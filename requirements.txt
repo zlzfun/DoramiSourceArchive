@@ -1,0 +1,24 @@
+# Web 框架与服务器
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pydantic>=2.0.0
+
+# 数据库与 ORM
+sqlmodel>=0.0.8
+
+# 向量数据库与大模型特征提取
+chromadb>=0.4.15
+sentence-transformers>=2.2.2
+
+# 异步爬虫与网络请求
+httpx>=0.25.0
+
+# 定时任务调度
+apscheduler>=3.10.4
+
+beautifulsoup4>=4.12.0
+feedparser>=6.0.10
+
+# 微信公众号抓取器所需依赖
+playwright>=1.35.0
+lxml>=4.9.0
