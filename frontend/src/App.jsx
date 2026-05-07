@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Database, RefreshCw, CloudDownload, CheckCircle, Clock, Server, Play, AlertCircle, Bot, Activity, CheckSquare, Settings, Search, Trash2, Calendar, X, BarChart2, Plus, ExternalLink, Save, Edit2, Zap, FileText, Link as LinkIcon, Box, ChevronLeft, ChevronRight } from 'lucide-react';
 
-const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  ? 'http://127.0.0.1:8888/api'
-  : `http://${window.location.hostname}:8888/api`;
+const API_BASE_URL = '/api';
 
 const CUSTOM_LOGO_PATH = '/logo.png';
 
