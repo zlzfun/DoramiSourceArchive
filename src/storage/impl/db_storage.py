@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Optional, Dict, Any
 from sqlmodel import Session, create_engine, select
 from storage.base import BaseStorage
@@ -9,6 +10,11 @@ from models.db import ArticleRecord, FetchTaskRecord, SQLModel
 class DatabaseStorage(BaseStorage):
     def __init__(self, db_url: str = "sqlite:///./data/cms_data.db"):
         super().__init__()
+
+        db_path = db_url.replace("sqlite:///", "")
+        db_dir = os.path.dirname(db_path)
+        if db_dir: os.makedirs(db_dir, exist_ok=True)
+
         self.engine = create_engine(db_url, echo=False)
         SQLModel.metadata.create_all(self.engine)
         self.logger.info(f"🗄️ 关系型数据库已连接: {db_url}")
