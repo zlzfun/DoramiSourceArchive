@@ -34,9 +34,9 @@ The first goal is to make fetch execution visible and auditable before adding ma
 
 ### Epic 2: Source Configuration
 
-- [ ] Add a SourceConfig table.
+- [x] Add a SourceConfig table.
 - [ ] Support generic fetchers driven by source configuration.
-- [ ] Add backend APIs for source management.
+- [x] Add backend APIs for source management.
 - [ ] Add source grouping by type.
 - [ ] Support source import/export as JSON or YAML.
 
@@ -80,6 +80,7 @@ The first goal is to make fetch execution visible and auditable before adding ma
 
 - 2026-05-11: Keep the product positioned as source collection and archival infrastructure for Dify/agents/private knowledge systems, not as a public reader-facing AI news portal.
 - 2026-05-11: Start implementation with fetch run observability before adding generic RSS/source configuration, because source expansion without run history would be hard to debug.
+- 2026-05-11: Store source configuration primarily in SQLite through `SourceConfigRecord`; JSON/YAML import/export remains a later convenience layer.
 
 ## Progress Log
 
@@ -89,3 +90,6 @@ The first goal is to make fetch execution visible and auditable before adding ma
 - 2026-05-11: Added a `FetchRunsTab` admin page, wired `/api/fetch-runs` into the frontend API client, and exposed it through the main navigation as `运行历史`.
 - 2026-05-11: Verified frontend build with `npm run build` by temporarily linking the original project `frontend/node_modules`; verified backend syntax with the original project `.venv` Python.
 - 2026-05-11: Ran `npm run lint`; remaining failures are existing lint debt in `DataTab.jsx`, `DateRangePicker.jsx`, `FetchTab.jsx`, and `VectorTab.jsx`. The new `FetchRunsTab.jsx` no longer reports lint errors.
+- 2026-05-11: Added `SourceConfigRecord` with stable source IDs, source type/category, optional bound fetcher, activity flag, scheduling hints, and JSON params.
+- 2026-05-11: Added `/api/source-configs` CRUD APIs, toggle endpoint, filtering by type/category/activity/search, and response serialization that exposes parsed `params`.
+- 2026-05-11: Verified backend syntax with `.venv` Python and validated `SourceConfigRecord` create/query behavior against an in-memory SQLite database.

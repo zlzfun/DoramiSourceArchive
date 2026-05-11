@@ -5,7 +5,7 @@ import json
 import datetime
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field as PydanticField
 from typing import Optional, List, Dict, Any
 from sqlmodel import Session, select
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -14,7 +14,7 @@ from apscheduler.triggers.cron import CronTrigger
 from storage.impl.db_storage import DatabaseStorage
 from storage.impl.vector_storage import ChromaVectorStorage
 from pipeline.core import DataPipeline
-from models.db import ArticleRecord, FetchTaskRecord, FetchRunRecord
+from models.db import ArticleRecord, FetchTaskRecord, FetchRunRecord, SourceConfigRecord
 from models.content import BaseContent
 
 # 引入动态抓取器注册中心
@@ -142,6 +142,164 @@ async def startup_event():
 # ==================== 1. 数据台账与 CRUD ====================
 class BatchOpParams(BaseModel):
     ids: List[str]
+
+
+class SourceConfigCreate(BaseModel):
+    source_id: str
+    name: str
+    source_type: str = "rss"
+    url: str = ""
+    category: str = ""
+    fetcher_id: str = ""
+    description: str = ""
+    is_active: bool = True
+    fetch_interval_minutes: Optional[int] = None
+    cron_expr: str = ""
+    params: Dict[str, Any] = PydanticField(default_factory=dict)
+
+
+class SourceConfigUpdate(BaseModel):
+    name: Optional[str] = None
+    source_type: Optional[str] = None
+    url: Optional[str] = None
+    category: Optional[str] = None
+    fetcher_id: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    fetch_interval_minutes: Optional[int] = None
+    cron_expr: Optional[str] = None
+    params: Optional[Dict[str, Any]] = None
+
+
+def serialize_source_config(record: SourceConfigRecord) -> Dict[str, Any]:
+    data = record.dict()
+    try:
+        data["params"] = json.loads(record.params_json or "{}")
+    except json.JSONDecodeError:
+        data["params"] = {}
+    return data
+
+
+def normalize_source_id(source_id: str) -> str:
+    return source_id.strip()
+
+
+# ==================== 0. 数据源配置 ====================
+@app.get("/api/source-configs")
+def get_source_configs(
+        source_type: Optional[str] = None,
+        category: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        search: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100
+):
+    with Session(db_sink.engine) as session:
+        query = select(SourceConfigRecord)
+        if source_type:
+            query = query.where(SourceConfigRecord.source_type == source_type)
+        if category:
+            query = query.where(SourceConfigRecord.category == category)
+        if is_active is not None:
+            query = query.where(SourceConfigRecord.is_active == is_active)
+        if search:
+            query = query.where(SourceConfigRecord.name.contains(search))
+        query = query.order_by(SourceConfigRecord.source_type, SourceConfigRecord.name).offset(skip).limit(limit)
+        return [serialize_source_config(record) for record in session.exec(query).all()]
+
+
+@app.get("/api/source-configs/{source_id}")
+def get_source_config(source_id: str):
+    source_id = normalize_source_id(source_id)
+    with Session(db_sink.engine) as session:
+        record = session.get(SourceConfigRecord, source_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="数据源配置不存在")
+        return serialize_source_config(record)
+
+
+@app.post("/api/source-configs")
+def create_source_config(params: SourceConfigCreate):
+    source_id = normalize_source_id(params.source_id)
+    if not source_id:
+        raise HTTPException(status_code=400, detail="source_id 不能为空")
+
+    with Session(db_sink.engine) as session:
+        existing = session.get(SourceConfigRecord, source_id)
+        if existing:
+            raise HTTPException(status_code=400, detail="该 source_id 已存在")
+
+        now = _now_iso()
+        record = SourceConfigRecord(
+            source_id=source_id,
+            name=params.name.strip(),
+            source_type=params.source_type.strip() or "rss",
+            url=params.url.strip(),
+            category=params.category.strip(),
+            fetcher_id=params.fetcher_id.strip(),
+            description=params.description.strip(),
+            is_active=params.is_active,
+            fetch_interval_minutes=params.fetch_interval_minutes,
+            cron_expr=params.cron_expr.strip(),
+            params_json=_json_dumps(params.params),
+            created_at=now,
+            updated_at=now
+        )
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return serialize_source_config(record)
+
+
+@app.put("/api/source-configs/{source_id}")
+def update_source_config(source_id: str, params: SourceConfigUpdate):
+    source_id = normalize_source_id(source_id)
+    with Session(db_sink.engine) as session:
+        record = session.get(SourceConfigRecord, source_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="数据源配置不存在")
+
+        update_data = params.dict(exclude_unset=True)
+        for key, value in update_data.items():
+            if key == "params":
+                record.params_json = _json_dumps(value)
+            elif isinstance(value, str):
+                setattr(record, key, value.strip())
+            else:
+                setattr(record, key, value)
+
+        record.updated_at = _now_iso()
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return serialize_source_config(record)
+
+
+@app.post("/api/source-configs/{source_id}/toggle")
+def toggle_source_config(source_id: str, is_active: bool = Body(..., embed=True)):
+    source_id = normalize_source_id(source_id)
+    with Session(db_sink.engine) as session:
+        record = session.get(SourceConfigRecord, source_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="数据源配置不存在")
+        record.is_active = is_active
+        record.updated_at = _now_iso()
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return serialize_source_config(record)
+
+
+@app.delete("/api/source-configs/{source_id}")
+def delete_source_config(source_id: str):
+    source_id = normalize_source_id(source_id)
+    with Session(db_sink.engine) as session:
+        record = session.get(SourceConfigRecord, source_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="数据源配置不存在")
+        session.delete(record)
+        session.commit()
+        return {"status": "success"}
 
 
 @app.get("/api/articles")

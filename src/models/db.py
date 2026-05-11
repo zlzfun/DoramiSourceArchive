@@ -55,3 +55,24 @@ class FetchRunRecord(SQLModel, table=True):
     saved_count: int = Field(default=0, description="成功新增入库的条目数量")
     skipped_count: int = Field(default=0, description="重复或未被任何存储接受的条目数量")
     error_message: Optional[str] = Field(default=None, description="失败原因或异常摘要")
+
+
+class SourceConfigRecord(SQLModel, table=True):
+    """可配置数据源定义，作为通用抓取器和后台数据源管理的基础。"""
+    __tablename__ = "source_configs"
+
+    source_id: str = Field(primary_key=True, description="稳定的数据源唯一标识")
+    name: str = Field(index=True, description="数据源展示名称")
+    source_type: str = Field(default="rss", index=True, description="数据源类型，如 rss/wechat/github/arxiv")
+    url: str = Field(default="", description="数据源入口 URL")
+    category: str = Field(default="", index=True, description="业务分类，如 official/news/paper/community")
+    fetcher_id: str = Field(default="", index=True, description="绑定的抓取器 ID，通用源可为空或使用 generic_rss")
+    description: str = Field(default="", description="数据源说明")
+
+    is_active: bool = Field(default=True, index=True, description="是否启用该数据源")
+    fetch_interval_minutes: Optional[int] = Field(default=None, description="建议抓取间隔，分钟")
+    cron_expr: str = Field(default="", description="建议 Cron 表达式，可用于生成 FetchTaskRecord")
+    params_json: str = Field(default="{}", description="抓取参数 JSON")
+
+    created_at: str = Field(description="创建时间")
+    updated_at: str = Field(description="更新时间")
