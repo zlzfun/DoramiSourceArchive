@@ -104,12 +104,21 @@ class GenericRssFetcher(BaseFetcher):
             "updated": entry.get("updated", ""),
         }
 
+    def _entry_limit(self, raw_limit: Any, default: int = 20) -> int:
+        if raw_limit in (None, ""):
+            return default
+        try:
+            return max(int(raw_limit), 0)
+        except (TypeError, ValueError):
+            self.logger.warning(f"RSS 条数参数无效，使用默认值: {raw_limit}")
+            return default
+
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         feed_url = str(kwargs.get("feed_url", "")).strip()
         runtime_source_id = str(kwargs.get("source_id", "")).strip() or self.source_id
         feed_name = str(kwargs.get("feed_name", "")).strip()
         category = str(kwargs.get("category", "")).strip()
-        limit = int(kwargs.get("limit", 20))
+        limit = self._entry_limit(kwargs.get("limit"), 20)
 
         if not feed_url:
             self.logger.error("RSS/Atom 地址不能为空，放弃抓取。")
@@ -127,7 +136,7 @@ class GenericRssFetcher(BaseFetcher):
             self.logger.warning(f"RSS 解析存在异常: {parsed_feed.bozo_exception}")
 
         resolved_feed_name = feed_name or parsed_feed.feed.get("title", "") or runtime_source_id
-        entries = parsed_feed.entries[:max(limit, 0)]
+        entries = parsed_feed.entries[:limit]
 
         for entry in entries:
             html_text = self._entry_html(entry)
@@ -153,3 +162,140 @@ class GenericRssFetcher(BaseFetcher):
                 media_url=self._media_url(entry),
                 raw_data=self._raw_entry(entry),
             )
+
+
+class PresetRssFetcher(GenericRssFetcher):
+    """
+    预设 RSS/Atom 抓取器基类。
+
+    子类只声明稳定 feed 地址和展示元数据，即可被注册中心自动发现为独立节点。
+    """
+    source_id = "unknown_source"
+    feed_url = ""
+    category = "official"
+    default_limit = 20
+
+    @classmethod
+    def get_parameter_schema(cls) -> List[Dict[str, Any]]:
+        return [
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
+        ]
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = kwargs.get("limit", self.default_limit)
+        if limit in (None, ""):
+            limit = self.default_limit
+
+        params = {
+            **kwargs,
+            "feed_url": self.feed_url,
+            "source_id": self.source_id,
+            "feed_name": self.name,
+            "category": self.category,
+            "limit": limit,
+        }
+        async for item in super()._run(client, **params):
+            yield item
+
+
+class OpenAINewsRssFetcher(PresetRssFetcher):
+    source_id = "rss_openai_news"
+    name = "OpenAI News"
+    description = "OpenAI 官方新闻、产品、研究与工程博客动态。"
+    icon = "🧠"
+    feed_url = "https://openai.com/news/rss.xml"
+    category = "official"
+
+
+class HuggingFaceBlogRssFetcher(PresetRssFetcher):
+    source_id = "rss_huggingface_blog"
+    name = "Hugging Face Blog"
+    description = "Hugging Face 官方博客、模型、数据集、工具与社区动态。"
+    icon = "🤗"
+    feed_url = "https://huggingface.co/blog/feed.xml"
+    category = "official"
+
+
+class LangChainBlogRssFetcher(PresetRssFetcher):
+    source_id = "rss_langchain_blog"
+    name = "LangChain Blog"
+    description = "LangChain、LangGraph、LangSmith 官方博客与产品更新。"
+    icon = "🦜"
+    feed_url = "https://blog.langchain.com/rss/"
+    category = "framework"
+
+
+class GitHubBlogRssFetcher(PresetRssFetcher):
+    source_id = "rss_github_blog"
+    name = "GitHub Blog"
+    description = "GitHub 官方博客，覆盖 Copilot、Actions、开源生态与工程平台更新。"
+    icon = "🐙"
+    feed_url = "https://github.blog/feed/"
+    category = "developer_platform"
+
+
+class ArxivAiRssFetcher(PresetRssFetcher):
+    source_id = "rss_arxiv_cs_ai"
+    name = "arXiv cs.AI"
+    description = "arXiv 人工智能分类最新论文。"
+    icon = "📄"
+    feed_url = "https://export.arxiv.org/rss/cs.AI"
+    category = "paper"
+    default_limit = 30
+
+
+class ArxivClRssFetcher(PresetRssFetcher):
+    source_id = "rss_arxiv_cs_cl"
+    name = "arXiv cs.CL"
+    description = "arXiv 计算语言学与 NLP 分类最新论文。"
+    icon = "📄"
+    feed_url = "https://export.arxiv.org/rss/cs.CL"
+    category = "paper"
+    default_limit = 30
+
+
+class ArxivLgRssFetcher(PresetRssFetcher):
+    source_id = "rss_arxiv_cs_lg"
+    name = "arXiv cs.LG"
+    description = "arXiv 机器学习分类最新论文。"
+    icon = "📄"
+    feed_url = "https://export.arxiv.org/rss/cs.LG"
+    category = "paper"
+    default_limit = 30
+
+
+class ArxivCvRssFetcher(PresetRssFetcher):
+    source_id = "rss_arxiv_cs_cv"
+    name = "arXiv cs.CV"
+    description = "arXiv 计算机视觉分类最新论文。"
+    icon = "📄"
+    feed_url = "https://export.arxiv.org/rss/cs.CV"
+    category = "paper"
+    default_limit = 30
+
+
+class HackerNewsAiRssFetcher(PresetRssFetcher):
+    source_id = "rss_hn_ai"
+    name = "Hacker News: AI"
+    description = "Hacker News 中与 AI 相关的新讨论。"
+    icon = "🟧"
+    feed_url = "https://hnrss.org/newest?q=AI"
+    category = "community"
+
+
+class DifyReleasesRssFetcher(PresetRssFetcher):
+    source_id = "rss_dify_releases"
+    name = "Dify Releases"
+    description = "Dify GitHub releases，跟踪开源 Agent 平台版本更新。"
+    icon = "🚀"
+    feed_url = "https://github.com/langgenius/dify/releases.atom"
+    category = "product_update"
+
+
+class VllmReleasesRssFetcher(PresetRssFetcher):
+    source_id = "rss_vllm_releases"
+    name = "vLLM Releases"
+    description = "vLLM GitHub releases，跟踪推理引擎版本更新。"
+    icon = "⚙️"
+    feed_url = "https://github.com/vllm-project/vllm/releases.atom"
+    category = "product_update"

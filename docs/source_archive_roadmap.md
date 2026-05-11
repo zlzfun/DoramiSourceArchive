@@ -25,11 +25,12 @@ The first goal is to make fetch execution visible and auditable before adding ma
 ### Epic 1: Source Coverage Expansion
 
 - [x] Add a generic RSS/Atom fetcher.
-- [ ] Add official AI company sources.
-- [ ] Add model/product update sources.
-- [ ] Add paper sources.
-- [ ] Add GitHub release/trending sources.
-- [ ] Add community/news sources.
+- [x] Add a first batch of built-in RSS/Atom source fetchers.
+- [ ] Add more official AI company sources.
+- [ ] Add more model/product update sources.
+- [x] Add initial paper sources.
+- [x] Add initial GitHub release sources.
+- [x] Add initial community/news sources.
 - [ ] Convert hard-coded WeChat account fetchers toward configurable source entries.
 
 ### Epic 2: Source Configuration
@@ -103,3 +104,4 @@ The first goal is to make fetch execution visible and auditable before adding ma
 - 2026-05-11: Verified backend syntax with `.venv` Python and frontend build with `npm run build`; lint still fails only on pre-existing component debt.
 - 2026-05-11: Cleaned frontend lint baseline by removing unused imports/functions and disabling `react-hooks/set-state-in-effect` for the current data-loading style. `npm run lint` now exits successfully with one remaining exhaustive-deps warning in `DataTab.jsx`.
 - 2026-05-11: Hid the `SourcesTab` from the main navigation after product review. SourceConfig code remains available as an advanced foundation, but the primary UI flow is again the dynamic built-in fetcher registry under `节点与调度`.
+- 2026-05-11: Added a `PresetRssFetcher` base class and the first built-in RSS/Atom source catalog: OpenAI News, Hugging Face Blog, LangChain Blog, GitHub Blog, arXiv cs.AI/cs.CL/cs.LG/cs.CV, Hacker News AI search, Dify releases, and vLLM releases. These appear through the existing dynamic fetcher registry rather than the advanced source-configuration UI.
