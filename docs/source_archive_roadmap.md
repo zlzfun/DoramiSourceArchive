@@ -24,7 +24,7 @@ The first goal is to make fetch execution visible and auditable before adding ma
 
 ### Epic 1: Source Coverage Expansion
 
-- [ ] Add a generic RSS/Atom fetcher.
+- [x] Add a generic RSS/Atom fetcher.
 - [ ] Add official AI company sources.
 - [ ] Add model/product update sources.
 - [ ] Add paper sources.
@@ -95,3 +95,5 @@ The first goal is to make fetch execution visible and auditable before adding ma
 - 2026-05-11: Verified backend syntax with `.venv` Python and validated `SourceConfigRecord` create/query behavior against an in-memory SQLite database.
 - 2026-05-11: Added a `SourcesTab` admin page for listing, filtering, creating, editing, enabling/disabling, and deleting `SourceConfigRecord` entries.
 - 2026-05-11: Verified frontend build with `npm run build` by temporarily linking the original project `frontend/node_modules`; `npm run lint` still fails only on existing lint debt outside the newly added source-management component.
+- 2026-05-11: Added `GenericRssFetcher` (`generic_rss`) for single-feed RSS/Atom ingestion with runtime source identity, stable item IDs, HTML-to-text cleanup, feed metadata, tags, media URL extraction, and raw entry traces.
+- 2026-05-11: Verified RSS fetcher registration and offline parsing behavior with a local RSS fixture; verified backend syntax with `.venv` Python.
