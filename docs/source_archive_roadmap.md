@@ -26,6 +26,7 @@ The first goal is to make fetch execution visible and auditable before adding ma
 
 - [x] Add a generic RSS/Atom fetcher.
 - [x] Add a first batch of built-in RSS/Atom source fetchers.
+- [x] Add a second batch of verified built-in RSS/Atom source fetchers.
 - [ ] Add more official AI company sources.
 - [ ] Add more model/product update sources.
 - [x] Add initial paper sources.
@@ -106,3 +107,5 @@ The first goal is to make fetch execution visible and auditable before adding ma
 - 2026-05-11: Hid the `SourcesTab` from the main navigation after product review. SourceConfig code remains available as an advanced foundation, but the primary UI flow is again the dynamic built-in fetcher registry under `节点与调度`.
 - 2026-05-11: Added a `PresetRssFetcher` base class and the first built-in RSS/Atom source catalog: OpenAI News, Hugging Face Blog, LangChain Blog, GitHub Blog, arXiv cs.AI/cs.CL/cs.LG/cs.CV, Hacker News AI search, Dify releases, and vLLM releases. These appear through the existing dynamic fetcher registry rather than the advanced source-configuration UI.
 - 2026-05-11: Exposed fetcher `category` metadata through `/api/fetchers` and updated the `节点与调度` page with category filters, search, type badges, and fetcher descriptions so the built-in catalog remains usable as source coverage grows.
+- 2026-05-11: Validated candidate official feeds with live HTTP/feed parsing before adding them. Anthropic, Mistral, and IBM Research RSS candidates were not added because the tested URLs returned 404 or no feed entries.
+- 2026-05-11: Added a second built-in source batch: Google AI Blog, Google DeepMind News, Microsoft AI Blog, NVIDIA Developer Blog, arXiv stat.ML/eess.IV, and GitHub release feeds for Ollama, Transformers, PyTorch, llama.cpp, and LangChain.
