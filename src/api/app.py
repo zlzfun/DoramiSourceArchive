@@ -14,7 +14,7 @@ from apscheduler.triggers.cron import CronTrigger
 from storage.impl.db_storage import DatabaseStorage
 from storage.impl.vector_storage import ChromaVectorStorage
 from pipeline.core import DataPipeline
-from models.db import ArticleRecord, FetchTaskRecord
+from models.db import ArticleRecord, FetchTaskRecord, FetchRunRecord
 from models.content import BaseContent
 
 # 引入动态抓取器注册中心
@@ -47,14 +47,73 @@ scheduler = AsyncIOScheduler()
 
 
 # ==================== 定时任务系统核心逻辑 ====================
-async def execute_fetch_job(fetcher_id: str, params: dict):
+def _now_iso() -> str:
+    return datetime.datetime.now().isoformat()
+
+
+def _json_dumps(data: Any) -> str:
+    return json.dumps(data or {}, ensure_ascii=False)
+
+
+def create_fetch_run(fetcher_id: str, params: dict, trigger_type: str, task_id: Optional[int] = None) -> int:
+    with Session(db_sink.engine) as session:
+        run = FetchRunRecord(
+            fetcher_id=fetcher_id,
+            task_id=task_id,
+            trigger_type=trigger_type,
+            status="running",
+            params_json=_json_dumps(params),
+            started_at=_now_iso()
+        )
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        return run.id
+
+
+def finish_fetch_run(run_id: int, status: str, result: Any = None, error_message: Optional[str] = None):
+    ended_at = _now_iso()
+    with Session(db_sink.engine) as session:
+        run = session.get(FetchRunRecord, run_id)
+        if not run:
+            return
+
+        run.status = status
+        run.ended_at = ended_at
+        run.error_message = error_message
+        try:
+            started_at = datetime.datetime.fromisoformat(run.started_at)
+            ended_dt = datetime.datetime.fromisoformat(ended_at)
+            run.duration_ms = int((ended_dt - started_at).total_seconds() * 1000)
+        except ValueError:
+            run.duration_ms = None
+
+        if result:
+            run.fetched_count = getattr(result, "fetched_count", 0)
+            run.saved_count = getattr(result, "saved_count", 0)
+            run.skipped_count = getattr(result, "skipped_count", 0)
+
+        session.add(run)
+        session.commit()
+
+
+async def execute_fetch_job(fetcher_id: str, params: dict, task_id: Optional[int] = None):
     print(f"⏰ 定时任务触发: 正在执行调度节点 {fetcher_id}...")
+    run_id = create_fetch_run(fetcher_id, params, trigger_type="scheduled", task_id=task_id)
     fetcher_class = fetcher_registry.get_class(fetcher_id)
-    if fetcher_class:
+    if not fetcher_class:
+        message = f"找不到对应的 Fetcher 节点: {fetcher_id}"
+        print(f"❌ {message}")
+        finish_fetch_run(run_id, status="failed", error_message=message)
+        return
+
+    try:
         fetcher = fetcher_class()
-        await pipeline.run_task(fetcher, **params)
-    else:
-        print(f"❌ 找不到对应的 Fetcher 节点: {fetcher_id}")
+        result = await pipeline.run_task(fetcher, **params)
+        finish_fetch_run(run_id, status="success", result=result)
+    except Exception as e:
+        finish_fetch_run(run_id, status="failed", error_message=str(e))
+        raise
 
 
 def load_tasks_to_scheduler():
@@ -68,7 +127,7 @@ def load_tasks_to_scheduler():
                 trigger = CronTrigger(minute=parts[0], hour=parts[1], day=parts[2], month=parts[3],
                                       day_of_week=parts[4])
                 scheduler.add_job(
-                    execute_fetch_job, trigger, args=[task.fetcher_id, params], id=f"task_{task.id}",
+                    execute_fetch_job, trigger, args=[task.fetcher_id, params, task.id], id=f"task_{task.id}",
                     replace_existing=True
                 )
 
@@ -197,13 +256,26 @@ async def get_available_fetchers():
 
 @app.post("/api/fetch/{fetcher_id}")
 async def trigger_fetch_dynamic(fetcher_id: str, params: Dict[str, Any] = Body(...)):
+    run_id = create_fetch_run(fetcher_id, params, trigger_type="manual")
     fetcher_class = fetcher_registry.get_class(fetcher_id)
     if not fetcher_class:
+        finish_fetch_run(run_id, status="failed", error_message=f"未知的抓取器节点: {fetcher_id}")
         raise HTTPException(status_code=404, detail=f"未知的抓取器节点: {fetcher_id}")
 
-    fetcher = fetcher_class()
-    await pipeline.run_task(fetcher, **params)
-    return {"status": "success"}
+    try:
+        fetcher = fetcher_class()
+        result = await pipeline.run_task(fetcher, **params)
+        finish_fetch_run(run_id, status="success", result=result)
+        return {
+            "status": "success",
+            "run_id": run_id,
+            "fetched_count": result.fetched_count,
+            "saved_count": result.saved_count,
+            "skipped_count": result.skipped_count
+        }
+    except Exception as e:
+        finish_fetch_run(run_id, status="failed", error_message=str(e))
+        raise
 
 
 # ----------------- 向量化接口 -----------------
@@ -350,3 +422,33 @@ def delete_task(task_id: int):
             session.commit()
     load_tasks_to_scheduler()
     return {"status": "success"}
+
+
+# ==================== 5. 抓取运行历史 ====================
+@app.get("/api/fetch-runs")
+def get_fetch_runs(
+        fetcher_id: Optional[str] = None,
+        status: Optional[str] = None,
+        trigger_type: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100
+):
+    with Session(db_sink.engine) as session:
+        query = select(FetchRunRecord)
+        if fetcher_id:
+            query = query.where(FetchRunRecord.fetcher_id == fetcher_id)
+        if status:
+            query = query.where(FetchRunRecord.status == status)
+        if trigger_type:
+            query = query.where(FetchRunRecord.trigger_type == trigger_type)
+        query = query.order_by(FetchRunRecord.started_at.desc()).offset(skip).limit(limit)
+        return session.exec(query).all()
+
+
+@app.get("/api/fetch-runs/{run_id}")
+def get_fetch_run(run_id: int):
+    with Session(db_sink.engine) as session:
+        run = session.get(FetchRunRecord, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="抓取运行记录不存在")
+        return run
