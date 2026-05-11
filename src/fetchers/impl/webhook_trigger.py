@@ -19,6 +19,7 @@ class DifyWebhookTrigger(BaseFetcher):
     # ==========================================
     source_id = "webhook_dify_workflow"
     content_type = "webhook_trigger"  # 作为一个虚拟动作标识
+    category = "workflow"
 
     # ==========================================
     # 2. 前端 UI 渲染元数据 (声明为类属性)

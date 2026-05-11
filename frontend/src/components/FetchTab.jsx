@@ -1,6 +1,41 @@
-import { useState, useEffect } from 'react';
-import { Server, Clock, CheckSquare, Play, RefreshCw, Calendar } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Server, Clock, CheckSquare, Play, RefreshCw, Calendar, Search, Layers } from 'lucide-react';
 import { triggerFetch, fetchTasks as apiFetchTasks, createTask, deleteTask } from '../api';
+
+const CATEGORY_LABELS = {
+  official: '官方动态',
+  framework: '框架生态',
+  paper: '论文源',
+  developer_platform: '开发平台',
+  community: '社区资讯',
+  product_update: '版本发布',
+  wechat: '微信公众号',
+  workflow: '后置编排',
+  advanced: '高级通用',
+  general: '其他',
+};
+
+const CATEGORY_ORDER = [
+  'official',
+  'framework',
+  'paper',
+  'product_update',
+  'developer_platform',
+  'community',
+  'wechat',
+  'workflow',
+  'advanced',
+  'general',
+];
+
+function getCategoryLabel(category) {
+  return CATEGORY_LABELS[category] || category || '其他';
+}
+
+function getCategoryRank(category) {
+  const index = CATEGORY_ORDER.indexOf(category || 'general');
+  return index === -1 ? CATEGORY_ORDER.length : index;
+}
 
 export default function FetchTab({ availableFetchers, showToast }) {
   const [fetchLoading, setFetchLoading] = useState(false);
@@ -8,6 +43,8 @@ export default function FetchTab({ availableFetchers, showToast }) {
   const [selectedFetchers, setSelectedFetchers] = useState([]);
   const [cronExpr, setCronExpr] = useState('0 8 * * *');
   const [fetchConfigs, setFetchConfigs] = useState({});
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     const initialConfigs = {};
@@ -32,6 +69,40 @@ export default function FetchTab({ availableFetchers, showToast }) {
     const fetcher = availableFetchers.find(f => f.id === id);
     return fetcher ? fetcher.name : id;
   };
+
+  const categoryOptions = useMemo(() => {
+    const counts = availableFetchers.reduce((acc, fetcher) => {
+      const category = fetcher.category || 'general';
+      acc[category] = (acc[category] || 0) + 1;
+      return acc;
+    }, {});
+
+    return Object.entries(counts)
+      .sort(([a], [b]) => getCategoryRank(a) - getCategoryRank(b) || getCategoryLabel(a).localeCompare(getCategoryLabel(b), 'zh-Hans-CN'))
+      .map(([category, count]) => ({ category, count }));
+  }, [availableFetchers]);
+
+  const visibleFetchers = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return [...availableFetchers]
+      .filter(fetcher => categoryFilter === 'all' || (fetcher.category || 'general') === categoryFilter)
+      .filter(fetcher => {
+        if (!query) return true;
+        const haystack = [
+          fetcher.name,
+          fetcher.id,
+          fetcher.desc,
+          fetcher.content_type,
+          getCategoryLabel(fetcher.category),
+        ].filter(Boolean).join(' ').toLowerCase();
+        return haystack.includes(query);
+      })
+      .sort((a, b) => {
+        const categoryDelta = getCategoryRank(a.category) - getCategoryRank(b.category);
+        if (categoryDelta !== 0) return categoryDelta;
+        return a.name.localeCompare(b.name, 'zh-Hans-CN');
+      });
+  }, [availableFetchers, categoryFilter, searchQuery]);
 
   const toggleFetcherSelection = (id) => {
     setSelectedFetchers(prev => prev.includes(id) ? prev.filter(fid => fid !== id) : [...prev, id]);
@@ -90,28 +161,68 @@ export default function FetchTab({ availableFetchers, showToast }) {
         </div>
       </div>
 
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
+            <Layers className="w-4 h-4 text-indigo-500" />
+            <span>内置节点目录</span>
+            <span className="text-xs text-slate-400 font-mono">{visibleFetchers.length}/{availableFetchers.length}</span>
+          </div>
+          <div className="relative w-full lg:w-80">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="搜索名称、ID、类型"
+              className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setCategoryFilter('all')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${categoryFilter === 'all' ? 'bg-blue-600 border-blue-600 text-white' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}
+          >
+            全部 {availableFetchers.length}
+          </button>
+          {categoryOptions.map(({ category, count }) => (
+            <button
+              key={category}
+              onClick={() => setCategoryFilter(category)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${categoryFilter === category ? 'bg-blue-600 border-blue-600 text-white' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}
+            >
+              {getCategoryLabel(category)} {count}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {availableFetchers.length === 0 ? <div className="col-span-full py-10 text-center text-slate-400 font-bold border-2 border-dashed border-slate-200 rounded-2xl">未探测到可用节点</div> : null}
-        {availableFetchers.map(fetcher => {
+        {availableFetchers.length === 0 ? <div className="col-span-full py-10 text-center text-slate-400 font-bold border-2 border-dashed border-slate-200 rounded-xl">未探测到可用节点</div> : null}
+        {availableFetchers.length > 0 && visibleFetchers.length === 0 ? <div className="col-span-full py-10 text-center text-slate-400 font-bold border-2 border-dashed border-slate-200 rounded-xl">没有匹配的抓取节点</div> : null}
+        {visibleFetchers.map(fetcher => {
           const isSelected = selectedFetchers.includes(fetcher.id);
           const hasTask = tasks.some(t => t.fetcher_id === fetcher.id);
           return (
-            <div key={fetcher.id} className={`bg-white border-2 rounded-2xl flex flex-col transition-all group shadow-sm ${isSelected ? 'border-blue-500 ring-4 ring-blue-500/10' : 'border-slate-200 hover:border-blue-300'}`}>
-              <div onClick={() => toggleFetcherSelection(fetcher.id)} className="p-4 flex items-start gap-3 cursor-pointer border-b border-slate-100 bg-slate-50/50 rounded-t-xl hover:bg-slate-100/70 transition-colors">
+            <div key={fetcher.id} className={`bg-white border-2 rounded-xl flex flex-col transition-all group shadow-sm ${isSelected ? 'border-blue-500 ring-4 ring-blue-500/10' : 'border-slate-200 hover:border-blue-300'}`}>
+              <div onClick={() => toggleFetcherSelection(fetcher.id)} className="p-4 flex items-start gap-3 cursor-pointer border-b border-slate-100 bg-slate-50/50 rounded-t-lg hover:bg-slate-100/70 transition-colors">
                 <div className={`mt-1.5 w-5 h-5 shrink-0 rounded border flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300 group-hover:border-blue-400'}`}>
                   {isSelected && <CheckSquare className="w-4 h-4 text-white" />}
                 </div>
-                <div className="w-11 h-11 shrink-0 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-2xl shadow-sm">{fetcher.icon}</div>
+                <div className="w-11 h-11 shrink-0 bg-white border border-slate-200 rounded-lg flex items-center justify-center text-2xl shadow-sm">{fetcher.icon}</div>
                 <div className="flex-1 min-w-0">
                   <h3 className="font-extrabold text-slate-800 text-sm leading-snug">{fetcher.name}</h3>
-                  <div className="flex items-center space-x-2 mt-1.5">
+                  <div className="flex items-center gap-2 mt-1.5 min-w-0">
                     {hasTask && <Clock className="w-3.5 h-3.5 text-emerald-500 shrink-0" title="已有定时任务" />}
+                    <span className="text-[10px] text-blue-700 font-bold bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded truncate">{getCategoryLabel(fetcher.category)}</span>
                     <span className="text-[10px] text-slate-500 font-mono bg-slate-200/50 px-1.5 py-0.5 rounded truncate">{fetcher.id}</span>
                   </div>
                 </div>
               </div>
 
-              <div className="p-4 bg-white rounded-b-xl flex-1 flex flex-col justify-center space-y-3">
+              <div className="p-4 bg-white rounded-b-lg flex-1 flex flex-col justify-between gap-3">
+                <p className="text-xs text-slate-500 leading-relaxed min-h-[34px]">{fetcher.desc}</p>
                 {fetcher.parameters?.length > 0 ? (
                   fetcher.parameters.map(param => (
                     <div key={param.field} className="flex items-center justify-between gap-3">

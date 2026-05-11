@@ -20,6 +20,7 @@ class GenericRssFetcher(BaseFetcher):
     """
     source_id = "generic_rss"
     content_type = "rss_article"
+    category = "advanced"
 
     name = "通用 RSS/Atom"
     description = "抓取任意 RSS/Atom Feed，适合官方博客、产品更新、论文与社区资讯源。"

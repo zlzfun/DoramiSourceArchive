@@ -29,6 +29,9 @@ class BaseFetcher(abc.ABC):
     # 产出的数据结构类型，对应 models.content (例如: "arxiv", "tech_news")
     content_type: str = "unknown_content"
 
+    # 面向管理台的来源分类，用于在节点较多时筛选和分组展示。
+    category: str = "general"
+
     # ==========================================
     # 2. 前端 UI 渲染元数据 (必须由子类覆盖)
     # ==========================================

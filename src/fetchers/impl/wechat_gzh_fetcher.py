@@ -478,6 +478,7 @@ class BaseWechatGzhFetcher(BaseFetcher):
 
 class JiQiZhiXinWechatFetcher(BaseWechatGzhFetcher):
     source_id = "wechat_jiqizhixin"
+    category = "wechat"
     name = "机器之心"
     icon = "🤖"
     description = "抓取「机器之心」微信公众号的最新 AI 产业、研究与前沿报道。"
@@ -486,6 +487,7 @@ class JiQiZhiXinWechatFetcher(BaseWechatGzhFetcher):
 
 class QbitAIWechatFetcher(BaseWechatGzhFetcher):
     source_id = "wechat_qbitai"
+    category = "wechat"
     name = "量子位"
     icon = "⚛️"
     description = "抓取「量子位」微信公众号的 AI 科技新闻、大模型进展追踪。"
@@ -494,6 +496,7 @@ class QbitAIWechatFetcher(BaseWechatGzhFetcher):
 
 class XinzhiyuanWechatFetcher(BaseWechatGzhFetcher):
     source_id = "wechat_xinzhiyuan"
+    category = "wechat"
     name = "新智元"
     icon = "🧠"
     description = "抓取「新智元」微信公众号的 AI 深度解析、人物专访与行业洞察。"
