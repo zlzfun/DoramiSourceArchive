@@ -99,20 +99,12 @@ def finish_fetch_run(run_id: int, status: str, result: Any = None, error_message
 
 async def execute_fetch_job(fetcher_id: str, params: dict, task_id: Optional[int] = None):
     print(f"⏰ 定时任务触发: 正在执行调度节点 {fetcher_id}...")
-    run_id = create_fetch_run(fetcher_id, params, trigger_type="scheduled", task_id=task_id)
-    fetcher_class = fetcher_registry.get_class(fetcher_id)
-    if not fetcher_class:
-        message = f"找不到对应的 Fetcher 节点: {fetcher_id}"
-        print(f"❌ {message}")
-        finish_fetch_run(run_id, status="failed", error_message=message)
-        return
-
     try:
-        fetcher = fetcher_class()
-        result = await pipeline.run_task(fetcher, **params)
-        finish_fetch_run(run_id, status="success", result=result)
+        await run_fetcher_with_tracking(fetcher_id, params, trigger_type="scheduled", task_id=task_id)
+    except ValueError as e:
+        print(f"❌ {e}")
     except Exception as e:
-        finish_fetch_run(run_id, status="failed", error_message=str(e))
+        print(f"❌ 定时任务执行失败: {e}")
         raise
 
 
@@ -171,6 +163,10 @@ class SourceConfigUpdate(BaseModel):
     params: Optional[Dict[str, Any]] = None
 
 
+class SourceFetchParams(BaseModel):
+    params: Dict[str, Any] = PydanticField(default_factory=dict)
+
+
 def serialize_source_config(record: SourceConfigRecord) -> Dict[str, Any]:
     data = record.dict()
     try:
@@ -182,6 +178,65 @@ def serialize_source_config(record: SourceConfigRecord) -> Dict[str, Any]:
 
 def normalize_source_id(source_id: str) -> str:
     return source_id.strip()
+
+
+def parse_json_object(raw_json: str) -> Dict[str, Any]:
+    try:
+        parsed = json.loads(raw_json or "{}")
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def resolve_source_fetcher_id(source_config: SourceConfigRecord) -> str:
+    if source_config.fetcher_id:
+        return source_config.fetcher_id
+    if source_config.source_type.lower() in {"rss", "atom"}:
+        return "generic_rss"
+    return ""
+
+
+def build_source_fetch_params(source_config: SourceConfigRecord, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    params = parse_json_object(source_config.params_json)
+    params.update({
+        "source_id": source_config.source_id,
+        "feed_url": source_config.url,
+        "feed_name": source_config.name,
+        "category": source_config.category,
+    })
+    if overrides:
+        params.update(overrides)
+    return params
+
+
+async def run_fetcher_with_tracking(
+        fetcher_id: str,
+        params: Dict[str, Any],
+        trigger_type: str = "manual",
+        task_id: Optional[int] = None
+) -> Dict[str, Any]:
+    run_id = create_fetch_run(fetcher_id, params, trigger_type=trigger_type, task_id=task_id)
+    fetcher_class = fetcher_registry.get_class(fetcher_id)
+    if not fetcher_class:
+        message = f"未知的抓取器节点: {fetcher_id}"
+        finish_fetch_run(run_id, status="failed", error_message=message)
+        raise ValueError(message)
+
+    try:
+        fetcher = fetcher_class()
+        result = await pipeline.run_task(fetcher, **params)
+        finish_fetch_run(run_id, status="success", result=result)
+        return {
+            "status": "success",
+            "run_id": run_id,
+            "fetcher_id": fetcher_id,
+            "fetched_count": result.fetched_count,
+            "saved_count": result.saved_count,
+            "skipped_count": result.skipped_count
+        }
+    except Exception as e:
+        finish_fetch_run(run_id, status="failed", error_message=str(e))
+        raise
 
 
 # ==================== 0. 数据源配置 ====================
@@ -302,6 +357,55 @@ def delete_source_config(source_id: str):
         return {"status": "success"}
 
 
+@app.post("/api/source-configs/{source_id}/fetch")
+async def fetch_source_config(source_id: str, body: Optional[SourceFetchParams] = None):
+    source_id = normalize_source_id(source_id)
+    with Session(db_sink.engine) as session:
+        record = session.get(SourceConfigRecord, source_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="数据源配置不存在")
+        if not record.is_active:
+            raise HTTPException(status_code=400, detail="数据源已停用，无法触发抓取")
+
+        fetcher_id = resolve_source_fetcher_id(record)
+        if not fetcher_id:
+            raise HTTPException(status_code=400, detail="该数据源未绑定可用抓取器")
+        params = build_source_fetch_params(record, body.params if body else {})
+
+    try:
+        result = await run_fetcher_with_tracking(fetcher_id, params, trigger_type="manual")
+        return {"source_id": source_id, **result}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/source-configs/fetch-active-rss")
+async def fetch_active_rss_sources(body: Optional[SourceFetchParams] = None):
+    results = []
+    with Session(db_sink.engine) as session:
+        records = session.exec(
+            select(SourceConfigRecord)
+            .where(SourceConfigRecord.is_active == True)
+            .where(SourceConfigRecord.source_type.in_(["rss", "atom"]))
+            .order_by(SourceConfigRecord.name)
+        ).all()
+
+    for record in records:
+        fetcher_id = resolve_source_fetcher_id(record)
+        if not fetcher_id:
+            results.append({"source_id": record.source_id, "status": "skipped", "error": "未绑定可用抓取器"})
+            continue
+
+        try:
+            params = build_source_fetch_params(record, body.params if body else {})
+            result = await run_fetcher_with_tracking(fetcher_id, params, trigger_type="manual")
+            results.append({"source_id": record.source_id, **result})
+        except Exception as e:
+            results.append({"source_id": record.source_id, "status": "failed", "error": str(e)})
+
+    return {"status": "success", "count": len(results), "results": results}
+
+
 @app.get("/api/articles")
 def get_articles(
         content_type: Optional[str] = None,
@@ -414,26 +518,10 @@ async def get_available_fetchers():
 
 @app.post("/api/fetch/{fetcher_id}")
 async def trigger_fetch_dynamic(fetcher_id: str, params: Dict[str, Any] = Body(...)):
-    run_id = create_fetch_run(fetcher_id, params, trigger_type="manual")
-    fetcher_class = fetcher_registry.get_class(fetcher_id)
-    if not fetcher_class:
-        finish_fetch_run(run_id, status="failed", error_message=f"未知的抓取器节点: {fetcher_id}")
-        raise HTTPException(status_code=404, detail=f"未知的抓取器节点: {fetcher_id}")
-
     try:
-        fetcher = fetcher_class()
-        result = await pipeline.run_task(fetcher, **params)
-        finish_fetch_run(run_id, status="success", result=result)
-        return {
-            "status": "success",
-            "run_id": run_id,
-            "fetched_count": result.fetched_count,
-            "saved_count": result.saved_count,
-            "skipped_count": result.skipped_count
-        }
-    except Exception as e:
-        finish_fetch_run(run_id, status="failed", error_message=str(e))
-        raise
+        return await run_fetcher_with_tracking(fetcher_id, params, trigger_type="manual")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # ----------------- 向量化接口 -----------------

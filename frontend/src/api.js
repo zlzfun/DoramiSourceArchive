@@ -149,6 +149,26 @@ export async function deleteSourceConfig(sourceId) {
   return res.json();
 }
 
+export async function fetchSourceConfigNow(sourceId, params = {}) {
+  const res = await fetch(`${API_BASE_URL}/source-configs/${encodeURIComponent(sourceId)}/fetch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ params }),
+  });
+  if (!res.ok) await handleApiError(res, '触发数据源抓取失败');
+  return res.json();
+}
+
+export async function fetchActiveRssSources(params = {}) {
+  const res = await fetch(`${API_BASE_URL}/source-configs/fetch-active-rss`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ params }),
+  });
+  if (!res.ok) await handleApiError(res, '批量触发 RSS 抓取失败');
+  return res.json();
+}
+
 export async function createTask(data) {
   const res = await fetch(`${API_BASE_URL}/tasks`, {
     method: 'POST',

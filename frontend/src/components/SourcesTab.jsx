@@ -3,6 +3,8 @@ import { CheckCircle2, Edit2, Plus, RefreshCw, Save, Settings2, Trash2, XCircle 
 import {
   createSourceConfig,
   deleteSourceConfig,
+  fetchActiveRssSources,
+  fetchSourceConfigNow,
   fetchSourceConfigs,
   toggleSourceConfig,
   updateSourceConfig,
@@ -52,6 +54,8 @@ export default function SourcesTab({ showToast }) {
   const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [fetchingSourceId, setFetchingSourceId] = useState('');
+  const [batchFetching, setBatchFetching] = useState(false);
   const [filters, setFilters] = useState({ source_type: '', category: '', is_active: '' });
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -190,6 +194,30 @@ export default function SourcesTab({ showToast }) {
     }
   };
 
+  const handleFetchSource = async (source) => {
+    setFetchingSourceId(source.source_id);
+    try {
+      const result = await fetchSourceConfigNow(source.source_id);
+      showToast(`抓取完成：新增 ${result.saved_count || 0} 条，跳过 ${result.skipped_count || 0} 条`, 'success');
+    } catch (e) {
+      showToast(e.message || '触发抓取失败', 'error');
+    }
+    setFetchingSourceId('');
+  };
+
+  const handleBatchFetchRss = async () => {
+    setBatchFetching(true);
+    try {
+      const result = await fetchActiveRssSources();
+      const successCount = (result.results || []).filter(item => item.status === 'success').length;
+      const failedCount = (result.results || []).filter(item => item.status === 'failed').length;
+      showToast(`RSS 批量抓取完成：成功 ${successCount} 个，失败 ${failedCount} 个`, failedCount ? 'info' : 'success');
+    } catch (e) {
+      showToast(e.message || '批量触发失败', 'error');
+    }
+    setBatchFetching(false);
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
@@ -199,6 +227,9 @@ export default function SourcesTab({ showToast }) {
         </div>
         <button onClick={loadSources} disabled={loading} className="text-sm text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 shadow-sm px-4 py-2 rounded-lg transition-all flex items-center font-bold w-fit">
           <RefreshCw className={`w-4 h-4 mr-2 text-blue-600 ${loading ? 'animate-spin' : ''}`} /> 刷新配置
+        </button>
+        <button onClick={handleBatchFetchRss} disabled={batchFetching} className="text-sm text-white bg-blue-600 hover:bg-blue-700 shadow-sm px-4 py-2 rounded-lg transition-all flex items-center font-bold w-fit">
+          <RefreshCw className={`w-4 h-4 mr-2 ${batchFetching ? 'animate-spin' : ''}`} /> 批量抓取 RSS
         </button>
       </div>
 
@@ -264,6 +295,9 @@ export default function SourcesTab({ showToast }) {
                         </button>
                         <button onClick={() => handleToggle(source)} className="px-3 py-2 text-xs font-bold text-slate-600 bg-slate-50 hover:bg-slate-100 rounded-lg transition-colors">
                           {source.is_active ? '停用' : '启用'}
+                        </button>
+                        <button onClick={() => handleFetchSource(source)} disabled={!source.is_active || fetchingSourceId === source.source_id} className="px-3 py-2 text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors disabled:text-slate-300 disabled:bg-slate-50">
+                          {fetchingSourceId === source.source_id ? '抓取中' : '抓取'}
                         </button>
                         <button onClick={() => handleDelete(source)} className="p-2 text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-colors" title="删除">
                           <Trash2 className="w-4 h-4" />

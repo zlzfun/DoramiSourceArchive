@@ -35,7 +35,7 @@ The first goal is to make fetch execution visible and auditable before adding ma
 ### Epic 2: Source Configuration
 
 - [x] Add a SourceConfig table.
-- [ ] Support generic fetchers driven by source configuration.
+- [x] Support generic fetchers driven by source configuration.
 - [x] Add backend APIs for source management.
 - [ ] Add source grouping by type.
 - [ ] Support source import/export as JSON or YAML.
@@ -97,3 +97,6 @@ The first goal is to make fetch execution visible and auditable before adding ma
 - 2026-05-11: Verified frontend build with `npm run build` by temporarily linking the original project `frontend/node_modules`; `npm run lint` still fails only on existing lint debt outside the newly added source-management component.
 - 2026-05-11: Added `GenericRssFetcher` (`generic_rss`) for single-feed RSS/Atom ingestion with runtime source identity, stable item IDs, HTML-to-text cleanup, feed metadata, tags, media URL extraction, and raw entry traces.
 - 2026-05-11: Verified RSS fetcher registration and offline parsing behavior with a local RSS fixture; verified backend syntax with `.venv` Python.
+- 2026-05-11: Added SourceConfig-triggered fetch APIs for single-source execution and batch execution of all active RSS/Atom sources, reusing the same fetch run tracking path.
+- 2026-05-11: Added source-management UI actions to trigger a single source or batch-trigger active RSS sources from the admin console.
+- 2026-05-11: Verified backend syntax with `.venv` Python and frontend build with `npm run build`; lint still fails only on pre-existing component debt.
