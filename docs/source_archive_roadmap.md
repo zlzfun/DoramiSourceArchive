@@ -70,7 +70,7 @@ The first goal is to make fetch execution visible and auditable before adding ma
 
 ### Epic 6: Admin Console Enhancements
 
-- [x] Add a source management tab.
+- [ ] Add a source management tab as an advanced configuration surface.
 - [x] Add a fetch run history tab.
 - [ ] Add a data quality check tab.
 - [ ] Add a Dify sync tab.
@@ -81,6 +81,7 @@ The first goal is to make fetch execution visible and auditable before adding ma
 - 2026-05-11: Keep the product positioned as source collection and archival infrastructure for Dify/agents/private knowledge systems, not as a public reader-facing AI news portal.
 - 2026-05-11: Start implementation with fetch run observability before adding generic RSS/source configuration, because source expansion without run history would be hard to debug.
 - 2026-05-11: Store source configuration primarily in SQLite through `SourceConfigRecord`; JSON/YAML import/export remains a later convenience layer.
+- 2026-05-11: Restore the original fetcher-registry-first product direction. Built-in fetchers should be the primary user workflow; user-defined source configuration remains an advanced/parallel capability and should not dominate the main UI.
 
 ## Progress Log
 
@@ -101,3 +102,4 @@ The first goal is to make fetch execution visible and auditable before adding ma
 - 2026-05-11: Added source-management UI actions to trigger a single source or batch-trigger active RSS sources from the admin console.
 - 2026-05-11: Verified backend syntax with `.venv` Python and frontend build with `npm run build`; lint still fails only on pre-existing component debt.
 - 2026-05-11: Cleaned frontend lint baseline by removing unused imports/functions and disabling `react-hooks/set-state-in-effect` for the current data-loading style. `npm run lint` now exits successfully with one remaining exhaustive-deps warning in `DataTab.jsx`.
+- 2026-05-11: Hid the `SourcesTab` from the main navigation after product review. SourceConfig code remains available as an advanced foundation, but the primary UI flow is again the dynamic built-in fetcher registry under `节点与调度`.
