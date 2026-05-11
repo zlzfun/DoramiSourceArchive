@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Server, Clock, CheckSquare, Play, RefreshCw, Calendar, Search, Layers } from 'lucide-react';
-import { triggerFetch, fetchTasks as apiFetchTasks, createTask, deleteTask } from '../api';
+import { triggerFetch, fetchTasks as apiFetchTasks, createTask, deleteTask, fetchSourceHealth } from '../api';
 
 const CATEGORY_LABELS = {
   official: '官方动态',
@@ -37,9 +37,23 @@ function getCategoryRank(category) {
   return index === -1 ? CATEGORY_ORDER.length : index;
 }
 
+function formatDateTime(value) {
+  if (!value) return '从未运行';
+  return value.replace('T', ' ').substring(0, 19);
+}
+
+function healthMeta(status) {
+  if (status === 'healthy') return { label: '健康', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' };
+  if (status === 'failing') return { label: '失败', className: 'bg-red-50 text-red-700 border-red-100' };
+  if (status === 'running') return { label: '运行中', className: 'bg-amber-50 text-amber-700 border-amber-100' };
+  if (status === 'never_run') return { label: '未运行', className: 'bg-slate-50 text-slate-500 border-slate-200' };
+  return { label: '未知', className: 'bg-slate-50 text-slate-500 border-slate-200' };
+}
+
 export default function FetchTab({ availableFetchers, showToast }) {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [tasks, setTasks] = useState([]);
+  const [healthByFetcher, setHealthByFetcher] = useState({});
   const [selectedFetchers, setSelectedFetchers] = useState([]);
   const [cronExpr, setCronExpr] = useState('0 8 * * *');
   const [fetchConfigs, setFetchConfigs] = useState({});
@@ -63,7 +77,19 @@ export default function FetchTab({ availableFetchers, showToast }) {
     } catch (e) { console.error(e); }
   };
 
-  useEffect(() => { loadTasks(); }, []);
+  const loadSourceHealth = useCallback(async () => {
+    try {
+      const healthItems = await fetchSourceHealth();
+      setHealthByFetcher(Object.fromEntries(healthItems.map(item => [item.fetcher_id, item])));
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTasks();
+    loadSourceHealth();
+  }, [loadSourceHealth]);
 
   const getFetcherName = (id) => {
     const fetcher = availableFetchers.find(f => f.id === id);
@@ -125,6 +151,7 @@ export default function FetchTab({ availableFetchers, showToast }) {
     if (successCount > 0) {
       showToast(`已向 ${successCount} 个节点下发立即抓取指令！`, 'success');
       setSelectedFetchers([]);
+      loadSourceHealth();
     }
   };
 
@@ -204,6 +231,8 @@ export default function FetchTab({ availableFetchers, showToast }) {
         {visibleFetchers.map(fetcher => {
           const isSelected = selectedFetchers.includes(fetcher.id);
           const hasTask = tasks.some(t => t.fetcher_id === fetcher.id);
+          const health = healthByFetcher[fetcher.id];
+          const healthInfo = healthMeta(health?.health_status);
           return (
             <div key={fetcher.id} className={`bg-white border-2 rounded-xl flex flex-col transition-all group shadow-sm ${isSelected ? 'border-blue-500 ring-4 ring-blue-500/10' : 'border-slate-200 hover:border-blue-300'}`}>
               <div onClick={() => toggleFetcherSelection(fetcher.id)} className="p-4 flex items-start gap-3 cursor-pointer border-b border-slate-100 bg-slate-50/50 rounded-t-lg hover:bg-slate-100/70 transition-colors">
@@ -216,6 +245,7 @@ export default function FetchTab({ availableFetchers, showToast }) {
                   <div className="flex items-center gap-2 mt-1.5 min-w-0">
                     {hasTask && <Clock className="w-3.5 h-3.5 text-emerald-500 shrink-0" title="已有定时任务" />}
                     <span className="text-[10px] text-blue-700 font-bold bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded truncate">{getCategoryLabel(fetcher.category)}</span>
+                    <span className={`text-[10px] font-bold border px-1.5 py-0.5 rounded truncate ${healthInfo.className}`}>{healthInfo.label}</span>
                     <span className="text-[10px] text-slate-500 font-mono bg-slate-200/50 px-1.5 py-0.5 rounded truncate">{fetcher.id}</span>
                   </div>
                 </div>
@@ -223,6 +253,20 @@ export default function FetchTab({ availableFetchers, showToast }) {
 
               <div className="p-4 bg-white rounded-b-lg flex-1 flex flex-col justify-between gap-3">
                 <p className="text-xs text-slate-500 leading-relaxed min-h-[34px]">{fetcher.desc}</p>
+                <div className="grid grid-cols-3 gap-2 text-[11px]">
+                  <div className="bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5">
+                    <div className="text-slate-400 font-bold">最近运行</div>
+                    <div className="text-slate-700 font-mono truncate" title={formatDateTime(health?.latest_run_at)}>{formatDateTime(health?.latest_run_at)}</div>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5">
+                    <div className="text-slate-400 font-bold">新增</div>
+                    <div className="text-emerald-700 font-black">{health?.latest_saved_count ?? 0}</div>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5">
+                    <div className="text-slate-400 font-bold">失败</div>
+                    <div className="text-red-700 font-black">{health?.consecutive_failures ?? 0}</div>
+                  </div>
+                </div>
                 {fetcher.parameters?.length > 0 ? (
                   fetcher.parameters.map(param => (
                     <div key={param.field} className="flex items-center justify-between gap-3">

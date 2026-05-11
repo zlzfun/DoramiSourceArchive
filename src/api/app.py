@@ -209,6 +209,57 @@ def build_source_fetch_params(source_config: SourceConfigRecord, overrides: Opti
     return params
 
 
+def derive_health_status(latest_run: Optional[FetchRunRecord], consecutive_failures: int) -> str:
+    if not latest_run:
+        return "never_run"
+    if latest_run.status == "running":
+        return "running"
+    if consecutive_failures > 0:
+        return "failing"
+    if latest_run.status == "success":
+        return "healthy"
+    return "unknown"
+
+
+def build_fetcher_health(fetcher_metadata: Dict[str, Any], runs: List[FetchRunRecord]) -> Dict[str, Any]:
+    ordered_runs = sorted(runs, key=lambda run: run.started_at or "", reverse=True)
+    latest_run = ordered_runs[0] if ordered_runs else None
+    success_runs = [run for run in ordered_runs if run.status == "success"]
+    failed_runs = [run for run in ordered_runs if run.status == "failed"]
+    running_runs = [run for run in ordered_runs if run.status == "running"]
+
+    consecutive_failures = 0
+    for run in ordered_runs:
+        if run.status == "failed":
+            consecutive_failures += 1
+        elif run.status == "success":
+            break
+
+    latest_success = success_runs[0] if success_runs else None
+    latest_failure = failed_runs[0] if failed_runs else None
+
+    return {
+        "fetcher_id": fetcher_metadata["id"],
+        "name": fetcher_metadata["name"],
+        "category": fetcher_metadata.get("category", "general"),
+        "content_type": fetcher_metadata.get("content_type", ""),
+        "health_status": derive_health_status(latest_run, consecutive_failures),
+        "latest_run_status": latest_run.status if latest_run else None,
+        "latest_run_at": latest_run.started_at if latest_run else None,
+        "latest_success_at": latest_success.started_at if latest_success else None,
+        "latest_failure_at": latest_failure.started_at if latest_failure else None,
+        "latest_error_message": latest_run.error_message if latest_run and latest_run.status == "failed" else None,
+        "consecutive_failures": consecutive_failures,
+        "total_runs": len(ordered_runs),
+        "success_runs": len(success_runs),
+        "failed_runs": len(failed_runs),
+        "running_runs": len(running_runs),
+        "latest_fetched_count": latest_run.fetched_count if latest_run else 0,
+        "latest_saved_count": latest_run.saved_count if latest_run else 0,
+        "latest_skipped_count": latest_run.skipped_count if latest_run else 0,
+    }
+
+
 async def run_fetcher_with_tracking(
         fetcher_id: str,
         params: Dict[str, Any],
@@ -514,6 +565,25 @@ async def update_article(article_id: str, params: ArticleUpdateParams):
 @app.get("/api/fetchers")
 async def get_available_fetchers():
     return fetcher_registry.get_all_metadata()
+
+
+@app.get("/api/source-health")
+def get_source_health():
+    fetchers = fetcher_registry.get_all_metadata()
+    fetcher_ids = [fetcher["id"] for fetcher in fetchers]
+
+    with Session(db_sink.engine) as session:
+        runs = session.exec(select(FetchRunRecord).where(FetchRunRecord.fetcher_id.in_(fetcher_ids))).all()
+
+    runs_by_fetcher: Dict[str, List[FetchRunRecord]] = {fetcher_id: [] for fetcher_id in fetcher_ids}
+    for run in runs:
+        runs_by_fetcher.setdefault(run.fetcher_id, []).append(run)
+
+    health_items = [
+        build_fetcher_health(fetcher, runs_by_fetcher.get(fetcher["id"], []))
+        for fetcher in fetchers
+    ]
+    return sorted(health_items, key=lambda item: (item["category"], item["name"]))
 
 
 @app.post("/api/fetch/{fetcher_id}")

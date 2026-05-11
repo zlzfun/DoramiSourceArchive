@@ -15,6 +15,12 @@ export async function fetchFetchers() {
   return res.json();
 }
 
+export async function fetchSourceHealth() {
+  const res = await fetch(`${API_BASE_URL}/source-health`);
+  if (!res.ok) await handleApiError(res, '获取数据源健康状态失败');
+  return res.json();
+}
+
 export async function fetchArticles(filters = {}, limit = 100) {
   const params = new URLSearchParams({ limit });
   Object.entries(filters).forEach(([k, v]) => {

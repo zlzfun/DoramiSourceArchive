@@ -48,7 +48,7 @@ The first goal is to make fetch execution visible and auditable before adding ma
 - [x] Add a fetch run history UI.
 - [ ] Store incremental cursors per source.
 - [ ] Improve retry and failure classification.
-- [ ] Add source health states.
+- [x] Add source health states.
 - [ ] Add alert notifications for important failures.
 
 ### Epic 4: Archive Data Quality
@@ -109,3 +109,4 @@ The first goal is to make fetch execution visible and auditable before adding ma
 - 2026-05-11: Exposed fetcher `category` metadata through `/api/fetchers` and updated the `节点与调度` page with category filters, search, type badges, and fetcher descriptions so the built-in catalog remains usable as source coverage grows.
 - 2026-05-11: Validated candidate official feeds with live HTTP/feed parsing before adding them. Anthropic, Mistral, and IBM Research RSS candidates were not added because the tested URLs returned 404 or no feed entries.
 - 2026-05-11: Added a second built-in source batch: Google AI Blog, Google DeepMind News, Microsoft AI Blog, NVIDIA Developer Blog, arXiv stat.ML/eess.IV, and GitHub release feeds for Ollama, Transformers, PyTorch, llama.cpp, and LangChain.
+- 2026-05-11: Added `/api/source-health`, deriving per-fetcher health from `FetchRunRecord` without a new table, and surfaced health badges, latest run time, latest saved count, and consecutive failures on the `节点与调度` cards.
