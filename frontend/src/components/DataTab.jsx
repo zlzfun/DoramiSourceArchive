@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { Database, RefreshCw, CheckCircle, Zap, Search, Plus, Trash2, CheckSquare, FileText, Link as LinkIcon, Calendar, Box, ExternalLink, Edit2, Save, X, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { RefreshCw, CheckCircle, Zap, Search, Plus, Trash2 } from 'lucide-react';
 import DateRangePicker from './DateRangePicker';
 import ArticleDetailModal from './ArticleDetailModal';
 import ManualAddModal from './ManualAddModal';
 import {
   fetchArticles as apiFetchArticles,
-  deleteArticle,
   batchDeleteArticles,
   vectorizeArticle,
   batchVectorizeArticles,
@@ -85,15 +84,6 @@ export default function DataTab({ availableFetchers, showToast }) {
     try {
       const data = await batchVectorizeArticles(Array.from(selectedArticles));
       showToast(`成功处理，${data.count} 条记录新建了向量索引`, 'success');
-      loadArticles();
-    } catch (e) { showToast(e.message || '网络异常', 'error'); }
-  };
-
-  const handleDeleteArticle = async (id) => {
-    if (!window.confirm('确定要彻底删除这条数据吗？')) return;
-    try {
-      await deleteArticle(id);
-      showToast('删除成功', 'success');
       loadArticles();
     } catch (e) { showToast(e.message || '网络异常', 'error'); }
   };

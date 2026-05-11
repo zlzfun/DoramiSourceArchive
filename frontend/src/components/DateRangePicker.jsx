@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, X } from 'lucide-react';
 
 function parseDateStr(dateStr) {
