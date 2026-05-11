@@ -5,7 +5,7 @@ async function handleApiError(response, defaultMsg) {
   try {
     const data = await response.json();
     if (data.detail) msg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
-  } catch (e) { /* use defaultMsg */ }
+  } catch { /* use defaultMsg */ }
   throw new Error(msg);
 }
 
@@ -90,6 +90,16 @@ export async function triggerFetch(fetcherId, params) {
 export async function fetchTasks() {
   const res = await fetch(`${API_BASE_URL}/tasks`);
   if (!res.ok) await handleApiError(res, '获取任务列表失败');
+  return res.json();
+}
+
+export async function fetchFetchRuns(filters = {}, limit = 100) {
+  const params = new URLSearchParams({ limit });
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
+  });
+  const res = await fetch(`${API_BASE_URL}/fetch-runs?${params}`);
+  if (!res.ok) await handleApiError(res, '获取抓取运行历史失败');
   return res.json();
 }
 

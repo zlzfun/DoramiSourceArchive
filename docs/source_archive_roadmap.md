@@ -43,7 +43,7 @@ The first goal is to make fetch execution visible and auditable before adding ma
 ### Epic 3: Fetch Stability and Observability
 
 - [x] Add persistent fetch run records.
-- [ ] Add a fetch run history UI.
+- [x] Add a fetch run history UI.
 - [ ] Store incremental cursors per source.
 - [ ] Improve retry and failure classification.
 - [ ] Add source health states.
@@ -86,3 +86,6 @@ The first goal is to make fetch execution visible and auditable before adding ma
 - 2026-05-11: Created this roadmap/progress document as the persistent handoff anchor.
 - 2026-05-11: Added `FetchRunRecord`, fetch run creation/completion helpers, manual/scheduled run recording, `/api/fetch-runs` list/detail APIs, and pipeline result counters.
 - 2026-05-11: Verified with `python3 -m compileall src` and a lightweight pipeline counter behavior test using a stubbed HTTP client.
+- 2026-05-11: Added a `FetchRunsTab` admin page, wired `/api/fetch-runs` into the frontend API client, and exposed it through the main navigation as `运行历史`.
+- 2026-05-11: Verified frontend build with `npm run build` by temporarily linking the original project `frontend/node_modules`; verified backend syntax with the original project `.venv` Python.
+- 2026-05-11: Ran `npm run lint`; remaining failures are existing lint debt in `DataTab.jsx`, `DateRangePicker.jsx`, `FetchTab.jsx`, and `VectorTab.jsx`. The new `FetchRunsTab.jsx` no longer reports lint errors.
