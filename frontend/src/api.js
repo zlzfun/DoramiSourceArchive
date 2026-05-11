@@ -103,6 +103,52 @@ export async function fetchFetchRuns(filters = {}, limit = 100) {
   return res.json();
 }
 
+export async function fetchSourceConfigs(filters = {}, limit = 100) {
+  const params = new URLSearchParams({ limit });
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
+  });
+  const res = await fetch(`${API_BASE_URL}/source-configs?${params}`);
+  if (!res.ok) await handleApiError(res, '获取数据源配置失败');
+  return res.json();
+}
+
+export async function createSourceConfig(data) {
+  const res = await fetch(`${API_BASE_URL}/source-configs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) await handleApiError(res, '创建数据源失败');
+  return res.json();
+}
+
+export async function updateSourceConfig(sourceId, data) {
+  const res = await fetch(`${API_BASE_URL}/source-configs/${encodeURIComponent(sourceId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) await handleApiError(res, '更新数据源失败');
+  return res.json();
+}
+
+export async function toggleSourceConfig(sourceId, isActive) {
+  const res = await fetch(`${API_BASE_URL}/source-configs/${encodeURIComponent(sourceId)}/toggle`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_active: isActive }),
+  });
+  if (!res.ok) await handleApiError(res, '切换数据源状态失败');
+  return res.json();
+}
+
+export async function deleteSourceConfig(sourceId) {
+  const res = await fetch(`${API_BASE_URL}/source-configs/${encodeURIComponent(sourceId)}`, { method: 'DELETE' });
+  if (!res.ok) await handleApiError(res, '删除数据源失败');
+  return res.json();
+}
+
 export async function createTask(data) {
   const res = await fetch(`${API_BASE_URL}/tasks`, {
     method: 'POST',

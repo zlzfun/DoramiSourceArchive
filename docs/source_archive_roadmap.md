@@ -70,8 +70,8 @@ The first goal is to make fetch execution visible and auditable before adding ma
 
 ### Epic 6: Admin Console Enhancements
 
-- [ ] Add a source management tab.
-- [ ] Add a fetch run history tab.
+- [x] Add a source management tab.
+- [x] Add a fetch run history tab.
 - [ ] Add a data quality check tab.
 - [ ] Add a Dify sync tab.
 - [ ] Extend article filters with source type, sync status, full-text status, and duplicate status.
@@ -93,3 +93,5 @@ The first goal is to make fetch execution visible and auditable before adding ma
 - 2026-05-11: Added `SourceConfigRecord` with stable source IDs, source type/category, optional bound fetcher, activity flag, scheduling hints, and JSON params.
 - 2026-05-11: Added `/api/source-configs` CRUD APIs, toggle endpoint, filtering by type/category/activity/search, and response serialization that exposes parsed `params`.
 - 2026-05-11: Verified backend syntax with `.venv` Python and validated `SourceConfigRecord` create/query behavior against an in-memory SQLite database.
+- 2026-05-11: Added a `SourcesTab` admin page for listing, filtering, creating, editing, enabling/disabling, and deleting `SourceConfigRecord` entries.
+- 2026-05-11: Verified frontend build with `npm run build` by temporarily linking the original project `frontend/node_modules`; `npm run lint` still fails only on existing lint debt outside the newly added source-management component.

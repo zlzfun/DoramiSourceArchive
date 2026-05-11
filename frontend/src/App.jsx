@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Database, CloudDownload, BarChart2, Activity, Bot, History } from 'lucide-react';
+import { Database, CloudDownload, BarChart2, Activity, Bot, History, Settings2 } from 'lucide-react';
 import Toast from './components/Toast';
 import DataTab from './components/DataTab';
 import FetchTab from './components/FetchTab';
 import VectorTab from './components/VectorTab';
 import FetchRunsTab from './components/FetchRunsTab';
+import SourcesTab from './components/SourcesTab';
 import { fetchFetchers } from './api';
 
 const CUSTOM_LOGO_PATH = '/logo.png';
@@ -33,6 +34,7 @@ export default function App() {
 
   const tabs = [
     { id: 'data', icon: Database, label: '知识台账' },
+    { id: 'sources', icon: Settings2, label: '数据源配置' },
     { id: 'fetch', icon: CloudDownload, label: '节点与调度' },
     { id: 'runs', icon: History, label: '运行历史' },
     { id: 'vector', icon: BarChart2, label: '向量雷达' },
@@ -65,6 +67,7 @@ export default function App() {
 
       <main className="max-w-[1400px] mx-auto px-4 py-8 relative">
         {activeTab === 'data' && <DataTab availableFetchers={availableFetchers} showToast={showToast} />}
+        {activeTab === 'sources' && <SourcesTab showToast={showToast} />}
         {activeTab === 'fetch' && <FetchTab availableFetchers={availableFetchers} showToast={showToast} />}
         {activeTab === 'runs' && <FetchRunsTab availableFetchers={availableFetchers} showToast={showToast} />}
         {activeTab === 'vector' && <VectorTab availableFetchers={availableFetchers} showToast={showToast} />}
