@@ -196,6 +196,27 @@ class WebPageArticleContent(BaseContent):
 
 
 @dataclass
+class GitHubReleaseContent(BaseContent):
+    """GitHub Release 内容类"""
+    content_type: ClassVar[str] = "github_release"
+
+    repository: str = field(default="", metadata={"description": "仓库全名 owner/repo"})
+    owner: str = field(default="", metadata={"description": "仓库 owner"})
+    repo: str = field(default="", metadata={"description": "仓库名称"})
+    tag_name: str = field(default="", metadata={"description": "Release 标签"})
+    release_name: str = field(default="", metadata={"description": "Release 名称"})
+    author_login: str = field(default="", metadata={"description": "发布者 GitHub login"})
+    target_commitish: str = field(default="", metadata={"description": "目标分支或提交"})
+    draft: bool = field(default=False, metadata={"description": "是否草稿"})
+    prerelease: bool = field(default=False, metadata={"description": "是否预发布"})
+    assets: List[Dict[str, Any]] = field(default_factory=list, metadata={"description": "Release 资产元数据"})
+    tarball_url: str = field(default="", metadata={"description": "源码 tarball URL"})
+    zipball_url: str = field(default="", metadata={"description": "源码 zipball URL"})
+    raw_data: Optional[Dict[str, Any]] = field(default_factory=dict,
+                                               metadata={"description": "GitHub API 原始摘要信息"})
+
+
+@dataclass
 class WechatArticleContent(BaseContent):
     """微信公众号文章内容类"""
     content_type: ClassVar[str] = "wechat_article"

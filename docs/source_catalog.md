@@ -19,7 +19,7 @@ It exists to keep development aligned with the product direction: a broad, built
 | Official website/blog/news pages | Partially implemented | `BaseWebPageListFetcher` | Needed for sources without stable RSS, such as Claude/Anthropic pages and Runway News. Current implementation captures list-page metadata and links, with optional article-detail full-text extraction via `fetch_detail`. |
 | X/Twitter public posts | Design pending | TBD | AIHot relies heavily on X accounts. Requires a decision: official API, browser scraping, third-party mirror, or webhook/import bridge. |
 | WeChat official accounts | Partially implemented | `BaseWechatGzhFetcher` | Existing concrete fetchers cover Chinese AI media/KOL accounts. Real runs depend on valid WeChat MP credentials. |
-| GitHub releases/repos | Partially implemented through Atom | `PresetRssFetcher` for releases; future GitHub API fetcher for richer repo data | Release feeds work today. GitHub API/trending/stars/issues can be a later non-RSS fetcher family. |
+| GitHub releases/repos | Partially implemented | `PresetRssFetcher`, `GenericGitHubReleasesFetcher`, `PresetGitHubReleasesFetcher` | Release feeds work today, and GitHub Releases API fetchers preserve richer release metadata such as tags, authors, prerelease flags, and assets. GitHub repo activity/trending/issues remain later candidates. |
 | Paper sources | Partially implemented through arXiv RSS | `PresetRssFetcher`; future arXiv API/Semantic Scholar fetchers | arXiv categories are covered through RSS. Richer paper metadata needs dedicated APIs. |
 | Community/news aggregators | Partially implemented | RSS today; future site/API fetchers | Hacker News and tech news can start through feeds, but richer ranking/comments need dedicated fetchers. |
 | Webhook/import bridges | Partially implemented | `DifyWebhookTrigger`; `/api/import/social-posts` | Useful as transitional path for X/Telegram/Discord/private channels when direct crawling is risky. |
@@ -91,6 +91,24 @@ It exists to keep development aligned with the product direction: a broad, built
 | `web_stability_news` | Stability AI News | official_web | Built on `BaseWebPageListFetcher`; defaults `fetch_detail=true` because the list page does not expose reliable title/summary text. |
 | `web_elevenlabs_blog` | ElevenLabs Blog | official_web | Built on `BaseWebPageListFetcher`; captures ElevenLabs Blog metadata and can optionally fetch article body text. |
 
+### GitHub Releases API
+
+| Source ID | Repository | Category | Notes |
+| --- | --- | --- | --- |
+| `generic_github_releases` | Runtime configured | advanced | Advanced generic GitHub Releases API source for user-configured repositories. |
+| `github_dify_releases` | `langgenius/dify` | product_update | API-backed release metadata; richer counterpart to the existing Atom feed source. |
+| `github_vllm_releases` | `vllm-project/vllm` | product_update | API-backed vLLM release metadata. |
+| `github_ollama_releases` | `ollama/ollama` | product_update | API-backed Ollama release metadata. |
+| `github_langchain_releases` | `langchain-ai/langchain` | product_update | API-backed LangChain release metadata. |
+| `github_transformers_releases` | `huggingface/transformers` | product_update | API-backed Transformers release metadata. |
+| `github_pytorch_releases` | `pytorch/pytorch` | product_update | API-backed PyTorch release metadata. |
+| `github_llama_cpp_releases` | `ggml-org/llama.cpp` | product_update | API-backed llama.cpp release metadata. |
+| `github_litellm_releases` | `BerriAI/litellm` | product_update | API-backed LiteLLM release metadata. Live fetch validated on 2026-05-12. |
+| `github_open_webui_releases` | `open-webui/open-webui` | product_update | API-backed Open WebUI release metadata. |
+| `github_comfyui_releases` | `comfyanonymous/ComfyUI` | product_update | API-backed ComfyUI release metadata. |
+| `github_openai_agents_python_releases` | `openai/openai-agents-python` | product_update | API-backed OpenAI Agents SDK release metadata. Live fetch validated on 2026-05-12. |
+| `github_claude_code_releases` | `anthropics/claude-code` | product_update | API-backed Claude Code release metadata. Live fetch validated on 2026-05-12. |
+
 ## Candidate Sources Inspired By AIHot
 
 Sampled from AIHot public pages on 2026-05-12. These are planning candidates, not all confirmed source endpoints.
@@ -139,15 +157,15 @@ Sampled from AIHot public pages on 2026-05-12. These are planning candidates, no
 
 | Candidate | Priority | Rationale | Implementation Status |
 | --- | --- | --- | --- |
-| Claude Code releases | High | AIHot tracks Claude Code releases. | Pending release Atom or GitHub API source. |
-| Codex / OpenAI developer tooling repos | High | Developer workflow updates. | Pending repo selection. |
-| ComfyUI, LiteLLM, vLLM, llama.cpp, Ollama, LangChain, Dify, OpenWebUI | Medium | AI tooling release velocity. | Some releases implemented; expand repo set later. |
+| Claude Code releases | High | AIHot tracks Claude Code releases. | Built-in GitHub Releases API fetcher implemented. |
+| OpenAI Agents SDK releases | High | Developer/API/agent workflow updates. | Built-in GitHub Releases API fetcher implemented. |
+| ComfyUI, LiteLLM, vLLM, llama.cpp, Ollama, LangChain, Dify, OpenWebUI | Medium | AI tooling release velocity. | Built-in GitHub Releases API fetchers implemented; some also have older Atom feed counterparts. |
 
 ## Immediate Next Development Slice
 
 1. Add more built-in official webpage sources and source-specific filters where RSS is absent or too broad.
 2. Decide the X/Twitter ingestion strategy before implementing direct source fetchers.
-3. Add richer GitHub API fetchers for repos/trending/issues when needed.
+3. Add GitHub repo activity/trending/issues fetchers when needed.
 4. Improve WeChat credential handling and account-name verification after more real-run data is available.
 
 ## Open Verification Items

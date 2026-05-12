@@ -36,9 +36,10 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - [x] Expand built-in WeChat account fetchers.
 - [ ] Validate newly added WeChat fetchers with real WeChat MP credentials.
 - [ ] Add more official AI company sources.
-- [ ] Add more model/product update sources.
+- [x] Add more model/product update sources.
 - [x] Add initial paper sources.
 - [x] Add initial GitHub release sources.
+- [x] Add richer GitHub Releases API fetchers for structured release metadata.
 - [x] Add initial community/news sources.
 - [ ] Convert hard-coded WeChat account fetchers toward configurable source entries.
 
@@ -134,3 +135,4 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - 2026-05-12: Added optional article-detail extraction to `BaseWebPageListFetcher` through `fetch_detail` and `detail_max_chars`, and fixed the fetcher parameter UI so boolean parameters render as checkboxes. Verified with an offline HTML fixture and a live `web_anthropic_news` detail run.
 - 2026-05-12: Added two more verified official webpage sources: `web_stability_news` and `web_elevenlabs_blog`. Candidate checks found that Cohere's static list page does not expose direct article links yet, while Perplexity Blog and xAI News returned 403 to the current HTTP client, so those remain documented candidates rather than built-in nodes.
 - 2026-05-12: Added per-source webpage defaults for detail extraction. `web_stability_news` now defaults `fetch_detail=true` with a lower default limit because its list page requires detail pages for usable titles and content.
+- 2026-05-12: Added `GitHubReleaseContent`, a generic GitHub Releases API fetcher, and 12 built-in API-backed release sources covering Dify, vLLM, Ollama, LangChain, Transformers, PyTorch, llama.cpp, LiteLLM, Open WebUI, ComfyUI, OpenAI Agents SDK, and Claude Code. Verified registry discovery, offline serialization, and live API fetches for Claude Code, OpenAI Agents SDK, and LiteLLM.
