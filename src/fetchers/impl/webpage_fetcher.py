@@ -44,7 +44,8 @@ class BaseWebPageListFetcher(BaseFetcher):
     官网/博客/新闻列表页抓取器基类。
 
     子类声明列表页、文章 URL 匹配规则和展示元数据；基类负责从 HTML 中提取文章链接、
-    标题、摘要上下文和保守发布时间。当前只记录列表页元数据，全文抽取留给后续数据质量阶段。
+    标题、摘要上下文和保守发布时间。默认保持轻量列表抓取；需要更高归档质量时可以开启
+    `fetch_detail` 从正文页提取主内容。
     """
 
     source_id = "unknown_source"
@@ -62,6 +63,8 @@ class BaseWebPageListFetcher(BaseFetcher):
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
+            {"field": "fetch_detail", "label": "抓取正文页", "type": "boolean", "default": False},
+            {"field": "detail_max_chars", "label": "正文最大字符", "type": "number", "default": 12000},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
@@ -72,6 +75,22 @@ class BaseWebPageListFetcher(BaseFetcher):
         except (TypeError, ValueError):
             self.logger.warning(f"网页条数参数无效，使用默认值: {raw_limit}")
             return self.default_limit
+
+    def _bool_param(self, raw_value: Any) -> bool:
+        if isinstance(raw_value, bool):
+            return raw_value
+        if raw_value in (None, ""):
+            return False
+        return str(raw_value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _positive_int_param(self, raw_value: Any, default: int) -> int:
+        if raw_value in (None, ""):
+            return default
+        try:
+            return max(int(raw_value), 0)
+        except (TypeError, ValueError):
+            self.logger.warning(f"网页正文长度参数无效，使用默认值: {raw_value}")
+            return default
 
     def _content_id(self, url: str) -> str:
         digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
@@ -148,8 +167,47 @@ class BaseWebPageListFetcher(BaseFetcher):
             "summary": summary,
         }
 
+    def _extract_detail_text(self, html: str, max_chars: int) -> str:
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup.find_all(["script", "style", "noscript", "svg", "nav", "header", "footer", "form"]):
+            tag.decompose()
+
+        selectors = [
+            "article",
+            "main",
+            "[role='main']",
+            ".post-content",
+            ".article-content",
+            ".entry-content",
+            ".blog-post",
+            ".markdown",
+        ]
+        candidates: List[str] = []
+        for selector in selectors:
+            for node in soup.select(selector):
+                text = self._clean_text(node.get_text(" ", strip=True))
+                if text:
+                    candidates.append(text)
+
+        if not candidates and soup.body:
+            candidates.append(self._clean_text(soup.body.get_text(" ", strip=True)))
+
+        if not candidates:
+            return ""
+
+        detail_text = max(candidates, key=len)
+        return detail_text[:max_chars]
+
+    async def _detail_text_for_url(self, client: httpx.AsyncClient, url: str, max_chars: int) -> str:
+        response = await self._safe_get(client, url)
+        if not response:
+            return ""
+        return self._extract_detail_text(response.text, max_chars)
+
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         limit = self._entry_limit(kwargs.get("limit"))
+        fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
+        detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), 12000)
         if not self.listing_url:
             self.logger.error("网页列表地址不能为空，放弃抓取。")
             return
@@ -171,21 +229,31 @@ class BaseWebPageListFetcher(BaseFetcher):
             title = self._title_from_container(link, container)
             summary = self._summary_from_container(title, container)
             publish_date = self._extract_datetime(f"{title} {summary}")
+            detail_text = ""
+            if fetch_detail:
+                detail_text = await self._detail_text_for_url(client, url, detail_max_chars)
             seen_urls.add(url)
             emitted_count += 1
+
+            raw_data = self._raw_entry(url, title, summary)
+            raw_data.update({
+                "detail_fetched": fetch_detail,
+                "detail_text_length": len(detail_text),
+            })
+            content = detail_text or summary
 
             yield WebPageArticleContent(
                 id=self._content_id(url),
                 title=title,
                 source_url=url,
                 publish_date=publish_date,
-                content=summary,
-                has_content=bool(summary),
+                content=content,
+                has_content=bool(content),
                 site_name=self.site_name or self.name,
                 source_section=self.source_section,
                 summary=summary,
                 tags=[self.category, "webpage"],
-                raw_data=self._raw_entry(url, title, summary),
+                raw_data=raw_data,
             )
 
             if emitted_count >= limit:

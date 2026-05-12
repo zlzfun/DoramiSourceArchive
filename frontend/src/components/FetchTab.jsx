@@ -140,6 +140,30 @@ export default function FetchTab({ availableFetchers, showToast }) {
     setFetchConfigs(prev => ({ ...prev, [fetcherId]: { ...prev[fetcherId], [field]: value } }));
   };
 
+  const renderParameterInput = (fetcher, param) => {
+    const value = (fetchConfigs[fetcher.id] && fetchConfigs[fetcher.id][param.field]) ?? param.default ?? '';
+    if (param.type === 'boolean') {
+      const checked = typeof value === 'boolean' ? value : ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+      return (
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => handleConfigChange(fetcher.id, param.field, e.target.checked)}
+          className="w-4 h-4 text-blue-600 rounded border-slate-300 cursor-pointer"
+        />
+      );
+    }
+
+    return (
+      <input
+        type={param.type || 'text'}
+        value={value}
+        onChange={(e) => handleConfigChange(fetcher.id, param.field, e.target.value)}
+        className="w-1/2 max-w-[140px] px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-1 focus:ring-blue-500 outline-none text-xs font-bold text-slate-700 transition-all text-right"
+      />
+    );
+  };
+
   const handleBatchFetch = async () => {
     setFetchLoading(true);
     let successCount = 0;
@@ -273,12 +297,7 @@ export default function FetchTab({ availableFetchers, showToast }) {
                   fetcher.parameters.map(param => (
                     <div key={param.field} className="flex items-center justify-between gap-3">
                       <label className="text-xs font-bold text-slate-500 truncate" title={param.label}>{param.label}</label>
-                      <input
-                        type={param.type || 'text'}
-                        value={(fetchConfigs[fetcher.id] && fetchConfigs[fetcher.id][param.field]) ?? param.default ?? ''}
-                        onChange={(e) => handleConfigChange(fetcher.id, param.field, e.target.value)}
-                        className="w-1/2 max-w-[140px] px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-1 focus:ring-blue-500 outline-none text-xs font-bold text-slate-700 transition-all text-right"
-                      />
+                      {renderParameterInput(fetcher, param)}
                     </div>
                   ))
                 ) : (

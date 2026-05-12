@@ -16,7 +16,7 @@ It exists to keep development aligned with the product direction: a broad, built
 | Source Type | Current Status | Existing/Future Base | Notes |
 | --- | --- | --- | --- |
 | RSS/Atom feeds | Implemented | `GenericRssFetcher`, `PresetRssFetcher` | Useful for stable blogs, release feeds, papers, community/news feeds. Should not dominate future expansion. |
-| Official website/blog/news pages | Partially implemented | `BaseWebPageListFetcher` | Needed for sources without stable RSS, such as Claude/Anthropic pages and Runway News. Current implementation captures list-page metadata and links; full-text extraction is a later data-quality task. |
+| Official website/blog/news pages | Partially implemented | `BaseWebPageListFetcher` | Needed for sources without stable RSS, such as Claude/Anthropic pages and Runway News. Current implementation captures list-page metadata and links, with optional article-detail full-text extraction via `fetch_detail`. |
 | X/Twitter public posts | Design pending | TBD | AIHot relies heavily on X accounts. Requires a decision: official API, browser scraping, third-party mirror, or webhook/import bridge. |
 | WeChat official accounts | Partially implemented | `BaseWechatGzhFetcher` | Existing concrete fetchers cover Chinese AI media/KOL accounts. Real runs depend on valid WeChat MP credentials. |
 | GitHub releases/repos | Partially implemented through Atom | `PresetRssFetcher` for releases; future GitHub API fetcher for richer repo data | Release feeds work today. GitHub API/trending/stars/issues can be a later non-RSS fetcher family. |
@@ -84,10 +84,10 @@ It exists to keep development aligned with the product direction: a broad, built
 
 | Source ID | Name | Category | Notes |
 | --- | --- | --- | --- |
-| `web_anthropic_news` | Anthropic News | official_web | Built on `BaseWebPageListFetcher`; captures Anthropic News list-page metadata and article links. |
-| `web_claude_blog` | Claude Blog | official_web | Built on `BaseWebPageListFetcher`; captures Claude Blog list-page metadata and article links. |
-| `web_runway_news` | Runway News | official_web | Built on `BaseWebPageListFetcher`; captures Runway News/Research list-page metadata and article links. |
-| `web_mistral_news` | Mistral AI News | official_web | Built on `BaseWebPageListFetcher`; captures Mistral News list-page metadata and article links. |
+| `web_anthropic_news` | Anthropic News | official_web | Built on `BaseWebPageListFetcher`; captures list metadata and can optionally fetch article body text. Live detail extraction validated on 2026-05-12. |
+| `web_claude_blog` | Claude Blog | official_web | Built on `BaseWebPageListFetcher`; captures list metadata and can optionally fetch article body text. |
+| `web_runway_news` | Runway News | official_web | Built on `BaseWebPageListFetcher`; captures Runway News/Research metadata and can optionally fetch article body text. |
+| `web_mistral_news` | Mistral AI News | official_web | Built on `BaseWebPageListFetcher`; captures Mistral News metadata and can optionally fetch article body text. |
 
 ## Candidate Sources Inspired By AIHot
 
@@ -139,8 +139,8 @@ Sampled from AIHot public pages on 2026-05-12. These are planning candidates, no
 
 ## Immediate Next Development Slice
 
-1. Improve website/blog/news fetchers with optional article-detail full-text extraction.
-2. Prepare an X/Twitter fetcher decision note before implementation.
+1. Add more built-in official webpage sources and source-specific filters where RSS is absent or too broad.
+2. Decide the X/Twitter ingestion strategy before implementing direct source fetchers.
 3. Add richer GitHub API fetchers for repos/trending/issues when needed.
 4. Improve WeChat credential handling and account-name verification after more real-run data is available.
 
@@ -150,7 +150,7 @@ Sampled from AIHot public pages on 2026-05-12. These are planning candidates, no
 | --- | --- | --- |
 | WeChat real-run validation for the 6 newly added accounts | Pending | `wechat_ai_tech_review`, `wechat_infoq_ai`, `wechat_zhidx`, `wechat_founder_park`, `wechat_silicon_star`, and `wechat_xixiaoyao` are registered and compile successfully, but have not been verified against the WeChat MP backend. A real run requires valid `src/.wechat_auth/wechat_config.json` credentials or a fresh QR login. Verify exact account-name matching, fakeid resolution, rate limiting behavior, and article body extraction before marking these sources production-ready. |
 | Existing WeChat credential workflow hardening | Pending | Current flow can trigger QR login and depends on local/enterprise notification pieces. Before unattended scheduling, confirm credential refresh behavior, failure classification, and safe concurrency in the deployment environment. |
-| Official webpage full-text extraction | Pending | `BaseWebPageListFetcher` currently stores list-page summary/context and article links. Full article body extraction is a later data-quality task. |
+| Official webpage full-text extraction | Partially verified | `BaseWebPageListFetcher` supports optional `fetch_detail` and `detail_max_chars` parameters. Live extraction was verified against `web_anthropic_news`; remaining webpage sources should be spot-checked because HTML structure varies by site. |
 | X/Twitter ingestion strategy | Pending decision | Direct X/Twitter fetchers are still blocked until `docs/x_twitter_ingestion_decision.md` is reviewed and one option is selected. The safe webhook/import bridge is now available for external collectors. |
 
 ## X/Twitter Decision Options

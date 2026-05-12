@@ -64,6 +64,7 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - [ ] Improve deduplication beyond primary IDs.
 - [ ] Normalize URLs.
 - [ ] Add full-text extraction for summary-only sources.
+  - [x] Add optional article-detail extraction for official webpage fetchers.
 - [ ] Preserve raw source payloads.
 - [ ] Standardize content formats.
 - [ ] Archive media metadata.
@@ -130,3 +131,4 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - 2026-05-12: Added `docs/x_twitter_ingestion_decision.md` and a clear open verification section in `docs/source_catalog.md`. The recommended X/Twitter near-term path is a webhook/import bridge, with official X API as a later option if credentials and costs are acceptable.
 - 2026-05-12: Added `SocialPostContent` and `POST /api/import/social-posts` as a safe social-post import bridge. External collectors can now push normalized X/Twitter-like posts into the archive idempotently without direct X crawling.
 - 2026-05-12: Enabled HTTP redirect following for the shared `BaseFetcher` client after the Google AI feed moved from `/technology/ai/rss/` to `/innovation-and-ai/technology/ai/rss/`.
+- 2026-05-12: Added optional article-detail extraction to `BaseWebPageListFetcher` through `fetch_detail` and `detail_max_chars`, and fixed the fetcher parameter UI so boolean parameters render as checkboxes. Verified with an offline HTML fixture and a live `web_anthropic_news` detail run.
