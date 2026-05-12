@@ -3,7 +3,7 @@
 import os
 import json
 import datetime
-from fastapi import FastAPI, HTTPException, Body, Response
+from fastapi import FastAPI, HTTPException, Body, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field as PydanticField
 from typing import Optional, List, Dict, Any
@@ -1483,10 +1483,11 @@ _MCP_TOOLS_MANIFEST = [
 
 
 @app.get("/api/mcp/status")
-def get_mcp_status():
+def get_mcp_status(request: Request):
+    base = str(request.base_url).rstrip("/")
     return {
         "enabled": _mcp_enabled,
-        "url": "http://127.0.0.1:8088/mcp",
+        "url": f"{base}/mcp",
         "tools": _MCP_TOOLS_MANIFEST,
     }
 
