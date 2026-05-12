@@ -58,13 +58,15 @@ class BaseWebPageListFetcher(BaseFetcher):
     article_url_patterns: List[str] = []
     exclude_url_patterns: List[str] = []
     default_limit = 20
+    default_fetch_detail = False
+    default_detail_max_chars = 12000
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {"field": "fetch_detail", "label": "抓取正文页", "type": "boolean", "default": False},
-            {"field": "detail_max_chars", "label": "正文最大字符", "type": "number", "default": 12000},
+            {"field": "fetch_detail", "label": "抓取正文页", "type": "boolean", "default": cls.default_fetch_detail},
+            {"field": "detail_max_chars", "label": "正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
@@ -80,7 +82,7 @@ class BaseWebPageListFetcher(BaseFetcher):
         if isinstance(raw_value, bool):
             return raw_value
         if raw_value in (None, ""):
-            return False
+            return self.default_fetch_detail
         return str(raw_value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
     def _positive_int_param(self, raw_value: Any, default: int) -> int:
@@ -237,7 +239,7 @@ class BaseWebPageListFetcher(BaseFetcher):
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         limit = self._entry_limit(kwargs.get("limit"))
         fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
-        detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), 12000)
+        detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
         if not self.listing_url:
             self.logger.error("网页列表地址不能为空，放弃抓取。")
             return
@@ -354,6 +356,8 @@ class StabilityNewsWebFetcher(BaseWebPageListFetcher):
     source_section = "News & Updates"
     article_url_patterns = ["stability.ai/news-updates/"]
     exclude_url_patterns = ["stability.ai/news-updates#"]
+    default_limit = 10
+    default_fetch_detail = True
 
 
 class ElevenLabsBlogWebFetcher(BaseWebPageListFetcher):

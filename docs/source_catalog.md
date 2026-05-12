@@ -88,7 +88,7 @@ It exists to keep development aligned with the product direction: a broad, built
 | `web_claude_blog` | Claude Blog | official_web | Built on `BaseWebPageListFetcher`; captures list metadata and can optionally fetch article body text. |
 | `web_runway_news` | Runway News | official_web | Built on `BaseWebPageListFetcher`; captures Runway News/Research metadata and can optionally fetch article body text. |
 | `web_mistral_news` | Mistral AI News | official_web | Built on `BaseWebPageListFetcher`; captures Mistral News metadata and can optionally fetch article body text. |
-| `web_stability_news` | Stability AI News | official_web | Built on `BaseWebPageListFetcher`; captures Stability AI News & Updates metadata and can optionally fetch article body text. |
+| `web_stability_news` | Stability AI News | official_web | Built on `BaseWebPageListFetcher`; defaults `fetch_detail=true` because the list page does not expose reliable title/summary text. |
 | `web_elevenlabs_blog` | ElevenLabs Blog | official_web | Built on `BaseWebPageListFetcher`; captures ElevenLabs Blog metadata and can optionally fetch article body text. |
 
 ## Candidate Sources Inspired By AIHot
