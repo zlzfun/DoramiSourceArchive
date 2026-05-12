@@ -46,8 +46,8 @@ The first goal is to make fetch execution visible and auditable before adding ma
 
 - [x] Add persistent fetch run records.
 - [x] Add a fetch run history UI.
-- [ ] Store incremental cursors per source.
-- [ ] Improve retry and failure classification.
+- [x] Store incremental cursors per source.
+- [x] Add basic failure classification.
 - [x] Add source health states.
 - [ ] Add alert notifications for important failures.
 
@@ -110,3 +110,4 @@ The first goal is to make fetch execution visible and auditable before adding ma
 - 2026-05-11: Validated candidate official feeds with live HTTP/feed parsing before adding them. Anthropic, Mistral, and IBM Research RSS candidates were not added because the tested URLs returned 404 or no feed entries.
 - 2026-05-11: Added a second built-in source batch: Google AI Blog, Google DeepMind News, Microsoft AI Blog, NVIDIA Developer Blog, arXiv stat.ML/eess.IV, and GitHub release feeds for Ollama, Transformers, PyTorch, llama.cpp, and LangChain.
 - 2026-05-11: Added `/api/source-health`, deriving per-fetcher health from `FetchRunRecord` without a new table, and surfaced health badges, latest run time, latest saved count, and consecutive failures on the `节点与调度` cards.
+- 2026-05-12: Added `SourceStateRecord` for persistent per-source health and conservative incremental cursors. Fetch execution now marks a source running at start, updates healthy/failing state at completion, records latest content ID/date as cursor metadata, tracks success/failure counters, and exposes `/api/source-states` for handoff/debugging. Cursor recording is intentionally passive for now and does not skip older feed entries yet.

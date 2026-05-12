@@ -57,6 +57,39 @@ class FetchRunRecord(SQLModel, table=True):
     error_message: Optional[str] = Field(default=None, description="失败原因或异常摘要")
 
 
+class SourceStateRecord(SQLModel, table=True):
+    """每个实际数据源的抓取状态与增量游标。"""
+    __tablename__ = "source_states"
+
+    source_id: str = Field(primary_key=True, description="实际数据源 ID，内置 fetcher 通常等于 fetcher_id")
+    fetcher_id: str = Field(index=True, description="最近一次使用的抓取器 ID")
+    content_type: str = Field(default="", index=True, description="最近一次产出的内容结构类型")
+    status: str = Field(default="never_run", index=True, description="healthy/failing/running/never_run/unknown")
+
+    last_started_at: Optional[str] = Field(default=None, index=True, description="最近一次开始时间")
+    last_completed_at: Optional[str] = Field(default=None, description="最近一次完成时间")
+    last_success_at: Optional[str] = Field(default=None, index=True, description="最近一次成功时间")
+    last_failure_at: Optional[str] = Field(default=None, index=True, description="最近一次失败时间")
+
+    last_run_id: Optional[int] = Field(default=None, index=True, description="最近一次运行记录 ID")
+    last_cursor_value: str = Field(default="", description="保守记录的增量游标值，通常是最新内容 ID")
+    last_cursor_date: str = Field(default="", index=True, description="保守记录的增量游标时间，通常是最新内容发布时间")
+    last_content_id: str = Field(default="", description="最近一次看到的最新内容 ID")
+
+    consecutive_failures: int = Field(default=0, description="连续失败次数")
+    total_runs: int = Field(default=0, description="累计运行次数")
+    success_runs: int = Field(default=0, description="累计成功次数")
+    failed_runs: int = Field(default=0, description="累计失败次数")
+
+    latest_fetched_count: int = Field(default=0, description="最近一次抓取器产出数量")
+    latest_saved_count: int = Field(default=0, description="最近一次新增入库数量")
+    latest_skipped_count: int = Field(default=0, description="最近一次跳过数量")
+    latest_error_type: str = Field(default="", description="最近一次错误类型")
+    latest_error_message: Optional[str] = Field(default=None, description="最近一次错误摘要")
+
+    updated_at: str = Field(description="状态更新时间")
+
+
 class SourceConfigRecord(SQLModel, table=True):
     """可配置数据源定义，作为通用抓取器和后台数据源管理的基础。"""
     __tablename__ = "source_configs"

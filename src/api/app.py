@@ -14,7 +14,7 @@ from apscheduler.triggers.cron import CronTrigger
 from storage.impl.db_storage import DatabaseStorage
 from storage.impl.vector_storage import ChromaVectorStorage
 from pipeline.core import DataPipeline
-from models.db import ArticleRecord, FetchTaskRecord, FetchRunRecord, SourceConfigRecord
+from models.db import ArticleRecord, FetchTaskRecord, FetchRunRecord, SourceConfigRecord, SourceStateRecord
 from models.content import BaseContent
 
 # 引入动态抓取器注册中心
@@ -209,6 +209,113 @@ def build_source_fetch_params(source_config: SourceConfigRecord, overrides: Opti
     return params
 
 
+def resolve_state_source_id(fetcher_id: str, params: Optional[Dict[str, Any]], result: Any = None) -> str:
+    if result and getattr(result, "latest_content_source_id", ""):
+        return result.latest_content_source_id
+    if params:
+        source_id = str(params.get("source_id", "")).strip()
+        if source_id:
+            return source_id
+    return fetcher_id
+
+
+def classify_error(error: Exception | str | None) -> str:
+    if not error:
+        return ""
+    message = str(error).lower()
+    if "unknown" in message or "未知" in message:
+        return "configuration_error"
+    if "timeout" in message or "connect" in message or "network" in message:
+        return "network_error"
+    if "http" in message or "status" in message:
+        return "http_error"
+    if "parse" in message or "解析" in message:
+        return "parse_error"
+    return error.__class__.__name__ if isinstance(error, Exception) else "runtime_error"
+
+
+def mark_source_state_started(fetcher_id: str, params: Dict[str, Any], run_id: int):
+    source_id = resolve_state_source_id(fetcher_id, params)
+    now = _now_iso()
+    with Session(db_sink.engine) as session:
+        state = session.get(SourceStateRecord, source_id)
+        if not state:
+            state = SourceStateRecord(
+                source_id=source_id,
+                fetcher_id=fetcher_id,
+                status="running",
+                last_started_at=now,
+                last_run_id=run_id,
+                updated_at=now
+            )
+        else:
+            state.fetcher_id = fetcher_id
+            state.status = "running"
+            state.last_started_at = now
+            state.last_run_id = run_id
+            state.updated_at = now
+        session.add(state)
+        session.commit()
+
+
+def mark_source_state_finished(
+        fetcher_id: str,
+        params: Dict[str, Any],
+        run_id: int,
+        status: str,
+        result: Any = None,
+        error: Exception | str | None = None
+):
+    source_id = resolve_state_source_id(fetcher_id, params, result)
+    now = _now_iso()
+    with Session(db_sink.engine) as session:
+        state = session.get(SourceStateRecord, source_id)
+        if not state:
+            state = SourceStateRecord(
+                source_id=source_id,
+                fetcher_id=fetcher_id,
+                status="unknown",
+                last_run_id=run_id,
+                updated_at=now
+            )
+
+        state.fetcher_id = fetcher_id
+        state.last_run_id = run_id
+        state.last_completed_at = now
+        state.total_runs += 1
+        state.latest_fetched_count = getattr(result, "fetched_count", 0) if result else 0
+        state.latest_saved_count = getattr(result, "saved_count", 0) if result else 0
+        state.latest_skipped_count = getattr(result, "skipped_count", 0) if result else 0
+
+        if status == "success":
+            state.status = "healthy"
+            state.last_success_at = now
+            state.success_runs += 1
+            state.consecutive_failures = 0
+            state.latest_error_type = ""
+            state.latest_error_message = None
+            latest_content_id = getattr(result, "latest_content_id", "") if result else ""
+            latest_publish_date = getattr(result, "latest_content_publish_date", "") if result else ""
+            if latest_content_id:
+                state.last_content_id = latest_content_id
+                state.last_cursor_value = latest_content_id
+            if latest_publish_date:
+                state.last_cursor_date = latest_publish_date
+            if result and getattr(result, "latest_content_type", ""):
+                state.content_type = result.latest_content_type
+        else:
+            state.status = "failing"
+            state.last_failure_at = now
+            state.failed_runs += 1
+            state.consecutive_failures += 1
+            state.latest_error_type = classify_error(error)
+            state.latest_error_message = str(error) if error else None
+
+        state.updated_at = now
+        session.add(state)
+        session.commit()
+
+
 def derive_health_status(latest_run: Optional[FetchRunRecord], consecutive_failures: int) -> str:
     if not latest_run:
         return "never_run"
@@ -240,6 +347,7 @@ def build_fetcher_health(fetcher_metadata: Dict[str, Any], runs: List[FetchRunRe
 
     return {
         "fetcher_id": fetcher_metadata["id"],
+        "source_id": fetcher_metadata["id"],
         "name": fetcher_metadata["name"],
         "category": fetcher_metadata.get("category", "general"),
         "content_type": fetcher_metadata.get("content_type", ""),
@@ -260,6 +368,34 @@ def build_fetcher_health(fetcher_metadata: Dict[str, Any], runs: List[FetchRunRe
     }
 
 
+def build_fetcher_health_from_state(fetcher_metadata: Dict[str, Any], state: SourceStateRecord) -> Dict[str, Any]:
+    return {
+        "fetcher_id": fetcher_metadata["id"],
+        "source_id": state.source_id,
+        "name": fetcher_metadata["name"],
+        "category": fetcher_metadata.get("category", "general"),
+        "content_type": state.content_type or fetcher_metadata.get("content_type", ""),
+        "health_status": state.status,
+        "latest_run_status": "success" if state.status == "healthy" else "failed" if state.status == "failing" else state.status,
+        "latest_run_at": state.last_started_at,
+        "latest_success_at": state.last_success_at,
+        "latest_failure_at": state.last_failure_at,
+        "latest_error_type": state.latest_error_type,
+        "latest_error_message": state.latest_error_message,
+        "last_cursor_value": state.last_cursor_value,
+        "last_cursor_date": state.last_cursor_date,
+        "last_content_id": state.last_content_id,
+        "consecutive_failures": state.consecutive_failures,
+        "total_runs": state.total_runs,
+        "success_runs": state.success_runs,
+        "failed_runs": state.failed_runs,
+        "running_runs": 1 if state.status == "running" else 0,
+        "latest_fetched_count": state.latest_fetched_count,
+        "latest_saved_count": state.latest_saved_count,
+        "latest_skipped_count": state.latest_skipped_count,
+    }
+
+
 async def run_fetcher_with_tracking(
         fetcher_id: str,
         params: Dict[str, Any],
@@ -267,16 +403,19 @@ async def run_fetcher_with_tracking(
         task_id: Optional[int] = None
 ) -> Dict[str, Any]:
     run_id = create_fetch_run(fetcher_id, params, trigger_type=trigger_type, task_id=task_id)
+    mark_source_state_started(fetcher_id, params, run_id)
     fetcher_class = fetcher_registry.get_class(fetcher_id)
     if not fetcher_class:
         message = f"未知的抓取器节点: {fetcher_id}"
         finish_fetch_run(run_id, status="failed", error_message=message)
+        mark_source_state_finished(fetcher_id, params, run_id, status="failed", error=message)
         raise ValueError(message)
 
     try:
         fetcher = fetcher_class()
         result = await pipeline.run_task(fetcher, **params)
         finish_fetch_run(run_id, status="success", result=result)
+        mark_source_state_finished(fetcher_id, params, run_id, status="success", result=result)
         return {
             "status": "success",
             "run_id": run_id,
@@ -287,6 +426,7 @@ async def run_fetcher_with_tracking(
         }
     except Exception as e:
         finish_fetch_run(run_id, status="failed", error_message=str(e))
+        mark_source_state_finished(fetcher_id, params, run_id, status="failed", error=e)
         raise
 
 
@@ -574,16 +714,37 @@ def get_source_health():
 
     with Session(db_sink.engine) as session:
         runs = session.exec(select(FetchRunRecord).where(FetchRunRecord.fetcher_id.in_(fetcher_ids))).all()
+        states = session.exec(select(SourceStateRecord).where(SourceStateRecord.source_id.in_(fetcher_ids))).all()
 
+    states_by_source = {state.source_id: state for state in states}
     runs_by_fetcher: Dict[str, List[FetchRunRecord]] = {fetcher_id: [] for fetcher_id in fetcher_ids}
     for run in runs:
         runs_by_fetcher.setdefault(run.fetcher_id, []).append(run)
 
     health_items = [
-        build_fetcher_health(fetcher, runs_by_fetcher.get(fetcher["id"], []))
+        build_fetcher_health_from_state(fetcher, states_by_source[fetcher["id"]])
+        if fetcher["id"] in states_by_source
+        else build_fetcher_health(fetcher, runs_by_fetcher.get(fetcher["id"], []))
         for fetcher in fetchers
     ]
     return sorted(health_items, key=lambda item: (item["category"], item["name"]))
+
+
+@app.get("/api/source-states")
+def get_source_states(
+        status: Optional[str] = None,
+        fetcher_id: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100
+):
+    with Session(db_sink.engine) as session:
+        query = select(SourceStateRecord)
+        if status:
+            query = query.where(SourceStateRecord.status == status)
+        if fetcher_id:
+            query = query.where(SourceStateRecord.fetcher_id == fetcher_id)
+        query = query.order_by(SourceStateRecord.updated_at.desc()).offset(skip).limit(limit)
+        return session.exec(query).all()
 
 
 @app.post("/api/fetch/{fetcher_id}")
