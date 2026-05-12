@@ -167,9 +167,39 @@ class BaseWebPageListFetcher(BaseFetcher):
             "summary": summary,
         }
 
-    def _extract_detail_text(self, html: str, max_chars: int) -> str:
+    def _detail_title(self, soup: BeautifulSoup) -> str:
+        for selector in ["meta[property='og:title']", "meta[name='twitter:title']"]:
+            node = soup.select_one(selector)
+            if node:
+                title = self._clean_text(str(node.get("content", "")))
+                if title:
+                    return title
+
+        heading = soup.find("h1")
+        if heading:
+            title = self._clean_text(heading.get_text(" ", strip=True))
+            if title:
+                return title
+
+        if soup.title:
+            return self._clean_text(soup.title.get_text(" ", strip=True))
+        return ""
+
+    def _extract_detail(self, html: str, max_chars: int) -> Dict[str, str]:
         soup = BeautifulSoup(html, "html.parser")
-        for tag in soup.find_all(["script", "style", "noscript", "svg", "nav", "header", "footer", "form"]):
+        title = self._detail_title(soup)
+
+        for tag in soup.find_all([
+            "script",
+            "style",
+            "noscript",
+            "svg",
+            "nav",
+            "header",
+            "footer",
+            "form",
+            "button",
+        ]):
             tag.decompose()
 
         selectors = [
@@ -193,16 +223,16 @@ class BaseWebPageListFetcher(BaseFetcher):
             candidates.append(self._clean_text(soup.body.get_text(" ", strip=True)))
 
         if not candidates:
-            return ""
+            return {"title": title, "text": ""}
 
         detail_text = max(candidates, key=len)
-        return detail_text[:max_chars]
+        return {"title": title, "text": detail_text[:max_chars]}
 
-    async def _detail_text_for_url(self, client: httpx.AsyncClient, url: str, max_chars: int) -> str:
+    async def _detail_for_url(self, client: httpx.AsyncClient, url: str, max_chars: int) -> Dict[str, str]:
         response = await self._safe_get(client, url)
         if not response:
-            return ""
-        return self._extract_detail_text(response.text, max_chars)
+            return {"title": "", "text": ""}
+        return self._extract_detail(response.text, max_chars)
 
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         limit = self._entry_limit(kwargs.get("limit"))
@@ -229,18 +259,21 @@ class BaseWebPageListFetcher(BaseFetcher):
             title = self._title_from_container(link, container)
             summary = self._summary_from_container(title, container)
             publish_date = self._extract_datetime(f"{title} {summary}")
-            detail_text = ""
+            detail = {"title": "", "text": ""}
             if fetch_detail:
-                detail_text = await self._detail_text_for_url(client, url, detail_max_chars)
+                detail = await self._detail_for_url(client, url, detail_max_chars)
+                if title == "未命名网页条目" and detail["title"]:
+                    title = detail["title"]
             seen_urls.add(url)
             emitted_count += 1
 
             raw_data = self._raw_entry(url, title, summary)
             raw_data.update({
                 "detail_fetched": fetch_detail,
-                "detail_text_length": len(detail_text),
+                "detail_title": detail["title"],
+                "detail_text_length": len(detail["text"]),
             })
-            content = detail_text or summary
+            content = detail["text"] or summary
 
             yield WebPageArticleContent(
                 id=self._content_id(url),
@@ -309,3 +342,30 @@ class MistralNewsWebFetcher(BaseWebPageListFetcher):
     site_name = "Mistral AI"
     source_section = "News"
     article_url_patterns = ["mistral.ai/news/"]
+
+
+class StabilityNewsWebFetcher(BaseWebPageListFetcher):
+    source_id = "web_stability_news"
+    name = "Stability AI News"
+    description = "抓取 Stability AI 官网 News & Updates 页面中的图像、视频、音频模型与企业动态。"
+    icon = "🎨"
+    listing_url = "https://stability.ai/news-updates"
+    site_name = "Stability AI"
+    source_section = "News & Updates"
+    article_url_patterns = ["stability.ai/news-updates/"]
+    exclude_url_patterns = ["stability.ai/news-updates#"]
+
+
+class ElevenLabsBlogWebFetcher(BaseWebPageListFetcher):
+    source_id = "web_elevenlabs_blog"
+    name = "ElevenLabs Blog"
+    description = "抓取 ElevenLabs 官方 Blog 中的语音 AI、Agent、开发者 API 与企业动态。"
+    icon = "🎙️"
+    listing_url = "https://elevenlabs.io/blog"
+    site_name = "ElevenLabs"
+    source_section = "Blog"
+    article_url_patterns = ["elevenlabs.io/blog/"]
+    exclude_url_patterns = [
+        "elevenlabs.io/blog#",
+        "elevenlabs.io/blog/category/",
+    ]

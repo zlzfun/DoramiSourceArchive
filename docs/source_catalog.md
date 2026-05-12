@@ -88,6 +88,8 @@ It exists to keep development aligned with the product direction: a broad, built
 | `web_claude_blog` | Claude Blog | official_web | Built on `BaseWebPageListFetcher`; captures list metadata and can optionally fetch article body text. |
 | `web_runway_news` | Runway News | official_web | Built on `BaseWebPageListFetcher`; captures Runway News/Research metadata and can optionally fetch article body text. |
 | `web_mistral_news` | Mistral AI News | official_web | Built on `BaseWebPageListFetcher`; captures Mistral News metadata and can optionally fetch article body text. |
+| `web_stability_news` | Stability AI News | official_web | Built on `BaseWebPageListFetcher`; captures Stability AI News & Updates metadata and can optionally fetch article body text. |
+| `web_elevenlabs_blog` | ElevenLabs Blog | official_web | Built on `BaseWebPageListFetcher`; captures ElevenLabs Blog metadata and can optionally fetch article body text. |
 
 ## Candidate Sources Inspired By AIHot
 
@@ -114,9 +116,13 @@ Sampled from AIHot public pages on 2026-05-12. These are planning candidates, no
 | Runway News | High | AIHot includes Runway News webpage items. | Initial webpage fetcher implemented. |
 | Mistral News / Blog | High | Important model/product source; RSS candidate failed validation. | Initial webpage fetcher implemented. |
 | OpenAI News pages excluding customer stories | High | RSS exists, but source-specific filtering may require webpage logic. | RSS implemented; webpage refinement pending. |
+| Stability AI News & Updates | Medium | Official image/video/audio generation model and enterprise updates. | Built-in webpage fetcher implemented. |
+| ElevenLabs Blog | Medium | Official voice AI, agent, API, and enterprise updates. | Built-in webpage fetcher implemented. |
 | Simon Willison blog | Medium | High-signal technical posts, sometimes not AI-only. | Candidate website/RSS evaluation pending. |
 | Tomer Tunguz blog | Medium | VC/market analysis relevant to AI infrastructure. | Candidate website/RSS evaluation pending. |
 | The Decoder / IT之家 / 36Kr AI / InfoQ AI | Medium | News coverage; may use RSS or webpage depending source stability. | Candidate evaluation pending. |
+| Cohere Blog | Medium | Official enterprise AI/model blog; listing page is accessible but did not expose direct article links in the first static HTML check. | Candidate evaluation pending; may need RSS/API/embedded-data parsing. |
+| Perplexity Blog / xAI News | Medium | Important product/model sources, but tested pages returned 403 to the current fetcher-style HTTP client. | Candidate evaluation pending; do not add as built-in webpage nodes until access strategy is clear. |
 
 ### WeChat Accounts
 
