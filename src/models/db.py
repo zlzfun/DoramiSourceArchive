@@ -109,3 +109,9 @@ class SourceConfigRecord(SQLModel, table=True):
 
     created_at: str = Field(description="创建时间")
     updated_at: str = Field(description="更新时间")
+
+
+class AppSettingRecord(SQLModel, table=True):
+    __tablename__ = "app_settings"
+    key: str = Field(primary_key=True)
+    value: str = ""
