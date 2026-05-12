@@ -4,6 +4,8 @@ This document records the current downstream delivery contract for Dify/RAG/agen
 
 DoramiSourceArchive remains the source collection and archival hub. These APIs expose archived records without adding a reader-facing product surface.
 
+Existing downstream jobs that already use `GET /api/articles` can continue doing so. The `/api/dify/*` endpoints are a cleaner recommended delivery contract for future Dify/RAG consumers, not a forced migration path.
+
 ## JSON Pull Endpoint
 
 `GET /api/dify/articles`

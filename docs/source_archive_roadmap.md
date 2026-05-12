@@ -62,14 +62,17 @@ The current goal is to keep fetch execution visible and auditable while expandin
 
 ### Epic 4: Archive Data Quality
 
-- [ ] Improve deduplication beyond primary IDs.
-- [ ] Normalize URLs.
 - [ ] Add full-text extraction for summary-only sources.
   - [x] Add optional article-detail extraction for official webpage fetchers.
 - [ ] Preserve raw source payloads.
 - [ ] Standardize content formats.
 - [ ] Archive media metadata.
 - [ ] Add language and region markers.
+
+### Epic 4b: Optional AI Enrichment
+
+- [ ] Design an optional LLM-enabled article-to-event clustering module.
+- [ ] Keep article archiving faithful to source records before adding semantic event grouping.
 
 ### Epic 5: Dify Delivery
 
@@ -98,6 +101,8 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - 2026-05-12: Avoid treating RSS/Atom as the architecture center. RSS is one source family; the main source-expansion direction is a multi-type built-in fetcher catalog covering official web pages, WeChat, X/Twitter, GitHub, papers, and community/news sources.
 - 2026-05-12: X/Twitter ingestion requires an explicit strategy decision before implementation because official API access, browser/session scraping, third-party mirrors, and webhook/import bridges have different reliability, cost, and account-risk tradeoffs.
 - 2026-05-12: Newly added WeChat account subclasses are registry-validated only; they are not considered production-verified until a real run with valid WeChat MP credentials confirms account-name matching, fakeid resolution, rate-limit behavior, and body extraction.
+- 2026-05-12: Defer deterministic URL canonicalization and broad deduplication from the near-term roadmap. The archive layer should focus on faithful article capture; future semantic grouping or de-dup-like behavior should live in an optional LLM-enabled article-to-event enrichment module.
+- 2026-05-12: Existing Dify integrations may continue using `GET /api/articles`. The newer `GET /api/dify/articles` and `GET /api/dify/articles.md` endpoints are recommended downstream delivery contracts, not a forced migration path.
 
 ## Progress Log
 
@@ -138,3 +143,4 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - 2026-05-12: Added `GitHubReleaseContent`, a generic GitHub Releases API fetcher, and 12 built-in API-backed release sources covering Dify, vLLM, Ollama, LangChain, Transformers, PyTorch, llama.cpp, LiteLLM, Open WebUI, ComfyUI, OpenAI Agents SDK, and Claude Code. Verified registry discovery, offline serialization, and live API fetches for Claude Code, OpenAI Agents SDK, and LiteLLM.
 - 2026-05-12: Added Dify delivery endpoints: `GET /api/dify/articles` for JSON pulls and `GET /api/dify/articles.md` for Markdown batch export. Both support source/content/date/search filters, default to content-bearing records, and are documented in `docs/dify_delivery.md`. Verified with FastAPI `TestClient`.
 - 2026-05-12: Integrated `feature/rag-improvement` into the source-archive line on `codex/integrate-rag-improvement`. The merged result keeps the source collection, observability, GitHub/webpage/Dify-delivery work while adding RAG context APIs, similarity lookup, pending-vectorization/reindex endpoints, date-filtered vector search, optional reranking/context expansion, and the `tests/rag/` evaluation harness. Verified with backend compile, frontend build/lint, FastAPI `TestClient` smoke tests, and `tests/rag/evaluate.py --dry-run`.
+- 2026-05-12: Updated roadmap priorities after product review: near-term work should not pursue article-level deduplication or canonicalization as a core archive behavior. Long-term semantic consolidation should be explored as article-to-event enrichment with an explicit AI dependency.
