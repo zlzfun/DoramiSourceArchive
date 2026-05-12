@@ -74,7 +74,7 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - [ ] Add Dify pull APIs with time/source/status filters.
 - [ ] Track Dify sync status per article.
 - [ ] Add batch JSON/Markdown export.
-- [ ] Add social post webhook/import bridge if selected for X/Twitter ingestion.
+- [x] Add social post webhook/import bridge for safe X/Twitter-adjacent ingestion.
 - [ ] Enhance webhook payloads to include new content batches.
 - [ ] Add standard time-window slices.
 - [ ] Make downstream sync idempotent.
@@ -128,3 +128,4 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - 2026-05-12: Seeded the original project worktree database at `/Users/zhuliuzi/PycharmProjects/DoramiSourceArchive/data/cms_data.db` with 70 sample articles for parallel RAG development: 54 `rss_article` records and 16 `web_article` records across OpenAI, Hugging Face, Google AI, Google DeepMind, Microsoft AI, NVIDIA, arXiv, Hacker News, Dify/vLLM/Ollama releases, Anthropic News, Claude Blog, Runway News, and Mistral AI News.
 - 2026-05-12: Expanded built-in WeChat fetcher subclasses from 3 to 9 accounts by adding AI科技评论、AI前线、智东西、Founder Park、硅星人、夕小瑶科技说. These appear in the dynamic registry but real runs still require valid WeChat MP credentials.
 - 2026-05-12: Added `docs/x_twitter_ingestion_decision.md` and a clear open verification section in `docs/source_catalog.md`. The recommended X/Twitter near-term path is a webhook/import bridge, with official X API as a later option if credentials and costs are acceptable.
+- 2026-05-12: Added `SocialPostContent` and `POST /api/import/social-posts` as a safe social-post import bridge. External collectors can now push normalized X/Twitter-like posts into the archive idempotently without direct X crawling.

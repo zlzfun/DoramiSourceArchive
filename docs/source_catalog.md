@@ -22,7 +22,7 @@ It exists to keep development aligned with the product direction: a broad, built
 | GitHub releases/repos | Partially implemented through Atom | `PresetRssFetcher` for releases; future GitHub API fetcher for richer repo data | Release feeds work today. GitHub API/trending/stars/issues can be a later non-RSS fetcher family. |
 | Paper sources | Partially implemented through arXiv RSS | `PresetRssFetcher`; future arXiv API/Semantic Scholar fetchers | arXiv categories are covered through RSS. Richer paper metadata needs dedicated APIs. |
 | Community/news aggregators | Partially implemented | RSS today; future site/API fetchers | Hacker News and tech news can start through feeds, but richer ranking/comments need dedicated fetchers. |
-| Webhook/import bridges | Partially implemented | `DifyWebhookTrigger`; future inbound APIs | Useful as transitional path for X/Telegram/Discord/private channels when direct crawling is risky. |
+| Webhook/import bridges | Partially implemented | `DifyWebhookTrigger`; `/api/import/social-posts` | Useful as transitional path for X/Telegram/Discord/private channels when direct crawling is risky. |
 
 ## Implemented Built-In Sources
 
@@ -73,6 +73,12 @@ It exists to keep development aligned with the product direction: a broad, built
 | Source ID | Name | Category | Notes |
 | --- | --- | --- | --- |
 | `webhook_dify_workflow` | Dify 自动化日报编排 | workflow | Outbound workflow trigger, not an inbound content source. |
+
+### Import Bridges
+
+| Endpoint | Content Type | Notes |
+| --- | --- | --- |
+| `POST /api/import/social-posts` | `social_post` | Inbound bridge for X/Twitter or other social posts collected by external tools. Idempotent by `source_id + post_id`; recommended near-term path before direct X crawling. |
 
 ### Official Website / Blog / News Pages
 
@@ -145,7 +151,7 @@ Sampled from AIHot public pages on 2026-05-12. These are planning candidates, no
 | WeChat real-run validation for the 6 newly added accounts | Pending | `wechat_ai_tech_review`, `wechat_infoq_ai`, `wechat_zhidx`, `wechat_founder_park`, `wechat_silicon_star`, and `wechat_xixiaoyao` are registered and compile successfully, but have not been verified against the WeChat MP backend. A real run requires valid `src/.wechat_auth/wechat_config.json` credentials or a fresh QR login. Verify exact account-name matching, fakeid resolution, rate limiting behavior, and article body extraction before marking these sources production-ready. |
 | Existing WeChat credential workflow hardening | Pending | Current flow can trigger QR login and depends on local/enterprise notification pieces. Before unattended scheduling, confirm credential refresh behavior, failure classification, and safe concurrency in the deployment environment. |
 | Official webpage full-text extraction | Pending | `BaseWebPageListFetcher` currently stores list-page summary/context and article links. Full article body extraction is a later data-quality task. |
-| X/Twitter ingestion strategy | Pending decision | Do not implement X/Twitter fetchers until `docs/x_twitter_ingestion_decision.md` is reviewed and one option is selected. |
+| X/Twitter ingestion strategy | Pending decision | Direct X/Twitter fetchers are still blocked until `docs/x_twitter_ingestion_decision.md` is reviewed and one option is selected. The safe webhook/import bridge is now available for external collectors. |
 
 ## X/Twitter Decision Options
 

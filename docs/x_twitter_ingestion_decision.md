@@ -126,7 +126,15 @@ This preserves the product direction: DoramiSourceArchive remains the archive an
 
 ## Decision Status
 
-Current status: Pending user decision.
+Current status: Webhook/import bridge implemented as a safe interim path; direct X/Twitter fetching still requires user decision.
+
+Implemented bridge:
+
+- Endpoint: `POST /api/import/social-posts`
+- Content model: `SocialPostContent`
+- Stored `content_type`: `social_post`
+- Idempotency key: generated article ID as `source_id + post_id`
+- Intended use: external collectors can push normalized X/Twitter posts without DoramiSourceArchive holding X credentials or scraping sessions.
 
 No X/Twitter crawler/fetcher implementation should be merged until the user chooses one of:
 

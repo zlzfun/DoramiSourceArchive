@@ -15,7 +15,7 @@ from storage.impl.db_storage import DatabaseStorage
 from storage.impl.vector_storage import ChromaVectorStorage
 from pipeline.core import DataPipeline
 from models.db import ArticleRecord, FetchTaskRecord, FetchRunRecord, SourceConfigRecord, SourceStateRecord
-from models.content import BaseContent
+from models.content import BaseContent, SocialPostContent
 
 # 引入动态抓取器注册中心
 from fetchers.registry import fetcher_registry
@@ -167,6 +167,33 @@ class SourceFetchParams(BaseModel):
     params: Dict[str, Any] = PydanticField(default_factory=dict)
 
 
+class SocialPostImportItem(BaseModel):
+    platform: str = "x"
+    post_id: str
+    source_id: str = ""
+    author_id: str = ""
+    author_handle: str = ""
+    author_name: str = ""
+    text: str = ""
+    title: str = ""
+    source_url: str = ""
+    publish_date: str = ""
+    conversation_id: str = ""
+    in_reply_to_id: str = ""
+    quoted_post_id: str = ""
+    reposted_post_id: str = ""
+    lang: str = ""
+    tags: List[str] = PydanticField(default_factory=list)
+    media_urls: List[str] = PydanticField(default_factory=list)
+    metrics: Dict[str, Any] = PydanticField(default_factory=dict)
+    raw_data: Dict[str, Any] = PydanticField(default_factory=dict)
+
+
+class SocialPostImportParams(BaseModel):
+    source_id: str = "import_social_posts"
+    posts: List[SocialPostImportItem]
+
+
 def serialize_source_config(record: SourceConfigRecord) -> Dict[str, Any]:
     data = record.dict()
     try:
@@ -207,6 +234,55 @@ def build_source_fetch_params(source_config: SourceConfigRecord, overrides: Opti
     if overrides:
         params.update(overrides)
     return params
+
+
+def normalize_social_source_id(platform: str, author_handle: str, fallback: str) -> str:
+    if fallback:
+        return fallback.strip()
+    safe_platform = (platform or "social").strip().lower().replace("/", "_")
+    safe_handle = (author_handle or "unknown").strip().lower().lstrip("@").replace("/", "_")
+    return f"{safe_platform}_{safe_handle}"
+
+
+def build_social_post_content(post: SocialPostImportItem, batch_source_id: str) -> SocialPostContent:
+    platform = post.platform.strip() or "x"
+    post_id = post.post_id.strip()
+    if not post_id:
+        raise ValueError("post_id 不能为空")
+
+    source_id = normalize_social_source_id(platform, post.author_handle, post.source_id or batch_source_id)
+    title = post.title.strip() or (post.text.strip()[:80] if post.text else f"{platform} post {post_id}")
+    source_url = post.source_url.strip()
+    if not source_url and post.author_handle:
+        source_url = f"https://x.com/{post.author_handle.lstrip('@')}/status/{post_id}"
+
+    publish_date = post.publish_date.strip() or _now_iso()
+    raw_data = dict(post.raw_data or {})
+    raw_data.setdefault("import_source_id", batch_source_id)
+
+    return SocialPostContent(
+        id=f"{source_id}_{post_id}",
+        title=title,
+        source_url=source_url,
+        publish_date=publish_date,
+        source_id=source_id,
+        content=post.text,
+        has_content=bool(post.text),
+        platform=platform,
+        author_id=post.author_id,
+        author_handle=post.author_handle,
+        author_name=post.author_name,
+        post_id=post_id,
+        conversation_id=post.conversation_id,
+        in_reply_to_id=post.in_reply_to_id,
+        quoted_post_id=post.quoted_post_id,
+        reposted_post_id=post.reposted_post_id,
+        lang=post.lang,
+        tags=post.tags,
+        media_urls=post.media_urls,
+        metrics=post.metrics,
+        raw_data=raw_data,
+    )
 
 
 def resolve_state_source_id(fetcher_id: str, params: Optional[Dict[str, Any]], result: Any = None) -> str:
@@ -595,6 +671,36 @@ async def fetch_active_rss_sources(body: Optional[SourceFetchParams] = None):
             results.append({"source_id": record.source_id, "status": "failed", "error": str(e)})
 
     return {"status": "success", "count": len(results), "results": results}
+
+
+@app.post("/api/import/social-posts")
+async def import_social_posts(params: SocialPostImportParams):
+    saved_count = 0
+    skipped_count = 0
+    errors = []
+
+    for index, post in enumerate(params.posts):
+        try:
+            content = build_social_post_content(post, params.source_id)
+            if await db_sink.save(content):
+                saved_count += 1
+            else:
+                skipped_count += 1
+        except Exception as e:
+            errors.append({
+                "index": index,
+                "post_id": post.post_id,
+                "error": str(e),
+            })
+
+    return {
+        "status": "partial_success" if errors else "success",
+        "received_count": len(params.posts),
+        "saved_count": saved_count,
+        "skipped_count": skipped_count,
+        "error_count": len(errors),
+        "errors": errors,
+    }
 
 
 @app.get("/api/articles")
