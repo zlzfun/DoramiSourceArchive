@@ -16,17 +16,23 @@ This project should not compete first as a public reader-facing news product. Pu
 
 ## Current Phase
 
-Phase 1: fetching observability and source-infrastructure foundation.
+Phase 1: fetching observability and multi-type source-infrastructure foundation.
 
-The first goal is to make fetch execution visible and auditable before adding many new sources.
+The current goal is to keep fetch execution visible and auditable while expanding from RSS/Atom into a broad built-in fetcher catalog: official web pages, WeChat, X/Twitter, GitHub, papers, and community/news sources.
 
 ## Backlog
 
 ### Epic 1: Source Coverage Expansion
 
+- [x] Add a persistent source coverage matrix.
 - [x] Add a generic RSS/Atom fetcher.
 - [x] Add a first batch of built-in RSS/Atom source fetchers.
 - [x] Add a second batch of verified built-in RSS/Atom source fetchers.
+- [ ] Add official website/blog/news page fetcher foundation.
+- [ ] Add first built-in webpage sources for official AI company news.
+- [ ] Decide X/Twitter ingestion strategy before implementation.
+- [ ] Add first built-in X/Twitter source fetchers after strategy decision.
+- [ ] Expand built-in WeChat account fetchers.
 - [ ] Add more official AI company sources.
 - [ ] Add more model/product update sources.
 - [x] Add initial paper sources.
@@ -84,6 +90,8 @@ The first goal is to make fetch execution visible and auditable before adding ma
 - 2026-05-11: Start implementation with fetch run observability before adding generic RSS/source configuration, because source expansion without run history would be hard to debug.
 - 2026-05-11: Store source configuration primarily in SQLite through `SourceConfigRecord`; JSON/YAML import/export remains a later convenience layer.
 - 2026-05-11: Restore the original fetcher-registry-first product direction. Built-in fetchers should be the primary user workflow; user-defined source configuration remains an advanced/parallel capability and should not dominate the main UI.
+- 2026-05-12: Avoid treating RSS/Atom as the architecture center. RSS is one source family; the main source-expansion direction is a multi-type built-in fetcher catalog covering official web pages, WeChat, X/Twitter, GitHub, papers, and community/news sources.
+- 2026-05-12: X/Twitter ingestion requires an explicit strategy decision before implementation because official API access, browser/session scraping, third-party mirrors, and webhook/import bridges have different reliability, cost, and account-risk tradeoffs.
 
 ## Progress Log
 
@@ -111,3 +119,4 @@ The first goal is to make fetch execution visible and auditable before adding ma
 - 2026-05-11: Added a second built-in source batch: Google AI Blog, Google DeepMind News, Microsoft AI Blog, NVIDIA Developer Blog, arXiv stat.ML/eess.IV, and GitHub release feeds for Ollama, Transformers, PyTorch, llama.cpp, and LangChain.
 - 2026-05-11: Added `/api/source-health`, deriving per-fetcher health from `FetchRunRecord` without a new table, and surfaced health badges, latest run time, latest saved count, and consecutive failures on the `节点与调度` cards.
 - 2026-05-12: Added `SourceStateRecord` for persistent per-source health and conservative incremental cursors. Fetch execution now marks a source running at start, updates healthy/failing state at completion, records latest content ID/date as cursor metadata, tracks success/failure counters, and exposes `/api/source-states` for handoff/debugging. Cursor recording is intentionally passive for now and does not skip older feed entries yet.
+- 2026-05-12: Added `docs/source_catalog.md` as the persistent multi-type source coverage matrix. It records implemented sources, AIHot-inspired candidates, immediate next slices, and the pending X/Twitter ingestion decision so future work does not drift back into RSS-only expansion.
