@@ -29,6 +29,9 @@ class BaseFetcher(abc.ABC):
     # 产出的数据结构类型，对应 models.content (例如: "arxiv", "tech_news")
     content_type: str = "unknown_content"
 
+    # 面向管理台的来源分类，用于在节点较多时筛选和分组展示。
+    category: str = "general"
+
     # ==========================================
     # 2. 前端 UI 渲染元数据 (必须由子类覆盖)
     # ==========================================
@@ -70,7 +73,11 @@ class BaseFetcher(abc.ABC):
 
         try:
             # 使用上下文管理器统一管理 HTTP 连接池
-            async with httpx.AsyncClient(timeout=self.timeout, headers=self.default_headers) as client:
+            async with httpx.AsyncClient(
+                    timeout=self.timeout,
+                    headers=self.default_headers,
+                    follow_redirects=True
+            ) as client:
                 # 将 client 传递给子类的具体实现逻辑
                 async for content_item in self._run(client, **kwargs):
                     # ⚠️ 架构约束点：强制校验并覆写实例的血统证明

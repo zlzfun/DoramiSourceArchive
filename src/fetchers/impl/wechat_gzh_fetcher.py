@@ -478,6 +478,7 @@ class BaseWechatGzhFetcher(BaseFetcher):
 
 class JiQiZhiXinWechatFetcher(BaseWechatGzhFetcher):
     source_id = "wechat_jiqizhixin"
+    category = "wechat"
     name = "机器之心"
     icon = "🤖"
     description = "抓取「机器之心」微信公众号的最新 AI 产业、研究与前沿报道。"
@@ -486,6 +487,7 @@ class JiQiZhiXinWechatFetcher(BaseWechatGzhFetcher):
 
 class QbitAIWechatFetcher(BaseWechatGzhFetcher):
     source_id = "wechat_qbitai"
+    category = "wechat"
     name = "量子位"
     icon = "⚛️"
     description = "抓取「量子位」微信公众号的 AI 科技新闻、大模型进展追踪。"
@@ -494,7 +496,62 @@ class QbitAIWechatFetcher(BaseWechatGzhFetcher):
 
 class XinzhiyuanWechatFetcher(BaseWechatGzhFetcher):
     source_id = "wechat_xinzhiyuan"
+    category = "wechat"
     name = "新智元"
     icon = "🧠"
     description = "抓取「新智元」微信公众号的 AI 深度解析、人物专访与行业洞察。"
     target_account = "新智元"
+
+
+class AiTechReviewWechatFetcher(BaseWechatGzhFetcher):
+    source_id = "wechat_ai_tech_review"
+    category = "wechat"
+    name = "AI科技评论"
+    icon = "📰"
+    description = "抓取「AI科技评论」微信公众号的 AI 研究、产业与技术评论。"
+    target_account = "AI科技评论"
+
+
+class InfoQAiWechatFetcher(BaseWechatGzhFetcher):
+    source_id = "wechat_infoq_ai"
+    category = "wechat"
+    name = "AI前线"
+    icon = "💻"
+    description = "抓取「AI前线」微信公众号的 AI 工程、架构与开发者生态内容。"
+    target_account = "AI前线"
+
+
+class ZhidxWechatFetcher(BaseWechatGzhFetcher):
+    source_id = "wechat_zhidx"
+    category = "wechat"
+    name = "智东西"
+    icon = "🔬"
+    description = "抓取「智东西」微信公众号的 AI 硬件、产业与科技公司动态。"
+    target_account = "智东西"
+
+
+class FounderParkWechatFetcher(BaseWechatGzhFetcher):
+    source_id = "wechat_founder_park"
+    category = "wechat"
+    name = "Founder Park"
+    icon = "🏗️"
+    description = "抓取「Founder Park」微信公众号的 AI 创业、产品与投资生态内容。"
+    target_account = "Founder Park"
+
+
+class SiliconStarWechatFetcher(BaseWechatGzhFetcher):
+    source_id = "wechat_silicon_star"
+    category = "wechat"
+    name = "硅星人"
+    icon = "🌉"
+    description = "抓取「硅星人」微信公众号的硅谷、AI 产品与全球科技生态内容。"
+    target_account = "硅星人"
+
+
+class XixiaoyaoWechatFetcher(BaseWechatGzhFetcher):
+    source_id = "wechat_xixiaoyao"
+    category = "wechat"
+    name = "夕小瑶科技说"
+    icon = "🧪"
+    description = "抓取「夕小瑶科技说」微信公众号的 AI 技术解读、论文与应用趋势。"
+    target_account = "夕小瑶科技说"

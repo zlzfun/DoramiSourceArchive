@@ -1,0 +1,9 @@
+# Data files (large/generated)
+data/
+.venv/
+**/__pycache__/
+*.pyc
+.wechat_auth/
+
+# Evaluation results (keep .gitkeep but not actual results)
+tests/rag/results/*.json

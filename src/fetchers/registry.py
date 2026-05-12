@@ -72,6 +72,7 @@ class FetcherRegistry:
                 "name": cls.name,
                 "icon": cls.icon,
                 "desc": cls.description,
+                "category": getattr(cls, "category", "general"),
                 "content_type": cls.content_type,
                 "active": True,
                 "parameters": cls.get_parameter_schema()

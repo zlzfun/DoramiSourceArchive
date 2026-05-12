@@ -5,13 +5,19 @@ async function handleApiError(response, defaultMsg) {
   try {
     const data = await response.json();
     if (data.detail) msg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
-  } catch (e) { /* use defaultMsg */ }
+  } catch { /* use defaultMsg */ }
   throw new Error(msg);
 }
 
 export async function fetchFetchers() {
   const res = await fetch(`${API_BASE_URL}/fetchers`);
   if (!res.ok) await handleApiError(res, '获取抓取器注册表失败');
+  return res.json();
+}
+
+export async function fetchSourceHealth() {
+  const res = await fetch(`${API_BASE_URL}/source-health`);
+  if (!res.ok) await handleApiError(res, '获取数据源健康状态失败');
   return res.json();
 }
 
@@ -93,6 +99,82 @@ export async function fetchTasks() {
   return res.json();
 }
 
+export async function fetchFetchRuns(filters = {}, limit = 100) {
+  const params = new URLSearchParams({ limit });
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
+  });
+  const res = await fetch(`${API_BASE_URL}/fetch-runs?${params}`);
+  if (!res.ok) await handleApiError(res, '获取抓取运行历史失败');
+  return res.json();
+}
+
+export async function fetchSourceConfigs(filters = {}, limit = 100) {
+  const params = new URLSearchParams({ limit });
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
+  });
+  const res = await fetch(`${API_BASE_URL}/source-configs?${params}`);
+  if (!res.ok) await handleApiError(res, '获取数据源配置失败');
+  return res.json();
+}
+
+export async function createSourceConfig(data) {
+  const res = await fetch(`${API_BASE_URL}/source-configs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) await handleApiError(res, '创建数据源失败');
+  return res.json();
+}
+
+export async function updateSourceConfig(sourceId, data) {
+  const res = await fetch(`${API_BASE_URL}/source-configs/${encodeURIComponent(sourceId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) await handleApiError(res, '更新数据源失败');
+  return res.json();
+}
+
+export async function toggleSourceConfig(sourceId, isActive) {
+  const res = await fetch(`${API_BASE_URL}/source-configs/${encodeURIComponent(sourceId)}/toggle`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_active: isActive }),
+  });
+  if (!res.ok) await handleApiError(res, '切换数据源状态失败');
+  return res.json();
+}
+
+export async function deleteSourceConfig(sourceId) {
+  const res = await fetch(`${API_BASE_URL}/source-configs/${encodeURIComponent(sourceId)}`, { method: 'DELETE' });
+  if (!res.ok) await handleApiError(res, '删除数据源失败');
+  return res.json();
+}
+
+export async function fetchSourceConfigNow(sourceId, params = {}) {
+  const res = await fetch(`${API_BASE_URL}/source-configs/${encodeURIComponent(sourceId)}/fetch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ params }),
+  });
+  if (!res.ok) await handleApiError(res, '触发数据源抓取失败');
+  return res.json();
+}
+
+export async function fetchActiveRssSources(params = {}) {
+  const res = await fetch(`${API_BASE_URL}/source-configs/fetch-active-rss`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ params }),
+  });
+  if (!res.ok) await handleApiError(res, '批量触发 RSS 抓取失败');
+  return res.json();
+}
+
 export async function createTask(data) {
   const res = await fetch(`${API_BASE_URL}/tasks`, {
     method: 'POST',
@@ -115,12 +197,40 @@ export async function fetchVectorStats() {
   return res.json();
 }
 
-export async function vectorSearch(query, topK = 5) {
+export async function vectorSearch(query, topK = 5, options = {}) {
   const res = await fetch(`${API_BASE_URL}/vector/search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, top_k: topK }),
+    body: JSON.stringify({ query, top_k: topK, ...options }),
   });
   if (!res.ok) await handleApiError(res, '检索失败');
+  return res.json();
+}
+
+export async function ragContext(query, topK = 5, options = {}) {
+  const res = await fetch(`${API_BASE_URL}/rag/context`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, top_k: topK, ...options }),
+  });
+  if (!res.ok) await handleApiError(res, 'RAG 上下文检索失败');
+  return res.json();
+}
+
+export async function ragSimilar(articleId, topK = 5) {
+  const res = await fetch(`${API_BASE_URL}/rag/similar/${encodeURIComponent(articleId)}?top_k=${topK}`);
+  if (!res.ok) await handleApiError(res, '相似文章检索失败');
+  return res.json();
+}
+
+export async function vectorizeAllPending() {
+  const res = await fetch(`${API_BASE_URL}/vectorize/all-pending`, { method: 'POST' });
+  if (!res.ok) await handleApiError(res, '全量向量化失败');
+  return res.json();
+}
+
+export async function reindexAll() {
+  const res = await fetch(`${API_BASE_URL}/vector/reindex-all`, { method: 'POST' });
+  if (!res.ok) await handleApiError(res, '全量重索引失败');
   return res.json();
 }

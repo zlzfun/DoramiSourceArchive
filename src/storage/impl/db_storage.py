@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any
 from sqlmodel import Session, create_engine, select
 from storage.base import BaseStorage
 from models.content import BaseContent, serialize_to_metadata
-from models.db import ArticleRecord, FetchTaskRecord, SQLModel
+from models.db import ArticleRecord, SQLModel
 
 
 class DatabaseStorage(BaseStorage):

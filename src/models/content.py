@@ -132,6 +132,28 @@ class AICommunityContent(BaseContent):
 
 
 @dataclass
+class SocialPostContent(BaseContent):
+    """社交平台帖子内容类，用于 X/Twitter 等外部采集器导入。"""
+    content_type: ClassVar[str] = "social_post"
+
+    platform: str = field(default="", metadata={"description": "社交平台，如 x/twitter"})
+    author_id: str = field(default="", metadata={"description": "作者稳定 ID"})
+    author_handle: str = field(default="", metadata={"description": "作者 handle"})
+    author_name: str = field(default="", metadata={"description": "作者展示名称"})
+    post_id: str = field(default="", metadata={"description": "平台原始帖子 ID"})
+    conversation_id: str = field(default="", metadata={"description": "会话或 thread ID"})
+    in_reply_to_id: str = field(default="", metadata={"description": "回复目标 ID"})
+    quoted_post_id: str = field(default="", metadata={"description": "引用帖子 ID"})
+    reposted_post_id: str = field(default="", metadata={"description": "转发帖子 ID"})
+    lang: str = field(default="", metadata={"description": "语言"})
+    tags: List[str] = field(default_factory=list, metadata={"description": "标签"})
+    media_urls: List[str] = field(default_factory=list, metadata={"description": "媒体 URL 列表"})
+    metrics: Dict[str, Any] = field(default_factory=dict, metadata={"description": "平台指标，如点赞/转发/回复"})
+    raw_data: Optional[Dict[str, Any]] = field(default_factory=dict,
+                                               metadata={"description": "外部采集器提供的原始数据"})
+
+
+@dataclass
 class ArxivContent(BaseContent):
     """Arxiv论文内容类"""
     content_type: ClassVar[str] = "arxiv"
@@ -158,6 +180,40 @@ class RssArticleContent(BaseContent):
     media_url: str = field(default="", metadata={"description": "题图或多媒体链接"})
     raw_data: Optional[Dict[str, Any]] = field(default_factory=dict,
                                                metadata={"description": "原始抓取字典(保证无限扩展性)"})
+
+
+@dataclass
+class WebPageArticleContent(BaseContent):
+    """官网/博客/新闻网页列表文章内容类"""
+    content_type: ClassVar[str] = "web_article"
+
+    site_name: str = field(default="", metadata={"description": "站点名称"})
+    source_section: str = field(default="", metadata={"description": "站点栏目或页面来源"})
+    summary: str = field(default="", metadata={"description": "列表页摘要或上下文"})
+    tags: List[str] = field(default_factory=list, metadata={"description": "页面标签与分类"})
+    raw_data: Optional[Dict[str, Any]] = field(default_factory=dict,
+                                               metadata={"description": "原始列表页解析信息"})
+
+
+@dataclass
+class GitHubReleaseContent(BaseContent):
+    """GitHub Release 内容类"""
+    content_type: ClassVar[str] = "github_release"
+
+    repository: str = field(default="", metadata={"description": "仓库全名 owner/repo"})
+    owner: str = field(default="", metadata={"description": "仓库 owner"})
+    repo: str = field(default="", metadata={"description": "仓库名称"})
+    tag_name: str = field(default="", metadata={"description": "Release 标签"})
+    release_name: str = field(default="", metadata={"description": "Release 名称"})
+    author_login: str = field(default="", metadata={"description": "发布者 GitHub login"})
+    target_commitish: str = field(default="", metadata={"description": "目标分支或提交"})
+    draft: bool = field(default=False, metadata={"description": "是否草稿"})
+    prerelease: bool = field(default=False, metadata={"description": "是否预发布"})
+    assets: List[Dict[str, Any]] = field(default_factory=list, metadata={"description": "Release 资产元数据"})
+    tarball_url: str = field(default="", metadata={"description": "源码 tarball URL"})
+    zipball_url: str = field(default="", metadata={"description": "源码 zipball URL"})
+    raw_data: Optional[Dict[str, Any]] = field(default_factory=dict,
+                                               metadata={"description": "GitHub API 原始摘要信息"})
 
 
 @dataclass

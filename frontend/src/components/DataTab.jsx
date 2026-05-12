@@ -1,14 +1,14 @@
-import React, { useState, useEffect } from 'react';
-import { Database, RefreshCw, CheckCircle, Zap, Search, Plus, Trash2, CheckSquare, FileText, Link as LinkIcon, Calendar, Box, ExternalLink, Edit2, Save, X, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { RefreshCw, CheckCircle, Zap, Search, Plus, Trash2 } from 'lucide-react';
 import DateRangePicker from './DateRangePicker';
 import ArticleDetailModal from './ArticleDetailModal';
 import ManualAddModal from './ManualAddModal';
 import {
   fetchArticles as apiFetchArticles,
-  deleteArticle,
   batchDeleteArticles,
   vectorizeArticle,
   batchVectorizeArticles,
+  vectorizeAllPending,
   updateArticle,
   createArticle,
 } from '../api';
@@ -20,6 +20,7 @@ export default function DataTab({ availableFetchers, showToast }) {
   const [selectedArticles, setSelectedArticles] = useState(new Set());
   const [modalState, setModalState] = useState({ isOpen: false, data: null, isEditing: false });
   const [manualAddModal, setManualAddModal] = useState(false);
+  const [vectorizingAll, setVectorizingAll] = useState(false);
 
   const [filters, setFilters] = useState({
     content_type: '',
@@ -89,13 +90,14 @@ export default function DataTab({ availableFetchers, showToast }) {
     } catch (e) { showToast(e.message || '网络异常', 'error'); }
   };
 
-  const handleDeleteArticle = async (id) => {
-    if (!window.confirm('确定要彻底删除这条数据吗？')) return;
+  const handleVectorizeAllPending = async () => {
+    setVectorizingAll(true);
     try {
-      await deleteArticle(id);
-      showToast('删除成功', 'success');
+      const data = await vectorizeAllPending();
+      showToast(`已向量化 ${data.count}/${data.total_pending} 篇待处理文章`, 'success');
       loadArticles();
     } catch (e) { showToast(e.message || '网络异常', 'error'); }
+    setVectorizingAll(false);
   };
 
   const handleVectorize = async (id) => {
@@ -157,6 +159,11 @@ export default function DataTab({ availableFetchers, showToast }) {
                 <Trash2 className="w-4 h-4 mr-1.5" /> 彻底删除 ({selectedArticles.size})
               </button>
             </div>
+          )}
+          {selectedArticles.size === 0 && (
+            <button onClick={handleVectorizeAllPending} disabled={vectorizingAll} className="text-sm text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 shadow-sm px-4 py-2 rounded-lg transition-all flex items-center font-bold">
+              {vectorizingAll ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <Zap className="w-4 h-4 mr-1.5 text-amber-500" />} 全量向量化
+            </button>
           )}
           <button onClick={() => setManualAddModal(true)} className="text-sm text-white bg-blue-600 hover:bg-blue-700 shadow-md px-4 py-2 rounded-lg transition-all flex items-center font-bold">
             <Plus className="w-4 h-4 mr-1.5" /> 手工录入
