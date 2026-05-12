@@ -138,6 +138,15 @@ Sampled from AIHot public pages on 2026-05-12. These are planning candidates, no
 3. Add richer GitHub API fetchers for repos/trending/issues when needed.
 4. Improve WeChat credential handling and account-name verification after more real-run data is available.
 
+## Open Verification Items
+
+| Item | Status | Owner Notes |
+| --- | --- | --- |
+| WeChat real-run validation for the 6 newly added accounts | Pending | `wechat_ai_tech_review`, `wechat_infoq_ai`, `wechat_zhidx`, `wechat_founder_park`, `wechat_silicon_star`, and `wechat_xixiaoyao` are registered and compile successfully, but have not been verified against the WeChat MP backend. A real run requires valid `src/.wechat_auth/wechat_config.json` credentials or a fresh QR login. Verify exact account-name matching, fakeid resolution, rate limiting behavior, and article body extraction before marking these sources production-ready. |
+| Existing WeChat credential workflow hardening | Pending | Current flow can trigger QR login and depends on local/enterprise notification pieces. Before unattended scheduling, confirm credential refresh behavior, failure classification, and safe concurrency in the deployment environment. |
+| Official webpage full-text extraction | Pending | `BaseWebPageListFetcher` currently stores list-page summary/context and article links. Full article body extraction is a later data-quality task. |
+| X/Twitter ingestion strategy | Pending decision | Do not implement X/Twitter fetchers until `docs/x_twitter_ingestion_decision.md` is reviewed and one option is selected. |
+
 ## X/Twitter Decision Options
 
 | Option | Pros | Cons |

@@ -30,9 +30,11 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - [x] Add a second batch of verified built-in RSS/Atom source fetchers.
 - [x] Add official website/blog/news page fetcher foundation.
 - [x] Add first built-in webpage sources for official AI company news.
+- [x] Draft X/Twitter ingestion decision note.
 - [ ] Decide X/Twitter ingestion strategy before implementation.
 - [ ] Add first built-in X/Twitter source fetchers after strategy decision.
 - [x] Expand built-in WeChat account fetchers.
+- [ ] Validate newly added WeChat fetchers with real WeChat MP credentials.
 - [ ] Add more official AI company sources.
 - [ ] Add more model/product update sources.
 - [x] Add initial paper sources.
@@ -72,6 +74,7 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - [ ] Add Dify pull APIs with time/source/status filters.
 - [ ] Track Dify sync status per article.
 - [ ] Add batch JSON/Markdown export.
+- [ ] Add social post webhook/import bridge if selected for X/Twitter ingestion.
 - [ ] Enhance webhook payloads to include new content batches.
 - [ ] Add standard time-window slices.
 - [ ] Make downstream sync idempotent.
@@ -92,6 +95,7 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - 2026-05-11: Restore the original fetcher-registry-first product direction. Built-in fetchers should be the primary user workflow; user-defined source configuration remains an advanced/parallel capability and should not dominate the main UI.
 - 2026-05-12: Avoid treating RSS/Atom as the architecture center. RSS is one source family; the main source-expansion direction is a multi-type built-in fetcher catalog covering official web pages, WeChat, X/Twitter, GitHub, papers, and community/news sources.
 - 2026-05-12: X/Twitter ingestion requires an explicit strategy decision before implementation because official API access, browser/session scraping, third-party mirrors, and webhook/import bridges have different reliability, cost, and account-risk tradeoffs.
+- 2026-05-12: Newly added WeChat account subclasses are registry-validated only; they are not considered production-verified until a real run with valid WeChat MP credentials confirms account-name matching, fakeid resolution, rate-limit behavior, and body extraction.
 
 ## Progress Log
 
@@ -123,3 +127,4 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - 2026-05-12: Added `WebPageArticleContent`, `BaseWebPageListFetcher`, and first built-in official webpage sources: Anthropic News, Claude Blog, Runway News, and Mistral AI News. These capture list-page metadata and article links as `web_article` entries; full article extraction remains a later archive data-quality task.
 - 2026-05-12: Seeded the original project worktree database at `/Users/zhuliuzi/PycharmProjects/DoramiSourceArchive/data/cms_data.db` with 70 sample articles for parallel RAG development: 54 `rss_article` records and 16 `web_article` records across OpenAI, Hugging Face, Google AI, Google DeepMind, Microsoft AI, NVIDIA, arXiv, Hacker News, Dify/vLLM/Ollama releases, Anthropic News, Claude Blog, Runway News, and Mistral AI News.
 - 2026-05-12: Expanded built-in WeChat fetcher subclasses from 3 to 9 accounts by adding AI科技评论、AI前线、智东西、Founder Park、硅星人、夕小瑶科技说. These appear in the dynamic registry but real runs still require valid WeChat MP credentials.
+- 2026-05-12: Added `docs/x_twitter_ingestion_decision.md` and a clear open verification section in `docs/source_catalog.md`. The recommended X/Twitter near-term path is a webhook/import bridge, with official X API as a later option if credentials and costs are acceptable.
