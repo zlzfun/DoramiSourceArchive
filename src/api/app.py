@@ -3,28 +3,49 @@
 import os
 import json
 import datetime
-from fastapi import FastAPI, HTTPException, Body, Response
+from fastapi import FastAPI, HTTPException, Body, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field as PydanticField
 from typing import Optional, List, Dict, Any
 from sqlmodel import Session, select
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.base import STATE_STOPPED
 from apscheduler.triggers.cron import CronTrigger
 
 from storage.impl.db_storage import DatabaseStorage
 from storage.impl.vector_storage import ChromaVectorStorage
 from pipeline.core import DataPipeline
-from models.db import ArticleRecord, FetchTaskRecord, FetchRunRecord, SourceConfigRecord, SourceStateRecord
+from models.db import ArticleRecord, FetchTaskRecord, FetchRunRecord, SourceConfigRecord, SourceStateRecord, AppSettingRecord
 from models.content import BaseContent, SocialPostContent
 
 # 引入动态抓取器注册中心
 from fetchers.registry import fetcher_registry
+
+from starlette.responses import JSONResponse as StarletteJSONResponse
+from mcp_server import build_mcp_app
 
 
 class GenericContent(BaseContent):
     # 拆分为结构类型与来源通道
     content_type = "restored_from_db"
     source_id = "database_restore"
+
+
+_mcp_enabled: bool = True
+
+
+class MCPGateApp:
+    def __init__(self, asgi_app):
+        self._app = asgi_app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket") and not _mcp_enabled:
+            response = StarletteJSONResponse(
+                {"detail": "MCP server is disabled"}, status_code=503
+            )
+            await response(scope, receive, send)
+            return
+        await self._app(scope, receive, send)
 
 
 app = FastAPI(title="Dorami 数据归档中枢 API")
@@ -42,6 +63,11 @@ base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 db_sink = DatabaseStorage(db_url=f"sqlite:///{os.path.join(base_path, 'data', 'cms_data.db')}")
 vector_sink = ChromaVectorStorage(db_path=os.path.join(base_path, "data", "chroma_db"))
 pipeline = DataPipeline(storages=[db_sink])
+
+_mcp_server = build_mcp_app(db_sink, vector_sink)
+_mcp_asgi = _mcp_server.streamable_http_app()
+
+app.mount("/mcp", MCPGateApp(_mcp_asgi))
 
 scheduler = AsyncIOScheduler()
 
@@ -223,10 +249,24 @@ def load_tasks_to_scheduler():
 
 
 @app.on_event("startup")
+async def _init_mcp_state():
+    global _mcp_enabled
+    with Session(db_sink.engine) as session:
+        rec = session.get(AppSettingRecord, "mcp_enabled")
+        if rec is None:
+            session.add(AppSettingRecord(key="mcp_enabled", value="true"))
+            session.commit()
+            _mcp_enabled = True
+        else:
+            _mcp_enabled = rec.value.lower() == "true"
+
+
+@app.on_event("startup")
 async def startup_event():
     load_tasks_to_scheduler()
-    scheduler.start()
-    print("⏰ APScheduler 定时调度引擎已启动！")
+    if scheduler.state == STATE_STOPPED:
+        scheduler.start()
+        print("⏰ APScheduler 定时调度引擎已启动！")
 
 
 # ==================== 1. 数据台账与 CRUD ====================
@@ -1424,3 +1464,45 @@ def get_fetch_run(run_id: int):
         if not run:
             raise HTTPException(status_code=404, detail="抓取运行记录不存在")
         return run
+
+
+# ==================== MCP Server Management ====================
+
+_MCP_TOOLS_MANIFEST = [
+    {"name": "search_articles",
+     "description": "语义向量搜索文章，支持中英文，可按日期/来源/类型过滤"},
+    {"name": "browse_articles",
+     "description": "按条件过滤浏览文章列表（来源、类型、日期区间），适合日报生成"},
+    {"name": "get_article",
+     "description": "按 ID 获取单篇文章完整内容（含正文）"},
+    {"name": "list_sources",
+     "description": "列出所有已知数据来源，获取可用的 source_id 和 content_type"},
+    {"name": "get_rag_context",
+     "description": "语义检索后组装格式化 RAG 上下文字符串，可直接拼入 LLM Prompt"},
+]
+
+
+@app.get("/api/mcp/status")
+def get_mcp_status(request: Request):
+    base = str(request.base_url).rstrip("/")
+    return {
+        "enabled": _mcp_enabled,
+        "url": f"{base}/mcp",
+        "tools": _MCP_TOOLS_MANIFEST,
+    }
+
+
+@app.post("/api/mcp/toggle")
+def toggle_mcp():
+    global _mcp_enabled
+    _mcp_enabled = not _mcp_enabled
+    with Session(db_sink.engine) as session:
+        rec = session.get(AppSettingRecord, "mcp_enabled")
+        if rec is None:
+            rec = AppSettingRecord(key="mcp_enabled", value=str(_mcp_enabled).lower())
+            session.add(rec)
+        else:
+            rec.value = str(_mcp_enabled).lower()
+            session.add(rec)
+        session.commit()
+    return {"enabled": _mcp_enabled}
