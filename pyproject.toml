@@ -23,3 +23,8 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
