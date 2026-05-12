@@ -1,13 +1,7 @@
-<<<<<<< HEAD
 import { useState, useEffect } from 'react';
-import { Database, Search, RefreshCw } from 'lucide-react';
-import { fetchVectorStats, vectorSearch } from '../api';
-=======
-import React, { useState, useEffect } from 'react';
 import { Database, Search, RefreshCw, Copy, Check, ExternalLink, RotateCcw, Zap } from 'lucide-react';
 import { fetchVectorStats, vectorSearch, ragContext, reindexAll, vectorizeAllPending } from '../api';
 import DateRangePicker from './DateRangePicker';
->>>>>>> feature/rag-improvement
 
 export default function VectorTab({ availableFetchers, showToast }) {
   const [vectorStats, setVectorStats] = useState({ total: 0 });
