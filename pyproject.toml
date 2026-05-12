@@ -2,7 +2,7 @@
 name = "doramisourcearchive"
 version = "0.1.0"
 description = "Add your description here"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "apscheduler>=3.10.4",
     "beautifulsoup4>=4.12.0",
@@ -11,6 +11,7 @@ dependencies = [
     "feedparser>=6.0.10",
     "httpx>=0.25.0",
     "lxml>=4.9.0",
+    "mcp>=1.0.0",
     "playwright>=1.35.0",
     "pydantic>=2.0.0",
     "sentence-transformers>=2.2.2",
