@@ -4,6 +4,7 @@ import { triggerFetch, fetchTasks as apiFetchTasks, createTask, deleteTask, fetc
 
 const CATEGORY_LABELS = {
   official: '官方动态',
+  official_web: '官网网页',
   framework: '框架生态',
   paper: '论文源',
   developer_platform: '开发平台',
@@ -17,6 +18,7 @@ const CATEGORY_LABELS = {
 
 const CATEGORY_ORDER = [
   'official',
+  'official_web',
   'framework',
   'paper',
   'product_update',

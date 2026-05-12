@@ -161,6 +161,19 @@ class RssArticleContent(BaseContent):
 
 
 @dataclass
+class WebPageArticleContent(BaseContent):
+    """官网/博客/新闻网页列表文章内容类"""
+    content_type: ClassVar[str] = "web_article"
+
+    site_name: str = field(default="", metadata={"description": "站点名称"})
+    source_section: str = field(default="", metadata={"description": "站点栏目或页面来源"})
+    summary: str = field(default="", metadata={"description": "列表页摘要或上下文"})
+    tags: List[str] = field(default_factory=list, metadata={"description": "页面标签与分类"})
+    raw_data: Optional[Dict[str, Any]] = field(default_factory=dict,
+                                               metadata={"description": "原始列表页解析信息"})
+
+
+@dataclass
 class WechatArticleContent(BaseContent):
     """微信公众号文章内容类"""
     content_type: ClassVar[str] = "wechat_article"

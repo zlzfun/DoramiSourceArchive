@@ -16,7 +16,7 @@ It exists to keep development aligned with the product direction: a broad, built
 | Source Type | Current Status | Existing/Future Base | Notes |
 | --- | --- | --- | --- |
 | RSS/Atom feeds | Implemented | `GenericRssFetcher`, `PresetRssFetcher` | Useful for stable blogs, release feeds, papers, community/news feeds. Should not dominate future expansion. |
-| Official website/blog/news pages | Planned next | `BaseWebPageListFetcher` or source-specific subclasses | Needed for sources without stable RSS, such as Claude/Anthropic pages and Runway News. |
+| Official website/blog/news pages | Partially implemented | `BaseWebPageListFetcher` | Needed for sources without stable RSS, such as Claude/Anthropic pages and Runway News. Current implementation captures list-page metadata and links; full-text extraction is a later data-quality task. |
 | X/Twitter public posts | Design pending | TBD | AIHot relies heavily on X accounts. Requires a decision: official API, browser scraping, third-party mirror, or webhook/import bridge. |
 | WeChat official accounts | Partially implemented | `BaseWechatGzhFetcher` | Existing concrete fetchers cover 机器之心、量子位、新智元. Expand via built-in subclasses. |
 | GitHub releases/repos | Partially implemented through Atom | `PresetRssFetcher` for releases; future GitHub API fetcher for richer repo data | Release feeds work today. GitHub API/trending/stars/issues can be a later non-RSS fetcher family. |
@@ -68,6 +68,15 @@ It exists to keep development aligned with the product direction: a broad, built
 | --- | --- | --- | --- |
 | `webhook_dify_workflow` | Dify 自动化日报编排 | workflow | Outbound workflow trigger, not an inbound content source. |
 
+### Official Website / Blog / News Pages
+
+| Source ID | Name | Category | Notes |
+| --- | --- | --- | --- |
+| `web_anthropic_news` | Anthropic News | official_web | Built on `BaseWebPageListFetcher`; captures Anthropic News list-page metadata and article links. |
+| `web_claude_blog` | Claude Blog | official_web | Built on `BaseWebPageListFetcher`; captures Claude Blog list-page metadata and article links. |
+| `web_runway_news` | Runway News | official_web | Built on `BaseWebPageListFetcher`; captures Runway News/Research list-page metadata and article links. |
+| `web_mistral_news` | Mistral AI News | official_web | Built on `BaseWebPageListFetcher`; captures Mistral News list-page metadata and article links. |
+
 ## Candidate Sources Inspired By AIHot
 
 Sampled from AIHot public pages on 2026-05-12. These are planning candidates, not all confirmed source endpoints.
@@ -89,9 +98,9 @@ Sampled from AIHot public pages on 2026-05-12. These are planning candidates, no
 
 | Candidate | Priority | Rationale | Implementation Status |
 | --- | --- | --- | --- |
-| Claude / Anthropic Blog and News | High | AIHot includes Claude Blog webpage items; previous RSS candidates were not stable. | Planned webpage fetcher. |
-| Runway News | High | AIHot includes Runway News webpage items. | Planned webpage fetcher. |
-| Mistral News / Blog | High | Important model/product source; RSS candidate failed validation. | Planned webpage fetcher. |
+| Claude / Anthropic Blog and News | High | AIHot includes Claude Blog webpage items; previous RSS candidates were not stable. | Initial webpage fetchers implemented. |
+| Runway News | High | AIHot includes Runway News webpage items. | Initial webpage fetcher implemented. |
+| Mistral News / Blog | High | Important model/product source; RSS candidate failed validation. | Initial webpage fetcher implemented. |
 | OpenAI News pages excluding customer stories | High | RSS exists, but source-specific filtering may require webpage logic. | RSS implemented; webpage refinement pending. |
 | Simon Willison blog | Medium | High-signal technical posts, sometimes not AI-only. | Candidate website/RSS evaluation pending. |
 | Tomer Tunguz blog | Medium | VC/market analysis relevant to AI infrastructure. | Candidate website/RSS evaluation pending. |
@@ -118,10 +127,10 @@ Sampled from AIHot public pages on 2026-05-12. These are planning candidates, no
 
 ## Immediate Next Development Slice
 
-1. Implement official website/blog/news fetcher foundation.
-2. Add first concrete webpage sources, starting with Claude/Anthropic and Runway if stable selectors can be verified.
-3. Expand WeChat concrete subclasses in a separate small commit.
-4. Prepare an X/Twitter fetcher decision note before implementation.
+1. Improve website/blog/news fetchers with optional article-detail full-text extraction.
+2. Expand WeChat concrete subclasses in a separate small commit.
+3. Prepare an X/Twitter fetcher decision note before implementation.
+4. Add richer GitHub API fetchers for repos/trending/issues when needed.
 
 ## X/Twitter Decision Options
 

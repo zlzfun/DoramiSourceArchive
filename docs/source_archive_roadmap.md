@@ -28,8 +28,8 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - [x] Add a generic RSS/Atom fetcher.
 - [x] Add a first batch of built-in RSS/Atom source fetchers.
 - [x] Add a second batch of verified built-in RSS/Atom source fetchers.
-- [ ] Add official website/blog/news page fetcher foundation.
-- [ ] Add first built-in webpage sources for official AI company news.
+- [x] Add official website/blog/news page fetcher foundation.
+- [x] Add first built-in webpage sources for official AI company news.
 - [ ] Decide X/Twitter ingestion strategy before implementation.
 - [ ] Add first built-in X/Twitter source fetchers after strategy decision.
 - [ ] Expand built-in WeChat account fetchers.
@@ -120,3 +120,4 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - 2026-05-11: Added `/api/source-health`, deriving per-fetcher health from `FetchRunRecord` without a new table, and surfaced health badges, latest run time, latest saved count, and consecutive failures on the `节点与调度` cards.
 - 2026-05-12: Added `SourceStateRecord` for persistent per-source health and conservative incremental cursors. Fetch execution now marks a source running at start, updates healthy/failing state at completion, records latest content ID/date as cursor metadata, tracks success/failure counters, and exposes `/api/source-states` for handoff/debugging. Cursor recording is intentionally passive for now and does not skip older feed entries yet.
 - 2026-05-12: Added `docs/source_catalog.md` as the persistent multi-type source coverage matrix. It records implemented sources, AIHot-inspired candidates, immediate next slices, and the pending X/Twitter ingestion decision so future work does not drift back into RSS-only expansion.
+- 2026-05-12: Added `WebPageArticleContent`, `BaseWebPageListFetcher`, and first built-in official webpage sources: Anthropic News, Claude Blog, Runway News, and Mistral AI News. These capture list-page metadata and article links as `web_article` entries; full article extraction remains a later archive data-quality task.
