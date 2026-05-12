@@ -73,9 +73,9 @@ The current goal is to keep fetch execution visible and auditable while expandin
 
 ### Epic 5: Dify Delivery
 
-- [ ] Add Dify pull APIs with time/source/status filters.
+- [x] Add Dify pull APIs with time/source/status filters.
 - [ ] Track Dify sync status per article.
-- [ ] Add batch JSON/Markdown export.
+- [x] Add batch JSON/Markdown export.
 - [x] Add social post webhook/import bridge for safe X/Twitter-adjacent ingestion.
 - [ ] Enhance webhook payloads to include new content batches.
 - [ ] Add standard time-window slices.
@@ -136,3 +136,4 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - 2026-05-12: Added two more verified official webpage sources: `web_stability_news` and `web_elevenlabs_blog`. Candidate checks found that Cohere's static list page does not expose direct article links yet, while Perplexity Blog and xAI News returned 403 to the current HTTP client, so those remain documented candidates rather than built-in nodes.
 - 2026-05-12: Added per-source webpage defaults for detail extraction. `web_stability_news` now defaults `fetch_detail=true` with a lower default limit because its list page requires detail pages for usable titles and content.
 - 2026-05-12: Added `GitHubReleaseContent`, a generic GitHub Releases API fetcher, and 12 built-in API-backed release sources covering Dify, vLLM, Ollama, LangChain, Transformers, PyTorch, llama.cpp, LiteLLM, Open WebUI, ComfyUI, OpenAI Agents SDK, and Claude Code. Verified registry discovery, offline serialization, and live API fetches for Claude Code, OpenAI Agents SDK, and LiteLLM.
+- 2026-05-12: Added Dify delivery endpoints: `GET /api/dify/articles` for JSON pulls and `GET /api/dify/articles.md` for Markdown batch export. Both support source/content/date/search filters, default to content-bearing records, and are documented in `docs/dify_delivery.md`. Verified with FastAPI `TestClient`.

@@ -3,7 +3,7 @@
 import os
 import json
 import datetime
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field as PydanticField
 from typing import Optional, List, Dict, Any
@@ -53,6 +53,104 @@ def _now_iso() -> str:
 
 def _json_dumps(data: Any) -> str:
     return json.dumps(data or {}, ensure_ascii=False)
+
+
+def _json_loads(raw_value: Optional[str], default: Any = None) -> Any:
+    if not raw_value:
+        return default if default is not None else {}
+    try:
+        return json.loads(raw_value)
+    except (TypeError, json.JSONDecodeError):
+        return default if default is not None else {}
+
+
+def _split_csv(raw_value: Optional[str]) -> List[str]:
+    if not raw_value:
+        return []
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+
+def _date_end_value(raw_value: str) -> str:
+    return raw_value if "T" in raw_value else f"{raw_value}T23:59:59"
+
+
+def apply_article_query_filters(
+        query,
+        content_type: Optional[str] = None,
+        content_types: Optional[str] = None,
+        source_id: Optional[str] = None,
+        source_ids: Optional[str] = None,
+        is_vectorized: Optional[bool] = None,
+        has_content: Optional[bool] = None,
+        search: Optional[str] = None,
+        publish_date_start: Optional[str] = None,
+        publish_date_end: Optional[str] = None,
+        fetched_date_start: Optional[str] = None,
+        fetched_date_end: Optional[str] = None,
+):
+    if content_type:
+        query = query.where(ArticleRecord.content_type == content_type)
+    content_type_list = _split_csv(content_types)
+    if content_type_list:
+        query = query.where(ArticleRecord.content_type.in_(content_type_list))
+
+    if source_id:
+        query = query.where(ArticleRecord.source_id == source_id)
+    source_id_list = _split_csv(source_ids)
+    if source_id_list:
+        query = query.where(ArticleRecord.source_id.in_(source_id_list))
+
+    if is_vectorized is not None:
+        query = query.where(ArticleRecord.is_vectorized == is_vectorized)
+    if has_content is not None:
+        query = query.where(ArticleRecord.has_content == has_content)
+    if search:
+        query = query.where(ArticleRecord.title.contains(search))
+
+    if publish_date_start:
+        query = query.where(ArticleRecord.publish_date >= publish_date_start)
+    if publish_date_end:
+        query = query.where(ArticleRecord.publish_date <= _date_end_value(publish_date_end))
+
+    if fetched_date_start:
+        query = query.where(ArticleRecord.fetched_date >= fetched_date_start)
+    if fetched_date_end:
+        query = query.where(ArticleRecord.fetched_date <= _date_end_value(fetched_date_end))
+
+    return query
+
+
+def serialize_dify_article(record: ArticleRecord, include_content: bool = True) -> Dict[str, Any]:
+    extensions = _json_loads(record.extensions_json, {})
+    metadata = {
+        "id": record.id,
+        "title": record.title,
+        "source_url": record.source_url,
+        "source_id": record.source_id,
+        "content_type": record.content_type,
+        "publish_date": record.publish_date,
+        "fetched_date": record.fetched_date,
+        "has_content": record.has_content,
+        "is_vectorized": record.is_vectorized,
+        "extensions": extensions,
+    }
+
+    item = {
+        "id": record.id,
+        "title": record.title,
+        "url": record.source_url,
+        "metadata": metadata,
+    }
+    if include_content:
+        item["content"] = record.content or ""
+    return item
+
+
+def article_to_markdown(record: ArticleRecord) -> str:
+    metadata = serialize_dify_article(record, include_content=False)["metadata"]
+    frontmatter = json.dumps(metadata, ensure_ascii=False, indent=2)
+    content = record.content or ""
+    return f"---\n{frontmatter}\n---\n\n# {record.title}\n\n{content}".strip()
 
 
 def create_fetch_run(fetcher_id: str, params: dict, trigger_type: str, task_id: Optional[int] = None) -> int:
@@ -718,26 +816,102 @@ def get_articles(
 ):
     with Session(db_sink.engine) as session:
         query = select(ArticleRecord)
-        if content_type: query = query.where(ArticleRecord.content_type == content_type)
-        if source_id: query = query.where(ArticleRecord.source_id == source_id)
-        if is_vectorized is not None: query = query.where(ArticleRecord.is_vectorized == is_vectorized)
-        if search: query = query.where(ArticleRecord.title.contains(search))
-
-        # ✨ 日期区间过滤 (巧妙附加 23:59:59 将结束日的最后一秒包揽进来)
-        if publish_date_start:
-            query = query.where(ArticleRecord.publish_date >= publish_date_start)
-        if publish_date_end:
-            end_time = publish_date_end if "T" in publish_date_end else f"{publish_date_end}T23:59:59"
-            query = query.where(ArticleRecord.publish_date <= end_time)
-
-        if fetched_date_start:
-            query = query.where(ArticleRecord.fetched_date >= fetched_date_start)
-        if fetched_date_end:
-            end_time = fetched_date_end if "T" in fetched_date_end else f"{fetched_date_end}T23:59:59"
-            query = query.where(ArticleRecord.fetched_date <= end_time)
-
+        query = apply_article_query_filters(
+            query,
+            content_type=content_type,
+            source_id=source_id,
+            is_vectorized=is_vectorized,
+            search=search,
+            publish_date_start=publish_date_start,
+            publish_date_end=publish_date_end,
+            fetched_date_start=fetched_date_start,
+            fetched_date_end=fetched_date_end,
+        )
         query = query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(limit)
         return session.exec(query).all()
+
+
+@app.get("/api/dify/articles")
+def get_dify_articles(
+        content_type: Optional[str] = None,
+        content_types: Optional[str] = None,
+        source_id: Optional[str] = None,
+        source_ids: Optional[str] = None,
+        publish_date_start: Optional[str] = None,
+        publish_date_end: Optional[str] = None,
+        fetched_date_start: Optional[str] = None,
+        fetched_date_end: Optional[str] = None,
+        search: Optional[str] = None,
+        has_content: Optional[bool] = True,
+        include_content: bool = True,
+        skip: int = 0,
+        limit: int = 100
+):
+    safe_limit = min(max(limit, 1), 500)
+    with Session(db_sink.engine) as session:
+        query = apply_article_query_filters(
+            select(ArticleRecord),
+            content_type=content_type,
+            content_types=content_types,
+            source_id=source_id,
+            source_ids=source_ids,
+            has_content=has_content,
+            search=search,
+            publish_date_start=publish_date_start,
+            publish_date_end=publish_date_end,
+            fetched_date_start=fetched_date_start,
+            fetched_date_end=fetched_date_end,
+        )
+        records = session.exec(
+            query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
+        ).all()
+
+    return {
+        "status": "success",
+        "count": len(records),
+        "skip": skip,
+        "limit": safe_limit,
+        "next_skip": skip + len(records) if len(records) == safe_limit else None,
+        "items": [serialize_dify_article(record, include_content=include_content) for record in records],
+    }
+
+
+@app.get("/api/dify/articles.md")
+def export_dify_articles_markdown(
+        content_type: Optional[str] = None,
+        content_types: Optional[str] = None,
+        source_id: Optional[str] = None,
+        source_ids: Optional[str] = None,
+        publish_date_start: Optional[str] = None,
+        publish_date_end: Optional[str] = None,
+        fetched_date_start: Optional[str] = None,
+        fetched_date_end: Optional[str] = None,
+        search: Optional[str] = None,
+        has_content: Optional[bool] = True,
+        skip: int = 0,
+        limit: int = 100
+):
+    safe_limit = min(max(limit, 1), 200)
+    with Session(db_sink.engine) as session:
+        query = apply_article_query_filters(
+            select(ArticleRecord),
+            content_type=content_type,
+            content_types=content_types,
+            source_id=source_id,
+            source_ids=source_ids,
+            has_content=has_content,
+            search=search,
+            publish_date_start=publish_date_start,
+            publish_date_end=publish_date_end,
+            fetched_date_start=fetched_date_start,
+            fetched_date_end=fetched_date_end,
+        )
+        records = session.exec(
+            query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
+        ).all()
+
+    markdown = "\n\n---\n\n".join(article_to_markdown(record) for record in records)
+    return Response(content=markdown, media_type="text/markdown; charset=utf-8")
 
 
 @app.post("/api/articles")
