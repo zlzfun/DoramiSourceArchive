@@ -197,12 +197,40 @@ export async function fetchVectorStats() {
   return res.json();
 }
 
-export async function vectorSearch(query, topK = 5) {
+export async function vectorSearch(query, topK = 5, options = {}) {
   const res = await fetch(`${API_BASE_URL}/vector/search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, top_k: topK }),
+    body: JSON.stringify({ query, top_k: topK, ...options }),
   });
   if (!res.ok) await handleApiError(res, '检索失败');
+  return res.json();
+}
+
+export async function ragContext(query, topK = 5, options = {}) {
+  const res = await fetch(`${API_BASE_URL}/rag/context`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, top_k: topK, ...options }),
+  });
+  if (!res.ok) await handleApiError(res, 'RAG 上下文检索失败');
+  return res.json();
+}
+
+export async function ragSimilar(articleId, topK = 5) {
+  const res = await fetch(`${API_BASE_URL}/rag/similar/${encodeURIComponent(articleId)}?top_k=${topK}`);
+  if (!res.ok) await handleApiError(res, '相似文章检索失败');
+  return res.json();
+}
+
+export async function vectorizeAllPending() {
+  const res = await fetch(`${API_BASE_URL}/vectorize/all-pending`, { method: 'POST' });
+  if (!res.ok) await handleApiError(res, '全量向量化失败');
+  return res.json();
+}
+
+export async function reindexAll() {
+  const res = await fetch(`${API_BASE_URL}/vector/reindex-all`, { method: 'POST' });
+  if (!res.ok) await handleApiError(res, '全量重索引失败');
   return res.json();
 }

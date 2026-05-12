@@ -1,0 +1,414 @@
+{
+  "version": "v1",
+  "created_at": "2026-05-12",
+  "description": "RAG 系统评估测试集 v1。基于数据库中 70 篇文章设计（来自 16 个英文来源，时间跨度 2022-2026）。覆盖 6 类检索场景，重点测试中文问句检索英文文档的跨语言能力，以及元数据感知能力。",
+  "data_snapshot": {
+    "total_articles": 70,
+    "sources": 16,
+    "date_range": "2022-07-21 ~ 2026-05-12",
+    "articles_with_content": 56,
+    "articles_content_empty": 14
+  },
+  "categories": {
+    "A": "按来源/组织检索 — 查询特定公司/机构的内容",
+    "B": "按产品/工具检索 — 查询特定软件产品的更新",
+    "C": "技术话题语义检索 — 通过语义描述命中英文技术内容",
+    "D": "元数据/无正文检索 — 正文为空时依赖标题与来源信息检索",
+    "E": "时效性查询 — 含日期/近期限定词的检索",
+    "F": "跨语言深层语义 — 中文专业术语匹配英文学术/技术摘要"
+  },
+  "improvement_tags": {
+    "T1": "换用多语言 embedding 模型（bge-m3）",
+    "T2": "元数据头部嵌入每个 chunk（来源/日期/标题）",
+    "T6": "空正文内容回退（标题+头部建立索引）"
+  },
+  "cases": [
+    {
+      "id": "TC-A01",
+      "category": "A",
+      "query": "Anthropic最近有哪些新公告？",
+      "top_k": 5,
+      "primary_relevant_ids": [
+        "web_anthropic_news_cb85d5cc4e125d63",
+        "web_anthropic_news_29276d540e65a684",
+        "web_anthropic_news_8ffed2502175348b"
+      ],
+      "secondary_relevant_ids": [
+        "web_anthropic_news_afabafae073055fd",
+        "web_anthropic_news_26de9866b27d78a4"
+      ],
+      "difficulty": "medium",
+      "requires": ["T1", "T2", "T6"],
+      "notes": "三条 primary 均为 web_anthropic_news，其中两条无正文内容（需 T6），日期信息在标题中（需 T2）"
+    },
+    {
+      "id": "TC-A02",
+      "category": "A",
+      "query": "Claude产品的最新功能更新",
+      "top_k": 5,
+      "primary_relevant_ids": [
+        "web_claude_blog_2830aa4bc246cbc9",
+        "web_claude_blog_881c22f723feda10",
+        "web_claude_blog_95659f73008c6395",
+        "web_claude_blog_045952ff4e713b88"
+      ],
+      "secondary_relevant_ids": [
+        "web_anthropic_news_cb85d5cc4e125d63"
+      ],
+      "difficulty": "medium",
+      "requires": ["T1", "T2"],
+      "notes": "web_claude_blog 文章正文极短（11-14字符），几乎依赖标题进行语义匹配"
+    },
+    {
+      "id": "TC-A03",
+      "category": "A",
+      "query": "OpenAI近期发布了哪些内容？",
+      "top_k": 5,
+      "primary_relevant_ids": [
+        "rss_openai_news_68e94ee2f13a7ca6",
+        "rss_openai_news_e13dc335beb06d7d",
+        "rss_openai_news_4ca12da2ae6a65c2"
+      ],
+      "secondary_relevant_ids": [
+        "rss_openai_news_ee5564e4d43f9040",
+        "rss_openai_news_91ec1ce9a5cf0cec"
+      ],
+      "difficulty": "easy",
+      "requires": ["T1"],
+      "notes": "所有 rss_openai_news 文章均有内容，标准来源检索"
+    },
+    {
+      "id": "TC-A04",
+      "category": "A",
+      "query": "Google DeepMind最近有什么进展？",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "rss_google_deepmind_news_049666cfa3c7dd01",
+        "rss_google_deepmind_news_960e6bf14c403204"
+      ],
+      "secondary_relevant_ids": [
+        "rss_google_deepmind_news_b0e1eac9b8fc4192",
+        "rss_google_deepmind_news_15929aafa9b340ad"
+      ],
+      "difficulty": "easy",
+      "requires": ["T1"],
+      "notes": "DeepMind 文章内容较短（80-120字符），部分有一篇无正文"
+    },
+    {
+      "id": "TC-A05",
+      "category": "A",
+      "query": "NVIDIA开发者博客上有哪些技术文章？",
+      "top_k": 5,
+      "primary_relevant_ids": [
+        "rss_nvidia_developer_blog_b11fa9a952d7bcd6",
+        "rss_nvidia_developer_blog_e6eca2897c56f932",
+        "rss_nvidia_developer_blog_579e33919645e94d",
+        "rss_nvidia_developer_blog_28e5808d1ea45e6d",
+        "rss_nvidia_developer_blog_61f1d257bb3a9fab"
+      ],
+      "secondary_relevant_ids": [],
+      "difficulty": "easy",
+      "requires": ["T1"],
+      "notes": "测试来源特异性：top-5 应全部来自 NVIDIA，不混入其他来源"
+    },
+    {
+      "id": "TC-A06",
+      "category": "A",
+      "query": "Mistral AI有什么最新消息？",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "web_mistral_news_637050adece4681f"
+      ],
+      "secondary_relevant_ids": [],
+      "difficulty": "easy",
+      "requires": ["T1"],
+      "notes": "数据库中只有 1 篇 Mistral 文章，应作为 top-1 返回"
+    },
+    {
+      "id": "TC-B01",
+      "category": "B",
+      "query": "Dify最新版本发布了哪些新功能？",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "rss_dify_releases_13d93c706b9f1092",
+        "rss_dify_releases_cc212a5e28154f34"
+      ],
+      "secondary_relevant_ids": [
+        "rss_dify_releases_7b7b09bc5c96a7e2"
+      ],
+      "difficulty": "easy",
+      "requires": ["T1"],
+      "notes": "v1.14.0 内容最丰富（86K字符），应排最前；测试长文档的召回是否正常"
+    },
+    {
+      "id": "TC-B02",
+      "category": "B",
+      "query": "vLLM推理框架有哪些版本更新？",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "rss_vllm_releases_47252dca97207ddb",
+        "rss_vllm_releases_4ba1e9271d57beed"
+      ],
+      "secondary_relevant_ids": [
+        "rss_vllm_releases_e69fff88041ddc9e"
+      ],
+      "difficulty": "easy",
+      "requires": ["T1"],
+      "notes": "v0.20.1 内容较丰富（1784字符），v0.20.2 次之（874字符），rc 版本内容极短"
+    },
+    {
+      "id": "TC-B03",
+      "category": "B",
+      "query": "Ollama本地模型运行工具的最新版本",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "rss_ollama_releases_fc9f557cf6c4f072",
+        "rss_ollama_releases_34af5baabe51eaf1",
+        "rss_ollama_releases_fe930e83a5213f32"
+      ],
+      "secondary_relevant_ids": [],
+      "difficulty": "medium",
+      "requires": ["T1", "T2"],
+      "notes": "Ollama 文章正文只有 16-38 字符（版本变更极简），几乎依赖标题中的产品名"
+    },
+    {
+      "id": "TC-B04",
+      "category": "B",
+      "query": "ChatGPT的企业用户增长和商业化进展",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "rss_openai_news_e13dc335beb06d7d",
+        "rss_openai_news_4ca12da2ae6a65c2"
+      ],
+      "secondary_relevant_ids": [
+        "rss_openai_news_68e94ee2f13a7ca6"
+      ],
+      "difficulty": "medium",
+      "requires": ["T1"],
+      "notes": "需要将'企业用户增长'与'How ChatGPT adoption broadened'和'How enterprises are scaling AI'进行语义匹配"
+    },
+    {
+      "id": "TC-C01",
+      "category": "C",
+      "query": "思维链推理模型存在哪些位置偏差问题？",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "rss_arxiv_cs_ai_2c26dfd2cb8b1c91"
+      ],
+      "secondary_relevant_ids": [],
+      "difficulty": "hard",
+      "requires": ["T1"],
+      "notes": "需要将中文'思维链位置偏差'映射到英文论文标题'Length-Driven Position Bias in Reasoning Models'，跨语言语义匹配"
+    },
+    {
+      "id": "TC-C02",
+      "category": "C",
+      "query": "多智能体系统在图算法求解中的应用研究",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "rss_arxiv_cs_ai_4703fb6a71e7c951"
+      ],
+      "secondary_relevant_ids": [
+        "rss_arxiv_cs_ai_a8bb711f080c57fc"
+      ],
+      "difficulty": "hard",
+      "requires": ["T1"],
+      "notes": "GraphDC 正是多智能体图算法研究；Hidden Coalitions 也是多智能体话题"
+    },
+    {
+      "id": "TC-C03",
+      "category": "C",
+      "query": "大型语言模型的元认知与自我知识监控能力",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "rss_arxiv_cs_cl_9fc1b8490a1d80ff"
+      ],
+      "secondary_relevant_ids": [],
+      "difficulty": "hard",
+      "requires": ["T1"],
+      "notes": "'元认知'对应英文'metacognitive monitoring'，高度依赖跨语言语义对齐"
+    },
+    {
+      "id": "TC-C04",
+      "category": "C",
+      "query": "表达性语音合成与角色扮演的语言模型",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "rss_arxiv_cs_cl_07c1faa7f557c177"
+      ],
+      "secondary_relevant_ids": [],
+      "difficulty": "hard",
+      "requires": ["T1"],
+      "notes": "VITA-QinYu 是表达性语音语言模型，支持角色扮演与歌唱"
+    },
+    {
+      "id": "TC-C05",
+      "category": "C",
+      "query": "AlphaEvolve是什么，它是如何工作的？",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "rss_google_deepmind_news_049666cfa3c7dd01"
+      ],
+      "secondary_relevant_ids": [],
+      "difficulty": "easy",
+      "requires": ["T1"],
+      "notes": "命名实体查询，'AlphaEvolve'直接出现在标题中，语义匹配应较容易"
+    },
+    {
+      "id": "TC-C06",
+      "category": "C",
+      "query": "AI辅助临床医生的医疗健康模型研究",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "rss_google_deepmind_news_960e6bf14c403204"
+      ],
+      "secondary_relevant_ids": [],
+      "difficulty": "medium",
+      "requires": ["T1"],
+      "notes": "'AI co-clinician'和'healthcare'与中文'AI辅助临床医生'的语义匹配"
+    },
+    {
+      "id": "TC-C07",
+      "category": "C",
+      "query": "GPU神经网络模型量化与推理性能优化",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "rss_nvidia_developer_blog_61f1d257bb3a9fab"
+      ],
+      "secondary_relevant_ids": [
+        "rss_nvidia_developer_blog_28e5808d1ea45e6d"
+      ],
+      "difficulty": "hard",
+      "requires": ["T1"],
+      "notes": "需匹配'Post-Training Quantization'和'NVIDIA GB200 NVL Efficiency'，纯语义匹配"
+    },
+    {
+      "id": "TC-C08",
+      "category": "C",
+      "query": "AI Agent的安全风险与防护措施",
+      "top_k": 5,
+      "primary_relevant_ids": [
+        "rss_openai_news_91ec1ce9a5cf0cec",
+        "rss_hn_ai_bd2688c1ebf34222"
+      ],
+      "secondary_relevant_ids": [
+        "web_claude_blog_89e2f7218e30f836"
+      ],
+      "difficulty": "hard",
+      "requires": ["T1"],
+      "notes": "Codex安全运行 + Morse Code Hack花费$200k + Claude安全博客，需覆盖多个来源"
+    },
+    {
+      "id": "TC-D01",
+      "category": "D",
+      "query": "Runway ML最近发布了哪些新产品或功能？",
+      "top_k": 5,
+      "primary_relevant_ids": [
+        "web_runway_news_df444af5c95ad24b",
+        "web_runway_news_3467294157852914",
+        "web_runway_news_840b685a2e0b616f",
+        "web_runway_news_360dfa9d3d1ee006",
+        "web_runway_news_2895eed1a41740ea"
+      ],
+      "secondary_relevant_ids": [],
+      "difficulty": "hard",
+      "requires": ["T1", "T2", "T6"],
+      "notes": "全部5篇 Runway 文章正文为空（c=0，s=0），只能通过标题+来源元数据检索；测试 T6 空内容回退"
+    },
+    {
+      "id": "TC-D02",
+      "category": "D",
+      "query": "HuggingFace博客上的大模型技术文章",
+      "top_k": 5,
+      "primary_relevant_ids": [
+        "rss_huggingface_blog_ce49fe8e0cb4aba7",
+        "rss_huggingface_blog_a40b2ba2d440123f",
+        "rss_huggingface_blog_08c10eedccbd3d4b",
+        "rss_huggingface_blog_351d00366b56e172",
+        "rss_huggingface_blog_6af9b6a7000314f8"
+      ],
+      "secondary_relevant_ids": [],
+      "difficulty": "hard",
+      "requires": ["T1", "T2", "T6"],
+      "notes": "全部5篇 HuggingFace 博客正文为空，仅能依赖标题与来源标签"
+    },
+    {
+      "id": "TC-D03",
+      "category": "D",
+      "query": "Claude Code桌面端与并行Agent的新设计",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "web_claude_blog_045952ff4e713b88"
+      ],
+      "secondary_relevant_ids": [
+        "web_claude_blog_2830aa4bc246cbc9"
+      ],
+      "difficulty": "hard",
+      "requires": ["T1", "T2"],
+      "notes": "web_claude_blog 正文仅14字符（几乎为空），标题'Redesigning Claude Code on desktop for parallel agents'是唯一可用信息"
+    },
+    {
+      "id": "TC-E01",
+      "category": "E",
+      "query": "2026年5月发布的AI新产品有哪些？",
+      "top_k": 5,
+      "primary_relevant_ids": [
+        "web_runway_news_df444af5c95ad24b",
+        "web_runway_news_3467294157852914",
+        "rss_openai_news_68e94ee2f13a7ca6",
+        "rss_google_deepmind_news_049666cfa3c7dd01"
+      ],
+      "secondary_relevant_ids": [
+        "web_anthropic_news_cb85d5cc4e125d63"
+      ],
+      "difficulty": "hard",
+      "requires": ["T1", "T2"],
+      "notes": "测试时效性感知：日期信息'2026-05-xx'必须嵌入 chunk 才能匹配，依赖 T2 的元数据头部"
+    },
+    {
+      "id": "TC-E02",
+      "category": "E",
+      "query": "近期关于Anthropic和Claude有哪些重要更新？",
+      "top_k": 5,
+      "primary_relevant_ids": [
+        "web_anthropic_news_cb85d5cc4e125d63",
+        "web_claude_blog_2830aa4bc246cbc9",
+        "web_anthropic_news_29276d540e65a684"
+      ],
+      "secondary_relevant_ids": [
+        "web_claude_blog_881c22f723feda10",
+        "web_claude_blog_95659f73008c6395",
+        "web_anthropic_news_8ffed2502175348b"
+      ],
+      "difficulty": "medium",
+      "requires": ["T1", "T2"],
+      "notes": "跨两个来源（web_anthropic_news + web_claude_blog）的综合查询，测试是否能覆盖两个 source_id"
+    },
+    {
+      "id": "TC-F01",
+      "category": "F",
+      "query": "机器人抓取中的意图理解与具身智能基准测试",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "rss_arxiv_cs_cl_9dcff366f019489a"
+      ],
+      "secondary_relevant_ids": [],
+      "difficulty": "very_hard",
+      "requires": ["T1"],
+      "notes": "IntentGrasp 是关于抓取意图理解的 benchmark，'具身智能'是领域术语，需强跨语言语义能力"
+    },
+    {
+      "id": "TC-F02",
+      "category": "F",
+      "query": "递归推理系统的状态表示与终止条件研究",
+      "top_k": 3,
+      "primary_relevant_ids": [
+        "rss_arxiv_cs_ai_07df08055ef85b06"
+      ],
+      "secondary_relevant_ids": [],
+      "difficulty": "very_hard",
+      "requires": ["T1"],
+      "notes": "直接对应英文论文标题'State Representation and Termination for Recursive Reasoning Systems'，极难的中文→英文学术语义映射"
+    }
+  ]
+}

@@ -8,6 +8,7 @@ import {
   batchDeleteArticles,
   vectorizeArticle,
   batchVectorizeArticles,
+  vectorizeAllPending,
   updateArticle,
   createArticle,
 } from '../api';
@@ -19,6 +20,7 @@ export default function DataTab({ availableFetchers, showToast }) {
   const [selectedArticles, setSelectedArticles] = useState(new Set());
   const [modalState, setModalState] = useState({ isOpen: false, data: null, isEditing: false });
   const [manualAddModal, setManualAddModal] = useState(false);
+  const [vectorizingAll, setVectorizingAll] = useState(false);
 
   const [filters, setFilters] = useState({
     content_type: '',
@@ -88,6 +90,16 @@ export default function DataTab({ availableFetchers, showToast }) {
     } catch (e) { showToast(e.message || '网络异常', 'error'); }
   };
 
+  const handleVectorizeAllPending = async () => {
+    setVectorizingAll(true);
+    try {
+      const data = await vectorizeAllPending();
+      showToast(`已向量化 ${data.count}/${data.total_pending} 篇待处理文章`, 'success');
+      loadArticles();
+    } catch (e) { showToast(e.message || '网络异常', 'error'); }
+    setVectorizingAll(false);
+  };
+
   const handleVectorize = async (id) => {
     setVectorizingId(id);
     try {
@@ -147,6 +159,11 @@ export default function DataTab({ availableFetchers, showToast }) {
                 <Trash2 className="w-4 h-4 mr-1.5" /> 彻底删除 ({selectedArticles.size})
               </button>
             </div>
+          )}
+          {selectedArticles.size === 0 && (
+            <button onClick={handleVectorizeAllPending} disabled={vectorizingAll} className="text-sm text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 shadow-sm px-4 py-2 rounded-lg transition-all flex items-center font-bold">
+              {vectorizingAll ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <Zap className="w-4 h-4 mr-1.5 text-amber-500" />} 全量向量化
+            </button>
           )}
           <button onClick={() => setManualAddModal(true)} className="text-sm text-white bg-blue-600 hover:bg-blue-700 shadow-md px-4 py-2 rounded-lg transition-all flex items-center font-bold">
             <Plus className="w-4 h-4 mr-1.5" /> 手工录入

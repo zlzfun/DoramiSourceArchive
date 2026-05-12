@@ -1036,25 +1036,44 @@ async def trigger_fetch_dynamic(fetcher_id: str, params: Dict[str, Any] = Body(.
 
 
 # ----------------- 向量化接口 -----------------
+def _record_to_content(record: ArticleRecord) -> GenericContent:
+    """将 ArticleRecord 转换为可向量化的 GenericContent 对象。"""
+    obj = GenericContent(
+        id=record.id, title=record.title, publish_date=record.publish_date,
+        source_url=record.source_url, content=record.content,
+        fetched_date=record.fetched_date, has_content=record.has_content,
+    )
+    obj.content_type = record.content_type
+    obj.source_id = record.source_id
+    return obj
+
+
 @app.post("/api/vectorize/batch")
 async def batch_vectorize_articles(params: BatchOpParams):
     success_count = 0
     for uid in params.ids:
         record = await db_sink.get(uid)
         if not record or record.is_vectorized: continue
-
-        content_obj = GenericContent(
-            id=record.id, title=record.title, publish_date=record.publish_date,
-            source_url=record.source_url, content=record.content, fetched_date=record.fetched_date,
-            has_content=record.has_content
-        )
-        content_obj.content_type = record.content_type
-        content_obj.source_id = record.source_id
-
-        if await vector_sink.save(content_obj):
+        if await vector_sink.save(_record_to_content(record)):
             await db_sink.mark_as_vectorized(uid)
             success_count += 1
     return {"status": "success", "count": success_count}
+
+
+@app.post("/api/vectorize/all-pending")
+async def vectorize_all_pending():
+    """对所有 is_vectorized=False 的文章执行向量化，跳过已索引的条目。"""
+    with Session(db_sink.engine) as session:
+        from sqlmodel import select as sm_select
+        records = session.exec(
+            sm_select(ArticleRecord).where(ArticleRecord.is_vectorized == False)
+        ).all()
+    success_count = 0
+    for record in records:
+        if await vector_sink.save(_record_to_content(record)):
+            await db_sink.mark_as_vectorized(record.id)
+            success_count += 1
+    return {"status": "success", "count": success_count, "total_pending": len(records)}
 
 
 @app.post("/api/vectorize/{article_id:path}")
@@ -1063,14 +1082,7 @@ async def vectorize_article(article_id: str):
     if not record: raise HTTPException(status_code=404, detail="文章不存在")
     if record.is_vectorized: return {"status": "skipped"}
 
-    content_obj = GenericContent(
-        id=record.id, title=record.title, publish_date=record.publish_date,
-        source_url=record.source_url, content=record.content, fetched_date=record.fetched_date,
-        has_content=record.has_content
-    )
-    content_obj.content_type = record.content_type
-    content_obj.source_id = record.source_id
-
+    content_obj = _record_to_content(record)
     success = await vector_sink.save(content_obj)
     if success:
         await db_sink.mark_as_vectorized(article_id)
@@ -1082,8 +1094,12 @@ async def vectorize_article(article_id: str):
 class SearchQuery(BaseModel):
     query: str
     top_k: int = 5
+    score_threshold: float = 1.5   # T4: cosine distance 上限（越小越相关；>1.5 视为不相关）
     content_type: Optional[str] = None
     source_id: Optional[str] = None
+    publish_date_gte: Optional[str] = None   # T5: 发布日期下限，格式 'YYYY-MM-DD'
+    publish_date_lte: Optional[str] = None   # 发布日期上限，格式 'YYYY-MM-DD'
+    rerank: bool = False                     # T12: cross-encoder 重排序
 
 
 @app.post("/api/vector/search")
@@ -1092,30 +1108,40 @@ async def vector_search(query: SearchQuery):
         query.query,
         n_results=query.top_k * 4,
         content_type=query.content_type,
-        source_id=query.source_id
+        source_id=query.source_id,
+        publish_date_gte=query.publish_date_gte,
+        publish_date_lte=query.publish_date_lte,
     )
 
-    unique_results = []
-    seen_parents = set()
-
+    # T3: 按 parent_id 去重，保留相同文章中 distance 最小的 chunk（最相关那条）
+    best_by_parent: Dict[str, Any] = {}
     for res in raw_results:
-        parent_id = res["metadata"].get("parent_id")
+        pid = res["metadata"].get("parent_id", res["id"])
+        if pid not in best_by_parent or res["distance"] < best_by_parent[pid]["distance"]:
+            best_by_parent[pid] = res
 
-        if parent_id not in seen_parents:
-            if parent_id:
-                seen_parents.add(parent_id)
-                record = await db_sink.get(parent_id)
-                if record:
-                    res["metadata"]["title"] = record.title
-                else:
-                    res["metadata"]["title"] = f"未知文章 ({parent_id})"
+    # T4: 过滤低相关性结果（distance 超过阈值则丢弃）
+    candidates = [r for r in best_by_parent.values() if r["distance"] <= query.score_threshold]
 
-            unique_results.append(res)
+    # T12: cross-encoder 重排序（可选）
+    if query.rerank:
+        candidates = vector_sink.rerank(query.query, candidates[:query.top_k * 2])
+    else:
+        candidates.sort(key=lambda x: x["distance"])
 
-        if len(unique_results) >= query.top_k:
-            break
+    unique_results = []
+    for res in candidates[:query.top_k]:
+        pid = res["metadata"].get("parent_id", res["id"])
+        record = await db_sink.get(pid)
+        if record:
+            res["metadata"]["title"] = record.title
+            res["metadata"]["source_url"] = record.source_url
+            res["metadata"]["publish_date"] = record.publish_date
+        else:
+            res["metadata"]["title"] = f"未知文章 ({pid})"
+        unique_results.append(res)
 
-    return {"status": "success", "results": unique_results}
+    return {"status": "success", "results": unique_results, "reranked": query.rerank}
 
 
 @app.get("/api/vector/stats")
@@ -1142,6 +1168,195 @@ async def batch_delete_vectors(params: BatchOpParams):
             await vector_sink.delete(uid)
             await db_sink.mark_as_unvectorized(uid)
     return {"status": "success"}
+
+
+# ==================== 3b. RAG 检索上下文接口（供 Dify 等下游应用调用）====================
+
+class RagContextQuery(BaseModel):
+    query: str
+    top_k: int = 5
+    max_chars: int = 4000           # 上下文文本的最大字符数（控制 LLM token 预算）
+    score_threshold: float = 1.5
+    content_type: Optional[str] = None
+    source_id: Optional[str] = None
+    publish_date_gte: Optional[str] = None
+    publish_date_lte: Optional[str] = None
+    context_separator: str = "\n\n---\n\n"  # 各来源之间的分隔符
+    rerank: bool = False            # T12: cross-encoder 重排序
+    expand_context: bool = False    # T13: 拼接命中 chunk 的前后相邻 chunk 以扩展上下文
+
+
+@app.post("/api/rag/context")
+async def rag_context(query: RagContextQuery):
+    """
+    结构化检索上下文接口。
+    返回组装好的 context_text（可直接注入 Dify/LLM prompt）及结构化 sources 列表。
+    不调用任何 LLM，纯检索层输出。
+    """
+    from storage.impl.vector_storage import SOURCE_FRIENDLY_NAMES
+
+    raw = await vector_sink.search(
+        query.query,
+        n_results=query.top_k * 4,
+        content_type=query.content_type,
+        source_id=query.source_id,
+        publish_date_gte=query.publish_date_gte,
+        publish_date_lte=query.publish_date_lte,
+    )
+
+    # 去重：同文章保留最优 chunk
+    best_by_parent: Dict[str, Any] = {}
+    for r in raw:
+        pid = r["metadata"].get("parent_id", r["id"])
+        if pid not in best_by_parent or r["distance"] < best_by_parent[pid]["distance"]:
+            best_by_parent[pid] = r
+
+    candidates = [r for r in best_by_parent.values() if r["distance"] <= query.score_threshold]
+
+    # T12: cross-encoder 重排序（可选）
+    if query.rerank:
+        candidates = vector_sink.rerank(query.query, candidates[:query.top_k * 2])
+    else:
+        candidates.sort(key=lambda x: x["distance"])
+    candidates = candidates[:query.top_k]
+
+    # 组装结构化来源列表与上下文文本
+    sources = []
+    context_blocks = []
+    total_chars = 0
+
+    for rank, res in enumerate(candidates, start=1):
+        pid = res["metadata"].get("parent_id", res["id"])
+        record = await db_sink.get(pid)
+
+        source_id = res["metadata"].get("source_id", "")
+        source_name = SOURCE_FRIENDLY_NAMES.get(source_id, source_id)
+        pub_date = res["metadata"].get("publish_date", "")
+        title = record.title if record else res["metadata"].get("title", "")
+        source_url = record.source_url if record else ""
+
+        # 摘录：取 chunk 文本，去掉头部（已有结构化字段），只保留正文部分
+        raw_doc = res["document"]
+        body_start = raw_doc.find("\n\n")
+        excerpt = raw_doc[body_start + 2:].strip() if body_start != -1 else raw_doc.strip()
+
+        # T13: 拼接前后相邻 chunk，扩展上下文窗口（可选）
+        if query.expand_context:
+            chunk_index = res["metadata"].get("chunk_index", 0)
+            total_chunks = res["metadata"].get("total_chunks", 1)
+            adj = await vector_sink.expand_chunk(pid, chunk_index, total_chunks)
+            parts = []
+            if adj["prev"]:
+                parts.append(adj["prev"])
+            parts.append(excerpt)
+            if adj["next"]:
+                parts.append(adj["next"])
+            excerpt = "\n\n".join(parts)
+
+        block = (
+            f"[{rank}] 来源: {source_name} | 日期: {pub_date}\n"
+            f"标题: {title}\n"
+            f"链接: {source_url}\n\n"
+            f"{excerpt}"
+        )
+
+        if total_chars + len(block) > query.max_chars and context_blocks:
+            break
+
+        context_blocks.append(block)
+        total_chars += len(block)
+
+        sources.append({
+            "rank": rank,
+            "parent_id": pid,
+            "title": title,
+            "source_id": source_id,
+            "source_name": source_name,
+            "publish_date": pub_date,
+            "source_url": source_url,
+            "distance": round(res["distance"], 4),
+            "excerpt": excerpt[:500],
+        })
+
+    context_text = query.context_separator.join(context_blocks)
+
+    return {
+        "query": query.query,
+        "context_text": context_text,
+        "sources": sources,
+        "total_chars": len(context_text),
+        "retrieved_count": len(sources),
+    }
+
+
+@app.get("/api/rag/similar/{article_id:path}")
+async def rag_similar(article_id: str, top_k: int = 5):
+    """
+    相似文章接口：找出与给定文章语义最接近的其他文章。
+    用于"相关阅读"、知识图谱构建等场景。
+    """
+    record = await db_sink.get(article_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="文章不存在")
+
+    # 使用标题+正文片段作为查询向量
+    query_text = f"{record.title}\n{(record.content or '')[:300]}"
+    raw = await vector_sink.search(query_text, n_results=(top_k + 1) * 3)
+
+    best_by_parent: Dict[str, Any] = {}
+    for r in raw:
+        pid = r["metadata"].get("parent_id", r["id"])
+        if pid == article_id:
+            continue  # 排除自身
+        if pid not in best_by_parent or r["distance"] < best_by_parent[pid]["distance"]:
+            best_by_parent[pid] = r
+
+    candidates = sorted(best_by_parent.values(), key=lambda x: x["distance"])[:top_k]
+
+    similar = []
+    for rank, res in enumerate(candidates, start=1):
+        pid = res["metadata"].get("parent_id", res["id"])
+        rec = await db_sink.get(pid)
+        similar.append({
+            "rank": rank,
+            "parent_id": pid,
+            "title": rec.title if rec else res["metadata"].get("title", ""),
+            "source_id": res["metadata"].get("source_id", ""),
+            "publish_date": res["metadata"].get("publish_date", ""),
+            "source_url": rec.source_url if rec else "",
+            "distance": round(res["distance"], 4),
+        })
+
+    return {
+        "article_id": article_id,
+        "title": record.title,
+        "similar": similar,
+    }
+
+
+@app.post("/api/vector/reindex-all")
+async def reindex_all_articles():
+    """
+    T9: 删除并重建整个 ChromaDB collection，对所有文章重新向量化。
+    适用于：更换 embedding 模型后的全库迁移。
+    """
+    vector_sink.rebuild_collection()
+
+    with Session(db_sink.engine) as session:
+        records = session.exec(select(ArticleRecord)).all()
+
+    # 先批量重置 is_vectorized 标志
+    for record in records:
+        await db_sink.update(record.id, {"is_vectorized": False})
+
+    # 重新向量化
+    success_count = 0
+    for record in records:
+        if await vector_sink.save(_record_to_content(record)):
+            await db_sink.mark_as_vectorized(record.id)
+            success_count += 1
+
+    return {"status": "success", "total_reindexed": success_count, "total_articles": len(records)}
 
 
 # ==================== 4. 定时任务 ====================
