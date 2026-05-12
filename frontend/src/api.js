@@ -234,3 +234,9 @@ export async function reindexAll() {
   if (!res.ok) await handleApiError(res, '全量重索引失败');
   return res.json();
 }
+
+export const fetchMcpStatus = () =>
+  fetch(`${API_BASE_URL}/mcp/status`).then(r => r.json());
+
+export const toggleMcp = () =>
+  fetch(`${API_BASE_URL}/mcp/toggle`, { method: 'POST' }).then(r => r.json());

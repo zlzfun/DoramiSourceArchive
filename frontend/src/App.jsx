@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Database, CloudDownload, BarChart2, Activity, Bot, History } from 'lucide-react';
+import { Database, CloudDownload, BarChart2, Activity, Bot, History, Plug2 } from 'lucide-react';
 import Toast from './components/Toast';
 import DataTab from './components/DataTab';
 import FetchTab from './components/FetchTab';
 import VectorTab from './components/VectorTab';
 import FetchRunsTab from './components/FetchRunsTab';
+import MCPTab from './components/MCPTab';
 import { fetchFetchers } from './api';
 
 const CUSTOM_LOGO_PATH = '/logo.png';
@@ -36,6 +37,7 @@ export default function App() {
     { id: 'fetch', icon: CloudDownload, label: '节点与调度' },
     { id: 'runs', icon: History, label: '运行历史' },
     { id: 'vector', icon: BarChart2, label: '向量雷达' },
+    { id: 'mcp', icon: Plug2, label: 'MCP 接入' },
   ];
 
   return (
@@ -68,6 +70,7 @@ export default function App() {
         {activeTab === 'fetch' && <FetchTab availableFetchers={availableFetchers} showToast={showToast} />}
         {activeTab === 'runs' && <FetchRunsTab availableFetchers={availableFetchers} showToast={showToast} />}
         {activeTab === 'vector' && <VectorTab availableFetchers={availableFetchers} showToast={showToast} />}
+        {activeTab === 'mcp' && <MCPTab showToast={showToast} />}
       </main>
     </div>
   );
