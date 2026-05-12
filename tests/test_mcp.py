@@ -195,3 +195,39 @@ def test_get_rag_context_formats_block():
     assert "Embodied AI Survey" in result
     assert "2025-03-01" in result
     assert isinstance(result, str)
+
+
+# ── Task 5 ────────────────────────────────────────────────────────────────────
+from fastapi.testclient import TestClient
+
+
+def get_client():
+    import api.app as app_module
+    with TestClient(app_module.app) as client:
+        return client
+
+
+def test_mcp_status_returns_correct_structure():
+    with TestClient(__import__('api.app', fromlist=['app']).app) as client:
+        resp = client.get("/api/mcp/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "enabled" in data
+        assert "url" in data
+        assert data["url"].endswith("/mcp")
+        assert "tools" in data
+        assert len(data["tools"]) == 5
+        tool_names = {t["name"] for t in data["tools"]}
+        assert tool_names == {"list_sources", "browse_articles", "get_article",
+                              "search_articles", "get_rag_context"}
+
+
+def test_mcp_toggle_flips_state():
+    with TestClient(__import__('api.app', fromlist=['app']).app) as client:
+        initial = client.get("/api/mcp/status").json()["enabled"]
+        resp = client.post("/api/mcp/toggle")
+        assert resp.status_code == 200
+        assert resp.json()["enabled"] != initial
+        # Restore
+        client.post("/api/mcp/toggle")
+        assert client.get("/api/mcp/status").json()["enabled"] == initial

@@ -188,7 +188,7 @@ async def _get_rag_context_impl(
 def build_mcp_app(db_sink: DatabaseStorage, vector_sink: ChromaVectorStorage) -> FastMCP:
     mcp = FastMCP(
         "dorami-archive",
-        description="哆啦美·归档中枢 MCP Server — AI资讯检索与RAG上下文组装",
+        instructions="哆啦美·归档中枢 MCP Server — AI资讯检索与RAG上下文组装",
     )
 
     @mcp.tool()
