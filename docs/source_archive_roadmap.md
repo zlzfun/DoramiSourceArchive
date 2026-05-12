@@ -32,7 +32,7 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - [x] Add first built-in webpage sources for official AI company news.
 - [ ] Decide X/Twitter ingestion strategy before implementation.
 - [ ] Add first built-in X/Twitter source fetchers after strategy decision.
-- [ ] Expand built-in WeChat account fetchers.
+- [x] Expand built-in WeChat account fetchers.
 - [ ] Add more official AI company sources.
 - [ ] Add more model/product update sources.
 - [x] Add initial paper sources.
@@ -122,3 +122,4 @@ The current goal is to keep fetch execution visible and auditable while expandin
 - 2026-05-12: Added `docs/source_catalog.md` as the persistent multi-type source coverage matrix. It records implemented sources, AIHot-inspired candidates, immediate next slices, and the pending X/Twitter ingestion decision so future work does not drift back into RSS-only expansion.
 - 2026-05-12: Added `WebPageArticleContent`, `BaseWebPageListFetcher`, and first built-in official webpage sources: Anthropic News, Claude Blog, Runway News, and Mistral AI News. These capture list-page metadata and article links as `web_article` entries; full article extraction remains a later archive data-quality task.
 - 2026-05-12: Seeded the original project worktree database at `/Users/zhuliuzi/PycharmProjects/DoramiSourceArchive/data/cms_data.db` with 70 sample articles for parallel RAG development: 54 `rss_article` records and 16 `web_article` records across OpenAI, Hugging Face, Google AI, Google DeepMind, Microsoft AI, NVIDIA, arXiv, Hacker News, Dify/vLLM/Ollama releases, Anthropic News, Claude Blog, Runway News, and Mistral AI News.
+- 2026-05-12: Expanded built-in WeChat fetcher subclasses from 3 to 9 accounts by adding AI科技评论、AI前线、智东西、Founder Park、硅星人、夕小瑶科技说. These appear in the dynamic registry but real runs still require valid WeChat MP credentials.

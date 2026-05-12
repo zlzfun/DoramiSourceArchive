@@ -18,7 +18,7 @@ It exists to keep development aligned with the product direction: a broad, built
 | RSS/Atom feeds | Implemented | `GenericRssFetcher`, `PresetRssFetcher` | Useful for stable blogs, release feeds, papers, community/news feeds. Should not dominate future expansion. |
 | Official website/blog/news pages | Partially implemented | `BaseWebPageListFetcher` | Needed for sources without stable RSS, such as Claude/Anthropic pages and Runway News. Current implementation captures list-page metadata and links; full-text extraction is a later data-quality task. |
 | X/Twitter public posts | Design pending | TBD | AIHot relies heavily on X accounts. Requires a decision: official API, browser scraping, third-party mirror, or webhook/import bridge. |
-| WeChat official accounts | Partially implemented | `BaseWechatGzhFetcher` | Existing concrete fetchers cover 机器之心、量子位、新智元. Expand via built-in subclasses. |
+| WeChat official accounts | Partially implemented | `BaseWechatGzhFetcher` | Existing concrete fetchers cover Chinese AI media/KOL accounts. Real runs depend on valid WeChat MP credentials. |
 | GitHub releases/repos | Partially implemented through Atom | `PresetRssFetcher` for releases; future GitHub API fetcher for richer repo data | Release feeds work today. GitHub API/trending/stars/issues can be a later non-RSS fetcher family. |
 | Paper sources | Partially implemented through arXiv RSS | `PresetRssFetcher`; future arXiv API/Semantic Scholar fetchers | arXiv categories are covered through RSS. Richer paper metadata needs dedicated APIs. |
 | Community/news aggregators | Partially implemented | RSS today; future site/API fetchers | Hacker News and tech news can start through feeds, but richer ranking/comments need dedicated fetchers. |
@@ -61,6 +61,12 @@ It exists to keep development aligned with the product direction: a broad, built
 | `wechat_jiqizhixin` | 机器之心 | wechat | Existing `BaseWechatGzhFetcher` subclass. |
 | `wechat_qbitai` | 量子位 | wechat | Existing `BaseWechatGzhFetcher` subclass. |
 | `wechat_xinzhiyuan` | 新智元 | wechat | Existing `BaseWechatGzhFetcher` subclass. |
+| `wechat_ai_tech_review` | AI科技评论 | wechat | Built-in `BaseWechatGzhFetcher` subclass; requires WeChat MP credentials to run. |
+| `wechat_infoq_ai` | AI前线 | wechat | Built-in `BaseWechatGzhFetcher` subclass; requires WeChat MP credentials to run. |
+| `wechat_zhidx` | 智东西 | wechat | Built-in `BaseWechatGzhFetcher` subclass; requires WeChat MP credentials to run. |
+| `wechat_founder_park` | Founder Park | wechat | Built-in `BaseWechatGzhFetcher` subclass; requires WeChat MP credentials to run. |
+| `wechat_silicon_star` | 硅星人 | wechat | Built-in `BaseWechatGzhFetcher` subclass; requires WeChat MP credentials to run. |
+| `wechat_xixiaoyao` | 夕小瑶科技说 | wechat | Built-in `BaseWechatGzhFetcher` subclass; requires WeChat MP credentials to run. |
 
 ### Workflow
 
@@ -110,12 +116,12 @@ Sampled from AIHot public pages on 2026-05-12. These are planning candidates, no
 
 | Candidate | Priority | Rationale | Implementation Status |
 | --- | --- | --- | --- |
-| AI科技评论 | High | Chinese AI research/industry coverage. | Pending built-in subclass. |
-| InfoQ AI 前线 / InfoQ | High | Developer and industry reporting. | Pending built-in subclass. |
-| 智东西 | Medium | AI hardware/industry coverage. | Pending built-in subclass. |
-| Founder Park | Medium | AI startup/product ecosystem. | Pending built-in subclass. |
-| 硅星人 | Medium | Silicon Valley and AI product coverage. | Pending built-in subclass. |
-| 夕小瑶科技说 | Medium | Technical interpretation and AI trends. | Pending built-in subclass. |
+| AI科技评论 | High | Chinese AI research/industry coverage. | Built-in subclass implemented. |
+| InfoQ AI 前线 / InfoQ | High | Developer and industry reporting. | Built-in subclass implemented as `AI前线`. |
+| 智东西 | Medium | AI hardware/industry coverage. | Built-in subclass implemented. |
+| Founder Park | Medium | AI startup/product ecosystem. | Built-in subclass implemented. |
+| 硅星人 | Medium | Silicon Valley and AI product coverage. | Built-in subclass implemented. |
+| 夕小瑶科技说 | Medium | Technical interpretation and AI trends. | Built-in subclass implemented. |
 
 ### GitHub / Developer Ecosystem
 
@@ -128,9 +134,9 @@ Sampled from AIHot public pages on 2026-05-12. These are planning candidates, no
 ## Immediate Next Development Slice
 
 1. Improve website/blog/news fetchers with optional article-detail full-text extraction.
-2. Expand WeChat concrete subclasses in a separate small commit.
-3. Prepare an X/Twitter fetcher decision note before implementation.
-4. Add richer GitHub API fetchers for repos/trending/issues when needed.
+2. Prepare an X/Twitter fetcher decision note before implementation.
+3. Add richer GitHub API fetchers for repos/trending/issues when needed.
+4. Improve WeChat credential handling and account-name verification after more real-run data is available.
 
 ## X/Twitter Decision Options
 
