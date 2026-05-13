@@ -21,6 +21,7 @@ from models.content import BaseContent, SocialPostContent
 
 # 引入动态抓取器注册中心
 from fetchers.registry import fetcher_registry
+from api.skill_router import router as skill_router
 
 from starlette.responses import JSONResponse as StarletteJSONResponse
 from mcp_server import build_mcp_app
@@ -100,6 +101,7 @@ vector_sink = ChromaVectorStorage(db_path=os.path.join(base_path, "data", "chrom
 pipeline = DataPipeline(storages=[db_sink])
 
 app.mount("/mcp", _mcp_gate)
+app.include_router(skill_router)
 
 scheduler = AsyncIOScheduler()
 

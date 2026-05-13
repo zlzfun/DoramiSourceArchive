@@ -37,7 +37,7 @@ export default function App() {
     { id: 'fetch', icon: CloudDownload, label: '节点与调度' },
     { id: 'runs', icon: History, label: '运行历史' },
     { id: 'vector', icon: BarChart2, label: '向量雷达' },
-    { id: 'mcp', icon: Plug2, label: 'MCP 接入' },
+    { id: 'mcp', icon: Plug2, label: '接入集成' },
   ];
 
   return (
