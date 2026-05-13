@@ -3,6 +3,7 @@
 import os
 import json
 import datetime
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Body, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field as PydanticField
@@ -35,8 +36,10 @@ _mcp_enabled: bool = True
 
 
 class MCPGateApp:
-    def __init__(self, asgi_app):
-        self._app = asgi_app
+    """ASGI gate for /mcp — checks _mcp_enabled and delegates to the MCP ASGI app.
+    _app is set in the lifespan so each restart gets a fresh FastMCP instance."""
+    def __init__(self):
+        self._app = None
 
     async def __call__(self, scope, receive, send):
         if scope["type"] in ("http", "websocket") and not _mcp_enabled:
@@ -45,10 +48,42 @@ class MCPGateApp:
             )
             await response(scope, receive, send)
             return
+        if self._app is None:
+            response = StarletteJSONResponse({"detail": "MCP server not ready"}, status_code=503)
+            await response(scope, receive, send)
+            return
         await self._app(scope, receive, send)
 
 
-app = FastAPI(title="Dorami 数据归档中枢 API")
+_mcp_gate = MCPGateApp()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _mcp_enabled
+    # Init MCP enabled state from DB
+    with Session(db_sink.engine) as session:
+        rec = session.get(AppSettingRecord, "mcp_enabled")
+        if rec is None:
+            session.add(AppSettingRecord(key="mcp_enabled", value="true"))
+            session.commit()
+            _mcp_enabled = True
+        else:
+            _mcp_enabled = rec.value.lower() == "true"
+    # Build fresh FastMCP instance (session_manager can only be run() once per instance)
+    mcp = build_mcp_app(db_sink, vector_sink)
+    _mcp_gate._app = mcp.streamable_http_app()
+    # Start scheduler
+    load_tasks_to_scheduler()
+    if scheduler.state == STATE_STOPPED:
+        scheduler.start()
+        print("⏰ APScheduler 定时调度引擎已启动！")
+    async with mcp.session_manager.run():
+        yield
+    _mcp_gate._app = None
+
+
+app = FastAPI(title="Dorami 数据归档中枢 API", lifespan=lifespan)
 
 # 跨域配置
 app.add_middleware(
@@ -64,10 +99,7 @@ db_sink = DatabaseStorage(db_url=f"sqlite:///{os.path.join(base_path, 'data', 'c
 vector_sink = ChromaVectorStorage(db_path=os.path.join(base_path, "data", "chroma_db"))
 pipeline = DataPipeline(storages=[db_sink])
 
-_mcp_server = build_mcp_app(db_sink, vector_sink)
-_mcp_asgi = _mcp_server.streamable_http_app()
-
-app.mount("/mcp", MCPGateApp(_mcp_asgi))
+app.mount("/mcp", _mcp_gate)
 
 scheduler = AsyncIOScheduler()
 
@@ -246,27 +278,6 @@ def load_tasks_to_scheduler():
                     execute_fetch_job, trigger, args=[task.fetcher_id, params, task.id], id=f"task_{task.id}",
                     replace_existing=True
                 )
-
-
-@app.on_event("startup")
-async def _init_mcp_state():
-    global _mcp_enabled
-    with Session(db_sink.engine) as session:
-        rec = session.get(AppSettingRecord, "mcp_enabled")
-        if rec is None:
-            session.add(AppSettingRecord(key="mcp_enabled", value="true"))
-            session.commit()
-            _mcp_enabled = True
-        else:
-            _mcp_enabled = rec.value.lower() == "true"
-
-
-@app.on_event("startup")
-async def startup_event():
-    load_tasks_to_scheduler()
-    if scheduler.state == STATE_STOPPED:
-        scheduler.start()
-        print("⏰ APScheduler 定时调度引擎已启动！")
 
 
 # ==================== 1. 数据台账与 CRUD ====================
