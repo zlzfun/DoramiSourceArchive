@@ -285,11 +285,11 @@ export default function FetchTab({ availableFetchers, showToast }) {
                     <div className="text-slate-700 font-mono truncate" title={formatDateTime(health?.latest_run_at)}>{formatDateTime(health?.latest_run_at)}</div>
                   </div>
                   <div className="bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5">
-                    <div className="text-slate-400 font-bold">新增</div>
+                    <div className="text-slate-400 font-bold">最近新增</div>
                     <div className="text-emerald-700 font-black">{health?.latest_saved_count ?? 0}</div>
                   </div>
                   <div className="bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5">
-                    <div className="text-slate-400 font-bold">失败</div>
+                    <div className="text-slate-400 font-bold">连续失败</div>
                     <div className="text-red-700 font-black">{health?.consecutive_failures ?? 0}</div>
                   </div>
                 </div>
