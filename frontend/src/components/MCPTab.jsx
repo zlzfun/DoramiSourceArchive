@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plug2, Copy, Check, Circle, Bot, Download, FileText } from 'lucide-react';
+import { Plug2, Copy, Check, Bot, Download, Terminal, Globe } from 'lucide-react';
 import { fetchMcpStatus, toggleMcp } from '../api';
 
 const TOOL_CARDS = [
@@ -30,28 +30,8 @@ const TOOL_CARDS = [
   },
 ];
 
-const DAILY_BRIEF_STEPS = [
-  {
-    step: '1',
-    title: '下载 Skill 压缩包',
-    desc: '点击下方按钮，获取 dorami-daily-brief.zip，解压后得到 dorami-daily-brief/ 文件夹（含 SKILL.md）。',
-  },
-  {
-    step: '2',
-    title: '安装到 Claude Code',
-    desc: '将 dorami-daily-brief/ 文件夹放入 ~/.claude/skills/，重启 Claude Code 后即可用 /dorami-daily-brief 触发。',
-  },
-  {
-    step: '3',
-    title: '或配置到其他 Agent 平台',
-    desc: '将 SKILL.md 的内容粘贴到 Dify、Coze、Claude.ai Projects 等平台的 System Prompt 配置中。',
-  },
-  {
-    step: '4',
-    title: '对话生成日报',
-    desc: '对 Agent 说「生成今天的 AI 资讯日报」，或指定范围，如「最近3天的日报，只要论文和开源，加点评」。',
-  },
-];
+const LOCAL_TOOLS = ['Claude Code', 'Cursor', 'Codex', 'OpenCode'];
+const ONLINE_TOOLS = ['Claude.ai Projects', 'Dify', 'Coze'];
 
 export default function MCPTab({ showToast }) {
   const [status, setStatus] = useState(null);
@@ -100,143 +80,266 @@ export default function MCPTab({ showToast }) {
   const enabled = status?.enabled ?? false;
 
   return (
-    <div className="space-y-6">
-      {/* Status & Control */}
-      <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-6">
-        <h2 className="text-lg font-bold text-slate-800 mb-5 flex items-center gap-2">
-          <Plug2 className="w-5 h-5 text-blue-600" />
-          MCP Server 状态
-        </h2>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {enabled ? (
-              <span className="relative flex h-3 w-3">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
-              </span>
-            ) : (
-              <Circle className="w-3 h-3 text-red-400 fill-red-400" />
-            )}
-            <span className="font-semibold text-slate-700">
-              {status === null
-                ? '加载中...'
-                : enabled
-                ? 'MCP Server 运行中'
-                : 'MCP Server 已停止'}
-            </span>
-          </div>
-          <button
-            onClick={handleToggle}
-            disabled={toggling || status === null}
-            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all border disabled:opacity-50 ${
-              enabled
-                ? 'bg-red-50 text-red-600 hover:bg-red-100 border-red-200'
-                : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-200'
-            }`}
-          >
-            {toggling ? '处理中...' : enabled ? '停止 MCP' : '启动 MCP'}
-          </button>
-        </div>
-      </div>
-
-      {/* MCP URL */}
-      <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-6">
-        <h2 className="text-lg font-bold text-slate-800 mb-4">接入地址</h2>
+    <div className="space-y-4">
+      {/* ── HERO ─────────────────────────────────────────────────── */}
+      <div
+        className="relative overflow-hidden rounded-2xl p-7"
+        style={{
+          background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)',
+        }}
+      >
+        {/* Dot-grid texture */}
         <div
-          className={`flex items-center gap-3 p-3 rounded-xl border transition-opacity ${
-            enabled ? 'bg-slate-50 border-slate-200' : 'bg-slate-100 border-slate-200 opacity-50'
-          }`}
-        >
-          <code className="flex-1 text-sm font-mono text-slate-700 select-all break-all">
-            {status?.url ?? 'http://127.0.0.1:8088/mcp'}
-          </code>
-          <button
-            onClick={handleCopy}
-            disabled={!enabled}
-            title={enabled ? '复制 URL' : 'MCP 当前未运行'}
-            className="p-1.5 rounded-lg hover:bg-slate-200 transition-colors disabled:cursor-not-allowed shrink-0"
-          >
-            {copied
-              ? <Check className="w-4 h-4 text-emerald-600" />
-              : <Copy className="w-4 h-4 text-slate-500" />}
-          </button>
-        </div>
-        {!enabled && (
-          <p className="text-xs text-slate-400 mt-2">启动 MCP Server 后方可复制接入地址</p>
-        )}
-        <p className="text-xs text-slate-400 mt-2">
-          在 Agent 或 Dify 中配置 MCP URL 后，即可调用以下工具查询归档内容。
-        </p>
-      </div>
+          className="absolute inset-0 opacity-[0.07]"
+          style={{
+            backgroundImage: 'radial-gradient(circle, #ffffff 1px, transparent 1px)',
+            backgroundSize: '24px 24px',
+          }}
+        />
+        {/* Top-right glow */}
+        <div className="absolute -top-16 -right-16 w-64 h-64 rounded-full opacity-20"
+          style={{ background: 'radial-gradient(circle, #818cf8, transparent 70%)' }} />
 
-      {/* Tools */}
-      <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-6">
-        <h2 className="text-lg font-bold text-slate-800 mb-4">
-          可用工具
-          <span className="ml-2 text-sm font-normal text-slate-400">({TOOL_CARDS.length} 个)</span>
-        </h2>
-        <div className="space-y-3">
-          {TOOL_CARDS.map(tool => (
-            <div key={tool.name} className="p-4 rounded-xl bg-slate-50 border border-slate-100">
-              <div className="flex items-start justify-between gap-3 mb-1">
-                <code className="text-sm font-bold text-blue-700">{tool.name}</code>
-                <span className="text-[11px] text-slate-400 font-mono text-right leading-relaxed">
-                  {tool.params}
+        <div className="relative">
+          <p className="text-[10px] font-mono tracking-[0.2em] text-slate-400 uppercase mb-1">
+            Integration Hub · 接入集成
+          </p>
+          <h2 className="text-xl font-bold text-white mb-1">扩展你的 Agent 能力</h2>
+          <p className="text-sm text-slate-400 mb-6">
+            通过 MCP 实时访问归档数据，或下载 Skill 让 Agent 自动生成 AI 资讯日报。
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* MCP card */}
+            <div className="relative rounded-xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm hover:bg-white/8 transition-colors">
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center"
+                    style={{ background: 'rgba(14, 165, 233, 0.2)', border: '1px solid rgba(14, 165, 233, 0.3)' }}>
+                    <Plug2 className="w-4 h-4 text-sky-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-white leading-tight">MCP Server</p>
+                    <p className="text-[11px] text-slate-400">实时数据接入</p>
+                  </div>
+                </div>
+                {status === null ? (
+                  <div className="h-2 w-2 rounded-full bg-slate-600 mt-1" />
+                ) : enabled ? (
+                  <span className="relative flex h-2.5 w-2.5 mt-1">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                  </span>
+                ) : (
+                  <div className="h-2.5 w-2.5 rounded-full bg-red-400/70 mt-1" />
+                )}
+              </div>
+              <p className="text-xs text-slate-400 leading-relaxed mb-4">
+                {TOOL_CARDS.length} 个工具，支持语义搜索、条件浏览和 RAG 上下文组装。
+              </p>
+              <button
+                onClick={handleToggle}
+                disabled={toggling || status === null}
+                className="w-full py-2 rounded-lg text-xs font-bold transition-all disabled:opacity-40"
+                style={enabled
+                  ? { background: 'rgba(239,68,68,0.15)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.3)' }
+                  : { background: 'rgba(14,165,233,0.15)', color: '#7dd3fc', border: '1px solid rgba(14,165,233,0.3)' }
+                }
+              >
+                {toggling ? '处理中…' : enabled ? '停止 MCP' : '启动 MCP'}
+              </button>
+            </div>
+
+            {/* Skill card */}
+            <div className="relative rounded-xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm hover:bg-white/8 transition-colors">
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center"
+                    style={{ background: 'rgba(139, 92, 246, 0.2)', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
+                    <Bot className="w-4 h-4 text-violet-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-white leading-tight">AI 日报 Skill</p>
+                    <p className="text-[11px] text-slate-400">智能日报生成</p>
+                  </div>
+                </div>
+                <span className="text-[9px] font-mono px-2 py-0.5 rounded-full mt-0.5"
+                  style={{ background: 'rgba(139,92,246,0.2)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}>
+                  v1
                 </span>
               </div>
-              <p className="text-sm text-slate-600">{tool.desc}</p>
+              <p className="text-xs text-slate-400 leading-relaxed mb-4">
+                一句话生成结构化日报，支持 Claude Code、Cursor、Dify 等主流 Agent 平台。
+              </p>
+              <button
+                onClick={() => handleDownload('/api/skill/daily-brief', 'dorami-daily-brief.zip')}
+                className="w-full py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                style={{ background: 'rgba(139,92,246,0.15)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}
+              >
+                <Download className="w-3.5 h-3.5" />
+                下载 Skill 包
+              </button>
             </div>
-          ))}
+          </div>
         </div>
       </div>
 
-      {/* AI Daily Brief Skill */}
-      <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-6">
-        <h2 className="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
-          <Bot className="w-5 h-5 text-violet-600" />
-          AI日报 Skill
-        </h2>
-        <p className="text-sm text-slate-500 mb-5">
-          将归档内容一键生成结构化 Markdown 日报。支持 Claude Code、Dify、Coze、Claude.ai Projects 等主流 Agent 平台。
-        </p>
+      {/* ── MCP DETAILS ──────────────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm overflow-hidden">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
+          <div className="w-1 h-5 rounded-full bg-sky-500" />
+          <h3 className="text-sm font-bold text-slate-700 tracking-wide">MCP 配置详情</h3>
+          <span className="ml-auto text-xs text-slate-400 font-medium">
+            {status === null ? '…' : enabled ? '● 运行中' : '○ 已停止'}
+          </span>
+        </div>
 
-        {/* Download card */}
-        <div className="flex flex-col gap-3 p-4 rounded-xl bg-violet-50 border border-violet-100 mb-6">
-          <div className="flex items-center gap-2">
-            <FileText className="w-5 h-5 text-violet-600 shrink-0" />
-            <div>
-              <p className="text-sm font-bold text-violet-800">dorami-daily-brief.zip</p>
-              <p className="text-xs text-violet-500">标准 Skill 包 · 含 SKILL.md，BASE_URL 已注入</p>
+        <div className="p-6 space-y-5">
+          {/* URL */}
+          <div>
+            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">接入地址</p>
+            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border bg-slate-50 transition-opacity ${!enabled && 'opacity-50'}`}>
+              <code className="flex-1 text-sm font-mono text-slate-700 break-all select-all">
+                {status?.url ?? 'http://127.0.0.1:8088/mcp'}
+              </code>
+              <button
+                onClick={handleCopy}
+                disabled={!enabled}
+                title={enabled ? '复制 URL' : 'MCP 未运行'}
+                className="shrink-0 p-1.5 rounded-lg hover:bg-slate-200 transition-colors disabled:cursor-not-allowed"
+              >
+                {copied
+                  ? <Check className="w-4 h-4 text-emerald-500" />
+                  : <Copy className="w-4 h-4 text-slate-400" />}
+              </button>
+            </div>
+            {!enabled && (
+              <p className="text-[11px] text-slate-400 mt-1.5">启动 MCP Server 后方可复制接入地址</p>
+            )}
+          </div>
+
+          {/* Tools */}
+          <div>
+            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
+              可用工具 <span className="font-normal normal-case text-slate-400">({TOOL_CARDS.length} 个)</span>
+            </p>
+            <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 overflow-hidden">
+              {TOOL_CARDS.map(tool => (
+                <div key={tool.name} className="flex gap-4 px-4 py-3 bg-slate-50 hover:bg-slate-100/80 transition-colors">
+                  <div className="shrink-0 mt-[3px] w-1.5 h-1.5 rounded-full bg-sky-400" />
+                  <div className="min-w-0">
+                    <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
+                      <code className="text-xs font-bold text-sky-700">{tool.name}</code>
+                      <span className="text-[10px] text-slate-400 font-mono">{tool.params}</span>
+                    </div>
+                    <p className="text-xs text-slate-500 leading-relaxed">{tool.desc}</p>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
-          <p className="text-xs text-slate-500 leading-relaxed">
-            解压得到 <code className="bg-violet-100 px-1 rounded">dorami-daily-brief/SKILL.md</code>。
-            Claude Code 用户将文件夹放入 <code className="bg-violet-100 px-1 rounded">~/.claude/skills/</code> 即可安装；其他平台将 SKILL.md 内容粘贴为 System Prompt。
-          </p>
+        </div>
+      </div>
+
+      {/* ── SKILL INSTALLATION ───────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm overflow-hidden">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
+          <div className="w-1 h-5 rounded-full bg-violet-500" />
+          <h3 className="text-sm font-bold text-slate-700 tracking-wide">Skill 安装指南</h3>
           <button
             onClick={() => handleDownload('/api/skill/daily-brief', 'dorami-daily-brief.zip')}
-            className="self-start flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold transition-colors"
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 transition-colors"
           >
-            <Download className="w-4 h-4" />
+            <Download className="w-3.5 h-3.5" />
             下载 Skill 包
           </button>
         </div>
 
-        {/* Usage steps */}
-        <div>
-          <p className="text-sm font-semibold text-slate-600 mb-3">使用说明</p>
-          <div className="space-y-2">
-            {DAILY_BRIEF_STEPS.map(item => (
-              <div key={item.step} className="flex items-start gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-slate-200 text-slate-600 text-xs font-bold flex items-center justify-center">
-                  {item.step}
-                </span>
-                <div>
-                  <p className="text-sm font-semibold text-slate-700">{item.title}</p>
-                  <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{item.desc}</p>
+        <div className="p-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Local tools */}
+            <div className="rounded-xl border border-slate-200 p-4 hover:border-slate-300 transition-colors">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center">
+                  <Terminal className="w-3.5 h-3.5 text-slate-600" />
+                </div>
+                <p className="text-sm font-bold text-slate-700">本地 AI 工具</p>
+              </div>
+              <div className="flex flex-wrap gap-1 mb-4">
+                {LOCAL_TOOLS.map(t => (
+                  <span key={t} className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-medium">{t}</span>
+                ))}
+              </div>
+              <ol className="space-y-2 mb-4">
+                {[
+                  '下载并解压 dorami-daily-brief.zip',
+                  '将 dorami-daily-brief/ 文件夹放入工具的 skills 目录',
+                  '重启工具后 Skill 即可使用',
+                ].map((step, i) => (
+                  <li key={i} className="flex gap-2.5 text-xs text-slate-600">
+                    <span className="shrink-0 font-bold text-slate-300 tabular-nums">{i + 1}</span>
+                    <span>{step}</span>
+                  </li>
+                ))}
+              </ol>
+              <div className="pt-3 border-t border-slate-100">
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Skills 目录参考</p>
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-slate-400 font-medium">Claude Code</span>
+                    <code className="text-slate-500 font-mono">~/.claude/skills/</code>
+                  </div>
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-slate-400 font-medium">其他工具</span>
+                    <span className="text-slate-400">参考工具文档</span>
+                  </div>
                 </div>
               </div>
-            ))}
+            </div>
+
+            {/* Online platforms */}
+            <div className="rounded-xl border border-slate-200 p-4 hover:border-slate-300 transition-colors">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center">
+                  <Globe className="w-3.5 h-3.5 text-slate-600" />
+                </div>
+                <p className="text-sm font-bold text-slate-700">在线 Agent 平台</p>
+              </div>
+              <div className="flex flex-wrap gap-1 mb-4">
+                {ONLINE_TOOLS.map(t => (
+                  <span key={t} className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-medium">{t}</span>
+                ))}
+              </div>
+              <ol className="space-y-2 mb-4">
+                {[
+                  '下载并解压，用文本编辑器打开 SKILL.md',
+                  '复制文件全部内容',
+                  '粘贴到平台的 System Prompt 或项目指令配置中',
+                ].map((step, i) => (
+                  <li key={i} className="flex gap-2.5 text-xs text-slate-600">
+                    <span className="shrink-0 font-bold text-slate-300 tabular-nums">{i + 1}</span>
+                    <span>{step}</span>
+                  </li>
+                ))}
+              </ol>
+              <div className="pt-3 border-t border-slate-100">
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">配置位置参考</p>
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-slate-400 font-medium">Claude.ai</span>
+                    <span className="text-slate-500">项目设置 → Instructions</span>
+                  </div>
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-slate-400 font-medium">Dify</span>
+                    <span className="text-slate-500">Chatbot → 系统提示</span>
+                  </div>
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-slate-400 font-medium">Coze</span>
+                    <span className="text-slate-500">Bot → Personality</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
