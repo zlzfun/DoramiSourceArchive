@@ -189,6 +189,7 @@ def build_mcp_app(db_sink: DatabaseStorage, vector_sink: ChromaVectorStorage) ->
     mcp = FastMCP(
         "dorami-archive",
         instructions="哆啦美·归档中枢 MCP Server — AI资讯检索与RAG上下文组装",
+        streamable_http_path="/",
     )
 
     @mcp.tool()
