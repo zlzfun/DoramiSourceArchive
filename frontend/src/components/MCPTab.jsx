@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plug2, Copy, Check, Circle, Bot, Download, FileCode, FileText } from 'lucide-react';
+import { Plug2, Copy, Check, Circle, Bot, Download, FileText } from 'lucide-react';
 import { fetchMcpStatus, toggleMcp } from '../api';
 
 const TOOL_CARDS = [
@@ -33,23 +33,23 @@ const TOOL_CARDS = [
 const DAILY_BRIEF_STEPS = [
   {
     step: '1',
-    title: '下载 Skill.md',
-    desc: '点击下方「下载 Skill 文件」，获取 daily_brief_skill.md。',
+    title: '下载 Skill 压缩包',
+    desc: '点击下方按钮，获取 dorami-daily-brief.zip，解压后得到 dorami-daily-brief/ 文件夹（含 SKILL.md）。',
   },
   {
     step: '2',
-    title: '配置到 Agent / LLM 平台',
-    desc: '将 Skill.md 内容粘贴到 Claude、Dify、Coze 等平台的 System Prompt 或 Skill 配置中。',
+    title: '安装到 Claude Code',
+    desc: '将 dorami-daily-brief/ 文件夹放入 ~/.claude/skills/，重启 Claude Code 后即可用 /dorami-daily-brief 触发。',
   },
   {
     step: '3',
-    title: '对话生成日报',
-    desc: '直接对 Agent 说「生成今天的 AI 资讯日报」，或指定日期，如「生成最近3天的日报，只要论文和开源」。',
+    title: '或配置到其他 Agent 平台',
+    desc: '将 SKILL.md 的内容粘贴到 Dify、Coze、Claude.ai Projects 等平台的 System Prompt 配置中。',
   },
   {
     step: '4',
-    title: '或直接运行 Python 脚本',
-    desc: '下载 daily_brief.py，安装 httpx 后执行：python daily_brief.py --days 3，无需 LLM 即可生成 Markdown 日报。',
+    title: '对话生成日报',
+    desc: '对 Agent 说「生成今天的 AI 资讯日报」，或指定范围，如「最近3天的日报，只要论文和开源，加点评」。',
   },
 ];
 
@@ -197,52 +197,29 @@ export default function MCPTab({ showToast }) {
           AI日报 Skill
         </h2>
         <p className="text-sm text-slate-500 mb-5">
-          将归档内容一键生成结构化 Markdown 日报。提供两种使用方式：配置到 Claude / Dify / Coze 等 Agent 平台的 Skill 文件，或直接运行独立 Python 脚本（无需 LLM）。
+          将归档内容一键生成结构化 Markdown 日报。支持 Claude Code、Dify、Coze、Claude.ai Projects 等主流 Agent 平台。
         </p>
 
-        {/* Download cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-          {/* Skill.md */}
-          <div className="flex flex-col gap-3 p-4 rounded-xl bg-violet-50 border border-violet-100">
-            <div className="flex items-center gap-2">
-              <FileText className="w-5 h-5 text-violet-600 shrink-0" />
-              <div>
-                <p className="text-sm font-bold text-violet-800">daily_brief_skill.md</p>
-                <p className="text-xs text-violet-500">Agent / LLM 平台 Skill 文件</p>
-              </div>
+        {/* Download card */}
+        <div className="flex flex-col gap-3 p-4 rounded-xl bg-violet-50 border border-violet-100 mb-6">
+          <div className="flex items-center gap-2">
+            <FileText className="w-5 h-5 text-violet-600 shrink-0" />
+            <div>
+              <p className="text-sm font-bold text-violet-800">dorami-daily-brief.zip</p>
+              <p className="text-xs text-violet-500">标准 Skill 包 · 含 SKILL.md，BASE_URL 已注入</p>
             </div>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              System Prompt 格式，包含完整的日报生成指令、分类规则和输出格式。适配 Claude、Dify、Coze 等主流平台。
-            </p>
-            <button
-              onClick={() => handleDownload('/api/skill/daily-brief.md', 'daily_brief_skill.md')}
-              className="mt-auto flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold transition-colors"
-            >
-              <Download className="w-4 h-4" />
-              下载 Skill 文件
-            </button>
           </div>
-
-          {/* Python script */}
-          <div className="flex flex-col gap-3 p-4 rounded-xl bg-blue-50 border border-blue-100">
-            <div className="flex items-center gap-2">
-              <FileCode className="w-5 h-5 text-blue-600 shrink-0" />
-              <div>
-                <p className="text-sm font-bold text-blue-800">daily_brief.py</p>
-                <p className="text-xs text-blue-500">独立 Python 脚本</p>
-              </div>
-            </div>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              无需 LLM，直接调用 REST API 生成 Markdown 日报。支持日期范围、内容类型过滤和多语言输出。
-            </p>
-            <button
-              onClick={() => handleDownload('/api/skill/daily-brief.py', 'daily_brief.py')}
-              className="mt-auto flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-colors"
-            >
-              <Download className="w-4 h-4" />
-              下载 Python 脚本
-            </button>
-          </div>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            解压得到 <code className="bg-violet-100 px-1 rounded">dorami-daily-brief/SKILL.md</code>。
+            Claude Code 用户将文件夹放入 <code className="bg-violet-100 px-1 rounded">~/.claude/skills/</code> 即可安装；其他平台将 SKILL.md 内容粘贴为 System Prompt。
+          </p>
+          <button
+            onClick={() => handleDownload('/api/skill/daily-brief', 'dorami-daily-brief.zip')}
+            className="self-start flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            下载 Skill 包
+          </button>
         </div>
 
         {/* Usage steps */}
