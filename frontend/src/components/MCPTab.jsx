@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Plug2, Copy, Check, Bot, Download, Terminal, Globe } from 'lucide-react';
 import { fetchMcpStatus, toggleMcp } from '../api';
 
@@ -37,16 +37,15 @@ export default function MCPTab({ showToast }) {
   const [status, setStatus] = useState(null);
   const [toggling, setToggling] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedJson, setCopiedJson] = useState(false);
+  const showToastRef = useRef(showToast);
+  useEffect(() => { showToastRef.current = showToast; }, [showToast]);
 
-  const loadStatus = useCallback(async () => {
-    try {
-      setStatus(await fetchMcpStatus());
-    } catch {
-      showToast('无法获取 MCP 状态', 'error');
-    }
-  }, [showToast]);
-
-  useEffect(() => { loadStatus(); }, [loadStatus]);
+  useEffect(() => {
+    fetchMcpStatus()
+      .then(setStatus)
+      .catch(() => setStatus({ enabled: false, url: null }));
+  }, []);
 
   const handleToggle = async () => {
     setToggling(true);
@@ -67,6 +66,20 @@ export default function MCPTab({ showToast }) {
     navigator.clipboard.writeText(status.url).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const mcpUrl = status?.url ?? 'http://127.0.0.1:8088/mcp';
+  const mcpJson = JSON.stringify({
+    mcpServers: {
+      'dorami-archive': { type: 'http', url: mcpUrl },
+    },
+  }, null, 2);
+
+  const handleCopyJson = () => {
+    navigator.clipboard.writeText(mcpJson).then(() => {
+      setCopiedJson(true);
+      setTimeout(() => setCopiedJson(false), 2000);
     });
   };
 
@@ -216,6 +229,24 @@ export default function MCPTab({ showToast }) {
             {!enabled && (
               <p className="text-[11px] text-slate-400 mt-1.5">启动 MCP Server 后方可复制接入地址</p>
             )}
+          </div>
+
+          {/* JSON config */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">客户端配置（JSON）</p>
+              <button
+                onClick={handleCopyJson}
+                className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                {copiedJson ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                {copiedJson ? '已复制' : '复制'}
+              </button>
+            </div>
+            <pre className="text-[11px] font-mono bg-slate-950 text-slate-300 rounded-xl p-4 overflow-x-auto leading-relaxed select-all">{mcpJson}</pre>
+            <p className="text-[11px] text-slate-400 mt-1.5">
+              将以上配置合并到 Claude Code 的 <code className="bg-slate-100 px-1 rounded">~/.claude/settings.json</code>、Claude Desktop 的 <code className="bg-slate-100 px-1 rounded">claude_desktop_config.json</code> 或其他支持 MCP HTTP 协议的客户端配置文件中。
+            </p>
           </div>
 
           {/* Tools */}
