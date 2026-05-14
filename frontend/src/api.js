@@ -109,6 +109,102 @@ export async function fetchFetchRuns(filters = {}, limit = 100) {
   return res.json();
 }
 
+export async function fetchNodeGroups(filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
+  });
+  const query = params.toString();
+  const res = await fetch(`${API_BASE_URL}/node-groups${query ? `?${query}` : ''}`);
+  if (!res.ok) await handleApiError(res, '获取节点组失败');
+  return res.json();
+}
+
+export async function createNodeGroup(data) {
+  const res = await fetch(`${API_BASE_URL}/node-groups`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) await handleApiError(res, '创建节点组失败');
+  return res.json();
+}
+
+export async function updateNodeGroup(id, data) {
+  const res = await fetch(`${API_BASE_URL}/node-groups/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) await handleApiError(res, '更新节点组失败');
+  return res.json();
+}
+
+export async function deleteNodeGroup(id) {
+  const res = await fetch(`${API_BASE_URL}/node-groups/${id}`, { method: 'DELETE' });
+  if (!res.ok) await handleApiError(res, '删除节点组失败');
+  return res.json();
+}
+
+export async function runNodeGroup(id) {
+  const res = await fetch(`${API_BASE_URL}/node-groups/${id}/fetch`, { method: 'POST' });
+  if (!res.ok) await handleApiError(res, '触发节点组失败');
+  return res.json();
+}
+
+export async function fetchCollectionJobs(filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
+  });
+  const query = params.toString();
+  const res = await fetch(`${API_BASE_URL}/collection-jobs${query ? `?${query}` : ''}`);
+  if (!res.ok) await handleApiError(res, '获取采集任务失败');
+  return res.json();
+}
+
+export async function createCollectionJob(data) {
+  const res = await fetch(`${API_BASE_URL}/collection-jobs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) await handleApiError(res, '创建采集任务失败');
+  return res.json();
+}
+
+export async function updateCollectionJob(id, data) {
+  const res = await fetch(`${API_BASE_URL}/collection-jobs/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) await handleApiError(res, '更新采集任务失败');
+  return res.json();
+}
+
+export async function deleteCollectionJob(id) {
+  const res = await fetch(`${API_BASE_URL}/collection-jobs/${id}`, { method: 'DELETE' });
+  if (!res.ok) await handleApiError(res, '删除采集任务失败');
+  return res.json();
+}
+
+export async function runCollectionJob(id) {
+  const res = await fetch(`${API_BASE_URL}/collection-jobs/${id}/run`, { method: 'POST' });
+  if (!res.ok) await handleApiError(res, '触发采集任务失败');
+  return res.json();
+}
+
+export async function fetchCollectionJobRuns(filters = {}, limit = 100) {
+  const params = new URLSearchParams({ limit });
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
+  });
+  const res = await fetch(`${API_BASE_URL}/collection-job-runs?${params}`);
+  if (!res.ok) await handleApiError(res, '获取采集运行历史失败');
+  return res.json();
+}
+
 export async function fetchSourceConfigs(filters = {}, limit = 100) {
   const params = new URLSearchParams({ limit });
   Object.entries(filters).forEach(([k, v]) => {

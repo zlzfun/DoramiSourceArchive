@@ -34,8 +34,8 @@ export default function App() {
 
   const tabs = [
     { id: 'data', icon: Database, label: '知识台账' },
-    { id: 'fetch', icon: CloudDownload, label: '节点与调度' },
-    { id: 'runs', icon: History, label: '运行历史' },
+    { id: 'fetch', icon: CloudDownload, label: '节点管理' },
+    { id: 'runs', icon: History, label: '任务与运行' },
     { id: 'vector', icon: BarChart2, label: '向量雷达' },
     { id: 'mcp', icon: Plug2, label: '接入集成' },
   ];

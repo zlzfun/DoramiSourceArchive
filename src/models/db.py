@@ -16,6 +16,11 @@ class ArticleRecord(SQLModel, table=True):
     source_url: str
     publish_date: str = Field(index=True, description="发布日期")
     fetched_date: str = Field(description="抓取入库的系统时间")
+    fetch_run_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的节点级运行 ID")
+    job_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的采集任务 ID")
+    job_run_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的采集任务级运行 ID")
+    source_group_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的节点组 ID")
+    run_scope: str = Field(default="ad_hoc", index=True, description="首次入库运行归属: ad_hoc/saved_job/legacy_task")
 
     has_content: bool = Field(default=True)
     content: Optional[str] = Field(default=None, description="文章正文或长摘要")
@@ -36,6 +41,68 @@ class FetchTaskRecord(SQLModel, table=True):
     created_at: str = Field(description="任务创建时间")
 
 
+class NodeGroupRecord(SQLModel, table=True):
+    """用户维护的节点集合，用于复用筛选范围和任务节点来源。"""
+    __tablename__ = "node_groups"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True, description="节点组名称")
+    description: str = Field(default="", description="节点组说明")
+    fetcher_ids_json: str = Field(default="[]", description="节点 ID 列表 JSON")
+    params_json: str = Field(default="{}", description="节点组默认参数 JSON")
+    per_fetcher_params_json: str = Field(default="{}", description="按节点覆盖的参数 JSON")
+    cron_expr: str = Field(default="", description="节点组整体 Cron 表达式")
+    per_fetcher_cron_json: str = Field(default="{}", description="按节点覆盖的 Cron 表达式 JSON")
+    is_active: bool = Field(default=True, index=True, description="是否启用")
+    created_at: str = Field(description="创建时间")
+    updated_at: str = Field(description="更新时间")
+
+
+class CollectionJobRecord(SQLModel, table=True):
+    """可保存、可调度的采集任务定义。"""
+    __tablename__ = "collection_jobs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True, description="采集任务名称")
+    description: str = Field(default="", description="采集任务说明")
+    group_id: Optional[int] = Field(default=None, index=True, description="可选关联节点组 ID")
+    fetcher_ids_json: str = Field(default="[]", description="直接包含的节点 ID 列表 JSON")
+    params_json: str = Field(default="{}", description="任务默认参数 JSON")
+    per_fetcher_params_json: str = Field(default="{}", description="按节点覆盖的参数 JSON")
+    cron_expr: str = Field(default="", description="可选 Cron 表达式")
+    per_fetcher_cron_json: str = Field(default="{}", description="按节点覆盖的 Cron 表达式 JSON")
+    is_active: bool = Field(default=True, index=True, description="是否启用")
+    downstream_policy_json: str = Field(default="{}", description="下游交付策略 JSON")
+    legacy_task_id: Optional[int] = Field(default=None, index=True, description="迁移自旧 fetch_tasks 的任务 ID")
+    created_at: str = Field(description="创建时间")
+    updated_at: str = Field(description="更新时间")
+
+
+class CollectionJobRunRecord(SQLModel, table=True):
+    """一次采集任务级运行，聚合多个节点级 FetchRunRecord。"""
+    __tablename__ = "collection_job_runs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    job_id: Optional[int] = Field(default=None, index=True, description="正式采集任务 ID；临时运行为空")
+    group_id: Optional[int] = Field(default=None, index=True, description="运行时关联的节点组 ID")
+    run_scope: str = Field(default="ad_hoc", index=True, description="ad_hoc/saved_job/legacy_task")
+    trigger_type: str = Field(default="manual", index=True, description="manual/scheduled")
+    status: str = Field(default="running", index=True, description="running/success/partial_failed/failed")
+    name: str = Field(default="", description="运行显示名称")
+    node_count: int = Field(default=0, description="计划执行节点数")
+    child_run_ids_json: str = Field(default="[]", description="关联 fetch_runs ID 列表 JSON")
+
+    started_at: str = Field(index=True, description="开始时间")
+    ended_at: Optional[str] = Field(default=None, description="结束时间")
+    duration_ms: Optional[int] = Field(default=None, description="执行耗时，毫秒")
+
+    fetched_count: int = Field(default=0, description="聚合抓取器产出数量")
+    saved_count: int = Field(default=0, description="聚合新增入库数量")
+    skipped_count: int = Field(default=0, description="聚合跳过数量")
+    failed_count: int = Field(default=0, description="失败节点数量")
+    error_message: Optional[str] = Field(default=None, description="聚合失败摘要")
+
+
 class FetchRunRecord(SQLModel, table=True):
     """记录每次抓取执行，用于追踪成功率、耗时、增量数量与失败原因。"""
     __tablename__ = "fetch_runs"
@@ -43,6 +110,10 @@ class FetchRunRecord(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     fetcher_id: str = Field(index=True, description="执行的数据源节点 ID")
     task_id: Optional[int] = Field(default=None, index=True, description="关联的定时任务 ID，手动执行时为空")
+    job_id: Optional[int] = Field(default=None, index=True, description="关联的采集任务 ID，临时执行时为空")
+    job_run_id: Optional[int] = Field(default=None, index=True, description="关联的采集任务级运行 ID")
+    source_group_id: Optional[int] = Field(default=None, index=True, description="关联节点组 ID")
+    run_scope: str = Field(default="ad_hoc", index=True, description="ad_hoc/saved_job/legacy_task")
     trigger_type: str = Field(default="manual", index=True, description="触发类型: manual/scheduled")
     status: str = Field(default="running", index=True, description="执行状态: running/success/failed")
     params_json: str = Field(default="{}", description="本次执行参数")

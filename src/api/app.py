@@ -16,7 +16,17 @@ from apscheduler.triggers.cron import CronTrigger
 from storage.impl.db_storage import DatabaseStorage
 from storage.impl.vector_storage import ChromaVectorStorage
 from pipeline.core import DataPipeline
-from models.db import ArticleRecord, FetchTaskRecord, FetchRunRecord, SourceConfigRecord, SourceStateRecord, AppSettingRecord
+from models.db import (
+    ArticleRecord,
+    CollectionJobRecord,
+    CollectionJobRunRecord,
+    FetchTaskRecord,
+    FetchRunRecord,
+    NodeGroupRecord,
+    SourceConfigRecord,
+    SourceStateRecord,
+    AppSettingRecord,
+)
 from models.content import BaseContent, SocialPostContent
 
 # 引入动态抓取器注册中心
@@ -140,6 +150,10 @@ def apply_article_query_filters(
         content_types: Optional[str] = None,
         source_id: Optional[str] = None,
         source_ids: Optional[str] = None,
+        job_id: Optional[int] = None,
+        job_run_id: Optional[int] = None,
+        fetch_run_id: Optional[int] = None,
+        run_scope: Optional[str] = None,
         is_vectorized: Optional[bool] = None,
         has_content: Optional[bool] = None,
         search: Optional[str] = None,
@@ -159,6 +173,15 @@ def apply_article_query_filters(
     source_id_list = _split_csv(source_ids)
     if source_id_list:
         query = query.where(ArticleRecord.source_id.in_(source_id_list))
+
+    if job_id is not None:
+        query = query.where(ArticleRecord.job_id == job_id)
+    if job_run_id is not None:
+        query = query.where(ArticleRecord.job_run_id == job_run_id)
+    if fetch_run_id is not None:
+        query = query.where(ArticleRecord.fetch_run_id == fetch_run_id)
+    if run_scope:
+        query = query.where(ArticleRecord.run_scope == run_scope)
 
     if is_vectorized is not None:
         query = query.where(ArticleRecord.is_vectorized == is_vectorized)
@@ -190,6 +213,11 @@ def serialize_dify_article(record: ArticleRecord, include_content: bool = True) 
         "content_type": record.content_type,
         "publish_date": record.publish_date,
         "fetched_date": record.fetched_date,
+        "fetch_run_id": record.fetch_run_id,
+        "job_id": record.job_id,
+        "job_run_id": record.job_run_id,
+        "source_group_id": record.source_group_id,
+        "run_scope": record.run_scope,
         "has_content": record.has_content,
         "is_vectorized": record.is_vectorized,
         "extensions": extensions,
@@ -213,11 +241,225 @@ def article_to_markdown(record: ArticleRecord) -> str:
     return f"---\n{frontmatter}\n---\n\n# {record.title}\n\n{content}".strip()
 
 
-def create_fetch_run(fetcher_id: str, params: dict, trigger_type: str, task_id: Optional[int] = None) -> int:
+def serialize_node_group(record: NodeGroupRecord) -> Dict[str, Any]:
+    return {
+        "id": record.id,
+        "name": record.name,
+        "description": record.description,
+        "fetcher_ids": _json_loads(record.fetcher_ids_json, []),
+        "params": _json_loads(record.params_json, {}),
+        "per_fetcher_params": _json_loads(record.per_fetcher_params_json, {}),
+        "cron_expr": record.cron_expr,
+        "per_fetcher_cron": _json_loads(record.per_fetcher_cron_json, {}),
+        "is_active": record.is_active,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+
+
+def serialize_collection_job(record: CollectionJobRecord) -> Dict[str, Any]:
+    return {
+        "id": record.id,
+        "name": record.name,
+        "description": record.description,
+        "group_id": record.group_id,
+        "fetcher_ids": _json_loads(record.fetcher_ids_json, []),
+        "params": _json_loads(record.params_json, {}),
+        "per_fetcher_params": _json_loads(record.per_fetcher_params_json, {}),
+        "cron_expr": record.cron_expr,
+        "per_fetcher_cron": _json_loads(record.per_fetcher_cron_json, {}),
+        "is_active": record.is_active,
+        "downstream_policy": _json_loads(record.downstream_policy_json, {}),
+        "legacy_task_id": record.legacy_task_id,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+
+
+def serialize_collection_job_run(record: CollectionJobRunRecord) -> Dict[str, Any]:
+    return {
+        "id": record.id,
+        "job_id": record.job_id,
+        "group_id": record.group_id,
+        "run_scope": record.run_scope,
+        "trigger_type": record.trigger_type,
+        "status": record.status,
+        "name": record.name,
+        "node_count": record.node_count,
+        "child_run_ids": _json_loads(record.child_run_ids_json, []),
+        "started_at": record.started_at,
+        "ended_at": record.ended_at,
+        "duration_ms": record.duration_ms,
+        "fetched_count": record.fetched_count,
+        "saved_count": record.saved_count,
+        "skipped_count": record.skipped_count,
+        "failed_count": record.failed_count,
+        "error_message": record.error_message,
+    }
+
+
+def normalize_fetcher_ids(fetcher_ids: Optional[List[str]]) -> List[str]:
+    seen = set()
+    normalized = []
+    for fetcher_id in fetcher_ids or []:
+        clean_id = str(fetcher_id).strip()
+        if clean_id and clean_id not in seen:
+            normalized.append(clean_id)
+            seen.add(clean_id)
+    return normalized
+
+
+def resolve_collection_job_fetcher_ids(job: CollectionJobRecord, session: Session) -> List[str]:
+    fetcher_ids = normalize_fetcher_ids(_json_loads(job.fetcher_ids_json, []))
+    if fetcher_ids:
+        return fetcher_ids
+    if job.group_id:
+        group = session.get(NodeGroupRecord, job.group_id)
+        if group and group.is_active:
+            return normalize_fetcher_ids(_json_loads(group.fetcher_ids_json, []))
+    return []
+
+
+def build_collection_job_items(job: CollectionJobRecord, session: Session) -> List[Dict[str, Any]]:
+    default_params = {}
+    per_fetcher_params = {}
+    if job.group_id:
+        group = session.get(NodeGroupRecord, job.group_id)
+        if group and group.is_active:
+            default_params.update(_json_loads(group.params_json, {}))
+            per_fetcher_params.update(_json_loads(group.per_fetcher_params_json, {}))
+    default_params.update(_json_loads(job.params_json, {}))
+    job_per_fetcher_params = _json_loads(job.per_fetcher_params_json, {})
+    items = []
+    for fetcher_id in resolve_collection_job_fetcher_ids(job, session):
+        params = dict(default_params)
+        params.update(per_fetcher_params.get(fetcher_id, {}))
+        params.update(job_per_fetcher_params.get(fetcher_id, {}))
+        items.append({"fetcher_id": fetcher_id, "params": params})
+    return items
+
+
+def build_node_group_items(group: NodeGroupRecord) -> List[Dict[str, Any]]:
+    default_params = _json_loads(group.params_json, {})
+    per_fetcher_params = _json_loads(group.per_fetcher_params_json, {})
+    items = []
+    for fetcher_id in normalize_fetcher_ids(_json_loads(group.fetcher_ids_json, [])):
+        params = dict(default_params)
+        params.update(per_fetcher_params.get(fetcher_id, {}))
+        items.append({"fetcher_id": fetcher_id, "params": params})
+    return items
+
+
+def resolve_delivery_source_ids(
+        session: Session,
+        source_id: Optional[str] = None,
+        source_ids: Optional[str] = None,
+        group_id: Optional[int] = None,
+        job_id: Optional[int] = None,
+) -> List[str]:
+    explicit_ids = normalize_fetcher_ids(([source_id] if source_id else []) + _split_csv(source_ids))
+    scope_ids = []
+    if group_id is not None:
+        group = session.get(NodeGroupRecord, group_id)
+        if not group:
+            raise HTTPException(status_code=404, detail="节点组不存在")
+        scope_ids.extend(_json_loads(group.fetcher_ids_json, []))
+    if job_id is not None:
+        job = session.get(CollectionJobRecord, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="采集任务不存在")
+        scope_ids.extend(resolve_collection_job_fetcher_ids(job, session))
+
+    scope_ids = normalize_fetcher_ids(scope_ids)
+    if explicit_ids and scope_ids:
+        scope_set = set(scope_ids)
+        return [item for item in explicit_ids if item in scope_set]
+    return explicit_ids or scope_ids
+
+
+def create_collection_job_run(
+        name: str,
+        trigger_type: str,
+        node_count: int,
+        job_id: Optional[int] = None,
+        group_id: Optional[int] = None,
+        run_scope: str = "ad_hoc",
+) -> int:
+    with Session(db_sink.engine) as session:
+        run = CollectionJobRunRecord(
+            job_id=job_id,
+            group_id=group_id,
+            run_scope=run_scope,
+            trigger_type=trigger_type,
+            status="running",
+            name=name,
+            node_count=node_count,
+            started_at=_now_iso(),
+        )
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        return run.id
+
+
+def finish_collection_job_run(
+        job_run_id: int,
+        status: str,
+        child_run_ids: Optional[List[int]] = None,
+        fetched_count: int = 0,
+        saved_count: int = 0,
+        skipped_count: int = 0,
+        failed_count: int = 0,
+        error_message: Optional[str] = None,
+):
+    ended_at = _now_iso()
+    with Session(db_sink.engine) as session:
+        run = session.get(CollectionJobRunRecord, job_run_id)
+        if not run:
+            return
+        if not child_run_ids:
+            child_run_ids = [
+                item.id for item in session.exec(
+                    select(FetchRunRecord).where(FetchRunRecord.job_run_id == job_run_id)
+                ).all()
+                if item.id is not None
+            ]
+        run.status = status
+        run.ended_at = ended_at
+        run.child_run_ids_json = _json_dumps(child_run_ids or [])
+        run.fetched_count = fetched_count
+        run.saved_count = saved_count
+        run.skipped_count = skipped_count
+        run.failed_count = failed_count
+        run.error_message = error_message
+        try:
+            started_at = datetime.datetime.fromisoformat(run.started_at)
+            ended_dt = datetime.datetime.fromisoformat(ended_at)
+            run.duration_ms = int((ended_dt - started_at).total_seconds() * 1000)
+        except ValueError:
+            run.duration_ms = None
+        session.add(run)
+        session.commit()
+
+
+def create_fetch_run(
+        fetcher_id: str,
+        params: dict,
+        trigger_type: str,
+        task_id: Optional[int] = None,
+        job_id: Optional[int] = None,
+        job_run_id: Optional[int] = None,
+        source_group_id: Optional[int] = None,
+        run_scope: str = "ad_hoc",
+) -> int:
     with Session(db_sink.engine) as session:
         run = FetchRunRecord(
             fetcher_id=fetcher_id,
             task_id=task_id,
+            job_id=job_id,
+            job_run_id=job_run_id,
+            source_group_id=source_group_id,
+            run_scope=run_scope,
             trigger_type=trigger_type,
             status="running",
             params_json=_json_dumps(params),
@@ -257,13 +499,124 @@ def finish_fetch_run(run_id: int, status: str, result: Any = None, error_message
 
 async def execute_fetch_job(fetcher_id: str, params: dict, task_id: Optional[int] = None):
     print(f"⏰ 定时任务触发: 正在执行调度节点 {fetcher_id}...")
+    job_run_id = create_collection_job_run(
+        name=f"旧定时任务 #{task_id or fetcher_id}",
+        trigger_type="scheduled",
+        node_count=1,
+        run_scope="legacy_task",
+    )
     try:
-        await run_fetcher_with_tracking(fetcher_id, params, trigger_type="scheduled", task_id=task_id)
+        result = await run_fetcher_with_tracking(
+            fetcher_id,
+            params,
+            trigger_type="scheduled",
+            task_id=task_id,
+            job_run_id=job_run_id,
+            run_scope="legacy_task",
+        )
+        finish_collection_job_run(
+            job_run_id,
+            status="success",
+            child_run_ids=[result["run_id"]],
+            fetched_count=result["fetched_count"],
+            saved_count=result["saved_count"],
+            skipped_count=result["skipped_count"],
+        )
     except ValueError as e:
+        finish_collection_job_run(job_run_id, status="failed", failed_count=1, error_message=str(e))
         print(f"❌ {e}")
     except Exception as e:
+        finish_collection_job_run(job_run_id, status="failed", failed_count=1, error_message=str(e))
         print(f"❌ 定时任务执行失败: {e}")
         raise
+
+
+async def execute_collection_job(job_id: int):
+    with Session(db_sink.engine) as session:
+        job = session.get(CollectionJobRecord, job_id)
+        if not job or not job.is_active:
+            print(f"⚠️ 采集任务不可用或已停用: {job_id}")
+            return
+        items = build_collection_job_items(job, session)
+        job_name = job.name
+        group_id = job.group_id
+
+    print(f"⏰ 采集任务触发: {job_name} ({len(items)} 个节点)")
+    await run_collection_items(
+        items,
+        name=job_name,
+        trigger_type="scheduled",
+        job_id=job_id,
+        group_id=group_id,
+        run_scope="saved_job",
+    )
+
+
+async def execute_collection_job_node(job_id: int, fetcher_id: str):
+    with Session(db_sink.engine) as session:
+        job = session.get(CollectionJobRecord, job_id)
+        if not job or not job.is_active:
+            print(f"⚠️ 采集任务不可用或已停用: {job_id}")
+            return
+        items = [item for item in build_collection_job_items(job, session) if item["fetcher_id"] == fetcher_id]
+        job_name = job.name
+        group_id = job.group_id
+    if not items:
+        print(f"⚠️ 采集任务节点不可用: {job_id}/{fetcher_id}")
+        return
+    await run_collection_items(
+        items,
+        name=f"{job_name} / {fetcher_id}",
+        trigger_type="scheduled",
+        job_id=job_id,
+        group_id=group_id,
+        run_scope="saved_job",
+    )
+
+
+async def execute_node_group(group_id: int):
+    with Session(db_sink.engine) as session:
+        group = session.get(NodeGroupRecord, group_id)
+        if not group or not group.is_active:
+            print(f"⚠️ 节点组不可用或已停用: {group_id}")
+            return
+        items = build_node_group_items(group)
+        group_name = group.name
+    await run_collection_items(
+        items,
+        name=f"节点组定时: {group_name}",
+        trigger_type="scheduled",
+        group_id=group_id,
+        run_scope="ad_hoc",
+    )
+
+
+async def execute_node_group_node(group_id: int, fetcher_id: str):
+    with Session(db_sink.engine) as session:
+        group = session.get(NodeGroupRecord, group_id)
+        if not group or not group.is_active:
+            print(f"⚠️ 节点组不可用或已停用: {group_id}")
+            return
+        items = [item for item in build_node_group_items(group) if item["fetcher_id"] == fetcher_id]
+        group_name = group.name
+    if not items:
+        print(f"⚠️ 节点组节点不可用: {group_id}/{fetcher_id}")
+        return
+    await run_collection_items(
+        items,
+        name=f"节点组定时: {group_name} / {fetcher_id}",
+        trigger_type="scheduled",
+        group_id=group_id,
+        run_scope="ad_hoc",
+    )
+
+
+def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]):
+    parts = cron_expr.split()
+    if len(parts) != 5:
+        return
+    trigger = CronTrigger(minute=parts[0], hour=parts[1], day=parts[2], month=parts[3], day_of_week=parts[4])
+    scheduler.add_job(callback, trigger, args=args, id=job_id, replace_existing=True)
 
 
 def load_tasks_to_scheduler():
@@ -272,14 +625,37 @@ def load_tasks_to_scheduler():
         tasks = session.exec(select(FetchTaskRecord).where(FetchTaskRecord.is_active == True)).all()
         for task in tasks:
             params = json.loads(task.params_json)
-            parts = task.cron_expr.split()
-            if len(parts) == 5:
-                trigger = CronTrigger(minute=parts[0], hour=parts[1], day=parts[2], month=parts[3],
-                                      day_of_week=parts[4])
-                scheduler.add_job(
-                    execute_fetch_job, trigger, args=[task.fetcher_id, params, task.id], id=f"task_{task.id}",
-                    replace_existing=True
-                )
+            add_cron_job(f"task_{task.id}", execute_fetch_job, task.cron_expr, [task.fetcher_id, params, task.id])
+        groups = session.exec(
+            select(NodeGroupRecord)
+            .where(NodeGroupRecord.is_active == True)
+        ).all()
+        for group in groups:
+            if group.cron_expr:
+                add_cron_job(f"node_group_{group.id}", execute_node_group, group.cron_expr, [group.id])
+            for fetcher_id, cron_expr in _json_loads(group.per_fetcher_cron_json, {}).items():
+                if cron_expr:
+                    add_cron_job(
+                        f"node_group_{group.id}_{fetcher_id}",
+                        execute_node_group_node,
+                        cron_expr,
+                        [group.id, fetcher_id],
+                    )
+        jobs = session.exec(
+            select(CollectionJobRecord)
+            .where(CollectionJobRecord.is_active == True)
+        ).all()
+        for job in jobs:
+            if job.cron_expr:
+                add_cron_job(f"collection_job_{job.id}", execute_collection_job, job.cron_expr, [job.id])
+            for fetcher_id, cron_expr in _json_loads(job.per_fetcher_cron_json, {}).items():
+                if cron_expr:
+                    add_cron_job(
+                        f"collection_job_{job.id}_{fetcher_id}",
+                        execute_collection_job_node,
+                        cron_expr,
+                        [job.id, fetcher_id],
+                    )
 
 
 # ==================== 1. 数据台账与 CRUD ====================
@@ -627,9 +1003,22 @@ async def run_fetcher_with_tracking(
         fetcher_id: str,
         params: Dict[str, Any],
         trigger_type: str = "manual",
-        task_id: Optional[int] = None
+        task_id: Optional[int] = None,
+        job_id: Optional[int] = None,
+        job_run_id: Optional[int] = None,
+        source_group_id: Optional[int] = None,
+        run_scope: str = "ad_hoc",
 ) -> Dict[str, Any]:
-    run_id = create_fetch_run(fetcher_id, params, trigger_type=trigger_type, task_id=task_id)
+    run_id = create_fetch_run(
+        fetcher_id,
+        params,
+        trigger_type=trigger_type,
+        task_id=task_id,
+        job_id=job_id,
+        job_run_id=job_run_id,
+        source_group_id=source_group_id,
+        run_scope=run_scope,
+    )
     mark_source_state_started(fetcher_id, params, run_id)
     fetcher_class = fetcher_registry.get_class(fetcher_id)
     if not fetcher_class:
@@ -640,21 +1029,161 @@ async def run_fetcher_with_tracking(
 
     try:
         fetcher = fetcher_class()
-        result = await pipeline.run_task(fetcher, **params)
+        result = await pipeline.run_task(
+            fetcher,
+            lineage={
+                "fetch_run_id": run_id,
+                "job_id": job_id,
+                "job_run_id": job_run_id,
+                "source_group_id": source_group_id,
+                "run_scope": run_scope,
+            },
+            **params,
+        )
         finish_fetch_run(run_id, status="success", result=result)
         mark_source_state_finished(fetcher_id, params, run_id, status="success", result=result)
         return {
             "status": "success",
             "run_id": run_id,
+            "job_id": job_id,
+            "job_run_id": job_run_id,
             "fetcher_id": fetcher_id,
             "fetched_count": result.fetched_count,
             "saved_count": result.saved_count,
-            "skipped_count": result.skipped_count
+            "skipped_count": result.skipped_count,
+            "saved_content_ids": result.saved_content_ids,
         }
     except Exception as e:
         finish_fetch_run(run_id, status="failed", error_message=str(e))
         mark_source_state_finished(fetcher_id, params, run_id, status="failed", error=e)
         raise
+
+
+async def run_single_fetch_as_collection(
+        fetcher_id: str,
+        params: Dict[str, Any],
+        name: str,
+        trigger_type: str = "manual",
+        run_scope: str = "ad_hoc",
+        task_id: Optional[int] = None,
+        job_id: Optional[int] = None,
+        group_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    job_run_id = create_collection_job_run(
+        name=name,
+        trigger_type=trigger_type,
+        node_count=1,
+        job_id=job_id,
+        group_id=group_id,
+        run_scope=run_scope,
+    )
+    try:
+        result = await run_fetcher_with_tracking(
+            fetcher_id,
+            params,
+            trigger_type=trigger_type,
+            task_id=task_id,
+            job_id=job_id,
+            job_run_id=job_run_id,
+            source_group_id=group_id,
+            run_scope=run_scope,
+        )
+        finish_collection_job_run(
+            job_run_id,
+            status="success",
+            child_run_ids=[result["run_id"]],
+            fetched_count=result["fetched_count"],
+            saved_count=result["saved_count"],
+            skipped_count=result["skipped_count"],
+        )
+        return {**result, "job_run_id": job_run_id}
+    except Exception as e:
+        finish_collection_job_run(job_run_id, status="failed", failed_count=1, error_message=str(e))
+        raise
+
+
+async def run_collection_items(
+        items: List[Dict[str, Any]],
+        name: str,
+        trigger_type: str = "manual",
+        job_id: Optional[int] = None,
+        group_id: Optional[int] = None,
+        run_scope: str = "ad_hoc",
+) -> Dict[str, Any]:
+    job_run_id = create_collection_job_run(
+        name=name,
+        trigger_type=trigger_type,
+        node_count=len(items),
+        job_id=job_id,
+        group_id=group_id,
+        run_scope=run_scope,
+    )
+    results = []
+    child_run_ids = []
+    fetched_count = 0
+    saved_count = 0
+    skipped_count = 0
+    failed_count = 0
+    errors = []
+    saved_content_ids = []
+
+    for item in items:
+        fetcher_id = str(item.get("fetcher_id", "")).strip()
+        params = item.get("params") or {}
+        if not fetcher_id:
+            failed_count += 1
+            errors.append("空节点 ID")
+            results.append({"fetcher_id": fetcher_id, "status": "failed", "error": "空节点 ID"})
+            continue
+        try:
+            result = await run_fetcher_with_tracking(
+                fetcher_id,
+                params,
+                trigger_type=trigger_type,
+                job_id=job_id,
+                job_run_id=job_run_id,
+                source_group_id=group_id,
+                run_scope=run_scope,
+            )
+            child_run_ids.append(result["run_id"])
+            fetched_count += result.get("fetched_count", 0)
+            saved_count += result.get("saved_count", 0)
+            skipped_count += result.get("skipped_count", 0)
+            saved_content_ids.extend(result.get("saved_content_ids", []))
+            results.append(result)
+        except Exception as e:
+            failed_count += 1
+            errors.append(f"{fetcher_id}: {e}")
+            results.append({"fetcher_id": fetcher_id, "status": "failed", "error": str(e)})
+
+    status = "success"
+    if failed_count and failed_count == len(items):
+        status = "failed"
+    elif failed_count:
+        status = "partial_failed"
+
+    finish_collection_job_run(
+        job_run_id,
+        status=status,
+        child_run_ids=child_run_ids,
+        fetched_count=fetched_count,
+        saved_count=saved_count,
+        skipped_count=skipped_count,
+        failed_count=failed_count,
+        error_message="; ".join(errors[:3]) if errors else None,
+    )
+    return {
+        "status": status,
+        "job_id": job_id,
+        "job_run_id": job_run_id,
+        "count": len(items),
+        "fetched_count": fetched_count,
+        "saved_count": saved_count,
+        "skipped_count": skipped_count,
+        "failed_count": failed_count,
+        "saved_content_ids": saved_content_ids,
+        "results": results,
+    }
 
 
 # ==================== 0. 数据源配置 ====================
@@ -791,7 +1320,13 @@ async def fetch_source_config(source_id: str, body: Optional[SourceFetchParams] 
         params = build_source_fetch_params(record, body.params if body else {})
 
     try:
-        result = await run_fetcher_with_tracking(fetcher_id, params, trigger_type="manual")
+        result = await run_single_fetch_as_collection(
+            fetcher_id,
+            params,
+            name=f"临时抓取: {source_id}",
+            trigger_type="manual",
+            run_scope="ad_hoc",
+        )
         return {"source_id": source_id, **result}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -808,20 +1343,28 @@ async def fetch_active_rss_sources(body: Optional[SourceFetchParams] = None):
             .order_by(SourceConfigRecord.name)
         ).all()
 
+    items = []
+    skipped_results = []
     for record in records:
         fetcher_id = resolve_source_fetcher_id(record)
         if not fetcher_id:
-            results.append({"source_id": record.source_id, "status": "skipped", "error": "未绑定可用抓取器"})
+            skipped_results.append({"source_id": record.source_id, "status": "skipped", "error": "未绑定可用抓取器"})
             continue
 
-        try:
-            params = build_source_fetch_params(record, body.params if body else {})
-            result = await run_fetcher_with_tracking(fetcher_id, params, trigger_type="manual")
-            results.append({"source_id": record.source_id, **result})
-        except Exception as e:
-            results.append({"source_id": record.source_id, "status": "failed", "error": str(e)})
+        params = build_source_fetch_params(record, body.params if body else {})
+        items.append({"source_id": record.source_id, "fetcher_id": fetcher_id, "params": params})
 
-    return {"status": "success", "count": len(results), "results": results}
+    result = await run_collection_items(
+        items,
+        name="临时抓取: 活跃 RSS 数据源",
+        trigger_type="manual",
+        run_scope="ad_hoc",
+    )
+    results = skipped_results + [
+        {"source_id": item.get("source_id"), **item_result}
+        for item, item_result in zip(items, result["results"])
+    ]
+    return {**result, "results": results}
 
 
 @app.post("/api/import/social-posts")
@@ -858,6 +1401,10 @@ async def import_social_posts(params: SocialPostImportParams):
 def get_articles(
         content_type: Optional[str] = None,
         source_id: Optional[str] = None,
+        job_id: Optional[int] = None,
+        job_run_id: Optional[int] = None,
+        fetch_run_id: Optional[int] = None,
+        run_scope: Optional[str] = None,
         is_vectorized: Optional[bool] = None,
         search: Optional[str] = None,
         publish_date_start: Optional[str] = None,  # ✨ 升级：起始原始发布日期
@@ -873,6 +1420,10 @@ def get_articles(
             query,
             content_type=content_type,
             source_id=source_id,
+            job_id=job_id,
+            job_run_id=job_run_id,
+            fetch_run_id=fetch_run_id,
+            run_scope=run_scope,
             is_vectorized=is_vectorized,
             search=search,
             publish_date_start=publish_date_start,
@@ -890,6 +1441,11 @@ def get_dify_articles(
         content_types: Optional[str] = None,
         source_id: Optional[str] = None,
         source_ids: Optional[str] = None,
+        group_id: Optional[int] = None,
+        job_id: Optional[int] = None,
+        job_run_id: Optional[int] = None,
+        fetch_run_id: Optional[int] = None,
+        run_scope: Optional[str] = None,
         publish_date_start: Optional[str] = None,
         publish_date_end: Optional[str] = None,
         fetched_date_start: Optional[str] = None,
@@ -902,12 +1458,19 @@ def get_dify_articles(
 ):
     safe_limit = min(max(limit, 1), 500)
     with Session(db_sink.engine) as session:
+        delivery_source_ids = resolve_delivery_source_ids(
+            session, source_id=source_id, source_ids=source_ids, group_id=group_id, job_id=job_id
+        )
+        if (source_id or source_ids or group_id is not None or job_id is not None) and not delivery_source_ids:
+            return {"status": "success", "count": 0, "skip": skip, "limit": safe_limit, "next_skip": None, "items": []}
         query = apply_article_query_filters(
             select(ArticleRecord),
             content_type=content_type,
             content_types=content_types,
-            source_id=source_id,
-            source_ids=source_ids,
+            source_ids=",".join(delivery_source_ids) if delivery_source_ids else None,
+            job_run_id=job_run_id,
+            fetch_run_id=fetch_run_id,
+            run_scope=run_scope,
             has_content=has_content,
             search=search,
             publish_date_start=publish_date_start,
@@ -935,6 +1498,11 @@ def export_dify_articles_markdown(
         content_types: Optional[str] = None,
         source_id: Optional[str] = None,
         source_ids: Optional[str] = None,
+        group_id: Optional[int] = None,
+        job_id: Optional[int] = None,
+        job_run_id: Optional[int] = None,
+        fetch_run_id: Optional[int] = None,
+        run_scope: Optional[str] = None,
         publish_date_start: Optional[str] = None,
         publish_date_end: Optional[str] = None,
         fetched_date_start: Optional[str] = None,
@@ -946,12 +1514,19 @@ def export_dify_articles_markdown(
 ):
     safe_limit = min(max(limit, 1), 200)
     with Session(db_sink.engine) as session:
+        delivery_source_ids = resolve_delivery_source_ids(
+            session, source_id=source_id, source_ids=source_ids, group_id=group_id, job_id=job_id
+        )
+        if (source_id or source_ids or group_id is not None or job_id is not None) and not delivery_source_ids:
+            return Response(content="", media_type="text/markdown; charset=utf-8")
         query = apply_article_query_filters(
             select(ArticleRecord),
             content_type=content_type,
             content_types=content_types,
-            source_id=source_id,
-            source_ids=source_ids,
+            source_ids=",".join(delivery_source_ids) if delivery_source_ids else None,
+            job_run_id=job_run_id,
+            fetch_run_id=fetch_run_id,
+            run_scope=run_scope,
             has_content=has_content,
             search=search,
             publish_date_start=publish_date_start,
@@ -1083,7 +1658,13 @@ def get_source_states(
 @app.post("/api/fetch/{fetcher_id}")
 async def trigger_fetch_dynamic(fetcher_id: str, params: Dict[str, Any] = Body(...)):
     try:
-        return await run_fetcher_with_tracking(fetcher_id, params, trigger_type="manual")
+        return await run_single_fetch_as_collection(
+            fetcher_id,
+            params,
+            name=f"临时抓取: {fetcher_id}",
+            trigger_type="manual",
+            run_scope="ad_hoc",
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -1413,10 +1994,344 @@ async def reindex_all_articles():
 
 
 # ==================== 4. 定时任务 ====================
+class NodeGroupCreate(BaseModel):
+    name: str
+    description: str = ""
+    fetcher_ids: List[str] = PydanticField(default_factory=list)
+    params: Dict[str, Any] = PydanticField(default_factory=dict)
+    per_fetcher_params: Dict[str, Dict[str, Any]] = PydanticField(default_factory=dict)
+    cron_expr: str = ""
+    per_fetcher_cron: Dict[str, str] = PydanticField(default_factory=dict)
+    is_active: bool = True
+
+
+class NodeGroupUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    fetcher_ids: Optional[List[str]] = None
+    params: Optional[Dict[str, Any]] = None
+    per_fetcher_params: Optional[Dict[str, Dict[str, Any]]] = None
+    cron_expr: Optional[str] = None
+    per_fetcher_cron: Optional[Dict[str, str]] = None
+    is_active: Optional[bool] = None
+
+
+class CollectionJobCreate(BaseModel):
+    name: str
+    description: str = ""
+    group_id: Optional[int] = None
+    fetcher_ids: List[str] = PydanticField(default_factory=list)
+    params: Dict[str, Any] = PydanticField(default_factory=dict)
+    per_fetcher_params: Dict[str, Dict[str, Any]] = PydanticField(default_factory=dict)
+    cron_expr: str = ""
+    per_fetcher_cron: Dict[str, str] = PydanticField(default_factory=dict)
+    is_active: bool = True
+    downstream_policy: Dict[str, Any] = PydanticField(default_factory=dict)
+
+
+class CollectionJobUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    group_id: Optional[int] = None
+    fetcher_ids: Optional[List[str]] = None
+    params: Optional[Dict[str, Any]] = None
+    per_fetcher_params: Optional[Dict[str, Dict[str, Any]]] = None
+    cron_expr: Optional[str] = None
+    per_fetcher_cron: Optional[Dict[str, str]] = None
+    is_active: Optional[bool] = None
+    downstream_policy: Optional[Dict[str, Any]] = None
+
+
 class TaskCreate(BaseModel):
     fetcher_id: str
     cron_expr: str
     params: dict
+
+
+@app.get("/api/node-groups")
+def get_node_groups(is_active: Optional[bool] = None):
+    with Session(db_sink.engine) as session:
+        query = select(NodeGroupRecord)
+        if is_active is not None:
+            query = query.where(NodeGroupRecord.is_active == is_active)
+        query = query.order_by(NodeGroupRecord.name)
+        return [serialize_node_group(record) for record in session.exec(query).all()]
+
+
+@app.post("/api/node-groups")
+def create_node_group(data: NodeGroupCreate):
+    name = data.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="节点组名称不能为空")
+    now = _now_iso()
+    with Session(db_sink.engine) as session:
+        record = NodeGroupRecord(
+            name=name,
+            description=data.description.strip(),
+            fetcher_ids_json=_json_dumps(normalize_fetcher_ids(data.fetcher_ids)),
+            params_json=_json_dumps(data.params),
+            per_fetcher_params_json=_json_dumps(data.per_fetcher_params),
+            cron_expr=data.cron_expr.strip(),
+            per_fetcher_cron_json=_json_dumps(data.per_fetcher_cron),
+            is_active=data.is_active,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        result = serialize_node_group(record)
+    load_tasks_to_scheduler()
+    return result
+
+
+@app.put("/api/node-groups/{group_id}")
+def update_node_group(group_id: int, data: NodeGroupUpdate):
+    with Session(db_sink.engine) as session:
+        record = session.get(NodeGroupRecord, group_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="节点组不存在")
+        update_data = data.dict(exclude_unset=True)
+        if "name" in update_data:
+            name = (update_data["name"] or "").strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="节点组名称不能为空")
+            record.name = name
+        if "description" in update_data:
+            record.description = (update_data["description"] or "").strip()
+        if "fetcher_ids" in update_data:
+            record.fetcher_ids_json = _json_dumps(normalize_fetcher_ids(update_data["fetcher_ids"]))
+        if "params" in update_data:
+            record.params_json = _json_dumps(update_data["params"])
+        if "per_fetcher_params" in update_data:
+            record.per_fetcher_params_json = _json_dumps(update_data["per_fetcher_params"])
+        if "cron_expr" in update_data:
+            record.cron_expr = (update_data["cron_expr"] or "").strip()
+        if "per_fetcher_cron" in update_data:
+            record.per_fetcher_cron_json = _json_dumps(update_data["per_fetcher_cron"])
+        if "is_active" in update_data:
+            record.is_active = update_data["is_active"]
+        record.updated_at = _now_iso()
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        result = serialize_node_group(record)
+    load_tasks_to_scheduler()
+    return result
+
+
+@app.delete("/api/node-groups/{group_id}")
+def delete_node_group(group_id: int):
+    with Session(db_sink.engine) as session:
+        record = session.get(NodeGroupRecord, group_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="节点组不存在")
+        session.delete(record)
+        session.commit()
+    load_tasks_to_scheduler()
+    return {"status": "success"}
+
+
+@app.post("/api/node-groups/{group_id}/fetch")
+async def fetch_node_group(group_id: int):
+    with Session(db_sink.engine) as session:
+        group = session.get(NodeGroupRecord, group_id)
+        if not group:
+            raise HTTPException(status_code=404, detail="节点组不存在")
+        if not group.is_active:
+            raise HTTPException(status_code=400, detail="节点组已停用")
+        items = build_node_group_items(group)
+        group_name = group.name
+    return await run_collection_items(
+        items,
+        name=f"临时抓取节点组: {group_name}",
+        trigger_type="manual",
+        group_id=group_id,
+        run_scope="ad_hoc",
+    )
+
+
+@app.get("/api/collection-jobs")
+def get_collection_jobs(is_active: Optional[bool] = None):
+    with Session(db_sink.engine) as session:
+        query = select(CollectionJobRecord)
+        if is_active is not None:
+            query = query.where(CollectionJobRecord.is_active == is_active)
+        query = query.order_by(CollectionJobRecord.name)
+        return [serialize_collection_job(record) for record in session.exec(query).all()]
+
+
+@app.post("/api/collection-jobs")
+def create_collection_job(data: CollectionJobCreate):
+    name = data.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="采集任务名称不能为空")
+    if data.group_id is None and not normalize_fetcher_ids(data.fetcher_ids):
+        raise HTTPException(status_code=400, detail="采集任务需要节点组或至少一个节点")
+    now = _now_iso()
+    with Session(db_sink.engine) as session:
+        if data.group_id is not None and not session.get(NodeGroupRecord, data.group_id):
+            raise HTTPException(status_code=404, detail="节点组不存在")
+        record = CollectionJobRecord(
+            name=name,
+            description=data.description.strip(),
+            group_id=data.group_id,
+            fetcher_ids_json=_json_dumps(normalize_fetcher_ids(data.fetcher_ids)),
+            params_json=_json_dumps(data.params),
+            per_fetcher_params_json=_json_dumps(data.per_fetcher_params),
+            cron_expr=data.cron_expr.strip(),
+            per_fetcher_cron_json=_json_dumps(data.per_fetcher_cron),
+            is_active=data.is_active,
+            downstream_policy_json=_json_dumps(data.downstream_policy),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+    load_tasks_to_scheduler()
+    return serialize_collection_job(record)
+
+
+@app.put("/api/collection-jobs/{job_id}")
+def update_collection_job(job_id: int, data: CollectionJobUpdate):
+    with Session(db_sink.engine) as session:
+        record = session.get(CollectionJobRecord, job_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="采集任务不存在")
+        update_data = data.dict(exclude_unset=True)
+        if "name" in update_data:
+            name = (update_data["name"] or "").strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="采集任务名称不能为空")
+            record.name = name
+        if "description" in update_data:
+            record.description = (update_data["description"] or "").strip()
+        if "group_id" in update_data:
+            group_id = update_data["group_id"]
+            if group_id is not None and not session.get(NodeGroupRecord, group_id):
+                raise HTTPException(status_code=404, detail="节点组不存在")
+            record.group_id = group_id
+        if "fetcher_ids" in update_data:
+            record.fetcher_ids_json = _json_dumps(normalize_fetcher_ids(update_data["fetcher_ids"]))
+        if "params" in update_data:
+            record.params_json = _json_dumps(update_data["params"])
+        if "per_fetcher_params" in update_data:
+            record.per_fetcher_params_json = _json_dumps(update_data["per_fetcher_params"])
+        if "cron_expr" in update_data:
+            record.cron_expr = (update_data["cron_expr"] or "").strip()
+        if "per_fetcher_cron" in update_data:
+            record.per_fetcher_cron_json = _json_dumps(update_data["per_fetcher_cron"])
+        if "is_active" in update_data:
+            record.is_active = update_data["is_active"]
+        if "downstream_policy" in update_data:
+            record.downstream_policy_json = _json_dumps(update_data["downstream_policy"])
+        record.updated_at = _now_iso()
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+    load_tasks_to_scheduler()
+    return serialize_collection_job(record)
+
+
+@app.delete("/api/collection-jobs/{job_id}")
+def delete_collection_job(job_id: int):
+    with Session(db_sink.engine) as session:
+        record = session.get(CollectionJobRecord, job_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="采集任务不存在")
+        session.delete(record)
+        session.commit()
+    load_tasks_to_scheduler()
+    return {"status": "success"}
+
+
+@app.post("/api/collection-jobs/{job_id}/run")
+async def run_collection_job_now(job_id: int):
+    with Session(db_sink.engine) as session:
+        job = session.get(CollectionJobRecord, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="采集任务不存在")
+        items = build_collection_job_items(job, session)
+        if not items:
+            raise HTTPException(status_code=400, detail="采集任务没有可执行节点")
+        job_name = job.name
+        group_id = job.group_id
+    return await run_collection_items(
+        items,
+        name=job_name,
+        trigger_type="manual",
+        job_id=job_id,
+        group_id=group_id,
+        run_scope="saved_job",
+    )
+
+
+@app.post("/api/collection-jobs/migrate-legacy-tasks")
+def migrate_legacy_tasks_to_collection_jobs():
+    created = 0
+    now = _now_iso()
+    with Session(db_sink.engine) as session:
+        tasks = session.exec(select(FetchTaskRecord)).all()
+        for task in tasks:
+            existing = session.exec(
+                select(CollectionJobRecord).where(CollectionJobRecord.legacy_task_id == task.id)
+            ).first()
+            if existing:
+                continue
+            fetcher_class = fetcher_registry.get_class(task.fetcher_id)
+            name = fetcher_class.name if fetcher_class else task.fetcher_id
+            record = CollectionJobRecord(
+                name=f"{name} 定时采集",
+                description="由旧版单节点定时任务迁移生成。",
+                fetcher_ids_json=_json_dumps([task.fetcher_id]),
+                params_json=task.params_json,
+                cron_expr=task.cron_expr,
+                is_active=False,
+                legacy_task_id=task.id,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(record)
+            created += 1
+        session.commit()
+    return {"status": "success", "created": created}
+
+
+@app.get("/api/collection-job-runs")
+def get_collection_job_runs(
+        job_id: Optional[int] = None,
+        status: Optional[str] = None,
+        trigger_type: Optional[str] = None,
+        run_scope: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100,
+):
+    with Session(db_sink.engine) as session:
+        query = select(CollectionJobRunRecord)
+        if job_id is not None:
+            query = query.where(CollectionJobRunRecord.job_id == job_id)
+        if status:
+            query = query.where(CollectionJobRunRecord.status == status)
+        if trigger_type:
+            query = query.where(CollectionJobRunRecord.trigger_type == trigger_type)
+        if run_scope:
+            query = query.where(CollectionJobRunRecord.run_scope == run_scope)
+        query = query.order_by(CollectionJobRunRecord.started_at.desc()).offset(skip).limit(limit)
+        return [serialize_collection_job_run(record) for record in session.exec(query).all()]
+
+
+@app.get("/api/collection-job-runs/{job_run_id}")
+def get_collection_job_run(job_run_id: int):
+    with Session(db_sink.engine) as session:
+        record = session.get(CollectionJobRunRecord, job_run_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="采集运行记录不存在")
+        child_run_ids = _json_loads(record.child_run_ids_json, [])
+        child_runs = []
+        if child_run_ids:
+            child_runs = session.exec(select(FetchRunRecord).where(FetchRunRecord.id.in_(child_run_ids))).all()
+        return {**serialize_collection_job_run(record), "child_runs": child_runs}
 
 
 @app.get("/api/tasks")
@@ -1453,6 +2368,9 @@ def delete_task(task_id: int):
 @app.get("/api/fetch-runs")
 def get_fetch_runs(
         fetcher_id: Optional[str] = None,
+        job_id: Optional[int] = None,
+        job_run_id: Optional[int] = None,
+        run_scope: Optional[str] = None,
         status: Optional[str] = None,
         trigger_type: Optional[str] = None,
         skip: int = 0,
@@ -1462,6 +2380,12 @@ def get_fetch_runs(
         query = select(FetchRunRecord)
         if fetcher_id:
             query = query.where(FetchRunRecord.fetcher_id == fetcher_id)
+        if job_id is not None:
+            query = query.where(FetchRunRecord.job_id == job_id)
+        if job_run_id is not None:
+            query = query.where(FetchRunRecord.job_run_id == job_run_id)
+        if run_scope:
+            query = query.where(FetchRunRecord.run_scope == run_scope)
         if status:
             query = query.where(FetchRunRecord.status == status)
         if trigger_type:
