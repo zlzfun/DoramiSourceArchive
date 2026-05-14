@@ -50,6 +50,11 @@ Returns archive records as Dify-friendly document objects:
 | `content_types` | Comma-separated content types. |
 | `source_id` | Exact source ID. |
 | `source_ids` | Comma-separated source IDs. |
+| `group_id` | Restrict delivery to records whose `source_id` belongs to a saved node group. |
+| `job_id` | Restrict delivery to records whose `source_id` belongs to a saved collection job. |
+| `job_run_id` | Restrict delivery to records first saved by one collection job run. |
+| `fetch_run_id` | Restrict delivery to records first saved by one node-level fetch run. |
+| `run_scope` | Restrict delivery by first-ingest scope: `ad_hoc`, `saved_job`, or `legacy_task`. |
 | `publish_date_start` / `publish_date_end` | Source publish-time window. Date-only end values include the end of that day. |
 | `fetched_date_start` / `fetched_date_end` | Archive ingestion-time window. Date-only end values include the end of that day. |
 | `search` | Title substring filter. |
@@ -75,5 +80,6 @@ This endpoint is capped at 200 records per request to keep exported documents re
 
 - Add Dify sync status per article or per downstream consumer.
 - Add idempotent sync acknowledgement APIs if Dify should report consumed article IDs.
+- Exact `job_run_id` delivery only covers records first saved during that run. Duplicate records skipped by later runs retain their original lineage.
 - Add standard time-window helpers such as `last_hours` or `since_cursor` if Dify jobs prefer cursor-style polling over timestamp filters.
 - Add authentication or shared-token protection before exposing these endpoints outside a trusted local/private network.

@@ -2,9 +2,9 @@
 核心中枢：数据流水线 (src/pipeline/core.py)
 """
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List
+from typing import Any, Dict, List, Optional
 from storage.base import BaseStorage
 from fetchers.base import BaseFetcher
 from models.content import BaseContent
@@ -15,11 +15,11 @@ class PipelineRunResult:
     fetched_count: int = 0
     saved_count: int = 0
     skipped_count: int = 0
+    saved_content_ids: List[str] = field(default_factory=list)
     latest_content_id: str = ""
     latest_content_publish_date: str = ""
     latest_content_source_id: str = ""
     latest_content_type: str = ""
-
 
 def _parse_iso_datetime(value: str) -> datetime | None:
     if not value:
@@ -47,7 +47,12 @@ class DataPipeline:
         self.logger = logging.getLogger("Pipeline")
         self.storages = storages  # 注入所有的存储汇点
 
-    async def run_task(self, fetcher: BaseFetcher, **kwargs) -> PipelineRunResult:
+    async def run_task(
+            self,
+            fetcher: BaseFetcher,
+            lineage: Optional[Dict[str, Any]] = None,
+            **kwargs
+    ) -> PipelineRunResult:
         """
         驱动 Fetcher 抓取，并将数据并发广播给所有的 Storage
         """
@@ -56,6 +61,8 @@ class DataPipeline:
         result = PipelineRunResult()
         async for item in fetcher.fetch(**kwargs):
             result.fetched_count += 1
+            for key, value in (lineage or {}).items():
+                setattr(item, key, value)
             if _is_newer_content(item, result.latest_content_publish_date):
                 result.latest_content_id = item.id
                 result.latest_content_publish_date = item.publish_date
@@ -69,6 +76,7 @@ class DataPipeline:
 
             if item_saved:
                 result.saved_count += 1
+                result.saved_content_ids.append(item.id)
             else:
                 result.skipped_count += 1
 

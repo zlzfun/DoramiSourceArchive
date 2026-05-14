@@ -1,6 +1,27 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Server, Clock, CheckSquare, Play, RefreshCw, Calendar, Search, Layers } from 'lucide-react';
-import { triggerFetch, fetchTasks as apiFetchTasks, createTask, deleteTask, fetchSourceHealth } from '../api';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  CheckSquare,
+  ChevronDown,
+  ChevronRight,
+  FolderPlus,
+  Layers,
+  Play,
+  RefreshCw,
+  Save,
+  Search,
+  Server,
+  Trash2,
+  X,
+} from 'lucide-react';
+import {
+  createNodeGroup,
+  deleteNodeGroup,
+  fetchNodeGroups,
+  fetchSourceHealth,
+  runNodeGroup,
+  triggerFetch,
+  updateNodeGroup,
+} from '../api';
 
 const CATEGORY_LABELS = {
   official: '官方动态',
@@ -16,19 +37,7 @@ const CATEGORY_LABELS = {
   general: '其他',
 };
 
-const CATEGORY_ORDER = [
-  'official',
-  'official_web',
-  'framework',
-  'paper',
-  'product_update',
-  'developer_platform',
-  'community',
-  'wechat',
-  'workflow',
-  'advanced',
-  'general',
-];
+const CATEGORY_ORDER = ['official', 'official_web', 'framework', 'paper', 'product_update', 'developer_platform', 'community', 'wechat', 'workflow', 'advanced', 'general'];
 
 function getCategoryLabel(category) {
   return CATEGORY_LABELS[category] || category || '其他';
@@ -52,51 +61,71 @@ function healthMeta(status) {
   return { label: '未知', className: 'bg-slate-50 text-slate-500 border-slate-200' };
 }
 
+function blankGroup(fetcherIds = [], configs = {}) {
+  return {
+    name: '',
+    description: '',
+    fetcher_ids: fetcherIds,
+    params: {},
+    per_fetcher_params: Object.fromEntries(fetcherIds.map(id => [id, configs[id] || {}])),
+    cron_expr: '',
+    per_fetcher_cron: {},
+    is_active: true,
+  };
+}
+
+function normalizeIds(ids) {
+  return Array.from(new Set((ids || []).filter(Boolean)));
+}
+
 export default function FetchTab({ availableFetchers, showToast }) {
+  const [view, setView] = useState('catalog');
   const [fetchLoading, setFetchLoading] = useState(false);
-  const [tasks, setTasks] = useState([]);
+  const [nodeGroups, setNodeGroups] = useState([]);
   const [healthByFetcher, setHealthByFetcher] = useState({});
   const [selectedFetchers, setSelectedFetchers] = useState([]);
-  const [cronExpr, setCronExpr] = useState('0 8 * * *');
   const [fetchConfigs, setFetchConfigs] = useState({});
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [expandedGroupId, setExpandedGroupId] = useState(null);
+  const [groupModalOpen, setGroupModalOpen] = useState(false);
+  const [editingGroupId, setEditingGroupId] = useState(null);
+  const [groupDraft, setGroupDraft] = useState(blankGroup());
+  const [modalSearch, setModalSearch] = useState('');
+
+  const fetchersById = useMemo(
+    () => Object.fromEntries(availableFetchers.map(fetcher => [fetcher.id, fetcher])),
+    [availableFetchers]
+  );
 
   useEffect(() => {
     const initialConfigs = {};
-    availableFetchers.forEach(f => {
-      initialConfigs[f.id] = {};
-      (f.parameters || []).forEach(p => {
-        initialConfigs[f.id][p.field] = p.default;
+    availableFetchers.forEach(fetcher => {
+      initialConfigs[fetcher.id] = {};
+      (fetcher.parameters || []).forEach(param => {
+        initialConfigs[fetcher.id][param.field] = param.default;
       });
     });
     setFetchConfigs(initialConfigs);
   }, [availableFetchers]);
 
-  const loadTasks = async () => {
+  const loadNodeGroups = useCallback(async () => {
     try {
-      setTasks(await apiFetchTasks());
+      setNodeGroups(await fetchNodeGroups());
     } catch (e) { console.error(e); }
-  };
+  }, []);
 
   const loadSourceHealth = useCallback(async () => {
     try {
       const healthItems = await fetchSourceHealth();
       setHealthByFetcher(Object.fromEntries(healthItems.map(item => [item.fetcher_id, item])));
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) { console.error(e); }
   }, []);
 
   useEffect(() => {
-    loadTasks();
+    loadNodeGroups();
     loadSourceHealth();
-  }, [loadSourceHealth]);
-
-  const getFetcherName = (id) => {
-    const fetcher = availableFetchers.find(f => f.id === id);
-    return fetcher ? fetcher.name : id;
-  };
+  }, [loadNodeGroups, loadSourceHealth]);
 
   const categoryOptions = useMemo(() => {
     const counts = availableFetchers.reduce((acc, fetcher) => {
@@ -110,20 +139,17 @@ export default function FetchTab({ availableFetchers, showToast }) {
       .map(([category, count]) => ({ category, count }));
   }, [availableFetchers]);
 
-  const visibleFetchers = useMemo(() => {
+  const filteredFetchers = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return [...availableFetchers]
       .filter(fetcher => categoryFilter === 'all' || (fetcher.category || 'general') === categoryFilter)
       .filter(fetcher => {
         if (!query) return true;
-        const haystack = [
-          fetcher.name,
-          fetcher.id,
-          fetcher.desc,
-          fetcher.content_type,
-          getCategoryLabel(fetcher.category),
-        ].filter(Boolean).join(' ').toLowerCase();
-        return haystack.includes(query);
+        return [fetcher.name, fetcher.id, fetcher.desc, fetcher.content_type, getCategoryLabel(fetcher.category)]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+          .includes(query);
       })
       .sort((a, b) => {
         const categoryDelta = getCategoryRank(a.category) - getCategoryRank(b.category);
@@ -132,220 +158,388 @@ export default function FetchTab({ availableFetchers, showToast }) {
       });
   }, [availableFetchers, categoryFilter, searchQuery]);
 
+  const modalFetchers = useMemo(() => {
+    const query = modalSearch.trim().toLowerCase();
+    if (!query) return availableFetchers;
+    return availableFetchers.filter(fetcher => [fetcher.name, fetcher.id, fetcher.desc].filter(Boolean).join(' ').toLowerCase().includes(query));
+  }, [availableFetchers, modalSearch]);
+
+  const getFetcherName = (id) => fetchersById[id]?.name || id;
+
   const toggleFetcherSelection = (id) => {
     setSelectedFetchers(prev => prev.includes(id) ? prev.filter(fid => fid !== id) : [...prev, id]);
   };
 
-  const handleConfigChange = (fetcherId, field, value) => {
-    setFetchConfigs(prev => ({ ...prev, [fetcherId]: { ...prev[fetcherId], [field]: value } }));
+  const updateModalNodeParam = (fetcherId, field, value) => {
+    setGroupDraft(prev => ({
+      ...prev,
+      per_fetcher_params: {
+        ...(prev.per_fetcher_params || {}),
+        [fetcherId]: {
+          ...((prev.per_fetcher_params || {})[fetcherId] || {}),
+          [field]: value,
+        },
+      },
+    }));
   };
 
-  const renderParameterInput = (fetcher, param) => {
-    const value = (fetchConfigs[fetcher.id] && fetchConfigs[fetcher.id][param.field]) ?? param.default ?? '';
+  const openCreateGroup = (fetcherIds = selectedFetchers) => {
+    setEditingGroupId(null);
+    setGroupDraft(blankGroup(fetcherIds, fetchConfigs));
+    setModalSearch('');
+    setGroupModalOpen(true);
+  };
+
+  const openEditGroup = (group) => {
+    setEditingGroupId(group.id);
+    setGroupDraft({
+      name: group.name || '',
+      description: group.description || '',
+      fetcher_ids: group.fetcher_ids || [],
+      params: group.params || {},
+      per_fetcher_params: group.per_fetcher_params || {},
+      cron_expr: '',
+      per_fetcher_cron: {},
+      is_active: group.is_active !== false,
+    });
+    setModalSearch('');
+    setGroupModalOpen(true);
+  };
+
+  const handleSaveGroup = async () => {
+    if (!groupDraft.name.trim()) {
+      showToast('节点组名称不能为空', 'error');
+      return;
+    }
+    if ((groupDraft.fetcher_ids || []).length === 0) {
+      showToast('节点组至少需要一个节点', 'error');
+      return;
+    }
+    const payload = {
+      ...groupDraft,
+      name: groupDraft.name.trim(),
+      fetcher_ids: normalizeIds(groupDraft.fetcher_ids),
+      cron_expr: '',
+      per_fetcher_cron: {},
+    };
+    try {
+      const saved = editingGroupId ? await updateNodeGroup(editingGroupId, payload) : await createNodeGroup(payload);
+      setExpandedGroupId(saved.id);
+      setGroupModalOpen(false);
+      setSelectedFetchers([]);
+      await loadNodeGroups();
+      showToast('节点组已保存', 'success');
+    } catch (e) { showToast(e.message || '保存节点组失败', 'error'); }
+  };
+
+  const handleDeleteGroup = async (id) => {
+    if (!window.confirm('确定删除该节点组？')) return;
+    try {
+      await deleteNodeGroup(id);
+      if (expandedGroupId === id) setExpandedGroupId(null);
+      await loadNodeGroups();
+      showToast('节点组已删除', 'success');
+    } catch (e) { showToast(e.message || '删除节点组失败', 'error'); }
+  };
+
+  const handleRunGroup = async (id) => {
+    try {
+      const result = await runNodeGroup(id);
+      showToast(`节点组运行完成：新增 ${result.saved_count || 0} 条`, result.failed_count ? 'info' : 'success');
+      loadSourceHealth();
+    } catch (e) { showToast(e.message || '节点组运行失败', 'error'); }
+  };
+
+  const handleBatchFetch = async () => {
+    setFetchLoading(true);
+    let successCount = 0;
+    for (const fetcherId of selectedFetchers) {
+      try {
+        await triggerFetch(fetcherId, fetchConfigs[fetcherId] || {});
+        successCount++;
+      } catch (e) { showToast(e.message || `[${getFetcherName(fetcherId)}] 抓取失败`, 'error'); }
+    }
+    setFetchLoading(false);
+    if (successCount > 0) {
+      showToast(`已触发 ${successCount} 个节点`, 'success');
+      setSelectedFetchers([]);
+      loadSourceHealth();
+    }
+  };
+
+  const renderParamInput = (fetcherId, param) => {
+    const params = (groupDraft.per_fetcher_params || {})[fetcherId] || {};
+    const value = params[param.field] ?? param.default ?? '';
     if (param.type === 'boolean') {
       const checked = typeof value === 'boolean' ? value : ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
       return (
         <input
           type="checkbox"
           checked={checked}
-          onChange={(e) => handleConfigChange(fetcher.id, param.field, e.target.checked)}
-          className="w-4 h-4 text-blue-600 rounded border-slate-300 cursor-pointer"
+          onChange={event => updateModalNodeParam(fetcherId, param.field, event.target.checked)}
+          className="w-4 h-4 text-blue-600 rounded border-slate-300"
         />
       );
     }
-
     return (
       <input
         type={param.type || 'text'}
         value={value}
-        onChange={(e) => handleConfigChange(fetcher.id, param.field, e.target.value)}
-        className="w-1/2 max-w-[140px] px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-1 focus:ring-blue-500 outline-none text-xs font-bold text-slate-700 transition-all text-right"
+        onChange={event => updateModalNodeParam(fetcherId, param.field, param.type === 'number' ? Number(event.target.value) : event.target.value)}
+        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500"
       />
     );
-  };
-
-  const handleBatchFetch = async () => {
-    setFetchLoading(true);
-    let successCount = 0;
-    for (const fId of selectedFetchers) {
-      try {
-        await triggerFetch(fId, fetchConfigs[fId] || {});
-        successCount++;
-      } catch (e) { showToast(e.message || `[${getFetcherName(fId)}] 网络异常`, 'error'); }
-    }
-    setFetchLoading(false);
-    if (successCount > 0) {
-      showToast(`已向 ${successCount} 个节点下发立即抓取指令！`, 'success');
-      setSelectedFetchers([]);
-      loadSourceHealth();
-    }
-  };
-
-  const handleBatchSchedule = async () => {
-    let successCount = 0;
-    for (const fId of selectedFetchers) {
-      try {
-        await createTask({ fetcher_id: fId, cron_expr: cronExpr, params: fetchConfigs[fId] || {} });
-        successCount++;
-      } catch (e) { showToast(e.message || '创建任务网络异常', 'error'); }
-    }
-    if (successCount > 0) {
-      showToast(`成功为您挂载了 ${successCount} 个定时轮询计划！`, 'success');
-      setSelectedFetchers([]);
-      loadTasks();
-    }
-  };
-
-  const handleDeleteTask = async (id) => {
-    if (!window.confirm('确定移除该定时计划？')) return;
-    try {
-      await deleteTask(id);
-      showToast('已取消该调度任务', 'success');
-      loadTasks();
-    } catch (e) { showToast(e.message || '网络异常', 'error'); }
   };
 
   return (
     <div className="space-y-6 animate-in fade-in">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold flex items-center"><Server className="w-6 h-6 mr-2 text-indigo-500" /> 抓取节点与自动化调度</h2>
-          <p className="text-sm text-slate-500 mt-2">勾选节点唤起批量指挥台，可直接在卡片上修改参数实现一键下发。</p>
+          <h2 className="text-2xl font-bold flex items-center"><Server className="w-6 h-6 mr-2 text-indigo-500" /> 节点管理</h2>
+          <p className="text-sm text-slate-500 mt-2">管理抓取节点目录与可复用节点组。</p>
+        </div>
+        <div className="flex bg-slate-100 border border-slate-200 rounded-xl p-1 w-fit">
+          <button onClick={() => setView('catalog')} className={`px-4 py-2 rounded-lg text-sm font-bold ${view === 'catalog' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>节点目录</button>
+          <button onClick={() => setView('groups')} className={`px-4 py-2 rounded-lg text-sm font-bold ${view === 'groups' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>节点组</button>
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-4">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
-            <Layers className="w-4 h-4 text-indigo-500" />
-            <span>内置节点目录</span>
-            <span className="text-xs text-slate-400 font-mono">{visibleFetchers.length}/{availableFetchers.length}</span>
-          </div>
-          <div className="relative w-full lg:w-80">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              placeholder="搜索名称、ID、类型"
-              className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => setCategoryFilter('all')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${categoryFilter === 'all' ? 'bg-blue-600 border-blue-600 text-white' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}
-          >
-            全部 {availableFetchers.length}
-          </button>
-          {categoryOptions.map(({ category, count }) => (
-            <button
-              key={category}
-              onClick={() => setCategoryFilter(category)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${categoryFilter === category ? 'bg-blue-600 border-blue-600 text-white' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}
-            >
-              {getCategoryLabel(category)} {count}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {availableFetchers.length === 0 ? <div className="col-span-full py-10 text-center text-slate-400 font-bold border-2 border-dashed border-slate-200 rounded-xl">未探测到可用节点</div> : null}
-        {availableFetchers.length > 0 && visibleFetchers.length === 0 ? <div className="col-span-full py-10 text-center text-slate-400 font-bold border-2 border-dashed border-slate-200 rounded-xl">没有匹配的抓取节点</div> : null}
-        {visibleFetchers.map(fetcher => {
-          const isSelected = selectedFetchers.includes(fetcher.id);
-          const hasTask = tasks.some(t => t.fetcher_id === fetcher.id);
-          const health = healthByFetcher[fetcher.id];
-          const healthInfo = healthMeta(health?.health_status);
-          return (
-            <div key={fetcher.id} className={`bg-white border-2 rounded-xl flex flex-col transition-all group shadow-sm ${isSelected ? 'border-blue-500 ring-4 ring-blue-500/10' : 'border-slate-200 hover:border-blue-300'}`}>
-              <div onClick={() => toggleFetcherSelection(fetcher.id)} className="p-4 flex items-start gap-3 cursor-pointer border-b border-slate-100 bg-slate-50/50 rounded-t-lg hover:bg-slate-100/70 transition-colors">
-                <div className={`mt-1.5 w-5 h-5 shrink-0 rounded border flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300 group-hover:border-blue-400'}`}>
-                  {isSelected && <CheckSquare className="w-4 h-4 text-white" />}
-                </div>
-                <div className="w-11 h-11 shrink-0 bg-white border border-slate-200 rounded-lg flex items-center justify-center text-2xl shadow-sm">{fetcher.icon}</div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-extrabold text-slate-800 text-sm leading-snug">{fetcher.name}</h3>
-                  <div className="flex items-center gap-2 mt-1.5 min-w-0">
-                    {hasTask && <Clock className="w-3.5 h-3.5 text-emerald-500 shrink-0" title="已有定时任务" />}
-                    <span className="text-[10px] text-blue-700 font-bold bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded truncate">{getCategoryLabel(fetcher.category)}</span>
-                    <span className={`text-[10px] font-bold border px-1.5 py-0.5 rounded truncate ${healthInfo.className}`}>{healthInfo.label}</span>
-                    <span className="text-[10px] text-slate-500 font-mono bg-slate-200/50 px-1.5 py-0.5 rounded truncate">{fetcher.id}</span>
-                  </div>
-                </div>
+      {view === 'catalog' && (
+        <>
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                <Layers className="w-4 h-4 text-indigo-500" />
+                <span>内置节点目录</span>
+                <span className="text-xs text-slate-400 font-mono">{filteredFetchers.length}/{availableFetchers.length}</span>
               </div>
-
-              <div className="p-4 bg-white rounded-b-lg flex-1 flex flex-col justify-between gap-3">
-                <p className="text-xs text-slate-500 leading-relaxed min-h-[34px]">{fetcher.desc}</p>
-                <div className="grid grid-cols-3 gap-2 text-[11px]">
-                  <div className="bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5">
-                    <div className="text-slate-400 font-bold">最近运行</div>
-                    <div className="text-slate-700 font-mono truncate" title={formatDateTime(health?.latest_run_at)}>{formatDateTime(health?.latest_run_at)}</div>
-                  </div>
-                  <div className="bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5">
-                    <div className="text-slate-400 font-bold">最近新增</div>
-                    <div className="text-emerald-700 font-black">{health?.latest_saved_count ?? 0}</div>
-                  </div>
-                  <div className="bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5">
-                    <div className="text-slate-400 font-bold">连续失败</div>
-                    <div className="text-red-700 font-black">{health?.consecutive_failures ?? 0}</div>
-                  </div>
-                </div>
-                {fetcher.parameters?.length > 0 ? (
-                  fetcher.parameters.map(param => (
-                    <div key={param.field} className="flex items-center justify-between gap-3">
-                      <label className="text-xs font-bold text-slate-500 truncate" title={param.label}>{param.label}</label>
-                      {renderParameterInput(fetcher, param)}
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-xs text-slate-400 font-medium italic text-center py-2">无需扩展参数</div>
-                )}
+              <div className="relative w-full lg:w-80">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="搜索名称、ID、类型" className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 outline-none focus:border-blue-500" />
               </div>
             </div>
-          );
-        })}
-      </div>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => setCategoryFilter('all')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${categoryFilter === 'all' ? 'bg-blue-600 border-blue-600 text-white' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>全部 {availableFetchers.length}</button>
+              {categoryOptions.map(({ category, count }) => (
+                <button key={category} onClick={() => setCategoryFilter(category)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${categoryFilter === category ? 'bg-blue-600 border-blue-600 text-white' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+                  {getCategoryLabel(category)} {count}
+                </button>
+              ))}
+            </div>
+          </div>
 
-      <div className="mt-8 bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="bg-slate-50 px-5 py-4 border-b border-slate-200 flex items-center">
-          <Calendar className="w-5 h-5 text-emerald-600 mr-2" />
-          <h3 className="font-bold text-slate-700 text-sm">正在后台巡检的自动化计划</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {filteredFetchers.map(fetcher => {
+              const isSelected = selectedFetchers.includes(fetcher.id);
+              const health = healthByFetcher[fetcher.id];
+              const healthInfo = healthMeta(health?.health_status);
+              return (
+                <div key={fetcher.id} className={`bg-white border-2 rounded-xl flex flex-col transition-all shadow-sm ${isSelected ? 'border-blue-500 ring-4 ring-blue-500/10' : 'border-slate-200 hover:border-blue-300'}`}>
+                  <div onClick={() => toggleFetcherSelection(fetcher.id)} className="p-4 flex items-start gap-3 cursor-pointer border-b border-slate-100 bg-slate-50/50 rounded-t-lg hover:bg-slate-100/70">
+                    <div className={`mt-1.5 w-5 h-5 shrink-0 rounded border flex items-center justify-center ${isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>
+                      {isSelected && <CheckSquare className="w-4 h-4 text-white" />}
+                    </div>
+                    <div className="w-11 h-11 shrink-0 bg-white border border-slate-200 rounded-lg flex items-center justify-center text-2xl shadow-sm">{fetcher.icon}</div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-extrabold text-slate-800 text-sm leading-snug">{fetcher.name}</h3>
+                      <div className="flex items-center gap-2 mt-1.5 min-w-0">
+                        <span className="text-[10px] text-blue-700 font-bold bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded truncate">{getCategoryLabel(fetcher.category)}</span>
+                        <span className={`text-[10px] font-bold border px-1.5 py-0.5 rounded truncate ${healthInfo.className}`}>{healthInfo.label}</span>
+                        <span className="text-[10px] text-slate-500 font-mono bg-slate-200/50 px-1.5 py-0.5 rounded truncate">{fetcher.id}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="p-4 bg-white rounded-b-lg flex-1 flex flex-col gap-3">
+                    <p className="text-xs text-slate-500 leading-relaxed min-h-[34px]">{fetcher.desc}</p>
+                    <div className="grid grid-cols-3 gap-2 text-[11px]">
+                      <div className="bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5">
+                        <div className="text-slate-400 font-bold">最近运行</div>
+                        <div className="text-slate-700 font-mono truncate" title={formatDateTime(health?.latest_run_at)}>{formatDateTime(health?.latest_run_at)}</div>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5">
+                        <div className="text-slate-400 font-bold">最近新增</div>
+                        <div className="text-emerald-700 font-black">{health?.latest_saved_count ?? 0}</div>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5">
+                        <div className="text-slate-400 font-bold">连续失败</div>
+                        <div className="text-red-700 font-black">{health?.consecutive_failures ?? 0}</div>
+                      </div>
+                    </div>
+                    <button onClick={() => triggerFetch(fetcher.id, fetchConfigs[fetcher.id] || {}).then(() => { showToast('已触发临时抓取', 'success'); loadSourceHealth(); }).catch(e => showToast(e.message || '抓取失败', 'error'))} className="w-full px-3 py-2 rounded-lg bg-blue-50 text-blue-700 border border-blue-100 text-xs font-bold hover:bg-blue-100 flex items-center justify-center">
+                      <Play className="w-3.5 h-3.5 mr-1.5" /> 临时抓取
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {view === 'groups' && (
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+            <div className="flex items-center">
+              <FolderPlus className="w-5 h-5 text-indigo-600 mr-2" />
+              <h3 className="font-bold text-slate-700 text-sm">节点组</h3>
+              <span className="ml-2 text-xs font-mono text-slate-400">{nodeGroups.length}</span>
+            </div>
+            <button onClick={() => openCreateGroup([])} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 flex items-center">
+              <FolderPlus className="w-3.5 h-3.5 mr-1.5" /> 新建节点组
+            </button>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {nodeGroups.length === 0 ? (
+              <div className="p-12 text-center text-slate-400 font-medium">暂无节点组</div>
+            ) : nodeGroups.map(group => {
+              const isExpanded = expandedGroupId === group.id;
+              return (
+                <div key={group.id}>
+                  <button onClick={() => setExpandedGroupId(isExpanded ? null : group.id)} className="w-full px-5 py-4 flex items-center justify-between hover:bg-slate-50 text-left">
+                    <div className="min-w-0">
+                      <div className="flex items-center">
+                        {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-400 mr-2" /> : <ChevronRight className="w-4 h-4 text-slate-400 mr-2" />}
+                        <div className="font-extrabold text-slate-800 text-sm truncate">{group.name}</div>
+                      </div>
+                      <div className="text-xs text-slate-400 mt-1 ml-6">{(group.fetcher_ids || []).length} 个节点 · {group.description || '无说明'}</div>
+                    </div>
+                    <div className="text-xs font-bold text-slate-500">{(group.fetcher_ids || []).slice(0, 3).map(getFetcherName).join('、')}</div>
+                  </button>
+                  {isExpanded && (
+                    <div className="px-5 pb-5 ml-6 space-y-4">
+                      <div className="flex flex-wrap gap-2">
+                        <button onClick={() => openEditGroup(group)} className="px-3 py-2 rounded-lg bg-slate-100 text-slate-700 text-xs font-bold hover:bg-slate-200">编辑</button>
+                        <button onClick={() => handleRunGroup(group.id)} className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 flex items-center"><Play className="w-3.5 h-3.5 mr-1.5" /> 临时运行</button>
+                        <button onClick={() => handleDeleteGroup(group.id)} className="px-3 py-2 rounded-lg bg-red-50 text-red-600 border border-red-100 text-xs font-bold hover:bg-red-100 flex items-center"><Trash2 className="w-3.5 h-3.5 mr-1.5" /> 删除</button>
+                      </div>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        {(group.fetcher_ids || []).map(fetcherId => (
+                          <div key={fetcherId} className="border border-slate-200 rounded-lg p-3 bg-slate-50">
+                            <div className="font-bold text-slate-700 text-sm">{getFetcherName(fetcherId)}</div>
+                            <div className="font-mono text-[11px] text-slate-400 mt-1">{fetcherId}</div>
+                            <code className="block mt-2 text-[11px] text-slate-500 bg-white border border-slate-100 rounded px-2 py-1 truncate" title={JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}>
+                              {JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}
+                            </code>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
-        <table className="w-full text-left">
-          <thead className="bg-white text-[11px] font-bold text-slate-400 uppercase border-b border-slate-100">
-            <tr><th className="p-4">数据节点</th><th className="p-4">Cron 频率</th><th className="p-4">执行参数</th><th className="p-4 text-right">管理</th></tr>
-          </thead>
-          <tbody className="divide-y divide-slate-50 text-sm">
-            {tasks.length === 0 ? <tr><td colSpan="4" className="p-8 text-center text-slate-400 text-sm font-medium">当前无自动调度任务</td></tr> : tasks.map(t => (
-              <tr key={t.id} className="hover:bg-slate-50 transition-colors">
-                <td className="p-4 font-bold text-slate-700 flex items-center"><span className="w-2 h-2 rounded-full bg-emerald-400 mr-2 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span> {getFetcherName(t.fetcher_id)}</td>
-                <td className="p-4"><span className="font-mono bg-slate-100 border border-slate-200 px-2.5 py-1 rounded text-slate-600 text-xs">{t.cron_expr}</span></td>
-                <td className="p-4 text-xs text-slate-500 max-w-xs truncate" title={t.params_json}>{t.params_json}</td>
-                <td className="p-4 text-right"><button onClick={() => handleDeleteTask(t.id)} className="text-red-500 hover:text-red-700 font-bold text-xs bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors">移除任务</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      )}
 
-      {selectedFetchers.length > 0 && (
+      {selectedFetchers.length > 0 && view === 'catalog' && (
         <div className="fixed bottom-0 left-0 w-full bg-white/90 backdrop-blur-xl border-t border-slate-200 p-4 z-40 flex justify-center items-center shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.1)] animate-in slide-in-from-bottom-full">
           <div className="max-w-7xl w-full flex flex-col md:flex-row justify-between items-center px-6 gap-4">
-            <span className="font-extrabold text-blue-700 flex items-center bg-blue-50 px-4 py-2 rounded-xl"><CheckSquare className="w-5 h-5 mr-2" /> 已蓄势 {selectedFetchers.length} 个抓取节点</span>
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2 border-r border-slate-200 pr-4">
-                <Clock className="w-4 h-4 text-emerald-600" />
-                <input type="text" value={cronExpr} onChange={e => setCronExpr(e.target.value)} className="w-28 text-sm px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-mono outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all text-emerald-700 font-bold" placeholder="0 8 * * *" />
-                <button onClick={handleBatchSchedule} className="px-5 py-2.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 text-sm flex items-center shadow-md transition-all">
-                  <Calendar className="w-4 h-4 mr-1.5" /> 批量挂载定时
-                </button>
-              </div>
-              <button onClick={handleBatchFetch} disabled={fetchLoading} className="px-6 py-2.5 bg-blue-600 text-white font-extrabold rounded-xl hover:bg-blue-700 text-sm flex items-center shadow-md transition-all">
-                {fetchLoading ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <Play className="w-4 h-4 mr-1.5 fill-current" />} {fetchLoading ? '指挥执行中...' : '立即批量抓取'}
+            <span className="font-extrabold text-blue-700 flex items-center bg-blue-50 px-4 py-2 rounded-xl"><CheckSquare className="w-5 h-5 mr-2" /> 已选择 {selectedFetchers.length} 个节点</span>
+            <div className="flex flex-wrap items-center gap-3">
+              <button onClick={() => openCreateGroup(selectedFetchers)} className="px-4 py-2.5 bg-indigo-50 text-indigo-700 border border-indigo-100 font-bold rounded-xl hover:bg-indigo-100 text-sm flex items-center">
+                <FolderPlus className="w-4 h-4 mr-1.5" /> 新建节点组
               </button>
+              <button onClick={handleBatchFetch} disabled={fetchLoading} className="px-6 py-2.5 bg-blue-600 text-white font-extrabold rounded-xl hover:bg-blue-700 text-sm flex items-center shadow-md">
+                {fetchLoading ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <Play className="w-4 h-4 mr-1.5 fill-current" />} {fetchLoading ? '执行中...' : '立即临时抓取'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {groupModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+              <div>
+                <h3 className="font-extrabold text-slate-800">{editingGroupId ? '编辑节点组' : '新建节点组'}</h3>
+                <p className="text-xs text-slate-400 mt-1">节点组只维护节点集合和参数模板。</p>
+              </div>
+              <button onClick={() => setGroupModalOpen(false)} className="p-2 rounded-lg hover:bg-slate-200 text-slate-500"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-5 overflow-auto space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="text-xs font-bold text-slate-500">
+                  名称
+                  <input value={groupDraft.name} onChange={event => setGroupDraft(prev => ({ ...prev, name: event.target.value }))} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 outline-none focus:border-blue-500" />
+                </label>
+                <label className="text-xs font-bold text-slate-500">
+                  说明
+                  <input value={groupDraft.description} onChange={event => setGroupDraft(prev => ({ ...prev, description: event.target.value }))} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 outline-none focus:border-blue-500" />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="p-3 bg-slate-50 border-b border-slate-200">
+                    <div className="relative">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input value={modalSearch} onChange={event => setModalSearch(event.target.value)} placeholder="搜索节点" className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-blue-500" />
+                    </div>
+                  </div>
+                  <div className="max-h-[420px] overflow-auto divide-y divide-slate-100">
+                    {modalFetchers.map(fetcher => {
+                      const checked = (groupDraft.fetcher_ids || []).includes(fetcher.id);
+                      return (
+                        <button
+                          key={fetcher.id}
+                          onClick={() => setGroupDraft(prev => {
+                            const ids = checked ? prev.fetcher_ids.filter(id => id !== fetcher.id) : [...(prev.fetcher_ids || []), fetcher.id];
+                            return {
+                              ...prev,
+                              fetcher_ids: normalizeIds(ids),
+                              per_fetcher_params: checked
+                                ? prev.per_fetcher_params
+                                : { ...(prev.per_fetcher_params || {}), [fetcher.id]: fetchConfigs[fetcher.id] || {} },
+                            };
+                          })}
+                          className={`w-full px-3 py-3 flex items-center gap-3 text-left hover:bg-slate-50 ${checked ? 'bg-blue-50/60' : ''}`}
+                        >
+                          <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>{checked && <CheckSquare className="w-3.5 h-3.5 text-white" />}</div>
+                          <div className="min-w-0">
+                            <div className="font-bold text-slate-700 text-sm truncate">{fetcher.name}</div>
+                            <div className="font-mono text-[11px] text-slate-400 truncate">{fetcher.id}</div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {(groupDraft.fetcher_ids || []).length === 0 ? (
+                    <div className="border border-dashed border-slate-200 rounded-xl p-10 text-center text-slate-400 font-medium">未选择节点</div>
+                  ) : (groupDraft.fetcher_ids || []).map(fetcherId => {
+                    const fetcher = fetchersById[fetcherId];
+                    return (
+                      <div key={fetcherId} className="border border-slate-200 rounded-xl p-3 bg-white">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-extrabold text-slate-800 text-sm truncate">{fetcher?.name || fetcherId}</div>
+                            <div className="font-mono text-[11px] text-slate-400 mt-0.5">{fetcherId}</div>
+                          </div>
+                          <button onClick={() => setGroupDraft(prev => ({ ...prev, fetcher_ids: prev.fetcher_ids.filter(id => id !== fetcherId) }))} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><X className="w-4 h-4" /></button>
+                        </div>
+                        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {(fetcher?.parameters || []).length === 0 ? (
+                            <div className="text-xs text-slate-400 font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">该节点无需扩展参数</div>
+                          ) : (fetcher.parameters || []).map(param => (
+                            <label key={param.field} className="text-xs font-bold text-slate-500">
+                              {param.label}
+                              <div className="mt-1">{renderParamInput(fetcherId, param)}</div>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            <div className="px-5 py-4 border-t border-slate-200 bg-white flex justify-end gap-2">
+              <button onClick={() => setGroupModalOpen(false)} className="px-4 py-2 rounded-lg bg-slate-100 text-slate-700 text-sm font-bold hover:bg-slate-200">取消</button>
+              <button onClick={handleSaveGroup} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 flex items-center"><Save className="w-4 h-4 mr-1.5" /> 保存</button>
             </div>
           </div>
         </div>
