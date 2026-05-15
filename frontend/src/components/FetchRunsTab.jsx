@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
-  CalendarClock,
   CheckCircle2,
   CheckSquare,
   ChevronDown,
@@ -178,6 +177,15 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
+  useEffect(() => {
+    if (!jobModalOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [jobModalOpen]);
+
   const openCreateJob = () => {
     setEditingJobId(null);
     setJobDraft(blankJob());
@@ -325,7 +333,7 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
         type={param.type || 'text'}
         value={value}
         onChange={event => updateDraftParam(fetcherId, param.field, param.type === 'number' ? Number(event.target.value) : event.target.value)}
-        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500"
+        className="form-input py-1.5 text-xs"
       />
     );
   };
@@ -379,20 +387,22 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
 
   return (
     <div className="space-y-6 animate-in fade-in">
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold flex items-center"><CalendarClock className="w-6 h-6 mr-2 text-blue-500" /> 任务与运行</h2>
-          <p className="text-sm text-slate-500 mt-2">配置采集任务，统一查看手动、定时和旧版运行记录。</p>
+      <div className="page-header flex-col xl:flex-row">
+        <div className="page-heading">
+          <h2 className="page-title">任务与运行</h2>
+          <p className="page-subtitle mt-3 max-w-3xl">配置采集任务，统一查看手动、定时和旧版运行记录，让节点编排、调度与追踪处在同一个工作台。</p>
         </div>
-        <div className="flex bg-slate-100 border border-slate-200 rounded-xl p-1 w-fit">
-          <button onClick={() => setView('jobs')} className={`px-4 py-2 rounded-lg text-sm font-bold ${view === 'jobs' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>采集任务</button>
-          <button onClick={() => setView('history')} className={`px-4 py-2 rounded-lg text-sm font-bold ${view === 'history' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>运行历史</button>
+        <div className="page-actions">
+          <div className="segmented-control">
+            <button onClick={() => setView('jobs')} className={`segmented-option ${view === 'jobs' ? 'segmented-option-active' : ''}`}>采集任务</button>
+            <button onClick={() => setView('history')} className={`segmented-option ${view === 'history' ? 'segmented-option-active' : ''}`}>运行历史</button>
+          </div>
         </div>
       </div>
 
       {view === 'jobs' && (
         <>
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="surface-card rounded-[14px] p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
             <div>
               <div className="flex items-center font-bold text-slate-700 text-sm">
                 <Settings2 className="w-4 h-4 mr-2 text-blue-600" /> 采集任务
@@ -401,16 +411,16 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
               <p className="text-xs text-slate-400 mt-1">任务负责节点组合、参数覆盖、整体 cron 和单节点 cron。</p>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={loadAll} disabled={loading} className="px-3 py-2 rounded-lg bg-slate-100 text-slate-700 text-xs font-bold hover:bg-slate-200 flex items-center">
-                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} /> 刷新
+              <button onClick={loadAll} disabled={loading} className="action-button action-button-secondary min-h-[36px] px-3 text-xs">
+                <RefreshCw className={loading ? 'animate-spin' : ''} /> 刷新
               </button>
-              <button onClick={openCreateJob} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 flex items-center">
-                <Plus className="w-3.5 h-3.5 mr-1.5" /> 新建采集任务
+              <button onClick={openCreateJob} className="action-button action-button-primary min-h-[36px] px-3 text-xs">
+                <Plus /> 新建采集任务
               </button>
             </div>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+          <div className="surface-card rounded-[14px] overflow-hidden">
             <div className="divide-y divide-slate-100">
               {collectionJobs.length === 0 ? (
                 <div className="p-12 text-center text-slate-400 font-medium">暂无采集任务</div>
@@ -424,7 +434,7 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
                       <div className="min-w-0">
                         <div className="flex items-center">
                           {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-400 mr-2" /> : <ChevronRight className="w-4 h-4 text-slate-400 mr-2" />}
-                          <div className="font-extrabold text-slate-800 text-sm truncate">{job.name}</div>
+                          <div className="card-title truncate">{job.name}</div>
                           {!job.is_active && <span className="ml-2 text-[10px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">停用</span>}
                         </div>
                         <div className="text-xs text-slate-400 mt-1 ml-6">
@@ -436,14 +446,14 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
                     {isExpanded && (
                       <div className="px-5 pb-5 ml-6 space-y-4">
                         <div className="flex flex-wrap gap-2">
-                          <button onClick={() => openEditJob(job)} className="px-3 py-2 rounded-lg bg-slate-100 text-slate-700 text-xs font-bold hover:bg-slate-200">编辑配置</button>
-                          <button onClick={() => handleRunJob(job.id)} className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 flex items-center"><Play className="w-3.5 h-3.5 mr-1.5" /> 立即运行</button>
-                          <button onClick={() => handleDeleteJob(job.id)} className="px-3 py-2 rounded-lg bg-red-50 text-red-600 border border-red-100 text-xs font-bold hover:bg-red-100 flex items-center"><Trash2 className="w-3.5 h-3.5 mr-1.5" /> 删除</button>
+                          <button onClick={() => openEditJob(job)} className="action-button action-button-quiet min-h-[34px] px-3 text-xs">编辑配置</button>
+                          <button onClick={() => handleRunJob(job.id)} className="action-button action-button-primary min-h-[34px] px-3 text-xs"><Play /> 立即运行</button>
+                          <button onClick={() => handleDeleteJob(job.id)} className="action-button action-button-danger min-h-[34px] px-3 text-xs"><Trash2 /> 删除</button>
                         </div>
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                           <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
                             <div className="text-xs font-bold text-slate-400">节点来源</div>
-                            <div className="font-extrabold text-slate-700 text-sm mt-1">{group ? group.name : '任务内直接选择'}</div>
+                            <div className="card-title mt-1">{group ? group.name : '任务内直接选择'}</div>
                           </div>
                           <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
                             <div className="text-xs font-bold text-slate-400">整体 cron</div>
@@ -481,51 +491,59 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
       {view === 'history' && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+            <div className="metric-card rounded-[14px] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">本页运行</div>
-              <div className="text-2xl font-black text-slate-800">{unifiedRuns.length}</div>
+              <div className="stat-number text-slate-800">{unifiedRuns.length}</div>
             </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+            <div className="metric-card rounded-[14px] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">新增入库</div>
-              <div className="text-2xl font-black text-emerald-600">{totals.saved}</div>
+              <div className="stat-number text-emerald-600">{totals.saved}</div>
             </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+            <div className="metric-card rounded-[14px] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">抓取产出</div>
-              <div className="text-2xl font-black text-blue-600">{totals.fetched}</div>
+              <div className="stat-number text-blue-600">{totals.fetched}</div>
             </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+            <div className="metric-card rounded-[14px] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">重复跳过</div>
-              <div className="text-2xl font-black text-amber-600">{totals.skipped}</div>
+              <div className="stat-number text-amber-600">{totals.skipped}</div>
             </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+            <div className="metric-card rounded-[14px] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">失败次数</div>
-              <div className="text-2xl font-black text-red-600">{totals.failed}</div>
+              <div className="stat-number text-red-600">{totals.failed}</div>
             </div>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-3 flex flex-col md:flex-row gap-3">
-            <div className="flex items-center flex-1 bg-slate-50 border border-slate-100 rounded-lg px-3">
-              <Search className="w-4 h-4 text-slate-400 mr-2" />
-              <select value={filters.fetcher_id} onChange={event => setFilters({ ...filters, fetcher_id: event.target.value })} className="w-full bg-transparent py-2 text-sm font-bold text-slate-700 outline-none">
-                <option value="">全部节点</option>
-                {fetcherOptions.map(id => <option key={id} value={id}>{getFetcherName(id)}</option>)}
-              </select>
+          <div className="surface-card rounded-[16px] p-5">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-[1.2fr_1fr_1fr_auto]">
+              <div className="field-box">
+                <span>数据来源</span>
+                <select value={filters.fetcher_id} onChange={event => setFilters({ ...filters, fetcher_id: event.target.value })}>
+                  <option value="">全部节点</option>
+                  {fetcherOptions.map(id => <option key={id} value={id}>{getFetcherName(id)}</option>)}
+                </select>
+              </div>
+              <div className="field-box">
+                <span>运行状态</span>
+                <select value={filters.status} onChange={event => setFilters({ ...filters, status: event.target.value })}>
+                  <option value="">全部状态</option>
+                  <option value="success">成功</option>
+                  <option value="partial_failed">部分失败</option>
+                  <option value="failed">失败</option>
+                  <option value="running">运行中</option>
+                </select>
+              </div>
+              <div className="field-box">
+                <span>触发方式</span>
+                <select value={filters.trigger_type} onChange={event => setFilters({ ...filters, trigger_type: event.target.value })}>
+                  <option value="">全部触发</option>
+                  <option value="manual">手动</option>
+                  <option value="scheduled">定时</option>
+                </select>
+              </div>
+              <button onClick={loadAll} disabled={loading} className="action-button action-button-secondary self-stretch">
+                <RefreshCw className={loading ? 'animate-spin' : ''} /> 刷新
+              </button>
             </div>
-            <select value={filters.status} onChange={event => setFilters({ ...filters, status: event.target.value })} className="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-sm font-bold text-slate-700 outline-none">
-              <option value="">全部状态</option>
-              <option value="success">成功</option>
-              <option value="partial_failed">部分失败</option>
-              <option value="failed">失败</option>
-              <option value="running">运行中</option>
-            </select>
-            <select value={filters.trigger_type} onChange={event => setFilters({ ...filters, trigger_type: event.target.value })} className="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-sm font-bold text-slate-700 outline-none">
-              <option value="">全部触发</option>
-              <option value="manual">手动</option>
-              <option value="scheduled">定时</option>
-            </select>
-            <button onClick={loadAll} disabled={loading} className="px-4 py-2 rounded-lg bg-slate-100 text-slate-700 text-sm font-bold hover:bg-slate-200 flex items-center justify-center">
-              <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} /> 刷新
-            </button>
           </div>
 
           {tasks.length > 0 && (
@@ -548,13 +566,13 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
             </div>
           )}
 
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+          <div className="surface-card rounded-[14px] overflow-hidden">
             {loadError && (
               <div className="px-4 py-3 bg-red-50 border-b border-red-100 text-red-700 text-sm font-bold flex items-center">
                 <AlertTriangle className="w-4 h-4 mr-2" /> {loadError}
               </div>
             )}
-            <table className="w-full text-left border-collapse">
+            <table className="data-table w-full text-left">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs tracking-wider">
                 <tr>
                   <th className="px-4 py-3">状态</th>
@@ -577,16 +595,16 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
                   return (
                     <tr key={run.key} className="hover:bg-blue-50/40 transition-colors">
                       <td className="px-4 py-4">
-                        <span className={`inline-flex items-center px-2.5 py-1 rounded-lg border text-xs font-black ${meta.className}`}>
+                        <span className={`status-badge ${meta.className}`}>
                           <StatusIcon className="w-3.5 h-3.5 mr-1" /> {meta.label}
                         </span>
                       </td>
                       <td className="px-4 py-4">
-                        <div className="font-extrabold text-slate-800 text-sm">{run.title}</div>
+                        <div className="card-title">{run.title}</div>
                         <div className="font-mono text-[11px] text-slate-400 mt-0.5">{run.subtitle} · {run.nodeLabel}</div>
                       </td>
                       <td className="px-4 py-4">
-                        <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2 py-1 rounded-lg">{triggerLabel(run.trigger_type)}</span>
+                        <span className="status-badge bg-slate-100 text-slate-600 border-slate-200">{triggerLabel(run.trigger_type)}</span>
                       </td>
                       <td className="px-4 py-4 font-mono text-xs text-slate-500">{formatDateTime(run.started_at)}</td>
                       <td className="px-4 py-4 text-xs font-bold text-slate-600">
@@ -613,11 +631,11 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
       )}
 
       {jobModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="modal-overlay">
+          <div className="modal-panel max-w-6xl">
             <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
               <div>
-                <h3 className="font-extrabold text-slate-800">{editingJobId ? '编辑采集任务' : '新建采集任务'}</h3>
+                <h3 className="card-title">{editingJobId ? '编辑采集任务' : '新建采集任务'}</h3>
                 <p className="text-xs text-slate-400 mt-1">采集任务负责调度、参数覆盖和运行追踪。</p>
               </div>
               <button onClick={() => setJobModalOpen(false)} className="p-2 rounded-lg hover:bg-slate-200 text-slate-500"><X className="w-4 h-4" /></button>
@@ -626,22 +644,22 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="text-xs font-bold text-slate-500">
                   名称
-                  <input value={jobDraft.name} onChange={event => setJobDraft(prev => ({ ...prev, name: event.target.value }))} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 outline-none focus:border-blue-500" />
+                  <input value={jobDraft.name} onChange={event => setJobDraft(prev => ({ ...prev, name: event.target.value }))} className="form-input mt-1" />
                 </label>
                 <label className="text-xs font-bold text-slate-500">
                   说明
-                  <input value={jobDraft.description} onChange={event => setJobDraft(prev => ({ ...prev, description: event.target.value }))} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 outline-none focus:border-blue-500" />
+                  <input value={jobDraft.description} onChange={event => setJobDraft(prev => ({ ...prev, description: event.target.value }))} className="form-input mt-1" />
                 </label>
                 <label className="text-xs font-bold text-slate-500">
                   节点组
-                  <select value={jobDraft.group_id} onChange={event => setJobDraft(prev => ({ ...prev, group_id: event.target.value, fetcher_ids: [] }))} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 outline-none focus:border-blue-500">
+                  <select value={jobDraft.group_id} onChange={event => setJobDraft(prev => ({ ...prev, group_id: event.target.value, fetcher_ids: [] }))} className="form-input mt-1">
                     <option value="">不使用节点组，直接选择节点</option>
                     {nodeGroups.map(group => <option key={group.id} value={group.id}>{group.name}（{(group.fetcher_ids || []).length}）</option>)}
                   </select>
                 </label>
                 <label className="text-xs font-bold text-slate-500">
                   整体 cron
-                  <input value={jobDraft.cron_expr} onChange={event => setJobDraft(prev => ({ ...prev, cron_expr: event.target.value }))} placeholder="例如：0 9 * * *" className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono text-slate-700 outline-none focus:border-blue-500" />
+                  <input value={jobDraft.cron_expr} onChange={event => setJobDraft(prev => ({ ...prev, cron_expr: event.target.value }))} placeholder="例如：0 9 * * *" className="form-input mt-1 font-mono" />
                 </label>
               </div>
 
@@ -654,7 +672,7 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
                     {!jobDraft.group_id && (
                       <div className="relative mt-3">
                         <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                        <input value={jobSearch} onChange={event => setJobSearch(event.target.value)} placeholder="搜索节点" className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-blue-500" />
+                        <input value={jobSearch} onChange={event => setJobSearch(event.target.value)} placeholder="搜索节点" className="form-input pl-9" />
                       </div>
                     )}
                   </div>
@@ -688,7 +706,7 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
                       <div key={fetcherId} className="border border-slate-200 rounded-xl p-3 bg-white">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="font-extrabold text-slate-800 text-sm truncate">{fetcher?.name || fetcherId}</div>
+                            <div className="card-title truncate">{fetcher?.name || fetcherId}</div>
                             <div className="font-mono text-[11px] text-slate-400 mt-0.5">{fetcherId}</div>
                           </div>
                           {!jobDraft.group_id && (
@@ -698,7 +716,7 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
                         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                           <label className="text-xs font-bold text-slate-500 md:col-span-2">
                             该节点 cron
-                            <input value={(jobDraft.per_fetcher_cron || {})[fetcherId] || ''} onChange={event => updateDraftCron(fetcherId, event.target.value)} placeholder={jobDraft.cron_expr || '留空则不单独调度'} className="mt-1 w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-700 outline-none focus:border-blue-500" />
+                            <input value={(jobDraft.per_fetcher_cron || {})[fetcherId] || ''} onChange={event => updateDraftCron(fetcherId, event.target.value)} placeholder={jobDraft.cron_expr || '留空则不单独调度'} className="form-input mt-1 py-1.5 text-xs font-mono" />
                           </label>
                           {(fetcher?.parameters || []).length === 0 ? (
                             <div className="text-xs text-slate-400 font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">该节点无需扩展参数</div>
@@ -721,8 +739,8 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
                 启用任务
               </label>
               <div className="flex justify-end gap-2">
-                <button onClick={() => setJobModalOpen(false)} className="px-4 py-2 rounded-lg bg-slate-100 text-slate-700 text-sm font-bold hover:bg-slate-200">取消</button>
-                <button onClick={handleSaveJob} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 flex items-center"><Save className="w-4 h-4 mr-1.5" /> 保存</button>
+                <button onClick={() => setJobModalOpen(false)} className="action-button action-button-quiet">取消</button>
+                <button onClick={handleSaveJob} className="action-button action-button-primary"><Save /> 保存</button>
               </div>
             </div>
           </div>

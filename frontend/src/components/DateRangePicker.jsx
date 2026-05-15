@@ -32,10 +32,10 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
   const popoverRef = useRef();
 
   useEffect(() => {
-    setTempStart(parseDateStr(startDate));
-    setTempEnd(parseDateStr(endDate));
-    if (startDate && !isOpen) {
-      setViewDate(parseDateStr(startDate));
+    if (!isOpen) {
+      setTempStart(parseDateStr(startDate));
+      setTempEnd(parseDateStr(endDate));
+      if (startDate) setViewDate(parseDateStr(startDate));
     }
   }, [startDate, endDate, isOpen]);
 
@@ -66,9 +66,11 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
     if (!tempStart || (tempStart && tempEnd)) {
       setTempStart(clickedDate);
       setTempEnd(null);
+      setViewDate(new Date(clickedDate.getFullYear(), clickedDate.getMonth(), 1));
     } else {
       if (clickedDate < tempStart) {
         setTempStart(clickedDate);
+        setViewDate(new Date(clickedDate.getFullYear(), clickedDate.getMonth(), 1));
       } else {
         setTempEnd(clickedDate);
         setIsOpen(false);
@@ -84,13 +86,29 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
     displayStr = `${startDate.slice(5)} ~ 结束点`;
   }
 
+  const toggleOpen = () => {
+    if (isOpen) {
+      setIsOpen(false);
+      setTempStart(parseDateStr(startDate));
+      setTempEnd(parseDateStr(endDate));
+      return;
+    }
+    const parsedStart = parseDateStr(startDate);
+    const parsedEnd = parseDateStr(endDate);
+    setTempStart(parsedStart);
+    setTempEnd(parsedEnd);
+    setHoverDate(null);
+    setViewDate(parsedStart || parsedEnd || new Date());
+    setIsOpen(true);
+  };
+
   return (
     <div className="relative w-full" ref={popoverRef}>
       <div
-        onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center justify-between bg-slate-100/70 hover:bg-slate-200/70 rounded px-2.5 py-1.5 cursor-pointer w-full transition-colors border shadow-sm ${isOpen ? 'border-blue-400 bg-blue-50/50' : 'border-transparent hover:border-slate-300'}`}
+        onClick={toggleOpen}
+        className={`date-range-trigger flex items-center justify-between bg-white/80 hover:bg-white rounded-lg px-3 py-3 cursor-pointer w-full transition-colors border ${isOpen ? 'border-blue-400 bg-blue-50/50 shadow-sm' : 'border-slate-200 hover:border-slate-300'}`}
       >
-        <span className={`text-[11px] font-bold truncate ${startDate ? 'text-blue-700' : 'text-slate-400'}`}>
+        <span className={`truncate text-sm font-semibold ${startDate ? 'text-blue-700' : 'text-slate-400'}`}>
           {displayStr}
         </span>
         {startDate ? (
@@ -101,15 +119,15 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
       </div>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-2 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 p-4 w-[260px] animate-in fade-in zoom-in-95 origin-top-left">
+        <div className="date-range-popover animate-in fade-in zoom-in-95">
           <div className="flex justify-between items-center mb-4 px-1">
             <button onClick={() => setViewDate(new Date(year, month - 1, 1))} className="p-1 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors"><ChevronLeft className="w-4 h-4" /></button>
-            <span className="text-sm font-extrabold text-slate-800 tracking-wide">{year}年 {month + 1}月</span>
+            <span className="date-range-month">{year}年 {month + 1}月</span>
             <button onClick={() => setViewDate(new Date(year, month + 1, 1))} className="p-1 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors"><ChevronRight className="w-4 h-4" /></button>
           </div>
           <div className="grid grid-cols-7 gap-y-2 mb-2">
             {['日', '一', '二', '三', '四', '五', '六'].map(d => (
-              <div key={d} className="text-[10px] font-bold text-slate-400 text-center">{d}</div>
+              <div key={d} className="date-range-weekday">{d}</div>
             ))}
           </div>
           <div className="grid grid-cols-7 gap-y-1" onMouseLeave={() => setHoverDate(null)}>
@@ -122,21 +140,19 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
               const hasRangeForward = tempEnd || (hoverDate && hoverDate > tempStart);
 
               let cellClass = 'w-full h-8 flex items-center justify-center transition-colors';
-              let textClass = 'w-7 h-7 flex items-center justify-center rounded-lg text-[11.5px] font-medium cursor-pointer transition-all';
+              let textClass = 'date-range-day';
 
               if (isStart && isEnd) {
-                textClass += ' bg-blue-600 text-white font-bold shadow-md';
+                textClass += ' date-range-day-selected';
               } else if (isStart) {
                 cellClass += hasRangeForward ? ' bg-blue-50 rounded-l-xl' : '';
-                textClass += ' bg-blue-600 text-white font-bold shadow-md scale-105';
+                textClass += ' date-range-day-selected';
               } else if (isEnd) {
                 cellClass += ' bg-blue-50 rounded-r-xl';
-                textClass += ' bg-blue-600 text-white font-bold shadow-md scale-105';
+                textClass += ' date-range-day-selected';
               } else if (inRange) {
                 cellClass += ' bg-blue-50';
-                textClass += ' text-blue-700 font-bold';
-              } else {
-                textClass += ' text-slate-700 hover:bg-slate-100';
+                textClass += ' date-range-day-inrange';
               }
 
               return (

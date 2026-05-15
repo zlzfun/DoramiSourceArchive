@@ -93,99 +93,109 @@ export default function VectorTab({ availableFetchers, showToast }) {
 
   return (
     <div className="space-y-6 animate-in fade-in">
-      <div className="flex justify-between items-end mb-6">
-        <div>
-          <h2 className="text-2xl font-bold">向量数据库雷达</h2>
-          <p className="text-sm text-slate-500 mt-2">ChromaDB 状态管理，语义检索测试，RAG 上下文导出。</p>
+      <div className="page-header flex-col xl:flex-row">
+        <div className="page-heading">
+          <h2 className="page-title">向量雷达</h2>
+          <p className="page-subtitle mt-3 max-w-3xl">ChromaDB 状态管理，语义检索测试，RAG 上下文导出，为知识召回质量提供可观察的调试界面。</p>
         </div>
-        <div className="flex space-x-2">
-          <button onClick={handleVectorizeAllPending} disabled={vectorizingPending} className="text-sm text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 shadow-sm px-3 py-2 rounded-lg transition-all flex items-center font-bold">
-            {vectorizingPending ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <Zap className="w-4 h-4 mr-1.5 text-amber-500" />}
+        <div className="page-actions">
+          <button onClick={handleVectorizeAllPending} disabled={vectorizingPending} className="action-button action-button-secondary">
+            {vectorizingPending ? <RefreshCw className="animate-spin" /> : <Zap className="text-amber-500" />}
             索引待处理
           </button>
-          <button onClick={handleReindexAll} disabled={reindexing} className="text-sm text-white bg-slate-700 hover:bg-slate-800 shadow-sm px-3 py-2 rounded-lg transition-all flex items-center font-bold">
-            {reindexing ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}
+          <button onClick={handleReindexAll} disabled={reindexing} className="action-button action-button-primary">
+            {reindexing ? <RefreshCw className="animate-spin" /> : <RotateCcw />}
             全量重索引
           </button>
         </div>
       </div>
 
-      <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-6 rounded-3xl text-white shadow-lg w-fit pr-20">
-        <h4 className="text-indigo-100 font-bold text-sm mb-2 flex items-center"><Database className="w-4 h-4 mr-1.5" /> ChromaDB 挂载块数</h4>
-        <div className="text-4xl font-black">{vectorStats.total} <span className="text-lg font-medium opacity-80">Chunks</span></div>
-      </div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[340px_1fr]">
+        <div className="relative overflow-hidden rounded-[14px] bg-gradient-to-br from-[#174fff] via-[#5d5cff] to-[#8c5aff] p-6 text-white shadow-lg shadow-blue-500/20">
+          <div className="absolute -right-14 -top-14 h-40 w-40 rounded-full bg-white/16" />
+          <div className="relative">
+            <h4 className="text-indigo-100 font-bold text-sm mb-2 flex items-center"><Database className="w-4 h-4 mr-1.5" /> ChromaDB 挂载块数</h4>
+            <div className="text-5xl font-bold">{vectorStats.total} <span className="text-lg font-medium opacity-80">Chunks</span></div>
+            <p className="mt-4 text-xs font-bold text-blue-100">向量库状态会随索引和重索引操作刷新。</p>
+          </div>
+        </div>
 
-      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 max-w-4xl">
+        <div className="surface-card rounded-[16px] p-6">
         <h3 className="font-bold text-lg mb-4 flex items-center"><Search className="w-5 h-5 mr-2 text-blue-500" /> 语义检索</h3>
 
         {/* 检索控制行 */}
-        <div className="flex space-x-3 mb-3">
+        <div className="vector-search-layout mb-3">
+          <label className="search-box min-h-[48px] flex-1">
+            <Search className="mr-3 h-5 w-5 text-slate-400" />
           <input
             type="text"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSearch()}
             placeholder="输入自然语言查询（中英文均可）..."
-            className="flex-1 bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl outline-none focus:ring-1 focus:ring-blue-500 font-medium text-sm"
+            className="py-3"
           />
-          <button onClick={handleSearch} disabled={searching} className="bg-slate-800 text-white px-6 py-3 rounded-xl font-bold hover:bg-slate-700 transition-all flex items-center shrink-0">
-            {searching ? <RefreshCw className="w-5 h-5 animate-spin" /> : <><Search className="w-4 h-4 mr-1.5" />检索</>}
+          </label>
+          <button onClick={handleSearch} disabled={searching} className="action-button action-button-primary min-h-[48px] w-full justify-center px-6">
+            {searching ? <RefreshCw className="animate-spin" /> : <><Search />检索</>}
           </button>
-          <button onClick={handleCopyContext} disabled={copyingContext || !searchQuery.trim()} title="将检索结果组装为 RAG 上下文并复制到剪贴板（可直接粘贴到 Dify 等 LLM 工作流）" className="bg-indigo-600 text-white px-4 py-3 rounded-xl font-bold hover:bg-indigo-700 transition-all flex items-center shrink-0 disabled:opacity-40">
-            {copiedContext ? <Check className="w-4 h-4 mr-1.5" /> : copyingContext ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <Copy className="w-4 h-4 mr-1.5" />}
+          <button onClick={handleCopyContext} disabled={copyingContext || !searchQuery.trim()} title="将检索结果组装为 RAG 上下文并复制到剪贴板（可直接粘贴到 Dify 等 LLM 工作流）" className="action-button action-button-secondary min-h-[48px] w-full justify-center disabled:opacity-40">
+            {copiedContext ? <Check /> : copyingContext ? <RefreshCw className="animate-spin" /> : <Copy />}
             复制上下文
           </button>
         </div>
 
         {/* 过滤参数行 */}
-        <div className="flex space-x-3 mb-5">
-          <div className="flex items-center space-x-2 text-sm text-slate-600">
-            <span className="font-medium">Top-K</span>
-            <input
-              type="number"
-              min={1} max={20}
-              value={topK}
-              onChange={e => setTopK(Math.max(1, Math.min(20, Number(e.target.value))))}
-              className="w-16 bg-slate-50 border border-slate-200 px-2 py-1.5 rounded-lg text-center font-bold outline-none focus:ring-1 focus:ring-blue-500 text-sm"
-            />
-          </div>
-          <div className="flex items-center space-x-2 text-sm text-slate-600">
-            <span className="font-medium">来源筛选</span>
-            <select
-              value={filterSourceId}
-              onChange={e => setFilterSourceId(e.target.value)}
-              className="bg-slate-50 border border-slate-200 px-2 py-1.5 rounded-lg font-bold outline-none focus:ring-1 focus:ring-blue-500 text-sm text-slate-700"
-            >
-              <option value="">全部来源</option>
-              {availableFetchers.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-            </select>
-          </div>
-          <div className="flex items-center space-x-2 text-sm text-slate-600">
-            <span className="font-medium shrink-0">发布日期</span>
-            <div className="w-44">
-              <DateRangePicker
-                startDate={filterDateStart}
-                endDate={filterDateEnd}
-                onChange={(start, end) => { setFilterDateStart(start); setFilterDateEnd(end); }}
-                placeholder="不限日期"
+        <div className="vector-filter-layout mb-5">
+          <div className="vector-inline-filters">
+            <div className="field-box">
+              <span>Top-K</span>
+              <input
+                type="number"
+                min={1} max={20}
+                value={topK}
+                onChange={e => setTopK(Math.max(1, Math.min(20, Number(e.target.value))))}
               />
             </div>
+            <div className="field-box">
+              <span>来源筛选</span>
+              <select
+                value={filterSourceId}
+                onChange={e => setFilterSourceId(e.target.value)}
+              >
+                <option value="">全部来源</option>
+                {availableFetchers.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+              </select>
+            </div>
+            <div className="field-box">
+              <span>发布日期</span>
+                <DateRangePicker
+                  startDate={filterDateStart}
+                  endDate={filterDateEnd}
+                  onChange={(start, end) => { setFilterDateStart(start); setFilterDateEnd(end); }}
+                  placeholder="不限日期"
+                />
+            </div>
           </div>
-          <label className="flex items-center space-x-1.5 text-sm text-slate-600 cursor-pointer select-none" title="使用 Cross-Encoder 对 Bi-Encoder 检索结果重打分，精确率更高但耗时更长">
-            <input type="checkbox" checked={rerank} onChange={e => setRerank(e.target.checked)} className="w-3.5 h-3.5 rounded text-indigo-600 cursor-pointer" />
-            <span className="font-medium">重排序</span>
-          </label>
-          <label className="flex items-center space-x-1.5 text-sm text-slate-600 cursor-pointer select-none" title="复制上下文时，在命中片段前后拼接相邻段落，扩展上下文窗口">
-            <input type="checkbox" checked={expandContext} onChange={e => setExpandContext(e.target.checked)} className="w-3.5 h-3.5 rounded text-indigo-600 cursor-pointer" />
-            <span className="font-medium">扩展上下文</span>
-          </label>
-          <div className="text-xs text-slate-400 flex items-center ml-auto">相关度越高距离越小</div>
+          <div className="vector-option-box">
+            <span>检索选项</span>
+            <div className="vector-option-list">
+              <label className="vector-option-chip" title="使用 Cross-Encoder 对 Bi-Encoder 检索结果重打分，精确率更高但耗时更长">
+                <input type="checkbox" checked={rerank} onChange={e => setRerank(e.target.checked)} />
+                <span>重排序</span>
+              </label>
+              <label className="vector-option-chip" title="复制上下文时，在命中片段前后拼接相邻段落，扩展上下文窗口">
+                <input type="checkbox" checked={expandContext} onChange={e => setExpandContext(e.target.checked)} />
+                <span>扩展上下文</span>
+              </label>
+            </div>
+          </div>
         </div>
 
         {/* 结果列表 */}
         <div className="space-y-4">
           {searchResults.length === 0 && !searching && (
-            <div className="text-center py-8 text-slate-400 font-bold bg-slate-50 rounded-xl border-dashed border-2 border-slate-200 text-sm">
+            <div className="empty-state py-8">
               输入查询句，探测语义检索效果
             </div>
           )}
@@ -194,7 +204,7 @@ export default function VectorTab({ availableFetchers, showToast }) {
             const sourceUrl = res.metadata?.source_url;
             const pubDate = res.metadata?.publish_date?.split('T')[0];
             return (
-              <div key={i} className="bg-slate-50 border border-slate-200 p-5 rounded-2xl">
+              <div key={i} className="bg-white/72 border border-slate-200 p-5 rounded-[14px] shadow-sm">
                 <div className="flex items-start justify-between mb-2">
                   <h4 className="font-bold text-slate-800 text-sm pr-4 line-clamp-1 flex-1">
                     {sourceUrl
@@ -204,7 +214,7 @@ export default function VectorTab({ availableFetchers, showToast }) {
                       : (res.metadata?.title || '未知片段')
                     }
                   </h4>
-                  <span className={`text-xs font-black px-2 py-0.5 rounded shrink-0 ${color}`}>
+                  <span className={`status-badge shrink-0 ${color}`}>
                     {label} {res.distance.toFixed(3)}
                   </span>
                 </div>
@@ -219,6 +229,7 @@ export default function VectorTab({ availableFetchers, showToast }) {
               </div>
             );
           })}
+        </div>
         </div>
       </div>
     </div>

@@ -143,100 +143,98 @@ export default function DataTab({ availableFetchers, showToast }) {
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in">
-      <div className="flex justify-between items-end">
-        <div>
-          <h2 className="text-2xl font-bold">知识台账</h2>
-          <p className="text-sm text-slate-500 mt-1">沉浸式多维过滤。支持点击日历极速框选范围。</p>
+    <div className={`space-y-6 animate-in fade-in ${selectedArticles.size > 0 ? 'pb-24' : ''}`}>
+      <div className="page-header flex-col xl:flex-row">
+        <div className="page-heading">
+          <h2 className="page-title">知识台账</h2>
+          <p className="page-subtitle mt-3 max-w-4xl">沉浸式多维过滤，支持点击日期极速框选范围，快速查找与管理全部抓取内容。</p>
         </div>
-        <div className="flex space-x-3 items-center">
-          {selectedArticles.size > 0 && (
-            <div className="flex space-x-2 mr-2 animate-in slide-in-from-right-4">
-              <button onClick={handleBatchVectorize} className="text-sm text-white bg-slate-800 hover:bg-slate-900 shadow-md px-4 py-2 rounded-lg transition-all flex items-center font-bold">
-                <Zap className="w-4 h-4 mr-1.5" /> 批量构建 ({selectedArticles.size})
-              </button>
-              <button onClick={handleBatchDeleteArticles} className="text-sm text-white bg-red-600 hover:bg-red-700 shadow-md px-4 py-2 rounded-lg transition-all flex items-center font-bold">
-                <Trash2 className="w-4 h-4 mr-1.5" /> 彻底删除 ({selectedArticles.size})
-              </button>
+        <div className="page-actions">
+          <button onClick={handleVectorizeAllPending} disabled={vectorizingAll} className="action-button action-button-secondary">
+            {vectorizingAll ? <RefreshCw className="animate-spin" /> : <Zap className="text-amber-500" />} 全量向量化
+          </button>
+          <button onClick={() => setManualAddModal(true)} className="action-button action-button-primary">
+            <Plus /> 手工录入
+          </button>
+          <button onClick={loadArticles} disabled={loading} className="action-button action-button-secondary">
+            <RefreshCw className={`text-blue-600 ${loading ? 'animate-spin' : ''}`} /> 同步最新
+          </button>
+        </div>
+      </div>
+
+      <div className="surface-card relative z-30 rounded-[16px] p-5">
+        <div className="flex flex-col gap-4">
+          <label className="search-box min-h-[58px]">
+            <Search className="mr-3 h-5 w-5 text-slate-400" />
+            <input type="text" placeholder="搜索标题、内容、来源网站、标签等关键词..." value={filters.search} onChange={e => setFilters({ ...filters, search: e.target.value })} onKeyDown={e => e.key === 'Enter' && loadArticles()} className="py-4" />
+            <span className="hidden rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-400 sm:inline-flex">⌘ /</span>
+          </label>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1.35fr_1.35fr_1fr]">
+            <div className="field-box">
+              <span>结构类型</span>
+              <select value={filters.content_type} onChange={e => setFilters({ ...filters, content_type: e.target.value })}>
+                <option value="">全部类型</option>
+                {uniqueContentTypes.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
             </div>
-          )}
-          {selectedArticles.size === 0 && (
-            <button onClick={handleVectorizeAllPending} disabled={vectorizingAll} className="text-sm text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 shadow-sm px-4 py-2 rounded-lg transition-all flex items-center font-bold">
-              {vectorizingAll ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <Zap className="w-4 h-4 mr-1.5 text-amber-500" />} 全量向量化
-            </button>
-          )}
-          <button onClick={() => setManualAddModal(true)} className="text-sm text-white bg-blue-600 hover:bg-blue-700 shadow-md px-4 py-2 rounded-lg transition-all flex items-center font-bold">
-            <Plus className="w-4 h-4 mr-1.5" /> 手工录入
-          </button>
-          <button onClick={loadArticles} disabled={loading} className="text-sm text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 shadow-sm px-4 py-2 rounded-lg transition-all flex items-center font-bold">
-            <RefreshCw className={`w-4 h-4 mr-2 text-blue-600 ${loading ? 'animate-spin' : ''}`} /> 同步
-          </button>
+            <div className="field-box">
+              <span>数据来源</span>
+              <select value={filters.source_id} onChange={e => setFilters({ ...filters, source_id: e.target.value })}>
+                <option value="">全部节点</option>
+                {uniqueSourceIds.map(src => <option key={src} value={src}>{getFetcherName(src)}</option>)}
+              </select>
+            </div>
+            <div className="field-box">
+              <span>原始发布日期</span>
+              <DateRangePicker
+                startDate={filters.publish_date_start}
+                endDate={filters.publish_date_end}
+                onChange={(start, end) => setFilters({ ...filters, publish_date_start: start, publish_date_end: end })}
+                placeholder="开始日期 → 结束日期"
+              />
+            </div>
+            <div className="field-box">
+              <span>抓取 / 收录时间</span>
+              <DateRangePicker
+                startDate={filters.fetched_date_start}
+                endDate={filters.fetched_date_end}
+                onChange={(start, end) => setFilters({ ...filters, fetched_date_start: start, fetched_date_end: end })}
+                placeholder="开始日期 → 结束日期"
+              />
+            </div>
+            <div className="field-box">
+              <span>向量状态</span>
+              <select value={filters.is_vectorized} onChange={e => setFilters({ ...filters, is_vectorized: e.target.value })}>
+                <option value="">全部状态</option>
+                <option value="true">向量已构建</option>
+                <option value="false">向量未构建</option>
+              </select>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="bg-white/80 p-3 rounded-2xl shadow-sm border border-slate-100 flex items-center">
-        <Search className="w-5 h-5 text-slate-400 ml-2" />
-        <input type="text" placeholder="全局检索文章标题..." value={filters.search} onChange={e => setFilters({ ...filters, search: e.target.value })} onKeyDown={e => e.key === 'Enter' && loadArticles()} className="w-full bg-transparent border-none text-sm px-4 py-2 outline-none font-medium" />
-      </div>
+      <div className="surface-card relative z-10 rounded-[16px] overflow-x-auto overflow-y-visible">
+        <div className="toolbar-card min-w-[980px]">
+          <div className="toolbar-title">
+            <span>共 {articles.length.toLocaleString()} 条记录</span>
+            <span className="text-slate-500">已选择 {selectedArticles.size} 条</span>
+          </div>
+        </div>
 
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-visible">
-        <table className="w-full text-left border-collapse">
+        <table className="data-table w-full min-w-[980px] text-left">
           <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs tracking-wider">
             <tr>
-              <th className="px-4 py-3 w-12 text-center align-top pt-4">
+              <th className="px-4 py-3 w-12 text-center">
                 <input type="checkbox" checked={selectedArticles.size === articles.length && articles.length > 0} onChange={toggleAllArticles} className="w-4 h-4 text-blue-600 rounded cursor-pointer" />
               </th>
-              <th className="px-3 py-3 w-32 align-top">
-                <div className="flex flex-col items-start space-y-1.5">
-                  <span className="font-bold opacity-70 mb-0.5">结构类型</span>
-                  <select value={filters.content_type} onChange={e => setFilters({ ...filters, content_type: e.target.value })} className="bg-slate-100/50 rounded px-1.5 py-1 text-blue-700 font-bold outline-none text-xs w-full cursor-pointer">
-                    <option value="">全部 (All)</option>
-                    {uniqueContentTypes.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </div>
-              </th>
-              <th className="px-3 py-3 w-36 align-top">
-                <div className="flex flex-col items-start space-y-1.5">
-                  <span className="font-bold opacity-70 mb-0.5">数据来源</span>
-                  <select value={filters.source_id} onChange={e => setFilters({ ...filters, source_id: e.target.value })} className="bg-slate-100/50 rounded px-1.5 py-1 text-blue-700 font-bold outline-none text-xs w-full cursor-pointer truncate">
-                    <option value="">全部节点 (All)</option>
-                    {uniqueSourceIds.map(src => <option key={src} value={src}>{getFetcherName(src)}</option>)}
-                  </select>
-                </div>
-              </th>
-              <th className="px-4 py-3 align-top pt-4"><span className="font-bold opacity-70">内容标题 (点击展开详情)</span></th>
-              <th className="px-3 py-3 w-[160px] align-top">
-                <div className="flex flex-col items-start space-y-1.5">
-                  <span className="font-bold opacity-70 mb-0.5">原始发布时间</span>
-                  <DateRangePicker
-                    startDate={filters.publish_date_start}
-                    endDate={filters.publish_date_end}
-                    onChange={(start, end) => setFilters({ ...filters, publish_date_start: start, publish_date_end: end })}
-                    placeholder="选择日期范围"
-                  />
-                </div>
-              </th>
-              <th className="px-3 py-3 w-[160px] align-top">
-                <div className="flex flex-col items-start space-y-1.5">
-                  <span className="font-bold opacity-70 mb-0.5">中枢收录时间</span>
-                  <DateRangePicker
-                    startDate={filters.fetched_date_start}
-                    endDate={filters.fetched_date_end}
-                    onChange={(start, end) => setFilters({ ...filters, fetched_date_start: start, fetched_date_end: end })}
-                    placeholder="选择日期范围"
-                  />
-                </div>
-              </th>
-              <th className="px-3 py-3 w-28 align-top">
-                <div className="flex flex-col items-start space-y-1.5">
-                  <span className="font-bold opacity-70 mb-0.5">向量状态</span>
-                  <select value={filters.is_vectorized} onChange={e => setFilters({ ...filters, is_vectorized: e.target.value })} className="bg-slate-100/50 rounded px-1.5 py-1 text-blue-700 font-bold outline-none text-xs w-full cursor-pointer">
-                    <option value="">全部</option>
-                    <option value="true">已索引</option>
-                    <option value="false">待处理</option>
-                  </select>
-                </div>
-              </th>
+              <th className="px-3 py-4 w-36 font-bold">内容类型</th>
+              <th className="px-3 py-4 w-44 font-bold">数据来源</th>
+              <th className="px-4 py-4 font-bold">标题 / 内容摘要</th>
+              <th className="px-3 py-4 w-[150px] font-bold">原始发布日期</th>
+              <th className="px-3 py-4 w-[150px] font-bold">抓取 / 收录时间</th>
+              <th className="px-3 py-4 w-36 font-bold">向量状态</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
@@ -247,19 +245,25 @@ export default function DataTab({ availableFetchers, showToast }) {
                 <td className="px-4 py-4 text-center">
                   <input type="checkbox" checked={selectedArticles.has(article.id)} onChange={() => toggleArticleSelection(article.id)} className="w-4 h-4 text-blue-600 rounded cursor-pointer" />
                 </td>
-                <td className="px-3 py-4"><span className="px-2 py-1 rounded bg-slate-100 text-slate-600 text-[11px] font-bold uppercase">{article.content_type || '未知'}</span></td>
+                <td className="px-3 py-4"><span className="data-chip">{article.content_type || '未知'}</span></td>
                 <td className="px-3 py-4"><span className="font-bold text-slate-700 text-xs line-clamp-2" title={article.source_id}>{getFetcherName(article.source_id)}</span></td>
-                <td className="px-4 py-4 font-extrabold text-slate-800 line-clamp-2 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => openDetailModal(article)}>
-                  {article.title}
+                <td className="px-4 py-4 font-bold text-slate-800 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => openDetailModal(article)}>
+                  <div className="line-clamp-1">{article.title}</div>
+                  <div className="mt-1 line-clamp-1 text-xs font-semibold text-slate-400">{article.content || '暂无摘要内容'}</div>
                 </td>
-                <td className="px-3 py-4 text-slate-400 text-[11px] font-mono">{article.publish_date?.split('T')[0] || '-'}</td>
-                <td className="px-3 py-4 text-emerald-600 text-[11px] font-mono font-medium">{article.fetched_date?.split('T')[0] || '-'}</td>
+                <td className="px-3 py-4 text-slate-500 text-xs font-mono">{article.publish_date?.split('T')[0] || '-'}</td>
+                <td className="px-3 py-4 text-slate-600 text-xs font-mono">{article.fetched_date?.replace('T', ' ').substring(0, 16) || '-'}</td>
                 <td className="px-3 py-4">
                   {article.is_vectorized ? (
-                    <span className="flex items-center text-xs font-bold text-emerald-600"><CheckCircle className="w-3.5 h-3.5 mr-1" /> 已建索引</span>
+                    <span className="vector-status vector-status-done">
+                      <CheckCircle className="vector-status-icon" strokeWidth={2.35} />
+                      <span className="vector-status-label">向量已构建</span>
+                    </span>
                   ) : (
-                    <button onClick={() => handleVectorize(article.id)} disabled={vectorizingId === article.id} className="text-xs font-bold text-slate-500 hover:text-blue-600 flex items-center transition-colors">
-                      {vectorizingId === article.id ? <RefreshCw className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1" />} 构建向量
+                    <button onClick={() => handleVectorize(article.id)} disabled={vectorizingId === article.id} className="vector-status vector-status-pending group">
+                      {vectorizingId === article.id ? <RefreshCw className="vector-status-icon animate-spin" strokeWidth={2.35} /> : <Zap className="vector-status-icon" strokeWidth={2.35} />}
+                      <span className="vector-status-label vector-status-default">{vectorizingId === article.id ? '构建中' : '向量未构建'}</span>
+                      <span className="vector-status-label vector-status-hover">{vectorizingId === article.id ? '构建中' : '构建向量'}</span>
                     </button>
                   )}
                 </td>
@@ -268,6 +272,22 @@ export default function DataTab({ availableFetchers, showToast }) {
           </tbody>
         </table>
       </div>
+
+      {selectedArticles.size > 0 && (
+        <div className="selection-bar animate-in slide-in-from-bottom-4">
+          <div className="selection-bar-info">
+            <CheckCircle /> 已选择 {selectedArticles.size} 条记录
+          </div>
+          <div className="selection-bar-actions">
+            <button onClick={handleBatchVectorize} className="action-button action-button-secondary text-blue-700">
+              <Zap /> 批量构建
+            </button>
+            <button onClick={handleBatchDeleteArticles} className="action-button action-button-danger">
+              <Trash2 /> 批量删除
+            </button>
+          </div>
+        </div>
+      )}
 
       <ArticleDetailModal
         isOpen={modalState.isOpen}

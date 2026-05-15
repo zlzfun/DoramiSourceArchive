@@ -93,14 +93,15 @@ export default function MCPTab({ showToast }) {
   const enabled = status?.enabled ?? false;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      <div className="page-header">
+        <div className="page-heading">
+          <h2 className="page-title">接入集成</h2>
+          <p className="page-subtitle mt-3 max-w-3xl">通过 MCP 与 Skill 把归档中枢接入本地工具和在线 Agent 平台，让检索、浏览与日报生成成为可复用能力。</p>
+        </div>
+      </div>
       {/* ── HERO ─────────────────────────────────────────────────── */}
-      <div
-        className="relative overflow-hidden rounded-2xl p-7"
-        style={{
-          background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)',
-        }}
-      >
+      <div className="integration-hero relative overflow-hidden rounded-[14px] p-7 shadow-lg shadow-blue-500/10">
         {/* Dot-grid texture */}
         <div
           className="absolute inset-0 opacity-[0.07]"
@@ -114,26 +115,25 @@ export default function MCPTab({ showToast }) {
           style={{ background: 'radial-gradient(circle, #818cf8, transparent 70%)' }} />
 
         <div className="relative">
-          <p className="text-[10px] font-mono tracking-[0.2em] text-slate-400 uppercase mb-1">
+          <p className="integration-kicker mb-1">
             Integration Hub · 接入集成
           </p>
           <h2 className="text-xl font-bold text-white mb-1">扩展你的 Agent 能力</h2>
-          <p className="text-sm text-slate-400 mb-6">
+          <p className="integration-lede mb-6">
             通过 MCP 实时访问归档数据，或下载 Skill 让 Agent 自动生成 AI 资讯日报。
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {/* MCP card */}
-            <div className="relative rounded-xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm hover:bg-white/8 transition-colors">
+            <div className="integration-card">
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg flex items-center justify-center"
-                    style={{ background: 'rgba(14, 165, 233, 0.2)', border: '1px solid rgba(14, 165, 233, 0.3)' }}>
-                    <Plug2 className="w-4 h-4 text-sky-400" />
+                  <div className="integration-icon integration-icon-sky">
+                    <Plug2 className="w-4 h-4" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-white leading-tight">MCP Server</p>
-                    <p className="text-[11px] text-slate-400">实时数据接入</p>
+                    <p className="integration-card-title">MCP Server</p>
+                    <p className="integration-card-meta">实时数据接入</p>
                   </div>
                 </div>
                 {status === null ? (
@@ -147,47 +147,40 @@ export default function MCPTab({ showToast }) {
                   <div className="h-2.5 w-2.5 rounded-full bg-red-400/70 mt-1" />
                 )}
               </div>
-              <p className="text-xs text-slate-400 leading-relaxed mb-4">
+              <p className="integration-card-copy mb-4">
                 {TOOL_CARDS.length} 个工具，支持语义搜索、条件浏览和 RAG 上下文组装。
               </p>
               <button
                 onClick={handleToggle}
                 disabled={toggling || status === null}
-                className="w-full py-2 rounded-lg text-xs font-bold transition-all disabled:opacity-40"
-                style={enabled
-                  ? { background: 'rgba(239,68,68,0.15)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.3)' }
-                  : { background: 'rgba(14,165,233,0.15)', color: '#7dd3fc', border: '1px solid rgba(14,165,233,0.3)' }
-                }
+                className={`integration-button w-full ${enabled ? 'integration-button-danger' : 'integration-button-primary'}`}
               >
                 {toggling ? '处理中…' : enabled ? '停止 MCP' : '启动 MCP'}
               </button>
             </div>
 
             {/* Skill card */}
-            <div className="relative rounded-xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm hover:bg-white/8 transition-colors">
+            <div className="integration-card">
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg flex items-center justify-center"
-                    style={{ background: 'rgba(139, 92, 246, 0.2)', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
-                    <Bot className="w-4 h-4 text-violet-400" />
+                  <div className="integration-icon integration-icon-violet">
+                    <Bot className="w-4 h-4" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-white leading-tight">AI 日报 Skill</p>
-                    <p className="text-[11px] text-slate-400">智能日报生成</p>
+                    <p className="integration-card-title">AI 日报 Skill</p>
+                    <p className="integration-card-meta">智能日报生成</p>
                   </div>
                 </div>
-                <span className="text-[9px] font-mono px-2 py-0.5 rounded-full mt-0.5"
-                  style={{ background: 'rgba(139,92,246,0.2)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}>
+                <span className="integration-version">
                   v1
                 </span>
               </div>
-              <p className="text-xs text-slate-400 leading-relaxed mb-4">
+              <p className="integration-card-copy mb-4">
                 一句话生成结构化日报，支持 Claude Code、Cursor、Dify 等主流 Agent 平台。
               </p>
               <button
                 onClick={() => handleDownload('/api/skill/daily-brief', 'dorami-daily-brief.zip')}
-                className="w-full py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5"
-                style={{ background: 'rgba(139,92,246,0.15)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}
+                className="integration-button integration-button-secondary w-full"
               >
                 <Download className="w-3.5 h-3.5" />
                 下载 Skill 包
@@ -198,10 +191,10 @@ export default function MCPTab({ showToast }) {
       </div>
 
       {/* ── MCP DETAILS ──────────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm overflow-hidden">
+      <div className="surface-card rounded-[14px] overflow-hidden">
         <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
           <div className="w-1 h-5 rounded-full bg-sky-500" />
-          <h3 className="text-sm font-bold text-slate-700 tracking-wide">MCP 配置详情</h3>
+          <h3 className="section-title">MCP 配置详情</h3>
           <span className="ml-auto text-xs text-slate-400 font-medium">
             {status === null ? '…' : enabled ? '● 运行中' : '○ 已停止'}
           </span>
@@ -210,7 +203,7 @@ export default function MCPTab({ showToast }) {
         <div className="p-6 space-y-5">
           {/* URL */}
           <div>
-            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">接入地址</p>
+            <p className="form-label">接入地址</p>
             <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border bg-slate-50 transition-opacity ${!enabled && 'opacity-50'}`}>
               <code className="flex-1 text-sm font-mono text-slate-700 break-all select-all">
                 {status?.url ?? 'http://127.0.0.1:8088/mcp'}
@@ -227,31 +220,31 @@ export default function MCPTab({ showToast }) {
               </button>
             </div>
             {!enabled && (
-              <p className="text-[11px] text-slate-400 mt-1.5">启动 MCP Server 后方可复制接入地址</p>
+              <p className="tiny-meta mt-1.5">启动 MCP Server 后方可复制接入地址</p>
             )}
           </div>
 
           {/* JSON config */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">客户端配置（JSON）</p>
+              <p className="form-label mb-0">客户端配置（JSON）</p>
               <button
                 onClick={handleCopyJson}
-                className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-600 transition-colors"
+                className="action-button action-button-quiet min-h-[28px] px-2 text-xs"
               >
                 {copiedJson ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
                 {copiedJson ? '已复制' : '复制'}
               </button>
             </div>
-            <pre className="text-[11px] font-mono bg-slate-950 text-slate-300 rounded-xl p-4 overflow-x-auto leading-relaxed select-all">{mcpJson}</pre>
-            <p className="text-[11px] text-slate-400 mt-1.5">
+            <pre className="text-xs font-mono bg-slate-950 text-slate-300 rounded-xl p-4 overflow-x-auto leading-relaxed select-all">{mcpJson}</pre>
+            <p className="tiny-meta mt-1.5">
               将以上配置合并到 Claude Code 的 <code className="bg-slate-100 px-1 rounded">~/.claude/settings.json</code>、Claude Desktop 的 <code className="bg-slate-100 px-1 rounded">claude_desktop_config.json</code> 或其他支持 MCP HTTP 协议的客户端配置文件中。
             </p>
           </div>
 
           {/* Tools */}
           <div>
-            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
+            <p className="form-label">
               可用工具 <span className="font-normal normal-case text-slate-400">({TOOL_CARDS.length} 个)</span>
             </p>
             <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 overflow-hidden">
@@ -261,7 +254,7 @@ export default function MCPTab({ showToast }) {
                   <div className="min-w-0">
                     <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
                       <code className="text-xs font-bold text-sky-700">{tool.name}</code>
-                      <span className="text-[10px] text-slate-400 font-mono">{tool.params}</span>
+                      <span className="tiny-meta font-mono">{tool.params}</span>
                     </div>
                     <p className="text-xs text-slate-500 leading-relaxed">{tool.desc}</p>
                   </div>
@@ -273,13 +266,13 @@ export default function MCPTab({ showToast }) {
       </div>
 
       {/* ── SKILL INSTALLATION ───────────────────────────────────── */}
-      <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm overflow-hidden">
+      <div className="surface-card rounded-[14px] overflow-hidden">
         <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
           <div className="w-1 h-5 rounded-full bg-violet-500" />
-          <h3 className="text-sm font-bold text-slate-700 tracking-wide">Skill 安装指南</h3>
+          <h3 className="section-title">Skill 安装指南</h3>
           <button
             onClick={() => handleDownload('/api/skill/daily-brief', 'dorami-daily-brief.zip')}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 transition-colors"
+            className="action-button action-button-secondary ml-auto min-h-[34px] px-3 text-xs text-violet-700"
           >
             <Download className="w-3.5 h-3.5" />
             下载 Skill 包
@@ -298,7 +291,7 @@ export default function MCPTab({ showToast }) {
               </div>
               <div className="flex flex-wrap gap-1 mb-4">
                 {LOCAL_TOOLS.map(t => (
-                  <span key={t} className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-medium">{t}</span>
+                  <span key={t} className="status-badge min-h-[22px] bg-slate-100 text-slate-500 border-slate-200">{t}</span>
                 ))}
               </div>
               <ol className="space-y-2 mb-4">
@@ -314,13 +307,13 @@ export default function MCPTab({ showToast }) {
                 ))}
               </ol>
               <div className="pt-3 border-t border-slate-100">
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Skills 目录参考</p>
+                <p className="form-label">Skills 目录参考</p>
                 <div className="space-y-1">
-                  <div className="flex justify-between text-[10px]">
+                  <div className="flex justify-between text-xs">
                     <span className="text-slate-400 font-medium">Claude Code</span>
                     <code className="text-slate-500 font-mono">~/.claude/skills/</code>
                   </div>
-                  <div className="flex justify-between text-[10px]">
+                  <div className="flex justify-between text-xs">
                     <span className="text-slate-400 font-medium">其他工具</span>
                     <span className="text-slate-400">参考工具文档</span>
                   </div>
@@ -338,7 +331,7 @@ export default function MCPTab({ showToast }) {
               </div>
               <div className="flex flex-wrap gap-1 mb-4">
                 {ONLINE_TOOLS.map(t => (
-                  <span key={t} className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-medium">{t}</span>
+                  <span key={t} className="status-badge min-h-[22px] bg-slate-100 text-slate-500 border-slate-200">{t}</span>
                 ))}
               </div>
               <ol className="space-y-2 mb-4">
@@ -354,17 +347,17 @@ export default function MCPTab({ showToast }) {
                 ))}
               </ol>
               <div className="pt-3 border-t border-slate-100">
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">配置位置参考</p>
+                <p className="form-label">配置位置参考</p>
                 <div className="space-y-1">
-                  <div className="flex justify-between text-[10px]">
+                  <div className="flex justify-between text-xs">
                     <span className="text-slate-400 font-medium">Claude.ai</span>
                     <span className="text-slate-500">项目设置 → Instructions</span>
                   </div>
-                  <div className="flex justify-between text-[10px]">
+                  <div className="flex justify-between text-xs">
                     <span className="text-slate-400 font-medium">Dify</span>
                     <span className="text-slate-500">Chatbot → 系统提示</span>
                   </div>
-                  <div className="flex justify-between text-[10px]">
+                  <div className="flex justify-between text-xs">
                     <span className="text-slate-400 font-medium">Coze</span>
                     <span className="text-slate-500">Bot → Personality</span>
                   </div>
