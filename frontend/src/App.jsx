@@ -94,7 +94,7 @@ export default function App() {
 
         <div className="flex shrink-0 items-center gap-4">
           <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#0f75ff] to-[#1554ff] text-xs font-black text-white shadow-lg shadow-blue-500/20">DA</div>
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#4f46e5] to-[#7c3aed] text-xs font-black text-white shadow-lg shadow-indigo-500/25">DA</div>
           </div>
         </div>
       </header>
