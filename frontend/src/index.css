@@ -509,6 +509,94 @@ button:disabled {
     transform: translateY(-1px);
   }
 
+  .icon-button {
+    display: inline-flex;
+    height: 38px;
+    width: 38px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(99, 102, 241, 0.14);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.86);
+    color: #475569;
+    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.06);
+    transition:
+      transform var(--motion-fast) var(--motion-spring),
+      box-shadow var(--motion-fast) var(--motion-ease),
+      border-color var(--motion-fast) var(--motion-ease),
+      background var(--motion-fast) var(--motion-ease),
+      color var(--motion-fast) var(--motion-ease);
+  }
+
+  .icon-button:hover {
+    transform: translateY(-1px);
+    border-color: rgba(99, 102, 241, 0.3);
+    background: #fff;
+    color: #4f46e5;
+    box-shadow: 0 8px 24px rgba(79, 70, 229, 0.1);
+  }
+
+  /* ── Login ── */
+
+  .login-screen {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .login-screen::before {
+    content: "";
+    position: absolute;
+    inset: 8% 5% auto auto;
+    z-index: -1;
+    width: min(560px, 70vw);
+    height: min(560px, 70vw);
+    border-radius: 999px;
+    background:
+      radial-gradient(circle at 35% 35%, rgba(79, 70, 229, 0.18), transparent 58%),
+      radial-gradient(circle at 70% 65%, rgba(14, 165, 233, 0.12), transparent 56%);
+    filter: blur(36px);
+    animation: aurora-drift 9s ease-in-out infinite;
+  }
+
+  .login-panel {
+    animation: dorami-slide-up-fade 420ms var(--motion-ease) both;
+  }
+
+  .login-brief::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(135deg, rgba(79, 70, 229, 0.58), transparent 44%),
+      radial-gradient(circle at 82% 18%, rgba(14, 165, 233, 0.32), transparent 28%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent);
+  }
+
+  .login-brief::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    opacity: 0.28;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+    background-size: 34px 34px;
+    mask-image: linear-gradient(135deg, #000, transparent 76%);
+  }
+
+  .login-input-wrap {
+    transition:
+      border-color var(--motion-fast) var(--motion-ease),
+      box-shadow var(--motion-fast) var(--motion-ease),
+      transform var(--motion-fast) var(--motion-spring);
+  }
+
+  .login-input-wrap:focus-within {
+    border-color: rgba(79, 70, 229, 0.5);
+    box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.1);
+    transform: translateY(-1px);
+  }
+
   /* ── Segmented control ── */
 
   .segmented-control {

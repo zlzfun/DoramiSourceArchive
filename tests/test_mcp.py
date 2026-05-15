@@ -207,8 +207,25 @@ def get_client():
         return client
 
 
+def login_test_admin(client):
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    assert resp.status_code == 200
+    assert resp.json()["user"]["role"] == "admin"
+
+
+def test_admin_auth_session_lifecycle():
+    with TestClient(__import__('api.app', fromlist=['app']).app) as client:
+        assert client.get("/api/auth/session").json()["authenticated"] is False
+        assert client.get("/api/mcp/status").status_code == 401
+        login_test_admin(client)
+        assert client.get("/api/auth/session").json()["authenticated"] is True
+        assert client.post("/api/auth/logout").status_code == 200
+        assert client.get("/api/auth/session").json()["authenticated"] is False
+
+
 def test_mcp_status_returns_correct_structure():
     with TestClient(__import__('api.app', fromlist=['app']).app) as client:
+        login_test_admin(client)
         resp = client.get("/api/mcp/status")
         assert resp.status_code == 200
         data = resp.json()
@@ -224,6 +241,7 @@ def test_mcp_status_returns_correct_structure():
 
 def test_mcp_toggle_flips_state():
     with TestClient(__import__('api.app', fromlist=['app']).app) as client:
+        login_test_admin(client)
         initial = client.get("/api/mcp/status").json()["enabled"]
         resp = client.post("/api/mcp/toggle")
         assert resp.status_code == 200
