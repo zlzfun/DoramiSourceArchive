@@ -3,6 +3,10 @@
 import os
 import json
 import datetime
+import base64
+import hashlib
+import hmac
+import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Body, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -114,6 +118,122 @@ app.mount("/mcp", _mcp_gate)
 app.include_router(skill_router)
 
 scheduler = AsyncIOScheduler()
+
+
+# ==================== 管理员登录与会话 ====================
+AUTH_COOKIE_NAME = "dorami_admin_session"
+AUTH_SESSION_SECONDS = int(os.getenv("DORAMI_SESSION_SECONDS", "604800"))
+AUTH_USERNAME = os.getenv("DORAMI_ADMIN_USERNAME", "admin")
+AUTH_PASSWORD = os.getenv("DORAMI_ADMIN_PASSWORD", "admin")
+AUTH_SECRET = os.getenv("DORAMI_AUTH_SECRET") or f"{AUTH_PASSWORD}:{base_path}:dorami-auth-v1"
+
+
+class AuthLoginParams(BaseModel):
+    username: str
+    password: str
+
+
+def _auth_cookie_secure() -> bool:
+    return os.getenv("DORAMI_AUTH_COOKIE_SECURE", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _b64encode_json(data: Dict[str, Any]) -> str:
+    raw = json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64decode_json(raw_value: str) -> Dict[str, Any]:
+    padded = raw_value + "=" * (-len(raw_value) % 4)
+    decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
+    return json.loads(decoded.decode("utf-8"))
+
+
+def _sign_auth_payload(payload: str) -> str:
+    return hmac.new(AUTH_SECRET.encode("utf-8"), payload.encode("ascii"), hashlib.sha256).hexdigest()
+
+
+def create_auth_token() -> str:
+    payload = _b64encode_json({
+        "sub": AUTH_USERNAME,
+        "role": "admin",
+        "exp": int(time.time()) + AUTH_SESSION_SECONDS,
+    })
+    return f"{payload}.{_sign_auth_payload(payload)}"
+
+
+def read_auth_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not token or "." not in token:
+        return None
+    payload, signature = token.rsplit(".", 1)
+    if not hmac.compare_digest(signature, _sign_auth_payload(payload)):
+        return None
+    try:
+        data = _b64decode_json(payload)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if data.get("sub") != AUTH_USERNAME or data.get("role") != "admin":
+        return None
+    if int(data.get("exp", 0)) < int(time.time()):
+        return None
+    return data
+
+
+def current_admin_session(request: Request) -> Optional[Dict[str, Any]]:
+    return read_auth_token(request.cookies.get(AUTH_COOKIE_NAME))
+
+
+def set_auth_cookie(response: Response) -> None:
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=create_auth_token(),
+        max_age=AUTH_SESSION_SECONDS,
+        httponly=True,
+        secure=_auth_cookie_secure(),
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_auth_cookie(response: Response) -> None:
+    response.delete_cookie(key=AUTH_COOKIE_NAME, path="/", samesite="lax")
+
+
+def is_public_auth_path(path: str) -> bool:
+    return path in {"/api/auth/login", "/api/auth/logout", "/api/auth/session"}
+
+
+@app.middleware("http")
+async def require_admin_session(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS" or is_public_auth_path(path):
+        return await call_next(request)
+    if path.startswith("/api/") or path.startswith("/mcp"):
+        if current_admin_session(request) is None:
+            return StarletteJSONResponse({"detail": "未登录或登录已过期"}, status_code=401)
+    return await call_next(request)
+
+
+@app.post("/api/auth/login")
+def login_admin(params: AuthLoginParams, response: Response):
+    username_ok = hmac.compare_digest(params.username.strip(), AUTH_USERNAME)
+    password_ok = hmac.compare_digest(params.password, AUTH_PASSWORD)
+    if not (username_ok and password_ok):
+        raise HTTPException(status_code=401, detail="账号或密码错误")
+    set_auth_cookie(response)
+    return {"authenticated": True, "user": {"username": AUTH_USERNAME, "role": "admin"}}
+
+
+@app.get("/api/auth/session")
+def get_auth_session(request: Request):
+    if current_admin_session(request) is None:
+        return {"authenticated": False, "user": None}
+    return {"authenticated": True, "user": {"username": AUTH_USERNAME, "role": "admin"}}
+
+
+@app.post("/api/auth/logout")
+def logout_admin(response: Response):
+    clear_auth_cookie(response)
+    return {"authenticated": False}
 
 
 # ==================== 定时任务系统核心逻辑 ====================

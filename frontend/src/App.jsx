@@ -1,10 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import {
   BarChart2,
   Bot,
   CloudDownload,
   Database,
   History,
+  Loader2,
+  LogOut,
   Plug2,
 } from 'lucide-react';
 import Toast from './components/Toast';
@@ -13,7 +15,8 @@ import FetchTab from './components/FetchTab';
 import VectorTab from './components/VectorTab';
 import FetchRunsTab from './components/FetchRunsTab';
 import MCPTab from './components/MCPTab';
-import { fetchFetchers } from './api';
+import LoginScreen from './components/LoginScreen';
+import { fetchAuthSession, fetchFetchers, loginAdmin, logoutAdmin } from './api';
 
 const CUSTOM_LOGO_PATH = '/logo.png';
 
@@ -32,22 +35,71 @@ export default function App() {
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
   const [logoError, setLogoError] = useState(false);
   const [availableFetchers, setAvailableFetchers] = useState([]);
+  const [authState, setAuthState] = useState({ status: 'checking', user: null });
 
-  const showToast = (message, type = 'info') => {
+  const showToast = useCallback((message, type = 'info') => {
     setToast({ show: true, message: typeof message === 'string' ? message : JSON.stringify(message), type });
     setTimeout(() => setToast({ show: false, message: '', type: 'info' }), 3000);
-  };
+  }, []);
+
+  const loadFetchers = useCallback(async () => {
+    try {
+      setAvailableFetchers(await fetchFetchers());
+    } catch {
+      showToast(`网络连接异常，无法获取后端数据。`, 'error');
+    }
+  }, [showToast]);
 
   useEffect(() => {
-    const loadFetchers = async () => {
+    let mounted = true;
+    const checkSession = async () => {
       try {
-        setAvailableFetchers(await fetchFetchers());
+        const session = await fetchAuthSession();
+        if (!mounted) return;
+        if (session.authenticated) {
+          setAuthState({ status: 'authenticated', user: session.user });
+        } else {
+          setAuthState({ status: 'anonymous', user: null });
+        }
       } catch {
-        showToast(`网络连接异常，无法获取后端数据。`, 'error');
+        if (mounted) setAuthState({ status: 'anonymous', user: null });
       }
     };
-    loadFetchers();
+    checkSession();
+    return () => {
+      mounted = false;
+    };
   }, []);
+
+  useEffect(() => {
+    if (authState.status !== 'authenticated') return;
+    loadFetchers();
+  }, [authState.status, loadFetchers]);
+
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      setAuthState({ status: 'anonymous', user: null });
+      setAvailableFetchers([]);
+      showToast('登录已过期，请重新登录。', 'error');
+    };
+    window.addEventListener('dorami-auth-expired', handleAuthExpired);
+    return () => window.removeEventListener('dorami-auth-expired', handleAuthExpired);
+  }, [showToast]);
+
+  const handleLogin = async (username, password) => {
+    const session = await loginAdmin(username, password);
+    setAuthState({ status: 'authenticated', user: session.user });
+    showToast('登录成功', 'success');
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logoutAdmin();
+    } finally {
+      setAuthState({ status: 'anonymous', user: null });
+      setAvailableFetchers([]);
+    }
+  };
 
   const tabs = [
     { id: 'data', icon: Database, label: '知识台账' },
@@ -56,6 +108,19 @@ export default function App() {
     { id: 'vector', icon: BarChart2, label: '向量雷达' },
     { id: 'mcp', icon: Plug2, label: '接入集成' },
   ];
+
+  if (authState.status === 'checking') {
+    return (
+      <div className="app-shell flex min-h-screen items-center justify-center font-sans text-slate-500">
+        <Loader2 className="mr-3 h-5 w-5 animate-spin text-indigo-500" />
+        <span className="text-sm font-bold">正在检查登录状态</span>
+      </div>
+    );
+  }
+
+  if (authState.status !== 'authenticated') {
+    return <LoginScreen logoError={logoError} onLogoError={() => setLogoError(true)} onLogin={handleLogin} />;
+  }
 
   return (
     <div className="app-shell font-sans">
@@ -94,7 +159,20 @@ export default function App() {
 
         <div className="flex shrink-0 items-center gap-4">
           <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#4f46e5] to-[#7c3aed] text-xs font-black text-white shadow-lg shadow-indigo-500/25">DA</div>
+            <div className="hidden text-right sm:block">
+              <p className="text-xs font-black text-slate-800">{authState.user?.username || 'admin'}</p>
+              <p className="text-[11px] font-bold text-slate-400">admin</p>
+            </div>
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#4f46e5] to-[#7c3aed] text-xs font-black text-white shadow-lg shadow-indigo-500/25">AD</div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="icon-button"
+              title="退出登录"
+              aria-label="退出登录"
+            >
+              <LogOut className="h-4.5 w-4.5" />
+            </button>
           </div>
         </div>
       </header>
