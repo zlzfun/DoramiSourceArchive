@@ -20,6 +20,27 @@ PM2 使用方案 A：启动 `src/main.py`，由应用代码读取 `[server] host
 DORAMI_CONFIG_FILE=/opt/dorami/config/production.ini pm2 start ecosystem.config.js
 ```
 
+仓库根目录提供 `deploy.sh`，用于直接完成依赖安装、前端构建、静态资源同步、PM2 启动/重载和 Nginx reload：
+
+```bash
+./deploy.sh
+```
+
+默认参数：
+
+- `DORAMI_CONFIG_FILE`：`$(pwd)/config/production.ini`
+- `VENV_DIR`：`venv`
+- `PM2_APP_NAME`：`dorami-backend`
+- `NGINX_HTML_DIR`：`/var/www/my_site`
+
+如果服务器路径不同，可以临时覆盖：
+
+```bash
+DORAMI_CONFIG_FILE=/opt/dorami/config/production.ini \
+NGINX_HTML_DIR=/var/www/my_site \
+./deploy.sh
+```
+
 代理配置迁移到后端配置文件：
 
 ```ini
