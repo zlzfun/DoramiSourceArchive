@@ -42,6 +42,13 @@ class NetworkConfig:
 
 
 @dataclass(frozen=True)
+class ProxyConfig:
+    http_proxy: str = ""
+    https_proxy: str = ""
+    no_proxy: str = "127.0.0.1,localhost"
+
+
+@dataclass(frozen=True)
 class AuthConfig:
     cookie_name: str = "dorami_admin_session"
     session_seconds: int = 604800
@@ -103,6 +110,7 @@ class ImageHostConfig:
 class AppConfig:
     server: ServerConfig
     network: NetworkConfig
+    proxy: ProxyConfig
     auth: AuthConfig
     storage: StorageConfig
     models: ModelConfig
@@ -117,6 +125,14 @@ class AppConfig:
             os.environ["REQUESTS_CA_BUNDLE"] = ""
         if self.network.hf_endpoint:
             os.environ["HF_ENDPOINT"] = self.network.hf_endpoint
+        proxy_values = {
+            "HTTP_PROXY": self.proxy.http_proxy,
+            "HTTPS_PROXY": self.proxy.https_proxy,
+            "NO_PROXY": self.proxy.no_proxy,
+        }
+        for key, value in proxy_values.items():
+            os.environ[key] = value
+            os.environ[key.lower()] = value
 
 
 def _candidate_config_paths() -> list[Path]:
@@ -130,7 +146,7 @@ def _candidate_config_paths() -> list[Path]:
 
 
 def _read_config_file() -> configparser.ConfigParser:
-    parser = configparser.ConfigParser()
+    parser = configparser.ConfigParser(interpolation=None)
     parser.optionxform = str
     for path in _candidate_config_paths():
         if path.exists():
@@ -154,6 +170,11 @@ def load_config() -> AppConfig:
         network=NetworkConfig(
             disable_ca_bundle=parser.getboolean("network", "disable_ca_bundle", fallback=True),
             hf_endpoint=parser.get("network", "hf_endpoint", fallback="https://hf-mirror.com"),
+        ),
+        proxy=ProxyConfig(
+            http_proxy=parser.get("proxy", "http_proxy", fallback=""),
+            https_proxy=parser.get("proxy", "https_proxy", fallback=""),
+            no_proxy=parser.get("proxy", "no_proxy", fallback="127.0.0.1,localhost"),
         ),
         auth=AuthConfig(
             cookie_name=parser.get("auth", "cookie_name", fallback="dorami_admin_session"),
