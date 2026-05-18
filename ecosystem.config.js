@@ -3,7 +3,7 @@ const path = require('path');
 module.exports = {
   apps: [
     {
-      name: 'dorami-backend',
+      name: 'dorami-backend-v2',
       cwd: __dirname,
       script: 'src/main.py',
       interpreter: './venv/bin/python',

@@ -30,8 +30,10 @@ DORAMI_CONFIG_FILE=/opt/dorami/config/production.ini pm2 start ecosystem.config.
 
 - `DORAMI_CONFIG_FILE`：`$(pwd)/config/production.ini`
 - `VENV_DIR`：`venv`
-- `PM2_APP_NAME`：`dorami-backend`
+- `PM2_APP_NAME`：`dorami-backend-v2`
 - `NGINX_HTML_DIR`：`/var/www/my_site`
+
+部署脚本会使用 `uv sync --active --no-dev --frozen --no-install-project` 按 `pyproject.toml`/`uv.lock` 同步后端依赖到 `venv`，并使用 `npm install --verbose --no-audit --no-fund --replace-registry-host=always` 安装前端依赖，避免 lockfile 中的历史 registry host 覆盖服务器 npm registry 配置。
 
 如果服务器路径不同，可以临时覆盖：
 
@@ -51,6 +53,17 @@ no_proxy = 127.0.0.1,localhost
 ```
 
 应用启动时会把这组配置同步到 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 及其小写形式，供底层网络库使用。
+
+管理员登录读取后端配置文件中的 `[auth]`：
+
+```ini
+[auth]
+username = admin
+password = change-me
+secret = change-me-to-a-long-random-string
+```
+
+修改 `production.ini` 后需要重新执行 `./deploy.sh` 或 `pm2 reload ecosystem.config.js --only dorami-backend-v2 --update-env`，因为认证配置只在后端进程启动时读取。
 
 前端配置集中在 `frontend/app.config.json`：
 

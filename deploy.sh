@@ -4,7 +4,7 @@ set -euo pipefail
 # Always run from the project root, no matter where the command is invoked.
 cd "$(dirname "$0")"
 
-APP_NAME="${PM2_APP_NAME:-dorami-backend}"
+APP_NAME="${PM2_APP_NAME:-dorami-backend-v2}"
 VENV_DIR="${VENV_DIR:-venv}"
 CONFIG_FILE="${DORAMI_CONFIG_FILE:-$(pwd)/config/production.ini}"
 NGINX_HTML_DIR="${NGINX_HTML_DIR:-/var/www/my_site}"
@@ -27,13 +27,13 @@ fi
 
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
-uv pip install -r requirements.txt
+uv sync --active --no-dev --frozen --no-install-project
 
 mkdir -p logs
 
 echo "[2/4] Building frontend..."
 cd frontend
-npm install
+npm install --verbose --no-audit --no-fund --replace-registry-host=always
 npm run build
 cd ..
 
