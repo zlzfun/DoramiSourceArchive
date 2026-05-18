@@ -9,19 +9,10 @@
 
 仓库提供示例文件 `config/backend.example.ini`。真实部署文件可能包含管理员密码、auth secret、小鲁班凭证、图床 secret 等敏感值，已通过 `.gitignore` 排除，不应提交。
 
-PM2 部署时建议只在 `ecosystem.config.js` 中保留配置文件路径：
+PM2 部署时建议只在 `ecosystem.config.js` 中保留配置文件路径。仓库根目录已提供可直接使用的 `ecosystem.config.js`，默认读取 `./config/production.ini`，也可以在启动 PM2 前用 `DORAMI_CONFIG_FILE` 覆盖：
 
-```js
-module.exports = {
-  apps: [{
-    name: 'dorami',
-    script: 'src/main.py',
-    interpreter: '.venv/bin/python',
-    env: {
-      DORAMI_CONFIG_FILE: '/opt/dorami/config/production.ini'
-    }
-  }]
-}
+```bash
+DORAMI_CONFIG_FILE=/opt/dorami/config/production.ini pm2 start ecosystem.config.js
 ```
 
 前端配置集中在 `frontend/app.config.json`：
