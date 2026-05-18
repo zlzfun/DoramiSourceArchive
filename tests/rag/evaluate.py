@@ -34,11 +34,14 @@ DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 RESULTS_DIR = os.path.join(SCRIPT_DIR, "results")
 
 sys.path.insert(0, SRC_DIR)
-os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 # ── 模块导入（延迟到 path 设置后）────────────────────────────────────────────
+from config import settings
 from storage.impl.vector_storage import ChromaVectorStorage
 from storage.impl.db_storage import DatabaseStorage
+
+
+settings.apply_process_environment()
 
 
 # ── 评估核心逻辑 ──────────────────────────────────────────────────────────────
@@ -261,17 +264,17 @@ async def main(args):
         return
 
     print(f"\n⏳ 正在加载 Embedding 模型（首次运行可能需要下载）...")
-    model_name = os.environ.get("LOCAL_MODEL_PATH", "BAAI/bge-m3")
+    model_name = settings.models.embedding_model
     if args.rerank:
-        reranker_name = os.environ.get("RERANKER_MODEL_PATH", "BAAI/bge-reranker-v2-m3")
+        reranker_name = settings.models.reranker_model
         model_name = f"{model_name} + {reranker_name}"
     collection_name = "dorami_docs"
 
     vector = ChromaVectorStorage(
-        db_path=os.path.join(DATA_DIR, "chroma_db"),
+        db_path=settings.storage.chroma_path,
         collection_name=collection_name,
     )
-    db = DatabaseStorage(db_url=f"sqlite:///{os.path.join(DATA_DIR, 'cms_data.db')}")
+    db = DatabaseStorage(db_url=settings.storage.database_url)
 
     total_vectors = await vector.count()
     print(f"  ChromaDB chunk 数: {total_vectors}")

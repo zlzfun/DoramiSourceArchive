@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Plug2, Copy, Check, Bot, Download, Terminal, Globe } from 'lucide-react';
 import { fetchMcpStatus, toggleMcp } from '../api';
+import { MCP_URL } from '../config';
 
 const TOOL_CARDS = [
   {
@@ -69,7 +70,7 @@ export default function MCPTab({ showToast }) {
     });
   };
 
-  const mcpUrl = status?.url ?? 'http://127.0.0.1:8088/mcp';
+  const mcpUrl = status?.url ?? MCP_URL;
   const mcpJson = JSON.stringify({
     mcpServers: {
       'dorami-archive': { type: 'http', url: mcpUrl },
@@ -206,7 +207,7 @@ export default function MCPTab({ showToast }) {
             <p className="form-label">接入地址</p>
             <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border bg-slate-50 transition-opacity ${!enabled && 'opacity-50'}`}>
               <code className="flex-1 text-sm font-mono text-slate-700 break-all select-all">
-                {status?.url ?? 'http://127.0.0.1:8088/mcp'}
+                {mcpUrl}
               </code>
               <button
                 onClick={handleCopy}

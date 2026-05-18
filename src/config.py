@@ -1,0 +1,200 @@
+import configparser
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _csv(raw_value: str) -> list[str]:
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+
+def _path(raw_value: str) -> str:
+    path = Path(raw_value).expanduser()
+    if path.is_absolute():
+        return str(path)
+    return str((PROJECT_ROOT / path).resolve())
+
+
+def _database_url(raw_value: str) -> str:
+    sqlite_prefix = "sqlite:///"
+    if raw_value == "sqlite:///:memory:":
+        return raw_value
+    if raw_value.startswith(sqlite_prefix) and not raw_value.startswith("sqlite:////"):
+        return f"{sqlite_prefix}{_path(raw_value[len(sqlite_prefix):])}"
+    return raw_value
+
+
+@dataclass(frozen=True)
+class ServerConfig:
+    host: str = "127.0.0.1"
+    port: int = 8088
+    reload: bool = True
+
+
+@dataclass(frozen=True)
+class NetworkConfig:
+    disable_ca_bundle: bool = True
+    hf_endpoint: str = "https://hf-mirror.com"
+
+
+@dataclass(frozen=True)
+class AuthConfig:
+    cookie_name: str = "dorami_admin_session"
+    session_seconds: int = 604800
+    username: str = "admin"
+    password: str = "admin"
+    secret: Optional[str] = None
+    cookie_secure: bool = False
+
+
+@dataclass(frozen=True)
+class StorageConfig:
+    database_url: str
+    chroma_path: str
+
+
+@dataclass(frozen=True)
+class ModelConfig:
+    embedding_model: str = "BAAI/bge-m3"
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+
+
+@dataclass(frozen=True)
+class CorsConfig:
+    allow_origins: list[str]
+    allow_credentials: bool = True
+    allow_methods: list[str] = None
+    allow_headers: list[str] = None
+
+    def __post_init__(self):
+        if self.allow_methods is None:
+            object.__setattr__(self, "allow_methods", ["*"])
+        if self.allow_headers is None:
+            object.__setattr__(self, "allow_headers", ["*"])
+
+
+@dataclass(frozen=True)
+class WechatConfig:
+    auth_base_dir: str
+
+
+@dataclass(frozen=True)
+class XiaolubanConfig:
+    url: str = "http://xiaoluban.rnd.huawei.com:80/"
+    auth: str = ""
+    receiver: str = ""
+
+
+@dataclass(frozen=True)
+class ImageHostConfig:
+    upload_url_template: str = (
+        "http://3ms.huawei.com/hi/restnew/editor/attach/upload"
+        "?app_id=67&public_key=10067&current_timestamp={timestamp}&verify_code={verify_code}"
+    )
+    secret_key: str = ""
+    timeout_seconds: int = 15
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    server: ServerConfig
+    network: NetworkConfig
+    auth: AuthConfig
+    storage: StorageConfig
+    models: ModelConfig
+    cors: CorsConfig
+    wechat: WechatConfig
+    xiaoluban: XiaolubanConfig
+    image_host: ImageHostConfig
+
+    def apply_process_environment(self) -> None:
+        if self.network.disable_ca_bundle:
+            os.environ["CURL_CA_BUNDLE"] = ""
+            os.environ["REQUESTS_CA_BUNDLE"] = ""
+        if self.network.hf_endpoint:
+            os.environ["HF_ENDPOINT"] = self.network.hf_endpoint
+
+
+def _candidate_config_paths() -> list[Path]:
+    configured = os.getenv("DORAMI_CONFIG_FILE", "").strip()
+    if configured:
+        return [Path(configured).expanduser()]
+    return [
+        PROJECT_ROOT / "config" / "backend.ini",
+        PROJECT_ROOT / "config" / "local.ini",
+    ]
+
+
+def _read_config_file() -> configparser.ConfigParser:
+    parser = configparser.ConfigParser()
+    parser.optionxform = str
+    for path in _candidate_config_paths():
+        if path.exists():
+            parser.read(path, encoding="utf-8")
+            break
+    return parser
+
+
+def load_config() -> AppConfig:
+    parser = _read_config_file()
+
+    storage_db = f"sqlite:///{PROJECT_ROOT / 'data' / 'cms_data.db'}"
+    storage_chroma = str(PROJECT_ROOT / "data" / "chroma_db")
+
+    return AppConfig(
+        server=ServerConfig(
+            host=parser.get("server", "host", fallback="127.0.0.1"),
+            port=parser.getint("server", "port", fallback=8088),
+            reload=parser.getboolean("server", "reload", fallback=True),
+        ),
+        network=NetworkConfig(
+            disable_ca_bundle=parser.getboolean("network", "disable_ca_bundle", fallback=True),
+            hf_endpoint=parser.get("network", "hf_endpoint", fallback="https://hf-mirror.com"),
+        ),
+        auth=AuthConfig(
+            cookie_name=parser.get("auth", "cookie_name", fallback="dorami_admin_session"),
+            session_seconds=parser.getint("auth", "session_seconds", fallback=604800),
+            username=parser.get("auth", "username", fallback="admin"),
+            password=parser.get("auth", "password", fallback="admin"),
+            secret=parser.get("auth", "secret", fallback="").strip() or None,
+            cookie_secure=parser.getboolean("auth", "cookie_secure", fallback=False),
+        ),
+        storage=StorageConfig(
+            database_url=_database_url(parser.get("storage", "database_url", fallback=storage_db)),
+            chroma_path=_path(parser.get("storage", "chroma_path", fallback=storage_chroma)),
+        ),
+        models=ModelConfig(
+            embedding_model=parser.get("models", "embedding_model", fallback="BAAI/bge-m3"),
+            reranker_model=parser.get("models", "reranker_model", fallback="BAAI/bge-reranker-v2-m3"),
+        ),
+        cors=CorsConfig(
+            allow_origins=_csv(parser.get("cors", "allow_origins", fallback="*")),
+            allow_credentials=parser.getboolean("cors", "allow_credentials", fallback=True),
+            allow_methods=_csv(parser.get("cors", "allow_methods", fallback="*")),
+            allow_headers=_csv(parser.get("cors", "allow_headers", fallback="*")),
+        ),
+        wechat=WechatConfig(
+            auth_base_dir=_path(parser.get("wechat", "auth_base_dir", fallback=".wechat_auth")),
+        ),
+        xiaoluban=XiaolubanConfig(
+            url=parser.get("xiaoluban", "url", fallback="http://xiaoluban.rnd.huawei.com:80/"),
+            auth=parser.get("xiaoluban", "auth", fallback=""),
+            receiver=parser.get("xiaoluban", "receiver", fallback=""),
+        ),
+        image_host=ImageHostConfig(
+            upload_url_template=parser.get(
+                "image_host",
+                "upload_url_template",
+                fallback=ImageHostConfig.upload_url_template,
+            ),
+            secret_key=parser.get("image_host", "secret_key", fallback=""),
+            timeout_seconds=parser.getint("image_host", "timeout_seconds", fallback=15),
+        ),
+    )
+
+
+settings = load_config()

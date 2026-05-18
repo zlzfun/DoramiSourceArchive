@@ -17,12 +17,11 @@ import FetchRunsTab from './components/FetchRunsTab';
 import MCPTab from './components/MCPTab';
 import LoginScreen from './components/LoginScreen';
 import { fetchAuthSession, fetchFetchers, loginAdmin, logoutAdmin } from './api';
-
-const CUSTOM_LOGO_PATH = '/logo.png';
+import { LOGO_PATH } from './config';
 
 function BrandLogo({ logoError, onLogoError }) {
   return !logoError ? (
-    <img src={CUSTOM_LOGO_PATH} alt="Logo" className="h-12 w-12 rounded-[12px] object-contain shadow-sm" onError={onLogoError} />
+    <img src={LOGO_PATH} alt="Logo" className="h-12 w-12 rounded-[12px] object-contain shadow-sm" onError={onLogoError} />
   ) : (
     <div className="brand-mark flex h-12 w-12 items-center justify-center rounded-[12px]">
       <Bot className="h-6 w-6 text-white" />

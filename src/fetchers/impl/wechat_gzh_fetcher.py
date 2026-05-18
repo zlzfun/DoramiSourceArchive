@@ -17,11 +17,12 @@ from bs4 import BeautifulSoup
 
 from fetchers.base import BaseFetcher
 from models.content import BaseContent, WechatArticleContent
+from config import settings
 
 # ==========================================
 # 统一存储配置：收纳凭证与临时文件，保持项目目录整洁
 # ==========================================
-AUTH_BASE_DIR = os.path.join(os.getcwd(), ".wechat_auth")
+AUTH_BASE_DIR = settings.wechat.auth_base_dir
 os.makedirs(AUTH_BASE_DIR, exist_ok=True)
 
 # ====== 新增：全局异步锁，防止并发触发多个登录会话 ======
@@ -36,17 +37,16 @@ class XiaolubanNotifier:
 
     @staticmethod
     def send_msg(content: str):
-        # 从环境变量中安全获取敏感配置
-        auth = os.getenv("XIAOLUBAN_AUTH")
-        receiver = os.getenv("XIAOLUBAN_RECEIVER")
+        auth = settings.xiaoluban.auth
+        receiver = settings.xiaoluban.receiver
 
         logger = logging.getLogger("XiaolubanNotifier")
 
         if not auth or not receiver:
-            logger.warning("未配置 XIAOLUBAN_AUTH 或 XIAOLUBAN_RECEIVER 环境变量，跳过机器人消息发送。")
+            logger.warning("未配置小鲁班 auth 或 receiver，跳过机器人消息发送。")
             return
 
-        url = 'http://xiaoluban.rnd.huawei.com:80/'
+        url = settings.xiaoluban.url
         data = {'content': content, 'receiver': receiver, 'auth': auth}
 
         try:
@@ -75,17 +75,28 @@ class ImageHostUploader:
         logger = logging.getLogger("ImageHostUploader")
         try:
             timestamp = int(time.time())
-            secret_key = 'bIbT0orLEO5FDGyciQKL0ounccep04qk'
+            secret_key = settings.image_host.secret_key
+            if not secret_key:
+                logger.warning("未配置图床 secret_key，跳过图床上传。")
+                return None
             code = hashlib.md5(f'{secret_key}{timestamp}'.encode('utf-8')).hexdigest()
 
-            url = f"http://3ms.huawei.com/hi/restnew/editor/attach/upload?app_id=67&public_key=10067&current_timestamp={timestamp}&verify_code={code}"
+            url = settings.image_host.upload_url_template.format(
+                timestamp=timestamp,
+                verify_code=code,
+            )
 
             with open(image_path, 'rb') as image_file:
                 files = {
                     'action': (None, 'upload_image'),
                     'attach_binary': (image_path, image_file, 'multipart/form-data')
                 }
-                response = requests.post(url, files=files, timeout=15, proxies={"http": None, "https": None})
+                response = requests.post(
+                    url,
+                    files=files,
+                    timeout=settings.image_host.timeout_seconds,
+                    proxies={"http": None, "https": None},
+                )
 
             if response.status_code != 200:
                 raise Exception(f"HTTP Status {response.status_code} - {response.text}")

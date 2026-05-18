@@ -1,4 +1,4 @@
-const API_BASE_URL = '/api';
+import { API_BASE_URL } from './config';
 
 async function apiFetch(url, options = {}) {
   const response = await fetch(url, {

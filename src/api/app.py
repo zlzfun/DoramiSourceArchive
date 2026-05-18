@@ -1,6 +1,5 @@
 # /src/api/app.py
 
-import os
 import json
 import datetime
 import base64
@@ -39,6 +38,10 @@ from api.skill_router import router as skill_router
 
 from starlette.responses import JSONResponse as StarletteJSONResponse
 from mcp_server import build_mcp_app
+from config import settings
+
+
+settings.apply_process_environment()
 
 
 class GenericContent(BaseContent):
@@ -103,15 +106,14 @@ app = FastAPI(title="Dorami 数据归档中枢 API", lifespan=lifespan)
 # 跨域配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors.allow_origins,
+    allow_credentials=settings.cors.allow_credentials,
+    allow_methods=settings.cors.allow_methods,
+    allow_headers=settings.cors.allow_headers,
 )
 
-base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-db_sink = DatabaseStorage(db_url=f"sqlite:///{os.path.join(base_path, 'data', 'cms_data.db')}")
-vector_sink = ChromaVectorStorage(db_path=os.path.join(base_path, "data", "chroma_db"))
+db_sink = DatabaseStorage(db_url=settings.storage.database_url)
+vector_sink = ChromaVectorStorage(db_path=settings.storage.chroma_path)
 pipeline = DataPipeline(storages=[db_sink])
 
 app.mount("/mcp", _mcp_gate)
@@ -121,11 +123,11 @@ scheduler = AsyncIOScheduler()
 
 
 # ==================== 管理员登录与会话 ====================
-AUTH_COOKIE_NAME = "dorami_admin_session"
-AUTH_SESSION_SECONDS = int(os.getenv("DORAMI_SESSION_SECONDS", "604800"))
-AUTH_USERNAME = os.getenv("DORAMI_ADMIN_USERNAME", "admin")
-AUTH_PASSWORD = os.getenv("DORAMI_ADMIN_PASSWORD", "admin")
-AUTH_SECRET = os.getenv("DORAMI_AUTH_SECRET") or f"{AUTH_PASSWORD}:{base_path}:dorami-auth-v1"
+AUTH_COOKIE_NAME = settings.auth.cookie_name
+AUTH_SESSION_SECONDS = settings.auth.session_seconds
+AUTH_USERNAME = settings.auth.username
+AUTH_PASSWORD = settings.auth.password
+AUTH_SECRET = settings.auth.secret or f"{AUTH_PASSWORD}:{settings.storage.database_url}:dorami-auth-v1"
 
 
 class AuthLoginParams(BaseModel):
@@ -134,7 +136,7 @@ class AuthLoginParams(BaseModel):
 
 
 def _auth_cookie_secure() -> bool:
-    return os.getenv("DORAMI_AUTH_COOKIE_SECURE", "").lower() in {"1", "true", "yes", "on"}
+    return settings.auth.cookie_secure
 
 
 def _b64encode_json(data: Dict[str, Any]) -> str:

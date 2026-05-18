@@ -1,0 +1,9 @@
+{
+  "apiBaseUrl": "/api",
+  "logoPath": "/logo.png",
+  "mcpUrl": "http://127.0.0.1:8088/mcp",
+  "devServer": {
+    "port": 5173,
+    "proxyTarget": "http://127.0.0.1:8088"
+  }
+}

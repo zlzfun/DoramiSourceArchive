@@ -14,6 +14,7 @@ import chromadb
 from chromadb.utils import embedding_functions
 from storage.base import BaseStorage
 from models.content import BaseContent
+from config import settings
 
 # ── T8: 文本清洗 ─────────────────────────────────────────────────────────────
 
@@ -162,17 +163,17 @@ def paragraph_chunk_text(text: str, chunk_size: int = 800, overlap: int = 150) -
 # ── 存储类 ────────────────────────────────────────────────────────────────────
 
 class ChromaVectorStorage(BaseStorage):
-    def __init__(self, db_path: str = "./data/chroma_db",
+    def __init__(self, db_path: str = None,
                  collection_name: str = "dorami_docs"):
         super().__init__()
+        if db_path is None:
+            db_path = settings.storage.chroma_path
         self._collection_name = collection_name
         os.makedirs(db_path, exist_ok=True)
         self.client = chromadb.PersistentClient(path=db_path)
 
         # T1: 默认换用 BAAI/bge-m3（多语言，支持中文查询→英文文档跨语言检索）
-        # 可通过 LOCAL_MODEL_PATH 环境变量指向本地私有化路径
-        default_model = "BAAI/bge-m3"
-        model_name_or_path = os.environ.get("LOCAL_MODEL_PATH", default_model)
+        model_name_or_path = settings.models.embedding_model
         self.logger.info(f"🧬 正在加载 Embedding 模型: {model_name_or_path}")
 
         try:
@@ -192,7 +193,7 @@ class ChromaVectorStorage(BaseStorage):
 
         # T12: Cross-encoder reranker — lazy-loaded on first use
         self._reranker = None
-        self._reranker_model = os.environ.get("RERANKER_MODEL_PATH", "BAAI/bge-reranker-v2-m3")
+        self._reranker_model = settings.models.reranker_model
 
     # ── 写入 ──────────────────────────────────────────────────────────────────
 

@@ -4,6 +4,9 @@ data/
 **/__pycache__/
 *.pyc
 .wechat_auth/
+config/backend.ini
+config/local.ini
+config/production.ini
 
 # Evaluation results (keep .gitkeep but not actual results)
 tests/rag/results/*.json

@@ -1,11 +1,10 @@
 import { useState } from 'react';
 import { Bot, KeyRound, Loader2, LogIn, User } from 'lucide-react';
-
-const CUSTOM_LOGO_PATH = '/logo.png';
+import { LOGO_PATH } from '../config';
 
 function LoginBrandMark({ logoError, onLogoError }) {
   return !logoError ? (
-    <img src={CUSTOM_LOGO_PATH} alt="Logo" className="h-14 w-14 rounded-[14px] object-contain shadow-sm" onError={onLogoError} />
+    <img src={LOGO_PATH} alt="Logo" className="h-14 w-14 rounded-[14px] object-contain shadow-sm" onError={onLogoError} />
   ) : (
     <div className="brand-mark flex h-14 w-14 items-center justify-center rounded-[14px]">
       <Bot className="h-7 w-7 text-white" />
