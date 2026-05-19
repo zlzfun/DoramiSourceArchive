@@ -223,6 +223,12 @@ def test_admin_auth_session_lifecycle():
         assert client.get("/api/auth/session").json()["authenticated"] is False
 
 
+def test_mcp_transport_does_not_require_admin_cookie():
+    with TestClient(__import__('api.app', fromlist=['app']).app) as client:
+        resp = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+        assert resp.status_code != 401
+
+
 def test_mcp_status_returns_correct_structure():
     with TestClient(__import__('api.app', fromlist=['app']).app) as client:
         login_test_admin(client)

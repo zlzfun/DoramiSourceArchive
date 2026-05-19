@@ -207,9 +207,9 @@ def is_public_auth_path(path: str) -> bool:
 @app.middleware("http")
 async def require_admin_session(request: Request, call_next):
     path = request.url.path
-    if request.method == "OPTIONS" or is_public_auth_path(path):
+    if request.method == "OPTIONS" or is_public_auth_path(path) or path == "/mcp" or path.startswith("/mcp/"):
         return await call_next(request)
-    if path.startswith("/api/") or path.startswith("/mcp"):
+    if path.startswith("/api/"):
         if current_admin_session(request) is None:
             return StarletteJSONResponse({"detail": "未登录或登录已过期"}, status_code=401)
     return await call_next(request)
