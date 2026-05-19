@@ -27,7 +27,7 @@ fi
 
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
-uv sync --active --no-dev --frozen --no-install-project
+uv pip install -e .
 
 mkdir -p logs
 

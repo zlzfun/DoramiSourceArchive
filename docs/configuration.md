@@ -33,7 +33,13 @@ DORAMI_CONFIG_FILE=/opt/dorami/config/production.ini pm2 start ecosystem.config.
 - `PM2_APP_NAME`：`dorami-backend-v2`
 - `NGINX_HTML_DIR`：`/var/www/my_site`
 
-部署脚本会使用 `uv sync --active --no-dev --frozen --no-install-project` 按 `pyproject.toml`/`uv.lock` 同步后端依赖到 `venv`，并使用 `npm install --verbose --no-audit --no-fund --replace-registry-host=always` 安装前端依赖，避免 lockfile 中的历史 registry host 覆盖服务器 npm registry 配置。
+部署脚本会使用 `uv pip install -e .` 按 `pyproject.toml` 安装后端依赖到 `venv`。它不会读取 `uv.lock` 中锁定的包下载 URL，因此服务器可以通过 uv 环境变量或 uv 配置使用内网 PyPI 源：
+
+```bash
+UV_DEFAULT_INDEX=https://pypi.company.example/simple ./deploy.sh
+```
+
+前端依赖使用 `npm install --verbose --no-audit --no-fund --replace-registry-host=always` 安装，避免 lockfile 中的历史 registry host 覆盖服务器 npm registry 配置。
 
 如果服务器路径不同，可以临时覆盖：
 
