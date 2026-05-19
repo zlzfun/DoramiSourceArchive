@@ -42,6 +42,36 @@ export default function MCPTab({ showToast }) {
   const showToastRef = useRef(showToast);
   useEffect(() => { showToastRef.current = showToast; }, [showToast]);
 
+  const copyText = async (text) => {
+    if (!text) throw new Error('没有可复制的内容');
+
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return;
+      } catch {
+        // Fall back to textarea copy below for browsers that block Clipboard API.
+      }
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    try {
+      const copiedByFallback = document.execCommand('copy');
+      if (!copiedByFallback) throw new Error('浏览器拒绝复制');
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  };
+
   useEffect(() => {
     fetchMcpStatus()
       .then(setStatus)
@@ -62,12 +92,15 @@ export default function MCPTab({ showToast }) {
     }
   };
 
-  const handleCopy = () => {
-    if (!status?.enabled || !status?.url) return;
-    navigator.clipboard.writeText(status.url).then(() => {
+  const handleCopy = async () => {
+    try {
+      await copyText(mcpUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+      showToastRef.current?.('接入地址已复制', 'success');
+    } catch (e) {
+      showToastRef.current?.(e.message || '复制失败，请手动选择文本复制', 'error');
+    }
   };
 
   const mcpUrl = status?.url ?? MCP_URL;
@@ -77,11 +110,15 @@ export default function MCPTab({ showToast }) {
     },
   }, null, 2);
 
-  const handleCopyJson = () => {
-    navigator.clipboard.writeText(mcpJson).then(() => {
+  const handleCopyJson = async () => {
+    try {
+      await copyText(mcpJson);
       setCopiedJson(true);
       setTimeout(() => setCopiedJson(false), 2000);
-    });
+      showToastRef.current?.('客户端配置已复制', 'success');
+    } catch (e) {
+      showToastRef.current?.(e.message || '复制失败，请手动选择文本复制', 'error');
+    }
   };
 
   const handleDownload = (url, filename) => {
@@ -196,7 +233,7 @@ export default function MCPTab({ showToast }) {
         <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
           <div className="w-1 h-5 rounded-full bg-sky-500" />
           <h3 className="section-title">MCP 配置详情</h3>
-          <span className="ml-auto text-xs text-slate-400 font-medium">
+          <span className={`ml-auto text-xs font-medium ${enabled ? 'text-emerald-500' : 'text-slate-400'}`}>
             {status === null ? '…' : enabled ? '● 运行中' : '○ 已停止'}
           </span>
         </div>
@@ -211,9 +248,8 @@ export default function MCPTab({ showToast }) {
               </code>
               <button
                 onClick={handleCopy}
-                disabled={!enabled}
-                title={enabled ? '复制 URL' : 'MCP 未运行'}
-                className="shrink-0 p-1.5 rounded-lg hover:bg-slate-200 transition-colors disabled:cursor-not-allowed"
+                title="复制 URL"
+                className="shrink-0 p-1.5 rounded-lg hover:bg-slate-200 transition-colors"
               >
                 {copied
                   ? <Check className="w-4 h-4 text-emerald-500" />
