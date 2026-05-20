@@ -164,51 +164,84 @@ class BaseWechatGzhFetcher(BaseFetcher):
         self.logger.info("🚀 启动 Playwright 自动化凭证收割 (等待弹出全屏二维码)...")
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    headless=False,
-                    args=[
-                        '--headless=new',
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--disable-blink-features=AutomationControlled'
-                    ]
+                # 不传 --disable-gpu：服务器无 GPU 时,该参数会让 headless 模式失去 SwiftShader
+                # 兜底,反而导致 canvas 元素(微信 QR 码)绘制为空白。
+                launch_args = [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-blink-features=AutomationControlled',
+                ]
+
+                # 关键修复:强制使用完整 Chromium 而非 chromium_headless_shell。
+                # headless_shell 缺少完整渲染管线,无法绘制 canvas(微信 QR 码即 canvas),
+                # 表现为截图全白。channel="chromium" + headless=True 内部走 --headless=new,
+                # 二维码可正常渲染。前置:服务器需执行 `playwright install chromium`。
+                try:
+                    browser = p.chromium.launch(
+                        channel="chromium",
+                        headless=headless,
+                        args=launch_args,
+                    )
+                    self.logger.info("✅ 已通过 channel='chromium' 启动完整 Chromium (canvas 管线完整)")
+                except Exception as e:
+                    self.logger.warning(
+                        f"⚠️ channel='chromium' 启动失败,降级使用默认 headless_shell: {e}\n"
+                        f"👉 若截图仍然全白,请在服务器执行: playwright install chromium"
+                    )
+                    browser = p.chromium.launch(headless=headless, args=launch_args)
+
+                ua = (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 )
-
-                # 核心防白图策略：强制给无头浏览器设置一个正常的屏幕尺寸，防止它默认缩成一团导致截图空白
-                context = browser.new_context(viewport={'width': 1280, 'height': 800})
-                default_ua = context.pages[0].evaluate(
-                    "navigator.userAgent") if context.pages else "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                clean_ua = default_ua.replace("HeadlessChrome", "Chrome")
-
-                # 重新设置干净的 UA
-                context = browser.new_context(
-                    viewport={'width': 1280, 'height': 800},
-                    user_agent=clean_ua
-                )
-
-                # 去除 webdriver 指纹
+                context = browser.new_context(viewport={'width': 1280, 'height': 800}, user_agent=ua)
                 context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
                 page = context.new_page()
 
-                # 等待 DOM 加载
-                page.goto("https://mp.weixin.qq.com/", wait_until="networkidle")
+                # 字体请求拦截,避免内网字体 CDN 阻塞 goto。
+                def mock_fonts(route):
+                    if route.request.resource_type == "font":
+                        route.fulfill(status=200, content_type="application/x-font-woff", body=b"")
+                    else:
+                        route.continue_()
+                page.route("**/*", mock_fonts)
 
-                # 强制等待 8 秒
-                self.logger.info("⏳ 页面加载完毕，强行等待 8 秒确保二维码完全渲染...")
+                self.logger.info("⏳ 正在请求微信公众平台首页...")
+                try:
+                    page.goto("https://mp.weixin.qq.com/", wait_until="domcontentloaded", timeout=60000)
+                except Exception as e:
+                    self.logger.warning(f"⚠️ 页面 goto 阶段超时或遭遇长链接阻塞,强行放行继续执行: {e}")
+
+                self.logger.info("⏳ 基础骨架就绪,强行硬等 8 秒确保二维码 canvas 绘制完毕...")
                 page.wait_for_timeout(8000)
 
-                # page info
-                self.logger.info(f"当前页面标题: {page.title()}")
-                self.logger.info(f"页面前500字符: {page.content()[:500]}")
+                try:
+                    self.logger.info(f"📄 当前页面标题: {page.title()}")
+                    self.logger.info(f"📐 视口尺寸: {page.viewport_size}")
+                except Exception:
+                    pass
 
-                # 直接全屏截图
                 qr_code_path = os.path.join(AUTH_BASE_DIR, "wechat_login_qr.png")
                 abs_qr_path = os.path.abspath(qr_code_path)
 
-                page.screenshot(path=abs_qr_path)
-                self.logger.info(f"📸 全屏防白截图已保存至: {abs_qr_path}")
+                self.logger.info("📸 准备执行截图动作...")
+                page.screenshot(path=abs_qr_path, timeout=15000)
+
+                # 截图全白预警:1280x800 PNG 若 < 5KB 基本是纯色填充。
+                try:
+                    size_bytes = os.path.getsize(abs_qr_path)
+                    size_kb = size_bytes / 1024
+                    self.logger.info(f"✅ 截图已保存: {abs_qr_path} ({size_kb:.1f} KB)")
+                    if size_bytes < 5 * 1024:
+                        self.logger.warning(
+                            f"⚠️ 截图文件异常小 ({size_kb:.1f} KB),很可能是全白/纯色图!\n"
+                            f"👉 排查方向:确认 channel='chromium' 已生效;"
+                            f"服务器执行 `playwright install chromium` 安装完整 Chromium。"
+                        )
+                except Exception as e:
+                    self.logger.warning(f"截图体积检测异常: {e}")
 
                 self.logger.info("☁️ 正在将截图上传至图床...")
                 img_url = ImageHostUploader.upload(abs_qr_path)
