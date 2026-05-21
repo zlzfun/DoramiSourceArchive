@@ -472,6 +472,37 @@ def build_node_group_items(group: NodeGroupRecord) -> List[Dict[str, Any]]:
     return items
 
 
+def apply_run_param_overrides(
+        items: List[Dict[str, Any]],
+        overrides: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    if not overrides:
+        return items
+    normalized_overrides = {
+        key: value
+        for key, value in overrides.items()
+        if value is not None and value != ""
+    }
+    if not normalized_overrides:
+        return items
+    return [
+        {
+            **item,
+            "params": {
+                **(item.get("params") or {}),
+                **normalized_overrides,
+            },
+        }
+        for item in items
+    ]
+
+
+def test_run_overrides(test_limit: Optional[int] = None) -> Dict[str, Any]:
+    if test_limit is None:
+        return {}
+    return {"limit": max(int(test_limit), 1)}
+
+
 def resolve_delivery_source_ids(
         session: Session,
         source_id: Optional[str] = None,
@@ -1778,11 +1809,15 @@ def get_source_states(
 
 
 @app.post("/api/fetch/{fetcher_id}")
-async def trigger_fetch_dynamic(fetcher_id: str, params: Dict[str, Any] = Body(...)):
+async def trigger_fetch_dynamic(
+        fetcher_id: str,
+        params: Dict[str, Any] = Body(...),
+        test_limit: Optional[int] = None,
+):
     try:
         return await run_single_fetch_as_collection(
             fetcher_id,
-            params,
+            {**params, **test_run_overrides(test_limit)},
             name=f"临时抓取: {fetcher_id}",
             trigger_type="manual",
             run_scope="ad_hoc",
@@ -2255,7 +2290,7 @@ def delete_node_group(group_id: int):
 
 
 @app.post("/api/node-groups/{group_id}/fetch")
-async def fetch_node_group(group_id: int):
+async def fetch_node_group(group_id: int, test_limit: Optional[int] = None):
     with Session(db_sink.engine) as session:
         group = session.get(NodeGroupRecord, group_id)
         if not group:
@@ -2264,6 +2299,7 @@ async def fetch_node_group(group_id: int):
             raise HTTPException(status_code=400, detail="节点组已停用")
         items = build_node_group_items(group)
         group_name = group.name
+    items = apply_run_param_overrides(items, test_run_overrides(test_limit))
     return await run_collection_items(
         items,
         name=f"临时抓取节点组: {group_name}",
@@ -2369,7 +2405,7 @@ def delete_collection_job(job_id: int):
 
 
 @app.post("/api/collection-jobs/{job_id}/run")
-async def run_collection_job_now(job_id: int):
+async def run_collection_job_now(job_id: int, test_limit: Optional[int] = None):
     with Session(db_sink.engine) as session:
         job = session.get(CollectionJobRecord, job_id)
         if not job:
@@ -2379,6 +2415,7 @@ async def run_collection_job_now(job_id: int):
             raise HTTPException(status_code=400, detail="采集任务没有可执行节点")
         job_name = job.name
         group_id = job.group_id
+    items = apply_run_param_overrides(items, test_run_overrides(test_limit))
     return await run_collection_items(
         items,
         name=job_name,

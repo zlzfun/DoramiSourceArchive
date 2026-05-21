@@ -117,8 +117,17 @@ export async function batchVectorizeArticles(ids) {
   return res.json();
 }
 
-export async function triggerFetch(fetcherId, params) {
-  const res = await apiFetch(`${API_BASE_URL}/fetch/${fetcherId}`, {
+function runQuery(options = {}) {
+  const params = new URLSearchParams();
+  if (options.testLimit !== undefined && options.testLimit !== null) {
+    params.append('test_limit', options.testLimit);
+  }
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+export async function triggerFetch(fetcherId, params, options = {}) {
+  const res = await apiFetch(`${API_BASE_URL}/fetch/${fetcherId}${runQuery(options)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
@@ -180,8 +189,8 @@ export async function deleteNodeGroup(id) {
   return res.json();
 }
 
-export async function runNodeGroup(id) {
-  const res = await apiFetch(`${API_BASE_URL}/node-groups/${id}/fetch`, { method: 'POST' });
+export async function runNodeGroup(id, options = {}) {
+  const res = await apiFetch(`${API_BASE_URL}/node-groups/${id}/fetch${runQuery(options)}`, { method: 'POST' });
   if (!res.ok) await handleApiError(res, '触发节点组失败');
   return res.json();
 }
@@ -223,8 +232,8 @@ export async function deleteCollectionJob(id) {
   return res.json();
 }
 
-export async function runCollectionJob(id) {
-  const res = await apiFetch(`${API_BASE_URL}/collection-jobs/${id}/run`, { method: 'POST' });
+export async function runCollectionJob(id, options = {}) {
+  const res = await apiFetch(`${API_BASE_URL}/collection-jobs/${id}/run${runQuery(options)}`, { method: 'POST' });
   if (!res.ok) await handleApiError(res, '触发采集任务失败');
   return res.json();
 }

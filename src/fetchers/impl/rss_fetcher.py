@@ -513,3 +513,12 @@ class VllmReleasesRssFetcher(PresetRssFetcher):
     icon = "⚙️"
     feed_url = "https://github.com/vllm-project/vllm/releases.atom"
     category = "product_update"
+
+
+class OpenRouterAnnouncementsRssFetcher(PresetRssFetcher):
+    source_id = "rss_openrouter_announcements"
+    name = "OpenRouter Announcements"
+    description = "OpenRouter 官方公告，覆盖模型上线、路由/API 能力、价格与平台策略更新。"
+    icon = "🧭"
+    feed_url = "https://openrouter.ai/announcements/feed.xml"
+    category = "primary"

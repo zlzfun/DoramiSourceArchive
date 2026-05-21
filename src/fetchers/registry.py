@@ -69,6 +69,41 @@ FOCUSED_FETCHER_CURATION: Dict[str, Dict[str, str | bool]] = {
         "default_visible": True,
         "curation_reason": "Claude Code 属于 Agent 产品工具，保留 release 信号。",
     },
+    "web_qwen_blog": {
+        "curation_tier": "core",
+        "default_visible": True,
+        "curation_reason": "Qwen 官方模型、产品、多模态与 Agent 动态。",
+    },
+    "github_deepseek_repositories": {
+        "curation_tier": "core",
+        "default_visible": True,
+        "curation_reason": "DeepSeek 新仓库常早于新闻稿暴露模型与工具信号。",
+    },
+    "web_xai_news": {
+        "curation_tier": "core",
+        "default_visible": False,
+        "curation_reason": "xAI / Grok 官方模型、产品和 API 动态；当前官网对服务端抓取返回 403，先注册为待接入源。",
+    },
+    "web_kimi_blog": {
+        "curation_tier": "core",
+        "default_visible": True,
+        "curation_reason": "Kimi 官方模型、Agent 与 AI 应用产品动态。",
+    },
+    "web_minimax_news": {
+        "curation_tier": "core",
+        "default_visible": True,
+        "curation_reason": "MiniMax 官方文本、语音、视频、多模态和 Agent 产品动态。",
+    },
+    "web_cursor_blog": {
+        "curation_tier": "core",
+        "default_visible": True,
+        "curation_reason": "Cursor 是 AI 编码应用标杆，适合跟踪优秀 AI 实践。",
+    },
+    "rss_openrouter_announcements": {
+        "curation_tier": "core",
+        "default_visible": True,
+        "curation_reason": "OpenRouter 模型上线、API、价格与路由策略对 AI 应用开发有直接价值。",
+    },
 
     # Useful but noisier sources. Keep visible, but label as watchlist.
     "rss_huggingface_blog": {
@@ -80,6 +115,61 @@ FOCUSED_FETCHER_CURATION: Dict[str, Dict[str, str | bool]] = {
         "curation_tier": "watch",
         "default_visible": True,
         "curation_reason": "OpenAI Agent 方向相关，但 SDK release 仍偏框架信号。",
+    },
+    "web_seed_research": {
+        "curation_tier": "watch",
+        "default_visible": True,
+        "curation_reason": "字节 Seed 模型、Agent 和研究动态，信息价值高但偏研究。",
+    },
+    "web_zai_blog": {
+        "curation_tier": "watch",
+        "default_visible": True,
+        "curation_reason": "Z.ai 官方模型、Agent、工具和 release notes 文档索引。",
+    },
+    "github_tencent_hunyuan_repositories": {
+        "curation_tier": "watch",
+        "default_visible": True,
+        "curation_reason": "腾讯混元开源仓库信号，可补充官方研究/API动态不足。",
+    },
+    "github_inclusion_ai_repositories": {
+        "curation_tier": "watch",
+        "default_visible": True,
+        "curation_reason": "inclusionAI 新仓库可提前暴露模型和工具发布。",
+    },
+    "hf_inclusion_ai_models": {
+        "curation_tier": "watch",
+        "default_visible": True,
+        "curation_reason": "inclusionAI Hugging Face 新模型信号，适合跟踪开源模型生态。",
+    },
+    "web_ant_ling_blog": {
+        "curation_tier": "watch",
+        "default_visible": True,
+        "curation_reason": "蚂蚁百灵开发者博客，偏 Agent、应用和开发者实践。",
+    },
+    "hf_longcat_models": {
+        "curation_tier": "watch",
+        "default_visible": True,
+        "curation_reason": "美团 LongCat Hugging Face 新模型信号。",
+    },
+    "web_suno_blog": {
+        "curation_tier": "watch",
+        "default_visible": True,
+        "curation_reason": "Suno 音乐生成模型和创作产品动态，垂直但高信号。",
+    },
+    "web_midjourney_updates": {
+        "curation_tier": "watch",
+        "default_visible": True,
+        "curation_reason": "Midjourney 图像生成模型、产品和社区活动动态。",
+    },
+    "web_runway_changelog": {
+        "curation_tier": "watch",
+        "default_visible": True,
+        "curation_reason": "Runway changelog 补充 News 之外的产品能力变化。",
+    },
+    "github_hermes_agent_releases": {
+        "curation_tier": "watch",
+        "default_visible": True,
+        "curation_reason": "Hermes Agent 属于优秀 Agent 实践方向，跟踪 release 信号。",
     },
     "github_comfyui_releases": {
         "curation_tier": "watch",
@@ -148,6 +238,16 @@ FOCUSED_FETCHER_CURATION: Dict[str, Dict[str, str | bool]] = {
         "curation_tier": "advanced",
         "default_visible": False,
         "curation_reason": "通用 GitHub Releases 能力入口，适合孵化热门工具源，默认隐藏以降低目录噪声。",
+    },
+    "generic_github_repositories": {
+        "curation_tier": "advanced",
+        "default_visible": False,
+        "curation_reason": "通用 GitHub 新仓库能力入口，适合手工扩展，不作为默认 AI 资讯源展示。",
+    },
+    "generic_huggingface_models": {
+        "curation_tier": "advanced",
+        "default_visible": False,
+        "curation_reason": "通用 Hugging Face 新模型能力入口，适合手工扩展，不作为默认 AI 资讯源展示。",
     },
     "webhook_dify_workflow": {
         "curation_tier": "system",

@@ -19,7 +19,8 @@ It exists to keep development aligned with the product direction: a broad, built
 | Official website/blog/news pages | Partially implemented | `BaseWebPageListFetcher` | Needed for sources without stable RSS, such as Claude/Anthropic pages and Runway News. Current implementation captures list-page metadata and links, with optional article-detail full-text extraction via `fetch_detail`. |
 | X/Twitter public posts | Design pending | TBD | AIHot relies heavily on X accounts. Requires a decision: official API, browser scraping, third-party mirror, or webhook/import bridge. |
 | WeChat official accounts | Partially implemented | `BaseWechatGzhFetcher` | Existing concrete fetchers cover Chinese AI media/KOL accounts. Real runs depend on valid WeChat MP credentials. |
-| GitHub releases/repos | Partially implemented | `PresetRssFetcher`, `GenericGitHubReleasesFetcher`, `PresetGitHubReleasesFetcher` | Release feeds work today, and GitHub Releases API fetchers preserve richer release metadata such as tags, authors, prerelease flags, and assets. GitHub repo activity/trending/issues remain later candidates. |
+| GitHub releases/repos | Partially implemented | `PresetRssFetcher`, `GenericGitHubReleasesFetcher`, `PresetGitHubReleasesFetcher`, `GenericGitHubRepositoriesFetcher` | Release feeds work today, GitHub Releases API fetchers preserve richer release metadata, and GitHub organization repository fetchers can track newly published repos from model/application vendors. |
+| Hugging Face models | Implemented | `GenericHuggingFaceModelsFetcher`, `PresetHuggingFaceModelsFetcher` | Tracks newly published public models by organization/author for open model release signals. |
 | Paper sources | Partially implemented through arXiv RSS | `PresetRssFetcher`; future arXiv API/Semantic Scholar fetchers | arXiv categories are covered through RSS. Richer paper metadata needs dedicated APIs. |
 | Community/news aggregators | Partially implemented | RSS today; future site/API fetchers | Hacker News and tech news can start through feeds, but richer ranking/comments need dedicated fetchers. |
 | Webhook/import bridges | Partially implemented | `DifyWebhookTrigger`; `/api/import/social-posts` | Useful as transitional path for X/Telegram/Discord/private channels when direct crawling is risky. |
@@ -53,6 +54,7 @@ It exists to keep development aligned with the product direction: a broad, built
 | `rss_transformers_releases` | Transformers Releases | product_update | GitHub releases Atom. |
 | `rss_pytorch_releases` | PyTorch Releases | product_update | GitHub releases Atom. |
 | `rss_llama_cpp_releases` | llama.cpp Releases | product_update | GitHub releases Atom. |
+| `rss_openrouter_announcements` | OpenRouter Announcements | primary | Official OpenRouter announcement feed for model availability, API, pricing, and routing updates. Live fetch validated on 2026-05-21. |
 
 ### WeChat
 
@@ -90,6 +92,17 @@ It exists to keep development aligned with the product direction: a broad, built
 | `web_mistral_news` | Mistral AI News | official_web | Built on `BaseWebPageListFetcher`; captures Mistral News metadata and can optionally fetch article body text. |
 | `web_stability_news` | Stability AI News | official_web | Built on `BaseWebPageListFetcher`; defaults `fetch_detail=true` because the list page does not expose reliable title/summary text. |
 | `web_elevenlabs_blog` | ElevenLabs Blog | official_web | Built on `BaseWebPageListFetcher`; captures ElevenLabs Blog metadata and can optionally fetch article body text. |
+| `web_qwen_blog` | Qwen Blog | official_web | Uses Qwen `page_config` JSON because the public blog page is client-rendered. Live fetch validated on 2026-05-21. |
+| `web_xai_news` | xAI News | official_web | Registered as a core candidate, but default-hidden because `x.ai` returns 403 to server-side HTTP fetches. Needs a later access strategy before production scheduling. |
+| `web_kimi_blog` | Kimi Blog | official_web | Built on `BaseWebPageListFetcher`; captures Moonshot/Kimi model and agent blog entries. Live fetch validated on 2026-05-21. |
+| `web_minimax_news` | MiniMax News | official_web | Built on `BaseWebPageListFetcher`; captures MiniMax model, voice, video, and product news entries. Live fetch validated on 2026-05-21. |
+| `web_cursor_blog` | Cursor Blog | official_web | Built on `BaseWebPageListFetcher`; captures AI coding product and agent practice updates. Live fetch validated on 2026-05-21. |
+| `web_seed_research` | ByteDance Seed Research | official_web | Built on `BaseWebPageListFetcher`; captures accessible Seed research/blog links from the research page. Current static output is sparse. Live fetch validated on 2026-05-21. |
+| `web_zai_blog` | Z.ai Docs / Release Notes | official_web | Parses `docs.z.ai/llms.txt` for model, VLM, agent, tool, and release-note pages because `z.ai/blog` is not a valid source. Live fetch validated on 2026-05-21. |
+| `web_ant_ling_blog` | Ant Ling Developer Blog | official_web | Built on `BaseWebPageListFetcher`; captures Ant Ling model, multimodal, and agent practice blog posts. Live fetch validated on 2026-05-21. |
+| `web_suno_blog` | Suno Blog | official_web | Built on `BaseWebPageListFetcher`; captures music generation model/product updates. Live fetch validated on 2026-05-21. |
+| `web_midjourney_updates` | Midjourney Updates | official_web | Built on `BaseWebPageListFetcher`; captures Midjourney product/model update posts with navigation links filtered out. Live fetch validated on 2026-05-21. |
+| `web_runway_changelog` | Runway Changelog | official_web | Uses Zendesk Help Center API because the public help center page returns 403. Filters updated help articles by model/product keywords. Live fetch validated on 2026-05-21. |
 
 ### GitHub Releases API
 
@@ -108,6 +121,24 @@ It exists to keep development aligned with the product direction: a broad, built
 | `github_comfyui_releases` | `comfyanonymous/ComfyUI` | product_update | API-backed ComfyUI release metadata. |
 | `github_openai_agents_python_releases` | `openai/openai-agents-python` | product_update | API-backed OpenAI Agents SDK release metadata. Live fetch validated on 2026-05-12. |
 | `github_claude_code_releases` | `anthropics/claude-code` | product_update | API-backed Claude Code release metadata. Live fetch validated on 2026-05-12. |
+| `github_hermes_agent_releases` | `NousResearch/hermes-agent` | product_update | API-backed Hermes Agent release metadata for agent practice tracking. Live fetch validated on 2026-05-21. |
+
+### GitHub Repository API
+
+| Source ID | Owner / Org | Category | Notes |
+| --- | --- | --- | --- |
+| `generic_github_repositories` | Runtime configured | advanced | Advanced generic source for latest public repos under a GitHub user/org. |
+| `github_deepseek_repositories` | `deepseek-ai` | primary | Tracks new DeepSeek repositories. Live fetch validated on 2026-05-21. |
+| `github_inclusion_ai_repositories` | `inclusionAI` | primary | Tracks new inclusionAI repositories. Live fetch validated on 2026-05-21. |
+| `github_tencent_hunyuan_repositories` | `Tencent-Hunyuan` | primary | Tracks new Tencent Hunyuan repositories. Live fetch validated on 2026-05-21. |
+
+### Hugging Face Models API
+
+| Source ID | Author / Org | Category | Notes |
+| --- | --- | --- | --- |
+| `generic_huggingface_models` | Runtime configured | advanced | Advanced generic source for latest public models from a Hugging Face author/org. |
+| `hf_inclusion_ai_models` | `inclusionAI` | primary | Tracks new inclusionAI Hugging Face model releases. Live fetch validated on 2026-05-21. |
+| `hf_longcat_models` | `meituan-longcat` | primary | Tracks new Meituan LongCat Hugging Face model releases. Live fetch validated on 2026-05-21. |
 
 ## Candidate Sources Inspired By AIHot
 
@@ -140,7 +171,7 @@ Sampled from AIHot public pages on 2026-05-12. These are planning candidates, no
 | Tomer Tunguz blog | Medium | VC/market analysis relevant to AI infrastructure. | Candidate website/RSS evaluation pending. |
 | The Decoder / IT之家 / 36Kr AI / InfoQ AI | Medium | News coverage; may use RSS or webpage depending source stability. | Candidate evaluation pending. |
 | Cohere Blog | Medium | Official enterprise AI/model blog; listing page is accessible but did not expose direct article links in the first static HTML check. | Candidate evaluation pending; may need RSS/API/embedded-data parsing. |
-| Perplexity Blog / xAI News | Medium | Important product/model sources, but tested pages returned 403 to the current fetcher-style HTTP client. | Candidate evaluation pending; do not add as built-in webpage nodes until access strategy is clear. |
+| Perplexity Blog / xAI News | Medium | Important product/model sources, but tested pages returned 403 to the current fetcher-style HTTP client. | xAI is registered as default-hidden `web_xai_news`; Perplexity remains pending. |
 
 ### WeChat Accounts
 

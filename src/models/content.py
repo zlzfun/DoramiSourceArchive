@@ -217,6 +217,48 @@ class GitHubReleaseContent(BaseContent):
 
 
 @dataclass
+class GitHubRepositoryContent(BaseContent):
+    """GitHub 仓库内容类，用于跟踪组织下的新仓库信号。"""
+    content_type: ClassVar[str] = "github_repository"
+
+    repository: str = field(default="", metadata={"description": "仓库全名 owner/repo"})
+    owner: str = field(default="", metadata={"description": "仓库 owner"})
+    repo: str = field(default="", metadata={"description": "仓库名称"})
+    description: str = field(default="", metadata={"description": "仓库描述"})
+    language: str = field(default="", metadata={"description": "主要语言"})
+    default_branch: str = field(default="", metadata={"description": "默认分支"})
+    stars: int = field(default=0, metadata={"description": "Star 数"})
+    forks: int = field(default=0, metadata={"description": "Fork 数"})
+    open_issues: int = field(default=0, metadata={"description": "Open issues 数"})
+    archived: bool = field(default=False, metadata={"description": "是否归档"})
+    fork: bool = field(default=False, metadata={"description": "是否 fork 仓库"})
+    license_name: str = field(default="", metadata={"description": "许可证名称"})
+    pushed_at: str = field(default="", metadata={"description": "最近 push 时间"})
+    updated_at: str = field(default="", metadata={"description": "最近更新时间"})
+    raw_data: Optional[Dict[str, Any]] = field(default_factory=dict,
+                                               metadata={"description": "GitHub API 原始摘要信息"})
+
+
+@dataclass
+class HuggingFaceModelContent(BaseContent):
+    """Hugging Face 模型内容类，用于跟踪组织下的新模型信号。"""
+    content_type: ClassVar[str] = "hf_model"
+
+    model_id: str = field(default="", metadata={"description": "Hugging Face 模型 ID"})
+    author: str = field(default="", metadata={"description": "模型作者或组织"})
+    pipeline_tag: str = field(default="", metadata={"description": "模型任务类型"})
+    library_name: str = field(default="", metadata={"description": "模型库名称"})
+    tags: List[str] = field(default_factory=list, metadata={"description": "模型标签"})
+    downloads: int = field(default=0, metadata={"description": "下载量"})
+    likes: int = field(default=0, metadata={"description": "点赞量"})
+    last_modified: str = field(default="", metadata={"description": "最近更新时间"})
+    gated: str = field(default="", metadata={"description": "访问限制状态"})
+    private: bool = field(default=False, metadata={"description": "是否私有"})
+    raw_data: Optional[Dict[str, Any]] = field(default_factory=dict,
+                                               metadata={"description": "Hugging Face API 原始摘要信息"})
+
+
+@dataclass
 class WechatArticleContent(BaseContent):
     """微信公众号文章内容类"""
     content_type: ClassVar[str] = "wechat_article"

@@ -74,6 +74,8 @@ function blankJob() {
   };
 }
 
+const TEST_RUN_LIMIT = 1;
+
 function normalizeIds(ids) {
   return Array.from(new Set((ids || []).filter(Boolean)));
 }
@@ -281,10 +283,11 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
     }
   };
 
-  const handleRunJob = async (id) => {
+  const handleRunJob = async (id, options = {}) => {
     try {
-      const result = await runCollectionJob(id);
-      showToast(`采集任务运行完成：新增 ${result.saved_count || 0} 条`, result.failed_count ? 'info' : 'success');
+      const result = await runCollectionJob(id, options);
+      const prefix = options.testLimit ? `测试运行完成（每源 ${options.testLimit} 条）` : '采集任务运行完成';
+      showToast(`${prefix}：新增 ${result.saved_count || 0} 条`, result.failed_count ? 'info' : 'success');
       await loadAll();
     } catch (e) {
       showToast(e.message || '采集任务运行失败', 'error');
@@ -447,6 +450,7 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
                       <div className="px-5 pb-5 ml-6 space-y-4">
                         <div className="flex flex-wrap gap-2">
                           <button onClick={() => openEditJob(job)} className="action-button action-button-quiet min-h-[34px] px-3 text-xs">编辑配置</button>
+                          <button onClick={() => handleRunJob(job.id, { testLimit: TEST_RUN_LIMIT })} className="action-button action-button-quiet min-h-[34px] px-3 text-xs"><Play /> 测试运行 1 条/源</button>
                           <button onClick={() => handleRunJob(job.id)} className="action-button action-button-primary min-h-[34px] px-3 text-xs"><Play /> 立即运行</button>
                           <button onClick={() => handleDeleteJob(job.id)} className="action-button action-button-danger min-h-[34px] px-3 text-xs"><Trash2 /> 删除</button>
                         </div>

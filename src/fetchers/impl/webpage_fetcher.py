@@ -4,7 +4,7 @@ import json
 import re
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, Iterable, List
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -63,6 +63,7 @@ class BaseWebPageListFetcher(BaseFetcher):
     default_limit = 20
     default_fetch_detail = False
     default_detail_max_chars = 12000
+    generic_link_titles = {"read more", "learn more", "blog", "news", "publication", "publications"}
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
@@ -104,17 +105,37 @@ class BaseWebPageListFetcher(BaseFetcher):
     def _clean_text(self, text: str) -> str:
         return " ".join((text or "").split())
 
+    def _title_from_url(self, url: str) -> str:
+        slug = urlparse(url).path.rstrip("/").split("/")[-1]
+        if not slug:
+            return ""
+        words = [word for word in re.split(r"[-_]+", slug) if word]
+        if not words:
+            return ""
+        title = " ".join(word.upper() if word.lower() in {"ai", "api", "llm"} else word.capitalize() for word in words)
+        return self._clean_text(title)
+
     def _entry_url_from_slug(self, slug: str) -> str:
         slug = (slug or "").strip()
         if not slug:
             return ""
         if slug.startswith(("http://", "https://")):
-            return slug
+            return self._normalize_article_url(slug)
         if slug.startswith("/"):
-            return urljoin(self.listing_url, slug)
+            return self._normalize_article_url(urljoin(self.listing_url, slug))
         listing_path = urlparse(self.listing_url).path.rstrip("/")
         base_path = listing_path or ""
-        return urljoin(self.listing_url, f"{base_path}/{slug}")
+        return self._normalize_article_url(urljoin(self.listing_url, f"{base_path}/{slug}"))
+
+    def _normalize_article_url(self, url: str) -> str:
+        parsed = urlparse(url)
+        query = urlencode([
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if not key.lower().startswith("utm_") and key.lower() not in {"ref", "spm", "view_from"}
+        ])
+        path = parsed.path.rstrip("/") or "/"
+        return parsed._replace(path=path, query=query, fragment="").geturl()
 
     def _matches_article_url(self, url: str) -> bool:
         parsed = urlparse(url)
@@ -144,16 +165,18 @@ class BaseWebPageListFetcher(BaseFetcher):
     def _title_from_container(self, link: Tag, container: Tag) -> str:
         for heading in container.find_all(["h1", "h2", "h3", "h4"], limit=3):
             title = self._clean_text(heading.get_text(" ", strip=True))
-            if title and title.lower() != "read more":
+            if title and title.lower() not in self.generic_link_titles:
                 return title
 
         link_text = self._clean_text(link.get_text(" ", strip=True))
-        if link_text and link_text.lower() != "read more":
+        if link_text and link_text.lower() not in self.generic_link_titles:
             return link_text
 
         text = self._clean_text(container.get_text(" ", strip=True))
         text = re.sub(r"\b(read more|learn more)\b", "", text, flags=re.IGNORECASE).strip()
-        return text[:120] or "未命名网页条目"
+        if text.lower() not in self.generic_link_titles:
+            return text[:120] or "未命名网页条目"
+        return self._title_from_url(str(link.get("href") or "")) or "未命名网页条目"
 
     def _summary_from_container(self, title: str, container: Tag) -> str:
         text = self._clean_text(container.get_text(" ", strip=True))
@@ -360,7 +383,7 @@ class BaseWebPageListFetcher(BaseFetcher):
         order = 0
 
         for link in soup.find_all("a", href=True):
-            url = urljoin(str(response.url), str(link["href"]))
+            url = self._normalize_article_url(urljoin(str(response.url), str(link["href"])))
             if not self._matches_article_url(url):
                 continue
 
@@ -397,7 +420,7 @@ class BaseWebPageListFetcher(BaseFetcher):
             detail = {"title": "", "text": ""}
             if fetch_detail:
                 detail = await self._detail_for_url(client, url, detail_max_chars)
-                if title == "未命名网页条目" and detail["title"]:
+                if (title == "未命名网页条目" or title.lower() in self.generic_link_titles) and detail["title"]:
                     title = detail["title"]
 
             raw_data = self._raw_entry(url, title, summary)
@@ -504,3 +527,384 @@ class ElevenLabsBlogWebFetcher(BaseWebPageListFetcher):
         "elevenlabs.io/blog#",
         "elevenlabs.io/blog/category/",
     ]
+
+
+class XAiNewsWebFetcher(BaseWebPageListFetcher):
+    source_id = "web_xai_news"
+    name = "xAI News"
+    description = "抓取 xAI 官方 News 页面中的 Grok 模型、产品、API 与企业动态。"
+    icon = "𝕏"
+    listing_url = "https://x.ai/news"
+    site_name = "xAI"
+    source_section = "News"
+    article_url_patterns = ["x.ai/news/"]
+    exclude_url_patterns = ["x.ai/news#"]
+    default_fetch_detail = True
+
+
+class QwenBlogWebFetcher(BaseWebPageListFetcher):
+    source_id = "web_qwen_blog"
+    name = "Qwen Blog"
+    description = "抓取 Qwen 官方 Blog 中的模型、产品、多模态与 Agent 动态。"
+    icon = "🟦"
+    listing_url = "https://qwen.ai/api/page_config?code=news.news-list"
+    site_name = "Qwen"
+    source_section = "Blog"
+    article_url_patterns = ["qwen.ai/blog", "docs.qwenlm.ai/"]
+    exclude_url_patterns = ["qwen.ai/blog#"]
+    default_fetch_detail = False
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        response = await self._safe_get(client, self.listing_url)
+        if not response:
+            return
+
+        try:
+            records = response.json()
+        except ValueError:
+            self.logger.warning("Qwen Blog API 返回了非 JSON 内容。")
+            return
+        if not isinstance(records, list):
+            self.logger.warning("Qwen Blog API 返回了非列表结构。")
+            return
+
+        records = sorted(
+            (record for record in records if isinstance(record, dict) and not record.get("draft")),
+            key=lambda record: self._sort_datetime(str(record.get("date") or "")),
+            reverse=True,
+        )
+        for record in records[:limit]:
+            article_id = str(record.get("id") or "").strip()
+            token_links = str(record.get("tokenLinks") or "").strip()
+            source_url = f"https://qwen.ai/blog?id={article_id}" if article_id else token_links or "https://qwen.ai/blog"
+            title = self._clean_text(str(record.get("title") or "")) or "未命名 Qwen Blog 条目"
+            summary = self._clean_text(str(record.get("description") or record.get("introduction") or ""))[:500]
+            tags = [str(tag) for tag in record.get("tags") or []]
+
+            yield WebPageArticleContent(
+                id=self._content_id(source_url),
+                title=title,
+                source_url=source_url,
+                publish_date=str(record.get("date") or datetime.now(timezone.utc).isoformat()),
+                content=summary,
+                has_content=bool(summary),
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=summary,
+                tags=[self.category, "webpage", *tags],
+                raw_data={
+                    "listing_url": self.listing_url,
+                    "url": source_url,
+                    "tokenLinks": token_links,
+                    "author": record.get("author") or "",
+                    "readTime": record.get("readTime") or "",
+                    "word_count": record.get("word_count") or "",
+                    "tags": tags,
+                    "listing_source": "qwen_page_config",
+                },
+            )
+
+
+class KimiBlogWebFetcher(BaseWebPageListFetcher):
+    source_id = "web_kimi_blog"
+    name = "Kimi Blog"
+    description = "抓取 Moonshot AI / Kimi 官方 Blog 中的模型与 AI 应用动态。"
+    icon = "🌙"
+    listing_url = "https://www.kimi.com/blog"
+    site_name = "Kimi"
+    source_section = "Blog"
+    article_url_patterns = ["kimi.com/blog/"]
+    exclude_url_patterns = ["kimi.com/blog#"]
+    default_fetch_detail = True
+
+    def _matches_article_url(self, url: str) -> bool:
+        if not super()._matches_article_url(url):
+            return False
+        return urlparse(url).path.rstrip("/") != "/blog"
+
+
+class MiniMaxNewsWebFetcher(BaseWebPageListFetcher):
+    source_id = "web_minimax_news"
+    name = "MiniMax News"
+    description = "抓取 MiniMax 官方 News 页面中的模型、多模态、语音与产品动态。"
+    icon = "〽️"
+    listing_url = "https://www.minimax.io/news"
+    site_name = "MiniMax"
+    source_section = "News"
+    article_url_patterns = ["minimax.io/news/"]
+    exclude_url_patterns = ["minimax.io/news#"]
+    default_fetch_detail = True
+
+
+class CursorBlogWebFetcher(BaseWebPageListFetcher):
+    source_id = "web_cursor_blog"
+    name = "Cursor Blog / Changelog"
+    description = "抓取 Cursor 官方 Blog 和 Changelog 中的 AI 编程、Agent 与产品实践动态。"
+    icon = "⌨️"
+    listing_url = "https://cursor.com/blog"
+    site_name = "Cursor"
+    source_section = "Blog / Changelog"
+    article_url_patterns = ["cursor.com/blog/", "cursor.com/changelog/"]
+    exclude_url_patterns = ["cursor.com/blog#", "cursor.com/blog/topic/"]
+    default_fetch_detail = True
+
+    def _entry_url_from_slug(self, slug: str) -> str:
+        slug = (slug or "").strip()
+        if re.fullmatch(r"\d{1,2}-\d{1,2}-\d{2,4}", slug) or re.fullmatch(r"\d+(?:-\d+)+", slug):
+            return self._normalize_article_url(urljoin(self.listing_url, f"/changelog/{slug}"))
+        return super()._entry_url_from_slug(slug)
+
+    def _matches_article_url(self, url: str) -> bool:
+        if not super()._matches_article_url(url):
+            return False
+        return urlparse(url).path.rstrip("/") not in {"/blog", "/changelog"}
+
+    def _title_from_container(self, link: Tag, container: Tag) -> str:
+        href = self._normalize_article_url(urljoin(self.listing_url, str(link.get("href") or "")))
+        if urlparse(href).path.startswith("/changelog/"):
+            for paragraph in container.find_all("p"):
+                title = self._clean_text(paragraph.get_text(" ", strip=True))
+                if title and title.lower() not in self.generic_link_titles:
+                    return title
+        return super()._title_from_container(link, container)
+
+    def _summary_from_container(self, title: str, container: Tag) -> str:
+        summary = super()._summary_from_container(title, container)
+        return re.sub(r"^\d+(?:\.\d+)?\s+", "", summary).strip()
+
+
+class SeedResearchWebFetcher(BaseWebPageListFetcher):
+    source_id = "web_seed_research"
+    name = "字节 Seed Research"
+    description = "抓取字节 Seed 官方博客中的模型、Agent 与研究动态。"
+    icon = "🌱"
+    listing_url = "https://seed.bytedance.com/en/research"
+    site_name = "ByteDance Seed"
+    source_section = "Research Blog"
+    article_url_patterns = ["seed.bytedance.com/blog/", "seed.bytedance.com/en/blog/"]
+    exclude_url_patterns = ["seed.bytedance.com/zh/blog#"]
+    default_fetch_detail = True
+
+    def _title_from_container(self, link: Tag, container: Tag) -> str:
+        return self._title_from_url(str(link.get("href") or "")) or super()._title_from_container(link, container)
+
+
+class ZaiBlogWebFetcher(BaseWebPageListFetcher):
+    source_id = "web_zai_blog"
+    name = "Z.ai Docs / Release Notes"
+    description = "抓取 Z.ai 官方文档索引中的模型、Agent、工具与 release notes 页面。"
+    icon = "🧩"
+    listing_url = "https://docs.z.ai/llms.txt"
+    site_name = "Z.ai"
+    source_section = "Docs"
+    default_fetch_detail = False
+    include_url_markers = [
+        "/guides/llm/",
+        "/guides/vlm/",
+        "/guides/image/",
+        "/guides/video/",
+        "/guides/audio/",
+        "/guides/agents/",
+        "/guides/tools/",
+        "/release-notes/",
+        "/devpack/resources/",
+    ]
+    priority_url_markers = [
+        "/release-notes/",
+        "/guides/llm/",
+        "/guides/vlm/",
+        "/guides/agents/",
+        "/guides/image/",
+        "/guides/video/",
+        "/guides/audio/",
+        "/guides/tools/",
+        "/devpack/resources/",
+    ]
+
+    def _entry_priority(self, url: str) -> int:
+        for index, marker in enumerate(self.priority_url_markers):
+            if marker in url:
+                return index
+        return len(self.priority_url_markers)
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        response = await self._safe_get(client, self.listing_url)
+        if not response:
+            return
+
+        entries: List[Dict[str, str]] = []
+        pattern = re.compile(r"^- \[([^\]]+)\]\((https://docs\.z\.ai/[^)]+)\)(?::\s*(.*))?$")
+        for line in response.text.splitlines():
+            match = pattern.match(line.strip())
+            if not match:
+                continue
+            title, url, summary = match.groups()
+            if not any(marker in url for marker in self.include_url_markers):
+                continue
+            entries.append({
+                "title": self._clean_text(title),
+                "url": url,
+                "summary": self._clean_text(summary or "")[:500],
+            })
+        entries.sort(key=lambda entry: self._entry_priority(entry["url"]))
+
+        for entry in entries[:limit]:
+            yield WebPageArticleContent(
+                id=self._content_id(entry["url"]),
+                title=entry["title"],
+                source_url=entry["url"],
+                publish_date=datetime.now(timezone.utc).isoformat(),
+                content=entry["summary"],
+                has_content=bool(entry["summary"]),
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=entry["summary"],
+                tags=[self.category, "webpage", "docs"],
+                raw_data={
+                    "listing_url": self.listing_url,
+                    "url": entry["url"],
+                    "listing_source": "llms_txt",
+                },
+            )
+
+
+class AntLingBlogWebFetcher(BaseWebPageListFetcher):
+    source_id = "web_ant_ling_blog"
+    name = "蚂蚁百灵 Developer Blog"
+    description = "抓取蚂蚁百灵 Developer Blog 中的模型、Agent、应用与开发者实践。"
+    icon = "🐜"
+    listing_url = "https://developer.ant-ling.com/en/blogs"
+    site_name = "Ant Ling"
+    source_section = "Developer Blog"
+    article_url_patterns = ["developer.ant-ling.com/en/blogs/"]
+    exclude_url_patterns = ["developer.ant-ling.com/en/blogs#"]
+    default_fetch_detail = True
+
+    def _content_id(self, url: str) -> str:
+        return super()._content_id(url.rstrip("/"))
+
+    def _matches_article_url(self, url: str) -> bool:
+        if not super()._matches_article_url(url):
+            return False
+        return urlparse(url).path.rstrip("/") != "/en/blogs"
+
+
+class SunoBlogWebFetcher(BaseWebPageListFetcher):
+    source_id = "web_suno_blog"
+    name = "Suno Blog"
+    description = "抓取 Suno 官方 Blog 中的音乐生成模型、产品与创作者工具动态。"
+    icon = "🎵"
+    listing_url = "https://suno.com/blog"
+    site_name = "Suno"
+    source_section = "Blog"
+    article_url_patterns = ["suno.com/blog/"]
+    exclude_url_patterns = ["suno.com/blog#"]
+    default_fetch_detail = True
+
+
+class MidjourneyUpdatesWebFetcher(BaseWebPageListFetcher):
+    source_id = "web_midjourney_updates"
+    name = "Midjourney Updates"
+    description = "抓取 Midjourney 官方 Updates 中的图像生成模型、产品与社区活动动态。"
+    icon = "🖼️"
+    listing_url = "https://updates.midjourney.com/"
+    site_name = "Midjourney"
+    source_section = "Updates"
+    article_url_patterns = ["updates.midjourney.com/"]
+    exclude_url_patterns = ["updates.midjourney.com/#", "updates.midjourney.com/author/"]
+    default_fetch_detail = True
+
+    def _matches_article_url(self, url: str) -> bool:
+        if not super()._matches_article_url(url):
+            return False
+        path = urlparse(url).path.rstrip("/")
+        return bool(path) and path not in {"/about"}
+
+
+class RunwayChangelogWebFetcher(BaseWebPageListFetcher):
+    source_id = "web_runway_changelog"
+    name = "Runway Changelog"
+    description = "抓取 Runway 帮助中心中的产品能力、模型与创作工具变更记录。"
+    icon = "🎞️"
+    listing_url = "https://help.runwayml.com/api/v2/help_center/en-us/articles.json"
+    site_name = "Runway"
+    source_section = "Changelog"
+    default_fetch_detail = False
+    keyword_markers = [
+        "agent",
+        "aleph",
+        "api",
+        "chat mode",
+        "gen-",
+        "gen4",
+        "generation",
+        "image",
+        "lip sync",
+        "model",
+        "prompt",
+        "video",
+    ]
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        response = await self._safe_get(
+            client,
+            self.listing_url,
+            params={"sort_by": "updated_at", "sort_order": "desc", "per_page": min(max(limit * 4, 10), 100)},
+        )
+        if not response:
+            return
+
+        try:
+            payload = response.json()
+        except ValueError:
+            self.logger.warning("Runway Help Center API 返回了非 JSON 内容。")
+            return
+
+        articles = payload.get("articles") if isinstance(payload, dict) else None
+        if not isinstance(articles, list):
+            self.logger.warning("Runway Help Center API 返回了非文章列表结构。")
+            return
+
+        emitted = 0
+        for article in articles:
+            if not isinstance(article, dict) or article.get("draft"):
+                continue
+            title = self._clean_text(str(article.get("title") or article.get("name") or ""))
+            labels = [str(label) for label in article.get("label_names") or []]
+            haystack = " ".join([title, *labels]).lower()
+            if not any(marker in haystack for marker in self.keyword_markers):
+                continue
+
+            body = BeautifulSoup(str(article.get("body") or ""), "html.parser").get_text(" ", strip=True)
+            summary = self._clean_text(body)[:500]
+            source_url = str(article.get("html_url") or "")
+            if not source_url:
+                continue
+
+            yield WebPageArticleContent(
+                id=self._content_id(source_url),
+                title=title or "未命名 Runway Help Center 条目",
+                source_url=source_url,
+                publish_date=str(article.get("updated_at") or article.get("created_at") or datetime.now(timezone.utc).isoformat()),
+                content=summary,
+                has_content=bool(summary),
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=summary,
+                tags=[self.category, "webpage", "help_center", *labels[:8]],
+                raw_data={
+                    "listing_url": self.listing_url,
+                    "url": source_url,
+                    "article_id": article.get("id"),
+                    "created_at": article.get("created_at") or "",
+                    "updated_at": article.get("updated_at") or "",
+                    "labels": labels,
+                    "listing_source": "zendesk_help_center_api",
+                },
+            )
+            emitted += 1
+            if emitted >= limit:
+                break

@@ -43,6 +43,7 @@ const CATEGORY_LABELS = {
 
 const CATEGORY_ORDER = ['official', 'official_web', 'framework', 'paper', 'product_update', 'developer_platform', 'community', 'wechat', 'workflow', 'advanced', 'general'];
 const FAVORITE_FETCHERS_STORAGE_KEY = 'dorami.favorite_fetchers';
+const TEST_RUN_LIMIT = 1;
 const CATALOG_SCOPE_OPTIONS = [
   { value: 'focused', label: '聚焦', icon: Target },
   { value: 'favorites', label: '收藏', icon: Star },
@@ -373,26 +374,28 @@ export default function FetchTab({ availableFetchers, showToast }) {
     } catch (e) { showToast(e.message || '删除节点组失败', 'error'); }
   };
 
-  const handleRunGroup = async (id) => {
+  const handleRunGroup = async (id, options = {}) => {
     try {
-      const result = await runNodeGroup(id);
-      showToast(`节点组运行完成：新增 ${result.saved_count || 0} 条`, result.failed_count ? 'info' : 'success');
+      const result = await runNodeGroup(id, options);
+      const prefix = options.testLimit ? `测试运行完成（每源 ${options.testLimit} 条）` : '节点组运行完成';
+      showToast(`${prefix}：新增 ${result.saved_count || 0} 条`, result.failed_count ? 'info' : 'success');
       loadSourceHealth();
     } catch (e) { showToast(e.message || '节点组运行失败', 'error'); }
   };
 
-  const handleBatchFetch = async () => {
+  const handleBatchFetch = async (options = {}) => {
     setFetchLoading(true);
     let successCount = 0;
     for (const fetcherId of selectedFetchers) {
       try {
-        await triggerFetch(fetcherId, fetchConfigs[fetcherId] || {});
+        await triggerFetch(fetcherId, fetchConfigs[fetcherId] || {}, options);
         successCount++;
       } catch (e) { showToast(e.message || `[${getFetcherName(fetcherId)}] 抓取失败`, 'error'); }
     }
     setFetchLoading(false);
     if (successCount > 0) {
-      showToast(`已触发 ${successCount} 个节点`, 'success');
+      const suffix = options.testLimit ? `（每源 ${options.testLimit} 条）` : '';
+      showToast(`已触发 ${successCount} 个节点${suffix}`, 'success');
       setSelectedFetchers([]);
       loadSourceHealth();
     }
@@ -643,6 +646,7 @@ export default function FetchTab({ availableFetchers, showToast }) {
                     <div className="px-5 pb-5 ml-6 space-y-4">
                       <div className="flex flex-wrap gap-2">
                         <button onClick={() => openEditGroup(group)} className="action-button action-button-quiet min-h-[34px] px-3 text-xs">编辑</button>
+                        <button onClick={() => handleRunGroup(group.id, { testLimit: TEST_RUN_LIMIT })} className="action-button action-button-quiet min-h-[34px] px-3 text-xs"><Play /> 测试运行 1 条/源</button>
                         <button onClick={() => handleRunGroup(group.id)} className="action-button action-button-primary min-h-[34px] px-3 text-xs"><Play /> 临时运行</button>
                         <button onClick={() => handleDeleteGroup(group.id)} className="action-button action-button-danger min-h-[34px] px-3 text-xs"><Trash2 /> 删除</button>
                       </div>
@@ -675,7 +679,10 @@ export default function FetchTab({ availableFetchers, showToast }) {
             <button onClick={() => openCreateGroup(selectedFetchers)} className="action-button action-button-secondary text-indigo-700">
               <FolderPlus /> 新建节点组
             </button>
-            <button onClick={handleBatchFetch} disabled={fetchLoading} className="action-button action-button-primary">
+            <button onClick={() => handleBatchFetch({ testLimit: TEST_RUN_LIMIT })} disabled={fetchLoading} className="action-button action-button-quiet">
+              {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 测试抓取 1 条/源
+            </button>
+            <button onClick={() => handleBatchFetch()} disabled={fetchLoading} className="action-button action-button-primary">
               {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} {fetchLoading ? '执行中...' : '立即临时抓取'}
             </button>
           </div>

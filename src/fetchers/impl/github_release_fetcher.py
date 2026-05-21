@@ -303,3 +303,12 @@ class ClaudeCodeGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     icon = "🟧"
     owner = "anthropics"
     repo = "claude-code"
+
+
+class HermesAgentGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
+    source_id = "github_hermes_agent_releases"
+    name = "Hermes Agent GitHub Releases"
+    description = "通过 GitHub API 抓取 NousResearch Hermes Agent Release 元数据。"
+    icon = "🪽"
+    owner = "NousResearch"
+    repo = "hermes-agent"
