@@ -79,6 +79,19 @@ class DatabaseStorage(BaseStorage):
         with Session(self.engine) as session:
             existing = session.get(ArticleRecord, item.id)
             if existing:
+                if not existing.has_content and item.has_content and item.content:
+                    raw_metadata = serialize_to_metadata(item)
+                    existing.title = item.title
+                    existing.source_url = item.source_url
+                    existing.publish_date = item.publish_date
+                    existing.fetched_date = item.fetched_date
+                    existing.has_content = True
+                    existing.content = item.content
+                    existing.extensions_json = json.dumps(raw_metadata.get("extensions", {}), ensure_ascii=False)
+                    existing.is_vectorized = False
+                    session.add(existing)
+                    session.commit()
+                    return True
                 return False
 
             raw_metadata = serialize_to_metadata(item)

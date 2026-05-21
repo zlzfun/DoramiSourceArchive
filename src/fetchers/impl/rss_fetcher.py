@@ -1,12 +1,13 @@
 import calendar
 import hashlib
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, AsyncGenerator, Dict, List
 
 import feedparser
 import httpx
-from bs4 import BeautifulSoup
 
+from fetchers.impl.article_extractor import clean_text, extract_article_detail, extract_detail_from_html
 from fetchers.base import BaseFetcher
 from models.content import BaseContent, RssArticleContent
 
@@ -25,6 +26,9 @@ class GenericRssFetcher(BaseFetcher):
     name = "通用 RSS/Atom"
     description = "抓取任意 RSS/Atom Feed，适合官方博客、产品更新、论文与社区资讯源。"
     icon = "🛰️"
+    default_fetch_detail_if_missing = True
+    default_detail_min_chars = 200
+    default_detail_max_chars = 12000
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
@@ -34,6 +38,9 @@ class GenericRssFetcher(BaseFetcher):
             {"field": "feed_name", "label": "数据源名称", "type": "text", "default": ""},
             {"field": "category", "label": "业务分类", "type": "text", "default": "official"},
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": 20},
+            {"field": "fetch_detail_if_missing", "label": "短正文时抓取详情页", "type": "boolean", "default": cls.default_fetch_detail_if_missing},
+            {"field": "detail_min_chars", "label": "触发详情抓取的正文长度", "type": "number", "default": cls.default_detail_min_chars},
+            {"field": "detail_max_chars", "label": "详情页正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_id(self, runtime_source_id: str, entry: Any) -> str:
@@ -47,15 +54,53 @@ class GenericRssFetcher(BaseFetcher):
         digest = hashlib.sha1(str(stable_value).encode("utf-8")).hexdigest()[:16]
         return f"{runtime_source_id}_{digest}"
 
-    def _entry_datetime(self, entry: Any, field_name: str) -> str:
-        parsed_value = entry.get(f"{field_name}_parsed")
+    def _datetime_from_entry_field(self, entry: Any, field_name: str) -> datetime | None:
+        parsed_key = f"{field_name}_parsed"
+        parsed_value = entry[parsed_key] if parsed_key in entry else None
         if parsed_value:
             timestamp = calendar.timegm(parsed_value)
-            return datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
+            return datetime.fromtimestamp(timestamp, timezone.utc)
+        raw_value = entry[field_name] if field_name in entry else None
+        if raw_value:
+            try:
+                value = parsedate_to_datetime(str(raw_value))
+                if value.tzinfo is None:
+                    value = value.replace(tzinfo=timezone.utc)
+                return value.astimezone(timezone.utc)
+            except (TypeError, ValueError, IndexError, OverflowError):
+                return None
+        return None
+
+    def _entry_datetime(self, entry: Any, field_name: str) -> str:
+        fallback_fields = ["updated", "created"] if field_name == "published" else []
+        for name in [field_name, *fallback_fields]:
+            value = self._datetime_from_entry_field(entry, name)
+            if value:
+                return value.isoformat()
         raw_value = entry.get(field_name)
         if raw_value:
             return str(raw_value)
         return datetime.now(timezone.utc).isoformat()
+
+    def _entry_sort_timestamp(self, entry: Any) -> int | None:
+        for field_name in ["published", "updated", "created"]:
+            value = self._datetime_from_entry_field(entry, field_name)
+            if value:
+                return int(value.timestamp())
+        return None
+
+    def _sort_entries_newest_first(self, entries: List[Any]) -> List[Any]:
+        indexed_entries = list(enumerate(entries))
+        sorted_entries = sorted(
+            indexed_entries,
+            key=lambda pair: (
+                (timestamp := self._entry_sort_timestamp(pair[1])) is not None,
+                timestamp or 0,
+                -pair[0],
+            ),
+            reverse=True,
+        )
+        return [entry for _, entry in sorted_entries]
 
     def _entry_tags(self, entry: Any, category: str) -> List[str]:
         tags = []
@@ -79,8 +124,7 @@ class GenericRssFetcher(BaseFetcher):
     def _clean_text(self, html_text: str) -> str:
         if not html_text:
             return ""
-        soup = BeautifulSoup(html_text, "html.parser")
-        return soup.get_text(separator="\n", strip=True)
+        return clean_text(html_text)
 
     def _media_url(self, entry: Any) -> str:
         media_content = entry.get("media_content") or []
@@ -101,8 +145,8 @@ class GenericRssFetcher(BaseFetcher):
             "id": entry.get("id", ""),
             "title": entry.get("title", ""),
             "link": entry.get("link", ""),
-            "published": entry.get("published", ""),
-            "updated": entry.get("updated", ""),
+            "published": entry["published"] if "published" in entry else "",
+            "updated": entry["updated"] if "updated" in entry else "",
         }
 
     def _entry_limit(self, raw_limit: Any, default: int = 20) -> int:
@@ -114,12 +158,58 @@ class GenericRssFetcher(BaseFetcher):
             self.logger.warning(f"RSS 条数参数无效，使用默认值: {raw_limit}")
             return default
 
+    def _bool_param(self, raw_value: Any, default: bool) -> bool:
+        if isinstance(raw_value, bool):
+            return raw_value
+        if raw_value in (None, ""):
+            return default
+        return str(raw_value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _positive_int_param(self, raw_value: Any, default: int) -> int:
+        if raw_value in (None, ""):
+            return default
+        try:
+            return max(int(raw_value), 0)
+        except (TypeError, ValueError):
+            self.logger.warning(f"RSS 正文长度参数无效，使用默认值: {raw_value}")
+            return default
+
+    def _extract_detail(self, html: str, max_chars: int) -> Dict[str, str]:
+        detail = extract_detail_from_html(html, max_chars, self.default_detail_min_chars)
+        return {"title": detail.title, "text": detail.text, "method": detail.method}
+
+    async def _detail_for_url(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        max_chars: int,
+        detail_min_chars: int,
+    ) -> Dict[str, str]:
+        response = await self._safe_get(client, url)
+        if not response:
+            return {"title": "", "text": "", "method": "", "url": ""}
+        detail = await extract_article_detail(
+            client,
+            self._safe_get,
+            str(response.url),
+            response.text,
+            max_chars,
+            detail_min_chars,
+        )
+        return {"title": detail.title, "text": detail.text, "method": detail.method, "url": detail.url}
+
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         feed_url = str(kwargs.get("feed_url", "")).strip()
         runtime_source_id = str(kwargs.get("source_id", "")).strip() or self.source_id
         feed_name = str(kwargs.get("feed_name", "")).strip()
         category = str(kwargs.get("category", "")).strip()
         limit = self._entry_limit(kwargs.get("limit"), 20)
+        fetch_detail_if_missing = self._bool_param(
+            kwargs.get("fetch_detail_if_missing"),
+            self.default_fetch_detail_if_missing,
+        )
+        detail_min_chars = self._positive_int_param(kwargs.get("detail_min_chars"), self.default_detail_min_chars)
+        detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
 
         if not feed_url:
             self.logger.error("RSS/Atom 地址不能为空，放弃抓取。")
@@ -137,16 +227,35 @@ class GenericRssFetcher(BaseFetcher):
             self.logger.warning(f"RSS 解析存在异常: {parsed_feed.bozo_exception}")
 
         resolved_feed_name = feed_name or parsed_feed.feed.get("title", "") or runtime_source_id
-        entries = parsed_feed.entries[:limit]
+        entries = self._sort_entries_newest_first(parsed_feed.entries)[:limit]
 
         for entry in entries:
             html_text = self._entry_html(entry)
             content_text = self._clean_text(html_text)
             publish_date = self._entry_datetime(entry, "published")
-            updated_date = self._entry_datetime(entry, "updated") if entry.get("updated") else ""
+            updated_date = self._entry_datetime(entry, "updated") if "updated" in entry or "updated_parsed" in entry else ""
             title = entry.get("title", "未命名 RSS 条目")
             source_url = entry.get("link", feed_url)
+            detail = {"title": "", "text": ""}
 
+            if (
+                fetch_detail_if_missing
+                and source_url
+                and source_url != feed_url
+                and len(content_text) < detail_min_chars
+            ):
+                detail = await self._detail_for_url(client, source_url, detail_max_chars, detail_min_chars)
+                if detail["text"] and len(detail["text"]) > len(content_text):
+                    content_text = detail["text"]
+
+            raw_data = self._raw_entry(entry)
+            raw_data.update({
+                "detail_fetched": bool(detail["text"]),
+                "detail_title": detail["title"],
+                "detail_text_length": len(detail["text"]),
+                "detail_extraction_method": detail.get("method", ""),
+                "detail_source_url": detail.get("url", ""),
+            })
             yield RssArticleContent(
                 id=self._entry_id(runtime_source_id, entry),
                 title=title,
@@ -161,7 +270,7 @@ class GenericRssFetcher(BaseFetcher):
                 summary=self._clean_text(entry.get("summary", "")),
                 updated_date=updated_date,
                 media_url=self._media_url(entry),
-                raw_data=self._raw_entry(entry),
+                raw_data=raw_data,
             )
 
 
@@ -180,6 +289,9 @@ class PresetRssFetcher(GenericRssFetcher):
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
+            {"field": "fetch_detail_if_missing", "label": "短正文时抓取详情页", "type": "boolean", "default": cls.default_fetch_detail_if_missing},
+            {"field": "detail_min_chars", "label": "触发详情抓取的正文长度", "type": "number", "default": cls.default_detail_min_chars},
+            {"field": "detail_max_chars", "label": "详情页正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
@@ -237,10 +349,10 @@ class HuggingFaceBlogRssFetcher(PresetRssFetcher):
 
 class MicrosoftAiBlogRssFetcher(PresetRssFetcher):
     source_id = "rss_microsoft_ai_blog"
-    name = "Microsoft AI Blog"
-    description = "Microsoft 官方 AI 产品、研究与企业应用动态。"
+    name = "Microsoft Cloud Blog"
+    description = "Microsoft 官方 Cloud/AI 产品、Copilot、Agent 与企业应用动态。"
     icon = "🪟"
-    feed_url = "https://blogs.microsoft.com/ai/feed/"
+    feed_url = "https://www.microsoft.com/en-us/microsoft-cloud/blog/feed/"
     category = "official"
 
 

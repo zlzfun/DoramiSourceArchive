@@ -204,14 +204,21 @@ class ChromaVectorStorage(BaseStorage):
         T2: 每个 chunk 前置元数据头部（来源名/日期/标题）。
         T6: 无正文内容时以头部单 chunk 建立索引，保证空正文文章也可被检索到。
         """
-        # 幂等检查
-        existing = self.collection.get(where={"parent_id": item.id})
-        if existing and existing["ids"]:
-            return False
-
         header = build_document_header(item.source_id, item.publish_date, item.title)
         # T8: 清洗后再判断是否有有效正文
         body = clean_text(item.content or "")
+
+        # 幂等检查；如果旧版本只是 header-only，而本次已有正文，则重建 chunks。
+        existing = self.collection.get(where={"parent_id": item.id})
+        if existing and existing["ids"]:
+            existing_has_body = any(
+                bool(metadata.get("has_body"))
+                for metadata in (existing.get("metadatas") or [])
+                if metadata
+            )
+            if existing_has_body or len(body) < _MIN_BODY_CHARS:
+                return False
+            self.collection.delete(where={"parent_id": item.id})
 
         # T6: 有效正文不足 _MIN_BODY_CHARS 字符时，以头部单 chunk 建立索引
         if len(body) < _MIN_BODY_CHARS:
