@@ -3,6 +3,7 @@ import {
   CheckSquare,
   ChevronDown,
   ChevronRight,
+  EyeOff,
   FolderPlus,
   Layers,
   Play,
@@ -10,6 +11,7 @@ import {
   Save,
   Search,
   Settings2,
+  Star,
   Trash2,
   X,
 } from 'lucide-react';
@@ -38,6 +40,20 @@ const CATEGORY_LABELS = {
 };
 
 const CATEGORY_ORDER = ['official', 'official_web', 'framework', 'paper', 'product_update', 'developer_platform', 'community', 'wechat', 'workflow', 'advanced', 'general'];
+const FAVORITE_FETCHERS_STORAGE_KEY = 'dorami.favorite_fetchers';
+const CATALOG_SCOPE_OPTIONS = [
+  { value: 'focused', label: '聚焦' },
+  { value: 'favorites', label: '收藏' },
+  { value: 'hidden', label: '隐藏' },
+  { value: 'all', label: '全部' },
+];
+const CURATION_TIER_ORDER = {
+  core: 0,
+  watch: 1,
+  advanced: 2,
+  system: 3,
+  hidden: 4,
+};
 
 function getCategoryLabel(category) {
   return CATEGORY_LABELS[category] || category || '其他';
@@ -46,6 +62,14 @@ function getCategoryLabel(category) {
 function getCategoryRank(category) {
   const index = CATEGORY_ORDER.indexOf(category || 'general');
   return index === -1 ? CATEGORY_ORDER.length : index;
+}
+
+function curationMeta(tier) {
+  if (tier === 'core') return { label: '精选', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' };
+  if (tier === 'watch') return { label: '观察', className: 'bg-amber-50 text-amber-700 border-amber-100' };
+  if (tier === 'advanced') return { label: '高级', className: 'bg-violet-50 text-violet-700 border-violet-100' };
+  if (tier === 'system') return { label: '系统', className: 'bg-slate-100 text-slate-600 border-slate-200' };
+  return { label: '隐藏', className: 'bg-slate-100 text-slate-500 border-slate-200' };
 }
 
 function formatDateTime(value) {
@@ -86,6 +110,15 @@ export default function FetchTab({ availableFetchers, showToast }) {
   const [selectedFetchers, setSelectedFetchers] = useState([]);
   const [fetchConfigs, setFetchConfigs] = useState({});
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [catalogScope, setCatalogScope] = useState('focused');
+  const [favoriteFetcherIds, setFavoriteFetcherIds] = useState(() => {
+    try {
+      if (typeof localStorage === 'undefined') return [];
+      return JSON.parse(localStorage.getItem(FAVORITE_FETCHERS_STORAGE_KEY) || '[]');
+    } catch {
+      return [];
+    }
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedGroupId, setExpandedGroupId] = useState(null);
   const [expandedParamFetcherId, setExpandedParamFetcherId] = useState(null);
@@ -137,8 +170,31 @@ export default function FetchTab({ availableFetchers, showToast }) {
     };
   }, [groupModalOpen]);
 
+  useEffect(() => {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(FAVORITE_FETCHERS_STORAGE_KEY, JSON.stringify(favoriteFetcherIds));
+  }, [favoriteFetcherIds]);
+
+  const scopeCounts = useMemo(() => {
+    const favorites = new Set(favoriteFetcherIds);
+    return {
+      focused: availableFetchers.filter(fetcher => fetcher.default_visible !== false).length,
+      favorites: availableFetchers.filter(fetcher => favorites.has(fetcher.id)).length,
+      hidden: availableFetchers.filter(fetcher => fetcher.default_visible === false).length,
+      all: availableFetchers.length,
+    };
+  }, [availableFetchers, favoriteFetcherIds]);
+
+  const scopedFetchers = useMemo(() => {
+    const favorites = new Set(favoriteFetcherIds);
+    if (catalogScope === 'favorites') return availableFetchers.filter(fetcher => favorites.has(fetcher.id));
+    if (catalogScope === 'hidden') return availableFetchers.filter(fetcher => fetcher.default_visible === false);
+    if (catalogScope === 'all') return availableFetchers;
+    return availableFetchers.filter(fetcher => fetcher.default_visible !== false);
+  }, [availableFetchers, catalogScope, favoriteFetcherIds]);
+
   const categoryOptions = useMemo(() => {
-    const counts = availableFetchers.reduce((acc, fetcher) => {
+    const counts = scopedFetchers.reduce((acc, fetcher) => {
       const category = fetcher.category || 'general';
       acc[category] = (acc[category] || 0) + 1;
       return acc;
@@ -147,37 +203,46 @@ export default function FetchTab({ availableFetchers, showToast }) {
     return Object.entries(counts)
       .sort(([a], [b]) => getCategoryRank(a) - getCategoryRank(b) || getCategoryLabel(a).localeCompare(getCategoryLabel(b), 'zh-Hans-CN'))
       .map(([category, count]) => ({ category, count }));
-  }, [availableFetchers]);
+  }, [scopedFetchers]);
 
   const filteredFetchers = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    return [...availableFetchers]
+    return [...scopedFetchers]
       .filter(fetcher => categoryFilter === 'all' || (fetcher.category || 'general') === categoryFilter)
       .filter(fetcher => {
         if (!query) return true;
-        return [fetcher.name, fetcher.id, fetcher.desc, fetcher.content_type, getCategoryLabel(fetcher.category)]
+        return [fetcher.name, fetcher.id, fetcher.desc, fetcher.content_type, fetcher.curation_reason, getCategoryLabel(fetcher.category)]
           .filter(Boolean)
           .join(' ')
           .toLowerCase()
           .includes(query);
       })
       .sort((a, b) => {
+        const tierDelta = (CURATION_TIER_ORDER[a.curation_tier] ?? 9) - (CURATION_TIER_ORDER[b.curation_tier] ?? 9);
+        if (tierDelta !== 0) return tierDelta;
         const categoryDelta = getCategoryRank(a.category) - getCategoryRank(b.category);
         if (categoryDelta !== 0) return categoryDelta;
         return a.name.localeCompare(b.name, 'zh-Hans-CN');
       });
-  }, [availableFetchers, categoryFilter, searchQuery]);
+  }, [scopedFetchers, categoryFilter, searchQuery]);
 
   const modalFetchers = useMemo(() => {
     const query = modalSearch.trim().toLowerCase();
-    if (!query) return availableFetchers;
-    return availableFetchers.filter(fetcher => [fetcher.name, fetcher.id, fetcher.desc].filter(Boolean).join(' ').toLowerCase().includes(query));
-  }, [availableFetchers, modalSearch]);
+    const favorites = new Set(favoriteFetcherIds);
+    const baseFetchers = query
+      ? availableFetchers
+      : availableFetchers.filter(fetcher => fetcher.default_visible !== false || favorites.has(fetcher.id));
+    return baseFetchers.filter(fetcher => [fetcher.name, fetcher.id, fetcher.desc].filter(Boolean).join(' ').toLowerCase().includes(query));
+  }, [availableFetchers, favoriteFetcherIds, modalSearch]);
 
   const getFetcherName = (id) => fetchersById[id]?.name || id;
 
   const toggleFetcherSelection = (id) => {
     setSelectedFetchers(prev => prev.includes(id) ? prev.filter(fid => fid !== id) : [...prev, id]);
+  };
+
+  const toggleFavorite = (id) => {
+    setFavoriteFetcherIds(prev => prev.includes(id) ? prev.filter(fid => fid !== id) : [...prev, id]);
   };
 
   const updateModalNodeParam = (fetcherId, field, value) => {
@@ -379,15 +444,31 @@ export default function FetchTab({ availableFetchers, showToast }) {
                   <Layers className="h-5 w-5" />
                 </div>
                 <span>内置节点目录</span>
-                <span className="text-xs font-mono text-slate-400">{filteredFetchers.length}/{availableFetchers.length}</span>
+                <span className="text-xs font-mono text-slate-400">{filteredFetchers.length}/{scopeCounts[catalogScope]}</span>
               </div>
               <div className="search-box catalog-search">
                 <Search className="mr-2 h-4 w-4 text-slate-400" />
                 <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="搜索名称、ID、类型" className="py-2.5" />
               </div>
             </div>
+            <div className="catalog-chips mb-3">
+              {CATALOG_SCOPE_OPTIONS.map(option => (
+                <button
+                  key={option.value}
+                  onClick={() => {
+                    setCatalogScope(option.value);
+                    setCategoryFilter('all');
+                  }}
+                  className={`catalog-chip border ${catalogScope === option.value ? 'filter-chip-active catalog-chip-active' : 'filter-chip'}`}
+                >
+                  {option.value === 'favorites' && <Star className="h-3.5 w-3.5" />}
+                  {option.value === 'hidden' && <EyeOff className="h-3.5 w-3.5" />}
+                  {option.label} {scopeCounts[option.value] || 0}
+                </button>
+              ))}
+            </div>
             <div className="catalog-chips">
-              <button onClick={() => setCategoryFilter('all')} className={`catalog-chip border ${categoryFilter === 'all' ? 'filter-chip-active catalog-chip-active' : 'filter-chip'}`}>全部 {availableFetchers.length}</button>
+              <button onClick={() => setCategoryFilter('all')} className={`catalog-chip border ${categoryFilter === 'all' ? 'filter-chip-active catalog-chip-active' : 'filter-chip'}`}>全部 {scopedFetchers.length}</button>
               {categoryOptions.map(({ category, count }) => (
                 <button key={category} onClick={() => setCategoryFilter(category)} className={`catalog-chip border ${categoryFilter === category ? 'filter-chip-active catalog-chip-active' : 'filter-chip'}`}>
                   {getCategoryLabel(category)} {count}
@@ -403,6 +484,8 @@ export default function FetchTab({ availableFetchers, showToast }) {
               const healthInfo = healthMeta(health?.health_status);
               const paramCount = (fetcher.parameters || []).length;
               const paramsExpanded = expandedParamFetcherId === fetcher.id;
+              const tierInfo = curationMeta(fetcher.curation_tier);
+              const isFavorite = favoriteFetcherIds.includes(fetcher.id);
               return (
                 <div key={fetcher.id} className={`node-card rounded-[16px] flex flex-col transition-all ${isSelected ? 'border-blue-500 ring-4 ring-blue-500/10' : ''}`}>
                   <div onClick={() => toggleFetcherSelection(fetcher.id)} className="p-4 flex items-start gap-3 cursor-pointer rounded-t-[16px] hover:bg-slate-50">
@@ -411,8 +494,22 @@ export default function FetchTab({ availableFetchers, showToast }) {
                     </div>
                     <div className="w-12 h-12 shrink-0 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-2xl shadow-sm">{fetcher.icon}</div>
                     <div className="flex-1 min-w-0">
-                      <h3 className="card-title">{fetcher.name}</h3>
+                      <div className="flex items-start justify-between gap-2">
+                        <h3 className="card-title">{fetcher.name}</h3>
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleFavorite(fetcher.id);
+                          }}
+                          className={`rounded-lg p-1.5 transition-colors ${isFavorite ? 'bg-amber-50 text-amber-500' : 'text-slate-300 hover:bg-slate-100 hover:text-slate-500'}`}
+                          title={isFavorite ? '取消收藏' : '收藏节点'}
+                          aria-label={isFavorite ? `取消收藏 ${fetcher.name}` : `收藏 ${fetcher.name}`}
+                        >
+                          <Star className={`h-4 w-4 ${isFavorite ? 'fill-current' : ''}`} />
+                        </button>
+                      </div>
                       <div className="flex items-center gap-2 mt-1.5 min-w-0">
+                        <span className={`status-badge truncate ${tierInfo.className}`} title={fetcher.curation_reason}>{tierInfo.label}</span>
                         <span className="status-badge bg-blue-50 text-blue-700 border-blue-100 truncate">{getCategoryLabel(fetcher.category)}</span>
                         <span className={`status-badge truncate ${healthInfo.className}`}>{healthInfo.label}</span>
                         <span className="status-badge bg-slate-100 text-slate-500 border-slate-200 truncate">{fetcher.id}</span>
@@ -421,6 +518,11 @@ export default function FetchTab({ availableFetchers, showToast }) {
                   </div>
                   <div className="px-4 pb-4 bg-white/70 rounded-b-[16px] flex-1 flex flex-col gap-3">
                     <p className="text-sm text-slate-600 leading-relaxed min-h-[38px]">{fetcher.desc}</p>
+                    {fetcher.curation_reason && (
+                      <div className="text-xs leading-relaxed rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-slate-500">
+                        {fetcher.curation_reason}
+                      </div>
+                    )}
                     <div className="grid grid-cols-3 gap-2">
                       <div className="bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2">
                         <div className="tiny-meta">最近运行</div>
