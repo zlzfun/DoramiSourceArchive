@@ -5,6 +5,7 @@ import {
   ChevronRight,
   EyeOff,
   FolderPlus,
+  LayoutGrid,
   Layers,
   Play,
   RefreshCw,
@@ -12,6 +13,7 @@ import {
   Search,
   Settings2,
   Star,
+  Target,
   Trash2,
   X,
 } from 'lucide-react';
@@ -42,10 +44,10 @@ const CATEGORY_LABELS = {
 const CATEGORY_ORDER = ['official', 'official_web', 'framework', 'paper', 'product_update', 'developer_platform', 'community', 'wechat', 'workflow', 'advanced', 'general'];
 const FAVORITE_FETCHERS_STORAGE_KEY = 'dorami.favorite_fetchers';
 const CATALOG_SCOPE_OPTIONS = [
-  { value: 'focused', label: '聚焦' },
-  { value: 'favorites', label: '收藏' },
-  { value: 'hidden', label: '隐藏' },
-  { value: 'all', label: '全部' },
+  { value: 'focused', label: '聚焦', icon: Target },
+  { value: 'favorites', label: '收藏', icon: Star },
+  { value: 'hidden', label: '隐藏', icon: EyeOff },
+  { value: 'all', label: '全部', icon: LayoutGrid },
 ];
 const CURATION_TIER_ORDER = {
   core: 0,
@@ -451,29 +453,52 @@ export default function FetchTab({ availableFetchers, showToast }) {
                 <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="搜索名称、ID、类型" className="py-2.5" />
               </div>
             </div>
-            <div className="catalog-chips mb-3">
-              {CATALOG_SCOPE_OPTIONS.map(option => (
-                <button
-                  key={option.value}
-                  onClick={() => {
-                    setCatalogScope(option.value);
-                    setCategoryFilter('all');
-                  }}
-                  className={`catalog-chip border ${catalogScope === option.value ? 'filter-chip-active catalog-chip-active' : 'filter-chip'}`}
-                >
-                  {option.value === 'favorites' && <Star className="h-3.5 w-3.5" />}
-                  {option.value === 'hidden' && <EyeOff className="h-3.5 w-3.5" />}
-                  {option.label} {scopeCounts[option.value] || 0}
-                </button>
-              ))}
+            <div className="catalog-filter-row mb-3">
+              <span className="catalog-dimension-label">视图</span>
+              <div className="scope-toggle" role="tablist" aria-label="节点视图范围">
+                {CATALOG_SCOPE_OPTIONS.map(option => {
+                  const Icon = option.icon;
+                  const active = catalogScope === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => {
+                        setCatalogScope(option.value);
+                        setCategoryFilter('all');
+                      }}
+                      className={`scope-toggle-option ${active ? 'scope-toggle-option-active' : ''}`}
+                    >
+                      {Icon && <Icon />}
+                      <span>{option.label}</span>
+                      <span className="scope-toggle-count">{scopeCounts[option.value] || 0}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="catalog-chips">
-              <button onClick={() => setCategoryFilter('all')} className={`catalog-chip border ${categoryFilter === 'all' ? 'filter-chip-active catalog-chip-active' : 'filter-chip'}`}>全部 {scopedFetchers.length}</button>
-              {categoryOptions.map(({ category, count }) => (
-                <button key={category} onClick={() => setCategoryFilter(category)} className={`catalog-chip border ${categoryFilter === category ? 'filter-chip-active catalog-chip-active' : 'filter-chip'}`}>
-                  {getCategoryLabel(category)} {count}
+            <div className="catalog-filter-row">
+              <span className="catalog-dimension-label">分类</span>
+              <div className="catalog-chips">
+                <button
+                  onClick={() => setCategoryFilter('all')}
+                  className={`category-chip ${categoryFilter === 'all' ? 'category-chip-active' : ''}`}
+                >
+                  <span>全部</span>
+                  <span className="category-chip-count">{scopedFetchers.length}</span>
                 </button>
-              ))}
+                {categoryOptions.map(({ category, count }) => (
+                  <button
+                    key={category}
+                    onClick={() => setCategoryFilter(category)}
+                    className={`category-chip ${categoryFilter === category ? 'category-chip-active' : ''}`}
+                  >
+                    <span>{getCategoryLabel(category)}</span>
+                    <span className="category-chip-count">{count}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
