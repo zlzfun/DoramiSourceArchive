@@ -61,6 +61,10 @@ function triggerLabel(type) {
   return type === 'scheduled' ? '定时' : '手动';
 }
 
+function normalizeCollectorDisplayName(value) {
+  return String(value || '').replaceAll('节点组', '采集范围');
+}
+
 function blankJob() {
   return {
     name: '',
@@ -384,7 +388,7 @@ export default function FetchRunsTab({
       rows.push({
         key: `collection-${run.id}`,
         type: 'collection',
-        title: run.name || job?.name || `采集运行 #${run.id}`,
+        title: normalizeCollectorDisplayName(run.name || job?.name || `采集运行 #${run.id}`),
         subtitle: run.job_id ? `任务 #${run.job_id}` : scopeLabel(run.run_scope),
         nodeLabel: `${run.node_count || 0} 个节点`,
         ...run,
