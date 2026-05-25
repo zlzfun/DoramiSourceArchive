@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, useMemo } from 'react';
 import {
   BarChart2,
   Bot,
@@ -16,7 +16,7 @@ import VectorTab from './components/VectorTab';
 import FetchRunsTab from './components/FetchRunsTab';
 import MCPTab from './components/MCPTab';
 import LoginScreen from './components/LoginScreen';
-import { fetchAuthSession, fetchFetchers, loginAdmin, logoutAdmin } from './api';
+import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
 import { LOGO_PATH } from './config';
 
 function BrandLogo({ logoError, onLogoError }) {
@@ -35,6 +35,7 @@ export default function App() {
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
   const [logoError, setLogoError] = useState(false);
   const [availableFetchers, setAvailableFetchers] = useState([]);
+  const [runtimeInfo, setRuntimeInfo] = useState({ role: 'all', collector_enabled: true, reader_enabled: true });
   const [authState, setAuthState] = useState({ status: 'checking', user: null });
   const [articlesDirty, setArticlesDirty] = useState(false);
   const [runsDirty, setRunsDirty] = useState(false);
@@ -73,11 +74,17 @@ export default function App() {
     setTimeout(() => setToast({ show: false, message: '', type: 'info' }), 3000);
   }, []);
 
-  const loadFetchers = useCallback(async () => {
+  const loadRuntimeAndFetchers = useCallback(async () => {
     try {
-      setAvailableFetchers(await fetchFetchers());
-    } catch {
-      showToast(`网络连接异常，无法获取后端数据。`, 'error');
+      const runtime = await fetchRuntimeInfo();
+      setRuntimeInfo(runtime);
+      if (runtime.collector_enabled) {
+        setAvailableFetchers(await fetchFetchers());
+      } else {
+        setAvailableFetchers([]);
+      }
+    } catch (error) {
+      showToast(error.message || `网络连接异常，无法获取后端数据。`, 'error');
     }
   }, [showToast]);
 
@@ -104,8 +111,8 @@ export default function App() {
 
   useEffect(() => {
     if (authState.status !== 'authenticated') return;
-    loadFetchers();
-  }, [authState.status, loadFetchers]);
+    loadRuntimeAndFetchers();
+  }, [authState.status, loadRuntimeAndFetchers]);
 
   useEffect(() => {
     const handleAuthExpired = () => {
@@ -132,13 +139,19 @@ export default function App() {
     }
   };
 
-  const tabs = [
+  const tabs = useMemo(() => [
     { id: 'data', icon: Database, label: '知识台账' },
-    { id: 'fetch', icon: CloudDownload, label: '节点管理' },
-    { id: 'runs', icon: History, label: '任务与运行' },
-    { id: 'vector', icon: BarChart2, label: '向量雷达' },
-    { id: 'mcp', icon: Plug2, label: '接入集成' },
-  ];
+    { id: 'fetch', icon: CloudDownload, label: '节点管理', surface: 'collector' },
+    { id: 'runs', icon: History, label: '任务与运行', surface: 'collector' },
+    { id: 'vector', icon: BarChart2, label: '向量雷达', surface: 'reader' },
+    { id: 'mcp', icon: Plug2, label: '接入集成', surface: 'reader' },
+  ].filter(tab => !tab.surface || runtimeInfo[`${tab.surface}_enabled`]), [runtimeInfo]);
+
+  useEffect(() => {
+    if (!tabs.some(tab => tab.id === activeTab)) {
+      switchTab(tabs[0]?.id || 'data');
+    }
+  }, [activeTab, switchTab, tabs]);
 
   if (authState.status === 'checking') {
     return (
@@ -226,7 +239,7 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('fetch') && (
-            <div style={{ display: activeTab === 'fetch' ? 'block' : 'none' }}>
+            <div style={{ display: activeTab === 'fetch' && runtimeInfo.collector_enabled ? 'block' : 'none' }}>
               <FetchTab
                 availableFetchers={availableFetchers}
                 showToast={showToast}
@@ -239,7 +252,7 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('runs') && (
-            <div style={{ display: activeTab === 'runs' ? 'block' : 'none' }}>
+            <div style={{ display: activeTab === 'runs' && runtimeInfo.collector_enabled ? 'block' : 'none' }}>
               <FetchRunsTab
                 availableFetchers={availableFetchers}
                 showToast={showToast}
@@ -254,12 +267,12 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('vector') && (
-            <div style={{ display: activeTab === 'vector' ? 'block' : 'none' }}>
+            <div style={{ display: activeTab === 'vector' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
               <VectorTab availableFetchers={availableFetchers} showToast={showToast} />
             </div>
           )}
           {mountedTabs.has('mcp') && (
-            <div style={{ display: activeTab === 'mcp' ? 'block' : 'none' }}>
+            <div style={{ display: activeTab === 'mcp' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
               <MCPTab showToast={showToast} />
             </div>
           )}

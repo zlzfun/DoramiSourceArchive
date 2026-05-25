@@ -78,27 +78,99 @@ class MCPGateApp:
 _mcp_gate = MCPGateApp()
 
 
+def runtime_role() -> str:
+    return settings.runtime.role
+
+
+def collector_role_enabled() -> bool:
+    return runtime_role() in {"all", "collector"}
+
+
+def reader_role_enabled() -> bool:
+    return runtime_role() in {"all", "reader"}
+
+
+def runtime_capabilities() -> Dict[str, Any]:
+    return {
+        "role": runtime_role(),
+        "collector_enabled": collector_role_enabled(),
+        "reader_enabled": reader_role_enabled(),
+    }
+
+
+COLLECTOR_API_PREFIXES = (
+    "/api/fetchers",
+    "/api/source-health",
+    "/api/source-states",
+    "/api/fetch-runs",
+    "/api/fetch/",
+    "/api/source-configs",
+    "/api/import/social-posts",
+    "/api/node-groups",
+    "/api/collection-jobs",
+    "/api/collection-job-runs",
+    "/api/tasks",
+)
+
+READER_API_PREFIXES = (
+    "/api/dify",
+    "/api/mcp",
+    "/api/rag",
+    "/api/skill",
+    "/api/vector",
+    "/api/vectorize",
+)
+
+
+def _path_matches(path: str, prefixes: tuple[str, ...]) -> bool:
+    return any(path == prefix or path.startswith(f"{prefix}/") for prefix in prefixes)
+
+
+def disabled_runtime_surface(method: str, path: str) -> Optional[str]:
+    if path.startswith("/mcp") and not reader_role_enabled():
+        return "reader"
+    if _path_matches(path, READER_API_PREFIXES) and not reader_role_enabled():
+        return "reader"
+    if _path_matches(path, COLLECTOR_API_PREFIXES) and not collector_role_enabled():
+        return "collector"
+    return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _mcp_enabled
-    # Init MCP enabled state from DB
-    with Session(db_sink.engine) as session:
-        rec = session.get(AppSettingRecord, "mcp_enabled")
-        if rec is None:
-            session.add(AppSettingRecord(key="mcp_enabled", value="true"))
-            session.commit()
-            _mcp_enabled = True
-        else:
-            _mcp_enabled = rec.value.lower() == "true"
-    # Build fresh FastMCP instance (session_manager can only be run() once per instance)
-    mcp = build_mcp_app(db_sink, vector_sink)
-    _mcp_gate._app = mcp.streamable_http_app()
-    # Start scheduler
-    load_tasks_to_scheduler()
-    if scheduler.state == STATE_STOPPED:
-        scheduler.start()
-        print("⏰ APScheduler 定时调度引擎已启动！")
-    async with mcp.session_manager.run():
+    print(f"🧭 Dorami runtime role: {runtime_role()}")
+
+    mcp = None
+    if reader_role_enabled():
+        # Init MCP enabled state from DB
+        with Session(db_sink.engine) as session:
+            rec = session.get(AppSettingRecord, "mcp_enabled")
+            if rec is None:
+                session.add(AppSettingRecord(key="mcp_enabled", value="true"))
+                session.commit()
+                _mcp_enabled = True
+            else:
+                _mcp_enabled = rec.value.lower() == "true"
+        # Build fresh FastMCP instance (session_manager can only be run() once per instance)
+        mcp = build_mcp_app(db_sink, vector_sink)
+        _mcp_gate._app = mcp.streamable_http_app()
+    else:
+        _mcp_gate._app = None
+        _mcp_enabled = False
+
+    if collector_role_enabled():
+        load_tasks_to_scheduler()
+        if scheduler.state == STATE_STOPPED:
+            scheduler.start()
+            print("⏰ APScheduler 定时调度引擎已启动！")
+    else:
+        print("⏸️ 当前 reader 运行角色不启动抓取调度引擎。")
+
+    if mcp is not None:
+        async with mcp.session_manager.run():
+            yield
+    else:
         yield
     _mcp_gate._app = None
 
@@ -209,6 +281,18 @@ def is_public_auth_path(path: str) -> bool:
 @app.middleware("http")
 async def require_admin_session(request: Request, call_next):
     path = request.url.path
+    disabled_surface = disabled_runtime_surface(request.method, path)
+    if disabled_surface:
+        return StarletteJSONResponse(
+            {
+                "detail": (
+                    f"{disabled_surface} API surface is disabled for runtime role "
+                    f"'{runtime_role()}'"
+                ),
+                **runtime_capabilities(),
+            },
+            status_code=403,
+        )
     if request.method == "OPTIONS" or is_public_auth_path(path) or path == "/mcp" or path.startswith("/mcp/"):
         return await call_next(request)
     if path.startswith("/api/"):
@@ -232,6 +316,11 @@ def get_auth_session(request: Request):
     if current_admin_session(request) is None:
         return {"authenticated": False, "user": None}
     return {"authenticated": True, "user": {"username": AUTH_USERNAME, "role": "admin"}}
+
+
+@app.get("/api/runtime")
+def get_runtime():
+    return runtime_capabilities()
 
 
 @app.post("/api/auth/logout")

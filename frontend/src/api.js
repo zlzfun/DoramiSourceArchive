@@ -37,6 +37,12 @@ export async function fetchAuthSession() {
   return res.json();
 }
 
+export async function fetchRuntimeInfo() {
+  const res = await apiFetch(`${API_BASE_URL}/runtime`);
+  if (!res.ok) await handleApiError(res, '获取运行角色失败');
+  return res.json();
+}
+
 export async function logoutAdmin() {
   const res = await apiFetch(`${API_BASE_URL}/auth/logout`, { method: 'POST' });
   if (!res.ok) await handleApiError(res, '退出登录失败');

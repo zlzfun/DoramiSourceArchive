@@ -36,6 +36,11 @@ class ServerConfig:
 
 
 @dataclass(frozen=True)
+class RuntimeConfig:
+    role: str = "all"
+
+
+@dataclass(frozen=True)
 class NetworkConfig:
     disable_ca_bundle: bool = True
     hf_endpoint: str = "https://hf-mirror.com"
@@ -109,6 +114,7 @@ class ImageHostConfig:
 @dataclass(frozen=True)
 class AppConfig:
     server: ServerConfig
+    runtime: RuntimeConfig
     network: NetworkConfig
     proxy: ProxyConfig
     auth: AuthConfig
@@ -155,17 +161,30 @@ def _read_config_file() -> configparser.ConfigParser:
     return parser
 
 
+def _runtime_role(raw_value: str) -> str:
+    role = (raw_value or "all").strip().lower()
+    allowed = {"all", "collector", "reader"}
+    if role not in allowed:
+        allowed_text = ", ".join(sorted(allowed))
+        raise ValueError(f"Invalid runtime role '{raw_value}'. Expected one of: {allowed_text}")
+    return role
+
+
 def load_config() -> AppConfig:
     parser = _read_config_file()
 
     storage_db = f"sqlite:///{PROJECT_ROOT / 'data' / 'cms_data.db'}"
     storage_chroma = str(PROJECT_ROOT / "data" / "chroma_db")
+    runtime_role = os.getenv("DORAMI_RUNTIME_ROLE") or parser.get("runtime", "role", fallback="all")
 
     return AppConfig(
         server=ServerConfig(
             host=parser.get("server", "host", fallback="127.0.0.1"),
             port=parser.getint("server", "port", fallback=8088),
             reload=parser.getboolean("server", "reload", fallback=True),
+        ),
+        runtime=RuntimeConfig(
+            role=_runtime_role(runtime_role),
         ),
         network=NetworkConfig(
             disable_ca_bundle=parser.getboolean("network", "disable_ca_bundle", fallback=True),

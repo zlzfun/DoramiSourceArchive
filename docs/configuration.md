@@ -14,6 +14,19 @@
 
 真实部署文件可能包含管理员密码、auth secret、代理账密、小鲁班凭证、图床 secret 等敏感值，已通过 `.gitignore` 排除，不应提交。
 
+运行角色读取 `[runtime] role`，也可以用 `DORAMI_RUNTIME_ROLE` 覆盖：
+
+```ini
+[runtime]
+role = all
+```
+
+可选值：
+
+- `all`：本地兼容模式，保留现有采集和消费能力。
+- `collector`：外网采集归档层，开启抓取、调度、采集任务和运行观测，关闭 MCP/Dify/RAG 等 reader 交付面。
+- `reader`：内网分发订阅层，开启内容阅览、向量/RAG、Dify 和 MCP，关闭抓取、调度和采集任务。
+
 PM2 使用方案 A：启动 `src/main.py`，由应用代码读取 `[server] host/port/reload` 后调用 Uvicorn。仓库根目录提供的 `ecosystem.config.js` 只保留进程管理配置和 `DORAMI_CONFIG_FILE` 路径，不再注入代理、模型或业务密钥。默认读取 `./config/production.ini`，也可以在启动 PM2 前覆盖：
 
 ```bash
