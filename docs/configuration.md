@@ -96,10 +96,21 @@ no_proxy = 127.0.0.1,localhost
 
 ```ini
 [auth]
-username = admin
-password = change-me
+admin_users = admin:change-me,ops:another-secret
+user_users = user:change-me,reader:reader-secret
 secret = change-me-to-a-long-random-string
 ```
+
+`admin_users` 和 `user_users` 都是逗号分隔的白名单，单项格式为 `账号:密码`。
+旧配置中的 `username/password` 仍会被兼容读取为一个 admin 账号，但建议迁移到白名单写法。
+
+账号角色会和 `[runtime] role` 取交集：
+
+- admin 账号：只能访问采集归档层，包括抓取、调度、采集范围、运行观测和归档导出。
+- user 账号：只能访问订阅分发层，包括内容阅览、订阅源、向量/RAG、Dify 和 MCP 管理。
+- 内容台账读取对两类账号开放；手工录入、编辑、删除等归档写操作只对 admin 账号开放。
+- 当 `role = all` 时，同一个部署可通过不同账号隔离两层。
+- 当 `role = collector` 或 `role = reader` 时，部署角色仍是外层硬限制。
 
 修改 `production.ini` 后需要重新执行 `./deploy.sh` 或 `pm2 reload ecosystem.config.js --only dorami-backend-v2 --update-env`，因为认证配置只在后端进程启动时读取。
 

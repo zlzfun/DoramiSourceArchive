@@ -84,19 +84,30 @@ def runtime_role() -> str:
     return settings.runtime.role
 
 
-def collector_role_enabled() -> bool:
+def runtime_collector_enabled() -> bool:
     return runtime_role() in {"all", "collector"}
 
 
-def reader_role_enabled() -> bool:
+def runtime_reader_enabled() -> bool:
     return runtime_role() in {"all", "reader"}
 
 
-def runtime_capabilities() -> Dict[str, Any]:
+def collector_role_enabled(session: Optional[Dict[str, Any]] = None) -> bool:
+    account_role = session.get("role") if session else None
+    return runtime_collector_enabled() and (account_role in (None, "admin"))
+
+
+def reader_role_enabled(session: Optional[Dict[str, Any]] = None) -> bool:
+    account_role = session.get("role") if session else None
+    return runtime_reader_enabled() and (account_role in (None, "user"))
+
+
+def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return {
         "role": runtime_role(),
-        "collector_enabled": collector_role_enabled(),
-        "reader_enabled": reader_role_enabled(),
+        "account_role": session.get("role") if session else None,
+        "collector_enabled": collector_role_enabled(session),
+        "reader_enabled": reader_role_enabled(session),
     }
 
 
@@ -132,14 +143,25 @@ def _path_matches(path: str, prefixes: tuple[str, ...]) -> bool:
     return any(path == prefix or path.startswith(f"{prefix}/") for prefix in prefixes)
 
 
-def disabled_runtime_surface(path: str) -> Optional[str]:
-    if (path == "/mcp" or path.startswith("/mcp/")) and not reader_role_enabled():
+def disabled_runtime_surface(path: str, session: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    if (path == "/mcp" or path.startswith("/mcp/")) and not reader_role_enabled(session):
         return "reader"
-    if _path_matches(path, READER_API_PREFIXES) and not reader_role_enabled():
+    if _path_matches(path, READER_API_PREFIXES) and not reader_role_enabled(session):
         return "reader"
-    if _path_matches(path, COLLECTOR_API_PREFIXES) and not collector_role_enabled():
+    if _path_matches(path, COLLECTOR_API_PREFIXES) and not collector_role_enabled(session):
         return "collector"
     return None
+
+
+def article_write_requires_collector(path: str, method: str) -> bool:
+    normalized_method = method.upper()
+    if path == "/api/articles" and normalized_method == "POST":
+        return True
+    if path == "/api/articles/batch-delete" and normalized_method == "POST":
+        return True
+    if path.startswith("/api/articles/") and normalized_method in {"PUT", "DELETE"}:
+        return True
+    return False
 
 
 @asynccontextmanager
@@ -148,7 +170,7 @@ async def lifespan(app: FastAPI):
     print(f"🧭 Dorami runtime role: {runtime_role()}")
 
     mcp = None
-    if reader_role_enabled():
+    if runtime_reader_enabled():
         # Init MCP enabled state from DB
         with Session(db_sink.engine) as session:
             rec = session.get(AppSettingRecord, "mcp_enabled")
@@ -165,7 +187,7 @@ async def lifespan(app: FastAPI):
         _mcp_gate._app = None
         _mcp_enabled = False
 
-    if collector_role_enabled():
+    if runtime_collector_enabled():
         load_tasks_to_scheduler()
         if scheduler.state == STATE_STOPPED:
             scheduler.start()
@@ -205,9 +227,15 @@ scheduler = AsyncIOScheduler()
 # ==================== 管理员登录与会话 ====================
 AUTH_COOKIE_NAME = settings.auth.cookie_name
 AUTH_SESSION_SECONDS = settings.auth.session_seconds
-AUTH_USERNAME = settings.auth.username
-AUTH_PASSWORD = settings.auth.password
-AUTH_SECRET = settings.auth.secret or f"{AUTH_PASSWORD}:{settings.storage.database_url}:dorami-auth-v1"
+AUTH_ACCOUNTS = {
+    credential.username: {"password": credential.password, "role": "admin"}
+    for credential in settings.auth.admin_users
+}
+for credential in settings.auth.user_users:
+    if credential.username in AUTH_ACCOUNTS:
+        raise ValueError(f"Auth user '{credential.username}' is configured in both admin_users and user_users")
+    AUTH_ACCOUNTS[credential.username] = {"password": credential.password, "role": "user"}
+AUTH_SECRET = settings.auth.secret or f"{settings.auth.admin_users}:{settings.auth.user_users}:{settings.storage.database_url}:dorami-auth-v2"
 
 
 class AuthLoginParams(BaseModel):
@@ -234,10 +262,10 @@ def _sign_auth_payload(payload: str) -> str:
     return hmac.new(AUTH_SECRET.encode("utf-8"), payload.encode("ascii"), hashlib.sha256).hexdigest()
 
 
-def create_auth_token() -> str:
+def create_auth_token(username: str, role: str) -> str:
     payload = _b64encode_json({
-        "sub": AUTH_USERNAME,
-        "role": "admin",
+        "sub": username,
+        "role": role,
         "exp": int(time.time()) + AUTH_SESSION_SECONDS,
     })
     return f"{payload}.{_sign_auth_payload(payload)}"
@@ -253,21 +281,26 @@ def read_auth_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
         data = _b64decode_json(payload)
     except (ValueError, json.JSONDecodeError):
         return None
-    if data.get("sub") != AUTH_USERNAME or data.get("role") != "admin":
+    account = AUTH_ACCOUNTS.get(data.get("sub"))
+    if not account or data.get("role") != account["role"]:
         return None
     if int(data.get("exp", 0)) < int(time.time()):
         return None
     return data
 
 
-def current_admin_session(request: Request) -> Optional[Dict[str, Any]]:
+def current_auth_session(request: Request) -> Optional[Dict[str, Any]]:
     return read_auth_token(request.cookies.get(AUTH_COOKIE_NAME))
 
 
-def set_auth_cookie(response: Response) -> None:
+def current_admin_session(request: Request) -> Optional[Dict[str, Any]]:
+    return current_auth_session(request)
+
+
+def set_auth_cookie(response: Response, username: str, role: str) -> None:
     response.set_cookie(
         key=AUTH_COOKIE_NAME,
-        value=create_auth_token(),
+        value=create_auth_token(username, role),
         max_age=AUTH_SESSION_SECONDS,
         httponly=True,
         secure=_auth_cookie_secure(),
@@ -307,10 +340,13 @@ async def require_admin_session(request: Request, call_next):
                 status_code=403,
             )
         return await call_next(request)
+    auth_session = current_auth_session(request)
     if path.startswith("/api/"):
-        if current_admin_session(request) is None:
+        if auth_session is None:
             return StarletteJSONResponse({"detail": "未登录或登录已过期"}, status_code=401)
-    disabled_surface = disabled_runtime_surface(path)
+    disabled_surface = disabled_runtime_surface(path, auth_session)
+    if disabled_surface is None and article_write_requires_collector(path, request.method):
+        disabled_surface = None if collector_role_enabled(auth_session) else "collector"
     if disabled_surface:
         return StarletteJSONResponse(
             {
@@ -318,7 +354,7 @@ async def require_admin_session(request: Request, call_next):
                     f"{disabled_surface} API surface is disabled for runtime role "
                     f"'{runtime_role()}'"
                 ),
-                **runtime_capabilities(),
+                **runtime_capabilities(auth_session),
             },
             status_code=403,
         )
@@ -327,24 +363,30 @@ async def require_admin_session(request: Request, call_next):
 
 @app.post("/api/auth/login")
 def login_admin(params: AuthLoginParams, response: Response):
-    username_ok = hmac.compare_digest(params.username.strip(), AUTH_USERNAME)
-    password_ok = hmac.compare_digest(params.password, AUTH_PASSWORD)
-    if not (username_ok and password_ok):
+    username = params.username.strip()
+    account = None
+    for configured_username, configured_account in AUTH_ACCOUNTS.items():
+        if hmac.compare_digest(username, configured_username):
+            account = configured_account
+            username = configured_username
+            break
+    if not account or not hmac.compare_digest(params.password, account["password"]):
         raise HTTPException(status_code=401, detail="账号或密码错误")
-    set_auth_cookie(response)
-    return {"authenticated": True, "user": {"username": AUTH_USERNAME, "role": "admin"}}
+    set_auth_cookie(response, username, account["role"])
+    return {"authenticated": True, "user": {"username": username, "role": account["role"]}}
 
 
 @app.get("/api/auth/session")
 def get_auth_session(request: Request):
-    if current_admin_session(request) is None:
+    session = current_auth_session(request)
+    if session is None:
         return {"authenticated": False, "user": None}
-    return {"authenticated": True, "user": {"username": AUTH_USERNAME, "role": "admin"}}
+    return {"authenticated": True, "user": {"username": session["sub"], "role": session["role"]}}
 
 
 @app.get("/api/runtime")
-def get_runtime():
-    return runtime_capabilities()
+def get_runtime(request: Request):
+    return runtime_capabilities(current_auth_session(request))
 
 
 @app.post("/api/auth/logout")

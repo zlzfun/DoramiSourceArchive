@@ -13,7 +13,17 @@ import {
   createArticle,
 } from '../api';
 
-export default function DataTab({ availableFetchers, showToast, isActive = true, articlesDirty = false, onArticlesRefreshed, pendingFilter, onPendingFilterApplied }) {
+export default function DataTab({
+  availableFetchers,
+  showToast,
+  isActive = true,
+  canManageArticles = true,
+  canVectorizeArticles = true,
+  articlesDirty = false,
+  onArticlesRefreshed,
+  pendingFilter,
+  onPendingFilterApplied,
+}) {
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [vectorizingId, setVectorizingId] = useState(null);
@@ -43,6 +53,7 @@ export default function DataTab({ availableFetchers, showToast, isActive = true,
     ...articles.map(a => a.source_id).filter(Boolean),
     ...(filters.source_id ? [filters.source_id] : []),
   ])];
+  const canSelectArticles = canManageArticles || canVectorizeArticles;
 
   const loadArticles = async () => {
     setLoading(true);
@@ -176,12 +187,16 @@ export default function DataTab({ availableFetchers, showToast, isActive = true,
           <p className="page-subtitle mt-3 max-w-4xl">沉浸式多维过滤，支持点击日期极速框选范围，快速查找与管理全部抓取内容。</p>
         </div>
         <div className="page-actions">
-          <button onClick={handleVectorizeAllPending} disabled={vectorizingAll} className="action-button action-button-secondary">
-            {vectorizingAll ? <RefreshCw className="animate-spin" /> : <Zap className="text-amber-500" />} 全量向量化
-          </button>
-          <button onClick={() => setManualAddModal(true)} className="action-button action-button-primary">
-            <Plus /> 手工录入
-          </button>
+          {canVectorizeArticles && (
+            <button onClick={handleVectorizeAllPending} disabled={vectorizingAll} className="action-button action-button-secondary">
+              {vectorizingAll ? <RefreshCw className="animate-spin" /> : <Zap className="text-amber-500" />} 全量向量化
+            </button>
+          )}
+          {canManageArticles && (
+            <button onClick={() => setManualAddModal(true)} className="action-button action-button-primary">
+              <Plus /> 手工录入
+            </button>
+          )}
           <button onClick={loadArticles} disabled={loading} className="action-button action-button-secondary">
             <RefreshCw className={`text-blue-600 ${loading ? 'animate-spin' : ''}`} /> 同步最新
           </button>
@@ -253,7 +268,9 @@ export default function DataTab({ availableFetchers, showToast, isActive = true,
           <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs tracking-wider">
             <tr>
               <th className="px-4 py-3 w-12 text-center">
-                <input type="checkbox" checked={selectedArticles.size === articles.length && articles.length > 0} onChange={toggleAllArticles} className="w-4 h-4 text-blue-600 rounded cursor-pointer" />
+                {canSelectArticles && (
+                  <input type="checkbox" checked={selectedArticles.size === articles.length && articles.length > 0} onChange={toggleAllArticles} className="w-4 h-4 text-blue-600 rounded cursor-pointer" />
+                )}
               </th>
               <th className="px-3 py-4 w-36 font-bold">内容类型</th>
               <th className="px-3 py-4 w-44 font-bold">数据来源</th>
@@ -269,7 +286,9 @@ export default function DataTab({ availableFetchers, showToast, isActive = true,
             ) : articles.map((article) => (
               <tr key={article.id} className="hover:bg-blue-50/40 transition-colors group">
                 <td className="px-4 py-4 text-center">
-                  <input type="checkbox" checked={selectedArticles.has(article.id)} onChange={() => toggleArticleSelection(article.id)} className="w-4 h-4 text-blue-600 rounded cursor-pointer" />
+                  {canSelectArticles && (
+                    <input type="checkbox" checked={selectedArticles.has(article.id)} onChange={() => toggleArticleSelection(article.id)} className="w-4 h-4 text-blue-600 rounded cursor-pointer" />
+                  )}
                 </td>
                 <td className="px-3 py-4"><span className="data-chip">{article.content_type || '未知'}</span></td>
                 <td className="px-3 py-4"><span className="font-bold text-slate-700 text-xs line-clamp-2" title={article.source_id}>{getFetcherName(article.source_id)}</span></td>
@@ -285,12 +304,17 @@ export default function DataTab({ availableFetchers, showToast, isActive = true,
                       <CheckCircle className="vector-status-icon" strokeWidth={2.35} />
                       <span className="vector-status-label">向量已构建</span>
                     </span>
-                  ) : (
+                  ) : canVectorizeArticles ? (
                     <button onClick={() => handleVectorize(article.id)} disabled={vectorizingId === article.id} className="vector-status vector-status-pending group">
                       {vectorizingId === article.id ? <RefreshCw className="vector-status-icon animate-spin" strokeWidth={2.35} /> : <Zap className="vector-status-icon" strokeWidth={2.35} />}
                       <span className="vector-status-label vector-status-default">{vectorizingId === article.id ? '构建中' : '向量未构建'}</span>
                       <span className="vector-status-label vector-status-hover">{vectorizingId === article.id ? '构建中' : '构建向量'}</span>
                     </button>
+                  ) : (
+                    <span className="vector-status vector-status-pending">
+                      <Zap className="vector-status-icon" strokeWidth={2.35} />
+                      <span className="vector-status-label">向量未构建</span>
+                    </span>
                   )}
                 </td>
               </tr>
@@ -299,18 +323,22 @@ export default function DataTab({ availableFetchers, showToast, isActive = true,
         </table>
       </div>
 
-      {selectedArticles.size > 0 && (
+      {selectedArticles.size > 0 && canSelectArticles && (
         <div className="selection-bar animate-in slide-in-from-bottom-4">
           <div className="selection-bar-info">
             <CheckCircle /> 已选择 {selectedArticles.size} 条记录
           </div>
           <div className="selection-bar-actions">
-            <button onClick={handleBatchVectorize} className="action-button action-button-secondary text-blue-700">
-              <Zap /> 批量构建
-            </button>
-            <button onClick={handleBatchDeleteArticles} className="action-button action-button-danger">
-              <Trash2 /> 批量删除
-            </button>
+            {canVectorizeArticles && (
+              <button onClick={handleBatchVectorize} className="action-button action-button-secondary text-blue-700">
+                <Zap /> 批量构建
+              </button>
+            )}
+            {canManageArticles && (
+              <button onClick={handleBatchDeleteArticles} className="action-button action-button-danger">
+                <Trash2 /> 批量删除
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -320,6 +348,7 @@ export default function DataTab({ availableFetchers, showToast, isActive = true,
         data={modalState.data}
         isEditing={modalState.isEditing}
         getFetcherName={getFetcherName}
+        canEdit={canManageArticles}
         onClose={() => setModalState({ isOpen: false, data: null, isEditing: false })}
         onToggleEdit={() => setModalState({ ...modalState, isEditing: !modalState.isEditing })}
         onSave={handleUpdateArticle}

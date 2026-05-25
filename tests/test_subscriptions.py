@@ -8,9 +8,20 @@ from sqlmodel import Session
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
-def _login(client: TestClient) -> None:
-    response = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+def _login(client: TestClient, username: str = "user", password: str = "user") -> None:
+    response = client.post("/api/auth/login", json={"username": username, "password": password})
     assert response.status_code == 200
+
+
+def _set_auth_accounts(monkeypatch, app_module):
+    monkeypatch.setattr(
+        app_module,
+        "AUTH_ACCOUNTS",
+        {
+            "admin": {"password": "admin", "role": "admin"},
+            "user": {"password": "user", "role": "user"},
+        },
+    )
 
 
 def _set_runtime_role(monkeypatch, app_module, role: str):
@@ -56,6 +67,7 @@ def test_subscription_tokenized_dify_delivery_filters_articles(monkeypatch, tmp_
 
     sink = _make_sink(tmp_path, "subscriptions.db")
     monkeypatch.setattr(app_module, "db_sink", sink)
+    _set_auth_accounts(monkeypatch, app_module)
     _set_runtime_role(monkeypatch, app_module, "reader")
     _seed_article(sink.engine, "openai_1", "rss_openai", "OpenAI Update")
     _seed_article(sink.engine, "hf_1", "rss_huggingface", "Hugging Face Update")
@@ -92,6 +104,7 @@ def test_subscription_public_delivery_requires_valid_token(monkeypatch, tmp_path
 
     sink = _make_sink(tmp_path, "tokens.db")
     monkeypatch.setattr(app_module, "db_sink", sink)
+    _set_auth_accounts(monkeypatch, app_module)
     _set_runtime_role(monkeypatch, app_module, "reader")
 
     with TestClient(app_module.app) as client:
@@ -117,6 +130,7 @@ def test_subscription_token_rotation_invalidates_old_token(monkeypatch, tmp_path
 
     sink = _make_sink(tmp_path, "rotation.db")
     monkeypatch.setattr(app_module, "db_sink", sink)
+    _set_auth_accounts(monkeypatch, app_module)
     _set_runtime_role(monkeypatch, app_module, "reader")
 
     with TestClient(app_module.app) as client:
@@ -140,6 +154,7 @@ def test_subscription_delivery_disabled_in_collector_role(monkeypatch, tmp_path)
 
     sink = _make_sink(tmp_path, "collector.db")
     monkeypatch.setattr(app_module, "db_sink", sink)
+    _set_auth_accounts(monkeypatch, app_module)
     _set_runtime_role(monkeypatch, app_module, "collector")
 
     with TestClient(app_module.app) as client:

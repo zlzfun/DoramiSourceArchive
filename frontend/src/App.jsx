@@ -151,16 +151,17 @@ export default function App() {
   ].filter(tab => !tab.surface || runtimeInfo[`${tab.surface}_enabled`]), [runtimeInfo]);
 
   const roleLabel = useMemo(() => {
-    if (runtimeInfo.role === 'collector') return '采集归档层';
-    if (runtimeInfo.role === 'reader') return '分发订阅层';
-    return '双层一体';
-  }, [runtimeInfo.role]);
+    if (runtimeInfo.collector_enabled && !runtimeInfo.reader_enabled) return '采集归档层';
+    if (runtimeInfo.reader_enabled && !runtimeInfo.collector_enabled) return '分发订阅层';
+    if (runtimeInfo.collector_enabled && runtimeInfo.reader_enabled) return '双层一体';
+    return '无可用层';
+  }, [runtimeInfo.collector_enabled, runtimeInfo.reader_enabled]);
 
   const brandSubtitle = useMemo(() => {
-    if (runtimeInfo.role === 'collector') return 'External Collector Archive';
-    if (runtimeInfo.role === 'reader') return 'Reader Subscription Layer';
+    if (runtimeInfo.collector_enabled && !runtimeInfo.reader_enabled) return 'External Collector Archive';
+    if (runtimeInfo.reader_enabled && !runtimeInfo.collector_enabled) return 'Reader Subscription Layer';
     return 'Dorami Agent Archive';
-  }, [runtimeInfo.role]);
+  }, [runtimeInfo.collector_enabled, runtimeInfo.reader_enabled]);
 
   useEffect(() => {
     if (!tabs.some(tab => tab.id === activeTab)) {
@@ -246,6 +247,8 @@ export default function App() {
                 availableFetchers={availableFetchers}
                 showToast={showToast}
                 isActive={activeTab === 'data'}
+                canManageArticles={runtimeInfo.collector_enabled}
+                canVectorizeArticles={runtimeInfo.reader_enabled}
                 articlesDirty={articlesDirty}
                 onArticlesRefreshed={clearArticlesDirty}
                 pendingFilter={pendingDataFilter}

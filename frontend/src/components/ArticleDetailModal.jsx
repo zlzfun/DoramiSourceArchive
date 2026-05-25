@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { FileText, Link as LinkIcon, Calendar, Database, Box, ExternalLink, Edit2, Save, X, AlertCircle } from 'lucide-react';
 
-export default function ArticleDetailModal({ isOpen, data, isEditing, getFetcherName, onClose, onToggleEdit, onSave }) {
+export default function ArticleDetailModal({ isOpen, data, isEditing, getFetcherName, canEdit = true, onClose, onToggleEdit, onSave }) {
   useEffect(() => {
     if (!isOpen) return undefined;
     const previousOverflow = document.body.style.overflow;
@@ -31,10 +31,12 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, getFetcher
             <span className="data-chip text-blue-700">{data.content_type}</span>
           </div>
           <div className="flex items-center space-x-2">
-            <button onClick={onToggleEdit} className={`action-button min-h-[34px] px-3 text-xs ${isEditing ? 'action-button-danger' : 'action-button-quiet'}`}>
-              {isEditing ? <X /> : <Edit2 />}
-              {isEditing ? '取消编辑' : '进入编辑模式'}
-            </button>
+            {canEdit && (
+              <button onClick={onToggleEdit} className={`action-button min-h-[34px] px-3 text-xs ${isEditing ? 'action-button-danger' : 'action-button-quiet'}`}>
+                {isEditing ? <X /> : <Edit2 />}
+                {isEditing ? '取消编辑' : '进入编辑模式'}
+              </button>
+            )}
             <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-700 bg-white rounded-lg shadow-sm"><X className="w-5 h-5" /></button>
           </div>
         </div>

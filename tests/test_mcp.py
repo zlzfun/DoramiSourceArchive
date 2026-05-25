@@ -213,6 +213,23 @@ def login_test_admin(client):
     assert resp.json()["user"]["role"] == "admin"
 
 
+def login_test_user(client):
+    resp = client.post("/api/auth/login", json={"username": "user", "password": "user"})
+    assert resp.status_code == 200
+    assert resp.json()["user"]["role"] == "user"
+
+
+def set_test_auth_accounts(monkeypatch, app_module):
+    monkeypatch.setattr(
+        app_module,
+        "AUTH_ACCOUNTS",
+        {
+            "admin": {"password": "admin", "role": "admin"},
+            "user": {"password": "user", "role": "user"},
+        },
+    )
+
+
 def test_admin_auth_session_lifecycle():
     with TestClient(__import__('api.app', fromlist=['app']).app) as client:
         assert client.get("/api/auth/session").json()["authenticated"] is False
@@ -229,9 +246,11 @@ def test_mcp_transport_does_not_require_admin_cookie():
         assert resp.status_code != 401
 
 
-def test_mcp_status_returns_correct_structure():
-    with TestClient(__import__('api.app', fromlist=['app']).app) as client:
-        login_test_admin(client)
+def test_mcp_status_returns_correct_structure(monkeypatch):
+    app_module = __import__('api.app', fromlist=['app'])
+    set_test_auth_accounts(monkeypatch, app_module)
+    with TestClient(app_module.app) as client:
+        login_test_user(client)
         resp = client.get("/api/mcp/status")
         assert resp.status_code == 200
         data = resp.json()
@@ -245,9 +264,11 @@ def test_mcp_status_returns_correct_structure():
                               "search_articles", "get_rag_context"}
 
 
-def test_mcp_toggle_flips_state():
-    with TestClient(__import__('api.app', fromlist=['app']).app) as client:
-        login_test_admin(client)
+def test_mcp_toggle_flips_state(monkeypatch):
+    app_module = __import__('api.app', fromlist=['app'])
+    set_test_auth_accounts(monkeypatch, app_module)
+    with TestClient(app_module.app) as client:
+        login_test_user(client)
         initial = client.get("/api/mcp/status").json()["enabled"]
         resp = client.post("/api/mcp/toggle")
         assert resp.status_code == 200

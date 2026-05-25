@@ -7,9 +7,20 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
-def _login(client: TestClient) -> None:
-    response = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+def _login(client: TestClient, username: str = "admin", password: str = "admin") -> None:
+    response = client.post("/api/auth/login", json={"username": username, "password": password})
     assert response.status_code == 200
+
+
+def _set_auth_accounts(monkeypatch, app_module):
+    monkeypatch.setattr(
+        app_module,
+        "AUTH_ACCOUNTS",
+        {
+            "admin": {"password": "admin", "role": "admin"},
+            "user": {"password": "user", "role": "user"},
+        },
+    )
 
 
 def _set_runtime_role(monkeypatch, role: str):
@@ -25,10 +36,11 @@ def _set_runtime_role(monkeypatch, role: str):
 
 
 def test_runtime_role_normalization_rejects_invalid_role():
-    from config import _runtime_role
+    from config import _auth_credentials, _runtime_role
 
     assert _runtime_role("") == "all"
     assert _runtime_role(" Reader ") == "reader"
+    assert [item.username for item in _auth_credentials("admin:a,user:b")] == ["admin", "user"]
 
     try:
         _runtime_role("invalid")
@@ -40,15 +52,17 @@ def test_runtime_role_normalization_rejects_invalid_role():
 
 def test_reader_role_disables_collector_api(monkeypatch):
     app_module = _set_runtime_role(monkeypatch, "reader")
+    _set_auth_accounts(monkeypatch, app_module)
 
     with TestClient(app_module.app) as client:
         unauthenticated_response = client.get("/api/fetchers")
         assert unauthenticated_response.status_code == 401
 
-        _login(client)
+        _login(client, "user", "user")
         runtime_response = client.get("/api/runtime")
         assert runtime_response.status_code == 200
         assert runtime_response.json()["role"] == "reader"
+        assert runtime_response.json()["account_role"] == "user"
 
         collector_response = client.get("/api/fetchers")
         assert collector_response.status_code == 403
@@ -62,6 +76,7 @@ def test_reader_role_disables_collector_api(monkeypatch):
 
 def test_collector_role_disables_reader_api(monkeypatch):
     app_module = _set_runtime_role(monkeypatch, "collector")
+    _set_auth_accounts(monkeypatch, app_module)
 
     with TestClient(app_module.app) as client:
         _login(client)
@@ -82,3 +97,30 @@ def test_collector_role_disables_reader_api(monkeypatch):
         assert mcp_response.status_code == 403
 
         assert app_module.disabled_runtime_surface("/mcpfoo") is None
+
+
+def test_all_runtime_splits_surfaces_by_login_account(monkeypatch):
+    app_module = _set_runtime_role(monkeypatch, "all")
+    _set_auth_accounts(monkeypatch, app_module)
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        admin_runtime = client.get("/api/runtime").json()
+        assert admin_runtime["role"] == "all"
+        assert admin_runtime["account_role"] == "admin"
+        assert admin_runtime["collector_enabled"] is True
+        assert admin_runtime["reader_enabled"] is False
+        assert client.get("/api/fetchers").status_code == 200
+        assert client.get("/api/subscriptions").status_code == 403
+
+        client.post("/api/auth/logout")
+        _login(client, "user", "user")
+        user_runtime = client.get("/api/runtime").json()
+        assert user_runtime["role"] == "all"
+        assert user_runtime["account_role"] == "user"
+        assert user_runtime["collector_enabled"] is False
+        assert user_runtime["reader_enabled"] is True
+        assert client.get("/api/fetchers").status_code == 403
+        assert client.get("/api/subscriptions").status_code == 200
+        assert client.get("/api/articles").status_code == 200
+        assert client.post("/api/articles", json={}).status_code == 403

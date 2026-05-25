@@ -57,10 +57,30 @@ class ProxyConfig:
 class AuthConfig:
     cookie_name: str = "dorami_admin_session"
     session_seconds: int = 604800
-    username: str = "admin"
-    password: str = "admin"
+    admin_users: list["AuthCredential"] = None
+    user_users: list["AuthCredential"] = None
     secret: Optional[str] = None
     cookie_secure: bool = False
+
+    @property
+    def username(self) -> str:
+        return self.admin_users[0].username if self.admin_users else "admin"
+
+    @property
+    def password(self) -> str:
+        return self.admin_users[0].password if self.admin_users else "admin"
+
+    def __post_init__(self):
+        if self.admin_users is None:
+            object.__setattr__(self, "admin_users", [AuthCredential("admin", "admin")])
+        if self.user_users is None:
+            object.__setattr__(self, "user_users", [])
+
+
+@dataclass(frozen=True)
+class AuthCredential:
+    username: str
+    password: str
 
 
 @dataclass(frozen=True)
@@ -170,12 +190,33 @@ def _runtime_role(raw_value: str) -> str:
     return role
 
 
+def _auth_credentials(raw_value: str) -> list[AuthCredential]:
+    credentials: list[AuthCredential] = []
+    for item in _csv(raw_value):
+        if ":" not in item:
+            raise ValueError("Auth whitelist entries must use 'username:password' format")
+        username, password = item.split(":", 1)
+        username = username.strip()
+        if not username:
+            raise ValueError("Auth whitelist username cannot be empty")
+        if not password:
+            raise ValueError("Auth whitelist password cannot be empty")
+        credentials.append(AuthCredential(username=username, password=password))
+    return credentials
+
+
 def load_config() -> AppConfig:
     parser = _read_config_file()
 
     storage_db = f"sqlite:///{PROJECT_ROOT / 'data' / 'cms_data.db'}"
     storage_chroma = str(PROJECT_ROOT / "data" / "chroma_db")
     runtime_role = os.getenv("DORAMI_RUNTIME_ROLE") or parser.get("runtime", "role", fallback="all")
+    legacy_auth_user = parser.get("auth", "username", fallback="admin")
+    legacy_auth_password = parser.get("auth", "password", fallback="admin")
+    admin_users = _auth_credentials(
+        parser.get("auth", "admin_users", fallback=f"{legacy_auth_user}:{legacy_auth_password}")
+    )
+    user_users = _auth_credentials(parser.get("auth", "user_users", fallback=""))
 
     return AppConfig(
         server=ServerConfig(
@@ -198,8 +239,8 @@ def load_config() -> AppConfig:
         auth=AuthConfig(
             cookie_name=parser.get("auth", "cookie_name", fallback="dorami_admin_session"),
             session_seconds=parser.getint("auth", "session_seconds", fallback=604800),
-            username=parser.get("auth", "username", fallback="admin"),
-            password=parser.get("auth", "password", fallback="admin"),
+            admin_users=admin_users,
+            user_users=user_users,
             secret=parser.get("auth", "secret", fallback="").strip() or None,
             cookie_secure=parser.getboolean("auth", "cookie_secure", fallback=False),
         ),
