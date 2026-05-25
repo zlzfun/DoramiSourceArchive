@@ -292,7 +292,7 @@ export default function FetchRunsTab({
       return;
     }
     if (!groupId && fetcherIds.length === 0) {
-      showToast('采集任务需要选择节点组或至少一个节点', 'error');
+      showToast('采集任务需要选择采集范围或至少一个节点', 'error');
       return;
     }
     const payload = {
@@ -449,7 +449,7 @@ export default function FetchRunsTab({
                   <span>采集任务</span>
                   <span className="text-xs font-mono text-slate-400">{collectionJobs.length}</span>
                 </div>
-                <p className="panel-header-subtitle">任务负责节点组合、参数覆盖、整体 cron 和单节点 cron。</p>
+                <p className="panel-header-subtitle">任务负责采集范围、参数覆盖、整体 cron 和单节点 cron。</p>
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={loadAll} disabled={loading} className="action-button action-button-secondary min-h-[36px] px-3 text-xs">
@@ -480,7 +480,7 @@ export default function FetchRunsTab({
                           {!job.is_active && <span className="ml-2 text-[10px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">停用</span>}
                         </div>
                         <div className="text-xs text-slate-400 mt-1 ml-6">
-                          {group ? `节点组：${group.name}` : '直接选择节点'} · {ids.length} 个节点 · {job.cron_expr || '无整体定时'}
+                          {group ? `采集范围：${group.name}` : '直接选择节点'} · {ids.length} 个节点 · {job.cron_expr || '无整体定时'}
                         </div>
                       </div>
                       <div className="hidden md:block text-xs font-bold text-slate-500 truncate max-w-sm">{ids.slice(0, 3).map(getFetcherName).join('、')}</div>
@@ -713,9 +713,9 @@ export default function FetchRunsTab({
                   <input value={jobDraft.description} onChange={event => setJobDraft(prev => ({ ...prev, description: event.target.value }))} className="form-input mt-1" />
                 </label>
                 <label className="text-xs font-bold text-slate-500">
-                  节点组
+                  采集范围
                   <select value={jobDraft.group_id} onChange={event => setJobDraft(prev => ({ ...prev, group_id: event.target.value, fetcher_ids: [] }))} className="form-input mt-1">
-                    <option value="">不使用节点组，直接选择节点</option>
+                    <option value="">不使用采集范围，直接选择节点</option>
                     {nodeGroups.map(group => <option key={group.id} value={group.id}>{group.name}（{(group.fetcher_ids || []).length}）</option>)}
                   </select>
                 </label>
@@ -729,7 +729,7 @@ export default function FetchRunsTab({
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
                   <div className="p-3 bg-slate-50 border-b border-slate-200">
                     <div className="font-bold text-slate-700 text-sm flex items-center">
-                      <Layers className="w-4 h-4 mr-2 text-blue-600" /> {jobDraft.group_id ? '节点组包含节点' : '选择节点'}
+                      <Layers className="w-4 h-4 mr-2 text-blue-600" /> {jobDraft.group_id ? '采集范围包含节点' : '选择节点'}
                     </div>
                     {!jobDraft.group_id && (
                       <div className="relative mt-3">

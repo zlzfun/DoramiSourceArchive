@@ -606,7 +606,7 @@ def resolve_delivery_source_ids(
     if group_id is not None:
         group = session.get(NodeGroupRecord, group_id)
         if not group:
-            raise HTTPException(status_code=404, detail="节点组不存在")
+            raise HTTPException(status_code=404, detail="采集范围不存在")
         scope_ids.extend(_json_loads(group.fetcher_ids_json, []))
     if job_id is not None:
         job = session.get(CollectionJobRecord, job_id)
@@ -822,13 +822,13 @@ async def execute_node_group(group_id: int):
     with Session(db_sink.engine) as session:
         group = session.get(NodeGroupRecord, group_id)
         if not group or not group.is_active:
-            print(f"⚠️ 节点组不可用或已停用: {group_id}")
+            print(f"⚠️ 采集范围不可用或已停用: {group_id}")
             return
         items = build_node_group_items(group)
         group_name = group.name
     await run_collection_items(
         items,
-        name=f"节点组定时: {group_name}",
+        name=f"采集范围定时: {group_name}",
         trigger_type="scheduled",
         group_id=group_id,
         run_scope="ad_hoc",
@@ -839,16 +839,16 @@ async def execute_node_group_node(group_id: int, fetcher_id: str):
     with Session(db_sink.engine) as session:
         group = session.get(NodeGroupRecord, group_id)
         if not group or not group.is_active:
-            print(f"⚠️ 节点组不可用或已停用: {group_id}")
+            print(f"⚠️ 采集范围不可用或已停用: {group_id}")
             return
         items = [item for item in build_node_group_items(group) if item["fetcher_id"] == fetcher_id]
         group_name = group.name
     if not items:
-        print(f"⚠️ 节点组节点不可用: {group_id}/{fetcher_id}")
+        print(f"⚠️ 采集范围节点不可用: {group_id}/{fetcher_id}")
         return
     await run_collection_items(
         items,
-        name=f"节点组定时: {group_name} / {fetcher_id}",
+        name=f"采集范围定时: {group_name} / {fetcher_id}",
         trigger_type="scheduled",
         group_id=group_id,
         run_scope="ad_hoc",
@@ -2324,7 +2324,7 @@ def get_node_groups(is_active: Optional[bool] = None):
 def create_node_group(data: NodeGroupCreate):
     name = data.name.strip()
     if not name:
-        raise HTTPException(status_code=400, detail="节点组名称不能为空")
+        raise HTTPException(status_code=400, detail="采集范围名称不能为空")
     now = _now_iso()
     with Session(db_sink.engine) as session:
         record = NodeGroupRecord(
@@ -2352,12 +2352,12 @@ def update_node_group(group_id: int, data: NodeGroupUpdate):
     with Session(db_sink.engine) as session:
         record = session.get(NodeGroupRecord, group_id)
         if not record:
-            raise HTTPException(status_code=404, detail="节点组不存在")
+            raise HTTPException(status_code=404, detail="采集范围不存在")
         update_data = data.dict(exclude_unset=True)
         if "name" in update_data:
             name = (update_data["name"] or "").strip()
             if not name:
-                raise HTTPException(status_code=400, detail="节点组名称不能为空")
+                raise HTTPException(status_code=400, detail="采集范围名称不能为空")
             record.name = name
         if "description" in update_data:
             record.description = (update_data["description"] or "").strip()
@@ -2387,7 +2387,7 @@ def delete_node_group(group_id: int):
     with Session(db_sink.engine) as session:
         record = session.get(NodeGroupRecord, group_id)
         if not record:
-            raise HTTPException(status_code=404, detail="节点组不存在")
+            raise HTTPException(status_code=404, detail="采集范围不存在")
         session.delete(record)
         session.commit()
     load_tasks_to_scheduler()
@@ -2399,15 +2399,15 @@ async def fetch_node_group(group_id: int, test_limit: Optional[int] = None):
     with Session(db_sink.engine) as session:
         group = session.get(NodeGroupRecord, group_id)
         if not group:
-            raise HTTPException(status_code=404, detail="节点组不存在")
+            raise HTTPException(status_code=404, detail="采集范围不存在")
         if not group.is_active:
-            raise HTTPException(status_code=400, detail="节点组已停用")
+            raise HTTPException(status_code=400, detail="采集范围已停用")
         items = build_node_group_items(group)
         group_name = group.name
     items = apply_run_param_overrides(items, test_run_overrides(test_limit))
     return await run_collection_items(
         items,
-        name=f"临时抓取节点组: {group_name}",
+        name=f"临时抓取采集范围: {group_name}",
         trigger_type="manual",
         group_id=group_id,
         run_scope="ad_hoc",
@@ -2430,11 +2430,11 @@ def create_collection_job(data: CollectionJobCreate):
     if not name:
         raise HTTPException(status_code=400, detail="采集任务名称不能为空")
     if data.group_id is None and not normalize_fetcher_ids(data.fetcher_ids):
-        raise HTTPException(status_code=400, detail="采集任务需要节点组或至少一个节点")
+        raise HTTPException(status_code=400, detail="采集任务需要采集范围或至少一个节点")
     now = _now_iso()
     with Session(db_sink.engine) as session:
         if data.group_id is not None and not session.get(NodeGroupRecord, data.group_id):
-            raise HTTPException(status_code=404, detail="节点组不存在")
+            raise HTTPException(status_code=404, detail="采集范围不存在")
         record = CollectionJobRecord(
             name=name,
             description=data.description.strip(),
@@ -2473,7 +2473,7 @@ def update_collection_job(job_id: int, data: CollectionJobUpdate):
         if "group_id" in update_data:
             group_id = update_data["group_id"]
             if group_id is not None and not session.get(NodeGroupRecord, group_id):
-                raise HTTPException(status_code=404, detail="节点组不存在")
+                raise HTTPException(status_code=404, detail="采集范围不存在")
             record.group_id = group_id
         if "fetcher_ids" in update_data:
             record.fetcher_ids_json = _json_dumps(normalize_fetcher_ids(update_data["fetcher_ids"]))

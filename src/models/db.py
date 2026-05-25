@@ -19,7 +19,7 @@ class ArticleRecord(SQLModel, table=True):
     fetch_run_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的节点级运行 ID")
     job_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的采集任务 ID")
     job_run_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的采集任务级运行 ID")
-    source_group_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的节点组 ID")
+    source_group_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的采集范围 ID")
     run_scope: str = Field(default="ad_hoc", index=True, description="首次入库运行归属: ad_hoc/saved_job/legacy_task")
 
     has_content: bool = Field(default=True)
@@ -42,16 +42,16 @@ class FetchTaskRecord(SQLModel, table=True):
 
 
 class NodeGroupRecord(SQLModel, table=True):
-    """用户维护的节点集合，用于复用筛选范围和任务节点来源。"""
+    """兼容性采集范围表：复用节点集合和参数模板，不再作为用户层订阅抽象。"""
     __tablename__ = "node_groups"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    name: str = Field(index=True, description="节点组名称")
-    description: str = Field(default="", description="节点组说明")
+    name: str = Field(index=True, description="采集范围名称")
+    description: str = Field(default="", description="采集范围说明")
     fetcher_ids_json: str = Field(default="[]", description="节点 ID 列表 JSON")
-    params_json: str = Field(default="{}", description="节点组默认参数 JSON")
+    params_json: str = Field(default="{}", description="采集范围默认参数 JSON")
     per_fetcher_params_json: str = Field(default="{}", description="按节点覆盖的参数 JSON")
-    cron_expr: str = Field(default="", description="节点组整体 Cron 表达式")
+    cron_expr: str = Field(default="", description="采集范围兼容 Cron 表达式")
     per_fetcher_cron_json: str = Field(default="{}", description="按节点覆盖的 Cron 表达式 JSON")
     is_active: bool = Field(default=True, index=True, description="是否启用")
     created_at: str = Field(description="创建时间")
@@ -65,7 +65,7 @@ class CollectionJobRecord(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True, description="采集任务名称")
     description: str = Field(default="", description="采集任务说明")
-    group_id: Optional[int] = Field(default=None, index=True, description="可选关联节点组 ID")
+    group_id: Optional[int] = Field(default=None, index=True, description="可选关联采集范围 ID")
     fetcher_ids_json: str = Field(default="[]", description="直接包含的节点 ID 列表 JSON")
     params_json: str = Field(default="{}", description="任务默认参数 JSON")
     per_fetcher_params_json: str = Field(default="{}", description="按节点覆盖的参数 JSON")
@@ -84,7 +84,7 @@ class CollectionJobRunRecord(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     job_id: Optional[int] = Field(default=None, index=True, description="正式采集任务 ID；临时运行为空")
-    group_id: Optional[int] = Field(default=None, index=True, description="运行时关联的节点组 ID")
+    group_id: Optional[int] = Field(default=None, index=True, description="运行时关联的采集范围 ID")
     run_scope: str = Field(default="ad_hoc", index=True, description="ad_hoc/saved_job/legacy_task")
     trigger_type: str = Field(default="manual", index=True, description="manual/scheduled")
     status: str = Field(default="running", index=True, description="running/success/partial_failed/failed")
@@ -112,7 +112,7 @@ class FetchRunRecord(SQLModel, table=True):
     task_id: Optional[int] = Field(default=None, index=True, description="关联的定时任务 ID，手动执行时为空")
     job_id: Optional[int] = Field(default=None, index=True, description="关联的采集任务 ID，临时执行时为空")
     job_run_id: Optional[int] = Field(default=None, index=True, description="关联的采集任务级运行 ID")
-    source_group_id: Optional[int] = Field(default=None, index=True, description="关联节点组 ID")
+    source_group_id: Optional[int] = Field(default=None, index=True, description="关联采集范围 ID")
     run_scope: str = Field(default="ad_hoc", index=True, description="ad_hoc/saved_job/legacy_task")
     trigger_type: str = Field(default="manual", index=True, description="触发类型: manual/scheduled")
     status: str = Field(default="running", index=True, description="执行状态: running/success/failed")

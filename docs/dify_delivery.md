@@ -50,7 +50,7 @@ Returns archive records as Dify-friendly document objects:
 | `content_types` | Comma-separated content types. |
 | `source_id` | Exact source ID. |
 | `source_ids` | Comma-separated source IDs. |
-| `group_id` | Restrict delivery to records whose `source_id` belongs to a saved node group. |
+| `group_id` | Restrict delivery to records whose `source_id` belongs to a saved collector-side collection scope. |
 | `job_id` | Restrict delivery to records whose `source_id` belongs to a saved collection job. |
 | `job_run_id` | Restrict delivery to records first saved by one collection job run. |
 | `fetch_run_id` | Restrict delivery to records first saved by one node-level fetch run. |

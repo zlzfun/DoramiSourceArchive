@@ -171,7 +171,7 @@ export async function fetchNodeGroups(filters = {}) {
   });
   const query = params.toString();
   const res = await apiFetch(`${API_BASE_URL}/node-groups${query ? `?${query}` : ''}`);
-  if (!res.ok) await handleApiError(res, '获取节点组失败');
+  if (!res.ok) await handleApiError(res, '获取采集范围失败');
   return res.json();
 }
 
@@ -181,7 +181,7 @@ export async function createNodeGroup(data) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!res.ok) await handleApiError(res, '创建节点组失败');
+  if (!res.ok) await handleApiError(res, '创建采集范围失败');
   return res.json();
 }
 
@@ -191,19 +191,19 @@ export async function updateNodeGroup(id, data) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!res.ok) await handleApiError(res, '更新节点组失败');
+  if (!res.ok) await handleApiError(res, '更新采集范围失败');
   return res.json();
 }
 
 export async function deleteNodeGroup(id) {
   const res = await apiFetch(`${API_BASE_URL}/node-groups/${id}`, { method: 'DELETE' });
-  if (!res.ok) await handleApiError(res, '删除节点组失败');
+  if (!res.ok) await handleApiError(res, '删除采集范围失败');
   return res.json();
 }
 
 export async function runNodeGroup(id, options = {}) {
   const res = await apiFetch(`${API_BASE_URL}/node-groups/${id}/fetch${runQuery(options)}`, { method: 'POST' });
-  if (!res.ok) await handleApiError(res, '触发节点组失败');
+  if (!res.ok) await handleApiError(res, '触发采集范围失败');
   return res.json();
 }
 

@@ -363,11 +363,11 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
 
   const handleSaveGroup = async () => {
     if (!groupDraft.name.trim()) {
-      showToast('节点组名称不能为空', 'error');
+      showToast('采集范围名称不能为空', 'error');
       return;
     }
     if ((groupDraft.fetcher_ids || []).length === 0) {
-      showToast('节点组至少需要一个节点', 'error');
+      showToast('采集范围至少需要一个节点', 'error');
       return;
     }
     const payload = {
@@ -383,30 +383,30 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
       setGroupModalOpen(false);
       setSelectedFetchers([]);
       await loadNodeGroups();
-      showToast('节点组已保存', 'success');
-    } catch (e) { showToast(e.message || '保存节点组失败', 'error'); }
+      showToast('采集范围已保存', 'success');
+    } catch (e) { showToast(e.message || '保存采集范围失败', 'error'); }
   };
 
   const handleDeleteGroup = async (id) => {
-    if (!window.confirm('确定删除该节点组？')) return;
+    if (!window.confirm('确定删除该采集范围？')) return;
     try {
       await deleteNodeGroup(id);
       if (expandedGroupId === id) setExpandedGroupId(null);
       await loadNodeGroups();
-      showToast('节点组已删除', 'success');
-    } catch (e) { showToast(e.message || '删除节点组失败', 'error'); }
+      showToast('采集范围已删除', 'success');
+    } catch (e) { showToast(e.message || '删除采集范围失败', 'error'); }
   };
 
   const handleRunGroup = async (id, options = {}) => {
     onRunsChanged?.();
     try {
       const result = await runNodeGroup(id, options);
-      const prefix = options.testLimit ? `测试运行完成（每源 ${options.testLimit} 条）` : '节点组运行完成';
+      const prefix = options.testLimit ? `测试运行完成（每源 ${options.testLimit} 条）` : '采集范围运行完成';
       showToast(`${prefix}：新增 ${result.saved_count || 0} 条`, result.failed_count ? 'info' : 'success');
       loadSourceHealth();
       onArticlesChanged?.();
       onRunsChanged?.();
-    } catch (e) { showToast(e.message || '节点组运行失败', 'error'); }
+    } catch (e) { showToast(e.message || '采集范围运行失败', 'error'); }
   };
 
   const handleBatchFetch = async (options = {}) => {
@@ -469,12 +469,12 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
       <div className="page-header flex-col xl:flex-row">
         <div className="page-heading">
           <h2 className="page-title">节点管理</h2>
-          <p className="page-subtitle mt-3 max-w-4xl">管理抓取节点目录与可复用节点组，统一配置与监控，保障数据抓取稳定高效。</p>
+          <p className="page-subtitle mt-3 max-w-4xl">管理抓取节点目录与可复用采集范围，统一配置与监控，保障数据抓取稳定高效。</p>
         </div>
         <div className="page-actions">
           <div className="segmented-control">
             <button onClick={() => setView('catalog')} className={`segmented-option ${view === 'catalog' ? 'segmented-option-active' : ''}`}><Layers /> 节点目录</button>
-            <button onClick={() => setView('groups')} className={`segmented-option ${view === 'groups' ? 'segmented-option-active' : ''}`}><FolderPlus /> 节点组</button>
+            <button onClick={() => setView('groups')} className={`segmented-option ${view === 'groups' ? 'segmented-option-active' : ''}`}><FolderPlus /> 采集范围</button>
           </div>
         </div>
       </div>
@@ -721,16 +721,16 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
                 <FolderPlus className="h-5 w-5" />
               </div>
-              <span>节点组</span>
+              <span>采集范围</span>
               <span className="text-xs font-mono text-slate-400">{nodeGroups.length}</span>
             </div>
             <button onClick={() => openCreateGroup([])} className="action-button action-button-primary min-h-[36px] px-3 text-xs">
-              <FolderPlus /> 新建节点组
+              <FolderPlus /> 新建采集范围
             </button>
           </div>
           <div className="divide-y divide-slate-100">
             {nodeGroups.length === 0 ? (
-              <div className="p-12 text-center text-slate-400 font-medium">暂无节点组</div>
+              <div className="p-12 text-center text-slate-400 font-medium">暂无采集范围</div>
             ) : nodeGroups.map(group => {
               const isExpanded = expandedGroupId === group.id;
               return (
@@ -816,7 +816,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
           )}
           <div className="selection-bar-actions">
             <button onClick={() => openCreateGroup(selectedFetchers)} className="action-button action-button-secondary text-indigo-700">
-              <FolderPlus /> 新建节点组
+              <FolderPlus /> 保存为采集范围
             </button>
             <button onClick={() => handleBatchFetch()} disabled={fetchLoading} className="action-button action-button-primary">
               {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} {fetchLoading ? '执行中...' : '立即临时抓取'}
@@ -830,8 +830,8 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
           <div className="modal-panel max-w-5xl">
             <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
               <div>
-                <h3 className="card-title">{editingGroupId ? '编辑节点组' : '新建节点组'}</h3>
-                <p className="text-xs text-slate-400 mt-1">节点组只维护节点集合和参数模板。</p>
+                <h3 className="card-title">{editingGroupId ? '编辑采集范围' : '新建采集范围'}</h3>
+                <p className="text-xs text-slate-400 mt-1">采集范围只维护节点集合和参数模板，可被采集任务复用。</p>
               </div>
               <button onClick={() => setGroupModalOpen(false)} className="p-2 rounded-lg hover:bg-slate-200 text-slate-500"><X className="w-4 h-4" /></button>
             </div>

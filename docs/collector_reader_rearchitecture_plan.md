@@ -48,6 +48,11 @@ The existing `NodeGroupRecord` capability should be reviewed and either folded i
 `CollectionJobRecord` or retained only as an internal migration compatibility shape.
 It should not remain a shared user-facing concept across both layers.
 
+Stage 2 decision: retain the existing `NodeGroupRecord` table and `/api/node-groups`
+contracts as compatibility internals for now, but remove "node group" from the
+collector-facing product language. The collector UI should call this reusable fetcher
+set a "采集范围" and reserve "订阅源" for the future reader-side consumption scope.
+
 ## Development Rules
 
 Each development stage should start from its own branch using the `codex/` prefix.
@@ -113,6 +118,15 @@ Review focus:
 
 - Product language is clear.
 - Existing saved jobs and historical lineage remain understandable.
+
+Stage 2 completion note:
+
+- Collector-facing UI and backend error text now use "采集范围" for reusable fetcher
+  sets.
+- `NodeGroupRecord`, `group_id`, `source_group_id`, and `/api/node-groups` remain as
+  compatibility names to avoid a destructive schema/API migration in this stage.
+- Future reader-side subscriptions should not reuse these collector compatibility
+  names.
 
 ### Stage 3: Archive Sync Contract
 
@@ -183,5 +197,6 @@ Review focus:
 - Whether the first sync mechanism should be HTTP pull, file bundle import, or both.
 - Whether reader-side MCP should expose one global archive surface or per-subscription
   tools filtered by token/profile.
-- How much historical `NodeGroupRecord` data should be migrated versus hidden behind
-  compatibility APIs.
+- Whether a later migration should physically rename `NodeGroupRecord`, `group_id`,
+  `source_group_id`, and `/api/node-groups`, or keep them as permanent compatibility
+  internals.
