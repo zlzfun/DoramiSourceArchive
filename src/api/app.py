@@ -126,8 +126,8 @@ def _path_matches(path: str, prefixes: tuple[str, ...]) -> bool:
     return any(path == prefix or path.startswith(f"{prefix}/") for prefix in prefixes)
 
 
-def disabled_runtime_surface(method: str, path: str) -> Optional[str]:
-    if path.startswith("/mcp") and not reader_role_enabled():
+def disabled_runtime_surface(path: str) -> Optional[str]:
+    if (path == "/mcp" or path.startswith("/mcp/")) and not reader_role_enabled():
         return "reader"
     if _path_matches(path, READER_API_PREFIXES) and not reader_role_enabled():
         return "reader"
@@ -281,7 +281,12 @@ def is_public_auth_path(path: str) -> bool:
 @app.middleware("http")
 async def require_admin_session(request: Request, call_next):
     path = request.url.path
-    disabled_surface = disabled_runtime_surface(request.method, path)
+    if request.method == "OPTIONS" or is_public_auth_path(path):
+        return await call_next(request)
+    if path.startswith("/api/"):
+        if current_admin_session(request) is None:
+            return StarletteJSONResponse({"detail": "未登录或登录已过期"}, status_code=401)
+    disabled_surface = disabled_runtime_surface(path)
     if disabled_surface:
         return StarletteJSONResponse(
             {
@@ -293,11 +298,6 @@ async def require_admin_session(request: Request, call_next):
             },
             status_code=403,
         )
-    if request.method == "OPTIONS" or is_public_auth_path(path) or path == "/mcp" or path.startswith("/mcp/"):
-        return await call_next(request)
-    if path.startswith("/api/"):
-        if current_admin_session(request) is None:
-            return StarletteJSONResponse({"detail": "未登录或登录已过期"}, status_code=401)
     return await call_next(request)
 
 

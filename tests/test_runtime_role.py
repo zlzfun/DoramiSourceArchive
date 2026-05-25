@@ -42,6 +42,9 @@ def test_reader_role_disables_collector_api(monkeypatch):
     app_module = _set_runtime_role(monkeypatch, "reader")
 
     with TestClient(app_module.app) as client:
+        unauthenticated_response = client.get("/api/fetchers")
+        assert unauthenticated_response.status_code == 401
+
         _login(client)
         runtime_response = client.get("/api/runtime")
         assert runtime_response.status_code == 200
@@ -73,3 +76,5 @@ def test_collector_role_disables_reader_api(monkeypatch):
 
         mcp_response = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
         assert mcp_response.status_code == 403
+
+        assert app_module.disabled_runtime_surface("/mcpfoo") is None
