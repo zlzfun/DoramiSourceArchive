@@ -73,7 +73,7 @@ def test_subscription_tokenized_dify_delivery_filters_articles(monkeypatch, tmp_
         assert create_response.status_code == 200
         subscription = create_response.json()
         assert subscription["token"].startswith("dsub_")
-        assert subscription["token_preview"]
+        assert subscription["token_preview"] == f"...{subscription['token'][-6:]}"
 
         public_response = client.get(
             f"/api/public/subscriptions/{subscription['id']}/dify/articles",
@@ -107,6 +107,9 @@ def test_subscription_public_delivery_requires_valid_token(monkeypatch, tmp_path
             f"/api/public/subscriptions/{subscription['id']}/dify/articles?token={subscription['token']}"
         )
         assert ok.status_code == 200
+
+        missing = client.get("/api/public/subscriptions/999/dify/articles?token=wrong")
+        assert missing.status_code == 401
 
 
 def test_subscription_token_rotation_invalidates_old_token(monkeypatch, tmp_path):

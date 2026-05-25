@@ -53,7 +53,10 @@ GET /api/public/subscriptions/{subscription_id}/dify/articles
 Authorization: Bearer dsub_...
 ```
 
-For tools that cannot set headers, the endpoint also accepts `?token=dsub_...`.
+Prefer the `Authorization: Bearer` header. For tools that cannot set headers, the
+endpoint also accepts `?token=dsub_...`, but query-string tokens may be captured by
+access logs, proxy logs, browser history, or referrers. Treat query-token usage as a
+lower-security fallback and rotate those tokens more aggressively.
 
 Query parameters:
 
@@ -101,6 +104,7 @@ Subscription tokens are independent of admin sessions.
 
 - Tokens are generated with the `dsub_` prefix.
 - Only a salted HMAC-SHA256 hash is stored.
+- Admin reads expose only a short suffix preview such as `...abc123`.
 - Token rotation invalidates the previous token.
 - Inactive subscriptions return no consumer data.
 

@@ -512,7 +512,7 @@ def hash_subscription_token(token: str) -> str:
 
 
 def subscription_token_preview(token: str) -> str:
-    return f"{token[:10]}...{token[-6:]}"
+    return f"...{token[-6:]}"
 
 
 def read_bearer_or_query_token(request: Request) -> str:
@@ -547,9 +547,11 @@ def resolve_subscription_by_token(
     if not token:
         raise HTTPException(status_code=401, detail="缺少订阅源访问令牌")
     record = session.get(ReaderSubscriptionRecord, subscription_id)
-    if not record or not record.is_active:
-        raise HTTPException(status_code=404, detail="订阅源不存在或已停用")
-    if not hmac.compare_digest(record.token_hash, hash_subscription_token(token)):
+    if (
+        not record
+        or not record.is_active
+        or not hmac.compare_digest(record.token_hash, hash_subscription_token(token))
+    ):
         raise HTTPException(status_code=401, detail="订阅源访问令牌无效")
     return record
 
