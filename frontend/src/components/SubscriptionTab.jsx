@@ -31,7 +31,19 @@ const EMPTY_DRAFT = {
   default_limit: 100,
   max_limit: 500,
   is_active: true,
+  passthrough_filters: {},
 };
+
+const DELIVERY_LIMIT_MAX = 500;
+const UI_FILTER_KEYS = new Set([
+  'content_type',
+  'content_types',
+  'source_id',
+  'source_ids',
+  'search',
+  'run_scope',
+  'has_content',
+]);
 
 const RUN_SCOPE_LABELS = {
   ad_hoc: '临时采集',
@@ -56,6 +68,9 @@ function numberInRange(value, fallback, min, max) {
 function draftFromSubscription(subscription) {
   const filters = subscription.filters || {};
   const policy = subscription.delivery_policy || {};
+  const passthroughFilters = Object.fromEntries(
+    Object.entries(filters).filter(([key]) => !UI_FILTER_KEYS.has(key)),
+  );
   return {
     name: subscription.name || '',
     description: subscription.description || '',
@@ -68,11 +83,13 @@ function draftFromSubscription(subscription) {
     default_limit: policy.default_limit || 100,
     max_limit: policy.max_limit || 500,
     is_active: subscription.is_active !== false,
+    passthrough_filters: passthroughFilters,
   };
 }
 
 function buildPayload(draft) {
   const filters = {
+    ...(draft.passthrough_filters || {}),
     has_content: Boolean(draft.has_content),
   };
   const sourceIds = normalizeCsv(draft.source_ids);
@@ -82,8 +99,8 @@ function buildPayload(draft) {
   if (draft.search.trim()) filters.search = draft.search.trim();
   if (draft.run_scope) filters.run_scope = draft.run_scope;
 
-  const defaultLimit = numberInRange(draft.default_limit, 100, 1, 1000);
-  const maxLimit = numberInRange(draft.max_limit, 500, defaultLimit, 2000);
+  const defaultLimit = numberInRange(draft.default_limit, 100, 1, DELIVERY_LIMIT_MAX);
+  const maxLimit = numberInRange(draft.max_limit, 500, defaultLimit, DELIVERY_LIMIT_MAX);
 
   return {
     name: draft.name.trim(),
@@ -455,11 +472,11 @@ export default function SubscriptionTab({ showToast }) {
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <label className="form-field">
                   <span>默认拉取数量</span>
-                  <input className="form-input" type="number" min="1" max="1000" value={draft.default_limit} onChange={event => updateDraft('default_limit', event.target.value)} />
+                  <input className="form-input" type="number" min="1" max={DELIVERY_LIMIT_MAX} value={draft.default_limit} onChange={event => updateDraft('default_limit', event.target.value)} />
                 </label>
                 <label className="form-field">
                   <span>最大拉取数量</span>
-                  <input className="form-input" type="number" min="1" max="2000" value={draft.max_limit} onChange={event => updateDraft('max_limit', event.target.value)} />
+                  <input className="form-input" type="number" min="1" max={DELIVERY_LIMIT_MAX} value={draft.max_limit} onChange={event => updateDraft('max_limit', event.target.value)} />
                 </label>
               </div>
 
