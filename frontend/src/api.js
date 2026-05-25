@@ -391,3 +391,46 @@ export const fetchMcpStatus = () =>
 
 export const toggleMcp = () =>
   apiFetch(`${API_BASE_URL}/mcp/toggle`, { method: 'POST' }).then(r => r.json());
+
+export async function fetchSubscriptions(filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
+  });
+  const query = params.toString();
+  const res = await apiFetch(`${API_BASE_URL}/subscriptions${query ? `?${query}` : ''}`);
+  if (!res.ok) await handleApiError(res, '获取订阅源失败');
+  return res.json();
+}
+
+export async function createSubscription(data) {
+  const res = await apiFetch(`${API_BASE_URL}/subscriptions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) await handleApiError(res, '创建订阅源失败');
+  return res.json();
+}
+
+export async function updateSubscription(id, data) {
+  const res = await apiFetch(`${API_BASE_URL}/subscriptions/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) await handleApiError(res, '更新订阅源失败');
+  return res.json();
+}
+
+export async function rotateSubscriptionToken(id) {
+  const res = await apiFetch(`${API_BASE_URL}/subscriptions/${id}/rotate-token`, { method: 'POST' });
+  if (!res.ok) await handleApiError(res, '轮换订阅令牌失败');
+  return res.json();
+}
+
+export async function deleteSubscription(id) {
+  const res = await apiFetch(`${API_BASE_URL}/subscriptions/${id}`, { method: 'DELETE' });
+  if (!res.ok) await handleApiError(res, '删除订阅源失败');
+  return res.json();
+}

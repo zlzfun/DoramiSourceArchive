@@ -27,6 +27,25 @@ role = all
 - `collector`：外网采集归档层，开启抓取、调度、采集任务和运行观测，关闭 MCP/Dify/RAG 等 reader 交付面。
 - `reader`：内网分发订阅层，开启内容阅览、向量/RAG、Dify 和 MCP，关闭抓取、调度和采集任务。
 
+两层部署建议：
+
+1. 外网采集归档层部署在可访问公开站点的个人电脑或外网服务器，配置 `role = collector`。
+2. 内网分发订阅层部署在公司内网服务器，配置 `role = reader`。
+3. 采集层通过 `/api/archive/export/articles.jsonl` 导出归档，分发层通过 `/api/archive/import/articles.jsonl` 导入归档。同步契约见 `docs/archive_sync_contract.md`。
+4. 下游应用优先访问分发层的订阅接口 `/api/public/subscriptions/{subscription_id}/dify/articles`，订阅源在前端“订阅分发”页面创建和轮换令牌。
+
+最小示例：
+
+```ini
+# 外网 collector
+[runtime]
+role = collector
+
+# 内网 reader
+[runtime]
+role = reader
+```
+
 PM2 使用方案 A：启动 `src/main.py`，由应用代码读取 `[server] host/port/reload` 后调用 Uvicorn。仓库根目录提供的 `ecosystem.config.js` 只保留进程管理配置和 `DORAMI_CONFIG_FILE` 路径，不再注入代理、模型或业务密钥。默认读取 `./config/production.ini`，也可以在启动 PM2 前覆盖：
 
 ```bash

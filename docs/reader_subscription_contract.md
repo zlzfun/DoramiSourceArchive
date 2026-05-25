@@ -12,6 +12,10 @@ downstream applications.
 Admin-managed subscription APIs require the existing admin session and are enabled
 only for `reader` and `all` runtime roles.
 
+The admin console exposes the same lifecycle in the reader-side `订阅分发` tab:
+create/edit a subscription, copy the generated Dify pull URL, and rotate the
+consumer token. Plaintext tokens are still shown only on create or rotate.
+
 ```http
 GET    /api/subscriptions
 GET    /api/subscriptions/{subscription_id}
@@ -110,7 +114,6 @@ Subscription tokens are independent of admin sessions.
 
 ## Current Limits
 
-- This stage provides backend APIs and the tokenized Dify delivery surface only.
-- Per-subscription MCP tools and reader UI management are future work.
+- Per-subscription MCP tools are future work.
 - Subscription filtering depends on archive records already present in the reader DB;
   it does not sync missing collector metadata by itself.

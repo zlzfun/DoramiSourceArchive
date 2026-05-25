@@ -203,6 +203,15 @@ Review focus:
 - UI does not mix collector operations into the intranet reader role.
 - Deployment instructions match the intended network boundary.
 
+Stage 5 completion note:
+
+- Added a reader-side `订阅分发` console tab for subscription CRUD, token rotation,
+  Dify endpoint copy, and one-time plaintext token display after create/rotate.
+- Added role-aware top-bar labeling so `collector`, `reader`, and `all` runtimes are
+  visually distinguishable in the console.
+- Updated deployment/configuration notes with external collector and intranet reader
+  role examples and the archive-sync-to-subscription delivery path.
+
 ## Non-goals for the Initial Refactor
 
 - Do not rewrite all fetchers.

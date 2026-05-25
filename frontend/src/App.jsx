@@ -5,6 +5,7 @@ import {
   CloudDownload,
   Database,
   History,
+  KeyRound,
   Loader2,
   LogOut,
   Plug2,
@@ -15,6 +16,7 @@ import FetchTab from './components/FetchTab';
 import VectorTab from './components/VectorTab';
 import FetchRunsTab from './components/FetchRunsTab';
 import MCPTab from './components/MCPTab';
+import SubscriptionTab from './components/SubscriptionTab';
 import LoginScreen from './components/LoginScreen';
 import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
 import { LOGO_PATH } from './config';
@@ -143,9 +145,22 @@ export default function App() {
     { id: 'data', icon: Database, label: '知识台账' },
     { id: 'fetch', icon: CloudDownload, label: '节点管理', surface: 'collector' },
     { id: 'runs', icon: History, label: '任务与运行', surface: 'collector' },
+    { id: 'subscriptions', icon: KeyRound, label: '订阅分发', surface: 'reader' },
     { id: 'vector', icon: BarChart2, label: '向量雷达', surface: 'reader' },
     { id: 'mcp', icon: Plug2, label: '接入集成', surface: 'reader' },
   ].filter(tab => !tab.surface || runtimeInfo[`${tab.surface}_enabled`]), [runtimeInfo]);
+
+  const roleLabel = useMemo(() => {
+    if (runtimeInfo.role === 'collector') return '采集归档层';
+    if (runtimeInfo.role === 'reader') return '分发订阅层';
+    return '双层一体';
+  }, [runtimeInfo.role]);
+
+  const brandSubtitle = useMemo(() => {
+    if (runtimeInfo.role === 'collector') return 'External Collector Archive';
+    if (runtimeInfo.role === 'reader') return 'Reader Subscription Layer';
+    return 'Dorami Agent Archive';
+  }, [runtimeInfo.role]);
 
   useEffect(() => {
     if (!tabs.some(tab => tab.id === activeTab)) {
@@ -173,7 +188,7 @@ export default function App() {
           <BrandLogo logoError={logoError} onLogoError={() => setLogoError(true)} />
           <div className="hidden min-w-0 sm:block">
             <h1 className="truncate text-[20px] font-black leading-tight text-slate-950">哆啦美·归档中枢</h1>
-            <p className="mt-1 text-xs font-bold text-slate-500">Dorami Agent Archive</p>
+            <p className="mt-1 text-xs font-bold text-slate-500">{brandSubtitle}</p>
           </div>
         </div>
 
@@ -205,7 +220,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             <div className="hidden text-right sm:block">
               <p className="text-xs font-black text-slate-800">{authState.user?.username || 'admin'}</p>
-              <p className="text-[11px] font-bold text-slate-400">admin</p>
+              <p className="text-[11px] font-bold text-slate-400">{roleLabel}</p>
             </div>
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#4f46e5] to-[#7c3aed] text-xs font-black text-white shadow-lg shadow-indigo-500/25">AD</div>
             <button
@@ -269,6 +284,11 @@ export default function App() {
           {mountedTabs.has('vector') && (
             <div style={{ display: activeTab === 'vector' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
               <VectorTab availableFetchers={availableFetchers} showToast={showToast} />
+            </div>
+          )}
+          {mountedTabs.has('subscriptions') && (
+            <div style={{ display: activeTab === 'subscriptions' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
+              <SubscriptionTab showToast={showToast} />
             </div>
           )}
           {mountedTabs.has('mcp') && (
