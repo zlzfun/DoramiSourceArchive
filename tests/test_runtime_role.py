@@ -53,6 +53,8 @@ def test_reader_role_disables_collector_api(monkeypatch):
         collector_response = client.get("/api/fetchers")
         assert collector_response.status_code == 403
         assert collector_response.json()["collector_enabled"] is False
+        export_response = client.get("/api/archive/export/articles.jsonl")
+        assert export_response.status_code == 403
 
         reader_response = client.get("/api/dify/articles")
         assert reader_response.status_code == 200
@@ -73,6 +75,8 @@ def test_collector_role_disables_reader_api(monkeypatch):
         reader_response = client.get("/api/dify/articles")
         assert reader_response.status_code == 403
         assert reader_response.json()["reader_enabled"] is False
+        import_response = client.post("/api/archive/import/articles.jsonl", content="")
+        assert import_response.status_code == 403
 
         mcp_response = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
         assert mcp_response.status_code == 403

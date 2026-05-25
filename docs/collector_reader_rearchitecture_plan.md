@@ -147,6 +147,17 @@ Review focus:
 - Reader import does not trigger public-network fetches.
 - The export/import format is documented enough for external automation.
 
+Stage 3 completion note:
+
+- Added the first JSONL article sync contract:
+  `GET /api/archive/export/articles.jsonl` for collector export and
+  `POST /api/archive/import/articles.jsonl` for reader import.
+- Import is idempotent by article ID and only backfills existing records that lack
+  content when the incoming record has content.
+- Imported records reset `is_vectorized` to `false`; vector indexes remain a
+  reader-side derived artifact rather than a primary sync payload.
+- The contract is documented in `docs/archive_sync_contract.md`.
+
 ### Stage 4: Reader Subscription Layer
 
 Introduce user-facing content consumption scopes.
