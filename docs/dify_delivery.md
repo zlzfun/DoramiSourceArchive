@@ -6,6 +6,15 @@ DoramiSourceArchive remains the source collection and archival hub. These APIs e
 
 Existing downstream jobs that already use `GET /api/articles` can continue doing so. The `/api/dify/*` endpoints are a cleaner recommended delivery contract for future Dify/RAG consumers, not a forced migration path.
 
+For personalized reader-layer delivery, prefer subscription endpoints documented in
+`docs/reader_subscription_contract.md`. They expose tokenized, per-subscription
+Dify-compatible pulls at:
+
+```http
+GET /api/public/subscriptions/{subscription_id}/dify/articles
+Authorization: Bearer dsub_...
+```
+
 ## JSON Pull Endpoint
 
 `GET /api/dify/articles`

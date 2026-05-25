@@ -5,6 +5,7 @@ import datetime
 import base64
 import hashlib
 import hmac
+import secrets
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Body, Response, Request
@@ -28,6 +29,7 @@ from models.db import (
     FetchTaskRecord,
     FetchRunRecord,
     NodeGroupRecord,
+    ReaderSubscriptionRecord,
     SourceConfigRecord,
     SourceStateRecord,
     AppSettingRecord,
@@ -117,8 +119,10 @@ READER_API_PREFIXES = (
     "/api/archive/import",
     "/api/dify",
     "/api/mcp",
+    "/api/public/subscriptions",
     "/api/rag",
     "/api/skill",
+    "/api/subscriptions",
     "/api/vector",
     "/api/vectorize",
 )
@@ -280,10 +284,28 @@ def is_public_auth_path(path: str) -> bool:
     return path in {"/api/auth/login", "/api/auth/logout", "/api/auth/session"}
 
 
+def is_public_subscription_path(path: str) -> bool:
+    return path == "/api/public/subscriptions" or path.startswith("/api/public/subscriptions/")
+
+
 @app.middleware("http")
 async def require_admin_session(request: Request, call_next):
     path = request.url.path
     if request.method == "OPTIONS" or is_public_auth_path(path):
+        return await call_next(request)
+    if is_public_subscription_path(path):
+        disabled_surface = disabled_runtime_surface(path)
+        if disabled_surface:
+            return StarletteJSONResponse(
+                {
+                    "detail": (
+                        f"{disabled_surface} API surface is disabled for runtime role "
+                        f"'{runtime_role()}'"
+                    ),
+                    **runtime_capabilities(),
+                },
+                status_code=403,
+            )
         return await call_next(request)
     if path.startswith("/api/"):
         if current_admin_session(request) is None:
@@ -454,6 +476,115 @@ def article_to_markdown(record: ArticleRecord) -> str:
     frontmatter = json.dumps(metadata, ensure_ascii=False, indent=2)
     content = record.content or ""
     return f"---\n{frontmatter}\n---\n\n# {record.title}\n\n{content}".strip()
+
+
+def _model_dump(model: BaseModel, **kwargs) -> Dict[str, Any]:
+    if hasattr(model, "model_dump"):
+        return model.model_dump(**kwargs)
+    return model.dict(**kwargs)
+
+
+def _model_to_clean_dict(model: BaseModel) -> Dict[str, Any]:
+    return {
+        key: value
+        for key, value in _model_dump(model).items()
+        if value is not None and value != ""
+    }
+
+
+def normalize_delivery_policy(policy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    raw = dict(policy or {})
+    max_limit = min(max(int(raw.get("max_limit", 500)), 1), 500)
+    default_limit = min(max(int(raw.get("default_limit", 100)), 1), max_limit)
+    return {
+        "include_content": _coerce_bool(raw.get("include_content", True)),
+        "default_limit": default_limit,
+        "max_limit": max_limit,
+    }
+
+
+def generate_subscription_token() -> str:
+    return f"dsub_{secrets.token_urlsafe(32)}"
+
+
+def hash_subscription_token(token: str) -> str:
+    return hmac.new(AUTH_SECRET.encode("utf-8"), token.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def subscription_token_preview(token: str) -> str:
+    return f"{token[:10]}...{token[-6:]}"
+
+
+def read_bearer_or_query_token(request: Request) -> str:
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    return (request.query_params.get("token") or "").strip()
+
+
+def serialize_subscription(record: ReaderSubscriptionRecord, token: Optional[str] = None) -> Dict[str, Any]:
+    data = {
+        "id": record.id,
+        "name": record.name,
+        "description": record.description,
+        "filters": _json_loads(record.filters_json, {}),
+        "delivery_policy": normalize_delivery_policy(_json_loads(record.delivery_policy_json, {})),
+        "token_preview": record.token_preview,
+        "is_active": record.is_active,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+    if token:
+        data["token"] = token
+    return data
+
+
+def resolve_subscription_by_token(
+        session: Session,
+        subscription_id: int,
+        token: str,
+) -> ReaderSubscriptionRecord:
+    if not token:
+        raise HTTPException(status_code=401, detail="缺少订阅源访问令牌")
+    record = session.get(ReaderSubscriptionRecord, subscription_id)
+    if not record or not record.is_active:
+        raise HTTPException(status_code=404, detail="订阅源不存在或已停用")
+    if not hmac.compare_digest(record.token_hash, hash_subscription_token(token)):
+        raise HTTPException(status_code=401, detail="订阅源访问令牌无效")
+    return record
+
+
+def query_subscription_articles(
+        session: Session,
+        subscription: ReaderSubscriptionRecord,
+        skip: int = 0,
+        limit: Optional[int] = None,
+) -> tuple[list[ArticleRecord], Dict[str, Any]]:
+    filters = _json_loads(subscription.filters_json, {})
+    policy = normalize_delivery_policy(_json_loads(subscription.delivery_policy_json, {}))
+    effective_limit = limit if limit is not None else policy["default_limit"]
+    safe_limit = min(max(int(effective_limit), 1), policy["max_limit"])
+    query = apply_article_query_filters(
+        select(ArticleRecord),
+        content_type=filters.get("content_type"),
+        content_types=filters.get("content_types"),
+        source_id=filters.get("source_id"),
+        source_ids=filters.get("source_ids"),
+        job_id=filters.get("job_id"),
+        job_run_id=filters.get("job_run_id"),
+        fetch_run_id=filters.get("fetch_run_id"),
+        run_scope=filters.get("run_scope"),
+        has_content=filters.get("has_content", True),
+        search=filters.get("search"),
+        publish_date_start=filters.get("publish_date_start"),
+        publish_date_end=filters.get("publish_date_end"),
+        fetched_date_start=filters.get("fetched_date_start"),
+        fetched_date_end=filters.get("fetched_date_end"),
+    )
+    records = session.exec(
+        query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
+    ).all()
+    return records, {"limit": safe_limit, "policy": policy, "filters": filters}
 
 
 ARCHIVE_SYNC_SCHEMA_VERSION = "articles-jsonl-v1"
@@ -1139,6 +1270,45 @@ class SocialPostImportParams(BaseModel):
     posts: List[SocialPostImportItem]
 
 
+class SubscriptionFilters(BaseModel):
+    content_type: Optional[str] = None
+    content_types: Optional[str] = None
+    source_id: Optional[str] = None
+    source_ids: Optional[str] = None
+    job_id: Optional[int] = None
+    job_run_id: Optional[int] = None
+    fetch_run_id: Optional[int] = None
+    run_scope: Optional[str] = None
+    publish_date_start: Optional[str] = None
+    publish_date_end: Optional[str] = None
+    fetched_date_start: Optional[str] = None
+    fetched_date_end: Optional[str] = None
+    search: Optional[str] = None
+    has_content: Optional[bool] = True
+
+
+class SubscriptionDeliveryPolicy(BaseModel):
+    include_content: bool = True
+    default_limit: int = 100
+    max_limit: int = 500
+
+
+class SubscriptionCreate(BaseModel):
+    name: str
+    description: str = ""
+    filters: SubscriptionFilters = PydanticField(default_factory=SubscriptionFilters)
+    delivery_policy: SubscriptionDeliveryPolicy = PydanticField(default_factory=SubscriptionDeliveryPolicy)
+    is_active: bool = True
+
+
+class SubscriptionUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    filters: Optional[SubscriptionFilters] = None
+    delivery_policy: Optional[SubscriptionDeliveryPolicy] = None
+    is_active: Optional[bool] = None
+
+
 def serialize_source_config(record: SourceConfigRecord) -> Dict[str, Any]:
     data = record.dict()
     try:
@@ -1601,6 +1771,138 @@ async def run_collection_items(
         "failed_count": failed_count,
         "saved_content_ids": saved_content_ids,
         "results": results,
+    }
+
+
+# ==================== Reader 订阅源 ====================
+@app.get("/api/subscriptions")
+def get_subscriptions(is_active: Optional[bool] = None):
+    with Session(db_sink.engine) as session:
+        query = select(ReaderSubscriptionRecord)
+        if is_active is not None:
+            query = query.where(ReaderSubscriptionRecord.is_active == is_active)
+        records = session.exec(query.order_by(ReaderSubscriptionRecord.name)).all()
+        return [serialize_subscription(record) for record in records]
+
+
+@app.get("/api/subscriptions/{subscription_id}")
+def get_subscription(subscription_id: int):
+    with Session(db_sink.engine) as session:
+        record = session.get(ReaderSubscriptionRecord, subscription_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="订阅源不存在")
+        return serialize_subscription(record)
+
+
+@app.post("/api/subscriptions")
+def create_subscription(params: SubscriptionCreate):
+    name = params.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="订阅源名称不能为空")
+    token = generate_subscription_token()
+    now = _now_iso()
+    record = ReaderSubscriptionRecord(
+        name=name,
+        description=params.description.strip(),
+        filters_json=_json_dumps(_model_to_clean_dict(params.filters)),
+        delivery_policy_json=_json_dumps(normalize_delivery_policy(_model_dump(params.delivery_policy))),
+        token_hash=hash_subscription_token(token),
+        token_preview=subscription_token_preview(token),
+        is_active=params.is_active,
+        created_at=now,
+        updated_at=now,
+    )
+    with Session(db_sink.engine) as session:
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return serialize_subscription(record, token=token)
+
+
+@app.put("/api/subscriptions/{subscription_id}")
+def update_subscription(subscription_id: int, params: SubscriptionUpdate):
+    with Session(db_sink.engine) as session:
+        record = session.get(ReaderSubscriptionRecord, subscription_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="订阅源不存在")
+        update_data = _model_dump(params, exclude_unset=True)
+        if "name" in update_data:
+            name = (update_data["name"] or "").strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="订阅源名称不能为空")
+            record.name = name
+        if "description" in update_data:
+            record.description = (update_data["description"] or "").strip()
+        if "filters" in update_data and update_data["filters"] is not None:
+            record.filters_json = _json_dumps(
+                {key: value for key, value in update_data["filters"].items() if value not in (None, "")}
+            )
+        if "delivery_policy" in update_data and update_data["delivery_policy"] is not None:
+            record.delivery_policy_json = _json_dumps(normalize_delivery_policy(update_data["delivery_policy"]))
+        if "is_active" in update_data:
+            record.is_active = update_data["is_active"]
+        record.updated_at = _now_iso()
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return serialize_subscription(record)
+
+
+@app.post("/api/subscriptions/{subscription_id}/rotate-token")
+def rotate_subscription_token(subscription_id: int):
+    token = generate_subscription_token()
+    with Session(db_sink.engine) as session:
+        record = session.get(ReaderSubscriptionRecord, subscription_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="订阅源不存在")
+        record.token_hash = hash_subscription_token(token)
+        record.token_preview = subscription_token_preview(token)
+        record.updated_at = _now_iso()
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return serialize_subscription(record, token=token)
+
+
+@app.delete("/api/subscriptions/{subscription_id}")
+def delete_subscription(subscription_id: int):
+    with Session(db_sink.engine) as session:
+        record = session.get(ReaderSubscriptionRecord, subscription_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="订阅源不存在")
+        session.delete(record)
+        session.commit()
+        return {"status": "success"}
+
+
+@app.get("/api/public/subscriptions/{subscription_id}/dify/articles")
+def get_public_subscription_dify_articles(
+        subscription_id: int,
+        request: Request,
+        skip: int = 0,
+        limit: Optional[int] = None,
+):
+    with Session(db_sink.engine) as session:
+        subscription = resolve_subscription_by_token(
+            session,
+            subscription_id,
+            read_bearer_or_query_token(request),
+        )
+        records, query_info = query_subscription_articles(session, subscription, skip=skip, limit=limit)
+
+    include_content = query_info["policy"]["include_content"]
+    safe_limit = query_info["limit"]
+    return {
+        "status": "success",
+        "subscription": {
+            "id": subscription.id,
+            "name": subscription.name,
+        },
+        "count": len(records),
+        "skip": skip,
+        "limit": safe_limit,
+        "next_skip": skip + len(records) if len(records) == safe_limit else None,
+        "items": [serialize_dify_article(record, include_content=include_content) for record in records],
     }
 
 

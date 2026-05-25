@@ -175,6 +175,17 @@ Review focus:
 - Reader concepts do not expose collector implementation details unnecessarily.
 - Downstream consumers can get a stable personalized endpoint or MCP surface.
 
+Stage 4 completion note:
+
+- Added reader-side `ReaderSubscriptionRecord` profiles with JSON filters, delivery
+  policy, active state, and independent consumer tokens.
+- Added admin CRUD APIs under `/api/subscriptions`.
+- Added tokenized Dify-compatible consumer delivery at
+  `/api/public/subscriptions/{subscription_id}/dify/articles`.
+- Subscription tokens are distinct from the admin cookie and are stored only as
+  HMAC-SHA256 hashes.
+- Reader subscription contract is documented in `docs/reader_subscription_contract.md`.
+
 ### Stage 5: UI Role Split and Deployment Polish
 
 Make the role separation visible and deployable.

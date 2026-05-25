@@ -182,6 +182,22 @@ class SourceConfigRecord(SQLModel, table=True):
     updated_at: str = Field(description="更新时间")
 
 
+class ReaderSubscriptionRecord(SQLModel, table=True):
+    """Reader 侧订阅源：定义下游可消费的归档内容范围和独立访问令牌。"""
+    __tablename__ = "reader_subscriptions"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True, description="订阅源名称")
+    description: str = Field(default="", description="订阅源说明")
+    filters_json: str = Field(default="{}", description="内容过滤条件 JSON")
+    delivery_policy_json: str = Field(default="{}", description="交付策略 JSON")
+    token_hash: str = Field(index=True, description="订阅源访问令牌哈希")
+    token_preview: str = Field(default="", description="令牌前后缀预览")
+    is_active: bool = Field(default=True, index=True, description="是否启用")
+    created_at: str = Field(description="创建时间")
+    updated_at: str = Field(description="更新时间")
+
+
 class AppSettingRecord(SQLModel, table=True):
     __tablename__ = "app_settings"
     key: str = Field(primary_key=True)
