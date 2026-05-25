@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from storage.base import BaseStorage
 from fetchers.base import BaseFetcher
 from models.content import BaseContent
+from pipeline.progress import clear_progress, set_progress
 
 
 @dataclass
@@ -59,26 +60,35 @@ class DataPipeline:
         self.logger.info(f"🚀 开始执行抓取任务: {fetcher.__class__.__name__}")
 
         result = PipelineRunResult()
-        async for item in fetcher.fetch(**kwargs):
-            result.fetched_count += 1
-            for key, value in (lineage or {}).items():
-                setattr(item, key, value)
-            if _is_newer_content(item, result.latest_content_publish_date):
-                result.latest_content_id = item.id
-                result.latest_content_publish_date = item.publish_date
-                result.latest_content_source_id = item.source_id
-                result.latest_content_type = item.content_type
-            item_saved = False
-            # 广播给所有的 Storage
-            for storage in self.storages:
-                if await storage.save(item):
-                    item_saved = True
+        source_id = getattr(fetcher, "source_id", None)
+        limit_hint = kwargs.get("limit")
+        total = limit_hint if isinstance(limit_hint, int) and limit_hint > 0 else None
+        set_progress(source_id, 0, total)
+        try:
+            async for item in fetcher.fetch(**kwargs):
+                result.fetched_count += 1
+                for key, value in (lineage or {}).items():
+                    setattr(item, key, value)
+                if _is_newer_content(item, result.latest_content_publish_date):
+                    result.latest_content_id = item.id
+                    result.latest_content_publish_date = item.publish_date
+                    result.latest_content_source_id = item.source_id
+                    result.latest_content_type = item.content_type
+                item_saved = False
+                # 广播给所有的 Storage
+                for storage in self.storages:
+                    if await storage.save(item):
+                        item_saved = True
 
-            if item_saved:
-                result.saved_count += 1
-                result.saved_content_ids.append(item.id)
-            else:
-                result.skipped_count += 1
+                if item_saved:
+                    result.saved_count += 1
+                    result.saved_content_ids.append(item.id)
+                else:
+                    result.skipped_count += 1
+
+                set_progress(source_id, result.fetched_count, total)
+        finally:
+            clear_progress(source_id)
 
         self.logger.info(
             f"🏁 任务结束: 共抓取 {result.fetched_count} 条数据，"

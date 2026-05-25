@@ -136,6 +136,12 @@ export async function triggerFetch(fetcherId, params, options = {}) {
   return res.json();
 }
 
+export async function fetchRunningProgress() {
+  const res = await apiFetch(`${API_BASE_URL}/fetch-runs/running-progress`);
+  if (!res.ok) return {};
+  return res.json();
+}
+
 export async function fetchTasks() {
   const res = await apiFetch(`${API_BASE_URL}/tasks`);
   if (!res.ok) await handleApiError(res, '获取任务列表失败');

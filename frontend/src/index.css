@@ -777,18 +777,288 @@ button:disabled {
     box-shadow: 0 8px 20px rgba(79, 70, 229, 0.26);
   }
 
-  .catalog-header {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  /* ── Floating running-tasks widget (bottom-right pill on FetchTab) ── */
+
+  .running-widget {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 55;
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 12px;
+    min-width: 240px;
+    max-width: 320px;
+    padding: 12px 14px;
+    border: 1px solid rgba(99, 102, 241, 0.22);
+    border-radius: 14px;
+    background: linear-gradient(135deg, #ffffff 0%, #f5f3ff 100%);
+    box-shadow: 0 10px 30px rgba(79, 70, 229, 0.18), 0 2px 6px rgba(15, 23, 42, 0.06);
+    text-align: left;
+    cursor: pointer;
+    transform: translateY(0) scale(1);
+    opacity: 1;
+    animation: running-widget-pulse 2.4s var(--motion-ease) infinite;
+    transition:
+      box-shadow 240ms var(--motion-ease),
+      opacity 280ms var(--motion-ease),
+      transform 320ms var(--motion-spring);
+  }
+
+  .running-widget:hover {
+    box-shadow: 0 14px 36px rgba(79, 70, 229, 0.24), 0 3px 8px rgba(15, 23, 42, 0.08);
+  }
+
+  .running-widget-hidden {
+    opacity: 0;
+    transform: translateY(16px) scale(0.94);
+    pointer-events: none;
+    animation: none;
+  }
+
+  /* Embedded variant — widget content lives inside the selection-bar */
+  .running-widget-embedded {
+    position: static;
+    right: auto;
+    bottom: auto;
+    z-index: auto;
+    min-width: 0;
+    max-width: none;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none !important;
+    animation: none;
+    transform: none;
+    opacity: 1;
+    transition:
+      opacity 220ms var(--motion-ease),
+      transform 280ms var(--motion-spring);
+  }
+
+  .running-widget-embedded:hover {
+    box-shadow: none;
+    transform: translateY(-1px);
+  }
+
+  .running-widget-embedded .running-widget-icon {
+    color: #4f46e5;
+  }
+
+  .running-widget-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    color: #4f46e5;
+    margin-top: 2px;
+  }
+
+  .running-widget-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .running-widget-headline {
+    display: flex;
     align-items: center;
-    gap: 18px;
-    margin-bottom: 18px;
+    justify-content: space-between;
+    gap: 4px;
+    color: #312e81;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 18px;
+  }
+
+  .running-widget-chevron {
+    width: 14px;
+    height: 14px;
+    color: #6366f1;
+    flex-shrink: 0;
+  }
+
+  .running-widget-list {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .running-widget-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 11.5px;
+    line-height: 16px;
+  }
+
+  .running-widget-name {
+    color: #475569;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .running-widget-progress {
+    color: #4f46e5;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+
+  .running-widget-progress-queued {
+    color: #94a3b8;
+    font-weight: 600;
+  }
+
+  .running-widget-more {
+    color: #94a3b8;
+    font-size: 11px;
+    font-weight: 600;
+    margin-top: 2px;
+  }
+
+  @keyframes running-widget-pulse {
+    0%, 100% { box-shadow: 0 10px 30px rgba(79, 70, 229, 0.18), 0 2px 6px rgba(15, 23, 42, 0.06); }
+    50% { box-shadow: 0 10px 30px rgba(79, 70, 229, 0.32), 0 2px 6px rgba(15, 23, 42, 0.08); }
+  }
+
+  /* ── Unified panel header (used across catalog/groups/jobs/history) ── */
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px 16px;
+    padding: 20px 24px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  }
+
+  .panel-header > div:first-child {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .panel-header-subtitle {
+    margin-top: 8px;
+    margin-left: 52px;
+    color: #94a3b8;
+    font-size: 12px;
+    line-height: 18px;
+  }
+
+  .catalog-topbar {
+    display: flex;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 18px 24px;
+    padding: 20px 24px 0;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  }
+
+  .catalog-topbar .section-title {
+    flex: 0 0 auto;
+    margin-right: auto;
+    margin-bottom: 12px;
+  }
+
+  .catalog-scope-tabs {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: -1px;
+  }
+
+  .catalog-scope-tab {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 14px 12px;
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 18px;
+    cursor: pointer;
+    transition:
+      color var(--motion-fast) var(--motion-ease);
+  }
+
+  .catalog-scope-tab svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    opacity: 0.85;
+  }
+
+  .catalog-scope-tab:hover:not(.catalog-scope-tab-active) {
+    color: #475569;
+  }
+
+  .catalog-scope-tab-active {
+    color: #4f46e5;
+    font-weight: 700;
+  }
+
+  .catalog-scope-tab-active::after {
+    content: '';
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: -1px;
+    height: 2px;
+    border-radius: 2px 2px 0 0;
+    background: linear-gradient(90deg, #4f46e5, #7c3aed);
+  }
+
+  .catalog-scope-tab-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 6px;
+    background: rgba(148, 163, 184, 0.16);
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .catalog-scope-tab-active .catalog-scope-tab-count {
+    background: rgba(79, 70, 229, 0.14);
+    color: #4f46e5;
+  }
+
+  .catalog-filter-row-with-search {
+    padding: 16px 24px 20px;
+  }
+
+  .catalog-filter-row-with-search .catalog-chips {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .catalog-search {
-    min-height: 42px;
-    border-radius: 11px;
+    flex: 0 0 240px;
+    min-width: 200px;
+    max-width: 280px;
+    min-height: 36px;
+    border-radius: 10px;
     box-shadow: none;
+    background: rgba(248, 250, 252, 0.85);
+    border-color: rgba(148, 163, 184, 0.22);
+    margin-left: auto;
+  }
+
+  .catalog-search:focus-within {
+    background: #ffffff;
+    border-color: rgba(99, 102, 241, 0.35);
   }
 
   .catalog-chips {
@@ -1807,8 +2077,21 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .catalog-header {
-    grid-template-columns: 1fr;
+  .catalog-topbar .section-title {
+    width: 100%;
+    margin-right: 0;
+  }
+
+  .catalog-search {
+    flex: 1 1 100%;
+    max-width: none;
+    margin-left: 0;
+  }
+
+  .catalog-scope-tabs {
+    width: 100%;
+    overflow-x: auto;
+    margin-bottom: 0;
   }
 
   .catalog-dimension-label {

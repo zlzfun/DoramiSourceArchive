@@ -31,10 +31,42 @@ function BrandLogo({ logoError, onLogoError }) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('data');
+  const [mountedTabs, setMountedTabs] = useState(() => new Set(['data']));
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
   const [logoError, setLogoError] = useState(false);
   const [availableFetchers, setAvailableFetchers] = useState([]);
   const [authState, setAuthState] = useState({ status: 'checking', user: null });
+  const [articlesDirty, setArticlesDirty] = useState(false);
+  const [runsDirty, setRunsDirty] = useState(false);
+  const [pendingDataFilter, setPendingDataFilter] = useState(null);
+  const [pendingRunsFilter, setPendingRunsFilter] = useState(null);
+
+  const switchTab = useCallback((id) => {
+    setActiveTab(id);
+    setMountedTabs(prev => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }, []);
+
+  const markArticlesDirty = useCallback(() => setArticlesDirty(true), []);
+  const clearArticlesDirty = useCallback(() => setArticlesDirty(false), []);
+
+  const markRunsDirty = useCallback(() => setRunsDirty(true), []);
+  const clearRunsDirty = useCallback(() => setRunsDirty(false), []);
+
+  const viewArticlesForSource = useCallback((sourceId) => {
+    setPendingDataFilter({ source_id: sourceId });
+    switchTab('data');
+  }, [switchTab]);
+  const clearPendingDataFilter = useCallback(() => setPendingDataFilter(null), []);
+
+  const viewRunsForSource = useCallback((fetcherId, options = {}) => {
+    setPendingRunsFilter({ fetcher_id: fetcherId, status: options.status || '' });
+    switchTab('runs');
+  }, [switchTab]);
+  const viewRunningTasks = useCallback(() => {
+    setPendingRunsFilter({ fetcher_id: '', status: '' });
+    switchTab('runs');
+  }, [switchTab]);
+  const clearPendingRunsFilter = useCallback(() => setPendingRunsFilter(null), []);
 
   const showToast = useCallback((message, type = 'info') => {
     setToast({ show: true, message: typeof message === 'string' ? message : JSON.stringify(message), type });
@@ -136,7 +168,7 @@ export default function App() {
           {tabs.map(tab => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => switchTab(tab.id)}
               className={`top-tab relative flex items-center gap-2 whitespace-nowrap px-6 py-3 text-sm font-extrabold transition-colors ${activeTab === tab.id ? 'top-tab-active' : 'text-slate-600 hover:text-slate-950'}`}
             >
               <tab.icon className="h-4.5 w-4.5" /> {tab.label}
@@ -148,7 +180,7 @@ export default function App() {
           {tabs.map(tab => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => switchTab(tab.id)}
               className={`nav-pill flex shrink-0 items-center gap-2 px-3 py-2 text-xs font-extrabold ${activeTab === tab.id ? 'nav-pill-active' : 'text-slate-600'}`}
             >
               <tab.icon className="h-4 w-4" /> {tab.label}
@@ -180,11 +212,57 @@ export default function App() {
 
       <main className="mx-auto max-w-[1540px] px-5 py-9 sm:px-8 xl:px-10">
         <div className="page-shell">
-          {activeTab === 'data' && <DataTab availableFetchers={availableFetchers} showToast={showToast} />}
-          {activeTab === 'fetch' && <FetchTab availableFetchers={availableFetchers} showToast={showToast} />}
-          {activeTab === 'runs' && <FetchRunsTab availableFetchers={availableFetchers} showToast={showToast} />}
-          {activeTab === 'vector' && <VectorTab availableFetchers={availableFetchers} showToast={showToast} />}
-          {activeTab === 'mcp' && <MCPTab showToast={showToast} />}
+          {mountedTabs.has('data') && (
+            <div style={{ display: activeTab === 'data' ? 'block' : 'none' }}>
+              <DataTab
+                availableFetchers={availableFetchers}
+                showToast={showToast}
+                isActive={activeTab === 'data'}
+                articlesDirty={articlesDirty}
+                onArticlesRefreshed={clearArticlesDirty}
+                pendingFilter={pendingDataFilter}
+                onPendingFilterApplied={clearPendingDataFilter}
+              />
+            </div>
+          )}
+          {mountedTabs.has('fetch') && (
+            <div style={{ display: activeTab === 'fetch' ? 'block' : 'none' }}>
+              <FetchTab
+                availableFetchers={availableFetchers}
+                showToast={showToast}
+                onArticlesChanged={markArticlesDirty}
+                onRunsChanged={markRunsDirty}
+                onViewArticles={viewArticlesForSource}
+                onViewRuns={viewRunsForSource}
+                onViewRunning={viewRunningTasks}
+              />
+            </div>
+          )}
+          {mountedTabs.has('runs') && (
+            <div style={{ display: activeTab === 'runs' ? 'block' : 'none' }}>
+              <FetchRunsTab
+                availableFetchers={availableFetchers}
+                showToast={showToast}
+                onArticlesChanged={markArticlesDirty}
+                onRunsChanged={markRunsDirty}
+                isActive={activeTab === 'runs'}
+                runsDirty={runsDirty}
+                onRunsRefreshed={clearRunsDirty}
+                pendingFilter={pendingRunsFilter}
+                onPendingFilterApplied={clearPendingRunsFilter}
+              />
+            </div>
+          )}
+          {mountedTabs.has('vector') && (
+            <div style={{ display: activeTab === 'vector' ? 'block' : 'none' }}>
+              <VectorTab availableFetchers={availableFetchers} showToast={showToast} />
+            </div>
+          )}
+          {mountedTabs.has('mcp') && (
+            <div style={{ display: activeTab === 'mcp' ? 'block' : 'none' }}>
+              <MCPTab showToast={showToast} />
+            </div>
+          )}
         </div>
       </main>
     </div>

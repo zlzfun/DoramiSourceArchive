@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Clock3,
   Layers,
+  Loader2,
   Play,
   Plus,
   RefreshCw,
@@ -43,10 +44,11 @@ function formatDuration(durationMs) {
 }
 
 function statusMeta(status) {
-  if (status === 'success') return { label: '成功', className: 'text-emerald-700 bg-emerald-50 border-emerald-100', icon: CheckCircle2 };
-  if (status === 'failed') return { label: '失败', className: 'text-red-700 bg-red-50 border-red-100', icon: XCircle };
-  if (status === 'partial_failed') return { label: '部分失败', className: 'text-amber-700 bg-amber-50 border-amber-100', icon: AlertTriangle };
-  return { label: '运行中', className: 'text-blue-700 bg-blue-50 border-blue-100', icon: Clock3 };
+  if (status === 'success') return { label: '成功', className: 'text-emerald-700 bg-emerald-50 border-emerald-100', icon: CheckCircle2, iconClassName: '' };
+  if (status === 'failed') return { label: '失败', className: 'text-red-700 bg-red-50 border-red-100', icon: XCircle, iconClassName: '' };
+  if (status === 'partial_failed') return { label: '部分失败', className: 'text-amber-700 bg-amber-50 border-amber-100', icon: AlertTriangle, iconClassName: '' };
+  if (status === 'running') return { label: '运行中', className: 'text-indigo-700 bg-indigo-50 border-indigo-200 ring-2 ring-indigo-200/60 animate-pulse', icon: Loader2, iconClassName: 'animate-spin' };
+  return { label: '运行中', className: 'text-blue-700 bg-blue-50 border-blue-100', icon: Clock3, iconClassName: '' };
 }
 
 function scopeLabel(scope) {
@@ -96,7 +98,17 @@ function cleanStringMap(map) {
   );
 }
 
-export default function FetchRunsTab({ availableFetchers, showToast }) {
+export default function FetchRunsTab({
+  availableFetchers,
+  showToast,
+  onArticlesChanged,
+  onRunsChanged,
+  isActive = true,
+  runsDirty = false,
+  onRunsRefreshed,
+  pendingFilter,
+  onPendingFilterApplied,
+}) {
   const [view, setView] = useState('jobs');
   const [collectionJobs, setCollectionJobs] = useState([]);
   const [nodeGroups, setNodeGroups] = useState([]);
@@ -178,6 +190,25 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
   }, [filters.fetcher_id, filters.status, filters.trigger_type, showToast]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  useEffect(() => {
+    if (isActive && runsDirty) {
+      loadAll();
+      onRunsRefreshed?.();
+    }
+  }, [isActive, runsDirty]);
+
+  useEffect(() => {
+    if (!pendingFilter) return;
+    setView('history');
+    setFilters(prev => ({
+      ...prev,
+      fetcher_id: pendingFilter.fetcher_id ?? prev.fetcher_id,
+      status: pendingFilter.status ?? '',
+      trigger_type: '',
+    }));
+    onPendingFilterApplied?.();
+  }, [pendingFilter]);
 
   useEffect(() => {
     if (!jobModalOpen) return undefined;
@@ -284,11 +315,14 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
   };
 
   const handleRunJob = async (id, options = {}) => {
+    onRunsChanged?.();
     try {
       const result = await runCollectionJob(id, options);
       const prefix = options.testLimit ? `测试运行完成（每源 ${options.testLimit} 条）` : '采集任务运行完成';
       showToast(`${prefix}：新增 ${result.saved_count || 0} 条`, result.failed_count ? 'info' : 'success');
       await loadAll();
+      onArticlesChanged?.();
+      onRunsChanged?.();
     } catch (e) {
       showToast(e.message || '采集任务运行失败', 'error');
     }
@@ -405,21 +439,26 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
 
       {view === 'jobs' && (
         <>
-          <div className="surface-card rounded-[14px] p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-            <div>
-              <div className="flex items-center font-bold text-slate-700 text-sm">
-                <Settings2 className="w-4 h-4 mr-2 text-blue-600" /> 采集任务
-                <span className="ml-2 text-xs font-mono text-slate-400">{collectionJobs.length}</span>
+          <div className="surface-card rounded-[16px] overflow-hidden">
+            <div className="panel-header">
+              <div>
+                <div className="section-title">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                    <Settings2 className="h-5 w-5" />
+                  </div>
+                  <span>采集任务</span>
+                  <span className="text-xs font-mono text-slate-400">{collectionJobs.length}</span>
+                </div>
+                <p className="panel-header-subtitle">任务负责节点组合、参数覆盖、整体 cron 和单节点 cron。</p>
               </div>
-              <p className="text-xs text-slate-400 mt-1">任务负责节点组合、参数覆盖、整体 cron 和单节点 cron。</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button onClick={loadAll} disabled={loading} className="action-button action-button-secondary min-h-[36px] px-3 text-xs">
-                <RefreshCw className={loading ? 'animate-spin' : ''} /> 刷新
-              </button>
-              <button onClick={openCreateJob} className="action-button action-button-primary min-h-[36px] px-3 text-xs">
-                <Plus /> 新建采集任务
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={loadAll} disabled={loading} className="action-button action-button-secondary min-h-[36px] px-3 text-xs">
+                  <RefreshCw className={loading ? 'animate-spin' : ''} /> 刷新
+                </button>
+                <button onClick={openCreateJob} className="action-button action-button-primary min-h-[36px] px-3 text-xs">
+                  <Plus /> 新建采集任务
+                </button>
+              </div>
             </div>
           </div>
 
@@ -494,6 +533,24 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
 
       {view === 'history' && (
         <>
+          <div className="surface-card rounded-[16px] overflow-hidden">
+            <div className="panel-header">
+              <div>
+                <div className="section-title">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
+                    <Clock3 className="h-5 w-5" />
+                  </div>
+                  <span>运行历史</span>
+                  <span className="text-xs font-mono text-slate-400">{unifiedRuns.length}</span>
+                </div>
+                <p className="panel-header-subtitle">汇总手动、定时与旧版运行记录，可按节点、状态、时间筛选回溯。</p>
+              </div>
+              <button onClick={loadAll} disabled={loading} className="action-button action-button-secondary min-h-[36px] px-3 text-xs">
+                <RefreshCw className={loading ? 'animate-spin' : ''} /> 刷新
+              </button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <div className="metric-card rounded-[14px] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">本页运行</div>
@@ -596,11 +653,12 @@ export default function FetchRunsTab({ availableFetchers, showToast }) {
                 ) : unifiedRuns.map(run => {
                   const meta = statusMeta(run.status);
                   const StatusIcon = meta.icon;
+                  const isRunning = run.status === 'running';
                   return (
-                    <tr key={run.key} className="hover:bg-blue-50/40 transition-colors">
+                    <tr key={run.key} className={`transition-colors ${isRunning ? 'bg-indigo-50/40 border-l-4 border-l-indigo-500' : 'hover:bg-blue-50/40'}`}>
                       <td className="px-4 py-4">
                         <span className={`status-badge ${meta.className}`}>
-                          <StatusIcon className="w-3.5 h-3.5 mr-1" /> {meta.label}
+                          <StatusIcon className={`w-3.5 h-3.5 mr-1 ${meta.iconClassName}`} /> {meta.label}
                         </span>
                       </td>
                       <td className="px-4 py-4">

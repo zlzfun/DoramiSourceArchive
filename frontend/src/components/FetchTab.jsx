@@ -21,6 +21,7 @@ import {
   createNodeGroup,
   deleteNodeGroup,
   fetchNodeGroups,
+  fetchRunningProgress,
   fetchSourceHealth,
   runNodeGroup,
   triggerFetch,
@@ -50,13 +51,6 @@ const CATALOG_SCOPE_OPTIONS = [
   { value: 'hidden', label: '隐藏', icon: EyeOff },
   { value: 'all', label: '全部', icon: LayoutGrid },
 ];
-const CURATION_TIER_ORDER = {
-  core: 0,
-  watch: 1,
-  advanced: 2,
-  system: 3,
-  hidden: 4,
-};
 
 function getCategoryLabel(category) {
   return CATEGORY_LABELS[category] || category || '其他';
@@ -67,17 +61,26 @@ function getCategoryRank(category) {
   return index === -1 ? CATEGORY_ORDER.length : index;
 }
 
-function curationMeta(tier) {
-  if (tier === 'core') return { label: '精选', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' };
-  if (tier === 'watch') return { label: '观察', className: 'bg-amber-50 text-amber-700 border-amber-100' };
-  if (tier === 'advanced') return { label: '高级', className: 'bg-violet-50 text-violet-700 border-violet-100' };
-  if (tier === 'system') return { label: '系统', className: 'bg-slate-100 text-slate-600 border-slate-200' };
-  return { label: '隐藏', className: 'bg-slate-100 text-slate-500 border-slate-200' };
-}
-
 function formatDateTime(value) {
   if (!value) return '从未运行';
   return value.replace('T', ' ').substring(0, 19);
+}
+
+function formatRelativeTime(value) {
+  if (!value) return '从未运行';
+  const ts = Date.parse(value);
+  if (Number.isNaN(ts)) return formatDateTime(value);
+  const diffSec = Math.floor((Date.now() - ts) / 1000);
+  if (diffSec < 0) return '刚刚';
+  if (diffSec < 60) return '刚刚';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} 分钟前`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} 小时前`;
+  if (diffSec < 86400 * 7) return `${Math.floor(diffSec / 86400)} 天前`;
+  const d = new Date(ts);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  if (d.getFullYear() === new Date().getFullYear()) return `${mm}-${dd}`;
+  return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
 function healthMeta(status) {
@@ -105,13 +108,15 @@ function normalizeIds(ids) {
   return Array.from(new Set((ids || []).filter(Boolean)));
 }
 
-export default function FetchTab({ availableFetchers, showToast }) {
+export default function FetchTab({ availableFetchers, showToast, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onViewRunning }) {
   const [view, setView] = useState('catalog');
   const [fetchLoading, setFetchLoading] = useState(false);
   const [nodeGroups, setNodeGroups] = useState([]);
   const [healthByFetcher, setHealthByFetcher] = useState({});
   const [selectedFetchers, setSelectedFetchers] = useState([]);
   const [fetchConfigs, setFetchConfigs] = useState({});
+  const [runningFetcherIds, setRunningFetcherIds] = useState(() => new Set());
+  const [fetchProgress, setFetchProgress] = useState({});
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [catalogScope, setCatalogScope] = useState('focused');
   const [favoriteFetcherIds, setFavoriteFetcherIds] = useState(() => {
@@ -163,6 +168,26 @@ export default function FetchTab({ availableFetchers, showToast }) {
     loadNodeGroups();
     loadSourceHealth();
   }, [loadNodeGroups, loadSourceHealth]);
+
+  useEffect(() => {
+    if (runningFetcherIds.size === 0) {
+      setFetchProgress({});
+      return undefined;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const data = await fetchRunningProgress();
+        if (!cancelled) setFetchProgress(data || {});
+      } catch { /* ignore transient polling errors */ }
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [runningFetcherIds]);
 
   useEffect(() => {
     if (!groupModalOpen) return undefined;
@@ -221,8 +246,6 @@ export default function FetchTab({ availableFetchers, showToast }) {
           .includes(query);
       })
       .sort((a, b) => {
-        const tierDelta = (CURATION_TIER_ORDER[a.curation_tier] ?? 9) - (CURATION_TIER_ORDER[b.curation_tier] ?? 9);
-        if (tierDelta !== 0) return tierDelta;
         const categoryDelta = getCategoryRank(a.category) - getCategoryRank(b.category);
         if (categoryDelta !== 0) return categoryDelta;
         return a.name.localeCompare(b.name, 'zh-Hans-CN');
@@ -375,22 +398,36 @@ export default function FetchTab({ availableFetchers, showToast }) {
   };
 
   const handleRunGroup = async (id, options = {}) => {
+    onRunsChanged?.();
     try {
       const result = await runNodeGroup(id, options);
       const prefix = options.testLimit ? `测试运行完成（每源 ${options.testLimit} 条）` : '节点组运行完成';
       showToast(`${prefix}：新增 ${result.saved_count || 0} 条`, result.failed_count ? 'info' : 'success');
       loadSourceHealth();
+      onArticlesChanged?.();
+      onRunsChanged?.();
     } catch (e) { showToast(e.message || '节点组运行失败', 'error'); }
   };
 
   const handleBatchFetch = async (options = {}) => {
     setFetchLoading(true);
+    onRunsChanged?.();
+    setRunningFetcherIds(prev => {
+      const next = new Set(prev);
+      selectedFetchers.forEach(id => next.add(id));
+      return next;
+    });
     let successCount = 0;
     for (const fetcherId of selectedFetchers) {
       try {
         await triggerFetch(fetcherId, fetchConfigs[fetcherId] || {}, options);
         successCount++;
       } catch (e) { showToast(e.message || `[${getFetcherName(fetcherId)}] 抓取失败`, 'error'); }
+      setRunningFetcherIds(prev => {
+        const next = new Set(prev);
+        next.delete(fetcherId);
+        return next;
+      });
     }
     setFetchLoading(false);
     if (successCount > 0) {
@@ -398,6 +435,8 @@ export default function FetchTab({ availableFetchers, showToast }) {
       showToast(`已触发 ${successCount} 个节点${suffix}`, 'success');
       setSelectedFetchers([]);
       loadSourceHealth();
+      onArticlesChanged?.();
+      onRunsChanged?.();
     }
   };
 
@@ -442,8 +481,8 @@ export default function FetchTab({ availableFetchers, showToast }) {
 
       {view === 'catalog' && (
         <>
-          <div className="surface-card rounded-[16px] p-6">
-            <div className="catalog-header">
+          <div className="surface-card rounded-[16px] overflow-hidden">
+            <div className="catalog-topbar">
               <div className="section-title">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
                   <Layers className="h-5 w-5" />
@@ -451,14 +490,7 @@ export default function FetchTab({ availableFetchers, showToast }) {
                 <span>内置节点目录</span>
                 <span className="text-xs font-mono text-slate-400">{filteredFetchers.length}/{scopeCounts[catalogScope]}</span>
               </div>
-              <div className="search-box catalog-search">
-                <Search className="mr-2 h-4 w-4 text-slate-400" />
-                <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="搜索名称、ID、类型" className="py-2.5" />
-              </div>
-            </div>
-            <div className="catalog-filter-row mb-3">
-              <span className="catalog-dimension-label">视图</span>
-              <div className="scope-toggle" role="tablist" aria-label="节点视图范围">
+              <div className="catalog-scope-tabs" role="tablist" aria-label="节点视图范围">
                 {CATALOG_SCOPE_OPTIONS.map(option => {
                   const Icon = option.icon;
                   const active = catalogScope === option.value;
@@ -471,17 +503,17 @@ export default function FetchTab({ availableFetchers, showToast }) {
                         setCatalogScope(option.value);
                         setCategoryFilter('all');
                       }}
-                      className={`scope-toggle-option ${active ? 'scope-toggle-option-active' : ''}`}
+                      className={`catalog-scope-tab ${active ? 'catalog-scope-tab-active' : ''}`}
                     >
                       {Icon && <Icon />}
                       <span>{option.label}</span>
-                      <span className="scope-toggle-count">{scopeCounts[option.value] || 0}</span>
+                      <span className="catalog-scope-tab-count">{scopeCounts[option.value] || 0}</span>
                     </button>
                   );
                 })}
               </div>
             </div>
-            <div className="catalog-filter-row">
+            <div className="catalog-filter-row catalog-filter-row-with-search">
               <span className="catalog-dimension-label">分类</span>
               <div className="catalog-chips">
                 <button
@@ -502,6 +534,10 @@ export default function FetchTab({ availableFetchers, showToast }) {
                   </button>
                 ))}
               </div>
+              <div className="search-box catalog-search">
+                <Search className="mr-2 h-4 w-4 text-slate-400" />
+                <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="搜索名称、ID、类型" className="py-2" />
+              </div>
             </div>
           </div>
 
@@ -512,8 +548,8 @@ export default function FetchTab({ availableFetchers, showToast }) {
               const healthInfo = healthMeta(health?.health_status);
               const paramCount = (fetcher.parameters || []).length;
               const paramsExpanded = expandedParamFetcherId === fetcher.id;
-              const tierInfo = curationMeta(fetcher.curation_tier);
               const isFavorite = favoriteFetcherIds.includes(fetcher.id);
+              const isRunning = runningFetcherIds.has(fetcher.id);
               return (
                 <div key={fetcher.id} className={`node-card rounded-[16px] flex flex-col transition-all ${isSelected ? 'border-blue-500 ring-4 ring-blue-500/10' : ''}`}>
                   <div onClick={() => toggleFetcherSelection(fetcher.id)} className="p-4 flex items-start gap-3 cursor-pointer rounded-t-[16px] hover:bg-slate-50">
@@ -523,7 +559,10 @@ export default function FetchTab({ availableFetchers, showToast }) {
                     <div className="w-12 h-12 shrink-0 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-2xl shadow-sm">{fetcher.icon}</div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
-                        <h3 className="card-title">{fetcher.name}</h3>
+                        <div className="min-w-0 flex-1">
+                          <h3 className="card-title truncate" title={fetcher.name}>{fetcher.name}</h3>
+                          <div className="mt-0.5 text-[11px] font-mono text-slate-400 truncate" title={fetcher.id}>{fetcher.id}</div>
+                        </div>
                         <button
                           onClick={(event) => {
                             event.stopPropagation();
@@ -536,11 +575,9 @@ export default function FetchTab({ availableFetchers, showToast }) {
                           <Star className={`h-4 w-4 ${isFavorite ? 'fill-current' : ''}`} />
                         </button>
                       </div>
-                      <div className="flex items-center gap-2 mt-1.5 min-w-0">
-                        <span className={`status-badge truncate ${tierInfo.className}`} title={fetcher.curation_reason}>{tierInfo.label}</span>
-                        <span className="status-badge bg-blue-50 text-blue-700 border-blue-100 truncate">{getCategoryLabel(fetcher.category)}</span>
-                        <span className={`status-badge truncate ${healthInfo.className}`}>{healthInfo.label}</span>
-                        <span className="status-badge bg-slate-100 text-slate-500 border-slate-200 truncate">{fetcher.id}</span>
+                      <div className="flex items-center gap-2 mt-2 min-w-0 flex-wrap">
+                        <span className="status-badge bg-blue-50 text-blue-700 border-blue-100">{getCategoryLabel(fetcher.category)}</span>
+                        <span className={`status-badge ${healthInfo.className}`}>{healthInfo.label}</span>
                       </div>
                     </div>
                   </div>
@@ -552,18 +589,42 @@ export default function FetchTab({ availableFetchers, showToast }) {
                       </div>
                     )}
                     <div className="grid grid-cols-3 gap-2">
-                      <div className="bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onViewRuns?.(fetcher.id);
+                        }}
+                        className="bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2 text-left hover:bg-blue-50 hover:border-blue-100 transition-colors"
+                        title={`查看 ${fetcher.name} 的运行记录`}
+                      >
                         <div className="tiny-meta">最近运行</div>
-                        <div className="text-xs text-slate-700 font-mono truncate" title={formatDateTime(health?.latest_run_at)}>{formatDateTime(health?.latest_run_at)}</div>
-                      </div>
-                      <div className="bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2">
-                        <div className="tiny-meta">最近新增</div>
-                        <div className="text-sm font-bold text-emerald-700">{health?.latest_saved_count ?? 0}</div>
-                      </div>
-                      <div className="bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2">
+                        <div className="text-xs text-slate-700 font-medium truncate" title={formatDateTime(health?.latest_run_at)}>{formatRelativeTime(health?.latest_run_at)}</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onViewArticles?.(fetcher.id);
+                        }}
+                        className="bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2 text-left hover:bg-blue-50 hover:border-blue-100 transition-colors"
+                        title={`查看 ${fetcher.name} 抓取的文章`}
+                      >
+                        <div className="tiny-meta">文章总数</div>
+                        <div className="text-sm font-bold text-emerald-700">{health?.total_articles ?? 0}</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onViewRuns?.(fetcher.id, { status: 'failed' });
+                        }}
+                        className="bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2 text-left hover:bg-red-50 hover:border-red-100 transition-colors"
+                        title={`查看 ${fetcher.name} 的失败运行记录`}
+                      >
                         <div className="tiny-meta">连续失败</div>
                         <div className="text-sm font-bold text-red-700">{health?.consecutive_failures ?? 0}</div>
-                      </div>
+                      </button>
                     </div>
 
                     {paramsExpanded && (
@@ -601,8 +662,48 @@ export default function FetchTab({ availableFetchers, showToast }) {
                         <span>配置</span>
                         <span className="config-badge">{paramCount}</span>
                       </button>
-                      <button onClick={(event) => { event.stopPropagation(); triggerFetch(fetcher.id, fetchConfigs[fetcher.id] || {}).then(() => { showToast('已触发临时抓取', 'success'); loadSourceHealth(); }).catch(e => showToast(e.message || '抓取失败', 'error')); }} className="w-full px-3 py-2.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-100 text-xs font-bold hover:bg-blue-100 flex items-center justify-center">
-                        <Play className="w-3.5 h-3.5 mr-1.5" /> 临时抓取
+                      <button
+                        disabled={isRunning}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (isRunning) return;
+                          setRunningFetcherIds(prev => {
+                            const next = new Set(prev);
+                            next.add(fetcher.id);
+                            return next;
+                          });
+                          showToast(`开始抓取「${fetcher.name}」…`, 'info');
+                          onRunsChanged?.();
+                          triggerFetch(fetcher.id, fetchConfigs[fetcher.id] || {})
+                            .then((result) => {
+                              const saved = result?.saved_count ?? 0;
+                              const failed = result?.failed_count ?? 0;
+                              const status = failed > 0 ? 'info' : 'success';
+                              showToast(`「${fetcher.name}」抓取完成：新增 ${saved} 条${failed ? `，失败 ${failed}` : ''}`, status);
+                              loadSourceHealth();
+                              onArticlesChanged?.();
+                              onRunsChanged?.();
+                            })
+                            .catch(e => showToast(`「${fetcher.name}」抓取失败：${e.message || '未知错误'}`, 'error'))
+                            .finally(() => {
+                              setRunningFetcherIds(prev => {
+                                const next = new Set(prev);
+                                next.delete(fetcher.id);
+                                return next;
+                              });
+                            });
+                        }}
+                        className={`w-full px-3 py-2.5 rounded-lg border text-xs font-bold flex items-center justify-center ${isRunning ? 'bg-blue-100 text-blue-700 border-blue-200 cursor-wait' : 'bg-blue-50 text-blue-700 border-blue-100 hover:bg-blue-100'}`}
+                      >
+                        {isRunning ? <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Play className="w-3.5 h-3.5 mr-1.5" />}
+                        {isRunning
+                          ? (() => {
+                              const p = fetchProgress[fetcher.id];
+                              if (!p) return '抓取中…';
+                              if (p.total) return `进度 ${p.current}/${p.total}`;
+                              return `已抓取 ${p.current} 条`;
+                            })()
+                          : '临时抓取'}
                       </button>
                     </div>
                   </div>
@@ -614,12 +715,14 @@ export default function FetchTab({ availableFetchers, showToast }) {
       )}
 
       {view === 'groups' && (
-        <div className="surface-card rounded-[14px] overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-200/70 bg-white/55 flex items-center justify-between">
-            <div className="flex items-center">
-              <FolderPlus className="w-5 h-5 text-indigo-600 mr-2" />
-              <h3 className="font-bold text-slate-700 text-sm">节点组</h3>
-              <span className="ml-2 text-xs font-mono text-slate-400">{nodeGroups.length}</span>
+        <div className="surface-card rounded-[16px] overflow-hidden">
+          <div className="panel-header">
+            <div className="section-title">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                <FolderPlus className="h-5 w-5" />
+              </div>
+              <span>节点组</span>
+              <span className="text-xs font-mono text-slate-400">{nodeGroups.length}</span>
             </div>
             <button onClick={() => openCreateGroup([])} className="action-button action-button-primary min-h-[36px] px-3 text-xs">
               <FolderPlus /> 新建节点组
@@ -672,15 +775,48 @@ export default function FetchTab({ availableFetchers, showToast }) {
 
       {selectedFetchers.length > 0 && view === 'catalog' && (
         <div className="selection-bar animate-in slide-in-from-bottom-4">
-          <div className="selection-bar-info">
-            <CheckSquare /> 已选择 {selectedFetchers.length} 个节点
-          </div>
+          {runningFetcherIds.size > 0 ? (
+            <button
+              type="button"
+              onClick={() => onViewRunning?.()}
+              className="running-widget running-widget-embedded"
+              title="查看运行历史"
+            >
+              <RefreshCw className="running-widget-icon animate-spin" />
+              <div className="running-widget-body">
+                <div className="running-widget-headline">
+                  <span>{runningFetcherIds.size} 个节点正在抓取</span>
+                  <ChevronRight className="running-widget-chevron" />
+                </div>
+                <div className="running-widget-list">
+                  {Array.from(runningFetcherIds).slice(0, 4).map(id => {
+                    const p = fetchProgress[id];
+                    const name = fetchersById[id]?.name || id;
+                    const isQueued = !p;
+                    const progressText = isQueued
+                      ? '排队中'
+                      : (p.total ? `${p.current}/${p.total}` : `${p.current}`);
+                    return (
+                      <div key={id} className="running-widget-row">
+                        <span className="running-widget-name">{name}</span>
+                        <span className={`running-widget-progress ${isQueued ? 'running-widget-progress-queued' : ''}`}>{progressText}</span>
+                      </div>
+                    );
+                  })}
+                  {runningFetcherIds.size > 4 && (
+                    <div className="running-widget-more">+{runningFetcherIds.size - 4} 个</div>
+                  )}
+                </div>
+              </div>
+            </button>
+          ) : (
+            <div className="selection-bar-info">
+              <CheckSquare /> 已选择 {selectedFetchers.length} 个节点
+            </div>
+          )}
           <div className="selection-bar-actions">
             <button onClick={() => openCreateGroup(selectedFetchers)} className="action-button action-button-secondary text-indigo-700">
               <FolderPlus /> 新建节点组
-            </button>
-            <button onClick={() => handleBatchFetch({ testLimit: TEST_RUN_LIMIT })} disabled={fetchLoading} className="action-button action-button-quiet">
-              {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 测试抓取 1 条/源
             </button>
             <button onClick={() => handleBatchFetch()} disabled={fetchLoading} className="action-button action-button-primary">
               {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} {fetchLoading ? '执行中...' : '立即临时抓取'}
@@ -784,6 +920,43 @@ export default function FetchTab({ availableFetchers, showToast }) {
             </div>
           </div>
         </div>
+      )}
+
+      {runningFetcherIds.size > 0 && (
+        <button
+          type="button"
+          onClick={() => onViewRunning?.()}
+          className={`running-widget ${selectedFetchers.length > 0 && view === 'catalog' ? 'running-widget-hidden' : ''}`}
+          title="查看运行历史"
+          aria-hidden={selectedFetchers.length > 0 && view === 'catalog'}
+        >
+          <RefreshCw className="running-widget-icon animate-spin" />
+          <div className="running-widget-body">
+            <div className="running-widget-headline">
+              <span>{runningFetcherIds.size} 个节点正在抓取</span>
+              <ChevronRight className="running-widget-chevron" />
+            </div>
+            <div className="running-widget-list">
+              {Array.from(runningFetcherIds).slice(0, 4).map(id => {
+                const p = fetchProgress[id];
+                const name = fetchersById[id]?.name || id;
+                const isQueued = !p;
+                const progressText = isQueued
+                  ? '排队中'
+                  : (p.total ? `${p.current}/${p.total}` : `${p.current}`);
+                return (
+                  <div key={id} className="running-widget-row">
+                    <span className="running-widget-name">{name}</span>
+                    <span className={`running-widget-progress ${isQueued ? 'running-widget-progress-queued' : ''}`}>{progressText}</span>
+                  </div>
+                );
+              })}
+              {runningFetcherIds.size > 4 && (
+                <div className="running-widget-more">+{runningFetcherIds.size - 4} 个</div>
+              )}
+            </div>
+          </div>
+        </button>
       )}
     </div>
   );

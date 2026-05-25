@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field as PydanticField
 from typing import Optional, List, Dict, Any
 from sqlmodel import Session, select
+from sqlalchemy import func
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.schedulers.base import STATE_STOPPED
 from apscheduler.triggers.cron import CronTrigger
@@ -19,6 +20,7 @@ from apscheduler.triggers.cron import CronTrigger
 from storage.impl.db_storage import DatabaseStorage
 from storage.impl.vector_storage import ChromaVectorStorage
 from pipeline.core import DataPipeline
+from pipeline.progress import get_all_progress
 from models.db import (
     ArticleRecord,
     CollectionJobRecord,
@@ -1776,18 +1778,27 @@ def get_source_health():
     with Session(db_sink.engine) as session:
         runs = session.exec(select(FetchRunRecord).where(FetchRunRecord.fetcher_id.in_(fetcher_ids))).all()
         states = session.exec(select(SourceStateRecord).where(SourceStateRecord.source_id.in_(fetcher_ids))).all()
+        article_counts = session.exec(
+            select(ArticleRecord.source_id, func.count(ArticleRecord.id))
+            .where(ArticleRecord.source_id.in_(fetcher_ids))
+            .group_by(ArticleRecord.source_id)
+        ).all()
 
+    article_count_by_source = {source_id: count for source_id, count in article_counts}
     states_by_source = {state.source_id: state for state in states}
     runs_by_fetcher: Dict[str, List[FetchRunRecord]] = {fetcher_id: [] for fetcher_id in fetcher_ids}
     for run in runs:
         runs_by_fetcher.setdefault(run.fetcher_id, []).append(run)
 
-    health_items = [
-        build_fetcher_health_from_state(fetcher, states_by_source[fetcher["id"]])
-        if fetcher["id"] in states_by_source
-        else build_fetcher_health(fetcher, runs_by_fetcher.get(fetcher["id"], []))
-        for fetcher in fetchers
-    ]
+    health_items = []
+    for fetcher in fetchers:
+        item = (
+            build_fetcher_health_from_state(fetcher, states_by_source[fetcher["id"]])
+            if fetcher["id"] in states_by_source
+            else build_fetcher_health(fetcher, runs_by_fetcher.get(fetcher["id"], []))
+        )
+        item["total_articles"] = article_count_by_source.get(fetcher["id"], 0)
+        health_items.append(item)
     return sorted(health_items, key=lambda item: (item["category"], item["name"]))
 
 
@@ -1806,6 +1817,11 @@ def get_source_states(
             query = query.where(SourceStateRecord.fetcher_id == fetcher_id)
         query = query.order_by(SourceStateRecord.updated_at.desc()).offset(skip).limit(limit)
         return session.exec(query).all()
+
+
+@app.get("/api/fetch-runs/running-progress")
+def get_running_progress():
+    return get_all_progress()
 
 
 @app.post("/api/fetch/{fetcher_id}")

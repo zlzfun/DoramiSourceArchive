@@ -13,7 +13,7 @@ import {
   createArticle,
 } from '../api';
 
-export default function DataTab({ availableFetchers, showToast }) {
+export default function DataTab({ availableFetchers, showToast, isActive = true, articlesDirty = false, onArticlesRefreshed, pendingFilter, onPendingFilterApplied }) {
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [vectorizingId, setVectorizingId] = useState(null);
@@ -39,7 +39,10 @@ export default function DataTab({ availableFetchers, showToast }) {
   };
 
   const uniqueContentTypes = [...new Set(articles.map(a => a.content_type).filter(Boolean))];
-  const uniqueSourceIds = [...new Set(articles.map(a => a.source_id).filter(Boolean))];
+  const uniqueSourceIds = [...new Set([
+    ...articles.map(a => a.source_id).filter(Boolean),
+    ...(filters.source_id ? [filters.source_id] : []),
+  ])];
 
   const loadArticles = async () => {
     setLoading(true);
@@ -60,6 +63,29 @@ export default function DataTab({ availableFetchers, showToast }) {
     filters.publish_date_start, filters.publish_date_end,
     filters.fetched_date_start, filters.fetched_date_end,
   ]);
+
+  useEffect(() => {
+    if (isActive && articlesDirty) {
+      loadArticles();
+      onArticlesRefreshed?.();
+    }
+  }, [isActive, articlesDirty]);
+
+  useEffect(() => {
+    if (!pendingFilter) return;
+    setFilters(prev => ({
+      ...prev,
+      content_type: '',
+      source_id: pendingFilter.source_id ?? prev.source_id,
+      is_vectorized: '',
+      search: '',
+      publish_date_start: '',
+      publish_date_end: '',
+      fetched_date_start: '',
+      fetched_date_end: '',
+    }));
+    onPendingFilterApplied?.();
+  }, [pendingFilter]);
 
   const toggleArticleSelection = (id) => {
     const newSet = new Set(selectedArticles);
