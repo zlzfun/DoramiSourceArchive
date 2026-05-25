@@ -114,3 +114,40 @@ def test_archive_sync_rejects_checksum_mismatch(monkeypatch):
     assert result["imported_count"] == 0
     assert result["error_count"] == 1
     assert "checksum mismatch" in result["errors"][0]["error"]
+
+
+def test_archive_sync_checksum_survives_json_roundtrip(monkeypatch):
+    from api.app import _canonical_json, archive_sync_line, import_archive_sync_jsonl
+    from models.db import ArticleRecord
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url="sqlite:///:memory:")
+    monkeypatch.setattr("api.app.db_sink", sink)
+
+    source_record = _article_record(
+        id="sync_article_unicode",
+        title="中文标题",
+        content="正文包含中文和 symbols.",
+        extensions_json=json.dumps(
+            {
+                "z": ["后", "先"],
+                "nested": {"b": True, "a": 1},
+            },
+            ensure_ascii=False,
+        ),
+    )
+    exported_line = archive_sync_line(source_record)
+
+    # Simulate a real JSONL producer/consumer boundary.
+    reparsed_line = json.loads(_canonical_json(exported_line))
+    result = import_archive_sync_jsonl(_jsonl(reparsed_line))
+
+    assert result["status"] == "success"
+    assert result["imported_count"] == 1
+    with Session(sink.engine) as session:
+        record = session.get(ArticleRecord, "sync_article_unicode")
+        assert record.title == "中文标题"
+        assert json.loads(record.extensions_json) == {
+            "z": ["后", "先"],
+            "nested": {"b": True, "a": 1},
+        }

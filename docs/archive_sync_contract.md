@@ -61,6 +61,29 @@ Each later line is one article:
 The checksum is a SHA-256 hash of the canonical JSON representation of the `article`
 object. Reader import rejects lines with checksum mismatches.
 
+## Checksum Canonicalization
+
+External producers that generate compatible article lines must calculate `checksum`
+from the `article` object using these exact rules:
+
+- Serialize JSON with keys sorted recursively by object key.
+- Use compact separators: comma `,` and colon `:` with no surrounding spaces.
+- Emit UTF-8 JSON directly; do not ASCII-escape non-ASCII text.
+- Preserve JSON scalar types: booleans as `true`/`false`, integers as numbers,
+  absent optional IDs as `null`, strings as strings.
+- Use the exported article defaults: `content` is an empty string when absent, and
+  `extensions` is an object, usually `{}`.
+
+Python-compatible reference:
+
+```python
+import hashlib
+import json
+
+canonical = json.dumps(article, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+checksum = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+```
+
 ## Import Semantics
 
 Import is idempotent by `article.id`.
