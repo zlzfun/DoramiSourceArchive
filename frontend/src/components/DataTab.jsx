@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { RefreshCw, CheckCircle, Zap, Search, Plus, Trash2, RotateCcw } from 'lucide-react';
+import { RefreshCw, CheckCircle, Zap, Search, Plus, Trash2 } from 'lucide-react';
 import DateRangePicker from './DateRangePicker';
 import ArticleDetailModal from './ArticleDetailModal';
 import ManualAddModal from './ManualAddModal';
@@ -9,9 +9,6 @@ import {
   vectorizeArticle,
   batchVectorizeArticles,
   vectorizeAllPending,
-  reindexAll,
-  getAutoVectorize,
-  setAutoVectorize,
   updateArticle,
   createArticle,
 } from '../api';
@@ -34,8 +31,6 @@ export default function DataTab({
   const [manualAddModal, setManualAddModal] = useState(false);
   const [vectorizingId, setVectorizingId] = useState(null);
   const [vectorizingAll, setVectorizingAll] = useState(false);
-  const [reindexing, setReindexing] = useState(false);
-  const [autoVectorize, setAutoVectorizeState] = useState(false);
 
   const [filters, setFilters] = useState({
     content_type: '',
@@ -60,23 +55,6 @@ export default function DataTab({
     ...(filters.source_id ? [filters.source_id] : []),
   ])];
   const canSelectArticles = canManageArticles;
-
-  useEffect(() => {
-    if (!canManageArticles) return;
-    getAutoVectorize().then(d => setAutoVectorizeState(Boolean(d.enabled))).catch(() => {});
-  }, [canManageArticles]);
-
-  const handleToggleAutoVectorize = async () => {
-    const next = !autoVectorize;
-    setAutoVectorizeState(next);
-    try {
-      await setAutoVectorize(next);
-      showToast(next ? '已开启：抓取后自动向量化' : '已关闭自动向量化', 'success');
-    } catch (e) {
-      setAutoVectorizeState(!next);
-      showToast(e.message || '设置失败', 'error');
-    }
-  };
 
   const handleVectorize = async (id) => {
     setVectorizingId(id);
@@ -104,17 +82,6 @@ export default function DataTab({
       loadArticles();
     } catch (e) { showToast(e.message || '网络异常', 'error'); }
     setVectorizingAll(false);
-  };
-
-  const handleReindexAll = async () => {
-    if (!window.confirm('全量重索引将清空并重建整个向量库（适用于更换 Embedding 模型）。确认继续？')) return;
-    setReindexing(true);
-    try {
-      const data = await reindexAll();
-      showToast(`全量重索引完成：${data.total_reindexed}/${data.total_articles} 篇`, 'success');
-      loadArticles();
-    } catch (e) { showToast(e.message || '重索引失败', 'error'); }
-    setReindexing(false);
   };
 
   const loadArticles = async () => {
@@ -223,18 +190,9 @@ export default function DataTab({
         </div>
         <div className="page-actions">
           {canManageArticles && (
-            <>
-              <label className="flex items-center gap-2 rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600" title="开启后，后续抓取入库的文章会自动写入向量库">
-                <input type="checkbox" checked={autoVectorize} onChange={handleToggleAutoVectorize} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
-                抓取后自动向量化
-              </label>
-              <button onClick={handleVectorizeAllPending} disabled={vectorizingAll} className="action-button action-button-secondary">
-                {vectorizingAll ? <RefreshCw className="animate-spin" /> : <Zap className="text-amber-500" />} 全量向量化
-              </button>
-              <button onClick={handleReindexAll} disabled={reindexing} className="action-button action-button-secondary">
-                {reindexing ? <RefreshCw className="animate-spin" /> : <RotateCcw />} 全量重索引
-              </button>
-            </>
+            <button onClick={handleVectorizeAllPending} disabled={vectorizingAll} className="action-button action-button-secondary">
+              {vectorizingAll ? <RefreshCw className="animate-spin" /> : <Zap className="text-amber-500" />} 全量向量化
+            </button>
           )}
           {canManageArticles && (
             <button onClick={() => setManualAddModal(true)} className="action-button action-button-primary">

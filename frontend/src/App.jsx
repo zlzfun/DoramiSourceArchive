@@ -9,6 +9,7 @@ import {
   Loader2,
   LogOut,
   Plug2,
+  Settings,
 } from 'lucide-react';
 import Toast from './components/Toast';
 import DataTab from './components/DataTab';
@@ -17,6 +18,7 @@ import VectorTab from './components/VectorTab';
 import FetchRunsTab from './components/FetchRunsTab';
 import MCPTab from './components/MCPTab';
 import SubscriptionTab from './components/SubscriptionTab';
+import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
 import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
 import { LOGO_PATH } from './config';
@@ -33,6 +35,7 @@ function BrandLogo({ logoError, onLogoError }) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('data');
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [mountedTabs, setMountedTabs] = useState(() => new Set(['data']));
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
   const [logoError, setLogoError] = useState(false);
@@ -150,6 +153,11 @@ export default function App() {
     { id: 'mcp', icon: Plug2, label: '接入集成', surface: 'reader' },
   ].filter(tab => !tab.surface || runtimeInfo[`${tab.surface}_enabled`]), [runtimeInfo]);
 
+  const avatarInitials = useMemo(() => {
+    const name = authState.user?.username?.trim();
+    return name ? name.slice(0, 2).toUpperCase() : 'AD';
+  }, [authState.user?.username]);
+
   const roleLabel = useMemo(() => {
     if (runtimeInfo.collector_enabled && !runtimeInfo.reader_enabled) return '采集归档层';
     if (runtimeInfo.reader_enabled && !runtimeInfo.collector_enabled) return '分发订阅层';
@@ -223,7 +231,16 @@ export default function App() {
               <p className="text-xs font-black text-slate-800">{authState.user?.username || 'admin'}</p>
               <p className="text-[11px] font-bold text-slate-400">{roleLabel}</p>
             </div>
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#4f46e5] to-[#7c3aed] text-xs font-black text-white shadow-lg shadow-indigo-500/25">AD</div>
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="icon-button"
+              title="设置"
+              aria-label="设置"
+            >
+              <Settings className="h-4.5 w-4.5" />
+            </button>
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#4f46e5] to-[#7c3aed] text-xs font-black text-white shadow-lg shadow-indigo-500/25">{avatarInitials}</div>
             <button
               type="button"
               onClick={handleLogout}
@@ -238,6 +255,16 @@ export default function App() {
       </header>
 
       <Toast show={toast.show} message={toast.message} type={toast.type} />
+
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        runtimeInfo={runtimeInfo}
+        username={authState.user?.username}
+        onLogout={() => { setSettingsOpen(false); handleLogout(); }}
+        showToast={showToast}
+        onArticlesChanged={markArticlesDirty}
+      />
 
       <main className="mx-auto max-w-[1540px] px-5 py-9 sm:px-8 xl:px-10">
         <div className="page-shell">

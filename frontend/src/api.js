@@ -408,6 +408,27 @@ export async function setAutoVectorize(enabled) {
   return res.json();
 }
 
+export async function exportArchiveArticles(filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
+  });
+  const query = params.toString();
+  const res = await apiFetch(`${API_BASE_URL}/archive/export/articles.jsonl${query ? `?${query}` : ''}`);
+  if (!res.ok) await handleApiError(res, '导出归档包失败');
+  return res.text();
+}
+
+export async function importArchiveArticlesJsonl(rawText) {
+  const res = await apiFetch(`${API_BASE_URL}/archive/import/articles.jsonl`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8' },
+    body: rawText,
+  });
+  if (!res.ok) await handleApiError(res, '导入归档包失败');
+  return res.json();
+}
+
 export const fetchMcpStatus = () =>
   apiFetch(`${API_BASE_URL}/mcp/status`).then(r => r.json());
 

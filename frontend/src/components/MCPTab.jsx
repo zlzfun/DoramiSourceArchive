@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Plug2, Copy, Check, Bot, Download, Terminal, Globe } from 'lucide-react';
-import { fetchMcpStatus, toggleMcp } from '../api';
+import { fetchMcpStatus } from '../api';
 import { MCP_URL } from '../config';
 
 const TOOL_CARDS = [
@@ -36,7 +36,6 @@ const ONLINE_TOOLS = ['Claude.ai Projects', 'Coze'];
 
 export default function MCPTab({ showToast }) {
   const [status, setStatus] = useState(null);
-  const [toggling, setToggling] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
   const showToastRef = useRef(showToast);
@@ -78,19 +77,14 @@ export default function MCPTab({ showToast }) {
       .catch(() => setStatus({ enabled: false, url: null }));
   }, []);
 
-  const handleToggle = async () => {
-    setToggling(true);
-    try {
-      const data = await toggleMcp();
-      setStatus(prev => ({ ...prev, enabled: data.enabled }));
-      showToast(data.enabled ? 'MCP Server 已启动' : 'MCP Server 已停止',
-                data.enabled ? 'success' : 'info');
-    } catch {
-      showToast('切换失败，请重试', 'error');
-    } finally {
-      setToggling(false);
-    }
-  };
+  // 设置面板里启停 MCP 后会广播该事件，同步已挂载页面的运行状态。
+  useEffect(() => {
+    const handleMcpChanged = (event) => {
+      setStatus(prev => ({ ...(prev || {}), enabled: event.detail?.enabled ?? false }));
+    };
+    window.addEventListener('dorami-mcp-changed', handleMcpChanged);
+    return () => window.removeEventListener('dorami-mcp-changed', handleMcpChanged);
+  }, []);
 
   const handleCopy = async () => {
     try {
@@ -188,13 +182,11 @@ export default function MCPTab({ showToast }) {
               <p className="integration-card-copy mb-4">
                 {TOOL_CARDS.length} 个工具，支持语义搜索、条件浏览和 RAG 上下文组装。
               </p>
-              <button
-                onClick={handleToggle}
-                disabled={toggling || status === null}
-                className={`integration-button w-full ${enabled ? 'integration-button-danger' : 'integration-button-primary'}`}
-              >
-                {toggling ? '处理中…' : enabled ? '停止 MCP' : '启动 MCP'}
-              </button>
+              <div className="integration-status-line flex items-center justify-center gap-2 rounded-[10px] border border-white/15 bg-white/5 px-3 py-2 text-xs font-bold text-white/80">
+                {status === null ? '读取状态中…' : enabled ? '● 运行中' : '○ 已停止'}
+                <span className="text-white/40">·</span>
+                <span className="text-white/50">在「设置」中启停</span>
+              </div>
             </div>
 
             {/* Skill card */}

@@ -24,7 +24,8 @@ Content-Type: application/x-ndjson
 Runtime role gating:
 
 - `collector` and `all` can export.
-- `reader` and `all` can import.
+- `reader` and `all` can import, but import requires an `admin` login account
+  because it mutates the whole archive.
 - `reader` cannot access fetch-triggering collector APIs.
 
 ## Export Filters

@@ -126,3 +126,4 @@ def test_all_runtime_splits_surfaces_by_login_account(monkeypatch):
         assert client.get("/api/subscriptions").status_code == 200
         assert client.get("/api/articles").status_code == 200
         assert client.post("/api/articles", json={}).status_code == 403
+        assert client.post("/api/archive/import/articles.jsonl", content="x").status_code == 403

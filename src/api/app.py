@@ -178,6 +178,10 @@ def article_write_requires_collector(path: str, method: str) -> bool:
     return False
 
 
+def archive_import_requires_admin(path: str, method: str) -> bool:
+    return method.upper() == "POST" and _path_matches(path, ("/api/archive/import",))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _mcp_enabled
@@ -367,6 +371,15 @@ async def require_admin_session(request: Request, call_next):
     disabled_surface = disabled_runtime_surface(path, auth_session)
     if disabled_surface is None and article_write_requires_collector(path, request.method):
         disabled_surface = None if collector_role_enabled(auth_session) else "collector"
+    if disabled_surface is None and archive_import_requires_admin(path, request.method):
+        if (auth_session or {}).get("role") != "admin":
+            return StarletteJSONResponse(
+                {
+                    "detail": "该操作需要管理员账号",
+                    **runtime_capabilities(auth_session),
+                },
+                status_code=403,
+            )
     if disabled_surface:
         return StarletteJSONResponse(
             {
