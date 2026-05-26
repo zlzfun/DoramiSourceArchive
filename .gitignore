@@ -10,3 +10,6 @@ config/production.ini
 
 # Evaluation results (keep .gitkeep but not actual results)
 tests/rag/results/*.json
+
+# macOS
+.DS_Store

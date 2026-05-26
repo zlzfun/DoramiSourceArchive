@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { RefreshCw, CheckCircle, Zap, Search, Plus, Trash2 } from 'lucide-react';
+import { RefreshCw, CheckCircle, Zap, Search, Plus, Trash2, RotateCcw } from 'lucide-react';
 import DateRangePicker from './DateRangePicker';
 import ArticleDetailModal from './ArticleDetailModal';
 import ManualAddModal from './ManualAddModal';
@@ -9,6 +9,9 @@ import {
   vectorizeArticle,
   batchVectorizeArticles,
   vectorizeAllPending,
+  reindexAll,
+  getAutoVectorize,
+  setAutoVectorize,
   updateArticle,
   createArticle,
 } from '../api';
@@ -18,7 +21,7 @@ export default function DataTab({
   showToast,
   isActive = true,
   canManageArticles = true,
-  canVectorizeArticles = true,
+  isReader = true,
   articlesDirty = false,
   onArticlesRefreshed,
   pendingFilter,
@@ -26,11 +29,13 @@ export default function DataTab({
 }) {
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [vectorizingId, setVectorizingId] = useState(null);
   const [selectedArticles, setSelectedArticles] = useState(new Set());
   const [modalState, setModalState] = useState({ isOpen: false, data: null, isEditing: false });
   const [manualAddModal, setManualAddModal] = useState(false);
+  const [vectorizingId, setVectorizingId] = useState(null);
   const [vectorizingAll, setVectorizingAll] = useState(false);
+  const [reindexing, setReindexing] = useState(false);
+  const [autoVectorize, setAutoVectorizeState] = useState(false);
 
   const [filters, setFilters] = useState({
     content_type: '',
@@ -41,6 +46,7 @@ export default function DataTab({
     publish_date_end: '',
     fetched_date_start: '',
     fetched_date_end: '',
+    subscribed_scope: 'off', // off | prioritize | only（相对当前用户订阅的源）
   });
 
   const getFetcherName = (id) => {
@@ -53,7 +59,63 @@ export default function DataTab({
     ...articles.map(a => a.source_id).filter(Boolean),
     ...(filters.source_id ? [filters.source_id] : []),
   ])];
-  const canSelectArticles = canManageArticles || canVectorizeArticles;
+  const canSelectArticles = canManageArticles;
+
+  useEffect(() => {
+    if (!canManageArticles) return;
+    getAutoVectorize().then(d => setAutoVectorizeState(Boolean(d.enabled))).catch(() => {});
+  }, [canManageArticles]);
+
+  const handleToggleAutoVectorize = async () => {
+    const next = !autoVectorize;
+    setAutoVectorizeState(next);
+    try {
+      await setAutoVectorize(next);
+      showToast(next ? '已开启：抓取后自动向量化' : '已关闭自动向量化', 'success');
+    } catch (e) {
+      setAutoVectorizeState(!next);
+      showToast(e.message || '设置失败', 'error');
+    }
+  };
+
+  const handleVectorize = async (id) => {
+    setVectorizingId(id);
+    try {
+      await vectorizeArticle(id);
+      showToast('建立索引成功', 'success');
+      loadArticles();
+    } catch (e) { showToast(e.message || '网络异常', 'error'); }
+    setVectorizingId(null);
+  };
+
+  const handleBatchVectorize = async () => {
+    try {
+      const data = await batchVectorizeArticles(Array.from(selectedArticles));
+      showToast(`成功处理，${data.count} 条记录新建了向量索引`, 'success');
+      loadArticles();
+    } catch (e) { showToast(e.message || '网络异常', 'error'); }
+  };
+
+  const handleVectorizeAllPending = async () => {
+    setVectorizingAll(true);
+    try {
+      const data = await vectorizeAllPending();
+      showToast(`已向量化 ${data.count}/${data.total_pending} 篇待处理文章`, 'success');
+      loadArticles();
+    } catch (e) { showToast(e.message || '网络异常', 'error'); }
+    setVectorizingAll(false);
+  };
+
+  const handleReindexAll = async () => {
+    if (!window.confirm('全量重索引将清空并重建整个向量库（适用于更换 Embedding 模型）。确认继续？')) return;
+    setReindexing(true);
+    try {
+      const data = await reindexAll();
+      showToast(`全量重索引完成：${data.total_reindexed}/${data.total_articles} 篇`, 'success');
+      loadArticles();
+    } catch (e) { showToast(e.message || '重索引失败', 'error'); }
+    setReindexing(false);
+  };
 
   const loadArticles = async () => {
     setLoading(true);
@@ -73,6 +135,7 @@ export default function DataTab({
     filters.content_type, filters.source_id, filters.is_vectorized,
     filters.publish_date_start, filters.publish_date_end,
     filters.fetched_date_start, filters.fetched_date_end,
+    filters.subscribed_scope,
   ]);
 
   useEffect(() => {
@@ -119,34 +182,6 @@ export default function DataTab({
     } catch (e) { showToast(e.message || '网络异常', 'error'); }
   };
 
-  const handleBatchVectorize = async () => {
-    try {
-      const data = await batchVectorizeArticles(Array.from(selectedArticles));
-      showToast(`成功处理，${data.count} 条记录新建了向量索引`, 'success');
-      loadArticles();
-    } catch (e) { showToast(e.message || '网络异常', 'error'); }
-  };
-
-  const handleVectorizeAllPending = async () => {
-    setVectorizingAll(true);
-    try {
-      const data = await vectorizeAllPending();
-      showToast(`已向量化 ${data.count}/${data.total_pending} 篇待处理文章`, 'success');
-      loadArticles();
-    } catch (e) { showToast(e.message || '网络异常', 'error'); }
-    setVectorizingAll(false);
-  };
-
-  const handleVectorize = async (id) => {
-    setVectorizingId(id);
-    try {
-      await vectorizeArticle(id);
-      showToast('建立索引成功', 'success');
-      loadArticles();
-    } catch (e) { showToast(e.message || '网络异常', 'error'); }
-    setVectorizingId(null);
-  };
-
   const handleUpdateArticle = async (id, updatedData) => {
     try {
       await updateArticle(id, updatedData);
@@ -187,10 +222,19 @@ export default function DataTab({
           <p className="page-subtitle mt-3 max-w-4xl">沉浸式多维过滤，支持点击日期极速框选范围，快速查找与管理全部抓取内容。</p>
         </div>
         <div className="page-actions">
-          {canVectorizeArticles && (
-            <button onClick={handleVectorizeAllPending} disabled={vectorizingAll} className="action-button action-button-secondary">
-              {vectorizingAll ? <RefreshCw className="animate-spin" /> : <Zap className="text-amber-500" />} 全量向量化
-            </button>
+          {canManageArticles && (
+            <>
+              <label className="flex items-center gap-2 rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600" title="开启后，后续抓取入库的文章会自动写入向量库">
+                <input type="checkbox" checked={autoVectorize} onChange={handleToggleAutoVectorize} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+                抓取后自动向量化
+              </label>
+              <button onClick={handleVectorizeAllPending} disabled={vectorizingAll} className="action-button action-button-secondary">
+                {vectorizingAll ? <RefreshCw className="animate-spin" /> : <Zap className="text-amber-500" />} 全量向量化
+              </button>
+              <button onClick={handleReindexAll} disabled={reindexing} className="action-button action-button-secondary">
+                {reindexing ? <RefreshCw className="animate-spin" /> : <RotateCcw />} 全量重索引
+              </button>
+            </>
           )}
           {canManageArticles && (
             <button onClick={() => setManualAddModal(true)} className="action-button action-button-primary">
@@ -210,6 +254,28 @@ export default function DataTab({
             <input type="text" placeholder="搜索标题、内容、来源网站、标签等关键词..." value={filters.search} onChange={e => setFilters({ ...filters, search: e.target.value })} onKeyDown={e => e.key === 'Enter' && loadArticles()} className="py-4" />
             <span className="hidden rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-400 sm:inline-flex">⌘ /</span>
           </label>
+
+          {isReader && (
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs font-bold text-slate-500">个性化视图</span>
+              <div className="segmented-control">
+                {[
+                  { id: 'off', label: '全部内容' },
+                  { id: 'prioritize', label: '我的订阅优先' },
+                  { id: 'only', label: '仅看我的订阅' },
+                ].map(opt => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setFilters({ ...filters, subscribed_scope: opt.id })}
+                    className={`segmented-option ${filters.subscribed_scope === opt.id ? 'segmented-option-active' : ''}`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1.35fr_1.35fr_1fr]">
             <div className="field-box">
@@ -244,14 +310,16 @@ export default function DataTab({
                 placeholder="开始日期 → 结束日期"
               />
             </div>
-            <div className="field-box">
-              <span>向量状态</span>
-              <select value={filters.is_vectorized} onChange={e => setFilters({ ...filters, is_vectorized: e.target.value })}>
-                <option value="">全部状态</option>
-                <option value="true">向量已构建</option>
-                <option value="false">向量未构建</option>
-              </select>
-            </div>
+            {canManageArticles && (
+              <div className="field-box">
+                <span>向量状态</span>
+                <select value={filters.is_vectorized} onChange={e => setFilters({ ...filters, is_vectorized: e.target.value })}>
+                  <option value="">全部状态</option>
+                  <option value="true">向量已构建</option>
+                  <option value="false">向量未构建</option>
+                </select>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -277,12 +345,12 @@ export default function DataTab({
               <th className="px-4 py-4 font-bold">标题 / 内容摘要</th>
               <th className="px-3 py-4 w-[150px] font-bold">原始发布日期</th>
               <th className="px-3 py-4 w-[150px] font-bold">抓取 / 收录时间</th>
-              <th className="px-3 py-4 w-36 font-bold">向量状态</th>
+              {canManageArticles && <th className="px-3 py-4 w-36 font-bold">向量状态</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
             {articles.length === 0 ? (
-              <tr><td colSpan="7" className="px-6 py-16 text-center text-slate-400 font-medium">当前时间区间或过滤条件下，未查询到相关数据</td></tr>
+              <tr><td colSpan={canManageArticles ? 7 : 6} className="px-6 py-16 text-center text-slate-400 font-medium">当前时间区间或过滤条件下，未查询到相关数据</td></tr>
             ) : articles.map((article) => (
               <tr key={article.id} className="hover:bg-blue-50/40 transition-colors group">
                 <td className="px-4 py-4 text-center">
@@ -298,25 +366,22 @@ export default function DataTab({
                 </td>
                 <td className="px-3 py-4 text-slate-500 text-xs font-mono">{article.publish_date?.split('T')[0] || '-'}</td>
                 <td className="px-3 py-4 text-slate-600 text-xs font-mono">{article.fetched_date?.replace('T', ' ').substring(0, 16) || '-'}</td>
-                <td className="px-3 py-4">
-                  {article.is_vectorized ? (
-                    <span className="vector-status vector-status-done">
-                      <CheckCircle className="vector-status-icon" strokeWidth={2.35} />
-                      <span className="vector-status-label">向量已构建</span>
-                    </span>
-                  ) : canVectorizeArticles ? (
-                    <button onClick={() => handleVectorize(article.id)} disabled={vectorizingId === article.id} className="vector-status vector-status-pending group">
-                      {vectorizingId === article.id ? <RefreshCw className="vector-status-icon animate-spin" strokeWidth={2.35} /> : <Zap className="vector-status-icon" strokeWidth={2.35} />}
-                      <span className="vector-status-label vector-status-default">{vectorizingId === article.id ? '构建中' : '向量未构建'}</span>
-                      <span className="vector-status-label vector-status-hover">{vectorizingId === article.id ? '构建中' : '构建向量'}</span>
-                    </button>
-                  ) : (
-                    <span className="vector-status vector-status-pending">
-                      <Zap className="vector-status-icon" strokeWidth={2.35} />
-                      <span className="vector-status-label">向量未构建</span>
-                    </span>
-                  )}
-                </td>
+                {canManageArticles && (
+                  <td className="px-3 py-4">
+                    {article.is_vectorized ? (
+                      <span className="vector-status vector-status-done">
+                        <CheckCircle className="vector-status-icon" strokeWidth={2.35} />
+                        <span className="vector-status-label">向量已构建</span>
+                      </span>
+                    ) : (
+                      <button onClick={() => handleVectorize(article.id)} disabled={vectorizingId === article.id} className="vector-status vector-status-pending group">
+                        {vectorizingId === article.id ? <RefreshCw className="vector-status-icon animate-spin" strokeWidth={2.35} /> : <Zap className="vector-status-icon" strokeWidth={2.35} />}
+                        <span className="vector-status-label vector-status-default">{vectorizingId === article.id ? '构建中' : '向量未构建'}</span>
+                        <span className="vector-status-label vector-status-hover">{vectorizingId === article.id ? '构建中' : '构建向量'}</span>
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -329,7 +394,7 @@ export default function DataTab({
             <CheckCircle /> 已选择 {selectedArticles.size} 条记录
           </div>
           <div className="selection-bar-actions">
-            {canVectorizeArticles && (
+            {canManageArticles && (
               <button onClick={handleBatchVectorize} className="action-button action-button-secondary text-blue-700">
                 <Zap /> 批量构建
               </button>

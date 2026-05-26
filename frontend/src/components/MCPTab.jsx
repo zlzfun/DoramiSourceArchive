@@ -32,7 +32,7 @@ const TOOL_CARDS = [
 ];
 
 const LOCAL_TOOLS = ['Claude Code', 'Cursor', 'Codex', 'OpenCode'];
-const ONLINE_TOOLS = ['Claude.ai Projects', 'Dify', 'Coze'];
+const ONLINE_TOOLS = ['Claude.ai Projects', 'Coze'];
 
 export default function MCPTab({ showToast }) {
   const [status, setStatus] = useState(null);
@@ -214,7 +214,7 @@ export default function MCPTab({ showToast }) {
                 </span>
               </div>
               <p className="integration-card-copy mb-4">
-                一句话生成结构化日报，支持 Claude Code、Cursor、Dify 等主流 Agent 平台。
+                一句话生成结构化日报，支持 Claude Code、Cursor 等主流 Agent 平台。
               </p>
               <button
                 onClick={() => handleDownload('/api/skill/daily-brief', 'dorami-daily-brief.zip')}
@@ -389,10 +389,6 @@ export default function MCPTab({ showToast }) {
                   <div className="flex justify-between text-xs">
                     <span className="text-slate-400 font-medium">Claude.ai</span>
                     <span className="text-slate-500">项目设置 → Instructions</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400 font-medium">Dify</span>
-                    <span className="text-slate-500">Chatbot → 系统提示</span>
                   </div>
                   <div className="flex justify-between text-xs">
                     <span className="text-slate-400 font-medium">Coze</span>

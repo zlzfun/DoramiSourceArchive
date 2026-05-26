@@ -1,118 +1,38 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Check,
+  ChevronDown,
+  ChevronRight,
   Copy,
-  Edit3,
+  FileText,
   KeyRound,
+  Layers,
   Loader2,
   Plus,
   RefreshCw,
   RotateCw,
+  Search,
+  Terminal,
   Trash2,
 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import {
-  createSubscription,
-  deleteSubscription,
-  fetchSubscriptions,
-  rotateSubscriptionToken,
-  updateSubscription,
+  fetchFeedToken,
+  fetchReaderSources,
+  rotateFeedToken,
+  subscribeSource,
+  unsubscribeSource,
 } from '../api';
 
-const EMPTY_DRAFT = {
-  name: '',
-  description: '',
-  source_ids: '',
-  content_types: '',
-  search: '',
-  run_scope: '',
-  has_content: true,
-  include_content: true,
-  default_limit: 100,
-  max_limit: 500,
-  is_active: true,
-  passthrough_filters: {},
-};
+const TOKEN_PLACEHOLDER = '$DORAMI_TOKEN';
 
-const DELIVERY_LIMIT_MAX = 500;
-const UI_FILTER_KEYS = new Set([
-  'content_type',
-  'content_types',
-  'source_id',
-  'source_ids',
-  'search',
-  'run_scope',
-  'has_content',
-]);
-
-const RUN_SCOPE_LABELS = {
-  ad_hoc: '临时采集',
-  saved_job: '固定任务',
-  legacy_task: '旧任务',
-};
-
-function normalizeCsv(value) {
-  return String(value || '')
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean)
-    .join(',');
+function apiRoot() {
+  const base = API_BASE_URL.startsWith('http') ? API_BASE_URL : `${window.location.origin}${API_BASE_URL}`;
+  return base.replace(/\/$/, '');
 }
 
-function numberInRange(value, fallback, min, max) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(parsed)));
-}
-
-function draftFromSubscription(subscription) {
-  const filters = subscription.filters || {};
-  const policy = subscription.delivery_policy || {};
-  const passthroughFilters = Object.fromEntries(
-    Object.entries(filters).filter(([key]) => !UI_FILTER_KEYS.has(key)),
-  );
-  return {
-    name: subscription.name || '',
-    description: subscription.description || '',
-    source_ids: filters.source_ids || filters.source_id || '',
-    content_types: filters.content_types || filters.content_type || '',
-    search: filters.search || '',
-    run_scope: filters.run_scope || '',
-    has_content: filters.has_content !== false,
-    include_content: policy.include_content !== false,
-    default_limit: policy.default_limit || 100,
-    max_limit: policy.max_limit || 500,
-    is_active: subscription.is_active !== false,
-    passthrough_filters: passthroughFilters,
-  };
-}
-
-function buildPayload(draft) {
-  const filters = {
-    ...(draft.passthrough_filters || {}),
-    has_content: Boolean(draft.has_content),
-  };
-  const sourceIds = normalizeCsv(draft.source_ids);
-  const contentTypes = normalizeCsv(draft.content_types);
-  if (sourceIds) filters.source_ids = sourceIds;
-  if (contentTypes) filters.content_types = contentTypes;
-  if (draft.search.trim()) filters.search = draft.search.trim();
-  if (draft.run_scope) filters.run_scope = draft.run_scope;
-
-  const defaultLimit = numberInRange(draft.default_limit, 100, 1, DELIVERY_LIMIT_MAX);
-  const maxLimit = numberInRange(draft.max_limit, 500, defaultLimit, DELIVERY_LIMIT_MAX);
-
-  return {
-    name: draft.name.trim(),
-    description: draft.description.trim(),
-    filters,
-    delivery_policy: {
-      include_content: Boolean(draft.include_content),
-      default_limit: defaultLimit,
-      max_limit: maxLimit,
-    },
-    is_active: Boolean(draft.is_active),
-  };
+function feedEndpoint(suffix = '') {
+  return `${apiRoot()}/public/feed/articles${suffix}`;
 }
 
 async function copyText(text) {
@@ -121,7 +41,6 @@ async function copyText(text) {
     await navigator.clipboard.writeText(text);
     return;
   }
-
   const textarea = document.createElement('textarea');
   textarea.value = text;
   textarea.setAttribute('readonly', '');
@@ -136,34 +55,18 @@ async function copyText(text) {
   }
 }
 
-function publicEndpoint(subscriptionId) {
-  const apiRoot = API_BASE_URL.startsWith('http')
-    ? API_BASE_URL
-    : `${window.location.origin}${API_BASE_URL}`;
-  return `${apiRoot.replace(/\/$/, '')}/public/subscriptions/${subscriptionId}/dify/articles`;
-}
+const FEED_PARAMS = [
+  ['publish_date_start / publish_date_end', '发布时间窗口（YYYY-MM-DD），生成日报最常用'],
+  ['content_types', '逗号分隔的内容类型，如 rss_article,web_article'],
+  ['source_ids', '逗号分隔的来源；仅取与你已订阅来源的交集'],
+  ['search', '标题关键词过滤'],
+  ['include_content', '是否下发正文，默认 true；传 false 仅取元数据'],
+  ['has_content', '仅返回有正文的记录，默认 true'],
+  ['skip / limit', '分页偏移与条数，limit 上限 500'],
+];
 
-function FilterSummary({ filters }) {
-  const chips = [];
-  const sourceLabel = filters.source_ids || filters.source_id;
-  const typeLabel = filters.content_types || filters.content_type;
-  if (sourceLabel) chips.push(`来源 ${sourceLabel}`);
-  if (typeLabel) chips.push(`类型 ${typeLabel}`);
-  if (filters.run_scope) chips.push(RUN_SCOPE_LABELS[filters.run_scope] || filters.run_scope);
-  if (filters.search) chips.push(`检索 ${filters.search}`);
-  chips.push(filters.has_content === false ? '允许无正文' : '仅正文');
-
-  return (
-    <div className="flex flex-wrap gap-2">
-      {chips.map(chip => (
-        <span key={chip} className="data-chip max-w-[220px] truncate" title={chip}>{chip}</span>
-      ))}
-    </div>
-  );
-}
-
-function TokenNotice({ tokenInfo, onCopy, copied }) {
-  if (!tokenInfo) return null;
+function TokenNotice({ token, onCopy, copied }) {
+  if (!token) return null;
   return (
     <div className="surface-card rounded-[14px] border-emerald-200 bg-emerald-50/80 p-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
@@ -172,14 +75,14 @@ function TokenNotice({ tokenInfo, onCopy, copied }) {
             <KeyRound className="h-5 w-5" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-black text-emerald-900">订阅令牌仅显示一次</p>
-            <p className="tiny-meta mt-1 text-emerald-700">请复制到下游系统，后续只能通过轮换生成新令牌。</p>
+            <p className="text-sm font-black text-emerald-900">访问令牌仅显示一次</p>
+            <p className="tiny-meta mt-1 text-emerald-700">复制到你的下游系统，后续只能再次生成新令牌。</p>
             <code className="mt-2 block break-all rounded-[10px] bg-white/80 px-3 py-2 text-xs font-bold text-emerald-950">
-              {tokenInfo.token}
+              {token}
             </code>
           </div>
         </div>
-        <button onClick={() => onCopy(tokenInfo.token, 'token-notice')} className="action-button action-button-secondary shrink-0">
+        <button onClick={() => onCopy(token, 'token-notice')} className="action-button action-button-secondary shrink-0">
           {copied === 'token-notice' ? <Check /> : <Copy />}
           {copied === 'token-notice' ? '已复制' : '复制令牌'}
         </button>
@@ -188,47 +91,228 @@ function TokenNotice({ tokenInfo, onCopy, copied }) {
   );
 }
 
-export default function SubscriptionTab({ showToast }) {
-  const [subscriptions, setSubscriptions] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [draft, setDraft] = useState(EMPTY_DRAFT);
-  const [tokenInfo, setTokenInfo] = useState(null);
+function FeedDocsPanel({ plainToken, onCopy, copiedKey }) {
+  const token = plainToken || TOKEN_PLACEHOLDER;
+  const examples = [
+    ['拉取最新（默认 100 条）', `curl -H "Authorization: Bearer ${token}" \\\n  "${feedEndpoint()}"`],
+    ['按发布时间筛选（日报）', `curl -H "Authorization: Bearer ${token}" \\\n  "${feedEndpoint('?publish_date_start=2026-05-20&publish_date_end=2026-05-26')}"`],
+    ['指定类型 + 仅元数据', `curl -H "Authorization: Bearer ${token}" \\\n  "${feedEndpoint('?content_types=rss_article&include_content=false')}"`],
+    ['Markdown 批量导出', `curl -H "Authorization: Bearer ${token}" \\\n  "${apiRoot()}/public/feed/articles.md"`],
+  ];
+  return (
+    <div className="mt-4 space-y-4 border-t border-slate-100 pt-4">
+      {!plainToken && (
+        <p className="tiny-meta">下例中的 <code className="font-mono">{TOKEN_PLACEHOLDER}</code> 请替换为你的令牌（生成时仅显示一次）。</p>
+      )}
+      <div>
+        <p className="form-label mb-2">请求参数</p>
+        <div className="overflow-hidden rounded-[10px] border border-slate-100">
+          <table className="w-full text-left text-xs">
+            <tbody className="divide-y divide-slate-100">
+              {FEED_PARAMS.map(([name, desc]) => (
+                <tr key={name} className="align-top">
+                  <td className="w-[220px] bg-slate-50 px-3 py-2 font-mono font-bold text-slate-600">{name}</td>
+                  <td className="px-3 py-2 text-slate-500">{desc}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div className="space-y-3">
+        <p className="form-label">调用示例（curl）</p>
+        {examples.map(([label, cmd], idx) => (
+          <div key={label}>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="tiny-meta">{label}</span>
+              <button
+                type="button"
+                onClick={() => onCopy(cmd, `curl-${idx}`)}
+                className="flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-800"
+              >
+                {copiedKey === `curl-${idx}` ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                复制
+              </button>
+            </div>
+            <pre className="overflow-x-auto rounded-[10px] bg-slate-900 px-3 py-2.5 text-[11px] leading-5 text-slate-100"><code>{cmd}</code></pre>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SourceTile({ source, busy, onToggleSubscribe, onViewArticles }) {
+  const subscribed = Boolean(source.subscribed);
+  const hasArticles = (source.count || 0) > 0;
+  return (
+    <div
+      className={`flex flex-col gap-3 rounded-[14px] border p-4 transition-all ${
+        subscribed ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200 bg-white hover:border-indigo-200'
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-slate-200 bg-white text-xl">
+          {source.icon || '📡'}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-black text-slate-900" title={source.name}>{source.name}</p>
+          <p className="truncate font-mono text-[11px] text-slate-400" title={source.source_id}>{source.source_id}</p>
+        </div>
+      </div>
+
+      {source.description ? (
+        <p className="line-clamp-2 min-h-[2.5rem] text-xs leading-5 text-slate-500" title={source.description}>{source.description}</p>
+      ) : (
+        <p className="min-h-[2.5rem] text-xs leading-5 text-slate-300">暂无简介</p>
+      )}
+
+      <div className="flex items-center gap-2 text-[11px] font-bold text-slate-500">
+        <span className="data-chip">{source.content_type || '未知类型'}</span>
+        {hasArticles ? <span>{source.count} 篇</span> : <span className="text-slate-400">尚无归档 · 订阅接收后续</span>}
+      </div>
+
+      <div className="mt-1 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onToggleSubscribe(source)}
+          disabled={busy}
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded-[10px] border px-3 py-2 text-xs font-bold transition-colors disabled:opacity-60 ${
+            subscribed
+              ? 'border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+              : 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+          }`}
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : subscribed ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+          {subscribed ? '已订阅' : '订阅'}
+        </button>
+        <button
+          type="button"
+          onClick={() => onViewArticles?.(source.source_id)}
+          disabled={!hasArticles}
+          className="flex items-center justify-center gap-1.5 rounded-[10px] border border-slate-100 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 hover:border-indigo-100 hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-slate-50 disabled:hover:text-slate-600"
+          title={hasArticles ? `在知识台账中查看「${source.name}」的文章` : '该源暂无归档文章'}
+        >
+          <FileText className="h-3.5 w-3.5" /> 查看文章
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default function SubscriptionTab({ showToast, onViewArticles }) {
+  const [view, setView] = useState('catalog'); // catalog | manage
+  const [sources, setSources] = useState([]);
+  const [sourcesLoading, setSourcesLoading] = useState(true);
+  const [sourceQuery, setSourceQuery] = useState('');
+  const [pendingSourceIds, setPendingSourceIds] = useState(() => new Set());
+  const [feedToken, setFeedToken] = useState(null);
+  const [feedLoading, setFeedLoading] = useState(true);
+  const [rotatingToken, setRotatingToken] = useState(false);
+  const [plainToken, setPlainToken] = useState('');
+  const [docsOpen, setDocsOpen] = useState(false);
   const [copiedKey, setCopiedKey] = useState('');
 
-  const loadSubscriptions = useCallback(async () => {
-    setLoading(true);
+  const loadSources = useCallback(async () => {
+    setSourcesLoading(true);
     try {
-      setSubscriptions(await fetchSubscriptions());
+      const data = await fetchReaderSources();
+      setSources(data.sources || []);
     } catch (error) {
-      showToast(error.message || '获取订阅源失败', 'error');
+      showToast(error.message || '获取内容源目录失败', 'error');
     } finally {
-      setLoading(false);
+      setSourcesLoading(false);
+    }
+  }, [showToast]);
+
+  const loadFeedToken = useCallback(async () => {
+    setFeedLoading(true);
+    try {
+      setFeedToken(await fetchFeedToken());
+    } catch (error) {
+      showToast(error.message || '获取聚合接口令牌失败', 'error');
+    } finally {
+      setFeedLoading(false);
     }
   }, [showToast]);
 
   useEffect(() => {
-    loadSubscriptions();
-  }, [loadSubscriptions]);
+    loadSources();
+    loadFeedToken();
+  }, [loadSources, loadFeedToken]);
 
-  const activeCount = useMemo(
-    () => subscriptions.filter(item => item.is_active).length,
-    [subscriptions],
+  const subscribedSources = useMemo(
+    () => sources.filter(source => source.subscribed),
+    [sources],
+  );
+  const subscribedArticleTotal = useMemo(
+    () => subscribedSources.reduce((total, source) => total + (source.count || 0), 0),
+    [subscribedSources],
   );
 
-  const openCreate = () => {
-    setEditing(null);
-    setDraft(EMPTY_DRAFT);
-    setEditorOpen(true);
-  };
+  const sourcesByCategory = useMemo(() => {
+    const query = sourceQuery.trim().toLowerCase();
+    const map = new Map();
+    for (const source of sources) {
+      const haystack = `${source.name} ${source.source_id} ${source.content_type} ${source.description || ''}`.toLowerCase();
+      if (query && !haystack.includes(query)) continue;
+      if (!map.has(source.category)) map.set(source.category, []);
+      map.get(source.category).push(source);
+    }
+    return [...map.entries()];
+  }, [sources, sourceQuery]);
 
-  const openEdit = (subscription) => {
-    setEditing(subscription);
-    setDraft(draftFromSubscription(subscription));
-    setEditorOpen(true);
-  };
+  const applySubscribedIds = useCallback((ids) => {
+    const idSet = new Set(ids || []);
+    setSources(prev => prev.map(source => ({ ...source, subscribed: idSet.has(source.source_id) })));
+  }, []);
+
+  const handleToggleSubscribe = useCallback(async (source) => {
+    const { source_id, subscribed, name } = source;
+    setPendingSourceIds(prev => new Set(prev).add(source_id));
+    setSources(prev => prev.map(s => (s.source_id === source_id ? { ...s, subscribed: !subscribed } : s)));
+    try {
+      const result = subscribed ? await unsubscribeSource(source_id) : await subscribeSource(source_id);
+      applySubscribedIds(result.subscribed_source_ids);
+      showToast(subscribed ? `已取消订阅「${name}」` : `已订阅「${name}」`, 'success');
+    } catch (error) {
+      setSources(prev => prev.map(s => (s.source_id === source_id ? { ...s, subscribed } : s)));
+      showToast(error.message || '操作失败', 'error');
+    } finally {
+      setPendingSourceIds(prev => {
+        const next = new Set(prev);
+        next.delete(source_id);
+        return next;
+      });
+    }
+  }, [applySubscribedIds, showToast]);
+
+  const handleToggleCategory = useCallback(async (items) => {
+    const allSubscribed = items.every(item => item.subscribed);
+    const targets = items.filter(item => (allSubscribed ? item.subscribed : !item.subscribed));
+    if (targets.length === 0) return;
+    const ids = targets.map(item => item.source_id);
+    setPendingSourceIds(prev => new Set([...prev, ...ids]));
+    setSources(prev => prev.map(s => (ids.includes(s.source_id) ? { ...s, subscribed: !allSubscribed } : s)));
+    try {
+      let latestIds = null;
+      for (const sid of ids) {
+        const result = allSubscribed ? await unsubscribeSource(sid) : await subscribeSource(sid);
+        latestIds = result.subscribed_source_ids ?? latestIds;
+      }
+      if (latestIds) applySubscribedIds(latestIds);
+      showToast(allSubscribed ? `已取消订阅 ${ids.length} 个源` : `已订阅 ${ids.length} 个源`, 'success');
+    } catch (error) {
+      await loadSources();
+      showToast(error.message || '批量操作失败', 'error');
+    } finally {
+      setPendingSourceIds(prev => {
+        const next = new Set(prev);
+        ids.forEach(id => next.delete(id));
+        return next;
+      });
+    }
+  }, [applySubscribedIds, loadSources, showToast]);
 
   const handleCopy = async (text, key) => {
     try {
@@ -241,269 +325,217 @@ export default function SubscriptionTab({ showToast }) {
     }
   };
 
-  const handleSave = async (event) => {
-    event.preventDefault();
-    const payload = buildPayload(draft);
-    if (!payload.name) {
-      showToast('订阅源名称不能为空', 'error');
-      return;
-    }
-
-    setSaving(true);
+  const handleRotateFeedToken = async () => {
+    if (feedToken?.exists && !window.confirm('重新生成会使旧的聚合令牌立即失效，确定继续？')) return;
+    setRotatingToken(true);
     try {
-      const result = editing
-        ? await updateSubscription(editing.id, payload)
-        : await createSubscription(payload);
-      setEditorOpen(false);
-      setEditing(null);
-      setTokenInfo(result.token ? { id: result.id, token: result.token } : null);
-      await loadSubscriptions();
-      showToast(editing ? '订阅源已更新' : '订阅源已创建', 'success');
+      const result = await rotateFeedToken();
+      setPlainToken(result.token);
+      setDocsOpen(true);
+      setFeedToken(prev => ({ ...(prev || {}), exists: true, token_preview: result.token_preview }));
+      showToast('聚合接口令牌已生成', 'success');
     } catch (error) {
-      showToast(error.message || '保存订阅源失败', 'error');
+      showToast(error.message || '生成聚合接口令牌失败', 'error');
     } finally {
-      setSaving(false);
+      setRotatingToken(false);
     }
   };
 
-  const handleRotate = async (subscription) => {
-    if (!window.confirm(`轮换「${subscription.name}」的访问令牌？旧令牌会立即失效。`)) return;
-    try {
-      const result = await rotateSubscriptionToken(subscription.id);
-      setTokenInfo({ id: result.id, token: result.token });
-      await loadSubscriptions();
-      showToast('订阅令牌已轮换', 'success');
-    } catch (error) {
-      showToast(error.message || '轮换订阅令牌失败', 'error');
-    }
-  };
-
-  const handleDelete = async (subscription) => {
-    if (!window.confirm(`删除订阅源「${subscription.name}」？下游接口会停止访问。`)) return;
-    try {
-      await deleteSubscription(subscription.id);
-      if (tokenInfo?.id === subscription.id) setTokenInfo(null);
-      await loadSubscriptions();
-      showToast('订阅源已删除', 'success');
-    } catch (error) {
-      showToast(error.message || '删除订阅源失败', 'error');
-    }
-  };
-
-  const updateDraft = (key, value) => {
-    setDraft(prev => ({ ...prev, [key]: value }));
-  };
+  const refreshAll = useCallback(async () => {
+    await Promise.all([loadSources(), loadFeedToken()]);
+  }, [loadSources, loadFeedToken]);
 
   return (
     <div className="space-y-6 animate-in fade-in">
       <div className="page-header flex-col xl:flex-row">
         <div className="page-heading">
           <h2 className="page-title">订阅分发</h2>
-          <p className="page-subtitle mt-3 max-w-3xl">管理读者层的个性化内容源，向 Dify 等下游编排应用提供带令牌的拉取接口。</p>
+          <p className="page-subtitle mt-3 max-w-3xl">在源目录中一键订阅你关注的内容源，再用一个聚合接口把它们交付给下游编排应用（按发布时间等条件自由拉取）。</p>
         </div>
         <div className="page-actions">
-          <button onClick={loadSubscriptions} disabled={loading} className="action-button action-button-secondary">
-            {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          <div className="segmented-control">
+            <button onClick={() => setView('catalog')} className={`segmented-option ${view === 'catalog' ? 'segmented-option-active' : ''}`}><Layers /> 源目录</button>
+            <button onClick={() => setView('manage')} className={`segmented-option ${view === 'manage' ? 'segmented-option-active' : ''}`}><KeyRound /> 我的订阅</button>
+          </div>
+          <button onClick={refreshAll} disabled={sourcesLoading || feedLoading} className="action-button action-button-secondary">
+            {sourcesLoading || feedLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             刷新
-          </button>
-          <button onClick={openCreate} className="action-button action-button-primary">
-            <Plus />
-            新建订阅源
           </button>
         </div>
       </div>
 
-      <TokenNotice tokenInfo={tokenInfo} onCopy={handleCopy} copied={copiedKey} />
+      <TokenNotice token={plainToken} onCopy={handleCopy} copied={copiedKey} />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="surface-card rounded-[14px] p-5">
-          <p className="tiny-meta">订阅源总数</p>
-          <p className="stat-number mt-2">{subscriptions.length}</p>
+          <p className="tiny-meta">可订阅内容源</p>
+          <p className="stat-number mt-2">{sources.length}</p>
         </div>
         <div className="surface-card rounded-[14px] p-5">
-          <p className="tiny-meta">启用中</p>
-          <p className="stat-number mt-2 text-emerald-600">{activeCount}</p>
+          <p className="tiny-meta">我已订阅的源</p>
+          <p className="stat-number mt-2 text-emerald-600">{subscribedSources.length}</p>
         </div>
         <div className="surface-card rounded-[14px] p-5">
-          <p className="tiny-meta">交付协议</p>
-          <p className="mt-2 text-sm font-black text-slate-900">Dify Articles Pull</p>
+          <p className="tiny-meta">订阅覆盖的文章</p>
+          <p className="stat-number mt-2 text-indigo-600">{subscribedArticleTotal}</p>
         </div>
       </div>
 
-      <div className="surface-card overflow-hidden rounded-[14px]">
-        <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
-          <div className="h-5 w-1 rounded-full bg-indigo-500" />
-          <h3 className="section-title">订阅源列表</h3>
+      {view === 'catalog' ? (
+        <div className="surface-card rounded-[14px]">
+          <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="h-5 w-1 rounded-full bg-indigo-500" />
+              <h3 className="section-title">内容源目录</h3>
+              <span className="tiny-meta">点一下即订阅，再点一下取消</span>
+            </div>
+            <label className="search-box h-10 max-w-sm flex-1">
+              <Search className="mr-2 h-4 w-4 text-slate-400" />
+              <input type="text" placeholder="搜索来源名称 / 简介 / 类型" value={sourceQuery} onChange={e => setSourceQuery(e.target.value)} />
+            </label>
+          </div>
+
+          {sourcesLoading ? (
+            <div className="flex items-center justify-center gap-2 px-6 py-12 text-sm font-bold text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin text-indigo-500" /> 正在加载内容源
+            </div>
+          ) : sourcesByCategory.length === 0 ? (
+            <div className="p-6"><div className="empty-state py-12">没有匹配的内容源</div></div>
+          ) : (
+            <div className="space-y-6 px-6 py-5">
+              {sourcesByCategory.map(([category, items]) => {
+                const allSubscribed = items.every(item => item.subscribed);
+                return (
+                  <div key={category}>
+                    <div className="mb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-black text-slate-800">{category}</span>
+                        <span className="text-xs font-mono text-slate-400">{items.length}</span>
+                      </div>
+                      <button type="button" onClick={() => handleToggleCategory(items)} className="text-xs font-bold text-indigo-600 hover:text-indigo-800">
+                        {allSubscribed ? '取消订阅本组' : '订阅本组'}
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {items.map(source => (
+                        <SourceTile
+                          key={source.source_id}
+                          source={source}
+                          busy={pendingSourceIds.has(source.source_id)}
+                          onToggleSubscribe={handleToggleSubscribe}
+                          onViewArticles={onViewArticles}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
+      ) : (
+        <div className="space-y-6">
+          <div className="surface-card rounded-[14px] p-6">
+            <div className="flex flex-col gap-1 border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="h-5 w-1 rounded-full bg-indigo-500" />
+                <h3 className="section-title">聚合拉取接口</h3>
+              </div>
+              <p className="tiny-meta ml-4">一个接口覆盖你订阅的全部来源，下游可按发布时间、类型、关键词等自由筛选拉取。</p>
+            </div>
 
-        {loading ? (
-          <div className="flex items-center justify-center gap-2 px-6 py-12 text-sm font-bold text-slate-500">
-            <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />
-            正在加载订阅源
-          </div>
-        ) : subscriptions.length === 0 ? (
-          <div className="p-6">
-            <div className="empty-state py-12">还没有订阅源</div>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="data-table w-full min-w-[980px] text-left text-sm">
-              <thead>
-                <tr className="text-xs font-black uppercase tracking-wide text-slate-500">
-                  <th className="px-5 py-3">名称</th>
-                  <th className="px-5 py-3">过滤范围</th>
-                  <th className="px-5 py-3">交付策略</th>
-                  <th className="px-5 py-3">下游接口</th>
-                  <th className="px-5 py-3 text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {subscriptions.map(subscription => {
-                  const endpoint = publicEndpoint(subscription.id);
-                  const policy = subscription.delivery_policy || {};
-                  return (
-                    <tr key={subscription.id} className="align-top">
-                      <td className="px-5 py-4">
-                        <div className="flex items-start gap-3">
-                          <span className={`mt-1 h-2.5 w-2.5 rounded-full ${subscription.is_active ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                          <div className="min-w-0">
-                            <p className="font-black text-slate-900">{subscription.name}</p>
-                            {subscription.description && (
-                              <p className="mt-1 max-w-[260px] text-xs font-medium leading-5 text-slate-500">{subscription.description}</p>
-                            )}
-                            <p className="tiny-meta mt-2">Token {subscription.token_preview || '未生成'}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4">
-                        <FilterSummary filters={subscription.filters || {}} />
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="space-y-2 text-xs font-bold text-slate-600">
-                          <p>{policy.include_content === false ? '仅元数据' : '含正文'}</p>
-                          <p className="tiny-meta">默认 {policy.default_limit || 100}，上限 {policy.max_limit || 500}</p>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="flex max-w-[320px] items-center gap-2 rounded-[10px] border border-slate-100 bg-slate-50 px-3 py-2">
-                          <code className="min-w-0 flex-1 truncate text-xs font-bold text-slate-600" title={endpoint}>{endpoint}</code>
-                          <button
-                            type="button"
-                            onClick={() => handleCopy(endpoint, `endpoint-${subscription.id}`)}
-                            className="shrink-0 text-slate-400 hover:text-indigo-600"
-                            title="复制接口地址"
-                            aria-label="复制接口地址"
-                          >
-                            {copiedKey === `endpoint-${subscription.id}` ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
-                          </button>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="flex justify-end gap-2">
-                          <button onClick={() => openEdit(subscription)} className="icon-button" title="编辑订阅源" aria-label="编辑订阅源">
-                            <Edit3 className="h-4 w-4" />
-                          </button>
-                          <button onClick={() => handleRotate(subscription)} className="icon-button" title="轮换令牌" aria-label="轮换令牌">
-                            <RotateCw className="h-4 w-4" />
-                          </button>
-                          <button onClick={() => handleDelete(subscription)} className="icon-button text-rose-500" title="删除订阅源" aria-label="删除订阅源">
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {editorOpen && (
-        <div className="modal-overlay">
-          <form onSubmit={handleSave} className="modal-panel max-w-3xl">
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+            <div className="mt-4 space-y-4">
               <div>
-                <h3 className="text-base font-black text-slate-950">{editing ? '编辑订阅源' : '新建订阅源'}</h3>
-                <p className="tiny-meta mt-1">订阅源只筛选读者层已有归档，不触发外网采集。</p>
-              </div>
-              <button type="button" onClick={() => setEditorOpen(false)} className="action-button action-button-quiet">取消</button>
-            </div>
-
-            <div className="space-y-5 overflow-y-auto px-6 py-5">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <label className="form-field">
-                  <span>名称</span>
-                  <input className="form-input" value={draft.name} onChange={event => updateDraft('name', event.target.value)} placeholder="OpenAI 产品更新" />
-                </label>
-                <label className="form-field">
-                  <span>运行范围</span>
-                  <select className="form-input" value={draft.run_scope} onChange={event => updateDraft('run_scope', event.target.value)}>
-                    <option value="">全部运行来源</option>
-                    <option value="ad_hoc">临时采集</option>
-                    <option value="saved_job">固定任务</option>
-                    <option value="legacy_task">旧任务</option>
-                  </select>
-                </label>
+                <p className="tiny-meta mb-1">接口地址</p>
+                <div className="flex items-center gap-2 rounded-[10px] border border-slate-100 bg-slate-50 px-3 py-2">
+                  <code className="min-w-0 flex-1 truncate text-xs font-bold text-slate-600" title={feedEndpoint()}>{feedEndpoint()}</code>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(feedEndpoint(), 'feed-endpoint')}
+                    className="shrink-0 text-slate-400 hover:text-indigo-600"
+                    title="复制接口地址"
+                    aria-label="复制接口地址"
+                  >
+                    {copiedKey === 'feed-endpoint' ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
 
-              <label className="form-field">
-                <span>描述</span>
-                <textarea className="form-input min-h-[86px] resize-y" value={draft.description} onChange={event => updateDraft('description', event.target.value)} placeholder="给下游工作流看的用途说明" />
-              </label>
-
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <label className="form-field">
-                  <span>来源 ID（逗号分隔）</span>
-                  <input className="form-input" value={draft.source_ids} onChange={event => updateDraft('source_ids', event.target.value)} placeholder="rss_openai_news,rss_anthropic" />
-                </label>
-                <label className="form-field">
-                  <span>内容类型（逗号分隔）</span>
-                  <input className="form-input" value={draft.content_types} onChange={event => updateDraft('content_types', event.target.value)} placeholder="rss_article,webpage" />
-                </label>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="tiny-meta">
+                  {feedLoading
+                    ? '正在读取令牌状态…'
+                    : feedToken?.exists
+                      ? `访问令牌 ${feedToken.token_preview}`
+                      : '尚未生成访问令牌'}
+                </p>
+                <button onClick={handleRotateFeedToken} disabled={rotatingToken} className="action-button action-button-secondary text-xs">
+                  {rotatingToken ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
+                  {feedToken?.exists ? '重新生成令牌' : '生成访问令牌'}
+                </button>
               </div>
 
-              <label className="form-field">
-                <span>关键词过滤</span>
-                <input className="form-input" value={draft.search} onChange={event => updateDraft('search', event.target.value)} placeholder="产品发布 OR research" />
-              </label>
-
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <label className="form-field">
-                  <span>默认拉取数量</span>
-                  <input className="form-input" type="number" min="1" max={DELIVERY_LIMIT_MAX} value={draft.default_limit} onChange={event => updateDraft('default_limit', event.target.value)} />
-                </label>
-                <label className="form-field">
-                  <span>最大拉取数量</span>
-                  <input className="form-input" type="number" min="1" max={DELIVERY_LIMIT_MAX} value={draft.max_limit} onChange={event => updateDraft('max_limit', event.target.value)} />
-                </label>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <label className="flex items-center gap-3 rounded-[12px] border border-slate-100 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
-                  <input type="checkbox" checked={draft.has_content} onChange={event => updateDraft('has_content', event.target.checked)} />
-                  仅返回有正文
-                </label>
-                <label className="flex items-center gap-3 rounded-[12px] border border-slate-100 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
-                  <input type="checkbox" checked={draft.include_content} onChange={event => updateDraft('include_content', event.target.checked)} />
-                  下发正文
-                </label>
-                <label className="flex items-center gap-3 rounded-[12px] border border-slate-100 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
-                  <input type="checkbox" checked={draft.is_active} onChange={event => updateDraft('is_active', event.target.checked)} />
-                  启用订阅
-                </label>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3 border-t border-slate-100 px-6 py-4">
-              <button type="button" onClick={() => setEditorOpen(false)} className="action-button action-button-secondary">取消</button>
-              <button type="submit" disabled={saving} className="action-button action-button-primary">
-                {saving ? <Loader2 className="animate-spin" /> : <Check />}
-                保存
+              <button
+                type="button"
+                onClick={() => setDocsOpen(open => !open)}
+                className="flex items-center gap-2 text-sm font-bold text-indigo-600 hover:text-indigo-800"
+              >
+                {docsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                <Terminal className="h-4 w-4" /> 接口文档与调用示例
               </button>
+              {docsOpen && <FeedDocsPanel plainToken={plainToken} onCopy={handleCopy} copiedKey={copiedKey} />}
             </div>
-          </form>
+          </div>
+
+          <div className="surface-card rounded-[14px]">
+            <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
+              <div className="h-5 w-1 rounded-full bg-indigo-500" />
+              <h3 className="section-title">已订阅来源</h3>
+              <span className="text-xs font-mono text-slate-400">{subscribedSources.length}</span>
+            </div>
+
+            {sourcesLoading ? (
+              <div className="flex items-center justify-center gap-2 px-6 py-12 text-sm font-bold text-slate-500">
+                <Loader2 className="h-4 w-4 animate-spin text-indigo-500" /> 正在加载
+              </div>
+            ) : subscribedSources.length === 0 ? (
+              <div className="p-6"><div className="empty-state py-12">还没有订阅来源 —— 到「源目录」点一下来源即可订阅</div></div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 p-6 sm:grid-cols-2 lg:grid-cols-3">
+                {subscribedSources.map(source => (
+                  <div key={source.source_id} className="flex items-center gap-3 rounded-[12px] border border-slate-200 bg-white p-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-slate-200 bg-white text-lg">
+                      {source.icon || '📡'}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-black text-slate-900" title={source.name}>{source.name}</p>
+                      <p className="tiny-meta">{(source.count || 0) > 0 ? `${source.count} 篇` : '尚无归档'}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onViewArticles?.(source.source_id)}
+                      disabled={(source.count || 0) === 0}
+                      className="icon-button shrink-0 disabled:opacity-30"
+                      title="查看文章"
+                      aria-label="查看文章"
+                    >
+                      <FileText className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSubscribe(source)}
+                      disabled={pendingSourceIds.has(source.source_id)}
+                      className="icon-button shrink-0 text-rose-500 disabled:opacity-40"
+                      title="取消订阅"
+                      aria-label="取消订阅"
+                    >
+                      {pendingSourceIds.has(source.source_id) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

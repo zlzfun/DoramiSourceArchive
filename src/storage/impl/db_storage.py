@@ -75,6 +75,12 @@ class DatabaseStorage(BaseStorage):
                 with self.engine.begin() as conn:
                     conn.execute(text("ALTER TABLE collection_jobs ADD COLUMN per_fetcher_cron_json VARCHAR DEFAULT '{}'"))
 
+        if "reader_subscriptions" in inspector.get_table_names():
+            subscription_columns = {column["name"] for column in inspector.get_columns("reader_subscriptions")}
+            if "owner_username" not in subscription_columns:
+                with self.engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE reader_subscriptions ADD COLUMN owner_username VARCHAR DEFAULT ''"))
+
     async def save(self, item: BaseContent) -> bool:
         with Session(self.engine) as session:
             existing = session.get(ArticleRecord, item.id)

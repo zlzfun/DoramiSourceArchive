@@ -248,7 +248,7 @@ export default function App() {
                 showToast={showToast}
                 isActive={activeTab === 'data'}
                 canManageArticles={runtimeInfo.collector_enabled}
-                canVectorizeArticles={runtimeInfo.reader_enabled}
+                isReader={runtimeInfo.reader_enabled}
                 articlesDirty={articlesDirty}
                 onArticlesRefreshed={clearArticlesDirty}
                 pendingFilter={pendingDataFilter}
@@ -286,12 +286,12 @@ export default function App() {
           )}
           {mountedTabs.has('vector') && (
             <div style={{ display: activeTab === 'vector' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
-              <VectorTab availableFetchers={availableFetchers} showToast={showToast} />
+              <VectorTab availableFetchers={availableFetchers} showToast={showToast} accountRole={runtimeInfo.account_role} />
             </div>
           )}
           {mountedTabs.has('subscriptions') && (
             <div style={{ display: activeTab === 'subscriptions' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
-              <SubscriptionTab showToast={showToast} />
+              <SubscriptionTab showToast={showToast} onViewArticles={viewArticlesForSource} />
             </div>
           )}
           {mountedTabs.has('mcp') && (

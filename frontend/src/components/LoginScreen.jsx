@@ -13,7 +13,7 @@ function LoginBrandMark({ logoError, onLogoError }) {
 }
 
 export default function LoginScreen({ logoError, onLogoError, onLogin }) {
-  const [username, setUsername] = useState('admin');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -50,7 +50,6 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
           <div className="mb-8">
             <p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-500">Archive Access</p>
             <h2 className="mt-3 text-[26px] font-black leading-tight text-slate-950">登录管理台</h2>
-            <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">admin 进入采集归档层，user 进入订阅分发层。</p>
           </div>
 
           <label className="mb-5 block">
@@ -62,7 +61,7 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
                 onChange={(event) => setUsername(event.target.value)}
                 autoComplete="username"
                 className="h-12 min-w-0 flex-1 border-0 bg-transparent text-sm font-bold text-slate-900 outline-none placeholder:text-slate-400"
-                placeholder="admin / user"
+                placeholder="输入登录账号"
               />
             </span>
           </label>

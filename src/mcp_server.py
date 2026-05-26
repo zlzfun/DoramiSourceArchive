@@ -33,6 +33,7 @@ def _list_sources_impl(db_sink: DatabaseStorage) -> list[dict]:
 def _browse_articles_impl(
     db_sink: DatabaseStorage,
     source_id: Optional[str] = None,
+    source_ids: Optional[list[str]] = None,
     content_type: Optional[str] = None,
     publish_date_start: Optional[str] = None,
     publish_date_end: Optional[str] = None,
@@ -43,7 +44,10 @@ def _browse_articles_impl(
     effective_limit = min(limit, 100)
     with Session(db_sink.engine) as session:
         q = select(ArticleRecord)
-        if source_id:
+        if source_ids is not None:
+            # 订阅范围白名单：空列表显式匹配不到任何记录。
+            q = q.where(ArticleRecord.source_id.in_(source_ids or ["__none__"]))
+        elif source_id:
             q = q.where(ArticleRecord.source_id == source_id)
         if content_type:
             q = q.where(ArticleRecord.content_type == content_type)
@@ -95,6 +99,7 @@ async def _search_articles_impl(
     top_k: int = 10,
     content_type: Optional[str] = None,
     source_id: Optional[str] = None,
+    source_ids: Optional[list[str]] = None,
     publish_date_gte: Optional[str] = None,
     distance_threshold: float = 1.5,
 ) -> list[dict]:
@@ -103,6 +108,7 @@ async def _search_articles_impl(
         n_results=top_k * 4,
         content_type=content_type,
         source_id=source_id,
+        source_ids=source_ids,
         publish_date_gte=publish_date_gte,
     )
     best: dict[str, dict] = {}
@@ -185,12 +191,33 @@ async def _get_rag_context_impl(
 
 # ── FastMCP server factory ────────────────────────────────────────────────────
 
-def build_mcp_app(db_sink: DatabaseStorage, vector_sink: ChromaVectorStorage) -> FastMCP:
+def build_mcp_app(
+    db_sink: DatabaseStorage,
+    vector_sink: ChromaVectorStorage,
+    subscription_resolver=None,
+) -> FastMCP:
+    """构建 FastMCP 实例。
+
+    subscription_resolver: 可选的 ``token -> Optional[list[str]]`` 回调。
+    当工具收到 ``subscription_token`` 时，用它把检索范围约束到该订阅覆盖的 source_id。
+    返回 None 表示令牌无效；返回 [] 表示订阅未限定来源。
+    """
     mcp = FastMCP(
         "dorami-archive",
         instructions="哆啦美·归档中枢 MCP Server — AI资讯检索与RAG上下文组装",
         streamable_http_path="/",
     )
+
+    def _resolve_subscription_scope(subscription_token: Optional[str]):
+        """返回 (ok, source_ids)。ok=False 表示令牌无效，应拒绝。"""
+        if not subscription_token:
+            return True, None
+        if subscription_resolver is None:
+            return False, None
+        source_ids = subscription_resolver(subscription_token)
+        if source_ids is None:
+            return False, None
+        return True, source_ids
 
     @mcp.tool()
     def list_sources() -> list[dict]:
@@ -210,14 +237,19 @@ def build_mcp_app(db_sink: DatabaseStorage, vector_sink: ChromaVectorStorage) ->
         has_content: Optional[bool] = None,
         limit: int = 20,
         skip: int = 0,
+        subscription_token: Optional[str] = None,
     ) -> list[dict]:
         """按条件过滤浏览文章列表，适合「Anthropic最新动态」或生成日报等场景。
         Filter and browse articles by metadata. Use for source-specific or date-range queries.
         Scenarios: 「某来源最新资讯」「生成今日日报」「列出某类型内容」
         publish_date_start/end: YYYY-MM-DD. limit max 100.
+        subscription_token: 传入订阅令牌则把结果限定在该订阅覆盖的来源内（个性化视图）。
         """
+        ok, scope_ids = _resolve_subscription_scope(subscription_token)
+        if not ok:
+            return [{"error": "invalid or unauthorized subscription_token"}]
         return _browse_articles_impl(
-            db_sink, source_id=source_id, content_type=content_type,
+            db_sink, source_id=source_id, source_ids=scope_ids, content_type=content_type,
             publish_date_start=publish_date_start, publish_date_end=publish_date_end,
             has_content=has_content, limit=limit, skip=skip,
         )
@@ -239,16 +271,22 @@ def build_mcp_app(db_sink: DatabaseStorage, vector_sink: ChromaVectorStorage) ->
         source_id: Optional[str] = None,
         publish_date_gte: Optional[str] = None,
         distance_threshold: float = 1.5,
+        subscription_token: Optional[str] = None,
     ) -> list[dict]:
         """语义向量搜索文章，支持中英文，按相关性排序。适合主题查询场景。
         Semantic vector search. Supports Chinese and English queries.
         Scenarios: 「最近的具身智能资讯有哪些？」「Find papers on multimodal LLMs」
         distance_threshold: cosine distance cutoff (lower = stricter, default 1.5).
         publish_date_gte: YYYY-MM-DD. Returns articles ranked by relevance (distance asc).
+        subscription_token: 传入访问令牌则把检索限定在其覆盖的来源内（个性化视图）；
+            支持单订阅令牌（dsub_）或个人聚合令牌（dfeed_，覆盖你的全部订阅）。
         """
+        ok, scope_ids = _resolve_subscription_scope(subscription_token)
+        if not ok:
+            return [{"error": "invalid or unauthorized subscription_token"}]
         return await _search_articles_impl(
             vector_sink, query=query, top_k=top_k,
-            content_type=content_type, source_id=source_id,
+            content_type=content_type, source_id=source_id, source_ids=scope_ids,
             publish_date_gte=publish_date_gte, distance_threshold=distance_threshold,
         )
 

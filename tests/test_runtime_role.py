@@ -70,7 +70,7 @@ def test_reader_role_disables_collector_api(monkeypatch):
         export_response = client.get("/api/archive/export/articles.jsonl")
         assert export_response.status_code == 403
 
-        reader_response = client.get("/api/dify/articles")
+        reader_response = client.get("/api/feed/articles")
         assert reader_response.status_code == 200
 
 
@@ -87,7 +87,7 @@ def test_collector_role_disables_reader_api(monkeypatch):
         collector_response = client.get("/api/fetchers")
         assert collector_response.status_code == 200
 
-        reader_response = client.get("/api/dify/articles")
+        reader_response = client.get("/api/feed/articles")
         assert reader_response.status_code == 403
         assert reader_response.json()["reader_enabled"] is False
         import_response = client.post("/api/archive/import/articles.jsonl", content="")
@@ -104,16 +104,18 @@ def test_all_runtime_splits_surfaces_by_login_account(monkeypatch):
     _set_auth_accounts(monkeypatch, app_module)
 
     with TestClient(app_module.app) as client:
+        # admin 为超级用户：采集 + 读者通吃。
         _login(client, "admin", "admin")
         admin_runtime = client.get("/api/runtime").json()
         assert admin_runtime["role"] == "all"
         assert admin_runtime["account_role"] == "admin"
         assert admin_runtime["collector_enabled"] is True
-        assert admin_runtime["reader_enabled"] is False
+        assert admin_runtime["reader_enabled"] is True
         assert client.get("/api/fetchers").status_code == 200
-        assert client.get("/api/subscriptions").status_code == 403
+        assert client.get("/api/subscriptions").status_code == 200
 
         client.post("/api/auth/logout")
+        # user 为受限读者：仅读者面，采集面被拒。
         _login(client, "user", "user")
         user_runtime = client.get("/api/runtime").json()
         assert user_runtime["role"] == "all"

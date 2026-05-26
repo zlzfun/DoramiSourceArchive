@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Database, Search, RefreshCw, Copy, Check, ExternalLink, RotateCcw, Zap } from 'lucide-react';
-import { fetchVectorStats, vectorSearch, ragContext, reindexAll, vectorizeAllPending } from '../api';
+import { Database, Search, RefreshCw, Copy, Check, ExternalLink } from 'lucide-react';
+import { fetchVectorStats, vectorSearch, ragContext, fetchSubscribedVectorStats } from '../api';
 import DateRangePicker from './DateRangePicker';
 
-export default function VectorTab({ availableFetchers, showToast }) {
+export default function VectorTab({ availableFetchers, showToast, accountRole }) {
+  const scopedToSubscriptions = accountRole === 'user';
   const [vectorStats, setVectorStats] = useState({ total: 0 });
+  const [subStats, setSubStats] = useState({ subscribed_source_count: 0, total: 0, vectorized: 0, pending: 0 });
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -12,8 +14,6 @@ export default function VectorTab({ availableFetchers, showToast }) {
   const [filterSourceId, setFilterSourceId] = useState('');
   const [copyingContext, setCopyingContext] = useState(false);
   const [copiedContext, setCopiedContext] = useState(false);
-  const [reindexing, setReindexing] = useState(false);
-  const [vectorizingPending, setVectorizingPending] = useState(false);
   const [rerank, setRerank] = useState(false);
   const [expandContext, setExpandContext] = useState(false);
   const [filterDateStart, setFilterDateStart] = useState('');
@@ -21,8 +21,9 @@ export default function VectorTab({ availableFetchers, showToast }) {
 
   const loadStats = async () => {
     try {
-      const data = await fetchVectorStats();
-      setVectorStats({ total: data.total_vectors });
+      const [stats, sub] = await Promise.all([fetchVectorStats(), fetchSubscribedVectorStats()]);
+      setVectorStats({ total: stats.total_vectors });
+      setSubStats(sub);
     } catch (e) { console.error(e); }
   };
 
@@ -63,27 +64,6 @@ export default function VectorTab({ availableFetchers, showToast }) {
     setCopyingContext(false);
   };
 
-  const handleReindexAll = async () => {
-    if (!window.confirm('全量重索引将删除并重建整个向量库，适用于更换 Embedding 模型后使用。确认继续？')) return;
-    setReindexing(true);
-    try {
-      const data = await reindexAll();
-      showToast(`全量重索引完成：${data.total_reindexed}/${data.total_articles} 篇`, 'success');
-      await loadStats();
-    } catch (e) { showToast(e.message || '重索引失败', 'error'); }
-    setReindexing(false);
-  };
-
-  const handleVectorizeAllPending = async () => {
-    setVectorizingPending(true);
-    try {
-      const data = await vectorizeAllPending();
-      showToast(`已向量化 ${data.count}/${data.total_pending} 篇待处理文章`, 'success');
-      await loadStats();
-    } catch (e) { showToast(e.message || '向量化失败', 'error'); }
-    setVectorizingPending(false);
-  };
-
   const getDistanceLabel = (dist) => {
     if (dist < 0.3) return { label: '极高', color: 'text-emerald-700 bg-emerald-100' };
     if (dist < 0.5) return { label: '高', color: 'text-blue-700 bg-blue-100' };
@@ -96,18 +76,21 @@ export default function VectorTab({ availableFetchers, showToast }) {
       <div className="page-header flex-col xl:flex-row">
         <div className="page-heading">
           <h2 className="page-title">向量雷达</h2>
-          <p className="page-subtitle mt-3 max-w-3xl">ChromaDB 状态管理，语义检索测试，RAG 上下文导出，为知识召回质量提供可观察的调试界面。</p>
+          <p className="page-subtitle mt-3 max-w-3xl">在你订阅的来源范围内进行语义检索与 RAG 上下文导出。向量构建由管理员统一维护。</p>
         </div>
-        <div className="page-actions">
-          <button onClick={handleVectorizeAllPending} disabled={vectorizingPending} className="action-button action-button-secondary">
-            {vectorizingPending ? <RefreshCw className="animate-spin" /> : <Zap className="text-amber-500" />}
-            索引待处理
-          </button>
-          <button onClick={handleReindexAll} disabled={reindexing} className="action-button action-button-primary">
-            {reindexing ? <RefreshCw className="animate-spin" /> : <RotateCcw />}
-            全量重索引
-          </button>
-        </div>
+      </div>
+
+      <div className="surface-card flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] px-5 py-3 text-xs font-bold text-slate-500">
+        {!scopedToSubscriptions ? (
+          <span>检索覆盖全部归档（管理员视图）。</span>
+        ) : subStats.subscribed_source_count === 0 ? (
+          <span>你还没有订阅任何来源 —— 先到「订阅分发」订阅即可在此检索。</span>
+        ) : (
+          <span>
+            已订阅 {subStats.subscribed_source_count} 个源 · 已建向量 {subStats.vectorized}/{subStats.total} 篇
+            {subStats.pending > 0 ? `（${subStats.pending} 篇待管理员构建）` : ' · 已全部就绪'}
+          </span>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[340px_1fr]">
@@ -139,7 +122,7 @@ export default function VectorTab({ availableFetchers, showToast }) {
           <button onClick={handleSearch} disabled={searching} className="action-button action-button-primary min-h-[48px] w-full justify-center px-6">
             {searching ? <RefreshCw className="animate-spin" /> : <><Search />检索</>}
           </button>
-          <button onClick={handleCopyContext} disabled={copyingContext || !searchQuery.trim()} title="将检索结果组装为 RAG 上下文并复制到剪贴板（可直接粘贴到 Dify 等 LLM 工作流）" className="action-button action-button-secondary min-h-[48px] w-full justify-center disabled:opacity-40">
+          <button onClick={handleCopyContext} disabled={copyingContext || !searchQuery.trim()} title="将检索结果组装为 RAG 上下文并复制到剪贴板（可直接粘贴到下游 LLM 工作流）" className="action-button action-button-secondary min-h-[48px] w-full justify-center disabled:opacity-40">
             {copiedContext ? <Check /> : copyingContext ? <RefreshCw className="animate-spin" /> : <Copy />}
             复制上下文
           </button>

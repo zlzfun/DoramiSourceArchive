@@ -13,13 +13,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field as PydanticField
 from typing import Optional, List, Dict, Any
 from sqlmodel import Session, select
-from sqlalchemy import func
+from sqlalchemy import func, case
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.schedulers.base import STATE_STOPPED
 from apscheduler.triggers.cron import CronTrigger
 
 from storage.impl.db_storage import DatabaseStorage
-from storage.impl.vector_storage import ChromaVectorStorage
+from storage.impl.vector_storage import ChromaVectorStorage, SOURCE_FRIENDLY_NAMES
 from pipeline.core import DataPipeline
 from pipeline.progress import get_all_progress
 from models.db import (
@@ -30,6 +30,7 @@ from models.db import (
     FetchRunRecord,
     NodeGroupRecord,
     ReaderSubscriptionRecord,
+    ReaderFeedTokenRecord,
     SourceConfigRecord,
     SourceStateRecord,
     AppSettingRecord,
@@ -98,8 +99,9 @@ def collector_role_enabled(session: Optional[Dict[str, Any]] = None) -> bool:
 
 
 def reader_role_enabled(session: Optional[Dict[str, Any]] = None) -> bool:
+    # admin 为超级用户（采集+读者通吃）；user 为受限读者；二者都可访问 reader 面。
     account_role = session.get("role") if session else None
-    return runtime_reader_enabled() and (account_role in (None, "user"))
+    return runtime_reader_enabled() and (account_role in (None, "admin", "user"))
 
 
 def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -124,18 +126,25 @@ COLLECTOR_API_PREFIXES = (
     "/api/collection-jobs",
     "/api/collection-job-runs",
     "/api/tasks",
+    # 向量构建/管理归管理员（collector）；/api/vector/search|stats|subscribed-stats 例外归 reader。
+    "/api/vectorize",
+    "/api/vector",
 )
 
 READER_API_PREFIXES = (
     "/api/archive/import",
-    "/api/dify",
+    "/api/feed",
     "/api/mcp",
+    "/api/reader",
+    "/api/public/feed",
     "/api/public/subscriptions",
     "/api/rag",
     "/api/skill",
     "/api/subscriptions",
-    "/api/vector",
-    "/api/vectorize",
+    # 仅检索/只读统计归 reader（用户侧）；其余 /api/vector/* 与 /api/vectorize/* 归 collector。
+    "/api/vector/search",
+    "/api/vector/stats",
+    "/api/vector/subscribed-stats",
 )
 
 
@@ -144,12 +153,17 @@ def _path_matches(path: str, prefixes: tuple[str, ...]) -> bool:
 
 
 def disabled_runtime_surface(path: str, session: Optional[Dict[str, Any]] = None) -> Optional[str]:
-    if (path == "/mcp" or path.startswith("/mcp/")) and not reader_role_enabled(session):
-        return "reader"
-    if _path_matches(path, READER_API_PREFIXES) and not reader_role_enabled(session):
-        return "reader"
-    if _path_matches(path, COLLECTOR_API_PREFIXES) and not collector_role_enabled(session):
-        return "collector"
+    # Reader-surface paths短路判定：命中即只按 reader 权限裁决，不再落到 collector 检查，
+    # 从而允许 reader/collector 前缀重叠（如 /api/vector/search 归 reader、/api/vector/* 归 collector）。
+    is_reader_path = (
+        path == "/mcp"
+        or path.startswith("/mcp/")
+        or _path_matches(path, READER_API_PREFIXES)
+    )
+    if is_reader_path:
+        return None if reader_role_enabled(session) else "reader"
+    if _path_matches(path, COLLECTOR_API_PREFIXES):
+        return None if collector_role_enabled(session) else "collector"
     return None
 
 
@@ -181,7 +195,7 @@ async def lifespan(app: FastAPI):
             else:
                 _mcp_enabled = rec.value.lower() == "true"
         # Build fresh FastMCP instance (session_manager can only be run() once per instance)
-        mcp = build_mcp_app(db_sink, vector_sink)
+        mcp = build_mcp_app(db_sink, vector_sink, subscription_resolver=resolve_subscription_sources_by_token)
         _mcp_gate._app = mcp.streamable_http_app()
     else:
         _mcp_gate._app = None
@@ -297,6 +311,11 @@ def current_admin_session(request: Request) -> Optional[Dict[str, Any]]:
     return current_auth_session(request)
 
 
+def current_username(request: Request) -> str:
+    session = current_auth_session(request)
+    return str(session.get("sub")) if session else ""
+
+
 def set_auth_cookie(response: Response, username: str, role: str) -> None:
     response.set_cookie(
         key=AUTH_COOKIE_NAME,
@@ -318,7 +337,8 @@ def is_public_auth_path(path: str) -> bool:
 
 
 def is_public_subscription_path(path: str) -> bool:
-    return path == "/api/public/subscriptions" or path.startswith("/api/public/subscriptions/")
+    # 所有 /api/public/* 消费端（按订阅令牌 / 个人聚合令牌鉴权）均无需登录会话。
+    return path == "/api/public" or path.startswith("/api/public/")
 
 
 @app.middleware("http")
@@ -482,7 +502,7 @@ def apply_article_query_filters(
     return query
 
 
-def serialize_dify_article(record: ArticleRecord, include_content: bool = True) -> Dict[str, Any]:
+def serialize_feed_article(record: ArticleRecord, include_content: bool = True) -> Dict[str, Any]:
     extensions = _json_loads(record.extensions_json, {})
     metadata = {
         "id": record.id,
@@ -514,7 +534,7 @@ def serialize_dify_article(record: ArticleRecord, include_content: bool = True) 
 
 
 def article_to_markdown(record: ArticleRecord) -> str:
-    metadata = serialize_dify_article(record, include_content=False)["metadata"]
+    metadata = serialize_feed_article(record, include_content=False)["metadata"]
     frontmatter = json.dumps(metadata, ensure_ascii=False, indent=2)
     content = record.content or ""
     return f"---\n{frontmatter}\n---\n\n# {record.title}\n\n{content}".strip()
@@ -629,6 +649,113 @@ def query_subscription_articles(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
     ).all()
     return records, {"limit": safe_limit, "policy": policy, "filters": filters}
+
+
+def subscription_source_ids(subscription: ReaderSubscriptionRecord) -> List[str]:
+    """Extract the source_id scope a subscription filters on (source_ids/source_id)."""
+    filters = _json_loads(subscription.filters_json, {})
+    ids: List[str] = []
+    for key in ("source_ids", "source_id"):
+        value = filters.get(key)
+        if value:
+            ids.extend(part.strip() for part in str(value).split(",") if part.strip())
+    return ids
+
+
+def resolve_subscribed_source_ids(session: Session, username: str) -> List[str]:
+    """Union of source_ids across the user's active subscriptions, sorted & de-duplicated."""
+    if not username:
+        return []
+    subs = session.exec(
+        select(ReaderSubscriptionRecord).where(
+            ReaderSubscriptionRecord.owner_username == username,
+            ReaderSubscriptionRecord.is_active == True,  # noqa: E712
+        )
+    ).all()
+    collected: set[str] = set()
+    for sub in subs:
+        collected.update(subscription_source_ids(sub))
+    return sorted(collected)
+
+
+def resolve_subscription_sources_by_token(token: str) -> Optional[List[str]]:
+    """令牌 → 检索可见的 source_id 列表（供 MCP 个性化作用域使用）。
+
+    支持两类令牌：单订阅令牌（``dsub_``）限定到该订阅；个人聚合令牌（``dfeed_``）
+    限定到该用户全部订阅的并集。令牌无效返回 None。
+    """
+    if not token:
+        return None
+    token_hash = hash_subscription_token(token)
+    with Session(db_sink.engine) as session:
+        record = session.exec(
+            select(ReaderSubscriptionRecord).where(
+                ReaderSubscriptionRecord.token_hash == token_hash,
+                ReaderSubscriptionRecord.is_active == True,  # noqa: E712
+            )
+        ).first()
+        if record:
+            return subscription_source_ids(record)
+        owner = resolve_feed_token_owner(session, token)
+        if owner is not None:
+            return resolve_subscribed_source_ids(session, owner)
+    return None
+
+
+def generate_feed_token() -> str:
+    return f"dfeed_{secrets.token_urlsafe(32)}"
+
+
+def resolve_feed_token_owner(session: Session, token: str) -> Optional[str]:
+    """个人聚合令牌 → 归属用户名；令牌缺失/无效返回 None。"""
+    if not token:
+        return None
+    token_hash = hash_subscription_token(token)
+    record = session.exec(
+        select(ReaderFeedTokenRecord).where(ReaderFeedTokenRecord.token_hash == token_hash)
+    ).first()
+    return record.owner_username if record else None
+
+
+def feed_articles_for_owner(
+        session: Session,
+        username: str,
+        *,
+        content_type: Optional[str] = None,
+        content_types: Optional[str] = None,
+        source_ids: Optional[str] = None,
+        search: Optional[str] = None,
+        has_content: Optional[bool] = True,
+        publish_date_start: Optional[str] = None,
+        publish_date_end: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100,
+) -> list[ArticleRecord]:
+    """聚合拉取：当前用户全部已订阅来源的文章，按发布时间倒序。
+
+    仅按发布时间过滤（不暴露归档时间这一内部细节）。若调用方传入 source_ids，
+    取其与已订阅集合的交集，避免越权拉取未订阅来源。
+    """
+    subscribed = resolve_subscribed_source_ids(session, username)
+    if not subscribed:
+        return []
+    requested = [s.strip() for s in (source_ids or "").split(",") if s.strip()]
+    allowed = [s for s in requested if s in set(subscribed)] if requested else subscribed
+    if not allowed:
+        return []
+    query = apply_article_query_filters(
+        select(ArticleRecord),
+        content_type=content_type,
+        content_types=content_types,
+        source_ids=",".join(allowed),
+        has_content=has_content,
+        search=search,
+        publish_date_start=publish_date_start,
+        publish_date_end=publish_date_end,
+    )
+    return session.exec(
+        query.order_by(ArticleRecord.publish_date.desc()).offset(skip).limit(limit)
+    ).all()
 
 
 ARCHIVE_SYNC_SCHEMA_VERSION = "articles-jsonl-v1"
@@ -1674,6 +1801,7 @@ async def run_fetcher_with_tracking(
         )
         finish_fetch_run(run_id, status="success", result=result)
         mark_source_state_finished(fetcher_id, params, run_id, status="success", result=result)
+        await auto_vectorize_after_fetch(result.saved_content_ids)
         return {
             "status": "success",
             "run_id": run_id,
@@ -1818,11 +1946,312 @@ async def run_collection_items(
     }
 
 
-# ==================== Reader 订阅源 ====================
-@app.get("/api/subscriptions")
-def get_subscriptions(is_active: Optional[bool] = None):
+# ==================== Reader 内容源目录 ====================
+CONTENT_TYPE_CATEGORY = {
+    "rss_article": "RSS 资讯",
+    "web_article": "网页文章",
+    "wechat_article": "微信公众号",
+    "arxiv": "arXiv 论文",
+    "github_release": "GitHub 发布",
+    "github_repository": "代码仓库",
+    "hf_model": "模型",
+    "huggingface_model": "模型",
+    "tech_conference": "技术会议",
+    "social_post": "社交动态",
+    "webhook_trigger": "工作流",
+}
+
+
+def _source_category(content_type: Optional[str]) -> str:
+    if not content_type:
+        return "其它"
+    return CONTENT_TYPE_CATEGORY.get(content_type, content_type)
+
+
+def _registry_source_meta() -> Dict[str, Dict[str, Any]]:
+    """source_id -> 抓取器注册元数据（名称/简介/图标），用于内容源目录展示。"""
+    return {meta["id"]: meta for meta in fetcher_registry.get_all_metadata()}
+
+
+def _friendly_source_name(source_id: str, registry_meta: Dict[str, Dict[str, Any]]) -> str:
+    meta = registry_meta.get(source_id)
+    if meta and meta.get("name"):
+        return meta["name"]
+    return SOURCE_FRIENDLY_NAMES.get(source_id, source_id)
+
+
+@app.get("/api/reader/sources")
+def get_reader_sources(request: Request):
+    """读者层内容源目录：可订阅来源 = 所有已注册抓取源 ∪ 已归档来源 ∪ 已订阅来源。
+
+    即便某个源历史产出为 0，它仍会出现在目录里，用户可提前订阅以接收其后续产出。
+    """
+    username = current_username(request)
+    registry_meta = _registry_source_meta()
     with Session(db_sink.engine) as session:
-        query = select(ReaderSubscriptionRecord)
+        rows = session.exec(
+            select(
+                ArticleRecord.source_id,
+                ArticleRecord.content_type,
+                func.count(ArticleRecord.id),
+                func.max(ArticleRecord.fetched_date),
+            )
+            .where(ArticleRecord.source_id.isnot(None))
+            .group_by(ArticleRecord.source_id, ArticleRecord.content_type)
+        ).all()
+        subscribed_ids = set(resolve_subscribed_source_ids(session, username))
+
+    by_source: Dict[str, Dict[str, Any]] = {}
+
+    def _ensure_entry(source_id: str, content_type: Optional[str] = None) -> Dict[str, Any]:
+        entry = by_source.get(source_id)
+        if entry is None:
+            meta = registry_meta.get(source_id, {})
+            resolved_type = content_type or meta.get("content_type") or ""
+            entry = {
+                "source_id": source_id,
+                "name": _friendly_source_name(source_id, registry_meta),
+                "description": meta.get("desc", ""),
+                "icon": meta.get("icon", ""),
+                "content_type": resolved_type,
+                "category": _source_category(resolved_type),
+                "count": 0,
+                "last_fetched": "",
+                "subscribed": source_id in subscribed_ids,
+                "registered": source_id in registry_meta,
+                "_primary_count": -1,
+            }
+            by_source[source_id] = entry
+        return entry
+
+    # 1. 所有已注册抓取源（含历史产出为 0 者，使新源可被提前订阅）。
+    for source_id in registry_meta:
+        _ensure_entry(source_id)
+
+    # 2. 叠加归档文章聚合（含未注册的导入源，如 social_post）；主 content_type 取计数最高者。
+    for source_id, content_type, count, last_fetched in rows:
+        if not source_id:
+            continue
+        entry = _ensure_entry(source_id, content_type)
+        entry["count"] += int(count or 0)
+        if (last_fetched or "") > entry["last_fetched"]:
+            entry["last_fetched"] = last_fetched or ""
+        if int(count or 0) > entry["_primary_count"]:
+            entry["_primary_count"] = int(count or 0)
+            entry["content_type"] = content_type
+            entry["category"] = _source_category(content_type)
+
+    # 3. 已订阅但既未注册也无归档的来源也要出现，便于退订。
+    for source_id in subscribed_ids:
+        _ensure_entry(source_id)
+
+    sources = sorted(
+        ({k: v for k, v in entry.items() if k != "_primary_count"} for entry in by_source.values()),
+        key=lambda s: (s["category"], -s["count"], s["name"]),
+    )
+    return {
+        "sources": sources,
+        "subscribed_source_ids": sorted(subscribed_ids),
+        "total_sources": len(sources),
+    }
+
+
+@app.post("/api/reader/sources/{source_id}/subscribe")
+def subscribe_source(source_id: str, request: Request):
+    """一键订阅单个内容源：尚未订阅则创建一个仅含该源的订阅，已订阅则幂等返回。
+
+    交付令牌、限额等高级设置使用默认值，留待用户在「我的订阅」中按需编辑。
+    """
+    username = current_username(request)
+    source_id = (source_id or "").strip()
+    if not source_id:
+        raise HTTPException(status_code=400, detail="source_id 不能为空")
+    registry_meta = _registry_source_meta()
+    with Session(db_sink.engine) as session:
+        already = source_id in set(resolve_subscribed_source_ids(session, username))
+        if not already:
+            token = generate_subscription_token()
+            now = _now_iso()
+            record = ReaderSubscriptionRecord(
+                owner_username=username,
+                name=_friendly_source_name(source_id, registry_meta),
+                description="",
+                filters_json=_json_dumps({"source_ids": source_id, "has_content": True}),
+                delivery_policy_json=_json_dumps(normalize_delivery_policy()),
+                token_hash=hash_subscription_token(token),
+                token_preview=subscription_token_preview(token),
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(record)
+            session.commit()
+        subscribed_ids = sorted(set(resolve_subscribed_source_ids(session, username)))
+    return {
+        "status": "success",
+        "source_id": source_id,
+        "subscribed": True,
+        "subscribed_source_ids": subscribed_ids,
+    }
+
+
+@app.delete("/api/reader/sources/{source_id}/subscribe")
+def unsubscribe_source(source_id: str, request: Request):
+    """一键取消订阅：从当前用户的所有订阅范围内移除该源，因此清空的订阅会被删除。"""
+    username = current_username(request)
+    source_id = (source_id or "").strip()
+    if not source_id:
+        raise HTTPException(status_code=400, detail="source_id 不能为空")
+    with Session(db_sink.engine) as session:
+        records = session.exec(
+            select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.owner_username == username)
+        ).all()
+        for record in records:
+            ids = subscription_source_ids(record)
+            if source_id not in ids:
+                continue
+            remaining = [sid for sid in ids if sid != source_id]
+            if remaining:
+                filters = _json_loads(record.filters_json, {}) or {}
+                filters.pop("source_id", None)
+                filters["source_ids"] = ",".join(remaining)
+                record.filters_json = _json_dumps(filters)
+                record.updated_at = _now_iso()
+                session.add(record)
+            else:
+                session.delete(record)
+        session.commit()
+        subscribed_ids = sorted(set(resolve_subscribed_source_ids(session, username)))
+    return {
+        "status": "success",
+        "source_id": source_id,
+        "subscribed": False,
+        "subscribed_source_ids": subscribed_ids,
+    }
+
+
+# ==================== Reader 个人聚合接口令牌 ====================
+@app.get("/api/reader/feed-token")
+def get_feed_token(request: Request):
+    """当前用户的个人聚合接口令牌状态（仅返回预览，不回显明文）。"""
+    username = current_username(request)
+    with Session(db_sink.engine) as session:
+        record = session.get(ReaderFeedTokenRecord, username)
+        subscribed = resolve_subscribed_source_ids(session, username)
+    return {
+        "exists": record is not None,
+        "token_preview": record.token_preview if record else "",
+        "created_at": record.created_at if record else None,
+        "updated_at": record.updated_at if record else None,
+        "subscribed_source_count": len(subscribed),
+    }
+
+
+@app.post("/api/reader/feed-token/rotate")
+def rotate_feed_token(request: Request):
+    """创建或轮换当前用户的个人聚合接口令牌；明文仅在本次响应中返回一次。"""
+    username = current_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="需要登录")
+    token = generate_feed_token()
+    now = _now_iso()
+    with Session(db_sink.engine) as session:
+        record = session.get(ReaderFeedTokenRecord, username)
+        if record is None:
+            record = ReaderFeedTokenRecord(owner_username=username, created_at=now, updated_at=now)
+        record.token_hash = hash_subscription_token(token)
+        record.token_preview = subscription_token_preview(token)
+        record.updated_at = now
+        session.add(record)
+        session.commit()
+    return {"token": token, "token_preview": subscription_token_preview(token)}
+
+
+@app.get("/api/public/feed/articles")
+def get_public_feed_articles(
+        request: Request,
+        content_type: Optional[str] = None,
+        content_types: Optional[str] = None,
+        source_ids: Optional[str] = None,
+        search: Optional[str] = None,
+        has_content: Optional[bool] = True,
+        include_content: bool = True,
+        publish_date_start: Optional[str] = None,
+        publish_date_end: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100,
+):
+    """个人聚合拉取接口：用个人聚合令牌一次性拉取当前用户全部已订阅来源的文章。
+
+    支持按发布时间（publish_date_start/end）、来源、类型、关键词筛选；适合日报等下游场景。
+    """
+    safe_limit = min(max(limit, 1), 500)
+    token = read_bearer_or_query_token(request)
+    with Session(db_sink.engine) as session:
+        owner = resolve_feed_token_owner(session, token)
+        if not owner:
+            raise HTTPException(status_code=401, detail="个人聚合接口令牌无效")
+        records = feed_articles_for_owner(
+            session, owner,
+            content_type=content_type, content_types=content_types, source_ids=source_ids,
+            search=search, has_content=has_content,
+            publish_date_start=publish_date_start, publish_date_end=publish_date_end,
+            skip=skip, limit=safe_limit,
+        )
+    return {
+        "status": "success",
+        "count": len(records),
+        "skip": skip,
+        "limit": safe_limit,
+        "next_skip": skip + len(records) if len(records) == safe_limit else None,
+        "items": [serialize_feed_article(record, include_content=include_content) for record in records],
+    }
+
+
+@app.get("/api/public/feed/articles.md")
+def export_public_feed_articles_markdown(
+        request: Request,
+        content_type: Optional[str] = None,
+        content_types: Optional[str] = None,
+        source_ids: Optional[str] = None,
+        search: Optional[str] = None,
+        has_content: Optional[bool] = True,
+        publish_date_start: Optional[str] = None,
+        publish_date_end: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100,
+):
+    """个人聚合拉取接口的 Markdown 批量导出变体（最多 200 条）。"""
+    safe_limit = min(max(limit, 1), 200)
+    token = read_bearer_or_query_token(request)
+    with Session(db_sink.engine) as session:
+        owner = resolve_feed_token_owner(session, token)
+        if not owner:
+            raise HTTPException(status_code=401, detail="个人聚合接口令牌无效")
+        records = feed_articles_for_owner(
+            session, owner,
+            content_type=content_type, content_types=content_types, source_ids=source_ids,
+            search=search, has_content=has_content,
+            publish_date_start=publish_date_start, publish_date_end=publish_date_end,
+            skip=skip, limit=safe_limit,
+        )
+    body = "\n\n---\n\n".join(article_to_markdown(record) for record in records)
+    return Response(content=body, media_type="text/markdown; charset=utf-8")
+
+
+# ==================== Reader 订阅源 ====================
+def _owned_subscription_or_404(session: Session, subscription_id: int, username: str) -> ReaderSubscriptionRecord:
+    record = session.get(ReaderSubscriptionRecord, subscription_id)
+    if not record or record.owner_username != username:
+        raise HTTPException(status_code=404, detail="订阅源不存在")
+    return record
+
+
+@app.get("/api/subscriptions")
+def get_subscriptions(request: Request, is_active: Optional[bool] = None):
+    username = current_username(request)
+    with Session(db_sink.engine) as session:
+        query = select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.owner_username == username)
         if is_active is not None:
             query = query.where(ReaderSubscriptionRecord.is_active == is_active)
         records = session.exec(query.order_by(ReaderSubscriptionRecord.name)).all()
@@ -1830,22 +2259,21 @@ def get_subscriptions(is_active: Optional[bool] = None):
 
 
 @app.get("/api/subscriptions/{subscription_id}")
-def get_subscription(subscription_id: int):
+def get_subscription(subscription_id: int, request: Request):
     with Session(db_sink.engine) as session:
-        record = session.get(ReaderSubscriptionRecord, subscription_id)
-        if not record:
-            raise HTTPException(status_code=404, detail="订阅源不存在")
+        record = _owned_subscription_or_404(session, subscription_id, current_username(request))
         return serialize_subscription(record)
 
 
 @app.post("/api/subscriptions")
-def create_subscription(params: SubscriptionCreate):
+def create_subscription(params: SubscriptionCreate, request: Request):
     name = params.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="订阅源名称不能为空")
     token = generate_subscription_token()
     now = _now_iso()
     record = ReaderSubscriptionRecord(
+        owner_username=current_username(request),
         name=name,
         description=params.description.strip(),
         filters_json=_json_dumps(_model_to_clean_dict(params.filters)),
@@ -1864,11 +2292,9 @@ def create_subscription(params: SubscriptionCreate):
 
 
 @app.put("/api/subscriptions/{subscription_id}")
-def update_subscription(subscription_id: int, params: SubscriptionUpdate):
+def update_subscription(subscription_id: int, params: SubscriptionUpdate, request: Request):
     with Session(db_sink.engine) as session:
-        record = session.get(ReaderSubscriptionRecord, subscription_id)
-        if not record:
-            raise HTTPException(status_code=404, detail="订阅源不存在")
+        record = _owned_subscription_or_404(session, subscription_id, current_username(request))
         update_data = _model_dump(params, exclude_unset=True)
         if "name" in update_data:
             name = (update_data["name"] or "").strip()
@@ -1893,12 +2319,10 @@ def update_subscription(subscription_id: int, params: SubscriptionUpdate):
 
 
 @app.post("/api/subscriptions/{subscription_id}/rotate-token")
-def rotate_subscription_token(subscription_id: int):
+def rotate_subscription_token(subscription_id: int, request: Request):
     token = generate_subscription_token()
     with Session(db_sink.engine) as session:
-        record = session.get(ReaderSubscriptionRecord, subscription_id)
-        if not record:
-            raise HTTPException(status_code=404, detail="订阅源不存在")
+        record = _owned_subscription_or_404(session, subscription_id, current_username(request))
         record.token_hash = hash_subscription_token(token)
         record.token_preview = subscription_token_preview(token)
         record.updated_at = _now_iso()
@@ -1909,18 +2333,16 @@ def rotate_subscription_token(subscription_id: int):
 
 
 @app.delete("/api/subscriptions/{subscription_id}")
-def delete_subscription(subscription_id: int):
+def delete_subscription(subscription_id: int, request: Request):
     with Session(db_sink.engine) as session:
-        record = session.get(ReaderSubscriptionRecord, subscription_id)
-        if not record:
-            raise HTTPException(status_code=404, detail="订阅源不存在")
+        record = _owned_subscription_or_404(session, subscription_id, current_username(request))
         session.delete(record)
         session.commit()
         return {"status": "success"}
 
 
-@app.get("/api/public/subscriptions/{subscription_id}/dify/articles")
-def get_public_subscription_dify_articles(
+@app.get("/api/public/subscriptions/{subscription_id}/articles")
+def get_public_subscription_articles(
         subscription_id: int,
         request: Request,
         skip: int = 0,
@@ -1946,7 +2368,47 @@ def get_public_subscription_dify_articles(
         "skip": skip,
         "limit": safe_limit,
         "next_skip": skip + len(records) if len(records) == safe_limit else None,
-        "items": [serialize_dify_article(record, include_content=include_content) for record in records],
+        "items": [serialize_feed_article(record, include_content=include_content) for record in records],
+    }
+
+
+class PublicSubscriptionSearchBody(BaseModel):
+    query: str
+    top_k: int = 5
+    score_threshold: float = 1.5
+    rerank: bool = False
+
+
+@app.post("/api/public/subscriptions/{subscription_id}/vector/search")
+async def public_subscription_vector_search(
+        subscription_id: int,
+        body: PublicSubscriptionSearchBody,
+        request: Request,
+):
+    """带令牌的、按订阅源范围约束的语义检索（供下游 Agent 应用个性化使用）。"""
+    with Session(db_sink.engine) as session:
+        subscription = resolve_subscription_by_token(
+            session, subscription_id, read_bearer_or_query_token(request),
+        )
+        filters = _json_loads(subscription.filters_json, {})
+        source_ids = subscription_source_ids(subscription)
+        sub_id, sub_name = subscription.id, subscription.name
+
+    results = await run_vector_search(
+        body.query,
+        top_k=body.top_k,
+        score_threshold=body.score_threshold,
+        rerank=body.rerank,
+        content_type=filters.get("content_type"),
+        source_ids=source_ids or None,
+    )
+    return {
+        "status": "success",
+        "subscription": {"id": sub_id, "name": sub_name},
+        "scoped_source_ids": source_ids,
+        "count": len(results),
+        "results": results,
+        "reranked": body.rerank,
     }
 
 
@@ -2239,6 +2701,7 @@ async def import_archive_articles_jsonl(request: Request):
 
 @app.get("/api/articles")
 def get_articles(
+        request: Request,
         content_type: Optional[str] = None,
         source_id: Optional[str] = None,
         job_id: Optional[int] = None,
@@ -2251,10 +2714,16 @@ def get_articles(
         publish_date_end: Optional[str] = None,  # ✨ 升级：结束原始发布日期
         fetched_date_start: Optional[str] = None,  # ✨ 升级：起始中枢收录日期
         fetched_date_end: Optional[str] = None,  # ✨ 升级：结束中枢收录日期
+        subscribed_scope: str = "off",  # off | only | prioritize：相对当前用户订阅的源
         skip: int = 0,
         limit: int = 100
 ):
+    scope = (subscribed_scope or "off").strip().lower()
     with Session(db_sink.engine) as session:
+        subscribed_ids = (
+            resolve_subscribed_source_ids(session, current_username(request))
+            if scope in {"only", "prioritize"} else []
+        )
         query = select(ArticleRecord)
         query = apply_article_query_filters(
             query,
@@ -2271,12 +2740,20 @@ def get_articles(
             fetched_date_start=fetched_date_start,
             fetched_date_end=fetched_date_end,
         )
-        query = query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(limit)
+        if scope == "only":
+            # 仅当前用户已订阅的源；无订阅时显式返回空集。
+            query = query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
+        if scope == "prioritize" and subscribed_ids:
+            subscribed_first = case((ArticleRecord.source_id.in_(subscribed_ids), 0), else_=1)
+            query = query.order_by(subscribed_first, ArticleRecord.fetched_date.desc())
+        else:
+            query = query.order_by(ArticleRecord.fetched_date.desc())
+        query = query.offset(skip).limit(limit)
         return session.exec(query).all()
 
 
-@app.get("/api/dify/articles")
-def get_dify_articles(
+@app.get("/api/feed/articles")
+def get_feed_articles(
         content_type: Optional[str] = None,
         content_types: Optional[str] = None,
         source_id: Optional[str] = None,
@@ -2328,12 +2805,12 @@ def get_dify_articles(
         "skip": skip,
         "limit": safe_limit,
         "next_skip": skip + len(records) if len(records) == safe_limit else None,
-        "items": [serialize_dify_article(record, include_content=include_content) for record in records],
+        "items": [serialize_feed_article(record, include_content=include_content) for record in records],
     }
 
 
-@app.get("/api/dify/articles.md")
-def export_dify_articles_markdown(
+@app.get("/api/feed/articles.md")
+def export_feed_articles_markdown(
         content_type: Optional[str] = None,
         content_types: Optional[str] = None,
         source_id: Optional[str] = None,
@@ -2568,6 +3045,82 @@ async def vectorize_all_pending():
     return {"status": "success", "count": success_count, "total_pending": len(records)}
 
 
+@app.get("/api/vector/subscribed-stats")
+def subscribed_vector_stats(request: Request):
+    """当前用户订阅范围内的向量化进度（用于「向量雷达」的范围内构建）。"""
+    username = current_username(request)
+    with Session(db_sink.engine) as session:
+        source_ids = resolve_subscribed_source_ids(session, username) if username else []
+        if not source_ids:
+            return {"subscribed_source_count": 0, "total": 0, "vectorized": 0, "pending": 0}
+        total = session.exec(
+            select(func.count(ArticleRecord.id)).where(ArticleRecord.source_id.in_(source_ids))
+        ).one()
+        vectorized = session.exec(
+            select(func.count(ArticleRecord.id)).where(
+                ArticleRecord.source_id.in_(source_ids),
+                ArticleRecord.is_vectorized == True,  # noqa: E712
+            )
+        ).one()
+    total = int(total or 0)
+    vectorized = int(vectorized or 0)
+    return {
+        "subscribed_source_count": len(source_ids),
+        "total": total,
+        "vectorized": vectorized,
+        "pending": total - vectorized,
+    }
+
+
+AUTO_VECTORIZE_SETTING_KEY = "auto_vectorize"
+
+
+def is_auto_vectorize_enabled() -> bool:
+    with Session(db_sink.engine) as session:
+        record = session.get(AppSettingRecord, AUTO_VECTORIZE_SETTING_KEY)
+        return bool(record and record.value.lower() == "true")
+
+
+async def auto_vectorize_after_fetch(content_ids: List[str]) -> None:
+    """抓取保存后，如管理员开启了自动向量化，则把新入库文章写入向量库。
+
+    失败不影响抓取主流程（向量化是尽力而为的旁路）。
+    """
+    if not content_ids or not is_auto_vectorize_enabled():
+        return
+    for content_id in content_ids:
+        try:
+            record = await db_sink.get(content_id)
+            if record and not record.is_vectorized:
+                if await vector_sink.save(_record_to_content(record)):
+                    await db_sink.mark_as_vectorized(content_id)
+        except Exception as exc:  # noqa: BLE001 — 旁路任务不应中断抓取
+            print(f"⚠️ 自动向量化失败 (id={content_id}): {exc}")
+
+
+class AutoVectorizeConfig(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/vector/auto-vectorize")
+def get_auto_vectorize_config():
+    """读取「抓取后自动向量化」开关（管理员配置）。"""
+    return {"enabled": is_auto_vectorize_enabled()}
+
+
+@app.post("/api/vector/auto-vectorize")
+def set_auto_vectorize_config(config: AutoVectorizeConfig):
+    """设置「抓取后自动向量化」开关。开启后，后续抓取入库的文章会自动写入向量库。"""
+    with Session(db_sink.engine) as session:
+        record = session.get(AppSettingRecord, AUTO_VECTORIZE_SETTING_KEY)
+        if record is None:
+            record = AppSettingRecord(key=AUTO_VECTORIZE_SETTING_KEY, value="")
+        record.value = "true" if config.enabled else "false"
+        session.add(record)
+        session.commit()
+    return {"enabled": config.enabled}
+
+
 @app.post("/api/vectorize/{article_id:path}")
 async def vectorize_article(article_id: str):
     record = await db_sink.get(article_id)
@@ -2594,15 +3147,66 @@ class SearchQuery(BaseModel):
     rerank: bool = False                     # T12: cross-encoder 重排序
 
 
-@app.post("/api/vector/search")
-async def vector_search(query: SearchQuery):
+def enforced_search_scope(request: Request) -> tuple[Optional[List[str]], bool]:
+    """登录用户的语义检索硬性限定在其订阅来源内。
+
+    返回 (source_ids, enforced)：
+      - enforced=True 且 source_ids=[] → 用户无订阅，调用方应返回空结果；
+      - enforced=True 且 source_ids=[...] → 限定到这些来源；
+      - enforced=False → 不做限定（管理员超级用户检索全库；未启用鉴权同理）。
+
+    只有受限的 ``user`` 账号被硬性限定在其订阅范围内；``admin`` 作为超级用户检索全部归档。
+    """
+    session = current_auth_session(request)
+    username = str(session.get("sub")) if session else ""
+    role = session.get("role") if session else None
+    if not username or role != "user":
+        return None, False
+    with Session(db_sink.engine) as session_db:
+        return resolve_subscribed_source_ids(session_db, username), True
+
+
+def resolve_scoped_search_args(
+        request: Request,
+        requested_source_id: Optional[str],
+) -> tuple[Optional[str], Optional[List[str]], bool, bool]:
+    """把"硬性订阅范围"折算成传给检索流水线的 (source_id, source_ids)。
+
+    返回 (source_id, source_ids, enforced, empty)。empty=True 表示应直接返回空结果
+    （用户无订阅，或请求的 source_id 落在订阅范围之外）。
+    """
+    scope_ids, enforced = enforced_search_scope(request)
+    if not enforced:
+        return requested_source_id, None, False, False
+    if not scope_ids:
+        return None, None, True, True
+    if requested_source_id:
+        if requested_source_id not in set(scope_ids):
+            return None, None, True, True
+        return None, [requested_source_id], True, False
+    return None, scope_ids, True, False
+
+
+async def run_vector_search(
+        query_text: str,
+        top_k: int,
+        score_threshold: float = 1.5,
+        rerank: bool = False,
+        content_type: Optional[str] = None,
+        source_id: Optional[str] = None,
+        source_ids: Optional[List[str]] = None,
+        publish_date_gte: Optional[str] = None,
+        publish_date_lte: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """语义检索流水线：召回 → 按 parent_id 去重 → 阈值过滤 → 重排序 → 回填标题。"""
     raw_results = await vector_sink.search(
-        query.query,
-        n_results=query.top_k * 4,
-        content_type=query.content_type,
-        source_id=query.source_id,
-        publish_date_gte=query.publish_date_gte,
-        publish_date_lte=query.publish_date_lte,
+        query_text,
+        n_results=top_k * 4,
+        content_type=content_type,
+        source_id=source_id,
+        source_ids=source_ids,
+        publish_date_gte=publish_date_gte,
+        publish_date_lte=publish_date_lte,
     )
 
     # T3: 按 parent_id 去重，保留相同文章中 distance 最小的 chunk（最相关那条）
@@ -2613,16 +3217,16 @@ async def vector_search(query: SearchQuery):
             best_by_parent[pid] = res
 
     # T4: 过滤低相关性结果（distance 超过阈值则丢弃）
-    candidates = [r for r in best_by_parent.values() if r["distance"] <= query.score_threshold]
+    candidates = [r for r in best_by_parent.values() if r["distance"] <= score_threshold]
 
     # T12: cross-encoder 重排序（可选）
-    if query.rerank:
-        candidates = vector_sink.rerank(query.query, candidates[:query.top_k * 2])
+    if rerank:
+        candidates = vector_sink.rerank(query_text, candidates[:top_k * 2])
     else:
         candidates.sort(key=lambda x: x["distance"])
 
     unique_results = []
-    for res in candidates[:query.top_k]:
+    for res in candidates[:top_k]:
         pid = res["metadata"].get("parent_id", res["id"])
         record = await db_sink.get(pid)
         if record:
@@ -2632,8 +3236,28 @@ async def vector_search(query: SearchQuery):
         else:
             res["metadata"]["title"] = f"未知文章 ({pid})"
         unique_results.append(res)
+    return unique_results
 
-    return {"status": "success", "results": unique_results, "reranked": query.rerank}
+
+@app.post("/api/vector/search")
+async def vector_search(query: SearchQuery, request: Request):
+    # 登录用户的检索硬性限定在其订阅来源范围内（无订阅则空集）。
+    source_id, source_ids, scoped, empty = resolve_scoped_search_args(request, query.source_id)
+    if empty:
+        return {"status": "success", "results": [], "reranked": query.rerank, "scoped": True}
+
+    unique_results = await run_vector_search(
+        query.query,
+        top_k=query.top_k,
+        score_threshold=query.score_threshold,
+        rerank=query.rerank,
+        content_type=query.content_type,
+        source_id=source_id,
+        source_ids=source_ids,
+        publish_date_gte=query.publish_date_gte,
+        publish_date_lte=query.publish_date_lte,
+    )
+    return {"status": "success", "results": unique_results, "reranked": query.rerank, "scoped": scoped}
 
 
 @app.get("/api/vector/stats")
@@ -2662,7 +3286,7 @@ async def batch_delete_vectors(params: BatchOpParams):
     return {"status": "success"}
 
 
-# ==================== 3b. RAG 检索上下文接口（供 Dify 等下游应用调用）====================
+# ==================== 3b. RAG 检索上下文接口（供下游应用调用）====================
 
 class RagContextQuery(BaseModel):
     query: str
@@ -2679,19 +3303,28 @@ class RagContextQuery(BaseModel):
 
 
 @app.post("/api/rag/context")
-async def rag_context(query: RagContextQuery):
+async def rag_context(query: RagContextQuery, request: Request):
     """
     结构化检索上下文接口。
-    返回组装好的 context_text（可直接注入 Dify/LLM prompt）及结构化 sources 列表。
+    返回组装好的 context_text（可直接注入 LLM prompt）及结构化 sources 列表。
     不调用任何 LLM，纯检索层输出。
     """
     from storage.impl.vector_storage import SOURCE_FRIENDLY_NAMES
+
+    # 登录用户的检索硬性限定在其订阅来源范围内（无订阅则空集）。
+    source_id, source_ids, scoped, empty = resolve_scoped_search_args(request, query.source_id)
+    if empty:
+        return {
+            "status": "success", "query": query.query, "retrieved_count": 0,
+            "total_chars": 0, "context_text": "", "sources": [], "scoped": True,
+        }
 
     raw = await vector_sink.search(
         query.query,
         n_results=query.top_k * 4,
         content_type=query.content_type,
-        source_id=query.source_id,
+        source_id=source_id,
+        source_ids=source_ids,
         publish_date_gte=query.publish_date_gte,
         publish_date_lte=query.publish_date_lte,
     )
@@ -2830,7 +3463,7 @@ async def rag_similar(article_id: str, top_k: int = 5):
 async def reindex_all_articles():
     """
     T9: 删除并重建整个 ChromaDB collection，对所有文章重新向量化。
-    适用于：更换 embedding 模型后的全库迁移。
+    适用于：更换 embedding 模型后的全库迁移。管理员（collector）操作。
     """
     vector_sink.rebuild_collection()
 

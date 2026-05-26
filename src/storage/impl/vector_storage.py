@@ -276,11 +276,13 @@ class ChromaVectorStorage(BaseStorage):
 
     async def search(self, query: str, n_results: int = 5,
                      content_type: str = None, source_id: str = None,
+                     source_ids: Optional[List[str]] = None,
                      publish_date_gte: str = None,
                      publish_date_lte: str = None,
                      days_ago: int = None) -> List[Dict[str, Any]]:
         """
-        语义检索，支持 content_type / source_id / publish_date 四维元数据过滤。
+        语义检索，支持 content_type / source_id / source_ids / publish_date 元数据过滤。
+        source_ids 为来源白名单（如某用户订阅的源集合），与 source_id 取并集约束。
         日期格式: 'YYYY-MM-DD'（利用 ISO 日期字符串的字典序比较性质）。
         """
         conditions = []
@@ -288,6 +290,12 @@ class ChromaVectorStorage(BaseStorage):
             conditions.append({"content_type": content_type})
         if source_id:
             conditions.append({"source_id": source_id})
+        if source_ids:
+            unique_source_ids = [sid for sid in dict.fromkeys(source_ids) if sid]
+            if len(unique_source_ids) == 1:
+                conditions.append({"source_id": unique_source_ids[0]})
+            elif len(unique_source_ids) > 1:
+                conditions.append({"source_id": {"$in": unique_source_ids}})
         if publish_date_gte:
             conditions.append({"publish_date": {"$gte": publish_date_gte}})
         if publish_date_lte:

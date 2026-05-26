@@ -386,6 +386,28 @@ export async function reindexAll() {
   return res.json();
 }
 
+export async function fetchSubscribedVectorStats() {
+  const res = await apiFetch(`${API_BASE_URL}/vector/subscribed-stats`);
+  if (!res.ok) await handleApiError(res, '获取订阅向量统计失败');
+  return res.json();
+}
+
+export async function getAutoVectorize() {
+  const res = await apiFetch(`${API_BASE_URL}/vector/auto-vectorize`);
+  if (!res.ok) await handleApiError(res, '获取自动向量化配置失败');
+  return res.json();
+}
+
+export async function setAutoVectorize(enabled) {
+  const res = await apiFetch(`${API_BASE_URL}/vector/auto-vectorize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) await handleApiError(res, '设置自动向量化失败');
+  return res.json();
+}
+
 export const fetchMcpStatus = () =>
   apiFetch(`${API_BASE_URL}/mcp/status`).then(r => r.json());
 
@@ -400,6 +422,36 @@ export async function fetchSubscriptions(filters = {}) {
   const query = params.toString();
   const res = await apiFetch(`${API_BASE_URL}/subscriptions${query ? `?${query}` : ''}`);
   if (!res.ok) await handleApiError(res, '获取订阅源失败');
+  return res.json();
+}
+
+export async function fetchReaderSources() {
+  const res = await apiFetch(`${API_BASE_URL}/reader/sources`);
+  if (!res.ok) await handleApiError(res, '获取内容源目录失败');
+  return res.json();
+}
+
+export async function fetchFeedToken() {
+  const res = await apiFetch(`${API_BASE_URL}/reader/feed-token`);
+  if (!res.ok) await handleApiError(res, '获取聚合接口令牌失败');
+  return res.json();
+}
+
+export async function rotateFeedToken() {
+  const res = await apiFetch(`${API_BASE_URL}/reader/feed-token/rotate`, { method: 'POST' });
+  if (!res.ok) await handleApiError(res, '生成聚合接口令牌失败');
+  return res.json();
+}
+
+export async function subscribeSource(sourceId) {
+  const res = await apiFetch(`${API_BASE_URL}/reader/sources/${encodeURIComponent(sourceId)}/subscribe`, { method: 'POST' });
+  if (!res.ok) await handleApiError(res, '订阅失败');
+  return res.json();
+}
+
+export async function unsubscribeSource(sourceId) {
+  const res = await apiFetch(`${API_BASE_URL}/reader/sources/${encodeURIComponent(sourceId)}/subscribe`, { method: 'DELETE' });
+  if (!res.ok) await handleApiError(res, '取消订阅失败');
   return res.json();
 }
 

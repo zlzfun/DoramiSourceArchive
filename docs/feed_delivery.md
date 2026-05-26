@@ -1,25 +1,24 @@
-# Dify Delivery API
+# Feed Delivery API
 
-This document records the current downstream delivery contract for Dify/RAG/agent consumers.
+This document records the current downstream delivery contract for RAG/agent consumers.
 
 DoramiSourceArchive remains the source collection and archival hub. These APIs expose archived records without adding a reader-facing product surface.
 
-Existing downstream jobs that already use `GET /api/articles` can continue doing so. The `/api/dify/*` endpoints are a cleaner recommended delivery contract for future Dify/RAG consumers, not a forced migration path.
+Existing downstream jobs that already use `GET /api/articles` can continue doing so. The `/api/feed/*` endpoints are a cleaner recommended delivery contract for downstream consumers, not a forced migration path.
 
 For personalized reader-layer delivery, prefer subscription endpoints documented in
-`docs/reader_subscription_contract.md`. They expose tokenized, per-subscription
-Dify-compatible pulls at:
+`docs/reader_subscription_contract.md`. They expose tokenized, per-subscription pulls at:
 
 ```http
-GET /api/public/subscriptions/{subscription_id}/dify/articles
+GET /api/public/subscriptions/{subscription_id}/articles
 Authorization: Bearer dsub_...
 ```
 
 ## JSON Pull Endpoint
 
-`GET /api/dify/articles`
+`GET /api/feed/articles`
 
-Returns archive records as Dify-friendly document objects:
+Returns archive records as downstream-friendly document objects:
 
 ```json
 {
@@ -73,7 +72,7 @@ Returns archive records as Dify-friendly document objects:
 
 ## Markdown Export Endpoint
 
-`GET /api/dify/articles.md`
+`GET /api/feed/articles.md`
 
 Returns the same filtered records as a Markdown batch. Each article is separated by `---` and starts with JSON frontmatter-like metadata.
 
@@ -81,14 +80,13 @@ This endpoint is capped at 200 records per request to keep exported documents re
 
 ## Current Status
 
-- Implemented and verified on 2026-05-12 with FastAPI `TestClient`.
 - Uses the existing `articles` table only; no sync-state table has been added yet.
 - `extensions_json` is parsed into `metadata.extensions` for structured downstream use.
 
 ## Follow-Up Work
 
-- Add Dify sync status per article or per downstream consumer.
-- Add idempotent sync acknowledgement APIs if Dify should report consumed article IDs.
+- Add sync status per article or per downstream consumer.
+- Add idempotent sync acknowledgement APIs if a consumer should report consumed article IDs.
 - Exact `job_run_id` delivery only covers records first saved during that run. Duplicate records skipped by later runs retain their original lineage.
-- Add standard time-window helpers such as `last_hours` or `since_cursor` if Dify jobs prefer cursor-style polling over timestamp filters.
+- Add standard time-window helpers such as `last_hours` or `since_cursor` if downstream jobs prefer cursor-style polling over timestamp filters.
 - Add authentication or shared-token protection before exposing these endpoints outside a trusted local/private network.

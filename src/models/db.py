@@ -187,6 +187,7 @@ class ReaderSubscriptionRecord(SQLModel, table=True):
     __tablename__ = "reader_subscriptions"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    owner_username: str = Field(default="", index=True, description="订阅归属用户名；空字符串为历史全局订阅")
     name: str = Field(index=True, description="订阅源名称")
     description: str = Field(default="", description="订阅源说明")
     filters_json: str = Field(default="{}", description="内容过滤条件 JSON")
@@ -194,6 +195,17 @@ class ReaderSubscriptionRecord(SQLModel, table=True):
     token_hash: str = Field(index=True, description="订阅源访问令牌哈希")
     token_preview: str = Field(default="", description="令牌前后缀预览")
     is_active: bool = Field(default=True, index=True, description="是否启用")
+    created_at: str = Field(description="创建时间")
+    updated_at: str = Field(description="更新时间")
+
+
+class ReaderFeedTokenRecord(SQLModel, table=True):
+    """读者个人聚合接口令牌：一个用户一个，覆盖其全部已订阅来源的统一拉取令牌。"""
+    __tablename__ = "reader_feed_tokens"
+
+    owner_username: str = Field(primary_key=True, description="令牌归属用户名")
+    token_hash: str = Field(index=True, description="聚合接口访问令牌哈希")
+    token_preview: str = Field(default="", description="令牌前后缀预览")
     created_at: str = Field(description="创建时间")
     updated_at: str = Field(description="更新时间")
 
