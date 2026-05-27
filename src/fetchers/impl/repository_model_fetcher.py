@@ -68,13 +68,20 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
         description = repo.get("description", "") or ""
         license_info = repo.get("license") or {}
         created_at = repo.get("created_at") or datetime.now(timezone.utc).isoformat()
+        content = "\n".join([
+            f"GitHub repository: {full_name}",
+            f"Description: {description or 'No repository description provided.'}",
+            f"Language: {repo.get('language') or 'Unknown'}",
+            f"Stars: {int(repo.get('stargazers_count') or 0)}",
+            f"URL: {repo.get('html_url', '')}",
+        ]).strip()
         return GitHubRepositoryContent(
             id=self._repo_id(runtime_source_id, repo),
             title=full_name,
             source_url=repo.get("html_url", ""),
             publish_date=created_at,
-            content=description,
-            has_content=bool(description),
+            content=content,
+            has_content=bool(content),
             repository=full_name,
             owner=owner,
             repo=repo.get("name", ""),
@@ -148,22 +155,16 @@ class DeepSeekGitHubRepositoriesFetcher(PresetGitHubRepositoriesFetcher):
     description = "跟踪 deepseek-ai GitHub 组织下的新公开仓库。"
     icon = "🧠"
     owner = "deepseek-ai"
-
-
-class InclusionAiGitHubRepositoriesFetcher(PresetGitHubRepositoriesFetcher):
-    source_id = "github_inclusion_ai_repositories"
-    name = "inclusionAI GitHub 新仓库"
-    description = "跟踪 inclusionAI GitHub 组织下的新公开仓库。"
-    icon = "🐜"
-    owner = "inclusionAI"
-
-
-class TencentHunyuanGitHubRepositoriesFetcher(PresetGitHubRepositoriesFetcher):
-    source_id = "github_tencent_hunyuan_repositories"
-    name = "腾讯混元 GitHub 新仓库"
-    description = "跟踪 Tencent-Hunyuan GitHub 组织下的新公开仓库。"
-    icon = "💧"
-    owner = "Tencent-Hunyuan"
+    source_owner = "deepseek-ai"
+    source_brand = "deepseek"
+    source_scope = "open_model_family"
+    source_channel = "github_repository_activity"
+    source_url = "https://github.com/deepseek-ai"
+    provenance_tier = "tier0_primary"
+    content_tags = ["model_release", "developer_tool", "research_paper"]
+    signal_strength = "high_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public"
 
 
 class GenericHuggingFaceModelsFetcher(BaseFetcher):
@@ -209,13 +210,21 @@ class GenericHuggingFaceModelsFetcher(BaseFetcher):
             tags = []
         card_data = model.get("cardData") if isinstance(model.get("cardData"), dict) else {}
         summary = card_data.get("summary") or model.get("description") or ""
+        content = "\n".join([
+            f"Hugging Face model: {model_id or 'Unknown model'}",
+            f"Summary: {summary or 'No model-card summary provided.'}",
+            f"Pipeline tag: {model.get('pipeline_tag') or 'Unknown'}",
+            f"Library: {model.get('library_name') or 'Unknown'}",
+            f"Tags: {', '.join(str(tag) for tag in tags[:12])}",
+            f"URL: {'https://huggingface.co/' + model_id if model_id else 'https://huggingface.co/models'}",
+        ]).strip()
         return HuggingFaceModelContent(
             id=self._model_id(runtime_source_id, model),
             title=model_id or "未命名 Hugging Face 模型",
             source_url=f"https://huggingface.co/{model_id}" if model_id else "https://huggingface.co/models",
             publish_date=self._model_datetime(model),
-            content=summary,
-            has_content=bool(summary),
+            content=content,
+            has_content=bool(content),
             model_id=model_id,
             author=author,
             pipeline_tag=model.get("pipeline_tag") or "",
@@ -276,17 +285,19 @@ class PresetHuggingFaceModelsFetcher(GenericHuggingFaceModelsFetcher):
             yield item
 
 
-class InclusionAiHuggingFaceModelsFetcher(PresetHuggingFaceModelsFetcher):
-    source_id = "hf_inclusion_ai_models"
-    name = "inclusionAI Hugging Face 新模型"
-    description = "跟踪 inclusionAI 在 Hugging Face 上发布的新模型。"
-    icon = "🐜"
-    author = "inclusionAI"
-
-
-class LongCatHuggingFaceModelsFetcher(PresetHuggingFaceModelsFetcher):
-    source_id = "hf_longcat_models"
-    name = "美团 LongCat Hugging Face 新模型"
-    description = "跟踪美团 LongCat 在 Hugging Face 上发布的新模型。"
-    icon = "🍱"
-    author = "meituan-longcat"
+class DeepSeekHuggingFaceModelsFetcher(PresetHuggingFaceModelsFetcher):
+    source_id = "hf_deepseek_models"
+    name = "DeepSeek Hugging Face 新模型"
+    description = "跟踪 DeepSeek 在 Hugging Face 上发布的新模型。"
+    icon = "🤗"
+    author = "deepseek-ai"
+    source_owner = "deepseek-ai"
+    source_brand = "deepseek"
+    source_scope = "open_model_family"
+    source_channel = "model_repository"
+    source_url = "https://huggingface.co/deepseek-ai"
+    provenance_tier = "tier0_primary"
+    content_tags = ["model_release", "research_paper"]
+    signal_strength = "high_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public"

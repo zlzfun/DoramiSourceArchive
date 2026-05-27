@@ -81,6 +81,25 @@ class DatabaseStorage(BaseStorage):
                 with self.engine.begin() as conn:
                     conn.execute(text("ALTER TABLE reader_subscriptions ADD COLUMN owner_username VARCHAR DEFAULT ''"))
 
+        if "source_configs" in inspector.get_table_names():
+            source_config_columns = {column["name"] for column in inspector.get_columns("source_configs")}
+            source_config_additive_columns = {
+                "source_owner": "VARCHAR DEFAULT ''",
+                "source_brand": "VARCHAR DEFAULT ''",
+                "source_scope": "VARCHAR DEFAULT ''",
+                "source_channel": "VARCHAR DEFAULT ''",
+                "base_url": "VARCHAR DEFAULT ''",
+                "provenance_tier": "VARCHAR DEFAULT ''",
+                "content_tags_json": "VARCHAR DEFAULT '[]'",
+                "signal_strength": "VARCHAR DEFAULT ''",
+                "noise_risk": "VARCHAR DEFAULT ''",
+                "fetch_reliability": "VARCHAR DEFAULT ''",
+            }
+            with self.engine.begin() as conn:
+                for column_name, column_sql in source_config_additive_columns.items():
+                    if column_name not in source_config_columns:
+                        conn.execute(text(f"ALTER TABLE source_configs ADD COLUMN {column_name} {column_sql}"))
+
     async def save(self, item: BaseContent) -> bool:
         with Session(self.engine) as session:
             existing = session.get(ArticleRecord, item.id)

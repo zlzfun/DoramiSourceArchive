@@ -1404,6 +1404,16 @@ class SourceConfigCreate(BaseModel):
     category: str = ""
     fetcher_id: str = ""
     description: str = ""
+    source_owner: str = ""
+    source_brand: str = ""
+    source_scope: str = ""
+    source_channel: str = ""
+    base_url: str = ""
+    provenance_tier: str = ""
+    content_tags: List[str] = PydanticField(default_factory=list)
+    signal_strength: str = ""
+    noise_risk: str = ""
+    fetch_reliability: str = ""
     is_active: bool = True
     fetch_interval_minutes: Optional[int] = None
     cron_expr: str = ""
@@ -1417,6 +1427,16 @@ class SourceConfigUpdate(BaseModel):
     category: Optional[str] = None
     fetcher_id: Optional[str] = None
     description: Optional[str] = None
+    source_owner: Optional[str] = None
+    source_brand: Optional[str] = None
+    source_scope: Optional[str] = None
+    source_channel: Optional[str] = None
+    base_url: Optional[str] = None
+    provenance_tier: Optional[str] = None
+    content_tags: Optional[List[str]] = None
+    signal_strength: Optional[str] = None
+    noise_risk: Optional[str] = None
+    fetch_reliability: Optional[str] = None
     is_active: Optional[bool] = None
     fetch_interval_minutes: Optional[int] = None
     cron_expr: Optional[str] = None
@@ -1499,6 +1519,11 @@ def serialize_source_config(record: SourceConfigRecord) -> Dict[str, Any]:
         data["params"] = json.loads(record.params_json or "{}")
     except json.JSONDecodeError:
         data["params"] = {}
+    try:
+        tags = json.loads(record.content_tags_json or "[]")
+        data["content_tags"] = tags if isinstance(tags, list) else []
+    except json.JSONDecodeError:
+        data["content_tags"] = []
     return data
 
 
@@ -2479,6 +2504,16 @@ def create_source_config(params: SourceConfigCreate):
             category=params.category.strip(),
             fetcher_id=params.fetcher_id.strip(),
             description=params.description.strip(),
+            source_owner=params.source_owner.strip(),
+            source_brand=params.source_brand.strip(),
+            source_scope=params.source_scope.strip(),
+            source_channel=params.source_channel.strip(),
+            base_url=params.base_url.strip(),
+            provenance_tier=params.provenance_tier.strip(),
+            content_tags_json=json.dumps(params.content_tags or [], ensure_ascii=False),
+            signal_strength=params.signal_strength.strip(),
+            noise_risk=params.noise_risk.strip(),
+            fetch_reliability=params.fetch_reliability.strip(),
             is_active=params.is_active,
             fetch_interval_minutes=params.fetch_interval_minutes,
             cron_expr=params.cron_expr.strip(),
@@ -2504,6 +2539,8 @@ def update_source_config(source_id: str, params: SourceConfigUpdate):
         for key, value in update_data.items():
             if key == "params":
                 record.params_json = _json_dumps(value)
+            elif key == "content_tags":
+                record.content_tags_json = json.dumps(value or [], ensure_ascii=False)
             elif isinstance(value, str):
                 setattr(record, key, value.strip())
             else:

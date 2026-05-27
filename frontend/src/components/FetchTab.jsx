@@ -31,8 +31,11 @@ import {
 const CATEGORY_LABELS = {
   official: '官方动态',
   official_web: '官网网页',
+  official_doc: '官方文档',
+  primary: '一手信号',
   framework: '框架生态',
   paper: '论文源',
+  model_repository: '模型仓库',
   developer_platform: '开发平台',
   community: '社区资讯',
   product_update: '版本发布',
@@ -42,7 +45,63 @@ const CATEGORY_LABELS = {
   general: '其他',
 };
 
-const CATEGORY_ORDER = ['official', 'official_web', 'framework', 'paper', 'product_update', 'developer_platform', 'community', 'wechat', 'workflow', 'advanced', 'general'];
+const CATEGORY_ORDER = ['official', 'official_web', 'official_doc', 'primary', 'framework', 'paper', 'model_repository', 'product_update', 'developer_platform', 'community', 'wechat', 'workflow', 'advanced', 'general'];
+const TIER_LABELS = {
+  tier0_primary: 'Tier0 官方直接',
+  tier1_curated: 'Tier1 聚合筛选',
+  tier2_commentary: 'Tier2 个人评论',
+};
+const SOURCE_SCOPE_LABELS = {
+  company: '公司',
+  model_family: '模型族',
+  open_model_family: '开放模型族',
+  product_family: '产品族',
+  api_platform: 'API 平台',
+  developer_tool: '开发工具',
+  research_lab: '研究团队',
+  ai_media: 'AI 媒体',
+  tech_media: '科技媒体',
+  developer_community: '开发者社区',
+  research_community: '研究社区',
+};
+const SOURCE_CHANNEL_LABELS = {
+  newsroom: '新闻页',
+  newsroom_rss: '新闻 RSS',
+  blog: '博客',
+  blog_api: '博客 API',
+  blog_category: '博客分类',
+  changelog: 'Changelog',
+  docs_changelog: '文档变更',
+  docs_release_notes: 'Release Notes',
+  docs_reference: '参考文档',
+  docs_index: '文档索引',
+  support_release_notes: '帮助中心',
+  github_release: 'GitHub Release',
+  github_repository_activity: 'GitHub 仓库',
+  model_repository: '模型仓库',
+  model_catalog: '模型目录',
+  research_index: '研究目录',
+  paper_ranking: '论文榜单',
+  search_rss: '搜索 RSS',
+  website: '网站',
+  website_or_feed: '网站/Feed',
+  docs_console: '开放平台',
+};
+const SIGNAL_LABELS = {
+  high_signal: '高信号',
+  medium_signal: '中信号',
+  low_signal: '低信号',
+};
+const NOISE_LABELS = {
+  low_noise: '低噪声',
+  medium_noise: '中噪声',
+  high_noise: '高噪声',
+};
+const RELIABILITY_LABELS = {
+  stable_public: '稳定公开',
+  fragile_js_api: 'JS/API 易变',
+  blocked_or_fragile: '易阻断',
+};
 const FAVORITE_FETCHERS_STORAGE_KEY = 'dorami.favorite_fetchers';
 const TEST_RUN_LIMIT = 1;
 const CATALOG_SCOPE_OPTIONS = [
@@ -59,6 +118,10 @@ function getCategoryLabel(category) {
 function getCategoryRank(category) {
   const index = CATEGORY_ORDER.indexOf(category || 'general');
   return index === -1 ? CATEGORY_ORDER.length : index;
+}
+
+function labelFrom(map, value) {
+  return map[value] || value || '';
 }
 
 function formatDateTime(value) {
@@ -239,7 +302,21 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
       .filter(fetcher => categoryFilter === 'all' || (fetcher.category || 'general') === categoryFilter)
       .filter(fetcher => {
         if (!query) return true;
-        return [fetcher.name, fetcher.id, fetcher.desc, fetcher.content_type, fetcher.curation_reason, getCategoryLabel(fetcher.category)]
+        return [
+          fetcher.name,
+          fetcher.id,
+          fetcher.desc,
+          fetcher.content_type,
+          fetcher.curation_reason,
+          fetcher.base_url,
+          fetcher.source_owner,
+          fetcher.source_brand,
+          fetcher.source_scope,
+          fetcher.source_channel,
+          fetcher.provenance_tier,
+          ...(fetcher.content_tags || []),
+          getCategoryLabel(fetcher.category),
+        ]
           .filter(Boolean)
           .join(' ')
           .toLowerCase()
@@ -258,7 +335,15 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
     const baseFetchers = query
       ? availableFetchers
       : availableFetchers.filter(fetcher => fetcher.default_visible !== false || favorites.has(fetcher.id));
-    return baseFetchers.filter(fetcher => [fetcher.name, fetcher.id, fetcher.desc].filter(Boolean).join(' ').toLowerCase().includes(query));
+    return baseFetchers.filter(fetcher => [
+      fetcher.name,
+      fetcher.id,
+      fetcher.desc,
+      fetcher.base_url,
+      fetcher.source_owner,
+      fetcher.source_brand,
+      ...(fetcher.content_tags || []),
+    ].filter(Boolean).join(' ').toLowerCase().includes(query));
   }, [availableFetchers, favoriteFetcherIds, modalSearch]);
 
   const getFetcherName = (id) => fetchersById[id]?.name || id;
@@ -586,6 +671,53 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
                     {fetcher.curation_reason && (
                       <div className="text-xs leading-relaxed rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-slate-500">
                         {fetcher.curation_reason}
+                      </div>
+                    )}
+                    {(fetcher.base_url || fetcher.provenance_tier || fetcher.source_owner || fetcher.source_brand) && (
+                      <div className="rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs text-slate-500 space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          {fetcher.provenance_tier && (
+                            <div>
+                              <div className="tiny-meta">来源层级</div>
+                              <div className="font-bold text-slate-700">{labelFrom(TIER_LABELS, fetcher.provenance_tier)}</div>
+                            </div>
+                          )}
+                          {(fetcher.source_owner || fetcher.source_brand) && (
+                            <div>
+                              <div className="tiny-meta">主体 / 承载</div>
+                              <div className="font-mono text-[11px] text-slate-700 truncate" title={[fetcher.source_owner, fetcher.source_brand].filter(Boolean).join(' / ')}>
+                                {[fetcher.source_owner, fetcher.source_brand].filter(Boolean).join(' / ')}
+                              </div>
+                            </div>
+                          )}
+                          {fetcher.source_scope && (
+                            <div>
+                              <div className="tiny-meta">范围</div>
+                              <div className="font-bold text-slate-700">{labelFrom(SOURCE_SCOPE_LABELS, fetcher.source_scope)}</div>
+                            </div>
+                          )}
+                          {fetcher.source_channel && (
+                            <div>
+                              <div className="tiny-meta">渠道</div>
+                              <div className="font-bold text-slate-700">{labelFrom(SOURCE_CHANNEL_LABELS, fetcher.source_channel)}</div>
+                            </div>
+                          )}
+                        </div>
+                        {fetcher.base_url && (
+                          <div className="truncate font-mono text-[11px] text-blue-600" title={fetcher.base_url}>{fetcher.base_url}</div>
+                        )}
+                        <div className="flex flex-wrap gap-1.5">
+                          {fetcher.signal_strength && <span className="status-badge bg-emerald-50 text-emerald-700 border-emerald-100">{labelFrom(SIGNAL_LABELS, fetcher.signal_strength)}</span>}
+                          {fetcher.noise_risk && <span className="status-badge bg-amber-50 text-amber-700 border-amber-100">{labelFrom(NOISE_LABELS, fetcher.noise_risk)}</span>}
+                          {fetcher.fetch_reliability && <span className="status-badge bg-slate-50 text-slate-600 border-slate-200">{labelFrom(RELIABILITY_LABELS, fetcher.fetch_reliability)}</span>}
+                        </div>
+                        {(fetcher.content_tags || []).length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {fetcher.content_tags.slice(0, 5).map(tag => (
+                              <span key={tag} className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">{tag}</span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                     <div className="grid grid-cols-3 gap-2">

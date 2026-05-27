@@ -318,129 +318,16 @@ class OpenAINewsRssFetcher(PresetRssFetcher):
     icon = "🧠"
     feed_url = "https://openai.com/news/rss.xml"
     category = "official"
-
-
-class GoogleAiBlogRssFetcher(PresetRssFetcher):
-    source_id = "rss_google_ai_blog"
-    name = "Google AI Blog"
-    description = "Google 官方 AI 产品、研究与应用动态。"
-    icon = "🔎"
-    feed_url = "https://blog.google/technology/ai/rss/"
-    category = "official"
-
-
-class GoogleDeepMindNewsRssFetcher(PresetRssFetcher):
-    source_id = "rss_google_deepmind_news"
-    name = "Google DeepMind News"
-    description = "Google DeepMind 官方研究、模型与产品新闻。"
-    icon = "🧬"
-    feed_url = "https://deepmind.google/blog/rss.xml"
-    category = "official"
-
-
-class HuggingFaceBlogRssFetcher(PresetRssFetcher):
-    source_id = "rss_huggingface_blog"
-    name = "Hugging Face Blog"
-    description = "Hugging Face 官方博客、模型、数据集、工具与社区动态。"
-    icon = "🤗"
-    feed_url = "https://huggingface.co/blog/feed.xml"
-    category = "official"
-
-
-class MicrosoftAiBlogRssFetcher(PresetRssFetcher):
-    source_id = "rss_microsoft_ai_blog"
-    name = "Microsoft Cloud Blog"
-    description = "Microsoft 官方 Cloud/AI 产品、Copilot、Agent 与企业应用动态。"
-    icon = "🪟"
-    feed_url = "https://www.microsoft.com/en-us/microsoft-cloud/blog/feed/"
-    category = "official"
-
-
-class NvidiaDeveloperBlogRssFetcher(PresetRssFetcher):
-    source_id = "rss_nvidia_developer_blog"
-    name = "NVIDIA Developer Blog"
-    description = "NVIDIA 官方开发者技术博客，覆盖 AI 加速、推理、训练与工程实践。"
-    icon = "🟩"
-    feed_url = "https://developer.nvidia.com/blog/feed/"
-    category = "official"
-
-
-class LangChainBlogRssFetcher(PresetRssFetcher):
-    source_id = "rss_langchain_blog"
-    name = "LangChain Blog"
-    description = "LangChain、LangGraph、LangSmith 官方博客与产品更新。"
-    icon = "🦜"
-    feed_url = "https://blog.langchain.com/rss/"
-    category = "framework"
-
-
-class GitHubBlogRssFetcher(PresetRssFetcher):
-    source_id = "rss_github_blog"
-    name = "GitHub Blog"
-    description = "GitHub 官方博客，覆盖 Copilot、Actions、开源生态与工程平台更新。"
-    icon = "🐙"
-    feed_url = "https://github.blog/feed/"
-    category = "developer_platform"
-
-
-class ArxivAiRssFetcher(PresetRssFetcher):
-    source_id = "rss_arxiv_cs_ai"
-    name = "arXiv cs.AI"
-    description = "arXiv 人工智能分类最新论文。"
-    icon = "📄"
-    feed_url = "https://export.arxiv.org/rss/cs.AI"
-    category = "paper"
-    default_limit = 30
-
-
-class ArxivClRssFetcher(PresetRssFetcher):
-    source_id = "rss_arxiv_cs_cl"
-    name = "arXiv cs.CL"
-    description = "arXiv 计算语言学与 NLP 分类最新论文。"
-    icon = "📄"
-    feed_url = "https://export.arxiv.org/rss/cs.CL"
-    category = "paper"
-    default_limit = 30
-
-
-class ArxivLgRssFetcher(PresetRssFetcher):
-    source_id = "rss_arxiv_cs_lg"
-    name = "arXiv cs.LG"
-    description = "arXiv 机器学习分类最新论文。"
-    icon = "📄"
-    feed_url = "https://export.arxiv.org/rss/cs.LG"
-    category = "paper"
-    default_limit = 30
-
-
-class ArxivCvRssFetcher(PresetRssFetcher):
-    source_id = "rss_arxiv_cs_cv"
-    name = "arXiv cs.CV"
-    description = "arXiv 计算机视觉分类最新论文。"
-    icon = "📄"
-    feed_url = "https://export.arxiv.org/rss/cs.CV"
-    category = "paper"
-    default_limit = 30
-
-
-class ArxivStatMlRssFetcher(PresetRssFetcher):
-    source_id = "rss_arxiv_stat_ml"
-    name = "arXiv stat.ML"
-    description = "arXiv 统计机器学习分类最新论文。"
-    icon = "📄"
-    feed_url = "https://export.arxiv.org/rss/stat.ML"
-    category = "paper"
-    default_limit = 30
-
-
-class ArxivEessIvRssFetcher(PresetRssFetcher):
-    source_id = "rss_arxiv_eess_iv"
-    name = "arXiv eess.IV"
-    description = "arXiv 图像与视频信号处理分类最新论文。"
-    icon = "📄"
-    feed_url = "https://export.arxiv.org/rss/eess.IV"
-    category = "paper"
-    default_limit = 30
+    source_owner = "openai"
+    source_brand = "openai"
+    source_scope = "company"
+    source_channel = "newsroom_rss"
+    source_url = feed_url
+    provenance_tier = "tier0_primary"
+    content_tags = ["model_release", "product_update", "api_platform", "research_paper", "developer_tool"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public"
 
 
 class HackerNewsAiRssFetcher(PresetRssFetcher):
@@ -450,75 +337,13 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
     icon = "🟧"
     feed_url = "https://hnrss.org/newest?q=AI"
     category = "community"
-
-
-class DifyReleasesRssFetcher(PresetRssFetcher):
-    source_id = "rss_dify_releases"
-    name = "Dify Releases"
-    description = "Dify GitHub releases，跟踪开源 Agent 平台版本更新。"
-    icon = "🚀"
-    feed_url = "https://github.com/langgenius/dify/releases.atom"
-    category = "product_update"
-
-
-class LangChainReleasesRssFetcher(PresetRssFetcher):
-    source_id = "rss_langchain_releases"
-    name = "LangChain Releases"
-    description = "LangChain GitHub releases，跟踪框架版本发布。"
-    icon = "🦜"
-    feed_url = "https://github.com/langchain-ai/langchain/releases.atom"
-    category = "product_update"
-
-
-class OllamaReleasesRssFetcher(PresetRssFetcher):
-    source_id = "rss_ollama_releases"
-    name = "Ollama Releases"
-    description = "Ollama GitHub releases，跟踪本地模型运行工具版本更新。"
-    icon = "🧱"
-    feed_url = "https://github.com/ollama/ollama/releases.atom"
-    category = "product_update"
-
-
-class TransformersReleasesRssFetcher(PresetRssFetcher):
-    source_id = "rss_transformers_releases"
-    name = "Transformers Releases"
-    description = "Hugging Face Transformers GitHub releases，跟踪模型库版本更新。"
-    icon = "🤗"
-    feed_url = "https://github.com/huggingface/transformers/releases.atom"
-    category = "product_update"
-
-
-class PytorchReleasesRssFetcher(PresetRssFetcher):
-    source_id = "rss_pytorch_releases"
-    name = "PyTorch Releases"
-    description = "PyTorch GitHub releases，跟踪深度学习框架版本更新。"
-    icon = "🔥"
-    feed_url = "https://github.com/pytorch/pytorch/releases.atom"
-    category = "product_update"
-
-
-class LlamaCppReleasesRssFetcher(PresetRssFetcher):
-    source_id = "rss_llama_cpp_releases"
-    name = "llama.cpp Releases"
-    description = "llama.cpp GitHub releases，跟踪本地推理引擎版本更新。"
-    icon = "🧩"
-    feed_url = "https://github.com/ggerganov/llama.cpp/releases.atom"
-    category = "product_update"
-
-
-class VllmReleasesRssFetcher(PresetRssFetcher):
-    source_id = "rss_vllm_releases"
-    name = "vLLM Releases"
-    description = "vLLM GitHub releases，跟踪推理引擎版本更新。"
-    icon = "⚙️"
-    feed_url = "https://github.com/vllm-project/vllm/releases.atom"
-    category = "product_update"
-
-
-class OpenRouterAnnouncementsRssFetcher(PresetRssFetcher):
-    source_id = "rss_openrouter_announcements"
-    name = "OpenRouter Announcements"
-    description = "OpenRouter 官方公告，覆盖模型上线、路由/API 能力、价格与平台策略更新。"
-    icon = "🧭"
-    feed_url = "https://openrouter.ai/announcements/feed.xml"
-    category = "primary"
+    source_owner = "ycombinator"
+    source_brand = "hacker_news"
+    source_scope = "developer_community"
+    source_channel = "search_rss"
+    source_url = feed_url
+    provenance_tier = "tier1_curated"
+    content_tags = ["developer_tool", "market_news", "opinion", "product_update"]
+    signal_strength = "medium_signal"
+    noise_risk = "high_noise"
+    fetch_reliability = "stable_public"

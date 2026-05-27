@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from fetchers.impl.rss_fetcher import GenericRssFetcher, MicrosoftAiBlogRssFetcher
+from fetchers.impl.rss_fetcher import GenericRssFetcher, OpenAINewsRssFetcher
 
 
 class DummyResponse:
@@ -83,8 +83,8 @@ def test_rss_fetcher_sorts_newest_first_and_backfills_missing_detail():
     assert items[0].raw_data["detail_fetched"] is True
 
 
-def test_microsoft_ai_blog_uses_current_cloud_blog_feed():
-    assert MicrosoftAiBlogRssFetcher.feed_url == "https://www.microsoft.com/en-us/microsoft-cloud/blog/feed/"
+def test_openai_news_uses_current_official_feed():
+    assert OpenAINewsRssFetcher.feed_url == "https://openai.com/news/rss.xml"
 
 
 def test_database_storage_backfills_existing_empty_article():

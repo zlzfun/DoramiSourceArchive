@@ -32,6 +32,18 @@ class BaseFetcher(abc.ABC):
     # 面向管理台的来源分类，用于在节点较多时筛选和分组展示。
     category: str = "general"
 
+    # 新一代数据源准入元数据。用于区分来源身份、准入层级、内容标签与抓取可靠性。
+    source_owner: str = ""
+    source_brand: str = ""
+    source_scope: str = ""
+    source_channel: str = ""
+    source_url: str = ""
+    provenance_tier: str = ""
+    content_tags: List[str] = []
+    signal_strength: str = ""
+    noise_risk: str = ""
+    fetch_reliability: str = ""
+
     # ==========================================
     # 2. 前端 UI 渲染元数据 (必须由子类覆盖)
     # ==========================================

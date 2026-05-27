@@ -18,6 +18,16 @@ const EMPTY_FORM = {
   category: '',
   fetcher_id: '',
   description: '',
+  source_owner: '',
+  source_brand: '',
+  source_scope: '',
+  source_channel: '',
+  base_url: '',
+  provenance_tier: '',
+  contentTagsText: '',
+  signal_strength: '',
+  noise_risk: '',
+  fetch_reliability: '',
   is_active: true,
   fetch_interval_minutes: '',
   cron_expr: '',
@@ -33,6 +43,16 @@ function toForm(source) {
     category: source.category || '',
     fetcher_id: source.fetcher_id || '',
     description: source.description || '',
+    source_owner: source.source_owner || '',
+    source_brand: source.source_brand || '',
+    source_scope: source.source_scope || '',
+    source_channel: source.source_channel || '',
+    base_url: source.base_url || '',
+    provenance_tier: source.provenance_tier || '',
+    contentTagsText: (source.content_tags || []).join(', '),
+    signal_strength: source.signal_strength || '',
+    noise_risk: source.noise_risk || '',
+    fetch_reliability: source.fetch_reliability || '',
     is_active: source.is_active !== false,
     fetch_interval_minutes: source.fetch_interval_minutes ?? '',
     cron_expr: source.cron_expr || '',
@@ -48,6 +68,13 @@ function parseParams(paramsText) {
     throw new Error('参数 JSON 必须是对象');
   }
   return parsed;
+}
+
+function parseTags(tagsText) {
+  return tagsText
+    .split(',')
+    .map(tag => tag.trim())
+    .filter(Boolean);
 }
 
 export default function SourcesTab({ showToast }) {
@@ -140,6 +167,16 @@ export default function SourcesTab({ showToast }) {
       category: form.category.trim(),
       fetcher_id: form.fetcher_id.trim(),
       description: form.description.trim(),
+      source_owner: form.source_owner.trim(),
+      source_brand: form.source_brand.trim(),
+      source_scope: form.source_scope.trim(),
+      source_channel: form.source_channel.trim(),
+      base_url: form.base_url.trim(),
+      provenance_tier: form.provenance_tier.trim(),
+      content_tags: parseTags(form.contentTagsText),
+      signal_strength: form.signal_strength.trim(),
+      noise_risk: form.noise_risk.trim(),
+      fetch_reliability: form.fetch_reliability.trim(),
       is_active: form.is_active,
       fetch_interval_minutes: intervalValue,
       cron_expr: form.cron_expr.trim(),
@@ -279,10 +316,22 @@ export default function SourcesTab({ showToast }) {
                       <div className="font-extrabold text-slate-800">{source.name}</div>
                       <div className="font-mono text-[11px] text-slate-400 mt-0.5">{source.source_id}</div>
                       {source.url && <div className="text-xs text-blue-600 truncate max-w-sm mt-1" title={source.url}>{source.url}</div>}
+                      {(source.source_owner || source.source_brand || source.base_url) && (
+                        <div className="mt-2 space-y-1">
+                          <div className="text-[11px] text-slate-500">
+                            {[source.source_owner, source.source_brand].filter(Boolean).join(' / ')}
+                            {source.provenance_tier ? ` · ${source.provenance_tier}` : ''}
+                          </div>
+                          {source.base_url && <div className="font-mono text-[11px] text-blue-500 truncate max-w-sm" title={source.base_url}>{source.base_url}</div>}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-4">
                       <div className="text-xs font-black text-indigo-700 bg-indigo-50 border border-indigo-100 inline-block px-2 py-1 rounded-lg">{source.source_type}</div>
                       {source.category && <div className="text-xs text-slate-500 mt-1">{source.category}</div>}
+                      {(source.source_scope || source.source_channel) && (
+                        <div className="text-[11px] text-slate-400 mt-1">{[source.source_scope, source.source_channel].filter(Boolean).join(' / ')}</div>
+                      )}
                     </td>
                     <td className="px-4 py-4 text-xs text-slate-600">
                       {source.cron_expr ? <div className="font-mono bg-slate-100 px-2 py-1 rounded inline-block">{source.cron_expr}</div> : <div>-</div>}
@@ -347,6 +396,59 @@ export default function SourcesTab({ showToast }) {
               URL
               <input value={form.url} onChange={e => updateForm('url', e.target.value)} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500" placeholder="https://example.com/rss.xml" />
             </label>
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-xs font-bold text-slate-500">
+                来源主体
+                <input value={form.source_owner} onChange={e => updateForm('source_owner', e.target.value)} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500 font-mono" placeholder="anthropic" />
+              </label>
+              <label className="text-xs font-bold text-slate-500">
+                承载品牌
+                <input value={form.source_brand} onChange={e => updateForm('source_brand', e.target.value)} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500 font-mono" placeholder="claude" />
+              </label>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-xs font-bold text-slate-500">
+                范围
+                <input value={form.source_scope} onChange={e => updateForm('source_scope', e.target.value)} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500 font-mono" placeholder="model_family" />
+              </label>
+              <label className="text-xs font-bold text-slate-500">
+                渠道
+                <input value={form.source_channel} onChange={e => updateForm('source_channel', e.target.value)} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500 font-mono" placeholder="blog" />
+              </label>
+            </div>
+
+            <label className="text-xs font-bold text-slate-500 block">
+              Base URL
+              <input value={form.base_url} onChange={e => updateForm('base_url', e.target.value)} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500" placeholder="https://example.com/news" />
+            </label>
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-xs font-bold text-slate-500">
+                来源层级
+                <input value={form.provenance_tier} onChange={e => updateForm('provenance_tier', e.target.value)} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500 font-mono" placeholder="tier0_primary" />
+              </label>
+              <label className="text-xs font-bold text-slate-500">
+                内容标签
+                <input value={form.contentTagsText} onChange={e => updateForm('contentTagsText', e.target.value)} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500 font-mono" placeholder="model_release, product_update" />
+              </label>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <label className="text-xs font-bold text-slate-500">
+                信号
+                <input value={form.signal_strength} onChange={e => updateForm('signal_strength', e.target.value)} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500 font-mono" placeholder="high_signal" />
+              </label>
+              <label className="text-xs font-bold text-slate-500">
+                噪声
+                <input value={form.noise_risk} onChange={e => updateForm('noise_risk', e.target.value)} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500 font-mono" placeholder="low_noise" />
+              </label>
+              <label className="text-xs font-bold text-slate-500">
+                抓取可靠性
+                <input value={form.fetch_reliability} onChange={e => updateForm('fetch_reliability', e.target.value)} className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500 font-mono" placeholder="stable_public" />
+              </label>
+            </div>
 
             <div className="grid grid-cols-2 gap-3">
               <label className="text-xs font-bold text-slate-500">

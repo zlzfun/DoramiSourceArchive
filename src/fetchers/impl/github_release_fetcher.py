@@ -197,112 +197,61 @@ class PresetGitHubReleasesFetcher(GenericGitHubReleasesFetcher):
             yield item
 
 
-class DifyGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
-    source_id = "github_dify_releases"
-    name = "Dify GitHub Releases"
-    description = "通过 GitHub API 抓取 Dify Release 元数据。"
-    icon = "🧩"
-    owner = "langgenius"
-    repo = "dify"
+class QwenCodeGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
+    source_id = "github_qwen_code_releases"
+    name = "Qwen Code GitHub Releases"
+    description = "通过 GitHub API 抓取 Qwen Code Release 元数据。"
+    icon = "🟦"
+    owner = "QwenLM"
+    repo = "qwen-code"
+    source_owner = "qwenlm"
+    source_brand = "qwen_code"
+    source_scope = "developer_tool"
+    source_channel = "github_release"
+    source_url = "https://github.com/QwenLM/qwen-code/releases"
+    provenance_tier = "tier0_primary"
+    content_tags = ["developer_tool", "product_update"]
+    signal_strength = "medium_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public"
 
 
-class VllmGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
-    source_id = "github_vllm_releases"
-    name = "vLLM GitHub Releases"
-    description = "通过 GitHub API 抓取 vLLM Release 元数据。"
-    icon = "⚡"
-    owner = "vllm-project"
-    repo = "vllm"
+class OpenCodeGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
+    source_id = "github_opencode_releases"
+    name = "OpenCode GitHub Releases"
+    description = "通过 GitHub API 抓取 OpenCode Release 元数据。"
+    icon = "⌨️"
+    owner = "opencode-ai"
+    repo = "opencode"
+    source_owner = "opencode"
+    source_brand = "opencode"
+    source_scope = "developer_tool"
+    source_channel = "github_release"
+    source_url = "https://github.com/opencode-ai/opencode/releases"
+    provenance_tier = "tier0_primary"
+    content_tags = ["developer_tool", "product_update"]
+    signal_strength = "medium_signal"
+    noise_risk = "high_noise"
+    fetch_reliability = "stable_public"
 
 
-class OllamaGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
-    source_id = "github_ollama_releases"
-    name = "Ollama GitHub Releases"
-    description = "通过 GitHub API 抓取 Ollama Release 元数据。"
-    icon = "🦙"
-    owner = "ollama"
-    repo = "ollama"
-
-
-class LangChainGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
-    source_id = "github_langchain_releases"
-    name = "LangChain GitHub Releases"
-    description = "通过 GitHub API 抓取 LangChain Release 元数据。"
-    icon = "🦜"
-    owner = "langchain-ai"
-    repo = "langchain"
-
-
-class TransformersGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
-    source_id = "github_transformers_releases"
-    name = "Transformers GitHub Releases"
-    description = "通过 GitHub API 抓取 Hugging Face Transformers Release 元数据。"
-    icon = "🤗"
-    owner = "huggingface"
-    repo = "transformers"
-
-
-class PytorchGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
-    source_id = "github_pytorch_releases"
-    name = "PyTorch GitHub Releases"
-    description = "通过 GitHub API 抓取 PyTorch Release 元数据。"
-    icon = "🔥"
-    owner = "pytorch"
-    repo = "pytorch"
-
-
-class LlamaCppGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
-    source_id = "github_llama_cpp_releases"
-    name = "llama.cpp GitHub Releases"
-    description = "通过 GitHub API 抓取 llama.cpp Release 元数据。"
-    icon = "🧱"
-    owner = "ggml-org"
-    repo = "llama.cpp"
-
-
-class LiteLlmGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
-    source_id = "github_litellm_releases"
-    name = "LiteLLM GitHub Releases"
-    description = "通过 GitHub API 抓取 LiteLLM Release 元数据。"
-    icon = "💡"
-    owner = "BerriAI"
-    repo = "litellm"
-
-
-class OpenWebUiGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
-    source_id = "github_open_webui_releases"
-    name = "Open WebUI GitHub Releases"
-    description = "通过 GitHub API 抓取 Open WebUI Release 元数据。"
-    icon = "🖥️"
-    owner = "open-webui"
-    repo = "open-webui"
-
-
-class ComfyUiGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
-    source_id = "github_comfyui_releases"
-    name = "ComfyUI GitHub Releases"
-    description = "通过 GitHub API 抓取 ComfyUI Release 元数据。"
-    icon = "🎛️"
-    owner = "comfyanonymous"
-    repo = "ComfyUI"
-
-
-class OpenAiAgentsPythonGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
-    source_id = "github_openai_agents_python_releases"
-    name = "OpenAI Agents SDK Releases"
-    description = "通过 GitHub API 抓取 OpenAI Agents Python SDK Release 元数据。"
-    icon = "🧠"
-    owner = "openai"
-    repo = "openai-agents-python"
-
-
-class ClaudeCodeGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
-    source_id = "github_claude_code_releases"
-    name = "Claude Code GitHub Releases"
-    description = "通过 GitHub API 抓取 Claude Code Release 元数据。"
-    icon = "🟧"
-    owner = "anthropics"
-    repo = "claude-code"
+class OpenClawGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
+    source_id = "github_openclaw_releases"
+    name = "OpenClaw GitHub Releases"
+    description = "通过 GitHub API 抓取 OpenClaw Release 元数据。"
+    icon = "🧰"
+    owner = "openclaw"
+    repo = "openclaw"
+    source_owner = "openclaw"
+    source_brand = "openclaw"
+    source_scope = "developer_tool"
+    source_channel = "github_release"
+    source_url = "https://github.com/openclaw/openclaw/releases"
+    provenance_tier = "tier0_primary"
+    content_tags = ["developer_tool", "product_update", "api_platform"]
+    signal_strength = "medium_signal"
+    noise_risk = "high_noise"
+    fetch_reliability = "stable_public"
 
 
 class HermesAgentGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
@@ -312,3 +261,13 @@ class HermesAgentGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     icon = "🪽"
     owner = "NousResearch"
     repo = "hermes-agent"
+    source_owner = "nousresearch"
+    source_brand = "hermes_agent"
+    source_scope = "developer_tool"
+    source_channel = "github_release"
+    source_url = "https://github.com/NousResearch/hermes-agent/releases"
+    provenance_tier = "tier0_primary"
+    content_tags = ["developer_tool", "product_update", "api_platform"]
+    signal_strength = "medium_signal"
+    noise_risk = "high_noise"
+    fetch_reliability = "stable_public"
