@@ -2172,7 +2172,7 @@ button:disabled {
     text-transform: none;
   }
 
-  /* ── 目录顶栏：展开全部 + 层级筛选 ── */
+  /* ── 目录顶栏：板块/主体展开控制 ── */
   .dept-expand-toggle {
     display: inline-flex;
     align-items: center;

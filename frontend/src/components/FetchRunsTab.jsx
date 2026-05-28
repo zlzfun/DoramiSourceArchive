@@ -88,6 +88,13 @@ function normalizeIds(ids) {
   return Array.from(new Set((ids || []).filter(Boolean)));
 }
 
+function collectionRunMessage(prefix, result) {
+  const failed = result?.failed_count || 0;
+  const saved = result?.saved_count || 0;
+  const failureText = failed ? `，失败 ${failed} 个${result.error_message ? `：${result.error_message}` : ''}` : '';
+  return `${prefix}：新增 ${saved} 条${failureText}`;
+}
+
 function defaultParamsFor(fetcher) {
   const params = {};
   (fetcher?.parameters || []).forEach(param => {
@@ -326,7 +333,7 @@ export default function FetchRunsTab({
     try {
       const result = await runCollectionJob(id, options);
       const prefix = options.testLimit ? `测试运行完成（每源 ${options.testLimit} 条）` : '采集任务运行完成';
-      showToast(`${prefix}：新增 ${result.saved_count || 0} 条`, result.failed_count ? 'info' : 'success');
+      showToast(collectionRunMessage(prefix, result), result.failed_count ? 'error' : 'success');
       await loadAll();
       onArticlesChanged?.();
       onRunsChanged?.();

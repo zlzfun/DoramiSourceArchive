@@ -101,6 +101,7 @@ class BaseFetcher(abc.ABC):
 
         except Exception as e:
             self.logger.error(f"❌ 抓取任务异常中断: {str(e)}", exc_info=True)
+            raise
         finally:
             self.logger.info(f"🏁 抓取任务结束: {self.source_id}")
 

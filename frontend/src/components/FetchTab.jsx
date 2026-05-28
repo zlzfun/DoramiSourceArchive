@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   CheckSquare,
@@ -26,6 +26,7 @@ import {
   fetchRunningProgress,
   fetchSourceHealth,
   runNodeGroup,
+  triggerBatchFetch,
   triggerFetch,
   updateNodeGroup,
 } from '../api';
@@ -139,6 +140,14 @@ function normalizeIds(ids) {
   return Array.from(new Set((ids || []).filter(Boolean)));
 }
 
+function collectionRunMessage(prefix, result, successCount = null) {
+  const failed = result?.failed_count || 0;
+  const saved = result?.saved_count || 0;
+  const okText = successCount === null ? '' : `完成 ${successCount} 个节点，`;
+  const failureText = failed ? `，失败 ${failed} 个${result.error_message ? `：${result.error_message}` : ''}` : '';
+  return `${prefix}：${okText}新增 ${saved} 条${failureText}`;
+}
+
 export default function FetchTab({ availableFetchers, showToast, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onViewRunning }) {
   const [view, setView] = useState('catalog');
   const [fetchLoading, setFetchLoading] = useState(false);
@@ -148,6 +157,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
   const [fetchConfigs, setFetchConfigs] = useState({});
   const [runningFetcherIds, setRunningFetcherIds] = useState(() => new Set());
   const [fetchProgress, setFetchProgress] = useState({});
+  const progressSeenFetcherIdsRef = useRef(new Set());
   const [sectionFilter, setSectionFilter] = useState('all');
   const [tierFilter, setTierFilter] = useState('all');
   const [catalogScope, setCatalogScope] = useState('focused');
@@ -206,13 +216,31 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
   useEffect(() => {
     if (runningFetcherIds.size === 0) {
       setFetchProgress({});
+      progressSeenFetcherIdsRef.current.clear();
       return undefined;
     }
     let cancelled = false;
     const tick = async () => {
       try {
         const data = await fetchRunningProgress();
-        if (!cancelled) setFetchProgress(data || {});
+        if (cancelled) return;
+        const progress = data || {};
+        Object.keys(progress).forEach(id => progressSeenFetcherIdsRef.current.add(id));
+        setFetchProgress(progress);
+        setRunningFetcherIds(prev => {
+          let changed = false;
+          const next = new Set(prev);
+          prev.forEach(id => {
+            if (
+              progressSeenFetcherIdsRef.current.has(id)
+              && (!progress[id] || progress[id].status === 'completed')
+            ) {
+              next.delete(id);
+              changed = true;
+            }
+          });
+          return changed ? next : prev;
+        });
       } catch { /* ignore transient polling errors */ }
     };
     tick();
@@ -325,14 +353,6 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
     });
   }, []);
 
-  const setAllCatalogSections = useCallback((open) => {
-    if (open) {
-      setCollapsedCatalogSections(new Set());
-      return;
-    }
-    setCollapsedCatalogSections(new Set(groupedSections.map(section => section.id)));
-  }, [groupedSections]);
-
   const handleCatalogSectionKeyDown = useCallback((event, sectionId, currentlyOpen) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
@@ -350,18 +370,6 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
       const next = new Set(prev);
       if (currentlyOpen) next.delete(companyKey);
       else next.add(companyKey);
-      return next;
-    });
-  };
-
-  const setAllCompanies = (open) => {
-    if (!open) {
-      setExpandedCompanies(new Set());
-      return;
-    }
-    setExpandedCompanies(() => {
-      const next = new Set();
-      groupedSections.forEach(section => section.companies.forEach(({ company }) => next.add(company.key)));
       return next;
     });
   };
@@ -515,7 +523,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
     try {
       const result = await runNodeGroup(id, options);
       const prefix = options.testLimit ? `测试运行完成（每源 ${options.testLimit} 条）` : '采集范围运行完成';
-      showToast(`${prefix}：新增 ${result.saved_count || 0} 条`, result.failed_count ? 'info' : 'success');
+      showToast(collectionRunMessage(prefix, result), result.failed_count ? 'error' : 'success');
       loadSourceHealth();
       onArticlesChanged?.();
       onRunsChanged?.();
@@ -525,27 +533,35 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
   const handleBatchFetch = async (options = {}) => {
     setFetchLoading(true);
     onRunsChanged?.();
+    selectedFetchers.forEach(id => progressSeenFetcherIdsRef.current.delete(id));
     setRunningFetcherIds(prev => {
       const next = new Set(prev);
       selectedFetchers.forEach(id => next.add(id));
       return next;
     });
-    let successCount = 0;
-    for (const fetcherId of selectedFetchers) {
-      try {
-        await triggerFetch(fetcherId, fetchConfigs[fetcherId] || {}, options);
-        successCount++;
-      } catch (e) { showToast(e.message || `[${getFetcherName(fetcherId)}] 抓取失败`, 'error'); }
-      setRunningFetcherIds(prev => {
-        const next = new Set(prev);
-        next.delete(fetcherId);
-        return next;
-      });
+    const items = selectedFetchers.map(fetcherId => ({
+      fetcher_id: fetcherId,
+      params: fetchConfigs[fetcherId] || {},
+    }));
+    let result = null;
+    try {
+      result = await triggerBatchFetch(items, options);
+    } catch (e) {
+      showToast(e.message || '批量抓取失败', 'error');
     }
     setFetchLoading(false);
-    if (successCount > 0) {
+    setRunningFetcherIds(prev => {
+      const next = new Set(prev);
+      selectedFetchers.forEach(id => next.delete(id));
+      return next;
+    });
+    if (result) {
+      const successCount = selectedFetchers.length - (result.failed_count || 0);
       const suffix = options.testLimit ? `（每源 ${options.testLimit} 条）` : '';
-      showToast(`已触发 ${successCount} 个节点${suffix}`, 'success');
+      showToast(
+        collectionRunMessage(`批量抓取完成${suffix}`, result, successCount),
+        result.failed_count ? 'error' : 'success',
+      );
       setSelectedFetchers([]);
       loadSourceHealth();
       onArticlesChanged?.();
@@ -555,6 +571,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
 
   const runSingleFetcher = (fetcher) => {
     if (runningFetcherIds.has(fetcher.id)) return;
+    progressSeenFetcherIdsRef.current.delete(fetcher.id);
     setRunningFetcherIds(prev => new Set(prev).add(fetcher.id));
     showToast(`开始抓取「${fetcher.name}」…`, 'info');
     onRunsChanged?.();
@@ -796,22 +813,6 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
                 <span className="text-xs font-mono text-slate-400">{visibleFetchers.length}/{scopeCounts[catalogScope]}</span>
               </div>
               <div className="flex items-center gap-2">
-                {!autoExpand && (
-                  <div className="catalog-expand-tools">
-                    <div className="dept-expand-toggle">
-                      <span>板块</span>
-                      <button type="button" onClick={() => setAllCatalogSections(true)}>展开</button>
-                      <span>·</span>
-                      <button type="button" onClick={() => setAllCatalogSections(false)}>收起</button>
-                    </div>
-                    <div className="dept-expand-toggle">
-                      <span>主体</span>
-                      <button type="button" onClick={() => setAllCompanies(true)}>展开</button>
-                      <span>·</span>
-                      <button type="button" onClick={() => setAllCompanies(false)}>收起</button>
-                    </div>
-                  </div>
-                )}
                 <div className="catalog-scope-tabs" role="tablist" aria-label="节点视图范围">
                   {CATALOG_SCOPE_OPTIONS.map(option => {
                     const Icon = option.icon;

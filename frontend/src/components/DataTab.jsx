@@ -15,6 +15,8 @@ import {
   createArticle,
 } from '../api';
 
+const ARTICLE_PAGE_SIZE = 100;
+
 export default function DataTab({
   availableFetchers,
   showToast,
@@ -27,7 +29,9 @@ export default function DataTab({
   onPendingFilterApplied,
 }) {
   const [articles, setArticles] = useState([]);
+  const [articlePageInfo, setArticlePageInfo] = useState({ total: 0, nextSkip: null });
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [selectedArticles, setSelectedArticles] = useState(new Set());
   const [modalState, setModalState] = useState({ isOpen: false, data: null, isEditing: false });
   const [manualAddModal, setManualAddModal] = useState(false);
@@ -122,12 +126,26 @@ export default function DataTab({
     setLoading(true);
     setSelectedArticles(new Set());
     try {
-      const data = await apiFetchArticles(filters);
-      setArticles(data);
+      const data = await apiFetchArticles(filters, ARTICLE_PAGE_SIZE, 0, true);
+      setArticles(data.items || []);
+      setArticlePageInfo({ total: data.total || 0, nextSkip: data.next_skip ?? null });
     } catch (e) {
       showToast(e.message || '后端服务未启动或网络错误', 'error');
     }
     setLoading(false);
+  };
+
+  const loadMoreArticles = async () => {
+    if (articlePageInfo.nextSkip === null) return;
+    setLoadingMore(true);
+    try {
+      const data = await apiFetchArticles(filters, ARTICLE_PAGE_SIZE, articlePageInfo.nextSkip, true);
+      setArticles(prev => [...prev, ...(data.items || [])]);
+      setArticlePageInfo({ total: data.total || 0, nextSkip: data.next_skip ?? null });
+    } catch (e) {
+      showToast(e.message || '加载更多失败', 'error');
+    }
+    setLoadingMore(false);
   };
 
   useEffect(() => {
@@ -334,7 +352,9 @@ export default function DataTab({
       <div className="surface-card relative z-10 rounded-[16px] overflow-x-auto overflow-y-visible">
         <div className="toolbar-card min-w-[980px]">
           <div className="toolbar-title">
-            <span>共 {articles.length.toLocaleString()} 条记录</span>
+            <span>
+              显示 {articles.length.toLocaleString()} / 共 {articlePageInfo.total.toLocaleString()} 条记录
+            </span>
             <span className="text-slate-500">已选择 {selectedArticles.size} 条</span>
           </div>
         </div>
@@ -408,6 +428,19 @@ export default function DataTab({
             ))}
           </tbody>
         </table>
+        {articlePageInfo.nextSkip !== null && (
+          <div className="flex justify-center border-t border-slate-100 bg-slate-50/60 p-4">
+            <button
+              type="button"
+              onClick={loadMoreArticles}
+              disabled={loadingMore}
+              className="action-button action-button-secondary"
+            >
+              <RefreshCw className={loadingMore ? 'animate-spin' : ''} />
+              {loadingMore ? '加载中...' : `加载更多（剩余 ${(articlePageInfo.total - articles.length).toLocaleString()} 条）`}
+            </button>
+          </div>
+        )}
       </div>
 
       {selectedArticles.size > 0 && canSelectArticles && (

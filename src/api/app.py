@@ -1,5 +1,6 @@
 # /src/api/app.py
 
+import asyncio
 import json
 import datetime
 import base64
@@ -240,6 +241,7 @@ app.mount("/mcp", _mcp_gate)
 app.include_router(skill_router)
 
 scheduler = AsyncIOScheduler()
+COLLECTION_FETCH_CONCURRENCY = 4
 
 
 # ==================== 管理员登录与会话 ====================
@@ -1447,6 +1449,15 @@ class SourceFetchParams(BaseModel):
     params: Dict[str, Any] = PydanticField(default_factory=dict)
 
 
+class FetchBatchItem(BaseModel):
+    fetcher_id: str
+    params: Dict[str, Any] = PydanticField(default_factory=dict)
+
+
+class FetchBatchParams(BaseModel):
+    items: List[FetchBatchItem] = PydanticField(default_factory=list)
+
+
 class SocialPostImportItem(BaseModel):
     platform: str = "x"
     post_id: str
@@ -1907,6 +1918,7 @@ async def run_collection_items(
         job_id: Optional[int] = None,
         group_id: Optional[int] = None,
         run_scope: str = "ad_hoc",
+        max_concurrency: Optional[int] = None,
 ) -> Dict[str, Any]:
     job_run_id = create_collection_job_run(
         name=name,
@@ -1916,43 +1928,44 @@ async def run_collection_items(
         group_id=group_id,
         run_scope=run_scope,
     )
-    results = []
-    child_run_ids = []
-    fetched_count = 0
-    saved_count = 0
-    skipped_count = 0
-    failed_count = 0
-    errors = []
-    saved_content_ids = []
+    concurrency = max(int(max_concurrency or COLLECTION_FETCH_CONCURRENCY), 1)
+    semaphore = asyncio.Semaphore(concurrency)
 
-    for item in items:
+    async def run_one(item: Dict[str, Any]) -> Dict[str, Any]:
         fetcher_id = str(item.get("fetcher_id", "")).strip()
         params = item.get("params") or {}
         if not fetcher_id:
-            failed_count += 1
-            errors.append("空节点 ID")
-            results.append({"fetcher_id": fetcher_id, "status": "failed", "error": "空节点 ID"})
-            continue
+            return {"fetcher_id": fetcher_id, "status": "failed", "error": "空节点 ID"}
         try:
-            result = await run_fetcher_with_tracking(
-                fetcher_id,
-                params,
-                trigger_type=trigger_type,
-                job_id=job_id,
-                job_run_id=job_run_id,
-                source_group_id=group_id,
-                run_scope=run_scope,
-            )
-            child_run_ids.append(result["run_id"])
-            fetched_count += result.get("fetched_count", 0)
-            saved_count += result.get("saved_count", 0)
-            skipped_count += result.get("skipped_count", 0)
-            saved_content_ids.extend(result.get("saved_content_ids", []))
-            results.append(result)
+            async with semaphore:
+                return await run_fetcher_with_tracking(
+                    fetcher_id,
+                    params,
+                    trigger_type=trigger_type,
+                    job_id=job_id,
+                    job_run_id=job_run_id,
+                    source_group_id=group_id,
+                    run_scope=run_scope,
+                )
         except Exception as e:
-            failed_count += 1
-            errors.append(f"{fetcher_id}: {e}")
-            results.append({"fetcher_id": fetcher_id, "status": "failed", "error": str(e)})
+            return {"fetcher_id": fetcher_id, "status": "failed", "error": str(e)}
+
+    results = await asyncio.gather(*(run_one(item) for item in items))
+    child_run_ids = [result["run_id"] for result in results if result.get("run_id") is not None]
+    fetched_count = sum(result.get("fetched_count", 0) for result in results)
+    saved_count = sum(result.get("saved_count", 0) for result in results)
+    skipped_count = sum(result.get("skipped_count", 0) for result in results)
+    failed_count = sum(1 for result in results if result.get("status") == "failed")
+    errors = [
+        f"{result.get('fetcher_id', '')}: {result.get('error')}"
+        for result in results
+        if result.get("status") == "failed" and result.get("error")
+    ]
+    saved_content_ids = [
+        content_id
+        for result in results
+        for content_id in result.get("saved_content_ids", [])
+    ]
 
     status = "success"
     if failed_count and failed_count == len(items):
@@ -1979,6 +1992,7 @@ async def run_collection_items(
         "saved_count": saved_count,
         "skipped_count": skipped_count,
         "failed_count": failed_count,
+        "error_message": "; ".join(errors[:3]) if errors else None,
         "saved_content_ids": saved_content_ids,
         "results": results,
     }
@@ -2773,40 +2787,53 @@ def get_articles(
         fetched_date_end: Optional[str] = None,  # ✨ 升级：结束中枢收录日期
         subscribed_scope: str = "off",  # off | only | prioritize：相对当前用户订阅的源
         skip: int = 0,
-        limit: int = 100
+        limit: int = 100,
+        include_total: bool = False,
 ):
     scope = (subscribed_scope or "off").strip().lower()
+    safe_limit = min(max(int(limit), 1), 500)
+    safe_skip = max(int(skip), 0)
     with Session(db_sink.engine) as session:
         subscribed_ids = (
             resolve_subscribed_source_ids(session, current_username(request))
             if scope in {"only", "prioritize"} else []
         )
-        query = select(ArticleRecord)
-        query = apply_article_query_filters(
-            query,
-            content_type=content_type,
-            source_id=source_id,
-            job_id=job_id,
-            job_run_id=job_run_id,
-            fetch_run_id=fetch_run_id,
-            run_scope=run_scope,
-            is_vectorized=is_vectorized,
-            search=search,
-            publish_date_start=publish_date_start,
-            publish_date_end=publish_date_end,
-            fetched_date_start=fetched_date_start,
-            fetched_date_end=fetched_date_end,
-        )
+        filter_kwargs = {
+            "content_type": content_type,
+            "source_id": source_id,
+            "job_id": job_id,
+            "job_run_id": job_run_id,
+            "fetch_run_id": fetch_run_id,
+            "run_scope": run_scope,
+            "is_vectorized": is_vectorized,
+            "search": search,
+            "publish_date_start": publish_date_start,
+            "publish_date_end": publish_date_end,
+            "fetched_date_start": fetched_date_start,
+            "fetched_date_end": fetched_date_end,
+        }
+        query = apply_article_query_filters(select(ArticleRecord), **filter_kwargs)
+        count_query = apply_article_query_filters(select(func.count(ArticleRecord.id)), **filter_kwargs)
         if scope == "only":
             # 仅当前用户已订阅的源；无订阅时显式返回空集。
             query = query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
+            count_query = count_query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
         if scope == "prioritize" and subscribed_ids:
             subscribed_first = case((ArticleRecord.source_id.in_(subscribed_ids), 0), else_=1)
             query = query.order_by(subscribed_first, ArticleRecord.fetched_date.desc())
         else:
             query = query.order_by(ArticleRecord.fetched_date.desc())
-        query = query.offset(skip).limit(limit)
-        return session.exec(query).all()
+        total = int(session.exec(count_query).one() or 0) if include_total else None
+        records = session.exec(query.offset(safe_skip).limit(safe_limit)).all()
+        if not include_total:
+            return records
+        return {
+            "items": records,
+            "total": total,
+            "skip": safe_skip,
+            "limit": safe_limit,
+            "next_skip": safe_skip + len(records) if safe_skip + len(records) < total else None,
+        }
 
 
 @app.get("/api/feed/articles")
@@ -3041,6 +3068,28 @@ def get_source_states(
 @app.get("/api/fetch-runs/running-progress")
 def get_running_progress():
     return get_all_progress()
+
+
+@app.post("/api/fetch/batch")
+async def trigger_fetch_batch(
+        params: FetchBatchParams,
+        test_limit: Optional[int] = None,
+):
+    items = [
+        {
+            "fetcher_id": item.fetcher_id,
+            "params": {**item.params, **test_run_overrides(test_limit)},
+        }
+        for item in params.items
+    ]
+    if not items:
+        raise HTTPException(status_code=400, detail="至少需要一个抓取节点")
+    return await run_collection_items(
+        items,
+        name="临时批量抓取",
+        trigger_type="manual",
+        run_scope="ad_hoc",
+    )
 
 
 @app.post("/api/fetch/{fetcher_id}")

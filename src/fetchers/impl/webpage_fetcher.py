@@ -371,12 +371,11 @@ class BaseWebPageListFetcher(BaseFetcher):
         fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
         detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
         if not self.listing_url:
-            self.logger.error("网页列表地址不能为空，放弃抓取。")
-            return
+            raise ValueError("网页列表地址不能为空")
 
         response = await self._safe_get(client, self.listing_url)
         if not response:
-            return
+            raise RuntimeError(f"网页列表请求失败: {self.listing_url}")
 
         soup = BeautifulSoup(response.text, "html.parser")
         entries_by_url: Dict[str, Dict[str, Any]] = {}
@@ -551,13 +550,12 @@ class QwenBlogWebFetcher(BaseWebPageListFetcher):
         limit = self._entry_limit(kwargs.get("limit"))
         response = await self._safe_get(client, self.listing_url)
         if not response:
-            return
+            raise RuntimeError(f"Qwen Blog API 请求失败: {self.listing_url}")
 
         try:
             records = response.json()
         except ValueError:
-            self.logger.warning("Qwen Blog API 返回了非 JSON 内容。")
-            return
+            raise RuntimeError("Qwen Blog API 返回了非 JSON 内容")
         if not isinstance(records, list):
             self.logger.warning("Qwen Blog API 返回了非列表结构。")
             return

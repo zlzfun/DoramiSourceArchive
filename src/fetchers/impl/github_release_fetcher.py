@@ -126,8 +126,7 @@ class GenericGitHubReleasesFetcher(BaseFetcher):
         include_prereleases = self._bool_param(kwargs.get("include_prereleases"), True)
 
         if not owner or not repo:
-            self.logger.error("GitHub owner/repo 不能为空，放弃抓取。")
-            return
+            raise ValueError("GitHub owner/repo 不能为空")
 
         self.source_id = runtime_source_id
         url = f"https://api.github.com/repos/{owner}/{repo}/releases"
@@ -141,7 +140,7 @@ class GenericGitHubReleasesFetcher(BaseFetcher):
             },
         )
         if not response:
-            return
+            raise RuntimeError(f"GitHub Releases 请求失败: {owner}/{repo}")
 
         releases = response.json()
         if not isinstance(releases, list):

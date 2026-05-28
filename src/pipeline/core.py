@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from storage.base import BaseStorage
 from fetchers.base import BaseFetcher
 from models.content import BaseContent
-from pipeline.progress import clear_progress, set_progress
+from pipeline.progress import complete_progress, set_progress
 
 
 @dataclass
@@ -88,7 +88,7 @@ class DataPipeline:
 
                 set_progress(source_id, result.fetched_count, total)
         finally:
-            clear_progress(source_id)
+            complete_progress(source_id, result.fetched_count, total)
 
         self.logger.info(
             f"🏁 任务结束: 共抓取 {result.fetched_count} 条数据，"

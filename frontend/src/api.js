@@ -61,8 +61,9 @@ export async function fetchSourceHealth() {
   return res.json();
 }
 
-export async function fetchArticles(filters = {}, limit = 100) {
-  const params = new URLSearchParams({ limit });
+export async function fetchArticles(filters = {}, limit = 100, skip = 0, includeTotal = false) {
+  const params = new URLSearchParams({ limit, skip });
+  if (includeTotal) params.append('include_total', 'true');
   Object.entries(filters).forEach(([k, v]) => {
     if (v !== '' && v !== null && v !== undefined) params.append(k, v);
   });
@@ -139,6 +140,16 @@ export async function triggerFetch(fetcherId, params, options = {}) {
     body: JSON.stringify(params),
   });
   if (!res.ok) await handleApiError(res, `[${fetcherId}] 抓取失败`);
+  return res.json();
+}
+
+export async function triggerBatchFetch(items, options = {}) {
+  const res = await apiFetch(`${API_BASE_URL}/fetch/batch${runQuery(options)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items }),
+  });
+  if (!res.ok) await handleApiError(res, '批量抓取失败');
   return res.json();
 }
 

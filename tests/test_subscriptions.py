@@ -280,6 +280,39 @@ def test_articles_subscribed_scope_only_and_prioritize(monkeypatch, tmp_path):
         assert prioritized == ["sub1", "oth1"]  # subscribed first despite older
 
 
+def test_articles_can_return_total_without_breaking_list_response(monkeypatch, tmp_path):
+    import api.app as app_module
+    from models.db import ArticleRecord
+
+    sink = _make_sink(tmp_path, "articles_total.db")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    _set_auth_accounts(monkeypatch, app_module)
+    _set_runtime_role(monkeypatch, app_module, "reader")
+
+    with Session(sink.engine) as session:
+        for index in range(3):
+            session.add(ArticleRecord(
+                id=f"a{index}", title=f"a{index}", content_type="rss_article", source_id="rss_openai",
+                source_url="https://e.test", publish_date=f"2026-05-2{index}T00:00:00",
+                fetched_date=f"2026-05-2{index}T00:00:00", has_content=True, content="x",
+                extensions_json="{}", is_vectorized=False,
+            ))
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        legacy = client.get("/api/articles?limit=2").json()
+        assert isinstance(legacy, list)
+        assert len(legacy) == 2
+
+        paged = client.get("/api/articles?limit=2&include_total=true").json()
+        assert paged["total"] == 3
+        assert paged["limit"] == 2
+        assert paged["skip"] == 0
+        assert paged["next_skip"] == 2
+        assert len(paged["items"]) == 2
+
+
 def test_articles_subscribed_only_empty_when_no_subscriptions(monkeypatch, tmp_path):
     import api.app as app_module
     from models.db import ArticleRecord

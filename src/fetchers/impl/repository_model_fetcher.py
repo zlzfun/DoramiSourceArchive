@@ -61,7 +61,7 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
             if response and response.status_code < 400:
                 data = response.json()
                 return data if isinstance(data, list) else []
-        return []
+        raise RuntimeError(f"GitHub 仓库请求失败: {owner}")
 
     def _repo_content(self, repo: Dict[str, Any], runtime_source_id: str, owner: str) -> GitHubRepositoryContent:
         full_name = repo.get("full_name", "") or f"{owner}/{repo.get('name', '')}".strip("/")
@@ -113,8 +113,7 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
         include_forks = self._bool_param(kwargs.get("include_forks"), False)
         include_archived = self._bool_param(kwargs.get("include_archived"), False)
         if not owner:
-            self.logger.error("GitHub owner 不能为空，放弃抓取。")
-            return
+            raise ValueError("GitHub owner 不能为空")
 
         self.source_id = runtime_source_id
         emitted = 0
@@ -248,8 +247,7 @@ class GenericHuggingFaceModelsFetcher(BaseFetcher):
         runtime_source_id = str(kwargs.get("source_id", "")).strip() or self.source_id
         limit = self._entry_limit(kwargs.get("limit"), 20)
         if not author:
-            self.logger.error("Hugging Face author 不能为空，放弃抓取。")
-            return
+            raise ValueError("Hugging Face author 不能为空")
 
         self.source_id = runtime_source_id
         response = await self._safe_get(
@@ -258,12 +256,11 @@ class GenericHuggingFaceModelsFetcher(BaseFetcher):
             params={"author": author, "sort": "createdAt", "direction": -1, "limit": limit, "full": 1},
         )
         if not response:
-            return
+            raise RuntimeError(f"Hugging Face 模型请求失败: {author}")
 
         models = response.json()
         if not isinstance(models, list):
-            self.logger.warning(f"Hugging Face API 返回了非列表结构: {author}")
-            return
+            raise RuntimeError(f"Hugging Face API 返回了非列表结构: {author}")
 
         for model in models[:limit]:
             yield self._model_content(model, runtime_source_id, author)
