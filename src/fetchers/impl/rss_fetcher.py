@@ -1,6 +1,5 @@
 import calendar
 import hashlib
-import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, AsyncGenerator, Dict, List
@@ -347,90 +346,6 @@ class GoogleGeminiModelsRssFetcher(PresetRssFetcher):
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_rss"
-
-
-class IThomeAiRssFetcher(PresetRssFetcher):
-    source_id = "rss_ithome_ai"
-    name = "IT之家 AI RSS"
-    description = "从 IT之家公开 RSS 中筛选 AI、模型、智能体和主流 AI 厂商相关中文资讯。"
-    icon = "📰"
-    feed_url = "https://www.ithome.com/rss/"
-    category = "media"
-    default_limit = 20
-    source_owner = "ithome"
-    source_brand = "IT之家"
-    source_scope = "tech_media"
-    source_channel = "filtered_rss"
-    source_url = feed_url
-    provenance_tier = "tier1_curated"
-    content_tags = ["market_news", "model_release", "product_update", "developer_tool"]
-    signal_strength = "medium_signal"
-    noise_risk = "high_noise"
-    fetch_reliability = "stable_public_filtered_rss"
-
-    ai_keywords = (
-        "AI",
-        "AIGC",
-        "人工智能",
-        "大模型",
-        "模型",
-        "智能体",
-        "Agent",
-        "OpenAI",
-        "ChatGPT",
-        "Claude",
-        "Anthropic",
-        "Gemini",
-        "Google",
-        "Grok",
-        "xAI",
-        "DeepSeek",
-        "Qwen",
-        "通义",
-        "豆包",
-        "Kimi",
-        "智谱",
-        "GLM",
-        "Sora",
-        "Codex",
-        "机器人",
-        "具身智能",
-    )
-
-    def _keyword_matches(self, keyword: str, haystack: str) -> bool:
-        if keyword.isascii():
-            pattern = rf"(?<![A-Za-z0-9]){re.escape(keyword)}(?![A-Za-z0-9])"
-            return re.search(pattern, haystack, flags=re.IGNORECASE) is not None
-        return keyword in haystack
-
-    def _is_ai_related(self, item: BaseContent) -> bool:
-        haystack = "\n".join([
-            getattr(item, "title", "") or "",
-            getattr(item, "summary", "") or "",
-            getattr(item, "content", "") or "",
-        ])
-        return any(self._keyword_matches(keyword, haystack) for keyword in self.ai_keywords)
-
-    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
-        limit = self._entry_limit(kwargs.get("limit"), self.default_limit)
-        if limit <= 0:
-            return
-        scan_limit = max(limit * 3, self.default_limit)
-        yielded = 0
-
-        params = {**kwargs, "limit": scan_limit}
-        async for item in super()._run(client, **params):
-            if not self._is_ai_related(item):
-                continue
-            item.raw_data = {
-                **(item.raw_data or {}),
-                "filtered_from_feed": self.feed_url,
-                "filter_keywords": list(self.ai_keywords),
-            }
-            yield item
-            yielded += 1
-            if yielded >= limit:
-                break
 
 
 class HackerNewsAiRssFetcher(PresetRssFetcher):

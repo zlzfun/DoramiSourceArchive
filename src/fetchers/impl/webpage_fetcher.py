@@ -493,6 +493,122 @@ class ClaudeBlogWebFetcher(BaseWebPageListFetcher):
     fetch_reliability = "stable_public"
 
 
+class IThomeAiWebFetcher(BaseWebPageListFetcher):
+    source_id = "web_ithome_ai"
+    name = "IT之家 AI"
+    description = "抓取 IT之家智能时代人工智能分类页中的 AI 模型、产品、智能体和产业资讯。"
+    icon = "📰"
+    listing_url = "https://next.ithome.com/ai"
+    site_name = "IT之家"
+    source_section = "人工智能"
+    category = "media"
+    article_url_patterns = ["ithome.com/0/"]
+    exclude_url_patterns = ["next.ithome.com", "m.ithome.com", "quan.ithome.com"]
+    default_limit = 20
+    default_fetch_detail = True
+    source_owner = "ithome"
+    source_brand = "IT之家"
+    source_scope = "tech_media"
+    source_channel = "website_category"
+    source_url = listing_url
+    provenance_tier = "tier1_curated"
+    content_tags = ["market_news", "model_release", "product_update", "developer_tool"]
+    signal_strength = "medium_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public_website_category"
+
+    def _parse_listing_datetime(self, raw_value: str) -> str:
+        raw_value = (raw_value or "").strip()
+        if not raw_value:
+            return ""
+        raw_value = re.sub(r"(\.\d{6})\d+(?=[+-]\d{2}:\d{2}$)", r"\1", raw_value)
+        try:
+            parsed = datetime.fromisoformat(raw_value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc).isoformat()
+        except ValueError:
+            return ""
+
+    def _list_items(self, soup: BeautifulSoup) -> List[Tag]:
+        items = soup.select("#list ul.bl > li")
+        return items or soup.select("ul.bl > li")
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
+        detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
+        if limit <= 0:
+            return
+
+        response = await self._safe_get(client, self.listing_url)
+        if not response:
+            raise RuntimeError(f"IT之家 AI 分类页请求失败: {self.listing_url}")
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        emitted = 0
+        seen_urls: set[str] = set()
+        for item in self._list_items(soup):
+            title_link = item.select_one("a.title[href]")
+            if not title_link:
+                continue
+            url = self._normalize_article_url(urljoin(str(response.url), str(title_link["href"])))
+            if not self._matches_article_url(url) or url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            title = self._clean_text(title_link.get_text(" ", strip=True)) or str(title_link.get("title") or "")
+            summary_node = item.select_one(".m")
+            summary = self._clean_text(summary_node.get_text(" ", strip=True) if summary_node else "")[:500]
+            content_node = item.select_one(".c")
+            raw_publish_date = str(content_node.get("data-ot") or "") if content_node else ""
+            publish_date = self._parse_listing_datetime(raw_publish_date) or self._extract_datetime(f"{title} {summary}")
+            tags = [self._clean_text(tag.get_text(" ", strip=True)) for tag in item.select(".tags a")]
+            tags = [tag for tag in tags if tag]
+            image_node = item.select_one("a.img img")
+            media_url = ""
+            if image_node:
+                media_url = str(image_node.get("data-original") or image_node.get("src") or "")
+
+            detail = {"title": "", "text": "", "method": "", "url": ""}
+            if fetch_detail:
+                detail = await self._detail_for_url(client, url, detail_max_chars)
+                if detail["title"] and not title:
+                    title = detail["title"]
+            content = detail["text"] or summary
+
+            yield WebPageArticleContent(
+                id=self._content_id(url),
+                title=title or "未命名 IT之家 AI 条目",
+                source_url=url,
+                publish_date=publish_date,
+                content=content,
+                has_content=bool(content),
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=summary,
+                tags=[self.category, "webpage", *tags],
+                raw_data={
+                    "listing_url": self.listing_url,
+                    "url": url,
+                    "title": title,
+                    "summary": summary,
+                    "listing_source": "ithome_ai_category_html",
+                    "listing_publish_date": raw_publish_date,
+                    "tags": tags,
+                    "media_url": media_url,
+                    "detail_fetched": fetch_detail,
+                    "detail_title": detail["title"],
+                    "detail_text_length": len(detail["text"]),
+                    "detail_extraction_method": detail.get("method", ""),
+                    "detail_source_url": detail.get("url", ""),
+                },
+            )
+            emitted += 1
+            if emitted >= limit:
+                break
+
+
 class QwenBlogWebFetcher(BaseWebPageListFetcher):
     source_id = "web_qwen_blog"
     name = "Qwen Blog"

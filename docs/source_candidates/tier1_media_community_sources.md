@@ -112,13 +112,13 @@ Implemented as `web_aiera` on 2026-05-28. The RSS feed currently returns a WordP
 - source_owner: `ithome`
 - source_brand: `IT之家`
 - source_scope: `tech_media`
-- source_channel: `filtered_rss`
-- source_url: `https://www.ithome.com/rss/`
+- source_channel: `website_category`
+- source_url: `https://next.ithome.com/ai`
 - provenance_tier: `tier1_curated`
 - content_tags: `market_news`, `product_update`, `model_release`
 - signal_strength: `medium_signal`
-- noise_risk: `high_noise`
-- fetch_reliability: `stable_public`
+- noise_risk: `medium_noise`
+- fetch_reliability: `stable_public_website_category`
 
 ### Target Coverage
 
@@ -130,7 +130,7 @@ IT之家 is fast and broad. It may be useful as a Chinese-language AI product/ne
 
 ### Risks / Open Questions
 
-The broad RSS is filtered by AI/model/vendor keywords before admission; noise remains higher than official sources.
+The broad RSS is intentionally avoided because it mixes unrelated IT之家 sections. The AI category page is narrower, but still includes both model/product updates and broader AI industry coverage.
 
 ### Known Overlap
 
@@ -138,7 +138,7 @@ Overlaps with tier0 official sources, Chinese AI media, and general tech news.
 
 ### Validation Notes
 
-Implemented as `rss_ithome_ai` on 2026-05-28 using `https://www.ithome.com/rss/` plus keyword filtering. Homepage scraping is still avoided.
+Implemented as `web_ithome_ai` on 2026-05-28 using `https://next.ithome.com/ai`. The fetcher parses the category listing HTML (`#list ul.bl > li`) instead of the broad RSS feed, preserving listing timestamps, tags, summaries, and article URLs.
 
 ## Source: Hacker News AI Search Feed
 
@@ -215,6 +215,6 @@ Validate whether the Daily Papers page provides stable dates/ranking and whether
 | 机器之心 WeChat | WeChat account `机器之心` | Likely high coverage, but requires WeChat credential flow and authenticated scraping. |
 | 量子位 WeChat | WeChat account `量子位` | Likely core distribution channel, but requires authenticated WeChat fetching. |
 | 新智元 WeChat | WeChat account `AI_era` | Likely core distribution channel, but requires authenticated WeChat fetching and higher noise filtering. |
-| IT之家 broad RSS/Homepage | `https://www.ithome.com/` | Too broad without an AI-specific route. |
+| IT之家 broad RSS/Homepage | `https://www.ithome.com/rss/` / `https://www.ithome.com/` | Too broad now that `https://next.ithome.com/ai` is available. |
 | Hacker News Algolia search | `https://hn.algolia.com/?q=AI` | Useful for manual search/API exploration, but HNRSS is simpler as a first pass. |
 | Raw arXiv AI/CL/LG/CV feeds | varies | Primary sources, but too broad for the focused catalog without ranking. |

@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from fetchers.impl.rss_fetcher import GenericRssFetcher, GoogleGeminiModelsRssFetcher, IThomeAiRssFetcher, OpenAINewsRssFetcher
+from fetchers.impl.rss_fetcher import GenericRssFetcher, GoogleGeminiModelsRssFetcher, OpenAINewsRssFetcher
 
 
 class DummyResponse:
@@ -89,52 +89,6 @@ def test_openai_news_uses_current_official_feed():
 
 def test_google_gemini_models_uses_category_rss():
     assert GoogleGeminiModelsRssFetcher.feed_url == "https://blog.google/innovation-and-ai/models-and-research/gemini-models/rss/"
-
-
-def test_ithome_ai_rss_filters_broad_feed_to_ai_related_items():
-    feed_xml = """<?xml version="1.0" encoding="UTF-8"?>
-    <rss version="2.0">
-      <channel>
-        <title>IT之家</title>
-        <item>
-          <title>手机新品发布</title>
-          <link>https://www.ithome.com/0/001/001.htm</link>
-          <pubDate>Wed, 01 Jan 2026 02:00:00 GMT</pubDate>
-          <description>这是一条普通消费电子新闻，正文足够长，不需要抓取详情页。</description>
-        </item>
-        <item>
-          <title>OpenAI 确认 ChatGPT 与 API 出现高延迟</title>
-          <link>https://www.ithome.com/0/001/002.htm</link>
-          <pubDate>Wed, 01 Jan 2026 01:00:00 GMT</pubDate>
-          <description>这是一条 AI 平台状态相关报道，正文足够长，不需要抓取详情页。</description>
-        </item>
-        <item>
-          <title>英伟达推出 AI 框架 Polar</title>
-          <link>https://www.ithome.com/0/001/003.htm</link>
-          <pubDate>Wed, 01 Jan 2026 00:00:00 GMT</pubDate>
-          <description>这是一条模型与开发工具相关报道，正文足够长，不需要抓取详情页。</description>
-        </item>
-      </channel>
-    </rss>
-    """
-    fetcher = IThomeAiRssFetcher()
-
-    async def fake_safe_get(client, url):
-        assert url == "https://www.ithome.com/rss/"
-        return DummyResponse(feed_xml, url)
-
-    fetcher._safe_get = fake_safe_get
-
-    async def collect_items():
-        return [item async for item in fetcher._run(None, limit=2, detail_min_chars=10)]
-
-    items = asyncio.run(collect_items())
-
-    assert [item.title for item in items] == [
-        "OpenAI 确认 ChatGPT 与 API 出现高延迟",
-        "英伟达推出 AI 框架 Polar",
-    ]
-    assert all(item.raw_data["filtered_from_feed"] == "https://www.ithome.com/rss/" for item in items)
 
 
 def test_database_storage_backfills_existing_empty_article():

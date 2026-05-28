@@ -86,7 +86,7 @@ This catalog describes the current source implementation after the additive sour
 | `web_qbitai` | `https://www.qbitai.com/` |
 | `web_aiera` | `https://aiera.com.cn/` |
 | `web_jiqizhixin` | `https://www.jiqizhixin.com/` |
-| `rss_ithome_ai` | `https://www.ithome.com/rss/` |
+| `web_ithome_ai` | `https://next.ithome.com/ai` |
 | `rss_hn_ai` | `https://hnrss.org/newest?q=AI` |
 | `web_huggingface_daily_papers` | `https://huggingface.co/papers` |
 
@@ -113,5 +113,5 @@ This catalog describes the current source implementation after the additive sour
 - Backend metadata must expose the v1.0 dimensions and `base_url` for each registry item.
 - The focused catalog should contain exactly `ESSENTIAL_FETCHER_IDS`; generic advanced fetchers must remain hidden.
 - Spot validation on 2026-05-27 confirmed content extraction for representative source types: RSS, official webpage, single-page docs, GitHub releases, and Qwen JSON-backed blog entries.
-- Recovery pass on 2026-05-28 restored OpenAI API Changelog, Google Blog Gemini Models, 新智元 Website, filtered IT之家 AI RSS, and 机器之心 Website. 机器之心 direct article/RSS HTTP still routes to a data-service/error page, so its fetcher enumerates original article URLs from the public sitemap and reads article正文 through the `r.jina.ai` reader proxy while preserving the original `jiqizhixin.com` source URL.
+- Recovery pass on 2026-05-28 restored OpenAI API Changelog, Google Blog Gemini Models, 新智元 Website, IT之家 AI category page, and 机器之心 Website. 机器之心 direct article/RSS HTTP still routes to a data-service/error page, so its fetcher enumerates original article URLs from the public sitemap and reads article正文 through the `r.jina.ai` reader proxy while preserving the original `jiqizhixin.com` source URL.
 - Sources still parked after the recovery pass: ChatGPT Release Notes and xAI News return Cloudflare challenge/block pages to the HTTP fetcher; Antigravity Blog exposes a public SPA shell and bundled list data but no stable article正文 endpoint for the current fetcher stack.

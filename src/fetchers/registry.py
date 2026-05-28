@@ -45,7 +45,7 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "web_qbitai",
     "web_aiera",
     "web_jiqizhixin",
-    "rss_ithome_ai",
+    "web_ithome_ai",
     "rss_hn_ai",
     "web_huggingface_daily_papers",
     # Agent coding tools

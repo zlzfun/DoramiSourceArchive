@@ -46,7 +46,7 @@ def test_recovered_sources_are_default_visible_with_stable_metadata():
 
     assert metadata["docs_openai_api_changelog"]["base_url"] == "https://developers.openai.com/api/docs/changelog"
     assert metadata["rss_google_gemini_models"]["fetch_reliability"] == "stable_public_rss"
-    assert metadata["rss_ithome_ai"]["fetch_reliability"] == "stable_public_filtered_rss"
+    assert metadata["web_ithome_ai"]["fetch_reliability"] == "stable_public_website_category"
     assert metadata["web_aiera"]["base_url"] == "https://aiera.com.cn/"
     assert metadata["web_jiqizhixin"]["fetch_reliability"] == "reader_proxy_sitemap"
 
