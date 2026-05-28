@@ -15,12 +15,14 @@ from fetchers.base import BaseFetcher
 ESSENTIAL_FETCHER_IDS = frozenset({
     # OpenAI / ChatGPT / Codex
     "rss_openai_news",
+    "docs_openai_api_changelog",
     "docs_openai_codex_changelog",
     # Anthropic / Claude
     "web_anthropic_news",
     "web_claude_blog",
     "docs_claude_code_changelog",
     # Google / Gemini / Gemma / Antigravity
+    "rss_google_gemini_models",
     "docs_gemini_api_changelog",
     "docs_gemma_release_notes",
     # xAI / Grok
@@ -41,6 +43,9 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "web_bytedance_seed_research",
     # Tier1 media / community / paper signal
     "web_qbitai",
+    "web_aiera",
+    "web_jiqizhixin",
+    "rss_ithome_ai",
     "rss_hn_ai",
     "web_huggingface_daily_papers",
     # Agent coding tools

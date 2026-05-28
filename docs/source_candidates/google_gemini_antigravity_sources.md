@@ -6,17 +6,17 @@ These records are documentation-only. They do not imply implementation or defaul
 
 ## Source: Google Blog Gemini Models
 
-- status: `under_review`
+- status: `implemented_core`
 - source_owner: `google`
 - source_brand: `gemini`
 - source_scope: `model_family`
-- source_channel: `blog_category`
+- source_channel: `blog_category_rss`
 - source_url: `https://blog.google/innovation-and-ai/models-and-research/gemini-models/`
 - provenance_tier: `tier0_primary`
 - content_tags: `model_release`, `research_paper`, `product_update`
 - signal_strength: `high_signal`
 - noise_risk: `low_noise`
-- fetch_reliability: `stable_public`
+- fetch_reliability: `stable_public_rss`
 
 ### Target Coverage
 
@@ -36,7 +36,7 @@ Overlaps with Google DeepMind News and Gemini API release notes for model launch
 
 ### Validation Notes
 
-Validate whether the category page can be parsed reliably and whether article URLs remain stable.
+Implemented as `rss_google_gemini_models` on 2026-05-28 using the category RSS endpoint: `https://blog.google/innovation-and-ai/models-and-research/gemini-models/rss/`.
 
 ## Source: Gemini API Release Notes
 

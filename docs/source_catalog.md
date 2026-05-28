@@ -13,7 +13,7 @@ This catalog describes the current source implementation after the additive sour
 
 | Group | Count | Notes |
 | --- | ---: | --- |
-| Recommended review sources | 25 | Default-visible through `ESSENTIAL_FETCHER_IDS`. |
+| Recommended review sources | 30 | Default-visible through `ESSENTIAL_FETCHER_IDS`. |
 | Generic advanced fetchers | 4 | Runtime-configured RSS, GitHub releases, GitHub repositories, and Hugging Face models. |
 | Historical concrete preset sources | 0 | Removed from `src/fetchers/impl`; not merely hidden. |
 
@@ -24,6 +24,7 @@ This catalog describes the current source implementation after the additive sour
 | Source ID | Base URL |
 | --- | --- |
 | `rss_openai_news` | `https://openai.com/news/rss.xml` |
+| `docs_openai_api_changelog` | `https://developers.openai.com/api/docs/changelog` |
 | `docs_openai_codex_changelog` | `https://developers.openai.com/codex/changelog` |
 
 ### Anthropic / Claude
@@ -38,6 +39,7 @@ This catalog describes the current source implementation after the additive sour
 
 | Source ID | Base URL |
 | --- | --- |
+| `rss_google_gemini_models` | `https://blog.google/innovation-and-ai/models-and-research/gemini-models/` |
 | `docs_gemini_api_changelog` | `https://ai.google.dev/gemini-api/docs/changelog` |
 | `docs_gemma_release_notes` | `https://ai.google.dev/gemma/docs/releases` |
 
@@ -82,6 +84,9 @@ This catalog describes the current source implementation after the additive sour
 | Source ID | Base URL |
 | --- | --- |
 | `web_qbitai` | `https://www.qbitai.com/` |
+| `web_aiera` | `https://aiera.com.cn/` |
+| `web_jiqizhixin` | `https://www.jiqizhixin.com/` |
+| `rss_ithome_ai` | `https://www.ithome.com/rss/` |
 | `rss_hn_ai` | `https://hnrss.org/newest?q=AI` |
 | `web_huggingface_daily_papers` | `https://huggingface.co/papers` |
 
@@ -108,3 +113,5 @@ This catalog describes the current source implementation after the additive sour
 - Backend metadata must expose the v1.0 dimensions and `base_url` for each registry item.
 - The focused catalog should contain exactly `ESSENTIAL_FETCHER_IDS`; generic advanced fetchers must remain hidden.
 - Spot validation on 2026-05-27 confirmed content extraction for representative source types: RSS, official webpage, single-page docs, GitHub releases, and Qwen JSON-backed blog entries.
+- Recovery pass on 2026-05-28 restored OpenAI API Changelog, Google Blog Gemini Models, 新智元 Website, filtered IT之家 AI RSS, and 机器之心 Website. 机器之心 direct article/RSS HTTP still routes to a data-service/error page, so its fetcher enumerates original article URLs from the public sitemap and reads article正文 through the `r.jina.ai` reader proxy while preserving the original `jiqizhixin.com` source URL.
+- Sources still parked after the recovery pass: ChatGPT Release Notes and xAI News return Cloudflare challenge/block pages to the HTTP fetcher; Antigravity Blog exposes a public SPA shell and bundled list data but no stable article正文 endpoint for the current fetcher stack.

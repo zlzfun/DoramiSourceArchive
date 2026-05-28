@@ -6,7 +6,7 @@ These records are documentation-only. They do not imply implementation or defaul
 
 ## Source: OpenAI News
 
-- status: `under_review`
+- status: `implemented_core`
 - source_owner: `openai`
 - source_brand: `openai`
 - source_scope: `company`
@@ -45,7 +45,7 @@ Prefer the existing OpenAI RSS feed if it provides sufficient metadata; otherwis
 - source_brand: `openai_api`
 - source_scope: `api_platform`
 - source_channel: `docs_changelog`
-- source_url: `https://platform.openai.com/docs/changelog`
+- source_url: `https://developers.openai.com/api/docs/changelog`
 - provenance_tier: `tier0_primary`
 - content_tags: `model_release`, `api_platform`, `developer_tool`, `product_update`
 - signal_strength: `high_signal`
@@ -70,7 +70,7 @@ Overlaps with OpenAI News for major launches and Codex Changelog for Codex-relat
 
 ### Validation Notes
 
-Use the redirected developer docs URL during implementation if more stable: `https://developers.openai.com/api/docs/changelog`.
+Implemented as `docs_openai_api_changelog` on 2026-05-28 using the redirected developer docs URL.
 
 ## Source: Codex Changelog
 

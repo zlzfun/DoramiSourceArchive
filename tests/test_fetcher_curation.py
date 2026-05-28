@@ -41,6 +41,16 @@ def test_recommended_fetcher_metadata_has_source_dimensions():
     assert "model_release" in item["content_tags"]
 
 
+def test_recovered_sources_are_default_visible_with_stable_metadata():
+    metadata = {item["id"]: item for item in fetcher_registry.get_all_metadata()}
+
+    assert metadata["docs_openai_api_changelog"]["base_url"] == "https://developers.openai.com/api/docs/changelog"
+    assert metadata["rss_google_gemini_models"]["fetch_reliability"] == "stable_public_rss"
+    assert metadata["rss_ithome_ai"]["fetch_reliability"] == "stable_public_filtered_rss"
+    assert metadata["web_aiera"]["base_url"] == "https://aiera.com.cn/"
+    assert metadata["web_jiqizhixin"]["fetch_reliability"] == "reader_proxy_sitemap"
+
+
 def test_non_whitelisted_source_cannot_become_default_visible(monkeypatch):
     import fetchers.registry as registry_module
 

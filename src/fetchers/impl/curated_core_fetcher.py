@@ -1,4 +1,8 @@
-from datetime import datetime, timezone
+import gzip
+import hashlib
+import html
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Dict, List
 from urllib.parse import urlparse
 
@@ -40,12 +44,11 @@ class SinglePageDocumentFetcher(BaseFetcher):
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
         if not self.page_url:
-            self.logger.error("单页文档 URL 不能为空，放弃抓取。")
-            return
+            raise ValueError("单页文档 URL 不能为空")
 
         response = await self._safe_get(client, self.page_url)
         if not response:
-            return
+            raise RuntimeError(f"单页文档请求失败: {self.page_url}")
 
         detail = await extract_article_detail(
             client,
@@ -98,6 +101,26 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
     content_tags = ["developer_tool", "product_update", "model_release", "api_platform"]
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
+    fetch_reliability = "stable_public"
+
+
+class OpenAiApiChangelogFetcher(SinglePageDocumentFetcher):
+    source_id = "docs_openai_api_changelog"
+    name = "OpenAI API Changelog"
+    description = "抓取 OpenAI API 官方 Changelog 中的模型、API、平台能力与生命周期更新。"
+    icon = "🧠"
+    page_url = "https://developers.openai.com/api/docs/changelog"
+    source_url = page_url
+    site_name = "OpenAI API"
+    source_section = "Changelog"
+    source_owner = "openai"
+    source_brand = "openai_api"
+    source_scope = "api_platform"
+    source_channel = "docs_changelog"
+    provenance_tier = "tier0_primary"
+    content_tags = ["model_release", "api_platform", "developer_tool", "product_update"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
     fetch_reliability = "stable_public"
 
 
@@ -371,3 +394,220 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
             return False
         path = urlparse(url).path.strip("/")
         return bool(path) and not path.startswith(("category", "tag", "author", "page"))
+
+
+class AieraWebsiteFetcher(BaseWebPageListFetcher):
+    source_id = "web_aiera"
+    name = "新智元 Website"
+    description = "抓取新智元官网公开文章列表中的中文 AI 模型、产品、产业和研究资讯。"
+    icon = "📰"
+    listing_url = "https://aiera.com.cn/"
+    source_url = listing_url
+    site_name = "新智元"
+    source_section = "Website"
+    article_url_patterns = ["aiera.com.cn/20"]
+    exclude_url_patterns = [
+        "aiera.com.cn/feed",
+        "aiera.com.cn/comments/feed",
+        "aiera.com.cn/wp-",
+        "aiera.com.cn/search/",
+        "aiera.com.cn/category/",
+        "aiera.com.cn/tag/",
+        "aiera.com.cn/author/",
+    ]
+    default_fetch_detail = True
+    source_owner = "aiera"
+    source_brand = "新智元"
+    source_scope = "ai_media"
+    source_channel = "website"
+    provenance_tier = "tier1_curated"
+    content_tags = ["market_news", "model_release", "product_update", "research_paper", "opinion"]
+    signal_strength = "medium_signal"
+    noise_risk = "high_noise"
+    fetch_reliability = "stable_public_website"
+
+    def _matches_article_url(self, url: str) -> bool:
+        if not super()._matches_article_url(url):
+            return False
+        path = urlparse(url).path.strip("/")
+        return bool(path) and path[:4].isdigit()
+
+
+class JiqizhixinWebsiteFetcher(BaseFetcher):
+    source_id = "web_jiqizhixin"
+    content_type = "web_article"
+    category = "official_web"
+    name = "机器之心 Website"
+    description = "抓取机器之心官网公开文章中的中文 AI 新闻、研究论文、模型和产业动态。"
+    icon = "📰"
+    source_url = "https://www.jiqizhixin.com/"
+    sitemap_url = "https://www.jiqizhixin.com/shared/sitemap.xml.gz"
+    site_name = "机器之心"
+    source_section = "Website"
+    source_owner = "jiqizhixin"
+    source_brand = "机器之心"
+    source_scope = "ai_media"
+    source_channel = "website_reader_proxy"
+    provenance_tier = "tier1_curated"
+    content_tags = ["market_news", "research_paper", "model_release", "product_update", "tutorial_or_practice"]
+    signal_strength = "medium_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "reader_proxy_sitemap"
+    default_limit = 10
+    default_lookback_days = 14
+    default_sitemap_scan_limit = 80
+    default_detail_max_chars = 20000
+    min_content_chars = 200
+    reader_prefix = "https://r.jina.ai/http://"
+    article_url_re = re.compile(r"https?://www\.jiqizhixin\.com/articles/(\d{4}-\d{2}-\d{2})(?:-\d+)?")
+
+    @classmethod
+    def get_parameter_schema(cls) -> List[Dict[str, Any]]:
+        return [
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
+            {"field": "article_lookback_days", "label": "文章回看天数", "type": "number", "default": cls.default_lookback_days},
+            {"field": "sitemap_scan_limit", "label": "站点地图扫描上限", "type": "number", "default": cls.default_sitemap_scan_limit},
+            {"field": "detail_max_chars", "label": "正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
+        ]
+
+    def _positive_int_param(self, raw_value: Any, default: int) -> int:
+        if raw_value in (None, ""):
+            return default
+        try:
+            return max(int(raw_value), 0)
+        except (TypeError, ValueError):
+            self.logger.warning(f"数值参数无效，使用默认值: {raw_value}")
+            return default
+
+    def _reader_url(self, source_url: str) -> str:
+        return f"{self.reader_prefix}{source_url}"
+
+    def _read_sitemap_text(self, response: httpx.Response) -> str:
+        body = response.content
+        try:
+            if body[:2] == b"\x1f\x8b":
+                body = gzip.decompress(body)
+        except (OSError, EOFError):
+            self.logger.warning("机器之心 sitemap gzip 解压失败，尝试按文本解析")
+        return body.decode("utf-8", errors="ignore")
+
+    def _normalize_article_url(self, raw_url: str) -> str:
+        raw_url = html.unescape(raw_url.strip())
+        match = self.article_url_re.search(raw_url)
+        if not match:
+            return ""
+        return match.group(0).replace("http://", "https://", 1)
+
+    def _article_date(self, source_url: str) -> datetime | None:
+        match = re.search(r"/articles/(\d{4}-\d{2}-\d{2})(?:-\d+)?$", source_url)
+        if not match:
+            return None
+        try:
+            return datetime.strptime(match.group(1), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
+    def _parse_sitemap_candidates(self, sitemap_text: str, lookback_days: int, scan_limit: int) -> List[str]:
+        today = datetime.now(timezone.utc).date()
+        earliest = today - timedelta(days=lookback_days)
+        candidates: Dict[str, str] = {}
+        for block in re.findall(r"<url>(.*?)</url>", sitemap_text, flags=re.DOTALL | re.IGNORECASE):
+            loc_match = re.search(r"<loc>(.*?)</loc>", block, flags=re.DOTALL | re.IGNORECASE)
+            if not loc_match:
+                continue
+            url = self._normalize_article_url(loc_match.group(1))
+            if not url:
+                continue
+            article_date = self._article_date(url)
+            if not article_date or article_date.date() < earliest:
+                continue
+            lastmod_match = re.search(r"<lastmod>(.*?)</lastmod>", block, flags=re.DOTALL | re.IGNORECASE)
+            candidates[url] = lastmod_match.group(1).strip() if lastmod_match else article_date.isoformat()
+
+        ordered = sorted(
+            candidates,
+            key=lambda url: (self._article_date(url) or datetime.min.replace(tzinfo=timezone.utc), candidates[url]),
+            reverse=True,
+        )
+        return ordered[:scan_limit] if scan_limit else ordered
+
+    def _parse_reader_markdown(self, text: str, fallback_url: str) -> Dict[str, str]:
+        title = ""
+        source_url = fallback_url
+        title_match = re.search(r"^Title:\s*(.+?)\s*$", text, flags=re.MULTILINE)
+        if title_match:
+            title = title_match.group(1).strip()
+        url_match = re.search(r"^URL Source:\s*(.+?)\s*$", text, flags=re.MULTILINE)
+        if url_match:
+            source_url = self._normalize_article_url(url_match.group(1)) or fallback_url
+        content = text.split("Markdown Content:", 1)[1] if "Markdown Content:" in text else text
+        content = content.strip()
+        return {"title": title, "source_url": source_url, "content": content}
+
+    def _is_valid_article(self, title: str, content: str) -> bool:
+        if not title or title.startswith("文章库"):
+            return False
+        if "机器之心·数据服务" in title or "还在费劲爬数据" in content:
+            return False
+        return len(content) >= self.min_content_chars
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._positive_int_param(kwargs.get("limit"), self.default_limit)
+        lookback_days = self._positive_int_param(kwargs.get("article_lookback_days"), self.default_lookback_days)
+        scan_limit = self._positive_int_param(kwargs.get("sitemap_scan_limit"), self.default_sitemap_scan_limit)
+        max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
+        if limit <= 0:
+            return
+
+        sitemap_response = await self._safe_get(client, self.sitemap_url)
+        if not sitemap_response:
+            raise RuntimeError(f"机器之心 sitemap 请求失败: {self.sitemap_url}")
+
+        candidates = self._parse_sitemap_candidates(
+            self._read_sitemap_text(sitemap_response),
+            lookback_days=lookback_days,
+            scan_limit=scan_limit,
+        )
+
+        yielded = 0
+        seen_titles: set[str] = set()
+        for source_url in candidates:
+            reader_url = self._reader_url(source_url)
+            response = await self._safe_get(client, reader_url)
+            if not response:
+                continue
+
+            parsed = self._parse_reader_markdown(response.text, source_url)
+            title = parsed["title"]
+            content = parsed["content"][:max_chars] if max_chars else parsed["content"]
+            article_url = parsed["source_url"]
+            if not self._is_valid_article(title, content) or title in seen_titles:
+                continue
+
+            seen_titles.add(title)
+            publish_date = self._article_date(article_url) or datetime.now(timezone.utc)
+            item_id = hashlib.sha1(article_url.encode("utf-8")).hexdigest()[:16]
+            yield WebPageArticleContent(
+                id=f"{self.source_id}_{item_id}",
+                title=title,
+                source_url=article_url,
+                publish_date=publish_date.isoformat(),
+                content=content,
+                has_content=bool(content),
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=content[:500],
+                tags=list(self.content_tags),
+                raw_data={
+                    "listing_url": self.sitemap_url,
+                    "url": article_url,
+                    "reader_url": reader_url,
+                    "reader_service": "r.jina.ai",
+                    "listing_source": "sitemap_reader_proxy",
+                    "detail_text_length": len(content),
+                    "sitemap_candidate_count": len(candidates),
+                },
+            )
+            yielded += 1
+            if yielded >= limit:
+                break

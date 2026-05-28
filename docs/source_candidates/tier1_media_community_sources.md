@@ -6,17 +6,17 @@ These records are documentation-only. They do not imply implementation or defaul
 
 ## Source: 机器之心 Website
 
-- status: `under_review`
+- status: `implemented_core`
 - source_owner: `jiqizhixin`
 - source_brand: `机器之心`
 - source_scope: `ai_media`
-- source_channel: `website`
+- source_channel: `website_reader_proxy`
 - source_url: `https://www.jiqizhixin.com/`
 - provenance_tier: `tier1_curated`
 - content_tags: `market_news`, `research_paper`, `model_release`, `product_update`, `tutorial_or_practice`
 - signal_strength: `medium_signal`
 - noise_risk: `medium_noise`
-- fetch_reliability: `stable_public`
+- fetch_reliability: `reader_proxy_sitemap`
 
 ### Target Coverage
 
@@ -36,7 +36,7 @@ Overlaps with official vendor sources, arXiv/paper sources, and other Chinese AI
 
 ### Validation Notes
 
-Validate website listing stability first. Keep WeChat as a later supplement if website coverage is incomplete.
+2026-05-28 recovery pass implemented this as `web_jiqizhixin`. Direct article/RSS HTTP still routes to a data-service page or server error outside a browser, but the public sitemap exposes original article URLs and `r.jina.ai` can render those pages as markdown. The fetcher therefore enumerates recent `jiqizhixin.com/articles/...` URLs from `https://www.jiqizhixin.com/shared/sitemap.xml.gz`, skips article-library fallbacks, and stores the original article URL plus reader-proxy metadata.
 
 ## Source: 量子位 Website
 
@@ -104,16 +104,16 @@ Overlaps with all major tier0 vendor sources and Chinese AI media.
 
 ### Validation Notes
 
-Search results show stable `aiera.com.cn` article URLs and an about page. Validate listing/feed availability before implementation.
+Implemented as `web_aiera` on 2026-05-28. The RSS feed currently returns a WordPress 500 error, so the implementation uses the public homepage with strict year-prefixed article URL matching and detail extraction.
 
 ## Source: IT之家 AI-Related Content
 
-- status: `under_review`
+- status: `implemented_core`
 - source_owner: `ithome`
 - source_brand: `IT之家`
 - source_scope: `tech_media`
-- source_channel: `website_or_feed`
-- source_url: `https://www.ithome.com/`
+- source_channel: `filtered_rss`
+- source_url: `https://www.ithome.com/rss/`
 - provenance_tier: `tier1_curated`
 - content_tags: `market_news`, `product_update`, `model_release`
 - signal_strength: `medium_signal`
@@ -130,7 +130,7 @@ IT之家 is fast and broad. It may be useful as a Chinese-language AI product/ne
 
 ### Risks / Open Questions
 
-The homepage is very broad and not AI-specific. Need an AI tag/category/search/RSS route before admission; otherwise noise is too high.
+The broad RSS is filtered by AI/model/vendor keywords before admission; noise remains higher than official sources.
 
 ### Known Overlap
 
@@ -138,7 +138,7 @@ Overlaps with tier0 official sources, Chinese AI media, and general tech news.
 
 ### Validation Notes
 
-Do not implement homepage scraping directly. First identify a stable AI tag/category/RSS route.
+Implemented as `rss_ithome_ai` on 2026-05-28 using `https://www.ithome.com/rss/` plus keyword filtering. Homepage scraping is still avoided.
 
 ## Source: Hacker News AI Search Feed
 
