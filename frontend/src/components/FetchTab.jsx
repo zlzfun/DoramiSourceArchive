@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Activity,
   CheckSquare,
   ChevronDown,
   ChevronRight,
-  EyeOff,
+  ExternalLink,
+  FileText,
   FolderPlus,
   LayoutGrid,
   Layers,
@@ -27,101 +29,46 @@ import {
   triggerFetch,
   updateNodeGroup,
 } from '../api';
+import LogoMark from './LogoMark';
+import {
+  SECTIONS,
+  groupBySection,
+  labelFrom,
+  resolveCompany,
+  tierMeta,
+  SOURCE_CHANNEL_LABELS,
+  SOURCE_SCOPE_LABELS,
+  SIGNAL_LABELS,
+  NOISE_LABELS,
+  RELIABILITY_LABELS,
+} from '../sourceTaxonomy';
 
-const CATEGORY_LABELS = {
-  official: '官方动态',
-  official_web: '官网网页',
-  official_doc: '官方文档',
-  primary: '一手信号',
-  framework: '框架生态',
-  paper: '论文源',
-  model_repository: '模型仓库',
-  developer_platform: '开发平台',
-  community: '社区资讯',
-  product_update: '版本发布',
-  wechat: '微信公众号',
-  workflow: '后置编排',
-  advanced: '高级通用',
-  general: '其他',
-};
-
-const CATEGORY_ORDER = ['official', 'official_web', 'official_doc', 'primary', 'framework', 'paper', 'model_repository', 'product_update', 'developer_platform', 'community', 'wechat', 'workflow', 'advanced', 'general'];
-const TIER_LABELS = {
-  tier0_primary: 'Tier0 官方直接',
-  tier1_curated: 'Tier1 聚合筛选',
-  tier2_commentary: 'Tier2 个人评论',
-};
-const SOURCE_SCOPE_LABELS = {
-  company: '公司',
-  model_family: '模型族',
-  open_model_family: '开放模型族',
-  product_family: '产品族',
-  api_platform: 'API 平台',
-  developer_tool: '开发工具',
-  research_lab: '研究团队',
-  ai_media: 'AI 媒体',
-  tech_media: '科技媒体',
-  developer_community: '开发者社区',
-  research_community: '研究社区',
-};
-const SOURCE_CHANNEL_LABELS = {
-  newsroom: '新闻页',
-  newsroom_rss: '新闻 RSS',
-  blog: '博客',
-  blog_api: '博客 API',
-  blog_category: '博客分类',
-  changelog: 'Changelog',
-  docs_changelog: '文档变更',
-  docs_release_notes: 'Release Notes',
-  docs_reference: '参考文档',
-  docs_index: '文档索引',
-  support_release_notes: '帮助中心',
-  github_release: 'GitHub Release',
-  github_repository_activity: 'GitHub 仓库',
-  model_repository: '模型仓库',
-  model_catalog: '模型目录',
-  research_index: '研究目录',
-  paper_ranking: '论文榜单',
-  search_rss: '搜索 RSS',
-  website: '网站',
-  website_or_feed: '网站/Feed',
-  docs_console: '开放平台',
-};
-const SIGNAL_LABELS = {
-  high_signal: '高信号',
-  medium_signal: '中信号',
-  low_signal: '低信号',
-};
-const NOISE_LABELS = {
-  low_noise: '低噪声',
-  medium_noise: '中噪声',
-  high_noise: '高噪声',
-};
-const RELIABILITY_LABELS = {
-  stable_public: '稳定公开',
-  fragile_js_api: 'JS/API 易变',
-  blocked_or_fragile: '易阻断',
-};
 const FAVORITE_FETCHERS_STORAGE_KEY = 'dorami.favorite_fetchers';
 const TEST_RUN_LIMIT = 1;
+
 const CATALOG_SCOPE_OPTIONS = [
   { value: 'focused', label: '聚焦', icon: Target },
   { value: 'favorites', label: '收藏', icon: Star },
-  { value: 'hidden', label: '隐藏', icon: EyeOff },
+  { value: 'hidden', label: '通用能力', icon: Settings2 },
   { value: 'all', label: '全部', icon: LayoutGrid },
 ];
 
-function getCategoryLabel(category) {
-  return CATEGORY_LABELS[category] || category || '其他';
-}
+const TIER_FILTER_OPTIONS = [
+  { value: 'all', label: '全部层级' },
+  { value: 'tier0_primary', label: '官方一手' },
+  { value: 'tier1_curated', label: '聚合筛选' },
+  { value: 'tier2_commentary', label: '评论观点' },
+];
 
-function getCategoryRank(category) {
-  const index = CATEGORY_ORDER.indexOf(category || 'general');
-  return index === -1 ? CATEGORY_ORDER.length : index;
-}
+const TIER_TONE_CLASS = {
+  emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+  sky: 'bg-sky-50 text-sky-700 border-sky-100',
+  violet: 'bg-violet-50 text-violet-700 border-violet-100',
+  slate: 'bg-slate-50 text-slate-500 border-slate-200',
+};
 
-function labelFrom(map, value) {
-  return map[value] || value || '';
+function tierPillClass(tier) {
+  return TIER_TONE_CLASS[tierMeta(tier).tone] || TIER_TONE_CLASS.slate;
 }
 
 function formatDateTime(value) {
@@ -134,7 +81,6 @@ function formatRelativeTime(value) {
   const ts = Date.parse(value);
   if (Number.isNaN(ts)) return formatDateTime(value);
   const diffSec = Math.floor((Date.now() - ts) / 1000);
-  if (diffSec < 0) return '刚刚';
   if (diffSec < 60) return '刚刚';
   if (diffSec < 3600) return `${Math.floor(diffSec / 60)} 分钟前`;
   if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} 小时前`;
@@ -146,12 +92,34 @@ function formatRelativeTime(value) {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
+const HEALTH_DOT = {
+  healthy: 'bg-emerald-500',
+  failing: 'bg-red-500',
+  running: 'bg-amber-400',
+  never_run: 'bg-slate-300',
+};
+
 function healthMeta(status) {
   if (status === 'healthy') return { label: '健康', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' };
   if (status === 'failing') return { label: '失败', className: 'bg-red-50 text-red-700 border-red-100' };
   if (status === 'running') return { label: '运行中', className: 'bg-amber-50 text-amber-700 border-amber-100' };
   if (status === 'never_run') return { label: '未运行', className: 'bg-slate-50 text-slate-500 border-slate-200' };
   return { label: '未知', className: 'bg-slate-50 text-slate-500 border-slate-200' };
+}
+
+const HEALTH_RANK = { failing: 0, running: 1, never_run: 2, healthy: 3 };
+
+function aggregateHealth(fetchers, healthByFetcher) {
+  const summary = { total: fetchers.length, healthy: 0, failing: 0, running: 0, never_run: 0, articles: 0, latest: null, worst: 'healthy' };
+  fetchers.forEach(fetcher => {
+    const h = healthByFetcher[fetcher.id] || {};
+    const status = h.health_status || 'never_run';
+    if (summary[status] !== undefined) summary[status] += 1;
+    summary.articles += h.total_articles || 0;
+    if (h.latest_run_at && (!summary.latest || h.latest_run_at > summary.latest)) summary.latest = h.latest_run_at;
+    if ((HEALTH_RANK[status] ?? 3) < (HEALTH_RANK[summary.worst] ?? 3)) summary.worst = status;
+  });
+  return summary;
 }
 
 function blankGroup(fetcherIds = [], configs = {}) {
@@ -180,7 +148,8 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
   const [fetchConfigs, setFetchConfigs] = useState({});
   const [runningFetcherIds, setRunningFetcherIds] = useState(() => new Set());
   const [fetchProgress, setFetchProgress] = useState({});
-  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [sectionFilter, setSectionFilter] = useState('all');
+  const [tierFilter, setTierFilter] = useState('all');
   const [catalogScope, setCatalogScope] = useState('focused');
   const [favoriteFetcherIds, setFavoriteFetcherIds] = useState(() => {
     try {
@@ -191,6 +160,8 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
     }
   });
   const [searchQuery, setSearchQuery] = useState('');
+  const [expandedCompanies, setExpandedCompanies] = useState(() => new Set());
+  const [collapsedCatalogSections, setCollapsedCatalogSections] = useState(() => new Set());
   const [expandedGroupId, setExpandedGroupId] = useState(null);
   const [expandedParamFetcherId, setExpandedParamFetcherId] = useState(null);
   const [groupModalOpen, setGroupModalOpen] = useState(false);
@@ -284,50 +255,116 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
     return availableFetchers.filter(fetcher => fetcher.default_visible !== false);
   }, [availableFetchers, catalogScope, favoriteFetcherIds]);
 
-  const categoryOptions = useMemo(() => {
-    const counts = scopedFetchers.reduce((acc, fetcher) => {
-      const category = fetcher.category || 'general';
-      acc[category] = (acc[category] || 0) + 1;
-      return acc;
-    }, {});
-
-    return Object.entries(counts)
-      .sort(([a], [b]) => getCategoryRank(a) - getCategoryRank(b) || getCategoryLabel(a).localeCompare(getCategoryLabel(b), 'zh-Hans-CN'))
-      .map(([category, count]) => ({ category, count }));
-  }, [scopedFetchers]);
-
-  const filteredFetchers = useMemo(() => {
+  const matchesSearch = useCallback((fetcher) => {
     const query = searchQuery.trim().toLowerCase();
-    return [...scopedFetchers]
-      .filter(fetcher => categoryFilter === 'all' || (fetcher.category || 'general') === categoryFilter)
-      .filter(fetcher => {
-        if (!query) return true;
-        return [
-          fetcher.name,
-          fetcher.id,
-          fetcher.desc,
-          fetcher.content_type,
-          fetcher.curation_reason,
-          fetcher.base_url,
-          fetcher.source_owner,
-          fetcher.source_brand,
-          fetcher.source_scope,
-          fetcher.source_channel,
-          fetcher.provenance_tier,
-          ...(fetcher.content_tags || []),
-          getCategoryLabel(fetcher.category),
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase()
-          .includes(query);
-      })
-      .sort((a, b) => {
-        const categoryDelta = getCategoryRank(a.category) - getCategoryRank(b.category);
-        if (categoryDelta !== 0) return categoryDelta;
-        return a.name.localeCompare(b.name, 'zh-Hans-CN');
-      });
-  }, [scopedFetchers, categoryFilter, searchQuery]);
+    if (!query) return true;
+    const company = resolveCompany(fetcher);
+    return [
+      fetcher.name, fetcher.id, fetcher.desc, fetcher.content_type,
+      fetcher.base_url, fetcher.source_owner, fetcher.source_brand, fetcher.source_scope,
+      fetcher.source_channel, fetcher.provenance_tier, company.name, company.en,
+      ...(fetcher.content_tags || []),
+    ].filter(Boolean).join(' ').toLowerCase().includes(query);
+  }, [searchQuery]);
+
+  const searchedFetchers = useMemo(() => scopedFetchers.filter(matchesSearch), [scopedFetchers, matchesSearch]);
+
+  const sectionOf = useCallback((fetcher) => {
+    const key = resolveCompany(fetcher).key;
+    const section = SECTIONS.find(s => s.companies.includes(key));
+    return section ? section.id : 'other';
+  }, []);
+
+  const sectionOptions = useMemo(() => {
+    const pool = searchedFetchers.filter(f => tierFilter === 'all' || f.provenance_tier === tierFilter);
+    const counts = {};
+    pool.forEach(f => { const id = sectionOf(f); counts[id] = (counts[id] || 0) + 1; });
+    const ordered = SECTIONS.filter(s => counts[s.id]).map(s => ({ id: s.id, label: s.label, count: counts[s.id] }));
+    if (counts.other) ordered.push({ id: 'other', label: '其他来源', count: counts.other });
+    return ordered;
+  }, [searchedFetchers, tierFilter, sectionOf]);
+
+  const tierCounts = useMemo(() => {
+    const pool = searchedFetchers.filter(f => sectionFilter === 'all' || sectionOf(f) === sectionFilter);
+    const counts = { all: pool.length };
+    pool.forEach(f => { const t = f.provenance_tier || 'none'; counts[t] = (counts[t] || 0) + 1; });
+    return counts;
+  }, [searchedFetchers, sectionFilter, sectionOf]);
+
+  const visibleTierFilterOptions = useMemo(() => TIER_FILTER_OPTIONS.filter(option => (
+    option.value === 'all' || (tierCounts[option.value] || 0) > 0
+  )), [tierCounts]);
+
+  useEffect(() => {
+    if (tierFilter !== 'all' && (tierCounts[tierFilter] || 0) === 0) {
+      setTierFilter('all');
+    }
+  }, [tierCounts, tierFilter]);
+
+  const visibleFetchers = useMemo(() => searchedFetchers
+    .filter(f => sectionFilter === 'all' || sectionOf(f) === sectionFilter)
+    .filter(f => tierFilter === 'all' || f.provenance_tier === tierFilter),
+  [searchedFetchers, sectionFilter, tierFilter, sectionOf]);
+
+  const groupedSections = useMemo(() => groupBySection(visibleFetchers), [visibleFetchers]);
+
+  // 搜索 / 筛选时强制展开，便于聚焦命中结果；否则默认展开，用户可逐个收起。
+  const autoExpand = searchQuery.trim().length > 0 || sectionFilter !== 'all' || tierFilter !== 'all';
+
+  const isCatalogSectionOpen = useCallback((sectionId) => {
+    if (autoExpand) return true;
+    return !collapsedCatalogSections.has(sectionId);
+  }, [autoExpand, collapsedCatalogSections]);
+
+  const toggleCatalogSection = useCallback((sectionId, currentlyOpen) => {
+    setCollapsedCatalogSections(prev => {
+      const next = new Set(prev);
+      if (currentlyOpen) next.add(sectionId);
+      else next.delete(sectionId);
+      return next;
+    });
+  }, []);
+
+  const setAllCatalogSections = useCallback((open) => {
+    if (open) {
+      setCollapsedCatalogSections(new Set());
+      return;
+    }
+    setCollapsedCatalogSections(new Set(groupedSections.map(section => section.id)));
+  }, [groupedSections]);
+
+  const handleCatalogSectionKeyDown = useCallback((event, sectionId, currentlyOpen) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    toggleCatalogSection(sectionId, currentlyOpen);
+  }, [toggleCatalogSection]);
+
+  const isCompanyOpen = useCallback((companyKey, fetchers) => {
+    if (autoExpand) return true;
+    if (fetchers.some(f => selectedFetchers.includes(f.id) || runningFetcherIds.has(f.id))) return true;
+    return expandedCompanies.has(companyKey);
+  }, [expandedCompanies, autoExpand, selectedFetchers, runningFetcherIds]);
+
+  const toggleCompany = (companyKey, currentlyOpen) => {
+    setExpandedCompanies(prev => {
+      const next = new Set(prev);
+      if (currentlyOpen) next.delete(companyKey);
+      else next.add(companyKey);
+      return next;
+    });
+  };
+
+  const setAllCompanies = (open) => {
+    if (!open) {
+      setExpandedCompanies(new Set());
+      return;
+    }
+    setExpandedCompanies(() => {
+      const next = new Set();
+      groupedSections.forEach(section => section.companies.forEach(({ company }) => next.add(company.key)));
+      return next;
+    });
+  };
 
   const modalFetchers = useMemo(() => {
     const query = modalSearch.trim().toLowerCase();
@@ -336,12 +373,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
       ? availableFetchers
       : availableFetchers.filter(fetcher => fetcher.default_visible !== false || favorites.has(fetcher.id));
     return baseFetchers.filter(fetcher => [
-      fetcher.name,
-      fetcher.id,
-      fetcher.desc,
-      fetcher.base_url,
-      fetcher.source_owner,
-      fetcher.source_brand,
+      fetcher.name, fetcher.id, fetcher.desc, fetcher.base_url, fetcher.source_owner, fetcher.source_brand,
       ...(fetcher.content_tags || []),
     ].filter(Boolean).join(' ').toLowerCase().includes(query));
   }, [availableFetchers, favoriteFetcherIds, modalSearch]);
@@ -350,6 +382,14 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
 
   const toggleFetcherSelection = (id) => {
     setSelectedFetchers(prev => prev.includes(id) ? prev.filter(fid => fid !== id) : [...prev, id]);
+  };
+
+  const toggleCompanySelection = (fetchers) => {
+    const ids = fetchers.map(f => f.id);
+    const allSelected = ids.every(id => selectedFetchers.includes(id));
+    setSelectedFetchers(prev => allSelected
+      ? prev.filter(id => !ids.includes(id))
+      : Array.from(new Set([...prev, ...ids])));
   };
 
   const toggleFavorite = (id) => {
@@ -361,10 +401,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
       ...prev,
       per_fetcher_params: {
         ...(prev.per_fetcher_params || {}),
-        [fetcherId]: {
-          ...((prev.per_fetcher_params || {})[fetcherId] || {}),
-          [field]: value,
-        },
+        [fetcherId]: { ...((prev.per_fetcher_params || {})[fetcherId] || {}), [field]: value },
       },
     }));
   };
@@ -372,10 +409,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
   const updateFetcherConfig = (fetcherId, field, value) => {
     setFetchConfigs(prev => ({
       ...prev,
-      [fetcherId]: {
-        ...(prev[fetcherId] || {}),
-        [field]: value,
-      },
+      [fetcherId]: { ...(prev[fetcherId] || {}), [field]: value },
     }));
   };
 
@@ -395,14 +429,9 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
         </label>
       );
     }
-
     if (Array.isArray(param.options) && param.options.length > 0) {
       return (
-        <select
-          value={value}
-          onChange={event => updateFetcherConfig(fetcherId, param.field, event.target.value)}
-          className="node-param-input"
-        >
+        <select value={value} onChange={event => updateFetcherConfig(fetcherId, param.field, event.target.value)} className="node-param-input">
           {param.options.map(option => {
             const optionValue = typeof option === 'object' ? option.value : option;
             const optionLabel = typeof option === 'object' ? option.label : option;
@@ -411,7 +440,6 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
         </select>
       );
     }
-
     return (
       <input
         type={param.type || 'text'}
@@ -525,6 +553,30 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
     }
   };
 
+  const runSingleFetcher = (fetcher) => {
+    if (runningFetcherIds.has(fetcher.id)) return;
+    setRunningFetcherIds(prev => new Set(prev).add(fetcher.id));
+    showToast(`开始抓取「${fetcher.name}」…`, 'info');
+    onRunsChanged?.();
+    triggerFetch(fetcher.id, fetchConfigs[fetcher.id] || {})
+      .then((result) => {
+        const saved = result?.saved_count ?? 0;
+        const failed = result?.failed_count ?? 0;
+        showToast(`「${fetcher.name}」抓取完成：新增 ${saved} 条${failed ? `，失败 ${failed}` : ''}`, failed > 0 ? 'info' : 'success');
+        loadSourceHealth();
+        onArticlesChanged?.();
+        onRunsChanged?.();
+      })
+      .catch(e => showToast(`「${fetcher.name}」抓取失败：${e.message || '未知错误'}`, 'error'))
+      .finally(() => {
+        setRunningFetcherIds(prev => {
+          const next = new Set(prev);
+          next.delete(fetcher.id);
+          return next;
+        });
+      });
+  };
+
   const renderParamInput = (fetcherId, param) => {
     const params = (groupDraft.per_fetcher_params || {})[fetcherId] || {};
     const value = params[param.field] ?? param.default ?? '';
@@ -549,12 +601,180 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
     );
   };
 
+  const renderSourceRow = (fetcher) => {
+    const isSelected = selectedFetchers.includes(fetcher.id);
+    const health = healthByFetcher[fetcher.id];
+    const paramCount = (fetcher.parameters || []).length;
+    const paramsExpanded = expandedParamFetcherId === fetcher.id;
+    const isFavorite = favoriteFetcherIds.includes(fetcher.id);
+    const isRunning = runningFetcherIds.has(fetcher.id);
+    const tier = tierMeta(fetcher.provenance_tier);
+    const progress = fetchProgress[fetcher.id];
+    const status = health?.health_status || 'never_run';
+    const statusLabel = healthMeta(status).label;
+    const company = resolveCompany(fetcher);
+    const ownerLabel = fetcher.source_brand || fetcher.source_owner || company.name;
+    const scopeLabel = labelFrom(SOURCE_SCOPE_LABELS, fetcher.source_scope);
+    const channelLabel = labelFrom(SOURCE_CHANNEL_LABELS, fetcher.source_channel);
+    const signalLabel = labelFrom(SIGNAL_LABELS, fetcher.signal_strength);
+    const noiseLabel = labelFrom(NOISE_LABELS, fetcher.noise_risk);
+    const reliabilityLabel = labelFrom(RELIABILITY_LABELS, fetcher.fetch_reliability);
+    const contentTags = (fetcher.content_tags || []).slice(0, 5);
+
+    return (
+      <div key={fetcher.id} className={`source-row ${isSelected ? 'source-row-selected' : ''}`}>
+        <div className="source-row-head">
+          <button
+            type="button"
+            onClick={() => toggleFetcherSelection(fetcher.id)}
+            className={`source-check ${isSelected ? 'source-check-on' : ''}`}
+            aria-label={isSelected ? `取消选择 ${fetcher.name}` : `选择 ${fetcher.name}`}
+          >
+            {isSelected && <CheckSquare className="h-3.5 w-3.5 text-white" />}
+          </button>
+
+          <div className="source-row-id" onClick={() => toggleFetcherSelection(fetcher.id)}>
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="source-name truncate" title={fetcher.name}>{fetcher.name}</span>
+              {fetcher.provenance_tier && <span className={`tier-pill tier-pill-wide ${tierPillClass(fetcher.provenance_tier)}`}>{tier.short} {tier.label}</span>}
+            </div>
+            <div className="source-sub">
+              <span className="font-mono truncate" title={fetcher.id}>{fetcher.id}</span>
+              {ownerLabel && <span className="source-sub-dot">{ownerLabel}</span>}
+              {fetcher.source_scope && <span className="source-sub-dot">{scopeLabel}</span>}
+              {fetcher.source_channel && <span className="source-sub-dot">{channelLabel}</span>}
+            </div>
+          </div>
+
+          <div className="source-stats">
+            <span className={`source-health-pill source-health-${status}`} title={`运行状态：${statusLabel}`}>{statusLabel}</span>
+            <button
+              type="button"
+              onClick={() => onViewRuns?.(fetcher.id)}
+              className="source-stat"
+              title={`查看运行记录 · ${formatDateTime(health?.latest_run_at)}`}
+            >
+              <Activity className="h-3.5 w-3.5 text-slate-400" />
+              <span>{formatRelativeTime(health?.latest_run_at)}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onViewArticles?.(fetcher.id)}
+              className="source-stat"
+              title={`查看 ${fetcher.name} 抓取的文章`}
+            >
+              <FileText className="h-3.5 w-3.5 text-emerald-500" />
+              <span className="font-bold text-emerald-700">{health?.total_articles ?? 0}</span>
+            </button>
+            {(health?.consecutive_failures ?? 0) > 0 && (
+              <button
+                type="button"
+                onClick={() => onViewRuns?.(fetcher.id, { status: 'failed' })}
+                className="source-stat source-stat-danger"
+                title="查看失败运行记录"
+              >
+                ✕{health.consecutive_failures}
+              </button>
+            )}
+          </div>
+
+          <div className="source-actions">
+            <button
+              type="button"
+              onClick={() => toggleFavorite(fetcher.id)}
+              className={`source-icon-btn ${isFavorite ? 'is-fav' : ''}`}
+              title={isFavorite ? '取消收藏' : '收藏节点'}
+            >
+              <Star className={`h-4 w-4 ${isFavorite ? 'fill-current' : ''}`} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setExpandedParamFetcherId(paramsExpanded ? null : fetcher.id)}
+              className={`source-config-btn ${paramsExpanded ? 'is-active' : ''}`}
+              title={`参数配置（${paramCount} 项）`}
+            >
+              <Settings2 className="h-4 w-4" />
+              <span>配置</span>
+              <span className="source-config-count">{paramCount}</span>
+            </button>
+            <button
+              type="button"
+              disabled={isRunning}
+              onClick={() => runSingleFetcher(fetcher)}
+              className={`source-run ${isRunning ? 'is-running' : ''}`}
+            >
+              {isRunning ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              <span>{isRunning ? (progress ? (progress.total ? `${progress.current}/${progress.total}` : `${progress.current}`) : '抓取中') : '抓取'}</span>
+            </button>
+          </div>
+        </div>
+
+        {fetcher.desc && (
+          <p className="source-desc">{fetcher.desc}</p>
+        )}
+
+        {paramsExpanded && (
+          <div className="node-param-panel source-review-panel animate-in fade-in slide-in-from-top-1">
+            <div className="node-param-title">
+              <span>源审查字段</span>
+              <span className="font-mono text-slate-400">配置 {paramCount} 项</span>
+            </div>
+            <div className="source-review-grid">
+              <div><span className="tiny-meta">主体 / 承载</span><div className="source-meta-val">{ownerLabel}</div></div>
+              {fetcher.source_scope && <div><span className="tiny-meta">范围</span><div className="source-meta-val">{scopeLabel}</div></div>}
+              {fetcher.source_channel && <div><span className="tiny-meta">渠道</span><div className="source-meta-val">{channelLabel}</div></div>}
+              {fetcher.signal_strength && <div><span className="tiny-meta">信号</span><div className="source-meta-val">{signalLabel}</div></div>}
+              {fetcher.noise_risk && <div><span className="tiny-meta">噪声</span><div className="source-meta-val">{noiseLabel}</div></div>}
+              {fetcher.fetch_reliability && <div><span className="tiny-meta">稳定性</span><div className="source-meta-val">{reliabilityLabel}</div></div>}
+            </div>
+            {contentTags.length > 0 && (
+              <div className="source-tag-row">
+                <span className="tiny-meta">标签</span>
+                <div className="source-tags">
+                  {contentTags.map(tag => <span key={tag}>{tag}</span>)}
+                </div>
+              </div>
+            )}
+            {fetcher.base_url && (
+              <div className="source-url-row">
+                <span className="tiny-meta">来源入口</span>
+                <a className="source-url truncate" href={fetcher.base_url} target="_blank" rel="noreferrer" title={fetcher.base_url}>{fetcher.base_url}</a>
+                <a className="source-url-open" href={fetcher.base_url} target="_blank" rel="noreferrer" title="打开来源入口">
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  打开
+                </a>
+              </div>
+            )}
+            {paramCount === 0 ? (
+              <div className="source-param-empty">该节点无需额外抓取参数</div>
+            ) : (
+              <div className="source-param-block">
+                <div className="source-param-block-head">
+                  <span>抓取参数</span>
+                  <span>{paramCount} 项</span>
+                </div>
+                <div className="node-param-grid">
+                  {fetcher.parameters.map(param => (
+                    <div key={param.field} className="node-param-field">
+                      <label className="node-param-label" title={param.field}>{param.label || param.field}</label>
+                      {renderCatalogParamInput(fetcher.id, param)}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className={`space-y-6 animate-in fade-in ${selectedFetchers.length > 0 && view === 'catalog' ? 'pb-24' : ''}`}>
       <div className="page-header flex-col xl:flex-row">
         <div className="page-heading">
           <h2 className="page-title">节点管理</h2>
-          <p className="page-subtitle mt-3 max-w-4xl">管理抓取节点目录与可复用采集范围，统一配置与监控，保障数据抓取稳定高效。</p>
+          <p className="page-subtitle mt-3 max-w-4xl">按主体聚合内置抓取节点，一站式查看各来源的官方源、运行健康与最新产出，并维护可复用的采集范围。</p>
         </div>
         <div className="page-actions">
           <div className="segmented-control">
@@ -573,276 +793,167 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
                   <Layers className="h-5 w-5" />
                 </div>
                 <span>内置节点目录</span>
-                <span className="text-xs font-mono text-slate-400">{filteredFetchers.length}/{scopeCounts[catalogScope]}</span>
+                <span className="text-xs font-mono text-slate-400">{visibleFetchers.length}/{scopeCounts[catalogScope]}</span>
               </div>
-              <div className="catalog-scope-tabs" role="tablist" aria-label="节点视图范围">
-                {CATALOG_SCOPE_OPTIONS.map(option => {
-                  const Icon = option.icon;
-                  const active = catalogScope === option.value;
-                  return (
-                    <button
-                      key={option.value}
-                      role="tab"
-                      aria-selected={active}
-                      onClick={() => {
-                        setCatalogScope(option.value);
-                        setCategoryFilter('all');
-                      }}
-                      className={`catalog-scope-tab ${active ? 'catalog-scope-tab-active' : ''}`}
-                    >
-                      {Icon && <Icon />}
-                      <span>{option.label}</span>
-                      <span className="catalog-scope-tab-count">{scopeCounts[option.value] || 0}</span>
-                    </button>
-                  );
-                })}
+              <div className="flex items-center gap-2">
+                {!autoExpand && (
+                  <div className="catalog-expand-tools">
+                    <div className="dept-expand-toggle">
+                      <span>板块</span>
+                      <button type="button" onClick={() => setAllCatalogSections(true)}>展开</button>
+                      <span>·</span>
+                      <button type="button" onClick={() => setAllCatalogSections(false)}>收起</button>
+                    </div>
+                    <div className="dept-expand-toggle">
+                      <span>主体</span>
+                      <button type="button" onClick={() => setAllCompanies(true)}>展开</button>
+                      <span>·</span>
+                      <button type="button" onClick={() => setAllCompanies(false)}>收起</button>
+                    </div>
+                  </div>
+                )}
+                <div className="catalog-scope-tabs" role="tablist" aria-label="节点视图范围">
+                  {CATALOG_SCOPE_OPTIONS.map(option => {
+                    const Icon = option.icon;
+                    const active = catalogScope === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => { setCatalogScope(option.value); setSectionFilter('all'); setTierFilter('all'); }}
+                        className={`catalog-scope-tab ${active ? 'catalog-scope-tab-active' : ''}`}
+                      >
+                        {Icon && <Icon />}
+                        <span>{option.label}</span>
+                        <span className="catalog-scope-tab-count">{scopeCounts[option.value] || 0}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
             <div className="catalog-filter-row catalog-filter-row-with-search">
-              <span className="catalog-dimension-label">分类</span>
+              <span className="catalog-dimension-label">板块</span>
               <div className="catalog-chips">
-                <button
-                  onClick={() => setCategoryFilter('all')}
-                  className={`category-chip ${categoryFilter === 'all' ? 'category-chip-active' : ''}`}
-                >
+                <button onClick={() => setSectionFilter('all')} className={`category-chip ${sectionFilter === 'all' ? 'category-chip-active' : ''}`}>
                   <span>全部</span>
-                  <span className="category-chip-count">{scopedFetchers.length}</span>
+                  <span className="category-chip-count">{searchedFetchers.filter(f => tierFilter === 'all' || f.provenance_tier === tierFilter).length}</span>
                 </button>
-                {categoryOptions.map(({ category, count }) => (
-                  <button
-                    key={category}
-                    onClick={() => setCategoryFilter(category)}
-                    className={`category-chip ${categoryFilter === category ? 'category-chip-active' : ''}`}
-                  >
-                    <span>{getCategoryLabel(category)}</span>
+                {sectionOptions.map(({ id, label, count }) => (
+                  <button key={id} onClick={() => setSectionFilter(id)} className={`category-chip ${sectionFilter === id ? 'category-chip-active' : ''}`}>
+                    <span>{label}</span>
                     <span className="category-chip-count">{count}</span>
                   </button>
                 ))}
               </div>
               <div className="search-box catalog-search">
                 <Search className="mr-2 h-4 w-4 text-slate-400" />
-                <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="搜索名称、ID、类型" className="py-2" />
+                <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="搜索名称、主体、ID、标签、Base URL" className="py-2" />
+              </div>
+            </div>
+            <div className="catalog-filter-row catalog-tier-row">
+              <span className="catalog-dimension-label">层级</span>
+              <div className="tier-segment">
+                {visibleTierFilterOptions.map(option => {
+                  const active = tierFilter === option.value;
+                  const count = option.value === 'all' ? (tierCounts.all || 0) : (tierCounts[option.value] || 0);
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => setTierFilter(option.value)}
+                      className={`tier-segment-btn ${active ? 'tier-segment-btn-active' : ''}`}
+                      disabled={option.value !== 'all' && count === 0}
+                    >
+                      {option.label}<span className="tier-segment-count">{count}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-2 lg:grid-cols-3">
-            {filteredFetchers.map(fetcher => {
-              const isSelected = selectedFetchers.includes(fetcher.id);
-              const health = healthByFetcher[fetcher.id];
-              const healthInfo = healthMeta(health?.health_status);
-              const paramCount = (fetcher.parameters || []).length;
-              const paramsExpanded = expandedParamFetcherId === fetcher.id;
-              const isFavorite = favoriteFetcherIds.includes(fetcher.id);
-              const isRunning = runningFetcherIds.has(fetcher.id);
-              return (
-                <div key={fetcher.id} className={`node-card rounded-[16px] flex flex-col transition-all ${isSelected ? 'border-blue-500 ring-4 ring-blue-500/10' : ''}`}>
-                  <div onClick={() => toggleFetcherSelection(fetcher.id)} className="p-4 flex items-start gap-3 cursor-pointer rounded-t-[16px] hover:bg-slate-50">
-                    <div className={`mt-1.5 w-5 h-5 shrink-0 rounded border flex items-center justify-center ${isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>
-                      {isSelected && <CheckSquare className="w-4 h-4 text-white" />}
-                    </div>
-                    <div className="w-12 h-12 shrink-0 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-2xl shadow-sm">{fetcher.icon}</div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <h3 className="card-title truncate" title={fetcher.name}>{fetcher.name}</h3>
-                          <div className="mt-0.5 text-[11px] font-mono text-slate-400 truncate" title={fetcher.id}>{fetcher.id}</div>
-                        </div>
-                        <button
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            toggleFavorite(fetcher.id);
-                          }}
-                          className={`rounded-lg p-1.5 transition-colors ${isFavorite ? 'bg-amber-50 text-amber-500' : 'text-slate-300 hover:bg-slate-100 hover:text-slate-500'}`}
-                          title={isFavorite ? '取消收藏' : '收藏节点'}
-                          aria-label={isFavorite ? `取消收藏 ${fetcher.name}` : `收藏 ${fetcher.name}`}
-                        >
-                          <Star className={`h-4 w-4 ${isFavorite ? 'fill-current' : ''}`} />
-                        </button>
+          {groupedSections.length === 0 ? (
+            <div className="surface-card rounded-[16px] p-16 text-center text-slate-400 font-medium">当前筛选条件下没有匹配的节点</div>
+          ) : (
+            <div className="space-y-8">
+              {groupedSections.map(section => {
+                const sectionOpen = isCatalogSectionOpen(section.id);
+                return (
+                  <section key={section.id} className="space-y-4">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      className="section-band section-band-toggle"
+                      style={{ '--section-accent': section.accent }}
+                      onClick={() => toggleCatalogSection(section.id, sectionOpen)}
+                      onKeyDown={event => handleCatalogSectionKeyDown(event, section.id, sectionOpen)}
+                      aria-expanded={sectionOpen}
+                    >
+                      <div className="section-band-line" />
+                      <div className="section-band-text">
+                        <h3 className="section-band-title">{section.label}</h3>
+                        <span className="section-band-en">{section.en}</span>
                       </div>
-                      <div className="flex items-center gap-2 mt-2 min-w-0 flex-wrap">
-                        <span className="status-badge bg-blue-50 text-blue-700 border-blue-100">{getCategoryLabel(fetcher.category)}</span>
-                        <span className={`status-badge ${healthInfo.className}`}>{healthInfo.label}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="px-4 pb-4 bg-white/70 rounded-b-[16px] flex-1 flex flex-col gap-3">
-                    <p className="text-sm text-slate-600 leading-relaxed min-h-[38px]">{fetcher.desc}</p>
-                    {fetcher.curation_reason && (
-                      <div className="text-xs leading-relaxed rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-slate-500">
-                        {fetcher.curation_reason}
-                      </div>
-                    )}
-                    {(fetcher.base_url || fetcher.provenance_tier || fetcher.source_owner || fetcher.source_brand) && (
-                      <div className="rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs text-slate-500 space-y-2">
-                        <div className="grid grid-cols-2 gap-2">
-                          {fetcher.provenance_tier && (
-                            <div>
-                              <div className="tiny-meta">来源层级</div>
-                              <div className="font-bold text-slate-700">{labelFrom(TIER_LABELS, fetcher.provenance_tier)}</div>
-                            </div>
-                          )}
-                          {(fetcher.source_owner || fetcher.source_brand) && (
-                            <div>
-                              <div className="tiny-meta">主体 / 承载</div>
-                              <div className="font-mono text-[11px] text-slate-700 truncate" title={[fetcher.source_owner, fetcher.source_brand].filter(Boolean).join(' / ')}>
-                                {[fetcher.source_owner, fetcher.source_brand].filter(Boolean).join(' / ')}
-                              </div>
-                            </div>
-                          )}
-                          {fetcher.source_scope && (
-                            <div>
-                              <div className="tiny-meta">范围</div>
-                              <div className="font-bold text-slate-700">{labelFrom(SOURCE_SCOPE_LABELS, fetcher.source_scope)}</div>
-                            </div>
-                          )}
-                          {fetcher.source_channel && (
-                            <div>
-                              <div className="tiny-meta">渠道</div>
-                              <div className="font-bold text-slate-700">{labelFrom(SOURCE_CHANNEL_LABELS, fetcher.source_channel)}</div>
-                            </div>
-                          )}
-                        </div>
-                        {fetcher.base_url && (
-                          <div className="truncate font-mono text-[11px] text-blue-600" title={fetcher.base_url}>{fetcher.base_url}</div>
-                        )}
-                        <div className="flex flex-wrap gap-1.5">
-                          {fetcher.signal_strength && <span className="status-badge bg-emerald-50 text-emerald-700 border-emerald-100">{labelFrom(SIGNAL_LABELS, fetcher.signal_strength)}</span>}
-                          {fetcher.noise_risk && <span className="status-badge bg-amber-50 text-amber-700 border-amber-100">{labelFrom(NOISE_LABELS, fetcher.noise_risk)}</span>}
-                          {fetcher.fetch_reliability && <span className="status-badge bg-slate-50 text-slate-600 border-slate-200">{labelFrom(RELIABILITY_LABELS, fetcher.fetch_reliability)}</span>}
-                        </div>
-                        {(fetcher.content_tags || []).length > 0 && (
-                          <div className="flex flex-wrap gap-1.5">
-                            {fetcher.content_tags.slice(0, 5).map(tag => (
-                              <span key={tag} className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">{tag}</span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    <div className="grid grid-cols-3 gap-2">
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onViewRuns?.(fetcher.id);
-                        }}
-                        className="bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2 text-left hover:bg-blue-50 hover:border-blue-100 transition-colors"
-                        title={`查看 ${fetcher.name} 的运行记录`}
-                      >
-                        <div className="tiny-meta">最近运行</div>
-                        <div className="text-xs text-slate-700 font-medium truncate" title={formatDateTime(health?.latest_run_at)}>{formatRelativeTime(health?.latest_run_at)}</div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onViewArticles?.(fetcher.id);
-                        }}
-                        className="bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2 text-left hover:bg-blue-50 hover:border-blue-100 transition-colors"
-                        title={`查看 ${fetcher.name} 抓取的文章`}
-                      >
-                        <div className="tiny-meta">文章总数</div>
-                        <div className="text-sm font-bold text-emerald-700">{health?.total_articles ?? 0}</div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onViewRuns?.(fetcher.id, { status: 'failed' });
-                        }}
-                        className="bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2 text-left hover:bg-red-50 hover:border-red-100 transition-colors"
-                        title={`查看 ${fetcher.name} 的失败运行记录`}
-                      >
-                        <div className="tiny-meta">连续失败</div>
-                        <div className="text-sm font-bold text-red-700">{health?.consecutive_failures ?? 0}</div>
-                      </button>
+                      <span className="section-band-blurb">{section.blurb}</span>
+                      <span className="section-band-count">{section.companies.reduce((sum, c) => sum + c.fetchers.length, 0)} 源 · {section.companies.length} 主体</span>
+                      <span className="section-band-chevron">
+                        {sectionOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      </span>
                     </div>
 
-                    {paramsExpanded && (
-                      <div className="node-param-panel animate-in fade-in slide-in-from-top-1">
-                        <div className="node-param-title">
-                          <span>{paramCount > 0 ? '参数配置' : '参数配置'}</span>
-                          <span className="font-mono text-slate-400">{paramCount} 项</span>
-                        </div>
-                        {paramCount === 0 ? (
-                          <div className="tiny-meta rounded-lg border border-slate-100 bg-white px-3 py-2">该节点无需额外参数</div>
-                        ) : (
-                          <div className="node-param-grid">
-                            {fetcher.parameters.map(param => (
-                              <div key={param.field} className="node-param-field">
-                                <label className="node-param-label" title={param.field}>{param.label || param.field}</label>
-                                {renderCatalogParamInput(fetcher.id, param)}
+                    {sectionOpen && (
+                      <div className="dept-grid animate-in fade-in slide-in-from-top-1">
+                        {section.companies.map(({ company, fetchers }) => {
+                      const open = isCompanyOpen(company.key, fetchers);
+                      const health = aggregateHealth(fetchers, healthByFetcher);
+                      const allSelected = fetchers.every(f => selectedFetchers.includes(f.id));
+                      const someSelected = fetchers.some(f => selectedFetchers.includes(f.id));
+                      return (
+                        <div key={company.key} className={`dept-card ${open ? 'dept-card-open' : ''}`} style={{ '--dept-accent': company.accent }}>
+                          <div className="dept-spine" />
+                          <div className="dept-head">
+                            <button
+                              type="button"
+                              onClick={() => toggleCompanySelection(fetchers)}
+                              className={`dept-check ${allSelected ? 'dept-check-on' : someSelected ? 'dept-check-some' : ''}`}
+                              title={allSelected ? '取消选择本主体全部节点' : '选择本主体全部节点'}
+                            >
+                              {allSelected ? <CheckSquare className="h-3.5 w-3.5 text-white" /> : someSelected ? <span className="dept-check-dash" /> : null}
+                            </button>
+                            <LogoMark company={company} size="md" />
+                            <button type="button" className="dept-headline" onClick={() => toggleCompany(company.key, open)}>
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="dept-name truncate">{company.name}</span>
+                                {company.en && company.en !== company.name && <span className="dept-alias truncate">{company.en}</span>}
+                                <span className={`dept-dot ${HEALTH_DOT[health.worst] || HEALTH_DOT.never_run}`} title={healthMeta(health.worst).label} />
                               </div>
-                            ))}
+                              <div className="dept-meta">
+                                <span>{health.total} 源</span>
+                                <span className="dept-meta-dot">{health.articles} 篇</span>
+                                {health.failing > 0 && <span className="dept-meta-fail">{health.failing} 失败</span>}
+                                <span className="dept-meta-dot">{health.latest ? formatRelativeTime(health.latest) : '未运行'}</span>
+                              </div>
+                            </button>
+                            <button type="button" className="dept-chevron" onClick={() => toggleCompany(company.key, open)} aria-label={open ? '收起' : '展开'}>
+                              {open ? <ChevronDown className="h-4.5 w-4.5" /> : <ChevronRight className="h-4.5 w-4.5" />}
+                            </button>
                           </div>
-                        )}
+                          {open && (
+                            <div className="dept-body animate-in fade-in slide-in-from-top-1">
+                              {fetchers.map(renderSourceRow)}
+                            </div>
+                          )}
+                        </div>
+                      );
+                        })}
                       </div>
                     )}
-
-                    <div className="grid grid-cols-[auto_1fr] gap-2">
-                      <button
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setExpandedParamFetcherId(paramsExpanded ? null : fetcher.id);
-                        }}
-                        className={`config-toggle ${paramsExpanded ? 'config-toggle-active' : ''}`}
-                        title={`${paramCount} 项参数配置`}
-                        aria-label={`${fetcher.name} 参数配置，${paramCount} 项`}
-                      >
-                        <Settings2 />
-                        <span>配置</span>
-                        <span className="config-badge">{paramCount}</span>
-                      </button>
-                      <button
-                        disabled={isRunning}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (isRunning) return;
-                          setRunningFetcherIds(prev => {
-                            const next = new Set(prev);
-                            next.add(fetcher.id);
-                            return next;
-                          });
-                          showToast(`开始抓取「${fetcher.name}」…`, 'info');
-                          onRunsChanged?.();
-                          triggerFetch(fetcher.id, fetchConfigs[fetcher.id] || {})
-                            .then((result) => {
-                              const saved = result?.saved_count ?? 0;
-                              const failed = result?.failed_count ?? 0;
-                              const status = failed > 0 ? 'info' : 'success';
-                              showToast(`「${fetcher.name}」抓取完成：新增 ${saved} 条${failed ? `，失败 ${failed}` : ''}`, status);
-                              loadSourceHealth();
-                              onArticlesChanged?.();
-                              onRunsChanged?.();
-                            })
-                            .catch(e => showToast(`「${fetcher.name}」抓取失败：${e.message || '未知错误'}`, 'error'))
-                            .finally(() => {
-                              setRunningFetcherIds(prev => {
-                                const next = new Set(prev);
-                                next.delete(fetcher.id);
-                                return next;
-                              });
-                            });
-                        }}
-                        className={`w-full px-3 py-2.5 rounded-lg border text-xs font-bold flex items-center justify-center ${isRunning ? 'bg-blue-100 text-blue-700 border-blue-200 cursor-wait' : 'bg-blue-50 text-blue-700 border-blue-100 hover:bg-blue-100'}`}
-                      >
-                        {isRunning ? <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Play className="w-3.5 h-3.5 mr-1.5" />}
-                        {isRunning
-                          ? (() => {
-                              const p = fetchProgress[fetcher.id];
-                              if (!p) return '抓取中…';
-                              if (p.total) return `进度 ${p.current}/${p.total}`;
-                              return `已抓取 ${p.current} 条`;
-                            })()
-                          : '临时抓取'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                  </section>
+                );
+              })}
+            </div>
+          )}
         </>
       )}
 
@@ -875,7 +986,12 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
                       </div>
                       <div className="text-xs text-slate-400 mt-1 ml-6">{(group.fetcher_ids || []).length} 个节点 · {group.description || '无说明'}</div>
                     </div>
-                    <div className="text-xs font-bold text-slate-500">{(group.fetcher_ids || []).slice(0, 3).map(getFetcherName).join('、')}</div>
+                    <div className="hidden sm:flex items-center -space-x-1.5">
+                      {(group.fetcher_ids || []).slice(0, 5).map(id => {
+                        const f = fetchersById[id];
+                        return <LogoMark key={id} company={resolveCompany(f || {})} size="xs" className="ring-2 ring-white" />;
+                      })}
+                    </div>
                   </button>
                   {isExpanded && (
                     <div className="px-5 pb-5 ml-6 space-y-4">
@@ -886,15 +1002,21 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
                         <button onClick={() => handleDeleteGroup(group.id)} className="action-button action-button-danger min-h-[34px] px-3 text-xs"><Trash2 /> 删除</button>
                       </div>
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                        {(group.fetcher_ids || []).map(fetcherId => (
-                          <div key={fetcherId} className="border border-slate-200 rounded-lg p-3 bg-slate-50">
-                            <div className="font-bold text-slate-700 text-sm">{getFetcherName(fetcherId)}</div>
-                            <div className="font-mono text-[11px] text-slate-400 mt-1">{fetcherId}</div>
-                            <code className="block mt-2 text-[11px] text-slate-500 bg-white border border-slate-100 rounded px-2 py-1 truncate" title={JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}>
-                              {JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}
-                            </code>
-                          </div>
-                        ))}
+                        {(group.fetcher_ids || []).map(fetcherId => {
+                          const f = fetchersById[fetcherId];
+                          return (
+                            <div key={fetcherId} className="flex items-center gap-3 border border-slate-200 rounded-lg p-3 bg-slate-50">
+                              <LogoMark company={resolveCompany(f || {})} size="sm" />
+                              <div className="min-w-0 flex-1">
+                                <div className="font-bold text-slate-700 text-sm truncate">{getFetcherName(fetcherId)}</div>
+                                <div className="font-mono text-[11px] text-slate-400 truncate">{fetcherId}</div>
+                              </div>
+                              <code className="hidden md:block text-[11px] text-slate-500 bg-white border border-slate-100 rounded px-2 py-1 max-w-[180px] truncate" title={JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}>
+                                {JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}
+                              </code>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -908,12 +1030,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
       {selectedFetchers.length > 0 && view === 'catalog' && (
         <div className="selection-bar animate-in slide-in-from-bottom-4">
           {runningFetcherIds.size > 0 ? (
-            <button
-              type="button"
-              onClick={() => onViewRunning?.()}
-              className="running-widget running-widget-embedded"
-              title="查看运行历史"
-            >
+            <button type="button" onClick={() => onViewRunning?.()} className="running-widget running-widget-embedded" title="查看运行历史">
               <RefreshCw className="running-widget-icon animate-spin" />
               <div className="running-widget-body">
                 <div className="running-widget-headline">
@@ -925,9 +1042,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
                     const p = fetchProgress[id];
                     const name = fetchersById[id]?.name || id;
                     const isQueued = !p;
-                    const progressText = isQueued
-                      ? '排队中'
-                      : (p.total ? `${p.current}/${p.total}` : `${p.current}`);
+                    const progressText = isQueued ? '排队中' : (p.total ? `${p.current}/${p.total}` : `${p.current}`);
                     return (
                       <div key={id} className="running-widget-row">
                         <span className="running-widget-name">{name}</span>
@@ -935,9 +1050,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
                       </div>
                     );
                   })}
-                  {runningFetcherIds.size > 4 && (
-                    <div className="running-widget-more">+{runningFetcherIds.size - 4} 个</div>
-                  )}
+                  {runningFetcherIds.size > 4 && <div className="running-widget-more">+{runningFetcherIds.size - 4} 个</div>}
                 </div>
               </div>
             </button>
@@ -1006,6 +1119,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
                           className={`w-full px-3 py-3 flex items-center gap-3 text-left hover:bg-slate-50 ${checked ? 'bg-blue-50/60' : ''}`}
                         >
                           <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>{checked && <CheckSquare className="w-3.5 h-3.5 text-white" />}</div>
+                          <LogoMark company={resolveCompany(fetcher)} size="sm" />
                           <div className="min-w-0">
                             <div className="font-bold text-slate-700 text-sm truncate">{fetcher.name}</div>
                             <div className="font-mono text-[11px] text-slate-400 truncate">{fetcher.id}</div>
@@ -1024,9 +1138,12 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
                     return (
                       <div key={fetcherId} className="border border-slate-200 rounded-xl p-3 bg-white">
                         <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="card-title truncate">{fetcher?.name || fetcherId}</div>
-                            <div className="font-mono text-[11px] text-slate-400 mt-0.5">{fetcherId}</div>
+                          <div className="flex items-center gap-3 min-w-0">
+                            <LogoMark company={resolveCompany(fetcher || {})} size="sm" />
+                            <div className="min-w-0">
+                              <div className="card-title truncate">{fetcher?.name || fetcherId}</div>
+                              <div className="font-mono text-[11px] text-slate-400 mt-0.5">{fetcherId}</div>
+                            </div>
                           </div>
                           <button onClick={() => setGroupDraft(prev => ({ ...prev, fetcher_ids: prev.fetcher_ids.filter(id => id !== fetcherId) }))} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><X className="w-4 h-4" /></button>
                         </div>
@@ -1073,9 +1190,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
                 const p = fetchProgress[id];
                 const name = fetchersById[id]?.name || id;
                 const isQueued = !p;
-                const progressText = isQueued
-                  ? '排队中'
-                  : (p.total ? `${p.current}/${p.total}` : `${p.current}`);
+                const progressText = isQueued ? '排队中' : (p.total ? `${p.current}/${p.total}` : `${p.current}`);
                 return (
                   <div key={id} className="running-widget-row">
                     <span className="running-widget-name">{name}</span>
@@ -1083,9 +1198,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
                   </div>
                 );
               })}
-              {runningFetcherIds.size > 4 && (
-                <div className="running-widget-more">+{runningFetcherIds.size - 4} 个</div>
-              )}
+              {runningFetcherIds.size > 4 && <div className="running-widget-more">+{runningFetcherIds.size - 4} 个</div>}
             </div>
           </div>
         </button>

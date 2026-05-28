@@ -31,6 +31,8 @@ import {
   runCollectionJob,
   updateCollectionJob,
 } from '../api';
+import LogoMark from './LogoMark';
+import { resolveCompany } from '../sourceTaxonomy';
 
 function formatDateTime(value) {
   if (!value) return '-';
@@ -144,6 +146,7 @@ export default function FetchRunsTab({
   );
 
   const getFetcherName = useCallback((id) => fetchersById[id]?.name || id, [fetchersById]);
+  const companyForId = useCallback((id) => resolveCompany(fetchersById[id] || { source_owner: '', base_url: '' }), [fetchersById]);
 
   const getJobFetchers = useCallback((job) => {
     if (job?.group_id) return groupsById[String(job.group_id)]?.fetcher_ids || [];
@@ -514,8 +517,13 @@ export default function FetchRunsTab({
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                           {ids.map(fetcherId => (
                             <div key={fetcherId} className="border border-slate-200 rounded-lg p-3 bg-white">
-                              <div className="font-bold text-slate-700 text-sm">{getFetcherName(fetcherId)}</div>
-                              <div className="font-mono text-[11px] text-slate-400 mt-1">{fetcherId}</div>
+                              <div className="flex items-center gap-2.5">
+                                <LogoMark company={companyForId(fetcherId)} size="sm" />
+                                <div className="min-w-0">
+                                  <div className="font-bold text-slate-700 text-sm truncate">{getFetcherName(fetcherId)}</div>
+                                  <div className="font-mono text-[11px] text-slate-400 truncate">{fetcherId}</div>
+                                </div>
+                              </div>
                               <div className="mt-2 text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-100 rounded px-2 py-1">
                                 cron：{(job.per_fetcher_cron || {})[fetcherId] || job.cron_expr || '-'}
                               </div>
@@ -666,8 +674,17 @@ export default function FetchRunsTab({
                         </span>
                       </td>
                       <td className="px-4 py-4">
-                        <div className="card-title">{run.title}</div>
-                        <div className="font-mono text-[11px] text-slate-400 mt-0.5">{run.subtitle} · {run.nodeLabel}</div>
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {run.type === 'fetch' ? (
+                            <LogoMark company={companyForId(run.fetcher_id)} size="sm" />
+                          ) : (
+                            <span className="run-object-mark"><Layers className="h-4 w-4" /></span>
+                          )}
+                          <div className="min-w-0">
+                            <div className="card-title truncate">{run.title}</div>
+                            <div className="font-mono text-[11px] text-slate-400 mt-0.5 truncate">{run.subtitle} · {run.nodeLabel}</div>
+                          </div>
+                        </div>
                       </td>
                       <td className="px-4 py-4">
                         <span className="status-badge bg-slate-100 text-slate-600 border-slate-200">{triggerLabel(run.trigger_type)}</span>
@@ -753,6 +770,7 @@ export default function FetchRunsTab({
                           className={`w-full px-3 py-3 flex items-center gap-3 text-left ${checked ? 'bg-blue-50/60' : ''} ${jobDraft.group_id ? 'cursor-default' : 'hover:bg-slate-50'}`}
                         >
                           <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>{checked && <CheckSquare className="w-3.5 h-3.5 text-white" />}</div>
+                          <LogoMark company={companyForId(fetcher.id)} size="sm" />
                           <div className="min-w-0">
                             <div className="font-bold text-slate-700 text-sm truncate">{fetcher.name}</div>
                             <div className="font-mono text-[11px] text-slate-400 truncate">{fetcher.id}</div>
@@ -771,9 +789,12 @@ export default function FetchRunsTab({
                     return (
                       <div key={fetcherId} className="border border-slate-200 rounded-xl p-3 bg-white">
                         <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="card-title truncate">{fetcher?.name || fetcherId}</div>
-                            <div className="font-mono text-[11px] text-slate-400 mt-0.5">{fetcherId}</div>
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <LogoMark company={companyForId(fetcherId)} size="sm" />
+                            <div className="min-w-0">
+                              <div className="card-title truncate">{fetcher?.name || fetcherId}</div>
+                              <div className="font-mono text-[11px] text-slate-400 mt-0.5">{fetcherId}</div>
+                            </div>
                           </div>
                           {!jobDraft.group_id && (
                             <button onClick={() => setJobDraft(prev => ({ ...prev, fetcher_ids: prev.fetcher_ids.filter(id => id !== fetcherId) }))} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><X className="w-4 h-4" /></button>

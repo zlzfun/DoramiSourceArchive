@@ -16,6 +16,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import LogoMark from './LogoMark';
 import {
   fetchFeedToken,
   fetchReaderSources,
@@ -23,6 +24,14 @@ import {
   subscribeSource,
   unsubscribeSource,
 } from '../api';
+import {
+  groupBySection,
+  labelFrom,
+  resolveCompany,
+  tierMeta,
+  SOURCE_CHANNEL_LABELS,
+  SOURCE_SCOPE_LABELS,
+} from '../sourceTaxonomy';
 
 const TOKEN_PLACEHOLDER = '$DORAMI_TOKEN';
 
@@ -64,6 +73,46 @@ const FEED_PARAMS = [
   ['has_content', '仅返回有正文的记录，默认 true'],
   ['skip / limit', '分页偏移与条数，limit 上限 500'],
 ];
+
+const TIER_TONE_CLASS = {
+  emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+  sky: 'bg-sky-50 text-sky-700 border-sky-100',
+  violet: 'bg-violet-50 text-violet-700 border-violet-100',
+  slate: 'bg-slate-50 text-slate-500 border-slate-200',
+};
+
+function tierPillClass(tier) {
+  return TIER_TONE_CLASS[tierMeta(tier).tone] || TIER_TONE_CLASS.slate;
+}
+
+function inferSourceOwner(source) {
+  const text = `${source.source_id || ''} ${source.name || ''}`.toLowerCase();
+  if (text.includes('anthropic') || text.includes('claude')) return 'anthropic';
+  if (text.includes('gemini') || text.includes('gemma') || text.includes('google')) return 'google';
+  if (text.includes('openai') || text.includes('codex')) return 'openai';
+  if (text.includes('xai') || text.includes('grok')) return 'xai';
+  if (text.includes('deepseek')) return 'deepseek';
+  if (text.includes('qwen') || text.includes('alibaba')) return 'alibaba';
+  if (text.includes('bytedance') || text.includes('seed')) return 'bytedance_seed';
+  if (text.includes('zhipu') || text.includes('z.ai') || text.includes('glm')) return 'zai';
+  if (text.includes('cursor')) return 'cursor';
+  if (text.includes('openclaw')) return 'openclaw';
+  if (text.includes('opencode')) return 'opencode';
+  if (text.includes('nous') || text.includes('hermes')) return 'nousresearch';
+  if (text.includes('hugging') || text.includes('hf_')) return 'huggingface';
+  if (text.includes('qbit') || text.includes('量子位')) return 'qbitai';
+  if (text.includes('hacker') || text.includes('ycombinator')) return 'ycombinator';
+  return '';
+}
+
+function enrichSource(source) {
+  return {
+    ...source,
+    id: source.source_id,
+    desc: source.description,
+    source_owner: source.source_owner || inferSourceOwner(source),
+  };
+}
 
 function TokenNotice({ token, onCopy, copied }) {
   if (!token) return null;
@@ -142,60 +191,73 @@ function FeedDocsPanel({ plainToken, onCopy, copiedKey }) {
   );
 }
 
-function SourceTile({ source, busy, onToggleSubscribe, onViewArticles }) {
+function SubscriptionSourceRow({ source, busy, onToggleSubscribe, onViewArticles }) {
   const subscribed = Boolean(source.subscribed);
   const hasArticles = (source.count || 0) > 0;
+  const tier = tierMeta(source.provenance_tier);
+  const scopeLabel = labelFrom(SOURCE_SCOPE_LABELS, source.source_scope);
+  const channelLabel = labelFrom(SOURCE_CHANNEL_LABELS, source.source_channel);
   return (
-    <div
-      className={`flex flex-col gap-3 rounded-[14px] border p-4 transition-all ${
-        subscribed ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200 bg-white hover:border-indigo-200'
-      }`}
-    >
-      <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-slate-200 bg-white text-xl">
-          {source.icon || '📡'}
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-black text-slate-900" title={source.name}>{source.name}</p>
-          <p className="truncate font-mono text-[11px] text-slate-400" title={source.source_id}>{source.source_id}</p>
-        </div>
-      </div>
-
-      {source.description ? (
-        <p className="line-clamp-2 min-h-[2.5rem] text-xs leading-5 text-slate-500" title={source.description}>{source.description}</p>
-      ) : (
-        <p className="min-h-[2.5rem] text-xs leading-5 text-slate-300">暂无简介</p>
-      )}
-
-      <div className="flex items-center gap-2 text-[11px] font-bold text-slate-500">
-        <span className="data-chip">{source.content_type || '未知类型'}</span>
-        {hasArticles ? <span>{source.count} 篇</span> : <span className="text-slate-400">尚无归档 · 订阅接收后续</span>}
-      </div>
-
-      <div className="mt-1 flex items-center gap-2">
+    <div className={`source-row subscription-source-row ${subscribed ? 'subscription-source-subscribed' : ''}`}>
+      <div className="source-row-head">
         <button
           type="button"
           onClick={() => onToggleSubscribe(source)}
           disabled={busy}
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded-[10px] border px-3 py-2 text-xs font-bold transition-colors disabled:opacity-60 ${
-            subscribed
-              ? 'border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-              : 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
-          }`}
+          className={`source-check subscription-check ${subscribed ? 'subscription-check-on' : ''}`}
+          aria-label={subscribed ? `取消订阅 ${source.name}` : `订阅 ${source.name}`}
         >
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : subscribed ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
-          {subscribed ? '已订阅' : '订阅'}
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : subscribed ? <Check className="h-3.5 w-3.5 text-white" /> : <Plus className="h-3.5 w-3.5" />}
         </button>
-        <button
-          type="button"
-          onClick={() => onViewArticles?.(source.source_id)}
-          disabled={!hasArticles}
-          className="flex items-center justify-center gap-1.5 rounded-[10px] border border-slate-100 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 hover:border-indigo-100 hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-slate-50 disabled:hover:text-slate-600"
-          title={hasArticles ? `在知识台账中查看「${source.name}」的文章` : '该源暂无归档文章'}
-        >
-          <FileText className="h-3.5 w-3.5" /> 查看文章
-        </button>
+
+        <div className="source-row-id">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="source-name truncate" title={source.name}>{source.name}</span>
+            {source.provenance_tier && <span className={`tier-pill tier-pill-wide ${tierPillClass(source.provenance_tier)}`}>{tier.short} {tier.label}</span>}
+            {subscribed && <span className="subscription-status-pill">已订阅</span>}
+          </div>
+          <div className="source-sub">
+            <span className="font-mono truncate" title={source.source_id}>{source.source_id}</span>
+            {source.source_scope && <span className="source-sub-dot">{scopeLabel}</span>}
+            {source.source_channel && <span className="source-sub-dot">{channelLabel}</span>}
+            {!source.source_channel && source.category && <span className="source-sub-dot">{source.category}</span>}
+          </div>
+        </div>
+
+        <div className="source-stats subscription-source-stats">
+          <span className="source-stat">
+            <FileText className="h-3.5 w-3.5 text-emerald-500" />
+            <span className="font-bold text-emerald-700">{source.count || 0}</span>
+          </span>
+        </div>
+
+        <div className="source-actions">
+          <button
+            type="button"
+            onClick={() => onToggleSubscribe(source)}
+            disabled={busy}
+            className={`subscription-action ${subscribed ? 'subscription-action-on' : ''}`}
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : subscribed ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+            <span>{subscribed ? '取消订阅' : '订阅'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onViewArticles?.(source.source_id)}
+            disabled={!hasArticles}
+            className="source-icon-btn"
+            title={hasArticles ? `在知识台账中查看「${source.name}」的文章` : '该源暂无归档文章'}
+          >
+            <FileText className="h-4 w-4" />
+          </button>
+        </div>
       </div>
+
+      {source.description ? (
+        <p className="source-desc">{source.description}</p>
+      ) : (
+        <p className="source-desc text-slate-300">暂无简介</p>
+      )}
     </div>
   );
 }
@@ -212,6 +274,8 @@ export default function SubscriptionTab({ showToast, onViewArticles }) {
   const [plainToken, setPlainToken] = useState('');
   const [docsOpen, setDocsOpen] = useState(false);
   const [copiedKey, setCopiedKey] = useState('');
+  const [collapsedSourceSections, setCollapsedSourceSections] = useState(() => new Set());
+  const [expandedSourceCompanies, setExpandedSourceCompanies] = useState(() => new Set());
 
   const loadSources = useCallback(async () => {
     setSourcesLoading(true);
@@ -250,17 +314,85 @@ export default function SubscriptionTab({ showToast, onViewArticles }) {
     [subscribedSources],
   );
 
-  const sourcesByCategory = useMemo(() => {
+  const filteredSources = useMemo(() => {
     const query = sourceQuery.trim().toLowerCase();
-    const map = new Map();
-    for (const source of sources) {
-      const haystack = `${source.name} ${source.source_id} ${source.content_type} ${source.description || ''}`.toLowerCase();
-      if (query && !haystack.includes(query)) continue;
-      if (!map.has(source.category)) map.set(source.category, []);
-      map.get(source.category).push(source);
-    }
-    return [...map.entries()];
+    return sources
+      .map(enrichSource)
+      .filter(source => {
+        const company = resolveCompany(source);
+        const haystack = [
+          source.name,
+          source.source_id,
+          source.content_type,
+          source.category,
+          source.description,
+          source.source_owner,
+          source.source_brand,
+          company.name,
+          company.en,
+          ...(source.content_tags || []),
+        ].filter(Boolean).join(' ').toLowerCase();
+        return !query || haystack.includes(query);
+      });
   }, [sources, sourceQuery]);
+
+  const groupedSourceSections = useMemo(() => groupBySection(filteredSources), [filteredSources]);
+  const autoExpandSourceSections = sourceQuery.trim().length > 0;
+
+  const isSourceSectionOpen = useCallback((sectionId) => {
+    if (autoExpandSourceSections) return true;
+    return !collapsedSourceSections.has(sectionId);
+  }, [autoExpandSourceSections, collapsedSourceSections]);
+
+  const toggleSourceSection = useCallback((sectionId, currentlyOpen) => {
+    setCollapsedSourceSections(prev => {
+      const next = new Set(prev);
+      if (currentlyOpen) next.add(sectionId);
+      else next.delete(sectionId);
+      return next;
+    });
+  }, []);
+
+  const setAllSourceSections = useCallback((open) => {
+    if (open) {
+      setCollapsedSourceSections(new Set());
+      return;
+    }
+    setCollapsedSourceSections(new Set(groupedSourceSections.map(section => section.id)));
+  }, [groupedSourceSections]);
+
+  const handleSourceSectionKeyDown = useCallback((event, sectionId, currentlyOpen) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    toggleSourceSection(sectionId, currentlyOpen);
+  }, [toggleSourceSection]);
+
+  const isSourceCompanyOpen = useCallback((companyKey, fetchers) => {
+    if (autoExpandSourceSections) return true;
+    if (fetchers.some(source => source.subscribed || pendingSourceIds.has(source.source_id))) return true;
+    return expandedSourceCompanies.has(companyKey);
+  }, [autoExpandSourceSections, expandedSourceCompanies, pendingSourceIds]);
+
+  const toggleSourceCompany = useCallback((companyKey, currentlyOpen) => {
+    setExpandedSourceCompanies(prev => {
+      const next = new Set(prev);
+      if (currentlyOpen) next.delete(companyKey);
+      else next.add(companyKey);
+      return next;
+    });
+  }, []);
+
+  const setAllSourceCompanies = useCallback((open) => {
+    if (!open) {
+      setExpandedSourceCompanies(new Set());
+      return;
+    }
+    setExpandedSourceCompanies(() => {
+      const next = new Set();
+      groupedSourceSections.forEach(section => section.companies.forEach(({ company }) => next.add(company.key)));
+      return next;
+    });
+  }, [groupedSourceSections]);
 
   const applySubscribedIds = useCallback((ids) => {
     const idSet = new Set(ids || []);
@@ -382,52 +514,132 @@ export default function SubscriptionTab({ showToast, onViewArticles }) {
       </div>
 
       {view === 'catalog' ? (
-        <div className="surface-card rounded-[14px]">
-          <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-3">
-              <div className="h-5 w-1 rounded-full bg-indigo-500" />
-              <h3 className="section-title">内容源目录</h3>
-              <span className="tiny-meta">点一下即订阅，再点一下取消</span>
+        <div className="space-y-6">
+          <div className="surface-card rounded-[16px] overflow-hidden">
+            <div className="catalog-topbar">
+              <div className="section-title">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                  <Layers className="h-5 w-5" />
+                </div>
+                <span>内容源目录</span>
+                <span className="text-xs font-mono text-slate-400">{filteredSources.length}/{sources.length}</span>
+              </div>
+              <div className="subscription-catalog-toolbar">
+                <div className="dept-expand-toggle">
+                  <span>板块</span>
+                  <button type="button" onClick={() => setAllSourceSections(true)}>展开</button>
+                  <span>·</span>
+                  <button type="button" onClick={() => setAllSourceSections(false)}>收起</button>
+                </div>
+                <div className="dept-expand-toggle">
+                  <span>主体</span>
+                  <button type="button" onClick={() => setAllSourceCompanies(true)}>展开</button>
+                  <span>·</span>
+                  <button type="button" onClick={() => setAllSourceCompanies(false)}>收起</button>
+                </div>
+                <div className="subscription-catalog-note">按主体聚合，点选来源即可订阅</div>
+              </div>
             </div>
-            <label className="search-box h-10 max-w-sm flex-1">
-              <Search className="mr-2 h-4 w-4 text-slate-400" />
-              <input type="text" placeholder="搜索来源名称 / 简介 / 类型" value={sourceQuery} onChange={e => setSourceQuery(e.target.value)} />
-            </label>
+            <div className="catalog-filter-row catalog-filter-row-with-search">
+              <span className="catalog-dimension-label">搜索</span>
+              <label className="search-box catalog-search">
+                <Search className="mr-2 h-4 w-4 text-slate-400" />
+                <input type="text" placeholder="搜索名称、主体、ID、标签" value={sourceQuery} onChange={e => setSourceQuery(e.target.value)} />
+              </label>
+            </div>
           </div>
 
           {sourcesLoading ? (
-            <div className="flex items-center justify-center gap-2 px-6 py-12 text-sm font-bold text-slate-500">
+            <div className="surface-card rounded-[16px] flex items-center justify-center gap-2 px-6 py-12 text-sm font-bold text-slate-500">
               <Loader2 className="h-4 w-4 animate-spin text-indigo-500" /> 正在加载内容源
             </div>
-          ) : sourcesByCategory.length === 0 ? (
-            <div className="p-6"><div className="empty-state py-12">没有匹配的内容源</div></div>
+          ) : groupedSourceSections.length === 0 ? (
+            <div className="surface-card rounded-[16px] p-6"><div className="empty-state py-12">没有匹配的内容源</div></div>
           ) : (
-            <div className="space-y-6 px-6 py-5">
-              {sourcesByCategory.map(([category, items]) => {
-                const allSubscribed = items.every(item => item.subscribed);
+            <div className="space-y-8">
+              {groupedSourceSections.map(section => {
+                const sectionOpen = isSourceSectionOpen(section.id);
                 return (
-                  <div key={category}>
-                    <div className="mb-3 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-black text-slate-800">{category}</span>
-                        <span className="text-xs font-mono text-slate-400">{items.length}</span>
+                  <section key={section.id} className="space-y-4">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      className="section-band section-band-toggle"
+                      style={{ '--section-accent': section.accent }}
+                      onClick={() => toggleSourceSection(section.id, sectionOpen)}
+                      onKeyDown={event => handleSourceSectionKeyDown(event, section.id, sectionOpen)}
+                      aria-expanded={sectionOpen}
+                    >
+                      <div className="section-band-line" />
+                      <div className="section-band-text">
+                        <h3 className="section-band-title">{section.label}</h3>
+                        <span className="section-band-en">{section.en}</span>
                       </div>
-                      <button type="button" onClick={() => handleToggleCategory(items)} className="text-xs font-bold text-indigo-600 hover:text-indigo-800">
-                        {allSubscribed ? '取消订阅本组' : '订阅本组'}
-                      </button>
+                      <span className="section-band-blurb">{section.blurb}</span>
+                      <span className="section-band-count">{section.companies.reduce((sum, c) => sum + c.fetchers.length, 0)} 源 · {section.companies.length} 主体</span>
+                      <span className="section-band-chevron">
+                        {sectionOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      </span>
                     </div>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                      {items.map(source => (
-                        <SourceTile
-                          key={source.source_id}
-                          source={source}
-                          busy={pendingSourceIds.has(source.source_id)}
-                          onToggleSubscribe={handleToggleSubscribe}
-                          onViewArticles={onViewArticles}
-                        />
-                      ))}
-                    </div>
-                  </div>
+
+                    {sectionOpen && (
+                      <div className="dept-grid animate-in fade-in slide-in-from-top-1">
+                        {section.companies.map(({ company, fetchers }) => {
+                          const companyOpen = isSourceCompanyOpen(company.key, fetchers);
+                          const allSubscribed = fetchers.every(item => item.subscribed);
+                          const subscribedCount = fetchers.filter(item => item.subscribed).length;
+                          const articleCount = fetchers.reduce((sum, item) => sum + (item.count || 0), 0);
+                          return (
+                            <div key={company.key} className={`dept-card ${companyOpen ? 'dept-card-open' : ''} subscription-dept-card`} style={{ '--dept-accent': company.accent }}>
+                              <div className="dept-spine" />
+                              <div className="dept-head">
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleCategory(fetchers)}
+                                  className={`dept-check ${allSubscribed ? 'dept-check-on subscription-check-on' : subscribedCount > 0 ? 'dept-check-some' : ''}`}
+                                  title={allSubscribed ? '取消订阅本主体全部来源' : '订阅本主体全部来源'}
+                                >
+                                  {allSubscribed ? <Check className="h-3.5 w-3.5 text-white" /> : subscribedCount > 0 ? <span className="dept-check-dash" /> : null}
+                                </button>
+                                <LogoMark company={company} size="md" />
+                                <button type="button" className="dept-headline" onClick={() => toggleSourceCompany(company.key, companyOpen)}>
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <span className="dept-name truncate">{company.name}</span>
+                                    {company.en && company.en !== company.name && <span className="dept-alias truncate">{company.en}</span>}
+                                  </div>
+                                  <div className="dept-meta">
+                                    <span>{fetchers.length} 源</span>
+                                    <span className="dept-meta-dot">{subscribedCount} 已订阅</span>
+                                    <span className="dept-meta-dot">{articleCount} 篇</span>
+                                  </div>
+                                </button>
+                                <button type="button" onClick={() => handleToggleCategory(fetchers)} className="subscription-action shrink-0">
+                                  {allSubscribed ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                                  <span>{allSubscribed ? '取消本主体' : '订阅本主体'}</span>
+                                </button>
+                                <button type="button" className="dept-chevron" onClick={() => toggleSourceCompany(company.key, companyOpen)} aria-label={companyOpen ? '收起' : '展开'}>
+                                  {companyOpen ? <ChevronDown className="h-4.5 w-4.5" /> : <ChevronRight className="h-4.5 w-4.5" />}
+                                </button>
+                              </div>
+                              {companyOpen && (
+                                <div className="dept-body animate-in fade-in slide-in-from-top-1">
+                                  {fetchers.map(source => (
+                                    <SubscriptionSourceRow
+                                      key={source.source_id}
+                                      source={source}
+                                      busy={pendingSourceIds.has(source.source_id)}
+                                      onToggleSubscribe={handleToggleSubscribe}
+                                      onViewArticles={onViewArticles}
+                                    />
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
                 );
               })}
             </div>

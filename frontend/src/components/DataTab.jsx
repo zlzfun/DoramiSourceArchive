@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
-import { RefreshCw, CheckCircle, Zap, Search, Plus, Trash2 } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { RefreshCw, CheckCircle, Zap, Search, Plus, Trash2, SlidersHorizontal } from 'lucide-react';
 import DateRangePicker from './DateRangePicker';
 import ArticleDetailModal from './ArticleDetailModal';
 import ManualAddModal from './ManualAddModal';
+import LogoMark from './LogoMark';
+import { resolveCompany } from '../sourceTaxonomy';
 import {
   fetchArticles as apiFetchArticles,
   batchDeleteArticles,
@@ -31,6 +33,7 @@ export default function DataTab({
   const [manualAddModal, setManualAddModal] = useState(false);
   const [vectorizingId, setVectorizingId] = useState(null);
   const [vectorizingAll, setVectorizingAll] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [filters, setFilters] = useState({
     content_type: '',
@@ -44,9 +47,19 @@ export default function DataTab({
     subscribed_scope: 'off', // off | prioritize | only（相对当前用户订阅的源）
   });
 
-  const getFetcherName = (id) => {
-    const fetcher = availableFetchers.find(f => f.id === id);
-    return fetcher ? fetcher.name : id;
+  const fetchersById = useMemo(
+    () => Object.fromEntries(availableFetchers.map(f => [f.id, f])),
+    [availableFetchers]
+  );
+
+  const getFetcherName = (id) => fetchersById[id]?.name || id;
+  const companyFor = (sourceId) => {
+    const fetcher = fetchersById[sourceId];
+    if (fetcher) return resolveCompany(fetcher);
+    // 阅读端运行时无 fetcher 元数据：用 source_id 兜底，保证标识仍可区分
+    const sid = String(sourceId || 'unknown');
+    const mono = sid.replace(/[^a-zA-Z0-9一-龥]/g, '').slice(0, 2).toUpperCase() || '··';
+    return { key: `sid:${sid}`, name: sid, en: sid, accent: '#64748b', domain: '', monogram: mono };
   };
 
   const uniqueContentTypes = [...new Set(articles.map(a => a.content_type).filter(Boolean))];
@@ -54,6 +67,27 @@ export default function DataTab({
     ...articles.map(a => a.source_id).filter(Boolean),
     ...(filters.source_id ? [filters.source_id] : []),
   ])];
+
+  // 数据来源下拉：按公司分组（optgroup），让来源更易定位
+  const sourceKey = uniqueSourceIds.join('|');
+  const sourceGroups = useMemo(() => {
+    const groups = new Map();
+    uniqueSourceIds.forEach(src => {
+      const company = companyFor(src);
+      if (!groups.has(company.key)) groups.set(company.key, { name: company.name, items: [] });
+      groups.get(company.key).items.push(src);
+    });
+    return Array.from(groups.values()).sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceKey, fetchersById]);
+
+  const advancedCount = [
+    filters.content_type,
+    filters.is_vectorized,
+    filters.publish_date_start || filters.publish_date_end,
+    filters.fetched_date_start || filters.fetched_date_end,
+  ].filter(Boolean).length;
+
   const canSelectArticles = canManageArticles;
 
   const handleVectorize = async (id) => {
@@ -207,11 +241,31 @@ export default function DataTab({
 
       <div className="surface-card relative z-30 rounded-[16px] p-5">
         <div className="flex flex-col gap-4">
-          <label className="search-box min-h-[58px]">
-            <Search className="mr-3 h-5 w-5 text-slate-400" />
-            <input type="text" placeholder="搜索标题、内容、来源网站、标签等关键词..." value={filters.search} onChange={e => setFilters({ ...filters, search: e.target.value })} onKeyDown={e => e.key === 'Enter' && loadArticles()} className="py-4" />
-            <span className="hidden rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-400 sm:inline-flex">⌘ /</span>
-          </label>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <label className="search-box min-h-[52px] flex-1">
+              <Search className="mr-3 h-5 w-5 text-slate-400" />
+              <input type="text" placeholder="搜索标题、内容、来源网站、标签等关键词..." value={filters.search} onChange={e => setFilters({ ...filters, search: e.target.value })} onKeyDown={e => e.key === 'Enter' && loadArticles()} className="py-3" />
+              <span className="hidden rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-400 sm:inline-flex">⌘ /</span>
+            </label>
+            <div className="field-box lg:w-64">
+              <span>数据来源</span>
+              <select value={filters.source_id} onChange={e => setFilters({ ...filters, source_id: e.target.value })}>
+                <option value="">全部节点</option>
+                {sourceGroups.map(group => (
+                  <optgroup key={group.name} label={group.name}>
+                    {group.items.map(src => <option key={src} value={src}>{getFetcherName(src)}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(v => !v)}
+              className={`action-button action-button-secondary min-h-[52px] ${showAdvanced ? 'text-indigo-700' : ''}`}
+            >
+              <SlidersHorizontal /> 高级筛选{advancedCount > 0 && <span className="ml-1 rounded-full bg-indigo-100 px-1.5 text-[11px] font-black text-indigo-700">{advancedCount}</span>}
+            </button>
+          </div>
 
           {isReader && (
             <div className="flex flex-wrap items-center gap-3">
@@ -235,50 +289,45 @@ export default function DataTab({
             </div>
           )}
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1.35fr_1.35fr_1fr]">
-            <div className="field-box">
-              <span>结构类型</span>
-              <select value={filters.content_type} onChange={e => setFilters({ ...filters, content_type: e.target.value })}>
-                <option value="">全部类型</option>
-                {uniqueContentTypes.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div className="field-box">
-              <span>数据来源</span>
-              <select value={filters.source_id} onChange={e => setFilters({ ...filters, source_id: e.target.value })}>
-                <option value="">全部节点</option>
-                {uniqueSourceIds.map(src => <option key={src} value={src}>{getFetcherName(src)}</option>)}
-              </select>
-            </div>
-            <div className="field-box">
-              <span>原始发布日期</span>
-              <DateRangePicker
-                startDate={filters.publish_date_start}
-                endDate={filters.publish_date_end}
-                onChange={(start, end) => setFilters({ ...filters, publish_date_start: start, publish_date_end: end })}
-                placeholder="开始日期 → 结束日期"
-              />
-            </div>
-            <div className="field-box">
-              <span>抓取 / 收录时间</span>
-              <DateRangePicker
-                startDate={filters.fetched_date_start}
-                endDate={filters.fetched_date_end}
-                onChange={(start, end) => setFilters({ ...filters, fetched_date_start: start, fetched_date_end: end })}
-                placeholder="开始日期 → 结束日期"
-              />
-            </div>
-            {canManageArticles && (
+          {showAdvanced && (
+            <div className="grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 animate-in fade-in slide-in-from-top-1 md:grid-cols-2 xl:grid-cols-[1fr_1.35fr_1.35fr_1fr]">
               <div className="field-box">
-                <span>向量状态</span>
-                <select value={filters.is_vectorized} onChange={e => setFilters({ ...filters, is_vectorized: e.target.value })}>
-                  <option value="">全部状态</option>
-                  <option value="true">向量已构建</option>
-                  <option value="false">向量未构建</option>
+                <span>结构类型</span>
+                <select value={filters.content_type} onChange={e => setFilters({ ...filters, content_type: e.target.value })}>
+                  <option value="">全部类型</option>
+                  {uniqueContentTypes.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
-            )}
-          </div>
+              <div className="field-box">
+                <span>原始发布日期</span>
+                <DateRangePicker
+                  startDate={filters.publish_date_start}
+                  endDate={filters.publish_date_end}
+                  onChange={(start, end) => setFilters({ ...filters, publish_date_start: start, publish_date_end: end })}
+                  placeholder="开始日期 → 结束日期"
+                />
+              </div>
+              <div className="field-box">
+                <span>抓取 / 收录时间</span>
+                <DateRangePicker
+                  startDate={filters.fetched_date_start}
+                  endDate={filters.fetched_date_end}
+                  onChange={(start, end) => setFilters({ ...filters, fetched_date_start: start, fetched_date_end: end })}
+                  placeholder="开始日期 → 结束日期"
+                />
+              </div>
+              {canManageArticles && (
+                <div className="field-box">
+                  <span>向量状态</span>
+                  <select value={filters.is_vectorized} onChange={e => setFilters({ ...filters, is_vectorized: e.target.value })}>
+                    <option value="">全部状态</option>
+                    <option value="true">向量已构建</option>
+                    <option value="false">向量未构建</option>
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -317,7 +366,22 @@ export default function DataTab({
                   )}
                 </td>
                 <td className="px-3 py-4"><span className="data-chip">{article.content_type || '未知'}</span></td>
-                <td className="px-3 py-4"><span className="font-bold text-slate-700 text-xs line-clamp-2" title={article.source_id}>{getFetcherName(article.source_id)}</span></td>
+                <td className="px-3 py-4">
+                  {(() => {
+                    const company = companyFor(article.source_id);
+                    const name = getFetcherName(article.source_id);
+                    const showCompany = company.name && company.name !== name && !company.key.startsWith('sid:');
+                    return (
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <LogoMark company={company} size="sm" />
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-700 text-xs line-clamp-1" title={article.source_id}>{name}</div>
+                          {showCompany && <div className="text-[11px] text-slate-400 truncate">{company.name}</div>}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </td>
                 <td className="px-4 py-4 font-bold text-slate-800 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => openDetailModal(article)}>
                   <div className="line-clamp-1">{article.title}</div>
                   <div className="mt-1 line-clamp-1 text-xs font-semibold text-slate-400">{article.content || '暂无摘要内容'}</div>
