@@ -534,6 +534,38 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
         items = soup.select("#list ul.bl > li")
         return items or soup.select("ul.bl > li")
 
+    def _extract_ithome_detail(self, html_text: str, max_chars: int) -> Dict[str, str]:
+        soup = BeautifulSoup(html_text, "html.parser")
+        title = self._detail_title(soup)
+        body = soup.select_one("#paragraph.post_content") or soup.select_one(".post_content")
+        if not body:
+            return {"title": title, "text": "", "method": ""}
+
+        for selector in [".tougao-user", ".ad-tips", "script", "style", "noscript", "button"]:
+            for node in body.select(selector):
+                node.decompose()
+
+        text = "\n\n".join(
+            self._clean_text(node.get_text(" ", strip=True))
+            for node in body.find_all(["p", "blockquote", "li"], recursive=True)
+        )
+        if not text:
+            text = self._clean_text(body.get_text(" ", strip=True))
+        return {
+            "title": title,
+            "text": text[:max_chars],
+            "method": "ithome_post_content",
+        }
+
+    async def _detail_for_url(self, client: httpx.AsyncClient, url: str, max_chars: int) -> Dict[str, str]:
+        response = await self._safe_get(client, url)
+        if not response:
+            return {"title": "", "text": "", "method": "", "url": ""}
+        detail = self._extract_ithome_detail(response.text, max_chars)
+        if detail["text"]:
+            return {**detail, "url": str(response.url)}
+        return await super()._detail_for_url(client, url, max_chars)
+
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         limit = self._entry_limit(kwargs.get("limit"))
         fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
