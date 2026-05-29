@@ -8,6 +8,7 @@ const TOOL_CARDS = [
     name: 'search_articles',
     params: 'query, top_k?, content_type?, source_id?, publish_date_gte?, distance_threshold?',
     desc: '语义向量搜索，支持中英文，按相关性排序。适合主题查询，如「最近的具身智能资讯」。',
+    requiresRag: true,
   },
   {
     name: 'browse_articles',
@@ -28,13 +29,14 @@ const TOOL_CARDS = [
     name: 'get_rag_context',
     params: 'query, top_k?, max_chars?, distance_threshold?, content_type?, source_id?, publish_date_gte?',
     desc: '组装格式化 RAG 上下文字符串，可直接拼入 LLM System Prompt。',
+    requiresRag: true,
   },
 ];
 
 const LOCAL_TOOLS = ['Claude Code', 'Cursor', 'Codex', 'OpenCode'];
 const ONLINE_TOOLS = ['Claude.ai Projects', 'Coze'];
 
-export default function MCPTab({ showToast }) {
+export default function MCPTab({ showToast, ragEnabled = false }) {
   const [status, setStatus] = useState(null);
   const [copied, setCopied] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
@@ -277,18 +279,24 @@ export default function MCPTab({ showToast }) {
               可用工具 <span className="font-normal normal-case text-slate-400">({TOOL_CARDS.length} 个)</span>
             </p>
             <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 overflow-hidden">
-              {TOOL_CARDS.map(tool => (
-                <div key={tool.name} className="flex gap-4 px-4 py-3 bg-slate-50 hover:bg-slate-100/80 transition-colors">
-                  <div className="shrink-0 mt-[3px] w-1.5 h-1.5 rounded-full bg-sky-400" />
-                  <div className="min-w-0">
-                    <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
-                      <code className="text-xs font-bold text-sky-700">{tool.name}</code>
-                      <span className="tiny-meta font-mono">{tool.params}</span>
+              {TOOL_CARDS.map(tool => {
+                const disabled = tool.requiresRag && !ragEnabled;
+                return (
+                  <div key={tool.name} className={`flex gap-4 px-4 py-3 transition-colors ${disabled ? 'bg-slate-100/60 opacity-60' : 'bg-slate-50 hover:bg-slate-100/80'}`}>
+                    <div className={`shrink-0 mt-[3px] w-1.5 h-1.5 rounded-full ${disabled ? 'bg-slate-300' : 'bg-sky-400'}`} />
+                    <div className="min-w-0">
+                      <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
+                        <code className={`text-xs font-bold ${disabled ? 'text-slate-500 line-through' : 'text-sky-700'}`}>{tool.name}</code>
+                        <span className="tiny-meta font-mono">{tool.params}</span>
+                        {disabled && (
+                          <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">需启用 RAG</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 leading-relaxed">{tool.desc}</p>
                     </div>
-                    <p className="text-xs text-slate-500 leading-relaxed">{tool.desc}</p>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

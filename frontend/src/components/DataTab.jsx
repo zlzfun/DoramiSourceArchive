@@ -23,6 +23,7 @@ export default function DataTab({
   isActive = true,
   canManageArticles = true,
   isReader = true,
+  ragEnabled = false,
   articlesDirty = false,
   onArticlesRefreshed,
   pendingFilter,
@@ -241,7 +242,7 @@ export default function DataTab({
           <p className="page-subtitle mt-3 max-w-4xl">沉浸式多维过滤，支持点击日期极速框选范围，快速查找与管理全部抓取内容。</p>
         </div>
         <div className="page-actions">
-          {canManageArticles && (
+          {canManageArticles && ragEnabled && (
             <button onClick={handleVectorizeAllPending} disabled={vectorizingAll} className="action-button action-button-secondary">
               {vectorizingAll ? <RefreshCw className="animate-spin" /> : <Zap className="text-amber-500" />} 全量向量化
             </button>
@@ -334,7 +335,7 @@ export default function DataTab({
                   placeholder="开始日期 → 结束日期"
                 />
               </div>
-              {canManageArticles && (
+              {canManageArticles && ragEnabled && (
                 <div className="field-box">
                   <span>向量状态</span>
                   <select value={filters.is_vectorized} onChange={e => setFilters({ ...filters, is_vectorized: e.target.value })}>
@@ -372,12 +373,12 @@ export default function DataTab({
               <th className="px-4 py-4 font-bold">标题 / 内容摘要</th>
               <th className="px-3 py-4 w-[150px] font-bold">原始发布日期</th>
               <th className="px-3 py-4 w-[150px] font-bold">抓取 / 收录时间</th>
-              {canManageArticles && <th className="px-3 py-4 w-36 font-bold">向量状态</th>}
+              {canManageArticles && ragEnabled && <th className="px-3 py-4 w-36 font-bold">向量状态</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
             {articles.length === 0 ? (
-              <tr><td colSpan={canManageArticles ? 7 : 6} className="px-6 py-16 text-center text-slate-400 font-medium">当前时间区间或过滤条件下，未查询到相关数据</td></tr>
+              <tr><td colSpan={canManageArticles && ragEnabled ? 7 : 6} className="px-6 py-16 text-center text-slate-400 font-medium">当前时间区间或过滤条件下，未查询到相关数据</td></tr>
             ) : articles.map((article) => (
               <tr key={article.id} className="hover:bg-blue-50/40 transition-colors group">
                 <td className="px-4 py-4 text-center">
@@ -408,7 +409,7 @@ export default function DataTab({
                 </td>
                 <td className="px-3 py-4 text-slate-500 text-xs font-mono">{article.publish_date?.split('T')[0] || '-'}</td>
                 <td className="px-3 py-4 text-slate-600 text-xs font-mono">{article.fetched_date?.replace('T', ' ').substring(0, 16) || '-'}</td>
-                {canManageArticles && (
+                {canManageArticles && ragEnabled && (
                   <td className="px-3 py-4">
                     {article.is_vectorized ? (
                       <span className="vector-status vector-status-done">
@@ -449,7 +450,7 @@ export default function DataTab({
             <CheckCircle /> 已选择 {selectedArticles.size} 条记录
           </div>
           <div className="selection-bar-actions">
-            {canManageArticles && (
+            {canManageArticles && ragEnabled && (
               <button onClick={handleBatchVectorize} className="action-button action-button-secondary text-blue-700">
                 <Zap /> 批量构建
               </button>

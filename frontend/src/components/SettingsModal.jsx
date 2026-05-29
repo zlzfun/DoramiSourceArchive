@@ -545,6 +545,7 @@ function AboutSection({ accountRoleLabel, layerLabel, runtimeRole }) {
 export default function SettingsModal({ open, onClose, runtimeInfo, username, onLogout, showToast, onArticlesChanged }) {
   const collectorEnabled = Boolean(runtimeInfo?.collector_enabled);
   const readerEnabled = Boolean(runtimeInfo?.reader_enabled);
+  const ragEnabled = Boolean(runtimeInfo?.rag_enabled);
   const accountRole = runtimeInfo?.account_role;
   const isAdmin = accountRole === 'admin';
 
@@ -563,11 +564,11 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, on
 
   const sections = useMemo(() => [
     { id: 'account', label: '账户', icon: User, show: true },
-    { id: 'vector', label: '向量雷达', icon: BarChart2, show: collectorEnabled },
+    { id: 'vector', label: '向量雷达', icon: BarChart2, show: collectorEnabled && ragEnabled },
     { id: 'sync', label: '数据同步', icon: FileText, show: isAdmin && (collectorEnabled || readerEnabled) },
     { id: 'integration', label: '接入集成', icon: Plug2, show: readerEnabled },
     { id: 'about', label: '关于', icon: Info, show: true },
-  ].filter(s => s.show), [collectorEnabled, isAdmin, readerEnabled]);
+  ].filter(s => s.show), [collectorEnabled, isAdmin, ragEnabled, readerEnabled]);
 
   const [active, setActive] = useState('account');
   const [mcpStatus, setMcpStatus] = useState(null);
@@ -619,7 +620,7 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, on
             {active === 'account' && (
               <AccountSection username={username} accountRoleLabel={accountRoleLabel} layerLabel={layerLabel} onLogout={onLogout} />
             )}
-            {active === 'vector' && collectorEnabled && (
+            {active === 'vector' && collectorEnabled && ragEnabled && (
               <VectorSection showToast={showToast} />
             )}
             {active === 'sync' && isAdmin && (collectorEnabled || readerEnabled) && (

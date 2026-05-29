@@ -41,6 +41,11 @@ class RuntimeConfig:
 
 
 @dataclass(frozen=True)
+class RagConfig:
+    enabled: bool = False
+
+
+@dataclass(frozen=True)
 class NetworkConfig:
     disable_ca_bundle: bool = True
     hf_endpoint: str = "https://hf-mirror.com"
@@ -135,6 +140,7 @@ class ImageHostConfig:
 class AppConfig:
     server: ServerConfig
     runtime: RuntimeConfig
+    rag: RagConfig
     network: NetworkConfig
     proxy: ProxyConfig
     auth: AuthConfig
@@ -211,6 +217,11 @@ def load_config() -> AppConfig:
     storage_db = f"sqlite:///{PROJECT_ROOT / 'data' / 'cms_data.db'}"
     storage_chroma = str(PROJECT_ROOT / "data" / "chroma_db")
     runtime_role = os.getenv("DORAMI_RUNTIME_ROLE") or parser.get("runtime", "role", fallback="all")
+    rag_enabled_raw = os.getenv("DORAMI_RAG_ENABLED")
+    if rag_enabled_raw is None:
+        rag_enabled = parser.getboolean("rag", "enabled", fallback=False)
+    else:
+        rag_enabled = rag_enabled_raw.strip().lower() in {"1", "true", "yes", "on"}
     legacy_auth_user = parser.get("auth", "username", fallback="admin")
     legacy_auth_password = parser.get("auth", "password", fallback="admin")
     admin_users = _auth_credentials(
@@ -226,6 +237,9 @@ def load_config() -> AppConfig:
         ),
         runtime=RuntimeConfig(
             role=_runtime_role(runtime_role),
+        ),
+        rag=RagConfig(
+            enabled=rag_enabled,
         ),
         network=NetworkConfig(
             disable_ca_bundle=parser.getboolean("network", "disable_ca_bundle", fallback=True),

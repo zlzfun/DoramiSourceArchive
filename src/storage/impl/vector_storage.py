@@ -168,32 +168,53 @@ class ChromaVectorStorage(BaseStorage):
         super().__init__()
         if db_path is None:
             db_path = settings.storage.chroma_path
-        self._collection_name = collection_name
         os.makedirs(db_path, exist_ok=True)
-        self.client = chromadb.PersistentClient(path=db_path)
-
-        # T1: 默认换用 BAAI/bge-m3（多语言，支持中文查询→英文文档跨语言检索）
-        model_name_or_path = settings.models.embedding_model
-        self.logger.info(f"🧬 正在加载 Embedding 模型: {model_name_or_path}")
-
-        try:
-            self.embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=model_name_or_path
-            )
-        except Exception as e:
-            self.logger.error(f"❌ 向量模型加载失败 [{model_name_or_path}]: {e}")
-            raise
-
-        self.collection = self.client.get_or_create_collection(
-            name=collection_name,
-            embedding_function=self.embedding_fn,
-            metadata={"hnsw:space": "cosine"},
-        )
-        self.logger.info(f"🗂️ 向量特征库就绪: {db_path} | 集合: {collection_name}")
+        self._db_path = db_path
+        self._collection_name = collection_name
+        # chromadb client / embedding 函数 / collection 均推迟到首次使用时再加载，
+        # 避免后端启动时即下载/加载 sentence-transformers 权重。
+        self._client = None
+        self._embedding_fn = None
+        self._collection = None
 
         # T12: Cross-encoder reranker — lazy-loaded on first use
         self._reranker = None
         self._reranker_model = settings.models.reranker_model
+
+    # ── 懒加载 ───────────────────────────────────────────────────────────────
+    def _ensure_collection(self):
+        if self._collection is None:
+            model_name_or_path = settings.models.embedding_model
+            self.logger.info(f"🧬 正在加载 Embedding 模型: {model_name_or_path}")
+            self._client = chromadb.PersistentClient(path=self._db_path)
+            try:
+                self._embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name=model_name_or_path
+                )
+            except Exception as e:
+                self.logger.error(f"❌ 向量模型加载失败 [{model_name_or_path}]: {e}")
+                raise
+            self._collection = self._client.get_or_create_collection(
+                name=self._collection_name,
+                embedding_function=self._embedding_fn,
+                metadata={"hnsw:space": "cosine"},
+            )
+            self.logger.info(f"🗂️ 向量特征库就绪: {self._db_path} | 集合: {self._collection_name}")
+        return self._collection
+
+    @property
+    def client(self):
+        self._ensure_collection()
+        return self._client
+
+    @property
+    def collection(self):
+        return self._ensure_collection()
+
+    @property
+    def embedding_fn(self):
+        self._ensure_collection()
+        return self._embedding_fn
 
     # ── 写入 ──────────────────────────────────────────────────────────────────
 
@@ -383,13 +404,15 @@ class ChromaVectorStorage(BaseStorage):
         换用新 embedding 模型后必须调用此方法，否则旧维度向量与新模型不兼容。
         调用后需重新向量化所有文章（POST /api/vector/reindex-all）。
         """
+        # 强制初始化 client / embedding_fn，再删除并重建集合。
+        self._ensure_collection()
         try:
-            self.client.delete_collection(self._collection_name)
+            self._client.delete_collection(self._collection_name)
         except Exception:
             pass
-        self.collection = self.client.get_or_create_collection(
+        self._collection = self._client.get_or_create_collection(
             name=self._collection_name,
-            embedding_function=self.embedding_fn,
+            embedding_function=self._embedding_fn,
             metadata={"hnsw:space": "cosine"},
         )
         self.logger.info(f"🔄 向量集合已重建: {self._collection_name}")

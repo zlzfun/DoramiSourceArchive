@@ -111,6 +111,7 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "account_role": session.get("role") if session else None,
         "collector_enabled": collector_role_enabled(session),
         "reader_enabled": reader_role_enabled(session),
+        "rag_enabled": settings.rag.enabled,
     }
 
 
@@ -201,6 +202,7 @@ async def lifespan(app: FastAPI):
                 _mcp_enabled = rec.value.lower() == "true"
         # Build fresh FastMCP instance (session_manager can only be run() once per instance)
         mcp = build_mcp_app(db_sink, vector_sink, subscription_resolver=resolve_subscription_sources_by_token)
+        # vector_sink 为 None 时 MCP 内部会让向量类工具直接报「RAG disabled」
         _mcp_gate._app = mcp.streamable_http_app()
     else:
         _mcp_gate._app = None
@@ -234,8 +236,22 @@ app.add_middleware(
 )
 
 db_sink = DatabaseStorage(db_url=settings.storage.database_url)
-vector_sink = ChromaVectorStorage(db_path=settings.storage.chroma_path)
+# 向量库默认按需创建：[rag] enabled = false 时不构造 ChromaVectorStorage，
+# 后端启动既快且不占用 embedding 模型所需内存。开启后实例仍会懒加载模型权重。
+vector_sink: Optional[ChromaVectorStorage] = (
+    ChromaVectorStorage(db_path=settings.storage.chroma_path)
+    if settings.rag.enabled else None
+)
 pipeline = DataPipeline(storages=[db_sink])
+
+
+def require_vector_sink() -> ChromaVectorStorage:
+    if vector_sink is None:
+        raise HTTPException(
+            status_code=503,
+            detail="RAG 功能未启用。请在 config/backend.ini 中设置 [rag] enabled = true 后重启后端。",
+        )
+    return vector_sink
 
 app.mount("/mcp", _mcp_gate)
 app.include_router(skill_router)
@@ -2975,7 +2991,8 @@ async def create_article_manual(params: dict = Body(...)):
 async def delete_article(article_id: str):
     record = await db_sink.get(article_id)
     if not record: raise HTTPException(status_code=404, detail="文章未找到")
-    if record.is_vectorized: await vector_sink.delete(article_id)
+    if record.is_vectorized and vector_sink is not None:
+        await vector_sink.delete(article_id)
     await db_sink.delete(article_id)
     return {"status": "success"}
 
@@ -2985,7 +3002,8 @@ async def batch_delete_articles(params: BatchOpParams):
     for uid in params.ids:
         record = await db_sink.get(uid)
         if record:
-            if record.is_vectorized: await vector_sink.delete(uid)
+            if record.is_vectorized and vector_sink is not None:
+                await vector_sink.delete(uid)
             await db_sink.delete(uid)
     return {"status": "success"}
 
@@ -3002,7 +3020,8 @@ async def update_article(article_id: str, params: ArticleUpdateParams):
     update_data = {k: v for k, v in params.dict().items() if v is not None}
     if "content" in update_data or "title" in update_data:
         update_data["is_vectorized"] = False
-        await vector_sink.delete(article_id)
+        if vector_sink is not None:
+            await vector_sink.delete(article_id)
 
     success = await db_sink.update(article_id, update_data)
     if not success: raise HTTPException(status_code=404, detail="更新失败")
@@ -3125,11 +3144,12 @@ def _record_to_content(record: ArticleRecord) -> GenericContent:
 
 @app.post("/api/vectorize/batch")
 async def batch_vectorize_articles(params: BatchOpParams):
+    vs = require_vector_sink()
     success_count = 0
     for uid in params.ids:
         record = await db_sink.get(uid)
         if not record or record.is_vectorized: continue
-        if await vector_sink.save(_record_to_content(record)):
+        if await vs.save(_record_to_content(record)):
             await db_sink.mark_as_vectorized(uid)
             success_count += 1
     return {"status": "success", "count": success_count}
@@ -3138,6 +3158,7 @@ async def batch_vectorize_articles(params: BatchOpParams):
 @app.post("/api/vectorize/all-pending")
 async def vectorize_all_pending():
     """对所有 is_vectorized=False 的文章执行向量化，跳过已索引的条目。"""
+    vs = require_vector_sink()
     with Session(db_sink.engine) as session:
         from sqlmodel import select as sm_select
         records = session.exec(
@@ -3145,7 +3166,7 @@ async def vectorize_all_pending():
         ).all()
     success_count = 0
     for record in records:
-        if await vector_sink.save(_record_to_content(record)):
+        if await vs.save(_record_to_content(record)):
             await db_sink.mark_as_vectorized(record.id)
             success_count += 1
     return {"status": "success", "count": success_count, "total_pending": len(records)}
@@ -3191,8 +3212,9 @@ async def auto_vectorize_after_fetch(content_ids: List[str]) -> None:
     """抓取保存后，如管理员开启了自动向量化，则把新入库文章写入向量库。
 
     失败不影响抓取主流程（向量化是尽力而为的旁路）。
+    RAG 关闭时（vector_sink 为 None）直接 no-op。
     """
-    if not content_ids or not is_auto_vectorize_enabled():
+    if not content_ids or vector_sink is None or not is_auto_vectorize_enabled():
         return
     for content_id in content_ids:
         try:
@@ -3211,12 +3233,14 @@ class AutoVectorizeConfig(BaseModel):
 @app.get("/api/vector/auto-vectorize")
 def get_auto_vectorize_config():
     """读取「抓取后自动向量化」开关（管理员配置）。"""
+    require_vector_sink()
     return {"enabled": is_auto_vectorize_enabled()}
 
 
 @app.post("/api/vector/auto-vectorize")
 def set_auto_vectorize_config(config: AutoVectorizeConfig):
     """设置「抓取后自动向量化」开关。开启后，后续抓取入库的文章会自动写入向量库。"""
+    require_vector_sink()
     with Session(db_sink.engine) as session:
         record = session.get(AppSettingRecord, AUTO_VECTORIZE_SETTING_KEY)
         if record is None:
@@ -3229,12 +3253,13 @@ def set_auto_vectorize_config(config: AutoVectorizeConfig):
 
 @app.post("/api/vectorize/{article_id:path}")
 async def vectorize_article(article_id: str):
+    vs = require_vector_sink()
     record = await db_sink.get(article_id)
     if not record: raise HTTPException(status_code=404, detail="文章不存在")
     if record.is_vectorized: return {"status": "skipped"}
 
     content_obj = _record_to_content(record)
-    success = await vector_sink.save(content_obj)
+    success = await vs.save(content_obj)
     if success:
         await db_sink.mark_as_vectorized(article_id)
         return {"status": "success"}
@@ -3305,7 +3330,8 @@ async def run_vector_search(
         publish_date_lte: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """语义检索流水线：召回 → 按 parent_id 去重 → 阈值过滤 → 重排序 → 回填标题。"""
-    raw_results = await vector_sink.search(
+    vs = require_vector_sink()
+    raw_results = await vs.search(
         query_text,
         n_results=top_k * 4,
         content_type=content_type,
@@ -3327,7 +3353,7 @@ async def run_vector_search(
 
     # T12: cross-encoder 重排序（可选）
     if rerank:
-        candidates = vector_sink.rerank(query_text, candidates[:top_k * 2])
+        candidates = vs.rerank(query_text, candidates[:top_k * 2])
     else:
         candidates.sort(key=lambda x: x["distance"])
 
@@ -3368,26 +3394,29 @@ async def vector_search(query: SearchQuery, request: Request):
 
 @app.get("/api/vector/stats")
 async def get_vector_stats():
-    count = await vector_sink.count()
+    vs = require_vector_sink()
+    count = await vs.count()
     return {"total_vectors": count}
 
 
 @app.delete("/api/vector/{article_id:path}")
 async def delete_vector_only(article_id: str):
+    vs = require_vector_sink()
     record = await db_sink.get(article_id)
     if not record: raise HTTPException(status_code=404, detail="记录不存在")
     if record.is_vectorized:
-        await vector_sink.delete(article_id)
+        await vs.delete(article_id)
         await db_sink.mark_as_unvectorized(article_id)
     return {"status": "success"}
 
 
 @app.post("/api/vector/batch-delete")
 async def batch_delete_vectors(params: BatchOpParams):
+    vs = require_vector_sink()
     for uid in params.ids:
         record = await db_sink.get(uid)
         if record and record.is_vectorized:
-            await vector_sink.delete(uid)
+            await vs.delete(uid)
             await db_sink.mark_as_unvectorized(uid)
     return {"status": "success"}
 
@@ -3417,6 +3446,8 @@ async def rag_context(query: RagContextQuery, request: Request):
     """
     from storage.impl.vector_storage import SOURCE_FRIENDLY_NAMES
 
+    vs = require_vector_sink()
+
     # 登录用户的检索硬性限定在其订阅来源范围内（无订阅则空集）。
     source_id, source_ids, scoped, empty = resolve_scoped_search_args(request, query.source_id)
     if empty:
@@ -3425,7 +3456,7 @@ async def rag_context(query: RagContextQuery, request: Request):
             "total_chars": 0, "context_text": "", "sources": [], "scoped": True,
         }
 
-    raw = await vector_sink.search(
+    raw = await vs.search(
         query.query,
         n_results=query.top_k * 4,
         content_type=query.content_type,
@@ -3446,7 +3477,7 @@ async def rag_context(query: RagContextQuery, request: Request):
 
     # T12: cross-encoder 重排序（可选）
     if query.rerank:
-        candidates = vector_sink.rerank(query.query, candidates[:query.top_k * 2])
+        candidates = vs.rerank(query.query, candidates[:query.top_k * 2])
     else:
         candidates.sort(key=lambda x: x["distance"])
     candidates = candidates[:query.top_k]
@@ -3475,7 +3506,7 @@ async def rag_context(query: RagContextQuery, request: Request):
         if query.expand_context:
             chunk_index = res["metadata"].get("chunk_index", 0)
             total_chunks = res["metadata"].get("total_chunks", 1)
-            adj = await vector_sink.expand_chunk(pid, chunk_index, total_chunks)
+            adj = await vs.expand_chunk(pid, chunk_index, total_chunks)
             parts = []
             if adj["prev"]:
                 parts.append(adj["prev"])
@@ -3526,13 +3557,14 @@ async def rag_similar(article_id: str, top_k: int = 5):
     相似文章接口：找出与给定文章语义最接近的其他文章。
     用于"相关阅读"、知识图谱构建等场景。
     """
+    vs = require_vector_sink()
     record = await db_sink.get(article_id)
     if not record:
         raise HTTPException(status_code=404, detail="文章不存在")
 
     # 使用标题+正文片段作为查询向量
     query_text = f"{record.title}\n{(record.content or '')[:300]}"
-    raw = await vector_sink.search(query_text, n_results=(top_k + 1) * 3)
+    raw = await vs.search(query_text, n_results=(top_k + 1) * 3)
 
     best_by_parent: Dict[str, Any] = {}
     for r in raw:
@@ -3571,7 +3603,8 @@ async def reindex_all_articles():
     T9: 删除并重建整个 ChromaDB collection，对所有文章重新向量化。
     适用于：更换 embedding 模型后的全库迁移。管理员（collector）操作。
     """
-    vector_sink.rebuild_collection()
+    vs = require_vector_sink()
+    vs.rebuild_collection()
 
     with Session(db_sink.engine) as session:
         records = session.exec(select(ArticleRecord)).all()
@@ -3583,7 +3616,7 @@ async def reindex_all_articles():
     # 重新向量化
     success_count = 0
     for record in records:
-        if await vector_sink.save(_record_to_content(record)):
+        if await vs.save(_record_to_content(record)):
             await db_sink.mark_as_vectorized(record.id)
             success_count += 1
 

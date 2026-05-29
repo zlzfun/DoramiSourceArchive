@@ -40,7 +40,7 @@ export default function App() {
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
   const [logoError, setLogoError] = useState(false);
   const [availableFetchers, setAvailableFetchers] = useState([]);
-  const [runtimeInfo, setRuntimeInfo] = useState({ role: 'all', collector_enabled: true, reader_enabled: true });
+  const [runtimeInfo, setRuntimeInfo] = useState({ role: 'all', collector_enabled: true, reader_enabled: true, rag_enabled: false });
   const [authState, setAuthState] = useState({ status: 'checking', user: null });
   const [articlesDirty, setArticlesDirty] = useState(false);
   const [runsDirty, setRunsDirty] = useState(false);
@@ -149,9 +149,13 @@ export default function App() {
     { id: 'fetch', icon: CloudDownload, label: '节点管理', surface: 'collector' },
     { id: 'runs', icon: History, label: '任务与运行', surface: 'collector' },
     { id: 'subscriptions', icon: KeyRound, label: '订阅分发', surface: 'reader' },
-    { id: 'vector', icon: BarChart2, label: '向量雷达', surface: 'reader' },
+    { id: 'vector', icon: BarChart2, label: '向量雷达', surface: 'reader', requiresRag: true },
     { id: 'mcp', icon: Plug2, label: '接入集成', surface: 'reader' },
-  ].filter(tab => !tab.surface || runtimeInfo[`${tab.surface}_enabled`]), [runtimeInfo]);
+  ].filter(tab => {
+    if (tab.surface && !runtimeInfo[`${tab.surface}_enabled`]) return false;
+    if (tab.requiresRag && !runtimeInfo.rag_enabled) return false;
+    return true;
+  }), [runtimeInfo]);
 
   const avatarInitials = useMemo(() => {
     const name = authState.user?.username?.trim();
@@ -276,6 +280,7 @@ export default function App() {
                 isActive={activeTab === 'data'}
                 canManageArticles={runtimeInfo.collector_enabled}
                 isReader={runtimeInfo.reader_enabled}
+                ragEnabled={runtimeInfo.rag_enabled}
                 articlesDirty={articlesDirty}
                 onArticlesRefreshed={clearArticlesDirty}
                 pendingFilter={pendingDataFilter}
@@ -323,7 +328,7 @@ export default function App() {
           )}
           {mountedTabs.has('mcp') && (
             <div style={{ display: activeTab === 'mcp' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
-              <MCPTab showToast={showToast} />
+              <MCPTab showToast={showToast} ragEnabled={runtimeInfo.rag_enabled} />
             </div>
           )}
         </div>

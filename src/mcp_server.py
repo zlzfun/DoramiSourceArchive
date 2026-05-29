@@ -94,7 +94,7 @@ def _get_article_impl(db_sink: DatabaseStorage, article_id: str) -> dict:
 
 
 async def _search_articles_impl(
-    vector_sink: ChromaVectorStorage,
+    vector_sink: Optional[ChromaVectorStorage],
     query: str,
     top_k: int = 10,
     content_type: Optional[str] = None,
@@ -103,6 +103,8 @@ async def _search_articles_impl(
     publish_date_gte: Optional[str] = None,
     distance_threshold: float = 1.5,
 ) -> list[dict]:
+    if vector_sink is None:
+        return [{"error": "RAG disabled", "detail": "向量检索功能未启用，请在后端启用 [rag] enabled = true 后重启。"}]
     raw = await vector_sink.search(
         query,
         n_results=top_k * 4,
@@ -135,7 +137,7 @@ async def _search_articles_impl(
 
 async def _get_rag_context_impl(
     db_sink: DatabaseStorage,
-    vector_sink: ChromaVectorStorage,
+    vector_sink: Optional[ChromaVectorStorage],
     query: str,
     top_k: int = 8,
     max_chars: int = 4000,
@@ -145,6 +147,8 @@ async def _get_rag_context_impl(
     publish_date_gte: Optional[str] = None,
     context_separator: str = "\n\n---\n\n",
 ) -> str:
+    if vector_sink is None:
+        return ""
     raw = await vector_sink.search(
         query,
         n_results=top_k * 4,
@@ -193,7 +197,7 @@ async def _get_rag_context_impl(
 
 def build_mcp_app(
     db_sink: DatabaseStorage,
-    vector_sink: ChromaVectorStorage,
+    vector_sink: Optional[ChromaVectorStorage],
     subscription_resolver=None,
 ) -> FastMCP:
     """构建 FastMCP 实例。

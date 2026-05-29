@@ -62,6 +62,15 @@ def _make_sink(tmp_path, name: str):
     return DatabaseStorage(db_url=f"sqlite:///{tmp_path / name}")
 
 
+def _enable_vector_sink(monkeypatch, app_module):
+    """让需要 vector_sink 的端点不 503——挂一个最小桩对象上去。
+
+    auto-vectorize 开关与全量重建只检查 vector_sink 是否为 None；不会真正调用其方法，
+    因此一个简单的非 None 哨兵足够。需要真实方法的测试应自行 monkeypatch。
+    """
+    monkeypatch.setattr(app_module, "vector_sink", object())
+
+
 def test_subscription_tokenized_delivery_filters_articles(monkeypatch, tmp_path):
     import api.app as app_module
 
@@ -725,6 +734,7 @@ def test_vectorization_managed_by_admin(monkeypatch, tmp_path):
     monkeypatch.setattr(app_module, "db_sink", sink)
     _set_auth_accounts(monkeypatch, app_module)
     _set_runtime_role(monkeypatch, app_module, "all")
+    _enable_vector_sink(monkeypatch, app_module)  # 模拟 [rag] enabled=true 启动
 
     with TestClient(app_module.app) as client:
         _login(client, "admin", "admin")  # admin 账号 → collector 面
