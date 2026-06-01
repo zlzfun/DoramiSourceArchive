@@ -24,7 +24,6 @@ This catalog describes the current source implementation after the additive sour
 | Source ID | Base URL |
 | --- | --- |
 | `rss_openai_news` | `https://openai.com/news/rss.xml` |
-| `docs_openai_api_changelog` | `https://developers.openai.com/api/docs/changelog` |
 | `docs_openai_codex_changelog` | `https://developers.openai.com/codex/changelog` |
 
 ### Anthropic / Claude
@@ -40,7 +39,6 @@ This catalog describes the current source implementation after the additive sour
 | Source ID | Base URL |
 | --- | --- |
 | `rss_google_gemini_models` | `https://blog.google/innovation-and-ai/models-and-research/gemini-models/` |
-| `docs_gemini_api_changelog` | `https://ai.google.dev/gemini-api/docs/changelog` |
 | `docs_gemma_release_notes` | `https://ai.google.dev/gemma/docs/releases` |
 
 ### xAI / Grok

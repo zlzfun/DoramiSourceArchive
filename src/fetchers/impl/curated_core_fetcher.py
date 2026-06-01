@@ -119,25 +119,110 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
 
+    # Codex Changelog 按月份 <h2> 分组，但每条发布是一个独立的
+    # <li data-product> 容器：内含 <time>(ISO 日期) + 首个标题(发布名，如
+    # "Codex CLI 0.135.0" 或 "Appshots, goal mode, and more 26.519") + 正文。通用单页
+    # 抓取会把所有发布糅成一篇长文、丢失逐发布日期；这里按 <li> 切分，每条发布一条记录。
+    @classmethod
+    def get_parameter_schema(cls) -> List[Dict[str, Any]]:
+        return [
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 50},
+            {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
+        ]
 
-class OpenAiApiChangelogFetcher(SinglePageDocumentFetcher):
-    source_id = "docs_openai_api_changelog"
-    name = "OpenAI API Changelog"
-    description = "抓取 OpenAI API 官方 Changelog 中的模型、API、平台能力与生命周期更新。"
-    icon = "🧠"
-    page_url = "https://developers.openai.com/api/docs/changelog"
-    source_url = page_url
-    site_name = "OpenAI API"
-    source_section = "Changelog"
-    source_owner = "openai"
-    source_brand = "openai_api"
-    source_scope = "api_platform"
-    source_channel = "docs_changelog"
-    provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "api_platform", "developer_tool", "product_update"]
-    signal_strength = "high_signal"
-    noise_risk = "low_noise"
-    fetch_reliability = "stable_public"
+    def _entry_limit(self, raw_limit: Any) -> int:
+        if raw_limit in (None, ""):
+            return 50
+        try:
+            return max(int(raw_limit), 0)
+        except (TypeError, ValueError):
+            self.logger.warning(f"{self.name} 条数参数无效，使用默认值: {raw_limit}")
+            return 50
+
+    def _content_id(self, anchor: str) -> str:
+        digest = hashlib.sha1(f"{self.source_id}:{anchor}".encode("utf-8")).hexdigest()[:16]
+        return f"{self.source_id}_{digest}"
+
+    def _release_entries(self, html_text: str, resolved_url: str, max_chars: int) -> List[Dict[str, Any]]:
+        soup = BeautifulSoup(html_text, "html.parser")
+        container = soup.select_one("main") or soup
+        base_url = resolved_url.split("#", 1)[0]
+
+        entries: List[Dict[str, Any]] = []
+        seen = set()
+        for item in container.find_all("li", attrs={"data-product": True}):
+            anchor = self._clean_text(str(item.get("id") or ""))
+            if not anchor or anchor in seen:
+                continue
+
+            time_node = item.find("time")
+            raw_date = self._clean_text(time_node.get_text(" ", strip=True)) if time_node else ""
+            publish_date = ""
+            if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", raw_date):
+                publish_date = f"{raw_date}T00:00:00+00:00"
+
+            heading = item.find(["h2", "h3", "h4"])
+            release_title = self._clean_text(heading.get_text(" ", strip=True)) if heading else ""
+            if not release_title:
+                continue
+
+            body = self._clean_text(item.get_text(" ", strip=True))
+            # 去掉正文开头重复的日期与标题前缀
+            if raw_date and body.startswith(raw_date):
+                body = body[len(raw_date):].strip()
+            if release_title and body.startswith(release_title):
+                body = body[len(release_title):].strip()
+            body = body[:max_chars]
+            if not body:
+                continue
+
+            seen.add(anchor)
+            entries.append({
+                "anchor": anchor,
+                "title": f"{self.site_name}: {release_title}",
+                "source_url": f"{base_url}#{anchor}",
+                "publish_date": publish_date,
+                "raw_date": raw_date,
+                "content": body,
+                "summary": body[:500],
+            })
+        return entries
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
+        if limit <= 0:
+            return
+
+        response = await self._safe_get(client, self.page_url)
+        if not response:
+            raise RuntimeError(f"{self.name} 页面请求失败: {self.page_url}")
+
+        entries = self._release_entries(response.text, str(response.url), max_chars)
+        entries = sorted(entries, key=lambda entry: entry["publish_date"] or "", reverse=True)
+        for entry in entries[:limit]:
+            yield WebPageArticleContent(
+                id=self._content_id(entry["anchor"]),
+                title=entry["title"],
+                source_url=entry["source_url"],
+                publish_date=entry["publish_date"] or datetime.now(timezone.utc).isoformat(),
+                content=entry["content"],
+                has_content=bool(entry["content"]),
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=entry["summary"],
+                tags=[self.category, *list(self.content_tags or [])],
+                raw_data={
+                    "listing_url": self.page_url,
+                    "url": entry["source_url"],
+                    "listing_source": "openai_codex_changelog_updates",
+                    "release_anchor": entry["anchor"],
+                    "release_date_text": entry["raw_date"],
+                    "detail_text_length": len(entry["content"]),
+                    "detail_extraction_method": "openai_changelog_list_item",
+                },
+            )
+
 
 
 class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
@@ -283,27 +368,142 @@ class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
             )
 
 
-class GeminiApiChangelogFetcher(SinglePageDocumentFetcher):
-    source_id = "docs_gemini_api_changelog"
-    name = "Gemini API Release Notes"
-    description = "抓取 Gemini API 官方 Changelog 中的模型、API 与开发者平台更新。"
-    icon = "🔷"
-    page_url = "https://ai.google.dev/gemini-api/docs/changelog"
-    source_url = page_url
-    site_name = "Gemini API"
-    source_section = "Changelog"
-    source_owner = "google"
-    source_brand = "gemini_api"
-    source_scope = "api_platform"
-    source_channel = "docs_changelog"
-    provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "api_platform", "developer_tool", "product_update"]
-    signal_strength = "high_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public"
+class DevsiteReleaseNotesFetcher(SinglePageDocumentFetcher):
+    """抓取 Google devsite 风格的 release notes / changelog 页面，按日期标题切分。
+
+    这类页面（ai.google.dev 等）在 ``devsite-content`` 容器里以 ``<h2>`` 日期标题
+    （如 ``May 28, 2026``，带 ``id`` 锚点）分段，标题之后的兄弟节点（``ul``/``p``）
+    是该日期的更新内容，直到下一个 ``<h2>``。通用单页抓取会把所有日期糅成一篇长文、
+    丢失逐日期粒度；这里按日期标题切分，每个日期段作为一条记录。
+    """
+
+    listing_source_label = "devsite_release_notes_updates"
+
+    # 兼容带逗号 "May 28, 2026" 与个别缺逗号 "December 13 2023" 的标题
+    _date_heading_re = re.compile(r"^([A-Z][a-z]+)\s+(\d{1,2}),?\s+(20\d{2})$")
+    _month_map = {
+        "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+        "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+    }
+
+    @classmethod
+    def get_parameter_schema(cls) -> List[Dict[str, Any]]:
+        return [
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 50},
+            {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
+        ]
+
+    def _entry_limit(self, raw_limit: Any) -> int:
+        if raw_limit in (None, ""):
+            return 50
+        try:
+            return max(int(raw_limit), 0)
+        except (TypeError, ValueError):
+            self.logger.warning(f"{self.name} 条数参数无效，使用默认值: {raw_limit}")
+            return 50
+
+    def _content_id(self, anchor: str) -> str:
+        digest = hashlib.sha1(f"{self.source_id}:{anchor}".encode("utf-8")).hexdigest()[:16]
+        return f"{self.source_id}_{digest}"
+
+    def _parse_heading_date(self, raw_heading: str) -> str:
+        match = self._date_heading_re.match(self._clean_text(raw_heading))
+        if not match:
+            return ""
+        month_name, day, year = match.groups()
+        month = self._month_map.get(month_name.lower())
+        if not month:
+            return ""
+        return datetime(int(year), month, int(day), tzinfo=timezone.utc).isoformat()
+
+    def _release_entries(self, html_text: str, resolved_url: str, max_chars: int) -> List[Dict[str, Any]]:
+        soup = BeautifulSoup(html_text, "html.parser")
+        container = soup.select_one("devsite-content") or soup.select_one(".devsite-article-body") or soup
+        base_url = resolved_url.split("#", 1)[0]
+
+        entries: List[Dict[str, Any]] = []
+        seen = set()
+        for heading in container.find_all("h2"):
+            heading_text = self._clean_text(heading.get_text(" ", strip=True))
+            publish_date = self._parse_heading_date(heading_text)
+            if not publish_date:
+                continue
+
+            anchor = self._clean_text(str(heading.get("id") or "")) or heading_text
+            if anchor in seen:
+                continue
+
+            parts: List[str] = []
+            sibling = heading.find_next_sibling()
+            while sibling is not None and getattr(sibling, "name", None) != "h2":
+                if isinstance(sibling, Tag):
+                    if sibling.name in {"ul", "ol"}:
+                        parts.extend(
+                            self._clean_text(li.get_text(" ", strip=True))
+                            for li in sibling.find_all("li", recursive=False)
+                        )
+                    else:
+                        text = self._clean_text(sibling.get_text(" ", strip=True))
+                        if text:
+                            parts.append(text)
+                sibling = sibling.find_next_sibling()
+
+            parts = [part for part in parts if part]
+            body = "\n\n".join(parts)[:max_chars]
+            if not body:
+                continue
+
+            seen.add(anchor)
+            source_url = f"{base_url}#{anchor}" if heading.get("id") else base_url
+            entries.append({
+                "anchor": anchor,
+                "heading": heading_text,
+                "title": f"{self.site_name or self.name}: {heading_text}",
+                "source_url": source_url,
+                "publish_date": publish_date,
+                "content": body,
+                "summary": body[:500],
+            })
+        return entries
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
+        if limit <= 0:
+            return
+        if not self.page_url:
+            raise ValueError("release notes 页面 URL 不能为空")
+
+        response = await self._safe_get(client, self.page_url)
+        if not response:
+            raise RuntimeError(f"{self.name} 页面请求失败: {self.page_url}")
+
+        entries = self._release_entries(response.text, str(response.url), max_chars)
+        entries = sorted(entries, key=lambda entry: entry["publish_date"], reverse=True)
+        for entry in entries[:limit]:
+            yield WebPageArticleContent(
+                id=self._content_id(entry["anchor"]),
+                title=entry["title"],
+                source_url=entry["source_url"],
+                publish_date=entry["publish_date"],
+                content=entry["content"],
+                has_content=bool(entry["content"]),
+                site_name=self.site_name or self.name,
+                source_section=self.source_section,
+                summary=entry["summary"],
+                tags=[self.category, *list(self.content_tags or [])],
+                raw_data={
+                    "listing_url": self.page_url,
+                    "url": entry["source_url"],
+                    "listing_source": self.listing_source_label,
+                    "release_heading": entry["heading"],
+                    "detail_text_length": len(entry["content"]),
+                    "detail_extraction_method": "devsite_release_notes_heading",
+                },
+            )
 
 
-class GemmaReleaseNotesFetcher(SinglePageDocumentFetcher):
+class GemmaReleaseNotesFetcher(DevsiteReleaseNotesFetcher):
     source_id = "docs_gemma_release_notes"
     name = "Gemma Release Notes"
     description = "抓取 Gemma 官方 Release Notes 中的开放模型发布与更新。"
@@ -312,6 +512,7 @@ class GemmaReleaseNotesFetcher(SinglePageDocumentFetcher):
     source_url = page_url
     site_name = "Gemma"
     source_section = "Release Notes"
+    listing_source_label = "gemma_release_notes_updates"
     source_owner = "google"
     source_brand = "gemma"
     source_scope = "open_model_family"

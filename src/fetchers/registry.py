@@ -15,7 +15,6 @@ from fetchers.base import BaseFetcher
 ESSENTIAL_FETCHER_IDS = frozenset({
     # OpenAI / ChatGPT / Codex
     "rss_openai_news",
-    "docs_openai_api_changelog",
     "docs_openai_codex_changelog",
     # Anthropic / Claude
     "web_anthropic_news",
@@ -23,7 +22,6 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "docs_claude_code_changelog",
     # Google / Gemini / Gemma / Antigravity
     "rss_google_gemini_models",
-    "docs_gemini_api_changelog",
     "docs_gemma_release_notes",
     # xAI / Grok
     "docs_xai_release_notes",

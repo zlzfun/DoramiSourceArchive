@@ -13,6 +13,8 @@ from fetchers.impl.webpage_fetcher import (
 from fetchers.impl.curated_core_fetcher import (
     AieraWebsiteFetcher,
     ClaudeCodeChangelogFetcher,
+    GemmaReleaseNotesFetcher,
+    OpenAiCodexChangelogFetcher,
     QbitAiWebsiteFetcher,
     ZaiNewReleasedFetcher,
 )
@@ -587,3 +589,102 @@ def test_zai_new_released_fetcher_splits_updates_by_model():
     assert "long-horizon tasks" in items[0].content
     assert items[0].raw_data["listing_source"] == "zai_new_released_updates"
     assert items[1].raw_data["model_name"] == "GLM-5V-Turbo"
+
+
+def test_gemma_release_notes_split_by_date_and_anchor_by_id():
+    # Gemma 的 <h2> id 是版本名（gemma-4 等），同样按日期标题切分；锚点复用 id。
+    listing_html = """
+    <html>
+      <body>
+        <devsite-content>
+          <div class="devsite-article-body clearfix">
+            <h1>Gemma releases</h1>
+            <h2 id="gemma-4-mtp" data-text="April 16, 2026">April 16, 2026</h2>
+            <ul><li>Release of Gemma 4 - MTP for E2B, E4B, 31B, and 26B A4B.</li></ul>
+            <h2 id="gemma-4" data-text="March 31, 2026">March 31, 2026</h2>
+            <ul><li>Release of Gemma 4 in E2B, E4B, 31B and 26B A4B sizes.</li></ul>
+          </div>
+        </devsite-content>
+      </body>
+    </html>
+    """
+    fetcher = GemmaReleaseNotesFetcher()
+
+    async def fake_safe_get(client, url):
+        assert url == "https://ai.google.dev/gemma/docs/releases"
+        return DummyResponse(listing_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=10)]
+
+    items = asyncio.run(collect_items())
+
+    assert [item.title for item in items] == [
+        "Gemma: April 16, 2026",
+        "Gemma: March 31, 2026",
+    ]
+    assert items[0].publish_date == "2026-04-16T00:00:00+00:00"
+    # 锚点用 <h2> 的 id（版本名），而非日期。
+    assert items[0].source_url == "https://ai.google.dev/gemma/docs/releases#gemma-4-mtp"
+    assert "Gemma 4 - MTP" in items[0].content
+    assert items[0].raw_data["listing_source"] == "gemma_release_notes_updates"
+    assert items[0].raw_data["release_heading"] == "April 16, 2026"
+
+
+def test_openai_codex_changelog_splits_releases_by_list_item():
+    # Codex Changelog 按月份 <h2> 分组，但每条发布是一个 <li data-product> 容器：
+    # 内含 <time>(ISO 日期) + 首个标题(发布名) + 正文。fixture 打乱日期以验证倒序。
+    listing_html = """
+    <html>
+      <body>
+        <main>
+          <h1>Codex changelog</h1>
+          <h2 id="month-2026-05">May 2026</h2>
+          <ul>
+            <li id="github-release-329640454" data-product="codex">
+              <time>2026-05-26</time>
+              <h3>Codex CLI 0.134.0</h3>
+              <h2>New Features</h2>
+              <p>Added richer diff rendering.</p>
+            </li>
+            <li id="codex-2026-05-28-app" data-product="codex">
+              <time>2026-05-29</time>
+              <h3>Computer use and mobile access on Windows 26.527</h3>
+              <p>Computer Use now works on Windows.</p>
+            </li>
+          </ul>
+        </main>
+      </body>
+    </html>
+    """
+    fetcher = OpenAiCodexChangelogFetcher()
+
+    async def fake_safe_get(client, url):
+        assert url == "https://developers.openai.com/codex/changelog"
+        return DummyResponse(listing_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=10)]
+
+    items = asyncio.run(collect_items())
+
+    # 每个 <li> 各成一条，按 <time> 日期倒序（不沿用页面先后）。
+    assert [item.title for item in items] == [
+        "OpenAI Codex: Computer use and mobile access on Windows 26.527",
+        "OpenAI Codex: Codex CLI 0.134.0",
+    ]
+    assert [item.publish_date for item in items] == [
+        "2026-05-29T00:00:00+00:00",
+        "2026-05-26T00:00:00+00:00",
+    ]
+    assert items[0].source_url == "https://developers.openai.com/codex/changelog#codex-2026-05-28-app"
+    # 内容按发布切分，互不串味，且不含重复的日期/标题前缀。
+    assert "Computer Use now works on Windows" in items[0].content
+    assert "Codex CLI" not in items[0].content
+    assert not items[0].content.startswith("2026-05-29")
+    assert items[0].raw_data["listing_source"] == "openai_codex_changelog_updates"
+    assert items[0].raw_data["detail_extraction_method"] == "openai_changelog_list_item"

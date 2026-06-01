@@ -44,7 +44,7 @@ def test_recommended_fetcher_metadata_has_source_dimensions():
 def test_recovered_sources_are_default_visible_with_stable_metadata():
     metadata = {item["id"]: item for item in fetcher_registry.get_all_metadata()}
 
-    assert metadata["docs_openai_api_changelog"]["base_url"] == "https://developers.openai.com/api/docs/changelog"
+    assert metadata["docs_openai_codex_changelog"]["base_url"] == "https://developers.openai.com/codex/changelog"
     assert metadata["rss_google_gemini_models"]["fetch_reliability"] == "stable_public_rss"
     assert metadata["web_qwen_blog"]["base_url"] == "https://qwen.ai/api/v2/article/retrieval"
     assert metadata["web_qwen_blog"]["fetch_reliability"] == "stable_public_api"

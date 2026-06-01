@@ -35,7 +35,6 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `web_anthropic_news` | Anthropic company, model, safety, and enterprise announcements. |
 | `web_claude_blog` | Claude product, Claude Code, and agent updates. |
 | `docs_claude_code_changelog` | Claude Code version-level tool updates. |
-| `docs_gemini_api_changelog` | Gemini API model and developer-platform release notes. |
 | `docs_gemma_release_notes` | Gemma open model release notes. |
 | `docs_xai_release_notes` | xAI developer release notes. |
 | `docs_xai_models` | xAI model catalog and API model reference. |

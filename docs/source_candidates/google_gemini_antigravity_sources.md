@@ -70,7 +70,7 @@ Overlaps with Google DeepMind News and Gemini Models for major model launches, a
 
 ### Validation Notes
 
-Preserve date headings and individual bullet items if implemented. Consider compacting small updates into grouped daily entries.
+Implemented as `docs_gemini_api_changelog` (devsite date-heading splitter; 121 dated records). Removed from the default catalog on 2026-06-02: the changelog is operational/noisy (the "Risks" above) and overlaps with `rss_google_gemini_models` for the launches that matter, so it was judged redundant rather than low-value. The fetcher class was deleted; the shared `DevsiteReleaseNotesFetcher` base is kept (Gemma still uses it). Note `docs_gemma_release_notes` was deliberately **kept** — it is low-frequency but every entry is a real open-model release, and it is Google's only dedicated open-model source. Restore from git history if a dedicated Gemini API changelog node is wanted again.
 
 ## Source: Gemma Release Notes
 

@@ -70,7 +70,7 @@ Overlaps with OpenAI News for major launches and Codex Changelog for Codex-relat
 
 ### Validation Notes
 
-Implemented as `docs_openai_api_changelog` on 2026-05-28 using the redirected developer docs URL.
+Implemented as `docs_openai_api_changelog` on 2026-05-28 using the redirected developer docs URL, with per-entry month/year splitting (133 dated entries). Removed from the default catalog on 2026-06-02: the changelog entries are dense and operational (the "Risks" above), and OpenAI is already covered at a higher signal level by `rss_openai_news` and `docs_openai_codex_changelog`, so this source was judged redundant rather than low-value. The fetcher class was deleted (consistent with the `github_qwen_code_releases` removal); restore from git history if a dedicated API-changelog node is wanted again.
 
 ## Source: Codex Changelog
 

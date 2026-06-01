@@ -400,6 +400,132 @@ Live verification (real `https://code.claude.com/docs/en/changelog`):
 
 - 302 unique version records (vs. the old single long article), each with its own date and bullet content, strictly newest-first from `2.1.158` on `2026-05-30` back to `0.2.21` on `2025-04-02`.
 
+### Gemini API & Gemma Release Notes (Google devsite)
+
+Source ids:
+
+```text
+docs_gemini_api_changelog
+docs_gemma_release_notes
+```
+
+Problem observed (same shape as Z.ai / Claude Code):
+
+- Both are single release-notes pages, and generic single-page extraction (`SinglePageDocumentFetcher`) produced one long article containing every dated release.
+- Both pages are naturally segmented by date, so each date's release should be a separate ledger record.
+
+Root cause:
+
+- These are Google `devsite` pages. Inside the `devsite-content` container each release is an `<h2>` date heading (e.g. `May 28, 2026`, carrying an `id` anchor — `05-28-2026` on Gemini, the version name like `gemma-4-mtp` on Gemma), and the heading's following siblings (`ul`/`p`) are that date's content until the next `<h2>`. It's heading-based segmentation, not a wrapper container.
+
+Decision:
+
+- Add a reusable `DevsiteReleaseNotesFetcher` base (heading-based date splitter) and make both Google fetchers subclass it; treat each date `<h2>` section as one record.
+
+Implemented in:
+
+```text
+src/fetchers/impl/curated_core_fetcher.py
+```
+
+The base (`DevsiteReleaseNotesFetcher`) now:
+
+- walks `<h2>` headings under `devsite-content`, keeping only those that parse as a date (`Month DD, YYYY`, tolerating the one comma-less `December 13 2023` heading);
+- collects each heading's following `ul`/`p`/`ol` siblings (until the next `<h2>`) as the section body, so non-date headings (e.g. "Related guides") and their content are excluded;
+- titles records as `<site>: <date>` (e.g. `Gemini API: May 28, 2026`), sets `publish_date` to the heading date at UTC midnight, and anchors the URL with the heading's `id`;
+- sorts newest-first and dedupes by anchor;
+- marks records with a per-source `listing_source` (`gemini_api_changelog_updates` / `gemma_release_notes_updates`) and `detail_extraction_method = devsite_release_notes_heading`.
+
+Regression tests:
+
+```text
+tests/test_webpage_fetcher.py::test_gemini_api_changelog_splits_releases_by_date_heading
+tests/test_webpage_fetcher.py::test_gemma_release_notes_split_by_date_and_anchor_by_id
+```
+
+Live verification:
+
+- Gemini API (`https://ai.google.dev/gemini-api/docs/changelog`): 121 dated records, strictly newest-first from `2026-05-28` back to `2023-12-13`.
+- Gemma (`https://ai.google.dev/gemma/docs/releases`): 28 dated records, newest-first from `2026-04-16` back to `2024-02-21`, each anchored by its version `id`.
+
+### OpenAI Codex & API Changelog
+
+Source ids:
+
+```text
+docs_openai_codex_changelog
+docs_openai_api_changelog
+```
+
+Problem observed (same shape as the other changelog nodes):
+
+- Both are single changelog pages, and generic single-page extraction (`SinglePageDocumentFetcher`) produced one long article containing every release.
+- Both are naturally segmented (Codex by release, OpenAI API by dated entry), so each release/entry should be a separate ledger record.
+
+Root cause:
+
+- The two pages are the same site (`developers.openai.com`) but use **two different DOM shapes**, so they need separate parsers (no shared base like the Google devsite case):
+  - **Codex**: months are `<h2>` group headings, but each release is its own `<li data-product="codex">` container with a `<time>` (ISO date), a first heading (the release name, e.g. `Codex CLI 0.135.0`), and the body. IDs split into `codex-…` (app updates) and `github-release-…` (CLI releases).
+  - **OpenAI API**: months are `<h3>` headings using full month names (`May, 2026`); each entry under a month is a `div.mt-5` with a left-column date badge using the **abbreviated** month (`Apr 24`), type/scope badges (`Update` / `Feature` + `v1/responses`, `chat-latest`, …), and a Markdown body. The entry date must be completed from the month heading's year — the original cut only resolved `May` because the abbreviation matched the full name; every other month parsed to an empty date.
+
+Decision:
+
+- Give each OpenAI changelog its own `_run` override: split Codex by `<li data-product>` and OpenAI API by `div.mt-5`.
+
+Implemented in:
+
+```text
+src/fetchers/impl/curated_core_fetcher.py
+```
+
+`OpenAiCodexChangelogFetcher` now:
+
+- emits one record per `<li data-product>` under `main`, titled `OpenAI Codex: <release name>`;
+- takes the publish date from the item's `<time>` (ISO), strips the repeated date/title prefix from the body, anchors the URL with the item `id`, sorts newest-first, and dedupes by anchor;
+- marks records with `listing_source = openai_codex_changelog_updates`, `detail_extraction_method = openai_changelog_list_item`.
+
+`OpenAiApiChangelogFetcher` now:
+
+- walks each month `<h3>` and emits one record per `div.mt-5` entry;
+- parses the entry date from the abbreviated day badge completed with the month heading's year (the `_month_map` accepts both full and abbreviated month names);
+- titles records `OpenAI API: <type> · <scopes>` from the badges, takes the Markdown body, sorts newest-first (stable within a day), and dedupes;
+- marks records with `listing_source = openai_api_changelog_updates`, `detail_extraction_method = openai_changelog_month_entry`.
+
+Regression tests:
+
+```text
+tests/test_webpage_fetcher.py::test_openai_codex_changelog_splits_releases_by_list_item
+tests/test_webpage_fetcher.py::test_openai_api_changelog_splits_entries_with_month_year_dates
+```
+
+Live verification:
+
+- Codex (`https://developers.openai.com/codex/changelog`): 83 release records, strictly newest-first from `2026-05-29` back to `2025-05-19`.
+- OpenAI API (`https://developers.openai.com/api/docs/changelog`): 133 dated entries, strictly newest-first from `2026-05-29` back to `2023-10-06` (all years now resolve, not just May).
+
+### Curation follow-up: hide the two API changelogs (2026-06-02)
+
+After the API changelogs were made to split correctly, a content-value review concluded that two of them are **redundant rather than low-value** and were removed from the default catalog:
+
+```text
+docs_openai_api_changelog
+docs_gemini_api_changelog
+```
+
+Rationale:
+
+- Both are dense, operational, parameter-level changelogs. For each brand a higher-signal source already provides launch coverage: OpenAI via `rss_openai_news` + `docs_openai_codex_changelog`, Gemini via `rss_google_gemini_models`. So the standard is "this brand is already covered, the changelog is redundant" — not "API changelogs have no value" (other brands' changelogs such as `docs_zai_new_released` / `docs_deepseek_api_changelog` / `docs_xai_release_notes` are each their brand's coverage pillar and stay).
+- `docs_gemma_release_notes` was deliberately **kept**: it is low-frequency but every entry is a real open-model release, and it is Google's only dedicated open-model source — hiding it would leave a coverage gap, not remove noise.
+
+Implementation (same delete-the-class approach as `github_qwen_code_releases`, because the registry invariant forbids a "registered but hidden" preset):
+
+- Deleted `OpenAiApiChangelogFetcher` and `GeminiApiChangelogFetcher` from `src/fetchers/impl/curated_core_fetcher.py` (the shared `DevsiteReleaseNotesFetcher` base is kept — Gemma still uses it).
+- Removed both ids from `ESSENTIAL_FETCHER_IDS`.
+- Synced `docs/source_catalog.md`, `docs/source_curation_policy.md`, and the two `docs/source_candidates/*` validation notes.
+- Removed the two now-dead fetcher tests; repointed the curation metadata assertion to `docs_openai_codex_changelog`. The registry invariant tests still pass (registered set == essential set + generic capabilities).
+
+Restore from git history if a dedicated API-changelog node is wanted again.
+
 ## Verification Performed
 
 Targeted tests for the node audit and related curation changes:
@@ -411,7 +537,7 @@ uv run pytest tests/test_subscriptions.py tests/test_runtime_role.py tests/test_
 Latest result:
 
 ```text
-42 passed
+44 passed
 ```
 
 The Alibaba/Qwen handoff also reports:
