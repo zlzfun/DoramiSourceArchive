@@ -64,6 +64,8 @@ Three fetcher base classes cover the major source types:
 
 **Embedding model**: Default is `BAAI/bge-m3` (multilingual, supports Chinese queries against English documents). Override with `LOCAL_MODEL_PATH`. Changing models requires `POST /api/vector/reindex-all` to rebuild the collection from scratch.
 
+**RAG is opt-in and lazy-loaded**: The entire vector/RAG subsystem is gated by `[rag] enabled` (default `false`, override `DORAMI_RAG_ENABLED`). When off, `vector_sink` is `None` and no embedding-model weights ever load, keeping startup fast and the server runnable on low-memory hosts. Even when enabled, `ChromaVectorStorage` defers chromadb client / embedding-fn / collection creation to first use via `_ensure_collection()` (mirroring the lazy `_ensure_reranker()` cross-encoder). All `/api/vector*`, `/api/vectorize*`, `/api/rag*`, and the auto-vectorize toggle go through `require_vector_sink()` (503 when disabled); article CRUD skips vector purge when off; MCP semantic-search tools return a structured "RAG disabled" result instead of failing. `rag_enabled` is exposed in `GET /api/runtime`, and the frontend hides 向量雷达, the vector-build column/toggles, and greys out RAG MCP tools when off.
+
 **Fetch run tracking**: Every fetcher execution (manual or scheduled) writes a `FetchRunRecord` and upserts a `SourceStateRecord`. The state record is the authoritative health/cursor store per source; `build_fetcher_health_from_state()` in `app.py` derives the `/api/source-health` response from it, falling back to aggregating raw `FetchRunRecord` rows when no state exists.
 
 **Runtime roles & dual-axis access control**: Surfaces gate on two independent axes (`src/api/app.py`): the deployment **runtime role** (`[runtime] role` = `collector` | `reader` | `all`) and the **login account role** (`admin` | `user`, from `[auth] admin_users` / `user_users`). `collector` surfaces (节点管理/任务运行, article CRUD, vectorization build/manage) require an `admin` account; `reader` surfaces (订阅分发/向量雷达/接入集成, subscription delivery, semantic search) are open to any logged-in account, except archive import, which is admin-only because it mutates the whole archive. So **`admin` is a superuser (collector + reader); a `user` account is a restricted reader**. `disabled_runtime_surface()` enforces this per request via `COLLECTOR_API_PREFIXES` / `READER_API_PREFIXES` (reader-prefix matches short-circuit, so `/api/vector/*` can split: `search`/`stats`/`subscribed-stats` → reader, everything else → collector). The frontend mirrors it through `runtime_capabilities()` → `collector_enabled` / `reader_enabled` / `account_role` per session.
@@ -93,8 +95,10 @@ src/
 │       ├── repository_model_fetcher.py  # GitHub repo + HuggingFace model fetchers (content_type=github_repository / huggingface_model)
 │       ├── webpage_fetcher.py           # BaseWebPageListFetcher + preset subclasses (6 built-in)
 │       ├── wechat_gzh_fetcher.py        # BaseWechatGzhFetcher + preset subclasses (9 built-in, Playwright auth)
+│       ├── curated_core_fetcher.py      # Curated AI-source presets: SinglePageDocumentFetcher (changelogs/release notes) + per-site BaseWebPageListFetcher/BaseFetcher subclasses (量子位, 机器之心, HF Daily Papers, etc.)
 │       ├── article_extractor.py         # Shared HTML→article-body extractor (helper module, not a fetcher); used by webpage/rss fetchers to backfill detail
 │       └── webhook_trigger.py           # Outbound Dify workflow trigger (not an inbound content source)
+├── mcp_server.py            # build_mcp_app(): FastMCP streamable-HTTP server, mounted at /mcp by app.py
 ├── pipeline/core.py         # DataPipeline: drives fetcher → broadcasts to registered storages
 └── storage/
     ├── base.py              # BaseStorage abstract class
@@ -112,7 +116,8 @@ frontend/src/
     ├── FetchRunsTab.jsx     # 任务与运行: scheduled tasks + fetch-run history (collector)
     ├── SubscriptionTab.jsx  # 订阅分发: source catalog one-click subscribe + aggregated feed token/docs (reader)
     ├── VectorTab.jsx        # 向量雷达: semantic search + RAG context export, hard-scoped for user (reader)
-    ├── MCPTab.jsx           # 接入集成: MCP server status + integration snippets (reader)
+    ├── MCPTab.jsx           # 接入集成: MCP server status + integration snippets (reader; greys out RAG tools when rag_enabled is false)
+    ├── SettingsModal.jsx    # Account/runtime settings + admin maintenance actions
     ├── ManualAddModal.jsx   # Manual article entry form
     ├── ArticleDetailModal.jsx
     ├── DateRangePicker.jsx
@@ -180,7 +185,7 @@ frontend/src/
 
 ### Tests
 
-Unit tests live directly under `tests/` as `test_*.py` (covering `rss_fetcher`, `webpage_fetcher`, `article_extractor`, `mcp`, `runtime_role`, and `subscriptions` — the latter two exercise the dual-role gating, subscriptions, aggregated feed, and admin/user vectorization split). Each file self-bootstraps `sys.path` to `src/` so imports resolve without an editable install. Run with pytest:
+Unit tests live directly under `tests/` as `test_*.py` (covering `rss_fetcher`, `webpage_fetcher`, `article_extractor`, `fetcher_curation`, `mcp`, `runtime_role`, `subscriptions`, and `rag_disabled` — `runtime_role`/`subscriptions` exercise the dual-role gating, subscriptions, aggregated feed, and admin/user vectorization split; `rag_disabled` verifies the `vector_sink`-is-`None` path returns 503 / "RAG disabled"). Each file self-bootstraps `sys.path` to `src/` so imports resolve without an editable install. Run with pytest:
 
 ```bash
 .venv/bin/python -m pytest tests/test_rss_fetcher.py
@@ -214,6 +219,7 @@ Loaded by `src/config.py` into the `settings` singleton (read live in `app.py`; 
 
 - `[runtime] role` — `all` (local all-in-one, default) | `collector` (external collection/archive) | `reader` (intranet distribution). Also overridable via `DORAMI_RUNTIME_ROLE`.
 - `[auth] admin_users` / `user_users` — comma-separated `username:password` pairs. `admin` accounts are collector+reader superusers; `user` accounts are reader-only. A username may not appear in both. `[auth] secret` salts the session and subscription/feed token HMACs.
+- `[rag] enabled` — `false` (default) | `true`. Master switch for the vector/RAG subsystem; when off no embedding model loads. Overridable via `DORAMI_RAG_ENABLED`. See *RAG is opt-in and lazy-loaded*.
 
 ### Environment Variables
 
@@ -222,4 +228,5 @@ Loaded by `src/config.py` into the `settings` singleton (read live in `app.py`; 
 | `HF_ENDPOINT` | HuggingFace mirror (defaults to `https://hf-mirror.com` in `main.py`) |
 | `LOCAL_MODEL_PATH` | Path to local sentence-transformers model for offline embedding; defaults to `BAAI/bge-m3` |
 | `DORAMI_RUNTIME_ROLE` | Override `[runtime] role` (`all`/`collector`/`reader`) |
+| `DORAMI_RAG_ENABLED` | Override `[rag] enabled` (`1`/`true`/`yes`/`on` to enable the vector/RAG subsystem) |
 | `XIAOLUBAN_AUTH` / `XIAOLUBAN_RECEIVER` | Internal notification bot credentials for WeChat QR code alerts |

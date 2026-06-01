@@ -40,8 +40,6 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `docs_xai_release_notes` | xAI developer release notes. |
 | `docs_xai_models` | xAI model catalog and API model reference. |
 | `web_qwen_blog` | Qwen model, product, multimodal, and agent updates. |
-| `docs_alibaba_model_studio_announcements` | Alibaba Cloud Model Studio model announcements. |
-| `github_qwen_code_releases` | Qwen Code release updates. |
 | `docs_deepseek_api_changelog` | DeepSeek API and model changelog. |
 | `github_deepseek_repositories` | Early DeepSeek model/tool signals from public repositories. |
 | `hf_deepseek_models` | DeepSeek model releases on Hugging Face. |

@@ -474,6 +474,16 @@ def _date_end_value(raw_value: str) -> str:
     return raw_value if "T" in raw_value else f"{raw_value}T23:59:59"
 
 
+def article_recency_order(*prefix_ordering):
+    """Canonical newest-first ordering for cross-source archive views."""
+    return (
+        *prefix_ordering,
+        ArticleRecord.publish_date.desc(),
+        ArticleRecord.fetched_date.desc(),
+        ArticleRecord.id.desc(),
+    )
+
+
 def apply_article_query_filters(
         query,
         content_type: Optional[str] = None,
@@ -2836,9 +2846,9 @@ def get_articles(
             count_query = count_query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
         if scope == "prioritize" and subscribed_ids:
             subscribed_first = case((ArticleRecord.source_id.in_(subscribed_ids), 0), else_=1)
-            query = query.order_by(subscribed_first, ArticleRecord.fetched_date.desc())
+            query = query.order_by(*article_recency_order(subscribed_first))
         else:
-            query = query.order_by(ArticleRecord.fetched_date.desc())
+            query = query.order_by(*article_recency_order())
         total = int(session.exec(count_query).one() or 0) if include_total else None
         records = session.exec(query.offset(safe_skip).limit(safe_limit)).all()
         if not include_total:

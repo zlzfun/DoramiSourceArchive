@@ -259,14 +259,14 @@ def test_articles_subscribed_scope_only_and_prioritize(monkeypatch, tmp_path):
     _set_runtime_role(monkeypatch, app_module, "reader")
 
     with Session(sink.engine) as session:
-        # Subscribed source: older fetched_date.
+        # Subscribed source: older publish_date but newer fetched_date.
         session.add(ArticleRecord(
             id="sub1", title="sub1", content_type="rss_article", source_id="rss_openai",
             source_url="https://e.test", publish_date="2026-05-10T00:00:00",
-            fetched_date="2026-05-10T00:00:00", has_content=True, content="x",
+            fetched_date="2026-05-30T00:00:00", has_content=True, content="x",
             extensions_json="{}", is_vectorized=False,
         ))
-        # Unsubscribed source: newer fetched_date.
+        # Unsubscribed source: newer publish_date but older fetched_date.
         session.add(ArticleRecord(
             id="oth1", title="oth1", content_type="rss_article", source_id="rss_other",
             source_url="https://e.test", publish_date="2026-05-20T00:00:00",
@@ -280,7 +280,7 @@ def test_articles_subscribed_scope_only_and_prioritize(monkeypatch, tmp_path):
         client.post("/api/subscriptions", json={"name": "OpenAI", "filters": {"source_ids": "rss_openai"}})
 
         default_order = [a["id"] for a in client.get("/api/articles").json()]
-        assert default_order == ["oth1", "sub1"]  # newest first
+        assert default_order == ["oth1", "sub1"]  # publish_date newest first, not fetched_date
 
         only = [a["id"] for a in client.get("/api/articles?subscribed_scope=only").json()]
         assert only == ["sub1"]

@@ -10,13 +10,13 @@ These records are documentation-only. They do not imply implementation or defaul
 - source_owner: `alibaba`
 - source_brand: `qwen`
 - source_scope: `model_family`
-- source_channel: `blog`
-- source_url: `https://qwen.ai/blog`
+- source_channel: `blog_api`
+- source_url: `https://qwen.ai/api/v2/article/retrieval`
 - provenance_tier: `tier0_primary`
 - content_tags: `model_release`, `research_paper`, `product_update`, `developer_tool`
 - signal_strength: `high_signal`
 - noise_risk: `low_noise`
-- fetch_reliability: `blocked_or_fragile`
+- fetch_reliability: `stable_public_api`
 
 ### Target Coverage
 
@@ -28,49 +28,15 @@ This is the most direct Qwen brand source and should be the first Alibaba/Qwen c
 
 ### Risks / Open Questions
 
-The public page appears client-rendered and may need embedded-data or API parsing. Existing project notes already use Qwen page-config extraction.
+The public page is client-rendered, so the source depends on Qwen's public article retrieval API remaining stable.
 
 ### Known Overlap
 
-Overlaps with Alibaba Cloud Model Studio announcements for commercial API availability and with GitHub/Hugging Face for open model publication.
+Overlaps with GitHub/Hugging Face for open model publication and Model Studio surfaces for commercial API availability.
 
 ### Validation Notes
 
-Validate the existing `qwen.ai` page-config approach before implementation.
-
-## Source: Alibaba Cloud Model Studio Model Announcements
-
-- status: `under_review`
-- source_owner: `alibaba_cloud`
-- source_brand: `model_studio`
-- source_scope: `api_platform`
-- source_channel: `docs_release_notes`
-- source_url: `https://www.alibabacloud.com/help/en/model-studio/model-announcements`
-- provenance_tier: `tier0_primary`
-- content_tags: `model_release`, `api_platform`, `product_update`
-- signal_strength: `high_signal`
-- noise_risk: `medium_noise`
-- fetch_reliability: `stable_public`
-
-### Target Coverage
-
-Qwen commercial model availability, model snapshots, regional rollout, pricing or availability announcements, Model Studio/Bailian model update tables, and API-facing model lifecycle changes.
-
-### Inclusion Reasons
-
-This is the strongest structured source for Alibaba Cloud Model Studio/Bailian model availability and has explicit model-update tables.
-
-### Risks / Open Questions
-
-It may include regional platform details and pricing notices that are lower priority than model capability releases.
-
-### Known Overlap
-
-Overlaps with Qwen Blog for major Qwen launches and with Qwen GitHub/Hugging Face for open-source model publication.
-
-### Validation Notes
-
-The page exposes dated model-update rows and should be feasible to parse if table structure remains stable.
+Use the current `qwen.ai` article retrieval API, which backs the Research and Blog surfaces and includes recent model releases such as Qwen3.7.
 
 ## Source: Qwen Code GitHub Releases
 

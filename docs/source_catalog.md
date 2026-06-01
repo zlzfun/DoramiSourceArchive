@@ -54,9 +54,7 @@ This catalog describes the current source implementation after the additive sour
 
 | Source ID | Base URL |
 | --- | --- |
-| `web_qwen_blog` | `https://qwen.ai/blog` |
-| `docs_alibaba_model_studio_announcements` | `https://www.alibabacloud.com/help/en/model-studio/model-announcements` |
-| `github_qwen_code_releases` | `https://github.com/QwenLM/qwen-code/releases` |
+| `web_qwen_blog` | `https://qwen.ai/api/v2/article/retrieval` |
 
 ### DeepSeek
 

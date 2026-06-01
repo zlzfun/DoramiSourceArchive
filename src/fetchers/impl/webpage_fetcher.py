@@ -469,6 +469,124 @@ class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
 
+    # Anthropic News 是 Next.js RSC 流式渲染：初始 DOM 里只有首屏约 11 条 <a>，更早的
+    # 文章（页面里要点 “See More” 才显示）都嵌在 self.__next_f 的转义 JSON 流中，作为
+    # Sanity 风格的 {"_type":"post", "publishedOn", "slug":{"current":...}, "title",
+    # "summary", "subjects":[...]} 对象出现。通用锚点抓取既会把日期+分类拼进标题、混入
+    # 导航页脚噪声，也抓不到首屏之外的旧文。这里复用基类已解码 __next_f 的能力，只筛选
+    # _type=="post" 对象，拿到全部条目与干净标题、发布日期，再复用正文抓取/排序逻辑。
+    def _anthropic_news_entries(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+        entries: List[Dict[str, Any]] = []
+        seen = set()
+        for payload in self._script_payloads(soup):
+            for value in self._json_values_from_text(payload):
+                for record in self._walk_json(value):
+                    if record.get("_type") != "post":
+                        continue
+                    slug = record.get("slug")
+                    if isinstance(slug, dict):
+                        slug = slug.get("current")
+                    if not isinstance(slug, str) or not slug:
+                        continue
+                    url = self._entry_url_from_slug(slug)
+                    if not self._matches_article_url(url) or url in seen:
+                        continue
+                    seen.add(url)
+
+                    title = self._clean_text(str(record.get("title") or ""))
+                    summary_value = record.get("summary") or record.get("description") or ""
+                    if not isinstance(summary_value, str):
+                        summary_value = ""
+                    raw_date = record.get("publishedOn") or record.get("date") or ""
+                    if not isinstance(raw_date, str):
+                        raw_date = ""
+                    # publishedOn 是完整 ISO（带 Z 或时区偏移），date 是纯日期；统一规范化为
+                    # UTC isoformat，避免下游字符串比较时混用 Z / +00:00 两种格式。
+                    publish_date = self._extract_datetime_or_empty(raw_date)
+                    if not publish_date and raw_date:
+                        parsed = self._sort_datetime(raw_date)
+                        if parsed != datetime.min.replace(tzinfo=timezone.utc):
+                            publish_date = parsed.astimezone(timezone.utc).isoformat()
+                        else:
+                            publish_date = raw_date
+                    subjects = [
+                        str(tag.get("label", "")).strip()
+                        for tag in (record.get("subjects") or [])
+                        if isinstance(tag, dict) and tag.get("label")
+                    ]
+                    entries.append({
+                        "url": url,
+                        "title": title or "未命名网页条目",
+                        "summary": self._clean_text(summary_value)[:500],
+                        "publish_date": publish_date,
+                        "subjects": subjects,
+                        "listing_source": "anthropic_news_rsc",
+                    })
+        return entries
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
+        detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
+        if limit <= 0:
+            return
+
+        response = await self._safe_get(client, self.listing_url)
+        if not response:
+            raise RuntimeError(f"Anthropic News 页面请求失败: {self.listing_url}")
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        entries = self._anthropic_news_entries(soup)
+        if not entries:
+            # RSC 结构变更时回退到通用锚点抓取，保证不静默失败
+            async for article in super()._run(client, **kwargs):
+                yield article
+            return
+
+        entries.sort(key=lambda entry: self._sort_datetime(entry.get("publish_date", "")), reverse=True)
+
+        emitted = 0
+        for entry in entries:
+            url = entry["url"]
+            title = entry["title"]
+            summary = entry["summary"]
+            publish_date = entry.get("publish_date") or self._extract_datetime(title)
+
+            detail = {"title": "", "text": "", "method": "", "url": ""}
+            if fetch_detail:
+                detail = await self._detail_for_url(client, url, detail_max_chars)
+                if (title == "未命名网页条目" or title.lower() in self.generic_link_titles) and detail["title"]:
+                    title = detail["title"]
+            content = detail["text"] or summary
+
+            raw_data = self._raw_entry(url, title, summary)
+            raw_data.update({
+                "listing_source": entry["listing_source"],
+                "subjects": entry.get("subjects", []),
+                "detail_fetched": fetch_detail,
+                "detail_title": detail["title"],
+                "detail_text_length": len(detail["text"]),
+                "detail_extraction_method": detail.get("method", ""),
+                "detail_source_url": detail.get("url", ""),
+            })
+
+            yield WebPageArticleContent(
+                id=self._content_id(url),
+                title=title,
+                source_url=url,
+                publish_date=publish_date,
+                content=content,
+                has_content=bool(content),
+                site_name=self.site_name or self.name,
+                source_section=self.source_section,
+                summary=summary,
+                tags=[self.category, "webpage"] + entry.get("subjects", []),
+                raw_data=raw_data,
+            )
+            emitted += 1
+            if emitted >= limit:
+                break
+
 
 class ClaudeBlogWebFetcher(BaseWebPageListFetcher):
     source_id = "web_claude_blog"
@@ -646,7 +764,7 @@ class QwenBlogWebFetcher(BaseWebPageListFetcher):
     name = "Qwen Blog"
     description = "抓取 Qwen 官方 Blog 中的模型、产品、多模态与 Agent 动态。"
     icon = "🟦"
-    listing_url = "https://qwen.ai/api/page_config?code=news.news-list"
+    listing_url = "https://qwen.ai/api/v2/article/retrieval"
     site_name = "Qwen"
     source_section = "Blog"
     article_url_patterns = ["qwen.ai/blog", "docs.qwenlm.ai/"]
@@ -656,12 +774,12 @@ class QwenBlogWebFetcher(BaseWebPageListFetcher):
     source_brand = "qwen"
     source_scope = "model_family"
     source_channel = "blog_api"
-    source_url = "https://qwen.ai/blog"
+    source_url = listing_url
     provenance_tier = "tier0_primary"
     content_tags = ["model_release", "product_update", "research_paper", "developer_tool"]
     signal_strength = "high_signal"
     noise_risk = "low_noise"
-    fetch_reliability = "fragile_js_api"
+    fetch_reliability = "stable_public_api"
 
     def _qwen_block_text(self, value: Any) -> List[str]:
         texts: List[str] = []
@@ -696,69 +814,89 @@ class QwenBlogWebFetcher(BaseWebPageListFetcher):
 
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         limit = self._entry_limit(kwargs.get("limit"))
-        response = await self._safe_get(client, self.listing_url)
+        response = await self._safe_get(
+            client,
+            self.listing_url,
+            params={"type": "qwen_ai", "language": "en-US"},
+        )
         if not response:
             raise RuntimeError(f"Qwen Blog API 请求失败: {self.listing_url}")
 
         try:
-            records = response.json()
+            payload = response.json()
         except ValueError:
             raise RuntimeError("Qwen Blog API 返回了非 JSON 内容")
+        records = payload.get("data", {}).get("articles", []) if isinstance(payload, dict) else payload
         if not isinstance(records, list):
             self.logger.warning("Qwen Blog API 返回了非列表结构。")
             return
 
         records = sorted(
             (record for record in records if isinstance(record, dict) and not record.get("draft")),
-            key=lambda record: self._sort_datetime(str(record.get("date") or "")),
+            key=lambda record: self._sort_datetime(str(record.get("date") or record.get("extra", {}).get("date") or "")),
             reverse=True,
         )
         for record in records[:limit]:
-            article_id = str(record.get("id") or "").strip()
+            extra = record.get("extra") if isinstance(record.get("extra"), dict) else {}
+            article_id = str(record.get("path") or record.get("id") or "").strip()
             token_links = str(record.get("tokenLinks") or "").strip()
             source_url = f"https://qwen.ai/blog?id={article_id}" if article_id else token_links or "https://qwen.ai/blog"
             title = self._clean_text(str(record.get("title") or "")) or "未命名 Qwen Blog 条目"
-            summary = self._clean_text(str(record.get("description") or record.get("introduction") or ""))[:500]
-            tags = [str(tag) for tag in record.get("tags") or []]
+            summary = self._clean_text(str(extra.get("description") or extra.get("introduction") or record.get("description") or record.get("introduction") or ""))[:500]
+            tags = [str(tag) for tag in extra.get("tags") or record.get("tags") or []]
             content = summary
+            html_content = str(record.get("content") or "")
             raw_data = {
                 "listing_url": self.listing_url,
                 "url": source_url,
                 "tokenLinks": token_links,
-                "author": record.get("author") or "",
-                "readTime": record.get("readTime") or "",
-                "word_count": record.get("word_count") or "",
+                "author": extra.get("author") or record.get("author") or "",
+                "readTime": extra.get("readTime") or record.get("readTime") or "",
+                "word_count": extra.get("wordCount") or record.get("word_count") or "",
                 "tags": tags,
-                "listing_source": "qwen_page_config",
+                "listing_source": "qwen_article_retrieval",
             }
 
             if self._bool_param(kwargs.get("fetch_detail")):
-                detail_url = token_links or source_url
                 max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
-                json_detail = await self._qwen_json_detail(client, detail_url, max_chars)
-                if json_detail["text"]:
-                    content = json_detail["text"]
+                if html_content:
+                    soup = BeautifulSoup(html_content, "html.parser")
+                    for tag in soup(["script", "style", "noscript"]):
+                        tag.decompose()
+                    text = self._clean_text(soup.get_text(" "))
+                    if text:
+                        content = text[:max_chars]
                     raw_data.update({
-                        "detail_text_length": len(json_detail["text"]),
-                        "detail_extraction_method": json_detail["method"],
-                        "detail_source_url": json_detail["url"],
+                        "detail_text_length": len(content),
+                        "detail_extraction_method": "qwen_article_retrieval_html",
+                        "detail_source_url": source_url,
                     })
                 else:
-                    detail = await extract_article_detail(client, self._safe_get, detail_url, "", max_chars)
-                    if detail.text and len(detail.text) > len(content):
-                        content = detail.text
-                    raw_data.update({
-                        "detail_title": detail.title,
-                        "detail_text_length": len(detail.text),
-                        "detail_extraction_method": detail.method,
-                        "detail_source_url": detail.url,
-                    })
+                    detail_url = token_links or source_url
+                    json_detail = await self._qwen_json_detail(client, detail_url, max_chars)
+                    if json_detail["text"]:
+                        content = json_detail["text"]
+                        raw_data.update({
+                            "detail_text_length": len(json_detail["text"]),
+                            "detail_extraction_method": json_detail["method"],
+                            "detail_source_url": json_detail["url"],
+                        })
+                    else:
+                        detail = await extract_article_detail(client, self._safe_get, detail_url, "", max_chars)
+                        if detail.text and len(detail.text) > len(content):
+                            content = detail.text
+                        raw_data.update({
+                            "detail_title": detail.title,
+                            "detail_text_length": len(detail.text),
+                            "detail_extraction_method": detail.method,
+                            "detail_source_url": detail.url,
+                        })
 
             yield WebPageArticleContent(
                 id=self._content_id(source_url),
                 title=title,
                 source_url=source_url,
-                publish_date=str(record.get("date") or datetime.now(timezone.utc).isoformat()),
+                publish_date=str(record.get("date") or extra.get("date") or datetime.now(timezone.utc).isoformat()),
                 content=content,
                 has_content=bool(content),
                 site_name=self.site_name,

@@ -4,14 +4,27 @@ import html
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Dict, List
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
+from zoneinfo import ZoneInfo
 
 import httpx
+from bs4 import BeautifulSoup, Tag
 
 from fetchers.base import BaseFetcher
 from fetchers.impl.article_extractor import extract_article_detail
 from fetchers.impl.webpage_fetcher import BaseWebPageListFetcher
 from models.content import BaseContent, WebPageArticleContent
+
+
+def _version_sort_key(version: str) -> tuple:
+    """把 '2.1.158' 解析为可排序的数值元组，非数字段按 0 处理。"""
+    parts = []
+    for part in (version or "").split("."):
+        try:
+            parts.append(int(part))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
 
 
 class SinglePageDocumentFetcher(BaseFetcher):
@@ -40,6 +53,9 @@ class SinglePageDocumentFetcher(BaseFetcher):
         except (TypeError, ValueError):
             self.logger.warning(f"正文长度参数无效，使用默认值: {raw_value}")
             return default
+
+    def _clean_text(self, text: str) -> str:
+        return " ".join((text or "").split())
 
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
@@ -143,6 +159,129 @@ class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
 
+    # Claude Code Changelog 是 Mintlify <Update> 组件渲染：每个版本是一个独立块，
+    # 由 data-component-part="update-label"(版本号) / "update-description"(发布日期，如
+    # May 30, 2026) / "update-content"(更新条目) 三段组成。通用单页抓取会把全部版本糅成
+    # 一篇长文、丢失版本号粒度与逐版本日期。这里按版本块切分，每个版本发布作为一条记录。
+    @classmethod
+    def get_parameter_schema(cls) -> List[Dict[str, Any]]:
+        return [
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 50},
+            {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
+        ]
+
+    def _entry_limit(self, raw_limit: Any) -> int:
+        if raw_limit in (None, ""):
+            return 50
+        try:
+            return max(int(raw_limit), 0)
+        except (TypeError, ValueError):
+            self.logger.warning(f"Claude Code Changelog 条数参数无效，使用默认值: {raw_limit}")
+            return 50
+
+    def _content_id(self, version: str) -> str:
+        digest = hashlib.sha1(f"{self.source_id}:{version}".encode("utf-8")).hexdigest()[:16]
+        return f"{self.source_id}_{digest}"
+
+    def _parse_release_date(self, raw_date: str) -> str:
+        raw_date = self._clean_text(raw_date)
+        if not raw_date:
+            return ""
+        try:
+            parsed = datetime.strptime(raw_date, "%B %d, %Y")
+        except ValueError:
+            return ""
+        return parsed.replace(tzinfo=timezone.utc).isoformat()
+
+    def _release_entries(self, html_text: str, resolved_url: str, max_chars: int) -> List[Dict[str, Any]]:
+        soup = BeautifulSoup(html_text, "html.parser")
+        content = soup.select_one("#content-area") or soup
+        base_url = resolved_url.split("#", 1)[0]
+
+        entries: List[Dict[str, Any]] = []
+        seen_versions = set()
+        for label in content.select('[data-component-part="update-label"]'):
+            version = self._clean_text(label.get_text(" ", strip=True))
+            if not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", version) or version in seen_versions:
+                continue
+
+            # 向上找到同时含描述与正文的版本块容器
+            block: Tag | None = label
+            for _ in range(6):
+                block = block.parent if isinstance(block, Tag) else None
+                if block is None:
+                    break
+                if block.select_one('[data-component-part="update-content"]'):
+                    break
+            if block is None:
+                continue
+
+            desc_node = block.select_one('[data-component-part="update-description"]')
+            content_node = block.select_one('[data-component-part="update-content"]')
+            if content_node is None:
+                continue
+
+            raw_date = desc_node.get_text(" ", strip=True) if desc_node else ""
+            publish_date = self._parse_release_date(raw_date)
+
+            bullets = [self._clean_text(node.get_text(" ", strip=True)) for node in content_node.select("li")]
+            bullets = [bullet for bullet in bullets if bullet]
+            body = "\n\n".join(bullets) if bullets else self._clean_text(content_node.get_text(" ", strip=True))
+            body = body[:max_chars]
+            if not body:
+                continue
+
+            seen_versions.add(version)
+            entries.append({
+                "version": version,
+                "release_date_text": raw_date,
+                "title": f"Claude Code {version}",
+                "source_url": f"{base_url}#{version}",
+                "publish_date": publish_date,
+                "content": body,
+                "summary": body[:500],
+            })
+        return entries
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
+        if limit <= 0:
+            return
+
+        response = await self._safe_get(client, self.page_url)
+        if not response:
+            raise RuntimeError(f"Claude Code Changelog 页面请求失败: {self.page_url}")
+
+        entries = self._release_entries(response.text, str(response.url), max_chars)
+        entries = sorted(
+            entries,
+            key=lambda entry: (entry["publish_date"] or "", _version_sort_key(entry["version"])),
+            reverse=True,
+        )
+        for entry in entries[:limit]:
+            yield WebPageArticleContent(
+                id=self._content_id(entry["version"]),
+                title=entry["title"],
+                source_url=entry["source_url"],
+                publish_date=entry["publish_date"] or datetime.now(timezone.utc).isoformat(),
+                content=entry["content"],
+                has_content=bool(entry["content"]),
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=entry["summary"],
+                tags=[self.category, *list(self.content_tags or [])],
+                raw_data={
+                    "listing_url": self.page_url,
+                    "url": entry["source_url"],
+                    "listing_source": "claude_code_changelog_updates",
+                    "version": entry["version"],
+                    "release_date_text": entry["release_date_text"],
+                    "detail_text_length": len(entry["content"]),
+                    "detail_extraction_method": "mintlify_update_component",
+                },
+            )
+
 
 class GeminiApiChangelogFetcher(SinglePageDocumentFetcher):
     source_id = "docs_gemini_api_changelog"
@@ -224,26 +363,6 @@ class XAiModelsDocsFetcher(SinglePageDocumentFetcher):
     fetch_reliability = "stable_public"
 
 
-class AlibabaModelStudioAnnouncementsFetcher(SinglePageDocumentFetcher):
-    source_id = "docs_alibaba_model_studio_announcements"
-    name = "Alibaba Model Studio Model Announcements"
-    description = "抓取阿里云 Model Studio 模型公告中的 Qwen 商业模型与 API 更新。"
-    icon = "🟦"
-    page_url = "https://www.alibabacloud.com/help/en/model-studio/model-announcements"
-    source_url = page_url
-    site_name = "Alibaba Cloud Model Studio"
-    source_section = "Model Announcements"
-    source_owner = "alibaba_cloud"
-    source_brand = "model_studio"
-    source_scope = "api_platform"
-    source_channel = "docs_release_notes"
-    provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "api_platform", "product_update"]
-    signal_strength = "high_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public"
-
-
 class DeepSeekApiChangeLogFetcher(SinglePageDocumentFetcher):
     source_id = "docs_deepseek_api_changelog"
     name = "DeepSeek API Change Log"
@@ -282,6 +401,97 @@ class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
+
+    @classmethod
+    def get_parameter_schema(cls) -> List[Dict[str, Any]]:
+        return [
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 50},
+            {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
+        ]
+
+    def _entry_limit(self, raw_limit: Any) -> int:
+        if raw_limit in (None, ""):
+            return 50
+        try:
+            return max(int(raw_limit), 0)
+        except (TypeError, ValueError):
+            self.logger.warning(f"Z.ai 发布条数参数无效，使用默认值: {raw_limit}")
+            return 50
+
+    def _content_id(self, release_date: str, model_name: str) -> str:
+        digest = hashlib.sha1(f"{release_date}:{model_name}".encode("utf-8")).hexdigest()[:16]
+        return f"{self.source_id}_{digest}"
+
+    def _release_entries(self, html_text: str, resolved_url: str, max_chars: int) -> List[Dict[str, Any]]:
+        soup = BeautifulSoup(html_text, "html.parser")
+        entries: List[Dict[str, Any]] = []
+        for item in soup.select("div.update.update-container"):
+            release_date = self._clean_text(str(item.get("id") or ""))
+            if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", release_date):
+                continue
+
+            text_parts = [
+                self._clean_text(part)
+                for part in item.stripped_strings
+                if self._clean_text(part) and self._clean_text(part) != "\u200b"
+            ]
+            if len(text_parts) < 2:
+                continue
+            model_name = text_parts[1]
+
+            bullets = [self._clean_text(node.get_text(" ", strip=True)) for node in item.select("li")]
+            bullets = [bullet for bullet in bullets if bullet]
+            content = "\n\n".join(bullets) if bullets else "\n\n".join(text_parts[2:])
+            content = content[:max_chars]
+            if not content:
+                continue
+
+            source_url = f"{resolved_url.split('#', 1)[0]}#{release_date}"
+            entries.append({
+                "release_date": release_date,
+                "model_name": model_name,
+                "title": f"Z.ai New Released: {model_name}",
+                "source_url": source_url,
+                "publish_date": f"{release_date}T00:00:00+00:00",
+                "content": content,
+                "summary": content[:500],
+            })
+        return entries
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
+        if limit <= 0:
+            return
+
+        response = await self._safe_get(client, self.page_url)
+        if not response:
+            raise RuntimeError(f"Z.ai New Released 页面请求失败: {self.page_url}")
+
+        entries = self._release_entries(response.text, str(response.url), max_chars)
+        entries = sorted(entries, key=lambda entry: entry["publish_date"], reverse=True)
+        for entry in entries[:limit]:
+            yield WebPageArticleContent(
+                id=self._content_id(entry["release_date"], entry["model_name"]),
+                title=entry["title"],
+                source_url=entry["source_url"],
+                publish_date=entry["publish_date"],
+                content=entry["content"],
+                has_content=bool(entry["content"]),
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=entry["summary"],
+                tags=[self.category, *list(self.content_tags or [])],
+                raw_data={
+                    "listing_url": self.page_url,
+                    "url": entry["source_url"],
+                    "listing_source": "zai_new_released_updates",
+                    "release_date": entry["release_date"],
+                    "model_name": entry["model_name"],
+                    "detail_text_length": len(entry["content"]),
+                    "detail_extraction_method": "mintlify_update_container",
+                },
+            )
 
 
 class ByteDanceSeedModelsFetcher(SinglePageDocumentFetcher):
@@ -372,10 +582,10 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
     name = "量子位 Website"
     description = "抓取量子位官网中的中文 AI 新闻、模型、产品和产业动态。"
     icon = "📰"
-    listing_url = "https://www.qbitai.com/"
+    listing_url = "https://www.qbitai.com/category/%E8%B5%84%E8%AE%AF"
     source_url = listing_url
     site_name = "量子位"
-    source_section = "Website"
+    source_section = "资讯"
     article_url_patterns = ["qbitai.com/"]
     exclude_url_patterns = ["qbitai.com/#", "qbitai.com/about", "qbitai.com/contact"]
     default_fetch_detail = True
@@ -393,7 +603,141 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
         if not super()._matches_article_url(url):
             return False
         path = urlparse(url).path.strip("/")
-        return bool(path) and not path.startswith(("category", "tag", "author", "page"))
+        return bool(re.fullmatch(r"20\d{2}/\d{2}/\d+\.html", path))
+
+    def _list_items(self, soup: BeautifulSoup) -> List[Tag]:
+        return soup.select(".article_list > .picture_text")
+
+    def _parse_listing_datetime(self, raw_value: str, now: datetime | None = None) -> str:
+        raw_value = self._clean_text(raw_value)
+        if not raw_value:
+            return ""
+
+        now = now or datetime.now(ZoneInfo("Asia/Shanghai"))
+        iso_date = self._extract_datetime_or_empty(raw_value)
+        if iso_date:
+            return iso_date
+
+        hour_match = re.search(r"(\d+)\s*小时前", raw_value)
+        if hour_match:
+            return (now - timedelta(hours=int(hour_match.group(1)))).astimezone(timezone.utc).isoformat()
+
+        minute_match = re.search(r"(\d+)\s*分钟前", raw_value)
+        if minute_match:
+            return (now - timedelta(minutes=int(minute_match.group(1)))).astimezone(timezone.utc).isoformat()
+
+        time_match = re.search(r"(?:(昨天|前天)\s*)?(\d{1,2}):(\d{2})", raw_value)
+        if time_match:
+            relative_day, hour, minute = time_match.groups()
+            days_back = 1 if relative_day == "昨天" else 2 if relative_day == "前天" else 0
+            base_date = (now - timedelta(days=days_back)).date()
+            return datetime(
+                base_date.year,
+                base_date.month,
+                base_date.day,
+                int(hour),
+                int(minute),
+                tzinfo=ZoneInfo("Asia/Shanghai"),
+            ).astimezone(timezone.utc).isoformat()
+
+        return ""
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
+        detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
+        if limit <= 0:
+            return
+
+        response = await self._safe_get(client, self.listing_url)
+        if not response:
+            raise RuntimeError(f"量子位首页请求失败: {self.listing_url}")
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        seen_urls: set[str] = set()
+        entries: List[Dict[str, Any]] = []
+        reference_now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        for order, item in enumerate(self._list_items(soup)):
+            title_link = item.select_one(".text_box h4 a[href]")
+            if not title_link:
+                continue
+            url = self._normalize_article_url(urljoin(str(response.url), str(title_link["href"])))
+            if not self._matches_article_url(url) or url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            title = self._clean_text(title_link.get_text(" ", strip=True)) or "未命名量子位条目"
+            summary_node = item.select_one(".text_box > p")
+            summary = self._clean_text(summary_node.get_text(" ", strip=True) if summary_node else "")[:500]
+            time_node = item.select_one(".info .time")
+            raw_publish_date = self._clean_text(time_node.get_text(" ", strip=True) if time_node else "")
+            publish_date = self._parse_listing_datetime(raw_publish_date, reference_now) or self._extract_datetime(f"{title} {summary}")
+            author_node = item.select_one(".info .author")
+            author = self._clean_text(author_node.get_text(" ", strip=True) if author_node else "")
+            tags = [self._clean_text(tag.get_text(" ", strip=True)) for tag in item.select(".tags_s a")]
+            tags = [tag for tag in tags if tag]
+            image_node = item.select_one(".picture img")
+            media_url = ""
+            if image_node:
+                media_url = str(image_node.get("data-original") or image_node.get("src") or "")
+
+            entries.append({
+                "url": url,
+                "title": title,
+                "summary": summary,
+                "publish_date": publish_date,
+                "raw_publish_date": raw_publish_date,
+                "author": author,
+                "tags": tags,
+                "media_url": media_url,
+                "order": order,
+            })
+
+        entries = sorted(
+            entries,
+            key=lambda entry: (self._sort_datetime(entry["publish_date"]), -entry["order"]),
+            reverse=True,
+        )
+
+        for entry in entries[:limit]:
+            url = entry["url"]
+            title = entry["title"]
+            summary = entry["summary"]
+            detail = {"title": "", "text": "", "method": "", "url": ""}
+            if fetch_detail:
+                detail = await self._detail_for_url(client, url, detail_max_chars)
+                if detail["title"] and not title:
+                    title = detail["title"]
+            content = detail["text"] or summary
+
+            yield WebPageArticleContent(
+                id=self._content_id(url),
+                title=title,
+                source_url=url,
+                publish_date=entry["publish_date"],
+                content=content,
+                has_content=bool(content),
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=summary,
+                tags=[self.category, "webpage", *entry["tags"]],
+                raw_data={
+                    "listing_url": self.listing_url,
+                    "url": url,
+                    "title": title,
+                    "summary": summary,
+                    "listing_source": "qbitai_main_article_list",
+                    "listing_publish_date": entry["raw_publish_date"],
+                    "author": entry["author"],
+                    "tags": entry["tags"],
+                    "media_url": entry["media_url"],
+                    "detail_fetched": fetch_detail,
+                    "detail_title": detail["title"],
+                    "detail_text_length": len(detail["text"]),
+                    "detail_extraction_method": detail.get("method", ""),
+                    "detail_source_url": detail.get("url", ""),
+                },
+            )
 
 
 class AieraWebsiteFetcher(BaseWebPageListFetcher):
@@ -430,7 +774,169 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
         if not super()._matches_article_url(url):
             return False
         path = urlparse(url).path.strip("/")
-        return bool(path) and path[:4].isdigit()
+        return bool(re.fullmatch(r"20\d{2}/\d{2}/\d{2}/.+", path))
+
+    def _list_items(self, soup: BeautifulSoup) -> List[Tag]:
+        items = soup.select("main#main .entries > article.entry-card")
+        if items:
+            return items
+        return soup.select("main#main article.entry-card")
+
+    def _parse_listing_datetime(self, raw_value: str) -> str:
+        raw_value = self._clean_text(raw_value)
+        if not raw_value:
+            return ""
+
+        try:
+            parsed = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+            return parsed.isoformat()
+        except ValueError:
+            pass
+
+        chinese_match = re.search(r"(20\d{2})年(\d{1,2})月(\d{1,2})日", raw_value)
+        if chinese_match:
+            year, month, day = (int(part) for part in chinese_match.groups())
+            return datetime(year, month, day, tzinfo=ZoneInfo("Asia/Shanghai")).isoformat()
+
+        return self._extract_datetime_or_empty(raw_value)
+
+    def _date_from_article_url(self, url: str) -> str:
+        path = urlparse(url).path.strip("/")
+        match = re.match(r"(20\d{2})/(\d{1,2})/(\d{1,2})/", path)
+        if not match:
+            return ""
+        year, month, day = (int(part) for part in match.groups())
+        return datetime(year, month, day, tzinfo=ZoneInfo("Asia/Shanghai")).isoformat()
+
+    def _next_page_url(self, soup: BeautifulSoup, current_url: str) -> str:
+        next_link = soup.select_one("nav.ct-pagination a.next[rel='next'][href], a.next.page-numbers[href]")
+        if not next_link:
+            return ""
+        return urljoin(current_url, str(next_link["href"]))
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
+        detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
+        if limit <= 0:
+            return
+
+        seen_urls: set[str] = set()
+        seen_pages: set[str] = set()
+        entries: List[Dict[str, Any]] = []
+        page_url = self.listing_url
+        page_index = 0
+        max_pages = 20
+        while page_url and page_url not in seen_pages and len(entries) < limit and page_index < max_pages:
+            seen_pages.add(page_url)
+            response = await self._safe_get(client, page_url)
+            if not response:
+                if page_index == 0:
+                    raise RuntimeError(f"新智元首页请求失败: {self.listing_url}")
+                break
+
+            resolved_page_url = str(response.url)
+            soup = BeautifulSoup(response.text, "html.parser")
+            page_order_base = page_index * 1000
+            for order, item in enumerate(self._list_items(soup)):
+                title_link = item.select_one(".entry-title a[href], h1 a[href], h2 a[href], h3 a[href]")
+                if not title_link:
+                    continue
+
+                url = self._normalize_article_url(urljoin(resolved_page_url, str(title_link["href"])))
+                if not self._matches_article_url(url) or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+
+                title = self._clean_text(title_link.get_text(" ", strip=True)) or "未命名新智元条目"
+                time_node = item.select_one("time[datetime], time")
+                raw_publish_date = ""
+                if time_node:
+                    raw_publish_date = self._clean_text(
+                        str(time_node.get("datetime") or "") or time_node.get_text(" ", strip=True)
+                    )
+                display_publish_date = self._clean_text(time_node.get_text(" ", strip=True) if time_node else "")
+                publish_date = (
+                    self._parse_listing_datetime(raw_publish_date)
+                    or self._parse_listing_datetime(display_publish_date)
+                    or self._date_from_article_url(url)
+                    or self._extract_datetime(title)
+                )
+
+                image_node = item.select_one("img")
+                media_url = ""
+                if image_node:
+                    media_url = str(image_node.get("src") or "")
+                    if media_url:
+                        media_url = urljoin(resolved_page_url, media_url)
+
+                summary = self._summary_from_container(title, item)
+                summary = re.sub(r"^发布于\s*[\d年月日:：+\-T ]+", "", summary).strip()
+                summary = re.sub(r"点我查看.*$", "", summary).strip()[:500]
+
+                entries.append({
+                    "url": url,
+                    "title": title,
+                    "summary": summary,
+                    "publish_date": publish_date,
+                    "raw_publish_date": display_publish_date or raw_publish_date,
+                    "listing_datetime": raw_publish_date,
+                    "media_url": media_url,
+                    "order": page_order_base + order,
+                    "listing_page_url": resolved_page_url,
+                })
+                if len(entries) >= limit:
+                    break
+
+            page_index += 1
+            page_url = self._next_page_url(soup, resolved_page_url)
+
+        entries = sorted(
+            entries,
+            key=lambda entry: (self._sort_datetime(entry["publish_date"]), -entry["order"]),
+            reverse=True,
+        )
+
+        for entry in entries[:limit]:
+            url = entry["url"]
+            title = entry["title"]
+            summary = entry["summary"]
+            detail = {"title": "", "text": "", "method": "", "url": ""}
+            if fetch_detail:
+                detail = await self._detail_for_url(client, url, detail_max_chars)
+                if detail["title"] and not title:
+                    title = detail["title"]
+            content = detail["text"] or summary
+
+            yield WebPageArticleContent(
+                id=self._content_id(url),
+                title=title,
+                source_url=url,
+                publish_date=entry["publish_date"],
+                content=content,
+                has_content=bool(content),
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=summary,
+                tags=[self.category, "webpage", *self.content_tags],
+                raw_data={
+                    "listing_url": entry["listing_page_url"],
+                    "url": url,
+                    "title": title,
+                    "summary": summary,
+                    "listing_source": "aiera_main_article_list",
+                    "listing_publish_date": entry["raw_publish_date"],
+                    "listing_datetime": entry["listing_datetime"],
+                    "media_url": entry["media_url"],
+                    "detail_fetched": fetch_detail,
+                    "detail_title": detail["title"],
+                    "detail_text_length": len(detail["text"]),
+                    "detail_extraction_method": detail.get("method", ""),
+                    "detail_source_url": detail.get("url", ""),
+                },
+            )
 
 
 class JiqizhixinWebsiteFetcher(BaseFetcher):

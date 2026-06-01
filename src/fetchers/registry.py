@@ -30,8 +30,6 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "docs_xai_models",
     # Alibaba / Qwen
     "web_qwen_blog",
-    "docs_alibaba_model_studio_announcements",
-    "github_qwen_code_releases",
     # DeepSeek
     "docs_deepseek_api_changelog",
     "github_deepseek_repositories",

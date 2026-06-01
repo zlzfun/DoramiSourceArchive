@@ -1,10 +1,21 @@
 import asyncio
+import json
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from fetchers.impl.webpage_fetcher import BaseWebPageListFetcher
+from fetchers.impl.webpage_fetcher import (
+    AnthropicNewsWebFetcher,
+    BaseWebPageListFetcher,
+    QwenBlogWebFetcher,
+)
+from fetchers.impl.curated_core_fetcher import (
+    AieraWebsiteFetcher,
+    ClaudeCodeChangelogFetcher,
+    QbitAiWebsiteFetcher,
+    ZaiNewReleasedFetcher,
+)
 
 
 class DummyResponse:
@@ -14,6 +25,9 @@ class DummyResponse:
         self.url = url
         self.status_code = 200
         self.headers = {"content-type": "text/html"}
+
+    def json(self):
+        return json.loads(self.text)
 
 
 class ExampleNewsFetcher(BaseWebPageListFetcher):
@@ -91,3 +105,485 @@ def test_webpage_fetcher_reads_embedded_next_rsc_article_records():
     assert items[0].publish_date == "2026-04-29T12:00:00"
     assert items[1].raw_data["listing_source"] == "embedded_json"
     assert all("full article body" in item.content for item in items)
+
+
+def test_anthropic_news_parses_rsc_post_objects_only():
+    # 首屏 DOM 锚点会把 "DATE CATEGORY TITLE" 拼进可见文本，并混入导航/页脚噪声；
+    # 真正干净且完整（含 See More 之后旧文）的列表在 self.__next_f 的 _type:"post" 对象里。
+    posts = [
+        {
+            "_type": "post",
+            "publishedOn": "2026-05-28T17:00:00.000Z",
+            "slug": {"_type": "slug", "current": "claude-opus-4-8"},
+            "subjects": [
+                {"_type": "tag", "label": "Product", "value": "product"},
+                {"_type": "tag", "label": "Announcements", "value": "announcements"},
+            ],
+            "summary": "An upgrade to our Opus class of models.",
+            "title": "Introducing Claude Opus 4.8",
+        },
+        {
+            "_type": "post",
+            "publishedOn": "2026-05-14T12:00:00.000Z",
+            "slug": {"_type": "slug", "current": "mid-screen-update"},
+            "subjects": [{"_type": "tag", "label": "Announcements", "value": "announcements"}],
+            "summary": "A first-screen boundary article.",
+            "title": "Mid screen update",
+        },
+        {
+            # 首屏 See More 之后才显示的旧文——通用锚点抓取拿不到，RSC 流里有。
+            "_type": "post",
+            "publishedOn": "2021-05-28T00:00:00-07:00",
+            "slug": {"_type": "slug", "current": "anthropic-raises-124-million"},
+            "subjects": [{"_type": "tag", "label": "Announcements", "value": "announcements"}],
+            "summary": "Our Series A announcement.",
+            "title": "Anthropic raises $124 million to build more reliable AI systems",
+        },
+    ]
+    rsc_chunk = json.dumps(
+        "9:" + json.dumps({"items": posts}, ensure_ascii=False),
+        ensure_ascii=False,
+    )
+    listing_html = (
+        "<html><body>"
+        "<nav><a href=\"/news#latest\">News</a></nav>"
+        # 首屏锚点把日期/分类拼进可见文本，且会被噪声/锚点逻辑污染。
+        "<a href=\"/news/claude-opus-4-8\"><article><h2>May 28, 2026 Product Introducing Claude Opus 4.8</h2></article></a>"
+        "<a href=\"/careers\">Careers</a>"
+        "<footer><a href=\"/news#footer\">More news</a></footer>"
+        "<script>self.__next_f.push([1," + rsc_chunk + "])</script>"
+        "</body></html>"
+    )
+    detail_html = (
+        "<html><body><article><h1>Detail</h1><p>"
+        "This is a full article body from the detail page, long enough for the shared "
+        "article extractor to treat it as a real body with enough product, release, and "
+        "implementation context for downstream storage and vectorization tests to pass."
+        "</p></article></body></html>"
+    )
+
+    fetcher = AnthropicNewsWebFetcher()
+
+    async def fake_safe_get(client, url):
+        if url == "https://www.anthropic.com/news":
+            return DummyResponse(listing_html, url)
+        if "anthropic.com/news/" in url:
+            return DummyResponse(detail_html, url)
+        raise AssertionError(f"Unexpected URL fetched: {url}")
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [
+            item
+            async for item in fetcher._run(
+                None,
+                limit=10,
+                fetch_detail=True,
+                detail_max_chars=2000,
+            )
+        ]
+
+    items = asyncio.run(collect_items())
+
+    # 三篇 post 全部解析（含首屏外旧文），且按发布时间倒序。
+    assert [item.source_url for item in items] == [
+        "https://www.anthropic.com/news/claude-opus-4-8",
+        "https://www.anthropic.com/news/mid-screen-update",
+        "https://www.anthropic.com/news/anthropic-raises-124-million",
+    ]
+    # 标题干净：不含拼接的 DATE / CATEGORY 前缀。
+    assert items[0].title == "Introducing Claude Opus 4.8"
+    assert "May 28" not in items[0].title and "Product" not in items[0].title
+    # 发布日期取自 publishedOn 而非锚点文本，并统一规范化为 UTC isoformat。
+    assert items[0].publish_date == "2026-05-28T17:00:00+00:00"
+    assert items[2].publish_date == "2021-05-28T07:00:00+00:00"
+    # 分类来自 subjects.label，并入 tags。
+    assert "Product" in items[0].tags and "Announcements" in items[0].tags
+    assert items[0].raw_data["subjects"] == ["Product", "Announcements"]
+    assert items[0].raw_data["listing_source"] == "anthropic_news_rsc"
+    # 噪声链接（导航/招聘/页脚锚点）不出现在结果里。
+    urls = [item.source_url for item in items]
+    assert all("/careers" not in u and "#" not in u for u in urls)
+
+
+def test_qwen_blog_fetcher_uses_current_article_retrieval_api():
+    payload = {
+        "success": True,
+        "data": {
+            "articles": [
+                {
+                    "id": "479a326d-c932-49ff-a8bb-fe31849529d5",
+                    "type": "qwen_ai",
+                    "title": "Qwen3.7: The Agent Frontier",
+                    "content": "<html><body><article><h1>Qwen3.7-Max</h1><p>Latest proprietary model designed for the agent era.</p></article></body></html>",
+                    "path": "qwen3.7",
+                    "language": "en-US",
+                    "extra": {
+                        "introduction": "Today we introduce Qwen3.7-Max.",
+                        "tags": ["Release"],
+                        "date": "2026-05-20T10:00:00+08:00",
+                        "author": "QwenTeam",
+                        "readTime": 25,
+                        "wordCount": 4992,
+                    },
+                }
+            ]
+        },
+    }
+    fetcher = QwenBlogWebFetcher()
+
+    async def fake_safe_get(client, url, **kwargs):
+        assert url == "https://qwen.ai/api/v2/article/retrieval"
+        assert kwargs["params"] == {"type": "qwen_ai", "language": "en-US"}
+        return DummyResponse(json.dumps(payload), url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [
+            item
+            async for item in fetcher._run(
+                None,
+                limit=1,
+                fetch_detail=True,
+                detail_max_chars=2000,
+            )
+        ]
+
+    items = asyncio.run(collect_items())
+
+    assert len(items) == 1
+    assert items[0].title == "Qwen3.7: The Agent Frontier"
+    assert items[0].source_url == "https://qwen.ai/blog?id=qwen3.7"
+    assert items[0].publish_date == "2026-05-20T10:00:00+08:00"
+    assert "Latest proprietary model" in items[0].content
+    assert items[0].raw_data["listing_source"] == "qwen_article_retrieval"
+    assert items[0].raw_data["detail_extraction_method"] == "qwen_article_retrieval_html"
+
+
+def test_qbitai_fetcher_uses_main_article_list_only():
+    listing_html = """
+    <html>
+      <body>
+        <nav>
+          <a href="https://www.qbitai.com/meet/meet2026/">MEET大会</a>
+        </nav>
+        <div class="page_top">
+          <a href="https://www.qbitai.com/2026/05/426069.html">
+            <h3>焦点图文章</h3>
+          </a>
+        </div>
+        <div class="main index_page">
+          <div class="content">
+            <div class="article_list">
+              <div class="picture_text">
+                <div class="picture">
+                  <a href="https://www.qbitai.com/2026/05/426353.html"><img src="/second.png"></a>
+                </div>
+                <div class="text_box">
+                  <h4><a href="https://www.qbitai.com/2026/05/426353.html">主列表较旧篇</a></h4>
+                  <p>较旧篇摘要</p>
+                  <div class="info">
+                    <span class="author">作者乙</span>
+                    <span class="time">4小时前</span>
+                    <div class="tags_s"><a href="/tag/infra">AI infra</a></div>
+                  </div>
+                </div>
+              </div>
+              <div class="picture_text">
+                <div class="picture">
+                  <a href="https://www.qbitai.com/2026/05/426366.html"><img src="/latest.png"></a>
+                </div>
+                <div class="text_box">
+                  <h4><a href="https://www.qbitai.com/2026/05/426366.html">主列表较新篇</a></h4>
+                  <p>较新篇摘要</p>
+                  <div class="info">
+                    <span class="author">作者甲</span>
+                    <span class="time">33分钟前</span>
+                    <div class="tags_s"><a href="/tag/ai">AI</a></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="content_right">
+            <div class="yaowen">
+              <h3>热门文章</h3>
+              <div class="picture_text">
+                <a href="https://www.qbitai.com/2026/05/422738.html">
+                  <div class="text_box"><h4>侧栏热门旧文</h4></div>
+                  <div class="info">2026-05-22</div>
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+    fetcher = QbitAiWebsiteFetcher()
+
+    async def fake_safe_get(client, url):
+        assert url == "https://www.qbitai.com/category/%E8%B5%84%E8%AE%AF"
+        return DummyResponse(listing_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=20, fetch_detail=False)]
+
+    items = asyncio.run(collect_items())
+
+    assert [item.title for item in items] == ["主列表较新篇", "主列表较旧篇"]
+    assert [item.source_url for item in items] == [
+        "https://www.qbitai.com/2026/05/426366.html",
+        "https://www.qbitai.com/2026/05/426353.html",
+    ]
+    assert all(item.raw_data["listing_source"] == "qbitai_main_article_list" for item in items)
+    assert items[0].raw_data["author"] == "作者甲"
+    assert "AI infra" in items[1].tags
+
+
+def test_aiera_fetcher_uses_main_article_list_dates_and_excludes_sidebar():
+    listing_html = """
+    <html>
+      <body>
+        <main id="main" class="site-main hfeed">
+          <div class="entries">
+            <article class="entry-card post type-post">
+              <a class="ct-media-container" href="https://aiera.com.cn/2026/05/29/other/admin/96253/latest/">
+                <img src="/latest.jpg" />
+              </a>
+              <div class="card-content">
+                <h2 class="entry-title">
+                  <a href="https://aiera.com.cn/2026/05/29/other/admin/96253/latest/" rel="bookmark">主列表较新篇</a>
+                </h2>
+                <ul class="entry-meta">
+                  <li class="meta-date">
+                    <span>发布于</span>
+                    <time datetime="2026-05-29T08:01:43+08:00">2026年5月29日</time>
+                  </li>
+                </ul>
+                <a class="entry-button" href="https://aiera.com.cn/2026/05/29/other/admin/96253/latest/">点我查看</a>
+              </div>
+            </article>
+            <article class="entry-card post type-post">
+              <div class="card-content">
+                <h2 class="entry-title">
+                  <a href="https://aiera.com.cn/2026/05/28/other/admin/96118/older/" rel="bookmark">主列表较旧篇</a>
+                </h2>
+                <ul class="entry-meta">
+                  <li class="meta-date">
+                    <span>发布于</span>
+                    <time datetime="2026-05-28T08:02:00+08:00">2026年5月28日</time>
+                  </li>
+                </ul>
+              </div>
+            </article>
+          </div>
+
+          <aside class="sidebar">
+            <h3>爆款文章</h3>
+            <article class="wp-block-post">
+              <h2>
+                <a href="https://aiera.com.cn/2015/12/20/other/aiera-com-cn/14022/hot/">侧栏爆款旧文</a>
+              </h2>
+              <time datetime="2015-12-20T00:00:00+08:00">2015年12月20日</time>
+            </article>
+          </aside>
+          <nav class="ct-pagination">
+            <a class="next page-numbers" rel="next" href="https://aiera.com.cn/page/2/">下一个</a>
+          </nav>
+        </main>
+      </body>
+    </html>
+    """
+    page2_html = """
+    <html>
+      <body>
+        <main id="main" class="site-main hfeed">
+          <div class="entries">
+            <article class="entry-card post type-post">
+              <div class="card-content">
+                <h2 class="entry-title">
+                  <a href="https://aiera.com.cn/2026/05/28/other/admin/96118/older/" rel="bookmark">主列表较旧篇重复</a>
+                </h2>
+                <time datetime="2026-05-28T08:02:00+08:00">2026年5月28日</time>
+              </div>
+            </article>
+            <article class="entry-card post type-post">
+              <div class="card-content">
+                <h2 class="entry-title">
+                  <a href="https://aiera.com.cn/2026/05/27/other/admin/95967/page-two/" rel="bookmark">第二页主列表篇</a>
+                </h2>
+                <time datetime="2026-05-27T08:02:00+08:00">2026年5月27日</time>
+              </div>
+            </article>
+          </div>
+        </main>
+      </body>
+    </html>
+    """
+    fetcher = AieraWebsiteFetcher()
+    fetched_urls = []
+
+    async def fake_safe_get(client, url):
+        fetched_urls.append(url)
+        if url == "https://aiera.com.cn/":
+            return DummyResponse(listing_html, url)
+        if url == "https://aiera.com.cn/page/2/":
+            return DummyResponse(page2_html, url)
+        raise AssertionError(f"Unexpected URL fetched: {url}")
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=3, fetch_detail=False)]
+
+    items = asyncio.run(collect_items())
+
+    assert fetched_urls == ["https://aiera.com.cn/", "https://aiera.com.cn/page/2/"]
+    assert [item.title for item in items] == ["主列表较新篇", "主列表较旧篇", "第二页主列表篇"]
+    assert [item.source_url for item in items] == [
+        "https://aiera.com.cn/2026/05/29/other/admin/96253/latest",
+        "https://aiera.com.cn/2026/05/28/other/admin/96118/older",
+        "https://aiera.com.cn/2026/05/27/other/admin/95967/page-two",
+    ]
+    assert [item.publish_date for item in items] == [
+        "2026-05-29T08:01:43+08:00",
+        "2026-05-28T08:02:00+08:00",
+        "2026-05-27T08:02:00+08:00",
+    ]
+    assert all(item.raw_data["listing_source"] == "aiera_main_article_list" for item in items)
+    assert items[0].raw_data["listing_publish_date"] == "2026年5月29日"
+    assert "侧栏爆款旧文" not in [item.title for item in items]
+
+
+def test_claude_code_changelog_splits_releases_by_version():
+    # Mintlify <Update> 组件：每个版本是一个独立块，含 update-label(版本号) /
+    # update-description(发布日期) / update-content(更新条目)。fixture 故意把版本顺序打乱，
+    # 以验证 fetcher 会按 (发布日期, 版本号) 倒序排序，而不是沿用页面顺序。
+    listing_html = """
+    <html>
+      <body>
+        <div id="content-area">
+          <h1>Changelog</h1>
+          <div class="update-block">
+            <div data-component-part="update-label">2.1.156</div>
+            <div data-component-part="update-description">May 29, 2026</div>
+            <div data-component-part="update-content">
+              <ul><li>Fixed a thinking-block API error on Opus 4.8.</li></ul>
+            </div>
+          </div>
+          <div class="update-block">
+            <div data-component-part="update-label">2.1.158</div>
+            <div data-component-part="update-description">May 30, 2026</div>
+            <div data-component-part="update-content">
+              <ul>
+                <li>Auto mode is now available on Bedrock, Vertex, and Foundry.</li>
+                <li>Opt in via CLAUDE_CODE_ENABLE_AUTO.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="update-block">
+            <div data-component-part="update-label">2.1.157</div>
+            <div data-component-part="update-description">May 29, 2026</div>
+            <div data-component-part="update-content">
+              <ul><li>Plugins in .claude/skills directories are now auto-loaded.</li></ul>
+            </div>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+    fetcher = ClaudeCodeChangelogFetcher()
+
+    async def fake_safe_get(client, url):
+        assert url == "https://code.claude.com/docs/en/changelog"
+        return DummyResponse(listing_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=10)]
+
+    items = asyncio.run(collect_items())
+
+    # 每个版本各成一条；按 (发布日期, 版本号) 倒序：5-30 在前，5-29 两条按版本号降序。
+    assert [item.raw_data["version"] for item in items] == ["2.1.158", "2.1.157", "2.1.156"]
+    assert [item.title for item in items] == [
+        "Claude Code 2.1.158",
+        "Claude Code 2.1.157",
+        "Claude Code 2.1.156",
+    ]
+    assert [item.publish_date for item in items] == [
+        "2026-05-30T00:00:00+00:00",
+        "2026-05-29T00:00:00+00:00",
+        "2026-05-29T00:00:00+00:00",
+    ]
+    assert items[0].source_url == "https://code.claude.com/docs/en/changelog#2.1.158"
+    # 内容按版本切分，互不串味。
+    assert "Auto mode is now available" in items[0].content
+    assert "Bedrock" in items[0].content and "thinking-block" not in items[0].content
+    assert "auto-loaded" in items[1].content
+    assert items[0].raw_data["listing_source"] == "claude_code_changelog_updates"
+    assert items[0].raw_data["release_date_text"] == "May 30, 2026"
+    assert items[0].raw_data["detail_extraction_method"] == "mintlify_update_component"
+
+
+def test_zai_new_released_fetcher_splits_updates_by_model():
+    listing_html = """
+    <html>
+      <body>
+        <div class="mdx-content">
+          <div id="2026-04-07" class="update update-container">
+            <div>
+              <div>​</div>
+              <div>2026-04-07</div>
+              <div>GLM-5.1</div>
+            </div>
+            <ul>
+              <li>Designed for long-horizon tasks.</li>
+              <li>Improves stability and tool use over extended tasks.</li>
+            </ul>
+          </div>
+          <div id="2026-04-01" class="update update-container">
+            <div>
+              <div>​</div>
+              <div>2026-04-01</div>
+              <div>GLM-5V-Turbo</div>
+            </div>
+            <ul>
+              <li>Brings native multimodal understanding to images, video, and text.</li>
+            </ul>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+    fetcher = ZaiNewReleasedFetcher()
+
+    async def fake_safe_get(client, url):
+        assert url == "https://docs.z.ai/release-notes/new-released"
+        return DummyResponse(listing_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=10)]
+
+    items = asyncio.run(collect_items())
+
+    assert [item.title for item in items] == [
+        "Z.ai New Released: GLM-5.1",
+        "Z.ai New Released: GLM-5V-Turbo",
+    ]
+    assert [item.publish_date for item in items] == [
+        "2026-04-07T00:00:00+00:00",
+        "2026-04-01T00:00:00+00:00",
+    ]
+    assert items[0].source_url == "https://docs.z.ai/release-notes/new-released#2026-04-07"
+    assert "long-horizon tasks" in items[0].content
+    assert items[0].raw_data["listing_source"] == "zai_new_released_updates"
+    assert items[1].raw_data["model_name"] == "GLM-5V-Turbo"

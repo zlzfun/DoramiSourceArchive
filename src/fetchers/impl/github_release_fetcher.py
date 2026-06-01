@@ -196,25 +196,6 @@ class PresetGitHubReleasesFetcher(GenericGitHubReleasesFetcher):
             yield item
 
 
-class QwenCodeGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
-    source_id = "github_qwen_code_releases"
-    name = "Qwen Code GitHub Releases"
-    description = "通过 GitHub API 抓取 Qwen Code Release 元数据。"
-    icon = "🟦"
-    owner = "QwenLM"
-    repo = "qwen-code"
-    source_owner = "qwenlm"
-    source_brand = "qwen_code"
-    source_scope = "developer_tool"
-    source_channel = "github_release"
-    source_url = "https://github.com/QwenLM/qwen-code/releases"
-    provenance_tier = "tier0_primary"
-    content_tags = ["developer_tool", "product_update"]
-    signal_strength = "medium_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public"
-
-
 class OpenCodeGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     source_id = "github_opencode_releases"
     name = "OpenCode GitHub Releases"
