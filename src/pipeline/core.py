@@ -48,6 +48,20 @@ class DataPipeline:
         self.logger = logging.getLogger("Pipeline")
         self.storages = storages  # 注入所有的存储汇点
 
+    def _inject_dedup_lookup(self, fetcher: BaseFetcher) -> None:
+        """把首个支持 existing_content_flags 的 sink 挂到 fetcher 的去重钩子上。
+
+        抓取器只读地用它做正文请求前的去重预检；找不到这样的 sink 时保持 None
+        （抓取器降级为不预检，行为与改动前一致）。
+        """
+        if not hasattr(fetcher, "dedup_lookup"):
+            return
+        for storage in self.storages:
+            lookup = getattr(storage, "existing_content_flags", None)
+            if callable(lookup):
+                fetcher.dedup_lookup = lookup
+                return
+
     async def run_task(
             self,
             fetcher: BaseFetcher,
@@ -58,6 +72,9 @@ class DataPipeline:
         驱动 Fetcher 抓取，并将数据并发广播给所有的 Storage
         """
         self.logger.info(f"🚀 开始执行抓取任务: {fetcher.__class__.__name__}")
+
+        # 注入去重预检钩子：让抓取器在请求正文前先批量查库，跳过重复条目的正文抓取。
+        self._inject_dedup_lookup(fetcher)
 
         result = PipelineRunResult()
         source_id = getattr(fetcher, "source_id", None)

@@ -83,6 +83,157 @@ def test_rss_fetcher_sorts_newest_first_and_backfills_missing_detail():
     assert items[0].raw_data["detail_fetched"] is True
 
 
+def test_rss_fetcher_skips_detail_fetch_for_already_stored_articles():
+    # 回归 #1：已入库且已有正文的重复条目，不应再访问正文 URL（抓取慢的主因）；
+    # 缺席（全新）或已存在但空正文的条目仍要抓取正文，以保留旧空正文的回填语义。
+    feed_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <title>Example Feed</title>
+        <item>
+          <title>Stored With Body</title>
+          <link>https://example.test/stored-full</link>
+          <pubDate>Wed, 01 Jan 2026 00:00:00 GMT</pubDate>
+          <description>short</description>
+        </item>
+        <item>
+          <title>Stored But Empty</title>
+          <link>https://example.test/stored-empty</link>
+          <pubDate>Tue, 01 Jan 2025 00:00:00 GMT</pubDate>
+          <description>short</description>
+        </item>
+        <item>
+          <title>Brand New</title>
+          <link>https://example.test/brand-new</link>
+          <pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate>
+          <description>short</description>
+        </item>
+      </channel>
+    </rss>
+    """
+    detail_html = """
+    <html><body><article><h1>Detail</h1>
+    <p>This is the full detail article body fetched from the source page for backfill.</p>
+    </article></body></html>
+    """
+    fetcher = GenericRssFetcher()
+
+    stored_full_id = fetcher._entry_id("example_feed", {"link": "https://example.test/stored-full"})
+    stored_empty_id = fetcher._entry_id("example_feed", {"link": "https://example.test/stored-empty"})
+
+    async def fake_dedup_lookup(item_ids):
+        ids = list(item_ids)
+        # 全部 id 都应被预检（一次批量查询）
+        assert stored_full_id in ids and stored_empty_id in ids
+        return {stored_full_id: True, stored_empty_id: False}
+
+    fetcher.dedup_lookup = fake_dedup_lookup
+
+    detail_requests = []
+
+    async def fake_safe_get(client, url):
+        if url == "https://example.test/feed.xml":
+            return DummyResponse(feed_xml, url)
+        detail_requests.append(url)
+        return DummyResponse(detail_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [
+            item
+            async for item in fetcher._run(
+                None,
+                feed_url="https://example.test/feed.xml",
+                source_id="example_feed",
+                limit=3,
+                detail_min_chars=50,
+            )
+        ]
+
+    items = asyncio.run(collect_items())
+
+    # 已存在且有正文的条目：跳过正文请求，正文沿用 RSS summary。
+    stored_full = next(i for i in items if i.id == stored_full_id)
+    assert "https://example.test/stored-full" not in detail_requests
+    assert stored_full.raw_data["detail_fetched"] is False
+
+    # 已存在但空正文 + 全新条目：仍抓取正文（回填语义保留）。
+    assert "https://example.test/stored-empty" in detail_requests
+    assert "https://example.test/brand-new" in detail_requests
+    stored_empty = next(i for i in items if i.id == stored_empty_id)
+    assert "full detail article body" in stored_empty.content
+
+
+def test_rss_fetcher_without_dedup_hook_fetches_detail_as_before():
+    # 未注入去重钩子时（dedup_lookup=None），行为与改动前一致：短正文条目照常抓详情。
+    feed_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <title>Example Feed</title>
+        <item>
+          <title>Needs Detail</title>
+          <link>https://example.test/needs-detail</link>
+          <pubDate>Wed, 01 Jan 2026 00:00:00 GMT</pubDate>
+          <description>short</description>
+        </item>
+      </channel>
+    </rss>
+    """
+    detail_html = """
+    <html><body><article><h1>Detail</h1>
+    <p>This is the full detail article body fetched from the source page.</p>
+    </article></body></html>
+    """
+    fetcher = GenericRssFetcher()
+    detail_requests = []
+
+    async def fake_safe_get(client, url):
+        if url == "https://example.test/feed.xml":
+            return DummyResponse(feed_xml, url)
+        detail_requests.append(url)
+        return DummyResponse(detail_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [
+            item
+            async for item in fetcher._run(
+                None,
+                feed_url="https://example.test/feed.xml",
+                source_id="example_feed",
+                limit=1,
+                detail_min_chars=50,
+            )
+        ]
+
+    items = asyncio.run(collect_items())
+    assert "https://example.test/needs-detail" in detail_requests
+    assert "full detail article body" in items[0].content
+
+
+def test_database_storage_existing_content_flags_reports_presence_and_body():
+    from models.content import RssArticleContent
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url="sqlite:///:memory:")
+    full = RssArticleContent(
+        id="feed_full", title="Full", source_url="https://e.test/full",
+        publish_date="2026-01-01T00:00:00+00:00", content="a real body", has_content=True,
+    )
+    empty = RssArticleContent(
+        id="feed_empty", title="Empty", source_url="https://e.test/empty",
+        publish_date="2026-01-01T00:00:00+00:00", content="", has_content=False,
+    )
+    asyncio.run(sink.save(full))
+    asyncio.run(sink.save(empty))
+
+    flags = asyncio.run(sink.existing_content_flags(["feed_full", "feed_empty", "feed_absent"]))
+    assert flags == {"feed_full": True, "feed_empty": False}  # 缺席 id 不出现在结果里
+    assert asyncio.run(sink.existing_content_flags([])) == {}
+
+
 def test_openai_news_uses_current_official_feed():
     assert OpenAINewsRssFetcher.feed_url == "https://openai.com/news/rss.xml"
 

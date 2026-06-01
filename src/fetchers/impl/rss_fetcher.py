@@ -228,7 +228,15 @@ class GenericRssFetcher(BaseFetcher):
         resolved_feed_name = feed_name or parsed_feed.feed.get("title", "") or runtime_source_id
         entries = self._sort_entries_newest_first(parsed_feed.entries)[:limit]
 
+        # 去重预检：entry 的稳定 id 在抓正文前即可算出，先批量查库。已入库且已有正文的
+        # 条目无需再访问正文 URL（避免对重复条目重复请求，这是抓取慢的主因）；仅库中
+        # 缺席（全新）或已存在但仍空正文（需回填）的条目才触发详情抓取。
+        existing_flags = await self._lookup_existing_content_flags(
+            self._entry_id(runtime_source_id, entry) for entry in entries
+        )
+
         for entry in entries:
+            entry_id = self._entry_id(runtime_source_id, entry)
             html_text = self._entry_html(entry)
             content_text = self._clean_text(html_text)
             publish_date = self._entry_datetime(entry, "published")
@@ -237,8 +245,12 @@ class GenericRssFetcher(BaseFetcher):
             source_url = entry.get("link", feed_url)
             detail = {"title": "", "text": ""}
 
+            # 已入库且已有正文 → 跳过正文请求；缺席或空正文 → 允许抓取（回填）。
+            already_has_content = existing_flags.get(entry_id, False)
+
             if (
                 fetch_detail_if_missing
+                and not already_has_content
                 and source_url
                 and source_url != feed_url
                 and len(content_text) < detail_min_chars
@@ -256,7 +268,7 @@ class GenericRssFetcher(BaseFetcher):
                 "detail_source_url": detail.get("url", ""),
             })
             yield RssArticleContent(
-                id=self._entry_id(runtime_source_id, entry),
+                id=entry_id,
                 title=title,
                 source_url=source_url,
                 publish_date=publish_date,

@@ -8,10 +8,16 @@
 import abc
 import logging
 import asyncio
-from typing import AsyncGenerator, Optional, Dict, Any, List
+from typing import AsyncGenerator, Awaitable, Callable, Iterable, Optional, Dict, Any, List
 import httpx
 
 from models.content import BaseContent
+
+
+# 可选的去重预检钩子：给定一批内容 id，返回 {id: has_content}，仅含库中已存在者。
+# 由 DataPipeline 在运行前注入（指向 db sink 的 existing_content_flags），
+# 抓取器据此在请求正文前跳过重复条目，避免重复访问正文 URL。
+DedupLookup = Callable[[Iterable[str]], Awaitable[Dict[str, bool]]]
 
 
 class BaseFetcher(abc.ABC):
@@ -55,6 +61,9 @@ class BaseFetcher(abc.ABC):
         self.timeout = timeout
         self.max_retries = max_retries
         self.logger = logging.getLogger(self.__class__.__name__)
+
+        # 去重预检钩子，默认 None（不预检）。DataPipeline 运行前可注入。
+        self.dedup_lookup: Optional[DedupLookup] = None
 
         # 配置通用的请求头，防止被基础反爬拦截
         self.default_headers = {
@@ -112,6 +121,20 @@ class BaseFetcher(abc.ABC):
         必须通过 `yield` 逐个返回实例化的 Content 对象。
         """
         pass
+
+    async def _lookup_existing_content_flags(self, item_ids: Iterable[str]) -> Dict[str, bool]:
+        """通过注入的去重钩子批量查询 ``{id: has_content}``（仅含已存在者）。
+
+        未注入钩子或查询异常时返回空 dict，调用方据此降级为“全部当作新条目”，
+        即保持原有抓取行为。
+        """
+        if not self.dedup_lookup:
+            return {}
+        try:
+            return await self.dedup_lookup(item_ids)
+        except Exception as e:  # 去重只是优化，失败不应阻断抓取
+            self.logger.warning(f"⚠️ 去重预检失败，回退为不预检: {e}")
+            return {}
 
     async def _safe_get(self, client: httpx.AsyncClient, url: str, **kwargs) -> Optional[httpx.Response]:
         """

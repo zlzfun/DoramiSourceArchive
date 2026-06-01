@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Iterable
 from sqlalchemy import inspect, text
 from sqlmodel import Session, create_engine, select
 from storage.base import BaseStorage
@@ -145,6 +145,25 @@ class DatabaseStorage(BaseStorage):
             session.add(record)
             session.commit()
             return True
+
+    async def existing_content_flags(self, item_ids: Iterable[str]) -> Dict[str, bool]:
+        """批量查询给定 id 是否已入库及是否已有正文。
+
+        返回 ``{id: has_content}``，仅包含库中已存在的 id（缺席即代表全新条目）。
+        仅取主键与 has_content 两列，供抓取器在请求正文前做去重预检，
+        避免对重复条目重复访问正文 URL（详见 fetcher 的去重钩子）。
+        """
+        ids = [item_id for item_id in dict.fromkeys(item_ids) if item_id]
+        if not ids:
+            return {}
+        flags: Dict[str, bool] = {}
+        with Session(self.engine) as session:
+            statement = select(ArticleRecord.id, ArticleRecord.has_content).where(
+                ArticleRecord.id.in_(ids)
+            )
+            for row_id, has_content in session.exec(statement).all():
+                flags[row_id] = bool(has_content)
+        return flags
 
     # --- 统一标准的 CRUD 操作 ---
 

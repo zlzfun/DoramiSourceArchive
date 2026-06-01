@@ -41,6 +41,105 @@ class ExampleNewsFetcher(BaseWebPageListFetcher):
     article_url_patterns = ["example.test/news/"]
 
 
+def test_webpage_fetcher_skips_detail_fetch_for_already_stored_articles():
+    # 回归 #1（扩到 webpage 列表节点）：已入库且有正文的条目不再请求详情页；
+    # 缺席（全新）或已存在但空正文的条目仍抓详情，保留空正文回填语义。
+    listing_html = """
+    <html><body>
+      <a href="/news/stored-full"><article><h2>Stored Full</h2></article></a>
+      <a href="/news/stored-empty"><article><h2>Stored Empty</h2></article></a>
+      <a href="/news/brand-new"><article><h2>Brand New</h2></article></a>
+    </body></html>
+    """
+    detail_html = """
+    <html><body><article><h1>Detail</h1>
+    <p>This is the full detail article body fetched from the source page, long enough
+    for the shared extractor to accept it as a real body and store it for backfill.</p>
+    </article></body></html>
+    """
+    fetcher = ExampleNewsFetcher()
+
+    full_id = fetcher._content_id("https://example.test/news/stored-full")
+    empty_id = fetcher._content_id("https://example.test/news/stored-empty")
+    looked_up = []
+
+    # webpage 列表节点是 per-item 预检（每条传入单个 id）：已存且有正文返回 True。
+    async def fake_dedup_lookup(item_ids):
+        ids = list(item_ids)
+        looked_up.extend(ids)
+        return {i: True for i in ids if i == full_id}
+
+    fetcher.dedup_lookup = fake_dedup_lookup
+
+    detail_requests = []
+
+    async def fake_safe_get(client, url, **kwargs):
+        if url == "https://example.test/news":
+            return DummyResponse(listing_html, url)
+        detail_requests.append(url)
+        return DummyResponse(detail_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [
+            item
+            async for item in fetcher._run(
+                None, limit=10, fetch_detail=True, detail_max_chars=5000
+            )
+        ]
+
+    items = asyncio.run(collect_items())
+    by_id = {item.id: item for item in items}
+
+    # 已存且有正文：不请求该 url 的详情，detail_fetched 标记为 False。
+    assert "https://example.test/news/stored-full" not in detail_requests
+    assert by_id[full_id].raw_data["detail_fetched"] is False
+    # 已存但空正文 + 全新：仍请求详情（回填语义保留）。
+    assert "https://example.test/news/stored-empty" in detail_requests
+    assert "https://example.test/news/brand-new" in detail_requests
+    assert by_id[empty_id].raw_data["detail_fetched"] is True
+    # 每条都在抓详情前经过去重预检。
+    assert full_id in looked_up and empty_id in looked_up
+
+
+def test_webpage_fetcher_without_dedup_hook_fetches_detail_as_before():
+    # 未注入去重钩子时（dedup_lookup=None），行为与改动前一致：照常抓详情。
+    listing_html = """
+    <html><body>
+      <a href="/news/needs-detail"><article><h2>Needs Detail</h2></article></a>
+    </body></html>
+    """
+    detail_html = """
+    <html><body><article><h1>Detail</h1>
+    <p>This is the full detail article body fetched from the source page, long enough
+    for the shared extractor to accept it as a real body.</p>
+    </article></body></html>
+    """
+    fetcher = ExampleNewsFetcher()
+    detail_requests = []
+
+    async def fake_safe_get(client, url, **kwargs):
+        if url == "https://example.test/news":
+            return DummyResponse(listing_html, url)
+        detail_requests.append(url)
+        return DummyResponse(detail_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [
+            item
+            async for item in fetcher._run(
+                None, limit=10, fetch_detail=True, detail_max_chars=5000
+            )
+        ]
+
+    items = asyncio.run(collect_items())
+    assert "https://example.test/news/needs-detail" in detail_requests
+    assert items[0].raw_data["detail_fetched"] is True
+
+
 def test_webpage_fetcher_reads_embedded_next_rsc_article_records():
     listing_html = r"""
     <html>

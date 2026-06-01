@@ -526,18 +526,42 @@ Implementation (same delete-the-class approach as `github_qwen_code_releases`, b
 
 Restore from git history if a dedicated API-changelog node is wanted again.
 
+### Fetch performance: skip detail fetch for already-archived items
+
+Problem: re-running a feed/listing node re-fetched the per-item detail page for
+every entry before dedup ran, because dedup only happens in `DatabaseStorage.save`
+(after the fetcher already yielded). On `rss_openai_news` a 20-item re-run with
+only 4 new articles still hit the source ~16 extra times (each behind an
+anti-bot challenge + retries).
+
+Fix: add a pre-fetch dedup check. `DatabaseStorage.existing_content_flags(ids)`
+returns `{id: has_content}` for already-stored ids (id + has_content columns
+only). `DataPipeline` injects it onto the fetcher's optional `dedup_lookup`
+hook before each run; `BaseFetcher` exposes it via `_lookup_existing_content_flags`.
+The content id is computable before the detail request, so:
+
+- RSS (`GenericRssFetcher`): batch-checks all entry ids up front.
+- Webpage list fetchers (`BaseWebPageListFetcher` + Anthropic/IThome/Qwen
+  overrides, Qbitai/Aiera): per-item check via `_should_skip_detail_fetch`.
+
+Both only skip the detail request when the item is already stored **and** has
+content, so empty-body rows are still backfilled (unchanged `save` semantics).
+The hook defaults to `None`, so dedup failure or absence degrades to the prior
+behavior. Only "list + per-item detail" sources benefit; single-page and
+list-API sources (changelogs, GitHub releases, HF models) get no extra query.
+
 ## Verification Performed
 
 Targeted tests for the node audit and related curation changes:
 
 ```bash
-uv run pytest tests/test_subscriptions.py tests/test_runtime_role.py tests/test_webpage_fetcher.py tests/test_fetcher_curation.py
+uv run pytest tests/test_rss_fetcher.py tests/test_subscriptions.py tests/test_runtime_role.py tests/test_webpage_fetcher.py tests/test_fetcher_curation.py
 ```
 
 Latest result:
 
 ```text
-44 passed
+55 passed
 ```
 
 The Alibaba/Qwen handoff also reports:

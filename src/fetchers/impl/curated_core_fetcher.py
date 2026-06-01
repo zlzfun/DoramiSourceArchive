@@ -904,15 +904,18 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
             url = entry["url"]
             title = entry["title"]
             summary = entry["summary"]
+            content_id = self._content_id(url)
             detail = {"title": "", "text": "", "method": "", "url": ""}
-            if fetch_detail:
+            # 已入库且有正文则跳过详情请求，避免对重复条目重复抓取正文。
+            detail_fetched = fetch_detail and not await self._should_skip_detail_fetch(content_id)
+            if detail_fetched:
                 detail = await self._detail_for_url(client, url, detail_max_chars)
                 if detail["title"] and not title:
                     title = detail["title"]
             content = detail["text"] or summary
 
             yield WebPageArticleContent(
-                id=self._content_id(url),
+                id=content_id,
                 title=title,
                 source_url=url,
                 publish_date=entry["publish_date"],
@@ -932,7 +935,7 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
                     "author": entry["author"],
                     "tags": entry["tags"],
                     "media_url": entry["media_url"],
-                    "detail_fetched": fetch_detail,
+                    "detail_fetched": detail_fetched,
                     "detail_title": detail["title"],
                     "detail_text_length": len(detail["text"]),
                     "detail_extraction_method": detail.get("method", ""),
@@ -1104,15 +1107,18 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
             url = entry["url"]
             title = entry["title"]
             summary = entry["summary"]
+            content_id = self._content_id(url)
             detail = {"title": "", "text": "", "method": "", "url": ""}
-            if fetch_detail:
+            # 已入库且有正文则跳过详情请求，避免对重复条目重复抓取正文。
+            detail_fetched = fetch_detail and not await self._should_skip_detail_fetch(content_id)
+            if detail_fetched:
                 detail = await self._detail_for_url(client, url, detail_max_chars)
                 if detail["title"] and not title:
                     title = detail["title"]
             content = detail["text"] or summary
 
             yield WebPageArticleContent(
-                id=self._content_id(url),
+                id=content_id,
                 title=title,
                 source_url=url,
                 publish_date=entry["publish_date"],
@@ -1131,7 +1137,7 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
                     "listing_publish_date": entry["raw_publish_date"],
                     "listing_datetime": entry["listing_datetime"],
                     "media_url": entry["media_url"],
-                    "detail_fetched": fetch_detail,
+                    "detail_fetched": detail_fetched,
                     "detail_title": detail["title"],
                     "detail_text_length": len(detail["text"]),
                     "detail_extraction_method": detail.get("method", ""),

@@ -366,6 +366,18 @@ class BaseWebPageListFetcher(BaseFetcher):
         )
         return {"title": detail.title, "text": detail.text, "method": detail.method, "url": detail.url}
 
+    async def _should_skip_detail_fetch(self, content_id: str) -> bool:
+        """详情请求前的去重预检：该条目是否已入库且已有正文。
+
+        命中则跳过昂贵的详情页请求（重复抓取时的主要耗时）；库中缺席或仍空正文的
+        条目返回 False，照常抓详情以保留空正文回填语义。未注入去重钩子时恒为 False，
+        即维持原抓取行为。
+        """
+        if not content_id:
+            return False
+        flags = await self._lookup_existing_content_flags([content_id])
+        return flags.get(content_id, False)
+
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         limit = self._entry_limit(kwargs.get("limit"))
         fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
@@ -416,8 +428,11 @@ class BaseWebPageListFetcher(BaseFetcher):
             title = entry["title"]
             summary = entry["summary"]
             publish_date = entry.get("publish_date") or self._extract_datetime(f"{title} {summary}")
+            content_id = self._content_id(url)
             detail = {"title": "", "text": ""}
-            if fetch_detail:
+            # 已入库且有正文则跳过详情请求，避免对重复条目重复抓取正文。
+            detail_fetched = fetch_detail and not await self._should_skip_detail_fetch(content_id)
+            if detail_fetched:
                 detail = await self._detail_for_url(client, url, detail_max_chars)
                 if (title == "未命名网页条目" or title.lower() in self.generic_link_titles) and detail["title"]:
                     title = detail["title"]
@@ -425,7 +440,7 @@ class BaseWebPageListFetcher(BaseFetcher):
             raw_data = self._raw_entry(url, title, summary)
             raw_data.update({
                 "listing_source": entry.get("listing_source", ""),
-                "detail_fetched": fetch_detail,
+                "detail_fetched": detail_fetched,
                 "detail_title": detail["title"],
                 "detail_text_length": len(detail["text"]),
                 "detail_extraction_method": detail.get("method", ""),
@@ -434,7 +449,7 @@ class BaseWebPageListFetcher(BaseFetcher):
             content = detail["text"] or summary
 
             yield WebPageArticleContent(
-                id=self._content_id(url),
+                id=content_id,
                 title=title,
                 source_url=url,
                 publish_date=publish_date,
@@ -551,9 +566,12 @@ class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
             title = entry["title"]
             summary = entry["summary"]
             publish_date = entry.get("publish_date") or self._extract_datetime(title)
+            content_id = self._content_id(url)
 
             detail = {"title": "", "text": "", "method": "", "url": ""}
-            if fetch_detail:
+            # 已入库且有正文则跳过详情请求，避免对重复条目重复抓取正文。
+            detail_fetched = fetch_detail and not await self._should_skip_detail_fetch(content_id)
+            if detail_fetched:
                 detail = await self._detail_for_url(client, url, detail_max_chars)
                 if (title == "未命名网页条目" or title.lower() in self.generic_link_titles) and detail["title"]:
                     title = detail["title"]
@@ -563,7 +581,7 @@ class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
             raw_data.update({
                 "listing_source": entry["listing_source"],
                 "subjects": entry.get("subjects", []),
-                "detail_fetched": fetch_detail,
+                "detail_fetched": detail_fetched,
                 "detail_title": detail["title"],
                 "detail_text_length": len(detail["text"]),
                 "detail_extraction_method": detail.get("method", ""),
@@ -571,7 +589,7 @@ class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
             })
 
             yield WebPageArticleContent(
-                id=self._content_id(url),
+                id=content_id,
                 title=title,
                 source_url=url,
                 publish_date=publish_date,
@@ -720,15 +738,18 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
             if image_node:
                 media_url = str(image_node.get("data-original") or image_node.get("src") or "")
 
+            content_id = self._content_id(url)
             detail = {"title": "", "text": "", "method": "", "url": ""}
-            if fetch_detail:
+            # 已入库且有正文则跳过详情请求，避免对重复条目重复抓取正文。
+            detail_fetched = fetch_detail and not await self._should_skip_detail_fetch(content_id)
+            if detail_fetched:
                 detail = await self._detail_for_url(client, url, detail_max_chars)
                 if detail["title"] and not title:
                     title = detail["title"]
             content = detail["text"] or summary
 
             yield WebPageArticleContent(
-                id=self._content_id(url),
+                id=content_id,
                 title=title or "未命名 IT之家 AI 条目",
                 source_url=url,
                 publish_date=publish_date,
@@ -747,7 +768,7 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
                     "listing_publish_date": raw_publish_date,
                     "tags": tags,
                     "media_url": media_url,
-                    "detail_fetched": fetch_detail,
+                    "detail_fetched": detail_fetched,
                     "detail_title": detail["title"],
                     "detail_text_length": len(detail["text"]),
                     "detail_extraction_method": detail.get("method", ""),
@@ -871,6 +892,9 @@ class QwenBlogWebFetcher(BaseWebPageListFetcher):
                         "detail_extraction_method": "qwen_article_retrieval_html",
                         "detail_source_url": source_url,
                     })
+                # 列表 API 未内联正文时才需二次请求；若该条已入库且有正文则跳过，避免重复抓取。
+                elif await self._should_skip_detail_fetch(self._content_id(source_url)):
+                    pass
                 else:
                     detail_url = token_links or source_url
                     json_detail = await self._qwen_json_detail(client, detail_url, max_chars)
