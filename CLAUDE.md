@@ -58,7 +58,7 @@ Three fetcher base classes cover the major source types:
 
 **`extensions_json` serialization pattern**: `serialize_to_metadata()` splits a content object's fields into base fields (from `BaseContent`) and subclass-specific extension fields. The extensions are serialised as a JSON string into the `ArticleRecord.extensions_json` column. When reconstructing for vectorization, a `GenericContent` object is used since the ORM only stores the flat record.
 
-**WeChat Official Account auth flow**: `src/fetchers/impl/wechat_gzh_fetcher.py` uses Playwright to automate browser-based QR code login. Credentials are cached to `.wechat_auth/wechat_config.json`. Error code 200003 (expired credentials) triggers self-healing re-authentication. A global `asyncio.Lock` prevents concurrent login sessions.
+**Playwright browser-rendered detail (Cloudflare bypass)**: Most fetchers are pure httpx, but a few sources gate their article bodies behind a Cloudflare Managed Challenge that only a real browser can pass (httpx gets a 403 challenge shell). `src/fetchers/impl/playwright_renderer.py` provides `PlaywrightRenderer`, an async context manager that lazily launches a headless Chromium for the duration of one fetch run, then renders each blocked article: it opens a fresh page per article, throttles requests, polls until the challenge clears and the body text appears, retries, and returns `""` on any failure so the caller degrades gracefully. Currently only `OpenAINewsRssFetcher` uses it — it overrides `_detail_for_url` to prefer the rendered body and fall back to the RSS summary when rendering fails (`openai.com` is the one audited source behind this challenge). Playwright is an opt-in path: when a node needs no detail fetch, no browser is started. (Note: the legacy WeChat Official Account Playwright login fetcher has been removed; only the `WechatArticleContent` type and the `wechat_article` display label remain for historical archived data.)
 
 **Vector chunking & cleaning**: Text is cleaned via `clean_text()` (HTML stripping, HN boilerplate removal, arxiv prefix removal) then split into paragraph-aware 800-char chunks with 150-char overlap. Articles with `< 30` usable characters are indexed with a header-only chunk. Metadata headers (source name, date, title) are prepended to every chunk to support temporal and source queries. Each chunk is an independent ChromaDB document linked by `parent_id` metadata. Semantic search fetches `top_k * 4` raw chunks then deduplicates by `parent_id`.
 
@@ -90,13 +90,13 @@ src/
 │   ├── base.py              # BaseFetcher: httpx client, retries, template method
 │   ├── registry.py          # FetcherRegistry singleton — auto-discovers impl/ on import
 │   └── impl/
-│       ├── rss_fetcher.py               # GenericRssFetcher + PresetRssFetcher (23+ built-in RSS sources)
+│       ├── rss_fetcher.py               # GenericRssFetcher + PresetRssFetcher (23+ built-in RSS sources); OpenAINewsRssFetcher renders detail via Playwright (CF bypass)
 │       ├── github_release_fetcher.py    # GenericGitHubReleasesFetcher + preset subclasses (13 built-in)
 │       ├── repository_model_fetcher.py  # GitHub repo + HuggingFace model fetchers (content_type=github_repository / huggingface_model)
 │       ├── webpage_fetcher.py           # BaseWebPageListFetcher + preset subclasses (6 built-in)
-│       ├── wechat_gzh_fetcher.py        # BaseWechatGzhFetcher + preset subclasses (9 built-in, Playwright auth)
 │       ├── curated_core_fetcher.py      # Curated AI-source presets: SinglePageDocumentFetcher (changelogs/release notes) + per-site BaseWebPageListFetcher/BaseFetcher subclasses (量子位, 机器之心, HF Daily Papers, etc.)
 │       ├── article_extractor.py         # Shared HTML→article-body extractor (helper module, not a fetcher); used by webpage/rss fetchers to backfill detail
+│       ├── playwright_renderer.py       # PlaywrightRenderer: headless-Chromium detail rendering for Cloudflare-challenged sources (used by OpenAINewsRssFetcher)
 │       └── webhook_trigger.py           # Outbound Dify workflow trigger (not an inbound content source)
 ├── mcp_server.py            # build_mcp_app(): FastMCP streamable-HTTP server, mounted at /mcp by app.py
 ├── pipeline/core.py         # DataPipeline: drives fetcher → broadcasts to registered storages
@@ -229,4 +229,3 @@ Loaded by `src/config.py` into the `settings` singleton (read live in `app.py`; 
 | `LOCAL_MODEL_PATH` | Path to local sentence-transformers model for offline embedding; defaults to `BAAI/bge-m3` |
 | `DORAMI_RUNTIME_ROLE` | Override `[runtime] role` (`all`/`collector`/`reader`) |
 | `DORAMI_RAG_ENABLED` | Override `[rag] enabled` (`1`/`true`/`yes`/`on` to enable the vector/RAG subsystem) |
-| `XIAOLUBAN_AUTH` / `XIAOLUBAN_RECEIVER` | Internal notification bot credentials for WeChat QR code alerts |

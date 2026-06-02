@@ -238,6 +238,114 @@ def test_openai_news_uses_current_official_feed():
     assert OpenAINewsRssFetcher.feed_url == "https://openai.com/news/rss.xml"
 
 
+def _openai_feed_xml():
+    return """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0"><channel><title>OpenAI</title>
+      <item>
+        <title>Rendered Article</title>
+        <link>https://openai.com/index/rendered-article</link>
+        <pubDate>Wed, 01 Jan 2026 00:00:00 GMT</pubDate>
+        <description>Short human-written summary for the rendered article.</description>
+      </item>
+      <item>
+        <title>Challenge Blocked Article</title>
+        <link>https://openai.com/index/blocked-article</link>
+        <pubDate>Tue, 01 Jan 2025 00:00:00 GMT</pubDate>
+        <description>Short summary that must survive as fallback.</description>
+      </item>
+    </channel></rss>
+    """
+
+
+def test_openai_news_uses_playwright_detail_and_falls_back_to_summary():
+    # OpenAI 文章页有 Cloudflare 挑战：渲染成功的条目应拿到完整正文；渲染失败（挑战未过）
+    # 的条目应优雅降级为 RSS summary，而不是空正文或报错。
+    rendered_html = (
+        "<html><body><article><h1>Rendered Article</h1><p>"
+        + "This is the full rendered OpenAI article body obtained after the challenge. " * 6
+        + "</p></article></body></html>"
+    )
+
+    fetcher = OpenAINewsRssFetcher()
+
+    rendered_urls = []
+
+    async def fake_render(url):
+        rendered_urls.append(url)
+        # 第一篇渲染成功，第二篇渲染失败（返回空 → 触发降级）。
+        return rendered_html if url.endswith("rendered-article") else ""
+
+    fetcher._render_override = fake_render
+
+    async def fake_safe_get(client, url, **kwargs):
+        if url.endswith("rss.xml"):
+            return DummyResponse(_openai_feed_xml(), url)
+        # httpx 详情降级路径同样取不到正文（模拟被 CF 拦截）。
+        return None
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [
+            item
+            async for item in fetcher._run(
+                None,
+                limit=2,
+                fetch_detail_if_missing=True,
+                detail_min_chars=200,
+                detail_max_chars=12000,
+            )
+        ]
+
+    items = asyncio.run(collect_items())
+    by_title = {item.title: item for item in items}
+
+    # 渲染成功：完整正文，方法标记为 playwright。
+    rendered = by_title["Rendered Article"]
+    assert "full rendered OpenAI article body" in rendered.content
+    assert len(rendered.content) > 200
+    assert rendered.raw_data["detail_extraction_method"].startswith("playwright")
+
+    # 渲染失败：降级回 RSS summary，正文不空、不报错。
+    blocked = by_title["Challenge Blocked Article"]
+    assert blocked.content == "Short summary that must survive as fallback."
+    assert blocked.has_content is True
+
+    # 两篇都尝试过渲染。
+    assert rendered_urls == [
+        "https://openai.com/index/rendered-article",
+        "https://openai.com/index/blocked-article",
+    ]
+
+
+def test_openai_news_skips_browser_when_detail_disabled():
+    # 关闭详情抓取时不应启动浏览器渲染路径（renderer 不被触碰），直接走 summary。
+    fetcher = OpenAINewsRssFetcher()
+
+    async def fail_render(url):  # 不应被调用
+        raise AssertionError("renderer should not run when detail fetch is disabled")
+
+    fetcher._render_override = fail_render
+
+    async def fake_safe_get(client, url, **kwargs):
+        if url.endswith("rss.xml"):
+            return DummyResponse(_openai_feed_xml(), url)
+        raise AssertionError(f"Unexpected detail fetch: {url}")
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [
+            item
+            async for item in fetcher._run(
+                None, limit=2, fetch_detail_if_missing=False
+            )
+        ]
+
+    items = asyncio.run(collect_items())
+    assert items[0].content == "Short human-written summary for the rendered article."
+
+
 def test_google_gemini_models_uses_category_rss():
     assert GoogleGeminiModelsRssFetcher.feed_url == "https://blog.google/innovation-and-ai/models-and-research/gemini-models/rss/"
 

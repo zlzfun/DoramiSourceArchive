@@ -340,6 +340,57 @@ class OpenAINewsRssFetcher(PresetRssFetcher):
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
 
+    # OpenAI 文章正文页（/index/{slug}）有 Cloudflare Managed Challenge，纯 httpx 只能拿到
+    # 403 挑战壳页，正文需浏览器执行 JS 通过挑战后才渲染。RSS 自带的 summary 只是人工
+    # 摘要——对“把原文概括成一段话”的日报场景而言，在 summary 上再概括等于零增量或幻觉，
+    # 因此这里覆盖详情抓取：优先用 Playwright 渲染正文页，渲染失败时优雅降级回 summary。
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._renderer = None
+        # 允许测试注入渲染函数（签名 async (url) -> html），免于真正启动浏览器。
+        self._render_override = None
+
+    async def _run(self, client, **kwargs):
+        # 仅在确有详情抓取需求时才启动浏览器，避免无谓的进程开销。
+        fetch_detail = self._bool_param(
+            kwargs.get("fetch_detail_if_missing"), self.default_fetch_detail_if_missing
+        )
+        if self._render_override is not None or not fetch_detail:
+            async for item in super()._run(client, **kwargs):
+                yield item
+            return
+
+        from fetchers.impl.playwright_renderer import PlaywrightRenderer
+
+        async with PlaywrightRenderer() as renderer:
+            self._renderer = renderer
+            try:
+                async for item in super()._run(client, **kwargs):
+                    yield item
+            finally:
+                self._renderer = None
+
+    async def _detail_for_url(self, client, url, max_chars, detail_min_chars):
+        html = ""
+        if self._render_override is not None:
+            html = await self._render_override(url)
+        elif self._renderer is not None and getattr(self._renderer, "available", False):
+            html = await self._renderer.render(url)
+
+        if html:
+            detail = extract_detail_from_html(html, max_chars, detail_min_chars)
+            if detail.text and len(detail.text) >= detail_min_chars:
+                return {
+                    "title": detail.title,
+                    "text": detail.text,
+                    "method": f"playwright_{detail.method}" if detail.method else "playwright",
+                    "url": url,
+                }
+
+        # 浏览器不可用 / 渲染失败 / 正文仍不足 → 退回 httpx 详情（多半同样被 CF 拦截，
+        # 拿不到正文时返回空，由通用 RSS 逻辑降级为 summary）。
+        return await super()._detail_for_url(client, url, max_chars, detail_min_chars)
+
 
 class GoogleGeminiModelsRssFetcher(PresetRssFetcher):
     source_id = "rss_google_gemini_models"
