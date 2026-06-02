@@ -38,7 +38,6 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     # Tier1 media / community / paper signal
     "web_qbitai",
     "web_aiera",
-    "web_jiqizhixin",
     "web_ithome_ai",
     "rss_hn_ai",
     "web_huggingface_daily_papers",

@@ -4,7 +4,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from fetchers.impl.rss_fetcher import GenericRssFetcher, GoogleGeminiModelsRssFetcher, OpenAINewsRssFetcher
+from fetchers.impl.rss_fetcher import (
+    GenericRssFetcher,
+    GoogleGeminiModelsRssFetcher,
+    HackerNewsAiRssFetcher,
+    OpenAINewsRssFetcher,
+)
 
 
 class DummyResponse:
@@ -384,3 +389,116 @@ def test_database_storage_backfills_existing_empty_article():
         assert record.has_content is True
         assert "standalone desktop application" in record.content
         assert record.is_vectorized is False
+
+
+def _hn_feed_xml():
+    # 两类 HN 条目：外链帖（link != 讨论页，summary 只是 URL 模板 + 热度），
+    # 站内帖（link == 讨论页，summary 是作者写的真实正文）。
+    return """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0"><channel><title>Hacker News - Newest: "AI"</title>
+      <item>
+        <title>Alphabet announces $80B AI infra raise</title>
+        <link>https://example.test/alphabet</link>
+        <comments>https://news.ycombinator.com/item?id=1</comments>
+        <pubDate>Tue, 02 Jun 2026 12:00:00 GMT</pubDate>
+        <description>&lt;p&gt;Article URL: &lt;a href="https://example.test/alphabet"&gt;link&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Comments URL: &lt;a href="https://news.ycombinator.com/item?id=1"&gt;c&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Points: 144&lt;/p&gt;
+&lt;p&gt;# Comments: 48&lt;/p&gt;</description>
+      </item>
+      <item>
+        <title>Ask HN: I'm done using AI</title>
+        <link>https://news.ycombinator.com/item?id=2</link>
+        <comments>https://news.ycombinator.com/item?id=2</comments>
+        <pubDate>Tue, 02 Jun 2026 11:00:00 GMT</pubDate>
+        <description>&lt;p&gt;I think AI tooling is quietly changing how I work, and here is my long take on it.&lt;/p&gt;</description>
+      </item>
+    </channel></rss>
+    """
+
+
+def _run_hn_capturing_url(**run_kwargs):
+    """运行 HN 抓取器并捕获实际请求的 feed_url（不触发详情抓取/联网）。"""
+    fetcher = HackerNewsAiRssFetcher()
+    captured = {}
+
+    async def fake_safe_get(client, url, **kwargs):
+        captured["url"] = url
+        return DummyResponse(_hn_feed_xml(), url=url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect():
+        items = []
+        async for item in fetcher._run(None, fetch_detail_if_missing=False, **run_kwargs):
+            items.append(item)
+        return items
+
+    items = asyncio.run(collect())
+    return captured.get("url", ""), items
+
+
+def test_hn_ai_applies_default_points_threshold_to_filter_noise():
+    url, items = _run_hn_capturing_url()
+    # 默认门槛把 points=10 注入查询串，把 q=AI 的无过滤 firehose 收敛为社区已投票的提交。
+    assert "q=AI" in url
+    assert "points=10" in url
+    assert {i.title for i in items} == {
+        "Alphabet announces $80B AI infra raise",
+        "Ask HN: I'm done using AI",
+    }
+
+
+def test_hn_external_link_post_becomes_discovery_entry():
+    # 外链帖：正文留空（纯发现条目），但保留外链、讨论页与社区热度元数据。
+    _, items = _run_hn_capturing_url()
+    ext = next(i for i in items if i.title == "Alphabet announces $80B AI infra raise")
+    assert ext.has_content is False
+    assert ext.content == ""
+    assert ext.source_url == "https://example.test/alphabet"
+    assert ext.raw_data["discussion_url"] == "https://news.ycombinator.com/item?id=1"
+    assert ext.raw_data["hn_points"] == 144
+    assert ext.raw_data["hn_num_comments"] == 48
+
+
+def test_hn_self_post_keeps_author_body():
+    # 站内帖（Ask/Show/Tell HN，link == 讨论页）：summary 是作者正文，必须保留。
+    _, items = _run_hn_capturing_url()
+    self_post = next(i for i in items if i.title == "Ask HN: I'm done using AI")
+    assert self_post.has_content is True
+    assert "AI tooling is quietly changing how I work" in self_post.content
+
+
+def test_hn_keeps_body_when_external_detail_actually_fetched():
+    # 用户手动开启外链详情抓取且成功时，外链帖正文应保留（不再降级）。
+    fetcher = HackerNewsAiRssFetcher()
+    entry = {
+        "link": "https://example.test/alphabet",
+        "comments": "https://news.ycombinator.com/item?id=1",
+    }
+    kept = fetcher._finalize_content_text(entry, "real fetched body", detail_text="real fetched body")
+    assert kept == "real fetched body"
+
+
+def test_hn_default_disables_external_detail_fetch():
+    schema = {f["field"]: f for f in HackerNewsAiRssFetcher.get_parameter_schema()}
+    assert HackerNewsAiRssFetcher.default_fetch_detail_if_missing is False
+    assert schema["fetch_detail_if_missing"]["default"] is False
+
+
+def test_hn_ai_honors_custom_points_and_comments_thresholds():
+    url, _ = _run_hn_capturing_url(min_points=30, min_comments=5)
+    assert "points=30" in url
+    assert "comments=5" in url
+
+
+def test_hn_ai_zero_thresholds_fall_back_to_unfiltered_query():
+    url, _ = _run_hn_capturing_url(min_points=0, min_comments=0)
+    assert url.endswith("?q=AI")
+    assert "points=" not in url
+    assert "comments=" not in url
+
+
+def test_hn_ai_parameter_schema_exposes_thresholds():
+    fields = {f["field"] for f in HackerNewsAiRssFetcher.get_parameter_schema()}
+    assert {"min_points", "min_comments", "limit"}.issubset(fields)

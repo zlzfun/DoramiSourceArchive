@@ -50,7 +50,6 @@ def test_recovered_sources_are_default_visible_with_stable_metadata():
     assert metadata["web_qwen_blog"]["fetch_reliability"] == "stable_public_api"
     assert metadata["web_ithome_ai"]["fetch_reliability"] == "stable_public_website_category"
     assert metadata["web_aiera"]["base_url"] == "https://aiera.com.cn/"
-    assert metadata["web_jiqizhixin"]["fetch_reliability"] == "reader_proxy_sitemap"
 
 
 def test_non_whitelisted_source_cannot_become_default_visible(monkeypatch):

@@ -44,7 +44,7 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `docs_zai_new_released` | Z.ai/GLM model, API, and product release notes. |
 | `web_bytedance_seed_research` | ByteDance Seed research papers/tech reports, split per publication. |
 | `web_qbitai` | Tier1 Chinese AI media coverage from 量子位. |
-| `rss_hn_ai` | Developer community AI discussion signal from Hacker News. |
+| `rss_hn_ai` | Developer community AI discussion signal from Hacker News, filtered to community-upvoted submissions (min points/comments threshold). |
 | `web_huggingface_daily_papers` | Hugging Face daily papers as curated research signal, split per paper (title/abstract/date). |
 | `web_cursor_changelog` | Cursor product changelog for agent coding practice. |
 | `github_opencode_releases` | OpenCode release updates. |

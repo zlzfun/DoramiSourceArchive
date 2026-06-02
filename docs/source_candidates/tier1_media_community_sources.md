@@ -6,7 +6,7 @@ These records are documentation-only. They do not imply implementation or defaul
 
 ## Source: 机器之心 Website
 
-- status: `implemented_core`
+- status: `removed`
 - source_owner: `jiqizhixin`
 - source_brand: `机器之心`
 - source_scope: `ai_media`
@@ -36,7 +36,23 @@ Overlaps with official vendor sources, arXiv/paper sources, and other Chinese AI
 
 ### Validation Notes
 
-2026-05-28 recovery pass implemented this as `web_jiqizhixin`. Direct article/RSS HTTP still routes to a data-service page or server error outside a browser, but the public sitemap exposes original article URLs and `r.jina.ai` can render those pages as markdown. The fetcher therefore enumerates recent `jiqizhixin.com/articles/...` URLs from `https://www.jiqizhixin.com/shared/sitemap.xml.gz`, skips article-library fallbacks, and stores the original article URL plus reader-proxy metadata.
+2026-05-28 recovery pass implemented this as `web_jiqizhixin`. Direct article/RSS HTTP still routes to a data-service page or server error outside a browser, but the public sitemap exposed original article URLs and `r.jina.ai` could render those pages as markdown. The fetcher enumerated recent `jiqizhixin.com/articles/...` URLs from `https://www.jiqizhixin.com/shared/sitemap.xml.gz`, skipped article-library fallbacks, and stored the original article URL plus reader-proxy metadata.
+
+**Removed 2026-06-02.** During the node audit `web_jiqizhixin` produced **zero**
+records: `sitemap.xml.gz` is now behind an Aliyun WAF and returns a `text/html`
+JS challenge page (`<textarea id="renderData">` + `aliyun_waf` + `acw_sc__v2`
+cookie) instead of the gzip sitemap, so pure httpx can't read it and the
+candidate list is empty. The only other entry points are gone too: the homepage/
+listing is a Vue SPA whose `r.jina.ai` render shows article titles + cover
+images but no `/articles/` links to extract, and RSS still 500s. The one
+formerly-working entry (the public sitemap) is now WAF-gated, with no
+low-maintenance bypass (Aliyun `acw_sc__v2` JS reversing is fragile, and even a
+headless-browser bypass would still need per-article `r.jina.ai` fetches). This
+hit both deletion triggers — structural unfitness (0 output, no cheap fix) and
+redundancy (Chinese AI media is already covered by the healthy `web_ithome_ai`
+and `web_qbitai`) — so the `JiqizhixinWebsiteFetcher` class, its
+`ESSENTIAL_FETCHER_IDS` entry, and `tests/test_jiqizhixin_fetcher.py` were
+deleted (same disposition as `docs_xai_models` / `web_bytedance_seed_models`).
 
 ## Source: 量子位 Website
 
@@ -142,12 +158,12 @@ Implemented as `web_ithome_ai` on 2026-05-28 using `https://next.ithome.com/ai`.
 
 ## Source: Hacker News AI Search Feed
 
-- status: `under_review`
+- status: `implemented_core`
 - source_owner: `ycombinator`
 - source_brand: `hacker_news`
 - source_scope: `tech_community`
 - source_channel: `rss_search_feed`
-- source_url: `https://hnrss.org/newest?q=AI`
+- source_url: `https://hnrss.org/newest?q=AI&points=10`
 - provenance_tier: `tier1_curated`
 - content_tags: `market_news`, `developer_tool`, `product_update`, `opinion`
 - signal_strength: `medium_signal`
@@ -172,7 +188,25 @@ Overlaps with official project releases, GitHub releases, and media sources.
 
 ### Validation Notes
 
-Existing project has `rss_hn_ai`; keep it hidden unless ranking/filtering is added.
+Audited 2026-06-02. The node was structurally fine (per-submission rows, real
+dates, newest-first) but `rss_hn_ai` pulled the raw `https://hnrss.org/newest?q=AI`
+firehose, so it was dominated by 0-engagement noise (hiring posts, 0-point
+self-promo, weakly-AI-related forum questions). hnrss supports `points`/`comments`
+numeric thresholds, so `HackerNewsAiRssFetcher` now applies a configurable
+`min_points` (default 10) / `min_comments` (default 0) floor — only community-
+upvoted/discussed submissions pass. `min_points=0, min_comments=0` restores the
+original unfiltered query. With the default `points=10` the feed collapses to
+front-page-worthy AI stories, so the source is admitted (ranking/filtering added
+as the doc required).
+
+Same-day follow-up: HN is a link aggregator, not a content platform, so it is
+now treated as a discovery source. External-link posts (`link != comments`) keep
+title + external URL + discussion URL + community heat (`hn_points` /
+`hn_num_comments`) but no body (`has_content=False`); only self-posts
+(Ask/Show/Tell HN, `link == comments`) keep the author's text as the body.
+External detail fetch is disabled by default (the linked body lives on arbitrary
+third-party domains that are slow/unreliable to scrape) but can be re-enabled
+per run.
 
 ## Source: Hugging Face Daily Papers
 

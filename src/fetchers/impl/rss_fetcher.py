@@ -1,5 +1,6 @@
 import calendar
 import hashlib
+import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, AsyncGenerator, Dict, List
@@ -145,9 +146,19 @@ class GenericRssFetcher(BaseFetcher):
             "id": entry.get("id", ""),
             "title": entry.get("title", ""),
             "link": entry.get("link", ""),
+            "comments": entry.get("comments", ""),
             "published": entry["published"] if "published" in entry else "",
             "updated": entry["updated"] if "updated" in entry else "",
         }
+
+    def _finalize_content_text(self, entry: Any, content_text: str, detail_text: str) -> str:
+        """yield 前对正文做最终裁决的可覆盖钩子。默认原样返回。
+
+        子类（如 Hacker News 这类「链接聚合 / 讨论」源）可借此把无正文价值的
+        条目降级为纯发现条目。``detail_text`` 是本轮详情抓取拿到的正文（未抓或失败
+        时为空），便于子类区分「确实抓到外链正文」与「只有 RSS 模板 summary」。
+        """
+        return content_text
 
     def _entry_limit(self, raw_limit: Any, default: int = 20) -> int:
         if raw_limit in (None, ""):
@@ -258,6 +269,8 @@ class GenericRssFetcher(BaseFetcher):
                 detail = await self._detail_for_url(client, source_url, detail_max_chars, detail_min_chars)
                 if detail["text"] and len(detail["text"]) > len(content_text):
                     content_text = detail["text"]
+
+            content_text = self._finalize_content_text(entry, content_text, detail.get("text", ""))
 
             raw_data = self._raw_entry(entry)
             raw_data.update({
@@ -414,8 +427,16 @@ class GoogleGeminiModelsRssFetcher(PresetRssFetcher):
 class HackerNewsAiRssFetcher(PresetRssFetcher):
     source_id = "rss_hn_ai"
     name = "Hacker News: AI"
-    description = "Hacker News 中与 AI 相关的新讨论。"
+    description = "Hacker News 中已获得社区投票/讨论的 AI 相关提交（按最低分数过滤掉招聘贴、0 赞自荐等噪声）。"
     icon = "🟧"
+    # hnrss 的 ?q=AI 是无过滤的「最新提交」全文搜索 firehose——把 AI 当关键词捞新帖，
+    # 噪声极高（招聘贴、0 赞自荐、与 AI 弱相关的随手提问）。hnrss 原生支持 points/comments
+    # 数值门槛（底层走 Algolia numericFilters），因此默认叠加最低分数门槛，只保留社区已
+    # 投票/讨论过的提交，把这个高噪声搜索源收敛成可用的开发者社区信号。
+    base_feed_url = "https://hnrss.org/newest"
+    search_query = "AI"
+    default_min_points = 10
+    default_min_comments = 0
     feed_url = "https://hnrss.org/newest?q=AI"
     category = "community"
     source_owner = "ycombinator"
@@ -428,3 +449,67 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
     signal_strength = "medium_signal"
     noise_risk = "high_noise"
     fetch_reliability = "stable_public"
+
+    # HN 是链接聚合 / 讨论源，不是内容平台：外链帖的正文在任意第三方域名（付费墙、
+    # CF 挑战、SPA、视频/仓库等），逐条硬抓既慢又大面积失败，对归档价值低。因此把它
+    # 当「发现源」用——默认关闭外链详情抓取，外链帖只保留标题 + 外链 + 讨论页 + 热度
+    # 元数据；只有站内帖（Ask/Show/Tell HN，summary 即作者正文）才保留正文。
+    default_fetch_detail_if_missing = False
+
+    _points_re = re.compile(r"Points:\s*(\d+)")
+    _num_comments_re = re.compile(r"#\s*Comments:\s*(\d+)")
+
+    @classmethod
+    def get_parameter_schema(cls) -> List[Dict[str, Any]]:
+        return [
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
+            {"field": "min_points", "label": "最低分数门槛", "type": "number", "default": cls.default_min_points},
+            {"field": "min_comments", "label": "最低评论数门槛", "type": "number", "default": cls.default_min_comments},
+            {"field": "fetch_detail_if_missing", "label": "抓取外链正文（默认关闭，建议保持）", "type": "boolean", "default": cls.default_fetch_detail_if_missing},
+            {"field": "detail_min_chars", "label": "触发详情抓取的正文长度", "type": "number", "default": cls.default_detail_min_chars},
+            {"field": "detail_max_chars", "label": "详情页正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
+        ]
+
+    def _finalize_content_text(self, entry: Any, content_text: str, detail_text: str) -> str:
+        # 真抓到了外链正文（用户手动开启详情抓取且成功）→ 保留。
+        if detail_text:
+            return content_text
+        link = entry.get("link", "")
+        comments = entry.get("comments", "")
+        # 外链帖（link != 讨论页）：RSS summary 只是 Article/Comments URL 模板，无正文价值
+        # → 降级为纯发现条目（正文留空）。站内帖（link == comments，Ask/Show/Tell HN）的
+        # summary 是作者写的真实正文 → 保留。
+        if comments and link and link != comments:
+            return ""
+        return content_text
+
+    def _raw_entry(self, entry: Any) -> Dict[str, Any]:
+        raw = super()._raw_entry(entry)
+        # HN 的社区热度（分数 / 评论数）是这个源的核心信号，写进 RSS summary 的
+        # 「Points: N」「# Comments: N」段；即便外链帖正文被降级，热度元数据仍要保留。
+        summary = entry.get("summary", "") or ""
+        points_match = self._points_re.search(summary)
+        comments_match = self._num_comments_re.search(summary)
+        raw["hn_points"] = int(points_match.group(1)) if points_match else None
+        raw["hn_num_comments"] = int(comments_match.group(1)) if comments_match else None
+        raw["discussion_url"] = entry.get("comments", "")
+        return raw
+
+    def _build_feed_url(self, min_points: int, min_comments: int) -> str:
+        from urllib.parse import urlencode
+
+        params = {"q": self.search_query}
+        if min_points > 0:
+            params["points"] = min_points
+        if min_comments > 0:
+            params["comments"] = min_comments
+        return f"{self.base_feed_url}?{urlencode(params)}"
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        min_points = self._positive_int_param(kwargs.get("min_points"), self.default_min_points)
+        min_comments = self._positive_int_param(kwargs.get("min_comments"), self.default_min_comments)
+        # 父类 PresetRssFetcher._run 会读取 self.feed_url 拼装参数，这里按门槛动态改写。
+        # 与 GenericRssFetcher._run 改写 self.source_id 同属「单次运行内的实例身份切换」模式。
+        self.feed_url = self._build_feed_url(min_points, min_comments)
+        async for item in super()._run(client, **kwargs):
+            yield item

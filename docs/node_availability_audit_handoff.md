@@ -34,6 +34,30 @@ Existing records in `data/cms_data.db` are not automatically cleaned when a fetc
 
 ## Source Quality Decisions
 
+### 机器之心 / IT之家 audit (2026-06-02)
+
+Audited the two Chinese AI-media nodes together. **IT之家 (`web_ithome_ai`) is
+healthy** — a live run returned 8 AI-relevant articles with clean bodies (no HTML
+residue), real listing timestamps, strict newest-first order, correct URLs, and
+`detail_extraction_method=ithome_post_content`; no change needed.
+
+**机器之心 (`web_jiqizhixin`) was removed.** It produced **zero** records: its
+sole working entry point, the public `sitemap.xml.gz`, is now behind an Aliyun
+WAF — instead of the gzip sitemap it returns a `text/html` JS challenge page
+(`<textarea id="renderData">` + `aliyun_waf` + `acw_sc__v2` cookie), so pure
+httpx can't read it and the candidate list is empty. The homepage/listing is a
+Vue SPA whose `r.jina.ai` render exposes titles + cover images but no
+`/articles/` links to extract, and RSS still 500s, so there is no replacement
+discovery entry. Reviving it would require reversing the Aliyun `acw_sc__v2`
+WAF (fragile, high-maintenance) or a headless-browser bypass that still needs
+per-article `r.jina.ai` fetches — poor cost/benefit. Both deletion triggers
+fired: structural unfitness (0 output, no cheap fix) and redundancy (Chinese AI
+media is already covered by the healthy `web_ithome_ai` and `web_qbitai`). So the
+`JiqizhixinWebsiteFetcher` class, its `ESSENTIAL_FETCHER_IDS` entry, the now-unused
+`gzip`/`html` imports, `tests/test_jiqizhixin_fetcher.py`, and the
+`test_fetcher_curation` metadata assertion were all removed (same disposition as
+`docs_xai_models` / `web_bytedance_seed_models`). Registry now mounts 27 nodes.
+
 ### QbitAI
 
 Source id:
@@ -749,6 +773,51 @@ now overrides `_detail_for_url` → `_extract_qbitai_detail`, scoping to
 paragraph-level text (`p`/`blockquote`/`li`/`h2`/`h3`); method
 `qbitai_article_body`, falling back to the shared extractor if the container is
 missing. Live: bodies now carry zero HTML tags, no wx_img, no related/hot/footer.
+
+### Hacker News: AI noise filter (2026-06-02)
+
+`rss_hn_ai` was structurally sound (splits per submission, real dates,
+newest-first) but mis-scoped: it pulled the raw `https://hnrss.org/newest?q=AI`
+firehose — an unfiltered full-text search over *newest* submissions — so the
+feed was dominated by 0-engagement noise (hiring posts like `Fibr.ai is hiring`,
+0-point self-promo like `Build private AI agents…`, weakly-AI-related forum
+questions). This is exactly the defect the candidate doc flagged
+(`tier1_media_community_sources.md`: "Search query `AI` is broad and noisy.
+Needs stricter scoring, minimum points/comments… keep it hidden unless
+ranking/filtering is added"). Per the audit standard this is a quality fix, not
+a deletion (HN is an admitted catalog source). hnrss natively supports `points`
+and `comments` numeric thresholds (backed by Algolia `numericFilters`), so
+`HackerNewsAiRssFetcher` now builds its feed URL from configurable `min_points`
+(default 10) / `min_comments` (default 0) params, only admitting submissions the
+community actually upvoted/discussed. `min_points=0, min_comments=0` falls back
+to the original unfiltered `?q=AI` for parity. The `feed_url` is rewritten per
+run from the thresholds (mirroring the existing `self.source_id` instance-switch
+pattern in `GenericRssFetcher._run`). Live with the default `points=10`: the
+firehose collapses to front-page-worthy AI stories (Alphabet's $80B AI infra
+raise, Florida v. OpenAI, Meta AI-bot account theft, Copilot pricing reaction)
+with zero hiring/self-promo. Regression tests assert default-threshold
+injection, custom points/comments, the zero-threshold fallback, and schema
+exposure.
+
+Follow-up the same day: HN is a link-aggregator/discussion community, not a
+content platform — each item's `link` points at an arbitrary third-party domain
+(paywalled journals, CF-challenged sites, JS SPAs, YouTube/GitHub/PDF), so
+hard-fetching every external body is slow and fails for a large fraction, while
+the RSS summary of an external post is just an `Article URL: … / Comments URL: …`
+template with no real body. So HN is now treated as a *discovery source*:
+`default_fetch_detail_if_missing = False`, and a new `_finalize_content_text`
+hook (added to `GenericRssFetcher`, default no-op, called just before yield with
+the fetched detail text) lets `HackerNewsAiRssFetcher` degrade external-link
+posts (`link != comments`) to title + external URL + discussion URL + community
+heat, leaving `content` empty (`has_content=False`); self-posts (Ask/Show/Tell
+HN, `link == comments`) keep the author's summary as the real body. `_raw_entry`
+now also parses `Points:` / `# Comments:` into `hn_points` / `hn_num_comments`
+and stores the discussion URL as `discussion_url`. If a user manually re-enables
+detail fetch and an external body is actually retrieved, it is kept (the hook
+short-circuits on non-empty `detail_text`). Live default run: 18/20 external
+posts collapse to discovery entries with heat metadata, 2 self-posts keep their
+bodies. Regression tests cover the discovery-entry degrade, self-post body
+retention, the detail-fetched override, and the disabled-by-default toggle.
 
 ## Verification Performed
 

@@ -90,11 +90,11 @@ src/
 │   ├── base.py              # BaseFetcher: httpx client, retries, template method
 │   ├── registry.py          # FetcherRegistry singleton — auto-discovers impl/ on import
 │   └── impl/
-│       ├── rss_fetcher.py               # GenericRssFetcher + PresetRssFetcher (23+ built-in RSS sources); OpenAINewsRssFetcher renders detail via Playwright (CF bypass)
+│       ├── rss_fetcher.py               # GenericRssFetcher + PresetRssFetcher (23+ built-in RSS sources); OpenAINewsRssFetcher renders detail via Playwright (CF bypass); HackerNewsAiRssFetcher applies a configurable min_points/min_comments hnrss threshold to de-noise the q=AI firehose and is treated as a discovery source (external-link posts degrade to title+URL+discussion+heat with no body; only Ask/Show/Tell self-posts keep a body; external detail fetch off by default)
 │       ├── github_release_fetcher.py    # GenericGitHubReleasesFetcher + preset subclasses (13 built-in)
 │       ├── repository_model_fetcher.py  # GitHub repo + HuggingFace model fetchers (content_type=github_repository / huggingface_model); GitHub repo fetcher backfills a cleaned README excerpt when a repo has no description (dedup-gated, GITHUB_TOKEN-aware)
 │       ├── webpage_fetcher.py           # BaseWebPageListFetcher + preset subclasses (6 built-in)
-│       ├── curated_core_fetcher.py      # Curated AI-source presets: SinglePageDocumentFetcher (changelogs/release notes) + per-site BaseWebPageListFetcher/BaseFetcher subclasses (量子位, 机器之心, HF Daily Papers, etc.)
+│       ├── curated_core_fetcher.py      # Curated AI-source presets: SinglePageDocumentFetcher (changelogs/release notes) + per-site BaseWebPageListFetcher/BaseFetcher subclasses (量子位, 新智元, HF Daily Papers, etc.)
 │       ├── article_extractor.py         # Shared HTML→article-body extractor (helper module, not a fetcher); used by webpage/rss fetchers to backfill detail
 │       ├── playwright_renderer.py       # PlaywrightRenderer: headless-Chromium detail rendering for Cloudflare-challenged sources (used by OpenAINewsRssFetcher)
 │       └── webhook_trigger.py           # Outbound Dify workflow trigger (not an inbound content source)
