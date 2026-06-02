@@ -550,6 +550,38 @@ The hook defaults to `None`, so dedup failure or absence degrades to the prior
 behavior. Only "list + per-item detail" sources benefit; single-page and
 list-API sources (changelogs, GitHub releases, HF models) get no extra query.
 
+### xAI / Grok: split release notes, drop the models reference page (2026-06-02)
+
+Audited the two xAI nodes by fetching their base URLs and inspecting what each fetcher actually extracts.
+
+`docs_xai_models` (`https://docs.x.ai/developers/models`) — **removed.** It is a static
+model catalog (Grok model names, pricing, context-window specs); no dated entries,
+no chronology, every fetch produces the same single reference blob with the
+`publish_date` falling back to fetch time. Fails the audit standard (must match the
+page's primary chronological content with real publish dates), and the only news-like
+signal it carries ("a new Grok model exists") is already covered — with dates — by
+`docs_xai_release_notes`. So it is redundant *and* structurally unfit, same verdict
+shape as the hidden API changelogs. Deleted `XAiModelsDocsFetcher` and removed
+`docs_xai_models` from `ESSENTIAL_FETCHER_IDS` (delete-the-class, per the registry
+invariant).
+
+`docs_xai_release_notes` (`https://docs.x.ai/developers/release-notes`) — **fixed, not
+dropped.** It is a genuine substantive Grok model/API/product changelog, but the
+generic `SinglePageDocumentFetcher` mashed all ~35 releases into one undated blob, so it
+*looked* low-value. It only needed the same per-entry split as Claude Code / Codex /
+Gemma. The page is a Mintlify changelog **grid**: each release is a
+`div.grid grid-cols-[5rem_minmax(0,1fr)]` card whose left column holds the date and
+right column (`div.min-w-0`) holds the `<h3>` heading + body. Dates are day-level but
+**year-less** — recent cards use full month names (`May 29`), older ones use
+abbreviations (`Dec 14`). The year comes from the nearest preceding month `<h2>`:
+explicit when present (`December 2025`), otherwise the current year (with a previous-year
+fallback when the month is later than the current month). Rewrote
+`XAiDeveloperReleaseNotesFetcher` with a grid splitter (`_release_entries`,
+`_parse_grid_date`, `_infer_year`) — like the Codex `<li>` splitter, including the
+abbreviated-month map (the same gap that broke the OpenAI API changelog dates). Live run:
+35 entries, 0 empty dates, newest-first, real dates spanning 2024-11 → 2026-05, anchored
+per `<h3>` id.
+
 ## Verification Performed
 
 Targeted tests for the node audit and related curation changes:

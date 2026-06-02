@@ -46,7 +46,6 @@ This catalog describes the current source implementation after the additive sour
 | Source ID | Base URL |
 | --- | --- |
 | `docs_xai_release_notes` | `https://docs.x.ai/developers/release-notes` |
-| `docs_xai_models` | `https://docs.x.ai/developers/models` |
 
 ### Alibaba / Qwen
 

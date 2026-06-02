@@ -527,7 +527,7 @@ class GemmaReleaseNotesFetcher(DevsiteReleaseNotesFetcher):
 class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
     source_id = "docs_xai_release_notes"
     name = "xAI Developer Release Notes"
-    description = "抓取 xAI 开发者 Release Notes 中的 Grok API、模型与产品更新。"
+    description = "抓取 xAI 开发者 Release Notes 中的 Grok 模型、API 与产品更新（按发布条目逐条切分）。"
     icon = "𝕏"
     page_url = "https://docs.x.ai/developers/release-notes"
     source_url = page_url
@@ -543,25 +543,142 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
 
+    # xAI Release Notes 是 Mintlify changelog grid：每条发布是一个
+    # ``div.grid grid-cols-[5rem...]`` 卡片，左列(5rem)放日期(``May 29`` / 老条目用缩写
+    # ``Dec 31``，均无年份)，右列(``div.min-w-0``)放标题(<h3>)与正文。年份由前一个
+    # 月份 <h2>(``May`` / ``December 2025``)给出：带年份的取其年，无年份的视为当前年
+    # (跨月时回退上一年)。通用单页抓取会把所有发布糅成一篇、丢失逐条日期；这里按 grid
+    # 卡片切分，每条发布一条记录、保留真实发布日期。
+    _date_text_re = re.compile(r"^([A-Za-z]+)\s+(\d{1,2})(?:,?\s+(20\d{2}))?$")
+    _month_map = {
+        "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+        "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+        "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7, "aug": 8,
+        "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+    }
 
-class XAiModelsDocsFetcher(SinglePageDocumentFetcher):
-    source_id = "docs_xai_models"
-    name = "xAI Models Docs"
-    description = "抓取 xAI Models 文档中的 Grok 模型目录与 API 能力信息。"
-    icon = "𝕏"
-    page_url = "https://docs.x.ai/developers/models"
-    source_url = page_url
-    site_name = "xAI"
-    source_section = "Models"
-    source_owner = "xai"
-    source_brand = "grok"
-    source_scope = "api_platform"
-    source_channel = "docs_reference"
-    provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "api_platform"]
-    signal_strength = "medium_signal"
-    noise_risk = "low_noise"
-    fetch_reliability = "stable_public"
+    @classmethod
+    def get_parameter_schema(cls) -> List[Dict[str, Any]]:
+        return [
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 50},
+            {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
+        ]
+
+    def _entry_limit(self, raw_limit: Any) -> int:
+        if raw_limit in (None, ""):
+            return 50
+        try:
+            return max(int(raw_limit), 0)
+        except (TypeError, ValueError):
+            self.logger.warning(f"{self.name} 条数参数无效，使用默认值: {raw_limit}")
+            return 50
+
+    def _content_id(self, anchor: str) -> str:
+        digest = hashlib.sha1(f"{self.source_id}:{anchor}".encode("utf-8")).hexdigest()[:16]
+        return f"{self.source_id}_{digest}"
+
+    def _infer_year(self, grid: Tag, month: int, now: datetime) -> int:
+        """从最近的前序月份 <h2> 推断年份：带年份取其年，否则按当前日期回退。"""
+        for heading in grid.find_all_previous("h2"):
+            text = self._clean_text(heading.get_text(" ", strip=True))
+            first = text.split()[0].lower() if text else ""
+            if first in self._month_map:
+                year_match = re.search(r"(20\d{2})", text)
+                if year_match:
+                    return int(year_match.group(1))
+                break
+        return now.year - 1 if month > now.month else now.year
+
+    def _parse_grid_date(self, date_text: str, grid: Tag, now: datetime) -> str:
+        match = self._date_text_re.match(date_text)
+        if not match:
+            return ""
+        month_name, day, year = match.groups()
+        month = self._month_map.get(month_name.lower())
+        if not month:
+            return ""
+        resolved_year = int(year) if year else self._infer_year(grid, month, now)
+        try:
+            return datetime(resolved_year, month, int(day), tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            return ""
+
+    def _release_entries(self, html_text: str, resolved_url: str, max_chars: int) -> List[Dict[str, Any]]:
+        soup = BeautifulSoup(html_text, "html.parser")
+        container = soup.select_one("main") or soup
+        base_url = resolved_url.split("#", 1)[0]
+        now = datetime.now(timezone.utc)
+
+        entries: List[Dict[str, Any]] = []
+        seen = set()
+        for grid in container.select("div.grid"):
+            cols = grid.find_all("div", recursive=False)
+            if len(cols) < 2:
+                continue
+            date_text = self._clean_text(cols[0].get_text(" ", strip=True))
+            content_col = cols[1]
+            heading = content_col.find(["h2", "h3", "h4"])
+            if heading is None:
+                continue
+
+            release_title = self._clean_text(heading.get_text(" ", strip=True))
+            anchor = self._clean_text(str(heading.get("id") or "")) or release_title
+            if not release_title or anchor in seen:
+                continue
+
+            body = self._clean_text(content_col.get_text(" ", strip=True))[:max_chars]
+            if not body:
+                continue
+
+            publish_date = self._parse_grid_date(date_text, grid, now)
+            seen.add(anchor)
+            entries.append({
+                "anchor": anchor,
+                "heading": release_title,
+                "title": f"{self.site_name}: {release_title}",
+                "source_url": f"{base_url}#{anchor}" if heading.get("id") else base_url,
+                "publish_date": publish_date,
+                "raw_date": date_text,
+                "content": body,
+                "summary": body[:500],
+            })
+        return entries
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
+        if limit <= 0:
+            return
+
+        response = await self._safe_get(client, self.page_url)
+        if not response:
+            raise RuntimeError(f"{self.name} 页面请求失败: {self.page_url}")
+
+        entries = self._release_entries(response.text, str(response.url), max_chars)
+        entries = sorted(entries, key=lambda entry: entry["publish_date"] or "", reverse=True)
+        for entry in entries[:limit]:
+            yield WebPageArticleContent(
+                id=self._content_id(entry["anchor"]),
+                title=entry["title"],
+                source_url=entry["source_url"],
+                publish_date=entry["publish_date"] or datetime.now(timezone.utc).isoformat(),
+                content=entry["content"],
+                has_content=bool(entry["content"]),
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=entry["summary"],
+                tags=[self.category, *list(self.content_tags or [])],
+                raw_data={
+                    "listing_url": self.page_url,
+                    "url": entry["source_url"],
+                    "listing_source": "xai_release_notes_updates",
+                    "release_anchor": entry["anchor"],
+                    "release_heading": entry["heading"],
+                    "release_date_text": entry["raw_date"],
+                    "detail_text_length": len(entry["content"]),
+                    "detail_extraction_method": "xai_release_notes_grid",
+                },
+            )
 
 
 class DeepSeekApiChangeLogFetcher(SinglePageDocumentFetcher):

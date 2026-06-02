@@ -16,6 +16,7 @@ from fetchers.impl.curated_core_fetcher import (
     GemmaReleaseNotesFetcher,
     OpenAiCodexChangelogFetcher,
     QbitAiWebsiteFetcher,
+    XAiDeveloperReleaseNotesFetcher,
     ZaiNewReleasedFetcher,
 )
 
@@ -787,3 +788,115 @@ def test_openai_codex_changelog_splits_releases_by_list_item():
     assert not items[0].content.startswith("2026-05-29")
     assert items[0].raw_data["listing_source"] == "openai_codex_changelog_updates"
     assert items[0].raw_data["detail_extraction_method"] == "openai_changelog_list_item"
+
+
+def test_xai_release_notes_splits_grid_cards_by_date():
+    # xAI Release Notes 是 Mintlify changelog grid：每条发布是一个两列 grid 卡片，
+    # 左列(日期，近期用全称 "May 29"、老条目用缩写 "Dec 14"，均无年份)，右列(<h3>+正文)。
+    # 年份由前序月份 <h2>(带年份的取其年)给出。fixture 用显式年份的 <h2> 保证确定性，
+    # 并打乱顺序以验证按日期倒序。
+    listing_html = """
+    <html>
+      <body>
+        <main>
+          <h1 id="release-notes-1">Release Notes</h1>
+          <h2 id="may-2026">May 2026</h2>
+          <div class="grid grid-cols-[5rem_minmax(0,1fr)]">
+            <div class="text-muted tabular-nums">May 27</div>
+            <div class="min-w-0">
+              <h3 id="image-search-in-web-search">Image Search in Web Search</h3>
+              <p>Web Search now supports searching for images directly.</p>
+            </div>
+          </div>
+          <div class="grid grid-cols-[5rem_minmax(0,1fr)]">
+            <div class="text-muted tabular-nums">May 29</div>
+            <div class="min-w-0">
+              <h3 id="smart-turn-for-streaming-stt">Smart Turn for Streaming STT</h3>
+              <p>An ML model predicts whether the speaker has finished their thought.</p>
+            </div>
+          </div>
+          <h2 id="december-2025">December 2025</h2>
+          <div class="grid grid-cols-[5rem_minmax(0,1fr)]">
+            <div class="text-muted tabular-nums">Dec 14</div>
+            <div class="min-w-0">
+              <h3 id="grok-2-1212">Released the new grok-2-1212 models</h3>
+              <p>New Grok 2 model and vision variant are now available.</p>
+            </div>
+          </div>
+        </main>
+      </body>
+    </html>
+    """
+    fetcher = XAiDeveloperReleaseNotesFetcher()
+
+    async def fake_safe_get(client, url):
+        assert url == "https://docs.x.ai/developers/release-notes"
+        return DummyResponse(listing_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=10)]
+
+    items = asyncio.run(collect_items())
+
+    # 每个 grid 卡片各成一条，按日期倒序（不沿用页面先后）。
+    assert [item.title for item in items] == [
+        "xAI: Smart Turn for Streaming STT",
+        "xAI: Image Search in Web Search",
+        "xAI: Released the new grok-2-1212 models",
+    ]
+    # 缩写月份 "Dec 14" + 显式年份 <h2> "December 2025" → 真实日期。
+    assert [item.publish_date for item in items] == [
+        "2026-05-29T00:00:00+00:00",
+        "2026-05-27T00:00:00+00:00",
+        "2025-12-14T00:00:00+00:00",
+    ]
+    # 锚点用 <h3> 的 id。
+    assert items[0].source_url == "https://docs.x.ai/developers/release-notes#smart-turn-for-streaming-stt"
+    # 内容按卡片切分，互不串味。
+    assert "finished their thought" in items[0].content
+    assert "Image Search" not in items[0].content
+    assert items[0].raw_data["listing_source"] == "xai_release_notes_updates"
+    assert items[0].raw_data["detail_extraction_method"] == "xai_release_notes_grid"
+    assert items[0].raw_data["release_date_text"] == "May 29"
+
+
+def test_xai_release_notes_infers_current_year_for_undated_month_heading():
+    # 月份 <h2> 不带年份（"May"）时按当前日期推断：当前年；若该月晚于当月则回退上一年。
+    # 用与实现相同的规则计算期望年份，避免对运行时间的硬编码。
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    expected_year = now.year - 1 if 5 > now.month else now.year
+
+    listing_html = """
+    <html>
+      <body>
+        <main>
+          <h2 id="may">May</h2>
+          <div class="grid grid-cols-[5rem_minmax(0,1fr)]">
+            <div class="text-muted tabular-nums">May 29</div>
+            <div class="min-w-0">
+              <h3 id="smart-turn">Smart Turn for Streaming STT</h3>
+              <p>An ML model predicts end of turn.</p>
+            </div>
+          </div>
+        </main>
+      </body>
+    </html>
+    """
+    fetcher = XAiDeveloperReleaseNotesFetcher()
+
+    async def fake_safe_get(client, url):
+        return DummyResponse(listing_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=10)]
+
+    items = asyncio.run(collect_items())
+
+    assert len(items) == 1
+    assert items[0].publish_date == f"{expected_year}-05-29T00:00:00+00:00"

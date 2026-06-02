@@ -36,8 +36,7 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `web_claude_blog` | Claude product, Claude Code, and agent updates. |
 | `docs_claude_code_changelog` | Claude Code version-level tool updates. |
 | `docs_gemma_release_notes` | Gemma open model release notes. |
-| `docs_xai_release_notes` | xAI developer release notes. |
-| `docs_xai_models` | xAI model catalog and API model reference. |
+| `docs_xai_release_notes` | xAI developer release notes (Grok model/API/product updates), split per release entry. |
 | `web_qwen_blog` | Qwen model, product, multimodal, and agent updates. |
 | `docs_deepseek_api_changelog` | DeepSeek API and model changelog. |
 | `github_deepseek_repositories` | Early DeepSeek model/tool signals from public repositories. |

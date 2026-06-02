@@ -25,7 +25,6 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "docs_gemma_release_notes",
     # xAI / Grok
     "docs_xai_release_notes",
-    "docs_xai_models",
     # Alibaba / Qwen
     "web_qwen_blog",
     # DeepSeek
