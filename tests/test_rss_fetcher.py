@@ -351,6 +351,52 @@ def test_openai_news_skips_browser_when_detail_disabled():
     assert items[0].content == "Short human-written summary for the rendered article."
 
 
+def test_openai_news_strips_loading_placeholder_only_on_isolated_lines():
+    fetcher = OpenAINewsRssFetcher()
+    # 标题与正文之间的孤立 "Loading…"/"Loading..." 占位行被剔除。
+    assert fetcher._strip_render_placeholders("Title\nLoading…\nBody.") == "Title\nBody."
+    assert fetcher._strip_render_placeholders("Title\nLoading...\nBody.") == "Title\nBody."
+    assert fetcher._strip_render_placeholders("Head\n   Loading…  \nTail") == "Head\nTail"
+    # 正文中合法的 "Loading ..." 句子不被误删。
+    keep = "Loading the model takes time.\nReal body."
+    assert fetcher._strip_render_placeholders(keep) == keep
+
+
+def test_openai_news_rendered_body_drops_loading_placeholder():
+    # 端到端：渲染快照里夹了 "Loading…" 占位行，入库正文不应包含它。
+    rendered_html = (
+        "<html><body><article><h1>Rendered Article</h1>"
+        "<p>Loading…</p><p>"
+        + "This is the full rendered OpenAI article body obtained after the challenge. " * 6
+        + "</p></article></body></html>"
+    )
+    fetcher = OpenAINewsRssFetcher()
+
+    async def fake_render(url):
+        return rendered_html if url.endswith("rendered-article") else ""
+
+    fetcher._render_override = fake_render
+
+    async def fake_safe_get(client, url, **kwargs):
+        if url.endswith("rss.xml"):
+            return DummyResponse(_openai_feed_xml(), url)
+        return None
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [
+            item
+            async for item in fetcher._run(
+                None, limit=1, fetch_detail_if_missing=True, detail_min_chars=200, detail_max_chars=12000
+            )
+        ]
+
+    rendered = asyncio.run(collect_items())[0]
+    assert "full rendered OpenAI article body" in rendered.content
+    assert "Loading" not in rendered.content
+
+
 def test_google_gemini_models_uses_category_rss():
     assert GoogleGeminiModelsRssFetcher.feed_url == "https://blog.google/innovation-and-ai/models-and-research/gemini-models/rss/"
 

@@ -353,6 +353,11 @@ class OpenAINewsRssFetcher(PresetRssFetcher):
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
 
+    # Playwright 渲染 openai.com 正文页时，标题/正文之间会夹一个独立的 "Loading…" 占位行
+    # （异步区块的加载提示，渲染快照里残留），需在提取后剔除。只匹配「整行就是 Loading[…/...]」
+    # 的孤立行，避免误删正文中合法的 "Loading ..." 句子。
+    _render_placeholder_re = re.compile(r"(?m)^[ \t]*Loading(?:…|\.\.\.)?[ \t]*$\n?")
+
     # OpenAI 文章正文页（/index/{slug}）有 Cloudflare Managed Challenge，纯 httpx 只能拿到
     # 403 挑战壳页，正文需浏览器执行 JS 通过挑战后才渲染。RSS 自带的 summary 只是人工
     # 摘要——对“把原文概括成一段话”的日报场景而言，在 summary 上再概括等于零增量或幻觉，
@@ -383,6 +388,11 @@ class OpenAINewsRssFetcher(PresetRssFetcher):
             finally:
                 self._renderer = None
 
+    def _strip_render_placeholders(self, text: str) -> str:
+        if not text:
+            return text
+        return self._render_placeholder_re.sub("", text)
+
     async def _detail_for_url(self, client, url, max_chars, detail_min_chars):
         html = ""
         if self._render_override is not None:
@@ -392,10 +402,11 @@ class OpenAINewsRssFetcher(PresetRssFetcher):
 
         if html:
             detail = extract_detail_from_html(html, max_chars, detail_min_chars)
-            if detail.text and len(detail.text) >= detail_min_chars:
+            text = self._strip_render_placeholders(detail.text)
+            if text and len(text) >= detail_min_chars:
                 return {
                     "title": detail.title,
-                    "text": detail.text,
+                    "text": text,
                     "method": f"playwright_{detail.method}" if detail.method else "playwright",
                     "url": url,
                 }

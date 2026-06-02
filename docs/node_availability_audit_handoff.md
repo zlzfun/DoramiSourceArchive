@@ -819,6 +819,27 @@ posts collapse to discovery entries with heat metadata, 2 self-posts keep their
 bodies. Regression tests cover the discovery-entry degrade, self-post body
 retention, the detail-fetched override, and the disabled-by-default toggle.
 
+### Remaining default nodes verified from DB + OpenAI Loading… cleanup (2026-06-02)
+
+Closed out the four default nodes that had no dedicated audit section by
+inspecting their most-recent archived rows in `data/cms_data.db` (the latest
+fetch output) rather than re-fetching. All four are healthy: `web_claude_blog`
+(Claude product blog, 4k–12k-char bodies, no HTML residue, newest-first),
+`rss_openai_news` (Playwright-rendered OpenAI bodies, full text, newest-first),
+`rss_google_gemini_models` (Gemini Omni/3.5/I/O coverage, 1k–12k-char bodies),
+and `hf_deepseek_models` (DeepSeek HF model cards — short metadata bodies are
+correct for a model-signal node; DeepSeek typically ships no HF card summary).
+That covers all 23 default-visible nodes.
+
+One minor blemish was fixed: `rss_openai_news` bodies carried a stray `Loading…`
+placeholder line between the title and the body (an async-block loading hint left
+in the Playwright render snapshot). `OpenAINewsRssFetcher` now strips it via
+`_strip_render_placeholders` (a `(?m)^[ \t]*Loading(?:…|\.\.\.)?[ \t]*$\n?`
+regex) applied to the rendered detail text — it only removes lines that are
+*exactly* a Loading placeholder, so legitimate "Loading the model…" sentences in
+article bodies are preserved. Regression tests cover the isolated-line strip,
+the in-sentence keep, and the end-to-end rendered-body path.
+
 ## Verification Performed
 
 Targeted tests for the node audit and related curation changes:
