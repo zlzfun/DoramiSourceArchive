@@ -1070,6 +1070,8 @@ class CursorChangelogWebFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     # 兜底：即便有新的导航链接漏过 exclude，也丢弃正文为空的垃圾条目。
     drop_empty_content = True
+    # Cursor 列表页每页仅约 5 条，更早的在 /changelog/page/N 翻页里；逐页累积以凑够 limit。
+    max_listing_pages = 8
     source_owner = "cursor"
     source_brand = "cursor"
     source_scope = "developer_tool"
@@ -1079,6 +1081,22 @@ class CursorChangelogWebFetcher(BaseWebPageListFetcher):
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
+
+    _page_link_re = re.compile(r"/changelog/page/(\d+)/?$")
+
+    def _next_listing_page_url(self, soup, current_url):
+        # 当前页码（/changelog 视为第 1 页），下一页取页面里编号最小且大于当前页的 page 链接。
+        current_match = self._page_link_re.search(current_url)
+        current_page = int(current_match.group(1)) if current_match else 1
+        next_candidates = []
+        for link in soup.find_all("a", href=True):
+            href = urljoin(current_url, str(link["href"]))
+            match = self._page_link_re.search(href)
+            if match and int(match.group(1)) > current_page:
+                next_candidates.append((int(match.group(1)), href.split("#", 1)[0]))
+        if not next_candidates:
+            return None
+        return min(next_candidates, key=lambda pair: pair[0])[1]
 
 
 class QbitAiWebsiteFetcher(BaseWebPageListFetcher):

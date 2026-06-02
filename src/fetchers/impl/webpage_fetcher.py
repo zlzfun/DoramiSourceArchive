@@ -3,7 +3,7 @@ import html
 import json
 import re
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, Iterable, List
+from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
 
 import httpx
@@ -67,6 +67,8 @@ class BaseWebPageListFetcher(BaseFetcher):
     # 列表页常把导航/页脚链接（定价、企业版等）也匹配进来：它们既无正文、详情页又多为 404。
     # 置 True 时丢弃正文为空的条目，避免把这类导航垃圾入库。默认 False，保持既有行为不变。
     drop_empty_content = False
+    # 列表翻页上限：默认 1（不翻页）。子类设大并实现 _next_listing_page_url 才会逐页累积。
+    max_listing_pages = 1
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
@@ -149,6 +151,10 @@ class BaseWebPageListFetcher(BaseFetcher):
         if any(pattern in url for pattern in self.exclude_url_patterns):
             return False
         return any(pattern in url for pattern in self.article_url_patterns)
+
+    def _next_listing_page_url(self, soup: BeautifulSoup, current_url: str) -> Optional[str]:
+        """返回下一页列表 URL；无翻页则返回 None。子类按站点分页规则实现。"""
+        return None
 
     def _candidate_container(self, link: Tag) -> Tag:
         if link.find(["article", "h1", "h2", "h3", "h4"]):
@@ -388,37 +394,52 @@ class BaseWebPageListFetcher(BaseFetcher):
         if not self.listing_url:
             raise ValueError("网页列表地址不能为空")
 
-        response = await self._safe_get(client, self.listing_url)
-        if not response:
-            raise RuntimeError(f"网页列表请求失败: {self.listing_url}")
-
-        soup = BeautifulSoup(response.text, "html.parser")
         entries_by_url: Dict[str, Dict[str, Any]] = {}
         order = 0
+        page_url = self.listing_url
+        visited_pages = set()
+        pages_fetched = 0
 
-        for link in soup.find_all("a", href=True):
-            url = self._normalize_article_url(urljoin(str(response.url), str(link["href"])))
-            if not self._matches_article_url(url):
-                continue
+        # 部分列表页只展示最近若干条，更早的需翻页（如 Cursor 的 /changelog/page/N）。
+        # 默认 max_listing_pages=1（不翻页，保持原行为）；子类设大并实现 _next_listing_page_url
+        # 即可逐页累积，直到凑够 limit、翻完上限或没有下一页。
+        while page_url and page_url not in visited_pages and pages_fetched < max(1, self.max_listing_pages):
+            visited_pages.add(page_url)
+            response = await self._safe_get(client, page_url)
+            if not response:
+                if pages_fetched == 0:
+                    raise RuntimeError(f"网页列表请求失败: {self.listing_url}")
+                break
 
-            container = self._candidate_container(link)
-            title = self._title_from_container(link, container)
-            summary = self._summary_from_container(title, container)
-            publish_date = self._extract_datetime_or_empty(f"{title} {summary}")
-            self._merge_entry(entries_by_url, {
-                "url": url,
-                "title": title,
-                "summary": summary,
-                "publish_date": publish_date,
-                "listing_source": "html_anchor",
-                "order": order,
-            })
-            order += 1
+            soup = BeautifulSoup(response.text, "html.parser")
+            for link in soup.find_all("a", href=True):
+                url = self._normalize_article_url(urljoin(str(response.url), str(link["href"])))
+                if not self._matches_article_url(url):
+                    continue
 
-        for embedded_entry in self._embedded_article_entries(soup):
-            embedded_entry["order"] = order
-            self._merge_entry(entries_by_url, embedded_entry)
-            order += 1
+                container = self._candidate_container(link)
+                title = self._title_from_container(link, container)
+                summary = self._summary_from_container(title, container)
+                publish_date = self._extract_datetime_or_empty(f"{title} {summary}")
+                self._merge_entry(entries_by_url, {
+                    "url": url,
+                    "title": title,
+                    "summary": summary,
+                    "publish_date": publish_date,
+                    "listing_source": "html_anchor",
+                    "order": order,
+                })
+                order += 1
+
+            for embedded_entry in self._embedded_article_entries(soup):
+                embedded_entry["order"] = order
+                self._merge_entry(entries_by_url, embedded_entry)
+                order += 1
+
+            pages_fetched += 1
+            if len(entries_by_url) >= limit:
+                break
+            page_url = self._next_listing_page_url(soup, str(response.url))
 
         entries = sorted(
             entries_by_url.values(),

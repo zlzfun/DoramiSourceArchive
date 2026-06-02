@@ -44,7 +44,9 @@ Overlaps with Cursor Blog for major launches and tier1 media coverage.
 
 Prefer changelog over blog as the first Cursor source. Existing project has `web_cursor_blog`, but the changelog may be the better default candidate.
 
-Audited 2026-06-02: the listing matched nav/footer links (`/changelog/enterprise|pricing|community`) as articles — their detail pages 404 and they carry no body, so they landed as empty-content junk rows. Added those nav paths to `exclude_url_patterns` and set `drop_empty_content = True` (new opt-in flag on `BaseWebPageListFetcher`) so any empty-content entry is dropped before archiving. Real dated entries (5 found) are unaffected.
+Audited 2026-06-02: the listing matched nav/footer links (`/changelog/enterprise|pricing|community`) as articles — their detail pages 404 and they carry no body, so they landed as empty-content junk rows. Added those nav paths to `exclude_url_patterns` and set `drop_empty_content = True` (new opt-in flag on `BaseWebPageListFetcher`) so any empty-content entry is dropped before archiving.
+
+Follow-up: the `/changelog` listing only shows ~5 recent entries; older ones live behind `/changelog/page/N` pagination, so `limit=20` was returning only 5. Added general listing pagination to `BaseWebPageListFetcher` (`max_listing_pages` + a `_next_listing_page_url` hook); Cursor sets `max_listing_pages=8` and follows the next `/changelog/page/N`. `limit=20` now yields 20 dated entries across pages 1–4.
 
 ## Source: OpenCode GitHub Releases
 
@@ -116,7 +118,7 @@ Overlaps with xAI/Google/OpenAI/Claude ecosystem updates when OpenClaw integrate
 
 Prefer GitHub Releases API. Consider tracking only stable releases or monthly summaries.
 
-Audited 2026-06-02: OpenClaw ships several `-beta` prereleases per day (11 of the last 12 releases were prereleases, multiple per day) — extreme noise. Set `default_include_prereleases = False` so the node tracks **stable releases only** by default (param can re-enable betas). To keep stable history meaningful when betas crowd the feed, the generic releases fetcher now fetches `per_page=100` when prereleases are excluded, then emits up to `limit` stable ones.
+Audited 2026-06-02: OpenClaw ships several `-beta` prereleases per day (11 of the last 12 releases were prereleases, multiple per day) — extreme noise. Set `default_include_prereleases = False` so the node tracks **stable releases only** by default (param can re-enable betas). To keep stable history meaningful when betas crowd the feed, the generic releases fetcher now fetches `per_page=100` when prereleases are excluded, then emits up to `limit` stable ones. Verified: a fresh `limit=20` fetch returns 20 stable releases, 0 betas. (Betas seen after the fix are pre-fix archived rows; they persist until deleted from the ledger.)
 
 ## Source: Hermes Agent GitHub Releases
 

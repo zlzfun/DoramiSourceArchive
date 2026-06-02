@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+from urllib.parse import urljoin
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -54,6 +55,20 @@ class DropEmptyNewsFetcher(BaseWebPageListFetcher):
     drop_empty_content = True
 
 
+class PaginatedNewsFetcher(BaseWebPageListFetcher):
+    source_id = "web_paginated_news"
+    name = "Paginated News"
+    listing_url = "https://example.test/news"
+    site_name = "Example"
+    source_section = "News"
+    article_url_patterns = ["example.test/news/"]
+    max_listing_pages = 5
+
+    def _next_listing_page_url(self, soup, current_url):
+        link = soup.find("a", class_="next")
+        return urljoin(current_url, link["href"]) if link else None
+
+
 def test_webpage_fetcher_drops_empty_content_entries_when_flag_set():
     # 列表页把导航链接(Pricing，无正文、无摘要)也匹配进来：drop_empty_content=True 时
     # 应被丢弃，而有正文的真实条目仍保留。两个页面各只含一个匹配链接，避免容器文本串扰。
@@ -87,6 +102,61 @@ def test_webpage_fetcher_drops_empty_content_entries_when_flag_set():
     kept = asyncio.run(collect(DropEmptyNewsFetcher(), real_html))
     assert [item.source_url for item in kept] == ["https://example.test/news/real-post"]
     assert (kept[0].content or "").strip()
+
+
+def test_webpage_fetcher_paginates_listing_to_reach_limit():
+    # 列表页每页 2 条 + 指向下一页；翻页累积应凑够更大的 limit，并按页内顺序去重。
+    pages = {
+        "https://example.test/news": """
+        <html><body>
+          <article><a href="/news/p1-a"><h2>P1 A</h2><p>page one first body.</p></a></article>
+          <article><a href="/news/p1-b"><h2>P1 B</h2><p>page one second body.</p></a></article>
+          <a class="next" href="/news?page=2">Older</a>
+        </body></html>
+        """,
+        "https://example.test/news?page=2": """
+        <html><body>
+          <article><a href="/news/p2-a"><h2>P2 A</h2><p>page two first body.</p></a></article>
+          <article><a href="/news/p2-b"><h2>P2 B</h2><p>page two second body.</p></a></article>
+          <a class="next" href="/news?page=3">Older</a>
+        </body></html>
+        """,
+        "https://example.test/news?page=3": """
+        <html><body>
+          <article><a href="/news/p3-a"><h2>P3 A</h2><p>page three first body.</p></a></article>
+        </body></html>
+        """,
+    }
+    fetched_pages = []
+
+    async def fake_safe_get(client, url, **kwargs):
+        fetched_pages.append(url)
+        return DummyResponse(pages[url], url)
+
+    def run(limit):
+        fetched_pages.clear()
+        fetcher = PaginatedNewsFetcher()
+        fetcher._safe_get = fake_safe_get
+
+        async def collect():
+            return [item async for item in fetcher._run(None, limit=limit, fetch_detail=False)]
+
+        return asyncio.run(collect())
+
+    # limit=10：翻完全部 3 页，拿到 5 条。
+    items = run(10)
+    urls = {item.source_url for item in items}
+    assert len(items) == 5
+    assert "https://example.test/news/p3-a" in urls
+    assert fetched_pages == [
+        "https://example.test/news",
+        "https://example.test/news?page=2",
+        "https://example.test/news?page=3",
+    ]
+
+    # limit=3：第 2 页后已凑够（4 条 >= 3），不再请求第 3 页。
+    run(3)
+    assert "https://example.test/news?page=3" not in fetched_pages
 
 
 def test_webpage_fetcher_skips_detail_fetch_for_already_stored_articles():

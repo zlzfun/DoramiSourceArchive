@@ -700,6 +700,25 @@ The audit instead surfaced four real, different problems and fixed three:
   stable, already split per release with real dates. Verbose (large cumulative
   bodies) but correct; left untruncated.
 
+#### Follow-up (same day)
+
+- **OpenClaw "still shows betas":** the `include_prereleases` param already
+  exists and now defaults to `False`, and a fresh fetch returns 20 stable
+  releases / 0 betas. The betas the reporter still saw are **old archived rows**
+  from the pre-fix run (9 of 10 stored rows are `-beta`); they persist until
+  deleted (new fetches won't re-create them). No code change — point users at
+  the existing toggle and clear stale beta rows from 知识台账 if desired.
+- **Cursor only returned 5:** the `/changelog` listing shows ~5 entries; older
+  ones live behind `/changelog/page/N` pagination. Added a general pagination
+  capability to `BaseWebPageListFetcher` — `max_listing_pages` (default 1, no
+  behavior change) plus a `_next_listing_page_url(soup, current_url)` hook; the
+  `_run` loop now accumulates entries across pages until it has `limit` items,
+  runs out of pages, or hits the cap. (`_matches_article_url` already excluded
+  `/page/\d+$`, so pagination links were never mistaken for articles.) Cursor
+  sets `max_listing_pages=8` and implements the hook to follow the smallest
+  `/changelog/page/N` greater than the current page. Live: `limit=20` now yields
+  20 dated entries across pages 1–4, newest-first, no empty rows.
+
 ## Verification Performed
 
 Targeted tests for the node audit and related curation changes:
