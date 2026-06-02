@@ -6,7 +6,7 @@ This document defines the add-only source admission workflow.
 
 Do not modify frontend or backend implementation when considering a new source.
 
-Before implementation, each source must first be recorded as a written candidate using the fields from [Source Classification Standard v1.1](./source_classification_standard_v1.md).
+Before implementation, each source must first be recorded as a written candidate using the fields from [Source Classification Standard v1.1](./classification_standard.md).
 
 Use two-stage curation:
 
@@ -41,7 +41,7 @@ Each parking-lot source should still have a short reason so it can be revisited 
 
 ## Steps
 
-1. Create or update a candidate record under `docs/source_candidates/`.
+1. Create or update a candidate record under `docs/sources/candidates/`.
 2. Split sources into `Recommended Review Sources` and `Parking Lot` before writing detailed records.
 3. Fill identity metadata:
    - `source_owner`

@@ -7,7 +7,7 @@ DoramiSourceArchive remains the source collection and archival hub. These APIs e
 Existing downstream jobs that already use `GET /api/articles` can continue doing so. The `/api/feed/*` endpoints are a cleaner recommended delivery contract for downstream consumers, not a forced migration path.
 
 For personalized reader-layer delivery, prefer subscription endpoints documented in
-`docs/reader_subscription_contract.md`. They expose tokenized, per-subscription pulls at:
+`docs/contracts/reader_subscription.md`. They expose tokenized, per-subscription pulls at:
 
 ```http
 GET /api/public/subscriptions/{subscription_id}/articles

@@ -53,7 +53,7 @@ The current default-visible catalog is the admitted first additive batch. Each s
 
 ## Candidate Queue
 
-Future candidates should be recorded first in `docs/source_candidates/` with the same dimensions, then implemented and admitted only when they pass validation.
+Future candidates should be recorded first in `docs/sources/candidates/` with the same dimensions, then implemented and admitted only when they pass validation.
 
 ## Operational Rule
 

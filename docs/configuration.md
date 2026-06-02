@@ -31,7 +31,7 @@ role = all
 
 1. 外网采集归档层部署在可访问公开站点的个人电脑或外网服务器，配置 `role = collector`。
 2. 内网分发订阅层部署在公司内网服务器，配置 `role = reader`。
-3. 采集层通过 `/api/archive/export/articles.jsonl` 导出归档，分发层通过 `/api/archive/import/articles.jsonl` 导入归档。同步契约见 `docs/archive_sync_contract.md`。
+3. 采集层通过 `/api/archive/export/articles.jsonl` 导出归档，分发层通过 `/api/archive/import/articles.jsonl` 导入归档。同步契约见 `docs/contracts/archive_sync.md`。
 4. 下游应用优先访问分发层的订阅接口 `/api/public/subscriptions/{subscription_id}/dify/articles`，订阅源在前端“订阅分发”页面创建和轮换令牌。
 
 最小示例：
