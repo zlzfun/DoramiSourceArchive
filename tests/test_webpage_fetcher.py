@@ -12,6 +12,7 @@ from fetchers.impl.webpage_fetcher import (
 )
 from fetchers.impl.curated_core_fetcher import (
     AieraWebsiteFetcher,
+    ByteDanceSeedResearchFetcher,
     ClaudeCodeChangelogFetcher,
     DeepSeekApiChangeLogFetcher,
     GemmaReleaseNotesFetcher,
@@ -41,6 +42,51 @@ class ExampleNewsFetcher(BaseWebPageListFetcher):
     site_name = "Example"
     source_section = "News"
     article_url_patterns = ["example.test/news/"]
+
+
+class DropEmptyNewsFetcher(BaseWebPageListFetcher):
+    source_id = "web_drop_empty_news"
+    name = "Drop Empty News"
+    listing_url = "https://example.test/news"
+    site_name = "Example"
+    source_section = "News"
+    article_url_patterns = ["example.test/news/"]
+    drop_empty_content = True
+
+
+def test_webpage_fetcher_drops_empty_content_entries_when_flag_set():
+    # 列表页把导航链接(Pricing，无正文、无摘要)也匹配进来：drop_empty_content=True 时
+    # 应被丢弃，而有正文的真实条目仍保留。两个页面各只含一个匹配链接，避免容器文本串扰。
+    nav_only_html = "<html><body><a href='/news/pricing'>Pricing</a></body></html>"
+    real_html = (
+        "<html><body><article><a href='/news/real-post'><h2>Real Post</h2>"
+        "<p>A genuine summary paragraph with actual content worth archiving.</p>"
+        "</a></article></body></html>"
+    )
+
+    def make(fetcher, html):
+        async def fake_safe_get(client, url, **kwargs):
+            return DummyResponse(html, url)
+        fetcher._safe_get = fake_safe_get
+        return fetcher
+
+    async def collect(fetcher, html):
+        make(fetcher, html)
+        return [item async for item in fetcher._run(None, limit=10, fetch_detail=False)]
+
+    # 纯导航链接、无摘要 → 正文为空。默认行为：仍入库（空正文）。
+    base_items = asyncio.run(collect(ExampleNewsFetcher(), nav_only_html))
+    assert len(base_items) == 1
+    assert not (base_items[0].content or "").strip()
+
+    # 开启丢弃：空正文的导航条目被剔除（0 条）。
+    dropped = asyncio.run(collect(DropEmptyNewsFetcher(), nav_only_html))
+    assert dropped == []
+
+    # 有正文的真实条目不受影响，照常保留。
+    kept = asyncio.run(collect(DropEmptyNewsFetcher(), real_html))
+    assert [item.source_url for item in kept] == ["https://example.test/news/real-post"]
+    assert (kept[0].content or "").strip()
 
 
 def test_webpage_fetcher_skips_detail_fetch_for_already_stored_articles():
@@ -956,3 +1002,65 @@ def test_deepseek_api_changelog_splits_by_date_heading():
     assert items[0].raw_data["listing_source"] == "deepseek_api_changelog_updates"
     assert items[0].raw_data["detail_extraction_method"] == "deepseek_api_changelog_heading"
     assert items[0].raw_data["release_heading"] == "Date: 2026-04-24"
+
+
+def test_bytedance_seed_research_splits_publications_by_card():
+    # Seed Research 的 Publications 区把每篇论文渲染为一个 div.group.relative 卡片：
+    # 内含日期 div、标题 div(直属文本即标题)、以及 div[class*=markdown] 摘要(响应式重复多份)。
+    # 按卡片逐篇切分，保留日期与摘要，按日期倒序；fixture 打乱顺序以验证排序。
+    listing_html = """
+    <html>
+      <body>
+        <div class="px-[110px]">
+          <h1>Publications</h1>
+          <div class="group relative">
+            <div class="flex items-center">
+              <div class="mb-[14px] text-black/70">Feb 6, 2026</div>
+              <div class="mb-[24px] text-[30px]">Protenix-v1: Open-Source Biomolecular Structure Prediction</div>
+            </div>
+            <div class="markdown-Vl1VIB">We introduce Protenix-v1, a fully open-source structure prediction model.</div>
+            <div class="markdown-Vl1VIB">We introduce Protenix-v1, a fully open-source structure prediction model.</div>
+          </div>
+          <div class="group relative">
+            <div class="flex items-center">
+              <div class="mb-[14px] text-black/70">Apr 22, 2026</div>
+              <div class="mb-[24px] text-[30px]">Seed3D 2.0: High-Fidelity 3D Content Generation</div>
+            </div>
+            <div class="markdown-Vl1VIB">We present Seed3D 2.0, an advanced 3D content generation system.</div>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+    fetcher = ByteDanceSeedResearchFetcher()
+
+    async def fake_safe_get(client, url):
+        assert url == "https://seed.bytedance.com/en/research"
+        return DummyResponse(listing_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=10)]
+
+    items = asyncio.run(collect_items())
+
+    # 每张卡片各成一条，按发布日期倒序。
+    assert [item.title for item in items] == [
+        "ByteDance Seed: Seed3D 2.0: High-Fidelity 3D Content Generation",
+        "ByteDance Seed: Protenix-v1: Open-Source Biomolecular Structure Prediction",
+    ]
+    assert [item.publish_date for item in items] == [
+        "2026-04-22T00:00:00+00:00",
+        "2026-02-06T00:00:00+00:00",
+    ]
+    # 正文 = 标题 + 摘要；摘要的响应式重复只取一份(不串入另一篇)。
+    assert items[0].content.startswith("Seed3D 2.0: High-Fidelity 3D Content Generation")
+    assert "advanced 3D content generation system" in items[0].content
+    assert items[0].content.count("advanced 3D content generation system") == 1
+    assert "Protenix" not in items[0].content
+    # 静态 HTML 无逐篇链接，source_url 回退到列表页。
+    assert items[0].source_url == "https://seed.bytedance.com/en/research"
+    assert items[0].raw_data["listing_source"] == "bytedance_seed_research_publications"
+    assert items[0].raw_data["detail_extraction_method"] == "bytedance_seed_research_card"
+    assert items[0].raw_data["release_date_text"] == "Apr 22, 2026"

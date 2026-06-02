@@ -34,7 +34,6 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     # Zhipu / Z.ai / GLM
     "docs_zai_new_released",
     # ByteDance Seed
-    "web_bytedance_seed_models",
     "web_bytedance_seed_research",
     # Tier1 media / community / paper signal
     "web_qbitai",

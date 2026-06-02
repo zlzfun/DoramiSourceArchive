@@ -44,6 +44,8 @@ Overlaps with Cursor Blog for major launches and tier1 media coverage.
 
 Prefer changelog over blog as the first Cursor source. Existing project has `web_cursor_blog`, but the changelog may be the better default candidate.
 
+Audited 2026-06-02: the listing matched nav/footer links (`/changelog/enterprise|pricing|community`) as articles — their detail pages 404 and they carry no body, so they landed as empty-content junk rows. Added those nav paths to `exclude_url_patterns` and set `drop_empty_content = True` (new opt-in flag on `BaseWebPageListFetcher`) so any empty-content entry is dropped before archiving. Real dated entries (5 found) are unaffected.
+
 ## Source: OpenCode GitHub Releases
 
 - status: `under_review`
@@ -51,7 +53,7 @@ Prefer changelog over blog as the first Cursor source. Existing project has `web
 - source_brand: `opencode`
 - source_scope: `developer_tool`
 - source_channel: `github_release`
-- source_url: `https://github.com/opencode-ai/opencode/releases`
+- source_url: `https://github.com/anomalyco/opencode/releases`
 - provenance_tier: `tier0_primary`
 - content_tags: `developer_tool`, `product_update`
 - signal_strength: `medium_signal`
@@ -77,6 +79,8 @@ Overlaps with xAI News when Grok/OpenCode integrations are announced and with ge
 ### Validation Notes
 
 Live review confirmed the GitHub releases page is reachable. Prefer GitHub Releases API. Consider weekly compaction or only major releases if implemented.
+
+Audited 2026-06-02: the implemented node tracked `opencode-ai/opencode`, which **stopped releasing at v0.0.55 (2025-06-27)** — the project moved (the old `sst/opencode` now 301-redirects) and the active repo is **`anomalyco/opencode`** (releasing v1.15.x). Re-pointed `owner`/`repo`/`source_url` to `anomalyco/opencode` to restore a live signal (kept the `github_opencode_releases` source_id).
 
 ## Source: OpenClaw GitHub Releases
 
@@ -112,6 +116,8 @@ Overlaps with xAI/Google/OpenAI/Claude ecosystem updates when OpenClaw integrate
 
 Prefer GitHub Releases API. Consider tracking only stable releases or monthly summaries.
 
+Audited 2026-06-02: OpenClaw ships several `-beta` prereleases per day (11 of the last 12 releases were prereleases, multiple per day) — extreme noise. Set `default_include_prereleases = False` so the node tracks **stable releases only** by default (param can re-enable betas). To keep stable history meaningful when betas crowd the feed, the generic releases fetcher now fetches `per_page=100` when prereleases are excluded, then emits up to `limit` stable ones.
+
 ## Source: Hermes Agent GitHub Releases
 
 - status: `under_review`
@@ -145,6 +151,8 @@ Overlaps with xAI, Claude, OpenAI, and OpenClaw-related integration news.
 ### Validation Notes
 
 Existing project already has a Hermes Agent releases fetcher candidate; keep hidden unless the agent-tool lane is accepted.
+
+Audited 2026-06-02: works as intended — 12/12 recent releases are stable (no prereleases), already split per release with real dates. No fix needed. Note the bodies are large cumulative changelogs (52k–71k chars), which can read like "everything in one article" but are genuinely one-release-each; left untruncated.
 
 # Parking Lot
 

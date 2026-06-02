@@ -72,6 +72,17 @@ Overlaps with Seed Blog and Seed Research.
 
 Use as a supplement or diff source unless it exposes update dates.
 
+**Dropped on 2026-06-02.** Audit confirmed `web_bytedance_seed_models`
+(`https://seed.bytedance.com/en/models`) is a static model catalog (Seed2.0 /
+Seed1.8 / Seed1.6 … with descriptions) — no dates, no chronology, every fetch
+yields the same single reference blob with `publish_date` falling back to fetch
+time, failing the "primary chronological content with real publish dates"
+standard (same verdict shape as `docs_xai_models`). Model-launch signal is better
+served by the dated Seed Research publications and the Seed Blog. Deleted
+`ByteDanceSeedModelsFetcher` and removed `web_bytedance_seed_models` from
+`ESSENTIAL_FETCHER_IDS` (delete-the-class, per the registry invariant). Restore
+from git history if a catalog diff source is wanted later.
+
 ## Source: ByteDance Seed Research
 
 - status: `proposed`
@@ -105,6 +116,8 @@ Overlaps with Seed Blog for launches and arXiv for papers.
 ### Validation Notes
 
 Existing project notes described Seed static output as sparse; revisit after blog/model pages are validated.
+
+Implemented as `web_bytedance_seed_research` and audited on 2026-06-02. The page is JS-rendered but SSRs the Publications cards, so pure httpx parses them. Each paper is a `div.group.relative` card holding a date div (`Apr 22, 2026`), a title div (its direct text is the title), and a `div[class*="markdown"]` abstract (duplicated across responsive breakpoints — take the first). The generic single-page fetcher had mashed all paper titles into one undated 20k-char blob; the fetcher now splits per card with a date/title/abstract extractor (`_release_entries` / `_parse_pub_date`). Static HTML carries no per-paper link, so `source_url` falls back to the listing page. Live run: 6 publications, 0 empty dates, newest-first, real dates 2025-08 → 2026-04, each with a ~0.7–1.4k-char abstract body.
 
 # Parking Lot
 

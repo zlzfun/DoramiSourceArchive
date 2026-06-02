@@ -895,30 +895,10 @@ class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
             )
 
 
-class ByteDanceSeedModelsFetcher(SinglePageDocumentFetcher):
-    source_id = "web_bytedance_seed_models"
-    name = "ByteDance Seed Models"
-    description = "抓取 ByteDance Seed Models 目录中的 Seed/Seedance 核心模型产品信息。"
-    icon = "🌱"
-    page_url = "https://seed.bytedance.com/en/models"
-    source_url = page_url
-    site_name = "ByteDance Seed"
-    source_section = "Models"
-    source_owner = "bytedance_seed"
-    source_brand = "seed"
-    source_scope = "model_family"
-    source_channel = "model_catalog"
-    provenance_tier = "tier0_primary"
-    content_tags = ["model_release", "product_update", "research_paper"]
-    signal_strength = "medium_signal"
-    noise_risk = "low_noise"
-    fetch_reliability = "stable_public"
-
-
 class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
     source_id = "web_bytedance_seed_research"
     name = "ByteDance Seed Research"
-    description = "抓取 ByteDance Seed Research 页面中的研究论文、技术报告与模型相关研究。"
+    description = "抓取 ByteDance Seed Research 页面 Publications 中的研究论文与技术报告（逐篇切分）。"
     icon = "🌱"
     page_url = "https://seed.bytedance.com/en/research"
     source_url = page_url
@@ -933,6 +913,120 @@ class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
+
+    # Seed Research 页的 Publications 区把每篇论文渲染为一个 ``div.group.relative`` 卡片：
+    # 内含日期 div(``Apr 22, 2026``)、标题 div(其直属文本即标题)、以及 ``div[class*=markdown]``
+    # 摘要(响应式重复多份，取首份即可)。通用单页抓取会把所有论文标题糅成一篇无日期长文；
+    # 这里按卡片逐篇切分，每篇一条记录、保留发布日期与摘要正文。页面为 JS 渲染但 SSR 已含
+    # 这些卡片，故纯 httpx 即可解析；静态 HTML 无逐篇链接，source_url 回退到列表页。
+    _pub_date_re = re.compile(r"^([A-Z][a-z]{2})\s+(\d{1,2}),\s+(20\d{2})$")
+    _month_map = {
+        "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+        "jul": 7, "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+    }
+
+    @classmethod
+    def get_parameter_schema(cls) -> List[Dict[str, Any]]:
+        return [
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 30},
+            {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
+        ]
+
+    def _entry_limit(self, raw_limit: Any) -> int:
+        if raw_limit in (None, ""):
+            return 30
+        try:
+            return max(int(raw_limit), 0)
+        except (TypeError, ValueError):
+            self.logger.warning(f"{self.name} 条数参数无效，使用默认值: {raw_limit}")
+            return 30
+
+    def _content_id(self, key: str) -> str:
+        digest = hashlib.sha1(f"{self.source_id}:{key}".encode("utf-8")).hexdigest()[:16]
+        return f"{self.source_id}_{digest}"
+
+    def _parse_pub_date(self, raw_date: str) -> str:
+        match = self._pub_date_re.match(self._clean_text(raw_date))
+        if not match:
+            return ""
+        month = self._month_map.get(match.group(1).lower())
+        if not month:
+            return ""
+        try:
+            return datetime(int(match.group(3)), month, int(match.group(2)), tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            return ""
+
+    def _release_entries(self, html_text: str, resolved_url: str, max_chars: int) -> List[Dict[str, Any]]:
+        soup = BeautifulSoup(html_text, "html.parser")
+        base_url = resolved_url.split("#", 1)[0]
+
+        entries: List[Dict[str, Any]] = []
+        seen = set()
+        for card in soup.select("div.group.relative"):
+            date_node = card.find(string=self._pub_date_re)
+            if not date_node:
+                continue
+            publish_date = self._parse_pub_date(date_node)
+
+            title_div = date_node.parent.find_next_sibling()
+            title = ""
+            if title_div is not None:
+                title = self._clean_text("".join(title_div.find_all(string=True, recursive=False)))
+            if not title or title in seen:
+                continue
+
+            markdown = card.select_one('[class*="markdown"]')
+            abstract = self._clean_text(markdown.get_text(" ", strip=True)) if markdown else ""
+            body = (f"{title}\n\n{abstract}" if abstract else title)[:max_chars]
+
+            seen.add(title)
+            entries.append({
+                "key": title,
+                "heading": title,
+                "title": f"{self.site_name}: {title}",
+                "source_url": base_url,
+                "publish_date": publish_date,
+                "raw_date": self._clean_text(date_node),
+                "content": body,
+                "summary": (abstract or title)[:500],
+            })
+        return entries
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
+        if limit <= 0:
+            return
+
+        response = await self._safe_get(client, self.page_url)
+        if not response:
+            raise RuntimeError(f"{self.name} 页面请求失败: {self.page_url}")
+
+        entries = self._release_entries(response.text, str(response.url), max_chars)
+        entries = sorted(entries, key=lambda entry: entry["publish_date"] or "", reverse=True)
+        for entry in entries[:limit]:
+            yield WebPageArticleContent(
+                id=self._content_id(entry["key"]),
+                title=entry["title"],
+                source_url=entry["source_url"],
+                publish_date=entry["publish_date"] or datetime.now(timezone.utc).isoformat(),
+                content=entry["content"],
+                has_content=bool(entry["content"]),
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=entry["summary"],
+                tags=[self.category, *list(self.content_tags or [])],
+                raw_data={
+                    "listing_url": self.page_url,
+                    "url": entry["source_url"],
+                    "listing_source": "bytedance_seed_research_publications",
+                    "release_heading": entry["heading"],
+                    "release_date_text": entry["raw_date"],
+                    "detail_text_length": len(entry["content"]),
+                    "detail_extraction_method": "bytedance_seed_research_card",
+                },
+            )
 
 
 class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
@@ -965,8 +1059,17 @@ class CursorChangelogWebFetcher(BaseWebPageListFetcher):
     site_name = "Cursor"
     source_section = "Changelog"
     article_url_patterns = ["cursor.com/changelog/"]
-    exclude_url_patterns = ["cursor.com/changelog#"]
+    # 排除会匹配进来的导航/页脚链接（这些 /changelog/<nav> 详情页会 404、正文为空）。
+    exclude_url_patterns = [
+        "cursor.com/changelog#",
+        "cursor.com/changelog/enterprise",
+        "cursor.com/changelog/pricing",
+        "cursor.com/changelog/community",
+        "cursor.com/changelog/students",
+    ]
     default_fetch_detail = True
+    # 兜底：即便有新的导航链接漏过 exclude，也丢弃正文为空的垃圾条目。
+    drop_empty_content = True
     source_owner = "cursor"
     source_brand = "cursor"
     source_scope = "developer_tool"

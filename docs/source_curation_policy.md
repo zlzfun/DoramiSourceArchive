@@ -42,8 +42,7 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `github_deepseek_repositories` | Early DeepSeek model/tool signals from public repositories. |
 | `hf_deepseek_models` | DeepSeek model releases on Hugging Face. |
 | `docs_zai_new_released` | Z.ai/GLM model, API, and product release notes. |
-| `web_bytedance_seed_models` | ByteDance Seed model catalog. |
-| `web_bytedance_seed_research` | ByteDance Seed research and model-adjacent papers. |
+| `web_bytedance_seed_research` | ByteDance Seed research papers/tech reports, split per publication. |
 | `web_qbitai` | Tier1 Chinese AI media coverage from 量子位. |
 | `rss_hn_ai` | Developer community AI discussion signal from Hacker News. |
 | `web_huggingface_daily_papers` | Hugging Face daily papers as curated research signal. |

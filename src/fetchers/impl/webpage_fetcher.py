@@ -64,6 +64,9 @@ class BaseWebPageListFetcher(BaseFetcher):
     default_fetch_detail = False
     default_detail_max_chars = 12000
     generic_link_titles = {"read more", "learn more", "blog", "news", "publication", "publications"}
+    # 列表页常把导航/页脚链接（定价、企业版等）也匹配进来：它们既无正文、详情页又多为 404。
+    # 置 True 时丢弃正文为空的条目，避免把这类导航垃圾入库。默认 False，保持既有行为不变。
+    drop_empty_content = False
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
@@ -447,6 +450,8 @@ class BaseWebPageListFetcher(BaseFetcher):
                 "detail_source_url": detail.get("url", ""),
             })
             content = detail["text"] or summary
+            if self.drop_empty_content and not content:
+                continue
 
             yield WebPageArticleContent(
                 id=content_id,

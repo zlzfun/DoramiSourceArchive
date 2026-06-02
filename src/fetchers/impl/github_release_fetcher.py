@@ -130,10 +130,13 @@ class GenericGitHubReleasesFetcher(BaseFetcher):
 
         self.source_id = runtime_source_id
         url = f"https://api.github.com/repos/{owner}/{repo}/releases"
+        # 排除预发布时，正式 release 可能稀疏地分布在大量 beta 之间，按 limit 取页会几乎全被
+        # 过滤掉；此时多取一页（GitHub 上限 100）作为余量，确保过滤后仍能凑够 limit 条正式版。
+        per_page = limit if include_prereleases else 100
         response = await self._safe_get(
             client,
             url,
-            params={"per_page": limit},
+            params={"per_page": per_page},
             headers={
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
@@ -201,13 +204,15 @@ class OpenCodeGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     name = "OpenCode GitHub Releases"
     description = "通过 GitHub API 抓取 OpenCode Release 元数据。"
     icon = "⌨️"
-    owner = "opencode-ai"
+    # 原 opencode-ai/opencode 自 2025-06(v0.0.55)起停更，项目已迁移；活跃仓库现为
+    # anomalyco/opencode（前 sst/opencode，持续发布 v1.x）。指向活跃仓库以恢复有效信号。
+    owner = "anomalyco"
     repo = "opencode"
     source_owner = "opencode"
     source_brand = "opencode"
     source_scope = "developer_tool"
     source_channel = "github_release"
-    source_url = "https://github.com/opencode-ai/opencode/releases"
+    source_url = "https://github.com/anomalyco/opencode/releases"
     provenance_tier = "tier0_primary"
     content_tags = ["developer_tool", "product_update"]
     signal_strength = "medium_signal"
@@ -218,7 +223,7 @@ class OpenCodeGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
 class OpenClawGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     source_id = "github_openclaw_releases"
     name = "OpenClaw GitHub Releases"
-    description = "通过 GitHub API 抓取 OpenClaw Release 元数据。"
+    description = "通过 GitHub API 抓取 OpenClaw 正式 Release 元数据（默认跳过 beta 预发布）。"
     icon = "🧰"
     owner = "openclaw"
     repo = "openclaw"
@@ -232,6 +237,9 @@ class OpenClawGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     signal_strength = "medium_signal"
     noise_risk = "high_noise"
     fetch_reliability = "stable_public"
+    # OpenClaw 每天发多个 -beta 预发布（最近 12 个 release 有 11 个是 beta、同日多条重复），
+    # 噪声极高。默认只保留正式 release；需要 beta 时可在参数里打开 include_prereleases。
+    default_include_prereleases = False
 
 
 class HermesAgentGitHubReleasesFetcher(PresetGitHubReleasesFetcher):

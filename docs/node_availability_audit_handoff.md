@@ -644,12 +644,68 @@ Live run on `github_deepseek_repositories`: description-less repos
 `DeepSeek-Prover-V2`) went from ~190-char stubs to ~1.3–1.5k-char readable
 excerpts; repos that already carry a description issue no extra request.
 
+### ByteDance Seed: split research publications, drop the Models catalog (2026-06-02)
+
+Two nodes, same pattern as the xAI pair.
+
+`web_bytedance_seed_models` (`https://seed.bytedance.com/en/models`) — **removed.**
+It is a static model catalog (Seed2.0 / Seed1.8 / Seed1.6 … with one-line
+descriptions): no dates, no chronology, every fetch yields the same single
+reference blob with `publish_date` = fetch time. Fails the chronological-content
+standard, and the model-launch signal is already carried — with dates — by the
+Seed Research publications. Same verdict shape as `docs_xai_models`. Deleted
+`ByteDanceSeedModelsFetcher`, removed `web_bytedance_seed_models` from
+`ESSENTIAL_FETCHER_IDS`.
+
+`web_bytedance_seed_research` (`https://seed.bytedance.com/en/research`) — **fixed.**
+Same "all titles mashed into one undated blob" disease: the generic single-page
+fetcher returned one 20k-char record with every paper title concatenated and no
+body. The page is JS-rendered but SSRs its Publications cards, so pure httpx
+parses them. Each paper is a `div.group.relative` card holding a date div
+(`Apr 22, 2026`), a title div (its *direct* text is the title), and a
+`div[class*="markdown"]` abstract (duplicated across responsive breakpoints —
+take the first). Rewrote `ByteDanceSeedResearchFetcher` to split per card
+(`_release_entries` / `_parse_pub_date`), title = `ByteDance Seed: <paper title>`,
+body = title + abstract. Static HTML carries no per-paper link, so `source_url`
+falls back to the listing page (no anchor). Live run: 6 publications, 0 empty
+dates, newest-first, 2025-08 → 2026-04, each with a ~0.7–1.4k-char abstract.
+
+### Cursor changelog + OpenCode/OpenClaw/Hermes releases (2026-06-02)
+
+The reporter flagged these four as "all merged into one article." Reproduction
+(live fetch + DB rows) showed that is **not** the case — all four split into
+8–10 separate dated records with unique ids; the impression came from the
+huge cumulative release bodies (OpenClaw/Hermes notes run 30k–71k chars each).
+The audit instead surfaced four real, different problems and fixed three:
+
+- `github_opencode_releases` — tracked **`opencode-ai/opencode`, which stopped
+  releasing at v0.0.55 (2025-06-27)**. The project moved (old `sst/opencode`
+  301-redirects) and the active repo is **`anomalyco/opencode`** (v1.15.x).
+  Re-pointed `owner`/`repo`/`source_url` to `anomalyco/opencode` (kept the
+  source_id). Same "stale repo" shape as the Qwen Code removal, but re-pointing
+  beats deletion here since OpenCode is alive, just at a new home.
+- `github_openclaw_releases` — **11 of the last 12 releases were `-beta`
+  prereleases**, several per day, with near-duplicate cumulative bodies. Set
+  `default_include_prereleases = False` so it tracks stable releases only
+  (param re-enables betas). The generic releases `_run` now fetches
+  `per_page=100` when prereleases are excluded (instead of `per_page=limit`),
+  so stable releases aren't starved when betas crowd the recent window.
+- `web_cursor_changelog` — the listing matched nav/footer links
+  (`/changelog/enterprise|pricing|community`) as articles; their detail pages
+  404 and they have no body, so they archived as empty-content junk. Added
+  those paths to `exclude_url_patterns` and introduced a `drop_empty_content`
+  opt-in flag on `BaseWebPageListFetcher` (default `False`, no behavior change
+  elsewhere) that skips entries whose content is empty; set it `True` on Cursor.
+- `github_hermes_agent_releases` — **no change**: 12/12 recent releases are
+  stable, already split per release with real dates. Verbose (large cumulative
+  bodies) but correct; left untruncated.
+
 ## Verification Performed
 
 Targeted tests for the node audit and related curation changes:
 
 ```bash
-uv run pytest tests/test_rss_fetcher.py tests/test_subscriptions.py tests/test_runtime_role.py tests/test_webpage_fetcher.py tests/test_fetcher_curation.py tests/test_repository_model_fetcher.py
+uv run pytest tests/test_rss_fetcher.py tests/test_subscriptions.py tests/test_runtime_role.py tests/test_webpage_fetcher.py tests/test_fetcher_curation.py tests/test_repository_model_fetcher.py tests/test_github_release_fetcher.py
 ```
 
 Latest result:

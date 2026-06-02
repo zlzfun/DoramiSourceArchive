@@ -71,7 +71,6 @@ This catalog describes the current source implementation after the additive sour
 
 | Source ID | Base URL |
 | --- | --- |
-| `web_bytedance_seed_models` | `https://seed.bytedance.com/en/models` |
 | `web_bytedance_seed_research` | `https://seed.bytedance.com/en/research` |
 
 ### Tier1 Media / Community / Research Signal
@@ -90,7 +89,7 @@ This catalog describes the current source implementation after the additive sour
 | Source ID | Base URL |
 | --- | --- |
 | `web_cursor_changelog` | `https://cursor.com/changelog` |
-| `github_opencode_releases` | `https://github.com/opencode-ai/opencode/releases` |
+| `github_opencode_releases` | `https://github.com/anomalyco/opencode/releases` |
 | `github_openclaw_releases` | `https://github.com/openclaw/openclaw/releases` |
 | `github_hermes_agent_releases` | `https://github.com/NousResearch/hermes-agent/releases` |
 
