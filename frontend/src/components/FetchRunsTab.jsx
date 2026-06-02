@@ -33,11 +33,8 @@ import {
 } from '../api';
 import LogoMark from './LogoMark';
 import { resolveCompany } from '../sourceTaxonomy';
-
-function formatDateTime(value) {
-  if (!value) return '-';
-  return value.replace('T', ' ').substring(0, 19);
-}
+import { formatDateTime } from '../utils/datetime';
+import { useConfirm } from '../hooks/useConfirm';
 
 function formatDuration(durationMs) {
   if (durationMs === null || durationMs === undefined) return '-';
@@ -122,6 +119,7 @@ export default function FetchRunsTab({
   pendingFilter,
   onPendingFilterApplied,
 }) {
+  const confirm = useConfirm();
   const [view, setView] = useState('jobs');
   const [collectionJobs, setCollectionJobs] = useState([]);
   const [nodeGroups, setNodeGroups] = useState([]);
@@ -343,7 +341,7 @@ export default function FetchRunsTab({
   };
 
   const handleDeleteJob = async (id) => {
-    if (!window.confirm('确定删除该采集任务？')) return;
+    if (!(await confirm('确定删除该采集任务？'))) return;
     try {
       await deleteCollectionJob(id);
       if (expandedJobId === id) setExpandedJobId(null);
@@ -355,7 +353,7 @@ export default function FetchRunsTab({
   };
 
   const handleDeleteLegacyTask = async (id) => {
-    if (!window.confirm('确定删除旧版单节点定时计划？')) return;
+    if (!(await confirm('确定删除旧版单节点定时计划？'))) return;
     try {
       await deleteTask(id);
       await loadAll();

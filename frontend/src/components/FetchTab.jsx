@@ -43,6 +43,8 @@ import {
   NOISE_LABELS,
   RELIABILITY_LABELS,
 } from '../sourceTaxonomy';
+import { formatDateTime, formatRelativeTime } from '../utils/datetime';
+import { useConfirm } from '../hooks/useConfirm';
 
 const FAVORITE_FETCHERS_STORAGE_KEY = 'dorami.favorite_fetchers';
 const TEST_RUN_LIMIT = 1;
@@ -70,27 +72,6 @@ const TIER_TONE_CLASS = {
 
 function tierPillClass(tier) {
   return TIER_TONE_CLASS[tierMeta(tier).tone] || TIER_TONE_CLASS.slate;
-}
-
-function formatDateTime(value) {
-  if (!value) return '从未运行';
-  return value.replace('T', ' ').substring(0, 19);
-}
-
-function formatRelativeTime(value) {
-  if (!value) return '从未运行';
-  const ts = Date.parse(value);
-  if (Number.isNaN(ts)) return formatDateTime(value);
-  const diffSec = Math.floor((Date.now() - ts) / 1000);
-  if (diffSec < 60) return '刚刚';
-  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} 分钟前`;
-  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} 小时前`;
-  if (diffSec < 86400 * 7) return `${Math.floor(diffSec / 86400)} 天前`;
-  const d = new Date(ts);
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  if (d.getFullYear() === new Date().getFullYear()) return `${mm}-${dd}`;
-  return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
 const HEALTH_DOT = {
@@ -149,6 +130,7 @@ function collectionRunMessage(prefix, result, successCount = null) {
 }
 
 export default function FetchTab({ availableFetchers, showToast, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onViewRunning }) {
+  const confirm = useConfirm();
   const [view, setView] = useState('catalog');
   const [fetchLoading, setFetchLoading] = useState(false);
   const [nodeGroups, setNodeGroups] = useState([]);
@@ -509,7 +491,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
   };
 
   const handleDeleteGroup = async (id) => {
-    if (!window.confirm('确定删除该采集范围？')) return;
+    if (!(await confirm('确定删除该采集范围？'))) return;
     try {
       await deleteNodeGroup(id);
       if (expandedGroupId === id) setExpandedGroupId(null);
@@ -669,7 +651,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
               type="button"
               onClick={() => onViewRuns?.(fetcher.id)}
               className="source-stat"
-              title={`查看运行记录 · ${formatDateTime(health?.latest_run_at)}`}
+              title={`查看运行记录 · ${formatDateTime(health?.latest_run_at, '从未运行')}`}
             >
               <Activity className="h-3.5 w-3.5 text-slate-400" />
               <span>{formatRelativeTime(health?.latest_run_at)}</span>

@@ -61,13 +61,13 @@ export async function fetchSourceHealth() {
   return res.json();
 }
 
-export async function fetchArticles(filters = {}, limit = 100, skip = 0, includeTotal = false) {
+export async function fetchArticles(filters = {}, limit = 100, skip = 0, includeTotal = false, options = {}) {
   const params = new URLSearchParams({ limit, skip });
   if (includeTotal) params.append('include_total', 'true');
   Object.entries(filters).forEach(([k, v]) => {
     if (v !== '' && v !== null && v !== undefined) params.append(k, v);
   });
-  const res = await apiFetch(`${API_BASE_URL}/articles?${params}`);
+  const res = await apiFetch(`${API_BASE_URL}/articles?${params}`, options);
   if (!res.ok) await handleApiError(res, '获取文章列表失败');
   return res.json();
 }

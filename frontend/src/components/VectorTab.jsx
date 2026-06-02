@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Database, Search, RefreshCw, Copy, Check, ExternalLink } from 'lucide-react';
 import { fetchVectorStats, vectorSearch, ragContext, fetchSubscribedVectorStats } from '../api';
 import DateRangePicker from './DateRangePicker';
+import { copyText } from '../utils/clipboard';
 
 export default function VectorTab({ availableFetchers, showToast, accountRole }) {
   const scopedToSubscriptions = accountRole === 'user';
@@ -56,7 +57,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
       if (rerank) opts.rerank = true;
       if (expandContext) opts.expand_context = true;
       const data = await ragContext(searchQuery, topK, opts);
-      await navigator.clipboard.writeText(data.context_text);
+      await copyText(data.context_text);
       setCopiedContext(true);
       showToast(`已复制 RAG 上下文（${data.retrieved_count} 条来源，${data.total_chars} 字符）`, 'success');
       setTimeout(() => setCopiedContext(false), 2500);

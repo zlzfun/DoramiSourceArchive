@@ -32,6 +32,8 @@ import {
   SOURCE_CHANNEL_LABELS,
   SOURCE_SCOPE_LABELS,
 } from '../sourceTaxonomy';
+import { copyText } from '../utils/clipboard';
+import { useConfirm } from '../hooks/useConfirm';
 
 const TOKEN_PLACEHOLDER = '$DORAMI_TOKEN';
 
@@ -42,26 +44,6 @@ function apiRoot() {
 
 function feedEndpoint(suffix = '') {
   return `${apiRoot()}/public/feed/articles${suffix}`;
-}
-
-async function copyText(text) {
-  if (!text) throw new Error('没有可复制的内容');
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  document.body.appendChild(textarea);
-  textarea.select();
-  try {
-    if (!document.execCommand('copy')) throw new Error('浏览器拒绝复制');
-  } finally {
-    document.body.removeChild(textarea);
-  }
 }
 
 const FEED_PARAMS = [
@@ -263,6 +245,7 @@ function SubscriptionSourceRow({ source, busy, onToggleSubscribe, onViewArticles
 }
 
 export default function SubscriptionTab({ showToast, onViewArticles }) {
+  const confirm = useConfirm();
   const [view, setView] = useState('catalog'); // catalog | manage
   const [sources, setSources] = useState([]);
   const [sourcesLoading, setSourcesLoading] = useState(true);
@@ -458,7 +441,7 @@ export default function SubscriptionTab({ showToast, onViewArticles }) {
   };
 
   const handleRotateFeedToken = async () => {
-    if (feedToken?.exists && !window.confirm('重新生成会使旧的聚合令牌立即失效，确定继续？')) return;
+    if (feedToken?.exists && !(await confirm('重新生成会使旧的聚合令牌立即失效，确定继续？'))) return;
     setRotatingToken(true);
     try {
       const result = await rotateFeedToken();

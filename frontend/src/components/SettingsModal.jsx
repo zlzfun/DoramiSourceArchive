@@ -27,30 +27,8 @@ import {
   setAutoVectorize,
   toggleMcp,
 } from '../api';
-
-async function copyText(text) {
-  if (!text) throw new Error('没有可复制的内容');
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      /* fall through to textarea fallback */
-    }
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  document.body.appendChild(textarea);
-  textarea.select();
-  try {
-    if (!document.execCommand('copy')) throw new Error('浏览器拒绝复制');
-  } finally {
-    document.body.removeChild(textarea);
-  }
-}
+import { copyText } from '../utils/clipboard';
+import { useConfirm } from '../hooks/useConfirm';
 
 function downloadFile(url, filename) {
   const a = document.createElement('a');
@@ -137,6 +115,7 @@ function AccountSection({ username, accountRoleLabel, layerLabel, onLogout }) {
 
 /* ── 向量雷达（向量库管理，仅管理员）─────────────────────── */
 function VectorSection({ showToast }) {
+  const confirm = useConfirm();
   const [autoVec, setAutoVec] = useState(false);
   const [reindexing, setReindexing] = useState(false);
   const [stats, setStats] = useState(null);
@@ -161,7 +140,7 @@ function VectorSection({ showToast }) {
   };
 
   const handleReindex = async () => {
-    if (!window.confirm('全量重索引将清空并重建整个向量库（适用于更换 Embedding 模型）。确认继续？')) return;
+    if (!(await confirm('全量重索引将清空并重建整个向量库（适用于更换 Embedding 模型）。确认继续？'))) return;
     setReindexing(true);
     try {
       const data = await reindexAll();

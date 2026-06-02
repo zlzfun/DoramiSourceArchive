@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { RefreshCw, CheckCircle, Zap, Search, Plus, Trash2, SlidersHorizontal } from 'lucide-react';
 import DateRangePicker from './DateRangePicker';
 import ArticleDetailModal from './ArticleDetailModal';
@@ -14,6 +14,8 @@ import {
   updateArticle,
   createArticle,
 } from '../api';
+import { runAction } from '../utils/runAction';
+import { useConfirm } from '../hooks/useConfirm';
 
 const ARTICLE_PAGE_SIZE = 100;
 
@@ -29,6 +31,8 @@ export default function DataTab({
   pendingFilter,
   onPendingFilterApplied,
 }) {
+  const confirm = useConfirm();
+  const listAbortRef = useRef(null);
   const [articles, setArticles] = useState([]);
   const [articlePageInfo, setArticlePageInfo] = useState({ total: 0, nextSkip: null });
   const [loading, setLoading] = useState(false);
@@ -97,56 +101,63 @@ export default function DataTab({
 
   const handleVectorize = async (id) => {
     setVectorizingId(id);
-    try {
-      await vectorizeArticle(id);
-      showToast('建立索引成功', 'success');
-      loadArticles();
-    } catch (e) { showToast(e.message || '网络异常', 'error'); }
+    await runAction(() => vectorizeArticle(id), {
+      showToast, success: '建立索引成功', onSuccess: loadArticles,
+    });
     setVectorizingId(null);
   };
 
   const handleBatchVectorize = async () => {
-    try {
-      const data = await batchVectorizeArticles(Array.from(selectedArticles));
-      showToast(`成功处理，${data.count} 条记录新建了向量索引`, 'success');
-      loadArticles();
-    } catch (e) { showToast(e.message || '网络异常', 'error'); }
+    await runAction(() => batchVectorizeArticles(Array.from(selectedArticles)), {
+      showToast,
+      success: (data) => `成功处理，${data.count} 条记录新建了向量索引`,
+      onSuccess: loadArticles,
+    });
   };
 
   const handleVectorizeAllPending = async () => {
-    setVectorizingAll(true);
-    try {
-      const data = await vectorizeAllPending();
-      showToast(`已向量化 ${data.count}/${data.total_pending} 篇待处理文章`, 'success');
-      loadArticles();
-    } catch (e) { showToast(e.message || '网络异常', 'error'); }
-    setVectorizingAll(false);
+    await runAction(() => vectorizeAllPending(), {
+      showToast,
+      success: (data) => `已向量化 ${data.count}/${data.total_pending} 篇待处理文章`,
+      onSuccess: loadArticles,
+      setLoading: setVectorizingAll,
+    });
   };
 
   const loadArticles = async () => {
+    // 取消上一笔仍在飞行的列表请求，避免快速切换筛选时「后发先至」覆盖结果
+    listAbortRef.current?.abort();
+    const controller = new AbortController();
+    listAbortRef.current = controller;
     setLoading(true);
     setSelectedArticles(new Set());
     try {
-      const data = await apiFetchArticles(filters, ARTICLE_PAGE_SIZE, 0, true);
+      const data = await apiFetchArticles(filters, ARTICLE_PAGE_SIZE, 0, true, { signal: controller.signal });
       setArticles(data.items || []);
       setArticlePageInfo({ total: data.total || 0, nextSkip: data.next_skip ?? null });
     } catch (e) {
+      if (e.name === 'AbortError') return; // 被更新的请求取消，静默丢弃
       showToast(e.message || '后端服务未启动或网络错误', 'error');
+    } finally {
+      if (!controller.signal.aborted) setLoading(false);
     }
-    setLoading(false);
   };
 
   const loadMoreArticles = async () => {
     if (articlePageInfo.nextSkip === null) return;
+    const controller = new AbortController();
+    listAbortRef.current = controller;
     setLoadingMore(true);
     try {
-      const data = await apiFetchArticles(filters, ARTICLE_PAGE_SIZE, articlePageInfo.nextSkip, true);
+      const data = await apiFetchArticles(filters, ARTICLE_PAGE_SIZE, articlePageInfo.nextSkip, true, { signal: controller.signal });
       setArticles(prev => [...prev, ...(data.items || [])]);
       setArticlePageInfo({ total: data.total || 0, nextSkip: data.next_skip ?? null });
     } catch (e) {
+      if (e.name === 'AbortError') return;
       showToast(e.message || '加载更多失败', 'error');
+    } finally {
+      setLoadingMore(false);
     }
-    setLoadingMore(false);
   };
 
   useEffect(() => {
@@ -194,21 +205,21 @@ export default function DataTab({
   };
 
   const handleBatchDeleteArticles = async () => {
-    if (!window.confirm(`确定彻底删除选中的 ${selectedArticles.size} 条数据吗？`)) return;
-    try {
-      await batchDeleteArticles(Array.from(selectedArticles));
-      showToast('批量删除成功', 'success');
-      loadArticles();
-    } catch (e) { showToast(e.message || '网络异常', 'error'); }
+    if (!(await confirm(`确定彻底删除选中的 ${selectedArticles.size} 条数据吗？`))) return;
+    await runAction(() => batchDeleteArticles(Array.from(selectedArticles)), {
+      showToast, success: '批量删除成功', onSuccess: loadArticles,
+    });
   };
 
   const handleUpdateArticle = async (id, updatedData) => {
-    try {
-      await updateArticle(id, updatedData);
-      showToast('数据修改成功', 'success');
-      setModalState({ isOpen: false, data: null, isEditing: false });
-      loadArticles();
-    } catch (e) { showToast(e.message || '网络异常', 'error'); }
+    await runAction(() => updateArticle(id, updatedData), {
+      showToast,
+      success: '数据修改成功',
+      onSuccess: () => {
+        setModalState({ isOpen: false, data: null, isEditing: false });
+        loadArticles();
+      },
+    });
   };
 
   const handleManualAddSubmit = async (formData) => {
@@ -222,12 +233,14 @@ export default function DataTab({
       content: formData.content,
       extensions_json: formData.extensions_json || '{}',
     };
-    try {
-      await createArticle(payload);
-      showToast('手工录入成功', 'success');
-      setManualAddModal(false);
-      loadArticles();
-    } catch (e) { showToast(e.message || '网络异常', 'error'); }
+    await runAction(() => createArticle(payload), {
+      showToast,
+      success: '手工录入成功',
+      onSuccess: () => {
+        setManualAddModal(false);
+        loadArticles();
+      },
+    });
   };
 
   const openDetailModal = (article) => {
@@ -365,7 +378,7 @@ export default function DataTab({
             <tr>
               <th className="px-4 py-3 w-12 text-center">
                 {canSelectArticles && (
-                  <input type="checkbox" checked={selectedArticles.size === articles.length && articles.length > 0} onChange={toggleAllArticles} className="w-4 h-4 text-blue-600 rounded cursor-pointer" />
+                  <input type="checkbox" aria-label="全选当前页记录" checked={selectedArticles.size === articles.length && articles.length > 0} onChange={toggleAllArticles} className="w-4 h-4 text-blue-600 rounded cursor-pointer" />
                 )}
               </th>
               <th className="px-3 py-4 w-36 font-bold">内容类型</th>
@@ -377,13 +390,25 @@ export default function DataTab({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
-            {articles.length === 0 ? (
+            {loading && articles.length === 0 ? (
+              Array.from({ length: 8 }).map((_, i) => (
+                <tr key={`skeleton-${i}`}>
+                  <td className="px-4 py-4"><div className="skeleton mx-auto h-4 w-4" /></td>
+                  <td className="px-3 py-4"><div className="skeleton h-5 w-20 rounded-full" /></td>
+                  <td className="px-3 py-4"><div className="flex items-center gap-2.5"><div className="skeleton h-8 w-8 rounded-lg" /><div className="skeleton h-4 w-24" /></div></td>
+                  <td className="px-4 py-4"><div className="skeleton h-4 w-3/4" /><div className="skeleton mt-2 h-3 w-1/2" /></td>
+                  <td className="px-3 py-4"><div className="skeleton h-4 w-20" /></td>
+                  <td className="px-3 py-4"><div className="skeleton h-4 w-24" /></td>
+                  {canManageArticles && ragEnabled && <td className="px-3 py-4"><div className="skeleton h-6 w-24 rounded-full" /></td>}
+                </tr>
+              ))
+            ) : articles.length === 0 ? (
               <tr><td colSpan={canManageArticles && ragEnabled ? 7 : 6} className="px-6 py-16 text-center text-slate-400 font-medium">当前时间区间或过滤条件下，未查询到相关数据</td></tr>
             ) : articles.map((article) => (
               <tr key={article.id} className="hover:bg-blue-50/40 transition-colors group">
                 <td className="px-4 py-4 text-center">
                   {canSelectArticles && (
-                    <input type="checkbox" checked={selectedArticles.has(article.id)} onChange={() => toggleArticleSelection(article.id)} className="w-4 h-4 text-blue-600 rounded cursor-pointer" />
+                    <input type="checkbox" aria-label={`选择：${article.title || article.id}`} checked={selectedArticles.has(article.id)} onChange={() => toggleArticleSelection(article.id)} className="w-4 h-4 text-blue-600 rounded cursor-pointer" />
                   )}
                 </td>
                 <td className="px-3 py-4"><span className="data-chip">{article.content_type || '未知'}</span></td>

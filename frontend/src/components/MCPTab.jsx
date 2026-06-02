@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Plug2, Copy, Check, Bot, Download, Terminal, Globe } from 'lucide-react';
 import { fetchMcpStatus } from '../api';
 import { MCP_URL } from '../config';
+import { copyText } from '../utils/clipboard';
 
 const TOOL_CARDS = [
   {
@@ -42,36 +43,6 @@ export default function MCPTab({ showToast, ragEnabled = false }) {
   const [copiedJson, setCopiedJson] = useState(false);
   const showToastRef = useRef(showToast);
   useEffect(() => { showToastRef.current = showToast; }, [showToast]);
-
-  const copyText = async (text) => {
-    if (!text) throw new Error('没有可复制的内容');
-
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(text);
-        return;
-      } catch {
-        // Fall back to textarea copy below for browsers that block Clipboard API.
-      }
-    }
-
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.setAttribute('readonly', '');
-    textarea.style.position = 'fixed';
-    textarea.style.left = '-9999px';
-    textarea.style.top = '0';
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-
-    try {
-      const copiedByFallback = document.execCommand('copy');
-      if (!copiedByFallback) throw new Error('浏览器拒绝复制');
-    } finally {
-      document.body.removeChild(textarea);
-    }
-  };
 
   useEffect(() => {
     fetchMcpStatus()
