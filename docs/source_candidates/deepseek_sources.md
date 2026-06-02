@@ -38,6 +38,8 @@ Overlaps with DeepSeek GitHub organization and Hugging Face model pages.
 
 Existing source gap notes already identify DeepSeek GitHub repo activity as an early signal; compare changelog latency against GitHub activity.
 
+Implemented as `docs_deepseek_api_changelog` and audited on 2026-06-02. The page is a Docusaurus doc (`<article>` container) segmented by `<h2>` date headings (`Date: YYYY-MM-DD`, id `date-...`), each section holding `<h3>` model names + body. The generic single-page fetcher had mashed all 17 releases into one undated blob; the fetcher now subclasses `DevsiteReleaseNotesFetcher` (same h2-date-heading family) and overrides date parsing (`Date:` prefix + ISO) and segmentation (`<article>` container, title built from the section's `<h3>` model names; same-day variants joined). Docusaurus injects zero-width spaces into headings, so `_clean_text` strips them before the date regex. Live run: 17 entries, 0 empty dates, newest-first, 2024-05 → 2026-04, anchored per `<h2>` id.
+
 ## Source: DeepSeek GitHub Organization
 
 - status: `under_review`

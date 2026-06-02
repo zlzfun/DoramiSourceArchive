@@ -13,6 +13,7 @@ from fetchers.impl.webpage_fetcher import (
 from fetchers.impl.curated_core_fetcher import (
     AieraWebsiteFetcher,
     ClaudeCodeChangelogFetcher,
+    DeepSeekApiChangeLogFetcher,
     GemmaReleaseNotesFetcher,
     OpenAiCodexChangelogFetcher,
     QbitAiWebsiteFetcher,
@@ -900,3 +901,58 @@ def test_xai_release_notes_infers_current_year_for_undated_month_heading():
 
     assert len(items) == 1
     assert items[0].publish_date == f"{expected_year}-05-29T00:00:00+00:00"
+
+
+def test_deepseek_api_changelog_splits_by_date_heading():
+    # DeepSeek 的 Change Log 是 Docusaurus 页：<article> 容器内以 <h2>"Date: YYYY-MM-DD"
+    # 分段(标题带零宽空格​)，段内 <h3> 是模型名。按日期切分，标题用模型名，且同日
+    # 多模型并列。fixture 打乱顺序以验证倒序。
+    listing_html = """
+    <html>
+      <body>
+        <article>
+          <h1>Change Log</h1>
+          <h2 id="date-2025-12-01" class="anchor">Date: 2025-12-01​</h2>
+          <h3 id="deepseek-v32">DeepSeek-V3.2​</h3>
+          <p>V3.2 is now available via the API.</p>
+          <h3 id="deepseek-v32-speciale">DeepSeek-V3.2-Speciale​</h3>
+          <ul><li>Speciale variant added for research workloads.</li></ul>
+          <h2 id="date-2026-04-24" class="anchor">Date: 2026-04-24​</h2>
+          <h3 id="deepseek-v4">DeepSeek-V4​</h3>
+          <p>The DeepSeek API now supports V4-Pro and V4-Flash.</p>
+        </article>
+      </body>
+    </html>
+    """
+    fetcher = DeepSeekApiChangeLogFetcher()
+
+    async def fake_safe_get(client, url):
+        assert url == "https://api-docs.deepseek.com/updates/"
+        return DummyResponse(listing_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=10)]
+
+    items = asyncio.run(collect_items())
+
+    # 每个日期段各成一条，按日期倒序；标题用段内 <h3> 模型名，同日多模型并列。
+    assert [item.title for item in items] == [
+        "DeepSeek API: DeepSeek-V4",
+        "DeepSeek API: DeepSeek-V3.2, DeepSeek-V3.2-Speciale",
+    ]
+    assert [item.publish_date for item in items] == [
+        "2026-04-24T00:00:00+00:00",
+        "2025-12-01T00:00:00+00:00",
+    ]
+    # 锚点用 <h2> 的 id（date-...）。
+    assert items[0].source_url == "https://api-docs.deepseek.com/updates/#date-2026-04-24"
+    # 零宽空格被剥除，内容按日期切分、互不串味。
+    assert "​" not in items[0].title
+    assert "​" not in items[0].content
+    assert "V4-Pro and V4-Flash" in items[0].content
+    assert "Speciale" not in items[0].content
+    assert items[0].raw_data["listing_source"] == "deepseek_api_changelog_updates"
+    assert items[0].raw_data["detail_extraction_method"] == "deepseek_api_changelog_heading"
+    assert items[0].raw_data["release_heading"] == "Date: 2026-04-24"

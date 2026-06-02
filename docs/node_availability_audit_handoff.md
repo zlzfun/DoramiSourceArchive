@@ -582,12 +582,74 @@ abbreviated-month map (the same gap that broke the OpenAI API changelog dates). 
 35 entries, 0 empty dates, newest-first, real dates spanning 2024-11 → 2026-05, anchored
 per `<h3>` id.
 
+### DeepSeek API Change Log (2026-06-02)
+
+Same "all releases mashed into one undated blob" disease as the other changelogs:
+`docs_deepseek_api_changelog` returned a single record (`publish_date` = fetch time)
+with every release concatenated. The page (`https://api-docs.deepseek.com/updates/`)
+is a Docusaurus doc whose `<article>` body is segmented by `<h2>` date headings
+(`Date: YYYY-MM-DD`, id `date-2026-04-24`); each section holds one or more `<h3>`
+model names (e.g. `DeepSeek-V4`) plus body, until the next `<h2>`. This is the same
+h2-date-heading family as the Google devsite pages, so `DeepSeekApiChangeLogFetcher`
+now subclasses `DevsiteReleaseNotesFetcher` and overrides only:
+
+- `_parse_heading_date` — `Date:` prefix + ISO `YYYY-MM-DD` (vs Gemma's `May 28, 2026`).
+- `_release_entries` — container is `<article>` (not `devsite-content`); the title is
+  built from the section's `<h3>` model names (`DeepSeek API: DeepSeek-V4`, same-day
+  variants joined) rather than a bare date, which is far more useful in a daily brief.
+- `_clean_text` — Docusaurus injects zero-width spaces (`​`) into headings, which
+  silently broke the date regex's `$` anchor (the fetcher returned 0 entries until this
+  was found); strip them before cleaning.
+
+Also refactored the shared base: `DevsiteReleaseNotesFetcher._run` now reads
+`detail_extraction_method` from a class attribute (default unchanged for Gemma) so
+DeepSeek can record accurate provenance (`deepseek_api_changelog_heading`). Live run:
+17 entries, 0 empty dates, newest-first, real dates 2024-05 → 2026-04, anchored per
+`<h2>` id.
+
+### DeepSeek source review + GitHub repo README backfill (2026-06-02)
+
+Reviewed DeepSeek's three nodes against the deletion standard:
+`docs_deepseek_api_changelog` (API availability + platform changes),
+`hf_deepseek_models` (open-weights releases with model cards), and
+`github_deepseek_repositories` (new public repos — earliest/broadest signal).
+Verdict: **keep all three.** Unlike `docs_xai_models` (static, no chronology,
+redundant), each DeepSeek node is structurally sound (dated, sorted, real
+publish dates) and covers a distinct facet; DeepSeek is a low-announcement
+vendor where multi-channel coverage is justified. `github_deepseek_repositories`
+is the noisiest/most-overlapping but keeps a unique early-signal role, so it
+stays (no de-noising applied, per decision).
+
+Follow-up fix on the GitHub repo fetcher: its body was just
+`name / description / language / stars / url`, and for description-less repos
+the `Description:` line was empty boilerplate. `GenericGitHubRepositoriesFetcher`
+now backfills a README excerpt **only when the repo has no description**:
+
+- `_fetch_readme` hits `GET /repos/{owner}/{repo}/readme` with the
+  `application/vnd.github.raw+json` media type (raw markdown), deliberately
+  bypassing `_safe_get` so a missing-README 404 stays quiet (no retries/errors).
+- `_clean_readme` strips HTML comments / badges / images / rules / table
+  separators, converts links to plain text, flattens `**`/backticks, turns
+  table content rows into `·`-separated lines, and truncates on a line boundary.
+- Dedup-gated: a single `_lookup_existing_content_flags` pre-check means already
+  archived repos (which `save` won't re-body anyway) don't trigger a README call,
+  so re-runs cost no extra GitHub quota.
+- `GITHUB_TOKEN` / `GH_TOKEN` (if set) is sent on both repo-listing and README
+  requests, lifting the unauthenticated 60/hr limit to 5000/hr.
+- New params `fetch_readme` (default on) and `readme_max_chars` (default 1500)
+  on the generic + preset schemas.
+
+Live run on `github_deepseek_repositories`: description-less repos
+(`awesome-deepseek-agent`, `DeepSeek-Math-V2`, `DeepSeek-V3.2-Exp`,
+`DeepSeek-Prover-V2`) went from ~190-char stubs to ~1.3–1.5k-char readable
+excerpts; repos that already carry a description issue no extra request.
+
 ## Verification Performed
 
 Targeted tests for the node audit and related curation changes:
 
 ```bash
-uv run pytest tests/test_rss_fetcher.py tests/test_subscriptions.py tests/test_runtime_role.py tests/test_webpage_fetcher.py tests/test_fetcher_curation.py
+uv run pytest tests/test_rss_fetcher.py tests/test_subscriptions.py tests/test_runtime_role.py tests/test_webpage_fetcher.py tests/test_fetcher_curation.py tests/test_repository_model_fetcher.py
 ```
 
 Latest result:

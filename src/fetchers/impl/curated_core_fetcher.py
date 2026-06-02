@@ -378,6 +378,7 @@ class DevsiteReleaseNotesFetcher(SinglePageDocumentFetcher):
     """
 
     listing_source_label = "devsite_release_notes_updates"
+    detail_extraction_method = "devsite_release_notes_heading"
 
     # 兼容带逗号 "May 28, 2026" 与个别缺逗号 "December 13 2023" 的标题
     _date_heading_re = re.compile(r"^([A-Z][a-z]+)\s+(\d{1,2}),?\s+(20\d{2})$")
@@ -498,7 +499,7 @@ class DevsiteReleaseNotesFetcher(SinglePageDocumentFetcher):
                     "listing_source": self.listing_source_label,
                     "release_heading": entry["heading"],
                     "detail_text_length": len(entry["content"]),
-                    "detail_extraction_method": "devsite_release_notes_heading",
+                    "detail_extraction_method": self.detail_extraction_method,
                 },
             )
 
@@ -681,10 +682,10 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
             )
 
 
-class DeepSeekApiChangeLogFetcher(SinglePageDocumentFetcher):
+class DeepSeekApiChangeLogFetcher(DevsiteReleaseNotesFetcher):
     source_id = "docs_deepseek_api_changelog"
     name = "DeepSeek API Change Log"
-    description = "抓取 DeepSeek API Change Log 中的模型、API 与平台更新。"
+    description = "抓取 DeepSeek API Change Log 中的模型、API 与平台更新（按发布日期逐条切分）。"
     icon = "🧠"
     page_url = "https://api-docs.deepseek.com/updates/"
     source_url = page_url
@@ -699,6 +700,88 @@ class DeepSeekApiChangeLogFetcher(SinglePageDocumentFetcher):
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
+
+    # DeepSeek 的 Change Log 是 Docusaurus 文档页：在 <article> 容器里以
+    # <h2> 日期标题(``Date: 2026-04-24``，id 形如 ``date-2026-04-24``)分段，标题之后
+    # 是 <h3> 模型名(如 ``DeepSeek-V4``)与正文(p/ul)，直到下一个 <h2>。结构与 Google
+    # devsite 同构，故复用基类的 _run/_entry_limit/_content_id/参数表，仅覆写日期解析
+    # (Date: 前缀 + ISO 格式)与切分(容器换成 <article>，标题用段内 <h3> 模型名)。
+    listing_source_label = "deepseek_api_changelog_updates"
+    detail_extraction_method = "deepseek_api_changelog_heading"
+
+    _deepseek_date_re = re.compile(r"^Date:\s*(20\d{2})-(\d{2})-(\d{2})$")
+
+    def _clean_text(self, text: str) -> str:
+        # Docusaurus 在标题/锚点里塞了零宽空格(​)，会让 "Date: 2026-04-24" 末尾
+        # 带上不可见字符、破坏日期正则的 $ 锚定，也污染标题里的模型名；先剥掉再清洗。
+        stripped = (text or "").replace("​", "").replace("﻿", "")
+        return super()._clean_text(stripped)
+
+    def _parse_heading_date(self, raw_heading: str) -> str:
+        match = self._deepseek_date_re.match(self._clean_text(raw_heading))
+        if not match:
+            return ""
+        year, month, day = (int(part) for part in match.groups())
+        try:
+            return datetime(year, month, day, tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            return ""
+
+    def _release_entries(self, html_text: str, resolved_url: str, max_chars: int) -> List[Dict[str, Any]]:
+        soup = BeautifulSoup(html_text, "html.parser")
+        container = soup.select_one("article") or soup.select_one("main") or soup
+        base_url = resolved_url.split("#", 1)[0]
+
+        entries: List[Dict[str, Any]] = []
+        seen = set()
+        for heading in container.find_all("h2"):
+            heading_text = self._clean_text(heading.get_text(" ", strip=True))
+            publish_date = self._parse_heading_date(heading_text)
+            if not publish_date:
+                continue
+
+            anchor = self._clean_text(str(heading.get("id") or "")) or heading_text
+            if anchor in seen:
+                continue
+
+            model_names: List[str] = []
+            parts: List[str] = []
+            sibling = heading.find_next_sibling()
+            while sibling is not None and getattr(sibling, "name", None) != "h2":
+                if isinstance(sibling, Tag):
+                    if sibling.name in {"h3", "h4"}:
+                        model_name = self._clean_text(sibling.get_text(" ", strip=True))
+                        if model_name:
+                            model_names.append(model_name)
+                            parts.append(model_name)
+                    elif sibling.name in {"ul", "ol"}:
+                        parts.extend(
+                            self._clean_text(li.get_text(" ", strip=True))
+                            for li in sibling.find_all("li", recursive=False)
+                        )
+                    else:
+                        text = self._clean_text(sibling.get_text(" ", strip=True))
+                        if text:
+                            parts.append(text)
+                sibling = sibling.find_next_sibling()
+
+            body = "\n\n".join(part for part in parts if part)[:max_chars]
+            if not body:
+                continue
+
+            # 标题用段内 <h3> 模型名（比裸日期更有信息量）；多模型同日则并列，缺失则回退日期文本。
+            headline = ", ".join(model_names) if model_names else heading_text
+            seen.add(anchor)
+            entries.append({
+                "anchor": anchor,
+                "heading": heading_text,
+                "title": f"{self.site_name} API: {headline}",
+                "source_url": f"{base_url}#{anchor}" if heading.get("id") else base_url,
+                "publish_date": publish_date,
+                "content": body,
+                "summary": body[:500],
+            })
+        return entries
 
 
 class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):

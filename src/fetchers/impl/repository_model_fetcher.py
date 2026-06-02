@@ -1,4 +1,6 @@
 import hashlib
+import os
+import re
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List
 
@@ -19,6 +21,9 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
     description = "通过 GitHub API 抓取指定组织或用户的最新公开仓库。"
     icon = "🐙"
 
+    default_fetch_readme = True
+    default_readme_max_chars = 1500
+
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
@@ -27,6 +32,8 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": 20},
             {"field": "include_forks", "label": "包含 fork 仓库", "type": "boolean", "default": False},
             {"field": "include_archived", "label": "包含归档仓库", "type": "boolean", "default": False},
+            {"field": "fetch_readme", "label": "无描述时补充 README", "type": "boolean", "default": cls.default_fetch_readme},
+            {"field": "readme_max_chars", "label": "README 摘要最大字符", "type": "number", "default": cls.default_readme_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any, default: int = 20) -> int:
@@ -45,16 +52,30 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
             return default
         return str(raw_value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
+    def _positive_int_param(self, raw_value: Any, default: int) -> int:
+        if raw_value in (None, ""):
+            return default
+        try:
+            return max(int(raw_value), 0)
+        except (TypeError, ValueError):
+            self.logger.warning(f"参数无效，使用默认值: {raw_value}")
+            return default
+
     def _repo_id(self, runtime_source_id: str, repo: Dict[str, Any]) -> str:
         stable_value = repo.get("id") or repo.get("node_id") or repo.get("full_name")
         digest = hashlib.sha1(str(stable_value).encode("utf-8")).hexdigest()[:16]
         return f"{runtime_source_id}_{digest}"
 
+    def _github_headers(self, accept: str = "application/vnd.github+json") -> Dict[str, str]:
+        """GitHub API 请求头；存在 GITHUB_TOKEN/GH_TOKEN 时附带鉴权(限额 60→5000/hr)。"""
+        headers = {"Accept": accept, "X-GitHub-Api-Version": "2022-11-28"}
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token.strip()}"
+        return headers
+
     async def _fetch_repositories(self, client: httpx.AsyncClient, owner: str, limit: int) -> List[Dict[str, Any]]:
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
+        headers = self._github_headers()
         params = {"sort": "created", "direction": "desc", "per_page": limit}
         for path in [f"https://api.github.com/orgs/{owner}/repos", f"https://api.github.com/users/{owner}/repos"]:
             response = await self._safe_get(client, path, params=params, headers=headers)
@@ -63,18 +84,78 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
                 return data if isinstance(data, list) else []
         raise RuntimeError(f"GitHub 仓库请求失败: {owner}")
 
-    def _repo_content(self, repo: Dict[str, Any], runtime_source_id: str, owner: str) -> GitHubRepositoryContent:
+    _README_SKIP_LINE_RE = re.compile(
+        r"^\s*(?:!\[[^\]]*\]\([^)]*\)\s*|\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)\s*|<[^>]+>\s*|[-=*_]{3,}\s*|\|[-:\s|]+\|\s*)+$"
+    )
+    _README_BADGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)|<img[^>]*>|<a[^>]*>|</a>", re.IGNORECASE)
+    _README_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+    def _clean_readme(self, raw: str, max_chars: int) -> str:
+        """把 README markdown 清洗成可读的纯文本摘要：去 HTML 注释/徽章/图片/裸标签/
+        分隔线与表格分隔行，剥掉行首 markdown 标记，合并空行，按行边界截断。"""
+        if not raw:
+            return ""
+        text = self._README_HTML_COMMENT_RE.sub("", raw)
+        lines: List[str] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                if lines and lines[-1] != "":
+                    lines.append("")
+                continue
+            if self._README_SKIP_LINE_RE.match(stripped):
+                continue
+            cleaned = self._README_BADGE_RE.sub("", stripped)
+            cleaned = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", cleaned)  # 链接→纯文本
+            cleaned = re.sub(r"\*\*|`", "", cleaned)             # 加粗/行内代码标记
+            cleaned = re.sub(r"^#{1,6}\s*", "", cleaned)        # 标题井号
+            cleaned = re.sub(r"^>\s*", "", cleaned)              # 引用
+            cleaned = re.sub(r"^[-*+]\s+", "• ", cleaned)        # 无序列表
+            if "|" in cleaned:                                   # 表格行 → " · " 分隔
+                cells = [cell.strip() for cell in cleaned.strip("|").split("|")]
+                cleaned = " · ".join(cell for cell in cells if cell)
+            cleaned = cleaned.strip()
+            if cleaned:
+                lines.append(cleaned)
+        excerpt = "\n".join(lines).strip()
+        excerpt = re.sub(r"\n{3,}", "\n\n", excerpt)
+        if len(excerpt) > max_chars:
+            excerpt = excerpt[:max_chars].rsplit("\n", 1)[0].rstrip() + "\n…"
+        return excerpt
+
+    async def _fetch_readme(self, client: httpx.AsyncClient, owner: str, repo_name: str, max_chars: int) -> str:
+        """拉取仓库 README 原文并清洗为摘要；无 README 或失败时安静返回空串。
+
+        故意不走 ``_safe_get``：缺 README 是合法的 404，不该触发重试与错误日志。
+        """
+        if not repo_name:
+            return ""
+        url = f"https://api.github.com/repos/{owner}/{repo_name}/readme"
+        try:
+            response = await client.get(url, headers=self._github_headers("application/vnd.github.raw+json"))
+        except httpx.HTTPError as e:
+            self.logger.info(f"ℹ️ README 拉取失败，跳过 [{owner}/{repo_name}]: {e}")
+            return ""
+        if response.status_code != 200 or not response.text:
+            return ""
+        return self._clean_readme(response.text, max_chars)
+
+    def _repo_content(self, repo: Dict[str, Any], runtime_source_id: str, owner: str, readme_excerpt: str = "") -> GitHubRepositoryContent:
         full_name = repo.get("full_name", "") or f"{owner}/{repo.get('name', '')}".strip("/")
         description = repo.get("description", "") or ""
         license_info = repo.get("license") or {}
         created_at = repo.get("created_at") or datetime.now(timezone.utc).isoformat()
-        content = "\n".join([
+        lines = [
             f"GitHub repository: {full_name}",
             f"Description: {description or 'No repository description provided.'}",
             f"Language: {repo.get('language') or 'Unknown'}",
             f"Stars: {int(repo.get('stargazers_count') or 0)}",
             f"URL: {repo.get('html_url', '')}",
-        ]).strip()
+        ]
+        if readme_excerpt:
+            lines.append("Readme excerpt:")
+            lines.append(readme_excerpt)
+        content = "\n".join(lines).strip()
         return GitHubRepositoryContent(
             id=self._repo_id(runtime_source_id, repo),
             title=full_name,
@@ -103,6 +184,7 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
                 "created_at": repo.get("created_at", ""),
                 "updated_at": repo.get("updated_at", ""),
                 "pushed_at": repo.get("pushed_at", ""),
+                "readme_chars": len(readme_excerpt),
             },
         )
 
@@ -112,17 +194,31 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
         limit = self._entry_limit(kwargs.get("limit"), 20)
         include_forks = self._bool_param(kwargs.get("include_forks"), False)
         include_archived = self._bool_param(kwargs.get("include_archived"), False)
+        fetch_readme = self._bool_param(kwargs.get("fetch_readme"), self.default_fetch_readme)
+        readme_max_chars = self._positive_int_param(kwargs.get("readme_max_chars"), self.default_readme_max_chars)
         if not owner:
             raise ValueError("GitHub owner 不能为空")
 
         self.source_id = runtime_source_id
+        repos = [
+            repo for repo in await self._fetch_repositories(client, owner, limit)
+            if not (repo.get("fork") and not include_forks)
+            and not (repo.get("archived") and not include_archived)
+        ]
+
+        # 去重预检：已入库且有正文的仓库无需重复拉 README（仅描述为空者才会触发拉取）。
+        existing_flags = await self._lookup_existing_content_flags(
+            self._repo_id(runtime_source_id, repo) for repo in repos
+        )
+
         emitted = 0
-        for repo in await self._fetch_repositories(client, owner, limit):
-            if repo.get("fork") and not include_forks:
-                continue
-            if repo.get("archived") and not include_archived:
-                continue
-            yield self._repo_content(repo, runtime_source_id, owner)
+        for repo in repos:
+            readme_excerpt = ""
+            description = (repo.get("description") or "").strip()
+            already_stored = existing_flags.get(self._repo_id(runtime_source_id, repo), False)
+            if fetch_readme and not description and not already_stored:
+                readme_excerpt = await self._fetch_readme(client, owner, repo.get("name", ""), readme_max_chars)
+            yield self._repo_content(repo, runtime_source_id, owner, readme_excerpt)
             emitted += 1
             if emitted >= limit:
                 break
@@ -140,6 +236,8 @@ class PresetGitHubRepositoriesFetcher(GenericGitHubRepositoriesFetcher):
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
             {"field": "include_forks", "label": "包含 fork 仓库", "type": "boolean", "default": False},
             {"field": "include_archived", "label": "包含归档仓库", "type": "boolean", "default": False},
+            {"field": "fetch_readme", "label": "无描述时补充 README", "type": "boolean", "default": cls.default_fetch_readme},
+            {"field": "readme_max_chars", "label": "README 摘要最大字符", "type": "number", "default": cls.default_readme_max_chars},
         ]
 
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:

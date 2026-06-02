@@ -92,7 +92,7 @@ src/
 │   └── impl/
 │       ├── rss_fetcher.py               # GenericRssFetcher + PresetRssFetcher (23+ built-in RSS sources); OpenAINewsRssFetcher renders detail via Playwright (CF bypass)
 │       ├── github_release_fetcher.py    # GenericGitHubReleasesFetcher + preset subclasses (13 built-in)
-│       ├── repository_model_fetcher.py  # GitHub repo + HuggingFace model fetchers (content_type=github_repository / huggingface_model)
+│       ├── repository_model_fetcher.py  # GitHub repo + HuggingFace model fetchers (content_type=github_repository / huggingface_model); GitHub repo fetcher backfills a cleaned README excerpt when a repo has no description (dedup-gated, GITHUB_TOKEN-aware)
 │       ├── webpage_fetcher.py           # BaseWebPageListFetcher + preset subclasses (6 built-in)
 │       ├── curated_core_fetcher.py      # Curated AI-source presets: SinglePageDocumentFetcher (changelogs/release notes) + per-site BaseWebPageListFetcher/BaseFetcher subclasses (量子位, 机器之心, HF Daily Papers, etc.)
 │       ├── article_extractor.py         # Shared HTML→article-body extractor (helper module, not a fetcher); used by webpage/rss fetchers to backfill detail
@@ -229,3 +229,4 @@ Loaded by `src/config.py` into the `settings` singleton (read live in `app.py`; 
 | `LOCAL_MODEL_PATH` | Path to local sentence-transformers model for offline embedding; defaults to `BAAI/bge-m3` |
 | `DORAMI_RUNTIME_ROLE` | Override `[runtime] role` (`all`/`collector`/`reader`) |
 | `DORAMI_RAG_ENABLED` | Override `[rag] enabled` (`1`/`true`/`yes`/`on` to enable the vector/RAG subsystem) |
+| `GITHUB_TOKEN` / `GH_TOKEN` | Optional GitHub API token for the GitHub repo fetchers; raises the rate limit (60→5000/hr) for repo listing + README backfill |
