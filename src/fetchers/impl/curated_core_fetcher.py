@@ -1284,6 +1284,40 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
 
         return ""
 
+    def _extract_qbitai_detail(self, html_text: str, max_chars: int) -> Dict[str, str]:
+        """限定到量子位文章正文容器 ``div.content > div.article``。
+
+        通用提取器会落到 ``article``/``main`` 选择器，把同级的 logo 图(``.wx_img`` 里有一段
+        非法的 ``< img …>`` 文本，因 ``<`` 后带空格不会被当标签剥除而泄漏)、标签、作者框
+        以及页面的相关阅读/热门文章/页脚一并圈进来。正文真正只在 ``.article`` 里，故精确
+        限定并只取段落级文本。"""
+        soup = BeautifulSoup(html_text, "html.parser")
+        title = self._detail_title(soup)
+        body = soup.select_one(".content .article") or soup.select_one("div.article")
+        if not body:
+            return {"title": title, "text": "", "method": ""}
+
+        for selector in ["script", "style", "noscript", "button", ".wx_img", ".share_pc", ".tags", ".person_box", ".xiangguan"]:
+            for node in body.select(selector):
+                node.decompose()
+
+        text = "\n\n".join(
+            self._clean_text(node.get_text(" ", strip=True))
+            for node in body.find_all(["p", "blockquote", "li", "h2", "h3"], recursive=True)
+        )
+        if not text:
+            text = self._clean_text(body.get_text(" ", strip=True))
+        return {"title": title, "text": text[:max_chars], "method": "qbitai_article_body"}
+
+    async def _detail_for_url(self, client: httpx.AsyncClient, url: str, max_chars: int) -> Dict[str, str]:
+        response = await self._safe_get(client, url)
+        if not response:
+            return {"title": "", "text": "", "method": "", "url": ""}
+        detail = self._extract_qbitai_detail(response.text, max_chars)
+        if detail["text"]:
+            return {**detail, "url": str(response.url)}
+        return await super()._detail_for_url(client, url, max_chars)
+
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         limit = self._entry_limit(kwargs.get("limit"))
         fetch_detail = self._bool_param(kwargs.get("fetch_detail"))

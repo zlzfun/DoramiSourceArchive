@@ -733,6 +733,23 @@ title, abstract as body, `paper.publishedAt` as date, `/papers/{id}` as URL,
 upvotes/keywords/author-count into raw_data — sorted newest-first, no per-paper
 detail requests. Live run: 40 papers (limit), 0 empty dates/bodies, newest-first.
 
+### QbitAI detail body cleanup (2026-06-02)
+
+量子位 article bodies carried HTML-tag and boilerplate noise: every body began
+with a literal `< img id="wx_img" …>` string (the page emits this with a space
+after `<`, so it is invalid HTML, never parsed as a tag, and leaked as text) and
+ended with the page's 相关阅读 / 热门文章 / 关于量子位 / footer + ICP. Root cause:
+the shared `article_extractor` fell through to the generic `article`/`main`
+selectors, which on qbitai's WordPress wrap the logo div, the article, the
+related/hot sidebar, and the footer together. The real body is precisely
+`div.content > div.article`; the `.wx_img` / `.tags` / `.person_box` / `.xiangguan`
+blocks are siblings outside it. Mirrored the IThome precedent: `QbitAiWebsiteFetcher`
+now overrides `_detail_for_url` → `_extract_qbitai_detail`, scoping to
+`.content .article`, decomposing residual noise selectors, and joining
+paragraph-level text (`p`/`blockquote`/`li`/`h2`/`h3`); method
+`qbitai_article_body`, falling back to the shared extractor if the container is
+missing. Live: bodies now carry zero HTML tags, no wx_img, no related/hot/footer.
+
 ## Verification Performed
 
 Targeted tests for the node audit and related curation changes:

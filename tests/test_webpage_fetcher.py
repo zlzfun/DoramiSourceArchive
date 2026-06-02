@@ -1191,3 +1191,42 @@ def test_huggingface_daily_papers_splits_each_paper_from_embedded_json():
     assert items[0].raw_data["num_authors"] == 2
     assert items[0].raw_data["ai_keywords"] == ["peft", "scaling"]
     assert items[0].raw_data["detail_extraction_method"] == "huggingface_daily_papers_json"
+
+
+def test_qbitai_detail_scoped_to_article_body_drops_noise_and_tags():
+    # 量子位文章页：正文只在 div.content > div.article 里；同级的 .wx_img(含一段非法
+    # "< img …>" 文本，因 < 后带空格不会被当标签剥除)、.tags/.person_box/.xiangguan 以及
+    # 页面的热门文章/页脚都应被排除。
+    detail_html = """
+    <html><head><title>测试标题 - 量子位</title></head><body>
+      <div class="main">
+        <div class="content">
+          <div class="wx_img">< img id="wx_img" src="https://www.qbitai.com/logo.png" width="400" height="400"></div>
+          <div class="article">
+            <p>这是文章正文第一段，包含实际内容与观点。</p>
+            <p>第二段正文继续展开说明，给出更多细节。</p>
+          </div>
+          <div class="tags"><a>标签A</a><a>标签B</a></div>
+          <div class="person_box">作者简介信息</div>
+          <div class="xiangguan"><a href="/2026/01/1.html">相关阅读的另一篇文章</a></div>
+        </div>
+        <div class="hot">热门文章 关于量子位 加入我们 京ICP备17005886号-1</div>
+      </div>
+    </body></html>
+    """
+    fetcher = QbitAiWebsiteFetcher()
+    detail = fetcher._extract_qbitai_detail(detail_html, max_chars=12000)
+
+    assert detail["method"] == "qbitai_article_body"
+    text = detail["text"]
+    # 正文段落保留。
+    assert "这是文章正文第一段" in text
+    assert "第二段正文继续展开说明" in text
+    # 噪声全部剔除：非法 img 文本、标签、作者框、相关阅读、热门/页脚。
+    assert "wx_img" not in text and "< img" not in text
+    assert "标签A" not in text
+    assert "作者简介信息" not in text
+    assert "相关阅读" not in text
+    assert "热门文章" not in text and "关于量子位" not in text and "ICP备" not in text
+    # 不残留任何 HTML 标签。
+    assert "<" not in text and ">" not in text
