@@ -45,6 +45,7 @@ import {
 } from '../sourceTaxonomy';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { useConfirm } from '../hooks/useConfirm';
+import { runAction } from '../utils/runAction';
 
 const FAVORITE_FETCHERS_STORAGE_KEY = 'dorami.favorite_fetchers';
 const TEST_RUN_LIMIT = 1;
@@ -480,24 +481,30 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
       cron_expr: '',
       per_fetcher_cron: {},
     };
-    try {
-      const saved = editingGroupId ? await updateNodeGroup(editingGroupId, payload) : await createNodeGroup(payload);
-      setExpandedGroupId(saved.id);
-      setGroupModalOpen(false);
-      setSelectedFetchers([]);
-      await loadNodeGroups();
-      showToast('采集范围已保存', 'success');
-    } catch (e) { showToast(e.message || '保存采集范围失败', 'error'); }
+    await runAction(() => (editingGroupId ? updateNodeGroup(editingGroupId, payload) : createNodeGroup(payload)), {
+      showToast,
+      success: '采集范围已保存',
+      error: '保存采集范围失败',
+      onSuccess: (saved) => {
+        setExpandedGroupId(saved.id);
+        setGroupModalOpen(false);
+        setSelectedFetchers([]);
+        loadNodeGroups();
+      },
+    });
   };
 
   const handleDeleteGroup = async (id) => {
     if (!(await confirm('确定删除该采集范围？'))) return;
-    try {
-      await deleteNodeGroup(id);
-      if (expandedGroupId === id) setExpandedGroupId(null);
-      await loadNodeGroups();
-      showToast('采集范围已删除', 'success');
-    } catch (e) { showToast(e.message || '删除采集范围失败', 'error'); }
+    await runAction(() => deleteNodeGroup(id), {
+      showToast,
+      success: '采集范围已删除',
+      error: '删除采集范围失败',
+      onSuccess: () => {
+        if (expandedGroupId === id) setExpandedGroupId(null);
+        loadNodeGroups();
+      },
+    });
   };
 
   const handleRunGroup = async (id, options = {}) => {

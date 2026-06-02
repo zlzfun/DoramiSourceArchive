@@ -3,6 +3,7 @@ import { Plug2, Copy, Check, Bot, Download, Terminal, Globe } from 'lucide-react
 import { fetchMcpStatus } from '../api';
 import { MCP_URL } from '../config';
 import { copyText } from '../utils/clipboard';
+import { runAction } from '../utils/runAction';
 
 const TOOL_CARDS = [
   {
@@ -59,16 +60,12 @@ export default function MCPTab({ showToast, ragEnabled = false }) {
     return () => window.removeEventListener('dorami-mcp-changed', handleMcpChanged);
   }, []);
 
-  const handleCopy = async () => {
-    try {
-      await copyText(mcpUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-      showToastRef.current?.('接入地址已复制', 'success');
-    } catch (e) {
-      showToastRef.current?.(e.message || '复制失败，请手动选择文本复制', 'error');
-    }
-  };
+  const handleCopy = () => runAction(() => copyText(mcpUrl), {
+    showToast: (m, t) => showToastRef.current?.(m, t),
+    success: '接入地址已复制',
+    error: '复制失败，请手动选择文本复制',
+    onSuccess: () => { setCopied(true); setTimeout(() => setCopied(false), 2000); },
+  });
 
   const mcpUrl = status?.url ?? MCP_URL;
   const mcpJson = JSON.stringify({
@@ -77,16 +74,12 @@ export default function MCPTab({ showToast, ragEnabled = false }) {
     },
   }, null, 2);
 
-  const handleCopyJson = async () => {
-    try {
-      await copyText(mcpJson);
-      setCopiedJson(true);
-      setTimeout(() => setCopiedJson(false), 2000);
-      showToastRef.current?.('客户端配置已复制', 'success');
-    } catch (e) {
-      showToastRef.current?.(e.message || '复制失败，请手动选择文本复制', 'error');
-    }
-  };
+  const handleCopyJson = () => runAction(() => copyText(mcpJson), {
+    showToast: (m, t) => showToastRef.current?.(m, t),
+    success: '客户端配置已复制',
+    error: '复制失败，请手动选择文本复制',
+    onSuccess: () => { setCopiedJson(true); setTimeout(() => setCopiedJson(false), 2000); },
+  });
 
   const handleDownload = (url, filename) => {
     const a = document.createElement('a');

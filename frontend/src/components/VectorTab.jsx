@@ -3,6 +3,7 @@ import { Database, Search, RefreshCw, Copy, Check, ExternalLink } from 'lucide-r
 import { fetchVectorStats, vectorSearch, ragContext, fetchSubscribedVectorStats } from '../api';
 import DateRangePicker from './DateRangePicker';
 import { copyText } from '../utils/clipboard';
+import { runAction } from '../utils/runAction';
 
 export default function VectorTab({ availableFetchers, showToast, accountRole }) {
   const scopedToSubscriptions = accountRole === 'user';
@@ -32,37 +33,42 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
-    setSearching(true);
     setSearchResults([]);
-    try {
-      const opts = {};
-      if (filterSourceId) opts.source_id = filterSourceId;
-      if (filterDateStart) opts.publish_date_gte = filterDateStart;
-      if (filterDateEnd) opts.publish_date_lte = filterDateEnd;
-      if (rerank) opts.rerank = true;
-      const data = await vectorSearch(searchQuery, topK, opts);
-      setSearchResults(data.results || []);
-    } catch (e) { showToast(e.message || '网络异常', 'error'); }
-    setSearching(false);
+    const opts = {};
+    if (filterSourceId) opts.source_id = filterSourceId;
+    if (filterDateStart) opts.publish_date_gte = filterDateStart;
+    if (filterDateEnd) opts.publish_date_lte = filterDateEnd;
+    if (rerank) opts.rerank = true;
+    await runAction(() => vectorSearch(searchQuery, topK, opts), {
+      showToast,
+      onSuccess: (data) => setSearchResults(data.results || []),
+      setLoading: setSearching,
+    });
   };
 
   const handleCopyContext = async () => {
     if (!searchQuery.trim()) return;
-    setCopyingContext(true);
-    try {
-      const opts = {};
-      if (filterSourceId) opts.source_id = filterSourceId;
-      if (filterDateStart) opts.publish_date_gte = filterDateStart;
-      if (filterDateEnd) opts.publish_date_lte = filterDateEnd;
-      if (rerank) opts.rerank = true;
-      if (expandContext) opts.expand_context = true;
+    const opts = {};
+    if (filterSourceId) opts.source_id = filterSourceId;
+    if (filterDateStart) opts.publish_date_gte = filterDateStart;
+    if (filterDateEnd) opts.publish_date_lte = filterDateEnd;
+    if (rerank) opts.rerank = true;
+    if (expandContext) opts.expand_context = true;
+    // ragContext + copyText 同纳入 fn：任一失败都不会误报「已复制」
+    await runAction(async () => {
       const data = await ragContext(searchQuery, topK, opts);
       await copyText(data.context_text);
-      setCopiedContext(true);
-      showToast(`已复制 RAG 上下文（${data.retrieved_count} 条来源，${data.total_chars} 字符）`, 'success');
-      setTimeout(() => setCopiedContext(false), 2500);
-    } catch (e) { showToast(e.message || '复制失败', 'error'); }
-    setCopyingContext(false);
+      return data;
+    }, {
+      showToast,
+      success: (data) => `已复制 RAG 上下文（${data.retrieved_count} 条来源，${data.total_chars} 字符）`,
+      error: '复制失败',
+      setLoading: setCopyingContext,
+      onSuccess: () => {
+        setCopiedContext(true);
+        setTimeout(() => setCopiedContext(false), 2500);
+      },
+    });
   };
 
   const getDistanceLabel = (dist) => {
@@ -178,6 +184,15 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
 
         {/* 结果列表 */}
         <div className="space-y-4">
+          {searching && searchResults.length === 0 && (
+            Array.from({ length: 3 }).map((_, i) => (
+              <div key={`vec-skeleton-${i}`} className="bg-white/72 border border-slate-200 p-5 rounded-[14px] shadow-sm">
+                <div className="skeleton mb-3 h-4 w-2/3" />
+                <div className="skeleton mb-3 h-3 w-40" />
+                <div className="skeleton h-16 w-full rounded-xl" />
+              </div>
+            ))
+          )}
           {searchResults.length === 0 && !searching && (
             <div className="empty-state py-8">
               输入查询句，探测语义检索效果

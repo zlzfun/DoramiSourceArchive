@@ -28,6 +28,7 @@ import {
   toggleMcp,
 } from '../api';
 import { copyText } from '../utils/clipboard';
+import { runAction } from '../utils/runAction';
 import { useConfirm } from '../hooks/useConfirm';
 
 function downloadFile(url, filename) {
@@ -141,16 +142,13 @@ function VectorSection({ showToast }) {
 
   const handleReindex = async () => {
     if (!(await confirm('全量重索引将清空并重建整个向量库（适用于更换 Embedding 模型）。确认继续？'))) return;
-    setReindexing(true);
-    try {
-      const data = await reindexAll();
-      showToast(`全量重索引完成：${data.total_reindexed}/${data.total_articles} 篇`, 'success');
-      fetchVectorStats().then(setStats).catch(() => {});
-    } catch (error) {
-      showToast(error.message || '重索引失败', 'error');
-    } finally {
-      setReindexing(false);
-    }
+    await runAction(() => reindexAll(), {
+      showToast,
+      success: (data) => `全量重索引完成：${data.total_reindexed}/${data.total_articles} 篇`,
+      error: '重索引失败',
+      setLoading: setReindexing,
+      onSuccess: () => { fetchVectorStats().then(setStats).catch(() => {}); },
+    });
   };
 
   return (
@@ -197,15 +195,11 @@ function IntegrationSection({ showToast, mcpStatus, canToggle, onMcpToggled }) {
   const mcpUrl = mcpStatus?.url ?? MCP_URL;
   const enabled = mcpStatus?.enabled ?? false;
 
-  const handleCopy = async () => {
-    try {
-      await copyText(mcpUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    } catch (error) {
-      showToast(error.message || '复制失败', 'error');
-    }
-  };
+  const handleCopy = () => runAction(() => copyText(mcpUrl), {
+    showToast,
+    error: '复制失败',
+    onSuccess: () => { setCopied(true); setTimeout(() => setCopied(false), 1800); },
+  });
 
   const handleToggle = async () => {
     setToggling(true);

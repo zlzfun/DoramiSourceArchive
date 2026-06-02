@@ -33,6 +33,7 @@ import {
   SOURCE_SCOPE_LABELS,
 } from '../sourceTaxonomy';
 import { copyText } from '../utils/clipboard';
+import { runAction } from '../utils/runAction';
 import { useConfirm } from '../hooks/useConfirm';
 
 const TOKEN_PLACEHOLDER = '$DORAMI_TOKEN';
@@ -260,28 +261,19 @@ export default function SubscriptionTab({ showToast, onViewArticles }) {
   const [collapsedSourceSections, setCollapsedSourceSections] = useState(() => new Set());
   const [expandedSourceCompanies, setExpandedSourceCompanies] = useState(() => new Set());
 
-  const loadSources = useCallback(async () => {
-    setSourcesLoading(true);
-    try {
-      const data = await fetchReaderSources();
-      setSources(data.sources || []);
-    } catch (error) {
-      showToast(error.message || '获取内容源目录失败', 'error');
-    } finally {
-      setSourcesLoading(false);
-    }
-  }, [showToast]);
+  const loadSources = useCallback(() => runAction(() => fetchReaderSources(), {
+    showToast,
+    error: '获取内容源目录失败',
+    setLoading: setSourcesLoading,
+    onSuccess: (data) => setSources(data.sources || []),
+  }), [showToast]);
 
-  const loadFeedToken = useCallback(async () => {
-    setFeedLoading(true);
-    try {
-      setFeedToken(await fetchFeedToken());
-    } catch (error) {
-      showToast(error.message || '获取聚合接口令牌失败', 'error');
-    } finally {
-      setFeedLoading(false);
-    }
-  }, [showToast]);
+  const loadFeedToken = useCallback(() => runAction(() => fetchFeedToken(), {
+    showToast,
+    error: '获取聚合接口令牌失败',
+    setLoading: setFeedLoading,
+    onSuccess: (token) => setFeedToken(token),
+  }), [showToast]);
 
   useEffect(() => {
     loadSources();
@@ -429,31 +421,26 @@ export default function SubscriptionTab({ showToast, onViewArticles }) {
     }
   }, [applySubscribedIds, loadSources, showToast]);
 
-  const handleCopy = async (text, key) => {
-    try {
-      await copyText(text);
-      setCopiedKey(key);
-      setTimeout(() => setCopiedKey(''), 1800);
-      showToast('已复制', 'success');
-    } catch (error) {
-      showToast(error.message || '复制失败', 'error');
-    }
-  };
+  const handleCopy = (text, key) => runAction(() => copyText(text), {
+    showToast,
+    success: '已复制',
+    error: '复制失败',
+    onSuccess: () => { setCopiedKey(key); setTimeout(() => setCopiedKey(''), 1800); },
+  });
 
   const handleRotateFeedToken = async () => {
     if (feedToken?.exists && !(await confirm('重新生成会使旧的聚合令牌立即失效，确定继续？'))) return;
-    setRotatingToken(true);
-    try {
-      const result = await rotateFeedToken();
-      setPlainToken(result.token);
-      setDocsOpen(true);
-      setFeedToken(prev => ({ ...(prev || {}), exists: true, token_preview: result.token_preview }));
-      showToast('聚合接口令牌已生成', 'success');
-    } catch (error) {
-      showToast(error.message || '生成聚合接口令牌失败', 'error');
-    } finally {
-      setRotatingToken(false);
-    }
+    await runAction(() => rotateFeedToken(), {
+      showToast,
+      success: '聚合接口令牌已生成',
+      error: '生成聚合接口令牌失败',
+      setLoading: setRotatingToken,
+      onSuccess: (result) => {
+        setPlainToken(result.token);
+        setDocsOpen(true);
+        setFeedToken(prev => ({ ...(prev || {}), exists: true, token_preview: result.token_preview }));
+      },
+    });
   };
 
   const refreshAll = useCallback(async () => {

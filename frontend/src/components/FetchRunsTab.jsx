@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -34,6 +34,7 @@ import {
 import LogoMark from './LogoMark';
 import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime } from '../utils/datetime';
+import { runAction } from '../utils/runAction';
 import { useConfirm } from '../hooks/useConfirm';
 
 function formatDuration(durationMs) {
@@ -120,6 +121,7 @@ export default function FetchRunsTab({
   onPendingFilterApplied,
 }) {
   const confirm = useConfirm();
+  const loadRequestRef = useRef(0);
   const [view, setView] = useState('jobs');
   const [collectionJobs, setCollectionJobs] = useState([]);
   const [nodeGroups, setNodeGroups] = useState([]);
@@ -170,6 +172,7 @@ export default function FetchRunsTab({
   }, [availableFetchers, jobSearch]);
 
   const loadAll = useCallback(async () => {
+    const reqId = ++loadRequestRef.current;
     setLoading(true);
     try {
       const runFilters = {
@@ -187,6 +190,7 @@ export default function FetchRunsTab({
         fetchFetchRuns(fetchRunFilters, 200),
         fetchTasks(),
       ]);
+      if (reqId !== loadRequestRef.current) return; // 被更新的加载抢占，丢弃过期结果
       setNodeGroups(groups);
       setCollectionJobs(jobs);
       setCollectionRuns(jobRuns);
@@ -194,10 +198,11 @@ export default function FetchRunsTab({
       setTasks(legacyTasks);
       setLoadError('');
     } catch (e) {
+      if (reqId !== loadRequestRef.current) return;
       setLoadError(e.message || '任务与运行数据加载失败');
       showToast(e.message || '任务与运行数据加载失败', 'error');
     } finally {
-      setLoading(false);
+      if (reqId === loadRequestRef.current) setLoading(false);
     }
   }, [filters.fetcher_id, filters.status, filters.trigger_type, showToast]);
 
@@ -315,15 +320,16 @@ export default function FetchRunsTab({
       cron_expr: jobDraft.cron_expr.trim(),
       per_fetcher_cron: cleanStringMap(jobDraft.per_fetcher_cron),
     };
-    try {
-      const saved = editingJobId ? await updateCollectionJob(editingJobId, payload) : await createCollectionJob(payload);
-      setExpandedJobId(saved.id);
-      setJobModalOpen(false);
-      await loadAll();
-      showToast('采集任务已保存', 'success');
-    } catch (e) {
-      showToast(e.message || '保存采集任务失败', 'error');
-    }
+    await runAction(() => (editingJobId ? updateCollectionJob(editingJobId, payload) : createCollectionJob(payload)), {
+      showToast,
+      success: '采集任务已保存',
+      error: '保存采集任务失败',
+      onSuccess: (saved) => {
+        setExpandedJobId(saved.id);
+        setJobModalOpen(false);
+        loadAll();
+      },
+    });
   };
 
   const handleRunJob = async (id, options = {}) => {
@@ -342,25 +348,25 @@ export default function FetchRunsTab({
 
   const handleDeleteJob = async (id) => {
     if (!(await confirm('确定删除该采集任务？'))) return;
-    try {
-      await deleteCollectionJob(id);
-      if (expandedJobId === id) setExpandedJobId(null);
-      await loadAll();
-      showToast('采集任务已删除', 'success');
-    } catch (e) {
-      showToast(e.message || '删除采集任务失败', 'error');
-    }
+    await runAction(() => deleteCollectionJob(id), {
+      showToast,
+      success: '采集任务已删除',
+      error: '删除采集任务失败',
+      onSuccess: () => {
+        if (expandedJobId === id) setExpandedJobId(null);
+        loadAll();
+      },
+    });
   };
 
   const handleDeleteLegacyTask = async (id) => {
     if (!(await confirm('确定删除旧版单节点定时计划？'))) return;
-    try {
-      await deleteTask(id);
-      await loadAll();
-      showToast('旧版计划已删除', 'success');
-    } catch (e) {
-      showToast(e.message || '删除旧版计划失败', 'error');
-    }
+    await runAction(() => deleteTask(id), {
+      showToast,
+      success: '旧版计划已删除',
+      error: '删除旧版计划失败',
+      onSuccess: () => loadAll(),
+    });
   };
 
   const renderParamInput = (fetcherId, param) => {
@@ -663,7 +669,19 @@ export default function FetchRunsTab({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
-                {unifiedRuns.length === 0 ? (
+                {loading && unifiedRuns.length === 0 ? (
+                  Array.from({ length: 6 }).map((_, i) => (
+                    <tr key={`run-skeleton-${i}`}>
+                      <td className="px-4 py-4"><div className="skeleton h-6 w-16 rounded-full" /></td>
+                      <td className="px-4 py-4"><div className="flex items-center gap-2.5"><div className="skeleton h-8 w-8 rounded-lg" /><div className="skeleton h-4 w-32" /></div></td>
+                      <td className="px-4 py-4"><div className="skeleton h-6 w-14 rounded-full" /></td>
+                      <td className="px-4 py-4"><div className="skeleton h-4 w-28" /></td>
+                      <td className="px-4 py-4"><div className="skeleton h-4 w-12" /></td>
+                      <td className="px-4 py-4"><div className="skeleton h-4 w-10" /></td>
+                      <td className="px-4 py-4"><div className="skeleton h-4 w-20" /></td>
+                    </tr>
+                  ))
+                ) : unifiedRuns.length === 0 ? (
                   <tr>
                     <td colSpan="7" className="px-6 py-16 text-center text-slate-400 font-medium">当前过滤条件下暂无运行记录</td>
                   </tr>
