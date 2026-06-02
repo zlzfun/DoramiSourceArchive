@@ -17,6 +17,7 @@ from fetchers.impl.curated_core_fetcher import (
     ClaudeCodeChangelogFetcher,
     DeepSeekApiChangeLogFetcher,
     GemmaReleaseNotesFetcher,
+    HuggingFaceDailyPapersFetcher,
     OpenAiCodexChangelogFetcher,
     QbitAiWebsiteFetcher,
     XAiDeveloperReleaseNotesFetcher,
@@ -1134,3 +1135,59 @@ def test_bytedance_seed_research_splits_publications_by_card():
     assert items[0].raw_data["listing_source"] == "bytedance_seed_research_publications"
     assert items[0].raw_data["detail_extraction_method"] == "bytedance_seed_research_card"
     assert items[0].raw_data["release_date_text"] == "Apr 22, 2026"
+
+
+def test_huggingface_daily_papers_splits_each_paper_from_embedded_json():
+    # Daily Papers 把当天数十篇论文渲染成 <article> 卡片，完整数据在
+    # <div data-target="DailyPapers" data-props="{…}"> 的 hydration JSON 里。按 dailyPapers
+    # 数组逐篇切分，正文用摘要、日期用 paper.publishedAt，按日期倒序。fixture 打乱顺序。
+    payload = {
+        "dateString": "2026-06-02",
+        "dailyPapers": [
+            {"title": "Paper B", "paper": {
+                "id": "2606.00002", "title": "Paper B",
+                "summary": "Abstract B about multi-agent benchmarks.",
+                "publishedAt": "2026-05-30T20:00:00.000Z", "upvotes": 10,
+                "authors": [{"name": "X"}], "ai_keywords": ["agents"],
+                "githubRepo": "https://github.com/x/b"}},
+            {"title": "Paper A", "paper": {
+                "id": "2606.00001", "title": "Paper A",
+                "summary": "Abstract A about PEFT scaling.",
+                "publishedAt": "2026-06-01T20:00:00.000Z", "upvotes": 52,
+                "authors": [{"name": "Y"}, {"name": "Z"}], "ai_keywords": ["peft", "scaling"]}},
+        ],
+    }
+    listing_html = (
+        "<html><body><div data-target='DailyPapers' data-props='"
+        + json.dumps(payload)
+        + "'></div></body></html>"
+    )
+    fetcher = HuggingFaceDailyPapersFetcher()
+
+    async def fake_safe_get(client, url):
+        assert url == "https://huggingface.co/papers"
+        return DummyResponse(listing_html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=40)]
+
+    items = asyncio.run(collect_items())
+
+    # 每篇论文各成一条，按发布日期倒序（不沿用 JSON 顺序）。
+    assert [item.title for item in items] == ["Paper A", "Paper B"]
+    assert [item.publish_date for item in items] == [
+        "2026-06-01T20:00:00+00:00",
+        "2026-05-30T20:00:00+00:00",
+    ]
+    # 正文用摘要，逐篇 arxiv URL，互不串味。
+    assert items[0].content == "Abstract A about PEFT scaling."
+    assert "multi-agent" not in items[0].content
+    assert items[0].source_url == "https://huggingface.co/papers/2606.00001"
+    # 结构化元数据落到 raw_data。
+    assert items[0].raw_data["arxiv_id"] == "2606.00001"
+    assert items[0].raw_data["upvotes"] == 52
+    assert items[0].raw_data["num_authors"] == 2
+    assert items[0].raw_data["ai_keywords"] == ["peft", "scaling"]
+    assert items[0].raw_data["detail_extraction_method"] == "huggingface_daily_papers_json"

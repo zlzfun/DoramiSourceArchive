@@ -208,6 +208,8 @@ Overlaps with arXiv sources, vendor research blogs, and tier1 media summaries.
 
 Validate whether the Daily Papers page provides stable dates/ranking and whether an API or RSS-like endpoint exists.
 
+Implemented as `web_huggingface_daily_papers` and audited 2026-06-02. It was a `SinglePageDocumentFetcher`, so the whole page (47 paper cards) collapsed into **one** article. The page carries a hydration blob — `<div data-target="DailyPapers" data-props="{…}">` — whose JSON has a `dailyPapers` array; each entry's `paper` object holds `id` (arxiv), `title`, `summary` (abstract), `publishedAt`, `upvotes`, `authors`, `ai_keywords`, `githubRepo`. Rewrote the fetcher to parse that JSON and split per paper: title, abstract as body, `paper.publishedAt` as the date, `https://huggingface.co/papers/{id}` as the URL, sorted newest-first — no per-paper detail requests. Live run: 40 papers (limit), 0 empty dates/bodies, newest-first, upvotes/keywords in raw_data.
+
 # Parking Lot
 
 | Source | URL | Reason |

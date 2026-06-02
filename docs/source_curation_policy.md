@@ -45,7 +45,7 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `web_bytedance_seed_research` | ByteDance Seed research papers/tech reports, split per publication. |
 | `web_qbitai` | Tier1 Chinese AI media coverage from 量子位. |
 | `rss_hn_ai` | Developer community AI discussion signal from Hacker News. |
-| `web_huggingface_daily_papers` | Hugging Face daily papers as curated research signal. |
+| `web_huggingface_daily_papers` | Hugging Face daily papers as curated research signal, split per paper (title/abstract/date). |
 | `web_cursor_changelog` | Cursor product changelog for agent coding practice. |
 | `github_opencode_releases` | OpenCode release updates. |
 | `github_openclaw_releases` | OpenClaw release updates. |

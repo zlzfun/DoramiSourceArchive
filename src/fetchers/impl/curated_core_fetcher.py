@@ -1,6 +1,7 @@
 import gzip
 import hashlib
 import html
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Dict, List
@@ -1032,7 +1033,7 @@ class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
 class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
     source_id = "web_huggingface_daily_papers"
     name = "Hugging Face Daily Papers"
-    description = "抓取 Hugging Face Daily Papers 页面中的社区热门论文与模型研究信号。"
+    description = "抓取 Hugging Face Daily Papers 中的社区热门论文（逐篇切分，含摘要与发布日期）。"
     icon = "🤗"
     page_url = "https://huggingface.co/papers"
     source_url = page_url
@@ -1047,6 +1048,125 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
+
+    # Daily Papers 页把当天数十篇论文渲染为一组 <article> 卡片；通用单页抓取会把它们糅成
+    # 一篇无逐篇日期的长文。页面用 hydration 数据 <div data-target="DailyPapers" data-props="…">
+    # 内嵌完整 JSON（dailyPapers 数组，每篇含 paper.id/title/summary(摘要)/publishedAt/upvotes
+    # 等）。这里解析该 JSON 逐篇切分，每篇一条记录、保留 arxiv 发布日期与摘要正文，无需逐篇
+    # 再请求详情页。
+    @classmethod
+    def get_parameter_schema(cls) -> List[Dict[str, Any]]:
+        return [
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 40},
+            {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
+        ]
+
+    def _entry_limit(self, raw_limit: Any) -> int:
+        if raw_limit in (None, ""):
+            return 40
+        try:
+            return max(int(raw_limit), 0)
+        except (TypeError, ValueError):
+            self.logger.warning(f"{self.name} 条数参数无效，使用默认值: {raw_limit}")
+            return 40
+
+    def _content_id(self, arxiv_id: str) -> str:
+        digest = hashlib.sha1(f"{self.source_id}:{arxiv_id}".encode("utf-8")).hexdigest()[:16]
+        return f"{self.source_id}_{digest}"
+
+    def _normalize_dt(self, raw: str) -> str:
+        raw = (raw or "").strip()
+        if not raw:
+            return ""
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat()
+        except ValueError:
+            return ""
+
+    def _paper_entries(self, html_text: str, max_chars: int) -> List[Dict[str, Any]]:
+        soup = BeautifulSoup(html_text, "html.parser")
+        node = None
+        for el in soup.find_all(attrs={"data-props": True}):
+            if el.get("data-target") == "DailyPapers":
+                node = el
+                break
+        if node is None:
+            return []
+        try:
+            data = json.loads(node.get("data-props") or "{}")
+        except (ValueError, TypeError):
+            self.logger.warning(f"{self.name} 解析 DailyPapers JSON 失败")
+            return []
+
+        entries: List[Dict[str, Any]] = []
+        seen = set()
+        for item in data.get("dailyPapers", []):
+            paper = item.get("paper", {}) if isinstance(item, dict) else {}
+            arxiv_id = self._clean_text(str(paper.get("id") or ""))
+            if not arxiv_id or arxiv_id in seen:
+                continue
+            title = self._clean_text(item.get("title") or paper.get("title") or "")
+            if not title:
+                continue
+            abstract = self._clean_text(paper.get("summary") or item.get("summary") or "")
+            ai_keywords = paper.get("ai_keywords") or []
+            publish_date = self._normalize_dt(
+                paper.get("publishedAt") or item.get("publishedAt") or paper.get("submittedOnDailyAt")
+            )
+            body = (abstract or title)[:max_chars]
+
+            seen.add(arxiv_id)
+            entries.append({
+                "arxiv_id": arxiv_id,
+                "title": title,
+                "source_url": f"https://huggingface.co/papers/{arxiv_id}",
+                "publish_date": publish_date,
+                "content": body,
+                "summary": (abstract or title)[:500],
+                "upvotes": int(paper.get("upvotes") or 0),
+                "num_authors": len(paper.get("authors") or []),
+                "ai_keywords": ai_keywords if isinstance(ai_keywords, list) else [],
+                "github_repo": paper.get("githubRepo") or "",
+            })
+        return entries
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
+        if limit <= 0:
+            return
+
+        response = await self._safe_get(client, self.page_url)
+        if not response:
+            raise RuntimeError(f"{self.name} 页面请求失败: {self.page_url}")
+
+        entries = self._paper_entries(response.text, max_chars)
+        entries = sorted(entries, key=lambda entry: entry["publish_date"] or "", reverse=True)
+        for entry in entries[:limit]:
+            yield WebPageArticleContent(
+                id=self._content_id(entry["arxiv_id"]),
+                title=entry["title"],
+                source_url=entry["source_url"],
+                publish_date=entry["publish_date"] or datetime.now(timezone.utc).isoformat(),
+                content=entry["content"],
+                has_content=bool(entry["content"]),
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=entry["summary"],
+                tags=[self.category, *list(self.content_tags or [])],
+                raw_data={
+                    "listing_url": self.page_url,
+                    "url": entry["source_url"],
+                    "listing_source": "huggingface_daily_papers",
+                    "arxiv_id": entry["arxiv_id"],
+                    "upvotes": entry["upvotes"],
+                    "num_authors": entry["num_authors"],
+                    "ai_keywords": entry["ai_keywords"],
+                    "github_repo": entry["github_repo"],
+                    "detail_text_length": len(entry["content"]),
+                    "detail_extraction_method": "huggingface_daily_papers_json",
+                },
+            )
 
 
 class CursorChangelogWebFetcher(BaseWebPageListFetcher):

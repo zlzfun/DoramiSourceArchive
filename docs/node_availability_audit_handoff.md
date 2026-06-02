@@ -719,6 +719,20 @@ The audit instead surfaced four real, different problems and fixed three:
   `/changelog/page/N` greater than the current page. Live: `limit=20` now yields
   20 dated entries across pages 1–4, newest-first, no empty rows.
 
+### Hugging Face Daily Papers (2026-06-02)
+
+`web_huggingface_daily_papers` returned **one** article — it was a
+`SinglePageDocumentFetcher`, so the whole `https://huggingface.co/papers` page
+(47 paper cards) collapsed into a single record (publish_date = fetch time) with
+every title/author/vote concatenated. The page is a JS app, but it ships a
+hydration blob: `<div data-target="DailyPapers" data-props="{…}">` whose JSON has
+a `dailyPapers` array; each entry's `paper` object holds `id` (arxiv), `title`,
+`summary` (abstract), `publishedAt`, `upvotes`, `authors`, `ai_keywords`,
+`githubRepo`. Rewrote the fetcher to parse that JSON and split per paper —
+title, abstract as body, `paper.publishedAt` as date, `/papers/{id}` as URL,
+upvotes/keywords/author-count into raw_data — sorted newest-first, no per-paper
+detail requests. Live run: 40 papers (limit), 0 empty dates/bodies, newest-first.
+
 ## Verification Performed
 
 Targeted tests for the node audit and related curation changes:
