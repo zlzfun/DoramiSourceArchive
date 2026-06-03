@@ -1,7 +1,10 @@
 import { useEffect } from 'react';
 import { FileText, Link as LinkIcon, Calendar, Database, Box, ExternalLink, Edit2, Save, X, AlertCircle } from 'lucide-react';
+import { useModalTransition } from '../hooks/useModalTransition';
 
 export default function ArticleDetailModal({ isOpen, data, isEditing, getFetcherName, canEdit = true, onClose, onToggleEdit, onSave }) {
+  const { mounted, closing } = useModalTransition(isOpen);
+
   useEffect(() => {
     if (!isOpen) return undefined;
     const previousOverflow = document.body.style.overflow;
@@ -11,7 +14,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, getFetcher
     };
   }, [isOpen]);
 
-  if (!isOpen || !data) return null;
+  if (!mounted || !data) return null;
 
   const handleSave = () => {
     onSave(data.id, {
@@ -23,7 +26,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, getFetcher
   };
 
   return (
-    <div className="modal-overlay animate-in fade-in">
+    <div className={`modal-overlay ${closing ? 'is-closing' : ''}`}>
       <div className="modal-panel max-w-4xl">
         <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
           <div className="flex items-center space-x-3">

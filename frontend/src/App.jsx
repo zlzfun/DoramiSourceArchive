@@ -183,8 +183,8 @@ export default function App() {
 
   if (authState.status === 'checking') {
     return (
-      <div className="app-shell flex min-h-screen items-center justify-center font-sans text-slate-500">
-        <Loader2 className="mr-3 h-5 w-5 animate-spin text-indigo-500" />
+      <div className="checking-state app-shell flex min-h-screen items-center justify-center font-sans">
+        <Loader2 className="mr-3 h-5 w-5 animate-spin text-blue-600" />
         <span className="text-sm font-bold">正在检查登录状态</span>
       </div>
     );
@@ -200,8 +200,8 @@ export default function App() {
         <div className="flex min-w-0 items-center gap-3">
           <BrandLogo logoError={logoError} onLogoError={() => setLogoError(true)} />
           <div className="hidden min-w-0 sm:block">
-            <h1 className="truncate text-[20px] font-black leading-tight text-slate-950">哆啦美·归档中枢</h1>
-            <p className="mt-1 text-xs font-bold text-slate-500">{brandSubtitle}</p>
+            <h1 className="brand-title truncate text-[20px] font-black leading-tight">哆啦美·归档中枢</h1>
+            <p className="brand-subtitle mt-1 text-xs font-bold">{brandSubtitle}</p>
           </div>
         </div>
 
@@ -244,7 +244,7 @@ export default function App() {
             >
               <Settings className="h-4.5 w-4.5" />
             </button>
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#4f46e5] to-[#7c3aed] text-xs font-black text-white shadow-lg shadow-indigo-500/25">{avatarInitials}</div>
+            <div className="avatar-badge flex h-9 w-9 items-center justify-center rounded-full text-xs font-black text-white">{avatarInitials}</div>
             <button
               type="button"
               onClick={handleLogout}
@@ -273,7 +273,7 @@ export default function App() {
       <main className="mx-auto max-w-[1540px] px-5 py-9 sm:px-8 xl:px-10">
         <div className="page-shell">
           {mountedTabs.has('data') && (
-            <div style={{ display: activeTab === 'data' ? 'block' : 'none' }}>
+            <div className="tab-panel" style={{ display: activeTab === 'data' ? 'block' : 'none' }}>
               <DataTab
                 availableFetchers={availableFetchers}
                 showToast={showToast}
@@ -289,7 +289,7 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('fetch') && (
-            <div style={{ display: activeTab === 'fetch' && runtimeInfo.collector_enabled ? 'block' : 'none' }}>
+            <div className="tab-panel" style={{ display: activeTab === 'fetch' && runtimeInfo.collector_enabled ? 'block' : 'none' }}>
               <FetchTab
                 availableFetchers={availableFetchers}
                 showToast={showToast}
@@ -302,7 +302,7 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('runs') && (
-            <div style={{ display: activeTab === 'runs' && runtimeInfo.collector_enabled ? 'block' : 'none' }}>
+            <div className="tab-panel" style={{ display: activeTab === 'runs' && runtimeInfo.collector_enabled ? 'block' : 'none' }}>
               <FetchRunsTab
                 availableFetchers={availableFetchers}
                 showToast={showToast}
@@ -317,17 +317,17 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('vector') && (
-            <div style={{ display: activeTab === 'vector' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
+            <div className="tab-panel" style={{ display: activeTab === 'vector' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
               <VectorTab availableFetchers={availableFetchers} showToast={showToast} accountRole={runtimeInfo.account_role} />
             </div>
           )}
           {mountedTabs.has('subscriptions') && (
-            <div style={{ display: activeTab === 'subscriptions' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
+            <div className="tab-panel" style={{ display: activeTab === 'subscriptions' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
               <SubscriptionTab showToast={showToast} onViewArticles={viewArticlesForSource} />
             </div>
           )}
           {mountedTabs.has('mcp') && (
-            <div style={{ display: activeTab === 'mcp' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
+            <div className="tab-panel" style={{ display: activeTab === 'mcp' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
               <MCPTab showToast={showToast} ragEnabled={runtimeInfo.rag_enabled} />
             </div>
           )}

@@ -183,7 +183,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
         </div>
 
         {/* 结果列表 */}
-        <div className="space-y-4">
+        <div className="row-stagger space-y-4">
           {searching && searchResults.length === 0 && (
             Array.from({ length: 3 }).map((_, i) => (
               <div key={`vec-skeleton-${i}`} className="bg-white/72 border border-slate-200 p-5 rounded-[14px] shadow-sm">

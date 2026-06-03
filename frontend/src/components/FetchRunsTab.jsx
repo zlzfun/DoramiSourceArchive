@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import AnimatedNumber from './AnimatedNumber';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -171,6 +172,9 @@ export default function FetchRunsTab({
     return availableFetchers.filter(fetcher => [fetcher.name, fetcher.id, fetcher.desc].filter(Boolean).join(' ').toLowerCase().includes(query));
   }, [availableFetchers, jobSearch]);
 
+  // 整刷自增，作为运行表 tbody 的 key：筛选一变即整体重挂载，让行入场动画对每次切换触发。
+  const [listVersion, setListVersion] = useState(0);
+
   const loadAll = useCallback(async () => {
     const reqId = ++loadRequestRef.current;
     setLoading(true);
@@ -197,6 +201,7 @@ export default function FetchRunsTab({
       setFetchRuns(nodeRuns);
       setTasks(legacyTasks);
       setLoadError('');
+      setListVersion(v => v + 1);
     } catch (e) {
       if (reqId !== loadRequestRef.current) return;
       setLoadError(e.message || '任务与运行数据加载失败');
@@ -574,26 +579,26 @@ export default function FetchRunsTab({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="stagger grid grid-cols-2 md:grid-cols-5 gap-3">
             <div className="metric-card rounded-[14px] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">本页运行</div>
-              <div className="stat-number text-slate-800">{unifiedRuns.length}</div>
+              <div className="stat-number text-slate-800"><AnimatedNumber value={unifiedRuns.length} /></div>
             </div>
             <div className="metric-card rounded-[14px] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">新增入库</div>
-              <div className="stat-number text-emerald-600">{totals.saved}</div>
+              <div className="stat-number text-emerald-600"><AnimatedNumber value={totals.saved} /></div>
             </div>
             <div className="metric-card rounded-[14px] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">抓取产出</div>
-              <div className="stat-number text-blue-600">{totals.fetched}</div>
+              <div className="stat-number text-blue-600"><AnimatedNumber value={totals.fetched} /></div>
             </div>
             <div className="metric-card rounded-[14px] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">重复跳过</div>
-              <div className="stat-number text-amber-600">{totals.skipped}</div>
+              <div className="stat-number text-amber-600"><AnimatedNumber value={totals.skipped} /></div>
             </div>
             <div className="metric-card rounded-[14px] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">失败次数</div>
-              <div className="stat-number text-red-600">{totals.failed}</div>
+              <div className="stat-number text-red-600"><AnimatedNumber value={totals.failed} /></div>
             </div>
           </div>
 
@@ -668,7 +673,7 @@ export default function FetchRunsTab({
                   <th className="px-4 py-3">失败信息</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-sm">
+              <tbody key={listVersion} className="row-stagger divide-y divide-slate-100 text-sm">
                 {loading && unifiedRuns.length === 0 ? (
                   Array.from({ length: 6 }).map((_, i) => (
                     <tr key={`run-skeleton-${i}`}>

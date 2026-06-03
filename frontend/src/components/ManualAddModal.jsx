@@ -1,7 +1,10 @@
 import { useEffect } from 'react';
 import { Plus, X } from 'lucide-react';
+import { useModalTransition } from '../hooks/useModalTransition';
 
 export default function ManualAddModal({ isOpen, uniqueContentTypes, uniqueSourceIds, onClose, onSubmit }) {
+  const { mounted, closing } = useModalTransition(isOpen);
+
   useEffect(() => {
     if (!isOpen) return undefined;
     const previousOverflow = document.body.style.overflow;
@@ -11,7 +14,7 @@ export default function ManualAddModal({ isOpen, uniqueContentTypes, uniqueSourc
     };
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  if (!mounted) return null;
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -20,7 +23,7 @@ export default function ManualAddModal({ isOpen, uniqueContentTypes, uniqueSourc
   };
 
   return (
-    <div className="modal-overlay animate-in fade-in">
+    <div className={`modal-overlay ${closing ? 'is-closing' : ''}`}>
       <div className="modal-panel max-w-2xl">
         <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
           <h3 className="font-bold text-lg text-slate-800 flex items-center"><Plus className="w-5 h-5 mr-2 text-blue-600" /> 手工录入知识数据</h3>

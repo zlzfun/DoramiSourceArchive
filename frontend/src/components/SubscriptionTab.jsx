@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import AnimatedNumber from './AnimatedNumber';
 import {
   Check,
   ChevronDown,
@@ -471,15 +472,15 @@ export default function SubscriptionTab({ showToast, onViewArticles }) {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="surface-card rounded-[14px] p-5">
           <p className="tiny-meta">可订阅内容源</p>
-          <p className="stat-number mt-2">{sources.length}</p>
+          <p className="stat-number mt-2"><AnimatedNumber value={sources.length} /></p>
         </div>
         <div className="surface-card rounded-[14px] p-5">
           <p className="tiny-meta">我已订阅的源</p>
-          <p className="stat-number mt-2 text-emerald-600">{subscribedSources.length}</p>
+          <p className="stat-number mt-2 text-emerald-600"><AnimatedNumber value={subscribedSources.length} /></p>
         </div>
         <div className="surface-card rounded-[14px] p-5">
           <p className="tiny-meta">订阅覆盖的文章</p>
-          <p className="stat-number mt-2 text-indigo-600">{subscribedArticleTotal}</p>
+          <p className="stat-number mt-2 text-indigo-600"><AnimatedNumber value={subscribedArticleTotal} /></p>
         </div>
       </div>
 
@@ -592,7 +593,7 @@ export default function SubscriptionTab({ showToast, onViewArticles }) {
                                 </button>
                               </div>
                               {companyOpen && (
-                                <div className="dept-body animate-in fade-in slide-in-from-top-1">
+                                <div className="dept-body row-stagger animate-in fade-in slide-in-from-top-1">
                                   {fetchers.map(source => (
                                     <SubscriptionSourceRow
                                       key={source.source_id}

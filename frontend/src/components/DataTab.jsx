@@ -43,6 +43,9 @@ export default function DataTab({
   const [vectorizingId, setVectorizingId] = useState(null);
   const [vectorizingAll, setVectorizingAll] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // 整刷一次自增（loadArticles），作为 tbody 的 key：查询/筛选一变即整体重挂载，
+  // 让行入场动画对每次切换都触发；加载更多（追加）不动它，仅新增行入场。
+  const [listVersion, setListVersion] = useState(0);
 
   const [filters, setFilters] = useState({
     content_type: '',
@@ -135,6 +138,7 @@ export default function DataTab({
       const data = await apiFetchArticles(filters, ARTICLE_PAGE_SIZE, 0, true, { signal: controller.signal });
       setArticles(data.items || []);
       setArticlePageInfo({ total: data.total || 0, nextSkip: data.next_skip ?? null });
+      setListVersion(v => v + 1);
     } catch (e) {
       if (e.name === 'AbortError') return; // 被更新的请求取消，静默丢弃
       showToast(e.message || '后端服务未启动或网络错误', 'error');
@@ -389,7 +393,7 @@ export default function DataTab({
               {canManageArticles && ragEnabled && <th className="px-3 py-4 w-36 font-bold">向量状态</th>}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 text-sm">
+          <tbody key={listVersion} className="row-stagger divide-y divide-slate-100 text-sm">
             {loading && articles.length === 0 ? (
               Array.from({ length: 8 }).map((_, i) => (
                 <tr key={`skeleton-${i}`}>

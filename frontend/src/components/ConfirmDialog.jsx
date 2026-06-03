@@ -7,16 +7,27 @@ import { ConfirmContext } from '../hooks/useConfirm';
 //      或 confirm({ title, message, confirmText, cancelText, tone: 'danger' | 'primary' })
 export function ConfirmProvider({ children }) {
   const [state, setState] = useState(null);
+  const [closing, setClosing] = useState(false);
   const resolverRef = useRef(null);
+  const closeTimerRef = useRef(null);
 
+  // 立即 resolve（不阻塞调用方），随后播 200ms 退出动画再卸载弹窗。
   const settle = useCallback((result) => {
     resolverRef.current?.(result);
     resolverRef.current = null;
-    setState(null);
+    setClosing(true);
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = setTimeout(() => {
+      setState(null);
+      setClosing(false);
+      closeTimerRef.current = null;
+    }, 320);
   }, []);
 
   const confirm = useCallback((options) => {
     const opts = typeof options === 'string' ? { message: options } : (options || {});
+    if (closeTimerRef.current) { clearTimeout(closeTimerRef.current); closeTimerRef.current = null; }
+    setClosing(false);
     return new Promise((resolve) => {
       resolverRef.current = resolve;
       setState({
@@ -46,9 +57,9 @@ export function ConfirmProvider({ children }) {
     <ConfirmContext.Provider value={confirm}>
       {children}
       {state && (
-        <div className="modal-overlay items-center z-[100] animate-in fade-in" onClick={() => settle(false)}>
+        <div className={`modal-overlay items-center z-[100] ${closing ? 'is-closing' : ''}`} onClick={() => settle(false)}>
           <div
-            className="modal-panel max-w-md animate-in fade-in slide-in-from-bottom-2"
+            className="modal-panel max-w-md"
             role="alertdialog"
             aria-modal="true"
             aria-label={state.title}

@@ -30,6 +30,7 @@ import {
 import { copyText } from '../utils/clipboard';
 import { runAction } from '../utils/runAction';
 import { useConfirm } from '../hooks/useConfirm';
+import { useModalTransition } from '../hooks/useModalTransition';
 
 function downloadFile(url, filename) {
   const a = document.createElement('a');
@@ -516,6 +517,7 @@ function AboutSection({ accountRoleLabel, layerLabel, runtimeRole }) {
 }
 
 export default function SettingsModal({ open, onClose, runtimeInfo, username, onLogout, showToast, onArticlesChanged }) {
+  const { mounted, closing } = useModalTransition(open);
   const collectorEnabled = Boolean(runtimeInfo?.collector_enabled);
   const readerEnabled = Boolean(runtimeInfo?.reader_enabled);
   const ragEnabled = Boolean(runtimeInfo?.rag_enabled);
@@ -559,10 +561,10 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, on
     fetchMcpStatus().then(setMcpStatus).catch(() => setMcpStatus({ enabled: false, url: null }));
   }, [open, readerEnabled]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   return (
-    <div className="modal-overlay animate-in fade-in" onMouseDown={onClose}>
+    <div className={`modal-overlay ${closing ? 'is-closing' : ''}`} onMouseDown={onClose}>
       <div className="modal-panel max-w-3xl" onMouseDown={e => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-6 py-4">
           <div className="flex items-center gap-3">
