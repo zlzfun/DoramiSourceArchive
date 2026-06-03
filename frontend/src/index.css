@@ -22,7 +22,7 @@
 :root {
   font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
   color: #0b1220;
-  background: #f7f8fa;
+  background: #eef1f6;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -41,23 +41,28 @@
   --dorami-muted: #5b6678;                     /* 次要文字 */
   --dorami-faint: #8a93a3;                     /* 最弱：占位/表头 */
 
-  /* 图底分离：画布(冷纸灰) → 卡片(纯白) → 浮起(白+强阴影) */
-  --dorami-canvas: #f7f8fa;
-  --dorami-canvas-2: #eef0f4;                  /* 凹陷/内嵌区域 */
+  /* 图底分离：画布(明确冷灰) → 卡片(纯白浮起) → 凹陷井(嵌进台面的子区域) */
+  --dorami-canvas: #eef1f6;
+  --dorami-canvas-2: #e6eaf1;                  /* 凹陷/内嵌区域 */
   --dorami-surface: #ffffff;
-  --dorami-soft: #f3f5f8;
-  --dorami-soft-2: #eef0f4;
-  --dorami-card: rgba(255, 255, 255, 0.92);
+  --dorami-soft: #eef1f6;
+  --dorami-soft-2: #e6eaf1;
+  --dorami-card: rgba(255, 255, 255, 0.96);
   --dorami-card-solid: #ffffff;
   --dorami-wash: rgba(91, 84, 232, 0.08);      /* accent 极淡背景 */
 
-  --dorami-border: rgba(11, 18, 32, 0.08);
-  --dorami-border-strong: rgba(11, 18, 32, 0.14);
+  /* 凹陷井：卡片内部的工具栏/表头/搜索/子面板，浅一档灰底 + inset 阴影，读作"沉进台面" */
+  --dorami-well: #e9edf3;
+  --dorami-inset: inset 0 1px 3px rgba(11, 18, 32, 0.07), inset 0 -1px 0 rgba(255, 255, 255, 0.6);
+  --dorami-inset-input: inset 0 1px 3px rgba(11, 18, 32, 0.08);
 
-  /* 高程系统：弱→强 = 静止 / 卡片 / 浮起。全站统一纵深语言。 */
-  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.04), 0 1px 1px rgba(11, 18, 32, 0.03);
-  --sh-2: 0 2px 6px rgba(11, 18, 32, 0.05), 0 8px 20px rgba(11, 18, 32, 0.07);
-  --sh-3: 0 4px 12px rgba(11, 18, 32, 0.08), 0 18px 44px rgba(11, 18, 32, 0.11);
+  --dorami-border: rgba(11, 18, 32, 0.09);
+  --dorami-border-strong: rgba(11, 18, 32, 0.15);
+
+  /* 高程系统：弱→强 = 静止 / 卡片 / 浮起。灰底上阴影需更实，白卡才浮得起来。 */
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 2px 6px rgba(11, 18, 32, 0.06), 0 12px 28px rgba(11, 18, 32, 0.1);
+  --sh-3: 0 6px 16px rgba(11, 18, 32, 0.1), 0 24px 52px rgba(11, 18, 32, 0.15);
   --sh-accent: 0 8px 20px rgba(91, 84, 232, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.22);
   /* 旧令牌名映射到新高程阶，组件层无需逐个改 */
   --dorami-soft-shadow: var(--sh-2);
@@ -110,9 +115,9 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    radial-gradient(ellipse 70% 50% at 12% -8%, rgba(91, 84, 232, 0.05), transparent 60%),
-    radial-gradient(ellipse 55% 45% at 95% 2%, rgba(91, 84, 232, 0.035), transparent 55%),
-    linear-gradient(180deg, #fbfbfd 0%, var(--dorami-canvas) 60%);
+    radial-gradient(ellipse 70% 50% at 12% -8%, rgba(91, 84, 232, 0.06), transparent 58%),
+    radial-gradient(ellipse 55% 45% at 95% 2%, rgba(91, 84, 232, 0.045), transparent 54%),
+    linear-gradient(180deg, #f4f6fa 0%, var(--dorami-canvas) 55%);
   background-attachment: fixed;
 }
 
@@ -813,8 +818,9 @@ button:disabled {
     justify-content: space-between;
     gap: 14px;
     min-height: 60px;
-    border-bottom: 1px solid rgba(11, 18, 32, 0.1);
-    background: rgba(255, 255, 255, 0.56);
+    border-bottom: 1px solid var(--dorami-border);
+    background: var(--dorami-well);
+    box-shadow: var(--dorami-inset);
     padding: 12px 20px;
   }
 
@@ -889,10 +895,10 @@ button:disabled {
   .search-box {
     display: flex;
     align-items: center;
-    border: 1px solid rgba(11, 18, 32, 0.12);
+    border: 1px solid var(--dorami-border);
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.88);
-    box-shadow: 0 4px 14px rgba(11, 18, 32, 0.05);
+    background: var(--dorami-well);
+    box-shadow: var(--dorami-inset-input);
     padding: 0 14px;
     transition:
       border-color var(--motion-fast) var(--motion-ease),
@@ -1210,9 +1216,9 @@ button:disabled {
     max-width: 280px;
     min-height: 36px;
     border-radius: 9px;
-    box-shadow: none;
-    background: rgba(255, 255, 255, 0.82);
-    border-color: rgba(11, 18, 32, 0.14);
+    box-shadow: var(--dorami-inset-input);
+    background: var(--dorami-well);
+    border-color: var(--dorami-border);
     margin-left: auto;
   }
 
@@ -1396,9 +1402,10 @@ button:disabled {
   /* ── Node param panel ── */
 
   .node-param-panel {
-    border: 1px solid rgba(11, 18, 32, 0.1);
+    border: 1px solid var(--dorami-border);
     border-radius: 10px;
-    background: rgba(247, 248, 250, 0.42);
+    background: var(--dorami-well);
+    box-shadow: var(--dorami-inset);
     padding: 10px;
   }
 
@@ -1802,8 +1809,8 @@ button:disabled {
   }
 
   .data-table thead {
-    background:
-      linear-gradient(180deg, rgba(247, 248, 250, 0.96), rgba(240, 242, 246, 0.78));
+    background: var(--dorami-well);
+    box-shadow: var(--dorami-inset);
   }
 
   .data-table tbody tr {
