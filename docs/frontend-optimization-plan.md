@@ -73,19 +73,21 @@
 
 ## 阶段三：结构性重构（高工作量 · 需取舍）
 
-> 本阶段改动面大、收益偏长期，建议在阶段一/二落地、回归稳定后再分 PR 推进，单独评审。
+> **裁决（2026-06-03，阶段一/二落地后复盘）**：阶段三整体**不立即执行**。阶段一/二已吃完高 ROI 项；阶段三为纯重构区——无用户可见收益、回归成本最高且集中在采集核心链路。逐项裁决见下。
 
-### P3-1　巨型组件拆分
-- **目标**：`FetchTab`(22 state) 按子区拆为「抓取器目录 / 节点分组 / 参数表单 / 运行中浮窗」容器 + 展示组件，状态下沉；`FetchRunsTab`/`SubscriptionTab`/`SettingsModal` 同法。
+### P3-1　巨型组件拆分　——【按需触发，绑定下次 FetchTab 特性】
+- **目标**：`FetchTab`(22 state) 按子区拆为「抓取器目录 / 节点分组 / 参数表单 / 运行中浮窗」容器 + 展示组件；`FetchRunsTab`/`SubscriptionTab`/`SettingsModal` 同法。
+- **裁决**：`FetchTab`(1198 行 / 22 state) 是真实维护隐患，但"行为等价重构"= 高回归 + 零用户收益。**不为重构而重构**：FetchTab 后续仍会迭代，故在**下次给它加特性时随同增量拆分**——只抽纯展示子组件到同目录（**不搬 state**），风险远低于一次性"状态下沉"大改。`FetchRunsTab`/`SubscriptionTab`/`SettingsModal` 暂不动。
 - **风险**：中高（行为等价重构，回归成本高）。　**工作量**：每个组件 0.5–1 天。
 
-### P3-2　CSS 分域治理
-- **目标**：`index.css` 3090 行单一 `@layer components` 拆分为按域文件（`shell` / `catalog` / `vector` / `subscription`…），或将一次性专用类（`dept-card`、`section-band`、`vector-status-*`）回收为组件内 Tailwind 原子类。
+### P3-2　CSS 分域治理　——【划掉，除非进入样式持续重写期】
+- **目标**：`index.css` 3090 行单一 `@layer components` 拆分为按域文件，或将一次性专用类回收为组件内 Tailwind 原子类。
+- **裁决**：**不做**。纯维护性收益、零用户可见变化，而全局样式耦合 → 拆分须逐页比对防视觉回归，风险高收益低。Tailwind v4 下该 `@layer` 主要装命名组件类，拆了只是换放法。仅当后续进入"样式大改"阶段才重新评估。
 - **风险**：中高（样式全局耦合，易引入视觉回归，需逐页比对）。　**工作量**：1–2 天。
-- **取舍点**：纯维护性收益、无用户可见变化；是否投入取决于后续是否持续迭代样式。
 
-### P3-3　跨 tab 状态与 prop drilling 收敛
-- **目标**：`articlesDirty`/`runsDirty` + `pendingDataFilter`/`pendingRunsFilter` 手动编排，`showToast`/`runtimeInfo` 深层透传 → 引入轻量 `ToastContext` / `RuntimeContext`。
+### P3-3　跨 tab 状态与 prop drilling 收敛　——【否决，假设已证伪】
+- **目标**：`showToast`/`runtimeInfo` 深层透传 → 引入轻量 `ToastContext` / `RuntimeContext`。
+- **裁决**：**放弃**。实测 prop 透传**只有一层**（`App → 各 Tab` 为直接父子）：`runtimeInfo` 已在 App 解构成语义化 prop 传一层即用，`articlesDirty`/`pendingFilter` 是跨 tab 协调、显式 prop 比藏进 Context 更可读。引入 Context 只是用 provider/useContext 的间接性换"少传一层"，净亏。原方案"深层透传"假设不成立。
 - **风险**：中（涉及 App 顶层数据流）。　**工作量**：~0.5 天。
 
 ---
