@@ -32,6 +32,7 @@ import {
   runCollectionJob,
   updateCollectionJob,
 } from '../api';
+import ActiveFilterBar from './ActiveFilterBar';
 import LogoMark from './LogoMark';
 import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime } from '../utils/datetime';
@@ -113,6 +114,8 @@ function cleanStringMap(map) {
 export default function FetchRunsTab({
   availableFetchers,
   showToast,
+  view,
+  setView,
   onArticlesChanged,
   onRunsChanged,
   isActive = true,
@@ -123,7 +126,6 @@ export default function FetchRunsTab({
 }) {
   const confirm = useConfirm();
   const loadRequestRef = useRef(0);
-  const [view, setView] = useState('jobs');
   const [collectionJobs, setCollectionJobs] = useState([]);
   const [nodeGroups, setNodeGroups] = useState([]);
   const [collectionRuns, setCollectionRuns] = useState([]);
@@ -445,6 +447,28 @@ export default function FetchRunsTab({
     return Array.from(ids).filter(Boolean).sort();
   }, [availableFetchers, fetchRuns]);
 
+  // 当前生效筛选（运行历史）；清除后由 loadAll（依赖 filters.*）自动重载。
+  const activeFilterItems = [];
+  if (filters.fetcher_id) {
+    activeFilterItems.push({
+      key: 'fetcher', label: '数据来源', value: getFetcherName(filters.fetcher_id),
+      onRemove: () => setFilters(prev => ({ ...prev, fetcher_id: '' })),
+    });
+  }
+  if (filters.status) {
+    activeFilterItems.push({
+      key: 'status', label: '运行状态', value: statusMeta(filters.status).label,
+      onRemove: () => setFilters(prev => ({ ...prev, status: '' })),
+    });
+  }
+  if (filters.trigger_type) {
+    activeFilterItems.push({
+      key: 'trigger', label: '触发方式', value: triggerLabel(filters.trigger_type),
+      onRemove: () => setFilters(prev => ({ ...prev, trigger_type: '' })),
+    });
+  }
+  const clearAllFilters = () => setFilters({ fetcher_id: '', status: '', trigger_type: '' });
+
   return (
     <div className="space-y-6 animate-in fade-in">
       <div className="page-header flex-col xl:flex-row">
@@ -454,8 +478,12 @@ export default function FetchRunsTab({
         </div>
         <div className="page-actions">
           <div className="segmented-control">
-            <button onClick={() => setView('jobs')} className={`segmented-option ${view === 'jobs' ? 'segmented-option-active' : ''}`}>采集任务</button>
-            <button onClick={() => setView('history')} className={`segmented-option ${view === 'history' ? 'segmented-option-active' : ''}`}>运行历史</button>
+            <button onClick={() => setView('jobs')} className={`segmented-option ${view === 'jobs' ? 'segmented-option-active' : ''}`}>
+              <Settings2 /> 采集任务
+            </button>
+            <button onClick={() => setView('history')} className={`segmented-option ${view === 'history' ? 'segmented-option-active' : ''}`}>
+              <Clock3 /> 运行历史
+            </button>
           </div>
         </div>
       </div>
@@ -633,6 +661,7 @@ export default function FetchRunsTab({
                 <RefreshCw className={loading ? 'animate-spin' : ''} /> 刷新
               </button>
             </div>
+            <ActiveFilterBar items={activeFilterItems} onClearAll={clearAllFilters} className="mt-3" />
           </div>
 
           {tasks.length > 0 && (
@@ -781,7 +810,7 @@ export default function FetchRunsTab({
                       <Layers className="w-4 h-4 mr-2 text-blue-600" /> {jobDraft.group_id ? '采集范围包含节点' : '选择节点'}
                     </div>
                     {!jobDraft.group_id && (
-                      <div className="relative mt-3">
+                      <div className="form-search-box relative mt-3">
                         <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                         <input value={jobSearch} onChange={event => setJobSearch(event.target.value)} placeholder="搜索节点" className="form-input pl-9" />
                       </div>

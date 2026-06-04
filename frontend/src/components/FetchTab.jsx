@@ -7,15 +7,13 @@ import {
   ExternalLink,
   FileText,
   FolderPlus,
-  LayoutGrid,
+  Info,
   Layers,
   Play,
   RefreshCw,
   Save,
   Search,
   Settings2,
-  Star,
-  Target,
   Trash2,
   X,
 } from 'lucide-react';
@@ -47,15 +45,7 @@ import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { useConfirm } from '../hooks/useConfirm';
 import { runAction } from '../utils/runAction';
 
-const FAVORITE_FETCHERS_STORAGE_KEY = 'dorami.favorite_fetchers';
 const TEST_RUN_LIMIT = 1;
-
-const CATALOG_SCOPE_OPTIONS = [
-  { value: 'focused', label: '聚焦', icon: Target },
-  { value: 'favorites', label: '收藏', icon: Star },
-  { value: 'hidden', label: '通用能力', icon: Settings2 },
-  { value: 'all', label: '全部', icon: LayoutGrid },
-];
 
 const TIER_FILTER_OPTIONS = [
   { value: 'all', label: '全部层级' },
@@ -130,9 +120,8 @@ function collectionRunMessage(prefix, result, successCount = null) {
   return `${prefix}：${okText}新增 ${saved} 条${failureText}`;
 }
 
-export default function FetchTab({ availableFetchers, showToast, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onViewRunning }) {
+export default function FetchTab({ availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onViewRunning, pendingFocus, onPendingFocusApplied }) {
   const confirm = useConfirm();
-  const [view, setView] = useState('catalog');
   const [fetchLoading, setFetchLoading] = useState(false);
   const [nodeGroups, setNodeGroups] = useState([]);
   const [healthByFetcher, setHealthByFetcher] = useState({});
@@ -143,20 +132,14 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
   const progressSeenFetcherIdsRef = useRef(new Set());
   const [sectionFilter, setSectionFilter] = useState('all');
   const [tierFilter, setTierFilter] = useState('all');
-  const [catalogScope, setCatalogScope] = useState('focused');
-  const [favoriteFetcherIds, setFavoriteFetcherIds] = useState(() => {
-    try {
-      if (typeof localStorage === 'undefined') return [];
-      return JSON.parse(localStorage.getItem(FAVORITE_FETCHERS_STORAGE_KEY) || '[]');
-    } catch {
-      return [];
-    }
-  });
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedCompanies, setExpandedCompanies] = useState(() => new Set());
   const [collapsedCatalogSections, setCollapsedCatalogSections] = useState(() => new Set());
   const [expandedGroupId, setExpandedGroupId] = useState(null);
   const [expandedParamFetcherId, setExpandedParamFetcherId] = useState(null);
+  const [expandedReviewFetcherId, setExpandedReviewFetcherId] = useState(null);
+  const [highlightedFetcherId, setHighlightedFetcherId] = useState(null);
+  const sourceRowRefs = useRef({});
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [groupDraft, setGroupDraft] = useState(blankGroup());
@@ -243,29 +226,6 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
     };
   }, [groupModalOpen]);
 
-  useEffect(() => {
-    if (typeof localStorage === 'undefined') return;
-    localStorage.setItem(FAVORITE_FETCHERS_STORAGE_KEY, JSON.stringify(favoriteFetcherIds));
-  }, [favoriteFetcherIds]);
-
-  const scopeCounts = useMemo(() => {
-    const favorites = new Set(favoriteFetcherIds);
-    return {
-      focused: availableFetchers.filter(fetcher => fetcher.default_visible !== false).length,
-      favorites: availableFetchers.filter(fetcher => favorites.has(fetcher.id)).length,
-      hidden: availableFetchers.filter(fetcher => fetcher.default_visible === false).length,
-      all: availableFetchers.length,
-    };
-  }, [availableFetchers, favoriteFetcherIds]);
-
-  const scopedFetchers = useMemo(() => {
-    const favorites = new Set(favoriteFetcherIds);
-    if (catalogScope === 'favorites') return availableFetchers.filter(fetcher => favorites.has(fetcher.id));
-    if (catalogScope === 'hidden') return availableFetchers.filter(fetcher => fetcher.default_visible === false);
-    if (catalogScope === 'all') return availableFetchers;
-    return availableFetchers.filter(fetcher => fetcher.default_visible !== false);
-  }, [availableFetchers, catalogScope, favoriteFetcherIds]);
-
   const matchesSearch = useCallback((fetcher) => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return true;
@@ -278,7 +238,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
     ].filter(Boolean).join(' ').toLowerCase().includes(query);
   }, [searchQuery]);
 
-  const searchedFetchers = useMemo(() => scopedFetchers.filter(matchesSearch), [scopedFetchers, matchesSearch]);
+  const searchedFetchers = useMemo(() => availableFetchers.filter(matchesSearch), [availableFetchers, matchesSearch]);
 
   const sectionOf = useCallback((fetcher) => {
     const key = resolveCompany(fetcher).key;
@@ -357,17 +317,53 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
     });
   };
 
+  // 接收来自知识台账「数据来源」列的定位请求：切到目录、清空筛选、展开对应板块/主体并高亮该节点行。
+  useEffect(() => {
+    if (!pendingFocus?.source_id) return;
+    if (availableFetchers.length === 0) return; // 节点目录尚未就绪，等下一轮
+    const sid = pendingFocus.source_id;
+    const fetcher = fetchersById[sid];
+    onPendingFocusApplied?.();
+    if (!fetcher) {
+      showToast?.('该来源在节点目录中没有对应节点', 'info');
+      return;
+    }
+    const company = resolveCompany(fetcher);
+    const sectionId = sectionOf(fetcher);
+    setView('catalog');
+    setSectionFilter('all');
+    setTierFilter('all');
+    setSearchQuery('');
+    setCollapsedCatalogSections(prev => {
+      if (!prev.has(sectionId)) return prev;
+      const next = new Set(prev);
+      next.delete(sectionId);
+      return next;
+    });
+    setExpandedCompanies(prev => (prev.has(company.key) ? prev : new Set(prev).add(company.key)));
+    setHighlightedFetcherId(sid);
+  }, [pendingFocus, availableFetchers, fetchersById, sectionOf, onPendingFocusApplied, showToast]);
+
+  // 高亮目标行：下一帧滚动到视野中央，短暂高亮后自动消退。
+  useEffect(() => {
+    if (!highlightedFetcherId) return undefined;
+    const raf = requestAnimationFrame(() => {
+      sourceRowRefs.current[highlightedFetcherId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    const timer = setTimeout(() => setHighlightedFetcherId(null), 2400);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
+  }, [highlightedFetcherId]);
+
   const modalFetchers = useMemo(() => {
     const query = modalSearch.trim().toLowerCase();
-    const favorites = new Set(favoriteFetcherIds);
-    const baseFetchers = query
-      ? availableFetchers
-      : availableFetchers.filter(fetcher => fetcher.default_visible !== false || favorites.has(fetcher.id));
-    return baseFetchers.filter(fetcher => [
+    return availableFetchers.filter(fetcher => [
       fetcher.name, fetcher.id, fetcher.desc, fetcher.base_url, fetcher.source_owner, fetcher.source_brand,
       ...(fetcher.content_tags || []),
     ].filter(Boolean).join(' ').toLowerCase().includes(query));
-  }, [availableFetchers, favoriteFetcherIds, modalSearch]);
+  }, [availableFetchers, modalSearch]);
 
   const getFetcherName = (id) => fetchersById[id]?.name || id;
 
@@ -381,10 +377,6 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
     setSelectedFetchers(prev => allSelected
       ? prev.filter(id => !ids.includes(id))
       : Array.from(new Set([...prev, ...ids])));
-  };
-
-  const toggleFavorite = (id) => {
-    setFavoriteFetcherIds(prev => prev.includes(id) ? prev.filter(fid => fid !== id) : [...prev, id]);
   };
 
   const updateModalNodeParam = (fetcherId, field, value) => {
@@ -508,6 +500,21 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
   };
 
   const handleRunGroup = async (id, options = {}) => {
+    const group = nodeGroups.find(g => g.id === id);
+    const fetcherIds = normalizeIds(group?.fetcher_ids || []);
+    // 进度反馈：把本采集范围的节点加入运行集合，触发 1s 轮询与 running-widget 浮窗（与单节点/批量抓取一致）。
+    fetcherIds.forEach(fid => progressSeenFetcherIdsRef.current.delete(fid));
+    if (fetcherIds.length > 0) {
+      setRunningFetcherIds(prev => {
+        const next = new Set(prev);
+        fetcherIds.forEach(fid => next.add(fid));
+        return next;
+      });
+    }
+    showToast(
+      `${options.testLimit ? '测试运行' : '运行'}采集范围「${group?.name || id}」…（${fetcherIds.length} 个节点）`,
+      'info',
+    );
     onRunsChanged?.();
     try {
       const result = await runNodeGroup(id, options);
@@ -516,7 +523,17 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
       loadSourceHealth();
       onArticlesChanged?.();
       onRunsChanged?.();
-    } catch (e) { showToast(e.message || '采集范围运行失败', 'error'); }
+    } catch (e) {
+      showToast(e.message || '采集范围运行失败', 'error');
+    } finally {
+      if (fetcherIds.length > 0) {
+        setRunningFetcherIds(prev => {
+          const next = new Set(prev);
+          fetcherIds.forEach(fid => next.delete(fid));
+          return next;
+        });
+      }
+    }
   };
 
   const handleBatchFetch = async (options = {}) => {
@@ -612,7 +629,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
     const health = healthByFetcher[fetcher.id];
     const paramCount = (fetcher.parameters || []).length;
     const paramsExpanded = expandedParamFetcherId === fetcher.id;
-    const isFavorite = favoriteFetcherIds.includes(fetcher.id);
+    const reviewExpanded = expandedReviewFetcherId === fetcher.id;
     const isRunning = runningFetcherIds.has(fetcher.id);
     const tier = tierMeta(fetcher.provenance_tier);
     const progress = fetchProgress[fetcher.id];
@@ -626,9 +643,16 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
     const noiseLabel = labelFrom(NOISE_LABELS, fetcher.noise_risk);
     const reliabilityLabel = labelFrom(RELIABILITY_LABELS, fetcher.fetch_reliability);
     const contentTags = (fetcher.content_tags || []).slice(0, 5);
+    const hasReview = Boolean(
+      fetcher.signal_strength || fetcher.noise_risk || fetcher.fetch_reliability || contentTags.length
+    );
 
     return (
-      <div key={fetcher.id} className={`source-row ${isSelected ? 'source-row-selected' : ''}`}>
+      <div
+        key={fetcher.id}
+        ref={el => { sourceRowRefs.current[fetcher.id] = el; }}
+        className={`source-row ${isSelected ? 'source-row-selected' : ''} ${highlightedFetcherId === fetcher.id ? 'source-row-focus' : ''}`}
+      >
         <div className="source-row-head">
           <button
             type="button"
@@ -685,23 +709,27 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
           </div>
 
           <div className="source-actions">
+            {hasReview && (
+              <button
+                type="button"
+                onClick={() => setExpandedReviewFetcherId(reviewExpanded ? null : fetcher.id)}
+                className={`source-config-btn ${reviewExpanded ? 'is-active' : ''}`}
+                title="源审查字段与标签"
+              >
+                <Info className="h-4 w-4" />
+                <span>详情</span>
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => toggleFavorite(fetcher.id)}
-              className={`source-icon-btn ${isFavorite ? 'is-fav' : ''}`}
-              title={isFavorite ? '取消收藏' : '收藏节点'}
-            >
-              <Star className={`h-4 w-4 ${isFavorite ? 'fill-current' : ''}`} />
-            </button>
-            <button
-              type="button"
+              disabled={paramCount === 0}
               onClick={() => setExpandedParamFetcherId(paramsExpanded ? null : fetcher.id)}
               className={`source-config-btn ${paramsExpanded ? 'is-active' : ''}`}
-              title={`参数配置（${paramCount} 项）`}
+              title={paramCount === 0 ? '该节点无需抓取参数' : `抓取参数（${paramCount} 项）`}
             >
               <Settings2 className="h-4 w-4" />
               <span>配置</span>
-              <span className="source-config-count">{paramCount}</span>
+              {paramCount > 0 && <span className="source-config-count">{paramCount}</span>}
             </button>
             <button
               type="button"
@@ -719,16 +747,20 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
           <p className="source-desc">{fetcher.desc}</p>
         )}
 
-        {paramsExpanded && (
+        {fetcher.base_url && (
+          <div className="source-url-inline">
+            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+            <a className="source-url truncate" href={fetcher.base_url} target="_blank" rel="noreferrer" title={fetcher.base_url}>{fetcher.base_url}</a>
+            <a className="source-url-open" href={fetcher.base_url} target="_blank" rel="noreferrer" title="打开来源入口">打开</a>
+          </div>
+        )}
+
+        {reviewExpanded && hasReview && (
           <div className="node-param-panel source-review-panel animate-in fade-in slide-in-from-top-1">
             <div className="node-param-title">
               <span>源审查字段</span>
-              <span className="font-mono text-slate-400">配置 {paramCount} 项</span>
             </div>
             <div className="source-review-grid">
-              <div><span className="tiny-meta">主体 / 承载</span><div className="source-meta-val">{ownerLabel}</div></div>
-              {fetcher.source_scope && <div><span className="tiny-meta">范围</span><div className="source-meta-val">{scopeLabel}</div></div>}
-              {fetcher.source_channel && <div><span className="tiny-meta">渠道</span><div className="source-meta-val">{channelLabel}</div></div>}
               {fetcher.signal_strength && <div><span className="tiny-meta">信号</span><div className="source-meta-val">{signalLabel}</div></div>}
               {fetcher.noise_risk && <div><span className="tiny-meta">噪声</span><div className="source-meta-val">{noiseLabel}</div></div>}
               {fetcher.fetch_reliability && <div><span className="tiny-meta">稳定性</span><div className="source-meta-val">{reliabilityLabel}</div></div>}
@@ -741,34 +773,23 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
                 </div>
               </div>
             )}
-            {fetcher.base_url && (
-              <div className="source-url-row">
-                <span className="tiny-meta">来源入口</span>
-                <a className="source-url truncate" href={fetcher.base_url} target="_blank" rel="noreferrer" title={fetcher.base_url}>{fetcher.base_url}</a>
-                <a className="source-url-open" href={fetcher.base_url} target="_blank" rel="noreferrer" title="打开来源入口">
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  打开
-                </a>
-              </div>
-            )}
-            {paramCount === 0 ? (
-              <div className="source-param-empty">该节点无需额外抓取参数</div>
-            ) : (
-              <div className="source-param-block">
-                <div className="source-param-block-head">
-                  <span>抓取参数</span>
-                  <span>{paramCount} 项</span>
+          </div>
+        )}
+
+        {paramsExpanded && paramCount > 0 && (
+          <div className="node-param-panel source-review-panel animate-in fade-in slide-in-from-top-1">
+            <div className="source-param-block-head">
+              <span>抓取参数</span>
+              <span>{paramCount} 项</span>
+            </div>
+            <div className="node-param-grid source-param-grid">
+              {fetcher.parameters.map(param => (
+                <div key={param.field} className="node-param-field">
+                  <label className="node-param-label" title={param.field}>{param.label || param.field}</label>
+                  {renderCatalogParamInput(fetcher.id, param)}
                 </div>
-                <div className="node-param-grid">
-                  {fetcher.parameters.map(param => (
-                    <div key={param.field} className="node-param-field">
-                      <label className="node-param-label" title={param.field}>{param.label || param.field}</label>
-                      {renderCatalogParamInput(fetcher.id, param)}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -799,28 +820,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
                   <Layers className="h-5 w-5" />
                 </div>
                 <span>内置节点目录</span>
-                <span className="text-xs font-mono text-slate-400">{visibleFetchers.length}/{scopeCounts[catalogScope]}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="catalog-scope-tabs" role="tablist" aria-label="节点视图范围">
-                  {CATALOG_SCOPE_OPTIONS.map(option => {
-                    const Icon = option.icon;
-                    const active = catalogScope === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        role="tab"
-                        aria-selected={active}
-                        onClick={() => { setCatalogScope(option.value); setSectionFilter('all'); setTierFilter('all'); }}
-                        className={`catalog-scope-tab ${active ? 'catalog-scope-tab-active' : ''}`}
-                      >
-                        {Icon && <Icon />}
-                        <span>{option.label}</span>
-                        <span className="catalog-scope-tab-count">{scopeCounts[option.value] || 0}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                <span className="text-xs font-mono text-slate-400">{visibleFetchers.length}/{availableFetchers.length}</span>
               </div>
             </div>
             <div className="catalog-filter-row catalog-filter-row-with-search">
@@ -1085,7 +1085,7 @@ export default function FetchTab({ availableFetchers, showToast, onArticlesChang
               <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
                   <div className="p-3 bg-slate-50 border-b border-slate-200">
-                    <div className="relative">
+                    <div className="form-search-box relative">
                       <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                       <input value={modalSearch} onChange={event => setModalSearch(event.target.value)} placeholder="搜索节点" className="form-input pl-9" />
                     </div>

@@ -3,6 +3,7 @@ import { RefreshCw, CheckCircle, Zap, Search, Plus, Trash2, SlidersHorizontal } 
 import DateRangePicker from './DateRangePicker';
 import ArticleDetailModal from './ArticleDetailModal';
 import ManualAddModal from './ManualAddModal';
+import ActiveFilterBar from './ActiveFilterBar';
 import LogoMark from './LogoMark';
 import { resolveCompany } from '../sourceTaxonomy';
 import {
@@ -30,22 +31,26 @@ export default function DataTab({
   onArticlesRefreshed,
   pendingFilter,
   onPendingFilterApplied,
+  onFocusSource,
 }) {
   const confirm = useConfirm();
   const listAbortRef = useRef(null);
+  const listFilterKeyRef = useRef('');
   const [articles, setArticles] = useState([]);
-  const [articlePageInfo, setArticlePageInfo] = useState({ total: 0, nextSkip: null });
+  const [articlePageInfo, setArticlePageInfo] = useState({ total: 0 });
+  const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [selectedArticles, setSelectedArticles] = useState(new Set());
   const [modalState, setModalState] = useState({ isOpen: false, data: null, isEditing: false });
   const [manualAddModal, setManualAddModal] = useState(false);
   const [vectorizingId, setVectorizingId] = useState(null);
   const [vectorizingAll, setVectorizingAll] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  // 整刷一次自增（loadArticles），作为 tbody 的 key：查询/筛选一变即整体重挂载，
-  // 让行入场动画对每次切换都触发；加载更多（追加）不动它，仅新增行入场。
+  // 整刷一次自增（loadArticles），作为 tbody 的 key：查询/筛选/分页一变即整体重挂载，
+  // 让行入场动画对每次切换都触发。
   const [listVersion, setListVersion] = useState(0);
+  // 搜索是提交式筛选（不进 activeFilterKey），清除搜索后需在状态提交后手动重载——用自增 tick 触发。
+  const [searchReloadTick, setSearchReloadTick] = useState(0);
 
   const [filters, setFilters] = useState({
     content_type: '',
@@ -76,6 +81,7 @@ export default function DataTab({
 
   const uniqueContentTypes = [...new Set(articles.map(a => a.content_type).filter(Boolean))];
   const uniqueSourceIds = [...new Set([
+    ...availableFetchers.map(f => f.id).filter(Boolean),
     ...articles.map(a => a.source_id).filter(Boolean),
     ...(filters.source_id ? [filters.source_id] : []),
   ])];
@@ -101,6 +107,21 @@ export default function DataTab({
   ].filter(Boolean).length;
 
   const canSelectArticles = canManageArticles;
+  const totalPages = Math.max(1, Math.ceil((articlePageInfo.total || 0) / ARTICLE_PAGE_SIZE));
+  const pageStart = articlePageInfo.total === 0 ? 0 : (currentPage - 1) * ARTICLE_PAGE_SIZE + 1;
+  const pageEnd = Math.min(currentPage * ARTICLE_PAGE_SIZE, articlePageInfo.total || 0);
+  const canGoPrev = currentPage > 1 && !loading;
+  const canGoNext = currentPage < totalPages && !loading;
+  const activeFilterKey = [
+    filters.content_type,
+    filters.source_id,
+    filters.is_vectorized,
+    filters.publish_date_start,
+    filters.publish_date_end,
+    filters.fetched_date_start,
+    filters.fetched_date_end,
+    filters.subscribed_scope,
+  ].join('|');
 
   const handleVectorize = async (id) => {
     setVectorizingId(id);
@@ -127,7 +148,7 @@ export default function DataTab({
     });
   };
 
-  const loadArticles = async () => {
+  const loadArticles = async (page = currentPage) => {
     // 取消上一笔仍在飞行的列表请求，避免快速切换筛选时「后发先至」覆盖结果
     listAbortRef.current?.abort();
     const controller = new AbortController();
@@ -135,9 +156,17 @@ export default function DataTab({
     setLoading(true);
     setSelectedArticles(new Set());
     try {
-      const data = await apiFetchArticles(filters, ARTICLE_PAGE_SIZE, 0, true, { signal: controller.signal });
+      const skip = (page - 1) * ARTICLE_PAGE_SIZE;
+      const data = await apiFetchArticles(filters, ARTICLE_PAGE_SIZE, skip, true, { signal: controller.signal });
+      const total = data.total || 0;
+      const maxPage = Math.max(1, Math.ceil(total / ARTICLE_PAGE_SIZE));
+      if (page > maxPage) {
+        setArticlePageInfo({ total });
+        setCurrentPage(maxPage);
+        return;
+      }
       setArticles(data.items || []);
-      setArticlePageInfo({ total: data.total || 0, nextSkip: data.next_skip ?? null });
+      setArticlePageInfo({ total });
       setListVersion(v => v + 1);
     } catch (e) {
       if (e.name === 'AbortError') return; // 被更新的请求取消，静默丢弃
@@ -147,31 +176,25 @@ export default function DataTab({
     }
   };
 
-  const loadMoreArticles = async () => {
-    if (articlePageInfo.nextSkip === null) return;
-    const controller = new AbortController();
-    listAbortRef.current = controller;
-    setLoadingMore(true);
-    try {
-      const data = await apiFetchArticles(filters, ARTICLE_PAGE_SIZE, articlePageInfo.nextSkip, true, { signal: controller.signal });
-      setArticles(prev => [...prev, ...(data.items || [])]);
-      setArticlePageInfo({ total: data.total || 0, nextSkip: data.next_skip ?? null });
-    } catch (e) {
-      if (e.name === 'AbortError') return;
-      showToast(e.message || '加载更多失败', 'error');
-    } finally {
-      setLoadingMore(false);
-    }
+  const refreshArticles = () => {
+    if (currentPage === 1) loadArticles(1);
+    else setCurrentPage(1);
+  };
+
+  const handleSearchSubmit = () => {
+    refreshArticles();
   };
 
   useEffect(() => {
-    loadArticles();
-  }, [
-    filters.content_type, filters.source_id, filters.is_vectorized,
-    filters.publish_date_start, filters.publish_date_end,
-    filters.fetched_date_start, filters.fetched_date_end,
-    filters.subscribed_scope,
-  ]);
+    if (listFilterKeyRef.current !== activeFilterKey) {
+      listFilterKeyRef.current = activeFilterKey;
+      if (currentPage !== 1) {
+        setCurrentPage(1);
+        return;
+      }
+    }
+    loadArticles(currentPage);
+  }, [activeFilterKey, currentPage]);
 
   useEffect(() => {
     if (isActive && articlesDirty) {
@@ -195,6 +218,69 @@ export default function DataTab({
     }));
     onPendingFilterApplied?.();
   }, [pendingFilter]);
+
+  useEffect(() => {
+    if (searchReloadTick === 0) return;
+    refreshArticles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchReloadTick]);
+
+  // 当前生效筛选（用于「当前筛选」条的可移除胶囊）。键控筛选清除后由 activeFilterKey effect 自动重载；
+  // 仅搜索是提交式，需额外触发 searchReloadTick。
+  const VECTOR_STATUS_LABELS = { true: '向量已构建', false: '向量未构建' };
+  const dateRangeText = (start, end) => `${start || '…'} ~ ${end || '…'}`;
+  const activeFilterItems = [];
+  if (filters.search) {
+    activeFilterItems.push({
+      key: 'search', label: '搜索', value: filters.search,
+      onRemove: () => { setFilters(prev => ({ ...prev, search: '' })); setSearchReloadTick(t => t + 1); },
+    });
+  }
+  if (filters.source_id) {
+    activeFilterItems.push({
+      key: 'source', label: '数据来源', value: getFetcherName(filters.source_id),
+      onRemove: () => setFilters(prev => ({ ...prev, source_id: '' })),
+    });
+  }
+  if (filters.content_type) {
+    activeFilterItems.push({
+      key: 'type', label: '结构类型', value: filters.content_type,
+      onRemove: () => setFilters(prev => ({ ...prev, content_type: '' })),
+    });
+  }
+  if (filters.is_vectorized) {
+    activeFilterItems.push({
+      key: 'vector', label: '向量状态', value: VECTOR_STATUS_LABELS[filters.is_vectorized] || filters.is_vectorized,
+      onRemove: () => setFilters(prev => ({ ...prev, is_vectorized: '' })),
+    });
+  }
+  if (filters.publish_date_start || filters.publish_date_end) {
+    activeFilterItems.push({
+      key: 'publish', label: '发布日期', value: dateRangeText(filters.publish_date_start, filters.publish_date_end),
+      onRemove: () => setFilters(prev => ({ ...prev, publish_date_start: '', publish_date_end: '' })),
+    });
+  }
+  if (filters.fetched_date_start || filters.fetched_date_end) {
+    activeFilterItems.push({
+      key: 'fetched', label: '收录时间', value: dateRangeText(filters.fetched_date_start, filters.fetched_date_end),
+      onRemove: () => setFilters(prev => ({ ...prev, fetched_date_start: '', fetched_date_end: '' })),
+    });
+  }
+
+  const clearAllFilters = () => {
+    const hadOnlySearch = Boolean(filters.search) && !(
+      filters.source_id || filters.content_type || filters.is_vectorized
+      || filters.publish_date_start || filters.publish_date_end
+      || filters.fetched_date_start || filters.fetched_date_end
+    );
+    setFilters(prev => ({
+      ...prev,
+      content_type: '', source_id: '', is_vectorized: '', search: '',
+      publish_date_start: '', publish_date_end: '', fetched_date_start: '', fetched_date_end: '',
+    }));
+    // 仅搜索生效时键控筛选无变化，需手动重载；否则 activeFilterKey effect 会用清空后的值重载（含搜索）。
+    if (hadOnlySearch) setSearchReloadTick(t => t + 1);
+  };
 
   const toggleArticleSelection = (id) => {
     const newSet = new Set(selectedArticles);
@@ -269,7 +355,7 @@ export default function DataTab({
               <Plus /> 手工录入
             </button>
           )}
-          <button onClick={loadArticles} disabled={loading} className="action-button action-button-secondary">
+          <button onClick={refreshArticles} disabled={loading} className="action-button action-button-secondary">
             <RefreshCw className={`text-blue-600 ${loading ? 'animate-spin' : ''}`} /> 同步最新
           </button>
         </div>
@@ -277,10 +363,10 @@ export default function DataTab({
 
       <div className="surface-card relative z-30 rounded-[16px] p-5">
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="ledger-filter-row flex flex-col gap-3 lg:flex-row lg:items-center">
             <label className="search-box min-h-[52px] flex-1">
               <Search className="mr-3 h-5 w-5 text-slate-400" />
-              <input type="text" placeholder="搜索标题、内容、来源网站、标签等关键词..." value={filters.search} onChange={e => setFilters({ ...filters, search: e.target.value })} onKeyDown={e => e.key === 'Enter' && loadArticles()} className="py-3" />
+              <input type="text" placeholder="搜索标题、内容、来源网站、标签等关键词..." value={filters.search} onChange={e => setFilters({ ...filters, search: e.target.value })} onKeyDown={e => e.key === 'Enter' && handleSearchSubmit()} className="py-3" />
               <span className="hidden rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-400 sm:inline-flex">⌘ /</span>
             </label>
             <div className="field-box lg:w-64">
@@ -364,6 +450,8 @@ export default function DataTab({
               )}
             </div>
           )}
+
+          <ActiveFilterBar items={activeFilterItems} onClearAll={clearAllFilters} />
         </div>
       </div>
 
@@ -371,13 +459,23 @@ export default function DataTab({
         <div className="toolbar-card min-w-[980px]">
           <div className="toolbar-title">
             <span>
-              显示 {articles.length.toLocaleString()} / 共 {articlePageInfo.total.toLocaleString()} 条记录
+              显示 {pageStart.toLocaleString()}-{pageEnd.toLocaleString()} / 共 {articlePageInfo.total.toLocaleString()} 条记录
             </span>
+            <span className="text-slate-500">第 {currentPage.toLocaleString()} / {totalPages.toLocaleString()} 页</span>
             <span className="text-slate-500">已选择 {selectedArticles.size} 条</span>
           </div>
         </div>
 
-        <table className="data-table w-full min-w-[980px] text-left">
+        <table className="data-table ledger-table w-full min-w-[980px] text-left">
+          <colgroup>
+            <col className="ledger-col-select" />
+            <col className="ledger-col-type" />
+            <col className="ledger-col-source" />
+            <col className="ledger-col-title" />
+            <col className="ledger-col-publish" />
+            <col className="ledger-col-fetched" />
+            {canManageArticles && ragEnabled && <col className="ledger-col-vector" />}
+          </colgroup>
           <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs tracking-wider">
             <tr>
               <th className="px-4 py-3 w-12 text-center">
@@ -415,20 +513,26 @@ export default function DataTab({
                     <input type="checkbox" aria-label={`选择：${article.title || article.id}`} checked={selectedArticles.has(article.id)} onChange={() => toggleArticleSelection(article.id)} className="w-4 h-4 text-blue-600 rounded cursor-pointer" />
                   )}
                 </td>
-                <td className="px-3 py-4"><span className="data-chip">{article.content_type || '未知'}</span></td>
+                <td className="px-3 py-4"><span className="data-chip max-w-full overflow-hidden text-ellipsis">{article.content_type || '未知'}</span></td>
                 <td className="px-3 py-4">
                   {(() => {
                     const company = companyFor(article.source_id);
                     const name = getFetcherName(article.source_id);
                     const showCompany = company.name && company.name !== name && !company.key.startsWith('sid:');
                     return (
-                      <div className="flex items-center gap-2.5 min-w-0">
+                      <button
+                        type="button"
+                        disabled={!onFocusSource}
+                        onClick={() => onFocusSource?.(article.source_id)}
+                        className="ledger-source-link flex max-w-full items-center gap-2.5 min-w-0 text-left"
+                        title={onFocusSource ? `定位来源「${name}」` : article.source_id}
+                      >
                         <LogoMark company={company} size="sm" />
                         <div className="min-w-0">
-                          <div className="font-bold text-slate-700 text-xs line-clamp-1" title={article.source_id}>{name}</div>
+                          <div className="ledger-source-name font-bold text-slate-700 text-xs line-clamp-1" title={article.source_id}>{name}</div>
                           {showCompany && <div className="text-[11px] text-slate-400 truncate">{company.name}</div>}
                         </div>
-                      </div>
+                      </button>
                     );
                   })()}
                 </td>
@@ -458,17 +562,48 @@ export default function DataTab({
             ))}
           </tbody>
         </table>
-        {articlePageInfo.nextSkip !== null && (
-          <div className="flex justify-center border-t border-slate-100 bg-slate-50/60 p-4">
-            <button
-              type="button"
-              onClick={loadMoreArticles}
-              disabled={loadingMore}
-              className="action-button action-button-secondary"
-            >
-              <RefreshCw className={loadingMore ? 'animate-spin' : ''} />
-              {loadingMore ? '加载中...' : `加载更多（剩余 ${(articlePageInfo.total - articles.length).toLocaleString()} 条）`}
-            </button>
+        {articlePageInfo.total > 0 && (
+          <div className="flex min-w-[980px] flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/60 p-4">
+            <div className="text-xs font-bold text-slate-500">
+              每页 {ARTICLE_PAGE_SIZE} 条，当前 {pageStart.toLocaleString()}-{pageEnd.toLocaleString()} 条
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPage(1)}
+                disabled={!canGoPrev}
+                className="action-button action-button-secondary min-h-[36px] px-3 text-xs"
+              >
+                首页
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentPage(page => Math.max(1, page - 1))}
+                disabled={!canGoPrev}
+                className="action-button action-button-secondary min-h-[36px] px-3 text-xs"
+              >
+                上一页
+              </button>
+              <span className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600">
+                第 {currentPage.toLocaleString()} / {totalPages.toLocaleString()} 页
+              </span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))}
+                disabled={!canGoNext}
+                className="action-button action-button-secondary min-h-[36px] px-3 text-xs"
+              >
+                下一页
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={!canGoNext}
+                className="action-button action-button-secondary min-h-[36px] px-3 text-xs"
+              >
+                末页
+              </button>
+            </div>
           </div>
         )}
       </div>

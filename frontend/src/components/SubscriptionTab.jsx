@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AnimatedNumber from './AnimatedNumber';
 import {
   Check,
@@ -26,6 +26,7 @@ import {
   unsubscribeSource,
 } from '../api';
 import {
+  SECTIONS,
   groupBySection,
   labelFrom,
   resolveCompany,
@@ -67,6 +68,12 @@ const TIER_TONE_CLASS = {
 
 function tierPillClass(tier) {
   return TIER_TONE_CLASS[tierMeta(tier).tone] || TIER_TONE_CLASS.slate;
+}
+
+function sectionIdOf(source) {
+  const key = resolveCompany(source).key;
+  const section = SECTIONS.find(s => s.companies.includes(key));
+  return section ? section.id : 'other';
 }
 
 function inferSourceOwner(source) {
@@ -175,14 +182,14 @@ function FeedDocsPanel({ plainToken, onCopy, copiedKey }) {
   );
 }
 
-function SubscriptionSourceRow({ source, busy, onToggleSubscribe, onViewArticles }) {
+function SubscriptionSourceRow({ source, busy, onToggleSubscribe, onViewArticles, innerRef, highlighted }) {
   const subscribed = Boolean(source.subscribed);
   const hasArticles = (source.count || 0) > 0;
   const tier = tierMeta(source.provenance_tier);
   const scopeLabel = labelFrom(SOURCE_SCOPE_LABELS, source.source_scope);
   const channelLabel = labelFrom(SOURCE_CHANNEL_LABELS, source.source_channel);
   return (
-    <div className={`source-row subscription-source-row ${subscribed ? 'subscription-source-subscribed' : ''}`}>
+    <div ref={innerRef} className={`source-row subscription-source-row ${subscribed ? 'subscription-source-subscribed' : ''} ${highlighted ? 'source-row-focus' : ''}`}>
       <div className="source-row-head">
         <button
           type="button"
@@ -246,9 +253,8 @@ function SubscriptionSourceRow({ source, busy, onToggleSubscribe, onViewArticles
   );
 }
 
-export default function SubscriptionTab({ showToast, onViewArticles }) {
+export default function SubscriptionTab({ showToast, view, setView, onViewArticles, pendingFocus, onPendingFocusApplied }) {
   const confirm = useConfirm();
-  const [view, setView] = useState('catalog'); // catalog | manage
   const [sources, setSources] = useState([]);
   const [sourcesLoading, setSourcesLoading] = useState(true);
   const [sourceQuery, setSourceQuery] = useState('');
@@ -261,6 +267,8 @@ export default function SubscriptionTab({ showToast, onViewArticles }) {
   const [copiedKey, setCopiedKey] = useState('');
   const [collapsedSourceSections, setCollapsedSourceSections] = useState(() => new Set());
   const [expandedSourceCompanies, setExpandedSourceCompanies] = useState(() => new Set());
+  const [highlightedSourceId, setHighlightedSourceId] = useState(null);
+  const sourceRowRefs = useRef({});
 
   const loadSources = useCallback(() => runAction(() => fetchReaderSources(), {
     showToast,
@@ -280,6 +288,44 @@ export default function SubscriptionTab({ showToast, onViewArticles }) {
     loadSources();
     loadFeedToken();
   }, [loadSources, loadFeedToken]);
+
+  // 接收来自知识台账「数据来源」列的定位请求（阅读端）：切到源目录、清空搜索、展开对应板块/主体并高亮该源行。
+  useEffect(() => {
+    if (!pendingFocus?.source_id) return;
+    if (sourcesLoading) return; // 等源目录加载完
+    const sid = pendingFocus.source_id;
+    const source = sources.find(s => s.source_id === sid);
+    onPendingFocusApplied?.();
+    if (!source) {
+      showToast?.('该来源不在你的内容源目录中', 'info');
+      return;
+    }
+    const company = resolveCompany(enrichSource(source));
+    const sectionId = sectionIdOf(enrichSource(source));
+    setView('catalog');
+    setSourceQuery('');
+    setCollapsedSourceSections(prev => {
+      if (!prev.has(sectionId)) return prev;
+      const next = new Set(prev);
+      next.delete(sectionId);
+      return next;
+    });
+    setExpandedSourceCompanies(prev => (prev.has(company.key) ? prev : new Set(prev).add(company.key)));
+    setHighlightedSourceId(sid);
+  }, [pendingFocus, sourcesLoading, sources, onPendingFocusApplied, showToast]);
+
+  // 高亮目标源行：下一帧滚动到视野中央，短暂高亮后自动消退。
+  useEffect(() => {
+    if (!highlightedSourceId) return undefined;
+    const raf = requestAnimationFrame(() => {
+      sourceRowRefs.current[highlightedSourceId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    const timer = setTimeout(() => setHighlightedSourceId(null), 2400);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
+  }, [highlightedSourceId]);
 
   const subscribedSources = useMemo(
     () => sources.filter(source => source.subscribed),
@@ -601,6 +647,8 @@ export default function SubscriptionTab({ showToast, onViewArticles }) {
                                       busy={pendingSourceIds.has(source.source_id)}
                                       onToggleSubscribe={handleToggleSubscribe}
                                       onViewArticles={onViewArticles}
+                                      innerRef={el => { sourceRowRefs.current[source.source_id] = el; }}
+                                      highlighted={highlightedSourceId === source.source_id}
                                     />
                                   ))}
                                 </div>

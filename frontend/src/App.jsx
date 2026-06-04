@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useMemo } from 'react';
+import { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import {
   BarChart2,
   Bot,
@@ -23,6 +23,36 @@ import LoginScreen from './components/LoginScreen';
 import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
 import { LOGO_PATH } from './config';
 
+// ── 导航 / 历史锚点 ──
+// 把「标签 + 子视图」镜像到 URL hash（#/fetch/groups），跨页跳转的聚焦上下文存在 history.state 里。
+// 让浏览器「返回」能逐级退回：子视图切换 → 标签切换 → 跨页跳转的原位。
+const ALL_TABS = ['data', 'fetch', 'runs', 'subscriptions', 'vector', 'mcp'];
+const TAB_DEFAULT_VIEW = { fetch: 'catalog', runs: 'jobs', subscriptions: 'catalog' };
+const SUBVIEW_TABS = new Set(['fetch', 'runs', 'subscriptions']);
+
+function defaultViews() {
+  return { fetch: 'catalog', runs: 'jobs', subscriptions: 'catalog' };
+}
+
+function routeToHash(tab, views) {
+  if (SUBVIEW_TABS.has(tab) && views[tab]) return `#/${tab}/${views[tab]}`;
+  return `#/${tab}`;
+}
+
+function hashToRoute(hash) {
+  const parts = String(hash || '').replace(/^#\/?/, '').split('/').filter(Boolean);
+  const tab = ALL_TABS.includes(parts[0]) ? parts[0] : 'data';
+  const view = SUBVIEW_TABS.has(tab) ? (parts[1] || TAB_DEFAULT_VIEW[tab]) : null;
+  return { tab, view };
+}
+
+function navFromHash() {
+  const r = typeof window !== 'undefined' && window.location.hash ? hashToRoute(window.location.hash) : { tab: 'data', view: null };
+  const views = defaultViews();
+  if (SUBVIEW_TABS.has(r.tab) && r.view) views[r.tab] = r.view;
+  return { tab: r.tab, views, focus: null };
+}
+
 function BrandLogo({ logoError, onLogoError }) {
   return !logoError ? (
     <img src={LOGO_PATH} alt="Logo" className="h-12 w-12 rounded-[12px] object-contain shadow-sm" onError={onLogoError} />
@@ -34,9 +64,11 @@ function BrandLogo({ logoError, onLogoError }) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('data');
+  const [nav, setNav] = useState(navFromHash);
+  const navRef = useRef(nav);
+  const activeTab = nav.tab;
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [mountedTabs, setMountedTabs] = useState(() => new Set(['data']));
+  const [mountedTabs, setMountedTabs] = useState(() => new Set(['data', nav.tab]));
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
   const [logoError, setLogoError] = useState(false);
   const [availableFetchers, setAvailableFetchers] = useState([]);
@@ -46,11 +78,53 @@ export default function App() {
   const [runsDirty, setRunsDirty] = useState(false);
   const [pendingDataFilter, setPendingDataFilter] = useState(null);
   const [pendingRunsFilter, setPendingRunsFilter] = useState(null);
+  const [pendingFetchFocus, setPendingFetchFocus] = useState(null);
+  const [pendingSubscriptionFocus, setPendingSubscriptionFocus] = useState(null);
 
-  const switchTab = useCallback((id) => {
-    setActiveTab(id);
-    setMountedTabs(prev => (prev.has(id) ? prev : new Set(prev).add(id)));
+  // 跨页跳转的聚焦上下文（存在 history.state 里）回放时，重新点燃对应的一次性 pending*，让目标页重新定位/筛选。
+  const applyFocus = useCallback((focus) => {
+    if (!focus) return;
+    if (focus.kind === 'dataFilter') setPendingDataFilter(focus.payload);
+    else if (focus.kind === 'runsFilter') setPendingRunsFilter(focus.payload);
+    else if (focus.kind === 'fetchFocus') setPendingFetchFocus(focus.payload);
+    else if (focus.kind === 'subFocus') setPendingSubscriptionFocus(focus.payload);
   }, []);
+
+  // 写入历史 + 应用路由的单一出口；replace 用于初始播种和角色重定向（不留多余历史条目）。
+  const commitNav = useCallback((next, { replace = false } = {}) => {
+    const url = routeToHash(next.tab, next.views);
+    const histState = { tab: next.tab, views: next.views, focus: next.focus || null };
+    try {
+      if (replace) window.history.replaceState(histState, '', url);
+      else window.history.pushState(histState, '', url);
+    } catch { /* 某些沙箱环境禁用 history，忽略即可 */ }
+    navRef.current = next;
+    setNav(next);
+    setMountedTabs(prev => (prev.has(next.tab) ? prev : new Set(prev).add(next.tab)));
+    applyFocus(next.focus);
+  }, [applyFocus]);
+
+  const goTab = useCallback((tab, options = {}) => {
+    const cur = navRef.current;
+    if (cur.tab === tab && !options.replace) return; // 点击当前标签：不重复入栈
+    commitNav({ tab, views: cur.views, focus: null }, options);
+  }, [commitNav]);
+
+  const goView = useCallback((tab, view) => {
+    const cur = navRef.current;
+    if (cur.tab === tab && cur.views[tab] === view) return; // 视图未变：no-op（拦掉子组件的冗余同步）
+    commitNav({ tab, views: { ...cur.views, [tab]: view }, focus: null });
+  }, [commitNav]);
+
+  const jumpWithFocus = useCallback((tab, view, focus) => {
+    const cur = navRef.current;
+    const views = view ? { ...cur.views, [tab]: view } : cur.views;
+    commitNav({ tab, views, focus });
+  }, [commitNav]);
+
+  const setFetchView = useCallback((v) => goView('fetch', v), [goView]);
+  const setRunsView = useCallback((v) => goView('runs', v), [goView]);
+  const setSubsView = useCallback((v) => goView('subscriptions', v), [goView]);
 
   const markArticlesDirty = useCallback(() => setArticlesDirty(true), []);
   const clearArticlesDirty = useCallback(() => setArticlesDirty(false), []);
@@ -59,20 +133,50 @@ export default function App() {
   const clearRunsDirty = useCallback(() => setRunsDirty(false), []);
 
   const viewArticlesForSource = useCallback((sourceId) => {
-    setPendingDataFilter({ source_id: sourceId });
-    switchTab('data');
-  }, [switchTab]);
+    jumpWithFocus('data', null, { kind: 'dataFilter', payload: { source_id: sourceId } });
+  }, [jumpWithFocus]);
   const clearPendingDataFilter = useCallback(() => setPendingDataFilter(null), []);
 
   const viewRunsForSource = useCallback((fetcherId, options = {}) => {
-    setPendingRunsFilter({ fetcher_id: fetcherId, status: options.status || '' });
-    switchTab('runs');
-  }, [switchTab]);
+    jumpWithFocus('runs', 'history', { kind: 'runsFilter', payload: { fetcher_id: fetcherId, status: options.status || '' } });
+  }, [jumpWithFocus]);
   const viewRunningTasks = useCallback(() => {
-    setPendingRunsFilter({ fetcher_id: '', status: '' });
-    switchTab('runs');
-  }, [switchTab]);
+    jumpWithFocus('runs', 'history', { kind: 'runsFilter', payload: { fetcher_id: '', status: '' } });
+  }, [jumpWithFocus]);
   const clearPendingRunsFilter = useCallback(() => setPendingRunsFilter(null), []);
+
+  // 知识台账「数据来源」列点击 → 按运行时角色分流到节点管理（采集端）或订阅分发（阅读端），定位并展开对应来源。
+  const focusSourceNode = useCallback((sourceId) => {
+    if (!sourceId) return;
+    if (runtimeInfo.collector_enabled) {
+      jumpWithFocus('fetch', 'catalog', { kind: 'fetchFocus', payload: { source_id: sourceId } });
+    } else if (runtimeInfo.reader_enabled) {
+      jumpWithFocus('subscriptions', 'catalog', { kind: 'subFocus', payload: { source_id: sourceId } });
+    }
+  }, [runtimeInfo.collector_enabled, runtimeInfo.reader_enabled, jumpWithFocus]);
+  const clearPendingFetchFocus = useCallback(() => setPendingFetchFocus(null), []);
+  const clearPendingSubscriptionFocus = useCallback(() => setPendingSubscriptionFocus(null), []);
+
+  // 历史锚点：初始播种 + 监听浏览器返回/前进。
+  useEffect(() => {
+    commitNav(navRef.current, { replace: true });
+    const onPop = (event) => {
+      let route = event.state && event.state.tab ? event.state : null;
+      if (!route) {
+        const h = hashToRoute(window.location.hash);
+        const views = { ...navRef.current.views };
+        if (SUBVIEW_TABS.has(h.tab) && h.view) views[h.tab] = h.view;
+        route = { tab: h.tab, views, focus: null };
+      }
+      navRef.current = route;
+      setNav(route);
+      setMountedTabs(prev => (prev.has(route.tab) ? prev : new Set(prev).add(route.tab)));
+      applyFocus(route.focus);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const showToast = useCallback((message, type = 'info') => {
     setToast({ show: true, message: typeof message === 'string' ? message : JSON.stringify(message), type });
@@ -177,9 +281,9 @@ export default function App() {
 
   useEffect(() => {
     if (!tabs.some(tab => tab.id === activeTab)) {
-      switchTab(tabs[0]?.id || 'data');
+      goTab(tabs[0]?.id || 'data', { replace: true });
     }
-  }, [activeTab, switchTab, tabs]);
+  }, [activeTab, goTab, tabs]);
 
   if (authState.status === 'checking') {
     return (
@@ -209,7 +313,7 @@ export default function App() {
           {tabs.map(tab => (
             <button
               key={tab.id}
-              onClick={() => switchTab(tab.id)}
+              onClick={() => goTab(tab.id)}
               className={`top-tab relative flex items-center gap-2 whitespace-nowrap px-6 py-3 text-sm font-extrabold transition-colors ${activeTab === tab.id ? 'top-tab-active' : 'text-slate-600 hover:text-slate-950'}`}
             >
               <tab.icon className="h-4.5 w-4.5" /> {tab.label}
@@ -221,7 +325,7 @@ export default function App() {
           {tabs.map(tab => (
             <button
               key={tab.id}
-              onClick={() => switchTab(tab.id)}
+              onClick={() => goTab(tab.id)}
               className={`nav-pill flex shrink-0 items-center gap-2 px-3 py-2 text-xs font-extrabold ${activeTab === tab.id ? 'nav-pill-active' : 'text-slate-600'}`}
             >
               <tab.icon className="h-4 w-4" /> {tab.label}
@@ -285,6 +389,7 @@ export default function App() {
                 onArticlesRefreshed={clearArticlesDirty}
                 pendingFilter={pendingDataFilter}
                 onPendingFilterApplied={clearPendingDataFilter}
+                onFocusSource={focusSourceNode}
               />
             </div>
           )}
@@ -293,11 +398,15 @@ export default function App() {
               <FetchTab
                 availableFetchers={availableFetchers}
                 showToast={showToast}
+                view={nav.views.fetch}
+                setView={setFetchView}
                 onArticlesChanged={markArticlesDirty}
                 onRunsChanged={markRunsDirty}
                 onViewArticles={viewArticlesForSource}
                 onViewRuns={viewRunsForSource}
                 onViewRunning={viewRunningTasks}
+                pendingFocus={pendingFetchFocus}
+                onPendingFocusApplied={clearPendingFetchFocus}
               />
             </div>
           )}
@@ -306,6 +415,8 @@ export default function App() {
               <FetchRunsTab
                 availableFetchers={availableFetchers}
                 showToast={showToast}
+                view={nav.views.runs}
+                setView={setRunsView}
                 onArticlesChanged={markArticlesDirty}
                 onRunsChanged={markRunsDirty}
                 isActive={activeTab === 'runs'}
@@ -323,7 +434,14 @@ export default function App() {
           )}
           {mountedTabs.has('subscriptions') && (
             <div className="tab-panel" style={{ display: activeTab === 'subscriptions' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
-              <SubscriptionTab showToast={showToast} onViewArticles={viewArticlesForSource} />
+              <SubscriptionTab
+                showToast={showToast}
+                view={nav.views.subscriptions}
+                setView={setSubsView}
+                onViewArticles={viewArticlesForSource}
+                pendingFocus={pendingSubscriptionFocus}
+                onPendingFocusApplied={clearPendingSubscriptionFocus}
+              />
             </div>
           )}
           {mountedTabs.has('mcp') && (
