@@ -1174,6 +1174,13 @@ button:disabled {
     box-shadow: 0 0 0 3px rgba(91, 84, 232, 0.08), 0 8px 20px rgba(11, 18, 32, 0.07);
   }
 
+  /* 单控件行（如订阅源目录）：搜索框铺满标签到右缘，不再贴右留白 */
+  .catalog-search-grow {
+    flex: 1 1 auto;
+    max-width: none;
+    margin-left: 0;
+  }
+
   .catalog-chips {
     display: flex;
     flex-wrap: wrap;

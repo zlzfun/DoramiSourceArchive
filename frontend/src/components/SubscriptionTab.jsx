@@ -375,14 +375,6 @@ export default function SubscriptionTab({ showToast, view, setView, onViewArticl
     });
   }, []);
 
-  const setAllSourceSections = useCallback((open) => {
-    if (open) {
-      setCollapsedSourceSections(new Set());
-      return;
-    }
-    setCollapsedSourceSections(new Set(groupedSourceSections.map(section => section.id)));
-  }, [groupedSourceSections]);
-
   const handleSourceSectionKeyDown = useCallback((event, sectionId, currentlyOpen) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
@@ -403,18 +395,6 @@ export default function SubscriptionTab({ showToast, view, setView, onViewArticl
       return next;
     });
   }, []);
-
-  const setAllSourceCompanies = useCallback((open) => {
-    if (!open) {
-      setExpandedSourceCompanies(new Set());
-      return;
-    }
-    setExpandedSourceCompanies(() => {
-      const next = new Set();
-      groupedSourceSections.forEach(section => section.companies.forEach(({ company }) => next.add(company.key)));
-      return next;
-    });
-  }, [groupedSourceSections]);
 
   const applySubscribedIds = useCallback((ids) => {
     const idSet = new Set(ids || []);
@@ -541,25 +521,10 @@ export default function SubscriptionTab({ showToast, view, setView, onViewArticl
                 <span>内容源目录</span>
                 <span className="text-xs font-mono text-slate-400">{filteredSources.length}/{sources.length}</span>
               </div>
-              <div className="subscription-catalog-toolbar">
-                <div className="dept-expand-toggle">
-                  <span>板块</span>
-                  <button type="button" onClick={() => setAllSourceSections(true)}>展开</button>
-                  <span>·</span>
-                  <button type="button" onClick={() => setAllSourceSections(false)}>收起</button>
-                </div>
-                <div className="dept-expand-toggle">
-                  <span>主体</span>
-                  <button type="button" onClick={() => setAllSourceCompanies(true)}>展开</button>
-                  <span>·</span>
-                  <button type="button" onClick={() => setAllSourceCompanies(false)}>收起</button>
-                </div>
-                <div className="subscription-catalog-note">按主体聚合，点选来源即可订阅</div>
-              </div>
             </div>
             <div className="catalog-filter-row catalog-filter-row-with-search">
               <span className="catalog-dimension-label">搜索</span>
-              <label className="search-box catalog-search">
+              <label className="search-box catalog-search catalog-search-grow">
                 <Search className="mr-2 h-4 w-4 text-slate-400" />
                 <input type="text" placeholder="搜索名称、主体、ID、标签" value={sourceQuery} onChange={e => setSourceQuery(e.target.value)} />
               </label>
