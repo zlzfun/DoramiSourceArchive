@@ -39,7 +39,7 @@ from models.db import (
 from models.content import BaseContent, SocialPostContent
 
 # 引入动态抓取器注册中心
-from fetchers.registry import fetcher_registry
+from fetchers.registry import fetcher_registry, DECOMMISSIONED_FETCHER_IDS
 from api.skill_router import router as skill_router
 
 from starlette.responses import JSONResponse as StarletteJSONResponse
@@ -2114,8 +2114,12 @@ def get_reader_sources(request: Request):
         _ensure_entry(source_id)
 
     # 2. 叠加归档文章聚合（含未注册的导入源，如 social_post）；主 content_type 取计数最高者。
+    #    已下线节点（删类后仍留有历史归档）不再回流目录，除非当前用户已订阅（保留退订入口），
+    #    以保持读者层订阅目录与节点管理同步。
     for source_id, content_type, count, last_fetched in rows:
         if not source_id:
+            continue
+        if source_id in DECOMMISSIONED_FETCHER_IDS and source_id not in subscribed_ids:
             continue
         entry = _ensure_entry(source_id, content_type)
         entry["count"] += int(count or 0)

@@ -68,7 +68,13 @@ The catalog is the union of three sets: every **registered fetcher source**, eve
 `source_id` that already has **archived articles**, and every `source_id` the user has
 already **subscribed** to. Including registered sources with a zero article `count` means
 a brand-new source can be subscribed *before* it has produced anything, so the user
-receives its future output. Each entry carries a friendly `name` and `description`/`icon`
+receives its future output. **Decommissioned fetcher nodes** (listed in
+`DECOMMISSIONED_FETCHER_IDS` — classes removed from `impl/` during node audits but whose
+historical archive lingers) are excluded from the archived-articles set, so a removed
+node does not silently reappear in the reader catalog after node management has been
+slimmed; the only exception is a user who is *already* subscribed to one, who still sees
+it so they can unsubscribe. Legitimate unregistered import sources (e.g. `social_post`)
+are *not* on that list and remain subscribable. Each entry carries a friendly `name` and `description`/`icon`
 (enriched from the fetcher registry, falling back to `SOURCE_FRIENDLY_NAMES` then the raw
 id), primary `content_type`, a grouping `category`, article `count`, a `registered` flag,
 and a `subscribed` flag for the current user. The console "源目录" tab renders these as

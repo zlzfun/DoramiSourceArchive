@@ -605,6 +605,50 @@ def test_reader_sources_includes_zero_article_registered_source(monkeypatch, tmp
         assert {s["source_id"]: s for s in catalog2["sources"]}[fresh]["subscribed"] is True
 
 
+def test_reader_sources_excludes_decommissioned_node_with_lingering_archive(monkeypatch, tmp_path):
+    import api.app as app_module
+    from models.db import ArticleRecord
+    from fetchers.registry import DECOMMISSIONED_FETCHER_IDS
+
+    sink = _make_sink(tmp_path, "decommissioned.db")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    _set_auth_accounts(monkeypatch, app_module)
+    _set_runtime_role(monkeypatch, app_module, "reader")
+
+    dead = next(iter(DECOMMISSIONED_FETCHER_IDS))  # 已删类、但历史归档仍在的下线节点
+
+    with Session(sink.engine) as session:
+        # 下线节点遗留的归档文章。
+        session.add(ArticleRecord(
+            id="d1", title="dead", content_type="rss_article", source_id=dead,
+            source_url="https://e.test", publish_date="2026-05-20T00:00:00",
+            fetched_date="2026-05-21T00:00:00", has_content=True, content="x",
+            extensions_json="{}", is_vectorized=False,
+        ))
+        # 合法的未注册导入源（如 social_post）不应被一并误伤。
+        session.add(ArticleRecord(
+            id="s1", title="post", content_type="social_post", source_id="import_x_feed",
+            source_url="https://e.test", publish_date="2026-05-20T00:00:00",
+            fetched_date="2026-05-21T00:00:00", has_content=True, content="x",
+            extensions_json="{}", is_vectorized=False,
+        ))
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        by_id = {s["source_id"]: s for s in client.get("/api/reader/sources").json()["sources"]}
+        # 下线节点不回流目录；导入源仍可订阅。
+        assert dead not in by_id
+        assert "import_x_feed" in by_id
+
+        # 但若用户已订阅该下线节点，目录仍要展示它（携带归档计数），以便退订。
+        assert client.post(f"/api/reader/sources/{dead}/subscribe").status_code == 200
+        entry = {s["source_id"]: s for s in client.get("/api/reader/sources").json()["sources"]}.get(dead)
+        assert entry is not None
+        assert entry["subscribed"] is True
+        assert entry["count"] == 1
+
+
 def _seed_article_dated(engine, article_id, source_id, title, publish_date):
     from models.db import ArticleRecord
     with Session(engine) as session:

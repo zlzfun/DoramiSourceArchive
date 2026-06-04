@@ -86,8 +86,8 @@ These recurred across the audit. Recognize the symptom, apply the known fix.
 
 ## When to remove a node instead of fixing it
 
-Delete the node (delete the class **and** its id from `ESSENTIAL_FETCHER_IDS`)
-when either trigger fires:
+Delete the node (delete the class, remove its id from `ESSENTIAL_FETCHER_IDS`, **and**
+add its id to `DECOMMISSIONED_FETCHER_IDS`) when either trigger fires:
 
 - **Structural unfitness** — it can't produce correct chronological records with a reasonable fetcher: a static catalog with no dates/chronology, the same blob every fetch, or an entry point now hard-gated (WAF/SPA) with no cheap recovery.
 - **Redundancy** — the brand/topic is already covered by a higher-signal node, so the marginal node mostly duplicates.
@@ -96,6 +96,13 @@ Removing the class (not just hiding it) is the policy — see
 [curation_policy.md](./curation_policy.md); the registry's invariant test forbids
 "registered but hidden" presets. Precedents: `docs_xai_models`,
 `web_bytedance_seed_models`, `web_jiqizhixin`.
+
+Registering the id in `DECOMMISSIONED_FETCHER_IDS` matters because the reader-side
+subscription catalog (`GET /api/reader/sources`) unions in every `source_id` that still
+has archived rows. A removed node's historical archive would otherwise leak back as a
+"fresh" subscribable source, leaving 订阅分发 out of sync with the slimmed 节点管理. The
+denylist keeps the two surfaces aligned; already-subscribed users still see the node so
+they can unsubscribe.
 
 ## Fix discipline
 

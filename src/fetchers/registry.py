@@ -49,6 +49,20 @@ ESSENTIAL_FETCHER_IDS = frozenset({
 })
 
 
+DECOMMISSIONED_FETCHER_IDS = frozenset({
+    # 历次节点审计中"删类"下线的抓取源（见 docs/sources/node_audit_playbook.md）。
+    # 它们的抓取器类已从 impl/ 移除，但历史归档文章仍留在库里——若不在此登记，
+    # 这些 source_id 会经由"归档来源"并集重新回流到读者层订阅目录，造成订阅分发
+    # 与节点管理不同步。读者目录据此排除它们（已订阅者除外，以便退订）。
+    # 删除一个节点时，除了删类 + 从 ESSENTIAL_FETCHER_IDS 移除，也应在此追加其 id。
+    "docs_gemini_api_changelog",
+    "docs_openai_api_changelog",
+    "github_qwen_code_releases",
+    "docs_alibaba_model_studio_announcements",
+    "web_bytedance_seed_models",
+})
+
+
 FOCUSED_FETCHER_CURATION: Dict[str, Dict[str, str | bool]] = {}
 
 
