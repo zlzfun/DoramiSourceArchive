@@ -35,7 +35,7 @@ class SinglePageDocumentFetcher(BaseFetcher):
     page_url = ""
     site_name = ""
     source_section = ""
-    default_detail_max_chars = 20000
+    default_detail_max_chars = 12000
     default_detail_min_chars = 200
 
     @classmethod
@@ -117,6 +117,8 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
+    default_limit = 12
+    default_detail_max_chars = 8000
 
     # Codex Changelog 按月份 <h2> 分组，但每条发布是一个独立的
     # <li data-product> 容器：内含 <time>(ISO 日期) + 首个标题(发布名，如
@@ -125,18 +127,18 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 50},
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
             {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
         if raw_limit in (None, ""):
-            return 50
+            return self.default_limit
         try:
             return max(int(raw_limit), 0)
         except (TypeError, ValueError):
             self.logger.warning(f"{self.name} 条数参数无效，使用默认值: {raw_limit}")
-            return 50
+            return self.default_limit
 
     def _content_id(self, anchor: str) -> str:
         digest = hashlib.sha1(f"{self.source_id}:{anchor}".encode("utf-8")).hexdigest()[:16]
@@ -242,6 +244,8 @@ class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
+    default_limit = 12
+    default_detail_max_chars = 8000
 
     # Claude Code Changelog 是 Mintlify <Update> 组件渲染：每个版本是一个独立块，
     # 由 data-component-part="update-label"(版本号) / "update-description"(发布日期，如
@@ -250,18 +254,18 @@ class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 50},
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
             {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
         if raw_limit in (None, ""):
-            return 50
+            return self.default_limit
         try:
             return max(int(raw_limit), 0)
         except (TypeError, ValueError):
             self.logger.warning(f"Claude Code Changelog 条数参数无效，使用默认值: {raw_limit}")
-            return 50
+            return self.default_limit
 
     def _content_id(self, version: str) -> str:
         digest = hashlib.sha1(f"{self.source_id}:{version}".encode("utf-8")).hexdigest()[:16]
@@ -378,6 +382,8 @@ class DevsiteReleaseNotesFetcher(SinglePageDocumentFetcher):
 
     listing_source_label = "devsite_release_notes_updates"
     detail_extraction_method = "devsite_release_notes_heading"
+    default_limit = 10
+    default_detail_max_chars = 8000
 
     # 兼容带逗号 "May 28, 2026" 与个别缺逗号 "December 13 2023" 的标题
     _date_heading_re = re.compile(r"^([A-Z][a-z]+)\s+(\d{1,2}),?\s+(20\d{2})$")
@@ -389,18 +395,18 @@ class DevsiteReleaseNotesFetcher(SinglePageDocumentFetcher):
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 50},
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
             {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
         if raw_limit in (None, ""):
-            return 50
+            return self.default_limit
         try:
             return max(int(raw_limit), 0)
         except (TypeError, ValueError):
             self.logger.warning(f"{self.name} 条数参数无效，使用默认值: {raw_limit}")
-            return 50
+            return self.default_limit
 
     def _content_id(self, anchor: str) -> str:
         digest = hashlib.sha1(f"{self.source_id}:{anchor}".encode("utf-8")).hexdigest()[:16]
@@ -542,6 +548,8 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
+    default_limit = 12
+    default_detail_max_chars = 8000
 
     # xAI Release Notes 是 Mintlify changelog grid：每条发布是一个
     # ``div.grid grid-cols-[5rem...]`` 卡片，左列(5rem)放日期(``May 29`` / 老条目用缩写
@@ -560,18 +568,18 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 50},
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
             {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
         if raw_limit in (None, ""):
-            return 50
+            return self.default_limit
         try:
             return max(int(raw_limit), 0)
         except (TypeError, ValueError):
             self.logger.warning(f"{self.name} 条数参数无效，使用默认值: {raw_limit}")
-            return 50
+            return self.default_limit
 
     def _content_id(self, anchor: str) -> str:
         digest = hashlib.sha1(f"{self.source_id}:{anchor}".encode("utf-8")).hexdigest()[:16]
@@ -801,22 +809,24 @@ class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
+    default_limit = 12
+    default_detail_max_chars = 8000
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 50},
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
             {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
         if raw_limit in (None, ""):
-            return 50
+            return self.default_limit
         try:
             return max(int(raw_limit), 0)
         except (TypeError, ValueError):
             self.logger.warning(f"Z.ai 发布条数参数无效，使用默认值: {raw_limit}")
-            return 50
+            return self.default_limit
 
     def _content_id(self, release_date: str, model_name: str) -> str:
         digest = hashlib.sha1(f"{release_date}:{model_name}".encode("utf-8")).hexdigest()[:16]
@@ -912,6 +922,8 @@ class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
+    default_limit = 15
+    default_detail_max_chars = 8000
 
     # Seed Research 页的 Publications 区把每篇论文渲染为一个 ``div.group.relative`` 卡片：
     # 内含日期 div(``Apr 22, 2026``)、标题 div(其直属文本即标题)、以及 ``div[class*=markdown]``
@@ -927,18 +939,18 @@ class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 30},
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
             {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
         if raw_limit in (None, ""):
-            return 30
+            return self.default_limit
         try:
             return max(int(raw_limit), 0)
         except (TypeError, ValueError):
             self.logger.warning(f"{self.name} 条数参数无效，使用默认值: {raw_limit}")
-            return 30
+            return self.default_limit
 
     def _content_id(self, key: str) -> str:
         digest = hashlib.sha1(f"{self.source_id}:{key}".encode("utf-8")).hexdigest()[:16]
@@ -1046,6 +1058,8 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
     signal_strength = "medium_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
+    default_limit = 20
+    default_detail_max_chars = 8000
 
     # Daily Papers 页把当天数十篇论文渲染为一组 <article> 卡片；通用单页抓取会把它们糅成
     # 一篇无逐篇日期的长文。页面用 hydration 数据 <div data-target="DailyPapers" data-props="…">
@@ -1055,18 +1069,18 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 40},
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
             {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
         if raw_limit in (None, ""):
-            return 40
+            return self.default_limit
         try:
             return max(int(raw_limit), 0)
         except (TypeError, ValueError):
             self.logger.warning(f"{self.name} 条数参数无效，使用默认值: {raw_limit}")
-            return 40
+            return self.default_limit
 
     def _content_id(self, arxiv_id: str) -> str:
         digest = hashlib.sha1(f"{self.source_id}:{arxiv_id}".encode("utf-8")).hexdigest()[:16]
@@ -1185,6 +1199,7 @@ class CursorChangelogWebFetcher(BaseWebPageListFetcher):
         "cursor.com/changelog/community",
         "cursor.com/changelog/students",
     ]
+    default_limit = 10
     default_fetch_detail = True
     # 兜底：即便有新的导航链接漏过 exclude，也丢弃正文为空的垃圾条目。
     drop_empty_content = True
@@ -1228,6 +1243,7 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
     source_section = "资讯"
     article_url_patterns = ["qbitai.com/"]
     exclude_url_patterns = ["qbitai.com/#", "qbitai.com/about", "qbitai.com/contact"]
+    default_limit = 18
     default_fetch_detail = True
     source_owner = "qbitai"
     source_brand = "量子位"
@@ -1436,6 +1452,7 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
         "aiera.com.cn/tag/",
         "aiera.com.cn/author/",
     ]
+    default_limit = 18
     default_fetch_detail = True
     source_owner = "aiera"
     source_brand = "新智元"

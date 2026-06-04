@@ -21,22 +21,23 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
     description = "通过 GitHub API 抓取指定组织或用户的最新公开仓库。"
     icon = "🐙"
 
+    default_limit = 10
     default_fetch_readme = True
-    default_readme_max_chars = 1500
+    default_readme_max_chars = 1200
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "owner", "label": "Owner / Org", "type": "text", "default": ""},
             {"field": "source_id", "label": "数据源 ID", "type": "text", "default": ""},
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 20},
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
             {"field": "include_forks", "label": "包含 fork 仓库", "type": "boolean", "default": False},
             {"field": "include_archived", "label": "包含归档仓库", "type": "boolean", "default": False},
             {"field": "fetch_readme", "label": "无描述时补充 README", "type": "boolean", "default": cls.default_fetch_readme},
             {"field": "readme_max_chars", "label": "README 摘要最大字符", "type": "number", "default": cls.default_readme_max_chars},
         ]
 
-    def _entry_limit(self, raw_limit: Any, default: int = 20) -> int:
+    def _entry_limit(self, raw_limit: Any, default: int = 10) -> int:
         if raw_limit in (None, ""):
             return default
         try:
@@ -191,7 +192,7 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         owner = str(kwargs.get("owner", "")).strip()
         runtime_source_id = str(kwargs.get("source_id", "")).strip() or self.source_id
-        limit = self._entry_limit(kwargs.get("limit"), 20)
+        limit = self._entry_limit(kwargs.get("limit"), self.default_limit)
         include_forks = self._bool_param(kwargs.get("include_forks"), False)
         include_archived = self._bool_param(kwargs.get("include_archived"), False)
         fetch_readme = self._bool_param(kwargs.get("fetch_readme"), self.default_fetch_readme)
@@ -228,7 +229,7 @@ class PresetGitHubRepositoriesFetcher(GenericGitHubRepositoriesFetcher):
     source_id = "unknown_source"
     owner = ""
     category = "primary"
-    default_limit = 20
+    default_limit = 10
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
@@ -274,16 +275,17 @@ class GenericHuggingFaceModelsFetcher(BaseFetcher):
     name = "通用 Hugging Face 新模型"
     description = "通过 Hugging Face API 抓取指定作者或组织的最新模型。"
     icon = "🤗"
+    default_limit = 10
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "author", "label": "Author / Org", "type": "text", "default": ""},
             {"field": "source_id", "label": "数据源 ID", "type": "text", "default": ""},
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 20},
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
         ]
 
-    def _entry_limit(self, raw_limit: Any, default: int = 20) -> int:
+    def _entry_limit(self, raw_limit: Any, default: int = 10) -> int:
         if raw_limit in (None, ""):
             return default
         try:
@@ -343,7 +345,7 @@ class GenericHuggingFaceModelsFetcher(BaseFetcher):
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         author = str(kwargs.get("author", "")).strip()
         runtime_source_id = str(kwargs.get("source_id", "")).strip() or self.source_id
-        limit = self._entry_limit(kwargs.get("limit"), 20)
+        limit = self._entry_limit(kwargs.get("limit"), self.default_limit)
         if not author:
             raise ValueError("Hugging Face author 不能为空")
 
@@ -368,7 +370,7 @@ class PresetHuggingFaceModelsFetcher(GenericHuggingFaceModelsFetcher):
     source_id = "unknown_source"
     author = ""
     category = "primary"
-    default_limit = 20
+    default_limit = 10
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:

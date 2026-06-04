@@ -22,6 +22,8 @@ class GenericGitHubReleasesFetcher(BaseFetcher):
     name = "通用 GitHub Releases"
     description = "通过 GitHub API 抓取指定仓库的 Release 元数据，适合 AI 工具、框架与产品更新。"
     icon = "🐙"
+    default_limit = 8
+    default_include_prereleases = True
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
@@ -29,11 +31,11 @@ class GenericGitHubReleasesFetcher(BaseFetcher):
             {"field": "owner", "label": "Owner", "type": "text", "default": ""},
             {"field": "repo", "label": "Repo", "type": "text", "default": ""},
             {"field": "source_id", "label": "数据源 ID", "type": "text", "default": ""},
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 10},
-            {"field": "include_prereleases", "label": "包含预发布", "type": "boolean", "default": True},
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
+            {"field": "include_prereleases", "label": "包含预发布", "type": "boolean", "default": cls.default_include_prereleases},
         ]
 
-    def _entry_limit(self, raw_limit: Any, default: int = 10) -> int:
+    def _entry_limit(self, raw_limit: Any, default: int = 8) -> int:
         if raw_limit in (None, ""):
             return default
         try:
@@ -122,8 +124,8 @@ class GenericGitHubReleasesFetcher(BaseFetcher):
         owner = str(kwargs.get("owner", "")).strip()
         repo = str(kwargs.get("repo", "")).strip()
         runtime_source_id = str(kwargs.get("source_id", "")).strip() or self.source_id
-        limit = self._entry_limit(kwargs.get("limit"), 10)
-        include_prereleases = self._bool_param(kwargs.get("include_prereleases"), True)
+        limit = self._entry_limit(kwargs.get("limit"), self.default_limit)
+        include_prereleases = self._bool_param(kwargs.get("include_prereleases"), self.default_include_prereleases)
 
         if not owner or not repo:
             raise ValueError("GitHub owner/repo 不能为空")
@@ -171,7 +173,7 @@ class PresetGitHubReleasesFetcher(GenericGitHubReleasesFetcher):
     owner = ""
     repo = ""
     category = "product_update"
-    default_limit = 10
+    default_limit = 8
     default_include_prereleases = True
 
     @classmethod

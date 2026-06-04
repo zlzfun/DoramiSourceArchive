@@ -60,9 +60,9 @@ class BaseWebPageListFetcher(BaseFetcher):
     source_section = ""
     article_url_patterns: List[str] = []
     exclude_url_patterns: List[str] = []
-    default_limit = 20
+    default_limit = 12
     default_fetch_detail = False
-    default_detail_max_chars = 12000
+    default_detail_max_chars = 8000
     generic_link_titles = {"read more", "learn more", "blog", "news", "publication", "publications"}
     # 列表页常把导航/页脚链接（定价、企业版等）也匹配进来：它们既无正文、详情页又多为 404。
     # 置 True 时丢弃正文为空的条目，避免把这类导航垃圾入库。默认 False，保持既有行为不变。
@@ -498,6 +498,7 @@ class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
     source_section = "News"
     article_url_patterns = ["anthropic.com/news/"]
     exclude_url_patterns = ["anthropic.com/news#"]
+    default_limit = 10
     default_fetch_detail = True
     source_owner = "anthropic"
     source_brand = "anthropic"
@@ -642,6 +643,7 @@ class ClaudeBlogWebFetcher(BaseWebPageListFetcher):
     source_section = "Blog"
     article_url_patterns = ["claude.com/blog/"]
     exclude_url_patterns = ["claude.com/blog/category/"]
+    default_limit = 10
     default_fetch_detail = True
     source_owner = "anthropic"
     source_brand = "claude"
@@ -666,7 +668,7 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
     category = "media"
     article_url_patterns = ["ithome.com/0/"]
     exclude_url_patterns = ["next.ithome.com", "m.ithome.com", "quan.ithome.com"]
-    default_limit = 20
+    default_limit = 18
     default_fetch_detail = True
     source_owner = "ithome"
     source_brand = "IT之家"
@@ -816,6 +818,7 @@ class QwenBlogWebFetcher(BaseWebPageListFetcher):
     source_section = "Blog"
     article_url_patterns = ["qwen.ai/blog", "docs.qwenlm.ai/"]
     exclude_url_patterns = ["qwen.ai/blog#"]
+    default_limit = 10
     default_fetch_detail = True
     source_owner = "alibaba"
     source_brand = "qwen"

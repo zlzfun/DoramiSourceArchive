@@ -27,9 +27,10 @@ class GenericRssFetcher(BaseFetcher):
     name = "通用 RSS/Atom"
     description = "抓取任意 RSS/Atom Feed，适合官方博客、产品更新、论文与社区资讯源。"
     icon = "🛰️"
+    default_limit = 12
     default_fetch_detail_if_missing = True
     default_detail_min_chars = 200
-    default_detail_max_chars = 12000
+    default_detail_max_chars = 8000
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
@@ -38,7 +39,7 @@ class GenericRssFetcher(BaseFetcher):
             {"field": "source_id", "label": "数据源 ID", "type": "text", "default": ""},
             {"field": "feed_name", "label": "数据源名称", "type": "text", "default": ""},
             {"field": "category", "label": "业务分类", "type": "text", "default": "official"},
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": 20},
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
             {"field": "fetch_detail_if_missing", "label": "短正文时抓取详情页", "type": "boolean", "default": cls.default_fetch_detail_if_missing},
             {"field": "detail_min_chars", "label": "触发详情抓取的正文长度", "type": "number", "default": cls.default_detail_min_chars},
             {"field": "detail_max_chars", "label": "详情页正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
@@ -160,7 +161,7 @@ class GenericRssFetcher(BaseFetcher):
         """
         return content_text
 
-    def _entry_limit(self, raw_limit: Any, default: int = 20) -> int:
+    def _entry_limit(self, raw_limit: Any, default: int = 12) -> int:
         if raw_limit in (None, ""):
             return default
         try:
@@ -214,7 +215,7 @@ class GenericRssFetcher(BaseFetcher):
         runtime_source_id = str(kwargs.get("source_id", "")).strip() or self.source_id
         feed_name = str(kwargs.get("feed_name", "")).strip()
         category = str(kwargs.get("category", "")).strip()
-        limit = self._entry_limit(kwargs.get("limit"), 20)
+        limit = self._entry_limit(kwargs.get("limit"), self.default_limit)
         fetch_detail_if_missing = self._bool_param(
             kwargs.get("fetch_detail_if_missing"),
             self.default_fetch_detail_if_missing,
@@ -307,7 +308,7 @@ class PresetRssFetcher(GenericRssFetcher):
     source_id = "unknown_source"
     feed_url = ""
     category = "official"
-    default_limit = 20
+    default_limit = 12
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
@@ -446,6 +447,7 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
     # 投票/讨论过的提交，把这个高噪声搜索源收敛成可用的开发者社区信号。
     base_feed_url = "https://hnrss.org/newest"
     search_query = "AI"
+    default_limit = 20
     default_min_points = 10
     default_min_comments = 0
     feed_url = "https://hnrss.org/newest?q=AI"
