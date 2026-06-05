@@ -12,9 +12,12 @@ downstream applications.
 Admin-managed subscription APIs require the existing admin session and are enabled
 only for `reader` and `all` runtime roles.
 
-The admin console exposes the same lifecycle in the reader-side `订阅分发` tab:
-create/edit a subscription, copy the generated pull URL, and rotate the
-consumer token. Plaintext tokens are still shown only on create or rotate.
+This `/api/subscriptions` lifecycle (create/edit a custom multi-source subscription,
+rotate its `dsub_` token) is an advanced/automation path with **no dedicated UI** — the
+standalone `订阅分发` tab was removed when the user layer became the 阅读器. Day-to-day
+users add/remove sources from the 阅读器 sidebar (see *Source Catalog and One-Click
+Subscribe*) and manage the aggregated `dfeed_` token in 接入集成. Plaintext tokens are
+still shown only on create or rotate.
 
 ```http
 GET    /api/subscriptions
@@ -77,9 +80,11 @@ it so they can unsubscribe. Legitimate unregistered import sources (e.g. `social
 are *not* on that list and remain subscribable. Each entry carries a friendly `name` and `description`/`icon`
 (enriched from the fetcher registry, falling back to `SOURCE_FRIENDLY_NAMES` then the raw
 id), primary `content_type`, a grouping `category`, article `count`, a `registered` flag,
-and a `subscribed` flag for the current user. The console "源目录" tab renders these as
-category-grouped tiles; each tile carries a one-click subscribe toggle and a "查看文章"
-jump into the knowledge ledger filtered by that source.
+and a `subscribed` flag for the current user. The 阅读器 left sidebar renders these as the
+subscription manager: subscribed sources pinned at the top (star to unsubscribe) and the
+rest under a collapsible "发现更多来源" group with a one-click subscribe `+`. Selecting a
+subscribed source reads its articles inline in the reader; the 我的订阅 entry aggregates
+all of them.
 
 One-click subscribe/unsubscribe hides all delivery complexity — the toggle just adds or
 removes a source from the user's subscriptions:
@@ -98,12 +103,12 @@ DELETE /api/reader/sources/{source_id}/subscribe
 - Both return `{subscribed, source_id, subscribed_source_ids}` so the catalog can
   reconcile every tile's `subscribed` flag from the authoritative union.
 
-The user-facing console is deliberately minimal: a one-click catalog plus a "我的订阅"
-list that only copies the pull URL, rotates/reveals the token, and unsubscribes. It does
-**not** expose a filter/delivery-policy editor — tuning a subscription's name, delivery
-limits, content scope, or building a custom multi-source subscription is an admin/automation
-concern handled directly through the `POST`/`PUT /api/subscriptions/{id}` lifecycle below,
-not through the reader UI.
+The user-facing surface is deliberately minimal: the 阅读器 sidebar handles subscribe /
+unsubscribe (one source per click), and 接入集成's 个人聚合接口 block copies the pull URL
+and rotates/reveals the `dfeed_` token. It does **not** expose a filter/delivery-policy
+editor — tuning a subscription's name, delivery limits, content scope, or building a custom
+multi-source subscription is an admin/automation concern handled directly through the
+`POST`/`PUT /api/subscriptions/{id}` lifecycle below, not through the reader UI.
 
 ### Retrieval is hard-scoped to subscriptions (user side)
 
@@ -115,15 +120,16 @@ role. A requested `source_id` is only honored if it falls inside that set; a `us
 subscriptions gets an empty result (`scoped: true`). The `admin` superuser (and the
 no-auth case) is **not** scoped — admin searches the whole archive. `GET
 /api/vector/subscribed-stats` exposes the `user`'s read-only coverage
-(`subscribed_source_count`, `total`, `vectorized`, `pending`) shown in 向量雷达.
+(`subscribed_source_count`, `total`, `vectorized`, `pending`); 向量雷达 itself is now
+admin-facing (a `user` searches through the 阅读器's keyword search instead).
 
 The same applies to MCP via token: `search_articles` / `browse_articles` accept a token
 (`dsub_` single subscription, or `dfeed_` the user's whole subscription union) that scopes
 results; the tokenless endpoint remains the global archive surface for trusted integrations.
 
-The knowledge ledger offers a read-only browse lens for users:
-`GET /api/articles?subscribed_scope=only|prioritize` (restrict to / rank first the user's
-subscribed sources; `off` is the default).
+The 阅读器 is the user's browse surface; its 我的订阅 view is backed by
+`GET /api/articles?subscribed_scope=only` (the same `subscribed_scope=only|prioritize`
+filter also powers admin's 知识台账 lens; `off` is the default).
 
 ### Vectorization is an admin (collector) concern, not user-facing
 

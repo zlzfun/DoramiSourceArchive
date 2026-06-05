@@ -100,9 +100,9 @@ Removing the class (not just hiding it) is the policy — see
 Registering the id in `DECOMMISSIONED_FETCHER_IDS` matters because the reader-side
 subscription catalog (`GET /api/reader/sources`) unions in every `source_id` that still
 has archived rows. A removed node's historical archive would otherwise leak back as a
-"fresh" subscribable source, leaving 订阅分发 out of sync with the slimmed 节点管理. The
-denylist keeps the two surfaces aligned; already-subscribed users still see the node so
-they can unsubscribe.
+"fresh" subscribable source, leaving the 阅读器's source list out of sync with the slimmed
+节点管理. The denylist keeps the two surfaces aligned; already-subscribed users still see
+the node so they can unsubscribe.
 
 ## Fix discipline
 

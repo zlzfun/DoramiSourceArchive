@@ -4,6 +4,7 @@ import { fetchMcpStatus } from '../api';
 import { MCP_URL } from '../config';
 import { copyText } from '../utils/clipboard';
 import { runAction } from '../utils/runAction';
+import FeedAccessSection from './FeedAccessSection';
 
 const TOOL_CARDS = [
   {
@@ -265,6 +266,9 @@ export default function MCPTab({ showToast, ragEnabled = false }) {
           </div>
         </div>
       </div>
+
+      {/* ── 个人聚合接口 ─────────────────────────────────────────── */}
+      <FeedAccessSection showToast={showToast} />
 
       {/* ── SKILL INSTALLATION ───────────────────────────────────── */}
       <div className="surface-card rounded-[14px] overflow-hidden">

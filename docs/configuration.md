@@ -32,7 +32,7 @@ role = all
 1. 外网采集归档层部署在可访问公开站点的个人电脑或外网服务器，配置 `role = collector`。
 2. 内网分发订阅层部署在公司内网服务器，配置 `role = reader`。
 3. 采集层通过 `/api/archive/export/articles.jsonl` 导出归档，分发层通过 `/api/archive/import/articles.jsonl` 导入归档。同步契约见 `docs/contracts/archive_sync.md`。
-4. 下游应用优先访问分发层的订阅接口 `/api/public/subscriptions/{subscription_id}/dify/articles`，订阅源在前端“订阅分发”页面创建和轮换令牌。
+4. 下游应用优先访问分发层的个人聚合接口 `/api/public/feed/articles`（`dfeed_` 令牌，覆盖用户全部订阅源）；订阅源在前端“阅读器”左栏增删，聚合令牌在“接入集成”页面生成/轮换。（按源隔离的 `/api/public/subscriptions/{id}/...` + `dsub_` 令牌仍可用，属高级/自动化路径。）
 
 最小示例：
 
@@ -106,8 +106,8 @@ secret = change-me-to-a-long-random-string
 
 账号角色会和 `[runtime] role` 取交集：
 
-- admin 账号：超级用户，可访问当前部署启用的采集归档层和订阅分发层；在 reader 面检索时不受个人订阅范围限制。
-- user 账号：受限读者，只能访问订阅分发层，包括内容阅览、订阅源、向量/RAG、Dify 和 MCP 管理。
+- admin 账号：超级用户，可访问当前部署启用的采集归档层和分发订阅层；在 reader 面检索时不受个人订阅范围限制。
+- user 账号：受限读者，登录后是一个“阅读器”（仅阅读已订阅来源，左栏增删订阅）外加“接入集成”（聚合接口令牌、MCP、Skill）；检索、阅读与下游分发均硬限定在个人订阅范围内。
 - 内容台账读取对两类账号开放；手工录入、编辑、删除、离线归档导入等归档写操作只对 admin 账号开放。
 - 当 `role = all` 时，同一个部署可通过不同账号隔离两层。
 - 当 `role = collector` 或 `role = reader` 时，部署角色仍是外层硬限制。

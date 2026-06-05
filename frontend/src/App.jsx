@@ -1,11 +1,11 @@
 import { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import {
   BarChart2,
+  BookOpen,
   Bot,
   CloudDownload,
   Database,
   History,
-  KeyRound,
   Loader2,
   LogOut,
   Plug2,
@@ -17,7 +17,7 @@ import FetchTab from './components/FetchTab';
 import VectorTab from './components/VectorTab';
 import FetchRunsTab from './components/FetchRunsTab';
 import MCPTab from './components/MCPTab';
-import SubscriptionTab from './components/SubscriptionTab';
+import ReaderTab from './components/ReaderTab';
 import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
 import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
@@ -26,12 +26,12 @@ import { LOGO_PATH } from './config';
 // ── 导航 / 历史锚点 ──
 // 把「标签 + 子视图」镜像到 URL hash（#/fetch/groups），跨页跳转的聚焦上下文存在 history.state 里。
 // 让浏览器「返回」能逐级退回：子视图切换 → 标签切换 → 跨页跳转的原位。
-const ALL_TABS = ['data', 'fetch', 'runs', 'subscriptions', 'vector', 'mcp'];
-const TAB_DEFAULT_VIEW = { fetch: 'catalog', runs: 'jobs', subscriptions: 'catalog' };
-const SUBVIEW_TABS = new Set(['fetch', 'runs', 'subscriptions']);
+const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'vector', 'mcp'];
+const TAB_DEFAULT_VIEW = { fetch: 'catalog', runs: 'jobs' };
+const SUBVIEW_TABS = new Set(['fetch', 'runs']);
 
 function defaultViews() {
-  return { fetch: 'catalog', runs: 'jobs', subscriptions: 'catalog' };
+  return { fetch: 'catalog', runs: 'jobs' };
 }
 
 function routeToHash(tab, views) {
@@ -68,7 +68,7 @@ export default function App() {
   const navRef = useRef(nav);
   const activeTab = nav.tab;
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [mountedTabs, setMountedTabs] = useState(() => new Set(['data', nav.tab]));
+  const [mountedTabs, setMountedTabs] = useState(() => new Set([nav.tab]));
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
   const [logoError, setLogoError] = useState(false);
   const [availableFetchers, setAvailableFetchers] = useState([]);
@@ -79,7 +79,6 @@ export default function App() {
   const [pendingDataFilter, setPendingDataFilter] = useState(null);
   const [pendingRunsFilter, setPendingRunsFilter] = useState(null);
   const [pendingFetchFocus, setPendingFetchFocus] = useState(null);
-  const [pendingSubscriptionFocus, setPendingSubscriptionFocus] = useState(null);
 
   // 跨页跳转的聚焦上下文（存在 history.state 里）回放时，重新点燃对应的一次性 pending*，让目标页重新定位/筛选。
   const applyFocus = useCallback((focus) => {
@@ -87,7 +86,6 @@ export default function App() {
     if (focus.kind === 'dataFilter') setPendingDataFilter(focus.payload);
     else if (focus.kind === 'runsFilter') setPendingRunsFilter(focus.payload);
     else if (focus.kind === 'fetchFocus') setPendingFetchFocus(focus.payload);
-    else if (focus.kind === 'subFocus') setPendingSubscriptionFocus(focus.payload);
   }, []);
 
   // 写入历史 + 应用路由的单一出口；replace 用于初始播种和角色重定向（不留多余历史条目）。
@@ -124,7 +122,6 @@ export default function App() {
 
   const setFetchView = useCallback((v) => goView('fetch', v), [goView]);
   const setRunsView = useCallback((v) => goView('runs', v), [goView]);
-  const setSubsView = useCallback((v) => goView('subscriptions', v), [goView]);
 
   const markArticlesDirty = useCallback(() => setArticlesDirty(true), []);
   const clearArticlesDirty = useCallback(() => setArticlesDirty(false), []);
@@ -145,17 +142,14 @@ export default function App() {
   }, [jumpWithFocus]);
   const clearPendingRunsFilter = useCallback(() => setPendingRunsFilter(null), []);
 
-  // 知识台账「数据来源」列点击 → 按运行时角色分流到节点管理（采集端）或订阅分发（阅读端），定位并展开对应来源。
+  // 知识台账「数据来源」列点击 → 定位并展开节点管理（采集端）里对应来源。
   const focusSourceNode = useCallback((sourceId) => {
     if (!sourceId) return;
     if (runtimeInfo.collector_enabled) {
       jumpWithFocus('fetch', 'catalog', { kind: 'fetchFocus', payload: { source_id: sourceId } });
-    } else if (runtimeInfo.reader_enabled) {
-      jumpWithFocus('subscriptions', 'catalog', { kind: 'subFocus', payload: { source_id: sourceId } });
     }
-  }, [runtimeInfo.collector_enabled, runtimeInfo.reader_enabled, jumpWithFocus]);
+  }, [runtimeInfo.collector_enabled, jumpWithFocus]);
   const clearPendingFetchFocus = useCallback(() => setPendingFetchFocus(null), []);
-  const clearPendingSubscriptionFocus = useCallback(() => setPendingSubscriptionFocus(null), []);
 
   // 历史锚点：初始播种 + 监听浏览器返回/前进。
   useEffect(() => {
@@ -248,18 +242,22 @@ export default function App() {
     }
   };
 
+  // 受限读者（user 账号）只看到「阅读器 + 订阅分发 + 接入集成」；admin（采集+阅读超级用户）保持现有全部 tab。
+  const readerOnly = runtimeInfo.account_role === 'user';
   const tabs = useMemo(() => [
-    { id: 'data', icon: Database, label: '知识台账' },
+    { id: 'reader', icon: BookOpen, label: '阅读器', onlyReader: true },
+    { id: 'data', icon: Database, label: '知识台账', hideForReader: true },
     { id: 'fetch', icon: CloudDownload, label: '节点管理', surface: 'collector' },
     { id: 'runs', icon: History, label: '任务与运行', surface: 'collector' },
-    { id: 'subscriptions', icon: KeyRound, label: '订阅分发', surface: 'reader' },
-    { id: 'vector', icon: BarChart2, label: '向量雷达', surface: 'reader', requiresRag: true },
+    { id: 'vector', icon: BarChart2, label: '向量雷达', surface: 'reader', requiresRag: true, hideForReader: true },
     { id: 'mcp', icon: Plug2, label: '接入集成', surface: 'reader' },
   ].filter(tab => {
+    if (tab.onlyReader && !readerOnly) return false;
+    if (tab.hideForReader && readerOnly) return false;
     if (tab.surface && !runtimeInfo[`${tab.surface}_enabled`]) return false;
     if (tab.requiresRag && !runtimeInfo.rag_enabled) return false;
     return true;
-  }), [runtimeInfo]);
+  }), [runtimeInfo, readerOnly]);
 
   const avatarInitials = useMemo(() => {
     const name = authState.user?.username?.trim();
@@ -376,7 +374,12 @@ export default function App() {
 
       <main className="mx-auto max-w-[1540px] px-5 py-9 sm:px-8 xl:px-10">
         <div className="page-shell">
-          {mountedTabs.has('data') && (
+          {readerOnly && mountedTabs.has('reader') && (
+            <div className="tab-panel" style={{ display: activeTab === 'reader' ? 'block' : 'none' }}>
+              <ReaderTab showToast={showToast} />
+            </div>
+          )}
+          {!readerOnly && mountedTabs.has('data') && (
             <div className="tab-panel" style={{ display: activeTab === 'data' ? 'block' : 'none' }}>
               <DataTab
                 availableFetchers={availableFetchers}
@@ -430,18 +433,6 @@ export default function App() {
           {mountedTabs.has('vector') && (
             <div className="tab-panel" style={{ display: activeTab === 'vector' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
               <VectorTab availableFetchers={availableFetchers} showToast={showToast} accountRole={runtimeInfo.account_role} />
-            </div>
-          )}
-          {mountedTabs.has('subscriptions') && (
-            <div className="tab-panel" style={{ display: activeTab === 'subscriptions' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
-              <SubscriptionTab
-                showToast={showToast}
-                view={nav.views.subscriptions}
-                setView={setSubsView}
-                onViewArticles={viewArticlesForSource}
-                pendingFocus={pendingSubscriptionFocus}
-                onPendingFocusApplied={clearPendingSubscriptionFocus}
-              />
             </div>
           )}
           {mountedTabs.has('mcp') && (

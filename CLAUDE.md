@@ -68,9 +68,9 @@ Three fetcher base classes cover the major source types:
 
 **Fetch run tracking**: Every fetcher execution (manual or scheduled) writes a `FetchRunRecord` and upserts a `SourceStateRecord`. The state record is the authoritative health/cursor store per source; `build_fetcher_health_from_state()` in `app.py` derives the `/api/source-health` response from it, falling back to aggregating raw `FetchRunRecord` rows when no state exists.
 
-**Runtime roles & dual-axis access control**: Surfaces gate on two independent axes (`src/api/app.py`): the deployment **runtime role** (`[runtime] role` = `collector` | `reader` | `all`) and the **login account role** (`admin` | `user`, from `[auth] admin_users` / `user_users`). `collector` surfaces (节点管理/任务运行, article CRUD, vectorization build/manage) require an `admin` account; `reader` surfaces (订阅分发/向量雷达/接入集成, subscription delivery, semantic search) are open to any logged-in account, except archive import, which is admin-only because it mutates the whole archive. So **`admin` is a superuser (collector + reader); a `user` account is a restricted reader**. `disabled_runtime_surface()` enforces this per request via `COLLECTOR_API_PREFIXES` / `READER_API_PREFIXES` (reader-prefix matches short-circuit, so `/api/vector/*` can split: `search`/`stats`/`subscribed-stats` → reader, everything else → collector). The frontend mirrors it through `runtime_capabilities()` → `collector_enabled` / `reader_enabled` / `account_role` per session.
+**Runtime roles & dual-axis access control**: Surfaces gate on two independent axes (`src/api/app.py`): the deployment **runtime role** (`[runtime] role` = `collector` | `reader` | `all`) and the **login account role** (`admin` | `user`, from `[auth] admin_users` / `user_users`). `collector` surfaces (节点管理/任务运行, article CRUD, vectorization build/manage) require an `admin` account; `reader` surfaces (subscription delivery, semantic search, MCP/接入集成 — surfaced to a `user` as the 阅读器 + 接入集成 tabs) are open to any logged-in account, except archive import, which is admin-only because it mutates the whole archive. So **`admin` is a superuser (collector + reader); a `user` account is a restricted reader**. `disabled_runtime_surface()` enforces this per request via `COLLECTOR_API_PREFIXES` / `READER_API_PREFIXES` (reader-prefix matches short-circuit, so `/api/vector/*` can split: `search`/`stats`/`subscribed-stats` → reader, everything else → collector). The frontend mirrors it through `runtime_capabilities()` → `collector_enabled` / `reader_enabled` / `account_role` per session.
 
-**Reader subscription & distribution layer**: Reader accounts build a personalized subscription scope over already-archived records (it never triggers fetching). One-click subscribe (`POST`/`DELETE /api/reader/sources/{source_id}/subscribe`) creates/removes a per-user, single-source `ReaderSubscriptionRecord` (owned via `owner_username`). "我订阅" = the union of `source_id`s across a user's active subscriptions; for a `user` account it hard-scopes that user's vector/RAG/MCP retrieval and drives the 知识台账 browse filter. Downstream consumers pull via tokens (HMAC-SHA256, stored only as hashes): a per-subscription token (`dsub_`) or the per-user **aggregated feed token** (`dfeed_`, one row per user in `ReaderFeedTokenRecord`) used at `GET /api/public/feed/articles[.md]` — a single endpoint covering all the user's subscribed sources with publish-time/source/type filters. Full contract in `docs/contracts/reader_subscription.md`.
+**Reader subscription & distribution layer**: Reader accounts build a personalized subscription scope over already-archived records (it never triggers fetching). One-click subscribe (`POST`/`DELETE /api/reader/sources/{source_id}/subscribe`) creates/removes a per-user, single-source `ReaderSubscriptionRecord` (owned via `owner_username`). "我订阅" = the union of `source_id`s across a user's active subscriptions; for a `user` account it hard-scopes that user's vector/RAG/MCP retrieval and is the scope of the 阅读器 (the user's primary surface — its 我的订阅 view aggregates subscribed sources via `GET /api/articles?subscribed_scope=only`). Downstream consumers pull via tokens (HMAC-SHA256, stored only as hashes): a per-subscription token (`dsub_`) or the per-user **aggregated feed token** (`dfeed_`, one row per user in `ReaderFeedTokenRecord`) used at `GET /api/public/feed/articles[.md]` — a single endpoint covering all the user's subscribed sources with publish-time/source/type filters. Full contract in `docs/contracts/reader_subscription.md`.
 
 **Vectorization is admin-managed**: The ChromaDB collection is shared/global, so building it is a collector/admin concern (one user vectorizing a source's article would affect every subscriber of that source). `user` accounts cannot trigger or select vectorization — they only consume via hard-scoped retrieval and a read-only coverage ratio (`GET /api/vector/subscribed-stats`). Admin manages it from 知识台账: per-article / batch / `all-pending` build, `reindex-all`, and an `auto_vectorize` toggle (`GET`/`POST /api/vector/auto-vectorize`, persisted in `AppSettingRecord`). The `admin` superuser's own retrieval is **not** subscription-scoped (it searches the whole archive); only the restricted `user` role is scoped.
 
@@ -108,21 +108,24 @@ src/
 
 frontend/src/
 ├── api.js                   # All fetch() calls to the backend (single source of truth)
-├── App.jsx                  # Root: login gate + tab routing; tabs filtered by runtime capabilities
+├── App.jsx                  # Root: login gate + tab routing; tabs filtered by runtime capabilities AND account_role (a `user` sees only 阅读器/接入集成; admin keeps the full collector+reader tab set)
 └── components/
     ├── LoginScreen.jsx      # Account login
-    ├── DataTab.jsx          # 知识台账: article list, filters, CRUD; admin-only vector build column + auto-vectorize toggle
+    ├── ReaderTab.jsx        # 阅读器: the user-only three-pane reader (subscribed-source list → article list → reading pane) over the user's subscribed sources; left sidebar manages subscriptions (star to unsubscribe + 发现更多来源 one-click subscribe); keyword search via GET /api/articles
+    ├── DataTab.jsx          # 知识台账: article list, filters, CRUD; admin-facing (hidden for `user`); admin-only vector build column + auto-vectorize toggle
     ├── FetchTab.jsx         # 节点管理: fetcher catalog/triggers + node-group management (collector)
     ├── FetchRunsTab.jsx     # 任务与运行: scheduled tasks + fetch-run history (collector)
-    ├── SubscriptionTab.jsx  # 订阅分发: source catalog one-click subscribe + aggregated feed token/docs (reader)
-    ├── VectorTab.jsx        # 向量雷达: semantic search + RAG context export, hard-scoped for user (reader)
-    ├── MCPTab.jsx           # 接入集成: MCP server status + integration snippets (reader; greys out RAG tools when rag_enabled is false)
+    ├── VectorTab.jsx        # 向量雷达: semantic search + RAG context export (reader surface, but admin-facing — hidden for `user`, who searches via the 阅读器)
+    ├── MCPTab.jsx           # 接入集成: MCP server status + integration snippets + 个人聚合接口 (the dfeed_ feed token, via FeedAccessSection) (reader; greys out RAG tools when rag_enabled is false)
+    ├── FeedAccessSection.jsx # 个人聚合接口 block embedded in 接入集成: aggregated feed endpoint + dfeed_ token get/rotate + curl docs
     ├── SettingsModal.jsx    # Account/runtime settings + admin maintenance actions
     ├── ManualAddModal.jsx   # Manual article entry form
     ├── ArticleDetailModal.jsx
     ├── DateRangePicker.jsx
     └── Toast.jsx
 ```
+
+**User layer is a reader, not a console**: A `user` (restricted reader) account logs into a single 阅读器 (`ReaderTab`) plus 接入集成 (`MCPTab`) — the standalone 订阅分发 tab was removed. The reader is scoped to the user's subscriptions: the default 我的订阅 view aggregates all subscribed sources via `GET /api/articles?subscribed_scope=only`, and the left sidebar is the subscription manager (star to unsubscribe, 发现更多来源 to one-click subscribe). So **subscription = the user's reading list (what the reader shows) + the downstream feed/MCP delivery scope**. The aggregated feed token (`dfeed_`) lives in 接入集成. Admin is unaffected (no reader; keeps 知识台账/向量雷达/etc.); the `/api/subscriptions` REST lifecycle remains as an advanced/automation path with no dedicated UI.
 
 ### Key Endpoints
 

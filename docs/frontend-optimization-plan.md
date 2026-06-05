@@ -4,6 +4,8 @@
 > 范围：`frontend/src`（约 9.8k 行：React 19 + Vite 8 + Tailwind v4 + lucide-react，无路由/状态库/组件库）
 > 目标：在**不改动后端契约、不改变现有视觉语言**的前提下，降低维护成本、消除重复与死代码、补强体验与健壮性。
 
+> ⚠️ 历史快照说明：user 层后续被重构为「阅读器」（`ReaderTab`），`SubscriptionTab.jsx` 已**整体删除**、聚合接口 UI 迁入「接入集成」（`FeedAccessSection`）。下文凡涉及 `SubscriptionTab` 的基线行数/拆分建议均为当时快照，不再适用。
+
 ---
 
 ## 0. 现状基线
