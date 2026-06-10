@@ -157,7 +157,10 @@ export default function DataTab({
     setSelectedArticles(new Set());
     try {
       const skip = (page - 1) * ARTICLE_PAGE_SIZE;
-      const data = await apiFetchArticles(filters, ARTICLE_PAGE_SIZE, skip, true, { signal: controller.signal });
+      // 知识台账只展示采集归档的原始内容；日报是 LLM 加工产物，从台账排除
+      // （阅读器订阅侧不带此参数，用户订阅日报后仍可正常查看）。
+      const queryFilters = { ...filters, exclude_source_ids: 'dorami_daily_brief' };
+      const data = await apiFetchArticles(queryFilters, ARTICLE_PAGE_SIZE, skip, true, { signal: controller.signal });
       const total = data.total || 0;
       const maxPage = Math.max(1, Math.ceil(total / ARTICLE_PAGE_SIZE));
       if (page > maxPage) {

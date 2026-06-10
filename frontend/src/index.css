@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
-/* ── 把 Tailwind 的 indigo / blue 色阶折叠进品牌 accent（方向 A 单宝石色）──
-   JSX 里散落的 text-indigo-*/text-blue-*/bg-indigo-* 等原子类不再各自为政，
-   全部映射到同一 indigo accent；emerald/amber/red/slate 等语义/中性色保持原样。 */
+/* 把 Tailwind 的 indigo 与 blue 色阶折叠进品牌 accent（方向 A 单宝石色）：
+   JSX 里散落的 indigo、blue 系原子类不再各自为政，全部映射到同一 indigo accent；
+   emerald、amber、red、slate 等语义与中性色保持原样。 */
 @theme {
   --color-indigo-50: #edecfb;
   --color-indigo-100: #dcdafa;
@@ -34,6 +34,12 @@
   --dorami-blue-2: #7b6cf0;                   /* gradient 同色系更亮端，within-hue 干净渐变 */
   --dorami-accent: #5b54e8;                   /* 原琥珀跳色折叠为同一 accent */
   --dorami-accent-ink: #4a43d4;               /* hover/按压更深端 */
+
+  /* 运行时由 JSX 内联 style 按宝石/分区/部门注入；此处给静态兜底，
+     供未注入处使用并消除编辑器对未定义自定义属性的误报。 */
+  --logo-accent: #64748b;
+  --section-accent: var(--dorami-blue);
+  --dept-accent: #5b54e8;
 
   /* 中性墨色阶 */
   --dorami-ink: #0b1220;                       /* 近黑标题 */
@@ -275,6 +281,27 @@ button:disabled {
 @keyframes modal-overlay-out {
   from { opacity: 1; }
   to { opacity: 0; }
+}
+
+/* Toast 底部居中浮层：从下方滑入/滑出（X 轴 -50% 居中烘焙进 transform，
+   避免被 tailwind 的 -translate-x 与 animation transform 互相覆盖）。
+   放底部以免遮挡顶部板块栏中的按钮。 */
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 18px) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+@keyframes toast-out {
+  from { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  to { opacity: 0; transform: translate(-50%, 14px) scale(0.97); }
+}
+
+.toast-pop {
+  animation: toast-in 300ms var(--motion-spring) both;
+}
+
+.toast-pop.is-leaving {
+  animation: toast-out 240ms var(--motion-ease) both;
 }
 
 @keyframes row-enter {

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import datetime
 import base64
 import hashlib
@@ -41,10 +42,22 @@ from models.content import BaseContent, SocialPostContent
 # 引入动态抓取器注册中心
 from fetchers.registry import fetcher_registry, DECOMMISSIONED_FETCHER_IDS
 from api.skill_router import router as skill_router
+from services import daily_brief as daily_brief_service
+from llm.client import LLMNotConfigured, LLMError, ping as llm_ping
 
 from starlette.responses import JSONResponse as StarletteJSONResponse
 from mcp_server import build_mcp_app
 from config import settings
+
+# 让应用自有的 dorami.* 日志输出到控制台（uvicorn 默认只配置自己的 logger，
+# 根 logger 为 WARNING，导致 logger.info 不可见）。独立挂 handler、不向上传播避免重复。
+_dorami_logger = logging.getLogger("dorami")
+if not _dorami_logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    _dorami_logger.addHandler(_handler)
+    _dorami_logger.setLevel(logging.INFO)
+    _dorami_logger.propagate = False
 
 
 settings.apply_process_environment()
@@ -128,6 +141,9 @@ COLLECTOR_API_PREFIXES = (
     "/api/collection-jobs",
     "/api/collection-job-runs",
     "/api/tasks",
+    # LLM 配置与日报生成/配置归管理员（collector）。
+    "/api/llm",
+    "/api/daily-brief",
     # 向量构建/管理归管理员（collector）；/api/vector/search|stats|subscribed-stats 例外归 reader。
     "/api/vectorize",
     "/api/vector",
@@ -490,6 +506,7 @@ def apply_article_query_filters(
         content_types: Optional[str] = None,
         source_id: Optional[str] = None,
         source_ids: Optional[str] = None,
+        exclude_source_ids: Optional[str] = None,
         job_id: Optional[int] = None,
         job_run_id: Optional[int] = None,
         fetch_run_id: Optional[int] = None,
@@ -513,6 +530,9 @@ def apply_article_query_filters(
     source_id_list = _split_csv(source_ids)
     if source_id_list:
         query = query.where(ArticleRecord.source_id.in_(source_id_list))
+    exclude_source_id_list = _split_csv(exclude_source_ids)
+    if exclude_source_id_list:
+        query = query.where(ArticleRecord.source_id.notin_(exclude_source_id_list))
 
     if job_id is not None:
         query = query.where(ArticleRecord.job_id == job_id)
@@ -1417,6 +1437,45 @@ def load_tasks_to_scheduler():
                         cron_expr,
                         [job.id, fetcher_id],
                     )
+        # 每日 AI 资讯日报（独立于采集任务，默认排在全量采集之后）
+        if daily_brief_service.daily_brief_enabled(session):
+            add_cron_job(
+                "daily_brief",
+                execute_daily_brief_job,
+                daily_brief_service.daily_brief_cron(session),
+                [],
+            )
+
+
+async def execute_daily_brief_job():
+    """定时回调：生成每日日报。失败仅记录，不影响调度引擎。"""
+    print("⏰ 定时任务触发: 正在生成每日 AI 资讯日报...")
+    try:
+        result = await daily_brief_service.generate_daily_brief(storage=db_sink, trigger="scheduled")
+        await auto_vectorize_after_fetch([result["article_id"]] if result.get("article_id") else [])
+        print(f"✅ 日报生成完成: {result.get('status')} ({result.get('article_id')})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"❌ 日报生成失败: {exc}")
+        try:
+            with Session(db_sink.engine) as session:
+                daily_brief_service.set_json_setting(session, daily_brief_service.KEY_LAST_RUN, {
+                    "status": "failed",
+                    "ended_at": datetime.datetime.now().isoformat(),
+                    "error_message": str(exc),
+                })
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def reload_daily_brief_schedule():
+    """日报配置变更后热生效：精准增删 daily_brief 这一个 job。"""
+    with Session(db_sink.engine) as session:
+        enabled = daily_brief_service.daily_brief_enabled(session)
+        cron_expr = daily_brief_service.daily_brief_cron(session)
+    if enabled:
+        add_cron_job("daily_brief", execute_daily_brief_job, cron_expr, [])
+    elif scheduler.get_job("daily_brief"):
+        scheduler.remove_job("daily_brief")
 
 
 # ==================== 1. 数据台账与 CRUD ====================
@@ -2037,6 +2096,18 @@ CONTENT_TYPE_CATEGORY = {
     "tech_conference": "技术会议",
     "social_post": "社交动态",
     "webhook_trigger": "工作流",
+    "daily_brief": "AI 日报",
+}
+
+# 日报作为「特殊源」的展示元数据。日报不是抓取器（不进 FetcherRegistry），
+# 在内容源目录里直接特判其名称/图标/简介，避免被采集触发流程误调。
+DAILY_BRIEF_SOURCE_ID = daily_brief_service.DAILY_BRIEF_SOURCE_ID
+DAILY_BRIEF_SOURCE_META = {
+    "name": "哆啦美·AI资讯日报",
+    "icon": "🤖",
+    "desc": "由后端大模型每日自动生成的 AI 资讯日报，汇总择优近期归档内容。",
+    "content_type": "daily_brief",
+    "category": "AI 日报",
 }
 
 
@@ -2085,10 +2156,12 @@ def get_reader_sources(request: Request):
         entry = by_source.get(source_id)
         if entry is None:
             meta = registry_meta.get(source_id, {})
+            if source_id == DAILY_BRIEF_SOURCE_ID:
+                meta = {**DAILY_BRIEF_SOURCE_META, **meta}
             resolved_type = content_type or meta.get("content_type") or ""
             entry = {
                 "source_id": source_id,
-                "name": _friendly_source_name(source_id, registry_meta),
+                "name": meta.get("name") or _friendly_source_name(source_id, registry_meta),
                 "description": meta.get("desc", ""),
                 "icon": meta.get("icon", ""),
                 "source_owner": meta.get("source_owner", ""),
@@ -2112,6 +2185,9 @@ def get_reader_sources(request: Request):
     # 1. 所有已注册抓取源（含历史产出为 0 者，使新源可被提前订阅）。
     for source_id in registry_meta:
         _ensure_entry(source_id)
+
+    # 1b. 日报特殊源：即使尚未生成过日报也预先出现，便于提前订阅。
+    _ensure_entry(DAILY_BRIEF_SOURCE_ID, "daily_brief")
 
     # 2. 叠加归档文章聚合（含未注册的导入源，如 social_post）；主 content_type 取计数最高者。
     #    已下线节点（删类后仍留有历史归档）不再回流目录，除非当前用户已订阅（保留退订入口），
@@ -2805,6 +2881,7 @@ def get_articles(
         request: Request,
         content_type: Optional[str] = None,
         source_id: Optional[str] = None,
+        exclude_source_ids: Optional[str] = None,  # CSV：从结果中排除的来源（如知识台账排除日报源）
         job_id: Optional[int] = None,
         job_run_id: Optional[int] = None,
         fetch_run_id: Optional[int] = None,
@@ -2831,6 +2908,7 @@ def get_articles(
         filter_kwargs = {
             "content_type": content_type,
             "source_id": source_id,
+            "exclude_source_ids": exclude_source_ids,
             "job_id": job_id,
             "job_run_id": job_run_id,
             "fetch_run_id": fetch_run_id,
@@ -3001,6 +3079,24 @@ async def create_article_manual(params: dict = Body(...)):
     return {"status": "success"}
 
 
+def _maybe_rewind_daily_brief_cursor(record) -> None:
+    """删除日报源记录时，若它正是最后推进游标的那一期，则把增量游标回退到
+    生成该期之前的值（记录里存了 cursor_before / cursor_after），使删除最新一期
+    后可直接重新生成。删除历史中间某期（cursor_after 不等于当前游标）则不动游标。
+    """
+    if getattr(record, "source_id", None) != DAILY_BRIEF_SOURCE_ID:
+        return
+    ext = _json_loads(record.extensions_json, {})
+    cursor_after = ext.get("cursor_after")
+    if not cursor_after:
+        return
+    with Session(db_sink.engine) as session:
+        if daily_brief_service.read_cursor(session) == cursor_after:
+            daily_brief_service.set_setting(
+                session, daily_brief_service.KEY_CURSOR, ext.get("cursor_before") or ""
+            )
+
+
 @app.delete("/api/articles/{article_id:path}")
 async def delete_article(article_id: str):
     record = await db_sink.get(article_id)
@@ -3008,6 +3104,7 @@ async def delete_article(article_id: str):
     if record.is_vectorized and vector_sink is not None:
         await vector_sink.delete(article_id)
     await db_sink.delete(article_id)
+    _maybe_rewind_daily_brief_cursor(record)
     return {"status": "success"}
 
 
@@ -3019,6 +3116,7 @@ async def batch_delete_articles(params: BatchOpParams):
             if record.is_vectorized and vector_sink is not None:
                 await vector_sink.delete(uid)
             await db_sink.delete(uid)
+            _maybe_rewind_daily_brief_cursor(record)
     return {"status": "success"}
 
 
@@ -3263,6 +3361,224 @@ def set_auto_vectorize_config(config: AutoVectorizeConfig):
         session.add(record)
         session.commit()
     return {"enabled": config.enabled}
+
+
+# ==================== LLM 配置 & 每日日报 ====================
+
+def _llm_api_key_preview(api_key: str) -> str:
+    key = (api_key or "").strip()
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return "*" * len(key)
+    return f"{key[:4]}…{key[-4:]}"
+
+
+def _llm_config_response() -> Dict[str, Any]:
+    with Session(db_sink.engine) as session:
+        cfg = daily_brief_service.resolve_llm_config(session)
+    return {
+        "base_url": cfg.base_url,
+        "model": cfg.model,
+        "temperature": cfg.temperature,
+        "max_tokens": cfg.max_tokens,
+        "configured": cfg.configured,
+        "api_key_set": bool(cfg.api_key),
+        "api_key_preview": _llm_api_key_preview(cfg.api_key),
+    }
+
+
+class LLMConfigUpdate(BaseModel):
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+
+
+@app.get("/api/llm/config")
+def get_llm_config():
+    """读取大模型有效配置（脱敏，绝不返回明文 api_key）。"""
+    return _llm_config_response()
+
+
+@app.post("/api/llm/config")
+def set_llm_config(payload: LLMConfigUpdate):
+    """更新大模型运行期配置（写入 app_settings 覆盖 ini 默认）。
+
+    api_key 留空（None 或空串）表示不修改；base_url/model 等同理按需覆盖。
+    """
+    with Session(db_sink.engine) as session:
+        if payload.base_url is not None:
+            daily_brief_service.set_setting(session, daily_brief_service.KEY_LLM_BASE_URL, payload.base_url.strip())
+        if payload.model is not None:
+            daily_brief_service.set_setting(session, daily_brief_service.KEY_LLM_MODEL, payload.model.strip())
+        if payload.api_key:  # 仅在非空时更新，避免清空已有机密
+            daily_brief_service.set_setting(session, daily_brief_service.KEY_LLM_API_KEY, payload.api_key.strip())
+        if payload.temperature is not None:
+            daily_brief_service.set_setting(session, daily_brief_service.KEY_LLM_TEMPERATURE, str(payload.temperature))
+        if payload.max_tokens is not None:
+            daily_brief_service.set_setting(session, daily_brief_service.KEY_LLM_MAX_TOKENS, str(payload.max_tokens))
+    return _llm_config_response()
+
+
+@app.post("/api/llm/config/test")
+async def test_llm_config():
+    """用当前有效配置测试连接。"""
+    with Session(db_sink.engine) as session:
+        cfg = daily_brief_service.resolve_llm_config(session)
+    if not cfg.configured:
+        raise HTTPException(status_code=400, detail="LLM 未配置（需 base_url / api_key / model）")
+    try:
+        return await llm_ping(cfg)
+    except LLMNotConfigured as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=f"连接失败: {exc}")
+
+
+class DailyBriefConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    cron: Optional[str] = None
+    cursor: Optional[str] = None  # 手动设置/重置增量游标；空串=重置（下次用近 1 天兜底窗口）
+    top_n: Optional[int] = None   # 日报精选条数
+
+
+class DailyBriefGenerateParams(BaseModel):
+    report_date: Optional[str] = None
+    dry_run: bool = False
+    top_n: Optional[int] = None   # 本次生成的精选条数（不传则用配置值）
+
+
+def _daily_brief_config_response() -> Dict[str, Any]:
+    with Session(db_sink.engine) as session:
+        return {
+            "enabled": daily_brief_service.daily_brief_enabled(session),
+            "cron": daily_brief_service.daily_brief_cron(session),
+            "cursor": daily_brief_service.read_cursor(session),
+            "top_n": daily_brief_service.daily_brief_top_n(session),
+            "last_run": daily_brief_service.get_json_setting(session, daily_brief_service.KEY_LAST_RUN, None),
+        }
+
+
+@app.get("/api/daily-brief/config")
+def get_daily_brief_config():
+    return _daily_brief_config_response()
+
+
+@app.post("/api/daily-brief/config")
+def set_daily_brief_config(payload: DailyBriefConfigUpdate):
+    if payload.cron is not None:
+        cron_expr = payload.cron.strip()
+        if len(cron_expr.split()) != 5:
+            raise HTTPException(status_code=400, detail="cron 表达式必须是 5 段，例如：30 8 * * *")
+    if payload.top_n is not None and not (
+        daily_brief_service.TOP_N_MIN <= payload.top_n <= daily_brief_service.TOP_N_MAX
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"精选条数需在 {daily_brief_service.TOP_N_MIN}–{daily_brief_service.TOP_N_MAX} 之间",
+        )
+    with Session(db_sink.engine) as session:
+        if payload.enabled is not None:
+            daily_brief_service.set_setting(
+                session, daily_brief_service.KEY_ENABLED, "true" if payload.enabled else "false"
+            )
+        if payload.cron is not None:
+            daily_brief_service.set_setting(session, daily_brief_service.KEY_CRON, payload.cron.strip())
+        if payload.cursor is not None:
+            daily_brief_service.set_setting(session, daily_brief_service.KEY_CURSOR, payload.cursor.strip())
+        if payload.top_n is not None:
+            daily_brief_service.set_setting(session, daily_brief_service.KEY_TOP_N, str(payload.top_n))
+    # 仅在 collector 运行角色下有调度引擎；reader 角色不接日报 cron。
+    if runtime_collector_enabled():
+        reload_daily_brief_schedule()
+    return _daily_brief_config_response()
+
+
+@app.post("/api/daily-brief/generate")
+async def generate_daily_brief_endpoint(payload: Optional[DailyBriefGenerateParams] = None):
+    """手动触发日报生成（同步等待，耗时数十秒到数分钟）。"""
+    params = payload or DailyBriefGenerateParams()
+    if params.top_n is not None and not (
+        daily_brief_service.TOP_N_MIN <= params.top_n <= daily_brief_service.TOP_N_MAX
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"精选条数需在 {daily_brief_service.TOP_N_MIN}–{daily_brief_service.TOP_N_MAX} 之间",
+        )
+    try:
+        result = await daily_brief_service.generate_daily_brief(
+            storage=db_sink,
+            report_date=params.report_date,
+            trigger="manual",
+            dry_run=params.dry_run,
+            top_n=params.top_n,
+        )
+    except LLMNotConfigured as exc:
+        daily_brief_service.set_progress("error", str(exc))
+        raise HTTPException(status_code=400, detail=str(exc))
+    except LLMError as exc:
+        daily_brief_service.set_progress("error", f"生成失败: {exc}")
+        raise HTTPException(status_code=502, detail=f"日报生成失败: {exc}")
+    except Exception as exc:  # noqa: BLE001 兜底：让进度反映失败，再抛出
+        daily_brief_service.set_progress("error", f"生成失败: {exc}")
+        raise
+    if not params.dry_run and result.get("article_id"):
+        await auto_vectorize_after_fetch([result["article_id"]])
+    return result
+
+
+@app.get("/api/daily-brief/runs")
+def get_daily_brief_runs():
+    with Session(db_sink.engine) as session:
+        last_run = daily_brief_service.get_json_setting(session, daily_brief_service.KEY_LAST_RUN, None)
+        rows = session.exec(
+            select(ArticleRecord)
+            .where(ArticleRecord.source_id == DAILY_BRIEF_SOURCE_ID)
+            .order_by(ArticleRecord.publish_date.desc())
+            .limit(30)
+        ).all()
+    history = [
+        {
+            "id": row.id,
+            "report_date": row.publish_date,
+            "title": row.title,
+            "fetched_date": row.fetched_date,
+        }
+        for row in rows
+    ]
+    return {"last_run": last_run, "history": history}
+
+
+@app.get("/api/daily-brief/progress")
+def get_daily_brief_progress():
+    """当前日报生成的实时阶段进度（内存态，供前端轮询）。"""
+    return daily_brief_service.get_progress()
+
+
+@app.get("/api/daily-brief/pipeline")
+def get_daily_brief_pipeline():
+    """日报生成管线的真实提示词与关键参数，供前端流程图展示（与代码同步，不在前端硬抄）。"""
+    prompts = daily_brief_service.prompts
+    with Session(db_sink.engine) as session:
+        cfg = daily_brief_service.resolve_llm_config(session)
+        top_n = daily_brief_service.daily_brief_top_n(session)
+    return {
+        "model": cfg.model,
+        "configured": cfg.configured,
+        "params": {
+            "top_n": top_n,
+            "max_total": 120,          # collect_candidates 默认总量上限
+            "per_source_cap": 15,      # collect_candidates 每来源候选上限
+            "map_concurrency": cfg.map_concurrency,
+            "map_max_body_chars": 6000,  # MAP 单篇正文截断
+            "recent_brief_days": 3,    # REDUCE 注入的近期日报天数
+        },
+        "allowed_classifications": prompts.ALLOWED_CLASSIFICATIONS,
+        "map_system_prompt": prompts.MAP_SYSTEM_PROMPT,
+        "reduce_system_prompt": prompts.REDUCE_SYSTEM_PROMPT,
+    }
 
 
 @app.post("/api/vectorize/{article_id:path}")

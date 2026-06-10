@@ -127,6 +127,28 @@ class XiaolubanConfig:
 
 
 @dataclass(frozen=True)
+class LLMConfig:
+    """大模型（OpenAI 兼容协议）配置。
+
+    统一走 OpenAI 兼容的 /chat/completions 接口（base_url + api_key + model），
+    覆盖 OpenAI/DeepSeek/Kimi/智谱/通义/火山方舟/OpenRouter/Ollama/vLLM 等。
+    api_key 为机密，优先从 ini/环境变量读取，运行期 KV 覆盖见 services/daily_brief.py。
+    """
+
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    timeout_seconds: int = 60
+    temperature: float = 0.3
+    max_tokens: int = 4096
+    map_concurrency: int = 4
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.base_url and self.api_key and self.model)
+
+
+@dataclass(frozen=True)
 class ImageHostConfig:
     upload_url_template: str = (
         "http://3ms.huawei.com/hi/restnew/editor/attach/upload"
@@ -150,6 +172,7 @@ class AppConfig:
     wechat: WechatConfig
     xiaoluban: XiaolubanConfig
     image_host: ImageHostConfig
+    llm: LLMConfig
 
     def apply_process_environment(self) -> None:
         if self.network.disable_ca_bundle:
@@ -288,6 +311,15 @@ def load_config() -> AppConfig:
             ),
             secret_key=parser.get("image_host", "secret_key", fallback=""),
             timeout_seconds=parser.getint("image_host", "timeout_seconds", fallback=15),
+        ),
+        llm=LLMConfig(
+            base_url=(os.getenv("DORAMI_LLM_BASE_URL") or parser.get("llm", "base_url", fallback="")).strip(),
+            api_key=(os.getenv("DORAMI_LLM_API_KEY") or parser.get("llm", "api_key", fallback="")).strip(),
+            model=(os.getenv("DORAMI_LLM_MODEL") or parser.get("llm", "model", fallback="")).strip(),
+            timeout_seconds=parser.getint("llm", "timeout_seconds", fallback=60),
+            temperature=parser.getfloat("llm", "temperature", fallback=0.3),
+            max_tokens=parser.getint("llm", "max_tokens", fallback=4096),
+            map_concurrency=parser.getint("llm", "map_concurrency", fallback=4),
         ),
     )
 

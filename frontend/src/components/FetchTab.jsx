@@ -801,7 +801,11 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       <div className="page-header flex-col xl:flex-row">
         <div className="page-heading">
           <h2 className="page-title">节点管理</h2>
-          <p className="page-subtitle mt-3 max-w-4xl">按主体聚合内置抓取节点，一站式查看各来源的官方源、运行健康与最新产出，并维护可复用的采集范围。</p>
+          <p className="page-subtitle mt-3 max-w-4xl">
+            {view === 'groups'
+              ? '维护可复用的采集范围：把多个节点与参数模板打包，供采集任务复用。'
+              : '按主体聚合内置抓取节点，查看各来源的官方源、运行健康与最新产出。'}
+          </p>
         </div>
         <div className="page-actions">
           <div className="segmented-control">

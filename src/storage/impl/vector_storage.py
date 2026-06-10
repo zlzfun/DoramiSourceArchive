@@ -90,6 +90,7 @@ SOURCE_FRIENDLY_NAMES: Dict[str, str] = {
     "web_claude_blog":           "Claude Blog (Anthropic)",
     "web_mistral_news":          "Mistral AI News",
     "web_runway_news":           "Runway ML News",
+    "dorami_daily_brief":        "哆啦美·AI资讯日报",
 }
 
 

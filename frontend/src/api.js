@@ -419,6 +419,68 @@ export async function setAutoVectorize(enabled) {
   return res.json();
 }
 
+// ==================== 大模型配置 & 每日日报 ====================
+
+export async function getLLMConfig() {
+  const res = await apiFetch(`${API_BASE_URL}/llm/config`);
+  if (!res.ok) await handleApiError(res, '获取大模型配置失败');
+  return res.json();
+}
+
+export async function saveLLMConfig(payload) {
+  const res = await apiFetch(`${API_BASE_URL}/llm/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await handleApiError(res, '保存大模型配置失败');
+  return res.json();
+}
+
+export async function testLLMConfig() {
+  const res = await apiFetch(`${API_BASE_URL}/llm/config/test`, { method: 'POST' });
+  if (!res.ok) await handleApiError(res, '大模型连接测试失败');
+  return res.json();
+}
+
+export async function getDailyBriefConfig() {
+  const res = await apiFetch(`${API_BASE_URL}/daily-brief/config`);
+  if (!res.ok) await handleApiError(res, '获取日报配置失败');
+  return res.json();
+}
+
+export async function saveDailyBriefConfig(payload) {
+  const res = await apiFetch(`${API_BASE_URL}/daily-brief/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await handleApiError(res, '保存日报配置失败');
+  return res.json();
+}
+
+export async function getDailyBriefPipeline() {
+  const res = await apiFetch(`${API_BASE_URL}/daily-brief/pipeline`);
+  if (!res.ok) await handleApiError(res, '获取日报生成管线失败');
+  return res.json();
+}
+
+export async function getDailyBriefProgress() {
+  const res = await apiFetch(`${API_BASE_URL}/daily-brief/progress`);
+  if (!res.ok) await handleApiError(res, '获取日报进度失败');
+  return res.json();
+}
+
+export async function generateDailyBrief(payload = {}) {
+  const res = await apiFetch(`${API_BASE_URL}/daily-brief/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await handleApiError(res, '生成日报失败');
+  return res.json();
+}
+
 export async function exportArchiveArticles(filters = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([k, v]) => {

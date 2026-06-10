@@ -270,6 +270,27 @@ class WechatArticleContent(BaseContent):
     media_type: str = field(default="text/html", metadata={"description": "内容类型 (如图文、视频、纯文本)"})
 
 
+@dataclass
+class DailyBriefContent(BaseContent):
+    """每日 AI 资讯日报内容类，由后端 LLM 编排生成。
+
+    content 字段存日报 Markdown 全文；扩展字段保留生成过程的结构化元数据，
+    便于追溯纳入范围与去重游标。写一条 ArticleRecord 即自动成为可订阅源
+    （source_id="dorami_daily_brief"）。
+    """
+    content_type: ClassVar[str] = "daily_brief"
+
+    report_date: str = field(default="", metadata={"description": "报告日期 YYYY-MM-DD"})
+    articles_count: int = field(default=0, metadata={"description": "最终纳入日报的文章数"})
+    categories_count: int = field(default=0, metadata={"description": "覆盖的分类数"})
+    included_article_ids: List[str] = field(default_factory=list, metadata={"description": "纳入的 article id 列表"})
+    items: List[Dict[str, Any]] = field(default_factory=list, metadata={"description": "各条目结构化概括 (Dify schema + score)"})
+    cursor_before: str = field(default="", metadata={"description": "本次纳入前的 fetched_date 游标"})
+    cursor_after: str = field(default="", metadata={"description": "本次推进后的 fetched_date 游标"})
+    llm_model: str = field(default="", metadata={"description": "生成所用模型"})
+    generated_at: str = field(default="", metadata={"description": "生成完成时间 (ISO)"})
+
+
 # ==========================================
 # 2. 外部工具方法 (序列化)
 # ==========================================

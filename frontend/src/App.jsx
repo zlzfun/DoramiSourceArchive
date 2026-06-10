@@ -172,9 +172,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const toastTimerRef = useRef(null);
   const showToast = useCallback((message, type = 'info') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ show: true, message: typeof message === 'string' ? message : JSON.stringify(message), type });
-    setTimeout(() => setToast({ show: false, message: '', type: 'info' }), 3000);
+    // 仅翻转 show=false，保留 message/type 以便离场动画期间内容不闪空。
+    toastTimerRef.current = setTimeout(() => setToast(t => ({ ...t, show: false })), 3000);
   }, []);
 
   const loadRuntimeAndFetchers = useCallback(async () => {
@@ -437,7 +440,7 @@ export default function App() {
           )}
           {mountedTabs.has('mcp') && (
             <div className="tab-panel" style={{ display: activeTab === 'mcp' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
-              <MCPTab showToast={showToast} ragEnabled={runtimeInfo.rag_enabled} />
+              <MCPTab showToast={showToast} ragEnabled={runtimeInfo.rag_enabled} collectorEnabled={runtimeInfo.collector_enabled} isAdmin={runtimeInfo.account_role === 'admin'} />
             </div>
           )}
         </div>

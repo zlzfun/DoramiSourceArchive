@@ -474,7 +474,11 @@ export default function FetchRunsTab({
       <div className="page-header flex-col xl:flex-row">
         <div className="page-heading">
           <h2 className="page-title">任务与运行</h2>
-          <p className="page-subtitle mt-3 max-w-3xl">配置采集任务，统一查看手动、定时和旧版运行记录，让节点编排、调度与追踪处在同一个工作台。</p>
+          <p className="page-subtitle mt-3 max-w-3xl">
+            {view === 'history'
+              ? '统一查看手动、定时和旧版抓取的运行记录，追踪每次采集的结果。'
+              : '配置并调度采集任务，编排节点的定时与批量运行。'}
+          </p>
         </div>
         <div className="page-actions">
           <div className="segmented-control">

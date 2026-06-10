@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
-import { Plug2, Copy, Check, Bot, Download, Terminal, Globe } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Plug2, Copy, Check, Bot, Download, Terminal, Globe, Newspaper, ChevronDown, ChevronRight } from 'lucide-react';
 import { fetchMcpStatus } from '../api';
 import { MCP_URL } from '../config';
 import { copyText } from '../utils/clipboard';
 import { runAction } from '../utils/runAction';
 import FeedAccessSection from './FeedAccessSection';
+import DailyBriefPanel from './DailyBriefPanel';
 
 const TOOL_CARDS = [
   {
@@ -39,7 +40,19 @@ const TOOL_CARDS = [
 const LOCAL_TOOLS = ['Claude Code', 'Cursor', 'Codex', 'OpenCode'];
 const ONLINE_TOOLS = ['Claude.ai Projects', 'Coze'];
 
-export default function MCPTab({ showToast, ragEnabled = false }) {
+export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled = false, isAdmin = false }) {
+  const canManage = collectorEnabled && isAdmin;        // 管理员才有「日报生成」管理页
+  const [sub, setSub] = useState(canManage ? 'brief' : 'access');  // 默认聚焦「日报生成」；读者无此页则落到 access
+  const subTouched = useRef(false);                     // 用户是否手动切过页（避免覆盖其选择）
+  const goSub = useCallback((next) => { subTouched.current = true; setSub(next); }, []);
+
+  // runtime 能力是异步加载的，初始渲染时 canManage 可能尚为 false（account_role 未就绪）。
+  // 待其就绪后，若用户未手动切页，则把默认页校正为「日报生成」（管理员）/「Agent 接入」（读者）。
+  useEffect(() => {
+    if (!subTouched.current) setSub(canManage ? 'brief' : 'access');
+  }, [canManage]);
+  const [toolsOpen, setToolsOpen] = useState(false);    // MCP 可用工具列表折叠
+  const [skillOpen, setSkillOpen] = useState(false);    // Skill 安装指南折叠
   const [status, setStatus] = useState(null);
   const [copied, setCopied] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
@@ -93,12 +106,35 @@ export default function MCPTab({ showToast, ragEnabled = false }) {
 
   return (
     <div className="space-y-6">
-      <div className="page-header">
+      <div className="page-header flex-col xl:flex-row">
         <div className="page-heading">
           <h2 className="page-title">接入集成</h2>
-          <p className="page-subtitle mt-3 max-w-3xl">通过 MCP 与 Skill 把归档中枢接入本地工具和在线 Agent 平台，让检索、浏览与日报生成成为可复用能力。</p>
+          <p className="page-subtitle mt-3 max-w-3xl">
+            {sub === 'brief'
+              ? '由后端大模型汇总择优近期归档内容，生成可订阅的 AI 资讯日报。'
+              : '通过 MCP / Skill 把归档中枢接入本地工具与在线 Agent 平台。'}
+          </p>
         </div>
+        {canManage && (
+          <div className="page-actions">
+            <div className="segmented-control">
+              <button onClick={() => goSub('brief')} className={`segmented-option ${sub === 'brief' ? 'segmented-option-active' : ''}`}><Newspaper /> 日报生成</button>
+              <button onClick={() => goSub('access')} className={`segmented-option ${sub === 'access' ? 'segmented-option-active' : ''}`}><Plug2 /> Agent 接入</button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* ══ 日报生成页（仅管理员） ══════════════════════════════════ */}
+      {canManage && sub === 'brief' && (
+        <div className="animate-in fade-in">
+          <DailyBriefPanel showToast={showToast} collectorEnabled={collectorEnabled} isAdmin={isAdmin} />
+        </div>
+      )}
+
+      {/* ══ Agent 接入页 ═══════════════════════════════════════════ */}
+      {sub === 'access' && (
+        <div className="space-y-6 animate-in fade-in">
       {/* ── HERO ─────────────────────────────────────────────────── */}
       <div className="integration-hero relative overflow-hidden rounded-[14px] p-7 shadow-lg shadow-blue-500/10">
         {/* Dot-grid texture */}
@@ -238,31 +274,38 @@ export default function MCPTab({ showToast, ragEnabled = false }) {
             </p>
           </div>
 
-          {/* Tools */}
+          {/* Tools（默认折叠：参考信息，按需展开） */}
           <div>
-            <p className="form-label">
-              可用工具 <span className="font-normal normal-case text-slate-400">({TOOL_CARDS.length} 个)</span>
-            </p>
-            <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 overflow-hidden">
-              {TOOL_CARDS.map(tool => {
-                const disabled = tool.requiresRag && !ragEnabled;
-                return (
-                  <div key={tool.name} className={`flex gap-4 px-4 py-3 transition-colors ${disabled ? 'bg-slate-100/60 opacity-60' : 'bg-slate-50 hover:bg-slate-100/80'}`}>
-                    <div className={`shrink-0 mt-[3px] w-1.5 h-1.5 rounded-full ${disabled ? 'bg-slate-300' : 'bg-sky-400'}`} />
-                    <div className="min-w-0">
-                      <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
-                        <code className={`text-xs font-bold ${disabled ? 'text-slate-500 line-through' : 'text-sky-700'}`}>{tool.name}</code>
-                        <span className="tiny-meta font-mono">{tool.params}</span>
-                        {disabled && (
-                          <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">需启用 RAG</span>
-                        )}
+            <button
+              type="button"
+              onClick={() => setToolsOpen(o => !o)}
+              className="flex w-full items-center gap-2 text-sm font-bold text-slate-600 hover:text-sky-700"
+            >
+              {toolsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              可用工具 <span className="font-normal text-slate-400">({TOOL_CARDS.length} 个)</span>
+            </button>
+            {toolsOpen && (
+              <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-100 overflow-hidden">
+                {TOOL_CARDS.map(tool => {
+                  const disabled = tool.requiresRag && !ragEnabled;
+                  return (
+                    <div key={tool.name} className={`flex gap-4 px-4 py-3 transition-colors ${disabled ? 'bg-slate-100/60 opacity-60' : 'bg-slate-50 hover:bg-slate-100/80'}`}>
+                      <div className={`shrink-0 mt-[3px] w-1.5 h-1.5 rounded-full ${disabled ? 'bg-slate-300' : 'bg-sky-400'}`} />
+                      <div className="min-w-0">
+                        <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
+                          <code className={`text-xs font-bold ${disabled ? 'text-slate-500 line-through' : 'text-sky-700'}`}>{tool.name}</code>
+                          <span className="tiny-meta font-mono">{tool.params}</span>
+                          {disabled && (
+                            <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">需启用 RAG</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-500 leading-relaxed">{tool.desc}</p>
                       </div>
-                      <p className="text-xs text-slate-500 leading-relaxed">{tool.desc}</p>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -270,20 +313,28 @@ export default function MCPTab({ showToast, ragEnabled = false }) {
       {/* ── 个人聚合接口 ─────────────────────────────────────────── */}
       <FeedAccessSection showToast={showToast} />
 
-      {/* ── SKILL INSTALLATION ───────────────────────────────────── */}
+      {/* ── SKILL INSTALLATION（默认折叠） ───────────────────────── */}
       <div className="surface-card rounded-[14px] overflow-hidden">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
-          <div className="w-1 h-5 rounded-full bg-violet-500" />
-          <h3 className="section-title">Skill 安装指南</h3>
+        <div className={`flex items-center gap-3 px-6 py-4 ${skillOpen ? 'border-b border-slate-100' : ''}`}>
+          <button
+            type="button"
+            onClick={() => setSkillOpen(o => !o)}
+            className="flex min-w-0 flex-1 items-center gap-3 text-left"
+          >
+            <div className="w-1 h-5 rounded-full bg-violet-500" />
+            <h3 className="section-title">Skill 安装指南</h3>
+            <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${skillOpen ? 'rotate-180' : ''}`} />
+          </button>
           <button
             onClick={() => handleDownload('/api/skill/daily-brief', 'dorami-daily-brief.zip')}
-            className="action-button action-button-secondary ml-auto min-h-[34px] px-3 text-xs text-violet-700"
+            className="action-button action-button-secondary shrink-0 min-h-[34px] px-3 text-xs text-violet-700"
           >
             <Download className="w-3.5 h-3.5" />
             下载 Skill 包
           </button>
         </div>
 
+        {skillOpen && (
         <div className="p-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Local tools */}
@@ -367,7 +418,13 @@ export default function MCPTab({ showToast, ragEnabled = false }) {
             </div>
           </div>
         </div>
+        )}
       </div>
+
+      {/* 非管理员（读者）：仅给一个日报订阅指引（无管理控件） */}
+      {!canManage && <DailyBriefPanel showToast={showToast} collectorEnabled={collectorEnabled} isAdmin={isAdmin} />}
+        </div>
+      )}
     </div>
   );
 }
