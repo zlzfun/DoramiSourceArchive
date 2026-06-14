@@ -10,7 +10,7 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 from fetchers.base import BaseFetcher
-from fetchers.impl.article_extractor import extract_article_detail
+from fetchers.impl.article_extractor import extract_article_detail, node_to_markdown
 from fetchers.impl.webpage_fetcher import BaseWebPageListFetcher
 from models.content import BaseContent, WebPageArticleContent
 
@@ -167,8 +167,12 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
             if not release_title:
                 continue
 
-            body = self._clean_text(item.get_text(" ", strip=True))
-            # 去掉正文开头重复的日期与标题前缀
+            # 移除条目开头重复的日期与标题节点，剩余正文用 node_to_markdown
+            # 保留 bullet/段落换行（避免整条发布被压成一段）。
+            if time_node:
+                time_node.decompose()
+            heading.decompose()
+            body = node_to_markdown(item, base_url)
             if raw_date and body.startswith(raw_date):
                 body = body[len(raw_date):].strip()
             if release_title and body.startswith(release_title):
@@ -1298,7 +1302,7 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
 
         return ""
 
-    def _extract_qbitai_detail(self, html_text: str, max_chars: int) -> Dict[str, str]:
+    def _extract_qbitai_detail(self, html_text: str, max_chars: int, base_url: str = "") -> Dict[str, str]:
         """限定到量子位文章正文容器 ``div.content > div.article``。
 
         通用提取器会落到 ``article``/``main`` 选择器，把同级的 logo 图(``.wx_img`` 里有一段
@@ -1311,14 +1315,12 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
         if not body:
             return {"title": title, "text": "", "method": ""}
 
-        for selector in ["script", "style", "noscript", "button", ".wx_img", ".share_pc", ".tags", ".person_box", ".xiangguan"]:
+        for selector in ["script", "style", "noscript", "button", ".wx_img", ".share_pc", ".tags", ".person_box", ".xiangguan", "img.avatar", ".avatar"]:
             for node in body.select(selector):
                 node.decompose()
 
-        text = "\n\n".join(
-            self._clean_text(node.get_text(" ", strip=True))
-            for node in body.find_all(["p", "blockquote", "li", "h2", "h3"], recursive=True)
-        )
+        # 用 node_to_markdown 保留正文图片(`![](url)`)与段落/列表换行
+        text = node_to_markdown(body, base_url)
         if not text:
             text = self._clean_text(body.get_text(" ", strip=True))
         return {"title": title, "text": text[:max_chars], "method": "qbitai_article_body"}
@@ -1327,7 +1329,7 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
         response = await self._safe_get(client, url)
         if not response:
             return {"title": "", "text": "", "method": "", "url": ""}
-        detail = self._extract_qbitai_detail(response.text, max_chars)
+        detail = self._extract_qbitai_detail(response.text, max_chars, str(response.url))
         if detail["text"]:
             return {**detail, "url": str(response.url)}
         return await super()._detail_for_url(client, url, max_chars)

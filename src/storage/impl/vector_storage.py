@@ -32,6 +32,8 @@ _STANDALONE_URL_RE = re.compile(r'^https?://\S+\s*$', re.MULTILINE)
 _ARXIV_PREFIX_RE = re.compile(r'arXiv:\S+\s+Announce Type:\s+\S+\s*\n?', re.IGNORECASE)
 # HTML 标签（仅做基础剥离，不引入 BeautifulSoup 依赖）
 _HTML_TAG_RE = re.compile(r'<[^>]+>')
+# markdown 图片语法 ![alt](url)
+_MD_IMAGE_RE = re.compile(r'!\[[^\]]*\]\([^)]+\)')
 # 连续三个以上换行收缩为两个
 _MULTI_NEWLINE_RE = re.compile(r'\n{3,}')
 # 连续两个以上空格收缩为一个
@@ -43,6 +45,7 @@ def clean_text(text: str) -> str:
     T8: 对入库正文进行标准化清洗，剔除噪声后再切片/向量化。
 
     处理顺序：
+    0. markdown 图片语法剥离（![alt](url)，避免图片 URL 污染 embedding）
     1. HTML 标签剥离
     2. HN 样板行剥离（Article URL / Comments URL / Points / # Comments）
     3. arxiv 声明前缀剥离（保留 Abstract 正文）
@@ -50,6 +53,9 @@ def clean_text(text: str) -> str:
     """
     if not text:
         return ""
+
+    # 0. markdown 图片语法（正文现在可能含 ![](url)，URL 对向量是噪声）
+    text = _MD_IMAGE_RE.sub('', text)
 
     # 1. HTML 标签
     if '<' in text and '>' in text:

@@ -3722,8 +3722,95 @@ button:disabled {
     line-height: 1.85;
     font-weight: 450;
     color: var(--dorami-ink-2);
-    white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  /* 阅读器正文 markdown 渲染样式 */
+  .markdown-body > :first-child {
+    margin-top: 0;
+  }
+  .markdown-body p {
+    margin: 0 0 16px;
+  }
+  .markdown-body h1,
+  .markdown-body h2,
+  .markdown-body h3,
+  .markdown-body h4 {
+    margin: 26px 0 12px;
+    line-height: 1.4;
+    font-weight: 650;
+    color: var(--dorami-ink-1);
+  }
+  .markdown-body h1 { font-size: 21px; }
+  .markdown-body h2 { font-size: 18.5px; }
+  .markdown-body h3 { font-size: 16.5px; }
+  .markdown-body h4 { font-size: 15.5px; }
+  .markdown-body ul,
+  .markdown-body ol {
+    margin: 0 0 16px;
+    padding-left: 1.4em;
+  }
+  .markdown-body li {
+    margin: 4px 0;
+  }
+  .markdown-body img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 16px auto;
+    border-radius: 10px;
+    /* 加载占位：图片绘制前先显示浅底，减少白屏闪烁与抖动观感 */
+    min-height: 40px;
+    background: var(--dorami-surface-2, #f1f5f9);
+  }
+  .markdown-body a {
+    color: var(--dorami-accent, #2563eb);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    word-break: break-all;
+  }
+  .markdown-body blockquote {
+    margin: 0 0 16px;
+    padding: 4px 0 4px 14px;
+    border-left: 3px solid var(--dorami-border);
+    color: var(--dorami-ink-3, #64748b);
+  }
+  .markdown-body pre {
+    margin: 0 0 16px;
+    padding: 14px 16px;
+    background: var(--dorami-surface-2, #f1f5f9);
+    border-radius: 12px;
+    overflow-x: auto;
+    font-size: 13.5px;
+    line-height: 1.6;
+  }
+  .markdown-body code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.9em;
+    background: var(--dorami-surface-2, #f1f5f9);
+    padding: 1px 5px;
+    border-radius: 6px;
+  }
+  .markdown-body pre code {
+    background: none;
+    padding: 0;
+  }
+  .markdown-body table {
+    width: 100%;
+    margin: 0 0 16px;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  .markdown-body th,
+  .markdown-body td {
+    border: 1px solid var(--dorami-border);
+    padding: 6px 10px;
+    text-align: left;
+  }
+  .markdown-body hr {
+    margin: 24px 0;
+    border: none;
+    border-top: 1px solid var(--dorami-border);
   }
 
   /* 空态 / 加载态 */

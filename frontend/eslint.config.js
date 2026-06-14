@@ -19,6 +19,8 @@ export default defineConfig([
     },
     rules: {
       'react-hooks/set-state-in-effect': 'off',
+      // 允许 `const { node, ...props }` 这种丢弃 react-markdown node 的惯用写法
+      'no-unused-vars': ['error', { ignoreRestSiblings: true }],
     },
   },
 ])

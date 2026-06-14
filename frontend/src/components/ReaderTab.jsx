@@ -11,20 +11,41 @@ import {
   BookOpenText,
   CalendarDays,
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import LogoMark from './LogoMark';
 import { resolveCompany } from '../sourceTaxonomy';
 import { fetchReaderSources, fetchArticles, subscribeSource, unsubscribeSource } from '../api';
 
 const PAGE_SIZE = 30;
 
+// react-markdown 默认不渲染原始 HTML（无 rehype-raw），无 XSS 风险
+const MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
+const MARKDOWN_COMPONENTS = {
+  img: ({ node, ...props }) => (
+    // 阅读窗格只展示一篇文章，正文图即时加载（不用 lazy，避免滚动时「现拉现出」）
+    <img {...props} loading="eager" decoding="async" referrerPolicy="no-referrer" alt={props.alt || ''} />
+  ),
+  a: ({ node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+};
+
 function formatDate(value) {
   if (!value) return '';
   return String(value).replace('T', ' ').substring(0, 10);
 }
 
+// 卡片摘要：去掉裸 markdown 标记（图片/标题/列表/强调），避免摘要里出现 ![](url) 等
 function excerptOf(content) {
   if (!content) return '';
-  return content.replace(/\s+/g, ' ').trim().slice(0, 140);
+  const plain = content
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')        // 图片
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')      // 链接 → 文本
+    .replace(/^#{1,6}\s+/gm, '')                  // 标题
+    .replace(/^\s*[-*+]\s+/gm, '')                // 列表项
+    .replace(/^\s*>\s?/gm, '')                    // 引用
+    .replace(/[*_`~]/g, '');                      // 强调/代码标记
+  return plain.replace(/\s+/g, ' ').trim().slice(0, 140);
 }
 
 export default function ReaderTab({ showToast }) {
@@ -372,10 +393,14 @@ export default function ReaderTab({ showToast }) {
                 </a>
               )}
             </header>
-            <div className="reader-pane-body">
-              {activeArticle.content
-                ? activeArticle.content
-                : '该文章未归档正文内容，点击「查看原文」阅读完整内容。'}
+            <div className="reader-pane-body markdown-body">
+              {activeArticle.content ? (
+                <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS}>
+                  {activeArticle.content}
+                </ReactMarkdown>
+              ) : (
+                '该文章未归档正文内容，点击「查看原文」阅读完整内容。'
+              )}
             </div>
           </article>
         ) : (

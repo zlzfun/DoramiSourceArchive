@@ -10,7 +10,11 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 from fetchers.base import BaseFetcher
-from fetchers.impl.article_extractor import extract_article_detail, extract_detail_from_html
+from fetchers.impl.article_extractor import (
+    extract_article_detail,
+    extract_detail_from_html,
+    node_to_markdown,
+)
 from models.content import BaseContent, WebPageArticleContent
 
 
@@ -698,7 +702,7 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
         items = soup.select("#list ul.bl > li")
         return items or soup.select("ul.bl > li")
 
-    def _extract_ithome_detail(self, html_text: str, max_chars: int) -> Dict[str, str]:
+    def _extract_ithome_detail(self, html_text: str, max_chars: int, base_url: str = "") -> Dict[str, str]:
         soup = BeautifulSoup(html_text, "html.parser")
         title = self._detail_title(soup)
         body = soup.select_one("#paragraph.post_content") or soup.select_one(".post_content")
@@ -709,10 +713,8 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
             for node in body.select(selector):
                 node.decompose()
 
-        text = "\n\n".join(
-            self._clean_text(node.get_text(" ", strip=True))
-            for node in body.find_all(["p", "blockquote", "li"], recursive=True)
-        )
+        # 用 node_to_markdown 保留正文图片(`![](url)`)与段落/列表换行
+        text = node_to_markdown(body, base_url)
         if not text:
             text = self._clean_text(body.get_text(" ", strip=True))
         return {
@@ -725,7 +727,7 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
         response = await self._safe_get(client, url)
         if not response:
             return {"title": "", "text": "", "method": "", "url": ""}
-        detail = self._extract_ithome_detail(response.text, max_chars)
+        detail = self._extract_ithome_detail(response.text, max_chars, str(response.url))
         if detail["text"]:
             return {**detail, "url": str(response.url)}
         return await super()._detail_for_url(client, url, max_chars)

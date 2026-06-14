@@ -5,7 +5,7 @@ from typing import Awaitable, Callable, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 
 SafeGet = Callable[[httpx.AsyncClient, str], Awaitable[Optional[httpx.Response]]]
@@ -30,6 +30,161 @@ def compact_text(text: str) -> str:
     text = re.sub(r"[ \t]{2,}", " ", text or "")
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+_MD_BLOCK_CONTAINERS = {
+    "div", "section", "article", "main", "figure", "header", "footer", "aside", "ul", "ol",
+}
+_MD_HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+_MD_SKIP_TAGS = {"script", "style", "noscript", "svg", "form", "button", "iframe"}
+
+
+# 懒加载图片的真实地址常放在这些属性里，src 多为占位图
+_LAZY_IMG_ATTRS = (
+    "data-original",
+    "data-src",
+    "data-actualsrc",
+    "data-lazy-src",
+    "data-echo",
+)
+# src 命中这些特征时判定为占位图（懒加载占位 / 透明像素），需回退到懒加载属性
+_IMG_PLACEHOLDER_HINTS = (
+    "images/v2/t.png",
+    "/blank.",
+    "placeholder",
+    "spacer",
+    "1x1.",
+    "grey.gif",
+    "loading.gif",
+)
+
+
+def _is_placeholder_img(url: str) -> bool:
+    low = url.lower()
+    return any(hint in low for hint in _IMG_PLACEHOLDER_HINTS)
+
+
+def _abs_image_url(base_url: str, src: str) -> str:
+    """把图片 src 解析为绝对 URL，过滤 data-uri / 空值。"""
+    src = (src or "").strip()
+    if not src or src.startswith("data:"):
+        return ""
+    return urljoin(base_url or "", src)
+
+
+def _pick_image_src(node: Tag) -> str:
+    """选出图片真实地址：懒加载属性优先，src 仅作兜底（且过滤占位图）。"""
+    for attr in _LAZY_IMG_ATTRS:
+        value = (node.get(attr) or "").strip()
+        if value and not value.startswith("data:"):
+            return value
+    src = (node.get("src") or "").strip()
+    if src and not _is_placeholder_img(src):
+        return src
+    return ""
+
+
+def _img_markdown(node: Tag, base_url: str) -> str:
+    url = _abs_image_url(base_url, _pick_image_src(node))
+    if not url:
+        return ""
+    alt = " ".join((node.get("alt") or "").split())
+    return f"![{alt}]({url})"
+
+
+def _inline_markdown(node: Tag, base_url: str) -> str:
+    """把行内内容（文本 + <a> + 行内 <img> + <br>）转成单段 markdown 文本。"""
+    parts: List[str] = []
+    for child in node.children:
+        if isinstance(child, NavigableString):
+            parts.append(str(child))
+            continue
+        if not isinstance(child, Tag):
+            continue
+        name = child.name.lower()
+        if name in _MD_SKIP_TAGS:
+            continue
+        if name == "br":
+            parts.append("\n")
+        elif name == "img":
+            md = _img_markdown(child, base_url)
+            if md:
+                parts.append(f" {md} ")
+        elif name == "a":
+            text = _inline_markdown(child, base_url).strip()
+            href = urljoin(base_url or "", (child.get("href") or "").strip())
+            if text and href.startswith(("http://", "https://")):
+                parts.append(f"[{text}]({href})")
+            else:
+                parts.append(text)
+        else:
+            parts.append(_inline_markdown(child, base_url))
+    text = "".join(parts)
+    # 折叠行内多余空白，但保留 <br> 引入的换行
+    lines = [re.sub(r"[ \t ]+", " ", ln).strip() for ln in text.split("\n")]
+    return "\n".join(ln for ln in lines if ln)
+
+
+def node_to_markdown(root: Tag, base_url: str = "") -> str:
+    """把一个正文容器节点转成 markdown-ish 文本：保留图片、段落、列表与标题。
+
+    设计目标是在不引入额外依赖的前提下，让 IT之家/新智元/changelog 等来源的正文
+    保留图片(`![](url)`)与换行结构，供前端 react-markdown 渲染。
+    """
+    blocks: List[str] = []
+    seen_imgs: set = set()
+
+    def emit(text: str) -> None:
+        text = (text or "").strip()
+        if text:
+            blocks.append(text)
+
+    def walk(el: Tag) -> None:
+        for child in el.children:
+            if isinstance(child, NavigableString):
+                stray = re.sub(r"[ \t ]+", " ", str(child)).strip()
+                if stray:
+                    emit(stray)
+                continue
+            if not isinstance(child, Tag):
+                continue
+            name = child.name.lower()
+            if name in _MD_SKIP_TAGS:
+                continue
+            if name == "img":
+                md = _img_markdown(child, base_url)
+                if md and md not in seen_imgs:
+                    seen_imgs.add(md)
+                    emit(md)
+            elif name in _MD_HEADINGS:
+                text = _inline_markdown(child, base_url)
+                if text:
+                    emit("#" * int(name[1]) + " " + text.replace("\n", " "))
+            elif name in ("p", "blockquote", "figcaption", "pre"):
+                inner_imgs = child.find_all("img")
+                text = _inline_markdown(child, base_url)
+                if name == "blockquote" and text:
+                    text = "\n".join("> " + ln for ln in text.split("\n"))
+                emit(text)
+                # 记录行内已渲染的图片，避免容器递归时重复
+                for img in inner_imgs:
+                    md = _img_markdown(img, base_url)
+                    if md:
+                        seen_imgs.add(md)
+            elif name in ("ul", "ol"):
+                for li in child.find_all("li", recursive=False):
+                    text = _inline_markdown(li, base_url)
+                    if text:
+                        for ln in text.split("\n"):
+                            emit("- " + ln)
+            elif name in _MD_BLOCK_CONTAINERS:
+                walk(child)
+            else:
+                # 其余块级元素（table/tr/td 等）退化为递归取内容
+                walk(child)
+
+    walk(root)
+    return "\n\n".join(blocks)
 
 
 def detail_title(soup: BeautifulSoup) -> str:
@@ -68,7 +223,9 @@ def json_ld_article_body(soup: BeautifulSoup) -> str:
     return ""
 
 
-def extract_detail_from_html(html: str, max_chars: int, detail_min_chars: int = 200) -> ArticleDetail:
+def extract_detail_from_html(
+    html: str, max_chars: int, detail_min_chars: int = 200, base_url: str = ""
+) -> ArticleDetail:
     soup = BeautifulSoup(html, "html.parser")
     title = detail_title(soup)
     article_body = json_ld_article_body(soup)
@@ -112,7 +269,7 @@ def extract_detail_from_html(html: str, max_chars: int, detail_min_chars: int = 
         group_texts: List[str] = []
         for selector in selector_group:
             for node in soup.select(selector):
-                text = clean_text(str(node))
+                text = node_to_markdown(node, base_url)
                 if text:
                     group_texts.append(text)
         if group_texts:
@@ -262,7 +419,7 @@ async def extract_article_detail(
     max_chars: int,
     detail_min_chars: int = 200,
 ) -> ArticleDetail:
-    detail = extract_detail_from_html(html, max_chars, detail_min_chars)
+    detail = extract_detail_from_html(html, max_chars, detail_min_chars, base_url=page_url)
     if len(detail.text) >= detail_min_chars:
         return detail
 

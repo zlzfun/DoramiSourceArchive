@@ -126,7 +126,7 @@ export default function DataTab({
   const handleVectorize = async (id) => {
     setVectorizingId(id);
     await runAction(() => vectorizeArticle(id), {
-      showToast, success: '建立索引成功', onSuccess: loadArticles,
+      showToast, success: '建立索引成功', onSuccess: () => loadArticles(),
     });
     setVectorizingId(null);
   };
@@ -135,7 +135,7 @@ export default function DataTab({
     await runAction(() => batchVectorizeArticles(Array.from(selectedArticles)), {
       showToast,
       success: (data) => `成功处理，${data.count} 条记录新建了向量索引`,
-      onSuccess: loadArticles,
+      onSuccess: () => loadArticles(),
     });
   };
 
@@ -143,7 +143,7 @@ export default function DataTab({
     await runAction(() => vectorizeAllPending(), {
       showToast,
       success: (data) => `已向量化 ${data.count}/${data.total_pending} 篇待处理文章`,
-      onSuccess: loadArticles,
+      onSuccess: () => loadArticles(),
       setLoading: setVectorizingAll,
     });
   };
@@ -300,7 +300,7 @@ export default function DataTab({
   const handleBatchDeleteArticles = async () => {
     if (!(await confirm(`确定彻底删除选中的 ${selectedArticles.size} 条数据吗？`))) return;
     await runAction(() => batchDeleteArticles(Array.from(selectedArticles)), {
-      showToast, success: '批量删除成功', onSuccess: loadArticles,
+      showToast, success: '批量删除成功', onSuccess: () => loadArticles(),
     });
   };
 
