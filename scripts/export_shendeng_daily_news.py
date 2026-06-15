@@ -4,24 +4,17 @@
 本脚本逻辑上独立于哆啦美后端，不被后端运行时调用。它从哆啦美的 API 拉取
 某日日报的**结构化条目 items**（哆啦美生成日报时已存于该记录的
 extensions.items 中），再做**确定性字段改名**（复刻原 Dify code 节点），
-生成 shendeng 接口的 batch body JSON 文件。由你手动把该 JSON 传进内网上传。
+生成 shendeng 接口的 batch body JSON 文件。按需也可同时导出日报 Markdown 正文。
 
 —— 不做 markdown 文本解析、不调用任何 LLM；转换是纯字段映射，稳定可靠。
 
-用法（二选一鉴权）：
+推荐用法：直接编辑本脚本顶部的「本地默认配置」常量；凭证类常量默认留空。
 
-  # A. 管理员登录（最通用，无需订阅）
-  PYTHONPATH=src .venv/bin/python scripts/export_shendeng_daily_news.py \
-      --base-url http://127.0.0.1:8088 \
-      --username admin --password '****' \
-      --date 2026-06-07 -o daily-news-2026-06-07.json
+  PYTHONPATH=src .venv/bin/python scripts/export_shendeng_daily_news.py
 
-  # B. 个人聚合接口令牌（需先在阅读器订阅「哆啦美·AI资讯日报」）
-  PYTHONPATH=src .venv/bin/python scripts/export_shendeng_daily_news.py \
-      --base-url http://127.0.0.1:8088 \
-      --feed-token dfeed_xxx --date 2026-06-07
-
-凭据也可用环境变量：DORAMI_ADMIN_USER / DORAMI_ADMIN_PASSWORD / DORAMI_FEED_TOKEN。
+配置优先级：脚本顶部常量 < 环境变量 < 命令行参数。
+若不想改脚本，也可用环境变量 DORAMI_ADMIN_USER / DORAMI_ADMIN_PASSWORD / DORAMI_FEED_TOKEN。
+不要把真实凭证提交到代码仓。
 
 生成的 JSON 即 shendeng 接口的 body，手动上传参考（值占位、按需自填）：
 
@@ -37,7 +30,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -45,9 +37,60 @@ import httpx
 
 DAILY_BRIEF_SOURCE_ID = "dorami_daily_brief"
 
+# ========================
+# 本地默认配置
+# ========================
+# 这个脚本可以单独拷走运行。非敏感配置可直接改这里；凭证类字段保持空字符串，
+# 运行时再手动填写到私有副本，或用环境变量/命令行参数覆盖。
+DEFAULT_EXPORT_CONFIG = {
+    "base_url": "https://www.dorami.cloud",
+    "date": "",  # 留空表示今天；也可写 "2026-06-15"
+    "output": "daily-news-{date}.json",
+    "markdown_output": "daily-brief-{date}.md",
+    "feed_token": "",
+    "username": "",
+    "password": "",
+}
+ENV_OVERRIDES = {
+    "base_url": "DORAMI_BASE_URL",
+    "date": "DORAMI_DAILY_BRIEF_DATE",
+    "output": "SHENDENG_EXPORT_OUTPUT",
+    "markdown_output": "SHENDENG_EXPORT_MARKDOWN_OUTPUT",
+    "feed_token": "DORAMI_FEED_TOKEN",
+    "username": "DORAMI_ADMIN_USER",
+    "password": "DORAMI_ADMIN_PASSWORD",
+}
+
 
 def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
+
+
+def _format_output_template(value: str, date: str) -> str:
+    try:
+        return value.format(date=date)
+    except (KeyError, ValueError) as exc:
+        raise SystemExit(f"输出路径模板格式错误: {value!r}，仅支持 {{date}} 占位符。") from exc
+
+
+def resolve_export_config(args: argparse.Namespace) -> Dict[str, str]:
+    cfg = dict(DEFAULT_EXPORT_CONFIG)
+
+    for key, env_name in ENV_OVERRIDES.items():
+        value = os.getenv(env_name, "").strip()
+        if value:
+            cfg[key] = value
+
+    for key in DEFAULT_EXPORT_CONFIG:
+        value = getattr(args, key, None)
+        if value:
+            cfg[key] = str(value).strip()
+
+    cfg["date"] = cfg["date"] or _today()
+    cfg["output"] = _format_output_template(cfg["output"], cfg["date"])
+    if cfg.get("markdown_output"):
+        cfg["markdown_output"] = _format_output_template(cfg["markdown_output"], cfg["date"])
+    return cfg
 
 
 # ==========================================
@@ -93,8 +136,8 @@ def items_to_shendeng_batch(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]
 # 取数：从哆啦美 API 拉取某日日报的结构化 items
 # ==========================================
 
-def _extract_items_for_date(records: List[Dict[str, Any]], date: str) -> Optional[List[Dict[str, Any]]]:
-    """从一批日报记录里挑出目标日期那篇，返回其 extensions.items。
+def _extract_daily_brief_for_date(records: List[Dict[str, Any]], date: str) -> Optional[Dict[str, Any]]:
+    """从一批日报记录里挑出目标日期那篇，返回 content 与 extensions.items。
 
     兼容两种记录形状：
     - /api/articles 的 ArticleRecord：含 publish_date + extensions_json(str)
@@ -114,11 +157,22 @@ def _extract_items_for_date(records: List[Dict[str, Any]], date: str) -> Optiona
                 ext = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
                 ext = {}
-        return list((ext or {}).get("items") or [])
+        return {
+            "items": list((ext or {}).get("items") or []),
+            "content": rec.get("content") or "",
+            "title": rec.get("title") or "",
+            "publish_date": publish_date or date,
+        }
     return None
 
 
-def fetch_items_via_admin(base_url: str, username: str, password: str, date: str) -> Optional[List[Dict[str, Any]]]:
+def _extract_items_for_date(records: List[Dict[str, Any]], date: str) -> Optional[List[Dict[str, Any]]]:
+    """向后兼容：从一批日报记录里挑出目标日期那篇，返回 extensions.items。"""
+    brief = _extract_daily_brief_for_date(records, date)
+    return None if brief is None else brief["items"]
+
+
+def fetch_daily_brief_via_admin(base_url: str, username: str, password: str, date: str) -> Optional[Dict[str, Any]]:
     with httpx.Client(base_url=base_url, timeout=30, follow_redirects=True, trust_env=False) as client:
         resp = client.post("/api/auth/login", json={"username": username, "password": password})
         if resp.status_code != 200:
@@ -131,10 +185,15 @@ def fetch_items_via_admin(base_url: str, username: str, password: str, date: str
             raise SystemExit(f"拉取日报失败 HTTP {resp.status_code}: {resp.text[:200]}")
         data = resp.json()
         records = data["items"] if isinstance(data, dict) and "items" in data else data
-        return _extract_items_for_date(records, date)
+        return _extract_daily_brief_for_date(records, date)
 
 
-def fetch_items_via_feed_token(base_url: str, token: str, date: str) -> Optional[List[Dict[str, Any]]]:
+def fetch_items_via_admin(base_url: str, username: str, password: str, date: str) -> Optional[List[Dict[str, Any]]]:
+    brief = fetch_daily_brief_via_admin(base_url, username, password, date)
+    return None if brief is None else brief["items"]
+
+
+def fetch_daily_brief_via_feed_token(base_url: str, token: str, date: str) -> Optional[Dict[str, Any]]:
     with httpx.Client(base_url=base_url, timeout=30, follow_redirects=True, trust_env=False) as client:
         resp = client.get(
             "/api/public/feed/articles",
@@ -143,42 +202,59 @@ def fetch_items_via_feed_token(base_url: str, token: str, date: str) -> Optional
         )
         if resp.status_code != 200:
             raise SystemExit(f"聚合接口拉取失败 HTTP {resp.status_code}: {resp.text[:200]}")
-        return _extract_items_for_date(resp.json().get("items", []), date)
+        return _extract_daily_brief_for_date(resp.json().get("items", []), date)
+
+
+def fetch_items_via_feed_token(base_url: str, token: str, date: str) -> Optional[List[Dict[str, Any]]]:
+    brief = fetch_daily_brief_via_feed_token(base_url, token, date)
+    return None if brief is None else brief["items"]
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="导出某日日报为 shendeng daily-news/batch 上传 JSON。")
-    parser.add_argument("--base-url", default=os.getenv("DORAMI_BASE_URL", "http://127.0.0.1:8088"))
-    parser.add_argument("--date", default=_today(), help="目标日报日期 YYYY-MM-DD，默认今天")
-    parser.add_argument("--username", default=os.getenv("DORAMI_ADMIN_USER", ""))
-    parser.add_argument("--password", default=os.getenv("DORAMI_ADMIN_PASSWORD", ""))
-    parser.add_argument("--feed-token", default=os.getenv("DORAMI_FEED_TOKEN", ""), help="个人聚合接口令牌 dfeed_…")
-    parser.add_argument("-o", "--output", default="", help="输出文件，默认 daily-news-{date}.json")
+    parser.add_argument("--base-url", default=None, help="覆盖脚本顶部的 Dorami base_url")
+    parser.add_argument("--date", default=None, help="目标日报日期 YYYY-MM-DD，默认今天")
+    parser.add_argument("--username", default=None, help="覆盖脚本顶部的管理员用户名")
+    parser.add_argument("--password", default=None, help="覆盖脚本顶部的管理员密码")
+    parser.add_argument("--feed-token", default=None, help="覆盖脚本顶部的个人聚合接口令牌 dfeed_…")
+    parser.add_argument("-o", "--output", default=None, help="覆盖 JSON 输出路径，支持 {date}")
+    parser.add_argument("--markdown-output", default=None, help="同时输出日报 Markdown 正文到指定文件，支持 {date}")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    date = args.date.strip()
+    cfg = resolve_export_config(args)
+    date = cfg["date"]
 
-    if args.feed_token:
-        items = fetch_items_via_feed_token(args.base_url, args.feed_token, date)
-    elif args.username and args.password:
-        items = fetch_items_via_admin(args.base_url, args.username, args.password, date)
+    if cfg["feed_token"]:
+        brief = fetch_daily_brief_via_feed_token(cfg["base_url"], cfg["feed_token"], date)
+    elif cfg["username"] and cfg["password"]:
+        brief = fetch_daily_brief_via_admin(cfg["base_url"], cfg["username"], cfg["password"], date)
     else:
-        raise SystemExit("请提供鉴权：--feed-token，或 --username/--password（亦可用环境变量）。")
+        raise SystemExit(
+            "请提供鉴权：在脚本顶部配置 feed_token，或配置 username/password；"
+            "也可用环境变量或命令行参数覆盖。"
+        )
 
+    items = None if brief is None else brief["items"]
     if items is None:
         raise SystemExit(f"未找到 {date} 的日报（请确认该日已生成日报）。")
     if not items:
         raise SystemExit(f"{date} 的日报没有结构化条目（items 为空），无可导出内容。")
 
     batch = items_to_shendeng_batch(items)
-    output = args.output or f"daily-news-{date}.json"
+    output = cfg["output"]
     with open(output, "w", encoding="utf-8") as f:
         json.dump(batch, f, ensure_ascii=False, indent=2)
 
+    if cfg["markdown_output"]:
+        with open(cfg["markdown_output"], "w", encoding="utf-8") as f:
+            f.write((brief.get("content") or "").rstrip() + "\n")
+
     print(f"✅ 已导出 {len(batch)} 条 → {output}")
+    if cfg["markdown_output"]:
+        print(f"✅ 已导出日报正文 → {cfg['markdown_output']}")
     print("   下一步：将该 JSON 作为 body，手动 POST 到 shendeng 的 daily-news/batch 接口（见脚本顶部说明）。")
     return 0
 

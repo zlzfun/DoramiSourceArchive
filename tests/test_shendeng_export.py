@@ -1,10 +1,16 @@
 import os
 import sys
+from argparse import Namespace
 from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
-from export_shendeng_daily_news import items_to_shendeng_batch, _extract_items_for_date  # noqa: E402
+from export_shendeng_daily_news import (  # noqa: E402
+    _extract_daily_brief_for_date,
+    _extract_items_for_date,
+    items_to_shendeng_batch,
+    resolve_export_config,
+)
 
 
 def _item(**over):
@@ -78,6 +84,16 @@ def test_extract_items_from_article_record_shape():
     assert items == [{"title_cn": "x"}]
 
 
+def test_extract_daily_brief_includes_markdown_content():
+    records = [
+        {"id": "daily_brief_2026-06-07", "publish_date": "2026-06-07", "content": "# 日报正文",
+         "extensions_json": '{"items": [{"title_cn": "x"}]}'},
+    ]
+    brief = _extract_daily_brief_for_date(records, "2026-06-07")
+    assert brief["items"] == [{"title_cn": "x"}]
+    assert brief["content"] == "# 日报正文"
+
+
 def test_extract_items_from_feed_shape():
     records = [
         {"id": "daily_brief_2026-06-07",
@@ -90,3 +106,34 @@ def test_extract_items_from_feed_shape():
 def test_extract_items_missing_date_returns_none():
     records = [{"id": "daily_brief_2026-06-06", "publish_date": "2026-06-06", "extensions_json": "{}"}]
     assert _extract_items_for_date(records, "2026-06-07") is None
+
+
+def test_resolve_export_config_uses_cli_overrides_and_formats_outputs(monkeypatch):
+    for env_name in [
+        "DORAMI_BASE_URL",
+        "DORAMI_DAILY_BRIEF_DATE",
+        "SHENDENG_EXPORT_OUTPUT",
+        "SHENDENG_EXPORT_MARKDOWN_OUTPUT",
+        "DORAMI_FEED_TOKEN",
+        "DORAMI_ADMIN_USER",
+        "DORAMI_ADMIN_PASSWORD",
+    ]:
+        monkeypatch.delenv(env_name, raising=False)
+
+    args = Namespace(
+        base_url="https://www.dorami.cloud",
+        date="2026-06-15",
+        username=None,
+        password=None,
+        feed_token="dfeed_test",
+        output="out-{date}.json",
+        markdown_output="brief-{date}.md",
+    )
+
+    cfg = resolve_export_config(args)
+
+    assert cfg["base_url"] == "https://www.dorami.cloud"
+    assert cfg["date"] == "2026-06-15"
+    assert cfg["output"] == "out-2026-06-15.json"
+    assert cfg["markdown_output"] == "brief-2026-06-15.md"
+    assert cfg["feed_token"] == "dfeed_test"
