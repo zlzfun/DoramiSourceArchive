@@ -216,6 +216,107 @@ button:disabled {
   50% { transform: translateY(-12px) scale(1.04); opacity: 1; }
 }
 
+@keyframes aurora-float-a {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.75; }
+  50% { transform: translate(36px, -28px) scale(1.12); opacity: 1; }
+}
+
+@keyframes aurora-float-b {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.65; }
+  50% { transform: translate(-44px, 24px) scale(1.16); opacity: 0.95; }
+}
+
+@keyframes auth-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(26px) scale(0.985);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+/* 标题逐词浮现 */
+@keyframes auth-word-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5em) rotate(1.5deg);
+    filter: blur(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) rotate(0);
+    filter: blur(0);
+  }
+}
+
+/* 开场一次性光幕斜掠 */
+@keyframes auth-sweep-once {
+  from { background-position: 180% 0; }
+  to { background-position: -120% 0; }
+}
+
+/* 流星斜掠 */
+@keyframes auth-meteor-fall {
+  0% { opacity: 0; transform: rotate(28deg) translateX(-260px); }
+  3% { opacity: 1; }
+  16% { opacity: 1; }
+  22% { opacity: 0; transform: rotate(28deg) translateX(920px); }
+  100% { opacity: 0; transform: rotate(28deg) translateX(920px); }
+}
+
+/* 网格扫描光束自上而下 */
+@keyframes auth-beam-scan {
+  0% { transform: translateY(-120%); opacity: 0; }
+  18% { opacity: 1; }
+  82% { opacity: 1; }
+  100% { transform: translateY(320%); opacity: 0; }
+}
+
+/* 星尘闪烁漂移 */
+@keyframes auth-twinkle {
+  0% { opacity: 0; transform: scale(var(--pd, 1)) translateY(8px); }
+  25% { opacity: 0.9; }
+  50% { opacity: 0.35; transform: scale(var(--pd, 1)) translateY(-10px); }
+  75% { opacity: 0.95; }
+  100% { opacity: 0; transform: scale(var(--pd, 1)) translateY(-26px); }
+}
+
+/* 标题渐变流光 */
+@keyframes auth-text-shimmer {
+  0%, 100% { background-position: 0% 0; }
+  50% { background-position: 100% 0; }
+}
+
+/* logo 光环旋转与呼吸 */
+@keyframes auth-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes auth-halo-pulse {
+  0%, 100% { opacity: 0.6; filter: blur(7px); }
+  50% { opacity: 1; filter: blur(10px); }
+}
+
+/* 按钮高光斜掠 */
+@keyframes auth-gloss-sweep {
+  to { transform: translateX(320%) skewX(-18deg); }
+}
+
+/* 卡片描边流光环绕（@property 让 conic 角度可平滑动画） */
+@property --auth-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes auth-ring-rotate {
+  to { --auth-angle: 360deg; }
+}
+
 @keyframes entrance-stagger {
   from {
     opacity: 0;
@@ -713,80 +814,755 @@ button:disabled {
     box-shadow: 0 9px 22px rgba(11, 18, 32, 0.09);
   }
 
-  /* ── Login ── */
+  /* ── Login · cinematic midnight archive ── */
 
-  .login-screen {
+  .auth-stage {
     position: relative;
     isolation: isolate;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: clamp(24px, 5vw, 72px);
+    overflow: hidden;
+    color: #eef1ff;
+    background: #060812;
+  }
+
+  /* —— layered atmosphere —— */
+  .auth-bg {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
     background:
-      radial-gradient(ellipse 60% 50% at 18% 8%, rgba(91, 84, 232, 0.12), transparent 56%),
-      radial-gradient(ellipse 50% 45% at 88% 12%, rgba(91, 84, 232, 0.1), transparent 54%),
-      linear-gradient(180deg, #fbfbfd, var(--dorami-canvas));
+      radial-gradient(120% 90% at 50% -10%, #11142b 0%, #0a0c1c 42%, #060812 78%);
   }
 
-  .login-screen::before {
-    content: "";
+  /* —— parallax aurora orbs (wrapper = depth shift, inner = float) —— */
+  .auth-orb {
     position: absolute;
-    inset: 6% 4% auto auto;
-    z-index: -1;
-    width: min(620px, 76vw);
-    height: min(460px, 64vw);
-    background: radial-gradient(circle at 65% 35%, rgba(91, 84, 232, 0.16), transparent 62%);
-    filter: blur(46px);
-    animation: aurora-drift 11s ease-in-out infinite;
+    will-change: transform;
+    transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  .login-screen::after {
+  .auth-orb-glow {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    filter: blur(70px);
+    opacity: 0.85;
+    will-change: transform, opacity;
+  }
+
+  .auth-orb-1 {
+    top: -16%;
+    left: -8%;
+    width: min(640px, 64vw);
+    height: min(640px, 64vw);
+    transform: translate3d(calc(var(--px, 0) * 110px), calc(var(--py, 0) * 90px), 0);
+  }
+  .auth-orb-1 .auth-orb-glow {
+    background: radial-gradient(circle at 50% 50%, rgba(91, 84, 232, 0.55), transparent 66%);
+    animation: aurora-float-a 16s ease-in-out infinite;
+  }
+
+  .auth-orb-2 {
+    bottom: -22%;
+    right: -10%;
+    width: min(720px, 70vw);
+    height: min(720px, 70vw);
+    transform: translate3d(calc(var(--px, 0) * -150px), calc(var(--py, 0) * -120px), 0);
+  }
+  .auth-orb-2 .auth-orb-glow {
+    background: radial-gradient(circle at 50% 50%, rgba(123, 108, 240, 0.42), transparent 64%);
+    animation: aurora-float-b 21s ease-in-out infinite;
+  }
+
+  .auth-orb-3 {
+    top: 32%;
+    left: 46%;
+    width: min(420px, 44vw);
+    height: min(420px, 44vw);
+    transform: translate3d(calc(var(--px, 0) * 220px), calc(var(--py, 0) * 180px), 0);
+  }
+  .auth-orb-3 .auth-orb-glow {
+    background: radial-gradient(circle at 50% 50%, rgba(56, 189, 248, 0.22), transparent 70%);
+    animation: aurora-float-a 19s ease-in-out infinite reverse;
+  }
+
+  .auth-grid {
+    position: absolute;
+    inset: -2px;
+    background-image:
+      linear-gradient(rgba(170, 180, 255, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(170, 180, 255, 0.06) 1px, transparent 1px);
+    background-size: 52px 52px;
+    transform: translate3d(calc(var(--px, 0) * -40px), calc(var(--py, 0) * -32px), 0);
+    transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
+    mask-image: radial-gradient(120% 90% at 50% 30%, #000 0%, transparent 72%);
+    -webkit-mask-image: radial-gradient(120% 90% at 50% 30%, #000 0%, transparent 72%);
+  }
+
+  /* —— grid that lights up around the cursor —— */
+  .auth-grid-spot {
+    position: absolute;
+    inset: -2px;
+    background-image:
+      linear-gradient(rgba(167, 159, 241, 0.55) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(167, 159, 241, 0.55) 1px, transparent 1px);
+    background-size: 52px 52px;
+    opacity: calc(var(--spot, 0) * 0.85);
+    transform: translate3d(calc(var(--px, 0) * -40px), calc(var(--py, 0) * -32px), 0);
+    mask-image: radial-gradient(140px circle at var(--mx, 50%) var(--my, 50%), #000 0%, transparent 70%);
+    -webkit-mask-image: radial-gradient(140px circle at var(--mx, 50%) var(--my, 50%), #000 0%, transparent 70%);
+    transition: opacity 600ms var(--motion-ease);
+  }
+
+  /* —— soft luminous halo trailing the cursor —— */
+  .auth-spotlight {
+    position: absolute;
+    inset: 0;
+    opacity: var(--spot, 0);
+    background: radial-gradient(
+      200px circle at var(--mx, 50%) var(--my, 50%),
+      rgba(123, 108, 240, 0.18),
+      rgba(91, 84, 232, 0.06) 40%,
+      transparent 70%
+    );
+    transition: opacity 600ms var(--motion-ease);
+    mix-blend-mode: screen;
+  }
+
+  /* —— occasional meteors streaking across the sky —— */
+  .auth-meteors {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+
+  .auth-meteor {
+    position: absolute;
+    width: 180px;
+    height: 1.5px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, rgba(214, 218, 255, 0.95));
+    filter: drop-shadow(0 0 6px rgba(167, 159, 241, 0.85));
+    opacity: 0;
+    will-change: transform, opacity;
+  }
+
+  .auth-meteor::after {
     content: "";
     position: absolute;
-    inset: auto 0 0;
-    z-index: -1;
-    height: 42%;
-    background: linear-gradient(180deg, transparent, rgba(11, 18, 32, 0.045));
+    right: -2px;
+    top: 50%;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #eef0ff;
+    box-shadow: 0 0 10px 2px rgba(186, 192, 255, 0.9);
+    transform: translateY(-50%);
+  }
+
+  .auth-meteor-1 {
+    top: -6%;
+    left: 8%;
+    animation: auth-meteor-fall 11s ease-in 2.5s infinite;
+  }
+  .auth-meteor-2 {
+    top: -10%;
+    left: 42%;
+    animation: auth-meteor-fall 15s ease-in 7s infinite;
+  }
+  .auth-meteor-3 {
+    top: -4%;
+    left: 70%;
+    animation: auth-meteor-fall 13s ease-in 12s infinite;
+  }
+
+  /* —— scanning beam sweeping down the grid —— */
+  .auth-beam {
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 38%;
+    background: linear-gradient(180deg, transparent, rgba(123, 108, 240, 0.1) 60%, rgba(167, 159, 241, 0.22) 100%);
+    mask-image: radial-gradient(120% 90% at 50% 30%, #000 0%, transparent 72%);
+    -webkit-mask-image: radial-gradient(120% 90% at 50% 30%, #000 0%, transparent 72%);
+    animation: auth-beam-scan 9s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+  }
+
+  /* —— drifting star dust —— */
+  .auth-particles {
+    position: absolute;
+    inset: 0;
+    transform: translate3d(calc(var(--px, 0) * 70px), calc(var(--py, 0) * 58px), 0);
+    transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .auth-particle {
+    position: absolute;
+    border-radius: 50%;
+    background: rgba(206, 210, 255, 0.9);
+    box-shadow: 0 0 8px rgba(150, 142, 244, 0.8);
+    opacity: 0;
+    transform: scale(var(--pd, 1));
+    animation-name: auth-twinkle;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+  }
+
+  /* —— one-time cinematic light sweep on load —— */
+  .auth-sweep {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(115deg, transparent 38%, rgba(186, 192, 255, 0.14) 50%, transparent 62%);
+    background-size: 280% 100%;
+    background-position: 180% 0;
+    animation: auth-sweep-once 2300ms cubic-bezier(0.22, 1, 0.36, 1) 300ms 1 both;
+  }
+
+  .auth-grain {
+    position: absolute;
+    inset: 0;
+    opacity: 0.5;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+  }
+
+  .auth-vignette {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(120% 120% at 50% 50%, transparent 52%, rgba(2, 4, 12, 0.72) 100%);
+  }
+
+  /* —— layout shell: open, asymmetric, no dividing panel —— */
+  .auth-shell {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    align-items: center;
+    gap: clamp(40px, 7vw, 120px);
+    width: 100%;
+    max-width: 1180px;
+  }
+
+  /* —— hero (left, floating in open space) —— */
+  .auth-hero {
+    max-width: 560px;
+    transition: transform 1500ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* 第一幕：标题独占舞台，平移到画面中心并显著放大、featured。
+     对齐方式始终保持左对齐（仅靠 transform 居中），避免 text-align
+     在两幕间无法过渡而产生的生硬跳变。 */
+  .is-title .auth-hero {
+    transform: translateX(58%) scale(1.2);
+  }
+  .is-ready .auth-hero {
+    transform: none;
+  }
+
+  .auth-brandrow {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .auth-logo-shell {
+    position: relative;
+    display: inline-flex;
+    height: 56px;
+    width: 56px;
+    flex-shrink: 0;
+  }
+
+  /* 旋转极光光环：在 logo 背后缓慢回转 + 呼吸脉冲 */
+  .auth-logo-halo {
+    position: absolute;
+    inset: -7px;
+    border-radius: 20px;
+    background: conic-gradient(
+      from 0deg,
+      rgba(91, 84, 232, 0),
+      rgba(167, 159, 241, 0.9),
+      rgba(56, 182, 245, 0.6),
+      rgba(91, 84, 232, 0)
+    );
+    filter: blur(7px);
+    opacity: 0.85;
+    animation: auth-spin 6s linear infinite, auth-halo-pulse 3.4s ease-in-out infinite;
+  }
+
+  .auth-logo {
+    position: relative;
+    height: 56px;
+    width: 56px;
+    border-radius: 16px;
+    object-fit: contain;
+    background: linear-gradient(135deg, var(--dorami-blue), var(--dorami-blue-2));
+    box-shadow:
+      0 0 0 1px rgba(170, 180, 255, 0.18),
+      0 16px 40px rgba(91, 84, 232, 0.5),
+      inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  }
+
+  .auth-logo-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .auth-wordmark {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.42em;
+    color: rgba(226, 230, 255, 0.92);
+    text-indent: 0.42em;
+  }
+
+  .auth-eyebrow {
+    margin-top: clamp(36px, 6vh, 64px);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.34em;
+    text-indent: 0.34em;
+    color: rgba(150, 142, 244, 0.95);
+  }
+
+  .auth-title {
+    margin-top: 18px;
+    font-size: clamp(40px, 6vw, 68px);
+    font-weight: 900;
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+    color: #f6f7ff;
+    text-shadow: 0 2px 30px rgba(91, 84, 232, 0.28);
+  }
+
+  .auth-title-line {
+    display: block;
+  }
+
+  /* 逐词浮现：模糊上浮入场 */
+  .auth-word {
+    display: inline-block;
+    opacity: 0;
+    will-change: transform, opacity, filter;
+    animation: auth-word-in 1200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: var(--d, 0ms);
+  }
+
+  .auth-title-accent {
+    background: linear-gradient(100deg, #a79ff1 0%, #7b6cf0 30%, #56b6f5 50%, #7b6cf0 70%, #a79ff1 100%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* 标题流光：入场结束后，光泽缓慢横扫渐变描字 */
+  .auth-title-accent.auth-word {
+    animation:
+      auth-word-in 1200ms cubic-bezier(0.22, 1, 0.36, 1) var(--d, 0ms) both,
+      auth-text-shimmer 6s ease-in-out calc(var(--d, 0ms) + 2200ms) infinite;
+  }
+
+  .auth-lede {
+    margin-top: 22px;
+    max-width: 460px;
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1.8;
+    color: rgba(198, 204, 233, 0.78);
+  }
+
+  .auth-feats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 34px;
+    transition:
+      transform 1100ms cubic-bezier(0.22, 1, 0.36, 1) 450ms,
+      opacity 1100ms var(--motion-ease) 450ms;
+  }
+  /* 第二幕才亮起 */
+  .is-title .auth-feats {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  .is-ready .auth-feats {
+    opacity: 1;
+    transform: none;
+  }
+
+  .auth-feats li {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 15px;
+    border-radius: 999px;
+    border: 1px solid rgba(170, 180, 255, 0.16);
+    background: rgba(120, 130, 220, 0.08);
+    backdrop-filter: blur(6px);
+    font-size: 13px;
+    font-weight: 700;
+    color: rgba(216, 221, 250, 0.9);
+  }
+
+  .auth-feats svg {
+    width: 15px;
+    height: 15px;
+    color: var(--dorami-blue-2);
+  }
+
+  /* —— card slot: 景深透视容器 + 第二幕浮现 —— */
+  .auth-card-slot {
+    perspective: 1300px;
+    transition:
+      opacity 1300ms var(--motion-ease),
+      transform 1500ms cubic-bezier(0.22, 1, 0.36, 1),
+      filter 1300ms var(--motion-ease);
+  }
+  .is-title .auth-card-slot {
+    opacity: 0;
+    transform: translateX(70px) scale(0.9);
+    filter: blur(14px);
+    pointer-events: none;
+  }
+  .is-ready .auth-card-slot {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+
+  /* —— auth card (right, frosted glass, luminous edge) —— */
+  .auth-card {
+    position: relative;
+    padding: clamp(30px, 3.4vw, 44px);
+    border-radius: 24px;
+    border: 1px solid rgba(170, 180, 255, 0.16);
+    background:
+      linear-gradient(165deg, rgba(28, 31, 58, 0.82), rgba(14, 16, 34, 0.72));
+    backdrop-filter: blur(26px) saturate(1.3);
+    -webkit-backdrop-filter: blur(26px) saturate(1.3);
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.1) inset,
+      0 -1px 0 rgba(0, 0, 0, 0.4) inset,
+      0 40px 90px rgba(4, 6, 18, 0.7),
+      0 0 60px rgba(91, 84, 232, 0.16);
+    overflow: hidden;
+  }
+
+  .auth-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(167, 159, 241, 0.85), transparent);
+  }
+
+  .auth-card-glow {
+    position: absolute;
+    top: -40%;
+    right: -30%;
+    width: 70%;
+    height: 80%;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(91, 84, 232, 0.4), transparent 64%);
+    filter: blur(50px);
     pointer-events: none;
   }
 
-  .login-panel {
-    animation: dorami-slide-up-fade 420ms var(--motion-ease) both;
-    border-color: rgba(11, 18, 32, 0.14);
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.82));
-    box-shadow: 0 34px 84px rgba(11, 18, 32, 0.16), 0 1px 0 rgba(255, 255, 255, 0.85) inset;
-  }
-
-  .login-brief::before {
-    content: "";
+  /* 卡片描边流光：一束亮点沿圆角边框缓慢环绕 */
+  .auth-card-ring {
     position: absolute;
     inset: 0;
-    background:
-      linear-gradient(140deg, rgba(91, 84, 232, 0.58), transparent 46%),
-      linear-gradient(32deg, rgba(91, 84, 232, 0.32), transparent 50%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent);
+    border-radius: 24px;
+    padding: 1px;
+    pointer-events: none;
+    background: conic-gradient(
+      from var(--auth-angle, 0deg),
+      transparent 0deg,
+      transparent 70deg,
+      rgba(167, 159, 241, 0.9) 110deg,
+      rgba(56, 182, 245, 0.7) 130deg,
+      transparent 170deg,
+      transparent 360deg
+    );
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    animation: auth-ring-rotate 7s linear infinite;
   }
 
-  .login-brief::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    opacity: 0.28;
-    background-image:
-      linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
-    background-size: 34px 34px;
-    mask-image: linear-gradient(135deg, #000, transparent 76%);
+  .auth-form {
+    position: relative;
+    display: flex;
+    flex-direction: column;
   }
 
-  .login-input-wrap {
+  .auth-card-eyebrow {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3em;
+    text-indent: 0.3em;
+    color: rgba(150, 142, 244, 0.95);
+  }
+
+  .auth-card-title {
+    margin-top: 12px;
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    color: #f4f5ff;
+  }
+
+  .auth-card-sub {
+    margin-top: 8px;
+    margin-bottom: 26px;
+    font-size: 13.5px;
+    font-weight: 500;
+    line-height: 1.6;
+    color: rgba(190, 196, 228, 0.66);
+  }
+
+  .auth-field {
+    display: block;
+    margin-bottom: 18px;
+  }
+
+  .auth-field-label {
+    display: block;
+    margin-bottom: 9px;
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: rgba(206, 212, 240, 0.82);
+  }
+
+  .auth-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 50px;
+    padding: 0 16px;
+    border-radius: 13px;
+    border: 1px solid rgba(170, 180, 255, 0.16);
+    background: rgba(8, 10, 24, 0.55);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
     transition:
       border-color var(--motion-fast) var(--motion-ease),
       box-shadow var(--motion-fast) var(--motion-ease),
-      transform var(--motion-fast) var(--motion-spring);
+      background var(--motion-fast) var(--motion-ease);
   }
 
-  .login-input-wrap:focus-within {
-    border-color: rgba(91, 84, 232, 0.42);
-    box-shadow: 0 0 0 4px rgba(91, 84, 232, 0.1);
-    transform: translateY(-1px);
+  .auth-input-wrap:focus-within {
+    border-color: rgba(123, 108, 240, 0.7);
+    background: rgba(12, 14, 32, 0.7);
+    box-shadow:
+      inset 0 1px 2px rgba(0, 0, 0, 0.35),
+      0 0 0 4px rgba(91, 84, 232, 0.18),
+      0 8px 24px rgba(91, 84, 232, 0.22);
+  }
+
+  .auth-input-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    color: rgba(150, 142, 244, 0.95);
+    transition: color var(--motion-fast) var(--motion-ease);
+  }
+
+  .auth-input-wrap:focus-within .auth-input-icon {
+    color: var(--dorami-blue-2);
+  }
+
+  .auth-input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    outline: none;
+    font-family: inherit;
+    font-size: 14.5px;
+    font-weight: 600;
+    color: #f1f2ff;
+  }
+
+  .auth-input::placeholder {
+    color: rgba(150, 158, 196, 0.5);
+    font-weight: 500;
+  }
+
+  .auth-error-slot {
+    min-height: 26px;
+    display: flex;
+    align-items: center;
+  }
+
+  .auth-error {
+    font-size: 13px;
+    font-weight: 700;
+    color: #ff8fa3;
+  }
+
+  .auth-submit {
+    position: relative;
+    overflow: hidden;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    height: 52px;
+    margin-top: 6px;
+    border: 0;
+    border-radius: 13px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 15.5px;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    color: #fff;
+    background: linear-gradient(135deg, var(--dorami-blue) 0%, var(--dorami-blue-2) 100%);
+    box-shadow:
+      0 14px 34px rgba(91, 84, 232, 0.45),
+      inset 0 1px 0 rgba(255, 255, 255, 0.28);
+    transition:
+      transform var(--motion-fast) var(--motion-spring),
+      box-shadow var(--motion-fast) var(--motion-ease),
+      filter var(--motion-fast) var(--motion-ease);
+  }
+
+  .auth-submit:hover:not(:disabled) {
+    filter: brightness(1.08);
+    transform: translateY(-2px);
+    box-shadow:
+      0 20px 46px rgba(91, 84, 232, 0.55),
+      inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  }
+
+  .auth-submit:active:not(:disabled) {
+    transform: translateY(0);
+  }
+
+  .auth-submit:disabled {
+    cursor: progress;
+    opacity: 0.78;
+  }
+
+  .auth-submit svg {
+    position: relative;
+    width: 18px;
+    height: 18px;
+    transition: transform var(--motion-fast) var(--motion-ease);
+  }
+
+  .auth-submit > span:not(.auth-submit-gloss) {
+    position: relative;
+  }
+
+  .auth-submit:hover:not(:disabled) svg:last-child {
+    transform: translateX(3px);
+  }
+
+  /* 按钮光泽：一束高光定期斜掠，hover 时立即再扫一次 */
+  .auth-submit-gloss {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 60%;
+    height: 100%;
+    background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+    transform: translateX(-180%) skewX(-18deg);
+    animation: auth-gloss-sweep 5.5s ease-in-out 2.2s infinite;
+  }
+
+  .auth-submit:hover:not(:disabled) .auth-submit-gloss {
+    animation: auth-gloss-sweep 0.9s ease-out;
+  }
+
+  .auth-foot {
+    margin-top: 22px;
+    text-align: center;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: rgba(160, 168, 204, 0.5);
+  }
+
+  /* —— orchestrated staggered entrance —— */
+  .auth-rise {
+    opacity: 0;
+    animation: auth-rise-in 1100ms var(--motion-ease) both;
+    animation-delay: var(--d, 0ms);
+  }
+
+  @media (max-width: 880px) {
+    .auth-shell {
+      grid-template-columns: 1fr;
+      max-width: 460px;
+      gap: 40px;
+    }
+    .auth-hero {
+      text-align: center;
+      margin: 0 auto;
+    }
+    .auth-brandrow,
+    .auth-feats {
+      justify-content: center;
+    }
+    .auth-lede {
+      margin-left: auto;
+      margin-right: auto;
+    }
+    /* 单列时第一幕不做水平平移，仅轻微放大 */
+    .is-title .auth-hero {
+      transform: scale(1.04);
+    }
+    .is-title .auth-card-slot {
+      transform: translateY(40px) scale(0.94);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .auth-orb-glow,
+    .auth-beam,
+    .auth-meteor,
+    .auth-particle,
+    .auth-sweep,
+    .auth-logo-halo,
+    .auth-card-ring,
+    .auth-submit-gloss,
+    .auth-title-accent.auth-word,
+    .auth-rise,
+    .auth-word {
+      animation: none !important;
+    }
+    .auth-rise,
+    .auth-word {
+      opacity: 1;
+    }
+    .auth-orb,
+    .auth-grid,
+    .auth-particles,
+    .auth-shell,
+    .auth-hero,
+    .auth-card-slot,
+    .auth-card,
+    .auth-feats {
+      transition: none;
+    }
+    .auth-card {
+      transform: none;
+    }
   }
 
   /* ── Segmented control ── */

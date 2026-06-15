@@ -1,22 +1,106 @@
-import { useState } from 'react';
-import { Bot, KeyRound, Loader2, LogIn, User } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Archive, ArrowRight, Bot, KeyRound, Loader2, Radar, Sparkles, User } from 'lucide-react';
 import { LOGO_PATH } from '../config';
 
 function LoginBrandMark({ logoError, onLogoError }) {
-  return !logoError ? (
-    <img src={LOGO_PATH} alt="Logo" className="h-14 w-14 rounded-[14px] object-contain shadow-sm" onError={onLogoError} />
-  ) : (
-    <div className="brand-mark flex h-14 w-14 items-center justify-center rounded-[14px]">
-      <Bot className="h-7 w-7 text-white" />
-    </div>
+  return (
+    <span className="auth-logo-shell">
+      <span className="auth-logo-halo" aria-hidden="true" />
+      {!logoError ? (
+        <img src={LOGO_PATH} alt="Logo" className="auth-logo" onError={onLogoError} />
+      ) : (
+        <span className="auth-logo auth-logo-fallback">
+          <Bot className="h-7 w-7 text-white" />
+        </span>
+      )}
+    </span>
   );
 }
+
+// 标题逐词浮现：保留换行结构，每个片段独立错峰入场
+const TITLE_LINES = [
+  [{ t: '让 ' }, { t: 'AI ' }, { t: '资讯' }],
+  [{ t: '有处可栖。', accent: true }],
+];
+
+// 第一幕「标题卡」停留时长，之后进入第二幕（文字归位 + 登录卡浮现）
+const TITLE_HOLD_MS = 3600;
+
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 export default function LoginScreen({ logoError, onLogoError, onLogin }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // 'title' = 第一幕（仅文字）；'ready' = 第二幕（登录卡浮现）
+  const [phase, setPhase] = useState(() => (prefersReducedMotion() ? 'ready' : 'title'));
+  const stageRef = useRef(null);
+
+  // 漂浮星尘：组件挂载时确定一组稳定的随机参数
+  const particles = useMemo(
+    () =>
+      Array.from({ length: 18 }, (_, i) => ({
+        id: i,
+        left: Math.random() * 100,
+        top: Math.random() * 100,
+        size: 1.5 + Math.random() * 2.5,
+        delay: Math.random() * 8,
+        duration: 9 + Math.random() * 10,
+        depth: 0.3 + Math.random() * 1.4,
+      })),
+    [],
+  );
+
+  // 第一幕 → 第二幕：定时推进；任意点击/按键可提前跳过开场
+  useEffect(() => {
+    if (phase !== 'title') return undefined;
+    const advance = () => setPhase('ready');
+    const timer = setTimeout(advance, TITLE_HOLD_MS);
+    window.addEventListener('pointerdown', advance, { once: true });
+    window.addEventListener('keydown', advance, { once: true });
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pointerdown', advance);
+      window.removeEventListener('keydown', advance);
+    };
+  }, [phase]);
+
+  // 鼠标：背景景深视差（--px/--py，归一化）+ 光标聚光坐标（--mx/--my，像素）
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || prefersReducedMotion()) return undefined;
+
+    let frame = 0;
+    const handleMove = (event) => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const rect = stage.getBoundingClientRect();
+        const mx = event.clientX - rect.left;
+        const my = event.clientY - rect.top;
+        stage.style.setProperty('--px', (mx / rect.width - 0.5).toFixed(4));
+        stage.style.setProperty('--py', (my / rect.height - 0.5).toFixed(4));
+        stage.style.setProperty('--mx', `${mx.toFixed(1)}px`);
+        stage.style.setProperty('--my', `${my.toFixed(1)}px`);
+        stage.style.setProperty('--spot', '1');
+      });
+    };
+    const reset = () => {
+      stage.style.setProperty('--px', '0');
+      stage.style.setProperty('--py', '0');
+      stage.style.setProperty('--spot', '0');
+    };
+    stage.addEventListener('pointermove', handleMove);
+    stage.addEventListener('pointerenter', () => stage.style.setProperty('--spot', '1'));
+    stage.addEventListener('pointerleave', reset);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      stage.removeEventListener('pointermove', handleMove);
+      stage.removeEventListener('pointerleave', reset);
+    };
+  }, []);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -31,66 +115,156 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
     }
   };
 
+  let wordIndex = 0;
+
   return (
-    <main className="login-screen flex min-h-screen items-center justify-center px-5 py-10">
-      <section className="login-panel grid w-full max-w-[980px] overflow-hidden rounded-[22px] border backdrop-blur-xl lg:grid-cols-[1.02fr_0.98fr]">
-        <div className="login-brief relative min-h-[360px] overflow-hidden bg-slate-950 p-8 text-white sm:p-10">
-          <div className="relative z-10 flex h-full flex-col justify-between">
-            <div>
-              <LoginBrandMark logoError={logoError} onLogoError={onLogoError} />
-              <h1 className="mt-7 text-[30px] font-black leading-tight sm:text-[36px]">哆啦美·归档中枢</h1>
-              <p className="mt-3 max-w-[420px] text-sm font-semibold leading-7 text-blue-50/86">
-                AI 资讯抓取、归档与集成控制台。
-              </p>
-            </div>
-          </div>
+    <main className={`auth-stage is-${phase}`} ref={stageRef}>
+      <div className="auth-bg" aria-hidden="true">
+        <div className="auth-orb auth-orb-1">
+          <span className="auth-orb-glow" />
         </div>
+        <div className="auth-orb auth-orb-2">
+          <span className="auth-orb-glow" />
+        </div>
+        <div className="auth-orb auth-orb-3">
+          <span className="auth-orb-glow" />
+        </div>
+        <span className="auth-grid" />
+        <span className="auth-grid-spot" />
+        <span className="auth-beam" />
+        <div className="auth-meteors">
+          <span className="auth-meteor auth-meteor-1" />
+          <span className="auth-meteor auth-meteor-2" />
+          <span className="auth-meteor auth-meteor-3" />
+        </div>
+        <div className="auth-particles">
+          {particles.map((p) => (
+            <span
+              key={p.id}
+              className="auth-particle"
+              style={{
+                left: `${p.left}%`,
+                top: `${p.top}%`,
+                width: `${p.size}px`,
+                height: `${p.size}px`,
+                '--pd': p.depth,
+                animationDelay: `${p.delay}s`,
+                animationDuration: `${p.duration}s`,
+              }}
+            />
+          ))}
+        </div>
+        <span className="auth-grain" />
+        <span className="auth-spotlight" />
+        <span className="auth-vignette" />
+        <span className="auth-sweep" />
+      </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col justify-center p-8 sm:p-10">
-          <div className="mb-8">
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-blue-600">Archive Access</p>
-            <h2 className="mt-3 text-[26px] font-black leading-tight text-slate-950">登录管理台</h2>
+      <div className="auth-shell">
+        <section className="auth-hero">
+          <div className="auth-brandrow auth-rise" style={{ '--d': '120ms' }}>
+            <LoginBrandMark logoError={logoError} onLogoError={onLogoError} />
+            <span className="auth-wordmark">DORAMI</span>
           </div>
 
-          <label className="mb-5 block">
-            <span className="mb-2 block text-sm font-extrabold text-slate-700">账号</span>
-            <span className="login-input-wrap flex items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4">
-              <User className="h-4.5 w-4.5 shrink-0 text-blue-600" />
-              <input
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                autoComplete="username"
-                className="h-12 min-w-0 flex-1 border-0 bg-transparent text-sm font-bold text-slate-900 outline-none placeholder:text-slate-400"
-                placeholder="输入登录账号"
-              />
-            </span>
-          </label>
+          <p className="auth-eyebrow auth-rise" style={{ '--d': '260ms' }}>
+            AI ARCHIVE NEXUS · 归档中枢
+          </p>
 
-          <label className="mb-4 block">
-            <span className="mb-2 block text-sm font-extrabold text-slate-700">密码</span>
-            <span className="login-input-wrap flex items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4">
-              <KeyRound className="h-4.5 w-4.5 shrink-0 text-blue-600" />
-              <input
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                type="password"
-                autoComplete="current-password"
-                className="h-12 min-w-0 flex-1 border-0 bg-transparent text-sm font-bold text-slate-900 outline-none placeholder:text-slate-400"
-                placeholder="输入登录密码"
-              />
-            </span>
-          </label>
+          <h1 className="auth-title">
+            {TITLE_LINES.map((line, li) => (
+              <span className="auth-title-line" key={li}>
+                {line.map((word, wi) => {
+                  const delay = 560 + wordIndex * 190;
+                  wordIndex += 1;
+                  return (
+                    <span
+                      key={wi}
+                      className={`auth-word${word.accent ? ' auth-title-accent' : ''}`}
+                      style={{ '--d': `${delay}ms` }}
+                    >
+                      {word.t}
+                    </span>
+                  );
+                })}
+              </span>
+            ))}
+          </h1>
 
-          <div className="min-h-7">
-            {error && <p className="text-sm font-bold text-rose-600">{error}</p>}
-          </div>
+          <p className="auth-lede auth-rise" style={{ '--d': '900ms' }}>
+            抓取 · 归档 · 向量检索 · 智能分发——在一处掌控全链路情报。
+          </p>
 
-          <button type="submit" disabled={isSubmitting} className="action-button action-button-primary mt-3 h-12 w-full text-[15px]">
-            {isSubmitting ? <Loader2 className="animate-spin" /> : <LogIn />}
-            {isSubmitting ? '正在登录' : '登录'}
-          </button>
-        </form>
-      </section>
+          <ul className="auth-feats">
+            <li>
+              <Radar />
+              多源抓取
+            </li>
+            <li>
+              <Archive />
+              结构化归档
+            </li>
+            <li>
+              <Sparkles />
+              语义检索
+            </li>
+          </ul>
+        </section>
+
+        <div className="auth-card-slot">
+          <section className="auth-card">
+            <span className="auth-card-ring" aria-hidden="true" />
+            <span className="auth-card-glow" aria-hidden="true" />
+            <form onSubmit={handleSubmit} className="auth-form">
+              <p className="auth-card-eyebrow">ARCHIVE ACCESS</p>
+              <h2 className="auth-card-title">进入控制台</h2>
+              <p className="auth-card-sub">使用归档账号登录，继续你的情报工作流。</p>
+
+              <label className="auth-field">
+                <span className="auth-field-label">账号</span>
+                <span className="auth-input-wrap">
+                  <User className="auth-input-icon" />
+                  <input
+                    value={username}
+                    onChange={(event) => setUsername(event.target.value)}
+                    autoComplete="username"
+                    className="auth-input"
+                    placeholder="输入登录账号"
+                  />
+                </span>
+              </label>
+
+              <label className="auth-field">
+                <span className="auth-field-label">密码</span>
+                <span className="auth-input-wrap">
+                  <KeyRound className="auth-input-icon" />
+                  <input
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    type="password"
+                    autoComplete="current-password"
+                    className="auth-input"
+                    placeholder="输入登录密码"
+                  />
+                </span>
+              </label>
+
+              <div className="auth-error-slot">
+                {error && <p className="auth-error">{error}</p>}
+              </div>
+
+              <button type="submit" disabled={isSubmitting} className="auth-submit">
+                <span className="auth-submit-gloss" aria-hidden="true" />
+                {isSubmitting ? <Loader2 className="animate-spin" /> : null}
+                <span>{isSubmitting ? '正在登录' : '登录'}</span>
+                {!isSubmitting ? <ArrowRight /> : null}
+              </button>
+
+              <p className="auth-foot">受 HMAC 会话保护 · 哆啦美 · 归档中枢</p>
+            </form>
+          </section>
+        </div>
+      </div>
     </main>
   );
 }
