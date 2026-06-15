@@ -11,5 +11,10 @@ config/production.ini
 # Evaluation results (keep .gitkeep but not actual results)
 tests/rag/results/*.json
 
+# Export artifacts (shendeng daily-news / daily-brief exports — see scripts/README.md)
+daily-news-*.json
+daily-brief-*.md
+/output/
+
 # macOS
 .DS_Store

@@ -1,6 +1,7 @@
 # DoramiSourceArchive Docs
 
-Reference documentation for the archive. (Architecture and dev commands live in
+Reference documentation for the archive. (A whole-repo navigation map lives in
+the repo-root [`README.md`](../README.md); architecture and dev commands live in
 the repo-root `CLAUDE.md`; this folder holds the durable contracts, standards,
 and source/node knowledge.)
 
@@ -26,3 +27,8 @@ How sources are classified, admitted, audited, and maintained.
 - [sources/node_audit_playbook.md](./sources/node_audit_playbook.md) — **how to verify a node is healthy and fix it when it isn't** (inspection steps, quality checks, failure-pattern catalog, deletion criteria).
 - [sources/node_catalog_and_risks.md](./sources/node_catalog_and_risks.md) — **the current node catalog**: each node's special adaptation and its stability risk.
 - [sources/candidates/](./sources/candidates/) — per-vendor candidate source records (recommended + parking lot), with validation notes.
+
+## Analysis & history
+
+- [analysis/horizon-vs-dorami.md](./analysis/horizon-vs-dorami.md) — fetch/daily-briefing principle comparison against [Thysrael/Horizon](https://github.com/Thysrael/Horizon).
+- [archive/](./archive/) — landed or superseded planning docs kept for provenance (e.g. `frontend-optimization-plan.md`, a historical snapshot of the frontend-polish effort).
