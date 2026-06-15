@@ -28,6 +28,10 @@ npm run lint     # ESLint
 
 Data is stored in the `data/` directory (SQLite `cms_data.db` and ChromaDB `chroma_db/`).
 
+### Production deploy
+
+`./deploy.sh` is the one-shot production deploy: it installs backend deps into a `venv/`, builds the frontend, copies `frontend/dist/*` into the Nginx html dir, then (re)starts the backend under PM2 via `ecosystem.config.js` (app `dorami-backend-v2`, `interpreter: ./venv/bin/python`, `script: src/main.py`) and reloads Nginx. It requires `config/production.ini` (the deploy points the backend at it via `DORAMI_CONFIG_FILE`); create it from `config/production.example.ini` first. The frontend is served as static assets by Nginx in production, **not** by Vite — only the backend runs as a process.
+
 ## Architecture Overview
 
 **DoramiSourceArchive** (哆啦美·归档中枢) is an AI content aggregation CMS with RAG capabilities. It fetches content from multiple sources, stores it in SQLite, and builds a vector index in ChromaDB for semantic search. It splits into two cooperating layers — a **collector/archive** side (fetching, archival, vectorization) and a **reader/distribution** side (per-user subscriptions, semantic search, tokenized feed/MCP delivery) — gated by runtime role and login account role (see *Runtime roles & dual-axis access control*).
@@ -72,6 +76,16 @@ Three fetcher base classes cover the major source types:
 
 **Reader subscription & distribution layer**: Reader accounts build a personalized subscription scope over already-archived records (it never triggers fetching). One-click subscribe (`POST`/`DELETE /api/reader/sources/{source_id}/subscribe`) creates/removes a per-user, single-source `ReaderSubscriptionRecord` (owned via `owner_username`). "我订阅" = the union of `source_id`s across a user's active subscriptions; for a `user` account it hard-scopes that user's vector/RAG/MCP retrieval and is the scope of the 阅读器 (the user's primary surface — its 我的订阅 view aggregates subscribed sources via `GET /api/articles?subscribed_scope=only`). Downstream consumers pull via tokens (HMAC-SHA256, stored only as hashes): a per-subscription token (`dsub_`) or the per-user **aggregated feed token** (`dfeed_`, one row per user in `ReaderFeedTokenRecord`) used at `GET /api/public/feed/articles[.md]` — a single endpoint covering all the user's subscribed sources with publish-time/source/type filters. Full contract in `docs/contracts/reader_subscription.md`.
 
+**Daily Brief (每日 AI 资讯日报) — LLM map-reduce over the archive**: `src/services/daily_brief.py` orchestrates a scheduled/manual digest of already-archived articles: `collect_candidates` → `map_summarize` (per-article LLM summarize+score, `map_concurrency` in parallel) → `select_top` (score + diversity) → `reduce_to_markdown` (single LLM rollup) → idempotent write of a `daily_brief` content record (`source_id=dorami_daily_brief`, `content_type=daily_brief`). **Two-layer dedup**: ① a deterministic high-water cursor `daily_brief_cursor` (over `fetched_date`) that only advances after a successful write; ② the reduce step injects recent briefs' bodies so the LLM collapses the same event semantically. All daily-brief run state/config (cron, top-N, last run, cursor, LLM overrides) lives in `AppSettingRecord` KV — **no new ORM table**. The scheduler registers exactly one APScheduler job `daily_brief`; `reload_daily_brief_schedule()` hot-adds/removes it on config change. Live generation progress is in-memory only (`get_progress()`, polled by `GET /api/daily-brief/progress`). Daily-brief endpoints are **collector(admin)-gated** but the panel (`DailyBriefPanel`) is surfaced inside 接入集成 (`MCPTab`).
+
+**LLM client (OpenAI-compatible)**: `src/llm/client.py` is a thin httpx wrapper over `{base_url}/chat/completions` covering OpenAI/DeepSeek/Kimi/智谱/通义/火山方舟/OpenRouter/Ollama/vLLM. `chat_completion()` does async completion + exponential-backoff retry + optional JSON mode; `parse_json_object()` robustly extracts a pure JSON object from model output (strips code fences, slices outer braces); `ping()` tests connectivity. It takes an `LLMConfig` and **never logs the api_key**. Config comes from `[llm]` in the ini (or `DORAMI_LLM_*` env), and can be overridden at runtime via admin settings (persisted to `AppSettingRecord` KV). Prompts live in `src/llm/prompts.py`. `LLMConfig.configured` is true only when `base_url`+`api_key`+`model` are all set.
+
+**Collection Jobs supersede the legacy fetch-task model**: A `CollectionJobRecord` is a savable, schedulable collection job that bundles multiple fetcher nodes (`fetcher_ids_json`), optional node-group scope (`group_id`), shared + per-node params, a job-level cron + per-node cron overrides, and a `downstream_policy_json`. Running one writes a job-level `CollectionJobRunRecord` (`run_scope` = `ad_hoc`/`saved_job`/`legacy_task`) that **aggregates** the per-node `FetchRunRecord` rows it spawned (counts, child run IDs, partial-failure status). The old `FetchTaskRecord` (cron-scheduled single fetcher) still exists for backward compatibility and is loaded into the scheduler at startup; `POST /api/collection-jobs/migrate-legacy-tasks` migrates them (tracked via `legacy_task_id`). Prefer Collection Jobs for new scheduling work. (`pipeline/progress.py` exposes in-memory per-`fetcher_id` `{current,total}` counts surfaced by `GET /api/fetch-runs/running-progress`.)
+
+**Archive Sync (collector → reader)**: A collector runtime (external network) exports faithful archive records as JSON Lines (`application/x-ndjson`) via `GET /api/archive/export/articles.jsonl`; an intranet reader runtime imports them via `POST /api/archive/import/articles.jsonl` **without performing any public fetch**. Import is admin-only (it mutates the whole archive). Full contract in `docs/contracts/archive_sync.md`.
+
+**Downloadable Claude skill**: `src/api/skill_router.py` zips `src/skill_templates/dorami-daily-brief/` on the fly (templating `{BASE_URL}` into the live host) and serves it at `GET /api/skill/daily-brief`, so a user can install a ready-made Claude skill that talks to this deployment's feed/MCP endpoints.
+
 **Vectorization is admin-managed**: The ChromaDB collection is shared/global, so building it is a collector/admin concern (one user vectorizing a source's article would affect every subscriber of that source). `user` accounts cannot trigger or select vectorization — they only consume via hard-scoped retrieval and a read-only coverage ratio (`GET /api/vector/subscribed-stats`). Admin manages it from 知识台账: per-article / batch / `all-pending` build, `reindex-all`, and an `auto_vectorize` toggle (`GET`/`POST /api/vector/auto-vectorize`, persisted in `AppSettingRecord`). The `admin` superuser's own retrieval is **not** subscription-scoped (it searches the whole archive); only the restricted `user` role is scoped.
 
 ### Project Structure
@@ -79,7 +93,15 @@ Three fetcher base classes cover the major source types:
 ```
 src/
 ├── main.py                  # Entry point: starts uvicorn with reload=True
-├── api/app.py               # FastAPI app — all REST endpoints + APScheduler init
+├── config.py                # load_config() → settings singleton; reads DORAMI_CONFIG_FILE (else config/backend.ini)
+├── api/
+│   ├── app.py               # FastAPI app — all REST endpoints + APScheduler init
+│   └── skill_router.py      # GET /api/skill/daily-brief: zips src/skill_templates/dorami-daily-brief on the fly
+├── llm/
+│   ├── client.py            # OpenAI-compatible chat_completion + parse_json_object + ping (httpx; never logs api_key)
+│   └── prompts.py           # Daily-brief map/reduce prompt templates
+├── services/
+│   └── daily_brief.py       # Daily-brief map-reduce orchestration + cursor dedup + in-memory progress
 ├── models/
 │   ├── content.py           # Dataclass content models (BaseContent + subtypes)
 │   └── db.py                # SQLModel ORM tables: ArticleRecord, FetchTaskRecord,
@@ -99,7 +121,9 @@ src/
 │       ├── playwright_renderer.py       # PlaywrightRenderer: headless-Chromium detail rendering for Cloudflare-challenged sources (used by OpenAINewsRssFetcher)
 │       └── webhook_trigger.py           # Outbound Dify workflow trigger (not an inbound content source)
 ├── mcp_server.py            # build_mcp_app(): FastMCP streamable-HTTP server, mounted at /mcp by app.py
-├── pipeline/core.py         # DataPipeline: drives fetcher → broadcasts to registered storages
+├── pipeline/
+│   ├── core.py              # DataPipeline: drives fetcher → broadcasts to registered storages
+│   └── progress.py          # In-memory per-fetcher {current,total} run progress (polled by frontend)
 └── storage/
     ├── base.py              # BaseStorage abstract class
     └── impl/
@@ -118,6 +142,8 @@ frontend/src/
     ├── VectorTab.jsx        # 向量雷达: semantic search + RAG context export (reader surface, but admin-facing — hidden for `user`, who searches via the 阅读器)
     ├── MCPTab.jsx           # 接入集成: MCP server status + integration snippets + 个人聚合接口 (the dfeed_ feed token, via FeedAccessSection) (reader; greys out RAG tools when rag_enabled is false)
     ├── FeedAccessSection.jsx # 个人聚合接口 block embedded in 接入集成: aggregated feed endpoint + dfeed_ token get/rotate + curl docs
+    ├── DailyBriefPanel.jsx   # 每日 AI 资讯日报: config + manual generate + run history; embedded in 接入集成 (admin-managed)
+    ├── DailyBriefFlow.jsx    # Animated map-reduce stage visualization for the daily-brief generation progress
     ├── SettingsModal.jsx    # Account/runtime settings + admin maintenance actions
     ├── ManualAddModal.jsx   # Manual article entry form
     ├── ArticleDetailModal.jsx
@@ -142,6 +168,23 @@ frontend/src/
 
 **Import Bridge**
 - `POST /api/import/social-posts` — ingest external social posts (X/Twitter, etc.) as `social_post` content; idempotent by `source_id + post_id`
+
+**Archive Sync** (collector → reader, see *Archive Sync* above)
+- `GET /api/archive/export/articles.jsonl` — collector exports archive records as JSON Lines
+- `POST /api/archive/import/articles.jsonl` — reader imports them (admin-only; no public fetch)
+
+**Daily Brief** (collector/admin-gated; surfaced in 接入集成)
+- `GET`/`POST /api/daily-brief/config` — read/set cron, top-N, LLM overrides (persisted in `AppSettingRecord` KV)
+- `POST /api/daily-brief/generate` — manually trigger one digest run
+- `GET /api/daily-brief/runs` — recent run history; `GET /api/daily-brief/progress` — live in-memory generation progress; `GET /api/daily-brief/pipeline` — stage/pipeline view
+- `GET /api/skill/daily-brief` — download the templated `dorami-daily-brief` Claude skill zip
+
+**Collection Jobs** (supersede legacy fetch-tasks; see *Collection Jobs* above)
+- `GET/POST/PUT/DELETE /api/collection-jobs` — savable, schedulable multi-node job CRUD
+- `POST /api/collection-jobs/{job_id}/run` — run a job now (writes an aggregating `CollectionJobRunRecord`)
+- `POST /api/collection-jobs/migrate-legacy-tasks` — migrate legacy `FetchTaskRecord`s into jobs
+- `GET /api/collection-job-runs` + `GET /api/collection-job-runs/{job_run_id}` — job-level run history
+- `GET /api/fetch-runs/running-progress` — in-memory per-fetcher live progress
 
 **Fetchers & Tasks**
 - `GET /api/fetchers` — list all discovered fetchers with parameter schemas
@@ -188,7 +231,7 @@ frontend/src/
 
 ### Tests
 
-Unit tests live directly under `tests/` as `test_*.py` (covering `rss_fetcher`, `webpage_fetcher`, `article_extractor`, `fetcher_curation`, `mcp`, `runtime_role`, `subscriptions`, and `rag_disabled` — `runtime_role`/`subscriptions` exercise the dual-role gating, subscriptions, aggregated feed, and admin/user vectorization split; `rag_disabled` verifies the `vector_sink`-is-`None` path returns 503 / "RAG disabled"). Each file self-bootstraps `sys.path` to `src/` so imports resolve without an editable install. Run with pytest:
+Unit tests live directly under `tests/` as `test_*.py`. Fetcher/extraction: `rss_fetcher`, `webpage_fetcher`, `github_release_fetcher`, `repository_model_fetcher`, `ithome_web_fetcher`, `article_extractor`, `fetcher_curation`, `fetch_concurrency`, `fetch_failures`, `progress`. Platform/role: `mcp`, `runtime_role`, `subscriptions`, `rag_disabled` (`runtime_role`/`subscriptions` exercise the dual-role gating, subscriptions, aggregated feed, and admin/user vectorization split; `rag_disabled` verifies the `vector_sink`-is-`None` path returns 503 / "RAG disabled"). Daily-brief/LLM/sync: `daily_brief`, `llm_client`, `ensure_daily_collection_job`, `archive_sync`, `shendeng_export`. Each file self-bootstraps `sys.path` to `src/` so imports resolve without an editable install. Run with pytest:
 
 ```bash
 .venv/bin/python -m pytest tests/test_rss_fetcher.py
@@ -218,11 +261,12 @@ Results are saved to `tests/rag/results/eval_<timestamp>.json` (gitignored).
 
 ### Configuration (`config/backend.ini`)
 
-Loaded by `src/config.py` into the `settings` singleton (read live in `app.py`; tests monkeypatch it).
+Loaded by `src/config.py` (`load_config()`) into the `settings` singleton (read live in `app.py`; tests monkeypatch it). The config file path is `DORAMI_CONFIG_FILE` if set (production uses `config/production.ini`), else `config/backend.ini`.
 
 - `[runtime] role` — `all` (local all-in-one, default) | `collector` (external collection/archive) | `reader` (intranet distribution). Also overridable via `DORAMI_RUNTIME_ROLE`.
 - `[auth] admin_users` / `user_users` — comma-separated `username:password` pairs. `admin` accounts are collector+reader superusers; `user` accounts are reader-only. A username may not appear in both. `[auth] secret` salts the session and subscription/feed token HMACs.
 - `[rag] enabled` — `false` (default) | `true`. Master switch for the vector/RAG subsystem; when off no embedding model loads. Overridable via `DORAMI_RAG_ENABLED`. See *RAG is opt-in and lazy-loaded*.
+- `[llm] base_url` / `api_key` / `model` (+ `timeout_seconds`, `temperature`, `max_tokens`, `map_concurrency`) — OpenAI-compatible LLM for the Daily Brief. Empty by default (Daily Brief is inert until configured). Overridable via `DORAMI_LLM_BASE_URL` / `DORAMI_LLM_API_KEY` / `DORAMI_LLM_MODEL` and at runtime via admin settings (KV). See *LLM client*.
 
 ### Environment Variables
 
@@ -232,4 +276,6 @@ Loaded by `src/config.py` into the `settings` singleton (read live in `app.py`; 
 | `LOCAL_MODEL_PATH` | Path to local sentence-transformers model for offline embedding; defaults to `BAAI/bge-m3` |
 | `DORAMI_RUNTIME_ROLE` | Override `[runtime] role` (`all`/`collector`/`reader`) |
 | `DORAMI_RAG_ENABLED` | Override `[rag] enabled` (`1`/`true`/`yes`/`on` to enable the vector/RAG subsystem) |
+| `DORAMI_CONFIG_FILE` | Path to the ini config file to load (defaults to `config/backend.ini`); production deploy sets it to `config/production.ini` |
+| `DORAMI_LLM_BASE_URL` / `DORAMI_LLM_API_KEY` / `DORAMI_LLM_MODEL` | Override the `[llm]` OpenAI-compatible client config (used by the Daily Brief) |
 | `GITHUB_TOKEN` / `GH_TOKEN` | Optional GitHub API token for the GitHub repo fetchers; raises the rate limit (60→5000/hr) for repo listing + README backfill |
