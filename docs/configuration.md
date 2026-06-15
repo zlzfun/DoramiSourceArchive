@@ -52,7 +52,7 @@ PM2 使用方案 A：启动 `src/main.py`，由应用代码读取 `[server] host
 DORAMI_CONFIG_FILE=/opt/dorami/config/production.ini pm2 start ecosystem.config.js
 ```
 
-仓库根目录提供 `deploy.sh`，用于直接完成依赖安装、前端构建、静态资源同步、PM2 启动/重载和 Nginx reload：
+仓库根目录提供 `deploy.sh`，用于直接完成基础系统依赖安装、后端依赖安装、前端构建、Nginx 站点配置、静态资源同步、PM2 启动/重载和 Nginx reload：
 
 ```bash
 ./deploy.sh
@@ -64,6 +64,19 @@ DORAMI_CONFIG_FILE=/opt/dorami/config/production.ini pm2 start ecosystem.config.
 - `VENV_DIR`：`venv`
 - `PM2_APP_NAME`：`dorami-backend-v2`
 - `NGINX_HTML_DIR`：`/var/www/my_site`
+- `NGINX_SITE_NAME`：`dorami`
+- `NGINX_SERVER_NAME`：`_`
+- `NGINX_LISTEN_PORT`：`80`
+- `NGINX_LISTEN_OPTIONS`：`default_server`
+- `BACKEND_PROXY_HOST`：`127.0.0.1`
+- `BACKEND_PROXY_PORT`：默认读取 `[server] port`，通常为 `8088`
+- `NGINX_DISABLE_DEFAULT_SITE`：`true`
+
+部署脚本假定 `uv` 已安装并配置好包源。它会在缺失时通过 `apt-get`、`dnf` 或 `yum` 安装 `nginx`、`nodejs`、`npm`，并通过 `npm install -g pm2` 安装 PM2。
+
+脚本会写入 Nginx 站点配置：Debian/Ubuntu 风格环境使用 `/etc/nginx/sites-available/${NGINX_SITE_NAME}` 并链接到 `sites-enabled`；其他环境使用 `/etc/nginx/conf.d/${NGINX_SITE_NAME}.conf`。生成的站点配置会将静态根目录设为 `NGINX_HTML_DIR`，并把 `/api/` 反代到 `http://${BACKEND_PROXY_HOST}:${BACKEND_PROXY_PORT}`。脚本随后用 `nginx -T` 和 `nginx -t` 校验启用后的配置确实包含该 root 和 proxy_pass。
+
+当 `[rag] enabled = true` 或设置了 `DORAMI_RAG_ENABLED=true` 时，脚本会检查 `[models] embedding_model` 和 `reranker_model` 指向的模型目录是否存在；RAG 关闭时跳过模型目录检查。
 
 部署脚本会使用 `uv pip install -e .` 按 `pyproject.toml` 安装后端依赖到 `venv`。它不会读取 `uv.lock` 中锁定的包下载 URL，因此服务器可以通过 uv 环境变量或 uv 配置使用内网 PyPI 源：
 
