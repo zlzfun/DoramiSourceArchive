@@ -7,13 +7,6 @@ cd "$(dirname "$0")"
 APP_NAME="${PM2_APP_NAME:-dorami-backend-v2}"
 VENV_DIR="${VENV_DIR:-venv}"
 CONFIG_FILE="${DORAMI_CONFIG_FILE:-$(pwd)/config/production.ini}"
-NGINX_HTML_DIR="${NGINX_HTML_DIR:-/var/www/my_site}"
-NGINX_SITE_NAME="${NGINX_SITE_NAME:-dorami}"
-NGINX_SERVER_NAME="${NGINX_SERVER_NAME:-_}"
-NGINX_LISTEN_PORT="${NGINX_LISTEN_PORT:-80}"
-NGINX_LISTEN_OPTIONS="${NGINX_LISTEN_OPTIONS:-default_server}"
-NGINX_DISABLE_DEFAULT_SITE="${NGINX_DISABLE_DEFAULT_SITE:-true}"
-BACKEND_PROXY_HOST="${BACKEND_PROXY_HOST:-127.0.0.1}"
 
 if [ "$(id -u)" -eq 0 ]; then
     SUDO=""
@@ -120,12 +113,136 @@ write_nginx_site_config() {
     local backend_host="$1"
     local backend_port="$2"
     local backend_upstream="http://${backend_host}:${backend_port}"
+    local ssl_enabled="false"
+    local hsts_header=""
+
+    if truthy "$NGINX_ENABLE_SSL"; then
+        ssl_enabled="true"
+        if [ "$NGINX_SERVER_NAME" = "_" ] || [ -z "$NGINX_SERVER_NAME" ]; then
+            fail "NGINX_ENABLE_SSL=true requires NGINX_SERVER_NAME to be your HTTPS domain."
+        fi
+        NGINX_SSL_CERT_FILE="${NGINX_SSL_CERT_FILE:-/etc/nginx/ssl/${NGINX_SERVER_NAME}.pem}"
+        NGINX_SSL_KEY_FILE="${NGINX_SSL_KEY_FILE:-/etc/nginx/ssl/${NGINX_SERVER_NAME}.key}"
+        $SUDO test -f "$NGINX_SSL_CERT_FILE" || fail "SSL certificate file not found: $NGINX_SSL_CERT_FILE"
+        $SUDO test -f "$NGINX_SSL_KEY_FILE" || fail "SSL private key file not found: $NGINX_SSL_KEY_FILE"
+        if truthy "$NGINX_ENABLE_HSTS"; then
+            hsts_header='    add_header Strict-Transport-Security "max-age=15552000" always;'
+        fi
+    fi
 
     resolve_nginx_site_file
     echo "Writing Nginx site config: $NGINX_SITE_FILE"
 
     $SUDO mkdir -p "$(dirname "$NGINX_SITE_FILE")"
-    $SUDO tee "$NGINX_SITE_FILE" >/dev/null <<EOF
+
+    if [ "$ssl_enabled" = "true" ]; then
+        if truthy "$NGINX_SSL_REDIRECT"; then
+            $SUDO tee "$NGINX_SITE_FILE" >/dev/null <<EOF
+server {
+    listen ${NGINX_LISTEN_PORT}${NGINX_LISTEN_OPTIONS:+ ${NGINX_LISTEN_OPTIONS}};
+    server_name ${NGINX_SERVER_NAME};
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen ${NGINX_SSL_LISTEN_PORT} ssl${NGINX_LISTEN_OPTIONS:+ ${NGINX_LISTEN_OPTIONS}};
+    server_name ${NGINX_SERVER_NAME};
+
+    ssl_certificate ${NGINX_SSL_CERT_FILE};
+    ssl_certificate_key ${NGINX_SSL_KEY_FILE};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+${hsts_header}
+
+    root ${NGINX_HTML_DIR};
+    index index.html;
+    client_max_body_size 100m;
+
+    location /api/ {
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 300s;
+        proxy_pass ${backend_upstream};
+    }
+
+    location /mcp {
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 300s;
+        proxy_pass ${backend_upstream};
+    }
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+}
+EOF
+        else
+            $SUDO tee "$NGINX_SITE_FILE" >/dev/null <<EOF
+server {
+    listen ${NGINX_LISTEN_PORT}${NGINX_LISTEN_OPTIONS:+ ${NGINX_LISTEN_OPTIONS}};
+    listen ${NGINX_SSL_LISTEN_PORT} ssl${NGINX_LISTEN_OPTIONS:+ ${NGINX_LISTEN_OPTIONS}};
+    server_name ${NGINX_SERVER_NAME};
+
+    ssl_certificate ${NGINX_SSL_CERT_FILE};
+    ssl_certificate_key ${NGINX_SSL_KEY_FILE};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    root ${NGINX_HTML_DIR};
+    index index.html;
+    client_max_body_size 100m;
+
+    location /api/ {
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 300s;
+        proxy_pass ${backend_upstream};
+    }
+
+    location /mcp {
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 300s;
+        proxy_pass ${backend_upstream};
+    }
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+}
+EOF
+        fi
+    else
+        $SUDO tee "$NGINX_SITE_FILE" >/dev/null <<EOF
 server {
     listen ${NGINX_LISTEN_PORT}${NGINX_LISTEN_OPTIONS:+ ${NGINX_LISTEN_OPTIONS}};
     server_name ${NGINX_SERVER_NAME};
@@ -161,6 +278,7 @@ server {
     }
 }
 EOF
+    fi
 
     if [ "$NGINX_SITE_ENABLED_FILE" != "$NGINX_SITE_FILE" ]; then
         $SUDO ln -sfn "$NGINX_SITE_FILE" "$NGINX_SITE_ENABLED_FILE"
@@ -184,6 +302,18 @@ validate_nginx_config() {
         || fail "Nginx site config does not define location /api/"
     $SUDO grep -F "proxy_pass ${backend_upstream};" "$NGINX_SITE_FILE" >/dev/null \
         || fail "Nginx /api proxy does not point to ${backend_upstream}"
+    if truthy "$NGINX_ENABLE_SSL"; then
+        $SUDO grep -F "listen ${NGINX_SSL_LISTEN_PORT} ssl" "$NGINX_SITE_FILE" >/dev/null \
+            || fail "Nginx SSL listener is not configured on port ${NGINX_SSL_LISTEN_PORT}"
+        $SUDO grep -F "ssl_certificate ${NGINX_SSL_CERT_FILE};" "$NGINX_SITE_FILE" >/dev/null \
+            || fail "Nginx SSL certificate path is not ${NGINX_SSL_CERT_FILE}"
+        $SUDO grep -F "ssl_certificate_key ${NGINX_SSL_KEY_FILE};" "$NGINX_SITE_FILE" >/dev/null \
+            || fail "Nginx SSL key path is not ${NGINX_SSL_KEY_FILE}"
+        if truthy "$NGINX_SSL_REDIRECT"; then
+            $SUDO grep -F 'return 301 https://$host$request_uri;' "$NGINX_SITE_FILE" >/dev/null \
+                || fail "Nginx HTTP to HTTPS redirect is not configured"
+        fi
+    fi
 
     if ! nginx_dump="$($SUDO nginx -T 2>&1)"; then
         echo "$nginx_dump" >&2
@@ -193,6 +323,12 @@ validate_nginx_config() {
         || fail "Enabled Nginx config does not include root ${NGINX_HTML_DIR}"
     grep -F "proxy_pass ${backend_upstream};" <<<"$nginx_dump" >/dev/null \
         || fail "Enabled Nginx config does not include proxy_pass ${backend_upstream}"
+    if truthy "$NGINX_ENABLE_SSL"; then
+        grep -F "ssl_certificate ${NGINX_SSL_CERT_FILE};" <<<"$nginx_dump" >/dev/null \
+            || fail "Enabled Nginx config does not include ssl_certificate ${NGINX_SSL_CERT_FILE}"
+        grep -F "ssl_certificate_key ${NGINX_SSL_KEY_FILE};" <<<"$nginx_dump" >/dev/null \
+            || fail "Enabled Nginx config does not include ssl_certificate_key ${NGINX_SSL_KEY_FILE}"
+    fi
 
     $SUDO nginx -t
 }
@@ -225,6 +361,19 @@ validate_models_if_needed() {
     [ -d "$reranker_model" ] || fail "RAG is enabled but reranker model directory is missing: $reranker_model"
 }
 
+warn_cookie_secure_if_needed() {
+    if ! truthy "$NGINX_ENABLE_SSL"; then
+        return
+    fi
+
+    local cookie_secure
+    cookie_secure="$(ini_get auth cookie_secure false)"
+    if ! truthy "$cookie_secure"; then
+        echo "WARNING: NGINX_ENABLE_SSL=true but [auth] cookie_secure is not true in $CONFIG_FILE."
+        echo "         Set cookie_secure = true after confirming HTTPS access is stable."
+    fi
+}
+
 echo "=================================================="
 echo "  Dorami production deploy"
 echo "=================================================="
@@ -236,8 +385,22 @@ fi
 
 need_command uv "uv is assumed to be configured on this server."
 
+NGINX_HTML_DIR="${NGINX_HTML_DIR:-$(ini_get nginx html_dir /var/www/my_site)}"
+NGINX_SITE_NAME="${NGINX_SITE_NAME:-$(ini_get nginx site_name dorami)}"
+NGINX_SERVER_NAME="${NGINX_SERVER_NAME:-$(ini_get nginx server_name _)}"
+NGINX_LISTEN_PORT="${NGINX_LISTEN_PORT:-$(ini_get nginx listen_port 80)}"
+NGINX_LISTEN_OPTIONS="${NGINX_LISTEN_OPTIONS:-$(ini_get nginx listen_options default_server)}"
+NGINX_DISABLE_DEFAULT_SITE="${NGINX_DISABLE_DEFAULT_SITE:-$(ini_get nginx disable_default_site true)}"
+NGINX_ENABLE_SSL="${NGINX_ENABLE_SSL:-$(ini_get nginx enable_ssl false)}"
+NGINX_SSL_LISTEN_PORT="${NGINX_SSL_LISTEN_PORT:-$(ini_get nginx ssl_listen_port 443)}"
+NGINX_SSL_REDIRECT="${NGINX_SSL_REDIRECT:-$(ini_get nginx ssl_redirect true)}"
+NGINX_SSL_CERT_FILE="${NGINX_SSL_CERT_FILE:-$(ini_get nginx ssl_cert_file "")}"
+NGINX_SSL_KEY_FILE="${NGINX_SSL_KEY_FILE:-$(ini_get nginx ssl_key_file "")}"
+NGINX_ENABLE_HSTS="${NGINX_ENABLE_HSTS:-$(ini_get nginx enable_hsts false)}"
+BACKEND_PROXY_HOST="${BACKEND_PROXY_HOST:-$(ini_get nginx backend_proxy_host 127.0.0.1)}"
+
 SERVER_PORT="$(ini_get server port 8088)"
-BACKEND_PROXY_PORT="${BACKEND_PROXY_PORT:-$SERVER_PORT}"
+BACKEND_PROXY_PORT="${BACKEND_PROXY_PORT:-$(ini_get nginx backend_proxy_port "$SERVER_PORT")}"
 
 echo "[1/7] Installing system dependencies..."
 install_system_packages
@@ -245,6 +408,7 @@ install_pm2
 
 echo "[2/7] Validating production config..."
 validate_models_if_needed
+warn_cookie_secure_if_needed
 
 echo "[3/7] Installing backend dependencies..."
 if [ ! -d "$VENV_DIR" ]; then
