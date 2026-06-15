@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
-  Star,
   Plus,
+  Minus,
   ExternalLink,
   ChevronDown,
   Loader2,
@@ -10,6 +10,8 @@ import {
   Compass,
   BookOpenText,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -54,6 +56,8 @@ export default function ReaderTab({ showToast }) {
   const [sourcesLoading, setSourcesLoading] = useState(true);
   const [activeSourceId, setActiveSourceId] = useState(null); // null = 「我的订阅」聚合
   const [discoverOpen, setDiscoverOpen] = useState(false);
+  const [sourcesCollapsed, setSourcesCollapsed] = useState(false);
+  const [listCollapsed, setListCollapsed] = useState(false);
 
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -134,6 +138,8 @@ export default function ReaderTab({ showToast }) {
       const items = data.items || [];
       setArticlesTotal(data.total || 0);
       setArticles(prev => (append ? [...prev, ...items] : items));
+      // 首次加载（非追加）自动展示第一篇，省去手动点选
+      if (!append) setActiveArticle(items[0] || null);
     } catch (error) {
       showToast(error.message || '获取文章列表失败', 'error');
     } finally {
@@ -185,20 +191,40 @@ export default function ReaderTab({ showToast }) {
   );
 
   return (
-    <div className="reader-shell">
-      {/* ── 左栏 · 我的订阅 ── */}
-      <aside className="reader-col reader-col-sources">
-        <div className="reader-search">
-          <Search className="h-4 w-4 text-slate-400" />
-          <input
-            type="text"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="搜索我的阅读…"
-            className="reader-search-input"
-          />
-        </div>
+    <div
+      className={`reader-shell ${sourcesCollapsed ? 'is-l-collapsed' : ''} ${listCollapsed ? 'is-m-collapsed' : ''}`}
+      style={{
+        '--col-l': sourcesCollapsed ? '0px' : '300px',
+        '--col-m': listCollapsed ? '0px' : '420px',
+      }}
+    >
+      {/* ── 分隔线把手 · 分阶段折叠（全栏 → 收左栏 → 收列表=专注阅读）──
+         有效态约束：收列表前必先收左栏。故列表展开时不显示「收列表」把手，
+         列表折叠时不显示「左栏」把手——任一状态至多两个把手且位置互不重叠。 */}
+      {!listCollapsed && (
+        <button
+          type="button"
+          title={sourcesCollapsed ? '展开来源栏' : '收起来源栏'}
+          onClick={() => setSourcesCollapsed(c => !c)}
+          className="reader-handle reader-handle-l"
+        >
+          {sourcesCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+        </button>
+      )}
+      {sourcesCollapsed && (
+        <button
+          type="button"
+          title={listCollapsed ? '展开文章列表' : '收起文章列表（专注阅读）'}
+          onClick={() => setListCollapsed(c => !c)}
+          className="reader-handle reader-handle-m"
+        >
+          {listCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+        </button>
+      )}
 
+      {/* ── 左栏 · 我的订阅 ── */}
+      <aside className="reader-col reader-col-sources" aria-hidden={sourcesCollapsed}>
+        <div className="reader-sources-inner">
         <button
           type="button"
           onClick={() => setActiveSourceId(null)}
@@ -246,7 +272,7 @@ export default function ReaderTab({ showToast }) {
                         >
                           {pinningId === source.source_id
                             ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            : <Star className="h-3.5 w-3.5" fill="currentColor" />}
+                            : <Minus className="h-3.5 w-3.5" />}
                         </button>
                       </div>
                     );
@@ -285,7 +311,7 @@ export default function ReaderTab({ showToast }) {
                             title="订阅"
                             onClick={() => handleSubscribe(source)}
                             disabled={pinningId === source.source_id}
-                            className="reader-add"
+                            className="reader-pin reader-pin-off"
                           >
                             {pinningId === source.source_id
                               ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -300,10 +326,22 @@ export default function ReaderTab({ showToast }) {
             </>
           )}
         </div>
+        </div>
       </aside>
 
       {/* ── 中栏 · 文章列表 ── */}
-      <section className="reader-col reader-col-list">
+      <section className="reader-col reader-col-list" aria-hidden={listCollapsed}>
+        <div className="reader-list-inner">
+        <div className="reader-search">
+          <Search className="h-4 w-4 text-slate-400" />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="搜索我的阅读…"
+            className="reader-search-input"
+          />
+        </div>
         <div className="reader-list-head">
           <span className="reader-list-title">
             {activeSourceId ? (sourceNameMap[activeSourceId] || activeSourceId) : '我的订阅'}
@@ -328,7 +366,7 @@ export default function ReaderTab({ showToast }) {
           ) : articles.length === 0 ? (
             <div className="reader-empty">
               <Inbox className="h-6 w-6 text-slate-300" />
-              <span>{searchQuery ? '没有匹配的文章' : '该来源暂无归档文章'}</span>
+              <span>{searchQuery ? '没有匹配的文章' : '该来源暂无文章'}</span>
             </div>
           ) : (
             <div className="row-stagger">
@@ -368,6 +406,7 @@ export default function ReaderTab({ showToast }) {
             </div>
           )}
         </div>
+        </div>
       </section>
 
       {/* ── 右栏 · 阅读面板 ── */}
@@ -399,7 +438,7 @@ export default function ReaderTab({ showToast }) {
                   {activeArticle.content}
                 </ReactMarkdown>
               ) : (
-                '该文章未归档正文内容，点击「查看原文」阅读完整内容。'
+                '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
               )}
             </div>
           </article>

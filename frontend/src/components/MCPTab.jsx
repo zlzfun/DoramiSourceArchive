@@ -112,7 +112,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
           <p className="page-subtitle mt-3 max-w-3xl">
             {sub === 'brief'
               ? '由后端大模型汇总择优近期归档内容，生成可订阅的 AI 资讯日报。'
-              : '通过 MCP / Skill 把归档中枢接入本地工具与在线 Agent 平台。'}
+              : '通过 MCP / Skill 把哆啦美接入本地工具与在线 Agent 平台。'}
           </p>
         </div>
         {canManage && (
@@ -155,7 +155,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
           </p>
           <h2 className="text-xl font-bold text-white mb-1">扩展你的 Agent 能力</h2>
           <p className="integration-lede mb-6">
-            通过 MCP 实时访问归档数据，或下载 Skill 让 Agent 自动生成 AI 资讯日报。
+            通过 MCP 实时访问你订阅的资讯，或下载 Skill 让 Agent 自动生成 AI 资讯日报。
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

@@ -46,6 +46,7 @@ export const COMPANY_REGISTRY = {
   huggingface: { name: 'Hugging Face', en: 'Hub', accent: '#FF9D00', domain: 'huggingface.co', monogram: 'HF' },
   qbitai: { name: '量子位', en: 'QbitAI', accent: '#E8392E', domain: 'qbitai.com', monogram: '量' },
   ycombinator: { name: 'Hacker News', en: 'Y Combinator', accent: '#FF6600', domain: 'news.ycombinator.com', monogram: 'Y' },
+  dorami: { name: '哆啦美', en: 'Dorami', accent: '#5B54E8', domain: '', monogram: '美', mark: 'dorami' },
   [CUSTOM_COMPANY_KEY]: { name: '通用能力节点', en: 'Custom', accent: '#64748B', domain: '', monogram: '⚙' },
 };
 

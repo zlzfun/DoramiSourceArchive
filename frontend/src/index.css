@@ -3235,6 +3235,18 @@ button:disabled {
     height: 82%;
   }
 
+  /* 哆啦美自有源：品牌紫底 + 白色 Bot，与 App 左上角主标识统一 */
+  .logo-mark-dorami {
+    color: #fff;
+    background: var(--dorami-blue);
+    box-shadow: 0 4px 12px rgba(91, 84, 232, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  }
+
+  .logo-mark-dorami svg {
+    width: 62%;
+    height: 62%;
+  }
+
   .logo-mark-mono {
     color: #fff;
     font-weight: 800;
@@ -4078,16 +4090,20 @@ button:disabled {
   /* 用 100vw + 负 margin 跳出 main 的 max-w/padding，铺满视口；
      高度填到视口底（顶部留出 76px sticky header），三栏各自内部滚动，页面本身不滚。 */
   .reader-shell {
+    --col-l: 300px;
+    --col-m: 420px;
     display: grid;
-    grid-template-columns: 300px minmax(360px, 420px) minmax(0, 1fr);
+    grid-template-columns: var(--col-l) var(--col-m) minmax(0, 1fr);
     width: 100vw;
     margin-inline: calc(50% - 50vw);
     margin-top: -36px;
     margin-bottom: -36px;
     height: calc(100vh - 76px);
     overflow: hidden;
+    position: relative;
     background: var(--dorami-surface);
     border-top: 1px solid var(--dorami-border);
+    transition: grid-template-columns 260ms cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .reader-col {
@@ -4098,14 +4114,73 @@ button:disabled {
     border-right: 1px solid var(--dorami-border);
   }
 
+  /* 可折叠栏内层固定宽度：列轨收缩到 0 时由外层 overflow 裁切，内容不回流 */
+  .reader-sources-inner,
+  .reader-list-inner {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .reader-sources-inner { width: 300px; }
+  .reader-list-inner { width: 420px; }
+
+  /* ── 分隔线浮动把手：折叠/展开触发控件 ──
+     挂在 reader-shell 的绝对定位层（不在任何会被裁切的列内）；
+     left 用与 grid 同源的 --col-l/--col-m 变量，跟随列宽动画一起滑动。
+     有效态约束（见 JSX）保证任一时刻可见把手位置互不重叠，故统一垂直居中、等高。 */
+  .reader-handle {
+    position: absolute;
+    z-index: 5;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 46px;
+    padding: 0;
+    border: 1px solid var(--dorami-border);
+    border-radius: 7px;
+    background: var(--dorami-surface);
+    color: var(--dorami-faint);
+    cursor: pointer;
+    box-shadow: var(--sh-1);
+    opacity: 0.55;
+    transition: left 260ms cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 140ms ease, color 140ms ease,
+                background 140ms ease, border-color 140ms ease;
+  }
+
+  .reader-handle:hover {
+    opacity: 1;
+    color: var(--dorami-blue);
+    border-color: rgba(91, 84, 232, 0.4);
+  }
+
+  .reader-handle:active { transform: translateY(-50%) scale(0.93); }
+
+  /* 把手贴在分隔线右侧（列宽为 0 时仍完整可见不被裁切） */
+  .reader-handle-l { left: var(--col-l); }
+  .reader-handle-m { left: calc(var(--col-l) + var(--col-m)); }
+
   .reader-col-read { border-right: none; }
 
   .reader-col-sources {
     background: var(--dorami-well);
     box-shadow: var(--dorami-inset);
+    overflow: hidden;
   }
 
-  .reader-col-list { background: var(--dorami-surface); }
+  .reader-col-list {
+    background: var(--dorami-surface);
+    overflow: hidden;
+  }
+
+  /* 列宽收到 0 时去掉残留的 1px 分隔线 */
+  .reader-shell.is-l-collapsed .reader-col-sources { border-right: none; }
+  .reader-shell.is-m-collapsed .reader-col-list { border-right: none; }
 
   .reader-col-read {
     background:
@@ -4214,6 +4289,7 @@ button:disabled {
     margin-top: 1px;
   }
 
+  /* 统一的加/减订阅开关：加号=订阅（reader-pin-off），减号=取消订阅（reader-pin-on） */
   .reader-pin {
     display: inline-flex;
     align-items: center;
@@ -4225,39 +4301,33 @@ button:disabled {
     background: transparent;
     border: 1px solid transparent;
     flex-shrink: 0;
-    opacity: 0;
-    transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
+    cursor: pointer;
+    transition: opacity 140ms ease, color 140ms ease, background 140ms ease, border-color 140ms ease;
   }
 
-  .reader-source-row:hover .reader-pin,
-  .reader-source-row-active .reader-pin { opacity: 1; }
+  .reader-pin:disabled { opacity: 0.6; cursor: default; }
 
-  .reader-pin:hover { background: rgba(91, 84, 232, 0.1); color: var(--dorami-blue); }
-
-  .reader-pin-on {
-    opacity: 1;
-    color: #f5a623;
-  }
-
-  .reader-pin-on:hover { background: rgba(245, 166, 35, 0.12); color: #e0930f; }
-
-  /* 发现区：+ 订阅按钮 */
-  .reader-add {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 26px;
-    border-radius: 7px;
+  /* 订阅：加号，品牌蓝，常显（发现区主操作），hover 填充 */
+  .reader-pin-off {
     color: var(--dorami-blue);
     background: rgba(91, 84, 232, 0.1);
-    border: 1px solid rgba(91, 84, 232, 0.16);
-    flex-shrink: 0;
-    transition: background 140ms ease, color 140ms ease;
+    border-color: rgba(91, 84, 232, 0.16);
   }
 
-  .reader-add:hover:not(:disabled) { background: var(--dorami-blue); color: #fff; }
-  .reader-add:disabled { opacity: 0.6; cursor: default; }
+  .reader-pin-off:hover:not(:disabled) { color: #fff; background: var(--dorami-blue); }
+
+  /* 取消订阅：减号默认隐藏，仅在该行 hover/选中/聚焦时浮现，避免一排减号 */
+  .reader-pin-on { opacity: 0; }
+
+  .reader-source-row:hover .reader-pin-on,
+  .reader-source-row-active .reader-pin-on,
+  .reader-pin-on:focus-visible { opacity: 1; }
+
+  /* hover 提示移除（红） */
+  .reader-pin-on:hover:not(:disabled) {
+    color: #dc2626;
+    background: rgba(220, 38, 38, 0.1);
+  }
 
   .reader-discover {
     margin-top: 14px;
@@ -4336,6 +4406,7 @@ button:disabled {
     font-weight: 700;
     color: var(--dorami-faint);
     flex-shrink: 0;
+    margin-left: auto;
   }
 
   .reader-list-scroll {
@@ -4622,6 +4693,10 @@ button:disabled {
       border-top: none;
     }
     .reader-col { border-right: none; border-bottom: 1px solid var(--dorami-border); }
+    /* 纵向堆叠时取消折叠相关的固定宽度/裁切与浮动把手 */
+    .reader-col-sources, .reader-col-list { overflow: visible; }
+    .reader-sources-inner, .reader-list-inner { width: 100%; }
+    .reader-handle { display: none; }
     .reader-source-scroll { max-height: 320px; }
     .reader-list-scroll { max-height: 420px; }
     .reader-pane { padding: 24px; }

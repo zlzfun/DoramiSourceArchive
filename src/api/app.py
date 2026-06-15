@@ -2108,6 +2108,8 @@ DAILY_BRIEF_SOURCE_META = {
     "desc": "由后端大模型每日自动生成的 AI 资讯日报，汇总择优近期归档内容。",
     "content_type": "daily_brief",
     "category": "AI 日报",
+    # 归到哆啦美自有品牌身份，使前端徽标走品牌色「美」字而非通用齿轮兜底。
+    "source_owner": "dorami",
 }
 
 
@@ -2136,6 +2138,7 @@ def get_reader_sources(request: Request):
     即便某个源历史产出为 0，它仍会出现在目录里，用户可提前订阅以接收其后续产出。
     """
     username = current_username(request)
+    ensure_default_subscriptions(username)
     registry_meta = _registry_source_meta()
     with Session(db_sink.engine) as session:
         rows = session.exec(
@@ -2221,6 +2224,56 @@ def get_reader_sources(request: Request):
     }
 
 
+def _create_single_source_subscription(session: Session, username: str, source_id: str, name: str) -> None:
+    """创建一个仅含 source_id 的单源订阅（不提交，由调用方统一 commit）。"""
+    token = generate_subscription_token()
+    now = _now_iso()
+    record = ReaderSubscriptionRecord(
+        owner_username=username,
+        name=name,
+        description="",
+        filters_json=_json_dumps({"source_ids": source_id, "has_content": True}),
+        delivery_policy_json=_json_dumps(normalize_delivery_policy()),
+        token_hash=hash_subscription_token(token),
+        token_preview=subscription_token_preview(token),
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(record)
+
+
+# 新读者账号默认自带的订阅源（可随时取消，且取消后不会被再次播种）。
+DEFAULT_SUBSCRIPTION_SOURCE_IDS = [DAILY_BRIEF_SOURCE_ID]
+DEFAULTS_SEEDED_KEY_PREFIX = "reader_defaults_seeded"
+
+
+def ensure_default_subscriptions(username: str) -> None:
+    """为读者账号首次播种默认订阅（仅一次）。
+
+    由读者门控端点调用，故调用方即可读账号；用每用户一次的 KV 标记守卫，
+    保证取消默认订阅后不会被重新加回。
+    """
+    if not username:
+        return
+    key = f"{DEFAULTS_SEEDED_KEY_PREFIX}:{username}"
+    registry_meta = _registry_source_meta()
+    with Session(db_sink.engine) as session:
+        if daily_brief_service.get_setting(session, key, ""):
+            return
+        existing = set(resolve_subscribed_source_ids(session, username))
+        for source_id in DEFAULT_SUBSCRIPTION_SOURCE_IDS:
+            if source_id in existing:
+                continue
+            if source_id == DAILY_BRIEF_SOURCE_ID:
+                name = DAILY_BRIEF_SOURCE_META["name"]
+            else:
+                name = _friendly_source_name(source_id, registry_meta)
+            _create_single_source_subscription(session, username, source_id, name)
+        # set_setting 内部 commit，会一并提交上面新增的订阅记录。
+        daily_brief_service.set_setting(session, key, _now_iso())
+
+
 @app.post("/api/reader/sources/{source_id}/subscribe")
 def subscribe_source(source_id: str, request: Request):
     """一键订阅单个内容源：尚未订阅则创建一个仅含该源的订阅，已订阅则幂等返回。
@@ -2235,21 +2288,9 @@ def subscribe_source(source_id: str, request: Request):
     with Session(db_sink.engine) as session:
         already = source_id in set(resolve_subscribed_source_ids(session, username))
         if not already:
-            token = generate_subscription_token()
-            now = _now_iso()
-            record = ReaderSubscriptionRecord(
-                owner_username=username,
-                name=_friendly_source_name(source_id, registry_meta),
-                description="",
-                filters_json=_json_dumps({"source_ids": source_id, "has_content": True}),
-                delivery_policy_json=_json_dumps(normalize_delivery_policy()),
-                token_hash=hash_subscription_token(token),
-                token_preview=subscription_token_preview(token),
-                is_active=True,
-                created_at=now,
-                updated_at=now,
+            _create_single_source_subscription(
+                session, username, source_id, _friendly_source_name(source_id, registry_meta)
             )
-            session.add(record)
             session.commit()
         subscribed_ids = sorted(set(resolve_subscribed_source_ids(session, username)))
     return {

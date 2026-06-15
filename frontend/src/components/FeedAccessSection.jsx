@@ -130,7 +130,7 @@ export default function FeedAccessSection({ showToast }) {
       </div>
 
       <div className="space-y-4 p-6">
-        <p className="tiny-meta">一个接口覆盖你订阅的全部来源，下游可按发布时间、类型、关键词等自由筛选拉取（与「订阅分发」无关，订阅在阅读器里管理）。</p>
+        <p className="tiny-meta">一个接口覆盖你订阅的全部来源，下游可按发布时间、类型、关键词等自由筛选拉取（订阅在阅读器里管理）。</p>
 
         <div>
           <p className="form-label">接口地址</p>

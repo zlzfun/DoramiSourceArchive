@@ -168,7 +168,7 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
           </div>
 
           <p className="auth-eyebrow auth-rise" style={{ '--d': '260ms' }}>
-            AI ARCHIVE NEXUS · 归档中枢
+            AI 资讯 · 聚合 · 订阅 · 检索
           </p>
 
           <h1 className="auth-title">
@@ -192,17 +192,17 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
           </h1>
 
           <p className="auth-lede auth-rise" style={{ '--d': '900ms' }}>
-            抓取 · 归档 · 向量检索 · 智能分发——在一处掌控全链路情报。
+            汇聚多源 AI 资讯，订阅、检索、随手可读——尽在一处。
           </p>
 
           <ul className="auth-feats">
             <li>
               <Radar />
-              多源抓取
+              多源聚合
             </li>
             <li>
               <Archive />
-              结构化归档
+              全文留存
             </li>
             <li>
               <Sparkles />
@@ -216,9 +216,9 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
             <span className="auth-card-ring" aria-hidden="true" />
             <span className="auth-card-glow" aria-hidden="true" />
             <form onSubmit={handleSubmit} className="auth-form">
-              <p className="auth-card-eyebrow">ARCHIVE ACCESS</p>
-              <h2 className="auth-card-title">进入控制台</h2>
-              <p className="auth-card-sub">使用归档账号登录，继续你的情报工作流。</p>
+              <p className="auth-card-eyebrow">ACCOUNT ACCESS</p>
+              <h2 className="auth-card-title">欢迎回来</h2>
+              <p className="auth-card-sub">登录账号，继续浏览你的 AI 资讯。</p>
 
               <label className="auth-field">
                 <span className="auth-field-label">账号</span>
@@ -260,7 +260,7 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
                 {!isSubmitting ? <ArrowRight /> : null}
               </button>
 
-              <p className="auth-foot">受 HMAC 会话保护 · 哆啦美 · 归档中枢</p>
+              <p className="auth-foot">受 HMAC 会话保护 · 哆啦美</p>
             </form>
           </section>
         </div>

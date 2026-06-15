@@ -72,7 +72,9 @@ export default function App() {
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
   const [logoError, setLogoError] = useState(false);
   const [availableFetchers, setAvailableFetchers] = useState([]);
-  const [runtimeInfo, setRuntimeInfo] = useState({ role: 'all', collector_enabled: true, reader_enabled: true, rag_enabled: false });
+  // 初始非乐观默认：能力未知时按「都未启用」，避免在 fetchRuntimeInfo 返回前把 collector 界面闪给读者。
+  const [runtimeInfo, setRuntimeInfo] = useState({ role: 'all', collector_enabled: false, reader_enabled: false, rag_enabled: false });
+  const [runtimeLoaded, setRuntimeLoaded] = useState(false);
   const [authState, setAuthState] = useState({ status: 'checking', user: null });
   const [articlesDirty, setArticlesDirty] = useState(false);
   const [runsDirty, setRunsDirty] = useState(false);
@@ -191,6 +193,9 @@ export default function App() {
       }
     } catch (error) {
       showToast(error.message || `网络连接异常，无法获取后端数据。`, 'error');
+    } finally {
+      // 能力已就绪（成功或失败都放行渲染，失败时退回非乐观默认）
+      setRuntimeLoaded(true);
     }
   }, [showToast]);
 
@@ -224,6 +229,7 @@ export default function App() {
     const handleAuthExpired = () => {
       setAuthState({ status: 'anonymous', user: null });
       setAvailableFetchers([]);
+      setRuntimeLoaded(false);
       showToast('登录已过期，请重新登录。', 'error');
     };
     window.addEventListener('dorami-auth-expired', handleAuthExpired);
@@ -242,6 +248,7 @@ export default function App() {
     } finally {
       setAuthState({ status: 'anonymous', user: null });
       setAvailableFetchers([]);
+      setRuntimeLoaded(false);
     }
   };
 
@@ -267,18 +274,18 @@ export default function App() {
     return name ? name.slice(0, 2).toUpperCase() : 'AD';
   }, [authState.user?.username]);
 
-  const roleLabel = useMemo(() => {
-    if (runtimeInfo.collector_enabled && !runtimeInfo.reader_enabled) return '采集归档层';
-    if (runtimeInfo.reader_enabled && !runtimeInfo.collector_enabled) return '分发订阅层';
-    if (runtimeInfo.collector_enabled && runtimeInfo.reader_enabled) return '双层一体';
-    return '无可用层';
-  }, [runtimeInfo.collector_enabled, runtimeInfo.reader_enabled]);
+  // 账号身份标签：读者不感知部署「层」概念，只显示自己的角色。
+  const roleLabel = readerOnly ? '读者' : '管理员';
+
+  // 品牌标题/副标题按账号视角区分：读者侧只讲「AI 资讯阅读」，不暴露归档/采集/分发。
+  const brandTitle = readerOnly ? '哆啦美' : '哆啦美·归档中枢';
 
   const brandSubtitle = useMemo(() => {
+    if (readerOnly) return 'AI 资讯阅读器';
     if (runtimeInfo.collector_enabled && !runtimeInfo.reader_enabled) return 'External Collector Archive';
     if (runtimeInfo.reader_enabled && !runtimeInfo.collector_enabled) return 'Reader Subscription Layer';
     return 'Dorami Agent Archive';
-  }, [runtimeInfo.collector_enabled, runtimeInfo.reader_enabled]);
+  }, [readerOnly, runtimeInfo.collector_enabled, runtimeInfo.reader_enabled]);
 
   useEffect(() => {
     if (!tabs.some(tab => tab.id === activeTab)) {
@@ -299,13 +306,23 @@ export default function App() {
     return <LoginScreen logoError={logoError} onLogoError={() => setLogoError(true)} onLogin={handleLogin} />;
   }
 
+  // 运行能力就绪前不渲染主界面，避免读者态下 collector 界面/请求闪现（403）。
+  if (!runtimeLoaded) {
+    return (
+      <div className="checking-state app-shell flex min-h-screen items-center justify-center font-sans">
+        <Loader2 className="mr-3 h-5 w-5 animate-spin text-blue-600" />
+        <span className="text-sm font-bold">正在载入工作台</span>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell font-sans">
       <header className="app-header flex items-center justify-between gap-4 px-5 sm:px-8">
         <div className="flex min-w-0 items-center gap-3">
           <BrandLogo logoError={logoError} onLogoError={() => setLogoError(true)} />
           <div className="hidden min-w-0 sm:block">
-            <h1 className="brand-title truncate text-[20px] font-black leading-tight">哆啦美·归档中枢</h1>
+            <h1 className="brand-title truncate text-[20px] font-black leading-tight">{brandTitle}</h1>
             <p className="brand-subtitle mt-1 text-xs font-bold">{brandSubtitle}</p>
           </div>
         </div>
