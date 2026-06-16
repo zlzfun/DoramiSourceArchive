@@ -38,21 +38,35 @@ Overlaps with official vendor sources, arXiv/paper sources, and other Chinese AI
 
 2026-05-28 recovery pass implemented this as `web_jiqizhixin`. Direct article/RSS HTTP still routes to a data-service page or server error outside a browser, but the public sitemap exposed original article URLs and `r.jina.ai` could render those pages as markdown. The fetcher enumerated recent `jiqizhixin.com/articles/...` URLs from `https://www.jiqizhixin.com/shared/sitemap.xml.gz`, skipped article-library fallbacks, and stored the original article URL plus reader-proxy metadata.
 
-**Removed 2026-06-02.** During the node audit `web_jiqizhixin` produced **zero**
-records: `sitemap.xml.gz` is now behind an Aliyun WAF and returns a `text/html`
-JS challenge page (`<textarea id="renderData">` + `aliyun_waf` + `acw_sc__v2`
-cookie) instead of the gzip sitemap, so pure httpx can't read it and the
-candidate list is empty. The only other entry points are gone too: the homepage/
-listing is a Vue SPA whose `r.jina.ai` render shows article titles + cover
-images but no `/articles/` links to extract, and RSS still 500s. The one
-formerly-working entry (the public sitemap) is now WAF-gated, with no
-low-maintenance bypass (Aliyun `acw_sc__v2` JS reversing is fragile, and even a
-headless-browser bypass would still need per-article `r.jina.ai` fetches). This
-hit both deletion triggers — structural unfitness (0 output, no cheap fix) and
-redundancy (Chinese AI media is already covered by the healthy `web_ithome_ai`
-and `web_qbitai`) — so the `JiqizhixinWebsiteFetcher` class, its
-`ESSENTIAL_FETCHER_IDS` entry, and `tests/test_jiqizhixin_fetcher.py` were
-deleted (same disposition as `docs_xai_models` / `web_bytedance_seed_models`).
+**Removed 2026-06-02 (the audit's WAF read was wrong / transient).** The audit
+recorded `web_jiqizhixin` producing **zero** records, attributing it to
+`sitemap.xml.gz` itself being behind an Aliyun WAF JS-challenge page. The node was
+deleted on structural-unfitness + redundancy grounds.
+
+**Re-investigated then re-discarded 2026-06-16. Do not re-attempt without a rotating egress IP.**
+A re-audit first overturned the sitemap finding: `https://www.jiqizhixin.com/shared/sitemap.xml.gz`
+*is* reachable over plain httpx — a real gzip sitemap with ~29k `/articles/{date}` URLs
+(doubled `http://host/https://host/...` prefix normalized via regex). The article **body**
+is JS-rendered into `div.detail__info-body` and a real browser renders it fine (siblings
+`detail__progress-wrapper` "0%" / `home__list-wrapper` "展开列表" are UI noise to exclude).
+A working fetcher was built (httpx sitemap discovery + reused headless-Chromium
+`PlaywrightRenderer` for the body) and verified pulling real recent articles.
+
+It was re-discarded because the blocker is **exit-IP rate-limiting**, not page structure.
+机器之心's Aliyun WAF tracks IP reputation: after ~10–20 requests in a session it starts
+**302-redirecting everything** from that IP (sitemap, `/rss`, `/articles/...`) to a
+`/data-service` landing page — HTTP 200 with no real content. Effects observed: a 10-article
+manual run got 8 then the IP flipped; subsequent runs returned the landing page for the
+sitemap itself (0 candidates). This is **IP-based, not fingerprint/headless detection** —
+confirmed by hitting the flagged IP with httpx, Scrapling `Fetcher` (curl_cffi Chrome *and*
+Safari impersonation), plain headless+headful Chromium, and Scrapling `StealthyFetcher`
+(patchright stealth + `solve_cloudflare`, which logged `No Cloudflare challenge found` since
+it's Aliyun not CF): **all** got the `/data-service` page. No client-side stealth can change
+the server's opinion of the IP; only a clean/rotating egress IP would. Not worth the cost —
+`web_ithome_ai` + `web_qbitai` already cover Chinese AI media. Nuance for any future attempt:
+fingerprint *does* matter at the first gate (curl_cffi passed the WAF before the IP was
+flagged where httpx couldn't), so a viable build would need **curl_cffi-grade fingerprinting
+for discovery _and_ a residential/rotating proxy** to survive sustained use.
 
 ## Source: 量子位 Website
 

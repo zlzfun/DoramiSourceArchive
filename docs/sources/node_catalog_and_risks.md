@@ -114,7 +114,18 @@ Concentrate periodic re-audits here (🔴, then the most coupled 🟡):
 - `web_qwen_blog` — private JSON API with no stability guarantee.
 - The HTML-structure-coupled nodes (`web_qbitai`, `web_aiera`, `web_bytedance_seed_research`, `web_cursor_changelog`, `docs_xai_release_notes`, `web_huggingface_daily_papers`) all break on an upstream redesign; the playbook's failure-pattern table is the recovery guide.
 
-> Removed node: `web_jiqizhixin` (机器之心) — its `sitemap.xml.gz` is now behind an
-> Aliyun WAF and there is no cheap recovery; Chinese AI media is already covered
-> by `web_ithome_ai` + `web_qbitai`. This is the canonical example of the
-> "structural unfitness + redundancy" deletion in the playbook.
+> Removed node: `web_jiqizhixin` (机器之心) — **do not re-attempt.** Re-investigated
+> 2026-06-16 (a working sitemap-discovery + Playwright-body-render fetcher was built and
+> verified pulling real articles). It is technically restorable, but was re-discarded
+> because 机器之心's Aliyun WAF **rate-limits by exit-IP reputation**: after ~10–20
+> requests in a session the WAF starts 302-redirecting *everything* from that IP (sitemap,
+> RSS, article pages) to a `/data-service` landing page (HTTP 200, no real content),
+> producing intermittent total failures. This is **not** fingerprint/headless detection,
+> so no client-side stealth defeats it — verified by testing httpx, curl_cffi
+> (Chrome/Safari impersonation), plain headless+headful Chromium, and Scrapling's
+> `StealthyFetcher` (patchright stealth + `solve_cloudflare`): once the IP is flagged, all
+> of them get the `/data-service` page. The only real lever is changing the egress IP
+> (residential/rotating proxy). Not worth the operational cost — Chinese AI media is
+> already covered by `web_ithome_ai` + `web_qbitai`. (Fingerprint *does* matter at the
+> first gate — curl_cffi passed the WAF before the IP was flagged where httpx didn't — so
+> a future attempt would need both curl_cffi-grade fingerprinting **and** a clean rotating IP.)

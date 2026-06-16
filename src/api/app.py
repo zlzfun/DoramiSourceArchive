@@ -225,6 +225,7 @@ async def lifespan(app: FastAPI):
         _mcp_enabled = False
 
     if runtime_collector_enabled():
+        reconcile_orphaned_runs()
         load_tasks_to_scheduler()
         if scheduler.state == STATE_STOPPED:
             scheduler.start()
@@ -465,6 +466,57 @@ def logout_admin(response: Response):
 # ==================== 定时任务系统核心逻辑 ====================
 def _now_iso() -> str:
     return datetime.datetime.now().isoformat()
+
+
+def reconcile_orphaned_runs() -> Dict[str, int]:
+    """启动自愈：把上次进程残留的「运行中」记录标记为失败。
+
+    抓取运行的进度只存活于进程内存，进程被杀/重启后任何仍是 ``running`` 的
+    ``fetch_runs`` / ``collection_job_runs`` 都成了永不收尾的孤儿（前端会一直显示
+    「运行中」）。启动时统一把它们标记为 ``failed`` 并补齐 ``ended_at``/``duration_ms``，
+    源状态从 ``running`` 降级为 ``unknown``（结果未知）。幂等：无残留时不做任何写入。
+    """
+    now = _now_iso()
+    counts = {"fetch_runs": 0, "job_runs": 0, "source_states": 0}
+    note = "后端重启，运行被中断（启动自愈标记）"
+
+    def _dur(started_at: Optional[str]) -> Optional[int]:
+        try:
+            delta = datetime.datetime.fromisoformat(now) - datetime.datetime.fromisoformat(started_at)
+            return int(delta.total_seconds() * 1000)
+        except (TypeError, ValueError):
+            return None
+
+    with Session(db_sink.engine) as session:
+        for run in session.exec(select(FetchRunRecord).where(FetchRunRecord.status == "running")).all():
+            run.status = "failed"
+            run.ended_at = now
+            run.duration_ms = _dur(run.started_at)
+            if not run.error_message:
+                run.error_message = note
+            session.add(run)
+            counts["fetch_runs"] += 1
+        for job_run in session.exec(select(CollectionJobRunRecord).where(CollectionJobRunRecord.status == "running")).all():
+            job_run.status = "failed"
+            job_run.ended_at = now
+            job_run.duration_ms = _dur(job_run.started_at)
+            if not job_run.error_message:
+                job_run.error_message = note
+            session.add(job_run)
+            counts["job_runs"] += 1
+        for state in session.exec(select(SourceStateRecord).where(SourceStateRecord.status == "running")).all():
+            state.status = "unknown"
+            state.updated_at = now
+            session.add(state)
+            counts["source_states"] += 1
+        session.commit()
+
+    if any(counts.values()):
+        print(
+            f"🧹 启动自愈：清理 {counts['fetch_runs']} 条中断抓取运行、"
+            f"{counts['job_runs']} 条采集任务运行、{counts['source_states']} 条源状态。"
+        )
+    return counts
 
 
 def _json_dumps(data: Any) -> str:
