@@ -419,6 +419,17 @@ fi
 source "$VENV_DIR/bin/activate"
 uv pip install -e .
 
+# Playwright 浏览器：rss_openai_news 节点用 headless Chromium 渲染 openai.com 正文页
+# （绕过其 Cloudflare 挑战）。Python 包已由上面的 uv 装好，但浏览器二进制需单独下载——
+# playwright 不会在首次启动时自动下载。缺浏览器时该节点只会优雅降级为 RSS 摘要、不影响
+# 其余节点，所以这两步即便失败也不阻断部署（在 set -euo pipefail 下显式吞掉退出码）。
+echo "    Provisioning Playwright Chromium (for the OpenAI News render node)..."
+"$VENV_DIR/bin/playwright" install chromium \
+    || echo "    ⚠️  Chromium 下载失败；OpenAI News 将降级为 RSS 摘要。可稍后手动执行: $VENV_DIR/bin/playwright install chromium"
+# 系统依赖库（libnss3/libatk/字体等）需 root，且仅 Debian/Ubuntu 支持；失败不阻断部署。
+$SUDO "$VENV_DIR/bin/playwright" install-deps chromium \
+    || echo "    ⚠️  playwright install-deps 失败或不适用（非 Debian/Ubuntu）；若 OpenAI News 渲染异常，请手动安装 Chromium 系统依赖。"
+
 mkdir -p logs
 
 echo "[4/7] Building frontend..."
