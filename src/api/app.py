@@ -646,6 +646,31 @@ def serialize_feed_article(record: ArticleRecord, include_content: bool = True) 
     return item
 
 
+def serialize_article_list_item(record: ArticleRecord, include_content: bool = True) -> Dict[str, Any]:
+    content = record.content or ""
+    item = {
+        "id": record.id,
+        "title": record.title,
+        "content_type": record.content_type,
+        "source_id": record.source_id,
+        "source_url": record.source_url,
+        "publish_date": record.publish_date,
+        "fetched_date": record.fetched_date,
+        "fetch_run_id": record.fetch_run_id,
+        "job_id": record.job_id,
+        "job_run_id": record.job_run_id,
+        "source_group_id": record.source_group_id,
+        "run_scope": record.run_scope,
+        "has_content": record.has_content,
+        "is_vectorized": record.is_vectorized,
+        "content_preview": content[:280],
+    }
+    if include_content:
+        item["content"] = content
+        item["extensions_json"] = record.extensions_json or "{}"
+    return item
+
+
 def article_to_markdown(record: ArticleRecord) -> str:
     metadata = serialize_feed_article(record, include_content=False)["metadata"]
     frontmatter = json.dumps(metadata, ensure_ascii=False, indent=2)
@@ -2989,6 +3014,7 @@ def get_articles(
         skip: int = 0,
         limit: int = 100,
         include_total: bool = False,
+        include_content: bool = True,
 ):
     scope = (subscribed_scope or "off").strip().lower()
     safe_limit = min(max(int(limit), 1), 500)
@@ -3026,10 +3052,11 @@ def get_articles(
             query = query.order_by(*article_recency_order())
         total = int(session.exec(count_query).one() or 0) if include_total else None
         records = session.exec(query.offset(safe_skip).limit(safe_limit)).all()
+        items = [serialize_article_list_item(record, include_content=include_content) for record in records]
         if not include_total:
-            return records
+            return items
         return {
-            "items": records,
+            "items": items,
             "total": total,
             "skip": safe_skip,
             "limit": safe_limit,
@@ -3142,6 +3169,14 @@ def export_feed_articles_markdown(
 
     markdown = "\n\n---\n\n".join(article_to_markdown(record) for record in records)
     return Response(content=markdown, media_type="text/markdown; charset=utf-8")
+
+
+@app.get("/api/articles/{article_id:path}")
+async def get_article(article_id: str):
+    record = await db_sink.get(article_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="文章未找到")
+    return serialize_article_list_item(record, include_content=True)
 
 
 @app.post("/api/articles")

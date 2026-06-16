@@ -8,6 +8,7 @@ import LogoMark from './LogoMark';
 import { resolveCompany } from '../sourceTaxonomy';
 import {
   fetchArticles as apiFetchArticles,
+  fetchArticle,
   batchDeleteArticles,
   vectorizeArticle,
   batchVectorizeArticles,
@@ -18,7 +19,7 @@ import {
 import { runAction } from '../utils/runAction';
 import { useConfirm } from '../hooks/useConfirm';
 
-const ARTICLE_PAGE_SIZE = 100;
+const ARTICLE_PAGE_SIZE = 30;
 
 export default function DataTab({
   availableFetchers,
@@ -35,6 +36,7 @@ export default function DataTab({
 }) {
   const confirm = useConfirm();
   const listAbortRef = useRef(null);
+  const detailAbortRef = useRef(null);
   const listFilterKeyRef = useRef('');
   const [articles, setArticles] = useState([]);
   const [articlePageInfo, setArticlePageInfo] = useState({ total: 0 });
@@ -42,6 +44,7 @@ export default function DataTab({
   const [loading, setLoading] = useState(false);
   const [selectedArticles, setSelectedArticles] = useState(new Set());
   const [modalState, setModalState] = useState({ isOpen: false, data: null, isEditing: false });
+  const [detailLoading, setDetailLoading] = useState(false);
   const [manualAddModal, setManualAddModal] = useState(false);
   const [vectorizingId, setVectorizingId] = useState(null);
   const [vectorizingAll, setVectorizingAll] = useState(false);
@@ -160,7 +163,7 @@ export default function DataTab({
       // 知识台账只展示采集归档的原始内容；日报是 LLM 加工产物，从台账排除
       // （阅读器订阅侧不带此参数，用户订阅日报后仍可正常查看）。
       const queryFilters = { ...filters, exclude_source_ids: 'dorami_daily_brief' };
-      const data = await apiFetchArticles(queryFilters, ARTICLE_PAGE_SIZE, skip, true, { signal: controller.signal });
+      const data = await apiFetchArticles(queryFilters, ARTICLE_PAGE_SIZE, skip, true, { signal: controller.signal, includeContent: false });
       const total = data.total || 0;
       const maxPage = Math.max(1, Math.ceil(total / ARTICLE_PAGE_SIZE));
       if (page > maxPage) {
@@ -227,6 +230,11 @@ export default function DataTab({
     refreshArticles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchReloadTick]);
+
+  useEffect(() => () => {
+    listAbortRef.current?.abort();
+    detailAbortRef.current?.abort();
+  }, []);
 
   // 当前生效筛选（用于「当前筛选」条的可移除胶囊）。键控筛选清除后由 activeFilterKey effect 自动重载；
   // 仅搜索是提交式，需额外触发 searchReloadTick。
@@ -336,8 +344,30 @@ export default function DataTab({
     });
   };
 
-  const openDetailModal = (article) => {
+  const openDetailModal = async (article) => {
+    detailAbortRef.current?.abort();
+    const controller = new AbortController();
+    detailAbortRef.current = controller;
     setModalState({ isOpen: true, data: article, isEditing: false });
+    setDetailLoading(true);
+    try {
+      const detail = await fetchArticle(article.id, { signal: controller.signal });
+      setModalState(prev => (
+        prev.isOpen && prev.data?.id === article.id
+          ? { ...prev, data: { ...prev.data, ...detail } }
+          : prev
+      ));
+    } catch (e) {
+      if (e.name !== 'AbortError') showToast(e.message || '获取文章详情失败', 'error');
+    } finally {
+      if (!controller.signal.aborted) setDetailLoading(false);
+    }
+  };
+
+  const closeDetailModal = () => {
+    detailAbortRef.current?.abort();
+    setDetailLoading(false);
+    setModalState({ isOpen: false, data: null, isEditing: false });
   };
 
   return (
@@ -541,7 +571,7 @@ export default function DataTab({
                 </td>
                 <td className="px-4 py-4 font-bold text-slate-800 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => openDetailModal(article)}>
                   <div className="line-clamp-1">{article.title}</div>
-                  <div className="mt-1 line-clamp-1 text-xs font-semibold text-slate-400">{article.content || '暂无摘要内容'}</div>
+                  <div className="mt-1 line-clamp-1 text-xs font-semibold text-slate-400">{article.content_preview || article.content || '暂无摘要内容'}</div>
                 </td>
                 <td className="px-3 py-4 text-slate-500 text-xs font-mono">{article.publish_date?.split('T')[0] || '-'}</td>
                 <td className="px-3 py-4 text-slate-600 text-xs font-mono">{article.fetched_date?.replace('T', ' ').substring(0, 16) || '-'}</td>
@@ -635,10 +665,14 @@ export default function DataTab({
         isOpen={modalState.isOpen}
         data={modalState.data}
         isEditing={modalState.isEditing}
+        isLoading={detailLoading}
         getFetcherName={getFetcherName}
         canEdit={canManageArticles}
-        onClose={() => setModalState({ isOpen: false, data: null, isEditing: false })}
-        onToggleEdit={() => setModalState({ ...modalState, isEditing: !modalState.isEditing })}
+        onClose={closeDetailModal}
+        onToggleEdit={() => {
+          if (detailLoading) return;
+          setModalState({ ...modalState, isEditing: !modalState.isEditing });
+        }}
         onSave={handleUpdateArticle}
       />
 

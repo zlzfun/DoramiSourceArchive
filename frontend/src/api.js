@@ -62,13 +62,21 @@ export async function fetchSourceHealth() {
 }
 
 export async function fetchArticles(filters = {}, limit = 100, skip = 0, includeTotal = false, options = {}) {
+  const { includeContent, ...fetchOptions } = options;
   const params = new URLSearchParams({ limit, skip });
   if (includeTotal) params.append('include_total', 'true');
+  if (includeContent !== undefined) params.append('include_content', includeContent ? 'true' : 'false');
   Object.entries(filters).forEach(([k, v]) => {
     if (v !== '' && v !== null && v !== undefined) params.append(k, v);
   });
-  const res = await apiFetch(`${API_BASE_URL}/articles?${params}`, options);
+  const res = await apiFetch(`${API_BASE_URL}/articles?${params}`, fetchOptions);
   if (!res.ok) await handleApiError(res, '获取文章列表失败');
+  return res.json();
+}
+
+export async function fetchArticle(id, options = {}) {
+  const res = await apiFetch(`${API_BASE_URL}/articles/${encodeURIComponent(id)}`, options);
+  if (!res.ok) await handleApiError(res, '获取文章详情失败');
   return res.json();
 }
 

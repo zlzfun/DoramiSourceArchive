@@ -349,6 +349,42 @@ def test_articles_can_return_total_without_breaking_list_response(monkeypatch, t
         assert len(paged["items"]) == 2
 
 
+def test_articles_lightweight_list_and_detail_endpoint(monkeypatch, tmp_path):
+    import api.app as app_module
+    from models.db import ArticleRecord
+
+    sink = _make_sink(tmp_path, "articles_lightweight.db")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    _set_auth_accounts(monkeypatch, app_module)
+    _set_runtime_role(monkeypatch, app_module, "reader")
+
+    body = "正文" * 300
+    with Session(sink.engine) as session:
+        session.add(ArticleRecord(
+            id="article_full", title="full", content_type="rss_article", source_id="rss_openai",
+            source_url="https://e.test/full", publish_date="2026-05-20T00:00:00",
+            fetched_date="2026-05-20T00:00:00", has_content=True, content=body,
+            extensions_json='{"tag": "full"}', is_vectorized=False,
+        ))
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+
+        legacy = client.get("/api/articles").json()[0]
+        assert legacy["content"] == body
+        assert legacy["extensions_json"] == '{"tag": "full"}'
+
+        slim = client.get("/api/articles?include_content=false&include_total=true").json()["items"][0]
+        assert slim["content_preview"] == body[:280]
+        assert "content" not in slim
+        assert "extensions_json" not in slim
+
+        detail = client.get("/api/articles/article_full").json()
+        assert detail["content"] == body
+        assert detail["extensions_json"] == '{"tag": "full"}'
+
+
 def test_articles_subscribed_only_empty_when_no_subscriptions(monkeypatch, tmp_path):
     import api.app as app_module
     from models.db import ArticleRecord

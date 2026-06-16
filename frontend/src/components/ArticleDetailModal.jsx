@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { FileText, Link as LinkIcon, Calendar, Database, Box, ExternalLink, Edit2, Save, X, AlertCircle } from 'lucide-react';
 import { useModalTransition } from '../hooks/useModalTransition';
 
-export default function ArticleDetailModal({ isOpen, data, isEditing, getFetcherName, canEdit = true, onClose, onToggleEdit, onSave }) {
+export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading = false, getFetcherName, canEdit = true, onClose, onToggleEdit, onSave }) {
   const { mounted, closing } = useModalTransition(isOpen);
 
   useEffect(() => {
@@ -15,6 +15,9 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, getFetcher
   }, [isOpen]);
 
   if (!mounted || !data) return null;
+
+  const hasFullDetail = Object.prototype.hasOwnProperty.call(data, 'content') && data.extensions_json !== undefined;
+  const canToggleEdit = canEdit && hasFullDetail && !isLoading;
 
   const handleSave = () => {
     onSave(data.id, {
@@ -35,9 +38,9 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, getFetcher
           </div>
           <div className="flex items-center space-x-2">
             {canEdit && (
-              <button onClick={onToggleEdit} className={`action-button min-h-[34px] px-3 text-xs ${isEditing ? 'action-button-danger' : 'action-button-quiet'}`}>
+              <button onClick={onToggleEdit} disabled={!canToggleEdit} className={`action-button min-h-[34px] px-3 text-xs ${isEditing ? 'action-button-danger' : 'action-button-quiet'}`}>
                 {isEditing ? <X /> : <Edit2 />}
-                {isEditing ? '取消编辑' : '进入编辑模式'}
+                {isLoading ? '加载中' : isEditing ? '取消编辑' : '进入编辑模式'}
               </button>
             )}
             <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-700 bg-white rounded-lg shadow-sm"><X className="w-5 h-5" /></button>
@@ -77,14 +80,14 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, getFetcher
             <label className="form-label flex items-center"><Database className="w-3.5 h-3.5 mr-1" /> 正文核心/摘要 (用于向量检索)</label>
             {isEditing ? (
               <textarea defaultValue={data.content} id="edit-content" rows="8" className="form-input leading-relaxed" />
-            ) : <div className="text-sm bg-slate-50 p-4 rounded-[14px] border border-slate-100 whitespace-pre-wrap leading-relaxed text-slate-700 shadow-inner max-h-64 overflow-y-auto">{data.content || '无正文内容'}</div>}
+            ) : <div className="text-sm bg-slate-50 p-4 rounded-[14px] border border-slate-100 whitespace-pre-wrap leading-relaxed text-slate-700 shadow-inner max-h-64 overflow-y-auto">{isLoading ? '正在加载全文…' : (data.content || '无正文内容')}</div>}
           </div>
 
           <div>
             <label className="form-label flex items-center"><Box className="w-3.5 h-3.5 mr-1" /> 扩展元数据 (Extensions JSON)</label>
             {isEditing ? (
               <textarea defaultValue={data.extensions_json} id="edit-extensions" rows="6" className="form-input font-mono text-xs" />
-            ) : <pre className="text-xs bg-slate-800 text-emerald-400 p-4 rounded-[14px] overflow-x-auto shadow-inner">{JSON.stringify(JSON.parse(data.extensions_json || '{}'), null, 2)}</pre>}
+            ) : <pre className="text-xs bg-slate-800 text-emerald-400 p-4 rounded-[14px] overflow-x-auto shadow-inner">{isLoading ? '正在加载元数据…' : JSON.stringify(JSON.parse(data.extensions_json || '{}'), null, 2)}</pre>}
           </div>
         </div>
 
