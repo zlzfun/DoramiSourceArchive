@@ -421,14 +421,29 @@ uv pip install -e .
 
 # Playwright 浏览器：rss_openai_news 节点用 headless Chromium 渲染 openai.com 正文页
 # （绕过其 Cloudflare 挑战）。Python 包已由上面的 uv 装好，但浏览器二进制需单独下载——
-# playwright 不会在首次启动时自动下载。缺浏览器时该节点只会优雅降级为 RSS 摘要、不影响
-# 其余节点，所以这两步即便失败也不阻断部署（在 set -euo pipefail 下显式吞掉退出码）。
+# playwright 不会在首次启动时自动下载，缺浏览器时该节点只优雅降级为 RSS 摘要、不影响其余节点。
+# 三种情形自适应（任何失败都不阻断部署，set -euo pipefail 下已逐一兜底）：
+#   1) 已显式指定 PLAYWRIGHT_CHROMIUM_EXECUTABLE → 尊重之，跳过下载；
+#   2) playwright 能为当前 OS 下载自带浏览器 → 用它，并装 Linux 系统依赖；
+#   3) OS 过新/不受支持（如 Ubuntu 26.04，playwright 拒绝下载）→ 自动探测系统已装的
+#      chromium/chrome，export 给后续 pm2 reload/start --update-env（配合 ecosystem.config.js
+#      的透传送进后端）。都没有就提示装一个后重跑部署。
 echo "    Provisioning Playwright Chromium (for the OpenAI News render node)..."
-"$VENV_DIR/bin/playwright" install chromium \
-    || echo "    ⚠️  Chromium 下载失败；OpenAI News 将降级为 RSS 摘要。可稍后手动执行: $VENV_DIR/bin/playwright install chromium"
-# 系统依赖库（libnss3/libatk/字体等）需 root，且仅 Debian/Ubuntu 支持；失败不阻断部署。
-$SUDO "$VENV_DIR/bin/playwright" install-deps chromium \
-    || echo "    ⚠️  playwright install-deps 失败或不适用（非 Debian/Ubuntu）；若 OpenAI News 渲染异常，请手动安装 Chromium 系统依赖。"
+if [ -n "${PLAYWRIGHT_CHROMIUM_EXECUTABLE:-}" ]; then
+    echo "    使用预设的系统 Chromium: $PLAYWRIGHT_CHROMIUM_EXECUTABLE"
+elif "$VENV_DIR/bin/playwright" install chromium; then
+    $SUDO "$VENV_DIR/bin/playwright" install-deps chromium \
+        || echo "    ⚠️  playwright install-deps 失败或不适用；若 OpenAI News 渲染异常请手动装 Chromium 系统依赖。"
+else
+    SYS_CHROMIUM="$(command -v chromium || command -v chromium-browser || command -v google-chrome || command -v google-chrome-stable || true)"
+    if [ -n "$SYS_CHROMIUM" ]; then
+        export PLAYWRIGHT_CHROMIUM_EXECUTABLE="$SYS_CHROMIUM"
+        echo "    ⚠️  Playwright 自带浏览器装不上（OS 不受支持），已自动改用系统 Chromium: $SYS_CHROMIUM"
+    else
+        echo "    ⚠️  Playwright 自带浏览器装不上，且未发现系统 Chromium → OpenAI News 将降级为 RSS 摘要。"
+        echo "        修复：装一个 Chromium 后重跑 ./deploy.sh，例如  sudo apt-get install -y chromium  （或 snap install chromium / 装 Google Chrome）"
+    fi
+fi
 
 mkdir -p logs
 

@@ -16,6 +16,7 @@
 
 import asyncio
 import logging
+import os
 from typing import Optional
 
 
@@ -74,7 +75,15 @@ class PlaywrightRenderer:
             return self
         try:
             self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(headless=True)
+            launch_kwargs = {"headless": True}
+            # 逃生口：Playwright 不支持当前 OS（如过新的 Ubuntu 拒绝下载/校验浏览器）时，
+            # 通过 PLAYWRIGHT_CHROMIUM_EXECUTABLE 指向一个系统自带的 chromium/chrome 二进制，
+            # 绕开 Playwright 自带浏览器的 OS 适配。未设置则沿用 Playwright 下载的浏览器。
+            executable = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE", "").strip()
+            if executable:
+                launch_kwargs["executable_path"] = executable
+                logger.info(f"ℹ️ 使用系统 Chromium: {executable}")
+            self._browser = await self._playwright.chromium.launch(**launch_kwargs)
             self._context = await self._browser.new_context(user_agent=self.user_agent)
             self.available = True
         except Exception as e:
