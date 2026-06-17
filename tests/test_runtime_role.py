@@ -6,24 +6,40 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+_DEFAULT_ACCOUNTS = (("admin", "admin", "admin"), ("user", "user", "user"))
+
 
 def _login(client: TestClient, username: str = "admin", password: str = "admin") -> None:
     response = client.post("/api/auth/login", json={"username": username, "password": password})
     assert response.status_code == 200
 
 
-def _set_auth_accounts(monkeypatch, app_module):
-    monkeypatch.setattr(
-        app_module,
-        "AUTH_ACCOUNTS",
-        {
-            "admin": {"password": "admin", "role": "admin"},
-            "user": {"password": "user", "role": "user"},
-        },
-    )
+def _seed_users(engine, accounts=_DEFAULT_ACCOUNTS):
+    """将测试账户播种进给定引擎的 users 表（账户已迁移到数据库托管）。"""
+    from sqlmodel import Session
+    from models.db import UserRecord
+    from services import accounts as accounts_service
+
+    with Session(engine) as session:
+        for username, password, role in accounts:
+            existing = session.get(UserRecord, username)
+            if existing is not None:
+                session.delete(existing)
+                session.commit()
+            accounts_service.create_user(session, username, password, role)
 
 
-def _set_runtime_role(monkeypatch, role: str):
+def _make_sink(tmp_path, name="runtime_role.db"):
+    from storage.impl.db_storage import DatabaseStorage
+
+    return DatabaseStorage(db_url=f"sqlite:///{tmp_path / name}")
+
+
+def _set_auth_accounts(monkeypatch, app_module, accounts=_DEFAULT_ACCOUNTS):
+    _seed_users(app_module.db_sink.engine, accounts)
+
+
+def _set_runtime_role(monkeypatch, role: str, *, tmp_path=None):
     import api.app as app_module
     from config import RuntimeConfig
 
@@ -32,6 +48,8 @@ def _set_runtime_role(monkeypatch, role: str):
         "settings",
         replace(app_module.settings, runtime=RuntimeConfig(role=role)),
     )
+    if tmp_path is not None:
+        monkeypatch.setattr(app_module, "db_sink", _make_sink(tmp_path))
     return app_module
 
 
@@ -50,8 +68,8 @@ def test_runtime_role_normalization_rejects_invalid_role():
         raise AssertionError("invalid runtime role should fail")
 
 
-def test_reader_role_disables_collector_api(monkeypatch):
-    app_module = _set_runtime_role(monkeypatch, "reader")
+def test_reader_role_disables_collector_api(monkeypatch, tmp_path):
+    app_module = _set_runtime_role(monkeypatch, "reader", tmp_path=tmp_path)
     _set_auth_accounts(monkeypatch, app_module)
 
     with TestClient(app_module.app) as client:
@@ -74,8 +92,8 @@ def test_reader_role_disables_collector_api(monkeypatch):
         assert reader_response.status_code == 200
 
 
-def test_collector_role_disables_reader_api(monkeypatch):
-    app_module = _set_runtime_role(monkeypatch, "collector")
+def test_collector_role_disables_reader_api(monkeypatch, tmp_path):
+    app_module = _set_runtime_role(monkeypatch, "collector", tmp_path=tmp_path)
     _set_auth_accounts(monkeypatch, app_module)
 
     with TestClient(app_module.app) as client:
@@ -99,8 +117,8 @@ def test_collector_role_disables_reader_api(monkeypatch):
         assert app_module.disabled_runtime_surface("/mcpfoo") is None
 
 
-def test_all_runtime_splits_surfaces_by_login_account(monkeypatch):
-    app_module = _set_runtime_role(monkeypatch, "all")
+def test_all_runtime_splits_surfaces_by_login_account(monkeypatch, tmp_path):
+    app_module = _set_runtime_role(monkeypatch, "all", tmp_path=tmp_path)
     _set_auth_accounts(monkeypatch, app_module)
 
     with TestClient(app_module.app) as client:

@@ -49,6 +49,59 @@ export async function logoutAdmin() {
   return res.json();
 }
 
+export async function changeOwnPassword(currentPassword, newPassword) {
+  const res = await apiFetch(`${API_BASE_URL}/auth/change-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  if (!res.ok) await handleApiError(res, '修改密码失败');
+  return res.json();
+}
+
+// ==================== 账户管理（仅管理员） ====================
+export async function fetchAccounts() {
+  const res = await apiFetch(`${API_BASE_URL}/accounts`);
+  if (!res.ok) await handleApiError(res, '获取账户列表失败');
+  return res.json();
+}
+
+export async function createAccount(payload) {
+  const res = await apiFetch(`${API_BASE_URL}/accounts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await handleApiError(res, '创建账户失败');
+  return res.json();
+}
+
+export async function updateAccount(username, payload) {
+  const res = await apiFetch(`${API_BASE_URL}/accounts/${encodeURIComponent(username)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await handleApiError(res, '更新账户失败');
+  return res.json();
+}
+
+export async function resetAccountPassword(username, newPassword) {
+  const res = await apiFetch(`${API_BASE_URL}/accounts/${encodeURIComponent(username)}/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+  if (!res.ok) await handleApiError(res, '重置密码失败');
+  return res.json();
+}
+
+export async function deleteAccount(username) {
+  const res = await apiFetch(`${API_BASE_URL}/accounts/${encodeURIComponent(username)}`, { method: 'DELETE' });
+  if (!res.ok) await handleApiError(res, '删除账户失败');
+  return res.json();
+}
+
 export async function fetchFetchers() {
   const res = await apiFetch(`${API_BASE_URL}/fetchers`);
   if (!res.ok) await handleApiError(res, '获取抓取器注册表失败');

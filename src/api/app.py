@@ -36,6 +36,7 @@ from models.db import (
     SourceConfigRecord,
     SourceStateRecord,
     AppSettingRecord,
+    UserRecord,
 )
 from models.content import BaseContent, SocialPostContent
 
@@ -43,6 +44,7 @@ from models.content import BaseContent, SocialPostContent
 from fetchers.registry import fetcher_registry, DECOMMISSIONED_FETCHER_IDS
 from api.skill_router import router as skill_router
 from services import daily_brief as daily_brief_service
+from services import accounts as accounts_service
 from llm.client import LLMNotConfigured, LLMError, ping as llm_ping
 
 from starlette.responses import JSONResponse as StarletteJSONResponse
@@ -200,6 +202,11 @@ def archive_import_requires_admin(path: str, method: str) -> bool:
     return method.upper() == "POST" and _path_matches(path, ("/api/archive/import",))
 
 
+def account_admin_required(path: str) -> bool:
+    """账户管理面（/api/accounts*）一律仅限 admin 角色，独立于 runtime 采集轴。"""
+    return _path_matches(path, ("/api/accounts",))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _mcp_enabled
@@ -253,6 +260,10 @@ app.add_middleware(
 )
 
 db_sink = DatabaseStorage(db_url=settings.storage.database_url)
+# 首次启动（users 表为空）时，从 config 的 [auth] 播种初始账户；之后以数据库为准。
+_seeded_accounts = accounts_service.seed_users_if_empty(db_sink.engine, settings.auth)
+if _seeded_accounts:
+    logging.getLogger("dorami.auth").info("👤 从配置播种了 %d 个初始账户", _seeded_accounts)
 # 向量库默认按需创建：[rag] enabled = false 时不构造 ChromaVectorStorage，
 # 后端启动既快且不占用 embedding 模型所需内存。开启后实例仍会懒加载模型权重。
 vector_sink: Optional[ChromaVectorStorage] = (
@@ -280,20 +291,35 @@ COLLECTION_FETCH_CONCURRENCY = 4
 # ==================== 管理员登录与会话 ====================
 AUTH_COOKIE_NAME = settings.auth.cookie_name
 AUTH_SESSION_SECONDS = settings.auth.session_seconds
-AUTH_ACCOUNTS = {
-    credential.username: {"password": credential.password, "role": "admin"}
-    for credential in settings.auth.admin_users
-}
-for credential in settings.auth.user_users:
-    if credential.username in AUTH_ACCOUNTS:
-        raise ValueError(f"Auth user '{credential.username}' is configured in both admin_users and user_users")
-    AUTH_ACCOUNTS[credential.username] = {"password": credential.password, "role": "user"}
+# 账户已迁移到数据库（UserRecord）托管：登录与每请求会话校验均查库，config 的
+# [auth] 仅作首次启动播种（见 seed_users_if_empty）。AUTH_SECRET 仍用于会话 token
+# 与订阅/聚合令牌的 HMAC 签名，保持原推导以兼容历史已签发的令牌。
 AUTH_SECRET = settings.auth.secret or f"{settings.auth.admin_users}:{settings.auth.user_users}:{settings.storage.database_url}:dorami-auth-v2"
 
 
 class AuthLoginParams(BaseModel):
     username: str
     password: str
+
+
+class ChangePasswordParams(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class AccountCreateParams(BaseModel):
+    username: str
+    password: str
+    role: str = "user"
+
+
+class AccountUpdateParams(BaseModel):
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class AccountResetPasswordParams(BaseModel):
+    new_password: str
 
 
 def _auth_cookie_secure() -> bool:
@@ -334,11 +360,14 @@ def read_auth_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
         data = _b64decode_json(payload)
     except (ValueError, json.JSONDecodeError):
         return None
-    account = AUTH_ACCOUNTS.get(data.get("sub"))
-    if not account or data.get("role") != account["role"]:
-        return None
     if int(data.get("exp", 0)) < int(time.time()):
         return None
+    # 账户必须仍存在、处于启用状态，且角色与 token 内一致；否则会话立即失效
+    # （管理员停用/删除/改角色后，对应 cookie 在下一次请求即被吊销）。
+    with Session(db_sink.engine) as session:
+        record = accounts_service.get_active_user(session, data.get("sub"))
+        if record is None or data.get("role") != record.role:
+            return None
     return data
 
 
@@ -404,6 +433,15 @@ async def require_admin_session(request: Request, call_next):
         if auth_session is None:
             return StarletteJSONResponse({"detail": "未登录或登录已过期"}, status_code=401)
     disabled_surface = disabled_runtime_surface(path, auth_session)
+    if disabled_surface is None and account_admin_required(path):
+        if (auth_session or {}).get("role") != "admin":
+            return StarletteJSONResponse(
+                {
+                    "detail": "该操作需要管理员账号",
+                    **runtime_capabilities(auth_session),
+                },
+                status_code=403,
+            )
     if disabled_surface is None and article_write_requires_collector(path, request.method):
         disabled_surface = None if collector_role_enabled(auth_session) else "collector"
     if disabled_surface is None and archive_import_requires_admin(path, request.method):
@@ -432,16 +470,17 @@ async def require_admin_session(request: Request, call_next):
 @app.post("/api/auth/login")
 def login_admin(params: AuthLoginParams, response: Response):
     username = params.username.strip()
-    account = None
-    for configured_username, configured_account in AUTH_ACCOUNTS.items():
-        if hmac.compare_digest(username, configured_username):
-            account = configured_account
-            username = configured_username
-            break
-    if not account or not hmac.compare_digest(params.password, account["password"]):
-        raise HTTPException(status_code=401, detail="账号或密码错误")
-    set_auth_cookie(response, username, account["role"])
-    return {"authenticated": True, "user": {"username": username, "role": account["role"]}}
+    with Session(db_sink.engine) as session:
+        record = accounts_service.get_user(session, username)
+        # 用户不存在/已停用：仍跑一次占位校验抹平时序，避免用户枚举。
+        if record is None or not record.is_active:
+            accounts_service.verify_against_dummy(params.password)
+            raise HTTPException(status_code=401, detail="账号或密码错误")
+        if not accounts_service.verify_password(params.password, record.password_hash):
+            raise HTTPException(status_code=401, detail="账号或密码错误")
+        role = record.role
+    set_auth_cookie(response, username, role)
+    return {"authenticated": True, "user": {"username": username, "role": role}}
 
 
 @app.get("/api/auth/session")
@@ -461,6 +500,102 @@ def get_runtime(request: Request):
 def logout_admin(response: Response):
     clear_auth_cookie(response)
     return {"authenticated": False}
+
+
+@app.post("/api/auth/change-password")
+def change_own_password(params: ChangePasswordParams, request: Request):
+    """任意已登录账户修改自己的登录密码（需校验旧密码）。"""
+    username = current_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+    if not params.new_password:
+        raise HTTPException(status_code=400, detail="新密码不能为空")
+    with Session(db_sink.engine) as session:
+        record = accounts_service.get_active_user(session, username)
+        if record is None:
+            raise HTTPException(status_code=401, detail="账户不存在或已停用")
+        if not accounts_service.verify_password(params.current_password, record.password_hash):
+            raise HTTPException(status_code=400, detail="当前密码错误")
+        accounts_service.set_password(session, username, params.new_password)
+    return {"ok": True}
+
+
+# ==================== 账户管理（仅 admin，中间件已强制 role==admin） ====================
+def _serialize_user(record: UserRecord) -> Dict[str, Any]:
+    return {
+        "username": record.username,
+        "role": record.role,
+        "is_active": record.is_active,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+
+
+@app.get("/api/accounts")
+def list_accounts():
+    with Session(db_sink.engine) as session:
+        return [_serialize_user(r) for r in accounts_service.list_users(session)]
+
+
+@app.post("/api/accounts")
+def create_account(params: AccountCreateParams):
+    with Session(db_sink.engine) as session:
+        try:
+            record = accounts_service.create_user(
+                session, params.username, params.password, params.role
+            )
+        except accounts_service.AccountError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return _serialize_user(record)
+
+
+@app.put("/api/accounts/{username}")
+def update_account(username: str, params: AccountUpdateParams):
+    with Session(db_sink.engine) as session:
+        try:
+            if params.role is not None:
+                accounts_service.set_role(session, username, params.role)
+            if params.is_active is not None:
+                accounts_service.set_active(session, username, params.is_active)
+            record = accounts_service.get_user(session, username)
+            if record is None:
+                raise HTTPException(status_code=404, detail="账户不存在")
+        except accounts_service.AccountError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return _serialize_user(record)
+
+
+@app.post("/api/accounts/{username}/reset-password")
+def reset_account_password(username: str, params: AccountResetPasswordParams):
+    if not params.new_password:
+        raise HTTPException(status_code=400, detail="新密码不能为空")
+    with Session(db_sink.engine) as session:
+        try:
+            record = accounts_service.set_password(session, username, params.new_password)
+        except accounts_service.AccountError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return _serialize_user(record)
+
+
+@app.delete("/api/accounts/{username}")
+def delete_account(username: str):
+    with Session(db_sink.engine) as session:
+        try:
+            accounts_service.delete_user(session, username)
+        except accounts_service.AccountError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        # 清理该用户的订阅与聚合令牌，避免孤儿数据。
+        for sub in session.exec(
+            select(ReaderSubscriptionRecord).where(
+                ReaderSubscriptionRecord.owner_username == username
+            )
+        ).all():
+            session.delete(sub)
+        feed_token = session.get(ReaderFeedTokenRecord, username)
+        if feed_token is not None:
+            session.delete(feed_token)
+        session.commit()
+    return {"ok": True}
 
 
 # ==================== 定时任务系统核心逻辑 ====================

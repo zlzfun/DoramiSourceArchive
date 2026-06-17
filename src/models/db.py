@@ -224,3 +224,20 @@ class AppSettingRecord(SQLModel, table=True):
     __tablename__ = "app_settings"
     key: str = Field(primary_key=True)
     value: str = ""
+
+
+class UserRecord(SQLModel, table=True):
+    """登录账户：数据库托管，密码以 PBKDF2 哈希存储。
+
+    username 即全局唯一身份，不可重命名（reader_subscriptions /
+    reader_feed_tokens 均按 owner_username 值关联）。config 的 [auth]
+    仅在该表为空时作为初始种子，之后以本表为准。
+    """
+    __tablename__ = "users"
+
+    username: str = Field(primary_key=True, description="登录账号，全局唯一身份")
+    password_hash: str = Field(description="PBKDF2 编码串 pbkdf2_sha256$iters$salt$hash")
+    role: str = Field(default="user", index=True, description="账户角色：admin | user")
+    is_active: bool = Field(default=True, index=True, description="是否启用该账户")
+    created_at: str = Field(description="创建时间")
+    updated_at: str = Field(description="更新时间")

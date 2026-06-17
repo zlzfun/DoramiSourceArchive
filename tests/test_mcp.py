@@ -272,18 +272,22 @@ def login_test_user(client):
 
 
 def set_test_auth_accounts(monkeypatch, app_module):
-    monkeypatch.setattr(
-        app_module,
-        "AUTH_ACCOUNTS",
-        {
-            "admin": {"password": "admin", "role": "admin"},
-            "user": {"password": "user", "role": "user"},
-        },
-    )
+    """账户已迁移到数据库托管：将测试账户播种进当前 db_sink 的 users 表。"""
+    from models.db import UserRecord
+    from services import accounts as accounts_service
+
+    with Session(app_module.db_sink.engine) as session:
+        for username, password, role in (("admin", "admin", "admin"), ("user", "user", "user")):
+            existing = session.get(UserRecord, username)
+            if existing is not None:
+                session.delete(existing)
+                session.commit()
+            accounts_service.create_user(session, username, password, role)
 
 
-def test_admin_auth_session_lifecycle(monkeypatch):
+def test_admin_auth_session_lifecycle(monkeypatch, tmp_path):
     app_module = __import__('api.app', fromlist=['app'])
+    monkeypatch.setattr(app_module, "db_sink", DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'mcp_auth.db'}"))
     set_test_auth_accounts(monkeypatch, app_module)
     with TestClient(app_module.app) as client:
         assert client.get("/api/auth/session").json()["authenticated"] is False

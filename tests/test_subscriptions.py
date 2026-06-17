@@ -13,15 +13,25 @@ def _login(client: TestClient, username: str = "user", password: str = "user") -
     assert response.status_code == 200
 
 
-def _set_auth_accounts(monkeypatch, app_module):
-    monkeypatch.setattr(
-        app_module,
-        "AUTH_ACCOUNTS",
-        {
-            "admin": {"password": "admin", "role": "admin"},
-            "user": {"password": "user", "role": "user"},
-        },
-    )
+_DEFAULT_ACCOUNTS = (("admin", "admin", "admin"), ("user", "user", "user"))
+
+
+def _seed_users(engine, accounts=_DEFAULT_ACCOUNTS):
+    """将测试账户播种进给定引擎的 users 表（账户已迁移到数据库托管）。"""
+    from services import accounts as accounts_service
+    from models.db import UserRecord
+
+    with Session(engine) as session:
+        for username, password, role in accounts:
+            existing = session.get(UserRecord, username)
+            if existing is not None:
+                session.delete(existing)
+                session.commit()
+            accounts_service.create_user(session, username, password, role)
+
+
+def _set_auth_accounts(monkeypatch, app_module, accounts=_DEFAULT_ACCOUNTS):
+    _seed_users(app_module.db_sink.engine, accounts)
 
 
 def _set_runtime_role(monkeypatch, app_module, role: str):
@@ -176,14 +186,7 @@ def test_subscriptions_are_isolated_per_user(monkeypatch, tmp_path):
 
     sink = _make_sink(tmp_path, "owners.db")
     monkeypatch.setattr(app_module, "db_sink", sink)
-    monkeypatch.setattr(
-        app_module,
-        "AUTH_ACCOUNTS",
-        {
-            "alice": {"password": "alice", "role": "user"},
-            "bob": {"password": "bob", "role": "user"},
-        },
-    )
+    _seed_users(sink.engine, (("alice", "alice", "user"), ("bob", "bob", "user")))
     _set_runtime_role(monkeypatch, app_module, "reader")
 
     with TestClient(app_module.app) as alice:
@@ -793,10 +796,7 @@ def test_feed_token_per_user_isolated(monkeypatch, tmp_path):
 
     sink = _make_sink(tmp_path, "feedowners.db")
     monkeypatch.setattr(app_module, "db_sink", sink)
-    monkeypatch.setattr(
-        app_module, "AUTH_ACCOUNTS",
-        {"alice": {"password": "alice", "role": "user"}, "bob": {"password": "bob", "role": "user"}},
-    )
+    _seed_users(sink.engine, (("alice", "alice", "user"), ("bob", "bob", "user")))
     _set_runtime_role(monkeypatch, app_module, "reader")
     _seed_article_dated(sink.engine, "a1", "rss_alice", "Alice src", "2026-05-25T00:00:00")
     _seed_article_dated(sink.engine, "b1", "rss_bob", "Bob src", "2026-05-25T00:00:00")

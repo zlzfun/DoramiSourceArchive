@@ -7,13 +7,17 @@ import {
   Download,
   FileText,
   Info,
+  KeyRound,
   Loader2,
   LogOut,
   Plug2,
   RefreshCw,
   Settings as SettingsIcon,
+  Trash2,
   Upload,
   User,
+  UserPlus,
+  Users,
   X,
   Zap,
 } from 'lucide-react';
@@ -27,6 +31,12 @@ import {
   reindexAll,
   setAutoVectorize,
   toggleMcp,
+  changeOwnPassword,
+  fetchAccounts,
+  createAccount,
+  updateAccount,
+  resetAccountPassword,
+  deleteAccount,
 } from '../api';
 import { copyText } from '../utils/clipboard';
 import { runAction } from '../utils/runAction';
@@ -98,7 +108,40 @@ function FieldRow({ label, children }) {
 }
 
 /* ── Account ─────────────────────────────────────────────── */
-function AccountSection({ username, accountRoleLabel, isAdmin, onLogout }) {
+function AccountSection({ username, accountRoleLabel, onLogout, showToast }) {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleChangePassword = async (event) => {
+    event.preventDefault();
+    if (!currentPassword || !newPassword) {
+      showToast('请填写当前密码与新密码', 'error');
+      return;
+    }
+    if (newPassword.length < 6) {
+      showToast('新密码至少 6 位', 'error');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      showToast('两次输入的新密码不一致', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      await changeOwnPassword(currentPassword, newPassword);
+      showToast('密码已修改', 'success');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (error) {
+      showToast(error.message || '修改密码失败', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div>
       <SectionHeading title="账户" />
@@ -107,18 +150,206 @@ function AccountSection({ username, accountRoleLabel, isAdmin, onLogout }) {
         <FieldRow label="账户角色">{accountRoleLabel}</FieldRow>
       </div>
 
-      <div className="mt-4 rounded-[12px] border border-dashed border-slate-200 bg-slate-50/60 p-4">
-        <p className="text-sm font-bold text-slate-600">修改密码</p>
-        <p className="tiny-meta mt-1">
-          {isAdmin
-            ? '账户密码由服务端统一管理，暂不支持在线修改；如需变更请在服务器侧调整账户配置后重启服务。'
-            : '账户密码由管理员统一管理，暂不支持在线修改；如需变更请联系管理员。'}
-        </p>
-      </div>
+      <form onSubmit={handleChangePassword} className="surface-card mt-4 rounded-[12px] p-4">
+        <p className="text-sm font-bold text-slate-700">修改密码</p>
+        <p className="tiny-meta mt-1">修改后当前会话仍然有效，下次登录请使用新密码。</p>
+        <div className="mt-3 space-y-3">
+          <input
+            type="password"
+            value={currentPassword}
+            onChange={e => setCurrentPassword(e.target.value)}
+            autoComplete="current-password"
+            placeholder="当前密码"
+            className="form-input w-full"
+          />
+          <input
+            type="password"
+            value={newPassword}
+            onChange={e => setNewPassword(e.target.value)}
+            autoComplete="new-password"
+            placeholder="新密码（至少 6 位）"
+            className="form-input w-full"
+          />
+          <input
+            type="password"
+            value={confirmPassword}
+            onChange={e => setConfirmPassword(e.target.value)}
+            autoComplete="new-password"
+            placeholder="确认新密码"
+            className="form-input w-full"
+          />
+        </div>
+        <button type="submit" disabled={saving} className="action-button action-button-primary mt-4">
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />} 保存新密码
+        </button>
+      </form>
 
       <button onClick={onLogout} className="action-button action-button-danger mt-4">
         <LogOut className="h-4 w-4" /> 退出登录
       </button>
+    </div>
+  );
+}
+
+/* ── 账户管理（仅管理员）────────────────────────────────── */
+function AccountManagementSection({ showToast, currentUsername }) {
+  const confirm = useConfirm();
+  const [accounts, setAccounts] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [newUsername, setNewUsername] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newRole, setNewRole] = useState('user');
+
+  const reload = () => fetchAccounts().then(setAccounts).catch(() => setAccounts([]));
+
+  useEffect(() => { reload(); }, []);
+
+  const handleCreate = async (event) => {
+    event.preventDefault();
+    if (!newUsername.trim() || !newPassword) {
+      showToast('请填写用户名与密码', 'error');
+      return;
+    }
+    if (newPassword.length < 6) {
+      showToast('密码至少 6 位', 'error');
+      return;
+    }
+    setBusy(true);
+    try {
+      await createAccount({ username: newUsername.trim(), password: newPassword, role: newRole });
+      showToast('账户已创建', 'success');
+      setNewUsername('');
+      setNewPassword('');
+      setNewRole('user');
+      await reload();
+    } catch (error) {
+      showToast(error.message || '创建账户失败', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleToggleRole = async (acc) => {
+    const nextRole = acc.role === 'admin' ? 'user' : 'admin';
+    try {
+      await updateAccount(acc.username, { role: nextRole });
+      showToast(`已将 ${acc.username} 设为${nextRole === 'admin' ? '管理员' : '读者'}`, 'success');
+      await reload();
+    } catch (error) {
+      showToast(error.message || '更新失败', 'error');
+    }
+  };
+
+  const handleToggleActive = async (acc) => {
+    try {
+      await updateAccount(acc.username, { is_active: !acc.is_active });
+      showToast(acc.is_active ? `已停用 ${acc.username}` : `已启用 ${acc.username}`, 'success');
+      await reload();
+    } catch (error) {
+      showToast(error.message || '更新失败', 'error');
+    }
+  };
+
+  const handleResetPassword = async (acc) => {
+    const pwd = window.prompt(`为账户「${acc.username}」设置新密码（至少 6 位）：`);
+    if (pwd === null) return;
+    if (pwd.length < 6) {
+      showToast('密码至少 6 位', 'error');
+      return;
+    }
+    try {
+      await resetAccountPassword(acc.username, pwd);
+      showToast(`已重置 ${acc.username} 的密码`, 'success');
+    } catch (error) {
+      showToast(error.message || '重置密码失败', 'error');
+    }
+  };
+
+  const handleDelete = async (acc) => {
+    if (!(await confirm(`确认删除账户「${acc.username}」？其订阅与个人接口令牌会一并清除，且不可恢复。`))) return;
+    try {
+      await deleteAccount(acc.username);
+      showToast(`已删除 ${acc.username}`, 'success');
+      await reload();
+    } catch (error) {
+      showToast(error.message || '删除账户失败', 'error');
+    }
+  };
+
+  return (
+    <div>
+      <SectionHeading title="账户管理" hint="管理员可创建账户、分配角色、重置密码或停用账户。停用/删除会立即让对应账户的会话失效。" />
+
+      <form onSubmit={handleCreate} className="surface-card rounded-[12px] p-4">
+        <p className="text-sm font-bold text-slate-700">新建账户</p>
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <input
+            value={newUsername}
+            onChange={e => setNewUsername(e.target.value)}
+            placeholder="用户名"
+            autoComplete="off"
+            className="form-input w-full"
+          />
+          <input
+            type="password"
+            value={newPassword}
+            onChange={e => setNewPassword(e.target.value)}
+            placeholder="初始密码（至少 6 位）"
+            autoComplete="new-password"
+            className="form-input w-full"
+          />
+          <label className="flex items-center gap-2 text-sm font-bold text-slate-600">
+            角色
+            <select value={newRole} onChange={e => setNewRole(e.target.value)} className="form-input flex-1">
+              <option value="user">读者</option>
+              <option value="admin">管理员</option>
+            </select>
+          </label>
+          <button type="submit" disabled={busy} className="action-button action-button-primary">
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />} 创建账户
+          </button>
+        </div>
+      </form>
+
+      <div className="surface-card mt-4 rounded-[12px] p-4">
+        <p className="mb-3 text-sm font-bold text-slate-700">现有账户</p>
+        {accounts === null ? (
+          <p className="tiny-meta">加载中…</p>
+        ) : accounts.length === 0 ? (
+          <p className="tiny-meta">暂无账户。</p>
+        ) : (
+          <div className="space-y-2">
+            {accounts.map(acc => (
+              <div key={acc.username} className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-slate-100 bg-white px-3 py-2.5">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm font-bold text-slate-800">{acc.username}</span>
+                    {acc.username === currentUsername && <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[11px] font-bold text-indigo-500">当前</span>}
+                    <span className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${acc.role === 'admin' ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
+                      {acc.role === 'admin' ? '管理员' : '读者'}
+                    </span>
+                    {!acc.is_active && <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[11px] font-bold text-rose-500">已停用</span>}
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                  <button onClick={() => handleToggleRole(acc)} className="action-button action-button-secondary text-xs">
+                    设为{acc.role === 'admin' ? '读者' : '管理员'}
+                  </button>
+                  <button onClick={() => handleToggleActive(acc)} className="action-button action-button-secondary text-xs">
+                    {acc.is_active ? '停用' : '启用'}
+                  </button>
+                  <button onClick={() => handleResetPassword(acc)} className="action-button action-button-secondary text-xs">
+                    <KeyRound className="h-3.5 w-3.5" /> 重置密码
+                  </button>
+                  <button onClick={() => handleDelete(acc)} className="action-button action-button-danger text-xs">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -505,6 +736,7 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, on
 
   const sections = useMemo(() => [
     { id: 'account', label: '账户', icon: User, show: true },
+    { id: 'accounts', label: '账户管理', icon: Users, show: isAdmin },
     { id: 'vector', label: '向量雷达', icon: BarChart2, show: collectorEnabled && ragEnabled },
     { id: 'sync', label: '数据同步', icon: FileText, show: isAdmin && (collectorEnabled || readerEnabled) },
     { id: 'integration', label: '接入集成', icon: Plug2, show: readerEnabled },
@@ -559,7 +791,10 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, on
 
           <div className="flex-1 overflow-y-auto p-6">
             {active === 'account' && (
-              <AccountSection username={username} accountRoleLabel={accountRoleLabel} isAdmin={isAdmin} onLogout={onLogout} />
+              <AccountSection username={username} accountRoleLabel={accountRoleLabel} onLogout={onLogout} showToast={showToast} />
+            )}
+            {active === 'accounts' && isAdmin && (
+              <AccountManagementSection showToast={showToast} currentUsername={username} />
             )}
             {active === 'vector' && collectorEnabled && ragEnabled && (
               <VectorSection showToast={showToast} />
