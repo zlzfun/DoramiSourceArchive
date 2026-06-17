@@ -7,7 +7,7 @@ and source/node knowledge.)
 
 ## Deployment & configuration
 
-- [configuration.md](./configuration.md) — `config/backend.ini`, runtime roles (collector / reader / all), and the two-tier collector+reader deployment.
+- [configuration.md](./configuration.md) — `config/backend.ini`, login account roles (admin / user), and the optional split-deployment runtime roles (collector / reader / all).
 
 ## Contracts (downstream integration)
 

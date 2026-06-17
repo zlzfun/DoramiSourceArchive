@@ -14,27 +14,28 @@
 
 真实部署文件可能包含管理员密码、auth secret、代理账密、小鲁班凭证、图床 secret 等敏感值，已通过 `.gitignore` 排除，不应提交。
 
-运行角色读取 `[runtime] role`，也可以用 `DORAMI_RUNTIME_ROLE` 覆盖：
+运行角色读取 `[runtime] role`（也可用 `DORAMI_RUNTIME_ROLE` 覆盖）。**单机部署保持默认 `all` 即可**，无需改动；此时访问控制只看登录账号角色（见下文「账号角色」）：
 
 ```ini
 [runtime]
 role = all
 ```
 
-可选值：
+> 以下「分离部署」属高级可选场景。若你只在单台机器（含公网 ECS）上跑、内网也能访问该域名，可直接跳过本节。
 
-- `all`：本地兼容模式，保留现有采集和消费能力。
+`collector` / `reader` 仅用于把采集与分发拆到不同主机的**分离部署**：
+
 - `collector`：外网采集归档层，开启抓取、调度、采集任务和运行观测，关闭 MCP/Dify/RAG 等 reader 交付面。
 - `reader`：内网分发订阅层，开启内容阅览、向量/RAG、Dify 和 MCP，关闭抓取、调度和采集任务。
 
-两层部署建议：
+分离部署步骤：
 
 1. 外网采集归档层部署在可访问公开站点的个人电脑或外网服务器，配置 `role = collector`。
 2. 内网分发订阅层部署在公司内网服务器，配置 `role = reader`。
 3. 采集层通过 `/api/archive/export/articles.jsonl` 导出归档，分发层通过 `/api/archive/import/articles.jsonl` 导入归档。同步契约见 `docs/contracts/archive_sync.md`。
 4. 下游应用优先访问分发层的个人聚合接口 `/api/public/feed/articles`（`dfeed_` 令牌，覆盖用户全部订阅源）；订阅源在前端“阅读器”左栏增删，聚合令牌在“接入集成”页面生成/轮换。（按源隔离的 `/api/public/subscriptions/{id}/...` + `dsub_` 令牌仍可用，属高级/自动化路径。）
 
-最小示例：
+分离部署最小示例：
 
 ```ini
 # 外网 collector
@@ -147,13 +148,12 @@ secret = change-me-to-a-long-random-string
 `admin_users` 和 `user_users` 都是逗号分隔的白名单，单项格式为 `账号:密码`。
 旧配置中的 `username/password` 仍会被兼容读取为一个 admin 账号，但建议迁移到白名单写法。
 
-账号角色会和 `[runtime] role` 取交集：
+账号角色是默认 `all` 部署下唯一生效的访问控制轴：
 
-- admin 账号：超级用户，可访问当前部署启用的采集归档层和分发订阅层；在 reader 面检索时不受个人订阅范围限制。
+- admin 账号：超级用户，可访问全部采集与分发能力；在 reader 面检索时不受个人订阅范围限制。
 - user 账号：受限读者，登录后是一个“阅读器”（仅阅读已订阅来源，左栏增删订阅）外加“接入集成”（聚合接口令牌、MCP、Skill）；检索、阅读与下游分发均硬限定在个人订阅范围内。
 - 内容台账读取对两类账号开放；手工录入、编辑、删除、离线归档导入等归档写操作只对 admin 账号开放。
-- 当 `role = all` 时，同一个部署可通过不同账号隔离两层。
-- 当 `role = collector` 或 `role = reader` 时，部署角色仍是外层硬限制。
+- （仅分离部署）账号角色会再和 `[runtime] role` 取交集：`role = collector` / `reader` 时，部署角色作为外层硬限制叠加在账号角色之上。
 
 修改 `production.ini` 后需要重新执行 `./deploy.sh` 或 `pm2 reload ecosystem.config.js --only dorami-backend-v2 --update-env`，因为认证配置只在后端进程启动时读取。
 
