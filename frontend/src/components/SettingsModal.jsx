@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowRight,
   BarChart2,
   Check,
   Copy,
@@ -52,6 +53,13 @@ function safeNamePart(value, fallback) {
   return (value || fallback).replace(/[^0-9A-Za-z_-]+/g, '-').replace(/^-+|-+$/g, '') || fallback;
 }
 
+// 当天本地 00:00–23:59，格式为 datetime-local 所需的 YYYY-MM-DDTHH:mm。
+function todayRange() {
+  const now = new Date();
+  const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return { start: `${day}T00:00`, end: `${day}T23:59` };
+}
+
 async function gzipJsonl(text) {
   if (typeof CompressionStream === 'undefined') return null;
   const stream = new Blob([text], { type: 'application/x-ndjson; charset=utf-8' })
@@ -90,7 +98,7 @@ function FieldRow({ label, children }) {
 }
 
 /* ── Account ─────────────────────────────────────────────── */
-function AccountSection({ username, accountRoleLabel, onLogout }) {
+function AccountSection({ username, accountRoleLabel, isAdmin, onLogout }) {
   return (
     <div>
       <SectionHeading title="账户" />
@@ -102,8 +110,9 @@ function AccountSection({ username, accountRoleLabel, onLogout }) {
       <div className="mt-4 rounded-[12px] border border-dashed border-slate-200 bg-slate-50/60 p-4">
         <p className="text-sm font-bold text-slate-600">修改密码</p>
         <p className="tiny-meta mt-1">
-          账户凭据当前由后端配置（<code className="font-mono">backend.ini</code> 的 admin_users / user_users）统一管理，
-          暂不支持在线修改。如需变更请编辑配置后重启服务。
+          {isAdmin
+            ? '账户密码由服务端统一管理，暂不支持在线修改；如需变更请在服务器侧调整账户配置后重启服务。'
+            : '账户密码由管理员统一管理，暂不支持在线修改；如需变更请联系管理员。'}
         </p>
       </div>
 
@@ -217,7 +226,7 @@ function IntegrationSection({ showToast, mcpStatus, canToggle, onMcpToggled }) {
 
   return (
     <div>
-      <SectionHeading title="接入集成" hint="管理 MCP Server 与 AI 日报 Skill。完整客户端配置、工具说明与安装指南见「接入集成」页。" />
+      <SectionHeading title="接入集成" hint="管理 MCP Server 启停与接入地址。完整客户端配置、工具说明、Skill 安装指南见「接入集成」页。" />
 
       <div className="surface-card rounded-[12px] p-4">
         <div className="flex items-center justify-between gap-4">
@@ -246,31 +255,15 @@ function IntegrationSection({ showToast, mcpStatus, canToggle, onMcpToggled }) {
           </button>
         </div>
       </div>
-
-      <div className="surface-card mt-4 rounded-[12px] p-4">
-        <div className="flex items-center justify-between gap-4">
-          <span>
-            <span className="block text-sm font-bold text-slate-700">AI 日报 Skill</span>
-            <span className="tiny-meta">一句话生成结构化日报，支持 Claude Code、Cursor 等平台。</span>
-          </span>
-          <button onClick={() => downloadFile('/api/skill/daily-brief', 'dorami-daily-brief.zip')} className="action-button action-button-secondary text-xs">
-            <Download className="h-3.5 w-3.5" /> 下载 Skill 包
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
 
 /* ── 数据同步（离线归档包）──────────────────────────────── */
 function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged }) {
-  const [exportFilters, setExportFilters] = useState({
-    fetched_date_start: '',
-    fetched_date_end: '',
-    source_ids: '',
-    limit: 1000,
-    skip: 0,
-    has_content: 'true',
+  const [exportFilters, setExportFilters] = useState(() => {
+    const { start, end } = todayRange();
+    return { fetched_date_start: start, fetched_date_end: end, limit: 1000 };
   });
   const [compressExport, setCompressExport] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -285,10 +278,10 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
   const exportPayload = () => ({
     fetched_date_start: exportFilters.fetched_date_start,
     fetched_date_end: exportFilters.fetched_date_end,
-    source_ids: exportFilters.source_ids,
+    source_ids: '',
     limit: Math.max(1, Math.min(5000, Number(exportFilters.limit) || 1000)),
-    skip: Math.max(0, Number(exportFilters.skip) || 0),
-    has_content: exportFilters.has_content === 'any' ? undefined : exportFilters.has_content,
+    skip: 0,
+    has_content: undefined,
   });
 
   const handleExport = async () => {
@@ -313,14 +306,14 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
         const gzipBlob = await gzipJsonl(text);
         if (gzipBlob) {
           downloadBlob(gzipBlob, `${baseName}.jsonl.gz`);
-          showToast(`已生成压缩同步包：${count} 篇文章`, 'success');
+          showToast(`已生成压缩归档包：${count} 篇文章`, 'success');
           return;
         }
         showToast('当前浏览器不支持 gzip 压缩，已改为下载 JSONL 原文', 'info');
       }
 
       downloadBlob(new Blob([text], { type: 'application/x-ndjson; charset=utf-8' }), `${baseName}.jsonl`);
-      showToast(`已生成同步包：${count} 篇文章`, 'success');
+      showToast(`已生成归档包：${count} 篇文章`, 'success');
     } catch (error) {
       showToast(error.message || '导出失败', 'error');
     } finally {
@@ -355,17 +348,27 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
     <div>
       <SectionHeading
         title="数据同步"
-        hint="用于外网采集层和内网分发层之间离线传递文章归档。建议按 fetched_date 分批导出，导入端可重复导入同一包。"
+        hint="在不同部署端之间离线搬运文章归档：一端导出归档包，另一端导入。建议按收录时间分批导出，导入端可重复导入同一包。"
       />
+
+      <div className="mb-4 flex items-center justify-center gap-2.5 rounded-[12px] border border-slate-100 bg-slate-50/60 px-4 py-3 text-xs font-bold text-slate-500">
+        <span className="flex items-center gap-1.5"><Download className="h-3.5 w-3.5 text-indigo-500" /> 本端导出</span>
+        <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
+        <span className="flex items-center gap-1.5"><FileText className="h-3.5 w-3.5 text-slate-400" /> 归档包</span>
+        <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
+        <span className="flex items-center gap-1.5"><Upload className="h-3.5 w-3.5 text-emerald-500" /> 另一端导入</span>
+      </div>
 
       {canExport && (
         <div className="surface-card rounded-[12px] p-4">
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <span>
-              <span className="block text-sm font-bold text-slate-700">生成文章同步包</span>
-              <span className="tiny-meta">从 collector 导出 JSONL 包，可通过邮件或聊天工具发到内网。</span>
-            </span>
-            <FileText className="h-5 w-5 text-indigo-500" />
+          <div className="mb-4 flex items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-indigo-50 text-indigo-500">
+              <Download className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <span className="block text-sm font-bold text-slate-700">导出归档包</span>
+              <span className="tiny-meta">把已归档文章打包成 JSONL 文件，供另一个端导入。</span>
+            </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -388,26 +391,6 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
               />
             </label>
             <label className="space-y-1 sm:col-span-2">
-              <span className="tiny-meta">来源 ID（可选，逗号分隔）</span>
-              <input
-                type="text"
-                value={exportFilters.source_ids}
-                onChange={e => updateExportFilter('source_ids', e.target.value)}
-                placeholder="rss_openai_news,rss_anthropic_news"
-                className="form-input w-full"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="tiny-meta">跳过条数</span>
-              <input
-                type="number"
-                min={0}
-                value={exportFilters.skip}
-                onChange={e => updateExportFilter('skip', e.target.value)}
-                className="form-input w-full"
-              />
-            </label>
-            <label className="space-y-1">
               <span className="tiny-meta">每包上限</span>
               <input
                 type="number"
@@ -418,19 +401,11 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
                 className="form-input w-full"
               />
             </label>
-            <label className="space-y-1">
-              <span className="tiny-meta">正文过滤</span>
-              <select
-                value={exportFilters.has_content}
-                onChange={e => updateExportFilter('has_content', e.target.value)}
-                className="form-input w-full"
-              >
-                <option value="true">仅含正文</option>
-                <option value="false">仅无正文</option>
-                <option value="any">全部</option>
-              </select>
-            </label>
-            <label className="flex items-center gap-2 pt-6 text-sm font-bold text-slate-600">
+          </div>
+          <p className="tiny-meta mt-2">默认导出今天收录的全部来源内容；可自行调整时间范围，留空则导出至今全部。</p>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+            <label className="flex items-center gap-2 text-sm font-bold text-slate-600">
               <input
                 type="checkbox"
                 checked={compressExport}
@@ -439,26 +414,27 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
               />
               gzip 压缩下载
             </label>
+            <button onClick={handleExport} disabled={exporting} className="action-button action-button-primary">
+              {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              生成并下载归档包
+            </button>
           </div>
-
-          <button onClick={handleExport} disabled={exporting} className="action-button action-button-primary mt-4">
-            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-            生成并下载同步包
-          </button>
         </div>
       )}
 
       {canImport && (
         <div className={`surface-card rounded-[12px] p-4 ${canExport ? 'mt-4' : ''}`}>
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <span>
-              <span className="block text-sm font-bold text-slate-700">导入文章同步包</span>
-              <span className="tiny-meta">在 reader 端导入外网传入的 JSONL 包；重复导入会自动跳过已存在文章。</span>
-            </span>
-            <Upload className="h-5 w-5 text-emerald-500" />
+          <div className="mb-4 flex items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-emerald-50 text-emerald-500">
+              <Upload className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <span className="block text-sm font-bold text-slate-700">导入归档包</span>
+              <span className="tiny-meta">导入其他端生成的归档包；重复导入会自动跳过已存在文章。</span>
+            </div>
           </div>
 
-          <label className="block rounded-[12px] border border-dashed border-slate-200 bg-slate-50/70 p-4">
+          <label className="block cursor-pointer rounded-[12px] border border-dashed border-slate-200 bg-slate-50/70 p-4 transition-colors hover:border-emerald-300 hover:bg-emerald-50/40">
             <span className="block text-sm font-bold text-slate-700">选择归档包</span>
             <span className="tiny-meta mt-1 block">支持 .jsonl；浏览器支持时也可直接导入 .jsonl.gz。</span>
             <input
@@ -467,11 +443,16 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
               onChange={e => setImportFile(e.target.files?.[0] || null)}
               className="mt-3 block w-full text-sm font-semibold text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-white file:px-3 file:py-2 file:text-sm file:font-bold file:text-indigo-600 file:shadow-sm"
             />
+            {importFile && (
+              <span className="mt-2 flex items-center gap-1.5 text-xs font-bold text-emerald-600">
+                <Check className="h-3.5 w-3.5" /> 已选择：{importFile.name}（{(importFile.size / 1024).toFixed(0)} KB）
+              </span>
+            )}
           </label>
 
           <button onClick={handleImport} disabled={importing || !importFile} className="action-button action-button-primary mt-4">
             {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-            导入同步包
+            导入归档包
           </button>
 
           {importResult && (
@@ -578,7 +559,7 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, on
 
           <div className="flex-1 overflow-y-auto p-6">
             {active === 'account' && (
-              <AccountSection username={username} accountRoleLabel={accountRoleLabel} onLogout={onLogout} />
+              <AccountSection username={username} accountRoleLabel={accountRoleLabel} isAdmin={isAdmin} onLogout={onLogout} />
             )}
             {active === 'vector' && collectorEnabled && ragEnabled && (
               <VectorSection showToast={showToast} />
