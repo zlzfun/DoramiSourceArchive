@@ -59,7 +59,7 @@ function FeedDocsPanel({ onCopy, copiedKey }) {
               <button
                 type="button"
                 onClick={() => onCopy(cmd, `curl-${idx}`)}
-                className="flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-800"
+                className="flex items-center gap-1 text-xs font-bold text-amber-600 hover:text-amber-700"
               >
                 {copiedKey === `curl-${idx}` ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                 复制
@@ -94,36 +94,34 @@ export default function FeedAccessSection({ showToast }) {
   return (
     <div className="surface-card rounded-[14px] overflow-hidden">
       <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
-        <div className="h-5 w-1 rounded-full bg-indigo-500" />
+        <div className="h-5 w-1 rounded-full bg-amber-500" />
         <h3 className="section-title">个人订阅接口</h3>
         <span className="ml-auto text-xs font-medium text-slate-400">dfeed_ · HTTP 拉取</span>
       </div>
 
       <div className="space-y-4 p-6">
-        <p className="tiny-meta">
-          这是给脚本、自动化服务和非 MCP 客户端使用的 HTTP 拉取接口，不是 Agent 接入本体。用上方「访问令牌」里的 dfeed_ 令牌作 Bearer 鉴权，只返回你已订阅来源的交集，下游可按发布时间、类型、关键词等筛选。
-        </p>
-
         <div>
-          <p className="form-label">接口地址</p>
-          <div className="flex items-center gap-2 rounded-[10px] border border-slate-100 bg-slate-50 px-3 py-2">
-            <code className="min-w-0 flex-1 truncate text-xs font-bold text-slate-600" title={feedEndpoint()}>{feedEndpoint()}</code>
+          <div className="mb-2 flex items-center justify-between">
+            <p className="form-label mb-0">接口地址</p>
             <button
               type="button"
               onClick={() => handleCopy(feedEndpoint(), 'feed-endpoint')}
-              className="shrink-0 text-slate-400 hover:text-indigo-600"
-              title="复制接口地址"
-              aria-label="复制接口地址"
+              className="action-button action-button-quiet min-h-[28px] px-2 text-xs"
             >
-              {copiedKey === 'feed-endpoint' ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+              {copiedKey === 'feed-endpoint' ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+              {copiedKey === 'feed-endpoint' ? '已复制' : '复制'}
             </button>
           </div>
+          <code className="block rounded-xl bg-slate-950 px-4 py-3 text-sm font-mono text-slate-300 break-all select-all">
+            {feedEndpoint()}
+          </code>
+          <p className="tiny-meta mt-1.5">用上方「访问令牌」里的 dfeed_ 令牌作 Bearer 鉴权即可调用，只返回你已订阅来源的内容。</p>
         </div>
 
         <button
           type="button"
           onClick={() => setDocsOpen(open => !open)}
-          className="flex items-center gap-2 text-sm font-bold text-indigo-600 hover:text-indigo-800"
+          className="flex items-center gap-2 text-sm font-bold text-amber-600 hover:text-amber-700"
         >
           {docsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           <Terminal className="h-4 w-4" /> 接口文档与调用示例

@@ -226,12 +226,12 @@ function IntegrationSection({ showToast, mcpStatus, canToggle, onMcpToggled }) {
           <div className="flex items-center gap-2">
             <Plug2 className="h-4 w-4 text-sky-500" />
             <span className="text-sm font-bold text-slate-700">MCP Server</span>
-            <span className={`text-xs font-bold ${enabled ? 'text-emerald-500' : 'text-slate-400'}`}>
+            <span className={`text-xs font-bold ${mcpStatus === null ? 'text-slate-400' : enabled ? 'text-emerald-500' : 'text-rose-500'}`}>
               {mcpStatus === null ? '…' : enabled ? '● 运行中' : '○ 已停止'}
             </span>
           </div>
           {canToggle ? (
-            <button onClick={handleToggle} disabled={toggling || mcpStatus === null} className={`action-button text-xs ${enabled ? 'action-button-danger' : 'action-button-primary'}`}>
+            <button onClick={handleToggle} disabled={toggling || mcpStatus === null} className={`action-button text-xs ${enabled ? 'action-button-danger' : 'action-button-success'}`}>
               {toggling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plug2 className="h-3.5 w-3.5" />}
               {enabled ? '停止 MCP' : '启动 MCP'}
             </button>

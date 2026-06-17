@@ -18,6 +18,13 @@ _TOKEN_REQUIRED_MSG = (
 
 # ── Helper functions (testable independently) ─────────────────────────────────
 
+def _parse_bearer(auth: Optional[str]) -> Optional[str]:
+    """从 ``Authorization`` 头解析 Bearer 令牌；非 Bearer 或空值返回 None。"""
+    if auth and auth.lower().startswith("bearer "):
+        return auth[7:].strip() or None
+    return None
+
+
 def _resolve_scope(resolver, token: Optional[str], *, require_token: bool = True):
     """把访问令牌折算成检索作用域，返回 (ok, source_ids)。
 
@@ -249,9 +256,27 @@ def build_mcp_app(
         streamable_http_path="/",
     )
 
+    def _token_from_header() -> Optional[str]:
+        """从当前请求的 ``Authorization: Bearer <token>`` 头兜底取访问令牌。
+
+        ``/mcp`` 是流式 HTTP 传输：客户端可在 JSON 配置的 ``headers`` 里写一次
+        ``Authorization: Bearer dfeed_…``，每次工具调用便自动带上，无需 Agent
+        逐次显式传 ``subscription_token``。取不到时返回 None，由调用方继续按入参判定。
+        """
+        try:
+            request = mcp.get_context().request_context.request
+            auth = request.headers.get("authorization") if request else None
+        except Exception:
+            return None
+        return _parse_bearer(auth)
+
     def _resolve_subscription_scope(subscription_token: Optional[str]):
-        """返回 (ok, source_ids)。内容类工具必须携带有效令牌，否则 ok=False。"""
-        return _resolve_scope(subscription_resolver, subscription_token, require_token=True)
+        """返回 (ok, source_ids)。内容类工具必须携带有效令牌，否则 ok=False。
+
+        令牌来源优先级：显式入参 ``subscription_token`` > 请求头 ``Authorization: Bearer``。
+        """
+        token = subscription_token or _token_from_header()
+        return _resolve_scope(subscription_resolver, token, require_token=True)
 
     @mcp.tool()
     def list_sources() -> list[dict]:
@@ -277,8 +302,9 @@ def build_mcp_app(
         Filter and browse articles by metadata. Use for source-specific or date-range queries.
         Scenarios: 「某来源最新资讯」「生成今日日报」「列出某类型内容」
         publish_date_start/end: YYYY-MM-DD. limit max 100.
-        subscription_token: 必填。访问令牌把结果限定在你订阅覆盖的来源内（个性化视图）；
-            支持单订阅令牌（dsub_）或个人订阅令牌（dfeed_，覆盖你的全部订阅）。缺失或无效将被拒绝。
+        subscription_token: 访问令牌把结果限定在你订阅覆盖的来源内（个性化视图）。
+            可经本参数传入，或由客户端在请求头 Authorization: Bearer 提供（二者皆缺或无效将被拒绝）；
+            支持单订阅令牌（dsub_）或个人订阅令牌（dfeed_，覆盖你的全部订阅）。
         """
         ok, scope_ids = _resolve_subscription_scope(subscription_token)
         if not ok:
@@ -295,7 +321,8 @@ def build_mcp_app(
         Get full content of a single article by its ID.
         Use article IDs from browse_articles or search_articles results.
         extensions contains content-type-specific metadata parsed from JSON.
-        subscription_token: 必填。仅允许读取访问令牌覆盖来源内的文章；缺失或无效将被拒绝。
+        subscription_token: 仅允许读取访问令牌覆盖来源内的文章。可经本参数传入，
+            或由客户端在请求头 Authorization: Bearer 提供；二者皆缺或无效将被拒绝。
         """
         ok, scope_ids = _resolve_subscription_scope(subscription_token)
         if not ok:
@@ -317,8 +344,9 @@ def build_mcp_app(
         Scenarios: 「最近的具身智能资讯有哪些？」「Find papers on multimodal LLMs」
         distance_threshold: cosine distance cutoff (lower = stricter, default 1.5).
         publish_date_gte: YYYY-MM-DD. Returns articles ranked by relevance (distance asc).
-        subscription_token: 必填。把检索限定在访问令牌覆盖的来源内（个性化视图）；
-            支持单订阅令牌（dsub_）或个人订阅令牌（dfeed_，覆盖你的全部订阅）。缺失或无效将被拒绝。
+        subscription_token: 把检索限定在访问令牌覆盖的来源内（个性化视图）。
+            可经本参数传入，或由客户端在请求头 Authorization: Bearer 提供（二者皆缺或无效将被拒绝）；
+            支持单订阅令牌（dsub_）或个人订阅令牌（dfeed_，覆盖你的全部订阅）。
         """
         ok, scope_ids = _resolve_subscription_scope(subscription_token)
         if not ok:
@@ -346,7 +374,8 @@ def build_mcp_app(
         Scenarios: 需要用归档资讯回答用户提问时的上下文准备。
         Returns empty string when no relevant results found.
         publish_date_gte: YYYY-MM-DD. distance_threshold: cosine distance cutoff (default 1.5).
-        subscription_token: 必填。把上下文限定在访问令牌覆盖来源内；缺失或无效将被拒绝。
+        subscription_token: 把上下文限定在访问令牌覆盖来源内。可经本参数传入，
+            或由客户端在请求头 Authorization: Bearer 提供；二者皆缺或无效将被拒绝。
         """
         ok, scope_ids = _resolve_subscription_scope(subscription_token)
         if not ok:

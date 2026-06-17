@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Plug2, Copy, Check, Download, Terminal, Globe, Newspaper, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plug2, Copy, Check, Download, Terminal, Globe, Newspaper, ChevronDown, ChevronRight, KeyRound, PowerOff } from 'lucide-react';
 import { fetchMcpStatus } from '../api';
 import { MCP_URL } from '../config';
 import { copyText } from '../utils/clipboard';
@@ -64,6 +64,8 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
     if (!subTouched.current) setSub(canManage ? 'brief' : 'access');
   }, [canManage]);
   const [toolsOpen, setToolsOpen] = useState(false);    // MCP 可用工具列表折叠
+  const [scopeOpen, setScopeOpen] = useState(false);    // 「启停与取数范围」说明默认收缩
+  const [stoppedConfigOpen, setStoppedConfigOpen] = useState(false);  // MCP 停止时接入配置默认折叠
   const [status, setStatus] = useState(null);
   const [configKind, setConfigKind] = useState('mcpServers');
   const [copied, setCopied] = useState(false);
@@ -100,7 +102,11 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
       note: '常见 MCP HTTP 配置格式，适用于使用 mcpServers 字段的客户端。',
       value: {
         mcpServers: {
-          'dorami-archive': { type: 'http', url: mcpUrl },
+          'dorami-archive': {
+            type: 'http',
+            url: mcpUrl,
+            headers: { Authorization: 'Bearer dfeed_你的令牌' },
+          },
         },
       },
     },
@@ -109,7 +115,12 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
       note: 'OpenCode 使用 mcp 字段组织远程 MCP。不同版本字段可能有差异，请以客户端文档为准。',
       value: {
         mcp: {
-          'dorami-archive': { type: 'remote', url: mcpUrl, enabled: true },
+          'dorami-archive': {
+            type: 'remote',
+            url: mcpUrl,
+            enabled: true,
+            headers: { Authorization: 'Bearer dfeed_你的令牌' },
+          },
         },
       },
     },
@@ -132,6 +143,63 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
   };
 
   const enabled = status?.enabled ?? false;
+
+  // 接入地址 + JSON 配置示例。MCP 运行时直接展开；停止时折叠到展开器后面（见下方渲染）。
+  const configBlocks = (
+    <div className="space-y-5">
+      {/* URL：只读的接入地址，按「可复制的代码值」呈现，而非输入框 */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <p className="form-label mb-0">接入地址</p>
+          <button
+            onClick={handleCopy}
+            className="action-button action-button-quiet min-h-[28px] px-2 text-xs"
+          >
+            {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+            {copied ? '已复制' : '复制'}
+          </button>
+        </div>
+        <code className="block rounded-xl bg-slate-950 px-4 py-3 text-sm font-mono text-slate-300 break-all select-all">
+          {mcpUrl}
+        </code>
+      </div>
+
+      {/* JSON config */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <p className="form-label mb-0">客户端配置示例（JSON）</p>
+          <button
+            onClick={handleCopyJson}
+            className="action-button action-button-quiet min-h-[28px] px-2 text-xs"
+          >
+            {copiedJson ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+            {copiedJson ? '已复制' : '复制'}
+          </button>
+        </div>
+        <div className="overflow-hidden rounded-xl bg-slate-950">
+          <div className="flex items-center gap-1 border-b border-white/10 px-2 pt-2">
+            {Object.entries(mcpConfigExamples).map(([key, item]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setConfigKind(key)}
+                className={`rounded-t-md px-3 py-1.5 text-xs font-semibold transition-colors ${configKind === key ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <pre className="text-xs font-mono text-slate-300 px-4 py-4 overflow-x-auto leading-relaxed select-all">{mcpJson}</pre>
+        </div>
+        <p className="tiny-meta mt-1.5">
+          把 <code className="font-mono">headers</code> 里的 <code className="font-mono">dfeed_你的令牌</code> 换成上方「访问令牌」复制的令牌（或单订阅 <code className="font-mono">dsub_</code>）；连接后每次调用都会自动按你的订阅范围过滤，无需逐次传参。
+        </p>
+        <p className="tiny-meta mt-1">
+          {activeConfig.note} 配置文件位置和字段名会随客户端变化，请以对应客户端当前文档为准。
+        </p>
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -177,8 +245,8 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
                 生成下方访问令牌，即可开始接入。
               </p>
             </div>
-            {/* MCP 运行状态：右上角一枚状态徽标 */}
-            <span className="inline-flex shrink-0 items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-bold text-white/90 backdrop-blur">
+            {/* MCP 运行状态：右上角一枚状态徽标（停止时整枚转红，与全站红=停止一致） */}
+            <span className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold backdrop-blur ${status !== null && !enabled ? 'border-rose-300/40 bg-rose-500/25 text-rose-50' : 'border-white/15 bg-white/10 text-white/90'}`}>
               {status === null ? (
                 <span className="h-2 w-2 rounded-full bg-white/40" />
               ) : enabled ? (
@@ -216,73 +284,63 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
               <span className={`h-1.5 w-1.5 rounded-full ${ragEnabled ? 'bg-emerald-500' : 'bg-slate-400'}`} />
               语义检索 {ragEnabled ? '已启用' : '未启用'}
             </span>
-            <span className={`text-xs font-medium ${enabled ? 'text-emerald-500' : 'text-slate-400'}`}>
-              {status === null ? '…' : enabled ? '● 运行中' : '○ 已停止'}
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold ${status === null ? 'bg-slate-100 text-slate-500' : enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${status === null ? 'bg-slate-300' : enabled ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+              MCP {status === null ? '检测中' : enabled ? '运行中' : '已停止'}
             </span>
           </div>
         </div>
 
         <div className="p-6 space-y-5">
           <div className="rounded-[10px] border border-sky-100 bg-sky-50 px-4 py-3">
-            <p className="text-sm font-bold text-sky-900">启停与取数范围</p>
-            <p className="tiny-meta mt-1 text-sky-800">
-              MCP Server 由管理员在「设置 → 接入集成」中配置启停。工具调用<strong className="font-bold">必须携带访问令牌</strong>（上方「访问令牌」处获取的 <code className="font-mono">dfeed_</code> 令牌，或单订阅 <code className="font-mono">dsub_</code> 令牌），结果仅限你已订阅的来源；不带令牌或令牌无效将被拒绝。仅 <code className="font-mono">list_sources</code> 例外，可无令牌列出来源目录。
-            </p>
-          </div>
-
-          {/* URL */}
-          <div>
-            <p className="form-label">接入地址</p>
-            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border bg-slate-50 transition-opacity ${!enabled && 'opacity-50'}`}>
-              <code className="flex-1 text-sm font-mono text-slate-700 break-all select-all">
-                {mcpUrl}
-              </code>
-              <button
-                onClick={handleCopy}
-                title="复制 URL"
-                className="shrink-0 p-1.5 rounded-lg hover:bg-slate-200 transition-colors"
-              >
-                {copied
-                  ? <Check className="w-4 h-4 text-emerald-500" />
-                  : <Copy className="w-4 h-4 text-slate-400" />}
-              </button>
-            </div>
-            {!enabled && (
-              <p className="tiny-meta mt-1.5">请联系管理员启动 MCP Server 后再接入。</p>
+            <button
+              type="button"
+              onClick={() => setScopeOpen(o => !o)}
+              className="flex w-full items-center gap-2 text-left"
+            >
+              <KeyRound className="h-4 w-4 shrink-0 text-sky-500" />
+              <span className="text-sm font-bold text-sky-900">接入需带访问令牌，仅返回你订阅的来源</span>
+              <span className="ml-auto shrink-0 text-sky-500">
+                {scopeOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </span>
+            </button>
+            {scopeOpen && (
+              <ul className="tiny-meta mt-2 space-y-1 text-sky-800 list-disc pl-4 marker:text-sky-400">
+                <li>在上方「访问令牌」复制 <code className="font-mono">dfeed_</code>（或单订阅 <code className="font-mono">dsub_</code>）填入即可；不带令牌的调用会被拒绝（仅 <code className="font-mono">list_sources</code> 例外，可直接列目录）。</li>
+                <li>MCP 的启停由管理员统一控制。</li>
+              </ul>
             )}
           </div>
 
-          {/* JSON config */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <p className="form-label mb-0">客户端配置示例（JSON）</p>
-              <button
-                onClick={handleCopyJson}
-                className="action-button action-button-quiet min-h-[28px] px-2 text-xs"
-              >
-                {copiedJson ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                {copiedJson ? '已复制' : '复制'}
-              </button>
-            </div>
-            <div className="overflow-hidden rounded-xl bg-slate-950">
-              <div className="flex items-center gap-1 border-b border-white/10 px-2 pt-2">
-                {Object.entries(mcpConfigExamples).map(([key, item]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setConfigKind(key)}
-                    className={`rounded-t-md px-3 py-1.5 text-xs font-semibold transition-colors ${configKind === key ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-slate-300'}`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
+          {/* MCP 未启动：醒目横幅，避免被下方大段配置淹没 */}
+          {status !== null && !enabled && (
+            <div className="flex items-start gap-3 rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3">
+              <PowerOff className="mt-0.5 h-5 w-5 shrink-0 text-rose-500" />
+              <div>
+                <p className="text-sm font-bold text-rose-900">MCP Server 未启动</p>
+                <p className="tiny-meta mt-0.5 text-rose-700">当前无法接入，请联系管理员启动后再使用下方配置。</p>
               </div>
-              <pre className="text-xs font-mono text-slate-300 px-4 py-4 overflow-x-auto leading-relaxed select-all">{mcpJson}</pre>
             </div>
-            <p className="tiny-meta mt-1.5">
-              {activeConfig.note} 配置文件位置和字段名会随客户端变化，请以对应客户端当前文档为准。
-            </p>
-          </div>
+          )}
+
+          {/* 接入地址 + JSON 配置：运行时直接展示；停止时折叠到展开器后面（不置灰，避免发灰不自然） */}
+          {enabled ? (
+            configBlocks
+          ) : (
+            <div className="rounded-[10px] border border-slate-200 bg-slate-50/60">
+              <button
+                type="button"
+                onClick={() => setStoppedConfigOpen(o => !o)}
+                className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-bold text-slate-500 hover:text-slate-700"
+              >
+                {stoppedConfigOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                查看接入配置（地址与示例）
+              </button>
+              {stoppedConfigOpen && <div className="px-4 pb-4">{configBlocks}</div>}
+            </div>
+          )}
 
           {/* Tools（默认折叠：参考信息，按需展开） */}
           <div>
@@ -337,16 +395,16 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
         <div className="p-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Local tools */}
-            <div className="rounded-xl border border-slate-200 p-4 hover:border-slate-300 transition-colors">
+            <div className="rounded-xl border border-slate-200 p-4 hover:border-sky-200 transition-colors">
               <div className="flex items-center gap-2 mb-3">
-                <div className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center">
-                  <Terminal className="w-3.5 h-3.5 text-slate-600" />
+                <div className="w-7 h-7 rounded-lg bg-sky-50 flex items-center justify-center">
+                  <Terminal className="w-3.5 h-3.5 text-sky-600" />
                 </div>
                 <p className="text-sm font-bold text-slate-700">本地 AI 工具</p>
               </div>
               <div className="flex flex-wrap gap-1 mb-4">
                 {LOCAL_TOOLS.map(t => (
-                  <span key={t} className="status-badge min-h-[22px] bg-slate-100 text-slate-500 border-slate-200">{t}</span>
+                  <span key={t} className="status-badge min-h-[22px] bg-sky-50 text-sky-600 border-sky-100">{t}</span>
                 ))}
               </div>
               <ol className="space-y-2 mb-4">
@@ -356,7 +414,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
                   '重启工具后 Skill 即可使用',
                 ].map((step, i) => (
                   <li key={i} className="flex gap-2.5 text-xs text-slate-600">
-                    <span className="shrink-0 font-bold text-slate-300 tabular-nums">{i + 1}</span>
+                    <span className="shrink-0 font-bold text-sky-400 tabular-nums">{i + 1}</span>
                     <span>{step}</span>
                   </li>
                 ))}
@@ -377,16 +435,16 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
             </div>
 
             {/* Online platforms */}
-            <div className="rounded-xl border border-slate-200 p-4 hover:border-slate-300 transition-colors">
+            <div className="rounded-xl border border-slate-200 p-4 hover:border-violet-200 transition-colors">
               <div className="flex items-center gap-2 mb-3">
-                <div className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center">
-                  <Globe className="w-3.5 h-3.5 text-slate-600" />
+                <div className="w-7 h-7 rounded-lg bg-violet-50 flex items-center justify-center">
+                  <Globe className="w-3.5 h-3.5 text-violet-600" />
                 </div>
                 <p className="text-sm font-bold text-slate-700">在线 Agent 平台</p>
               </div>
               <div className="flex flex-wrap gap-1 mb-4">
                 {ONLINE_TOOLS.map(t => (
-                  <span key={t} className="status-badge min-h-[22px] bg-slate-100 text-slate-500 border-slate-200">{t}</span>
+                  <span key={t} className="status-badge min-h-[22px] bg-violet-50 text-violet-600 border-violet-100">{t}</span>
                 ))}
               </div>
               <ol className="space-y-2 mb-4">
@@ -396,7 +454,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
                   '粘贴到平台的 System Prompt 或项目指令配置中',
                 ].map((step, i) => (
                   <li key={i} className="flex gap-2.5 text-xs text-slate-600">
-                    <span className="shrink-0 font-bold text-slate-300 tabular-nums">{i + 1}</span>
+                    <span className="shrink-0 font-bold text-violet-400 tabular-nums">{i + 1}</span>
                     <span>{step}</span>
                   </li>
                 ))}
@@ -423,7 +481,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
 
       {/* ── 分区 ②：面向脚本与自动化（个人订阅接口）─────────────────── */}
       <section className="space-y-3">
-        <GroupHeader accent="bg-indigo-500" title="面向脚本与自动化" hint="HTTP 拉取接口，供非 Agent 客户端使用" />
+        <GroupHeader accent="bg-amber-500" title="面向脚本与自动化" hint="HTTP 拉取接口，供非 Agent 客户端使用" />
         <FeedAccessSection showToast={showToast} />
       </section>
 

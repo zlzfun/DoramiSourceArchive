@@ -149,6 +149,18 @@ def test_resolve_scope_allows_tokenless_when_not_required():
     assert _resolve_scope(resolver, None, require_token=False) == (True, None)
 
 
+def test_parse_bearer_extracts_token():
+    from mcp_server import _parse_bearer
+    # 标准 Bearer（大小写不敏感的 scheme），取出令牌本体。
+    assert _parse_bearer("Bearer dfeed_abc") == "dfeed_abc"
+    assert _parse_bearer("bearer dsub_xyz") == "dsub_xyz"
+    # 非 Bearer / 空 / 仅 scheme 无令牌 → None。
+    assert _parse_bearer(None) is None
+    assert _parse_bearer("") is None
+    assert _parse_bearer("Token abc") is None
+    assert _parse_bearer("Bearer   ") is None
+
+
 # ── Task 4 ────────────────────────────────────────────────────────────────────
 import asyncio
 

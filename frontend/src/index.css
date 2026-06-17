@@ -775,6 +775,18 @@ button:disabled {
     transform: translateY(-1px);
   }
 
+  .action-button-success {
+    border-color: rgba(16, 185, 129, 0.2);
+    background: #ecfdf5;
+    color: #059669;
+  }
+
+  .action-button-success:hover {
+    background: #d1fae5;
+    border-color: rgba(16, 185, 129, 0.32);
+    transform: translateY(-1px);
+  }
+
   .action-button-quiet {
     border-color: rgba(11, 18, 32, 0.09);
     background: rgba(247, 248, 250, 0.56);

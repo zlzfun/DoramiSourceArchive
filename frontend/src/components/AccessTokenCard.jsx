@@ -53,7 +53,7 @@ export default function AccessTokenCard({ showToast, variant = 'card' }) {
   // ── Hero 变体：深色玻璃面板，内嵌进紫色 Hero ───────────────────────
   if (variant === 'hero') {
     return (
-      <div className="mt-5 rounded-[12px] border border-white/15 bg-white/10 p-4 backdrop-blur">
+      <div className="mt-5 rounded-[12px] border border-white/20 bg-white/[0.12] p-4 backdrop-blur">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-white/15 text-white">
             <KeyRound className="h-[18px] w-[18px]" />
@@ -82,12 +82,12 @@ export default function AccessTokenCard({ showToast, variant = 'card' }) {
         </p>
 
         {plainToken && (
-          <div className="mt-3 rounded-[10px] border border-emerald-300/40 bg-emerald-400/15 p-3">
+          <div className="mt-3 rounded-[10px] border border-white/25 bg-white/[0.18] p-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xs font-black text-white">访问令牌仅显示一次</p>
                 <p className="mt-0.5 text-[11px] text-white/70">复制到你的 MCP 客户端或下游系统，关闭后只能再次生成新令牌。</p>
-                <code className="mt-2 block break-all rounded-lg bg-black/25 px-2.5 py-1.5 text-[11px] font-bold text-emerald-100">{plainToken}</code>
+                <code className="mt-2 block break-all rounded-lg bg-black/25 px-2.5 py-1.5 text-[11px] font-bold text-white">{plainToken}</code>
               </div>
               <button
                 onClick={() => handleCopy(plainToken, 'token-notice')}
