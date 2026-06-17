@@ -5,7 +5,7 @@
 | 脚本 | 用途 | 运行方式 |
 |---|---|---|
 | [`ensure_daily_collection_job.py`](./ensure_daily_collection_job.py) | 幂等地创建/更新「每日全量采集」Collection Job，默认覆盖全部内置具体来源节点（泛化高级 fetcher 需逐源参数，默认排除，`--include-advanced` 才纳入）。 | `PYTHONPATH=src uv run python scripts/ensure_daily_collection_job.py` |
-| [`export_shendeng_daily_news.py`](./export_shendeng_daily_news.py) | 把哆啦美某日日报导出为 shendeng「daily-news/batch」上传 JSON：从 API 拉取该日日报记录的结构化 `extensions.items`，做确定性字段改名（复刻原 Dify code 节点），不调 LLM。可选同时导出日报 Markdown 正文。 | `PYTHONPATH=src .venv/bin/python scripts/export_shendeng_daily_news.py` |
+| [`export_shendeng_daily_news.py`](./export_shendeng_daily_news.py) | 把哆啦美某日日报导出为 shendeng「daily-news/batch」上传 JSON：从 API 拉取该日日报记录的结构化 `extensions.items`，做确定性字段改名（复刻原 Dify code 节点），不调 LLM。导出时把哆啦美内部的丰富分类（模型发布/行业资讯/开源动态/技术大会/…）**坍缩为 shendeng 二分类**（`学术论文` 保留，其余一律 → `产业资讯`，见 `collapse_to_shendeng_classification`）。可选同时导出日报 Markdown 正文。 | `PYTHONPATH=src .venv/bin/python scripts/export_shendeng_daily_news.py` |
 
 ## 关于导出产物
 
