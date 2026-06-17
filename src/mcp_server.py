@@ -9,7 +9,36 @@ from storage.impl.vector_storage import ChromaVectorStorage, SOURCE_FRIENDLY_NAM
 from fetchers.registry import fetcher_registry
 
 
+# 内容类工具缺/错令牌时的统一报错：明确指引去哪里取令牌，便于 Agent 转告用户。
+_TOKEN_REQUIRED_MSG = (
+    "subscription_token is required and must be valid — "
+    "请在哆啦美「接入集成 → 访问令牌」获取 dfeed_ 令牌后重试。"
+)
+
+
 # ── Helper functions (testable independently) ─────────────────────────────────
+
+def _resolve_scope(resolver, token: Optional[str], *, require_token: bool = True):
+    """把访问令牌折算成检索作用域，返回 (ok, source_ids)。
+
+    内容类工具（search/browse/get_article/get_rag_context）必须携带令牌：``/mcp``
+    传输层没有登录会话，令牌是唯一的鉴权手段，因此无令牌一律拒绝（ok=False），
+    避免任何人连上端口即可读取全库。``list_sources`` 只返回来源目录，可
+    ``require_token=False`` 放行。
+
+    - ok=False → 缺令牌或令牌无效，调用方应返回报错；
+    - ok=True 且 source_ids=None → 不限定作用域（仅 require_token=False 时可能出现）；
+    - ok=True 且 source_ids=[...] → 限定到这些来源（空列表表示零订阅，应返回空）。
+    """
+    if not token:
+        return (False, None) if require_token else (True, None)
+    if resolver is None:
+        return False, None
+    source_ids = resolver(token)
+    if source_ids is None:
+        return False, None
+    return True, source_ids
+
 
 def _list_sources_impl(db_sink: DatabaseStorage) -> list[dict]:
     fetchers = fetcher_registry.get_all_metadata()
@@ -76,11 +105,17 @@ def _browse_articles_impl(
     ]
 
 
-def _get_article_impl(db_sink: DatabaseStorage, article_id: str) -> dict:
+def _get_article_impl(
+    db_sink: DatabaseStorage,
+    article_id: str,
+    source_ids: Optional[list[str]] = None,
+) -> dict:
     with Session(db_sink.engine) as session:
         record = session.get(ArticleRecord, article_id)
     if not record:
         return {"error": f"Article '{article_id}' not found."}
+    if source_ids is not None and record.source_id not in set(source_ids):
+        return {"error": "article is outside the subscription scope"}
     return {
         "id": record.id,
         "title": record.title,
@@ -144,6 +179,7 @@ async def _get_rag_context_impl(
     distance_threshold: float = 1.5,
     content_type: Optional[str] = None,
     source_id: Optional[str] = None,
+    source_ids: Optional[list[str]] = None,
     publish_date_gte: Optional[str] = None,
     context_separator: str = "\n\n---\n\n",
 ) -> str:
@@ -154,6 +190,7 @@ async def _get_rag_context_impl(
         n_results=top_k * 4,
         content_type=content_type,
         source_id=source_id,
+        source_ids=source_ids,
         publish_date_gte=publish_date_gte,
     )
     best: dict[str, dict] = {}
@@ -213,15 +250,8 @@ def build_mcp_app(
     )
 
     def _resolve_subscription_scope(subscription_token: Optional[str]):
-        """返回 (ok, source_ids)。ok=False 表示令牌无效，应拒绝。"""
-        if not subscription_token:
-            return True, None
-        if subscription_resolver is None:
-            return False, None
-        source_ids = subscription_resolver(subscription_token)
-        if source_ids is None:
-            return False, None
-        return True, source_ids
+        """返回 (ok, source_ids)。内容类工具必须携带有效令牌，否则 ok=False。"""
+        return _resolve_scope(subscription_resolver, subscription_token, require_token=True)
 
     @mcp.tool()
     def list_sources() -> list[dict]:
@@ -247,11 +277,12 @@ def build_mcp_app(
         Filter and browse articles by metadata. Use for source-specific or date-range queries.
         Scenarios: 「某来源最新资讯」「生成今日日报」「列出某类型内容」
         publish_date_start/end: YYYY-MM-DD. limit max 100.
-        subscription_token: 传入订阅令牌则把结果限定在该订阅覆盖的来源内（个性化视图）。
+        subscription_token: 必填。访问令牌把结果限定在你订阅覆盖的来源内（个性化视图）；
+            支持单订阅令牌（dsub_）或个人订阅令牌（dfeed_，覆盖你的全部订阅）。缺失或无效将被拒绝。
         """
         ok, scope_ids = _resolve_subscription_scope(subscription_token)
         if not ok:
-            return [{"error": "invalid or unauthorized subscription_token"}]
+            return [{"error": _TOKEN_REQUIRED_MSG}]
         return _browse_articles_impl(
             db_sink, source_id=source_id, source_ids=scope_ids, content_type=content_type,
             publish_date_start=publish_date_start, publish_date_end=publish_date_end,
@@ -259,13 +290,17 @@ def build_mcp_app(
         )
 
     @mcp.tool()
-    def get_article(article_id: str) -> dict:
+    def get_article(article_id: str, subscription_token: Optional[str] = None) -> dict:
         """按 ID 获取单篇文章完整内容（含正文、extensions 元数据）。
         Get full content of a single article by its ID.
         Use article IDs from browse_articles or search_articles results.
         extensions contains content-type-specific metadata parsed from JSON.
+        subscription_token: 必填。仅允许读取访问令牌覆盖来源内的文章；缺失或无效将被拒绝。
         """
-        return _get_article_impl(db_sink, article_id)
+        ok, scope_ids = _resolve_subscription_scope(subscription_token)
+        if not ok:
+            return {"error": _TOKEN_REQUIRED_MSG}
+        return _get_article_impl(db_sink, article_id, source_ids=scope_ids)
 
     @mcp.tool()
     async def search_articles(
@@ -282,12 +317,12 @@ def build_mcp_app(
         Scenarios: 「最近的具身智能资讯有哪些？」「Find papers on multimodal LLMs」
         distance_threshold: cosine distance cutoff (lower = stricter, default 1.5).
         publish_date_gte: YYYY-MM-DD. Returns articles ranked by relevance (distance asc).
-        subscription_token: 传入访问令牌则把检索限定在其覆盖的来源内（个性化视图）；
-            支持单订阅令牌（dsub_）或个人聚合令牌（dfeed_，覆盖你的全部订阅）。
+        subscription_token: 必填。把检索限定在访问令牌覆盖的来源内（个性化视图）；
+            支持单订阅令牌（dsub_）或个人订阅令牌（dfeed_，覆盖你的全部订阅）。缺失或无效将被拒绝。
         """
         ok, scope_ids = _resolve_subscription_scope(subscription_token)
         if not ok:
-            return [{"error": "invalid or unauthorized subscription_token"}]
+            return [{"error": _TOKEN_REQUIRED_MSG}]
         return await _search_articles_impl(
             vector_sink, query=query, top_k=top_k,
             content_type=content_type, source_id=source_id, source_ids=scope_ids,
@@ -304,17 +339,22 @@ def build_mcp_app(
         source_id: Optional[str] = None,
         publish_date_gte: Optional[str] = None,
         context_separator: str = "\n\n---\n\n",
+        subscription_token: Optional[str] = None,
     ) -> str:
         """语义检索后组装格式化RAG上下文字符串，可直接拼入LLM System Prompt。
         Assemble a formatted RAG context string ready to inject into an LLM prompt.
         Scenarios: 需要用归档资讯回答用户提问时的上下文准备。
         Returns empty string when no relevant results found.
         publish_date_gte: YYYY-MM-DD. distance_threshold: cosine distance cutoff (default 1.5).
+        subscription_token: 必填。把上下文限定在访问令牌覆盖来源内；缺失或无效将被拒绝。
         """
+        ok, scope_ids = _resolve_subscription_scope(subscription_token)
+        if not ok:
+            return f"ERROR: {_TOKEN_REQUIRED_MSG}"
         return await _get_rag_context_impl(
             db_sink, vector_sink, query=query, top_k=top_k,
             max_chars=max_chars, distance_threshold=distance_threshold,
-            content_type=content_type, source_id=source_id,
+            content_type=content_type, source_id=source_id, source_ids=scope_ids,
             publish_date_gte=publish_date_gte, context_separator=context_separator,
         )
 

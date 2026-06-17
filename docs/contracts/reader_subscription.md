@@ -244,11 +244,19 @@ agents over HTTP.
 
 ### Per-subscription MCP scope
 
-The reader MCP server (`/mcp`) exposes a global archive surface. Its `search_articles`
-and `browse_articles` tools accept an optional `subscription_token` argument; when set,
-results are constrained to that subscription's sources, giving each consumer a
-personalized MCP view through one shared MCP endpoint. An invalid/inactive token makes
-the tool return an error item instead of unscoped data.
+The reader MCP server (`/mcp`) has **no login session on its transport** — a token is the
+only authorization signal it carries. Its content-returning tools (`search_articles`,
+`browse_articles`, `get_article`, and `get_rag_context`) therefore **require** a
+`subscription_token` argument: results are constrained to that token's sources, giving each
+consumer a personalized MCP view through one shared MCP endpoint. A missing, invalid, or
+inactive token makes the tool return an error instead of any data — there is no unscoped
+global surface over MCP. `list_sources` is the only exception: it returns just the source
+catalog (ids/types, no article bodies) and needs no token, so a consumer can discover what
+to subscribe to. Admins searching the whole archive use the in-app surfaces (向量雷达 /
+知识台账), not MCP; to debug MCP they pass their own `dfeed_` token like any reader.
+
+A token is either a per-subscription `dsub_` token or the per-user aggregated `dfeed_` token
+(obtainable from 接入集成 → 访问令牌 / `GET /api/reader/feed-token`).
 
 ## Filters
 

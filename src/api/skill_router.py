@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 import io
 import pathlib
 import zipfile
+from llm.prompts import build_daily_brief_skill_style_guide
 
 router = APIRouter()
 SKILL_DIR = pathlib.Path(__file__).parent.parent / "skill_templates" / "dorami-daily-brief"
@@ -14,6 +15,7 @@ async def download_skill(request: Request):
     base_url = str(request.base_url).rstrip("/")
     skill_content = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
     skill_content = skill_content.replace("{BASE_URL}", base_url)
+    skill_content = skill_content.replace("{DAILY_BRIEF_STYLE_GUIDE}", build_daily_brief_skill_style_guide())
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:

@@ -5,26 +5,32 @@ description: Generate an AI news daily briefing (AI资讯日报) from the Dorami
 
 # 哆啦美·AI资讯日报 (Dorami AI Daily Brief)
 
-Generate a structured Markdown daily briefing from articles in the Dorami Archive platform.
+Generate a structured Markdown daily briefing from articles in the Dorami Archive platform. The result should match the built-in Dorami daily brief style.
 
 ## Platform access
 
 **Base URL**: `{BASE_URL}`
 
-Use whichever access method is available, in order of preference:
+Use whichever access method is available, in order of preference.
+
+Access scope is the user's subscriptions when a `dfeed_` personal feed token or `dsub_` subscription token is provided. If a token is not available, ask the user for their Dorami access token instead of silently using unscoped data.
 
 **1. MCP tools** (if `dorami-archive` MCP Server is connected):
 
 | Tool | Purpose |
 |---|---|
 | `list_sources()` | List all source IDs — call this first if you need to know what's available |
-| `browse_articles(publish_date_start, publish_date_end, limit=100)` | Fetch articles by date range |
-| `get_article(article_id)` | Get full body text for a specific article |
+| `browse_articles(publish_date_start, publish_date_end, limit=100, subscription_token=token)` | Fetch articles by date range within the user's subscription scope |
+| `get_article(article_id, subscription_token=token)` | Get full body text for a specific article after subscription-scope validation |
+| `search_articles(query, subscription_token=token)` | Search articles within the user's subscription scope when RAG is enabled |
+| `get_rag_context(query, subscription_token=token)` | Build scoped RAG context when RAG is enabled |
 
-**2. REST API** (if MCP is not connected, or to supplement):
+**2. REST API** (if MCP is not connected, or to supplement). Prefer this endpoint for daily brief generation because it is token-authenticated and scoped to the user's active subscriptions:
 
 ```
-GET {BASE_URL}/api/dify/articles
+GET {BASE_URL}/api/public/feed/articles
+Authorization: Bearer <dfeed_token>
+
   ?publish_date_start=YYYY-MM-DD
   &publish_date_end=YYYY-MM-DD
   &include_content=true
@@ -36,10 +42,10 @@ GET {BASE_URL}/api/dify/articles
 ## Steps
 
 1. **Clarify the date range.** Default to today. Recognize natural expressions like 昨天, 最近3天, last week, 2025-01-15.
-2. **Fetch articles.** Use `browse_articles` or the REST endpoint above. For large date ranges, paginate with `skip`.
+2. **Fetch articles.** Use `browse_articles` with `subscription_token` or the scoped REST endpoint above. For large date ranges, paginate with `skip`.
 3. **Deduplicate.** Drop any repeated article IDs. Keep articles with `has_content=false` — list their title and link, but skip the summary.
 4. **Categorize.** Group articles by `content_type` (see table below).
-5. **Summarize.** For articles with body text, write a 1–2 sentence summary focusing on the key finding or contribution. Don't pad.
+5. **Summarize and comment.** For articles with body text, produce concise factual summary bullets and a short professional comment following the shared backend style below.
 6. **Output.** Produce the report in the format below.
 
 ## Categories
@@ -49,9 +55,14 @@ GET {BASE_URL}/api/dify/articles
 | `arxiv` | 📄 学术论文 |
 | `tech_conference` | 🎤 技术大会 |
 | `github_release` | 🔧 开源动态 |
+| `github_repository` | 🔧 开源动态 |
 | `wechat_article` | 📱 行业资讯 |
-| `rss` | 🌐 资讯聚合 |
+| `ai_company_blog` | 📱 行业资讯 |
+| `web_article` | 🌐 资讯聚合 |
+| `rss_article` | 🌐 资讯聚合 |
 | `social_post` | 💬 社交动态 |
+| `ai_community` | 💬 社交动态 |
+| `hf_model` | 🔧 开源动态 |
 | anything else | 📌 其他资讯 |
 
 Within each section, sort by `publish_date` descending (newest first). Omit sections that have no articles for the requested period.
@@ -70,6 +81,7 @@ Within each section, sort by `publish_date` descending (newest first). Omit sect
 ### [Article title](source_url)
 **来源**: source_name · YYYY-MM-DD
 One or two sentence summary.
+> 💡 点评：One or two sentence professional comment.
 
 ---
 
@@ -90,11 +102,13 @@ Recognize these in the user's message and adjust accordingly:
 |---|---|
 | 昨天 / 最近3天 / 2025-01-15 | Use that date range |
 | 只要论文 / only arxiv / `--content-types arxiv` | Filter to those content types |
-| 加点评 / with commentary / `--with-commentary` | After each summary, add a 1–2 sentence opinion prefixed with `> 💡 点评：` |
+| 不要点评 / no commentary / `--no-commentary` | Omit the `> 💡 点评：` line |
 | 用英文 / in English / `--lang en` | Output the report in English |
 | 简报版 / brief mode | List title + link only, no summaries |
 
-Commentary is off by default — only add it when the user explicitly asks.
+Commentary is on by default to match Dorami's built-in daily brief. Omit it only when the user explicitly asks.
+
+{DAILY_BRIEF_STYLE_GUIDE}
 
 ## Edge cases
 

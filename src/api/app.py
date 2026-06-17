@@ -4497,15 +4497,15 @@ def get_fetch_run(run_id: int):
 
 _MCP_TOOLS_MANIFEST = [
     {"name": "search_articles",
-     "description": "语义向量搜索文章，支持中英文，可按日期/来源/类型过滤"},
+     "description": "语义向量搜索文章，支持中英文，可按日期/来源/类型过滤；必须携带 subscription_token，结果限定到订阅范围"},
     {"name": "browse_articles",
-     "description": "按条件过滤浏览文章列表（来源、类型、日期区间），适合日报生成"},
+     "description": "按条件过滤浏览文章列表（来源、类型、日期区间），适合日报生成；必须携带 subscription_token，结果限定到订阅范围"},
     {"name": "get_article",
-     "description": "按 ID 获取单篇文章完整内容（含正文）"},
+     "description": "按 ID 获取单篇文章完整内容（含正文）；必须携带 subscription_token 并校验订阅范围"},
     {"name": "list_sources",
-     "description": "列出所有已知数据来源，获取可用的 source_id 和 content_type"},
+     "description": "列出所有已知数据来源，获取可用的 source_id 和 content_type（无需令牌）"},
     {"name": "get_rag_context",
-     "description": "语义检索后组装格式化 RAG 上下文字符串，可直接拼入 LLM Prompt"},
+     "description": "语义检索后组装格式化 RAG 上下文字符串；必须携带 subscription_token，结果限定到订阅范围"},
 ]
 
 

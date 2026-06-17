@@ -1,28 +1,29 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Plug2, Copy, Check, Bot, Download, Terminal, Globe, Newspaper, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plug2, Copy, Check, Download, Terminal, Globe, Newspaper, ChevronDown, ChevronRight } from 'lucide-react';
 import { fetchMcpStatus } from '../api';
 import { MCP_URL } from '../config';
 import { copyText } from '../utils/clipboard';
 import { runAction } from '../utils/runAction';
 import FeedAccessSection from './FeedAccessSection';
+import AccessTokenCard from './AccessTokenCard';
 import DailyBriefPanel from './DailyBriefPanel';
 
 const TOOL_CARDS = [
   {
     name: 'search_articles',
-    params: 'query, top_k?, content_type?, source_id?, publish_date_gte?, distance_threshold?',
+    params: 'query, top_k?, content_type?, source_id?, publish_date_gte?, distance_threshold?, subscription_token?',
     desc: '语义向量搜索，支持中英文，按相关性排序。适合主题查询，如「最近的具身智能资讯」。',
     requiresRag: true,
   },
   {
     name: 'browse_articles',
-    params: 'source_id?, content_type?, publish_date_start?, publish_date_end?, has_content?, limit?, skip?',
-    desc: '条件过滤浏览，按来源/类型/日期区间筛选。适合「Anthropic最新动态」或生成日报。',
+    params: 'source_id?, content_type?, publish_date_start?, publish_date_end?, has_content?, limit?, skip?, subscription_token?',
+    desc: '条件过滤浏览，按来源/类型/日期区间筛选。传入 dfeed_ 后限定到你的订阅范围。',
   },
   {
     name: 'get_article',
-    params: 'article_id: str',
-    desc: '按 ID 获取单篇文章完整内容（含正文和扩展元数据）。',
+    params: 'article_id: str, subscription_token?',
+    desc: '按 ID 获取单篇文章完整内容（含正文和扩展元数据）。传入 token 后会校验订阅范围。',
   },
   {
     name: 'list_sources',
@@ -31,14 +32,25 @@ const TOOL_CARDS = [
   },
   {
     name: 'get_rag_context',
-    params: 'query, top_k?, max_chars?, distance_threshold?, content_type?, source_id?, publish_date_gte?',
-    desc: '组装格式化 RAG 上下文字符串，可直接拼入 LLM System Prompt。',
+    params: 'query, top_k?, max_chars?, distance_threshold?, content_type?, source_id?, publish_date_gte?, subscription_token?',
+    desc: '组装格式化 RAG 上下文字符串，可直接拼入 LLM System Prompt。传入 token 后限定到订阅范围。',
     requiresRag: true,
   },
 ];
 
 const LOCAL_TOOLS = ['Claude Code', 'Cursor', 'Codex', 'OpenCode'];
 const ONLINE_TOOLS = ['Claude.ai Projects', 'Coze'];
+
+/** 分组标题：沿用 app 内「色条 + 文字」(section-title) 的分区语汇，让接入页与其它页面同构、不自成一派。 */
+function GroupHeader({ accent = 'bg-indigo-500', title, hint }) {
+  return (
+    <div className="flex items-center gap-2.5 px-0.5">
+      <span className={`h-5 w-1 shrink-0 rounded-full ${accent}`} />
+      <h3 className="section-title">{title}</h3>
+      {hint && <span className="hidden text-xs font-medium text-slate-400 sm:inline">· {hint}</span>}
+    </div>
+  );
+}
 
 export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled = false, isAdmin = false }) {
   const canManage = collectorEnabled && isAdmin;        // 管理员才有「日报生成」管理页
@@ -52,8 +64,8 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
     if (!subTouched.current) setSub(canManage ? 'brief' : 'access');
   }, [canManage]);
   const [toolsOpen, setToolsOpen] = useState(false);    // MCP 可用工具列表折叠
-  const [skillOpen, setSkillOpen] = useState(false);    // Skill 安装指南折叠
   const [status, setStatus] = useState(null);
+  const [configKind, setConfigKind] = useState('mcpServers');
   const [copied, setCopied] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
   const showToastRef = useRef(showToast);
@@ -82,11 +94,28 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
   });
 
   const mcpUrl = status?.url ?? MCP_URL;
-  const mcpJson = JSON.stringify({
+  const mcpConfigExamples = {
     mcpServers: {
-      'dorami-archive': { type: 'http', url: mcpUrl },
+      label: 'Claude Code / Cursor',
+      note: '常见 MCP HTTP 配置格式，适用于使用 mcpServers 字段的客户端。',
+      value: {
+        mcpServers: {
+          'dorami-archive': { type: 'http', url: mcpUrl },
+        },
+      },
     },
-  }, null, 2);
+    opencode: {
+      label: 'OpenCode',
+      note: 'OpenCode 使用 mcp 字段组织远程 MCP。不同版本字段可能有差异，请以客户端文档为准。',
+      value: {
+        mcp: {
+          'dorami-archive': { type: 'remote', url: mcpUrl, enabled: true },
+        },
+      },
+    },
+  };
+  const activeConfig = mcpConfigExamples[configKind] ?? mcpConfigExamples.mcpServers;
+  const mcpJson = JSON.stringify(activeConfig.value, null, 2);
 
   const handleCopyJson = () => runAction(() => copyText(mcpJson), {
     showToast: (m, t) => showToastRef.current?.(m, t),
@@ -112,7 +141,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
           <p className="page-subtitle mt-3 max-w-3xl">
             {sub === 'brief'
               ? '由后端大模型汇总择优近期归档内容，生成可订阅的 AI 资讯日报。'
-              : '通过 MCP / Skill 把哆啦美接入本地工具与在线 Agent 平台。'}
+              : '通过 MCP / Skill 接入 Agent；通过个人订阅接口把已订阅内容拉取到下游脚本或服务。'}
           </p>
         </div>
         {canManage && (
@@ -135,105 +164,72 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
       {/* ══ Agent 接入页 ═══════════════════════════════════════════ */}
       {sub === 'access' && (
         <div className="space-y-6 animate-in fade-in">
-      {/* ── HERO ─────────────────────────────────────────────────── */}
+      {/* ── HERO（克制的渐变标识卡，纹理交给 .integration-hero 自带的渐变光晕）── */}
       <div className="integration-hero relative overflow-hidden rounded-[14px] p-7 shadow-lg shadow-blue-500/10">
-        {/* Dot-grid texture */}
-        <div
-          className="absolute inset-0 opacity-[0.07]"
-          style={{
-            backgroundImage: 'radial-gradient(circle, #ffffff 1px, transparent 1px)',
-            backgroundSize: '24px 24px',
-          }}
-        />
-        {/* Top-right glow */}
-        <div className="absolute -top-16 -right-16 w-64 h-64 rounded-full opacity-20"
-          style={{ background: 'radial-gradient(circle, #818cf8, transparent 70%)' }} />
-
         <div className="relative">
-          <p className="integration-kicker mb-1">
-            Integration Hub · 接入集成
-          </p>
-          <h2 className="text-xl font-bold text-white mb-1">扩展你的 Agent 能力</h2>
-          <p className="integration-lede mb-6">
-            通过 MCP 实时访问你订阅的资讯，或下载 Skill 让 Agent 自动生成 AI 资讯日报。
-          </p>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* MCP card */}
-            <div className="integration-card">
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="integration-icon integration-icon-sky">
-                    <Plug2 className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <p className="integration-card-title">MCP Server</p>
-                    <p className="integration-card-meta">实时数据接入</p>
-                  </div>
-                </div>
-                {status === null ? (
-                  <div className="h-2 w-2 rounded-full bg-slate-600 mt-1" />
-                ) : enabled ? (
-                  <span className="relative flex h-2.5 w-2.5 mt-1">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
-                  </span>
-                ) : (
-                  <div className="h-2.5 w-2.5 rounded-full bg-red-400/70 mt-1" />
-                )}
-              </div>
-              <p className="integration-card-copy mb-4">
-                {TOOL_CARDS.length} 个工具，支持语义搜索、条件浏览和 RAG 上下文组装。
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="integration-kicker mb-2">
+                Integration Hub · 接入集成
               </p>
-              <div className="integration-status-line flex items-center justify-center gap-2 rounded-[10px] border border-white/15 bg-white/5 px-3 py-2 text-xs font-bold text-white/80">
-                {status === null ? '读取状态中…' : enabled ? '● 运行中' : '○ 已停止'}
-                <span className="text-white/40">·</span>
-                <span className="text-white/50">在「设置」中启停</span>
-              </div>
+              <h2 className="text-xl font-bold text-white mb-2 tracking-tight">把哆啦美接入你的 Agent 与脚本</h2>
+              <p className="integration-lede max-w-2xl">
+                生成下方访问令牌，即可开始接入。
+              </p>
             </div>
-
-            {/* Skill card */}
-            <div className="integration-card">
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="integration-icon integration-icon-violet">
-                    <Bot className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <p className="integration-card-title">AI 日报 Skill</p>
-                    <p className="integration-card-meta">智能日报生成</p>
-                  </div>
-                </div>
-                <span className="integration-version">
-                  v1
+            {/* MCP 运行状态：右上角一枚状态徽标 */}
+            <span className="inline-flex shrink-0 items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-bold text-white/90 backdrop-blur">
+              {status === null ? (
+                <span className="h-2 w-2 rounded-full bg-white/40" />
+              ) : enabled ? (
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-300" />
                 </span>
-              </div>
-              <p className="integration-card-copy mb-4">
-                一句话生成结构化日报，支持 Claude Code、Cursor 等主流 Agent 平台。
-              </p>
-              <button
-                onClick={() => handleDownload('/api/skill/daily-brief', 'dorami-daily-brief.zip')}
-                className="integration-button integration-button-secondary w-full"
-              >
-                <Download className="w-3.5 h-3.5" />
-                下载 Skill 包
-              </button>
-            </div>
+              ) : (
+                <span className="h-2 w-2 rounded-full bg-rose-300" />
+              )}
+              MCP {status === null ? '检测中' : enabled ? '运行中' : '已停止'}
+            </span>
           </div>
+
+          {/* 访问令牌：直接内嵌在 Hero 里——lede 已点题，这里当场取令牌，避免重复成块 */}
+          <AccessTokenCard showToast={showToast} variant="hero" />
         </div>
       </div>
 
+      {/* ── 分区 ①：面向 Agent（MCP + Skill）──────────────────────── */}
+      <section className="space-y-3">
+        <GroupHeader accent="bg-sky-500" title="面向 Agent" hint="MCP 实时接入 · Skill 自动生成日报" />
+        <div className="space-y-5">
       {/* ── MCP DETAILS ──────────────────────────────────────────── */}
       <div className="surface-card rounded-[14px] overflow-hidden">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-6 py-4 border-b border-slate-100">
           <div className="w-1 h-5 rounded-full bg-sky-500" />
           <h3 className="section-title">MCP 配置详情</h3>
-          <span className={`ml-auto text-xs font-medium ${enabled ? 'text-emerald-500' : 'text-slate-400'}`}>
-            {status === null ? '…' : enabled ? '● 运行中' : '○ 已停止'}
-          </span>
+          {/* MCP 与语义检索（RAG）两种能力的状态并排，一眼可见、彼此对称 */}
+          <div className="ml-auto flex items-center gap-2">
+            <span
+              title={ragEnabled ? undefined : '语义检索（向量搜索）需由部署方在配置中开启'}
+              className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold ${ragEnabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${ragEnabled ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+              语义检索 {ragEnabled ? '已启用' : '未启用'}
+            </span>
+            <span className={`text-xs font-medium ${enabled ? 'text-emerald-500' : 'text-slate-400'}`}>
+              {status === null ? '…' : enabled ? '● 运行中' : '○ 已停止'}
+            </span>
+          </div>
         </div>
 
         <div className="p-6 space-y-5">
+          <div className="rounded-[10px] border border-sky-100 bg-sky-50 px-4 py-3">
+            <p className="text-sm font-bold text-sky-900">启停与取数范围</p>
+            <p className="tiny-meta mt-1 text-sky-800">
+              MCP Server 由管理员在「设置 → 接入集成」中配置启停。工具调用<strong className="font-bold">必须携带访问令牌</strong>（上方「访问令牌」处获取的 <code className="font-mono">dfeed_</code> 令牌，或单订阅 <code className="font-mono">dsub_</code> 令牌），结果仅限你已订阅的来源；不带令牌或令牌无效将被拒绝。仅 <code className="font-mono">list_sources</code> 例外，可无令牌列出来源目录。
+            </p>
+          </div>
+
           {/* URL */}
           <div>
             <p className="form-label">接入地址</p>
@@ -252,14 +248,14 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
               </button>
             </div>
             {!enabled && (
-              <p className="tiny-meta mt-1.5">启动 MCP Server 后方可复制接入地址</p>
+              <p className="tiny-meta mt-1.5">请联系管理员启动 MCP Server 后再接入。</p>
             )}
           </div>
 
           {/* JSON config */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="form-label mb-0">客户端配置（JSON）</p>
+              <p className="form-label mb-0">客户端配置示例（JSON）</p>
               <button
                 onClick={handleCopyJson}
                 className="action-button action-button-quiet min-h-[28px] px-2 text-xs"
@@ -268,9 +264,23 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
                 {copiedJson ? '已复制' : '复制'}
               </button>
             </div>
-            <pre className="text-xs font-mono bg-slate-950 text-slate-300 rounded-xl p-4 overflow-x-auto leading-relaxed select-all">{mcpJson}</pre>
+            <div className="overflow-hidden rounded-xl bg-slate-950">
+              <div className="flex items-center gap-1 border-b border-white/10 px-2 pt-2">
+                {Object.entries(mcpConfigExamples).map(([key, item]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setConfigKind(key)}
+                    className={`rounded-t-md px-3 py-1.5 text-xs font-semibold transition-colors ${configKind === key ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <pre className="text-xs font-mono text-slate-300 px-4 py-4 overflow-x-auto leading-relaxed select-all">{mcpJson}</pre>
+            </div>
             <p className="tiny-meta mt-1.5">
-              将以上配置合并到 Claude Code 的 <code className="bg-slate-100 px-1 rounded">~/.claude/settings.json</code>、Claude Desktop 的 <code className="bg-slate-100 px-1 rounded">claude_desktop_config.json</code> 或其他支持 MCP HTTP 协议的客户端配置文件中。
+              {activeConfig.note} 配置文件位置和字段名会随客户端变化，请以对应客户端当前文档为准。
             </p>
           </div>
 
@@ -310,31 +320,20 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
         </div>
       </div>
 
-      {/* ── 个人聚合接口 ─────────────────────────────────────────── */}
-      <FeedAccessSection showToast={showToast} />
-
-      {/* ── SKILL INSTALLATION（默认折叠） ───────────────────────── */}
+      {/* ── SKILL INSTALLATION（常驻展开，与其它板块一致） ───────────────── */}
       <div className="surface-card rounded-[14px] overflow-hidden">
-        <div className={`flex items-center gap-3 px-6 py-4 ${skillOpen ? 'border-b border-slate-100' : ''}`}>
-          <button
-            type="button"
-            onClick={() => setSkillOpen(o => !o)}
-            className="flex min-w-0 flex-1 items-center gap-3 text-left"
-          >
-            <div className="w-1 h-5 rounded-full bg-violet-500" />
-            <h3 className="section-title">Skill 安装指南</h3>
-            <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${skillOpen ? 'rotate-180' : ''}`} />
-          </button>
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
+          <div className="w-1 h-5 rounded-full bg-violet-500" />
+          <h3 className="section-title">Skill 安装指南</h3>
           <button
             onClick={() => handleDownload('/api/skill/daily-brief', 'dorami-daily-brief.zip')}
-            className="action-button action-button-secondary shrink-0 min-h-[34px] px-3 text-xs text-violet-700"
+            className="action-button action-button-secondary shrink-0 min-h-[34px] px-3 text-xs text-violet-700 ml-auto"
           >
             <Download className="w-3.5 h-3.5" />
             下载 Skill 包
           </button>
         </div>
 
-        {skillOpen && (
         <div className="p-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Local tools */}
@@ -418,11 +417,23 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
             </div>
           </div>
         </div>
-        )}
       </div>
+        </div>
+      </section>
+
+      {/* ── 分区 ②：面向脚本与自动化（个人订阅接口）─────────────────── */}
+      <section className="space-y-3">
+        <GroupHeader accent="bg-indigo-500" title="面向脚本与自动化" hint="HTTP 拉取接口，供非 Agent 客户端使用" />
+        <FeedAccessSection showToast={showToast} />
+      </section>
 
       {/* 非管理员（读者）：仅给一个日报订阅指引（无管理控件） */}
-      {!canManage && <DailyBriefPanel showToast={showToast} collectorEnabled={collectorEnabled} isAdmin={isAdmin} />}
+      {!canManage && (
+        <section className="space-y-3">
+          <GroupHeader accent="bg-emerald-500" title="AI 资讯日报" hint="订阅哆啦美自动生成的每日精选" />
+          <DailyBriefPanel showToast={showToast} collectorEnabled={collectorEnabled} isAdmin={isAdmin} />
+        </section>
+      )}
         </div>
       )}
     </div>

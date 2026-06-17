@@ -151,3 +151,41 @@ def build_reduce_user_prompt(
         parts.append("")
 
     return "\n".join(parts)
+
+
+def build_daily_brief_skill_style_guide() -> str:
+    """Return the live daily-brief generation contract embedded into the downloadable Skill.
+
+    The Skill is packaged at request time, so keeping this guide derived from the
+    same prompt constants makes downstream Skill instructions follow future prompt
+    changes without manually editing the template.
+    """
+    category_lines = "\n".join(
+        f"- `{content_type}` → {label}"
+        for content_type, label in sorted(CATEGORY_LABELS.items())
+    )
+    return f"""## Shared daily brief generation style
+
+This Skill must follow the same editorial contract as Dorami's built-in daily brief generator. The live backend prompt source is `src/llm/prompts.py`; this section is generated from that module when the Skill zip is downloaded.
+
+### Category mapping
+
+{category_lines}
+- anything else → {DEFAULT_CATEGORY_LABEL}
+
+### Map-stage editorial standard
+
+When summarizing individual articles, follow this exact backend system prompt:
+
+```text
+{MAP_SYSTEM_PROMPT}
+```
+
+### Reduce-stage Markdown style
+
+When assembling the final report, follow this exact backend system prompt:
+
+```text
+{REDUCE_SYSTEM_PROMPT}
+```
+"""

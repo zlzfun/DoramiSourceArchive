@@ -318,12 +318,14 @@ class ChromaVectorStorage(BaseStorage):
             conditions.append({"content_type": content_type})
         if source_id:
             conditions.append({"source_id": source_id})
-        if source_ids:
+        if source_ids is not None:
             unique_source_ids = [sid for sid in dict.fromkeys(source_ids) if sid]
             if len(unique_source_ids) == 1:
                 conditions.append({"source_id": unique_source_ids[0]})
             elif len(unique_source_ids) > 1:
                 conditions.append({"source_id": {"$in": unique_source_ids}})
+            else:
+                conditions.append({"source_id": "__none__"})
         if publish_date_gte:
             conditions.append({"publish_date": {"$gte": publish_date_gte}})
         if publish_date_lte:

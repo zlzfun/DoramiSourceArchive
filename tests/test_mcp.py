@@ -112,12 +112,41 @@ def test_get_article_found():
     assert result["extensions"] == {"key": "val"}
 
 
+def test_get_article_respects_subscription_scope():
+    from mcp_server import _get_article_impl
+    db = make_db_sink()
+    article_id = seed_article(db, title="Scoped Article", source_id="src_a")
+    allowed = _get_article_impl(db, article_id, source_ids=["src_a"])
+    denied = _get_article_impl(db, article_id, source_ids=["src_b"])
+    assert allowed["title"] == "Scoped Article"
+    assert denied == {"error": "article is outside the subscription scope"}
+
+
 def test_get_article_not_found():
     from mcp_server import _get_article_impl
     db = make_db_sink()
     result = _get_article_impl(db, "nonexistent_id")
     assert isinstance(result, dict)
     assert "error" in result
+
+
+def test_resolve_scope_requires_token_for_content_tools():
+    from mcp_server import _resolve_scope
+    resolver = lambda token: ["src_a"] if token == "good" else None
+    # 无令牌：内容类工具一律拒绝（/mcp 无登录会话，令牌是唯一鉴权）。
+    assert _resolve_scope(resolver, None) == (False, None)
+    assert _resolve_scope(resolver, "") == (False, None)
+    # 无效令牌（resolver 返回 None）同样拒绝。
+    assert _resolve_scope(resolver, "bad") == (False, None)
+    # 有效令牌：放行并限定到其覆盖来源。
+    assert _resolve_scope(resolver, "good") == (True, ["src_a"])
+
+
+def test_resolve_scope_allows_tokenless_when_not_required():
+    from mcp_server import _resolve_scope
+    resolver = lambda token: ["src_a"]
+    # list_sources 等目录类工具：无令牌放行、不限定作用域。
+    assert _resolve_scope(resolver, None, require_token=False) == (True, None)
 
 
 # ── Task 4 ────────────────────────────────────────────────────────────────────
@@ -197,6 +226,17 @@ def test_get_rag_context_formats_block():
     assert isinstance(result, str)
 
 
+def test_get_rag_context_passes_subscription_scope_to_vector_search():
+    from mcp_server import _get_rag_context_impl
+    db = make_db_sink()
+    vec = make_vector_sink()
+    vec.search.return_value = []
+    result = run(_get_rag_context_impl(db, vec, query="embodied AI", source_ids=["src_a"]))
+    assert result == ""
+    kwargs = vec.search.call_args.kwargs
+    assert kwargs["source_ids"] == ["src_a"]
+
+
 # ── Task 5 ────────────────────────────────────────────────────────────────────
 from fastapi.testclient import TestClient
 
@@ -230,8 +270,10 @@ def set_test_auth_accounts(monkeypatch, app_module):
     )
 
 
-def test_admin_auth_session_lifecycle():
-    with TestClient(__import__('api.app', fromlist=['app']).app) as client:
+def test_admin_auth_session_lifecycle(monkeypatch):
+    app_module = __import__('api.app', fromlist=['app'])
+    set_test_auth_accounts(monkeypatch, app_module)
+    with TestClient(app_module.app) as client:
         assert client.get("/api/auth/session").json()["authenticated"] is False
         assert client.get("/api/mcp/status").status_code == 401
         login_test_admin(client)
@@ -262,6 +304,22 @@ def test_mcp_status_returns_correct_structure(monkeypatch):
         tool_names = {t["name"] for t in data["tools"]}
         assert tool_names == {"list_sources", "browse_articles", "get_article",
                               "search_articles", "get_rag_context"}
+
+
+def test_daily_brief_skill_download_embeds_live_prompt(monkeypatch):
+    import io
+    import zipfile
+    app_module = __import__('api.app', fromlist=['app'])
+    set_test_auth_accounts(monkeypatch, app_module)
+    with TestClient(app_module.app) as client:
+        login_test_user(client)
+        resp = client.get("/api/skill/daily-brief")
+        assert resp.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+            skill_text = zf.read("dorami-daily-brief/SKILL.md").decode("utf-8")
+        assert "Shared daily brief generation style" in skill_text
+        assert "/api/public/feed/articles" in skill_text
+        assert "{DAILY_BRIEF_STYLE_GUIDE}" not in skill_text
 
 
 def test_mcp_toggle_flips_state(monkeypatch):
