@@ -136,7 +136,7 @@ no_proxy = 127.0.0.1,localhost
 
 应用启动时会把这组配置同步到 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 及其小写形式，供底层网络库使用。
 
-管理员登录读取后端配置文件中的 `[auth]`：
+登录账户已迁移到**数据库托管**（`users` 表，密码以 PBKDF2 哈希存储）。配置文件中的 `[auth]` 只在**首次启动（`users` 表为空）时作为初始种子**，之后账户以数据库为准——改 `[auth]` 不再影响已存在的账户。
 
 ```ini
 [auth]
@@ -145,8 +145,9 @@ user_users = user:change-me,reader:reader-secret
 secret = change-me-to-a-long-random-string
 ```
 
-`admin_users` 和 `user_users` 都是逗号分隔的白名单，单项格式为 `账号:密码`。
-旧配置中的 `username/password` 仍会被兼容读取为一个 admin 账号，但建议迁移到白名单写法。
+`admin_users` 和 `user_users` 都是逗号分隔的种子白名单，单项格式为 `账号:密码`；`admin_users` 播种为 admin 角色、`user_users` 播种为 user 角色。`secret` 用于会话 token 与订阅/聚合令牌的 HMAC 签名，**请保持稳定**（变更会使已签发的会话与令牌失效）。
+
+**首次启动后请尽快改掉种子密码**：管理员在前端「设置 → 账户管理」可创建账户、分配角色、重置密码、停用/删除账户（停用或删除会立即让对应账户的会话失效，且不能删除最后一个启用的管理员）；任意账户可在「设置 → 账户」自助修改自己的登录密码。账户运维不再需要改配置文件或重启后端。
 
 账号角色是默认 `all` 部署下唯一生效的访问控制轴：
 
@@ -155,7 +156,7 @@ secret = change-me-to-a-long-random-string
 - 内容台账读取对两类账号开放；手工录入、编辑、删除、离线归档导入等归档写操作只对 admin 账号开放。
 - （仅分离部署）账号角色会再和 `[runtime] role` 取交集：`role = collector` / `reader` 时，部署角色作为外层硬限制叠加在账号角色之上。
 
-修改 `production.ini` 后需要重新执行 `./deploy.sh` 或 `pm2 reload ecosystem.config.js --only dorami-backend-v2 --update-env`，因为认证配置只在后端进程启动时读取。
+账户增删改在前端「账户管理」即时生效、无需重启；但 `[auth]` 的其余项（`cookie_name`、`session_seconds`、`secret`、`cookie_secure`）以及种子白名单只在后端进程启动时读取，修改这些后需要重新执行 `./deploy.sh` 或 `pm2 reload ecosystem.config.js --only dorami-backend-v2 --update-env`。
 
 前端配置集中在 `frontend/app.config.json`：
 
