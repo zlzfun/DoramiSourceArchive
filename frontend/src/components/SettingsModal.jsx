@@ -90,15 +90,13 @@ function FieldRow({ label, children }) {
 }
 
 /* ── Account ─────────────────────────────────────────────── */
-function AccountSection({ username, accountRoleLabel, layerLabel, isAdmin, onLogout }) {
+function AccountSection({ username, accountRoleLabel, onLogout }) {
   return (
     <div>
       <SectionHeading title="账户" />
       <div className="surface-card rounded-[12px] px-4">
         <FieldRow label="登录账户">{username || '—'}</FieldRow>
         <FieldRow label="账户角色">{accountRoleLabel}</FieldRow>
-        {/* 部署运行端属运维概念，仅管理员可见，读者不感知 */}
-        {isAdmin && <FieldRow label="当前运行端">{layerLabel}</FieldRow>}
       </div>
 
       <div className="mt-4 rounded-[12px] border border-dashed border-slate-200 bg-slate-50/60 p-4">
@@ -498,26 +496,14 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
 }
 
 /* ── About ───────────────────────────────────────────────── */
-function AboutSection({ accountRoleLabel, layerLabel, runtimeRole, isAdmin }) {
+function AboutSection({ accountRoleLabel, isAdmin }) {
   return (
     <div>
       <SectionHeading title="关于" />
       <div className="surface-card rounded-[12px] px-4">
         <FieldRow label="产品">{isAdmin ? '哆啦美·归档中枢' : '哆啦美'}</FieldRow>
-        {/* 部署运行端/角色属运维概念，仅管理员可见 */}
-        {isAdmin && (
-          <FieldRow label="运行角色">
-            <span className="font-mono text-xs">{runtimeRole}</span>
-            <span className="tiny-meta ml-1">（{layerLabel}）</span>
-          </FieldRow>
-        )}
         <FieldRow label="账户角色">{accountRoleLabel}</FieldRow>
       </div>
-      {isAdmin && (
-        <p className="tiny-meta mt-3">
-          运行角色由 <code className="font-mono">backend.ini</code> 的 <code className="font-mono">[runtime] role</code> 决定，修改后需重启生效。
-        </p>
-      )}
     </div>
   );
 }
@@ -531,17 +517,10 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, on
   const isAdmin = accountRole === 'admin';
 
   const accountRoleLabel = useMemo(() => {
-    if (accountRole === 'admin') return '管理员（采集 + 读者）';
-    if (accountRole === 'user') return '订阅读者';
+    if (accountRole === 'admin') return '管理员';
+    if (accountRole === 'user') return '读者';
     return '—';
   }, [accountRole]);
-
-  const layerLabel = useMemo(() => {
-    if (collectorEnabled && readerEnabled) return '采集 + 读者一体';
-    if (collectorEnabled) return '采集端';
-    if (readerEnabled) return '读者端';
-    return '未启用';
-  }, [collectorEnabled, readerEnabled]);
 
   const sections = useMemo(() => [
     { id: 'account', label: '账户', icon: User, show: true },
@@ -599,7 +578,7 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, on
 
           <div className="flex-1 overflow-y-auto p-6">
             {active === 'account' && (
-              <AccountSection username={username} accountRoleLabel={accountRoleLabel} layerLabel={layerLabel} isAdmin={isAdmin} onLogout={onLogout} />
+              <AccountSection username={username} accountRoleLabel={accountRoleLabel} onLogout={onLogout} />
             )}
             {active === 'vector' && collectorEnabled && ragEnabled && (
               <VectorSection showToast={showToast} />
@@ -621,7 +600,7 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, on
               />
             )}
             {active === 'about' && (
-              <AboutSection accountRoleLabel={accountRoleLabel} layerLabel={layerLabel} runtimeRole={runtimeInfo?.role || 'all'} isAdmin={isAdmin} />
+              <AboutSection accountRoleLabel={accountRoleLabel} isAdmin={isAdmin} />
             )}
           </div>
         </div>
