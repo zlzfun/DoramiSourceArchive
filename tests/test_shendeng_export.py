@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from export_shendeng_daily_news import (  # noqa: E402
     _extract_daily_brief_for_date,
     _extract_items_for_date,
+    collapse_to_shendeng_classification,
     items_to_shendeng_batch,
     resolve_export_config,
 )
@@ -44,6 +45,26 @@ def test_basic_field_mapping():
     assert entry["time"] == "2026-06-05"  # publish_date[:10]
     assert entry["status"] == "published"
     assert entry["company"] == "OpenAI"
+
+
+def test_collapse_to_shendeng_classification():
+    # 仅「学术论文」保留，其余 dorami 细分类全部坍缩为「产业资讯」
+    assert collapse_to_shendeng_classification("学术论文") == "学术论文"
+    for c in ["模型发布", "行业资讯", "开源动态", "技术大会", "社交动态", "资讯聚合", "其他资讯", ""]:
+        assert collapse_to_shendeng_classification(c) == "产业资讯"
+
+
+def test_dorami_rich_classification_collapses_in_batch():
+    # 模型发布（dorami 新增）应在导出时坍缩为产业资讯，type 与 classification 一致
+    [model] = items_to_shendeng_batch([_item(classification="模型发布")])
+    assert model["classification"] == "产业资讯"
+    assert model["type"] == "产业资讯"
+    [opensrc] = items_to_shendeng_batch([_item(classification="开源动态")])
+    assert opensrc["classification"] == "产业资讯"
+    # 学术论文保留
+    [paper] = items_to_shendeng_batch([_item(classification="学术论文")])
+    assert paper["classification"] == "学术论文"
+    assert paper["type"] == "学术论文"
 
 
 def test_company_omitted_when_empty():

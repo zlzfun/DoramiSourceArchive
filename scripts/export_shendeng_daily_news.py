@@ -37,6 +37,16 @@ import httpx
 
 DAILY_BRIEF_SOURCE_ID = "dorami_daily_brief"
 
+# shendeng 平台当前仅有二分类：「学术论文」与「产业资讯」。
+# dorami 日报内部分类更丰富（模型发布/行业资讯/开源动态/技术大会/…），
+# 导出时按下表坍缩：仅「学术论文」保留，其余一切归入「产业资讯」。
+SHENDENG_DEFAULT_CLASSIFICATION = "产业资讯"
+
+
+def collapse_to_shendeng_classification(dorami_classification: str) -> str:
+    """把 dorami 的细分类坍缩为 shendeng 二分类。空值也归默认「产业资讯」。"""
+    return "学术论文" if (dorami_classification or "").strip() == "学术论文" else SHENDENG_DEFAULT_CLASSIFICATION
+
 # ========================
 # 本地默认配置
 # ========================
@@ -108,7 +118,8 @@ def items_to_shendeng_batch(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     for idx, it in enumerate(items, start=1):
         summary_lines = [str(s) for s in (it.get("summary") or []) if s]
         content_text = "\n".join(f"• {line}" for line in summary_lines) if summary_lines else "暂无详情"
-        classification = (it.get("classification") or "").strip() or "产业资讯"
+        # dorami 细分类 → shendeng 二分类坍缩（学术论文保留，其余归产业资讯）
+        classification = collapse_to_shendeng_classification(it.get("classification") or "")
         time_val = (str(it.get("publish_date") or "")[:10]) or _today()
 
         entry: Dict[str, Any] = {

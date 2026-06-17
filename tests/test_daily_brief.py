@@ -13,6 +13,7 @@ from services.daily_brief import (  # noqa: E402
     BriefCandidate,
     ScoredItem,
     collect_candidates,
+    dedup_clusters,
     generate_daily_brief,
     map_summarize,
     select_top,
@@ -127,6 +128,77 @@ def test_select_top_final_order_is_score_desc_after_diversity():
     items = [_scored(10, "a"), _scored(9, "a"), _scored(5, "b")]
     selected = select_top(items, top_n=3, per_source_cap=1, per_realm_cap=10)
     assert [it.score for it in selected] == [10, 9, 5]
+
+
+def _scored_full(score, *, source="s", classification="行业资讯", source_url="", summary=None,
+                 company="", content_type="rss_article", item_id=None):
+    cand = BriefCandidate(id=item_id or f"id-{score}-{source}-{classification}", title="t", source_id=source,
+                          source_url=source_url, content_type=content_type, publish_date="", fetched_date="",
+                          has_content=True, body="")
+    return ScoredItem(candidate=cand, score=score, classification=classification,
+                      summary=summary or [], company=company)
+
+
+def test_select_top_paper_cap_limits_and_deprioritizes():
+    # 5 篇高分论文 + 5 条低分行业资讯；paper_cap=2、top_n=6 →
+    # 即便论文分更高，也只入选 2 篇，腾出名额给行业资讯（有足够其它内容时配额硬生效）
+    papers = [_scored_full(9 - i, source="hf", classification="学术论文", item_id=f"p{i}") for i in range(5)]
+    industry = [_scored_full(4 - i, source=f"news{i}", classification="行业资讯", item_id=f"n{i}") for i in range(5)]
+    selected = select_top(papers + industry, top_n=6, per_source_cap=10, per_realm_cap=10, paper_cap=2)
+    assert sum(1 for it in selected if it.classification == "学术论文") == 2  # 论文被配额限制
+    assert sum(1 for it in selected if it.classification == "行业资讯") == 4  # 行业资讯占满其余名额
+
+
+def test_select_top_paper_cap_via_content_type():
+    # 即使 classification 不是「学术论文」，content_type=arxiv 也算论文，受同一配额约束
+    papers = [_scored_full(9 - i, source="hf", classification="", content_type="arxiv", item_id=f"a{i}")
+              for i in range(4)]
+    industry = [_scored_full(3 - i, source=f"news{i}", classification="行业资讯", item_id=f"n{i}") for i in range(3)]
+    selected = select_top(papers + industry, top_n=4, paper_cap=2)
+    assert sum(1 for it in selected if it.candidate.content_type == "arxiv") == 2  # arxiv 计入论文配额
+
+
+# ---------------- dedup_clusters 同事件去重 ----------------
+
+def test_dedup_clusters_merges_same_event(monkeypatch):
+    async def _fake_cluster(*, messages, config, **kwargs):
+        return json.dumps({"clusters": [[0, 1]]})  # 前两条是同一事件
+
+    monkeypatch.setattr(db, "chat_completion", _fake_cluster)
+    items = [
+        _scored_full(7, source="ithome", source_url="https://a.test/1", item_id="x1"),
+        _scored_full(9, source="qbit", source_url="https://b.test/2", item_id="x2"),  # 分更高 → 代表
+        _scored_full(5, source="other", source_url="https://c.test/3", item_id="x3"),
+    ]
+    result = asyncio.run(dedup_clusters(items, CONFIGURED))
+    ids = {it.candidate.id for it in result}
+    assert ids == {"x2", "x3"}  # x1 被合并掉，保留高分代表 x2
+    rep = next(it for it in result if it.candidate.id == "x2")
+    assert "https://a.test/1" in rep.extra_sources  # 被并入条目的来源链接收集到代表
+
+
+def test_dedup_clusters_degrades_on_llm_failure(monkeypatch):
+    async def _boom(*, messages, config, **kwargs):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr(db, "chat_completion", _boom)
+    items = [_scored_full(7, item_id="x1"), _scored_full(8, item_id="x2")]
+    result = asyncio.run(dedup_clusters(items, CONFIGURED))
+    assert {it.candidate.id for it in result} == {"x1", "x2"}  # 失败降级：原样返回，不丢条目
+
+
+def test_dedup_clusters_ignores_singleton_and_bad_idx(monkeypatch):
+    async def _fake(*, messages, config, **kwargs):
+        return json.dumps({"clusters": [[0], [99], [1, 2]]})  # 单元素/越界忽略，[1,2] 合并
+
+    monkeypatch.setattr(db, "chat_completion", _fake)
+    items = [_scored_full(7, source_url="u0", item_id="x0"),
+             _scored_full(6, source_url="u1", item_id="x1"),
+             _scored_full(9, source_url="u2", item_id="x2")]
+    result = asyncio.run(dedup_clusters(items, CONFIGURED))
+    assert {it.candidate.id for it in result} == {"x0", "x2"}  # x1 并入 x2（更高分）
+    rep = next(it for it in result if it.candidate.id == "x2")
+    assert rep.extra_sources == ["u1"]
 
 
 # ---------------- top_n 配置 ----------------

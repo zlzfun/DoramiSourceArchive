@@ -99,6 +99,8 @@ class ScoredItem:
     tags: List[str] = field(default_factory=list)
     score: float = 0.0
     map_ok: bool = True
+    # 同事件去重合并后，被并入本条的其它来源链接（供 reduce 渲染多来源）
+    extra_sources: List[str] = field(default_factory=list)
 
     def to_reduce_dict(self) -> Dict[str, Any]:
         return {
@@ -114,6 +116,7 @@ class ScoredItem:
             "comment": self.comment,
             "tags": self.tags,
             "score": self.score,
+            "extra_sources": self.extra_sources,
         }
 
 
@@ -355,8 +358,78 @@ async def map_summarize(
 
 
 # ==========================================
+# 阶段 2.5：Dedup（同事件去重聚类，一次性 LLM 调用）
+# ==========================================
+
+async def dedup_clusters(
+    items: List[ScoredItem],
+    llm_config: config.LLMConfig,
+) -> List[ScoredItem]:
+    """识别同一天里报道同一事件的重复条目，每组只保留 score 最高的代表，
+    其余条目的 source_url 并入代表的 extra_sources。LLM 失败时降级为不聚类
+    （返回原列表），不阻断主流程。"""
+    if len(items) < 2:
+        return items
+    entries = [
+        {
+            "idx": i,
+            "title": it.title_cn or it.candidate.title,
+            "company": it.company,
+            "hint": (it.summary[0] if it.summary else ""),
+        }
+        for i, it in enumerate(items)
+    ]
+    try:
+        raw = await chat_completion(
+            messages=[
+                ChatMessage(role="system", content=prompts.DEDUP_SYSTEM_PROMPT),
+                ChatMessage(role="user", content=prompts.build_dedup_user_prompt(entries)),
+            ],
+            config=llm_config,
+            response_json=True,
+        )
+        data = parse_json_object(raw)
+        clusters = data.get("clusters") or []
+    except (LLMError, Exception) as exc:  # noqa: BLE001 去重失败降级，不中断整体
+        logger.warning("日报去重聚类失败，降级为不聚类: %s", exc)
+        return items
+
+    n = len(items)
+    dropped: set[int] = set()
+    for group in clusters:
+        # 规整为去重后的合法 idx 列表
+        idxs = sorted({int(g) for g in group if isinstance(g, (int, float)) and 0 <= int(g) < n})
+        if len(idxs) < 2:
+            continue
+        # 组内已被其它组消化掉的代表不再重复处理
+        idxs = [i for i in idxs if i not in dropped]
+        if len(idxs) < 2:
+            continue
+        rep = max(idxs, key=lambda i: items[i].score)
+        for i in idxs:
+            if i == rep:
+                continue
+            url = items[i].candidate.source_url
+            if url and url not in items[rep].extra_sources and url != items[rep].candidate.source_url:
+                items[rep].extra_sources.append(url)
+            dropped.add(i)
+
+    if dropped:
+        logger.info("日报去重：%d 条同事件重复合并到代表条目", len(dropped))
+    return [it for i, it in enumerate(items) if i not in dropped]
+
+
+# ==========================================
 # 阶段 3：Select（按分数 + 来源/领域多样性择优）
 # ==========================================
+
+# 论文类 classification（占比受 paper_cap 限制，避免论文淹没行业资讯）
+PAPER_CLASSIFICATION = "学术论文"
+
+
+def _is_paper(item: ScoredItem) -> bool:
+    return item.classification == PAPER_CLASSIFICATION or item.candidate.content_type == "arxiv"
+
 
 def select_top(
     items: List[ScoredItem],
@@ -364,23 +437,31 @@ def select_top(
     top_n: int = 30,
     per_source_cap: int = 5,
     per_realm_cap: int = 8,
+    paper_cap: int = 3,
 ) -> List[ScoredItem]:
     ranked = sorted(items, key=lambda it: it.score, reverse=True)
     selected: List[ScoredItem] = []
     overflow: List[ScoredItem] = []
     source_count: Dict[str, int] = {}
     realm_count: Dict[str, int] = {}
+    paper_count = 0
     for item in ranked:
         if len(selected) >= top_n:
             break
         src = item.candidate.source_id
         realm = item.realm or "未分类"
+        # 论文配额：超额的论文丢进 overflow（仅在凑不满时才回补），压低论文占比
+        if _is_paper(item) and paper_count >= paper_cap:
+            overflow.append(item)
+            continue
         if source_count.get(src, 0) >= per_source_cap or realm_count.get(realm, 0) >= per_realm_cap:
             overflow.append(item)
             continue
         selected.append(item)
         source_count[src] = source_count.get(src, 0) + 1
         realm_count[realm] = realm_count.get(realm, 0) + 1
+        if _is_paper(item):
+            paper_count += 1
     # 多样性配额导致不足时，用 overflow 中分数最高者补满
     if len(selected) < top_n:
         for item in overflow:
@@ -434,8 +515,8 @@ async def reduce_to_markdown(
             ChatMessage(role="user", content=user_prompt),
         ],
         config=llm_config,
-        # reduce 输出较长，放宽 token 上限
-        max_tokens=max(llm_config.max_tokens, 4096),
+        # reduce 输出整篇日报，较长——放宽 token 上限，避免中途截断（实测 4096 会截断）
+        max_tokens=max(llm_config.max_tokens, 8192),
     )
 
 
@@ -517,8 +598,10 @@ async def generate_daily_brief(
 
     scored = await map_summarize(candidates, cfg, on_item_done=_on_map_done)
 
-    set_progress("selecting", "按重要性择优排序…")
-    selected = select_top(scored, top_n=top_n)
+    set_progress("selecting", "同事件去重与择优排序…")
+    deduped = await dedup_clusters(scored, cfg)
+    logger.info("日报[%s]：去重后 %d 条（map 前 %d）", report_date, len(deduped), len(scored))
+    selected = select_top(deduped, top_n=top_n)
     title_only = [c for c in candidates if not c.has_content]
     logger.info("日报[%s]：择优 %d 条（+ 仅标题 %d 条）", report_date, len(selected), len(title_only))
 
