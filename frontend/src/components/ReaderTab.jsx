@@ -70,6 +70,9 @@ export default function ReaderTab({ showToast }) {
   const [pinningId, setPinningId] = useState(null);
 
   const listRef = useRef(null);
+  // 取消上一笔仍在飞行的列表请求：切源/搜索时慢的旧请求若晚返回会「后发先至」
+  // 覆盖当前选中源的列表，故发新请求前 abort 掉旧的（与 DataTab 同一约定）
+  const listAbortRef = useRef(null);
 
   // ── 源目录 ──
   const loadSources = useCallback(async () => {
@@ -122,28 +125,35 @@ export default function ReaderTab({ showToast }) {
 
   // ── 文章列表 ──
   const loadArticles = useCallback(async (skip = 0, append = false) => {
+    // 发新请求前取消上一笔在飞行的请求，杜绝乱序晚到的响应覆盖当前列表
+    listAbortRef.current?.abort();
     // 没有任何订阅且看的是聚合视图 → 直接空列表，省一次请求
     if (!activeSourceId && subscribedIds.size === 0) {
       setArticles([]);
       setArticlesTotal(0);
       return;
     }
-    if (append) setLoadingMore(true); else setArticlesLoading(true);
+    const controller = new AbortController();
+    listAbortRef.current = controller;
+    if (append) setLoadingMore(true); else { setArticlesLoading(true); setLoadingMore(false); }
     try {
       const filters = {};
       if (activeSourceId) filters.source_id = activeSourceId;
       else filters.subscribed_scope = 'only'; // 「我的订阅」聚合：后端硬过滤到已订阅源
       if (searchQuery) filters.search = searchQuery;
-      const data = await fetchArticles(filters, PAGE_SIZE, skip, true);
+      const data = await fetchArticles(filters, PAGE_SIZE, skip, true, { signal: controller.signal });
       const items = data.items || [];
       setArticlesTotal(data.total || 0);
       setArticles(prev => (append ? [...prev, ...items] : items));
       // 首次加载（非追加）自动展示第一篇，省去手动点选
       if (!append) setActiveArticle(items[0] || null);
     } catch (error) {
+      if (error.name === 'AbortError') return; // 被更新的请求取消，静默丢弃
       showToast(error.message || '获取文章列表失败', 'error');
     } finally {
-      if (append) setLoadingMore(false); else setArticlesLoading(false);
+      if (!controller.signal.aborted) {
+        if (append) setLoadingMore(false); else setArticlesLoading(false);
+      }
     }
   }, [activeSourceId, searchQuery, subscribedIds, showToast]);
 
