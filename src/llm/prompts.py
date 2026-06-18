@@ -30,7 +30,7 @@ CATEGORY_LABELS: Dict[str, str] = {
 DEFAULT_CATEGORY_LABEL = "📌 其他资讯"
 
 # 允许的中文分类集合（约束 MAP 阶段 classification 取值），顺序即日报呈现顺序。
-# 注意：导出 shendeng 时由 export_shendeng_daily_news 坍缩为二分类（学术论文 / 产业资讯）。
+# 注意：导出 shendeng 时由 export_shendeng_daily_news 原样透传分类（shendeng 已兼容多分类）。
 ALLOWED_CLASSIFICATIONS = ["模型发布", "行业资讯", "开源动态", "技术大会", "社交动态", "资讯聚合", "学术论文"]
 
 
