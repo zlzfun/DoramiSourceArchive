@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
   Plus,
@@ -158,7 +158,8 @@ export default function ReaderTab({ showToast }) {
   }, [activeSourceId, searchQuery, subscribedIds, showToast]);
 
   // 切换来源/搜索 → 重置列表、回顶、清空右栏
-  useEffect(() => {
+  // 用 useLayoutEffect：在绘制前同步进入加载态，避免「切源瞬间旧列表被画出一帧」的陈旧帧闪现
+  useLayoutEffect(() => {
     setActiveArticle(null);
     if (listRef.current) listRef.current.scrollTop = 0;
     loadArticles(0, false);
