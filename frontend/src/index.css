@@ -1087,16 +1087,16 @@ button:disabled {
   .auth-logo-shell {
     position: relative;
     display: inline-flex;
-    height: 56px;
-    width: 56px;
+    height: 72px;
+    width: 72px;
     flex-shrink: 0;
   }
 
   /* 旋转极光光环：在 logo 背后缓慢回转 + 呼吸脉冲 */
   .auth-logo-halo {
     position: absolute;
-    inset: -7px;
-    border-radius: 20px;
+    inset: -8px;
+    border-radius: 24px;
     background: conic-gradient(
       from 0deg,
       rgba(91, 84, 232, 0),
@@ -1111,15 +1111,38 @@ button:disabled {
 
   .auth-logo {
     position: relative;
-    height: 56px;
-    width: 56px;
-    border-radius: 16px;
+    height: 72px;
+    width: 72px;
+    border-radius: 20px;
     object-fit: contain;
     background: linear-gradient(135deg, var(--dorami-blue), var(--dorami-blue-2));
     box-shadow:
       0 0 0 1px rgba(170, 180, 255, 0.18),
       0 16px 40px rgba(91, 84, 232, 0.5),
       inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  }
+
+  /* 蒙眼彩蛋图：默认叠在基础 logo 之上、不可见；密码框聚焦时交叉淡入 */
+  .auth-logo-base {
+    transition: opacity 0.32s ease;
+  }
+
+  .auth-logo-cover {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transform: scale(0.94);
+    transition: opacity 0.32s ease, transform 0.32s ease;
+    pointer-events: none;
+  }
+
+  .auth-logo-shell.is-covering .auth-logo-base {
+    opacity: 0;
+  }
+
+  .auth-logo-shell.is-covering .auth-logo-cover {
+    opacity: 1;
+    transform: scale(1);
   }
 
   .auth-logo-fallback {
@@ -1130,7 +1153,7 @@ button:disabled {
 
   .auth-wordmark {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 700;
     letter-spacing: 0.42em;
     color: rgba(226, 230, 255, 0.92);

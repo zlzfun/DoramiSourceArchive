@@ -6,8 +6,7 @@
     "32": "/brand/dorami-logo-32.png",
     "48": "/brand/dorami-logo-48.png",
     "128": "/brand/dorami-logo-128.png",
-    "512": "/brand/dorami-logo-512.png",
-    "master": "/brand/dorami-logo-master.png"
+    "512": "/brand/dorami-logo-512.png"
   },
   "mcpUrl": "http://127.0.0.1:8088/mcp",
   "devServer": {

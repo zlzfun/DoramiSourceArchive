@@ -1,18 +1,33 @@
 import { useEffect, useRef, useState } from 'react';
 import { Archive, ArrowRight, Bot, KeyRound, Loader2, Radar, Sparkles, User } from 'lucide-react';
 import BrandLogoImage from './BrandLogoImage';
+import { LOGO_COVER_EYES_PATH, LOGO_COVER_EYES_SRC_SET } from '../config';
 
-function LoginBrandMark({ logoError, onLogoError }) {
+function LoginBrandMark({ logoError, onLogoError, covering }) {
   return (
-    <span className="auth-logo-shell">
+    <span className={`auth-logo-shell${covering ? ' is-covering' : ''}`}>
       <span className="auth-logo-halo" aria-hidden="true" />
       {!logoError ? (
-        <BrandLogoImage
-          displaySize={56}
-          alt="哆啦美"
-          className="auth-logo"
-          onError={onLogoError}
-        />
+        <>
+          <BrandLogoImage
+            displaySize={72}
+            alt="哆啦美"
+            className="auth-logo auth-logo-base"
+            onError={onLogoError}
+          />
+          {/* 蒙眼彩蛋：密码框聚焦时叠加淡入，失焦淡出 */}
+          <img
+            src={LOGO_COVER_EYES_PATH}
+            srcSet={LOGO_COVER_EYES_SRC_SET}
+            sizes="72px"
+            alt=""
+            aria-hidden="true"
+            width={72}
+            height={72}
+            decoding="async"
+            className="auth-logo auth-logo-cover"
+          />
+        </>
       ) : (
         <span className="auth-logo auth-logo-fallback">
           <Bot className="h-7 w-7 text-white" />
@@ -52,6 +67,7 @@ const prefersReducedMotion = () =>
 export default function LoginScreen({ logoError, onLogoError, onLogin }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordFocused, setPasswordFocused] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   // 'title' = 第一幕（仅文字）；'ready' = 第二幕（登录卡浮现）
@@ -166,7 +182,7 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
       <div className="auth-shell">
         <section className="auth-hero">
           <div className="auth-brandrow auth-rise" style={{ '--d': '120ms' }}>
-            <LoginBrandMark logoError={logoError} onLogoError={onLogoError} />
+            <LoginBrandMark logoError={logoError} onLogoError={onLogoError} covering={passwordFocused} />
             <span className="auth-wordmark">DORAMI</span>
           </div>
 
@@ -242,6 +258,8 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
                   <input
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
+                    onFocus={() => setPasswordFocused(true)}
+                    onBlur={() => setPasswordFocused(false)}
                     type="password"
                     autoComplete="current-password"
                     className="auth-input"
