@@ -234,6 +234,7 @@ export default function App() {
     const handleAuthExpired = () => {
       setAuthState({ status: 'anonymous', user: null });
       setAvailableFetchers([]);
+      setRuntimeInfo({ role: 'all', collector_enabled: false, reader_enabled: false, rag_enabled: false });
       setRuntimeLoaded(false);
       showToast('登录已过期，请重新登录。', 'error');
     };
@@ -253,6 +254,7 @@ export default function App() {
     } finally {
       setAuthState({ status: 'anonymous', user: null });
       setAvailableFetchers([]);
+      setRuntimeInfo({ role: 'all', collector_enabled: false, reader_enabled: false, rag_enabled: false });
       setRuntimeLoaded(false);
     }
   };

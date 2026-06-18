@@ -81,6 +81,16 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
     loadHistory();
   }, [canManage]);
 
+  // 生成进行中才轮询后端实时阶段；组件卸载 / 生成结束时由 cleanup 清除，
+  // 避免遗留定时器在退出登录后继续打 collector 端点（/api/daily-brief/progress）。
+  useEffect(() => {
+    if (!generating) return undefined;
+    const poll = setInterval(() => {
+      getDailyBriefProgress().then(setProgress).catch(() => {});
+    }, 1200);
+    return () => clearInterval(poll);
+  }, [generating]);
+
   // 弹窗打开时锁定页面滚动
   useEffect(() => {
     if (!llmModalOpen) return undefined;
@@ -201,12 +211,9 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
   };
 
   const handleGenerate = async () => {
+    // 生成是同步长请求；实时阶段轮询由上方 generating 驱动的 effect 负责启停。
     setGenerating(true);
     setProgress({ phase: 'collecting', message: '正在启动…', done: 0, total: 0 });
-    // 轮询后端实时阶段（生成是同步长请求，靠独立轮询拿进度）
-    const poll = setInterval(() => {
-      getDailyBriefProgress().then(setProgress).catch(() => {});
-    }, 1200);
     try {
       const r = await generateDailyBrief({});
       if (r.status === 'empty') showToast('暂无新增内容可生成日报', 'info');
@@ -216,7 +223,6 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
     } catch (error) {
       showToast(error.message || '生成失败', 'error');
     } finally {
-      clearInterval(poll);
       setProgress(null);
       setGenerating(false);
     }
