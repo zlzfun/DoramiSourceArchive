@@ -1,13 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Archive, ArrowRight, Bot, KeyRound, Loader2, Radar, Sparkles, User } from 'lucide-react';
-import { LOGO_PATH } from '../config';
+import BrandLogoImage from './BrandLogoImage';
 
 function LoginBrandMark({ logoError, onLogoError }) {
   return (
     <span className="auth-logo-shell">
       <span className="auth-logo-halo" aria-hidden="true" />
       {!logoError ? (
-        <img src={LOGO_PATH} alt="Logo" className="auth-logo" onError={onLogoError} />
+        <BrandLogoImage
+          displaySize={56}
+          alt="哆啦美"
+          className="auth-logo"
+          onError={onLogoError}
+        />
       ) : (
         <span className="auth-logo auth-logo-fallback">
           <Bot className="h-7 w-7 text-white" />
@@ -19,9 +24,24 @@ function LoginBrandMark({ logoError, onLogoError }) {
 
 // 标题逐词浮现：保留换行结构，每个片段独立错峰入场
 const TITLE_LINES = [
-  [{ t: '让 ' }, { t: 'AI ' }, { t: '资讯' }],
-  [{ t: '有处可栖。', accent: true }],
+  [{ t: '让 ', delay: 560 }, { t: 'AI ', delay: 750 }, { t: '资讯', delay: 940 }],
+  [{ t: '有处可栖。', accent: true, delay: 1130 }],
 ];
+
+function seededFraction(index, salt) {
+  const value = Math.sin((index + 1) * (salt + 11) * 91.731) * 43758.5453;
+  return value - Math.floor(value);
+}
+
+const PARTICLES = Array.from({ length: 18 }, (_, index) => ({
+  id: index,
+  left: seededFraction(index, 1) * 100,
+  top: seededFraction(index, 2) * 100,
+  size: 1.5 + seededFraction(index, 3) * 2.5,
+  delay: seededFraction(index, 4) * 8,
+  duration: 9 + seededFraction(index, 5) * 10,
+  depth: 0.3 + seededFraction(index, 6) * 1.4,
+}));
 
 // 第一幕「标题卡」停留时长，之后进入第二幕（文字归位 + 登录卡浮现）
 const TITLE_HOLD_MS = 3600;
@@ -37,21 +57,6 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
   // 'title' = 第一幕（仅文字）；'ready' = 第二幕（登录卡浮现）
   const [phase, setPhase] = useState(() => (prefersReducedMotion() ? 'ready' : 'title'));
   const stageRef = useRef(null);
-
-  // 漂浮星尘：组件挂载时确定一组稳定的随机参数
-  const particles = useMemo(
-    () =>
-      Array.from({ length: 18 }, (_, i) => ({
-        id: i,
-        left: Math.random() * 100,
-        top: Math.random() * 100,
-        size: 1.5 + Math.random() * 2.5,
-        delay: Math.random() * 8,
-        duration: 9 + Math.random() * 10,
-        depth: 0.3 + Math.random() * 1.4,
-      })),
-    [],
-  );
 
   // 第一幕 → 第二幕：定时推进；任意点击/按键可提前跳过开场
   useEffect(() => {
@@ -115,8 +120,6 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
     }
   };
 
-  let wordIndex = 0;
-
   return (
     <main className={`auth-stage is-${phase}`} ref={stageRef}>
       <div className="auth-bg" aria-hidden="true">
@@ -138,7 +141,7 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
           <span className="auth-meteor auth-meteor-3" />
         </div>
         <div className="auth-particles">
-          {particles.map((p) => (
+          {PARTICLES.map((p) => (
             <span
               key={p.id}
               className="auth-particle"
@@ -175,13 +178,11 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
             {TITLE_LINES.map((line, li) => (
               <span className="auth-title-line" key={li}>
                 {line.map((word, wi) => {
-                  const delay = 560 + wordIndex * 190;
-                  wordIndex += 1;
                   return (
                     <span
                       key={wi}
                       className={`auth-word${word.accent ? ' auth-title-accent' : ''}`}
-                      style={{ '--d': `${delay}ms` }}
+                      style={{ '--d': `${word.delay}ms` }}
                     >
                       {word.t}
                     </span>

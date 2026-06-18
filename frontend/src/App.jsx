@@ -20,8 +20,8 @@ import MCPTab from './components/MCPTab';
 import ReaderTab from './components/ReaderTab';
 import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
+import BrandLogoImage from './components/BrandLogoImage';
 import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
-import { LOGO_PATH } from './config';
 
 // ── 导航 / 历史锚点 ──
 // 把「标签 + 子视图」镜像到 URL hash（#/fetch/groups），跨页跳转的聚焦上下文存在 history.state 里。
@@ -55,7 +55,12 @@ function navFromHash() {
 
 function BrandLogo({ logoError, onLogoError }) {
   return !logoError ? (
-    <img src={LOGO_PATH} alt="Logo" className="h-12 w-12 rounded-[12px] object-contain shadow-sm" onError={onLogoError} />
+    <BrandLogoImage
+      displaySize={48}
+      alt="哆啦美"
+      className="h-12 w-12 rounded-[12px] object-contain shadow-sm"
+      onError={onLogoError}
+    />
   ) : (
     <div className="brand-mark flex h-12 w-12 items-center justify-center rounded-[12px]">
       <Bot className="h-6 w-6 text-white" />
