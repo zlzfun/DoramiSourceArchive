@@ -70,17 +70,20 @@ const PARAM_LABELS = {
   recent_brief_days: '去重参考天数',
 };
 
-export default function DailyBriefFlow({ showToast }) {
+export default function DailyBriefFlow({ showToast, canManage = false }) {
   const [pipeline, setPipeline] = useState(null);
   const [loadError, setLoadError] = useState(false);
   const [openId, setOpenId] = useState(null);
   const [copied, setCopied] = useState(false);
 
+  // /api/daily-brief/pipeline 是 collector(管理员) 端点。自我守卫：无管理权限不拉取，
+  // 避免日后这个流程图被挪到管理员分支之外时，读者会话挂载即打 collector 端点报 403。
   useEffect(() => {
+    if (!canManage) return;
     getDailyBriefPipeline()
       .then(setPipeline)
       .catch(() => setLoadError(true));
-  }, []);
+  }, [canManage]);
 
   const active = NODES.find(n => n.id === openId) || null;
   const promptText = active?.promptKey ? pipeline?.[active.promptKey] : '';

@@ -366,7 +366,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
         <div className="border-t border-slate-100" />
 
         {/* ── 生成原理（流程图 + 提示词） ── */}
-        <DailyBriefFlow showToast={showToast} />
+        <DailyBriefFlow showToast={showToast} canManage={canManage} />
 
         <div className="border-t border-slate-100" />
 

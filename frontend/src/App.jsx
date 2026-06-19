@@ -423,8 +423,8 @@ export default function App() {
               />
             </div>
           )}
-          {mountedTabs.has('fetch') && (
-            <div className="tab-panel" style={{ display: activeTab === 'fetch' && runtimeInfo.collector_enabled ? 'block' : 'none' }}>
+          {mountedTabs.has('fetch') && runtimeInfo.collector_enabled && (
+            <div className="tab-panel" style={{ display: activeTab === 'fetch' ? 'block' : 'none' }}>
               <FetchTab
                 availableFetchers={availableFetchers}
                 showToast={showToast}
@@ -440,8 +440,8 @@ export default function App() {
               />
             </div>
           )}
-          {mountedTabs.has('runs') && (
-            <div className="tab-panel" style={{ display: activeTab === 'runs' && runtimeInfo.collector_enabled ? 'block' : 'none' }}>
+          {mountedTabs.has('runs') && runtimeInfo.collector_enabled && (
+            <div className="tab-panel" style={{ display: activeTab === 'runs' ? 'block' : 'none' }}>
               <FetchRunsTab
                 availableFetchers={availableFetchers}
                 showToast={showToast}
@@ -457,13 +457,13 @@ export default function App() {
               />
             </div>
           )}
-          {mountedTabs.has('vector') && (
-            <div className="tab-panel" style={{ display: activeTab === 'vector' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
+          {mountedTabs.has('vector') && runtimeInfo.reader_enabled && (
+            <div className="tab-panel" style={{ display: activeTab === 'vector' ? 'block' : 'none' }}>
               <VectorTab availableFetchers={availableFetchers} showToast={showToast} accountRole={runtimeInfo.account_role} />
             </div>
           )}
-          {mountedTabs.has('mcp') && (
-            <div className="tab-panel" style={{ display: activeTab === 'mcp' && runtimeInfo.reader_enabled ? 'block' : 'none' }}>
+          {mountedTabs.has('mcp') && runtimeInfo.reader_enabled && (
+            <div className="tab-panel" style={{ display: activeTab === 'mcp' ? 'block' : 'none' }}>
               <MCPTab showToast={showToast} ragEnabled={runtimeInfo.rag_enabled} collectorEnabled={runtimeInfo.collector_enabled} isAdmin={runtimeInfo.account_role === 'admin'} />
             </div>
           )}
