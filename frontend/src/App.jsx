@@ -248,6 +248,15 @@ export default function App() {
     showToast('登录成功', 'success');
   };
 
+  // 头像/账户字段就地更新（如改头像），让顶栏与设置面板即时同步，无需重登。
+  const handleUserUpdated = useCallback((patch) => {
+    setAuthState(prev => (
+      prev.status === 'authenticated'
+        ? { ...prev, user: { ...prev.user, ...patch } }
+        : prev
+    ));
+  }, []);
+
   const handleLogout = async () => {
     try {
       await logoutAdmin();
@@ -373,7 +382,15 @@ export default function App() {
             >
               <Settings className="h-4.5 w-4.5" />
             </button>
-            <div className="avatar-badge flex h-9 w-9 items-center justify-center rounded-full text-xs font-black text-white">{avatarInitials}</div>
+            {authState.user?.avatar ? (
+              <img
+                src={authState.user.avatar}
+                alt="头像"
+                className="h-9 w-9 rounded-full object-cover shadow-sm ring-1 ring-black/5"
+              />
+            ) : (
+              <div className="avatar-badge flex h-9 w-9 items-center justify-center rounded-full text-xs font-black text-white">{avatarInitials}</div>
+            )}
             <button
               type="button"
               onClick={handleLogout}
@@ -394,6 +411,8 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         runtimeInfo={runtimeInfo}
         username={authState.user?.username}
+        avatar={authState.user?.avatar}
+        onUserUpdated={handleUserUpdated}
         onLogout={() => { setSettingsOpen(false); handleLogout(); }}
         showToast={showToast}
         onArticlesChanged={markArticlesDirty}

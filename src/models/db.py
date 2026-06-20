@@ -220,6 +220,20 @@ class ReaderFeedTokenRecord(SQLModel, table=True):
     updated_at: str = Field(description="更新时间")
 
 
+class ReaderFavoriteRecord(SQLModel, table=True):
+    """读者文章收藏：每个用户对单篇文章的收藏关系，按收藏时间排序。
+
+    复合主键 (owner_username, article_id) 保证同一用户对同一文章至多一条；
+    article_id 关联 ArticleRecord.id，文章被删除后留存的孤儿记录在列表查询时
+    自然被 join 过滤掉，无害。
+    """
+    __tablename__ = "reader_favorites"
+
+    owner_username: str = Field(primary_key=True, description="收藏归属用户名")
+    article_id: str = Field(primary_key=True, index=True, description="收藏的文章 ID")
+    created_at: str = Field(index=True, description="收藏时间")
+
+
 class AppSettingRecord(SQLModel, table=True):
     __tablename__ = "app_settings"
     key: str = Field(primary_key=True)
@@ -237,6 +251,7 @@ class UserRecord(SQLModel, table=True):
 
     username: str = Field(primary_key=True, description="登录账号，全局唯一身份")
     password_hash: str = Field(description="PBKDF2 编码串 pbkdf2_sha256$iters$salt$hash")
+    avatar: Optional[str] = Field(default=None, description="头像，存为 data:image/* base64 URL；空表示用首字母占位")
     role: str = Field(default="user", index=True, description="账户角色：admin | user")
     is_active: bool = Field(default=True, index=True, description="是否启用该账户")
     created_at: str = Field(description="创建时间")

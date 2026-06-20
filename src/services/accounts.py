@@ -149,6 +149,19 @@ def set_password(session: Session, username: str, new_password: str) -> UserReco
     return record
 
 
+def set_avatar(session: Session, username: str, avatar: Optional[str]) -> UserRecord:
+    """更新账户头像；avatar 为空字符串/None 表示清除（回退到首字母占位）。"""
+    record = get_user(session, username)
+    if record is None:
+        raise AccountError(f"账户 '{username}' 不存在")
+    record.avatar = avatar or None
+    record.updated_at = _now_iso()
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return record
+
+
 def set_role(session: Session, username: str, role: str) -> UserRecord:
     record = get_user(session, username)
     if record is None:

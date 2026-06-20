@@ -59,6 +59,16 @@ export async function changeOwnPassword(currentPassword, newPassword) {
   return res.json();
 }
 
+export async function updateAvatar(avatar) {
+  const res = await apiFetch(`${API_BASE_URL}/auth/avatar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ avatar }),
+  });
+  if (!res.ok) await handleApiError(res, '更新头像失败');
+  return res.json();
+}
+
 // ==================== 账户管理（仅管理员） ====================
 export async function fetchAccounts() {
   const res = await apiFetch(`${API_BASE_URL}/accounts`);
@@ -583,6 +593,28 @@ export async function fetchSubscriptions(filters = {}) {
 export async function fetchReaderSources() {
   const res = await apiFetch(`${API_BASE_URL}/reader/sources`);
   if (!res.ok) await handleApiError(res, '获取内容源目录失败');
+  return res.json();
+}
+
+export async function fetchFavorites(filters = {}, limit = 100, skip = 0, options = {}) {
+  const params = new URLSearchParams({ limit, skip });
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
+  });
+  const res = await apiFetch(`${API_BASE_URL}/reader/favorites?${params}`, options);
+  if (!res.ok) await handleApiError(res, '获取收藏列表失败');
+  return res.json();
+}
+
+export async function addFavorite(articleId) {
+  const res = await apiFetch(`${API_BASE_URL}/reader/favorites/${encodeURIComponent(articleId)}`, { method: 'POST' });
+  if (!res.ok) await handleApiError(res, '收藏失败');
+  return res.json();
+}
+
+export async function removeFavorite(articleId) {
+  const res = await apiFetch(`${API_BASE_URL}/reader/favorites/${encodeURIComponent(articleId)}`, { method: 'DELETE' });
+  if (!res.ok) await handleApiError(res, '取消收藏失败');
   return res.json();
 }
 

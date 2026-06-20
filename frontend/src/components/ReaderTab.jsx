@@ -12,13 +12,22 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  Star,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import LogoMark from './LogoMark';
 import { resolveCompany } from '../sourceTaxonomy';
-import { fetchReaderSources, fetchArticles, subscribeSource, unsubscribeSource } from '../api';
+import {
+  fetchReaderSources,
+  fetchArticles,
+  subscribeSource,
+  unsubscribeSource,
+  fetchFavorites,
+  addFavorite,
+  removeFavorite,
+} from '../api';
 
 const PAGE_SIZE = 30;
 
@@ -55,6 +64,9 @@ export default function ReaderTab({ showToast }) {
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
   const [sourcesLoading, setSourcesLoading] = useState(true);
   const [activeSourceId, setActiveSourceId] = useState(null); // null = 「我的订阅」聚合
+  const [showFavorites, setShowFavorites] = useState(false); // true = 「我的收藏」视图
+  const [favoriteIds, setFavoriteIds] = useState(() => new Set());
+  const [favTogglingId, setFavTogglingId] = useState(null);
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [sourcesCollapsed, setSourcesCollapsed] = useState(false);
   const [listCollapsed, setListCollapsed] = useState(false);
@@ -89,6 +101,16 @@ export default function ReaderTab({ showToast }) {
   }, [showToast]);
 
   useEffect(() => { loadSources(); }, [loadSources]);
+
+  // 进入阅读器先取一次收藏 ID 集合，让订阅/来源视图的文章卡也能显示收藏态。
+  const loadFavoriteIds = useCallback(async () => {
+    try {
+      const data = await fetchFavorites({}, 1, 0);
+      setFavoriteIds(new Set(data.favorite_ids || []));
+    } catch { /* 收藏态非关键路径，静默失败 */ }
+  }, []);
+
+  useEffect(() => { loadFavoriteIds(); }, [loadFavoriteIds]);
 
   // 搜索防抖
   useEffect(() => {
@@ -127,8 +149,8 @@ export default function ReaderTab({ showToast }) {
   const loadArticles = useCallback(async (skip = 0, append = false) => {
     // 发新请求前取消上一笔在飞行的请求，杜绝乱序晚到的响应覆盖当前列表
     listAbortRef.current?.abort();
-    // 没有任何订阅且看的是聚合视图 → 直接空列表，省一次请求
-    if (!activeSourceId && subscribedIds.size === 0) {
+    // 没有任何订阅且看的是订阅聚合视图 → 直接空列表，省一次请求（收藏视图不受此约束）
+    if (!showFavorites && !activeSourceId && subscribedIds.size === 0) {
       setArticles([]);
       setArticlesTotal(0);
       return;
@@ -137,11 +159,19 @@ export default function ReaderTab({ showToast }) {
     listAbortRef.current = controller;
     if (append) setLoadingMore(true); else { setArticlesLoading(true); setLoadingMore(false); }
     try {
-      const filters = {};
-      if (activeSourceId) filters.source_id = activeSourceId;
-      else filters.subscribed_scope = 'only'; // 「我的订阅」聚合：后端硬过滤到已订阅源
-      if (searchQuery) filters.search = searchQuery;
-      const data = await fetchArticles(filters, PAGE_SIZE, skip, true, { signal: controller.signal });
+      let data;
+      if (showFavorites) {
+        const filters = {};
+        if (searchQuery) filters.search = searchQuery;
+        data = await fetchFavorites(filters, PAGE_SIZE, skip, { signal: controller.signal });
+        if (data.favorite_ids) setFavoriteIds(new Set(data.favorite_ids));
+      } else {
+        const filters = {};
+        if (activeSourceId) filters.source_id = activeSourceId;
+        else filters.subscribed_scope = 'only'; // 「我的订阅」聚合：后端硬过滤到已订阅源
+        if (searchQuery) filters.search = searchQuery;
+        data = await fetchArticles(filters, PAGE_SIZE, skip, true, { signal: controller.signal });
+      }
       const items = data.items || [];
       setArticlesTotal(data.total || 0);
       setArticles(prev => (append ? [...prev, ...items] : items));
@@ -155,7 +185,7 @@ export default function ReaderTab({ showToast }) {
         if (append) setLoadingMore(false); else setArticlesLoading(false);
       }
     }
-  }, [activeSourceId, searchQuery, subscribedIds, showToast]);
+  }, [activeSourceId, searchQuery, subscribedIds, showFavorites, showToast]);
 
   // 切换来源/搜索 → 重置列表、回顶、清空右栏
   // 用 useLayoutEffect：在绘制前同步进入加载态，避免「切源瞬间旧列表被画出一帧」的陈旧帧闪现
@@ -201,6 +231,47 @@ export default function ReaderTab({ showToast }) {
     [subscribedSources],
   );
 
+  // ── 收藏 / 取消收藏 ──
+  const handleToggleFavorite = async (article, event) => {
+    event?.stopPropagation();
+    const id = article.id;
+    if (!id || favTogglingId === id) return;
+    const wasFav = favoriteIds.has(id);
+    setFavTogglingId(id);
+    // 乐观更新收藏态
+    setFavoriteIds((prev) => {
+      const next = new Set(prev);
+      if (wasFav) next.delete(id); else next.add(id);
+      return next;
+    });
+    try {
+      const result = wasFav ? await removeFavorite(id) : await addFavorite(id);
+      if (result.favorite_ids) setFavoriteIds(new Set(result.favorite_ids));
+      // 收藏视图里取消收藏 → 从当前列表移除
+      if (showFavorites && wasFav) {
+        setArticles((prev) => prev.filter((a) => a.id !== id));
+        setArticlesTotal((t) => Math.max(0, t - 1));
+        setActiveArticle((prev) => (prev?.id === id ? null : prev));
+      }
+      showToast(wasFav ? '已取消收藏' : '已收藏', 'success');
+    } catch (error) {
+      // 回滚乐观更新
+      setFavoriteIds((prev) => {
+        const next = new Set(prev);
+        if (wasFav) next.add(id); else next.delete(id);
+        return next;
+      });
+      showToast(error.message || '操作失败', 'error');
+    } finally {
+      setFavTogglingId(null);
+    }
+  };
+
+  // 视图切换：订阅聚合 / 单个来源 / 我的收藏 三者互斥
+  const goSubscribed = () => { setShowFavorites(false); setActiveSourceId(null); };
+  const goSource = (sourceId) => { setShowFavorites(false); setActiveSourceId(sourceId); };
+  const goFavorites = () => { setShowFavorites(true); setActiveSourceId(null); };
+
   return (
     <div
       className={`reader-shell ${sourcesCollapsed ? 'is-l-collapsed' : ''} ${listCollapsed ? 'is-m-collapsed' : ''}`}
@@ -236,17 +307,32 @@ export default function ReaderTab({ showToast }) {
       {/* ── 左栏 · 我的订阅 ── */}
       <aside className="reader-col reader-col-sources" aria-hidden={sourcesCollapsed}>
         <div className="reader-sources-inner">
-        <button
-          type="button"
-          onClick={() => setActiveSourceId(null)}
-          className={`reader-source-row reader-all-row ${activeSourceId === null ? 'reader-source-row-active' : ''}`}
-        >
-          <span className="reader-all-icon"><BookOpenText className="h-4 w-4" /></span>
-          <div className="min-w-0 flex-1 text-left">
-            <p className="reader-source-name">我的订阅</p>
-            <p className="reader-source-meta">{subscribedTotal} 篇 · {subscribedSources.length} 个来源</p>
-          </div>
-        </button>
+        {/* 两个聚合视图（我的订阅 / 我的收藏）作为统一的一组导航，与下方实际订阅来源分隔 */}
+        <nav className="reader-nav-group">
+          <button
+            type="button"
+            onClick={goSubscribed}
+            className={`reader-source-row reader-nav-row ${activeSourceId === null && !showFavorites ? 'reader-source-row-active' : ''}`}
+          >
+            <span className="reader-all-icon"><BookOpenText className="h-4 w-4" /></span>
+            <div className="min-w-0 flex-1 text-left">
+              <p className="reader-source-name">我的订阅</p>
+              <p className="reader-source-meta">{subscribedTotal} 篇 · {subscribedSources.length} 个来源</p>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={goFavorites}
+            className={`reader-source-row reader-nav-row ${showFavorites ? 'reader-source-row-active' : ''}`}
+          >
+            <span className="reader-all-icon reader-all-icon-fav"><Star className="h-4 w-4" /></span>
+            <div className="min-w-0 flex-1 text-left">
+              <p className="reader-source-name">我的收藏</p>
+              <p className="reader-source-meta">{favoriteIds.size} 篇</p>
+            </div>
+          </button>
+        </nav>
 
         <div className="reader-source-scroll">
           {sourcesLoading ? (
@@ -257,7 +343,12 @@ export default function ReaderTab({ showToast }) {
           ) : (
             <>
               {subscribedSources.length > 0 && (
-                <div className="reader-group-body">
+                <section className="reader-subs">
+                  <div className="reader-group-band">
+                    <span>订阅来源</span>
+                    <span className="reader-group-count">{subscribedSources.length}</span>
+                  </div>
+                  <div className="reader-group-body">
                   {subscribedSources.map((source) => {
                     const active = activeSourceId === source.source_id;
                     return (
@@ -265,8 +356,8 @@ export default function ReaderTab({ showToast }) {
                         key={source.source_id}
                         role="button"
                         tabIndex={0}
-                        onClick={() => setActiveSourceId(source.source_id)}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveSourceId(source.source_id); } }}
+                        onClick={() => goSource(source.source_id)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goSource(source.source_id); } }}
                         className={`reader-source-row ${active ? 'reader-source-row-active' : ''}`}
                       >
                         <LogoMark company={resolveCompany(source)} size="sm" emoji={source.icon} />
@@ -288,7 +379,8 @@ export default function ReaderTab({ showToast }) {
                       </div>
                     );
                   })}
-                </div>
+                  </div>
+                </section>
               )}
 
               {hasNoSubscriptions && (
@@ -355,7 +447,7 @@ export default function ReaderTab({ showToast }) {
         </div>
         <div className="reader-list-head">
           <span className="reader-list-title">
-            {activeSourceId ? (sourceNameMap[activeSourceId] || activeSourceId) : '我的订阅'}
+            {showFavorites ? '我的收藏' : activeSourceId ? (sourceNameMap[activeSourceId] || activeSourceId) : '我的订阅'}
           </span>
           <span className="reader-list-count">{articlesTotal} 篇</span>
         </div>
@@ -366,7 +458,7 @@ export default function ReaderTab({ showToast }) {
               <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
               <span>正在载入文章…</span>
             </div>
-          ) : hasNoSubscriptions && !activeSourceId ? (
+          ) : !showFavorites && hasNoSubscriptions && !activeSourceId ? (
             <div className="reader-empty reader-empty-tall">
               <Compass className="h-7 w-7 text-slate-300" />
               <span>你还没有订阅任何来源</span>
@@ -376,31 +468,51 @@ export default function ReaderTab({ showToast }) {
             </div>
           ) : articles.length === 0 ? (
             <div className="reader-empty">
-              <Inbox className="h-6 w-6 text-slate-300" />
-              <span>{searchQuery ? '没有匹配的文章' : '该来源暂无文章'}</span>
+              {showFavorites ? <Star className="h-6 w-6 text-slate-300" /> : <Inbox className="h-6 w-6 text-slate-300" />}
+              <span>
+                {searchQuery
+                  ? '没有匹配的文章'
+                  : showFavorites
+                    ? '还没有收藏任何文章，点文章上的星标即可收藏'
+                    : '该来源暂无文章'}
+              </span>
             </div>
           ) : (
             <div className="row-stagger">
               {articles.map((article) => {
                 const active = activeArticle?.id === article.id;
+                const favored = favoriteIds.has(article.id);
                 return (
-                  <button
-                    key={article.id}
-                    type="button"
-                    onClick={() => setActiveArticle(article)}
-                    className={`reader-article-card ${active ? 'reader-article-card-active' : ''}`}
-                  >
-                    <p className="reader-article-title">{article.title || '（无标题）'}</p>
-                    {excerptOf(article.content) && (
-                      <p className="reader-article-excerpt">{excerptOf(article.content)}</p>
-                    )}
-                    <div className="reader-article-foot">
-                      <span className="reader-article-source">{sourceNameMap[article.source_id] || article.source_id}</span>
-                      {article.publish_date && (
-                        <span className="reader-article-date">{formatDate(article.publish_date)}</span>
+                  <div key={article.id} className="reader-article-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setActiveArticle(article)}
+                      className={`reader-article-card ${active ? 'reader-article-card-active' : ''}`}
+                    >
+                      <p className="reader-article-title">{article.title || '（无标题）'}</p>
+                      {excerptOf(article.content) && (
+                        <p className="reader-article-excerpt">{excerptOf(article.content)}</p>
                       )}
-                    </div>
-                  </button>
+                      <div className="reader-article-foot">
+                        <span className="reader-article-source">{sourceNameMap[article.source_id] || article.source_id}</span>
+                        {article.publish_date && (
+                          <span className="reader-article-date">{formatDate(article.publish_date)}</span>
+                        )}
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      title={favored ? '取消收藏' : '收藏'}
+                      aria-label={favored ? '取消收藏' : '收藏'}
+                      onClick={(e) => handleToggleFavorite(article, e)}
+                      disabled={favTogglingId === article.id}
+                      className={`reader-fav-toggle ${favored ? 'reader-fav-toggle-on' : ''}`}
+                    >
+                      {favTogglingId === article.id
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <Star className="h-3.5 w-3.5" fill={favored ? 'currentColor' : 'none'} />}
+                    </button>
+                  </div>
                 );
               })}
               {hasMore && (
@@ -437,11 +549,24 @@ export default function ReaderTab({ showToast }) {
                 )}
               </div>
               <h1 className="reader-pane-title">{activeArticle.title || '（无标题）'}</h1>
-              {activeArticle.source_url && (
-                <a href={activeArticle.source_url} target="_blank" rel="noreferrer" className="reader-pane-link">
-                  <ExternalLink className="h-3.5 w-3.5" /> 查看原文
-                </a>
-              )}
+              <div className="reader-pane-actions">
+                {activeArticle.source_url && (
+                  <a href={activeArticle.source_url} target="_blank" rel="noreferrer" className="reader-pane-link">
+                    <ExternalLink className="h-3.5 w-3.5" /> 查看原文
+                  </a>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => handleToggleFavorite(activeArticle, e)}
+                  disabled={favTogglingId === activeArticle.id}
+                  className={`reader-pane-fav ${favoriteIds.has(activeArticle.id) ? 'reader-pane-fav-on' : ''}`}
+                >
+                  {favTogglingId === activeArticle.id
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <Star className="h-3.5 w-3.5" fill={favoriteIds.has(activeArticle.id) ? 'currentColor' : 'none'} />}
+                  {favoriteIds.has(activeArticle.id) ? '已收藏' : '收藏'}
+                </button>
+              </div>
             </header>
             <div className="reader-pane-body markdown-body">
               {activeArticle.content ? (

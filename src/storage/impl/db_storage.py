@@ -81,6 +81,12 @@ class DatabaseStorage(BaseStorage):
                 with self.engine.begin() as conn:
                     conn.execute(text("ALTER TABLE reader_subscriptions ADD COLUMN owner_username VARCHAR DEFAULT ''"))
 
+        if "users" in inspector.get_table_names():
+            user_columns = {column["name"] for column in inspector.get_columns("users")}
+            if "avatar" not in user_columns:
+                with self.engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN avatar VARCHAR"))
+
         if "source_configs" in inspector.get_table_names():
             source_config_columns = {column["name"] for column in inspector.get_columns("source_configs")}
             source_config_additive_columns = {

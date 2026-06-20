@@ -1,13 +1,8 @@
 import { useState } from 'react';
-import { Bot } from 'lucide-react';
+import { LOGO_PATHS, LOGO_SRC_SET } from '../config';
 import { LOGO_SIZES, companyLogoUrl } from '../sourceTaxonomy';
 
 function BrandGlyph({ mark }) {
-  // 哆啦美自有源（如 AI 资讯日报）：复用 App 左上角主标识的 Bot 图标，保持品牌一致。
-  if (mark === 'dorami') {
-    return <Bot aria-hidden="true" focusable="false" />;
-  }
-
   if (mark === 'anthropic') {
     return (
       <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
@@ -60,6 +55,23 @@ export default function LogoMark({ company, size = 'md', emoji, className = '' }
     '--logo-accent': accent,
   };
   const fallback = company?.monogram || emoji || (company?.name || '?').slice(0, 2);
+
+  // 哆啦美自有源（如 AI 资讯日报）：直接用品牌 logo 图，与 App 左上角主标识一致。
+  if (company?.mark === 'dorami') {
+    return (
+      <span className={`logo-mark logo-mark-dorami-img ${className}`} style={style} title={company?.name}>
+        <img
+          src={LOGO_PATHS[128]}
+          srcSet={LOGO_SRC_SET}
+          sizes={`${dims.box}px`}
+          alt={company?.name || '哆啦美'}
+          width={dims.img}
+          height={dims.img}
+          loading="lazy"
+        />
+      </span>
+    );
+  }
 
   if (company?.mark) {
     return (

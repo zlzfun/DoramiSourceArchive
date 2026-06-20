@@ -3270,16 +3270,18 @@ button:disabled {
     height: 82%;
   }
 
-  /* 哆啦美自有源：品牌紫底 + 白色 Bot，与 App 左上角主标识统一 */
-  .logo-mark-dorami {
-    color: #fff;
-    background: var(--dorami-blue);
-    box-shadow: 0 4px 12px rgba(91, 84, 232, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  /* 哆啦美自有源：直接用品牌 logo 图，与 App 左上角主标识统一 */
+  .logo-mark-dorami-img {
+    background: #fff;
+    border: 1px solid rgba(11, 18, 32, 0.08);
+    box-shadow: 0 1px 3px rgba(11, 18, 32, 0.06);
   }
 
-  .logo-mark-dorami svg {
-    width: 62%;
-    height: 62%;
+  .logo-mark-dorami-img img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
   }
 
   .logo-mark-mono {
@@ -4285,7 +4287,19 @@ button:disabled {
     box-shadow: var(--sh-1);
   }
 
-  .reader-all-row { margin: 8px; width: calc(100% - 16px); }
+  /* 我的订阅 / 我的收藏：统一成一组导航，彼此紧凑、与下方订阅来源用细分隔线断开 */
+  .reader-nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px;
+    border-bottom: 1px solid var(--dorami-border);
+  }
+
+  .reader-nav-row { width: 100%; }
+
+  /* 订阅来源分区：与上方导航组拉开一点距离 */
+  .reader-subs { margin-top: 6px; }
 
   .reader-all-icon {
     display: inline-flex;
@@ -4298,6 +4312,11 @@ button:disabled {
     background: var(--dorami-blue);
     box-shadow: 0 4px 12px rgba(91, 84, 232, 0.28);
     flex-shrink: 0;
+  }
+
+  .reader-all-icon-fav {
+    background: #f59e0b;
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
   }
 
   .reader-side-hint {
@@ -4483,7 +4502,33 @@ button:disabled {
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    padding-right: 22px; /* 给右上角收藏星标留位，避免标题压到星标 */
   }
+
+  .reader-article-wrap { position: relative; }
+
+  .reader-fav-toggle {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    color: var(--dorami-faint);
+    background: transparent;
+    opacity: 0;
+    transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
+  }
+
+  .reader-article-wrap:hover .reader-fav-toggle { opacity: 1; }
+  .reader-fav-toggle:hover { background: var(--dorami-surface); color: #f59e0b; }
+  .reader-fav-toggle:disabled { cursor: default; opacity: 1; }
+  .reader-fav-toggle-on { opacity: 1; color: #f59e0b; }
+  .reader-fav-toggle-on:hover { color: #d97706; }
 
   .reader-article-excerpt {
     margin-top: 5px;
@@ -4594,6 +4639,30 @@ button:disabled {
   }
 
   .reader-pane-link:hover { color: var(--dorami-accent-ink); text-decoration: underline; }
+
+  .reader-pane-actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 14px;
+  }
+
+  .reader-pane-actions .reader-pane-link { margin-top: 0; }
+
+  .reader-pane-fav {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--dorami-muted);
+    transition: color 140ms ease;
+  }
+
+  .reader-pane-fav:hover { color: #f59e0b; }
+  .reader-pane-fav:disabled { cursor: default; }
+  .reader-pane-fav-on { color: #f59e0b; }
+  .reader-pane-fav-on:hover { color: #d97706; }
 
   .reader-pane-body {
     max-width: 720px;

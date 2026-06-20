@@ -33,6 +33,7 @@ from models.db import (
     NodeGroupRecord,
     ReaderSubscriptionRecord,
     ReaderFeedTokenRecord,
+    ReaderFavoriteRecord,
     SourceConfigRecord,
     SourceStateRecord,
     AppSettingRecord,
@@ -307,6 +308,11 @@ class ChangePasswordParams(BaseModel):
     new_password: str
 
 
+class AvatarUpdateParams(BaseModel):
+    # data:image/* base64 URL；空字符串或 null 表示清除头像。
+    avatar: Optional[str] = None
+
+
 class AccountCreateParams(BaseModel):
     username: str
     password: str
@@ -467,6 +473,11 @@ async def require_admin_session(request: Request, call_next):
     return await call_next(request)
 
 
+def _auth_user_payload(username: str, role: str, avatar: Optional[str] = None) -> Dict[str, Any]:
+    """登录态对外暴露的账户视图：含头像，供前端头像展示。"""
+    return {"username": username, "role": role, "avatar": avatar or None}
+
+
 @app.post("/api/auth/login")
 def login_admin(params: AuthLoginParams, response: Response):
     username = params.username.strip()
@@ -479,8 +490,9 @@ def login_admin(params: AuthLoginParams, response: Response):
         if not accounts_service.verify_password(params.password, record.password_hash):
             raise HTTPException(status_code=401, detail="账号或密码错误")
         role = record.role
+        avatar = record.avatar
     set_auth_cookie(response, username, role)
-    return {"authenticated": True, "user": {"username": username, "role": role}}
+    return {"authenticated": True, "user": _auth_user_payload(username, role, avatar)}
 
 
 @app.get("/api/auth/session")
@@ -488,7 +500,10 @@ def get_auth_session(request: Request):
     session = current_auth_session(request)
     if session is None:
         return {"authenticated": False, "user": None}
-    return {"authenticated": True, "user": {"username": session["sub"], "role": session["role"]}}
+    with Session(db_sink.engine) as db_session:
+        record = accounts_service.get_user(db_session, session["sub"])
+        avatar = record.avatar if record else None
+    return {"authenticated": True, "user": _auth_user_payload(session["sub"], session["role"], avatar)}
 
 
 @app.get("/api/runtime")
@@ -520,11 +535,37 @@ def change_own_password(params: ChangePasswordParams, request: Request):
     return {"ok": True}
 
 
+# 头像上限：~1.5MB base64 字符串（约 1MB 原图），足够 256px 缩略图，且不撑爆会话/数据库。
+_AVATAR_MAX_CHARS = 1_500_000
+
+
+@app.post("/api/auth/avatar")
+def update_own_avatar(params: AvatarUpdateParams, request: Request):
+    """任意已登录账户更新/清除自己的头像（data:image/* base64 URL）。"""
+    username = current_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+    avatar = (params.avatar or "").strip()
+    if avatar:
+        if not avatar.startswith("data:image/"):
+            raise HTTPException(status_code=400, detail="头像必须是 data:image/* 格式的图片")
+        if len(avatar) > _AVATAR_MAX_CHARS:
+            raise HTTPException(status_code=400, detail="头像体积过大，请上传更小的图片")
+    with Session(db_sink.engine) as session:
+        record = accounts_service.get_active_user(session, username)
+        if record is None:
+            raise HTTPException(status_code=401, detail="账户不存在或已停用")
+        record = accounts_service.set_avatar(session, username, avatar or None)
+        result = _auth_user_payload(record.username, record.role, record.avatar)
+    return {"ok": True, "user": result}
+
+
 # ==================== 账户管理（仅 admin，中间件已强制 role==admin） ====================
 def _serialize_user(record: UserRecord) -> Dict[str, Any]:
     return {
         "username": record.username,
         "role": record.role,
+        "avatar": record.avatar or None,
         "is_active": record.is_active,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
@@ -2546,6 +2587,98 @@ def unsubscribe_source(source_id: str, request: Request):
         "subscribed": False,
         "subscribed_source_ids": subscribed_ids,
     }
+
+
+# ==================== Reader 文章收藏 ====================
+def resolve_favorite_article_ids(session: Session, username: str) -> List[str]:
+    """当前用户全部收藏的文章 ID（不分页，供前端维护收藏态集合）。"""
+    if not username:
+        return []
+    rows = session.exec(
+        select(ReaderFavoriteRecord.article_id).where(
+            ReaderFavoriteRecord.owner_username == username
+        )
+    ).all()
+    return list(rows)
+
+
+@app.get("/api/reader/favorites")
+def list_favorites(
+        request: Request,
+        search: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100,
+):
+    """当前用户的收藏文章列表，按收藏时间倒序；同时回传全部收藏 ID 集合。
+
+    join 文章表后，已被删除文章的孤儿收藏自然被过滤掉，不出现在列表里。
+    """
+    username = current_username(request)
+    safe_limit = min(max(int(limit), 1), 500)
+    safe_skip = max(int(skip), 0)
+    with Session(db_sink.engine) as session:
+        base = (
+            select(ArticleRecord, ReaderFavoriteRecord.created_at)
+            .join(ReaderFavoriteRecord, ReaderFavoriteRecord.article_id == ArticleRecord.id)
+            .where(ReaderFavoriteRecord.owner_username == username)
+        )
+        count_query = (
+            select(func.count())
+            .select_from(ReaderFavoriteRecord)
+            .join(ArticleRecord, ReaderFavoriteRecord.article_id == ArticleRecord.id)
+            .where(ReaderFavoriteRecord.owner_username == username)
+        )
+        if search:
+            base = base.where(ArticleRecord.title.contains(search))
+            count_query = count_query.where(ArticleRecord.title.contains(search))
+        base = base.order_by(ReaderFavoriteRecord.created_at.desc(), ArticleRecord.id.desc())
+        total = int(session.exec(count_query).one() or 0)
+        rows = session.exec(base.offset(safe_skip).limit(safe_limit)).all()
+        items = [serialize_article_list_item(record, include_content=True) for record, _ in rows]
+        favorite_ids = resolve_favorite_article_ids(session, username)
+    return {
+        "items": items,
+        "total": total,
+        "skip": safe_skip,
+        "limit": safe_limit,
+        "next_skip": safe_skip + len(items) if safe_skip + len(items) < total else None,
+        "favorite_ids": favorite_ids,
+    }
+
+
+@app.post("/api/reader/favorites/{article_id}")
+def add_favorite(article_id: str, request: Request):
+    """收藏一篇文章（幂等）。"""
+    username = current_username(request)
+    article_id = (article_id or "").strip()
+    if not article_id:
+        raise HTTPException(status_code=400, detail="article_id 不能为空")
+    with Session(db_sink.engine) as session:
+        if session.get(ArticleRecord, article_id) is None:
+            raise HTTPException(status_code=404, detail="文章不存在")
+        if session.get(ReaderFavoriteRecord, (username, article_id)) is None:
+            session.add(ReaderFavoriteRecord(
+                owner_username=username, article_id=article_id, created_at=_now_iso()
+            ))
+            session.commit()
+        favorite_ids = resolve_favorite_article_ids(session, username)
+    return {"status": "success", "article_id": article_id, "favorited": True, "favorite_ids": favorite_ids}
+
+
+@app.delete("/api/reader/favorites/{article_id}")
+def remove_favorite(article_id: str, request: Request):
+    """取消收藏一篇文章（幂等）。"""
+    username = current_username(request)
+    article_id = (article_id or "").strip()
+    if not article_id:
+        raise HTTPException(status_code=400, detail="article_id 不能为空")
+    with Session(db_sink.engine) as session:
+        record = session.get(ReaderFavoriteRecord, (username, article_id))
+        if record is not None:
+            session.delete(record)
+            session.commit()
+        favorite_ids = resolve_favorite_article_ids(session, username)
+    return {"status": "success", "article_id": article_id, "favorited": False, "favorite_ids": favorite_ids}
 
 
 # ==================== Reader 个人聚合接口令牌 ====================
