@@ -367,6 +367,9 @@ class BaseWebPageListFetcher(BaseFetcher):
         return {"title": detail.title, "text": detail.text, "method": detail.method}
 
     async def _detail_for_url(self, client: httpx.AsyncClient, url: str, max_chars: int) -> Dict[str, str]:
+        backend_detail = await self._web_backend_detail(url, max_chars)
+        if backend_detail:
+            return backend_detail
         response = await self._safe_get(client, url)
         if not response:
             return {"title": "", "text": "", "method": "", "url": ""}
@@ -504,6 +507,8 @@ class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
     exclude_url_patterns = ["anthropic.com/news#"]
     default_limit = 10
     default_fetch_detail = True
+    # 旁路验收：crawl4ai 详情与生产路径相似度 0.97，已迁移（装了 crawl4ai 时走浏览器后端，否则回退）
+    web_backend_enabled = True
     source_owner = "anthropic"
     source_brand = "anthropic"
     source_scope = "company"
@@ -649,6 +654,8 @@ class ClaudeBlogWebFetcher(BaseWebPageListFetcher):
     exclude_url_patterns = ["claude.com/blog/category/"]
     default_limit = 10
     default_fetch_detail = True
+    # 旁路验收：crawl4ai(main 容器) 与生产路径相似度 0.855，已迁移；未装 crawl4ai 时回退通用提取器
+    web_backend_enabled = True
     source_owner = "anthropic"
     source_brand = "claude"
     source_scope = "product_family"
@@ -672,6 +679,8 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
     category = "media"
     article_url_patterns = ["ithome.com/0/"]
     exclude_url_patterns = ["next.ithome.com", "m.ithome.com", "quan.ithome.com"]
+    # 旁路验收：crawl4ai 详情与生产路径相似度 0.81（≥0.8 门槛），已迁移；未装 crawl4ai 时回退专用提取器
+    web_backend_enabled = True
     default_limit = 18
     default_fetch_detail = True
     source_owner = "ithome"
@@ -724,6 +733,9 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
         }
 
     async def _detail_for_url(self, client: httpx.AsyncClient, url: str, max_chars: int) -> Dict[str, str]:
+        backend_detail = await self._web_backend_detail(url, max_chars)
+        if backend_detail:
+            return backend_detail
         response = await self._safe_get(client, url)
         if not response:
             return {"title": "", "text": "", "method": "", "url": ""}

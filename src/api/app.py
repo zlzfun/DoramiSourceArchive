@@ -139,6 +139,7 @@ COLLECTOR_API_PREFIXES = (
     "/api/fetch/",
     "/api/archive/export",
     "/api/source-configs",
+    "/api/source-builder",
     "/api/import/social-posts",
     "/api/node-groups",
     "/api/collection-jobs",
@@ -1787,6 +1788,19 @@ class SourceFetchParams(BaseModel):
     params: Dict[str, Any] = PydanticField(default_factory=dict)
 
 
+class SourceBuilderAnalyzeRequest(BaseModel):
+    url: str
+
+
+class SourceBuilderPreviewRequest(BaseModel):
+    source_id: str = ""
+    name: str = ""
+    source_type: str = "web"
+    url: str = ""
+    category: str = ""
+    params: Dict[str, Any] = PydanticField(default_factory=dict)
+
+
 class FetchBatchItem(BaseModel):
     fetcher_id: str
     params: Dict[str, Any] = PydanticField(default_factory=dict)
@@ -1891,8 +1905,11 @@ def parse_json_object(raw_json: str) -> Dict[str, Any]:
 def resolve_source_fetcher_id(source_config: SourceConfigRecord) -> str:
     if source_config.fetcher_id:
         return source_config.fetcher_id
-    if source_config.source_type.lower() in {"rss", "atom"}:
+    source_type = source_config.source_type.lower()
+    if source_type in {"rss", "atom"}:
         return "generic_rss"
+    if source_type in {"web", "webpage"}:
+        return "generic_web"
     return ""
 
 
@@ -1900,10 +1917,21 @@ def build_source_fetch_params(source_config: SourceConfigRecord, overrides: Opti
     params = parse_json_object(source_config.params_json)
     params.update({
         "source_id": source_config.source_id,
-        "feed_url": source_config.url,
-        "feed_name": source_config.name,
         "category": source_config.category,
     })
+    if source_config.source_type.lower() in {"web", "webpage"}:
+        # 通用网页抓取器（generic_web）：url 即列表页；其余 web 配置（URL 模式 / 详情 Profile /
+        # listing_css）已在 params_json 内，随上面的 parse_json_object 透传。
+        params.update({
+            "listing_url": source_config.url,
+            "site_name": params.get("site_name") or source_config.name,
+        })
+    else:
+        # RSS/Atom 等：维持既有 feed_url/feed_name 语义不变。
+        params.update({
+            "feed_url": source_config.url,
+            "feed_name": source_config.name,
+        })
     if overrides:
         params.update(overrides)
     return params
@@ -3154,6 +3182,65 @@ async def fetch_active_rss_sources(body: Optional[SourceFetchParams] = None):
         for item, item_result in zip(items, result["results"])
     ]
     return {**result, "results": results}
+
+
+@app.post("/api/source-configs/fetch-active-web")
+async def fetch_active_web_sources(body: Optional[SourceFetchParams] = None):
+    """批量触发所有启用的 web/webpage 数据源（经 generic_web 配置驱动抓取）。镜像 fetch-active-rss。"""
+    with Session(db_sink.engine) as session:
+        records = session.exec(
+            select(SourceConfigRecord)
+            .where(SourceConfigRecord.is_active == True)
+            .where(SourceConfigRecord.source_type.in_(["web", "webpage"]))
+            .order_by(SourceConfigRecord.name)
+        ).all()
+
+    items = []
+    skipped_results = []
+    for record in records:
+        fetcher_id = resolve_source_fetcher_id(record)
+        if not fetcher_id:
+            skipped_results.append({"source_id": record.source_id, "status": "skipped", "error": "未绑定可用抓取器"})
+            continue
+        params = build_source_fetch_params(record, body.params if body else {})
+        items.append({"source_id": record.source_id, "fetcher_id": fetcher_id, "params": params})
+
+    result = await run_collection_items(
+        items,
+        name="临时抓取: 活跃网页数据源",
+        trigger_type="manual",
+        run_scope="ad_hoc",
+    )
+    results = skipped_results + [
+        {"source_id": item.get("source_id"), **item_result}
+        for item, item_result in zip(items, result["results"])
+    ]
+    return {**result, "results": results}
+
+
+@app.post("/api/source-builder/analyze")
+async def source_builder_analyze(req: SourceBuilderAnalyzeRequest):
+    """输入一个列表页 URL → 判类型 + 分析 + (LLM) 生成抓取节点配置建议。"""
+    from services import source_builder
+
+    with Session(db_sink.engine) as session:
+        existing = {row.source_id for row in session.exec(select(SourceConfigRecord.source_id)).all()}
+        existing |= set(fetcher_registry._fetchers.keys())
+        result = await source_builder.analyze_url(req.url, session=session, existing_ids=existing)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "分析失败"))
+    return result
+
+
+@app.post("/api/source-builder/preview")
+async def source_builder_preview(req: SourceBuilderPreviewRequest):
+    """用建议配置试抓样例条目做验证（不落库）。"""
+    from services import source_builder
+
+    result = await source_builder.preview_config(req.model_dump())
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "试抓失败"))
+    return result
 
 
 @app.post("/api/import/social-posts")

@@ -408,6 +408,28 @@ export async function fetchActiveRssSources(params = {}) {
   return res.json();
 }
 
+// ===== AI 自定义节点（URL → 分析 → 预览 → 固化）=====
+
+export async function analyzeSourceUrl(url) {
+  const res = await apiFetch(`${API_BASE_URL}/source-builder/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) await handleApiError(res, '分析 URL 失败');
+  return res.json();
+}
+
+export async function previewSourceConfig(config) {
+  const res = await apiFetch(`${API_BASE_URL}/source-builder/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) await handleApiError(res, '试抓预览失败');
+  return res.json();
+}
+
 export async function createTask(data) {
   const res = await apiFetch(`${API_BASE_URL}/tasks`, {
     method: 'POST',

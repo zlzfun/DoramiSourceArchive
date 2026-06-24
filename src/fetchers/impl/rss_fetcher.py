@@ -7,6 +7,7 @@ from typing import Any, AsyncGenerator, Dict, List
 
 import feedparser
 import httpx
+from bs4 import BeautifulSoup, Tag
 
 from fetchers.impl.article_extractor import clean_text, extract_article_detail, extract_detail_from_html
 from fetchers.base import BaseFetcher
@@ -359,13 +360,23 @@ class OpenAINewsRssFetcher(PresetRssFetcher):
     # 的孤立行，避免误删正文中合法的 "Loading ..." 句子。
     _render_placeholder_re = re.compile(r"(?m)^[ \t]*Loading(?:…|\.\.\.)?[ \t]*$\n?")
 
+    # crawl4ai 渲染时等待 Cloudflare 挑战通过的判据：与 PlaywrightRenderer 同口径——
+    # 正文文本超过阈值即视为挑战已过、正文已现（标题仍是 "Just a moment" 时 body 文本极短）。
+    _CRAWL4AI_WAIT = "js:() => !!document.body && document.body.innerText.length > 1200"
+
     # OpenAI 文章正文页（/index/{slug}）有 Cloudflare Managed Challenge，纯 httpx 只能拿到
     # 403 挑战壳页，正文需浏览器执行 JS 通过挑战后才渲染。RSS 自带的 summary 只是人工
     # 摘要——对“把原文概括成一段话”的日报场景而言，在 summary 上再概括等于零增量或幻觉，
-    # 因此这里覆盖详情抓取：优先用 Playwright 渲染正文页，渲染失败时优雅降级回 summary。
+    # 因此这里覆盖详情抓取，渲染优先级：
+    #   ① crawl4ai 浏览器后端（主路，统一的 Web Content Runtime）
+    #   ② Playwright 自渲染（原能跑通的方式，作为 fallback；按需懒启动，最多一次/run）
+    #   ③ httpx 详情 → 通用 RSS 逻辑降级为 summary（最终兜底）
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._renderer = None
+        self._crawl4ai_backend = None  # 常驻 crawl4ai 渲染后端（主路，本次运行内复用）
+        self._renderer = None          # 常驻 Playwright 渲染器（fallback，懒启动后复用）
+        self._renderer_cm = None       # 持有 Playwright 上下文管理器以便收尾关闭
+        self._playwright_unavailable = False  # 懒启动失败后置位，避免每篇重复尝试
         # 允许测试注入渲染函数（签名 async (url) -> html），免于真正启动浏览器。
         self._render_override = None
 
@@ -379,40 +390,143 @@ class OpenAINewsRssFetcher(PresetRssFetcher):
                 yield item
             return
 
+        # 主路：开 crawl4ai 后端（不可用则保持 None，逐篇自动退回 Playwright/summary）。
+        self._crawl4ai_backend = await self._open_crawl4ai_backend()
+        try:
+            async for item in super()._run(client, **kwargs):
+                yield item
+        finally:
+            if self._crawl4ai_backend is not None:
+                await self._crawl4ai_backend.__aexit__(None, None, None)
+                self._crawl4ai_backend = None
+            if self._renderer_cm is not None:
+                await self._renderer_cm.__aexit__(None, None, None)
+                self._renderer_cm = None
+                self._renderer = None
+            self._playwright_unavailable = False
+
+    async def _open_crawl4ai_backend(self):
+        """启动 crawl4ai 渲染后端；未安装 / 启动失败均返回 None（调用方据此退回 Playwright）。"""
+        try:
+            from fetchers.web_content.crawl4ai_backend import Crawl4AIContentBackend
+        except Exception:
+            return None
+        if not Crawl4AIContentBackend.is_available():
+            return None
+        backend = Crawl4AIContentBackend()
+        try:
+            await backend.__aenter__()
+        except Exception as e:
+            self.logger.warning(f"⚠️ crawl4ai 渲染后端启动失败，退回 Playwright: {e}")
+            return None
+        if not getattr(backend, "available", False):
+            await backend.__aexit__(None, None, None)
+            return None
+        self.logger.info("🌐 OpenAI News 详情渲染优先走 crawl4ai")
+        return backend
+
+    async def _ensure_playwright(self):
+        """懒启动并复用 Playwright 渲染器（fallback）；一次运行内最多启动一次。"""
+        if self._renderer is not None:
+            return self._renderer
+        if self._playwright_unavailable:
+            return None
         from fetchers.impl.playwright_renderer import PlaywrightRenderer
 
-        async with PlaywrightRenderer() as renderer:
-            self._renderer = renderer
-            try:
-                async for item in super()._run(client, **kwargs):
-                    yield item
-            finally:
-                self._renderer = None
+        cm = PlaywrightRenderer()
+        renderer = await cm.__aenter__()
+        if not getattr(renderer, "available", False):
+            await cm.__aexit__(None, None, None)
+            self._playwright_unavailable = True
+            return None
+        self._renderer_cm = cm
+        self._renderer = renderer
+        self.logger.info("🎭 OpenAI News 启用 Playwright 渲染兜底")
+        return renderer
 
     def _strip_render_placeholders(self, text: str) -> str:
         if not text:
             return text
         return self._render_placeholder_re.sub("", text)
 
+    def _strip_openai_trailers(self, html: str) -> str:
+        """移除 OpenAI 文章 ``<article>`` 正文之后的尾部噪声（作者署名 + “Keep reading” 相关推荐）。
+
+        openai.com 文章页把作者署名块（“… GPT Author OpenAI”）与相关推荐（“Keep reading / View
+        all”）作为 ``<article>`` 内**正文块之后的同级子节点**，类名全是无语义的 Tailwind 哈希工具类，
+        无法靠选择器精确剔除。但版式稳定：正文是 ``<article>`` 直接子节点中**文本最长**的那个，其后
+        的同级子节点均为尾部噪声。删除正文块之后的全部同级子节点即可，标题/导语块（在正文块之前）保留。
+        两条渲染路（crawl4ai/Playwright）产出的 HTML 都经此清洗，保持一致。失败/结构不符时原样返回。"""
+        if not html:
+            return html
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            article = soup.find("article")
+            if article is None:
+                return html
+            children = [c for c in article.find_all(recursive=False) if isinstance(c, Tag)]
+            if len(children) < 2:
+                return html
+            body = max(children, key=lambda c: len(c.get_text(" ", strip=True)))
+            cutting = False
+            for child in children:
+                if cutting:
+                    child.decompose()
+                elif child is body:
+                    cutting = True
+            return str(soup)
+        except Exception as e:
+            self.logger.warning(f"⚠️ OpenAI 尾部噪声清洗失败，使用原始 HTML: {e}")
+            return html
+
+    def _detail_from_rendered_html(self, html, url, max_chars, detail_min_chars, method_prefix):
+        """把一段渲染后的 HTML 提取为详情 dict；正文不足返回 None（调用方继续走下一渲染路）。"""
+        if not html:
+            return None
+        html = self._strip_openai_trailers(html)
+        detail = extract_detail_from_html(html, max_chars, detail_min_chars)
+        text = self._strip_render_placeholders(detail.text)
+        if text and len(text) >= detail_min_chars:
+            return {
+                "title": detail.title,
+                "text": text,
+                "method": f"{method_prefix}_{detail.method}" if detail.method else method_prefix,
+                "url": url,
+            }
+        return None
+
     async def _detail_for_url(self, client, url, max_chars, detail_min_chars):
-        html = ""
+        # 测试注入：把 override 当作唯一渲染源（保留历史 playwright 方法标记）。
         if self._render_override is not None:
-            html = await self._render_override(url)
-        elif self._renderer is not None and getattr(self._renderer, "available", False):
-            html = await self._renderer.render(url)
+            detail = self._detail_from_rendered_html(
+                await self._render_override(url), url, max_chars, detail_min_chars, "playwright"
+            )
+            if detail:
+                return detail
+            return await super()._detail_for_url(client, url, max_chars, detail_min_chars)
 
-        if html:
-            detail = extract_detail_from_html(html, max_chars, detail_min_chars)
-            text = self._strip_render_placeholders(detail.text)
-            if text and len(text) >= detail_min_chars:
-                return {
-                    "title": detail.title,
-                    "text": text,
-                    "method": f"playwright_{detail.method}" if detail.method else "playwright",
-                    "url": url,
-                }
+        # ① crawl4ai（主路）：等 CF 挑战通过后取原始 HTML，复用既有 article_extractor 提取。
+        if self._crawl4ai_backend is not None:
+            try:
+                html = await self._crawl4ai_backend.render_html(
+                    url, wait_for=self._CRAWL4AI_WAIT, wait_for_timeout=20_000
+                )
+            except Exception as e:
+                self.logger.warning(f"⚠️ crawl4ai 渲染失败，退回 Playwright: {e}")
+                html = ""
+            detail = self._detail_from_rendered_html(html, url, max_chars, detail_min_chars, "crawl4ai")
+            if detail:
+                return detail
 
-        # 浏览器不可用 / 渲染失败 / 正文仍不足 → 退回 httpx 详情（多半同样被 CF 拦截，
+        # ② Playwright（fallback，原能跑通的方式）：懒启动后复用。
+        renderer = await self._ensure_playwright()
+        if renderer is not None:
+            html = await renderer.render(url)
+            detail = self._detail_from_rendered_html(html, url, max_chars, detail_min_chars, "playwright")
+            if detail:
+                return detail
+
+        # ③ 浏览器都拿不到正文 → 退回 httpx 详情（多半同样被 CF 拦截，
         # 拿不到正文时返回空，由通用 RSS 逻辑降级为 summary）。
         return await super()._detail_for_url(client, url, max_chars, detail_min_chars)
 

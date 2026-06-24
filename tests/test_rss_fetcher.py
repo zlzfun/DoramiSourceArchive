@@ -397,6 +397,116 @@ def test_openai_news_rendered_body_drops_loading_placeholder():
     assert "Loading" not in rendered.content
 
 
+def _rendered_article_html(marker="Body text from the renderer. "):
+    return (
+        "<html><body><article><h1>Rendered</h1><p>"
+        + marker * 20
+        + "</p></article></body></html>"
+    )
+
+
+class _FakeC4ABackend:
+    """伪 crawl4ai 渲染后端：URL 含 'good' 时返回正文 HTML，否则空（模拟 CF 未过）。"""
+
+    def __init__(self):
+        self.calls = []
+
+    async def render_html(self, url, *, wait_for=None, wait_for_timeout=15_000):
+        self.calls.append((url, wait_for))
+        return _rendered_article_html() if "good" in url else ""
+
+
+def test_openai_news_prefers_crawl4ai():
+    # crawl4ai 命中：方法标记为 crawl4ai_*，且确实传入了 CF 等待条件。
+    fetcher = OpenAINewsRssFetcher()
+    backend = _FakeC4ABackend()
+    fetcher._crawl4ai_backend = backend
+
+    detail = asyncio.run(
+        fetcher._detail_for_url(None, "https://openai.com/index/good-article", 12000, 200)
+    )
+    assert detail["method"].startswith("crawl4ai")
+    assert "Body text from the renderer" in detail["text"]
+    assert backend.calls and backend.calls[0][1] == OpenAINewsRssFetcher._CRAWL4AI_WAIT
+
+
+def test_openai_news_falls_back_to_playwright_when_crawl4ai_empty():
+    # crawl4ai 渲染拿不到正文 → 退回 Playwright（原能跑通的方式）→ 方法标记 playwright_*。
+    fetcher = OpenAINewsRssFetcher()
+    fetcher._crawl4ai_backend = _FakeC4ABackend()  # 'good' 不在 url 中 → 返回 ""
+
+    pw_calls = []
+
+    class _FakeRenderer:
+        available = True
+
+        async def render(self, url):
+            pw_calls.append(url)
+            return _rendered_article_html("Playwright rendered body. ")
+
+    async def fake_ensure():
+        return _FakeRenderer()
+
+    fetcher._ensure_playwright = fake_ensure
+
+    detail = asyncio.run(
+        fetcher._detail_for_url(None, "https://openai.com/index/blocked", 12000, 200)
+    )
+    assert detail["method"].startswith("playwright")
+    assert "Playwright rendered body" in detail["text"]
+    assert pw_calls == ["https://openai.com/index/blocked"]
+
+
+def test_openai_news_falls_back_to_summary_when_all_renderers_fail():
+    # crawl4ai 空 + Playwright 不可用 + httpx 详情取不到 → 返回空详情，交由通用逻辑降级 summary。
+    fetcher = OpenAINewsRssFetcher()
+    fetcher._crawl4ai_backend = _FakeC4ABackend()  # 返回 ""
+
+    async def ensure_none():
+        return None
+
+    fetcher._ensure_playwright = ensure_none
+
+    async def safe_get_none(client, url, **kwargs):
+        return None
+
+    fetcher._safe_get = safe_get_none
+
+    detail = asyncio.run(
+        fetcher._detail_for_url(None, "https://openai.com/index/blocked", 12000, 200)
+    )
+    assert detail["text"] == ""
+
+
+def test_openai_news_strips_trailing_related_and_byline():
+    # OpenAI 文章 <article> 内，正文块之后的署名 section 与 "Keep reading" 相关推荐应被剔除，
+    # 正文块之前的标题/导语保留。
+    fetcher = OpenAINewsRssFetcher()
+    html = (
+        "<html><body><article>"
+        "<div>June 23, 2026 Applied AI The Real Title Intro lead paragraph.</div>"
+        "<div>" + ("Actual article body sentence. " * 40) + "Final real sentence.</div>"
+        "<section>2026 GPT Author OpenAI</section>"
+        "<div><h2>Keep reading</h2><a>View all</a><p>Related article one</p></div>"
+        "</article></body></html>"
+    )
+    cleaned = fetcher._strip_openai_trailers(html)
+    assert "Keep reading" not in cleaned
+    assert "Related article one" not in cleaned
+    assert "Author OpenAI" not in cleaned
+    # 正文与导语保留
+    assert "Final real sentence." in cleaned
+    assert "Intro lead paragraph." in cleaned
+
+
+def test_openai_news_trailer_strip_is_noop_without_article():
+    # 无 <article> 或子节点过少时原样返回，不抛断。
+    fetcher = OpenAINewsRssFetcher()
+    assert fetcher._strip_openai_trailers("") == ""
+    plain = "<html><body><main><p>No article tag here at all.</p></main></body></html>"
+    assert fetcher._strip_openai_trailers(plain) == plain
+
+
 def test_google_gemini_models_uses_category_rss():
     assert GoogleGeminiModelsRssFetcher.feed_url == "https://blog.google/innovation-and-ai/models-and-research/gemini-models/rss/"
 

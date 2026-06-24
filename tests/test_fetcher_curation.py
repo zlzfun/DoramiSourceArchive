@@ -8,6 +8,7 @@ from fetchers.registry import ESSENTIAL_FETCHER_IDS, fetcher_registry, focused_c
 
 GENERIC_ADVANCED_FETCHER_IDS = {
     "generic_rss",
+    "generic_web",
     "generic_github_releases",
     "generic_github_repositories",
     "generic_huggingface_models",

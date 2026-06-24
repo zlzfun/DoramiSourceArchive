@@ -23,6 +23,11 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
 ]
+# 可选：基于 crawl4ai 的浏览器详情后端（统一 Web Content Runtime，阶段一旁路对比）。
+# 默认 `uv sync` 不安装；启用浏览器后端时 `uv sync --extra crawl4ai` 并 `playwright install chromium`。
+crawl4ai = [
+    "crawl4ai>=0.9.0",
+]
 
 [dependency-groups]
 dev = [

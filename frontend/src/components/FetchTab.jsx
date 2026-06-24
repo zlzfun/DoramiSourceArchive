@@ -15,6 +15,7 @@ import {
   Search,
   Settings2,
   Trash2,
+  Wand2,
   X,
 } from 'lucide-react';
 import {
@@ -29,6 +30,10 @@ import {
   updateNodeGroup,
 } from '../api';
 import LogoMark from './LogoMark';
+import CustomNodeBuilder from './CustomNodeBuilder';
+
+// 高级目标「AI 自定义节点」暂不开放前端入口：后端流程保留，UI 入口与面板用此开关隐藏。
+const ENABLE_CUSTOM_NODE_BUILDER = false;
 import {
   SECTIONS,
   groupBySection,
@@ -804,16 +809,23 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           <p className="page-subtitle mt-3 max-w-4xl">
             {view === 'groups'
               ? '维护可复用的采集范围：把多个节点与参数模板打包，供采集任务复用。'
-              : '按主体聚合内置抓取节点，查看各来源的官方源、运行健康与最新产出。'}
+              : view === 'custom'
+                ? '输入一个文章列表页 URL，自动分析并生成可抓取的自定义节点，无需写代码。'
+                : '按主体聚合内置抓取节点，查看各来源的官方源、运行健康与最新产出。'}
           </p>
         </div>
         <div className="page-actions">
           <div className="segmented-control">
             <button onClick={() => setView('catalog')} className={`segmented-option ${view === 'catalog' ? 'segmented-option-active' : ''}`}><Layers /> 节点目录</button>
             <button onClick={() => setView('groups')} className={`segmented-option ${view === 'groups' ? 'segmented-option-active' : ''}`}><FolderPlus /> 采集范围</button>
+            {ENABLE_CUSTOM_NODE_BUILDER && (
+              <button onClick={() => setView('custom')} className={`segmented-option ${view === 'custom' ? 'segmented-option-active' : ''}`}><Wand2 /> AI 自定义节点</button>
+            )}
           </div>
         </div>
       </div>
+
+      {ENABLE_CUSTOM_NODE_BUILDER && view === 'custom' && <CustomNodeBuilder showToast={showToast} />}
 
       {view === 'catalog' && (
         <>

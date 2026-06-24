@@ -192,7 +192,9 @@ export default function App() {
       const runtime = await fetchRuntimeInfo();
       setRuntimeInfo(runtime);
       if (runtime.collector_enabled) {
-        setAvailableFetchers(await fetchFetchers());
+        // 配置驱动通用抓取器（generic_web，中级目标）暂不开放前端入口：后端保留，目录里隐藏。
+        const fetchers = await fetchFetchers();
+        setAvailableFetchers(fetchers.filter(f => f.id !== 'generic_web'));
       } else {
         setAvailableFetchers([]);
       }

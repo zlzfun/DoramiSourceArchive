@@ -236,3 +236,111 @@ When assembling the final report, follow this exact backend system prompt:
 {REDUCE_SYSTEM_PROMPT}
 ```
 """
+
+
+# ==========================================
+# 高级目标：URL → LLM 生成抓取节点配置
+# ==========================================
+
+# 治理字段的受控取值（与现有 fetcher/source-config 取值对齐，约束 LLM 输出）。
+SOURCE_CONFIG_CATEGORIES = ["official", "official_web", "media", "community", "paper", "blog"]
+SOURCE_CONFIG_SCOPES = [
+    "company", "model_family", "product_family", "api_platform",
+    "open_model_family", "developer_tool", "tech_media", "research_lab",
+]
+SOURCE_CONFIG_CHANNELS = ["newsroom", "blog", "changelog", "release_notes", "website_category", "docs", "community"]
+SOURCE_CONFIG_TIERS = ["tier0_primary", "tier1_curated", "tier2_aggregator"]
+SOURCE_CONFIG_CONTENT_TAGS = [
+    "model_release", "product_update", "api_platform", "research_paper",
+    "developer_tool", "market_news", "safety_policy", "tutorial_or_practice",
+]
+SOURCE_CONFIG_SIGNALS = ["high_signal", "medium_signal", "low_signal"]
+SOURCE_CONFIG_NOISE = ["low_noise", "medium_noise", "high_noise"]
+
+
+SOURCE_CONFIG_SYSTEM_PROMPT = """你是哆啦美·归档中枢的数据源接入工程师。给你一个网页列表页（文章/博客/新闻列表）的结构信号，请推断一份用于通用网页抓取器（generic_web）的抓取配置，并输出**纯 JSON 对象**（不要任何解释文字、不要代码围栏）。
+
+判断要点：
+- article_url_patterns：从给定候选链接里归纳出「文章详情页 URL 的稳定子串」（如 "/news/"、"/blog/"、"example.com/20"），用于把详情页和导航/分类/分页链接区分开。可给多个，命中任一即视为文章。
+- exclude_url_patterns：需要排除的噪声链接子串（如 "/category/"、"/tag/"、"#"、分页 "/page/"）。
+- listing_css：仅当启发式锚点不可靠（如列表项结构特殊）时给出 {item,url,title,date,summary} CSS 选择器；否则留空对象 {} 让抓取器走通用启发式。
+- 治理字段从给定枚举里择优选择，拿不准就留空字符串或合理缺省。
+
+只依据给定信号推断，不要臆造站点不存在的栏目。"""
+
+
+def build_source_config_user_prompt(signals: Dict[str, Any]) -> str:
+    """构造「URL → 抓取配置」的 LLM 输入。signals 由 source_builder.collect_html_signals 产出。"""
+    sample_links = signals.get("sample_links", [])[:25]
+    link_lines = "\n".join(
+        f"- {item.get('url', '')}  |  {(item.get('title') or '')[:60]}"
+        for item in sample_links
+    ) or "（无候选链接）"
+    sample_item_html = (signals.get("sample_item_html") or "")[:1500]
+
+    return (
+        "【页面信号】\n"
+        f"URL：{signals.get('url', '')}\n"
+        f"域名：{signals.get('domain', '')}\n"
+        f"页面标题：{signals.get('page_title', '')}\n"
+        f"站点名(og:site_name)：{signals.get('site_name', '')}\n"
+        f"描述：{(signals.get('description') or '')[:200]}\n"
+        f"语言：{signals.get('lang', '')}\n"
+        f"启发式推断的 URL 模式候选：{signals.get('pattern_candidates', [])}\n"
+        f"候选文章链接（最多 25 条）：\n{link_lines}\n"
+        f"\n条目容器 HTML 样例：\n{sample_item_html}\n"
+        "\n【受控取值】\n"
+        f"category ∈ {SOURCE_CONFIG_CATEGORIES}\n"
+        f"source_scope ∈ {SOURCE_CONFIG_SCOPES}\n"
+        f"source_channel ∈ {SOURCE_CONFIG_CHANNELS}\n"
+        f"provenance_tier ∈ {SOURCE_CONFIG_TIERS}\n"
+        f"content_tags ⊆ {SOURCE_CONFIG_CONTENT_TAGS}\n"
+        f"signal_strength ∈ {SOURCE_CONFIG_SIGNALS}\n"
+        f"noise_risk ∈ {SOURCE_CONFIG_NOISE}\n"
+        "\n【输出 JSON 结构】\n"
+        "{\n"
+        '  "name": "节点展示名",\n'
+        '  "site_name": "站点名",\n'
+        '  "category": "official_web",\n'
+        '  "description": "一句话说明该源抓什么",\n'
+        '  "article_url_patterns": ["/news/"],\n'
+        '  "exclude_url_patterns": ["/category/"],\n'
+        '  "listing_css": {},\n'
+        '  "source_owner": "如 anthropic/openai/空",\n'
+        '  "source_brand": "",\n'
+        '  "source_scope": "company",\n'
+        '  "source_channel": "newsroom",\n'
+        '  "provenance_tier": "tier0_primary",\n'
+        '  "content_tags": ["product_update"],\n'
+        '  "signal_strength": "high_signal",\n'
+        '  "noise_risk": "low_noise"\n'
+        "}"
+    )
+
+
+DETAIL_PROFILE_SYSTEM_PROMPT = """你是网页正文抽取专家。给你一篇文章详情页的 HTML（可能已被截断），请推断用于 crawl4ai 的正文抓取 Profile，并输出**纯 JSON 对象**（无解释、无代码围栏）。
+
+判断要点：
+- target_elements：能精确圈定正文主体的 CSS 选择器（如 "article"、".post-content"、".entry-content article"）。优先最贴正文的容器，避免选到 main/body 这种过宽的；可给 1~3 个备选。
+- excluded_selector：正文容器内仍需剔除的噪声（相关推荐、分享、作者卡、订阅、评论等），逗号分隔的 CSS。
+- wait_for：若正文明显由 JS 渲染（初始 HTML 缺正文），给 "css:正文选择器" 或留空。
+- use_browser：该页是否需要浏览器渲染（JS 重/反爬）才能拿到正文，给 true/false。
+
+只依据给定 HTML 推断。"""
+
+
+def build_detail_profile_user_prompt(sample_html: str, *, max_chars: int = 6000) -> str:
+    clipped = (sample_html or "").strip()
+    if len(clipped) > max_chars:
+        clipped = clipped[:max_chars] + "\n...(HTML 已截断)"
+    return (
+        "【文章详情页 HTML】\n"
+        f"{clipped or '（空）'}\n"
+        "\n【输出 JSON 结构】\n"
+        "{\n"
+        '  "use_browser": false,\n'
+        '  "target_elements": ["article", ".post-content"],\n'
+        '  "excluded_selector": ".related, .share, .comments",\n'
+        '  "wait_for": ""\n'
+        "}"
+    )

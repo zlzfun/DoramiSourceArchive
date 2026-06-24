@@ -50,6 +50,11 @@ class BaseFetcher(abc.ABC):
     noise_risk: str = ""
     fetch_reliability: str = ""
 
+    # 网页详情迁移开关：置 True 的节点，若运行环境装了 crawl4ai 且 URL 命中专用 Profile，
+    # 则详情正文走统一的 crawl4ai 后端；否则（未装/未命中/失败）回退现有 httpx 提取。
+    # 默认 False —— 协议型/API 型节点不启动浏览器，行为与改动前完全一致。
+    web_backend_enabled: bool = False
+
     # ==========================================
     # 2. 前端 UI 渲染元数据 (必须由子类覆盖)
     # ==========================================
@@ -64,6 +69,9 @@ class BaseFetcher(abc.ABC):
 
         # 去重预检钩子，默认 None（不预检）。DataPipeline 运行前可注入。
         self.dedup_lookup: Optional[DedupLookup] = None
+
+        # 本次抓取运行内复用的 crawl4ai 详情后端（仅 web_backend_enabled 节点按需启动）。
+        self._web_backend = None
 
         # 配置通用的请求头，防止被基础反爬拦截
         self.default_headers = {
@@ -92,6 +100,9 @@ class BaseFetcher(abc.ABC):
         """
         self.logger.info(f"🚀 开始执行抓取任务: {self.source_id} | 参数: {kwargs}")
 
+        # 按需启动浏览器详情后端（生命周期与本次运行一致；非迁移节点恒为 None）
+        self._web_backend = await self._open_web_backend()
+
         try:
             # 使用上下文管理器统一管理 HTTP 连接池
             async with httpx.AsyncClient(
@@ -112,7 +123,67 @@ class BaseFetcher(abc.ABC):
             self.logger.error(f"❌ 抓取任务异常中断: {str(e)}", exc_info=True)
             raise
         finally:
+            if self._web_backend is not None:
+                try:
+                    await self._web_backend.__aexit__(None, None, None)
+                finally:
+                    self._web_backend = None
             self.logger.info(f"🏁 抓取任务结束: {self.source_id}")
+
+    async def _open_web_backend(self):
+        """按需启动 crawl4ai 详情后端。
+
+        未启用 / 未安装 crawl4ai / 浏览器启动失败，均返回 None —— 调用方据此回退现有 httpx 提取，
+        保证默认环境（无 crawl4ai）行为与改动前完全一致。
+        """
+        if not getattr(self, "web_backend_enabled", False):
+            return None
+        try:
+            from fetchers.web_content.crawl4ai_backend import Crawl4AIContentBackend
+        except Exception:
+            return None
+        if not Crawl4AIContentBackend.is_available():
+            return None
+        backend = Crawl4AIContentBackend()
+        await backend.__aenter__()
+        if not getattr(backend, "available", False):
+            await backend.__aexit__(None, None, None)
+            return None
+        self.logger.info(f"🌐 已启用 crawl4ai 详情后端: {self.source_id}")
+        return backend
+
+    async def _web_backend_detail(
+        self, url: str, max_chars: int, profile=None
+    ) -> Optional[Dict[str, str]]:
+        """命中专用 Profile 时用 crawl4ai 后端提取详情。
+
+        返回与 ``_detail_for_url`` 同构的 dict；后端未启用 / URL 无专用 Profile / 提取失败时返回 None，
+        调用方据此回退现有 httpx 提取（旁路保护）。
+
+        ``profile`` 显式传入时（配置驱动节点 generic_web）直接用该 Profile，跳过 URL 匹配预检；
+        为空时按 URL 匹配全局 PROFILES，未命中则返回 None 留给现有逻辑。
+        """
+        backend = getattr(self, "_web_backend", None)
+        if backend is None:
+            return None
+        try:
+            if profile is None:
+                from fetchers.web_content.profiles import DEFAULT_PROFILE, resolve_profile
+
+                if resolve_profile(url) is DEFAULT_PROFILE:
+                    return None  # 该 URL 没有专用 Profile，不接管，留给现有逻辑
+            result = await backend.extract(url, max_chars=max_chars, profile=profile)
+        except Exception as e:
+            self.logger.warning(f"⚠️ web 后端提取失败，回退现有逻辑: {e}")
+            return None
+        if result.success and result.text:
+            return {
+                "title": result.title,
+                "text": result.text,
+                "method": result.method,
+                "url": result.url,
+            }
+        return None
 
     @abc.abstractmethod
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:

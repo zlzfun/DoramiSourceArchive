@@ -56,6 +56,52 @@ class SinglePageDocumentFetcher(BaseFetcher):
     def _clean_text(self, text: str) -> str:
         return " ".join((text or "").split())
 
+    async def _render_page_html(self, url: str) -> str | None:
+        """httpx 拆条为空时的浏览器兜底：惰性起一个 crawl4ai 后端取**渲染后的原始 HTML**。
+
+        与 B 类常驻 ``_web_backend`` 不同——C 类日常 httpx 即可拆条，故不常驻浏览器（零快路径成本），
+        仅在 Segmenter 拆出 0 条（页面改成 SPA、httpx 拿到空壳）时按需启停。未装 crawl4ai /
+        浏览器启动失败 / 渲染失败均返回 None，调用方据此保持 httpx 结果。返回的是原始 HTML
+        （非 cleaned_html），保留 Segmenter 依赖的结构锚点。"""
+        try:
+            from fetchers.web_content.crawl4ai_backend import Crawl4AIContentBackend
+        except Exception:
+            return None
+        if not Crawl4AIContentBackend.is_available():
+            return None
+        backend = Crawl4AIContentBackend()
+        try:
+            await backend.__aenter__()
+            if not getattr(backend, "available", False):
+                return None
+            html = await backend.render_html(url)
+            return html or None
+        except Exception as e:
+            self.logger.warning(f"⚠️ 渲染兜底失败，保持 httpx 结果: {e}")
+            return None
+        finally:
+            await backend.__aexit__(None, None, None)
+
+    async def _segment_with_render_fallback(self, response, segmenter):
+        """先用 httpx 文本跑 ``segmenter`` 拆条；拆出 0 条且 crawl4ai 可用时，用浏览器渲染的
+        原始 HTML 重跑同一 ``segmenter``。
+
+        ``segmenter`` 形如 ``Callable[[html_text], List[entry]]``——调用方用 lambda 适配各自的
+        ``_release_entries``/``_paper_entries`` 签名，Segmenter 本身完全不动。返回拆出的条目列表。"""
+        entries = segmenter(response.text)
+        if entries:
+            return entries
+        rendered = await self._render_page_html(self.page_url)
+        if not rendered:
+            return entries
+        rendered_entries = segmenter(rendered)
+        if rendered_entries:
+            self.logger.info(
+                f"🌐 {self.name} httpx 拆条为空，改用 crawl4ai 渲染 HTML 拆出 {len(rendered_entries)} 条"
+            )
+            return rendered_entries
+        return entries
+
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
         if not self.page_url:
@@ -203,7 +249,9 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
         if not response:
             raise RuntimeError(f"{self.name} 页面请求失败: {self.page_url}")
 
-        entries = self._release_entries(response.text, str(response.url), max_chars)
+        entries = await self._segment_with_render_fallback(
+            response, lambda html: self._release_entries(html, str(response.url), max_chars)
+        )
         entries = sorted(entries, key=lambda entry: entry["publish_date"] or "", reverse=True)
         for entry in entries[:limit]:
             yield WebPageArticleContent(
@@ -345,7 +393,9 @@ class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
         if not response:
             raise RuntimeError(f"Claude Code Changelog 页面请求失败: {self.page_url}")
 
-        entries = self._release_entries(response.text, str(response.url), max_chars)
+        entries = await self._segment_with_render_fallback(
+            response, lambda html: self._release_entries(html, str(response.url), max_chars)
+        )
         entries = sorted(
             entries,
             key=lambda entry: (entry["publish_date"] or "", _version_sort_key(entry["version"])),
@@ -488,7 +538,9 @@ class DevsiteReleaseNotesFetcher(SinglePageDocumentFetcher):
         if not response:
             raise RuntimeError(f"{self.name} 页面请求失败: {self.page_url}")
 
-        entries = self._release_entries(response.text, str(response.url), max_chars)
+        entries = await self._segment_with_render_fallback(
+            response, lambda html: self._release_entries(html, str(response.url), max_chars)
+        )
         entries = sorted(entries, key=lambda entry: entry["publish_date"], reverse=True)
         for entry in entries[:limit]:
             yield WebPageArticleContent(
@@ -666,7 +718,9 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
         if not response:
             raise RuntimeError(f"{self.name} 页面请求失败: {self.page_url}")
 
-        entries = self._release_entries(response.text, str(response.url), max_chars)
+        entries = await self._segment_with_render_fallback(
+            response, lambda html: self._release_entries(html, str(response.url), max_chars)
+        )
         entries = sorted(entries, key=lambda entry: entry["publish_date"] or "", reverse=True)
         for entry in entries[:limit]:
             yield WebPageArticleContent(
@@ -882,7 +936,9 @@ class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
         if not response:
             raise RuntimeError(f"Z.ai New Released 页面请求失败: {self.page_url}")
 
-        entries = self._release_entries(response.text, str(response.url), max_chars)
+        entries = await self._segment_with_render_fallback(
+            response, lambda html: self._release_entries(html, str(response.url), max_chars)
+        )
         entries = sorted(entries, key=lambda entry: entry["publish_date"], reverse=True)
         for entry in entries[:limit]:
             yield WebPageArticleContent(
@@ -1018,7 +1074,9 @@ class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
         if not response:
             raise RuntimeError(f"{self.name} 页面请求失败: {self.page_url}")
 
-        entries = self._release_entries(response.text, str(response.url), max_chars)
+        entries = await self._segment_with_render_fallback(
+            response, lambda html: self._release_entries(html, str(response.url), max_chars)
+        )
         entries = sorted(entries, key=lambda entry: entry["publish_date"] or "", reverse=True)
         for entry in entries[:limit]:
             yield WebPageArticleContent(
@@ -1156,7 +1214,9 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
         if not response:
             raise RuntimeError(f"{self.name} 页面请求失败: {self.page_url}")
 
-        entries = self._paper_entries(response.text, max_chars)
+        entries = await self._segment_with_render_fallback(
+            response, lambda html: self._paper_entries(html, max_chars)
+        )
         entries = sorted(entries, key=lambda entry: entry["publish_date"] or "", reverse=True)
         for entry in entries[:limit]:
             yield WebPageArticleContent(
@@ -1249,6 +1309,8 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
     exclude_url_patterns = ["qbitai.com/#", "qbitai.com/about", "qbitai.com/contact"]
     default_limit = 18
     default_fetch_detail = True
+    # 旁路验收：crawl4ai 与专用提取器相似度 0.978，已迁移；未装 crawl4ai 时回退 _extract_qbitai_detail
+    web_backend_enabled = True
     source_owner = "qbitai"
     source_brand = "量子位"
     source_scope = "ai_media"
@@ -1326,6 +1388,9 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
         return {"title": title, "text": text[:max_chars], "method": "qbitai_article_body"}
 
     async def _detail_for_url(self, client: httpx.AsyncClient, url: str, max_chars: int) -> Dict[str, str]:
+        backend_detail = await self._web_backend_detail(url, max_chars)
+        if backend_detail:
+            return backend_detail
         response = await self._safe_get(client, url)
         if not response:
             return {"title": "", "text": "", "method": "", "url": ""}
@@ -1456,6 +1521,8 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
     ]
     default_limit = 18
     default_fetch_detail = True
+    # 旁路验收：crawl4ai(article .entry-content 精确容器) 正文与生产路径一致(~1.1x，开头逐字相符)，已迁移
+    web_backend_enabled = True
     source_owner = "aiera"
     source_brand = "新智元"
     source_scope = "ai_media"
