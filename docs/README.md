@@ -17,6 +17,10 @@ API and data contracts for systems that consume the archive.
 - [contracts/archive_sync.md](./contracts/archive_sync.md) — collector → reader JSONL export/import contract (identity, lineage, checksum).
 - [contracts/reader_subscription.md](./contracts/reader_subscription.md) — reader subscriptions, one-click subscribe, aggregated feed token, tokenized pull endpoints.
 
+## Frontend (design & implementation discipline)
+
+- [frontend/conventions.md](./frontend/conventions.md) — **前端开发纪律**：文案/可访问性/排版/颜色令牌/圆角/高程/动效/主操作/暗色预留的约定与自检清单（借鉴 Geist，token 单一事实来源在 `frontend/src/index.css`）。
+
 ## Sources & nodes (curation and maintenance)
 
 How sources are classified, admitted, audited, and maintained.

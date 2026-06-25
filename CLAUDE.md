@@ -26,6 +26,8 @@ npm run build    # Production build
 npm run lint     # ESLint
 ```
 
+**Frontend design & implementation discipline**: before any frontend styling/UI change, follow [`docs/frontend/conventions.md`](docs/frontend/conventions.md) — the durable rules for 文案/accessibility/typography/color tokens/radius/elevation/motion/primary-action/dark-mode. The single source of truth for design tokens and role classes is `frontend/src/index.css` (`:root` tokens + `@layer components`): reuse `--r-*` radii, `--motion-*`, `--dorami-*` color/shadow tokens and the typography role classes (`.body-text`/`.micro-label`/etc.) instead of hand-writing `text-[Npx]`/`rounded-[Npx]`/hex. Work-area surfaces stay restrained; the brand/login cinematic motion is deliberately exempt.
+
 Data is stored in the `data/` directory (SQLite `cms_data.db` and ChromaDB `chroma_db/`).
 
 ### Production deploy
