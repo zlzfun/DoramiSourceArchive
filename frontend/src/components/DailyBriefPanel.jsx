@@ -354,7 +354,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
                 <span className="font-medium text-slate-400">增量游标</span>
                 <span className="flex items-center gap-2">
                   <code className="font-mono text-slate-500">{briefConfig?.cursor ? briefConfig.cursor.slice(0, 19) : '（空）'}</code>
-                  <button onClick={handleResetCursor} className="rounded-md px-2 py-0.5 text-[11px] font-bold text-slate-400 hover:bg-slate-100 hover:text-indigo-600" title="重置增量游标（用于重做/补生成）">
+                  <button onClick={handleResetCursor} className="rounded-md px-2 py-0.5 micro-label text-slate-400 hover:bg-slate-100 hover:text-indigo-600" title="重置增量游标（用于重做/补生成）">
                     重置
                   </button>
                 </span>

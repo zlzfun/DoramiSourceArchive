@@ -606,7 +606,18 @@ button:disabled {
     display: none;
   }
 
-  /* ── Typography ── */
+  /* ── Typography ──
+     文字角色词汇表（canonical roles，写组件时优先引用角色类而非手写字号）：
+       .page-title    页面 H1            clamp(26–32px)/900
+       .page-subtitle 页面副标题/说明     14px/600 · muted
+       .card-title    卡片标题           15px/700
+       .section-title 区块标题           14px/700 · ink-2
+       .body-text     默认正文/可读多行   14px/1.6/600 · ink-2
+       .tiny-meta     次要 meta          12px/500
+       .micro-label   微标签/徽标/角标    11px/700
+       .stat-number   指标数字           26px/900
+     语境化标签另有 .form-label/.node-param-label/.active-filter-label 等，各自就地维护。
+     其余请用 Tailwind 字号梯度（text-xs/sm/base + font-*），勿手写 text-[Npx]。 */
 
   .page-title {
     font-size: clamp(26px, 2.2vw, 32px);
@@ -3018,6 +3029,22 @@ button:disabled {
     font-size: 12px;
     font-weight: 500;
     line-height: 18px;
+  }
+
+  /* 默认正文/可读多行文本：copy 角色，taller line-height 便于阅读 */
+  .body-text {
+    color: var(--dorami-ink-2);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.6;
+    letter-spacing: 0;
+  }
+
+  /* 微标签/徽标/角标的文字角色：等价于 text-[11px] font-bold，归一化避免散落的魔法字号。
+     仅定字号+字重，配色/圆角/内距仍由各 chip 就地决定。 */
+  .micro-label {
+    font-size: 11px;
+    font-weight: 700;
   }
 
   .stat-number {

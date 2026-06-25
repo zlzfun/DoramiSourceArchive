@@ -87,7 +87,7 @@ export default function AccessTokenCard({ showToast, variant = 'card' }) {
               <div className="min-w-0">
                 <p className="text-xs font-black text-white">访问令牌仅显示一次</p>
                 <p className="mt-0.5 text-[11px] text-white/70">复制到你的 MCP 客户端或下游系统，关闭后只能再次生成新令牌。</p>
-                <code className="mt-2 block break-all rounded-lg bg-black/25 px-2.5 py-1.5 text-[11px] font-bold text-white">{plainToken}</code>
+                <code className="mt-2 block break-all rounded-lg bg-black/25 px-2.5 py-1.5 micro-label text-white">{plainToken}</code>
               </div>
               <button
                 onClick={() => handleCopy(plainToken, 'token-notice')}

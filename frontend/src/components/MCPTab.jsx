@@ -279,13 +279,13 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
           <div className="ml-auto flex items-center gap-2">
             <span
               title={ragEnabled ? undefined : '语义检索（向量搜索）需由部署方在配置中开启'}
-              className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold ${ragEnabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}
+              className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 micro-label ${ragEnabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}
             >
               <span className={`h-1.5 w-1.5 rounded-full ${ragEnabled ? 'bg-emerald-500' : 'bg-slate-400'}`} />
               语义检索 {ragEnabled ? '已启用' : '未启用'}
             </span>
             <span
-              className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold ${status === null ? 'bg-slate-100 text-slate-500' : enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}
+              className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 micro-label ${status === null ? 'bg-slate-100 text-slate-500' : enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}
             >
               <span className={`h-1.5 w-1.5 rounded-full ${status === null ? 'bg-slate-300' : enabled ? 'bg-emerald-500' : 'bg-rose-500'}`} />
               MCP {status === null ? '检测中' : enabled ? '运行中' : '已停止'}

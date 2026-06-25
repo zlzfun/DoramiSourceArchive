@@ -572,7 +572,7 @@ export default function FetchRunsTab({
                                   <div className="font-mono text-[11px] text-slate-400 truncate">{fetcherId}</div>
                                 </div>
                               </div>
-                              <div className="mt-2 text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-100 rounded px-2 py-1">
+                              <div className="mt-2 micro-label text-blue-700 bg-blue-50 border border-blue-100 rounded px-2 py-1">
                                 cron：{(job.per_fetcher_cron || {})[fetcherId] || job.cron_expr || '-'}
                               </div>
                               <code className="block mt-2 text-[11px] text-slate-500 bg-slate-50 border border-slate-100 rounded px-2 py-1 truncate" title={JSON.stringify((job.per_fetcher_params || {})[fetcherId] || {})}>

@@ -409,11 +409,11 @@ function AccountManagementSection({ showToast, currentUsername }) {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-bold text-slate-800">{acc.username}</span>
-                    {acc.username === currentUsername && <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[11px] font-bold text-indigo-500">当前</span>}
-                    <span className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${acc.role === 'admin' ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
+                    {acc.username === currentUsername && <span className="rounded bg-indigo-50 px-1.5 py-0.5 micro-label text-indigo-500">当前</span>}
+                    <span className={`rounded px-1.5 py-0.5 micro-label ${acc.role === 'admin' ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
                       {acc.role === 'admin' ? '管理员' : '读者'}
                     </span>
-                    {!acc.is_active && <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[11px] font-bold text-rose-500">已停用</span>}
+                    {!acc.is_active && <span className="rounded bg-rose-50 px-1.5 py-0.5 micro-label text-rose-500">已停用</span>}
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-1.5">
