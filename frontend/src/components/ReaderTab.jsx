@@ -337,7 +337,7 @@ export default function ReaderTab({ showToast }) {
         <div className="reader-source-scroll">
           {sourcesLoading ? (
             <div className="reader-empty">
-              <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+              <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
               <span>正在载入来源…</span>
             </div>
           ) : (
@@ -436,7 +436,7 @@ export default function ReaderTab({ showToast }) {
       <section className="reader-col reader-col-list" aria-hidden={listCollapsed}>
         <div className="reader-list-inner">
         <div className="reader-search">
-          <Search className="h-4 w-4 text-slate-400" />
+          <Search className="h-4 w-4 text-slate-500" />
           <input
             type="text"
             value={searchInput}
@@ -455,7 +455,7 @@ export default function ReaderTab({ showToast }) {
         <div className="reader-list-scroll" ref={listRef}>
           {articlesLoading ? (
             <div className="reader-empty">
-              <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+              <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
               <span>正在载入文章…</span>
             </div>
           ) : !showFavorites && hasNoSubscriptions && !activeSourceId ? (

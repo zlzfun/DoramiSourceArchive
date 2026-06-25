@@ -295,7 +295,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
                   <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-600" />
                   <span className="font-bold text-slate-700">{PHASE_LABELS[progress?.phase] || '处理中…'}</span>
                   {progress?.total > 0 && <span className="font-mono text-slate-500">{progress.done}/{progress.total}</span>}
-                  {progress?.message && progress.total === 0 && <span className="text-slate-400">{progress.message}</span>}
+                  {progress?.message && progress.total === 0 && <span className="text-slate-500">{progress.message}</span>}
                 </div>
                 {progress?.total > 0 && (
                   <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-amber-100">
@@ -309,14 +309,14 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
             )}
 
             <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-amber-200/60 pt-3 text-xs">
-              <span className="font-medium text-slate-400">最近一次</span>
+              <span className="font-medium text-slate-500">最近一次</span>
               {lastRun ? (
                 <>
                   <span className={`font-bold ${statusColor}`}>{statusLabel}</span>
-                  {lastRun.report_date && <span className="text-slate-400">· {lastRun.report_date}</span>}
-                  {typeof lastRun.articles_count === 'number' && lastRun.status === 'success' && <span className="text-slate-400">· 收录 {lastRun.articles_count} 条</span>}
+                  {lastRun.report_date && <span className="text-slate-500">· {lastRun.report_date}</span>}
+                  {typeof lastRun.articles_count === 'number' && lastRun.status === 'success' && <span className="text-slate-500">· 收录 {lastRun.articles_count} 条</span>}
                 </>
-              ) : <span className="text-slate-400">尚未运行</span>}
+              ) : <span className="text-slate-500">尚未运行</span>}
               {lastRun?.error_message && <span className="w-full text-rose-500">错误：{lastRun.error_message}</span>}
             </div>
           </div>
@@ -351,10 +351,10 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
                 <span className="tiny-meta">按重要性取分数最高的前 N 条（正文与导出 JSON 同步）。</span>
               </div>
               <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-100 pt-3 text-xs">
-                <span className="font-medium text-slate-400">增量游标</span>
+                <span className="font-medium text-slate-500">增量游标</span>
                 <span className="flex items-center gap-2">
                   <code className="font-mono text-slate-500">{briefConfig?.cursor ? briefConfig.cursor.slice(0, 19) : '（空）'}</code>
-                  <button onClick={handleResetCursor} className="rounded-md px-2 py-0.5 micro-label text-slate-400 hover:bg-slate-100 hover:text-indigo-600" title="重置增量游标（用于重做/补生成）">
+                  <button onClick={handleResetCursor} className="rounded-md px-2 py-0.5 micro-label text-slate-500 hover:bg-slate-100 hover:text-indigo-600" title="重置增量游标（用于重做/补生成）">
                     重置
                   </button>
                 </span>
@@ -379,7 +379,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
           </div>
 
           {history.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-6 text-center text-xs text-slate-400">
+            <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-6 text-center text-xs text-slate-500">
               还没有生成过日报。配置好模型后点「立即生成」试试。
             </p>
           ) : (
@@ -394,7 +394,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
                         onClick={() => setExpandedId(open ? null : record.id)}
                         className="flex min-w-0 flex-1 items-center gap-2 text-left"
                       >
-                        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+                        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`} />
                         <span className="truncate text-sm font-bold text-slate-700">{record.publish_date || record.id}</span>
                         {typeof meta.articles_count === 'number' && (
                           <span className="tiny-meta shrink-0">· 收录 {meta.articles_count} 条</span>
@@ -404,7 +404,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
                       <button
                         onClick={() => handleDelete(record.id)}
                         disabled={deletingId === record.id}
-                        className="shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-500"
+                        className="shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-rose-50 hover:text-rose-500"
                         title="删除该日报"
                       >
                         {deletingId === record.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
@@ -433,7 +433,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
               <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
                 <Brain className="w-5 h-5 text-indigo-500" /> 智能模型配置
               </h3>
-              <button onClick={() => setLlmModalOpen(false)} className="text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
+              <button onClick={() => setLlmModalOpen(false)} className="text-slate-500 hover:text-slate-700"><X className="w-5 h-5" /></button>
             </div>
             <div className="p-6">
               <p className="tiny-meta mb-4">日报由后端大模型生成 · OpenAI 兼容协议（/chat/completions）· API Key 不回显</p>

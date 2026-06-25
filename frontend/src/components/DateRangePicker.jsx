@@ -108,13 +108,13 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
         onClick={toggleOpen}
         className={`date-range-trigger flex items-center justify-between bg-white/80 hover:bg-white rounded-lg px-3 py-3 cursor-pointer w-full transition-colors border ${isOpen ? 'border-blue-400 bg-blue-50/50 shadow-sm' : 'border-slate-200 hover:border-slate-300'}`}
       >
-        <span className={`truncate text-sm font-semibold ${startDate ? 'text-blue-700' : 'text-slate-400'}`}>
+        <span className={`truncate text-sm font-semibold ${startDate ? 'text-blue-700' : 'text-slate-500'}`}>
           {displayStr}
         </span>
         {startDate ? (
-          <X className="w-3.5 h-3.5 text-slate-400 hover:text-red-500 transition-colors" onClick={(e) => { e.stopPropagation(); onChange('', ''); setTempStart(null); setTempEnd(null); }} />
+          <X className="w-3.5 h-3.5 text-slate-500 hover:text-red-500 transition-colors" onClick={(e) => { e.stopPropagation(); onChange('', ''); setTempStart(null); setTempEnd(null); }} />
         ) : (
-          <Calendar className={`w-3.5 h-3.5 ${isOpen ? 'text-blue-500' : 'text-slate-400'}`} />
+          <Calendar className={`w-3.5 h-3.5 ${isOpen ? 'text-blue-500' : 'text-slate-500'}`} />
         )}
       </div>
 

@@ -373,7 +373,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             <div className="hidden text-right sm:block">
               <p className="text-xs font-black text-slate-800">{authState.user?.username || 'admin'}</p>
-              <p className="text-[11px] font-bold text-slate-400">{roleLabel}</p>
+              <p className="text-[11px] font-bold text-slate-500">{roleLabel}</p>
             </div>
             <button
               type="button"

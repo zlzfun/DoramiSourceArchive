@@ -689,7 +689,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               className="source-stat"
               title={`查看运行记录 · ${formatDateTime(health?.latest_run_at, '从未运行')}`}
             >
-              <Activity className="h-3.5 w-3.5 text-slate-400" />
+              <Activity className="h-3.5 w-3.5 text-slate-500" />
               <span>{formatRelativeTime(health?.latest_run_at)}</span>
             </button>
             <button
@@ -754,7 +754,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
 
         {fetcher.base_url && (
           <div className="source-url-inline">
-            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-slate-500" />
             <a className="source-url truncate" href={fetcher.base_url} target="_blank" rel="noreferrer" title={fetcher.base_url}>{fetcher.base_url}</a>
             <a className="source-url-open" href={fetcher.base_url} target="_blank" rel="noreferrer" title="打开来源入口">打开</a>
           </div>
@@ -836,7 +836,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                   <Layers className="h-5 w-5" />
                 </div>
                 <span>内置节点目录</span>
-                <span className="text-xs font-mono text-slate-400">{visibleFetchers.length}/{availableFetchers.length}</span>
+                <span className="text-xs font-mono text-slate-500">{visibleFetchers.length}/{availableFetchers.length}</span>
               </div>
             </div>
             <div className="catalog-filter-row catalog-filter-row-with-search">
@@ -854,7 +854,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                 ))}
               </div>
               <div className="search-box catalog-search">
-                <Search className="mr-2 h-4 w-4 text-slate-400" />
+                <Search className="mr-2 h-4 w-4 text-slate-500" />
                 <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="搜索名称、主体、ID、标签、Base URL" className="py-2" />
               </div>
             </div>
@@ -880,7 +880,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           </div>
 
           {groupedSections.length === 0 ? (
-            <div className="surface-card rounded-[var(--r-overlay)] p-16 text-center text-slate-400 font-medium">当前筛选条件下没有匹配的节点</div>
+            <div className="surface-card rounded-[var(--r-overlay)] p-16 text-center text-slate-500 font-medium">当前筛选条件下没有匹配的节点</div>
           ) : (
             <div className="space-y-8">
               {groupedSections.map(section => {
@@ -971,7 +971,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                 <FolderPlus className="h-5 w-5" />
               </div>
               <span>采集范围</span>
-              <span className="text-xs font-mono text-slate-400">{nodeGroups.length}</span>
+              <span className="text-xs font-mono text-slate-500">{nodeGroups.length}</span>
             </div>
             <button onClick={() => openCreateGroup([])} className="action-button action-button-primary min-h-[36px] px-3 text-xs">
               <FolderPlus /> 新建采集范围
@@ -979,7 +979,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           </div>
           <div className="divide-y divide-slate-100">
             {nodeGroups.length === 0 ? (
-              <div className="p-12 text-center text-slate-400 font-medium">还没有采集范围，点右上角「新建采集范围」创建第一个。</div>
+              <div className="p-12 text-center text-slate-500 font-medium">还没有采集范围，点右上角「新建采集范围」创建第一个。</div>
             ) : nodeGroups.map(group => {
               const isExpanded = expandedGroupId === group.id;
               return (
@@ -987,10 +987,10 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                   <button onClick={() => setExpandedGroupId(isExpanded ? null : group.id)} className="w-full px-5 py-4 flex items-center justify-between hover:bg-slate-50 text-left">
                     <div className="min-w-0">
                       <div className="flex items-center">
-                        {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-400 mr-2" /> : <ChevronRight className="w-4 h-4 text-slate-400 mr-2" />}
+                        {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-500 mr-2" /> : <ChevronRight className="w-4 h-4 text-slate-500 mr-2" />}
                         <div className="card-title truncate">{group.name}</div>
                       </div>
-                      <div className="text-xs text-slate-400 mt-1 ml-6">{(group.fetcher_ids || []).length} 个节点 · {group.description || '无说明'}</div>
+                      <div className="text-xs text-slate-500 mt-1 ml-6">{(group.fetcher_ids || []).length} 个节点 · {group.description || '无说明'}</div>
                     </div>
                     <div className="hidden sm:flex items-center -space-x-1.5">
                       {(group.fetcher_ids || []).slice(0, 5).map(id => {
@@ -1015,7 +1015,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                               <LogoMark company={resolveCompany(f || {})} size="sm" />
                               <div className="min-w-0 flex-1">
                                 <div className="font-bold text-slate-700 text-sm truncate">{getFetcherName(fetcherId)}</div>
-                                <div className="font-mono text-[11px] text-slate-400 truncate">{fetcherId}</div>
+                                <div className="font-mono text-[11px] text-slate-500 truncate">{fetcherId}</div>
                               </div>
                               <code className="hidden md:block text-[11px] text-slate-500 bg-white border border-slate-100 rounded px-2 py-1 max-w-[180px] truncate" title={JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}>
                                 {JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}
@@ -1082,7 +1082,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
               <div>
                 <h3 className="card-title">{editingGroupId ? '编辑采集范围' : '新建采集范围'}</h3>
-                <p className="text-xs text-slate-400 mt-1">采集范围只维护节点集合和参数模板，可被采集任务复用。</p>
+                <p className="text-xs text-slate-500 mt-1">采集范围只维护节点集合和参数模板，可被采集任务复用。</p>
               </div>
               <button onClick={() => setGroupModalOpen(false)} className="p-2 rounded-lg hover:bg-slate-200 text-slate-500"><X className="w-4 h-4" /></button>
             </div>
@@ -1102,7 +1102,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
                   <div className="p-3 bg-slate-50 border-b border-slate-200">
                     <div className="form-search-box relative">
-                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                       <input value={modalSearch} onChange={event => setModalSearch(event.target.value)} placeholder="搜索节点" className="form-input pl-9" />
                     </div>
                   </div>
@@ -1128,7 +1128,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                           <LogoMark company={resolveCompany(fetcher)} size="sm" />
                           <div className="min-w-0">
                             <div className="font-bold text-slate-700 text-sm truncate">{fetcher.name}</div>
-                            <div className="font-mono text-[11px] text-slate-400 truncate">{fetcher.id}</div>
+                            <div className="font-mono text-[11px] text-slate-500 truncate">{fetcher.id}</div>
                           </div>
                         </button>
                       );
@@ -1138,7 +1138,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
 
                 <div className="space-y-3">
                   {(groupDraft.fetcher_ids || []).length === 0 ? (
-                    <div className="border border-dashed border-slate-200 rounded-xl p-10 text-center text-slate-400 font-medium">未选择节点</div>
+                    <div className="border border-dashed border-slate-200 rounded-xl p-10 text-center text-slate-500 font-medium">未选择节点</div>
                   ) : (groupDraft.fetcher_ids || []).map(fetcherId => {
                     const fetcher = fetchersById[fetcherId];
                     return (
@@ -1148,14 +1148,14 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                             <LogoMark company={resolveCompany(fetcher || {})} size="sm" />
                             <div className="min-w-0">
                               <div className="card-title truncate">{fetcher?.name || fetcherId}</div>
-                              <div className="font-mono text-[11px] text-slate-400 mt-0.5">{fetcherId}</div>
+                              <div className="font-mono text-[11px] text-slate-500 mt-0.5">{fetcherId}</div>
                             </div>
                           </div>
-                          <button onClick={() => setGroupDraft(prev => ({ ...prev, fetcher_ids: prev.fetcher_ids.filter(id => id !== fetcherId) }))} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><X className="w-4 h-4" /></button>
+                          <button onClick={() => setGroupDraft(prev => ({ ...prev, fetcher_ids: prev.fetcher_ids.filter(id => id !== fetcherId) }))} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg"><X className="w-4 h-4" /></button>
                         </div>
                         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                           {(fetcher?.parameters || []).length === 0 ? (
-                            <div className="text-xs text-slate-400 font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">该节点无需扩展参数</div>
+                            <div className="text-xs text-slate-500 font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">该节点无需扩展参数</div>
                           ) : (fetcher.parameters || []).map(param => (
                             <label key={param.field} className="text-xs font-bold text-slate-500">
                               {param.label}

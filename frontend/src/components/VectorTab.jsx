@@ -116,7 +116,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
         {/* 检索控制行 */}
         <div className="vector-search-layout mb-3">
           <label className="search-box min-h-[48px] flex-1">
-            <Search className="mr-3 h-5 w-5 text-slate-400" />
+            <Search className="mr-3 h-5 w-5 text-slate-500" />
           <input
             type="text"
             value={searchQuery}

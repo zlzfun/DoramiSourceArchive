@@ -27,7 +27,7 @@ export default function ManualAddModal({ isOpen, uniqueContentTypes, uniqueSourc
       <div className="modal-panel max-w-2xl">
         <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
           <h3 className="font-bold text-lg text-slate-800 flex items-center"><Plus className="w-5 h-5 mr-2 text-blue-600" /> 手工录入知识数据</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-700"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="p-6 overflow-y-auto flex-1 space-y-4">

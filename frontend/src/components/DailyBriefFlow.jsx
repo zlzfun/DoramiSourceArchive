@@ -133,7 +133,7 @@ export default function DailyBriefFlow({ showToast, canManage = false }) {
                 </div>
                 <div>
                   <p className="text-sm font-bold text-slate-700">{node.title}</p>
-                  <p className="text-[11px] text-slate-400">{node.subtitle}</p>
+                  <p className="text-[11px] text-slate-500">{node.subtitle}</p>
                 </div>
               </button>
               {/* 步骤间箭头（仅大屏、非末位显示） */}
@@ -151,7 +151,7 @@ export default function DailyBriefFlow({ showToast, canManage = false }) {
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <p className="text-sm font-bold text-slate-700">{active.title} · {active.subtitle}</p>
             {active.llm && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-600">大模型节点</span>}
-            <span className="flex items-center gap-1.5 text-xs text-slate-400">
+            <span className="flex items-center gap-1.5 text-xs text-slate-500">
               {active.io[0]} <ChevronRight className="h-3 w-3" /> <span className="font-medium text-slate-500">{active.io[1]}</span>
             </span>
           </div>
@@ -185,7 +185,7 @@ export default function DailyBriefFlow({ showToast, canManage = false }) {
           {active.promptKey && (
             <div className="mt-3">
               <div className="mb-1.5 flex items-center justify-between">
-                <p className="form-label mb-0">系统提示词{pipeline?.model ? <span className="ml-1 normal-case text-slate-400">· 模型 {pipeline.model}</span> : null}</p>
+                <p className="form-label mb-0">系统提示词{pipeline?.model ? <span className="ml-1 normal-case text-slate-500">· 模型 {pipeline.model}</span> : null}</p>
                 <button
                   onClick={handleCopyPrompt}
                   disabled={!promptText}

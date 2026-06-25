@@ -43,7 +43,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
                 {isLoading ? '加载中' : isEditing ? '取消编辑' : '进入编辑模式'}
               </button>
             )}
-            <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-700 bg-white rounded-lg shadow-sm"><X className="w-5 h-5" /></button>
+            <button onClick={onClose} className="p-1.5 text-slate-500 hover:text-slate-700 bg-white rounded-lg shadow-sm"><X className="w-5 h-5" /></button>
           </div>
         </div>
 
@@ -63,14 +63,14 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
               ) : (
                 data.source_url ?
                   <a href={data.source_url} target="_blank" rel="noreferrer" className="text-sm font-medium text-blue-600 hover:text-blue-800 flex items-center break-all"><ExternalLink className="w-3.5 h-3.5 mr-1 shrink-0" /> {data.source_url}</a>
-                  : <span className="text-sm text-slate-400">无链接</span>
+                  : <span className="text-sm text-slate-500">无链接</span>
               )}
             </div>
             <div>
               <label className="form-label flex items-center"><Calendar className="w-3.5 h-3.5 mr-1" /> 来源节点与收录时间</label>
               <div className="text-sm font-medium text-slate-700 flex items-center space-x-2">
                 <span className="bg-slate-100 px-2 py-0.5 rounded text-slate-600">{getFetcherName(data.source_id)}</span>
-                <span className="text-slate-400">|</span>
+                <span className="text-slate-500">|</span>
                 <span className="font-mono">{data.fetched_date?.replace('T', ' ').substring(0, 19)}</span>
               </div>
             </div>

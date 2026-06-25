@@ -47,7 +47,7 @@ function GroupHeader({ accent = 'bg-indigo-500', title, hint }) {
     <div className="flex items-center gap-2.5 px-0.5">
       <span className={`h-5 w-1 shrink-0 rounded-full ${accent}`} />
       <h3 className="section-title">{title}</h3>
-      {hint && <span className="hidden text-xs font-medium text-slate-400 sm:inline">· {hint}</span>}
+      {hint && <span className="hidden text-xs font-medium text-slate-500 sm:inline">· {hint}</span>}
     </div>
   );
 }
@@ -350,7 +350,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
               className="flex w-full items-center gap-2 text-sm font-bold text-slate-600 hover:text-sky-700"
             >
               {toolsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              可用工具 <span className="font-normal text-slate-400">({TOOL_CARDS.length} 个)</span>
+              可用工具 <span className="font-normal text-slate-500">({TOOL_CARDS.length} 个)</span>
             </button>
             {toolsOpen && (
               <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-100 overflow-hidden">
@@ -423,12 +423,12 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
                 <p className="form-label">Skills 目录参考</p>
                 <div className="space-y-1">
                   <div className="flex justify-between text-xs">
-                    <span className="text-slate-400 font-medium">Claude Code</span>
+                    <span className="text-slate-500 font-medium">Claude Code</span>
                     <code className="text-slate-500 font-mono">~/.claude/skills/</code>
                   </div>
                   <div className="flex justify-between text-xs">
-                    <span className="text-slate-400 font-medium">其他工具</span>
-                    <span className="text-slate-400">参考工具文档</span>
+                    <span className="text-slate-500 font-medium">其他工具</span>
+                    <span className="text-slate-500">参考工具文档</span>
                   </div>
                 </div>
               </div>
@@ -463,11 +463,11 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
                 <p className="form-label">配置位置参考</p>
                 <div className="space-y-1">
                   <div className="flex justify-between text-xs">
-                    <span className="text-slate-400 font-medium">Claude.ai</span>
+                    <span className="text-slate-500 font-medium">Claude.ai</span>
                     <span className="text-slate-500">项目设置 → Instructions</span>
                   </div>
                   <div className="flex justify-between text-xs">
-                    <span className="text-slate-400 font-medium">Coze</span>
+                    <span className="text-slate-500 font-medium">Coze</span>
                     <span className="text-slate-500">Bot → Personality</span>
                   </div>
                 </div>

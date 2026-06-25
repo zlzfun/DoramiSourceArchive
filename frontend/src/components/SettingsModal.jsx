@@ -549,7 +549,7 @@ function IntegrationSection({ showToast, mcpStatus, canToggle, onMcpToggled }) {
           <div className="flex items-center gap-2">
             <Plug2 className="h-4 w-4 text-sky-500" />
             <span className="text-sm font-bold text-slate-700">MCP Server</span>
-            <span className={`text-xs font-bold ${mcpStatus === null ? 'text-slate-400' : enabled ? 'text-emerald-500' : 'text-rose-500'}`}>
+            <span className={`text-xs font-bold ${mcpStatus === null ? 'text-slate-500' : enabled ? 'text-emerald-500' : 'text-rose-500'}`}>
               {mcpStatus === null ? '…' : enabled ? '● 运行中' : '○ 已停止'}
             </span>
           </div>
@@ -566,7 +566,7 @@ function IntegrationSection({ showToast, mcpStatus, canToggle, onMcpToggled }) {
         <p className="tiny-meta mb-1 mt-3">接入地址</p>
         <div className="flex items-center gap-2 rounded-[var(--r-control)] border border-slate-100 bg-slate-50 px-3 py-2">
           <code className="min-w-0 flex-1 truncate text-xs font-bold text-slate-600" title={mcpUrl}>{mcpUrl}</code>
-          <button onClick={handleCopy} className="shrink-0 text-slate-400 hover:text-indigo-600" title="复制 MCP 地址" aria-label="复制 MCP 地址">
+          <button onClick={handleCopy} className="shrink-0 text-slate-500 hover:text-indigo-600" title="复制 MCP 地址" aria-label="复制 MCP 地址">
             {copied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
           </button>
         </div>
@@ -670,7 +670,7 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
       <div className="mb-4 flex items-center justify-center gap-2.5 rounded-[var(--r-card)] border border-slate-100 bg-slate-50/60 px-4 py-3 text-xs font-bold text-slate-500">
         <span className="flex items-center gap-1.5"><Download className="h-3.5 w-3.5 text-indigo-500" /> 本端导出</span>
         <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
-        <span className="flex items-center gap-1.5"><FileText className="h-3.5 w-3.5 text-slate-400" /> 归档包</span>
+        <span className="flex items-center gap-1.5"><FileText className="h-3.5 w-3.5 text-slate-500" /> 归档包</span>
         <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
         <span className="flex items-center gap-1.5"><Upload className="h-3.5 w-3.5 text-emerald-500" /> 另一端导入</span>
       </div>
@@ -854,7 +854,7 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, av
             <SettingsIcon className="h-5 w-5 text-indigo-500" />
             <h3 className="text-lg font-black text-slate-800">设置</h3>
           </div>
-          <button onClick={onClose} className="rounded-lg bg-white p-1.5 text-slate-400 shadow-sm hover:text-slate-700" aria-label="关闭">
+          <button onClick={onClose} className="rounded-lg bg-white p-1.5 text-slate-500 shadow-sm hover:text-slate-700" aria-label="关闭">
             <X className="h-5 w-5" />
           </button>
         </div>

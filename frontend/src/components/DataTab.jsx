@@ -398,9 +398,9 @@ export default function DataTab({
         <div className="flex flex-col gap-4">
           <div className="ledger-filter-row flex flex-col gap-3 lg:flex-row lg:items-center">
             <label className="search-box min-h-[52px] flex-1">
-              <Search className="mr-3 h-5 w-5 text-slate-400" />
+              <Search className="mr-3 h-5 w-5 text-slate-500" />
               <input type="text" placeholder="搜索标题、内容、来源网站、标签等关键词..." value={filters.search} onChange={e => setFilters({ ...filters, search: e.target.value })} onKeyDown={e => e.key === 'Enter' && handleSearchSubmit()} className="py-3" />
-              <span className="hidden rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-400 sm:inline-flex">⌘ /</span>
+              <span className="hidden rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-500 sm:inline-flex">⌘ /</span>
             </label>
             <div className="field-box lg:w-64">
               <span>数据来源</span>
@@ -538,7 +538,7 @@ export default function DataTab({
                 </tr>
               ))
             ) : articles.length === 0 ? (
-              <tr><td colSpan={canManageArticles && ragEnabled ? 7 : 6} className="px-6 py-16 text-center text-slate-400 font-medium">当前时间区间或过滤条件下，未查询到相关数据</td></tr>
+              <tr><td colSpan={canManageArticles && ragEnabled ? 7 : 6} className="px-6 py-16 text-center text-slate-500 font-medium">当前时间区间或过滤条件下，未查询到相关数据</td></tr>
             ) : articles.map((article) => (
               <tr key={article.id} className="hover:bg-blue-50/40 transition-colors group">
                 <td className="px-4 py-4 text-center">
@@ -563,7 +563,7 @@ export default function DataTab({
                         <LogoMark company={company} size="sm" />
                         <div className="min-w-0">
                           <div className="ledger-source-name font-bold text-slate-700 text-xs line-clamp-1" title={article.source_id}>{name}</div>
-                          {showCompany && <div className="text-[11px] text-slate-400 truncate">{company.name}</div>}
+                          {showCompany && <div className="text-[11px] text-slate-500 truncate">{company.name}</div>}
                         </div>
                       </button>
                     );
@@ -571,7 +571,7 @@ export default function DataTab({
                 </td>
                 <td className="px-4 py-4 font-bold text-slate-800 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => openDetailModal(article)}>
                   <div className="line-clamp-1">{article.title}</div>
-                  <div className="mt-1 line-clamp-1 text-xs font-semibold text-slate-400">{article.content_preview || article.content || '暂无摘要内容'}</div>
+                  <div className="mt-1 line-clamp-1 text-xs font-semibold text-slate-500">{article.content_preview || article.content || '暂无摘要内容'}</div>
                 </td>
                 <td className="px-3 py-4 text-slate-500 text-xs font-mono">{article.publish_date?.split('T')[0] || '-'}</td>
                 <td className="px-3 py-4 text-slate-600 text-xs font-mono">{article.fetched_date?.replace('T', ' ').substring(0, 16) || '-'}</td>

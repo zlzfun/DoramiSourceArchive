@@ -108,7 +108,7 @@ export default function AccessTokenCard({ showToast, variant = 'card' }) {
       <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
         <div className="h-5 w-1 rounded-full bg-amber-500" />
         <h3 className="section-title">访问令牌</h3>
-        <span className="ml-auto text-xs font-medium text-slate-400">dfeed_ · 覆盖你订阅的全部来源</span>
+        <span className="ml-auto text-xs font-medium text-slate-500">dfeed_ · 覆盖你订阅的全部来源</span>
       </div>
 
       <div className="space-y-4 p-6">
