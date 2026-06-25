@@ -185,7 +185,7 @@ export default function CustomNodeBuilder({ showToast }) {
   return (
     <div className="space-y-6">
       {/* 第一步：输入 URL 分析 */}
-      <div className="surface-card rounded-[16px] p-5">
+      <div className="surface-card rounded-[var(--r-overlay)] p-5">
         <div className="flex items-center gap-2 mb-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-50 text-violet-600"><Wand2 className="h-5 w-5" /></div>
           <div>
@@ -219,7 +219,7 @@ export default function CustomNodeBuilder({ showToast }) {
 
       {/* 第二步：编辑配置 + 预览 */}
       {form && (
-        <div className="surface-card rounded-[16px] p-5 space-y-4">
+        <div className="surface-card rounded-[var(--r-overlay)] p-5 space-y-4">
           <div className="font-semibold text-slate-800">配置（可编辑）</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Field label="节点名称"><input className={inputCls} value={form.name} onChange={e => set('name', e.target.value)} /></Field>
@@ -291,7 +291,7 @@ export default function CustomNodeBuilder({ showToast }) {
       )}
 
       {/* 第三步：已存自定义源 */}
-      <div className="surface-card rounded-[16px] p-5">
+      <div className="surface-card rounded-[var(--r-overlay)] p-5">
         <div className="flex items-center justify-between mb-3">
           <div className="font-semibold text-slate-800">已存自定义源（{saved.length}）</div>
           <button onClick={loadSaved} className="text-sm text-slate-500 inline-flex items-center gap-1"><RefreshCw className="h-3.5 w-3.5" /> 刷新</button>

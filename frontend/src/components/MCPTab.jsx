@@ -233,7 +233,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
       {sub === 'access' && (
         <div className="space-y-6 animate-in fade-in">
       {/* ── HERO（克制的渐变标识卡，纹理交给 .integration-hero 自带的渐变光晕）── */}
-      <div className="integration-hero relative overflow-hidden rounded-[14px] p-7 shadow-lg shadow-blue-500/10">
+      <div className="integration-hero relative overflow-hidden rounded-[var(--r-card)] p-7 shadow-lg shadow-blue-500/10">
         <div className="relative">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -271,7 +271,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
         <GroupHeader accent="bg-sky-500" title="面向 Agent" hint="MCP 实时接入 · Skill 自动生成日报" />
         <div className="space-y-5">
       {/* ── MCP DETAILS ──────────────────────────────────────────── */}
-      <div className="surface-card rounded-[14px] overflow-hidden">
+      <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-6 py-4 border-b border-slate-100">
           <div className="w-1 h-5 rounded-full bg-sky-500" />
           <h3 className="section-title">MCP 配置详情</h3>
@@ -294,7 +294,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
         </div>
 
         <div className="p-6 space-y-5">
-          <div className="rounded-[10px] border border-sky-100 bg-sky-50 px-4 py-3">
+          <div className="rounded-[var(--r-control)] border border-sky-100 bg-sky-50 px-4 py-3">
             <button
               type="button"
               onClick={() => setScopeOpen(o => !o)}
@@ -316,7 +316,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
 
           {/* MCP 未启动：醒目横幅，避免被下方大段配置淹没 */}
           {status !== null && !enabled && (
-            <div className="flex items-start gap-3 rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3">
+            <div className="flex items-start gap-3 rounded-[var(--r-control)] border border-rose-200 bg-rose-50 px-4 py-3">
               <PowerOff className="mt-0.5 h-5 w-5 shrink-0 text-rose-500" />
               <div>
                 <p className="text-sm font-bold text-rose-900">MCP Server 未启动</p>
@@ -329,7 +329,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
           {enabled ? (
             configBlocks
           ) : (
-            <div className="rounded-[10px] border border-slate-200 bg-slate-50/60">
+            <div className="rounded-[var(--r-control)] border border-slate-200 bg-slate-50/60">
               <button
                 type="button"
                 onClick={() => setStoppedConfigOpen(o => !o)}
@@ -379,7 +379,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
       </div>
 
       {/* ── SKILL INSTALLATION（常驻展开，与其它板块一致） ───────────────── */}
-      <div className="surface-card rounded-[14px] overflow-hidden">
+      <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
         <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
           <div className="w-1 h-5 rounded-full bg-violet-500" />
           <h3 className="section-title">Skill 安装指南</h3>

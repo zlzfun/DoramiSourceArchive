@@ -829,7 +829,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
 
       {view === 'catalog' && (
         <>
-          <div className="surface-card rounded-[16px] overflow-hidden">
+          <div className="surface-card rounded-[var(--r-overlay)] overflow-hidden">
             <div className="catalog-topbar">
               <div className="section-title">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
@@ -880,7 +880,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           </div>
 
           {groupedSections.length === 0 ? (
-            <div className="surface-card rounded-[16px] p-16 text-center text-slate-400 font-medium">当前筛选条件下没有匹配的节点</div>
+            <div className="surface-card rounded-[var(--r-overlay)] p-16 text-center text-slate-400 font-medium">当前筛选条件下没有匹配的节点</div>
           ) : (
             <div className="space-y-8">
               {groupedSections.map(section => {
@@ -964,7 +964,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       )}
 
       {view === 'groups' && (
-        <div className="surface-card rounded-[16px] overflow-hidden">
+        <div className="surface-card rounded-[var(--r-overlay)] overflow-hidden">
           <div className="panel-header">
             <div className="section-title">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">

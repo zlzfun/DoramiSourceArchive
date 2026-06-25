@@ -80,14 +80,14 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
             <label className="form-label flex items-center"><Database className="w-3.5 h-3.5 mr-1" /> 正文核心/摘要 (用于向量检索)</label>
             {isEditing ? (
               <textarea defaultValue={data.content} id="edit-content" rows="8" className="form-input leading-relaxed" />
-            ) : <div className="text-sm bg-slate-50 p-4 rounded-[14px] border border-slate-100 whitespace-pre-wrap leading-relaxed text-slate-700 shadow-inner max-h-64 overflow-y-auto">{isLoading ? '正在加载全文…' : (data.content || '无正文内容')}</div>}
+            ) : <div className="text-sm bg-slate-50 p-4 rounded-[var(--r-card)] border border-slate-100 whitespace-pre-wrap leading-relaxed text-slate-700 shadow-inner max-h-64 overflow-y-auto">{isLoading ? '正在加载全文…' : (data.content || '无正文内容')}</div>}
           </div>
 
           <div>
             <label className="form-label flex items-center"><Box className="w-3.5 h-3.5 mr-1" /> 扩展元数据 (Extensions JSON)</label>
             {isEditing ? (
               <textarea defaultValue={data.extensions_json} id="edit-extensions" rows="6" className="form-input font-mono text-xs" />
-            ) : <pre className="text-xs bg-slate-800 text-emerald-400 p-4 rounded-[14px] overflow-x-auto shadow-inner">{isLoading ? '正在加载元数据…' : JSON.stringify(JSON.parse(data.extensions_json || '{}'), null, 2)}</pre>}
+            ) : <pre className="text-xs bg-slate-800 text-emerald-400 p-4 rounded-[var(--r-card)] overflow-x-auto shadow-inner">{isLoading ? '正在加载元数据…' : JSON.stringify(JSON.parse(data.extensions_json || '{}'), null, 2)}</pre>}
           </div>
         </div>
 

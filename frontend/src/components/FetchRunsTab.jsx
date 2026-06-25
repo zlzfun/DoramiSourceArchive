@@ -494,7 +494,7 @@ export default function FetchRunsTab({
 
       {view === 'jobs' && (
         <>
-          <div className="surface-card rounded-[16px] overflow-hidden">
+          <div className="surface-card rounded-[var(--r-overlay)] overflow-hidden">
             <div className="panel-header">
               <div>
                 <div className="section-title">
@@ -517,7 +517,7 @@ export default function FetchRunsTab({
             </div>
           </div>
 
-          <div className="surface-card rounded-[14px] overflow-hidden">
+          <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
             <div className="divide-y divide-slate-100">
               {collectionJobs.length === 0 ? (
                 <div className="p-12 text-center text-slate-400 font-medium">还没有采集任务，点「新建采集任务」创建第一个。</div>
@@ -593,7 +593,7 @@ export default function FetchRunsTab({
 
       {view === 'history' && (
         <>
-          <div className="surface-card rounded-[16px] overflow-hidden">
+          <div className="surface-card rounded-[var(--r-overlay)] overflow-hidden">
             <div className="panel-header">
               <div>
                 <div className="section-title">
@@ -612,29 +612,29 @@ export default function FetchRunsTab({
           </div>
 
           <div className="stagger grid grid-cols-2 md:grid-cols-5 gap-3">
-            <div className="metric-card rounded-[14px] p-4">
+            <div className="metric-card rounded-[var(--r-card)] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">本页运行</div>
               <div className="stat-number text-slate-800"><AnimatedNumber value={unifiedRuns.length} /></div>
             </div>
-            <div className="metric-card rounded-[14px] p-4">
+            <div className="metric-card rounded-[var(--r-card)] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">新增入库</div>
               <div className="stat-number text-emerald-600"><AnimatedNumber value={totals.saved} /></div>
             </div>
-            <div className="metric-card rounded-[14px] p-4">
+            <div className="metric-card rounded-[var(--r-card)] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">抓取产出</div>
               <div className="stat-number text-blue-600"><AnimatedNumber value={totals.fetched} /></div>
             </div>
-            <div className="metric-card rounded-[14px] p-4">
+            <div className="metric-card rounded-[var(--r-card)] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">重复跳过</div>
               <div className="stat-number text-amber-600"><AnimatedNumber value={totals.skipped} /></div>
             </div>
-            <div className="metric-card rounded-[14px] p-4">
+            <div className="metric-card rounded-[var(--r-card)] p-4">
               <div className="text-xs font-bold text-slate-400 mb-1">失败次数</div>
               <div className="stat-number text-red-600"><AnimatedNumber value={totals.failed} /></div>
             </div>
           </div>
 
-          <div className="surface-card rounded-[16px] p-5">
+          <div className="surface-card rounded-[var(--r-overlay)] p-5">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-[1.2fr_1fr_1fr_auto]">
               <div className="field-box">
                 <span>数据来源</span>
@@ -688,7 +688,7 @@ export default function FetchRunsTab({
             </div>
           )}
 
-          <div className="surface-card rounded-[14px] overflow-hidden">
+          <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
             {loadError && (
               <div className="px-4 py-3 bg-red-50 border-b border-red-100 text-red-700 text-sm font-bold flex items-center">
                 <AlertTriangle className="w-4 h-4 mr-2" /> {loadError}

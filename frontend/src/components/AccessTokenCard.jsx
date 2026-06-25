@@ -53,9 +53,9 @@ export default function AccessTokenCard({ showToast, variant = 'card' }) {
   // ── Hero 变体：深色玻璃面板，内嵌进紫色 Hero ───────────────────────
   if (variant === 'hero') {
     return (
-      <div className="mt-5 rounded-[12px] border border-white/20 bg-white/[0.12] p-4 backdrop-blur">
+      <div className="mt-5 rounded-[var(--r-card)] border border-white/20 bg-white/[0.12] p-4 backdrop-blur">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-white/15 text-white">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--r-control)] bg-white/15 text-white">
             <KeyRound className="h-[18px] w-[18px]" />
           </div>
           <div className="min-w-0 flex-1">
@@ -82,7 +82,7 @@ export default function AccessTokenCard({ showToast, variant = 'card' }) {
         </p>
 
         {plainToken && (
-          <div className="mt-3 rounded-[10px] border border-white/25 bg-white/[0.18] p-3">
+          <div className="mt-3 rounded-[var(--r-control)] border border-white/25 bg-white/[0.18] p-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xs font-black text-white">访问令牌仅显示一次</p>
@@ -104,7 +104,7 @@ export default function AccessTokenCard({ showToast, variant = 'card' }) {
   }
 
   return (
-    <div className="surface-card rounded-[14px] overflow-hidden">
+    <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
       <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
         <div className="h-5 w-1 rounded-full bg-amber-500" />
         <h3 className="section-title">访问令牌</h3>
@@ -131,16 +131,16 @@ export default function AccessTokenCard({ showToast, variant = 'card' }) {
         </div>
 
         {plainToken && (
-          <div className="surface-card rounded-[14px] border-emerald-200 bg-emerald-50/80 p-4">
+          <div className="surface-card rounded-[var(--r-card)] border-emerald-200 bg-emerald-50/80 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
               <div className="flex min-w-0 flex-1 items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-emerald-100 text-emerald-700">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--r-control)] bg-emerald-100 text-emerald-700">
                   <KeyRound className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-black text-emerald-900">访问令牌仅显示一次</p>
                   <p className="tiny-meta mt-1 text-emerald-700">复制到你的 MCP 客户端或下游系统，关闭后只能再次生成新令牌。</p>
-                  <code className="mt-2 block break-all rounded-[10px] bg-white/80 px-3 py-2 text-xs font-bold text-emerald-950">{plainToken}</code>
+                  <code className="mt-2 block break-all rounded-[var(--r-control)] bg-white/80 px-3 py-2 text-xs font-bold text-emerald-950">{plainToken}</code>
                 </div>
               </div>
               <button onClick={() => handleCopy(plainToken, 'token-notice')} className="action-button action-button-secondary shrink-0">

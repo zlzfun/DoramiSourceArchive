@@ -231,7 +231,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
   // 非管理员（受限读者）：只给一个订阅指引，不暴露任何管理控件。
   if (!canManage) {
     return (
-      <div className="surface-card rounded-[14px] overflow-hidden">
+      <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
         <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
           <div className="w-1 h-5 rounded-full bg-amber-500" />
           <h3 className="section-title">AI 资讯日报</h3>
@@ -251,7 +251,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
   const statusColor = lastRun?.status === 'success' ? 'text-emerald-500' : lastRun?.status === 'failed' ? 'text-rose-500' : 'text-slate-500';
 
   return (
-    <div className="surface-card rounded-[14px] overflow-hidden">
+    <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
       <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
         <div className="w-1 h-5 rounded-full bg-amber-500" />
         <h3 className="section-title">AI 资讯日报</h3>

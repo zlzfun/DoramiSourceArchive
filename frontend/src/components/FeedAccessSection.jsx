@@ -37,7 +37,7 @@ function FeedDocsPanel({ onCopy, copiedKey }) {
       <p className="tiny-meta">下例中的 <code className="font-mono">{TOKEN_PLACEHOLDER}</code> 请替换为上方「访问令牌」里的 dfeed_ 令牌。</p>
       <div>
         <p className="form-label mb-2">请求参数</p>
-        <div className="overflow-hidden rounded-[10px] border border-slate-100">
+        <div className="overflow-hidden rounded-[var(--r-control)] border border-slate-100">
           <table className="w-full text-left text-xs">
             <tbody className="divide-y divide-slate-100">
               {FEED_PARAMS.map(([name, desc]) => (
@@ -65,7 +65,7 @@ function FeedDocsPanel({ onCopy, copiedKey }) {
                 复制
               </button>
             </div>
-            <pre className="overflow-x-auto rounded-[10px] bg-slate-900 px-3 py-2.5 text-[11px] leading-5 text-slate-100"><code>{cmd}</code></pre>
+            <pre className="overflow-x-auto rounded-[var(--r-control)] bg-slate-900 px-3 py-2.5 text-[11px] leading-5 text-slate-100"><code>{cmd}</code></pre>
           </div>
         ))}
       </div>
@@ -92,7 +92,7 @@ export default function FeedAccessSection({ showToast }) {
   };
 
   return (
-    <div className="surface-card rounded-[14px] overflow-hidden">
+    <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
       <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
         <div className="h-5 w-1 rounded-full bg-amber-500" />
         <h3 className="section-title">个人订阅接口</h3>

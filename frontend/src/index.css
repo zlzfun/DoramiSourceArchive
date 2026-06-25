@@ -45,7 +45,7 @@
   --dorami-ink: #0b1220;                       /* 近黑标题 */
   --dorami-ink-2: #2b3445;                     /* 正文强调 */
   --dorami-muted: #5b6678;                     /* 次要文字 */
-  --dorami-faint: #8a93a3;                     /* 最弱：占位/表头 */
+  --dorami-faint: #64748b;                     /* 最弱：占位/表头（提到 slate-500，白底 ≥4.5:1 达 WCAG AA） */
 
   /* 图底分离：画布(明确冷灰) → 卡片(纯白浮起) → 凹陷井(嵌进台面的子区域) */
   --dorami-canvas: #eef1f6;
@@ -67,14 +67,25 @@
 
   /* 高程系统：弱→强 = 静止 / 卡片 / 浮起。灰底上阴影需更实，白卡才浮得起来。 */
   --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
-  --sh-2: 0 2px 6px rgba(11, 18, 32, 0.06), 0 12px 28px rgba(11, 18, 32, 0.1);
-  --sh-3: 0 6px 16px rgba(11, 18, 32, 0.1), 0 24px 52px rgba(11, 18, 32, 0.15);
+  /* 工作区收敛（P3）：阴影适度调淡，层级更多靠色面+边框，卡片不再明显悬浮 */
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --sh-3: 0 4px 10px rgba(11, 18, 32, 0.08), 0 16px 36px rgba(11, 18, 32, 0.11);
   --sh-accent: 0 8px 20px rgba(91, 84, 232, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.22);
   /* 旧令牌名映射到新高程阶，组件层无需逐个改 */
   --dorami-soft-shadow: var(--sh-2);
   --dorami-shadow: var(--sh-3);
   --dorami-focus: rgba(91, 84, 232, 0.32);
   --dorami-grid: rgba(91, 84, 232, 0.05);
+
+  /* ── 圆角 canonical 家族（P3 收敛）──
+     全站圆角统一到下列 token，消除散落的 5/7/8/9/11/12/13/20/24px 等魔法值；
+     一个视图内只用同一家族，勿混圆与方。Tailwind 具名 rounded-lg/xl/2xl 为标准梯度可共存，
+     新代码优先引用这些 token（JSX 用 rounded-[var(--r-card)] 等）。 */
+  --r-sm: 6px;          /* 微元素：徽标、代码块、角标 */
+  --r-control: 10px;    /* 控件：按钮、输入框、下拉、开关、小 chip */
+  --r-card: 14px;       /* 卡片、面板、列表容器 */
+  --r-overlay: 16px;    /* 模态、浮层、hero/全屏面 */
+  --r-pill: 9999px;     /* 胶囊、头像、圆形控件 */
 
   --motion-fast: 220ms;
   --motion-medium: 360ms;
@@ -104,7 +115,7 @@ html {
 
 ::-webkit-scrollbar-thumb {
   background: rgba(91, 84, 232, 0.25);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -470,7 +481,7 @@ button:disabled {
   );
   background-size: 1200px 100%;
   animation: shimmer 1.6s infinite linear;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
 }
 
 @layer components {
@@ -524,7 +535,7 @@ button:disabled {
   /* ── Navigation ── */
 
   .nav-pill {
-    border-radius: 8px;
+    border-radius: var(--r-control);
     transition:
       color var(--motion-fast) var(--motion-ease),
       background var(--motion-fast) var(--motion-ease),
@@ -540,7 +551,7 @@ button:disabled {
 
   .top-tab {
     border: 1px solid transparent;
-    border-radius: 9px;
+    border-radius: var(--r-control);
     transition:
       color var(--motion-fast) var(--motion-ease),
       background var(--motion-fast) var(--motion-ease),
@@ -570,7 +581,7 @@ button:disabled {
     right: 28px;
     bottom: -1px;
     height: 2px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     background: linear-gradient(90deg, var(--dorami-blue), var(--dorami-blue-2));
     opacity: 0.9;
   }
@@ -724,7 +735,7 @@ button:disabled {
     justify-content: center;
     gap: 7px;
     min-height: 40px;
-    border-radius: 9px;
+    border-radius: var(--r-control);
     border: 1px solid transparent;
     padding: 0 16px;
     font-family: inherit;
@@ -817,7 +828,7 @@ button:disabled {
     align-items: center;
     justify-content: center;
     border: 1px solid rgba(11, 18, 32, 0.12);
-    border-radius: 9px;
+    border-radius: var(--r-control);
     background: rgba(255, 255, 255, 0.84);
     color: #475569;
     box-shadow: 0 4px 14px rgba(11, 18, 32, 0.05);
@@ -970,7 +981,7 @@ button:disabled {
     position: absolute;
     width: 180px;
     height: 1.5px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     background: linear-gradient(90deg, transparent, rgba(214, 218, 255, 0.95));
     filter: drop-shadow(0 0 6px rgba(167, 159, 241, 0.85));
     opacity: 0;
@@ -1107,7 +1118,7 @@ button:disabled {
   .auth-logo-halo {
     position: absolute;
     inset: -8px;
-    border-radius: 24px;
+    border-radius: var(--r-overlay);
     background: conic-gradient(
       from 0deg,
       rgba(91, 84, 232, 0),
@@ -1124,7 +1135,7 @@ button:disabled {
     position: relative;
     height: 72px;
     width: 72px;
-    border-radius: 20px;
+    border-radius: var(--r-overlay);
     object-fit: contain;
     background: linear-gradient(135deg, var(--dorami-blue), var(--dorami-blue-2));
     box-shadow:
@@ -1252,7 +1263,7 @@ button:disabled {
     align-items: center;
     gap: 8px;
     padding: 9px 15px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     border: 1px solid rgba(170, 180, 255, 0.16);
     background: rgba(120, 130, 220, 0.08);
     backdrop-filter: blur(6px);
@@ -1291,7 +1302,7 @@ button:disabled {
   .auth-card {
     position: relative;
     padding: clamp(30px, 3.4vw, 44px);
-    border-radius: 24px;
+    border-radius: var(--r-overlay);
     border: 1px solid rgba(170, 180, 255, 0.16);
     background:
       linear-gradient(165deg, rgba(28, 31, 58, 0.82), rgba(14, 16, 34, 0.72));
@@ -1329,7 +1340,7 @@ button:disabled {
   .auth-card-ring {
     position: absolute;
     inset: 0;
-    border-radius: 24px;
+    border-radius: var(--r-overlay);
     padding: 1px;
     pointer-events: none;
     background: conic-gradient(
@@ -1400,7 +1411,7 @@ button:disabled {
     gap: 12px;
     height: 50px;
     padding: 0 16px;
-    border-radius: 13px;
+    border-radius: var(--r-card);
     border: 1px solid rgba(170, 180, 255, 0.16);
     background: rgba(8, 10, 24, 0.55);
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
@@ -1470,7 +1481,7 @@ button:disabled {
     height: 52px;
     margin-top: 6px;
     border: 0;
-    border-radius: 13px;
+    border-radius: var(--r-card);
     cursor: pointer;
     font-family: inherit;
     font-size: 15.5px;
@@ -1619,7 +1630,7 @@ button:disabled {
     align-items: center;
     gap: 3px;
     border: 1px solid rgba(11, 18, 32, 0.12);
-    border-radius: 12px;
+    border-radius: var(--r-card);
     background: rgba(240, 242, 246, 0.58);
     box-shadow: inset 0 1px 2px rgba(11, 18, 32, 0.04), 0 4px 14px rgba(11, 18, 32, 0.05);
     padding: 4px;
@@ -1632,7 +1643,7 @@ button:disabled {
     align-items: center;
     justify-content: center;
     gap: 7px;
-    border-radius: 8px;
+    border-radius: var(--r-control);
     padding: 0 22px;
     color: #64748b;
     font-size: 14px;
@@ -1706,7 +1717,7 @@ button:disabled {
     justify-content: space-between;
     gap: 16px;
     border: 1px solid rgba(11, 18, 32, 0.15);
-    border-radius: 14px;
+    border-radius: var(--r-card);
     background: rgba(255, 255, 255, 0.94);
     box-shadow: 0 24px 64px rgba(11, 18, 32, 0.16), 0 8px 24px rgba(11, 18, 32, 0.08);
     backdrop-filter: blur(24px) saturate(1.8);
@@ -1745,7 +1756,7 @@ button:disabled {
     display: flex;
     align-items: center;
     border: 1px solid rgba(11, 18, 32, 0.1);
-    border-radius: 10px;
+    border-radius: var(--r-control);
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.88));
     box-shadow:
@@ -1776,7 +1787,7 @@ button:disabled {
   }
 
   .search-box input::placeholder {
-    color: #94a3b8;
+    color: #64748b;
     font-weight: 500;
   }
 
@@ -1821,7 +1832,7 @@ button:disabled {
     max-width: 320px;
     padding: 12px 14px;
     border: 1px solid rgba(91, 84, 232, 0.22);
-    border-radius: 14px;
+    border-radius: var(--r-card);
     background: linear-gradient(135deg, #ffffff 0%, #f0effc 100%);
     box-shadow: 0 10px 30px rgba(91, 84, 232, 0.18), 0 2px 6px rgba(11, 18, 32, 0.06);
     text-align: left;
@@ -1939,12 +1950,12 @@ button:disabled {
   }
 
   .running-widget-progress-queued {
-    color: #94a3b8;
+    color: #64748b;
     font-weight: 600;
   }
 
   .running-widget-more {
-    color: #94a3b8;
+    color: #64748b;
     font-size: 11px;
     font-weight: 600;
     margin-top: 2px;
@@ -1974,7 +1985,7 @@ button:disabled {
   .panel-header-subtitle {
     margin-top: 8px;
     margin-left: 52px;
-    color: #94a3b8;
+    color: #64748b;
     font-size: 12px;
     line-height: 18px;
   }
@@ -2007,7 +2018,7 @@ button:disabled {
     min-width: 200px;
     max-width: 280px;
     min-height: 36px;
-    border-radius: 9px;
+    border-radius: var(--r-control);
     box-shadow:
       0 3px 12px rgba(11, 18, 32, 0.04),
       inset 0 1px 0 rgba(255, 255, 255, 0.86);
@@ -2038,7 +2049,7 @@ button:disabled {
 
   .catalog-chip {
     min-height: 34px;
-    border-radius: 9px;
+    border-radius: var(--r-control);
     padding: 0 13px;
     font-size: 13px;
     font-weight: 600;
@@ -2064,7 +2075,7 @@ button:disabled {
     height: 28px;
     padding-right: 12px;
     border-right: 1px solid rgba(91, 84, 232, 0.14);
-    color: #94a3b8;
+    color: #64748b;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.16em;
@@ -2077,7 +2088,7 @@ button:disabled {
     gap: 2px;
     padding: 4px;
     border: 1px solid rgba(11, 18, 32, 0.12);
-    border-radius: 11px;
+    border-radius: var(--r-control);
     background: linear-gradient(180deg, rgba(240, 242, 246, 0.85), rgba(255, 255, 255, 0.58));
     box-shadow: inset 0 1px 2px rgba(11, 18, 32, 0.05);
   }
@@ -2088,7 +2099,7 @@ button:disabled {
     gap: 6px;
     min-height: 32px;
     padding: 0 12px;
-    border-radius: 8px;
+    border-radius: var(--r-control);
     background: transparent;
     color: #64748b;
     font-size: 13px;
@@ -2131,7 +2142,7 @@ button:disabled {
     min-width: 20px;
     height: 18px;
     padding: 0 6px;
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     background: rgba(91, 84, 232, 0.1);
     color: var(--dorami-blue);
     font-size: 11px;
@@ -2155,7 +2166,7 @@ button:disabled {
     min-height: 34px;
     padding: 0 14px;
     border: 1px solid rgba(11, 18, 32, 0.12);
-    border-radius: 10px;
+    border-radius: var(--r-control);
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.9));
     color: #5b6678;
@@ -2204,7 +2215,7 @@ button:disabled {
     min-width: 20px;
     height: 18px;
     padding: 0 6px;
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     background: rgba(91, 84, 232, 0.1);
     color: var(--dorami-blue);
     font-size: 11px;
@@ -2223,7 +2234,7 @@ button:disabled {
 
   .node-param-panel {
     border: 1px solid var(--dorami-border);
-    border-radius: 10px;
+    border-radius: var(--r-control);
     background: var(--dorami-well);
     box-shadow: var(--dorami-inset);
     padding: 10px;
@@ -2264,7 +2275,7 @@ button:disabled {
     width: 100%;
     min-height: 32px;
     border: 1px solid rgba(11, 18, 32, 0.12);
-    border-radius: 8px;
+    border-radius: var(--r-control);
     background: rgba(255, 255, 255, 0.9);
     color: var(--dorami-ink);
     font-size: 13px;
@@ -2290,7 +2301,7 @@ button:disabled {
     align-items: center;
     gap: 8px;
     border: 1px solid rgba(11, 18, 32, 0.12);
-    border-radius: 8px;
+    border-radius: var(--r-control);
     background: rgba(255, 255, 255, 0.9);
     color: #334155;
     cursor: pointer;
@@ -2309,7 +2320,7 @@ button:disabled {
     justify-content: center;
     gap: 7px;
     border: 1px solid rgba(91, 84, 232, 0.14);
-    border-radius: 10px;
+    border-radius: var(--r-control);
     background: rgba(255, 255, 255, 0.9);
     color: #475569;
     font-size: 13px;
@@ -2355,7 +2366,7 @@ button:disabled {
     height: 19px;
     align-items: center;
     justify-content: center;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     background: rgba(91, 84, 232, 0.1);
     color: currentColor;
     font-size: 11px;
@@ -2373,7 +2384,7 @@ button:disabled {
     gap: 6px;
     height: 74px;
     border: 1px solid rgba(11, 18, 32, 0.12);
-    border-radius: 9px;
+    border-radius: var(--r-control);
     background: rgba(255, 255, 255, 0.84);
     cursor: default;
     font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
@@ -2454,7 +2465,7 @@ button:disabled {
   }
 
   .field-box .date-range-trigger span {
-    color: #94a3b8;
+    color: #64748b;
     font-family: inherit;
     font-size: 15px;
     font-weight: 600;
@@ -2478,7 +2489,7 @@ button:disabled {
     width: 116px;
     height: 28px;
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--r-control);
     appearance: none;
     -webkit-appearance: none;
     font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
@@ -2569,7 +2580,7 @@ button:disabled {
     grid-template-rows: auto 1fr;
     gap: 8px;
     border: 1px solid rgba(11, 18, 32, 0.12);
-    border-radius: 9px;
+    border-radius: var(--r-control);
     background: rgba(255, 255, 255, 0.84);
     padding: 12px 14px;
     transition:
@@ -2678,7 +2689,7 @@ button:disabled {
     font-size: 11px;
     font-weight: 800;
     letter-spacing: 0.02em;
-    color: #94a3b8;
+    color: #64748b;
   }
 
   .active-filter-chip {
@@ -2687,7 +2698,7 @@ button:disabled {
     gap: 6px;
     height: 28px;
     padding: 0 8px 0 10px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     border: 1px solid rgba(91, 84, 232, 0.18);
     background: rgba(91, 84, 232, 0.07);
     font-size: 12px;
@@ -2717,7 +2728,7 @@ button:disabled {
   }
 
   .active-filter-chip svg {
-    color: #94a3b8;
+    color: #64748b;
     transition: color var(--motion-fast) var(--motion-ease);
   }
 
@@ -2731,7 +2742,7 @@ button:disabled {
     gap: 4px;
     height: 28px;
     padding: 0 10px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     color: #64748b;
     font-size: 12px;
     font-weight: 800;
@@ -2746,7 +2757,7 @@ button:disabled {
   }
 
   .ledger-source-link {
-    border-radius: 8px;
+    border-radius: var(--r-control);
     padding: 3px 6px;
     margin: -3px -6px;
     transition:
@@ -2815,7 +2826,7 @@ button:disabled {
   .integration-card {
     position: relative;
     border: 1px solid rgba(155, 145, 240, 0.6);
-    border-radius: 14px;
+    border-radius: var(--r-card);
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(245, 243, 255, 0.84));
     box-shadow: 0 16px 40px rgba(91, 84, 232, 0.18);
     padding: 20px;
@@ -2838,7 +2849,7 @@ button:disabled {
     height: 36px;
     align-items: center;
     justify-content: center;
-    border-radius: 10px;
+    border-radius: var(--r-control);
     box-shadow: 0 8px 20px rgba(91, 84, 232, 0.14);
   }
 
@@ -2892,7 +2903,7 @@ button:disabled {
     align-items: center;
     justify-content: center;
     gap: 8px;
-    border-radius: 10px;
+    border-radius: var(--r-control);
     padding: 0 14px;
     font-size: 13px;
     font-weight: 800;
@@ -2954,7 +2965,7 @@ button:disabled {
     align-items: center;
     justify-content: center;
     border: 1px solid rgba(91, 84, 232, 0.18);
-    border-radius: 8px;
+    border-radius: var(--r-control);
     background: #f0effc;
     color: var(--dorami-blue-2);
     padding: 0 9px;
@@ -2973,7 +2984,7 @@ button:disabled {
     justify-content: center;
     gap: 5px;
     border: 1px solid transparent;
-    border-radius: 8px;
+    border-radius: var(--r-control);
     padding: 0 9px;
     font-size: 12px;
     font-weight: 700;
@@ -2993,7 +3004,7 @@ button:disabled {
     align-items: center;
     justify-content: center;
     border: 1px solid rgba(91, 84, 232, 0.14);
-    border-radius: 7px;
+    border-radius: var(--r-control);
     background: rgba(238, 237, 252, 0.82);
     color: #4a43d4;
     padding: 0 9px;
@@ -3025,7 +3036,7 @@ button:disabled {
   }
 
   .tiny-meta {
-    color: #94a3b8;
+    color: #64748b;
     font-size: 12px;
     font-weight: 500;
     line-height: 18px;
@@ -3056,10 +3067,10 @@ button:disabled {
 
   .empty-state {
     border: 1px dashed rgba(11, 18, 32, 0.18);
-    border-radius: 12px;
+    border-radius: var(--r-card);
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(240, 242, 246, 0.42));
-    color: #94a3b8;
+    color: #64748b;
     font-size: 14px;
     font-weight: 500;
     line-height: 22px;
@@ -3089,7 +3100,7 @@ button:disabled {
   .form-input {
     width: 100%;
     border: 1px solid rgba(11, 18, 32, 0.13);
-    border-radius: 9px;
+    border-radius: var(--r-control);
     background: rgba(255, 255, 255, 0.72);
     color: var(--dorami-ink);
     font-size: 14px;
@@ -3134,7 +3145,7 @@ button:disabled {
     width: 264px;
     margin-top: 8px;
     border: 1px solid rgba(11, 18, 32, 0.14);
-    border-radius: 12px;
+    border-radius: var(--r-card);
     background: #ffffff;
     box-shadow: 0 24px 56px rgba(11, 18, 32, 0.14), 0 8px 24px rgba(11, 18, 32, 0.08);
     padding: 16px;
@@ -3149,7 +3160,7 @@ button:disabled {
   }
 
   .date-range-weekday {
-    color: #94a3b8;
+    color: #64748b;
     font-size: 12px;
     font-weight: 700;
     line-height: 16px;
@@ -3162,7 +3173,7 @@ button:disabled {
     height: 28px;
     align-items: center;
     justify-content: center;
-    border-radius: 7px;
+    border-radius: var(--r-control);
     color: #334155;
     cursor: pointer;
     font-size: 12px;
@@ -3221,7 +3232,7 @@ button:disabled {
     flex-direction: column;
     overflow: hidden;
     border: 1px solid rgba(11, 18, 32, 0.14);
-    border-radius: 16px;
+    border-radius: var(--r-overlay);
     background: #ffffff;
     box-shadow: 0 32px 80px rgba(11, 18, 32, 0.2), 0 8px 32px rgba(11, 18, 32, 0.1);
     animation: modal-pop-in 520ms var(--motion-spring) both;
@@ -3338,7 +3349,7 @@ button:disabled {
     align-items: center;
     height: 16px;
     padding: 0 5px;
-    border-radius: 5px;
+    border-radius: var(--r-sm);
     border: 1px solid;
     font-size: 10px;
     font-weight: 800;
@@ -3411,7 +3422,7 @@ button:disabled {
   }
 
   .section-band-toggle:focus-visible {
-    border-radius: 10px;
+    border-radius: var(--r-control);
     box-shadow: 0 0 0 3px rgba(91, 84, 232, 0.14);
   }
 
@@ -3422,7 +3433,7 @@ button:disabled {
   .section-band-line {
     width: 4px;
     height: 26px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     background: linear-gradient(180deg, var(--section-accent, var(--dorami-blue)), color-mix(in srgb, var(--section-accent, var(--dorami-blue)) 55%, #fff));
     box-shadow: 0 2px 8px color-mix(in srgb, var(--section-accent, var(--dorami-blue)) 35%, transparent);
     flex-shrink: 0;
@@ -3465,7 +3476,7 @@ button:disabled {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 11px;
     font-weight: 700;
-    color: #94a3b8;
+    color: #64748b;
     white-space: nowrap;
   }
 
@@ -3475,8 +3486,8 @@ button:disabled {
     justify-content: center;
     width: 28px;
     height: 28px;
-    border-radius: 8px;
-    color: #94a3b8;
+    border-radius: var(--r-control);
+    color: #64748b;
     flex-shrink: 0;
     transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
   }
@@ -3497,7 +3508,7 @@ button:disabled {
   .dept-card {
     position: relative;
     border: 1px solid rgba(11, 18, 32, 0.12);
-    border-radius: 12px;
+    border-radius: var(--r-card);
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.8));
     box-shadow: var(--dorami-soft-shadow);
@@ -3541,7 +3552,7 @@ button:disabled {
     justify-content: center;
     width: 18px;
     height: 18px;
-    border-radius: 5px;
+    border-radius: var(--r-sm);
     border: 1.5px solid #cbd5e1;
     background: #fff;
     flex-shrink: 0;
@@ -3586,7 +3597,7 @@ button:disabled {
 
   .dept-alias {
     max-width: 180px;
-    color: #94a3b8;
+    color: #64748b;
     font-size: 11px;
     font-weight: 800;
     letter-spacing: 0.08em;
@@ -3596,7 +3607,7 @@ button:disabled {
   .dept-dot {
     width: 8px;
     height: 8px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     flex-shrink: 0;
     box-shadow: 0 0 0 3px rgba(11, 18, 32, 0.04);
   }
@@ -3623,7 +3634,7 @@ button:disabled {
     top: 50%;
     width: 3px;
     height: 3px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     background: #cbd5e1;
     transform: translateY(-50%);
   }
@@ -3639,8 +3650,8 @@ button:disabled {
     justify-content: center;
     width: 30px;
     height: 30px;
-    border-radius: 8px;
-    color: #94a3b8;
+    border-radius: var(--r-control);
+    color: #64748b;
     flex-shrink: 0;
     transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
   }
@@ -3660,7 +3671,7 @@ button:disabled {
   /* ── 来源行 ── */
   .source-row {
     border: 1px solid rgba(11, 18, 32, 0.1);
-    border-radius: 10px;
+    border-radius: var(--r-control);
     background: rgba(255, 255, 255, 0.62);
     padding: 10px 12px;
     transition:
@@ -3727,7 +3738,7 @@ button:disabled {
     gap: 8px;
     margin-top: 1px;
     font-size: 11px;
-    color: #94a3b8;
+    color: #64748b;
     min-width: 0;
   }
 
@@ -3746,7 +3757,7 @@ button:disabled {
     top: 50%;
     width: 3px;
     height: 3px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     background: #cbd5e1;
     transform: translateY(-50%);
   }
@@ -3765,7 +3776,7 @@ button:disabled {
     height: 26px;
     padding: 0 8px;
     border: 1px solid transparent;
-    border-radius: 7px;
+    border-radius: var(--r-control);
     font-size: 11px;
     font-weight: 800;
     white-space: nowrap;
@@ -3802,7 +3813,7 @@ button:disabled {
     gap: 4px;
     height: 28px;
     padding: 0 8px;
-    border-radius: 7px;
+    border-radius: var(--r-control);
     font-size: 11.5px;
     font-weight: 700;
     color: #64748b;
@@ -3832,7 +3843,7 @@ button:disabled {
     gap: 5px;
     height: 30px;
     padding: 0 9px;
-    border-radius: 8px;
+    border-radius: var(--r-control);
     color: #64748b;
     font-size: 12px;
     font-weight: 800;
@@ -3853,7 +3864,7 @@ button:disabled {
     min-width: 18px;
     height: 18px;
     padding: 0 5px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     background: rgba(91, 84, 232, 0.12);
     color: var(--dorami-blue);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -3868,7 +3879,7 @@ button:disabled {
     min-width: 14px;
     height: 14px;
     padding: 0 3px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     background: var(--dorami-blue);
     color: #fff;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -3887,7 +3898,7 @@ button:disabled {
     height: 30px;
     min-width: 72px;
     padding: 0 12px;
-    border-radius: 8px;
+    border-radius: var(--r-control);
     border: 1px solid rgba(91, 84, 232, 0.18);
     background: rgba(91, 84, 232, 0.08);
     color: var(--dorami-blue);
@@ -3973,7 +3984,7 @@ button:disabled {
     align-items: center;
     height: 20px;
     padding: 0 7px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     border: 1px solid rgba(91, 84, 232, 0.1);
     background: rgba(91, 84, 232, 0.06);
     color: #475569;
@@ -3992,7 +4003,7 @@ button:disabled {
     gap: 4px;
     height: 24px;
     padding: 0 8px;
-    border-radius: 7px;
+    border-radius: var(--r-control);
     background: rgba(91, 84, 232, 0.08);
     color: var(--dorami-blue);
     font-size: 11px;
@@ -4024,7 +4035,7 @@ button:disabled {
   .source-param-empty {
     margin-top: 10px;
     border: 1px solid rgba(148, 163, 184, 0.14);
-    border-radius: 9px;
+    border-radius: var(--r-control);
     background: rgba(248, 250, 252, 0.82);
     color: #64748b;
     font-size: 12px;
@@ -4085,7 +4096,7 @@ button:disabled {
   }
 
   .subscription-check {
-    color: #94a3b8;
+    color: #64748b;
   }
 
   .subscription-check-on {
@@ -4099,7 +4110,7 @@ button:disabled {
     align-items: center;
     height: 18px;
     padding: 0 6px;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     border: 1px solid rgba(16, 185, 129, 0.18);
     background: rgba(16, 185, 129, 0.1);
     color: #047857;
@@ -4121,7 +4132,7 @@ button:disabled {
     min-width: 88px;
     padding: 0 10px;
     border: 1px solid rgba(91, 84, 232, 0.18);
-    border-radius: 8px;
+    border-radius: var(--r-control);
     background: rgba(91, 84, 232, 0.08);
     color: var(--dorami-blue);
     font-size: 12px;
@@ -4151,7 +4162,7 @@ button:disabled {
     justify-content: center;
     width: 30px;
     height: 30px;
-    border-radius: 9px;
+    border-radius: var(--r-control);
     color: var(--dorami-blue);
     background: rgba(91, 84, 232, 0.1);
     border: 1px solid rgba(91, 84, 232, 0.16);
@@ -4214,7 +4225,7 @@ button:disabled {
     height: 46px;
     padding: 0;
     border: 1px solid var(--dorami-border);
-    border-radius: 7px;
+    border-radius: var(--r-control);
     background: var(--dorami-surface);
     color: var(--dorami-faint);
     cursor: pointer;
@@ -4268,7 +4279,7 @@ button:disabled {
     margin: 14px 14px 8px;
     padding: 0 12px;
     border: 1px solid rgba(11, 18, 32, 0.1);
-    border-radius: 10px;
+    border-radius: var(--r-control);
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(248, 250, 252, 0.9));
     box-shadow: 0 3px 12px rgba(11, 18, 32, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.86);
     transition: border-color 150ms ease, box-shadow 150ms ease;
@@ -4306,7 +4317,7 @@ button:disabled {
     gap: 10px;
     width: 100%;
     padding: 8px 10px;
-    border-radius: 9px;
+    border-radius: var(--r-control);
     border: 1px solid transparent;
     background: transparent;
     cursor: pointer;
@@ -4342,7 +4353,7 @@ button:disabled {
     justify-content: center;
     width: 28px;
     height: 28px;
-    border-radius: 8px;
+    border-radius: var(--r-control);
     color: #fff;
     background: var(--dorami-blue);
     box-shadow: 0 4px 12px rgba(91, 84, 232, 0.28);
@@ -4385,7 +4396,7 @@ button:disabled {
     justify-content: center;
     width: 26px;
     height: 26px;
-    border-radius: 7px;
+    border-radius: var(--r-control);
     color: var(--dorami-faint);
     background: transparent;
     border: 1px solid transparent;
@@ -4454,7 +4465,7 @@ button:disabled {
     min-width: 18px;
     height: 16px;
     padding: 0 5px;
-    border-radius: 5px;
+    border-radius: var(--r-sm);
     background: rgba(11, 18, 32, 0.06);
     font-size: 10px;
     font-weight: 800;
@@ -4510,7 +4521,7 @@ button:disabled {
     width: 100%;
     text-align: left;
     padding: 12px 14px;
-    border-radius: 11px;
+    border-radius: var(--r-control);
     border: 1px solid transparent;
     background: transparent;
     cursor: pointer;
@@ -4552,7 +4563,7 @@ button:disabled {
     justify-content: center;
     width: 26px;
     height: 26px;
-    border-radius: 8px;
+    border-radius: var(--r-control);
     color: var(--dorami-faint);
     background: transparent;
     opacity: 0;
@@ -4609,7 +4620,7 @@ button:disabled {
     width: calc(100% - 8px);
     margin: 8px 4px 4px;
     padding: 10px;
-    border-radius: 10px;
+    border-radius: var(--r-control);
     border: 1px dashed var(--dorami-border-strong);
     background: transparent;
     font-size: 12px;
@@ -4744,7 +4755,7 @@ button:disabled {
     max-width: 100%;
     height: auto;
     margin: 16px auto;
-    border-radius: 10px;
+    border-radius: var(--r-control);
     /* 加载占位：图片绘制前先显示浅底，减少白屏闪烁与抖动观感 */
     min-height: 40px;
     background: var(--dorami-surface-2, #f1f5f9);
@@ -4765,7 +4776,7 @@ button:disabled {
     margin: 0 0 16px;
     padding: 14px 16px;
     background: var(--dorami-surface-2, #f1f5f9);
-    border-radius: 12px;
+    border-radius: var(--r-card);
     overflow-x: auto;
     font-size: 13.5px;
     line-height: 1.6;
@@ -4775,7 +4786,7 @@ button:disabled {
     font-size: 0.9em;
     background: var(--dorami-surface-2, #f1f5f9);
     padding: 1px 5px;
-    border-radius: 6px;
+    border-radius: var(--r-sm);
   }
   .markdown-body pre code {
     background: none;

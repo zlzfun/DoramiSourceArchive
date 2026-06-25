@@ -207,7 +207,7 @@ function AccountSection({ username, avatar, accountRoleLabel, onUserUpdated, onL
     <div>
       <SectionHeading title="账户" />
 
-      <div className="surface-card mb-4 flex items-center gap-4 rounded-[12px] p-4">
+      <div className="surface-card mb-4 flex items-center gap-4 rounded-[var(--r-card)] p-4">
         {avatar ? (
           <img src={avatar} alt="头像" className="h-16 w-16 rounded-full object-cover shadow-sm ring-1 ring-black/5" />
         ) : (
@@ -230,12 +230,12 @@ function AccountSection({ username, avatar, accountRoleLabel, onUserUpdated, onL
         </div>
       </div>
 
-      <div className="surface-card rounded-[12px] px-4">
+      <div className="surface-card rounded-[var(--r-card)] px-4">
         <FieldRow label="登录账户">{username || '—'}</FieldRow>
         <FieldRow label="账户角色">{accountRoleLabel}</FieldRow>
       </div>
 
-      <form onSubmit={handleChangePassword} className="surface-card mt-4 rounded-[12px] p-4">
+      <form onSubmit={handleChangePassword} className="surface-card mt-4 rounded-[var(--r-card)] p-4">
         <p className="text-sm font-bold text-slate-700">修改密码</p>
         <p className="tiny-meta mt-1">修改后当前会话仍然有效，下次登录请使用新密码。</p>
         <div className="mt-3 space-y-3">
@@ -365,7 +365,7 @@ function AccountManagementSection({ showToast, currentUsername }) {
     <div>
       <SectionHeading title="账户管理" hint="管理员可创建账户、分配角色、重置密码或停用账户。停用/删除会立即让对应账户的会话失效。" />
 
-      <form onSubmit={handleCreate} className="surface-card rounded-[12px] p-4">
+      <form onSubmit={handleCreate} className="surface-card rounded-[var(--r-card)] p-4">
         <p className="text-sm font-bold text-slate-700">新建账户</p>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <input
@@ -396,7 +396,7 @@ function AccountManagementSection({ showToast, currentUsername }) {
         </div>
       </form>
 
-      <div className="surface-card mt-4 rounded-[12px] p-4">
+      <div className="surface-card mt-4 rounded-[var(--r-card)] p-4">
         <p className="mb-3 text-sm font-bold text-slate-700">现有账户</p>
         {accounts === null ? (
           <p className="tiny-meta">加载中…</p>
@@ -405,7 +405,7 @@ function AccountManagementSection({ showToast, currentUsername }) {
         ) : (
           <div className="space-y-2">
             {accounts.map(acc => (
-              <div key={acc.username} className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-slate-100 bg-white px-3 py-2.5">
+              <div key={acc.username} className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-control)] border border-slate-100 bg-white px-3 py-2.5">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-bold text-slate-800">{acc.username}</span>
@@ -480,7 +480,7 @@ function VectorSection({ showToast }) {
     <div>
       <SectionHeading title="向量雷达" hint="向量库是全局共享的，构建与重索引会影响所有订阅者，仅管理员可操作。" />
 
-      <div className="surface-card rounded-[12px] p-4">
+      <div className="surface-card rounded-[var(--r-card)] p-4">
         <label className="flex cursor-pointer items-center justify-between gap-4">
           <span>
             <span className="block text-sm font-bold text-slate-700">抓取后自动向量化</span>
@@ -490,7 +490,7 @@ function VectorSection({ showToast }) {
         </label>
       </div>
 
-      <div className="surface-card mt-4 rounded-[12px] p-4">
+      <div className="surface-card mt-4 rounded-[var(--r-card)] p-4">
         <div className="flex items-center justify-between gap-4">
           <span>
             <span className="block text-sm font-bold text-slate-700">全量重索引</span>
@@ -544,7 +544,7 @@ function IntegrationSection({ showToast, mcpStatus, canToggle, onMcpToggled }) {
     <div>
       <SectionHeading title="接入集成" hint="管理 MCP Server 启停与接入地址。完整客户端配置、工具说明、Skill 安装指南见「接入集成」页。" />
 
-      <div className="surface-card rounded-[12px] p-4">
+      <div className="surface-card rounded-[var(--r-card)] p-4">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <Plug2 className="h-4 w-4 text-sky-500" />
@@ -564,7 +564,7 @@ function IntegrationSection({ showToast, mcpStatus, canToggle, onMcpToggled }) {
         </div>
 
         <p className="tiny-meta mb-1 mt-3">接入地址</p>
-        <div className="flex items-center gap-2 rounded-[10px] border border-slate-100 bg-slate-50 px-3 py-2">
+        <div className="flex items-center gap-2 rounded-[var(--r-control)] border border-slate-100 bg-slate-50 px-3 py-2">
           <code className="min-w-0 flex-1 truncate text-xs font-bold text-slate-600" title={mcpUrl}>{mcpUrl}</code>
           <button onClick={handleCopy} className="shrink-0 text-slate-400 hover:text-indigo-600" title="复制 MCP 地址" aria-label="复制 MCP 地址">
             {copied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
@@ -667,7 +667,7 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
         hint="在不同部署端之间离线搬运文章归档：一端导出归档包，另一端导入。建议按收录时间分批导出，导入端可重复导入同一包。"
       />
 
-      <div className="mb-4 flex items-center justify-center gap-2.5 rounded-[12px] border border-slate-100 bg-slate-50/60 px-4 py-3 text-xs font-bold text-slate-500">
+      <div className="mb-4 flex items-center justify-center gap-2.5 rounded-[var(--r-card)] border border-slate-100 bg-slate-50/60 px-4 py-3 text-xs font-bold text-slate-500">
         <span className="flex items-center gap-1.5"><Download className="h-3.5 w-3.5 text-indigo-500" /> 本端导出</span>
         <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
         <span className="flex items-center gap-1.5"><FileText className="h-3.5 w-3.5 text-slate-400" /> 归档包</span>
@@ -676,9 +676,9 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
       </div>
 
       {canExport && (
-        <div className="surface-card rounded-[12px] p-4">
+        <div className="surface-card rounded-[var(--r-card)] p-4">
           <div className="mb-4 flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-indigo-50 text-indigo-500">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--r-control)] bg-indigo-50 text-indigo-500">
               <Download className="h-4 w-4" />
             </div>
             <div className="min-w-0">
@@ -739,9 +739,9 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
       )}
 
       {canImport && (
-        <div className={`surface-card rounded-[12px] p-4 ${canExport ? 'mt-4' : ''}`}>
+        <div className={`surface-card rounded-[var(--r-card)] p-4 ${canExport ? 'mt-4' : ''}`}>
           <div className="mb-4 flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-emerald-50 text-emerald-500">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--r-control)] bg-emerald-50 text-emerald-500">
               <Upload className="h-4 w-4" />
             </div>
             <div className="min-w-0">
@@ -750,7 +750,7 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
             </div>
           </div>
 
-          <label className="block cursor-pointer rounded-[12px] border border-dashed border-slate-200 bg-slate-50/70 p-4 transition-colors hover:border-emerald-300 hover:bg-emerald-50/40">
+          <label className="block cursor-pointer rounded-[var(--r-card)] border border-dashed border-slate-200 bg-slate-50/70 p-4 transition-colors hover:border-emerald-300 hover:bg-emerald-50/40">
             <span className="block text-sm font-bold text-slate-700">选择归档包</span>
             <span className="tiny-meta mt-1 block">支持 .jsonl；浏览器支持时也可直接导入 .jsonl.gz。</span>
             <input
@@ -772,7 +772,7 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
           </button>
 
           {importResult && (
-            <div className="mt-4 rounded-[12px] border border-slate-100 bg-slate-50/80 px-4 py-3">
+            <div className="mt-4 rounded-[var(--r-card)] border border-slate-100 bg-slate-50/80 px-4 py-3">
               <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                 <div><span className="tiny-meta block">新增</span><b>{importResult.imported_count}</b></div>
                 <div><span className="tiny-meta block">更新</span><b>{importResult.updated_count}</b></div>
@@ -780,7 +780,7 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
                 <div><span className="tiny-meta block">错误</span><b className={importResult.error_count ? 'text-rose-500' : ''}>{importResult.error_count}</b></div>
               </div>
               {importResult.error_count > 0 && (
-                <pre className="mt-3 max-h-32 overflow-auto rounded-[10px] bg-white p-3 text-xs font-semibold text-rose-600">
+                <pre className="mt-3 max-h-32 overflow-auto rounded-[var(--r-control)] bg-white p-3 text-xs font-semibold text-rose-600">
                   {JSON.stringify(importResult.errors?.slice(0, 5) || [], null, 2)}
                 </pre>
               )}
@@ -797,7 +797,7 @@ function AboutSection({ accountRoleLabel, isAdmin }) {
   return (
     <div>
       <SectionHeading title="关于" />
-      <div className="surface-card rounded-[12px] px-4">
+      <div className="surface-card rounded-[var(--r-card)] px-4">
         <FieldRow label="产品">{isAdmin ? '哆啦美·归档中枢' : '哆啦美'}</FieldRow>
         <FieldRow label="账户角色">{accountRoleLabel}</FieldRow>
       </div>
@@ -865,7 +865,7 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, av
               <button
                 key={section.id}
                 onClick={() => setActive(section.id)}
-                className={`flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-sm font-bold transition-colors ${
+                className={`flex w-full items-center gap-2 rounded-[var(--r-control)] px-3 py-2 text-sm font-bold transition-colors ${
                   active === section.id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >

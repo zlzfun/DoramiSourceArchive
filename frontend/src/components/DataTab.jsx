@@ -394,7 +394,7 @@ export default function DataTab({
         </div>
       </div>
 
-      <div className="surface-card relative z-30 rounded-[16px] p-5">
+      <div className="surface-card relative z-30 rounded-[var(--r-overlay)] p-5">
         <div className="flex flex-col gap-4">
           <div className="ledger-filter-row flex flex-col gap-3 lg:flex-row lg:items-center">
             <label className="search-box min-h-[52px] flex-1">
@@ -488,7 +488,7 @@ export default function DataTab({
         </div>
       </div>
 
-      <div className="surface-card relative z-10 rounded-[16px] overflow-x-auto overflow-y-visible">
+      <div className="surface-card relative z-10 rounded-[var(--r-overlay)] overflow-x-auto overflow-y-visible">
         <div className="toolbar-card min-w-[980px]">
           <div className="toolbar-title">
             <span>

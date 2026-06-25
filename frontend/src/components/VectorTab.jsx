@@ -87,7 +87,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
         </div>
       </div>
 
-      <div className="surface-card flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] px-5 py-3 text-xs font-bold text-slate-500">
+      <div className="surface-card flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[var(--r-card)] px-5 py-3 text-xs font-bold text-slate-500">
         {!scopedToSubscriptions ? (
           <span>检索覆盖全部归档（管理员视图）。</span>
         ) : subStats.subscribed_source_count === 0 ? (
@@ -101,7 +101,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[340px_1fr]">
-        <div className="relative overflow-hidden rounded-[14px] bg-gradient-to-br from-[#174fff] via-[#5d5cff] to-[#8c5aff] p-6 text-white shadow-lg shadow-blue-500/20">
+        <div className="relative overflow-hidden rounded-[var(--r-card)] bg-gradient-to-br from-[#174fff] via-[#5d5cff] to-[#8c5aff] p-6 text-white shadow-lg shadow-blue-500/20">
           <div className="absolute -right-14 -top-14 h-40 w-40 rounded-full bg-white/16" />
           <div className="relative">
             <h4 className="text-indigo-100 font-bold text-sm mb-2 flex items-center"><Database className="w-4 h-4 mr-1.5" /> ChromaDB 挂载块数</h4>
@@ -110,7 +110,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
           </div>
         </div>
 
-        <div className="surface-card rounded-[16px] p-6">
+        <div className="surface-card rounded-[var(--r-overlay)] p-6">
         <h3 className="font-bold text-lg mb-4 flex items-center"><Search className="w-5 h-5 mr-2 text-blue-500" /> 语义检索</h3>
 
         {/* 检索控制行 */}
@@ -186,7 +186,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
         <div className="row-stagger space-y-4">
           {searching && searchResults.length === 0 && (
             Array.from({ length: 3 }).map((_, i) => (
-              <div key={`vec-skeleton-${i}`} className="bg-white/72 border border-slate-200 p-5 rounded-[14px] shadow-sm">
+              <div key={`vec-skeleton-${i}`} className="bg-white/72 border border-slate-200 p-5 rounded-[var(--r-card)] shadow-sm">
                 <div className="skeleton mb-3 h-4 w-2/3" />
                 <div className="skeleton mb-3 h-3 w-40" />
                 <div className="skeleton h-16 w-full rounded-xl" />
@@ -203,7 +203,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
             const sourceUrl = res.metadata?.source_url;
             const pubDate = res.metadata?.publish_date?.split('T')[0];
             return (
-              <div key={i} className="bg-white/72 border border-slate-200 p-5 rounded-[14px] shadow-sm">
+              <div key={i} className="bg-white/72 border border-slate-200 p-5 rounded-[var(--r-card)] shadow-sm">
                 <div className="flex items-start justify-between mb-2">
                   <h4 className="font-bold text-slate-800 text-sm pr-4 line-clamp-1 flex-1">
                     {sourceUrl

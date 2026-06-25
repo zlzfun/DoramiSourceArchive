@@ -58,11 +58,11 @@ function BrandLogo({ logoError, onLogoError }) {
     <BrandLogoImage
       displaySize={48}
       alt="哆啦美"
-      className="h-12 w-12 rounded-[12px] object-contain shadow-sm"
+      className="h-12 w-12 rounded-[var(--r-card)] object-contain shadow-sm"
       onError={onLogoError}
     />
   ) : (
-    <div className="brand-mark flex h-12 w-12 items-center justify-center rounded-[12px]">
+    <div className="brand-mark flex h-12 w-12 items-center justify-center rounded-[var(--r-card)]">
       <Bot className="h-6 w-6 text-white" />
     </div>
   );
