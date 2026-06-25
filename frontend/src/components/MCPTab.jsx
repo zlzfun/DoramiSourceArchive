@@ -159,7 +159,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
             {copied ? '已复制' : '复制'}
           </button>
         </div>
-        <code className="block rounded-xl bg-slate-950 px-4 py-3 text-sm font-mono text-slate-300 break-all select-all">
+        <code className="block rounded-[var(--r-card)] bg-slate-950 px-4 py-3 text-sm font-mono text-slate-300 break-all select-all">
           {mcpUrl}
         </code>
       </div>
@@ -176,7 +176,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
             {copiedJson ? '已复制' : '复制'}
           </button>
         </div>
-        <div className="overflow-hidden rounded-xl bg-slate-950">
+        <div className="overflow-hidden rounded-[var(--r-card)] bg-slate-950">
           <div className="flex items-center gap-1 border-b border-white/10 px-2 pt-2">
             {Object.entries(mcpConfigExamples).map(([key, item]) => (
               <button
@@ -233,7 +233,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
       {sub === 'access' && (
         <div className="space-y-6 animate-in fade-in">
       {/* ── HERO（克制的渐变标识卡，纹理交给 .integration-hero 自带的渐变光晕）── */}
-      <div className="integration-hero relative overflow-hidden rounded-[var(--r-card)] p-7 shadow-lg shadow-blue-500/10">
+      <div className="integration-hero relative overflow-hidden rounded-[var(--r-card)] p-7 shadow-[var(--sh-2)]">
         <div className="relative">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -272,7 +272,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
         <div className="space-y-5">
       {/* ── MCP DETAILS ──────────────────────────────────────────── */}
       <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-6 py-4 border-b border-slate-100">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-6 py-4 border-b border-[var(--dorami-border)]">
           <div className="w-1 h-5 rounded-full bg-sky-500" />
           <h3 className="section-title">MCP 配置详情</h3>
           {/* MCP 与语义检索（RAG）两种能力的状态并排，一眼可见、彼此对称 */}
@@ -329,7 +329,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
           {enabled ? (
             configBlocks
           ) : (
-            <div className="rounded-[var(--r-control)] border border-slate-200 bg-slate-50/60">
+            <div className="rounded-[var(--r-control)] border border-[var(--dorami-border)] bg-[var(--dorami-soft)]">
               <button
                 type="button"
                 onClick={() => setStoppedConfigOpen(o => !o)}
@@ -347,24 +347,24 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
             <button
               type="button"
               onClick={() => setToolsOpen(o => !o)}
-              className="flex w-full items-center gap-2 text-sm font-bold text-slate-600 hover:text-sky-700"
+              className="flex w-full items-center gap-2 text-sm font-bold text-slate-500 hover:text-sky-700"
             >
               {toolsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
               可用工具 <span className="font-normal text-slate-500">({TOOL_CARDS.length} 个)</span>
             </button>
             {toolsOpen && (
-              <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-100 overflow-hidden">
+              <div className="mt-2 divide-y divide-[var(--dorami-border)] rounded-[var(--r-card)] border border-[var(--dorami-border)] overflow-hidden">
                 {TOOL_CARDS.map(tool => {
                   const disabled = tool.requiresRag && !ragEnabled;
                   return (
-                    <div key={tool.name} className={`flex gap-4 px-4 py-3 transition-colors ${disabled ? 'bg-slate-100/60 opacity-60' : 'bg-slate-50 hover:bg-slate-100/80'}`}>
+                    <div key={tool.name} className={`flex gap-4 px-4 py-3 transition-colors ${disabled ? 'bg-slate-100/60 opacity-60' : 'bg-[var(--dorami-soft)] hover:bg-slate-100/80'}`}>
                       <div className={`shrink-0 mt-[3px] w-1.5 h-1.5 rounded-full ${disabled ? 'bg-slate-300' : 'bg-sky-400'}`} />
                       <div className="min-w-0">
                         <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
                           <code className={`text-xs font-bold ${disabled ? 'text-slate-500 line-through' : 'text-sky-700'}`}>{tool.name}</code>
                           <span className="tiny-meta font-mono">{tool.params}</span>
                           {disabled && (
-                            <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">需启用 RAG</span>
+                            <span className="rounded-full bg-slate-200 px-1.5 py-0.5 micro-label text-slate-500">需启用 RAG</span>
                           )}
                         </div>
                         <p className="text-xs text-slate-500 leading-relaxed">{tool.desc}</p>
@@ -380,7 +380,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
 
       {/* ── SKILL INSTALLATION（常驻展开，与其它板块一致） ───────────────── */}
       <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-[var(--dorami-border)]">
           <div className="w-1 h-5 rounded-full bg-violet-500" />
           <h3 className="section-title">Skill 安装指南</h3>
           <button
@@ -395,9 +395,9 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
         <div className="p-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Local tools */}
-            <div className="rounded-xl border border-slate-200 p-4 hover:border-sky-200 transition-colors">
+            <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] p-4 hover:border-sky-200 transition-colors">
               <div className="flex items-center gap-2 mb-3">
-                <div className="w-7 h-7 rounded-lg bg-sky-50 flex items-center justify-center">
+                <div className="w-7 h-7 rounded-[var(--r-control)] bg-sky-50 flex items-center justify-center">
                   <Terminal className="w-3.5 h-3.5 text-sky-600" />
                 </div>
                 <p className="text-sm font-bold text-slate-700">本地 AI 工具</p>
@@ -413,13 +413,13 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
                   '将 dorami-daily-brief/ 文件夹放入工具的 skills 目录',
                   '重启工具后 Skill 即可使用',
                 ].map((step, i) => (
-                  <li key={i} className="flex gap-2.5 text-xs text-slate-600">
+                  <li key={i} className="flex gap-2.5 text-xs text-slate-500">
                     <span className="shrink-0 font-bold text-sky-400 tabular-nums">{i + 1}</span>
                     <span>{step}</span>
                   </li>
                 ))}
               </ol>
-              <div className="pt-3 border-t border-slate-100">
+              <div className="pt-3 border-t border-[var(--dorami-border)]">
                 <p className="form-label">Skills 目录参考</p>
                 <div className="space-y-1">
                   <div className="flex justify-between text-xs">
@@ -435,9 +435,9 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
             </div>
 
             {/* Online platforms */}
-            <div className="rounded-xl border border-slate-200 p-4 hover:border-violet-200 transition-colors">
+            <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] p-4 hover:border-violet-200 transition-colors">
               <div className="flex items-center gap-2 mb-3">
-                <div className="w-7 h-7 rounded-lg bg-violet-50 flex items-center justify-center">
+                <div className="w-7 h-7 rounded-[var(--r-control)] bg-violet-50 flex items-center justify-center">
                   <Globe className="w-3.5 h-3.5 text-violet-600" />
                 </div>
                 <p className="text-sm font-bold text-slate-700">在线 Agent 平台</p>
@@ -453,13 +453,13 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
                   '复制文件全部内容',
                   '粘贴到平台的 System Prompt 或项目指令配置中',
                 ].map((step, i) => (
-                  <li key={i} className="flex gap-2.5 text-xs text-slate-600">
+                  <li key={i} className="flex gap-2.5 text-xs text-slate-500">
                     <span className="shrink-0 font-bold text-violet-400 tabular-nums">{i + 1}</span>
                     <span>{step}</span>
                   </li>
                 ))}
               </ol>
-              <div className="pt-3 border-t border-slate-100">
+              <div className="pt-3 border-t border-[var(--dorami-border)]">
                 <p className="form-label">配置位置参考</p>
                 <div className="space-y-1">
                   <div className="flex justify-between text-xs">

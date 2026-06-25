@@ -85,7 +85,7 @@ function Field({ label, children }) {
   );
 }
 
-const inputCls = 'rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none';
+const inputCls = 'rounded-[var(--r-control)] border border-[var(--dorami-border)] px-3 py-2 text-sm focus:border-blue-400 focus:outline-none';
 
 export default function CustomNodeBuilder({ showToast }) {
   const [url, setUrl] = useState('');
@@ -187,7 +187,7 @@ export default function CustomNodeBuilder({ showToast }) {
       {/* 第一步：输入 URL 分析 */}
       <div className="surface-card rounded-[var(--r-overlay)] p-5">
         <div className="flex items-center gap-2 mb-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-50 text-violet-600"><Wand2 className="h-5 w-5" /></div>
+          <div className="flex h-9 w-9 items-center justify-center rounded-[var(--r-control)] bg-violet-50 text-violet-600"><Wand2 className="h-5 w-5" /></div>
           <div>
             <div className="font-semibold text-slate-800">AI 自定义节点</div>
             <div className="text-xs text-slate-500">输入一个文章列表页 URL，自动判断类型、分析结构并生成可抓取的节点配置。</div>
@@ -247,7 +247,7 @@ export default function CustomNodeBuilder({ showToast }) {
               <button onClick={() => setAdvanced(a => !a)} className="text-sm text-blue-600">{advanced ? '收起' : '展开'}详情 / 治理高级设置</button>
               {advanced && (
                 <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                  <label className="flex items-center gap-2 text-sm text-slate-500">
                     <input type="checkbox" checked={form.detail_use_browser} onChange={e => set('detail_use_browser', e.target.checked)} /> 用浏览器渲染详情 (crawl4ai)
                   </label>
                   <div />
@@ -272,7 +272,7 @@ export default function CustomNodeBuilder({ showToast }) {
           </div>
 
           {preview && (
-            <div className="mt-2 rounded-lg border border-slate-100 bg-slate-50 p-3">
+            <div className="mt-2 rounded-[var(--r-control)] border border-[var(--dorami-border)] bg-[var(--dorami-soft)] p-3">
               <div className="text-xs text-slate-500 mb-2">试抓 {preview.count} 条 · 有正文 {preview.has_content_count} 条</div>
               <ul className="space-y-2">
                 {(preview.entries || []).map((e, i) => (
@@ -280,7 +280,7 @@ export default function CustomNodeBuilder({ showToast }) {
                     <a href={e.url} target="_blank" rel="noreferrer" className="font-medium text-slate-800 hover:text-blue-600 inline-flex items-center gap-1">
                       {e.title || '(无标题)'} <ExternalLink className="h-3 w-3" />
                     </a>
-                    {e.method && <span className="ml-2 text-[10px] font-mono text-slate-500">{e.method}</span>}
+                    {e.method && <span className="ml-2 micro-label font-mono text-slate-500">{e.method}</span>}
                     {e.content_preview && <div className="text-xs text-slate-500 line-clamp-2">{e.content_preview}</div>}
                   </li>
                 ))}
@@ -299,7 +299,7 @@ export default function CustomNodeBuilder({ showToast }) {
         {saved.length === 0 ? (
           <div className="text-sm text-slate-500">暂无自定义源。用上方功能分析一个 URL 并保存即可。</div>
         ) : (
-          <ul className="divide-y divide-slate-100">
+          <ul className="divide-y divide-[var(--dorami-border)]">
             {saved.map(row => (
               <li key={row.source_id} className="flex items-center gap-3 py-2.5">
                 <span className={`h-2 w-2 rounded-full ${row.is_active ? 'bg-emerald-500' : 'bg-slate-300'}`} />

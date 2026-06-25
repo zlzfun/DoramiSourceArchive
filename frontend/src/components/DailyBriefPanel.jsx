@@ -16,7 +16,7 @@ import {
 } from '../api';
 import { useConfirm } from '../hooks/useConfirm';
 
-const INPUT_CLS = 'w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm';
+const INPUT_CLS = 'w-full rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-soft)] px-4 py-2.5 text-sm';
 const DAILY_BRIEF_SOURCE_ID = 'dorami_daily_brief';
 
 // 生成阶段 → 中文标签（与后端 set_progress 的 phase 对齐）
@@ -232,12 +232,12 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
   if (!canManage) {
     return (
       <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-[var(--dorami-border)]">
           <div className="w-1 h-5 rounded-full bg-amber-500" />
           <h3 className="section-title">AI 资讯日报</h3>
         </div>
         <div className="p-6">
-          <p className="text-sm text-slate-600 leading-relaxed">
+          <p className="text-sm text-slate-500 leading-relaxed">
             本站点支持由后端大模型每日自动生成 AI 资讯日报。前往「阅读器」的「发现更多来源」一键订阅
             <span className="font-bold text-slate-700"> 🤖 哆啦美·AI资讯日报</span>，即可通过订阅 / 个人聚合接口获取每日日报。
           </p>
@@ -252,13 +252,13 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
 
   return (
     <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-[var(--dorami-border)]">
         <div className="w-1 h-5 rounded-full bg-amber-500" />
         <h3 className="section-title">AI 资讯日报</h3>
         <button
           type="button"
           onClick={() => setLlmModalOpen(true)}
-          className="ml-auto flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-500 hover:border-indigo-300 hover:text-indigo-600"
+          className="ml-auto flex items-center gap-1.5 rounded-[var(--r-control)] border border-[var(--dorami-border)] px-2.5 py-1.5 text-xs font-bold text-slate-500 hover:border-indigo-300 hover:text-indigo-600"
           title="配置生成日报所用的大模型"
         >
           <Settings2 className="h-3.5 w-3.5" />
@@ -290,7 +290,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
 
             {/* 生成过程中的实时阶段 */}
             {generating && (
-              <div className="mt-3 rounded-lg border border-amber-200/70 bg-white/70 px-3 py-2.5">
+              <div className="mt-3 rounded-[var(--r-control)] border border-amber-200/70 bg-white/70 px-3 py-2.5">
                 <div className="flex items-center gap-2 text-xs">
                   <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-600" />
                   <span className="font-bold text-slate-700">{PHASE_LABELS[progress?.phase] || '处理中…'}</span>
@@ -324,7 +324,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
           {/* 设置：自动调度 | 生成参数 */}
           <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-3">
             {/* 自动调度 */}
-            <div className="rounded-xl border border-slate-200 p-4">
+            <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] p-4">
               <label className="flex cursor-pointer items-center justify-between gap-3">
                 <span className="text-sm font-bold text-slate-700">定时生成</span>
                 <input type="checkbox" checked={enabled} onChange={handleToggle} className="h-5 w-5 shrink-0 rounded border-slate-300 text-indigo-600" />
@@ -340,7 +340,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
             </div>
 
             {/* 生成参数 */}
-            <div className="flex flex-col rounded-xl border border-slate-200 p-4">
+            <div className="flex flex-col rounded-[var(--r-card)] border border-[var(--dorami-border)] p-4">
               <p className="text-sm font-bold text-slate-700">生成参数</p>
               <div className="mt-3">
                 <p className="form-label">精选条数（1–50）</p>
@@ -350,7 +350,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
                 </div>
                 <span className="tiny-meta">按重要性取分数最高的前 N 条（正文与导出 JSON 同步）。</span>
               </div>
-              <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-100 pt-3 text-xs">
+              <div className="mt-3 flex items-center justify-between gap-2 border-t border-[var(--dorami-border)] pt-3 text-xs">
                 <span className="font-medium text-slate-500">增量游标</span>
                 <span className="flex items-center gap-2">
                   <code className="font-mono text-slate-500">{briefConfig?.cursor ? briefConfig.cursor.slice(0, 19) : '（空）'}</code>
@@ -363,12 +363,12 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
           </div>
         </div>
 
-        <div className="border-t border-slate-100" />
+        <div className="border-t border-[var(--dorami-border)]" />
 
         {/* ── 生成原理（流程图 + 提示词） ── */}
         <DailyBriefFlow showToast={showToast} canManage={canManage} />
 
-        <div className="border-t border-slate-100" />
+        <div className="border-t border-[var(--dorami-border)]" />
 
         {/* ── 历史日报 ── */}
         <div>
@@ -379,16 +379,16 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
           </div>
 
           {history.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-6 text-center text-xs text-slate-500">
+            <p className="rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] bg-[var(--dorami-soft)] px-4 py-6 text-center text-xs text-slate-500">
               还没有生成过日报。配置好模型后点「立即生成」试试。
             </p>
           ) : (
-            <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 overflow-hidden">
+            <div className="divide-y divide-[var(--dorami-border)] rounded-[var(--r-card)] border border-[var(--dorami-border)] overflow-hidden">
               {history.map(record => {
                 const meta = briefMeta(record);
                 const open = expandedId === record.id;
                 return (
-                  <div key={record.id} className="bg-slate-50">
+                  <div key={record.id} className="bg-[var(--dorami-soft)]">
                     <div className="flex items-center gap-3 px-4 py-3">
                       <button
                         onClick={() => setExpandedId(open ? null : record.id)}
@@ -404,14 +404,14 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
                       <button
                         onClick={() => handleDelete(record.id)}
                         disabled={deletingId === record.id}
-                        className="shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-rose-50 hover:text-rose-500"
+                        className="shrink-0 rounded-[var(--r-control)] p-1.5 text-slate-500 hover:bg-rose-50 hover:text-rose-500"
                         title="删除该日报"
                       >
                         {deletingId === record.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                       </button>
                     </div>
                     {open && (
-                      <div className="border-t border-slate-100 bg-white px-4 py-3">
+                      <div className="border-t border-[var(--dorami-border)] bg-white px-4 py-3">
                         <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700 font-mono">
                           {record.content || '（无正文）'}
                         </pre>
@@ -429,8 +429,8 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
       {llmModal.mounted && createPortal(
         <div className={`modal-overlay ${llmModal.closing ? 'is-closing' : ''}`} onClick={() => setLlmModalOpen(false)}>
           <div className="modal-panel max-w-xl" onClick={e => e.stopPropagation()}>
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-              <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+            <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex items-center justify-between bg-[var(--dorami-well)]">
+              <h3 className="card-title flex items-center gap-2">
                 <Brain className="w-5 h-5 text-indigo-500" /> 智能模型配置
               </h3>
               <button onClick={() => setLlmModalOpen(false)} className="text-slate-500 hover:text-slate-700"><X className="w-5 h-5" /></button>
@@ -465,7 +465,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
                 </div>
               </div>
             </div>
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center gap-3">
+            <div className="px-6 py-4 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex items-center gap-3">
               <button onClick={handleSaveLlm} disabled={saving} className="action-button action-button-primary text-xs">
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} 保存
               </button>

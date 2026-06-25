@@ -106,7 +106,7 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
     <div className="relative w-full" ref={popoverRef}>
       <div
         onClick={toggleOpen}
-        className={`date-range-trigger flex items-center justify-between bg-white/80 hover:bg-white rounded-lg px-3 py-3 cursor-pointer w-full transition-colors border ${isOpen ? 'border-blue-400 bg-blue-50/50 shadow-sm' : 'border-slate-200 hover:border-slate-300'}`}
+        className={`date-range-trigger flex items-center justify-between bg-white/80 hover:bg-white rounded-[var(--r-control)] px-3 py-3 cursor-pointer w-full transition-colors border ${isOpen ? 'border-blue-400 bg-blue-50/50 shadow-sm' : 'border-[var(--dorami-border)] hover:border-slate-300'}`}
       >
         <span className={`truncate text-sm font-semibold ${startDate ? 'text-blue-700' : 'text-slate-500'}`}>
           {displayStr}
@@ -121,9 +121,9 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
       {isOpen && (
         <div className="date-range-popover animate-in fade-in zoom-in-95">
           <div className="flex justify-between items-center mb-4 px-1">
-            <button onClick={() => setViewDate(new Date(year, month - 1, 1))} className="p-1 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors"><ChevronLeft className="w-4 h-4" /></button>
+            <button onClick={() => setViewDate(new Date(year, month - 1, 1))} className="p-1 hover:bg-slate-100 rounded-[var(--r-control)] text-slate-500 transition-colors"><ChevronLeft className="w-4 h-4" /></button>
             <span className="date-range-month">{year}年 {month + 1}月</span>
-            <button onClick={() => setViewDate(new Date(year, month + 1, 1))} className="p-1 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors"><ChevronRight className="w-4 h-4" /></button>
+            <button onClick={() => setViewDate(new Date(year, month + 1, 1))} className="p-1 hover:bg-slate-100 rounded-[var(--r-control)] text-slate-500 transition-colors"><ChevronRight className="w-4 h-4" /></button>
           </div>
           <div className="grid grid-cols-7 gap-y-2 mb-2">
             {['日', '一', '二', '三', '四', '五', '六'].map(d => (

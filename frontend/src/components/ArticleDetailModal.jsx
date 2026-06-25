@@ -1,20 +1,8 @@
-import { useEffect } from 'react';
 import { FileText, Link as LinkIcon, Calendar, Database, Box, ExternalLink, Edit2, Save, X, AlertCircle } from 'lucide-react';
-import { useModalTransition } from '../hooks/useModalTransition';
+import Modal from './Modal';
 
 export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading = false, getFetcherName, canEdit = true, onClose, onToggleEdit, onSave }) {
-  const { mounted, closing } = useModalTransition(isOpen);
-
-  useEffect(() => {
-    if (!isOpen) return undefined;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [isOpen]);
-
-  if (!mounted || !data) return null;
+  if (!data) return null;
 
   const hasFullDetail = Object.prototype.hasOwnProperty.call(data, 'content') && data.extensions_json !== undefined;
   const canToggleEdit = canEdit && hasFullDetail && !isLoading;
@@ -29,12 +17,11 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
   };
 
   return (
-    <div className={`modal-overlay ${closing ? 'is-closing' : ''}`}>
-      <div className="modal-panel max-w-4xl">
-        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+    <Modal open={isOpen} onClose={onClose} size="4xl">
+        <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex justify-between items-center bg-[var(--dorami-well)]">
           <div className="flex items-center space-x-3">
-            <h3 className="font-bold text-lg text-slate-800">数据全景档案</h3>
-            <span className="data-chip text-blue-700">{data.content_type}</span>
+            <h3 className="card-title">数据全景档案</h3>
+            <span className="data-chip">{data.content_type}</span>
           </div>
           <div className="flex items-center space-x-2">
             {canEdit && (
@@ -43,16 +30,16 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
                 {isLoading ? '加载中' : isEditing ? '取消编辑' : '进入编辑模式'}
               </button>
             )}
-            <button onClick={onClose} className="p-1.5 text-slate-500 hover:text-slate-700 bg-white rounded-lg shadow-sm"><X className="w-5 h-5" /></button>
+            <button onClick={onClose} className="icon-button"><X className="w-5 h-5" /></button>
           </div>
         </div>
 
-        <div className="p-6 overflow-y-auto flex-1 space-y-5 bg-white">
+        <div className="p-6 overflow-y-auto flex-1 space-y-5 bg-[var(--dorami-surface)]">
           <div>
             <label className="form-label flex items-center"><FileText className="w-3.5 h-3.5 mr-1" /> 文章标题</label>
             {isEditing ? (
               <input type="text" defaultValue={data.title} id="edit-title" className="form-input" />
-            ) : <div className="text-xl font-bold text-slate-800 leading-snug">{data.title}</div>}
+            ) : <div className="text-xl font-bold text-[var(--dorami-ink)] leading-snug">{data.title}</div>}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -62,14 +49,14 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
                 <input type="text" defaultValue={data.source_url} id="edit-url" className="form-input" />
               ) : (
                 data.source_url ?
-                  <a href={data.source_url} target="_blank" rel="noreferrer" className="text-sm font-medium text-blue-600 hover:text-blue-800 flex items-center break-all"><ExternalLink className="w-3.5 h-3.5 mr-1 shrink-0" /> {data.source_url}</a>
+                  <a href={data.source_url} target="_blank" rel="noreferrer" className="text-sm font-medium text-[var(--dorami-blue)] hover:text-[var(--dorami-accent-ink)] flex items-center break-all"><ExternalLink className="w-3.5 h-3.5 mr-1 shrink-0" /> {data.source_url}</a>
                   : <span className="text-sm text-slate-500">无链接</span>
               )}
             </div>
             <div>
               <label className="form-label flex items-center"><Calendar className="w-3.5 h-3.5 mr-1" /> 来源节点与收录时间</label>
               <div className="text-sm font-medium text-slate-700 flex items-center space-x-2">
-                <span className="bg-slate-100 px-2 py-0.5 rounded text-slate-600">{getFetcherName(data.source_id)}</span>
+                <span className="bg-[var(--dorami-soft)] px-2 py-0.5 rounded text-slate-500">{getFetcherName(data.source_id)}</span>
                 <span className="text-slate-500">|</span>
                 <span className="font-mono">{data.fetched_date?.replace('T', ' ').substring(0, 19)}</span>
               </div>
@@ -80,7 +67,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
             <label className="form-label flex items-center"><Database className="w-3.5 h-3.5 mr-1" /> 正文核心/摘要 (用于向量检索)</label>
             {isEditing ? (
               <textarea defaultValue={data.content} id="edit-content" rows="8" className="form-input leading-relaxed" />
-            ) : <div className="text-sm bg-slate-50 p-4 rounded-[var(--r-card)] border border-slate-100 whitespace-pre-wrap leading-relaxed text-slate-700 shadow-inner max-h-64 overflow-y-auto">{isLoading ? '正在加载全文…' : (data.content || '无正文内容')}</div>}
+            ) : <div className="text-sm bg-[var(--dorami-soft)] p-4 rounded-[var(--r-card)] border border-[var(--dorami-border)] whitespace-pre-wrap leading-relaxed text-slate-700 shadow-inner max-h-64 overflow-y-auto">{isLoading ? '正在加载全文…' : (data.content || '无正文内容')}</div>}
           </div>
 
           <div>
@@ -92,7 +79,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
         </div>
 
         {isEditing && (
-          <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end space-x-3">
+          <div className="p-4 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex justify-end space-x-3">
             <span className="text-xs text-amber-600 flex items-center mr-auto px-2"><AlertCircle className="w-3.5 h-3.5 mr-1" /> 修改内容后系统将自动抹除旧的向量索引，需重新构建。</span>
             <button onClick={onToggleEdit} className="action-button action-button-quiet">取消</button>
             <button onClick={handleSave} className="action-button action-button-primary">
@@ -100,7 +87,6 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
             </button>
           </div>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }

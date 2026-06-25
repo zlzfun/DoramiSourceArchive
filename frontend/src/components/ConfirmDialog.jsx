@@ -70,14 +70,14 @@ export function ConfirmProvider({ children }) {
                 <AlertTriangle className="h-5 w-5" />
               </div>
               <div className="min-w-0 flex-1">
-                <h3 className="text-base font-black text-slate-800">{state.title}</h3>
+                <h3 className="text-base font-black text-[var(--dorami-ink)]">{state.title}</h3>
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-500">{state.message}</p>
               </div>
-              <button onClick={() => settle(false)} className="p-1 text-slate-300 hover:text-slate-600" aria-label="关闭">
+              <button onClick={() => settle(false)} className="p-1 text-slate-300 hover:text-slate-500" aria-label="关闭">
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <div className="flex justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4">
+            <div className="flex justify-end gap-3 border-t border-[var(--dorami-border)] bg-[var(--dorami-soft)] px-6 py-4">
               <button type="button" onClick={() => settle(false)} className="action-button action-button-quiet" autoFocus>
                 {state.cancelText}
               </button>

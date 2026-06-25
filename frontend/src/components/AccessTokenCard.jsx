@@ -71,7 +71,7 @@ export default function AccessTokenCard({ showToast, variant = 'card' }) {
           <button
             onClick={handleRotate}
             disabled={rotating}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/20 bg-white/15 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-white/25 disabled:opacity-60"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-[var(--r-control)] border border-white/20 bg-white/15 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-white/25 disabled:opacity-60"
           >
             {rotating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
             {feedToken?.exists ? '重新生成' : '生成令牌'}
@@ -86,12 +86,12 @@ export default function AccessTokenCard({ showToast, variant = 'card' }) {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xs font-black text-white">访问令牌仅显示一次</p>
-                <p className="mt-0.5 text-[11px] text-white/70">复制到你的 MCP 客户端或下游系统，关闭后只能再次生成新令牌。</p>
-                <code className="mt-2 block break-all rounded-lg bg-black/25 px-2.5 py-1.5 micro-label text-white">{plainToken}</code>
+                <p className="mt-0.5 text-xs text-white/70">复制到你的 MCP 客户端或下游系统，关闭后只能再次生成新令牌。</p>
+                <code className="mt-2 block break-all rounded-[var(--r-control)] bg-black/25 px-2.5 py-1.5 micro-label text-white">{plainToken}</code>
               </div>
               <button
                 onClick={() => handleCopy(plainToken, 'token-notice')}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/25 bg-white/15 px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-white/25"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-[var(--r-control)] border border-white/25 bg-white/15 px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-white/25"
               >
                 {copiedKey === 'token-notice' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                 {copiedKey === 'token-notice' ? '已复制' : '复制'}
@@ -105,7 +105,7 @@ export default function AccessTokenCard({ showToast, variant = 'card' }) {
 
   return (
     <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
-      <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
+      <div className="flex items-center gap-3 border-b border-[var(--dorami-border)] px-6 py-4">
         <div className="h-5 w-1 rounded-full bg-amber-500" />
         <h3 className="section-title">访问令牌</h3>
         <span className="ml-auto text-xs font-medium text-slate-500">dfeed_ · 覆盖你订阅的全部来源</span>
@@ -113,7 +113,7 @@ export default function AccessTokenCard({ showToast, variant = 'card' }) {
 
       <div className="space-y-4 p-6">
         <p className="tiny-meta">
-          这是你的身份令牌：<strong className="font-bold text-slate-600">MCP 工具调用必须携带它</strong>，下方个人订阅接口的 HTTP 拉取也用它。它只返回你在阅读器里已订阅来源的内容；请妥善保管，泄露后及时重新生成（旧令牌随即失效）。
+          这是你的身份令牌：<strong className="font-bold text-slate-500">MCP 工具调用必须携带它</strong>，下方个人订阅接口的 HTTP 拉取也用它。它只返回你在阅读器里已订阅来源的内容；请妥善保管，泄露后及时重新生成（旧令牌随即失效）。
         </p>
 
         <div className="flex flex-wrap items-center justify-between gap-3">

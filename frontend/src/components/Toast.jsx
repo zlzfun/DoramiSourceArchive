@@ -16,7 +16,7 @@ export default function Toast({ show, message, type = 'info' }) {
 
   return (
     <div
-      className={`toast-pop ${closing ? 'is-leaving' : ''} fixed bottom-8 left-1/2 z-[200] flex max-w-[90vw] items-center gap-3 rounded-xl px-5 py-3.5 text-white shadow-2xl ${bg}`}
+      className={`toast-pop ${closing ? 'is-leaving' : ''} fixed bottom-8 left-1/2 z-[200] flex max-w-[90vw] items-center gap-3 rounded-[var(--r-card)] px-5 py-3.5 text-white shadow-2xl ${bg}`}
       role="status"
     >
       <Icon className="h-5 w-5 shrink-0" />

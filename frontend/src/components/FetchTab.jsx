@@ -30,6 +30,7 @@ import {
   updateNodeGroup,
 } from '../api';
 import LogoMark from './LogoMark';
+import Modal from './Modal';
 import CustomNodeBuilder from './CustomNodeBuilder';
 
 // 高级目标「AI 自定义节点」暂不开放前端入口：后端流程保留，UI 入口与面板用此开关隐藏。
@@ -46,6 +47,7 @@ import {
   NOISE_LABELS,
   RELIABILITY_LABELS,
 } from '../sourceTaxonomy';
+import { healthMeta } from '../statusMeta';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { useConfirm } from '../hooks/useConfirm';
 import { runAction } from '../utils/runAction';
@@ -63,26 +65,11 @@ const TIER_TONE_CLASS = {
   emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
   sky: 'bg-sky-50 text-sky-700 border-sky-100',
   violet: 'bg-violet-50 text-violet-700 border-violet-100',
-  slate: 'bg-slate-50 text-slate-500 border-slate-200',
+  slate: 'bg-[var(--dorami-soft)] text-slate-500 border-[var(--dorami-border)]',
 };
 
 function tierPillClass(tier) {
   return TIER_TONE_CLASS[tierMeta(tier).tone] || TIER_TONE_CLASS.slate;
-}
-
-const HEALTH_DOT = {
-  healthy: 'bg-emerald-500',
-  failing: 'bg-red-500',
-  running: 'bg-amber-400',
-  never_run: 'bg-slate-300',
-};
-
-function healthMeta(status) {
-  if (status === 'healthy') return { label: '健康', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' };
-  if (status === 'failing') return { label: '失败', className: 'bg-red-50 text-red-700 border-red-100' };
-  if (status === 'running') return { label: '运行中', className: 'bg-amber-50 text-amber-700 border-amber-100' };
-  if (status === 'never_run') return { label: '未运行', className: 'bg-slate-50 text-slate-500 border-slate-200' };
-  return { label: '未知', className: 'bg-slate-50 text-slate-500 border-slate-200' };
 }
 
 const HEALTH_RANK = { failing: 0, running: 1, never_run: 2, healthy: 3 };
@@ -222,14 +209,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     };
   }, [runningFetcherIds]);
 
-  useEffect(() => {
-    if (!groupModalOpen) return undefined;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [groupModalOpen]);
 
   const matchesSearch = useCallback((fetcher) => {
     const query = searchQuery.trim().toLowerCase();
@@ -832,7 +811,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           <div className="surface-card rounded-[var(--r-overlay)] overflow-hidden">
             <div className="catalog-topbar">
               <div className="section-title">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                <div className="flex h-10 w-10 items-center justify-center rounded-[var(--r-control)] bg-blue-50 text-blue-600">
                   <Layers className="h-5 w-5" />
                 </div>
                 <span>内置节点目录</span>
@@ -932,7 +911,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                               <div className="flex items-center gap-2 min-w-0">
                                 <span className="dept-name truncate">{company.name}</span>
                                 {company.en && company.en !== company.name && <span className="dept-alias truncate">{company.en}</span>}
-                                <span className={`dept-dot ${HEALTH_DOT[health.worst] || HEALTH_DOT.never_run}`} title={healthMeta(health.worst).label} />
+                                <span className={`dept-dot ${healthMeta(health.worst).dot}`} title={healthMeta(health.worst).label} />
                               </div>
                               <div className="dept-meta">
                                 <span>{health.total} 源</span>
@@ -967,7 +946,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         <div className="surface-card rounded-[var(--r-overlay)] overflow-hidden">
           <div className="panel-header">
             <div className="section-title">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+              <div className="flex h-10 w-10 items-center justify-center rounded-[var(--r-control)] bg-indigo-50 text-indigo-600">
                 <FolderPlus className="h-5 w-5" />
               </div>
               <span>采集范围</span>
@@ -977,14 +956,14 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               <FolderPlus /> 新建采集范围
             </button>
           </div>
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-[var(--dorami-border)]">
             {nodeGroups.length === 0 ? (
               <div className="p-12 text-center text-slate-500 font-medium">还没有采集范围，点右上角「新建采集范围」创建第一个。</div>
             ) : nodeGroups.map(group => {
               const isExpanded = expandedGroupId === group.id;
               return (
                 <div key={group.id}>
-                  <button onClick={() => setExpandedGroupId(isExpanded ? null : group.id)} className="w-full px-5 py-4 flex items-center justify-between hover:bg-slate-50 text-left">
+                  <button onClick={() => setExpandedGroupId(isExpanded ? null : group.id)} className="w-full px-5 py-4 flex items-center justify-between hover:bg-[var(--dorami-soft)] text-left">
                     <div className="min-w-0">
                       <div className="flex items-center">
                         {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-500 mr-2" /> : <ChevronRight className="w-4 h-4 text-slate-500 mr-2" />}
@@ -1011,13 +990,13 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                         {(group.fetcher_ids || []).map(fetcherId => {
                           const f = fetchersById[fetcherId];
                           return (
-                            <div key={fetcherId} className="flex items-center gap-3 border border-slate-200 rounded-lg p-3 bg-slate-50">
+                            <div key={fetcherId} className="flex items-center gap-3 border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-[var(--dorami-soft)]">
                               <LogoMark company={resolveCompany(f || {})} size="sm" />
                               <div className="min-w-0 flex-1">
                                 <div className="font-bold text-slate-700 text-sm truncate">{getFetcherName(fetcherId)}</div>
-                                <div className="font-mono text-[11px] text-slate-500 truncate">{fetcherId}</div>
+                                <div className="font-mono text-xs text-slate-500 truncate">{fetcherId}</div>
                               </div>
-                              <code className="hidden md:block text-[11px] text-slate-500 bg-white border border-slate-100 rounded px-2 py-1 max-w-[180px] truncate" title={JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}>
+                              <code className="hidden md:block text-xs text-slate-500 bg-white border border-[var(--dorami-border)] rounded px-2 py-1 max-w-[180px] truncate" title={JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}>
                                 {JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}
                               </code>
                             </div>
@@ -1076,15 +1055,13 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         </div>
       )}
 
-      {groupModalOpen && (
-        <div className="modal-overlay">
-          <div className="modal-panel max-w-5xl">
-            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+      <Modal open={groupModalOpen} onClose={() => setGroupModalOpen(false)} size="5xl">
+            <div className="px-5 py-4 border-b border-[var(--dorami-border)] bg-[var(--dorami-well)] flex items-center justify-between">
               <div>
                 <h3 className="card-title">{editingGroupId ? '编辑采集范围' : '新建采集范围'}</h3>
                 <p className="text-xs text-slate-500 mt-1">采集范围只维护节点集合和参数模板，可被采集任务复用。</p>
               </div>
-              <button onClick={() => setGroupModalOpen(false)} className="p-2 rounded-lg hover:bg-slate-200 text-slate-500"><X className="w-4 h-4" /></button>
+              <button onClick={() => setGroupModalOpen(false)} className="icon-button"><X className="w-4 h-4" /></button>
             </div>
             <div className="p-5 overflow-auto space-y-5">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1099,14 +1076,14 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <div className="p-3 bg-slate-50 border-b border-slate-200">
+                <div className="border border-[var(--dorami-border)] rounded-[var(--r-card)] overflow-hidden">
+                  <div className="p-3 bg-[var(--dorami-soft)] border-b border-[var(--dorami-border)]">
                     <div className="form-search-box relative">
                       <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                       <input value={modalSearch} onChange={event => setModalSearch(event.target.value)} placeholder="搜索节点" className="form-input pl-9" />
                     </div>
                   </div>
-                  <div className="max-h-[420px] overflow-auto divide-y divide-slate-100">
+                  <div className="max-h-[420px] overflow-auto divide-y divide-[var(--dorami-border)]">
                     {modalFetchers.map(fetcher => {
                       const checked = (groupDraft.fetcher_ids || []).includes(fetcher.id);
                       return (
@@ -1122,13 +1099,13 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                                 : { ...(prev.per_fetcher_params || {}), [fetcher.id]: fetchConfigs[fetcher.id] || {} },
                             };
                           })}
-                          className={`w-full px-3 py-3 flex items-center gap-3 text-left hover:bg-slate-50 ${checked ? 'bg-blue-50/60' : ''}`}
+                          className={`w-full px-3 py-3 flex items-center gap-3 text-left hover:bg-[var(--dorami-soft)] ${checked ? 'bg-blue-50/60' : ''}`}
                         >
                           <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>{checked && <CheckSquare className="w-3.5 h-3.5 text-white" />}</div>
                           <LogoMark company={resolveCompany(fetcher)} size="sm" />
                           <div className="min-w-0">
                             <div className="font-bold text-slate-700 text-sm truncate">{fetcher.name}</div>
-                            <div className="font-mono text-[11px] text-slate-500 truncate">{fetcher.id}</div>
+                            <div className="font-mono text-xs text-slate-500 truncate">{fetcher.id}</div>
                           </div>
                         </button>
                       );
@@ -1138,24 +1115,24 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
 
                 <div className="space-y-3">
                   {(groupDraft.fetcher_ids || []).length === 0 ? (
-                    <div className="border border-dashed border-slate-200 rounded-xl p-10 text-center text-slate-500 font-medium">未选择节点</div>
+                    <div className="border border-dashed border-[var(--dorami-border)] rounded-[var(--r-card)] p-10 text-center text-slate-500 font-medium">未选择节点</div>
                   ) : (groupDraft.fetcher_ids || []).map(fetcherId => {
                     const fetcher = fetchersById[fetcherId];
                     return (
-                      <div key={fetcherId} className="border border-slate-200 rounded-xl p-3 bg-white">
+                      <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-card)] p-3 bg-white">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-center gap-3 min-w-0">
                             <LogoMark company={resolveCompany(fetcher || {})} size="sm" />
                             <div className="min-w-0">
                               <div className="card-title truncate">{fetcher?.name || fetcherId}</div>
-                              <div className="font-mono text-[11px] text-slate-500 mt-0.5">{fetcherId}</div>
+                              <div className="font-mono text-xs text-slate-500 mt-0.5">{fetcherId}</div>
                             </div>
                           </div>
-                          <button onClick={() => setGroupDraft(prev => ({ ...prev, fetcher_ids: prev.fetcher_ids.filter(id => id !== fetcherId) }))} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg"><X className="w-4 h-4" /></button>
+                          <button onClick={() => setGroupDraft(prev => ({ ...prev, fetcher_ids: prev.fetcher_ids.filter(id => id !== fetcherId) }))} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-[var(--r-control)]"><X className="w-4 h-4" /></button>
                         </div>
                         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                           {(fetcher?.parameters || []).length === 0 ? (
-                            <div className="text-xs text-slate-500 font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">该节点无需扩展参数</div>
+                            <div className="text-xs text-slate-500 font-medium bg-[var(--dorami-soft)] border border-[var(--dorami-border)] rounded-[var(--r-control)] px-3 py-2">该节点无需扩展参数</div>
                           ) : (fetcher.parameters || []).map(param => (
                             <label key={param.field} className="text-xs font-bold text-slate-500">
                               {param.label}
@@ -1169,13 +1146,12 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                 </div>
               </div>
             </div>
-            <div className="px-5 py-4 border-t border-slate-200 bg-white flex justify-end gap-2">
+            <div className="px-5 py-4 border-t border-[var(--dorami-border)] bg-[var(--dorami-surface)] flex justify-end gap-2">
               <button onClick={() => setGroupModalOpen(false)} className="action-button action-button-quiet">取消</button>
               <button onClick={handleSaveGroup} className="action-button action-button-primary"><Save /> 保存</button>
             </div>
-          </div>
-        </div>
-      )}
+      </Modal>
+
 
       {runningFetcherIds.size > 0 && (
         <button

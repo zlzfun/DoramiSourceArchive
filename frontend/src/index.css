@@ -64,14 +64,14 @@
   --dorami-canvas: #eef1f6;
   --dorami-canvas-2: #e6eaf1;                  /* 凹陷/内嵌区域 */
   --dorami-surface: #ffffff;
-  --dorami-soft: #eef1f6;
+  --dorami-soft: #f8fafc;                       /* 白卡内的淡填充（modal 头尾/内嵌区/chip 底）：取 slate-50 档的淡灰，比 canvas 更浅 */
   --dorami-soft-2: #e6eaf1;
   --dorami-card: rgba(255, 255, 255, 0.96);
   --dorami-card-solid: #ffffff;
   --dorami-wash: rgba(91, 84, 232, 0.08);      /* accent 极淡背景 */
 
-  /* 凹陷井：卡片内部的工具栏/表头/搜索/子面板，浅一档灰底 + inset 阴影，读作"沉进台面" */
-  --dorami-well: #e9edf3;
+  /* 凹陷井：卡片内部的工具栏/表头/搜索/子面板，淡灰底 + inset 阴影，读作"沉进台面"（凹陷感主要靠 inset 阴影，底色取 slate-100 档、仅比 soft 低半档） */
+  --dorami-well: #f1f5f9;
   --dorami-inset: inset 0 1px 3px rgba(11, 18, 32, 0.07), inset 0 -1px 0 rgba(255, 255, 255, 0.6);
   --dorami-inset-input: inset 0 1px 3px rgba(11, 18, 32, 0.08);
 

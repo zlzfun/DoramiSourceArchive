@@ -389,7 +389,7 @@ export default function DataTab({
             </button>
           )}
           <button onClick={refreshArticles} disabled={loading} className="action-button action-button-secondary">
-            <RefreshCw className={`text-blue-600 ${loading ? 'animate-spin' : ''}`} /> 同步最新
+            <RefreshCw className={`text-[var(--dorami-blue)] ${loading ? 'animate-spin' : ''}`} /> 同步最新
           </button>
         </div>
       </div>
@@ -400,7 +400,7 @@ export default function DataTab({
             <label className="search-box min-h-[52px] flex-1">
               <Search className="mr-3 h-5 w-5 text-slate-500" />
               <input type="text" placeholder="搜索标题、内容、来源网站、标签等关键词..." value={filters.search} onChange={e => setFilters({ ...filters, search: e.target.value })} onKeyDown={e => e.key === 'Enter' && handleSearchSubmit()} className="py-3" />
-              <span className="hidden rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-500 sm:inline-flex">⌘ /</span>
+              <span className="hidden rounded-[var(--r-sm)] border border-[var(--dorami-border)] px-2 py-1 text-xs font-bold text-slate-500 sm:inline-flex">⌘ /</span>
             </label>
             <div className="field-box lg:w-64">
               <span>数据来源</span>
@@ -416,9 +416,9 @@ export default function DataTab({
             <button
               type="button"
               onClick={() => setShowAdvanced(v => !v)}
-              className={`action-button action-button-secondary min-h-[52px] ${showAdvanced ? 'text-indigo-700' : ''}`}
+              className={`action-button action-button-secondary min-h-[52px] ${showAdvanced ? 'text-[var(--dorami-blue)]' : ''}`}
             >
-              <SlidersHorizontal /> 高级筛选{advancedCount > 0 && <span className="ml-1 rounded-full bg-indigo-100 px-1.5 text-[11px] font-black text-indigo-700">{advancedCount}</span>}
+              <SlidersHorizontal /> 高级筛选{advancedCount > 0 && <span className="ml-1 rounded-full bg-indigo-100 px-1.5 micro-label font-black text-indigo-700">{advancedCount}</span>}
             </button>
           </div>
 
@@ -445,7 +445,7 @@ export default function DataTab({
           )}
 
           {showAdvanced && (
-            <div className="grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 animate-in fade-in slide-in-from-top-1 md:grid-cols-2 xl:grid-cols-[1fr_1.35fr_1.35fr_1fr]">
+            <div className="grid grid-cols-1 gap-3 border-t border-[var(--dorami-border)] pt-4 animate-in fade-in slide-in-from-top-1 md:grid-cols-2 xl:grid-cols-[1fr_1.35fr_1.35fr_1fr]">
               <div className="field-box">
                 <span>结构类型</span>
                 <select value={filters.content_type} onChange={e => setFilters({ ...filters, content_type: e.target.value })}>
@@ -509,11 +509,11 @@ export default function DataTab({
             <col className="ledger-col-fetched" />
             {canManageArticles && ragEnabled && <col className="ledger-col-vector" />}
           </colgroup>
-          <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs tracking-wider">
+          <thead className="bg-[var(--dorami-well)] border-b border-[var(--dorami-border)] text-slate-500 text-xs tracking-wider">
             <tr>
               <th className="px-4 py-3 w-12 text-center">
                 {canSelectArticles && (
-                  <input type="checkbox" aria-label="全选当前页记录" checked={selectedArticles.size === articles.length && articles.length > 0} onChange={toggleAllArticles} className="w-4 h-4 text-blue-600 rounded cursor-pointer" />
+                  <input type="checkbox" aria-label="全选当前页记录" checked={selectedArticles.size === articles.length && articles.length > 0} onChange={toggleAllArticles} className="w-4 h-4 text-[var(--dorami-blue)] rounded cursor-pointer" />
                 )}
               </th>
               <th className="px-3 py-4 w-36 font-bold">内容类型</th>
@@ -524,13 +524,13 @@ export default function DataTab({
               {canManageArticles && ragEnabled && <th className="px-3 py-4 w-36 font-bold">向量状态</th>}
             </tr>
           </thead>
-          <tbody key={listVersion} className="row-stagger divide-y divide-slate-100 text-sm">
+          <tbody key={listVersion} className="row-stagger divide-y divide-[var(--dorami-border)] text-sm">
             {loading && articles.length === 0 ? (
               Array.from({ length: 8 }).map((_, i) => (
                 <tr key={`skeleton-${i}`}>
                   <td className="px-4 py-4"><div className="skeleton mx-auto h-4 w-4" /></td>
                   <td className="px-3 py-4"><div className="skeleton h-5 w-20 rounded-full" /></td>
-                  <td className="px-3 py-4"><div className="flex items-center gap-2.5"><div className="skeleton h-8 w-8 rounded-lg" /><div className="skeleton h-4 w-24" /></div></td>
+                  <td className="px-3 py-4"><div className="flex items-center gap-2.5"><div className="skeleton h-8 w-8 rounded-[var(--r-control)]" /><div className="skeleton h-4 w-24" /></div></td>
                   <td className="px-4 py-4"><div className="skeleton h-4 w-3/4" /><div className="skeleton mt-2 h-3 w-1/2" /></td>
                   <td className="px-3 py-4"><div className="skeleton h-4 w-20" /></td>
                   <td className="px-3 py-4"><div className="skeleton h-4 w-24" /></td>
@@ -543,7 +543,7 @@ export default function DataTab({
               <tr key={article.id} className="hover:bg-blue-50/40 transition-colors group">
                 <td className="px-4 py-4 text-center">
                   {canSelectArticles && (
-                    <input type="checkbox" aria-label={`选择：${article.title || article.id}`} checked={selectedArticles.has(article.id)} onChange={() => toggleArticleSelection(article.id)} className="w-4 h-4 text-blue-600 rounded cursor-pointer" />
+                    <input type="checkbox" aria-label={`选择：${article.title || article.id}`} checked={selectedArticles.has(article.id)} onChange={() => toggleArticleSelection(article.id)} className="w-4 h-4 text-[var(--dorami-blue)] rounded cursor-pointer" />
                   )}
                 </td>
                 <td className="px-3 py-4"><span className="data-chip max-w-full overflow-hidden text-ellipsis">{article.content_type || '未知'}</span></td>
@@ -563,18 +563,18 @@ export default function DataTab({
                         <LogoMark company={company} size="sm" />
                         <div className="min-w-0">
                           <div className="ledger-source-name font-bold text-slate-700 text-xs line-clamp-1" title={article.source_id}>{name}</div>
-                          {showCompany && <div className="text-[11px] text-slate-500 truncate">{company.name}</div>}
+                          {showCompany && <div className="text-xs text-slate-500 truncate">{company.name}</div>}
                         </div>
                       </button>
                     );
                   })()}
                 </td>
-                <td className="px-4 py-4 font-bold text-slate-800 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => openDetailModal(article)}>
+                <td className="px-4 py-4 font-bold text-slate-800 cursor-pointer hover:text-[var(--dorami-blue)] transition-colors" onClick={() => openDetailModal(article)}>
                   <div className="line-clamp-1">{article.title}</div>
-                  <div className="mt-1 line-clamp-1 text-xs font-semibold text-slate-500">{article.content_preview || article.content || '暂无摘要内容'}</div>
+                  <div className="mt-1 line-clamp-1 text-xs font-medium text-slate-500">{article.content_preview || article.content || '暂无摘要内容'}</div>
                 </td>
                 <td className="px-3 py-4 text-slate-500 text-xs font-mono">{article.publish_date?.split('T')[0] || '-'}</td>
-                <td className="px-3 py-4 text-slate-600 text-xs font-mono">{article.fetched_date?.replace('T', ' ').substring(0, 16) || '-'}</td>
+                <td className="px-3 py-4 text-slate-500 text-xs font-mono">{article.fetched_date?.replace('T', ' ').substring(0, 16) || '-'}</td>
                 {canManageArticles && ragEnabled && (
                   <td className="px-3 py-4">
                     {article.is_vectorized ? (
@@ -596,7 +596,7 @@ export default function DataTab({
           </tbody>
         </table>
         {articlePageInfo.total > 0 && (
-          <div className="flex min-w-[980px] flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/60 p-4">
+          <div className="flex min-w-[980px] flex-wrap items-center justify-between gap-3 border-t border-[var(--dorami-border)] bg-[var(--dorami-soft)] p-4">
             <div className="text-xs font-bold text-slate-500">
               每页 {ARTICLE_PAGE_SIZE} 条，当前 {pageStart.toLocaleString()}-{pageEnd.toLocaleString()} 条
             </div>
@@ -617,7 +617,7 @@ export default function DataTab({
               >
                 上一页
               </button>
-              <span className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600">
+              <span className="rounded-[var(--r-control)] border border-[var(--dorami-border)] bg-[var(--dorami-surface)] px-3 py-2 text-xs font-bold text-slate-500">
                 第 {currentPage.toLocaleString()} / {totalPages.toLocaleString()} 页
               </span>
               <button

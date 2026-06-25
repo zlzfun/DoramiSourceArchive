@@ -127,8 +127,8 @@ function SectionHeading({ title, hint }) {
 
 function FieldRow({ label, children }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-slate-100 py-3 last:border-b-0">
-      <span className="text-sm font-bold text-slate-600">{label}</span>
+    <div className="flex items-center justify-between gap-4 border-b border-[var(--dorami-border)] py-3 last:border-b-0">
+      <span className="text-sm font-bold text-slate-500">{label}</span>
       <div className="text-right text-sm font-semibold text-slate-800">{children}</div>
     </div>
   );
@@ -383,7 +383,7 @@ function AccountManagementSection({ showToast, currentUsername }) {
             autoComplete="new-password"
             className="form-input w-full"
           />
-          <label className="flex items-center gap-2 text-sm font-bold text-slate-600">
+          <label className="flex items-center gap-2 text-sm font-bold text-slate-500">
             角色
             <select value={newRole} onChange={e => setNewRole(e.target.value)} className="form-input flex-1">
               <option value="user">读者</option>
@@ -405,7 +405,7 @@ function AccountManagementSection({ showToast, currentUsername }) {
         ) : (
           <div className="space-y-2">
             {accounts.map(acc => (
-              <div key={acc.username} className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-control)] border border-slate-100 bg-white px-3 py-2.5">
+              <div key={acc.username} className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-control)] border border-[var(--dorami-border)] bg-white px-3 py-2.5">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-bold text-slate-800">{acc.username}</span>
@@ -500,7 +500,7 @@ function VectorSection({ showToast }) {
             {reindexing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5 text-amber-500" />} 重索引
           </button>
         </div>
-        <div className="mt-3 border-t border-slate-100 pt-3">
+        <div className="mt-3 border-t border-[var(--dorami-border)] pt-3">
           <FieldRow label="向量块总数">{stats === null ? '…' : (stats.total_vectors ?? '—')}</FieldRow>
           <FieldRow label="Embedding 模型">
             <span className="font-mono text-xs">BAAI/bge-m3</span>
@@ -564,8 +564,8 @@ function IntegrationSection({ showToast, mcpStatus, canToggle, onMcpToggled }) {
         </div>
 
         <p className="tiny-meta mb-1 mt-3">接入地址</p>
-        <div className="flex items-center gap-2 rounded-[var(--r-control)] border border-slate-100 bg-slate-50 px-3 py-2">
-          <code className="min-w-0 flex-1 truncate text-xs font-bold text-slate-600" title={mcpUrl}>{mcpUrl}</code>
+        <div className="flex items-center gap-2 rounded-[var(--r-control)] border border-[var(--dorami-border)] bg-[var(--dorami-soft)] px-3 py-2">
+          <code className="min-w-0 flex-1 truncate text-xs font-bold text-slate-500" title={mcpUrl}>{mcpUrl}</code>
           <button onClick={handleCopy} className="shrink-0 text-slate-500 hover:text-indigo-600" title="复制 MCP 地址" aria-label="复制 MCP 地址">
             {copied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
           </button>
@@ -667,7 +667,7 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
         hint="在不同部署端之间离线搬运文章归档：一端导出归档包，另一端导入。建议按收录时间分批导出，导入端可重复导入同一包。"
       />
 
-      <div className="mb-4 flex items-center justify-center gap-2.5 rounded-[var(--r-card)] border border-slate-100 bg-slate-50/60 px-4 py-3 text-xs font-bold text-slate-500">
+      <div className="mb-4 flex items-center justify-center gap-2.5 rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-soft)] px-4 py-3 text-xs font-bold text-slate-500">
         <span className="flex items-center gap-1.5"><Download className="h-3.5 w-3.5 text-indigo-500" /> 本端导出</span>
         <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
         <span className="flex items-center gap-1.5"><FileText className="h-3.5 w-3.5 text-slate-500" /> 归档包</span>
@@ -720,8 +720,8 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
           </div>
           <p className="tiny-meta mt-2">默认导出今天收录的全部来源内容；可自行调整时间范围，留空则导出至今全部。</p>
 
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
-            <label className="flex items-center gap-2 text-sm font-bold text-slate-600">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--dorami-border)] pt-4">
+            <label className="flex items-center gap-2 text-sm font-bold text-slate-500">
               <input
                 type="checkbox"
                 checked={compressExport}
@@ -750,14 +750,14 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
             </div>
           </div>
 
-          <label className="block cursor-pointer rounded-[var(--r-card)] border border-dashed border-slate-200 bg-slate-50/70 p-4 transition-colors hover:border-emerald-300 hover:bg-emerald-50/40">
+          <label className="block cursor-pointer rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] bg-[var(--dorami-soft)] p-4 transition-colors hover:border-emerald-300 hover:bg-emerald-50/40">
             <span className="block text-sm font-bold text-slate-700">选择归档包</span>
             <span className="tiny-meta mt-1 block">支持 .jsonl；浏览器支持时也可直接导入 .jsonl.gz。</span>
             <input
               type="file"
               accept=".jsonl,.gz,.jsonl.gz,application/x-ndjson,application/gzip"
               onChange={e => setImportFile(e.target.files?.[0] || null)}
-              className="mt-3 block w-full text-sm font-semibold text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-white file:px-3 file:py-2 file:text-sm file:font-bold file:text-indigo-600 file:shadow-sm"
+              className="mt-3 block w-full text-sm font-semibold text-slate-500 file:mr-3 file:rounded-[var(--r-control)] file:border-0 file:bg-white file:px-3 file:py-2 file:text-sm file:font-bold file:text-indigo-600 file:shadow-sm"
             />
             {importFile && (
               <span className="mt-2 flex items-center gap-1.5 text-xs font-bold text-emerald-600">
@@ -772,7 +772,7 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
           </button>
 
           {importResult && (
-            <div className="mt-4 rounded-[var(--r-card)] border border-slate-100 bg-slate-50/80 px-4 py-3">
+            <div className="mt-4 rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-soft)] px-4 py-3">
               <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                 <div><span className="tiny-meta block">新增</span><b>{importResult.imported_count}</b></div>
                 <div><span className="tiny-meta block">更新</span><b>{importResult.updated_count}</b></div>
@@ -849,18 +849,18 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, av
   return (
     <div className={`modal-overlay ${closing ? 'is-closing' : ''}`} onMouseDown={onClose}>
       <div className="modal-panel max-w-3xl" onMouseDown={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-[var(--dorami-border)] bg-[var(--dorami-well)] px-6 py-4">
           <div className="flex items-center gap-3">
             <SettingsIcon className="h-5 w-5 text-indigo-500" />
-            <h3 className="text-lg font-black text-slate-800">设置</h3>
+            <h3 className="text-lg font-black text-[var(--dorami-ink)]">设置</h3>
           </div>
-          <button onClick={onClose} className="rounded-lg bg-white p-1.5 text-slate-500 shadow-sm hover:text-slate-700" aria-label="关闭">
+          <button onClick={onClose} className="icon-button" aria-label="关闭">
             <X className="h-5 w-5" />
           </button>
         </div>
 
         <div className="flex min-h-0 flex-1">
-          <nav className="w-40 shrink-0 space-y-1 border-r border-slate-100 bg-slate-50/60 p-3">
+          <nav className="w-40 shrink-0 space-y-1 border-r border-[var(--dorami-border)] bg-[var(--dorami-soft)] p-3">
             {sections.map(section => (
               <button
                 key={section.id}

@@ -340,7 +340,7 @@ export default function App() {
         <div className="flex min-w-0 items-center gap-3">
           <BrandLogo logoError={logoError} onLogoError={() => setLogoError(true)} />
           <div className="hidden min-w-0 sm:block">
-            <h1 className="brand-title truncate text-[20px] font-black leading-tight">{brandTitle}</h1>
+            <h1 className="brand-title truncate text-xl font-black leading-tight">{brandTitle}</h1>
             <p className="brand-subtitle mt-1 text-xs font-bold">{brandSubtitle}</p>
           </div>
         </div>
@@ -350,7 +350,7 @@ export default function App() {
             <button
               key={tab.id}
               onClick={() => goTab(tab.id)}
-              className={`top-tab relative flex items-center gap-2 whitespace-nowrap px-6 py-3 text-sm font-extrabold transition-colors ${activeTab === tab.id ? 'top-tab-active' : 'text-slate-600 hover:text-slate-950'}`}
+              className={`top-tab relative flex items-center gap-2 whitespace-nowrap px-6 py-3 text-sm font-extrabold transition-colors ${activeTab === tab.id ? 'top-tab-active' : 'text-slate-500 hover:text-slate-950'}`}
             >
               <tab.icon className="h-4.5 w-4.5" /> {tab.label}
             </button>
@@ -362,7 +362,7 @@ export default function App() {
             <button
               key={tab.id}
               onClick={() => goTab(tab.id)}
-              className={`nav-pill flex shrink-0 items-center gap-2 px-3 py-2 text-xs font-extrabold ${activeTab === tab.id ? 'nav-pill-active' : 'text-slate-600'}`}
+              className={`nav-pill flex shrink-0 items-center gap-2 px-3 py-2 text-xs font-extrabold ${activeTab === tab.id ? 'nav-pill-active' : 'text-slate-500'}`}
             >
               <tab.icon className="h-4 w-4" /> {tab.label}
             </button>
@@ -373,7 +373,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             <div className="hidden text-right sm:block">
               <p className="text-xs font-black text-slate-800">{authState.user?.username || 'admin'}</p>
-              <p className="text-[11px] font-bold text-slate-500">{roleLabel}</p>
+              <p className="micro-label text-slate-500">{roleLabel}</p>
             </div>
             <button
               type="button"

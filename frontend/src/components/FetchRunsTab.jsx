@@ -2,13 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AnimatedNumber from './AnimatedNumber';
 import {
   AlertTriangle,
-  CheckCircle2,
   CheckSquare,
   ChevronDown,
   ChevronRight,
   Clock3,
   Layers,
-  Loader2,
   Play,
   Plus,
   RefreshCw,
@@ -18,7 +16,6 @@ import {
   Timer,
   Trash2,
   X,
-  XCircle,
 } from 'lucide-react';
 import {
   createCollectionJob,
@@ -34,6 +31,9 @@ import {
 } from '../api';
 import ActiveFilterBar from './ActiveFilterBar';
 import LogoMark from './LogoMark';
+import Modal from './Modal';
+import StatusBadge from './StatusBadge';
+import { runStatusMeta } from '../statusMeta';
 import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime } from '../utils/datetime';
 import { runAction } from '../utils/runAction';
@@ -43,14 +43,6 @@ function formatDuration(durationMs) {
   if (durationMs === null || durationMs === undefined) return '-';
   if (durationMs < 1000) return `${durationMs} ms`;
   return `${(durationMs / 1000).toFixed(1)} s`;
-}
-
-function statusMeta(status) {
-  if (status === 'success') return { label: '成功', className: 'text-emerald-700 bg-emerald-50 border-emerald-100', icon: CheckCircle2, iconClassName: '' };
-  if (status === 'failed') return { label: '失败', className: 'text-red-700 bg-red-50 border-red-100', icon: XCircle, iconClassName: '' };
-  if (status === 'partial_failed') return { label: '部分失败', className: 'text-amber-700 bg-amber-50 border-amber-100', icon: AlertTriangle, iconClassName: '' };
-  if (status === 'running') return { label: '运行中', className: 'text-indigo-700 bg-indigo-50 border-indigo-200 ring-2 ring-indigo-200/60 animate-pulse', icon: Loader2, iconClassName: 'animate-spin' };
-  return { label: '运行中', className: 'text-blue-700 bg-blue-50 border-blue-100', icon: Clock3, iconClassName: '' };
 }
 
 function scopeLabel(scope) {
@@ -234,14 +226,6 @@ export default function FetchRunsTab({
     onPendingFilterApplied?.();
   }, [pendingFilter]);
 
-  useEffect(() => {
-    if (!jobModalOpen) return undefined;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [jobModalOpen]);
 
   const openCreateJob = () => {
     setEditingJobId(null);
@@ -386,7 +370,7 @@ export default function FetchRunsTab({
           type="checkbox"
           checked={checked}
           onChange={event => updateDraftParam(fetcherId, param.field, event.target.checked)}
-          className="w-4 h-4 text-blue-600 rounded border-slate-300"
+          className="w-4 h-4 text-[var(--dorami-blue)] rounded border-slate-300"
         />
       );
     }
@@ -457,7 +441,7 @@ export default function FetchRunsTab({
   }
   if (filters.status) {
     activeFilterItems.push({
-      key: 'status', label: '运行状态', value: statusMeta(filters.status).label,
+      key: 'status', label: '运行状态', value: runStatusMeta(filters.status).label,
       onRemove: () => setFilters(prev => ({ ...prev, status: '' })),
     });
   }
@@ -498,7 +482,7 @@ export default function FetchRunsTab({
             <div className="panel-header">
               <div>
                 <div className="section-title">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-[var(--r-control)] bg-blue-50 text-[var(--dorami-blue)]">
                     <Settings2 className="h-5 w-5" />
                   </div>
                   <span>采集任务</span>
@@ -518,7 +502,7 @@ export default function FetchRunsTab({
           </div>
 
           <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
-            <div className="divide-y divide-slate-100">
+            <div className="divide-y divide-[var(--dorami-border)]">
               {collectionJobs.length === 0 ? (
                 <div className="p-12 text-center text-slate-500 font-medium">还没有采集任务，点「新建采集任务」创建第一个。</div>
               ) : collectionJobs.map(job => {
@@ -527,12 +511,12 @@ export default function FetchRunsTab({
                 const ids = getJobFetchers(job);
                 return (
                   <div key={job.id}>
-                    <button onClick={() => setExpandedJobId(isExpanded ? null : job.id)} className="w-full px-5 py-4 flex items-center justify-between gap-4 hover:bg-slate-50 text-left">
+                    <button onClick={() => setExpandedJobId(isExpanded ? null : job.id)} className="w-full px-5 py-4 flex items-center justify-between gap-4 hover:bg-[var(--dorami-soft)] text-left">
                       <div className="min-w-0">
                         <div className="flex items-center">
                           {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-500 mr-2" /> : <ChevronRight className="w-4 h-4 text-slate-500 mr-2" />}
                           <div className="card-title truncate">{job.name}</div>
-                          {!job.is_active && <span className="ml-2 text-[10px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">停用</span>}
+                          {!job.is_active && <span className="ml-2 micro-label bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">停用</span>}
                         </div>
                         <div className="text-xs text-slate-500 mt-1 ml-6">
                           {group ? `采集范围：${group.name}` : '直接选择节点'} · {ids.length} 个节点 · {job.cron_expr || '无整体定时'}
@@ -549,33 +533,33 @@ export default function FetchRunsTab({
                           <button onClick={() => handleDeleteJob(job.id)} className="action-button action-button-danger min-h-[34px] px-3 text-xs"><Trash2 /> 删除</button>
                         </div>
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                          <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
+                          <div className="border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-[var(--dorami-soft)]">
                             <div className="text-xs font-bold text-slate-500">节点来源</div>
                             <div className="card-title mt-1">{group ? group.name : '任务内直接选择'}</div>
                           </div>
-                          <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
+                          <div className="border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-[var(--dorami-soft)]">
                             <div className="text-xs font-bold text-slate-500">整体 cron</div>
                             <div className="font-mono text-xs text-slate-700 mt-1">{job.cron_expr || '-'}</div>
                           </div>
-                          <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
+                          <div className="border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-[var(--dorami-soft)]">
                             <div className="text-xs font-bold text-slate-500">单节点 cron 覆盖</div>
                             <div className="font-mono text-xs text-slate-700 mt-1">{Object.keys(job.per_fetcher_cron || {}).length} 个</div>
                           </div>
                         </div>
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                           {ids.map(fetcherId => (
-                            <div key={fetcherId} className="border border-slate-200 rounded-lg p-3 bg-white">
+                            <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-white">
                               <div className="flex items-center gap-2.5">
                                 <LogoMark company={companyForId(fetcherId)} size="sm" />
                                 <div className="min-w-0">
                                   <div className="font-bold text-slate-700 text-sm truncate">{getFetcherName(fetcherId)}</div>
-                                  <div className="font-mono text-[11px] text-slate-500 truncate">{fetcherId}</div>
+                                  <div className="font-mono text-xs text-slate-500 truncate">{fetcherId}</div>
                                 </div>
                               </div>
                               <div className="mt-2 micro-label text-blue-700 bg-blue-50 border border-blue-100 rounded px-2 py-1">
                                 cron：{(job.per_fetcher_cron || {})[fetcherId] || job.cron_expr || '-'}
                               </div>
-                              <code className="block mt-2 text-[11px] text-slate-500 bg-slate-50 border border-slate-100 rounded px-2 py-1 truncate" title={JSON.stringify((job.per_fetcher_params || {})[fetcherId] || {})}>
+                              <code className="block mt-2 text-xs text-slate-500 bg-[var(--dorami-soft)] border border-[var(--dorami-border)] rounded px-2 py-1 truncate" title={JSON.stringify((job.per_fetcher_params || {})[fetcherId] || {})}>
                                 {JSON.stringify((job.per_fetcher_params || {})[fetcherId] || {})}
                               </code>
                             </div>
@@ -597,7 +581,7 @@ export default function FetchRunsTab({
             <div className="panel-header">
               <div>
                 <div className="section-title">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-[var(--r-control)] bg-violet-50 text-violet-600">
                     <Clock3 className="h-5 w-5" />
                   </div>
                   <span>运行历史</span>
@@ -622,7 +606,7 @@ export default function FetchRunsTab({
             </div>
             <div className="metric-card rounded-[var(--r-card)] p-4">
               <div className="text-xs font-bold text-slate-500 mb-1">抓取产出</div>
-              <div className="stat-number text-blue-600"><AnimatedNumber value={totals.fetched} /></div>
+              <div className="stat-number text-[var(--dorami-blue)]"><AnimatedNumber value={totals.fetched} /></div>
             </div>
             <div className="metric-card rounded-[var(--r-card)] p-4">
               <div className="text-xs font-bold text-slate-500 mb-1">重复跳过</div>
@@ -669,19 +653,19 @@ export default function FetchRunsTab({
           </div>
 
           {tasks.length > 0 && (
-            <div className="bg-amber-50 border border-amber-100 rounded-xl p-4">
+            <div className="bg-amber-50 border border-amber-100 rounded-[var(--r-card)] p-4">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div className="font-bold text-amber-900 text-sm">旧版单节点定时计划</div>
                 <div className="text-xs font-bold text-amber-700">{tasks.length} 个</div>
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                 {tasks.map(task => (
-                  <div key={task.id} className="bg-white border border-amber-100 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+                  <div key={task.id} className="bg-white border border-amber-100 rounded-[var(--r-control)] px-3 py-2 flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="font-bold text-slate-700 text-sm truncate">{getFetcherName(task.fetcher_id)}</div>
-                      <div className="font-mono text-[11px] text-slate-500 truncate">{task.cron_expr}</div>
+                      <div className="font-mono text-xs text-slate-500 truncate">{task.cron_expr}</div>
                     </div>
-                    <button onClick={() => handleDeleteLegacyTask(task.id)} className="p-1.5 text-amber-700 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                    <button onClick={() => handleDeleteLegacyTask(task.id)} className="p-1.5 text-amber-700 hover:text-red-600 hover:bg-red-50 rounded-[var(--r-control)]"><Trash2 className="w-4 h-4" /></button>
                   </div>
                 ))}
               </div>
@@ -695,7 +679,7 @@ export default function FetchRunsTab({
               </div>
             )}
             <table className="data-table w-full text-left">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs tracking-wider">
+              <thead className="bg-[var(--dorami-well)] border-b border-[var(--dorami-border)] text-slate-500 text-xs tracking-wider">
                 <tr>
                   <th className="px-4 py-3">状态</th>
                   <th className="px-4 py-3">对象</th>
@@ -706,12 +690,12 @@ export default function FetchRunsTab({
                   <th className="px-4 py-3">失败信息</th>
                 </tr>
               </thead>
-              <tbody key={listVersion} className="row-stagger divide-y divide-slate-100 text-sm">
+              <tbody key={listVersion} className="row-stagger divide-y divide-[var(--dorami-border)] text-sm">
                 {loading && unifiedRuns.length === 0 ? (
                   Array.from({ length: 6 }).map((_, i) => (
                     <tr key={`run-skeleton-${i}`}>
                       <td className="px-4 py-4"><div className="skeleton h-6 w-16 rounded-full" /></td>
-                      <td className="px-4 py-4"><div className="flex items-center gap-2.5"><div className="skeleton h-8 w-8 rounded-lg" /><div className="skeleton h-4 w-32" /></div></td>
+                      <td className="px-4 py-4"><div className="flex items-center gap-2.5"><div className="skeleton h-8 w-8 rounded-[var(--r-control)]" /><div className="skeleton h-4 w-32" /></div></td>
                       <td className="px-4 py-4"><div className="skeleton h-6 w-14 rounded-full" /></td>
                       <td className="px-4 py-4"><div className="skeleton h-4 w-28" /></td>
                       <td className="px-4 py-4"><div className="skeleton h-4 w-12" /></td>
@@ -724,15 +708,12 @@ export default function FetchRunsTab({
                     <td colSpan="7" className="px-6 py-16 text-center text-slate-500 font-medium">当前过滤条件下暂无运行记录</td>
                   </tr>
                 ) : unifiedRuns.map(run => {
-                  const meta = statusMeta(run.status);
-                  const StatusIcon = meta.icon;
+                  const meta = runStatusMeta(run.status);
                   const isRunning = run.status === 'running';
                   return (
                     <tr key={run.key} className={`transition-colors ${isRunning ? 'bg-indigo-50/40 border-l-4 border-l-indigo-500' : 'hover:bg-blue-50/40'}`}>
                       <td className="px-4 py-4">
-                        <span className={`status-badge ${meta.className}`}>
-                          <StatusIcon className={`w-3.5 h-3.5 mr-1 ${meta.iconClassName}`} /> {meta.label}
-                        </span>
+                        <StatusBadge meta={meta} />
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-2.5 min-w-0">
@@ -743,16 +724,16 @@ export default function FetchRunsTab({
                           )}
                           <div className="min-w-0">
                             <div className="card-title truncate">{run.title}</div>
-                            <div className="font-mono text-[11px] text-slate-500 mt-0.5 truncate">{run.subtitle} · {run.nodeLabel}</div>
+                            <div className="font-mono text-xs text-slate-500 mt-0.5 truncate">{run.subtitle} · {run.nodeLabel}</div>
                           </div>
                         </div>
                       </td>
                       <td className="px-4 py-4">
-                        <span className="status-badge bg-slate-100 text-slate-600 border-slate-200">{triggerLabel(run.trigger_type)}</span>
+                        <StatusBadge tone="slate">{triggerLabel(run.trigger_type)}</StatusBadge>
                       </td>
                       <td className="px-4 py-4 font-mono text-xs text-slate-500">{formatDateTime(run.started_at)}</td>
-                      <td className="px-4 py-4 text-xs font-bold text-slate-600">
-                        <span className="inline-flex items-center"><Timer className="w-3.5 h-3.5 mr-1 text-blue-500" /> {formatDuration(run.duration_ms)}</span>
+                      <td className="px-4 py-4 text-xs font-bold text-slate-500">
+                        <span className="inline-flex items-center"><Timer className="w-3.5 h-3.5 mr-1 text-[var(--dorami-blue)]" /> {formatDuration(run.duration_ms)}</span>
                       </td>
                       <td className="px-4 py-4">
                         <div className="text-xs font-bold text-slate-700">抓取 {run.fetched_count || 0} / 新增 {run.saved_count || 0} / 跳过 {run.skipped_count || 0}</div>
@@ -774,15 +755,13 @@ export default function FetchRunsTab({
         </>
       )}
 
-      {jobModalOpen && (
-        <div className="modal-overlay">
-          <div className="modal-panel max-w-6xl">
-            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+      <Modal open={jobModalOpen} onClose={() => setJobModalOpen(false)} size="6xl">
+            <div className="px-5 py-4 border-b border-[var(--dorami-border)] bg-[var(--dorami-well)] flex items-center justify-between">
               <div>
                 <h3 className="card-title">{editingJobId ? '编辑采集任务' : '新建采集任务'}</h3>
                 <p className="text-xs text-slate-500 mt-1">采集任务负责调度、参数覆盖和运行追踪。</p>
               </div>
-              <button onClick={() => setJobModalOpen(false)} className="p-2 rounded-lg hover:bg-slate-200 text-slate-500"><X className="w-4 h-4" /></button>
+              <button onClick={() => setJobModalOpen(false)} className="icon-button"><X className="w-4 h-4" /></button>
             </div>
             <div className="p-5 overflow-auto space-y-5">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -808,10 +787,10 @@ export default function FetchRunsTab({
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <div className="p-3 bg-slate-50 border-b border-slate-200">
+                <div className="border border-[var(--dorami-border)] rounded-[var(--r-card)] overflow-hidden">
+                  <div className="p-3 bg-[var(--dorami-soft)] border-b border-[var(--dorami-border)]">
                     <div className="font-bold text-slate-700 text-sm flex items-center">
-                      <Layers className="w-4 h-4 mr-2 text-blue-600" /> {jobDraft.group_id ? '采集范围包含节点' : '选择节点'}
+                      <Layers className="w-4 h-4 mr-2 text-[var(--dorami-blue)]" /> {jobDraft.group_id ? '采集范围包含节点' : '选择节点'}
                     </div>
                     {!jobDraft.group_id && (
                       <div className="form-search-box relative mt-3">
@@ -820,7 +799,7 @@ export default function FetchRunsTab({
                       </div>
                     )}
                   </div>
-                  <div className="max-h-[460px] overflow-auto divide-y divide-slate-100">
+                  <div className="max-h-[460px] overflow-auto divide-y divide-[var(--dorami-border)]">
                     {(jobDraft.group_id ? draftFetcherIds.map(id => fetchersById[id] || { id, name: id }) : filteredModalFetchers).map(fetcher => {
                       const checked = draftFetcherIds.includes(fetcher.id);
                       return (
@@ -828,13 +807,13 @@ export default function FetchRunsTab({
                           key={fetcher.id}
                           disabled={Boolean(jobDraft.group_id)}
                           onClick={() => toggleDraftFetcher(fetcher)}
-                          className={`w-full px-3 py-3 flex items-center gap-3 text-left ${checked ? 'bg-blue-50/60' : ''} ${jobDraft.group_id ? 'cursor-default' : 'hover:bg-slate-50'}`}
+                          className={`w-full px-3 py-3 flex items-center gap-3 text-left ${checked ? 'bg-blue-50/60' : ''} ${jobDraft.group_id ? 'cursor-default' : 'hover:bg-[var(--dorami-soft)]'}`}
                         >
                           <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>{checked && <CheckSquare className="w-3.5 h-3.5 text-white" />}</div>
                           <LogoMark company={companyForId(fetcher.id)} size="sm" />
                           <div className="min-w-0">
                             <div className="font-bold text-slate-700 text-sm truncate">{fetcher.name}</div>
-                            <div className="font-mono text-[11px] text-slate-500 truncate">{fetcher.id}</div>
+                            <div className="font-mono text-xs text-slate-500 truncate">{fetcher.id}</div>
                           </div>
                         </button>
                       );
@@ -844,21 +823,21 @@ export default function FetchRunsTab({
 
                 <div className="space-y-3">
                   {draftFetcherIds.length === 0 ? (
-                    <div className="border border-dashed border-slate-200 rounded-xl p-10 text-center text-slate-500 font-medium">未选择节点</div>
+                    <div className="border border-dashed border-[var(--dorami-border)] rounded-[var(--r-card)] p-10 text-center text-slate-500 font-medium">未选择节点</div>
                   ) : draftFetcherIds.map(fetcherId => {
                     const fetcher = fetchersById[fetcherId];
                     return (
-                      <div key={fetcherId} className="border border-slate-200 rounded-xl p-3 bg-white">
+                      <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-card)] p-3 bg-white">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-center gap-2.5 min-w-0">
                             <LogoMark company={companyForId(fetcherId)} size="sm" />
                             <div className="min-w-0">
                               <div className="card-title truncate">{fetcher?.name || fetcherId}</div>
-                              <div className="font-mono text-[11px] text-slate-500 mt-0.5">{fetcherId}</div>
+                              <div className="font-mono text-xs text-slate-500 mt-0.5">{fetcherId}</div>
                             </div>
                           </div>
                           {!jobDraft.group_id && (
-                            <button onClick={() => setJobDraft(prev => ({ ...prev, fetcher_ids: prev.fetcher_ids.filter(id => id !== fetcherId) }))} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg"><X className="w-4 h-4" /></button>
+                            <button onClick={() => setJobDraft(prev => ({ ...prev, fetcher_ids: prev.fetcher_ids.filter(id => id !== fetcherId) }))} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-[var(--r-control)]"><X className="w-4 h-4" /></button>
                           )}
                         </div>
                         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -867,7 +846,7 @@ export default function FetchRunsTab({
                             <input value={(jobDraft.per_fetcher_cron || {})[fetcherId] || ''} onChange={event => updateDraftCron(fetcherId, event.target.value)} placeholder={jobDraft.cron_expr || '留空则不单独调度'} className="form-input mt-1 py-1.5 text-xs font-mono" />
                           </label>
                           {(fetcher?.parameters || []).length === 0 ? (
-                            <div className="text-xs text-slate-500 font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">该节点无需扩展参数</div>
+                            <div className="text-xs text-slate-500 font-medium bg-[var(--dorami-soft)] border border-[var(--dorami-border)] rounded-[var(--r-control)] px-3 py-2">该节点无需扩展参数</div>
                           ) : (fetcher.parameters || []).map(param => (
                             <label key={param.field} className="text-xs font-bold text-slate-500">
                               {param.label}
@@ -881,9 +860,9 @@ export default function FetchRunsTab({
                 </div>
               </div>
             </div>
-            <div className="px-5 py-4 border-t border-slate-200 bg-white flex justify-between gap-2">
-              <label className="inline-flex items-center text-xs font-bold text-slate-600">
-                <input type="checkbox" checked={jobDraft.is_active} onChange={event => setJobDraft(prev => ({ ...prev, is_active: event.target.checked }))} className="w-4 h-4 mr-2 text-blue-600 rounded border-slate-300" />
+            <div className="px-5 py-4 border-t border-[var(--dorami-border)] bg-white flex justify-between gap-2">
+              <label className="inline-flex items-center text-xs font-bold text-slate-500">
+                <input type="checkbox" checked={jobDraft.is_active} onChange={event => setJobDraft(prev => ({ ...prev, is_active: event.target.checked }))} className="w-4 h-4 mr-2 text-[var(--dorami-blue)] rounded border-slate-300" />
                 启用任务
               </label>
               <div className="flex justify-end gap-2">
@@ -891,9 +870,7 @@ export default function FetchRunsTab({
                 <button onClick={handleSaveJob} className="action-button action-button-primary"><Save /> 保存</button>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 }

@@ -116,24 +116,24 @@ export default function DailyBriefFlow({ showToast, canManage = false }) {
               <button
                 type="button"
                 onClick={() => setOpenId(isOpen ? null : node.id)}
-                className={`group relative flex w-full flex-col gap-1.5 rounded-xl border px-3 py-3 text-left transition-all ${
+                className={`group relative flex w-full flex-col gap-1.5 rounded-[var(--r-card)] border px-3 py-3 text-left transition-all ${
                   isOpen
                     ? 'border-indigo-300 bg-indigo-50/70 ring-1 ring-indigo-200'
-                    : 'border-slate-200 bg-slate-50 hover:border-indigo-200 hover:bg-white'
+                    : 'border-[var(--dorami-border)] bg-[var(--dorami-soft)] hover:border-indigo-200 hover:bg-white'
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${isOpen ? 'bg-indigo-100 text-indigo-600' : 'bg-white text-slate-500 group-hover:text-indigo-500'}`}>
+                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--r-control)] ${isOpen ? 'bg-indigo-100 text-indigo-600' : 'bg-white text-slate-500 group-hover:text-indigo-500'}`}>
                     <Icon className="h-4 w-4" />
                   </span>
-                  <span className="text-[10px] font-black tabular-nums text-slate-300">{node.step}</span>
+                  <span className="micro-label font-black tabular-nums text-slate-300">{node.step}</span>
                   {node.llm && (
-                    <span className="ml-auto rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-600">大模型</span>
+                    <span className="ml-auto rounded-full bg-amber-100 px-1.5 py-0.5 micro-label text-amber-600">大模型</span>
                   )}
                 </div>
                 <div>
                   <p className="text-sm font-bold text-slate-700">{node.title}</p>
-                  <p className="text-[11px] text-slate-500">{node.subtitle}</p>
+                  <p className="text-xs text-slate-500">{node.subtitle}</p>
                 </div>
               </button>
               {/* 步骤间箭头（仅大屏、非末位显示） */}
@@ -147,16 +147,16 @@ export default function DailyBriefFlow({ showToast, canManage = false }) {
 
       {/* 节点详情 */}
       {active && (
-        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4 animate-in fade-in">
+        <div className="mt-3 rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-surface)] p-4 animate-in fade-in">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <p className="text-sm font-bold text-slate-700">{active.title} · {active.subtitle}</p>
-            {active.llm && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-600">大模型节点</span>}
+            {active.llm && <span className="rounded-full bg-amber-100 px-2 py-0.5 micro-label text-amber-600">大模型节点</span>}
             <span className="flex items-center gap-1.5 text-xs text-slate-500">
               {active.io[0]} <ChevronRight className="h-3 w-3" /> <span className="font-medium text-slate-500">{active.io[1]}</span>
             </span>
           </div>
 
-          <p className="text-xs leading-relaxed text-slate-600">{active.desc}</p>
+          <p className="text-xs leading-relaxed text-slate-500">{active.desc}</p>
 
           {active.points?.length > 0 && (
             <ul className="mt-2 space-y-1">
@@ -173,7 +173,7 @@ export default function DailyBriefFlow({ showToast, canManage = false }) {
           {active.paramKeys?.length > 0 && pipeline?.params && (
             <div className="mt-3 flex flex-wrap gap-1.5">
               {active.paramKeys.map(key => (
-                <span key={key} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-500">
+                <span key={key} className="rounded-[var(--r-control)] border border-[var(--dorami-border)] bg-[var(--dorami-soft)] px-2 py-1 text-xs text-slate-500">
                   {PARAM_LABELS[key] || key}
                   <span className="ml-1 font-mono font-bold text-slate-700">{pipeline.params[key]}</span>
                 </span>
@@ -196,7 +196,7 @@ export default function DailyBriefFlow({ showToast, canManage = false }) {
                 </button>
               </div>
               {pipeline ? (
-                <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-words rounded-xl bg-slate-950 px-4 py-3 text-[11px] leading-relaxed text-slate-300">{promptText || '（未获取到提示词）'}</pre>
+                <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-words rounded-[var(--r-card)] bg-slate-950 px-4 py-3 text-xs leading-relaxed text-slate-300">{promptText || '（未获取到提示词）'}</pre>
               ) : loadError ? (
                 <p className="tiny-meta text-rose-500">提示词加载失败，请刷新重试。</p>
               ) : (

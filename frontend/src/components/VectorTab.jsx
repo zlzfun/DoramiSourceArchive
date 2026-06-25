@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { Database, Search, RefreshCw, Copy, Check, ExternalLink } from 'lucide-react';
 import { fetchVectorStats, vectorSearch, ragContext, fetchSubscribedVectorStats } from '../api';
 import DateRangePicker from './DateRangePicker';
+import StatusBadge from './StatusBadge';
+import EmptyState from './EmptyState';
+import { distanceMeta } from '../statusMeta';
 import { copyText } from '../utils/clipboard';
 import { runAction } from '../utils/runAction';
 
@@ -71,13 +74,6 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
     });
   };
 
-  const getDistanceLabel = (dist) => {
-    if (dist < 0.3) return { label: '极高', color: 'text-emerald-700 bg-emerald-100' };
-    if (dist < 0.5) return { label: '高', color: 'text-blue-700 bg-blue-100' };
-    if (dist < 0.7) return { label: '中', color: 'text-amber-700 bg-amber-100' };
-    return { label: '低', color: 'text-slate-500 bg-slate-100' };
-  };
-
   return (
     <div className="space-y-6 animate-in fade-in">
       <div className="page-header flex-col xl:flex-row">
@@ -101,17 +97,17 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[340px_1fr]">
-        <div className="relative overflow-hidden rounded-[var(--r-card)] bg-gradient-to-br from-[#174fff] via-[#5d5cff] to-[#8c5aff] p-6 text-white shadow-lg shadow-blue-500/20">
+        <div className="relative overflow-hidden rounded-[var(--r-card)] bg-gradient-to-br from-[var(--dorami-accent-ink)] via-[var(--dorami-blue)] to-[var(--dorami-blue-2)] p-6 text-white shadow-[var(--sh-accent)]">
           <div className="absolute -right-14 -top-14 h-40 w-40 rounded-full bg-white/16" />
           <div className="relative">
             <h4 className="text-indigo-100 font-bold text-sm mb-2 flex items-center"><Database className="w-4 h-4 mr-1.5" /> ChromaDB 挂载块数</h4>
             <div className="text-5xl font-bold">{vectorStats.total} <span className="text-lg font-medium opacity-80">Chunks</span></div>
-            <p className="mt-4 text-xs font-bold text-blue-100">向量库状态会随索引和重索引操作刷新。</p>
+            <p className="mt-4 text-xs font-bold text-indigo-100">向量库状态会随索引和重索引操作刷新。</p>
           </div>
         </div>
 
         <div className="surface-card rounded-[var(--r-overlay)] p-6">
-        <h3 className="font-bold text-lg mb-4 flex items-center"><Search className="w-5 h-5 mr-2 text-blue-500" /> 语义检索</h3>
+        <h3 className="section-title mb-4"><Search className="w-5 h-5 text-[var(--dorami-blue)]" /> 语义检索</h3>
 
         {/* 检索控制行 */}
         <div className="vector-search-layout mb-3">
@@ -186,43 +182,39 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
         <div className="row-stagger space-y-4">
           {searching && searchResults.length === 0 && (
             Array.from({ length: 3 }).map((_, i) => (
-              <div key={`vec-skeleton-${i}`} className="bg-white/72 border border-slate-200 p-5 rounded-[var(--r-card)] shadow-sm">
+              <div key={`vec-skeleton-${i}`} className="surface-card rounded-[var(--r-card)] p-5">
                 <div className="skeleton mb-3 h-4 w-2/3" />
                 <div className="skeleton mb-3 h-3 w-40" />
-                <div className="skeleton h-16 w-full rounded-xl" />
+                <div className="skeleton h-16 w-full rounded-[var(--r-card)]" />
               </div>
             ))
           )}
           {searchResults.length === 0 && !searching && (
-            <div className="empty-state py-8">
-              输入查询句，探测语义检索效果
-            </div>
+            <EmptyState icon={Search} title="输入查询句，探测语义检索效果" />
           )}
           {searchResults.map((res, i) => {
-            const { label, color } = getDistanceLabel(res.distance);
+            const meta = distanceMeta(res.distance);
             const sourceUrl = res.metadata?.source_url;
             const pubDate = res.metadata?.publish_date?.split('T')[0];
             return (
-              <div key={i} className="bg-white/72 border border-slate-200 p-5 rounded-[var(--r-card)] shadow-sm">
+              <div key={i} className="surface-card rounded-[var(--r-card)] p-5">
                 <div className="flex items-start justify-between mb-2">
-                  <h4 className="font-bold text-slate-800 text-sm pr-4 line-clamp-1 flex-1">
+                  <h4 className="card-title pr-4 line-clamp-1 flex-1">
                     {sourceUrl
-                      ? <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 transition-colors flex items-center gap-1">
+                      ? <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="hover:text-[var(--dorami-blue)] transition-colors flex items-center gap-1">
                           {res.metadata?.title || '未知片段'}<ExternalLink className="w-3 h-3 shrink-0" />
                         </a>
                       : (res.metadata?.title || '未知片段')
                     }
                   </h4>
-                  <span className={`status-badge shrink-0 ${color}`}>
-                    {label} {res.distance.toFixed(3)}
-                  </span>
+                  <StatusBadge meta={meta} className="shrink-0">{meta.label} {res.distance.toFixed(3)}</StatusBadge>
                 </div>
-                <div className="text-xs text-slate-500 flex flex-wrap gap-1.5 mb-3">
-                  <span className="bg-white px-2 py-0.5 border border-slate-200 rounded shadow-sm">{res.metadata?.content_type}</span>
-                  <span className="bg-white px-2 py-0.5 border border-slate-200 rounded shadow-sm">{res.metadata?.source_id}</span>
-                  {pubDate && <span className="bg-white px-2 py-0.5 border border-slate-200 rounded shadow-sm">{pubDate}</span>}
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  <span className="data-chip">{res.metadata?.content_type}</span>
+                  <span className="data-chip">{res.metadata?.source_id}</span>
+                  {pubDate && <span className="data-chip">{pubDate}</span>}
                 </div>
-                <p className="text-sm text-slate-600 bg-white p-4 rounded-xl border border-slate-100 leading-relaxed line-clamp-4">
+                <p className="body-text bg-[var(--dorami-soft)] p-4 rounded-[var(--r-card)] border border-[var(--dorami-border)] line-clamp-4">
                   {res.document}
                 </p>
               </div>

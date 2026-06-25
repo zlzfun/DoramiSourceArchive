@@ -33,16 +33,16 @@ function FeedDocsPanel({ onCopy, copiedKey }) {
     ['Markdown 批量导出', `curl -H "Authorization: Bearer ${token}" \\\n  "${apiRoot()}/public/feed/articles.md"`],
   ];
   return (
-    <div className="mt-4 space-y-4 border-t border-slate-100 pt-4">
+    <div className="mt-4 space-y-4 border-t border-[var(--dorami-border)] pt-4">
       <p className="tiny-meta">下例中的 <code className="font-mono">{TOKEN_PLACEHOLDER}</code> 请替换为上方「访问令牌」里的 dfeed_ 令牌。</p>
       <div>
         <p className="form-label mb-2">请求参数</p>
-        <div className="overflow-hidden rounded-[var(--r-control)] border border-slate-100">
+        <div className="overflow-hidden rounded-[var(--r-control)] border border-[var(--dorami-border)]">
           <table className="w-full text-left text-xs">
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-[var(--dorami-border)]">
               {FEED_PARAMS.map(([name, desc]) => (
                 <tr key={name} className="align-top">
-                  <td className="w-[220px] bg-slate-50 px-3 py-2 font-mono font-bold text-slate-600">{name}</td>
+                  <td className="w-[220px] bg-[var(--dorami-soft)] px-3 py-2 font-mono font-bold text-slate-500">{name}</td>
                   <td className="px-3 py-2 text-slate-500">{desc}</td>
                 </tr>
               ))}
@@ -65,7 +65,7 @@ function FeedDocsPanel({ onCopy, copiedKey }) {
                 复制
               </button>
             </div>
-            <pre className="overflow-x-auto rounded-[var(--r-control)] bg-slate-900 px-3 py-2.5 text-[11px] leading-5 text-slate-100"><code>{cmd}</code></pre>
+            <pre className="overflow-x-auto rounded-[var(--r-control)] bg-slate-900 px-3 py-2.5 text-xs leading-5 text-slate-100"><code>{cmd}</code></pre>
           </div>
         ))}
       </div>
@@ -93,7 +93,7 @@ export default function FeedAccessSection({ showToast }) {
 
   return (
     <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
-      <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
+      <div className="flex items-center gap-3 border-b border-[var(--dorami-border)] px-6 py-4">
         <div className="h-5 w-1 rounded-full bg-amber-500" />
         <h3 className="section-title">个人订阅接口</h3>
         <span className="ml-auto text-xs font-medium text-slate-500">dfeed_ · HTTP 拉取</span>
