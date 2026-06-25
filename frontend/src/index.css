@@ -27,7 +27,20 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 
-  /* ── Direction A · 墨色 + 单宝石色 ──
+  /* ── 设计令牌分类法（P5：命名对齐，为暗色预留）──
+     令牌按「语义角色」分四套，彼此不混用：
+       · 图底/背景阶（surface）：--dorami-canvas / canvas-2 / surface / soft / card / well / wash
+         —— 页面与容器的「底」，勿用作文字色。
+       · 文字/墨色阶（ink）：--dorami-ink / ink-2 / muted / faint
+         —— 信息层级（标题→正文→次要→最弱），勿用作背景。muted/faint 已达 WCAG AA。
+       · 描边（border）：--dorami-border / border-strong。
+       · 强调/状态（accent）：--dorami-accent(=blue) / blue-2 / accent-ink
+         —— 唯一饱和色，仅用于「激活态/状态」与「一个视图里最重要的那个动作（CTA）」。
+       · 高程（elevation）：--sh-1/2/3 / --sh-accent。
+     暗色预留：以上均为语义令牌（非字面 gray-100），未来上暗色只需在 [data-theme=dark]
+     作用域重定义这批令牌的值，组件层（引用语义令牌处）无需改动；目前仅亮色，故不落地。
+
+     ── Direction A · 墨色 + 单宝石色 ──
      唯一饱和 accent（indigo），仅用于激活/CTA；层次靠明度阶 + 高程阴影。 */
   --dorami-accent-rgb: 91, 84, 232;          /* #5b54e8 electric indigo */
   --dorami-blue: #5b54e8;                     /* 主 accent（沿用旧令牌名，兼容组件层引用） */
