@@ -743,7 +743,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               className={`source-run ${isRunning ? 'is-running' : ''}`}
             >
               {isRunning ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-              <span>{isRunning ? (progress ? (progress.total ? `${progress.current}/${progress.total}` : `${progress.current}`) : '抓取中') : '抓取'}</span>
+              <span>{isRunning ? (progress ? (progress.total ? `${progress.current}/${progress.total}` : `${progress.current}`) : '抓取中…') : '抓取'}</span>
             </button>
           </div>
         </div>
@@ -979,7 +979,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           </div>
           <div className="divide-y divide-slate-100">
             {nodeGroups.length === 0 ? (
-              <div className="p-12 text-center text-slate-400 font-medium">暂无采集范围</div>
+              <div className="p-12 text-center text-slate-400 font-medium">还没有采集范围，点右上角「新建采集范围」创建第一个。</div>
             ) : nodeGroups.map(group => {
               const isExpanded = expandedGroupId === group.id;
               return (

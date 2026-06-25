@@ -164,7 +164,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
       await persistLlm(); // 先落盘当前表单，再测试，免去「必须先保存」的困惑
       const r = await testLLMConfig();
       await loadLlm();
-      showToast(`连接成功 · ${r.model} · ${r.latency_ms}ms`, 'success');
+      showToast(`已连接 · ${r.model} · ${r.latency_ms}ms`, 'success');
     } catch (error) {
       showToast(error.message || '连接失败', 'error');
     } finally {
@@ -293,7 +293,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
               <div className="mt-3 rounded-lg border border-amber-200/70 bg-white/70 px-3 py-2.5">
                 <div className="flex items-center gap-2 text-xs">
                   <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-600" />
-                  <span className="font-bold text-slate-700">{PHASE_LABELS[progress?.phase] || '处理中'}</span>
+                  <span className="font-bold text-slate-700">{PHASE_LABELS[progress?.phase] || '处理中…'}</span>
                   {progress?.total > 0 && <span className="font-mono text-slate-500">{progress.done}/{progress.total}</span>}
                   {progress?.message && progress.total === 0 && <span className="text-slate-400">{progress.message}</span>}
                 </div>

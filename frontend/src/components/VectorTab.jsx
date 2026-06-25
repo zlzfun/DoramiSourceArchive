@@ -91,7 +91,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
         {!scopedToSubscriptions ? (
           <span>检索覆盖全部归档（管理员视图）。</span>
         ) : subStats.subscribed_source_count === 0 ? (
-          <span>你还没有订阅任何来源 —— 先到「订阅分发」订阅即可在此检索。</span>
+          <span>你还没有订阅任何来源 —— 先在 阅读器 的「发现更多来源」订阅即可在此检索。</span>
         ) : (
           <span>
             已订阅 {subStats.subscribed_source_count} 个源 · 已建向量 {subStats.vectorized}/{subStats.total} 篇

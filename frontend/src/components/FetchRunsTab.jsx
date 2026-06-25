@@ -520,7 +520,7 @@ export default function FetchRunsTab({
           <div className="surface-card rounded-[14px] overflow-hidden">
             <div className="divide-y divide-slate-100">
               {collectionJobs.length === 0 ? (
-                <div className="p-12 text-center text-slate-400 font-medium">暂无采集任务</div>
+                <div className="p-12 text-center text-slate-400 font-medium">还没有采集任务，点「新建采集任务」创建第一个。</div>
               ) : collectionJobs.map(job => {
                 const isExpanded = expandedJobId === job.id;
                 const group = job.group_id ? groupsById[String(job.group_id)] : null;

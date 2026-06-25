@@ -247,7 +247,7 @@ export default function App() {
   const handleLogin = async (username, password) => {
     const session = await loginAdmin(username, password);
     setAuthState({ status: 'authenticated', user: session.user });
-    showToast('登录成功', 'success');
+    showToast(session.user?.username ? `已登录 · ${session.user.username}` : '已登录', 'success');
   };
 
   // 头像/账户字段就地更新（如改头像），让顶栏与设置面板即时同步，无需重登。

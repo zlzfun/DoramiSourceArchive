@@ -401,7 +401,7 @@ function AccountManagementSection({ showToast, currentUsername }) {
         {accounts === null ? (
           <p className="tiny-meta">加载中…</p>
         ) : accounts.length === 0 ? (
-          <p className="tiny-meta">暂无账户。</p>
+          <p className="tiny-meta">还没有账户，用上方「新建账户」创建第一个。</p>
         ) : (
           <div className="space-y-2">
             {accounts.map(acc => (

@@ -2379,6 +2379,14 @@ button:disabled {
     box-shadow: 0 7px 18px rgba(11, 18, 32, 0.08);
   }
 
+  /* 内部 select/input 设了 outline:none + border:0，焦点指示由容器接管：
+     键盘 focus 时给出可见的 accent 焦点环（不移除 outline 而无替代）。 */
+  .field-box:focus-within {
+    border-color: rgba(91, 84, 232, 0.55);
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(91, 84, 232, 0.12);
+  }
+
   .field-box > span {
     color: #64748b;
     font-family: inherit;

@@ -129,7 +129,7 @@ export default function DataTab({
   const handleVectorize = async (id) => {
     setVectorizingId(id);
     await runAction(() => vectorizeArticle(id), {
-      showToast, success: '建立索引成功', onSuccess: () => loadArticles(),
+      showToast, success: '已建立向量索引', onSuccess: () => loadArticles(),
     });
     setVectorizingId(null);
   };
@@ -137,7 +137,7 @@ export default function DataTab({
   const handleBatchVectorize = async () => {
     await runAction(() => batchVectorizeArticles(Array.from(selectedArticles)), {
       showToast,
-      success: (data) => `成功处理，${data.count} 条记录新建了向量索引`,
+      success: (data) => `已为 ${data.count} 条记录建立向量索引`,
       onSuccess: () => loadArticles(),
     });
   };
@@ -176,7 +176,7 @@ export default function DataTab({
       setListVersion(v => v + 1);
     } catch (e) {
       if (e.name === 'AbortError') return; // 被更新的请求取消，静默丢弃
-      showToast(e.message || '后端服务未启动或网络错误', 'error');
+      showToast(e.message || '加载失败：后端未响应，请确认服务已启动后重试', 'error');
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
@@ -308,14 +308,14 @@ export default function DataTab({
   const handleBatchDeleteArticles = async () => {
     if (!(await confirm(`确定彻底删除选中的 ${selectedArticles.size} 条数据吗？`))) return;
     await runAction(() => batchDeleteArticles(Array.from(selectedArticles)), {
-      showToast, success: '批量删除成功', onSuccess: () => loadArticles(),
+      showToast, success: `已删除 ${selectedArticles.size} 篇文章`, onSuccess: () => loadArticles(),
     });
   };
 
   const handleUpdateArticle = async (id, updatedData) => {
     await runAction(() => updateArticle(id, updatedData), {
       showToast,
-      success: '数据修改成功',
+      success: '已保存修改',
       onSuccess: () => {
         setModalState({ isOpen: false, data: null, isEditing: false });
         loadArticles();
@@ -336,7 +336,7 @@ export default function DataTab({
     };
     await runAction(() => createArticle(payload), {
       showToast,
-      success: '手工录入成功',
+      success: '已录入文章',
       onSuccess: () => {
         setManualAddModal(false);
         loadArticles();
