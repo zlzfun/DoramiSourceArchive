@@ -112,6 +112,27 @@ export async function deleteAccount(username) {
   return res.json();
 }
 
+// ── 阅读器 AI（用户面：翻译 / 问答） ──
+export async function translateArticle(articleId) {
+  const res = await apiFetch(`${API_BASE_URL}/reader/ai/translate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ article_id: articleId }),
+  });
+  if (!res.ok) await handleApiError(res, '翻译失败，请稍后重试');
+  return res.json();
+}
+
+export async function askReaderAi({ question, scope = 'article', articleId = null, history = [] }) {
+  const res = await apiFetch(`${API_BASE_URL}/reader/ai/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, scope, article_id: articleId, history }),
+  });
+  if (!res.ok) await handleApiError(res, '提问失败，请稍后重试');
+  return res.json();
+}
+
 export async function fetchFetchers() {
   const res = await apiFetch(`${API_BASE_URL}/fetchers`);
   if (!res.ok) await handleApiError(res, '获取抓取器注册表失败');

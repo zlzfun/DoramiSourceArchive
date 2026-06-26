@@ -13,6 +13,14 @@ import {
   ChevronLeft,
   ChevronRight,
   Star,
+  Languages,
+  Sparkles,
+  Send,
+  X,
+  Check,
+  Maximize2,
+  Minimize2,
+  SquarePen,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -28,6 +36,8 @@ import {
   fetchFavorites,
   addFavorite,
   removeFavorite,
+  translateArticle,
+  askReaderAi,
 } from '../api';
 
 const PAGE_SIZE = 30;
@@ -83,7 +93,7 @@ function excerptOf(content) {
   return plain.replace(/\s+/g, ' ').trim().slice(0, 140);
 }
 
-export default function ReaderTab({ showToast }) {
+export default function ReaderTab({ showToast, aiEnabled = false }) {
   const [sources, setSources] = useState([]);
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
   const [sourcesLoading, setSourcesLoading] = useState(true);
@@ -106,6 +116,21 @@ export default function ReaderTab({ showToast }) {
   const [activeBody, setActiveBody] = useState(null);        // 选中文章的全文正文（按需拉取）
   const [activeBodyLoading, setActiveBodyLoading] = useState(false);
   const [pinningId, setPinningId] = useState(null);
+
+  // ── 用户面 AI（aiEnabled 时才挂载入口）──
+  const [showTranslation, setShowTranslation] = useState(false);  // 右栏是否展示译文
+  const [translating, setTranslating] = useState(false);
+  const [translatedBody, setTranslatedBody] = useState(null);
+  const translationCacheRef = useRef(new Map());                  // id → 译文
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [aiPanelClosing, setAiPanelClosing] = useState(false);
+  const [aiPanelLarge, setAiPanelLarge] = useState(() => localStorage.getItem('dorami_reader_ai_panel_large') === '1');
+  const [qaScope, setQaScope] = useState('article');             // article | subscription
+  const [qaScopeMenuOpen, setQaScopeMenuOpen] = useState(false);
+  const qaScopeRef = useRef(null);
+  const [qaInput, setQaInput] = useState('');
+  const [qaThread, setQaThread] = useState([]);                  // {q, a, sources, error, pending}
+  const [qaLoading, setQaLoading] = useState(false);
 
   const listRef = useRef(null);
   // 正文缓存（id → content）+ 「最新选中 id」防竞态：快速连点时丢弃晚到的过期正文响应
@@ -181,6 +206,10 @@ export default function ReaderTab({ showToast }) {
     setActiveArticle(article);
     const id = article?.id || null;
     activeIdRef.current = id;
+    // 切文章即回到原文视图；译文若已缓存则备好，等用户主动点「译为中文」再显示。
+    setShowTranslation(false);
+    setTranslating(false);
+    setTranslatedBody(id ? (translationCacheRef.current.get(id) ?? null) : null);
     if (!id) { setActiveBody(null); setActiveBodyLoading(false); return; }
     // 兜底：若列表项偶然已带正文（如详情接口回填），直接用
     if (article.content != null) { setActiveBody(article.content); setActiveBodyLoading(false); return; }
@@ -203,6 +232,79 @@ export default function ReaderTab({ showToast }) {
       });
   }, [showToast]);
 
+  // ── AI · 一键译为中文（结果按 id 缓存，再次切回直接复用）──
+  const handleTranslate = useCallback(async () => {
+    const id = activeArticle?.id;
+    if (!id) return;
+    if (showTranslation) { setShowTranslation(false); return; }
+    const cached = translationCacheRef.current.get(id);
+    if (cached) { setTranslatedBody(cached); setShowTranslation(true); return; }
+    setTranslating(true);
+    try {
+      const data = await translateArticle(id);
+      translationCacheRef.current.set(id, data.translation);
+      if (activeIdRef.current === id) { setTranslatedBody(data.translation); setShowTranslation(true); }
+    } catch (error) {
+      showToast(error.message || '翻译失败，请稍后重试', 'error');
+    } finally {
+      if (activeIdRef.current === id) setTranslating(false);
+    }
+  }, [activeArticle, showTranslation, showToast]);
+
+  // ── AI · 问答（基于本文 / 基于我的订阅）──
+  const handleAsk = useCallback(async () => {
+    const q = qaInput.trim();
+    if (!q || qaLoading) return;
+    const scope = qaScope;
+    const articleId = activeArticle?.id || null;
+    if (scope === 'article' && !articleId) { showToast('请先从中间选择一篇文章', 'error'); return; }
+    // 多轮：把此前已完成的问答展开成 user/assistant 历史（不含本轮，未完成/出错的轮次跳过）
+    const history = qaThread
+      .filter((m) => m.a && !m.error && !m.pending)
+      .flatMap((m) => [{ role: 'user', content: m.q }, { role: 'assistant', content: m.a }]);
+    setQaLoading(true);
+    setQaThread((prev) => [...prev, { q, a: null, sources: [], pending: true }]);
+    setQaInput('');
+    try {
+      const data = await askReaderAi({ question: q, scope, articleId, history });
+      setQaThread((prev) => prev.map((m, i) => (
+        i === prev.length - 1 ? { q, a: data.answer, sources: data.sources || [] } : m
+      )));
+    } catch (error) {
+      setQaThread((prev) => prev.map((m, i) => (
+        i === prev.length - 1 ? { q, a: null, error: error.message || '提问失败，请稍后重试' } : m
+      )));
+    } finally {
+      setQaLoading(false);
+    }
+  }, [qaInput, qaLoading, qaScope, qaThread, activeArticle, showToast]);
+
+  // 范围下拉：点击面板外区域收起
+  useEffect(() => {
+    if (!qaScopeMenuOpen) return undefined;
+    const onPointerDown = (e) => {
+      if (qaScopeRef.current && !qaScopeRef.current.contains(e.target)) setQaScopeMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [qaScopeMenuOpen]);
+
+  // 发起新对话：清空多轮历史与输入（切换范围/点「新对话」时调用）
+  const resetConversation = useCallback(() => {
+    setQaThread([]);
+    setQaInput('');
+  }, []);
+
+  // 关闭面板：先播放退场动画，动画结束再卸载（与 CSS .is-closing 的 180ms 对齐）
+  const closeAiPanel = useCallback(() => {
+    setQaScopeMenuOpen(false);
+    setAiPanelClosing(true);
+    window.setTimeout(() => {
+      setAiPanelOpen(false);
+      setAiPanelClosing(false);
+    }, 180);
+  }, []);
+
   // ── 文章列表 ──
   const loadArticles = useCallback(async (skip = 0, append = false) => {
     // 发新请求前取消上一笔在飞行的请求，杜绝乱序晚到的响应覆盖当前列表
@@ -216,6 +318,7 @@ export default function ReaderTab({ showToast }) {
       // 「我的订阅」聚合由后端 subscribed_scope=only 自行解析范围，前端无需先拿到订阅集合即可发请求。
       if (showFavorites) {
         const filters = {};
+        if (activeSourceId) filters.source_id = activeSourceId; // 收藏视图跟随当前来源
         if (searchQuery) filters.search = searchQuery;
         data = await fetchFavorites(filters, PAGE_SIZE, skip, { signal: controller.signal, includeContent: false });
         if (data.favorite_ids) setFavoriteIds(new Set(data.favorite_ids));
@@ -332,10 +435,12 @@ export default function ReaderTab({ showToast }) {
     }
   };
 
-  // 视图切换：订阅聚合 / 单个来源 / 我的收藏 三者互斥
+  // 视图切换：订阅聚合 / 单个来源（左栏导航，离开收藏视图）
   const goSubscribed = () => { setShowFavorites(false); setActiveSourceId(null); };
   const goSource = (sourceId) => { setShowFavorites(false); setActiveSourceId(sourceId); };
-  const goFavorites = () => { setShowFavorites(true); setActiveSourceId(null); };
+  // 收藏星标：仅在「当前范围」上叠加/取消收藏过滤，保留 activeSourceId
+  // （在某来源 → 看该来源收藏；在「我的订阅」聚合 → 看全部收藏）
+  const toggleFavorites = () => setShowFavorites((v) => !v);
 
   return (
     <div
@@ -511,15 +616,18 @@ export default function ReaderTab({ showToast }) {
         </div>
         <div className="reader-list-head">
           <span className="reader-list-title">
-            {showFavorites ? '我的收藏' : activeSourceId ? (sourceNameMap[activeSourceId] || activeSourceId) : '我的订阅'}
+            {showFavorites
+              ? (activeSourceId ? `${sourceNameMap[activeSourceId] || activeSourceId} · 收藏` : '我的收藏')
+              : activeSourceId ? (sourceNameMap[activeSourceId] || activeSourceId) : '我的订阅'}
           </span>
-          {/* 收藏是文章级集合：中栏头部的星标切换，与逐篇卡片星标同色呼应 */}
+          {/* 收藏是文章级集合：中栏头部的星标切换，与逐篇卡片星标同色呼应。
+              在某来源时只看该来源收藏；在「我的订阅」聚合时看全部收藏。 */}
           <button
             type="button"
-            onClick={() => (showFavorites ? goSubscribed() : goFavorites())}
+            onClick={toggleFavorites}
             aria-pressed={showFavorites}
-            aria-label={showFavorites ? '返回我的订阅' : '只看我的收藏'}
-            title={showFavorites ? '返回我的订阅' : '只看我的收藏'}
+            aria-label={showFavorites ? '退出收藏' : (activeSourceId ? '只看本来源收藏' : '只看我的收藏')}
+            title={showFavorites ? '退出收藏' : (activeSourceId ? '只看本来源收藏' : '只看我的收藏')}
             className={`reader-fav-icon ${showFavorites ? 'reader-fav-icon-on' : ''}`}
           >
             <Star className="h-4 w-4" fill={showFavorites ? 'currentColor' : 'none'} />
@@ -548,7 +656,7 @@ export default function ReaderTab({ showToast }) {
                 {searchQuery
                   ? '没有匹配的文章'
                   : showFavorites
-                    ? '还没有收藏任何文章，点文章上的星标即可收藏'
+                    ? (activeSourceId ? '该来源还没有收藏的文章' : '还没有收藏任何文章，点文章上的星标即可收藏')
                     : '该来源暂无文章'}
               </span>
             </div>
@@ -627,7 +735,7 @@ export default function ReaderTab({ showToast }) {
               <div className="reader-pane-actions">
                 {activeArticle.source_url && (
                   <a href={activeArticle.source_url} target="_blank" rel="noreferrer" className="reader-pane-link">
-                    <ExternalLink className="h-3.5 w-3.5" /> 查看原文
+                    <ExternalLink className="h-3.5 w-3.5" /> 查看来源
                   </a>
                 )}
                 <button
@@ -641,6 +749,21 @@ export default function ReaderTab({ showToast }) {
                     : <Star className="h-3.5 w-3.5" fill={favoriteIds.has(activeArticle.id) ? 'currentColor' : 'none'} />}
                   {favoriteIds.has(activeArticle.id) ? '已收藏' : '收藏'}
                 </button>
+                {aiEnabled && (
+                  <button
+                    type="button"
+                    onClick={handleTranslate}
+                    disabled={translating || activeBodyLoading || !activeBody}
+                    title={showTranslation ? '当前显示中文译文，点击切回原文' : '将正文译为中文'}
+                    aria-pressed={showTranslation}
+                    className={`reader-pane-link ${showTranslation ? 'reader-pane-link-on' : ''}`}
+                  >
+                    {translating
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : <Languages className="h-3.5 w-3.5" />}
+                    {showTranslation ? '显示原文' : '译为中文'}
+                  </button>
+                )}
               </div>
             </header>
             <div className="reader-pane-body markdown-body">
@@ -649,6 +772,10 @@ export default function ReaderTab({ showToast }) {
                   <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
                   <span>正在载入正文…</span>
                 </div>
+              ) : (showTranslation && translatedBody) ? (
+                <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS}>
+                  {translatedBody}
+                </ReactMarkdown>
               ) : activeBody ? (
                 <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS}>
                   {activeBody}
@@ -665,6 +792,158 @@ export default function ReaderTab({ showToast }) {
           </div>
         )}
       </section>
+
+      {/* ── AI 问答 · 常态收起于右下角，点击展开 ── */}
+      {aiEnabled && (
+        <>
+          {!aiPanelOpen && (
+            <button
+              type="button"
+              className="reader-ai-fab"
+              onClick={() => setAiPanelOpen(true)}
+              aria-label="问问哆啦美"
+            >
+              <Sparkles className="h-4 w-4" />
+              <span className="reader-ai-fab-label">问问哆啦美</span>
+            </button>
+          )}
+          {aiPanelOpen && (
+            <aside className={`reader-ai-panel ${aiPanelLarge ? 'is-large' : ''} ${aiPanelClosing ? 'is-closing' : ''}`} role="dialog" aria-label="问问哆啦美">
+              <header className="reader-ai-head">
+                <span className="reader-ai-title">
+                  <Sparkles className="h-4 w-4" /> 问问哆啦美
+                </span>
+                <div className="reader-ai-head-actions">
+                  <button
+                    type="button"
+                    className="reader-ai-head-btn"
+                    onClick={resetConversation}
+                    disabled={qaThread.length === 0}
+                    aria-label="新对话"
+                    title="新对话"
+                  >
+                    <SquarePen className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    className="reader-ai-head-btn"
+                    onClick={() => setAiPanelLarge((prev) => {
+                      const next = !prev;
+                      localStorage.setItem('dorami_reader_ai_panel_large', next ? '1' : '0');
+                      return next;
+                    })}
+                    aria-label={aiPanelLarge ? '还原大小' : '放大'}
+                    title={aiPanelLarge ? '还原大小' : '放大'}
+                  >
+                    {aiPanelLarge ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                  </button>
+                  <button
+                    type="button"
+                    className="reader-ai-head-btn"
+                    onClick={closeAiPanel}
+                    aria-label="收起"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </header>
+
+              <div className="reader-ai-thread">
+                {qaThread.map((m, i) => (
+                    <div key={i} className="reader-ai-turn">
+                      <div className="reader-ai-q">{m.q}</div>
+                      {m.pending ? (
+                        <div className="reader-ai-a reader-ai-a-pending">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在思考…
+                        </div>
+                      ) : m.error ? (
+                        <div className="reader-ai-a reader-ai-a-error">{m.error}</div>
+                      ) : (
+                        <div className="reader-ai-a markdown-body">
+                          <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS}>
+                            {m.a || ''}
+                          </ReactMarkdown>
+                          {m.sources && m.sources.length > 0 && (
+                            <div className="reader-ai-sources">
+                              {m.sources.slice(0, 5).map((s, si) => (
+                                s.source_url ? (
+                                  <a key={si} href={s.source_url} target="_blank" rel="noreferrer" className="reader-ai-source">
+                                    {s.title || s.source_id}
+                                  </a>
+                                ) : (
+                                  <span key={si} className="reader-ai-source">{s.title || s.source_id}</span>
+                                )
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+              </div>
+
+              <div className="reader-ai-composer">
+                <textarea
+                  className="reader-ai-input"
+                  rows={2}
+                  value={qaInput}
+                  placeholder={qaScope === 'article' ? '三句话总结这篇文章' : '最近有哪些值得关注的进展？'}
+                  onChange={(e) => setQaInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAsk(); }
+                  }}
+                />
+                <div className="reader-ai-toolbar">
+                  <div className="reader-ai-scope" ref={qaScopeRef}>
+                    <button
+                      type="button"
+                      className="reader-ai-scope-trigger"
+                      onClick={() => setQaScopeMenuOpen((o) => !o)}
+                      aria-haspopup="listbox"
+                      aria-expanded={qaScopeMenuOpen}
+                    >
+                      {qaScope === 'article' ? '基于本文' : '基于我的订阅'}
+                      <ChevronDown className={`h-3.5 w-3.5 reader-ai-scope-caret ${qaScopeMenuOpen ? 'is-open' : ''}`} />
+                    </button>
+                    {qaScopeMenuOpen && (
+                      <div className="reader-ai-scope-menu" role="listbox">
+                        {[
+                          { id: 'article', label: '基于本文' },
+                          { id: 'subscription', label: '基于我的订阅' },
+                        ].map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            role="option"
+                            aria-selected={qaScope === opt.id}
+                            className={`reader-ai-scope-option ${qaScope === opt.id ? 'is-on' : ''}`}
+                            onClick={() => {
+                              if (opt.id !== qaScope) { setQaScope(opt.id); resetConversation(); }
+                              setQaScopeMenuOpen(false);
+                            }}
+                          >
+                            <span>{opt.label}</span>
+                            {qaScope === opt.id && <Check className="h-3.5 w-3.5" />}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="reader-ai-send"
+                    onClick={handleAsk}
+                    disabled={qaLoading || !qaInput.trim()}
+                    aria-label="发送"
+                  >
+                    {qaLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+            </aside>
+          )}
+        </>
+      )}
     </div>
   );
 }

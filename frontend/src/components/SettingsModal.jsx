@@ -339,6 +339,16 @@ function AccountManagementSection({ showToast, currentUsername }) {
     }
   };
 
+  const handleToggleAiBeta = async (acc) => {
+    try {
+      await updateAccount(acc.username, { ai_beta_enabled: !acc.ai_beta_enabled });
+      showToast(acc.ai_beta_enabled ? `已为 ${acc.username} 关闭 AI` : `已为 ${acc.username} 开启 AI`, 'success');
+      await reload();
+    } catch (error) {
+      showToast(error.message || '更新失败', 'error');
+    }
+  };
+
   const handleResetPassword = async (acc) => {
     const pwd = window.prompt(`为账户「${acc.username}」设置新密码（至少 6 位）：`);
     if (pwd === null) return;
@@ -418,6 +428,7 @@ function AccountManagementSection({ showToast, currentUsername }) {
                       {acc.role === 'admin' ? '管理员' : '读者'}
                     </span>
                     {!acc.is_active && <span className="rounded bg-rose-50 px-1.5 py-0.5 micro-label text-rose-500">已停用</span>}
+                    {acc.ai_beta_enabled && <span className="inline-flex items-center gap-0.5 rounded bg-indigo-50 px-1.5 py-0.5 micro-label text-indigo-500"><Zap className="h-3 w-3" /> AI Beta</span>}
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-1.5">
@@ -426,6 +437,9 @@ function AccountManagementSection({ showToast, currentUsername }) {
                   </button>
                   <button onClick={() => handleToggleActive(acc)} className="action-button action-button-secondary text-xs">
                     {acc.is_active ? '停用' : '启用'}
+                  </button>
+                  <button onClick={() => handleToggleAiBeta(acc)} className="action-button action-button-secondary text-xs">
+                    <Zap className="h-3.5 w-3.5" /> {acc.ai_beta_enabled ? '关闭 AI' : '开启 AI'}
                   </button>
                   <button onClick={() => handleResetPassword(acc)} className="action-button action-button-secondary text-xs">
                     <KeyRound className="h-3.5 w-3.5" /> 重置密码

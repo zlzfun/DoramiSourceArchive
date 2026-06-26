@@ -82,7 +82,7 @@ export default function App() {
   const [logoError, setLogoError] = useState(false);
   const [availableFetchers, setAvailableFetchers] = useState([]);
   // 初始非乐观默认：能力未知时按「都未启用」，避免在 fetchRuntimeInfo 返回前把 collector 界面闪给读者。
-  const [runtimeInfo, setRuntimeInfo] = useState({ role: 'all', collector_enabled: false, reader_enabled: false, rag_enabled: false });
+  const [runtimeInfo, setRuntimeInfo] = useState({ role: 'all', collector_enabled: false, reader_enabled: false, rag_enabled: false, ai_beta_enabled: false, llm_configured: false });
   const [runtimeLoaded, setRuntimeLoaded] = useState(false);
   const [authState, setAuthState] = useState({ status: 'checking', user: null });
   const [articlesDirty, setArticlesDirty] = useState(false);
@@ -439,7 +439,7 @@ export default function App() {
         <div className="page-shell">
           {readerOnly && mountedTabs.has('reader') && (
             <div className="tab-panel" style={{ display: activeTab === 'reader' ? 'block' : 'none' }}>
-              <ReaderTab showToast={showToast} />
+              <ReaderTab showToast={showToast} aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured} />
             </div>
           )}
           {!readerOnly && mountedTabs.has('data') && (

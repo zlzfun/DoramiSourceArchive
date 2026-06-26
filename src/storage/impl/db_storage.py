@@ -86,6 +86,9 @@ class DatabaseStorage(BaseStorage):
             if "avatar" not in user_columns:
                 with self.engine.begin() as conn:
                     conn.execute(text("ALTER TABLE users ADD COLUMN avatar VARCHAR"))
+            if "ai_beta_enabled" not in user_columns:
+                with self.engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN ai_beta_enabled BOOLEAN DEFAULT 0"))
 
         if "source_configs" in inspector.get_table_names():
             source_config_columns = {column["name"] for column in inspector.get_columns("source_configs")}

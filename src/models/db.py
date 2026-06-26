@@ -254,5 +254,6 @@ class UserRecord(SQLModel, table=True):
     avatar: Optional[str] = Field(default=None, description="头像，存为 data:image/* base64 URL；空表示用首字母占位")
     role: str = Field(default="user", index=True, description="账户角色：admin | user")
     is_active: bool = Field(default=True, index=True, description="是否启用该账户")
+    ai_beta_enabled: bool = Field(default=False, index=True, description="是否为该用户开启 AI Beta 功能（阅读器内翻译/问答）")
     created_at: str = Field(description="创建时间")
     updated_at: str = Field(description="更新时间")

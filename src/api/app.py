@@ -46,6 +46,7 @@ from fetchers.registry import fetcher_registry, DECOMMISSIONED_FETCHER_IDS
 from api.skill_router import router as skill_router
 from services import daily_brief as daily_brief_service
 from services import accounts as accounts_service
+from services import reader_ai as reader_ai_service
 from llm.client import LLMNotConfigured, LLMError, ping as llm_ping
 
 from starlette.responses import JSONResponse as StarletteJSONResponse
@@ -122,13 +123,35 @@ def reader_role_enabled(session: Optional[Dict[str, Any]] = None) -> bool:
 
 
 def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    ai_beta_enabled, llm_configured = _ai_capabilities(session)
     return {
         "role": runtime_role(),
         "account_role": session.get("role") if session else None,
         "collector_enabled": collector_role_enabled(session),
         "reader_enabled": reader_role_enabled(session),
         "rag_enabled": settings.rag.enabled,
+        # 用户面 AI（阅读器内翻译/问答）：该账户开关 AND LLM 已配置才视为可用。
+        "ai_beta_enabled": ai_beta_enabled,
+        "llm_configured": llm_configured,
     }
+
+
+def _ai_capabilities(session: Optional[Dict[str, Any]] = None) -> tuple[bool, bool]:
+    """返回 (该账户是否开启 AI Beta, LLM 是否已配置)。任一异常时降级为 False。"""
+    username = str(session.get("sub")) if session else ""
+    ai_beta_enabled = False
+    llm_configured = False
+    if db_sink is None:
+        return ai_beta_enabled, llm_configured
+    try:
+        with Session(db_sink.engine) as db:
+            llm_configured = daily_brief_service.resolve_llm_config(db).configured
+            if username:
+                record = accounts_service.get_user(db, username)
+                ai_beta_enabled = bool(record and record.ai_beta_enabled)
+    except Exception:  # 能力探测不应阻断 runtime 接口
+        return False, False
+    return ai_beta_enabled, llm_configured
 
 
 COLLECTOR_API_PREFIXES = (
@@ -323,6 +346,7 @@ class AccountCreateParams(BaseModel):
 class AccountUpdateParams(BaseModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
+    ai_beta_enabled: Optional[bool] = None
 
 
 class AccountResetPasswordParams(BaseModel):
@@ -568,6 +592,7 @@ def _serialize_user(record: UserRecord) -> Dict[str, Any]:
         "role": record.role,
         "avatar": record.avatar or None,
         "is_active": record.is_active,
+        "ai_beta_enabled": record.ai_beta_enabled,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     }
@@ -599,6 +624,8 @@ def update_account(username: str, params: AccountUpdateParams):
                 accounts_service.set_role(session, username, params.role)
             if params.is_active is not None:
                 accounts_service.set_active(session, username, params.is_active)
+            if params.ai_beta_enabled is not None:
+                accounts_service.set_ai_beta_enabled(session, username, params.ai_beta_enabled)
             record = accounts_service.get_user(session, username)
             if record is None:
                 raise HTTPException(status_code=404, detail="账户不存在")
@@ -2634,6 +2661,7 @@ def resolve_favorite_article_ids(session: Session, username: str) -> List[str]:
 def list_favorites(
         request: Request,
         search: Optional[str] = None,
+        source_id: Optional[str] = None,
         skip: int = 0,
         limit: int = 100,
         include_content: bool = False,
@@ -2657,6 +2685,9 @@ def list_favorites(
             .join(ArticleRecord, ReaderFavoriteRecord.article_id == ArticleRecord.id)
             .where(ReaderFavoriteRecord.owner_username == username)
         )
+        if source_id:
+            base = base.where(ArticleRecord.source_id == source_id)
+            count_query = count_query.where(ArticleRecord.source_id == source_id)
         if search:
             base = base.where(ArticleRecord.title.contains(search))
             count_query = count_query.where(ArticleRecord.title.contains(search))
@@ -2745,6 +2776,120 @@ def rotate_feed_token(request: Request):
         session.add(record)
         session.commit()
     return {"token": token, "token_preview": subscription_token_preview(token)}
+
+
+# ==================== 阅读器 AI（用户面：翻译 / 问答） ====================
+class ReaderTranslateParams(BaseModel):
+    article_id: str
+
+
+class ReaderChatTurn(BaseModel):
+    role: str  # user | assistant
+    content: str
+
+
+class ReaderAskParams(BaseModel):
+    question: str
+    scope: str = "article"  # article | subscription
+    article_id: Optional[str] = None
+    history: Optional[List[ReaderChatTurn]] = None  # 多轮对话历史（纯文本问答，不含参考资料）
+
+
+def _require_reader_ai(request: Request):
+    """校验当前账户的 AI Beta 已开启且 LLM 已配置，返回 (username, llm_config)；否则 403/401。"""
+    username = current_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="需要登录")
+    with Session(db_sink.engine) as session:
+        record = accounts_service.get_user(session, username)
+        if record is None or not record.ai_beta_enabled:
+            raise HTTPException(status_code=403, detail="AI 功能尚未开启，请联系管理员")
+        llm_config = daily_brief_service.resolve_llm_config(session)
+    if not llm_config.configured:
+        raise HTTPException(status_code=403, detail="AI 服务暂未就绪")
+    return username, llm_config
+
+
+def _recent_subscribed_articles(username: str, limit: int) -> List[ArticleRecord]:
+    """取该用户订阅来源内、按抓取时间倒序的最近若干篇有正文的文章（RAG 关闭时的问答上下文）。"""
+    with Session(db_sink.engine) as session:
+        source_ids = resolve_subscribed_source_ids(session, username)
+        if not source_ids:
+            return []
+        statement = (
+            select(ArticleRecord)
+            .where(
+                ArticleRecord.source_id.in_(source_ids),
+                ArticleRecord.has_content == True,  # noqa: E712
+            )
+            .order_by(ArticleRecord.fetched_date.desc())
+            .limit(limit)
+        )
+        return list(session.exec(statement).all())
+
+
+@app.post("/api/reader/ai/translate")
+async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
+    """把指定文章正文译为简体中文（结果缓存复用）。"""
+    _username, llm_config = _require_reader_ai(request)
+    try:
+        result = await reader_ai_service.translate_article(db_sink, params.article_id, llm_config)
+    except reader_ai_service.ReaderAIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=f"翻译失败：{exc}")
+    return {"status": "success", **result}
+
+
+@app.post("/api/reader/ai/ask")
+async def reader_ai_ask(params: ReaderAskParams, request: Request):
+    """基于当前文章或用户订阅文章回答提问。
+
+    三档上下文（graceful degrade）：
+      - scope=article：直接用该文正文（零 RAG 依赖）；
+      - scope=subscription 且 RAG 开启：走 /api/rag/context 语义召回（已自带订阅域硬隔离）；
+      - scope=subscription 且 RAG 关闭：取订阅来源最近 N 篇标题+截断正文拼成上下文。
+    """
+    username, llm_config = _require_reader_ai(request)
+    scope = params.scope if params.scope in ("article", "subscription") else "article"
+    context = ""
+    sources: List[Dict[str, Any]] = []
+
+    if scope == "article":
+        if not params.article_id:
+            raise HTTPException(status_code=400, detail="缺少文章标识")
+        record = await db_sink.get(params.article_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="文章不存在")
+        context = reader_ai_service.build_article_context(record.title, record.content or "")
+    else:
+        if settings.rag.enabled and vector_sink is not None:
+            rag_result = await rag_context(
+                RagContextQuery(query=params.question, top_k=6, max_chars=12000),
+                request,
+            )
+            context = rag_result.get("context_text", "")
+            sources = rag_result.get("sources", [])
+        else:
+            records = _recent_subscribed_articles(
+                username, reader_ai_service.LIST_MAX_ARTICLES
+            )
+            context = reader_ai_service.build_list_context(records)
+            sources = [
+                {"title": r.title, "source_id": r.source_id, "source_url": r.source_url}
+                for r in records
+            ]
+
+    history = [{"role": t.role, "content": t.content} for t in (params.history or [])]
+    try:
+        answer = await reader_ai_service.answer_question(
+            params.question, context, scope=scope, llm_config=llm_config, history=history
+        )
+    except reader_ai_service.ReaderAIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=f"提问失败：{exc}")
+    return {"status": "success", "answer": answer, "sources": sources, "scope": scope}
 
 
 @app.get("/api/public/feed/articles")

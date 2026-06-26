@@ -194,6 +194,19 @@ def set_active(session: Session, username: str, is_active: bool) -> UserRecord:
     return record
 
 
+def set_ai_beta_enabled(session: Session, username: str, enabled: bool) -> UserRecord:
+    """开关该账户的 AI Beta 功能（阅读器内翻译/问答）。无末位管理员约束。"""
+    record = get_user(session, username)
+    if record is None:
+        raise AccountError(f"账户 '{username}' 不存在")
+    record.ai_beta_enabled = bool(enabled)
+    record.updated_at = _now_iso()
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return record
+
+
 def delete_user(session: Session, username: str) -> None:
     record = get_user(session, username)
     if record is None:

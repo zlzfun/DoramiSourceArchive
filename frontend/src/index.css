@@ -4748,14 +4748,24 @@ button:disabled {
 
   .reader-pane-link:hover { color: var(--dorami-accent-ink); text-decoration: underline; }
 
+  /* 字号/字重/行高放在容器上：全局无 layer 的 `button{font:inherit}` 会压过
+     layer 内对 button 写的 font-size，导致 button（收藏/译为中文）字号回退到继承值、
+     与 <a>（查看来源）不齐。把字体属性挂到 div 容器，button 经 font:inherit 自然继承，
+     三者字号/字重/字体族即统一。 */
   .reader-pane-actions {
     display: flex;
     align-items: center;
     gap: 16px;
     margin-top: 14px;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
   }
 
-  .reader-pane-actions .reader-pane-link { margin-top: 0; }
+  .reader-pane-actions > a,
+  .reader-pane-actions > button { margin-top: 0; }
+  .reader-pane-actions > a svg,
+  .reader-pane-actions > button svg { flex: none; }
 
   .reader-pane-fav {
     display: inline-flex;
@@ -4771,6 +4781,283 @@ button:disabled {
   .reader-pane-fav:disabled { cursor: default; }
   .reader-pane-fav-on { color: #f59e0b; }
   .reader-pane-fav-on:hover { color: #d97706; }
+
+  /* ── 阅读器 AI：译为中文按钮态 + 问答浮层 ── */
+  .reader-pane-link.reader-pane-link-on { color: var(--dorami-accent); }
+  .reader-pane-link:disabled { color: var(--dorami-faint); cursor: default; }
+  .reader-pane-link:disabled:hover { text-decoration: none; }
+
+  /* 收起态为纯图标圆钮；悬停约 0.5s 后向左展开「问问哆啦美」标签，移开即收起。 */
+  .reader-ai-fab {
+    position: absolute;
+    right: 22px;
+    bottom: 22px;
+    z-index: 30;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 44px;
+    padding: 0 14px;
+    border-radius: var(--r-pill);
+    background: var(--dorami-accent);
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    box-shadow: var(--dorami-shadow);
+    transition: background var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
+    animation: reader-ai-rise var(--motion-medium) var(--motion-ease);
+  }
+  .reader-ai-fab svg { flex: none; }
+  .reader-ai-fab:hover { background: var(--dorami-accent-ink); transform: translateY(-1px); }
+
+  .reader-ai-fab-label {
+    display: inline-block;
+    max-width: 0;
+    margin-left: 0;
+    opacity: 0;
+    overflow: hidden;
+    font-size: 13px;
+    font-weight: 700;
+    /* 收起：立即；展开延时见 :hover 规则 */
+    transition:
+      max-width var(--motion-medium) var(--motion-ease),
+      margin-left var(--motion-medium) var(--motion-ease),
+      opacity var(--motion-fast) var(--motion-ease);
+  }
+  .reader-ai-fab:hover .reader-ai-fab-label {
+    max-width: 120px;
+    margin-left: 8px;
+    opacity: 1;
+    transition-delay: 500ms;
+  }
+
+  .reader-ai-panel {
+    position: absolute;
+    right: 22px;
+    bottom: 22px;
+    z-index: 31;
+    width: 380px;
+    max-width: calc(100% - 44px);
+    max-height: calc(100% - 44px);
+    display: flex;
+    flex-direction: column;
+    background: var(--dorami-surface);
+    border: 1px solid var(--dorami-border);
+    border-radius: var(--r-overlay);
+    box-shadow: var(--dorami-shadow);
+    overflow: hidden;
+    /* 从右下角锚点优雅浮现/收起；缩放用更慢的曲线让放大/还原更有「高级感」 */
+    transform-origin: bottom right;
+    animation: reader-ai-rise var(--motion-medium) var(--motion-ease);
+    transition: width var(--motion-slow) var(--motion-ease), height var(--motion-slow) var(--motion-ease);
+  }
+  /* 退场：先播放 fall 再卸载（JS 端 180ms 后 unmount）；forwards 保住末帧避免回弹 */
+  .reader-ai-panel.is-closing {
+    animation: reader-ai-fall 180ms var(--motion-ease) forwards;
+    pointer-events: none;
+  }
+  /* 放大态：更宽并拉到接近满高（标准态保持 max-height 自适应内容）。
+     max-width: calc(100% - 44px) 仍会在窄阅读窗格下钳制宽度，不会溢出视口。 */
+  .reader-ai-panel.is-large {
+    width: 560px;
+    height: calc(100% - 44px);
+  }
+  @keyframes reader-ai-rise {
+    from { opacity: 0; transform: translateY(12px) scale(0.96); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes reader-ai-fall {
+    from { opacity: 1; transform: translateY(0) scale(1); }
+    to { opacity: 0; transform: translateY(12px) scale(0.96); }
+  }
+
+  .reader-ai-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--dorami-border);
+    background: var(--dorami-soft);
+  }
+  .reader-ai-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--dorami-ink);
+  }
+  .reader-ai-head-actions { display: inline-flex; align-items: center; gap: 4px; }
+  /* 两个头部按钮用等大方形盒 + 居中图标，成为视觉一致的图标按钮对（消除裸图标的细微错位） */
+  .reader-ai-head-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--r-control);
+    color: var(--dorami-muted);
+    transition: color var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
+  }
+  .reader-ai-head-btn:hover { color: var(--dorami-ink); background: var(--dorami-well); }
+  .reader-ai-head-btn:disabled { color: var(--dorami-faint); opacity: 0.5; cursor: default; }
+  .reader-ai-head-btn:disabled:hover { background: transparent; color: var(--dorami-faint); }
+  .reader-ai-head-btn svg { flex: none; }
+
+  .reader-ai-thread {
+    flex: 1;
+    min-height: 120px;
+    overflow-y: auto;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .reader-ai-hint {
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--dorami-faint);
+  }
+  .reader-ai-turn { display: flex; flex-direction: column; gap: 8px; }
+  /* 用户气泡（右）与哆啦美气泡（左）左右对称 */
+  .reader-ai-q {
+    align-self: flex-end;
+    max-width: 88%;
+    padding: 8px 11px;
+    border-radius: var(--r-card);
+    background: var(--dorami-accent);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.5;
+  }
+  .reader-ai-a {
+    align-self: flex-start;
+    max-width: 88%;
+    padding: 8px 11px;
+    border-radius: var(--r-card);
+    background: var(--dorami-soft);
+    border: 1px solid var(--dorami-border);
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--dorami-ink-2);
+  }
+  .reader-ai-a > :first-child { margin-top: 0; }
+  .reader-ai-a > :last-child { margin-bottom: 0; }
+  .reader-ai-a-pending { display: inline-flex; align-items: center; gap: 6px; color: var(--dorami-muted); }
+  .reader-ai-a-error { color: #dc2626; background: #fef2f2; border-color: #fecaca; }
+  .reader-ai-sources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--dorami-border);
+  }
+  .reader-ai-source {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--dorami-accent);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  a.reader-ai-source:hover { text-decoration: underline; }
+
+  /* 容器化输入区：上方 textarea + 底部工具条（范围切换在左、发送在右），
+     参考桌面端 AI 对话框，消除 textarea 与发送钮平级时的高度差。 */
+  .reader-ai-composer {
+    margin: 8px 14px 14px;
+    border: 1px solid var(--dorami-border);
+    border-radius: var(--r-card);
+    background: var(--dorami-surface);
+    transition: border-color var(--motion-fast) var(--motion-ease);
+    /* 字号的唯一真源：挂在 div 容器上。textarea/按钮经全局 `font: inherit`
+       继承此值（无 layer 的 font:inherit 会压过 layer 内给它们写的 font-size），
+       从而让 引导语/输入文字/基于本文 与气泡正文统一为 13px。
+       字重不显式设置，让它们与气泡一样继承自 body，保证四者字号字重完全一致。 */
+    font-size: 13px;
+  }
+  .reader-ai-composer:focus-within { border-color: var(--dorami-accent); }
+  .reader-ai-input {
+    display: block;
+    width: 100%;
+    resize: none;
+    border: none;
+    background: transparent;
+    padding: 10px 12px 2px;
+    max-height: 140px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--dorami-ink-2);
+  }
+  .reader-ai-input:focus { outline: none; }
+  .reader-ai-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 8px 8px;
+  }
+  /* 范围切换：折叠式下拉（仿桌面端底部配置项），默认只显示当前项 + ⌄，点击向上展开菜单 */
+  .reader-ai-scope { position: relative; display: inline-flex; }
+  .reader-ai-scope-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 8px 5px 10px;
+    border-radius: var(--r-pill);
+    color: var(--dorami-muted);
+    transition: color var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
+  }
+  .reader-ai-scope-trigger:hover { color: var(--dorami-accent); background: var(--dorami-well); }
+  .reader-ai-scope-caret { transition: transform var(--motion-fast) var(--motion-ease); }
+  .reader-ai-scope-caret.is-open { transform: rotate(180deg); }
+  .reader-ai-scope-menu {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 6px);
+    z-index: 5;
+    min-width: 148px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: var(--dorami-surface);
+    border: 1px solid var(--dorami-border);
+    border-radius: var(--r-card);
+    box-shadow: var(--dorami-shadow);
+    animation: reader-ai-rise var(--motion-fast) var(--motion-ease);
+  }
+  .reader-ai-scope-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 9px;
+    border-radius: var(--r-control);
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--dorami-ink-2);
+    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+  .reader-ai-scope-option:hover { background: var(--dorami-well); }
+  .reader-ai-scope-option.is-on { color: var(--dorami-accent); }
+  .reader-ai-send {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--r-pill);
+    background: var(--dorami-accent);
+    color: #fff;
+    transition: background var(--motion-fast) var(--motion-ease);
+  }
+  .reader-ai-send:hover { background: var(--dorami-accent-ink); }
+  .reader-ai-send:disabled { background: var(--dorami-soft-2); color: var(--dorami-faint); cursor: default; }
 
   .reader-pane-body {
     max-width: 720px;
