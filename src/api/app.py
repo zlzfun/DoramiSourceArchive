@@ -2636,6 +2636,7 @@ def list_favorites(
         search: Optional[str] = None,
         skip: int = 0,
         limit: int = 100,
+        include_content: bool = False,
 ):
     """当前用户的收藏文章列表，按收藏时间倒序；同时回传全部收藏 ID 集合。
 
@@ -2662,7 +2663,7 @@ def list_favorites(
         base = base.order_by(ReaderFavoriteRecord.created_at.desc(), ArticleRecord.id.desc())
         total = int(session.exec(count_query).one() or 0)
         rows = session.exec(base.offset(safe_skip).limit(safe_limit)).all()
-        items = [serialize_article_list_item(record, include_content=True) for record, _ in rows]
+        items = [serialize_article_list_item(record, include_content=include_content) for record, _ in rows]
         favorite_ids = resolve_favorite_article_ids(session, username)
     return {
         "items": items,

@@ -619,11 +619,13 @@ export async function fetchReaderSources() {
 }
 
 export async function fetchFavorites(filters = {}, limit = 100, skip = 0, options = {}) {
+  const { includeContent, ...fetchOptions } = options;
   const params = new URLSearchParams({ limit, skip });
+  if (includeContent !== undefined) params.append('include_content', includeContent ? 'true' : 'false');
   Object.entries(filters).forEach(([k, v]) => {
     if (v !== '' && v !== null && v !== undefined) params.append(k, v);
   });
-  const res = await apiFetch(`${API_BASE_URL}/reader/favorites?${params}`, options);
+  const res = await apiFetch(`${API_BASE_URL}/reader/favorites?${params}`, fetchOptions);
   if (!res.ok) await handleApiError(res, '获取收藏列表失败');
   return res.json();
 }

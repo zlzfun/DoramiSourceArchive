@@ -22,6 +22,7 @@ import { resolveCompany } from '../sourceTaxonomy';
 import {
   fetchReaderSources,
   fetchArticles,
+  fetchArticle,
   subscribeSource,
   unsubscribeSource,
   fetchFavorites,
@@ -101,10 +102,15 @@ export default function ReaderTab({ showToast }) {
   const [articlesTotal, setArticlesTotal] = useState(0);
   const [articlesLoading, setArticlesLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [activeArticle, setActiveArticle] = useState(null);
+  const [activeArticle, setActiveArticle] = useState(null);  // 轻量列表项（meta/标题/收藏态即时渲染）
+  const [activeBody, setActiveBody] = useState(null);        // 选中文章的全文正文（按需拉取）
+  const [activeBodyLoading, setActiveBodyLoading] = useState(false);
   const [pinningId, setPinningId] = useState(null);
 
   const listRef = useRef(null);
+  // 正文缓存（id → content）+ 「最新选中 id」防竞态：快速连点时丢弃晚到的过期正文响应
+  const bodyCacheRef = useRef(new Map());
+  const activeIdRef = useRef(null);
   // 取消上一笔仍在飞行的列表请求：切源/搜索时慢的旧请求若晚返回会「后发先至」
   // 覆盖当前选中源的列表，故发新请求前 abort 掉旧的（与 DataTab 同一约定）
   const listAbortRef = useRef(null);
@@ -168,38 +174,63 @@ export default function ReaderTab({ showToast }) {
     if (hasNoSubscriptions) setDiscoverOpen(true);
   }, [hasNoSubscriptions]);
 
+  // ── 选中文章 → 按需拉全文 ──
+  // 列表项已不含正文（include_content=false），仅 meta 即时渲染；正文命中缓存直接用，
+  // 否则拉 GET /api/articles/{id}，回来时比对最新选中 id，丢弃过期响应。
+  const selectArticle = useCallback((article) => {
+    setActiveArticle(article);
+    const id = article?.id || null;
+    activeIdRef.current = id;
+    if (!id) { setActiveBody(null); setActiveBodyLoading(false); return; }
+    // 兜底：若列表项偶然已带正文（如详情接口回填），直接用
+    if (article.content != null) { setActiveBody(article.content); setActiveBodyLoading(false); return; }
+    const cached = bodyCacheRef.current.get(id);
+    if (cached !== undefined) { setActiveBody(cached); setActiveBodyLoading(false); return; }
+    setActiveBody(null);
+    setActiveBodyLoading(true);
+    fetchArticle(id)
+      .then((data) => {
+        const body = data?.content || '';
+        bodyCacheRef.current.set(id, body);
+        if (activeIdRef.current === id) { setActiveBody(body); setActiveBodyLoading(false); }
+      })
+      .catch((error) => {
+        if (activeIdRef.current === id) {
+          setActiveBody(null);
+          setActiveBodyLoading(false);
+          showToast(error.message || '获取文章正文失败', 'error');
+        }
+      });
+  }, [showToast]);
+
   // ── 文章列表 ──
   const loadArticles = useCallback(async (skip = 0, append = false) => {
     // 发新请求前取消上一笔在飞行的请求，杜绝乱序晚到的响应覆盖当前列表
     listAbortRef.current?.abort();
-    // 没有任何订阅且看的是订阅聚合视图 → 直接空列表，省一次请求（收藏视图不受此约束）
-    if (!showFavorites && !activeSourceId && subscribedIds.size === 0) {
-      setArticles([]);
-      setArticlesTotal(0);
-      return;
-    }
     const controller = new AbortController();
     listAbortRef.current = controller;
     if (append) setLoadingMore(true); else { setArticlesLoading(true); setLoadingMore(false); }
     try {
       let data;
+      // 列表只渲染摘要（content_preview），故请求统一不带全文，正文按需懒加载（见 selectArticle）。
+      // 「我的订阅」聚合由后端 subscribed_scope=only 自行解析范围，前端无需先拿到订阅集合即可发请求。
       if (showFavorites) {
         const filters = {};
         if (searchQuery) filters.search = searchQuery;
-        data = await fetchFavorites(filters, PAGE_SIZE, skip, { signal: controller.signal });
+        data = await fetchFavorites(filters, PAGE_SIZE, skip, { signal: controller.signal, includeContent: false });
         if (data.favorite_ids) setFavoriteIds(new Set(data.favorite_ids));
       } else {
         const filters = {};
         if (activeSourceId) filters.source_id = activeSourceId;
         else filters.subscribed_scope = 'only'; // 「我的订阅」聚合：后端硬过滤到已订阅源
         if (searchQuery) filters.search = searchQuery;
-        data = await fetchArticles(filters, PAGE_SIZE, skip, true, { signal: controller.signal });
+        data = await fetchArticles(filters, PAGE_SIZE, skip, true, { signal: controller.signal, includeContent: false });
       }
       const items = data.items || [];
       setArticlesTotal(data.total || 0);
       setArticles(prev => (append ? [...prev, ...items] : items));
-      // 首次加载（非追加）自动展示第一篇，省去手动点选
-      if (!append) setActiveArticle(items[0] || null);
+      // 首次加载（非追加）自动展示第一篇，省去手动点选（并触发其正文懒加载）
+      if (!append) selectArticle(items[0] || null);
     } catch (error) {
       if (error.name === 'AbortError') return; // 被更新的请求取消，静默丢弃
       showToast(error.message || '获取文章列表失败', 'error');
@@ -208,12 +239,15 @@ export default function ReaderTab({ showToast }) {
         if (append) setLoadingMore(false); else setArticlesLoading(false);
       }
     }
-  }, [activeSourceId, searchQuery, subscribedIds, showFavorites, showToast]);
+  }, [activeSourceId, searchQuery, showFavorites, showToast, selectArticle]);
 
   // 切换来源/搜索 → 重置列表、回顶、清空右栏
   // 用 useLayoutEffect：在绘制前同步进入加载态，避免「切源瞬间旧列表被画出一帧」的陈旧帧闪现
   useLayoutEffect(() => {
     setActiveArticle(null);
+    setActiveBody(null);
+    setActiveBodyLoading(false);
+    activeIdRef.current = null;
     if (listRef.current) listRef.current.scrollTop = 0;
     loadArticles(0, false);
   }, [loadArticles]);
@@ -224,10 +258,17 @@ export default function ReaderTab({ showToast }) {
   // ── 订阅 / 取消订阅 ──
   const applyResult = (result) => setSubscribedIds(new Set(result.subscribed_source_ids || []));
 
+  // 订阅集合变化后，若正看「我的订阅」聚合视图需显式重拉（loadArticles 已不依赖 subscribedIds，
+  // 故不会自动刷新）；看具体来源时由 activeSourceId 变化驱动，无需在此处理。
+  const refreshAggregateIfActive = () => {
+    if (!showFavorites && !activeSourceId) loadArticles(0, false);
+  };
+
   const handleSubscribe = async (source) => {
     setPinningId(source.source_id);
     try {
       applyResult(await subscribeSource(source.source_id));
+      refreshAggregateIfActive();
       showToast(`已订阅 ${source.name}`, 'success');
     } catch (error) {
       showToast(error.message || '订阅失败', 'error');
@@ -240,7 +281,8 @@ export default function ReaderTab({ showToast }) {
     setPinningId(source.source_id);
     try {
       applyResult(await unsubscribeSource(source.source_id));
-      if (activeSourceId === source.source_id) setActiveSourceId(null);
+      if (activeSourceId === source.source_id) setActiveSourceId(null);  // 改 activeSourceId → 自动重拉
+      else refreshAggregateIfActive();
       showToast(`已取消订阅 ${source.name}`, 'success');
     } catch (error) {
       showToast(error.message || '取消订阅失败', 'error');
@@ -274,7 +316,7 @@ export default function ReaderTab({ showToast }) {
       if (showFavorites && wasFav) {
         setArticles((prev) => prev.filter((a) => a.id !== id));
         setArticlesTotal((t) => Math.max(0, t - 1));
-        setActiveArticle((prev) => (prev?.id === id ? null : prev));
+        if (activeArticle?.id === id) selectArticle(null);  // 移除的正是当前阅读项 → 清空右栏
       }
       showToast(wasFav ? '已取消收藏' : '已收藏', 'success');
     } catch (error) {
@@ -519,12 +561,12 @@ export default function ReaderTab({ showToast }) {
                   <div key={article.id} className="reader-article-wrap">
                     <button
                       type="button"
-                      onClick={() => setActiveArticle(article)}
+                      onClick={() => selectArticle(article)}
                       className={`reader-article-card ${active ? 'reader-article-card-active' : ''}`}
                     >
                       <p className="reader-article-title">{article.title || '（无标题）'}</p>
-                      {excerptOf(article.content) && (
-                        <p className="reader-article-excerpt">{excerptOf(article.content)}</p>
+                      {excerptOf(article.content_preview || article.content) && (
+                        <p className="reader-article-excerpt">{excerptOf(article.content_preview || article.content)}</p>
                       )}
                       <div className="reader-article-foot">
                         <span className="reader-article-source">{sourceNameMap[article.source_id] || article.source_id}</span>
@@ -602,9 +644,14 @@ export default function ReaderTab({ showToast }) {
               </div>
             </header>
             <div className="reader-pane-body markdown-body">
-              {activeArticle.content ? (
+              {activeBodyLoading ? (
+                <div className="reader-empty">
+                  <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
+                  <span>正在载入正文…</span>
+                </div>
+              ) : activeBody ? (
                 <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS}>
-                  {activeArticle.content}
+                  {activeBody}
                 </ReactMarkdown>
               ) : (
                 '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
