@@ -4,6 +4,9 @@ import BrandLogoImage from './BrandLogoImage';
 import { LOGO_COVER_EYES_PATH, LOGO_COVER_EYES_SRC_SET } from '../config';
 
 function LoginBrandMark({ logoError, onLogoError, covering }) {
+  // 蒙眼彩蛋图（30KB）移出首屏关键路径：首次聚焦密码框后才挂载，避免与 hero 头像争抢带宽
+  const [coverArmed, setCoverArmed] = useState(false);
+  useEffect(() => { if (covering) setCoverArmed(true); }, [covering]);
   return (
     <span className={`auth-logo-shell${covering ? ' is-covering' : ''}`}>
       <span className="auth-logo-halo" aria-hidden="true" />
@@ -14,19 +17,22 @@ function LoginBrandMark({ logoError, onLogoError, covering }) {
             alt="哆啦美"
             className="auth-logo auth-logo-base"
             onError={onLogoError}
+            fadeInOnLoad
           />
-          {/* 蒙眼彩蛋：密码框聚焦时叠加淡入，失焦淡出 */}
-          <img
-            src={LOGO_COVER_EYES_PATH}
-            srcSet={LOGO_COVER_EYES_SRC_SET}
-            sizes="72px"
-            alt=""
-            aria-hidden="true"
-            width={72}
-            height={72}
-            decoding="async"
-            className="auth-logo auth-logo-cover"
-          />
+          {/* 蒙眼彩蛋：密码框聚焦时叠加淡入，失焦淡出（首次聚焦后才挂载） */}
+          {coverArmed && (
+            <img
+              src={LOGO_COVER_EYES_PATH}
+              srcSet={LOGO_COVER_EYES_SRC_SET}
+              sizes="72px"
+              alt=""
+              aria-hidden="true"
+              width={72}
+              height={72}
+              decoding="async"
+              className="auth-logo auth-logo-cover"
+            />
+          )}
         </>
       ) : (
         <span className="auth-logo auth-logo-fallback">

@@ -1164,8 +1164,18 @@ button:disabled {
   }
 
   /* 蒙眼彩蛋图：默认叠在基础 logo 之上、不可见；密码框聚焦时交叉淡入 */
+  /* 加载门控：解码完成前保持透明（避免大图自上而下「半张」渲染），
+     onLoad 后 .is-loaded 整张淡入+轻微放大，呼应入场电影感。
+     is-covering 交叉淡入规则类名更具体（见下），聚焦时仍能盖过 .is-loaded 把 base 淡出。 */
   .auth-logo-base {
-    transition: opacity 0.32s ease;
+    opacity: 0;
+    transform: scale(0.96);
+    transition: opacity 0.36s ease, transform 0.5s var(--motion-ease);
+  }
+
+  .auth-logo-base.is-loaded {
+    opacity: 1;
+    transform: scale(1);
   }
 
   .auth-logo-cover {
@@ -1638,6 +1648,11 @@ button:disabled {
     }
     .auth-card {
       transform: none;
+    }
+    /* 头像仍保留透明门控（杜绝半张渲染），但去掉位移/过渡，加载完成即瞬时显现 */
+    .auth-logo-base {
+      transform: none;
+      transition: none;
     }
   }
 
