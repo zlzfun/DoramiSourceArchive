@@ -303,27 +303,37 @@ export default function ReaderTab({ showToast }) {
         '--col-m': listCollapsed ? '0px' : '420px',
       }}
     >
-      {/* ── 分隔线把手 · 分阶段折叠（全栏 → 收左栏 → 收列表=专注阅读）──
-         有效态约束：收列表前必先收左栏。故列表展开时不显示「收列表」把手，
-         列表折叠时不显示「左栏」把手——任一状态至多两个把手且位置互不重叠。 */}
-      {!listCollapsed && (
+      {/* ── 分隔线把手 · 两类折叠互不耦合 ──
+         · handle-l（左/中分隔线）：仅切换左栏，保留「全栏 ↔ 仅隐藏左栏」的分级能力。
+         · handle-m（中/右分隔线）：一键直达——同时收起左栏+中栏，进入纯净阅读（仅右栏）。
+         纯净态下中栏宽为 0，两把手会重叠，故只在最左缘渲染单个还原把手一键恢复全栏。 */}
+      {!listCollapsed ? (
+        <>
+          <button
+            type="button"
+            title={sourcesCollapsed ? '展开来源栏' : '收起来源栏'}
+            onClick={() => setSourcesCollapsed(c => !c)}
+            className="reader-handle reader-handle-l"
+          >
+            {sourcesCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+          </button>
+          <button
+            type="button"
+            title="专注阅读（仅显示正文）"
+            onClick={() => { setSourcesCollapsed(true); setListCollapsed(true); }}
+            className="reader-handle reader-handle-m"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+        </>
+      ) : (
         <button
           type="button"
-          title={sourcesCollapsed ? '展开来源栏' : '收起来源栏'}
-          onClick={() => setSourcesCollapsed(c => !c)}
+          title="退出专注阅读（恢复栏目）"
+          onClick={() => { setSourcesCollapsed(false); setListCollapsed(false); }}
           className="reader-handle reader-handle-l"
         >
-          {sourcesCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-        </button>
-      )}
-      {sourcesCollapsed && (
-        <button
-          type="button"
-          title={listCollapsed ? '展开文章列表' : '收起文章列表（专注阅读）'}
-          onClick={() => setListCollapsed(c => !c)}
-          className="reader-handle reader-handle-m"
-        >
-          {listCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+          <ChevronRight className="h-4 w-4" />
         </button>
       )}
 
