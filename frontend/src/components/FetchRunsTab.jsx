@@ -548,7 +548,7 @@ export default function FetchRunsTab({
                         </div>
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                           {ids.map(fetcherId => (
-                            <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-white">
+                            <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-white dark:bg-[var(--dorami-surface)]">
                               <div className="flex items-center gap-2.5">
                                 <LogoMark company={companyForId(fetcherId)} size="sm" />
                                 <div className="min-w-0">
@@ -559,7 +559,7 @@ export default function FetchRunsTab({
                               <div className="mt-2 micro-label text-blue-700 bg-blue-50 border border-blue-100 rounded px-2 py-1">
                                 cron：{(job.per_fetcher_cron || {})[fetcherId] || job.cron_expr || '-'}
                               </div>
-                              <code className="block mt-2 text-xs text-slate-500 bg-[var(--dorami-soft)] border border-[var(--dorami-border)] rounded px-2 py-1 truncate" title={JSON.stringify((job.per_fetcher_params || {})[fetcherId] || {})}>
+                              <code className="block mt-2 text-xs text-slate-500 bg-[var(--dorami-well)] border border-[var(--dorami-border)] rounded px-2 py-1 truncate" title={JSON.stringify((job.per_fetcher_params || {})[fetcherId] || {})}>
                                 {JSON.stringify((job.per_fetcher_params || {})[fetcherId] || {})}
                               </code>
                             </div>
@@ -660,7 +660,7 @@ export default function FetchRunsTab({
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                 {tasks.map(task => (
-                  <div key={task.id} className="bg-white border border-amber-100 rounded-[var(--r-control)] px-3 py-2 flex items-center justify-between gap-3">
+                  <div key={task.id} className="bg-white dark:bg-[var(--dorami-surface)] border border-amber-100 rounded-[var(--r-control)] px-3 py-2 flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="font-bold text-slate-700 text-sm truncate">{getFetcherName(task.fetcher_id)}</div>
                       <div className="font-mono text-xs text-slate-500 truncate">{task.cron_expr}</div>
@@ -827,7 +827,7 @@ export default function FetchRunsTab({
                   ) : draftFetcherIds.map(fetcherId => {
                     const fetcher = fetchersById[fetcherId];
                     return (
-                      <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-card)] p-3 bg-white">
+                      <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-card)] p-3 bg-white dark:bg-[var(--dorami-surface)]">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-center gap-2.5 min-w-0">
                             <LogoMark company={companyForId(fetcherId)} size="sm" />
@@ -860,7 +860,7 @@ export default function FetchRunsTab({
                 </div>
               </div>
             </div>
-            <div className="px-5 py-4 border-t border-[var(--dorami-border)] bg-white flex justify-between gap-2">
+            <div className="px-5 py-4 border-t border-[var(--dorami-border)] bg-white dark:bg-[var(--dorami-surface)] flex justify-between gap-2">
               <label className="inline-flex items-center text-xs font-bold text-slate-500">
                 <input type="checkbox" checked={jobDraft.is_active} onChange={event => setJobDraft(prev => ({ ...prev, is_active: event.target.checked }))} className="w-4 h-4 mr-2 text-[var(--dorami-blue)] rounded border-slate-300" />
                 启用任务

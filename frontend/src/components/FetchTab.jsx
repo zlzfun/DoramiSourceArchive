@@ -996,7 +996,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                                 <div className="font-bold text-slate-700 text-sm truncate">{getFetcherName(fetcherId)}</div>
                                 <div className="font-mono text-xs text-slate-500 truncate">{fetcherId}</div>
                               </div>
-                              <code className="hidden md:block text-xs text-slate-500 bg-white border border-[var(--dorami-border)] rounded px-2 py-1 max-w-[180px] truncate" title={JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}>
+                              <code className="hidden md:block text-xs text-slate-500 bg-white dark:bg-[var(--dorami-well)] border border-[var(--dorami-border)] rounded px-2 py-1 max-w-[180px] truncate" title={JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}>
                                 {JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}
                               </code>
                             </div>
@@ -1119,7 +1119,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                   ) : (groupDraft.fetcher_ids || []).map(fetcherId => {
                     const fetcher = fetchersById[fetcherId];
                     return (
-                      <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-card)] p-3 bg-white">
+                      <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-card)] p-3 bg-white dark:bg-[var(--dorami-surface)]">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-center gap-3 min-w-0">
                             <LogoMark company={resolveCompany(fetcher || {})} size="sm" />

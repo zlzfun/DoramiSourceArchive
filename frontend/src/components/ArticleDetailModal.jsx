@@ -74,7 +74,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
             <label className="form-label flex items-center"><Box className="w-3.5 h-3.5 mr-1" /> 扩展元数据 (Extensions JSON)</label>
             {isEditing ? (
               <textarea defaultValue={data.extensions_json} id="edit-extensions" rows="6" className="form-input font-mono text-xs" />
-            ) : <pre className="text-xs bg-slate-800 text-emerald-400 p-4 rounded-[var(--r-card)] overflow-x-auto shadow-inner">{isLoading ? '正在加载元数据…' : JSON.stringify(JSON.parse(data.extensions_json || '{}'), null, 2)}</pre>}
+            ) : <pre className="text-xs bg-slate-800 dark:bg-slate-900 text-emerald-400 p-4 rounded-[var(--r-card)] overflow-x-auto shadow-inner">{isLoading ? '正在加载元数据…' : JSON.stringify(JSON.parse(data.extensions_json || '{}'), null, 2)}</pre>}
           </div>
         </div>
 

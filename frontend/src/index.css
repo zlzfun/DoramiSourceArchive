@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* Tailwind v4 暗色变体接线：让 `dark:` 跟随 document.documentElement 上的
+   [data-theme="dark"]（由主题控制器三态切换挂载），而非默认的 prefers-color-scheme。
+   v4 不读 tailwind.config.js 的 darkMode 键，必须在 CSS 里声明此 custom-variant，
+   否则所有 dark: 补丁会退化成系统偏好媒体查询、在浅色系统下整体失效。 */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 /* 把 Tailwind 的 indigo 与 blue 色阶折叠进品牌 accent（方向 A 单宝石色）：
    JSX 里散落的 indigo、blue 系原子类不再各自为政，全部映射到同一 indigo accent；
    emerald、amber、red、slate 等语义与中性色保持原样。 */
@@ -2820,6 +2826,15 @@ button:disabled {
       linear-gradient(135deg, var(--dorami-blue) 0%, var(--dorami-blue-2) 52%, var(--dorami-blue-2) 100%);
   }
 
+  /* 暗色：hero 的两个高亮是硬编码亮 rgba（token 调不到），单独压低不透明度并把渐变收深，
+     让大面积 accent 表面成为「沉稳的深靛蓝面板」而非高饱和发光块。 */
+  [data-theme="dark"] .integration-hero {
+    background:
+      radial-gradient(circle at 16% 8%, rgba(124, 112, 235, 0.20), transparent 36%),
+      radial-gradient(circle at 86% 12%, rgba(110, 100, 222, 0.16), transparent 38%),
+      linear-gradient(135deg, var(--dorami-blue) 0%, var(--dorami-blue-2) 58%, #453fad 100%);
+  }
+
   .integration-kicker {
     color: rgba(221, 214, 254, 0.86);
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
@@ -4913,6 +4928,30 @@ button:disabled {
   border-color: rgba(91, 84, 232, 0.18);
 }
 
+/* 暗色对应桥接（必须与上方亮色桥接一一对应）：
+   上方 `.surface-card .bg-white` 等后代选择器特异性 0,2,0，会压过 JSX 上的
+   `dark:bg-[var(--dorami-surface)]` 工具类补丁（0,1,0）——所以「卡片/模态内的
+   bg-white / bg-slate-50 / bg-indigo-50」在暗色下会被强制成亮底（即"复查仍发白"的真因）。
+   这里用更高特异性（0,3,0，多一个 [data-theme=dark]）把同一批嵌套工具类整体重指向暗色令牌。
+   新组件只要套在 .surface-card / .modal-panel 内即自动适配，无需逐处加 dark: 补丁。 */
+[data-theme="dark"] :is(.surface-card, .modal-panel) .bg-white {
+  background-color: var(--dorami-surface);
+}
+[data-theme="dark"] :is(.surface-card, .modal-panel) :is(
+  .bg-slate-50, .bg-slate-50\/60, .bg-slate-50\/70, .bg-slate-50\/80, .bg-slate-50\/90
+) {
+  background-color: var(--dorami-soft);
+}
+[data-theme="dark"] :is(.surface-card, .modal-panel) :is(.border-slate-100, .border-slate-200) {
+  border-color: var(--dorami-border);
+}
+[data-theme="dark"] :is(.surface-card, .modal-panel) :is(.bg-indigo-50, .bg-blue-50\/60) {
+  background-color: var(--dorami-wash);
+}
+[data-theme="dark"] :is(.surface-card, .modal-panel) .border-indigo-200 {
+  border-color: var(--dorami-border-strong);
+}
+
 /* ── Responsive ── */
 
 @media (max-width: 1024px) {
@@ -4997,3 +5036,286 @@ button:disabled {
     flex-wrap: wrap;
   }
 }
+
+
+/* ════════════════════════════════════════════════════════════════════
+   暗色主题（[data-theme="dark"]）—— 落地 conventions.md §9
+   「一套表面阶 + 规则映射」，非逐组件定制。
+
+   ── 关键：表面阶必须保持与亮色相同的「相对明暗关系」──
+   亮色里：canvas(画布) < well(凹陷) < soft(卡内淡填充) < surface(白卡)，
+   即 well/soft 是「比卡片更暗一点的凹陷填充」，surface(卡片)最亮。
+   暗色必须照搬这个次序（否则 bg-soft 的淡填充会比卡片还亮、整片"发白"）：
+     canvas  页面底（最暗）
+     well    深凹陷：输入框 / 轨道 / 表头 / 工具栏 / 代码·参数预览
+     soft    浅凹陷：面板内淡填充 / 页脚 / 侧栏 / 信息条（比卡片暗一点）
+     surface 卡片 / 浮层 / 模态 / 激活态控件
+     raised  抬起：次按钮 / 图标按钮 / 胶囊 / hover（唯一比卡片"亮"的一档，故只给可点控件）
+   规则映射（成组 :is() 批量套用，不写逐元素特例）：
+     输入/轨道/代码 → well · 淡填充/页脚/侧栏 → soft(令牌自动) · 卡片/浮层/激活 → surface
+     次按钮/胶囊/hover → raised · 强调淡底 → --dorami-wash
+   登录/品牌页（.auth-*）豁免。日后新组件只要用 --dorami-* 或标准 slate/accent 原子类即自动适配。
+   ════════════════════════════════════════════════════════════════════ */
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  background: var(--dorami-canvas);
+
+  /* —— 表面阶（明暗次序对齐亮色：well/soft 是比 surface 暗的凹陷；raised 才比 surface 亮）—— */
+  --dorami-canvas: #0c0e13;
+  --dorami-canvas-2: #08090d;
+  --dorami-well: #15181f;
+  --dorami-soft: #1a1e26;
+  --dorami-soft-2: #15181f;
+  --dorami-surface: #20252f;
+  --dorami-card: rgba(32, 37, 47, 0.96);
+  --dorami-card-solid: #20252f;
+  --dorami-raised: #2a313c;   /* 暗色专用：抬起的可点控件（次按钮/图标按钮/胶囊/hover） */
+  --dorami-wash: rgba(124, 112, 235, 0.13);
+  --dorami-inset: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  --dorami-inset-input: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+
+  /* markdown 正文兜底令牌（:root 未定义，亮色走 hex 兜底；此处补暗色值） */
+  --dorami-surface-2: #15181f;
+  --dorami-ink-1: var(--dorami-ink);
+  --dorami-ink-3: #99a1ad;
+
+  /* —— 墨色阶（信息层级，越上越亮；均 ≥4.5:1）—— */
+  --dorami-ink: #f2f4f7;
+  --dorami-ink-2: #d2d7df;
+  --dorami-muted: #99a1ad;
+  --dorami-faint: #828b97;
+
+  /* —— 描边 —— */
+  --dorami-border: rgba(255, 255, 255, 0.10);
+  --dorami-border-strong: rgba(255, 255, 255, 0.16);
+
+  /* —— 强调（深底略提亮：按钮不发灰、accent 文字达对比）—— */
+  /* 填充类 accent（hero 渐变 / 主按钮 / 部门卡）在暗色下调深、去霓虹：
+     大面积实色用提亮过的 accent 会刺眼，且白字在 #7670ec 上仅 ~3.6:1 不达 AA。
+     调深到品牌同族的深靛蓝，白字对比 ≈5.5:1。文字用的 --dorami-accent 仍保持亮，单独不动。 */
+  --dorami-blue: #4d45b5;
+  --dorami-blue-2: #5f57c8;
+  --dorami-accent: #8b84f0;
+  --dorami-accent-ink: #aaa4f6;
+  --logo-accent: #828b97;
+  --section-accent: var(--dorami-blue);
+  --dept-accent: #7670ec;
+
+  /* —— 高程：深底阴影更黑、内高光更弱 —— */
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --sh-3: 0 4px 10px rgba(0, 0, 0, 0.5), 0 16px 36px rgba(0, 0, 0, 0.6);
+  --sh-accent: 0 8px 20px rgba(91, 84, 232, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --dorami-soft-shadow: var(--sh-2);
+  --dorami-shadow: var(--sh-3);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --dorami-grid: rgba(124, 112, 235, 0.06);
+
+  /* —— Tailwind 色阶重映射：JSX 硬编码原子类按主导角色翻转，对齐表面阶 —— */
+  /* slate 背景端（浅灰填充 → 凹陷暗面）；900/950 不改（深色代码块底）；white 不改（text/border-white 保白） */
+  --color-slate-50: #1a1e26;
+  --color-slate-100: #20252f;
+  --color-slate-200: #2a313c;
+  /* slate 文字端（提亮）*/
+  --color-slate-500: #99a1ad;
+  --color-slate-600: #b1b8c2;
+  --color-slate-700: #c9cfd8;
+  --color-slate-800: #e5e9ef;
+  /* 状态色：-50/-100 淡底 → 低饱和深染；-200/-300（边框/ring/激活态淡底）→ 深染一档，
+     避免在暗底上「亮环/亮边」违和；-600/-700 文字 → 提亮一档。
+     blue 已折叠进 accent，与 indigo 同步深染（否则 bg-blue-50 等会残留浅薰衣草）。 */
+  --color-indigo-50: #1a1b27;
+  --color-indigo-100: #222338;
+  --color-indigo-200: #2e2c52;
+  --color-indigo-300: #3d3a6b;
+  --color-indigo-500: #8b84f0;
+  --color-indigo-600: #8b84f0;
+  --color-indigo-700: #a8a2f4;
+  --color-blue-50: #1a1b27;
+  --color-blue-100: #222338;
+  --color-blue-200: #2e2c52;
+  --color-blue-300: #3d3a6b;
+  --color-emerald-50: #0f241b;
+  --color-emerald-100: #14301f;
+  --color-emerald-200: #1b3d2c;
+  --color-emerald-600: #10b981;
+  --color-emerald-700: #34d399;
+  --color-amber-50: #281e10;
+  --color-amber-100: #322614;
+  --color-amber-200: #3d3018;
+  --color-amber-600: #fbbf24;
+  --color-amber-700: #fcd34d;
+  /* orange 与 amber 同族（暖调），同步深染——否则 from-amber-50 to-orange-50 之类
+     暖渐变会在暗底残留发棕的浅口子（日报「立即生成」卡即此因）。 */
+  --color-orange-50: #2a1d0e;
+  --color-orange-100: #342410;
+  --color-orange-200: #402d15;
+  --color-orange-600: #fb923c;
+  --color-orange-700: #fdba74;
+  --color-rose-50: #2a1620;
+  --color-rose-100: #341a26;
+  --color-rose-200: #432130;
+  --color-rose-600: #fb7185;
+  --color-rose-700: #fda4af;
+  --color-red-50: #2a1517;
+  --color-red-100: #341a1d;
+  --color-red-200: #43211f;
+  --color-red-600: #f87171;
+  --color-red-700: #fca5a5;
+  --color-sky-50: #0c2030;
+  --color-sky-100: #102a3c;
+  --color-sky-200: #163a52;
+  --color-sky-600: #38bdf8;
+  --color-sky-700: #7dd3fc;
+  --color-violet-50: #201a34;
+  --color-violet-100: #292142;
+  --color-violet-200: #322a52;
+  --color-violet-600: #a78bfa;
+  --color-violet-700: #c4b5fd;
+}
+
+/* ── 页面底：亮色顶部停靠点 #f4f6fa 在暗色会留亮带，整体换暗色渐变 ── */
+[data-theme="dark"] body {
+  background:
+    radial-gradient(ellipse 70% 50% at 12% -8%, rgba(124, 112, 235, 0.10), transparent 58%),
+    radial-gradient(ellipse 55% 45% at 95% 2%, rgba(124, 112, 235, 0.07), transparent 54%),
+    linear-gradient(180deg, #11131a 0%, var(--dorami-canvas) 55%);
+}
+
+/* ── Shell / 顶栏 ── */
+[data-theme="dark"] .app-header {
+  background: rgba(12, 14, 19, 0.8);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+[data-theme="dark"] .brand-title { text-shadow: none; }
+[data-theme="dark"] .brand-subtitle { color: rgba(154, 162, 178, 0.9); }
+[data-theme="dark"] .checking-state {
+  background:
+    radial-gradient(ellipse 70% 50% at 50% 20%, rgba(124, 112, 235, 0.1), transparent 60%),
+    linear-gradient(180deg, #11131a, var(--dorami-canvas));
+}
+
+/* ── Tabs ── */
+[data-theme="dark"] .top-tab:hover:not(.top-tab-active) { background: var(--dorami-raised); }
+[data-theme="dark"] .top-tab-active {
+  background: var(--dorami-surface);
+  border-color: rgba(124, 112, 235, 0.34);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(124, 112, 235, 0.2), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+/* ── 卡片：抹掉亮色的白色内高光（深底上会变刺眼亮边）── */
+[data-theme="dark"] :is(.surface-card, .metric-card) { box-shadow: var(--sh-2), inset 0 1px 0 rgba(255, 255, 255, 0.04); }
+[data-theme="dark"] .surface-card:hover { box-shadow: var(--sh-3), inset 0 1px 0 rgba(255, 255, 255, 0.05); border-color: rgba(124, 112, 235, 0.32); }
+[data-theme="dark"] .metric-card:hover { box-shadow: var(--sh-3), inset 0 1px 0 rgba(255, 255, 255, 0.05); }
+
+/* ════ 规则①：输入 / 轨道 / 表头 / 代码预览 → well（深凹陷）════ */
+[data-theme="dark"] :is(
+  .segmented-control, .scope-toggle, .search-box, .catalog-search, .reader-search,
+  .field-box, .vector-option-box, .node-param-input, .node-param-checkbox, .form-input,
+  .config-toggle, .vector-status-pending, .empty-state, .source-param-empty, .subscription-catalog-toolbar
+) {
+  background: var(--dorami-well);
+  border-color: var(--dorami-border);
+  box-shadow: var(--dorami-inset);
+}
+[data-theme="dark"] .form-search-box .form-input { background: var(--dorami-well); }
+[data-theme="dark"] :is(.dept-check, .source-check) { background: var(--dorami-well); border-color: rgba(255, 255, 255, 0.28); box-shadow: none; }
+[data-theme="dark"] :is(.dept-check-on, .source-check-on) { background: var(--dorami-blue); border-color: var(--dorami-blue); }
+
+/* ════ 规则②：卡片 / 浮层 / 模态 / 激活控件 / 列表行 hover → surface ════ */
+[data-theme="dark"] :is(
+  .modal-panel, .date-range-popover, .node-card, .dept-card, .running-widget, .selection-bar,
+  .segmented-option-active, .scope-toggle-option-active, .subscription-dept-card, .subscription-source-row,
+  .source-row:hover,
+  .field-box:focus-within, .search-box:focus-within, .catalog-search:focus-within,
+  .node-param-input:focus, .form-input:focus
+) {
+  background: var(--dorami-surface);
+  border-color: var(--dorami-border);
+}
+[data-theme="dark"] :is(.modal-panel, .date-range-popover, .node-card, .dept-card, .running-widget, .selection-bar) { box-shadow: var(--sh-3); }
+[data-theme="dark"] :is(.segmented-option-active, .scope-toggle-option-active) { box-shadow: var(--sh-1); }
+[data-theme="dark"] :is(.field-box:focus-within, .search-box:focus-within, .catalog-search:focus-within, .node-param-input:focus, .form-input:focus) { border-color: rgba(124, 112, 235, 0.5); }
+[data-theme="dark"] .source-row { background: var(--dorami-soft); border-color: var(--dorami-border); }
+[data-theme="dark"] .source-row:hover { border-color: rgba(124, 112, 235, 0.32); }
+[data-theme="dark"] .source-review-panel { background: var(--dorami-soft); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04); }
+
+/* ════ 规则③：次按钮 / 图标按钮 / 胶囊 / hover → raised（唯一比卡片亮的一档，给可点控件）════ */
+[data-theme="dark"] :is(
+  .ghost-action, .action-button-secondary, .icon-button, .action-button-quiet,
+  .filter-chip, .category-chip, .tier-segment-btn
+) {
+  background: var(--dorami-raised);
+  color: var(--dorami-ink-2);
+  border-color: var(--dorami-border);
+  box-shadow: var(--sh-1);
+}
+[data-theme="dark"] :is(
+  .ghost-action:hover, .action-button-secondary:hover, .icon-button:hover, .action-button-quiet:hover,
+  .config-toggle:hover, .field-box:hover, .vector-option-box:hover,
+  .category-chip:hover:not(.category-chip-active), .tier-segment-btn:hover:not(:disabled):not(.tier-segment-btn-active),
+  .scope-toggle-option:hover:not(.scope-toggle-option-active)
+) {
+  background: #323a47;
+}
+[data-theme="dark"] :is(.icon-button:hover, .action-button-secondary:hover, .ghost-action:hover, .category-chip:hover:not(.category-chip-active), .tier-segment-btn:hover:not(:disabled):not(.tier-segment-btn-active)) { border-color: rgba(124, 112, 235, 0.4); }
+[data-theme="dark"] :is(.category-chip, .tier-segment-btn) { box-shadow: var(--sh-1); }
+
+/* ════ 规则④：强调淡底 → 统一 --dorami-wash（不再各自发紫）════ */
+[data-theme="dark"] :is(
+  .integration-button-secondary, .integration-version, .data-chip, .source-run, .config-toggle-active
+) {
+  background: var(--dorami-wash);
+  border-color: rgba(124, 112, 235, 0.3);
+}
+[data-theme="dark"] :is(.integration-button-secondary, .integration-version, .data-chip) { color: #c4bdf7; }
+[data-theme="dark"] .data-table tbody tr:hover { background: var(--dorami-wash); }
+[data-theme="dark"] .source-row-selected { background: var(--dorami-wash); border-color: var(--dorami-blue); }
+[data-theme="dark"] :is(.integration-icon-sky, .integration-icon-violet) {
+  background: linear-gradient(135deg, rgba(124, 112, 235, 0.26), rgba(124, 112, 235, 0.12));
+}
+
+/* ── 运行小部件文字 / 接入集成卡 / 模态遮罩 ── */
+[data-theme="dark"] .running-widget-headline { color: #c7c2f5; }
+[data-theme="dark"] .integration-card {
+  background: linear-gradient(180deg, rgba(124, 112, 235, 0.1), var(--dorami-surface));
+  border-color: rgba(124, 112, 235, 0.26);
+  box-shadow: var(--sh-3);
+}
+[data-theme="dark"] .integration-card:hover {
+  background: linear-gradient(180deg, rgba(124, 112, 235, 0.16), var(--dorami-raised));
+  border-color: rgba(124, 112, 235, 0.42);
+}
+[data-theme="dark"] .integration-button-secondary:hover:not(:disabled) { background: var(--dorami-raised); border-color: rgba(124, 112, 235, 0.42); }
+[data-theme="dark"] .integration-button-danger { background: var(--dorami-raised); color: #fca5a5; }
+[data-theme="dark"] .integration-button-danger:hover:not(:disabled) { background: #323a47; }
+[data-theme="dark"] .integration-status-line { background: var(--dorami-well) !important; border-color: var(--dorami-border) !important; }
+[data-theme="dark"] .modal-overlay { background: rgba(0, 0, 0, 0.62); }
+[data-theme="dark"] .date-range-day:hover { background: var(--dorami-raised); }
+[data-theme="dark"] .reader-group-count { background: rgba(255, 255, 255, 0.08); }
+
+/* ── 状态色块（保留语义色，仅压深底 + 提亮文字）── */
+[data-theme="dark"] .action-button-danger { background: rgba(248, 113, 113, 0.12); color: #fca5a5; border-color: rgba(248, 113, 113, 0.28); }
+[data-theme="dark"] .action-button-danger:hover { background: rgba(248, 113, 113, 0.2); }
+[data-theme="dark"] .action-button-success { background: rgba(16, 185, 129, 0.13); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.3); }
+[data-theme="dark"] .action-button-success:hover { background: rgba(16, 185, 129, 0.22); }
+[data-theme="dark"] .vector-status-done { background: rgba(16, 185, 129, 0.13); color: #6ee7b7; }
+[data-theme="dark"] .source-health-healthy { color: #6ee7b7; }
+[data-theme="dark"] .source-health-failing { color: #fca5a5; }
+[data-theme="dark"] .source-health-running { color: #fcd34d; }
+[data-theme="dark"] :is(.dept-meta-fail, .source-stat-danger) { color: #fca5a5; }
+
+/* ── 组件层写死的 slate-hex 文字：成组提到 muted / ink（不随 --color-* 翻转）── */
+[data-theme="dark"] :is(
+  .segmented-option, .scope-toggle-option, .node-param-title, .node-param-label,
+  .field-box > span, .vector-option-box > span, .active-filter-label, .active-filter-chip-label,
+  .active-filter-clear, .integration-card-meta, .integration-card-copy, .catalog-dimension-label,
+  .tiny-meta, .form-field, .form-field > span, .form-label, .date-range-weekday,
+  .panel-header-subtitle, .running-widget-more, .running-widget-progress-queued, .running-widget-name,
+  .category-chip, .tier-segment-btn, .section-band-count, .section-band-chevron, .dept-alias,
+  .dept-chevron, .source-sub, .source-sub-dot, .source-stat, .source-config-btn, .source-desc,
+  .source-param-block-head, .field-box .date-range-trigger span
+) { color: var(--dorami-muted); }
+[data-theme="dark"] :is(.section-band-title, .dept-name, .source-name) { color: var(--dorami-ink); }
+[data-theme="dark"] :is(.date-range-day, .source-meta-val) { color: var(--dorami-ink-2); }

@@ -4,7 +4,7 @@ import { useModalTransition } from '../hooks/useModalTransition';
 const STYLES = {
   error: { bg: 'bg-rose-500', Icon: AlertCircle },
   success: { bg: 'bg-emerald-600', Icon: CheckCircle2 },
-  info: { bg: 'bg-slate-800', Icon: Info },
+  info: { bg: 'bg-slate-800 dark:bg-slate-900', Icon: Info },
 };
 
 export default function Toast({ show, message, type = 'info' }) {

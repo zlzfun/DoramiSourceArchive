@@ -8,8 +8,22 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/brand/dorami-logo-48.png?v=2" />
     <link rel="apple-touch-icon" href="/brand/dorami-logo-512.png?v=2" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>哆啦美·归档中枢</title>
     <meta name="description" content="哆啦美·归档中枢 — AI 内容聚合归档与语义检索平台" />
+    <!-- 防闪烁（FOUC）：React 挂载前先据 localStorage / 系统偏好给 <html> 打 data-theme -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('dorami-theme') || 'system';
+          var dark = saved === 'dark' ||
+            (saved === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

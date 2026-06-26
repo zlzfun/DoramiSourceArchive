@@ -114,11 +114,40 @@
 - 复用既有原语（`.action-button*` / `.icon-button` / `.surface-card` / `.modal-*` / `.toast-*`），
   不要为同类元素另起样式。
 
-## 9. 暗色主题预留
+## 9. 暗色主题（已落地）
 
-目前**仅亮色**。但上述颜色/阴影令牌均为**语义令牌**（非字面 `gray-100`），未来上暗色只需在
-`[data-theme=dark]` 作用域重定义这批令牌的值，引用语义令牌的组件层无需改动。新写样式时坚持引用
-语义令牌（而非硬编码 hex），即为暗色预留。
+暗色主题通过 `[data-theme=dark]`（挂在 `<html>`，由 `src/theme.js` 的主题控制器写入）实现，三态偏好
+（亮 / 暗 / 跟随系统）存 `localStorage('dorami-theme')`、跟随 `prefers-color-scheme`；入口在顶栏快捷图标
+与「设置 → 外观」。`index.html` 有防闪烁内联脚本（React 挂载前先打 `data-theme`）。落地分三层（全部集中在
+`index.css` 末尾的 `[data-theme=dark]` 段，零改动亮色）：
+
+1. **语义令牌重定义**：`--dorami-*` / `--sh-*` 在暗色作用域换值，引用令牌的角色类/组件**自动翻转**。
+2. **Tailwind 色阶重映射**：JSX 里散落的硬编码原子类（`text-slate-*`/`bg-slate-50/100`/状态色 `-50/-100/-200`）
+   编译为 `var(--color-*)`，故按**主导角色**重映射这批 `--color-*`（slate 文字端提亮、浅底端压深、状态淡底/淡边·ring `-50/-100/-200` 转深染）。
+   **`blue` 已折叠进 accent，其 `-50/-100/-200/-300` 必须与 `indigo` 同步深染**，否则 `bg-blue-50` 的胶囊、`ring/border-*-200` 的激活态亮边会在暗底残留浅色。
+3. **组件层硬编码表面覆盖**：`@layer components` 里写死 白/玻璃/slate-hex 的工作区表面，用 unlayered
+   `[data-theme=dark] .foo` 覆盖（特异性 + 来源优先级双重胜出）。
+
+**核心是「一套表面阶 + 规则映射」，不是逐组件调色**。所有底色收敛到一条 **elevation scale**，同级靠描边分隔。
+**关键：暗色必须保持与亮色相同的「相对明暗次序」**——亮色里 `well`/`soft` 是「比白卡更暗一点的凹陷填充」、`surface`(卡片)最亮；暗色照搬此次序（`canvas < well < soft < surface < raised`），否则 `bg-soft` 的淡填充会比卡片还亮、整片"发白"。
+
+| 级 | token | 相对卡片 | 用途 |
+|---|---|---|---|
+| 画布 | `--dorami-canvas` | — | 页面底（最暗） |
+| 深凹陷 | `--dorami-well` | 暗 | **输入框** / 轨道 / 表头 / 工具栏 / **代码·参数预览** |
+| 浅凹陷 | `--dorami-soft` | 略暗 | 面板内淡填充 / 页脚 / 侧栏 / 信息条 |
+| 卡片 | `--dorami-surface` | = | 卡片 / 浮层 / 模态 / **激活态控件** / 列表行·输入 hover·focus |
+| 抬起 | `--dorami-raised` | 亮 | **唯一比卡片亮的一档**：次按钮 / 图标按钮 / 胶囊 / hover（仅给可点控件） |
+
+强调淡底（旧版散落的 `indigo-50`/`rgba(238,237,252)` 等"发紫小块"）统一收敛到 `--dorami-wash`；强调实色（按钮/激活）在深底略提亮保对比。第 3 层覆盖按上表用**成组 `:is()` 选择器**批量套用，不写逐元素特例。**记住「可点才上 raised，被动容器只能 ≤ surface」**——被动框（代码/参数预览、内容框、信息条）popping 发白多半是误用了 raised/soft。
+
+**新写样式的纪律（日后拓展无需再为暗色适配）**：背景只用上表 token（或 `.surface-card`/`.toolbar-card` 等已 token 化的角色类）、文字用 `--dorami-ink/-2/muted/faint`、强调用 `--dorami-accent`——即天然适配暗色。**不要给容器写死 `bg-white`/`#fff`/`rgba(255,255,255,…)` 或 slate-hex 底色**；标准 slate/状态原子类会自动重映射。仅 `bg-white`/`text-white` 这类**双角色**（同色既作文字又作白底）无法靠映射两全，才就地加 `dark:` 变体补丁。
+
+> ⚠️ **`dark:` 变体接线（Tailwind v4 坑）**：v4 **不读** `tailwind.config.js` 的 `darkMode` 键，默认 `dark:` 走 `prefers-color-scheme`。本项目在 `index.css` 顶部用 `@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));` 把 `dark:` 绑到 `[data-theme=dark]`。**少了这行，所有 `dark:` 补丁会在浅色系统下静默失效**（白底/淡底残块全部漏出，且只在切到暗色却又是浅色 OS 时暴露）——排查暗色"补丁不生效"先查这行是否还在。
+
+> ⚠️ **高特异性桥接会压过 `dark:` 补丁**：`index.css` 有一组「桥接」规则用后代选择器把卡片/模态内的嵌套工具类统一改写（如 `.surface-card .bg-white { … }`、`.modal-panel .bg-slate-50 { … }`，特异性 0,2,0）。它**压过** JSX 上的 `dark:bg-[var(--dorami-*)]`（0,1,0）——所以「卡片/模态内的 `bg-white`/`bg-slate-50`/`bg-indigo-50` 在暗色下仍发白」往往不是 `dark:` 没接通，而是被这组桥接强制。**每条亮色桥接都必须有 `[data-theme=dark]` 对应**（紧随其后、用 `[data-theme="dark"] :is(.surface-card,.modal-panel) …`，特异性 0,3,0 稳压），新增亮色桥接时同步加暗色版。
+
+**登录/品牌页（`.auth-*` / `.login-panel`）刻意豁免**——暗色桥接不要纳入 `.login-panel`。
 
 ---
 
@@ -129,3 +158,4 @@
 - [ ] 没有手写 `text-[Npx]` / `rounded-[Npx]` / 阴影硬编码？都引用了 token/角色类？（§3/§5/§6）
 - [ ] 强调色只用于状态与唯一 CTA？一个视图一个主按钮？（§4/§8）
 - [ ] 工作区动效时长在区间内、有 reduced-motion 兜底；品牌区未被误伤？（§7）
+- [ ] 暗色下没有「亮色残块 / 黑字黑底」？硬编码原子类（尤其 `bg-white`、双角色 slate）已就地补 `dark:` 变体？（§9）

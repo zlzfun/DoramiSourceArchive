@@ -290,7 +290,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
 
             {/* 生成过程中的实时阶段 */}
             {generating && (
-              <div className="mt-3 rounded-[var(--r-control)] border border-amber-200/70 bg-white/70 px-3 py-2.5">
+              <div className="mt-3 rounded-[var(--r-control)] border border-amber-200/70 bg-white/70 dark:bg-[var(--dorami-surface)] px-3 py-2.5">
                 <div className="flex items-center gap-2 text-xs">
                   <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-600" />
                   <span className="font-bold text-slate-700">{PHASE_LABELS[progress?.phase] || '处理中…'}</span>
@@ -411,7 +411,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
                       </button>
                     </div>
                     {open && (
-                      <div className="border-t border-[var(--dorami-border)] bg-white px-4 py-3">
+                      <div className="border-t border-[var(--dorami-border)] bg-white dark:bg-[var(--dorami-surface)] px-4 py-3">
                         <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700 font-mono">
                           {record.content || '（无正文）'}
                         </pre>

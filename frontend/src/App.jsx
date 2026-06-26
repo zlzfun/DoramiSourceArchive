@@ -8,8 +8,10 @@ import {
   History,
   Loader2,
   LogOut,
+  Moon,
   Plug2,
   Settings,
+  Sun,
 } from 'lucide-react';
 import Toast from './components/Toast';
 import DataTab from './components/DataTab';
@@ -21,6 +23,7 @@ import ReaderTab from './components/ReaderTab';
 import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
 import BrandLogoImage from './components/BrandLogoImage';
+import { useTheme } from './theme';
 import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
 
 // ── 导航 / 历史锚点 ──
@@ -72,6 +75,7 @@ export default function App() {
   const [nav, setNav] = useState(navFromHash);
   const navRef = useRef(nav);
   const activeTab = nav.tab;
+  const { theme, setTheme, toggleTheme, effective } = useTheme();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mountedTabs, setMountedTabs] = useState(() => new Set([nav.tab]));
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
@@ -350,7 +354,7 @@ export default function App() {
             <button
               key={tab.id}
               onClick={() => goTab(tab.id)}
-              className={`top-tab relative flex items-center gap-2 whitespace-nowrap px-6 py-3 text-sm font-extrabold transition-colors ${activeTab === tab.id ? 'top-tab-active' : 'text-slate-500 hover:text-slate-950'}`}
+              className={`top-tab relative flex items-center gap-2 whitespace-nowrap px-6 py-3 text-sm font-extrabold transition-colors ${activeTab === tab.id ? 'top-tab-active' : 'text-slate-500 hover:text-slate-950 dark:hover:text-slate-100'}`}
             >
               <tab.icon className="h-4.5 w-4.5" /> {tab.label}
             </button>
@@ -375,6 +379,15 @@ export default function App() {
               <p className="text-xs font-black text-slate-800">{authState.user?.username || 'admin'}</p>
               <p className="micro-label text-slate-500">{roleLabel}</p>
             </div>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="icon-button"
+              title={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+              aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+            >
+              {effective === 'dark' ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}
+            </button>
             <button
               type="button"
               onClick={() => setSettingsOpen(true)}
@@ -411,6 +424,8 @@ export default function App() {
       <SettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        theme={theme}
+        onThemeChange={setTheme}
         runtimeInfo={runtimeInfo}
         username={authState.user?.username}
         avatar={authState.user?.avatar}

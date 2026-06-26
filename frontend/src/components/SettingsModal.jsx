@@ -10,9 +10,13 @@ import {
   KeyRound,
   Loader2,
   LogOut,
+  Monitor,
+  Moon,
+  Palette,
   Plug2,
   RefreshCw,
   Settings as SettingsIcon,
+  Sun,
   Trash2,
   Upload,
   User,
@@ -405,7 +409,7 @@ function AccountManagementSection({ showToast, currentUsername }) {
         ) : (
           <div className="space-y-2">
             {accounts.map(acc => (
-              <div key={acc.username} className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-control)] border border-[var(--dorami-border)] bg-white px-3 py-2.5">
+              <div key={acc.username} className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-control)] border border-[var(--dorami-border)] bg-white dark:bg-[var(--dorami-surface)] px-3 py-2.5">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-bold text-slate-800">{acc.username}</span>
@@ -757,7 +761,7 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
               type="file"
               accept=".jsonl,.gz,.jsonl.gz,application/x-ndjson,application/gzip"
               onChange={e => setImportFile(e.target.files?.[0] || null)}
-              className="mt-3 block w-full text-sm font-semibold text-slate-500 file:mr-3 file:rounded-[var(--r-control)] file:border-0 file:bg-white file:px-3 file:py-2 file:text-sm file:font-bold file:text-indigo-600 file:shadow-sm"
+              className="mt-3 block w-full text-sm font-semibold text-slate-500 file:mr-3 file:rounded-[var(--r-control)] file:border-0 file:bg-white dark:file:bg-[var(--dorami-raised)] file:px-3 file:py-2 file:text-sm file:font-bold file:text-indigo-600 file:shadow-sm"
             />
             {importFile && (
               <span className="mt-2 flex items-center gap-1.5 text-xs font-bold text-emerald-600">
@@ -780,7 +784,7 @@ function DataSyncSection({ showToast, canExport, canImport, onArticlesChanged })
                 <div><span className="tiny-meta block">错误</span><b className={importResult.error_count ? 'text-rose-500' : ''}>{importResult.error_count}</b></div>
               </div>
               {importResult.error_count > 0 && (
-                <pre className="mt-3 max-h-32 overflow-auto rounded-[var(--r-control)] bg-white p-3 text-xs font-semibold text-rose-600">
+                <pre className="mt-3 max-h-32 overflow-auto rounded-[var(--r-control)] bg-white dark:bg-[var(--dorami-well)] p-3 text-xs font-semibold text-rose-600">
                   {JSON.stringify(importResult.errors?.slice(0, 5) || [], null, 2)}
                 </pre>
               )}
@@ -805,7 +809,36 @@ function AboutSection({ accountRoleLabel, isAdmin }) {
   );
 }
 
-export default function SettingsModal({ open, onClose, runtimeInfo, username, avatar, onUserUpdated, onLogout, showToast, onArticlesChanged }) {
+/* ── Appearance（外观 / 主题）─────────────────────────────── */
+function AppearanceSection({ theme, onThemeChange }) {
+  const options = [
+    { id: 'light', label: '亮色', icon: Sun },
+    { id: 'dark', label: '暗色', icon: Moon },
+    { id: 'system', label: '跟随系统', icon: Monitor },
+  ];
+  return (
+    <div>
+      <SectionHeading title="外观" hint="选择界面主题。「跟随系统」会随设备的浅色/深色外观自动切换。" />
+      <div className="surface-card rounded-[var(--r-card)] p-4">
+        <p className="text-sm font-bold text-slate-700">主题</p>
+        <div className="segmented-control mt-3">
+          {options.map(opt => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => onThemeChange(opt.id)}
+              className={`segmented-option ${theme === opt.id ? 'segmented-option-active' : ''}`}
+            >
+              <opt.icon /> {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function SettingsModal({ open, onClose, theme, onThemeChange, runtimeInfo, username, avatar, onUserUpdated, onLogout, showToast, onArticlesChanged }) {
   const { mounted, closing } = useModalTransition(open);
   const collectorEnabled = Boolean(runtimeInfo?.collector_enabled);
   const readerEnabled = Boolean(runtimeInfo?.reader_enabled);
@@ -821,6 +854,7 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, av
 
   const sections = useMemo(() => [
     { id: 'account', label: '账户', icon: User, show: true },
+    { id: 'appearance', label: '外观', icon: Palette, show: true },
     { id: 'accounts', label: '账户管理', icon: Users, show: isAdmin },
     { id: 'vector', label: '向量雷达', icon: BarChart2, show: collectorEnabled && ragEnabled },
     { id: 'sync', label: '数据同步', icon: FileText, show: isAdmin && (collectorEnabled || readerEnabled) },
@@ -866,7 +900,7 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, av
                 key={section.id}
                 onClick={() => setActive(section.id)}
                 className={`flex w-full items-center gap-2 rounded-[var(--r-control)] px-3 py-2 text-sm font-bold transition-colors ${
-                  active === section.id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                  active === section.id ? 'bg-white dark:bg-[var(--dorami-surface)] text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
                 <section.icon className="h-4 w-4" /> {section.label}
@@ -877,6 +911,9 @@ export default function SettingsModal({ open, onClose, runtimeInfo, username, av
           <div className="flex-1 overflow-y-auto p-6">
             {active === 'account' && (
               <AccountSection username={username} avatar={avatar} accountRoleLabel={accountRoleLabel} onUserUpdated={onUserUpdated} onLogout={onLogout} showToast={showToast} />
+            )}
+            {active === 'appearance' && (
+              <AppearanceSection theme={theme} onThemeChange={onThemeChange} />
             )}
             {active === 'accounts' && isAdmin && (
               <AccountManagementSection showToast={showToast} currentUsername={username} />

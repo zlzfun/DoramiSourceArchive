@@ -119,11 +119,11 @@ export default function DailyBriefFlow({ showToast, canManage = false }) {
                 className={`group relative flex w-full flex-col gap-1.5 rounded-[var(--r-card)] border px-3 py-3 text-left transition-all ${
                   isOpen
                     ? 'border-indigo-300 bg-indigo-50/70 ring-1 ring-indigo-200'
-                    : 'border-[var(--dorami-border)] bg-[var(--dorami-soft)] hover:border-indigo-200 hover:bg-white'
+                    : 'border-[var(--dorami-border)] bg-[var(--dorami-soft)] hover:border-indigo-200 hover:bg-white dark:hover:bg-[var(--dorami-surface)]'
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--r-control)] ${isOpen ? 'bg-indigo-100 text-indigo-600' : 'bg-white text-slate-500 group-hover:text-indigo-500'}`}>
+                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--r-control)] ${isOpen ? 'bg-indigo-100 text-indigo-600' : 'bg-white dark:bg-[var(--dorami-surface)] text-slate-500 group-hover:text-indigo-500'}`}>
                     <Icon className="h-4 w-4" />
                   </span>
                   <span className="micro-label font-black tabular-nums text-slate-300">{node.step}</span>
