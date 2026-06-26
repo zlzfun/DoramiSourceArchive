@@ -4388,11 +4388,6 @@ button:disabled {
     flex-shrink: 0;
   }
 
-  .reader-all-icon-fav {
-    background: #f59e0b;
-    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
-  }
-
   .reader-side-hint {
     padding: 6px 12px 12px;
     font-size: 12px;
@@ -4513,14 +4508,15 @@ button:disabled {
   /* 中栏：文章列表 */
   .reader-list-head {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
+    align-items: center;
     gap: 10px;
-    padding: 16px 18px 12px;
+    padding: 14px 18px 11px;
     border-bottom: 1px solid var(--dorami-border);
   }
 
   .reader-list-title {
+    flex: 1;
+    min-width: 0;
     font-size: 14px;
     font-weight: 900;
     color: var(--dorami-ink);
@@ -4529,12 +4525,35 @@ button:disabled {
     white-space: nowrap;
   }
 
+  /* 收藏星标切换：纯图标，与文章卡星标、阅读窗格收藏按钮统一用琥珀色语义 */
+  .reader-fav-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--r-control);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--dorami-faint);
+    cursor: pointer;
+    transition: color 140ms ease, background 140ms ease;
+  }
+
+  .reader-fav-icon:hover {
+    color: #f59e0b;
+    background: var(--dorami-well);
+  }
+
+  .reader-fav-icon-on { color: #f59e0b; }
+  .reader-fav-icon-on:hover { color: #d97706; }
+
   .reader-list-count {
     font-size: 11px;
     font-weight: 700;
     color: var(--dorami-faint);
     flex-shrink: 0;
-    margin-left: auto;
   }
 
   .reader-list-scroll {

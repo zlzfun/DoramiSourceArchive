@@ -340,7 +340,8 @@ export default function ReaderTab({ showToast }) {
       {/* ── 左栏 · 我的订阅 ── */}
       <aside className="reader-col reader-col-sources" aria-hidden={sourcesCollapsed}>
         <div className="reader-sources-inner">
-        {/* 两个聚合视图（我的订阅 / 我的收藏）作为统一的一组导航，与下方实际订阅来源分隔 */}
+        {/* 左栏聚焦「来源」一类对象：订阅来源的聚合入口 + 下方逐源列表。
+           「我的收藏」是文章级集合（非来源），已移到中栏文章列表头，避免与订阅来源混淆。 */}
         <nav className="reader-nav-group">
           <button
             type="button"
@@ -351,18 +352,6 @@ export default function ReaderTab({ showToast }) {
             <div className="min-w-0 flex-1 text-left">
               <p className="reader-source-name">我的订阅</p>
               <p className="reader-source-meta">{subscribedTotal} 篇 · {subscribedSources.length} 个来源</p>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={goFavorites}
-            className={`reader-source-row reader-nav-row ${showFavorites ? 'reader-source-row-active' : ''}`}
-          >
-            <span className="reader-all-icon reader-all-icon-fav"><Star className="h-4 w-4" /></span>
-            <div className="min-w-0 flex-1 text-left">
-              <p className="reader-source-name">我的收藏</p>
-              <p className="reader-source-meta">{favoriteIds.size} 篇</p>
             </div>
           </button>
         </nav>
@@ -482,6 +471,17 @@ export default function ReaderTab({ showToast }) {
           <span className="reader-list-title">
             {showFavorites ? '我的收藏' : activeSourceId ? (sourceNameMap[activeSourceId] || activeSourceId) : '我的订阅'}
           </span>
+          {/* 收藏是文章级集合：中栏头部的星标切换，与逐篇卡片星标同色呼应 */}
+          <button
+            type="button"
+            onClick={() => (showFavorites ? goSubscribed() : goFavorites())}
+            aria-pressed={showFavorites}
+            aria-label={showFavorites ? '返回我的订阅' : '只看我的收藏'}
+            title={showFavorites ? '返回我的订阅' : '只看我的收藏'}
+            className={`reader-fav-icon ${showFavorites ? 'reader-fav-icon-on' : ''}`}
+          >
+            <Star className="h-4 w-4" fill={showFavorites ? 'currentColor' : 'none'} />
+          </button>
           <span className="reader-list-count">{articlesTotal} 篇</span>
         </div>
 
