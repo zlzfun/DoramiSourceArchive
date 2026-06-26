@@ -4788,6 +4788,26 @@ button:disabled {
     min-height: 40px;
     background: var(--dorami-surface-2, #f1f5f9);
   }
+  /* 裂图兜底：源站删图/防盗链时的体面占位，替代浏览器默认破图标 */
+  .markdown-img-fallback {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    max-width: 100%;
+    margin: 16px auto;
+    padding: 18px 16px;
+    border: 1px dashed var(--dorami-border-strong);
+    border-radius: var(--r-control);
+    background: var(--dorami-surface-2, #f1f5f9);
+    color: var(--dorami-muted);
+    text-align: center;
+  }
+  .markdown-img-fallback-alt {
+    font-size: 12px;
+    line-height: 1.5;
+  }
   .markdown-body a {
     color: var(--dorami-accent, #2563eb);
     text-decoration: underline;
