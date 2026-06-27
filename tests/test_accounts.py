@@ -128,18 +128,32 @@ def test_admin_account_crud(monkeypatch, tmp_path):
         # 重复用户名失败。
         assert client.post("/api/accounts", json={"username": "carol", "password": "x2", "role": "user"}).status_code == 400
 
+        # 不支持新建管理员账户。
+        assert client.post("/api/accounts", json={"username": "root", "password": "rootpw1", "role": "admin"}).status_code == 400
+
         # 列表包含新账户。
         usernames = {a["username"] for a in client.get("/api/accounts").json()}
         assert {"admin", "user", "carol"} <= usernames
 
-        # 升级角色、停用、重置密码。
-        assert client.put("/api/accounts/carol", json={"role": "admin"}).json()["role"] == "admin"
+        # 不支持把读者提升为管理员（角色渠道关闭）。
+        assert client.put("/api/accounts/carol", json={"role": "admin"}).status_code == 400
+        assert client.get("/api/accounts").json()  # carol 仍为读者
+        assert next(a for a in client.get("/api/accounts").json() if a["username"] == "carol")["role"] == "user"
+
+        # 停用、重置密码仍可用。
         assert client.put("/api/accounts/carol", json={"is_active": False}).json()["is_active"] is False
         assert client.post("/api/accounts/carol/reset-password", json={"new_password": "newpw123"}).status_code == 200
 
         # 删除。
         assert client.delete("/api/accounts/carol").status_code == 200
         assert "carol" not in {a["username"] for a in client.get("/api/accounts").json()}
+
+    # 运维视图（/api/admin/accounts）不展示管理员，仅列读者。
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        admin_view = client.get("/api/admin/accounts").json()
+        assert all(a["role"] != "admin" for a in admin_view)
+        assert "admin" not in {a["username"] for a in admin_view}
 
 
 def test_last_admin_guard_via_api(monkeypatch, tmp_path):

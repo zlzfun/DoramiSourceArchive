@@ -26,7 +26,15 @@ def _seed_users(engine, accounts=_DEFAULT_ACCOUNTS):
             if existing is not None:
                 session.delete(existing)
                 session.commit()
-            accounts_service.create_user(session, username, password, role)
+            session.add(UserRecord(
+                username=username,
+                password_hash=accounts_service.hash_password(password),
+                role=role,
+                is_active=True,
+                created_at=__import__("datetime").datetime.now().isoformat(),
+                updated_at=__import__("datetime").datetime.now().isoformat(),
+            ))
+        session.commit()
 
 
 def _make_sink(tmp_path, name: str):

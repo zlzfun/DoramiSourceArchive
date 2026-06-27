@@ -261,6 +261,35 @@ class AiUsageRecord(SQLModel, table=True):
     updated_at: str = Field(description="最近一次累加时间")
 
 
+class ReaderReadRecord(SQLModel, table=True):
+    """阅读活动按天聚合：一行 = 某天某读者浏览某来源的累计阅读次数。
+
+    在阅读器中**主动打开一篇文章**即记一次（按文章所属 source_id 归集）；
+    供运维面板统计用户阅读总量、各源浏览分布与每日阅读趋势。计量绝不阻断
+    阅读主流程（写入异常吞掉）。
+    """
+    __tablename__ = "reader_reads"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    day: str = Field(index=True, description="YYYY-MM-DD（本地日期）")
+    username: str = Field(index=True, description="归属读者账户")
+    source_id: str = Field(index=True, description="被阅读文章所属来源")
+    reads: int = Field(default=0, description="累计阅读次数")
+    updated_at: str = Field(description="最近一次累加时间")
+
+
+class LoginEventRecord(SQLModel, table=True):
+    """登录事件流：每次成功登录写一行（含精确时间），与 UserRecord.last_login_at
+    互补——后者是「最近一次」快照，本表保留历史以支持窗口内登录次数与「最近若干次
+    登录时间」列表。登录低频，原始事件留存可控。
+    """
+    __tablename__ = "login_events"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True, description="登录账户")
+    at: str = Field(index=True, description="登录时间 ISO 串")
+
+
 class UserRecord(SQLModel, table=True):
     """登录账户：数据库托管，密码以 PBKDF2 哈希存储。
 

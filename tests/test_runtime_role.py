@@ -15,18 +15,32 @@ def _login(client: TestClient, username: str = "admin", password: str = "admin")
 
 
 def _seed_users(engine, accounts=_DEFAULT_ACCOUNTS):
-    """将测试账户播种进给定引擎的 users 表（账户已迁移到数据库托管）。"""
+    """将测试账户播种进给定引擎的 users 表（账户已迁移到数据库托管）。
+
+    直接落库 UserRecord（等价于首次启动播种），因为业务层已禁止经 create_user
+    新建管理员——管理员只能由 seed 路径产生。
+    """
+    import datetime
     from sqlmodel import Session
     from models.db import UserRecord
     from services import accounts as accounts_service
 
+    now = datetime.datetime.now().isoformat()
     with Session(engine) as session:
         for username, password, role in accounts:
             existing = session.get(UserRecord, username)
             if existing is not None:
                 session.delete(existing)
                 session.commit()
-            accounts_service.create_user(session, username, password, role)
+            session.add(UserRecord(
+                username=username,
+                password_hash=accounts_service.hash_password(password),
+                role=role,
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            ))
+        session.commit()
 
 
 def _make_sink(tmp_path, name="runtime_role.db"):

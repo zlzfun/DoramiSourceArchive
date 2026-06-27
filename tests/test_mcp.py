@@ -282,7 +282,15 @@ def set_test_auth_accounts(monkeypatch, app_module):
             if existing is not None:
                 session.delete(existing)
                 session.commit()
-            accounts_service.create_user(session, username, password, role)
+            session.add(UserRecord(
+                username=username,
+                password_hash=accounts_service.hash_password(password),
+                role=role,
+                is_active=True,
+                created_at=__import__("datetime").datetime.now().isoformat(),
+                updated_at=__import__("datetime").datetime.now().isoformat(),
+            ))
+        session.commit()
 
 
 def test_admin_auth_session_lifecycle(monkeypatch, tmp_path):

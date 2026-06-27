@@ -119,15 +119,27 @@ export async function fetchAdminOverview() {
   return res.json();
 }
 
-export async function fetchAdminAccounts() {
-  const res = await apiFetch(`${API_BASE_URL}/admin/accounts`);
+export async function fetchAdminAccounts(days = 30) {
+  const res = await apiFetch(`${API_BASE_URL}/admin/accounts?days=${encodeURIComponent(days)}`);
   if (!res.ok) await handleApiError(res, '获取账户列表失败');
+  return res.json();
+}
+
+export async function fetchAccountActivity(username, days = 30) {
+  const res = await apiFetch(`${API_BASE_URL}/admin/accounts/${encodeURIComponent(username)}/activity?days=${encodeURIComponent(days)}`);
+  if (!res.ok) await handleApiError(res, '获取用户活动详情失败');
   return res.json();
 }
 
 export async function fetchAiUsage(days = 30) {
   const res = await apiFetch(`${API_BASE_URL}/admin/ai-usage?days=${encodeURIComponent(days)}`);
   if (!res.ok) await handleApiError(res, '获取 AI 用量失败');
+  return res.json();
+}
+
+export async function fetchAdminContent(top = 12) {
+  const res = await apiFetch(`${API_BASE_URL}/admin/content?top=${encodeURIComponent(top)}`);
+  if (!res.ok) await handleApiError(res, '获取内容看板失败');
   return res.json();
 }
 
@@ -720,6 +732,12 @@ export async function unsubscribeSource(sourceId) {
   const res = await apiFetch(`${API_BASE_URL}/reader/sources/${encodeURIComponent(sourceId)}/subscribe`, { method: 'DELETE' });
   if (!res.ok) await handleApiError(res, '取消订阅失败');
   return res.json();
+}
+
+// 记录一次主动阅读（fire-and-forget：失败静默，不阻断阅读）。
+export function recordArticleRead(articleId) {
+  return apiFetch(`${API_BASE_URL}/reader/articles/${encodeURIComponent(articleId)}/read`, { method: 'POST' })
+    .catch(() => {});
 }
 
 export async function createSubscription(data) {

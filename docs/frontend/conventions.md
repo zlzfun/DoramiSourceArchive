@@ -147,6 +147,8 @@
 
 > ⚠️ **高特异性桥接会压过 `dark:` 补丁**：`index.css` 有一组「桥接」规则用后代选择器把卡片/模态内的嵌套工具类统一改写（如 `.surface-card .bg-white { … }`、`.modal-panel .bg-slate-50 { … }`，特异性 0,2,0）。它**压过** JSX 上的 `dark:bg-[var(--dorami-*)]`（0,1,0）——所以「卡片/模态内的 `bg-white`/`bg-slate-50`/`bg-indigo-50` 在暗色下仍发白」往往不是 `dark:` 没接通，而是被这组桥接强制。**每条亮色桥接都必须有 `[data-theme=dark]` 对应**（紧随其后、用 `[data-theme="dark"] :is(.surface-card,.modal-panel) …`，特异性 0,3,0 稳压），新增亮色桥接时同步加暗色版。
 
+> ⚠️ **输入框：背景与文字色 token 必须成对**。表单输入优先**复用 `.form-input` 角色类**（它已把 `color: var(--dorami-ink)` 绑进去，暗色自动翻转）。若确实要手搓工具类串，凡用了会翻转的背景 token（`bg-[var(--dorami-soft)]`/`--dorami-well` 等），就**必须同时绑 `text-[var(--dorami-ink)]` 和 `placeholder:text-[var(--dorami-faint)]`**——只翻背景不翻文字是暗色「深字配深底、看不清」的典型来源：背景随主题翻转、文字色却走继承/默认值不翻，亮色下侥幸正常、暗色下糊成一团。（实例：`AdminOpsTab.jsx` 模型配置的 `INPUT_CLS` 曾漏掉文字色 token，亮色无碍、暗色翻车。）
+
 **登录/品牌页（`.auth-*` / `.login-panel`）刻意豁免**——暗色桥接不要纳入 `.login-panel`。
 
 ---
@@ -159,3 +161,4 @@
 - [ ] 强调色只用于状态与唯一 CTA？一个视图一个主按钮？（§4/§8）
 - [ ] 工作区动效时长在区间内、有 reduced-motion 兜底；品牌区未被误伤？（§7）
 - [ ] 暗色下没有「亮色残块 / 黑字黑底」？硬编码原子类（尤其 `bg-white`、双角色 slate）已就地补 `dark:` 变体？（§9）
+- [ ] 输入框复用了 `.form-input`，或手搓串里背景 token 与 `text-`/`placeholder:text-` token 成对？（§9）

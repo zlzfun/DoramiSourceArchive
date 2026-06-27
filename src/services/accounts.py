@@ -1,7 +1,10 @@
 """账户服务 (src/services/accounts.py)
 
 数据库托管的登录账户：密码以 PBKDF2-HMAC-SHA256 哈希存储（标准库，无新增依赖），
-集中提供哈希/校验、用户 CRUD、末位管理员保护与首次启动播种。
+集中提供哈希/校验、用户 CRUD、管理员唯一内置账号保护与首次启动播种。
+
+管理员为系统唯一内置账号：不支持新建管理员、不支持把读者提升为管理员、
+管理员账户不可改角色 / 不可停用 / 不可删除（人人统一登录这一个 admin 进行管理）。
 
 config 的 [auth] admin_users/user_users 仅在 users 表为空时作为初始种子；
 之后账户以本表为准（改 ini 不再生效）。username 即全局唯一身份，不可重命名。
@@ -18,7 +21,7 @@ from typing import List, Optional
 
 from sqlmodel import Session, select
 
-from models.db import AppSettingRecord, UserRecord
+from models.db import AppSettingRecord, LoginEventRecord, UserRecord
 
 VALID_ROLES = ("admin", "user")
 
@@ -101,13 +104,6 @@ def list_users(session: Session) -> List[UserRecord]:
     return list(session.exec(select(UserRecord).order_by(UserRecord.username)).all())
 
 
-def count_active_admins(session: Session, *, exclude: Optional[str] = None) -> int:
-    rows = session.exec(
-        select(UserRecord).where(UserRecord.role == "admin", UserRecord.is_active == True)  # noqa: E712
-    ).all()
-    return sum(1 for r in rows if r.username != exclude)
-
-
 # ==================== 用户增删改 ====================
 def _normalize_role(role: str) -> str:
     role = (role or "").strip()
@@ -123,6 +119,8 @@ def create_user(session: Session, username: str, password: str, role: str) -> Us
     if ":" in username:
         raise AccountError("用户名不能包含冒号")
     role = _normalize_role(role)
+    if role == "admin":
+        raise AccountError("不支持新建管理员账户：管理员为系统唯一内置账号")
     if session.get(UserRecord, username) is not None:
         raise AccountError(f"账户 '{username}' 已存在")
     now = _now_iso()
@@ -170,10 +168,11 @@ def set_role(session: Session, username: str, role: str) -> UserRecord:
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
     role = _normalize_role(role)
-    # 降级最后一个 active admin → 拒绝，避免系统失去管理员。
-    if record.role == "admin" and role != "admin" and record.is_active:
-        if count_active_admins(session, exclude=username) == 0:
-            raise AccountError("不能降级最后一个启用的管理员")
+    # 管理员为系统唯一内置账号：其角色不可更改，也不接受将其他账户提升为管理员。
+    if record.role == "admin":
+        raise AccountError("管理员账户的角色不可更改")
+    if role == "admin":
+        raise AccountError("不支持将账户提升为管理员：管理员为系统唯一内置账号")
     record.role = role
     record.updated_at = _now_iso()
     session.add(record)
@@ -186,9 +185,9 @@ def set_active(session: Session, username: str, is_active: bool) -> UserRecord:
     record = get_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
-    if not is_active and record.role == "admin" and record.is_active:
-        if count_active_admins(session, exclude=username) == 0:
-            raise AccountError("不能停用最后一个启用的管理员")
+    # 管理员为系统唯一内置账号：不可停用。
+    if not is_active and record.role == "admin":
+        raise AccountError("管理员账户不可停用")
     record.is_active = is_active
     record.updated_at = _now_iso()
     session.add(record)
@@ -212,13 +211,69 @@ def set_ai_beta_enabled(session: Session, username: str, enabled: bool) -> UserR
 
 # ==================== 运维埋点 ====================
 def touch_login(session: Session, username: str) -> None:
-    """记录一次成功登录的时间。账户不存在时静默跳过（不阻断登录流程）。"""
+    """记录一次成功登录：刷新 last_login_at 快照 + 追加一条登录事件流。
+
+    账户不存在时静默跳过（不阻断登录流程）。"""
     record = get_user(session, username)
     if record is None:
         return
-    record.last_login_at = _now_iso()
+    now = _now_iso()
+    record.last_login_at = now
     session.add(record)
+    session.add(LoginEventRecord(username=username, at=now))
     session.commit()
+
+
+def _since(days: int) -> str:
+    days = max(1, min(int(days or 30), 365))
+    return (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
+
+
+def logins_by_user(session: Session, *, days: int = 30) -> dict:
+    """窗口内按用户聚合登录次数 `{username: count}`（供账户列表/活跃榜富化）。"""
+    since = _since(days)
+    rows: List[LoginEventRecord] = list(
+        session.exec(select(LoginEventRecord).where(LoginEventRecord.at >= since)).all()
+    )
+    out: dict = {}
+    for row in rows:
+        out[row.username] = out.get(row.username, 0) + 1
+    return out
+
+
+def summarize_user_logins(
+    session: Session, username: str, *, days: int = 30, recent_limit: int = 10
+) -> dict:
+    """单用户登录聚合：窗口内 count + by_day 趋势 + 最近 recent_limit 次登录时间。"""
+    since = _since(days)
+    window_rows: List[LoginEventRecord] = list(
+        session.exec(
+            select(LoginEventRecord).where(
+                LoginEventRecord.at >= since,
+                LoginEventRecord.username == username,
+            )
+        ).all()
+    )
+    by_day: dict = {}
+    for row in window_rows:
+        day = (row.at or "")[:10]
+        by_day[day] = by_day.get(day, 0) + 1
+    by_day_list = sorted(
+        [{"day": k, "logins": v} for k, v in by_day.items() if k], key=lambda x: x["day"]
+    )
+    recent = list(
+        session.exec(
+            select(LoginEventRecord)
+            .where(LoginEventRecord.username == username)
+            .order_by(LoginEventRecord.at.desc())
+            .limit(max(1, int(recent_limit or 10)))
+        ).all()
+    )
+    return {
+        "count": len(window_rows),
+        "by_day": by_day_list,
+        "recent": [r.at for r in recent],
+    }
 
 
 def record_ai_usage(session: Session, username: str, kind: str) -> None:
@@ -263,9 +318,9 @@ def delete_user(session: Session, username: str) -> None:
     record = get_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
-    if record.role == "admin" and record.is_active:
-        if count_active_admins(session, exclude=username) == 0:
-            raise AccountError("不能删除最后一个启用的管理员")
+    # 管理员为系统唯一内置账号：不可删除。
+    if record.role == "admin":
+        raise AccountError("管理员账户不可删除")
     session.delete(record)
     session.commit()
 

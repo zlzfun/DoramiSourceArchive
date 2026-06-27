@@ -27,6 +27,10 @@
 
 :root {
   font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  /* 显式声明浅色配色域：否则 color-scheme 为 normal，原生表单控件
+     （checkbox/radio/下拉等）会跟随操作系统外观——OS 处于深色模式时，
+     浅色 App 里的勾选框会被系统渲染成深色方块。暗色主题另行覆盖为 dark。 */
+  color-scheme: light;
   color: #0b1220;
   background: #eef1f6;
   font-synthesis: none;
@@ -180,6 +184,15 @@ textarea:focus-visible {
 
 button:disabled {
   cursor: not-allowed;
+}
+
+/* 原生勾选/单选框统一走品牌 accent —— 否则在 [data-theme=dark] 的
+   color-scheme: dark 下会退化成浏览器暗色 UA 默认（深色方块、无品牌色）。
+   JSX 里散落的 text-[var(--dorami-blue)] 只设 color，原生控件并不读取，
+   故在此一处兜底（与 .vector-option-chip input 的 accent-color 同口径）。 */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--dorami-blue);
 }
 
 ::selection {
@@ -5044,6 +5057,12 @@ button:disabled {
   }
   .reader-ai-scope-option:hover { background: var(--dorami-well); }
   .reader-ai-scope-option.is-on { color: var(--dorami-accent); }
+  .reader-ai-scope-option.is-disabled {
+    color: var(--dorami-faint);
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+  .reader-ai-scope-option.is-disabled:hover { background: transparent; }
   .reader-ai-send {
     flex: none;
     display: inline-flex;

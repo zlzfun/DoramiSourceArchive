@@ -171,9 +171,9 @@ def test_summarize_aggregates(tmp_path):
     today = ai_usage._today()
     with Session(engine) as session:
         ai_usage.record_usage(session, username="alice", purpose="ask", model="m1",
-                              usage={"total_tokens": 50}, day=today)
+                              usage={"prompt_tokens": 20, "completion_tokens": 30, "total_tokens": 50}, day=today)
         ai_usage.record_usage(session, username="system", purpose="daily_brief_reduce", model="m1",
-                              usage={"total_tokens": 200}, day=today)
+                              usage={"prompt_tokens": 80, "completion_tokens": 120, "total_tokens": 200}, day=today)
         summary = ai_usage.summarize(session, days=7)
     assert summary["totals"]["total_tokens"] == 250
     assert summary["totals"]["calls"] == 2
@@ -181,6 +181,186 @@ def test_summarize_aggregates(tmp_path):
     assert {"ask", "daily_brief_reduce"} <= purposes
     users = {r["username"] for r in summary["by_user"]}
     assert {"alice", "system"} <= users
+    # by_day 携带输入/输出分量。
+    day_row = next(r for r in summary["by_day"] if r["day"] == today)
+    assert day_row["prompt_tokens"] == 100
+    assert day_row["completion_tokens"] == 150
+    assert day_row["total_tokens"] == 250
+    # 日×维度明细：供前端按用途/用户拆多系列。
+    dp = {(r["day"], r["purpose"]): r for r in summary["by_day_purpose"]}
+    assert dp[(today, "ask")]["total_tokens"] == 50
+    assert dp[(today, "daily_brief_reduce")]["calls"] == 1
+    du = {(r["day"], r["username"]): r for r in summary["by_day_user"]}
+    assert du[(today, "alice")]["total_tokens"] == 50
+    assert du[(today, "system")]["total_tokens"] == 200
+
+
+def test_usage_by_user_and_summarize_user(tmp_path):
+    from services import ai_usage
+    from storage.impl.db_storage import DatabaseStorage
+
+    engine = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'usage3.db'}").engine
+    today = ai_usage._today()
+    with Session(engine) as session:
+        ai_usage.record_usage(session, username="alice", purpose="translate", model="m1",
+                              usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}, day=today)
+        ai_usage.record_usage(session, username="alice", purpose="ask", model="m1",
+                              usage={"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}, day=today)
+        # 系统任务不计入按用户榜。
+        ai_usage.record_usage(session, username="system", purpose="daily_brief_map", model="m1",
+                              usage={"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}, day=today)
+
+        by_user = ai_usage.usage_by_user(session, days=30)
+        assert "system" not in by_user
+        assert by_user["alice"]["calls"] == 2
+        assert by_user["alice"]["total_tokens"] == 45
+
+        user = ai_usage.summarize_user(session, "alice", days=30)
+        assert user["totals"]["calls"] == 2
+        assert user["totals"]["total_tokens"] == 45
+        purposes = {r["purpose"] for r in user["by_purpose"]}
+        assert {"translate", "ask"} == purposes
+        # by_purpose 按调用数降序；by_day 含当天聚合。
+        day_row = next(r for r in user["by_day"] if r["day"] == today)
+        assert day_row["calls"] == 2 and day_row["total_tokens"] == 45
+        dp = {(r["day"], r["purpose"]) for r in user["by_day_purpose"]}
+        assert (today, "translate") in dp and (today, "ask") in dp
+
+
+def test_reader_activity_service(tmp_path):
+    from services import reader_activity
+    from storage.impl.db_storage import DatabaseStorage
+
+    engine = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'reads.db'}").engine
+    today = reader_activity._today()
+    with Session(engine) as session:
+        reader_activity.record_read(session, username="alice", source_id="src_a", day=today)
+        reader_activity.record_read(session, username="alice", source_id="src_a", day=today)
+        reader_activity.record_read(session, username="alice", source_id="src_b", day=today)
+        # 空用户/来源静默跳过。
+        reader_activity.record_read(session, username="", source_id="src_a", day=today)
+        reader_activity.record_read(session, username="alice", source_id="", day=today)
+
+        reader_activity.record_read(session, username="bob", source_id="src_a", day=today)
+
+        by_user = reader_activity.reads_by_user(session, days=30)
+        assert by_user["alice"] == 3
+
+        # 各源聚合（全量，跨用户）：src_a = alice 2 + bob 1 = 3，src_b = 1。
+        by_source = reader_activity.reads_by_source(session)
+        assert by_source["src_a"] == 3
+        assert by_source["src_b"] == 1
+
+        summary = reader_activity.summarize_user_reads(session, "alice", days=30)
+        assert summary["total"] == 3
+        # by_source 按次数降序：src_a(2) 在前。
+        assert summary["by_source"][0] == {"source_id": "src_a", "reads": 2}
+        day_row = next(r for r in summary["by_day"] if r["day"] == today)
+        assert day_row["reads"] == 3
+
+
+def test_login_events_aggregation(tmp_path):
+    from services import accounts as accounts_service
+    from storage.impl.db_storage import DatabaseStorage
+
+    engine = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'logins.db'}").engine
+    accounts_service.seed_users_if_empty(engine, _auth_config())
+    with Session(engine) as session:
+        accounts_service.touch_login(session, "user")
+        accounts_service.touch_login(session, "user")
+        accounts_service.touch_login(session, "admin")
+        # 不存在账户静默跳过，不建事件。
+        accounts_service.touch_login(session, "ghost")
+
+        by_user = accounts_service.logins_by_user(session, days=30)
+        assert by_user["user"] == 2
+        assert by_user["admin"] == 1
+        assert "ghost" not in by_user
+
+        summary = accounts_service.summarize_user_logins(session, "user", days=30)
+        assert summary["count"] == 2
+        assert len(summary["recent"]) == 2
+        assert all(summary["recent"])  # 均为非空时间戳
+        assert sum(d["logins"] for d in summary["by_day"]) == 2
+
+
+def test_admin_accounts_windowed_and_activity(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from services import accounts as accounts_service, ai_usage, reader_activity
+    from models.db import ReaderSubscriptionRecord, ArticleRecord, ReaderFavoriteRecord
+
+    today = ai_usage._today()
+    with Session(app_module.db_sink.engine) as session:
+        accounts_service.touch_login(session, "user")
+        accounts_service.touch_login(session, "user")
+        ai_usage.record_usage(session, username="user", purpose="translate", model="m1",
+                              usage={"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12}, day=today)
+        reader_activity.record_read(session, username="user", source_id="src_a", day=today)
+        reader_activity.record_read(session, username="user", source_id="src_a", day=today)
+        session.add(ArticleRecord(
+            id="a1", title="t", content_type="web_article", source_id="src_a",
+            source_url="http://x", publish_date="2026-06-01", fetched_date="2026-06-01",
+        ))
+        session.add(ReaderFavoriteRecord(owner_username="user", article_id="a1", created_at=today))
+        session.add(ReaderSubscriptionRecord(
+            owner_username="user", name="src_a", filters_json='{"source_ids": ["src_a"]}',
+            token_hash="h1", is_active=True, created_at=today, updated_at=today,
+        ))
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        accounts = client.get("/api/admin/accounts?days=30").json()
+        row = next(a for a in accounts if a["username"] == "user")
+        assert row["window_days"] == 30
+        assert row["ai_calls"] == 1 and row["ai_tokens"] == 12
+        assert row["reads"] == 2
+        # 列表登录次数 = 测试里 2 次 + 本次 admin 视图前的 user 未再登录（仅 setup 的 2 次）。
+        assert row["logins"] == 2
+        assert row["logged_in_window"] is True
+        assert row["subscription_count"] == 1
+
+        detail = client.get("/api/admin/accounts/user/activity?days=30").json()
+        assert detail["usage"]["totals"]["calls"] == 1
+        assert detail["reads"]["total"] == 2
+        assert detail["logins"]["count"] == 2
+        assert len(detail["logins"]["recent"]) == 2
+        # 各源互动并集：src_a 含 reads=2 + favorites=1。
+        eng = next(e for e in detail["source_engagement"] if e["source_id"] == "src_a")
+        assert eng["reads"] == 2 and eng["favorites"] == 1 and "name" in eng
+        assert detail["favorites_total"] == 1
+        assert detail["account"]["subscription_count"] == 1
+        # 不存在 / admin 账户走 404。
+        assert client.get("/api/admin/accounts/admin/activity").status_code == 404
+        assert client.get("/api/admin/accounts/ghost/activity").status_code == 404
+
+    # 受限读者无权访问。
+    with TestClient(app_module.app) as client:
+        _login(client, "user", "user")
+        assert client.get("/api/admin/accounts/user/activity").status_code == 403
+
+
+def test_reader_read_endpoint_records(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from services import reader_activity
+    from models.db import ArticleRecord
+
+    with Session(app_module.db_sink.engine) as session:
+        session.add(ArticleRecord(
+            id="a1", title="t", content_type="web_article", source_id="src_x",
+            source_url="http://x", publish_date="2026-06-01", fetched_date="2026-06-01",
+        ))
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client, "user", "user")
+        res = client.post("/api/reader/articles/a1/read")
+        assert res.status_code == 200 and res.json()["status"] == "ok"
+        # 不存在的文章安静忽略（不报错、不计量）。
+        assert client.post("/api/reader/articles/ghost/read").json()["status"] == "ignored"
+
+    with Session(app_module.db_sink.engine) as session:
+        assert reader_activity.reads_by_user(session, days=30).get("user") == 1
 
 
 def test_usage_recorder_gating_and_ping_excluded():

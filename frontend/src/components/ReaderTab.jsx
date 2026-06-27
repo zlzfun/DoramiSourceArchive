@@ -38,6 +38,7 @@ import {
   removeFavorite,
   translateArticle,
   askReaderAi,
+  recordArticleRead,
 } from '../api';
 
 const PAGE_SIZE = 30;
@@ -203,9 +204,12 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
   // 列表项已不含正文（include_content=false），仅 meta 即时渲染；正文命中缓存直接用，
   // 否则拉 GET /api/articles/{id}，回来时比对最新选中 id，丢弃过期响应。
   const selectArticle = useCallback((article) => {
+    const prevId = activeIdRef.current;
     setActiveArticle(article);
     const id = article?.id || null;
     activeIdRef.current = id;
+    // 主动打开一篇新文章即记一次阅读（同篇连点不重复计；fire-and-forget）。
+    if (id && id !== prevId) recordArticleRead(id);
     // 切文章即回到原文视图；译文若已缓存则备好，等用户主动点「译为中文」再显示。
     setShowTranslation(false);
     setTranslating(false);
@@ -295,6 +299,11 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
     setQaInput('');
   }, []);
 
+  // 未选中文章时「基于本文」无对应文章 → 自动回落到「基于我的订阅」（该项始终成立）。
+  useEffect(() => {
+    if (!activeArticle && qaScope === 'article') setQaScope('subscription');
+  }, [activeArticle, qaScope]);
+
   // 关闭面板：先播放退场动画，动画结束再卸载（与 CSS .is-closing 的 180ms 对齐）
   const closeAiPanel = useCallback(() => {
     setQaScopeMenuOpen(false);
@@ -332,8 +341,8 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
       const items = data.items || [];
       setArticlesTotal(data.total || 0);
       setArticles(prev => (append ? [...prev, ...items] : items));
-      // 首次加载（非追加）自动展示第一篇，省去手动点选（并触发其正文懒加载）
-      if (!append) selectArticle(items[0] || null);
+      // 不再自动展开第一篇——避免「被动打开」污染阅读计量；右栏停在提示态，
+      // 等用户主动点选一篇才加载正文并计一次阅读（见 selectArticle）。
     } catch (error) {
       if (error.name === 'AbortError') return; // 被更新的请求取消，静默丢弃
       showToast(error.message || '获取文章列表失败', 'error');
@@ -342,7 +351,7 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
         if (append) setLoadingMore(false); else setArticlesLoading(false);
       }
     }
-  }, [activeSourceId, searchQuery, showFavorites, showToast, selectArticle]);
+  }, [activeSourceId, searchQuery, showFavorites, showToast]);
 
   // 切换来源/搜索 → 重置列表、回顶、清空右栏
   // 用 useLayoutEffect：在绘制前同步进入加载态，避免「切源瞬间旧列表被画出一帧」的陈旧帧闪现
@@ -910,14 +919,20 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
                         {[
                           { id: 'article', label: '基于本文' },
                           { id: 'subscription', label: '基于我的订阅' },
-                        ].map((opt) => (
+                        ].map((opt) => {
+                          // 「基于本文」需先选中一篇文章，未选时置灰不可选。
+                          const disabled = opt.id === 'article' && !activeArticle;
+                          return (
                           <button
                             key={opt.id}
                             type="button"
                             role="option"
                             aria-selected={qaScope === opt.id}
-                            className={`reader-ai-scope-option ${qaScope === opt.id ? 'is-on' : ''}`}
+                            disabled={disabled}
+                            title={disabled ? '先从中间选择一篇文章' : undefined}
+                            className={`reader-ai-scope-option ${qaScope === opt.id ? 'is-on' : ''} ${disabled ? 'is-disabled' : ''}`}
                             onClick={() => {
+                              if (disabled) return;
                               if (opt.id !== qaScope) { setQaScope(opt.id); resetConversation(); }
                               setQaScopeMenuOpen(false);
                             }}
@@ -925,7 +940,8 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
                             <span>{opt.label}</span>
                             {qaScope === opt.id && <Check className="h-3.5 w-3.5" />}
                           </button>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
