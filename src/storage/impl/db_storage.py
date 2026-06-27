@@ -89,6 +89,16 @@ class DatabaseStorage(BaseStorage):
             if "ai_beta_enabled" not in user_columns:
                 with self.engine.begin() as conn:
                     conn.execute(text("ALTER TABLE users ADD COLUMN ai_beta_enabled BOOLEAN DEFAULT 0"))
+            user_additive_columns = {
+                "last_login_at": "VARCHAR",
+                "ai_translate_count": "INTEGER DEFAULT 0",
+                "ai_ask_count": "INTEGER DEFAULT 0",
+                "ai_last_used_at": "VARCHAR",
+            }
+            with self.engine.begin() as conn:
+                for column_name, column_sql in user_additive_columns.items():
+                    if column_name not in user_columns:
+                        conn.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {column_sql}"))
 
         if "source_configs" in inspector.get_table_names():
             source_config_columns = {column["name"] for column in inspector.get_columns("source_configs")}

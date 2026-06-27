@@ -17,7 +17,7 @@ from typing import Any, List, Optional
 
 from config import LLMConfig
 from llm import prompts
-from llm.client import ChatMessage, chat_completion
+from llm.client import ChatMessage, UsageMeta, chat_completion
 
 # 译文缓存在 ArticleRecord.extensions_json 下的键；只新增此键，不触碰正文，
 # 因此不影响向量化状态（向量化只在 content/title 变更时重置）。
@@ -68,18 +68,23 @@ def _split_for_translation(body: str, *, segment_chars: int = _TRANSLATE_SEGMENT
     return segments
 
 
-async def _translate_segment(title: str, segment: str, llm_config: LLMConfig) -> str:
+async def _translate_segment(
+    title: str, segment: str, llm_config: LLMConfig, usage_meta: Optional[UsageMeta] = None
+) -> str:
     raw = await chat_completion(
         messages=[
             ChatMessage(role="system", content=prompts.TRANSLATE_SYSTEM_PROMPT),
             ChatMessage(role="user", content=prompts.build_translate_user_prompt(title, segment)),
         ],
         config=llm_config,
+        usage_meta=usage_meta,
     )
     return raw.strip()
 
 
-async def translate_article(db_sink, article_id: str, llm_config: LLMConfig) -> dict:
+async def translate_article(
+    db_sink, article_id: str, llm_config: LLMConfig, usage_meta: Optional[UsageMeta] = None
+) -> dict:
     """翻译指定文章正文为中文；命中缓存直接返回，否则翻译后写回 extensions_json。
 
     返回 {"translation": str, "cached": bool}。
@@ -104,14 +109,14 @@ async def translate_article(db_sink, article_id: str, llm_config: LLMConfig) -> 
 
     segments = _split_for_translation(body)
     if len(segments) == 1:
-        translated = await _translate_segment(record.title or "", segments[0], llm_config)
+        translated = await _translate_segment(record.title or "", segments[0], llm_config, usage_meta)
     else:
         concurrency = max(1, getattr(llm_config, "map_concurrency", 4))
         semaphore = asyncio.Semaphore(concurrency)
 
         async def _guarded(seg: str) -> str:
             async with semaphore:
-                return await _translate_segment(record.title or "", seg, llm_config)
+                return await _translate_segment(record.title or "", seg, llm_config, usage_meta)
 
         parts = await asyncio.gather(*[_guarded(seg) for seg in segments])
         translated = "\n\n".join(p for p in parts if p)
@@ -202,6 +207,7 @@ async def answer_question(
     scope: str,
     llm_config: LLMConfig,
     history: Optional[List[Any]] = None,
+    usage_meta: Optional[UsageMeta] = None,
 ) -> str:
     """基于给定上下文 + 多轮历史回答提问。上下文为空时仍调用，由提示词约束模型如实说明资料不足。
 
@@ -219,7 +225,7 @@ async def answer_question(
             content=prompts.build_qa_user_prompt(question, context, scope=scope),
         )
     )
-    raw = await chat_completion(messages=messages, config=llm_config)
+    raw = await chat_completion(messages=messages, config=llm_config, usage_meta=usage_meta)
     answer = raw.strip()
     if not answer:
         raise ReaderAIError("AI 暂时没有返回内容，请稍后重试", status_code=502)

@@ -23,8 +23,15 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlmodel import Session, select
 
 import config
-from llm.client import ChatMessage, LLMError, LLMNotConfigured, chat_completion, parse_json_object
+from llm.client import ChatMessage, LLMError, LLMNotConfigured, UsageMeta, chat_completion, parse_json_object
 from llm import prompts
+
+# 日报各阶段的 LLM 用量归属：手动触发归到触发它的 admin，定时调度无登录上下文则归 "system"。
+USAGE_SYSTEM = "system"
+
+
+def _usage_meta(purpose: str, username: Optional[str]) -> UsageMeta:
+    return UsageMeta(purpose=purpose, username=(username or USAGE_SYSTEM))
 from models.content import DailyBriefContent
 from models.db import AppSettingRecord, ArticleRecord
 
@@ -281,7 +288,9 @@ def collect_candidates(
 # 阶段 2：Map（每篇 LLM 概括 + 打分）
 # ==========================================
 
-async def _summarize_one(candidate: BriefCandidate, llm_config: config.LLMConfig) -> ScoredItem:
+async def _summarize_one(
+    candidate: BriefCandidate, llm_config: config.LLMConfig, usage_meta: Optional[UsageMeta] = None
+) -> ScoredItem:
     try:
         user_prompt = prompts.build_map_user_prompt(
             title=candidate.title,
@@ -295,6 +304,7 @@ async def _summarize_one(candidate: BriefCandidate, llm_config: config.LLMConfig
             ],
             config=llm_config,
             response_json=True,
+            usage_meta=usage_meta,
         )
         data = parse_json_object(raw)
         return ScoredItem(
@@ -335,6 +345,7 @@ async def map_summarize(
     llm_config: config.LLMConfig,
     *,
     on_item_done=None,
+    usage_username: Optional[str] = None,
 ) -> List[ScoredItem]:
     """对有正文的候选并发 LLM 概括。无正文候选不进 map（reduce 单列附录）。
     on_item_done(done, total) 每完成一篇回调一次，供上层上报进度。"""
@@ -343,12 +354,13 @@ async def map_summarize(
         return []
     total = len(with_body)
     done = 0
+    usage_meta = _usage_meta("daily_brief_map", usage_username)
     semaphore = asyncio.Semaphore(max(1, llm_config.map_concurrency))
 
     async def _guarded(c: BriefCandidate) -> ScoredItem:
         nonlocal done
         async with semaphore:
-            result = await _summarize_one(c, llm_config)
+            result = await _summarize_one(c, llm_config, usage_meta)
         done += 1
         if on_item_done is not None:
             on_item_done(done, total)
@@ -364,6 +376,7 @@ async def map_summarize(
 async def dedup_clusters(
     items: List[ScoredItem],
     llm_config: config.LLMConfig,
+    usage_username: Optional[str] = None,
 ) -> List[ScoredItem]:
     """识别同一天里报道同一事件的重复条目，每组只保留 score 最高的代表，
     其余条目的 source_url 并入代表的 extra_sources。LLM 失败时降级为不聚类
@@ -387,6 +400,7 @@ async def dedup_clusters(
             ],
             config=llm_config,
             response_json=True,
+            usage_meta=_usage_meta("daily_brief_dedup", usage_username),
         )
         data = parse_json_object(raw)
         clusters = data.get("clusters") or []
@@ -495,6 +509,7 @@ async def reduce_to_markdown(
     *,
     report_date: str,
     llm_config: config.LLMConfig,
+    usage_username: Optional[str] = None,
 ) -> str:
     selected_dicts = [it.to_reduce_dict() for it in selected]
     title_only_dicts = [
@@ -517,6 +532,7 @@ async def reduce_to_markdown(
         config=llm_config,
         # reduce 输出整篇日报，较长——放宽 token 上限，避免中途截断（实测 4096 会截断）
         max_tokens=max(llm_config.max_tokens, 8192),
+        usage_meta=_usage_meta("daily_brief_reduce", usage_username),
     )
 
 
@@ -538,13 +554,17 @@ async def generate_daily_brief(
     llm_config: Optional[config.LLMConfig] = None,
     report_date: Optional[str] = None,
     trigger: str = "manual",
+    triggered_by: Optional[str] = None,
     dry_run: bool = False,
     max_total: int = 120,
     per_source_cap: int = 15,
     top_n: Optional[int] = None,
     recent_brief_days: int = 3,
 ) -> Dict[str, Any]:
-    """生成日报主流程。storage 为 DatabaseStorage 实例（提供 .engine 与 save/get/update）。"""
+    """生成日报主流程。storage 为 DatabaseStorage 实例（提供 .engine 与 save/get/update）。
+
+    triggered_by：手动触发的 admin 用户名，用于 AI 用量归属；定时调度留空则归 "system"。
+    """
     report_date = report_date or _today()
     started_at = datetime.now().isoformat()
     engine = storage.engine
@@ -596,10 +616,10 @@ async def generate_daily_brief(
         if done == total or done % 5 == 0:
             logger.info("日报[%s]：Map 概括打分 %d/%d", report_date, done, total)
 
-    scored = await map_summarize(candidates, cfg, on_item_done=_on_map_done)
+    scored = await map_summarize(candidates, cfg, on_item_done=_on_map_done, usage_username=triggered_by)
 
     set_progress("selecting", "同事件去重与择优排序…")
-    deduped = await dedup_clusters(scored, cfg)
+    deduped = await dedup_clusters(scored, cfg, usage_username=triggered_by)
     logger.info("日报[%s]：去重后 %d 条（map 前 %d）", report_date, len(deduped), len(scored))
     selected = select_top(deduped, top_n=top_n)
     title_only = [c for c in candidates if not c.has_content]
@@ -611,7 +631,8 @@ async def generate_daily_brief(
     set_progress("reducing", "汇编日报正文…")
     logger.info("日报[%s]：开始汇编（reduce），注入近期日报 %d 篇", report_date, len(recent_briefs))
     markdown = await reduce_to_markdown(
-        selected, title_only, recent_briefs, report_date=report_date, llm_config=cfg
+        selected, title_only, recent_briefs, report_date=report_date, llm_config=cfg,
+        usage_username=triggered_by,
     )
 
     if dry_run:

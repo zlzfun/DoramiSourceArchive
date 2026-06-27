@@ -23,7 +23,7 @@ from bs4 import BeautifulSoup, Tag
 
 import config
 from llm import client as llm_client
-from llm.client import ChatMessage, LLMError
+from llm.client import ChatMessage, LLMError, UsageMeta
 from llm.prompts import (
     DETAIL_PROFILE_SYSTEM_PROMPT,
     SOURCE_CONFIG_SYSTEM_PROMPT,
@@ -274,7 +274,7 @@ def _csv(value: Any) -> str:
     return str(value or "").strip()
 
 
-async def propose_config_via_llm(signals: Dict[str, Any], llm_config) -> Dict[str, Any]:
+async def propose_config_via_llm(signals: Dict[str, Any], llm_config, usage_meta=None) -> Dict[str, Any]:
     content = await llm_client.chat_completion(
         messages=[
             ChatMessage(role="system", content=SOURCE_CONFIG_SYSTEM_PROMPT),
@@ -282,6 +282,7 @@ async def propose_config_via_llm(signals: Dict[str, Any], llm_config) -> Dict[st
         ],
         config=llm_config,
         response_json=True,
+        usage_meta=usage_meta,
     )
     return llm_client.parse_json_object(content)
 
@@ -335,7 +336,7 @@ async def _sample_article_html(article_url: str) -> str:
     return text
 
 
-async def propose_detail_profile(article_url: str, llm_config) -> Dict[str, Any]:
+async def propose_detail_profile(article_url: str, llm_config, usage_meta=None) -> Dict[str, Any]:
     html = await _sample_article_html(article_url)
     if not html:
         return {}
@@ -346,6 +347,7 @@ async def propose_detail_profile(article_url: str, llm_config) -> Dict[str, Any]
         ],
         config=llm_config,
         response_json=True,
+        usage_meta=usage_meta,
     )
     return llm_client.parse_json_object(content)
 
@@ -365,7 +367,9 @@ def apply_detail_profile(cfg: Dict[str, Any], profile: Dict[str, Any]) -> None:
 
 # ============ 主入口：分析 ============
 
-async def analyze_url(url: str, *, session, existing_ids: Optional[set] = None) -> Dict[str, Any]:
+async def analyze_url(
+    url: str, *, session, existing_ids: Optional[set] = None, usage_username: Optional[str] = None
+) -> Dict[str, Any]:
     url = (url or "").strip()
     if not url.startswith(("http://", "https://")):
         return {"ok": False, "error": "URL 需以 http(s):// 开头"}
@@ -418,8 +422,10 @@ async def analyze_url(url: str, *, session, existing_ids: Optional[set] = None) 
         llm_config = None
 
     if llm_config is not None and getattr(llm_config, "configured", False):
+        usage_cfg_meta = UsageMeta(purpose="source_config", username=usage_username or "system")
+        usage_detail_meta = UsageMeta(purpose="detail_profile", username=usage_username or "system")
         try:
-            llm_cfg = await propose_config_via_llm(signals, llm_config)
+            llm_cfg = await propose_config_via_llm(signals, llm_config, usage_cfg_meta)
             cfg = merge_llm_config(cfg, llm_cfg)
             llm_used = True
         except LLMError as e:
@@ -431,7 +437,7 @@ async def analyze_url(url: str, *, session, existing_ids: Optional[set] = None) 
         sample_url = _first_article_url(signals, cfg["params"].get("article_url_patterns", ""))
         if sample_url:
             try:
-                profile = await propose_detail_profile(sample_url, llm_config)
+                profile = await propose_detail_profile(sample_url, llm_config, usage_detail_meta)
                 if profile:
                     apply_detail_profile(cfg, profile)
                     detail_profiled = True

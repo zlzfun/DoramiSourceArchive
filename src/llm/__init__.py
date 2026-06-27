@@ -7,16 +7,20 @@ from .client import (
     ChatMessage,
     LLMError,
     LLMNotConfigured,
+    UsageMeta,
     chat_completion,
     parse_json_object,
     ping,
+    set_usage_recorder,
 )
 
 __all__ = [
     "ChatMessage",
     "LLMError",
     "LLMNotConfigured",
+    "UsageMeta",
     "chat_completion",
     "parse_json_object",
     "ping",
+    "set_usage_recorder",
 ]

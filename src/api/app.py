@@ -47,7 +47,9 @@ from api.skill_router import router as skill_router
 from services import daily_brief as daily_brief_service
 from services import accounts as accounts_service
 from services import reader_ai as reader_ai_service
-from llm.client import LLMNotConfigured, LLMError, ping as llm_ping
+from services import ai_usage as ai_usage_service
+from llm.client import LLMNotConfigured, LLMError, UsageMeta, ping as llm_ping
+from llm.client import set_usage_recorder as _set_llm_usage_recorder
 
 from starlette.responses import JSONResponse as StarletteJSONResponse
 from mcp_server import build_mcp_app
@@ -146,7 +148,9 @@ def _ai_capabilities(session: Optional[Dict[str, Any]] = None) -> tuple[bool, bo
     try:
         with Session(db_sink.engine) as db:
             llm_configured = daily_brief_service.resolve_llm_config(db).configured
-            if username:
+            # 全局总开关关闭即视为该账户 AI 不可用（前端入口随之隐藏）。
+            global_on = accounts_service.ai_beta_global_enabled(db)
+            if username and global_on:
                 record = accounts_service.get_user(db, username)
                 ai_beta_enabled = bool(record and record.ai_beta_enabled)
     except Exception:  # 能力探测不应阻断 runtime 接口
@@ -228,8 +232,8 @@ def archive_import_requires_admin(path: str, method: str) -> bool:
 
 
 def account_admin_required(path: str) -> bool:
-    """账户管理面（/api/accounts*）一律仅限 admin 角色，独立于 runtime 采集轴。"""
-    return _path_matches(path, ("/api/accounts",))
+    """账户管理面（/api/accounts*）与运维管理面（/api/admin*）一律仅限 admin 角色，独立于 runtime 采集轴。"""
+    return _path_matches(path, ("/api/accounts", "/api/admin"))
 
 
 @asynccontextmanager
@@ -285,6 +289,28 @@ app.add_middleware(
 )
 
 db_sink = DatabaseStorage(db_url=settings.storage.database_url)
+
+
+def _record_llm_usage(meta: UsageMeta, usage: Dict[str, Any], model: str) -> None:
+    """LLM 客户端计量回调：把一次调用的 token 用量写入 AiUsageRecord。
+
+    计量绝不阻断主流程——客户端侧已吞异常，这里再兜一层。
+    """
+    try:
+        with Session(db_sink.engine) as session:
+            ai_usage_service.record_usage(
+                session,
+                username=meta.username,
+                purpose=meta.purpose,
+                model=model,
+                usage=usage,
+            )
+    except Exception:  # noqa: BLE001
+        logging.getLogger("dorami.llm").debug("AI 用量写库失败（忽略）", exc_info=True)
+
+
+_set_llm_usage_recorder(_record_llm_usage)
+
 # 首次启动（users 表为空）时，从 config 的 [auth] 播种初始账户；之后以数据库为准。
 _seeded_accounts = accounts_service.seed_users_if_empty(db_sink.engine, settings.auth)
 if _seeded_accounts:
@@ -516,6 +542,7 @@ def login_admin(params: AuthLoginParams, response: Response):
             raise HTTPException(status_code=401, detail="账号或密码错误")
         role = record.role
         avatar = record.avatar
+        accounts_service.touch_login(session, username)
     set_auth_cookie(response, username, role)
     return {"authenticated": True, "user": _auth_user_payload(username, role, avatar)}
 
@@ -593,6 +620,10 @@ def _serialize_user(record: UserRecord) -> Dict[str, Any]:
         "avatar": record.avatar or None,
         "is_active": record.is_active,
         "ai_beta_enabled": record.ai_beta_enabled,
+        "last_login_at": record.last_login_at,
+        "ai_translate_count": record.ai_translate_count or 0,
+        "ai_ask_count": record.ai_ask_count or 0,
+        "ai_last_used_at": record.ai_last_used_at,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     }
@@ -665,6 +696,109 @@ def delete_account(username: str):
             session.delete(feed_token)
         session.commit()
     return {"ok": True}
+
+
+# ==================== 运维管理面板（仅 admin，中间件已强制 role==admin） ====================
+class AiBetaGlobalParams(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/admin/overview")
+def admin_overview():
+    """运维统计大盘：账户分布、归档/订阅规模、AI 用量累计与全局开关状态。"""
+    with Session(db_sink.engine) as session:
+        users = accounts_service.list_users(session)
+        total_accounts = len(users)
+        admin_count = sum(1 for u in users if u.role == "admin")
+        reader_count = total_accounts - admin_count
+        active_count = sum(1 for u in users if u.is_active)
+        ai_beta_on_count = sum(1 for u in users if u.ai_beta_enabled)
+        translate_total = sum(u.ai_translate_count or 0 for u in users)
+        ask_total = sum(u.ai_ask_count or 0 for u in users)
+
+        article_count = session.exec(select(func.count()).select_from(ArticleRecord)).one()
+        subscription_count = session.exec(
+            select(func.count()).select_from(ReaderSubscriptionRecord)
+        ).one()
+        feed_token_count = session.exec(
+            select(func.count()).select_from(ReaderFeedTokenRecord)
+        ).one()
+
+        recent_logins = [
+            {"username": u.username, "role": u.role, "last_login_at": u.last_login_at}
+            for u in sorted(
+                (u for u in users if u.last_login_at),
+                key=lambda u: u.last_login_at,
+                reverse=True,
+            )[:8]
+        ]
+
+        llm_configured = daily_brief_service.resolve_llm_config(session).configured
+        global_ai_on = accounts_service.ai_beta_global_enabled(session)
+
+    return {
+        "accounts": {
+            "total": total_accounts,
+            "admin": admin_count,
+            "reader": reader_count,
+            "active": active_count,
+            "disabled": total_accounts - active_count,
+            "ai_beta_enabled": ai_beta_on_count,
+        },
+        "archive": {
+            "articles": int(article_count),
+            "subscriptions": int(subscription_count),
+            "feed_tokens": int(feed_token_count),
+        },
+        "ai": {
+            "translate_total": translate_total,
+            "ask_total": ask_total,
+            "calls_total": translate_total + ask_total,
+            "global_enabled": global_ai_on,
+            "llm_configured": llm_configured,
+        },
+        "rag_enabled": settings.rag.enabled,
+        "recent_logins": recent_logins,
+    }
+
+
+@app.get("/api/admin/accounts")
+def admin_list_accounts():
+    """账户列表（运维视图）：在基础账户字段上附每账户的订阅数。"""
+    with Session(db_sink.engine) as session:
+        rows = session.exec(
+            select(
+                ReaderSubscriptionRecord.owner_username,
+                func.count(),
+            ).group_by(ReaderSubscriptionRecord.owner_username)
+        ).all()
+        sub_counts = {owner: int(count) for owner, count in rows}
+        result = []
+        for record in accounts_service.list_users(session):
+            payload = _serialize_user(record)
+            payload["subscription_count"] = sub_counts.get(record.username, 0)
+            result.append(payload)
+    return result
+
+
+@app.get("/api/admin/ai-usage")
+def admin_ai_usage(days: int = 30):
+    """AI 用量看板：近 days 天按用途/用户/日期聚合的调用数与 token 消耗。"""
+    with Session(db_sink.engine) as session:
+        return ai_usage_service.summarize(session, days=days)
+
+
+@app.get("/api/admin/ai-beta/global")
+def admin_get_ai_beta_global():
+    with Session(db_sink.engine) as session:
+        return {"enabled": accounts_service.ai_beta_global_enabled(session)}
+
+
+@app.post("/api/admin/ai-beta/global")
+def admin_set_ai_beta_global(params: AiBetaGlobalParams):
+    with Session(db_sink.engine) as session:
+        accounts_service.set_ai_beta_global_enabled(session, params.enabled)
+        return {"enabled": accounts_service.ai_beta_global_enabled(session)}
 
 
 # ==================== 定时任务系统核心逻辑 ====================
@@ -2801,6 +2935,8 @@ def _require_reader_ai(request: Request):
     if not username:
         raise HTTPException(status_code=401, detail="需要登录")
     with Session(db_sink.engine) as session:
+        if not accounts_service.ai_beta_global_enabled(session):
+            raise HTTPException(status_code=403, detail="AI 功能已临时关闭，请稍后再试")
         record = accounts_service.get_user(session, username)
         if record is None or not record.ai_beta_enabled:
             raise HTTPException(status_code=403, detail="AI 功能尚未开启，请联系管理员")
@@ -2831,13 +2967,18 @@ def _recent_subscribed_articles(username: str, limit: int) -> List[ArticleRecord
 @app.post("/api/reader/ai/translate")
 async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
     """把指定文章正文译为简体中文（结果缓存复用）。"""
-    _username, llm_config = _require_reader_ai(request)
+    username, llm_config = _require_reader_ai(request)
     try:
-        result = await reader_ai_service.translate_article(db_sink, params.article_id, llm_config)
+        result = await reader_ai_service.translate_article(
+            db_sink, params.article_id, llm_config,
+            UsageMeta(purpose="translate", username=username),
+        )
     except reader_ai_service.ReaderAIError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     except LLMError as exc:
         raise HTTPException(status_code=502, detail=f"翻译失败：{exc}")
+    with Session(db_sink.engine) as session:
+        accounts_service.record_ai_usage(session, username, "translate")
     return {"status": "success", **result}
 
 
@@ -2883,12 +3024,15 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
     history = [{"role": t.role, "content": t.content} for t in (params.history or [])]
     try:
         answer = await reader_ai_service.answer_question(
-            params.question, context, scope=scope, llm_config=llm_config, history=history
+            params.question, context, scope=scope, llm_config=llm_config, history=history,
+            usage_meta=UsageMeta(purpose="ask", username=username),
         )
     except reader_ai_service.ReaderAIError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     except LLMError as exc:
         raise HTTPException(status_code=502, detail=f"提问失败：{exc}")
+    with Session(db_sink.engine) as session:
+        accounts_service.record_ai_usage(session, username, "ask")
     return {"status": "success", "answer": answer, "sources": sources, "scope": scope}
 
 
@@ -3365,14 +3509,17 @@ async def fetch_active_web_sources(body: Optional[SourceFetchParams] = None):
 
 
 @app.post("/api/source-builder/analyze")
-async def source_builder_analyze(req: SourceBuilderAnalyzeRequest):
+async def source_builder_analyze(req: SourceBuilderAnalyzeRequest, request: Request):
     """输入一个列表页 URL → 判类型 + 分析 + (LLM) 生成抓取节点配置建议。"""
     from services import source_builder
 
     with Session(db_sink.engine) as session:
         existing = {row.source_id for row in session.exec(select(SourceConfigRecord.source_id)).all()}
         existing |= set(fetcher_registry._fetchers.keys())
-        result = await source_builder.analyze_url(req.url, session=session, existing_ids=existing)
+        result = await source_builder.analyze_url(
+            req.url, session=session, existing_ids=existing,
+            usage_username=current_username(request) or None,
+        )
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "分析失败"))
     return result
@@ -4126,7 +4273,7 @@ def set_daily_brief_config(payload: DailyBriefConfigUpdate):
 
 
 @app.post("/api/daily-brief/generate")
-async def generate_daily_brief_endpoint(payload: Optional[DailyBriefGenerateParams] = None):
+async def generate_daily_brief_endpoint(request: Request, payload: Optional[DailyBriefGenerateParams] = None):
     """手动触发日报生成（同步等待，耗时数十秒到数分钟）。"""
     params = payload or DailyBriefGenerateParams()
     if params.top_n is not None and not (
@@ -4141,6 +4288,7 @@ async def generate_daily_brief_endpoint(payload: Optional[DailyBriefGeneratePara
             storage=db_sink,
             report_date=params.report_date,
             trigger="manual",
+            triggered_by=current_username(request) or None,
             dry_run=params.dry_run,
             top_n=params.top_n,
         )

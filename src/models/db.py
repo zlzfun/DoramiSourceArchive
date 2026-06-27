@@ -240,6 +240,27 @@ class AppSettingRecord(SQLModel, table=True):
     value: str = ""
 
 
+class AiUsageRecord(SQLModel, table=True):
+    """AI 用量按天聚合：一行 = 某天某用户某用途某模型的累计调用与 token 消耗。
+
+    username 为登录账户名；系统级任务（定时日报等）记为 "system"。
+    purpose ∈ translate / ask / daily_brief_map / daily_brief_dedup /
+    daily_brief_reduce / source_config / detail_profile。
+    """
+    __tablename__ = "ai_usage"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    day: str = Field(index=True, description="YYYY-MM-DD（本地日期）")
+    username: str = Field(index=True, description="归属账户；系统任务为 system")
+    purpose: str = Field(index=True, description="用途标签")
+    model: str = Field(default="", description="调用的模型名")
+    calls: int = Field(default=0, description="累计调用次数")
+    prompt_tokens: int = Field(default=0)
+    completion_tokens: int = Field(default=0)
+    total_tokens: int = Field(default=0)
+    updated_at: str = Field(description="最近一次累加时间")
+
+
 class UserRecord(SQLModel, table=True):
     """登录账户：数据库托管，密码以 PBKDF2 哈希存储。
 
@@ -255,5 +276,10 @@ class UserRecord(SQLModel, table=True):
     role: str = Field(default="user", index=True, description="账户角色：admin | user")
     is_active: bool = Field(default=True, index=True, description="是否启用该账户")
     ai_beta_enabled: bool = Field(default=False, index=True, description="是否为该用户开启 AI Beta 功能（阅读器内翻译/问答）")
+    # 轻量运维埋点：仅在成功登录/成功调用 AI 时写入，供管理员运维面板统计活跃度与用量。
+    last_login_at: Optional[str] = Field(default=None, description="最近一次成功登录时间")
+    ai_translate_count: int = Field(default=0, description="累计成功翻译次数")
+    ai_ask_count: int = Field(default=0, description="累计成功问答次数")
+    ai_last_used_at: Optional[str] = Field(default=None, description="最近一次使用 AI（翻译/问答）的时间")
     created_at: str = Field(description="创建时间")
     updated_at: str = Field(description="更新时间")

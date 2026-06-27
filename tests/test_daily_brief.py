@@ -246,6 +246,40 @@ def test_generate_empty_no_write_no_cursor_move(tmp_path, monkeypatch):
     assert asyncio.run(sink.get("daily_brief_2026-06-06")) is None  # 未写库
 
 
+def test_generate_attributes_usage_to_triggering_admin(tmp_path, monkeypatch):
+    """手动触发：map/dedup/reduce 各阶段的用量 usage_meta 归到触发的 admin；默认归 system。"""
+    seen_users = []
+
+    async def _capture(*, messages, config, **kwargs):
+        meta = kwargs.get("usage_meta")
+        if meta is not None:
+            seen_users.append(meta.username)
+        return await _fake_chat_completion(messages=messages, config=config, **kwargs)
+
+    monkeypatch.setattr(db, "chat_completion", _capture)
+    sink = _make_sink(tmp_path)
+    _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
+    _seed(sink.engine, "a2", "src_b", "2026-06-05T11:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+
+    # 手动触发归到 alice。
+    asyncio.run(generate_daily_brief(
+        storage=sink, llm_config=CONFIGURED, report_date="2026-06-06", triggered_by="alice"
+    ))
+    assert seen_users  # 至少 map + reduce 各产生一次
+    assert set(seen_users) == {"alice"}
+
+    # 定时调度（无 triggered_by）归到 system。
+    seen_users.clear()
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    asyncio.run(generate_daily_brief(
+        storage=sink, llm_config=CONFIGURED, report_date="2026-06-07", trigger="scheduled"
+    ))
+    assert set(seen_users) == {"system"}
+
+
 def test_generate_success_writes_and_advances_cursor(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
     sink = _make_sink(tmp_path)

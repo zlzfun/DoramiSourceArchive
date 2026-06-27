@@ -18,9 +18,12 @@ from typing import List, Optional
 
 from sqlmodel import Session, select
 
-from models.db import UserRecord
+from models.db import AppSettingRecord, UserRecord
 
 VALID_ROLES = ("admin", "user")
+
+# AI Beta 全局总开关：存 app_settings KV，默认开启。关闭即全员 AI 熔断。
+AI_BETA_GLOBAL_KEY = "ai_beta_global_enabled"
 
 # PBKDF2 参数
 _PBKDF2_ALGO = "pbkdf2_sha256"
@@ -205,6 +208,55 @@ def set_ai_beta_enabled(session: Session, username: str, enabled: bool) -> UserR
     session.commit()
     session.refresh(record)
     return record
+
+
+# ==================== 运维埋点 ====================
+def touch_login(session: Session, username: str) -> None:
+    """记录一次成功登录的时间。账户不存在时静默跳过（不阻断登录流程）。"""
+    record = get_user(session, username)
+    if record is None:
+        return
+    record.last_login_at = _now_iso()
+    session.add(record)
+    session.commit()
+
+
+def record_ai_usage(session: Session, username: str, kind: str) -> None:
+    """记录一次成功的 AI 调用（kind ∈ {"translate","ask"}）并刷新最近使用时间。
+
+    仅在调用成功后写，失败不计数。账户不存在时静默跳过。
+    """
+    record = get_user(session, username)
+    if record is None:
+        return
+    if kind == "translate":
+        record.ai_translate_count = (record.ai_translate_count or 0) + 1
+    elif kind == "ask":
+        record.ai_ask_count = (record.ai_ask_count or 0) + 1
+    record.ai_last_used_at = _now_iso()
+    session.add(record)
+    session.commit()
+
+
+# ==================== AI Beta 全局总开关 ====================
+def ai_beta_global_enabled(session: Session) -> bool:
+    """读取 AI Beta 全局总开关，未设置时默认开启。"""
+    record = session.get(AppSettingRecord, AI_BETA_GLOBAL_KEY)
+    if record is None:
+        return True
+    return record.value.strip().lower() == "true"
+
+
+def set_ai_beta_global_enabled(session: Session, enabled: bool) -> None:
+    """写入 AI Beta 全局总开关。"""
+    record = session.get(AppSettingRecord, AI_BETA_GLOBAL_KEY)
+    value = "true" if enabled else "false"
+    if record is None:
+        record = AppSettingRecord(key=AI_BETA_GLOBAL_KEY, value=value)
+    else:
+        record.value = value
+    session.add(record)
+    session.commit()
 
 
 def delete_user(session: Session, username: str) -> None:

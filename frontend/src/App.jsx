@@ -11,6 +11,7 @@ import {
   Moon,
   Plug2,
   Settings,
+  ShieldCheck,
   Sun,
 } from 'lucide-react';
 import Toast from './components/Toast';
@@ -19,6 +20,7 @@ import FetchTab from './components/FetchTab';
 import VectorTab from './components/VectorTab';
 import FetchRunsTab from './components/FetchRunsTab';
 import MCPTab from './components/MCPTab';
+import AdminOpsTab from './components/AdminOpsTab';
 import ReaderTab from './components/ReaderTab';
 import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
@@ -29,7 +31,7 @@ import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAd
 // ── 导航 / 历史锚点 ──
 // 把「标签 + 子视图」镜像到 URL hash（#/fetch/groups），跨页跳转的聚焦上下文存在 history.state 里。
 // 让浏览器「返回」能逐级退回：子视图切换 → 标签切换 → 跨页跳转的原位。
-const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'vector', 'mcp'];
+const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'vector', 'mcp', 'admin'];
 const TAB_DEFAULT_VIEW = { fetch: 'catalog', runs: 'jobs' };
 const SUBVIEW_TABS = new Set(['fetch', 'runs']);
 
@@ -283,9 +285,11 @@ export default function App() {
     { id: 'runs', icon: History, label: '任务与运行', surface: 'collector' },
     { id: 'vector', icon: BarChart2, label: '向量雷达', surface: 'reader', requiresRag: true, hideForReader: true },
     { id: 'mcp', icon: Plug2, label: '接入集成', surface: 'reader' },
+    { id: 'admin', icon: ShieldCheck, label: '运维管理', adminOnly: true },
   ].filter(tab => {
     if (tab.onlyReader && !readerOnly) return false;
     if (tab.hideForReader && readerOnly) return false;
+    if (tab.adminOnly && runtimeInfo.account_role !== 'admin') return false;
     if (tab.surface && !runtimeInfo[`${tab.surface}_enabled`]) return false;
     if (tab.requiresRag && !runtimeInfo.rag_enabled) return false;
     return true;
@@ -501,6 +505,11 @@ export default function App() {
           {mountedTabs.has('mcp') && runtimeInfo.reader_enabled && (
             <div className="tab-panel" style={{ display: activeTab === 'mcp' ? 'block' : 'none' }}>
               <MCPTab showToast={showToast} ragEnabled={runtimeInfo.rag_enabled} collectorEnabled={runtimeInfo.collector_enabled} isAdmin={runtimeInfo.account_role === 'admin'} />
+            </div>
+          )}
+          {mountedTabs.has('admin') && runtimeInfo.account_role === 'admin' && (
+            <div className="tab-panel" style={{ display: activeTab === 'admin' ? 'block' : 'none' }}>
+              <AdminOpsTab showToast={showToast} />
             </div>
           )}
         </div>

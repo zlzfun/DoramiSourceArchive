@@ -80,7 +80,7 @@ Three fetcher base classes cover the major source types:
 
 **Fetch run tracking**: Every fetcher execution (manual or scheduled) writes a `FetchRunRecord` and upserts a `SourceStateRecord`. The state record is the authoritative health/cursor store per source; `build_fetcher_health_from_state()` in `app.py` derives the `/api/source-health` response from it, falling back to aggregating raw `FetchRunRecord` rows when no state exists.
 
-**Accounts are database-managed**: Login accounts live in the `users` ORM table (`UserRecord`), passwords stored as PBKDF2-HMAC-SHA256 hashes. `src/services/accounts.py` centralizes hashing/verify, user CRUD, the last-active-admin guard, and `seed_users_if_empty`. `[auth] admin_users`/`user_users` in the ini are **first-boot seeds only** (seeded when the `users` table is empty); afterwards accounts are runtime-managed and editing the ini no longer affects existing accounts. Admin manages accounts under `/api/accounts` (list/create/update role+active/reset-password/delete — admin-only via `account_admin_required()`, independent of the runtime axis; the last active admin can't be demoted/disabled/deleted); any logged-in user self-changes password via `POST /api/auth/change-password`. `login_admin` and `read_auth_token` validate against the DB (account must exist, be `is_active`, role must match the token), so disabling/deleting/role-changing a user revokes their existing cookie on the next request. `username` is the immutable identity (it keys `owner_username` on subscriptions/feed tokens — no rename; deleting a user cascades their subscriptions + feed token). Account UI lives in `SettingsModal` (self password-change for all; admin account-management panel).
+**Accounts are database-managed**: Login accounts live in the `users` ORM table (`UserRecord`), passwords stored as PBKDF2-HMAC-SHA256 hashes. `src/services/accounts.py` centralizes hashing/verify, user CRUD, the last-active-admin guard, and `seed_users_if_empty`. `[auth] admin_users`/`user_users` in the ini are **first-boot seeds only** (seeded when the `users` table is empty); afterwards accounts are runtime-managed and editing the ini no longer affects existing accounts. Admin manages accounts under `/api/accounts` (list/create/update role+active/reset-password/delete — admin-only via `account_admin_required()`, independent of the runtime axis; the last active admin can't be demoted/disabled/deleted); any logged-in user self-changes password via `POST /api/auth/change-password`. `login_admin` and `read_auth_token` validate against the DB (account must exist, be `is_active`, role must match the token), so disabling/deleting/role-changing a user revokes their existing cookie on the next request. `username` is the immutable identity (it keys `owner_username` on subscriptions/feed tokens — no rename; deleting a user cascades their subscriptions + feed token). The admin account-management UI lives in the **运维管理 Tab** (`AdminOpsTab`, see *Admin Ops console*); `SettingsModal` keeps only the self password-change available to every account.
 
 **Access control — login account role (primary axis)**: In the default single-node `all` deployment the only axis that matters is the **login account role** (`admin` | `user`, stored per-account in the `users` table). **`admin` is a superuser** — collector surfaces (节点管理/任务运行, article CRUD, vectorization build/manage) plus every reader surface; **a `user` is a restricted reader** — reader surfaces only (subscription delivery, semantic search, MCP/接入集成, surfaced as the 阅读器 + 接入集成 tabs), open to any logged-in account except archive import (admin-only, it mutates the whole archive). `disabled_runtime_surface()` enforces this per request via `COLLECTOR_API_PREFIXES` / `READER_API_PREFIXES` (reader-prefix matches short-circuit, so `/api/vector/*` can split: `search`/`stats`/`subscribed-stats` → reader, everything else → collector). The frontend mirrors it through `runtime_capabilities()` → `collector_enabled` / `reader_enabled` / `account_role` per session.
 
@@ -100,6 +100,12 @@ Three fetcher base classes cover the major source types:
 
 **Vectorization is admin-managed**: The ChromaDB collection is shared/global, so building it is a collector/admin concern (one user vectorizing a source's article would affect every subscriber of that source). `user` accounts cannot trigger or select vectorization — they only consume via hard-scoped retrieval and a read-only coverage ratio (`GET /api/vector/subscribed-stats`). Admin manages it from 知识台账: per-article / batch / `all-pending` build, `reindex-all`, and an `auto_vectorize` toggle (`GET`/`POST /api/vector/auto-vectorize`, persisted in `AppSettingRecord`). The `admin` superuser's own retrieval is **not** subscription-scoped (it searches the whole archive); only the restricted `user` role is scoped.
 
+**Reader-facing AI Beta (用户面翻译 + 问答助手)**: `src/services/reader_ai.py` gives the 阅读器 two LLM features over the **same global `resolve_llm_config()`** the Daily Brief uses: `translate_article()` (full-body → 简体中文, paragraph-split + concurrent, cached under `extensions_json.translation_zh` so it never re-translates nor resets `is_vectorized`) and `answer_question()` (multi-turn QA, context assembled by the API layer in three graceful-degrade tiers: current-article body → RAG semantic recall when `[rag] enabled` → recent subscribed articles). Endpoints `POST /api/reader/ai/translate|ask` are gated by `_require_reader_ai()`, which checks **global master switch AND per-account flag AND LLM configured** (else 403). Access is **two-layer**: a per-account `UserRecord.ai_beta_enabled` flag ⊕ a global master switch `ai_beta_global_enabled` (`AppSettingRecord` KV, default on) — the master switch is a kill/gray-out 总闸 that instantly suspends everyone without touching per-account flags; `_ai_capabilities()` ANDs the two into the `runtime.ai_beta_enabled` the frontend reads (so the 阅读器 entry auto-hides when either is off). Prompts (translate/QA, 哆啦美 persona) live in `src/llm/prompts.py`.
+
+**Admin Ops console (运维管理 Tab)**: An **admin-only** top-level Tab (`AdminOpsTab.jsx`, gated by `account_role === 'admin'`) is the operational hub. It hosts ① an overview stat board (account/role/active counts, AI Beta-enabled count, archive/subscription totals, AI call total, recent logins), ② the AI Beta 总闸 + **global model config** (the LLM editor was moved here from the Daily Brief panel since the model is shared infra; the panel now shows a read-only model-status chip), ③ an **AI usage dashboard** (call counts + token consumption by 用途/用户 over a 7/30-day window), and ④ account management (migrated out of `SettingsModal`; create/role/active/per-account AI toggle/reset-password/delete + per-account 最近登录/AI 用量/订阅数). New admin endpoints live under the `/api/admin/*` prefix (`overview`, `accounts`, `ai-usage`, `ai-beta/global`), all forced to admin via `account_admin_required()` (which now matches `/api/accounts` **and** `/api/admin`).
+
+**AI usage metering (token tracking)**: `src/llm/client.py` keeps `chat_completion()` returning a `str` but optionally surfaces the response `usage` (prompt/completion/total tokens): pass a `UsageMeta(purpose, username)` and the client hands token usage to a registered recorder callback (`set_usage_recorder`, wired in `app.py` to write the DB) — **metering never blocks the main flow** (recorder exceptions are swallowed; `ping()` passes no meta so connectivity tests aren't counted). `src/services/ai_usage.py` aggregates one row per `(day × username × purpose × model)` into the `AiUsageRecord` table (`record_usage` upserts/accumulates; `summarize` powers `GET /api/admin/ai-usage`). Purposes: `translate`/`ask` (attributed to the logged-in reader), `daily_brief_map|dedup|reduce` (attributed to the **admin who manually triggered** the run via `generate_daily_brief(triggered_by=...)`, else `"system"` for scheduled runs), `source_config`/`detail_profile`. Lightweight per-account counters (`UserRecord.ai_translate_count`/`ai_ask_count`/`last_login_at`) remain a separate cheap snapshot for the account row; `AiUsageRecord` is the token dashboard's source of truth.
+
 ### Project Structure
 
 ```
@@ -110,17 +116,21 @@ src/
 │   ├── app.py               # FastAPI app — all REST endpoints + APScheduler init
 │   └── skill_router.py      # GET /api/skill/daily-brief: zips src/skill_templates/dorami-daily-brief on the fly
 ├── llm/
-│   ├── client.py            # OpenAI-compatible chat_completion + parse_json_object + ping (httpx; never logs api_key)
-│   └── prompts.py           # Daily-brief map/reduce prompt templates
+│   ├── client.py            # OpenAI-compatible chat_completion + parse_json_object + ping (httpx; never logs api_key); optional UsageMeta + set_usage_recorder surface token usage without changing the str return
+│   └── prompts.py           # Daily-brief map/reduce + reader-AI translate/QA (哆啦美 persona) prompt templates
 ├── services/
-│   ├── daily_brief.py       # Daily-brief map-reduce orchestration + same-event dedup_clusters + paper_cap + cursor dedup + in-memory progress
+│   ├── daily_brief.py       # Daily-brief map-reduce orchestration + same-event dedup_clusters + paper_cap + cursor dedup + in-memory progress; usage attributed to triggered_by (manual admin) else "system"
+│   ├── reader_ai.py         # 用户面 AI Beta: translate_article (cached zh translation) + answer_question (multi-turn QA, 3-tier context); shares resolve_llm_config
+│   ├── accounts.py          # Account CRUD + PBKDF2 + last-active-admin guard + seed; login/AI-usage 埋点 (touch_login/record_ai_usage) + AI Beta global master switch
+│   ├── ai_usage.py          # AI token metering: record_usage upserts AiUsageRecord per (day×user×purpose×model); summarize → /api/admin/ai-usage dashboard
 │   └── source_builder.py    # AI node onboarding: URL → detect type + signals + (LLM) config + detail-profile → preview (frontend gated off; backend only)
 ├── models/
 │   ├── content.py           # Dataclass content models (BaseContent + subtypes)
 │   └── db.py                # SQLModel ORM tables: ArticleRecord, FetchTaskRecord,
 │                            #   FetchRunRecord, SourceStateRecord, SourceConfigRecord,
 │                            #   NodeGroupRecord, CollectionJobRecord, CollectionJobRunRecord,
-│                            #   ReaderSubscriptionRecord, ReaderFeedTokenRecord, AppSettingRecord, UserRecord
+│                            #   ReaderSubscriptionRecord, ReaderFeedTokenRecord, AppSettingRecord,
+│                            #   UserRecord (+ai_beta_enabled/last_login_at/ai_*_count 埋点列), AiUsageRecord
 ├── fetchers/
 │   ├── base.py              # BaseFetcher: httpx client, retries, template method
 │   ├── registry.py          # FetcherRegistry singleton — auto-discovers impl/ on import
@@ -147,17 +157,18 @@ src/
 
 frontend/src/
 ├── api.js                   # All fetch() calls to the backend (single source of truth)
-├── App.jsx                  # Root: login gate + tab routing; tabs filtered by runtime capabilities AND account_role (a `user` sees only 阅读器/接入集成; admin keeps the full collector+reader tab set)
+├── App.jsx                  # Root: login gate + tab routing; tabs filtered by runtime capabilities AND account_role (a `user` sees only 阅读器/接入集成; admin keeps the full collector+reader tab set + the admin-only 运维管理 tab)
 └── components/
     ├── LoginScreen.jsx      # Account login
-    ├── ReaderTab.jsx        # 阅读器: the user-only three-pane reader (subscribed-source list → article list → reading pane) over the user's subscribed sources; left sidebar manages subscriptions (star to unsubscribe + 发现更多来源 one-click subscribe); keyword search via GET /api/articles
+    ├── ReaderTab.jsx        # 阅读器: the user-only three-pane reader (subscribed-source list → article list → reading pane); left sidebar manages subscriptions; keyword search via GET /api/articles; AI Beta entries (译为中文 toggle + 哆啦美 QA 浮层) shown when runtime ai_beta_enabled && llm_configured
+    ├── AdminOpsTab.jsx     # 运维管理 (admin-only): overview stats + AI Beta 总闸 & global model config + AI usage dashboard (calls/tokens by 用途/用户) + account management; calls /api/admin/* + /api/llm/config
     ├── DataTab.jsx          # 知识台账: article list, filters, CRUD; admin-facing (hidden for `user`); admin-only vector build column + auto-vectorize toggle
     ├── FetchTab.jsx         # 节点管理: fetcher catalog/triggers + node-group management (collector)
     ├── FetchRunsTab.jsx     # 任务与运行: scheduled tasks + fetch-run history (collector)
     ├── VectorTab.jsx        # 向量雷达: semantic search + RAG context export (reader surface, but admin-facing — hidden for `user`, who searches via the 阅读器)
     ├── MCPTab.jsx           # 接入集成: MCP server status + integration snippets + 个人聚合接口 (the dfeed_ feed token, via FeedAccessSection) (reader; greys out RAG tools when rag_enabled is false)
     ├── FeedAccessSection.jsx # 个人聚合接口 block embedded in 接入集成: aggregated feed endpoint + dfeed_ token get/rotate + curl docs
-    ├── DailyBriefPanel.jsx   # 每日 AI 资讯日报: config + manual generate + run history; embedded in 接入集成 (admin-managed)
+    ├── DailyBriefPanel.jsx   # 每日 AI 资讯日报: config + manual generate + run history; embedded in 接入集成 (admin-managed). Model config moved to 运维管理 — shows a read-only model-status chip only
     ├── DailyBriefFlow.jsx    # Animated map-reduce stage visualization for the daily-brief generation progress
     ├── SettingsModal.jsx    # Account/runtime settings + admin maintenance actions
     ├── ManualAddModal.jsx   # Manual article entry form
@@ -249,9 +260,20 @@ frontend/src/
 **MCP** (reader surface)
 - `/mcp` — FastMCP streamable-HTTP server (`build_mcp_app`); tools accept an optional `subscription_token` (`dsub_` or `dfeed_`) to scope results to that subscription / the user's whole subscription union
 
+**Reader AI Beta** (reader surface; gated by global master switch + per-account flag + LLM configured)
+- `POST /api/reader/ai/translate` — translate an article body to 简体中文 (cached in `extensions_json`)
+- `POST /api/reader/ai/ask` — multi-turn QA over current-article / subscription context (RAG when enabled)
+
+**Admin Ops** (admin-only via `account_admin_required`, `/api/admin/*` prefix)
+- `GET /api/admin/overview` — account/archive/AI stat board + recent logins
+- `GET /api/admin/accounts` — account list enriched with `subscription_count` (+ 埋点 fields)
+- `GET /api/admin/ai-usage?days=` — AI usage dashboard (calls + tokens by 用途/用户/日期)
+- `GET`/`POST /api/admin/ai-beta/global` — read/set the AI Beta global master switch
+- `GET`/`POST /api/llm/config` + `POST /api/llm/config/test` — global model config (shared by Daily Brief + reader AI; edited from 运维管理)
+
 ### Tests
 
-Unit tests live directly under `tests/` as `test_*.py`. Fetcher/extraction: `rss_fetcher`, `webpage_fetcher`, `github_release_fetcher`, `repository_model_fetcher`, `ithome_web_fetcher`, `article_extractor`, `fetcher_curation`, `fetch_concurrency`, `fetch_failures`, `progress`. Platform/role: `mcp`, `runtime_role`, `subscriptions`, `rag_disabled` (`runtime_role`/`subscriptions` exercise the dual-role gating, subscriptions, aggregated feed, and admin/user vectorization split; `rag_disabled` verifies the `vector_sink`-is-`None` path returns 503 / "RAG disabled"). Daily-brief/LLM/sync: `daily_brief`, `llm_client`, `ensure_daily_collection_job`, `archive_sync`, `shendeng_export`. Each file self-bootstraps `sys.path` to `src/` so imports resolve without an editable install. Run with pytest:
+Unit tests live directly under `tests/` as `test_*.py`. Fetcher/extraction: `rss_fetcher`, `webpage_fetcher`, `github_release_fetcher`, `repository_model_fetcher`, `ithome_web_fetcher`, `article_extractor`, `fetcher_curation`, `fetch_concurrency`, `fetch_failures`, `progress`. Platform/role: `mcp`, `runtime_role`, `subscriptions`, `rag_disabled` (`runtime_role`/`subscriptions` exercise the dual-role gating, subscriptions, aggregated feed, and admin/user vectorization split; `rag_disabled` verifies the `vector_sink`-is-`None` path returns 503 / "RAG disabled"). Daily-brief/LLM/sync: `daily_brief`, `llm_client`, `ensure_daily_collection_job`, `archive_sync`, `shendeng_export` (`daily_brief` also covers AI-usage attribution to the triggering admin vs `system`). Accounts/admin-ops: `accounts`, `admin_ops` (`admin_ops` covers login/AI 埋点, AI Beta global master switch + 熔断, `/api/admin/*` aggregation & admin-gating, and AI token metering — `record_usage` accumulation, `summarize`, recorder gating / ping-excluded). Each file self-bootstraps `sys.path` to `src/` so imports resolve without an editable install. Run with pytest:
 
 ```bash
 .venv/bin/python -m pytest tests/test_rss_fetcher.py

@@ -16,13 +16,30 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 
 from config import LLMConfig
 
 logger = logging.getLogger("dorami.llm")
+
+
+@dataclass
+class UsageMeta:
+    """一次 LLM 调用的计量标签：用途 + 归属用户（系统任务用 None/"system"）。"""
+    purpose: str  # translate / ask / daily_brief_map / daily_brief_dedup / daily_brief_reduce / source_config / detail_profile
+    username: Optional[str] = None
+
+
+# 计量回调：fn(meta, usage_dict, model)。由上层（app.py）注册写库实现，
+# 避免本模块直接依赖 db/models（保持分层）。recorder 内异常一律吞掉，绝不阻断主流程。
+_usage_recorder: Optional[Callable[[UsageMeta, Dict[str, Any], str], None]] = None
+
+
+def set_usage_recorder(fn: Optional[Callable[[UsageMeta, Dict[str, Any], str], None]]) -> None:
+    global _usage_recorder
+    _usage_recorder = fn
 
 
 class LLMError(Exception):
@@ -64,6 +81,7 @@ async def chat_completion(
     max_tokens: Optional[int] = None,
     response_json: bool = False,
     max_retries: int = 3,
+    usage_meta: Optional[UsageMeta] = None,
 ) -> str:
     """调用 chat completions，返回 choices[0].message.content。
 
@@ -71,6 +89,7 @@ async def chat_completion(
     - 其它 4xx：直接抛 LLMError（不重试）。
     - response_json=True：附带 response_format={"type":"json_object"}；若端点不
       支持（返回 400），自动去掉该字段重试一次（degrade gracefully）。
+    - usage_meta：提供时把响应里的 token usage 交给已注册的计量 recorder（可选、不阻断）。
     """
     if not config.configured:
         raise LLMNotConfigured("LLM 未配置（需 base_url / api_key / model）")
@@ -109,7 +128,9 @@ async def chat_completion(
                 continue
 
             if resp.status_code == 200:
-                return _extract_content(resp)
+                content, usage = _extract_content_and_usage(resp)
+                _maybe_record_usage(usage_meta, usage, config.model)
+                return content
 
             body_preview = resp.text[:500]
             # response_format 不被支持时，去掉后重试一次
@@ -134,7 +155,7 @@ async def chat_completion(
     raise LLMError(f"LLM 请求失败: {last_error}")
 
 
-def _extract_content(resp: httpx.Response) -> str:
+def _extract_content_and_usage(resp: httpx.Response) -> tuple[str, Dict[str, Any]]:
     try:
         data = resp.json()
     except Exception as exc:  # noqa: BLE001
@@ -145,7 +166,21 @@ def _extract_content(resp: httpx.Response) -> str:
         raise LLMError(f"LLM 响应缺少 choices/message/content: {str(data)[:300]}") from exc
     if content is None:
         raise LLMError("LLM 返回空内容")
-    return content
+    usage = data.get("usage") if isinstance(data, dict) else None
+    return content, (usage if isinstance(usage, dict) else {})
+
+
+def _maybe_record_usage(
+    meta: Optional[UsageMeta], usage: Dict[str, Any], model: str
+) -> None:
+    """把一次调用的 token 用量交给已注册的 recorder；计量绝不阻断主流程。"""
+    recorder = _usage_recorder
+    if meta is None or recorder is None:
+        return
+    try:
+        recorder(meta, usage or {}, model)
+    except Exception:  # noqa: BLE001
+        logger.debug("usage recorder 异常（忽略）", exc_info=True)
 
 
 def parse_json_object(text: str) -> dict:

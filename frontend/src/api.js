@@ -112,6 +112,41 @@ export async function deleteAccount(username) {
   return res.json();
 }
 
+// ==================== 运维管理（仅管理员） ====================
+export async function fetchAdminOverview() {
+  const res = await apiFetch(`${API_BASE_URL}/admin/overview`);
+  if (!res.ok) await handleApiError(res, '获取运维概览失败');
+  return res.json();
+}
+
+export async function fetchAdminAccounts() {
+  const res = await apiFetch(`${API_BASE_URL}/admin/accounts`);
+  if (!res.ok) await handleApiError(res, '获取账户列表失败');
+  return res.json();
+}
+
+export async function fetchAiUsage(days = 30) {
+  const res = await apiFetch(`${API_BASE_URL}/admin/ai-usage?days=${encodeURIComponent(days)}`);
+  if (!res.ok) await handleApiError(res, '获取 AI 用量失败');
+  return res.json();
+}
+
+export async function getAiBetaGlobal() {
+  const res = await apiFetch(`${API_BASE_URL}/admin/ai-beta/global`);
+  if (!res.ok) await handleApiError(res, '获取 AI 全局开关失败');
+  return res.json();
+}
+
+export async function setAiBetaGlobal(enabled) {
+  const res = await apiFetch(`${API_BASE_URL}/admin/ai-beta/global`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) await handleApiError(res, '更新 AI 全局开关失败');
+  return res.json();
+}
+
 // ── 阅读器 AI（用户面：翻译 / 问答） ──
 export async function translateArticle(articleId) {
   const res = await apiFetch(`${API_BASE_URL}/reader/ai/translate`, {

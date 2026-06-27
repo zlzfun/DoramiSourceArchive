@@ -1,12 +1,8 @@
 import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { Brain, Check, ChevronDown, Loader2, Newspaper, Settings2, Trash2, X, Zap } from 'lucide-react';
-import { useModalTransition } from '../hooks/useModalTransition';
+import { Brain, ChevronDown, Loader2, Newspaper, Trash2 } from 'lucide-react';
 import DailyBriefFlow from './DailyBriefFlow';
 import {
   getLLMConfig,
-  saveLLMConfig,
-  testLLMConfig,
   getDailyBriefConfig,
   saveDailyBriefConfig,
   generateDailyBrief,
@@ -37,13 +33,8 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
   const canManage = collectorEnabled && isAdmin;
   const confirm = useConfirm();
 
-  // ── LLM 配置 ──
-  const [form, setForm] = useState({ base_url: '', model: '', api_key: '', temperature: 0.3, max_tokens: 4096 });
+  // ── LLM 配置（只读概览；编辑入口已迁至「运维管理」面板） ──
   const [llmStatus, setLlmStatus] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [llmModalOpen, setLlmModalOpen] = useState(false);  // 智能模型配置弹窗
-  const llmModal = useModalTransition(llmModalOpen);
 
   // ── 日报配置 ──
   const [briefConfig, setBriefConfig] = useState(null);
@@ -58,12 +49,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
   const [expandedId, setExpandedId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
 
-  const loadLlm = () => getLLMConfig()
-    .then(d => {
-      setLlmStatus(d);
-      setForm(f => ({ ...f, base_url: d.base_url || '', model: d.model || '', temperature: d.temperature ?? 0.3, max_tokens: d.max_tokens ?? 4096, api_key: '' }));
-    })
-    .catch(() => {});
+  const loadLlm = () => getLLMConfig().then(setLlmStatus).catch(() => {});
 
   const loadBrief = () => getDailyBriefConfig()
     .then(d => { setBriefConfig(d); setCron(d.cron || '30 8 * * *'); setTopN(d.top_n ?? 12); setEnabled(Boolean(d.enabled)); })
@@ -90,14 +76,6 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
     }, 1200);
     return () => clearInterval(poll);
   }, [generating]);
-
-  // 弹窗打开时锁定页面滚动
-  useEffect(() => {
-    if (!llmModalOpen) return undefined;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
-  }, [llmModalOpen]);
 
   const briefMeta = (record) => {
     try { return JSON.parse(record.extensions_json || '{}'); } catch { return {}; }
@@ -127,48 +105,6 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
       loadBrief();
     } catch (error) {
       showToast(error.message || '重置失败', 'error');
-    }
-  };
-
-  const update = (key, value) => setForm(f => ({ ...f, [key]: value }));
-  const canTest = Boolean(form.base_url.trim() && form.model.trim() && (form.api_key.trim() || llmStatus?.api_key_set));
-
-  const persistLlm = async () => {
-    const payload = {
-      base_url: form.base_url.trim(),
-      model: form.model.trim(),
-      temperature: Number(form.temperature),
-      max_tokens: Number(form.max_tokens),
-    };
-    if (form.api_key.trim()) payload.api_key = form.api_key.trim();
-    await saveLLMConfig(payload);
-  };
-
-  const handleSaveLlm = async () => {
-    setSaving(true);
-    try {
-      await persistLlm();
-      showToast('大模型配置已保存', 'success');
-      await loadLlm();
-      setLlmModalOpen(false);
-    } catch (error) {
-      showToast(error.message || '保存失败', 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleTestLlm = async () => {
-    setTesting(true);
-    try {
-      await persistLlm(); // 先落盘当前表单，再测试，免去「必须先保存」的困惑
-      const r = await testLLMConfig();
-      await loadLlm();
-      showToast(`已连接 · ${r.model} · ${r.latency_ms}ms`, 'success');
-    } catch (error) {
-      showToast(error.message || '连接失败', 'error');
-    } finally {
-      setTesting(false);
     }
   };
 
@@ -255,16 +191,14 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
       <div className="flex items-center gap-3 px-6 py-4 border-b border-[var(--dorami-border)]">
         <div className="w-1 h-5 rounded-full bg-amber-500" />
         <h3 className="section-title">AI 资讯日报</h3>
-        <button
-          type="button"
-          onClick={() => setLlmModalOpen(true)}
-          className="ml-auto flex items-center gap-1.5 rounded-[var(--r-control)] border border-[var(--dorami-border)] px-2.5 py-1.5 text-xs font-bold text-slate-500 hover:border-indigo-300 hover:text-indigo-600"
-          title="配置生成日报所用的大模型"
+        <span
+          className="ml-auto inline-flex items-center gap-1.5 rounded-[var(--r-control)] border border-[var(--dorami-border)] px-2.5 py-1.5 text-xs font-bold text-slate-500"
+          title="日报与阅读器 AI 共用的大模型，在「运维管理」面板统一配置"
         >
-          <Settings2 className="h-3.5 w-3.5" />
-          模型配置
+          <Brain className="h-3.5 w-3.5" />
+          {llmStatus?.api_key_set ? (llmStatus.model || '模型已配置') : '模型未配置'}
           <span className={`ml-0.5 h-1.5 w-1.5 rounded-full ${llmStatus?.api_key_set ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-        </button>
+        </span>
       </div>
 
       <div className="p-6 space-y-6">
@@ -424,60 +358,6 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
           )}
         </div>
       </div>
-
-      {/* ── 智能模型配置弹窗（Portal 到 body，避开变换祖先造成的 fixed 错位） ── */}
-      {llmModal.mounted && createPortal(
-        <div className={`modal-overlay ${llmModal.closing ? 'is-closing' : ''}`} onClick={() => setLlmModalOpen(false)}>
-          <div className="modal-panel max-w-xl" onClick={e => e.stopPropagation()}>
-            <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex items-center justify-between bg-[var(--dorami-well)]">
-              <h3 className="card-title flex items-center gap-2">
-                <Brain className="w-5 h-5 text-indigo-500" /> 智能模型配置
-              </h3>
-              <button onClick={() => setLlmModalOpen(false)} className="text-slate-500 hover:text-slate-700"><X className="w-5 h-5" /></button>
-            </div>
-            <div className="p-6">
-              <p className="tiny-meta mb-4">日报由后端大模型生成 · OpenAI 兼容协议（/chat/completions）· API Key 不回显</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <p className="form-label">Base URL</p>
-                  <input value={form.base_url} onChange={e => update('base_url', e.target.value)} placeholder="https://api.deepseek.com/v1" className={`${INPUT_CLS} font-mono`} />
-                </div>
-                <div>
-                  <p className="form-label">模型</p>
-                  <input value={form.model} onChange={e => update('model', e.target.value)} placeholder="deepseek-chat" className={`${INPUT_CLS} font-mono`} />
-                </div>
-              </div>
-              <div className="mt-3">
-                <p className="form-label">
-                  API Key
-                  {llmStatus?.api_key_set ? <span className="ml-1 text-emerald-500 normal-case">已配置（{llmStatus.api_key_preview}）</span> : <span className="ml-1 text-amber-500 normal-case">未配置</span>}
-                </p>
-                <input type="password" value={form.api_key} onChange={e => update('api_key', e.target.value)} placeholder={llmStatus?.api_key_set ? '留空表示不修改' : 'sk-...'} className={`${INPUT_CLS} font-mono`} />
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <div>
-                  <p className="form-label">Temperature</p>
-                  <input type="number" step="0.1" min="0" max="2" value={form.temperature} onChange={e => update('temperature', e.target.value)} className={INPUT_CLS} />
-                </div>
-                <div>
-                  <p className="form-label">Max Tokens</p>
-                  <input type="number" step="256" min="256" value={form.max_tokens} onChange={e => update('max_tokens', e.target.value)} className={INPUT_CLS} />
-                </div>
-              </div>
-            </div>
-            <div className="px-6 py-4 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex items-center gap-3">
-              <button onClick={handleSaveLlm} disabled={saving} className="action-button action-button-primary text-xs">
-                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} 保存
-              </button>
-              <button onClick={handleTestLlm} disabled={testing || saving || !canTest} className="action-button action-button-secondary text-xs">
-                {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5 text-amber-500" />} 测试连接
-              </button>
-              <span className="tiny-meta">{canTest ? '测试会自动保存当前配置' : '填写 Base URL / 模型 / API Key 后可测试'}</span>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
     </div>
   );
 }
