@@ -2,27 +2,9 @@ import { useState } from 'react';
 import { LOGO_PATHS, LOGO_SRC_SET } from '../config';
 import { LOGO_SIZES, companyLogoUrl } from '../sourceTaxonomy';
 
+const LOCAL_GLYPH_MARKS = new Set(['openclaw']);
+
 function BrandGlyph({ mark }) {
-  if (mark === 'anthropic') {
-    return (
-      <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-        <path d="M9.2 25.5 15.3 6h1.5l6.1 19.5h-3.8l-1.2-4.2h-5.8l-1.2 4.2H9.2Z" fill="currentColor" />
-        <path d="M13.1 18.1h3.8L15 11.4l-1.9 6.7Z" fill="rgba(255,255,255,.72)" />
-      </svg>
-    );
-  }
-
-  if (mark === 'google') {
-    return (
-      <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-        <path d="M26.6 16.3c0-.9-.1-1.7-.2-2.5H16v4.7h6a5.2 5.2 0 0 1-2.2 3.3v3.1h3.6c2.1-1.9 3.2-4.8 3.2-8.6Z" fill="#4285F4" />
-        <path d="M16 27c3 0 5.6-1 7.4-2.6l-3.6-3.1c-1 .7-2.3 1.1-3.8 1.1-2.9 0-5.3-1.9-6.2-4.5H6.1v3.2A11 11 0 0 0 16 27Z" fill="#34A853" />
-        <path d="M9.8 17.9a6.7 6.7 0 0 1 0-3.8v-3.2H6.1a11 11 0 0 0 0 10.2l3.7-3.2Z" fill="#FBBC05" />
-        <path d="M16 9.6c1.7 0 3.2.6 4.4 1.7l3.2-3.2A10.8 10.8 0 0 0 16 5a11 11 0 0 0-9.9 5.9l3.7 3.2c.9-2.6 3.3-4.5 6.2-4.5Z" fill="#EA4335" />
-      </svg>
-    );
-  }
-
   if (mark === 'openclaw') {
     return (
       <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
@@ -40,12 +22,13 @@ function BrandGlyph({ mark }) {
 
 /**
  * LogoMark — 公司品牌标识。
- * 优先渲染本地维护的关键品牌标识；其他主体使用 favicon，加载失败时回退到主题色字母徽标。
+ * 优先渲染本地缓存的官网 favicon；其他主体使用远程 favicon，加载失败时回退到主题色字母徽标。
  * size: 'xs' | 'sm' | 'md' | 'lg'
  */
 export default function LogoMark({ company, size = 'md', emoji, className = '' }) {
   const [imgFailed, setImgFailed] = useState(false);
   const dims = LOGO_SIZES[size] || LOGO_SIZES.md;
+  const localLogoPath = imgFailed ? '' : company?.logoPath;
   const url = imgFailed ? '' : companyLogoUrl(company);
   const accent = company?.accent || '#64748b';
   const style = {
@@ -55,6 +38,24 @@ export default function LogoMark({ company, size = 'md', emoji, className = '' }
     '--logo-accent': accent,
   };
   const fallback = company?.monogram || emoji || (company?.name || '?').slice(0, 2);
+  const hasLocalGlyph = LOCAL_GLYPH_MARKS.has(company?.mark);
+
+  if (localLogoPath) {
+    return (
+      <span className={`logo-mark logo-mark-img ${className}`} style={style} title={company?.name}>
+        <span className="logo-mark-img-fallback" style={{ fontSize: dims.font }}>{fallback}</span>
+        <img
+          src={localLogoPath}
+          alt={company?.name || ''}
+          width={dims.img}
+          height={dims.img}
+          decoding="async"
+          loading="eager"
+          onError={() => setImgFailed(true)}
+        />
+      </span>
+    );
+  }
 
   // 哆啦美自有源（如 AI 资讯日报）：直接用品牌 logo 图，与 App 左上角主标识一致。
   if (company?.mark === 'dorami') {
@@ -73,7 +74,7 @@ export default function LogoMark({ company, size = 'md', emoji, className = '' }
     );
   }
 
-  if (company?.mark) {
+  if (hasLocalGlyph) {
     return (
       <span className={`logo-mark logo-mark-custom logo-mark-${company.mark} ${className}`} style={{ ...style, fontSize: dims.font }} title={company?.name}>
         <BrandGlyph mark={company.mark} />

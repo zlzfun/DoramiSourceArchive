@@ -3338,7 +3338,8 @@ input[type="radio"] {
   }
 
   .logo-mark-custom {
-    background: #fff;
+    color: color-mix(in srgb, var(--logo-accent, #64748b) 88%, #0f172a);
+    background: color-mix(in srgb, var(--logo-accent, #64748b) 10%, #fff);
     border: 1px solid rgba(11, 18, 32, 0.08);
     box-shadow: 0 1px 3px rgba(11, 18, 32, 0.06);
   }
