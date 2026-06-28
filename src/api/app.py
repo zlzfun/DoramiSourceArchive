@@ -46,7 +46,10 @@ from fetchers.registry import fetcher_registry, DECOMMISSIONED_FETCHER_IDS
 from api.skill_router import router as skill_router
 from api import deps
 from api.serializers import serialize_user
-from api.textutils import _split_csv, _date_end_value, _now_iso, _json_loads, _json_dumps, _coerce_bool
+from api.textutils import (
+    _split_csv, _date_end_value, _now_iso, _json_loads, _json_dumps, _coerce_bool,
+    _model_dump, _model_to_clean_dict,
+)
 from api.tokens import (
     AUTH_SECRET,
     normalize_delivery_policy,
@@ -86,6 +89,14 @@ from api.routers import admin as admin_router
 from api.routers import daily_brief as daily_brief_router
 from api.routers import reader as reader_router
 from api.routers import ingest as ingest_router
+from api.routers import subscriptions as subscriptions_router
+from api.routers.subscriptions import (
+    SubscriptionCreate,
+    SubscriptionUpdate,
+    SubscriptionFilters,
+    SubscriptionDeliveryPolicy,
+    PublicSubscriptionSearchBody,
+)
 from services import daily_brief as daily_brief_service
 from services import accounts as accounts_service
 from services import reader_ai as reader_ai_service
@@ -384,6 +395,7 @@ app.include_router(admin_router.router)
 app.include_router(daily_brief_router.router)
 app.include_router(reader_router.router)
 app.include_router(ingest_router.router)
+app.include_router(subscriptions_router.router)
 
 scheduler = AsyncIOScheduler()
 COLLECTION_FETCH_CONCURRENCY = 4
@@ -737,18 +749,7 @@ def article_recency_order(*prefix_ordering):
 # article_to_markdown 已迁至 api/articles_view.py（共享，re-export 见顶部 import）。
 
 
-def _model_dump(model: BaseModel, **kwargs) -> Dict[str, Any]:
-    if hasattr(model, "model_dump"):
-        return model.model_dump(**kwargs)
-    return model.dict(**kwargs)
-
-
-def _model_to_clean_dict(model: BaseModel) -> Dict[str, Any]:
-    return {
-        key: value
-        for key, value in _model_dump(model).items()
-        if value is not None and value != ""
-    }
+# _model_dump / _model_to_clean_dict 已迁至 api.textutils（通用 pydantic 工具，re-export 见顶部 import）。
 
 
 # normalize_delivery_policy / generate_subscription_token / hash_subscription_token /
@@ -1486,43 +1487,8 @@ class FetchBatchParams(BaseModel):
 # SocialPostImport* 请求模型已迁出至 api/routers/ingest.py。
 
 
-class SubscriptionFilters(BaseModel):
-    content_type: Optional[str] = None
-    content_types: Optional[str] = None
-    source_id: Optional[str] = None
-    source_ids: Optional[str] = None
-    job_id: Optional[int] = None
-    job_run_id: Optional[int] = None
-    fetch_run_id: Optional[int] = None
-    run_scope: Optional[str] = None
-    publish_date_start: Optional[str] = None
-    publish_date_end: Optional[str] = None
-    fetched_date_start: Optional[str] = None
-    fetched_date_end: Optional[str] = None
-    search: Optional[str] = None
-    has_content: Optional[bool] = True
-
-
-class SubscriptionDeliveryPolicy(BaseModel):
-    include_content: bool = True
-    default_limit: int = 100
-    max_limit: int = 500
-
-
-class SubscriptionCreate(BaseModel):
-    name: str
-    description: str = ""
-    filters: SubscriptionFilters = PydanticField(default_factory=SubscriptionFilters)
-    delivery_policy: SubscriptionDeliveryPolicy = PydanticField(default_factory=SubscriptionDeliveryPolicy)
-    is_active: bool = True
-
-
-class SubscriptionUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    filters: Optional[SubscriptionFilters] = None
-    delivery_policy: Optional[SubscriptionDeliveryPolicy] = None
-    is_active: Optional[bool] = None
+# SubscriptionFilters / SubscriptionDeliveryPolicy / SubscriptionCreate /
+# SubscriptionUpdate 已迁至 api/routers/subscriptions.py（下方 import re-export）。
 
 
 def serialize_source_config(record: SourceConfigRecord) -> Dict[str, Any]:
@@ -2030,249 +1996,11 @@ def ensure_default_subscriptions(username: str) -> None:
 # ==================== 阅读器 AI（用户面：翻译 / 问答）====================
 # translate/ask 已迁出至 api/routers/reader.py
 #（_require_reader_ai / _recent_subscribed_articles 随迁）。
-@app.get("/api/public/feed/articles")
-def get_public_feed_articles(
-        request: Request,
-        content_type: Optional[str] = None,
-        content_types: Optional[str] = None,
-        source_ids: Optional[str] = None,
-        search: Optional[str] = None,
-        has_content: Optional[bool] = True,
-        include_content: bool = True,
-        publish_date_start: Optional[str] = None,
-        publish_date_end: Optional[str] = None,
-        skip: int = 0,
-        limit: int = 100,
-):
-    """个人聚合拉取接口：用个人聚合令牌一次性拉取当前用户全部已订阅来源的文章。
-
-    支持按发布时间（publish_date_start/end）、来源、类型、关键词筛选；适合日报等下游场景。
-    """
-    safe_limit = min(max(limit, 1), 500)
-    token = read_bearer_or_query_token(request)
-    with Session(db_sink.engine) as session:
-        owner = resolve_feed_token_owner(session, token)
-        if not owner:
-            raise HTTPException(status_code=401, detail="个人聚合接口令牌无效")
-        records = feed_articles_for_owner(
-            session, owner,
-            content_type=content_type, content_types=content_types, source_ids=source_ids,
-            search=search, has_content=has_content,
-            publish_date_start=publish_date_start, publish_date_end=publish_date_end,
-            skip=skip, limit=safe_limit,
-        )
-    return {
-        "status": "success",
-        "count": len(records),
-        "skip": skip,
-        "limit": safe_limit,
-        "next_skip": skip + len(records) if len(records) == safe_limit else None,
-        "items": [serialize_feed_article(record, include_content=include_content) for record in records],
-    }
-
-
-@app.get("/api/public/feed/articles.md")
-def export_public_feed_articles_markdown(
-        request: Request,
-        content_type: Optional[str] = None,
-        content_types: Optional[str] = None,
-        source_ids: Optional[str] = None,
-        search: Optional[str] = None,
-        has_content: Optional[bool] = True,
-        publish_date_start: Optional[str] = None,
-        publish_date_end: Optional[str] = None,
-        skip: int = 0,
-        limit: int = 100,
-):
-    """个人聚合拉取接口的 Markdown 批量导出变体（最多 200 条）。"""
-    safe_limit = min(max(limit, 1), 200)
-    token = read_bearer_or_query_token(request)
-    with Session(db_sink.engine) as session:
-        owner = resolve_feed_token_owner(session, token)
-        if not owner:
-            raise HTTPException(status_code=401, detail="个人聚合接口令牌无效")
-        records = feed_articles_for_owner(
-            session, owner,
-            content_type=content_type, content_types=content_types, source_ids=source_ids,
-            search=search, has_content=has_content,
-            publish_date_start=publish_date_start, publish_date_end=publish_date_end,
-            skip=skip, limit=safe_limit,
-        )
-    body = "\n\n---\n\n".join(article_to_markdown(record) for record in records)
-    return Response(content=body, media_type="text/markdown; charset=utf-8")
-
-
-# ==================== Reader 订阅源 ====================
-def _owned_subscription_or_404(session: Session, subscription_id: int, username: str) -> ReaderSubscriptionRecord:
-    record = session.get(ReaderSubscriptionRecord, subscription_id)
-    if not record or record.owner_username != username:
-        raise HTTPException(status_code=404, detail="订阅源不存在")
-    return record
-
-
-@app.get("/api/subscriptions")
-def get_subscriptions(request: Request, is_active: Optional[bool] = None):
-    username = current_username(request)
-    with Session(db_sink.engine) as session:
-        query = select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.owner_username == username)
-        if is_active is not None:
-            query = query.where(ReaderSubscriptionRecord.is_active == is_active)
-        records = session.exec(query.order_by(ReaderSubscriptionRecord.name)).all()
-        return [serialize_subscription(record) for record in records]
-
-
-@app.get("/api/subscriptions/{subscription_id}")
-def get_subscription(subscription_id: int, request: Request):
-    with Session(db_sink.engine) as session:
-        record = _owned_subscription_or_404(session, subscription_id, current_username(request))
-        return serialize_subscription(record)
-
-
-@app.post("/api/subscriptions")
-def create_subscription(params: SubscriptionCreate, request: Request):
-    name = params.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="订阅源名称不能为空")
-    token = generate_subscription_token()
-    now = _now_iso()
-    record = ReaderSubscriptionRecord(
-        owner_username=current_username(request),
-        name=name,
-        description=params.description.strip(),
-        filters_json=_json_dumps(_model_to_clean_dict(params.filters)),
-        delivery_policy_json=_json_dumps(normalize_delivery_policy(_model_dump(params.delivery_policy))),
-        token_hash=hash_subscription_token(token),
-        token_preview=subscription_token_preview(token),
-        is_active=params.is_active,
-        created_at=now,
-        updated_at=now,
-    )
-    with Session(db_sink.engine) as session:
-        session.add(record)
-        session.commit()
-        session.refresh(record)
-        return serialize_subscription(record, token=token)
-
-
-@app.put("/api/subscriptions/{subscription_id}")
-def update_subscription(subscription_id: int, params: SubscriptionUpdate, request: Request):
-    with Session(db_sink.engine) as session:
-        record = _owned_subscription_or_404(session, subscription_id, current_username(request))
-        update_data = _model_dump(params, exclude_unset=True)
-        if "name" in update_data:
-            name = (update_data["name"] or "").strip()
-            if not name:
-                raise HTTPException(status_code=400, detail="订阅源名称不能为空")
-            record.name = name
-        if "description" in update_data:
-            record.description = (update_data["description"] or "").strip()
-        if "filters" in update_data and update_data["filters"] is not None:
-            record.filters_json = _json_dumps(
-                {key: value for key, value in update_data["filters"].items() if value not in (None, "")}
-            )
-        if "delivery_policy" in update_data and update_data["delivery_policy"] is not None:
-            record.delivery_policy_json = _json_dumps(normalize_delivery_policy(update_data["delivery_policy"]))
-        if "is_active" in update_data:
-            record.is_active = update_data["is_active"]
-        record.updated_at = _now_iso()
-        session.add(record)
-        session.commit()
-        session.refresh(record)
-        return serialize_subscription(record)
-
-
-@app.post("/api/subscriptions/{subscription_id}/rotate-token")
-def rotate_subscription_token(subscription_id: int, request: Request):
-    token = generate_subscription_token()
-    with Session(db_sink.engine) as session:
-        record = _owned_subscription_or_404(session, subscription_id, current_username(request))
-        record.token_hash = hash_subscription_token(token)
-        record.token_preview = subscription_token_preview(token)
-        record.updated_at = _now_iso()
-        session.add(record)
-        session.commit()
-        session.refresh(record)
-        return serialize_subscription(record, token=token)
-
-
-@app.delete("/api/subscriptions/{subscription_id}")
-def delete_subscription(subscription_id: int, request: Request):
-    with Session(db_sink.engine) as session:
-        record = _owned_subscription_or_404(session, subscription_id, current_username(request))
-        session.delete(record)
-        session.commit()
-        return {"status": "success"}
-
-
-@app.get("/api/public/subscriptions/{subscription_id}/articles")
-def get_public_subscription_articles(
-        subscription_id: int,
-        request: Request,
-        skip: int = 0,
-        limit: Optional[int] = None,
-):
-    with Session(db_sink.engine) as session:
-        subscription = resolve_subscription_by_token(
-            session,
-            subscription_id,
-            read_bearer_or_query_token(request),
-        )
-        records, query_info = query_subscription_articles(session, subscription, skip=skip, limit=limit)
-
-    include_content = query_info["policy"]["include_content"]
-    safe_limit = query_info["limit"]
-    return {
-        "status": "success",
-        "subscription": {
-            "id": subscription.id,
-            "name": subscription.name,
-        },
-        "count": len(records),
-        "skip": skip,
-        "limit": safe_limit,
-        "next_skip": skip + len(records) if len(records) == safe_limit else None,
-        "items": [serialize_feed_article(record, include_content=include_content) for record in records],
-    }
-
-
-class PublicSubscriptionSearchBody(BaseModel):
-    query: str
-    top_k: int = 5
-    score_threshold: float = 1.5
-    rerank: bool = False
-
-
-@app.post("/api/public/subscriptions/{subscription_id}/vector/search")
-async def public_subscription_vector_search(
-        subscription_id: int,
-        body: PublicSubscriptionSearchBody,
-        request: Request,
-):
-    """带令牌的、按订阅源范围约束的语义检索（供下游 Agent 应用个性化使用）。"""
-    with Session(db_sink.engine) as session:
-        subscription = resolve_subscription_by_token(
-            session, subscription_id, read_bearer_or_query_token(request),
-        )
-        filters = _json_loads(subscription.filters_json, {})
-        source_ids = subscription_source_ids(subscription)
-        sub_id, sub_name = subscription.id, subscription.name
-
-    results = await run_vector_search(
-        body.query,
-        top_k=body.top_k,
-        score_threshold=body.score_threshold,
-        rerank=body.rerank,
-        content_type=filters.get("content_type"),
-        source_ids=source_ids or None,
-    )
-    return {
-        "status": "success",
-        "subscription": {"id": sub_id, "name": sub_name},
-        "scoped_source_ids": source_ids,
-        "count": len(results),
-        "results": results,
-        "reranked": body.rerank,
-    }
+# 订阅生命周期（/api/subscriptions/*）、单订阅令牌拉取/检索
+# （/api/public/subscriptions/{id}/articles|vector/search）、个人聚合拉取
+# （/api/public/feed/articles[.md]）已迁出至 api/routers/subscriptions.py
+# （含 SubscriptionCreate/Update/Filters/DeliveryPolicy/PublicSubscriptionSearchBody
+#  与 _owned_subscription_or_404；见 app.include_router）。
 
 
 # ==================== 0. 数据源配置 ====================

@@ -7,7 +7,9 @@ app 级可变全局，因此可被任意模块安全 import、不成环。
 
 import datetime
 import json
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel
 
 
 def _split_csv(raw_value: Optional[str]) -> List[str]:
@@ -41,3 +43,17 @@ def _coerce_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _model_dump(model: BaseModel, **kwargs) -> Dict[str, Any]:
+    if hasattr(model, "model_dump"):
+        return model.model_dump(**kwargs)
+    return model.dict(**kwargs)
+
+
+def _model_to_clean_dict(model: BaseModel) -> Dict[str, Any]:
+    return {
+        key: value
+        for key, value in _model_dump(model).items()
+        if value is not None and value != ""
+    }
