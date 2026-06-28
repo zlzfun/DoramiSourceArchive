@@ -7,7 +7,6 @@ import datetime
 import base64
 import hashlib
 import hmac
-import secrets
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Body, Response, Request
@@ -47,7 +46,16 @@ from fetchers.registry import fetcher_registry, DECOMMISSIONED_FETCHER_IDS
 from api.skill_router import router as skill_router
 from api import deps
 from api.serializers import serialize_user
-from api.textutils import _split_csv, _date_end_value, _now_iso, _json_loads, _json_dumps
+from api.textutils import _split_csv, _date_end_value, _now_iso, _json_loads, _json_dumps, _coerce_bool
+from api.tokens import (
+    AUTH_SECRET,
+    normalize_delivery_policy,
+    generate_subscription_token,
+    hash_subscription_token,
+    subscription_token_preview,
+    generate_feed_token,
+    read_bearer_or_query_token,
+)
 from api.articles_view import (
     GenericContent,
     _record_to_content,
@@ -376,9 +384,8 @@ COLLECTION_FETCH_CONCURRENCY = 4
 AUTH_COOKIE_NAME = settings.auth.cookie_name
 AUTH_SESSION_SECONDS = settings.auth.session_seconds
 # 账户已迁移到数据库（UserRecord）托管：登录与每请求会话校验均查库，config 的
-# [auth] 仅作首次启动播种（见 seed_users_if_empty）。AUTH_SECRET 仍用于会话 token
-# 与订阅/聚合令牌的 HMAC 签名，保持原推导以兼容历史已签发的令牌。
-AUTH_SECRET = settings.auth.secret or f"{settings.auth.admin_users}:{settings.auth.user_users}:{settings.storage.database_url}:dorami-auth-v2"
+# [auth] 仅作首次启动播种（见 seed_users_if_empty）。AUTH_SECRET 与订阅/聚合令牌
+# helper 现以 api.tokens 为单一来源（上方 import re-export），保持原推导以兼容历史令牌。
 
 
 class AuthLoginParams(BaseModel):
@@ -735,34 +742,9 @@ def _model_to_clean_dict(model: BaseModel) -> Dict[str, Any]:
     }
 
 
-def normalize_delivery_policy(policy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    raw = dict(policy or {})
-    max_limit = min(max(int(raw.get("max_limit", 500)), 1), 500)
-    default_limit = min(max(int(raw.get("default_limit", 100)), 1), max_limit)
-    return {
-        "include_content": _coerce_bool(raw.get("include_content", True)),
-        "default_limit": default_limit,
-        "max_limit": max_limit,
-    }
-
-
-def generate_subscription_token() -> str:
-    return f"dsub_{secrets.token_urlsafe(32)}"
-
-
-def hash_subscription_token(token: str) -> str:
-    return hmac.new(AUTH_SECRET.encode("utf-8"), token.encode("utf-8"), hashlib.sha256).hexdigest()
-
-
-def subscription_token_preview(token: str) -> str:
-    return f"...{token[-6:]}"
-
-
-def read_bearer_or_query_token(request: Request) -> str:
-    auth_header = request.headers.get("authorization", "")
-    if auth_header.lower().startswith("bearer "):
-        return auth_header[7:].strip()
-    return (request.query_params.get("token") or "").strip()
+# normalize_delivery_policy / generate_subscription_token / hash_subscription_token /
+# subscription_token_preview / read_bearer_or_query_token / generate_feed_token：
+# 已迁出至 api.tokens（上方 import re-export，保持 api.app.X 兼容）。
 
 
 def serialize_subscription(record: ReaderSubscriptionRecord, token: Optional[str] = None) -> Dict[str, Any]:
@@ -872,10 +854,6 @@ def resolve_subscription_sources_by_token(token: str) -> Optional[List[str]]:
     return None
 
 
-def generate_feed_token() -> str:
-    return f"dfeed_{secrets.token_urlsafe(32)}"
-
-
 def resolve_feed_token_owner(session: Session, token: str) -> Optional[str]:
     """个人聚合令牌 → 归属用户名；令牌缺失/无效返回 None。"""
     if not token:
@@ -978,12 +956,6 @@ def archive_manifest_line(count: int, filters: Dict[str, Any]) -> Dict[str, Any]
         "count": count,
         "filters": {key: value for key, value in filters.items() if value not in (None, "")},
     }
-
-
-def _coerce_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _coerce_optional_int(value: Any) -> Optional[int]:

@@ -35,3 +35,9 @@ def _json_loads(raw_value: Optional[str], default: Any = None) -> Any:
 
 def _json_dumps(data: Any) -> str:
     return json.dumps(data or {}, ensure_ascii=False)
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}

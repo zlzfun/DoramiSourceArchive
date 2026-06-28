@@ -21,6 +21,7 @@ from sqlmodel import Session, func, select
 
 from api import deps
 from api.articles_view import serialize_article_list_item
+from api.tokens import generate_feed_token, hash_subscription_token, subscription_token_preview
 from api.sources import (
     DAILY_BRIEF_SOURCE_ID,
     DAILY_BRIEF_SOURCE_META,
@@ -263,17 +264,17 @@ def rotate_feed_token(request: Request, session: Session = Depends(deps.get_sess
     username = app.current_username(request)
     if not username:
         raise HTTPException(status_code=401, detail="需要登录")
-    token = app.generate_feed_token()
+    token = generate_feed_token()
     now = _now_iso()
     record = session.get(ReaderFeedTokenRecord, username)
     if record is None:
         record = ReaderFeedTokenRecord(owner_username=username, created_at=now, updated_at=now)
-    record.token_hash = app.hash_subscription_token(token)
-    record.token_preview = app.subscription_token_preview(token)
+    record.token_hash = hash_subscription_token(token)
+    record.token_preview = subscription_token_preview(token)
     record.updated_at = now
     session.add(record)
     session.commit()
-    return {"token": token, "token_preview": app.subscription_token_preview(token)}
+    return {"token": token, "token_preview": subscription_token_preview(token)}
 
 
 # ==================== 内容源目录 ====================
