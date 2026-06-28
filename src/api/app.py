@@ -100,6 +100,15 @@ from api.routers.subscriptions import (
 from api.routers import articles as articles_router
 from api.routers.articles import ArticleUpdateParams, _maybe_rewind_daily_brief_cursor
 from api.schemas import BatchOpParams
+from api.collection_planning import (
+    normalize_fetcher_ids,
+    resolve_collection_job_fetcher_ids,
+    build_collection_job_items,
+    build_node_group_items,
+    apply_run_param_overrides,
+    test_run_overrides,
+    resolve_delivery_source_ids,
+)
 from api.routers import vector as vector_router
 from api.routers.vector import (
     SearchQuery,
@@ -868,114 +877,9 @@ def serialize_collection_job_run(record: CollectionJobRunRecord) -> Dict[str, An
     }
 
 
-def normalize_fetcher_ids(fetcher_ids: Optional[List[str]]) -> List[str]:
-    seen = set()
-    normalized = []
-    for fetcher_id in fetcher_ids or []:
-        clean_id = str(fetcher_id).strip()
-        if clean_id and clean_id not in seen:
-            normalized.append(clean_id)
-            seen.add(clean_id)
-    return normalized
-
-
-def resolve_collection_job_fetcher_ids(job: CollectionJobRecord, session: Session) -> List[str]:
-    fetcher_ids = normalize_fetcher_ids(_json_loads(job.fetcher_ids_json, []))
-    if fetcher_ids:
-        return fetcher_ids
-    if job.group_id:
-        group = session.get(NodeGroupRecord, job.group_id)
-        if group and group.is_active:
-            return normalize_fetcher_ids(_json_loads(group.fetcher_ids_json, []))
-    return []
-
-
-def build_collection_job_items(job: CollectionJobRecord, session: Session) -> List[Dict[str, Any]]:
-    default_params = {}
-    per_fetcher_params = {}
-    if job.group_id:
-        group = session.get(NodeGroupRecord, job.group_id)
-        if group and group.is_active:
-            default_params.update(_json_loads(group.params_json, {}))
-            per_fetcher_params.update(_json_loads(group.per_fetcher_params_json, {}))
-    default_params.update(_json_loads(job.params_json, {}))
-    job_per_fetcher_params = _json_loads(job.per_fetcher_params_json, {})
-    items = []
-    for fetcher_id in resolve_collection_job_fetcher_ids(job, session):
-        params = dict(default_params)
-        params.update(per_fetcher_params.get(fetcher_id, {}))
-        params.update(job_per_fetcher_params.get(fetcher_id, {}))
-        items.append({"fetcher_id": fetcher_id, "params": params})
-    return items
-
-
-def build_node_group_items(group: NodeGroupRecord) -> List[Dict[str, Any]]:
-    default_params = _json_loads(group.params_json, {})
-    per_fetcher_params = _json_loads(group.per_fetcher_params_json, {})
-    items = []
-    for fetcher_id in normalize_fetcher_ids(_json_loads(group.fetcher_ids_json, [])):
-        params = dict(default_params)
-        params.update(per_fetcher_params.get(fetcher_id, {}))
-        items.append({"fetcher_id": fetcher_id, "params": params})
-    return items
-
-
-def apply_run_param_overrides(
-        items: List[Dict[str, Any]],
-        overrides: Optional[Dict[str, Any]] = None,
-) -> List[Dict[str, Any]]:
-    if not overrides:
-        return items
-    normalized_overrides = {
-        key: value
-        for key, value in overrides.items()
-        if value is not None and value != ""
-    }
-    if not normalized_overrides:
-        return items
-    return [
-        {
-            **item,
-            "params": {
-                **(item.get("params") or {}),
-                **normalized_overrides,
-            },
-        }
-        for item in items
-    ]
-
-
-def test_run_overrides(test_limit: Optional[int] = None) -> Dict[str, Any]:
-    if test_limit is None:
-        return {}
-    return {"limit": max(int(test_limit), 1)}
-
-
-def resolve_delivery_source_ids(
-        session: Session,
-        source_id: Optional[str] = None,
-        source_ids: Optional[str] = None,
-        group_id: Optional[int] = None,
-        job_id: Optional[int] = None,
-) -> List[str]:
-    explicit_ids = normalize_fetcher_ids(([source_id] if source_id else []) + _split_csv(source_ids))
-    scope_ids = []
-    if group_id is not None:
-        group = session.get(NodeGroupRecord, group_id)
-        if not group:
-            raise HTTPException(status_code=404, detail="采集范围不存在")
-        scope_ids.extend(_json_loads(group.fetcher_ids_json, []))
-    if job_id is not None:
-        job = session.get(CollectionJobRecord, job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="采集任务不存在")
-        scope_ids.extend(resolve_collection_job_fetcher_ids(job, session))
-
-    scope_ids = normalize_fetcher_ids(scope_ids)
-    if explicit_ids and scope_ids:
-        scope_set = set(scope_ids)
-        return [item for item in explicit_ids if item in scope_set]
-    return explicit_ids or scope_ids
+# normalize_fetcher_ids / resolve_collection_job_fetcher_ids / build_collection_job_items /
+# build_node_group_items / apply_run_param_overrides / test_run_overrides /
+# resolve_delivery_source_ids 已迁至 api/collection_planning.py（共享，下方 import re-export）。
 
 
 def create_collection_job_run(
@@ -1723,111 +1627,8 @@ def ensure_default_subscriptions(username: str) -> None:
 # （见 app.include_router）。下方 /api/feed/articles[.md] 暂留（依赖采集投递作用域 helper）。
 
 
-@app.get("/api/feed/articles")
-def get_feed_articles(
-        content_type: Optional[str] = None,
-        content_types: Optional[str] = None,
-        source_id: Optional[str] = None,
-        source_ids: Optional[str] = None,
-        group_id: Optional[int] = None,
-        job_id: Optional[int] = None,
-        job_run_id: Optional[int] = None,
-        fetch_run_id: Optional[int] = None,
-        run_scope: Optional[str] = None,
-        publish_date_start: Optional[str] = None,
-        publish_date_end: Optional[str] = None,
-        fetched_date_start: Optional[str] = None,
-        fetched_date_end: Optional[str] = None,
-        search: Optional[str] = None,
-        has_content: Optional[bool] = True,
-        include_content: bool = True,
-        skip: int = 0,
-        limit: int = 100
-):
-    safe_limit = min(max(limit, 1), 500)
-    with Session(db_sink.engine) as session:
-        delivery_source_ids = resolve_delivery_source_ids(
-            session, source_id=source_id, source_ids=source_ids, group_id=group_id, job_id=job_id
-        )
-        if (source_id or source_ids or group_id is not None or job_id is not None) and not delivery_source_ids:
-            return {"status": "success", "count": 0, "skip": skip, "limit": safe_limit, "next_skip": None, "items": []}
-        query = apply_article_query_filters(
-            select(ArticleRecord),
-            content_type=content_type,
-            content_types=content_types,
-            source_ids=",".join(delivery_source_ids) if delivery_source_ids else None,
-            job_run_id=job_run_id,
-            fetch_run_id=fetch_run_id,
-            run_scope=run_scope,
-            has_content=has_content,
-            search=search,
-            publish_date_start=publish_date_start,
-            publish_date_end=publish_date_end,
-            fetched_date_start=fetched_date_start,
-            fetched_date_end=fetched_date_end,
-        )
-        records = session.exec(
-            query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
-        ).all()
-
-    return {
-        "status": "success",
-        "count": len(records),
-        "skip": skip,
-        "limit": safe_limit,
-        "next_skip": skip + len(records) if len(records) == safe_limit else None,
-        "items": [serialize_feed_article(record, include_content=include_content) for record in records],
-    }
-
-
-@app.get("/api/feed/articles.md")
-def export_feed_articles_markdown(
-        content_type: Optional[str] = None,
-        content_types: Optional[str] = None,
-        source_id: Optional[str] = None,
-        source_ids: Optional[str] = None,
-        group_id: Optional[int] = None,
-        job_id: Optional[int] = None,
-        job_run_id: Optional[int] = None,
-        fetch_run_id: Optional[int] = None,
-        run_scope: Optional[str] = None,
-        publish_date_start: Optional[str] = None,
-        publish_date_end: Optional[str] = None,
-        fetched_date_start: Optional[str] = None,
-        fetched_date_end: Optional[str] = None,
-        search: Optional[str] = None,
-        has_content: Optional[bool] = True,
-        skip: int = 0,
-        limit: int = 100
-):
-    safe_limit = min(max(limit, 1), 200)
-    with Session(db_sink.engine) as session:
-        delivery_source_ids = resolve_delivery_source_ids(
-            session, source_id=source_id, source_ids=source_ids, group_id=group_id, job_id=job_id
-        )
-        if (source_id or source_ids or group_id is not None or job_id is not None) and not delivery_source_ids:
-            return Response(content="", media_type="text/markdown; charset=utf-8")
-        query = apply_article_query_filters(
-            select(ArticleRecord),
-            content_type=content_type,
-            content_types=content_types,
-            source_ids=",".join(delivery_source_ids) if delivery_source_ids else None,
-            job_run_id=job_run_id,
-            fetch_run_id=fetch_run_id,
-            run_scope=run_scope,
-            has_content=has_content,
-            search=search,
-            publish_date_start=publish_date_start,
-            publish_date_end=publish_date_end,
-            fetched_date_start=fetched_date_start,
-            fetched_date_end=fetched_date_end,
-        )
-        records = session.exec(
-            query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
-        ).all()
-
-    markdown = "\n\n---\n\n".join(article_to_markdown(record) for record in records)
-    return Response(content=markdown, media_type="text/markdown; charset=utf-8")
+# /api/feed/articles[.md]（投递视图）已迁出至 api/routers/articles.py
+# （依赖 collection_planning.resolve_delivery_source_ids；见 app.include_router）。
 
 
 # 单条读取/手工录入/更新/删除/批量删除（GET|POST|PUT|DELETE /api/articles*）

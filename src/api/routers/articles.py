@@ -17,7 +17,7 @@ import importlib
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import case, func
 from sqlmodel import Session, select
@@ -27,8 +27,11 @@ from api.articles_view import (
     GenericContent,
     apply_article_query_filters,
     article_recency_order,
+    article_to_markdown,
     serialize_article_list_item,
+    serialize_feed_article,
 )
+from api.collection_planning import resolve_delivery_source_ids
 from api.feed_service import resolve_subscribed_source_ids
 from api.schemas import BatchOpParams
 from api.sources import DAILY_BRIEF_SOURCE_ID
@@ -218,3 +221,113 @@ async def update_article(article_id: str, params: ArticleUpdateParams):
     if not success:
         raise HTTPException(status_code=404, detail="更新失败")
     return {"status": "success"}
+
+
+# ==================== 投递视图（/api/feed/articles[.md]）====================
+# 下游 LLM/RAG 消费者推荐契约：按采集投递作用域（source/group/job）过滤后的档案视图。
+
+@router.get("/api/feed/articles")
+def get_feed_articles(
+        content_type: Optional[str] = None,
+        content_types: Optional[str] = None,
+        source_id: Optional[str] = None,
+        source_ids: Optional[str] = None,
+        group_id: Optional[int] = None,
+        job_id: Optional[int] = None,
+        job_run_id: Optional[int] = None,
+        fetch_run_id: Optional[int] = None,
+        run_scope: Optional[str] = None,
+        publish_date_start: Optional[str] = None,
+        publish_date_end: Optional[str] = None,
+        fetched_date_start: Optional[str] = None,
+        fetched_date_end: Optional[str] = None,
+        search: Optional[str] = None,
+        has_content: Optional[bool] = True,
+        include_content: bool = True,
+        skip: int = 0,
+        limit: int = 100,
+        session: Session = Depends(deps.get_session),
+):
+    safe_limit = min(max(limit, 1), 500)
+    delivery_source_ids = resolve_delivery_source_ids(
+        session, source_id=source_id, source_ids=source_ids, group_id=group_id, job_id=job_id
+    )
+    if (source_id or source_ids or group_id is not None or job_id is not None) and not delivery_source_ids:
+        return {"status": "success", "count": 0, "skip": skip, "limit": safe_limit, "next_skip": None, "items": []}
+    query = apply_article_query_filters(
+        select(ArticleRecord),
+        content_type=content_type,
+        content_types=content_types,
+        source_ids=",".join(delivery_source_ids) if delivery_source_ids else None,
+        job_run_id=job_run_id,
+        fetch_run_id=fetch_run_id,
+        run_scope=run_scope,
+        has_content=has_content,
+        search=search,
+        publish_date_start=publish_date_start,
+        publish_date_end=publish_date_end,
+        fetched_date_start=fetched_date_start,
+        fetched_date_end=fetched_date_end,
+    )
+    records = session.exec(
+        query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
+    ).all()
+
+    return {
+        "status": "success",
+        "count": len(records),
+        "skip": skip,
+        "limit": safe_limit,
+        "next_skip": skip + len(records) if len(records) == safe_limit else None,
+        "items": [serialize_feed_article(record, include_content=include_content) for record in records],
+    }
+
+
+@router.get("/api/feed/articles.md")
+def export_feed_articles_markdown(
+        content_type: Optional[str] = None,
+        content_types: Optional[str] = None,
+        source_id: Optional[str] = None,
+        source_ids: Optional[str] = None,
+        group_id: Optional[int] = None,
+        job_id: Optional[int] = None,
+        job_run_id: Optional[int] = None,
+        fetch_run_id: Optional[int] = None,
+        run_scope: Optional[str] = None,
+        publish_date_start: Optional[str] = None,
+        publish_date_end: Optional[str] = None,
+        fetched_date_start: Optional[str] = None,
+        fetched_date_end: Optional[str] = None,
+        search: Optional[str] = None,
+        has_content: Optional[bool] = True,
+        skip: int = 0,
+        limit: int = 100,
+        session: Session = Depends(deps.get_session),
+):
+    safe_limit = min(max(limit, 1), 200)
+    delivery_source_ids = resolve_delivery_source_ids(
+        session, source_id=source_id, source_ids=source_ids, group_id=group_id, job_id=job_id
+    )
+    if (source_id or source_ids or group_id is not None or job_id is not None) and not delivery_source_ids:
+        return Response(content="", media_type="text/markdown; charset=utf-8")
+    query = apply_article_query_filters(
+        select(ArticleRecord),
+        content_type=content_type,
+        content_types=content_types,
+        source_ids=",".join(delivery_source_ids) if delivery_source_ids else None,
+        job_run_id=job_run_id,
+        fetch_run_id=fetch_run_id,
+        run_scope=run_scope,
+        has_content=has_content,
+        search=search,
+        publish_date_start=publish_date_start,
+        publish_date_end=publish_date_end,
+        fetched_date_start=fetched_date_start,
+        fetched_date_end=fetched_date_end,
+    )
+    records = session.exec(
+        query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
+    ).all()
+
+    markdown = "\n\n---\n\n".join(article_to_markdown(record) for record in records)
+    return Response(content=markdown, media_type="text/markdown; charset=utf-8")
