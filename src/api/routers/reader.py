@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, func, select
 
 from api import deps
+from api.articles_view import serialize_article_list_item
 from api.sources import (
     DAILY_BRIEF_SOURCE_ID,
     DAILY_BRIEF_SOURCE_META,
@@ -192,7 +193,7 @@ def list_favorites(
     base = base.order_by(ReaderFavoriteRecord.created_at.desc(), ArticleRecord.id.desc())
     total = int(session.exec(count_query).one() or 0)
     rows = session.exec(base.offset(safe_skip).limit(safe_limit)).all()
-    items = [app.serialize_article_list_item(record, include_content=include_content) for record, _ in rows]
+    items = [serialize_article_list_item(record, include_content=include_content) for record, _ in rows]
     favorite_ids = resolve_favorite_article_ids(session, username)
     return {
         "items": items,

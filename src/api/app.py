@@ -47,6 +47,15 @@ from fetchers.registry import fetcher_registry, DECOMMISSIONED_FETCHER_IDS
 from api.skill_router import router as skill_router
 from api import deps
 from api.serializers import serialize_user
+from api.textutils import _split_csv, _date_end_value, _now_iso, _json_loads, _json_dumps
+from api.articles_view import (
+    GenericContent,
+    _record_to_content,
+    apply_article_query_filters,
+    serialize_feed_article,
+    serialize_article_list_item,
+    article_to_markdown,
+)
 from api.sources import (
     DAILY_BRIEF_SOURCE_ID,
     DAILY_BRIEF_SOURCE_META,
@@ -88,10 +97,7 @@ if not _dorami_logger.handlers:
 settings.apply_process_environment()
 
 
-class GenericContent(BaseContent):
-    # 拆分为结构类型与来源通道
-    content_type = "restored_from_db"
-    source_id = "database_restore"
+# GenericContent / _record_to_content 已迁至 api/articles_view.py（共享）。
 
 
 _mcp_enabled: bool = True
@@ -635,8 +641,7 @@ def update_own_avatar(params: AvatarUpdateParams, request: Request):
 
 
 # ==================== 定时任务系统核心逻辑 ====================
-def _now_iso() -> str:
-    return datetime.datetime.now().isoformat()
+# _now_iso 已迁至 api/textutils.py。
 
 
 def reconcile_orphaned_runs() -> Dict[str, int]:
@@ -690,27 +695,16 @@ def reconcile_orphaned_runs() -> Dict[str, int]:
     return counts
 
 
-def _json_dumps(data: Any) -> str:
-    return json.dumps(data or {}, ensure_ascii=False)
+# _json_dumps 已迁至 api/textutils.py。
 
 
-def _json_loads(raw_value: Optional[str], default: Any = None) -> Any:
-    if not raw_value:
-        return default if default is not None else {}
-    try:
-        return json.loads(raw_value)
-    except (TypeError, json.JSONDecodeError):
-        return default if default is not None else {}
+# _json_loads 已迁至 api/textutils.py。
 
 
-def _split_csv(raw_value: Optional[str]) -> List[str]:
-    if not raw_value:
-        return []
-    return [item.strip() for item in raw_value.split(",") if item.strip()]
+# _split_csv 已迁至 api/textutils.py（共享，re-export 见顶部 import）。
 
 
-def _date_end_value(raw_value: str) -> str:
-    return raw_value if "T" in raw_value else f"{raw_value}T23:59:59"
+# _date_end_value 已迁至 api/textutils.py。
 
 
 def article_recency_order(*prefix_ordering):
@@ -723,130 +717,8 @@ def article_recency_order(*prefix_ordering):
     )
 
 
-def apply_article_query_filters(
-        query,
-        content_type: Optional[str] = None,
-        content_types: Optional[str] = None,
-        source_id: Optional[str] = None,
-        source_ids: Optional[str] = None,
-        exclude_source_ids: Optional[str] = None,
-        job_id: Optional[int] = None,
-        job_run_id: Optional[int] = None,
-        fetch_run_id: Optional[int] = None,
-        run_scope: Optional[str] = None,
-        is_vectorized: Optional[bool] = None,
-        has_content: Optional[bool] = None,
-        search: Optional[str] = None,
-        publish_date_start: Optional[str] = None,
-        publish_date_end: Optional[str] = None,
-        fetched_date_start: Optional[str] = None,
-        fetched_date_end: Optional[str] = None,
-):
-    if content_type:
-        query = query.where(ArticleRecord.content_type == content_type)
-    content_type_list = _split_csv(content_types)
-    if content_type_list:
-        query = query.where(ArticleRecord.content_type.in_(content_type_list))
-
-    if source_id:
-        query = query.where(ArticleRecord.source_id == source_id)
-    source_id_list = _split_csv(source_ids)
-    if source_id_list:
-        query = query.where(ArticleRecord.source_id.in_(source_id_list))
-    exclude_source_id_list = _split_csv(exclude_source_ids)
-    if exclude_source_id_list:
-        query = query.where(ArticleRecord.source_id.notin_(exclude_source_id_list))
-
-    if job_id is not None:
-        query = query.where(ArticleRecord.job_id == job_id)
-    if job_run_id is not None:
-        query = query.where(ArticleRecord.job_run_id == job_run_id)
-    if fetch_run_id is not None:
-        query = query.where(ArticleRecord.fetch_run_id == fetch_run_id)
-    if run_scope:
-        query = query.where(ArticleRecord.run_scope == run_scope)
-
-    if is_vectorized is not None:
-        query = query.where(ArticleRecord.is_vectorized == is_vectorized)
-    if has_content is not None:
-        query = query.where(ArticleRecord.has_content == has_content)
-    if search:
-        query = query.where(ArticleRecord.title.contains(search))
-
-    if publish_date_start:
-        query = query.where(ArticleRecord.publish_date >= publish_date_start)
-    if publish_date_end:
-        query = query.where(ArticleRecord.publish_date <= _date_end_value(publish_date_end))
-
-    if fetched_date_start:
-        query = query.where(ArticleRecord.fetched_date >= fetched_date_start)
-    if fetched_date_end:
-        query = query.where(ArticleRecord.fetched_date <= _date_end_value(fetched_date_end))
-
-    return query
-
-
-def serialize_feed_article(record: ArticleRecord, include_content: bool = True) -> Dict[str, Any]:
-    extensions = _json_loads(record.extensions_json, {})
-    metadata = {
-        "id": record.id,
-        "title": record.title,
-        "source_url": record.source_url,
-        "source_id": record.source_id,
-        "content_type": record.content_type,
-        "publish_date": record.publish_date,
-        "fetched_date": record.fetched_date,
-        "fetch_run_id": record.fetch_run_id,
-        "job_id": record.job_id,
-        "job_run_id": record.job_run_id,
-        "source_group_id": record.source_group_id,
-        "run_scope": record.run_scope,
-        "has_content": record.has_content,
-        "is_vectorized": record.is_vectorized,
-        "extensions": extensions,
-    }
-
-    item = {
-        "id": record.id,
-        "title": record.title,
-        "url": record.source_url,
-        "metadata": metadata,
-    }
-    if include_content:
-        item["content"] = record.content or ""
-    return item
-
-
-def serialize_article_list_item(record: ArticleRecord, include_content: bool = True) -> Dict[str, Any]:
-    content = record.content or ""
-    item = {
-        "id": record.id,
-        "title": record.title,
-        "content_type": record.content_type,
-        "source_id": record.source_id,
-        "source_url": record.source_url,
-        "publish_date": record.publish_date,
-        "fetched_date": record.fetched_date,
-        "fetch_run_id": record.fetch_run_id,
-        "job_id": record.job_id,
-        "job_run_id": record.job_run_id,
-        "source_group_id": record.source_group_id,
-        "run_scope": record.run_scope,
-        "has_content": record.has_content,
-        "is_vectorized": record.is_vectorized,
-        "content_preview": content[:280],
-    }
-    if include_content:
-        item["content"] = content
-        item["extensions_json"] = record.extensions_json or "{}"
-    return item
-
-
-def article_to_markdown(record: ArticleRecord) -> str:
-    metadata = serialize_feed_article(record, include_content=False)["metadata"]
-    frontmatter = json.dumps(metadata, ensure_ascii=False, indent=2)
-    content = record.content or ""
-    return f"---\n{frontmatter}\n---\n\n# {record.title}\n\n{content}".strip()
+# apply_article_query_filters / serialize_feed_article / serialize_article_list_item /
+# article_to_markdown 已迁至 api/articles_view.py（共享，re-export 见顶部 import）。
 
 
 def _model_dump(model: BaseModel, **kwargs) -> Dict[str, Any]:
@@ -3259,16 +3131,7 @@ async def trigger_fetch_dynamic(
 
 
 # ----------------- 向量化接口 -----------------
-def _record_to_content(record: ArticleRecord) -> GenericContent:
-    """将 ArticleRecord 转换为可向量化的 GenericContent 对象。"""
-    obj = GenericContent(
-        id=record.id, title=record.title, publish_date=record.publish_date,
-        source_url=record.source_url, content=record.content,
-        fetched_date=record.fetched_date, has_content=record.has_content,
-    )
-    obj.content_type = record.content_type
-    obj.source_id = record.source_id
-    return obj
+# _record_to_content 已迁至 api/articles_view.py（共享，re-export 见顶部 import）。
 
 
 @app.post("/api/vectorize/batch")
