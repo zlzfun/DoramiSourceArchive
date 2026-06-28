@@ -32,7 +32,9 @@ def _database_url(raw_value: str) -> str:
 class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8088
-    reload: bool = True
+    # 安全默认：reload 默认关闭，开发环境由 config/backend.ini 显式 `reload = true` 开启；
+    # 生产再由 main.py 的 NODE_ENV 守卫兜底强制关闭。避免漏配时误开 reload。
+    reload: bool = False
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,7 @@
 import json
 import os
 from typing import Optional, Dict, Any, Iterable
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, text, event
 from sqlmodel import Session, create_engine, select
 from storage.base import BaseStorage
 from models.content import BaseContent, serialize_to_metadata
@@ -16,10 +16,33 @@ class DatabaseStorage(BaseStorage):
         db_dir = os.path.dirname(db_path)
         if db_dir: os.makedirs(db_dir, exist_ok=True)
 
-        self.engine = create_engine(db_url, echo=False)
+        is_sqlite = db_url.startswith("sqlite")
+        # SQLite：允许跨线程复用连接（asyncio.to_thread / APScheduler 线程池下会用到），
+        # 并在每个新连接上启用 WAL（读不阻塞写）+ busy_timeout（写竞争时自动等待而非立即报错）。
+        connect_args = {"check_same_thread": False} if is_sqlite else {}
+        self.engine = create_engine(db_url, echo=False, connect_args=connect_args)
+        if is_sqlite and db_url != "sqlite:///:memory:":
+            self._enable_sqlite_concurrency(self.engine)
         SQLModel.metadata.create_all(self.engine)
         self._ensure_compatible_schema()
         self.logger.info(f"🗄️ 关系型数据库已连接: {db_url}")
+
+    @staticmethod
+    def _enable_sqlite_concurrency(engine) -> None:
+        """在每个新建的 SQLite 连接上启用 WAL 与 busy_timeout。
+
+        WAL 让读写并发互不阻塞（默认 rollback journal 下读写互斥，并发写极易报
+        "database is locked"）；busy_timeout 让写竞争时自动等待 5s 再放弃。
+        逐连接生效，故挂在 SQLAlchemy 的 connect 事件上。
+        """
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, _connection_record):  # noqa: ANN001
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA busy_timeout=5000")
+            finally:
+                cursor.close()
 
     def _ensure_compatible_schema(self):
         """Lightweight SQLite-compatible migrations for additive schema changes."""

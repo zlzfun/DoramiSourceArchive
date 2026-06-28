@@ -51,6 +51,7 @@ from services import reader_ai as reader_ai_service
 from services import ai_usage as ai_usage_service
 from services import reader_activity as reader_activity_service
 from services import content_analytics as content_analytics_service
+from services import background_jobs
 from llm.client import LLMNotConfigured, LLMError, UsageMeta, ping as llm_ping
 from llm.client import set_usage_recorder as _set_llm_usage_recorder
 
@@ -174,6 +175,7 @@ COLLECTOR_API_PREFIXES = (
     "/api/node-groups",
     "/api/collection-jobs",
     "/api/collection-job-runs",
+    "/api/jobs",
     "/api/tasks",
     # LLM 配置与日报生成/配置归管理员（collector）。
     "/api/llm",
@@ -4215,19 +4217,33 @@ async def batch_vectorize_articles(params: BatchOpParams):
 
 @app.post("/api/vectorize/all-pending")
 async def vectorize_all_pending():
-    """对所有 is_vectorized=False 的文章执行向量化，跳过已索引的条目。"""
+    """对所有 is_vectorized=False 的文章执行向量化，跳过已索引的条目。
+
+    全量向量化可能耗时数分钟到数小时，改为提交后台任务并立即返回 job_id；
+    前端轮询 GET /api/jobs/{job_id} 获取进度与最终结果（count/total_pending）。
+    """
     vs = require_vector_sink()
     with Session(db_sink.engine) as session:
         from sqlmodel import select as sm_select
         records = session.exec(
             sm_select(ArticleRecord).where(ArticleRecord.is_vectorized == False)
         ).all()
-    success_count = 0
-    for record in records:
-        if await vs.save(_record_to_content(record)):
-            await db_sink.mark_as_vectorized(record.id)
-            success_count += 1
-    return {"status": "success", "count": success_count, "total_pending": len(records)}
+    pending_ids = [record.id for record in records]
+
+    async def _work(job: background_jobs.Job) -> Dict[str, Any]:
+        job.set_total(len(pending_ids))
+        success_count = 0
+        for article_id in pending_ids:
+            record = await db_sink.get(article_id)
+            if record and not record.is_vectorized:
+                if await vs.save(_record_to_content(record)):
+                    await db_sink.mark_as_vectorized(article_id)
+                    success_count += 1
+            job.advance()
+        return {"count": success_count, "total_pending": len(pending_ids)}
+
+    job = background_jobs.launch("vectorize_all_pending", _work)
+    return {"status": "accepted", "job_id": job.id, "total_pending": len(pending_ids)}
 
 
 @app.get("/api/vector/subscribed-stats")
@@ -4630,7 +4646,7 @@ async def run_vector_search(
 
     # T12: cross-encoder 重排序（可选）
     if rerank:
-        candidates = vs.rerank(query_text, candidates[:top_k * 2])
+        candidates = await vs.rerank(query_text, candidates[:top_k * 2])
     else:
         candidates.sort(key=lambda x: x["distance"])
 
@@ -4754,7 +4770,7 @@ async def rag_context(query: RagContextQuery, request: Request):
 
     # T12: cross-encoder 重排序（可选）
     if query.rerank:
-        candidates = vs.rerank(query.query, candidates[:query.top_k * 2])
+        candidates = await vs.rerank(query.query, candidates[:query.top_k * 2])
     else:
         candidates.sort(key=lambda x: x["distance"])
     candidates = candidates[:query.top_k]
@@ -4879,25 +4895,41 @@ async def reindex_all_articles():
     """
     T9: 删除并重建整个 ChromaDB collection，对所有文章重新向量化。
     适用于：更换 embedding 模型后的全库迁移。管理员（collector）操作。
+
+    全库重索引耗时极长，改为提交后台任务并立即返回 job_id；前端轮询
+    GET /api/jobs/{job_id} 获取进度与最终结果（total_reindexed/total_articles）。
     """
     vs = require_vector_sink()
-    vs.rebuild_collection()
 
-    with Session(db_sink.engine) as session:
-        records = session.exec(select(ArticleRecord)).all()
+    async def _work(job: background_jobs.Job) -> Dict[str, Any]:
+        # 重建集合为同步重操作，卸载到线程池避免阻塞事件循环。
+        await asyncio.to_thread(vs.rebuild_collection)
 
-    # 先批量重置 is_vectorized 标志
-    for record in records:
-        await db_sink.update(record.id, {"is_vectorized": False})
+        with Session(db_sink.engine) as session:
+            article_ids = list(session.exec(select(ArticleRecord.id)).all())
+        job.set_total(len(article_ids))
 
-    # 重新向量化
-    success_count = 0
-    for record in records:
-        if await vs.save(_record_to_content(record)):
-            await db_sink.mark_as_vectorized(record.id)
-            success_count += 1
+        success_count = 0
+        for article_id in article_ids:
+            await db_sink.update(article_id, {"is_vectorized": False})
+            record = await db_sink.get(article_id)
+            if record and await vs.save(_record_to_content(record)):
+                await db_sink.mark_as_vectorized(article_id)
+                success_count += 1
+            job.advance()
+        return {"total_reindexed": success_count, "total_articles": len(article_ids)}
 
-    return {"status": "success", "total_reindexed": success_count, "total_articles": len(records)}
+    job = background_jobs.launch("reindex_all", _work)
+    return {"status": "accepted", "job_id": job.id}
+
+
+@app.get("/api/jobs/{job_id}")
+async def get_background_job(job_id: str):
+    """查询后台任务状态/进度/结果（向量化、重索引等长任务）。"""
+    job = background_jobs.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="任务不存在或已过期")
+    return job.to_dict()
 
 
 # ==================== 4. 定时任务 ====================

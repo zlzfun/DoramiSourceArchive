@@ -67,7 +67,7 @@ async def run_case(case: dict, vector: ChromaVectorStorage, db: DatabaseStorage,
 
     # T12: cross-encoder 重排序（可选）
     if use_rerank:
-        candidates = vector.rerank(case["query"], candidates[:top_k * 2])
+        candidates = await vector.rerank(case["query"], candidates[:top_k * 2])
         deduplicated = candidates[:top_k]
     else:
         deduplicated = sorted(candidates, key=lambda x: x["distance"])[:top_k]

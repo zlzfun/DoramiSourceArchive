@@ -7,8 +7,10 @@ T6: 空正文内容回退——无正文文章仍可通过标题+头部建立索
 T8: 入库前文本清洗（HTML 剥离 / HN 样板去除 / arxiv 前缀剥离 / 短无效内容剔除）
 """
 
+import asyncio
 import os
 import re
+import threading
 from typing import List, Dict, Any, Optional
 import chromadb
 from chromadb.utils import embedding_functions
@@ -188,8 +190,26 @@ class ChromaVectorStorage(BaseStorage):
         self._reranker = None
         self._reranker_model = settings.models.reranker_model
 
+        # 懒加载在线程池中触发（向量操作经 asyncio.to_thread 卸载），
+        # 故首次初始化需加锁防止并发重复加载模型/建集合。
+        self._init_lock = threading.Lock()
+
+        # Chroma collection 操作级互斥锁：向量操作改用线程池后由「事件循环上隐式串行」
+        # 变为「多线程并发」，而 rebuild_collection 会删除并重建 collection——重建若与
+        # 并发的 add/query/delete 撞同一 collection 会崩溃/不一致。用一把锁串行化所有
+        # collection 访问（锁在工作线程内持有，事件循环仍不被阻塞）。
+        # 注意：与 _init_lock 是两把锁，加锁顺序恒为 _op_lock → _init_lock，无死锁。
+        self._op_lock = threading.Lock()
+
     # ── 懒加载 ───────────────────────────────────────────────────────────────
     def _ensure_collection(self):
+        if self._collection is None:
+            with self._init_lock:
+                if self._collection is None:
+                    self._load_collection()
+        return self._collection
+
+    def _load_collection(self):
         if self._collection is None:
             model_name_or_path = settings.models.embedding_model
             self.logger.info(f"🧬 正在加载 Embedding 模型: {model_name_or_path}")
@@ -223,9 +243,22 @@ class ChromaVectorStorage(BaseStorage):
         self._ensure_collection()
         return self._embedding_fn
 
+    def _locked(self, fn, *args, **kwargs):
+        """在 collection 操作级互斥锁下执行 fn（在工作线程内调用）。
+
+        把单个 collection 操作（save 内的 get+delete+add 视为整体）串行化，
+        避免与 rebuild_collection 的删除/重建并发竞争。
+        """
+        with self._op_lock:
+            return fn(*args, **kwargs)
+
     # ── 写入 ──────────────────────────────────────────────────────────────────
 
     async def save(self, item: BaseContent) -> bool:
+        """将文章向量化并写入 ChromaDB（embedding 为 CPU 重操作，经线程池卸载）。"""
+        return await asyncio.to_thread(self._locked, self._save_blocking, item)
+
+    def _save_blocking(self, item: BaseContent) -> bool:
         """
         将文章向量化并写入 ChromaDB。
 
@@ -282,6 +315,9 @@ class ChromaVectorStorage(BaseStorage):
     # ── CRUD ──────────────────────────────────────────────────────────────────
 
     async def get(self, id: str) -> Optional[Dict[str, Any]]:
+        return await asyncio.to_thread(self._locked, self._get_blocking, id)
+
+    def _get_blocking(self, id: str) -> Optional[Dict[str, Any]]:
         res = self.collection.get(where={"parent_id": id})
         if res and res["ids"]:
             return {"chunks_count": len(res["ids"]), "parent_id": id}
@@ -292,6 +328,9 @@ class ChromaVectorStorage(BaseStorage):
         return False
 
     async def delete(self, id: str) -> bool:
+        return await asyncio.to_thread(self._locked, self._delete_blocking, id)
+
+    def _delete_blocking(self, id: str) -> bool:
         try:
             self.collection.delete(where={"parent_id": id})
             self.logger.info(f"🗑️ 已删除文章 [{id}] 的所有向量 chunk")
@@ -308,6 +347,19 @@ class ChromaVectorStorage(BaseStorage):
                      publish_date_gte: str = None,
                      publish_date_lte: str = None,
                      days_ago: int = None) -> List[Dict[str, Any]]:
+        """语义检索（query 端 embedding 为 CPU 重操作，经线程池卸载）。"""
+        return await asyncio.to_thread(
+            self._locked, self._search_blocking,
+            query, n_results, content_type, source_id,
+            source_ids, publish_date_gte, publish_date_lte, days_ago,
+        )
+
+    def _search_blocking(self, query: str, n_results: int = 5,
+                         content_type: str = None, source_id: str = None,
+                         source_ids: Optional[List[str]] = None,
+                         publish_date_gte: str = None,
+                         publish_date_lte: str = None,
+                         days_ago: int = None) -> List[Dict[str, Any]]:
         """
         语义检索，支持 content_type / source_id / source_ids / publish_date 元数据过滤。
         source_ids 为来源白名单（如某用户订阅的源集合），与 source_id 取并集约束。
@@ -357,26 +409,32 @@ class ChromaVectorStorage(BaseStorage):
     # ── 统计与管理 ────────────────────────────────────────────────────────────
 
     async def count(self) -> int:
-        return self.collection.count()
+        return await asyncio.to_thread(self._locked, lambda: self.collection.count())
 
     # ── T12: Cross-encoder 重排序 ─────────────────────────────────────────────
 
     def _ensure_reranker(self):
         """Lazy-load cross-encoder model on first rerank call."""
         if self._reranker is None:
-            from sentence_transformers import CrossEncoder
-            self.logger.info(f"🔀 正在加载 Cross-Encoder 重排模型: {self._reranker_model}")
-            self._reranker = CrossEncoder(self._reranker_model)
-            self.logger.info(f"✅ Cross-Encoder 就绪")
+            with self._init_lock:
+                if self._reranker is None:
+                    from sentence_transformers import CrossEncoder
+                    self.logger.info(f"🔀 正在加载 Cross-Encoder 重排模型: {self._reranker_model}")
+                    self._reranker = CrossEncoder(self._reranker_model)
+                    self.logger.info(f"✅ Cross-Encoder 就绪")
         return self._reranker
 
-    def rerank(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def rerank(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         T12: 用 cross-encoder 对 bi-encoder 候选结果重打分，提升精确率。
         返回列表已按 rerank_score 降序排列；原 distance 字段保留供前端显示。
+        cross-encoder 推理为 CPU 重操作，经线程池卸载，避免冻结事件循环。
         """
         if not candidates:
             return candidates
+        return await asyncio.to_thread(self._rerank_blocking, query, candidates)
+
+    def _rerank_blocking(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         reranker = self._ensure_reranker()
         pairs = [(query, c["document"]) for c in candidates]
         scores = reranker.predict(pairs)
@@ -388,6 +446,12 @@ class ChromaVectorStorage(BaseStorage):
 
     async def expand_chunk(self, parent_id: str, chunk_index: int,
                            total_chunks: int) -> Dict[str, Optional[str]]:
+        return await asyncio.to_thread(
+            self._locked, self._expand_chunk_blocking, parent_id, chunk_index, total_chunks
+        )
+
+    def _expand_chunk_blocking(self, parent_id: str, chunk_index: int,
+                               total_chunks: int) -> Dict[str, Optional[str]]:
         """
         T13: 获取命中 chunk 的前后相邻 chunk 正文，用于上下文窗口扩展。
         返回 {"prev": str | None, "next": str | None}，已去除元数据头部。
@@ -412,16 +476,19 @@ class ChromaVectorStorage(BaseStorage):
         删除并重建 ChromaDB collection。
         换用新 embedding 模型后必须调用此方法，否则旧维度向量与新模型不兼容。
         调用后需重新向量化所有文章（POST /api/vector/reindex-all）。
+
+        在操作级锁内执行删除+重建，确保不与并发的 add/query/delete 撞同一 collection。
         """
-        # 强制初始化 client / embedding_fn，再删除并重建集合。
-        self._ensure_collection()
-        try:
-            self._client.delete_collection(self._collection_name)
-        except Exception:
-            pass
-        self._collection = self._client.get_or_create_collection(
-            name=self._collection_name,
-            embedding_function=self._embedding_fn,
-            metadata={"hnsw:space": "cosine"},
-        )
-        self.logger.info(f"🔄 向量集合已重建: {self._collection_name}")
+        with self._op_lock:
+            # 强制初始化 client / embedding_fn，再删除并重建集合。
+            self._ensure_collection()
+            try:
+                self._client.delete_collection(self._collection_name)
+            except Exception:
+                pass
+            self._collection = self._client.get_or_create_collection(
+                name=self._collection_name,
+                embedding_function=self._embedding_fn,
+                metadata={"hnsw:space": "cosine"},
+            )
+            self.logger.info(f"🔄 向量集合已重建: {self._collection_name}")

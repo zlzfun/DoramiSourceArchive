@@ -546,15 +546,40 @@ export async function ragSimilar(articleId, topK = 5) {
   return res.json();
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// 轮询后台任务直到终态；成功时 resolve 其 result（字段与旧同步接口一致），
+// 失败/超时抛错。让调用方（组件）的 await + success(data) 逻辑保持不变。
+async function pollJob(jobId, { intervalMs = 1500, timeoutMs = 60 * 60 * 1000, defaultError } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const res = await apiFetch(`${API_BASE_URL}/jobs/${jobId}`);
+    if (!res.ok) await handleApiError(res, defaultError || '任务状态查询失败');
+    const job = await res.json();
+    if (job.status === 'succeeded') return job.result || {};
+    if (job.status === 'failed') throw new Error(job.error || defaultError || '任务执行失败');
+    await sleep(intervalMs);
+  }
+  throw new Error('任务超时，请稍后在任务列表查看结果');
+}
+
 export async function vectorizeAllPending() {
   const res = await apiFetch(`${API_BASE_URL}/vectorize/all-pending`, { method: 'POST' });
   if (!res.ok) await handleApiError(res, '全量向量化失败');
-  return res.json();
+  const { job_id: jobId } = await res.json();
+  return pollJob(jobId, { defaultError: '全量向量化失败' });
 }
 
 export async function reindexAll() {
   const res = await apiFetch(`${API_BASE_URL}/vector/reindex-all`, { method: 'POST' });
   if (!res.ok) await handleApiError(res, '全量重索引失败');
+  const { job_id: jobId } = await res.json();
+  return pollJob(jobId, { defaultError: '全量重索引失败' });
+}
+
+export async function fetchBackgroundJob(jobId) {
+  const res = await apiFetch(`${API_BASE_URL}/jobs/${jobId}`);
+  if (!res.ok) await handleApiError(res, '任务状态查询失败');
   return res.json();
 }
 
