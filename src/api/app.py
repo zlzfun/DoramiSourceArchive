@@ -46,6 +46,8 @@ from models.content import BaseContent, SocialPostContent
 from fetchers.registry import fetcher_registry, DECOMMISSIONED_FETCHER_IDS
 from api.skill_router import router as skill_router
 from api import deps
+from api.serializers import serialize_user
+from api.routers import accounts as accounts_router
 from services import daily_brief as daily_brief_service
 from services import accounts as accounts_service
 from services import reader_ai as reader_ai_service
@@ -341,6 +343,8 @@ def require_vector_sink() -> ChromaVectorStorage:
 
 app.mount("/mcp", _mcp_gate)
 app.include_router(skill_router)
+# 阶段1：按域迁出的 Router（路径保持不变；鉴权仍由中间件统一强制）。
+app.include_router(accounts_router.router)
 
 scheduler = AsyncIOScheduler()
 COLLECTION_FETCH_CONCURRENCY = 4
@@ -368,22 +372,6 @@ class ChangePasswordParams(BaseModel):
 class AvatarUpdateParams(BaseModel):
     # data:image/* base64 URL；空字符串或 null 表示清除头像。
     avatar: Optional[str] = None
-
-
-class AccountCreateParams(BaseModel):
-    username: str
-    password: str
-    role: str = "user"
-
-
-class AccountUpdateParams(BaseModel):
-    role: Optional[str] = None
-    is_active: Optional[bool] = None
-    ai_beta_enabled: Optional[bool] = None
-
-
-class AccountResetPasswordParams(BaseModel):
-    new_password: str
 
 
 def _auth_cookie_secure() -> bool:
@@ -619,90 +607,10 @@ def update_own_avatar(params: AvatarUpdateParams, request: Request):
     return {"ok": True, "user": result}
 
 
-# ==================== 账户管理（仅 admin，中间件已强制 role==admin） ====================
-def _serialize_user(record: UserRecord) -> Dict[str, Any]:
-    return {
-        "username": record.username,
-        "role": record.role,
-        "avatar": record.avatar or None,
-        "is_active": record.is_active,
-        "ai_beta_enabled": record.ai_beta_enabled,
-        "last_login_at": record.last_login_at,
-        "ai_translate_count": record.ai_translate_count or 0,
-        "ai_ask_count": record.ai_ask_count or 0,
-        "ai_last_used_at": record.ai_last_used_at,
-        "created_at": record.created_at,
-        "updated_at": record.updated_at,
-    }
-
-
-@app.get("/api/accounts")
-def list_accounts():
-    with Session(db_sink.engine) as session:
-        return [_serialize_user(r) for r in accounts_service.list_users(session)]
-
-
-@app.post("/api/accounts")
-def create_account(params: AccountCreateParams):
-    with Session(db_sink.engine) as session:
-        try:
-            record = accounts_service.create_user(
-                session, params.username, params.password, params.role
-            )
-        except accounts_service.AccountError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        return _serialize_user(record)
-
-
-@app.put("/api/accounts/{username}")
-def update_account(username: str, params: AccountUpdateParams):
-    with Session(db_sink.engine) as session:
-        try:
-            if params.role is not None:
-                accounts_service.set_role(session, username, params.role)
-            if params.is_active is not None:
-                accounts_service.set_active(session, username, params.is_active)
-            if params.ai_beta_enabled is not None:
-                accounts_service.set_ai_beta_enabled(session, username, params.ai_beta_enabled)
-            record = accounts_service.get_user(session, username)
-            if record is None:
-                raise HTTPException(status_code=404, detail="账户不存在")
-        except accounts_service.AccountError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        return _serialize_user(record)
-
-
-@app.post("/api/accounts/{username}/reset-password")
-def reset_account_password(username: str, params: AccountResetPasswordParams):
-    if not params.new_password:
-        raise HTTPException(status_code=400, detail="新密码不能为空")
-    with Session(db_sink.engine) as session:
-        try:
-            record = accounts_service.set_password(session, username, params.new_password)
-        except accounts_service.AccountError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        return _serialize_user(record)
-
-
-@app.delete("/api/accounts/{username}")
-def delete_account(username: str):
-    with Session(db_sink.engine) as session:
-        try:
-            accounts_service.delete_user(session, username)
-        except accounts_service.AccountError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        # 清理该用户的订阅与聚合令牌，避免孤儿数据。
-        for sub in session.exec(
-            select(ReaderSubscriptionRecord).where(
-                ReaderSubscriptionRecord.owner_username == username
-            )
-        ).all():
-            session.delete(sub)
-        feed_token = session.get(ReaderFeedTokenRecord, username)
-        if feed_token is not None:
-            session.delete(feed_token)
-        session.commit()
-    return {"ok": True}
+# ==================== 账户管理（仅 admin） ====================
+# 账户管理端点已迁出至 api/routers/accounts.py（见 app.include_router）。
+# admin 网关仍由 require_admin_session 中间件统一强制（account_admin_required 命中 /api/accounts）。
+# 账户对外视图序列化迁至 api.serializers.serialize_user（与运维视图共享）。
 
 
 # ==================== 运维管理面板（仅 admin，中间件已强制 role==admin） ====================
@@ -794,7 +702,7 @@ def admin_list_accounts(days: int = 30):
         for record in accounts_service.list_users(session):
             if record.role == "admin":
                 continue
-            payload = _serialize_user(record)
+            payload = serialize_user(record)
             payload["subscription_count"] = sub_counts.get(record.username, 0)
             usage = usage_map.get(record.username, {"calls": 0, "total_tokens": 0})
             payload["window_days"] = days
