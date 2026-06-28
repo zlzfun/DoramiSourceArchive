@@ -161,6 +161,8 @@ from api.routers.collection import (
     serialize_collection_job,
     serialize_collection_job_run,
 )
+from api.routers import fetchers as fetchers_router
+from api.routers.fetchers import FetchBatchItem, FetchBatchParams
 from services import daily_brief as daily_brief_service
 from services import accounts as accounts_service
 from services import reader_ai as reader_ai_service
@@ -466,6 +468,7 @@ app.include_router(monitoring_router.router)
 app.include_router(source_configs_router.router)
 app.include_router(archive_sync_router.router)
 app.include_router(collection_router.router)
+app.include_router(fetchers_router.router)
 
 scheduler = AsyncIOScheduler()
 COLLECTION_FETCH_CONCURRENCY = 4
@@ -1170,15 +1173,7 @@ def reload_daily_brief_schedule():
 # SourceBuilder* 请求模型已迁出至 api/routers/ingest.py。
 
 
-class FetchBatchItem(BaseModel):
-    fetcher_id: str
-    params: Dict[str, Any] = PydanticField(default_factory=dict)
-
-
-class FetchBatchParams(BaseModel):
-    items: List[FetchBatchItem] = PydanticField(default_factory=list)
-
-
+# FetchBatchItem / FetchBatchParams 已迁至 api/routers/fetchers.py（下方 import re-export）。
 # SocialPostImport* 请求模型已迁出至 api/routers/ingest.py。
 
 
@@ -1597,53 +1592,11 @@ def ensure_default_subscriptions(username: str) -> None:
 
 # ==================== 2. 调度与抓取 (注册中心化) ====================
 
-@app.get("/api/fetchers")
-async def get_available_fetchers():
-    return fetcher_registry.get_all_metadata()
-
-
-# GET /api/source-health、/api/source-states、/api/fetch-runs/running-progress
-# 已迁至 api/routers/monitoring.py（见 app.include_router）。
-
-
-@app.post("/api/fetch/batch")
-async def trigger_fetch_batch(
-        params: FetchBatchParams,
-        test_limit: Optional[int] = None,
-):
-    items = [
-        {
-            "fetcher_id": item.fetcher_id,
-            "params": {**item.params, **test_run_overrides(test_limit)},
-        }
-        for item in params.items
-    ]
-    if not items:
-        raise HTTPException(status_code=400, detail="至少需要一个抓取节点")
-    return await run_collection_items(
-        items,
-        name="临时批量抓取",
-        trigger_type="manual",
-        run_scope="ad_hoc",
-    )
-
-
-@app.post("/api/fetch/{fetcher_id}")
-async def trigger_fetch_dynamic(
-        fetcher_id: str,
-        params: Dict[str, Any] = Body(...),
-        test_limit: Optional[int] = None,
-):
-    try:
-        return await run_single_fetch_as_collection(
-            fetcher_id,
-            {**params, **test_run_overrides(test_limit)},
-            name=f"临时抓取: {fetcher_id}",
-            trigger_type="manual",
-            run_scope="ad_hoc",
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+# 抓取器目录与即时触发 —— GET /api/fetchers、POST /api/fetch/batch、
+# POST /api/fetch/{fetcher_id}（含 FetchBatchItem/Params）已迁出至
+# api/routers/fetchers.py（抓取核心 run_collection_items/run_single_fetch_as_collection
+# 仍留守本文件，经其 _app() 调用。见 app.include_router）。
+# GET /api/source-health 等监控端点见 api/routers/monitoring.py。
 
 
 # ==================== LLM 配置 & 每日日报（collector/admin） ====================
