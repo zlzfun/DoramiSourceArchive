@@ -43,6 +43,12 @@ def get_vector_sink():
     return vector_sink
 
 
+def get_vector_sink_optional():
+    """向量库 sink，可能为 None（RAG 未启用）。供「向量化是可选副作用」的端点使用，
+    不抛 503——调用方自行判空（如文章删除时顺带清向量块）。"""
+    return _app().vector_sink
+
+
 def get_session() -> Iterator[Session]:
     """每请求一个 SQLModel Session 的生成器依赖，自动关闭。"""
     with Session(get_db_sink().engine) as session:

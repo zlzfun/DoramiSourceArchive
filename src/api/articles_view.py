@@ -151,6 +151,16 @@ def serialize_article_list_item(record: ArticleRecord, include_content: bool = T
     return item
 
 
+def article_recency_order(*prefix_ordering):
+    """Canonical newest-first ordering for cross-source archive views."""
+    return (
+        *prefix_ordering,
+        ArticleRecord.publish_date.desc(),
+        ArticleRecord.fetched_date.desc(),
+        ArticleRecord.id.desc(),
+    )
+
+
 def article_to_markdown(record: ArticleRecord) -> str:
     metadata = serialize_feed_article(record, include_content=False)["metadata"]
     frontmatter = json.dumps(metadata, ensure_ascii=False, indent=2)
