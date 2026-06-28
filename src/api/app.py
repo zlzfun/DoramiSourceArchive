@@ -45,6 +45,7 @@ from models.content import BaseContent, SocialPostContent
 # 引入动态抓取器注册中心
 from fetchers.registry import fetcher_registry, DECOMMISSIONED_FETCHER_IDS
 from api.skill_router import router as skill_router
+from api import deps
 from services import daily_brief as daily_brief_service
 from services import accounts as accounts_service
 from services import reader_ai as reader_ai_service
@@ -167,7 +168,11 @@ COLLECTOR_API_PREFIXES = (
     "/api/source-health",
     "/api/source-states",
     "/api/fetch-runs",
-    "/api/fetch/",
+    # 注意：必须是 "/api/fetch"（不带尾斜杠）。_path_matches 用 startswith(prefix + "/")，
+    # 若写成 "/api/fetch/" 会比对 "/api/fetch//"，导致 /api/fetch/{id}、/api/fetch/batch
+    # 永远匹配不到、漏过 collector 鉴权（受限 reader 可越权触发采集）。"/api/fetch" 既能
+    # 覆盖 /api/fetch/* 子路径，又不会误伤 /api/fetchers、/api/fetch-runs（它们各有独立条目）。
+    "/api/fetch",
     "/api/archive/export",
     "/api/source-configs",
     "/api/source-builder",
@@ -330,12 +335,9 @@ pipeline = DataPipeline(storages=[db_sink])
 
 
 def require_vector_sink() -> ChromaVectorStorage:
-    if vector_sink is None:
-        raise HTTPException(
-            status_code=503,
-            detail="RAG 功能未启用。请在 config/backend.ini 中设置 [rag] enabled = true 后重启后端。",
-        )
-    return vector_sink
+    # 委托给统一的依赖提供者（deps.get_vector_sink），保持单一实现；
+    # deps 动态读取 api.app.vector_sink，故测试 monkeypatch 仍生效。
+    return deps.get_vector_sink()
 
 app.mount("/mcp", _mcp_gate)
 app.include_router(skill_router)
