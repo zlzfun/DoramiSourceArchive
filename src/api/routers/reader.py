@@ -13,20 +13,33 @@
 import datetime
 import importlib
 import json
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlmodel import Session, func, select
 
 from api import deps
-from api.sources import _friendly_source_name, _registry_source_meta, subscription_source_ids
+from api.sources import (
+    DAILY_BRIEF_SOURCE_ID,
+    DAILY_BRIEF_SOURCE_META,
+    _friendly_source_name,
+    _registry_source_meta,
+    _source_category,
+    subscription_source_ids,
+)
+from fetchers.registry import DECOMMISSIONED_FETCHER_IDS
+from llm.client import LLMError, UsageMeta
 from models.db import (
     ArticleRecord,
     ReaderFavoriteRecord,
     ReaderFeedTokenRecord,
     ReaderSubscriptionRecord,
 )
+from services import accounts as accounts_service
+from services import daily_brief as daily_brief_service
 from services import reader_activity as reader_activity_service
+from services import reader_ai as reader_ai_service
 
 router = APIRouter(prefix="/api/reader", tags=["reader"])
 
@@ -260,3 +273,228 @@ def rotate_feed_token(request: Request, session: Session = Depends(deps.get_sess
     session.add(record)
     session.commit()
     return {"token": token, "token_preview": app.subscription_token_preview(token)}
+
+
+# ==================== 内容源目录 ====================
+
+@router.get("/sources")
+def get_reader_sources(request: Request, session: Session = Depends(deps.get_session)):
+    """读者层内容源目录：可订阅来源 = 所有已注册抓取源 ∪ 已归档来源 ∪ 已订阅来源。
+
+    即便某个源历史产出为 0，它仍会出现在目录里，用户可提前订阅以接收其后续产出。
+    """
+    app = _app()
+    username = app.current_username(request)
+    app.ensure_default_subscriptions(username)
+    registry_meta = _registry_source_meta()
+    rows = session.exec(
+        select(
+            ArticleRecord.source_id,
+            ArticleRecord.content_type,
+            func.count(ArticleRecord.id),
+            func.max(ArticleRecord.fetched_date),
+        )
+        .where(ArticleRecord.source_id.isnot(None))
+        .group_by(ArticleRecord.source_id, ArticleRecord.content_type)
+    ).all()
+    subscribed_ids = set(app.resolve_subscribed_source_ids(session, username))
+
+    by_source: Dict[str, Dict[str, Any]] = {}
+
+    def _ensure_entry(source_id: str, content_type: Optional[str] = None) -> Dict[str, Any]:
+        entry = by_source.get(source_id)
+        if entry is None:
+            meta = registry_meta.get(source_id, {})
+            if source_id == DAILY_BRIEF_SOURCE_ID:
+                meta = {**DAILY_BRIEF_SOURCE_META, **meta}
+            resolved_type = content_type or meta.get("content_type") or ""
+            entry = {
+                "source_id": source_id,
+                "name": meta.get("name") or _friendly_source_name(source_id, registry_meta),
+                "description": meta.get("desc", ""),
+                "icon": meta.get("icon", ""),
+                "source_owner": meta.get("source_owner", ""),
+                "source_brand": meta.get("source_brand", ""),
+                "source_scope": meta.get("source_scope", ""),
+                "source_channel": meta.get("source_channel", ""),
+                "provenance_tier": meta.get("provenance_tier", ""),
+                "base_url": meta.get("base_url", ""),
+                "content_tags": meta.get("content_tags", []),
+                "content_type": resolved_type,
+                "category": _source_category(resolved_type),
+                "count": 0,
+                "last_fetched": "",
+                "subscribed": source_id in subscribed_ids,
+                "registered": source_id in registry_meta,
+                "_primary_count": -1,
+            }
+            by_source[source_id] = entry
+        return entry
+
+    # 1. 所有已注册抓取源（含历史产出为 0 者，使新源可被提前订阅）。
+    for source_id in registry_meta:
+        _ensure_entry(source_id)
+
+    # 1b. 日报特殊源：即使尚未生成过日报也预先出现，便于提前订阅。
+    _ensure_entry(DAILY_BRIEF_SOURCE_ID, "daily_brief")
+
+    # 2. 叠加归档文章聚合（含未注册的导入源，如 social_post）；主 content_type 取计数最高者。
+    #    已下线节点（删类后仍留有历史归档）不再回流目录，除非当前用户已订阅（保留退订入口），
+    #    以保持读者层订阅目录与节点管理同步。
+    for source_id, content_type, count, last_fetched in rows:
+        if not source_id:
+            continue
+        if source_id in DECOMMISSIONED_FETCHER_IDS and source_id not in subscribed_ids:
+            continue
+        entry = _ensure_entry(source_id, content_type)
+        entry["count"] += int(count or 0)
+        if (last_fetched or "") > entry["last_fetched"]:
+            entry["last_fetched"] = last_fetched or ""
+        if int(count or 0) > entry["_primary_count"]:
+            entry["_primary_count"] = int(count or 0)
+            entry["content_type"] = content_type
+            entry["category"] = _source_category(content_type)
+
+    # 3. 已订阅但既未注册也无归档的来源也要出现，便于退订。
+    for source_id in subscribed_ids:
+        _ensure_entry(source_id)
+
+    sources = sorted(
+        ({k: v for k, v in entry.items() if k != "_primary_count"} for entry in by_source.values()),
+        key=lambda s: (s["category"], -s["count"], s["name"]),
+    )
+    return {
+        "sources": sources,
+        "subscribed_source_ids": sorted(subscribed_ids),
+        "total_sources": len(sources),
+    }
+
+
+# ==================== 阅读器 AI（用户面：翻译 / 问答）====================
+
+class ReaderTranslateParams(BaseModel):
+    article_id: str
+
+
+class ReaderChatTurn(BaseModel):
+    role: str  # user | assistant
+    content: str
+
+
+class ReaderAskParams(BaseModel):
+    question: str
+    scope: str = "article"  # article | subscription
+    article_id: Optional[str] = None
+    history: Optional[List[ReaderChatTurn]] = None  # 多轮对话历史（纯文本问答，不含参考资料）
+
+
+def _require_reader_ai(request: Request):
+    """校验当前账户的 AI Beta 已开启且 LLM 已配置，返回 (username, llm_config)；否则 403/401。"""
+    app = _app()
+    username = app.current_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="需要登录")
+    with Session(deps.get_db_sink().engine) as session:
+        if not accounts_service.ai_beta_global_enabled(session):
+            raise HTTPException(status_code=403, detail="AI 功能已临时关闭，请稍后再试")
+        record = accounts_service.get_user(session, username)
+        if record is None or not record.ai_beta_enabled:
+            raise HTTPException(status_code=403, detail="AI 功能尚未开启，请联系管理员")
+        llm_config = daily_brief_service.resolve_llm_config(session)
+    if not llm_config.configured:
+        raise HTTPException(status_code=403, detail="AI 服务暂未就绪")
+    return username, llm_config
+
+
+def _recent_subscribed_articles(username: str, limit: int) -> List[ArticleRecord]:
+    """取该用户订阅来源内、按抓取时间倒序的最近若干篇有正文的文章（RAG 关闭时的问答上下文）。"""
+    app = _app()
+    with Session(deps.get_db_sink().engine) as session:
+        source_ids = app.resolve_subscribed_source_ids(session, username)
+        if not source_ids:
+            return []
+        statement = (
+            select(ArticleRecord)
+            .where(
+                ArticleRecord.source_id.in_(source_ids),
+                ArticleRecord.has_content == True,  # noqa: E712
+            )
+            .order_by(ArticleRecord.fetched_date.desc())
+            .limit(limit)
+        )
+        return list(session.exec(statement).all())
+
+
+@router.post("/ai/translate")
+async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
+    """把指定文章正文译为简体中文（结果缓存复用）。"""
+    username, llm_config = _require_reader_ai(request)
+    db_sink = deps.get_db_sink()
+    try:
+        result = await reader_ai_service.translate_article(
+            db_sink, params.article_id, llm_config,
+            UsageMeta(purpose="translate", username=username),
+        )
+    except reader_ai_service.ReaderAIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=f"翻译失败：{exc}")
+    with Session(db_sink.engine) as session:
+        accounts_service.record_ai_usage(session, username, "translate")
+    return {"status": "success", **result}
+
+
+@router.post("/ai/ask")
+async def reader_ai_ask(params: ReaderAskParams, request: Request):
+    """基于当前文章或用户订阅文章回答提问。
+
+    三档上下文（graceful degrade）：
+      - scope=article：直接用该文正文（零 RAG 依赖）；
+      - scope=subscription 且 RAG 开启：走 /api/rag/context 语义召回（已自带订阅域硬隔离）；
+      - scope=subscription 且 RAG 关闭：取订阅来源最近 N 篇标题+截断正文拼成上下文。
+    """
+    app = _app()
+    username, llm_config = _require_reader_ai(request)
+    db_sink = deps.get_db_sink()
+    scope = params.scope if params.scope in ("article", "subscription") else "article"
+    context = ""
+    sources: List[Dict[str, Any]] = []
+
+    if scope == "article":
+        if not params.article_id:
+            raise HTTPException(status_code=400, detail="缺少文章标识")
+        record = await db_sink.get(params.article_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="文章不存在")
+        context = reader_ai_service.build_article_context(record.title, record.content or "")
+    else:
+        if app.settings.rag.enabled and app.vector_sink is not None:
+            rag_result = await app.rag_context(
+                app.RagContextQuery(query=params.question, top_k=6, max_chars=12000),
+                request,
+            )
+            context = rag_result.get("context_text", "")
+            sources = rag_result.get("sources", [])
+        else:
+            records = _recent_subscribed_articles(
+                username, reader_ai_service.LIST_MAX_ARTICLES
+            )
+            context = reader_ai_service.build_list_context(records)
+            sources = [
+                {"title": r.title, "source_id": r.source_id, "source_url": r.source_url}
+                for r in records
+            ]
+
+    history = [{"role": t.role, "content": t.content} for t in (params.history or [])]
+    try:
+        answer = await reader_ai_service.answer_question(
+            params.question, context, scope=scope, llm_config=llm_config, history=history,
+            usage_meta=UsageMeta(purpose="ask", username=username),
+        )
+    except reader_ai_service.ReaderAIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=f"提问失败：{exc}")
+    with Session(db_sink.engine) as session:
+        accounts_service.record_ai_usage(session, username, "ask")
+    return {"status": "success", "answer": answer, "sources": sources, "scope": scope}
