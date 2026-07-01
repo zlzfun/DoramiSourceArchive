@@ -94,6 +94,43 @@ def test_memory_db_skips_migration():
     ensure_migrated("sqlite:///:memory:")  # 不应抛错
 
 
+def test_reconcile_migration_restores_dropped_declared_indexes(tmp_path):
+    """模拟旧库缺索引：drop 掉声明索引并 stamp 基线，upgrade head 应把它们补回。"""
+    from alembic import command as alembic_command
+    from sqlalchemy import text
+
+    db_url = f"sqlite:///{tmp_path / 'legacy_idx.db'}"
+    DatabaseStorage(db_url=db_url)  # create_all：此时索引齐全
+
+    dropped = ["ix_articles_job_id", "ix_users_ai_beta_enabled", "ix_source_configs_source_owner"]
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            for name in dropped:
+                conn.execute(text(f"DROP INDEX {name}"))
+        with engine.connect() as conn:
+            before = {ix["name"] for ix in inspect(conn).get_indexes("articles")}
+        assert "ix_articles_job_id" not in before
+    finally:
+        engine.dispose()
+
+    # 老库采纳基线（跳过建表），再升级到含对账迁移的 head。
+    cfg = make_alembic_config(db_url)
+    alembic_command.stamp(cfg, BASELINE_REVISION)
+    alembic_command.upgrade(cfg, "head")
+
+    engine = create_engine(db_url)
+    try:
+        insp = inspect(engine)
+        all_idx = set()
+        for tbl in ("articles", "users", "source_configs"):
+            all_idx |= {ix["name"] for ix in insp.get_indexes(tbl)}
+        for name in dropped:
+            assert name in all_idx, f"对账迁移未补回声明索引 {name}"
+    finally:
+        engine.dispose()
+
+
 def test_baseline_revision_is_migration_root():
     from alembic.script import ScriptDirectory
 
