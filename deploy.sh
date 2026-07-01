@@ -447,6 +447,13 @@ fi
 
 mkdir -p logs
 
+# 数据库迁移（阶段 2 起 schema 变更走 Alembic）：ensure_migrated 对「有表无版本」的
+# 老库先 stamp 基线再 upgrade，避免裸 `alembic upgrade` 对已存在的表重跑建表而失败；
+# 全新库则从零建到最新。指向生产库（DORAMI_CONFIG_FILE），失败即终止部署（set -e）。
+echo "    Applying database migrations (alembic upgrade head)..."
+DORAMI_CONFIG_FILE="$CONFIG_FILE" PYTHONPATH=src "$VENV_DIR/bin/python" -c \
+    "from config import settings; from storage.migrations import ensure_migrated; ensure_migrated(settings.storage.database_url)"
+
 echo "[4/7] Building frontend..."
 cd frontend
 npm install --verbose --no-audit --no-fund --replace-registry-host=always

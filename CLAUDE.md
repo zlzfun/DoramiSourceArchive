@@ -16,6 +16,22 @@ python src/main.py
 # API docs available at http://127.0.0.1:8088/docs
 ```
 
+#### Database migrations (Alembic)
+
+Schema evolution is versioned via **Alembic** (`alembic/`, config `alembic.ini`). `alembic/env.py` uses `SQLModel.metadata` (import `models.db`) as the autogenerate target and reads the DB URL from `settings.storage.database_url` (unless a URL is injected programmatically — see `src/storage/migrations.py`). SQLite has no native `ALTER`, so `render_as_batch=True`.
+
+- **Runtime bootstrap is still `create_all()`** — `DatabaseStorage.__init__` builds tables from metadata for fresh/in-memory DBs (fast, and what the tests rely on). Alembic is the authoritative mechanism for **evolving existing file DBs** and CI/ops.
+- **The invariant that keeps the two in sync**: `create_all()` (== metadata) must always equal `alembic upgrade head`. `tests/test_migrations.py::test_upgrade_head_has_no_drift_from_metadata` enforces this — so **every model change needs a matching migration** (or the drift test fails). Author changes as: edit `models/db.py` → `alembic revision --autogenerate -m "..."` → review.
+- **Adopting Alembic on a legacy DB**: `storage.migrations.ensure_migrated(db_url)` handles "has tables but no `alembic_version`" by stamping the baseline (`5ee31a7c5393`) then `upgrade head` (avoids re-running baseline `create_table` on existing tables). `deploy.sh` calls it before starting the backend; run it manually for a dev DB.
+
+```bash
+.venv/bin/alembic upgrade head                       # apply migrations to the settings DB
+.venv/bin/alembic revision --autogenerate -m "desc"  # generate a migration from model changes
+.venv/bin/alembic check                              # report drift between models and the current DB
+```
+
+> Note: legacy DBs built by the old hand-written `_ensure_compatible_schema()` `ALTER TABLE ADD COLUMN` path are **missing the `index=True` indexes** those columns declare (raw ALTER never created them) — a real pre-existing drift that a follow-up migration repairs.
+
 ### Frontend (React + Vite + Tailwind CSS v4)
 
 ```bash
