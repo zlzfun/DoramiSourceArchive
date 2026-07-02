@@ -24,6 +24,7 @@ from sqlmodel import Session, select
 from api import deps
 from api.textutils import _json_dumps, _now_iso
 from models.db import SourceConfigRecord
+from services import jobs
 
 router = APIRouter(tags=["source-configs"])
 
@@ -330,17 +331,22 @@ async def fetch_active_rss_sources(
         params = build_source_fetch_params(record, body.params if body else {})
         items.append({"source_id": record.source_id, "fetcher_id": fetcher_id, "params": params})
 
-    result = await _app().run_collection_items(
-        items,
-        name="临时抓取: 活跃 RSS 数据源",
-        trigger_type="manual",
-        run_scope="ad_hoc",
-    )
-    results = skipped_results + [
-        {"source_id": item.get("source_id"), **item_result}
-        for item, item_result in zip(items, result["results"])
-    ]
-    return {**result, "results": results}
+    async def _work(bg) -> Dict[str, Any]:
+        result = await _app().run_collection_items(
+            items,
+            name="临时抓取: 活跃 RSS 数据源",
+            trigger_type="manual",
+            run_scope="ad_hoc",
+        )
+        results = skipped_results + [
+            {"source_id": item.get("source_id"), **item_result}
+            for item, item_result in zip(items, result["results"])
+        ]
+        return {**result, "results": results}
+
+    bg_job = jobs.launch(deps.get_db_sink().engine, "fetch_active_rss", _work,
+                         payload={"count": len(items)})
+    return {"status": "accepted", "job_id": bg_job.id}
 
 
 @router.post("/api/source-configs/fetch-active-web")
@@ -365,14 +371,19 @@ async def fetch_active_web_sources(
         params = build_source_fetch_params(record, body.params if body else {})
         items.append({"source_id": record.source_id, "fetcher_id": fetcher_id, "params": params})
 
-    result = await _app().run_collection_items(
-        items,
-        name="临时抓取: 活跃网页数据源",
-        trigger_type="manual",
-        run_scope="ad_hoc",
-    )
-    results = skipped_results + [
-        {"source_id": item.get("source_id"), **item_result}
-        for item, item_result in zip(items, result["results"])
-    ]
-    return {**result, "results": results}
+    async def _work(bg) -> Dict[str, Any]:
+        result = await _app().run_collection_items(
+            items,
+            name="临时抓取: 活跃网页数据源",
+            trigger_type="manual",
+            run_scope="ad_hoc",
+        )
+        results = skipped_results + [
+            {"source_id": item.get("source_id"), **item_result}
+            for item, item_result in zip(items, result["results"])
+        ]
+        return {**result, "results": results}
+
+    bg_job = jobs.launch(deps.get_db_sink().engine, "fetch_active_web", _work,
+                         payload={"count": len(items)})
+    return {"status": "accepted", "job_id": bg_job.id}

@@ -39,6 +39,7 @@ from models.db import (
     FetchTaskRecord,
     NodeGroupRecord,
 )
+from services import jobs
 
 router = APIRouter(tags=["collection"])
 
@@ -359,6 +360,11 @@ def delete_collection_job(job_id: int, session: Session = Depends(deps.get_sessi
 
 @router.post("/api/collection-jobs/{job_id}/run")
 async def run_collection_job_now(job_id: int, test_limit: Optional[int] = None, session: Session = Depends(deps.get_session)):
+    """触发采集任务：提交持久化后台任务并立即返回 job_id（不再占满长请求）。
+
+    校验/建节点同步完成（提前抛 4xx）；实际 run_collection_items 收进后台任务，前端轮询
+    GET /api/jobs/{job_id} 取聚合结果，细粒度进度仍走 GET /api/fetch-runs/running-progress。
+    """
     job = session.get(CollectionJobRecord, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="采集任务不存在")
@@ -368,14 +374,22 @@ async def run_collection_job_now(job_id: int, test_limit: Optional[int] = None, 
     job_name = job.name
     group_id = job.group_id
     items = apply_run_param_overrides(items, test_run_overrides(test_limit))
-    return await _app().run_collection_items(
-        items,
-        name=job_name,
-        trigger_type="manual",
-        job_id=job_id,
-        group_id=group_id,
-        run_scope="saved_job",
+
+    async def _work(bg) -> Dict[str, Any]:
+        return await _app().run_collection_items(
+            items,
+            name=job_name,
+            trigger_type="manual",
+            job_id=job_id,
+            group_id=group_id,
+            run_scope="saved_job",
+        )
+
+    bg_job = jobs.launch(
+        deps.get_db_sink().engine, "collection_job_run", _work,
+        payload={"job_id": job_id, "test_limit": test_limit},
     )
+    return {"status": "accepted", "job_id": bg_job.id}
 
 
 @router.post("/api/collection-jobs/migrate-legacy-tasks")

@@ -234,7 +234,7 @@ frontend/src/
 
 **Collection Jobs** (supersede legacy fetch-tasks; see *Collection Jobs* above)
 - `GET/POST/PUT/DELETE /api/collection-jobs` — savable, schedulable multi-node job CRUD
-- `POST /api/collection-jobs/{job_id}/run` — run a job now (writes an aggregating `CollectionJobRunRecord`)
+- `POST /api/collection-jobs/{job_id}/run` — submit a background job (阶段3) that runs the collection job (still writes an aggregating `CollectionJobRunRecord`); returns `{status, job_id}`, poll `GET /api/jobs/{job_id}` for the aggregate (validation 404/400 stays synchronous)
 - `POST /api/collection-jobs/migrate-legacy-tasks` — migrate legacy `FetchTaskRecord`s into jobs
 - `GET /api/collection-job-runs` + `GET /api/collection-job-runs/{job_run_id}` — job-level run history
 - `GET /api/fetch-runs/running-progress` — in-memory per-fetcher live progress
@@ -251,8 +251,8 @@ frontend/src/
 - `POST /api/source-configs/{source_id}/toggle` — enable/disable a source
 - `DELETE /api/source-configs/{source_id}` — delete a source config
 - `POST /api/source-configs/{source_id}/fetch` — trigger fetch for a specific source config
-- `POST /api/source-configs/fetch-active-rss` — trigger all active RSS source configs
-- `POST /api/source-configs/fetch-active-web` — trigger all active web/webpage source configs (via `generic_web`)
+- `POST /api/source-configs/fetch-active-rss` — trigger all active RSS source configs (阶段3: background job, returns `{status, job_id}`)
+- `POST /api/source-configs/fetch-active-web` — trigger all active web/webpage source configs (via `generic_web`; 阶段3: background job, returns `{status, job_id}`)
 
 **Source Builder** (AI node onboarding, collector-gated; frontend entry currently gated off — backend only)
 - `POST /api/source-builder/analyze` — body `{url}`; detect page type + analyze + (LLM) propose a `SourceConfigCreate`-shaped node config (+ sample-article detail `CrawlProfile`)

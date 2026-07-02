@@ -395,9 +395,12 @@ export async function deleteCollectionJob(id) {
 }
 
 export async function runCollectionJob(id, options = {}) {
+  // 采集任务运行已改为后台任务：提交拿 job_id，轮询 /api/jobs/{id} 取聚合结果。
+  // 细粒度进度仍由调用方轮询 /api/fetch-runs/running-progress 驱动，与此互补。
   const res = await apiFetch(`${API_BASE_URL}/collection-jobs/${id}/run${runQuery(options)}`, { method: 'POST' });
   if (!res.ok) await handleApiError(res, '触发采集任务失败');
-  return res.json();
+  const { job_id: jobId } = await res.json();
+  return pollJob(jobId, { defaultError: '触发采集任务失败' });
 }
 
 export async function fetchCollectionJobRuns(filters = {}, limit = 100) {
@@ -467,13 +470,15 @@ export async function fetchSourceConfigNow(sourceId, params = {}) {
 }
 
 export async function fetchActiveRssSources(params = {}) {
+  // 后台任务化：提交拿 job_id，轮询 /api/jobs/{id} 取聚合结果。
   const res = await apiFetch(`${API_BASE_URL}/source-configs/fetch-active-rss`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ params }),
   });
   if (!res.ok) await handleApiError(res, '批量触发 RSS 抓取失败');
-  return res.json();
+  const { job_id: jobId } = await res.json();
+  return pollJob(jobId, { defaultError: '批量触发 RSS 抓取失败' });
 }
 
 // ===== AI 自定义节点（URL → 分析 → 预览 → 固化）=====
