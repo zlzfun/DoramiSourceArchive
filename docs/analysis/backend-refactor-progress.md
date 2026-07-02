@@ -59,7 +59,7 @@
 | D2/D9 统一 jobs 状态机表 | ✅ | `a6997f8` | `JobRecord` + `services/jobs.py`（queued/running/succeeded/failed/cancelled）；进度节流落库；取代内存 background_jobs |
 | 迁移：vectorize/all-pending、reindex-all | ✅ | `a6997f8` | 走 `jobs.launch`，前端 pollJob 不变 |
 | 迁移：每日日报（手动生成） | ✅ | `6aa1382` | POST 返回 job_id；定时路径保持直连（非请求，已有自身 run 记录） |
-| 迁移：批量 fetch active sources、collection job run | ✅ | `<pending>` | collection-jobs/{id}/run + fetch-active-rss/web 走 jobs.launch，前端 pollJob；fetch/batch 与单节点 fetch/{id} 暂留同步 🟡 |
+| 迁移：批量 fetch active sources、collection job run | ✅ | `4f88b0b` | collection-jobs/{id}/run + fetch-active-rss/web 走 jobs.launch，前端 pollJob；fetch/batch 与单节点 fetch/{id} 暂留同步 🟡 |
 | D9 进度持久化（pipeline/progress.py + 日报 _PROGRESS → DB） | ⬜ **← 下一增量** | — | 目前仍内存态、重启即丢、多实例不可见 |
 | D9 scheduler/worker 与 API 进程分离 + DB 锁防重复调度 | ⬜ | — | 多实例铺路 |
 
@@ -80,7 +80,7 @@
 
 | 提交 | 阶段 | 摘要 |
 |---|---|---|
-| `<本提交>` | 3 | 批量 fetch active + collection job run 迁上 jobs |
+| `4f88b0b` | 3 | 批量 fetch active + collection job run 迁上 jobs |
 | `d4e94e5` | docs | 逐项进度追踪活文档 + 计划交叉链接 |
 | `6aa1382` | 3 | 手动日报生成迁上持久化 jobs |
 | `a6997f8` | 3 | 持久化 jobs 状态机替代内存 background_jobs |
