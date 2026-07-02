@@ -658,13 +658,16 @@ export async function getDailyBriefProgress() {
 }
 
 export async function generateDailyBrief(payload = {}) {
+  // 生成已改为后台任务：提交拿 job_id，再轮询 /api/jobs/{id} 取最终结果（result）。
+  // 细粒度阶段动画仍由调用方轮询 /api/daily-brief/progress 驱动，与此互补。
   const res = await apiFetch(`${API_BASE_URL}/daily-brief/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   if (!res.ok) await handleApiError(res, '生成日报失败');
-  return res.json();
+  const { job_id: jobId } = await res.json();
+  return pollJob(jobId, { defaultError: '生成日报失败' });
 }
 
 export async function exportArchiveArticles(filters = {}) {

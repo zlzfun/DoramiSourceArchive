@@ -79,3 +79,67 @@ def test_llm_config_denied_for_reader(monkeypatch, tmp_path):
         _login(client, "user", "user")
         assert client.get("/api/llm/config").status_code == 403
         assert client.post("/api/daily-brief/config", json={"enabled": True}).status_code == 403
+
+
+def _poll_job(client, job_id, tries=200):
+    for _ in range(tries):
+        body = client.get(f"/api/jobs/{job_id}").json()
+        if body["status"] in ("succeeded", "failed"):
+            return body
+    raise AssertionError("任务未到达终态")
+
+
+def test_generate_submits_background_job_and_returns_result(monkeypatch, tmp_path):
+    """生成改为后台任务：POST 返回 job_id，轮询 /api/jobs/{id} 得 succeeded + result。"""
+    app_module = _setup(monkeypatch, tmp_path)
+    from services import daily_brief as daily_brief_service
+
+    captured = {}
+
+    async def fake_generate(**kwargs):
+        captured.update(kwargs)
+        return {"status": "empty", "report_date": "2026-07-02", "articles_count": 0}
+
+    monkeypatch.setattr(daily_brief_service, "generate_daily_brief", fake_generate)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        resp = client.post("/api/daily-brief/generate", json={})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "accepted"
+        job_id = resp.json()["job_id"]
+
+        done = _poll_job(client, job_id)
+        assert done["status"] == "succeeded", done
+        assert done["result"]["report_date"] == "2026-07-02"
+        # 触发者被归因给当前 admin
+        assert captured["triggered_by"] == "admin"
+        assert captured["trigger"] == "manual"
+
+
+def test_generate_job_records_failure(monkeypatch, tmp_path):
+    """生成内部抛错 → 后台任务记为 failed，错误进 job.error。"""
+    app_module = _setup(monkeypatch, tmp_path)
+    from services import daily_brief as daily_brief_service
+    from llm.client import LLMNotConfigured
+
+    async def fake_generate(**kwargs):
+        raise LLMNotConfigured("未配置模型")
+
+    monkeypatch.setattr(daily_brief_service, "generate_daily_brief", fake_generate)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        job_id = client.post("/api/daily-brief/generate", json={}).json()["job_id"]
+        done = _poll_job(client, job_id)
+        assert done["status"] == "failed"
+        assert "未配置模型" in (done["error"] or "")
+
+
+def test_generate_rejects_bad_top_n_synchronously(monkeypatch, tmp_path):
+    """top_n 越界仍在提交前同步 400，不落任务。"""
+    app_module = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        resp = client.post("/api/daily-brief/generate", json={"top_n": 999999})
+        assert resp.status_code == 400

@@ -168,7 +168,11 @@ def set_daily_brief_config(payload: DailyBriefConfigUpdate, session: Session = D
 async def generate_daily_brief_endpoint(
     request: Request, payload: Optional[DailyBriefGenerateParams] = None
 ):
-    """手动触发日报生成（同步等待，耗时数十秒到数分钟）。"""
+    """手动触发日报生成：提交持久化后台任务并立即返回 job_id（不再占满长请求）。
+
+    生成耗时数十秒到数分钟。前端轮询 GET /api/jobs/{job_id} 取终态与结果，细粒度阶段
+    动画仍走内存态 GET /api/daily-brief/progress（_PROGRESS 由 generate 内部逐阶段上报）。
+    """
     app = _app()
     params = payload or DailyBriefGenerateParams()
     if params.top_n is not None and not (
@@ -178,27 +182,39 @@ async def generate_daily_brief_endpoint(
             status_code=400,
             detail=f"精选条数需在 {daily_brief_service.TOP_N_MIN}–{daily_brief_service.TOP_N_MAX} 之间",
         )
-    try:
-        result = await daily_brief_service.generate_daily_brief(
-            storage=deps.get_db_sink(),
-            report_date=params.report_date,
-            trigger="manual",
-            triggered_by=app.current_username(request) or None,
-            dry_run=params.dry_run,
-            top_n=params.top_n,
-        )
-    except LLMNotConfigured as exc:
-        daily_brief_service.set_progress("error", str(exc))
-        raise HTTPException(status_code=400, detail=str(exc))
-    except LLMError as exc:
-        daily_brief_service.set_progress("error", f"生成失败: {exc}")
-        raise HTTPException(status_code=502, detail=f"日报生成失败: {exc}")
-    except Exception as exc:  # noqa: BLE001 兜底：让进度反映失败，再抛出
-        daily_brief_service.set_progress("error", f"生成失败: {exc}")
-        raise
-    if not params.dry_run and result.get("article_id"):
-        await app.auto_vectorize_after_fetch([result["article_id"]])
-    return result
+    db_sink = deps.get_db_sink()
+    triggered_by = app.current_username(request) or None
+
+    async def _work(job) -> Dict[str, Any]:
+        try:
+            result = await daily_brief_service.generate_daily_brief(
+                storage=db_sink,
+                report_date=params.report_date,
+                trigger="manual",
+                triggered_by=triggered_by,
+                dry_run=params.dry_run,
+                top_n=params.top_n,
+            )
+        except LLMNotConfigured as exc:
+            daily_brief_service.set_progress("error", str(exc))
+            raise
+        except LLMError as exc:
+            daily_brief_service.set_progress("error", f"生成失败: {exc}")
+            raise
+        except Exception as exc:  # noqa: BLE001 兜底：让进度反映失败，再抛出（记入 job.error）
+            daily_brief_service.set_progress("error", f"生成失败: {exc}")
+            raise
+        if not params.dry_run and result.get("article_id"):
+            await app.auto_vectorize_after_fetch([result["article_id"]])
+        return result
+
+    from services import jobs
+    job = jobs.launch(
+        db_sink.engine, "daily_brief", _work,
+        created_by=triggered_by,
+        payload={"trigger": "manual", "dry_run": params.dry_run, "report_date": params.report_date},
+    )
+    return {"status": "accepted", "job_id": job.id}
 
 
 @router.get("/api/daily-brief/runs")
