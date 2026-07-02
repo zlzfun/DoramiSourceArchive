@@ -322,6 +322,24 @@ async def get_vector_stats():
     return {"total_vectors": count}
 
 
+@router.get("/api/vector/reconcile")
+async def reconcile_vector_report():
+    """SQLite↔Chroma 对账（只读报告，不修复）：列出两侧向量化状态漂移。"""
+    vs = deps.get_vector_sink()
+    db_sink = deps.get_db_sink()
+    from services import vector_reconcile
+    return await vector_reconcile.reconcile(db_sink, vs, repair=False)
+
+
+@router.post("/api/vector/reconcile")
+async def reconcile_vector_repair():
+    """SQLite↔Chroma 对账并修复：复位丢索引标记、采纳孤立标记、清除孤儿 chunk。"""
+    vs = deps.get_vector_sink()
+    db_sink = deps.get_db_sink()
+    from services import vector_reconcile
+    return await vector_reconcile.reconcile(db_sink, vs, repair=True)
+
+
 @router.delete("/api/vector/{article_id:path}")
 async def delete_vector_only(article_id: str):
     vs = deps.get_vector_sink()

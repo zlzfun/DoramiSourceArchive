@@ -411,6 +411,22 @@ class ChromaVectorStorage(BaseStorage):
     async def count(self) -> int:
         return await asyncio.to_thread(self._locked, lambda: self.collection.count())
 
+    async def list_parent_ids(self) -> set:
+        """返回集合中实际存在的全部去重 parent_id（供 SQLite↔Chroma 对账）。
+
+        一篇文章在 Chroma 中是若干 chunk，每个 chunk 的 metadata 带同一 parent_id
+        （= ArticleRecord.id）。这里只取 metadatas 里的 parent_id 去重，不拉 documents/
+        embeddings，尽量轻量。"""
+        return await asyncio.to_thread(self._locked, self._list_parent_ids_blocking)
+
+    def _list_parent_ids_blocking(self) -> set:
+        res = self.collection.get(include=["metadatas"])
+        return {
+            metadata["parent_id"]
+            for metadata in (res.get("metadatas") or [])
+            if metadata and metadata.get("parent_id")
+        }
+
     # ── T12: Cross-encoder 重排序 ─────────────────────────────────────────────
 
     def _ensure_reranker(self):
