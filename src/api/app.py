@@ -169,7 +169,7 @@ from services import reader_ai as reader_ai_service
 from services import ai_usage as ai_usage_service
 from services import reader_activity as reader_activity_service
 from services import content_analytics as content_analytics_service
-from services import background_jobs
+from services import jobs as jobs_service
 from llm.client import LLMNotConfigured, LLMError, UsageMeta, ping as llm_ping
 from llm.client import set_usage_recorder as _set_llm_usage_recorder
 
@@ -1613,10 +1613,10 @@ def ensure_default_subscriptions(username: str) -> None:
 @app.get("/api/jobs/{job_id}")
 async def get_background_job(job_id: str):
     """查询后台任务状态/进度/结果（向量化、重索引等长任务）。"""
-    job = background_jobs.get_job(job_id)
+    job = jobs_service.get_job(db_sink.engine, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="任务不存在或已过期")
-    return job.to_dict()
+    return job
 
 
 # ==================== 4. 定时任务 ====================

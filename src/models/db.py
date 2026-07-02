@@ -240,6 +240,29 @@ class AppSettingRecord(SQLModel, table=True):
     value: str = ""
 
 
+class JobRecord(SQLModel, table=True):
+    """持久化后台任务状态机（阶段3）：取代进程内内存态 background_jobs。
+
+    长任务（全量向量化、全量重索引、日报、批量抓取等）提交后立即返回 job_id，
+    执行状态/进度/结果落库，从而重启不丢、可跨进程查询、为多实例与 worker 拆分铺路。
+    时间戳沿用 epoch 浮点（与旧 to_dict 契约一致，前端轮询无感切换）。
+    """
+    __tablename__ = "jobs"
+
+    id: str = Field(primary_key=True, description="任务 ID（uuid hex）")
+    type: str = Field(index=True, description="任务类型，如 vectorize_all_pending/reindex_all")
+    status: str = Field(default="queued", index=True, description="queued/running/succeeded/failed/cancelled")
+    total: Optional[int] = Field(default=None, description="总步数，未知则空")
+    processed: int = Field(default=0, description="已处理步数")
+    payload_json: str = Field(default="{}", description="提交时的入参快照 JSON")
+    result_json: Optional[str] = Field(default=None, description="成功结果 JSON")
+    error: Optional[str] = Field(default=None, description="失败原因摘要")
+    created_by: Optional[str] = Field(default=None, index=True, description="触发账户；系统任务为空")
+    created_at: float = Field(index=True, description="创建时间 epoch 秒")
+    started_at: Optional[float] = Field(default=None, description="开始执行时间 epoch 秒")
+    ended_at: Optional[float] = Field(default=None, description="终态时间 epoch 秒")
+
+
 class AiUsageRecord(SQLModel, table=True):
     """AI 用量按天聚合：一行 = 某天某用户某用途某模型的累计调用与 token 消耗。
 

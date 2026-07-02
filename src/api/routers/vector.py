@@ -28,7 +28,7 @@ from api.articles_view import _record_to_content
 from api.feed_service import resolve_subscribed_source_ids
 from api.schemas import BatchOpParams
 from models.db import AppSettingRecord, ArticleRecord
-from services import background_jobs
+from services import jobs
 
 router = APIRouter(tags=["vector"])
 
@@ -70,7 +70,7 @@ async def vectorize_all_pending():
         ).all()
     pending_ids = [record.id for record in records]
 
-    async def _work(job: background_jobs.Job) -> Dict[str, Any]:
+    async def _work(job: jobs.Job) -> Dict[str, Any]:
         job.set_total(len(pending_ids))
         success_count = 0
         for article_id in pending_ids:
@@ -82,7 +82,8 @@ async def vectorize_all_pending():
             job.advance()
         return {"count": success_count, "total_pending": len(pending_ids)}
 
-    job = background_jobs.launch("vectorize_all_pending", _work)
+    job = jobs.launch(db_sink.engine, "vectorize_all_pending", _work,
+                      payload={"total_pending": len(pending_ids)})
     return {"status": "accepted", "job_id": job.id, "total_pending": len(pending_ids)}
 
 
@@ -555,7 +556,7 @@ async def reindex_all_articles():
     vs = deps.get_vector_sink()
     db_sink = deps.get_db_sink()
 
-    async def _work(job: background_jobs.Job) -> Dict[str, Any]:
+    async def _work(job: jobs.Job) -> Dict[str, Any]:
         # 重建集合为同步重操作，卸载到线程池避免阻塞事件循环。
         await asyncio.to_thread(vs.rebuild_collection)
 
@@ -573,5 +574,5 @@ async def reindex_all_articles():
             job.advance()
         return {"total_reindexed": success_count, "total_articles": len(article_ids)}
 
-    job = background_jobs.launch("reindex_all", _work)
+    job = jobs.launch(db_sink.engine, "reindex_all", _work)
     return {"status": "accepted", "job_id": job.id}
