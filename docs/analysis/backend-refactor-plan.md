@@ -2,6 +2,7 @@
 
 > 性质：**重构路线**（分阶段执行计划），非现状诊断。
 > 配套文档：现状诊断见 [`backend-architecture-review.md`](./backend-architecture-review.md)。本文是其行动方案。
+> **逐项进度追踪见 [`backend-refactor-progress.md`](./backend-refactor-progress.md)（活文档，每增量更新状态与提交映射）。**
 > 评估对象：`src/` 后端。日期：2026-06-28。
 > 来源：两轮独立架构检视的合并结论（Claude 会话 + Codex），并经代码核实带 `file:line` 锚点。
 
