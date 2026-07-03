@@ -2584,6 +2584,23 @@ input[type="radio"] {
     box-shadow: 0 6px 16px rgba(91, 84, 232, 0.28);
   }
 
+  /* 细粒度索引状态：失败(rose)/陈旧(amber) 的静息色，覆盖 pending 的中性色；
+     交互与 hover 仍复用 .vector-status-pending（可点击重建）。 */
+  .vector-status-failed {
+    background: #fef2f2;
+    color: #b91c1c;
+  }
+
+  .vector-status-stale {
+    background: #fffbeb;
+    color: #b45309;
+  }
+
+  .vector-status-indexing {
+    background: #eff6ff;
+    color: #1d4ed8;
+  }
+
   .vector-status-hover {
     display: none;
   }
@@ -5662,6 +5679,9 @@ input[type="radio"] {
 [data-theme="dark"] .action-button-success { background: rgba(16, 185, 129, 0.13); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.3); }
 [data-theme="dark"] .action-button-success:hover { background: rgba(16, 185, 129, 0.22); }
 [data-theme="dark"] .vector-status-done { background: rgba(16, 185, 129, 0.13); color: #6ee7b7; }
+[data-theme="dark"] .vector-status-failed { background: rgba(248, 113, 113, 0.13); color: #fca5a5; }
+[data-theme="dark"] .vector-status-stale { background: rgba(245, 158, 11, 0.14); color: #fcd34d; }
+[data-theme="dark"] .vector-status-indexing { background: rgba(59, 130, 246, 0.14); color: #93c5fd; }
 [data-theme="dark"] .source-health-healthy { color: #6ee7b7; }
 [data-theme="dark"] .source-health-failing { color: #fca5a5; }
 [data-theme="dark"] .source-health-running { color: #fcd34d; }

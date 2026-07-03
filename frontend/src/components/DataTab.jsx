@@ -58,7 +58,7 @@ export default function DataTab({
   const [filters, setFilters] = useState({
     content_type: '',
     source_id: '',
-    is_vectorized: '',
+    index_status: '',
     search: '',
     publish_date_start: '',
     publish_date_end: '',
@@ -104,7 +104,7 @@ export default function DataTab({
 
   const advancedCount = [
     filters.content_type,
-    filters.is_vectorized,
+    filters.index_status,
     filters.publish_date_start || filters.publish_date_end,
     filters.fetched_date_start || filters.fetched_date_end,
   ].filter(Boolean).length;
@@ -118,7 +118,7 @@ export default function DataTab({
   const activeFilterKey = [
     filters.content_type,
     filters.source_id,
-    filters.is_vectorized,
+    filters.index_status,
     filters.publish_date_start,
     filters.publish_date_end,
     filters.fetched_date_start,
@@ -215,7 +215,7 @@ export default function DataTab({
       ...prev,
       content_type: '',
       source_id: pendingFilter.source_id ?? prev.source_id,
-      is_vectorized: '',
+      index_status: '',
       search: '',
       publish_date_start: '',
       publish_date_end: '',
@@ -238,7 +238,9 @@ export default function DataTab({
 
   // 当前生效筛选（用于「当前筛选」条的可移除胶囊）。键控筛选清除后由 activeFilterKey effect 自动重载；
   // 仅搜索是提交式，需额外触发 searchReloadTick。
-  const VECTOR_STATUS_LABELS = { true: '向量已构建', false: '向量未构建' };
+  const VECTOR_STATUS_LABELS = {
+    indexed: '向量已构建', pending: '待索引', indexing: '构建中', failed: '构建失败', stale: '待重建',
+  };
   const dateRangeText = (start, end) => `${start || '…'} ~ ${end || '…'}`;
   const activeFilterItems = [];
   if (filters.search) {
@@ -259,10 +261,10 @@ export default function DataTab({
       onRemove: () => setFilters(prev => ({ ...prev, content_type: '' })),
     });
   }
-  if (filters.is_vectorized) {
+  if (filters.index_status) {
     activeFilterItems.push({
-      key: 'vector', label: '向量状态', value: VECTOR_STATUS_LABELS[filters.is_vectorized] || filters.is_vectorized,
-      onRemove: () => setFilters(prev => ({ ...prev, is_vectorized: '' })),
+      key: 'vector', label: '向量状态', value: VECTOR_STATUS_LABELS[filters.index_status] || filters.index_status,
+      onRemove: () => setFilters(prev => ({ ...prev, index_status: '' })),
     });
   }
   if (filters.publish_date_start || filters.publish_date_end) {
@@ -280,13 +282,13 @@ export default function DataTab({
 
   const clearAllFilters = () => {
     const hadOnlySearch = Boolean(filters.search) && !(
-      filters.source_id || filters.content_type || filters.is_vectorized
+      filters.source_id || filters.content_type || filters.index_status
       || filters.publish_date_start || filters.publish_date_end
       || filters.fetched_date_start || filters.fetched_date_end
     );
     setFilters(prev => ({
       ...prev,
-      content_type: '', source_id: '', is_vectorized: '', search: '',
+      content_type: '', source_id: '', index_status: '', search: '',
       publish_date_start: '', publish_date_end: '', fetched_date_start: '', fetched_date_end: '',
     }));
     // 仅搜索生效时键控筛选无变化，需手动重载；否则 activeFilterKey effect 会用清空后的值重载（含搜索）。
@@ -474,10 +476,13 @@ export default function DataTab({
               {canManageArticles && ragEnabled && (
                 <div className="field-box">
                   <span>向量状态</span>
-                  <select value={filters.is_vectorized} onChange={e => setFilters({ ...filters, is_vectorized: e.target.value })}>
+                  <select value={filters.index_status} onChange={e => setFilters({ ...filters, index_status: e.target.value })}>
                     <option value="">全部状态</option>
-                    <option value="true">向量已构建</option>
-                    <option value="false">向量未构建</option>
+                    <option value="indexed">向量已构建</option>
+                    <option value="pending">待索引</option>
+                    <option value="indexing">构建中</option>
+                    <option value="failed">构建失败</option>
+                    <option value="stale">待重建</option>
                   </select>
                 </div>
               )}
@@ -577,18 +582,30 @@ export default function DataTab({
                 <td className="px-3 py-4 text-slate-500 text-xs font-mono">{article.fetched_date?.replace('T', ' ').substring(0, 16) || '-'}</td>
                 {canManageArticles && ragEnabled && (
                   <td className="px-3 py-4">
-                    {article.is_vectorized ? (
-                      <span className="vector-status vector-status-done">
-                        <CheckCircle className="vector-status-icon" strokeWidth={2.35} />
-                        <span className="vector-status-label">向量已构建</span>
-                      </span>
-                    ) : (
-                      <button onClick={() => handleVectorize(article.id)} disabled={vectorizingId === article.id} className="vector-status vector-status-pending group">
-                        {vectorizingId === article.id ? <RefreshCw className="vector-status-icon animate-spin" strokeWidth={2.35} /> : <Zap className="vector-status-icon" strokeWidth={2.35} />}
-                        <span className="vector-status-label vector-status-default">{vectorizingId === article.id ? '构建中' : '向量未构建'}</span>
-                        <span className="vector-status-label vector-status-hover">{vectorizingId === article.id ? '构建中' : '构建向量'}</span>
-                      </button>
-                    )}
+                    {(() => {
+                      // index_status 优先；缺省回退到旧布尔位（向后兼容）。
+                      const status = article.index_status || (article.is_vectorized ? 'indexed' : 'pending');
+                      const busy = vectorizingId === article.id || status === 'indexing';
+                      if (status === 'indexed') {
+                        return (
+                          <span className="vector-status vector-status-done">
+                            <CheckCircle className="vector-status-icon" strokeWidth={2.35} />
+                            <span className="vector-status-label">向量已构建</span>
+                          </span>
+                        );
+                      }
+                      // 待索引/失败/陈旧/索引中：可点击（重）构建；失败/陈旧带语义色。
+                      const restModifier = busy ? '' : { failed: ' vector-status-failed', stale: ' vector-status-stale' }[status] || '';
+                      const restLabel = busy ? '构建中' : VECTOR_STATUS_LABELS[status] || '待索引';
+                      const hoverLabel = status === 'failed' ? '重试构建' : (status === 'stale' ? '重建向量' : '构建向量');
+                      return (
+                        <button onClick={() => handleVectorize(article.id)} disabled={busy} className={`vector-status vector-status-pending${restModifier} group`}>
+                          {busy ? <RefreshCw className="vector-status-icon animate-spin" strokeWidth={2.35} /> : <Zap className="vector-status-icon" strokeWidth={2.35} />}
+                          <span className="vector-status-label vector-status-default">{restLabel}</span>
+                          <span className="vector-status-label vector-status-hover">{busy ? '构建中' : hoverLabel}</span>
+                        </button>
+                      );
+                    })()}
                   </td>
                 )}
               </tr>
