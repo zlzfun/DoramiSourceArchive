@@ -19,10 +19,11 @@ from fastapi import Request
 from api.textutils import _coerce_bool
 from config import settings
 
-# 账户已迁移到数据库托管；AUTH_SECRET 仍用于会话 token 与订阅/聚合令牌的 HMAC 签名，
-# 保持原推导以兼容历史已签发的令牌（缺省时从首启播种配置 + 数据库 URL 派生）。
+# AUTH_SECRET 用于会话 token 与订阅/聚合令牌的 HMAC 签名。
+# 安全硬化（阶段4 D10）：显式 [auth] secret 优先；缺省时回退到**不含口令**的本地派生
+# （仅数据库 URL + 固定盐，不再掺入 admin_users/user_users 明文口令）。生产环境由
+# api.security_checks 在启动时强制要求显式设置 secret（否则拒绝启动）。
 AUTH_SECRET = settings.auth.secret or (
-    f"{settings.auth.admin_users}:{settings.auth.user_users}:"
     f"{settings.storage.database_url}:dorami-auth-v2"
 )
 

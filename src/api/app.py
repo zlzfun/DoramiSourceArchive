@@ -44,6 +44,7 @@ from models.content import BaseContent
 from fetchers.registry import fetcher_registry, DECOMMISSIONED_FETCHER_IDS
 from api.skill_router import router as skill_router
 from api import deps
+from api.security_checks import enforce_security_config
 from api.serializers import serialize_user
 from api.textutils import (
     _split_csv, _date_end_value, _now_iso, _json_loads, _json_dumps, _coerce_bool,
@@ -364,6 +365,10 @@ def account_admin_required(path: str) -> bool:
 async def lifespan(app: FastAPI):
     global _mcp_enabled
     print(f"🧭 Dorami runtime role: {runtime_role()}")
+
+    # 安全配置校验（阶段4 D10）：生产姿态下关键漏配（secret 未设/占位、CORS 不安全组合）
+    # 拒绝启动；开发姿态仅告警。
+    enforce_security_config(settings)
 
     mcp = None
     if runtime_reader_enabled():
