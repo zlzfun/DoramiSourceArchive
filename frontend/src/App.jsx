@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import {
   BarChart2,
   BookOpen,
@@ -15,18 +15,31 @@ import {
   Sun,
 } from 'lucide-react';
 import Toast from './components/Toast';
-import DataTab from './components/DataTab';
-import FetchTab from './components/FetchTab';
-import VectorTab from './components/VectorTab';
-import FetchRunsTab from './components/FetchRunsTab';
-import MCPTab from './components/MCPTab';
-import AdminOpsTab from './components/AdminOpsTab';
-import ReaderTab from './components/ReaderTab';
 import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
 import BrandLogoImage from './components/BrandLogoImage';
 import { useTheme } from './theme';
 import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
+
+// Tab 组件按路由惰性加载：各自独立 chunk，登录页与读者态不再下载用不到的重依赖
+// （AdminOpsTab→recharts、ReaderTab/MCPTab→react-markdown）。每个 Tab 挂在独立
+// Suspense 边界内，故加载新 Tab 不会波及已挂载 Tab（避免切换时整屏闪 fallback）。
+const DataTab = lazy(() => import('./components/DataTab'));
+const FetchTab = lazy(() => import('./components/FetchTab'));
+const VectorTab = lazy(() => import('./components/VectorTab'));
+const FetchRunsTab = lazy(() => import('./components/FetchRunsTab'));
+const MCPTab = lazy(() => import('./components/MCPTab'));
+const AdminOpsTab = lazy(() => import('./components/AdminOpsTab'));
+const ReaderTab = lazy(() => import('./components/ReaderTab'));
+
+// Tab chunk 加载期的占位（与顶层 checking-state 同语汇，克制不喧宾夺主）。
+function TabFallback() {
+  return (
+    <div className="flex min-h-[40vh] items-center justify-center">
+      <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
+    </div>
+  );
+}
 
 // ── 导航 / 历史锚点 ──
 // 把「标签 + 子视图」镜像到 URL hash（#/fetch/groups），跨页跳转的聚焦上下文存在 history.state 里。
@@ -34,6 +47,18 @@ import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAd
 const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'vector', 'mcp', 'admin'];
 const TAB_DEFAULT_VIEW = { fetch: 'catalog', runs: 'jobs' };
 const SUBVIEW_TABS = new Set(['fetch', 'runs']);
+
+// 运行能力的非乐观初始/重置值：能力未知（未登录 / 登出 / 会话过期）时按「都未启用」，
+// 避免在 fetchRuntimeInfo 返回前把 collector 界面闪给读者。初始化与两处重置共用同一形状，
+// 防字段遗漏（如 ai_beta_enabled/llm_configured 曾在重置时丢失）。
+const INITIAL_RUNTIME = {
+  role: 'all',
+  collector_enabled: false,
+  reader_enabled: false,
+  rag_enabled: false,
+  ai_beta_enabled: false,
+  llm_configured: false,
+};
 
 function defaultViews() {
   return { fetch: 'catalog', runs: 'jobs' };
@@ -83,8 +108,7 @@ export default function App() {
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
   const [logoError, setLogoError] = useState(false);
   const [availableFetchers, setAvailableFetchers] = useState([]);
-  // 初始非乐观默认：能力未知时按「都未启用」，避免在 fetchRuntimeInfo 返回前把 collector 界面闪给读者。
-  const [runtimeInfo, setRuntimeInfo] = useState({ role: 'all', collector_enabled: false, reader_enabled: false, rag_enabled: false, ai_beta_enabled: false, llm_configured: false });
+  const [runtimeInfo, setRuntimeInfo] = useState(INITIAL_RUNTIME);
   const [runtimeLoaded, setRuntimeLoaded] = useState(false);
   const [authState, setAuthState] = useState({ status: 'checking', user: null });
   const [articlesDirty, setArticlesDirty] = useState(false);
@@ -242,7 +266,7 @@ export default function App() {
     const handleAuthExpired = () => {
       setAuthState({ status: 'anonymous', user: null });
       setAvailableFetchers([]);
-      setRuntimeInfo({ role: 'all', collector_enabled: false, reader_enabled: false, rag_enabled: false });
+      setRuntimeInfo(INITIAL_RUNTIME);
       setRuntimeLoaded(false);
       showToast('登录已过期，请重新登录。', 'error');
     };
@@ -271,7 +295,7 @@ export default function App() {
     } finally {
       setAuthState({ status: 'anonymous', user: null });
       setAvailableFetchers([]);
-      setRuntimeInfo({ role: 'all', collector_enabled: false, reader_enabled: false, rag_enabled: false });
+      setRuntimeInfo(INITIAL_RUNTIME);
       setRuntimeLoaded(false);
     }
   };
@@ -443,73 +467,87 @@ export default function App() {
         <div className="page-shell">
           {readerOnly && mountedTabs.has('reader') && (
             <div className="tab-panel" style={{ display: activeTab === 'reader' ? 'block' : 'none' }}>
-              <ReaderTab showToast={showToast} aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured} />
+              <Suspense fallback={<TabFallback />}>
+                <ReaderTab showToast={showToast} aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured} />
+              </Suspense>
             </div>
           )}
           {!readerOnly && mountedTabs.has('data') && (
             <div className="tab-panel" style={{ display: activeTab === 'data' ? 'block' : 'none' }}>
-              <DataTab
-                availableFetchers={availableFetchers}
-                showToast={showToast}
-                isActive={activeTab === 'data'}
-                canManageArticles={runtimeInfo.collector_enabled}
-                isReader={runtimeInfo.reader_enabled}
-                ragEnabled={runtimeInfo.rag_enabled}
-                articlesDirty={articlesDirty}
-                onArticlesRefreshed={clearArticlesDirty}
-                pendingFilter={pendingDataFilter}
-                onPendingFilterApplied={clearPendingDataFilter}
-                onFocusSource={focusSourceNode}
-              />
+              <Suspense fallback={<TabFallback />}>
+                <DataTab
+                  availableFetchers={availableFetchers}
+                  showToast={showToast}
+                  isActive={activeTab === 'data'}
+                  canManageArticles={runtimeInfo.collector_enabled}
+                  isReader={runtimeInfo.reader_enabled}
+                  ragEnabled={runtimeInfo.rag_enabled}
+                  articlesDirty={articlesDirty}
+                  onArticlesRefreshed={clearArticlesDirty}
+                  pendingFilter={pendingDataFilter}
+                  onPendingFilterApplied={clearPendingDataFilter}
+                  onFocusSource={focusSourceNode}
+                />
+              </Suspense>
             </div>
           )}
           {mountedTabs.has('fetch') && runtimeInfo.collector_enabled && (
             <div className="tab-panel" style={{ display: activeTab === 'fetch' ? 'block' : 'none' }}>
-              <FetchTab
-                availableFetchers={availableFetchers}
-                showToast={showToast}
-                view={nav.views.fetch}
-                setView={setFetchView}
-                onArticlesChanged={markArticlesDirty}
-                onRunsChanged={markRunsDirty}
-                onViewArticles={viewArticlesForSource}
-                onViewRuns={viewRunsForSource}
-                onViewRunning={viewRunningTasks}
-                pendingFocus={pendingFetchFocus}
-                onPendingFocusApplied={clearPendingFetchFocus}
-              />
+              <Suspense fallback={<TabFallback />}>
+                <FetchTab
+                  availableFetchers={availableFetchers}
+                  showToast={showToast}
+                  view={nav.views.fetch}
+                  setView={setFetchView}
+                  onArticlesChanged={markArticlesDirty}
+                  onRunsChanged={markRunsDirty}
+                  onViewArticles={viewArticlesForSource}
+                  onViewRuns={viewRunsForSource}
+                  onViewRunning={viewRunningTasks}
+                  pendingFocus={pendingFetchFocus}
+                  onPendingFocusApplied={clearPendingFetchFocus}
+                />
+              </Suspense>
             </div>
           )}
           {mountedTabs.has('runs') && runtimeInfo.collector_enabled && (
             <div className="tab-panel" style={{ display: activeTab === 'runs' ? 'block' : 'none' }}>
-              <FetchRunsTab
-                availableFetchers={availableFetchers}
-                showToast={showToast}
-                view={nav.views.runs}
-                setView={setRunsView}
-                onArticlesChanged={markArticlesDirty}
-                onRunsChanged={markRunsDirty}
-                isActive={activeTab === 'runs'}
-                runsDirty={runsDirty}
-                onRunsRefreshed={clearRunsDirty}
-                pendingFilter={pendingRunsFilter}
-                onPendingFilterApplied={clearPendingRunsFilter}
-              />
+              <Suspense fallback={<TabFallback />}>
+                <FetchRunsTab
+                  availableFetchers={availableFetchers}
+                  showToast={showToast}
+                  view={nav.views.runs}
+                  setView={setRunsView}
+                  onArticlesChanged={markArticlesDirty}
+                  onRunsChanged={markRunsDirty}
+                  isActive={activeTab === 'runs'}
+                  runsDirty={runsDirty}
+                  onRunsRefreshed={clearRunsDirty}
+                  pendingFilter={pendingRunsFilter}
+                  onPendingFilterApplied={clearPendingRunsFilter}
+                />
+              </Suspense>
             </div>
           )}
           {mountedTabs.has('vector') && runtimeInfo.reader_enabled && (
             <div className="tab-panel" style={{ display: activeTab === 'vector' ? 'block' : 'none' }}>
-              <VectorTab availableFetchers={availableFetchers} showToast={showToast} accountRole={runtimeInfo.account_role} />
+              <Suspense fallback={<TabFallback />}>
+                <VectorTab availableFetchers={availableFetchers} showToast={showToast} accountRole={runtimeInfo.account_role} />
+              </Suspense>
             </div>
           )}
           {mountedTabs.has('mcp') && runtimeInfo.reader_enabled && (
             <div className="tab-panel" style={{ display: activeTab === 'mcp' ? 'block' : 'none' }}>
-              <MCPTab showToast={showToast} ragEnabled={runtimeInfo.rag_enabled} collectorEnabled={runtimeInfo.collector_enabled} isAdmin={runtimeInfo.account_role === 'admin'} />
+              <Suspense fallback={<TabFallback />}>
+                <MCPTab showToast={showToast} ragEnabled={runtimeInfo.rag_enabled} collectorEnabled={runtimeInfo.collector_enabled} isAdmin={runtimeInfo.account_role === 'admin'} />
+              </Suspense>
             </div>
           )}
           {mountedTabs.has('admin') && runtimeInfo.account_role === 'admin' && (
             <div className="tab-panel" style={{ display: activeTab === 'admin' ? 'block' : 'none' }}>
-              <AdminOpsTab showToast={showToast} />
+              <Suspense fallback={<TabFallback />}>
+                <AdminOpsTab showToast={showToast} />
+              </Suspense>
             </div>
           )}
         </div>

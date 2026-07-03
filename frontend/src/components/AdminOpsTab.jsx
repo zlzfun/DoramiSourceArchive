@@ -162,6 +162,12 @@ export default function AdminOpsTab({ showToast }) {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const createModal = useModalTransition(createModalOpen);
 
+  // ── 重置密码弹窗（取代 window.prompt：不回显明文、与全站 Modal 体系一致）──
+  const [resetTarget, setResetTarget] = useState(null);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetBusy, setResetBusy] = useState(false);
+  const resetModal = useModalTransition(Boolean(resetTarget));
+
   const loadLlm = useCallback(() => getLLMConfig().then((d) => {
     setLlmStatus(d);
     setLlmForm((f) => ({ ...f, base_url: d.base_url || '', model: d.model || '', temperature: d.temperature ?? 0.3, max_tokens: d.max_tokens ?? 4096, api_key: '' }));
@@ -194,13 +200,13 @@ export default function AdminOpsTab({ showToast }) {
   useEffect(() => { reloadAccounts(); }, [reloadAccounts]);
   useEffect(() => { loadUsage(usageDays); }, [loadUsage, usageDays]);
 
-  // 配置 / 新建 / 详情弹窗打开时锁定页面滚动。
+  // 配置 / 新建 / 详情 / 重置密码弹窗打开时锁定页面滚动。
   useEffect(() => {
-    if (!llmModalOpen && !createModalOpen && !detailUser) return undefined;
+    if (!llmModalOpen && !createModalOpen && !detailUser && !resetTarget) return undefined;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
-  }, [llmModalOpen, createModalOpen, detailUser]);
+  }, [llmModalOpen, createModalOpen, detailUser, resetTarget]);
 
   const updateLlm = (key, value) => setLlmForm((f) => ({ ...f, [key]: value }));
   const canTestLlm = Boolean(llmForm.base_url.trim() && llmForm.model.trim() && (llmForm.api_key.trim() || llmStatus?.api_key_set));
@@ -301,18 +307,26 @@ export default function AdminOpsTab({ showToast }) {
     }
   };
 
-  const handleResetPassword = async (acc) => {
-    const pwd = window.prompt(`为账户「${acc.username}」设置新密码（至少 6 位）：`);
-    if (pwd === null) return;
-    if (pwd.length < 6) {
+  const handleResetPassword = (acc) => {
+    setResetPassword('');
+    setResetTarget(acc);
+  };
+
+  const handleResetSubmit = async (event) => {
+    event.preventDefault();
+    if (resetPassword.length < 6) {
       showToast('密码至少 6 位', 'error');
       return;
     }
+    setResetBusy(true);
     try {
-      await resetAccountPassword(acc.username, pwd);
-      showToast(`已重置 ${acc.username} 的密码`, 'success');
+      await resetAccountPassword(resetTarget.username, resetPassword);
+      showToast(`已重置 ${resetTarget.username} 的密码`, 'success');
+      setResetTarget(null);
     } catch (error) {
       showToast(error.message || '重置密码失败', 'error');
+    } finally {
+      setResetBusy(false);
     }
   };
 
@@ -857,6 +871,41 @@ export default function AdminOpsTab({ showToast }) {
             <div className="px-6 py-4 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex items-center justify-end">
               <button type="submit" disabled={busy} className="action-button action-button-primary text-xs">
                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />} 创建读者账户
+              </button>
+            </div>
+          </form>
+        </div>,
+        document.body,
+      )}
+
+      {/* ── 重置密码弹窗（Portal 到 body） ── */}
+      {resetModal.mounted && createPortal(
+        <div className={`modal-overlay ${resetModal.closing ? 'is-closing' : ''}`} onClick={() => setResetTarget(null)}>
+          <form className="modal-panel max-w-md" onClick={(e) => e.stopPropagation()} onSubmit={handleResetSubmit}>
+            <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex items-center justify-between bg-[var(--dorami-well)]">
+              <h3 className="card-title flex items-center gap-2">
+                <KeyRound className="w-5 h-5 text-indigo-500" /> 重置密码
+              </h3>
+              <button type="button" onClick={() => setResetTarget(null)} className="text-slate-500 hover:text-slate-700"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-6 space-y-3">
+              <p className="tiny-meta">为账户「{resetTarget?.username}」设置新密码，设置后该账户需用新密码登录。</p>
+              <div>
+                <p className="form-label">新密码</p>
+                <input
+                  type="password"
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(e.target.value)}
+                  placeholder="至少 6 位"
+                  autoComplete="new-password"
+                  autoFocus
+                  className="form-input w-full"
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex items-center justify-end">
+              <button type="submit" disabled={resetBusy} className="action-button action-button-primary text-xs">
+                {resetBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />} 保存新密码
               </button>
             </div>
           </form>

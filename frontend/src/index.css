@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* 排除 ESLint 配置：eslint.config.js 的设计护栏提示文案里含示例 class 字面量
+   （如 rounded-[var(--r-sm|control|card|overlay|pill)]），会被 Tailwind v4 自动内容
+   探测当成真实 class 生成非法 CSS 并在构建期告警。排除它即消除告警，护栏文案照旧。 */
+@source not "../eslint.config.js";
+
 /* Tailwind v4 暗色变体接线：让 `dark:` 跟随 document.documentElement 上的
    [data-theme="dark"]（由主题控制器三态切换挂载），而非默认的 prefers-color-scheme。
    v4 不读 tailwind.config.js 的 darkMode 键，必须在 CSS 里声明此 custom-variant，
