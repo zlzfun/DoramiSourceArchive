@@ -12,7 +12,7 @@
 | 阶段 1 · 基建收敛 | ✅ 完成 | `refactor/frontend` |
 | 阶段 2 · 组件拆分 | ✅ 完成（含分档暂缓） | `refactor/frontend` |
 | 阶段 3 · 数据加载模型统一 | ✅ 完成 | `refactor/frontend` |
-| 阶段 4 · 样式体系 | ⏳ 进行 | — |
+| 阶段 4 · 样式体系 | ◐ 部分（F8-A 落地；f7/f8 有据暂缓） | `refactor/frontend` |
 
 ---
 
@@ -82,6 +82,22 @@
 
 ---
 
-## 阶段 4 · 样式体系 ⏳
+## 阶段 4 · 样式体系 ◐
 
-待执行：字重回落（f8，改 index.css 角色类）、`index.css` 按分区拆文件（f7，纯移动 + build CSS diff 校零）、legacy bridge 退役步骤 A（F8，ESLint 护栏冻结增量 + 存量清单入册）。
+自动化（无运行中 dev server / 无法截图）下，本阶段三项均需「看效果」才能安全收尾，故按证据分档：
+
+| 项 | 债务 | 状态 | 说明 |
+|---|---|---|---|
+| Legacy bridge 冻结 · 步骤 A | F8-A | ✅ 落地 | `eslint.config.js` 新增 `dorami/no-legacy-bridge-class` 规则（bg-white / bg-slate-50* / bg-indigo-50 / bg-blue-50* / border-slate-100\|200 / border-indigo-200 → 令牌类）。**现挂 `'off'`**：不往刚清零的 lint 灌存量告警；开始步骤 B 迁移时翻 `'warn'`、存量清零后翻 `'error'` 并删 `index.css:5262-5331` 桥接段。存量清单：翻 warn 实测 **55 处命中**（跨 16 文件）——即步骤 B 的迁移工作单。CSS 产物 hash 不变（`index-UrORIaJt.css`），零副作用。 |
+| 字重回落 | f8 | ⏸ 暂缓（有据） | 复核发现 **index.css 角色类字重已合理**（`.page-subtitle`/`.body-text` 600、`.tiny-meta` 500、`.micro-label`/`.card-title`/`.section-title` 700、`.stat-number` 900）——无明显下调空间。真正的「偏重」在散落 JSX 内联 `font-bold`/`font-black`（顶栏 tab、表格单元格、各类 meta），而 plan 明确「不做全局扫荡（避免巨型 diff）」。故 f8 的正确形态是**触碰文件时顺带回落**，而非独立盲改；且字重是可见改动，宜配合 dev server 目检。暂缓为「随手做 + 一次目检」。 |
+| index.css 拆分 | f7 | ⏸ 暂缓（有据） | 纯组织性（无功能/性能/视觉收益）。5700 行的核心是单个 `@layer components {}`（~4700 行），跨文件拆分涉及 Tailwind v4 `@import` 顺序 + `@theme`/`@custom-variant`/`@source` 位置 + `@layer` 合并语义的多点不确定性，首拆未必 hash 一致，需 dev server 迭代验证。ROI 低、宜交互式做，暂缓（已有 build-CSS-hash 作为将来验收闸门）。 |
+
+**验收**：`npm run lint` 0/0（bridge 规则 off）；`npm run build` 零警告、CSS hash 与阶段前一致。F8-A 的冻结机制已就位、一行可激活；步骤 B（55 处令牌化 + 删桥）与 f7/f8 留待带 dev server 的下一轮。
+
+---
+
+## 收尾小结
+
+- **已完成并验收**：阶段 0（分包，主包 gzip 294→75.7 kB）、阶段 1（api 收敛 806→517 行 + Modal 可访问性）、阶段 2（11 个新文件，消灭 RunningWidget 复制；ReaderTab/SettingsModal/FetchTab/AdminOpsTab 均瘦身）、阶段 3（useAbortableLoad 统一竞态 + **lint 6→0** + pendingFocus 泛化）。
+- **有据暂缓（记入 backlog）**：阶段 2 的 renderSourceRow / AdminOps 三子页 / FetchRuns Job Modal 深拆；阶段 4 的 f7 拆分、f8 字重、F8 步骤 B 令牌化——共性是「高 prop 面深耦合」或「需运行中目检」，宜交互式续做。
+- **全程未改外部行为/视觉**：每阶段 `npm run lint` + `npm run build` 双绿；阶段 4 CSS 产物字节不变。分支 `refactor/frontend`，5 个阶段提交。**待人工冒烟**（双角色 × 双主题）后合入 main。
