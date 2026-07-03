@@ -6,6 +6,7 @@ import StatusBadge from './StatusBadge';
 import EmptyState from './EmptyState';
 import { distanceMeta } from '../statusMeta';
 import { copyText } from '../utils/clipboard';
+import { contentTypeLabel } from '../utils/contentType';
 import { runAction } from '../utils/runAction';
 
 export default function VectorTab({ availableFetchers, showToast, accountRole }) {
@@ -210,7 +211,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
                   <StatusBadge meta={meta} className="shrink-0">{meta.label} {res.distance.toFixed(3)}</StatusBadge>
                 </div>
                 <div className="flex flex-wrap gap-1.5 mb-3">
-                  <span className="data-chip">{res.metadata?.content_type}</span>
+                  <span className="data-chip" title={res.metadata?.content_type || ''}>{contentTypeLabel(res.metadata?.content_type, res.metadata?.content_type)}</span>
                   <span className="data-chip">{res.metadata?.source_id}</span>
                   {pubDate && <span className="data-chip">{pubDate}</span>}
                 </div>

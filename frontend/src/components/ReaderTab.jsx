@@ -20,6 +20,7 @@ import ReaderMarkdown from './ReaderMarkdown';
 import ReaderAiPanel from './ReaderAiPanel';
 import { resolveCompany } from '../sourceTaxonomy';
 import { formatDate, excerptOf } from '../utils/readerText';
+import { contentTypeLabel } from '../utils/contentType';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
 import {
   fetchReaderSources,
@@ -608,7 +609,7 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
                   </span>
                 )}
                 {activeArticle.content_type && (
-                  <span className="data-chip">{activeArticle.content_type}</span>
+                  <span className="data-chip">{contentTypeLabel(activeArticle.content_type, activeArticle.content_type)}</span>
                 )}
               </div>
               <h1 className="reader-pane-title">{activeArticle.title || '（无标题）'}</h1>

@@ -1,5 +1,6 @@
 import { FileText, Link as LinkIcon, Calendar, Database, Box, ExternalLink, Edit2, Save, X, AlertCircle } from 'lucide-react';
 import Modal from './Modal';
+import { contentTypeLabel } from '../utils/contentType';
 
 export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading = false, getFetcherName, canEdit = true, onClose, onToggleEdit, onSave }) {
   if (!data) return null;
@@ -21,7 +22,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
         <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex justify-between items-center bg-[var(--dorami-well)]">
           <div className="flex items-center space-x-3">
             <h3 className="card-title">数据全景档案</h3>
-            <span className="data-chip">{data.content_type}</span>
+            <span className="data-chip" title={data.content_type || ''}>{contentTypeLabel(data.content_type, data.content_type)}</span>
           </div>
           <div className="flex items-center space-x-2">
             {canEdit && (

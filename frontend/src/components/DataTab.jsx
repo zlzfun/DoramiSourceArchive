@@ -18,6 +18,7 @@ import {
 } from '../api';
 import { runAction } from '../utils/runAction';
 import { excerptOf } from '../utils/readerText';
+import { contentTypeLabel } from '../utils/contentType';
 import { useConfirm } from '../hooks/useConfirm';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
 
@@ -244,7 +245,7 @@ export default function DataTab({
   }
   if (filters.content_type) {
     activeFilterItems.push({
-      key: 'type', label: '结构类型', value: filters.content_type,
+      key: 'type', label: '结构类型', value: contentTypeLabel(filters.content_type, filters.content_type),
       onRemove: () => setFilters(prev => ({ ...prev, content_type: '' })),
     });
   }
@@ -435,7 +436,7 @@ export default function DataTab({
                 <span>结构类型</span>
                 <select value={filters.content_type} onChange={e => setFilters({ ...filters, content_type: e.target.value })}>
                   <option value="">全部类型</option>
-                  {uniqueContentTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                  {uniqueContentTypes.map(t => <option key={t} value={t}>{contentTypeLabel(t)}</option>)}
                 </select>
               </div>
               <div className="field-box">
@@ -534,7 +535,7 @@ export default function DataTab({
                     <input type="checkbox" aria-label={`选择：${article.title || article.id}`} checked={selectedArticles.has(article.id)} onChange={() => toggleArticleSelection(article.id)} className="w-4 h-4 text-[var(--dorami-blue)] rounded cursor-pointer" />
                   )}
                 </td>
-                <td className="px-3 py-4"><span className="data-chip max-w-full overflow-hidden text-ellipsis">{article.content_type || '未知'}</span></td>
+                <td className="px-3 py-4"><span className="data-chip max-w-full overflow-hidden text-ellipsis" title={article.content_type || ''}>{contentTypeLabel(article.content_type)}</span></td>
                 <td className="px-3 py-4">
                   {(() => {
                     const company = companyFor(article.source_id);
