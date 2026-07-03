@@ -11,12 +11,10 @@ import {
   Layers,
   Play,
   RefreshCw,
-  Save,
   Search,
   Settings2,
   Trash2,
   Wand2,
-  X,
 } from 'lucide-react';
 import {
   createNodeGroup,
@@ -30,7 +28,8 @@ import {
   updateNodeGroup,
 } from '../api';
 import LogoMark from './LogoMark';
-import Modal from './Modal';
+import RunningWidget from './RunningWidget';
+import NodeGroupModal from './NodeGroupModal';
 import CustomNodeBuilder from './CustomNodeBuilder';
 
 // 高级目标「AI 自定义节点」暂不开放前端入口：后端流程保留，UI 入口与面板用此开关隐藏。
@@ -122,7 +121,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [groupDraft, setGroupDraft] = useState(blankGroup());
-  const [modalSearch, setModalSearch] = useState('');
 
   const fetchersById = useMemo(
     () => Object.fromEntries(availableFetchers.map(fetcher => [fetcher.id, fetcher])),
@@ -328,14 +326,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     };
   }, [highlightedFetcherId]);
 
-  const modalFetchers = useMemo(() => {
-    const query = modalSearch.trim().toLowerCase();
-    return availableFetchers.filter(fetcher => [
-      fetcher.name, fetcher.id, fetcher.desc, fetcher.base_url, fetcher.source_owner, fetcher.source_brand,
-      ...(fetcher.content_tags || []),
-    ].filter(Boolean).join(' ').toLowerCase().includes(query));
-  }, [availableFetchers, modalSearch]);
-
   const getFetcherName = (id) => fetchersById[id]?.name || id;
 
   const toggleFetcherSelection = (id) => {
@@ -348,16 +338,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     setSelectedFetchers(prev => allSelected
       ? prev.filter(id => !ids.includes(id))
       : Array.from(new Set([...prev, ...ids])));
-  };
-
-  const updateModalNodeParam = (fetcherId, field, value) => {
-    setGroupDraft(prev => ({
-      ...prev,
-      per_fetcher_params: {
-        ...(prev.per_fetcher_params || {}),
-        [fetcherId]: { ...((prev.per_fetcher_params || {})[fetcherId] || {}), [field]: value },
-      },
-    }));
   };
 
   const updateFetcherConfig = (fetcherId, field, value) => {
@@ -408,7 +388,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   const openCreateGroup = (fetcherIds = selectedFetchers) => {
     setEditingGroupId(null);
     setGroupDraft(blankGroup(fetcherIds, fetchConfigs));
-    setModalSearch('');
     setGroupModalOpen(true);
   };
 
@@ -424,7 +403,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       per_fetcher_cron: {},
       is_active: group.is_active !== false,
     });
-    setModalSearch('');
     setGroupModalOpen(true);
   };
 
@@ -569,30 +547,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           return next;
         });
       });
-  };
-
-  const renderParamInput = (fetcherId, param) => {
-    const params = (groupDraft.per_fetcher_params || {})[fetcherId] || {};
-    const value = params[param.field] ?? param.default ?? '';
-    if (param.type === 'boolean') {
-      const checked = typeof value === 'boolean' ? value : ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
-      return (
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={event => updateModalNodeParam(fetcherId, param.field, event.target.checked)}
-          className="w-4 h-4 text-blue-600 rounded border-slate-300"
-        />
-      );
-    }
-    return (
-      <input
-        type={param.type || 'text'}
-        value={value}
-        onChange={event => updateModalNodeParam(fetcherId, param.field, param.type === 'number' ? Number(event.target.value) : event.target.value)}
-        className="form-input py-1.5 text-xs"
-      />
-    );
   };
 
   const renderSourceRow = (fetcher) => {
@@ -1002,30 +956,13 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       {selectedFetchers.length > 0 && view === 'catalog' && (
         <div className="selection-bar animate-in slide-in-from-bottom-4">
           {runningFetcherIds.size > 0 ? (
-            <button type="button" onClick={() => onViewRunning?.()} className="running-widget running-widget-embedded" title="查看运行历史">
-              <RefreshCw className="running-widget-icon animate-spin" />
-              <div className="running-widget-body">
-                <div className="running-widget-headline">
-                  <span>{runningFetcherIds.size} 个节点正在抓取</span>
-                  <ChevronRight className="running-widget-chevron" />
-                </div>
-                <div className="running-widget-list">
-                  {Array.from(runningFetcherIds).slice(0, 4).map(id => {
-                    const p = fetchProgress[id];
-                    const name = fetchersById[id]?.name || id;
-                    const isQueued = !p;
-                    const progressText = isQueued ? '排队中' : (p.total ? `${p.current}/${p.total}` : `${p.current}`);
-                    return (
-                      <div key={id} className="running-widget-row">
-                        <span className="running-widget-name">{name}</span>
-                        <span className={`running-widget-progress ${isQueued ? 'running-widget-progress-queued' : ''}`}>{progressText}</span>
-                      </div>
-                    );
-                  })}
-                  {runningFetcherIds.size > 4 && <div className="running-widget-more">+{runningFetcherIds.size - 4} 个</div>}
-                </div>
-              </div>
-            </button>
+            <RunningWidget
+              variant="embedded"
+              runningIds={runningFetcherIds}
+              fetchProgress={fetchProgress}
+              fetchersById={fetchersById}
+              onViewRunning={onViewRunning}
+            />
           ) : (
             <div className="selection-bar-info">
               <CheckSquare /> 已选择 {selectedFetchers.length} 个节点
@@ -1042,135 +979,28 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         </div>
       )}
 
-      <Modal open={groupModalOpen} onClose={() => setGroupModalOpen(false)} size="5xl">
-            <div className="px-5 py-4 border-b border-[var(--dorami-border)] bg-[var(--dorami-well)] flex items-center justify-between">
-              <div>
-                <h3 className="card-title">{editingGroupId ? '编辑采集范围' : '新建采集范围'}</h3>
-                <p className="text-xs text-slate-500 mt-1">采集范围只维护节点集合和参数模板，可被采集任务复用。</p>
-              </div>
-              <button onClick={() => setGroupModalOpen(false)} className="icon-button"><X className="w-4 h-4" /></button>
-            </div>
-            <div className="p-5 overflow-auto space-y-5">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <label className="text-xs font-bold text-slate-500">
-                  名称
-                  <input value={groupDraft.name} onChange={event => setGroupDraft(prev => ({ ...prev, name: event.target.value }))} className="form-input mt-1" />
-                </label>
-                <label className="text-xs font-bold text-slate-500">
-                  说明
-                  <input value={groupDraft.description} onChange={event => setGroupDraft(prev => ({ ...prev, description: event.target.value }))} className="form-input mt-1" />
-                </label>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
-                <div className="border border-[var(--dorami-border)] rounded-[var(--r-card)] overflow-hidden">
-                  <div className="p-3 bg-[var(--dorami-soft)] border-b border-[var(--dorami-border)]">
-                    <div className="form-search-box relative">
-                      <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input value={modalSearch} onChange={event => setModalSearch(event.target.value)} placeholder="搜索节点" className="form-input pl-9" />
-                    </div>
-                  </div>
-                  <div className="max-h-[420px] overflow-auto divide-y divide-[var(--dorami-border)]">
-                    {modalFetchers.map(fetcher => {
-                      const checked = (groupDraft.fetcher_ids || []).includes(fetcher.id);
-                      return (
-                        <button
-                          key={fetcher.id}
-                          onClick={() => setGroupDraft(prev => {
-                            const ids = checked ? prev.fetcher_ids.filter(id => id !== fetcher.id) : [...(prev.fetcher_ids || []), fetcher.id];
-                            return {
-                              ...prev,
-                              fetcher_ids: normalizeIds(ids),
-                              per_fetcher_params: checked
-                                ? prev.per_fetcher_params
-                                : { ...(prev.per_fetcher_params || {}), [fetcher.id]: fetchConfigs[fetcher.id] || {} },
-                            };
-                          })}
-                          className={`w-full px-3 py-3 flex items-center gap-3 text-left hover:bg-[var(--dorami-soft)] ${checked ? 'bg-blue-50/60' : ''}`}
-                        >
-                          <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>{checked && <CheckSquare className="w-3.5 h-3.5 text-white" />}</div>
-                          <LogoMark company={resolveCompany(fetcher)} size="sm" />
-                          <div className="min-w-0">
-                            <div className="font-bold text-slate-700 text-sm truncate">{fetcher.name}</div>
-                            <div className="font-mono text-xs text-slate-500 truncate">{fetcher.id}</div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  {(groupDraft.fetcher_ids || []).length === 0 ? (
-                    <div className="border border-dashed border-[var(--dorami-border)] rounded-[var(--r-card)] p-10 text-center text-slate-500 font-medium">未选择节点</div>
-                  ) : (groupDraft.fetcher_ids || []).map(fetcherId => {
-                    const fetcher = fetchersById[fetcherId];
-                    return (
-                      <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-card)] p-3 bg-white dark:bg-[var(--dorami-surface)]">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <LogoMark company={resolveCompany(fetcher || {})} size="sm" />
-                            <div className="min-w-0">
-                              <div className="card-title truncate">{fetcher?.name || fetcherId}</div>
-                              <div className="font-mono text-xs text-slate-500 mt-0.5">{fetcherId}</div>
-                            </div>
-                          </div>
-                          <button onClick={() => setGroupDraft(prev => ({ ...prev, fetcher_ids: prev.fetcher_ids.filter(id => id !== fetcherId) }))} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-[var(--r-control)]"><X className="w-4 h-4" /></button>
-                        </div>
-                        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {(fetcher?.parameters || []).length === 0 ? (
-                            <div className="text-xs text-slate-500 font-medium bg-[var(--dorami-soft)] border border-[var(--dorami-border)] rounded-[var(--r-control)] px-3 py-2">该节点无需扩展参数</div>
-                          ) : (fetcher.parameters || []).map(param => (
-                            <label key={param.field} className="text-xs font-bold text-slate-500">
-                              {param.label}
-                              <div className="mt-1">{renderParamInput(fetcherId, param)}</div>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-            <div className="px-5 py-4 border-t border-[var(--dorami-border)] bg-[var(--dorami-surface)] flex justify-end gap-2">
-              <button onClick={() => setGroupModalOpen(false)} className="action-button action-button-quiet">取消</button>
-              <button onClick={handleSaveGroup} className="action-button action-button-primary"><Save /> 保存</button>
-            </div>
-      </Modal>
+      <NodeGroupModal
+        open={groupModalOpen}
+        onClose={() => setGroupModalOpen(false)}
+        editing={Boolean(editingGroupId)}
+        draft={groupDraft}
+        setDraft={setGroupDraft}
+        fetchersById={fetchersById}
+        availableFetchers={availableFetchers}
+        fetchConfigs={fetchConfigs}
+        onSave={handleSaveGroup}
+      />
 
 
       {runningFetcherIds.size > 0 && (
-        <button
-          type="button"
-          onClick={() => onViewRunning?.()}
-          className={`running-widget ${selectedFetchers.length > 0 && view === 'catalog' ? 'running-widget-hidden' : ''}`}
-          title="查看运行历史"
-          aria-hidden={selectedFetchers.length > 0 && view === 'catalog'}
-        >
-          <RefreshCw className="running-widget-icon animate-spin" />
-          <div className="running-widget-body">
-            <div className="running-widget-headline">
-              <span>{runningFetcherIds.size} 个节点正在抓取</span>
-              <ChevronRight className="running-widget-chevron" />
-            </div>
-            <div className="running-widget-list">
-              {Array.from(runningFetcherIds).slice(0, 4).map(id => {
-                const p = fetchProgress[id];
-                const name = fetchersById[id]?.name || id;
-                const isQueued = !p;
-                const progressText = isQueued ? '排队中' : (p.total ? `${p.current}/${p.total}` : `${p.current}`);
-                return (
-                  <div key={id} className="running-widget-row">
-                    <span className="running-widget-name">{name}</span>
-                    <span className={`running-widget-progress ${isQueued ? 'running-widget-progress-queued' : ''}`}>{progressText}</span>
-                  </div>
-                );
-              })}
-              {runningFetcherIds.size > 4 && <div className="running-widget-more">+{runningFetcherIds.size - 4} 个</div>}
-            </div>
-          </div>
-        </button>
+        <RunningWidget
+          variant="floating"
+          runningIds={runningFetcherIds}
+          fetchProgress={fetchProgress}
+          fetchersById={fetchersById}
+          onViewRunning={onViewRunning}
+          hidden={selectedFetchers.length > 0 && view === 'catalog'}
+        />
       )}
     </div>
   );

@@ -45,83 +45,13 @@ import { useModalTransition } from '../hooks/useModalTransition';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { MultiSeriesArea, RankBars, BarList } from './charts/DashboardCharts';
 import { pivotDaily, CATEGORICAL, C_READ, C_FAVORITE } from './charts/chartUtils';
+import { ChartPanel, StatCard, PanelHeader } from './admin/adminShared';
+import { KPI_COLOR, PURPOSE_LABELS, formatStamp, fmtNum, pct, truncLabel } from './admin/adminUtils';
 
 const INPUT_CLS = 'w-full rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-soft)] px-4 py-2.5 text-sm text-[var(--dorami-ink)] placeholder:text-[var(--dorami-faint)]';
 
 // 账户列表分页大小：超过即翻页，避免成百上千账户一次性平铺。
 const ACCOUNTS_PAGE_SIZE = 15;
-
-// KPI 数字的语义配色：登录/AI 拉开色相（蓝 vs 紫），详情页与外层同语义同色。
-const KPI_COLOR = {
-  active: 'text-emerald-600',
-  login: 'text-sky-600',
-  read: 'text-amber-600',
-  ai: 'text-violet-600',
-  subscription: 'text-teal-600',
-};
-
-// 用途标签：与后端 AiUsageRecord.purpose 对齐。
-const PURPOSE_LABELS = {
-  translate: '阅读器翻译',
-  ask: '阅读器问答',
-  daily_brief_map: '日报·概括',
-  daily_brief_dedup: '日报·去重',
-  daily_brief_reduce: '日报·汇编',
-  source_config: '节点·配置',
-  detail_profile: '节点·详情',
-};
-
-// 时间戳格式化：把 ISO 时间显示为「MM-DD HH:mm」，无值回落到占位符。
-function formatStamp(iso) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-// 大数字缩写：1234 → 1.2k，1234567 → 1.2M。
-function fmtNum(n) {
-  const v = Number(n || 0);
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}k`;
-  return String(v);
-}
-
-// 比率（0~1）→ 百分比整数。
-function pct(x) {
-  return `${Math.round(Number(x || 0) * 100)}%`;
-}
-
-// Y 轴类目截断：避免长名撑爆图表（仅 RankBars 的活跃用户 Top 仍用）。
-const truncLabel = (s) => (typeof s === 'string' && s.length > 7 ? `${s.slice(0, 6)}…` : s);
-
-// 图表小面板：统一的标题 + 图表容器。
-function ChartPanel({ title, action, children }) {
-  return (
-    <div className="flex flex-col rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-white dark:bg-[var(--dorami-surface)] p-4">
-      <div className="mb-3 flex items-center gap-3">
-        <p className="micro-label text-slate-500">{title}</p>
-        {action && <div className="ml-auto">{action}</div>}
-      </div>
-      {/* flex-1 + 居中：面板被同行更高的图表撑高时，本图表在垂直方向居中而非顶贴 */}
-      <div className="flex flex-1 flex-col justify-center">{children}</div>
-    </div>
-  );
-}
-
-function StatCard({ icon: Icon, label, value, sub, valueClass = 'text-slate-800' }) {
-  return (
-    <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-white dark:bg-[var(--dorami-surface)] p-4">
-      <div className="flex items-center gap-2 text-slate-500">
-        <Icon className="h-4 w-4" />
-        <span className="micro-label">{label}</span>
-      </div>
-      <p className={`stat-number mt-2 ${valueClass}`}>{value}</p>
-      {sub && <p className="tiny-meta mt-0.5">{sub}</p>}
-    </div>
-  );
-}
 
 export default function AdminOpsTab({ showToast }) {
   const confirm = useConfirm();
@@ -469,10 +399,7 @@ export default function AdminOpsTab({ showToast }) {
         {/* ══ AI 子页 ══════════════════════════════════════════════ */}
         {sub === 'ai' && (
         <div className="surface-card rounded-[var(--r-card)] overflow-hidden animate-in fade-in">
-          <div className="flex items-center gap-3 px-6 py-4 border-b border-[var(--dorami-border)]">
-            <div className="w-1 h-5 rounded-full bg-violet-500" />
-            <h3 className="section-title">AI 配置与用量</h3>
-            <span className="tiny-meta">日报与阅读器 AI 共用一套模型</span>
+          <PanelHeader barClass="bg-violet-500" title="AI 配置与用量" hint="日报与阅读器 AI 共用一套模型">
             {/* 用户 AI 功能：状态灯 + 开关（取代原「总闸」整块） */}
             <div className="ml-auto flex items-center gap-2">
               <span className={`h-2 w-2 rounded-full ${globalAi ? 'bg-emerald-500' : 'bg-amber-500'}`} title={globalAi ? '用户 AI 功能：开启' : '用户 AI 功能：关闭（全员暂停）'} />
@@ -488,7 +415,7 @@ export default function AdminOpsTab({ showToast }) {
                 <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${globalAi ? 'translate-x-4' : 'translate-x-0.5'}`} />
               </button>
             </div>
-          </div>
+          </PanelHeader>
           <div className="p-6">
             {/* 模型概览行 */}
             <div className="flex items-center justify-between gap-4">
@@ -557,10 +484,7 @@ export default function AdminOpsTab({ showToast }) {
         <div className="space-y-6 animate-in fade-in">
         {/* ── 上半：活跃概览（数据看板）── */}
         <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
-          <div className="flex items-center gap-3 px-6 py-4 border-b border-[var(--dorami-border)]">
-            <div className="w-1 h-5 rounded-full bg-sky-500" />
-            <h3 className="section-title">活跃概览</h3>
-            <span className="tiny-meta">读者登录 / 阅读 / AI 使用一览</span>
+          <PanelHeader barClass="bg-sky-500" title="活跃概览" hint="读者登录 / 阅读 / AI 使用一览">
             <select
               value={userDays}
               onChange={(e) => setUserDays(Number(e.target.value))}
@@ -572,7 +496,7 @@ export default function AdminOpsTab({ showToast }) {
               <option value={30}>近 30 天</option>
               <option value={90}>近 90 天</option>
             </select>
-          </div>
+          </PanelHeader>
           <div className="p-6 space-y-5">
             {/* 总览 KPI（窗口活跃度）：人数（活跃用户）与次数（登录/阅读/AI）分列、彩色数字 */}
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -616,14 +540,11 @@ export default function AdminOpsTab({ showToast }) {
 
         {/* ── 下半：账户管理（操作）── */}
         <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
-          <div className="flex items-center gap-3 px-6 py-4 border-b border-[var(--dorami-border)]">
-            <div className="w-1 h-5 rounded-full bg-indigo-500" />
-            <h3 className="section-title">账户管理</h3>
-            <span className="tiny-meta">停用 / 删除会立即让对应账户的会话失效</span>
+          <PanelHeader barClass="bg-indigo-500" title="账户管理" hint="停用 / 删除会立即让对应账户的会话失效">
             <button onClick={() => setCreateModalOpen(true)} className="action-button action-button-primary ml-auto shrink-0">
               <UserPlus className="h-4 w-4" /> 新建账户
             </button>
-          </div>
+          </PanelHeader>
           <div className="p-6">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm font-bold text-slate-700">
@@ -753,11 +674,7 @@ export default function AdminOpsTab({ showToast }) {
         {/* ══ 内容子页 ════════════════════════════════════════════ */}
         {sub === 'content' && (
         <div className="surface-card rounded-[var(--r-card)] overflow-hidden animate-in fade-in">
-          <div className="flex items-center gap-3 px-6 py-4 border-b border-[var(--dorami-border)]">
-            <div className="w-1 h-5 rounded-full bg-rose-500" />
-            <h3 className="section-title">内容看板</h3>
-            <span className="tiny-meta">哪些源、哪些内容受欢迎</span>
-          </div>
+          <PanelHeader barClass="bg-rose-500" title="内容看板" hint="哪些源、哪些内容受欢迎" />
           <div className="p-6">
             {!content ? (
               <p className="rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] p-4 text-center tiny-meta">

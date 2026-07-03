@@ -10,8 +10,8 @@
 |---|---|---|
 | 阶段 0 · 低垂果实 | ✅ 完成 | `refactor/frontend` |
 | 阶段 1 · 基建收敛 | ✅ 完成 | `refactor/frontend` |
-| 阶段 2 · 组件拆分 | ⏳ 进行 | — |
-| 阶段 3 · 数据加载模型统一 | 待办 | — |
+| 阶段 2 · 组件拆分 | ✅ 完成（含分档暂缓） | `refactor/frontend` |
+| 阶段 3 · 数据加载模型统一 | ⏳ 进行 | — |
 | 阶段 4 · 样式体系 | 待办 | — |
 
 ---
@@ -49,6 +49,26 @@
 
 ---
 
-## 阶段 2 · 组件拆分 ⏳
+## 阶段 2 · 组件拆分 ✅
 
-待执行：FetchTab（先 RunningWidget 消复制，再 Catalog/NodeGroups/Modal）、ReaderTab（AiPanel + markdown 共享）、AdminOpsTab（三子页 + 弹窗，顺带 GroupHeader/时间窗口样式）、FetchRunsTab（Job Modal + 历史）、SettingsModal（Section 分文件）。
+| Tab | 债务 | 结果 | 抽出的文件 |
+|---|---|---|---|
+| ReaderTab | F2 | 965 → 677 行 | `ReaderMarkdown.jsx`（统一 md 渲染，单组件导出）、`utils/readerText.js`（formatDate/excerptOf）、`ReaderAiPanel.jsx`（问答浮层自持全部 QA 态，仅收 aiEnabled/activeArticle/showToast） |
+| FetchTab | F2 | 1190 → 1007 行 | **`RunningWidget.jsx`（消灭内嵌版/浮动版整段复制——本阶段首要目标）**、`NodeGroupModal.jsx`（采集范围编辑弹窗，自持搜索态；保存逻辑经 onSave 留父） |
+| SettingsModal | F2 | 774 → 135 行 | `settings/`：`SectionPrimitives.jsx`（SectionHeading/FieldRow）+ Account/Appearance/Vector/Integration/DataSync/About 六个 Section（各自携带专属 helper） |
+| AdminOpsTab | F2/f9 | 958 → 935 行 | `admin/adminUtils.js`（KPI_COLOR/PURPOSE_LABELS/formatStamp/fmtNum/pct/truncLabel）、`admin/adminShared.jsx`（ChartPanel/StatCard/**PanelHeader** 收敛重复 4 遍的卡片头，即 f9） |
+
+**共享化收益**：`RunningWidget` 消灭 FetchTab 内唯一的整段 JSX 复制；`Modal.jsx` 的 a11y 惠及新 `NodeGroupModal`；`ReaderMarkdown` 供正文/译文/问答复用。
+
+**分档暂缓（本阶段不做，风险/收益不划算，记入 backlog）**：
+- **FetchTab `renderSourceRow`（~170 行）** 抽 `SourceRow.jsx`：需透传 ~13 个 props（health/running/progress/选择/展开态 + 一串 setter/回调 + renderCatalogParamInput 依赖 fetchConfigs），且不连带抽 catalog 网格仍到不了 600 行——高 prop 面、易引入回归，暂缓。
+- **AdminOpsTab 三子页（AI/用户/内容）+ 4 个 Portal 弹窗** 抽独立文件：三子页与顶层 state/handler 深度耦合（globalAi/llm/usage/accounts/detail…），拆分需大面积提升 state 或穿 props；AdminOpsTab 已是 admin-only 独立懒加载 chunk，收益有限、风险高，暂缓（仅做了安全的 util/展示件/头部抽取）。
+- **FetchRunsTab CollectionJobModal**：采集任务弹窗含节点选择 + 逐节点参数 + 分级 cron + downstream policy，草稿态复杂度高于 NodeGroupModal，暂缓。
+
+**验收**：`npm run lint` 0 error / 6 warning（未变，属阶段 3）；`npm run build` 零警告；主包 gzip 75.71 kB（稳定）；各 Tab chunk 随拆分微调但按需加载不变。新增 11 个文件，逻辑 diff 以「移动」为主。待手工冒烟：阅读器问答浮层（多轮/范围切换/放大/新对话）、节点采集范围新建/编辑/保存、设置各分区、运维三子页 + 重置密码/新建/详情弹窗。
+
+---
+
+## 阶段 3 · 数据加载模型统一 ⏳
+
+待执行：抽 `hooks/useAbortableLoad`（F4）、DataTab 对齐 ReaderTab 加载模型（F5）、清零 6 条 lint 警告、App.jsx 聚焦通道泛化为 `pendingFocus`（F6）。
