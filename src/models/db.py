@@ -2,6 +2,20 @@ from typing import Optional
 from sqlmodel import SQLModel, Field
 
 
+# 向量索引状态枚举（阶段2/3 跨存储一致性）：比布尔 is_vectorized 更细，区分
+# 从未索引 / 索引中 / 已索引 / 失败 / 陈旧（内容改动待重索引）。
+# is_vectorized 保留为向后兼容派生位（== indexed），二者由存储层同步维护。
+INDEX_STATUS_PENDING = "pending"
+INDEX_STATUS_INDEXING = "indexing"
+INDEX_STATUS_INDEXED = "indexed"
+INDEX_STATUS_FAILED = "failed"
+INDEX_STATUS_STALE = "stale"
+INDEX_STATUSES = frozenset({
+    INDEX_STATUS_PENDING, INDEX_STATUS_INDEXING, INDEX_STATUS_INDEXED,
+    INDEX_STATUS_FAILED, INDEX_STATUS_STALE,
+})
+
+
 class ArticleRecord(SQLModel, table=True):
     """关系型数据库表结构：用于 CMS 后端管理系统"""
     __tablename__ = "articles"
@@ -26,7 +40,8 @@ class ArticleRecord(SQLModel, table=True):
     content: Optional[str] = Field(default=None, description="文章正文或长摘要")
     extensions_json: Optional[str] = Field(default="{}", description="扩展元数据 (JSON 字符串)")
 
-    is_vectorized: bool = Field(default=False, index=True, description="是否已经经过向量化并存入 ChromaDB")
+    is_vectorized: bool = Field(default=False, index=True, description="是否已向量化（向后兼容派生位，== index_status 'indexed'）")
+    index_status: str = Field(default=INDEX_STATUS_PENDING, index=True, description="向量索引状态: pending/indexing/indexed/failed/stale")
 
 
 class FetchTaskRecord(SQLModel, table=True):

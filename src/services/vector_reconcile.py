@@ -7,8 +7,8 @@ chunk（丢索引）、或 Chroma 有孤儿 chunk 而文章早已删除（漏清
 本模块把两侧「谁被向量化了」的信念对齐并分类漂移，可只报告（dry-run）或顺带修复。
 修复动作都走既有安全原语，不引入新写路径：
 
-- flagged_but_absent（DB 说已索引，Chroma 无 chunk）→ 复位 is_vectorized=False，
-  使其重新进入 all-pending 队列被重新向量化。
+- flagged_but_absent（DB 说已索引，Chroma 无 chunk）→ 标记 index_status=stale
+  （is_vectorized 随之为 False），使其重新进入 all-pending 队列被重新向量化。
 - present_but_unflagged（Chroma 有 chunk，但文章 is_vectorized=False）→ 采纳既有 chunk，
   置 is_vectorized=True（chunk 已在，无需重算；若担心 chunk 陈旧可事后单篇重建）。
 - orphan_chunks（Chroma 有 chunk，但 SQLite 已无该文章）→ 清除这些孤儿 chunk。
@@ -72,7 +72,8 @@ async def reconcile(db_sink, vector_sink, repair: bool = False) -> Dict[str, Any
     if repair:
         repaired = {"reset_flag": 0, "adopted_flag": 0, "purged_chunks": 0}
         for article_id in flagged_but_absent:
-            if await db_sink.mark_as_unvectorized(article_id):
+            # 曾标已索引却无 chunk → 标 stale（is_vectorized 随之 False，all-pending 会重拾）。
+            if await db_sink.set_index_status(article_id, "stale"):
                 repaired["reset_flag"] += 1
         for article_id in present_but_unflagged:
             if await db_sink.mark_as_vectorized(article_id):

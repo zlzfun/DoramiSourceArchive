@@ -85,9 +85,13 @@ def test_reconcile_repair_fixes_all_three(tmp_path):
     report = asyncio.run(vector_reconcile.reconcile(db, vs, repair=True))
 
     assert report["repaired"] == {"reset_flag": 1, "adopted_flag": 1, "purged_chunks": 1}
-    assert _vec_flag(db, "a2") is False   # 复位
+    assert _vec_flag(db, "a2") is False   # 复位（丢索引）
     assert _vec_flag(db, "a3") is True    # 采纳
     assert vs.deleted == ["a9"]           # 孤儿清除
+    # 丢索引项标为 stale（仍会被 all-pending 重拾），采纳项标 indexed
+    with Session(db.engine) as session:
+        assert session.get(ArticleRecord, "a2").index_status == "stale"
+        assert session.get(ArticleRecord, "a3").index_status == "indexed"
 
 
 def test_reconcile_in_sync(tmp_path):

@@ -57,6 +57,7 @@ def get_articles(
         fetch_run_id: Optional[int] = None,
         run_scope: Optional[str] = None,
         is_vectorized: Optional[bool] = None,
+        index_status: Optional[str] = None,
         search: Optional[str] = None,
         publish_date_start: Optional[str] = None,
         publish_date_end: Optional[str] = None,
@@ -85,6 +86,7 @@ def get_articles(
         "fetch_run_id": fetch_run_id,
         "run_scope": run_scope,
         "is_vectorized": is_vectorized,
+        "index_status": index_status,
         "search": search,
         "publish_date_start": publish_date_start,
         "publish_date_end": publish_date_end,
@@ -213,7 +215,9 @@ async def update_article(article_id: str, params: ArticleUpdateParams):
     vector_sink = deps.get_vector_sink_optional()
     update_data = {k: v for k, v in params.dict().items() if v is not None}
     if "content" in update_data or "title" in update_data:
+        # 内容/标题改动使已有向量失效：清 chunk 并标陈旧（stale 仍会被 all-pending 重新拾取）。
         update_data["is_vectorized"] = False
+        update_data["index_status"] = "stale"
         if vector_sink is not None:
             await vector_sink.delete(article_id)
 

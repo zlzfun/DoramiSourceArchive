@@ -98,10 +98,13 @@ async def vectorize_article(article_id: str):
         return {"status": "skipped"}
 
     content_obj = _record_to_content(record)
+    await db_sink.set_index_status(article_id, "indexing")
     success = await vs.save(content_obj)
     if success:
         await db_sink.mark_as_vectorized(article_id)
         return {"status": "success"}
+    # 单篇端点将 save 返回 False 视为失败（历史即 500）→ 记 failed 供台账区分。
+    await db_sink.set_index_status(article_id, "failed")
     raise HTTPException(status_code=500, detail="向量化处理失败")
 
 

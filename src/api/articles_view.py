@@ -44,6 +44,7 @@ def apply_article_query_filters(
         fetch_run_id: Optional[int] = None,
         run_scope: Optional[str] = None,
         is_vectorized: Optional[bool] = None,
+        index_status: Optional[str] = None,
         has_content: Optional[bool] = None,
         search: Optional[str] = None,
         publish_date_start: Optional[str] = None,
@@ -77,6 +78,8 @@ def apply_article_query_filters(
 
     if is_vectorized is not None:
         query = query.where(ArticleRecord.is_vectorized == is_vectorized)
+    if index_status:
+        query = query.where(ArticleRecord.index_status == index_status)
     if has_content is not None:
         query = query.where(ArticleRecord.has_content == has_content)
     if search:
@@ -112,6 +115,7 @@ def serialize_feed_article(record: ArticleRecord, include_content: bool = True) 
         "run_scope": record.run_scope,
         "has_content": record.has_content,
         "is_vectorized": record.is_vectorized,
+        "index_status": record.index_status,
         "extensions": extensions,
     }
 
@@ -143,6 +147,7 @@ def serialize_article_list_item(record: ArticleRecord, include_content: bool = T
         "run_scope": record.run_scope,
         "has_content": record.has_content,
         "is_vectorized": record.is_vectorized,
+        "index_status": record.index_status,
         "content_preview": content[:280],
     }
     if include_content:

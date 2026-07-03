@@ -131,6 +131,43 @@ def test_reconcile_migration_restores_dropped_declared_indexes(tmp_path):
         engine.dispose()
 
 
+def test_index_status_migration_backfills_from_is_vectorized(tmp_path):
+    """升级到含 index_status 的迁移前：旧库无该列；升级后 is_vectorized=1 应回填为 indexed。"""
+    from alembic import command as alembic_command
+    from sqlalchemy import text
+
+    db_url = f"sqlite:///{tmp_path / 'idxmig.db'}"
+    cfg = make_alembic_config(db_url)
+    # 升到 index_status 之前的版本（jobs 表已在、index_status 列未加）。
+    alembic_command.upgrade(cfg, "c8df1ef41529")
+
+    engine = create_engine(db_url)
+    try:
+        cols = {c["name"] for c in inspect(engine).get_columns("articles")}
+        assert "index_status" not in cols
+        # 绕过 ORM（模型已含 index_status）用 raw SQL 插入两行。
+        with engine.begin() as conn:
+            for rid, vec in (("v1", 1), ("v0", 0)):
+                conn.execute(text(
+                    "INSERT INTO articles (id,title,content_type,source_id,source_url,"
+                    "publish_date,fetched_date,has_content,is_vectorized,run_scope) "
+                    "VALUES (:id,'t','web','s','u','2026-06-01','2026-06-01',1,:v,'ad_hoc')"
+                ), {"id": rid, "v": vec})
+    finally:
+        engine.dispose()
+
+    alembic_command.upgrade(cfg, "head")
+
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            rows = dict(conn.execute(text("SELECT id, index_status FROM articles")).all())
+        assert rows["v1"] == "indexed"   # 已向量化 → 回填 indexed
+        assert rows["v0"] == "pending"   # 其余 → server_default pending
+    finally:
+        engine.dispose()
+
+
 def test_baseline_revision_is_migration_root():
     from alembic.script import ScriptDirectory
 
