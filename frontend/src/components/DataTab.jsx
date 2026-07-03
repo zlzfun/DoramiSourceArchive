@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { RefreshCw, CheckCircle, Zap, Search, Plus, Trash2, SlidersHorizontal } from 'lucide-react';
 import DateRangePicker from './DateRangePicker';
 import ArticleDetailModal from './ArticleDetailModal';
@@ -18,6 +18,7 @@ import {
 } from '../api';
 import { runAction } from '../utils/runAction';
 import { useConfirm } from '../hooks/useConfirm';
+import { useAbortableLoad } from '../hooks/useAbortableLoad';
 
 const ARTICLE_PAGE_SIZE = 30;
 
@@ -35,9 +36,11 @@ export default function DataTab({
   onFocusSource,
 }) {
   const confirm = useConfirm();
-  const listAbortRef = useRef(null);
-  const detailAbortRef = useRef(null);
-  const listFilterKeyRef = useRef('');
+  // 列表 / 详情各自的竞态安全加载器（发新弃旧 + 卸载自动中止，见 useAbortableLoad）。
+  const runList = useAbortableLoad();
+  const runDetail = useAbortableLoad();
+  // 记录上一次的 loadArticles 身份，用于区分「筛选/搜索变化」与「翻页」：前者要回到第 1 页。
+  const loaderRef = useRef(null);
   const [articles, setArticles] = useState([]);
   const [articlePageInfo, setArticlePageInfo] = useState({ total: 0 });
   const [currentPage, setCurrentPage] = useState(1);
@@ -52,14 +55,15 @@ export default function DataTab({
   // 整刷一次自增（loadArticles），作为 tbody 的 key：查询/筛选/分页一变即整体重挂载，
   // 让行入场动画对每次切换都触发。
   const [listVersion, setListVersion] = useState(0);
-  // 搜索是提交式筛选（不进 activeFilterKey），清除搜索后需在状态提交后手动重载——用自增 tick 触发。
-  const [searchReloadTick, setSearchReloadTick] = useState(0);
 
+  // 搜索是提交式：searchInput 为输入框即时值（不触发加载），appliedSearch 为已提交值
+  // （回车/清除时更新，进入 loadArticles 依赖 → 触发一次加载并回到第 1 页）。
+  const [searchInput, setSearchInput] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
   const [filters, setFilters] = useState({
     content_type: '',
     source_id: '',
     index_status: '',
-    search: '',
     publish_date_start: '',
     publish_date_end: '',
     fetched_date_start: '',
@@ -115,21 +119,45 @@ export default function DataTab({
   const pageEnd = Math.min(currentPage * ARTICLE_PAGE_SIZE, articlePageInfo.total || 0);
   const canGoPrev = currentPage > 1 && !loading;
   const canGoNext = currentPage < totalPages && !loading;
-  const activeFilterKey = [
-    filters.content_type,
-    filters.source_id,
-    filters.index_status,
-    filters.publish_date_start,
-    filters.publish_date_end,
-    filters.fetched_date_start,
-    filters.fetched_date_end,
-    filters.subscribed_scope,
-  ].join('|');
+
+  // 列表加载：竞态由 runList 兜底（发新弃旧）。依赖 filters + appliedSearch —— 二者一变
+  // loadArticles 身份即变，驱动 effect 重载并回到第 1 页；搜索输入（searchInput）不在此列，
+  // 故打字不触发加载（提交式搜索）。
+  const loadArticles = useCallback(async (page = 1) => {
+    setSelectedArticles(new Set());
+    setLoading(true);
+    const skip = (page - 1) * ARTICLE_PAGE_SIZE;
+    // 知识台账只展示采集归档的原始内容；日报是 LLM 加工产物，从台账排除
+    // （阅读器订阅侧不带此参数，用户订阅日报后仍可正常查看）。
+    const queryFilters = { ...filters, search: appliedSearch, exclude_source_ids: 'dorami_daily_brief' };
+    let data;
+    try {
+      data = await runList((signal) =>
+        apiFetchArticles(queryFilters, ARTICLE_PAGE_SIZE, skip, true, { signal, includeContent: false }));
+    } catch (e) {
+      showToast(e.message || '加载失败：后端未响应，请确认服务已启动后重试', 'error');
+      setLoading(false);
+      return;
+    }
+    if (data === undefined) return; // 被更新的请求取代：loading 归新请求所有，不在此清除
+    const total = data.total || 0;
+    const maxPage = Math.max(1, Math.ceil(total / ARTICLE_PAGE_SIZE));
+    if (page > maxPage) {
+      // 越界页：修正 currentPage 触发再次加载（loading 保持，直到修正后的加载完成）
+      setArticlePageInfo({ total });
+      setCurrentPage(maxPage);
+      return;
+    }
+    setArticles(data.items || []);
+    setArticlePageInfo({ total });
+    setListVersion(v => v + 1);
+    setLoading(false);
+  }, [filters, appliedSearch, runList, showToast]);
 
   const handleVectorize = async (id) => {
     setVectorizingId(id);
     await runAction(() => vectorizeArticle(id), {
-      showToast, success: '已建立向量索引', onSuccess: () => loadArticles(),
+      showToast, success: '已建立向量索引', onSuccess: () => loadArticles(currentPage),
     });
     setVectorizingId(null);
   };
@@ -138,7 +166,7 @@ export default function DataTab({
     await runAction(() => batchVectorizeArticles(Array.from(selectedArticles)), {
       showToast,
       success: (data) => `已为 ${data.count} 条记录建立向量索引`,
-      onSuccess: () => loadArticles(),
+      onSuccess: () => loadArticles(currentPage),
     });
   };
 
@@ -146,40 +174,9 @@ export default function DataTab({
     await runAction(() => vectorizeAllPending(), {
       showToast,
       success: (data) => `已向量化 ${data.count}/${data.total_pending} 篇待处理文章`,
-      onSuccess: () => loadArticles(),
+      onSuccess: () => loadArticles(currentPage),
       setLoading: setVectorizingAll,
     });
-  };
-
-  const loadArticles = async (page = currentPage) => {
-    // 取消上一笔仍在飞行的列表请求，避免快速切换筛选时「后发先至」覆盖结果
-    listAbortRef.current?.abort();
-    const controller = new AbortController();
-    listAbortRef.current = controller;
-    setLoading(true);
-    setSelectedArticles(new Set());
-    try {
-      const skip = (page - 1) * ARTICLE_PAGE_SIZE;
-      // 知识台账只展示采集归档的原始内容；日报是 LLM 加工产物，从台账排除
-      // （阅读器订阅侧不带此参数，用户订阅日报后仍可正常查看）。
-      const queryFilters = { ...filters, exclude_source_ids: 'dorami_daily_brief' };
-      const data = await apiFetchArticles(queryFilters, ARTICLE_PAGE_SIZE, skip, true, { signal: controller.signal, includeContent: false });
-      const total = data.total || 0;
-      const maxPage = Math.max(1, Math.ceil(total / ARTICLE_PAGE_SIZE));
-      if (page > maxPage) {
-        setArticlePageInfo({ total });
-        setCurrentPage(maxPage);
-        return;
-      }
-      setArticles(data.items || []);
-      setArticlePageInfo({ total });
-      setListVersion(v => v + 1);
-    } catch (e) {
-      if (e.name === 'AbortError') return; // 被更新的请求取消，静默丢弃
-      showToast(e.message || '加载失败：后端未响应，请确认服务已启动后重试', 'error');
-    } finally {
-      if (!controller.signal.aborted) setLoading(false);
-    }
   };
 
   const refreshArticles = () => {
@@ -187,66 +184,55 @@ export default function DataTab({
     else setCurrentPage(1);
   };
 
-  const handleSearchSubmit = () => {
-    refreshArticles();
-  };
+  // 回车提交搜索：把输入值提交为 appliedSearch → loadArticles 变身 → 加载并回到第 1 页。
+  const handleSearchSubmit = () => setAppliedSearch(searchInput.trim());
 
+  // 唯一列表加载驱动：区分「筛选/搜索变化」（loadArticles 身份变，回第 1 页）与「翻页」
+  // （仅 currentPage 变，加载该页），取代旧的 activeFilterKey 串 + searchReloadTick 补丁。
   useEffect(() => {
-    if (listFilterKeyRef.current !== activeFilterKey) {
-      listFilterKeyRef.current = activeFilterKey;
-      if (currentPage !== 1) {
-        setCurrentPage(1);
-        return;
-      }
+    const loaderChanged = loaderRef.current !== loadArticles;
+    loaderRef.current = loadArticles;
+    if (loaderChanged && currentPage !== 1) {
+      setCurrentPage(1); // 会再次触发本 effect，届时以第 1 页加载
+      return;
     }
     loadArticles(currentPage);
-  }, [activeFilterKey, currentPage]);
+  }, [loadArticles, currentPage]);
 
   useEffect(() => {
     if (isActive && articlesDirty) {
-      loadArticles();
+      loadArticles(currentPage);
       onArticlesRefreshed?.();
     }
-  }, [isActive, articlesDirty]);
+  }, [isActive, articlesDirty, loadArticles, currentPage, onArticlesRefreshed]);
 
   useEffect(() => {
     if (!pendingFilter) return;
+    setSearchInput('');
+    setAppliedSearch('');
     setFilters(prev => ({
       ...prev,
       content_type: '',
       source_id: pendingFilter.source_id ?? prev.source_id,
       index_status: '',
-      search: '',
       publish_date_start: '',
       publish_date_end: '',
       fetched_date_start: '',
       fetched_date_end: '',
     }));
     onPendingFilterApplied?.();
-  }, [pendingFilter]);
-
-  useEffect(() => {
-    if (searchReloadTick === 0) return;
-    refreshArticles();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchReloadTick]);
-
-  useEffect(() => () => {
-    listAbortRef.current?.abort();
-    detailAbortRef.current?.abort();
-  }, []);
+  }, [pendingFilter, onPendingFilterApplied]);
 
   // 当前生效筛选（用于「当前筛选」条的可移除胶囊）。键控筛选清除后由 activeFilterKey effect 自动重载；
-  // 仅搜索是提交式，需额外触发 searchReloadTick。
   const VECTOR_STATUS_LABELS = {
     indexed: '向量已构建', pending: '待索引', indexing: '构建中', failed: '构建失败', stale: '待重建',
   };
   const dateRangeText = (start, end) => `${start || '…'} ~ ${end || '…'}`;
   const activeFilterItems = [];
-  if (filters.search) {
+  if (appliedSearch) {
     activeFilterItems.push({
-      key: 'search', label: '搜索', value: filters.search,
-      onRemove: () => { setFilters(prev => ({ ...prev, search: '' })); setSearchReloadTick(t => t + 1); },
+      key: 'search', label: '搜索', value: appliedSearch,
+      onRemove: () => { setSearchInput(''); setAppliedSearch(''); },
     });
   }
   if (filters.source_id) {
@@ -281,18 +267,13 @@ export default function DataTab({
   }
 
   const clearAllFilters = () => {
-    const hadOnlySearch = Boolean(filters.search) && !(
-      filters.source_id || filters.content_type || filters.index_status
-      || filters.publish_date_start || filters.publish_date_end
-      || filters.fetched_date_start || filters.fetched_date_end
-    );
+    setSearchInput('');
+    setAppliedSearch('');
     setFilters(prev => ({
       ...prev,
-      content_type: '', source_id: '', index_status: '', search: '',
+      content_type: '', source_id: '', index_status: '',
       publish_date_start: '', publish_date_end: '', fetched_date_start: '', fetched_date_end: '',
     }));
-    // 仅搜索生效时键控筛选无变化，需手动重载；否则 activeFilterKey effect 会用清空后的值重载（含搜索）。
-    if (hadOnlySearch) setSearchReloadTick(t => t + 1);
   };
 
   const toggleArticleSelection = (id) => {
@@ -347,27 +328,28 @@ export default function DataTab({
   };
 
   const openDetailModal = async (article) => {
-    detailAbortRef.current?.abort();
-    const controller = new AbortController();
-    detailAbortRef.current = controller;
     setModalState({ isOpen: true, data: article, isEditing: false });
     setDetailLoading(true);
+    let detail;
     try {
-      const detail = await fetchArticle(article.id, { signal: controller.signal });
-      setModalState(prev => (
-        prev.isOpen && prev.data?.id === article.id
-          ? { ...prev, data: { ...prev.data, ...detail } }
-          : prev
-      ));
+      detail = await runDetail((signal) => fetchArticle(article.id, { signal }));
     } catch (e) {
-      if (e.name !== 'AbortError') showToast(e.message || '获取文章详情失败', 'error');
-    } finally {
-      if (!controller.signal.aborted) setDetailLoading(false);
+      showToast(e.message || '获取文章详情失败', 'error');
+      setDetailLoading(false);
+      return;
     }
+    if (detail === undefined) return; // 被更新的详情请求取代，丢弃
+    setModalState(prev => (
+      prev.isOpen && prev.data?.id === article.id
+        ? { ...prev, data: { ...prev.data, ...detail } }
+        : prev
+    ));
+    setDetailLoading(false);
   };
 
   const closeDetailModal = () => {
-    detailAbortRef.current?.abort();
+    // 在飞行的详情请求由 runDetail 在下次调用/卸载时中止；此处仅复位 UI，
+    // 迟到的响应被 openDetailModal 里 prev.isOpen 的守卫挡下，不会污染已关闭的弹窗。
     setDetailLoading(false);
     setModalState({ isOpen: false, data: null, isEditing: false });
   };
@@ -401,7 +383,7 @@ export default function DataTab({
           <div className="ledger-filter-row flex flex-col gap-3 lg:flex-row lg:items-center">
             <label className="search-box min-h-[52px] flex-1">
               <Search className="mr-3 h-5 w-5 text-slate-500" />
-              <input type="text" placeholder="搜索标题、内容、来源网站、标签等关键词..." value={filters.search} onChange={e => setFilters({ ...filters, search: e.target.value })} onKeyDown={e => e.key === 'Enter' && handleSearchSubmit()} className="py-3" />
+              <input type="text" placeholder="搜索标题、内容、来源网站、标签等关键词..." value={searchInput} onChange={e => setSearchInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSearchSubmit()} className="py-3" />
               <span className="hidden rounded-[var(--r-sm)] border border-[var(--dorami-border)] px-2 py-1 text-xs font-bold text-slate-500 sm:inline-flex">⌘ /</span>
             </label>
             <div className="field-box lg:w-64">

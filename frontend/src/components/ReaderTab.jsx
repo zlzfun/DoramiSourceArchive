@@ -20,6 +20,7 @@ import ReaderMarkdown from './ReaderMarkdown';
 import ReaderAiPanel from './ReaderAiPanel';
 import { resolveCompany } from '../sourceTaxonomy';
 import { formatDate, excerptOf } from '../utils/readerText';
+import { useAbortableLoad } from '../hooks/useAbortableLoad';
 import {
   fetchReaderSources,
   fetchArticles,
@@ -69,9 +70,9 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
   // 正文缓存（id → content）+ 「最新选中 id」防竞态：快速连点时丢弃晚到的过期正文响应
   const bodyCacheRef = useRef(new Map());
   const activeIdRef = useRef(null);
-  // 取消上一笔仍在飞行的列表请求：切源/搜索时慢的旧请求若晚返回会「后发先至」
-  // 覆盖当前选中源的列表，故发新请求前 abort 掉旧的（与 DataTab 同一约定）
-  const listAbortRef = useRef(null);
+  // 列表加载的竞态安全器：切源/搜索时慢的旧请求若晚返回会「后发先至」覆盖当前源列表，
+  // runList 发新请求前 abort 掉旧的（与 DataTab 同一约定）。
+  const runList = useAbortableLoad();
 
   // ── 源目录 ──
   const loadSources = useCallback(async () => {
@@ -189,42 +190,39 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
 
   // ── 文章列表 ──
   const loadArticles = useCallback(async (skip = 0, append = false) => {
-    // 发新请求前取消上一笔在飞行的请求，杜绝乱序晚到的响应覆盖当前列表
-    listAbortRef.current?.abort();
-    const controller = new AbortController();
-    listAbortRef.current = controller;
+    // 竞态由 runList 兜底：发新弃旧，杜绝乱序晚到的响应覆盖当前列表。
     if (append) setLoadingMore(true); else { setArticlesLoading(true); setLoadingMore(false); }
+    let data;
     try {
-      let data;
       // 列表只渲染摘要（content_preview），故请求统一不带全文，正文按需懒加载（见 selectArticle）。
       // 「我的订阅」聚合由后端 subscribed_scope=only 自行解析范围，前端无需先拿到订阅集合即可发请求。
-      if (showFavorites) {
-        const filters = {};
-        if (activeSourceId) filters.source_id = activeSourceId; // 收藏视图跟随当前来源
-        if (searchQuery) filters.search = searchQuery;
-        data = await fetchFavorites(filters, PAGE_SIZE, skip, { signal: controller.signal, includeContent: false });
-        if (data.favorite_ids) setFavoriteIds(new Set(data.favorite_ids));
-      } else {
+      data = await runList((signal) => {
+        if (showFavorites) {
+          const filters = {};
+          if (activeSourceId) filters.source_id = activeSourceId; // 收藏视图跟随当前来源
+          if (searchQuery) filters.search = searchQuery;
+          return fetchFavorites(filters, PAGE_SIZE, skip, { signal, includeContent: false });
+        }
         const filters = {};
         if (activeSourceId) filters.source_id = activeSourceId;
         else filters.subscribed_scope = 'only'; // 「我的订阅」聚合：后端硬过滤到已订阅源
         if (searchQuery) filters.search = searchQuery;
-        data = await fetchArticles(filters, PAGE_SIZE, skip, true, { signal: controller.signal, includeContent: false });
-      }
-      const items = data.items || [];
-      setArticlesTotal(data.total || 0);
-      setArticles(prev => (append ? [...prev, ...items] : items));
-      // 不再自动展开第一篇——避免「被动打开」污染阅读计量；右栏停在提示态，
-      // 等用户主动点选一篇才加载正文并计一次阅读（见 selectArticle）。
+        return fetchArticles(filters, PAGE_SIZE, skip, true, { signal, includeContent: false });
+      });
     } catch (error) {
-      if (error.name === 'AbortError') return; // 被更新的请求取消，静默丢弃
       showToast(error.message || '获取文章列表失败', 'error');
-    } finally {
-      if (!controller.signal.aborted) {
-        if (append) setLoadingMore(false); else setArticlesLoading(false);
-      }
+      if (append) setLoadingMore(false); else setArticlesLoading(false);
+      return;
     }
-  }, [activeSourceId, searchQuery, showFavorites, showToast]);
+    if (data === undefined) return; // 被更新的请求取代，loading 交给新请求，不在此清除
+    if (showFavorites && data.favorite_ids) setFavoriteIds(new Set(data.favorite_ids));
+    const items = data.items || [];
+    setArticlesTotal(data.total || 0);
+    setArticles(prev => (append ? [...prev, ...items] : items));
+    // 不再自动展开第一篇——避免「被动打开」污染阅读计量；右栏停在提示态，
+    // 等用户主动点选一篇才加载正文并计一次阅读（见 selectArticle）。
+    if (append) setLoadingMore(false); else setArticlesLoading(false);
+  }, [activeSourceId, searchQuery, showFavorites, showToast, runList]);
 
   // 切换来源/搜索 → 重置列表、回顶、清空右栏
   // 用 useLayoutEffect：在绘制前同步进入加载态，避免「切源瞬间旧列表被画出一帧」的陈旧帧闪现

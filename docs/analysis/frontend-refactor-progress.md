@@ -11,8 +11,8 @@
 | 阶段 0 · 低垂果实 | ✅ 完成 | `refactor/frontend` |
 | 阶段 1 · 基建收敛 | ✅ 完成 | `refactor/frontend` |
 | 阶段 2 · 组件拆分 | ✅ 完成（含分档暂缓） | `refactor/frontend` |
-| 阶段 3 · 数据加载模型统一 | ⏳ 进行 | — |
-| 阶段 4 · 样式体系 | 待办 | — |
+| 阶段 3 · 数据加载模型统一 | ✅ 完成 | `refactor/frontend` |
+| 阶段 4 · 样式体系 | ⏳ 进行 | — |
 
 ---
 
@@ -69,6 +69,19 @@
 
 ---
 
-## 阶段 3 · 数据加载模型统一 ⏳
+## 阶段 3 · 数据加载模型统一 ✅
 
-待执行：抽 `hooks/useAbortableLoad`（F4）、DataTab 对齐 ReaderTab 加载模型（F5）、清零 6 条 lint 警告、App.jsx 聚焦通道泛化为 `pendingFocus`（F6）。
+| 项 | 债务 | 状态 | 说明 |
+|---|---|---|---|
+| 抽 `useAbortableLoad` | F4 | ✅ | `hooks/useAbortableLoad.js`：`run(fn)` 发新弃旧 + 卸载自动中止 + AbortError 静默（返回 undefined 表「被取代」）。DataTab（列表 + 详情两个实例）与 ReaderTab 列表迁入；FetchRunsTab 保留其请求序号（`loadRequestRef`）——它 Promise.all 5 个未接 signal 的接口，abort 化过于侵入，仅补齐依赖修警告。 |
+| DataTab 加载模型对齐 | F5 | ✅ | `loadArticles` 改 `useCallback([filters, appliedSearch, runList, showToast])`；搜索拆 `searchInput`（即时）/`appliedSearch`（提交式，回车/清除时更新）；删除 `activeFilterKey` 手拼串 + `listFilterKeyRef` + `searchReloadTick` 三处 hack，改用单一「loaderRef 区分筛选变化 vs 翻页」驱动 effect。行为等价（提交式搜索 / 越界页修正 / dirty 重载 / pendingFilter 均保留）。 |
+| lint 警告清零 | — | ✅ | **`npm run lint` 0 error / 0 warning**（原 6 条：DataTab×3 随 F5 消除；FetchTab×1 + FetchRunsTab×2 补齐 `setView`/`loadAll`/`onRunsRefreshed`/`onPendingFilterApplied` 稳定回调依赖）。 |
+| App.jsx 聚焦通道泛化 | F6 | ✅ | 三组 `pending*` state + 三个 clear 回调 + `applyFocus` 三分支 → 单一 `pendingFocus {tab,payload}` + `clearPendingFocus`；子组件 prop 由 `pendingFocus?.tab===X ? payload : null` 派生（子组件 API 不变）。焦点对象 `{kind}` → `{tab}`，history.state 回放 `applyFocus` 收敛为单行。 |
+
+**验收**：`npm run lint` **0/0**；`npm run build` 零警告；主包 gzip 75.68 kB（稳定）。待手工冒烟：知识台账筛选/搜索（打字不加载、回车才查）/翻页/清除筛选/越界页；阅读器快速切源不串列表；跨页跳转三链路（台账→节点定位、节点→运行历史、健康→失败记录）+ 浏览器前进后退逐级回退。
+
+---
+
+## 阶段 4 · 样式体系 ⏳
+
+待执行：字重回落（f8，改 index.css 角色类）、`index.css` 按分区拆文件（f7，纯移动 + build CSS diff 校零）、legacy bridge 退役步骤 A（F8，ESLint 护栏冻结增量 + 存量清单入册）。

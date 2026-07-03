@@ -311,7 +311,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     });
     setExpandedCompanies(prev => (prev.has(company.key) ? prev : new Set(prev).add(company.key)));
     setHighlightedFetcherId(sid);
-  }, [pendingFocus, availableFetchers, fetchersById, sectionOf, onPendingFocusApplied, showToast]);
+  }, [pendingFocus, availableFetchers, fetchersById, sectionOf, onPendingFocusApplied, showToast, setView]);
 
   // 高亮目标行：下一帧滚动到视野中央，短暂高亮后自动消退。
   useEffect(() => {

@@ -113,16 +113,14 @@ export default function App() {
   const [authState, setAuthState] = useState({ status: 'checking', user: null });
   const [articlesDirty, setArticlesDirty] = useState(false);
   const [runsDirty, setRunsDirty] = useState(false);
-  const [pendingDataFilter, setPendingDataFilter] = useState(null);
-  const [pendingRunsFilter, setPendingRunsFilter] = useState(null);
-  const [pendingFetchFocus, setPendingFetchFocus] = useState(null);
+  // 跨页跳转的聚焦上下文：单一通道 { tab, payload }。目标 Tab 自行解释 payload，
+  // 消费后调 clearPendingFocus 归零。取代原先每种跳转一套 state + clear 回调 + applyFocus 分支。
+  const [pendingFocus, setPendingFocus] = useState(null);
+  const clearPendingFocus = useCallback(() => setPendingFocus(null), []);
 
-  // 跨页跳转的聚焦上下文（存在 history.state 里）回放时，重新点燃对应的一次性 pending*，让目标页重新定位/筛选。
+  // history.state 回放时重新点燃这一次性聚焦，让目标页重新定位/筛选。
   const applyFocus = useCallback((focus) => {
-    if (!focus) return;
-    if (focus.kind === 'dataFilter') setPendingDataFilter(focus.payload);
-    else if (focus.kind === 'runsFilter') setPendingRunsFilter(focus.payload);
-    else if (focus.kind === 'fetchFocus') setPendingFetchFocus(focus.payload);
+    setPendingFocus(focus || null);
   }, []);
 
   // 写入历史 + 应用路由的单一出口；replace 用于初始播种和角色重定向（不留多余历史条目）。
@@ -167,26 +165,23 @@ export default function App() {
   const clearRunsDirty = useCallback(() => setRunsDirty(false), []);
 
   const viewArticlesForSource = useCallback((sourceId) => {
-    jumpWithFocus('data', null, { kind: 'dataFilter', payload: { source_id: sourceId } });
+    jumpWithFocus('data', null, { tab: 'data', payload: { source_id: sourceId } });
   }, [jumpWithFocus]);
-  const clearPendingDataFilter = useCallback(() => setPendingDataFilter(null), []);
 
   const viewRunsForSource = useCallback((fetcherId, options = {}) => {
-    jumpWithFocus('runs', 'history', { kind: 'runsFilter', payload: { fetcher_id: fetcherId, status: options.status || '' } });
+    jumpWithFocus('runs', 'history', { tab: 'runs', payload: { fetcher_id: fetcherId, status: options.status || '' } });
   }, [jumpWithFocus]);
   const viewRunningTasks = useCallback(() => {
-    jumpWithFocus('runs', 'history', { kind: 'runsFilter', payload: { fetcher_id: '', status: '' } });
+    jumpWithFocus('runs', 'history', { tab: 'runs', payload: { fetcher_id: '', status: '' } });
   }, [jumpWithFocus]);
-  const clearPendingRunsFilter = useCallback(() => setPendingRunsFilter(null), []);
 
   // 知识台账「数据来源」列点击 → 定位并展开节点管理（采集端）里对应来源。
   const focusSourceNode = useCallback((sourceId) => {
     if (!sourceId) return;
     if (runtimeInfo.collector_enabled) {
-      jumpWithFocus('fetch', 'catalog', { kind: 'fetchFocus', payload: { source_id: sourceId } });
+      jumpWithFocus('fetch', 'catalog', { tab: 'fetch', payload: { source_id: sourceId } });
     }
   }, [runtimeInfo.collector_enabled, jumpWithFocus]);
-  const clearPendingFetchFocus = useCallback(() => setPendingFetchFocus(null), []);
 
   // 历史锚点：初始播种 + 监听浏览器返回/前进。
   useEffect(() => {
@@ -490,8 +485,8 @@ export default function App() {
                   ragEnabled={runtimeInfo.rag_enabled}
                   articlesDirty={articlesDirty}
                   onArticlesRefreshed={clearArticlesDirty}
-                  pendingFilter={pendingDataFilter}
-                  onPendingFilterApplied={clearPendingDataFilter}
+                  pendingFilter={pendingFocus?.tab === 'data' ? pendingFocus.payload : null}
+                  onPendingFilterApplied={clearPendingFocus}
                   onFocusSource={focusSourceNode}
                 />
               </Suspense>
@@ -510,8 +505,8 @@ export default function App() {
                   onViewArticles={viewArticlesForSource}
                   onViewRuns={viewRunsForSource}
                   onViewRunning={viewRunningTasks}
-                  pendingFocus={pendingFetchFocus}
-                  onPendingFocusApplied={clearPendingFetchFocus}
+                  pendingFocus={pendingFocus?.tab === 'fetch' ? pendingFocus.payload : null}
+                  onPendingFocusApplied={clearPendingFocus}
                 />
               </Suspense>
             </div>
@@ -529,8 +524,8 @@ export default function App() {
                   isActive={activeTab === 'runs'}
                   runsDirty={runsDirty}
                   onRunsRefreshed={clearRunsDirty}
-                  pendingFilter={pendingRunsFilter}
-                  onPendingFilterApplied={clearPendingRunsFilter}
+                  pendingFilter={pendingFocus?.tab === 'runs' ? pendingFocus.payload : null}
+                  onPendingFilterApplied={clearPendingFocus}
                 />
               </Suspense>
             </div>

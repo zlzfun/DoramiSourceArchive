@@ -200,7 +200,7 @@ export default function FetchRunsTab({
       loadAll();
       onRunsRefreshed?.();
     }
-  }, [isActive, runsDirty]);
+  }, [isActive, runsDirty, loadAll, onRunsRefreshed]);
 
   useEffect(() => {
     if (!pendingFilter) return;
@@ -212,7 +212,7 @@ export default function FetchRunsTab({
       trigger_type: '',
     }));
     onPendingFilterApplied?.();
-  }, [pendingFilter]);
+  }, [pendingFilter, onPendingFilterApplied, setView]);
 
 
   const openCreateJob = () => {
