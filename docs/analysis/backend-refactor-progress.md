@@ -47,7 +47,7 @@
 | 高频 JSON 字段提列 | ⬜ | — | JSON 仍存高频字段（暂缓，需按查询面评估） |
 | 唯一约束（聚合表 ai_usage/reader_reads 的 upsert 元组） | ⬜ | — | 未加（SQLite 加唯一约束需重建表，风险/收益待评估） |
 | D8 跨存储一致性：SQLite↔Chroma 对账 | ✅ | `27d0292` | `services/vector_reconcile.py` + `GET/POST /api/vector/reconcile`（三类漂移分类+修复） |
-| D8 `is_vectorized` 升级状态枚举 pending/indexing/indexed/failed/stale | ✅ | `c0bfa1f` | 附加式 index_status 列（is_vectorized 保留为派生位）+ 迁移 `8bba6f81b240` 回填；存储态转移 + save/编辑 stale + 单篇 indexing/failed + 对账 stale；`?index_status=` 过滤/载荷。前端展示待后续 |
+| D8 `is_vectorized` 升级状态枚举 pending/indexing/indexed/failed/stale | ✅ | `7a177a4` | 附加式 index_status 列（is_vectorized 保留为派生位）+ 迁移 `8bba6f81b240` 回填；存储态转移 + save/编辑 stale + 单篇 indexing/failed + 对账 stale；`?index_status=` 过滤/载荷。前端展示待后续 |
 | 对账定为巡检任务（定时） | ⬜ | — | 当前仅按需端点；定时化待阶段3 调度整合 |
 
 ---
@@ -80,7 +80,7 @@
 
 | 提交 | 阶段 | 摘要 |
 |---|---|---|
-| `c0bfa1f` | 2/3 | is_vectorized 升级 index_status 枚举（附加式 + 回填迁移） |
+| `7a177a4` | 2/3 | is_vectorized 升级 index_status 枚举（附加式 + 回填迁移） |
 | `4f88b0b` | 3 | 批量 fetch active + collection job run 迁上 jobs |
 | `d4e94e5` | docs | 逐项进度追踪活文档 + 计划交叉链接 |
 | `6aa1382` | 3 | 手动日报生成迁上持久化 jobs |
