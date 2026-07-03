@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Users,
@@ -42,6 +42,7 @@ import {
 } from '../api';
 import { useConfirm } from '../hooks/useConfirm';
 import { useModalTransition } from '../hooks/useModalTransition';
+import { useModalA11y } from '../hooks/useModalA11y';
 import { MultiSeriesArea, RankBars, BarList } from './charts/DashboardCharts';
 import { pivotDaily, CATEGORICAL, C_READ, C_FAVORITE } from './charts/chartUtils';
 
@@ -167,6 +168,16 @@ export default function AdminOpsTab({ showToast }) {
   const [resetPassword, setResetPassword] = useState('');
   const [resetBusy, setResetBusy] = useState(false);
   const resetModal = useModalTransition(Boolean(resetTarget));
+
+  // 四个 Portal 弹窗的可访问性（Esc 关闭 / 焦点陷阱 / 焦点归还）：各挂一个 panelRef。
+  const llmPanelRef = useRef(null);
+  const createPanelRef = useRef(null);
+  const resetPanelRef = useRef(null);
+  const detailPanelRef = useRef(null);
+  useModalA11y(llmModalOpen && llmModal.mounted, () => setLlmModalOpen(false), llmPanelRef);
+  useModalA11y(createModalOpen && createModal.mounted, () => setCreateModalOpen(false), createPanelRef);
+  useModalA11y(Boolean(resetTarget) && resetModal.mounted, () => setResetTarget(null), resetPanelRef);
+  useModalA11y(Boolean(detailUser) && detailModal.mounted, () => setDetailUser(null), detailPanelRef);
 
   const loadLlm = useCallback(() => getLLMConfig().then((d) => {
     setLlmStatus(d);
@@ -797,7 +808,7 @@ export default function AdminOpsTab({ showToast }) {
       {/* ── 模型配置弹窗（Portal 到 body，避开变换祖先造成的 fixed 错位） ── */}
       {llmModal.mounted && createPortal(
         <div className={`modal-overlay ${llmModal.closing ? 'is-closing' : ''}`} onClick={() => setLlmModalOpen(false)}>
-          <div className="modal-panel max-w-xl" onClick={(e) => e.stopPropagation()}>
+          <div ref={llmPanelRef} role="dialog" aria-modal="true" aria-label="模型配置" tabIndex={-1} className="modal-panel max-w-xl" onClick={(e) => e.stopPropagation()}>
             <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex items-center justify-between bg-[var(--dorami-well)]">
               <h3 className="card-title flex items-center gap-2">
                 <Brain className="w-5 h-5 text-indigo-500" /> 模型配置
@@ -851,7 +862,7 @@ export default function AdminOpsTab({ showToast }) {
       {/* ── 新建账户弹窗（Portal 到 body，避开变换祖先造成的 fixed 错位） ── */}
       {createModal.mounted && createPortal(
         <div className={`modal-overlay ${createModal.closing ? 'is-closing' : ''}`} onClick={() => setCreateModalOpen(false)}>
-          <form className="modal-panel max-w-md" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
+          <form ref={createPanelRef} role="dialog" aria-modal="true" aria-label="新建账户" tabIndex={-1} className="modal-panel max-w-md" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
             <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex items-center justify-between bg-[var(--dorami-well)]">
               <h3 className="card-title flex items-center gap-2">
                 <UserPlus className="w-5 h-5 text-indigo-500" /> 新建账户
@@ -881,7 +892,7 @@ export default function AdminOpsTab({ showToast }) {
       {/* ── 重置密码弹窗（Portal 到 body） ── */}
       {resetModal.mounted && createPortal(
         <div className={`modal-overlay ${resetModal.closing ? 'is-closing' : ''}`} onClick={() => setResetTarget(null)}>
-          <form className="modal-panel max-w-md" onClick={(e) => e.stopPropagation()} onSubmit={handleResetSubmit}>
+          <form ref={resetPanelRef} role="dialog" aria-modal="true" aria-label="重置密码" tabIndex={-1} className="modal-panel max-w-md" onClick={(e) => e.stopPropagation()} onSubmit={handleResetSubmit}>
             <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex items-center justify-between bg-[var(--dorami-well)]">
               <h3 className="card-title flex items-center gap-2">
                 <KeyRound className="w-5 h-5 text-indigo-500" /> 重置密码
@@ -916,7 +927,7 @@ export default function AdminOpsTab({ showToast }) {
       {/* ── 单用户活动详情面板（Portal 到 body） ── */}
       {detailModal.mounted && createPortal(
         <div className={`modal-overlay ${detailModal.closing ? 'is-closing' : ''}`} onClick={() => setDetailUser(null)}>
-          <div className="modal-panel max-w-3xl" onClick={(e) => e.stopPropagation()}>
+          <div ref={detailPanelRef} role="dialog" aria-modal="true" aria-label={`${detailUser} · 活动详情`} tabIndex={-1} className="modal-panel max-w-3xl" onClick={(e) => e.stopPropagation()}>
             <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex items-center justify-between bg-[var(--dorami-well)]">
               <h3 className="card-title flex items-center gap-2">
                 <Activity className="w-5 h-5 text-indigo-500" />

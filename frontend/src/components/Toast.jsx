@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, Info } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 import { useModalTransition } from '../hooks/useModalTransition';
 
 const STYLES = {
@@ -7,7 +7,7 @@ const STYLES = {
   info: { bg: 'bg-slate-800 dark:bg-slate-900', Icon: Info },
 };
 
-export default function Toast({ show, message, type = 'info' }) {
+export default function Toast({ show, message, type = 'info', onClose }) {
   // 退出时保持挂载 260ms 播放离场动画，避免「瞬间消失」的生硬感。
   const { mounted, closing } = useModalTransition(show, 260);
   if (!mounted) return null;
@@ -16,11 +16,21 @@ export default function Toast({ show, message, type = 'info' }) {
 
   return (
     <div
-      className={`toast-pop ${closing ? 'is-leaving' : ''} fixed bottom-8 left-1/2 z-[200] flex max-w-[90vw] items-center gap-3 rounded-[var(--r-card)] px-5 py-3.5 text-white shadow-2xl ${bg}`}
+      className={`toast-pop ${closing ? 'is-leaving' : ''} fixed bottom-8 left-1/2 z-[200] flex max-w-[90vw] items-center gap-3 rounded-[var(--r-card)] py-3.5 pl-5 pr-3 text-white shadow-2xl ${bg}`}
       role="status"
     >
       <Icon className="h-5 w-5 shrink-0" />
       <span className="text-sm font-semibold">{message}</span>
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="关闭提示"
+          className="shrink-0 rounded-[var(--r-sm)] p-1 text-white/70 transition-colors hover:bg-white/15 hover:text-white"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      )}
     </div>
   );
 }

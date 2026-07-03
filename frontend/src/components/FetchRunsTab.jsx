@@ -38,6 +38,7 @@ import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime } from '../utils/datetime';
 import { runAction } from '../utils/runAction';
 import { useConfirm } from '../hooks/useConfirm';
+import { TEST_RUN_LIMIT, normalizeIds, collectionRunMessage } from '../utils/collection';
 
 function formatDuration(durationMs) {
   if (durationMs === null || durationMs === undefined) return '-';
@@ -72,19 +73,6 @@ function blankJob() {
     is_active: true,
     downstream_policy: {},
   };
-}
-
-const TEST_RUN_LIMIT = 1;
-
-function normalizeIds(ids) {
-  return Array.from(new Set((ids || []).filter(Boolean)));
-}
-
-function collectionRunMessage(prefix, result) {
-  const failed = result?.failed_count || 0;
-  const saved = result?.saved_count || 0;
-  const failureText = failed ? `，失败 ${failed} 个${result.error_message ? `：${result.error_message}` : ''}` : '';
-  return `${prefix}：新增 ${saved} 条${failureText}`;
 }
 
 function defaultParamsFor(fetcher) {

@@ -21,246 +21,179 @@ async function handleApiError(response, defaultMsg) {
   throw new Error(msg);
 }
 
-export async function loginAdmin(username, password) {
-  const res = await apiFetch(`${API_BASE_URL}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+// 统一 JSON 请求封装：收敛遍布各接口的 `apiFetch → if(!ok) handleApiError → res.json()` 样板。
+// - body 有值时自动带 Content-Type + JSON 序列化（GET 无 body 则不加头）。
+// - 其余 fetch 选项（如 AbortController 的 signal）经 ...opts 透传。
+// - path 需含查询串；非 JSON 响应（text/ndjson）、fire-and-forget、失败静默返回默认值的
+//   接口不走本封装，见文件末尾各定制实现。
+async function request(path, { method = 'GET', body, errorMsg, ...opts } = {}) {
+  const res = await apiFetch(`${API_BASE_URL}${path}`, {
+    method,
+    ...(body !== undefined && {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+    ...opts,
   });
-  if (!res.ok) await handleApiError(res, '登录失败');
+  if (!res.ok) await handleApiError(res, errorMsg);
   return res.json();
 }
 
+// 把 filters 对象里的非空项追加到 URLSearchParams（空串/null/undefined 跳过）。
+function withFilters(params, filters = {}) {
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
+  });
+  return params;
+}
+
+const enc = encodeURIComponent;
+
+// ==================== 认证 ====================
+export function loginAdmin(username, password) {
+  return request('/auth/login', { method: 'POST', body: { username, password }, errorMsg: '登录失败' });
+}
+
 export async function fetchAuthSession() {
+  // 未登录是常态，不抛错：!ok 时返回匿名会话形状。
   const res = await apiFetch(`${API_BASE_URL}/auth/session`);
   if (!res.ok) return { authenticated: false, user: null };
   return res.json();
 }
 
-export async function fetchRuntimeInfo() {
-  const res = await apiFetch(`${API_BASE_URL}/runtime`);
-  if (!res.ok) await handleApiError(res, '获取运行角色失败');
-  return res.json();
+export function fetchRuntimeInfo() {
+  return request('/runtime', { errorMsg: '获取运行角色失败' });
 }
 
-export async function logoutAdmin() {
-  const res = await apiFetch(`${API_BASE_URL}/auth/logout`, { method: 'POST' });
-  if (!res.ok) await handleApiError(res, '退出登录失败');
-  return res.json();
+export function logoutAdmin() {
+  return request('/auth/logout', { method: 'POST', errorMsg: '退出登录失败' });
 }
 
-export async function changeOwnPassword(currentPassword, newPassword) {
-  const res = await apiFetch(`${API_BASE_URL}/auth/change-password`, {
+export function changeOwnPassword(currentPassword, newPassword) {
+  return request('/auth/change-password', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    body: { current_password: currentPassword, new_password: newPassword },
+    errorMsg: '修改密码失败',
   });
-  if (!res.ok) await handleApiError(res, '修改密码失败');
-  return res.json();
 }
 
-export async function updateAvatar(avatar) {
-  const res = await apiFetch(`${API_BASE_URL}/auth/avatar`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ avatar }),
-  });
-  if (!res.ok) await handleApiError(res, '更新头像失败');
-  return res.json();
+export function updateAvatar(avatar) {
+  return request('/auth/avatar', { method: 'POST', body: { avatar }, errorMsg: '更新头像失败' });
 }
 
 // ==================== 账户管理（仅管理员） ====================
-export async function fetchAccounts() {
-  const res = await apiFetch(`${API_BASE_URL}/accounts`);
-  if (!res.ok) await handleApiError(res, '获取账户列表失败');
-  return res.json();
+export function fetchAccounts() {
+  return request('/accounts', { errorMsg: '获取账户列表失败' });
 }
 
-export async function createAccount(payload) {
-  const res = await apiFetch(`${API_BASE_URL}/accounts`, {
+export function createAccount(payload) {
+  return request('/accounts', { method: 'POST', body: payload, errorMsg: '创建账户失败' });
+}
+
+export function updateAccount(username, payload) {
+  return request(`/accounts/${enc(username)}`, { method: 'PUT', body: payload, errorMsg: '更新账户失败' });
+}
+
+export function resetAccountPassword(username, newPassword) {
+  return request(`/accounts/${enc(username)}/reset-password`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: { new_password: newPassword },
+    errorMsg: '重置密码失败',
   });
-  if (!res.ok) await handleApiError(res, '创建账户失败');
-  return res.json();
 }
 
-export async function updateAccount(username, payload) {
-  const res = await apiFetch(`${API_BASE_URL}/accounts/${encodeURIComponent(username)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) await handleApiError(res, '更新账户失败');
-  return res.json();
-}
-
-export async function resetAccountPassword(username, newPassword) {
-  const res = await apiFetch(`${API_BASE_URL}/accounts/${encodeURIComponent(username)}/reset-password`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ new_password: newPassword }),
-  });
-  if (!res.ok) await handleApiError(res, '重置密码失败');
-  return res.json();
-}
-
-export async function deleteAccount(username) {
-  const res = await apiFetch(`${API_BASE_URL}/accounts/${encodeURIComponent(username)}`, { method: 'DELETE' });
-  if (!res.ok) await handleApiError(res, '删除账户失败');
-  return res.json();
+export function deleteAccount(username) {
+  return request(`/accounts/${enc(username)}`, { method: 'DELETE', errorMsg: '删除账户失败' });
 }
 
 // ==================== 运维管理（仅管理员） ====================
-export async function fetchAdminOverview() {
-  const res = await apiFetch(`${API_BASE_URL}/admin/overview`);
-  if (!res.ok) await handleApiError(res, '获取运维概览失败');
-  return res.json();
+export function fetchAdminOverview() {
+  return request('/admin/overview', { errorMsg: '获取运维概览失败' });
 }
 
-export async function fetchAdminAccounts(days = 30) {
-  const res = await apiFetch(`${API_BASE_URL}/admin/accounts?days=${encodeURIComponent(days)}`);
-  if (!res.ok) await handleApiError(res, '获取账户列表失败');
-  return res.json();
+export function fetchAdminAccounts(days = 30) {
+  return request(`/admin/accounts?days=${enc(days)}`, { errorMsg: '获取账户列表失败' });
 }
 
-export async function fetchAccountActivity(username, days = 30) {
-  const res = await apiFetch(`${API_BASE_URL}/admin/accounts/${encodeURIComponent(username)}/activity?days=${encodeURIComponent(days)}`);
-  if (!res.ok) await handleApiError(res, '获取用户活动详情失败');
-  return res.json();
+export function fetchAccountActivity(username, days = 30) {
+  return request(`/admin/accounts/${enc(username)}/activity?days=${enc(days)}`, { errorMsg: '获取用户活动详情失败' });
 }
 
-export async function fetchAiUsage(days = 30) {
-  const res = await apiFetch(`${API_BASE_URL}/admin/ai-usage?days=${encodeURIComponent(days)}`);
-  if (!res.ok) await handleApiError(res, '获取 AI 用量失败');
-  return res.json();
+export function fetchAiUsage(days = 30) {
+  return request(`/admin/ai-usage?days=${enc(days)}`, { errorMsg: '获取 AI 用量失败' });
 }
 
-export async function fetchAdminContent(top = 12) {
-  const res = await apiFetch(`${API_BASE_URL}/admin/content?top=${encodeURIComponent(top)}`);
-  if (!res.ok) await handleApiError(res, '获取内容看板失败');
-  return res.json();
+export function fetchAdminContent(top = 12) {
+  return request(`/admin/content?top=${enc(top)}`, { errorMsg: '获取内容看板失败' });
 }
 
-export async function getAiBetaGlobal() {
-  const res = await apiFetch(`${API_BASE_URL}/admin/ai-beta/global`);
-  if (!res.ok) await handleApiError(res, '获取 AI 全局开关失败');
-  return res.json();
+export function getAiBetaGlobal() {
+  return request('/admin/ai-beta/global', { errorMsg: '获取 AI 全局开关失败' });
 }
 
-export async function setAiBetaGlobal(enabled) {
-  const res = await apiFetch(`${API_BASE_URL}/admin/ai-beta/global`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
-  });
-  if (!res.ok) await handleApiError(res, '更新 AI 全局开关失败');
-  return res.json();
+export function setAiBetaGlobal(enabled) {
+  return request('/admin/ai-beta/global', { method: 'POST', body: { enabled }, errorMsg: '更新 AI 全局开关失败' });
 }
 
 // ── 阅读器 AI（用户面：翻译 / 问答） ──
-export async function translateArticle(articleId) {
-  const res = await apiFetch(`${API_BASE_URL}/reader/ai/translate`, {
+export function translateArticle(articleId) {
+  return request('/reader/ai/translate', { method: 'POST', body: { article_id: articleId }, errorMsg: '翻译失败，请稍后重试' });
+}
+
+export function askReaderAi({ question, scope = 'article', articleId = null, history = [] }) {
+  return request('/reader/ai/ask', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ article_id: articleId }),
+    body: { question, scope, article_id: articleId, history },
+    errorMsg: '提问失败，请稍后重试',
   });
-  if (!res.ok) await handleApiError(res, '翻译失败，请稍后重试');
-  return res.json();
 }
 
-export async function askReaderAi({ question, scope = 'article', articleId = null, history = [] }) {
-  const res = await apiFetch(`${API_BASE_URL}/reader/ai/ask`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, scope, article_id: articleId, history }),
-  });
-  if (!res.ok) await handleApiError(res, '提问失败，请稍后重试');
-  return res.json();
+// ==================== 抓取器 / 数据源健康 ====================
+export function fetchFetchers() {
+  return request('/fetchers', { errorMsg: '获取抓取器注册表失败' });
 }
 
-export async function fetchFetchers() {
-  const res = await apiFetch(`${API_BASE_URL}/fetchers`);
-  if (!res.ok) await handleApiError(res, '获取抓取器注册表失败');
-  return res.json();
+export function fetchSourceHealth() {
+  return request('/source-health', { errorMsg: '获取数据源健康状态失败' });
 }
 
-export async function fetchSourceHealth() {
-  const res = await apiFetch(`${API_BASE_URL}/source-health`);
-  if (!res.ok) await handleApiError(res, '获取数据源健康状态失败');
-  return res.json();
-}
-
-export async function fetchArticles(filters = {}, limit = 100, skip = 0, includeTotal = false, options = {}) {
+// ==================== 文章 ====================
+export function fetchArticles(filters = {}, limit = 100, skip = 0, includeTotal = false, options = {}) {
   const { includeContent, ...fetchOptions } = options;
   const params = new URLSearchParams({ limit, skip });
   if (includeTotal) params.append('include_total', 'true');
   if (includeContent !== undefined) params.append('include_content', includeContent ? 'true' : 'false');
-  Object.entries(filters).forEach(([k, v]) => {
-    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
-  });
-  const res = await apiFetch(`${API_BASE_URL}/articles?${params}`, fetchOptions);
-  if (!res.ok) await handleApiError(res, '获取文章列表失败');
-  return res.json();
+  withFilters(params, filters);
+  return request(`/articles?${params}`, { ...fetchOptions, errorMsg: '获取文章列表失败' });
 }
 
-export async function fetchArticle(id, options = {}) {
-  const res = await apiFetch(`${API_BASE_URL}/articles/${encodeURIComponent(id)}`, options);
-  if (!res.ok) await handleApiError(res, '获取文章详情失败');
-  return res.json();
+export function fetchArticle(id, options = {}) {
+  return request(`/articles/${enc(id)}`, { ...options, errorMsg: '获取文章详情失败' });
 }
 
-export async function deleteArticle(id) {
-  const res = await apiFetch(`${API_BASE_URL}/articles/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!res.ok) await handleApiError(res, '删除失败');
-  return res.json();
+export function deleteArticle(id) {
+  return request(`/articles/${enc(id)}`, { method: 'DELETE', errorMsg: '删除失败' });
 }
 
-export async function batchDeleteArticles(ids) {
-  const res = await apiFetch(`${API_BASE_URL}/articles/batch-delete`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids }),
-  });
-  if (!res.ok) await handleApiError(res, '批量删除失败');
-  return res.json();
+export function batchDeleteArticles(ids) {
+  return request('/articles/batch-delete', { method: 'POST', body: { ids }, errorMsg: '批量删除失败' });
 }
 
-export async function updateArticle(id, data) {
-  const res = await apiFetch(`${API_BASE_URL}/articles/${encodeURIComponent(id)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) await handleApiError(res, '更新失败');
-  return res.json();
+export function updateArticle(id, data) {
+  return request(`/articles/${enc(id)}`, { method: 'PUT', body: data, errorMsg: '更新失败' });
 }
 
-export async function createArticle(payload) {
-  const res = await apiFetch(`${API_BASE_URL}/articles`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) await handleApiError(res, '录入失败');
-  return res.json();
+export function createArticle(payload) {
+  return request('/articles', { method: 'POST', body: payload, errorMsg: '录入失败' });
 }
 
-export async function vectorizeArticle(id) {
-  const res = await apiFetch(`${API_BASE_URL}/vectorize/${encodeURIComponent(id)}`, { method: 'POST' });
-  if (!res.ok) await handleApiError(res, '向量化失败');
-  return res.json();
+// ==================== 向量化（单篇 / 批量） ====================
+export function vectorizeArticle(id) {
+  return request(`/vectorize/${enc(id)}`, { method: 'POST', errorMsg: '向量化失败' });
 }
 
-export async function batchVectorizeArticles(ids) {
-  const res = await apiFetch(`${API_BASE_URL}/vectorize/batch`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids }),
-  });
-  if (!res.ok) await handleApiError(res, '批量向量化失败');
-  return res.json();
+export function batchVectorizeArticles(ids) {
+  return request('/vectorize/batch', { method: 'POST', body: { ids }, errorMsg: '批量向量化失败' });
 }
 
 function runQuery(options = {}) {
@@ -272,283 +205,147 @@ function runQuery(options = {}) {
   return query ? `?${query}` : '';
 }
 
-export async function triggerFetch(fetcherId, params, options = {}) {
-  const res = await apiFetch(`${API_BASE_URL}/fetch/${fetcherId}${runQuery(options)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
-  if (!res.ok) await handleApiError(res, `[${fetcherId}] 抓取失败`);
-  return res.json();
+export function triggerFetch(fetcherId, params, options = {}) {
+  return request(`/fetch/${fetcherId}${runQuery(options)}`, { method: 'POST', body: params, errorMsg: `[${fetcherId}] 抓取失败` });
 }
 
-export async function triggerBatchFetch(items, options = {}) {
-  const res = await apiFetch(`${API_BASE_URL}/fetch/batch${runQuery(options)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items }),
-  });
-  if (!res.ok) await handleApiError(res, '批量抓取失败');
-  return res.json();
+export function triggerBatchFetch(items, options = {}) {
+  return request(`/fetch/batch${runQuery(options)}`, { method: 'POST', body: { items }, errorMsg: '批量抓取失败' });
 }
 
 export async function fetchRunningProgress() {
+  // 进度轮询：!ok 时静默返回空对象，不打断轮询循环。
   const res = await apiFetch(`${API_BASE_URL}/fetch-runs/running-progress`);
   if (!res.ok) return {};
   return res.json();
 }
 
-export async function fetchTasks() {
-  const res = await apiFetch(`${API_BASE_URL}/tasks`);
-  if (!res.ok) await handleApiError(res, '获取任务列表失败');
-  return res.json();
+export function fetchTasks() {
+  return request('/tasks', { errorMsg: '获取任务列表失败' });
 }
 
-export async function fetchFetchRuns(filters = {}, limit = 100) {
-  const params = new URLSearchParams({ limit });
-  Object.entries(filters).forEach(([k, v]) => {
-    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
-  });
-  const res = await apiFetch(`${API_BASE_URL}/fetch-runs?${params}`);
-  if (!res.ok) await handleApiError(res, '获取抓取运行历史失败');
-  return res.json();
+export function fetchFetchRuns(filters = {}, limit = 100) {
+  const params = withFilters(new URLSearchParams({ limit }), filters);
+  return request(`/fetch-runs?${params}`, { errorMsg: '获取抓取运行历史失败' });
 }
 
-export async function fetchNodeGroups(filters = {}) {
-  const params = new URLSearchParams();
-  Object.entries(filters).forEach(([k, v]) => {
-    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
-  });
-  const query = params.toString();
-  const res = await apiFetch(`${API_BASE_URL}/node-groups${query ? `?${query}` : ''}`);
-  if (!res.ok) await handleApiError(res, '获取采集范围失败');
-  return res.json();
+// ==================== 采集范围（节点组） ====================
+export function fetchNodeGroups(filters = {}) {
+  const query = withFilters(new URLSearchParams(), filters).toString();
+  return request(`/node-groups${query ? `?${query}` : ''}`, { errorMsg: '获取采集范围失败' });
 }
 
-export async function createNodeGroup(data) {
-  const res = await apiFetch(`${API_BASE_URL}/node-groups`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) await handleApiError(res, '创建采集范围失败');
-  return res.json();
+export function createNodeGroup(data) {
+  return request('/node-groups', { method: 'POST', body: data, errorMsg: '创建采集范围失败' });
 }
 
-export async function updateNodeGroup(id, data) {
-  const res = await apiFetch(`${API_BASE_URL}/node-groups/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) await handleApiError(res, '更新采集范围失败');
-  return res.json();
+export function updateNodeGroup(id, data) {
+  return request(`/node-groups/${id}`, { method: 'PUT', body: data, errorMsg: '更新采集范围失败' });
 }
 
-export async function deleteNodeGroup(id) {
-  const res = await apiFetch(`${API_BASE_URL}/node-groups/${id}`, { method: 'DELETE' });
-  if (!res.ok) await handleApiError(res, '删除采集范围失败');
-  return res.json();
+export function deleteNodeGroup(id) {
+  return request(`/node-groups/${id}`, { method: 'DELETE', errorMsg: '删除采集范围失败' });
 }
 
-export async function runNodeGroup(id, options = {}) {
-  const res = await apiFetch(`${API_BASE_URL}/node-groups/${id}/fetch${runQuery(options)}`, { method: 'POST' });
-  if (!res.ok) await handleApiError(res, '触发采集范围失败');
-  return res.json();
+export function runNodeGroup(id, options = {}) {
+  return request(`/node-groups/${id}/fetch${runQuery(options)}`, { method: 'POST', errorMsg: '触发采集范围失败' });
 }
 
-export async function fetchCollectionJobs(filters = {}) {
-  const params = new URLSearchParams();
-  Object.entries(filters).forEach(([k, v]) => {
-    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
-  });
-  const query = params.toString();
-  const res = await apiFetch(`${API_BASE_URL}/collection-jobs${query ? `?${query}` : ''}`);
-  if (!res.ok) await handleApiError(res, '获取采集任务失败');
-  return res.json();
+// ==================== 采集任务（Collection Jobs） ====================
+export function fetchCollectionJobs(filters = {}) {
+  const query = withFilters(new URLSearchParams(), filters).toString();
+  return request(`/collection-jobs${query ? `?${query}` : ''}`, { errorMsg: '获取采集任务失败' });
 }
 
-export async function createCollectionJob(data) {
-  const res = await apiFetch(`${API_BASE_URL}/collection-jobs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) await handleApiError(res, '创建采集任务失败');
-  return res.json();
+export function createCollectionJob(data) {
+  return request('/collection-jobs', { method: 'POST', body: data, errorMsg: '创建采集任务失败' });
 }
 
-export async function updateCollectionJob(id, data) {
-  const res = await apiFetch(`${API_BASE_URL}/collection-jobs/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) await handleApiError(res, '更新采集任务失败');
-  return res.json();
+export function updateCollectionJob(id, data) {
+  return request(`/collection-jobs/${id}`, { method: 'PUT', body: data, errorMsg: '更新采集任务失败' });
 }
 
-export async function deleteCollectionJob(id) {
-  const res = await apiFetch(`${API_BASE_URL}/collection-jobs/${id}`, { method: 'DELETE' });
-  if (!res.ok) await handleApiError(res, '删除采集任务失败');
-  return res.json();
+export function deleteCollectionJob(id) {
+  return request(`/collection-jobs/${id}`, { method: 'DELETE', errorMsg: '删除采集任务失败' });
 }
 
 export async function runCollectionJob(id, options = {}) {
   // 采集任务运行已改为后台任务：提交拿 job_id，轮询 /api/jobs/{id} 取聚合结果。
   // 细粒度进度仍由调用方轮询 /api/fetch-runs/running-progress 驱动，与此互补。
-  const res = await apiFetch(`${API_BASE_URL}/collection-jobs/${id}/run${runQuery(options)}`, { method: 'POST' });
-  if (!res.ok) await handleApiError(res, '触发采集任务失败');
-  const { job_id: jobId } = await res.json();
+  const { job_id: jobId } = await request(`/collection-jobs/${id}/run${runQuery(options)}`, { method: 'POST', errorMsg: '触发采集任务失败' });
   return pollJob(jobId, { defaultError: '触发采集任务失败' });
 }
 
-export async function fetchCollectionJobRuns(filters = {}, limit = 100) {
-  const params = new URLSearchParams({ limit });
-  Object.entries(filters).forEach(([k, v]) => {
-    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
-  });
-  const res = await apiFetch(`${API_BASE_URL}/collection-job-runs?${params}`);
-  if (!res.ok) await handleApiError(res, '获取采集运行历史失败');
-  return res.json();
+export function fetchCollectionJobRuns(filters = {}, limit = 100) {
+  const params = withFilters(new URLSearchParams({ limit }), filters);
+  return request(`/collection-job-runs?${params}`, { errorMsg: '获取采集运行历史失败' });
 }
 
-export async function fetchSourceConfigs(filters = {}, limit = 100) {
-  const params = new URLSearchParams({ limit });
-  Object.entries(filters).forEach(([k, v]) => {
-    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
-  });
-  const res = await apiFetch(`${API_BASE_URL}/source-configs?${params}`);
-  if (!res.ok) await handleApiError(res, '获取数据源配置失败');
-  return res.json();
+// ==================== 数据源配置（Source Configs） ====================
+export function fetchSourceConfigs(filters = {}, limit = 100) {
+  const params = withFilters(new URLSearchParams({ limit }), filters);
+  return request(`/source-configs?${params}`, { errorMsg: '获取数据源配置失败' });
 }
 
-export async function createSourceConfig(data) {
-  const res = await apiFetch(`${API_BASE_URL}/source-configs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) await handleApiError(res, '创建数据源失败');
-  return res.json();
+export function createSourceConfig(data) {
+  return request('/source-configs', { method: 'POST', body: data, errorMsg: '创建数据源失败' });
 }
 
-export async function updateSourceConfig(sourceId, data) {
-  const res = await apiFetch(`${API_BASE_URL}/source-configs/${encodeURIComponent(sourceId)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) await handleApiError(res, '更新数据源失败');
-  return res.json();
+export function updateSourceConfig(sourceId, data) {
+  return request(`/source-configs/${enc(sourceId)}`, { method: 'PUT', body: data, errorMsg: '更新数据源失败' });
 }
 
-export async function toggleSourceConfig(sourceId, isActive) {
-  const res = await apiFetch(`${API_BASE_URL}/source-configs/${encodeURIComponent(sourceId)}/toggle`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ is_active: isActive }),
-  });
-  if (!res.ok) await handleApiError(res, '切换数据源状态失败');
-  return res.json();
+export function toggleSourceConfig(sourceId, isActive) {
+  return request(`/source-configs/${enc(sourceId)}/toggle`, { method: 'POST', body: { is_active: isActive }, errorMsg: '切换数据源状态失败' });
 }
 
-export async function deleteSourceConfig(sourceId) {
-  const res = await apiFetch(`${API_BASE_URL}/source-configs/${encodeURIComponent(sourceId)}`, { method: 'DELETE' });
-  if (!res.ok) await handleApiError(res, '删除数据源失败');
-  return res.json();
+export function deleteSourceConfig(sourceId) {
+  return request(`/source-configs/${enc(sourceId)}`, { method: 'DELETE', errorMsg: '删除数据源失败' });
 }
 
-export async function fetchSourceConfigNow(sourceId, params = {}) {
-  const res = await apiFetch(`${API_BASE_URL}/source-configs/${encodeURIComponent(sourceId)}/fetch`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ params }),
-  });
-  if (!res.ok) await handleApiError(res, '触发数据源抓取失败');
-  return res.json();
+export function fetchSourceConfigNow(sourceId, params = {}) {
+  return request(`/source-configs/${enc(sourceId)}/fetch`, { method: 'POST', body: { params }, errorMsg: '触发数据源抓取失败' });
 }
 
 export async function fetchActiveRssSources(params = {}) {
   // 后台任务化：提交拿 job_id，轮询 /api/jobs/{id} 取聚合结果。
-  const res = await apiFetch(`${API_BASE_URL}/source-configs/fetch-active-rss`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ params }),
-  });
-  if (!res.ok) await handleApiError(res, '批量触发 RSS 抓取失败');
-  const { job_id: jobId } = await res.json();
+  const { job_id: jobId } = await request('/source-configs/fetch-active-rss', { method: 'POST', body: { params }, errorMsg: '批量触发 RSS 抓取失败' });
   return pollJob(jobId, { defaultError: '批量触发 RSS 抓取失败' });
 }
 
 // ===== AI 自定义节点（URL → 分析 → 预览 → 固化）=====
-
-export async function analyzeSourceUrl(url) {
-  const res = await apiFetch(`${API_BASE_URL}/source-builder/analyze`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
-  });
-  if (!res.ok) await handleApiError(res, '分析 URL 失败');
-  return res.json();
+export function analyzeSourceUrl(url) {
+  return request('/source-builder/analyze', { method: 'POST', body: { url }, errorMsg: '分析 URL 失败' });
 }
 
-export async function previewSourceConfig(config) {
-  const res = await apiFetch(`${API_BASE_URL}/source-builder/preview`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(config),
-  });
-  if (!res.ok) await handleApiError(res, '试抓预览失败');
-  return res.json();
+export function previewSourceConfig(config) {
+  return request('/source-builder/preview', { method: 'POST', body: config, errorMsg: '试抓预览失败' });
 }
 
-export async function createTask(data) {
-  const res = await apiFetch(`${API_BASE_URL}/tasks`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) await handleApiError(res, '创建任务失败');
-  return res.json();
+// ==================== 定时任务（旧版） ====================
+export function createTask(data) {
+  return request('/tasks', { method: 'POST', body: data, errorMsg: '创建任务失败' });
 }
 
-export async function deleteTask(id) {
-  const res = await apiFetch(`${API_BASE_URL}/tasks/${id}`, { method: 'DELETE' });
-  if (!res.ok) await handleApiError(res, '删除任务失败');
-  return res.json();
+export function deleteTask(id) {
+  return request(`/tasks/${id}`, { method: 'DELETE', errorMsg: '删除任务失败' });
 }
 
-export async function fetchVectorStats() {
-  const res = await apiFetch(`${API_BASE_URL}/vector/stats`);
-  if (!res.ok) await handleApiError(res, '获取向量统计失败');
-  return res.json();
+// ==================== 向量 / RAG 检索 ====================
+export function fetchVectorStats() {
+  return request('/vector/stats', { errorMsg: '获取向量统计失败' });
 }
 
-export async function vectorSearch(query, topK = 5, options = {}) {
-  const res = await apiFetch(`${API_BASE_URL}/vector/search`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, top_k: topK, ...options }),
-  });
-  if (!res.ok) await handleApiError(res, '检索失败');
-  return res.json();
+export function vectorSearch(query, topK = 5, options = {}) {
+  return request('/vector/search', { method: 'POST', body: { query, top_k: topK, ...options }, errorMsg: '检索失败' });
 }
 
-export async function ragContext(query, topK = 5, options = {}) {
-  const res = await apiFetch(`${API_BASE_URL}/rag/context`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, top_k: topK, ...options }),
-  });
-  if (!res.ok) await handleApiError(res, 'RAG 上下文检索失败');
-  return res.json();
+export function ragContext(query, topK = 5, options = {}) {
+  return request('/rag/context', { method: 'POST', body: { query, top_k: topK, ...options }, errorMsg: 'RAG 上下文检索失败' });
 }
 
-export async function ragSimilar(articleId, topK = 5) {
-  const res = await apiFetch(`${API_BASE_URL}/rag/similar/${encodeURIComponent(articleId)}?top_k=${topK}`);
-  if (!res.ok) await handleApiError(res, '相似文章检索失败');
-  return res.json();
+export function ragSimilar(articleId, topK = 5) {
+  return request(`/rag/similar/${enc(articleId)}?top_k=${topK}`, { errorMsg: '相似文章检索失败' });
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -569,118 +366,70 @@ async function pollJob(jobId, { intervalMs = 1500, timeoutMs = 60 * 60 * 1000, d
 }
 
 export async function vectorizeAllPending() {
-  const res = await apiFetch(`${API_BASE_URL}/vectorize/all-pending`, { method: 'POST' });
-  if (!res.ok) await handleApiError(res, '全量向量化失败');
-  const { job_id: jobId } = await res.json();
+  const { job_id: jobId } = await request('/vectorize/all-pending', { method: 'POST', errorMsg: '全量向量化失败' });
   return pollJob(jobId, { defaultError: '全量向量化失败' });
 }
 
 export async function reindexAll() {
-  const res = await apiFetch(`${API_BASE_URL}/vector/reindex-all`, { method: 'POST' });
-  if (!res.ok) await handleApiError(res, '全量重索引失败');
-  const { job_id: jobId } = await res.json();
+  const { job_id: jobId } = await request('/vector/reindex-all', { method: 'POST', errorMsg: '全量重索引失败' });
   return pollJob(jobId, { defaultError: '全量重索引失败' });
 }
 
-export async function fetchBackgroundJob(jobId) {
-  const res = await apiFetch(`${API_BASE_URL}/jobs/${jobId}`);
-  if (!res.ok) await handleApiError(res, '任务状态查询失败');
-  return res.json();
+export function fetchBackgroundJob(jobId) {
+  return request(`/jobs/${jobId}`, { errorMsg: '任务状态查询失败' });
 }
 
-export async function fetchSubscribedVectorStats() {
-  const res = await apiFetch(`${API_BASE_URL}/vector/subscribed-stats`);
-  if (!res.ok) await handleApiError(res, '获取订阅向量统计失败');
-  return res.json();
+export function fetchSubscribedVectorStats() {
+  return request('/vector/subscribed-stats', { errorMsg: '获取订阅向量统计失败' });
 }
 
-export async function getAutoVectorize() {
-  const res = await apiFetch(`${API_BASE_URL}/vector/auto-vectorize`);
-  if (!res.ok) await handleApiError(res, '获取自动向量化配置失败');
-  return res.json();
+export function getAutoVectorize() {
+  return request('/vector/auto-vectorize', { errorMsg: '获取自动向量化配置失败' });
 }
 
-export async function setAutoVectorize(enabled) {
-  const res = await apiFetch(`${API_BASE_URL}/vector/auto-vectorize`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
-  });
-  if (!res.ok) await handleApiError(res, '设置自动向量化失败');
-  return res.json();
+export function setAutoVectorize(enabled) {
+  return request('/vector/auto-vectorize', { method: 'POST', body: { enabled }, errorMsg: '设置自动向量化失败' });
 }
 
 // ==================== 大模型配置 & 每日日报 ====================
-
-export async function getLLMConfig() {
-  const res = await apiFetch(`${API_BASE_URL}/llm/config`);
-  if (!res.ok) await handleApiError(res, '获取大模型配置失败');
-  return res.json();
+export function getLLMConfig() {
+  return request('/llm/config', { errorMsg: '获取大模型配置失败' });
 }
 
-export async function saveLLMConfig(payload) {
-  const res = await apiFetch(`${API_BASE_URL}/llm/config`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) await handleApiError(res, '保存大模型配置失败');
-  return res.json();
+export function saveLLMConfig(payload) {
+  return request('/llm/config', { method: 'POST', body: payload, errorMsg: '保存大模型配置失败' });
 }
 
-export async function testLLMConfig() {
-  const res = await apiFetch(`${API_BASE_URL}/llm/config/test`, { method: 'POST' });
-  if (!res.ok) await handleApiError(res, '大模型连接测试失败');
-  return res.json();
+export function testLLMConfig() {
+  return request('/llm/config/test', { method: 'POST', errorMsg: '大模型连接测试失败' });
 }
 
-export async function getDailyBriefConfig() {
-  const res = await apiFetch(`${API_BASE_URL}/daily-brief/config`);
-  if (!res.ok) await handleApiError(res, '获取日报配置失败');
-  return res.json();
+export function getDailyBriefConfig() {
+  return request('/daily-brief/config', { errorMsg: '获取日报配置失败' });
 }
 
-export async function saveDailyBriefConfig(payload) {
-  const res = await apiFetch(`${API_BASE_URL}/daily-brief/config`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) await handleApiError(res, '保存日报配置失败');
-  return res.json();
+export function saveDailyBriefConfig(payload) {
+  return request('/daily-brief/config', { method: 'POST', body: payload, errorMsg: '保存日报配置失败' });
 }
 
-export async function getDailyBriefPipeline() {
-  const res = await apiFetch(`${API_BASE_URL}/daily-brief/pipeline`);
-  if (!res.ok) await handleApiError(res, '获取日报生成管线失败');
-  return res.json();
+export function getDailyBriefPipeline() {
+  return request('/daily-brief/pipeline', { errorMsg: '获取日报生成管线失败' });
 }
 
-export async function getDailyBriefProgress() {
-  const res = await apiFetch(`${API_BASE_URL}/daily-brief/progress`);
-  if (!res.ok) await handleApiError(res, '获取日报进度失败');
-  return res.json();
+export function getDailyBriefProgress() {
+  return request('/daily-brief/progress', { errorMsg: '获取日报进度失败' });
 }
 
 export async function generateDailyBrief(payload = {}) {
   // 生成已改为后台任务：提交拿 job_id，再轮询 /api/jobs/{id} 取最终结果（result）。
   // 细粒度阶段动画仍由调用方轮询 /api/daily-brief/progress 驱动，与此互补。
-  const res = await apiFetch(`${API_BASE_URL}/daily-brief/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) await handleApiError(res, '生成日报失败');
-  const { job_id: jobId } = await res.json();
+  const { job_id: jobId } = await request('/daily-brief/generate', { method: 'POST', body: payload, errorMsg: '生成日报失败' });
   return pollJob(jobId, { defaultError: '生成日报失败' });
 }
 
+// ==================== 归档同步（导出/导入，非 JSON 响应） ====================
 export async function exportArchiveArticles(filters = {}) {
-  const params = new URLSearchParams();
-  Object.entries(filters).forEach(([k, v]) => {
-    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
-  });
-  const query = params.toString();
+  const query = withFilters(new URLSearchParams(), filters).toString();
   const res = await apiFetch(`${API_BASE_URL}/archive/export/articles.jsonl${query ? `?${query}` : ''}`);
   if (!res.ok) await handleApiError(res, '导出归档包失败');
   return res.text();
@@ -696,111 +445,73 @@ export async function importArchiveArticlesJsonl(rawText) {
   return res.json();
 }
 
+// ==================== MCP（无 ok 校验，容忍 502/未就绪） ====================
 export const fetchMcpStatus = () =>
   apiFetch(`${API_BASE_URL}/mcp/status`).then(r => r.json());
 
 export const toggleMcp = () =>
   apiFetch(`${API_BASE_URL}/mcp/toggle`, { method: 'POST' }).then(r => r.json());
 
-export async function fetchSubscriptions(filters = {}) {
-  const params = new URLSearchParams();
-  Object.entries(filters).forEach(([k, v]) => {
-    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
-  });
-  const query = params.toString();
-  const res = await apiFetch(`${API_BASE_URL}/subscriptions${query ? `?${query}` : ''}`);
-  if (!res.ok) await handleApiError(res, '获取订阅源失败');
-  return res.json();
+// ==================== 订阅 / 阅读器 ====================
+export function fetchSubscriptions(filters = {}) {
+  const query = withFilters(new URLSearchParams(), filters).toString();
+  return request(`/subscriptions${query ? `?${query}` : ''}`, { errorMsg: '获取订阅源失败' });
 }
 
-export async function fetchReaderSources() {
-  const res = await apiFetch(`${API_BASE_URL}/reader/sources`);
-  if (!res.ok) await handleApiError(res, '获取内容源目录失败');
-  return res.json();
+export function fetchReaderSources() {
+  return request('/reader/sources', { errorMsg: '获取内容源目录失败' });
 }
 
-export async function fetchFavorites(filters = {}, limit = 100, skip = 0, options = {}) {
+export function fetchFavorites(filters = {}, limit = 100, skip = 0, options = {}) {
   const { includeContent, ...fetchOptions } = options;
   const params = new URLSearchParams({ limit, skip });
   if (includeContent !== undefined) params.append('include_content', includeContent ? 'true' : 'false');
-  Object.entries(filters).forEach(([k, v]) => {
-    if (v !== '' && v !== null && v !== undefined) params.append(k, v);
-  });
-  const res = await apiFetch(`${API_BASE_URL}/reader/favorites?${params}`, fetchOptions);
-  if (!res.ok) await handleApiError(res, '获取收藏列表失败');
-  return res.json();
+  withFilters(params, filters);
+  return request(`/reader/favorites?${params}`, { ...fetchOptions, errorMsg: '获取收藏列表失败' });
 }
 
-export async function addFavorite(articleId) {
-  const res = await apiFetch(`${API_BASE_URL}/reader/favorites/${encodeURIComponent(articleId)}`, { method: 'POST' });
-  if (!res.ok) await handleApiError(res, '收藏失败');
-  return res.json();
+export function addFavorite(articleId) {
+  return request(`/reader/favorites/${enc(articleId)}`, { method: 'POST', errorMsg: '收藏失败' });
 }
 
-export async function removeFavorite(articleId) {
-  const res = await apiFetch(`${API_BASE_URL}/reader/favorites/${encodeURIComponent(articleId)}`, { method: 'DELETE' });
-  if (!res.ok) await handleApiError(res, '取消收藏失败');
-  return res.json();
+export function removeFavorite(articleId) {
+  return request(`/reader/favorites/${enc(articleId)}`, { method: 'DELETE', errorMsg: '取消收藏失败' });
 }
 
-export async function fetchFeedToken() {
-  const res = await apiFetch(`${API_BASE_URL}/reader/feed-token`);
-  if (!res.ok) await handleApiError(res, '获取聚合接口令牌失败');
-  return res.json();
+export function fetchFeedToken() {
+  return request('/reader/feed-token', { errorMsg: '获取聚合接口令牌失败' });
 }
 
-export async function rotateFeedToken() {
-  const res = await apiFetch(`${API_BASE_URL}/reader/feed-token/rotate`, { method: 'POST' });
-  if (!res.ok) await handleApiError(res, '生成聚合接口令牌失败');
-  return res.json();
+export function rotateFeedToken() {
+  return request('/reader/feed-token/rotate', { method: 'POST', errorMsg: '生成聚合接口令牌失败' });
 }
 
-export async function subscribeSource(sourceId) {
-  const res = await apiFetch(`${API_BASE_URL}/reader/sources/${encodeURIComponent(sourceId)}/subscribe`, { method: 'POST' });
-  if (!res.ok) await handleApiError(res, '订阅失败');
-  return res.json();
+export function subscribeSource(sourceId) {
+  return request(`/reader/sources/${enc(sourceId)}/subscribe`, { method: 'POST', errorMsg: '订阅失败' });
 }
 
-export async function unsubscribeSource(sourceId) {
-  const res = await apiFetch(`${API_BASE_URL}/reader/sources/${encodeURIComponent(sourceId)}/subscribe`, { method: 'DELETE' });
-  if (!res.ok) await handleApiError(res, '取消订阅失败');
-  return res.json();
+export function unsubscribeSource(sourceId) {
+  return request(`/reader/sources/${enc(sourceId)}/subscribe`, { method: 'DELETE', errorMsg: '取消订阅失败' });
 }
 
 // 记录一次主动阅读（fire-and-forget：失败静默，不阻断阅读）。
 export function recordArticleRead(articleId) {
-  return apiFetch(`${API_BASE_URL}/reader/articles/${encodeURIComponent(articleId)}/read`, { method: 'POST' })
+  return apiFetch(`${API_BASE_URL}/reader/articles/${enc(articleId)}/read`, { method: 'POST' })
     .catch(() => {});
 }
 
-export async function createSubscription(data) {
-  const res = await apiFetch(`${API_BASE_URL}/subscriptions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) await handleApiError(res, '创建订阅源失败');
-  return res.json();
+export function createSubscription(data) {
+  return request('/subscriptions', { method: 'POST', body: data, errorMsg: '创建订阅源失败' });
 }
 
-export async function updateSubscription(id, data) {
-  const res = await apiFetch(`${API_BASE_URL}/subscriptions/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) await handleApiError(res, '更新订阅源失败');
-  return res.json();
+export function updateSubscription(id, data) {
+  return request(`/subscriptions/${id}`, { method: 'PUT', body: data, errorMsg: '更新订阅源失败' });
 }
 
-export async function rotateSubscriptionToken(id) {
-  const res = await apiFetch(`${API_BASE_URL}/subscriptions/${id}/rotate-token`, { method: 'POST' });
-  if (!res.ok) await handleApiError(res, '轮换订阅令牌失败');
-  return res.json();
+export function rotateSubscriptionToken(id) {
+  return request(`/subscriptions/${id}/rotate-token`, { method: 'POST', errorMsg: '轮换订阅令牌失败' });
 }
 
-export async function deleteSubscription(id) {
-  const res = await apiFetch(`${API_BASE_URL}/subscriptions/${id}`, { method: 'DELETE' });
-  if (!res.ok) await handleApiError(res, '删除订阅源失败');
-  return res.json();
+export function deleteSubscription(id) {
+  return request(`/subscriptions/${id}`, { method: 'DELETE', errorMsg: '删除订阅源失败' });
 }

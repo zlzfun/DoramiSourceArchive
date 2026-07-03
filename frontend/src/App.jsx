@@ -210,11 +210,17 @@ export default function App() {
   }, []);
 
   const toastTimerRef = useRef(null);
+  const hideToast = useCallback(() => {
+    if (toastTimerRef.current) { clearTimeout(toastTimerRef.current); toastTimerRef.current = null; }
+    // 仅翻转 show=false，保留 message/type 以便离场动画期间内容不闪空。
+    setToast(t => ({ ...t, show: false }));
+  }, []);
   const showToast = useCallback((message, type = 'info') => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ show: true, message: typeof message === 'string' ? message : JSON.stringify(message), type });
-    // 仅翻转 show=false，保留 message/type 以便离场动画期间内容不闪空。
-    toastTimerRef.current = setTimeout(() => setToast(t => ({ ...t, show: false })), 3000);
+    // error 更可能需要阅读/复制，停留更久（6s）；info/success 维持 3s。
+    const duration = type === 'error' ? 6000 : 3000;
+    toastTimerRef.current = setTimeout(() => setToast(t => ({ ...t, show: false })), duration);
   }, []);
 
   const loadRuntimeAndFetchers = useCallback(async () => {
@@ -447,7 +453,7 @@ export default function App() {
         </div>
       </header>
 
-      <Toast show={toast.show} message={toast.message} type={toast.type} />
+      <Toast show={toast.show} message={toast.message} type={toast.type} onClose={hideToast} />
 
       <SettingsModal
         open={settingsOpen}

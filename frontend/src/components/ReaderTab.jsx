@@ -494,7 +494,7 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
       )}
 
       {/* ── 左栏 · 我的订阅 ── */}
-      <aside className="reader-col reader-col-sources" aria-hidden={sourcesCollapsed}>
+      <aside className="reader-col reader-col-sources" aria-hidden={sourcesCollapsed} inert={sourcesCollapsed || undefined}>
         <div className="reader-sources-inner">
         {/* 左栏聚焦「来源」一类对象：订阅来源的聚合入口 + 下方逐源列表。
            「我的收藏」是文章级集合（非来源），已移到中栏文章列表头，避免与订阅来源混淆。 */}
@@ -611,7 +611,7 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
       </aside>
 
       {/* ── 中栏 · 文章列表 ── */}
-      <section className="reader-col reader-col-list" aria-hidden={listCollapsed}>
+      <section className="reader-col reader-col-list" aria-hidden={listCollapsed} inert={listCollapsed || undefined}>
         <div className="reader-list-inner">
         <div className="reader-search">
           <Search className="h-4 w-4 text-slate-500" />

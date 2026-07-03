@@ -40,6 +40,7 @@ import { copyText } from '../utils/clipboard';
 import { runAction } from '../utils/runAction';
 import { useConfirm } from '../hooks/useConfirm';
 import { useModalTransition } from '../hooks/useModalTransition';
+import { useModalA11y } from '../hooks/useModalA11y';
 
 function downloadFile(url, filename) {
   const a = document.createElement('a');
@@ -693,6 +694,8 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange, run
 
   const [active, setActive] = useState('account');
   const [mcpStatus, setMcpStatus] = useState(null);
+  const panelRef = useRef(null);
+  useModalA11y(open && mounted, onClose, panelRef);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -711,7 +714,15 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange, run
 
   return (
     <div className={`modal-overlay ${closing ? 'is-closing' : ''}`} onMouseDown={onClose}>
-      <div className="modal-panel max-w-3xl" onMouseDown={e => e.stopPropagation()}>
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="设置"
+        tabIndex={-1}
+        className="modal-panel max-w-3xl"
+        onMouseDown={e => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between border-b border-[var(--dorami-border)] bg-[var(--dorami-well)] px-6 py-4">
           <div className="flex items-center gap-3">
             <SettingsIcon className="h-5 w-5 text-indigo-500" />

@@ -51,8 +51,7 @@ import { healthMeta } from '../statusMeta';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { useConfirm } from '../hooks/useConfirm';
 import { runAction } from '../utils/runAction';
-
-const TEST_RUN_LIMIT = 1;
+import { TEST_RUN_LIMIT, normalizeIds, collectionRunMessage } from '../utils/collection';
 
 const TIER_FILTER_OPTIONS = [
   { value: 'all', label: '全部层级' },
@@ -98,18 +97,6 @@ function blankGroup(fetcherIds = [], configs = {}) {
     per_fetcher_cron: {},
     is_active: true,
   };
-}
-
-function normalizeIds(ids) {
-  return Array.from(new Set((ids || []).filter(Boolean)));
-}
-
-function collectionRunMessage(prefix, result, successCount = null) {
-  const failed = result?.failed_count || 0;
-  const saved = result?.saved_count || 0;
-  const okText = successCount === null ? '' : `完成 ${successCount} 个节点，`;
-  const failureText = failed ? `，失败 ${failed} 个${result.error_message ? `：${result.error_message}` : ''}` : '';
-  return `${prefix}：${okText}新增 ${saved} 条${failureText}`;
 }
 
 export default function FetchTab({ availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onViewRunning, pendingFocus, onPendingFocusApplied }) {

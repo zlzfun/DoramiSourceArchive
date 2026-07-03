@@ -9,8 +9,8 @@
 | 阶段 | 状态 | 提交 |
 |---|---|---|
 | 阶段 0 · 低垂果实 | ✅ 完成 | `refactor/frontend` |
-| 阶段 1 · 基建收敛 | ⏳ 进行 | — |
-| 阶段 2 · 组件拆分 | 待办 | — |
+| 阶段 1 · 基建收敛 | ✅ 完成 | `refactor/frontend` |
+| 阶段 2 · 组件拆分 | ⏳ 进行 | — |
 | 阶段 3 · 数据加载模型统一 | 待办 | — |
 | 阶段 4 · 样式体系 | 待办 | — |
 
@@ -33,6 +33,22 @@
 
 ---
 
-## 阶段 1 · 基建收敛 ⏳
+## 阶段 1 · 基建收敛 ✅
 
-待执行：`api.js` `request()` 收敛（F3）、Modal 补 Esc/焦点/aria-modal（F7）、折叠栏 `inert`、抽 `utils/collection.js`（f4）、Toast error 延时+关闭（f6）。
+| 项 | 债务 | 状态 | 说明 |
+|---|---|---|---|
+| `api.js` `request()` 收敛 | F3 | ✅ | 抽 `request(path, {method,body,errorMsg,...opts})` + `withFilters()`；全部导出改一行式包装，**导出名/签名不变**。特殊路径保留定制：`fetchAuthSession`/`fetchRunningProgress`（失败静默默认值）、`exportArchiveArticles`（text）、`importArchiveArticlesJsonl`（ndjson）、`fetchMcpStatus`/`toggleMcp`（无 ok 校验）、`recordArticleRead`（fire-and-forget）、`pollJob` 及 5 个提交-轮询接口。文件 806 → 517 行。 |
+| Modal 可访问性 | F7 | ✅ | 新增 `hooks/useModalA11y.js`（Esc 关闭 + 焦点移入 + Tab 焦点陷阱 + 焦点归还，尊重 React autoFocus，捕获阶段监听）。接入 `Modal.jsx`（+`role=dialog`/`aria-modal`/`tabIndex=-1`）、`SettingsModal` 外层、`AdminOpsTab` 4 个 Portal 弹窗（llm/create/reset/detail）。 |
+| 折叠栏 `inert` | F7 | ✅ | `ReaderTab` 左/中栏折叠时补 `inert`（React 19 原生），消除隐藏列仍可 Tab 聚焦的违例。 |
+| 抽 `utils/collection.js` | f4 | ✅ | `TEST_RUN_LIMIT`/`normalizeIds`/`collectionRunMessage`（统一为带可选 successCount 的超集签名，FetchRunsTab 输出逐字不变）；FetchTab / FetchRunsTab 删本地副本改引用。 |
+| Toast error 延时 + 关闭 | f6 | ✅ | error 停留 6s（info/success 维持 3s）；Toast 增关闭按钮 + `onClose`；App 增 `hideToast`。队列按计划暂缓。 |
+
+**注**：F7 计划提及「AdminOpsTab/SettingsModal 手写 Portal 迁移到统一 `<Modal>` 组件」——本阶段先以 `useModalA11y` hook 就地补齐可访问性（用户面目标已达成），结构迁移留到阶段 2 提取文件时一并做（避免与拆分重复改动）。
+
+**验收**：`npm run lint` 0 error / 6 warning（未变，属阶段 3）；`npm run build` 零警告；主包 gzip 75.69 kB（+0.37，来自 a11y hook + collection utils，可忽略）。待手工冒烟：各弹窗 Esc 可关 / 打开焦点入面板 / Tab 不逸出；error toast 停留更久且可手动关闭；阅读器折叠栏键盘不可聚焦。
+
+---
+
+## 阶段 2 · 组件拆分 ⏳
+
+待执行：FetchTab（先 RunningWidget 消复制，再 Catalog/NodeGroups/Modal）、ReaderTab（AiPanel + markdown 共享）、AdminOpsTab（三子页 + 弹窗，顺带 GroupHeader/时间窗口样式）、FetchRunsTab（Job Modal + 历史）、SettingsModal（Section 分文件）。
