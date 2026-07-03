@@ -395,6 +395,10 @@ async def lifespan(app: FastAPI):
         if scheduler.state == STATE_STOPPED:
             scheduler.start()
             print("⏰ APScheduler 定时调度引擎已启动！")
+            # 仅在调度器新鲜启动（绑定当前事件循环）时注册巡检，避免跨 loop add_job。
+            # RAG 开启时注册每日向量索引对账巡检（只报告、发现漂移告警，每日 04:00）。
+            if vector_sink is not None:
+                add_cron_job("vector_reconcile", execute_vector_reconcile_job, "0 4 * * *", [])
     else:
         print("⏸️ 当前 reader 运行角色不启动抓取调度引擎。")
 
@@ -1156,6 +1160,30 @@ async def execute_daily_brief_job():
                 })
         except Exception:  # noqa: BLE001
             pass
+
+
+async def execute_vector_reconcile_job():
+    """定时巡检：SQLite↔Chroma 向量索引对账（只报告、不自动修复）。
+
+    发现漂移仅告警（管理员可用 POST /api/vector/reconcile 择时修复），避免定时任务
+    静默改动数据。RAG 关闭（vector_sink 为 None）时不注册本任务，故此处必有 sink。
+    """
+    from services import vector_reconcile
+    try:
+        report = await vector_reconcile.reconcile(db_sink, vector_sink, repair=False)
+    except Exception as exc:  # noqa: BLE001 巡检失败不影响调度引擎
+        _dorami_logger.error("向量索引对账巡检失败: %s", exc)
+        return
+    if report.get("in_sync"):
+        _dorami_logger.info("向量索引对账巡检: 一致（db=%s, chroma=%s）",
+                     report.get("db_total"), report.get("chroma_parents"))
+    else:
+        _dorami_logger.warning(
+            "向量索引对账巡检发现漂移: 丢索引=%s 未标记=%s 孤儿chunk=%s（可 POST /api/vector/reconcile 修复）",
+            report["flagged_but_absent"]["count"],
+            report["present_but_unflagged"]["count"],
+            report["orphan_chunks"]["count"],
+        )
 
 
 def reload_daily_brief_schedule():

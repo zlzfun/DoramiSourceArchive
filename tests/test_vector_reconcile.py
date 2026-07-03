@@ -120,6 +120,23 @@ def _seed_users(engine):
         session.commit()
 
 
+def test_scheduled_reconcile_job_reports_without_mutating(monkeypatch, tmp_path):
+    """定时巡检 execute_vector_reconcile_job 只报告：不修复、不抛错。"""
+    import api.app as app_module
+
+    db = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'patrol.db'}")
+    _seed(db, [("a1", True)])  # a1 flagged_but_absent（Chroma 为空）
+    vs = FakeVectorSink(parents=set())
+    monkeypatch.setattr(app_module, "db_sink", db)
+    monkeypatch.setattr(app_module, "vector_sink", vs)
+
+    asyncio.run(app_module.execute_vector_reconcile_job())
+
+    # 只报告：孤儿/标记未被改动，向量未被删。
+    assert vs.deleted == []
+    assert _vec_flag(db, "a1") is True
+
+
 def test_reconcile_endpoints_admin_gated_and_wired(monkeypatch, tmp_path):
     """端点级冒烟：collector(admin) 可读报告/触发修复，reader 被拦（403），二者经 deps 正确取 sink。"""
     from fastapi.testclient import TestClient

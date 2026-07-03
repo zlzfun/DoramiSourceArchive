@@ -4,7 +4,7 @@
 > 逐项记录每个计划条目的状态、对应提交与备注。每完成一个增量即更新此表。
 > 诊断出处见 [`backend-architecture-review.md`](backend-architecture-review.md)。
 
-**最近更新**：2026-07-03 · 当前分支 `refactor/phase0-concurrency` · 测试基线 **303 passed**
+**最近更新**：2026-07-03 · 当前分支 `refactor/phase0-concurrency` · 测试基线 **304 passed**
 
 ## 状态图例
 - ✅ 已完成
@@ -48,7 +48,7 @@
 | 唯一约束（聚合表 ai_usage/reader_reads 的 upsert 元组） | ⬜ | — | 未加（SQLite 加唯一约束需重建表，风险/收益待评估） |
 | D8 跨存储一致性：SQLite↔Chroma 对账 | ✅ | `27d0292` | `services/vector_reconcile.py` + `GET/POST /api/vector/reconcile`（三类漂移分类+修复） |
 | D8 `is_vectorized` 升级状态枚举 pending/indexing/indexed/failed/stale | ✅ | `7a177a4` | 附加式 index_status 列（is_vectorized 保留为派生位）+ 迁移 `8bba6f81b240` 回填；存储态转移 + save/编辑 stale + 单篇 indexing/failed + 对账 stale；`?index_status=` 过滤/载荷；知识台账状态徽标（失败/陈旧语义色 + 按状态筛选）已上前端 |
-| 对账定为巡检任务（定时） | ⬜ | — | 当前仅按需端点；定时化待阶段3 调度整合 |
+| 对账定为巡检任务（定时） | ✅ | `execute_vector_reconcile_job` | RAG 开启时注册每日 04:00 APScheduler 巡检（只报告、发现漂移告警；修复仍走管理员端点） |
 
 ---
 
