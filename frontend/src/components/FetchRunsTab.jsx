@@ -38,7 +38,7 @@ import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime } from '../utils/datetime';
 import { runAction } from '../utils/runAction';
 import { useConfirm } from '../hooks/useConfirm';
-import { TEST_RUN_LIMIT, normalizeIds, collectionRunMessage } from '../utils/collection';
+import { TEST_RUN_LIMIT, normalizeIds, collectionRunMessage, paramChips } from '../utils/collection';
 
 function formatDuration(durationMs) {
   if (durationMs === null || durationMs === undefined) return '-';
@@ -535,7 +535,13 @@ export default function FetchRunsTab({
                           </div>
                         </div>
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                          {ids.map(fetcherId => (
+                          {ids.map(fetcherId => {
+                            // 只消除「真正为空」的噪声：生效 cron（节点覆盖 || 任务整体）有值才渲染；
+                            // 参数覆盖翻成可读 chips（键名走 schema 中文 label），空对象不渲染。
+                            const nodeCron = (job.per_fetcher_cron || {})[fetcherId];
+                            const effectiveCron = nodeCron || job.cron_expr;
+                            const chips = paramChips((job.per_fetcher_params || {})[fetcherId], fetchersById[fetcherId]);
+                            return (
                             <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-white dark:bg-[var(--dorami-surface)]">
                               <div className="flex items-center gap-2.5">
                                 <LogoMark company={companyForId(fetcherId)} size="sm" />
@@ -544,14 +550,23 @@ export default function FetchRunsTab({
                                   <div className="font-mono text-xs text-slate-500 truncate">{fetcherId}</div>
                                 </div>
                               </div>
-                              <div className="mt-2 micro-label text-blue-700 bg-blue-50 border border-blue-100 rounded px-2 py-1">
-                                cron：{(job.per_fetcher_cron || {})[fetcherId] || job.cron_expr || '-'}
-                              </div>
-                              <code className="block mt-2 text-xs text-slate-500 bg-[var(--dorami-well)] border border-[var(--dorami-border)] rounded px-2 py-1 truncate" title={JSON.stringify((job.per_fetcher_params || {})[fetcherId] || {})}>
-                                {JSON.stringify((job.per_fetcher_params || {})[fetcherId] || {})}
-                              </code>
+                              {effectiveCron && (
+                                <div className="mt-2 micro-label text-blue-700 bg-blue-50 border border-blue-100 rounded px-2 py-1 font-mono">
+                                  cron：{effectiveCron}{nodeCron ? ' · 覆盖' : ''}
+                                </div>
+                              )}
+                              {chips.length > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-1.5" title={JSON.stringify((job.per_fetcher_params || {})[fetcherId] || {})}>
+                                  {chips.map(chip => (
+                                    <span key={chip.key} className="inline-flex items-center gap-1 text-xs bg-[var(--dorami-well)] border border-[var(--dorami-border)] rounded px-2 py-0.5">
+                                      <span className="text-slate-500">{chip.label}</span>
+                                      <span className="font-medium text-slate-700">{chip.value}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                          ))}
+                          );})}
                         </div>
                       </div>
                     )}

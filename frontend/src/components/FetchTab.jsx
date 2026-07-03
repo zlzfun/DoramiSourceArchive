@@ -50,7 +50,7 @@ import { healthMeta } from '../statusMeta';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { useConfirm } from '../hooks/useConfirm';
 import { runAction } from '../utils/runAction';
-import { TEST_RUN_LIMIT, normalizeIds, collectionRunMessage } from '../utils/collection';
+import { TEST_RUN_LIMIT, normalizeIds, collectionRunMessage, paramChips } from '../utils/collection';
 
 const TIER_FILTER_OPTIONS = [
   { value: 'all', label: '全部层级' },
@@ -910,7 +910,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                         {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-500 mr-2" /> : <ChevronRight className="w-4 h-4 text-slate-500 mr-2" />}
                         <div className="card-title truncate">{group.name}</div>
                       </div>
-                      <div className="text-xs text-slate-500 mt-1 ml-6">{(group.fetcher_ids || []).length} 个节点 · {group.description || '无说明'}</div>
+                      <div className="text-xs text-slate-500 mt-1 ml-6">{(group.fetcher_ids || []).length} 个节点{group.description ? ` · ${group.description}` : ''}</div>
                     </div>
                     <div className="hidden sm:flex items-center -space-x-1.5">
                       {(group.fetcher_ids || []).slice(0, 5).map(id => {
@@ -930,6 +930,8 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                         {(group.fetcher_ids || []).map(fetcherId => {
                           const f = fetchersById[fetcherId];
+                          const nodeParams = (group.per_fetcher_params || {})[fetcherId] || {};
+                          const chips = paramChips(nodeParams, f);
                           return (
                             <div key={fetcherId} className="flex items-center gap-3 border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-[var(--dorami-soft)]">
                               <LogoMark company={resolveCompany(f || {})} size="sm" />
@@ -937,9 +939,16 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                                 <div className="font-bold text-slate-700 text-sm truncate">{getFetcherName(fetcherId)}</div>
                                 <div className="font-mono text-xs text-slate-500 truncate">{fetcherId}</div>
                               </div>
-                              <code className="hidden md:block text-xs text-slate-500 bg-white dark:bg-[var(--dorami-well)] border border-[var(--dorami-border)] rounded px-2 py-1 max-w-[180px] truncate" title={JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}>
-                                {JSON.stringify((group.per_fetcher_params || {})[fetcherId] || {})}
-                              </code>
+                              {chips.length > 0 && (
+                                <div className="hidden md:flex flex-wrap gap-1.5 justify-end max-w-[220px]" title={JSON.stringify(nodeParams)}>
+                                  {chips.map(chip => (
+                                    <span key={chip.key} className="inline-flex items-center gap-1 text-xs bg-white dark:bg-[var(--dorami-well)] border border-[var(--dorami-border)] rounded px-2 py-0.5">
+                                      <span className="text-slate-500">{chip.label}</span>
+                                      <span className="font-medium text-slate-700">{chip.value}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           );
                         })}

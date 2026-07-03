@@ -18,3 +18,20 @@ export function collectionRunMessage(prefix, result, successCount = null) {
   const failureText = failed ? `，失败 ${failed} 个${result.error_message ? `：${result.error_message}` : ''}` : '';
   return `${prefix}：${okText}新增 ${saved} 条${failureText}`;
 }
+
+// 把一个参数覆盖对象翻译成可读 chips：`[{ key, label, value }]`。
+// 键名优先用 fetcher 参数 schema 的中文 label（fetcher.parameters: [{field,label,type}]），
+// 未命中回落原字段名；布尔值渲染成 ✓/✕，其余原样。空对象返回空数组（供调用方决定是否渲染）。
+export function paramChips(paramsObj, fetcher) {
+  const entries = Object.entries(paramsObj || {});
+  if (!entries.length) return [];
+  const schema = Object.fromEntries((fetcher?.parameters || []).map(p => [p.field, p]));
+  return entries.map(([key, value]) => {
+    const label = schema[key]?.label || key;
+    let display;
+    if (typeof value === 'boolean') display = value ? '✓' : '✕';
+    else if (value === null || value === undefined || value === '') display = '—';
+    else display = String(value);
+    return { key, label, value: display };
+  });
+}
