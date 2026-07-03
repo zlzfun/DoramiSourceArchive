@@ -17,6 +17,7 @@ import {
   createArticle,
 } from '../api';
 import { runAction } from '../utils/runAction';
+import { excerptOf } from '../utils/readerText';
 import { useConfirm } from '../hooks/useConfirm';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
 
@@ -558,7 +559,7 @@ export default function DataTab({
                 </td>
                 <td className="px-4 py-4 font-bold text-slate-800 cursor-pointer hover:text-[var(--dorami-blue)] transition-colors" onClick={() => openDetailModal(article)}>
                   <div className="line-clamp-1">{article.title}</div>
-                  <div className="mt-1 line-clamp-1 text-xs font-medium text-slate-500">{article.content_preview || article.content || '暂无摘要内容'}</div>
+                  <div className="mt-1 line-clamp-1 text-xs font-medium text-slate-500">{excerptOf(article.content_preview || article.content) || '暂无摘要内容'}</div>
                 </td>
                 <td className="px-3 py-4 text-slate-500 text-xs font-mono">{article.publish_date?.split('T')[0] || '-'}</td>
                 <td className="px-3 py-4 text-slate-500 text-xs font-mono">{article.fetched_date?.replace('T', ' ').substring(0, 16) || '-'}</td>
