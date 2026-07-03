@@ -170,6 +170,49 @@ def build_list_context(
     return "\n\n".join(blocks)
 
 
+async def assemble_reader_context(
+    *,
+    scope: str,
+    question: str,
+    article_id: Optional[str],
+    username: str,
+    db_sink: Any,
+    rag_enabled: bool,
+    rag_fetch: Any,
+    recent_fetch: Any,
+) -> tuple:
+    """按 scope 组装 reader 问答上下文（三档 graceful degrade），返回 ``(context, sources)``。
+
+    - ``scope=article``：取该文正文（零 RAG 依赖）；
+    - ``scope=subscription`` 且 ``rag_enabled``：``await rag_fetch(question)`` 语义召回
+      （召回自带订阅域硬隔离）；
+    - 否则：``recent_fetch(username)`` 取订阅来源最近文章拼接。
+
+    ``rag_fetch``（async，取 ``question`` → ``{context_text, sources}``）与
+    ``recent_fetch``（取 ``username`` → 文章记录列表）由调用方注入：API 层用闭包 over
+    ``request`` 承载鉴权作用域，worker/CLI 可注入无请求版本——从而本组装逻辑与 HTTP
+    请求解耦、可独立单测复用（阶段4 D11 编排下沉）。
+    """
+    if scope == "article":
+        if not article_id:
+            raise ReaderAIError("缺少文章标识", status_code=400)
+        record = await db_sink.get(article_id)
+        if record is None:
+            raise ReaderAIError("文章不存在", status_code=404)
+        return build_article_context(record.title, record.content or ""), []
+
+    if rag_enabled:
+        rag_result = await rag_fetch(question)
+        return rag_result.get("context_text", ""), rag_result.get("sources", [])
+
+    records = recent_fetch(username)
+    sources = [
+        {"title": r.title, "source_id": r.source_id, "source_url": r.source_url}
+        for r in records
+    ]
+    return build_list_context(records), sources
+
+
 def _sanitize_history(history: Optional[List[Any]]) -> List[ChatMessage]:
     """把前端传入的历史消息清洗为合法的 user/assistant 轮次。
 

@@ -459,33 +459,29 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
     username, llm_config = _require_reader_ai(request)
     db_sink = deps.get_db_sink()
     scope = params.scope if params.scope in ("article", "subscription") else "article"
-    context = ""
-    sources: List[Dict[str, Any]] = []
 
-    if scope == "article":
-        if not params.article_id:
-            raise HTTPException(status_code=400, detail="缺少文章标识")
-        record = await db_sink.get(params.article_id)
-        if record is None:
-            raise HTTPException(status_code=404, detail="文章不存在")
-        context = reader_ai_service.build_article_context(record.title, record.content or "")
-    else:
-        if app.settings.rag.enabled and app.vector_sink is not None:
-            rag_result = await app.rag_context(
-                app.RagContextQuery(query=params.question, top_k=6, max_chars=12000),
-                request,
-            )
-            context = rag_result.get("context_text", "")
-            sources = rag_result.get("sources", [])
-        else:
-            records = _recent_subscribed_articles(
-                username, reader_ai_service.LIST_MAX_ARTICLES
-            )
-            context = reader_ai_service.build_list_context(records)
-            sources = [
-                {"title": r.title, "source_id": r.source_id, "source_url": r.source_url}
-                for r in records
-            ]
+    # 三档上下文组装下沉到 reader_ai.assemble_reader_context；此处注入 rag/recent 取数闭包
+    # （闭包 over request 承载鉴权作用域），使组装逻辑与 HTTP 请求解耦、可独立单测（D11）。
+    async def _rag_fetch(question: str) -> Dict[str, Any]:
+        return await app.rag_context(
+            app.RagContextQuery(query=question, top_k=6, max_chars=12000), request
+        )
+
+    try:
+        context, sources = await reader_ai_service.assemble_reader_context(
+            scope=scope,
+            question=params.question,
+            article_id=params.article_id,
+            username=username,
+            db_sink=db_sink,
+            rag_enabled=bool(app.settings.rag.enabled and app.vector_sink is not None),
+            rag_fetch=_rag_fetch,
+            recent_fetch=lambda user: _recent_subscribed_articles(
+                user, reader_ai_service.LIST_MAX_ARTICLES
+            ),
+        )
+    except reader_ai_service.ReaderAIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
     history = [{"role": t.role, "content": t.content} for t in (params.history or [])]
     try:

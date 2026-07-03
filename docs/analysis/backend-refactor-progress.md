@@ -4,7 +4,7 @@
 > 逐项记录每个计划条目的状态、对应提交与备注。每完成一个增量即更新此表。
 > 诊断出处见 [`backend-architecture-review.md`](backend-architecture-review.md)。
 
-**最近更新**：2026-07-03 · 当前分支 `refactor/phase0-concurrency` · 测试基线 **298 passed**
+**最近更新**：2026-07-03 · 当前分支 `refactor/phase0-concurrency` · 测试基线 **303 passed**
 
 ## 状态图例
 - ✅ 已完成
@@ -69,7 +69,7 @@
 
 | 项 | 状态 | 备注 |
 |---|---|---|
-| D11 RagService/ReaderContextService 下沉三档上下文 | ⬜ | |
+| D11 ReaderContext 下沉三档上下文 | ✅ | `reader_ai.assemble_reader_context`（注入 rag_fetch/recent_fetch 解耦 request，三档 graceful degrade 可独立单测）；reader.py 端点委托之。RagService 未单独抽（rag_context 仍在 app.py，无第二消费方，暂不过度设计） |
 | D10 auth.secret 非默认/不从口令派生 + 启动安全校验 | ✅ | `api/security_checks.py`：AUTH_SECRET 回退去掉口令（仅 database_url 派生）；`enforce_security_config` 在生产姿态（cookie_secure）下对 secret 未设/占位、CORS *+credentials 拒绝启动，dev 仅告警 |
 | D10 CORS 域名白名单（启动校验） | ✅ | *+credentials 组合在生产姿态被拒；production.example 加白名单指引 |
 | D10 生产默认 CA 校验 / 密钥迁 env 或 secret manager | 🟡 | CA 禁用在生产姿态告警（未强制 false）；LLM key 已支持 env 覆盖，图床/代理密钥迁移未做 |
