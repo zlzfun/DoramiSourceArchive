@@ -14,12 +14,14 @@ export function ChartPanel({ title, action, children }) {
 }
 
 // KPI 统计卡：图标 + 标签 + 数字（+ 可选副行）。
-export function StatCard({ icon: Icon, label, value, sub, valueClass = 'text-slate-800' }) {
+// 类别色只染左侧小图标（iconClass），大数字默认保持中性强色 —— 避免「彩虹数字」，
+// 语义色（如向量化率健康度）才通过 valueClass 显式覆盖数字颜色。
+export function StatCard({ icon: Icon, label, value, sub, valueClass = 'text-slate-800', iconClass = 'text-slate-500' }) {
   return (
     <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-white dark:bg-[var(--dorami-surface)] p-4">
-      <div className="flex items-center gap-2 text-slate-500">
-        <Icon className="h-4 w-4" />
-        <span className="micro-label">{label}</span>
+      <div className="flex items-center gap-2">
+        <Icon className={`h-4 w-4 ${iconClass}`} />
+        <span className="micro-label text-slate-500">{label}</span>
       </div>
       <p className={`stat-number mt-2 ${valueClass}`}>{value}</p>
       {sub && <p className="tiny-meta mt-0.5">{sub}</p>}

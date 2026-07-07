@@ -155,10 +155,10 @@ export function RankBars({ rows, labelKey, valueKey, name, color = C_PRIMARY, he
  * 按该指标自身最大值独立归一化（不同量级也都可见，绝对值看右侧数字）。
  * rows: 对象数组；nameKey=类目名字段；metrics=[{key, name, color}]。
  * colorByIndex=true 时（仅适合单指标）每行的条按分类调色板逐行取色——排行也有色彩层次。
- * 数值默认隐藏、hover 整行才浮现（与 RankBars 的 tooltip 一致，更清爽）；列表可滚动时
- * 底部出现渐隐 + 「下滑查看更多」提示，未到底前一直引导。
+ * 数值默认隐藏、hover 整行才浮现（与 RankBars 的 tooltip 一致，更清爽）；alwaysShowValue=true
+ * 时行尾常显数值（排行榜场景——看榜本就是看数）。列表可滚动时底部出现渐隐 + 「下滑查看更多」提示。
  */
-export function BarList({ rows, nameKey, metrics, maxHeight = 248, emptyHint = '暂无数据', colorByIndex = false }) {
+export function BarList({ rows, nameKey, metrics, maxHeight = 248, emptyHint = '暂无数据', colorByIndex = false, alwaysShowValue = false }) {
   const scrollRef = useRef(null);
   const [scroll, setScroll] = useState({ overflowing: false, atEnd: true });
 
@@ -201,7 +201,7 @@ export function BarList({ rows, nameKey, metrics, maxHeight = 248, emptyHint = '
             <div key={r[nameKey]} className="group rounded-[var(--r-sm)] px-1.5 py-1.5 transition-colors hover:bg-[var(--dorami-wash)]">
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-xs font-bold text-slate-700" title={r[nameKey]}>{r[nameKey]}</span>
-                <span className="shrink-0 tiny-meta tabular-nums text-slate-500 opacity-0 transition-opacity group-hover:opacity-100">
+                <span className={`shrink-0 tiny-meta tabular-nums text-slate-500 ${alwaysShowValue ? '' : 'opacity-0 transition-opacity group-hover:opacity-100'}`}>
                   {metrics.map((m) => `${m.name} ${Number(r[m.key]) || 0}`).join(' · ')}
                 </span>
               </div>

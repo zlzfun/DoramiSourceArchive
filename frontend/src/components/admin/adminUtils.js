@@ -1,6 +1,7 @@
 // 运维看板的纯工具与常量（与组件分离，满足 react-refresh 只导出组件的约束）。
 
-// KPI 数字的语义配色：登录/AI 拉开色相（蓝 vs 紫），详情页与外层同语义同色。
+// KPI 卡的类别色：只用于左侧小图标（不再染大数字），供 StatCard 的 iconClass。
+// 各指标拉开色相以便快速区分，但数字保持中性，避免「彩虹数字」削弱可读性。
 export const KPI_COLOR = {
   active: 'text-emerald-600',
   login: 'text-sky-600',
@@ -8,6 +9,15 @@ export const KPI_COLOR = {
   ai: 'text-violet-600',
   subscription: 'text-teal-600',
 };
+
+// 向量化率健康度 → 数字语义色（这是真正需要语义色的指标）：
+// ≥80% 中性达标、40~80% 琥珀待补、<40% 偏红告警。0% 不再显示为绿。
+export function vectorizedRateClass(rate) {
+  const r = Number(rate || 0);
+  if (r >= 0.8) return 'text-slate-800';
+  if (r >= 0.4) return 'text-amber-600';
+  return 'text-rose-600';
+}
 
 // 用途标签：与后端 AiUsageRecord.purpose 对齐。
 export const PURPOSE_LABELS = {

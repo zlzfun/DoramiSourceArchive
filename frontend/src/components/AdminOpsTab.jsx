@@ -46,7 +46,7 @@ import { useModalA11y } from '../hooks/useModalA11y';
 import { MultiSeriesArea, RankBars, BarList } from './charts/DashboardCharts';
 import { pivotDaily, CATEGORICAL, C_READ, C_FAVORITE } from './charts/chartUtils';
 import { ChartPanel, StatCard, PanelHeader } from './admin/adminShared';
-import { KPI_COLOR, PURPOSE_LABELS, formatStamp, fmtNum, pct, truncLabel } from './admin/adminUtils';
+import { KPI_COLOR, PURPOSE_LABELS, formatStamp, fmtNum, pct, truncLabel, vectorizedRateClass } from './admin/adminUtils';
 
 const INPUT_CLS = 'w-full rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-soft)] px-4 py-2.5 text-sm text-[var(--dorami-ink)] placeholder:text-[var(--dorami-faint)]';
 
@@ -461,10 +461,10 @@ export default function AdminOpsTab({ showToast }) {
               <>
                 {/* 头条 KPI（数字明示）*/}
                 <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  <StatCard icon={Sparkles} label="总调用" value={fmtNum(usage.totals.calls)} valueClass={KPI_COLOR.ai} />
-                  <StatCard icon={BarChart3} label="总 tokens" value={fmtNum(usage.totals.total_tokens)} valueClass="text-sky-600" />
-                  <StatCard icon={BarChart3} label="输入 tokens" value={fmtNum(usage.totals.prompt_tokens)} valueClass={KPI_COLOR.read} />
-                  <StatCard icon={BarChart3} label="输出 tokens" value={fmtNum(usage.totals.completion_tokens)} valueClass={KPI_COLOR.active} />
+                  <StatCard icon={Sparkles} label="总调用" value={fmtNum(usage.totals.calls)} iconClass={KPI_COLOR.ai} />
+                  <StatCard icon={BarChart3} label="总 tokens" value={fmtNum(usage.totals.total_tokens)} iconClass="text-sky-600" />
+                  <StatCard icon={BarChart3} label="输入 tokens" value={fmtNum(usage.totals.prompt_tokens)} iconClass={KPI_COLOR.read} />
+                  <StatCard icon={BarChart3} label="输出 tokens" value={fmtNum(usage.totals.completion_tokens)} iconClass={KPI_COLOR.active} />
                 </div>
 
                 {/* 时间序列主图：每日调用 / 每日 tokens，各自可切「按用途 / 按用户」拆系列 */}
@@ -501,10 +501,10 @@ export default function AdminOpsTab({ showToast }) {
             {/* 总览 KPI（窗口活跃度）：人数（活跃用户）与次数（登录/阅读/AI）分列、彩色数字 */}
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
               <StatCard icon={Users} label="读者账户" value={fmtNum(userKpis.readers)} />
-              <StatCard icon={Activity} label={`近 ${userDays} 天活跃`} value={fmtNum(userKpis.loggedIn)} valueClass={KPI_COLOR.active} />
-              <StatCard icon={CalendarClock} label={`近 ${userDays} 天登录`} value={fmtNum(userKpis.logins)} valueClass={KPI_COLOR.login} />
-              <StatCard icon={BookOpen} label={`近 ${userDays} 天阅读`} value={fmtNum(userKpis.reads)} valueClass={KPI_COLOR.read} />
-              <StatCard icon={Sparkles} label={`近 ${userDays} 天 AI 调用`} value={fmtNum(userKpis.aiCalls)} valueClass={KPI_COLOR.ai} />
+              <StatCard icon={Activity} label={`近 ${userDays} 天活跃`} value={fmtNum(userKpis.loggedIn)} iconClass={KPI_COLOR.active} />
+              <StatCard icon={CalendarClock} label={`近 ${userDays} 天登录`} value={fmtNum(userKpis.logins)} iconClass={KPI_COLOR.login} />
+              <StatCard icon={BookOpen} label={`近 ${userDays} 天阅读`} value={fmtNum(userKpis.reads)} iconClass={KPI_COLOR.read} />
+              <StatCard icon={Sparkles} label={`近 ${userDays} 天 AI 调用`} value={fmtNum(userKpis.aiCalls)} iconClass={KPI_COLOR.ai} />
             </div>
             {(userKpis.reads + userKpis.logins) > 0 && (
               <ChartPanel
@@ -685,10 +685,10 @@ export default function AdminOpsTab({ showToast }) {
               <>
                 <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
                   <StatCard icon={Rss} label="内容源" value={fmtNum(content.totals.sources)} />
-                  <StatCard icon={Database} label="归档文章" value={fmtNum(content.totals.articles)} valueClass="text-sky-600" />
-                  <StatCard icon={BookOpen} label="阅读总数" value={fmtNum(content.totals.reads)} valueClass={KPI_COLOR.read} />
-                  <StatCard icon={Heart} label="收藏总数" value={fmtNum(content.totals.favorites)} valueClass="text-rose-600" />
-                  <StatCard icon={BarChart3} label="向量化率" value={pct(content.totals.vectorized_rate)} valueClass={KPI_COLOR.active} />
+                  <StatCard icon={Database} label="归档文章" value={fmtNum(content.totals.articles)} iconClass="text-sky-600" />
+                  <StatCard icon={BookOpen} label="阅读总数" value={fmtNum(content.totals.reads)} iconClass={KPI_COLOR.read} />
+                  <StatCard icon={Heart} label="收藏总数" value={fmtNum(content.totals.favorites)} iconClass="text-rose-600" />
+                  <StatCard icon={BarChart3} label="向量化率" value={pct(content.totals.vectorized_rate)} valueClass={vectorizedRateClass(content.totals.vectorized_rate)} />
                 </div>
 
                 {/* 各源热度（阅读/收藏/订阅三指标）+ 文章收藏榜：全名可滚动列表，多色 */}
@@ -710,7 +710,7 @@ export default function AdminOpsTab({ showToast }) {
                       rows={topArticleRows}
                       nameKey="title"
                       metrics={[{ key: 'fav', name: '收藏', color: C_FAVORITE }]}
-                      colorByIndex
+                      alwaysShowValue
                       emptyHint="还没有任何收藏记录，读者在阅读器收藏文章后这里会出现热度榜。"
                     />
                   </ChartPanel>
@@ -873,18 +873,18 @@ export default function AdminOpsTab({ showToast }) {
                       className={`rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-white dark:bg-[var(--dorami-surface)] p-4 text-left ${detailData.logins.recent.length > 0 ? 'cursor-pointer transition-colors hover:border-[var(--dorami-blue)]' : 'cursor-default'}`}
                     >
                       <div className="flex items-center gap-2 text-slate-500">
-                        <Clock className="h-4 w-4" />
+                        <Clock className={`h-4 w-4 ${KPI_COLOR.login}`} />
                         <span className="micro-label">近 {detailWindow} 天登录</span>
                         {detailData.logins.recent.length > 0 && (
                           <ChevronDown className={`ml-auto h-3.5 w-3.5 transition-transform ${loginListOpen ? 'rotate-180' : ''}`} />
                         )}
                       </div>
-                      <p className={`stat-number mt-2 ${KPI_COLOR.login}`}>{fmtNum(detailData.logins.count)}</p>
+                      <p className="stat-number mt-2 text-slate-800">{fmtNum(detailData.logins.count)}</p>
                       <p className="tiny-meta mt-0.5">最近 {formatStamp(detailData.account.last_login_at)}</p>
                     </button>
-                    <StatCard icon={BookOpen} label={`近 ${detailWindow} 天阅读`} value={fmtNum(detailData.reads.total)} sub={`${detailData.reads.by_source.length} 个源`} valueClass={KPI_COLOR.read} />
-                    <StatCard icon={Sparkles} label={`近 ${detailWindow} 天 AI`} value={fmtNum(detailData.usage.totals.calls)} sub={`累计 ${(detailData.account.ai_translate_count || 0) + (detailData.account.ai_ask_count || 0)} 次`} valueClass={KPI_COLOR.ai} />
-                    <StatCard icon={Bookmark} label="订阅来源" value={fmtNum(detailData.account.subscription_count)} sub={`创建 ${formatStamp(detailData.account.created_at)}`} valueClass={KPI_COLOR.subscription} />
+                    <StatCard icon={BookOpen} label={`近 ${detailWindow} 天阅读`} value={fmtNum(detailData.reads.total)} sub={`${detailData.reads.by_source.length} 个源`} iconClass={KPI_COLOR.read} />
+                    <StatCard icon={Sparkles} label={`近 ${detailWindow} 天 AI`} value={fmtNum(detailData.usage.totals.calls)} sub={`累计 ${(detailData.account.ai_translate_count || 0) + (detailData.account.ai_ask_count || 0)} 次`} iconClass={KPI_COLOR.ai} />
+                    <StatCard icon={Bookmark} label="订阅来源" value={fmtNum(detailData.account.subscription_count)} sub={`创建 ${formatStamp(detailData.account.created_at)}`} iconClass={KPI_COLOR.subscription} />
                   </div>
 
                   {/* 最近登录时间列表（展开） */}
