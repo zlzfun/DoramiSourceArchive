@@ -242,7 +242,9 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
               </p>
               <h2 className="text-xl font-bold text-white mb-2 tracking-tight">把哆啦美接入你的 Agent 与脚本</h2>
               <p className="integration-lede max-w-2xl">
-                生成下方访问令牌，即可开始接入。
+                {status !== null && !enabled
+                  ? 'MCP 当前已停止，接入暂不可用；可先生成下方访问令牌，待管理员启动后即可接入。'
+                  : '生成下方访问令牌，即可开始接入。'}
               </p>
             </div>
             {/* MCP 运行状态：右上角一枚状态徽标（停止时整枚转红，与全站红=停止一致） */}
@@ -275,7 +277,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-6 py-4 border-b border-[var(--dorami-border)]">
           <div className="w-1 h-5 rounded-full bg-sky-500" />
           <h3 className="section-title">MCP 配置详情</h3>
-          {/* MCP 与语义检索（RAG）两种能力的状态并排，一眼可见、彼此对称 */}
+          {/* 语义检索（RAG）能力状态；MCP 运行状态已由页顶 Hero 徽标统一呈现，此处不重复 */}
           <div className="ml-auto flex items-center gap-2">
             <span
               title={ragEnabled ? undefined : '语义检索（向量搜索）需由部署方在配置中开启'}
@@ -283,12 +285,6 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
             >
               <span className={`h-1.5 w-1.5 rounded-full ${ragEnabled ? 'bg-emerald-500' : 'bg-slate-400'}`} />
               语义检索 {ragEnabled ? '已启用' : '未启用'}
-            </span>
-            <span
-              className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 micro-label ${status === null ? 'bg-slate-100 text-slate-500' : enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}
-            >
-              <span className={`h-1.5 w-1.5 rounded-full ${status === null ? 'bg-slate-300' : enabled ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-              MCP {status === null ? '检测中' : enabled ? '运行中' : '已停止'}
             </span>
           </div>
         </div>

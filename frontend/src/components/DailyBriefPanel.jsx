@@ -121,25 +121,21 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
     }
   };
 
-  const handleSaveCron = async () => {
-    try {
-      await saveDailyBriefConfig({ cron: cron.trim() });
-      showToast('定时已更新', 'success');
-      loadBrief();
-    } catch (error) {
-      showToast(error.message || '保存失败', 'error');
-    }
-  };
-
-  const handleSaveTopN = async () => {
+  // Cron + 精选条数合并为一次保存（定时开关仍即时生效，见 handleToggle）。
+  const handleSaveSettings = async () => {
     const n = Number(topN);
     if (!Number.isInteger(n) || n < 1 || n > 50) {
       showToast('精选条数需为 1–50 的整数', 'error');
       return;
     }
+    const c = cron.trim();
+    if (!c) {
+      showToast('Cron 表达式不能为空', 'error');
+      return;
+    }
     try {
-      await saveDailyBriefConfig({ top_n: n });
-      showToast('精选条数已更新', 'success');
+      await saveDailyBriefConfig({ cron: c, top_n: n });
+      showToast('日报设置已保存', 'success');
       loadBrief();
     } catch (error) {
       showToast(error.message || '保存失败', 'error');
@@ -255,44 +251,53 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
             </div>
           </div>
 
-          {/* 设置：自动调度 | 生成参数 */}
-          <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {/* 自动调度 */}
-            <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] p-4">
-              <label className="flex cursor-pointer items-center justify-between gap-3">
-                <span className="text-sm font-bold text-slate-700">定时生成</span>
-                <input type="checkbox" checked={enabled} onChange={handleToggle} className="h-5 w-5 shrink-0 rounded border-slate-300 text-indigo-600" />
-              </label>
-              <p className="tiny-meta mt-1">开启后按 Cron 自动生成（默认每天 8:30，排在采集之后）。</p>
-              <div className="mt-3">
-                <p className="form-label">Cron 表达式（5 段）</p>
-                <div className="flex items-center gap-2">
-                  <input value={cron} onChange={e => setCron(e.target.value)} placeholder="30 8 * * *" className={`${INPUT_CLS} flex-1 font-mono`} />
-                  <button onClick={handleSaveCron} className="action-button action-button-secondary text-xs shrink-0">保存</button>
+          {/* 设置：自动调度 | 生成参数（Cron 与精选条数共用底部一枚「保存设置」） */}
+          <div className="mt-3">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {/* 自动调度 */}
+              <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-bold text-slate-700">定时生成</span>
+                  <button
+                    onClick={handleToggle}
+                    role="switch"
+                    aria-checked={enabled}
+                    aria-label="定时生成开关"
+                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[var(--dorami-raised)]'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+                <p className="tiny-meta mt-1">开启后按 Cron 自动生成（默认每天 8:30，排在采集之后）。</p>
+                <div className="mt-3">
+                  <p className="form-label">Cron 表达式（5 段）</p>
+                  <input value={cron} onChange={e => setCron(e.target.value)} placeholder="30 8 * * *" className={`${INPUT_CLS} font-mono`} />
+                </div>
+              </div>
+
+              {/* 生成参数 */}
+              <div className="flex flex-col rounded-[var(--r-card)] border border-[var(--dorami-border)] p-4">
+                <p className="text-sm font-bold text-slate-700">生成参数</p>
+                <div className="mt-3">
+                  <p className="form-label">精选条数（1–50）</p>
+                  <input type="number" min="1" max="50" step="1" value={topN} onChange={e => setTopN(e.target.value)} className={INPUT_CLS} />
+                  <span className="tiny-meta">按重要性取分数最高的前 N 条（正文与导出 JSON 同步）。</span>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-2 border-t border-[var(--dorami-border)] pt-3 text-xs">
+                  <span className="font-medium text-slate-500">增量游标</span>
+                  <span className="flex items-center gap-2">
+                    <code className="font-mono text-slate-500">{briefConfig?.cursor ? briefConfig.cursor.slice(0, 19) : '（空）'}</code>
+                    <button onClick={handleResetCursor} className="rounded-md px-2 py-0.5 micro-label text-slate-500 hover:bg-slate-100 hover:text-indigo-600" title="重置增量游标（用于重做/补生成）">
+                      重置
+                    </button>
+                  </span>
                 </div>
               </div>
             </div>
 
-            {/* 生成参数 */}
-            <div className="flex flex-col rounded-[var(--r-card)] border border-[var(--dorami-border)] p-4">
-              <p className="text-sm font-bold text-slate-700">生成参数</p>
-              <div className="mt-3">
-                <p className="form-label">精选条数（1–50）</p>
-                <div className="flex items-center gap-2">
-                  <input type="number" min="1" max="50" step="1" value={topN} onChange={e => setTopN(e.target.value)} className={`${INPUT_CLS} flex-1`} />
-                  <button onClick={handleSaveTopN} className="action-button action-button-secondary text-xs shrink-0">保存</button>
-                </div>
-                <span className="tiny-meta">按重要性取分数最高的前 N 条（正文与导出 JSON 同步）。</span>
-              </div>
-              <div className="mt-3 flex items-center justify-between gap-2 border-t border-[var(--dorami-border)] pt-3 text-xs">
-                <span className="font-medium text-slate-500">增量游标</span>
-                <span className="flex items-center gap-2">
-                  <code className="font-mono text-slate-500">{briefConfig?.cursor ? briefConfig.cursor.slice(0, 19) : '（空）'}</code>
-                  <button onClick={handleResetCursor} className="rounded-md px-2 py-0.5 micro-label text-slate-500 hover:bg-slate-100 hover:text-indigo-600" title="重置增量游标（用于重做/补生成）">
-                    重置
-                  </button>
-                </span>
-              </div>
+            {/* 统一保存：一次落库 Cron + 精选条数 */}
+            <div className="mt-3 flex justify-end">
+              <button onClick={handleSaveSettings} className="action-button action-button-secondary text-xs">保存日报设置</button>
             </div>
           </div>
         </div>
