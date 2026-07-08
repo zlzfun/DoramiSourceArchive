@@ -561,7 +561,7 @@ export default function DataTab({
                 </td>
                 <td className="px-3 py-4">
                   <div className="text-slate-500 text-xs font-mono">{article.publish_date?.split('T')[0] || '-'}</div>
-                  <div className="tiny-meta mt-0.5 font-mono" title="抓取 / 收录时间">收录 {article.fetched_date?.replace('T', ' ').substring(0, 16) || '-'}</div>
+                  <div className="tiny-meta mt-0.5 font-mono" title={`收录时间：${article.fetched_date?.replace('T', ' ').substring(0, 16) || '—'}`}>{article.fetched_date?.split('T')[0] || '-'}</div>
                 </td>
                 {canManageArticles && ragEnabled && (
                   <td className="px-3 py-4">

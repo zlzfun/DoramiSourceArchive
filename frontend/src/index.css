@@ -3713,6 +3713,8 @@ input[type="radio"] {
     height: 6px;
     border-radius: var(--r-pill);
     flex: none;
+    /* 淡描边：让「未运行」的浅灰点在白底上也清晰可辨 */
+    box-shadow: 0 0 0 1px rgba(100, 116, 139, 0.35);
   }
 
   .dept-meta {

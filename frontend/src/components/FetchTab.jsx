@@ -851,7 +851,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                               <div className="flex items-center gap-2 min-w-0">
                                 <span className="dept-name truncate">{company.name}</span>
                                 {company.en && company.en !== company.name && <span className="dept-alias truncate">{company.en}</span>}
-                                <span className={`dept-dot ${healthMeta(health.worst).dot}`} title={healthMeta(health.worst).label} />
                               </div>
                               <div className="dept-meta">
                                 <span>{health.total} 源</span>
@@ -860,7 +859,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                                 <span className="dept-meta-dot">{health.latest ? formatRelativeTime(health.latest) : '未运行'}</span>
                               </div>
                             </button>
-                            {!open && fetchers.length > 1 && (
+                            {!open && (
                               <div className="dept-dotgrid" title="各源运行健康">
                                 {fetchers.slice(0, 16).map(f => {
                                   const st = healthByFetcher[f.id]?.health_status || 'never_run';
