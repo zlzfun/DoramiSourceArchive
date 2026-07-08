@@ -145,11 +145,11 @@
 
 > ⚠️ **`dark:` 变体接线（Tailwind v4 坑）**：v4 **不读** `tailwind.config.js` 的 `darkMode` 键，默认 `dark:` 走 `prefers-color-scheme`。本项目在 `index.css` 顶部用 `@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));` 把 `dark:` 绑到 `[data-theme=dark]`。**少了这行，所有 `dark:` 补丁会在浅色系统下静默失效**（白底/淡底残块全部漏出，且只在切到暗色却又是浅色 OS 时暴露）——排查暗色"补丁不生效"先查这行是否还在。
 
-> ⚠️ **高特异性桥接会压过 `dark:` 补丁**：`index.css` 有一组「桥接」规则用后代选择器把卡片/模态内的嵌套工具类统一改写（如 `.surface-card .bg-white { … }`、`.modal-panel .bg-slate-50 { … }`，特异性 0,2,0）。它**压过** JSX 上的 `dark:bg-[var(--dorami-*)]`（0,1,0）——所以「卡片/模态内的 `bg-white`/`bg-slate-50`/`bg-indigo-50` 在暗色下仍发白」往往不是 `dark:` 没接通，而是被这组桥接强制。**每条亮色桥接都必须有 `[data-theme=dark]` 对应**（紧随其后、用 `[data-theme="dark"] :is(.surface-card,.modal-panel) …`，特异性 0,3,0 稳压），新增亮色桥接时同步加暗色版。
+> ℹ️ **Legacy bridge 已退役（F8-B，2026-07）**：`index.css` 曾有一组后代选择器桥接（`.surface-card .bg-white { … }` 等）把卡片/模态内的裸工具类改写成令牌语义，并因高特异性压过 `dark:` 补丁——该段已随 54 处存量令牌化**整体删除**。现在由 ESLint 规则 `dorami/no-legacy-bridge-class`（`'error'`）把关：新代码直接写 `bg-[var(--dorami-surface)]`/`--dorami-soft`/`--dorami-wash`/`border-[var(--dorami-border)]` 等令牌类，**不得再写** `bg-white`（裸形态）/`bg-slate-50*`/`bg-indigo-50`/`bg-blue-50*`/`border-slate-100|200`/`border-indigo-200`。`bg-white/NN` 半透明白玻璃（紫/深色 Hero、深色代码面、Toast 高光等主题恒定表面）是正当写法，不在拦截范围。
 
 > ⚠️ **输入框：背景与文字色 token 必须成对**。表单输入优先**复用 `.form-input` 角色类**（它已把 `color: var(--dorami-ink)` 绑进去，暗色自动翻转）。若确实要手搓工具类串，凡用了会翻转的背景 token（`bg-[var(--dorami-soft)]`/`--dorami-well` 等），就**必须同时绑 `text-[var(--dorami-ink)]` 和 `placeholder:text-[var(--dorami-faint)]`**——只翻背景不翻文字是暗色「深字配深底、看不清」的典型来源：背景随主题翻转、文字色却走继承/默认值不翻，亮色下侥幸正常、暗色下糊成一团。（实例：`AdminOpsTab.jsx` 模型配置的 `INPUT_CLS` 曾漏掉文字色 token，亮色无碍、暗色翻车。）
 
-**登录/品牌页（`.auth-*` / `.login-panel`）刻意豁免**——暗色桥接不要纳入 `.login-panel`。
+**登录/品牌页（`.auth-*` / `.login-panel`）刻意豁免**——不做暗色适配改写，品牌面保持自身的电影感配色。
 
 ---
 
