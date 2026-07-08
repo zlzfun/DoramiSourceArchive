@@ -361,7 +361,7 @@ export default function DataTab({
       <div className="page-header flex-col xl:flex-row">
         <div className="page-heading">
           <h2 className="page-title">知识台账</h2>
-          <p className="page-subtitle mt-3 max-w-4xl">沉浸式多维过滤，支持点击日期极速框选范围，快速查找与管理全部抓取内容。</p>
+          <p className="page-subtitle mt-3 max-w-4xl">按类型、来源、日期与关键词过滤，查找并管理全部归档内容。</p>
         </div>
         <div className="page-actions">
           {canManageArticles && ragEnabled && (
@@ -495,7 +495,6 @@ export default function DataTab({
             <col className="ledger-col-source" />
             <col className="ledger-col-title" />
             <col className="ledger-col-publish" />
-            <col className="ledger-col-fetched" />
             {canManageArticles && ragEnabled && <col className="ledger-col-vector" />}
           </colgroup>
           <thead className="bg-[var(--dorami-well)] border-b border-[var(--dorami-border)] text-slate-500 text-xs tracking-wider">
@@ -508,8 +507,7 @@ export default function DataTab({
               <th className="px-3 py-4 w-36 font-bold">内容类型</th>
               <th className="px-3 py-4 w-44 font-bold">数据来源</th>
               <th className="px-4 py-4 font-bold">标题 / 内容摘要</th>
-              <th className="px-3 py-4 w-[150px] font-bold">原始发布日期</th>
-              <th className="px-3 py-4 w-[150px] font-bold">抓取 / 收录时间</th>
+              <th className="px-3 py-4 w-[150px] font-bold">发布 / 收录</th>
               {canManageArticles && ragEnabled && <th className="px-3 py-4 w-36 font-bold">向量状态</th>}
             </tr>
           </thead>
@@ -521,13 +519,12 @@ export default function DataTab({
                   <td className="px-3 py-4"><div className="skeleton h-5 w-20 rounded-full" /></td>
                   <td className="px-3 py-4"><div className="flex items-center gap-2.5"><div className="skeleton h-8 w-8 rounded-[var(--r-control)]" /><div className="skeleton h-4 w-24" /></div></td>
                   <td className="px-4 py-4"><div className="skeleton h-4 w-3/4" /><div className="skeleton mt-2 h-3 w-1/2" /></td>
-                  <td className="px-3 py-4"><div className="skeleton h-4 w-20" /></td>
-                  <td className="px-3 py-4"><div className="skeleton h-4 w-24" /></td>
+                  <td className="px-3 py-4"><div className="skeleton h-4 w-20" /><div className="skeleton mt-1.5 h-3 w-24" /></td>
                   {canManageArticles && ragEnabled && <td className="px-3 py-4"><div className="skeleton h-6 w-24 rounded-full" /></td>}
                 </tr>
               ))
             ) : articles.length === 0 ? (
-              <tr><td colSpan={canManageArticles && ragEnabled ? 7 : 6} className="px-6 py-16 text-center text-slate-500 font-medium">当前时间区间或过滤条件下，未查询到相关数据</td></tr>
+              <tr><td colSpan={canManageArticles && ragEnabled ? 6 : 5} className="px-6 py-16 text-center text-slate-500 font-medium">当前时间区间或过滤条件下，未查询到相关数据</td></tr>
             ) : articles.map((article) => (
               <tr key={article.id} className="hover:bg-blue-50/40 transition-colors group">
                 <td className="px-4 py-4 text-center">
@@ -562,8 +559,10 @@ export default function DataTab({
                   <div className="line-clamp-1">{article.title}</div>
                   <div className="mt-1 line-clamp-1 text-xs font-medium text-slate-500">{excerptOf(article.content_preview || article.content) || '暂无摘要内容'}</div>
                 </td>
-                <td className="px-3 py-4 text-slate-500 text-xs font-mono">{article.publish_date?.split('T')[0] || '-'}</td>
-                <td className="px-3 py-4 text-slate-500 text-xs font-mono">{article.fetched_date?.replace('T', ' ').substring(0, 16) || '-'}</td>
+                <td className="px-3 py-4">
+                  <div className="text-slate-500 text-xs font-mono">{article.publish_date?.split('T')[0] || '-'}</div>
+                  <div className="tiny-meta mt-0.5 font-mono" title="抓取 / 收录时间">收录 {article.fetched_date?.replace('T', ' ').substring(0, 16) || '-'}</div>
+                </td>
                 {canManageArticles && ragEnabled && (
                   <td className="px-3 py-4">
                     {(() => {

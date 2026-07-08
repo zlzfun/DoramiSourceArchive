@@ -675,8 +675,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         {fetcher.base_url && (
           <div className="source-url-inline">
             <ExternalLink className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-            <a className="source-url truncate" href={fetcher.base_url} target="_blank" rel="noreferrer" title={fetcher.base_url}>{fetcher.base_url}</a>
-            <a className="source-url-open" href={fetcher.base_url} target="_blank" rel="noreferrer" title="打开来源入口">打开</a>
+            <a className="source-url truncate" href={fetcher.base_url} target="_blank" rel="noreferrer" title="打开来源入口">{fetcher.base_url}</a>
           </div>
         )}
 
@@ -861,6 +860,15 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                                 <span className="dept-meta-dot">{health.latest ? formatRelativeTime(health.latest) : '未运行'}</span>
                               </div>
                             </button>
+                            {!open && fetchers.length > 1 && (
+                              <div className="dept-dotgrid" title="各源运行健康">
+                                {fetchers.slice(0, 16).map(f => {
+                                  const st = healthByFetcher[f.id]?.health_status || 'never_run';
+                                  const meta = healthMeta(st);
+                                  return <span key={f.id} className={`dept-dotgrid-dot ${meta.dot}`} title={`${f.name}：${meta.label}`} />;
+                                })}
+                              </div>
+                            )}
                             <button type="button" className="dept-chevron" onClick={() => toggleCompany(company.key, open)} aria-label={open ? '收起' : '展开'}>
                               {open ? <ChevronDown className="h-4.5 w-4.5" /> : <ChevronRight className="h-4.5 w-4.5" />}
                             </button>

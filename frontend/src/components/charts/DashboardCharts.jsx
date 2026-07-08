@@ -4,7 +4,6 @@
  * hover 时由 ThemedTooltip 浮现。
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { ChevronDown } from 'lucide-react';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -156,7 +155,8 @@ export function RankBars({ rows, labelKey, valueKey, name, color = C_PRIMARY, he
  * rows: 对象数组；nameKey=类目名字段；metrics=[{key, name, color}]。
  * colorByIndex=true 时（仅适合单指标）每行的条按分类调色板逐行取色——排行也有色彩层次。
  * 数值默认隐藏、hover 整行才浮现（与 RankBars 的 tooltip 一致，更清爽）；alwaysShowValue=true
- * 时行尾常显数值（排行榜场景——看榜本就是看数）。列表可滚动时底部出现渐隐 + 「下滑查看更多」提示。
+ * 时行尾常显数值（排行榜场景——看榜本就是看数）。列表可滚动且未到底时，底部内容以
+ * CSS mask 渐隐（.scroll-fade-b）暗示「还可下滑」，到底即撤除、末行完整可见。
  */
 export function BarList({ rows, nameKey, metrics, maxHeight = 248, emptyHint = '暂无数据', colorByIndex = false, alwaysShowValue = false }) {
   const scrollRef = useRef(null);
@@ -196,7 +196,7 @@ export function BarList({ rows, nameKey, metrics, maxHeight = 248, emptyHint = '
         </div>
       )}
       <div className="relative">
-        <div ref={scrollRef} onScroll={updateScroll} className="overflow-y-auto pr-1" style={{ maxHeight }}>
+        <div ref={scrollRef} onScroll={updateScroll} className={`overflow-y-auto pr-1 ${showHint ? 'scroll-fade-b' : ''}`} style={{ maxHeight }}>
           {rows.map((r, i) => (
             <div key={r[nameKey]} className="group rounded-[var(--r-sm)] px-1.5 py-1.5 transition-colors hover:bg-[var(--dorami-wash)]">
               <div className="flex items-center justify-between gap-2">
@@ -215,14 +215,6 @@ export function BarList({ rows, nameKey, metrics, maxHeight = 248, emptyHint = '
             </div>
           ))}
         </div>
-        {/* 底部滚动引导：可滚动且未到底时浮现渐隐 + 跳动箭头 */}
-        {showHint && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-center bg-gradient-to-t from-white to-transparent pb-0.5 pt-7 dark:from-[var(--dorami-surface)]">
-            <span className="inline-flex items-center gap-1 tiny-meta text-slate-500">
-              <ChevronDown className="h-3 w-3 animate-bounce" /> 下滑查看更多
-            </span>
-          </div>
-        )}
       </div>
     </div>
   );

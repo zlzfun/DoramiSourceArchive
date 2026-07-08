@@ -2744,8 +2744,14 @@ input[type="radio"] {
   .ledger-col-source { width: 192px; }
   .ledger-col-title { width: auto; }
   .ledger-col-publish { width: 150px; }
-  .ledger-col-fetched { width: 170px; }
   .ledger-col-vector { width: 136px; }
+
+  /* 可滚动容器底部渐隐：内容自然淡出以暗示「还可下滑」，替代文字提示条。
+     仅在「可滚动且未到底」时挂到滚动元素上（见 BarList），到底即撤除、末行完整可见。 */
+  .scroll-fade-b {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
+  }
 
   .active-filter-bar {
     display: flex;
@@ -3691,6 +3697,24 @@ input[type="radio"] {
     box-shadow: 0 0 0 3px rgba(11, 18, 32, 0.04);
   }
 
+  /* 主体卡收起态：每源一枚小圆点组成健康点阵，让目录从「名单」变「仪表」。 */
+  .dept-dotgrid {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-content: center;
+    gap: 3px;
+    max-width: 92px;
+    flex-shrink: 0;
+  }
+
+  .dept-dotgrid-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: var(--r-pill);
+    flex: none;
+  }
+
   .dept-meta {
     display: flex;
     align-items: center;
@@ -4074,20 +4098,6 @@ input[type="radio"] {
   .source-url-row .tiny-meta,
   .source-tag-row .tiny-meta {
     flex: 0 0 auto;
-  }
-
-  .source-url-open {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    height: 24px;
-    padding: 0 8px;
-    border-radius: var(--r-control);
-    background: rgba(91, 84, 232, 0.08);
-    color: var(--dorami-blue);
-    font-size: 11px;
-    font-weight: 800;
-    white-space: nowrap;
   }
 
   .source-param-block {
