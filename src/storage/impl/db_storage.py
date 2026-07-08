@@ -86,18 +86,8 @@ class DatabaseStorage(BaseStorage):
                 if column_name not in article_columns:
                     conn.execute(text(f"ALTER TABLE articles ADD COLUMN {column_name} {column_sql}"))
 
-        if "node_groups" in inspector.get_table_names():
-            node_group_columns = {column["name"] for column in inspector.get_columns("node_groups")}
-            node_group_additive_columns = {
-                "params_json": "VARCHAR DEFAULT '{}'",
-                "per_fetcher_params_json": "VARCHAR DEFAULT '{}'",
-                "cron_expr": "VARCHAR DEFAULT ''",
-                "per_fetcher_cron_json": "VARCHAR DEFAULT '{}'",
-            }
-            with self.engine.begin() as conn:
-                for column_name, column_sql in node_group_additive_columns.items():
-                    if column_name not in node_group_columns:
-                        conn.execute(text(f"ALTER TABLE node_groups ADD COLUMN {column_name} {column_sql}"))
+        # node_groups 的遗留 additive 迁移已随节点组退役移除（实体简化阶段 2）；
+        # 存量表由 Alembic 迁移内联进采集任务后 DROP。
 
         if "collection_jobs" in inspector.get_table_names():
             collection_job_columns = {column["name"] for column in inspector.get_columns("collection_jobs")}

@@ -220,24 +220,14 @@ export async function fetchRunningProgress() {
   return res.json();
 }
 
-export function fetchTasks() {
-  return request('/tasks', { errorMsg: '获取任务列表失败' });
-}
-
 export function fetchFetchRuns(filters = {}, limit = 100) {
   const params = withFilters(new URLSearchParams({ limit }), filters);
   return request(`/fetch-runs?${params}`, { errorMsg: '获取抓取运行历史失败' });
 }
 
-// ==================== 采集范围（节点组，已下线管理入口，仅保留只读兼容） ====================
-// 采集范围（NodeGroup）作为独立概念已从 UI 下线（见 docs/analysis/entity-simplification-plan.md 阶段 1）。
-// 仅保留只读 fetch：FetchRunsTab 用它把「引用采集范围的存量采集任务」的节点数解析出来展示。
-export function fetchNodeGroups(filters = {}) {
-  const query = withFilters(new URLSearchParams(), filters).toString();
-  return request(`/node-groups${query ? `?${query}` : ''}`, { errorMsg: '获取采集范围失败' });
-}
-
 // ==================== 采集任务（Collection Jobs） ====================
+// （采集范围 node-groups 与旧版定时任务 /api/tasks 已退役——实体简化阶段 2，
+// 存量数据由后端 Alembic 迁移内联/转换为采集任务。）
 export function fetchCollectionJobs(filters = {}) {
   const query = withFilters(new URLSearchParams(), filters).toString();
   return request(`/collection-jobs${query ? `?${query}` : ''}`, { errorMsg: '获取采集任务失败' });
@@ -306,15 +296,6 @@ export function analyzeSourceUrl(url) {
 
 export function previewSourceConfig(config) {
   return request('/source-builder/preview', { method: 'POST', body: config, errorMsg: '试抓预览失败' });
-}
-
-// ==================== 定时任务（旧版） ====================
-export function createTask(data) {
-  return request('/tasks', { method: 'POST', body: data, errorMsg: '创建任务失败' });
-}
-
-export function deleteTask(id) {
-  return request(`/tasks/${id}`, { method: 'DELETE', errorMsg: '删除任务失败' });
 }
 
 // ==================== 向量 / RAG 检索 ====================

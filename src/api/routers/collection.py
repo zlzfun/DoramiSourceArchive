@@ -1,11 +1,13 @@
-"""采集调度 CRUD Router（collector）：节点组 / 采集任务 / 旧版定时任务。
+"""采集调度 CRUD Router（collector）：采集任务。
 
 阶段1 从 app.py 迁出的采集调度元数据读写端点（路径不变，collector 网关仍由中间件
 统一强制）：
-- /api/node-groups*          —— 采集范围（节点组）CRUD + 即时抓取
-- /api/collection-jobs*      —— 可保存可调度的多节点采集任务 CRUD + 立即运行 + 旧任务迁移
+- /api/collection-jobs*      —— 可保存可调度的多节点采集任务 CRUD + 立即运行
 - /api/collection-job-runs*  —— 任务级运行历史（聚合子运行）
-- /api/tasks*                —— 旧版单节点定时任务 CRUD（向后兼容）
+
+（实体简化阶段 2：/api/node-groups* 与 /api/tasks* 已退役——节点组与旧版单节点
+定时任务的存量数据由 Alembic 迁移内联/转换为采集任务；历史运行记录中的
+run_scope=legacy_task 与 group_id 列保留供回溯。）
 
 抓取核心 run_collection_items 与调度注册 load_tasks_to_scheduler 仍留守 app.py（与
 APScheduler 启动编排同源），经 _app() 延迟动态调用。序列化与请求模型随迁入本文件，
@@ -13,9 +15,7 @@ APScheduler 启动编排同源），经 _app() 延迟动态调用。序列化与
 数据访问经 deps.get_session()。
 """
 
-import datetime
 import importlib
-import json
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,18 +26,14 @@ from api import deps
 from api.collection_planning import (
     apply_run_param_overrides,
     build_collection_job_items,
-    build_node_group_items,
     normalize_fetcher_ids,
     test_run_overrides,
 )
 from api.textutils import _json_dumps, _json_loads, _now_iso
-from fetchers.registry import fetcher_registry
 from models.db import (
     CollectionJobRecord,
     CollectionJobRunRecord,
     FetchRunRecord,
-    FetchTaskRecord,
-    NodeGroupRecord,
 )
 from services import jobs
 
@@ -51,28 +47,11 @@ def _app():
 
 # ==================== 序列化 ====================
 
-def serialize_node_group(record: NodeGroupRecord) -> Dict[str, Any]:
-    return {
-        "id": record.id,
-        "name": record.name,
-        "description": record.description,
-        "fetcher_ids": _json_loads(record.fetcher_ids_json, []),
-        "params": _json_loads(record.params_json, {}),
-        "per_fetcher_params": _json_loads(record.per_fetcher_params_json, {}),
-        "cron_expr": record.cron_expr,
-        "per_fetcher_cron": _json_loads(record.per_fetcher_cron_json, {}),
-        "is_active": record.is_active,
-        "created_at": record.created_at,
-        "updated_at": record.updated_at,
-    }
-
-
 def serialize_collection_job(record: CollectionJobRecord) -> Dict[str, Any]:
     return {
         "id": record.id,
         "name": record.name,
         "description": record.description,
-        "group_id": record.group_id,
         "fetcher_ids": _json_loads(record.fetcher_ids_json, []),
         "params": _json_loads(record.params_json, {}),
         "per_fetcher_params": _json_loads(record.per_fetcher_params_json, {}),
@@ -110,32 +89,9 @@ def serialize_collection_job_run(record: CollectionJobRunRecord) -> Dict[str, An
 
 # ==================== 请求模型 ====================
 
-class NodeGroupCreate(BaseModel):
-    name: str
-    description: str = ""
-    fetcher_ids: List[str] = PydanticField(default_factory=list)
-    params: Dict[str, Any] = PydanticField(default_factory=dict)
-    per_fetcher_params: Dict[str, Dict[str, Any]] = PydanticField(default_factory=dict)
-    cron_expr: str = ""
-    per_fetcher_cron: Dict[str, str] = PydanticField(default_factory=dict)
-    is_active: bool = True
-
-
-class NodeGroupUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    fetcher_ids: Optional[List[str]] = None
-    params: Optional[Dict[str, Any]] = None
-    per_fetcher_params: Optional[Dict[str, Dict[str, Any]]] = None
-    cron_expr: Optional[str] = None
-    per_fetcher_cron: Optional[Dict[str, str]] = None
-    is_active: Optional[bool] = None
-
-
 class CollectionJobCreate(BaseModel):
     name: str
     description: str = ""
-    group_id: Optional[int] = None
     fetcher_ids: List[str] = PydanticField(default_factory=list)
     params: Dict[str, Any] = PydanticField(default_factory=dict)
     per_fetcher_params: Dict[str, Dict[str, Any]] = PydanticField(default_factory=dict)
@@ -148,7 +104,6 @@ class CollectionJobCreate(BaseModel):
 class CollectionJobUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    group_id: Optional[int] = None
     fetcher_ids: Optional[List[str]] = None
     params: Optional[Dict[str, Any]] = None
     per_fetcher_params: Optional[Dict[str, Dict[str, Any]]] = None
@@ -156,113 +111,6 @@ class CollectionJobUpdate(BaseModel):
     per_fetcher_cron: Optional[Dict[str, str]] = None
     is_active: Optional[bool] = None
     downstream_policy: Optional[Dict[str, Any]] = None
-
-
-class TaskCreate(BaseModel):
-    fetcher_id: str
-    cron_expr: str
-    params: dict
-
-
-# ==================== 节点组（采集范围）====================
-
-@router.get("/api/node-groups")
-def get_node_groups(is_active: Optional[bool] = None, session: Session = Depends(deps.get_session)):
-    query = select(NodeGroupRecord)
-    if is_active is not None:
-        query = query.where(NodeGroupRecord.is_active == is_active)
-    query = query.order_by(NodeGroupRecord.name)
-    return [serialize_node_group(record) for record in session.exec(query).all()]
-
-
-@router.post("/api/node-groups")
-def create_node_group(data: NodeGroupCreate, session: Session = Depends(deps.get_session)):
-    name = data.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="采集范围名称不能为空")
-    now = _now_iso()
-    record = NodeGroupRecord(
-        name=name,
-        description=data.description.strip(),
-        fetcher_ids_json=_json_dumps(normalize_fetcher_ids(data.fetcher_ids)),
-        params_json=_json_dumps(data.params),
-        per_fetcher_params_json=_json_dumps(data.per_fetcher_params),
-        cron_expr=data.cron_expr.strip(),
-        per_fetcher_cron_json=_json_dumps(data.per_fetcher_cron),
-        is_active=data.is_active,
-        created_at=now,
-        updated_at=now,
-    )
-    session.add(record)
-    session.commit()
-    session.refresh(record)
-    result = serialize_node_group(record)
-    _app().load_tasks_to_scheduler()
-    return result
-
-
-@router.put("/api/node-groups/{group_id}")
-def update_node_group(group_id: int, data: NodeGroupUpdate, session: Session = Depends(deps.get_session)):
-    record = session.get(NodeGroupRecord, group_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="采集范围不存在")
-    update_data = data.dict(exclude_unset=True)
-    if "name" in update_data:
-        name = (update_data["name"] or "").strip()
-        if not name:
-            raise HTTPException(status_code=400, detail="采集范围名称不能为空")
-        record.name = name
-    if "description" in update_data:
-        record.description = (update_data["description"] or "").strip()
-    if "fetcher_ids" in update_data:
-        record.fetcher_ids_json = _json_dumps(normalize_fetcher_ids(update_data["fetcher_ids"]))
-    if "params" in update_data:
-        record.params_json = _json_dumps(update_data["params"])
-    if "per_fetcher_params" in update_data:
-        record.per_fetcher_params_json = _json_dumps(update_data["per_fetcher_params"])
-    if "cron_expr" in update_data:
-        record.cron_expr = (update_data["cron_expr"] or "").strip()
-    if "per_fetcher_cron" in update_data:
-        record.per_fetcher_cron_json = _json_dumps(update_data["per_fetcher_cron"])
-    if "is_active" in update_data:
-        record.is_active = update_data["is_active"]
-    record.updated_at = _now_iso()
-    session.add(record)
-    session.commit()
-    session.refresh(record)
-    result = serialize_node_group(record)
-    _app().load_tasks_to_scheduler()
-    return result
-
-
-@router.delete("/api/node-groups/{group_id}")
-def delete_node_group(group_id: int, session: Session = Depends(deps.get_session)):
-    record = session.get(NodeGroupRecord, group_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="采集范围不存在")
-    session.delete(record)
-    session.commit()
-    _app().load_tasks_to_scheduler()
-    return {"status": "success"}
-
-
-@router.post("/api/node-groups/{group_id}/fetch")
-async def fetch_node_group(group_id: int, test_limit: Optional[int] = None, session: Session = Depends(deps.get_session)):
-    group = session.get(NodeGroupRecord, group_id)
-    if not group:
-        raise HTTPException(status_code=404, detail="采集范围不存在")
-    if not group.is_active:
-        raise HTTPException(status_code=400, detail="采集范围已停用")
-    items = build_node_group_items(group)
-    group_name = group.name
-    items = apply_run_param_overrides(items, test_run_overrides(test_limit))
-    return await _app().run_collection_items(
-        items,
-        name=f"临时抓取采集范围: {group_name}",
-        trigger_type="manual",
-        group_id=group_id,
-        run_scope="ad_hoc",
-    )
 
 
 # ==================== 采集任务（collection jobs）====================
@@ -281,15 +129,12 @@ def create_collection_job(data: CollectionJobCreate, session: Session = Depends(
     name = data.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="采集任务名称不能为空")
-    if data.group_id is None and not normalize_fetcher_ids(data.fetcher_ids):
-        raise HTTPException(status_code=400, detail="采集任务需要采集范围或至少一个节点")
+    if not normalize_fetcher_ids(data.fetcher_ids):
+        raise HTTPException(status_code=400, detail="采集任务至少需要一个节点")
     now = _now_iso()
-    if data.group_id is not None and not session.get(NodeGroupRecord, data.group_id):
-        raise HTTPException(status_code=404, detail="采集范围不存在")
     record = CollectionJobRecord(
         name=name,
         description=data.description.strip(),
-        group_id=data.group_id,
         fetcher_ids_json=_json_dumps(normalize_fetcher_ids(data.fetcher_ids)),
         params_json=_json_dumps(data.params),
         per_fetcher_params_json=_json_dumps(data.per_fetcher_params),
@@ -320,11 +165,6 @@ def update_collection_job(job_id: int, data: CollectionJobUpdate, session: Sessi
         record.name = name
     if "description" in update_data:
         record.description = (update_data["description"] or "").strip()
-    if "group_id" in update_data:
-        group_id = update_data["group_id"]
-        if group_id is not None and not session.get(NodeGroupRecord, group_id):
-            raise HTTPException(status_code=404, detail="采集范围不存在")
-        record.group_id = group_id
     if "fetcher_ids" in update_data:
         record.fetcher_ids_json = _json_dumps(normalize_fetcher_ids(update_data["fetcher_ids"]))
     if "params" in update_data:
@@ -368,11 +208,10 @@ async def run_collection_job_now(job_id: int, test_limit: Optional[int] = None, 
     job = session.get(CollectionJobRecord, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="采集任务不存在")
-    items = build_collection_job_items(job, session)
+    items = build_collection_job_items(job)
     if not items:
         raise HTTPException(status_code=400, detail="采集任务没有可执行节点")
     job_name = job.name
-    group_id = job.group_id
     items = apply_run_param_overrides(items, test_run_overrides(test_limit))
 
     async def _work(bg) -> Dict[str, Any]:
@@ -381,7 +220,6 @@ async def run_collection_job_now(job_id: int, test_limit: Optional[int] = None, 
             name=job_name,
             trigger_type="manual",
             job_id=job_id,
-            group_id=group_id,
             run_scope="saved_job",
         )
 
@@ -390,36 +228,6 @@ async def run_collection_job_now(job_id: int, test_limit: Optional[int] = None, 
         payload={"job_id": job_id, "test_limit": test_limit},
     )
     return {"status": "accepted", "job_id": bg_job.id}
-
-
-@router.post("/api/collection-jobs/migrate-legacy-tasks")
-def migrate_legacy_tasks_to_collection_jobs(session: Session = Depends(deps.get_session)):
-    created = 0
-    now = _now_iso()
-    tasks = session.exec(select(FetchTaskRecord)).all()
-    for task in tasks:
-        existing = session.exec(
-            select(CollectionJobRecord).where(CollectionJobRecord.legacy_task_id == task.id)
-        ).first()
-        if existing:
-            continue
-        fetcher_class = fetcher_registry.get_class(task.fetcher_id)
-        name = fetcher_class.name if fetcher_class else task.fetcher_id
-        record = CollectionJobRecord(
-            name=f"{name} 定时采集",
-            description="由旧版单节点定时任务迁移生成。",
-            fetcher_ids_json=_json_dumps([task.fetcher_id]),
-            params_json=task.params_json,
-            cron_expr=task.cron_expr,
-            is_active=False,
-            legacy_task_id=task.id,
-            created_at=now,
-            updated_at=now,
-        )
-        session.add(record)
-        created += 1
-    session.commit()
-    return {"status": "success", "created": created}
 
 
 @router.get("/api/collection-job-runs")
@@ -455,32 +263,3 @@ def get_collection_job_run(job_run_id: int, session: Session = Depends(deps.get_
     if child_run_ids:
         child_runs = session.exec(select(FetchRunRecord).where(FetchRunRecord.id.in_(child_run_ids))).all()
     return {**serialize_collection_job_run(record), "child_runs": child_runs}
-
-
-# ==================== 旧版定时任务（向后兼容）====================
-
-@router.get("/api/tasks")
-def get_tasks(session: Session = Depends(deps.get_session)):
-    return session.exec(select(FetchTaskRecord)).all()
-
-
-@router.post("/api/tasks")
-def create_task(task_data: TaskCreate, session: Session = Depends(deps.get_session)):
-    task = FetchTaskRecord(
-        fetcher_id=task_data.fetcher_id, cron_expr=task_data.cron_expr,
-        params_json=json.dumps(task_data.params), created_at=datetime.datetime.now().isoformat()
-    )
-    session.add(task)
-    session.commit()
-    _app().load_tasks_to_scheduler()
-    return {"status": "success"}
-
-
-@router.delete("/api/tasks/{task_id}")
-def delete_task(task_id: int, session: Session = Depends(deps.get_session)):
-    task = session.get(FetchTaskRecord, task_id)
-    if task:
-        session.delete(task)
-        session.commit()
-    _app().load_tasks_to_scheduler()
-    return {"status": "success"}

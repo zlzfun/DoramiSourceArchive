@@ -26,9 +26,7 @@ from models.db import (
     ArticleRecord,
     CollectionJobRecord,
     CollectionJobRunRecord,
-    FetchTaskRecord,
     FetchRunRecord,
-    NodeGroupRecord,
     ReaderSubscriptionRecord,
     ReaderFeedTokenRecord,
     ReaderFavoriteRecord,
@@ -105,7 +103,6 @@ from api.collection_planning import (
     normalize_fetcher_ids,
     resolve_collection_job_fetcher_ids,
     build_collection_job_items,
-    build_node_group_items,
     apply_run_param_overrides,
     test_run_overrides,
     resolve_delivery_source_ids,
@@ -153,12 +150,8 @@ from api.routers.archive_sync import (
 )
 from api.routers import collection as collection_router
 from api.routers.collection import (
-    NodeGroupCreate,
-    NodeGroupUpdate,
     CollectionJobCreate,
     CollectionJobUpdate,
-    TaskCreate,
-    serialize_node_group,
     serialize_collection_job,
     serialize_collection_job_run,
 )
@@ -292,11 +285,9 @@ COLLECTOR_API_PREFIXES = (
     "/api/source-configs",
     "/api/source-builder",
     "/api/import/social-posts",
-    "/api/node-groups",
     "/api/collection-jobs",
     "/api/collection-job-runs",
     "/api/jobs",
-    "/api/tasks",
     # LLM 配置与日报生成/配置归管理员（collector）。
     "/api/llm",
     "/api/daily-brief",
@@ -844,12 +835,12 @@ def reconcile_orphaned_runs() -> Dict[str, int]:
 # （下方 import re-export，保持 api.app.X 兼容）。
 
 
-# serialize_node_group / serialize_collection_job / serialize_collection_job_run
+# serialize_collection_job / serialize_collection_job_run
 # 已迁至 api/routers/collection.py（下方 import re-export）。
 
 
 # normalize_fetcher_ids / resolve_collection_job_fetcher_ids / build_collection_job_items /
-# build_node_group_items / apply_run_param_overrides / test_run_overrides /
+# apply_run_param_overrides / test_run_overrides /
 # resolve_delivery_source_ids 已迁至 api/collection_planning.py（共享，下方 import re-export）。
 
 
@@ -858,13 +849,11 @@ def create_collection_job_run(
         trigger_type: str,
         node_count: int,
         job_id: Optional[int] = None,
-        group_id: Optional[int] = None,
         run_scope: str = "ad_hoc",
 ) -> int:
     with Session(db_sink.engine) as session:
         run = CollectionJobRunRecord(
             job_id=job_id,
-            group_id=group_id,
             run_scope=run_scope,
             trigger_type=trigger_type,
             status="running",
@@ -922,19 +911,15 @@ def create_fetch_run(
         fetcher_id: str,
         params: dict,
         trigger_type: str,
-        task_id: Optional[int] = None,
         job_id: Optional[int] = None,
         job_run_id: Optional[int] = None,
-        source_group_id: Optional[int] = None,
         run_scope: str = "ad_hoc",
 ) -> int:
     with Session(db_sink.engine) as session:
         run = FetchRunRecord(
             fetcher_id=fetcher_id,
-            task_id=task_id,
             job_id=job_id,
             job_run_id=job_run_id,
-            source_group_id=source_group_id,
             run_scope=run_scope,
             trigger_type=trigger_type,
             status="running",
@@ -973,49 +958,14 @@ def finish_fetch_run(run_id: int, status: str, result: Any = None, error_message
         session.commit()
 
 
-async def execute_fetch_job(fetcher_id: str, params: dict, task_id: Optional[int] = None):
-    print(f"⏰ 定时任务触发: 正在执行调度节点 {fetcher_id}...")
-    job_run_id = create_collection_job_run(
-        name=f"旧定时任务 #{task_id or fetcher_id}",
-        trigger_type="scheduled",
-        node_count=1,
-        run_scope="legacy_task",
-    )
-    try:
-        result = await run_fetcher_with_tracking(
-            fetcher_id,
-            params,
-            trigger_type="scheduled",
-            task_id=task_id,
-            job_run_id=job_run_id,
-            run_scope="legacy_task",
-        )
-        finish_collection_job_run(
-            job_run_id,
-            status="success",
-            child_run_ids=[result["run_id"]],
-            fetched_count=result["fetched_count"],
-            saved_count=result["saved_count"],
-            skipped_count=result["skipped_count"],
-        )
-    except ValueError as e:
-        finish_collection_job_run(job_run_id, status="failed", failed_count=1, error_message=str(e))
-        print(f"❌ {e}")
-    except Exception as e:
-        finish_collection_job_run(job_run_id, status="failed", failed_count=1, error_message=str(e))
-        print(f"❌ 定时任务执行失败: {e}")
-        raise
-
-
 async def execute_collection_job(job_id: int):
     with Session(db_sink.engine) as session:
         job = session.get(CollectionJobRecord, job_id)
         if not job or not job.is_active:
             print(f"⚠️ 采集任务不可用或已停用: {job_id}")
             return
-        items = build_collection_job_items(job, session)
+        items = build_collection_job_items(job)
         job_name = job.name
-        group_id = job.group_id
 
     print(f"⏰ 采集任务触发: {job_name} ({len(items)} 个节点)")
     await run_collection_items(
@@ -1023,7 +973,6 @@ async def execute_collection_job(job_id: int):
         name=job_name,
         trigger_type="scheduled",
         job_id=job_id,
-        group_id=group_id,
         run_scope="saved_job",
     )
 
@@ -1034,9 +983,8 @@ async def execute_collection_job_node(job_id: int, fetcher_id: str):
         if not job or not job.is_active:
             print(f"⚠️ 采集任务不可用或已停用: {job_id}")
             return
-        items = [item for item in build_collection_job_items(job, session) if item["fetcher_id"] == fetcher_id]
+        items = [item for item in build_collection_job_items(job) if item["fetcher_id"] == fetcher_id]
         job_name = job.name
-        group_id = job.group_id
     if not items:
         print(f"⚠️ 采集任务节点不可用: {job_id}/{fetcher_id}")
         return
@@ -1045,45 +993,7 @@ async def execute_collection_job_node(job_id: int, fetcher_id: str):
         name=f"{job_name} / {fetcher_id}",
         trigger_type="scheduled",
         job_id=job_id,
-        group_id=group_id,
         run_scope="saved_job",
-    )
-
-
-async def execute_node_group(group_id: int):
-    with Session(db_sink.engine) as session:
-        group = session.get(NodeGroupRecord, group_id)
-        if not group or not group.is_active:
-            print(f"⚠️ 采集范围不可用或已停用: {group_id}")
-            return
-        items = build_node_group_items(group)
-        group_name = group.name
-    await run_collection_items(
-        items,
-        name=f"采集范围定时: {group_name}",
-        trigger_type="scheduled",
-        group_id=group_id,
-        run_scope="ad_hoc",
-    )
-
-
-async def execute_node_group_node(group_id: int, fetcher_id: str):
-    with Session(db_sink.engine) as session:
-        group = session.get(NodeGroupRecord, group_id)
-        if not group or not group.is_active:
-            print(f"⚠️ 采集范围不可用或已停用: {group_id}")
-            return
-        items = [item for item in build_node_group_items(group) if item["fetcher_id"] == fetcher_id]
-        group_name = group.name
-    if not items:
-        print(f"⚠️ 采集范围节点不可用: {group_id}/{fetcher_id}")
-        return
-    await run_collection_items(
-        items,
-        name=f"采集范围定时: {group_name} / {fetcher_id}",
-        trigger_type="scheduled",
-        group_id=group_id,
-        run_scope="ad_hoc",
     )
 
 
@@ -1098,25 +1008,6 @@ def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]):
 def load_tasks_to_scheduler():
     scheduler.remove_all_jobs()
     with Session(db_sink.engine) as session:
-        tasks = session.exec(select(FetchTaskRecord).where(FetchTaskRecord.is_active == True)).all()
-        for task in tasks:
-            params = json.loads(task.params_json)
-            add_cron_job(f"task_{task.id}", execute_fetch_job, task.cron_expr, [task.fetcher_id, params, task.id])
-        groups = session.exec(
-            select(NodeGroupRecord)
-            .where(NodeGroupRecord.is_active == True)
-        ).all()
-        for group in groups:
-            if group.cron_expr:
-                add_cron_job(f"node_group_{group.id}", execute_node_group, group.cron_expr, [group.id])
-            for fetcher_id, cron_expr in _json_loads(group.per_fetcher_cron_json, {}).items():
-                if cron_expr:
-                    add_cron_job(
-                        f"node_group_{group.id}_{fetcher_id}",
-                        execute_node_group_node,
-                        cron_expr,
-                        [group.id, fetcher_id],
-                    )
         jobs = session.exec(
             select(CollectionJobRecord)
             .where(CollectionJobRecord.is_active == True)
@@ -1337,20 +1228,16 @@ async def run_fetcher_with_tracking(
         fetcher_id: str,
         params: Dict[str, Any],
         trigger_type: str = "manual",
-        task_id: Optional[int] = None,
         job_id: Optional[int] = None,
         job_run_id: Optional[int] = None,
-        source_group_id: Optional[int] = None,
         run_scope: str = "ad_hoc",
 ) -> Dict[str, Any]:
     run_id = create_fetch_run(
         fetcher_id,
         params,
         trigger_type=trigger_type,
-        task_id=task_id,
         job_id=job_id,
         job_run_id=job_run_id,
-        source_group_id=source_group_id,
         run_scope=run_scope,
     )
     mark_source_state_started(fetcher_id, params, run_id)
@@ -1369,7 +1256,6 @@ async def run_fetcher_with_tracking(
                 "fetch_run_id": run_id,
                 "job_id": job_id,
                 "job_run_id": job_run_id,
-                "source_group_id": source_group_id,
                 "run_scope": run_scope,
             },
             **params,
@@ -1400,16 +1286,13 @@ async def run_single_fetch_as_collection(
         name: str,
         trigger_type: str = "manual",
         run_scope: str = "ad_hoc",
-        task_id: Optional[int] = None,
         job_id: Optional[int] = None,
-        group_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     job_run_id = create_collection_job_run(
         name=name,
         trigger_type=trigger_type,
         node_count=1,
         job_id=job_id,
-        group_id=group_id,
         run_scope=run_scope,
     )
     try:
@@ -1417,10 +1300,8 @@ async def run_single_fetch_as_collection(
             fetcher_id,
             params,
             trigger_type=trigger_type,
-            task_id=task_id,
             job_id=job_id,
             job_run_id=job_run_id,
-            source_group_id=group_id,
             run_scope=run_scope,
         )
         finish_collection_job_run(
@@ -1442,7 +1323,6 @@ async def run_collection_items(
         name: str,
         trigger_type: str = "manual",
         job_id: Optional[int] = None,
-        group_id: Optional[int] = None,
         run_scope: str = "ad_hoc",
         max_concurrency: Optional[int] = None,
 ) -> Dict[str, Any]:
@@ -1451,7 +1331,6 @@ async def run_collection_items(
         trigger_type=trigger_type,
         node_count=len(items),
         job_id=job_id,
-        group_id=group_id,
         run_scope=run_scope,
     )
     concurrency = max(int(max_concurrency or COLLECTION_FETCH_CONCURRENCY), 1)
@@ -1470,7 +1349,6 @@ async def run_collection_items(
                     trigger_type=trigger_type,
                     job_id=job_id,
                     job_run_id=job_run_id,
-                    source_group_id=group_id,
                     run_scope=run_scope,
                 )
         except Exception as e:
@@ -1653,13 +1531,13 @@ async def get_background_job(job_id: str):
 
 
 # ==================== 4. 定时任务 ====================
-# NodeGroupCreate/Update、CollectionJobCreate/Update、TaskCreate 已迁至
-# api/routers/collection.py（下方 import re-export）。
+# CollectionJobCreate/Update 已迁至 api/routers/collection.py（下方 import re-export）。
 
 
-# 采集调度 CRUD —— /api/node-groups*、/api/collection-jobs*、/api/collection-job-runs*、
-# /api/tasks* 已迁出至 api/routers/collection.py（含 serialize_node_group/
-# serialize_collection_job[_run] 与 NodeGroup/CollectionJob Create/Update、TaskCreate；
+# 采集调度 CRUD —— /api/collection-jobs*、/api/collection-job-runs* 已迁出至
+# api/routers/collection.py（含 serialize_collection_job[_run] 与
+# CollectionJob Create/Update；/api/node-groups* 与 /api/tasks* 已随实体简化
+# 阶段 2 退役——存量数据由 Alembic 迁移内联/转换为采集任务）；
 # 抓取核心 run_collection_items 与调度注册 load_tasks_to_scheduler 仍留守本文件，
 # 经 collection 路由的 _app() 调用。见 app.include_router）。
 

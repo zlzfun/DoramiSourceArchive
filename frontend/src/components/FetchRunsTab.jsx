@@ -20,12 +20,9 @@ import {
 import {
   createCollectionJob,
   deleteCollectionJob,
-  deleteTask,
   fetchCollectionJobRuns,
   fetchCollectionJobs,
   fetchFetchRuns,
-  fetchNodeGroups,
-  fetchTasks,
   runCollectionJob,
   updateCollectionJob,
 } from '../api';
@@ -106,10 +103,8 @@ export default function FetchRunsTab({
   const confirm = useConfirm();
   const loadRequestRef = useRef(0);
   const [collectionJobs, setCollectionJobs] = useState([]);
-  const [nodeGroups, setNodeGroups] = useState([]);
   const [collectionRuns, setCollectionRuns] = useState([]);
   const [fetchRuns, setFetchRuns] = useState([]);
-  const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [filters, setFilters] = useState({ fetcher_id: '', status: '', trigger_type: '' });
@@ -124,11 +119,6 @@ export default function FetchRunsTab({
     [availableFetchers]
   );
 
-  const groupsById = useMemo(
-    () => Object.fromEntries(nodeGroups.map(group => [String(group.id), group])),
-    [nodeGroups]
-  );
-
   const jobsById = useMemo(
     () => Object.fromEntries(collectionJobs.map(job => [job.id, job])),
     [collectionJobs]
@@ -136,11 +126,6 @@ export default function FetchRunsTab({
 
   const getFetcherName = useCallback((id) => fetchersById[id]?.name || id, [fetchersById]);
   const companyForId = useCallback((id) => resolveCompany(fetchersById[id] || { source_owner: '', base_url: '' }), [fetchersById]);
-
-  const getJobFetchers = useCallback((job) => {
-    if (job?.group_id) return groupsById[String(job.group_id)]?.fetcher_ids || [];
-    return job?.fetcher_ids || [];
-  }, [groupsById]);
 
   const draftFetcherIds = useMemo(() => jobDraft.fetcher_ids || [], [jobDraft.fetcher_ids]);
 
@@ -165,19 +150,15 @@ export default function FetchRunsTab({
         trigger_type: filters.trigger_type,
         fetcher_id: filters.fetcher_id,
       };
-      const [groups, jobs, jobRuns, nodeRuns, legacyTasks] = await Promise.all([
-        fetchNodeGroups(),
+      const [jobs, jobRuns, nodeRuns] = await Promise.all([
         fetchCollectionJobs(),
         fetchCollectionJobRuns(runFilters, 100),
         fetchFetchRuns(fetchRunFilters, 200),
-        fetchTasks(),
       ]);
       if (reqId !== loadRequestRef.current) return; // 被更新的加载抢占，丢弃过期结果
-      setNodeGroups(groups);
       setCollectionJobs(jobs);
       setCollectionRuns(jobRuns);
       setFetchRuns(nodeRuns);
-      setTasks(legacyTasks);
       setLoadError('');
       setListVersion(v => v + 1);
     } catch (e) {
@@ -223,8 +204,7 @@ export default function FetchRunsTab({
     setJobDraft({
       name: job.name || '',
       description: job.description || '',
-      // 编辑即迁移：存量任务若引用采集范围，把范围内的节点内联为直接选择，之后不再依赖 group_id。
-      fetcher_ids: getJobFetchers(job),
+      fetcher_ids: job.fetcher_ids || [],
       params: job.params || {},
       per_fetcher_params: job.per_fetcher_params || {},
       cron_expr: job.cron_expr || '',
@@ -289,8 +269,6 @@ export default function FetchRunsTab({
     const payload = {
       ...jobDraft,
       name,
-      // 显式发 null 才能清掉存量任务对采集范围的引用（后端 PUT 是 exclude_unset 语义，缺省不改、显式 null 置空）。
-      group_id: null,
       fetcher_ids: fetcherIds,
       cron_expr: jobDraft.cron_expr.trim(),
       per_fetcher_cron: cleanStringMap(jobDraft.per_fetcher_cron),
@@ -331,16 +309,6 @@ export default function FetchRunsTab({
         if (expandedJobId === id) setExpandedJobId(null);
         loadAll();
       },
-    });
-  };
-
-  const handleDeleteLegacyTask = async (id) => {
-    if (!(await confirm('确定删除旧版单节点定时计划？'))) return;
-    await runAction(() => deleteTask(id), {
-      showToast,
-      success: '旧版计划已删除',
-      error: '删除旧版计划失败',
-      onSuccess: () => loadAll(),
     });
   };
 
@@ -491,7 +459,7 @@ export default function FetchRunsTab({
                 <div className="p-12 text-center text-slate-500 font-medium">还没有采集任务，点「新建采集任务」创建第一个。</div>
               ) : collectionJobs.map(job => {
                 const isExpanded = expandedJobId === job.id;
-                const ids = getJobFetchers(job);
+                const ids = job.fetcher_ids || [];
                 return (
                   <div key={job.id}>
                     <button onClick={() => setExpandedJobId(isExpanded ? null : job.id)} className="w-full px-5 py-4 flex items-center justify-between gap-4 hover:bg-[var(--dorami-soft)] text-left">
@@ -649,26 +617,6 @@ export default function FetchRunsTab({
             </div>
             <ActiveFilterBar items={activeFilterItems} onClearAll={clearAllFilters} className="mt-3" />
           </div>
-
-          {tasks.length > 0 && (
-            <div className="bg-amber-50 border border-amber-100 rounded-[var(--r-card)] p-4">
-              <div className="flex items-center justify-between gap-3 mb-3">
-                <div className="font-bold text-amber-900 text-sm">旧版单节点定时计划</div>
-                <div className="text-xs font-bold text-amber-700">{tasks.length} 个</div>
-              </div>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-                {tasks.map(task => (
-                  <div key={task.id} className="bg-white dark:bg-[var(--dorami-surface)] border border-amber-100 rounded-[var(--r-control)] px-3 py-2 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="font-bold text-slate-700 text-sm truncate">{getFetcherName(task.fetcher_id)}</div>
-                      <div className="font-mono text-xs text-slate-500 truncate">{task.cron_expr}</div>
-                    </div>
-                    <button onClick={() => handleDeleteLegacyTask(task.id)} className="p-1.5 text-amber-700 hover:text-red-600 hover:bg-red-50 rounded-[var(--r-control)]"><Trash2 className="w-4 h-4" /></button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
             {loadError && (

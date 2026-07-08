@@ -149,7 +149,6 @@ def ensure_collection_job(
             )
 
         record.description = description
-        record.group_id = None
         record.fetcher_ids_json = json_dumps(fetcher_ids)
         record.params_json = "{}"
         record.per_fetcher_params_json = "{}"

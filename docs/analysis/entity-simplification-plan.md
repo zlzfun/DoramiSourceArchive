@@ -53,6 +53,11 @@
 3. 下线 `CollectionJobRecord.group_id` 分支与后端 node-group 端点；最终删除 `NodeGroupRecord`、`FetchTaskRecord`。
 4. 按 CLAUDE.md 规矩：改 `models/db.py` → `alembic revision --autogenerate` → 复核 → 补 `test_migrations` 的 drift 校验。
 
+> **已执行**（2026-07-08）。实际路径与原计划的两点偏差（见进度表）：① 数据合并不走 HTTP 端点，
+> 全部收进单个 Alembic 迁移 `8f6d93196258`（deploy.sh 的 `ensure_migrated` 自动执行，无需人工步骤）；
+> ② 旧任务转换 `is_active` **沿用原值**而非端点旧语义的 `False`——因旧调度路径同步移除，
+> 置 False 会静默停掉仍在跑的定时。
+
 ### 读者侧（附带观察，暂不动）
 读者侧已较干净（订阅折进阅读器侧栏）。残留小冗余：两种令牌 `dsub_`（单订阅）+ `dfeed_`（个人聚合）。当前 UI 只呈现 `dfeed_`，`dsub_` 保留为自动化 REST 高级路径——已恰当，暂不改。
 
@@ -73,6 +78,8 @@
 | 1·回访 | 死分支清理 | ✅ | `blankJob`/`openEditJob` 去 `group_id` 字段、`draftFetcherIds` 去不可达 group 分支；`handleSaveJob` 的 `group_id: null` 保留并注明缘由 |
 | 1·回访 | `#/fetch/groups` 归一化上移到路由层 | ✅ | 从 FetchTab 组件内补丁移到 `App.jsx` `hashToRoute`，URL 与状态不再错位 |
 | 1·回访 | CLAUDE.md 同步 | ✅ | Collection Jobs 段落改写 node-group 为 retired 概念（懒迁移语义）；FetchTab 结构注释更新 |
-| 2 | 采集范围内联迁移脚本 | ⏸️ | 阶段 2 |
-| 2 | 遗留任务迁移 + 调度器停载 | ⏸️ | 阶段 2 |
-| 2 | 下线 group_id / 删除 NodeGroupRecord、FetchTaskRecord | ⏸️ | 阶段 2 |
+| 2 | 采集范围内联迁移脚本 | ✅ | Alembic `8f6d93196258`：引用任务按运行时优先级（group.params < job.params < group.per_fetcher < job.per_fetcher）内联，group 停用则任务同停；未引用/自带 cron 的范围转独立任务保调度 |
+| 2 | 遗留任务迁移 + 调度器停载 | ✅ | fetch_tasks 转单节点任务（`legacy_task_id` 溯源、**is_active 沿用**——旧调度路径已删，置 False 会静默断跑）；`load_tasks_to_scheduler` 只载 collection_jobs |
+| 2 | 下线 group_id / 删除 NodeGroupRecord、FetchTaskRecord | ✅ | 模型删两表 + `collection_jobs.group_id` 列 drop；`/api/node-groups*`、`/api/tasks*`、`migrate-legacy-tasks` 端点移除；feed 端点 `?group_id=` 作用域移除；历史列（运行/文章的 task_id/group_id/source_group_id）保留供回溯 |
+| 2 | 引擎函数裁参 + 前端兜底清理 | ✅ | `run_collection_items`/`run_fetcher_with_tracking`/`create_fetch_run` 等去掉 task_id/group_id 经手；前端删只读兼容路径与「旧版计划」管理块（历史运行的 legacy_task 标签保留） |
+| 2 | 测试 | ✅ | 基线 304 → **305 passed**（新增迁移数据测试：内联合并/独立范围转任务/旧任务转换/表列消失四组断言）；drift 护栏全绿；前端 lint+build 全绿 |

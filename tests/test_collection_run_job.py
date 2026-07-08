@@ -53,7 +53,7 @@ def test_run_collection_job_submits_background_job(monkeypatch, tmp_path):
     import api.routers.collection as collection_router
 
     monkeypatch.setattr(collection_router, "build_collection_job_items",
-                        lambda job, session: [{"fetcher_id": "fx", "params": {}}])
+                        lambda job: [{"fetcher_id": "fx", "params": {}}])
 
     captured = {}
 

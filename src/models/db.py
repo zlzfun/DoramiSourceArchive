@@ -44,33 +44,9 @@ class ArticleRecord(SQLModel, table=True):
     index_status: str = Field(default=INDEX_STATUS_PENDING, index=True, description="向量索引状态: pending/indexing/indexed/failed/stale")
 
 
-class FetchTaskRecord(SQLModel, table=True):
-    """用于存储用户配置的定时抓取任务"""
-    __tablename__ = "fetch_tasks"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    fetcher_id: str = Field(index=True, description="绑定的抓取器ID，如 huggingface_daily")
-    cron_expr: str = Field(description="Cron 表达式，例如 '0 8 * * *' (每天早上8点)")
-    params_json: str = Field(default="{}", description="抓取参数 (limit, past_days 等)")
-    is_active: bool = Field(default=True, description="是否启用")
-    created_at: str = Field(description="任务创建时间")
-
-
-class NodeGroupRecord(SQLModel, table=True):
-    """兼容性采集范围表：复用节点集合和参数模板，不再作为用户层订阅抽象。"""
-    __tablename__ = "node_groups"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str = Field(index=True, description="采集范围名称")
-    description: str = Field(default="", description="采集范围说明")
-    fetcher_ids_json: str = Field(default="[]", description="节点 ID 列表 JSON")
-    params_json: str = Field(default="{}", description="采集范围默认参数 JSON")
-    per_fetcher_params_json: str = Field(default="{}", description="按节点覆盖的参数 JSON")
-    cron_expr: str = Field(default="", description="采集范围兼容 Cron 表达式")
-    per_fetcher_cron_json: str = Field(default="{}", description="按节点覆盖的 Cron 表达式 JSON")
-    is_active: bool = Field(default=True, index=True, description="是否启用")
-    created_at: str = Field(description="创建时间")
-    updated_at: str = Field(description="更新时间")
+# （实体简化阶段 2）FetchTaskRecord（旧版单节点定时任务）与 NodeGroupRecord（采集范围/
+# 节点组）已退役：存量数据由 Alembic 迁移（drop 前先内联/转换）合并进 CollectionJobRecord；
+# 历史运行/文章记录中的 task_id / group_id / source_group_id 列保留供回溯。
 
 
 class CollectionJobRecord(SQLModel, table=True):
@@ -80,7 +56,6 @@ class CollectionJobRecord(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True, description="采集任务名称")
     description: str = Field(default="", description="采集任务说明")
-    group_id: Optional[int] = Field(default=None, index=True, description="可选关联采集范围 ID")
     fetcher_ids_json: str = Field(default="[]", description="直接包含的节点 ID 列表 JSON")
     params_json: str = Field(default="{}", description="任务默认参数 JSON")
     per_fetcher_params_json: str = Field(default="{}", description="按节点覆盖的参数 JSON")
@@ -99,7 +74,7 @@ class CollectionJobRunRecord(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     job_id: Optional[int] = Field(default=None, index=True, description="正式采集任务 ID；临时运行为空")
-    group_id: Optional[int] = Field(default=None, index=True, description="运行时关联的采集范围 ID")
+    group_id: Optional[int] = Field(default=None, index=True, description="历史保留：运行时关联的采集范围 ID（节点组已退役）")
     run_scope: str = Field(default="ad_hoc", index=True, description="ad_hoc/saved_job/legacy_task")
     trigger_type: str = Field(default="manual", index=True, description="manual/scheduled")
     status: str = Field(default="running", index=True, description="running/success/partial_failed/failed")
@@ -124,10 +99,10 @@ class FetchRunRecord(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     fetcher_id: str = Field(index=True, description="执行的数据源节点 ID")
-    task_id: Optional[int] = Field(default=None, index=True, description="关联的定时任务 ID，手动执行时为空")
+    task_id: Optional[int] = Field(default=None, index=True, description="历史保留：旧版定时任务 ID（旧任务已退役）")
     job_id: Optional[int] = Field(default=None, index=True, description="关联的采集任务 ID，临时执行时为空")
     job_run_id: Optional[int] = Field(default=None, index=True, description="关联的采集任务级运行 ID")
-    source_group_id: Optional[int] = Field(default=None, index=True, description="关联采集范围 ID")
+    source_group_id: Optional[int] = Field(default=None, index=True, description="历史保留：关联采集范围 ID（节点组已退役）")
     run_scope: str = Field(default="ad_hoc", index=True, description="ad_hoc/saved_job/legacy_task")
     trigger_type: str = Field(default="manual", index=True, description="触发类型: manual/scheduled")
     status: str = Field(default="running", index=True, description="执行状态: running/success/failed")

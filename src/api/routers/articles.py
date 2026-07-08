@@ -228,7 +228,8 @@ async def update_article(article_id: str, params: ArticleUpdateParams):
 
 
 # ==================== 投递视图（/api/feed/articles[.md]）====================
-# 下游 LLM/RAG 消费者推荐契约：按采集投递作用域（source/group/job）过滤后的档案视图。
+# 下游 LLM/RAG 消费者推荐契约：按采集投递作用域（source/job）过滤后的档案视图。
+# （?group_id= 作用域随节点组退役移除——实体简化阶段 2。）
 
 @router.get("/api/feed/articles")
 def get_feed_articles(
@@ -236,7 +237,6 @@ def get_feed_articles(
         content_types: Optional[str] = None,
         source_id: Optional[str] = None,
         source_ids: Optional[str] = None,
-        group_id: Optional[int] = None,
         job_id: Optional[int] = None,
         job_run_id: Optional[int] = None,
         fetch_run_id: Optional[int] = None,
@@ -254,9 +254,9 @@ def get_feed_articles(
 ):
     safe_limit = min(max(limit, 1), 500)
     delivery_source_ids = resolve_delivery_source_ids(
-        session, source_id=source_id, source_ids=source_ids, group_id=group_id, job_id=job_id
+        session, source_id=source_id, source_ids=source_ids, job_id=job_id
     )
-    if (source_id or source_ids or group_id is not None or job_id is not None) and not delivery_source_ids:
+    if (source_id or source_ids or job_id is not None) and not delivery_source_ids:
         return {"status": "success", "count": 0, "skip": skip, "limit": safe_limit, "next_skip": None, "items": []}
     query = apply_article_query_filters(
         select(ArticleRecord),
@@ -293,7 +293,6 @@ def export_feed_articles_markdown(
         content_types: Optional[str] = None,
         source_id: Optional[str] = None,
         source_ids: Optional[str] = None,
-        group_id: Optional[int] = None,
         job_id: Optional[int] = None,
         job_run_id: Optional[int] = None,
         fetch_run_id: Optional[int] = None,
@@ -310,9 +309,9 @@ def export_feed_articles_markdown(
 ):
     safe_limit = min(max(limit, 1), 200)
     delivery_source_ids = resolve_delivery_source_ids(
-        session, source_id=source_id, source_ids=source_ids, group_id=group_id, job_id=job_id
+        session, source_id=source_id, source_ids=source_ids, job_id=job_id
     )
-    if (source_id or source_ids or group_id is not None or job_id is not None) and not delivery_source_ids:
+    if (source_id or source_ids or job_id is not None) and not delivery_source_ids:
         return Response(content="", media_type="text/markdown; charset=utf-8")
     query = apply_article_query_filters(
         select(ArticleRecord),
