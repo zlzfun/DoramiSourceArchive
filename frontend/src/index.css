@@ -161,6 +161,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  min-height: 100dvh;
   background:
     radial-gradient(ellipse 70% 50% at 12% -8%, rgba(91, 84, 232, 0.06), transparent 58%),
     radial-gradient(ellipse 55% 45% at 95% 2%, rgba(91, 84, 232, 0.045), transparent 54%),
@@ -527,6 +528,7 @@ input[type="radio"] {
 
   .app-shell {
     min-height: 100vh;
+    min-height: 100dvh;
     color: var(--dorami-ink);
   }
 
@@ -673,6 +675,7 @@ input[type="radio"] {
     font-weight: 900;
     letter-spacing: 0;
     color: var(--dorami-ink);
+    text-wrap: balance;
   }
 
   .page-subtitle {
@@ -3124,6 +3127,8 @@ input[type="radio"] {
     font-size: 12px;
     font-weight: 500;
     line-height: 18px;
+    /* meta 常载日期/计数，等宽数字让列表纵向对齐更稳 */
+    font-variant-numeric: tabular-nums;
   }
 
   /* 默认正文/可读多行文本：copy 角色，taller line-height 便于阅读 */
@@ -3147,6 +3152,7 @@ input[type="radio"] {
     font-weight: 900;
     letter-spacing: 0;
     line-height: 32px;
+    font-variant-numeric: tabular-nums;
   }
 
   .empty-state {
@@ -3159,6 +3165,7 @@ input[type="radio"] {
     font-weight: 500;
     line-height: 22px;
     text-align: center;
+    text-wrap: balance;
   }
 
   /* ── Forms ── */

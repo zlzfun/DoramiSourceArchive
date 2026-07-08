@@ -481,7 +481,7 @@ export default function FetchRunsTab({
                           <button onClick={() => openEditJob(job)} className="action-button action-button-quiet min-h-[34px] px-3 text-xs">编辑配置</button>
                           <button onClick={() => handleRunJob(job.id, { testLimit: TEST_RUN_LIMIT })} className="action-button action-button-quiet min-h-[34px] px-3 text-xs"><Play /> 测试运行 1 条/源</button>
                           <button onClick={() => handleRunJob(job.id)} className="action-button action-button-primary min-h-[34px] px-3 text-xs"><Play /> 立即运行</button>
-                          <button onClick={() => handleDeleteJob(job.id)} className="action-button action-button-danger min-h-[34px] px-3 text-xs"><Trash2 /> 删除</button>
+                          <button onClick={() => handleDeleteJob(job.id)} className="action-button action-button-danger min-h-[34px] px-3 text-xs ml-auto"><Trash2 /> 删除</button>
                         </div>
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                           <div className="border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-[var(--dorami-soft)]">
