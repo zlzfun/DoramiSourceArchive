@@ -65,7 +65,7 @@ export function MultiSeriesArea({
   const [dim, setDim] = useState(defaultDim ?? dims[0][0]);
   const ds = datasets[dim] || { data: [], keys: [] };
   return (
-    <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-white dark:bg-[var(--dorami-surface)] p-4">
+    <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-surface)] p-4">
       <div className="mb-2 flex items-center gap-3">
         <p className="micro-label text-slate-500">{title}</p>
         <div className="ml-auto inline-flex rounded-[var(--r-control)] border border-[var(--dorami-border)] p-0.5">

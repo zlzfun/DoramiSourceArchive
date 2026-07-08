@@ -106,7 +106,7 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
     <div className="relative w-full" ref={popoverRef}>
       <div
         onClick={toggleOpen}
-        className={`date-range-trigger flex items-center justify-between bg-white/80 hover:bg-white dark:bg-[var(--dorami-well)] dark:hover:bg-[var(--dorami-surface)] rounded-[var(--r-control)] px-3 py-3 cursor-pointer w-full transition-colors border ${isOpen ? 'border-blue-400 bg-blue-50/50 shadow-sm' : 'border-[var(--dorami-border)] hover:border-slate-300'}`}
+        className={`date-range-trigger flex items-center justify-between bg-white/80 hover:bg-[var(--dorami-surface)] dark:bg-[var(--dorami-well)] rounded-[var(--r-control)] px-3 py-3 cursor-pointer w-full transition-colors border ${isOpen ? 'border-blue-400 bg-[var(--dorami-wash)] shadow-sm' : 'border-[var(--dorami-border)] hover:border-slate-300'}`}
       >
         <span className={`truncate text-sm font-semibold ${startDate ? 'text-blue-700' : 'text-slate-500'}`}>
           {displayStr}
@@ -145,13 +145,13 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
               if (isStart && isEnd) {
                 textClass += ' date-range-day-selected';
               } else if (isStart) {
-                cellClass += hasRangeForward ? ' bg-blue-50 rounded-l-xl' : '';
+                cellClass += hasRangeForward ? ' bg-[var(--dorami-wash)] rounded-l-xl' : '';
                 textClass += ' date-range-day-selected';
               } else if (isEnd) {
-                cellClass += ' bg-blue-50 rounded-r-xl';
+                cellClass += ' bg-[var(--dorami-wash)] rounded-r-xl';
                 textClass += ' date-range-day-selected';
               } else if (inRange) {
-                cellClass += ' bg-blue-50';
+                cellClass += ' bg-[var(--dorami-wash)]';
                 textClass += ' date-range-day-inrange';
               }
 

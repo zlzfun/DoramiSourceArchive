@@ -66,7 +66,7 @@ export function ConfirmProvider({ children }) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start gap-4 p-6">
-              <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${state.tone === 'danger' ? 'bg-red-50 text-red-500' : 'bg-indigo-50 text-indigo-500'}`}>
+              <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${state.tone === 'danger' ? 'bg-red-50 text-red-500' : 'bg-[var(--dorami-wash)] text-indigo-500'}`}>
                 <AlertTriangle className="h-5 w-5" />
               </div>
               <div className="min-w-0 flex-1">

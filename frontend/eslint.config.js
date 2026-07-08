@@ -23,14 +23,14 @@ function checkRaw(context, raw, node) {
   }
 }
 
-// ── Legacy bridge 类冻结（重构阶段4 · F8 步骤 A） ──
-// index.css:5262+ 用后代选择器把这些 utility 类改写成令牌语义（`.surface-card .bg-white`
-// ≠ 白）。目标是逐步令牌化后删掉桥接。这条规则冻结「增量」：新代码不得再写这些类。
-// 存量（重构时 45 处 / 16 文件，见 frontend-refactor-progress.md）在步骤 B 迁移期逐批替换。
-// 现挂 'off'——避免在刚清零的 lint 里灌入 45 条存量告警；开始步骤 B 时把它翻成 'warn'，
-// 存量清零后翻 'error' 并删除 index.css 的桥接段。
+// ── Legacy bridge 类护栏（重构阶段4 · F8 步骤 B 已完成） ──
+// index.css 曾用后代选择器把这些 utility 类改写成令牌语义（`.surface-card .bg-white` ≠ 白）。
+// F8-B 已把全部存量（54 处 / 17 文件）令牌化并删除了那段桥接，故这条规则现挂 'error'，
+// 纯粹把关「增量」：新代码直接用 --dorami-* 令牌类，不得再写这些依赖已删桥接的裸工具类。
+// 说明：bg-white 仅匹配「裸」形态；`bg-white/NN`（带透明度的白玻璃，用于固定紫/深色 Hero、
+// 深色代码面、Toast 等主题恒定表面）从不被桥接改写，是正当写法，故不在此拦截。
 const FORBIDDEN_BRIDGE = [
-  { re: /\bbg-white\b/, msg: 'legacy bridge：请用 bg-[var(--dorami-surface)] 等令牌类替代 bg-white（见 index.css 桥接段）' },
+  { re: /\bbg-white\b(?!\/)/, msg: 'legacy bridge：请用 bg-[var(--dorami-surface)] 等令牌类替代 bg-white（桥接已删除，直接引用令牌）' },
   { re: /\bbg-slate-50(\/\d{1,3})?\b/, msg: 'legacy bridge：请用 bg-[var(--dorami-soft)] 令牌类替代 bg-slate-50' },
   { re: /\bbg-indigo-50\b/, msg: 'legacy bridge：请用 bg-[var(--dorami-wash)] 令牌类替代 bg-indigo-50' },
   { re: /\bbg-blue-50(\/\d{1,3})?\b/, msg: 'legacy bridge：请用 bg-[var(--dorami-wash)] 令牌类替代 bg-blue-50' },
@@ -105,9 +105,9 @@ export default defineConfig([
       'no-unused-vars': ['error', { ignoreRestSiblings: true }],
       // 设计令牌护栏：收敛已完成，直接以 error 把关
       'dorami/no-hardcoded-style': 'error',
-      // Legacy bridge 冻结：现 off（不灌存量告警）；开始 index.css 桥接段令牌化迁移（步骤 B）时翻 'warn'，
-      // 存量清零后翻 'error' 并删除桥接段。见 docs/analysis/frontend-refactor-{plan,progress}.md。
-      'dorami/no-legacy-bridge-class': 'off',
+      // Legacy bridge 护栏：F8-B 已令牌化全部存量并删除 index.css 桥接段，规则以 'error' 把关增量。
+      // 见 docs/analysis/frontend-refactor-{plan,progress}.md。
+      'dorami/no-legacy-bridge-class': 'error',
     },
   },
 ])

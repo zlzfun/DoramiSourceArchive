@@ -434,7 +434,7 @@ export default function FetchRunsTab({
             <div className="panel-header">
               <div>
                 <div className="section-title">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-[var(--r-control)] bg-blue-50 text-[var(--dorami-blue)]">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-[var(--r-control)] bg-[var(--dorami-wash)] text-[var(--dorami-blue)]">
                     <Settings2 className="h-5 w-5" />
                   </div>
                   <span>采集任务</span>
@@ -505,7 +505,7 @@ export default function FetchRunsTab({
                             const effectiveCron = nodeCron || job.cron_expr;
                             const chips = paramChips((job.per_fetcher_params || {})[fetcherId], fetchersById[fetcherId]);
                             return (
-                            <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-white dark:bg-[var(--dorami-surface)]">
+                            <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-[var(--dorami-surface)]">
                               <div className="flex items-center gap-2.5">
                                 <LogoMark company={companyForId(fetcherId)} size="sm" />
                                 <div className="min-w-0">
@@ -514,7 +514,7 @@ export default function FetchRunsTab({
                                 </div>
                               </div>
                               {effectiveCron && (
-                                <div className="mt-2 micro-label text-blue-700 bg-blue-50 border border-blue-100 rounded px-2 py-1 font-mono">
+                                <div className="mt-2 micro-label text-blue-700 bg-[var(--dorami-wash)] border border-blue-100 rounded px-2 py-1 font-mono">
                                   cron：{effectiveCron}{nodeCron ? ' · 覆盖' : ''}
                                 </div>
                               )}
@@ -657,7 +657,7 @@ export default function FetchRunsTab({
                   const meta = runStatusMeta(run.status);
                   const isRunning = run.status === 'running';
                   return (
-                    <tr key={run.key} className={`transition-colors ${isRunning ? 'bg-indigo-50/40 border-l-4 border-l-indigo-500' : 'hover:bg-blue-50/40'}`}>
+                    <tr key={run.key} className={`transition-colors ${isRunning ? 'bg-[var(--dorami-wash)] border-l-4 border-l-indigo-500' : 'hover:bg-[var(--dorami-wash)]'}`}>
                       <td className="px-4 py-4">
                         <StatusBadge meta={meta} />
                       </td>
@@ -743,7 +743,7 @@ export default function FetchRunsTab({
                         <button
                           key={fetcher.id}
                           onClick={() => toggleDraftFetcher(fetcher)}
-                          className={`w-full px-3 py-3 flex items-center gap-3 text-left ${checked ? 'bg-blue-50/60' : ''} hover:bg-[var(--dorami-soft)]`}
+                          className={`w-full px-3 py-3 flex items-center gap-3 text-left ${checked ? 'bg-[var(--dorami-wash)]' : ''} hover:bg-[var(--dorami-soft)]`}
                         >
                           <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>{checked && <CheckSquare className="w-3.5 h-3.5 text-white" />}</div>
                           <LogoMark company={companyForId(fetcher.id)} size="sm" />
@@ -763,7 +763,7 @@ export default function FetchRunsTab({
                   ) : draftFetcherIds.map(fetcherId => {
                     const fetcher = fetchersById[fetcherId];
                     return (
-                      <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-card)] p-3 bg-white dark:bg-[var(--dorami-surface)]">
+                      <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-card)] p-3 bg-[var(--dorami-surface)]">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-center gap-2.5 min-w-0">
                             <LogoMark company={companyForId(fetcherId)} size="sm" />
@@ -794,7 +794,7 @@ export default function FetchRunsTab({
                 </div>
               </div>
             </div>
-            <div className="px-5 py-4 border-t border-[var(--dorami-border)] bg-white dark:bg-[var(--dorami-surface)] flex justify-between gap-2">
+            <div className="px-5 py-4 border-t border-[var(--dorami-border)] bg-[var(--dorami-surface)] flex justify-between gap-2">
               <label className="inline-flex items-center text-xs font-bold text-slate-500">
                 <input type="checkbox" checked={jobDraft.is_active} onChange={event => setJobDraft(prev => ({ ...prev, is_active: event.target.checked }))} className="w-4 h-4 mr-2 text-[var(--dorami-blue)] rounded border-slate-300" />
                 启用任务

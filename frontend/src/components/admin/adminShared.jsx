@@ -3,7 +3,7 @@
 // 图表小面板：统一的标题 + 图表容器（flex-1 居中，让矮图在同行高图旁垂直居中）。
 export function ChartPanel({ title, action, children }) {
   return (
-    <div className="flex flex-col rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-white dark:bg-[var(--dorami-surface)] p-4">
+    <div className="flex flex-col rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-surface)] p-4">
       <div className="mb-3 flex items-center gap-3">
         <p className="micro-label text-slate-500">{title}</p>
         {action && <div className="ml-auto">{action}</div>}
@@ -18,7 +18,7 @@ export function ChartPanel({ title, action, children }) {
 // 语义色（如向量化率健康度）才通过 valueClass 显式覆盖数字颜色。
 export function StatCard({ icon: Icon, label, value, sub, valueClass = 'text-slate-800', iconClass = 'text-slate-500' }) {
   return (
-    <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-white dark:bg-[var(--dorami-surface)] p-4">
+    <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-surface)] p-4">
       <div className="flex items-center gap-2">
         <Icon className={`h-4 w-4 ${iconClass}`} />
         <span className="micro-label text-slate-500">{label}</span>

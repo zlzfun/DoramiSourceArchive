@@ -15,8 +15,8 @@ export const TONE_CLASS = {
   emerald: 'text-emerald-700 bg-emerald-50 border-emerald-100',
   amber: 'text-amber-700 bg-amber-50 border-amber-100',
   red: 'text-red-700 bg-red-50 border-red-100',
-  accent: 'text-indigo-700 bg-indigo-50 border-indigo-200',
-  slate: 'text-slate-500 bg-slate-50 border-slate-200',
+  accent: 'text-indigo-700 bg-[var(--dorami-wash)] border-[var(--dorami-accent)]/25',
+  slate: 'text-slate-500 bg-[var(--dorami-soft)] border-[var(--dorami-border)]',
 };
 
 // 来源健康的小圆点（dept-dot 用），tone 对齐上表。

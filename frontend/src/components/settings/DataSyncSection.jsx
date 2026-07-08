@@ -152,7 +152,7 @@ export default function DataSyncSection({ showToast, canExport, canImport, onArt
       {canExport && (
         <div className="surface-card rounded-[var(--r-card)] p-4">
           <div className="mb-4 flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--r-control)] bg-indigo-50 text-indigo-500">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--r-control)] bg-[var(--dorami-wash)] text-indigo-500">
               <Download className="h-4 w-4" />
             </div>
             <div className="min-w-0">
@@ -231,7 +231,7 @@ export default function DataSyncSection({ showToast, canExport, canImport, onArt
               type="file"
               accept=".jsonl,.gz,.jsonl.gz,application/x-ndjson,application/gzip"
               onChange={e => setImportFile(e.target.files?.[0] || null)}
-              className="mt-3 block w-full text-sm font-semibold text-slate-500 file:mr-3 file:rounded-[var(--r-control)] file:border-0 file:bg-white dark:file:bg-[var(--dorami-raised)] file:px-3 file:py-2 file:text-sm file:font-bold file:text-indigo-600 file:shadow-sm"
+              className="mt-3 block w-full text-sm font-semibold text-slate-500 file:mr-3 file:rounded-[var(--r-control)] file:border-0 file:bg-[var(--dorami-surface)] dark:file:bg-[var(--dorami-raised)] file:px-3 file:py-2 file:text-sm file:font-bold file:text-indigo-600 file:shadow-sm"
             />
             {importFile && (
               <span className="mt-2 flex items-center gap-1.5 text-xs font-bold text-emerald-600">
@@ -254,7 +254,7 @@ export default function DataSyncSection({ showToast, canExport, canImport, onArt
                 <div><span className="tiny-meta block">错误</span><b className={importResult.error_count ? 'text-rose-500' : ''}>{importResult.error_count}</b></div>
               </div>
               {importResult.error_count > 0 && (
-                <pre className="mt-3 max-h-32 overflow-auto rounded-[var(--r-control)] bg-white dark:bg-[var(--dorami-well)] p-3 text-xs font-semibold text-rose-600">
+                <pre className="mt-3 max-h-32 overflow-auto rounded-[var(--r-control)] bg-[var(--dorami-surface)] dark:bg-[var(--dorami-well)] p-3 text-xs font-semibold text-rose-600">
                   {JSON.stringify(importResult.errors?.slice(0, 5) || [], null, 2)}
                 </pre>
               )}

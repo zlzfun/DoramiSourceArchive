@@ -265,7 +265,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
                     aria-label="定时生成开关"
                     className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[var(--dorami-raised)]'}`}
                   >
-                    <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                    <span className={`inline-block h-4 w-4 rounded-full bg-[var(--dorami-surface)] shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
                   </button>
                 </div>
                 <p className="tiny-meta mt-1">开启后按 Cron 自动生成（默认每天 8:30，排在采集之后）。</p>
@@ -350,7 +350,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
                       </button>
                     </div>
                     {open && (
-                      <div className="border-t border-[var(--dorami-border)] bg-white dark:bg-[var(--dorami-surface)] px-4 py-3">
+                      <div className="border-t border-[var(--dorami-border)] bg-[var(--dorami-surface)] px-4 py-3">
                         <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700 font-mono">
                           {record.content || '（无正文）'}
                         </pre>

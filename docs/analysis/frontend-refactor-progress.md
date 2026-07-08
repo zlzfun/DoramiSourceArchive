@@ -12,7 +12,7 @@
 | 阶段 1 · 基建收敛 | ✅ 完成 | `refactor/frontend` |
 | 阶段 2 · 组件拆分 | ✅ 完成（含分档暂缓） | `refactor/frontend` |
 | 阶段 3 · 数据加载模型统一 | ✅ 完成 | `refactor/frontend` |
-| 阶段 4 · 样式体系 | ◐ 部分（F8-A 落地；f7/f8 有据暂缓） | `refactor/frontend` |
+| 阶段 4 · 样式体系 | ◐ 部分（F8-A/B 完成；仅 f7/f8 有据暂缓） | `refactor/frontend` |
 
 ---
 
@@ -88,16 +88,25 @@
 
 | 项 | 债务 | 状态 | 说明 |
 |---|---|---|---|
-| Legacy bridge 冻结 · 步骤 A | F8-A | ✅ 落地 | `eslint.config.js` 新增 `dorami/no-legacy-bridge-class` 规则（bg-white / bg-slate-50* / bg-indigo-50 / bg-blue-50* / border-slate-100\|200 / border-indigo-200 → 令牌类）。**现挂 `'off'`**：不往刚清零的 lint 灌存量告警；开始步骤 B 迁移时翻 `'warn'`、存量清零后翻 `'error'` 并删 `index.css:5262-5331` 桥接段。存量清单：翻 warn 实测 **55 处命中**（跨 16 文件）——即步骤 B 的迁移工作单。CSS 产物 hash 不变（`index-UrORIaJt.css`），零副作用。 |
+| Legacy bridge 冻结 · 步骤 A | F8-A | ✅ 落地 | `eslint.config.js` 新增 `dorami/no-legacy-bridge-class` 规则（bg-white / bg-slate-50* / bg-indigo-50 / bg-blue-50* / border-slate-100\|200 / border-indigo-200 → 令牌类）。冻结机制到位、一行可激活；存量清单翻 warn 实测命中，交步骤 B 迁移。 |
+| Legacy bridge 令牌化 + 删桥 · 步骤 B | F8-B | ✅ 完成 | 逐处令牌化 **54 处 / 17 文件**（bg-white→`--dorami-surface`、bg-slate-50*→`--dorami-soft`、bg-indigo-50/bg-blue-50*→`--dorami-wash`、border-slate-100\|200→`--dorami-border`、border-indigo-200→`--dorami-border-strong`；激活/选中态的 accent 边界改 `border-[var(--dorami-accent)]/25` 保留强调线索；配套冗余 `dark:` 补丁一并删除）。**删除 `index.css` 整段桥接**（亮色 6 组 + 暗色 5 条 `[data-theme=dark]` 对应，原 5286-5355 行）。`no-legacy-bridge-class` 翻 **`'error'`** 把关增量；其中 `bg-white` 正则收紧为「仅裸形态」——`bg-white/NN`（固定紫/深色 Hero、深色代码面、Toast 的白玻璃，主题恒定，从不被桥接改写）是正当写法，不拦。副作用：删 `text-indigo-*` 桥接后卡片内 accent 文字在暗色下由被强制的 `--dorami-blue`(#4d45b5, 低对比) 回归 `@theme` 暗色映射(#8b84f0/#a8a2f4)，暗色对比**改善**。`npm run lint` 0/0、`npm run build` 零警告。 |
 | 字重回落 | f8 | ⏸ 暂缓（有据） | 复核发现 **index.css 角色类字重已合理**（`.page-subtitle`/`.body-text` 600、`.tiny-meta` 500、`.micro-label`/`.card-title`/`.section-title` 700、`.stat-number` 900）——无明显下调空间。真正的「偏重」在散落 JSX 内联 `font-bold`/`font-black`（顶栏 tab、表格单元格、各类 meta），而 plan 明确「不做全局扫荡（避免巨型 diff）」。故 f8 的正确形态是**触碰文件时顺带回落**，而非独立盲改；且字重是可见改动，宜配合 dev server 目检。暂缓为「随手做 + 一次目检」。 |
 | index.css 拆分 | f7 | ⏸ 暂缓（有据） | 纯组织性（无功能/性能/视觉收益）。5700 行的核心是单个 `@layer components {}`（~4700 行），跨文件拆分涉及 Tailwind v4 `@import` 顺序 + `@theme`/`@custom-variant`/`@source` 位置 + `@layer` 合并语义的多点不确定性，首拆未必 hash 一致，需 dev server 迭代验证。ROI 低、宜交互式做，暂缓（已有 build-CSS-hash 作为将来验收闸门）。 |
 
-**验收**：`npm run lint` 0/0（bridge 规则 off）；`npm run build` 零警告、CSS hash 与阶段前一致。F8-A 的冻结机制已就位、一行可激活；步骤 B（55 处令牌化 + 删桥）与 f7/f8 留待带 dev server 的下一轮。
+**验收**：`npm run lint` 0/0（bridge 规则已 `'error'`）；`npm run build` 零警告。F8-A/B 均已完成——桥接段已从 `index.css` 删除、全部存量令牌化、护栏以 error 把关增量；仅 f7（index.css 拆分）/f8（字重回落）两项因需 dev server 目检有据暂缓，留待下一轮。
 
 ---
 
 ## 收尾小结
 
 - **已完成并验收**：阶段 0（分包，主包 gzip 294→75.7 kB）、阶段 1（api 收敛 806→517 行 + Modal 可访问性）、阶段 2（11 个新文件，消灭 RunningWidget 复制；ReaderTab/SettingsModal/FetchTab/AdminOpsTab 均瘦身）、阶段 3（useAbortableLoad 统一竞态 + **lint 6→0** + pendingFocus 泛化）。
-- **有据暂缓（记入 backlog）**：阶段 2 的 renderSourceRow / AdminOps 三子页 / FetchRuns Job Modal 深拆；阶段 4 的 f7 拆分、f8 字重、F8 步骤 B 令牌化——共性是「高 prop 面深耦合」或「需运行中目检」，宜交互式续做。
+- **有据暂缓（记入 backlog）**：阶段 2 的 renderSourceRow / AdminOps 三子页 / FetchRuns Job Modal 深拆；阶段 4 的 f7 拆分、f8 字重——共性是「高 prop 面深耦合」或「需运行中目检」，宜交互式续做。（F8-B 令牌化 + 删桥已完成，见上表。）
 - **全程未改外部行为/视觉**：每阶段 `npm run lint` + `npm run build` 双绿；阶段 4 CSS 产物字节不变。分支 `refactor/frontend`，5 个阶段提交。**待人工冒烟**（双角色 × 双主题）后合入 main。
+
+---
+
+## 视觉打磨（`frontend-visual-polish-plan.md` 的执行追踪）
+
+- **阶段 A–D 全部完成**（main 上 7 个 `polish(frontend):` 提交，2026-07 上旬）：V1 摘要剥离 Markdown、V3 空值不渲染 + 参数 chips、V5 枚举中文化、V2+V8 看板色彩语义收敛、V6+V7 MCP 状态单一化 + 日报控件统一、阶段 D v1-v5 随手项 + 回访。
+- **V4 补漏**（阶段 C 当时漏项，2026-07-09 补上）：采集任务展开态删除按钮 `ml-auto` 移至行尾，与主操作簇隔离。同批微打磨：`.stat-number`/`.tiny-meta` 加 `tabular-nums`、`.page-title`/`.empty-state` 加 `text-wrap: balance`、`body`/`.app-shell` 补 `100dvh` 兜底。
+- **待补评估四区（暗色 / 阅读器 user 角色 / 登录页 / 动效）仍搁置**——需 dev server 双账号截图/录屏再立项（见 plan「待补评估」表）。届时一并人工目检 F8-B 迁移的双主题风险点（开关滑块 surface 化、accent /25 透明边、DateRangePicker 区间格 wash 化、DataSyncSection 分主题取值、accent 文字暗色对比改善），清单见 F8-B 行与对应提交信息。

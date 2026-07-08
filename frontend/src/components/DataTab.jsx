@@ -526,7 +526,7 @@ export default function DataTab({
             ) : articles.length === 0 ? (
               <tr><td colSpan={canManageArticles && ragEnabled ? 6 : 5} className="px-6 py-16 text-center text-slate-500 font-medium">当前时间区间或过滤条件下，未查询到相关数据</td></tr>
             ) : articles.map((article) => (
-              <tr key={article.id} className="hover:bg-blue-50/40 transition-colors group">
+              <tr key={article.id} className="hover:bg-[var(--dorami-wash)] transition-colors group">
                 <td className="px-4 py-4 text-center">
                   {canSelectArticles && (
                     <input type="checkbox" aria-label={`选择：${article.title || article.id}`} checked={selectedArticles.has(article.id)} onChange={() => toggleArticleSelection(article.id)} className="w-4 h-4 text-[var(--dorami-blue)] rounded cursor-pointer" />

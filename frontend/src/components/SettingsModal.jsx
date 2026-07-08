@@ -90,7 +90,7 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange, run
                 key={section.id}
                 onClick={() => setActive(section.id)}
                 className={`flex w-full items-center gap-2 rounded-[var(--r-control)] px-3 py-2 text-sm font-bold transition-colors ${
-                  active === section.id ? 'bg-white dark:bg-[var(--dorami-surface)] text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                  active === section.id ? 'bg-[var(--dorami-surface)] text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
                 <section.icon className="h-4 w-4" /> {section.label}

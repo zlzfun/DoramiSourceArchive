@@ -610,7 +610,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           <div className="surface-card rounded-[var(--r-overlay)] overflow-hidden">
             <div className="catalog-topbar">
               <div className="section-title">
-                <div className="flex h-10 w-10 items-center justify-center rounded-[var(--r-control)] bg-blue-50 text-blue-600">
+                <div className="flex h-10 w-10 items-center justify-center rounded-[var(--r-control)] bg-[var(--dorami-wash)] text-blue-600">
                   <Layers className="h-5 w-5" />
                 </div>
                 <span>内置节点目录</span>

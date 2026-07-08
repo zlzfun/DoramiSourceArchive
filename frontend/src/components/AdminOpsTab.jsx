@@ -412,7 +412,7 @@ export default function AdminOpsTab({ showToast }) {
                 aria-label="用户 AI 功能开关"
                 className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${globalAi ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[var(--dorami-raised)]'}`}
               >
-                <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${globalAi ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                <span className={`inline-block h-4 w-4 rounded-full bg-[var(--dorami-surface)] shadow transition-transform ${globalAi ? 'translate-x-4' : 'translate-x-0.5'}`} />
               </button>
             </div>
           </PanelHeader>
@@ -583,7 +583,7 @@ export default function AdminOpsTab({ showToast }) {
                       tabIndex={0}
                       onClick={() => openDetail(account.username)}
                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(account.username); } }}
-                      className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-control)] border border-[var(--dorami-border)] bg-white dark:bg-[var(--dorami-surface)] px-3 py-2.5 cursor-pointer transition-colors hover:border-[var(--dorami-blue)]"
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-control)] border border-[var(--dorami-border)] bg-[var(--dorami-surface)] px-3 py-2.5 cursor-pointer transition-colors hover:border-[var(--dorami-blue)]"
                     >
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
@@ -591,7 +591,7 @@ export default function AdminOpsTab({ showToast }) {
                           <span className="rounded bg-slate-100 px-1.5 py-0.5 micro-label text-slate-500">读者</span>
                           {!account.is_active && <span className="rounded bg-rose-50 px-1.5 py-0.5 micro-label text-rose-500">已停用</span>}
                           {account.ai_beta_enabled && (
-                            <span className="inline-flex items-center gap-0.5 rounded bg-indigo-50 px-1.5 py-0.5 micro-label text-indigo-500">
+                            <span className="inline-flex items-center gap-0.5 rounded bg-[var(--dorami-wash)] px-1.5 py-0.5 micro-label text-indigo-500">
                               <Zap className="h-3 w-3" /> AI Beta
                             </span>
                           )}
@@ -852,7 +852,7 @@ export default function AdminOpsTab({ showToast }) {
                 <span className="rounded bg-slate-100 px-1.5 py-0.5 micro-label text-slate-500">读者</span>
                 {detailData && !detailData.account.is_active && <span className="rounded bg-rose-50 px-1.5 py-0.5 micro-label text-rose-500">已停用</span>}
                 {detailData?.account.ai_beta_enabled && (
-                  <span className="inline-flex items-center gap-0.5 rounded bg-indigo-50 px-1.5 py-0.5 micro-label text-indigo-500"><Zap className="h-3 w-3" /> AI Beta</span>
+                  <span className="inline-flex items-center gap-0.5 rounded bg-[var(--dorami-wash)] px-1.5 py-0.5 micro-label text-indigo-500"><Zap className="h-3 w-3" /> AI Beta</span>
                 )}
               </h3>
               <button onClick={() => setDetailUser(null)} className="text-slate-500 hover:text-slate-700"><X className="w-5 h-5" /></button>
@@ -870,7 +870,7 @@ export default function AdminOpsTab({ showToast }) {
                     <button
                       type="button"
                       onClick={() => detailData.logins.recent.length > 0 && setLoginListOpen((o) => !o)}
-                      className={`rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-white dark:bg-[var(--dorami-surface)] p-4 text-left ${detailData.logins.recent.length > 0 ? 'cursor-pointer transition-colors hover:border-[var(--dorami-blue)]' : 'cursor-default'}`}
+                      className={`rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-surface)] p-4 text-left ${detailData.logins.recent.length > 0 ? 'cursor-pointer transition-colors hover:border-[var(--dorami-blue)]' : 'cursor-default'}`}
                     >
                       <div className="flex items-center gap-2 text-slate-500">
                         <Clock className={`h-4 w-4 ${KPI_COLOR.login}`} />
@@ -893,7 +893,7 @@ export default function AdminOpsTab({ showToast }) {
                       <p className="micro-label mb-2 text-slate-500">最近 {detailData.logins.recent.length} 次登录</p>
                       <div className="flex flex-wrap gap-2">
                         {detailData.logins.recent.map((at, i) => (
-                          <span key={`${at}-${i}`} className="inline-flex items-center gap-1 rounded bg-white dark:bg-[var(--dorami-surface)] px-2 py-1 tiny-meta text-slate-700">
+                          <span key={`${at}-${i}`} className="inline-flex items-center gap-1 rounded bg-[var(--dorami-surface)] px-2 py-1 tiny-meta text-slate-700">
                             <Clock className="h-3 w-3 text-slate-500" /> {formatStamp(at)}
                           </span>
                         ))}
