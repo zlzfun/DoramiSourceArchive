@@ -229,26 +229,12 @@ export function fetchFetchRuns(filters = {}, limit = 100) {
   return request(`/fetch-runs?${params}`, { errorMsg: '获取抓取运行历史失败' });
 }
 
-// ==================== 采集范围（节点组） ====================
+// ==================== 采集范围（节点组，已下线管理入口，仅保留只读兼容） ====================
+// 采集范围（NodeGroup）作为独立概念已从 UI 下线（见 docs/analysis/entity-simplification-plan.md 阶段 1）。
+// 仅保留只读 fetch：FetchRunsTab 用它把「引用采集范围的存量采集任务」的节点数解析出来展示。
 export function fetchNodeGroups(filters = {}) {
   const query = withFilters(new URLSearchParams(), filters).toString();
   return request(`/node-groups${query ? `?${query}` : ''}`, { errorMsg: '获取采集范围失败' });
-}
-
-export function createNodeGroup(data) {
-  return request('/node-groups', { method: 'POST', body: data, errorMsg: '创建采集范围失败' });
-}
-
-export function updateNodeGroup(id, data) {
-  return request(`/node-groups/${id}`, { method: 'PUT', body: data, errorMsg: '更新采集范围失败' });
-}
-
-export function deleteNodeGroup(id) {
-  return request(`/node-groups/${id}`, { method: 'DELETE', errorMsg: '删除采集范围失败' });
-}
-
-export function runNodeGroup(id, options = {}) {
-  return request(`/node-groups/${id}/fetch${runQuery(options)}`, { method: 'POST', errorMsg: '触发采集范围失败' });
 }
 
 // ==================== 采集任务（Collection Jobs） ====================

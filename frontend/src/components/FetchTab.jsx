@@ -6,30 +6,22 @@ import {
   ChevronRight,
   ExternalLink,
   FileText,
-  FolderPlus,
   Info,
   Layers,
   Play,
   RefreshCw,
   Search,
   Settings2,
-  Trash2,
   Wand2,
 } from 'lucide-react';
 import {
-  createNodeGroup,
-  deleteNodeGroup,
-  fetchNodeGroups,
   fetchRunningProgress,
   fetchSourceHealth,
-  runNodeGroup,
   triggerBatchFetch,
   triggerFetch,
-  updateNodeGroup,
 } from '../api';
 import LogoMark from './LogoMark';
 import RunningWidget from './RunningWidget';
-import NodeGroupModal from './NodeGroupModal';
 import CustomNodeBuilder from './CustomNodeBuilder';
 
 // 高级目标「AI 自定义节点」暂不开放前端入口：后端流程保留，UI 入口与面板用此开关隐藏。
@@ -48,9 +40,7 @@ import {
 } from '../sourceTaxonomy';
 import { healthMeta } from '../statusMeta';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
-import { useConfirm } from '../hooks/useConfirm';
-import { runAction } from '../utils/runAction';
-import { TEST_RUN_LIMIT, normalizeIds, collectionRunMessage, paramChips } from '../utils/collection';
+import { collectionRunMessage } from '../utils/collection';
 
 const TIER_FILTER_OPTIONS = [
   { value: 'all', label: '全部层级' },
@@ -85,23 +75,8 @@ function aggregateHealth(fetchers, healthByFetcher) {
   return summary;
 }
 
-function blankGroup(fetcherIds = [], configs = {}) {
-  return {
-    name: '',
-    description: '',
-    fetcher_ids: fetcherIds,
-    params: {},
-    per_fetcher_params: Object.fromEntries(fetcherIds.map(id => [id, configs[id] || {}])),
-    cron_expr: '',
-    per_fetcher_cron: {},
-    is_active: true,
-  };
-}
-
 export default function FetchTab({ availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onViewRunning, pendingFocus, onPendingFocusApplied }) {
-  const confirm = useConfirm();
   const [fetchLoading, setFetchLoading] = useState(false);
-  const [nodeGroups, setNodeGroups] = useState([]);
   const [healthByFetcher, setHealthByFetcher] = useState({});
   const [selectedFetchers, setSelectedFetchers] = useState([]);
   const [fetchConfigs, setFetchConfigs] = useState({});
@@ -113,14 +88,10 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedCompanies, setExpandedCompanies] = useState(() => new Set());
   const [collapsedCatalogSections, setCollapsedCatalogSections] = useState(() => new Set());
-  const [expandedGroupId, setExpandedGroupId] = useState(null);
   const [expandedParamFetcherId, setExpandedParamFetcherId] = useState(null);
   const [expandedReviewFetcherId, setExpandedReviewFetcherId] = useState(null);
   const [highlightedFetcherId, setHighlightedFetcherId] = useState(null);
   const sourceRowRefs = useRef({});
-  const [groupModalOpen, setGroupModalOpen] = useState(false);
-  const [editingGroupId, setEditingGroupId] = useState(null);
-  const [groupDraft, setGroupDraft] = useState(blankGroup());
 
   const fetchersById = useMemo(
     () => Object.fromEntries(availableFetchers.map(fetcher => [fetcher.id, fetcher])),
@@ -138,12 +109,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     setFetchConfigs(initialConfigs);
   }, [availableFetchers]);
 
-  const loadNodeGroups = useCallback(async () => {
-    try {
-      setNodeGroups(await fetchNodeGroups());
-    } catch (e) { console.error(e); }
-  }, []);
-
   const loadSourceHealth = useCallback(async () => {
     try {
       const healthItems = await fetchSourceHealth();
@@ -152,9 +117,8 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   }, []);
 
   useEffect(() => {
-    loadNodeGroups();
     loadSourceHealth();
-  }, [loadNodeGroups, loadSourceHealth]);
+  }, [loadSourceHealth]);
 
   useEffect(() => {
     if (runningFetcherIds.size === 0) {
@@ -326,8 +290,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     };
   }, [highlightedFetcherId]);
 
-  const getFetcherName = (id) => fetchersById[id]?.name || id;
-
   const toggleFetcherSelection = (id) => {
     setSelectedFetchers(prev => prev.includes(id) ? prev.filter(fid => fid !== id) : [...prev, id]);
   };
@@ -383,106 +345,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         className="node-param-input"
       />
     );
-  };
-
-  const openCreateGroup = (fetcherIds = selectedFetchers) => {
-    setEditingGroupId(null);
-    setGroupDraft(blankGroup(fetcherIds, fetchConfigs));
-    setGroupModalOpen(true);
-  };
-
-  const openEditGroup = (group) => {
-    setEditingGroupId(group.id);
-    setGroupDraft({
-      name: group.name || '',
-      description: group.description || '',
-      fetcher_ids: group.fetcher_ids || [],
-      params: group.params || {},
-      per_fetcher_params: group.per_fetcher_params || {},
-      cron_expr: '',
-      per_fetcher_cron: {},
-      is_active: group.is_active !== false,
-    });
-    setGroupModalOpen(true);
-  };
-
-  const handleSaveGroup = async () => {
-    if (!groupDraft.name.trim()) {
-      showToast('采集范围名称不能为空', 'error');
-      return;
-    }
-    if ((groupDraft.fetcher_ids || []).length === 0) {
-      showToast('采集范围至少需要一个节点', 'error');
-      return;
-    }
-    const payload = {
-      ...groupDraft,
-      name: groupDraft.name.trim(),
-      fetcher_ids: normalizeIds(groupDraft.fetcher_ids),
-      cron_expr: '',
-      per_fetcher_cron: {},
-    };
-    await runAction(() => (editingGroupId ? updateNodeGroup(editingGroupId, payload) : createNodeGroup(payload)), {
-      showToast,
-      success: '采集范围已保存',
-      error: '保存采集范围失败',
-      onSuccess: (saved) => {
-        setExpandedGroupId(saved.id);
-        setGroupModalOpen(false);
-        setSelectedFetchers([]);
-        loadNodeGroups();
-      },
-    });
-  };
-
-  const handleDeleteGroup = async (id) => {
-    if (!(await confirm('确定删除该采集范围？'))) return;
-    await runAction(() => deleteNodeGroup(id), {
-      showToast,
-      success: '采集范围已删除',
-      error: '删除采集范围失败',
-      onSuccess: () => {
-        if (expandedGroupId === id) setExpandedGroupId(null);
-        loadNodeGroups();
-      },
-    });
-  };
-
-  const handleRunGroup = async (id, options = {}) => {
-    const group = nodeGroups.find(g => g.id === id);
-    const fetcherIds = normalizeIds(group?.fetcher_ids || []);
-    // 进度反馈：把本采集范围的节点加入运行集合，触发 1s 轮询与 running-widget 浮窗（与单节点/批量抓取一致）。
-    fetcherIds.forEach(fid => progressSeenFetcherIdsRef.current.delete(fid));
-    if (fetcherIds.length > 0) {
-      setRunningFetcherIds(prev => {
-        const next = new Set(prev);
-        fetcherIds.forEach(fid => next.add(fid));
-        return next;
-      });
-    }
-    showToast(
-      `${options.testLimit ? '测试运行' : '运行'}采集范围「${group?.name || id}」…（${fetcherIds.length} 个节点）`,
-      'info',
-    );
-    onRunsChanged?.();
-    try {
-      const result = await runNodeGroup(id, options);
-      const prefix = options.testLimit ? `测试运行完成（每源 ${options.testLimit} 条）` : '采集范围运行完成';
-      showToast(collectionRunMessage(prefix, result), result.failed_count ? 'error' : 'success');
-      loadSourceHealth();
-      onArticlesChanged?.();
-      onRunsChanged?.();
-    } catch (e) {
-      showToast(e.message || '采集范围运行失败', 'error');
-    } finally {
-      if (fetcherIds.length > 0) {
-        setRunningFetcherIds(prev => {
-          const next = new Set(prev);
-          fetcherIds.forEach(fid => next.delete(fid));
-          return next;
-        });
-      }
-    }
   };
 
   const handleBatchFetch = async (options = {}) => {
@@ -726,22 +588,19 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         <div className="page-heading">
           <h2 className="page-title">节点管理</h2>
           <p className="page-subtitle mt-3 max-w-4xl">
-            {view === 'groups'
-              ? '维护可复用的采集范围：把多个节点与参数模板打包，供采集任务复用。'
-              : view === 'custom'
-                ? '输入一个文章列表页 URL，自动分析并生成可抓取的自定义节点，无需写代码。'
-                : '按主体聚合内置抓取节点，查看各来源的官方源、运行健康与最新产出。'}
+            {view === 'custom'
+              ? '输入一个文章列表页 URL，自动分析并生成可抓取的自定义节点，无需写代码。'
+              : '按主体聚合内置抓取节点，查看各来源的官方源、运行健康与最新产出。'}
           </p>
         </div>
-        <div className="page-actions">
-          <div className="segmented-control">
-            <button onClick={() => setView('catalog')} className={`segmented-option ${view === 'catalog' ? 'segmented-option-active' : ''}`}><Layers /> 节点目录</button>
-            <button onClick={() => setView('groups')} className={`segmented-option ${view === 'groups' ? 'segmented-option-active' : ''}`}><FolderPlus /> 采集范围</button>
-            {ENABLE_CUSTOM_NODE_BUILDER && (
+        {ENABLE_CUSTOM_NODE_BUILDER && (
+          <div className="page-actions">
+            <div className="segmented-control">
+              <button onClick={() => setView('catalog')} className={`segmented-option ${view === 'catalog' ? 'segmented-option-active' : ''}`}><Layers /> 节点目录</button>
               <button onClick={() => setView('custom')} className={`segmented-option ${view === 'custom' ? 'segmented-option-active' : ''}`}><Wand2 /> AI 自定义节点</button>
-            )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {ENABLE_CUSTOM_NODE_BUILDER && view === 'custom' && <CustomNodeBuilder showToast={showToast} />}
@@ -890,85 +749,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         </>
       )}
 
-      {view === 'groups' && (
-        <div className="surface-card rounded-[var(--r-overlay)] overflow-hidden">
-          <div className="panel-header">
-            <div className="section-title">
-              <div className="flex h-10 w-10 items-center justify-center rounded-[var(--r-control)] bg-indigo-50 text-indigo-600">
-                <FolderPlus className="h-5 w-5" />
-              </div>
-              <span>采集范围</span>
-              <span className="text-xs font-mono text-slate-500">{nodeGroups.length}</span>
-            </div>
-            <button onClick={() => openCreateGroup([])} className="action-button action-button-primary min-h-[36px] px-3 text-xs">
-              <FolderPlus /> 新建采集范围
-            </button>
-          </div>
-          <div className="divide-y divide-[var(--dorami-border)]">
-            {nodeGroups.length === 0 ? (
-              <div className="p-12 text-center text-slate-500 font-medium">还没有采集范围，点右上角「新建采集范围」创建第一个。</div>
-            ) : nodeGroups.map(group => {
-              const isExpanded = expandedGroupId === group.id;
-              return (
-                <div key={group.id}>
-                  <button onClick={() => setExpandedGroupId(isExpanded ? null : group.id)} className="w-full px-5 py-4 flex items-center justify-between hover:bg-[var(--dorami-soft)] text-left">
-                    <div className="min-w-0">
-                      <div className="flex items-center">
-                        {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-500 mr-2" /> : <ChevronRight className="w-4 h-4 text-slate-500 mr-2" />}
-                        <div className="card-title truncate">{group.name}</div>
-                      </div>
-                      <div className="text-xs text-slate-500 mt-1 ml-6">{(group.fetcher_ids || []).length} 个节点{group.description ? ` · ${group.description}` : ''}</div>
-                    </div>
-                    <div className="hidden sm:flex items-center -space-x-1.5">
-                      {(group.fetcher_ids || []).slice(0, 5).map(id => {
-                        const f = fetchersById[id];
-                        return <LogoMark key={id} company={resolveCompany(f || {})} size="xs" className="ring-2 ring-white" />;
-                      })}
-                    </div>
-                  </button>
-                  {isExpanded && (
-                    <div className="px-5 pb-5 ml-6 space-y-4">
-                      <div className="flex flex-wrap gap-2">
-                        <button onClick={() => openEditGroup(group)} className="action-button action-button-quiet min-h-[34px] px-3 text-xs">编辑</button>
-                        <button onClick={() => handleRunGroup(group.id, { testLimit: TEST_RUN_LIMIT })} className="action-button action-button-quiet min-h-[34px] px-3 text-xs"><Play /> 测试运行 1 条/源</button>
-                        <button onClick={() => handleRunGroup(group.id)} className="action-button action-button-primary min-h-[34px] px-3 text-xs"><Play /> 临时运行</button>
-                        <button onClick={() => handleDeleteGroup(group.id)} className="action-button action-button-danger min-h-[34px] px-3 text-xs"><Trash2 /> 删除</button>
-                      </div>
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                        {(group.fetcher_ids || []).map(fetcherId => {
-                          const f = fetchersById[fetcherId];
-                          const nodeParams = (group.per_fetcher_params || {})[fetcherId] || {};
-                          const chips = paramChips(nodeParams, f);
-                          return (
-                            <div key={fetcherId} className="flex items-center gap-3 border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-[var(--dorami-soft)]">
-                              <LogoMark company={resolveCompany(f || {})} size="sm" />
-                              <div className="min-w-0 flex-1">
-                                <div className="font-bold text-slate-700 text-sm truncate">{getFetcherName(fetcherId)}</div>
-                                <div className="font-mono text-xs text-slate-500 truncate">{fetcherId}</div>
-                              </div>
-                              {chips.length > 0 && (
-                                <div className="hidden md:flex flex-wrap gap-1.5 justify-end max-w-[220px]" title={JSON.stringify(nodeParams)}>
-                                  {chips.map(chip => (
-                                    <span key={chip.key} className="inline-flex items-center gap-1 text-xs bg-white dark:bg-[var(--dorami-well)] border border-[var(--dorami-border)] rounded px-2 py-0.5">
-                                      <span className="text-slate-500">{chip.label}</span>
-                                      <span className="font-medium text-slate-700">{chip.value}</span>
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       {selectedFetchers.length > 0 && view === 'catalog' && (
         <div className="selection-bar animate-in slide-in-from-bottom-4">
           {runningFetcherIds.size > 0 ? (
@@ -985,28 +765,12 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             </div>
           )}
           <div className="selection-bar-actions">
-            <button onClick={() => openCreateGroup(selectedFetchers)} className="action-button action-button-secondary text-indigo-700">
-              <FolderPlus /> 保存为采集范围
-            </button>
             <button onClick={() => handleBatchFetch()} disabled={fetchLoading} className="action-button action-button-primary">
               {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} {fetchLoading ? '执行中...' : '立即临时抓取'}
             </button>
           </div>
         </div>
       )}
-
-      <NodeGroupModal
-        open={groupModalOpen}
-        onClose={() => setGroupModalOpen(false)}
-        editing={Boolean(editingGroupId)}
-        draft={groupDraft}
-        setDraft={setGroupDraft}
-        fetchersById={fetchersById}
-        availableFetchers={availableFetchers}
-        fetchConfigs={fetchConfigs}
-        onSave={handleSaveGroup}
-      />
-
 
       {runningFetcherIds.size > 0 && (
         <RunningWidget

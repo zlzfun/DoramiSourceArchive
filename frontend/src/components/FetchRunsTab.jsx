@@ -64,7 +64,6 @@ function blankJob() {
   return {
     name: '',
     description: '',
-    group_id: '',
     fetcher_ids: [],
     params: {},
     per_fetcher_params: {},
@@ -143,10 +142,7 @@ export default function FetchRunsTab({
     return job?.fetcher_ids || [];
   }, [groupsById]);
 
-  const draftFetcherIds = useMemo(() => {
-    if (jobDraft.group_id) return groupsById[String(jobDraft.group_id)]?.fetcher_ids || [];
-    return jobDraft.fetcher_ids || [];
-  }, [groupsById, jobDraft.fetcher_ids, jobDraft.group_id]);
+  const draftFetcherIds = useMemo(() => jobDraft.fetcher_ids || [], [jobDraft.fetcher_ids]);
 
   const filteredModalFetchers = useMemo(() => {
     const query = jobSearch.trim().toLowerCase();
@@ -227,8 +223,8 @@ export default function FetchRunsTab({
     setJobDraft({
       name: job.name || '',
       description: job.description || '',
-      group_id: job.group_id ? String(job.group_id) : '',
-      fetcher_ids: job.fetcher_ids || [],
+      // 编辑即迁移：存量任务若引用采集范围，把范围内的节点内联为直接选择，之后不再依赖 group_id。
+      fetcher_ids: getJobFetchers(job),
       params: job.params || {},
       per_fetcher_params: job.per_fetcher_params || {},
       cron_expr: job.cron_expr || '',
@@ -281,20 +277,20 @@ export default function FetchRunsTab({
 
   const handleSaveJob = async () => {
     const name = jobDraft.name.trim();
-    const groupId = jobDraft.group_id ? Number(jobDraft.group_id) : null;
-    const fetcherIds = groupId ? [] : normalizeIds(jobDraft.fetcher_ids);
+    const fetcherIds = normalizeIds(jobDraft.fetcher_ids);
     if (!name) {
       showToast('采集任务名称不能为空', 'error');
       return;
     }
-    if (!groupId && fetcherIds.length === 0) {
-      showToast('采集任务需要选择采集范围或至少一个节点', 'error');
+    if (fetcherIds.length === 0) {
+      showToast('采集任务至少需要选择一个节点', 'error');
       return;
     }
     const payload = {
       ...jobDraft,
       name,
-      group_id: groupId,
+      // 显式发 null 才能清掉存量任务对采集范围的引用（后端 PUT 是 exclude_unset 语义，缺省不改、显式 null 置空）。
+      group_id: null,
       fetcher_ids: fetcherIds,
       cron_expr: jobDraft.cron_expr.trim(),
       per_fetcher_cron: cleanStringMap(jobDraft.per_fetcher_cron),
@@ -476,7 +472,7 @@ export default function FetchRunsTab({
                   <span>采集任务</span>
                   <span className="text-xs font-mono text-slate-500">{collectionJobs.length}</span>
                 </div>
-                <p className="panel-header-subtitle">任务负责采集范围、参数覆盖、整体 cron 和单节点 cron。</p>
+                <p className="panel-header-subtitle">任务负责节点选择、参数覆盖、整体 cron 和单节点 cron。</p>
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={loadAll} disabled={loading} className="action-button action-button-secondary min-h-[36px] px-3 text-xs">
@@ -495,7 +491,6 @@ export default function FetchRunsTab({
                 <div className="p-12 text-center text-slate-500 font-medium">还没有采集任务，点「新建采集任务」创建第一个。</div>
               ) : collectionJobs.map(job => {
                 const isExpanded = expandedJobId === job.id;
-                const group = job.group_id ? groupsById[String(job.group_id)] : null;
                 const ids = getJobFetchers(job);
                 return (
                   <div key={job.id}>
@@ -507,7 +502,7 @@ export default function FetchRunsTab({
                           {!job.is_active && <span className="ml-2 micro-label bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">停用</span>}
                         </div>
                         <div className="text-xs text-slate-500 mt-1 ml-6">
-                          {group ? `采集范围：${group.name}` : '直接选择节点'} · {ids.length} 个节点 · {job.cron_expr || '无整体定时'}
+                          {ids.length} 个节点 · {job.cron_expr || '无整体定时'}
                         </div>
                       </div>
                       <div className="hidden md:block text-xs font-bold text-slate-500 truncate max-w-sm">{ids.slice(0, 3).map(getFetcherName).join('、')}</div>
@@ -523,7 +518,7 @@ export default function FetchRunsTab({
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                           <div className="border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-[var(--dorami-soft)]">
                             <div className="text-xs font-bold text-slate-500">节点来源</div>
-                            <div className="card-title mt-1">{group ? group.name : '任务内直接选择'}</div>
+                            <div className="card-title mt-1">任务内直接选择</div>
                           </div>
                           <div className="border border-[var(--dorami-border)] rounded-[var(--r-control)] p-3 bg-[var(--dorami-soft)]">
                             <div className="text-xs font-bold text-slate-500">整体 cron</div>
@@ -777,13 +772,6 @@ export default function FetchRunsTab({
                   <input value={jobDraft.description} onChange={event => setJobDraft(prev => ({ ...prev, description: event.target.value }))} className="form-input mt-1" />
                 </label>
                 <label className="text-xs font-bold text-slate-500">
-                  采集范围
-                  <select value={jobDraft.group_id} onChange={event => setJobDraft(prev => ({ ...prev, group_id: event.target.value, fetcher_ids: [] }))} className="form-input mt-1">
-                    <option value="">不使用采集范围，直接选择节点</option>
-                    {nodeGroups.map(group => <option key={group.id} value={group.id}>{group.name}（{(group.fetcher_ids || []).length}）</option>)}
-                  </select>
-                </label>
-                <label className="text-xs font-bold text-slate-500">
                   整体 cron
                   <input value={jobDraft.cron_expr} onChange={event => setJobDraft(prev => ({ ...prev, cron_expr: event.target.value }))} placeholder="例如：0 9 * * *" className="form-input mt-1 font-mono" />
                 </label>
@@ -793,24 +781,21 @@ export default function FetchRunsTab({
                 <div className="border border-[var(--dorami-border)] rounded-[var(--r-card)] overflow-hidden">
                   <div className="p-3 bg-[var(--dorami-soft)] border-b border-[var(--dorami-border)]">
                     <div className="font-bold text-slate-700 text-sm flex items-center">
-                      <Layers className="w-4 h-4 mr-2 text-[var(--dorami-blue)]" /> {jobDraft.group_id ? '采集范围包含节点' : '选择节点'}
+                      <Layers className="w-4 h-4 mr-2 text-[var(--dorami-blue)]" /> 选择节点
                     </div>
-                    {!jobDraft.group_id && (
-                      <div className="form-search-box relative mt-3">
-                        <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                        <input value={jobSearch} onChange={event => setJobSearch(event.target.value)} placeholder="搜索节点" className="form-input pl-9" />
-                      </div>
-                    )}
+                    <div className="form-search-box relative mt-3">
+                      <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input value={jobSearch} onChange={event => setJobSearch(event.target.value)} placeholder="搜索节点" className="form-input pl-9" />
+                    </div>
                   </div>
                   <div className="max-h-[460px] overflow-auto divide-y divide-[var(--dorami-border)]">
-                    {(jobDraft.group_id ? draftFetcherIds.map(id => fetchersById[id] || { id, name: id }) : filteredModalFetchers).map(fetcher => {
+                    {filteredModalFetchers.map(fetcher => {
                       const checked = draftFetcherIds.includes(fetcher.id);
                       return (
                         <button
                           key={fetcher.id}
-                          disabled={Boolean(jobDraft.group_id)}
                           onClick={() => toggleDraftFetcher(fetcher)}
-                          className={`w-full px-3 py-3 flex items-center gap-3 text-left ${checked ? 'bg-blue-50/60' : ''} ${jobDraft.group_id ? 'cursor-default' : 'hover:bg-[var(--dorami-soft)]'}`}
+                          className={`w-full px-3 py-3 flex items-center gap-3 text-left ${checked ? 'bg-blue-50/60' : ''} hover:bg-[var(--dorami-soft)]`}
                         >
                           <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>{checked && <CheckSquare className="w-3.5 h-3.5 text-white" />}</div>
                           <LogoMark company={companyForId(fetcher.id)} size="sm" />
@@ -839,9 +824,7 @@ export default function FetchRunsTab({
                               <div className="font-mono text-xs text-slate-500 mt-0.5">{fetcherId}</div>
                             </div>
                           </div>
-                          {!jobDraft.group_id && (
-                            <button onClick={() => setJobDraft(prev => ({ ...prev, fetcher_ids: prev.fetcher_ids.filter(id => id !== fetcherId) }))} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-[var(--r-control)]"><X className="w-4 h-4" /></button>
-                          )}
+                          <button onClick={() => setJobDraft(prev => ({ ...prev, fetcher_ids: prev.fetcher_ids.filter(id => id !== fetcherId) }))} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-[var(--r-control)]"><X className="w-4 h-4" /></button>
                         </div>
                         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                           <label className="text-xs font-bold text-slate-500 md:col-span-2">

@@ -42,7 +42,7 @@ function TabFallback() {
 }
 
 // ── 导航 / 历史锚点 ──
-// 把「标签 + 子视图」镜像到 URL hash（#/fetch/groups），跨页跳转的聚焦上下文存在 history.state 里。
+// 把「标签 + 子视图」镜像到 URL hash（#/runs/history），跨页跳转的聚焦上下文存在 history.state 里。
 // 让浏览器「返回」能逐级退回：子视图切换 → 标签切换 → 跨页跳转的原位。
 const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'vector', 'mcp', 'admin'];
 const TAB_DEFAULT_VIEW = { fetch: 'catalog', runs: 'jobs' };
@@ -72,7 +72,9 @@ function routeToHash(tab, views) {
 function hashToRoute(hash) {
   const parts = String(hash || '').replace(/^#\/?/, '').split('/').filter(Boolean);
   const tab = ALL_TABS.includes(parts[0]) ? parts[0] : 'data';
-  const view = SUBVIEW_TABS.has(tab) ? (parts[1] || TAB_DEFAULT_VIEW[tab]) : null;
+  let view = SUBVIEW_TABS.has(tab) ? (parts[1] || TAB_DEFAULT_VIEW[tab]) : null;
+  // 已下线的子视图归一到默认视图，兼容陈旧书签：#/fetch/groups（「采集范围」，实体简化阶段 1 移除）。
+  if (tab === 'fetch' && view === 'groups') view = TAB_DEFAULT_VIEW.fetch;
   return { tab, view };
 }
 
