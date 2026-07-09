@@ -37,6 +37,62 @@ import {
 
 const PAGE_SIZE = 30;
 
+// ── 骨架屏 · 大块加载态形状占位 ──
+// 形状贴近真实内容，替代居中 spinner；条数固定、宽度错落，纯装饰故 aria-hidden。
+
+// 侧栏来源行：图标块 + 名称条 + 篇数条
+function SourceRowsSkeleton() {
+  const nameWidths = ['w-3/4', 'w-2/3', 'w-4/5', 'w-1/2', 'w-3/5'];
+  return (
+    <div className="reader-group-body" aria-hidden="true">
+      {nameWidths.map((w, i) => (
+        <div key={i} className="flex items-center gap-2.5 px-2.5 py-2">
+          <div className="skeleton h-7 w-7 rounded-[var(--r-control)]" />
+          <div className="min-w-0 flex-1">
+            <div className={`skeleton h-3.5 ${w}`} />
+            <div className="skeleton mt-1.5 h-2.5 w-10" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// 文章卡：标题条 + 摘要两行 + foot 短条（形状贴近 .reader-article-card）
+function ArticleCardsSkeleton() {
+  const cards = [
+    { title: 'w-3/4', excerpt: 'w-1/2' },
+    { title: 'w-5/6', excerpt: 'w-2/3' },
+    { title: 'w-2/3', excerpt: 'w-3/5' },
+    { title: 'w-4/5', excerpt: 'w-1/2' },
+    { title: 'w-3/5', excerpt: 'w-2/3' },
+  ];
+  return (
+    <div aria-hidden="true">
+      {cards.map((c, i) => (
+        <div key={i} className="px-3.5 py-3">
+          <div className={`skeleton h-3.5 ${c.title}`} />
+          <div className="skeleton mt-2.5 h-3 w-full" />
+          <div className={`skeleton mt-1.5 h-3 ${c.excerpt}`} />
+          <div className="skeleton mt-2.5 h-2.5 w-16" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// 阅读窗格正文：若干段落条（真实 meta/标题已在 header 中渲染，此处只占正文位）
+function PaneBodySkeleton() {
+  const lines = ['w-full', 'w-full', 'w-11/12', 'w-full', 'w-4/5', 'w-full', 'w-full', 'w-2/3'];
+  return (
+    <div aria-hidden="true">
+      {lines.map((w, i) => (
+        <div key={i} className={`skeleton h-4 ${w} ${i > 0 ? 'mt-3' : ''}`} />
+      ))}
+    </div>
+  );
+}
+
 export default function ReaderTab({ showToast, aiEnabled = false }) {
   const [sources, setSources] = useState([]);
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
@@ -386,10 +442,7 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
 
         <div className="reader-source-scroll">
           {sourcesLoading ? (
-            <div className="reader-empty">
-              <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
-              <span>正在载入来源…</span>
-            </div>
+            <SourceRowsSkeleton />
           ) : (
             <>
               {subscribedSources.length > 0 && (
@@ -518,10 +571,7 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
 
         <div className="reader-list-scroll" ref={listRef}>
           {articlesLoading ? (
-            <div className="reader-empty">
-              <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
-              <span>正在载入文章…</span>
-            </div>
+            <ArticleCardsSkeleton />
           ) : !showFavorites && hasNoSubscriptions && !activeSourceId ? (
             <div className="reader-empty reader-empty-tall">
               <Compass className="h-7 w-7 text-slate-300" />
@@ -599,6 +649,12 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
       {/* ── 右栏 · 阅读面板 ── */}
       <section className="reader-col reader-col-read">
         {activeArticle ? (
+          <>
+            {/* 阅读进度线：仅正文非空时显示；CSS scroll() 滚动驱动、切文章天然归零，
+                不支持 scroll() 的浏览器由 @supports 直接隐藏（渐进增强，无 JS 兜底）。 */}
+            {!activeBodyLoading && activeBody ? (
+              <div className="reader-progress" aria-hidden="true" />
+            ) : null}
           <article className="reader-pane">
             <header className="reader-pane-head">
               <div className="reader-pane-meta">
@@ -649,10 +705,7 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
             </header>
             <div className="reader-pane-body markdown-body">
               {activeBodyLoading ? (
-                <div className="reader-empty">
-                  <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
-                  <span>正在载入正文…</span>
-                </div>
+                <PaneBodySkeleton />
               ) : (showTranslation && translatedBody) ? (
                 <ReaderMarkdown>{translatedBody}</ReaderMarkdown>
               ) : activeBody ? (
@@ -662,6 +715,7 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
               )}
             </div>
           </article>
+          </>
         ) : (
           <div className="reader-empty reader-empty-read">
             <BookOpenText className="h-8 w-8 text-slate-300" />

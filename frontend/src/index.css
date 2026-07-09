@@ -522,6 +522,10 @@ input[type="radio"] {
   border-radius: var(--r-sm);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; background: var(--dorami-soft); }
+}
+
 @layer components {
 
   /* ── Shell ── */
@@ -4445,9 +4449,40 @@ input[type="radio"] {
   .reader-shell.is-m-collapsed .reader-col-list { border-right: none; }
 
   .reader-col-read {
+    position: relative; /* 阅读进度线绝对定位锚点 */
     background:
       radial-gradient(ellipse 80% 40% at 50% 0%, rgba(91, 84, 232, 0.04), transparent 60%),
       var(--dorami-surface);
+  }
+
+  /* 阅读进度线（渐进增强）：滚动条位于 .reader-pane 内，用具名 scroll-timeline
+     把它的滚动进度暴露给栏顶的进度条（进度条在 .reader-pane 之外，故用 timeline-scope
+     跨元素引用，得以满宽贴顶而不受 .reader-pane 内边距影响）。scaleX 随滚动 0→1，
+     读到底=100%；切文章时 .reader-pane 重置滚动，动画天然归零。不支持 scroll() 的
+     浏览器整段不生效——进度条保持 scaleX(0) 隐形。 */
+  @supports (animation-timeline: scroll()) {
+    .reader-col-read { timeline-scope: --reader-scroll; }
+    .reader-pane { scroll-timeline-name: --reader-scroll; }
+    .reader-progress {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 5; /* 贴正文之上、低于把手/浮层 */
+      height: 2px;
+      background: var(--dorami-accent); /* accent 令牌暗色自动翻转 */
+      transform: scaleX(0);
+      transform-origin: left center;
+      pointer-events: none;
+      /* fill-mode 必须 both：滚动进度到 100% 时动画即「结束」，无 fill 会回退基态
+         scaleX(0)——读者恰好读完的那一刻进度线反而消失。 */
+      animation: dorami-read-progress linear both;
+      animation-timeline: --reader-scroll;
+    }
+    @keyframes dorami-read-progress {
+      from { transform: scaleX(0); }
+      to { transform: scaleX(1); }
+    }
   }
 
   /* 左栏：搜索 + 来源 */
@@ -4808,6 +4843,8 @@ input[type="radio"] {
     font-weight: 600;
     color: var(--dorami-faint);
     flex-shrink: 0;
+    /* 日期是数字排印：等宽数字让列表内日期纵向对齐更稳 */
+    font-variant-numeric: tabular-nums;
   }
 
   .reader-load-more {
@@ -4862,6 +4899,8 @@ input[type="radio"] {
     font-size: 12px;
     font-weight: 600;
     color: var(--dorami-faint);
+    /* 日期是数字排印：等宽数字让日期字形更稳 */
+    font-variant-numeric: tabular-nums;
   }
 
   .reader-pane-title {
@@ -4870,6 +4909,8 @@ input[type="radio"] {
     font-weight: 900;
     color: var(--dorami-ink);
     letter-spacing: -0.01em;
+    /* 与正文一致：英文标题也走优质拉丁字形（零资产系统字体栈），中文回落 PingFang/雅黑。 */
+    font-family: "SF Pro Text", -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   }
 
   .reader-pane-link {
@@ -5206,9 +5247,16 @@ input[type="radio"] {
     margin: 26px auto 0;
     padding-top: 22px;
     border-top: 1px solid var(--dorami-border);
-    font-size: 15.5px;
-    line-height: 1.85;
-    font-weight: 450;
+    /* 长文阅读容器：字号提到 16.5px（720px 下约 43 字/行，中文长文舒适区），
+       字号变大后行高从 1.85 收到 1.8 免得行距发散。PingFang 只有固定字重档、
+       :root 又设了 font-synthesis:none，450 会解析回 400——显式写 400 免误导。 */
+    font-size: 16.5px;
+    line-height: 1.8;
+    font-weight: 400;
+    /* 正文源大量英文（arxiv/HN/GitHub/blog）：单独给阅读容器一条「优质拉丁在前、
+       中文回落」的字体栈（零资产、不引 webfont），拉丁字形走 SF Pro/Segoe 等系统优质
+       西文字体，中文仍回落 PingFang/雅黑。只作用于阅读正文，不动 :root 全局栈。 */
+    font-family: "SF Pro Text", -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
     color: var(--dorami-ink-2);
     word-break: break-word;
   }
@@ -5224,15 +5272,18 @@ input[type="radio"] {
   .markdown-body h2,
   .markdown-body h3,
   .markdown-body h4 {
-    margin: 26px 0 12px;
-    line-height: 1.4;
-    font-weight: 650;
+    /* 正文提到 16.5px 后旧标题梯度（21/18.5/16.5/15.5）显得太平，拉开层级；
+       上外距略加大给更大的标题留呼吸。font-weight 显式写 600（PingFang 取 Semibold
+       档，与原 650 落到同一实际字重，避免 font-synthesis:none 下的模糊语义）。 */
+    margin: 30px 0 12px;
+    line-height: 1.35;
+    font-weight: 600;
     color: var(--dorami-ink-1);
   }
-  .markdown-body h1 { font-size: 21px; }
-  .markdown-body h2 { font-size: 18.5px; }
-  .markdown-body h3 { font-size: 16.5px; }
-  .markdown-body h4 { font-size: 15.5px; }
+  .markdown-body h1 { font-size: 24px; }
+  .markdown-body h2 { font-size: 20.5px; }
+  .markdown-body h3 { font-size: 18px; }
+  .markdown-body h4 { font-size: 16.5px; }
   .markdown-body ul,
   .markdown-body ol {
     margin: 0 0 16px;
@@ -5271,6 +5322,58 @@ input[type="radio"] {
     font-size: 12px;
     line-height: 1.5;
   }
+  /* 正文图放大触发钮：包住 <img> 的裸按钮——收窄到图宽并居中（保留原 img 居中观感），
+     去掉按钮默认外观，只提示可放大。焦点环走全局 button 焦点样式。 */
+  .markdown-body .markdown-img-button {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    margin: 16px auto;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: zoom-in;
+    border-radius: var(--r-control);
+  }
+  /* 外距移交给按钮，避免与 .markdown-body img 的 margin 叠成双重间距 */
+  .markdown-body .markdown-img-button img {
+    margin: 0;
+    cursor: zoom-in;
+  }
+
+  /* 图片灯箱：portal 到 body 的全屏放大层。z-index 对齐 modal(90) 之上、toast(200) 之下。
+     深色遮罩 rgba 黑属主题恒定表面（同 .modal-overlay 口径），暗色下再加深见文末覆盖。 */
+  .reader-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4vh 4vw;
+    background: rgba(11, 18, 32, 0.82);
+    backdrop-filter: blur(8px) saturate(1.3);
+    cursor: zoom-out;
+    animation: dorami-fade-in var(--motion-medium) var(--motion-ease) both;
+  }
+  .reader-lightbox-img {
+    max-width: 92vw;
+    max-height: 92vh;
+    object-fit: contain;
+    border-radius: var(--r-overlay);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+    cursor: zoom-out;
+    animation: dorami-lightbox-in var(--motion-medium) var(--motion-ease) both;
+  }
+  @keyframes dorami-lightbox-in {
+    from { opacity: 0; transform: scale(0.94); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .reader-lightbox,
+    .reader-lightbox-img { animation: none; }
+  }
+
   .markdown-body a {
     color: var(--dorami-accent, #2563eb);
     text-decoration: underline;
@@ -5704,6 +5807,8 @@ input[type="radio"] {
 [data-theme="dark"] .integration-button-danger:hover:not(:disabled) { background: #323a47; }
 [data-theme="dark"] .integration-status-line { background: var(--dorami-well) !important; border-color: var(--dorami-border) !important; }
 [data-theme="dark"] .modal-overlay { background: rgba(0, 0, 0, 0.62); }
+/* 灯箱遮罩暗色再加深（同 .modal-overlay 惯例），让放大原图更聚焦 */
+[data-theme="dark"] .reader-lightbox { background: rgba(0, 0, 0, 0.88); }
 [data-theme="dark"] .date-range-day:hover { background: var(--dorami-raised); }
 [data-theme="dark"] .reader-group-count { background: rgba(255, 255, 255, 0.08); }
 
@@ -5734,4 +5839,17 @@ input[type="radio"] {
   .source-param-block-head, .field-box .date-range-trigger span
 ) { color: var(--dorami-muted); }
 [data-theme="dark"] :is(.section-band-title, .dept-name, .source-name) { color: var(--dorami-ink); }
+
+/* ── 骨架屏 shimmer：暗色用半透明白叠加，而非表面阶实色——骨架常出现在
+   surface 底的容器里（如阅读器文章列），well↔surface 渐变的亮端与底色同色会整片隐形；
+   白叠加在任何表面阶上都可见，且 reduced-motion 静态降级（渐变停走）时同样成立。 ── */
+[data-theme="dark"] .skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.07) 25%,
+    rgba(255, 255, 255, 0.13) 50%,
+    rgba(255, 255, 255, 0.07) 75%
+  );
+  background-size: 1200px 100%;
+}
 [data-theme="dark"] :is(.date-range-day, .source-meta-val) { color: var(--dorami-ink-2); }
