@@ -76,7 +76,7 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange, run
         <div className="flex items-center justify-between border-b border-[var(--dorami-border)] bg-[var(--dorami-well)] px-6 py-4">
           <div className="flex items-center gap-3">
             <SettingsIcon className="h-5 w-5 text-indigo-500" />
-            <h3 className="text-lg font-black text-[var(--dorami-ink)]">设置</h3>
+            <h3 className="text-lg font-extrabold text-[var(--dorami-ink)]">设置</h3>
           </div>
           <button onClick={onClose} className="icon-button" aria-label="关闭">
             <X className="h-5 w-5" />
@@ -90,7 +90,7 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange, run
                 key={section.id}
                 onClick={() => setActive(section.id)}
                 className={`flex w-full items-center gap-2 rounded-[var(--r-control)] px-3 py-2 text-sm font-bold transition-colors ${
-                  active === section.id ? 'bg-[var(--dorami-surface)] text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                  active === section.id ? 'bg-[var(--dorami-surface)] text-[var(--dorami-ink)] shadow-[inset_3px_0_0_var(--dorami-blue)]' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
                 <section.icon className="h-4 w-4" /> {section.label}

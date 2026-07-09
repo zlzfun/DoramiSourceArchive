@@ -224,14 +224,14 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
 
       {/* ══ 日报生成页（仅管理员） ══════════════════════════════════ */}
       {canManage && sub === 'brief' && (
-        <div className="animate-in fade-in">
+        <div>
           <DailyBriefPanel showToast={showToast} collectorEnabled={collectorEnabled} isAdmin={isAdmin} />
         </div>
       )}
 
       {/* ══ Agent 接入页 ═══════════════════════════════════════════ */}
       {sub === 'access' && (
-        <div className="space-y-6 animate-in fade-in">
+        <div className="space-y-6">
       {/* ── HERO（克制的渐变标识卡，纹理交给 .integration-hero 自带的渐变光晕）── */}
       <div className="integration-hero relative overflow-hidden rounded-[var(--r-card)] p-7 shadow-[var(--sh-2)]">
         <div className="relative">
@@ -343,7 +343,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
             <button
               type="button"
               onClick={() => setToolsOpen(o => !o)}
-              className="flex w-full items-center gap-2 text-sm font-bold text-slate-500 hover:text-sky-700"
+              className="flex w-full items-center gap-2 text-sm font-bold text-slate-500 hover:text-slate-700"
             >
               {toolsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
               可用工具 <span className="font-normal text-slate-500">({TOOL_CARDS.length} 个)</span>
@@ -381,7 +381,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
           <h3 className="section-title">Skill 安装指南</h3>
           <button
             onClick={() => handleDownload('/api/skill/daily-brief', 'dorami-daily-brief.zip')}
-            className="action-button action-button-secondary shrink-0 min-h-[34px] px-3 text-xs text-violet-700 ml-auto"
+            className="action-button action-button-secondary shrink-0 min-h-[34px] px-3 text-xs ml-auto"
           >
             <Download className="w-3.5 h-3.5" />
             下载 Skill 包
@@ -391,7 +391,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
         <div className="p-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Local tools */}
-            <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] p-4 hover:border-sky-200 transition-colors">
+            <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] p-4 hover:border-[var(--dorami-border-strong)] transition-colors">
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-7 h-7 rounded-[var(--r-control)] bg-sky-50 flex items-center justify-center">
                   <Terminal className="w-3.5 h-3.5 text-sky-600" />
@@ -431,7 +431,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
             </div>
 
             {/* Online platforms */}
-            <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] p-4 hover:border-violet-200 transition-colors">
+            <div className="rounded-[var(--r-card)] border border-[var(--dorami-border)] p-4 hover:border-[var(--dorami-border-strong)] transition-colors">
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-7 h-7 rounded-[var(--r-control)] bg-violet-50 flex items-center justify-center">
                   <Globe className="w-3.5 h-3.5 text-violet-600" />

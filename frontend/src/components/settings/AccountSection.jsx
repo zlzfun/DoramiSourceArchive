@@ -105,7 +105,7 @@ export default function AccountSection({ username, avatar, accountRoleLabel, onU
         {avatar ? (
           <img src={avatar} alt="头像" className="h-16 w-16 rounded-full object-cover shadow-sm ring-1 ring-black/5" />
         ) : (
-          <div className="avatar-badge flex h-16 w-16 items-center justify-center rounded-full text-base font-black text-white">{initials}</div>
+          <div className="avatar-badge flex h-16 w-16 items-center justify-center rounded-full text-base font-bold text-white">{initials}</div>
         )}
         <div className="min-w-0 flex-1">
           <p className="text-sm font-bold text-slate-700">头像</p>

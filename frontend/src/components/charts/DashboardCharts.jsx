@@ -74,7 +74,7 @@ export function MultiSeriesArea({
               key={k}
               onClick={() => setDim(k)}
               className={`rounded-[var(--r-sm)] px-2 py-0.5 micro-label transition-colors ${
-                dim === k ? 'bg-[var(--dorami-wash)] text-indigo-600' : 'text-slate-500 hover:text-slate-700'
+                dim === k ? 'bg-[var(--dorami-wash)] text-[var(--dorami-accent-ink)]' : 'text-slate-500 hover:text-slate-700'
               }`}
             >
               {lbl}
@@ -198,7 +198,7 @@ export function BarList({ rows, nameKey, metrics, maxHeight = 248, emptyHint = '
       <div className="relative">
         <div ref={scrollRef} onScroll={updateScroll} className={`overflow-y-auto pr-1 ${showHint ? 'scroll-fade-b' : ''}`} style={{ maxHeight }}>
           {rows.map((r, i) => (
-            <div key={r[nameKey]} className="group rounded-[var(--r-sm)] px-1.5 py-1.5 transition-colors hover:bg-[var(--dorami-wash)]">
+            <div key={r[nameKey]} className="group rounded-[var(--r-sm)] px-1.5 py-1.5 transition-colors hover:bg-[var(--dorami-soft)]">
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-xs font-bold text-slate-700" title={r[nameKey]}>{r[nameKey]}</span>
                 <span className={`shrink-0 tiny-meta tabular-nums text-slate-500 ${alwaysShowValue ? '' : 'opacity-0 transition-opacity group-hover:opacity-100'}`}>

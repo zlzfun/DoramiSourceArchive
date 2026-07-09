@@ -224,14 +224,14 @@ export default function DataSyncSection({ showToast, canExport, canImport, onArt
             </div>
           </div>
 
-          <label className="block cursor-pointer rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] bg-[var(--dorami-soft)] p-4 transition-colors hover:border-emerald-300 hover:bg-emerald-50/40">
+          <label className="block cursor-pointer rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] bg-[var(--dorami-soft)] p-4 transition-colors hover:border-[var(--dorami-border-strong)]">
             <span className="block text-sm font-bold text-slate-700">选择归档包</span>
             <span className="tiny-meta mt-1 block">支持 .jsonl；浏览器支持时也可直接导入 .jsonl.gz。</span>
             <input
               type="file"
               accept=".jsonl,.gz,.jsonl.gz,application/x-ndjson,application/gzip"
               onChange={e => setImportFile(e.target.files?.[0] || null)}
-              className="mt-3 block w-full text-sm font-semibold text-slate-500 file:mr-3 file:rounded-[var(--r-control)] file:border-0 file:bg-[var(--dorami-surface)] dark:file:bg-[var(--dorami-raised)] file:px-3 file:py-2 file:text-sm file:font-bold file:text-indigo-600 file:shadow-sm"
+              className="mt-3 block w-full text-sm font-semibold text-slate-500 file:mr-3 file:rounded-[var(--r-control)] file:border-0 file:bg-[var(--dorami-surface)] dark:file:bg-[var(--dorami-raised)] file:px-3 file:py-2 file:text-sm file:font-bold file:text-[var(--dorami-ink)] file:shadow-sm"
             />
             {importFile && (
               <span className="mt-2 flex items-center gap-1.5 text-xs font-bold text-emerald-600">

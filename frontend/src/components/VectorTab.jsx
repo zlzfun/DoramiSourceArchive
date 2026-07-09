@@ -76,7 +76,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in">
+    <div className="space-y-6">
       <div className="page-header flex-col xl:flex-row">
         <div className="page-heading">
           <h2 className="page-title">向量雷达</h2>
@@ -98,12 +98,12 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[340px_1fr]">
-        <div className="relative overflow-hidden rounded-[var(--r-card)] bg-gradient-to-br from-[var(--dorami-accent-ink)] via-[var(--dorami-blue)] to-[var(--dorami-blue-2)] p-6 text-white shadow-[var(--sh-accent)]">
-          <div className="absolute -right-14 -top-14 h-40 w-40 rounded-full bg-white/16" />
+        <div className="surface-card relative overflow-hidden rounded-[var(--r-card)] p-6">
+          <div className="absolute -right-14 -top-14 h-40 w-40 rounded-full bg-[var(--dorami-wash)]" />
           <div className="relative">
-            <h4 className="text-indigo-100 font-bold text-sm mb-2 flex items-center"><Database className="w-4 h-4 mr-1.5" /> ChromaDB 挂载块数</h4>
-            <div className="text-5xl font-bold">{vectorStats.total} <span className="text-lg font-medium opacity-80">Chunks</span></div>
-            <p className="mt-4 text-xs font-bold text-indigo-100">向量库状态会随索引和重索引操作刷新。</p>
+            <h4 className="mb-2 flex items-center text-sm font-bold text-slate-500"><Database className="mr-1.5 h-4 w-4 text-[var(--dorami-blue)]" /> ChromaDB 挂载块数</h4>
+            <div className="text-5xl font-bold tabular-nums text-slate-800">{vectorStats.total} <span className="text-lg font-medium text-slate-500">Chunks</span></div>
+            <p className="mt-4 text-xs font-bold text-slate-500">向量库状态会随索引和重索引操作刷新。</p>
           </div>
         </div>
 
@@ -180,7 +180,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
         </div>
 
         {/* 结果列表 */}
-        <div className="row-stagger space-y-4">
+        <div className="space-y-4">
           {searching && searchResults.length === 0 && (
             Array.from({ length: 3 }).map((_, i) => (
               <div key={`vec-skeleton-${i}`} className="surface-card rounded-[var(--r-card)] p-5">
@@ -202,13 +202,13 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
                 <div className="flex items-start justify-between mb-2">
                   <h4 className="card-title pr-4 line-clamp-1 flex-1">
                     {sourceUrl
-                      ? <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="hover:text-[var(--dorami-blue)] transition-colors flex items-center gap-1">
+                      ? <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="hover:underline flex items-center gap-1">
                           {res.metadata?.title || '未知片段'}<ExternalLink className="w-3 h-3 shrink-0" />
                         </a>
                       : (res.metadata?.title || '未知片段')
                     }
                   </h4>
-                  <StatusBadge meta={meta} className="shrink-0">{meta.label} {res.distance.toFixed(3)}</StatusBadge>
+                  <StatusBadge meta={meta} className="shrink-0 tabular-nums">{meta.label} {res.distance.toFixed(3)}</StatusBadge>
                 </div>
                 <div className="flex flex-wrap gap-1.5 mb-3">
                   <span className="data-chip" title={res.metadata?.content_type || ''}>{contentTypeLabel(res.metadata?.content_type, res.metadata?.content_type)}</span>

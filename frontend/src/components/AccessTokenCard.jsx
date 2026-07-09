@@ -85,9 +85,9 @@ export default function AccessTokenCard({ showToast, variant = 'card' }) {
           <div className="mt-3 rounded-[var(--r-control)] border border-white/25 bg-white/[0.18] p-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-xs font-black text-white">访问令牌仅显示一次</p>
+                <p className="text-xs font-bold text-white">访问令牌仅显示一次</p>
                 <p className="mt-0.5 text-xs text-white/70">复制到你的 MCP 客户端或下游系统，关闭后只能再次生成新令牌。</p>
-                <code className="mt-2 block break-all rounded-[var(--r-control)] bg-black/25 px-2.5 py-1.5 micro-label text-white">{plainToken}</code>
+                <code className="mt-2 block break-all rounded-[var(--r-control)] bg-black/25 px-2.5 py-1.5 micro-label tabular-nums text-white">{plainToken}</code>
               </div>
               <button
                 onClick={() => handleCopy(plainToken, 'token-notice')}
@@ -138,9 +138,9 @@ export default function AccessTokenCard({ showToast, variant = 'card' }) {
                   <KeyRound className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-black text-emerald-900">访问令牌仅显示一次</p>
+                  <p className="text-sm font-bold text-emerald-900">访问令牌仅显示一次</p>
                   <p className="tiny-meta mt-1 text-emerald-700">复制到你的 MCP 客户端或下游系统，关闭后只能再次生成新令牌。</p>
-                  <code className="mt-2 block break-all rounded-[var(--r-control)] bg-white/80 px-3 py-2 text-xs font-bold text-emerald-950">{plainToken}</code>
+                  <code className="mt-2 block break-all rounded-[var(--r-control)] bg-white/80 px-3 py-2 text-xs font-bold tabular-nums text-emerald-950">{plainToken}</code>
                 </div>
               </div>
               <button onClick={() => handleCopy(plainToken, 'token-notice')} className="action-button action-button-secondary shrink-0">

@@ -59,7 +59,7 @@ function FeedDocsPanel({ onCopy, copiedKey }) {
               <button
                 type="button"
                 onClick={() => onCopy(cmd, `curl-${idx}`)}
-                className="flex items-center gap-1 text-xs font-bold text-amber-600 hover:text-amber-700"
+                className="flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-700"
               >
                 {copiedKey === `curl-${idx}` ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                 复制
@@ -121,7 +121,7 @@ export default function FeedAccessSection({ showToast }) {
         <button
           type="button"
           onClick={() => setDocsOpen(open => !open)}
-          className="flex items-center gap-2 text-sm font-bold text-amber-600 hover:text-amber-700"
+          className="flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-slate-700"
         >
           {docsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           <Terminal className="h-4 w-4" /> 接口文档与调用示例

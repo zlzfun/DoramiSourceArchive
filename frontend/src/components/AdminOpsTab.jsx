@@ -398,7 +398,7 @@ export default function AdminOpsTab({ showToast }) {
       <div className="mt-6">
         {/* ══ AI 子页 ══════════════════════════════════════════════ */}
         {sub === 'ai' && (
-        <div className="surface-card rounded-[var(--r-card)] overflow-hidden animate-in fade-in">
+        <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
           <PanelHeader barClass="bg-violet-500" title="AI 配置与用量" hint="日报与阅读器 AI 共用一套模型">
             {/* 用户 AI 功能：状态灯 + 开关（取代原「总闸」整块） */}
             <div className="ml-auto flex items-center gap-2">
@@ -481,7 +481,7 @@ export default function AdminOpsTab({ showToast }) {
 
         {/* ══ 用户子页 ════════════════════════════════════════════ */}
         {sub === 'user' && (
-        <div className="space-y-6 animate-in fade-in">
+        <div className="space-y-6">
         {/* ── 上半：活跃概览（数据看板）── */}
         <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
           <PanelHeader barClass="bg-sky-500" title="活跃概览" hint="读者登录 / 阅读 / AI 使用一览">
@@ -515,7 +515,7 @@ export default function AdminOpsTab({ showToast }) {
                       <button
                         key={k}
                         onClick={() => setTopMetric(k)}
-                        className={`rounded-[var(--r-sm)] px-2 py-0.5 micro-label transition-colors ${topMetric === k ? 'bg-[var(--dorami-wash)] text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
+                        className={`rounded-[var(--r-sm)] px-2 py-0.5 micro-label transition-colors ${topMetric === k ? 'bg-[var(--dorami-wash)] text-[var(--dorami-accent-ink)]' : 'text-slate-500 hover:text-slate-700'}`}
                       >
                         {lbl}
                       </button>
@@ -549,7 +549,7 @@ export default function AdminOpsTab({ showToast }) {
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm font-bold text-slate-700">
                   现有账户
-                  {accounts ? <span className="ml-1.5 font-bold text-slate-500">{accounts.length}</span> : null}
+                  {accounts ? <span className="ml-1.5 font-bold tabular-nums text-slate-500">{accounts.length}</span> : null}
                 </p>
                 {accounts && accounts.length > 0 && (
                   <div className="relative w-full sm:w-64">
@@ -583,7 +583,7 @@ export default function AdminOpsTab({ showToast }) {
                       tabIndex={0}
                       onClick={() => openDetail(account.username)}
                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(account.username); } }}
-                      className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-control)] border border-[var(--dorami-border)] bg-[var(--dorami-surface)] px-3 py-2.5 cursor-pointer transition-colors hover:border-[var(--dorami-blue)]"
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-control)] border border-[var(--dorami-border)] bg-[var(--dorami-surface)] px-3 py-2.5 cursor-pointer transition-colors hover:border-[var(--dorami-border-strong)]"
                     >
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
@@ -591,7 +591,7 @@ export default function AdminOpsTab({ showToast }) {
                           <span className="rounded bg-slate-100 px-1.5 py-0.5 micro-label text-slate-500">读者</span>
                           {!account.is_active && <span className="rounded bg-rose-50 px-1.5 py-0.5 micro-label text-rose-500">已停用</span>}
                           {account.ai_beta_enabled && (
-                            <span className="inline-flex items-center gap-0.5 rounded bg-[var(--dorami-wash)] px-1.5 py-0.5 micro-label text-indigo-500">
+                            <span className="inline-flex items-center gap-0.5 rounded bg-[var(--dorami-wash)] px-1.5 py-0.5 micro-label text-[var(--dorami-accent-ink)]">
                               <Zap className="h-3 w-3" /> AI Beta
                             </span>
                           )}
@@ -650,7 +650,7 @@ export default function AdminOpsTab({ showToast }) {
                       >
                         上一页
                       </button>
-                      <span className="rounded-[var(--r-control)] border border-[var(--dorami-border)] px-2.5 py-1 tiny-meta font-bold text-slate-500">
+                      <span className="rounded-[var(--r-control)] border border-[var(--dorami-border)] px-2.5 py-1 tiny-meta font-bold tabular-nums text-slate-500">
                         {accountSafePage} / {accountTotalPages}
                       </span>
                       <button
@@ -673,7 +673,7 @@ export default function AdminOpsTab({ showToast }) {
 
         {/* ══ 内容子页 ════════════════════════════════════════════ */}
         {sub === 'content' && (
-        <div className="surface-card rounded-[var(--r-card)] overflow-hidden animate-in fade-in">
+        <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
           <PanelHeader barClass="bg-rose-500" title="内容看板" hint="哪些源、哪些内容受欢迎" />
           <div className="p-6">
             {!content ? (
@@ -852,7 +852,7 @@ export default function AdminOpsTab({ showToast }) {
                 <span className="rounded bg-slate-100 px-1.5 py-0.5 micro-label text-slate-500">读者</span>
                 {detailData && !detailData.account.is_active && <span className="rounded bg-rose-50 px-1.5 py-0.5 micro-label text-rose-500">已停用</span>}
                 {detailData?.account.ai_beta_enabled && (
-                  <span className="inline-flex items-center gap-0.5 rounded bg-[var(--dorami-wash)] px-1.5 py-0.5 micro-label text-indigo-500"><Zap className="h-3 w-3" /> AI Beta</span>
+                  <span className="inline-flex items-center gap-0.5 rounded bg-[var(--dorami-wash)] px-1.5 py-0.5 micro-label text-[var(--dorami-accent-ink)]"><Zap className="h-3 w-3" /> AI Beta</span>
                 )}
               </h3>
               <button onClick={() => setDetailUser(null)} className="text-slate-500 hover:text-slate-700"><X className="w-5 h-5" /></button>
@@ -870,7 +870,7 @@ export default function AdminOpsTab({ showToast }) {
                     <button
                       type="button"
                       onClick={() => detailData.logins.recent.length > 0 && setLoginListOpen((o) => !o)}
-                      className={`rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-surface)] p-4 text-left ${detailData.logins.recent.length > 0 ? 'cursor-pointer transition-colors hover:border-[var(--dorami-blue)]' : 'cursor-default'}`}
+                      className={`rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-surface)] p-4 text-left ${detailData.logins.recent.length > 0 ? 'cursor-pointer transition-colors hover:border-[var(--dorami-border-strong)]' : 'cursor-default'}`}
                     >
                       <div className="flex items-center gap-2 text-slate-500">
                         <Clock className={`h-4 w-4 ${KPI_COLOR.login}`} />

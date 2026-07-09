@@ -118,15 +118,15 @@ export default function DailyBriefFlow({ showToast, canManage = false }) {
                 onClick={() => setOpenId(isOpen ? null : node.id)}
                 className={`group relative flex w-full flex-col gap-1.5 rounded-[var(--r-card)] border px-3 py-3 text-left transition-all ${
                   isOpen
-                    ? 'border-indigo-300 bg-[var(--dorami-wash)] ring-1 ring-indigo-200'
-                    : 'border-[var(--dorami-border)] bg-[var(--dorami-soft)] hover:border-[var(--dorami-accent)]/25 hover:bg-[var(--dorami-surface)]'
+                    ? 'border-[var(--dorami-border-strong)] bg-[var(--dorami-wash)]'
+                    : 'border-[var(--dorami-border)] bg-[var(--dorami-soft)] hover:border-[var(--dorami-border-strong)] hover:bg-[var(--dorami-surface)]'
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--r-control)] ${isOpen ? 'bg-indigo-100 text-indigo-600' : 'bg-[var(--dorami-surface)] text-slate-500 group-hover:text-indigo-500'}`}>
+                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--r-control)] ${isOpen ? 'bg-indigo-100 text-indigo-600' : 'bg-[var(--dorami-surface)] text-slate-500 group-hover:text-slate-700'}`}>
                     <Icon className="h-4 w-4" />
                   </span>
-                  <span className="micro-label font-black tabular-nums text-slate-300">{node.step}</span>
+                  <span className="micro-label font-bold tabular-nums text-slate-300">{node.step}</span>
                   {node.llm && (
                     <span className="ml-auto rounded-full bg-amber-100 px-1.5 py-0.5 micro-label text-amber-600">大模型</span>
                   )}

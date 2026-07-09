@@ -385,7 +385,7 @@ export default function App() {
         <div className="flex min-w-0 items-center gap-3">
           <BrandLogo logoError={logoError} onLogoError={() => setLogoError(true)} />
           <div className="hidden min-w-0 sm:block">
-            <h1 className="brand-title truncate text-xl font-black leading-tight">{brandTitle}</h1>
+            <h1 className="brand-title truncate text-xl font-extrabold leading-tight">{brandTitle}</h1>
             <p className="brand-subtitle mt-1 text-xs font-bold">{brandSubtitle}</p>
           </div>
         </div>
@@ -417,7 +417,7 @@ export default function App() {
         <div className="flex shrink-0 items-center gap-4">
           <div className="flex items-center gap-2">
             <div className="hidden text-right sm:block">
-              <p className="text-xs font-black text-slate-800">{authState.user?.username || 'admin'}</p>
+              <p className="text-xs font-bold text-slate-800">{authState.user?.username || 'admin'}</p>
               <p className="micro-label text-slate-500">{roleLabel}</p>
             </div>
             <button
@@ -445,7 +445,7 @@ export default function App() {
                 className="h-9 w-9 rounded-full object-cover shadow-sm ring-1 ring-black/5"
               />
             ) : (
-              <div className="avatar-badge flex h-9 w-9 items-center justify-center rounded-full text-xs font-black text-white">{avatarInitials}</div>
+              <div className="avatar-badge flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white">{avatarInitials}</div>
             )}
             <button
               type="button"

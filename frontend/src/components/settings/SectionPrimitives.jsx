@@ -3,7 +3,7 @@
 export function SectionHeading({ title, hint }) {
   return (
     <div className="mb-4">
-      <h4 className="text-sm font-black text-slate-800">{title}</h4>
+      <h4 className="text-sm font-bold text-slate-800">{title}</h4>
       {hint && <p className="tiny-meta mt-1">{hint}</p>}
     </div>
   );

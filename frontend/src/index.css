@@ -603,7 +603,8 @@ input[type="radio"] {
     left: 0;
     right: 0;
     height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(91, 84, 232, 0.38), rgba(91, 84, 232, 0.3), transparent);
+    /* 静默仪器·R5:页顶装饰细线去 accent，改中性 hairline（token 化，亮暗两态成立） */
+    background: linear-gradient(90deg, transparent, var(--dorami-border-strong), transparent);
     pointer-events: none;
   }
 
@@ -706,7 +707,6 @@ input[type="radio"] {
 
   .primary-action:hover {
     filter: brightness(1.06);
-    transform: translateY(-1px);
     box-shadow: 0 14px 32px rgba(91, 84, 232, 0.32);
   }
 
@@ -718,8 +718,8 @@ input[type="radio"] {
   }
 
   .ghost-action:hover {
-    background: white;
-    border-color: rgba(91, 84, 232, 0.3);
+    background: var(--dorami-soft);
+    border-color: var(--dorami-border-strong);
   }
 
   .action-button {
@@ -760,7 +760,6 @@ input[type="radio"] {
 
   .action-button-primary:hover {
     filter: brightness(1.06);
-    transform: translateY(-1.5px);
     box-shadow: 0 14px 34px rgba(91, 84, 232, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.24);
   }
 
@@ -771,11 +770,10 @@ input[type="radio"] {
     box-shadow: 0 4px 14px rgba(11, 18, 32, 0.05);
   }
 
+  /* 静默仪器·R3:次按钮 hover 灰阶、不抬升 */
   .action-button-secondary:hover {
-    background: #fff;
-    border-color: rgba(91, 84, 232, 0.28);
-    transform: translateY(-1px);
-    box-shadow: 0 9px 22px rgba(11, 18, 32, 0.09);
+    background: var(--dorami-soft);
+    border-color: var(--dorami-border-strong);
   }
 
   .action-button-danger {
@@ -787,7 +785,6 @@ input[type="radio"] {
   .action-button-danger:hover {
     background: #ffe4e6;
     border-color: rgba(248, 113, 113, 0.3);
-    transform: translateY(-1px);
   }
 
   .action-button-success {
@@ -799,7 +796,6 @@ input[type="radio"] {
   .action-button-success:hover {
     background: #d1fae5;
     border-color: rgba(16, 185, 129, 0.32);
-    transform: translateY(-1px);
   }
 
   .action-button-quiet {
@@ -809,9 +805,8 @@ input[type="radio"] {
   }
 
   .action-button-quiet:hover {
-    background: #fff;
-    border-color: rgba(91, 84, 232, 0.22);
-    transform: translateY(-1px);
+    background: var(--dorami-soft);
+    border-color: var(--dorami-border-strong);
   }
 
   .icon-button {
@@ -833,12 +828,11 @@ input[type="radio"] {
       color var(--motion-fast) var(--motion-ease);
   }
 
+  /* 静默仪器·R3:图标按钮 hover 保持 ink,不变紫不抬升 */
   .icon-button:hover {
-    transform: translateY(-1px);
-    border-color: rgba(91, 84, 232, 0.28);
-    background: #fff;
-    color: var(--dorami-blue);
-    box-shadow: 0 9px 22px rgba(11, 18, 32, 0.09);
+    border-color: var(--dorami-border-strong);
+    background: var(--dorami-soft);
+    color: var(--dorami-ink);
   }
 
   /* ── Login · cinematic midnight archive ── */
@@ -1842,13 +1836,13 @@ input[type="radio"] {
     min-width: 240px;
     max-width: 320px;
     padding: 12px 14px;
-    border: 1px solid rgba(91, 84, 232, 0.22);
+    border: 1px solid var(--dorami-card-bd);
     border-radius: var(--r-card);
     /* 运行中状态标记：表面阶底 + 一角极淡 wash 斜掠（token 化，暗色由末尾覆盖压为纯 surface） */
     background:
       linear-gradient(135deg, transparent, var(--dorami-wash)),
       var(--dorami-surface);
-    box-shadow: 0 10px 30px rgba(91, 84, 232, 0.18), 0 2px 6px rgba(11, 18, 32, 0.06);
+    box-shadow: var(--sh-2);
     text-align: left;
     cursor: pointer;
     transform: translateY(0) scale(1);
@@ -1976,8 +1970,8 @@ input[type="radio"] {
   }
 
   @keyframes running-widget-pulse {
-    0%, 100% { box-shadow: 0 10px 30px rgba(91, 84, 232, 0.18), 0 2px 6px rgba(11, 18, 32, 0.06); }
-    50% { box-shadow: 0 10px 30px rgba(91, 84, 232, 0.32), 0 2px 6px rgba(11, 18, 32, 0.08); }
+    0%, 100% { box-shadow: var(--sh-2); }
+    50% { box-shadow: var(--sh-3); }
   }
 
   /* ── Unified panel header (used across catalog/groups/jobs/history) ── */
@@ -2862,24 +2856,22 @@ input[type="radio"] {
     line-height: 22px;
   }
 
+  /* 静默仪器·R4/R5:accent 微渐变/染边/染底收敛为表面阶,分隔靠描边+阴影 */
   .integration-card {
     position: relative;
-    border: 1px solid rgba(155, 145, 240, 0.6);
+    border: 1px solid var(--dorami-card-bd);
     border-radius: var(--r-card);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(245, 243, 255, 0.84));
-    box-shadow: 0 16px 40px rgba(91, 84, 232, 0.18);
+    background: var(--dorami-surface);
+    box-shadow: var(--sh-2);
     padding: 20px;
-    backdrop-filter: blur(18px);
     transition:
       background var(--motion-medium) var(--motion-ease),
-      border-color var(--motion-medium) var(--motion-ease),
-      transform var(--motion-medium) var(--motion-spring);
+      border-color var(--motion-medium) var(--motion-ease);
   }
 
   .integration-card:hover {
-    border-color: rgba(255, 255, 255, 0.92);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 245, 255, 0.92));
-    transform: translateY(-2px);
+    border-color: var(--dorami-border-strong);
+    background: var(--dorami-soft);
   }
 
   .integration-icon {
@@ -2974,16 +2966,17 @@ input[type="radio"] {
     box-shadow: 0 12px 32px rgba(91, 84, 232, 0.36);
   }
 
+  /* 静默仪器·R5:次按钮降级为中性(surface 底 + 强描边 + ink-2 字),accent 让位给 CTA */
   .integration-button-secondary {
-    border: 1px solid rgba(91, 84, 232, 0.2);
-    background: rgba(238, 237, 252, 0.9);
-    color: var(--dorami-blue);
-    box-shadow: 0 6px 18px rgba(91, 84, 232, 0.08);
+    border: 1px solid var(--dorami-border-strong);
+    background: var(--dorami-surface);
+    color: var(--dorami-ink-2);
+    box-shadow: var(--sh-1);
   }
 
   .integration-button-secondary:hover:not(:disabled) {
-    background: #dcdafa;
-    border-color: rgba(91, 84, 232, 0.36);
+    background: var(--dorami-soft);
+    border-color: var(--dorami-border-strong);
   }
 
   .integration-button-danger {
@@ -2998,15 +2991,15 @@ input[type="radio"] {
     border-color: rgba(239, 68, 68, 0.36);
   }
 
+  /* 静默仪器·R4:wash 章语法——淡底 + accent-ink 字 + 无描边 */
   .integration-version {
     display: inline-flex;
     min-height: 22px;
     align-items: center;
     justify-content: center;
-    border: 1px solid rgba(91, 84, 232, 0.18);
     border-radius: var(--r-control);
-    background: #f0effc;
-    color: var(--dorami-blue-2);
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
     padding: 0 9px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     font-size: 12px;
@@ -3324,7 +3317,7 @@ input[type="radio"] {
     align-items: center;
     justify-content: center;
     color: color-mix(in srgb, var(--logo-accent, #64748b) 78%, #0f172a);
-    font-weight: 900;
+    font-weight: 800;
     letter-spacing: 0;
   }
 
@@ -5059,8 +5052,8 @@ input[type="radio"] {
     max-width: 88%;
     padding: 8px 11px;
     border-radius: var(--r-card);
-    background: var(--dorami-accent);
-    color: #fff;
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
     font-size: 13px;
     font-weight: 600;
     line-height: 1.5;
@@ -5145,7 +5138,7 @@ input[type="radio"] {
     color: var(--dorami-muted);
     transition: color var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
   }
-  .reader-ai-scope-trigger:hover { color: var(--dorami-accent); background: var(--dorami-well); }
+  .reader-ai-scope-trigger:hover { color: var(--dorami-ink); background: var(--dorami-well); }
   .reader-ai-scope-caret { transition: transform var(--motion-fast) var(--motion-ease); }
   .reader-ai-scope-caret.is-open { transform: rotate(180deg); }
   .reader-ai-scope-menu {
@@ -5738,12 +5731,12 @@ input[type="radio"] {
 
 /* ════ 规则④：强调淡底 → 统一 --dorami-wash（不再各自发紫）════ */
 [data-theme="dark"] :is(
-  .integration-button-secondary, .integration-version, .data-chip, .source-run, .config-toggle-active
+  .integration-version, .data-chip, .source-run, .config-toggle-active
 ) {
   background: var(--dorami-wash);
   border-color: rgba(124, 112, 235, 0.3);
 }
-[data-theme="dark"] :is(.integration-button-secondary, .integration-version, .data-chip) { color: #c4bdf7; }
+[data-theme="dark"] :is(.integration-version, .data-chip) { color: #c4bdf7; }
 [data-theme="dark"] .data-table tbody tr:hover { background: var(--dorami-soft); }
 [data-theme="dark"] .source-row-selected { background: var(--dorami-soft); border-color: transparent; }
 [data-theme="dark"] :is(.integration-icon-sky, .integration-icon-violet) {
@@ -5753,15 +5746,17 @@ input[type="radio"] {
 /* ── 运行小部件文字 / 接入集成卡 / 模态遮罩 ── */
 [data-theme="dark"] .running-widget-headline { color: #c7c2f5; }
 [data-theme="dark"] .integration-card {
-  background: linear-gradient(180deg, rgba(124, 112, 235, 0.1), var(--dorami-surface));
-  border-color: rgba(124, 112, 235, 0.26);
-  box-shadow: var(--sh-3);
+  background: var(--dorami-surface);
+  border-color: var(--dorami-card-bd);
+  box-shadow: var(--sh-2);
 }
 [data-theme="dark"] .integration-card:hover {
-  background: linear-gradient(180deg, rgba(124, 112, 235, 0.16), var(--dorami-raised));
-  border-color: rgba(124, 112, 235, 0.42);
+  background: var(--dorami-raised);
+  border-color: var(--dorami-border-strong);
 }
-[data-theme="dark"] .integration-button-secondary:hover:not(:disabled) { background: var(--dorami-raised); border-color: rgba(124, 112, 235, 0.42); }
+/* 静默仪器·§9:次按钮=可点控件,暗色走 raised 一档 + 中性描边 */
+[data-theme="dark"] .integration-button-secondary { background: var(--dorami-raised); color: var(--dorami-ink-2); border-color: var(--dorami-border); box-shadow: var(--sh-1); }
+[data-theme="dark"] .integration-button-secondary:hover:not(:disabled) { background: #323a47; border-color: var(--dorami-border-strong); }
 [data-theme="dark"] .integration-button-danger { background: var(--dorami-raised); color: #fca5a5; }
 [data-theme="dark"] .integration-button-danger:hover:not(:disabled) { background: #323a47; }
 [data-theme="dark"] .integration-status-line { background: var(--dorami-well) !important; border-color: var(--dorami-border) !important; }

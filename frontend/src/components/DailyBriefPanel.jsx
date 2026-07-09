@@ -210,7 +210,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
           <div className="rounded-2xl border border-amber-200/80 bg-gradient-to-br from-amber-50 to-orange-50/40 p-4">
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-sm font-black text-slate-800">立即生成今天的日报</p>
+                <p className="text-sm font-bold text-slate-800">立即生成今天的日报</p>
                 <p className="tiny-meta mt-0.5">手动汇总择优近期内容，耗时数十秒到数分钟。</p>
               </div>
               <button onClick={handleGenerate} disabled={generating} className="action-button action-button-primary shrink-0">
@@ -287,7 +287,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
                   <span className="font-medium text-slate-500">增量游标</span>
                   <span className="flex items-center gap-2">
                     <code className="font-mono text-slate-500">{briefConfig?.cursor ? briefConfig.cursor.slice(0, 19) : '（空）'}</code>
-                    <button onClick={handleResetCursor} className="rounded-md px-2 py-0.5 micro-label text-slate-500 hover:bg-slate-100 hover:text-indigo-600" title="重置增量游标（用于重做/补生成）">
+                    <button onClick={handleResetCursor} className="rounded-md px-2 py-0.5 micro-label text-slate-500 hover:bg-slate-100 hover:text-slate-700" title="重置增量游标（用于重做/补生成）">
                       重置
                     </button>
                   </span>
