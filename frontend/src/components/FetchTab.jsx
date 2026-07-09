@@ -2,28 +2,27 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
-  CheckSquare,
   ChevronDown,
   ChevronRight,
   ExternalLink,
   FileText,
   FlaskConical,
-  Info,
+  Inbox,
   Layers,
   Play,
   RefreshCw,
   Save,
   Search,
-  Settings2,
   Wand2,
+  X,
 } from 'lucide-react';
 import {
+  fetchFetchRuns,
   fetchRunningProgress,
   fetchSourceHealth,
   triggerBatchFetch,
   triggerFetch,
 } from '../api';
-import LogoMark from './LogoMark';
 import RunningWidget from './RunningWidget';
 import CustomNodeBuilder from './CustomNodeBuilder';
 
@@ -41,9 +40,9 @@ import {
   NOISE_LABELS,
   RELIABILITY_LABELS,
 } from '../sourceTaxonomy';
-import { healthMeta, errorTypeLabel } from '../statusMeta';
+import { healthMeta, errorTypeLabel, runStatusMeta } from '../statusMeta';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
-import { collectionRunMessage } from '../utils/collection';
+import { collectionRunMessage, TEST_RUN_LIMIT } from '../utils/collection';
 
 const TIER_FILTER_OPTIONS = [
   { value: 'all', label: '全部层级' },
@@ -52,13 +51,18 @@ const TIER_FILTER_OPTIONS = [
   { value: 'tier2_commentary', label: '评论观点' },
 ];
 
-const STATUS_FILTER_OPTIONS = [
-  { value: 'all', label: '全部' },
-  { value: 'failing', label: '失败' },
-  { value: 'running', label: '运行中' },
-  { value: 'never_run', label: '未运行' },
-  { value: 'healthy', label: '健康' },
+// 健康态 → 信号灯样式（后端 SourceStateRecord 只有四态，无独立「告警」态，故灯位取四态 + 全部）。
+const HEALTH_SIGNAL = { healthy: 'ok', failing: 'fail', running: 'running', never_run: 'idle' };
+
+const SIGNAL_STATS = [
+  { key: 'all', label: '全部节点' },
+  { key: 'healthy', label: '正常', sig: 'ok' },
+  { key: 'failing', label: '失败', sig: 'fail' },
+  { key: 'running', label: '运行中', sig: 'running' },
+  { key: 'never_run', label: '未运行', sig: 'idle' },
 ];
+
+const REFRESH_SECONDS = 45;
 
 // 抓取参数覆盖项持久化：只存「与 schema 默认值不同」的字段，key 见下。
 const FETCH_CONFIGS_STORAGE_KEY = 'dorami.fetchConfigs';
@@ -85,42 +89,35 @@ function tierPillClass(tier) {
   return TIER_TONE_CLASS[tierMeta(tier).tone] || TIER_TONE_CLASS.slate;
 }
 
-const HEALTH_RANK = { failing: 0, running: 1, never_run: 2, healthy: 3 };
-
-function aggregateHealth(fetchers, healthByFetcher) {
-  const summary = { total: fetchers.length, healthy: 0, failing: 0, running: 0, never_run: 0, articles: 0, latest: null, worst: 'healthy' };
-  fetchers.forEach(fetcher => {
-    const h = healthByFetcher[fetcher.id] || {};
-    const status = h.health_status || 'never_run';
-    if (summary[status] !== undefined) summary[status] += 1;
-    summary.articles += h.total_articles || 0;
-    if (h.latest_run_at && (!summary.latest || h.latest_run_at > summary.latest)) summary.latest = h.latest_run_at;
-    if ((HEALTH_RANK[status] ?? 3) < (HEALTH_RANK[summary.worst] ?? 3)) summary.worst = status;
-  });
-  return summary;
+function typeLabelOf(fetcher) {
+  return labelFrom(SOURCE_CHANNEL_LABELS, fetcher.source_channel) || fetcher.content_type || '节点';
 }
 
 export default function FetchTab({ availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onViewRunning, onSaveAsJob, pendingFocus, onPendingFocusApplied }) {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [healthByFetcher, setHealthByFetcher] = useState({});
-  const [selectedFetchers, setSelectedFetchers] = useState([]);
   const [fetchConfigs, setFetchConfigs] = useState({});
   const [runningFetcherIds, setRunningFetcherIds] = useState(() => new Set());
   const [fetchProgress, setFetchProgress] = useState({});
   const progressSeenFetcherIdsRef = useRef(new Set());
   const [sectionFilter, setSectionFilter] = useState('all');
   const [tierFilter, setTierFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [healthFilter, setHealthFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [healthRefreshing, setHealthRefreshing] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [countdown, setCountdown] = useState(REFRESH_SECONDS);
   const [expandedErrorFetcherIds, setExpandedErrorFetcherIds] = useState(() => new Set());
   const fetchConfigDefaultsRef = useRef({});
-  const [expandedCompanies, setExpandedCompanies] = useState(() => new Set());
-  const [collapsedCatalogSections, setCollapsedCatalogSections] = useState(() => new Set());
-  const [expandedParamFetcherId, setExpandedParamFetcherId] = useState(null);
-  const [expandedReviewFetcherId, setExpandedReviewFetcherId] = useState(null);
   const [highlightedFetcherId, setHighlightedFetcherId] = useState(null);
   const sourceRowRefs = useRef({});
+
+  // 常驻检视器：当前点选的节点 + 其近期运行 + 试抓状态。
+  const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
+  const [inspectorRuns, setInspectorRuns] = useState([]);
+  const [inspectorRunsLoading, setInspectorRunsLoading] = useState(false);
+  const [previewByNode, setPreviewByNode] = useState({});
 
   const fetchersById = useMemo(
     () => Object.fromEntries(availableFetchers.map(fetcher => [fetcher.id, fetcher])),
@@ -190,31 +187,31 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     setHealthRefreshing(true);
     try {
       await loadSourceHealth();
+      setCountdown(REFRESH_SECONDS);
     } finally {
       setHealthRefreshing(false);
     }
   }, [loadSourceHealth]);
 
-  // 数据新鲜度：页面可见时每 45s 静默刷新健康数据；页面隐藏时暂停，重新可见时立即补一刷。
+  // 自动刷新：开关驱动。开启时每秒倒计时，归零静默刷新健康数据（页面隐藏时暂停倒计时）；关闭时停摆。
   useEffect(() => {
-    let timer = null;
-    const start = () => { if (!timer) timer = setInterval(() => loadSourceHealth(), 45000); };
-    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
-    const onVisibility = () => {
-      if (document.hidden) {
-        stop();
-      } else {
+    if (!autoRefresh) {
+      setCountdown(REFRESH_SECONDS);
+      return undefined;
+    }
+    let secs = REFRESH_SECONDS;
+    setCountdown(secs);
+    const id = setInterval(() => {
+      if (document.hidden) return;
+      secs -= 1;
+      if (secs <= 0) {
         loadSourceHealth();
-        start();
+        secs = REFRESH_SECONDS;
       }
-    };
-    if (!document.hidden) start();
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      stop();
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [loadSourceHealth]);
+      setCountdown(secs);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [autoRefresh, loadSourceHealth]);
 
   useEffect(() => {
     if (runningFetcherIds.size === 0) {
@@ -254,7 +251,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     };
   }, [runningFetcherIds]);
 
-
   const matchesSearch = useCallback((fetcher) => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return true;
@@ -282,104 +278,92 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
 
   const matchesTier = useCallback((f) => tierFilter === 'all' || f.provenance_tier === tierFilter, [tierFilter]);
   const matchesSection = useCallback((f) => sectionFilter === 'all' || sectionOf(f) === sectionFilter, [sectionFilter, sectionOf]);
-  const matchesStatus = useCallback((f) => statusFilter === 'all' || statusOf(f) === statusFilter, [statusFilter, statusOf]);
+  const matchesHealth = useCallback((f) => healthFilter === 'all' || statusOf(f) === healthFilter, [healthFilter, statusOf]);
 
   // 各维度计数都在「其它维度筛选后的池子」里统计，保持 AND 联动口径。
-  const sectionOptions = useMemo(() => {
-    const pool = searchedFetchers.filter(f => matchesTier(f) && matchesStatus(f));
-    const counts = {};
-    pool.forEach(f => { const id = sectionOf(f); counts[id] = (counts[id] || 0) + 1; });
-    const ordered = SECTIONS.filter(s => counts[s.id]).map(s => ({ id: s.id, label: s.label, count: counts[s.id] }));
-    if (counts.other) ordered.push({ id: 'other', label: '其他来源', count: counts.other });
-    return ordered;
-  }, [searchedFetchers, matchesTier, matchesStatus, sectionOf]);
-
-  const sectionAllCount = useMemo(
-    () => searchedFetchers.filter(f => matchesTier(f) && matchesStatus(f)).length,
-    [searchedFetchers, matchesTier, matchesStatus],
-  );
-
-  const tierCounts = useMemo(() => {
-    const pool = searchedFetchers.filter(f => matchesSection(f) && matchesStatus(f));
-    const counts = { all: pool.length };
-    pool.forEach(f => { const t = f.provenance_tier || 'none'; counts[t] = (counts[t] || 0) + 1; });
-    return counts;
-  }, [searchedFetchers, matchesSection, matchesStatus]);
-
-  const statusCounts = useMemo(() => {
+  const healthCounts = useMemo(() => {
     const pool = searchedFetchers.filter(f => matchesSection(f) && matchesTier(f));
     const counts = { all: pool.length };
     pool.forEach(f => { const s = statusOf(f); counts[s] = (counts[s] || 0) + 1; });
     return counts;
   }, [searchedFetchers, matchesSection, matchesTier, statusOf]);
 
+  const sectionOptions = useMemo(() => {
+    const pool = searchedFetchers.filter(f => matchesTier(f) && matchesHealth(f));
+    const counts = {};
+    pool.forEach(f => { const id = sectionOf(f); counts[id] = (counts[id] || 0) + 1; });
+    const ordered = SECTIONS.filter(s => counts[s.id]).map(s => ({ id: s.id, label: s.label, count: counts[s.id] }));
+    if (counts.other) ordered.push({ id: 'other', label: '其他来源', count: counts.other });
+    return ordered;
+  }, [searchedFetchers, matchesTier, matchesHealth, sectionOf]);
+
+  const sectionAllCount = useMemo(
+    () => searchedFetchers.filter(f => matchesTier(f) && matchesHealth(f)).length,
+    [searchedFetchers, matchesTier, matchesHealth],
+  );
+
+  const tierCounts = useMemo(() => {
+    const pool = searchedFetchers.filter(f => matchesSection(f) && matchesHealth(f));
+    const counts = { all: pool.length };
+    pool.forEach(f => { const t = f.provenance_tier || 'none'; counts[t] = (counts[t] || 0) + 1; });
+    return counts;
+  }, [searchedFetchers, matchesSection, matchesHealth]);
+
   const visibleTierFilterOptions = useMemo(() => TIER_FILTER_OPTIONS.filter(option => (
     option.value === 'all' || (tierCounts[option.value] || 0) > 0
   )), [tierCounts]);
 
-  const visibleStatusFilterOptions = useMemo(() => STATUS_FILTER_OPTIONS.filter(option => (
-    option.value === 'all' || (statusCounts[option.value] || 0) > 0
-  )), [statusCounts]);
-
   useEffect(() => {
-    if (tierFilter !== 'all' && (tierCounts[tierFilter] || 0) === 0) {
-      setTierFilter('all');
-    }
+    if (tierFilter !== 'all' && (tierCounts[tierFilter] || 0) === 0) setTierFilter('all');
   }, [tierCounts, tierFilter]);
 
   useEffect(() => {
-    if (statusFilter !== 'all' && (statusCounts[statusFilter] || 0) === 0) {
-      setStatusFilter('all');
-    }
-  }, [statusCounts, statusFilter]);
+    if (healthFilter !== 'all' && (healthCounts[healthFilter] || 0) === 0) setHealthFilter('all');
+  }, [healthCounts, healthFilter]);
+
+  useEffect(() => {
+    if (sectionFilter !== 'all' && !sectionOptions.some(s => s.id === sectionFilter)) setSectionFilter('all');
+  }, [sectionOptions, sectionFilter]);
 
   const visibleFetchers = useMemo(() => searchedFetchers
     .filter(matchesSection)
     .filter(matchesTier)
-    .filter(matchesStatus),
-  [searchedFetchers, matchesSection, matchesTier, matchesStatus]);
+    .filter(matchesHealth),
+  [searchedFetchers, matchesSection, matchesTier, matchesHealth]);
 
-  const groupedSections = useMemo(() => groupBySection(visibleFetchers), [visibleFetchers]);
+  // 调度板：按现有类别（板块）分组，组内节点铺成行（去掉主体中间层）。
+  const groupedBoard = useMemo(() => (
+    groupBySection(visibleFetchers).map(section => ({
+      id: section.id,
+      label: section.label,
+      accent: section.accent,
+      fetchers: section.companies
+        .flatMap(bucket => bucket.fetchers)
+        .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),
+    }))
+  ), [visibleFetchers]);
 
-  // 搜索 / 筛选时强制展开，便于聚焦命中结果；否则默认展开，用户可逐个收起。
-  const autoExpand = searchQuery.trim().length > 0 || sectionFilter !== 'all' || tierFilter !== 'all' || statusFilter !== 'all';
+  // 默认选中第一个失败节点（最需关注），否则第一个可见节点；已选节点仍可见时保持不变。
+  useEffect(() => {
+    if (selectedNodeId && visibleFetchers.some(f => f.id === selectedNodeId)) return;
+    const failing = visibleFetchers.find(f => statusOf(f) === 'failing');
+    const next = failing || visibleFetchers[0];
+    setSelectedNodeId(next ? next.id : null);
+  }, [visibleFetchers, statusOf, selectedNodeId]);
 
-  const isCatalogSectionOpen = useCallback((sectionId) => {
-    if (autoExpand) return true;
-    return !collapsedCatalogSections.has(sectionId);
-  }, [autoExpand, collapsedCatalogSections]);
+  // 检视器选中节点时拉取该节点近期运行记录（最近 5 条）。
+  useEffect(() => {
+    if (!selectedNodeId) { setInspectorRuns([]); return undefined; }
+    let cancelled = false;
+    setInspectorRunsLoading(true);
+    fetchFetchRuns({ fetcher_id: selectedNodeId }, 5)
+      .then(rows => { if (!cancelled) setInspectorRuns(Array.isArray(rows) ? rows : []); })
+      .catch(() => { if (!cancelled) setInspectorRuns([]); })
+      .finally(() => { if (!cancelled) setInspectorRunsLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedNodeId]);
 
-  const toggleCatalogSection = useCallback((sectionId, currentlyOpen) => {
-    setCollapsedCatalogSections(prev => {
-      const next = new Set(prev);
-      if (currentlyOpen) next.add(sectionId);
-      else next.delete(sectionId);
-      return next;
-    });
-  }, []);
-
-  const handleCatalogSectionKeyDown = useCallback((event, sectionId, currentlyOpen) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
-    toggleCatalogSection(sectionId, currentlyOpen);
-  }, [toggleCatalogSection]);
-
-  const isCompanyOpen = useCallback((companyKey, fetchers) => {
-    if (autoExpand) return true;
-    if (fetchers.some(f => selectedFetchers.includes(f.id) || runningFetcherIds.has(f.id))) return true;
-    return expandedCompanies.has(companyKey);
-  }, [expandedCompanies, autoExpand, selectedFetchers, runningFetcherIds]);
-
-  const toggleCompany = (companyKey, currentlyOpen) => {
-    setExpandedCompanies(prev => {
-      const next = new Set(prev);
-      if (currentlyOpen) next.delete(companyKey);
-      else next.add(companyKey);
-      return next;
-    });
-  };
-
-  // 接收来自知识台账「数据来源」列的定位请求：切到目录、清空筛选、展开对应板块/主体并高亮该节点行。
+  // 接收来自知识台账「数据来源」列的定位请求：清空筛选、选中并高亮该节点。
   useEffect(() => {
     if (!pendingFocus?.source_id) return;
     if (availableFetchers.length === 0) return; // 节点目录尚未就绪，等下一轮
@@ -390,22 +374,14 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       showToast?.('该来源在节点目录中没有对应节点', 'info');
       return;
     }
-    const company = resolveCompany(fetcher);
-    const sectionId = sectionOf(fetcher);
     setView('catalog');
     setSectionFilter('all');
     setTierFilter('all');
-    setStatusFilter('all');
+    setHealthFilter('all');
     setSearchQuery('');
-    setCollapsedCatalogSections(prev => {
-      if (!prev.has(sectionId)) return prev;
-      const next = new Set(prev);
-      next.delete(sectionId);
-      return next;
-    });
-    setExpandedCompanies(prev => (prev.has(company.key) ? prev : new Set(prev).add(company.key)));
+    setSelectedNodeId(sid);
     setHighlightedFetcherId(sid);
-  }, [pendingFocus, availableFetchers, fetchersById, sectionOf, onPendingFocusApplied, showToast, setView]);
+  }, [pendingFocus, availableFetchers, fetchersById, onPendingFocusApplied, showToast, setView]);
 
   // 高亮目标行：下一帧滚动到视野中央，短暂高亮后自动消退。
   useEffect(() => {
@@ -419,18 +395,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       clearTimeout(timer);
     };
   }, [highlightedFetcherId]);
-
-  const toggleFetcherSelection = (id) => {
-    setSelectedFetchers(prev => prev.includes(id) ? prev.filter(fid => fid !== id) : [...prev, id]);
-  };
-
-  const toggleCompanySelection = (fetchers) => {
-    const ids = fetchers.map(f => f.id);
-    const allSelected = ids.every(id => selectedFetchers.includes(id));
-    setSelectedFetchers(prev => allSelected
-      ? prev.filter(id => !ids.includes(id))
-      : Array.from(new Set([...prev, ...ids])));
-  };
 
   const toggleErrorExpanded = (fetcherId) => {
     setExpandedErrorFetcherIds(prev => {
@@ -452,107 +416,22 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     });
   };
 
-  const renderCatalogParamInput = (fetcherId, param) => {
-    const value = (fetchConfigs[fetcherId] || {})[param.field] ?? param.default ?? '';
-    if (param.type === 'boolean') {
-      const checked = typeof value === 'boolean' ? value : ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
-      return (
-        <label className="node-param-checkbox">
-          <input
-            type="checkbox"
-            checked={checked}
-            onChange={event => updateFetcherConfig(fetcherId, param.field, event.target.checked)}
-            className="h-4 w-4 rounded border-slate-300 text-blue-600"
-          />
-          <span>{checked ? '已启用' : '未启用'}</span>
-        </label>
-      );
-    }
-    if (Array.isArray(param.options) && param.options.length > 0) {
-      return (
-        <select value={value} onChange={event => updateFetcherConfig(fetcherId, param.field, event.target.value)} className="node-param-input">
-          {param.options.map(option => {
-            const optionValue = typeof option === 'object' ? option.value : option;
-            const optionLabel = typeof option === 'object' ? option.label : option;
-            return <option key={optionValue} value={optionValue}>{optionLabel}</option>;
-          })}
-        </select>
-      );
-    }
-    return (
-      <input
-        type={param.type || 'text'}
-        value={value}
-        onChange={event => updateFetcherConfig(fetcherId, param.field, param.type === 'number' ? Number(event.target.value) : event.target.value)}
-        placeholder={param.placeholder || String(param.default ?? '')}
-        className="node-param-input"
-      />
-    );
+  const paramOverrideDiff = useCallback((fetcherId) => {
+    const cfg = fetchConfigs[fetcherId] || {};
+    const def = fetchConfigDefaultsRef.current[fetcherId] || {};
+    const diff = {};
+    Object.entries(cfg).forEach(([field, value]) => {
+      if (!Object.is(value, def[field])) diff[field] = value;
+    });
+    return diff;
+  }, [fetchConfigs]);
+
+  const selectNode = (fetcherId) => {
+    setSelectedNodeId(fetcherId);
+    setMobileInspectorOpen(true);
   };
 
-  const handleBatchFetch = async (options = {}) => {
-    setFetchLoading(true);
-    onRunsChanged?.();
-    selectedFetchers.forEach(id => progressSeenFetcherIdsRef.current.delete(id));
-    setRunningFetcherIds(prev => {
-      const next = new Set(prev);
-      selectedFetchers.forEach(id => next.add(id));
-      return next;
-    });
-    const items = selectedFetchers.map(fetcherId => ({
-      fetcher_id: fetcherId,
-      params: fetchConfigs[fetcherId] || {},
-    }));
-    let result = null;
-    try {
-      result = await triggerBatchFetch(items, options);
-    } catch (e) {
-      showToast(e.message || '批量抓取失败', 'error');
-    }
-    setFetchLoading(false);
-    setRunningFetcherIds(prev => {
-      const next = new Set(prev);
-      selectedFetchers.forEach(id => next.delete(id));
-      return next;
-    });
-    if (result) {
-      const successCount = selectedFetchers.length - (result.failed_count || 0);
-      const suffix = options.testLimit ? `（每源 ${options.testLimit} 条）` : '';
-      showToast(
-        collectionRunMessage(`批量抓取完成${suffix}`, result, successCount),
-        result.failed_count ? 'error' : 'success',
-      );
-      setSelectedFetchers([]);
-      loadSourceHealth();
-      onArticlesChanged?.();
-      onRunsChanged?.();
-    }
-  };
-
-  // 把当前选择 + 每节点参数覆盖交给「任务与运行」的新建采集任务编辑器预填。
-  // 只带「与 schema 默认值不同」的字段（与 localStorage 覆盖同口径），键形态对齐编辑器的
-  // per_fetcher_params（fetcherId → {field: value}）；节点选择映射为 fetcher_ids。
-  const handleSaveAsJob = () => {
-    if (selectedFetchers.length === 0) return;
-    const defaults = fetchConfigDefaultsRef.current;
-    const perFetcherParams = {};
-    selectedFetchers.forEach(id => {
-      const cfg = fetchConfigs[id] || {};
-      const def = defaults[id] || {};
-      const diff = {};
-      Object.entries(cfg).forEach(([field, value]) => {
-        if (!Object.is(value, def[field])) diff[field] = value;
-      });
-      if (Object.keys(diff).length) perFetcherParams[id] = diff;
-    });
-    onSaveAsJob?.({
-      fetcher_ids: [...selectedFetchers],
-      per_fetcher_params: perFetcherParams,
-    });
-    setSelectedFetchers([]);
-  };
-
-  const runSingleFetcher = (fetcher) => {
+  const runSingleFetcher = useCallback((fetcher) => {
     if (runningFetcherIds.has(fetcher.id)) return;
     progressSeenFetcherIdsRef.current.delete(fetcher.id);
     setRunningFetcherIds(prev => new Set(prev).add(fetcher.id));
@@ -575,439 +454,583 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           return next;
         });
       });
+  }, [runningFetcherIds, fetchConfigs, showToast, onRunsChanged, onArticlesChanged, loadSourceHealth]);
+
+  // 批量运行：对给定节点集触发临时抓取（后台任务，聚合结果回来后统一提示）。
+  const runFetchers = useCallback(async (ids, options = {}) => {
+    if (ids.length === 0) return;
+    setFetchLoading(true);
+    onRunsChanged?.();
+    ids.forEach(id => progressSeenFetcherIdsRef.current.delete(id));
+    setRunningFetcherIds(prev => {
+      const next = new Set(prev);
+      ids.forEach(id => next.add(id));
+      return next;
+    });
+    const items = ids.map(fetcherId => ({ fetcher_id: fetcherId, params: fetchConfigs[fetcherId] || {} }));
+    let result = null;
+    try {
+      result = await triggerBatchFetch(items, options);
+    } catch (e) {
+      showToast(e.message || '批量抓取失败', 'error');
+    }
+    setFetchLoading(false);
+    setRunningFetcherIds(prev => {
+      const next = new Set(prev);
+      ids.forEach(id => next.delete(id));
+      return next;
+    });
+    if (result) {
+      const successCount = ids.length - (result.failed_count || 0);
+      const suffix = options.testLimit ? `（每源 ${options.testLimit} 条）` : '';
+      showToast(
+        collectionRunMessage(`批量抓取完成${suffix}`, result, successCount),
+        result.failed_count ? 'error' : 'success',
+      );
+      loadSourceHealth();
+      onArticlesChanged?.();
+      onRunsChanged?.();
+    }
+    return result;
+  }, [fetchConfigs, onRunsChanged, showToast, loadSourceHealth, onArticlesChanged]);
+
+  const handleBatchRun = () => {
+    const ids = visibleFetchers.map(f => f.id);
+    if (ids.length === 0) return;
+    runFetchers(ids);
   };
 
-  const renderSourceRow = (fetcher) => {
-    const isSelected = selectedFetchers.includes(fetcher.id);
+  // 单节点试抓预览：以当前参数抓取 1 条（会入库，与既有「试抓」同口径），结果内嵌到检视器。
+  const runNodePreview = useCallback(async (fetcher) => {
+    setPreviewByNode(prev => ({ ...prev, [fetcher.id]: { status: 'running' } }));
+    try {
+      const result = await triggerBatchFetch(
+        [{ fetcher_id: fetcher.id, params: fetchConfigs[fetcher.id] || {} }],
+        { testLimit: TEST_RUN_LIMIT },
+      );
+      const saved = result?.saved_count ?? 0;
+      const fetched = result?.fetched_count ?? result?.total_fetched ?? null;
+      const failed = result?.failed_count ?? 0;
+      setPreviewByNode(prev => ({
+        ...prev,
+        [fetcher.id]: { status: failed ? 'error' : 'done', saved, fetched, failed },
+      }));
+      loadSourceHealth();
+      onArticlesChanged?.();
+      onRunsChanged?.();
+    } catch (e) {
+      setPreviewByNode(prev => ({ ...prev, [fetcher.id]: { status: 'error', error: e.message || '试抓失败' } }));
+    }
+  }, [fetchConfigs, loadSourceHealth, onArticlesChanged, onRunsChanged]);
+
+  const saveNodeAsJob = (fetcher) => {
+    const diff = paramOverrideDiff(fetcher.id);
+    onSaveAsJob?.({
+      fetcher_ids: [fetcher.id],
+      per_fetcher_params: Object.keys(diff).length ? { [fetcher.id]: diff } : {},
+    });
+  };
+
+  const renderParamInput = (fetcherId, param) => {
+    const value = (fetchConfigs[fetcherId] || {})[param.field] ?? param.default ?? '';
+    if (param.type === 'boolean') {
+      const checked = typeof value === 'boolean' ? value : ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+      return (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={checked}
+          onClick={() => updateFetcherConfig(fetcherId, param.field, !checked)}
+          className={`signal-switch ${checked ? 'signal-switch-on' : ''}`}
+          aria-label={param.label || param.field}
+        />
+      );
+    }
+    if (Array.isArray(param.options) && param.options.length > 0) {
+      return (
+        <select value={value} onChange={event => updateFetcherConfig(fetcherId, param.field, event.target.value)} className="node-param-input inspector-param-select">
+          {param.options.map(option => {
+            const optionValue = typeof option === 'object' ? option.value : option;
+            const optionLabel = typeof option === 'object' ? option.label : option;
+            return <option key={optionValue} value={optionValue}>{optionLabel}</option>;
+          })}
+        </select>
+      );
+    }
+    return (
+      <input
+        type={param.type || 'text'}
+        value={value}
+        onChange={event => updateFetcherConfig(fetcherId, param.field, param.type === 'number' ? Number(event.target.value) : event.target.value)}
+        placeholder={param.placeholder || String(param.default ?? '')}
+        className="inspector-param-input"
+        aria-label={param.label || param.field}
+      />
+    );
+  };
+
+  const renderNode = (fetcher) => {
     const health = healthByFetcher[fetcher.id];
-    const paramCount = (fetcher.parameters || []).length;
-    const paramsExpanded = expandedParamFetcherId === fetcher.id;
-    const reviewExpanded = expandedReviewFetcherId === fetcher.id;
-    const isRunning = runningFetcherIds.has(fetcher.id);
-    const tier = tierMeta(fetcher.provenance_tier);
-    const progress = fetchProgress[fetcher.id];
     const status = health?.health_status || 'never_run';
     const statusLabel = healthMeta(status).label;
+    const isRunning = runningFetcherIds.has(fetcher.id);
+    const progress = fetchProgress[fetcher.id];
     const errorMessage = health?.latest_error_message;
     const errorType = health?.latest_error_type;
     const isFailing = status === 'failing' && Boolean(errorMessage);
     const errorExpanded = expandedErrorFetcherIds.has(fetcher.id);
-    const company = resolveCompany(fetcher);
-    const ownerLabel = fetcher.source_brand || fetcher.source_owner || company.name;
-    const scopeLabel = labelFrom(SOURCE_SCOPE_LABELS, fetcher.source_scope);
-    const channelLabel = labelFrom(SOURCE_CHANNEL_LABELS, fetcher.source_channel);
-    const signalLabel = labelFrom(SIGNAL_LABELS, fetcher.signal_strength);
-    const noiseLabel = labelFrom(NOISE_LABELS, fetcher.noise_risk);
-    const reliabilityLabel = labelFrom(RELIABILITY_LABELS, fetcher.fetch_reliability);
-    const contentTags = (fetcher.content_tags || []).slice(0, 5);
-    const hasReview = Boolean(
-      fetcher.signal_strength || fetcher.noise_risk || fetcher.fetch_reliability || contentTags.length
-    );
+    const isSelected = selectedNodeId === fetcher.id;
+    const totalArticles = health?.total_articles ?? 0;
+    const consecutiveFailures = health?.consecutive_failures ?? 0;
 
     return (
-      <div
-        key={fetcher.id}
-        ref={el => { sourceRowRefs.current[fetcher.id] = el; }}
-        className={`source-row ${isSelected ? 'source-row-selected' : ''} ${highlightedFetcherId === fetcher.id ? 'source-row-focus' : ''}`}
-      >
-        <div className="source-row-head">
-          <button
-            type="button"
-            onClick={() => toggleFetcherSelection(fetcher.id)}
-            className={`source-check ${isSelected ? 'source-check-on' : ''}`}
-            aria-label={isSelected ? `取消选择 ${fetcher.name}` : `选择 ${fetcher.name}`}
-          >
-            {isSelected && <CheckSquare className="h-3.5 w-3.5 text-white" />}
-          </button>
-
-          <div className="source-row-id" onClick={() => toggleFetcherSelection(fetcher.id)}>
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="source-name truncate" title={fetcher.name}>{fetcher.name}</span>
-              {fetcher.provenance_tier && <span className={`tier-pill tier-pill-wide ${tierPillClass(fetcher.provenance_tier)}`}>{tier.short} {tier.label}</span>}
-            </div>
-            <div className="source-sub">
-              <span className="font-mono truncate" title={fetcher.id}>{fetcher.id}</span>
-              {ownerLabel && <span className="source-sub-dot">{ownerLabel}</span>}
-              {fetcher.source_scope && <span className="source-sub-dot">{scopeLabel}</span>}
-              {fetcher.source_channel && <span className="source-sub-dot">{channelLabel}</span>}
-            </div>
-          </div>
-
-          <div className="source-stats">
-            <span
-              className={`source-health-pill source-health-${status}`}
-              title={isFailing ? `运行状态：${statusLabel} · ${errorTypeLabel(errorType)}：${errorMessage}` : `运行状态：${statusLabel}`}
-            >{statusLabel}</span>
+      <div key={fetcher.id} ref={el => { sourceRowRefs.current[fetcher.id] = el; }}>
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => selectNode(fetcher.id)}
+          onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectNode(fetcher.id); } }}
+          className={`board-node ${isSelected ? 'board-node-sel' : ''} ${highlightedFetcherId === fetcher.id ? 'board-node-focus' : ''}`}
+          title={health?.latest_run_at ? `上次运行 ${formatDateTime(health.latest_run_at)}` : '从未运行'}
+        >
+          <span className={`signal-dot signal-dot-${HEALTH_SIGNAL[status] || 'idle'}`} title={statusLabel} />
+          <span className="board-node-id">
+            <span className="board-node-name" title={fetcher.name}>
+              <span className="board-node-name-text">{fetcher.name}</span>
+              {fetcher.provenance_tier && (
+                <span className={`tier-pill ${tierPillClass(fetcher.provenance_tier)}`}>{tierMeta(fetcher.provenance_tier).short}</span>
+              )}
+            </span>
+            <span className="board-node-sid" title={fetcher.id}>{fetcher.id}</span>
+          </span>
+          <span className="chip board-node-type">{typeLabelOf(fetcher)}</span>
+          <span className="board-node-last">
+            <span className="board-node-last-time">{formatRelativeTime(health?.latest_run_at)}</span>
+            <span className={`board-node-last-res ${status === 'failing' ? 'is-bad' : ''}`}>
+              {status === 'failing'
+                ? (consecutiveFailures > 0 ? `连续 ${consecutiveFailures} 次失败` : '最近失败')
+                : status === 'running'
+                  ? '运行中'
+                  : `${statusLabel} · 累计 ${totalArticles} 篇`}
+            </span>
+          </span>
+          <span className="board-node-acts">
             <button
               type="button"
-              onClick={() => onViewRuns?.(fetcher.id)}
-              className="source-stat"
-              title={`查看运行记录 · ${formatDateTime(health?.latest_run_at, '从未运行')}`}
-            >
-              <Activity className="h-3.5 w-3.5 text-slate-500" />
-              <span>{formatRelativeTime(health?.latest_run_at)}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onViewArticles?.(fetcher.id)}
-              className="source-stat"
-              title={`查看 ${fetcher.name} 抓取的文章`}
-            >
-              <FileText className="h-3.5 w-3.5 text-emerald-500" />
-              <span className="font-bold text-emerald-700">{health?.total_articles ?? 0}</span>
-            </button>
-            {(health?.consecutive_failures ?? 0) > 0 && (
-              <button
-                type="button"
-                onClick={() => onViewRuns?.(fetcher.id, { status: 'failed' })}
-                className="source-stat source-stat-danger"
-                title="查看失败运行记录"
-              >
-                ✕{health.consecutive_failures}
-              </button>
-            )}
-          </div>
-
-          <div className="source-actions">
-            {hasReview && (
-              <button
-                type="button"
-                onClick={() => setExpandedReviewFetcherId(reviewExpanded ? null : fetcher.id)}
-                className={`source-config-btn ${reviewExpanded ? 'is-active' : ''}`}
-                title="源审查字段与标签"
-              >
-                <Info className="h-4 w-4" />
-                <span>详情</span>
-              </button>
-            )}
-            <button
-              type="button"
-              disabled={paramCount === 0}
-              onClick={() => setExpandedParamFetcherId(paramsExpanded ? null : fetcher.id)}
-              className={`source-config-btn ${paramsExpanded ? 'is-active' : ''}`}
-              title={paramCount === 0 ? '该节点无需抓取参数' : `抓取参数（${paramCount} 项）`}
-            >
-              <Settings2 className="h-4 w-4" />
-              <span>配置</span>
-              {paramCount > 0 && <span className="source-config-count">{paramCount}</span>}
-            </button>
-            <button
-              type="button"
+              className="board-node-act"
               disabled={isRunning}
-              onClick={() => runSingleFetcher(fetcher)}
-              className={`source-run ${isRunning ? 'is-running' : ''}`}
+              onClick={event => { event.stopPropagation(); runSingleFetcher(fetcher); }}
+              title="立即运行"
+              aria-label={`立即运行 ${fetcher.name}`}
             >
               {isRunning ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-              <span>{isRunning ? (progress ? (progress.total ? `${progress.current}/${progress.total}` : `${progress.current}`) : '抓取中…') : '抓取'}</span>
             </button>
-          </div>
+            <button
+              type="button"
+              className="board-node-act"
+              onClick={event => { event.stopPropagation(); selectNode(fetcher.id); runNodePreview(fetcher); }}
+              title="试抓预览"
+              aria-label={`试抓预览 ${fetcher.name}`}
+            >
+              <FlaskConical className="h-3.5 w-3.5" />
+            </button>
+          </span>
         </div>
 
         {isFailing && (
-          <div className="source-error-banner">
+          <div className="board-node-error">
             <button
               type="button"
-              className="source-error-summary"
+              className="board-node-error-summary"
               onClick={() => toggleErrorExpanded(fetcher.id)}
               aria-expanded={errorExpanded}
               title={errorExpanded ? '收起失败详情' : '展开失败详情'}
             >
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-              <span className="source-error-type">{errorTypeLabel(errorType)}</span>
-              <span className={`source-error-msg ${errorExpanded ? '' : 'truncate'}`}>{errorMessage}</span>
+              <span className="board-node-error-type">{errorTypeLabel(errorType)}</span>
+              <span className={`board-node-error-msg ${errorExpanded ? '' : 'truncate'}`}>{errorMessage}</span>
               {health?.latest_failure_at && (
-                <span className="source-error-time">{formatRelativeTime(health.latest_failure_at)}</span>
+                <span className="board-node-error-time">{formatRelativeTime(health.latest_failure_at)}</span>
               )}
               {errorExpanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
             </button>
             {errorExpanded && (
-              <div className="source-error-detail">
-                <p className="source-error-detail-msg">{errorMessage}</p>
-                <div className="source-error-detail-meta">
+              <div className="board-node-error-detail">
+                <p className="board-node-error-detail-msg">{errorMessage}</p>
+                <div className="board-node-error-detail-meta">
                   <span>类型：{errorTypeLabel(errorType)}</span>
                   {health?.latest_failure_at && <span>失败时间：{formatDateTime(health.latest_failure_at, '未知')}</span>}
+                  <button type="button" className="board-node-error-link" onClick={() => onViewRuns?.(fetcher.id, { status: 'failed' })}>查看失败运行 →</button>
                 </div>
               </div>
             )}
           </div>
         )}
 
-        {fetcher.desc && (
-          <p className="source-desc">{fetcher.desc}</p>
-        )}
-
-        {fetcher.base_url && (
-          <div className="source-url-inline">
-            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-            <a className="source-url truncate" href={fetcher.base_url} target="_blank" rel="noreferrer" title="打开来源入口">{fetcher.base_url}</a>
-          </div>
-        )}
-
-        {reviewExpanded && hasReview && (
-          <div className="node-param-panel source-review-panel">
-            <div className="node-param-title">
-              <span>源审查字段</span>
+        {isRunning && (
+          <div className="board-node-progress">
+            <RefreshCw className="h-3 w-3 animate-spin shrink-0" />
+            <span>采集中</span>
+            <div className="board-progress-bar">
+              <i style={progress?.total ? { width: `${Math.min(100, Math.round((progress.current / progress.total) * 100))}%` } : { width: '35%' }} />
             </div>
-            <div className="source-review-grid">
-              {fetcher.signal_strength && <div><span className="tiny-meta">信号</span><div className="source-meta-val">{signalLabel}</div></div>}
-              {fetcher.noise_risk && <div><span className="tiny-meta">噪声</span><div className="source-meta-val">{noiseLabel}</div></div>}
-              {fetcher.fetch_reliability && <div><span className="tiny-meta">稳定性</span><div className="source-meta-val">{reliabilityLabel}</div></div>}
-            </div>
-            {contentTags.length > 0 && (
-              <div className="source-tag-row">
-                <span className="tiny-meta">标签</span>
-                <div className="source-tags">
-                  {contentTags.map(tag => <span key={tag}>{tag}</span>)}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {paramsExpanded && paramCount > 0 && (
-          <div className="node-param-panel source-review-panel">
-            <div className="source-param-block-head">
-              <span>抓取参数</span>
-              <span>{paramCount} 项</span>
-            </div>
-            <div className="node-param-grid source-param-grid">
-              {fetcher.parameters.map(param => (
-                <div key={param.field} className="node-param-field">
-                  <label className="node-param-label" title={param.field}>{param.label || param.field}</label>
-                  {renderCatalogParamInput(fetcher.id, param)}
-                </div>
-              ))}
-            </div>
+            <span className="board-node-progress-count">
+              {progress ? (progress.total ? `${progress.current} / ${progress.total}` : `${progress.current}`) : '排队中'}
+            </span>
           </div>
         )}
       </div>
     );
   };
 
-  return (
-    <div className={`space-y-6 ${selectedFetchers.length > 0 && view === 'catalog' ? 'pb-24' : ''}`}>
-      <div className="page-header flex-col xl:flex-row">
-        <div className="page-heading">
-          <h2 className="page-title">节点管理</h2>
-          <p className="page-subtitle mt-3 max-w-4xl">
-            {view === 'custom'
-              ? '输入一个文章列表页 URL，自动分析并生成可抓取的自定义节点，无需写代码。'
-              : '按主体聚合内置抓取节点，查看各来源的官方源、运行健康与最新产出。'}
-          </p>
+  const selectedFetcher = selectedNodeId ? fetchersById[selectedNodeId] : null;
+
+  const renderInspector = () => {
+    if (!selectedFetcher) {
+      return (
+        <div className="inspector-empty">
+          <Inbox className="h-7 w-7" />
+          <p>从左侧调度板选择一个节点</p>
+          <span>查看描述、运行参数、试抓预览与近期运行</span>
         </div>
-        {ENABLE_CUSTOM_NODE_BUILDER && (
-          <div className="page-actions">
-            <div className="segmented-control">
-              <button onClick={() => setView('catalog')} className={`segmented-option ${view === 'catalog' ? 'segmented-option-active' : ''}`}><Layers /> 节点目录</button>
-              <button onClick={() => setView('custom')} className={`segmented-option ${view === 'custom' ? 'segmented-option-active' : ''}`}><Wand2 /> AI 自定义节点</button>
-            </div>
+      );
+    }
+    const fetcher = selectedFetcher;
+    const health = healthByFetcher[fetcher.id];
+    const status = health?.health_status || 'never_run';
+    const statusLabel = healthMeta(status).label;
+    const isRunning = runningFetcherIds.has(fetcher.id);
+    const params = fetcher.parameters || [];
+    const preview = previewByNode[fetcher.id];
+    const company = resolveCompany(fetcher);
+    const ownerLabel = fetcher.source_brand || fetcher.source_owner || company.name;
+    const scopeLabel = labelFrom(SOURCE_SCOPE_LABELS, fetcher.source_scope);
+    const signalLabel = labelFrom(SIGNAL_LABELS, fetcher.signal_strength);
+    const noiseLabel = labelFrom(NOISE_LABELS, fetcher.noise_risk);
+    const reliabilityLabel = labelFrom(RELIABILITY_LABELS, fetcher.fetch_reliability);
+    const contentTags = (fetcher.content_tags || []).slice(0, 6);
+    const hasReview = Boolean(fetcher.signal_strength || fetcher.noise_risk || fetcher.fetch_reliability || contentTags.length);
+    const totalArticles = health?.total_articles ?? 0;
+
+    return (
+      <>
+        <div className="inspector-head">
+          <div className="inspector-head-top">
+            <span className={`signal-dot signal-dot-${HEALTH_SIGNAL[status] || 'idle'}`} title={statusLabel} />
+            <h2 className="inspector-title" title={fetcher.name}>{fetcher.name}</h2>
+            <span className={`inspector-stamp inspector-stamp-${status}`}>{statusLabel}</span>
+            <button type="button" className="inspector-close" onClick={() => setMobileInspectorOpen(false)} aria-label="关闭检视器">
+              <X className="h-4 w-4" />
+            </button>
           </div>
-        )}
-      </div>
+          <div className="inspector-sid">
+            <span className="font-mono truncate" title={fetcher.id}>{fetcher.id}</span>
+            <span className="inspector-sid-dot">{typeLabelOf(fetcher)}</span>
+            {ownerLabel && <span className="inspector-sid-dot">{ownerLabel}</span>}
+            {fetcher.source_scope && <span className="inspector-sid-dot">{scopeLabel}</span>}
+          </div>
+        </div>
 
-      {ENABLE_CUSTOM_NODE_BUILDER && view === 'custom' && <CustomNodeBuilder showToast={showToast} />}
+        <div className="inspector-body">
+          {fetcher.desc && <p className="inspector-desc">{fetcher.desc}</p>}
 
-      {view === 'catalog' && (
-        <>
-          <div className="surface-card rounded-[var(--r-overlay)] overflow-hidden">
-            <div className="catalog-topbar">
-              <div className="section-title">
-                <div className="flex h-10 w-10 items-center justify-center rounded-[var(--r-control)] bg-[var(--dorami-wash)] text-blue-600">
-                  <Layers className="h-5 w-5" />
-                </div>
-                <span>内置节点目录</span>
-                <span className="text-xs font-mono text-slate-500">{visibleFetchers.length}/{availableFetchers.length}</span>
-              </div>
-              <button
-                type="button"
-                onClick={refreshSourceHealth}
-                disabled={healthRefreshing}
-                className="icon-button catalog-refresh-btn"
-                title="刷新运行健康数据"
-                aria-label="刷新运行健康数据"
-              >
-                <RefreshCw className={`h-4 w-4 ${healthRefreshing ? 'animate-spin' : ''}`} />
-              </button>
+          {fetcher.base_url && (
+            <a className="inspector-url" href={fetcher.base_url} target="_blank" rel="noreferrer" title="打开来源入口">
+              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{fetcher.base_url}</span>
+            </a>
+          )}
+
+          <div className="inspector-metarow">
+            <button type="button" className="inspector-metabtn" onClick={() => onViewArticles?.(fetcher.id)} title="查看该节点抓取的文章">
+              <FileText className="h-3.5 w-3.5" />
+              <span>抓取文章</span>
+              <b>{totalArticles}</b>
+            </button>
+            <button type="button" className="inspector-metabtn" onClick={() => onViewRuns?.(fetcher.id)} title="查看全部运行历史">
+              <Activity className="h-3.5 w-3.5" />
+              <span>运行历史</span>
+            </button>
+          </div>
+
+          <div className="inspector-section">
+            <div className="inspector-section-head">
+              <h3 className="micro-label">运行参数</h3>
+              {params.length > 0 && <span className="inspector-persist-note">改动即存草稿，下次自动带出</span>}
             </div>
-            <div className="catalog-filter-row catalog-filter-row-with-search">
-              <span className="catalog-dimension-label">板块</span>
-              <div className="catalog-chips">
-                <button onClick={() => setSectionFilter('all')} className={`category-chip ${sectionFilter === 'all' ? 'category-chip-active' : ''}`}>
-                  <span>全部</span>
-                  <span className="category-chip-count">{sectionAllCount}</span>
-                </button>
-                {sectionOptions.map(({ id, label, count }) => (
-                  <button key={id} onClick={() => setSectionFilter(id)} className={`category-chip ${sectionFilter === id ? 'category-chip-active' : ''}`}>
-                    <span>{label}</span>
-                    <span className="category-chip-count">{count}</span>
-                  </button>
+            {params.length === 0 ? (
+              <div className="inspector-empty-mini">该节点无需抓取参数</div>
+            ) : (
+              <div className="inspector-params">
+                {params.map(param => (
+                  <div key={param.field} className="inspector-param">
+                    <label className="inspector-param-label" title={param.field}>
+                      {param.label || param.field}
+                      {param.hint && <span className="inspector-param-hint">{param.hint}</span>}
+                    </label>
+                    {renderParamInput(fetcher.id, param)}
+                  </div>
                 ))}
               </div>
-              <div className="search-box catalog-search">
-                <Search className="mr-2 h-4 w-4 text-slate-500" />
-                <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="搜索名称、主体、ID、标签、Base URL" className="py-2" />
-              </div>
-            </div>
-            <div className="catalog-filter-row catalog-tier-row">
-              <span className="catalog-dimension-label">层级</span>
-              <div className="tier-segment">
-                {visibleTierFilterOptions.map(option => {
-                  const active = tierFilter === option.value;
-                  const count = option.value === 'all' ? (tierCounts.all || 0) : (tierCounts[option.value] || 0);
-                  return (
-                    <button
-                      key={option.value}
-                      onClick={() => setTierFilter(option.value)}
-                      className={`tier-segment-btn ${active ? 'tier-segment-btn-active' : ''}`}
-                      disabled={option.value !== 'all' && count === 0}
-                    >
-                      {option.label}<span className="tier-segment-count">{count}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="catalog-filter-row catalog-tier-row">
-              <span className="catalog-dimension-label">状态</span>
-              <div className="tier-segment">
-                {visibleStatusFilterOptions.map(option => {
-                  const active = statusFilter === option.value;
-                  const count = option.value === 'all' ? (statusCounts.all || 0) : (statusCounts[option.value] || 0);
-                  return (
-                    <button
-                      key={option.value}
-                      onClick={() => setStatusFilter(option.value)}
-                      className={`tier-segment-btn ${active ? 'tier-segment-btn-active' : ''}`}
-                      disabled={option.value !== 'all' && count === 0}
-                    >
-                      {option.label}<span className="tier-segment-count">{count}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            )}
           </div>
 
-          {groupedSections.length === 0 ? (
-            <div className="surface-card rounded-[var(--r-overlay)] p-16 text-center text-slate-500 font-medium">当前筛选条件下没有匹配的节点</div>
-          ) : (
-            <div className="space-y-8">
-              {groupedSections.map(section => {
-                const sectionOpen = isCatalogSectionOpen(section.id);
-                return (
-                  <section key={section.id} className="space-y-4">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      className="section-band section-band-toggle"
-                      style={{ '--section-accent': section.accent }}
-                      onClick={() => toggleCatalogSection(section.id, sectionOpen)}
-                      onKeyDown={event => handleCatalogSectionKeyDown(event, section.id, sectionOpen)}
-                      aria-expanded={sectionOpen}
-                    >
-                      <div className="section-band-line" />
-                      <div className="section-band-text">
-                        <h3 className="section-band-title">{section.label}</h3>
-                        <span className="section-band-en">{section.en}</span>
-                      </div>
-                      <span className="section-band-blurb">{section.blurb}</span>
-                      <span className="section-band-count">{section.companies.reduce((sum, c) => sum + c.fetchers.length, 0)} 源 · {section.companies.length} 主体</span>
-                      <span className="section-band-chevron">
-                        {sectionOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                      </span>
-                    </div>
+          <div className="inspector-actions">
+            <button
+              type="button"
+              className="action-button action-button-primary inspector-act"
+              disabled={isRunning}
+              onClick={() => runSingleFetcher(fetcher)}
+            >
+              {isRunning ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 立即运行
+            </button>
+            <button
+              type="button"
+              className="action-button action-button-quiet inspector-act"
+              disabled={preview?.status === 'running'}
+              onClick={() => runNodePreview(fetcher)}
+            >
+              <FlaskConical /> 试抓预览
+            </button>
+            <button
+              type="button"
+              className="action-button action-button-quiet inspector-act"
+              onClick={() => saveNodeAsJob(fetcher)}
+            >
+              <Save /> 存为采集任务
+            </button>
+          </div>
 
-                    {sectionOpen && (
-                      <div className="dept-grid">
-                        {section.companies.map(({ company, fetchers }) => {
-                      const open = isCompanyOpen(company.key, fetchers);
-                      const health = aggregateHealth(fetchers, healthByFetcher);
-                      const allSelected = fetchers.every(f => selectedFetchers.includes(f.id));
-                      const someSelected = fetchers.some(f => selectedFetchers.includes(f.id));
-                      return (
-                        <div key={company.key} className={`dept-card ${open ? 'dept-card-open' : ''}`} style={{ '--dept-accent': company.accent }}>
-                          <div className="dept-spine" />
-                          <div className="dept-head">
-                            <button
-                              type="button"
-                              onClick={() => toggleCompanySelection(fetchers)}
-                              className={`dept-check ${allSelected ? 'dept-check-on' : someSelected ? 'dept-check-some' : ''}`}
-                              title={allSelected ? '取消选择本主体全部节点' : '选择本主体全部节点'}
-                            >
-                              {allSelected ? <CheckSquare className="h-3.5 w-3.5 text-white" /> : someSelected ? <span className="dept-check-dash" /> : null}
-                            </button>
-                            <LogoMark company={company} size="md" />
-                            <button type="button" className="dept-headline" onClick={() => toggleCompany(company.key, open)}>
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className="dept-name truncate">{company.name}</span>
-                                {company.en && company.en !== company.name && <span className="dept-alias truncate">{company.en}</span>}
-                              </div>
-                              <div className="dept-meta">
-                                <span>{health.total} 源</span>
-                                <span className="dept-meta-dot">{health.articles} 篇</span>
-                                {health.failing > 0 && <span className="dept-meta-fail">{health.failing} 失败</span>}
-                                <span className="dept-meta-dot">{health.latest ? formatRelativeTime(health.latest) : '未运行'}</span>
-                              </div>
-                            </button>
-                            {!open && (
-                              <div className="dept-dotgrid" title="各源运行健康">
-                                {fetchers.slice(0, 16).map(f => {
-                                  const st = healthByFetcher[f.id]?.health_status || 'never_run';
-                                  const meta = healthMeta(st);
-                                  return <span key={f.id} className={`dept-dotgrid-dot ${meta.dot}`} title={`${f.name}：${meta.label}`} />;
-                                })}
-                              </div>
-                            )}
-                            <button type="button" className="dept-chevron" onClick={() => toggleCompany(company.key, open)} aria-label={open ? '收起' : '展开'}>
-                              {open ? <ChevronDown className="h-4.5 w-4.5" /> : <ChevronRight className="h-4.5 w-4.5" />}
-                            </button>
-                          </div>
-                          {open && (
-                            <div className="dept-body">
-                              {fetchers.map(renderSourceRow)}
-                            </div>
-                          )}
-                        </div>
-                      );
-                        })}
-                      </div>
-                    )}
-                  </section>
+          {preview && (
+            <div className="inspector-preview">
+              {preview.status === 'running' ? (
+                <div className="inspector-preview-head">
+                  <span className="inspector-spin" /> 试抓中（每源 {TEST_RUN_LIMIT} 条）…
+                </div>
+              ) : preview.status === 'error' ? (
+                <div className="inspector-preview-head is-bad">
+                  <AlertTriangle className="h-3.5 w-3.5" /> 试抓失败{preview.error ? `：${preview.error}` : ''}
+                </div>
+              ) : (
+                <>
+                  <div className="inspector-preview-head">
+                    试抓完成 · 新增 {preview.saved ?? 0} 条{preview.failed ? `，失败 ${preview.failed}` : ''}
+                  </div>
+                  <div className="inspector-preview-item">
+                    以当前参数试抓 1 条并写入台账；如需批量入库请用「立即运行」。
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          <div className="inspector-section">
+            <h3 className="micro-label">近期运行</h3>
+            {inspectorRunsLoading ? (
+              <div className="inspector-empty-mini">加载中…</div>
+            ) : inspectorRuns.length === 0 ? (
+              <div className="inspector-empty-mini">尚无运行记录，首次运行后这里会出现批次时间线</div>
+            ) : (
+              <div className="inspector-runlist">
+                {inspectorRuns.map(run => {
+                  const meta = runStatusMeta(run.status);
+                  return (
+                    <button
+                      key={run.id}
+                      type="button"
+                      className="inspector-runrow"
+                      onClick={() => onViewRuns?.(fetcher.id)}
+                      title="查看运行历史"
+                    >
+                      <span className={`inspector-run-dot inspector-run-${meta.tone}`} />
+                      <b>{meta.label}</b>
+                      <span className="inspector-run-saved">+{run.saved_count ?? 0}</span>
+                      <time>{formatRelativeTime(run.started_at)}</time>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {hasReview && (
+            <div className="inspector-section">
+              <h3 className="micro-label">源审查</h3>
+              <div className="inspector-review-grid">
+                {fetcher.signal_strength && <div><span className="tiny-meta">信号</span><div className="inspector-review-val">{signalLabel}</div></div>}
+                {fetcher.noise_risk && <div><span className="tiny-meta">噪声</span><div className="inspector-review-val">{noiseLabel}</div></div>}
+                {fetcher.fetch_reliability && <div><span className="tiny-meta">稳定性</span><div className="inspector-review-val">{reliabilityLabel}</div></div>}
+              </div>
+              {contentTags.length > 0 && (
+                <div className="inspector-tags">
+                  {contentTags.map(tag => <span key={tag}>{tag}</span>)}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </>
+    );
+  };
+
+  // 自定义节点构建器（暂关闭）：保留原路由分支，避免破坏 view 契约。
+  if (ENABLE_CUSTOM_NODE_BUILDER && view === 'custom') {
+    return (
+      <div className="space-y-6">
+        <div className="page-header flex-col xl:flex-row">
+          <div className="page-heading">
+            <h2 className="page-title">节点管理</h2>
+            <p className="page-subtitle mt-3 max-w-4xl">输入一个文章列表页 URL，自动分析并生成可抓取的自定义节点，无需写代码。</p>
+          </div>
+          <div className="page-actions">
+            <div className="segmented-control">
+              <button onClick={() => setView('catalog')} className="segmented-option"><Layers /> 节点目录</button>
+              <button onClick={() => setView('custom')} className="segmented-option segmented-option-active"><Wand2 /> AI 自定义节点</button>
+            </div>
+          </div>
+        </div>
+        <CustomNodeBuilder showToast={showToast} />
+      </div>
+    );
+  }
+
+  const boardIsEmpty = groupedBoard.length === 0;
+
+  return (
+    <div className="nodes-shell">
+      <div className="nodes-head">
+        <div className="page-heading">
+          <h2 className="page-title nodes-title">节点管理</h2>
+          <p className="page-subtitle nodes-subtitle">按类别聚合内置抓取节点，查看健康、编辑参数、就地运行与试抓。</p>
+        </div>
+        <div className="page-actions">
+          {ENABLE_CUSTOM_NODE_BUILDER && (
+            <div className="segmented-control">
+              <button onClick={() => setView('catalog')} className="segmented-option segmented-option-active"><Layers /> 节点目录</button>
+              <button onClick={() => setView('custom')} className="segmented-option"><Wand2 /> AI 自定义节点</button>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={handleBatchRun}
+            disabled={fetchLoading || visibleFetchers.length === 0}
+            className="action-button action-button-primary"
+            title="对当前筛选下的全部节点触发临时抓取"
+          >
+            {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 批量运行（{visibleFetchers.length}）
+          </button>
+        </div>
+      </div>
+
+      <div className="nodespaper">
+        <div className="signal-strip" role="group" aria-label="节点健康总览与筛选">
+          {SIGNAL_STATS.map((stat, idx) => (
+            <div key={stat.key} className="signal-stat-wrap">
+              {idx === 1 && <span className="signal-strip-divider" />}
+              <button
+                type="button"
+                className={`signal-stat ${healthFilter === stat.key ? 'signal-stat-on' : ''}`}
+                onClick={() => setHealthFilter(stat.key)}
+              >
+                {stat.sig && <span className={`signal-dot signal-dot-${stat.sig}`} />}
+                <span className="signal-stat-n">{healthCounts[stat.key] || 0}</span>
+                <span className="signal-stat-label">{stat.label}</span>
+              </button>
+            </div>
+          ))}
+          <div className="signal-strip-tools">
+            <button
+              type="button"
+              onClick={refreshSourceHealth}
+              disabled={healthRefreshing}
+              className="icon-button signal-refresh"
+              title="立即刷新运行健康数据"
+              aria-label="刷新运行健康数据"
+            >
+              <RefreshCw className={`h-4 w-4 ${healthRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+            <div className="signal-autorefresh">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoRefresh}
+                onClick={() => setAutoRefresh(v => !v)}
+                className={`signal-switch ${autoRefresh ? 'signal-switch-on' : ''}`}
+                aria-label="自动刷新"
+              />
+              <span>自动刷新</span>
+              <span className="signal-countdown">{autoRefresh ? `${countdown}s` : '—'}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="board-toolbar">
+          <div className="board-search">
+            <Search className="h-4 w-4 shrink-0" />
+            <input
+              value={searchQuery}
+              onChange={event => setSearchQuery(event.target.value)}
+              placeholder="搜索名称、主体、ID、标签、Base URL"
+              aria-label="搜索节点"
+            />
+          </div>
+          <div className="board-filter-group">
+            <span className="board-filter-label">板块</span>
+            <button onClick={() => setSectionFilter('all')} className={`category-chip ${sectionFilter === 'all' ? 'category-chip-active' : ''}`}>
+              <span>全部</span><span className="category-chip-count">{sectionAllCount}</span>
+            </button>
+            {sectionOptions.map(({ id, label, count }) => (
+              <button key={id} onClick={() => setSectionFilter(id)} className={`category-chip ${sectionFilter === id ? 'category-chip-active' : ''}`}>
+                <span>{label}</span><span className="category-chip-count">{count}</span>
+              </button>
+            ))}
+          </div>
+          <div className="board-filter-group">
+            <span className="board-filter-label">层级</span>
+            <div className="tier-segment">
+              {visibleTierFilterOptions.map(option => {
+                const active = tierFilter === option.value;
+                const count = option.value === 'all' ? (tierCounts.all || 0) : (tierCounts[option.value] || 0);
+                return (
+                  <button
+                    key={option.value}
+                    onClick={() => setTierFilter(option.value)}
+                    className={`tier-segment-btn ${active ? 'tier-segment-btn-active' : ''}`}
+                    disabled={option.value !== 'all' && count === 0}
+                  >
+                    {option.label}<span className="tier-segment-count">{count}</span>
+                  </button>
                 );
               })}
             </div>
-          )}
-        </>
-      )}
-
-      {selectedFetchers.length > 0 && view === 'catalog' && (
-        <div className="selection-bar animate-in slide-in-from-bottom-4">
-          {runningFetcherIds.size > 0 ? (
-            <RunningWidget
-              variant="embedded"
-              runningIds={runningFetcherIds}
-              fetchProgress={fetchProgress}
-              fetchersById={fetchersById}
-              onViewRunning={onViewRunning}
-            />
-          ) : (
-            <div className="selection-bar-info">
-              <CheckSquare /> 已选择 {selectedFetchers.length} 个节点
-            </div>
-          )}
-          <div className="selection-bar-actions">
-            <button onClick={handleSaveAsJob} disabled={fetchLoading} className="action-button action-button-quiet">
-              <Save /> 保存为采集任务
-            </button>
-            <button onClick={() => handleBatchFetch({ testLimit: 1 })} disabled={fetchLoading} className="action-button action-button-quiet">
-              <FlaskConical /> 试抓（每源 1 条）
-            </button>
-            <button onClick={() => handleBatchFetch()} disabled={fetchLoading} className="action-button action-button-primary">
-              {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} {fetchLoading ? '执行中...' : '立即临时抓取'}
-            </button>
           </div>
         </div>
-      )}
+
+        <div className={`nodes-body ${mobileInspectorOpen ? 'inspector-open' : ''}`}>
+          <div className="board">
+            {boardIsEmpty ? (
+              <div className="board-empty">当前筛选条件下没有匹配的节点</div>
+            ) : (
+              groupedBoard.map(section => (
+                <div key={section.id} className="board-group">
+                  <div className="board-group-head">
+                    <span className="board-group-marker" style={{ '--group-accent': section.accent }} />
+                    <span className="board-group-name">{section.label}</span>
+                    <span className="board-group-count">{section.fetchers.length} 个节点</span>
+                    <span className="board-group-rule" />
+                  </div>
+                  {section.fetchers.map(renderNode)}
+                </div>
+              ))
+            )}
+          </div>
+
+          <aside className="board-inspector" aria-label="节点检视器">
+            {renderInspector()}
+          </aside>
+          {mobileInspectorOpen && <div className="inspector-scrim" onClick={() => setMobileInspectorOpen(false)} />}
+        </div>
+      </div>
 
       {runningFetcherIds.size > 0 && (
         <RunningWidget
@@ -1016,7 +1039,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           fetchProgress={fetchProgress}
           fetchersById={fetchersById}
           onViewRunning={onViewRunning}
-          hidden={selectedFetchers.length > 0 && view === 'catalog'}
         />
       )}
     </div>
