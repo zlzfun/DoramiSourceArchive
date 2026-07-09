@@ -126,6 +126,18 @@
      依赖视口数学的全屏面(reader-shell 等)一律引用这两个 token,勿硬编码。 */
   --rail-w: 0px;
   --app-top: 76px;
+
+  /* 滚动条范式 token */
+  --dorami-scrollbar: rgba(11, 18, 32, 0.2);
+  --dorami-scrollbar-strong: rgba(11, 18, 32, 0.34);
+
+  /* ── 语义状态色 token(范式):ok/warn/bad/run/idle 五态,「色 + 淡底」成对。
+     状态章(.stamp)/信号灯/状态数字一律引用,勿再散写 emerald/rose/amber hex。 ── */
+  --state-ok: #059669;   --state-ok-bg: #ecfdf5;
+  --state-warn: #b45309; --state-warn-bg: #fffbeb;
+  --state-bad: #e11d48;  --state-bad-bg: #fff1f2;
+  --state-run: #0284c7;  --state-run-bg: #f0f9ff;
+  --state-idle: #64748b; --state-idle-bg: #f1f5f9;
   /* lg+ 的导轨几何覆盖见本文件 :root 块后的 @media (min-width: 1024px) */
 
   /* 工作区动效收敛（P4）：功能态向 Geist 节奏靠拢（状态~150 / 浮层~200-240 / 面板~300）。
@@ -154,10 +166,22 @@ html {
   scrollbar-gutter: stable;
 }
 
-/* Custom scrollbar */
+/* ── 滚动条范式(全局,新滚动容器自动继承,勿逐处自定义)──
+   常态隐形;指针悬停在滚动容器上(:hover 链)时该容器的滚动条才显现。
+   现代 Chrome/Firefox/Safari18.2+ 走 scrollbar-color 双值;旧 WebKit 走伪元素兜底,
+   两套行为一致。厚度/颜色改 --dorami-scrollbar* token,不要在组件里另写。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+*:hover {
+  scrollbar-color: var(--dorami-scrollbar) transparent;
+}
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -165,13 +189,16 @@ html {
 }
 
 ::-webkit-scrollbar-thumb {
-  /* 静默仪器:滚动条是 chrome 不是内容,退出品牌色 */
-  background: rgba(11, 18, 32, 0.18);
+  background: transparent;
   border-radius: var(--r-pill);
 }
 
+*:hover::-webkit-scrollbar-thumb {
+  background: var(--dorami-scrollbar);
+}
+
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(11, 18, 32, 0.32);
+  background: var(--dorami-scrollbar-strong);
 }
 
 * {
@@ -609,7 +636,6 @@ input[type="radio"] {
 
   .avatar-badge {
     background: var(--dorami-blue);
-    box-shadow: 0 6px 16px rgba(91, 84, 232, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.25);
   }
 
   /* ── Navigation ── */
@@ -780,15 +806,15 @@ input[type="radio"] {
 
   /* ── Buttons ── */
 
+  /* 扁平化范式:主按钮 = 实心 accent,无渐变无 glow(工作区;登录 auth-* 豁免) */
   .primary-action {
-    background: linear-gradient(135deg, var(--dorami-blue), var(--dorami-blue-2));
+    background: var(--dorami-blue);
     color: white;
-    box-shadow: 0 10px 24px rgba(91, 84, 232, 0.25);
+    box-shadow: var(--sh-1);
   }
 
   .primary-action:hover {
-    filter: brightness(1.06);
-    box-shadow: 0 14px 32px rgba(91, 84, 232, 0.32);
+    background: var(--dorami-accent-ink);
   }
 
   .ghost-action {
@@ -834,14 +860,13 @@ input[type="radio"] {
   }
 
   .action-button-primary {
-    background: linear-gradient(135deg, var(--dorami-blue) 0%, var(--dorami-blue-2) 100%);
+    background: var(--dorami-blue);
     color: #fff;
-    box-shadow: 0 10px 24px rgba(91, 84, 232, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    box-shadow: var(--sh-1);
   }
 
   .action-button-primary:hover {
-    filter: brightness(1.06);
-    box-shadow: 0 14px 34px rgba(91, 84, 232, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.24);
+    background: var(--dorami-accent-ink);
   }
 
   .action-button-secondary {
@@ -3055,10 +3080,10 @@ input[type="radio"] {
     font-variant-numeric: tabular-nums;
     color: var(--dorami-ink);
   }
-  .ledger-stat-num.is-ok { color: #059669; }
-  .ledger-stat-num.is-bad { color: #e11d48; }
-  .ledger-stat-num.is-warn { color: #b45309; }
-  .ledger-stat-num.is-run { color: #0284c7; }
+  .ledger-stat-num.is-ok { color: var(--state-ok); }
+  .ledger-stat-num.is-bad { color: var(--state-bad); }
+  .ledger-stat-num.is-warn { color: var(--state-warn); }
+  .ledger-stat-num.is-run { color: var(--state-run); }
 
   .ledger-stat-lbl { display: block; margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
   .ledger-stat-sub { display: block; margin-top: 1px; font-size: 11px; font-weight: 500; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
@@ -3076,7 +3101,7 @@ input[type="radio"] {
   }
 
   .ledger-coverbar { display: block; height: 4px; border-radius: var(--r-pill); background: var(--dorami-well); margin-top: 10px; overflow: hidden; }
-  .ledger-coverbar i { display: block; height: 100%; border-radius: var(--r-pill); background: #059669; transition: width var(--motion-slow) var(--motion-ease); }
+  .ledger-coverbar i { display: block; height: 100%; border-radius: var(--r-pill); background: var(--state-ok); transition: width var(--motion-slow) var(--motion-ease); }
 
   .ledger-strip-actions {
     flex: none;
@@ -3335,6 +3360,53 @@ input[type="radio"] {
 
   /* (静默仪器收尾:死类 integration-card、-icon、-button、-status-line、-version 已删除——
      MCPTab 仅使用 integration-hero/kicker/lede;历史样式见 git) */
+
+  /* ── 状态章范式 .stamp(样页直移):淡底 + 深字 + 形状点,无描边。
+     形状编码保证色弱可辨:ok=方 / idle=圆 / run=圆·呼吸 / bad=菱 / warn=三角。
+     新状态展示一律用它(向量索引态、节点健康、运行结果…),勿再造 chip。 ── */
+  .stamp {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2.5px 9px;
+    border-radius: var(--r-pill);
+    white-space: nowrap;
+  }
+  .stamp::before { content: ""; width: 6px; height: 6px; flex: none; border-radius: 1px; }
+  .stamp-ok   { color: var(--state-ok);   background: var(--state-ok-bg); }
+  .stamp-ok::before   { background: var(--state-ok); }
+  .stamp-idle { color: var(--state-idle); background: var(--state-idle-bg); }
+  .stamp-idle::before { background: var(--dorami-faint); border-radius: 50%; }
+  .stamp-run  { color: var(--state-run);  background: var(--state-run-bg); }
+  .stamp-run::before  { background: var(--state-run); border-radius: 50%; animation: stamp-pulse 1.6s infinite; }
+  .stamp-bad  { color: var(--state-bad);  background: var(--state-bad-bg); }
+  .stamp-bad::before  { background: var(--state-bad); transform: rotate(45deg); }
+  .stamp-warn { color: var(--state-warn); background: var(--state-warn-bg); }
+  .stamp-warn::before { background: var(--state-warn); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+  @keyframes stamp-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  /* 可点章(如「待索引→点击构建」):hover 用 wash 提示可操作 */
+  button.stamp:not(:disabled) { cursor: pointer; }
+  button.stamp:not(:disabled):hover { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+
+  /* ── 页码范式 .pager(样页直移):mono 数字钮,当前页 = ink 实底。
+     分页一律用它(台账/运行历史/管理列表…)。 ── */
+  .pager { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+  .pager-btn {
+    min-width: 26px;
+    height: 26px;
+    padding: 0 8px;
+    border-radius: var(--r-sm);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--dorami-muted);
+  }
+  .pager-btn:hover:not(:disabled):not(.is-on) { background: var(--dorami-well); color: var(--dorami-ink-2); }
+  .pager-btn.is-on { background: var(--dorami-ink); color: var(--dorami-surface); font-weight: 700; }
+  .pager-btn:disabled { opacity: 0.4; cursor: default; }
+  .pager-ellipsis { align-self: center; color: var(--dorami-faint); font-size: 11px; padding: 0 2px; }
 
   /* ── Status badges & chips ── */
 
@@ -6966,6 +7038,13 @@ input[type="radio"] {
   /* 静默仪器:暗色卡片描边降级为细白线(深底上阴影不可读),内高光减弱 */
   --dorami-card-bd: rgba(255, 255, 255, 0.08);
   --dorami-edge: rgba(255, 255, 255, 0.05);
+  --dorami-scrollbar: rgba(255, 255, 255, 0.2);
+  --dorami-scrollbar-strong: rgba(255, 255, 255, 0.34);
+  --state-ok: #34d399;   --state-ok-bg: #0f241b;
+  --state-warn: #fbbf24; --state-warn-bg: #281e10;
+  --state-bad: #fb7185;  --state-bad-bg: #2a151a;
+  --state-run: #38bdf8;  --state-run-bg: #0e1c27;
+  --state-idle: #99a1ad; --state-idle-bg: #15181f;
 
   /* —— 强调（深底略提亮：按钮不发灰、accent 文字达对比）—— */
   /* 填充类 accent（hero 渐变 / 主按钮 / 部门卡）在暗色下调深、去霓虹：
@@ -7169,12 +7248,7 @@ input[type="radio"] {
 [data-theme="dark"] .vector-status-failed { background: rgba(248, 113, 113, 0.13); color: #fca5a5; }
 [data-theme="dark"] .vector-status-stale { background: rgba(245, 158, 11, 0.14); color: #fcd34d; }
 [data-theme="dark"] .vector-status-indexing { background: rgba(59, 130, 246, 0.14); color: #93c5fd; }
-/* 台账总账条:状态数字色在深底提亮(与 vector-status 暗色同口径),覆盖率条同步 */
-[data-theme="dark"] .ledger-stat-num.is-ok { color: #34d399; }
-[data-theme="dark"] .ledger-stat-num.is-bad { color: #fb7185; }
-[data-theme="dark"] .ledger-stat-num.is-warn { color: #fbbf24; }
-[data-theme="dark"] .ledger-stat-num.is-run { color: #38bdf8; }
-[data-theme="dark"] .ledger-coverbar i { background: #34d399; }
+/* (台账状态数字/覆盖率条已 token 化(--state-*),暗色随 token 自动翻转) */
 [data-theme="dark"] .source-health-healthy { color: #6ee7b7; }
 [data-theme="dark"] .source-health-failing { color: #fca5a5; }
 [data-theme="dark"] .source-health-running { color: #fcd34d; }

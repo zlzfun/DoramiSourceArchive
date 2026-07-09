@@ -98,6 +98,8 @@
   （`inset 3px 0 0` 或 `::before`）+ `--dorami-soft` 底，**不用 indigo 描边/ring/glow**；
   横向控件：segmented 拇指 = surface 底 + ink 字 + 中性 `--sh-1`，顶栏 tab = 底部 accent 条。
 - 「运行中/进度」类活动态（进度线、运行 pulse、running 徽标）与 accent 同族，是有意的产品语义。
+- **语义状态 token(2026-07)**:ok/warn/bad/run/idle 五态一律引用 `--state-*` / `--state-*-bg`
+  成对 token(亮暗自动翻转),不再散写 emerald/rose/amber hex。
 
 ## 5. 圆角（canonical 家族）
 
@@ -123,6 +125,13 @@
 - 表格行分隔：至多一条 `--dorami-border` hairline；禁 zebra+行线双保险、禁 border-strong 行线。
 - 禁止 border + inset ring + 外阴影三重叠加；卡片无 hover 抬升（装饰性位移已拆）。
 模态等确需悬浮的浮层才用强高程（`--sh-3`）。
+
+**组件范式速查(新增展示一律复用,勿另造)**:
+- **状态章 `.stamp` + `.stamp-{ok|warn|bad|run|idle}`**:淡底+深字+形状点(方/三角/菱/圆呼吸/圆),无描边;可点章用 `button.stamp`(hover wash)。
+- **页码 `.pager` / `.pager-btn`(`.is-on`=ink 实底) / `.pager-ellipsis`**:所有分页统一。
+- **滚动条**:全局范式已定——常态隐形、悬停所在容器显现(`--dorami-scrollbar*` token);组件内**禁止**再写 `::-webkit-scrollbar`。
+- **主按钮扁平化**:`.action-button-primary`/`.primary-action` = 实心 accent + `--sh-1`,hover 加深;无渐变无 glow(登录 auth-* 豁免)。
+- **分面数据源**:筛选栏选项一律来自聚合端点(`GET /api/articles/facets` 之类的全量 group-by),不得从当前页数据推导。
 
 ## 7. 动效（区分场景）
 
