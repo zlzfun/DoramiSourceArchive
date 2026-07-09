@@ -5,7 +5,6 @@ import ArticleDetailModal from './ArticleDetailModal';
 import ArticleDetailDrawer from './ArticleDetailDrawer';
 import ManualAddModal from './ManualAddModal';
 import ActiveFilterBar from './ActiveFilterBar';
-import LogoMark from './LogoMark';
 import { resolveCompany } from '../sourceTaxonomy';
 import {
   fetchArticles as apiFetchArticles,
@@ -139,7 +138,10 @@ export default function DataTab({
   }, [sourceKey, fetchersById]);
 
   const canSelectArticles = canManageArticles;
-  const showStripBreakdown = canManageArticles && ragEnabled;
+  // index_status 是归档事实,与 RAG 开关无关:状态格/状态列/计数对管理员始终可见;
+  // 向量化「动作」(自动开关/全量/重建/单条构建)才依赖 RAG(向量子系统关闭时 503)。
+  const showIndexBreakdown = canManageArticles;
+  const showVectorActions = canManageArticles && ragEnabled;
   const totalPages = Math.max(1, Math.ceil((articlePageInfo.total || 0) / ARTICLE_PAGE_SIZE));
   const pageStart = articlePageInfo.total === 0 ? 0 : (currentPage - 1) * ARTICLE_PAGE_SIZE + 1;
   const pageEnd = Math.min(currentPage * ARTICLE_PAGE_SIZE, articlePageInfo.total || 0);
@@ -200,7 +202,7 @@ export default function DataTab({
         return null;
       }
     };
-    if (!showStripBreakdown) {
+    if (!showIndexBreakdown) {
       const total = await countFor({});
       setLedgerStats({ total });
       return;
@@ -214,7 +216,7 @@ export default function DataTab({
       countFor({ index_status: 'stale' }),
     ]);
     setLedgerStats({ total, indexed, pending, indexing, failed, stale });
-  }, [showStripBreakdown]);
+  }, [showIndexBreakdown]);
 
   const refreshAfterMutation = useCallback((page) => {
     loadArticles(page);
@@ -308,11 +310,11 @@ export default function DataTab({
 
   // 自动向量化开关：读取当前配置（仅管理员 + RAG 开启）。
   useEffect(() => {
-    if (!showStripBreakdown) return;
+    if (!showIndexBreakdown) return;
     let alive = true;
     getAutoVectorize().then(d => { if (alive) setAutoVec(Boolean(d.enabled)); }).catch(() => {});
     return () => { alive = false; };
-  }, [showStripBreakdown]);
+  }, [showIndexBreakdown]);
 
   useEffect(() => {
     if (isActive && articlesDirty) {
@@ -575,16 +577,25 @@ export default function DataTab({
               >
                 全部类型
               </button>
-              {uniqueContentTypes.map(t => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setFilters(prev => ({ ...prev, content_type: t }))}
-                  className={`ledger-facet-item ${filters.content_type === t ? 'is-on' : ''}`}
-                >
-                  {contentTypeLabel(t)}
-                </button>
-              ))}
+              {(() => {
+                const labelCount = uniqueContentTypes.reduce((m, t) => {
+                  const l = contentTypeLabel(t); m[l] = (m[l] || 0) + 1; return m;
+                }, {});
+                return uniqueContentTypes.map(t => {
+                  const label = contentTypeLabel(t);
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setFilters(prev => ({ ...prev, content_type: t }))}
+                      className={`ledger-facet-item ${filters.content_type === t ? 'is-on' : ''}`}
+                      title={t}
+                    >
+                      {labelCount[label] > 1 ? `${label} · ${t}` : label}
+                    </button>
+                  );
+                });
+              })()}
             </div>
           </div>
 
@@ -694,7 +705,7 @@ export default function DataTab({
         <div className="ledger-paper surface-card">
           <div className="ledger-strip" role="group" aria-label="索引状态总览与筛选">
             <div className="ledger-strip-stats">
-              {STAT_DEFS.filter(s => s.key === 'all' || showStripBreakdown).map(stat => (
+              {STAT_DEFS.filter(s => s.key === 'all' || showIndexBreakdown).map(stat => (
                 <button
                   key={stat.key}
                   type="button"
@@ -713,7 +724,7 @@ export default function DataTab({
                 </button>
               ))}
             </div>
-            {showStripBreakdown && (
+            {showVectorActions && (
               <div className="ledger-strip-actions">
                 <button
                   type="button"
@@ -756,7 +767,8 @@ export default function DataTab({
                 <col className="ledger-col-source" />
                 <col className="ledger-col-type" />
                 <col className="ledger-col-publish" />
-                {showStripBreakdown && <col className="ledger-col-vector" />}
+                <col className="ledger-col-publish" />
+                {showIndexBreakdown && <col className="ledger-col-vector" />}
                 <col className="ledger-col-acts" />
               </colgroup>
               <thead>
@@ -769,8 +781,9 @@ export default function DataTab({
                   <th className="ledger-th px-4">条目</th>
                   <th className="ledger-th px-3">来源</th>
                   <th className="ledger-th px-3">类型</th>
-                  <th className="ledger-th px-3 text-right">发布 / 收录</th>
-                  {showStripBreakdown && <th className="ledger-th px-3">索引状态</th>}
+                  <th className="ledger-th px-3 text-right">发布</th>
+                  <th className="ledger-th px-3 text-right">收录</th>
+                  {showIndexBreakdown && <th className="ledger-th px-3">索引状态</th>}
                   <th className="ledger-th px-3" />
                 </tr>
               </thead>
@@ -783,12 +796,13 @@ export default function DataTab({
                       <td className="px-3"><div className="flex items-center gap-2.5"><div className="skeleton h-8 w-8 rounded-[var(--r-control)]" /><div className="skeleton h-4 w-20" /></div></td>
                       <td className="px-3"><div className="skeleton h-5 w-16 rounded-full" /></td>
                       <td className="px-3"><div className="skeleton ml-auto h-4 w-16" /></td>
-                      {showStripBreakdown && <td className="px-3"><div className="skeleton h-6 w-20 rounded-full" /></td>}
+                      <td className="px-3"><div className="skeleton ml-auto h-4 w-16" /></td>
+                      {showIndexBreakdown && <td className="px-3"><div className="skeleton h-6 w-20 rounded-full" /></td>}
                       <td className="px-3" />
                     </tr>
                   ))
                 ) : articles.length === 0 ? (
-                  <tr><td colSpan={2 + (canSelectArticles ? 1 : 0) + (showStripBreakdown ? 1 : 0) + 3} className="px-6 py-16 text-center font-medium text-slate-500">当前筛选条件下未查询到相关数据，试试放宽时间区间或清除筛选</td></tr>
+                  <tr><td colSpan={2 + (canSelectArticles ? 1 : 0) + (showIndexBreakdown ? 1 : 0) + 4} className="px-6 py-16 text-center font-medium text-slate-500">当前筛选条件下未查询到相关数据，试试放宽时间区间或清除筛选</td></tr>
                 ) : articles.map((article) => {
                   const status = article.index_status || (article.is_vectorized ? 'indexed' : 'pending');
                   const busy = vectorizingId === article.id || status === 'indexing';
@@ -812,37 +826,34 @@ export default function DataTab({
                       </td>
                       <td className="px-3" onClick={e => e.stopPropagation()}>
                         {(() => {
-                          const company = companyFor(article.source_id);
                           const name = getFetcherName(article.source_id);
-                          const showCompany = company.name && company.name !== name && !company.key.startsWith('sid:');
                           return (
                             <button
                               type="button"
                               disabled={!onFocusSource}
                               onClick={() => onFocusSource?.(article.source_id)}
-                              className="ledger-source-link flex min-w-0 max-w-full items-center gap-2.5 text-left"
-                              title={onFocusSource ? `定位来源「${name}」` : article.source_id}
+                              className="ledger-source-link block min-w-0 max-w-full text-left"
+                              title={onFocusSource ? `定位来源「${name}」（${article.source_id}）` : article.source_id}
                             >
-                              <LogoMark company={company} size="sm" />
-                              <div className="min-w-0">
-                                <div className="ledger-source-name line-clamp-1 text-xs font-bold text-slate-700" title={article.source_id}>{name}</div>
-                                {showCompany && <div className="truncate text-xs text-slate-500">{company.name}</div>}
-                              </div>
+                              <span className="ledger-source-name line-clamp-1 text-xs font-semibold text-slate-700">{name}</span>
                             </button>
                           );
                         })()}
                       </td>
-                      <td className="px-3"><span className="data-chip max-w-full overflow-hidden text-ellipsis" title={article.content_type || ''}>{contentTypeLabel(article.content_type)}</span></td>
-                      <td className="px-3 text-right">
-                        <div className="ledger-date">{article.publish_date?.split('T')[0] || '-'}</div>
-                        <div className="ledger-date ledger-date-sub" title={`收录时间：${article.fetched_date?.replace('T', ' ').substring(0, 16) || '—'}`}>{article.fetched_date?.split('T')[0] || '-'}</div>
-                      </td>
-                      {showStripBreakdown && (
+                      <td className="px-3"><span className="ledger-type-chip max-w-full overflow-hidden text-ellipsis" title={article.content_type || ''}>{contentTypeLabel(article.content_type)}</span></td>
+                      <td className="px-3 text-right"><span className="ledger-date">{article.publish_date?.split('T')[0] || '-'}</span></td>
+                      <td className="px-3 text-right"><span className="ledger-date" title={`收录时间：${article.fetched_date?.replace('T', ' ').substring(0, 16) || '—'}`}>{article.fetched_date?.split('T')[0] || '-'}</span></td>
+                      {showIndexBreakdown && (
                         <td className="px-3" onClick={e => e.stopPropagation()}>
                           {status === 'indexed' ? (
                             <span className="vector-status vector-status-done">
                               <CheckCircle className="vector-status-icon" strokeWidth={2.35} />
                               <span className="vector-status-label">向量已构建</span>
+                            </span>
+                          ) : !showVectorActions ? (
+                            <span className={`vector-status vector-status-pending pointer-events-none${{ failed: ' vector-status-failed', stale: ' vector-status-stale' }[status] || ''}`}>
+                              <Zap className="vector-status-icon" strokeWidth={2.35} />
+                              <span className="vector-status-label">{VECTOR_STATUS_LABELS[status] || '待索引'}</span>
                             </span>
                           ) : (() => {
                             const restModifier = busy ? '' : { failed: ' vector-status-failed', stale: ' vector-status-stale' }[status] || '';
@@ -871,7 +882,7 @@ export default function DataTab({
           {selectedArticles.size > 0 && canSelectArticles && (
             <div className="ledger-batchbar">
               <span className="ledger-batch-n">{selectedArticles.size} 条已选</span>
-              {showStripBreakdown && (
+              {showIndexBreakdown && (
                 <button onClick={handleBatchVectorize} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
                   <Zap className="h-3.5 w-3.5" /> 批量构建
                 </button>
@@ -905,7 +916,7 @@ export default function DataTab({
         open={drawer.open}
         article={drawer.article}
         loading={detailLoading}
-        ragEnabled={showStripBreakdown}
+        ragEnabled={showVectorActions}
         canManage={canManageArticles}
         getFetcherName={getFetcherName}
         vectorizing={vectorizingId === drawer.article?.id}

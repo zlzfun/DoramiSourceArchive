@@ -72,6 +72,11 @@
 
 语境化标签（`.form-label`/`.node-param-label`/`.active-filter-label` 等）各自就地维护，不必归一。
 
+> ⚠️ **`button { font: inherit }` 陷阱(未分层压层)**:`index.css` 顶部这条全局规则是**未分层**的
+> `font` 简写,按 cascade layers 规则会压过 `@layer components` 里任何类选择器的 `font-size`——
+> 给按钮类写 `font-size` 看似合法实则不生效(计算值回落到继承链)。给按钮定字号要么写在**容器**上
+> 靠继承穿透(实例:`.ledger-scope`),要么用未分层规则/工具类。排查「字号怎么改都不生效」先想到这条。
+
 ## 4. 颜色令牌（语义四套，互不混用）
 
 详见 `index.css` `:root` 顶部「设计令牌分类法」注释。

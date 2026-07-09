@@ -2962,7 +2962,6 @@ input[type="radio"] {
   .ledger-facet-more:hover { background: var(--dorami-soft); color: var(--dorami-ink-2); }
 
   .ledger-scope { width: 100%; }
-  .ledger-scope .segmented-option { flex: 1; padding-inline: 6px; }
 
   /* 主纸:总账条 + 表格 + 批量条 + 表脚,一张纸(复用 .surface-card 语法) */
   .ledger-paper {
@@ -2975,6 +2974,32 @@ input[type="radio"] {
   }
 
   /* 总账条:hairline 与表格分隔 */
+  /* 类型列中性 chip:well 底 + muted 字,不占 accent(样页 .chip 语法) */
+  .ledger-type-chip {
+    display: inline-flex;
+    align-items: center;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2.5px 9px;
+    border-radius: var(--r-pill);
+    color: var(--dorami-muted);
+    background: var(--dorami-well);
+    white-space: nowrap;
+  }
+
+  /* 个性化视图 segmented 塞进 198px 分面栏:等分、紧凑、压扁基类的 40px 高度。
+     字号挂容器:全局未分层的 button{font:inherit}(简写)会压过 layer 内类的 font-size,
+     写在按钮上不生效,靠继承穿透才稳。 */
+  .ledger-scope { display: flex; width: 100%; padding: 3px; gap: 2px; font-size: 11px; }
+  .ledger-scope .segmented-option {
+    flex: 1;
+    min-width: 0;
+    min-height: 28px;
+    padding: 0 2px;
+    gap: 0;
+    white-space: nowrap;
+  }
+
   .ledger-strip {
     flex: none;
     display: flex;
@@ -4543,6 +4568,7 @@ input[type="radio"] {
   }
 
   .signal-stat {
+    position: relative; /* 选中态 ::after 底部 accent 条的定位锚 */
     display: inline-flex;
     align-items: center;
     gap: 7px;
