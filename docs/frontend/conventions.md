@@ -128,7 +128,7 @@
 
 **组件范式速查(新增展示一律复用,勿另造)**:
 - **状态章 `.stamp` + `.stamp-{ok|warn|bad|run|idle}`**:淡底+深字+形状点(方/三角/菱/圆呼吸/圆),无描边;可点章用 `button.stamp`(hover wash)。
-- **页码 `.pager` / `.pager-btn`(`.is-on`=ink 实底) / `.pager-ellipsis`**:所有分页统一。
+- **页码 `.pager` / `.pager-btn`(`.is-on`=accent 实底,选中标记) / `.pager-ellipsis`**:所有分页统一。
 - **滚动条**:全局范式已定——常态隐形、悬停所在容器显现(`--dorami-scrollbar*` token);组件内**禁止**再写 `::-webkit-scrollbar`。
 - **主按钮扁平化**:`.action-button-primary`/`.primary-action` = 实心 accent + `--sh-1`,hover 加深;无渐变无 glow(登录 auth-* 豁免)。
 - **分面数据源**:筛选栏选项一律来自聚合端点(`GET /api/articles/facets` 之类的全量 group-by),不得从当前页数据推导。

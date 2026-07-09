@@ -150,6 +150,12 @@
   --motion-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
+/* 全屏壳页(台账/节点/阅读器):根滚动封死——页面本身永不滚,滚动只发生在壳内区域,
+   同时杜绝浏览器缩放下 vh 取整产生的 1-2px 假滚动空间。 */
+html:has(.ledger-shell, .nodes-shell, .reader-shell) {
+  overflow: hidden;
+}
+
 /* 壳层几何:lg+ 启用左导轨、撤顶栏(与 :root 基础值同为未分层,媒体命中即胜出) */
 @media (min-width: 1024px) {
   :root {
@@ -199,11 +205,6 @@ html {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--dorami-scrollbar-strong);
-}
-
-* {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(91, 84, 232, 0.25) transparent;
 }
 
 body {
@@ -3147,6 +3148,10 @@ input[type="radio"] {
   .ledger-table-scroll { flex: 1; min-height: 0; overflow: auto; }
 
   .ledger-th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--dorami-surface);
     font-size: 10.5px;
     font-weight: 600;
     letter-spacing: 0.07em;
@@ -3410,7 +3415,7 @@ input[type="radio"] {
     color: var(--dorami-muted);
   }
   .pager-btn:hover:not(:disabled):not(.is-on) { background: var(--dorami-well); color: var(--dorami-ink-2); }
-  .pager-btn.is-on { background: var(--dorami-ink); color: var(--dorami-surface); font-weight: 700; }
+  .pager-btn.is-on { background: var(--dorami-blue); color: #fff; font-weight: 700; }
   .pager-btn:disabled { opacity: 0.4; cursor: default; }
   .pager-ellipsis { align-self: center; color: var(--dorami-faint); font-size: 11px; padding: 0 2px; }
 
@@ -3582,6 +3587,30 @@ input[type="radio"] {
   .date-range-trigger {
     min-height: 44px;
   }
+
+  /* compact 变体(分面栏等窄语境):与样页 .daterange input 同语言——
+     surface 底 + sh-1、mono 小字,不再是臃肿的大框控件 */
+  .date-range-trigger-quiet {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    width: 100%;
+    min-height: 30px;
+    padding: 5px 9px;
+    border-radius: var(--r-sm);
+    background: var(--dorami-surface);
+    box-shadow: var(--sh-1);
+    cursor: pointer;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--dorami-muted);
+  }
+  .date-range-trigger-quiet:hover { color: var(--dorami-ink-2); }
+  .date-range-trigger-quiet.is-open { box-shadow: var(--sh-1), 0 0 0 3px var(--dorami-focus); }
+  .date-range-trigger-quiet.has-value { color: var(--dorami-ink-2); }
+  .date-range-trigger-quiet svg { width: 13px; height: 13px; flex: none; color: var(--dorami-faint); }
 
   .date-range-popover {
     position: absolute;

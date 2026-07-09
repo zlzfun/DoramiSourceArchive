@@ -619,7 +619,7 @@ export default function DataTab({
               ))}
             </div>
             <div className="ledger-facet-range">
-              <DateRangePicker
+              <DateRangePicker compact
                 startDate={filters.fetched_date_start}
                 endDate={filters.fetched_date_end}
                 onChange={(start, end) => setFilters({ ...filters, fetched_date_start: start, fetched_date_end: end })}
@@ -642,7 +642,7 @@ export default function DataTab({
               <>
                 <h3 className="micro-label ledger-facet-title mt-2">原始发布日期</h3>
                 <div className="ledger-facet-range">
-                  <DateRangePicker
+                  <DateRangePicker compact
                     startDate={filters.publish_date_start}
                     endDate={filters.publish_date_end}
                     onChange={(start, end) => setFilters({ ...filters, publish_date_start: start, publish_date_end: end })}
