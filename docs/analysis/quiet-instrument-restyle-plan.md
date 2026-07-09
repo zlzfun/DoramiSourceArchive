@@ -128,3 +128,31 @@ lint + vite build 全程绿;审计 grep(§三)全部通过。
 - 阅读器相对时间显示(JSX 逻辑,非纯样式,未纳入本波);
 - `·` 分隔符配给与文案层 em-dash 审查(文案波);
 - eslint 可加规则拦截 font-black/入场类回潮(可选)。
+
+
+## 五、布局波(L1–L4,2026-07-09)
+
+目标:实机达到 dorami-quiet-sample.html(台账/节点)与 dorami-reader-quiet.html(阅读器)的布局。
+提交链:L1 b5a5f3f(壳层)→ L2+L3 c884a66(两大页)→ L4 收尾(本提交)。
+
+| 阶段 | 内容 | 负责 | 状态 |
+|---|---|---|---|
+| L1 壳层 | lg+ 左侧图标导轨替换顶栏;--rail-w/--app-top token;reader-shell 视口数学改造;移动端保留顶栏 | 主线 | ✅ b5a5f3f |
+| L2 台账 | 分面栏+主纸(总账条=状态筛选器/覆盖率条/向量化动作区)+表格+详情抽屉(ArticleDetailDrawer,索引流水线);后端补 /api/articles has_content 透传 | Opus 代理 | ✅ c884a66 |
+| L3 节点 | 一张纸:信号灯条(四灯+自动刷新)+分组调度板(行式/失败就地/行内进度)+常驻检视器(参数/试抓/存任务/近期运行);移动端检视器=底部抽屉 | Opus 代理 | ✅ c884a66 |
+| L4 收尾 | 文档/记忆/终验提交 | 主线 | ✅ |
+
+**决策记录**:
+- 「告警」信号灯不落地:后端 SourceStateRecord 仅 healthy/failing/running/never_run 四态,无 warn 数据支撑;
+- 试抓复用 test-fetch(testLimit=1,会写入台账),文案诚实标注,只借样页 preview-box 视觉;干跑端点属后端立项;
+- 节点页 dept(主体)聚合层与行内多选退役,批量语义改「页头批量运行 × 筛选可见集」;
+- 台账总账条计数 = 6 个并行 limit=1 聚合(全局口径,不随分面变化);
+- 阅读器无需布局改动:三栏结构上一波已对齐,L1 的 token 化几何自动适配导轨。
+
+**遗留(需后端聚合端点才能补齐样页细节)**:
+- 总账条 7 日趋势 sparkline、节点行 7 日 sparkline(需 per-day 计数端点);
+- 分面 per-value 计数(内容类型/来源);
+- 死类清扫:旧 FetchTab 的 dept-*/section-band*/catalog-*/source-*(部分被 subscription-* 结构引用)、
+  L2 退役的 ledger-filter-row 相关、.top-tab*/.brand-title(顶栏退役);建议单独一个清理提交;
+- 设置面板 VectorSection 与总账条动作区的自动向量化/重索引入口重复,留设置波收敛;
+- 「批量试抓/批量存任务」由多选语义降为单节点动作,如需恢复手选批量需产品决策。
