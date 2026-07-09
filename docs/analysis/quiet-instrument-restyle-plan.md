@@ -77,14 +77,14 @@
 | 阶段 | 内容 | 负责 | 状态 |
 |---|---|---|---|
 | P0 基线 | 阅读器体验波 commit + 切分支 | 主线 | ✅ c4803f6 |
-| P1 foundation | index.css 共享层:token(card-bd/edge)、共享选中类(top-tab/nav-pill/segmented/scope-toggle/filter-chip/category-chip/tier-segment/config-toggle/source-row-selected/catalog-chip)、hover 灰阶化(含暗色段)、仪式动效拆除、字重角色类 | 主线(自做) | ⬜ |
-| P2-A | ReaderTab + ReaderMarkdown + reader 区段 css(R1/R3/R6:来源行/文章卡选中竖条、pin/load-more hover、字重) | Opus 代理 | ⬜ |
-| P2-B | DataTab + ArticleDetailModal + ManualAddModal + DateRangePicker + 相应 css 区段 | Opus 代理 | ⬜ |
-| P2-C | FetchTab + FetchRunsTab + 相应 css 区段(node-card/source-run/试抓等) | Opus 代理 | ⬜ |
-| P3-D | MCPTab + FeedAccessSection + DailyBriefPanel + DailyBriefFlow + AccessTokenCard | Opus 代理 | ⬜ |
-| P3-E | AdminOpsTab + charts/ + SettingsModal + settings/* + VectorTab | Opus 代理 | ⬜ |
-| P3-F | App.jsx 壳层 + Toast + ConfirmDialog + 杂项组件 | Opus 代理 | ⬜ |
-| P4 验收 | lint + build + grep 审计 + 亮暗抽查 + conventions.md 回写 + 提交 | 主线 | ⬜ |
+| P1 foundation | 同左 | 主线(自做) | ✅ 655f9a4 |
+| P2-A | ReaderTab + ReaderMarkdown + reader 区段 css(R1/R3/R6:来源行/文章卡选中竖条、pin/load-more hover、字重) | Opus 代理 | ✅ |
+| P2-B | DataTab + ArticleDetailModal + ManualAddModal + DateRangePicker + 相应 css 区段 | Opus 代理 | ✅ |
+| P2-C | FetchTab + FetchRunsTab + 相应 css 区段(node-card/source-run/试抓等) | Opus 代理 | ✅ |
+| P3-D | MCPTab + FeedAccessSection + DailyBriefPanel + DailyBriefFlow + AccessTokenCard | Opus 代理 | ✅ |
+| P3-E | AdminOpsTab + charts/ + SettingsModal + settings/* + VectorTab | Opus 代理 | ✅ |
+| P3-F | App.jsx 壳层 + Toast + ConfirmDialog + 杂项组件 | Opus 代理 | ✅ |
+| P4 验收 | lint + build + grep 审计 + conventions.md 回写 + 死类清理 + 提交 | 主线 | ✅ |
 
 **子任务边界(每个代理)**:只改分工表里自己的 JSX 文件 + index.css 中**自己组件的区段**
 (区段以 `/* ── <组件名> ── */` 注释为界;共享类已由 P1 处理,发现越界需求记录在报告里,不要改)。
@@ -105,3 +105,26 @@ grep -rn "row-stagger\|animate-in fade-in slide-in-from-bottom" frontend/src/com
 # 5. 渐变实心只剩 primary 按钮族
 grep -n "linear-gradient(135deg, var(--dorami-blue)" frontend/src/index.css
 ```
+
+
+## 四、完成记录与决策日志(2026-07-09)
+
+提交链:基线 c4803f6 → P1 655f9a4 → Wave1 aed5015 → Wave2 e08684c → P4 收尾(本提交)。
+lint + vite build 全程绿;审计 grep(§三)全部通过。
+
+**有意保留(非遗漏)**:
+- 「运行中/进度」活动态 = accent 家族(进度线/运行 pulse/running 徽标/statusMeta running tone),产品语义;
+- integration-hero 大渐变面:接入页唯一品牌陈述面,是否降级留给布局波;
+- 日历选中日实心 accent 圆、focus 焦点环、checkbox 控件 accent、DailyBriefFlow 点击披露 fade;
+- wash 基底元素(source-run/subscription-action/reader-pin-off/active-filter-chip)的 hover 同族加深。
+
+**显眼改动(用户目检重点)**:
+- VectorTab「ChromaDB 挂载块数」渐变 hero → 中性仪表卡(嫌过头可单独回退该 commit 片段);
+- 全站选中态从 indigo 描边/渐变实心 → 竖条/wash;顶栏 tab 文字 ink 化;
+- 切页/列表入场动画消失(刻意);卡片 hover 不再抬升。
+
+**遗留(另立项)**:
+- 布局重构波(台账总账条并入主纸/节点三段一纸/常驻检视器,见样页);
+- 阅读器相对时间显示(JSX 逻辑,非纯样式,未纳入本波);
+- `·` 分隔符配给与文案层 em-dash 审查(文案波);
+- eslint 可加规则拦截 font-black/入场类回潮(可选)。

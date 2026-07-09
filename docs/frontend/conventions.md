@@ -58,13 +58,17 @@
 
 | 角色类 | 用途 | 规格 |
 |---|---|---|
-| `.page-title` | 页面 H1 | clamp(26–32px)/900 |
+| `.page-title` | 页面 H1 | clamp(26–32px)/800 |
 | `.page-subtitle` | 页面副标题/说明 | 14px/600·muted |
 | `.card-title` / `.section-title` | 卡片/区块标题 | 15px/700 · 14px/700 |
 | `.body-text` | 默认正文/可读多行 | 14px/1.6/600 |
 | `.tiny-meta` | 次要 meta | 12px/500 |
 | `.micro-label` | 微标签/徽标/角标 | 11px/700 |
-| `.stat-number` | 指标数字 | 26px/900 |
+| `.stat-number` | 指标数字 | 26px/700·tabular |
+
+**静默仪器·字重纪律(2026-07)**:工作区 900/`font-black` 全面退场——页面级标题 800、
+指标数字 700、列表条目标题 ≤700(阅读器文章卡 600);大字号配中粗,仪表感靠 tabular 对齐而非超粗。
+数字列/计数/时间戳一律 `tabular-nums`。(登录/品牌面豁免。)
 
 语境化标签（`.form-label`/`.node-param-label`/`.active-filter-label` 等）各自就地维护，不必归一。
 
@@ -78,6 +82,17 @@
 - **强调/状态**：`--dorami-accent`(=`--dorami-blue`) / `blue-2` / `accent-ink` ——
   **唯一饱和色，只用于「激活/状态」与「一个视图里最重要的那个动作（CTA）」。**
 - 散落的 indigo/blue 原子类已在 `@theme` 折叠为同一 accent；emerald/amber/red/slate 语义中性色照常用。
+
+**静默仪器·accent 纪律（2026-07，全站已落地）**：
+- **实心/渐变 accent 一屏 ≤2 处**：主按钮（CTA）+ 选中标记。chip/徽标激活态一律
+  「`--dorami-wash` 底 + `--dorami-accent-ink` 字 + 无描边」，不再渐变实心。
+- **hover 不得引入 accent**：hover 背景 `--dorami-soft`（暗色可点控件 `--dorami-raised`），
+  文字/描边走 ink/border-strong；wash 基底元素的 hover 只允许同族加深。
+  例外：focus 焦点环（a11y）、checkbox 类控件、CTA 自身的提亮。
+- **选中语法全站统一 = accent 竖条**：纵向列表/导航项选中 = 3px `--dorami-blue` 左竖条
+  （`inset 3px 0 0` 或 `::before`）+ `--dorami-soft` 底，**不用 indigo 描边/ring/glow**；
+  横向控件：segmented 拇指 = surface 底 + ink 字 + 中性 `--sh-1`，顶栏 tab = 底部 accent 条。
+- 「运行中/进度」类活动态（进度线、运行 pulse、running 徽标）与 accent 同族，是有意的产品语义。
 
 ## 5. 圆角（canonical 家族）
 
@@ -94,16 +109,24 @@
 一个视图内只用同一圆角家族，勿混圆与方。Tailwind 具名 `rounded-lg/xl/2xl/full` 为标准梯度可共存；
 `50%`（正圆）/`0`（显式去角）等特例保留。
 
-## 6. 高程/阴影
+## 6. 高程/阴影与描边预算
 
-层级**先靠色面 + 边框**，阴影克制（参考 `--sh-1/2/3`，工作区已调淡）。新建卡片优先用 `.surface-card`
-而非自定义重阴影；模态等确需悬浮的浮层才用强高程。
+**静默仪器·描边预算（2026-07）：同一层级只用一种分隔手段。**
+- 卡片级容器：描边走 `--dorami-card-bd`（亮=transparent、暗=细白线），分隔靠 `--sh-2` +
+  顶部内高光 `inset 0 1px 0 var(--dorami-edge)`；`.surface-card` 已内置，新卡片直接复用。
+- 状态章/chip：淡底 + 深字，**无描边**（准绳：`.vector-status-*`）。
+- 表格行分隔：至多一条 `--dorami-border` hairline；禁 zebra+行线双保险、禁 border-strong 行线。
+- 禁止 border + inset ring + 外阴影三重叠加；卡片无 hover 抬升（装饰性位移已拆）。
+模态等确需悬浮的浮层才用强高程（`--sh-3`）。
 
 ## 7. 动效（区分场景）
 
-- **工作区**：功能态 ~150ms、浮层/弹层 ~200–240ms、面板/模态 ~300ms。引用 motion token：
-  `--motion-fast`(150) / `--motion-medium`(240) / `--motion-slow`(300) + `--motion-ease`。
-  **动效只为澄清状态变化，勿装饰**；长列表逐行 stagger 已弱化封顶，勿再加长。
+- **工作区（静默仪器，2026-07）：动效 = feedback-only。** 仪式性入场已整体拆除
+  （`tab-enter`/`row-stagger`/`entrance-stagger` keyframes 已删，`.tab-panel`/`.row-stagger`/`.stagger`
+  仅存为无动效锚点）——**不要再给切页/列表/卡片加入场编排**。
+  保留白名单：modal/toast/popover 开合、`selection-bar` 上下文条、进度条/进度线、骨架屏 shimmer、
+  开关/拇指滑动、运行中 pulse、hover 即时变底、瞬态定位高亮（`source-row-focus`）。
+  时长引用 motion token：`--motion-fast`(150) / `--motion-medium`(240) / `--motion-slow`(300) + `--motion-ease`。
 - **品牌/登录页**：电影感动画（秒级、硬编码）保留，不引用上述 token，不收敛。
 - 所有动画都要在 `@media (prefers-reduced-motion: reduce)` 下降级（已有兜底，新增动画须遵守）。
 

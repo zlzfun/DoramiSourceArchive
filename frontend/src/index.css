@@ -2801,26 +2801,7 @@ input[type="radio"] {
     cursor: default;
   }
 
-  /* ── Node card ── */
-
-  .node-card {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.82)),
-      linear-gradient(135deg, rgba(91, 84, 232, 0.04), transparent 52%);
-    border: 1px solid rgba(11, 18, 32, 0.12);
-    box-shadow: var(--dorami-soft-shadow);
-    transition:
-      border-color var(--motion-medium) var(--motion-ease),
-      box-shadow var(--motion-medium) var(--motion-ease),
-      transform var(--motion-medium) var(--motion-spring),
-      background var(--motion-medium) var(--motion-ease);
-  }
-
-  /* 静默仪器:hover 不抬升不染边,仅底色即时反馈 */
-  .node-card:hover {
-    border-color: var(--dorami-border-strong);
-    background: var(--dorami-soft);
-  }
+  /* (静默仪器收尾:死类 .node-card 已删除——FetchTab 不再引用) */
 
   /* ── Integration hero ── */
 
@@ -2856,156 +2837,8 @@ input[type="radio"] {
     line-height: 22px;
   }
 
-  /* 静默仪器·R4/R5:accent 微渐变/染边/染底收敛为表面阶,分隔靠描边+阴影 */
-  .integration-card {
-    position: relative;
-    border: 1px solid var(--dorami-card-bd);
-    border-radius: var(--r-card);
-    background: var(--dorami-surface);
-    box-shadow: var(--sh-2);
-    padding: 20px;
-    transition:
-      background var(--motion-medium) var(--motion-ease),
-      border-color var(--motion-medium) var(--motion-ease);
-  }
-
-  .integration-card:hover {
-    border-color: var(--dorami-border-strong);
-    background: var(--dorami-soft);
-  }
-
-  .integration-icon {
-    display: flex;
-    width: 36px;
-    height: 36px;
-    align-items: center;
-    justify-content: center;
-    border-radius: var(--r-control);
-    box-shadow: 0 8px 20px rgba(91, 84, 232, 0.14);
-  }
-
-  .integration-icon-sky {
-    border: 1px solid rgba(91, 84, 232, 0.18);
-    background: linear-gradient(135deg, #edecfb, #dcdafa);
-    color: var(--dorami-blue);
-  }
-
-  .integration-icon-violet {
-    border: 1px solid rgba(91, 84, 232, 0.18);
-    background: linear-gradient(135deg, #f0effc, #e3e0fb);
-    color: var(--dorami-blue-2);
-  }
-
-  .integration-card-title {
-    color: var(--dorami-ink);
-    font-size: 14px;
-    font-weight: 800;
-    line-height: 20px;
-  }
-
-  .integration-card-meta {
-    color: #64748b;
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 18px;
-  }
-
-  .integration-card-copy {
-    color: #475569;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 20px;
-  }
-
-  .integration-status-line {
-    border-color: rgba(11, 18, 32, 0.1) !important;
-    background: rgba(247, 248, 250, 0.58) !important;
-    color: var(--dorami-muted) !important;
-  }
-
-  .integration-status-line .text-white\/40,
-  .integration-status-line .text-white\/50 {
-    color: rgba(102, 112, 133, 0.9) !important;
-  }
-
-  .integration-button {
-    display: inline-flex;
-    min-height: 38px;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    border-radius: var(--r-control);
-    padding: 0 14px;
-    font-size: 13px;
-    font-weight: 800;
-    line-height: 18px;
-    transition:
-      transform var(--motion-fast) var(--motion-spring),
-      box-shadow var(--motion-fast) var(--motion-ease),
-      border-color var(--motion-fast) var(--motion-ease),
-      background var(--motion-fast) var(--motion-ease);
-  }
-
-  .integration-button:hover:not(:disabled) {
-    transform: translateY(-1.5px);
-  }
-
-  .integration-button:disabled {
-    opacity: 0.45;
-  }
-
-  .integration-button-primary {
-    border: 1px solid rgba(91, 84, 232, 0.9);
-    background: linear-gradient(135deg, var(--dorami-blue), var(--dorami-blue-2));
-    color: #ffffff;
-    box-shadow: 0 8px 24px rgba(91, 84, 232, 0.26);
-  }
-
-  .integration-button-primary:hover:not(:disabled) {
-    background: linear-gradient(135deg, #4a43d4, var(--dorami-blue-2));
-    box-shadow: 0 12px 32px rgba(91, 84, 232, 0.36);
-  }
-
-  /* 静默仪器·R5:次按钮降级为中性(surface 底 + 强描边 + ink-2 字),accent 让位给 CTA */
-  .integration-button-secondary {
-    border: 1px solid var(--dorami-border-strong);
-    background: var(--dorami-surface);
-    color: var(--dorami-ink-2);
-    box-shadow: var(--sh-1);
-  }
-
-  .integration-button-secondary:hover:not(:disabled) {
-    background: var(--dorami-soft);
-    border-color: var(--dorami-border-strong);
-  }
-
-  .integration-button-danger {
-    border: 1px solid rgba(239, 68, 68, 0.22);
-    background: rgba(255, 255, 255, 0.88);
-    color: #dc2626;
-    box-shadow: 0 6px 18px rgba(220, 38, 38, 0.06);
-  }
-
-  .integration-button-danger:hover:not(:disabled) {
-    background: #fff7f7;
-    border-color: rgba(239, 68, 68, 0.36);
-  }
-
-  /* 静默仪器·R4:wash 章语法——淡底 + accent-ink 字 + 无描边 */
-  .integration-version {
-    display: inline-flex;
-    min-height: 22px;
-    align-items: center;
-    justify-content: center;
-    border-radius: var(--r-control);
-    background: var(--dorami-wash);
-    color: var(--dorami-accent-ink);
-    padding: 0 9px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size: 12px;
-    font-weight: 800;
-    line-height: 18px;
-  }
+  /* (静默仪器收尾:死类 integration-card、-icon、-button、-status-line、-version 已删除——
+     MCPTab 仅使用 integration-hero/kicker/lede;历史样式见 git) */
 
   /* ── Status badges & chips ── */
 
@@ -5692,7 +5525,7 @@ input[type="radio"] {
 
 /* ════ 规则②：卡片 / 浮层 / 模态 / 激活控件 / 列表行 hover → surface ════ */
 [data-theme="dark"] :is(
-  .modal-panel, .date-range-popover, .node-card, .dept-card, .running-widget, .selection-bar,
+  .modal-panel, .date-range-popover, .dept-card, .running-widget, .selection-bar,
   .segmented-option-active, .scope-toggle-option-active, .subscription-dept-card, .subscription-source-row,
   .source-row:hover,
   .field-box:focus-within, .search-box:focus-within, .catalog-search:focus-within,
@@ -5701,7 +5534,7 @@ input[type="radio"] {
   background: var(--dorami-surface);
   border-color: var(--dorami-border);
 }
-[data-theme="dark"] :is(.modal-panel, .date-range-popover, .node-card, .dept-card, .running-widget, .selection-bar) { box-shadow: var(--sh-3); }
+[data-theme="dark"] :is(.modal-panel, .date-range-popover, .dept-card, .running-widget, .selection-bar) { box-shadow: var(--sh-3); }
 [data-theme="dark"] :is(.segmented-option-active, .scope-toggle-option-active) { box-shadow: var(--sh-1); }
 [data-theme="dark"] :is(.field-box:focus-within, .search-box:focus-within, .catalog-search:focus-within, .node-param-input:focus, .form-input:focus) { border-color: rgba(124, 112, 235, 0.5); }
 [data-theme="dark"] .source-row { background: var(--dorami-soft); border-color: var(--dorami-border); }
@@ -5731,35 +5564,18 @@ input[type="radio"] {
 
 /* ════ 规则④：强调淡底 → 统一 --dorami-wash（不再各自发紫）════ */
 [data-theme="dark"] :is(
-  .integration-version, .data-chip, .source-run, .config-toggle-active
+  .data-chip, .source-run, .config-toggle-active
 ) {
   background: var(--dorami-wash);
   border-color: rgba(124, 112, 235, 0.3);
 }
-[data-theme="dark"] :is(.integration-version, .data-chip) { color: #c4bdf7; }
+[data-theme="dark"] .data-chip { color: #c4bdf7; }
 [data-theme="dark"] .data-table tbody tr:hover { background: var(--dorami-soft); }
 [data-theme="dark"] .source-row-selected { background: var(--dorami-soft); border-color: transparent; }
-[data-theme="dark"] :is(.integration-icon-sky, .integration-icon-violet) {
-  background: linear-gradient(135deg, rgba(124, 112, 235, 0.26), rgba(124, 112, 235, 0.12));
-}
 
 /* ── 运行小部件文字 / 接入集成卡 / 模态遮罩 ── */
 [data-theme="dark"] .running-widget-headline { color: #c7c2f5; }
-[data-theme="dark"] .integration-card {
-  background: var(--dorami-surface);
-  border-color: var(--dorami-card-bd);
-  box-shadow: var(--sh-2);
-}
-[data-theme="dark"] .integration-card:hover {
-  background: var(--dorami-raised);
-  border-color: var(--dorami-border-strong);
-}
 /* 静默仪器·§9:次按钮=可点控件,暗色走 raised 一档 + 中性描边 */
-[data-theme="dark"] .integration-button-secondary { background: var(--dorami-raised); color: var(--dorami-ink-2); border-color: var(--dorami-border); box-shadow: var(--sh-1); }
-[data-theme="dark"] .integration-button-secondary:hover:not(:disabled) { background: #323a47; border-color: var(--dorami-border-strong); }
-[data-theme="dark"] .integration-button-danger { background: var(--dorami-raised); color: #fca5a5; }
-[data-theme="dark"] .integration-button-danger:hover:not(:disabled) { background: #323a47; }
-[data-theme="dark"] .integration-status-line { background: var(--dorami-well) !important; border-color: var(--dorami-border) !important; }
 [data-theme="dark"] .modal-overlay { background: rgba(0, 0, 0, 0.62); }
 /* 灯箱遮罩暗色再加深（同 .modal-overlay 惯例），让放大原图更聚焦 */
 [data-theme="dark"] .reader-lightbox { background: rgba(0, 0, 0, 0.88); }
@@ -5787,7 +5603,7 @@ input[type="radio"] {
 [data-theme="dark"] :is(
   .segmented-option, .scope-toggle-option, .node-param-title, .node-param-label,
   .field-box > span, .vector-option-box > span, .active-filter-label, .active-filter-chip-label,
-  .active-filter-clear, .integration-card-meta, .integration-card-copy, .catalog-dimension-label,
+  .active-filter-clear, .catalog-dimension-label,
   .tiny-meta, .form-field, .form-field > span, .form-label, .date-range-weekday,
   .panel-header-subtitle, .running-widget-more, .running-widget-progress-queued, .running-widget-name,
   .category-chip, .tier-segment-btn, .section-band-count, .section-band-chevron, .dept-alias,
