@@ -3013,7 +3013,8 @@ input[type="radio"] {
   .ledger-facet-item.is-clipped:hover .n {
     opacity: 0;
     max-width: 0;
-    transition: opacity var(--motion-fast) var(--motion-ease) 400ms, max-width var(--motion-medium) var(--motion-ease) 400ms;
+    /* 计数先行退场(350ms 起、120ms 完),给 480ms 的解除截断腾出干净空间 */
+    transition: opacity 100ms var(--motion-ease) 350ms, max-width 120ms var(--motion-ease) 350ms;
   }
 
   /* 揭示后仍溢出的长名:同一延时下解除省略并整体左移(--reveal-shift 由测量 effect 写入),
@@ -3028,7 +3029,13 @@ input[type="radio"] {
     overflow: visible;
     text-overflow: clip;
     transform: translateX(var(--reveal-shift, 0px));
-    transition: transform 600ms var(--motion-ease) 400ms;
+    /* overflow/text-overflow 是离散属性,默认 hover 一瞬翻转导致全名压在数字上——
+       用 allow-discrete 把翻转精确推迟到计数退场之后(480ms),消除重叠窗口。
+       不支持 allow-discrete 的旧浏览器退化为原行为(短暂重叠),无功能损失。 */
+    transition:
+      transform 600ms var(--motion-ease) 480ms,
+      overflow 0s 480ms allow-discrete,
+      text-overflow 0s 480ms allow-discrete;
   }
   .ledger-facet-item .n {
     margin-left: auto;
