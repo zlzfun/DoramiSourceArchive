@@ -316,13 +316,13 @@ export default function App() {
   // 受限读者（user 账号）只看到「阅读器 + 订阅分发 + 接入集成」；admin（采集+阅读超级用户）保持现有全部 tab。
   const readerOnly = runtimeInfo.account_role === 'user';
   const tabs = useMemo(() => [
-    { id: 'reader', icon: BookOpen, label: '阅读器', onlyReader: true },
-    { id: 'data', icon: Database, label: '知识台账', hideForReader: true },
-    { id: 'fetch', icon: CloudDownload, label: '节点管理', surface: 'collector' },
-    { id: 'runs', icon: History, label: '任务与运行', surface: 'collector' },
-    { id: 'vector', icon: BarChart2, label: '向量雷达', surface: 'reader', requiresRag: true, hideForReader: true },
-    { id: 'mcp', icon: Plug2, label: '接入集成', surface: 'reader' },
-    { id: 'admin', icon: ShieldCheck, label: '运维管理', adminOnly: true },
+    { id: 'reader', icon: BookOpen, label: '阅读器', railLabel: '阅读', onlyReader: true },
+    { id: 'data', icon: Database, label: '知识台账', railLabel: '台账', hideForReader: true },
+    { id: 'fetch', icon: CloudDownload, label: '节点管理', railLabel: '节点', surface: 'collector' },
+    { id: 'runs', icon: History, label: '任务与运行', railLabel: '运行', surface: 'collector' },
+    { id: 'vector', icon: BarChart2, label: '向量雷达', railLabel: '雷达', surface: 'reader', requiresRag: true, hideForReader: true },
+    { id: 'mcp', icon: Plug2, label: '接入集成', railLabel: '集成', surface: 'reader' },
+    { id: 'admin', icon: ShieldCheck, label: '运维管理', railLabel: '运维', adminOnly: true },
   ].filter(tab => {
     if (tab.onlyReader && !readerOnly) return false;
     if (tab.hideForReader && readerOnly) return false;
@@ -381,28 +381,67 @@ export default function App() {
 
   return (
     <div className="app-shell font-sans">
-      <header className="app-header flex items-center justify-between gap-4 px-5 sm:px-8">
-        <div className="flex min-w-0 items-center gap-3">
+      {/* ── lg+:左侧固定导轨(品牌/导航/工具/账号);布局波 L1 ── */}
+      <aside className="app-rail hidden lg:flex" aria-label="主导航">
+        <div className="rail-brand" title={`${brandTitle} · ${brandSubtitle}`}>
           <BrandLogo logoError={logoError} onLogoError={() => setLogoError(true)} />
-          <div className="hidden min-w-0 sm:block">
-            <h1 className="brand-title truncate text-xl font-extrabold leading-tight">{brandTitle}</h1>
-            <p className="brand-subtitle mt-1 text-xs font-bold">{brandSubtitle}</p>
-          </div>
         </div>
-
-        <nav className="hidden flex-1 items-center justify-center gap-6 lg:flex">
+        <nav className="flex w-full flex-col items-center gap-0.5" aria-label="页面">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => goTab(tab.id)}
-              className={`top-tab relative flex items-center gap-2 whitespace-nowrap px-6 py-3 text-sm font-extrabold transition-colors ${activeTab === tab.id ? 'top-tab-active' : 'text-slate-500 hover:text-slate-950 dark:hover:text-slate-100'}`}
+              className={`rail-nav-btn ${activeTab === tab.id ? 'rail-nav-on' : ''}`}
+              aria-current={activeTab === tab.id ? 'page' : undefined}
+              title={tab.label}
             >
-              <tab.icon className="h-4.5 w-4.5" /> {tab.label}
+              <tab.icon />
+              <span>{tab.railLabel || tab.label}</span>
             </button>
           ))}
         </nav>
+        <div className="flex-1" />
+        <div className="flex flex-col items-center gap-1.5">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="rail-tool"
+            title={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+            aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+          >
+            {effective === 'dark' ? <Sun /> : <Moon />}
+          </button>
+          <button type="button" onClick={() => setSettingsOpen(true)} className="rail-tool" title="设置" aria-label="设置">
+            <Settings />
+          </button>
+          {authState.user?.avatar ? (
+            <img
+              src={authState.user.avatar}
+              alt="头像"
+              title={`${authState.user?.username || 'admin'} · ${roleLabel}`}
+              className="h-9 w-9 rounded-full object-cover shadow-sm ring-1 ring-black/5"
+            />
+          ) : (
+            <div
+              className="avatar-badge flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white"
+              title={`${authState.user?.username || 'admin'} · ${roleLabel}`}
+            >
+              {avatarInitials}
+            </div>
+          )}
+          <button type="button" onClick={handleLogout} className="rail-tool" title="退出登录" aria-label="退出登录">
+            <LogOut />
+          </button>
+        </div>
+      </aside>
 
-        <nav className="mobile-tabs flex max-w-full flex-1 items-center gap-1 overflow-x-auto lg:hidden">
+      {/* ── lg 以下:保留移动顶栏 ── */}
+      <header className="app-header flex items-center justify-between gap-4 px-5 sm:px-8 lg:hidden">
+        <div className="flex min-w-0 items-center gap-3">
+          <BrandLogo logoError={logoError} onLogoError={() => setLogoError(true)} />
+        </div>
+
+        <nav className="mobile-tabs flex max-w-full flex-1 items-center gap-1 overflow-x-auto">
           {tabs.map(tab => (
             <button
               key={tab.id}
@@ -414,49 +453,43 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="flex shrink-0 items-center gap-4">
-          <div className="flex items-center gap-2">
-            <div className="hidden text-right sm:block">
-              <p className="text-xs font-bold text-slate-800">{authState.user?.username || 'admin'}</p>
-              <p className="micro-label text-slate-500">{roleLabel}</p>
-            </div>
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="icon-button"
-              title={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
-              aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
-            >
-              {effective === 'dark' ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}
-            </button>
-            <button
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-              className="icon-button"
-              title="设置"
-              aria-label="设置"
-            >
-              <Settings className="h-4.5 w-4.5" />
-            </button>
-            {authState.user?.avatar ? (
-              <img
-                src={authState.user.avatar}
-                alt="头像"
-                className="h-9 w-9 rounded-full object-cover shadow-sm ring-1 ring-black/5"
-              />
-            ) : (
-              <div className="avatar-badge flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white">{avatarInitials}</div>
-            )}
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="icon-button"
-              title="退出登录"
-              aria-label="退出登录"
-            >
-              <LogOut className="h-4.5 w-4.5" />
-            </button>
-          </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="icon-button"
+            title={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+            aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+          >
+            {effective === 'dark' ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}
+          </button>
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            className="icon-button"
+            title="设置"
+            aria-label="设置"
+          >
+            <Settings className="h-4.5 w-4.5" />
+          </button>
+          {authState.user?.avatar ? (
+            <img
+              src={authState.user.avatar}
+              alt="头像"
+              className="h-9 w-9 rounded-full object-cover shadow-sm ring-1 ring-black/5"
+            />
+          ) : (
+            <div className="avatar-badge flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white">{avatarInitials}</div>
+          )}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="icon-button"
+            title="退出登录"
+            aria-label="退出登录"
+          >
+            <LogOut className="h-4.5 w-4.5" />
+          </button>
         </div>
       </header>
 
@@ -476,7 +509,7 @@ export default function App() {
         onArticlesChanged={markArticlesDirty}
       />
 
-      <main className="mx-auto max-w-[1540px] px-5 py-9 sm:px-8 xl:px-10">
+      <main className="ml-[var(--rail-w)] px-5 py-9 sm:px-8 xl:px-10">
         <div className="page-shell">
           {readerOnly && mountedTabs.has('reader') && (
             <div className="tab-panel" style={{ display: activeTab === 'reader' ? 'block' : 'none' }}>

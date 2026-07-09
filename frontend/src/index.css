@@ -120,6 +120,14 @@
   --r-overlay: 16px;    /* 模态、浮层、hero/全屏面 */
   --r-pill: 9999px;     /* 胶囊、头像、圆形控件 */
 
+  /* ── 壳层几何(布局波 L1)──
+     lg+ 为左侧固定导轨(--rail-w)且无顶栏(--app-top:0);
+     lg 以下退回移动顶栏(--rail-w:0,--app-top:76px)。
+     依赖视口数学的全屏面(reader-shell 等)一律引用这两个 token,勿硬编码。 */
+  --rail-w: 0px;
+  --app-top: 76px;
+  /* lg+ 的导轨几何覆盖见本文件 :root 块后的 @media (min-width: 1024px) */
+
   /* 工作区动效收敛（P4）：功能态向 Geist 节奏靠拢（状态~150 / 浮层~200-240 / 面板~300）。
      品牌/登录页的 aurora/流星/光束/逐词浮现用各自硬编码秒级时长，不受这些 token 影响。 */
   --motion-fast: 150ms;     /* 功能态：hover、开关、颜色/位移小过渡 */
@@ -128,6 +136,14 @@
   --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-smooth: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 壳层几何:lg+ 启用左导轨、撤顶栏(与 :root 基础值同为未分层,媒体命中即胜出) */
+@media (min-width: 1024px) {
+  :root {
+    --rail-w: 78px;
+    --app-top: 0px;
+  }
 }
 
 * {
@@ -491,6 +507,71 @@ input[type="radio"] {
     min-height: 100dvh;
     color: var(--dorami-ink);
   }
+
+  /* ── 左侧导轨(布局波 L1,lg+ 生效;lg 以下走 .app-header 移动顶栏)── */
+
+  .app-rail {
+    position: fixed;
+    inset-block: 0;
+    left: 0;
+    width: 78px;
+    z-index: 45;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 14px 0 16px;
+    background: var(--dorami-surface);
+    border-right: 1px solid var(--dorami-card-bd);
+    box-shadow: var(--sh-1);
+  }
+
+  .rail-brand {
+    margin-bottom: 14px;
+    display: grid;
+    place-items: center;
+  }
+
+  .rail-nav-btn {
+    position: relative;
+    width: 100%;
+    padding: 10px 0 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    color: var(--dorami-faint);
+  }
+
+  .rail-nav-btn svg { width: 19px; height: 19px; }
+  .rail-nav-btn span { font-size: 11px; font-weight: 600; }
+  .rail-nav-btn:hover { color: var(--dorami-ink-2); }
+  .rail-nav-btn.rail-nav-on { color: var(--dorami-accent); }
+  .rail-nav-btn.rail-nav-on span { font-weight: 700; }
+
+  /* 选中语法 = accent 竖条(全站统一) */
+  .rail-nav-btn.rail-nav-on::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 26px;
+    background: var(--dorami-blue);
+    border-radius: 0 var(--r-pill) var(--r-pill) 0;
+  }
+
+  .rail-tool {
+    width: 36px;
+    height: 36px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--r-control);
+    color: var(--dorami-faint);
+  }
+
+  .rail-tool:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+  .rail-tool svg { width: 18px; height: 18px; }
 
   .app-header {
     position: sticky;
@@ -4129,18 +4210,19 @@ input[type="radio"] {
   }
 
   /* ── 阅读器（全屏三栏） ── */
-  /* 用 100vw + 负 margin 跳出 main 的 max-w/padding，铺满视口；
-     高度填到视口底（顶部留出 76px sticky header），三栏各自内部滚动，页面本身不滚。 */
+  /* 用「视口宽 − 导轨宽」+ 负 margin 跳出 main 的 max-w/padding，铺满导轨右侧的工作区；
+     高度填到视口底（顶部留出 --app-top：移动端 76px 顶栏、lg+ 无顶栏为 0），
+     三栏各自内部滚动，页面本身不滚。 */
   .reader-shell {
     --col-l: 300px;
     --col-m: 420px;
     display: grid;
     grid-template-columns: var(--col-l) var(--col-m) minmax(0, 1fr);
-    width: 100vw;
-    margin-inline: calc(50% - 50vw);
+    width: calc(100vw - var(--rail-w));
+    margin-inline: calc(50% - 50vw + var(--rail-w) / 2);
     margin-top: -36px;
     margin-bottom: -36px;
-    height: calc(100vh - 76px);
+    height: calc(100vh - var(--app-top));
     overflow: hidden;
     position: relative;
     background: var(--dorami-surface);
