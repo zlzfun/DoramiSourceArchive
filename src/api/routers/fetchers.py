@@ -16,8 +16,10 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, Field as PydanticField
 
+from api import deps
 from api.collection_planning import test_run_overrides
 from fetchers.registry import fetcher_registry
+from services import jobs
 
 router = APIRouter(tags=["fetchers"])
 
@@ -46,6 +48,12 @@ async def trigger_fetch_batch(
         params: FetchBatchParams,
         test_limit: Optional[int] = None,
 ):
+    """临时批量触发多个抓取节点：提交持久化后台任务并立即返回 job_id（不再占满长请求）。
+
+    校验（items 为空 → 400）同步完成；实际 run_collection_items 收进后台任务，它仍写
+    CollectionJobRunRecord 聚合记录，聚合结果作 job.result 落库，前端轮询
+    GET /api/jobs/{job_id} 取回，细粒度进度仍走 GET /api/fetch-runs/running-progress。
+    """
     items = [
         {
             "fetcher_id": item.fetcher_id,
@@ -55,12 +63,21 @@ async def trigger_fetch_batch(
     ]
     if not items:
         raise HTTPException(status_code=400, detail="至少需要一个抓取节点")
-    return await _app().run_collection_items(
-        items,
-        name="临时批量抓取",
-        trigger_type="manual",
-        run_scope="ad_hoc",
+
+    async def _work(bg) -> Dict[str, Any]:
+        return await _app().run_collection_items(
+            items,
+            name="临时批量抓取",
+            trigger_type="manual",
+            run_scope="ad_hoc",
+        )
+
+    bg_job = jobs.launch(
+        deps.get_db_sink().engine, "fetch_batch", _work,
+        payload={"fetcher_ids": [item.fetcher_id for item in params.items],
+                 "test_limit": test_limit},
     )
+    return {"status": "accepted", "job_id": bg_job.id}
 
 
 @router.post("/api/fetch/{fetcher_id}")
