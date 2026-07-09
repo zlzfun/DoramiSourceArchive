@@ -420,7 +420,7 @@ export default function FetchRunsTab({
   const clearAllFilters = () => setFilters({ fetcher_id: '', status: '', trigger_type: '' });
 
   return (
-    <div className="space-y-6 animate-in fade-in">
+    <div className="space-y-6">
       <div className="page-header flex-col xl:flex-row">
         <div className="page-heading">
           <h2 className="page-title">任务与运行</h2>
@@ -528,7 +528,7 @@ export default function FetchRunsTab({
                                 </div>
                               </div>
                               {effectiveCron && (
-                                <div className="mt-2 micro-label text-blue-700 bg-[var(--dorami-wash)] border border-blue-100 rounded px-2 py-1 font-mono">
+                                <div className="mt-2 micro-label text-blue-700 bg-[var(--dorami-wash)] rounded px-2 py-1 font-mono">
                                   cron：{effectiveCron}{nodeCron ? ' · 覆盖' : ''}
                                 </div>
                               )}
@@ -575,7 +575,7 @@ export default function FetchRunsTab({
             </div>
           </div>
 
-          <div className="stagger grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <div className="metric-card rounded-[var(--r-card)] p-4">
               <div className="text-xs font-bold text-slate-500 mb-1">本页运行</div>
               <div className="stat-number text-slate-800"><AnimatedNumber value={unifiedRuns.length} /></div>
@@ -650,7 +650,7 @@ export default function FetchRunsTab({
                   <th className="px-4 py-3">失败信息</th>
                 </tr>
               </thead>
-              <tbody key={listVersion} className="row-stagger divide-y divide-[var(--dorami-border)] text-sm">
+              <tbody key={listVersion} className="divide-y divide-[var(--dorami-border)] text-sm">
                 {loading && unifiedRuns.length === 0 ? (
                   Array.from({ length: 6 }).map((_, i) => (
                     <tr key={`run-skeleton-${i}`}>
@@ -671,7 +671,7 @@ export default function FetchRunsTab({
                   const meta = runStatusMeta(run.status);
                   const isRunning = run.status === 'running';
                   return (
-                    <tr key={run.key} className={`transition-colors ${isRunning ? 'bg-[var(--dorami-wash)] border-l-4 border-l-indigo-500' : 'hover:bg-[var(--dorami-wash)]'}`}>
+                    <tr key={run.key} className={`transition-colors ${isRunning ? 'bg-[var(--dorami-wash)]' : 'hover:bg-[var(--dorami-soft)]'}`}>
                       <td className="px-4 py-4">
                         <StatusBadge meta={meta} />
                       </td>
@@ -692,11 +692,11 @@ export default function FetchRunsTab({
                         <StatusBadge tone="slate">{triggerLabel(run.trigger_type)}</StatusBadge>
                       </td>
                       <td className="px-4 py-4 font-mono text-xs text-slate-500">{formatDateTime(run.started_at)}</td>
-                      <td className="px-4 py-4 text-xs font-bold text-slate-500">
-                        <span className="inline-flex items-center"><Timer className="w-3.5 h-3.5 mr-1 text-[var(--dorami-blue)]" /> {formatDuration(run.duration_ms)}</span>
+                      <td className="px-4 py-4 text-xs font-bold text-slate-500 tabular-nums">
+                        <span className="inline-flex items-center"><Timer className="w-3.5 h-3.5 mr-1 text-slate-500" /> {formatDuration(run.duration_ms)}</span>
                       </td>
                       <td className="px-4 py-4">
-                        <div className="text-xs font-bold text-slate-700">抓取 {run.fetched_count || 0} / 新增 {run.saved_count || 0} / 跳过 {run.skipped_count || 0}</div>
+                        <div className="text-xs font-bold text-slate-700 tabular-nums">抓取 {run.fetched_count || 0} / 新增 {run.saved_count || 0} / 跳过 {run.skipped_count || 0}</div>
                       </td>
                       <td className="px-4 py-4 max-w-sm">
                         {run.error_message ? (

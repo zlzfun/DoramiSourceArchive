@@ -592,7 +592,7 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
               </span>
             </div>
           ) : (
-            <div className="row-stagger">
+            <div>
               {articles.map((article) => {
                 const active = activeArticle?.id === article.id;
                 const favored = favoriteIds.has(article.id);

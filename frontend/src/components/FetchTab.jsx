@@ -744,7 +744,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         )}
 
         {reviewExpanded && hasReview && (
-          <div className="node-param-panel source-review-panel animate-in fade-in slide-in-from-top-1">
+          <div className="node-param-panel source-review-panel">
             <div className="node-param-title">
               <span>源审查字段</span>
             </div>
@@ -765,7 +765,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         )}
 
         {paramsExpanded && paramCount > 0 && (
-          <div className="node-param-panel source-review-panel animate-in fade-in slide-in-from-top-1">
+          <div className="node-param-panel source-review-panel">
             <div className="source-param-block-head">
               <span>抓取参数</span>
               <span>{paramCount} 项</span>
@@ -785,7 +785,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   };
 
   return (
-    <div className={`space-y-6 animate-in fade-in ${selectedFetchers.length > 0 && view === 'catalog' ? 'pb-24' : ''}`}>
+    <div className={`space-y-6 ${selectedFetchers.length > 0 && view === 'catalog' ? 'pb-24' : ''}`}>
       <div className="page-header flex-col xl:flex-row">
         <div className="page-heading">
           <h2 className="page-title">节点管理</h2>
@@ -918,7 +918,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                     </div>
 
                     {sectionOpen && (
-                      <div className="dept-grid animate-in fade-in slide-in-from-top-1">
+                      <div className="dept-grid">
                         {section.companies.map(({ company, fetchers }) => {
                       const open = isCompanyOpen(company.key, fetchers);
                       const health = aggregateHealth(fetchers, healthByFetcher);
@@ -963,7 +963,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                             </button>
                           </div>
                           {open && (
-                            <div className="dept-body animate-in fade-in slide-in-from-top-1">
+                            <div className="dept-body">
                               {fetchers.map(renderSourceRow)}
                             </div>
                           )}

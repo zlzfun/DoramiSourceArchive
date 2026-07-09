@@ -357,7 +357,7 @@ export default function DataTab({
   };
 
   return (
-    <div className={`space-y-6 animate-in fade-in ${selectedArticles.size > 0 ? 'pb-24' : ''}`}>
+    <div className={`space-y-6 ${selectedArticles.size > 0 ? 'pb-24' : ''}`}>
       <div className="page-header flex-col xl:flex-row">
         <div className="page-heading">
           <h2 className="page-title">知识台账</h2>
@@ -404,7 +404,7 @@ export default function DataTab({
               onClick={() => setShowAdvanced(v => !v)}
               className={`action-button action-button-secondary min-h-[52px] ${showAdvanced ? 'text-[var(--dorami-blue)]' : ''}`}
             >
-              <SlidersHorizontal /> 高级筛选{advancedCount > 0 && <span className="ml-1 rounded-full bg-indigo-100 px-1.5 micro-label font-black text-indigo-700">{advancedCount}</span>}
+              <SlidersHorizontal /> 高级筛选{advancedCount > 0 && <span className="ml-1 rounded-full bg-[var(--dorami-wash)] px-1.5 micro-label font-bold text-[var(--dorami-accent-ink)]">{advancedCount}</span>}
             </button>
           </div>
 
@@ -431,7 +431,7 @@ export default function DataTab({
           )}
 
           {showAdvanced && (
-            <div className="grid grid-cols-1 gap-3 border-t border-[var(--dorami-border)] pt-4 animate-in fade-in slide-in-from-top-1 md:grid-cols-2 xl:grid-cols-[1fr_1.35fr_1.35fr_1fr]">
+            <div className="grid grid-cols-1 gap-3 border-t border-[var(--dorami-border)] pt-4 md:grid-cols-2 xl:grid-cols-[1fr_1.35fr_1.35fr_1fr]">
               <div className="field-box">
                 <span>结构类型</span>
                 <select value={filters.content_type} onChange={e => setFilters({ ...filters, content_type: e.target.value })}>
@@ -511,7 +511,7 @@ export default function DataTab({
               {canManageArticles && ragEnabled && <th className="px-3 py-4 w-36 font-bold">向量状态</th>}
             </tr>
           </thead>
-          <tbody key={listVersion} className="row-stagger divide-y divide-[var(--dorami-border)] text-sm">
+          <tbody key={listVersion} className="divide-y divide-[var(--dorami-border)] text-sm">
             {loading && articles.length === 0 ? (
               Array.from({ length: 8 }).map((_, i) => (
                 <tr key={`skeleton-${i}`}>
@@ -555,7 +555,7 @@ export default function DataTab({
                     );
                   })()}
                 </td>
-                <td className="px-4 py-4 font-bold text-slate-800 cursor-pointer hover:text-[var(--dorami-blue)] transition-colors" onClick={() => openDetailModal(article)}>
+                <td className="px-4 py-4 font-bold text-slate-800 cursor-pointer hover:text-[var(--dorami-ink)] transition-colors" onClick={() => openDetailModal(article)}>
                   <div className="line-clamp-1">{article.title}</div>
                   <div className="mt-1 line-clamp-1 text-xs font-medium text-slate-500">{excerptOf(article.content_preview || article.content) || '暂无摘要内容'}</div>
                 </td>
@@ -648,7 +648,7 @@ export default function DataTab({
           </div>
           <div className="selection-bar-actions">
             {canManageArticles && ragEnabled && (
-              <button onClick={handleBatchVectorize} className="action-button action-button-secondary text-blue-700">
+              <button onClick={handleBatchVectorize} className="action-button action-button-secondary">
                 <Zap /> 批量构建
               </button>
             )}

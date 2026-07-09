@@ -1844,7 +1844,10 @@ input[type="radio"] {
     padding: 12px 14px;
     border: 1px solid rgba(91, 84, 232, 0.22);
     border-radius: var(--r-card);
-    background: linear-gradient(135deg, #ffffff 0%, #f0effc 100%);
+    /* 运行中状态标记：表面阶底 + 一角极淡 wash 斜掠（token 化，暗色由末尾覆盖压为纯 surface） */
+    background:
+      linear-gradient(135deg, transparent, var(--dorami-wash)),
+      var(--dorami-surface);
     box-shadow: 0 10px 30px rgba(91, 84, 232, 0.18), 0 2px 6px rgba(11, 18, 32, 0.06);
     text-align: left;
     cursor: pointer;
@@ -2280,7 +2283,7 @@ input[type="radio"] {
     min-height: 32px;
     border: 1px solid rgba(11, 18, 32, 0.12);
     border-radius: var(--r-control);
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--dorami-surface);
     color: var(--dorami-ink);
     font-size: 13px;
     font-weight: 600;
@@ -2306,7 +2309,7 @@ input[type="radio"] {
     gap: 8px;
     border: 1px solid rgba(11, 18, 32, 0.12);
     border-radius: var(--r-control);
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--dorami-surface);
     color: #334155;
     cursor: pointer;
     font-size: 13px;
@@ -2723,8 +2726,9 @@ input[type="radio"] {
     height: 28px;
     padding: 0 8px 0 10px;
     border-radius: var(--r-pill);
-    border: 1px solid rgba(91, 84, 232, 0.18);
-    background: rgba(91, 84, 232, 0.07);
+    border: 1px solid transparent;
+    /* 静默仪器·R2/R4:当前筛选=状态标记,wash 淡底 + 无描边(去 accent 描边/淡染) */
+    background: var(--dorami-wash);
     font-size: 12px;
     font-weight: 700;
     transition:
@@ -2732,8 +2736,9 @@ input[type="radio"] {
       border-color var(--motion-fast) var(--motion-ease);
   }
 
+  /* 静默仪器·R3:hover 灰阶(soft),不加深 accent;移除提示由 svg 变深承载 */
   .active-filter-chip:hover {
-    background: rgba(91, 84, 232, 0.14);
+    background: var(--dorami-soft);
     border-color: transparent;
   }
 
@@ -2747,7 +2752,7 @@ input[type="radio"] {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--dorami-blue);
+    color: var(--dorami-accent-ink);
     font-weight: 800;
   }
 
@@ -2756,8 +2761,9 @@ input[type="radio"] {
     transition: color var(--motion-fast) var(--motion-ease);
   }
 
+  /* 静默仪器·R3:移除动作用 ink 变深提示,不用 accent */
   .active-filter-chip:hover svg {
-    color: var(--dorami-blue);
+    color: var(--dorami-ink);
   }
 
   .active-filter-clear {
@@ -3036,10 +3042,12 @@ input[type="radio"] {
     min-height: 24px;
     align-items: center;
     justify-content: center;
-    border: 1px solid rgba(91, 84, 232, 0.14);
+    /* 静默仪器·R4:淡底状态章无描边(以 .vector-status-* 为准绳);border:none 让暗色的
+       accent border 覆盖同样落空,wash 淡底 + accent-ink 深字随主题翻转 */
+    border: none;
     border-radius: var(--r-control);
-    background: rgba(238, 237, 252, 0.82);
-    color: #4a43d4;
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
     padding: 0 9px;
     font-size: 12px;
     font-weight: 700;
@@ -3237,9 +3245,10 @@ input[type="radio"] {
     transform: scale(1.08);
   }
 
+  /* 静默仪器·R2:范围内日期淡底统一 wash(去散落的 indigo-50 系),深字用 accent-ink */
   .date-range-day-inrange {
-    color: var(--dorami-blue);
-    background: rgba(91, 84, 232, 0.08);
+    color: var(--dorami-accent-ink);
+    background: var(--dorami-wash);
     font-weight: 700;
   }
 
@@ -3431,7 +3440,7 @@ input[type="radio"] {
 
   .catalog-tier-row {
     padding: 14px 24px 18px;
-    border-top: 1px dashed rgba(91, 84, 232, 0.12);
+    border-top: 1px dashed var(--dorami-border);
   }
 
   .tier-segment {
@@ -3840,27 +3849,24 @@ input[type="radio"] {
     white-space: nowrap;
   }
 
+  /* 静默仪器·R4 状态章:淡底 + 深字、无描边(以 .vector-status-* 为准绳) */
   .source-health-healthy {
-    border-color: rgba(16, 185, 129, 0.16);
     background: rgba(16, 185, 129, 0.08);
     color: #047857;
   }
 
   .source-health-failing {
-    border-color: rgba(220, 38, 38, 0.18);
     background: rgba(220, 38, 38, 0.08);
     color: #b91c1c;
   }
 
   .source-health-running {
-    border-color: rgba(245, 158, 11, 0.2);
     background: rgba(245, 158, 11, 0.1);
     color: #b45309;
   }
 
   .source-health-never_run,
   .source-health-unknown {
-    border-color: rgba(148, 163, 184, 0.18);
     background: rgba(148, 163, 184, 0.08);
     color: #64748b;
   }
@@ -4047,7 +4053,7 @@ input[type="radio"] {
     background: rgba(91, 84, 232, 0.08);
     color: var(--dorami-blue);
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 700;
     transition: background var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-spring);
   }
 
@@ -4096,8 +4102,8 @@ input[type="radio"] {
   .source-review-panel {
     margin-top: 10px;
     margin-left: 29px;
-    background: rgba(255, 255, 255, 0.88);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+    background: var(--dorami-surface);
+    box-shadow: inset 0 1px 0 var(--dorami-edge);
   }
 
   .source-review-grid {
@@ -4128,8 +4134,7 @@ input[type="radio"] {
     height: 20px;
     padding: 0 7px;
     border-radius: var(--r-pill);
-    border: 1px solid rgba(91, 84, 232, 0.1);
-    background: rgba(91, 84, 232, 0.06);
+    background: var(--dorami-soft);
     color: #475569;
     font-size: 11px;
     font-weight: 700;
@@ -4143,7 +4148,7 @@ input[type="radio"] {
   .source-param-block {
     margin-top: 10px;
     padding-top: 10px;
-    border-top: 1px dashed rgba(91, 84, 232, 0.14);
+    border-top: 1px dashed var(--dorami-border);
   }
 
   .source-param-block-head {
@@ -4163,9 +4168,9 @@ input[type="radio"] {
 
   .source-param-empty {
     margin-top: 10px;
-    border: 1px solid rgba(148, 163, 184, 0.14);
+    border: 1px solid var(--dorami-border);
     border-radius: var(--r-control);
-    background: rgba(248, 250, 252, 0.82);
+    background: var(--dorami-soft);
     color: #64748b;
     font-size: 12px;
     font-weight: 700;
@@ -4395,9 +4400,8 @@ input[type="radio"] {
 
   .reader-col-read {
     position: relative; /* 阅读进度线绝对定位锚点 */
-    background:
-      radial-gradient(ellipse 80% 40% at 50% 0%, rgba(91, 84, 232, 0.04), transparent 60%),
-      var(--dorami-surface);
+    /* 静默仪器·R5:去掉顶部装饰性 indigo 辉光,阅读窗格 accent 只保留进度线 + 原文链接 */
+    background: var(--dorami-surface);
   }
 
   /* 阅读进度线（渐进增强）：滚动条位于 .reader-pane 内，用具名 scroll-timeline
@@ -4514,9 +4518,9 @@ input[type="radio"] {
     width: 28px;
     height: 28px;
     border-radius: var(--r-control);
-    color: #fff;
-    background: var(--dorami-blue);
-    box-shadow: 0 4px 12px rgba(91, 84, 232, 0.28);
+    /* 静默仪器·R5:导航图标常态色改灰阶,不作实心 indigo 装饰 */
+    color: var(--dorami-ink-2);
+    background: var(--dorami-soft);
     flex-shrink: 0;
   }
 
@@ -4542,6 +4546,7 @@ input[type="radio"] {
     font-weight: 600;
     color: var(--dorami-faint);
     margin-top: 1px;
+    font-variant-numeric: tabular-nums;
   }
 
   /* 统一的加/减订阅开关：加号=订阅（reader-pin-off），减号=取消订阅（reader-pin-on） */
@@ -4603,7 +4608,7 @@ input[type="radio"] {
     padding: 6px 10px;
     color: var(--dorami-muted);
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
     background: transparent;
@@ -4623,8 +4628,9 @@ input[type="radio"] {
     border-radius: var(--r-sm);
     background: rgba(11, 18, 32, 0.06);
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--dorami-muted);
+    font-variant-numeric: tabular-nums;
   }
 
   .reader-group-chevron {
@@ -4686,6 +4692,7 @@ input[type="radio"] {
     font-weight: 700;
     color: var(--dorami-faint);
     flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
   }
 
   .reader-list-scroll {
@@ -4707,9 +4714,9 @@ input[type="radio"] {
     transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
   }
 
+  /* 静默仪器·R3/R4:hover 仅底色反馈(soft,与 surface 容器区分),去描边 */
   .reader-article-card:hover {
-    background: var(--dorami-surface);
-    border-color: var(--dorami-border);
+    background: var(--dorami-soft);
   }
 
   /* 静默仪器·R1:竖条已是选中标记,去掉叠加的 indigo 描边 */
@@ -4721,7 +4728,7 @@ input[type="radio"] {
 
   .reader-article-title {
     font-size: 13.5px;
-    font-weight: 800;
+    font-weight: 600;
     line-height: 1.4;
     color: var(--dorami-ink);
     display: -webkit-box;
@@ -4779,7 +4786,8 @@ input[type="radio"] {
   .reader-article-source {
     font-size: 11px;
     font-weight: 700;
-    color: var(--dorami-blue);
+    /* 静默仪器·R5:来源名常态色降为墨阶,不占用一屏 accent 预算 */
+    color: var(--dorami-ink-2);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -4809,6 +4817,7 @@ input[type="radio"] {
     font-weight: 700;
     color: var(--dorami-muted);
     cursor: pointer;
+    font-variant-numeric: tabular-nums;
     transition: background 140ms ease, color 140ms ease;
   }
 
@@ -4835,8 +4844,9 @@ input[type="radio"] {
 
   .reader-pane-source {
     font-size: 12px;
-    font-weight: 800;
-    color: var(--dorami-blue);
+    font-weight: 700;
+    /* 静默仪器·R5:阅读窗格来源名降为墨阶,accent 仅留进度线 + 原文链接 */
+    color: var(--dorami-ink-2);
   }
 
   .reader-pane-date {
@@ -5758,6 +5768,8 @@ input[type="radio"] {
 [data-theme="dark"] .modal-overlay { background: rgba(0, 0, 0, 0.62); }
 /* 灯箱遮罩暗色再加深（同 .modal-overlay 惯例），让放大原图更聚焦 */
 [data-theme="dark"] .reader-lightbox { background: rgba(0, 0, 0, 0.88); }
+/* 静默仪器·R3:文章卡挂在 surface 容器上,暗色 hover 需用 raised(比卡片亮的一档)才可见反馈 */
+[data-theme="dark"] .reader-article-card:hover { background: var(--dorami-raised); }
 [data-theme="dark"] .date-range-day:hover { background: var(--dorami-raised); }
 [data-theme="dark"] .reader-group-count { background: rgba(255, 255, 255, 0.08); }
 

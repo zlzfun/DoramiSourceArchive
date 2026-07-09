@@ -106,7 +106,7 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
     <div className="relative w-full" ref={popoverRef}>
       <div
         onClick={toggleOpen}
-        className={`date-range-trigger flex items-center justify-between bg-white/80 hover:bg-[var(--dorami-surface)] dark:bg-[var(--dorami-well)] rounded-[var(--r-control)] px-3 py-3 cursor-pointer w-full transition-colors border ${isOpen ? 'border-blue-400 bg-[var(--dorami-wash)] shadow-sm' : 'border-[var(--dorami-border)] hover:border-slate-300'}`}
+        className={`date-range-trigger flex items-center justify-between bg-white/80 hover:bg-[var(--dorami-surface)] dark:bg-[var(--dorami-well)] rounded-[var(--r-control)] px-3 py-3 cursor-pointer w-full transition-colors border ${isOpen ? 'border-[var(--dorami-border-strong)] bg-[var(--dorami-wash)] shadow-sm' : 'border-[var(--dorami-border)] hover:border-slate-300'}`}
       >
         <span className={`truncate text-sm font-semibold ${startDate ? 'text-blue-700' : 'text-slate-500'}`}>
           {displayStr}
