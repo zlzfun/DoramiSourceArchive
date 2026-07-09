@@ -3000,12 +3000,15 @@ input[type="radio"] {
     border-radius: 0 var(--r-pill) var(--r-pill) 0;
   }
 
-  .ledger-facet-group-label {
-    padding: 6px 9px 2px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
+  /* 分面项名称截断 + 右侧计数(样页 .facet-item .n) */
+  .ledger-facet-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ledger-facet-item .n {
+    margin-left: auto;
+    padding-left: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 10.5px;
     color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums;
   }
 
   .ledger-facet-range { margin-top: 8px; padding: 0 2px; }
@@ -3141,11 +3144,6 @@ input[type="radio"] {
   .ledger-switch.is-on { background: var(--dorami-blue); }
   .ledger-switch.is-on::after { transform: translateX(15px); }
 
-  /* 工具栏:结果计数 + 当前筛选 + 排序提示 */
-  .ledger-toolbar { flex: none; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 11px 16px 9px; }
-  .ledger-result { font-size: 12px; font-weight: 600; color: var(--dorami-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .ledger-toolbar-filters { flex: 0 1 auto; min-width: 0; }
-
   .ledger-table-scroll { flex: 1; min-height: 0; overflow: auto; }
 
   .ledger-th {
@@ -3159,7 +3157,33 @@ input[type="radio"] {
     white-space: nowrap;
   }
 
-  .ledger-col-acts { width: 72px; }
+  .ledger-col-acts { width: 100px; }
+
+  /* 行末操作:hover 浮现的三枚 26px 图标钮(向量化/编辑/删除),样页 .rowacts/.iconbtn 直移 */
+  .ledger-rowacts {
+    display: flex;
+    justify-content: flex-end;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity var(--motion-fast) var(--motion-ease);
+  }
+  .ledger-row:hover .ledger-rowacts,
+  .ledger-row:focus-within .ledger-rowacts,
+  .ledger-row:focus-visible .ledger-rowacts { opacity: 1; }
+  .ledger-iconbtn {
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--r-sm);
+    color: var(--dorami-faint);
+    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+  .ledger-iconbtn:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+  .ledger-iconbtn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
+  .ledger-iconbtn:disabled { opacity: 0.4; cursor: default; }
+  /* 键盘可达:钮聚焦时也保持操作区可见 */
+  .ledger-iconbtn:focus-visible { opacity: 1; }
 
   .ledger-row { cursor: pointer; }
   .ledger-row td { height: 52px; vertical-align: middle; }
@@ -3181,10 +3205,6 @@ input[type="radio"] {
   }
   .ledger-date-sub { color: var(--dorami-faint); margin-top: 2px; }
 
-  .ledger-row-hint { font-size: 11px; font-weight: 600; color: var(--dorami-faint); opacity: 0; transition: opacity var(--motion-fast) var(--motion-ease); white-space: nowrap; }
-  .ledger-row:hover .ledger-row-hint,
-  .ledger-row:focus-visible .ledger-row-hint { opacity: 1; }
-
   .ledger-batchbar {
     flex: none;
     display: flex;
@@ -3199,21 +3219,7 @@ input[type="radio"] {
 
   .ledger-foot { flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 16px; border-top: 1px solid var(--dorami-border); background: var(--dorami-soft); }
   .ledger-foot-info { font-size: 12px; font-weight: 600; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
-  .ledger-pager { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-  .ledger-page-btn {
-    min-height: 32px;
-    padding: 0 12px;
-    border-radius: var(--r-control);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--dorami-muted);
-    background: var(--dorami-surface);
-    box-shadow: var(--sh-1);
-    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
-  }
-  .ledger-page-btn:hover:not(:disabled) { background: var(--dorami-soft); color: var(--dorami-ink-2); }
-  .ledger-page-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-  .ledger-page-cur { padding: 0 10px; font-size: 12px; font-weight: 700; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
+  /* 页码用共享 .pager 范式(见「页码范式」区段) */
 
   /* 详情抽屉:右缘滑入(状态反馈,保留) */
   .ledger-scrim {

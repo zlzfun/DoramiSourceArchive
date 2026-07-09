@@ -29,7 +29,26 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
   const [tempStart, setTempStart] = useState(null);
   const [tempEnd, setTempEnd] = useState(null);
   const [hoverDate, setHoverDate] = useState(null);
+  // 弹层用 position:fixed + 触发器 getBoundingClientRect 定位，逃出窄分面栏(198px,overflow)的裁切。
+  const [coords, setCoords] = useState(null);
   const popoverRef = useRef();
+  const triggerRef = useRef();
+
+  const POPOVER_W = 264;
+  const POPOVER_H = 340;
+  const computeCoords = () => {
+    const el = triggerRef.current;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    let left = Math.min(r.left, window.innerWidth - POPOVER_W - 8);
+    left = Math.max(8, left);
+    // 下方空间不足且上方够 → 翻到触发器上方。
+    let top = r.bottom + 8;
+    if (top + POPOVER_H > window.innerHeight && r.top - POPOVER_H - 8 > 0) {
+      top = r.top - POPOVER_H - 8;
+    }
+    return { top, left };
+  };
 
   useEffect(() => {
     if (!isOpen) {
@@ -50,6 +69,22 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [startDate, endDate]);
+
+  // fixed 弹层定位是「打开时算一次」的快照：滚动/缩放后坐标失效，直接关闭（不跟随，避免视觉漂移）。
+  useEffect(() => {
+    if (!isOpen) return;
+    const close = () => {
+      setIsOpen(false);
+      setTempStart(parseDateStr(startDate));
+      setTempEnd(parseDateStr(endDate));
+    };
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [isOpen, startDate, endDate]);
 
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
@@ -99,12 +134,14 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
     setTempEnd(parsedEnd);
     setHoverDate(null);
     setViewDate(parsedStart || parsedEnd || new Date());
+    setCoords(computeCoords());
     setIsOpen(true);
   };
 
   return (
     <div className="relative w-full" ref={popoverRef}>
       <div
+        ref={triggerRef}
         onClick={toggleOpen}
         className={`date-range-trigger flex items-center justify-between bg-white/80 hover:bg-[var(--dorami-surface)] dark:bg-[var(--dorami-well)] rounded-[var(--r-control)] px-3 py-3 cursor-pointer w-full transition-colors border ${isOpen ? 'border-[var(--dorami-border-strong)] bg-[var(--dorami-wash)] shadow-sm' : 'border-[var(--dorami-border)] hover:border-slate-300'}`}
       >
@@ -119,7 +156,10 @@ export default function DateRangePicker({ startDate, endDate, onChange, placehol
       </div>
 
       {isOpen && (
-        <div className="date-range-popover animate-in fade-in zoom-in-95">
+        <div
+          className="date-range-popover animate-in fade-in zoom-in-95"
+          style={coords ? { position: 'fixed', top: coords.top, left: coords.left } : undefined}
+        >
           <div className="flex justify-between items-center mb-4 px-1">
             <button onClick={() => setViewDate(new Date(year, month - 1, 1))} className="p-1 hover:bg-slate-100 rounded-[var(--r-control)] text-slate-500 transition-colors"><ChevronLeft className="w-4 h-4" /></button>
             <span className="date-range-month">{year}年 {month + 1}月</span>

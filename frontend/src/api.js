@@ -171,6 +171,13 @@ export function fetchArticle(id, options = {}) {
   return request(`/articles/${enc(id)}`, { ...options, errorMsg: '获取文章详情失败' });
 }
 
+// 分面目录：content_type / source_id 的全量 group-by 计数（{total, content_types, source_ids}，计数降序）。
+// 台账分面栏的单一数据源——选项来自全量归档而非当前页。
+export function fetchArticleFacets(filters = {}) {
+  const query = withFilters(new URLSearchParams(), filters).toString();
+  return request(`/articles/facets${query ? `?${query}` : ''}`, { errorMsg: '获取分面统计失败' });
+}
+
 export function deleteArticle(id) {
   return request(`/articles/${enc(id)}`, { method: 'DELETE', errorMsg: '删除失败' });
 }
