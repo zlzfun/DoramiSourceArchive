@@ -92,6 +92,11 @@
 
   --dorami-border: rgba(11, 18, 32, 0.09);
   --dorami-border-strong: rgba(11, 18, 32, 0.15);
+  /* 静默仪器·描边预算:卡片级容器的描边 token——亮色下透明(分隔全靠高程),
+     暗色下重定义为细白线(深底上阴影不可读,需要一条弱描边兜层级)。 */
+  --dorami-card-bd: transparent;
+  /* 卡片顶部内高光(「纸」的受光边),暗色下减弱 */
+  --dorami-edge: rgba(255, 255, 255, 0.62);
 
   /* 高程系统：弱→强 = 静止 / 卡片 / 浮起。灰底上阴影需更实，白卡才浮得起来。 */
   --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
@@ -144,12 +149,13 @@ html {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(91, 84, 232, 0.25);
+  /* 静默仪器:滚动条是 chrome 不是内容,退出品牌色 */
+  background: rgba(11, 18, 32, 0.18);
   border-radius: var(--r-pill);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(91, 84, 232, 0.42);
+  background: rgba(11, 18, 32, 0.32);
 }
 
 * {
@@ -368,16 +374,7 @@ input[type="radio"] {
   to { --auth-angle: 360deg; }
 }
 
-@keyframes entrance-stagger {
-  from {
-    opacity: 0;
-    transform: translateY(18px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
+/* (静默仪器:entrance-stagger keyframes 已随仪式性入场退场) */
 
 /* ── Animate-in helpers ── */
 
@@ -413,12 +410,7 @@ input[type="radio"] {
   animation-duration: var(--motion-medium);
 }
 
-/* Tab-switch entrance: display:none→block re-triggers the animation each
-   switch, so panels keep their mounted state yet still animate in. */
-@keyframes tab-enter {
-  from { opacity: 0; transform: translateY(18px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+/* (静默仪器:tab-enter keyframes 已随仪式性入场退场) */
 
 @keyframes modal-pop-in {
   from { opacity: 0; transform: translateY(24px) scale(0.93); }
@@ -456,57 +448,21 @@ input[type="radio"] {
   animation: toast-out 240ms var(--motion-ease) both;
 }
 
-@keyframes row-enter {
-  from { opacity: 0; transform: translateY(16px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+/* (静默仪器:row-enter keyframes 已随仪式性入场退场) */
 
 /* fill-mode 必须用 backwards 而非 both：both 会在动画结束后保留终帧的
    transform（即便是 translateY(0)），而带 transform 的元素会成为后代
    position:fixed 的包含块，导致 .tab-panel 内的 modal-overlay 错位。
    backwards 只在延迟期应用起始帧（防 stagger 闪烁），结束后回归无 transform 基态。 */
-.tab-panel {
-  animation: tab-enter var(--motion-slow) var(--motion-ease) backwards;
-}
-
-/* List rows / cards entering one-by-one. Delays cap at the 10th child so a
-   long list never trails for seconds; later rows just fade in together.
-   Animation only fires on DOM insertion, so paginating appends animate the
-   newly-added rows while existing ones stay put. */
-.row-stagger > * {
-  animation: row-enter 220ms var(--motion-ease) backwards;
-}
-/* P4：逐行 stagger 弱化——延迟压扁并尽早封顶，长列表不再逐行「飘」近 1s，
-   仅保留极轻的层次感（首几行微错位，其余一起淡入）。 */
-.row-stagger > *:nth-child(1) { animation-delay: 0ms; }
-.row-stagger > *:nth-child(2) { animation-delay: 25ms; }
-.row-stagger > *:nth-child(3) { animation-delay: 50ms; }
-.row-stagger > *:nth-child(4) { animation-delay: 75ms; }
-.row-stagger > *:nth-child(5) { animation-delay: 100ms; }
-.row-stagger > *:nth-child(n + 6) { animation-delay: 120ms; }
+/* 静默仪器·R7:仪式性入场编排(tab-enter / row-stagger / entrance-stagger)整体退场——
+   切页与列表渲染即时呈现,动效只留状态反馈(modal/toast/进度/骨架/开关)。
+   .tab-panel / .row-stagger / .stagger 类名保留为无动效锚点,JSX 逐步清理。 */
 
 @media (prefers-reduced-motion: reduce) {
   .modal-overlay,
   .modal-overlay.is-closing,
   .modal-panel,
-  .modal-overlay.is-closing .modal-panel,
-  .row-stagger > * { animation: none; }
-}
-
-/* Staggered reveal for grid/list children inside a freshly-shown panel. */
-.tab-panel .stagger > * {
-  animation: entrance-stagger 260ms var(--motion-ease) backwards;
-}
-/* P4：面板内网格/列表入场 stagger 同样压扁封顶，总时长从 ~1.2s 收到 ~0.4s。 */
-.tab-panel .stagger > *:nth-child(1) { animation-delay: 0ms; }
-.tab-panel .stagger > *:nth-child(2) { animation-delay: 40ms; }
-.tab-panel .stagger > *:nth-child(3) { animation-delay: 80ms; }
-.tab-panel .stagger > *:nth-child(4) { animation-delay: 120ms; }
-.tab-panel .stagger > *:nth-child(n + 5) { animation-delay: 150ms; }
-
-@media (prefers-reduced-motion: reduce) {
-  .tab-panel,
-  .tab-panel .stagger > * { animation: none; }
+  .modal-overlay.is-closing .modal-panel { animation: none; }
 }
 
 /* Skeleton shimmer utility */
@@ -587,9 +543,9 @@ input[type="radio"] {
   }
 
   .nav-pill-active {
-    color: var(--dorami-blue);
-    background: rgba(91, 84, 232, 0.1);
-    box-shadow: 0 6px 16px rgba(91, 84, 232, 0.1);
+    color: var(--dorami-ink);
+    font-weight: 700;
+    background: var(--dorami-soft);
   }
 
   .top-tab {
@@ -603,18 +559,14 @@ input[type="radio"] {
   }
 
   .top-tab:hover:not(.top-tab-active) {
-    transform: scale(1.02);
     background: rgba(255, 255, 255, 0.54);
   }
 
+  /* 静默仪器:选中标记只有底部 accent 条;文字回 ink,不再 indigo 染边/染影 */
   .top-tab-active {
-    color: var(--dorami-blue);
+    color: var(--dorami-ink);
     background: rgba(255, 255, 255, 0.92);
-    border-color: rgba(91, 84, 232, 0.16);
-    box-shadow:
-      0 8px 18px rgba(11, 18, 32, 0.07),
-      0 1px 4px rgba(91, 84, 232, 0.08),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.72);
+    box-shadow: var(--sh-1);
   }
 
   .top-tab-active::after {
@@ -623,10 +575,9 @@ input[type="radio"] {
     left: 28px;
     right: 28px;
     bottom: -1px;
-    height: 2px;
+    height: 3px;
     border-radius: var(--r-pill);
-    background: linear-gradient(90deg, var(--dorami-blue), var(--dorami-blue-2));
-    opacity: 0.9;
+    background: var(--dorami-blue);
   }
 
   .mobile-tabs {
@@ -676,7 +627,8 @@ input[type="radio"] {
   .page-title {
     font-size: clamp(26px, 2.2vw, 32px);
     line-height: 1.15;
-    font-weight: 900;
+    /* 静默仪器:900 退场,大字号配 800 更稳 */
+    font-weight: 800;
     letter-spacing: 0;
     color: var(--dorami-ink);
     text-wrap: balance;
@@ -716,9 +668,10 @@ input[type="radio"] {
 
   .surface-card {
     position: relative;
-    border: 1px solid var(--dorami-border);
+    /* 静默仪器·描边预算:亮色零描边(靠高程),暗色由 token 换成细白线 */
+    border: 1px solid var(--dorami-card-bd);
     background: var(--dorami-card);
-    box-shadow: var(--sh-2), inset 0 1px 0 rgba(255, 255, 255, 0.75);
+    box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge);
     backdrop-filter: blur(18px) saturate(1.1);
     transition:
       border-color var(--motion-medium) var(--motion-ease),
@@ -727,11 +680,7 @@ input[type="radio"] {
       background var(--motion-medium) var(--motion-ease);
   }
 
-  .surface-card:hover {
-    border-color: rgba(91, 84, 232, 0.18);
-    box-shadow: var(--sh-3), inset 0 1px 0 rgba(255, 255, 255, 0.85);
-    transform: translateY(-1px);
-  }
+  /* 静默仪器:卡片 hover 不抬升不染边(卡片非可点主体;可点行的 hover 归行自己) */
 
   .metric-card {
     border: 1px solid var(--dorami-border);
@@ -1723,10 +1672,11 @@ input[type="radio"] {
     flex-shrink: 0;
   }
 
+  /* 静默仪器:拇指白面 + ink 文字,中性阴影(去 indigo 文字与染色影) */
   .segmented-option-active {
     background: rgba(255, 255, 255, 0.98);
-    color: var(--dorami-blue);
-    box-shadow: 0 5px 14px rgba(11, 18, 32, 0.08), 0 1px 3px rgba(91, 84, 232, 0.08);
+    color: var(--dorami-ink);
+    box-shadow: var(--sh-1);
   }
 
   /* ── Toolbar ── */
@@ -1870,11 +1820,13 @@ input[type="radio"] {
     color: #475569;
   }
 
+  /* 静默仪器·accent 纪律:chip 激活态从渐变实心降为 wash 底 + accent 深字,
+     实心 indigo 只留给主按钮与选中标记 */
   .filter-chip-active {
     border-color: transparent;
-    background: linear-gradient(135deg, var(--dorami-blue), var(--dorami-blue-2));
-    color: white;
-    box-shadow: 0 8px 20px rgba(91, 84, 232, 0.24);
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
+    font-weight: 700;
   }
 
   /* ── Floating running-tasks widget (bottom-right pill on FetchTab) ── */
@@ -1906,7 +1858,7 @@ input[type="radio"] {
   }
 
   .running-widget:hover {
-    box-shadow: 0 14px 36px rgba(91, 84, 232, 0.24), 0 3px 8px rgba(11, 18, 32, 0.08);
+    box-shadow: var(--sh-3);
   }
 
   .running-widget-hidden {
@@ -2184,10 +2136,10 @@ input[type="radio"] {
   }
 
   .scope-toggle-option-active {
-    color: var(--dorami-blue);
+    color: var(--dorami-ink);
     background: #ffffff;
     font-weight: 700;
-    box-shadow: 0 2px 8px rgba(11, 18, 32, 0.1), 0 1px 2px rgba(91, 84, 232, 0.05);
+    box-shadow: var(--sh-1);
   }
 
   .scope-toggle-option-active svg {
@@ -2244,26 +2196,19 @@ input[type="radio"] {
     white-space: nowrap;
   }
 
+  /* 静默仪器:hover 灰阶、不抬升;激活 = wash 底 + accent 深字(去渐变去 glow) */
   .category-chip:hover:not(.category-chip-active),
   .tier-segment-btn:hover:not(:disabled):not(.tier-segment-btn-active) {
-    border-color: rgba(91, 84, 232, 0.26);
-    color: #374151;
-    background:
-      linear-gradient(180deg, #ffffff, rgba(238, 237, 252, 0.76));
-    box-shadow:
-      0 5px 14px rgba(11, 18, 32, 0.06),
-      inset 0 1px 0 rgba(255, 255, 255, 0.9);
-    transform: translateY(-1px);
+    border-color: var(--dorami-border-strong);
+    color: var(--dorami-ink-2);
+    background: var(--dorami-soft);
   }
 
   .category-chip-active,
   .tier-segment-btn-active {
     border-color: transparent;
-    background: linear-gradient(135deg, var(--dorami-blue), var(--dorami-blue-2));
-    color: #ffffff;
-    box-shadow:
-      0 8px 18px rgba(91, 84, 232, 0.22),
-      inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
   }
 
   .category-chip-count,
@@ -2285,8 +2230,8 @@ input[type="radio"] {
 
   .category-chip-active .category-chip-count,
   .tier-segment-btn-active .tier-segment-count {
-    background: rgba(255, 255, 255, 0.22);
-    color: #ffffff;
+    background: rgba(91, 84, 232, 0.14);
+    color: var(--dorami-accent-ink);
   }
 
   /* ── Node param panel ── */
@@ -2395,11 +2340,9 @@ input[type="radio"] {
   }
 
   .config-toggle:hover {
-    border-color: rgba(91, 84, 232, 0.36);
-    background: #fff;
-    color: var(--dorami-blue);
-    transform: translateY(-1px);
-    box-shadow: 0 6px 18px rgba(91, 84, 232, 0.1);
+    border-color: var(--dorami-border-strong);
+    background: var(--dorami-soft);
+    color: var(--dorami-ink-2);
   }
 
   .config-toggle svg {
@@ -2409,10 +2352,9 @@ input[type="radio"] {
   }
 
   .config-toggle-active {
-    border-color: rgba(91, 84, 232, 0.28);
-    background: rgba(238, 237, 252, 0.9);
-    color: var(--dorami-blue);
-    box-shadow: 0 6px 18px rgba(91, 84, 232, 0.12);
+    border-color: transparent;
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
   }
 
   .config-toggle-active svg {
@@ -2455,7 +2397,7 @@ input[type="radio"] {
   }
 
   .field-box:hover {
-    border-color: rgba(91, 84, 232, 0.3);
+    border-color: var(--dorami-border-strong);
     background: #fff;
     box-shadow: 0 7px 18px rgba(11, 18, 32, 0.08);
   }
@@ -2590,10 +2532,10 @@ input[type="radio"] {
     transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
   }
 
+  /* 静默仪器:可点状态章 hover 用 wash 提示可操作,不实心化 */
   .vector-status-pending:hover {
-    background: linear-gradient(135deg, var(--dorami-blue), var(--dorami-blue-2));
-    color: #fff;
-    box-shadow: 0 6px 16px rgba(91, 84, 232, 0.28);
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
   }
 
   /* 细粒度索引状态：失败(rose)/陈旧(amber) 的静息色，覆盖 pending 的中性色；
@@ -2666,7 +2608,7 @@ input[type="radio"] {
   }
 
   .vector-option-box:hover {
-    border-color: rgba(91, 84, 232, 0.3);
+    border-color: var(--dorami-border-strong);
     background: #fff;
     box-shadow: 0 7px 18px rgba(11, 18, 32, 0.08);
   }
@@ -2732,9 +2674,9 @@ input[type="radio"] {
     transition: background 120ms ease, box-shadow 120ms ease;
   }
 
+  /* 静默仪器:hover 灰阶;竖条是「选中」专用语法,hover 不得冒用 */
   .data-table tbody tr:hover {
-    background: rgba(238, 237, 252, 0.58);
-    box-shadow: inset 3px 0 0 rgba(91, 84, 232, 0.42);
+    background: var(--dorami-soft);
   }
 
   .ledger-table {
@@ -2792,7 +2734,7 @@ input[type="radio"] {
 
   .active-filter-chip:hover {
     background: rgba(91, 84, 232, 0.14);
-    border-color: rgba(91, 84, 232, 0.34);
+    border-color: transparent;
   }
 
   .active-filter-chip-label {
@@ -2848,11 +2790,11 @@ input[type="radio"] {
   }
 
   .ledger-source-link:not(:disabled):hover {
-    background: rgba(91, 84, 232, 0.08);
+    background: var(--dorami-soft);
   }
 
   .ledger-source-link:not(:disabled):hover .ledger-source-name {
-    color: var(--dorami-blue);
+    color: var(--dorami-ink);
   }
 
   .ledger-source-link:disabled {
@@ -2874,10 +2816,10 @@ input[type="radio"] {
       background var(--motion-medium) var(--motion-ease);
   }
 
+  /* 静默仪器:hover 不抬升不染边,仅底色即时反馈 */
   .node-card:hover {
-    border-color: rgba(91, 84, 232, 0.25);
-    box-shadow: var(--dorami-shadow);
-    transform: translateY(-2px) scale(1.002);
+    border-color: var(--dorami-border-strong);
+    background: var(--dorami-soft);
   }
 
   /* ── Integration hero ── */
@@ -3153,7 +3095,8 @@ input[type="radio"] {
 
   .stat-number {
     font-size: 26px;
-    font-weight: 900;
+    /* 静默仪器:指标数字 700——大而不糙,仪表感靠 tabular 对齐而非超粗 */
+    font-weight: 700;
     letter-spacing: 0;
     line-height: 32px;
     font-variant-numeric: tabular-nums;
@@ -3589,8 +3532,8 @@ input[type="radio"] {
   }
 
   .section-band-toggle:hover .section-band-chevron {
-    background: rgba(91, 84, 232, 0.08);
-    color: var(--dorami-blue);
+    background: var(--dorami-well);
+    color: var(--dorami-ink-2);
   }
 
   /* ── 公司部门卡 ── */
@@ -3773,8 +3716,8 @@ input[type="radio"] {
   }
 
   .dept-chevron:hover {
-    background: rgba(91, 84, 232, 0.08);
-    color: var(--dorami-blue);
+    background: var(--dorami-well);
+    color: var(--dorami-ink-2);
   }
 
   .dept-body {
@@ -3798,16 +3741,15 @@ input[type="radio"] {
   }
 
   .source-row:hover {
-    border-color: rgba(91, 84, 232, 0.22);
-    background: #fff;
-    box-shadow: 0 8px 18px rgba(11, 18, 32, 0.07);
-    transform: translateY(-1px);
+    border-color: var(--dorami-border-strong);
+    background: var(--dorami-soft);
   }
 
+  /* 静默仪器·R1 选中语法:accent 竖条 + 灰阶底,无 indigo 描边/ring */
   .source-row-selected {
-    border-color: var(--dorami-blue);
-    background: rgba(238, 237, 252, 0.74);
-    box-shadow: inset 0 0 0 1px rgba(91, 84, 232, 0.18);
+    border-color: transparent;
+    background: var(--dorami-soft);
+    box-shadow: inset 3px 0 0 var(--dorami-blue);
   }
 
   .source-row-focus {
@@ -4018,7 +3960,7 @@ input[type="radio"] {
   }
 
   .source-stat:hover {
-    background: rgba(91, 84, 232, 0.08);
+    background: var(--dorami-soft);
   }
 
   .source-stat-danger {
@@ -4048,10 +3990,15 @@ input[type="radio"] {
     transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
   }
 
-  .source-config-btn:hover,
+  /* 静默仪器:hover 灰阶与激活态(wash 状态标记)分离 */
+  .source-config-btn:hover {
+    background: var(--dorami-soft);
+    color: var(--dorami-ink-2);
+  }
+
   .source-config-btn.is-active {
-    background: rgba(91, 84, 232, 0.1);
-    color: var(--dorami-blue);
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
   }
 
   .source-config-count {
@@ -4106,7 +4053,6 @@ input[type="radio"] {
 
   .source-run:hover:not(:disabled) {
     background: rgba(91, 84, 232, 0.15);
-    transform: translateY(-1px);
   }
 
   .source-run.is-running {
@@ -4294,11 +4240,10 @@ input[type="radio"] {
     height: 18px;
     padding: 0 6px;
     border-radius: var(--r-pill);
-    border: 1px solid rgba(16, 185, 129, 0.18);
     background: rgba(16, 185, 129, 0.1);
     color: #047857;
     font-size: 10px;
-    font-weight: 900;
+    font-weight: 700;
     white-space: nowrap;
   }
 
@@ -4319,7 +4264,7 @@ input[type="radio"] {
     background: rgba(91, 84, 232, 0.08);
     color: var(--dorami-blue);
     font-size: 12px;
-    font-weight: 900;
+    font-weight: 700;
     white-space: nowrap;
     transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
   }
@@ -4421,8 +4366,8 @@ input[type="radio"] {
 
   .reader-handle:hover {
     opacity: 1;
-    color: var(--dorami-blue);
-    border-color: rgba(91, 84, 232, 0.4);
+    color: var(--dorami-ink-2);
+    border-color: var(--dorami-border-strong);
   }
 
   .reader-handle:active { transform: translateY(-50%) scale(0.93); }
@@ -4539,12 +4484,13 @@ input[type="radio"] {
     transition: background 140ms ease, border-color 140ms ease;
   }
 
-  .reader-source-row:hover { background: rgba(91, 84, 232, 0.06); }
+  .reader-source-row:hover { background: var(--dorami-soft); }
 
+  /* 静默仪器·R1:选中 = accent 竖条 + 灰阶底,去 indigo 描边 */
   .reader-source-row-active {
-    background: var(--dorami-surface);
-    border-color: rgba(91, 84, 232, 0.2);
-    box-shadow: var(--sh-1);
+    background: var(--dorami-soft);
+    border-color: transparent;
+    box-shadow: inset 3px 0 0 var(--dorami-blue);
   }
 
   /* 我的订阅 / 我的收藏：统一成一组导航，彼此紧凑、与下方订阅来源用细分隔线断开 */
@@ -4618,12 +4564,12 @@ input[type="radio"] {
 
   /* 订阅：加号，品牌蓝，常显（发现区主操作），hover 填充 */
   .reader-pin-off {
-    color: var(--dorami-blue);
-    background: rgba(91, 84, 232, 0.1);
-    border-color: rgba(91, 84, 232, 0.16);
+    color: var(--dorami-accent-ink);
+    background: var(--dorami-wash);
+    border-color: transparent;
   }
 
-  .reader-pin-off:hover:not(:disabled) { color: #fff; background: var(--dorami-blue); }
+  .reader-pin-off:hover:not(:disabled) { color: var(--dorami-accent-ink); background: rgba(91, 84, 232, 0.16); }
 
   /* 取消订阅：减号默认隐藏，仅在该行 hover/选中/聚焦时浮现，避免一排减号 */
   .reader-pin-on { opacity: 0; }
@@ -4704,7 +4650,7 @@ input[type="radio"] {
     flex: 1;
     min-width: 0;
     font-size: 14px;
-    font-weight: 900;
+    font-weight: 700;
     color: var(--dorami-ink);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -4766,10 +4712,11 @@ input[type="radio"] {
     border-color: var(--dorami-border);
   }
 
+  /* 静默仪器·R1:竖条已是选中标记,去掉叠加的 indigo 描边 */
   .reader-article-card-active {
-    background: var(--dorami-surface);
-    border-color: rgba(91, 84, 232, 0.28);
-    box-shadow: var(--sh-1), inset 3px 0 0 var(--dorami-blue);
+    background: var(--dorami-soft);
+    border-color: transparent;
+    box-shadow: inset 3px 0 0 var(--dorami-blue);
   }
 
   .reader-article-title {
@@ -4865,7 +4812,7 @@ input[type="radio"] {
     transition: background 140ms ease, color 140ms ease;
   }
 
-  .reader-load-more:hover:not(:disabled) { background: rgba(91, 84, 232, 0.06); color: var(--dorami-blue); }
+  .reader-load-more:hover:not(:disabled) { background: var(--dorami-soft); color: var(--dorami-ink-2); }
   .reader-load-more:disabled { cursor: default; opacity: 0.7; }
 
   /* 右栏：阅读面板 */
@@ -4906,7 +4853,7 @@ input[type="radio"] {
   .reader-pane-title {
     font-size: clamp(22px, 2.6vw, 30px);
     line-height: 1.3;
-    font-weight: 900;
+    font-weight: 800;
     color: var(--dorami-ink);
     letter-spacing: -0.01em;
     /* 与正文一致：英文标题也走优质拉丁字形（零资产系统字体栈），中文回落 PingFang/雅黑。 */
@@ -5604,6 +5551,9 @@ input[type="radio"] {
   /* —— 描边 —— */
   --dorami-border: rgba(255, 255, 255, 0.10);
   --dorami-border-strong: rgba(255, 255, 255, 0.16);
+  /* 静默仪器:暗色卡片描边降级为细白线(深底上阴影不可读),内高光减弱 */
+  --dorami-card-bd: rgba(255, 255, 255, 0.08);
+  --dorami-edge: rgba(255, 255, 255, 0.05);
 
   /* —— 强调（深底略提亮：按钮不发灰、accent 文字达对比）—— */
   /* 填充类 accent（hero 渐变 / 主按钮 / 部门卡）在暗色下调深、去霓虹：
@@ -5715,13 +5665,12 @@ input[type="radio"] {
 [data-theme="dark"] .top-tab:hover:not(.top-tab-active) { background: var(--dorami-raised); }
 [data-theme="dark"] .top-tab-active {
   background: var(--dorami-surface);
-  border-color: rgba(124, 112, 235, 0.34);
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(124, 112, 235, 0.2), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  box-shadow: var(--sh-1), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 /* ── 卡片：抹掉亮色的白色内高光（深底上会变刺眼亮边）── */
 [data-theme="dark"] :is(.surface-card, .metric-card) { box-shadow: var(--sh-2), inset 0 1px 0 rgba(255, 255, 255, 0.04); }
-[data-theme="dark"] .surface-card:hover { box-shadow: var(--sh-3), inset 0 1px 0 rgba(255, 255, 255, 0.05); border-color: rgba(124, 112, 235, 0.32); }
+/* (静默仪器:surface-card 无 hover 态,暗色对应覆盖一并移除) */
 [data-theme="dark"] .metric-card:hover { box-shadow: var(--sh-3), inset 0 1px 0 rgba(255, 255, 255, 0.05); }
 
 /* ════ 规则①：输入 / 轨道 / 表头 / 代码预览 → well（深凹陷）════ */
@@ -5753,7 +5702,7 @@ input[type="radio"] {
 [data-theme="dark"] :is(.segmented-option-active, .scope-toggle-option-active) { box-shadow: var(--sh-1); }
 [data-theme="dark"] :is(.field-box:focus-within, .search-box:focus-within, .catalog-search:focus-within, .node-param-input:focus, .form-input:focus) { border-color: rgba(124, 112, 235, 0.5); }
 [data-theme="dark"] .source-row { background: var(--dorami-soft); border-color: var(--dorami-border); }
-[data-theme="dark"] .source-row:hover { border-color: rgba(124, 112, 235, 0.32); }
+[data-theme="dark"] .source-row:hover { border-color: var(--dorami-border-strong); }
 [data-theme="dark"] .source-review-panel { background: var(--dorami-soft); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04); }
 
 /* ════ 规则③：次按钮 / 图标按钮 / 胶囊 / hover → raised（唯一比卡片亮的一档，给可点控件）════ */
@@ -5774,7 +5723,7 @@ input[type="radio"] {
 ) {
   background: #323a47;
 }
-[data-theme="dark"] :is(.icon-button:hover, .action-button-secondary:hover, .ghost-action:hover, .category-chip:hover:not(.category-chip-active), .tier-segment-btn:hover:not(:disabled):not(.tier-segment-btn-active)) { border-color: rgba(124, 112, 235, 0.4); }
+[data-theme="dark"] :is(.icon-button:hover, .action-button-secondary:hover, .ghost-action:hover, .category-chip:hover:not(.category-chip-active), .tier-segment-btn:hover:not(:disabled):not(.tier-segment-btn-active)) { border-color: var(--dorami-border-strong); }
 [data-theme="dark"] :is(.category-chip, .tier-segment-btn) { box-shadow: var(--sh-1); }
 
 /* ════ 规则④：强调淡底 → 统一 --dorami-wash（不再各自发紫）════ */
@@ -5785,8 +5734,8 @@ input[type="radio"] {
   border-color: rgba(124, 112, 235, 0.3);
 }
 [data-theme="dark"] :is(.integration-button-secondary, .integration-version, .data-chip) { color: #c4bdf7; }
-[data-theme="dark"] .data-table tbody tr:hover { background: var(--dorami-wash); }
-[data-theme="dark"] .source-row-selected { background: var(--dorami-wash); border-color: var(--dorami-blue); }
+[data-theme="dark"] .data-table tbody tr:hover { background: var(--dorami-soft); }
+[data-theme="dark"] .source-row-selected { background: var(--dorami-soft); border-color: transparent; }
 [data-theme="dark"] :is(.integration-icon-sky, .integration-icon-violet) {
   background: linear-gradient(135deg, rgba(124, 112, 235, 0.26), rgba(124, 112, 235, 0.12));
 }
