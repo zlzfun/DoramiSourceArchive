@@ -53,7 +53,6 @@ export default function DataTab({
   showToast,
   isActive = true,
   canManageArticles = true,
-  isReader = true,
   ragEnabled = false,
   articlesDirty = false,
   onArticlesRefreshed,
@@ -117,7 +116,19 @@ export default function DataTab({
     return { key: `sid:${sid}`, name: sid, en: sid, accent: '#64748b', domain: '', monogram: mono };
   };
 
-  const uniqueContentTypes = [...new Set(articles.map(a => a.content_type).filter(Boolean))];
+  // 类型分面选项必须稳定:若只取当前页,筛选后选项塌缩成「全部+已选」无法切换。
+  // 用「历史所见类型的并集」(只增不减),切换筛选后其余选项仍在。
+  const [uniqueContentTypes, setUniqueContentTypes] = useState([]);
+  useEffect(() => {
+    setUniqueContentTypes(prev => {
+      const set = new Set(prev);
+      let grew = false;
+      articles.forEach(a => {
+        if (a.content_type && !set.has(a.content_type)) { set.add(a.content_type); grew = true; }
+      });
+      return grew ? [...set].sort() : prev;
+    });
+  }, [articles]);
   const uniqueSourceIds = [...new Set([
     ...availableFetchers.map(f => f.id).filter(Boolean),
     ...articles.map(a => a.source_id).filter(Boolean),
@@ -512,20 +523,17 @@ export default function DataTab({
     : null;
 
   return (
-    <div className="ledger-page">
-      <div className="page-header">
-        <div className="page-heading">
-          <h2 className="page-title">知识台账</h2>
-          <p className="page-subtitle mt-2 max-w-4xl">按类型、来源、日期与关键词过滤，查找并管理全部归档内容。</p>
-        </div>
-        <div className="page-actions">
+    <div className="ledger-shell">
+      <div className="ledger-head">
+        <h2 className="ledger-head-title">知识台账</h2>
+        <div className="ledger-head-actions">
           {canManageArticles && (
             <button onClick={() => setManualAddModal(true)} className="action-button action-button-primary">
               <Plus /> 手工录入
             </button>
           )}
           <button onClick={refreshArticles} disabled={loading} className="action-button action-button-secondary">
-            <RefreshCw className={`text-[var(--dorami-blue)] ${loading ? 'animate-spin' : ''}`} /> 同步最新
+            <RefreshCw className={loading ? 'animate-spin' : ''} /> 同步最新
           </button>
         </div>
       </div>
@@ -533,8 +541,8 @@ export default function DataTab({
       <div className="ledger-work">
         {/* 分面栏：裸放画布 */}
         <aside className="ledger-facets" aria-label="筛选">
-          <label className="search-box ledger-search">
-            <Search className="mr-2 h-4 w-4 shrink-0 text-slate-500" />
+          <label className="ledger-searchbox">
+            <Search className="ledger-searchbox-icon" />
             <input
               type="search"
               placeholder="标题 / 关键词检索…"
@@ -545,27 +553,6 @@ export default function DataTab({
             />
           </label>
 
-          {isReader && (
-            <div className="ledger-facet">
-              <h3 className="micro-label ledger-facet-title">个性化视图</h3>
-              <div className="segmented-control ledger-scope">
-                {[
-                  { id: 'off', label: '全部内容' },
-                  { id: 'prioritize', label: '订阅优先' },
-                  { id: 'only', label: '仅看订阅' },
-                ].map(opt => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => setFilters({ ...filters, subscribed_scope: opt.id })}
-                    className={`segmented-option ${filters.subscribed_scope === opt.id ? 'segmented-option-active' : ''}`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
 
           <div className="ledger-facet">
             <h3 className="micro-label ledger-facet-title">内容类型</h3>
@@ -760,7 +747,7 @@ export default function DataTab({
           </div>
 
           <div className="ledger-table-scroll">
-            <table className="data-table ledger-table w-full min-w-[860px] text-left">
+            <table className="ledger-table w-full min-w-[980px] text-left">
               <colgroup>
                 {canSelectArticles && <col className="ledger-col-select" />}
                 <col className="ledger-col-title" />
@@ -787,7 +774,7 @@ export default function DataTab({
                   <th className="ledger-th px-3" />
                 </tr>
               </thead>
-              <tbody key={listVersion} className="text-sm">
+              <tbody key={listVersion}>
                 {loading && articles.length === 0 ? (
                   Array.from({ length: 8 }).map((_, i) => (
                     <tr key={`skeleton-${i}`} className="ledger-row">
