@@ -3002,7 +3002,19 @@ input[type="radio"] {
   }
 
   /* 分面项名称截断 + 右侧计数(样页 .facet-item .n) */
-  .ledger-facet-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ledger-facet-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* 截断行的 hover 揭示:停留 ~400ms 后计数让位、标题占满整行(信息获取型 motion);
+     移开立即还原(delay 只挂在 hover-in 方向)。未截断行(.is-clipped 缺席)不参与。 */
+  .ledger-facet-item .n {
+    max-width: 72px;
+    transition: opacity var(--motion-fast) var(--motion-ease), max-width var(--motion-medium) var(--motion-ease);
+  }
+  .ledger-facet-item.is-clipped:hover .n {
+    opacity: 0;
+    max-width: 0;
+    transition: opacity var(--motion-fast) var(--motion-ease) 400ms, max-width var(--motion-medium) var(--motion-ease) 400ms;
+  }
   .ledger-facet-item .n {
     margin-left: auto;
     padding-left: 6px;

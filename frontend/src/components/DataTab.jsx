@@ -150,6 +150,23 @@ export default function DataTab({
   // 来源分面：取消厂商分组，扁平列表按计数降序（后端已降序），显示 fetcher 名 + 计数。
   const sourceFacets = facets?.source_ids ?? [];
 
+  // 来源分面标题截断检测:只有名字真被省略号截断的行,才在 hover 停留后隐去计数、
+  // 让标题占满整行(motion 服务于信息获取,非装饰;未截断的行不参与,计数保持稳定)。
+  const sourceListRef = useRef(null);
+  useEffect(() => {
+    const el = sourceListRef.current;
+    if (!el) return;
+    const measure = () => {
+      el.querySelectorAll('.ledger-facet-item').forEach(btn => {
+        const name = btn.querySelector('.ledger-facet-name');
+        if (name) btn.classList.toggle('is-clipped', name.scrollWidth > name.clientWidth + 1);
+      });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [facets, fetchersById]);
+
   // 手工录入的 datalist 选项：类型/来源同样吃 facets（全量目录），并入已注册 fetcher。
   const manualContentTypes = useMemo(() => (facets?.content_types ?? []).map(c => c.value), [facets]);
   const uniqueSourceIds = useMemo(() => [...new Set([
@@ -576,7 +593,7 @@ export default function DataTab({
 
           <div className="ledger-facet">
             <h3 className="micro-label ledger-facet-title">来源</h3>
-            <div className="ledger-facet-list ledger-facet-scroll">
+            <div className="ledger-facet-list ledger-facet-scroll" ref={sourceListRef}>
               <button
                 type="button"
                 onClick={() => setFilters(prev => ({ ...prev, source_id: '' }))}
