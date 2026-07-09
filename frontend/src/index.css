@@ -3015,6 +3015,21 @@ input[type="radio"] {
     max-width: 0;
     transition: opacity var(--motion-fast) var(--motion-ease) 400ms, max-width var(--motion-medium) var(--motion-ease) 400ms;
   }
+
+  /* 揭示后仍溢出的长名:同一延时下解除省略并整体左移(--reveal-shift 由测量 effect 写入),
+     尾部滑入可视区;移开立即弹回。按钮裁掉滑出左缘的部分。 */
+  /* 裁切滑出左缘的文字:用 contain:paint 而非 overflow:hidden——
+     <button> 上 overflow≠visible 会触发 Chrome 按钮内部布局怪癖(内容高度坍缩为 0)。 */
+  .ledger-facet-item.is-clipped { contain: paint; }
+  .ledger-facet-item.is-clipped .ledger-facet-name {
+    transition: transform 600ms var(--motion-ease);
+  }
+  .ledger-facet-item.is-clipped:hover .ledger-facet-name {
+    overflow: visible;
+    text-overflow: clip;
+    transform: translateX(var(--reveal-shift, 0px));
+    transition: transform 600ms var(--motion-ease) 400ms;
+  }
   .ledger-facet-item .n {
     margin-left: auto;
     padding-left: 6px;
@@ -3210,8 +3225,12 @@ input[type="radio"] {
   /* 选中行 = accent 竖条(R1),hover 只灰阶 */
   .ledger-row.is-sel { background: var(--dorami-soft); box-shadow: inset 3px 0 0 var(--dorami-blue); }
 
-  .ledger-tt { font-size: 13.5px; font-weight: 600; line-height: 1.35; color: var(--dorami-ink); }
-  .ledger-ex { margin-top: 2px; font-size: 11.5px; font-weight: 400; color: var(--dorami-faint); }
+  .ledger-tt { font-size: 13.5px; font-weight: 600; line-height: 1.35; color: var(--dorami-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* 紧凑密度:摘录行退场、行高 52→44(摘录仍在抽屉) */
+  .ledger-table.is-compact .ledger-ex { display: none; }
+  .ledger-table.is-compact .ledger-row td { height: 44px; }
+  .ledger-ex { margin-top: 2px; font-size: 11.5px; font-weight: 400; color: var(--dorami-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .ledger-date {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
@@ -3430,6 +3449,26 @@ input[type="radio"] {
   .pager-btn.is-on { background: var(--dorami-blue); color: #fff; font-weight: 700; }
   .pager-btn:disabled { opacity: 0.4; cursor: default; }
   .pager-ellipsis { align-self: center; color: var(--dorami-faint); font-size: 11px; padding: 0 2px; }
+
+  /* ── 微型分段范式 .mini-seg(表脚/工具条级的小型二择,白拇指语法 R2):
+     密度切换等轻量偏好一律用它,勿再造小开关。 ── */
+  .mini-seg {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: var(--r-sm);
+    background: var(--dorami-well);
+    font-size: 11px;
+  }
+  .mini-seg-btn {
+    min-height: 22px;
+    padding: 0 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    color: var(--dorami-muted);
+  }
+  .mini-seg-btn:hover:not(.is-on) { color: var(--dorami-ink-2); }
+  .mini-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
 
   /* ── Status badges & chips ── */
 

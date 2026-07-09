@@ -95,6 +95,9 @@ export default function DataTab({
   const [reindexing, setReindexing] = useState(false);
   const [autoVec, setAutoVec] = useState(false);
   const [showMore, setShowMore] = useState(false);
+  // 表格密度:舒适(含摘录行)/紧凑(仅标题,44px 行高)。持久化偏好。
+  const [density, setDensity] = useState(() => localStorage.getItem('dorami-ledger-density') || 'comfortable');
+  const setDensityPersist = (d) => { setDensity(d); localStorage.setItem('dorami-ledger-density', d); };
   // 总账条计数（全局概览，不随分面筛选变化；见 loadLedgerStats）。
   const [ledgerStats, setLedgerStats] = useState(null);
   // 分面目录：{total, content_types:[{value,count}], source_ids:[{value,count}]}（计数降序）。
@@ -159,7 +162,14 @@ export default function DataTab({
     const measure = () => {
       el.querySelectorAll('.ledger-facet-item').forEach(btn => {
         const name = btn.querySelector('.ledger-facet-name');
-        if (name) btn.classList.toggle('is-clipped', name.scrollWidth > name.clientWidth + 1);
+        if (!name) return;
+        const clipped = name.scrollWidth > name.clientWidth + 1;
+        btn.classList.toggle('is-clipped', clipped);
+        // 揭示后可用宽 = 按钮内宽(计数已让位);仍不够的部分作为滑移距离,
+        // CSS 侧沿用同一延时把文字整体左移,尾部进入可视区。
+        const available = btn.clientWidth - 18; // padding 9px × 2
+        const shift = clipped ? Math.max(0, name.scrollWidth - available + 2) : 0;
+        btn.style.setProperty('--reveal-shift', `-${shift}px`);
       });
     };
     measure();
@@ -728,7 +738,7 @@ export default function DataTab({
           </div>
 
           <div className="ledger-table-scroll">
-            <table className="ledger-table w-full min-w-[980px] text-left">
+            <table className={`ledger-table w-full min-w-[980px] text-left ${density === 'compact' ? 'is-compact' : ''}`}>
               <colgroup>
                 {canSelectArticles && <col className="ledger-col-select" />}
                 <col className="ledger-col-title" />
@@ -789,8 +799,8 @@ export default function DataTab({
                         </td>
                       )}
                       <td className="ledger-td-title px-4">
-                        <div className="ledger-tt line-clamp-1">{article.title}</div>
-                        <div className="ledger-ex line-clamp-1">{excerptOf(article.content_preview || article.content) || '暂无摘要内容'}</div>
+                        <div className="ledger-tt">{article.title}</div>
+                        <div className="ledger-ex">{excerptOf(article.content_preview || article.content) || '暂无摘要内容'}</div>
                       </td>
                       <td className="px-3" onClick={e => e.stopPropagation()}>
                         {(() => {
@@ -894,6 +904,14 @@ export default function DataTab({
               <span className="ledger-foot-info">
                 共 {(articlePageInfo.total || 0).toLocaleString()} 条 · 每页 {ARTICLE_PAGE_SIZE} 条
               </span>
+              <div className="mini-seg" role="group" aria-label="表格密度">
+                {[['comfortable', '舒适'], ['compact', '紧凑']].map(([d, label]) => (
+                  <button key={d} type="button" onClick={() => setDensityPersist(d)}
+                    className={`mini-seg-btn ${density === d ? 'is-on' : ''}`} aria-pressed={density === d}>
+                    {label}
+                  </button>
+                ))}
+              </div>
               <div className="pager">
                 <button type="button" onClick={() => setCurrentPage(page => Math.max(1, page - 1))} disabled={!canGoPrev} className="pager-btn" aria-label="上一页">«</button>
                 {pageWindow.map(item => (item.ellipsis ? (
