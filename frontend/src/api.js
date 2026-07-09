@@ -209,8 +209,12 @@ export function triggerFetch(fetcherId, params, options = {}) {
   return request(`/fetch/${fetcherId}${runQuery(options)}`, { method: 'POST', body: params, errorMsg: `[${fetcherId}] 抓取失败` });
 }
 
-export function triggerBatchFetch(items, options = {}) {
-  return request(`/fetch/batch${runQuery(options)}`, { method: 'POST', body: { items }, errorMsg: '批量抓取失败' });
+export async function triggerBatchFetch(items, options = {}) {
+  // 批量抓取已改为后台任务：提交拿 job_id，轮询 /api/jobs/{id} 取聚合结果
+  //（字段与旧同步接口一致，调用方语义不变）。细粒度进度仍由调用方轮询
+  // /api/fetch-runs/running-progress 驱动，与此互补。
+  const { job_id: jobId } = await request(`/fetch/batch${runQuery(options)}`, { method: 'POST', body: { items }, errorMsg: '批量抓取失败' });
+  return pollJob(jobId, { defaultError: '批量抓取失败' });
 }
 
 export async function fetchRunningProgress() {

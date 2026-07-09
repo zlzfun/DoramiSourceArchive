@@ -3919,6 +3919,87 @@ input[type="radio"] {
     color: #64748b;
   }
 
+  /* ── 失败原因就地展示（失败节点行内摘要 + 可展开详情） ── */
+  .source-error-banner {
+    margin-top: 8px;
+    border: 1px solid rgba(220, 38, 38, 0.18);
+    border-radius: var(--r-control);
+    background: rgba(220, 38, 38, 0.06);
+    overflow: hidden;
+  }
+
+  .source-error-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+    padding: 7px 10px;
+    color: #b91c1c;
+    text-align: left;
+    transition: background var(--motion-fast) var(--motion-ease);
+  }
+
+  .source-error-summary:hover {
+    background: rgba(220, 38, 38, 0.07);
+  }
+
+  .source-error-type {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 7px;
+    border-radius: var(--r-sm);
+    background: rgba(220, 38, 38, 0.12);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .source-error-msg {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .source-error-time {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--dorami-faint);
+  }
+
+  .source-error-detail {
+    padding: 8px 10px 10px;
+    border-top: 1px dashed rgba(220, 38, 38, 0.16);
+  }
+
+  .source-error-detail-msg {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.6;
+    color: var(--dorami-ink-2);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .source-error-detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    margin-top: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--dorami-faint);
+  }
+
+  .catalog-refresh-btn {
+    flex: 0 0 auto;
+    height: 34px;
+    width: 34px;
+  }
+
   .source-stat {
     display: inline-flex;
     align-items: center;
@@ -5639,6 +5720,7 @@ input[type="radio"] {
 [data-theme="dark"] .source-health-failing { color: #fca5a5; }
 [data-theme="dark"] .source-health-running { color: #fcd34d; }
 [data-theme="dark"] :is(.dept-meta-fail, .source-stat-danger) { color: #fca5a5; }
+[data-theme="dark"] .source-error-summary { color: #fca5a5; }
 
 /* ── 组件层写死的 slate-hex 文字：成组提到 muted / ink（不随 --color-* 翻转）── */
 [data-theme="dark"] :is(

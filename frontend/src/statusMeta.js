@@ -61,6 +61,22 @@ export function healthMeta(status) {
   }
 }
 
+// 抓取失败原因分类（后端 classify_error → latest_error_type）的中文标签。
+// 已知枚举值：configuration_error / network_error / http_error / parse_error / runtime_error，
+// 其余为异常类名（如 KeyError、ConnectTimeout）——未知类型原样显示。
+const ERROR_TYPE_LABELS = {
+  configuration_error: '配置错误',
+  network_error: '网络错误',
+  http_error: 'HTTP 错误',
+  parse_error: '解析错误',
+  runtime_error: '运行错误',
+};
+
+export function errorTypeLabel(type) {
+  if (!type) return '抓取失败';
+  return ERROR_TYPE_LABELS[type] || type;
+}
+
 // 向量检索相关性（distance 越小越相关）。
 export function distanceMeta(distance) {
   if (distance < 0.3) return { label: '极高', tone: 'emerald' };

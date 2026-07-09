@@ -99,6 +99,8 @@ export default function FetchRunsTab({
   onRunsRefreshed,
   pendingFilter,
   onPendingFilterApplied,
+  pendingJobDraft,
+  onPendingJobDraftApplied,
 }) {
   const confirm = useConfirm();
   const loadRequestRef = useRef(0);
@@ -190,6 +192,18 @@ export default function FetchRunsTab({
     }));
     onPendingFilterApplied?.();
   }, [pendingFilter, onPendingFilterApplied, setView]);
+
+  // 来自节点管理「保存为采集任务」的草稿：切到采集任务视图，以「新建」态打开编辑器并预填
+  //（节点选择 + 每节点参数覆盖）。用户自行补名称/cron 再保存。消费后回执清空。
+  useEffect(() => {
+    if (!pendingJobDraft) return;
+    setView('jobs');
+    setEditingJobId(null);
+    setJobDraft({ ...blankJob(), ...pendingJobDraft });
+    setJobSearch('');
+    setJobModalOpen(true);
+    onPendingJobDraftApplied?.();
+  }, [pendingJobDraft, onPendingJobDraftApplied, setView]);
 
 
   const openCreateJob = () => {

@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
+  AlertTriangle,
   CheckSquare,
   ChevronDown,
   ChevronRight,
   ExternalLink,
   FileText,
+  FlaskConical,
   Info,
   Layers,
   Play,
   RefreshCw,
+  Save,
   Search,
   Settings2,
   Wand2,
@@ -38,7 +41,7 @@ import {
   NOISE_LABELS,
   RELIABILITY_LABELS,
 } from '../sourceTaxonomy';
-import { healthMeta } from '../statusMeta';
+import { healthMeta, errorTypeLabel } from '../statusMeta';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { collectionRunMessage } from '../utils/collection';
 
@@ -48,6 +51,28 @@ const TIER_FILTER_OPTIONS = [
   { value: 'tier1_curated', label: '聚合筛选' },
   { value: 'tier2_commentary', label: '评论观点' },
 ];
+
+const STATUS_FILTER_OPTIONS = [
+  { value: 'all', label: '全部' },
+  { value: 'failing', label: '失败' },
+  { value: 'running', label: '运行中' },
+  { value: 'never_run', label: '未运行' },
+  { value: 'healthy', label: '健康' },
+];
+
+// 抓取参数覆盖项持久化：只存「与 schema 默认值不同」的字段，key 见下。
+const FETCH_CONFIGS_STORAGE_KEY = 'dorami.fetchConfigs';
+
+function loadStoredConfigOverrides() {
+  try {
+    const raw = localStorage.getItem(FETCH_CONFIGS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 const TIER_TONE_CLASS = {
   emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
@@ -75,7 +100,7 @@ function aggregateHealth(fetchers, healthByFetcher) {
   return summary;
 }
 
-export default function FetchTab({ availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onViewRunning, pendingFocus, onPendingFocusApplied }) {
+export default function FetchTab({ availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onViewRunning, onSaveAsJob, pendingFocus, onPendingFocusApplied }) {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [healthByFetcher, setHealthByFetcher] = useState({});
   const [selectedFetchers, setSelectedFetchers] = useState([]);
@@ -85,7 +110,11 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   const progressSeenFetcherIdsRef = useRef(new Set());
   const [sectionFilter, setSectionFilter] = useState('all');
   const [tierFilter, setTierFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [healthRefreshing, setHealthRefreshing] = useState(false);
+  const [expandedErrorFetcherIds, setExpandedErrorFetcherIds] = useState(() => new Set());
+  const fetchConfigDefaultsRef = useRef({});
   const [expandedCompanies, setExpandedCompanies] = useState(() => new Set());
   const [collapsedCatalogSections, setCollapsedCatalogSections] = useState(() => new Set());
   const [expandedParamFetcherId, setExpandedParamFetcherId] = useState(null);
@@ -99,15 +128,52 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   );
 
   useEffect(() => {
+    const overrides = loadStoredConfigOverrides();
     const initialConfigs = {};
+    const defaults = {};
     availableFetchers.forEach(fetcher => {
-      initialConfigs[fetcher.id] = {};
+      const cfg = {};
+      const defaultCfg = {};
+      const paramByField = {};
       (fetcher.parameters || []).forEach(param => {
-        initialConfigs[fetcher.id][param.field] = param.default;
+        paramByField[param.field] = param;
+        cfg[param.field] = param.default;
+        defaultCfg[param.field] = param.default;
       });
+      const ov = overrides[fetcher.id];
+      if (ov && typeof ov === 'object' && !Array.isArray(ov)) {
+        Object.entries(ov).forEach(([field, value]) => {
+          const param = paramByField[field];
+          if (!param) return; // 陈旧字段：schema 已无此参数，忽略
+          // 类型不符时安全回退默认值
+          if (param.type === 'number' && typeof value !== 'number') return;
+          if (param.type === 'boolean' && typeof value !== 'boolean') return;
+          cfg[field] = value;
+        });
+      }
+      initialConfigs[fetcher.id] = cfg;
+      defaults[fetcher.id] = defaultCfg;
     });
+    fetchConfigDefaultsRef.current = defaults;
     setFetchConfigs(initialConfigs);
   }, [availableFetchers]);
+
+  // 把「与默认值不同」的覆盖项写回 localStorage（默认值不入库，让 schema 变更自然生效）。
+  const persistConfigOverrides = useCallback((configs) => {
+    const defaults = fetchConfigDefaultsRef.current;
+    const overrides = {};
+    Object.entries(configs).forEach(([fid, cfg]) => {
+      const def = defaults[fid] || {};
+      const diff = {};
+      Object.entries(cfg).forEach(([field, value]) => {
+        if (!Object.is(value, def[field])) diff[field] = value;
+      });
+      if (Object.keys(diff).length) overrides[fid] = diff;
+    });
+    try {
+      localStorage.setItem(FETCH_CONFIGS_STORAGE_KEY, JSON.stringify(overrides));
+    } catch { /* localStorage 不可用时静默降级，不影响本次会话内的参数 */ }
+  }, []);
 
   const loadSourceHealth = useCallback(async () => {
     try {
@@ -118,6 +184,36 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
 
   useEffect(() => {
     loadSourceHealth();
+  }, [loadSourceHealth]);
+
+  const refreshSourceHealth = useCallback(async () => {
+    setHealthRefreshing(true);
+    try {
+      await loadSourceHealth();
+    } finally {
+      setHealthRefreshing(false);
+    }
+  }, [loadSourceHealth]);
+
+  // 数据新鲜度：页面可见时每 45s 静默刷新健康数据；页面隐藏时暂停，重新可见时立即补一刷。
+  useEffect(() => {
+    let timer = null;
+    const start = () => { if (!timer) timer = setInterval(() => loadSourceHealth(), 45000); };
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    const onVisibility = () => {
+      if (document.hidden) {
+        stop();
+      } else {
+        loadSourceHealth();
+        start();
+      }
+    };
+    if (!document.hidden) start();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [loadSourceHealth]);
 
   useEffect(() => {
@@ -179,25 +275,51 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     return section ? section.id : 'other';
   }, []);
 
+  // 健康状态维度：缺省健康记录视为「从未运行」。
+  const statusOf = useCallback((fetcher) => (
+    healthByFetcher[fetcher.id]?.health_status || 'never_run'
+  ), [healthByFetcher]);
+
+  const matchesTier = useCallback((f) => tierFilter === 'all' || f.provenance_tier === tierFilter, [tierFilter]);
+  const matchesSection = useCallback((f) => sectionFilter === 'all' || sectionOf(f) === sectionFilter, [sectionFilter, sectionOf]);
+  const matchesStatus = useCallback((f) => statusFilter === 'all' || statusOf(f) === statusFilter, [statusFilter, statusOf]);
+
+  // 各维度计数都在「其它维度筛选后的池子」里统计，保持 AND 联动口径。
   const sectionOptions = useMemo(() => {
-    const pool = searchedFetchers.filter(f => tierFilter === 'all' || f.provenance_tier === tierFilter);
+    const pool = searchedFetchers.filter(f => matchesTier(f) && matchesStatus(f));
     const counts = {};
     pool.forEach(f => { const id = sectionOf(f); counts[id] = (counts[id] || 0) + 1; });
     const ordered = SECTIONS.filter(s => counts[s.id]).map(s => ({ id: s.id, label: s.label, count: counts[s.id] }));
     if (counts.other) ordered.push({ id: 'other', label: '其他来源', count: counts.other });
     return ordered;
-  }, [searchedFetchers, tierFilter, sectionOf]);
+  }, [searchedFetchers, matchesTier, matchesStatus, sectionOf]);
+
+  const sectionAllCount = useMemo(
+    () => searchedFetchers.filter(f => matchesTier(f) && matchesStatus(f)).length,
+    [searchedFetchers, matchesTier, matchesStatus],
+  );
 
   const tierCounts = useMemo(() => {
-    const pool = searchedFetchers.filter(f => sectionFilter === 'all' || sectionOf(f) === sectionFilter);
+    const pool = searchedFetchers.filter(f => matchesSection(f) && matchesStatus(f));
     const counts = { all: pool.length };
     pool.forEach(f => { const t = f.provenance_tier || 'none'; counts[t] = (counts[t] || 0) + 1; });
     return counts;
-  }, [searchedFetchers, sectionFilter, sectionOf]);
+  }, [searchedFetchers, matchesSection, matchesStatus]);
+
+  const statusCounts = useMemo(() => {
+    const pool = searchedFetchers.filter(f => matchesSection(f) && matchesTier(f));
+    const counts = { all: pool.length };
+    pool.forEach(f => { const s = statusOf(f); counts[s] = (counts[s] || 0) + 1; });
+    return counts;
+  }, [searchedFetchers, matchesSection, matchesTier, statusOf]);
 
   const visibleTierFilterOptions = useMemo(() => TIER_FILTER_OPTIONS.filter(option => (
     option.value === 'all' || (tierCounts[option.value] || 0) > 0
   )), [tierCounts]);
+
+  const visibleStatusFilterOptions = useMemo(() => STATUS_FILTER_OPTIONS.filter(option => (
+    option.value === 'all' || (statusCounts[option.value] || 0) > 0
+  )), [statusCounts]);
 
   useEffect(() => {
     if (tierFilter !== 'all' && (tierCounts[tierFilter] || 0) === 0) {
@@ -205,15 +327,22 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     }
   }, [tierCounts, tierFilter]);
 
+  useEffect(() => {
+    if (statusFilter !== 'all' && (statusCounts[statusFilter] || 0) === 0) {
+      setStatusFilter('all');
+    }
+  }, [statusCounts, statusFilter]);
+
   const visibleFetchers = useMemo(() => searchedFetchers
-    .filter(f => sectionFilter === 'all' || sectionOf(f) === sectionFilter)
-    .filter(f => tierFilter === 'all' || f.provenance_tier === tierFilter),
-  [searchedFetchers, sectionFilter, tierFilter, sectionOf]);
+    .filter(matchesSection)
+    .filter(matchesTier)
+    .filter(matchesStatus),
+  [searchedFetchers, matchesSection, matchesTier, matchesStatus]);
 
   const groupedSections = useMemo(() => groupBySection(visibleFetchers), [visibleFetchers]);
 
   // 搜索 / 筛选时强制展开，便于聚焦命中结果；否则默认展开，用户可逐个收起。
-  const autoExpand = searchQuery.trim().length > 0 || sectionFilter !== 'all' || tierFilter !== 'all';
+  const autoExpand = searchQuery.trim().length > 0 || sectionFilter !== 'all' || tierFilter !== 'all' || statusFilter !== 'all';
 
   const isCatalogSectionOpen = useCallback((sectionId) => {
     if (autoExpand) return true;
@@ -266,6 +395,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     setView('catalog');
     setSectionFilter('all');
     setTierFilter('all');
+    setStatusFilter('all');
     setSearchQuery('');
     setCollapsedCatalogSections(prev => {
       if (!prev.has(sectionId)) return prev;
@@ -302,11 +432,24 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       : Array.from(new Set([...prev, ...ids])));
   };
 
+  const toggleErrorExpanded = (fetcherId) => {
+    setExpandedErrorFetcherIds(prev => {
+      const next = new Set(prev);
+      if (next.has(fetcherId)) next.delete(fetcherId);
+      else next.add(fetcherId);
+      return next;
+    });
+  };
+
   const updateFetcherConfig = (fetcherId, field, value) => {
-    setFetchConfigs(prev => ({
-      ...prev,
-      [fetcherId]: { ...(prev[fetcherId] || {}), [field]: value },
-    }));
+    setFetchConfigs(prev => {
+      const next = {
+        ...prev,
+        [fetcherId]: { ...(prev[fetcherId] || {}), [field]: value },
+      };
+      persistConfigOverrides(next);
+      return next;
+    });
   };
 
   const renderCatalogParamInput = (fetcherId, param) => {
@@ -386,6 +529,29 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     }
   };
 
+  // 把当前选择 + 每节点参数覆盖交给「任务与运行」的新建采集任务编辑器预填。
+  // 只带「与 schema 默认值不同」的字段（与 localStorage 覆盖同口径），键形态对齐编辑器的
+  // per_fetcher_params（fetcherId → {field: value}）；节点选择映射为 fetcher_ids。
+  const handleSaveAsJob = () => {
+    if (selectedFetchers.length === 0) return;
+    const defaults = fetchConfigDefaultsRef.current;
+    const perFetcherParams = {};
+    selectedFetchers.forEach(id => {
+      const cfg = fetchConfigs[id] || {};
+      const def = defaults[id] || {};
+      const diff = {};
+      Object.entries(cfg).forEach(([field, value]) => {
+        if (!Object.is(value, def[field])) diff[field] = value;
+      });
+      if (Object.keys(diff).length) perFetcherParams[id] = diff;
+    });
+    onSaveAsJob?.({
+      fetcher_ids: [...selectedFetchers],
+      per_fetcher_params: perFetcherParams,
+    });
+    setSelectedFetchers([]);
+  };
+
   const runSingleFetcher = (fetcher) => {
     if (runningFetcherIds.has(fetcher.id)) return;
     progressSeenFetcherIdsRef.current.delete(fetcher.id);
@@ -422,6 +588,10 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     const progress = fetchProgress[fetcher.id];
     const status = health?.health_status || 'never_run';
     const statusLabel = healthMeta(status).label;
+    const errorMessage = health?.latest_error_message;
+    const errorType = health?.latest_error_type;
+    const isFailing = status === 'failing' && Boolean(errorMessage);
+    const errorExpanded = expandedErrorFetcherIds.has(fetcher.id);
     const company = resolveCompany(fetcher);
     const ownerLabel = fetcher.source_brand || fetcher.source_owner || company.name;
     const scopeLabel = labelFrom(SOURCE_SCOPE_LABELS, fetcher.source_scope);
@@ -464,7 +634,10 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           </div>
 
           <div className="source-stats">
-            <span className={`source-health-pill source-health-${status}`} title={`运行状态：${statusLabel}`}>{statusLabel}</span>
+            <span
+              className={`source-health-pill source-health-${status}`}
+              title={isFailing ? `运行状态：${statusLabel} · ${errorTypeLabel(errorType)}：${errorMessage}` : `运行状态：${statusLabel}`}
+            >{statusLabel}</span>
             <button
               type="button"
               onClick={() => onViewRuns?.(fetcher.id)}
@@ -529,6 +702,35 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             </button>
           </div>
         </div>
+
+        {isFailing && (
+          <div className="source-error-banner">
+            <button
+              type="button"
+              className="source-error-summary"
+              onClick={() => toggleErrorExpanded(fetcher.id)}
+              aria-expanded={errorExpanded}
+              title={errorExpanded ? '收起失败详情' : '展开失败详情'}
+            >
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span className="source-error-type">{errorTypeLabel(errorType)}</span>
+              <span className={`source-error-msg ${errorExpanded ? '' : 'truncate'}`}>{errorMessage}</span>
+              {health?.latest_failure_at && (
+                <span className="source-error-time">{formatRelativeTime(health.latest_failure_at)}</span>
+              )}
+              {errorExpanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+            </button>
+            {errorExpanded && (
+              <div className="source-error-detail">
+                <p className="source-error-detail-msg">{errorMessage}</p>
+                <div className="source-error-detail-meta">
+                  <span>类型：{errorTypeLabel(errorType)}</span>
+                  {health?.latest_failure_at && <span>失败时间：{formatDateTime(health.latest_failure_at, '未知')}</span>}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {fetcher.desc && (
           <p className="source-desc">{fetcher.desc}</p>
@@ -616,13 +818,23 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                 <span>内置节点目录</span>
                 <span className="text-xs font-mono text-slate-500">{visibleFetchers.length}/{availableFetchers.length}</span>
               </div>
+              <button
+                type="button"
+                onClick={refreshSourceHealth}
+                disabled={healthRefreshing}
+                className="icon-button catalog-refresh-btn"
+                title="刷新运行健康数据"
+                aria-label="刷新运行健康数据"
+              >
+                <RefreshCw className={`h-4 w-4 ${healthRefreshing ? 'animate-spin' : ''}`} />
+              </button>
             </div>
             <div className="catalog-filter-row catalog-filter-row-with-search">
               <span className="catalog-dimension-label">板块</span>
               <div className="catalog-chips">
                 <button onClick={() => setSectionFilter('all')} className={`category-chip ${sectionFilter === 'all' ? 'category-chip-active' : ''}`}>
                   <span>全部</span>
-                  <span className="category-chip-count">{searchedFetchers.filter(f => tierFilter === 'all' || f.provenance_tier === tierFilter).length}</span>
+                  <span className="category-chip-count">{sectionAllCount}</span>
                 </button>
                 {sectionOptions.map(({ id, label, count }) => (
                   <button key={id} onClick={() => setSectionFilter(id)} className={`category-chip ${sectionFilter === id ? 'category-chip-active' : ''}`}>
@@ -646,6 +858,25 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                     <button
                       key={option.value}
                       onClick={() => setTierFilter(option.value)}
+                      className={`tier-segment-btn ${active ? 'tier-segment-btn-active' : ''}`}
+                      disabled={option.value !== 'all' && count === 0}
+                    >
+                      {option.label}<span className="tier-segment-count">{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="catalog-filter-row catalog-tier-row">
+              <span className="catalog-dimension-label">状态</span>
+              <div className="tier-segment">
+                {visibleStatusFilterOptions.map(option => {
+                  const active = statusFilter === option.value;
+                  const count = option.value === 'all' ? (statusCounts.all || 0) : (statusCounts[option.value] || 0);
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => setStatusFilter(option.value)}
                       className={`tier-segment-btn ${active ? 'tier-segment-btn-active' : ''}`}
                       disabled={option.value !== 'all' && count === 0}
                     >
@@ -765,6 +996,12 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             </div>
           )}
           <div className="selection-bar-actions">
+            <button onClick={handleSaveAsJob} disabled={fetchLoading} className="action-button action-button-quiet">
+              <Save /> 保存为采集任务
+            </button>
+            <button onClick={() => handleBatchFetch({ testLimit: 1 })} disabled={fetchLoading} className="action-button action-button-quiet">
+              <FlaskConical /> 试抓（每源 1 条）
+            </button>
             <button onClick={() => handleBatchFetch()} disabled={fetchLoading} className="action-button action-button-primary">
               {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} {fetchLoading ? '执行中...' : '立即临时抓取'}
             </button>

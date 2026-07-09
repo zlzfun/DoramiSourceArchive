@@ -119,6 +119,10 @@ export default function App() {
   // 消费后调 clearPendingFocus 归零。取代原先每种跳转一套 state + clear 回调 + applyFocus 分支。
   const [pendingFocus, setPendingFocus] = useState(null);
   const clearPendingFocus = useCallback(() => setPendingFocus(null), []);
+  // 「保存为采集任务」的一次性 handoff：节点管理发起 → 切到任务与运行 → 预填新建编辑器后回执清空。
+  // 独立于 pendingFocus 通道，避免与运行历史的 pendingFilter（同走 tab==='runs'）相撞。
+  const [pendingJobDraft, setPendingJobDraft] = useState(null);
+  const clearPendingJobDraft = useCallback(() => setPendingJobDraft(null), []);
 
   // history.state 回放时重新点燃这一次性聚焦，让目标页重新定位/筛选。
   const applyFocus = useCallback((focus) => {
@@ -175,6 +179,12 @@ export default function App() {
   }, [jumpWithFocus]);
   const viewRunningTasks = useCallback(() => {
     jumpWithFocus('runs', 'history', { tab: 'runs', payload: { fetcher_id: '', status: '' } });
+  }, [jumpWithFocus]);
+
+  // 节点管理「保存为采集任务」→ 切到任务与运行·采集任务，预填新建编辑器（草稿）。
+  const saveSelectionAsJob = useCallback((draft) => {
+    setPendingJobDraft(draft);
+    jumpWithFocus('runs', 'jobs', null);
   }, [jumpWithFocus]);
 
   // 知识台账「数据来源」列点击 → 定位并展开节点管理（采集端）里对应来源。
@@ -507,6 +517,7 @@ export default function App() {
                   onViewArticles={viewArticlesForSource}
                   onViewRuns={viewRunsForSource}
                   onViewRunning={viewRunningTasks}
+                  onSaveAsJob={saveSelectionAsJob}
                   pendingFocus={pendingFocus?.tab === 'fetch' ? pendingFocus.payload : null}
                   onPendingFocusApplied={clearPendingFocus}
                 />
@@ -528,6 +539,8 @@ export default function App() {
                   onRunsRefreshed={clearRunsDirty}
                   pendingFilter={pendingFocus?.tab === 'runs' ? pendingFocus.payload : null}
                   onPendingFilterApplied={clearPendingFocus}
+                  pendingJobDraft={pendingJobDraft}
+                  onPendingJobDraftApplied={clearPendingJobDraft}
                 />
               </Suspense>
             </div>
