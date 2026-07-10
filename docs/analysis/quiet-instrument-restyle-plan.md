@@ -156,3 +156,31 @@ lint + vite build 全程绿;审计 grep(§三)全部通过。
   L2 退役的 ledger-filter-row 相关、.top-tab*/.brand-title(顶栏退役);建议单独一个清理提交;
 - 设置面板 VectorSection 与总账条动作区的自动向量化/重索引入口重复,留设置波收敛;
 - 「批量试抓/批量存任务」由多选语义降为单节点动作,如需恢复手选批量需产品决策。
+
+
+## 六、台账优化波(用户验收清单 12+5+2+1 条,2026-07-09/10)
+
+提交链:直移 18838ae → 范式+数据层 4d4775b → 装配 d2418bc → 遗留五条 0e0af96 →
+揭示动效 882f319 → 滑动揭示+密度 dad9a1f → 揭示时序 a9a1777。全程 Playwright 探针/截图实证。
+
+**沉淀的范式(conventions §4/§6 已回写,后续页面直接复用)**:
+- 滚动条:常态隐形、悬停所在容器显现(--dorami-scrollbar* token,组件内禁自定义);
+- 语义状态 token --state-{ok,warn,bad,run,idle}(-bg) + 状态章 .stamp 家族(形状点色弱可辨);
+- 页码 .pager 家族(当前页=accent 实底);微型分段 .mini-seg(白拇指,表脚级轻量二择);
+- 主按钮/头像扁平化(实心 accent + sh-1,无渐变无 glow);
+- 分面数据源规则:选项一律来自聚合端点(GET /api/articles/facets),不得从当前页推导;
+- DateRangePicker compact 变体(窄语境);全屏壳页 html:has(...){overflow:hidden} 封根滚动。
+
+**后端**:/api/articles/facets(全量 group-by 计数)、content_types CSV 透传(tests/test_article_facets.py)。
+
+**产品决策**:类型归组 CONTENT_TYPE_GROUPS(资讯文章=rss+web 等 11 组,utils/contentType 单一分类学);
+来源分面取消厂商分组;个性化视图 segmented 退役(管理员不订阅);正文分面退役;
+RAG 关闭时总账条降级为 总收录/今日/近7天 三格、索引状态列隐藏;表格密度 舒适/紧凑(持久化)。
+
+**技术陷阱档案(排查同类问题先查这里)**:
+- 工具类压层:utilities 层(text-*/line-clamp-*)压过 components 层同属性(实例:line-clamp-1
+  的 display:-webkit-box 压 display:none);对策=去工具类或用未分层规则;
+- button{font:inherit} 未分层简写压层内 font-size(字号挂容器靠继承穿透);
+- <button> 上 overflow:hidden 触发 Chrome 按钮内部布局怪癖(内容高度坍缩)→ 用 contain:paint 裁切;
+- overflow/text-overflow 离散属性不吃 transition 延时 → transition-behavior: allow-discrete 钉时点;
+- fixed 弹层与类内 top:100% 过约束 → 内联补 top:auto。
