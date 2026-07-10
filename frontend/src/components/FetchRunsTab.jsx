@@ -421,16 +421,9 @@ export default function FetchRunsTab({
 
   return (
     <div className="space-y-6">
-      <div className="page-header flex-col xl:flex-row">
-        <div className="page-heading">
-          <h2 className="page-title">任务与运行</h2>
-          <p className="page-subtitle mt-3 max-w-3xl">
-            {view === 'history'
-              ? '统一查看手动、定时和旧版抓取的运行记录，追踪每次采集的结果。'
-              : '配置并调度采集任务，编排节点的定时与批量运行。'}
-          </p>
-        </div>
-        <div className="page-actions">
+      <div className="page-head">
+        <h1 className="page-title">任务与运行</h1>
+        <div className="page-head-actions">
           <div className="segmented-control">
             <button onClick={() => setView('jobs')} className={`segmented-option ${view === 'jobs' ? 'segmented-option-active' : ''}`}>
               <Settings2 /> 采集任务

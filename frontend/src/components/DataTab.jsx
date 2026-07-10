@@ -546,9 +546,9 @@ export default function DataTab({
 
   return (
     <div className="ledger-shell">
-      <div className="ledger-head">
-        <h2 className="ledger-head-title">知识台账</h2>
-        <div className="ledger-head-actions">
+      <div className="page-head">
+        <h1 className="page-title">知识台账</h1>
+        <div className="page-head-actions">
           {canManageArticles && (
             <button onClick={() => setManualAddModal(true)} className="action-button action-button-primary">
               <Plus /> 手工录入

@@ -77,11 +77,8 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
 
   return (
     <div className="space-y-6">
-      <div className="page-header flex-col xl:flex-row">
-        <div className="page-heading">
-          <h2 className="page-title">向量雷达</h2>
-          <p className="page-subtitle mt-3 max-w-3xl">在你订阅的来源范围内进行语义检索与 RAG 上下文导出。向量构建由管理员统一维护。</p>
-        </div>
+      <div className="page-head">
+        <h1 className="page-title">向量雷达</h1>
       </div>
 
       <div className="surface-card flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[var(--r-card)] px-5 py-3 text-xs font-bold text-slate-500">

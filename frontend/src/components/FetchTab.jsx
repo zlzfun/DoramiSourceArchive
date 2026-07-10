@@ -877,12 +877,9 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   if (ENABLE_CUSTOM_NODE_BUILDER && view === 'custom') {
     return (
       <div className="space-y-6">
-        <div className="page-header flex-col xl:flex-row">
-          <div className="page-heading">
-            <h2 className="page-title">节点管理</h2>
-            <p className="page-subtitle mt-3 max-w-4xl">输入一个文章列表页 URL，自动分析并生成可抓取的自定义节点，无需写代码。</p>
-          </div>
-          <div className="page-actions">
+        <div className="page-head">
+          <h1 className="page-title">节点管理</h1>
+          <div className="page-head-actions">
             <div className="segmented-control">
               <button onClick={() => setView('catalog')} className="segmented-option"><Layers /> 节点目录</button>
               <button onClick={() => setView('custom')} className="segmented-option segmented-option-active"><Wand2 /> AI 自定义节点</button>
@@ -898,12 +895,9 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
 
   return (
     <div className="nodes-shell">
-      <div className="nodes-head">
-        <div className="page-heading">
-          <h2 className="page-title nodes-title">节点管理</h2>
-          <p className="page-subtitle nodes-subtitle">按类别聚合内置抓取节点，查看健康、编辑参数、就地运行与试抓。</p>
-        </div>
-        <div className="page-actions">
+      <div className="page-head">
+        <h1 className="page-title">节点管理</h1>
+        <div className="page-head-actions">
           {ENABLE_CUSTOM_NODE_BUILDER && (
             <div className="segmented-control">
               <button onClick={() => setView('catalog')} className="segmented-option segmented-option-active"><Layers /> 节点目录</button>

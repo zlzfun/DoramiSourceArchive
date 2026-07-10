@@ -154,6 +154,9 @@
    同时杜绝浏览器缩放下 vh 取整产生的 1-2px 假滚动空间。 */
 html:has(.ledger-shell, .nodes-shell, .reader-shell) {
   overflow: hidden;
+  /* 根滚动已封死,滚动条槽位也一并取消——否则 stable 预留的 gutter 会污染
+     壳层 100vw 定位数学(壳页与流式页的页头 x 坐标差 5px 的元凶) */
+  scrollbar-gutter: auto;
 }
 
 /* 壳层几何:lg+ 启用左导轨、撤顶栏(与 :root 基础值同为未分层,媒体命中即胜出) */
@@ -734,11 +737,10 @@ input[type="radio"] {
      其余请用 Tailwind 字号梯度（text-xs/sm/base + font-*），勿手写 text-[Npx]。 */
 
   .page-title {
-    font-size: clamp(26px, 2.2vw, 32px);
+    font-size: 24px;
     line-height: 1.15;
-    /* 静默仪器:900 退场,大字号配 800 更稳 */
     font-weight: 800;
-    letter-spacing: 0;
+    letter-spacing: -0.01em;
     color: var(--dorami-ink);
     text-wrap: balance;
   }
@@ -751,26 +753,37 @@ input[type="radio"] {
     letter-spacing: 0;
   }
 
-  .page-header {
+  /* ── 页头范式 .page-head(全站统一,样页口径):
+     h1.page-title(24/800) + 右侧 .page-head-actions;不带副标题。
+     流式页自带下边距;全屏壳页(ledger/nodes)由壳选择器改为内边距。 ── */
+  .page-head {
+    flex: none;
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 20px;
-    min-height: 74px;
-  }
-
-  .page-heading {
-    min-width: 0;
-    padding-top: 2px;
-  }
-
-  .page-actions {
-    display: flex;
-    flex-wrap: wrap;
     align-items: center;
-    justify-content: flex-end;
-    gap: 10px;
-    min-height: 44px;
+    gap: 14px;
+    /* 48px 统一箱高:容纳最高的动作件(segmented),标题垂直位置不随动作区高度漂移 */
+    min-height: 48px;
+    margin-bottom: 24px;
+  }
+
+  /* 页头内的 segmented 收紧到 48 箱高内 */
+  .page-head-actions .segmented-control { padding: 3px; }
+
+  .page-head-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .ledger-shell > .page-head,
+  .nodes-shell > .page-head {
+    margin-bottom: 0;
+    padding: 22px 28px 0;
+    /* border-box 下 padding-top 会吃掉箱高:补足到 22+48,保证内容箱与流式页同为 48,
+       标题 y 坐标全站一致(22 + (48-行高)/2) */
+    min-height: 70px;
   }
 
   /* ── Cards & surfaces ── */
@@ -2915,7 +2928,7 @@ input[type="radio"] {
   .ledger-shell {
     width: calc(100vw - var(--rail-w));
     margin-inline: calc(50% - 50vw + var(--rail-w) / 2);
-    margin-top: -36px;
+    margin-top: -22px; /* 抵消 main 的 pt-22(页头范式统一顶距) */
     margin-bottom: -36px;
     height: calc(100vh - var(--app-top));
     display: flex;
@@ -2925,15 +2938,7 @@ input[type="radio"] {
     line-height: 1.55;
   }
 
-  .ledger-head {
-    flex: none;
-    display: flex;
-    align-items: baseline;
-    gap: 14px;
-    padding: 22px 28px 0;
-  }
-  .ledger-head-title { font-size: 24px; font-weight: 800; line-height: 1.15; letter-spacing: -0.01em; color: var(--dorami-ink); }
-  .ledger-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  /* (页头已统一走 .page-head 范式) */
 
   .ledger-work { flex: 1; min-height: 0; display: flex; gap: 20px; align-items: stretch; margin: 16px 28px 20px; }
 
@@ -4695,7 +4700,7 @@ input[type="radio"] {
   .nodes-shell {
     width: calc(100vw - var(--rail-w));
     margin-inline: calc(50% - 50vw + var(--rail-w) / 2);
-    margin-top: -36px;
+    margin-top: -22px; /* 抵消 main 的 pt-22(页头范式统一顶距) */
     margin-bottom: -36px;
     height: calc(100vh - var(--app-top));
     display: flex;
@@ -4703,24 +4708,7 @@ input[type="radio"] {
     overflow: hidden;
   }
 
-  .nodes-head {
-    flex: none;
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 22px 28px 12px;
-  }
-
-  .nodes-title {
-    font-size: clamp(22px, 1.8vw, 26px);
-  }
-
-  .nodes-subtitle {
-    margin-top: 4px;
-    font-size: 12.5px;
-    line-height: 1.5;
-  }
+  /* (页头已统一走 .page-head 范式) */
 
   /* 每页一张纸 */
   .nodespaper {
@@ -5879,7 +5867,7 @@ input[type="radio"] {
     grid-template-columns: var(--col-l) var(--col-m) minmax(0, 1fr);
     width: calc(100vw - var(--rail-w));
     margin-inline: calc(50% - 50vw + var(--rail-w) / 2);
-    margin-top: -36px;
+    margin-top: -22px; /* 抵消 main 的 pt-22(页头范式统一顶距) */
     margin-bottom: -36px;
     height: calc(100vh - var(--app-top));
     overflow: hidden;

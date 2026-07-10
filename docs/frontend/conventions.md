@@ -58,13 +58,17 @@
 
 | 角色类 | 用途 | 规格 |
 |---|---|---|
-| `.page-title` | 页面 H1 | clamp(26–32px)/800 |
-| `.page-subtitle` | 页面副标题/说明 | 14px/600·muted |
+| `.page-title` | 页面 H1(页头范式 `.page-head`) | 24px/800 |
+| `.page-subtitle` | 卡内说明(页级副标题已随页头范式退役) | 14px/600·muted |
 | `.card-title` / `.section-title` | 卡片/区块标题 | 15px/700 · 14px/700 |
 | `.body-text` | 默认正文/可读多行 | 14px/1.6/600 |
 | `.tiny-meta` | 次要 meta | 12px/500 |
 | `.micro-label` | 微标签/徽标/角标 | 11px/700 |
 | `.stat-number` | 指标数字 | 26px/700·tabular |
+
+**页头范式(2026-07,全站统一)**:每页页头 = `.page-head`(`h1.page-title` 24/800 + 右侧
+`.page-head-actions`),**不带副标题**;流式页自带下边距,全屏壳页由壳选择器给内边距。
+新页面照此,勿再造 page-header/自定义标题。
 
 **静默仪器·字重纪律(2026-07)**:工作区 900/`font-black` 全面退场——页面级标题 800、
 指标数字 700、列表条目标题 ≤700(阅读器文章卡 600);大字号配中粗,仪表感靠 tabular 对齐而非超粗。

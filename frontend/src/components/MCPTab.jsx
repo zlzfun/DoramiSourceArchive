@@ -203,17 +203,10 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
 
   return (
     <div className="space-y-6">
-      <div className="page-header flex-col xl:flex-row">
-        <div className="page-heading">
-          <h2 className="page-title">接入集成</h2>
-          <p className="page-subtitle mt-3 max-w-3xl">
-            {sub === 'brief'
-              ? '由后端大模型汇总择优近期归档内容，生成可订阅的 AI 资讯日报。'
-              : '通过 MCP / Skill 接入 Agent；通过个人订阅接口把已订阅内容拉取到下游脚本或服务。'}
-          </p>
-        </div>
+      <div className="page-head">
+        <h1 className="page-title">接入集成</h1>
         {canManage && (
-          <div className="page-actions">
+          <div className="page-head-actions">
             <div className="segmented-control">
               <button onClick={() => goSub('brief')} className={`segmented-option ${sub === 'brief' ? 'segmented-option-active' : ''}`}><Newspaper /> 日报生成</button>
               <button onClick={() => goSub('access')} className={`segmented-option ${sub === 'access' ? 'segmented-option-active' : ''}`}><Plug2 /> Agent 接入</button>

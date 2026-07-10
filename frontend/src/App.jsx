@@ -509,7 +509,7 @@ export default function App() {
         onArticlesChanged={markArticlesDirty}
       />
 
-      <main className="ml-[var(--rail-w)] px-5 py-9 sm:px-8 xl:px-10">
+      <main className="ml-[var(--rail-w)] px-5 pt-[22px] pb-9 sm:px-7">
         <div className="page-shell">
           {readerOnly && mountedTabs.has('reader') && (
             <div className="tab-panel" style={{ display: activeTab === 'reader' ? 'block' : 'none' }}>

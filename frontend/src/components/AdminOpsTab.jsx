@@ -377,16 +377,9 @@ export default function AdminOpsTab({ showToast }) {
 
   return (
     <div>
-      <div className="page-header flex-col xl:flex-row">
-        <div className="page-heading">
-          <h1 className="page-title">运维管理</h1>
-          <p className="page-subtitle mt-3 max-w-3xl">
-            {sub === 'user' && '管理读者账号：创建、停用、AI 功能授权、重置密码。'}
-            {sub === 'content' && '各源与文章的受欢迎度看板：订阅与收藏热度。'}
-            {sub === 'ai' && 'AI 总开关、模型配置与用量监控（日报与阅读器 AI 共用一套模型）。'}
-          </p>
-        </div>
-        <div className="page-actions">
+      <div className="page-head">
+        <h1 className="page-title">运维管理</h1>
+        <div className="page-head-actions">
           <div className="segmented-control">
             <button onClick={() => setSub('user')} className={`segmented-option ${sub === 'user' ? 'segmented-option-active' : ''}`}><Users /> 用户</button>
             <button onClick={() => setSub('content')} className={`segmented-option ${sub === 'content' ? 'segmented-option-active' : ''}`}><Database /> 内容</button>
