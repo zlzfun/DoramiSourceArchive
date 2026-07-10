@@ -12,7 +12,6 @@ import {
   Play,
   RefreshCw,
   Save,
-  Search,
   Wand2,
   X,
 } from 'lucide-react';
@@ -29,13 +28,10 @@ import CustomNodeBuilder from './CustomNodeBuilder';
 // 高级目标「AI 自定义节点」暂不开放前端入口：后端流程保留，UI 入口与面板用此开关隐藏。
 const ENABLE_CUSTOM_NODE_BUILDER = false;
 import {
-  SECTIONS,
   groupBySection,
   labelFrom,
-  resolveCompany,
   tierMeta,
   SOURCE_CHANNEL_LABELS,
-  SOURCE_SCOPE_LABELS,
   SIGNAL_LABELS,
   NOISE_LABELS,
   RELIABILITY_LABELS,
@@ -43,13 +39,6 @@ import {
 import { healthMeta, errorTypeLabel, runStatusMeta } from '../statusMeta';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { collectionRunMessage, TEST_RUN_LIMIT } from '../utils/collection';
-
-const TIER_FILTER_OPTIONS = [
-  { value: 'all', label: '全部层级' },
-  { value: 'tier0_primary', label: '官方一手' },
-  { value: 'tier1_curated', label: '聚合筛选' },
-  { value: 'tier2_commentary', label: '评论观点' },
-];
 
 // 健康态 → 信号灯样式（后端 SourceStateRecord 只有四态，无独立「告警」态，故灯位取四态 + 全部）。
 const HEALTH_SIGNAL = { healthy: 'ok', failing: 'fail', running: 'running', never_run: 'idle' };
@@ -100,10 +89,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   const [runningFetcherIds, setRunningFetcherIds] = useState(() => new Set());
   const [fetchProgress, setFetchProgress] = useState({});
   const progressSeenFetcherIdsRef = useRef(new Set());
-  const [sectionFilter, setSectionFilter] = useState('all');
-  const [tierFilter, setTierFilter] = useState('all');
   const [healthFilter, setHealthFilter] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
   const [healthRefreshing, setHealthRefreshing] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [countdown, setCountdown] = useState(REFRESH_SECONDS);
@@ -251,85 +237,28 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     };
   }, [runningFetcherIds]);
 
-  const matchesSearch = useCallback((fetcher) => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return true;
-    const company = resolveCompany(fetcher);
-    return [
-      fetcher.name, fetcher.id, fetcher.desc, fetcher.content_type,
-      fetcher.base_url, fetcher.source_owner, fetcher.source_brand, fetcher.source_scope,
-      fetcher.source_channel, fetcher.provenance_tier, company.name, company.en,
-      ...(fetcher.content_tags || []),
-    ].filter(Boolean).join(' ').toLowerCase().includes(query);
-  }, [searchQuery]);
-
-  const searchedFetchers = useMemo(() => availableFetchers.filter(matchesSearch), [availableFetchers, matchesSearch]);
-
-  const sectionOf = useCallback((fetcher) => {
-    const key = resolveCompany(fetcher).key;
-    const section = SECTIONS.find(s => s.companies.includes(key));
-    return section ? section.id : 'other';
-  }, []);
-
   // 健康状态维度：缺省健康记录视为「从未运行」。
   const statusOf = useCallback((fetcher) => (
     healthByFetcher[fetcher.id]?.health_status || 'never_run'
   ), [healthByFetcher]);
 
-  const matchesTier = useCallback((f) => tierFilter === 'all' || f.provenance_tier === tierFilter, [tierFilter]);
-  const matchesSection = useCallback((f) => sectionFilter === 'all' || sectionOf(f) === sectionFilter, [sectionFilter, sectionOf]);
   const matchesHealth = useCallback((f) => healthFilter === 'all' || statusOf(f) === healthFilter, [healthFilter, statusOf]);
 
-  // 各维度计数都在「其它维度筛选后的池子」里统计，保持 AND 联动口径。
+  // 信号灯计数:唯一保留的筛选维度(搜索/板块/层级工具栏已退役,分组本身即板块导航)。
   const healthCounts = useMemo(() => {
-    const pool = searchedFetchers.filter(f => matchesSection(f) && matchesTier(f));
-    const counts = { all: pool.length };
-    pool.forEach(f => { const s = statusOf(f); counts[s] = (counts[s] || 0) + 1; });
+    const counts = { all: availableFetchers.length };
+    availableFetchers.forEach(f => { const st = statusOf(f); counts[st] = (counts[st] || 0) + 1; });
     return counts;
-  }, [searchedFetchers, matchesSection, matchesTier, statusOf]);
-
-  const sectionOptions = useMemo(() => {
-    const pool = searchedFetchers.filter(f => matchesTier(f) && matchesHealth(f));
-    const counts = {};
-    pool.forEach(f => { const id = sectionOf(f); counts[id] = (counts[id] || 0) + 1; });
-    const ordered = SECTIONS.filter(s => counts[s.id]).map(s => ({ id: s.id, label: s.label, count: counts[s.id] }));
-    if (counts.other) ordered.push({ id: 'other', label: '其他来源', count: counts.other });
-    return ordered;
-  }, [searchedFetchers, matchesTier, matchesHealth, sectionOf]);
-
-  const sectionAllCount = useMemo(
-    () => searchedFetchers.filter(f => matchesTier(f) && matchesHealth(f)).length,
-    [searchedFetchers, matchesTier, matchesHealth],
-  );
-
-  const tierCounts = useMemo(() => {
-    const pool = searchedFetchers.filter(f => matchesSection(f) && matchesHealth(f));
-    const counts = { all: pool.length };
-    pool.forEach(f => { const t = f.provenance_tier || 'none'; counts[t] = (counts[t] || 0) + 1; });
-    return counts;
-  }, [searchedFetchers, matchesSection, matchesHealth]);
-
-  const visibleTierFilterOptions = useMemo(() => TIER_FILTER_OPTIONS.filter(option => (
-    option.value === 'all' || (tierCounts[option.value] || 0) > 0
-  )), [tierCounts]);
-
-  useEffect(() => {
-    if (tierFilter !== 'all' && (tierCounts[tierFilter] || 0) === 0) setTierFilter('all');
-  }, [tierCounts, tierFilter]);
+  }, [availableFetchers, statusOf]);
 
   useEffect(() => {
     if (healthFilter !== 'all' && (healthCounts[healthFilter] || 0) === 0) setHealthFilter('all');
   }, [healthCounts, healthFilter]);
 
-  useEffect(() => {
-    if (sectionFilter !== 'all' && !sectionOptions.some(s => s.id === sectionFilter)) setSectionFilter('all');
-  }, [sectionOptions, sectionFilter]);
-
-  const visibleFetchers = useMemo(() => searchedFetchers
-    .filter(matchesSection)
-    .filter(matchesTier)
-    .filter(matchesHealth),
-  [searchedFetchers, matchesSection, matchesTier, matchesHealth]);
+  const visibleFetchers = useMemo(
+    () => availableFetchers.filter(matchesHealth),
+    [availableFetchers, matchesHealth],
+  );
 
   // 调度板：按现有类别（板块）分组，组内节点铺成行（去掉主体中间层）。
   const groupedBoard = useMemo(() => (
@@ -375,10 +304,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       return;
     }
     setView('catalog');
-    setSectionFilter('all');
-    setTierFilter('all');
     setHealthFilter('all');
-    setSearchQuery('');
     setSelectedNodeId(sid);
     setHighlightedFetcherId(sid);
   }, [pendingFocus, availableFetchers, fetchersById, onPendingFocusApplied, showToast, setView]);
@@ -702,9 +628,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     const isRunning = runningFetcherIds.has(fetcher.id);
     const params = fetcher.parameters || [];
     const preview = previewByNode[fetcher.id];
-    const company = resolveCompany(fetcher);
-    const ownerLabel = fetcher.source_brand || fetcher.source_owner || company.name;
-    const scopeLabel = labelFrom(SOURCE_SCOPE_LABELS, fetcher.source_scope);
     const signalLabel = labelFrom(SIGNAL_LABELS, fetcher.signal_strength);
     const noiseLabel = labelFrom(NOISE_LABELS, fetcher.noise_risk);
     const reliabilityLabel = labelFrom(RELIABILITY_LABELS, fetcher.fetch_reliability);
@@ -726,8 +649,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           <div className="inspector-sid">
             <span className="font-mono truncate" title={fetcher.id}>{fetcher.id}</span>
             <span className="inspector-sid-dot">{typeLabelOf(fetcher)}</span>
-            {ownerLabel && <span className="inspector-sid-dot">{ownerLabel}</span>}
-            {fetcher.source_scope && <span className="inspector-sid-dot">{scopeLabel}</span>}
           </div>
         </div>
 
@@ -911,7 +832,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             className="action-button action-button-primary"
             title="对当前筛选下的全部节点触发临时抓取"
           >
-            {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 批量运行（{visibleFetchers.length}）
+            {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 批量运行 {visibleFetchers.length}
           </button>
         </div>
       </div>
@@ -958,47 +879,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           </div>
         </div>
 
-        <div className="board-toolbar">
-          <div className="board-search">
-            <Search className="h-4 w-4 shrink-0" />
-            <input
-              value={searchQuery}
-              onChange={event => setSearchQuery(event.target.value)}
-              placeholder="搜索名称、主体、ID、标签、Base URL"
-              aria-label="搜索节点"
-            />
-          </div>
-          <div className="board-filter-group">
-            <span className="board-filter-label">板块</span>
-            <button onClick={() => setSectionFilter('all')} className={`category-chip ${sectionFilter === 'all' ? 'category-chip-active' : ''}`}>
-              <span>全部</span><span className="category-chip-count">{sectionAllCount}</span>
-            </button>
-            {sectionOptions.map(({ id, label, count }) => (
-              <button key={id} onClick={() => setSectionFilter(id)} className={`category-chip ${sectionFilter === id ? 'category-chip-active' : ''}`}>
-                <span>{label}</span><span className="category-chip-count">{count}</span>
-              </button>
-            ))}
-          </div>
-          <div className="board-filter-group">
-            <span className="board-filter-label">层级</span>
-            <div className="tier-segment">
-              {visibleTierFilterOptions.map(option => {
-                const active = tierFilter === option.value;
-                const count = option.value === 'all' ? (tierCounts.all || 0) : (tierCounts[option.value] || 0);
-                return (
-                  <button
-                    key={option.value}
-                    onClick={() => setTierFilter(option.value)}
-                    className={`tier-segment-btn ${active ? 'tier-segment-btn-active' : ''}`}
-                    disabled={option.value !== 'all' && count === 0}
-                  >
-                    {option.label}<span className="tier-segment-count">{count}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
 
         <div className={`nodes-body ${mobileInspectorOpen ? 'inspector-open' : ''}`}>
           <div className="board">

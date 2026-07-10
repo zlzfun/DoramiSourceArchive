@@ -351,10 +351,12 @@ export default function App() {
   }, [readerOnly, runtimeInfo.collector_enabled, runtimeInfo.reader_enabled]);
 
   useEffect(() => {
+    // 能力未载入前 tabs 为空,此时重定向会把深链(#/fetch 等书签)误弹回默认页——等载入后再判。
+    if (!runtimeLoaded) return;
     if (!tabs.some(tab => tab.id === activeTab)) {
       goTab(tabs[0]?.id || 'data', { replace: true });
     }
-  }, [activeTab, goTab, tabs]);
+  }, [activeTab, goTab, tabs, runtimeLoaded]);
 
   if (authState.status === 'checking') {
     return (

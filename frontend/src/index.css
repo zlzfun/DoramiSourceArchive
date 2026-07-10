@@ -4698,6 +4698,10 @@ input[type="radio"] {
 
   /* 全屏工作区：跳出 main 的 max-w/padding，铺满导轨右侧，页面不滚（内部各区自滚） */
   .nodes-shell {
+    /* 字号语境挂壳(13px,与台账壳/样页一致):button{font:inherit} 穿透继承,
+       检视器/按钮/参数全页排印随之落到样页刻度——此前漏设导致整页在 16px 基准膨胀 */
+    font-size: 13px;
+    line-height: 1.55;
     width: calc(100vw - var(--rail-w));
     margin-inline: calc(50% - 50vw + var(--rail-w) / 2);
     margin-top: -22px; /* 抵消 main 的 pt-22(页头范式统一顶距) */
@@ -5562,6 +5566,16 @@ input[type="radio"] {
     display: flex;
     flex-wrap: wrap;
     gap: 7px;
+  }
+
+  /* 检视器内动作钮压缩到样页刻度(基类 40px 对窄栏过于臃肿) */
+  .inspector-actions .action-button {
+    min-height: 32px;
+    padding: 0 12px;
+  }
+  .inspector-actions .action-button svg {
+    width: 14px;
+    height: 14px;
   }
 
   .inspector-act {
