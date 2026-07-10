@@ -20,6 +20,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 # 要么是漏配了 collector/reader/admin 鉴权（应去补前缀/特例，而非往这里加）。
 EXPECTED_AUTHENTICATED_ANY = {
     ("GET", "/api/articles"),
+    # 台账分面聚合:对已是 authenticated-any 的 GET /api/articles 的只读 group-by
+    # 视图,暴露面不超过列表本身(台账优化波新增时漏登记,此处补记)。
+    ("GET", "/api/articles/facets"),
     ("GET", "/api/articles/{article_id:path}"),
     ("GET", "/api/runtime"),
     ("POST", "/api/auth/avatar"),
