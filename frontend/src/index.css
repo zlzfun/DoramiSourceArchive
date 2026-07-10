@@ -3338,42 +3338,8 @@ input[type="radio"] {
 
   /* (静默仪器收尾:死类 .node-card 已删除——FetchTab 不再引用) */
 
-  /* ── Integration hero ── */
-
-  .integration-hero {
-    background:
-      radial-gradient(circle at 16% 8%, rgba(155, 145, 240, 0.4), transparent 32%),
-      radial-gradient(circle at 86% 12%, rgba(123, 108, 240, 0.36), transparent 34%),
-      linear-gradient(135deg, var(--dorami-blue) 0%, var(--dorami-blue-2) 52%, var(--dorami-blue-2) 100%);
-  }
-
-  /* 暗色：hero 的两个高亮是硬编码亮 rgba（token 调不到），单独压低不透明度并把渐变收深，
-     让大面积 accent 表面成为「沉稳的深靛蓝面板」而非高饱和发光块。 */
-  [data-theme="dark"] .integration-hero {
-    background:
-      radial-gradient(circle at 16% 8%, rgba(124, 112, 235, 0.20), transparent 36%),
-      radial-gradient(circle at 86% 12%, rgba(110, 100, 222, 0.16), transparent 38%),
-      linear-gradient(135deg, var(--dorami-blue) 0%, var(--dorami-blue-2) 58%, #453fad 100%);
-  }
-
-  .integration-kicker {
-    color: rgba(221, 214, 254, 0.86);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    line-height: 18px;
-  }
-
-  .integration-lede {
-    color: rgba(237, 233, 254, 0.84);
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 22px;
-  }
-
-  /* (静默仪器收尾:死类 integration-card、-icon、-button、-status-line、-version 已删除——
-     MCPTab 仅使用 integration-hero/kicker/lede;历史样式见 git) */
+  /* (集成波:integration-hero/-kicker/-lede 随出口面板改造整体退役——
+     大渐变品牌面撤除,品牌感归登录页;历史样式见 git) */
 
   /* ── 状态章范式 .stamp(样页直移):淡底 + 深字 + 形状点,无描边。
      形状编码保证色弱可辨:ok=方 / idle=圆 / run=圆·呼吸 / bad=菱 / warn=三角。
@@ -3728,6 +3694,207 @@ input[type="radio"] {
     .tt-list { max-height: 320px; }
     .flow-scroll { overflow-x: auto; }
     .flow-strip-tools { flex-direction: row; flex-wrap: wrap; }
+  }
+
+  /* ── 接入集成 静默仪器(集成波):出口面板 ──
+     出口面板:页面即通道清单,每通道一张卡,卡内恒定「状态章 → 端点/凭据 → 接入片段」。
+     纵排——交付通道区(全角色)在上、AI 资讯日报区(仅管理员)在下;两项退役:内部 segmented + integration-hero。
+     复用既有范式(不迁,直接引用):.stamp/.mini-seg/.page-head/.surface-card/.form-input/
+     .ledger-switch/.ledger-pipeline/.action-button*;此处只落接入页专属类。
+     刻度 1:1 取自 docs/design/dorami-integrations-quiet.html。 ── */
+
+  /* 流式页容器:承载 --mono 语境 + 密度字号(壳由 App 的 <main> 给内边距,此处不加导轨/内距) */
+  .integ-page {
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    max-width: 1200px;
+    font-size: 13px;
+  }
+
+  /* 模型状态 chip(只读,指向运维管理统一配置) */
+  .model-chip {
+    display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 12px;
+    border-radius: var(--r-pill); background: var(--dorami-surface); box-shadow: var(--sh-1);
+    font-size: 12px; font-weight: 600; color: var(--dorami-muted);
+  }
+  .model-chip i { width: 7px; height: 7px; flex: none; border-radius: var(--r-pill); background: var(--state-ok); }
+  .model-chip i.is-off { background: var(--state-warn); }
+  .model-chip b { font-family: var(--mono); font-weight: 600; color: var(--dorami-ink-2); }
+
+  /* 区标题(纯文字层级,短竖条已退役) */
+  .zone-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin: 26px 2px 12px; }
+  .zone-head.zone-head-first { margin-top: 0; }
+  .zone-title { font-size: 14px; font-weight: 700; color: var(--dorami-ink); }
+  .zone-hint { font-size: 12px; font-weight: 500; color: var(--dorami-faint); }
+  .zone-badge {
+    font-size: 10.5px; font-weight: 700; padding: 1.5px 8px; border-radius: var(--r-pill);
+    background: var(--dorami-well); color: var(--dorami-muted);
+  }
+
+  /* 卡片排版(叠在 .surface-card 之上) */
+  .card-pad { padding: 18px 20px; }
+  .card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-bottom: 4px; }
+  .card-desc { font-size: 12px; font-weight: 500; color: var(--dorami-muted); margin-top: 2px; }
+
+  /* 通道区布局:MCP 大卡(左)+ Feed/技能包纵排(右) */
+  .channels { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; align-items: start; }
+  .channels-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+  /* 端点行:mono + copy(well 底被动容器) */
+  .endpoint {
+    display: flex; align-items: center; gap: 8px; margin-top: 12px;
+    background: var(--dorami-well); border-radius: var(--r-control); padding: 8px 8px 8px 12px;
+  }
+  .endpoint + .endpoint { margin-top: 6px; }
+  .endpoint-method { font-size: 10px; font-weight: 700; letter-spacing: 0.05em; color: var(--dorami-faint); flex: none; }
+  .endpoint-url {
+    flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--dorami-ink-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums;
+  }
+
+  /* copy 小钮(全局焦点环已由 button:focus-visible 覆盖) */
+  .copybtn {
+    width: 26px; height: 26px; flex: none; display: grid; place-items: center;
+    border-radius: var(--r-sm); color: var(--dorami-faint);
+    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+  .copybtn:hover { background: var(--dorami-surface); color: var(--dorami-ink); }
+  .copybtn:disabled { opacity: 0.45; cursor: default; }
+  .copybtn svg { width: 13px; height: 13px; }
+
+  /* 代码块:well 底 mono(被动容器 ≤ surface) */
+  .codeblock {
+    position: relative; margin-top: 10px; background: var(--dorami-well);
+    border-radius: var(--r-control); padding: 12px 40px 12px 14px;
+    font-family: var(--mono); font-size: 11px; line-height: 1.7; color: var(--dorami-ink-2);
+    overflow-x: auto; white-space: pre;
+  }
+  .codeblock .copybtn { position: absolute; top: 8px; right: 8px; }
+
+  /* 适用工具行 */
+  .targets {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 5px 6px; margin-top: 12px;
+    font-size: 11px; font-weight: 500; color: var(--dorami-faint);
+  }
+  .target-chip {
+    font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: var(--r-pill);
+    background: var(--dorami-well); color: var(--dorami-muted);
+  }
+
+  /* MCP 工具清单:hairline 行表 */
+  .tools { margin-top: 16px; border-top: 1px solid var(--dorami-border); }
+  .tool-row {
+    display: grid; grid-template-columns: 168px 1fr auto; gap: 12px; align-items: baseline;
+    padding: 9px 2px; border-bottom: 1px solid var(--dorami-border);
+  }
+  .tool-row:last-child { border-bottom: none; }
+  .tool-row.is-off { opacity: 0.55; }
+  .tool-name { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); overflow-wrap: anywhere; }
+  .tool-desc { font-size: 12px; font-weight: 400; color: var(--dorami-muted); line-height: 1.6; }
+  .tool-desc .p {
+    display: block; font-family: var(--mono); font-size: 10px; color: var(--dorami-faint);
+    margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 52ch;
+  }
+  .tools-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .tools-title { font-size: 13px; font-weight: 700; color: var(--dorami-ink); }
+  .tools-n { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); }
+
+  /* 令牌行 */
+  .token-row {
+    display: flex; align-items: center; gap: 8px; margin-top: 12px;
+    background: var(--dorami-well); border-radius: var(--r-control); padding: 8px 8px 8px 12px;
+  }
+  .token-val {
+    flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--dorami-ink-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: 0.03em;
+  }
+  .token-meta { margin-top: 8px; font-size: 11px; font-weight: 500; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+
+  /* 安装步骤(counter 序号) */
+  .steps { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; counter-reset: step; }
+  .step { display: flex; gap: 10px; font-size: 12px; color: var(--dorami-muted); line-height: 1.6; }
+  .step::before {
+    counter-increment: step; content: counter(step); flex: none; width: 18px; height: 18px;
+    display: grid; place-items: center; border-radius: var(--r-pill); background: var(--dorami-well);
+    font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--dorami-faint); margin-top: 1px;
+  }
+  .step code {
+    font-family: var(--mono); font-size: 11px; background: var(--dorami-well);
+    border-radius: var(--r-sm); padding: 1px 5px; color: var(--dorami-ink-2);
+  }
+
+  /* MCP 停止时:接入配置折叠触发 */
+  .integ-collapse-btn {
+    display: flex; width: 100%; align-items: center; gap: 6px; margin-top: 12px;
+    font-size: 12px; font-weight: 600; color: var(--dorami-muted);
+  }
+  .integ-collapse-btn:hover { color: var(--dorami-ink); }
+  .integ-collapse-btn svg { width: 14px; height: 14px; flex: none; }
+
+  /* ── 日报工坊:一张宽卡,三段 hairline 分区 ── */
+  .brief-card { display: grid; grid-template-columns: 260px 1.2fr 1fr; }
+  .brief-col { padding: 18px 20px; min-width: 0; }
+  .brief-col + .brief-col { border-left: 1px solid var(--dorami-border); }
+  .brief-col-title { font-size: 12px; font-weight: 700; color: var(--dorami-ink-2); margin-bottom: 12px; }
+
+  .brief-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+  .brief-field .form-label { margin-bottom: 0; }
+  .brief-switch-row {
+    display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
+    color: var(--dorami-ink-2); margin-bottom: 12px;
+  }
+
+  /* 生成流水线计数微字(步进条本体复用 .ledger-pipeline) */
+  .pipeline-note { margin-top: 8px; font-family: var(--mono); font-size: 11px; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
+  .pipeline-note.is-err { color: var(--state-bad); }
+
+  /* 近期日报:紧凑行,点行展开正文,hover 出删除 */
+  .brief-run { border-bottom: 1px solid var(--dorami-border); }
+  .brief-run:last-child { border-bottom: none; }
+  .brief-run-line { display: flex; align-items: center; }
+  .brief-run-line:hover { background: var(--dorami-soft); }
+  .brief-run-head { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 8px 2px; text-align: left; }
+  .brief-run-caret { flex: none; width: 13px; height: 13px; color: var(--dorami-faint); transition: transform var(--motion-fast) var(--motion-ease); }
+  .brief-run-head[aria-expanded="true"] .brief-run-caret { transform: rotate(90deg); }
+  .brief-run-date { font-family: var(--mono); font-size: 11px; color: var(--dorami-ink-2); font-variant-numeric: tabular-nums; flex: none; }
+  .brief-run-meta {
+    flex: 1; min-width: 0; font-size: 11px; font-weight: 500; color: var(--dorami-faint);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums;
+  }
+  .brief-run-del {
+    flex: none; width: 24px; height: 24px; margin-right: 2px; display: grid; place-items: center; border-radius: var(--r-sm);
+    color: var(--dorami-faint); opacity: 0;
+    transition: opacity var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+  .brief-run-line:hover .brief-run-del, .brief-run-del:focus-visible { opacity: 1; }
+  .brief-run-del:hover { background: var(--state-bad-bg); color: var(--state-bad); }
+  .brief-run-del:disabled { opacity: 0.5; cursor: default; }
+  .brief-run-del svg { width: 13px; height: 13px; }
+  .brief-run-body {
+    margin: 0 2px 10px; max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: break-word;
+    background: var(--dorami-well); border-radius: var(--r-control); padding: 12px 14px;
+    font-family: var(--mono); font-size: 11px; line-height: 1.7; color: var(--dorami-ink-2);
+  }
+  .brief-empty {
+    margin-top: 4px; padding: 20px 14px; text-align: center; font-size: 12px; color: var(--dorami-faint);
+    background: var(--dorami-soft); border-radius: var(--r-control);
+  }
+
+  /* 说明折叠(启停与取数范围 / 取材与去重口径) */
+  .scope-note { margin-top: 14px; font-size: 11.5px; line-height: 1.7; color: var(--dorami-faint); }
+  .scope-note summary {
+    cursor: pointer; font-weight: 600; color: var(--dorami-muted); list-style: none;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .scope-note summary::-webkit-details-marker { display: none; }
+  .scope-note summary::before { content: "\25B8"; font-size: 9px; transition: transform var(--motion-fast) var(--motion-ease); }
+  .scope-note[open] summary::before { transform: rotate(90deg); }
+  .scope-note summary:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 2px; border-radius: var(--r-sm); }
+  .scope-note p { margin-top: 8px; }
+
+  @media (max-width: 1023px) {
+    .integ-page { max-width: none; }
+    .channels, .brief-card { grid-template-columns: 1fr; }
+    .brief-col + .brief-col { border-left: none; border-top: 1px solid var(--dorami-border); }
   }
 
   /* ── Status badges & chips ── */
