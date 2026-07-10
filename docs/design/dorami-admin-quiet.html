@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>运维管理 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   运维管理 · 静默仪器样页(从零到一设计稿)
+   概念:机房仪表墙(ops wall)——三个观测域(用户/内容/AI)保留 segmented
+   (数据形态迥异,合并会互相稀释),时间窗控件上移页头统一全页。
+   图表纪律(dataviz):隐退网格、mono 轴标、图例 + 选择性直标、hover tooltip、
+   堆叠段 2px 表面缝、KPI 数字 ink 化(语义色只留异常)。
+   分类调色板已过六项校验(validate_palette.js):
+     亮 #5b54e8 #14b8a6 #f59e0b #ef4444 #0ea5e9 #a855f7(白面 PASS)
+     暗 #8b84f0 #0d9488 #d97706 #ef4444 #0284c7 #a855f7(#20252f 面 PASS)
+   「其它」槽恒为中性灰(不参与彩色配额)。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --dorami-blue: #5b54e8; --dorami-blue-2: #7b6cf0;
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-card: rgba(255, 255, 255, 0.96); --dorami-wash: rgba(91, 84, 232, 0.08);
+  --dorami-well: #f1f5f9; --dorami-inset-input: inset 0 1px 3px rgba(11, 18, 32, 0.08);
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-strong: rgba(11, 18, 32, 0.15);
+  --dorami-card-bd: transparent; --dorami-edge: rgba(255, 255, 255, 0.62);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --sh-3: 0 4px 10px rgba(11, 18, 32, 0.08), 0 16px 36px rgba(11, 18, 32, 0.11);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-overlay: 16px; --r-pill: 9999px;
+  --state-ok: #059669;   --state-ok-bg: #ecfdf5;
+  --state-warn: #b45309; --state-warn-bg: #fffbeb;
+  --state-bad: #e11d48;  --state-bad-bg: #fff1f2;
+  --state-run: #0284c7;  --state-run-bg: #f0f9ff;
+  --state-idle: #64748b; --state-idle-bg: #f1f5f9;
+  --dorami-scrollbar: rgba(11, 18, 32, 0.2); --dorami-scrollbar-strong: rgba(11, 18, 32, 0.34);
+  --motion-fast: 150ms; --motion-medium: 240ms; --motion-slow: 300ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --rail-w: 78px;
+
+  /* 图表分类色(已校验;「其它」= 中性) */
+  --chart-1: #5b54e8; --chart-2: #14b8a6; --chart-3: #f59e0b;
+  --chart-4: #ef4444; --chart-5: #0ea5e9; --chart-6: #a855f7;
+  --chart-other: #94a3b8;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-card: rgba(32, 37, 47, 0.96); --dorami-raised: #2a313c;
+  --dorami-wash: rgba(124, 112, 235, 0.13); --dorami-inset-input: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-strong: rgba(255, 255, 255, 0.16);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08); --dorami-edge: rgba(255, 255, 255, 0.05);
+  --dorami-scrollbar: rgba(255, 255, 255, 0.2); --dorami-scrollbar-strong: rgba(255, 255, 255, 0.34);
+  --state-ok: #34d399;   --state-ok-bg: #0f241b;
+  --state-warn: #fbbf24; --state-warn-bg: #281e10;
+  --state-bad: #fb7185;  --state-bad-bg: #2a151a;
+  --state-run: #38bdf8;  --state-run-bg: #0e1c27;
+  --state-idle: #99a1ad; --state-idle-bg: #15181f;
+  --dorami-blue: #4d45b5; --dorami-blue-2: #5f57c8;
+  --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --sh-3: 0 4px 10px rgba(0, 0, 0, 0.5), 0 16px 36px rgba(0, 0, 0, 0.6);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+
+  /* 暗面梯级(同色相族降档,#20252f 面全项 PASS) */
+  --chart-1: #8b84f0; --chart-2: #0d9488; --chart-3: #d97706;
+  --chart-4: #ef4444; --chart-5: #0284c7; --chart-6: #a855f7;
+  --chart-other: #5b6678;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink);
+  font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+[data-theme="dark"] body {
+  background:
+    radial-gradient(ellipse 70% 50% at 12% -8%, rgba(124, 112, 235, 0.10), transparent 58%),
+    linear-gradient(180deg, #11131a 0%, var(--dorami-canvas) 55%);
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+* { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+*:hover { scrollbar-color: var(--dorami-scrollbar) transparent; }
+
+/* ── 导轨 ── */
+.app-rail { position: fixed; inset-block: 0; left: 0; width: var(--rail-w); z-index: 45;
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 14px 0 16px;
+  background: var(--dorami-surface); border-right: 1px solid var(--dorami-card-bd); box-shadow: var(--sh-1); }
+.rail-brand { margin-bottom: 14px; width: 34px; height: 34px; border-radius: var(--r-control);
+  background: var(--dorami-blue); display: grid; place-items: center; color: #fff; font-size: 15px; font-weight: 800; }
+.rail-nav-btn { position: relative; width: 100%; padding: 10px 0 8px; display: flex;
+  flex-direction: column; align-items: center; gap: 4px; color: var(--dorami-faint); }
+.rail-nav-btn svg { width: 19px; height: 19px; }
+.rail-nav-btn span { font-size: 11px; font-weight: 600; }
+.rail-nav-btn:hover { color: var(--dorami-ink-2); }
+.rail-nav-btn.rail-nav-on { color: var(--dorami-accent); }
+.rail-nav-btn.rail-nav-on span { font-weight: 700; }
+.rail-nav-btn.rail-nav-on::before { content: ""; position: absolute; left: 0; top: 50%;
+  transform: translateY(-50%); width: 3px; height: 26px; background: var(--dorami-blue);
+  border-radius: 0 var(--r-pill) var(--r-pill) 0; }
+.rail-spacer { flex: 1; }
+.rail-tool { width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: var(--r-control); color: var(--dorami-faint); }
+.rail-tool:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+.rail-tool svg { width: 18px; height: 18px; }
+
+/* ── 流式页 ── */
+.page { margin-left: var(--rail-w); padding: 22px 32px 48px; max-width: 1240px; }
+.page-head { display: flex; align-items: center; gap: 14px; min-height: 48px; margin-bottom: 20px; }
+.page-title { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; }
+.page-head-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+
+/* segmented(页头子页切换,白拇指语法) */
+.segmented { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--r-control);
+  background: var(--dorami-well); }
+.segmented-btn { min-height: 30px; padding: 0 14px; border-radius: 8px;
+  font-size: 12.5px; font-weight: 600; color: var(--dorami-muted); }
+.segmented-btn:hover:not(.is-on) { color: var(--dorami-ink-2); }
+.segmented-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink);
+  font-weight: 700; box-shadow: var(--sh-1); }
+
+/* mini-seg */
+.mini-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-sm);
+  background: var(--dorami-well); font-size: 11px; }
+.mini-seg-btn { min-height: 22px; padding: 0 8px; border-radius: 4px; font-weight: 600; color: var(--dorami-muted); }
+.mini-seg-btn:hover:not(.is-on) { color: var(--dorami-ink-2); }
+.mini-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+.win-label { font-size: 11px; font-weight: 600; color: var(--dorami-faint); margin-right: 2px; }
+
+/* ── 卡片 ── */
+.card { border: 1px solid var(--dorami-card-bd); background: var(--dorami-card);
+  border-radius: var(--r-card); box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge); }
+.card-pad { padding: 16px 18px; }
+.card-head { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+.card-title { font-size: 13.5px; font-weight: 700; }
+.card-hint { font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
+
+.zone-head { display: flex; align-items: baseline; gap: 10px; margin: 24px 2px 12px; }
+.zone-title { font-size: 14px; font-weight: 700; }
+.zone-hint { font-size: 12px; font-weight: 500; color: var(--dorami-faint); }
+.zone-acts { margin-left: auto; }
+
+/* ── KPI 总账条(被动读数,数字 ink 化) ── */
+.kpi-strip { display: flex; align-items: stretch; flex-wrap: wrap; }
+.kpi { flex: 1; min-width: 130px; padding: 14px 18px 12px; }
+.kpi + .kpi { border-left: 1px solid var(--dorami-border); }
+.kpi-num { display: block; font-size: 28px; font-weight: 700; line-height: 32px;
+  letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.kpi-lbl { display: block; margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+.kpi-sub { display: block; margin-top: 1px; font-size: 11px; font-weight: 500; color: var(--dorami-faint);
+  font-variant-numeric: tabular-nums; }
+
+/* ── 图表卡 ── */
+.charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.chart-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px;
+  margin: 2px 0 6px; font-size: 11px; font-weight: 600; color: var(--dorami-muted); }
+.legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.legend-dot { width: 7px; height: 7px; border-radius: 2px; }
+.chart-box { position: relative; }
+.chart-box svg { display: block; width: 100%; height: auto; }
+.chart-tip { position: absolute; pointer-events: none; z-index: 5; display: none; min-width: 132px;
+  background: var(--dorami-surface); border: 1px solid var(--dorami-border); border-radius: var(--r-control);
+  box-shadow: var(--sh-3); padding: 8px 10px; font-size: 11px; }
+.chart-tip-day { font-family: var(--mono); font-weight: 700; color: var(--dorami-ink-2);
+  margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+.chart-tip-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; color: var(--dorami-muted); }
+.chart-tip-row b { margin-left: auto; font-family: var(--mono); font-weight: 700; color: var(--dorami-ink);
+  font-variant-numeric: tabular-nums; }
+.axis-lbl { font-family: var(--mono); font-size: 9.5px; fill: var(--dorami-faint); }
+.grid-line { stroke: var(--dorami-border); stroke-width: 1; }
+.series-endlbl { font-size: 10px; font-weight: 700; }
+
+/* ── 横向 rank / 分组条(HTML 实现,4px 圆头数据端,组内 2px 缝) ── */
+.bars { display: flex; flex-direction: column; gap: 10px; }
+.bar-row { display: grid; grid-template-columns: 108px 1fr; gap: 10px; align-items: center; }
+.bar-label { font-size: 12px; font-weight: 600; color: var(--dorami-ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.bar-track-group { display: flex; flex-direction: column; gap: 2px; }
+.bar-line { display: flex; align-items: center; gap: 8px; height: 12px; }
+.bar-fill { height: 100%; border-radius: 0 4px 4px 0; min-width: 2px;
+  transition: width var(--motion-slow) var(--motion-ease); }
+.bar-val { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-muted);
+  font-variant-numeric: tabular-nums; flex: none; }
+
+/* ── 状态章 ── */
+.stamp { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700;
+  padding: 2.5px 9px; border-radius: var(--r-pill); white-space: nowrap; }
+.stamp::before { content: ""; width: 6px; height: 6px; flex: none; border-radius: 1px; }
+.stamp-ok { color: var(--state-ok); background: var(--state-ok-bg); }
+.stamp-ok::before { background: var(--state-ok); }
+.stamp-idle { color: var(--state-idle); background: var(--state-idle-bg); }
+.stamp-idle::before { background: var(--dorami-faint); border-radius: 50%; }
+.stamp-warn { color: var(--state-warn); background: var(--state-warn-bg); }
+.stamp-warn::before { background: var(--state-warn); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+
+/* ── 账户表(ledger-table 语法) ── */
+.acct-table { width: 100%; border-collapse: collapse; }
+.acct-th { font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; color: var(--dorami-faint);
+  text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--dorami-border); white-space: nowrap; }
+.acct-th.is-num { text-align: right; }
+.acct-th:first-child { padding-left: 18px; }
+.acct-th:last-child { padding-right: 14px; }
+.acct-row td { height: 46px; vertical-align: middle; padding: 0 10px;
+  border-top: 1px solid var(--dorami-border); }
+.acct-row td:first-child { padding-left: 18px; }
+.acct-row td:last-child { padding-right: 14px; }
+.acct-row { cursor: pointer; transition: background var(--motion-fast) var(--motion-ease); }
+.acct-row:hover { background: var(--dorami-soft); }
+.acct-row.is-sel { background: var(--dorami-soft); box-shadow: inset 3px 0 0 var(--dorami-blue); }
+.acct-user { display: flex; align-items: center; gap: 9px; }
+.acct-avatar { width: 26px; height: 26px; flex: none; border-radius: var(--r-pill);
+  display: grid; place-items: center; background: var(--dorami-well);
+  font-size: 11px; font-weight: 700; color: var(--dorami-muted); }
+.acct-name { font-size: 13px; font-weight: 600; }
+.acct-mono { font-family: var(--mono); font-size: 11px; color: var(--dorami-muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.acct-n { text-align: right; font-family: var(--mono); font-size: 12px; color: var(--dorami-muted);
+  font-variant-numeric: tabular-nums; }
+.acct-n.is-main { font-weight: 700; color: var(--dorami-ink); }
+.acct-n.is-zero { opacity: 0.55; }
+.rowacts { display: flex; justify-content: flex-end; gap: 2px; opacity: 0;
+  transition: opacity var(--motion-fast) var(--motion-ease); }
+.acct-row:hover .rowacts, .acct-row:focus-within .rowacts { opacity: 1; }
+.rowact-btn { width: 26px; height: 26px; display: grid; place-items: center;
+  border-radius: var(--r-sm); color: var(--dorami-faint); }
+.rowact-btn:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+.rowact-btn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
+.rowact-btn svg { width: 13px; height: 13px; }
+.btn-secondary { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 12px;
+  border-radius: var(--r-control); border: 1px solid var(--dorami-border-strong);
+  background: var(--dorami-surface); font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); }
+.btn-secondary:hover { background: var(--dorami-soft); }
+.btn-secondary svg { width: 13px; height: 13px; }
+
+/* ── AI 子页:总闸条 + 模型配置 ── */
+.ai-switchboard { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 13px 18px; }
+.ai-light { width: 8px; height: 8px; border-radius: var(--r-pill); background: var(--state-ok); flex: none; }
+.ai-light.is-off { background: var(--state-warn); }
+.ai-switch-lbl { font-size: 13px; font-weight: 700; }
+.ai-switch-sub { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); }
+.switch { position: relative; width: 34px; height: 19px; flex: none; border-radius: var(--r-pill);
+  background: var(--dorami-well); box-shadow: var(--dorami-inset-input);
+  transition: background var(--motion-fast) var(--motion-ease); }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+  background: #fff; border-radius: var(--r-pill); box-shadow: 0 1px 2px rgba(11, 18, 32, 0.3);
+  transition: transform var(--motion-fast) var(--motion-ease); }
+.switch.is-on { background: var(--dorami-blue); }
+.switch.is-on::after { transform: translateX(15px); }
+.ai-divider { width: 1px; height: 26px; background: var(--dorami-border); }
+.model-fields { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1; }
+.model-field { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600;
+  color: var(--dorami-faint); }
+.model-field input { min-height: 28px; padding: 0 9px; border: none; border-radius: var(--r-sm);
+  background: var(--dorami-well); box-shadow: var(--dorami-inset-input);
+  font-family: var(--mono); font-size: 11px; color: var(--dorami-ink); }
+.model-field input:focus { outline: none; box-shadow: 0 0 0 3px var(--dorami-focus); }
+.btn-quiet { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 0 10px;
+  border-radius: var(--r-sm); font-size: 11.5px; font-weight: 600; color: var(--dorami-muted); }
+.btn-quiet:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+
+/* ── 用户抽屉(ledger-drawer 语法) ── */
+.scrim { position: fixed; inset: 0; background: rgba(11, 18, 32, 0.38); z-index: 60;
+  opacity: 0; pointer-events: none; transition: opacity var(--motion-fast) var(--motion-ease); }
+.scrim.is-open { opacity: 1; pointer-events: auto; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 480px; max-width: 92vw; z-index: 61;
+  background: var(--dorami-surface); border-radius: var(--r-overlay) 0 0 var(--r-overlay);
+  box-shadow: var(--sh-3); transform: translateX(102%);
+  transition: transform var(--motion-slow) var(--motion-ease); display: flex; flex-direction: column; }
+.drawer.is-open { transform: none; }
+.drawer-head { flex: none; display: flex; align-items: center; gap: 10px; padding: 16px 20px 13px;
+  background: var(--dorami-soft); border-radius: var(--r-overlay) 0 0 0; }
+.drawer-title { font-size: 15px; font-weight: 700; flex: 1; min-width: 0; }
+.drawer-close { width: 28px; height: 28px; display: grid; place-items: center;
+  border-radius: var(--r-sm); color: var(--dorami-faint); }
+.drawer-close:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+.drawer-close svg { width: 14px; height: 14px; }
+.drawer-body { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 16px; }
+.drawer-sec-title { font-size: 12px; font-weight: 700; color: var(--dorami-ink-2); margin-bottom: 8px; }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tile { background: var(--dorami-soft); border-radius: var(--r-control); padding: 10px 12px; }
+.tile-num { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 24px; }
+.tile-lbl { font-size: 11px; font-weight: 600; color: var(--dorami-faint); margin-top: 2px; }
+.login-list { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.login-list li { list-style: none; font-family: var(--mono); font-size: 11px; color: var(--dorami-muted);
+  font-variant-numeric: tabular-nums; }
+details.login-card summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 8px; }
+details.login-card summary::after { content: "展开近 5 次"; font-size: 11px; color: var(--dorami-faint);
+  margin-left: auto; }
+details.login-card[open] summary::after { content: "收起"; }
+
+/* 榜单列表 */
+.toplist { display: flex; flex-direction: column; }
+.toplist-row { display: flex; align-items: baseline; gap: 10px; padding: 8px 2px;
+  border-bottom: 1px solid var(--dorami-border); }
+.toplist-row:last-child { border-bottom: none; }
+.toplist-rank { flex: none; width: 18px; font-family: var(--mono); font-size: 11px; font-weight: 700;
+  color: var(--dorami-faint); text-align: right; }
+.toplist-title { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--dorami-ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toplist-src { flex: none; font-size: 11px; color: var(--dorami-faint); }
+.toplist-n { flex: none; font-family: var(--mono); font-size: 12px; font-weight: 700;
+  font-variant-numeric: tabular-nums; }
+
+.spec-notes { margin: 34px 2px 0; max-width: 900px; color: var(--dorami-muted); font-size: 12.5px; line-height: 1.8; }
+.spec-notes h2 { font-size: 14px; font-weight: 700; color: var(--dorami-ink); margin: 22px 0 8px; }
+.spec-notes ul { padding-left: 18px; }
+.spec-notes li { margin: 3px 0; }
+.spec-notes code { font-family: var(--mono); font-size: 11px; background: var(--dorami-well); border-radius: 4px; padding: 1px 5px; }
+.spec-notes .hint { font-size: 11px; color: var(--dorami-faint); }
+
+.sub-page { display: none; }
+.sub-page.is-on { display: block; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+@media (max-width: 1023px) {
+  .app-rail { display: none; }
+  .page { margin-left: 0; padding: 18px 16px 40px; }
+  .charts-row { grid-template-columns: 1fr; }
+  .kpi + .kpi { border-left: none; border-top: 1px solid var(--dorami-border); }
+  .kpi-strip { flex-direction: column; }
+}
+</style>
+</head>
+<body>
+
+<nav class="app-rail" aria-label="主导航">
+  <div class="rail-brand">哆</div>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg><span>台账</span></button>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.2 4.2l2.8 2.8M17 17l2.8 2.8M1 12h4M19 12h4M4.2 19.8L7 17M17 7l2.8-2.8"/></svg><span>节点</span></button>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span>运行</span></button>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l3-9 4 18 3-9h6"/></svg><span>向量</span></button>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2M15 8V2"/><path d="M6 8h12v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4z"/></svg><span>集成</span></button>
+  <button class="rail-nav-btn rail-nav-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span>运维</span></button>
+  <div class="rail-spacer"></div>
+  <button class="rail-tool" id="theme-toggle" title="切换亮暗"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button>
+</nav>
+
+<div class="page">
+  <header class="page-head">
+    <h1 class="page-title">运维管理</h1>
+    <div class="page-head-actions">
+      <span class="win-label">时间窗</span>
+      <div class="mini-seg" id="win-seg" role="group" aria-label="时间窗">
+        <button class="mini-seg-btn">7 天</button>
+        <button class="mini-seg-btn">14 天</button>
+        <button class="mini-seg-btn is-on">30 天</button>
+        <button class="mini-seg-btn">90 天</button>
+      </div>
+      <div class="segmented" id="sub-seg" role="tablist" aria-label="观测域">
+        <button class="segmented-btn is-on" data-sub="user">用户</button>
+        <button class="segmented-btn" data-sub="content">内容</button>
+        <button class="segmented-btn" data-sub="ai">AI</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ════ 用户子页 ════ -->
+  <div class="sub-page is-on" data-page="user">
+    <section class="card kpi-strip" aria-label="窗口活跃概览">
+      <div class="kpi"><span class="kpi-num">12</span><span class="kpi-lbl">读者账户</span><span class="kpi-sub">停用 1</span></div>
+      <div class="kpi"><span class="kpi-num">9</span><span class="kpi-lbl">窗口内活跃</span><span class="kpi-sub">登录过 ≥1 次</span></div>
+      <div class="kpi"><span class="kpi-num">47</span><span class="kpi-lbl">登录次数</span><span class="kpi-sub">日均 1.6</span></div>
+      <div class="kpi"><span class="kpi-num">386</span><span class="kpi-lbl">阅读次数</span><span class="kpi-sub">日均 12.9</span></div>
+      <div class="kpi"><span class="kpi-num">152</span><span class="kpi-lbl">AI 调用</span><span class="kpi-sub">tokens 89.2k</span></div>
+    </section>
+
+    <div class="zone-head">
+      <span class="zone-title">活跃用户 Top</span>
+      <span class="zone-hint">近 30 天</span>
+      <span class="zone-acts mini-seg" role="group" aria-label="排序维度">
+        <button class="mini-seg-btn is-on">按阅读</button>
+        <button class="mini-seg-btn">按登录</button>
+      </span>
+    </div>
+    <section class="card card-pad" style="max-width:560px">
+      <div class="bars" id="top-users"></div>
+    </section>
+
+    <div class="zone-head">
+      <span class="zone-title">账户管理</span>
+      <span class="zone-hint">停用 / 删除会立即让对应账户的会话失效 · 点行查看活动详情</span>
+      <span class="zone-acts"><button class="btn-secondary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> 新建读者</button></span>
+    </div>
+    <section class="card" style="overflow:hidden">
+      <table class="acct-table">
+        <thead><tr>
+          <th class="acct-th">用户</th><th class="acct-th">状态</th><th class="acct-th">最近登录</th>
+          <th class="acct-th is-num">登录</th><th class="acct-th is-num">阅读</th>
+          <th class="acct-th is-num">AI 调用</th><th class="acct-th is-num">订阅</th>
+          <th class="acct-th" style="width:120px" aria-label="操作"></th>
+        </tr></thead>
+        <tbody id="acct-body"></tbody>
+      </table>
+    </section>
+  </div>
+
+  <!-- ════ 内容子页 ════ -->
+  <div class="sub-page" data-page="content">
+    <section class="card kpi-strip">
+      <div class="kpi"><span class="kpi-num">386</span><span class="kpi-lbl">阅读次数</span><span class="kpi-sub">近 30 天</span></div>
+      <div class="kpi"><span class="kpi-num">64</span><span class="kpi-lbl">收藏总数</span><span class="kpi-sub">累计</span></div>
+      <div class="kpi"><span class="kpi-num">31</span><span class="kpi-lbl">订阅关系</span><span class="kpi-sub">12 个源被订</span></div>
+    </section>
+
+    <div class="zone-head"><span class="zone-title">各源热度</span><span class="zone-hint">阅读为窗口口径,收藏/订阅为累计</span></div>
+    <div class="charts-row">
+      <section class="card card-pad">
+        <div class="card-head"><span class="card-title">各源 · 阅读 / 收藏 / 订阅</span></div>
+        <div class="chart-legend" id="src-legend"></div>
+        <div class="bars" id="src-bars"></div>
+      </section>
+      <section class="card card-pad">
+        <div class="card-head"><span class="card-title">文章 · 收藏 TOP 5</span></div>
+        <div class="toplist">
+          <div class="toplist-row"><span class="toplist-rank">1</span><span class="toplist-title">Claude Fable 5 与 Mythos 5 发布:新一代旗舰模型档位</span><span class="toplist-src">Anthropic News</span><span class="toplist-n">9</span></div>
+          <div class="toplist-row"><span class="toplist-rank">2</span><span class="toplist-title">bge-m3 多语向量在跨语检索里的工程实践</span><span class="toplist-src">机器之心</span><span class="toplist-n">7</span></div>
+          <div class="toplist-row"><span class="toplist-rank">3</span><span class="toplist-title">Agent 上下文工程:从提示词到记忆系统</span><span class="toplist-src">量子位</span><span class="toplist-n">6</span></div>
+          <div class="toplist-row"><span class="toplist-rank">4</span><span class="toplist-title">HF Daily Papers 精选:多模态推理综述</span><span class="toplist-src">HF Papers</span><span class="toplist-n">5</span></div>
+          <div class="toplist-row"><span class="toplist-rank">5</span><span class="toplist-title">Cursor 2.0 Changelog:后台代理与多文件编辑</span><span class="toplist-src">Cursor</span><span class="toplist-n">4</span></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ════ AI 子页 ════ -->
+  <div class="sub-page" data-page="ai">
+    <section class="card ai-switchboard">
+      <span class="ai-light" id="ai-light"></span>
+      <div>
+        <div class="ai-switch-lbl">用户 AI 功能</div>
+        <div class="ai-switch-sub">总闸,关闭立即暂停全员翻译/问答;不影响单账户开关记忆</div>
+      </div>
+      <button class="switch is-on" id="ai-master" role="switch" aria-checked="true" aria-label="AI 功能总闸"></button>
+      <span class="ai-divider"></span>
+      <div class="model-fields">
+        <span class="model-field">base_url <input value="https://open.bigmodel.cn/api/paas/v4" size="26"></span>
+        <span class="model-field">model <input value="glm-4.7" size="8"></span>
+        <span class="model-field">api_key <input type="password" value="••••••••••••" size="10"></span>
+        <button class="btn-quiet">测试连通</button>
+        <button class="btn-quiet">保存</button>
+      </div>
+    </section>
+
+    <section class="card kpi-strip" style="margin-top:16px">
+      <div class="kpi"><span class="kpi-num">152</span><span class="kpi-lbl">总调用</span><span class="kpi-sub">近 30 天</span></div>
+      <div class="kpi"><span class="kpi-num">61.4k</span><span class="kpi-lbl">输入 tokens</span><span class="kpi-sub">日均 2.0k</span></div>
+      <div class="kpi"><span class="kpi-num">27.8k</span><span class="kpi-lbl">输出 tokens</span><span class="kpi-sub">日均 0.9k</span></div>
+    </section>
+
+    <div class="zone-head"><span class="zone-title">每日用量</span><span class="zone-hint">悬停看当日明细;系列色恒随实体,不随排位</span></div>
+    <div class="charts-row">
+      <section class="card card-pad">
+        <div class="card-head">
+          <span class="card-title">每日调用次数</span>
+          <span style="margin-left:auto" class="mini-seg dim-seg" role="group">
+            <button class="mini-seg-btn is-on">按用途</button>
+            <button class="mini-seg-btn">按用户</button>
+          </span>
+        </div>
+        <div class="chart-legend" id="legend-calls"></div>
+        <div class="chart-box" id="chart-calls"></div>
+      </section>
+      <section class="card card-pad">
+        <div class="card-head">
+          <span class="card-title">每日 tokens</span>
+          <span style="margin-left:auto" class="mini-seg dim-seg" role="group">
+            <button class="mini-seg-btn is-on">按用途</button>
+            <button class="mini-seg-btn">按用户</button>
+          </span>
+        </div>
+        <div class="chart-legend" id="legend-tokens"></div>
+        <div class="chart-box" id="chart-tokens"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- 用户活动抽屉 -->
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-label="用户活动详情">
+    <div class="drawer-head">
+      <span class="acct-avatar">L</span>
+      <span class="drawer-title">Lizylu</span>
+      <span class="stamp stamp-ok">启用</span>
+      <button class="drawer-close" id="drawer-close" aria-label="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="drawer-body">
+      <div class="tiles">
+        <div class="tile"><div class="tile-num">128</div><div class="tile-lbl">窗口阅读</div></div>
+        <div class="tile"><div class="tile-num">64</div><div class="tile-lbl">窗口 AI 调用</div></div>
+        <div class="tile"><div class="tile-num">9</div><div class="tile-lbl">订阅来源</div></div>
+      </div>
+      <details class="login-card tile" style="display:block">
+        <summary><span class="tile-num" style="display:inline">18</span><span class="tile-lbl" style="display:inline;margin-left:6px">窗口登录次数 · 最近 07-10 09:12</span></summary>
+        <ul class="login-list">
+          <li>07-10 09:12:44</li><li>07-09 21:03:18</li><li>07-09 08:55:02</li>
+          <li>07-08 12:40:31</li><li>07-07 09:01:57</li>
+        </ul>
+      </details>
+      <div>
+        <div class="drawer-sec-title">各源 · 阅读 / 收藏</div>
+        <div class="chart-legend" id="drawer-legend"></div>
+        <div class="bars" id="drawer-bars"></div>
+      </div>
+      <div>
+        <div class="drawer-sec-title">每日 AI 用量(按用途)</div>
+        <div class="chart-legend" id="legend-drawer-area"></div>
+        <div class="chart-box" id="chart-drawer-area"></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 设计注记 -->
+  <section class="spec-notes">
+    <h2>设计推导:机房仪表墙(ops wall)</h2>
+    <p>三个观测域(用户/内容/AI)数据形态迥异,segmented <b>保留</b>是正确工具(与接入页退役 segmented 相反,
+    互为参照);但<b>时间窗控件上移页头</b>,一处控制全页窗口(内容页的收藏/订阅为累计口径,注记豁免)。
+    KPI 总账条沿用台账 28/700 tabular 刻度,但为<b>被动读数、数字全 ink</b>——语义色只留异常,
+    不再逐格彩色(原实现的彩色数字是「AI 味」信号)。</p>
+    <h2>图表纪律(dataviz 校验记录)</h2>
+    <ul>
+      <li>分类调色板过六项校验(validate_palette.js):亮面 6 槽白面 PASS;暗面按 L 0.48–0.67 带
+        同色相族降档(teal→#0d9488、amber→#d97706、sky→#0284c7、indigo→#8b84f0),#20252f 面全项 PASS;
+        「其它」槽恒为中性灰。对比 WARN 由图例+直标+tooltip 承接。</li>
+      <li><b>色随实体不随排位</b>:维度切换(按用途/按用户)重排系列,颜色跟实体走;固定序取色,不循环生成第 7 色——
+        超出并入「其它」。</li>
+      <li>堆叠面积段间 2px 表面缝;横条 4px 圆头数据端、组内 2px 缝、数值 mono 直标;网格 hairline 隐退、
+        mono 轴标;≥2 系列必有图例 + 末端选择性直标(不逐点标数);hover 十字线 + tooltip 默认配备。</li>
+      <li>单轴纪律:调用与 tokens 两个量纲 = 两张图,不做双轴。</li>
+    </ul>
+    <h2>结构与范式复用</h2>
+    <ul>
+      <li>账户表 = ledger-table 语法(46px 行、hover soft、选中竖条),行级管理动作收进 hover rowacts
+        (AI 开关/重置密码/停用/删除,危险动作红 hover)——常态是一张安静的读数表。</li>
+      <li>用户活动抽屉 = ledger-drawer 语法:登录卡(details 展开近 5 次)、三 tiles、各源阅读/收藏双系列条、
+        每日 AI 用量堆叠面积(与主看板同一图表引擎)。</li>
+      <li>AI 总闸 = 一条开关板(状态灯 + switch + hairline 分隔 + 行内模型配置),不再是独立大卡;
+        「测试连通/保存」quiet 级。</li>
+    </ul>
+    <p class="hint">令牌与刻度 1:1 引自 frontend/src/index.css;右下月亮切换亮暗;图表为样页内建 SVG 引擎,
+    实装映射回 recharts 包装件时保持同规格。本文件:docs/design/dorami-admin-quiet.html</p>
+  </section>
+</div>
+
+<script>
+/* ── 假数据(seed 固定,可复现) ── */
+let seed = 7;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const DAYS = 30;
+const dayLabels = [];
+{
+  const t = new Date();
+  for (let i = DAYS - 1; i >= 0; i--) {
+    const d = new Date(t); d.setDate(t.getDate() - i);
+    dayLabels.push(`${d.getMonth() + 1}-${d.getDate()}`);
+  }
+}
+const wave = (base, amp) => Array.from({ length: DAYS }, (_, i) =>
+  Math.max(0, Math.round(base + amp * Math.sin(i / 4.2 + base) + rnd() * amp)));
+
+const PURPOSES = [
+  { name: '翻译', v: 'var(--chart-1)', values: wave(2.4, 2.2) },
+  { name: '问答', v: 'var(--chart-2)', values: wave(1.6, 1.8) },
+  { name: '日报·摘要', v: 'var(--chart-3)', values: wave(1.2, 1.4) },
+  { name: '日报·成稿', v: 'var(--chart-5)', values: wave(0.4, 0.7) },
+  { name: '其它', v: 'var(--chart-other)', values: wave(0.3, 0.6) },
+];
+const TOKENS = PURPOSES.map(s => ({ ...s, values: s.values.map(x => x * (280 + Math.round(rnd() * 160))) }));
+const DRAWER_AREA = [
+  { name: '翻译', v: 'var(--chart-1)', values: wave(1.4, 1.2) },
+  { name: '问答', v: 'var(--chart-2)', values: wave(0.7, 0.9) },
+];
+
+/* ── 堆叠面积图引擎:hairline 网格 + mono 轴标 + 2px 表面缝 + 末端直标(top2) + tooltip ── */
+function stackedArea(boxId, legendId, series, { h = 190, unit = '' } = {}) {
+  const box = document.getElementById(boxId);
+  const W = 620, H = h, PL = 34, PR = 66, PT = 10, PB = 22;
+  const n = series[0].values.length;
+  const stacked = series.map(() => []);
+  const totals = Array.from({ length: n }, (_, i) => {
+    let acc = 0;
+    series.forEach((s, si) => { acc += s.values[i]; stacked[si][i] = acc; });
+    return acc;
+  });
+  const maxY = Math.max(...totals) * 1.08 || 1;
+  const x = i => PL + (i / (n - 1)) * (W - PL - PR);
+  const y = v => PT + (1 - v / maxY) * (H - PT - PB);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="堆叠面积图">`;
+  for (let g = 1; g <= 3; g++) {
+    const gy = PT + (g / 3) * (H - PT - PB);
+    svg += `<line class="grid-line" x1="${PL}" x2="${W - PR}" y1="${gy}" y2="${gy}"/>`;
+    svg += `<text class="axis-lbl" x="${PL - 6}" y="${gy + 3}" text-anchor="end">${Math.round(maxY * (1 - g / 3))}</text>`;
+  }
+  for (let i = 0; i < n; i += 5) {
+    svg += `<text class="axis-lbl" x="${x(i)}" y="${H - 6}" text-anchor="middle">${dayLabels[i]}</text>`;
+  }
+  for (let si = series.length - 1; si >= 0; si--) {
+    const top = stacked[si], bot = si === 0 ? null : stacked[si - 1];
+    let d = `M ${x(0)} ${y(top[0])}`;
+    for (let i = 1; i < n; i++) d += ` L ${x(i)} ${y(top[i])}`;
+    if (bot) { for (let i = n - 1; i >= 0; i--) d += ` L ${x(i)} ${y(bot[i])}`; }
+    else d += ` L ${x(n - 1)} ${y(0)} L ${x(0)} ${y(0)}`;
+    d += ' Z';
+    /* 段间 2px 表面缝:每段以 surface 色描边 */
+    svg += `<path d="${d}" style="fill:${series[si].v};stroke:var(--dorami-surface);stroke-width:2" fill-opacity="0.92"/>`;
+  }
+  /* 末端选择性直标:总量 top2 系列 */
+  const ends = series.map((s, si) => ({ si, name: s.name, v: s.v, sum: s.values.reduce((a, b) => a + b, 0) }))
+    .sort((a, b) => b.sum - a.sum).slice(0, 2);
+  ends.forEach(e => {
+    const mid = (stacked[e.si][n - 1] + (e.si === 0 ? 0 : stacked[e.si - 1][n - 1])) / 2;
+    svg += `<text class="series-endlbl" style="fill:${e.v}" x="${W - PR + 6}" y="${y(mid) + 3}">${e.name}</text>`;
+  });
+  svg += `<line id="${boxId}-cross" x1="0" x2="0" y1="${PT}" y2="${H - PB}" stroke="var(--dorami-border-strong)" stroke-width="1" visibility="hidden"/>`;
+  svg += '</svg>';
+  box.innerHTML = svg + '<div class="chart-tip" role="status"></div>';
+
+  const legend = document.getElementById(legendId);
+  legend.innerHTML = series.map(s =>
+    `<span class="legend-item"><span class="legend-dot" style="background:${s.v}"></span>${s.name}</span>`).join('');
+
+  const svgEl = box.querySelector('svg'), tip = box.querySelector('.chart-tip'),
+    cross = box.querySelector(`#${boxId}-cross`);
+  svgEl.addEventListener('mousemove', ev => {
+    const r = svgEl.getBoundingClientRect();
+    const vx = ((ev.clientX - r.left) / r.width) * W;
+    const i = Math.max(0, Math.min(n - 1, Math.round(((vx - PL) / (W - PL - PR)) * (n - 1))));
+    cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
+    cross.setAttribute('visibility', 'visible');
+    tip.style.display = 'block';
+    tip.innerHTML = `<div class="chart-tip-day">${dayLabels[i]}</div>` + series.map(s =>
+      `<div class="chart-tip-row"><span class="legend-dot" style="background:${s.v}"></span>${s.name}<b>${s.values[i].toLocaleString()}${unit}</b></div>`).join('');
+    const px = (x(i) / W) * r.width;
+    tip.style.left = `${Math.min(px + 12, r.width - 150)}px`;
+    tip.style.top = '8px';
+  });
+  svgEl.addEventListener('mouseleave', () => { tip.style.display = 'none'; cross.setAttribute('visibility', 'hidden'); });
+}
+
+/* ── 横向条(单系列 rank / 多系列分组):4px 圆头,组内 2px 缝,mono 直标 ── */
+function bars(elId, rows, series, legendId) {
+  const el = document.getElementById(elId);
+  const maxV = Math.max(...rows.flatMap(r => r.values));
+  el.innerHTML = rows.map(r => `
+    <div class="bar-row">
+      <span class="bar-label" title="${r.label}">${r.label}</span>
+      <span class="bar-track-group">${r.values.map((v, i) => `
+        <span class="bar-line">
+          <span class="bar-fill" style="width:${Math.max(2, (v / maxV) * 100)}%;background:${series[i].v}"
+            title="${series[i].name} ${v}"></span>
+          <span class="bar-val">${v.toLocaleString()}</span>
+        </span>`).join('')}
+      </span>
+    </div>`).join('');
+  if (legendId && series.length > 1) {
+    document.getElementById(legendId).innerHTML = series.map(s =>
+      `<span class="legend-item"><span class="legend-dot" style="background:${s.v}"></span>${s.name}</span>`).join('');
+  }
+}
+
+/* ── 数据装配 ── */
+bars('top-users', [
+  { label: 'Lizylu', values: [128] }, { label: 'user', values: [96] },
+  { label: 'mika', values: [41] }, { label: 'ben', values: [18] }, { label: '其它 5 人', values: [12] },
+], [{ name: '阅读', v: 'var(--chart-1)' }]);
+
+bars('src-bars', [
+  { label: '机器之心', values: [88, 14, 8] },
+  { label: 'Anthropic News', values: [64, 12, 7] },
+  { label: 'HF Papers', values: [52, 9, 5] },
+  { label: '量子位', values: [47, 8, 6] },
+  { label: 'OpenAI News', values: [39, 7, 5] },
+], [
+  { name: '阅读', v: 'var(--chart-1)' },
+  { name: '收藏', v: 'var(--chart-2)' },
+  { name: '订阅', v: 'var(--chart-other)' },
+], 'src-legend');
+
+bars('drawer-bars', [
+  { label: '机器之心', values: [34, 6] },
+  { label: 'Anthropic News', values: [28, 5] },
+  { label: 'HF Papers', values: [22, 3] },
+  { label: '量子位', values: [19, 2] },
+], [
+  { name: '阅读', v: 'var(--chart-1)' },
+  { name: '收藏', v: 'var(--chart-2)' },
+], 'drawer-legend');
+
+stackedArea('chart-calls', 'legend-calls', PURPOSES);
+stackedArea('chart-tokens', 'legend-tokens', TOKENS);
+stackedArea('chart-drawer-area', 'legend-drawer-area', DRAWER_AREA, { h: 150 });
+
+/* 账户表 */
+const ACCTS = [
+  { n: 'Lizylu', s: 'ok', last: '07-10 09:12', logins: 18, reads: 128, ai: 64, subs: 9, sel: false },
+  { n: 'user', s: 'ok', last: '07-10 08:03', logins: 12, reads: 96, ai: 41, subs: 6 },
+  { n: 'mika', s: 'ok', last: '07-08 22:40', logins: 9, reads: 41, ai: 28, subs: 4 },
+  { n: 'ben', s: 'ok', last: '07-05 11:15', logins: 5, reads: 18, ai: 12, subs: 3 },
+  { n: 'kite', s: 'off', last: '06-21 17:02', logins: 0, reads: 0, ai: 0, subs: 2 },
+];
+const ICONS = {
+  ai: '<path d="M12 3a6 6 0 0 1 6 6c0 2.4-1.4 4-2.5 5.2-.7.8-1.5 1.6-1.5 2.8h-4c0-1.2-.8-2-1.5-2.8C7.4 13 6 11.4 6 9a6 6 0 0 1 6-6z"/><path d="M10 21h4"/>',
+  key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>',
+  off: '<path d="M18.36 6.64A9 9 0 1 1 5.64 6.64"/><path d="M12 2v10"/>',
+  del: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+};
+const iconBtn = (title, path, danger = '') =>
+  `<button class="rowact-btn ${danger}" title="${title}" onclick="event.stopPropagation()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg></button>`;
+document.getElementById('acct-body').innerHTML = ACCTS.map((a, idx) => `
+  <tr class="acct-row" data-idx="${idx}" tabindex="0">
+    <td><span class="acct-user"><span class="acct-avatar">${a.n[0].toUpperCase()}</span><span class="acct-name">${a.n}</span></span></td>
+    <td>${a.s === 'ok' ? '<span class="stamp stamp-ok">启用</span>' : '<span class="stamp stamp-idle">停用</span>'}</td>
+    <td><span class="acct-mono">${a.last}</span></td>
+    <td class="acct-n">${a.logins || '–'}</td>
+    <td class="acct-n is-main ${a.reads ? '' : 'is-zero'}">${a.reads || '–'}</td>
+    <td class="acct-n">${a.ai || '–'}</td>
+    <td class="acct-n">${a.subs}</td>
+    <td><span class="rowacts">${iconBtn('AI 功能开关', ICONS.ai)}${iconBtn('重置密码', ICONS.key)}${iconBtn(a.s === 'ok' ? '停用账户' : '启用账户', ICONS.off)}${iconBtn('删除账户', ICONS.del, 'is-danger')}</span></td>
+  </tr>`).join('');
+
+/* ── 交互 ── */
+const drawer = document.getElementById('drawer'), scrim = document.getElementById('scrim');
+function openDrawer() { drawer.classList.add('is-open'); scrim.classList.add('is-open'); }
+function closeDrawer() {
+  drawer.classList.remove('is-open'); scrim.classList.remove('is-open');
+  document.querySelectorAll('.acct-row').forEach(r => r.classList.remove('is-sel'));
+}
+document.querySelectorAll('.acct-row').forEach(row => row.addEventListener('click', () => {
+  document.querySelectorAll('.acct-row').forEach(r => r.classList.remove('is-sel'));
+  row.classList.add('is-sel'); openDrawer();
+}));
+document.getElementById('drawer-close').addEventListener('click', closeDrawer);
+scrim.addEventListener('click', closeDrawer);
+
+document.querySelectorAll('#sub-seg .segmented-btn').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('#sub-seg .segmented-btn').forEach(b => b.classList.remove('is-on'));
+  btn.classList.add('is-on');
+  document.querySelectorAll('.sub-page').forEach(p =>
+    p.classList.toggle('is-on', p.dataset.page === btn.dataset.sub));
+  closeDrawer();
+}));
+document.querySelectorAll('.mini-seg').forEach(seg => seg.querySelectorAll('.mini-seg-btn').forEach(btn =>
+  btn.addEventListener('click', () => {
+    seg.querySelectorAll('.mini-seg-btn').forEach(b => b.classList.remove('is-on'));
+    btn.classList.add('is-on');
+  })));
+document.getElementById('ai-master').addEventListener('click', function () {
+  this.classList.toggle('is-on');
+  this.setAttribute('aria-checked', this.classList.contains('is-on'));
+  document.getElementById('ai-light').classList.toggle('is-off', !this.classList.contains('is-on'));
+});
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === 'dark' ? '' : 'dark';
+});
+</script>
+</body>
+</html>

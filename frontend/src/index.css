@@ -138,6 +138,14 @@
   --state-bad: #e11d48;  --state-bad-bg: #fff1f2;
   --state-run: #0284c7;  --state-run-bg: #f0f9ff;
   --state-idle: #64748b; --state-idle-bg: #f1f5f9;
+
+  /* ── 图表分类色 token(运维波):固定序 6 槽 + 中性「其它」槽。
+     已过 dataviz 六项校验(validate_palette.js,白面 PASS;对比 WARN 由图例+直标+tooltip 承接)。
+     纪律:固定序取色、色随实体不随排位、超出 6 系并入「其它」,不循环生成新色。
+     暗色在 [data-theme=dark] 按 L 0.48–0.67 带同色相族降档重定义。 ── */
+  --chart-1: #5b54e8; --chart-2: #14b8a6; --chart-3: #f59e0b;
+  --chart-4: #ef4444; --chart-5: #0ea5e9; --chart-6: #a855f7;
+  --chart-other: #94a3b8;
   /* lg+ 的导轨几何覆盖见本文件 :root 块后的 @media (min-width: 1024px) */
 
   /* 工作区动效收敛（P4）：功能态向 Geist 节奏靠拢（状态~150 / 浮层~200-240 / 面板~300）。
@@ -3897,6 +3905,145 @@ input[type="radio"] {
     .brief-col + .brief-col { border-left: none; border-top: 1px solid var(--dorami-border); }
   }
 
+  /* ── 运维管理 静默仪器(运维波):仪表墙 ──
+     机房仪表墙:三观测域(用户/内容/AI)保留 segmented(数据形态迥异),时间窗控件上移页头
+     统一全页;KPI 数字全 ink(彩色 KPI 是拆掉的 AI-tell,语义色只留异常)。图表卡容器已内聚进
+     charts/DashboardCharts(MultiSeriesArea 自带 surface-card + card-head + 图例),此处只落
+     KPI 条 / 账户表 / AI 总闸板 / 抽屉 tiles / 榜单等页面专属类。
+     复用既有范式(不迁,直接引用):.page-head/.surface-card/.stamp/.mini-seg/.segmented-control/
+     .zone-head|title|hint/.card-pad|head|title/.rowacts/.rowact-btn/.ledger-scrim/.ledger-drawer*/
+     .ledger-switch/.pager/.action-button*/.form-input。刻度 1:1 取自 docs/design/dorami-admin-quiet.html。 ── */
+
+  /* 流式页容器:承载 --mono 语境 + 密度字号(壳由 App 的 <main> 给内边距) */
+  .admin-page {
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    max-width: 1240px;
+    font-size: 13px;
+  }
+  .admin-page .win-label { font-size: 11px; font-weight: 600; color: var(--dorami-faint); margin-right: 2px; }
+
+  /* zone 头右侧对齐(与 .zone-head 配套;可叠 .mini-seg 或 flex 工具类承载多控件) */
+  .zone-acts { margin-left: auto; }
+
+  /* 双列图表栅格(内容/AI 子页) */
+  .admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+
+  /* ── KPI 总账条(被动读数,数字全 ink;语义色只留异常) ── */
+  .kpi-strip { display: flex; align-items: stretch; flex-wrap: wrap; border-radius: var(--r-card); overflow: hidden; }
+  .kpi { flex: 1; min-width: 130px; padding: 14px 18px 12px; }
+  .kpi + .kpi { border-left: 1px solid var(--dorami-border); }
+  .kpi-num {
+    display: block; font-size: 28px; font-weight: 700; line-height: 32px;
+    letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--dorami-ink);
+  }
+  .kpi-num.is-warn { color: var(--state-warn); }
+  .kpi-num.is-bad { color: var(--state-bad); }
+  .kpi-lbl { display: block; margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+  .kpi-sub {
+    display: block; margin-top: 1px; font-size: 11px; font-weight: 500;
+    color: var(--dorami-faint); font-variant-numeric: tabular-nums;
+  }
+
+  /* ── 账户表(ledger-table 语法:46px 行 / hover soft / 选中竖条 / 动作收 hover) ── */
+  .acct-scroll { overflow-x: auto; }
+  .acct-table { width: 100%; border-collapse: collapse; }
+  .acct-th {
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; color: var(--dorami-faint);
+    text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--dorami-border); white-space: nowrap;
+  }
+  .acct-th.is-num { text-align: right; }
+  .acct-th:first-child { padding-left: 18px; }
+  .acct-th:last-child { padding-right: 14px; }
+  .acct-row { cursor: pointer; transition: background var(--motion-fast) var(--motion-ease); }
+  .acct-row td { height: 46px; vertical-align: middle; padding: 0 10px; border-top: 1px solid var(--dorami-border); }
+  .acct-row td:first-child { padding-left: 18px; }
+  .acct-row td:last-child { padding-right: 14px; }
+  .acct-row:hover { background: var(--dorami-soft); }
+  .acct-row.is-sel { background: var(--dorami-soft); box-shadow: inset 3px 0 0 var(--dorami-blue); }
+  .acct-row:hover .rowacts, .acct-row:focus-within .rowacts { opacity: 1; }
+  .acct-user { display: flex; align-items: center; gap: 9px; }
+  .acct-avatar {
+    width: 26px; height: 26px; flex: none; border-radius: var(--r-pill); display: grid; place-items: center;
+    background: var(--dorami-well); font-size: 11px; font-weight: 700; color: var(--dorami-muted);
+  }
+  .acct-name { font-size: 13px; font-weight: 600; color: var(--dorami-ink); }
+  .acct-mono {
+    font-family: var(--mono); font-size: 11px; color: var(--dorami-muted);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .acct-n {
+    text-align: right; font-family: var(--mono); font-size: 12px; color: var(--dorami-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .acct-n.is-main { font-weight: 700; color: var(--dorami-ink); }
+  .acct-n.is-zero { opacity: 0.55; }
+  /* 行末 AI 开关按钮:开启态用 accent 墨提示(hover 仍归 rowact-btn) */
+  .rowact-btn.is-on { color: var(--dorami-accent-ink); }
+
+  /* ── AI 子页:总闸开关板 + 行内模型配置(状态灯 + ledger-switch + hairline 分隔) ── */
+  .ai-switchboard { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 13px 18px; }
+  .ai-light { width: 8px; height: 8px; border-radius: var(--r-pill); background: var(--state-ok); flex: none; }
+  .ai-light.is-off { background: var(--state-warn); }
+  .ai-switch-lbl { font-size: 13px; font-weight: 700; color: var(--dorami-ink); }
+  .ai-switch-sub { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); }
+  .ai-divider { width: 1px; height: 26px; background: var(--dorami-border); }
+  .model-fields { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1; min-width: 0; }
+  .model-field { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--dorami-faint); }
+  .model-field input {
+    min-height: 28px; padding: 0 9px; border: none; border-radius: var(--r-sm);
+    background: var(--dorami-well); box-shadow: var(--dorami-inset-input);
+    font-family: var(--mono); font-size: 11px; color: var(--dorami-ink);
+  }
+  .model-field input::placeholder { color: var(--dorami-faint); }
+  .model-field input:focus { outline: none; box-shadow: 0 0 0 3px var(--dorami-focus); }
+  .model-btn {
+    display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 0 10px;
+    border-radius: var(--r-sm); font-size: 11.5px; font-weight: 600; color: var(--dorami-muted);
+  }
+  .model-btn:hover:not(:disabled) { background: var(--dorami-soft); color: var(--dorami-ink); }
+  .model-btn:disabled { opacity: 0.5; cursor: default; }
+
+  /* ── 用户活动抽屉:tiles / 登录卡 / 榜单(ledger-drawer 语法换肤) ── */
+  .drawer-sec-title { font-size: 12px; font-weight: 700; color: var(--dorami-ink-2); margin-bottom: 8px; }
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .tile { background: var(--dorami-soft); border-radius: var(--r-control); padding: 10px 12px; }
+  .tile-num { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 24px; color: var(--dorami-ink); }
+  .tile-lbl { font-size: 11px; font-weight: 600; color: var(--dorami-faint); margin-top: 2px; }
+  .login-card { background: var(--dorami-soft); border-radius: var(--r-control); padding: 10px 12px; }
+  .login-card summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 8px; }
+  .login-card summary::-webkit-details-marker { display: none; }
+  .login-toggle { margin-left: auto; font-size: 11px; color: var(--dorami-faint); flex: none; }
+  .login-list { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .login-list li {
+    list-style: none; font-family: var(--mono); font-size: 11px; color: var(--dorami-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 榜单列表(收藏文章 TOP) */
+  .toplist { display: flex; flex-direction: column; }
+  .toplist-row { display: flex; align-items: baseline; gap: 10px; padding: 8px 2px; border-bottom: 1px solid var(--dorami-border); }
+  .toplist-row:last-child { border-bottom: none; }
+  .toplist-rank {
+    flex: none; width: 18px; font-family: var(--mono); font-size: 11px; font-weight: 700;
+    color: var(--dorami-faint); text-align: right;
+  }
+  .toplist-title {
+    flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--dorami-ink-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .toplist-src { flex: none; font-size: 11px; color: var(--dorami-faint); }
+  .toplist-n {
+    flex: none; font-family: var(--mono); font-size: 12px; font-weight: 700;
+    font-variant-numeric: tabular-nums; color: var(--dorami-ink);
+  }
+
+  @media (max-width: 1023px) {
+    .admin-page { max-width: none; }
+    .admin-grid { grid-template-columns: 1fr; }
+    .kpi-strip { flex-direction: column; }
+    .kpi + .kpi { border-left: none; border-top: 1px solid var(--dorami-border); }
+  }
+
   /* ── Status badges & chips ── */
 
   .status-badge {
@@ -7582,6 +7729,11 @@ input[type="radio"] {
   --state-bad: #fb7185;  --state-bad-bg: #2a151a;
   --state-run: #38bdf8;  --state-run-bg: #0e1c27;
   --state-idle: #99a1ad; --state-idle-bg: #15181f;
+
+  /* 图表分类色暗面梯级:同色相族降档(#20252f 面全项 PASS,校验记录见 :root 注释) */
+  --chart-1: #8b84f0; --chart-2: #0d9488; --chart-3: #d97706;
+  --chart-4: #ef4444; --chart-5: #0284c7; --chart-6: #a855f7;
+  --chart-other: #5b6678;
 
   /* —— 强调（深底略提亮：按钮不发灰、accent 文字达对比）—— */
   /* 填充类 accent（hero 渐变 / 主按钮 / 部门卡）在暗色下调深、去霓虹：
