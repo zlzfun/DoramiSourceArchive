@@ -164,7 +164,6 @@ export default function App() {
   }, [commitNav]);
 
   const setFetchView = useCallback((v) => goView('fetch', v), [goView]);
-  const setRunsView = useCallback((v) => goView('runs', v), [goView]);
 
   const markArticlesDirty = useCallback(() => setArticlesDirty(true), []);
   const clearArticlesDirty = useCallback(() => setArticlesDirty(false), []);
@@ -185,16 +184,16 @@ export default function App() {
   }, [jumpWithFocus]);
 
   const viewRunsForSource = useCallback((fetcherId, options = {}) => {
-    jumpWithFocus('runs', 'history', { tab: 'runs', payload: { fetcher_id: fetcherId, status: options.status || '' } });
+    jumpWithFocus('runs', null, { tab: 'runs', payload: { fetcher_id: fetcherId, status: options.status || '' } });
   }, [jumpWithFocus]);
   const viewRunningTasks = useCallback(() => {
-    jumpWithFocus('runs', 'history', { tab: 'runs', payload: { fetcher_id: '', status: '' } });
+    jumpWithFocus('runs', null, { tab: 'runs', payload: { fetcher_id: '', status: 'running' } });
   }, [jumpWithFocus]);
 
-  // 节点管理「保存为采集任务」→ 切到任务与运行·采集任务，预填新建编辑器（草稿）。
+  // 节点管理「保存为采集任务」→ 切到任务与运行，本地打开新建编辑器（草稿）。
   const saveSelectionAsJob = useCallback((draft) => {
     setPendingJobDraft(draft);
-    jumpWithFocus('runs', 'jobs', null);
+    jumpWithFocus('runs', null, null);
   }, [jumpWithFocus]);
 
   // 知识台账「数据来源」列点击 → 定位并展开节点管理（采集端）里对应来源。
@@ -590,8 +589,6 @@ export default function App() {
                 <FetchRunsTab
                   availableFetchers={availableFetchers}
                   showToast={showToast}
-                  view={nav.views.runs}
-                  setView={setRunsView}
                   onArticlesChanged={markArticlesDirty}
                   onRunsChanged={markRunsDirty}
                   isActive={activeTab === 'runs'}

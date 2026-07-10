@@ -1,0 +1,1179 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>任务与运行 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   任务与运行 · 静默仪器样页(从零到一设计稿)
+   基调:贵在安静——密度、静止、排印刚性扛高级感;动效只做状态反馈;accent 稀缺化。
+   概念:调度台(dispatch desk)——左栏「时刻表」答"什么时候跑",
+        右区「运行流水」答"跑得怎么样",总账条「运行中」灯答"什么在跑"。
+   令牌与刻度 1:1 取自 frontend/src/index.css(台账/节点两页已落地的范式)。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --dorami-blue: #5b54e8;
+  --dorami-blue-2: #7b6cf0;
+  --dorami-accent: #5b54e8;
+  --dorami-accent-ink: #4a43d4;
+
+  --dorami-ink: #0b1220;
+  --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678;
+  --dorami-faint: #64748b;
+
+  --dorami-canvas: #eef1f6;
+  --dorami-surface: #ffffff;
+  --dorami-soft: #f8fafc;
+  --dorami-card: rgba(255, 255, 255, 0.96);
+  --dorami-wash: rgba(91, 84, 232, 0.08);
+  --dorami-well: #f1f5f9;
+  --dorami-raised: #ffffff;
+  --dorami-inset-input: inset 0 1px 3px rgba(11, 18, 32, 0.08);
+
+  --dorami-border: rgba(11, 18, 32, 0.09);
+  --dorami-border-strong: rgba(11, 18, 32, 0.15);
+  --dorami-card-bd: transparent;
+  --dorami-edge: rgba(255, 255, 255, 0.62);
+
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --sh-3: 0 4px 10px rgba(11, 18, 32, 0.08), 0 16px 36px rgba(11, 18, 32, 0.11);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-overlay: 16px; --r-pill: 9999px;
+
+  --state-ok: #059669;   --state-ok-bg: #ecfdf5;
+  --state-warn: #b45309; --state-warn-bg: #fffbeb;
+  --state-bad: #e11d48;  --state-bad-bg: #fff1f2;
+  --state-run: #0284c7;  --state-run-bg: #f0f9ff;
+  --state-idle: #64748b; --state-idle-bg: #f1f5f9;
+
+  --dorami-scrollbar: rgba(11, 18, 32, 0.2);
+  --dorami-scrollbar-strong: rgba(11, 18, 32, 0.34);
+
+  --motion-fast: 150ms; --motion-medium: 240ms; --motion-slow: 300ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --rail-w: 78px;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13;
+  --dorami-well: #15181f;
+  --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f;
+  --dorami-card: rgba(32, 37, 47, 0.96);
+  --dorami-raised: #2a313c;
+  --dorami-wash: rgba(124, 112, 235, 0.13);
+  --dorami-inset-input: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+
+  --dorami-ink: #f2f4f7;
+  --dorami-ink-2: #d2d7df;
+  --dorami-muted: #99a1ad;
+  --dorami-faint: #828b97;
+
+  --dorami-border: rgba(255, 255, 255, 0.10);
+  --dorami-border-strong: rgba(255, 255, 255, 0.16);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08);
+  --dorami-edge: rgba(255, 255, 255, 0.05);
+  --dorami-scrollbar: rgba(255, 255, 255, 0.2);
+  --dorami-scrollbar-strong: rgba(255, 255, 255, 0.34);
+
+  --state-ok: #34d399;   --state-ok-bg: #0f241b;
+  --state-warn: #fbbf24; --state-warn-bg: #281e10;
+  --state-bad: #fb7185;  --state-bad-bg: #2a151a;
+  --state-run: #38bdf8;  --state-run-bg: #0e1c27;
+  --state-idle: #99a1ad; --state-idle-bg: #15181f;
+
+  --dorami-blue: #4d45b5;
+  --dorami-blue-2: #5f57c8;
+  --dorami-accent: #8b84f0;
+  --dorami-accent-ink: #aaa4f6;
+
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --sh-3: 0 4px 10px rgba(0, 0, 0, 0.5), 0 16px 36px rgba(0, 0, 0, 0.6);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--dorami-canvas);
+  color: var(--dorami-ink);
+  font-size: 13px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+[data-theme="dark"] body {
+  background:
+    radial-gradient(ellipse 70% 50% at 12% -8%, rgba(124, 112, 235, 0.10), transparent 58%),
+    linear-gradient(180deg, #11131a 0%, var(--dorami-canvas) 55%);
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+
+/* 滚动条范式:常态隐形、悬停所在容器显现 */
+* { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+*:hover { scrollbar-color: var(--dorami-scrollbar) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: transparent; border-radius: 8px; }
+*:hover::-webkit-scrollbar-thumb { background: var(--dorami-scrollbar); }
+*::-webkit-scrollbar-thumb:hover { background: var(--dorami-scrollbar-strong); }
+
+/* ── 左侧导轨(壳层上下文,刻度同 L1)── */
+.app-rail {
+  position: fixed; inset-block: 0; left: 0; width: var(--rail-w); z-index: 45;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 14px 0 16px;
+  background: var(--dorami-surface);
+  border-right: 1px solid var(--dorami-card-bd);
+  box-shadow: var(--sh-1);
+}
+.rail-brand { margin-bottom: 14px; width: 34px; height: 34px; border-radius: var(--r-control);
+  background: var(--dorami-blue); display: grid; place-items: center; color: #fff;
+  font-size: 15px; font-weight: 800; }
+.rail-nav-btn { position: relative; width: 100%; padding: 10px 0 8px; display: flex;
+  flex-direction: column; align-items: center; gap: 4px; color: var(--dorami-faint); }
+.rail-nav-btn svg { width: 19px; height: 19px; }
+.rail-nav-btn span { font-size: 11px; font-weight: 600; }
+.rail-nav-btn:hover { color: var(--dorami-ink-2); }
+.rail-nav-btn.rail-nav-on { color: var(--dorami-accent); }
+.rail-nav-btn.rail-nav-on span { font-weight: 700; }
+.rail-nav-btn.rail-nav-on::before {
+  content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 26px; background: var(--dorami-blue);
+  border-radius: 0 var(--r-pill) var(--r-pill) 0;
+}
+.rail-spacer { flex: 1; }
+.rail-tool { width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: var(--r-control); color: var(--dorami-faint); }
+.rail-tool:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+.rail-tool svg { width: 18px; height: 18px; }
+
+/* ── 壳层:满幅定高,页面不滚,滚动只发生在纸内 ── */
+.runs-shell {
+  margin-left: var(--rail-w);
+  height: 100vh;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── 页头范式 .page-head(全站统一口径)── */
+.page-head {
+  flex: none; display: flex; align-items: center; gap: 14px;
+  min-height: 70px; padding: 22px 28px 0;
+}
+.page-title { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; color: var(--dorami-ink); }
+.page-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* 自动刷新(节点页 signal-autorefresh 同刻度) */
+.autorefresh { display: inline-flex; align-items: center; gap: 8px; font-size: 12px;
+  font-weight: 600; color: var(--dorami-muted); white-space: nowrap; }
+.autorefresh-countdown { font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums;
+  color: var(--dorami-ink-2); min-width: 24px; text-align: right; }
+.switch { position: relative; width: 36px; height: 20px; flex: none; border-radius: var(--r-pill);
+  background: var(--dorami-well); box-shadow: var(--dorami-inset-input);
+  transition: background var(--motion-fast) var(--motion-ease); }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  background: #fff; border-radius: var(--r-pill); box-shadow: 0 1px 2px rgba(11, 18, 32, 0.3);
+  transition: transform var(--motion-fast) var(--motion-ease); }
+.switch.is-on { background: var(--dorami-blue); }
+.switch.is-on::after { transform: translateX(16px); }
+
+.iconbtn-32 { width: 32px; height: 32px; display: grid; place-items: center;
+  border-radius: var(--r-control); color: var(--dorami-muted); }
+.iconbtn-32:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+.iconbtn-32 svg { width: 16px; height: 16px; }
+
+/* 主按钮扁平化范式:实心 accent + sh-1(一屏唯一 CTA) */
+.primary-action {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 36px; padding: 0 14px; border-radius: var(--r-control);
+  background: var(--dorami-blue); color: #fff; font-size: 12.5px; font-weight: 700;
+  box-shadow: var(--sh-1);
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+.primary-action:hover { background: var(--dorami-accent-ink); }
+.primary-action svg { width: 14px; height: 14px; }
+
+/* ── 一张纸 ── */
+.runs-work { flex: 1; min-height: 0; display: flex; margin: 16px 28px 20px; }
+.runs-paper {
+  flex: 1; min-width: 0; min-height: 0;
+  display: flex; overflow: hidden;
+  border-radius: var(--r-card);
+  border: 1px solid var(--dorami-card-bd);
+  background: var(--dorami-card);
+  box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge);
+}
+
+/* ════════ 左栏:时刻表(调度台的发车牌)════════ */
+.timetable {
+  width: 300px; flex: none;
+  display: flex; flex-direction: column; overflow: hidden;
+  border-right: 1px solid var(--dorami-border);
+}
+.tt-head {
+  flex: none; display: flex; align-items: baseline; gap: 8px;
+  padding: 13px 16px 11px;
+  border-bottom: 1px solid var(--dorami-border);
+}
+.tt-head-title { font-size: 14px; font-weight: 700; color: var(--dorami-ink); }
+.tt-head-n { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint);
+  font-variant-numeric: tabular-nums; }
+/* 台面时钟:仪器的心跳,唯一"持续运动"的元素(数字走字,非动画) */
+.tt-clock { margin-left: auto; font-family: var(--mono); font-size: 11px;
+  font-variant-numeric: tabular-nums; color: var(--dorami-muted); }
+
+.tt-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 0 10px; }
+
+.tt-row {
+  position: relative; display: block; width: 100%; text-align: left;
+  padding: 9px 16px 10px;
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+.tt-row:hover { background: var(--dorami-soft); }
+/* 选中语法 R1:accent 竖条 + soft 底 */
+.tt-row.is-sel { background: var(--dorami-soft); box-shadow: inset 3px 0 0 var(--dorami-blue); }
+.tt-row + .tt-row { border-top: 1px solid var(--dorami-border); }
+
+.tt-row-top { display: flex; align-items: center; gap: 7px; }
+.tt-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: var(--dorami-ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-row-mid { margin-top: 2px; font-size: 11.5px; font-weight: 500; color: var(--dorami-muted);
+  display: flex; align-items: center; gap: 6px; }
+.tt-cron { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint);
+  font-variant-numeric: tabular-nums; }
+.tt-row-bot { margin-top: 7px; display: flex; align-items: center; gap: 8px; }
+
+/* 7 日结果点阵:形状点语言(方=有结果,空心=无运行);需后端 per-day 聚合端点 */
+.tt-dots { display: inline-flex; gap: 3px; }
+.tt-dots i { width: 6px; height: 6px; border-radius: 1.5px; background: var(--dorami-well); }
+.tt-dots i.ok { background: var(--state-ok); opacity: 0.75; }
+.tt-dots i.bad { background: var(--state-bad); }
+.tt-dots i.warn { background: var(--state-warn); }
+
+/* 下次触发倒计时:发车牌列,mono 走字 */
+.tt-next { margin-left: auto; font-family: var(--mono); font-size: 11px;
+  font-variant-numeric: tabular-nums; color: var(--dorami-ink-2); font-weight: 600; }
+.tt-next .u { color: var(--dorami-faint); font-weight: 500; font-family: inherit; }
+.tt-next.is-manual { color: var(--dorami-faint); font-weight: 500; }
+
+/* 最近结果微章:仅形状点(全 stamp 会让左栏过响) */
+.tt-last { width: 6px; height: 6px; flex: none; border-radius: 1px; }
+.tt-last.ok { background: var(--state-ok); }
+.tt-last.bad { background: var(--state-bad); transform: rotate(45deg); border-radius: 0.5px; }
+.tt-last.warn { background: var(--state-warn); clip-path: polygon(50% 0, 100% 100%, 0 100%); border-radius: 0; }
+.tt-last.run { background: var(--state-run); border-radius: 50%; animation: pulse 1.6s infinite; }
+
+.tt-off-head { padding: 12px 16px 4px; font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.07em; color: var(--dorami-faint); border-top: 1px solid var(--dorami-border);
+  margin-top: 6px; }
+.tt-row.is-off { opacity: 0.55; }
+.tt-row.is-off:hover { opacity: 0.8; }
+
+.tt-foot { flex: none; padding: 9px 16px; border-top: 1px solid var(--dorami-border);
+  background: var(--dorami-soft); font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
+
+/* ════════ 右区:运行流水 ════════ */
+.flow { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+/* 总账条范式(台账 ledger-strip 直移):可点状态灯 = 筛选器,选中 = 底部 accent 条 */
+.flow-strip { flex: none; display: flex; align-items: stretch; flex-wrap: wrap;
+  border-bottom: 1px solid var(--dorami-border); }
+.flow-strip-stats { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; }
+.flow-stat { flex: 1; min-width: 96px; padding: 14px 16px 11px; cursor: pointer;
+  position: relative; text-align: left;
+  transition: background var(--motion-fast) var(--motion-ease); }
+.flow-stat:hover { background: var(--dorami-soft); }
+.flow-stat.is-on::after { content: ""; position: absolute; left: 16px; right: 16px; bottom: 0;
+  height: 3px; background: var(--dorami-blue); border-radius: var(--r-pill) var(--r-pill) 0 0; }
+.flow-stat-num { display: block; font-size: 28px; font-weight: 700; line-height: 32px;
+  letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--dorami-ink); }
+.flow-stat-num.is-ok { color: var(--state-ok); }
+.flow-stat-num.is-bad { color: var(--state-bad); }
+.flow-stat-num.is-warn { color: var(--state-warn); }
+.flow-stat-num.is-run { color: var(--state-run); }
+.flow-stat-lbl { display: block; margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+.flow-stat-sub { display: block; margin-top: 1px; font-size: 11px; font-weight: 500;
+  color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+/* 被动读数(非筛选):新增入库/重复跳过 */
+.flow-stat.is-passive { cursor: default; }
+.flow-stat.is-passive:hover { background: none; }
+
+.flow-strip-tools { flex: none; display: flex; flex-direction: column; justify-content: center;
+  gap: 8px; padding: 12px 18px; background: var(--dorami-soft); }
+.flow-tools-row { display: flex; align-items: center; gap: 8px; }
+.flow-tools-lbl { font-size: 11px; font-weight: 600; color: var(--dorami-faint); }
+
+/* 微型分段范式 .mini-seg */
+.mini-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-sm);
+  background: var(--dorami-well); font-size: 11px; }
+.mini-seg-btn { min-height: 22px; padding: 0 8px; border-radius: 4px; font-weight: 600;
+  color: var(--dorami-muted); }
+.mini-seg-btn:hover:not(.is-on) { color: var(--dorami-ink-2); }
+.mini-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+
+/* 任务上下文条:选中任务后浮现(wash = 状态标记底,同台账批量条语法) */
+.jobbar { flex: none; display: none; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 16px; border-bottom: 1px solid var(--dorami-border); background: var(--dorami-wash); }
+.jobbar.is-open { display: flex; }
+.jobbar-name { font-size: 12.5px; font-weight: 700; color: var(--dorami-accent-ink); }
+.jobbar-meta { font-family: var(--mono); font-size: 11px; color: var(--dorami-muted);
+  font-variant-numeric: tabular-nums; }
+.jobbar-acts { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.jobbar-btn { min-height: 26px; padding: 0 9px; border-radius: var(--r-sm);
+  font-size: 11.5px; font-weight: 600; color: var(--dorami-ink-2); }
+.jobbar-btn:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+.jobbar-btn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
+.jobbar-x { width: 26px; height: 26px; display: grid; place-items: center; border-radius: var(--r-sm);
+  color: var(--dorami-faint); }
+.jobbar-x:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+.jobbar-x svg { width: 13px; height: 13px; }
+
+/* ── 流水表 ── */
+.flow-scroll { flex: 1; min-height: 0; overflow: auto; }
+.flow-table { width: 100%; border-collapse: collapse; }
+
+.flow-th {
+  position: sticky; top: 0; z-index: 2; background: var(--dorami-surface);
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; color: var(--dorami-faint);
+  padding: 8px 10px; border-bottom: 1px solid var(--dorami-border);
+  white-space: nowrap; text-align: left;
+}
+.flow-th.is-num { text-align: right; }
+.flow-th:first-child { padding-left: 16px; }
+.flow-th:last-child { padding-right: 16px; }
+
+/* 日分组行:日期导轨(左)+ 当日摘要(右),soft 底压一档 */
+.day-row td {
+  padding: 7px 16px 6px; background: var(--dorami-soft);
+  border-top: 1px solid var(--dorami-border); border-bottom: 1px solid var(--dorami-border);
+}
+.day-row .d { font-family: var(--mono); font-size: 11px; font-weight: 700;
+  font-variant-numeric: tabular-nums; color: var(--dorami-ink-2); }
+.day-row .d em { font-style: normal; color: var(--dorami-faint); font-weight: 500; margin-left: 6px; }
+.day-row .sum { float: right; font-family: var(--mono); font-size: 10.5px;
+  color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.day-row .sum b { color: var(--dorami-muted); font-weight: 600; }
+
+.run-row td { height: 44px; vertical-align: middle; padding: 0 10px;
+  border-top: 1px solid var(--dorami-border); }
+tbody tr:first-child td, .day-row + .run-row td { border-top: none; }
+.run-row td:first-child { padding-left: 16px; }
+.run-row td:last-child { padding-right: 16px; }
+.run-row { cursor: default; transition: background var(--motion-fast) var(--motion-ease); }
+.run-row:hover { background: var(--dorami-soft); }
+.run-row.is-expandable { cursor: pointer; }
+
+.run-time { font-family: var(--mono); font-size: 11px; color: var(--dorami-muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* 状态章范式 .stamp:淡底+深字+形状点,无描边 */
+.stamp { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700;
+  padding: 2.5px 9px; border-radius: var(--r-pill); white-space: nowrap; }
+.stamp::before { content: ""; width: 6px; height: 6px; flex: none; border-radius: 1px; }
+.stamp-ok   { color: var(--state-ok);   background: var(--state-ok-bg); }
+.stamp-ok::before   { background: var(--state-ok); }
+.stamp-run  { color: var(--state-run);  background: var(--state-run-bg); }
+.stamp-run::before  { background: var(--state-run); border-radius: 50%; animation: pulse 1.6s infinite; }
+.stamp-bad  { color: var(--state-bad);  background: var(--state-bad-bg); }
+.stamp-bad::before  { background: var(--state-bad); transform: rotate(45deg); }
+.stamp-warn { color: var(--state-warn); background: var(--state-warn-bg); }
+.stamp-warn::before { background: var(--state-warn); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.stamp-idle { color: var(--state-idle); background: var(--state-idle-bg); }
+.stamp-idle::before { background: var(--dorami-faint); border-radius: 50%; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* 对象列:名称 + mono 副行;聚合运行带展开三角 */
+.run-obj { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.run-caret { flex: none; width: 12px; height: 12px; color: var(--dorami-faint);
+  transition: transform var(--motion-fast) var(--motion-ease); }
+.is-open .run-caret { transform: rotate(90deg); }
+.run-caret-ph { flex: none; width: 12px; }
+.run-obj-txt { min-width: 0; }
+.run-obj-name { font-size: 13px; font-weight: 600; color: var(--dorami-ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-obj-sub { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* 运行中行:行内进度线(活动态 = accent 家族,产品语义) */
+.run-progress { display: flex; align-items: center; gap: 8px; margin-top: 4px; max-width: 240px; }
+.run-progress-track { flex: 1; height: 3px; border-radius: var(--r-pill); background: var(--dorami-well); overflow: hidden; }
+.run-progress-fill { display: block; height: 100%; border-radius: var(--r-pill);
+  background: var(--dorami-accent); transition: width var(--motion-slow) var(--motion-ease); }
+.run-progress-n { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.run-trigger { font-size: 12px; font-weight: 600; color: var(--dorami-muted); white-space: nowrap; }
+.run-trigger.is-sched { color: var(--dorami-faint); }
+
+/* 产出三列:右对齐 mono,新增是主读数(ink/700),其余 muted;零 = – */
+.run-n { text-align: right; font-family: var(--mono); font-size: 12px;
+  font-variant-numeric: tabular-nums; color: var(--dorami-muted); white-space: nowrap; }
+.run-n.is-main { font-weight: 700; color: var(--dorami-ink); }
+.run-n.is-zero { color: var(--dorami-faint); opacity: 0.6; }
+.run-dur { text-align: right; font-family: var(--mono); font-size: 11px;
+  font-variant-numeric: tabular-nums; color: var(--dorami-faint); white-space: nowrap; }
+
+/* 行末操作(台账 rowacts 范式):hover 浮现;临时运行=存为采集任务,失败行=重跑 */
+.rowacts { display: flex; justify-content: flex-end; gap: 2px; opacity: 0;
+  transition: opacity var(--motion-fast) var(--motion-ease); }
+.run-row:hover .rowacts, .run-row:focus-within .rowacts { opacity: 1; }
+.rowact-btn { width: 26px; height: 26px; display: grid; place-items: center;
+  border-radius: var(--r-sm); color: var(--dorami-faint); }
+.rowact-btn:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+.rowact-btn svg { width: 13px; height: 13px; }
+.rowact-btn:focus-visible { opacity: 1; }
+
+/* 失败就地展示:错误行贴在所属运行行下,无独立行高,红字 + 缩进对齐对象列 */
+.err-row td { padding: 0 16px 9px 0; border-top: none; }
+.err-row .err-msg { display: flex; align-items: flex-start; gap: 6px;
+  margin-left: 118px; font-size: 11.5px; font-weight: 500; color: var(--state-bad); line-height: 1.5; }
+.err-row .err-msg svg { flex: none; width: 12px; height: 12px; margin-top: 2px; }
+.run-row.has-err td { border-bottom: none; }
+
+/* 子节点运行(聚合运行展开):well 压底,缩进,细行 */
+.child-row td { height: 36px; vertical-align: middle; padding: 0 10px;
+  background: var(--dorami-well); border-top: 1px solid var(--dorami-border); }
+.child-row td:first-child { padding-left: 16px; }
+.child-row td:last-child { padding-right: 16px; }
+.child-obj { display: flex; align-items: center; gap: 8px; min-width: 0; padding-left: 20px; }
+.child-tick { flex: none; width: 6px; height: 6px; border-radius: 1px; }
+.child-tick.ok { background: var(--state-ok); }
+.child-tick.bad { background: var(--state-bad); transform: rotate(45deg); }
+.child-name { font-size: 12px; font-weight: 600; color: var(--dorami-ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.child-id { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); }
+.child-row .run-n, .child-row .run-dur { font-size: 11px; }
+.child-err td { background: var(--dorami-well); border-top: none; padding: 0 16px 8px 0; }
+.child-err .err-msg { margin-left: 138px; display: flex; gap: 6px; align-items: flex-start;
+  font-size: 11px; font-weight: 500; color: var(--state-bad); }
+.child-err .err-msg svg { flex: none; width: 11px; height: 11px; margin-top: 2px; }
+
+/* 空态(筛选无结果) */
+.flow-empty { padding: 56px 24px; text-align: center; color: var(--dorami-faint);
+  font-size: 13px; font-weight: 600; }
+
+/* 表脚 + 页码范式 .pager */
+.flow-foot { flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 16px; border-top: 1px solid var(--dorami-border); background: var(--dorami-soft); }
+.flow-foot-info { font-size: 12px; font-weight: 600; color: var(--dorami-faint);
+  font-variant-numeric: tabular-nums; }
+.pager { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.pager-btn { min-width: 26px; height: 26px; padding: 0 8px; border-radius: var(--r-sm);
+  font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums;
+  color: var(--dorami-muted); }
+.pager-btn:hover:not(:disabled):not(.is-on) { background: var(--dorami-well); color: var(--dorami-ink-2); }
+.pager-btn.is-on { background: var(--dorami-blue); color: #fff; font-weight: 700; }
+.pager-btn:disabled { opacity: 0.4; cursor: default; }
+.pager-ellipsis { align-self: center; color: var(--dorami-faint); font-size: 11px; padding: 0 2px; }
+
+/* ── 设计注记(样页专用,产品不含)── */
+.spec-notes { margin: 26px 28px 40px calc(var(--rail-w) + 28px); max-width: 900px;
+  color: var(--dorami-muted); font-size: 12.5px; line-height: 1.8; }
+.spec-notes h2 { font-size: 14px; font-weight: 700; color: var(--dorami-ink); margin: 22px 0 8px; }
+.spec-notes ul { padding-left: 18px; }
+.spec-notes li { margin: 3px 0; }
+.spec-notes code { font-family: var(--mono); font-size: 11px; background: var(--dorami-well);
+  border-radius: 4px; padding: 1px 5px; }
+.spec-notes .hint { font-size: 11px; color: var(--dorami-faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* 移动端降级仅示意:时刻表折到顶部,纸改纵向(实装按台账移动端范式细化) */
+@media (max-width: 1023px) {
+  .app-rail { display: none; }
+  .runs-shell { margin-left: 0; height: auto; overflow: visible; }
+  .runs-paper { flex-direction: column; }
+  .timetable { width: 100%; border-right: none; border-bottom: 1px solid var(--dorami-border); }
+  .tt-list { max-height: 300px; }
+  .spec-notes { margin-left: 28px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── 左侧导轨(壳层上下文)── -->
+<nav class="app-rail" aria-label="主导航">
+  <div class="rail-brand">哆</div>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg><span>台账</span></button>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.2 4.2l2.8 2.8M17 17l2.8 2.8M1 12h4M19 12h4M4.2 19.8L7 17M17 7l2.8-2.8"/></svg><span>节点</span></button>
+  <button class="rail-nav-btn rail-nav-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span>运行</span></button>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l3-9 4 18 3-9h6"/></svg><span>向量</span></button>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg><span>阅读器</span></button>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span>运维</span></button>
+  <div class="rail-spacer"></div>
+  <button class="rail-tool" id="theme-toggle" title="切换亮暗">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+  </button>
+</nav>
+
+<div class="runs-shell">
+
+  <!-- ── 页头范式 ── -->
+  <header class="page-head">
+    <h1 class="page-title">任务与运行</h1>
+    <div class="page-head-actions">
+      <span class="autorefresh">自动刷新 <span class="autorefresh-countdown" id="ar-countdown">8s</span>
+        <button class="switch is-on" id="ar-switch" role="switch" aria-checked="true" aria-label="自动刷新"></button>
+      </span>
+      <button class="iconbtn-32" title="刷新">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      </button>
+      <button class="primary-action">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        新建采集任务
+      </button>
+    </div>
+  </header>
+
+  <div class="runs-work">
+    <div class="runs-paper">
+
+      <!-- ════════ 左栏:时刻表 ════════ -->
+      <aside class="timetable" aria-label="采集任务时刻表">
+        <div class="tt-head">
+          <span class="tt-head-title">采集任务</span>
+          <span class="tt-head-n">4 + 1 停用</span>
+          <span class="tt-clock" id="clock">--:--:--</span>
+        </div>
+
+        <div class="tt-list">
+          <button class="tt-row is-sel" data-job="daily">
+            <div class="tt-row-top">
+              <span class="tt-name">每日全量采集</span>
+              <span class="tt-last run" title="上次结果:运行中"></span>
+            </div>
+            <div class="tt-row-mid">12 节点 <span class="tt-cron">0 9 * * *</span></div>
+            <div class="tt-row-bot">
+              <span class="tt-dots" title="近 7 日结果"><i class="ok"></i><i class="ok"></i><i class="warn"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i></span>
+              <span class="tt-next" data-next-offset="66753"><span class="u">距下次</span> --:--:--</span>
+            </div>
+          </button>
+
+          <button class="tt-row" data-job="vendors">
+            <div class="tt-row-top">
+              <span class="tt-name">厂商发布追踪</span>
+              <span class="tt-last ok" title="上次结果:成功"></span>
+            </div>
+            <div class="tt-row-mid">6 节点 <span class="tt-cron">0 */4 * * *</span></div>
+            <div class="tt-row-bot">
+              <span class="tt-dots"><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="bad"></i><i class="ok"></i><i class="ok"></i></span>
+              <span class="tt-next" data-next-offset="5433"><span class="u">距下次</span> --:--:--</span>
+            </div>
+          </button>
+
+          <button class="tt-row" data-job="papers">
+            <div class="tt-row-top">
+              <span class="tt-name">论文雷达</span>
+              <span class="tt-last warn" title="上次结果:部分失败"></span>
+            </div>
+            <div class="tt-row-mid">3 节点 <span class="tt-cron">30 8 * * 1-5</span></div>
+            <div class="tt-row-bot">
+              <span class="tt-dots"><i class="ok"></i><i class="ok"></i><i class="ok"></i><i></i><i></i><i class="ok"></i><i class="warn"></i></span>
+              <span class="tt-next" data-next-offset="64953"><span class="u">距下次</span> --:--:--</span>
+            </div>
+          </button>
+
+          <button class="tt-row" data-job="community">
+            <div class="tt-row-top">
+              <span class="tt-name">社区热帖</span>
+              <span class="tt-last bad" title="上次结果:失败"></span>
+            </div>
+            <div class="tt-row-mid">2 节点 <span class="tt-cron">手动触发</span></div>
+            <div class="tt-row-bot">
+              <span class="tt-dots"><i></i><i class="ok"></i><i></i><i class="ok"></i><i></i><i></i><i class="bad"></i></span>
+              <span class="tt-next is-manual">手动</span>
+            </div>
+          </button>
+
+          <div class="tt-off-head">未存为任务</div>
+          <button class="tt-row" data-job="adhoc">
+            <div class="tt-row-top">
+              <span class="tt-name">临时抓取</span>
+              <span class="tt-last ok" title="上次结果:成功"></span>
+            </div>
+            <div class="tt-row-mid">由节点管理直接发起 <span class="tt-cron">不定时</span></div>
+            <div class="tt-row-bot">
+              <span class="tt-dots" title="近 7 日结果"><i class="ok"></i><i></i><i class="ok"></i><i class="ok"></i><i></i><i class="bad"></i><i class="ok"></i></span>
+              <span class="tt-next is-manual">今日 2 次</span>
+            </div>
+          </button>
+
+          <div class="tt-off-head">已停用</div>
+          <button class="tt-row is-off" data-job="legacy">
+            <div class="tt-row-top">
+              <span class="tt-name">旧版迁移 · 科技媒体</span>
+            </div>
+            <div class="tt-row-mid">4 节点 <span class="tt-cron">0 7 * * *</span></div>
+            <div class="tt-row-bot">
+              <span class="tt-dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+              <span class="tt-next is-manual">已停用</span>
+            </div>
+          </button>
+        </div>
+
+        <div class="tt-foot">按下次触发时间排序 · 点任务过滤右侧流水</div>
+      </aside>
+
+      <!-- ════════ 右区:运行流水 ════════ -->
+      <main class="flow">
+
+        <!-- 总账条:前四格可点 = 状态筛选器;后两格被动读数 -->
+        <div class="flow-strip">
+          <div class="flow-strip-stats">
+            <button class="flow-stat is-on" data-filter="all">
+              <span class="flow-stat-num">143</span>
+              <span class="flow-stat-lbl">全部运行</span>
+              <span class="flow-stat-sub">近 30 天 · 今日 6</span>
+            </button>
+            <button class="flow-stat" data-filter="running">
+              <span class="flow-stat-num is-run">1</span>
+              <span class="flow-stat-lbl">运行中</span>
+              <span class="flow-stat-sub">8/12 节点</span>
+            </button>
+            <button class="flow-stat" data-filter="success">
+              <span class="flow-stat-num is-ok">129</span>
+              <span class="flow-stat-lbl">成功</span>
+              <span class="flow-stat-sub">90.2%</span>
+            </button>
+            <button class="flow-stat" data-filter="partial">
+              <span class="flow-stat-num is-warn">9</span>
+              <span class="flow-stat-lbl">部分失败</span>
+              <span class="flow-stat-sub">6.3%</span>
+            </button>
+            <button class="flow-stat" data-filter="failed">
+              <span class="flow-stat-num is-bad">4</span>
+              <span class="flow-stat-lbl">失败</span>
+              <span class="flow-stat-sub">2.8%</span>
+            </button>
+            <div class="flow-stat is-passive">
+              <span class="flow-stat-num">1,286</span>
+              <span class="flow-stat-lbl">新增入库</span>
+              <span class="flow-stat-sub">抓取 3,431 · 跳过 2,145</span>
+            </div>
+          </div>
+          <div class="flow-strip-tools">
+            <div class="flow-tools-row">
+              <span class="flow-tools-lbl">触发</span>
+              <div class="mini-seg" role="group" aria-label="触发方式">
+                <button class="mini-seg-btn is-on">全部</button>
+                <button class="mini-seg-btn">手动</button>
+                <button class="mini-seg-btn">定时</button>
+              </div>
+            </div>
+            <div class="flow-tools-row">
+              <span class="flow-tools-lbl">对象</span>
+              <div class="mini-seg" role="group" aria-label="运行对象">
+                <button class="mini-seg-btn is-on">全部</button>
+                <button class="mini-seg-btn">任务</button>
+                <button class="mini-seg-btn">临时</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 任务上下文条(选中「每日全量采集」时浮现) -->
+        <div class="jobbar is-open" id="jobbar">
+          <span class="jobbar-name">每日全量采集</span>
+          <span class="jobbar-meta">0 9 * * * · 12 节点 · 2 个单节点 cron 覆盖</span>
+          <div class="jobbar-acts">
+            <button class="jobbar-btn">立即运行</button>
+            <button class="jobbar-btn">测试 1 条/源</button>
+            <button class="jobbar-btn">编辑配置</button>
+            <button class="jobbar-btn is-danger">停用</button>
+            <button class="jobbar-x" id="jobbar-close" aria-label="取消任务过滤">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- 流水表:按日分组 -->
+        <div class="flow-scroll">
+          <table class="flow-table">
+            <thead>
+              <tr>
+                <th class="flow-th" style="width:64px">时间</th>
+                <th class="flow-th" style="width:96px">状态</th>
+                <th class="flow-th">对象</th>
+                <th class="flow-th" style="width:56px">触发</th>
+                <th class="flow-th is-num" style="width:64px">抓取</th>
+                <th class="flow-th is-num" style="width:64px">新增</th>
+                <th class="flow-th is-num" style="width:64px">跳过</th>
+                <th class="flow-th is-num" style="width:76px">耗时</th>
+                <th class="flow-th" style="width:56px" aria-label="操作"></th>
+              </tr>
+            </thead>
+            <tbody>
+
+              <tr class="day-row"><td colspan="9"><span class="d">今天 · 07-10<em>周五</em></span><span class="sum">6 次 · 新增 <b>58</b> · 失败 <b>0</b></span></td></tr>
+
+              <!-- 临时批量(节点页多选直接运行,未存任务;行尾可升格) -->
+              <tr class="run-row is-expandable" data-expand="adhoc-1012">
+                <td><span class="run-time">10:12</span></td>
+                <td><span class="stamp stamp-ok">成功</span></td>
+                <td>
+                  <div class="run-obj">
+                    <svg class="run-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                    <div class="run-obj-txt">
+                      <div class="run-obj-name">临时批量 · 量子位 等 3 节点</div>
+                      <div class="run-obj-sub">临时抓取 · 未存任务 · 由节点管理发起</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="run-trigger">手动</span></td>
+                <td><span class="run-n">12</span></td>
+                <td><span class="run-n is-main">7</span></td>
+                <td><span class="run-n">5</span></td>
+                <td><span class="run-dur">21.4 s</span></td>
+                <td><div class="rowacts">
+                  <button class="rowact-btn" title="存为采集任务"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg></button>
+                  <button class="rowact-btn" title="重跑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+                </div></td>
+              </tr>
+              <tr class="child-row" data-child="adhoc-1012">
+                <td></td><td></td>
+                <td><div class="child-obj"><span class="child-tick ok"></span><span class="child-name">量子位</span><span class="child-id">web_qbitai</span></div></td>
+                <td></td>
+                <td><span class="run-n">6</span></td>
+                <td><span class="run-n is-main">4</span></td>
+                <td><span class="run-n">2</span></td>
+                <td><span class="run-dur">8.2 s</span></td>
+                <td></td>
+              </tr>
+              <tr class="child-row" data-child="adhoc-1012">
+                <td></td><td></td>
+                <td><div class="child-obj"><span class="child-tick ok"></span><span class="child-name">新智元</span><span class="child-id">web_aiera</span></div></td>
+                <td></td>
+                <td><span class="run-n">4</span></td>
+                <td><span class="run-n is-main">2</span></td>
+                <td><span class="run-n">2</span></td>
+                <td><span class="run-dur">7.5 s</span></td>
+                <td></td>
+              </tr>
+              <tr class="child-row" data-child="adhoc-1012">
+                <td></td><td></td>
+                <td><div class="child-obj"><span class="child-tick ok"></span><span class="child-name">机器之心</span><span class="child-id">rss_jiqizhixin</span></div></td>
+                <td></td>
+                <td><span class="run-n">2</span></td>
+                <td><span class="run-n is-main">1</span></td>
+                <td><span class="run-n">1</span></td>
+                <td><span class="run-dur">5.7 s</span></td>
+                <td></td>
+              </tr>
+
+              <!-- 运行中(聚合运行,行内进度线) -->
+              <tr class="run-row">
+                <td><span class="run-time">09:00</span></td>
+                <td><span class="stamp stamp-run">运行中</span></td>
+                <td>
+                  <div class="run-obj">
+                    <span class="run-caret-ph"></span>
+                    <div class="run-obj-txt">
+                      <div class="run-obj-name">每日全量采集</div>
+                      <div class="run-progress">
+                        <span class="run-progress-track"><span class="run-progress-fill" style="width:66%"></span></span>
+                        <span class="run-progress-n">8/12 节点</span>
+                      </div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="run-trigger is-sched">定时</span></td>
+                <td><span class="run-n">96</span></td>
+                <td><span class="run-n is-main">37</span></td>
+                <td><span class="run-n">42</span></td>
+                <td><span class="run-dur">—</span></td>
+                <td></td>
+              </tr>
+
+              <!-- 部分失败(聚合运行,已展开子节点) -->
+              <tr class="run-row is-expandable is-open" data-expand="papers-0830">
+                <td><span class="run-time">08:30</span></td>
+                <td><span class="stamp stamp-warn">部分失败</span></td>
+                <td>
+                  <div class="run-obj">
+                    <svg class="run-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                    <div class="run-obj-txt">
+                      <div class="run-obj-name">论文雷达</div>
+                      <div class="run-obj-sub">任务 #7 · 3 节点 · 1 失败</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="run-trigger is-sched">定时</span></td>
+                <td><span class="run-n">31</span></td>
+                <td><span class="run-n is-main">22</span></td>
+                <td><span class="run-n">9</span></td>
+                <td><span class="run-dur">38.4 s</span></td>
+                <td></td>
+              </tr>
+              <tr class="child-row" data-child="papers-0830">
+                <td></td><td></td>
+                <td><div class="child-obj"><span class="child-tick ok"></span><span class="child-name">HF Daily Papers</span><span class="child-id">hf_daily_papers</span></div></td>
+                <td></td>
+                <td><span class="run-n">18</span></td>
+                <td><span class="run-n is-main">14</span></td>
+                <td><span class="run-n">4</span></td>
+                <td><span class="run-dur">12.1 s</span></td>
+                <td></td>
+              </tr>
+              <tr class="child-row" data-child="papers-0830">
+                <td></td><td></td>
+                <td><div class="child-obj"><span class="child-tick ok"></span><span class="child-name">arXiv cs.CL</span><span class="child-id">arxiv_cs_cl</span></div></td>
+                <td></td>
+                <td><span class="run-n">13</span></td>
+                <td><span class="run-n is-main">8</span></td>
+                <td><span class="run-n">5</span></td>
+                <td><span class="run-dur">9.8 s</span></td>
+                <td></td>
+              </tr>
+              <tr class="child-row" data-child="papers-0830">
+                <td></td><td></td>
+                <td><div class="child-obj"><span class="child-tick bad"></span><span class="child-name">Papers with Code</span><span class="child-id">papers_with_code</span></div></td>
+                <td></td>
+                <td><span class="run-n is-zero">–</span></td>
+                <td><span class="run-n is-zero">–</span></td>
+                <td><span class="run-n is-zero">–</span></td>
+                <td><span class="run-dur">16.5 s</span></td>
+                <td></td>
+              </tr>
+              <tr class="child-err" data-child="papers-0830">
+                <td colspan="9">
+                  <div class="err-msg">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3z"/><path d="M12 9v4M12 17h.01"/></svg>
+                    HTTP 503:paperswithcode.com 服务不可用,已重试 3 次 — 建议在节点页试抓验证后重跑
+                  </div>
+                </td>
+              </tr>
+
+              <tr class="run-row">
+                <td><span class="run-time">08:00</span></td>
+                <td><span class="stamp stamp-ok">成功</span></td>
+                <td>
+                  <div class="run-obj">
+                    <span class="run-caret-ph"></span>
+                    <div class="run-obj-txt">
+                      <div class="run-obj-name">厂商发布追踪</div>
+                      <div class="run-obj-sub">任务 #3 · 6 节点</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="run-trigger is-sched">定时</span></td>
+                <td><span class="run-n">24</span></td>
+                <td><span class="run-n is-main">18</span></td>
+                <td><span class="run-n">6</span></td>
+                <td><span class="run-dur">42.3 s</span></td>
+                <td></td>
+              </tr>
+
+              <tr class="run-row">
+                <td><span class="run-time">07:12</span></td>
+                <td><span class="stamp stamp-ok">成功</span></td>
+                <td>
+                  <div class="run-obj">
+                    <span class="run-caret-ph"></span>
+                    <div class="run-obj-txt">
+                      <div class="run-obj-name">Cursor Changelog</div>
+                      <div class="run-obj-sub">web_cursor_changelog · 单节点</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="run-trigger">手动</span></td>
+                <td><span class="run-n">5</span></td>
+                <td><span class="run-n is-main">2</span></td>
+                <td><span class="run-n">3</span></td>
+                <td><span class="run-dur">6.7 s</span></td>
+                <td><div class="rowacts">
+                  <button class="rowact-btn" title="存为采集任务"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg></button>
+                </div></td>
+              </tr>
+
+              <tr class="run-row">
+                <td><span class="run-time">04:00</span></td>
+                <td><span class="stamp stamp-ok">成功</span></td>
+                <td>
+                  <div class="run-obj">
+                    <span class="run-caret-ph"></span>
+                    <div class="run-obj-txt">
+                      <div class="run-obj-name">厂商发布追踪</div>
+                      <div class="run-obj-sub">任务 #3 · 6 节点</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="run-trigger is-sched">定时</span></td>
+                <td><span class="run-n">18</span></td>
+                <td><span class="run-n is-main">9</span></td>
+                <td><span class="run-n">9</span></td>
+                <td><span class="run-dur">39.0 s</span></td>
+                <td></td>
+              </tr>
+
+              <tr class="day-row"><td colspan="9"><span class="d">07-09<em>周四</em></span><span class="sum">7 次 · 新增 <b>64</b> · 失败 <b>1</b></span></td></tr>
+
+              <!-- 失败(单节点,错误就地展示) -->
+              <tr class="run-row has-err">
+                <td><span class="run-time">20:00</span></td>
+                <td><span class="stamp stamp-bad">失败</span></td>
+                <td>
+                  <div class="run-obj">
+                    <span class="run-caret-ph"></span>
+                    <div class="run-obj-txt">
+                      <div class="run-obj-name">Hacker News AI</div>
+                      <div class="run-obj-sub">rss_hackernews_ai · 单节点</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="run-trigger">手动</span></td>
+                <td><span class="run-n is-zero">–</span></td>
+                <td><span class="run-n is-zero">–</span></td>
+                <td><span class="run-n is-zero">–</span></td>
+                <td><span class="run-dur">30.2 s</span></td>
+                <td><div class="rowacts">
+                  <button class="rowact-btn" title="重跑该节点"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+                  <button class="rowact-btn" title="存为采集任务"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg></button>
+                </div></td>
+              </tr>
+              <tr class="err-row">
+                <td colspan="9">
+                  <div class="err-msg">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3z"/><path d="M12 9v4M12 17h.01"/></svg>
+                    hnrss.org 连接超时(10 s),已重试 3 次 — 检查网络代理配置后重试
+                  </div>
+                </td>
+              </tr>
+
+              <tr class="run-row is-expandable" data-expand="daily-0709">
+                <td><span class="run-time">09:00</span></td>
+                <td><span class="stamp stamp-ok">成功</span></td>
+                <td>
+                  <div class="run-obj">
+                    <svg class="run-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                    <div class="run-obj-txt">
+                      <div class="run-obj-name">每日全量采集</div>
+                      <div class="run-obj-sub">任务 #1 · 12 节点</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="run-trigger is-sched">定时</span></td>
+                <td><span class="run-n">148</span></td>
+                <td><span class="run-n is-main">52</span></td>
+                <td><span class="run-n">96</span></td>
+                <td><span class="run-dur">3.2 min</span></td>
+                <td></td>
+              </tr>
+
+              <tr class="run-row">
+                <td><span class="run-time">08:30</span></td>
+                <td><span class="stamp stamp-ok">成功</span></td>
+                <td>
+                  <div class="run-obj">
+                    <span class="run-caret-ph"></span>
+                    <div class="run-obj-txt">
+                      <div class="run-obj-name">论文雷达</div>
+                      <div class="run-obj-sub">任务 #7 · 3 节点</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="run-trigger is-sched">定时</span></td>
+                <td><span class="run-n">27</span></td>
+                <td><span class="run-n is-main">12</span></td>
+                <td><span class="run-n">15</span></td>
+                <td><span class="run-dur">31.9 s</span></td>
+                <td></td>
+              </tr>
+
+              <tr class="day-row"><td colspan="9"><span class="d">07-08<em>周三</em></span><span class="sum">6 次 · 新增 <b>58</b> · 失败 <b>0</b></span></td></tr>
+
+              <tr class="run-row">
+                <td><span class="run-time">16:00</span></td>
+                <td><span class="stamp stamp-ok">成功</span></td>
+                <td>
+                  <div class="run-obj">
+                    <span class="run-caret-ph"></span>
+                    <div class="run-obj-txt">
+                      <div class="run-obj-name">厂商发布追踪</div>
+                      <div class="run-obj-sub">任务 #3 · 6 节点</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="run-trigger is-sched">定时</span></td>
+                <td><span class="run-n">21</span></td>
+                <td><span class="run-n is-main">11</span></td>
+                <td><span class="run-n">10</span></td>
+                <td><span class="run-dur">44.6 s</span></td>
+                <td></td>
+              </tr>
+
+              <tr class="run-row">
+                <td><span class="run-time">09:00</span></td>
+                <td><span class="stamp stamp-ok">成功</span></td>
+                <td>
+                  <div class="run-obj">
+                    <span class="run-caret-ph"></span>
+                    <div class="run-obj-txt">
+                      <div class="run-obj-name">每日全量采集</div>
+                      <div class="run-obj-sub">任务 #1 · 12 节点</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="run-trigger is-sched">定时</span></td>
+                <td><span class="run-n">131</span></td>
+                <td><span class="run-n is-main">47</span></td>
+                <td><span class="run-n">84</span></td>
+                <td><span class="run-dur">2.9 min</span></td>
+                <td></td>
+              </tr>
+
+            </tbody>
+          </table>
+        </div>
+
+        <div class="flow-foot">
+          <span class="flow-foot-info">143 次运行 · 近 30 天 · 已按「每日全量采集」过滤示意</span>
+          <div class="pager">
+            <button class="pager-btn" disabled>‹</button>
+            <button class="pager-btn is-on">1</button>
+            <button class="pager-btn">2</button>
+            <button class="pager-btn">3</button>
+            <span class="pager-ellipsis">…</span>
+            <button class="pager-btn">8</button>
+            <button class="pager-btn">›</button>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+</div>
+
+<!-- ── 设计注记(样页专用,不进产品)── -->
+<section class="spec-notes">
+  <h2>设计推导:调度台(dispatch desk)</h2>
+  <p>运行页只需回答三个问题:<b>什么在跑</b>(总账条「运行中」灯 + 流水首行进度线)、<b>什么时候跑</b>(左栏时刻表:按下次触发排序 + 倒计时走字)、<b>跑得怎么样</b>(按日分组的运行流水)。仪器感来自持续走字的台面时钟与倒计时——功能性的运动,不是装饰动效。</p>
+  <h2>复用的既有范式(与台账/节点同基因)</h2>
+  <ul>
+    <li>页头 <code>.page-head</code>(24/800 + 右侧动作区,CTA 唯一实底 accent);自动刷新 = 节点页 signal-autorefresh 同刻度。</li>
+    <li>总账条 = 台账 <code>ledger-strip</code> 直移:28/700 tabular 读数,前五格可点 = 状态筛选(选中 = 底部 accent 条),「新增入库」为被动读数;右端工具区 soft 底 + <code>.mini-seg</code>(触发/对象二择)。</li>
+    <li>选中语法 R1(时刻表任务行 = accent 竖条 + soft 底)、状态章 <code>.stamp</code>、页码 <code>.pager</code>、失败就地展示(节点页范式)、行内进度线(活动态 = accent 家族,产品语义)。</li>
+    <li>任务上下文条 = 台账批量条语法(wash = 状态标记底):选中任务即过滤流水,任务级动作(立即运行/测试/编辑/停用)就地给出,不再需要「采集任务/运行历史」两视图切换。</li>
+  </ul>
+  <h2>信息设计决策</h2>
+  <ul>
+    <li>抓取/新增/跳过拆成三个右对齐 mono 列(账本对齐),「新增」是主读数(ink/700),零值退为「–」;原「抓取 24 / 新增 18 / 跳过 6」句式列拆掉。</li>
+    <li>日分组行 = 日期导轨 + 当日摘要(N 次 · 新增 · 失败),soft 底压一档;聚合运行行内展开子节点(well 底细行),失败子节点错误贴行展示。</li>
+    <li>时刻表行三层:名称 + 上次结果形状点 / 节点数 + mono cron / 7 日点阵 + 下次倒计时。停用任务压 opacity 收进「已停用」组。</li>
+  </ul>
+  <h2>临时运行(未存任务)的处理</h2>
+  <ul>
+    <li><b>原则:时刻表 = 承诺清单</b>,只陈列有「下次」的对象;临时运行(节点页直接执行/批量运行,<code>run_scope=ad_hoc</code>)没有未来,主体归流水,不与任务混排。</li>
+    <li><b>固定汇总位</b>:时刻表底部「未存为任务」组一枚「临时抓取」汇总行(今日次数 + 7 日点阵,无倒计时),选中即过滤右侧流水——与工具区「对象:临时」mini-seg 是同一筛选的双入口。</li>
+    <li><b>升格回路</b>:临时运行行尾 hover 浮现「存为采集任务」(台账 rowacts 范式,预填该次运行的节点 + 参数进任务编辑器)——与节点页批量选择的「存为采集任务」同一动作、两个入口;反复手动跑的组合据此升格为时刻表居民。失败行同位给「重跑」。</li>
+    <li><code>run_scope</code> 映射:saved_job = 任务 · ad_hoc = 临时(单节点手动与批量临时都归此)· legacy_task = 旧版,展示上并入临时组。</li>
+  </ul>
+  <h2>实装依赖与取舍(诚实标注)</h2>
+  <ul>
+    <li>「下次触发倒计时」需后端暴露 next_fire_time(APScheduler 有此数据,现 API 未透出);7 日点阵与当日摘要需 per-day 聚合端点——与台账 sparkline 同一遗留立项。</li>
+    <li>聚合运行的子节点展开:数据已有(FetchRunRecord.job_run_id 关联),仅需列表接口支持按 job_run_id 取子运行。</li>
+    <li>流水行「存为采集任务」需从运行记录回读节点集 + 生效参数预填草稿(子 FetchRunRecord 有 fetcher_id/params,可拼装;与节点页 pendingJobDraft 复用同一编辑器入口)。</li>
+    <li>任务编辑仍走既有模态(节点选择/参数覆盖/单节点 cron),样页未含;「两视图 segmented」被「时刻表 + 上下文条」替代,是本设计最大的结构变更,需产品确认。</li>
+  </ul>
+  <p class="hint">令牌与刻度 1:1 引自 frontend/src/index.css;右上月亮切换亮暗两态验收。本文件:docs/design/dorami-runs-quiet.html</p>
+</section>
+
+<script>
+// ── 台面时钟 + 倒计时(仪器走字;数据为演示假值) ──
+const clockEl = document.getElementById('clock');
+const nextEls = Array.from(document.querySelectorAll('.tt-next[data-next-offset]'));
+const base = Date.now();
+nextEls.forEach(el => { el.dataset.nextAt = base + Number(el.dataset.nextOffset) * 1000; });
+const pad = n => String(n).padStart(2, '0');
+function tick() {
+  const now = new Date();
+  clockEl.textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  nextEls.forEach(el => {
+    let s = Math.max(0, Math.round((Number(el.dataset.nextAt) - Date.now()) / 1000));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    el.innerHTML = `<span class="u">距下次</span> ${h}:${pad(m)}:${pad(sec)}`;
+  });
+}
+tick(); setInterval(tick, 1000);
+
+// ── 自动刷新倒计时(反馈型) ──
+const arSwitch = document.getElementById('ar-switch');
+const arCount = document.getElementById('ar-countdown');
+let arLeft = 8;
+setInterval(() => {
+  if (!arSwitch.classList.contains('is-on')) return;
+  arLeft = arLeft <= 1 ? 8 : arLeft - 1;
+  arCount.textContent = arLeft + 's';
+}, 1000);
+arSwitch.addEventListener('click', () => {
+  arSwitch.classList.toggle('is-on');
+  arSwitch.setAttribute('aria-checked', arSwitch.classList.contains('is-on'));
+  arCount.textContent = arSwitch.classList.contains('is-on') ? (arLeft = 8) + 's' : '—';
+});
+
+// ── 时刻表选中(演示:切换竖条 + 上下文条显隐) ──
+const jobbar = document.getElementById('jobbar');
+document.querySelectorAll('.tt-row').forEach(row => {
+  row.addEventListener('click', () => {
+    const was = row.classList.contains('is-sel');
+    document.querySelectorAll('.tt-row').forEach(r => r.classList.remove('is-sel'));
+    if (!was) row.classList.add('is-sel');
+    jobbar.classList.toggle('is-open', !was && row.dataset.job === 'daily');
+  });
+});
+document.getElementById('jobbar-close').addEventListener('click', () => {
+  jobbar.classList.remove('is-open');
+  document.querySelectorAll('.tt-row').forEach(r => r.classList.remove('is-sel'));
+});
+
+// ── 总账条状态筛选 / mini-seg(演示:仅切换选中态) ──
+document.querySelectorAll('.flow-stat[data-filter]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.flow-stat[data-filter]').forEach(b => b.classList.remove('is-on'));
+    btn.classList.add('is-on');
+  });
+});
+document.querySelectorAll('.mini-seg').forEach(seg => {
+  seg.querySelectorAll('.mini-seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      seg.querySelectorAll('.mini-seg-btn').forEach(b => b.classList.remove('is-on'));
+      btn.classList.add('is-on');
+    });
+  });
+});
+
+// ── 聚合运行展开/收起 ──
+document.querySelectorAll('.run-row.is-expandable').forEach(row => {
+  row.addEventListener('click', () => {
+    const key = row.dataset.expand;
+    const open = row.classList.toggle('is-open');
+    document.querySelectorAll(`[data-child="${key}"]`).forEach(c => {
+      c.style.display = open ? '' : 'none';
+    });
+  });
+  if (!row.classList.contains('is-open')) {
+    document.querySelectorAll(`[data-child="${row.dataset.expand}"]`).forEach(c => { c.style.display = 'none'; });
+  }
+});
+
+// ── 亮暗切换 ──
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === 'dark' ? '' : 'dark';
+});
+</script>
+</body>
+</html>

@@ -733,7 +733,7 @@ input[type="radio"] {
        .tiny-meta     次要 meta          12px/500
        .micro-label   微标签/徽标/角标    11px/700
        .stat-number   指标数字           26px/900
-     语境化标签另有 .form-label/.node-param-label/.active-filter-label 等，各自就地维护。
+     语境化标签另有 .form-label/.node-param-label 等，各自就地维护。
      其余请用 Tailwind 字号梯度（text-xs/sm/base + font-*），勿手写 text-[Npx]。 */
 
   .page-title {
@@ -803,20 +803,6 @@ input[type="radio"] {
   }
 
   /* 静默仪器:卡片 hover 不抬升不染边(卡片非可点主体;可点行的 hover 归行自己) */
-
-  .metric-card {
-    border: 1px solid var(--dorami-border);
-    background: var(--dorami-surface);
-    box-shadow: var(--sh-2), inset 0 1px 0 rgba(255, 255, 255, 0.8);
-    transition:
-      transform var(--motion-medium) var(--motion-spring),
-      box-shadow var(--motion-medium) var(--motion-ease);
-  }
-
-  .metric-card:hover {
-    transform: translateY(-3px);
-    box-shadow: var(--sh-3), inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  }
 
   /* ── Buttons ── */
 
@@ -2874,87 +2860,6 @@ input[type="radio"] {
     mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
   }
 
-  .active-filter-bar {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .active-filter-label {
-    font-size: 11px;
-    font-weight: 800;
-    letter-spacing: 0.02em;
-    color: #64748b;
-  }
-
-  .active-filter-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 28px;
-    padding: 0 8px 0 10px;
-    border-radius: var(--r-pill);
-    border: 1px solid transparent;
-    /* 静默仪器·R2/R4:当前筛选=状态标记,wash 淡底 + 无描边(去 accent 描边/淡染) */
-    background: var(--dorami-wash);
-    font-size: 12px;
-    font-weight: 700;
-    transition:
-      background var(--motion-fast) var(--motion-ease),
-      border-color var(--motion-fast) var(--motion-ease);
-  }
-
-  /* 静默仪器·R3:hover 灰阶(soft),不加深 accent;移除提示由 svg 变深承载 */
-  .active-filter-chip:hover {
-    background: var(--dorami-soft);
-    border-color: transparent;
-  }
-
-  .active-filter-chip-label {
-    color: #64748b;
-    font-weight: 700;
-  }
-
-  .active-filter-chip-value {
-    max-width: 220px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--dorami-accent-ink);
-    font-weight: 800;
-  }
-
-  .active-filter-chip svg {
-    color: #64748b;
-    transition: color var(--motion-fast) var(--motion-ease);
-  }
-
-  /* 静默仪器·R3:移除动作用 ink 变深提示,不用 accent */
-  .active-filter-chip:hover svg {
-    color: var(--dorami-ink);
-  }
-
-  .active-filter-clear {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    height: 28px;
-    padding: 0 10px;
-    border-radius: var(--r-pill);
-    color: #64748b;
-    font-size: 12px;
-    font-weight: 800;
-    transition:
-      background var(--motion-fast) var(--motion-ease),
-      color var(--motion-fast) var(--motion-ease);
-  }
-
-  .active-filter-clear:hover {
-    background: rgba(220, 38, 38, 0.09);
-    color: #dc2626;
-  }
-
   .ledger-source-link {
     border-radius: var(--r-control);
     padding: 3px 6px;
@@ -3536,6 +3441,294 @@ input[type="radio"] {
   }
   .mini-seg-btn:hover:not(.is-on) { color: var(--dorami-ink-2); }
   .mini-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+
+  /* ── 任务与运行 静默仪器(运行波):时刻表 + 流水 ──
+     调度台:左栏时刻表(何时跑)+ 右区运行流水(跑得怎么样)+ 总账条运行中灯(什么在跑)。
+     壳层数学照抄 .ledger-shell;.stamp/.pager/.mini-seg/.signal-switch 直接引用既有范式,
+     此处只落运行页专属类。刻度 1:1 取自 docs/design/dorami-runs-quiet.html。 ── */
+
+  /* 壳层:满幅定高,页面本身不滚,滚动只发生在纸内(与 ledger-shell 同技术)。 */
+  .runs-shell {
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    width: calc(100vw - var(--rail-w));
+    margin-inline: calc(50% - 50vw + var(--rail-w) / 2);
+    margin-top: -22px;
+    margin-bottom: -36px;
+    height: calc(100vh - var(--app-top));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .runs-shell > .page-head {
+    margin-bottom: 0;
+    padding: 22px 28px 0;
+    min-height: 70px;
+  }
+
+  /* 一张纸 */
+  .runs-work { flex: 1; min-height: 0; display: flex; margin: 16px 28px 20px; }
+  .runs-paper {
+    flex: 1; min-width: 0; min-height: 0;
+    display: flex; overflow: hidden;
+    border-radius: var(--r-card);
+    border: 1px solid var(--dorami-card-bd);
+    background: var(--dorami-card);
+    box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge);
+  }
+
+  /* ════════ 左栏:时刻表(调度台的发车牌)════════ */
+  .timetable {
+    width: 300px; flex: none;
+    display: flex; flex-direction: column; overflow: hidden;
+    border-right: 1px solid var(--dorami-border);
+  }
+  .tt-head {
+    flex: none; display: flex; align-items: baseline; gap: 8px;
+    padding: 13px 16px 11px;
+    border-bottom: 1px solid var(--dorami-border);
+  }
+  .tt-head-title { font-size: 14px; font-weight: 700; color: var(--dorami-ink); }
+  .tt-head-n { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums; }
+  /* 台面时钟:仪器心跳,数字走字(非动画) */
+  .tt-clock { margin-left: auto; font-family: var(--mono); font-size: 11px;
+    font-variant-numeric: tabular-nums; color: var(--dorami-muted); }
+
+  .tt-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 0 10px; }
+  .tt-empty { padding: 40px 20px; text-align: center; color: var(--dorami-faint);
+    font-size: 12.5px; font-weight: 600; line-height: 1.7; }
+
+  .tt-row {
+    position: relative; display: block; width: 100%; text-align: left;
+    padding: 9px 16px 10px;
+    transition: background var(--motion-fast) var(--motion-ease);
+  }
+  .tt-row:hover { background: var(--dorami-soft); }
+  /* 选中语法 R1:accent 竖条 + soft 底 */
+  .tt-row.is-sel { background: var(--dorami-soft); box-shadow: inset 3px 0 0 var(--dorami-blue); }
+  .tt-row + .tt-row { border-top: 1px solid var(--dorami-border); }
+
+  .tt-row-top { display: flex; align-items: center; gap: 7px; }
+  .tt-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: var(--dorami-ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tt-row-mid { margin-top: 2px; font-size: 11.5px; font-weight: 500; color: var(--dorami-muted);
+    display: flex; align-items: center; gap: 6px; }
+  .tt-cron { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums; }
+  .tt-row-bot { margin-top: 7px; display: flex; align-items: center; gap: 8px; }
+
+  /* 7 日结果点阵:方=有结果,空=无运行 */
+  .tt-dots { display: inline-flex; gap: 3px; }
+  .tt-dots i { width: 6px; height: 6px; border-radius: 1.5px; background: var(--dorami-well); }
+  .tt-dots i.ok { background: var(--state-ok); opacity: 0.75; }
+  .tt-dots i.bad { background: var(--state-bad); }
+  .tt-dots i.warn { background: var(--state-warn); }
+
+  /* 下次触发倒计时:发车牌列,mono 走字 */
+  .tt-next { margin-left: auto; font-family: var(--mono); font-size: 11px;
+    font-variant-numeric: tabular-nums; color: var(--dorami-ink-2); font-weight: 600; }
+  .tt-next .u { color: var(--dorami-faint); font-weight: 500; font-family: inherit; }
+  .tt-next.is-manual { color: var(--dorami-faint); font-weight: 500; }
+
+  /* 最近结果微章:仅形状点(全 stamp 会让左栏过响) */
+  .tt-last { width: 6px; height: 6px; flex: none; border-radius: 1px; }
+  .tt-last.ok { background: var(--state-ok); }
+  .tt-last.bad { background: var(--state-bad); transform: rotate(45deg); border-radius: 0.5px; }
+  .tt-last.warn { background: var(--state-warn); clip-path: polygon(50% 0, 100% 100%, 0 100%); border-radius: 0; }
+  .tt-last.run { background: var(--state-run); border-radius: 50%; animation: stamp-pulse 1.6s infinite; }
+
+  .tt-off-head { padding: 12px 16px 4px; font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.07em; color: var(--dorami-faint); border-top: 1px solid var(--dorami-border);
+    margin-top: 6px; }
+  .tt-row.is-off { opacity: 0.55; }
+  .tt-row.is-off:hover { opacity: 0.8; }
+
+  .tt-foot { flex: none; padding: 9px 16px; border-top: 1px solid var(--dorami-border);
+    background: var(--dorami-soft); font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
+
+  /* ════════ 右区:运行流水 ════════ */
+  .flow { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* 总账条(台账 ledger-strip 直移):可点状态灯 = 筛选器,选中 = 底部 accent 条 */
+  .flow-strip { flex: none; display: flex; align-items: stretch; flex-wrap: wrap;
+    border-bottom: 1px solid var(--dorami-border); }
+  .flow-strip-stats { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; }
+  .flow-stat { flex: 1; min-width: 96px; padding: 14px 16px 11px; cursor: pointer;
+    position: relative; text-align: left;
+    transition: background var(--motion-fast) var(--motion-ease); }
+  .flow-stat:hover { background: var(--dorami-soft); }
+  .flow-stat.is-on::after { content: ""; position: absolute; left: 16px; right: 16px; bottom: 0;
+    height: 3px; background: var(--dorami-blue); border-radius: var(--r-pill) var(--r-pill) 0 0; }
+  .flow-stat-num { display: block; font-size: 28px; font-weight: 700; line-height: 32px;
+    letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--dorami-ink); }
+  .flow-stat-num.is-ok { color: var(--state-ok); }
+  .flow-stat-num.is-bad { color: var(--state-bad); }
+  .flow-stat-num.is-warn { color: var(--state-warn); }
+  .flow-stat-num.is-run { color: var(--state-run); }
+  .flow-stat-lbl { display: block; margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+  .flow-stat-sub { display: block; margin-top: 1px; font-size: 11px; font-weight: 500;
+    color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+  .flow-stat.is-passive { cursor: default; }
+  .flow-stat.is-passive:hover { background: none; }
+
+  .flow-strip-tools { flex: none; display: flex; flex-direction: column; justify-content: center;
+    gap: 8px; padding: 12px 18px; background: var(--dorami-soft); }
+  .flow-tools-row { display: flex; align-items: center; gap: 8px; }
+  .flow-tools-lbl { font-size: 11px; font-weight: 600; color: var(--dorami-faint); }
+
+  /* 任务/来源上下文条:选中后浮现(wash = 状态标记底,同台账批量条语法) */
+  .jobbar { flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 16px; border-bottom: 1px solid var(--dorami-border); background: var(--dorami-wash); }
+  .jobbar-name { font-size: 12.5px; font-weight: 700; color: var(--dorami-accent-ink); }
+  .jobbar-meta { font-family: var(--mono); font-size: 11px; color: var(--dorami-muted);
+    font-variant-numeric: tabular-nums; }
+  .jobbar-acts { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+  .jobbar-btn { min-height: 26px; padding: 0 9px; border-radius: var(--r-sm);
+    font-size: 11.5px; font-weight: 600; color: var(--dorami-ink-2); }
+  .jobbar-btn:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+  .jobbar-btn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
+  .jobbar-x { width: 26px; height: 26px; display: grid; place-items: center; border-radius: var(--r-sm);
+    color: var(--dorami-faint); }
+  .jobbar-x:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+  .jobbar-x svg { width: 13px; height: 13px; }
+
+  /* ── 流水表 ── */
+  .flow-scroll { flex: 1; min-height: 0; overflow: auto; }
+  .flow-table { width: 100%; border-collapse: collapse; }
+
+  .flow-err-bar { display: flex; align-items: center; gap: 8px; padding: 10px 16px;
+    background: var(--state-bad-bg); color: var(--state-bad); font-size: 12px; font-weight: 600;
+    border-bottom: 1px solid var(--dorami-border); }
+  .flow-err-bar svg { width: 14px; height: 14px; flex: none; }
+
+  .flow-th {
+    position: sticky; top: 0; z-index: 2; background: var(--dorami-surface);
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; color: var(--dorami-faint);
+    padding: 8px 10px; border-bottom: 1px solid var(--dorami-border);
+    white-space: nowrap; text-align: left;
+  }
+  .flow-th.is-num { text-align: right; }
+  .flow-th:first-child { padding-left: 16px; }
+  .flow-th:last-child { padding-right: 16px; }
+
+  /* 日分组行:日期导轨 + 当日摘要,soft 底压一档 */
+  .day-row td {
+    padding: 7px 16px 6px; background: var(--dorami-soft);
+    border-top: 1px solid var(--dorami-border); border-bottom: 1px solid var(--dorami-border);
+  }
+  .day-row .d { font-family: var(--mono); font-size: 11px; font-weight: 700;
+    font-variant-numeric: tabular-nums; color: var(--dorami-ink-2); }
+  .day-row .d em { font-style: normal; color: var(--dorami-faint); font-weight: 500; margin-left: 6px; }
+  .day-row .sum { float: right; font-family: var(--mono); font-size: 10.5px;
+    color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+  .day-row .sum b { color: var(--dorami-muted); font-weight: 600; }
+
+  .run-row td { height: 44px; vertical-align: middle; padding: 0 10px;
+    border-top: 1px solid var(--dorami-border); }
+  .flow-table tbody tr:first-child td, .day-row + .run-row td { border-top: none; }
+  .run-row td:first-child { padding-left: 16px; }
+  .run-row td:last-child { padding-right: 16px; }
+  .run-row { cursor: default; transition: background var(--motion-fast) var(--motion-ease); }
+  .run-row:hover { background: var(--dorami-soft); }
+  .run-row.is-expandable { cursor: pointer; }
+
+  .run-time { font-family: var(--mono); font-size: 11px; color: var(--dorami-muted);
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* 对象列:名称 + mono 副行;聚合运行带展开三角 */
+  .run-obj { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .run-caret { flex: none; width: 12px; height: 12px; color: var(--dorami-faint);
+    transition: transform var(--motion-fast) var(--motion-ease); }
+  .is-open .run-caret { transform: rotate(90deg); }
+  .run-caret-ph { flex: none; width: 12px; }
+  .run-obj-txt { min-width: 0; }
+  .run-obj-name { font-size: 13px; font-weight: 600; color: var(--dorami-ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run-obj-sub { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+  /* 运行中行:行内进度线(活动态 = accent 家族,产品语义) */
+  .run-progress { display: flex; align-items: center; gap: 8px; margin-top: 4px; max-width: 240px; }
+  .run-progress-track { flex: 1; height: 3px; border-radius: var(--r-pill); background: var(--dorami-well); overflow: hidden; }
+  .run-progress-fill { display: block; height: 100%; border-radius: var(--r-pill);
+    background: var(--dorami-accent); transition: width var(--motion-slow) var(--motion-ease); }
+  .run-progress-n { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-muted);
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .run-trigger { font-size: 12px; font-weight: 600; color: var(--dorami-muted); white-space: nowrap; }
+  .run-trigger.is-sched { color: var(--dorami-faint); }
+
+  /* 产出三列:右对齐 mono,新增是主读数(ink/700),其余 muted;零 = – */
+  .run-n { text-align: right; font-family: var(--mono); font-size: 12px;
+    font-variant-numeric: tabular-nums; color: var(--dorami-muted); white-space: nowrap; }
+  .run-n.is-main { font-weight: 700; color: var(--dorami-ink); }
+  .run-n.is-zero { color: var(--dorami-faint); opacity: 0.6; }
+  .run-dur { text-align: right; font-family: var(--mono); font-size: 11px;
+    font-variant-numeric: tabular-nums; color: var(--dorami-faint); white-space: nowrap; }
+
+  /* 行末操作(台账 rowacts 范式):hover 浮现;临时运行=存为采集任务,失败行=重跑 */
+  .rowacts { display: flex; justify-content: flex-end; gap: 2px; opacity: 0;
+    transition: opacity var(--motion-fast) var(--motion-ease); }
+  .run-row:hover .rowacts, .run-row:focus-within .rowacts { opacity: 1; }
+  .rowact-btn { width: 26px; height: 26px; display: grid; place-items: center;
+    border-radius: var(--r-sm); color: var(--dorami-faint); }
+  .rowact-btn:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+  .rowact-btn svg { width: 13px; height: 13px; }
+  .rowact-btn:focus-visible { opacity: 1; }
+
+  /* 失败就地展示:错误行贴在所属运行行下,红字 + 缩进对齐对象列 */
+  .err-row td { padding: 0 16px 9px 0; border-top: none; }
+  .err-row .err-msg { display: flex; align-items: flex-start; gap: 6px;
+    margin-left: 118px; font-size: 11.5px; font-weight: 500; color: var(--state-bad); line-height: 1.5; }
+  .err-row .err-msg svg { flex: none; width: 12px; height: 12px; margin-top: 2px; }
+  .run-row.has-err td { border-bottom: none; }
+
+  /* 子节点运行(聚合运行展开):well 压底,缩进,细行 */
+  .child-row td { height: 36px; vertical-align: middle; padding: 0 10px;
+    background: var(--dorami-well); border-top: 1px solid var(--dorami-border); }
+  .child-row td:first-child { padding-left: 16px; }
+  .child-row td:last-child { padding-right: 16px; }
+  .child-obj { display: flex; align-items: center; gap: 8px; min-width: 0; padding-left: 20px; }
+  .child-tick { flex: none; width: 6px; height: 6px; border-radius: 1px; }
+  .child-tick.ok { background: var(--state-ok); }
+  .child-tick.bad { background: var(--state-bad); transform: rotate(45deg); }
+  .child-tick.warn { background: var(--state-warn); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+  .child-name { font-size: 12px; font-weight: 600; color: var(--dorami-ink-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .child-id { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); }
+  .child-row .run-n, .child-row .run-dur { font-size: 11px; }
+  .child-err td { background: var(--dorami-well); border-top: none; padding: 0 16px 8px 0; }
+  .child-err .err-msg { margin-left: 138px; display: flex; gap: 6px; align-items: flex-start;
+    font-size: 11px; font-weight: 500; color: var(--state-bad); }
+  .child-err .err-msg svg { flex: none; width: 11px; height: 11px; margin-top: 2px; }
+
+  /* 空态 */
+  .flow-empty { padding: 56px 24px; text-align: center; color: var(--dorami-faint);
+    font-size: 13px; font-weight: 600; line-height: 1.8; }
+
+  /* 表脚 + 页码范式 .pager(直接引用) */
+  .flow-foot { flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 16px; border-top: 1px solid var(--dorami-border); background: var(--dorami-soft); }
+  .flow-foot-info { font-size: 12px; font-weight: 600; color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums; }
+
+  /* 骨架屏行:loading 且无数据时 */
+  .flow-skel td { height: 44px; padding: 0 10px; border-top: 1px solid var(--dorami-border); }
+  .flow-skel td:first-child { padding-left: 16px; }
+
+  /* 移动端 <lg:时刻表折顶,纸纵排(照台账移动端范式) */
+  @media (max-width: 1023px) {
+    .runs-shell { width: auto; margin: 0; height: auto; overflow: visible; }
+    .runs-shell > .page-head { padding: 0 0 4px; min-height: 0; }
+    .runs-work { flex-direction: column; margin: 14px 0 0; }
+    .runs-paper { flex-direction: column; }
+    .timetable { width: 100%; border-right: none; border-bottom: 1px solid var(--dorami-border); }
+    .tt-list { max-height: 320px; }
+    .flow-scroll { overflow-x: auto; }
+    .flow-strip-tools { flex-direction: row; flex-wrap: wrap; }
+  }
 
   /* ── Status badges & chips ── */
 
@@ -5952,20 +6145,6 @@ input[type="radio"] {
     background: rgba(16, 185, 129, 0.16);
   }
 
-  /* ── 运行历史：聚合对象标记 ── */
-  .run-object-mark {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 30px;
-    height: 30px;
-    border-radius: var(--r-control);
-    color: var(--dorami-blue);
-    background: rgba(91, 84, 232, 0.1);
-    border: 1px solid rgba(91, 84, 232, 0.16);
-    flex-shrink: 0;
-  }
-
   /* ── 阅读器（全屏三栏） ── */
   /* 用「视口宽 − 导轨宽」+ 负 margin 跳出 main 的 max-w/padding，铺满导轨右侧的工作区；
      高度填到视口底（顶部留出 --app-top：移动端 76px 顶栏、lg+ 无顶栏为 0），
@@ -7351,9 +7530,7 @@ input[type="radio"] {
 }
 
 /* ── 卡片：抹掉亮色的白色内高光（深底上会变刺眼亮边）── */
-[data-theme="dark"] :is(.surface-card, .metric-card) { box-shadow: var(--sh-2), inset 0 1px 0 rgba(255, 255, 255, 0.04); }
-/* (静默仪器:surface-card 无 hover 态,暗色对应覆盖一并移除) */
-[data-theme="dark"] .metric-card:hover { box-shadow: var(--sh-3), inset 0 1px 0 rgba(255, 255, 255, 0.05); }
+[data-theme="dark"] .surface-card { box-shadow: var(--sh-2), inset 0 1px 0 rgba(255, 255, 255, 0.04); }
 
 /* ════ 规则①：输入 / 轨道 / 表头 / 代码预览 → well（深凹陷）════ */
 [data-theme="dark"] :is(
@@ -7449,8 +7626,7 @@ input[type="radio"] {
 /* ── 组件层写死的 slate-hex 文字：成组提到 muted / ink（不随 --color-* 翻转）── */
 [data-theme="dark"] :is(
   .segmented-option, .scope-toggle-option, .node-param-title, .node-param-label,
-  .field-box > span, .vector-option-box > span, .active-filter-label, .active-filter-chip-label,
-  .active-filter-clear, .catalog-dimension-label,
+  .field-box > span, .vector-option-box > span, .catalog-dimension-label,
   .tiny-meta, .form-field, .form-field > span, .form-label, .date-range-weekday,
   .panel-header-subtitle, .running-widget-more, .running-widget-progress-queued, .running-widget-name,
   .category-chip, .tier-segment-btn, .section-band-count, .section-band-chevron, .dept-alias,

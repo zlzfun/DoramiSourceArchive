@@ -16,8 +16,10 @@ APScheduler 启动编排同源），经 _app() 延迟动态调用。序列化与
 """
 
 import importlib
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session, select
@@ -47,7 +49,32 @@ def _app():
 
 # ==================== 序列化 ====================
 
+def _next_fire_iso(cron_exprs: List[str]) -> Optional[str]:
+    """若干 5 段 cron 中最早的下次触发时间(本地时区 ISO);无有效表达式返回 None。
+
+    与 app.add_cron_job 同一解析语义(minute/hour/day/month/day_of_week),
+    保证「时刻表倒计时」与调度器实际注册的触发一致。
+    """
+    best = None
+    now = datetime.now().astimezone()
+    for expr in cron_exprs:
+        parts = (expr or "").split()
+        if len(parts) != 5:
+            continue
+        try:
+            trigger = CronTrigger(
+                minute=parts[0], hour=parts[1], day=parts[2], month=parts[3], day_of_week=parts[4]
+            )
+            fire = trigger.get_next_fire_time(None, now)
+        except ValueError:
+            continue
+        if fire and (best is None or fire < best):
+            best = fire
+    return best.isoformat() if best else None
+
+
 def serialize_collection_job(record: CollectionJobRecord) -> Dict[str, Any]:
+    per_fetcher_cron = _json_loads(record.per_fetcher_cron_json, {})
     return {
         "id": record.id,
         "name": record.name,
@@ -56,12 +83,17 @@ def serialize_collection_job(record: CollectionJobRecord) -> Dict[str, Any]:
         "params": _json_loads(record.params_json, {}),
         "per_fetcher_params": _json_loads(record.per_fetcher_params_json, {}),
         "cron_expr": record.cron_expr,
-        "per_fetcher_cron": _json_loads(record.per_fetcher_cron_json, {}),
+        "per_fetcher_cron": per_fetcher_cron,
         "is_active": record.is_active,
         "downstream_policy": _json_loads(record.downstream_policy_json, {}),
         "legacy_task_id": record.legacy_task_id,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
+        "next_run_at": (
+            _next_fire_iso([record.cron_expr, *per_fetcher_cron.values()])
+            if record.is_active
+            else None
+        ),
     }
 
 
