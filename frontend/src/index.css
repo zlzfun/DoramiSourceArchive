@@ -4721,7 +4721,8 @@ input[type="radio"] {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    margin: 4px 28px 24px;
+    /* 头-卡纵距与台账(.ledger-work)统一:16px 顶距 / 20px 底距 */
+    margin: 16px 28px 20px;
     background: var(--dorami-surface);
     border: 1px solid var(--dorami-card-bd);
     border-radius: var(--r-card);
