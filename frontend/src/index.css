@@ -1945,6 +1945,61 @@ input[type="radio"] {
 
   /* ── Floating running-tasks widget (bottom-right pill on FetchTab) ── */
 
+  /* 浮窗坞:双形态(展开卡/迷你脉搏)同格叠放右下对齐,交叉淡出;
+     位置由 dock 持有,子元素回归静态定位 */
+  .running-dock {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 55;
+    display: inline-grid;
+  }
+
+  .running-dock > * {
+    grid-area: 1 / 1;
+    justify-self: end;
+    align-self: end;
+    transition: opacity var(--motion-medium) var(--motion-ease), transform var(--motion-medium) var(--motion-ease);
+  }
+
+  .running-dock .dock-hidden {
+    opacity: 0;
+    transform: scale(0.94);
+    pointer-events: none;
+  }
+
+  .running-dock .running-widget-docked {
+    position: static;
+  }
+
+  /* 迷你脉搏:仅表示「有任务在转」+ 计数,hover 展开详情 */
+  .running-mini {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 38px;
+    padding: 0 13px;
+    border-radius: var(--r-pill);
+    border: 1px solid var(--dorami-card-bd);
+    background: var(--dorami-surface);
+    box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge);
+    cursor: pointer;
+  }
+
+  .running-mini-icon {
+    width: 15px;
+    height: 15px;
+    color: var(--dorami-accent);
+  }
+
+  .running-mini-n {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--dorami-ink-2);
+  }
+
   .running-widget {
     position: fixed;
     right: 24px;

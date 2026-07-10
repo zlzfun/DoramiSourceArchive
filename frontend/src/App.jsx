@@ -512,7 +512,7 @@ export default function App() {
 
       <Toast show={toast.show} message={toast.message} type={toast.type} onClose={hideToast} />
 
-      {activeTab !== 'fetch' && globalRunningIds.size > 0 && (
+      {globalRunningIds.size > 0 && (
         <RunningWidget
           variant="floating"
           runningIds={globalRunningIds}
