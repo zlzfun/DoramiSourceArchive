@@ -15,7 +15,7 @@ export const TONE_CLASS = {
   emerald: 'text-emerald-700 bg-emerald-50 border-emerald-100',
   amber: 'text-amber-700 bg-amber-50 border-amber-100',
   red: 'text-red-700 bg-red-50 border-red-100',
-  accent: 'text-indigo-700 bg-[var(--dorami-wash)] border-[var(--dorami-accent)]/25',
+  accent: 'text-indigo-700 bg-[var(--dorami-wash)] border-transparent',
   slate: 'text-slate-500 bg-[var(--dorami-soft)] border-[var(--dorami-border)]',
 };
 
@@ -38,8 +38,8 @@ export function runStatusMeta(status) {
     case 'partial_failed':
       return { label: '部分失败', tone: 'amber', icon: AlertTriangle };
     case 'running':
-      // 运行中额外叠加脉冲/光环以强调“进行中”，仍走统一 tone 配色。
-      return { label: '运行中', tone: 'accent', icon: Loader2, iconClassName: 'animate-spin', extraClassName: 'ring-2 ring-indigo-200/60 animate-pulse' };
+      // 运行中 = accent 家族(产品语义):icon 旋转 + 徽标呼吸;不再叠 indigo ring(R1/R4 去描边)。
+      return { label: '运行中', tone: 'accent', icon: Loader2, iconClassName: 'animate-spin', extraClassName: 'animate-pulse' };
     default:
       return { label: '运行中', tone: 'accent', icon: Clock3 };
   }

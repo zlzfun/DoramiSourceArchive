@@ -47,8 +47,10 @@ function TabFallback() {
 // 把「标签 + 子视图」镜像到 URL hash（#/runs/history），跨页跳转的聚焦上下文存在 history.state 里。
 // 让浏览器「返回」能逐级退回：子视图切换 → 标签切换 → 跨页跳转的原位。
 const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'vector', 'mcp', 'admin'];
-const TAB_DEFAULT_VIEW = { fetch: 'catalog', runs: 'jobs' };
-const SUBVIEW_TABS = new Set(['fetch', 'runs']);
+// runs 的双视图已随运行波(调度台)退役:旧书签 #/runs/history、#/runs/jobs 在
+// hashToRoute 里因 runs 不再是 SUBVIEW 而自然归一到 #/runs,无需特判。
+const TAB_DEFAULT_VIEW = { fetch: 'catalog' };
+const SUBVIEW_TABS = new Set(['fetch']);
 
 // 运行能力的非乐观初始/重置值：能力未知（未登录 / 登出 / 会话过期）时按「都未启用」，
 // 避免在 fetchRuntimeInfo 返回前把 collector 界面闪给读者。初始化与两处重置共用同一形状，
@@ -63,7 +65,7 @@ const INITIAL_RUNTIME = {
 };
 
 function defaultViews() {
-  return { fetch: 'catalog', runs: 'jobs' };
+  return { fetch: 'catalog' };
 }
 
 function routeToHash(tab, views) {
