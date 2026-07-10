@@ -20,6 +20,8 @@ import LoginScreen from './components/LoginScreen';
 import BrandLogoImage from './components/BrandLogoImage';
 import { useTheme } from './theme';
 import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
+import RunningWidget from './components/RunningWidget';
+import { useRunningProgress } from './hooks/useRunningProgress';
 
 // Tab 组件按路由惰性加载：各自独立 chunk，登录页与读者态不再下载用不到的重依赖
 // （AdminOpsTab→recharts、ReaderTab/MCPTab→react-markdown）。每个 Tab 挂在独立
@@ -167,7 +169,15 @@ export default function App() {
   const markArticlesDirty = useCallback(() => setArticlesDirty(true), []);
   const clearArticlesDirty = useCallback(() => setArticlesDirty(false), []);
 
-  const markRunsDirty = useCallback(() => setRunsDirty(true), []);
+  // 全局运行进度:跨页浮窗数据源。kick 通道复用 onRunsChanged(两页发起运行都会经过);
+  // 节点页自身有行内进度+信号灯条,浮窗在该页隐藏(去重),其余页面获得跨页感知。
+  const {
+    progress: globalRunProgress,
+    runningIds: globalRunningIds,
+    kick: kickRunningProgress,
+  } = useRunningProgress(authState.status === 'authenticated' && runtimeInfo.collector_enabled);
+
+  const markRunsDirty = useCallback(() => { setRunsDirty(true); kickRunningProgress(); }, [kickRunningProgress]);
   const clearRunsDirty = useCallback(() => setRunsDirty(false), []);
 
   const viewArticlesForSource = useCallback((sourceId) => {
@@ -331,6 +341,11 @@ export default function App() {
     if (tab.requiresRag && !runtimeInfo.rag_enabled) return false;
     return true;
   }), [runtimeInfo, readerOnly]);
+
+  const fetchersById = useMemo(
+    () => Object.fromEntries(availableFetchers.map(f => [f.id, f])),
+    [availableFetchers],
+  );
 
   const avatarInitials = useMemo(() => {
     const name = authState.user?.username?.trim();
@@ -496,6 +511,16 @@ export default function App() {
       </header>
 
       <Toast show={toast.show} message={toast.message} type={toast.type} onClose={hideToast} />
+
+      {activeTab !== 'fetch' && globalRunningIds.size > 0 && (
+        <RunningWidget
+          variant="floating"
+          runningIds={globalRunningIds}
+          fetchProgress={globalRunProgress}
+          fetchersById={fetchersById}
+          onViewRunning={viewRunningTasks}
+        />
+      )}
 
       <SettingsModal
         open={settingsOpen}

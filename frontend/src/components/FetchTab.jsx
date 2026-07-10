@@ -23,7 +23,6 @@ import {
   triggerBatchFetch,
   triggerFetch,
 } from '../api';
-import RunningWidget from './RunningWidget';
 import CustomNodeBuilder from './CustomNodeBuilder';
 
 // 高级目标「AI 自定义节点」暂不开放前端入口：后端流程保留，UI 入口与面板用此开关隐藏。
@@ -83,7 +82,7 @@ function typeLabelOf(fetcher) {
   return labelFrom(SOURCE_CHANNEL_LABELS, fetcher.source_channel) || fetcher.content_type || '节点';
 }
 
-export default function FetchTab({ availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onViewRunning, onSaveAsJob, pendingFocus, onPendingFocusApplied }) {
+export default function FetchTab({ availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onSaveAsJob, pendingFocus, onPendingFocusApplied }) {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [healthByFetcher, setHealthByFetcher] = useState({});
   const [fetchConfigs, setFetchConfigs] = useState({});
@@ -1007,15 +1006,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         )}
       </div>
 
-      {runningFetcherIds.size > 0 && (
-        <RunningWidget
-          variant="floating"
-          runningIds={runningFetcherIds}
-          fetchProgress={fetchProgress}
-          fetchersById={fetchersById}
-          onViewRunning={onViewRunning}
-        />
-      )}
     </div>
   );
 }
