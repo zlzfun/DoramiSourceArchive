@@ -4981,6 +4981,45 @@ input[type="radio"] {
     font-weight: 600;
   }
 
+  /* ── 批量选择模式(方案 A):模式内行首多一列勾选框;勾中行 = wash 状态底
+     (与检视竖条可叠加);底部批量条与台账 batchbar 同语法。 ── */
+  .board.is-selecting .board-node {
+    grid-template-columns: 16px 14px minmax(0, 1fr) auto 150px auto;
+  }
+
+  .board-node-checked,
+  .board-node-checked:hover {
+    background: var(--dorami-wash);
+  }
+
+  .board-batchbar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 9px 16px;
+    border-top: 1px solid var(--dorami-border);
+    background: var(--dorami-wash);
+  }
+
+  .board-batch-n {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--dorami-accent-ink);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .board-batchbar .action-button {
+    min-height: 32px;
+    padding: 0 12px;
+  }
+
+  .board-batchbar .action-button svg {
+    width: 14px;
+    height: 14px;
+  }
+
   .board-group-head {
     display: flex;
     align-items: center;
@@ -5023,6 +5062,7 @@ input[type="radio"] {
   .board-node {
     display: grid;
     grid-template-columns: 14px minmax(0, 1fr) auto 150px auto;
+    /* 批量选择模式的列模板见 .board.is-selecting 覆盖(行首多一列勾选框) */
     align-items: center;
     gap: 12px;
     padding: 10px 18px;

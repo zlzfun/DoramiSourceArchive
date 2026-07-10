@@ -8,6 +8,7 @@ import {
   FileText,
   FlaskConical,
   Inbox,
+  ListChecks,
   Layers,
   Play,
   RefreshCw,
@@ -90,6 +91,24 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   const [fetchProgress, setFetchProgress] = useState({});
   const progressSeenFetcherIdsRef = useRef(new Set());
   const [healthFilter, setHealthFilter] = useState('all');
+
+  // 批量选择模式(方案 A):常态零勾选框;进入模式后行首浮现勾选框、分组头可整组勾选,
+  // 底部批量条承载动作(批量运行/存为采集任务),ESC 或「取消」退出。
+  // 「检视选中」(accent 竖条)与「批量勾选」(wash 底)两种选中语义并存、可叠加。
+  const [selectMode, setSelectMode] = useState(false);
+  const [checkedIds, setCheckedIds] = useState(() => new Set());
+  const exitSelectMode = useCallback(() => { setSelectMode(false); setCheckedIds(new Set()); }, []);
+  const toggleChecked = useCallback((id) => setCheckedIds(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  }), []);
+  useEffect(() => {
+    if (!selectMode) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') exitSelectMode(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectMode, exitSelectMode]);
   const [healthRefreshing, setHealthRefreshing] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [countdown, setCountdown] = useState(REFRESH_SECONDS);
@@ -426,6 +445,23 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     runFetchers(ids);
   };
 
+  // 勾选集批量运行 / 存为采集任务(按可见顺序,参数差量随行携带)。
+  const runChecked = () => {
+    const ids = visibleFetchers.filter(f => checkedIds.has(f.id)).map(f => f.id);
+    if (ids.length) runFetchers(ids);
+  };
+  const saveCheckedAsJob = () => {
+    const ids = visibleFetchers.filter(f => checkedIds.has(f.id)).map(f => f.id);
+    if (!ids.length) return;
+    const per = {};
+    ids.forEach(id => {
+      const diff = paramOverrideDiff(id);
+      if (Object.keys(diff).length) per[id] = diff;
+    });
+    onSaveAsJob?.({ fetcher_ids: ids, per_fetcher_params: per });
+  };
+  const checkAllVisible = () => setCheckedIds(new Set(visibleFetchers.map(f => f.id)));
+
   // 单节点试抓预览：以当前参数抓取 1 条（会入库，与既有「试抓」同口径），结果内嵌到检视器。
   const runNodePreview = useCallback(async (fetcher) => {
     setPreviewByNode(prev => ({ ...prev, [fetcher.id]: { status: 'running' } }));
@@ -516,9 +552,19 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           tabIndex={0}
           onClick={() => selectNode(fetcher.id)}
           onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectNode(fetcher.id); } }}
-          className={`board-node ${isSelected ? 'board-node-sel' : ''} ${highlightedFetcherId === fetcher.id ? 'board-node-focus' : ''}`}
+          className={`board-node ${isSelected ? 'board-node-sel' : ''} ${selectMode && checkedIds.has(fetcher.id) ? 'board-node-checked' : ''} ${highlightedFetcherId === fetcher.id ? 'board-node-focus' : ''}`}
           title={health?.latest_run_at ? `上次运行 ${formatDateTime(health.latest_run_at)}` : '从未运行'}
         >
+          {selectMode && (
+            <input
+              type="checkbox"
+              className="h-4 w-4 cursor-pointer rounded"
+              checked={checkedIds.has(fetcher.id)}
+              onClick={e => e.stopPropagation()}
+              onChange={() => toggleChecked(fetcher.id)}
+              aria-label={`选择：${fetcher.name}`}
+            />
+          )}
           <span className={`signal-dot signal-dot-${HEALTH_SIGNAL[status] || 'idle'}`} title={statusLabel} />
           <span className="board-node-id">
             <span className="board-node-name" title={fetcher.name}>
@@ -827,13 +873,23 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           )}
           <button
             type="button"
-            onClick={handleBatchRun}
-            disabled={fetchLoading || visibleFetchers.length === 0}
-            className="action-button action-button-primary"
-            title="对当前筛选下的全部节点触发临时抓取"
+            onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+            className="action-button action-button-quiet"
+            title={selectMode ? '退出批量选择(ESC)' : '勾选若干节点后批量运行或存为采集任务'}
           >
-            {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 批量运行 {visibleFetchers.length}
+            <ListChecks /> {selectMode ? '退出批量选择' : '批量选择'}
           </button>
+          {!selectMode && (
+            <button
+              type="button"
+              onClick={handleBatchRun}
+              disabled={fetchLoading || visibleFetchers.length === 0}
+              className="action-button action-button-primary"
+              title="对当前筛选下的全部节点触发临时抓取"
+            >
+              {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 批量运行 {visibleFetchers.length}
+            </button>
+          )}
         </div>
       </div>
 
@@ -881,13 +937,33 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
 
 
         <div className={`nodes-body ${mobileInspectorOpen ? 'inspector-open' : ''}`}>
-          <div className="board">
+          <div className={`board ${selectMode ? 'is-selecting' : ''}`}>
             {boardIsEmpty ? (
               <div className="board-empty">当前筛选条件下没有匹配的节点</div>
             ) : (
               groupedBoard.map(section => (
                 <div key={section.id} className="board-group">
                   <div className="board-group-head">
+                    {selectMode && (
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 cursor-pointer rounded"
+                        checked={section.fetchers.every(f => checkedIds.has(f.id))}
+                        ref={el => {
+                          if (!el) return;
+                          const all = section.fetchers.every(f => checkedIds.has(f.id));
+                          const some = section.fetchers.some(f => checkedIds.has(f.id));
+                          el.indeterminate = some && !all;
+                        }}
+                        onChange={() => setCheckedIds(prev => {
+                          const next = new Set(prev);
+                          const all = section.fetchers.every(f => next.has(f.id));
+                          section.fetchers.forEach(f => { if (all) next.delete(f.id); else next.add(f.id); });
+                          return next;
+                        })}
+                        aria-label={`选择整组：${section.label}`}
+                      />
+                    )}
                     <span className="board-group-marker" style={{ '--group-accent': section.accent }} />
                     <span className="board-group-name">{section.label}</span>
                     <span className="board-group-count">{section.fetchers.length} 个节点</span>
@@ -904,6 +980,31 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           </aside>
           {mobileInspectorOpen && <div className="inspector-scrim" onClick={() => setMobileInspectorOpen(false)} />}
         </div>
+
+        {selectMode && (
+          <div className="board-batchbar">
+            <span className="board-batch-n">已选 {checkedIds.size} 个节点</span>
+            <button
+              type="button"
+              className="action-button action-button-primary"
+              disabled={fetchLoading || checkedIds.size === 0}
+              onClick={runChecked}
+            >
+              {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 批量运行
+            </button>
+            <button
+              type="button"
+              className="action-button action-button-quiet"
+              disabled={checkedIds.size === 0}
+              onClick={saveCheckedAsJob}
+            >
+              <Save /> 存为采集任务
+            </button>
+            <span className="flex-1" />
+            <button type="button" className="action-button action-button-quiet" onClick={checkAllVisible}>全选可见</button>
+            <button type="button" className="action-button action-button-quiet" onClick={exitSelectMode}>取消</button>
+          </div>
+        )}
       </div>
 
       {runningFetcherIds.size > 0 && (
