@@ -7472,3 +7472,24 @@ input[type="radio"] {
   background-size: 1200px 100%;
 }
 [data-theme="dark"] :is(.date-range-day, .source-meta-val) { color: var(--dorami-ink-2); }
+
+/* ── 运行浮窗(坞内双形态)= accent 实底 ──
+   它是「运行中」活动态的全站唯一持续运动元素,主题色实底作醒目标识
+   (与进度线/运行 pulse 同族语义,不计入普通 accent 预算)。
+   未分层置于暗色段之后:压过其对 running-widget 文字色的通用覆盖,
+   亮暗两态同一套白字规则(--dorami-blue 暗色自动换深靛)。 */
+.running-dock .running-widget,
+.running-mini {
+  background: var(--dorami-blue);
+  border-color: transparent;
+  box-shadow: var(--sh-2);
+}
+.running-dock .running-widget-icon,
+.running-mini-icon { color: #fff; }
+.running-dock .running-widget-headline { color: #fff; }
+.running-dock .running-widget-chevron { color: rgba(255, 255, 255, 0.72); }
+.running-dock .running-widget-name { color: rgba(255, 255, 255, 0.85); }
+.running-dock .running-widget-progress { color: #fff; }
+.running-dock .running-widget-progress-queued { color: rgba(255, 255, 255, 0.62); }
+.running-dock .running-widget-more { color: rgba(255, 255, 255, 0.68); }
+.running-mini-n { color: #fff; }
