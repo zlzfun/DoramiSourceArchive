@@ -28,8 +28,7 @@ import { useConfirm } from '../hooks/useConfirm';
 import { TEST_RUN_LIMIT, normalizeIds, collectionRunMessage } from '../utils/collection';
 
 const PAGE_SIZE = 50;
-const AUTO_REFRESH_SECONDS = 30;
-const AUTO_REFRESH_KEY = 'dorami-runs-autorefresh';
+const POLL_SECONDS = 30; // 静默轮询间隔:页面激活时后台拉取,无 UI 开关(自动刷新按钮已退役)
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 
 // 状态 → 状态章(.stamp)映射:success/partial_failed/failed/running。
@@ -315,18 +314,13 @@ export default function FetchRunsTab({
   const [serverFetcherId, setServerFetcherId] = useState('');
   const [statusFilter, setStatusFilter] = useState(''); // '' | running | success | partial_failed | failed
   const [triggerFilter, setTriggerFilter] = useState(''); // '' | manual | scheduled
-  const [objectFilter, setObjectFilter] = useState('all'); // all | saved | adhoc
   const [selectedJobId, setSelectedJobId] = useState(null); // number | 'adhoc' | null
   const [expandedKeys, setExpandedKeys] = useState(() => new Set());
   const [page, setPage] = useState(0);
 
-  // 台面时钟 + 倒计时:每秒走字(非动画)。自动刷新计数同一 interval。
+  // 台面时钟 + 静默轮询:每秒走字(非动画),同一 interval 每 POLL_SECONDS 静默拉取。
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const [autoRefresh, setAutoRefresh] = useState(() => {
-    try { return localStorage.getItem(AUTO_REFRESH_KEY) !== 'off'; } catch { return true; }
-  });
-  const arCounterRef = useRef(AUTO_REFRESH_SECONDS);
-  const [arLeft, setArLeft] = useState(AUTO_REFRESH_SECONDS);
+  const pollTickRef = useRef(POLL_SECONDS);
 
   const [jobModalOpen, setJobModalOpen] = useState(false);
   const [editingJobId, setEditingJobId] = useState(null);
@@ -434,32 +428,21 @@ export default function FetchRunsTab({
     }
   }, [isActive, runsDirty, loadAll, onRunsRefreshed]);
 
-  // 台面时钟 + 自动刷新:单一 1s interval。仅在本页激活时走字(隐藏页不空转重渲染)。
+  // 台面时钟 + 静默轮询:单一 1s interval。仅在本页激活时走字(隐藏页不空转重渲染);
+  // 数据自动更新对用户无感——没有开关、没有倒计时,和寻常网页一样默默保持最新。
   useEffect(() => {
     if (!isActive) return undefined;
+    pollTickRef.current = POLL_SECONDS;
     const timer = setInterval(() => {
       setNowMs(Date.now());
-      if (autoRefresh) {
-        arCounterRef.current -= 1;
-        if (arCounterRef.current <= 0) {
-          arCounterRef.current = AUTO_REFRESH_SECONDS;
-          loadAll();
-        }
-        setArLeft(arCounterRef.current);
+      pollTickRef.current -= 1;
+      if (pollTickRef.current <= 0) {
+        pollTickRef.current = POLL_SECONDS;
+        loadAll();
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [isActive, autoRefresh, loadAll]);
-
-  const toggleAutoRefresh = () => {
-    setAutoRefresh(prev => {
-      const next = !prev;
-      try { localStorage.setItem(AUTO_REFRESH_KEY, next ? 'on' : 'off'); } catch { /* ignore */ }
-      arCounterRef.current = AUTO_REFRESH_SECONDS;
-      setArLeft(AUTO_REFRESH_SECONDS);
-      return next;
-    });
-  };
+  }, [isActive, loadAll]);
 
   // 节点页跳转:落 fetcher_id(服务端)+ status(本地);清空任务选择。
   useEffect(() => {
@@ -484,7 +467,7 @@ export default function FetchRunsTab({
   useEffect(() => {
     setPage(0);
     setExpandedKeys(new Set());
-  }, [serverFetcherId, statusFilter, triggerFilter, objectFilter, selectedJobId]);
+  }, [serverFetcherId, statusFilter, triggerFilter, selectedJobId]);
 
   // ── 数据推导 ──
 
@@ -657,7 +640,8 @@ export default function FetchRunsTab({
 
   const pct = (n) => (counts.total ? `${((n / counts.total) * 100).toFixed(1)}%` : '0%');
 
-  // 表格集:窗口 + 任务/状态/触发/对象 本地筛选。
+  // 表格集:窗口 + 任务/状态/触发 本地筛选。
+  // (「对象:任务/临时」筛选已退役——时刻表点选任务行/「临时抓取」行即是对象维度,mini-seg 与之重复。)
   const tableRuns = useMemo(() => {
     return scopedRuns.filter(run => {
       if (selectedJobId != null) {
@@ -668,13 +652,11 @@ export default function FetchRunsTab({
           return false;
         }
       }
-      if (objectFilter === 'saved' && run.run_scope !== 'saved_job') return false;
-      if (objectFilter === 'adhoc' && !(run.rowType === 'fetch' || run.run_scope !== 'saved_job')) return false;
       if (statusFilter && run.status !== statusFilter) return false;
       if (triggerFilter && run.trigger_type !== triggerFilter) return false;
       return true;
     });
-  }, [scopedRuns, selectedJobId, objectFilter, statusFilter, triggerFilter]);
+  }, [scopedRuns, selectedJobId, statusFilter, triggerFilter]);
 
   const pageCount = Math.max(1, Math.ceil(tableRuns.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
@@ -879,39 +861,55 @@ export default function FetchRunsTab({
   const timetableCount = timetable.active.length + timetable.disabled.length;
   const timetableEmpty = timetableCount === 0 && timetable.adhoc.todayCount === 0 && adhocRuns.length === 0;
 
+  // 时刻表行:tt-item 包裹(选中态背景/竖条落在包裹层),选中任务行下方就地展开动作区
+  // ——任务的动作跟着任务列表走(原右栏 jobbar 上下文条已退役,右栏回归纯流水)。
   const renderTtRow = (entry) => {
     const isSel = entry.kind === 'adhoc' ? selectedJobId === 'adhoc' : selectedJobId === entry.id;
     const countdown = entry.nextRunAt ? formatCountdown(entry.nextRunAt, nowMs) : null;
     return (
-      <button
-        key={entry.id}
-        onClick={() => setSelectedJobId(isSel ? null : entry.id)}
-        className={`tt-row ${isSel ? 'is-sel' : ''} ${entry.kind === 'job' && !entry.isActive ? 'is-off' : ''}`}
-      >
-        <div className="tt-row-top">
-          <span className="tt-name">{entry.name}</span>
-          {entry.lastStatus && <span className={`tt-last ${tickFor(entry.lastStatus)}`} title={`上次结果:${stampFor(entry.lastStatus)[1]}`} />}
-        </div>
-        <div className="tt-row-mid">
-          {entry.kind === 'adhoc'
-            ? <>由节点管理直接发起 <span className="tt-cron">不定时</span></>
-            : <>{entry.nodeCount} 节点 <span className="tt-cron">{entry.cron || '手动触发'}</span></>}
-        </div>
-        <div className="tt-row-bot">
-          <span className="tt-dots" title="近 7 日结果">
-            {entry.dots.map((cls, i) => <i key={i} className={cls} />)}
-          </span>
-          {entry.kind === 'adhoc' ? (
-            <span className="tt-next is-manual">{entry.todayCount ? `今日 ${entry.todayCount} 次` : '暂无'}</span>
-          ) : !entry.isActive ? (
-            <span className="tt-next is-manual">已停用</span>
-          ) : countdown ? (
-            <span className="tt-next"><span className="u">距下次</span> {countdown}</span>
-          ) : (
-            <span className="tt-next is-manual">手动</span>
-          )}
-        </div>
-      </button>
+      <div key={entry.id} className={`tt-item ${isSel ? 'is-sel' : ''}`}>
+        <button
+          onClick={() => setSelectedJobId(isSel ? null : entry.id)}
+          className={`tt-row ${entry.kind === 'job' && !entry.isActive ? 'is-off' : ''}`}
+        >
+          <div className="tt-row-top">
+            <span className="tt-name">{entry.name}</span>
+            {entry.lastStatus && <span className={`tt-last ${tickFor(entry.lastStatus)}`} title={`上次结果:${stampFor(entry.lastStatus)[1]}`} />}
+          </div>
+          <div className="tt-row-mid">
+            {entry.kind === 'adhoc'
+              ? <>由节点管理直接发起 <span className="tt-cron">不定时</span></>
+              : <>{entry.nodeCount} 节点 <span className="tt-cron">{entry.cron || '手动触发'}</span></>}
+          </div>
+          <div className="tt-row-bot">
+            <span className="tt-dots" title="近 7 日结果">
+              {entry.dots.map((cls, i) => <i key={i} className={cls} />)}
+            </span>
+            {entry.kind === 'adhoc' ? (
+              <span className="tt-next is-manual">{entry.todayCount ? `今日 ${entry.todayCount} 次` : '暂无'}</span>
+            ) : !entry.isActive ? (
+              <span className="tt-next is-manual">已停用</span>
+            ) : countdown ? (
+              <span className="tt-next"><span className="u">距下次</span> {countdown}</span>
+            ) : (
+              <span className="tt-next is-manual">手动</span>
+            )}
+          </div>
+        </button>
+        {isSel && entry.kind === 'job' && (
+          <div className="tt-acts">
+            {entry.isActive && (
+              <>
+                <button className="tt-act-btn" onClick={() => handleRunJob(entry.id)}>立即运行</button>
+                <button className="tt-act-btn" onClick={() => handleRunJob(entry.id, { testLimit: TEST_RUN_LIMIT })}>测试 1 条/源</button>
+              </>
+            )}
+            <button className="tt-act-btn" onClick={() => openEditJob(entry.job)}>编辑配置</button>
+            <button className="tt-act-btn" onClick={() => handleToggleJob(entry.job)}>{entry.isActive ? '停用' : '启用'}</button>
+            <button className="tt-act-btn is-danger" onClick={() => handleDeleteJob(entry.job)}>删除</button>
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -935,18 +933,6 @@ export default function FetchRunsTab({
               </button>
             ))}
           </div>
-          <span className="signal-autorefresh">
-            自动刷新
-            <span className="signal-countdown">{autoRefresh ? `${arLeft}s` : '—'}</span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={autoRefresh}
-              aria-label="自动刷新"
-              onClick={toggleAutoRefresh}
-              className={`signal-switch ${autoRefresh ? 'signal-switch-on' : ''}`}
-            />
-          </span>
           <button onClick={loadAll} disabled={loading} title="刷新" aria-label="刷新" className="icon-button signal-refresh">
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
@@ -1031,45 +1017,8 @@ export default function FetchRunsTab({
                     <button className={`mini-seg-btn ${triggerFilter === 'scheduled' ? 'is-on' : ''}`} onClick={() => setTriggerFilter('scheduled')}>定时</button>
                   </div>
                 </div>
-                <div className="flow-tools-row">
-                  <span className="flow-tools-lbl">对象</span>
-                  <div className="mini-seg" role="group" aria-label="运行对象">
-                    <button className={`mini-seg-btn ${objectFilter === 'all' ? 'is-on' : ''}`} onClick={() => setObjectFilter('all')}>全部</button>
-                    <button className={`mini-seg-btn ${objectFilter === 'saved' ? 'is-on' : ''}`} onClick={() => setObjectFilter('saved')}>任务</button>
-                    <button className={`mini-seg-btn ${objectFilter === 'adhoc' ? 'is-on' : ''}`} onClick={() => setObjectFilter('adhoc')}>临时</button>
-                  </div>
-                </div>
               </div>
             </div>
-
-            {/* 任务上下文条 */}
-            {selectedJob && (
-              <div className="jobbar">
-                <span className="jobbar-name">{selectedJob.name}</span>
-                <span className="jobbar-meta">
-                  {selectedJob.cron_expr || '手动触发'} · {(selectedJob.fetcher_ids || []).length} 节点
-                </span>
-                <div className="jobbar-acts">
-                  <button className="jobbar-btn" onClick={() => handleRunJob(selectedJob.id)}>立即运行</button>
-                  <button className="jobbar-btn" onClick={() => handleRunJob(selectedJob.id, { testLimit: TEST_RUN_LIMIT })}>测试 1 条/源</button>
-                  <button className="jobbar-btn" onClick={() => openEditJob(selectedJob)}>编辑配置</button>
-                  <button className="jobbar-btn" onClick={() => handleToggleJob(selectedJob)}>{selectedJob.is_active === false ? '启用' : '停用'}</button>
-                  <button className="jobbar-btn is-danger" onClick={() => handleDeleteJob(selectedJob)}>删除</button>
-                  <button className="jobbar-x" aria-label="取消任务过滤" onClick={() => setSelectedJobId(null)}><X /></button>
-                </div>
-              </div>
-            )}
-
-            {/* 来源上下文条(节点页跳转) */}
-            {serverFetcherId && (
-              <div className="jobbar">
-                <span className="jobbar-name">来源:{getFetcherName(serverFetcherId)}</span>
-                <span className="jobbar-meta">{serverFetcherId}</span>
-                <div className="jobbar-acts">
-                  <button className="jobbar-x" aria-label="取消来源过滤" onClick={() => setServerFetcherId('')}><X /></button>
-                </div>
-              </div>
-            )}
 
             {loadError && (
               <div className="flow-err-bar"><AlertTriangle /> {loadError}</div>
@@ -1231,7 +1180,24 @@ export default function FetchRunsTab({
             <div className="flow-foot">
               <span className="flow-foot-info">
                 {tableRuns.length} 次运行 · 近 {windowDays} 天
-                {selectedJob ? ` · 已按「${selectedJob.name}」过滤` : selectedJobId === 'adhoc' ? ' · 仅临时抓取' : ''}
+                {selectedJob && (
+                  <>
+                    {` · 已按「${selectedJob.name}」过滤`}
+                    <button className="foot-clear" aria-label="取消任务过滤" onClick={() => setSelectedJobId(null)}><X /></button>
+                  </>
+                )}
+                {selectedJobId === 'adhoc' && (
+                  <>
+                    {' · 仅临时抓取'}
+                    <button className="foot-clear" aria-label="取消临时抓取过滤" onClick={() => setSelectedJobId(null)}><X /></button>
+                  </>
+                )}
+                {serverFetcherId && (
+                  <>
+                    {` · 来源:${getFetcherName(serverFetcherId)}`}
+                    <button className="foot-clear" aria-label="取消来源过滤" onClick={() => setServerFetcherId('')}><X /></button>
+                  </>
+                )}
               </span>
               {pageCount > 1 && (
                 <div className="pager">

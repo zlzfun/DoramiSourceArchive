@@ -112,8 +112,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     return () => window.removeEventListener('keydown', onKey);
   }, [selectMode, exitSelectMode]);
   const [healthRefreshing, setHealthRefreshing] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const [countdown, setCountdown] = useState(REFRESH_SECONDS);
   const [expandedErrorFetcherIds, setExpandedErrorFetcherIds] = useState(() => new Set());
   const fetchConfigDefaultsRef = useRef({});
   const [highlightedFetcherId, setHighlightedFetcherId] = useState(null);
@@ -204,31 +202,20 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     setHealthRefreshing(true);
     try {
       await loadSourceHealth();
-      setCountdown(REFRESH_SECONDS);
     } finally {
       setHealthRefreshing(false);
     }
   }, [loadSourceHealth]);
 
-  // 自动刷新：开关驱动。开启时每秒倒计时，归零静默刷新健康数据（页面隐藏时暂停倒计时）；关闭时停摆。
+  // 静默轮询:健康数据每 REFRESH_SECONDS 后台刷新(页面隐藏时暂停)。
+  // 无开关、无倒计时——「自动刷新」UI 已退役,数据保持最新对用户无感。
   useEffect(() => {
-    if (!autoRefresh) {
-      setCountdown(REFRESH_SECONDS);
-      return undefined;
-    }
-    let secs = REFRESH_SECONDS;
-    setCountdown(secs);
     const id = setInterval(() => {
       if (document.hidden) return;
-      secs -= 1;
-      if (secs <= 0) {
-        loadSourceHealth();
-        secs = REFRESH_SECONDS;
-      }
-      setCountdown(secs);
-    }, 1000);
+      loadSourceHealth();
+    }, REFRESH_SECONDS * 1000);
     return () => clearInterval(id);
-  }, [autoRefresh, loadSourceHealth]);
+  }, [loadSourceHealth]);
 
   useEffect(() => {
     if (runningFetcherIds.size === 0) {
@@ -943,18 +930,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             >
               <RefreshCw className={`h-4 w-4 ${healthRefreshing ? 'animate-spin' : ''}`} />
             </button>
-            <div className="signal-autorefresh">
-              <button
-                type="button"
-                role="switch"
-                aria-checked={autoRefresh}
-                onClick={() => setAutoRefresh(v => !v)}
-                className={`signal-switch ${autoRefresh ? 'signal-switch-on' : ''}`}
-                aria-label="自动刷新"
-              />
-              <span>自动刷新</span>
-              <span className="signal-countdown">{autoRefresh ? `${countdown}s` : '—'}</span>
-            </div>
           </div>
         </div>
 

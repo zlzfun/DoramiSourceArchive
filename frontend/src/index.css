@@ -3475,15 +3475,18 @@ input[type="radio"] {
   .tt-empty { padding: 40px 20px; text-align: center; color: var(--dorami-faint);
     font-size: 12.5px; font-weight: 600; line-height: 1.7; }
 
+  /* tt-item:行 + 选中展开动作区的包裹层;选中态(竖条/soft 底)落在包裹层,
+     动作区与行同吃选中背景(任务的动作跟着任务列表走,原右栏 jobbar 已退役) */
+  .tt-item + .tt-item { border-top: 1px solid var(--dorami-border); }
+  /* 选中语法 R1:accent 竖条 + soft 底 */
+  .tt-item.is-sel { background: var(--dorami-soft); box-shadow: inset 3px 0 0 var(--dorami-blue); }
+
   .tt-row {
     position: relative; display: block; width: 100%; text-align: left;
     padding: 9px 16px 10px;
     transition: background var(--motion-fast) var(--motion-ease);
   }
   .tt-row:hover { background: var(--dorami-soft); }
-  /* 选中语法 R1:accent 竖条 + soft 底 */
-  .tt-row.is-sel { background: var(--dorami-soft); box-shadow: inset 3px 0 0 var(--dorami-blue); }
-  .tt-row + .tt-row { border-top: 1px solid var(--dorami-border); }
 
   .tt-row-top { display: flex; align-items: center; gap: 7px; }
   .tt-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: var(--dorami-ink);
@@ -3520,6 +3523,14 @@ input[type="radio"] {
   .tt-row.is-off { opacity: 0.55; }
   .tt-row.is-off:hover { opacity: 0.8; }
 
+  /* 选中任务行下方就地展开的动作区:quiet 文字钮,soft 底上 hover 用 paper 抬起 */
+  .tt-acts { display: flex; flex-wrap: wrap; gap: 2px 4px; padding: 0 12px 10px 14px; }
+  .tt-act-btn { min-height: 24px; padding: 0 8px; border-radius: var(--r-sm);
+    font-size: 11.5px; font-weight: 600; color: var(--dorami-muted);
+    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+  .tt-act-btn:hover { background: var(--dorami-paper); color: var(--dorami-ink); }
+  .tt-act-btn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
+
   .tt-foot { flex: none; display: flex; align-items: center; min-height: 47px;
     padding: 9px 16px; border-top: 1px solid var(--dorami-border);
     background: var(--dorami-soft); font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
@@ -3553,22 +3564,6 @@ input[type="radio"] {
     gap: 8px; padding: 12px 18px; background: var(--dorami-soft); }
   .flow-tools-row { display: flex; align-items: center; gap: 8px; }
   .flow-tools-lbl { font-size: 11px; font-weight: 600; color: var(--dorami-faint); }
-
-  /* 任务/来源上下文条:选中后浮现(wash = 状态标记底,同台账批量条语法) */
-  .jobbar { flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    padding: 8px 16px; border-bottom: 1px solid var(--dorami-border); background: var(--dorami-wash); }
-  .jobbar-name { font-size: 12.5px; font-weight: 700; color: var(--dorami-accent-ink); }
-  .jobbar-meta { font-family: var(--mono); font-size: 11px; color: var(--dorami-muted);
-    font-variant-numeric: tabular-nums; }
-  .jobbar-acts { margin-left: auto; display: flex; align-items: center; gap: 2px; }
-  .jobbar-btn { min-height: 26px; padding: 0 9px; border-radius: var(--r-sm);
-    font-size: 11.5px; font-weight: 600; color: var(--dorami-ink-2); }
-  .jobbar-btn:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
-  .jobbar-btn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
-  .jobbar-x { width: 26px; height: 26px; display: grid; place-items: center; border-radius: var(--r-sm);
-    color: var(--dorami-faint); }
-  .jobbar-x:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
-  .jobbar-x svg { width: 13px; height: 13px; }
 
   /* ── 流水表 ── */
   /* scrollbar-gutter:滚动条有无(随筛选行数变化)不再改变容器可用宽度(目检 #1 根因) */
@@ -3700,6 +3695,11 @@ input[type="radio"] {
     padding: 10px 16px; border-top: 1px solid var(--dorami-border); background: var(--dorami-soft); min-height: 47px; }
   .flow-foot-info { font-size: 12px; font-weight: 600; color: var(--dorami-faint);
     font-variant-numeric: tabular-nums; }
+  /* 表脚过滤指示的清除钮(任务/临时/来源过滤统一收在表脚,原 jobbar 上下文条已退役) */
+  .foot-clear { display: inline-grid; place-items: center; width: 18px; height: 18px;
+    margin-left: 4px; vertical-align: -4px; border-radius: var(--r-sm); color: var(--dorami-faint); }
+  .foot-clear:hover { background: var(--dorami-paper); color: var(--dorami-ink); }
+  .foot-clear svg { width: 11px; height: 11px; }
 
   /* 骨架屏行:loading 且无数据时 */
   .flow-skel td { height: 44px; padding: 0 10px; border-top: 1px solid var(--dorami-border); }
@@ -5595,24 +5595,7 @@ input[type="radio"] {
     flex: none;
   }
 
-  .signal-autorefresh {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--dorami-muted);
-    white-space: nowrap;
-  }
-
-  .signal-countdown {
-    font-family: var(--mono);
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-    color: var(--dorami-ink-2);
-    min-width: 30px;
-    text-align: right;
-  }
+  /* (「自动刷新」开关 UI 已退役——两页轮询转为静默;.signal-switch 仍被自动向量化等开关引用) */
 
   /* 开关：反馈类动效（拇指滑动），亮暗两态 */
   .signal-switch {
