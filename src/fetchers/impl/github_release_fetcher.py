@@ -15,6 +15,7 @@ class GenericGitHubReleasesFetcher(BaseFetcher):
     与 GitHub Atom feed 相比，API 形态能保留 tag、作者、预发布标记、资产列表等结构化字段，
     更适合归档产品/开发者生态的版本更新。
     """
+    is_template = True  # 通用模板节点:后端保留,前端目录不显现
     source_id = "generic_github_releases"
     content_type = "github_release"
     category = "advanced"
@@ -168,6 +169,7 @@ class GenericGitHubReleasesFetcher(BaseFetcher):
 
 class PresetGitHubReleasesFetcher(GenericGitHubReleasesFetcher):
     """预设 GitHub Releases API 抓取器基类。"""
+    is_template = False  # preset 固化节点:重置 Generic 基类的模板标志
 
     source_id = "unknown_source"
     owner = ""

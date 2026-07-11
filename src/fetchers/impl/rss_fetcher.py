@@ -21,6 +21,7 @@ class GenericRssFetcher(BaseFetcher):
     该抓取器通过运行时参数承载具体数据源身份，因此一次执行只处理一个 feed。
     后续 SourceConfig 调度可以把配置中的 source_id/url/name/category 转换为这些参数。
     """
+    is_template = True  # 通用模板节点:后端保留,前端目录不显现
     source_id = "generic_rss"
     content_type = "rss_article"
     category = "advanced"
@@ -307,6 +308,7 @@ class PresetRssFetcher(GenericRssFetcher):
 
     子类只声明稳定 feed 地址和展示元数据，即可被注册中心自动发现为独立节点。
     """
+    is_template = False  # preset 固化节点:重置 Generic 基类的模板标志
     source_id = "unknown_source"
     feed_url = ""
     category = "official"

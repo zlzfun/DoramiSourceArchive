@@ -12,6 +12,7 @@ from models.content import BaseContent, GitHubRepositoryContent, HuggingFaceMode
 
 class GenericGitHubRepositoriesFetcher(BaseFetcher):
     """通用 GitHub 组织新仓库抓取器。"""
+    is_template = True  # 通用模板节点:后端保留,前端目录不显现
 
     source_id = "generic_github_repositories"
     content_type = "github_repository"
@@ -226,6 +227,7 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
 
 
 class PresetGitHubRepositoriesFetcher(GenericGitHubRepositoriesFetcher):
+    is_template = False  # preset 固化节点:重置 Generic 基类的模板标志
     source_id = "unknown_source"
     owner = ""
     category = "primary"
@@ -267,6 +269,7 @@ class DeepSeekGitHubRepositoriesFetcher(PresetGitHubRepositoriesFetcher):
 
 class GenericHuggingFaceModelsFetcher(BaseFetcher):
     """通用 Hugging Face 作者/组织新模型抓取器。"""
+    is_template = True  # 通用模板节点:后端保留,前端目录不显现
 
     source_id = "generic_huggingface_models"
     content_type = "hf_model"
@@ -367,6 +370,7 @@ class GenericHuggingFaceModelsFetcher(BaseFetcher):
 
 
 class PresetHuggingFaceModelsFetcher(GenericHuggingFaceModelsFetcher):
+    is_template = False  # preset 固化节点:重置 Generic 基类的模板标志
     source_id = "unknown_source"
     author = ""
     category = "primary"

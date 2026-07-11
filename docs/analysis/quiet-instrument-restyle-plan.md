@@ -485,3 +485,17 @@ pendingJobDraft 预填)原样保留;Modal 外壳沿用。
   转换出 3 个新任务(全量抓取/Anthropic/crawl4ai迁移节点),属历史迁移正当行为;
 - 编排单最终形态:每节点行 = 身份 + schema 参数(多数只剩「单次获取上限」);
   pytest 316 全绿(含新专项),lint/build 绿。
+
+
+## 十五、通用节点隐藏波(is_template 标志,2026-07-11,主线自做)
+
+用户拍板:下游是阅读器,节点质量应在新增时由开发者保证;参数驱动的通用节点质量无保障,
+**只在后端保留**(source-configs/source_builder 执行底座 + 新节点开发模板),前端目录不显现;
+新增源的正道 = 写代码固化质量有保障的 preset。
+
+- `BaseFetcher.is_template = False` 默认;五个 `generic_*` 置 True;
+  **陷阱**:Preset 子类继承 Generic 基类会连带继承标志——四个 Preset 中间层显式重置 False
+  (registry 断言恰为五个 generic);
+- registry 元数据透出 `is_template`;App.jsx 过滤由硬编码 `generic_web` 升级为标志驱动;
+- 实机:节点目录 28 → 23,「通用」零出现;库中无 generic 历史运行,名称解析无退化面;
+- pytest 316 全绿,lint/build 绿;CLAUDE.md 事实同步。

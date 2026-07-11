@@ -169,6 +169,7 @@ class FetcherRegistry:
                 "category": category,
                 "content_type": cls.content_type,
                 "active": True,
+                "is_template": getattr(cls, "is_template", False),
                 "parameters": cls.get_parameter_schema(),
                 "source_owner": getattr(cls, "source_owner", ""),
                 "source_brand": getattr(cls, "source_brand", ""),

@@ -246,9 +246,11 @@ export default function App() {
       const runtime = await fetchRuntimeInfo();
       setRuntimeInfo(runtime);
       if (runtime.collector_enabled) {
-        // 配置驱动通用抓取器（generic_web，中级目标）暂不开放前端入口：后端保留，目录里隐藏。
+        // 模板节点(is_template:generic_* 参数驱动通用抓取器)只在后端保留——
+        // 作 source-configs/source_builder 执行底座与新节点开发模板;目录一律不显现
+        // (新增源的正道 = 写代码固化质量有保障的 preset)。
         const fetchers = await fetchFetchers();
-        setAvailableFetchers(fetchers.filter(f => f.id !== 'generic_web'));
+        setAvailableFetchers(fetchers.filter(f => !f.is_template));
       } else {
         setAvailableFetchers([]);
       }
