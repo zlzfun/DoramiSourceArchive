@@ -256,3 +256,57 @@ def test_baseline_revision_is_migration_root():
     script = ScriptDirectory.from_config(make_alembic_config())
     bases = list(script.get_bases())
     assert bases == [BASELINE_REVISION], f"基线应为迁移链唯一根：{bases}"
+
+
+def test_per_fetcher_cron_retirement_splits_overrides(tmp_path):
+    """单节点 cron 退役迁移(d41acead77b0):带覆盖的任务按 distinct cron 拆成独立任务
+    (faithful 保调度),覆盖节点与其参数移交新任务、原任务保留其余;列随后 DROP。"""
+    import json as _json
+
+    from alembic import command as alembic_command
+    from sqlalchemy import text
+
+    db_url = f"sqlite:///{tmp_path / 'cronsplit.db'}"
+    cfg = make_alembic_config(db_url)
+    alembic_command.upgrade(cfg, "8f6d93196258")
+
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO collection_jobs (id,name,description,fetcher_ids_json,params_json,"
+                "per_fetcher_params_json,cron_expr,per_fetcher_cron_json,is_active,downstream_policy_json,"
+                "created_at,updated_at) "
+                "VALUES (1,'混排任务','说明','[\"a\",\"b\",\"c\",\"d\"]','{\"limit\": 5}',"
+                "'{\"a\": {\"limit\": 9}, \"c\": {\"limit\": 2}}','0 9 * * *',"
+                "'{\"a\": \"0 */4 * * *\", \"c\": \"0 */4 * * *\", \"d\": \"30 8 * * 1-5\"}',"
+                "1,'{}','2026-01-01','2026-01-01')"
+            ))
+    finally:
+        engine.dispose()
+
+    alembic_command.upgrade(cfg, "head")
+
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            cols = {row[1] for row in conn.execute(text("PRAGMA table_info(collection_jobs)"))}
+            assert "per_fetcher_cron_json" not in cols
+            rows = conn.execute(text(
+                "SELECT name, fetcher_ids_json, per_fetcher_params_json, cron_expr FROM collection_jobs ORDER BY id"
+            )).fetchall()
+        assert len(rows) == 3  # 原任务 + 两个 distinct cron 拆分任务
+        by_cron = {r[3]: r for r in rows}
+        # 原任务:剩余节点 b,保留整体 cron 与 b 无关的参数剔除
+        origin = by_cron["0 9 * * *"]
+        assert _json.loads(origin[1]) == ["b"] and _json.loads(origin[2]) == {}
+        # 拆分任务 1:a+c 同 cron 同组,参数随节点移交
+        split1 = by_cron["0 */4 * * *"]
+        assert _json.loads(split1[1]) == ["a", "c"]
+        assert _json.loads(split1[2]) == {"a": {"limit": 9}, "c": {"limit": 2}}
+        assert split1[0].startswith("混排任务 · 独立时刻")
+        # 拆分任务 2:d 单节点
+        split2 = by_cron["30 8 * * 1-5"]
+        assert _json.loads(split2[1]) == ["d"] and _json.loads(split2[2]) == {}
+    finally:
+        engine.dispose()

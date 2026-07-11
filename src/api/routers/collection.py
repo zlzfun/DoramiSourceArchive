@@ -74,7 +74,6 @@ def _next_fire_iso(cron_exprs: List[str]) -> Optional[str]:
 
 
 def serialize_collection_job(record: CollectionJobRecord) -> Dict[str, Any]:
-    per_fetcher_cron = _json_loads(record.per_fetcher_cron_json, {})
     return {
         "id": record.id,
         "name": record.name,
@@ -83,17 +82,12 @@ def serialize_collection_job(record: CollectionJobRecord) -> Dict[str, Any]:
         "params": _json_loads(record.params_json, {}),
         "per_fetcher_params": _json_loads(record.per_fetcher_params_json, {}),
         "cron_expr": record.cron_expr,
-        "per_fetcher_cron": per_fetcher_cron,
         "is_active": record.is_active,
         "downstream_policy": _json_loads(record.downstream_policy_json, {}),
         "legacy_task_id": record.legacy_task_id,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
-        "next_run_at": (
-            _next_fire_iso([record.cron_expr, *per_fetcher_cron.values()])
-            if record.is_active
-            else None
-        ),
+        "next_run_at": _next_fire_iso([record.cron_expr]) if record.is_active else None,
     }
 
 
@@ -128,7 +122,6 @@ class CollectionJobCreate(BaseModel):
     params: Dict[str, Any] = PydanticField(default_factory=dict)
     per_fetcher_params: Dict[str, Dict[str, Any]] = PydanticField(default_factory=dict)
     cron_expr: str = ""
-    per_fetcher_cron: Dict[str, str] = PydanticField(default_factory=dict)
     is_active: bool = True
     downstream_policy: Dict[str, Any] = PydanticField(default_factory=dict)
 
@@ -140,7 +133,6 @@ class CollectionJobUpdate(BaseModel):
     params: Optional[Dict[str, Any]] = None
     per_fetcher_params: Optional[Dict[str, Dict[str, Any]]] = None
     cron_expr: Optional[str] = None
-    per_fetcher_cron: Optional[Dict[str, str]] = None
     is_active: Optional[bool] = None
     downstream_policy: Optional[Dict[str, Any]] = None
 
@@ -171,7 +163,6 @@ def create_collection_job(data: CollectionJobCreate, session: Session = Depends(
         params_json=_json_dumps(data.params),
         per_fetcher_params_json=_json_dumps(data.per_fetcher_params),
         cron_expr=data.cron_expr.strip(),
-        per_fetcher_cron_json=_json_dumps(data.per_fetcher_cron),
         is_active=data.is_active,
         downstream_policy_json=_json_dumps(data.downstream_policy),
         created_at=now,
@@ -205,8 +196,6 @@ def update_collection_job(job_id: int, data: CollectionJobUpdate, session: Sessi
         record.per_fetcher_params_json = _json_dumps(update_data["per_fetcher_params"])
     if "cron_expr" in update_data:
         record.cron_expr = (update_data["cron_expr"] or "").strip()
-    if "per_fetcher_cron" in update_data:
-        record.per_fetcher_cron_json = _json_dumps(update_data["per_fetcher_cron"])
     if "is_active" in update_data:
         record.is_active = update_data["is_active"]
     if "downstream_policy" in update_data:

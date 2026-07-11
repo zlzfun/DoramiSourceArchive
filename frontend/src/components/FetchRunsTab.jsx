@@ -161,7 +161,6 @@ function blankJob() {
     params: {},
     per_fetcher_params: {},
     cron_expr: '',
-    per_fetcher_cron: {},
     is_active: true,
     downstream_policy: {},
   };
@@ -173,14 +172,6 @@ function defaultParamsFor(fetcher) {
   });
   return params;
 }
-function cleanStringMap(map) {
-  return Object.fromEntries(
-    Object.entries(map || {})
-      .map(([key, value]) => [key, String(value || '').trim()])
-      .filter(([, value]) => value)
-  );
-}
-
 // ── cron 粗解析(仅编辑器回显 + 距下次预览,不做校验) ──
 // 支持常见五段式:全 *、数字、*/N、逗号列表、a-b 范围(可带 /step)、星期数字/范围。
 // 任一字段不认识 → 诚实降级(不显示人话/距下次)。
@@ -373,11 +364,7 @@ export default function FetchRunsTab({
     ? formatCountdown(new Date(cronInfo.nextMs).toISOString(), nowMs)
     : null;
 
-  // 编排单计数:cron 覆盖数(非空单独时刻)+ 参数改动数(与 schema default 不同的字段)。
-  const cronOverrideCount = useMemo(
-    () => draftFetcherIds.filter(id => String((jobDraft.per_fetcher_cron || {})[id] || '').trim()).length,
-    [draftFetcherIds, jobDraft.per_fetcher_cron]
-  );
+  // 编排单计数:参数改动数(与 schema default 不同的字段)。
   const paramChangeCount = useMemo(() => {
     let n = 0;
     draftFetcherIds.forEach(id => {
@@ -544,7 +531,6 @@ export default function FetchRunsTab({
         name: job.name,
         nodeCount: (job.fetcher_ids || []).length,
         cron: job.cron_expr || '',
-        cronOverrides: Object.keys(job.per_fetcher_cron || {}).length,
         nextRunAt: job.next_run_at || null,
         isActive: job.is_active !== false,
         lastStatus: latestStatus(runs),
@@ -714,7 +700,6 @@ export default function FetchRunsTab({
       params: job.params || {},
       per_fetcher_params: job.per_fetcher_params || {},
       cron_expr: job.cron_expr || '',
-      per_fetcher_cron: job.per_fetcher_cron || {},
       is_active: job.is_active !== false,
       downstream_policy: job.downstream_policy || {},
     });
@@ -729,12 +714,6 @@ export default function FetchRunsTab({
         ...(prev.per_fetcher_params || {}),
         [fetcherId]: { ...((prev.per_fetcher_params || {})[fetcherId] || {}), [field]: value },
       },
-    }));
-  };
-  const updateDraftCron = (fetcherId, value) => {
-    setJobDraft(prev => ({
-      ...prev,
-      per_fetcher_cron: { ...(prev.per_fetcher_cron || {}), [fetcherId]: value },
     }));
   };
   const toggleDraftFetcher = (fetcher) => {
@@ -763,7 +742,6 @@ export default function FetchRunsTab({
       name,
       fetcher_ids: fetcherIds,
       cron_expr: jobDraft.cron_expr.trim(),
-      per_fetcher_cron: cleanStringMap(jobDraft.per_fetcher_cron),
     };
     await runAction(() => (editingJobId ? updateCollectionJob(editingJobId, payload) : createCollectionJob(payload)), {
       showToast,
@@ -1030,7 +1008,6 @@ export default function FetchRunsTab({
                 <span className="jobbar-name">{selectedJob.name}</span>
                 <span className="jobbar-meta">
                   {selectedJob.cron_expr || '手动触发'} · {(selectedJob.fetcher_ids || []).length} 节点
-                  {Object.keys(selectedJob.per_fetcher_cron || {}).length ? ` · ${Object.keys(selectedJob.per_fetcher_cron).length} 单节点 cron 覆盖` : ''}
                 </span>
                 <div className="jobbar-acts">
                   <button className="jobbar-btn" onClick={() => handleRunJob(selectedJob.id)}>立即运行</button>
@@ -1291,12 +1268,6 @@ export default function FetchRunsTab({
                 {cronInfo.nextMs != null
                   ? <span>= <b>{cronInfo.human}</b> 触发</span>
                   : <span><b>{cronInfo.human}</b></span>}
-                {cronOverrideCount > 0 && (
-                  <>
-                    <span>·</span>
-                    <span>{cronOverrideCount} 个节点另有单独时刻</span>
-                  </>
-                )}
                 {cronCountdown && <span className="je-echo-next">距下次 {cronCountdown}</span>}
               </div>
             </div>
@@ -1353,9 +1324,8 @@ export default function FetchRunsTab({
               <div className="je-roster-head">
                 <span className="je-roster-title">编排单</span>
                 <span className="je-roster-meta">
-                  {draftFetcherIds.length} 节点 · {cronOverrideCount} 个 cron 覆盖 · {paramChangeCount} 项参数改动
+                  {draftFetcherIds.length} 节点 · {paramChangeCount} 项参数改动
                 </span>
-                <span className="je-roster-hint">留空的时刻随整体 cron</span>
               </div>
               {draftFetcherIds.length === 0 ? (
                 <div className="je-roster-empty">编排单还是空的<br />从左侧目录勾选节点即可加入班次</div>
@@ -1363,7 +1333,6 @@ export default function FetchRunsTab({
                 <div className="je-roster-list">
                   {draftFetcherIds.map(fetcherId => {
                     const fetcher = fetchersById[fetcherId];
-                    const nodeCron = (jobDraft.per_fetcher_cron || {})[fetcherId] || '';
                     const params = (jobDraft.per_fetcher_params || {})[fetcherId] || {};
                     return (
                       <div key={fetcherId} className="je-ros-row">
@@ -1371,7 +1340,6 @@ export default function FetchRunsTab({
                           <LogoMark company={companyForId(fetcherId)} size="xs" />
                           <span className="je-ros-name">{fetcher?.name || fetcherId}</span>
                           <span className="je-ros-sid">{fetcherId}</span>
-                          {nodeCron.trim() && <span className="je-cron-mark">单独时刻</span>}
                           <button
                             type="button"
                             className="je-ros-remove"
@@ -1382,16 +1350,6 @@ export default function FetchRunsTab({
                           </button>
                         </div>
                         <div className="je-ros-fields">
-                          <div className="je-ros-field">
-                            <span className="je-field-lbl">该节点 cron</span>
-                            <input
-                              value={nodeCron}
-                              onChange={event => updateDraftCron(fetcherId, event.target.value)}
-                              placeholder={jobDraft.cron_expr.trim() ? `随整体 ${jobDraft.cron_expr.trim()}` : '留空则不单独调度'}
-                              className="form-input font-mono py-1.5 text-xs"
-                              style={{ width: 150 }}
-                            />
-                          </div>
                           {(fetcher?.parameters || []).map(param => {
                             if (param.type === 'boolean') {
                               const raw = params[param.field] ?? param.default ?? '';

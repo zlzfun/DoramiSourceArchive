@@ -469,3 +469,19 @@ pendingJobDraft 预填)原样保留;Modal 外壳沿用。
 - **存量文章不自动回填全文**(已按 8000 截断入库者需重抓才变全文,另行决定);
 - 编排单每节点行由 3-4 字段收敛为「cron + 单次获取上限」两字段(实机验证);
   pytest 316 全绿。
+
+
+## 十四、单节点 cron 退场波(一任务一 cron,2026-07-11,主线自做)
+
+用户拍板:任务 = 一组节点 + **一个时刻**;想要不同节奏 = 建新任务(节点可属多任务,表达力零损失)。
+
+- 全链路退场:`per_fetcher_cron_json` 列(Alembic `d41acead77b0`)、调度器 per-node 注册分支与
+  `execute_collection_job_node`、序列化/API 模型字段、`next_run_at` 回归单 cron、
+  前端编辑器「该节点 cron」字段/「单独时刻」章/覆盖计数/jobbar meta;
+- 迁移带**防御性拆分**(faithful):带覆盖的存量任务按 distinct cron 拆为「{原名} · 独立时刻N」
+  新任务(覆盖节点与其参数随迁),原任务保留其余节点;基线采用路径(当前 metadata 建表,列本不存在)
+  有列存在性守卫直接跳过——tests/test_migrations 新增拆分语义专项;
+- 开发库随本次 upgrade 首次走完 Alembic 链:8f6d(实体简化)把遗留 node_groups/fetch_tasks
+  转换出 3 个新任务(全量抓取/Anthropic/crawl4ai迁移节点),属历史迁移正当行为;
+- 编排单最终形态:每节点行 = 身份 + schema 参数(多数只剩「单次获取上限」);
+  pytest 316 全绿(含新专项),lint/build 绿。

@@ -3992,9 +3992,7 @@ input[type="radio"] {
   .je-ros-field .form-input { min-height: 28px; font-size: 11.5px; }
   .je-ros-check { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px;
     font-weight: 600; color: var(--dorami-ink-2); padding-bottom: 5px; }
-  /* cron 覆盖生效章:wash = 状态标记 */
-  .je-cron-mark { font-size: 10px; font-weight: 700; padding: 1.5px 7px; border-radius: var(--r-pill);
-    background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+  /* (je-cron-mark 已随单节点 cron 退役删除) */
   .je-roster-empty { flex: 1; display: grid; place-items: center; padding: 40px;
     color: var(--dorami-faint); font-size: 12.5px; font-weight: 600; text-align: center; line-height: 1.8; }
 

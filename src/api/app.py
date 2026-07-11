@@ -981,26 +981,6 @@ async def execute_collection_job(job_id: int):
     )
 
 
-async def execute_collection_job_node(job_id: int, fetcher_id: str):
-    with Session(db_sink.engine) as session:
-        job = session.get(CollectionJobRecord, job_id)
-        if not job or not job.is_active:
-            print(f"⚠️ 采集任务不可用或已停用: {job_id}")
-            return
-        items = [item for item in build_collection_job_items(job) if item["fetcher_id"] == fetcher_id]
-        job_name = job.name
-    if not items:
-        print(f"⚠️ 采集任务节点不可用: {job_id}/{fetcher_id}")
-        return
-    await run_collection_items(
-        items,
-        name=f"{job_name} / {fetcher_id}",
-        trigger_type="scheduled",
-        job_id=job_id,
-        run_scope="saved_job",
-    )
-
-
 def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]):
     parts = cron_expr.split()
     if len(parts) != 5:
@@ -1017,16 +997,9 @@ def load_tasks_to_scheduler():
             .where(CollectionJobRecord.is_active == True)
         ).all()
         for job in jobs:
+            # 单节点 cron 覆盖已退役:一任务一 cron(想要不同节奏 = 建新任务)
             if job.cron_expr:
                 add_cron_job(f"collection_job_{job.id}", execute_collection_job, job.cron_expr, [job.id])
-            for fetcher_id, cron_expr in _json_loads(job.per_fetcher_cron_json, {}).items():
-                if cron_expr:
-                    add_cron_job(
-                        f"collection_job_{job.id}_{fetcher_id}",
-                        execute_collection_job_node,
-                        cron_expr,
-                        [job.id, fetcher_id],
-                    )
         # 每日 AI 资讯日报（独立于采集任务，默认排在全量采集之后）
         if daily_brief_service.daily_brief_enabled(session):
             add_cron_job(

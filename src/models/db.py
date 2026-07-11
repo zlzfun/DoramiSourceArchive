@@ -60,7 +60,7 @@ class CollectionJobRecord(SQLModel, table=True):
     params_json: str = Field(default="{}", description="任务默认参数 JSON")
     per_fetcher_params_json: str = Field(default="{}", description="按节点覆盖的参数 JSON")
     cron_expr: str = Field(default="", description="可选 Cron 表达式")
-    per_fetcher_cron_json: str = Field(default="{}", description="按节点覆盖的 Cron 表达式 JSON")
+    # (单节点 cron 覆盖已退役:一任务一 cron,想要不同节奏建新任务——2026-07 拆分迁移 faithful 保留)
     is_active: bool = Field(default=True, index=True, description="是否启用")
     downstream_policy_json: str = Field(default="{}", description="下游交付策略 JSON")
     legacy_task_id: Optional[int] = Field(default=None, index=True, description="迁移自旧 fetch_tasks 的任务 ID")
