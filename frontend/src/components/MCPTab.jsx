@@ -63,7 +63,7 @@ function CopyBtn({ text, label, copiedKey, itemKey, onCopy, title }) {
   );
 }
 
-export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled = false, isAdmin = false }) {
+export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled = false, isAdmin = false, onOpenModelConfig }) {
   const canManage = collectorEnabled && isAdmin;   // 管理员才见「AI 资讯日报」区与只读模型 chip
 
   const [status, setStatus] = useState(null);
@@ -174,21 +174,36 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
         <h1 className="page-title">接入集成</h1>
         {canManage && (
           <div className="page-head-actions">
-            <span className="model-chip" title="日报与阅读器 AI 共用的大模型，在「运维管理」统一配置">
+            <button
+              type="button"
+              className="model-chip"
+              title="前往运维管理配置模型"
+              onClick={() => onOpenModelConfig?.()}
+            >
               <i className={llmOk ? '' : 'is-off'} />模型 <b>{llmOk ? (llmStatus.model || '已配置') : '未配置'}</b>
-            </span>
+            </button>
           </div>
         )}
       </header>
 
-      {/* ════ 区 1：交付通道（全角色） ════ */}
-      <div className="zone-head zone-head-first">
+      {/* ════ 区 1：AI 资讯日报（仅管理员，置顶） ════ */}
+      {canManage && (
+        <>
+          <div className="zone-head zone-head-first">
+            <span className="zone-title">AI 资讯日报</span>
+          </div>
+          <DailyBriefPanel showToast={showToast} collectorEnabled={collectorEnabled} isAdmin={isAdmin} />
+        </>
+      )}
+
+      {/* ════ 区 2：交付通道（全角色） ════ */}
+      <div className={`zone-head ${canManage ? '' : 'zone-head-first'}`}>
         <span className="zone-title">交付通道</span>
         <span className="zone-hint">把内容接进你的 Agent、RSS 阅读器或工作流</span>
       </div>
 
       <div className="channels">
-        {/* MCP 大卡 */}
+        {/* MCP 大卡：独占整行 */}
         <section className="surface-card card-pad">
           <div className="card-head">
             <span className="card-title">MCP 服务</span>
@@ -271,14 +286,14 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
           <details className="scope-note">
             <summary>启停与取数范围</summary>
             <p>
-              MCP 服务随后端进程启停，无需单独部署，启停由管理员统一控制。管理员会话检索全库；携带 dfeed_ / dsub_ 令牌的调用硬限定到该令牌的订阅范围（仅 <code className="font-mono">list_sources</code> 例外，可直接列目录）。RAG 关闭时，两个语义工具返回结构化的「RAG disabled」而非报错。
+              MCP 服务随后端进程启停，无需单独部署，启停由管理员统一控制。管理员会话检索全库；携带 dfeed_ / dsub_ 令牌的调用硬限定到该令牌的订阅范围（仅 <code className="font-mono">list_sources</code> 例外，可直接列目录）。管理员的 dfeed_ 令牌不受此限，检索全库。RAG 关闭时，两个语义工具返回结构化的「RAG disabled」而非报错。
             </p>
           </details>
         </section>
 
-        {/* 右列：个人聚合接口 + Claude 技能包 */}
-        <div className="channels-side">
-          <FeedAccessSection showToast={showToast} />
+        {/* 次行：个人聚合接口 + Claude 技能包 并排等高 */}
+        <div className="channels-pair">
+          <FeedAccessSection showToast={showToast} isAdmin={isAdmin} />
 
           <section className="surface-card card-pad">
             <div className="card-head">
@@ -297,18 +312,6 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
           </section>
         </div>
       </div>
-
-      {/* ════ 区 2：AI 资讯日报（仅管理员） ════ */}
-      {canManage && (
-        <>
-          <div className="zone-head">
-            <span className="zone-title">AI 资讯日报</span>
-            <span className="zone-badge">仅管理员</span>
-            <span className="zone-hint">LLM 每日汇编归档精选；读者经阅读器订阅哆啦美·AI资讯日报即可看到</span>
-          </div>
-          <DailyBriefPanel showToast={showToast} collectorEnabled={collectorEnabled} isAdmin={isAdmin} />
-        </>
-      )}
     </div>
   );
 }

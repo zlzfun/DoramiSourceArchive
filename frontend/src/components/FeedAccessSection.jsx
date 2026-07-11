@@ -28,7 +28,7 @@ const FEED_PARAMS = [
  * 适合 RSS 工具与脚本。令牌 get/rotate 逻辑内聚于此（原 AccessTokenCard 的 hero 已退役）。
  * MCP 工具调用与这里的 HTTP 拉取共用同一枚令牌。
  */
-export default function FeedAccessSection({ showToast }) {
+export default function FeedAccessSection({ showToast, isAdmin = false }) {
   const [feedToken, setFeedToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [plainToken, setPlainToken] = useState('');   // 明文仅本次生成后可见
@@ -97,7 +97,9 @@ export default function FeedAccessSection({ showToast }) {
         <span className="card-title">个人聚合接口</span>
         <span className={`stamp ${exists ? 'stamp-ok' : 'stamp-idle'}`}>{exists ? '已签发' : '未签发'}</span>
       </div>
-      <p className="card-desc">一个令牌拉走你订阅的全部来源，适合 RSS 工具与脚本；MCP 工具调用也共用它。</p>
+      <p className="card-desc">{isAdmin
+        ? '管理员令牌不受订阅限制，一个令牌拉走全库内容，适合 RSS 工具与脚本；MCP 工具调用也共用它。'
+        : '一个令牌拉走你订阅的全部来源，适合 RSS 工具与脚本；MCP 工具调用也共用它。'}</p>
 
       <div className="token-row">
         <span className="token-val" title={revealed && plainToken ? plainToken : undefined}>{displayVal}</span>
@@ -138,7 +140,7 @@ export default function FeedAccessSection({ showToast }) {
           {copiedKey === 'feed-curl' ? <Check /> : <Copy />}
         </button>
       </div>
-      <p className="tiny-meta mt-2">把 <code className="font-mono">$DORAMI_TOKEN</code> 换成上方 dfeed_ 令牌；只返回你已订阅来源的内容。</p>
+      <p className="tiny-meta mt-2">把 <code className="font-mono">$DORAMI_TOKEN</code> 换成上方 dfeed_ 令牌；{isAdmin ? '管理员令牌不限订阅，返回全库内容。' : '只返回你已订阅来源的内容。'}</p>
 
       <details className="scope-note">
         <summary>接口参数</summary>

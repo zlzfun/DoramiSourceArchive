@@ -830,6 +830,37 @@ def test_feed_token_per_user_isolated(monkeypatch, tmp_path):
         assert {item["id"] for item in data["items"]} == {"a1"}
 
 
+def test_personal_feed_admin_token_covers_whole_archive(monkeypatch, tmp_path):
+    """管理员不设订阅，其 dfeed_ 令牌直通全库；显式 source_ids 原样生效。"""
+    import api.app as app_module
+    from api.feed_service import resolve_subscription_sources_by_token
+
+    sink = _make_sink(tmp_path, "feedadmin.db")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    _set_auth_accounts(monkeypatch, app_module)
+    _set_runtime_role(monkeypatch, app_module, "reader")
+    _seed_article_dated(sink.engine, "o1", "rss_openai", "OpenAI", "2026-05-25T00:00:00")
+    _seed_article_dated(sink.engine, "x1", "rss_other", "Other", "2026-05-24T00:00:00")
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        token = client.post("/api/reader/feed-token/rotate").json()["token"]
+
+        # 零订阅仍拉到全库（读者账号此场景返回空）
+        data = client.get("/api/public/feed/articles", headers={"Authorization": f"Bearer {token}"}).json()
+        assert {item["id"] for item in data["items"]} == {"o1", "x1"}
+
+        # 显式 source_ids 不做订阅交集，原样生效
+        scoped = client.get(
+            "/api/public/feed/articles?source_ids=rss_other",
+            headers={"Authorization": f"Bearer {token}"},
+        ).json()
+        assert {item["id"] for item in scoped["items"]} == {"x1"}
+
+        # MCP 作用域解析：管理员令牌 → []（调用方契约中的「未限定来源」）
+        assert resolve_subscription_sources_by_token(token) == []
+
+
 def test_vectorize_endpoints_blocked_for_reader_user(monkeypatch, tmp_path):
     import api.app as app_module
 

@@ -542,14 +542,14 @@ export default function App() {
       <main className="ml-[var(--rail-w)] px-5 pt-[22px] pb-9 sm:px-7">
         <div className="page-shell">
           {readerOnly && mountedTabs.has('reader') && (
-            <div className="tab-panel" style={{ display: activeTab === 'reader' ? 'block' : 'none' }}>
+            <div className={`tab-panel${activeTab === 'reader' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <ReaderTab showToast={showToast} aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured} />
               </Suspense>
             </div>
           )}
           {!readerOnly && mountedTabs.has('data') && (
-            <div className="tab-panel" style={{ display: activeTab === 'data' ? 'block' : 'none' }}>
+            <div className={`tab-panel${activeTab === 'data' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <DataTab
                   availableFetchers={availableFetchers}
@@ -568,7 +568,7 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('fetch') && runtimeInfo.collector_enabled && (
-            <div className="tab-panel" style={{ display: activeTab === 'fetch' ? 'block' : 'none' }}>
+            <div className={`tab-panel${activeTab === 'fetch' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <FetchTab
                   availableFetchers={availableFetchers}
@@ -588,7 +588,7 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('runs') && runtimeInfo.collector_enabled && (
-            <div className="tab-panel" style={{ display: activeTab === 'runs' ? 'block' : 'none' }}>
+            <div className={`tab-panel${activeTab === 'runs' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <FetchRunsTab
                   availableFetchers={availableFetchers}
@@ -607,23 +607,33 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('vector') && runtimeInfo.reader_enabled && (
-            <div className="tab-panel" style={{ display: activeTab === 'vector' ? 'block' : 'none' }}>
+            <div className={`tab-panel${activeTab === 'vector' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <VectorTab availableFetchers={availableFetchers} showToast={showToast} accountRole={runtimeInfo.account_role} />
               </Suspense>
             </div>
           )}
           {mountedTabs.has('mcp') && runtimeInfo.reader_enabled && (
-            <div className="tab-panel" style={{ display: activeTab === 'mcp' ? 'block' : 'none' }}>
+            <div className={`tab-panel${activeTab === 'mcp' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
-                <MCPTab showToast={showToast} ragEnabled={runtimeInfo.rag_enabled} collectorEnabled={runtimeInfo.collector_enabled} isAdmin={runtimeInfo.account_role === 'admin'} />
+                <MCPTab
+                  showToast={showToast}
+                  ragEnabled={runtimeInfo.rag_enabled}
+                  collectorEnabled={runtimeInfo.collector_enabled}
+                  isAdmin={runtimeInfo.account_role === 'admin'}
+                  onOpenModelConfig={() => jumpWithFocus('admin', null, { tab: 'admin', payload: { sub: 'ai' } })}
+                />
               </Suspense>
             </div>
           )}
           {mountedTabs.has('admin') && runtimeInfo.account_role === 'admin' && (
-            <div className="tab-panel" style={{ display: activeTab === 'admin' ? 'block' : 'none' }}>
+            <div className={`tab-panel${activeTab === 'admin' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
-                <AdminOpsTab showToast={showToast} />
+                <AdminOpsTab
+                  showToast={showToast}
+                  pendingFocus={pendingFocus?.tab === 'admin' ? pendingFocus.payload : null}
+                  onPendingFocusApplied={clearPendingFocus}
+                />
               </Suspense>
             </div>
           )}

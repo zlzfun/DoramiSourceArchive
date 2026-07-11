@@ -572,3 +572,38 @@ pendingJobDraft 预填)原样保留;Modal 外壳沿用。
 验收(probe_runs7,用户 vite 5173 实机):两页 .signal-autorefresh 均 0;strip-tools mini-seg
 仅 1 组;选中任务行 tt-acts 五钮齐、is-sel 竖条在包裹层、jobbar 零残留;表脚过滤文案 + ✕
 清除联动;adhoc 行无动作区;零 pageerror。
+
+## 十九、集成页目检波(八项,2026-07-12,主线+Opus 代理协作)
+
+用户目检集成页八项,主线做根因诊断+后端+全局项,布局重排委派 Opus 代理:
+
+- **① 流式页偶现锁滚(根因级修复,主线)**:`html:has(.ledger-shell,…){overflow:hidden}`
+  的根滚动封死规则被**隐藏面板**误触发——App 的 tab 面板挂载后以内联 display:none 隐藏,
+  而 `:has()` 不看 display,访问过任一壳页后根滚动就永久封死,流式页(集成页)随之锁滚。
+  修复:面板隐藏改 class(`.tab-panel.is-off`),封死规则限定
+  `html:has(.tab-panel:not(.is-off) :is(.ledger-shell,.nodes-shell,.reader-shell,.runs-shell))`
+  ——只在壳页**可见**时锁根;.runs-shell 一并入列(此前靠台账常驻挂载偶然生效)。
+  **陷阱档案::has() 命中不看 display,任何「挂着但藏起」的 DOM 都可能误触发状态类选择器;
+  面板显隐一律走 class,让 :not() 可以参与判定。**
+- **②③ 区顺序与三卡对齐(代理)**:「AI 资讯日报」区移页首(管理员;读者仍交付通道居首);
+  交付通道改行式——MCP 卡独占全宽,个人聚合接口+Claude 技能包 `.channels-pair`
+  两列等高(stretch),.channels-side 纵排退役,三卡边缘全部成线。
+- **④ 日报卡消空白(代理)**:brief-card 三列(260/1.2fr/1fr)改两列(280px | 1fr)——
+  「手动生成」列并入「近期日报」列头(紧凑主钮,不再 w-full),pipeline/失败提示/取材口径
+  依序其下,历史列表填满右列。
+- **⑤ 管理员令牌全库直通(主线,后端+契约)**:管理员不设订阅(订阅是读者面概念),
+  `feed_articles_for_owner` 对 admin 不再按订阅收窄(显式 source_ids 原样生效),
+  `resolve_subscription_sources_by_token` 对 admin 令牌显式返回 [](MCP 契约「未限定来源」,
+  原先靠 admin 恰好零订阅偶然成立);测试 `test_personal_feed_admin_token_covers_whole_archive`;
+  reader_subscription.md 增补 Admin exception 段。前端文案按 isAdmin 分流(代理)。
+- **⑥ 模型 chip 跳转(主线 App 接线+代理组件)**:chip 改 button,onOpenModelConfig →
+  jumpWithFocus('admin', …, {sub:'ai'});AdminOpsTab 接入 pendingFocus 单通道消费 {sub}。
+- **⑦ 输入框全局收紧(主线)**:.form-input 14px/10px 内距 → 13px/7px(总高 ~42→36px),
+  与 .mini-seg/.action-button 密度刻度对齐;编辑器/设置面板抽检 36px 无破版。
+- **⑧ 日报区头去引导(代理)**:「仅管理员」zone-badge 与 zone-hint 引导句删除,
+  .zone-badge 死类清扫。
+
+验收:管理员/读者双视角探针全过(区顺序、pair 两卡底部像素相等、chip 跳转落 AI 子页、
+台账挂载后集成页 scrollY=400 可滚、三壳页激活时根 overflow=hidden 不回退)、
+pytest 315 过(5 失败为 HEAD 基线同现的事件循环环境旧疾,非回归)、lint/build 绿。
+代理红线自查通过(无功能减项)。

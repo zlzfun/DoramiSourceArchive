@@ -51,9 +51,16 @@ function Kpi({ num, label, sub, tone }) {
   );
 }
 
-export default function AdminOpsTab({ showToast }) {
+export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingFocusApplied }) {
   const confirm = useConfirm();
   const [sub, setSub] = useState('user'); // 子页：user | content | ai
+
+  // 跨页聚焦(pendingFocus 单通道):目前只解释 { sub } —— 集成页模型 chip 跳到 AI 子页。
+  useEffect(() => {
+    if (!pendingFocus) return;
+    if (pendingFocus.sub) setSub(pendingFocus.sub);
+    onPendingFocusApplied?.();
+  }, [pendingFocus, onPendingFocusApplied]);
   const [accounts, setAccounts] = useState(null);
   const [globalAi, setGlobalAi] = useState(null);
   const [busy, setBusy] = useState(false);

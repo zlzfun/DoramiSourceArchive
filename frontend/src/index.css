@@ -160,9 +160,14 @@
   --motion-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-/* 全屏壳页(台账/节点/阅读器):根滚动封死——页面本身永不滚,滚动只发生在壳内区域,
-   同时杜绝浏览器缩放下 vh 取整产生的 1-2px 假滚动空间。 */
-html:has(.ledger-shell, .nodes-shell, .reader-shell) {
+/* Tab 面板的隐藏改用 class(原内联 display:none)::has() 不看 display,
+   壳页挂载后即使隐藏也会命中下方根滚动封死规则,把流式页(集成等)的滚动一并锁死。 */
+.tab-panel.is-off { display: none; }
+
+/* 全屏壳页(台账/节点/运行/阅读器)**可见**时:根滚动封死——页面本身永不滚,
+   滚动只发生在壳内区域,同时杜绝浏览器缩放下 vh 取整产生的 1-2px 假滚动空间。
+   限定 .tab-panel:not(.is-off):后台挂着的壳页不再波及当前流式页。 */
+html:has(.tab-panel:not(.is-off) :is(.ledger-shell, .nodes-shell, .reader-shell, .runs-shell)) {
   overflow: hidden;
   /* 根滚动已封死,滚动条槽位也一并取消——否则 stable 预留的 gutter 会污染
      壳层 100vw 定位数学(壳页与流式页的页头 x 坐标差 5px 的元凶) */
@@ -3741,25 +3746,23 @@ input[type="radio"] {
   .model-chip i { width: 7px; height: 7px; flex: none; border-radius: var(--r-pill); background: var(--state-ok); }
   .model-chip i.is-off { background: var(--state-warn); }
   .model-chip b { font-family: var(--mono); font-weight: 600; color: var(--dorami-ink-2); }
+  .model-chip:hover { background: var(--dorami-raised); color: var(--dorami-ink-2); }
 
   /* 区标题(纯文字层级,短竖条已退役) */
   .zone-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin: 26px 2px 12px; }
   .zone-head.zone-head-first { margin-top: 0; }
   .zone-title { font-size: 14px; font-weight: 700; color: var(--dorami-ink); }
   .zone-hint { font-size: 12px; font-weight: 500; color: var(--dorami-faint); }
-  .zone-badge {
-    font-size: 10.5px; font-weight: 700; padding: 1.5px 8px; border-radius: var(--r-pill);
-    background: var(--dorami-well); color: var(--dorami-muted);
-  }
+  /* (.zone-badge 已随「仅管理员」章退役删除) */
 
   /* 卡片排版(叠在 .surface-card 之上) */
   .card-pad { padding: 18px 20px; }
   .card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-bottom: 4px; }
   .card-desc { font-size: 12px; font-weight: 500; color: var(--dorami-muted); margin-top: 2px; }
 
-  /* 通道区布局:MCP 大卡(左)+ Feed/技能包纵排(右) */
-  .channels { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; align-items: start; }
-  .channels-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  /* 通道区布局:MCP 大卡独占整行,其下 Feed/技能包并排等高 */
+  .channels { display: flex; flex-direction: column; gap: 16px; }
+  .channels-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; min-width: 0; }
 
   /* 端点行:mono + copy(well 底被动容器) */
   .endpoint {
@@ -3852,11 +3855,14 @@ input[type="radio"] {
   .integ-collapse-btn:hover { color: var(--dorami-ink); }
   .integ-collapse-btn svg { width: 14px; height: 14px; flex: none; }
 
-  /* ── 日报工坊:一张宽卡,三段 hairline 分区 ── */
-  .brief-card { display: grid; grid-template-columns: 260px 1.2fr 1fr; }
+  /* ── 日报工坊:一张宽卡,两段 hairline 分区(定时配置 | 近期日报+生成) ── */
+  .brief-card { display: grid; grid-template-columns: 280px 1fr; }
   .brief-col { padding: 18px 20px; min-width: 0; }
   .brief-col + .brief-col { border-left: 1px solid var(--dorami-border); }
   .brief-col-title { font-size: 12px; font-weight: 700; color: var(--dorami-ink-2); margin-bottom: 12px; }
+  /* 近期日报列头:标题 + 右侧紧凑生成钮同排 */
+  .brief-col-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+  .brief-col-head .brief-col-title { margin-bottom: 0; }
 
   .brief-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
   .brief-field .form-label { margin-bottom: 0; }
@@ -3915,7 +3921,7 @@ input[type="radio"] {
 
   @media (max-width: 1023px) {
     .integ-page { max-width: none; }
-    .channels, .brief-card { grid-template-columns: 1fr; }
+    .channels-pair, .brief-card { grid-template-columns: 1fr; }
     .brief-col + .brief-col { border-left: none; border-top: 1px solid var(--dorami-border); }
   }
 
@@ -4366,11 +4372,13 @@ input[type="radio"] {
     border-radius: var(--r-control);
     background: rgba(255, 255, 255, 0.72);
     color: var(--dorami-ink);
-    font-size: 14px;
+    /* 集成页目检 #7:输入框全局收紧(14px/10px 内距 → 13px/7px,总高 ~42px → ~36px),
+       与 .mini-seg/.action-button 的密度刻度对齐 */
+    font-size: 13px;
     font-weight: 600;
     line-height: 20px;
     outline: none;
-    padding: 10px 12px;
+    padding: 7px 10px;
     transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
   }
 

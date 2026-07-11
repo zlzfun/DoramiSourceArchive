@@ -204,17 +204,19 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
         </div>
       </div>
 
-      {/* ── 手动生成 ── */}
+      {/* ── 近期日报（含手动生成入口） ── */}
       <div className="brief-col">
-        <div className="brief-col-title">手动生成</div>
-        <button onClick={handleGenerate} disabled={generating} className="action-button action-button-primary w-full">
-          {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-          {generating ? '生成中…' : '立即生成日报'}
-        </button>
+        <div className="brief-col-head">
+          <div className="brief-col-title">近期日报</div>
+          <button onClick={handleGenerate} disabled={generating} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
+            {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+            {generating ? '生成中…' : '立即生成日报'}
+          </button>
+        </div>
 
         {generating && (
           <>
-            <div className="ledger-pipeline mt-3.5" aria-label="生成阶段">
+            <div className="ledger-pipeline" aria-label="生成阶段">
               {PIPE_SEGMENTS.map((label, i) => {
                 let cls = 'ledger-pipeline-step';
                 if (i < activeIndex) cls += ' is-done';
@@ -234,11 +236,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
           <summary>取材与去重口径</summary>
           <p>候选取自上次成功生成之后新入库的文章（游标不回退）；同日同事件聚类合并，近几日正文注入 reduce 阶段做跨日语义去重。生成在后台任务中执行，可离开本页。</p>
         </details>
-      </div>
 
-      {/* ── 近期日报 ── */}
-      <div className="brief-col">
-        <div className="brief-col-title">近期日报</div>
         {history.length === 0 ? (
           <p className="brief-empty">还没有生成过日报。配置好模型后点「立即生成日报」试试。</p>
         ) : (
