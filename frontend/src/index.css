@@ -3912,9 +3912,10 @@ input[type="radio"] {
      输入 .form-input、开关 .ledger-switch、按钮 .action-button* 复用。
      刻度 1:1 取自 docs/design/dorami-job-roster-quiet.html。 ── */
 
-  /* 高度与 .modal-panel 的 max-height(calc(100vh - 120px))同步,否则脚部被裁出可视区 */
+  /* 编辑器模态垂直居中(centered + py-6 对称余量),高度按 100vh - 48px 上限,
+     不与默认 overlay 的 96px 顶距挂钩;否则脚部被裁出可视区 */
   .jr-sheet { display: flex; flex-direction: column;
-    max-height: min(calc(100vh - 120px), 800px); }
+    max-height: min(calc(100vh - 48px), 800px); }
 
   .jr-head { flex: none; padding: 16px 20px 14px; background: var(--dorami-soft);
     border-bottom: 1px solid var(--dorami-border); }

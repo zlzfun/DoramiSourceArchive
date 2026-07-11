@@ -1232,6 +1232,8 @@ export default function FetchRunsTab({
         open={jobModalOpen}
         onClose={() => setJobModalOpen(false)}
         size="2xl"
+        centered
+        overlayClassName="py-6"
         ariaLabel={editingJobId ? '编辑采集任务' : '新建采集任务'}
       >
         <div className="jr-sheet">
