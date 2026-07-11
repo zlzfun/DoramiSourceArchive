@@ -3571,7 +3571,8 @@ input[type="radio"] {
   .jobbar-x svg { width: 13px; height: 13px; }
 
   /* ── 流水表 ── */
-  .flow-scroll { flex: 1; min-height: 0; overflow: auto; }
+  /* scrollbar-gutter:滚动条有无(随筛选行数变化)不再改变容器可用宽度(目检 #1 根因) */
+  .flow-scroll { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
   /* fixed 布局:列宽只由表头定宽决定,不随行集内容变化——修「筛选切换列头漂移」
      与「标题与内容偶发错位」(auto 布局下数字宽度差引起) */
   .flow-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
@@ -3639,17 +3640,19 @@ input[type="radio"] {
   .run-trigger.is-sched { color: var(--dorami-faint); }
 
   /* 产出三列:右对齐 mono,新增是主读数(ink/700),其余 muted;零 = – */
-  .run-n { text-align: right; font-family: var(--mono); font-size: 12px;
+  /* span 是行内元素,text-align 无效——块化后右对齐才真正生效(目检 #4 根因) */
+  .run-n { display: block; text-align: right; font-family: var(--mono); font-size: 12px;
     font-variant-numeric: tabular-nums; color: var(--dorami-muted); white-space: nowrap; }
   .run-n.is-main { font-weight: 700; color: var(--dorami-ink); }
   .run-n.is-zero { color: var(--dorami-faint); opacity: 0.6; }
-  .run-dur { text-align: right; font-family: var(--mono); font-size: 11px;
+  .run-dur { display: block; text-align: right; font-family: var(--mono); font-size: 11px;
     font-variant-numeric: tabular-nums; color: var(--dorami-faint); white-space: nowrap; }
 
   /* 操作并入耗时列(独立操作列退役,右缘不再空旷):hover 行时耗时让位、动作浮现;
      无动作的行 hover 耗时保持可见 */
   .run-durcell { position: relative; }
   .run-durcell .rowacts { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); }
+  /* 26px 图标盒内图标居中:盒右缘 10px 时图标视觉右缘 ≈ 文字右缘(16px) */
   .run-row:hover .run-dur.has-acts { opacity: 0; }
 
   /* 行末操作(台账 rowacts 范式):hover 浮现;临时运行=存为采集任务,失败行=重跑 */
@@ -4102,7 +4105,7 @@ input[type="radio"] {
     max-width: 1240px;
     font-size: 13px;
   }
-  .admin-page .win-label { font-size: 11px; font-weight: 600; color: var(--dorami-faint); margin-right: 2px; }
+  .win-label { font-size: 11px; font-weight: 600; color: var(--dorami-faint); margin-right: 2px; }
 
   /* zone 头右侧对齐(与 .zone-head 配套;可叠 .mini-seg 或 flex 工具类承载多控件) */
   .zone-acts { margin-left: auto; }

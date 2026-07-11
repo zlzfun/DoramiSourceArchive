@@ -306,7 +306,8 @@ export default function FetchRunsTab({
   const [collectionJobs, setCollectionJobs] = useState([]);
   const [collectionRuns, setCollectionRuns] = useState([]);
   const [fetchRuns, setFetchRuns] = useState([]);
-  const [daily, setDaily] = useState(null); // GET /api/stats/daily(近 30 天精确聚合;null=回退窗口口径)
+  const [daily, setDaily] = useState(null); // GET /api/stats/daily(精确聚合;null=回退窗口口径)
+  const [windowDays, setWindowDays] = useState(30); // 时间窗(近 N 天,总账条+流水行集统一口径)
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
 
@@ -407,7 +408,7 @@ export default function FetchRunsTab({
         fetchCollectionJobs(),
         fetchCollectionJobRuns({}, 100),
         fetchFetchRuns({ fetcher_id: serverFetcherId }, 200),
-        fetchDailyStats(30).catch(() => null),
+        fetchDailyStats(windowDays).catch(() => null),
       ]);
       if (reqId !== loadRequestRef.current) return;
       setCollectionJobs(jobs);
@@ -422,7 +423,7 @@ export default function FetchRunsTab({
     } finally {
       if (reqId === loadRequestRef.current) setLoading(false);
     }
-  }, [serverFetcherId, showToast]);
+  }, [serverFetcherId, windowDays, showToast]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -577,12 +578,12 @@ export default function FetchRunsTab({
   }, [collectionJobs, runsByJobId, adhocRuns, daily]);
 
   // 统一运行流水:任务级 + 无 job_run_id 的节点级,按 started_at 降序。
-  // 口径统一(目检 #5):行集与总账条同为「近 30 天」——否则统计(stats 精确)与
-  // 列表(加载窗口可含更早行)数字对不上;更久历史超出本页问题域。
+  // 口径统一:行集与总账条同为「近 windowDays 天」——否则统计(stats 精确)与
+  // 列表(加载窗口可含更早行)数字对不上;时间窗页头可调(7/14/30/90,与运维页同档)。
   const unifiedRuns = useMemo(() => {
     const cutoff = new Date();
     cutoff.setHours(0, 0, 0, 0);
-    cutoff.setDate(cutoff.getDate() - 29);
+    cutoff.setDate(cutoff.getDate() - (windowDays - 1));
     const cutoffKey = localDayStr(cutoff);
     const inWindow = run => (dayKey(run.started_at) || '') >= cutoffKey;
     const rows = [];
@@ -611,7 +612,7 @@ export default function FetchRunsTab({
       });
     });
     return rows.sort((a, b) => String(b.started_at || '').localeCompare(String(a.started_at || '')));
-  }, [collectionRuns, nodeRunsWithoutParent, jobsById, fetchersById, getFetcherName]);
+  }, [collectionRuns, nodeRunsWithoutParent, jobsById, fetchersById, getFetcherName, windowDays]);
 
   // 服务端 fetcher 硬作用域(总账条计数以此为窗口,不随本地筛选塌缩)。
   const scopedRuns = useMemo(() => {
@@ -921,6 +922,19 @@ export default function FetchRunsTab({
       <header className="page-head">
         <h1 className="page-title">任务与运行</h1>
         <div className="page-head-actions">
+          <span className="win-label">时间窗</span>
+          <div className="mini-seg" role="group" aria-label="时间窗">
+            {[7, 14, 30, 90].map(d => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => setWindowDays(d)}
+                className={`mini-seg-btn ${windowDays === d ? 'is-on' : ''}`}
+              >
+                {d} 天
+              </button>
+            ))}
+          </div>
           <span className="signal-autorefresh">
             自动刷新
             <span className="signal-countdown">{autoRefresh ? `${arLeft}s` : '—'}</span>
@@ -980,7 +994,7 @@ export default function FetchRunsTab({
                 <button className={`flow-stat ${statusFilter === '' ? 'is-on' : ''}`} onClick={() => setStatusFilter('')}>
                   <span className="flow-stat-num">{counts.total}</span>
                   <span className="flow-stat-lbl">全部运行</span>
-                  <span className="flow-stat-sub">{statsCounts ? '近 30 天' : '窗口内'} · 今日 {counts.today}</span>
+                  <span className="flow-stat-sub">{statsCounts ? `近 ${windowDays} 天` : '窗口内'} · 今日 {counts.today}</span>
                 </button>
                 <button className={`flow-stat ${statusFilter === 'running' ? 'is-on' : ''}`} onClick={() => setStatusFilter(statusFilter === 'running' ? '' : 'running')}>
                   <span className="flow-stat-num is-run">{counts.running}</span>
@@ -1216,7 +1230,7 @@ export default function FetchRunsTab({
 
             <div className="flow-foot">
               <span className="flow-foot-info">
-                {tableRuns.length} 次运行 · 近 30 天
+                {tableRuns.length} 次运行 · 近 {windowDays} 天
                 {selectedJob ? ` · 已按「${selectedJob.name}」过滤` : selectedJobId === 'adhoc' ? ' · 仅临时抓取' : ''}
               </span>
               {pageCount > 1 && (
