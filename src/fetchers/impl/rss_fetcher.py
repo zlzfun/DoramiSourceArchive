@@ -9,7 +9,7 @@ import feedparser
 import httpx
 from bs4 import BeautifulSoup, Tag
 
-from fetchers.impl.article_extractor import clean_text, extract_article_detail, extract_detail_from_html
+from fetchers.impl.article_extractor import DETAIL_HARD_CAP, clean_text, extract_article_detail, extract_detail_from_html
 from fetchers.base import BaseFetcher
 from models.content import BaseContent, RssArticleContent
 
@@ -31,7 +31,8 @@ class GenericRssFetcher(BaseFetcher):
     default_limit = 12
     default_fetch_detail_if_missing = True
     default_detail_min_chars = 200
-    default_detail_max_chars = 8000
+    # 参数退场波:详情页截断仅剩硬上限兜底(GenericRssFetcher 仍暴露参数作自定义源逃生阀)
+    default_detail_max_chars = DETAIL_HARD_CAP
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
@@ -315,9 +316,6 @@ class PresetRssFetcher(GenericRssFetcher):
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {"field": "fetch_detail_if_missing", "label": "短正文时抓取详情页", "type": "boolean", "default": cls.default_fetch_detail_if_missing},
-            {"field": "detail_min_chars", "label": "触发详情抓取的正文长度", "type": "number", "default": cls.default_detail_min_chars},
-            {"field": "detail_max_chars", "label": "详情页正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:

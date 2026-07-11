@@ -1,3 +1,9 @@
+
+# 正文硬上限(参数退场波,2026-07):detail_max_chars 用户参数已退场——内置节点恒抓全文,
+# 下游(阅读器/翻译/QA/向量化)吃完整正文。此常量仅作病态页兜底(提取失败把导航/评论
+# 吞进正文的超长文本),正常文章永不触顶;它不是给用户调的旋钮。
+DETAIL_HARD_CAP = 40_000
+
 import json
 import re
 from dataclasses import dataclass

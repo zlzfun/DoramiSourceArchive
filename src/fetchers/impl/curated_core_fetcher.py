@@ -10,7 +10,7 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 from fetchers.base import BaseFetcher
-from fetchers.impl.article_extractor import extract_article_detail, node_to_markdown
+from fetchers.impl.article_extractor import DETAIL_HARD_CAP, extract_article_detail, node_to_markdown
 from fetchers.impl.webpage_fetcher import BaseWebPageListFetcher
 from models.content import BaseContent, WebPageArticleContent
 
@@ -35,13 +35,12 @@ class SinglePageDocumentFetcher(BaseFetcher):
     page_url = ""
     site_name = ""
     source_section = ""
-    default_detail_max_chars = 12000
+    default_detail_max_chars = DETAIL_HARD_CAP
     default_detail_min_chars = 200
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
-            {"field": "detail_max_chars", "label": "正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _positive_int_param(self, raw_value: Any, default: int) -> int:
@@ -164,7 +163,7 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
     default_limit = 12
-    default_detail_max_chars = 8000
+    default_detail_max_chars = DETAIL_HARD_CAP
 
     # Codex Changelog 按月份 <h2> 分组，但每条发布是一个独立的
     # <li data-product> 容器：内含 <time>(ISO 日期) + 首个标题(发布名，如
@@ -174,7 +173,6 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
@@ -297,7 +295,7 @@ class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
     default_limit = 12
-    default_detail_max_chars = 8000
+    default_detail_max_chars = DETAIL_HARD_CAP
 
     # Claude Code Changelog 是 Mintlify <Update> 组件渲染：每个版本是一个独立块，
     # 由 data-component-part="update-label"(版本号) / "update-description"(发布日期，如
@@ -307,7 +305,6 @@ class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
@@ -437,7 +434,7 @@ class DevsiteReleaseNotesFetcher(SinglePageDocumentFetcher):
     listing_source_label = "devsite_release_notes_updates"
     detail_extraction_method = "devsite_release_notes_heading"
     default_limit = 10
-    default_detail_max_chars = 8000
+    default_detail_max_chars = DETAIL_HARD_CAP
 
     # 兼容带逗号 "May 28, 2026" 与个别缺逗号 "December 13 2023" 的标题
     _date_heading_re = re.compile(r"^([A-Z][a-z]+)\s+(\d{1,2}),?\s+(20\d{2})$")
@@ -450,7 +447,6 @@ class DevsiteReleaseNotesFetcher(SinglePageDocumentFetcher):
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
@@ -605,7 +601,7 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
     default_limit = 12
-    default_detail_max_chars = 8000
+    default_detail_max_chars = DETAIL_HARD_CAP
 
     # xAI Release Notes 是 Mintlify changelog grid：每条发布是一个
     # ``div.grid grid-cols-[5rem...]`` 卡片，左列(5rem)放日期(``May 29`` / 老条目用缩写
@@ -625,7 +621,6 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
@@ -868,13 +863,12 @@ class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
     default_limit = 12
-    default_detail_max_chars = 8000
+    default_detail_max_chars = DETAIL_HARD_CAP
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
@@ -983,7 +977,7 @@ class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
     default_limit = 15
-    default_detail_max_chars = 8000
+    default_detail_max_chars = DETAIL_HARD_CAP
 
     # Seed Research 页的 Publications 区把每篇论文渲染为一个 ``div.group.relative`` 卡片：
     # 内含日期 div(``Apr 22, 2026``)、标题 div(其直属文本即标题)、以及 ``div[class*=markdown]``
@@ -1000,7 +994,6 @@ class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
@@ -1121,7 +1114,7 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
     default_limit = 20
-    default_detail_max_chars = 8000
+    default_detail_max_chars = DETAIL_HARD_CAP
 
     # Daily Papers 页把当天数十篇论文渲染为一组 <article> 卡片；通用单页抓取会把它们糅成
     # 一篇无逐篇日期的长文。页面用 hydration 数据 <div data-target="DailyPapers" data-props="…">
@@ -1132,7 +1125,6 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {"field": "detail_max_chars", "label": "单条正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
@@ -1264,7 +1256,6 @@ class CursorChangelogWebFetcher(BaseWebPageListFetcher):
         "cursor.com/changelog/students",
     ]
     default_limit = 10
-    default_fetch_detail = True
     # 兜底：即便有新的导航链接漏过 exclude，也丢弃正文为空的垃圾条目。
     drop_empty_content = True
     # Cursor 列表页每页仅约 5 条，更早的在 /changelog/page/N 翻页里；逐页累积以凑够 limit。
@@ -1308,7 +1299,6 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
     article_url_patterns = ["qbitai.com/"]
     exclude_url_patterns = ["qbitai.com/#", "qbitai.com/about", "qbitai.com/contact"]
     default_limit = 18
-    default_fetch_detail = True
     # 旁路验收：crawl4ai 与专用提取器相似度 0.978，已迁移；未装 crawl4ai 时回退 _extract_qbitai_detail
     web_backend_enabled = True
     source_owner = "qbitai"
@@ -1520,7 +1510,6 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
         "aiera.com.cn/author/",
     ]
     default_limit = 18
-    default_fetch_detail = True
     # 旁路验收：crawl4ai(article .entry-content 精确容器) 正文与生产路径一致(~1.1x，开头逐字相符)，已迁移
     web_backend_enabled = True
     source_owner = "aiera"

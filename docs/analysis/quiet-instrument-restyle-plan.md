@@ -452,3 +452,20 @@ pendingJobDraft 预填)原样保留;Modal 外壳沿用。
 **P-2 要点**:五区 = 账户/外观/服务/数据同步/关于;服务区 admin-only(MCP 启停一行 +
 向量索引只读统计行(fetchVectorStats)+ location.hash 跳台账);VectorSection 文件退役;
 现有 gates(canExport/canImport/canToggle)沿用;主题分段复用 .segmented-control。
+
+
+## 十三、参数退场波(正文抓取参数砍除,2026-07-11,主线自做)
+
+用户拍板:内置节点**恒抓全文**(下游阅读器/翻译/QA/向量化受益),正文相关用户参数退场。
+
+- `fetch_detail`(抓取正文页)砍除,一刀切打开(基类默认 True,原 False 继承者一并打开;
+  presets 的冗余覆盖行清除);「源正文抓不可靠」自此是 fetcher 实现该修的事,不是用户旋钮;
+- `detail_max_chars` 及 rss 系 `fetch_detail_if_missing`/`detail_min_chars` 砍除;
+  截断仅剩 **`DETAIL_HARD_CAP = 40_000`**(article_extractor 常量,病态页兜底,非参数);
+- **有意保留**(28 节点仅此三者仍暴露正文参数):`generic_web`/`generic_rss`(config 驱动
+  自定义源逃生阀)与 `rss_hn_ai`(外链贴 discovery source 的独立设计,默认关);
+- 兼容:kwargs 读取保留作 fallback(实测库中存量任务 per_fetcher_params 为空,无残留生效面;
+  前端 schema 驱动自动简化,localStorage 覆盖逻辑本就忽略 schema 外字段);
+- **存量文章不自动回填全文**(已按 8000 截断入库者需重抓才变全文,另行决定);
+- 编排单每节点行由 3-4 字段收敛为「cron + 单次获取上限」两字段(实机验证);
+  pytest 316 全绿。
