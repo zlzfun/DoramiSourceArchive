@@ -3523,11 +3523,13 @@ input[type="radio"] {
   .tt-row.is-off { opacity: 0.55; }
   .tt-row.is-off:hover { opacity: 0.8; }
 
-  /* 选中任务行下方就地展开的动作区:quiet 文字钮,soft 底上 hover 用 paper 抬起 */
-  .tt-acts { display: flex; flex-wrap: wrap; gap: 2px 4px; padding: 0 12px 10px 14px; }
-  .tt-act-btn { min-height: 24px; padding: 0 8px; border-radius: var(--r-sm);
-    font-size: 11.5px; font-weight: 600; color: var(--dorami-muted);
+  /* 选中任务行下方就地展开的动作条:hairline 分格等宽单行(卡片底部仪表条),
+     短标签 + title 全称;soft 底上 hover 用 paper 抬起 */
+  .tt-acts { display: flex; align-items: stretch; border-top: 1px solid var(--dorami-border); }
+  .tt-act-btn { flex: 1; min-width: 0; min-height: 30px; text-align: center;
+    font-size: 11.5px; font-weight: 600; color: var(--dorami-muted); white-space: nowrap;
     transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+  .tt-act-btn + .tt-act-btn { border-left: 1px solid var(--dorami-border); }
   .tt-act-btn:hover { background: var(--dorami-paper); color: var(--dorami-ink); }
   .tt-act-btn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
 

@@ -900,13 +900,13 @@ export default function FetchRunsTab({
           <div className="tt-acts">
             {entry.isActive && (
               <>
-                <button className="tt-act-btn" onClick={() => handleRunJob(entry.id)}>立即运行</button>
-                <button className="tt-act-btn" onClick={() => handleRunJob(entry.id, { testLimit: TEST_RUN_LIMIT })}>测试 1 条/源</button>
+                <button className="tt-act-btn" title="立即运行" onClick={() => handleRunJob(entry.id)}>运行</button>
+                <button className="tt-act-btn" title={`测试运行:每源 ${TEST_RUN_LIMIT} 条`} onClick={() => handleRunJob(entry.id, { testLimit: TEST_RUN_LIMIT })}>测试</button>
               </>
             )}
-            <button className="tt-act-btn" onClick={() => openEditJob(entry.job)}>编辑配置</button>
-            <button className="tt-act-btn" onClick={() => handleToggleJob(entry.job)}>{entry.isActive ? '停用' : '启用'}</button>
-            <button className="tt-act-btn is-danger" onClick={() => handleDeleteJob(entry.job)}>删除</button>
+            <button className="tt-act-btn" title="编辑配置" onClick={() => openEditJob(entry.job)}>编辑</button>
+            <button className="tt-act-btn" title={entry.isActive ? '停用任务' : '启用任务'} onClick={() => handleToggleJob(entry.job)}>{entry.isActive ? '停用' : '启用'}</button>
+            <button className="tt-act-btn is-danger" title="删除任务" onClick={() => handleDeleteJob(entry.job)}>删除</button>
           </div>
         )}
       </div>
