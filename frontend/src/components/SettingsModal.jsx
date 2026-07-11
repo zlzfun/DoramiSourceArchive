@@ -1,23 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  BarChart2,
-  FileText,
-  Info,
-  Palette,
-  Plug2,
-  Settings as SettingsIcon,
-  User,
-  X,
-} from 'lucide-react';
+import { FileText, Info, Palette, Plug2, User, X } from 'lucide-react';
 import { fetchMcpStatus } from '../api';
 import { useModalTransition } from '../hooks/useModalTransition';
 import { useModalA11y } from '../hooks/useModalA11y';
 import AccountSection from './settings/AccountSection';
 import AppearanceSection from './settings/AppearanceSection';
-import VectorSection from './settings/VectorSection';
-import IntegrationSection from './settings/IntegrationSection';
+import ServiceSection from './settings/ServiceSection';
 import DataSyncSection from './settings/DataSyncSection';
 import AboutSection from './settings/AboutSection';
+
+// 设置面板(弹窗波):控制柜——左导航(竖条选中)+ 右内容,五区共用设置行范式。
+// 分区头随切换给一句话提示;「向量雷达」独立区已退役为服务区只读统计行(用户拍板);
+// 原「接入集成」区更名「服务」且 admin-only(MCP 地址已移除,reader 无可操作项)。
+const HINTS = {
+  account: '身份、头像与登录凭据',
+  appearance: '亮暗主题偏好',
+  service: 'MCP 与向量索引的运行状态',
+  sync: '部署端之间搬运文章归档',
+  about: '产品与账户信息',
+};
 
 export default function SettingsModal({ open, onClose, theme, onThemeChange, runtimeInfo, username, avatar, onUserUpdated, onLogout, showToast, onArticlesChanged }) {
   const { mounted, closing } = useModalTransition(open);
@@ -36,11 +37,10 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange, run
   const sections = useMemo(() => [
     { id: 'account', label: '账户', icon: User, show: true },
     { id: 'appearance', label: '外观', icon: Palette, show: true },
-    { id: 'vector', label: '向量雷达', icon: BarChart2, show: collectorEnabled && ragEnabled },
+    { id: 'service', label: '服务', icon: Plug2, show: isAdmin && collectorEnabled },
     { id: 'sync', label: '数据同步', icon: FileText, show: isAdmin && (collectorEnabled || readerEnabled) },
-    { id: 'integration', label: '接入集成', icon: Plug2, show: readerEnabled },
     { id: 'about', label: '关于', icon: Info, show: true },
-  ].filter(s => s.show), [collectorEnabled, isAdmin, ragEnabled, readerEnabled]);
+  ].filter(s => s.show), [collectorEnabled, isAdmin, readerEnabled]);
 
   const [active, setActive] = useState('account');
   const [mcpStatus, setMcpStatus] = useState(null);
@@ -56,11 +56,13 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange, run
   }, [open]);
 
   useEffect(() => {
-    if (!open || !readerEnabled) return;
+    if (!open || !(isAdmin && collectorEnabled)) return;
     fetchMcpStatus().then(setMcpStatus).catch(() => setMcpStatus({ enabled: false, url: null }));
-  }, [open, readerEnabled]);
+  }, [open, isAdmin, collectorEnabled]);
 
   if (!mounted) return null;
+
+  const activeSection = sections.find(s => s.id === active) || sections[0];
 
   return (
     <div className={`modal-overlay ${closing ? 'is-closing' : ''}`} onMouseDown={onClose}>
@@ -70,45 +72,50 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange, run
         aria-modal="true"
         aria-label="设置"
         tabIndex={-1}
-        className="modal-panel max-w-3xl"
+        className="modal-panel sett-cab"
         onMouseDown={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-[var(--dorami-border)] bg-[var(--dorami-well)] px-6 py-4">
-          <div className="flex items-center gap-3">
-            <SettingsIcon className="h-5 w-5 text-indigo-500" />
-            <h3 className="text-lg font-extrabold text-[var(--dorami-ink)]">设置</h3>
+        <nav className="sett-nav" aria-label="设置分区">
+          <div className="sett-nav-title">设置</div>
+          {sections.map(section => (
+            <button
+              key={section.id}
+              type="button"
+              onClick={() => setActive(section.id)}
+              className={`sett-nav-btn ${activeSection.id === section.id ? 'is-on' : ''}`}
+            >
+              <section.icon /> {section.label}
+            </button>
+          ))}
+          <div className="sett-nav-spacer" />
+          <div className="sett-nav-foot">哆啦美 · 归档中枢</div>
+        </nav>
+
+        <div className="sett-body">
+          <div className="sett-head">
+            <span className="sett-head-title">{activeSection.label}</span>
+            <span className="sett-head-hint">{HINTS[activeSection.id]}</span>
+            <button onClick={onClose} className="icon-button ml-auto h-8 w-8" aria-label="关闭设置">
+              <X className="h-4 w-4" />
+            </button>
           </div>
-          <button onClick={onClose} className="icon-button" aria-label="关闭">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <div className="flex min-h-0 flex-1">
-          <nav className="w-40 shrink-0 space-y-1 border-r border-[var(--dorami-border)] bg-[var(--dorami-soft)] p-3">
-            {sections.map(section => (
-              <button
-                key={section.id}
-                onClick={() => setActive(section.id)}
-                className={`flex w-full items-center gap-2 rounded-[var(--r-control)] px-3 py-2 text-sm font-bold transition-colors ${
-                  active === section.id ? 'bg-[var(--dorami-surface)] text-[var(--dorami-ink)] shadow-[inset_3px_0_0_var(--dorami-blue)]' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <section.icon className="h-4 w-4" /> {section.label}
-              </button>
-            ))}
-          </nav>
-
-          <div className="flex-1 overflow-y-auto p-6">
-            {active === 'account' && (
+          <div className="sett-scroll">
+            {activeSection.id === 'account' && (
               <AccountSection username={username} avatar={avatar} accountRoleLabel={accountRoleLabel} onUserUpdated={onUserUpdated} onLogout={onLogout} showToast={showToast} />
             )}
-            {active === 'appearance' && (
+            {activeSection.id === 'appearance' && (
               <AppearanceSection theme={theme} onThemeChange={onThemeChange} />
             )}
-            {active === 'vector' && collectorEnabled && ragEnabled && (
-              <VectorSection showToast={showToast} />
+            {activeSection.id === 'service' && isAdmin && collectorEnabled && (
+              <ServiceSection
+                showToast={showToast}
+                mcpStatus={mcpStatus}
+                onMcpToggled={enabled => setMcpStatus(prev => ({ ...(prev || {}), enabled }))}
+                ragEnabled={ragEnabled}
+                onClose={onClose}
+              />
             )}
-            {active === 'sync' && isAdmin && (collectorEnabled || readerEnabled) && (
+            {activeSection.id === 'sync' && isAdmin && (collectorEnabled || readerEnabled) && (
               <DataSyncSection
                 showToast={showToast}
                 canExport={collectorEnabled}
@@ -116,15 +123,7 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange, run
                 onArticlesChanged={onArticlesChanged}
               />
             )}
-            {active === 'integration' && readerEnabled && (
-              <IntegrationSection
-                showToast={showToast}
-                mcpStatus={mcpStatus}
-                canToggle={collectorEnabled}
-                onMcpToggled={enabled => setMcpStatus(prev => ({ ...(prev || {}), enabled }))}
-              />
-            )}
-            {active === 'about' && (
+            {activeSection.id === 'about' && (
               <AboutSection accountRoleLabel={accountRoleLabel} isAdmin={isAdmin} />
             )}
           </div>

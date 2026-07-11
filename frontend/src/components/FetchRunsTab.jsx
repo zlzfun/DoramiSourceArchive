@@ -1,9 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
-  CheckSquare,
   ChevronRight,
-  Layers,
   Plus,
   RefreshCw,
   RotateCw,
@@ -24,7 +22,7 @@ import {
 } from '../api';
 import LogoMark from './LogoMark';
 import Modal from './Modal';
-import { resolveCompany } from '../sourceTaxonomy';
+import { groupBySection, resolveCompany } from '../sourceTaxonomy';
 import { runAction } from '../utils/runAction';
 import { useConfirm } from '../hooks/useConfirm';
 import { TEST_RUN_LIMIT, normalizeIds, collectionRunMessage } from '../utils/collection';
@@ -183,6 +181,122 @@ function cleanStringMap(map) {
   );
 }
 
+// ── cron 粗解析(仅编辑器回显 + 距下次预览,不做校验) ──
+// 支持常见五段式:全 *、数字、*/N、逗号列表、a-b 范围(可带 /step)、星期数字/范围。
+// 任一字段不认识 → 诚实降级(不显示人话/距下次)。
+function parseCronField(raw, min, max) {
+  const out = new Set();
+  for (const token of String(raw).split(',')) {
+    const t = token.trim();
+    if (t === '') return null;
+    let m;
+    if (t === '*') {
+      for (let v = min; v <= max; v += 1) out.add(v);
+    } else if ((m = t.match(/^\*\/(\d+)$/))) {
+      const step = Number(m[1]);
+      if (!step) return null;
+      for (let v = min; v <= max; v += step) out.add(v);
+    } else if ((m = t.match(/^(\d+)-(\d+)(?:\/(\d+))?$/))) {
+      const a = Number(m[1]);
+      const b = Number(m[2]);
+      const step = m[3] ? Number(m[3]) : 1;
+      if (!step || a > b || a < min || b > max) return null;
+      for (let v = a; v <= b; v += step) out.add(v);
+    } else if ((m = t.match(/^(\d+)$/))) {
+      const v = Number(m[1]);
+      if (v < min || v > max) return null;
+      out.add(v);
+    } else {
+      return null;
+    }
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+function parseCron(expr) {
+  const trimmed = String(expr || '').trim();
+  if (!trimmed) return { kind: 'manual' };
+  const parts = trimmed.split(/\s+/);
+  if (parts.length !== 5) return { kind: 'unparsed' };
+  const minute = parseCronField(parts[0], 0, 59);
+  const hour = parseCronField(parts[1], 0, 23);
+  const dom = parseCronField(parts[2], 1, 31);
+  const month = parseCronField(parts[3], 1, 12);
+  let dow = parseCronField(parts[4], 0, 7);
+  if (!minute || !hour || !dom || !month || !dow) return { kind: 'unparsed' };
+  // cron 星期 7 归一为 0(周日)
+  dow = [...new Set(dow.map(d => (d === 7 ? 0 : d)))].sort((a, b) => a - b);
+  const star = {
+    minute: parts[0].trim() === '*',
+    hour: parts[1].trim() === '*',
+    dom: parts[2].trim() === '*',
+    month: parts[3].trim() === '*',
+    dow: parts[4].trim() === '*',
+  };
+  return { kind: 'cron', fields: { minute, hour, dom, month, dow }, star, raw: parts };
+}
+
+function cronDayMatches(info, date) {
+  const { fields, star } = info;
+  if (!fields.month.includes(date.getMonth() + 1)) return false;
+  const domOk = fields.dom.includes(date.getDate());
+  const dowOk = fields.dow.includes(date.getDay());
+  if (!star.dom && !star.dow) return domOk || dowOk; // 两者都限定 → 任一命中(cron 语义)
+  if (!star.dom) return domOk;
+  if (!star.dow) return dowOk;
+  return true;
+}
+
+function nextCronTime(info, fromMs) {
+  const cursor = new Date(fromMs);
+  cursor.setSeconds(0, 0);
+  cursor.setMinutes(cursor.getMinutes() + 1);
+  const cursorMs = cursor.getTime();
+  for (let day = 0; day < 367; day += 1) {
+    const probe = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + day);
+    if (!cronDayMatches(info, probe)) continue;
+    for (const h of info.fields.hour) {
+      for (const mm of info.fields.minute) {
+        const cand = new Date(probe.getFullYear(), probe.getMonth(), probe.getDate(), h, mm);
+        if (cand.getTime() >= cursorMs) return cand.getTime();
+      }
+    }
+  }
+  return null;
+}
+
+function cronHuman(info) {
+  const { fields, star } = info;
+  const single = (arr) => (arr.length === 1 ? arr[0] : null);
+  const M = single(fields.minute);
+  const H = single(fields.hour);
+  const hhmm = H != null && M != null ? `${pad(H)}:${pad(M)}` : null;
+  const minStep = info.raw[0].trim().match(/^\*\/(\d+)$/);
+  const hourStep = info.raw[1].trim().match(/^\*\/(\d+)$/);
+  const dateFree = star.dom && star.month && star.dow;
+  if (star.minute && star.hour && dateFree) return '每分钟';
+  if (minStep && star.hour && dateFree) return `每 ${minStep[1]} 分钟`;
+  if (M != null && hourStep && dateFree) return M === 0 ? `每 ${hourStep[1]} 小时` : `每 ${hourStep[1]} 小时(第 ${M} 分)`;
+  if (M != null && star.hour && dateFree) return `每小时第 ${pad(M)} 分`;
+  if (hhmm && dateFree) return `每天 ${hhmm}`;
+  if (hhmm && star.dom && star.month && !star.dow) {
+    const key = fields.dow.join(',');
+    if (key === '1,2,3,4,5') return `工作日 ${hhmm}`;
+    if (key === '0,6') return `周末 ${hhmm}`;
+    return `${fields.dow.map(d => `周${WEEKDAYS[d]}`).join('、')} ${hhmm}`;
+  }
+  if (hhmm && !star.dom && star.month && star.dow) return `每月 ${fields.dom.join('、')} 日 ${hhmm}`;
+  return null;
+}
+
+// 编辑器读数:人话 + 下次触发毫秒(拿不准 → 诚实降级文案 + 无距下次)。
+function readCron(expr) {
+  const info = parseCron(expr);
+  if (info.kind === 'manual') return { human: '手动触发,无定时', nextMs: null };
+  if (info.kind === 'unparsed') return { human: '保存后按调度器口径生效', nextMs: null };
+  return { human: cronHuman(info) || '已按 cron 定时', nextMs: nextCronTime(info, Date.now()) };
+}
+
 export default function FetchRunsTab({
   availableFetchers,
   showToast,
@@ -249,6 +363,33 @@ export default function FetchRunsTab({
       [fetcher.name, fetcher.id, fetcher.desc].filter(Boolean).join(' ').toLowerCase().includes(query)
     );
   }, [availableFetchers, jobSearch]);
+
+  // 目录同款分组(节点页 groupBySection):板块 → 公司 → 节点。
+  const groupedCatalog = useMemo(() => groupBySection(filteredModalFetchers), [filteredModalFetchers]);
+
+  // 编辑器读数:整体 cron 人话 + 距下次(距下次每秒随台面时钟走字)。
+  const cronInfo = useMemo(() => readCron(jobDraft.cron_expr), [jobDraft.cron_expr]);
+  const cronCountdown = cronInfo.nextMs != null
+    ? formatCountdown(new Date(cronInfo.nextMs).toISOString(), nowMs)
+    : null;
+
+  // 编排单计数:cron 覆盖数(非空单独时刻)+ 参数改动数(与 schema default 不同的字段)。
+  const cronOverrideCount = useMemo(
+    () => draftFetcherIds.filter(id => String((jobDraft.per_fetcher_cron || {})[id] || '').trim()).length,
+    [draftFetcherIds, jobDraft.per_fetcher_cron]
+  );
+  const paramChangeCount = useMemo(() => {
+    let n = 0;
+    draftFetcherIds.forEach(id => {
+      const params = (jobDraft.per_fetcher_params || {})[id] || {};
+      (fetchersById[id]?.parameters || []).forEach(param => {
+        const def = param.default ?? '';
+        const value = params[param.field] ?? def;
+        if (String(value) !== String(def)) n += 1;
+      });
+    });
+    return n;
+  }, [draftFetcherIds, jobDraft.per_fetcher_params, fetchersById]);
 
   const loadAll = useCallback(async () => {
     const reqId = ++loadRequestRef.current;
@@ -728,30 +869,6 @@ export default function FetchRunsTab({
     });
   };
 
-  const renderParamInput = (fetcherId, param) => {
-    const params = (jobDraft.per_fetcher_params || {})[fetcherId] || {};
-    const value = params[param.field] ?? param.default ?? '';
-    if (param.type === 'boolean') {
-      const checked = typeof value === 'boolean' ? value : ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
-      return (
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={event => updateDraftParam(fetcherId, param.field, event.target.checked)}
-          className="w-4 h-4 text-[var(--dorami-blue)] rounded border-slate-300"
-        />
-      );
-    }
-    return (
-      <input
-        type={param.type || 'text'}
-        value={value}
-        onChange={event => updateDraftParam(fetcherId, param.field, param.type === 'number' ? Number(event.target.value) : event.target.value)}
-        className="form-input py-1.5 text-xs"
-      />
-    );
-  };
-
   const selectedJob = typeof selectedJobId === 'number' ? jobsById[selectedJobId] : null;
 
   const timetableCount = timetable.active.length + timetable.disabled.length;
@@ -1115,108 +1232,213 @@ export default function FetchRunsTab({
         </div>
       </div>
 
-      <Modal open={jobModalOpen} onClose={() => setJobModalOpen(false)} size="6xl">
-        <div className="px-5 py-4 border-b border-[var(--dorami-border)] bg-[var(--dorami-well)] flex items-center justify-between">
-          <div>
-            <h3 className="card-title">{editingJobId ? '编辑采集任务' : '新建采集任务'}</h3>
-            <p className="text-xs text-slate-500 mt-1">采集任务负责调度、参数覆盖和运行追踪。</p>
-          </div>
-          <button onClick={() => setJobModalOpen(false)} className="icon-button"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="p-5 overflow-auto space-y-5">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <label className="text-xs font-bold text-slate-500">
-              名称
-              <input value={jobDraft.name} onChange={event => setJobDraft(prev => ({ ...prev, name: event.target.value }))} className="form-input mt-1" />
-            </label>
-            <label className="text-xs font-bold text-slate-500">
-              说明
-              <input value={jobDraft.description} onChange={event => setJobDraft(prev => ({ ...prev, description: event.target.value }))} className="form-input mt-1" />
-            </label>
-            <label className="text-xs font-bold text-slate-500">
-              整体 cron
-              <input value={jobDraft.cron_expr} onChange={event => setJobDraft(prev => ({ ...prev, cron_expr: event.target.value }))} placeholder="例如：0 9 * * *" className="form-input mt-1 font-mono" />
-            </label>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
-            <div className="border border-[var(--dorami-border)] rounded-[var(--r-card)] overflow-hidden">
-              <div className="p-3 bg-[var(--dorami-soft)] border-b border-[var(--dorami-border)]">
-                <div className="font-bold text-slate-700 text-sm flex items-center">
-                  <Layers className="w-4 h-4 mr-2 text-[var(--dorami-blue)]" /> 选择节点
-                </div>
-                <div className="form-search-box relative mt-3">
-                  <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input value={jobSearch} onChange={event => setJobSearch(event.target.value)} placeholder="搜索节点" className="form-input pl-9" />
-                </div>
+      <Modal
+        open={jobModalOpen}
+        onClose={() => setJobModalOpen(false)}
+        size="5xl"
+        ariaLabel={editingJobId ? '编辑采集任务' : '新建采集任务'}
+      >
+        <div className="je-sheet">
+          {/* ── 头:时刻区(名称/启用/整体 cron + 人话回显 + 距下次走字) ── */}
+          <header className="je-head">
+            <div className="je-head-top">
+              <span className="je-kicker">{editingJobId ? '编辑采集任务' : '新建采集任务'}</span>
+              <span className="je-switch-row ml-auto">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={jobDraft.is_active}
+                  aria-label="启用任务"
+                  onClick={() => setJobDraft(prev => ({ ...prev, is_active: !prev.is_active }))}
+                  className={`ledger-switch ${jobDraft.is_active ? 'is-on' : ''}`}
+                />
+                启用
+              </span>
+              <button onClick={() => setJobModalOpen(false)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="je-fields">
+              <div className="je-field">
+                <label className="je-field-lbl" htmlFor="je-name">名称</label>
+                <input
+                  id="je-name"
+                  value={jobDraft.name}
+                  onChange={event => setJobDraft(prev => ({ ...prev, name: event.target.value }))}
+                  placeholder="给这组班次起个名"
+                  className="form-input je-name-input"
+                />
               </div>
-              <div className="max-h-[460px] overflow-auto divide-y divide-[var(--dorami-border)]">
-                {filteredModalFetchers.map(fetcher => {
-                  const checked = draftFetcherIds.includes(fetcher.id);
-                  return (
-                    <button
-                      key={fetcher.id}
-                      onClick={() => toggleDraftFetcher(fetcher)}
-                      className={`w-full px-3 py-3 flex items-center gap-3 text-left ${checked ? 'bg-[var(--dorami-wash)]' : ''} hover:bg-[var(--dorami-soft)]`}
-                    >
-                      <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>{checked && <CheckSquare className="w-3.5 h-3.5 text-white" />}</div>
-                      <LogoMark company={companyForId(fetcher.id)} size="sm" />
-                      <div className="min-w-0">
-                        <div className="font-bold text-slate-700 text-sm truncate">{fetcher.name}</div>
-                        <div className="font-mono text-xs text-slate-500 truncate">{fetcher.id}</div>
-                      </div>
-                    </button>
-                  );
-                })}
+              <div className="je-field" style={{ width: 150 }}>
+                <label className="je-field-lbl" htmlFor="je-cron">整体 cron(5 段)</label>
+                <input
+                  id="je-cron"
+                  value={jobDraft.cron_expr}
+                  onChange={event => setJobDraft(prev => ({ ...prev, cron_expr: event.target.value }))}
+                  placeholder="0 9 * * *"
+                  className="form-input font-mono"
+                />
+              </div>
+              <div className="je-field">
+                <label className="je-field-lbl" htmlFor="je-desc">说明</label>
+                <input
+                  id="je-desc"
+                  value={jobDraft.description}
+                  onChange={event => setJobDraft(prev => ({ ...prev, description: event.target.value }))}
+                  placeholder="给未来的自己一句话"
+                  className="form-input"
+                />
+              </div>
+              <div className="je-echo">
+                {cronInfo.nextMs != null
+                  ? <span>= <b>{cronInfo.human}</b> 触发</span>
+                  : <span><b>{cronInfo.human}</b></span>}
+                {cronOverrideCount > 0 && (
+                  <>
+                    <span>·</span>
+                    <span>{cronOverrideCount} 个节点另有单独时刻</span>
+                  </>
+                )}
+                {cronCountdown && <span className="je-echo-next">距下次 {cronCountdown}</span>}
               </div>
             </div>
+          </header>
 
-            <div className="space-y-3">
+          {/* ── 体:节点目录(分组勾选) → 编排单(每节点班次行) ── */}
+          <div className="je-body">
+            <aside className="je-catalog" aria-label="节点目录">
+              <div className="je-catalog-head">
+                <div className="je-catalog-title">
+                  <b>节点目录</b>
+                  <span className="n">{availableFetchers.length} 个 · 已编入 {draftFetcherIds.length}</span>
+                </div>
+                <div className="je-searchbox">
+                  <Search />
+                  <input
+                    value={jobSearch}
+                    onChange={event => setJobSearch(event.target.value)}
+                    placeholder="搜索节点名或 ID"
+                    aria-label="搜索节点"
+                  />
+                </div>
+              </div>
+              <div className="je-catalog-list">
+                {groupedCatalog.length === 0 ? (
+                  <div className="je-cat-group">无匹配节点</div>
+                ) : groupedCatalog.map(section => (
+                  <Fragment key={section.id}>
+                    <div className="je-cat-group">{section.label}</div>
+                    {section.companies.flatMap(bucket => bucket.fetchers).map(fetcher => {
+                      const checked = draftFetcherIds.includes(fetcher.id);
+                      return (
+                        <button
+                          key={fetcher.id}
+                          type="button"
+                          onClick={() => toggleDraftFetcher(fetcher)}
+                          className={`je-cat-row ${checked ? 'is-in' : ''}`}
+                        >
+                          <span className="je-check" />
+                          <LogoMark company={companyForId(fetcher.id)} size="xs" />
+                          <span className="je-cat-id">
+                            <span className="je-cat-name">{fetcher.name}</span>
+                            <span className="je-cat-sid">{fetcher.id}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </Fragment>
+                ))}
+              </div>
+            </aside>
+
+            <main className="je-roster">
+              <div className="je-roster-head">
+                <span className="je-roster-title">编排单</span>
+                <span className="je-roster-meta">
+                  {draftFetcherIds.length} 节点 · {cronOverrideCount} 个 cron 覆盖 · {paramChangeCount} 项参数改动
+                </span>
+                <span className="je-roster-hint">留空的时刻随整体 cron</span>
+              </div>
               {draftFetcherIds.length === 0 ? (
-                <div className="border border-dashed border-[var(--dorami-border)] rounded-[var(--r-card)] p-10 text-center text-slate-500 font-medium">未选择节点</div>
-              ) : draftFetcherIds.map(fetcherId => {
-                const fetcher = fetchersById[fetcherId];
-                return (
-                  <div key={fetcherId} className="border border-[var(--dorami-border)] rounded-[var(--r-card)] p-3 bg-[var(--dorami-surface)]">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <LogoMark company={companyForId(fetcherId)} size="sm" />
-                        <div className="min-w-0">
-                          <div className="card-title truncate">{fetcher?.name || fetcherId}</div>
-                          <div className="font-mono text-xs text-slate-500 mt-0.5">{fetcherId}</div>
+                <div className="je-roster-empty">编排单还是空的<br />从左侧目录勾选节点即可加入班次</div>
+              ) : (
+                <div className="je-roster-list">
+                  {draftFetcherIds.map(fetcherId => {
+                    const fetcher = fetchersById[fetcherId];
+                    const nodeCron = (jobDraft.per_fetcher_cron || {})[fetcherId] || '';
+                    const params = (jobDraft.per_fetcher_params || {})[fetcherId] || {};
+                    return (
+                      <div key={fetcherId} className="je-ros-row">
+                        <div className="je-ros-top">
+                          <LogoMark company={companyForId(fetcherId)} size="xs" />
+                          <span className="je-ros-name">{fetcher?.name || fetcherId}</span>
+                          <span className="je-ros-sid">{fetcherId}</span>
+                          {nodeCron.trim() && <span className="je-cron-mark">单独时刻</span>}
+                          <button
+                            type="button"
+                            className="je-ros-remove"
+                            aria-label="移出编排单"
+                            onClick={() => toggleDraftFetcher(fetcher || { id: fetcherId })}
+                          >
+                            <X />
+                          </button>
+                        </div>
+                        <div className="je-ros-fields">
+                          <div className="je-ros-field">
+                            <span className="je-field-lbl">该节点 cron</span>
+                            <input
+                              value={nodeCron}
+                              onChange={event => updateDraftCron(fetcherId, event.target.value)}
+                              placeholder={jobDraft.cron_expr.trim() ? `随整体 ${jobDraft.cron_expr.trim()}` : '留空则不单独调度'}
+                              className="form-input font-mono py-1.5 text-xs"
+                              style={{ width: 150 }}
+                            />
+                          </div>
+                          {(fetcher?.parameters || []).map(param => {
+                            if (param.type === 'boolean') {
+                              const raw = params[param.field] ?? param.default ?? '';
+                              const checked = typeof raw === 'boolean'
+                                ? raw
+                                : ['1', 'true', 'yes', 'on'].includes(String(raw).toLowerCase());
+                              return (
+                                <label key={param.field} className="je-ros-check">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={event => updateDraftParam(fetcherId, param.field, event.target.checked)}
+                                  />
+                                  {param.label}
+                                </label>
+                              );
+                            }
+                            const value = params[param.field] ?? param.default ?? '';
+                            const isNum = param.type === 'number';
+                            return (
+                              <div key={param.field} className="je-ros-field">
+                                <span className="je-field-lbl">{param.label}</span>
+                                <input
+                                  type={param.type || 'text'}
+                                  value={value}
+                                  onChange={event => updateDraftParam(fetcherId, param.field, isNum ? Number(event.target.value) : event.target.value)}
+                                  className={`form-input py-1.5 text-xs ${isNum ? 'font-mono' : ''}`}
+                                  style={{ width: isNum ? 88 : 160 }}
+                                />
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
-                      <button onClick={() => setJobDraft(prev => ({ ...prev, fetcher_ids: prev.fetcher_ids.filter(id => id !== fetcherId) }))} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-[var(--r-control)]"><X className="w-4 h-4" /></button>
-                    </div>
-                    <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <label className="text-xs font-bold text-slate-500 md:col-span-2">
-                        该节点 cron
-                        <input value={(jobDraft.per_fetcher_cron || {})[fetcherId] || ''} onChange={event => updateDraftCron(fetcherId, event.target.value)} placeholder={jobDraft.cron_expr || '留空则不单独调度'} className="form-input mt-1 py-1.5 text-xs font-mono" />
-                      </label>
-                      {(fetcher?.parameters || []).length === 0 ? (
-                        <div className="text-xs text-slate-500 font-medium bg-[var(--dorami-soft)] border border-[var(--dorami-border)] rounded-[var(--r-control)] px-3 py-2">该节点无需扩展参数</div>
-                      ) : (fetcher.parameters || []).map(param => (
-                        <label key={param.field} className="text-xs font-bold text-slate-500">
-                          {param.label}
-                          <div className="mt-1">{renderParamInput(fetcherId, param)}</div>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                    );
+                  })}
+                </div>
+              )}
+            </main>
           </div>
-        </div>
-        <div className="px-5 py-4 border-t border-[var(--dorami-border)] bg-[var(--dorami-surface)] flex justify-between gap-2">
-          <label className="inline-flex items-center text-xs font-bold text-slate-500">
-            <input type="checkbox" checked={jobDraft.is_active} onChange={event => setJobDraft(prev => ({ ...prev, is_active: event.target.checked }))} className="w-4 h-4 mr-2 text-[var(--dorami-blue)] rounded border-slate-300" />
-            启用任务
-          </label>
-          <div className="flex justify-end gap-2">
-            <button onClick={() => setJobModalOpen(false)} className="action-button action-button-quiet">取消</button>
-            <button onClick={handleSaveJob} className="action-button action-button-primary"><Save /> 保存</button>
-          </div>
+
+          {/* ── 脚:注记 + 唯一 primary CTA ── */}
+          <footer className="je-foot">
+            <span className="je-foot-note">保存后时刻表立即更新;运行中的批次不受影响</span>
+            <button onClick={() => setJobModalOpen(false)} className="action-button action-button-quiet ml-auto">取消</button>
+            <button onClick={handleSaveJob} className="action-button action-button-primary"><Save /> 保存任务</button>
+          </footer>
         </div>
       </Modal>
     </div>

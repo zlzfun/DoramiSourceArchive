@@ -1,7 +1,6 @@
 import { useRef, useState } from 'react';
-import { KeyRound, Loader2, LogOut, Trash2, Upload } from 'lucide-react';
+import { KeyRound, Loader2 } from 'lucide-react';
 import { changeOwnPassword, updateAvatar } from '../../api';
-import { SectionHeading, FieldRow } from './SectionPrimitives';
 
 // 客户端把头像缩到 maxSize 见方以内并转成 JPEG data URL，控制体积（后端再做上限校验）。
 function readImageAsDataUrl(file, maxSize = 256) {
@@ -29,6 +28,7 @@ function readImageAsDataUrl(file, maxSize = 256) {
   });
 }
 
+// 账户(弹窗波,设置行范式):头像行 + 改密码行内表单(区内唯一 primary)+ 退出登录 danger 行。
 export default function AccountSection({ username, avatar, accountRoleLabel, onUserUpdated, onLogout, showToast }) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -99,55 +99,62 @@ export default function AccountSection({ username, avatar, accountRoleLabel, onU
 
   return (
     <div>
-      <SectionHeading title="账户" />
-
-      <div className="surface-card mb-4 flex items-center gap-4 rounded-[var(--r-card)] p-4">
+      <div className="sett-row">
         {avatar ? (
-          <img src={avatar} alt="头像" className="h-16 w-16 rounded-full object-cover shadow-sm ring-1 ring-black/5" />
+          <img src={avatar} alt="头像" className="sett-avatar object-cover" />
         ) : (
-          <div className="avatar-badge flex h-16 w-16 items-center justify-center rounded-full text-base font-bold text-white">{initials}</div>
+          <span className="sett-avatar avatar-badge text-white">{initials}</span>
         )}
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold text-slate-700">头像</p>
-          <p className="tiny-meta mt-1">支持 JPG/PNG 等图片，会自动缩为方形缩略图。</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={avatarBusy} className="action-button action-button-secondary">
-              {avatarBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} 上传头像
+        <span className="sett-id">
+          <span className="sett-acct-name">{username || '—'}</span>
+          <div className="sett-sub"><span className="sett-role-chip">{accountRoleLabel}</span></div>
+        </span>
+        <span className="sett-ctl">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={avatarBusy}
+            className="action-button action-button-secondary min-h-[30px] px-3 text-xs"
+          >
+            {avatarBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} 更换头像
+          </button>
+          {avatar && (
+            <button
+              type="button"
+              onClick={handleRemoveAvatar}
+              disabled={avatarBusy}
+              className="action-button action-button-quiet min-h-[30px] px-3 text-xs"
+            >
+              移除
             </button>
-            {avatar && (
-              <button type="button" onClick={handleRemoveAvatar} disabled={avatarBusy} className="action-button action-button-quiet">
-                <Trash2 className="h-4 w-4" /> 移除
-              </button>
-            )}
-          </div>
+          )}
           <input ref={fileInputRef} type="file" accept="image/*" onChange={handleAvatarFile} className="hidden" />
-        </div>
+        </span>
       </div>
 
-      <div className="surface-card rounded-[var(--r-card)] px-4">
-        <FieldRow label="登录账户">{username || '—'}</FieldRow>
-        <FieldRow label="账户角色">{accountRoleLabel}</FieldRow>
-      </div>
-
-      <form onSubmit={handleChangePassword} className="surface-card mt-4 rounded-[var(--r-card)] p-4">
-        <p className="text-sm font-bold text-slate-700">修改密码</p>
-        <p className="tiny-meta mt-1">修改后当前会话仍然有效，下次登录请使用新密码。</p>
-        <div className="mt-3 space-y-3">
+      <form className="sett-row is-block" onSubmit={handleChangePassword}>
+        <span className="sett-id">
+          <span className="sett-lbl">修改密码</span>
+          <div className="sett-sub">改密后当前会话保持有效,下次登录使用新密码</div>
+        </span>
+        <div className="sett-pw-grid">
           <input
             type="password"
             value={currentPassword}
             onChange={e => setCurrentPassword(e.target.value)}
             autoComplete="current-password"
             placeholder="当前密码"
-            className="form-input w-full"
+            aria-label="当前密码"
+            className="form-input"
           />
           <input
             type="password"
             value={newPassword}
             onChange={e => setNewPassword(e.target.value)}
             autoComplete="new-password"
-            placeholder="新密码（至少 6 位）"
-            className="form-input w-full"
+            placeholder="新密码(至少 6 位)"
+            aria-label="新密码"
+            className="form-input"
           />
           <input
             type="password"
@@ -155,17 +162,26 @@ export default function AccountSection({ username, avatar, accountRoleLabel, onU
             onChange={e => setConfirmPassword(e.target.value)}
             autoComplete="new-password"
             placeholder="确认新密码"
-            className="form-input w-full"
+            aria-label="确认新密码"
+            className="form-input"
           />
+          <button type="submit" disabled={saving} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />} 更新密码
+          </button>
         </div>
-        <button type="submit" disabled={saving} className="action-button action-button-primary mt-4">
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />} 保存新密码
-        </button>
       </form>
 
-      <button onClick={onLogout} className="action-button action-button-danger mt-4">
-        <LogOut className="h-4 w-4" /> 退出登录
-      </button>
+      <div className="sett-row">
+        <span className="sett-id">
+          <span className="sett-lbl">退出登录</span>
+          <div className="sett-sub">仅退出本浏览器的会话</div>
+        </span>
+        <span className="sett-ctl">
+          <button type="button" onClick={onLogout} className="action-button action-button-danger min-h-[30px] px-3 text-xs">
+            退出登录
+          </button>
+        </span>
+      </div>
     </div>
   );
 }

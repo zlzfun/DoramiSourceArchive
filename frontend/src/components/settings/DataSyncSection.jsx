@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { ArrowRight, Check, Download, FileText, Loader2, Upload } from 'lucide-react';
 import { exportArchiveArticles, importArchiveArticlesJsonl } from '../../api';
-import { SectionHeading } from './SectionPrimitives';
 
 function downloadFile(url, filename) {
   const a = document.createElement('a');
@@ -136,11 +135,6 @@ export default function DataSyncSection({ showToast, canExport, canImport, onArt
 
   return (
     <div>
-      <SectionHeading
-        title="数据同步"
-        hint="在不同部署端之间离线搬运文章归档：一端导出归档包，另一端导入。建议按收录时间分批导出，导入端可重复导入同一包。"
-      />
-
       <div className="mb-4 flex items-center justify-center gap-2.5 rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-soft)] px-4 py-3 text-xs font-bold text-slate-500">
         <span className="flex items-center gap-1.5"><Download className="h-3.5 w-3.5 text-indigo-500" /> 本端导出</span>
         <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
@@ -150,7 +144,7 @@ export default function DataSyncSection({ showToast, canExport, canImport, onArt
       </div>
 
       {canExport && (
-        <div className="surface-card rounded-[var(--r-card)] p-4">
+        <div className="sett-sync-card">
           <div className="mb-4 flex items-center gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--r-control)] bg-[var(--dorami-wash)] text-indigo-500">
               <Download className="h-4 w-4" />
@@ -213,7 +207,7 @@ export default function DataSyncSection({ showToast, canExport, canImport, onArt
       )}
 
       {canImport && (
-        <div className={`surface-card rounded-[var(--r-card)] p-4 ${canExport ? 'mt-4' : ''}`}>
+        <div className={`sett-sync-card ${canExport ? 'mt-4' : ''}`}>
           <div className="mb-4 flex items-center gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--r-control)] bg-emerald-50 text-emerald-500">
               <Upload className="h-4 w-4" />

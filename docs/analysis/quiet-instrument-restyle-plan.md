@@ -411,3 +411,44 @@ docs/design 样页与 analysis 文档不属文案审查对象。
   代理留给主线的两处顺手修已随 A 落地(运行页 tt-foot 改分号、节点页试抓 toast 改冒号);
   `formatRelativeTime` 系运行页波既有沉淀,D 仅接入阅读器(带 title 完整时间);
 - 点阵/计数/趋势的「窗口口径」妥协自此全部兑现为精确聚合;表脚等描述表内窗口的文案保持诚实。
+
+
+## 十二、弹窗波(任务编辑器 + 设置面板,2026-07-11)
+
+**样页 = 唯一视觉契约**(用户已认可方向与两项拍板):
+- `docs/design/dorami-job-editor-quiet.html`——班次编排单(用户注:总体认可,实装后逐项微调);
+- `docs/design/dorami-settings-quiet.html`——控制柜(用户微调已落样页:MCP 行**无状态灯**
+  (switch 即状态)、**不体现地址**;拍板:「向量雷达」区退役为服务区只读统计行、
+  「接入集成」区更名「服务」)。
+
+**CSS 已由主线预写入 index.css**(`je-*` 编辑器区段 + `sett-*` 设置区段,置于运维区段前)——
+**执行侧只写 JSX,不改 CSS**(消除并发冲突面)。
+
+**分工**:
+
+| 项 | 内容 | 负责 | 状态 |
+|---|---|---|---|
+| P-0 | 样页微调 + 契约 + CSS 两区段预写 | 主线 | ✅ |
+| P-1 | FetchRunsTab 任务编辑模态重写为班次编排单(JSX) | Opus 代理 | ✅ |
+| P-2 | SettingsModal + settings/* 重构为控制柜(JSX) | 主线 | ✅ |
+| P-3 | 验收:lint/build/双弹窗探针(打开态亮暗)/死码清理/提交 | 主线 | ✅ |
+
+**验收记录(2026-07-11,双角色双弹窗亮暗探针零 pageerror,pytest 316 全绿)**:
+- 编辑器:cron 解析器支持 `*`/数字/`*/N`/列表/范围(含 a-b/step)/周 0-7,越界或不识别 →
+  「保存后按调度器口径生效」且不显示距下次(诚实降级,实机验证:无 cron 任务显示「手动触发,无定时」);
+  逻辑零删减;代理三项「拿不准」采纳(距下次不自愈/参数计数字符串比对/目录计数全量口径);
+- 设置:双栏被 `.modal-panel` 后定义的 `flex-direction: column` 压过(同特异性后者胜)——
+  **技术陷阱**:与既有壳类复合使用的新区段,方向/布局属性要用复合选择器(`.modal-panel.sett-cab`)钉住;
+- 服务区向量行在 RAG 关闭环境正确隐藏;reader 设置只见 账户/外观/关于;
+- 死文件:IntegrationSection/VectorSection/SectionPrimitives 删除(L4 双入口遗留收账)。
+- 用户注:编辑器实装后将逐项微调(方向已认可),待用户目检清单。
+
+**P-1 要点**:头部启用 switch(从脚部 checkbox 升格);目录按 `sourceTaxonomy.groupBySection`
+分组;cron 人话回显 + 距下次走字(前端粗解析常见五段式:`*`、数字、`*/N`、列表、范围、星期——
+解析不了则回显「保存后按调度器口径生效」诚实降级;仅回显用,不做校验);编排单行 = cron 覆盖
+(placeholder 明示「随整体 {cron}」)+ schema 参数 + hover 移除;逻辑(草稿状态机/保存/校验/
+pendingJobDraft 预填)原样保留;Modal 外壳沿用。
+
+**P-2 要点**:五区 = 账户/外观/服务/数据同步/关于;服务区 admin-only(MCP 启停一行 +
+向量索引只读统计行(fetchVectorStats)+ location.hash 跳台账);VectorSection 文件退役;
+现有 gates(canExport/canImport/canToggle)沿用;主题分段复用 .segmented-control。

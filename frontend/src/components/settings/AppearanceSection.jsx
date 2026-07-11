@@ -1,7 +1,6 @@
 import { Monitor, Moon, Sun } from 'lucide-react';
-import { SectionHeading } from './SectionPrimitives';
 
-// 外观 / 主题：亮 / 暗 / 跟随系统三态。
+// 外观(弹窗波,设置行范式):主题三态,白拇指分段(复用 .segmented-control)。
 export default function AppearanceSection({ theme, onThemeChange }) {
   const options = [
     { id: 'light', label: '亮色', icon: Sun },
@@ -9,11 +8,13 @@ export default function AppearanceSection({ theme, onThemeChange }) {
     { id: 'system', label: '跟随系统', icon: Monitor },
   ];
   return (
-    <div>
-      <SectionHeading title="外观" hint="选择界面主题。「跟随系统」会随设备的浅色/深色外观自动切换。" />
-      <div className="surface-card rounded-[var(--r-card)] p-4">
-        <p className="text-sm font-bold text-slate-700">主题</p>
-        <div className="segmented-control mt-3">
+    <div className="sett-row">
+      <span className="sett-id">
+        <span className="sett-lbl">主题</span>
+        <div className="sett-sub">跟随系统时,随操作系统亮暗自动切换</div>
+      </span>
+      <span className="sett-ctl">
+        <span className="segmented-control">
           {options.map(opt => (
             <button
               key={opt.id}
@@ -24,8 +25,8 @@ export default function AppearanceSection({ theme, onThemeChange }) {
               <opt.icon /> {opt.label}
             </button>
           ))}
-        </div>
-      </div>
+        </span>
+      </span>
     </div>
   );
 }
