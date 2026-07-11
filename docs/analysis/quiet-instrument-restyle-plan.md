@@ -499,3 +499,23 @@ pendingJobDraft 预填)原样保留;Modal 外壳沿用。
 - registry 元数据透出 `is_template`;App.jsx 过滤由硬编码 `generic_web` 升级为标志驱动;
 - 实机:节点目录 28 → 23,「通用」零出现;库中无 generic 历史运行,名称解析无退化面;
 - pytest 316 全绿,lint/build 绿;CLAUDE.md 事实同步。
+
+
+## 十六、参数固化波(preset 非 limit 参数全退场,2026-07-11,主线自做)
+
+用户拍板:特定节点的抓取偏好是固定的,全部固化为类默认;可见节点的用户参数**恰好只剩
+「单次获取上限」**。
+
+- 三组 schema 收敛:GitHub 仓库(fork/归档恒排除、README 恒补充且对齐全文 40k)、
+  GitHub Releases(预发布与否 = 各 preset 按仓库发版习惯的类默认)、HN(去噪门槛 10/0 与
+  「外链不抓正文」是设计本身);模板节点参数面不动;
+- **BaseFetcher.fetch 加 schema 白名单过滤**(非模板节点只接受 schema 声明的参数,
+  schema 即契约)——治本:任何历史/未来残留一律无效;
+- **残留击穿修复**:cron 退场波的 8f6d 迁移把旧节点组参数(detail_max_chars 8000/12000/20000 等)
+  搬进了新任务并经 fallback 生效,击穿「恒抓全文」——Alembic e7a3c19b5d02 数据清洗剔除
+  已退场字段(generic_* 节点参数面防御性跳过);**教训:「库无残留」的判断会被后续迁移作废,
+  fallback 兼容策略不如契约过滤**;
+- 测试:白名单过滤契约(tests/test_fetch_param_whitelist.py)、清洗迁移语义、
+  三个旧 schema 契约测试改写;pytest 319 全绿,lint/build 绿;
+- 观察记录:迁移任务引用了一个已不在 registry 的化石节点 id(web_bytedance_seed_models),
+  编排单以原始 id 兜底显示、运行时自动跳过——无害,用户可自行从任务中移除。

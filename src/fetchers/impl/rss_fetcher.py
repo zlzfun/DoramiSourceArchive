@@ -588,14 +588,9 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
-        return [
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {"field": "min_points", "label": "最低分数门槛", "type": "number", "default": cls.default_min_points},
-            {"field": "min_comments", "label": "最低评论数门槛", "type": "number", "default": cls.default_min_comments},
-            {"field": "fetch_detail_if_missing", "label": "抓取外链正文（默认关闭，建议保持）", "type": "boolean", "default": cls.default_fetch_detail_if_missing},
-            {"field": "detail_min_chars", "label": "触发详情抓取的正文长度", "type": "number", "default": cls.default_detail_min_chars},
-            {"field": "detail_max_chars", "label": "详情页正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
-        ]
+        # 参数固化波:去噪门槛(10 分/0 评)与「外链贴不抓正文」是本节点的设计本身
+        # (discovery source),固化为类默认,不作用户参数;调整 = 改代码。
+        return [{"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit}]
 
     def _finalize_content_text(self, entry: Any, content_text: str, detail_text: str) -> str:
         # 真抓到了外链正文（用户手动开启详情抓取且成功）→ 保留。

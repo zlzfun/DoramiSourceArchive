@@ -310,3 +310,48 @@ def test_per_fetcher_cron_retirement_splits_overrides(tmp_path):
         assert _json.loads(split2[1]) == ["d"] and _json.loads(split2[2]) == {}
     finally:
         engine.dispose()
+
+
+def test_retired_param_fields_purged_from_jobs(tmp_path):
+    """参数固化波清洗迁移(e7a3c19b5d02):已退场字段从任务参数剔除,
+    存活字段保留,generic_* 节点(模板参数面)不清洗。"""
+    import json as _json
+
+    from alembic import command as alembic_command
+    from sqlalchemy import text
+
+    db_url = f"sqlite:///{tmp_path / 'purge.db'}"
+    cfg = make_alembic_config(db_url)
+    alembic_command.upgrade(cfg, "d41acead77b0")
+
+    per_params = {
+        "web_anthropic_news": {"limit": 20, "fetch_detail": True, "detail_max_chars": 12000},
+        "github_deepseek_repositories": {"limit": 20, "include_forks": False, "readme_max_chars": 1200},
+        "rss_hn_ai": {"limit": 20, "min_points": 25, "fetch_detail_if_missing": True},
+        "generic_rss": {"limit": 5, "detail_max_chars": 9000},
+    }
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO collection_jobs (id,name,description,fetcher_ids_json,params_json,"
+                "per_fetcher_params_json,cron_expr,is_active,downstream_policy_json,created_at,updated_at) "
+                "VALUES (1,'脏参任务','','[]','{}',:pp,'',1,'{}','2026-01-01','2026-01-01')"
+            ), {"pp": _json.dumps(per_params)})
+    finally:
+        engine.dispose()
+
+    alembic_command.upgrade(cfg, "head")
+
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            raw = conn.execute(text("SELECT per_fetcher_params_json FROM collection_jobs WHERE id=1")).scalar()
+    finally:
+        engine.dispose()
+    cleaned = _json.loads(raw)
+    assert cleaned["web_anthropic_news"] == {"limit": 20}
+    assert cleaned["github_deepseek_repositories"] == {"limit": 20}
+    assert cleaned["rss_hn_ai"] == {"limit": 20}
+    # 模板节点参数面不清洗
+    assert cleaned["generic_rss"] == {"limit": 5, "detail_max_chars": 9000}

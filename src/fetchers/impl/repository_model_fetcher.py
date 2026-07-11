@@ -7,6 +7,7 @@ from typing import Any, AsyncGenerator, Dict, List
 import httpx
 
 from fetchers.base import BaseFetcher
+from fetchers.impl.article_extractor import DETAIL_HARD_CAP
 from models.content import BaseContent, GitHubRepositoryContent, HuggingFaceModelContent
 
 
@@ -24,7 +25,8 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
 
     default_limit = 10
     default_fetch_readme = True
-    default_readme_max_chars = 1200
+    # README 补进正文,对齐「下游要全文」原则(仅病态页兜底,与正文同一硬上限)
+    default_readme_max_chars = DETAIL_HARD_CAP
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
@@ -235,13 +237,9 @@ class PresetGitHubRepositoriesFetcher(GenericGitHubRepositoriesFetcher):
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
-        return [
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {"field": "include_forks", "label": "包含 fork 仓库", "type": "boolean", "default": False},
-            {"field": "include_archived", "label": "包含归档仓库", "type": "boolean", "default": False},
-            {"field": "fetch_readme", "label": "无描述时补充 README", "type": "boolean", "default": cls.default_fetch_readme},
-            {"field": "readme_max_chars", "label": "README 摘要最大字符", "type": "number", "default": cls.default_readme_max_chars},
-        ]
+        # 参数固化波:抓取偏好属于节点本身(fork/归档恒排除、README 恒补充取全文),
+        # 不作用户参数;调整 = 改代码。
+        return [{"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit}]
 
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         params = {**kwargs, "owner": self.owner, "source_id": self.source_id, "limit": kwargs.get("limit", self.default_limit)}

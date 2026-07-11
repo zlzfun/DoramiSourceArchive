@@ -637,9 +637,8 @@ def test_hn_keeps_body_when_external_detail_actually_fetched():
 
 
 def test_hn_default_disables_external_detail_fetch():
-    schema = {f["field"]: f for f in HackerNewsAiRssFetcher.get_parameter_schema()}
+    # 参数固化波:「外链贴不抓正文」是设计本身,固化为类默认,不再暴露 schema。
     assert HackerNewsAiRssFetcher.default_fetch_detail_if_missing is False
-    assert schema["fetch_detail_if_missing"]["default"] is False
 
 
 def test_hn_ai_honors_custom_points_and_comments_thresholds():
@@ -655,6 +654,9 @@ def test_hn_ai_zero_thresholds_fall_back_to_unfiltered_query():
     assert "comments=" not in url
 
 
-def test_hn_ai_parameter_schema_exposes_thresholds():
+def test_hn_ai_parameter_schema_is_limit_only():
+    # 参数固化波:去噪门槛固化为类默认(10 分/0 评),schema 只剩 limit;调整 = 改代码。
     fields = {f["field"] for f in HackerNewsAiRssFetcher.get_parameter_schema()}
-    assert {"min_points", "min_comments", "limit"}.issubset(fields)
+    assert fields == {"limit"}
+    assert HackerNewsAiRssFetcher.default_min_points == 10
+    assert HackerNewsAiRssFetcher.default_min_comments == 0

@@ -180,15 +180,9 @@ class PresetGitHubReleasesFetcher(GenericGitHubReleasesFetcher):
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
-        return [
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {
-                "field": "include_prereleases",
-                "label": "包含预发布",
-                "type": "boolean",
-                "default": cls.default_include_prereleases,
-            },
-        ]
+        # 参数固化波:是否含预发布由各 preset 按该仓库的发版习惯以类默认配好
+        # (default_include_prereleases),不作用户参数。
+        return [{"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit}]
 
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         params = {

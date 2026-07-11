@@ -103,6 +103,16 @@ class BaseFetcher(abc.ABC):
         公开的主干调用方法 (模板方法模式)。
         外层的定时任务(Cron)或异步队列池只调用这个方法。
         """
+        # 参数固化波(2026-07):非模板节点只接受自己 schema 声明的参数——schema 即契约。
+        # 历史任务 per_fetcher_params 里的已退场字段(如迁移搬运的 detail_max_chars 残留)
+        # 在此被剔除,防止击穿类内固化默认;模板节点(is_template)参数面即 schema 全集,不受影响。
+        if not self.is_template:
+            allowed = {p["field"] for p in self.get_parameter_schema()}
+            dropped = sorted(k for k in kwargs if k not in allowed)
+            if dropped:
+                self.logger.info(f"🧹 忽略 schema 外参数(已固化为节点默认): {dropped}")
+                kwargs = {k: v for k, v in kwargs.items() if k in allowed}
+
         self.logger.info(f"🚀 开始执行抓取任务: {self.source_id} | 参数: {kwargs}")
 
         # 按需启动浏览器详情后端（生命周期与本次运行一致；非迁移节点恒为 None）
