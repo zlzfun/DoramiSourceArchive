@@ -236,6 +236,12 @@ export function fetchFetchRuns(filters = {}, limit = 100) {
   return request(`/fetch-runs?${params}`, { errorMsg: '获取抓取运行历史失败' });
 }
 
+// 每日聚合统计(A 波):runs 按 day×job×scope 状态分列,articles 按 day×source 计数。
+// 运行页点阵/总账条精确化、台账 7 日趋势、节点行收录 mini 柱共用。
+export function fetchDailyStats(days = 30) {
+  return request(`/stats/daily?days=${days}`, { errorMsg: '获取每日统计失败' });
+}
+
 // ==================== 采集任务（Collection Jobs） ====================
 // （采集范围 node-groups 与旧版定时任务 /api/tasks 已退役——实体简化阶段 2，
 // 存量数据由后端 Alembic 迁移内联/转换为采集任务。）

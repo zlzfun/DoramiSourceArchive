@@ -17,12 +17,14 @@ import {
   X,
 } from 'lucide-react';
 import {
+  fetchDailyStats,
   fetchFetchRuns,
   fetchRunningProgress,
   fetchSourceHealth,
   triggerBatchFetch,
   triggerFetch,
 } from '../api';
+import Sparkline from './charts/Sparkline';
 import CustomNodeBuilder from './CustomNodeBuilder';
 
 // 高级目标「AI 自定义节点」暂不开放前端入口：后端流程保留，UI 入口与面板用此开关隐藏。
@@ -85,6 +87,7 @@ function typeLabelOf(fetcher) {
 export default function FetchTab({ availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onSaveAsJob, pendingFocus, onPendingFocusApplied }) {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [healthByFetcher, setHealthByFetcher] = useState({});
+  const [trendBySource, setTrendBySource] = useState(null); // 7 日收录趋势 {days, bySource}(A 波)
   const [fetchConfigs, setFetchConfigs] = useState({});
   const [runningFetcherIds, setRunningFetcherIds] = useState(() => new Set());
   const [fetchProgress, setFetchProgress] = useState({});
@@ -181,6 +184,16 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       const healthItems = await fetchSourceHealth();
       setHealthByFetcher(Object.fromEntries(healthItems.map(item => [item.fetcher_id, item])));
     } catch (e) { console.error(e); }
+    // 7 日收录趋势(A 每日聚合端点波):随健康刷新同步;失败静默,行内不渲染。
+    try {
+      const stats = await fetchDailyStats(7);
+      const bySource = {};
+      stats.articles.forEach(a => {
+        if (!bySource[a.source_id]) bySource[a.source_id] = {};
+        bySource[a.source_id][a.day] = (bySource[a.source_id][a.day] || 0) + a.count;
+      });
+      setTrendBySource({ days: stats.days, bySource });
+    } catch { setTrendBySource(null); }
   }, []);
 
   useEffect(() => {
@@ -575,6 +588,17 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             <span className="board-node-sid" title={fetcher.id}>{fetcher.id}</span>
           </span>
           <span className="chip board-node-type">{typeLabelOf(fetcher)}</span>
+          {/* 常驻占位保 grid 对齐;无数据时 Sparkline 返回 null,格空 */}
+          <span className="board-node-trend" aria-hidden="true">
+            {trendBySource?.bySource[fetcher.id] && (
+              <Sparkline
+                values={trendBySource.days.map(d => trendBySource.bySource[fetcher.id][d] || 0)}
+                labels={trendBySource.days}
+                height={14}
+                title={`${fetcher.name} 近 7 日收录`}
+              />
+            )}
+          </span>
           <span className="board-node-last">
             <span className="board-node-last-time">{formatRelativeTime(health?.latest_run_at)}</span>
             <span className={`board-node-last-res ${status === 'failing' ? 'is-bad' : ''}`}>
@@ -780,7 +804,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               ) : (
                 <>
                   <div className="inspector-preview-head">
-                    试抓完成 · 新增 {preview.saved ?? 0} 条{preview.failed ? `，失败 ${preview.failed}` : ''}
+                    试抓完成:新增 {preview.saved ?? 0} 条{preview.failed ? `，失败 ${preview.failed}` : ''}
                   </div>
                   <div className="inspector-preview-item">
                     以当前参数试抓 1 条并写入台账；如需批量入库请用「立即运行」。

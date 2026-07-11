@@ -156,6 +156,7 @@ from api.routers.collection import (
     serialize_collection_job_run,
 )
 from api.routers import fetchers as fetchers_router
+from api.routers import stats as stats_router
 from api.routers.fetchers import FetchBatchItem, FetchBatchParams
 from services import daily_brief as daily_brief_service
 from services import accounts as accounts_service
@@ -287,6 +288,8 @@ COLLECTOR_API_PREFIXES = (
     "/api/import/social-posts",
     "/api/collection-jobs",
     "/api/collection-job-runs",
+    # 每日聚合统计(运行页点阵/台账与节点 sparkline)——采集面只读。
+    "/api/stats",
     "/api/jobs",
     # LLM 配置与日报生成/配置归管理员（collector）。
     "/api/llm",
@@ -468,6 +471,7 @@ app.include_router(monitoring_router.router)
 app.include_router(source_configs_router.router)
 app.include_router(archive_sync_router.router)
 app.include_router(collection_router.router)
+app.include_router(stats_router.router)
 app.include_router(fetchers_router.router)
 
 scheduler = AsyncIOScheduler()

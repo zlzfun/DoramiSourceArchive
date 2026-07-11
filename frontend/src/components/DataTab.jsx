@@ -8,6 +8,7 @@ import {
   fetchArticles as apiFetchArticles,
   fetchArticle,
   fetchArticleFacets,
+  fetchDailyStats,
   batchDeleteArticles,
   deleteArticle,
   vectorizeArticle,
@@ -19,6 +20,7 @@ import {
   updateArticle,
   createArticle,
 } from '../api';
+import Sparkline from './charts/Sparkline';
 import { runAction } from '../utils/runAction';
 import { excerptOf } from '../utils/readerText';
 import { contentTypeLabel, CONTENT_TYPE_GROUPS } from '../utils/contentType';
@@ -285,6 +287,19 @@ export default function DataTab({
     setLedgerStats({ total, today, week });
   }, [showVectorActions]);
 
+  // 近 7 日收录趋势(A 每日聚合端点波):挂在「总收录」格,端点失败静默不渲染。
+  const [weekTrend, setWeekTrend] = useState(null);
+  const loadWeekTrend = useCallback(() => {
+    fetchDailyStats(7)
+      .then(d => {
+        const byDay = {};
+        d.articles.forEach(a => { byDay[a.day] = (byDay[a.day] || 0) + a.count; });
+        setWeekTrend({ values: d.days.map(k => byDay[k] || 0), labels: d.days });
+      })
+      .catch(() => setWeekTrend(null));
+  }, []);
+  useEffect(() => { loadWeekTrend(); }, [loadWeekTrend]);
+
   const loadFacets = useCallback(async () => {
     try {
       const d = await fetchArticleFacets({ exclude_source_ids: 'dorami_daily_brief' });
@@ -357,6 +372,7 @@ export default function DataTab({
     else setCurrentPage(1);
     loadLedgerStats();
     loadFacets();
+    loadWeekTrend();
   };
 
   const handleSearchSubmit = () => setAppliedSearch(searchInput.trim());
@@ -703,6 +719,11 @@ export default function DataTab({
                   >
                     <span className={`ledger-stat-num ${stat.tone}`}>{renderStatValue(stat.key)}</span>
                     <span className="ledger-stat-lbl">{stat.label}</span>
+                    {stat.key === 'all' && weekTrend && (
+                      <span className="mt-2 block" aria-hidden="true">
+                        <Sparkline values={weekTrend.values} labels={weekTrend.labels} title="近 7 日收录趋势" />
+                      </span>
+                    )}
                     {stat.key === 'indexed' && coverage !== null && (
                       <>
                         <span className="ledger-stat-sub">覆盖率 {coverage}%</span>

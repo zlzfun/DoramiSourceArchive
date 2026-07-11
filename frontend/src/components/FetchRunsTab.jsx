@@ -16,6 +16,7 @@ import {
   deleteCollectionJob,
   fetchCollectionJobRuns,
   fetchCollectionJobs,
+  fetchDailyStats,
   fetchFetchRuns,
   runCollectionJob,
   triggerFetch,
@@ -97,7 +98,30 @@ function parseParams(paramsJson) {
   }
 }
 
+// stats 端点行(day×计数分列)→ 7 日点阵(旧→新 7 格,精确口径;A 每日聚合端点波)。
+// worst:failed>0→bad、partial>0→warn、当日有运行→ok、无→空格。
+function sevenDayDotsFromStats(rows) {
+  const days = [];
+  const base = new Date();
+  base.setHours(0, 0, 0, 0);
+  for (let i = 6; i >= 0; i -= 1) {
+    const d = new Date(base);
+    d.setDate(d.getDate() - i);
+    days.push(localDayStr(d));
+  }
+  const byDay = {};
+  rows.forEach(r => {
+    let sev = 0;
+    if (r.failed > 0) sev = 3;
+    else if (r.partial > 0) sev = 2;
+    else if (r.runs > 0) sev = 1;
+    byDay[r.day] = Math.max(byDay[r.day] || 0, sev);
+  });
+  return days.map(k => SEV_CLASS[byDay[k] || 0]);
+}
+
 // 已加载运行按日聚合最差状态,得出 7 日点阵(旧→新 7 格)与最近一次结果。
+// (stats 拉取失败时的窗口口径回退。)
 function sevenDayDots(runs) {
   const days = [];
   const base = new Date();
@@ -177,6 +201,7 @@ export default function FetchRunsTab({
   const [collectionJobs, setCollectionJobs] = useState([]);
   const [collectionRuns, setCollectionRuns] = useState([]);
   const [fetchRuns, setFetchRuns] = useState([]);
+  const [daily, setDaily] = useState(null); // GET /api/stats/daily(近 30 天精确聚合;null=回退窗口口径)
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
 
@@ -230,15 +255,18 @@ export default function FetchRunsTab({
     setLoading(true);
     try {
       // 拉取不带 status/trigger 服务端参数(总账条计数不随本地筛选塌缩);仅 fetcher_id 保留。
-      const [jobs, jobRuns, nodeRuns] = await Promise.all([
+      // stats 为精确聚合口径(点阵/总账条),拉取失败降级 null → 各消费点回退窗口口径。
+      const [jobs, jobRuns, nodeRuns, stats] = await Promise.all([
         fetchCollectionJobs(),
         fetchCollectionJobRuns({}, 100),
         fetchFetchRuns({ fetcher_id: serverFetcherId }, 200),
+        fetchDailyStats(30).catch(() => null),
       ]);
       if (reqId !== loadRequestRef.current) return;
       setCollectionJobs(jobs);
       setCollectionRuns(jobRuns);
       setFetchRuns(nodeRuns);
+      setDaily(stats);
       setLoadError('');
     } catch (e) {
       if (reqId !== loadRequestRef.current) return;
@@ -349,7 +377,20 @@ export default function FetchRunsTab({
   );
 
   // 时刻表分组:活跃有 next 按升序 → 活跃手动按名称 → 临时汇总 → 已停用。
+  // 点阵/今日次数优先吃 stats 精确口径(A 波),端点不可用时回退已加载窗口;
+  // 上次结果点保持窗口口径(要的是「最近一条」的即时状态,含 running)。
   const timetable = useMemo(() => {
+    const statsByJob = new Map();
+    const statsAdhoc = [];
+    if (daily) {
+      daily.runs.forEach(r => {
+        if (r.scope !== 'saved_job') statsAdhoc.push(r);
+        if (r.job_id == null) return;
+        if (!statsByJob.has(r.job_id)) statsByJob.set(r.job_id, []);
+        statsByJob.get(r.job_id).push(r);
+      });
+      daily.solo.forEach(r => statsAdhoc.push(r));
+    }
     const withNext = [];
     const manual = [];
     const disabled = [];
@@ -366,7 +407,7 @@ export default function FetchRunsTab({
         nextRunAt: job.next_run_at || null,
         isActive: job.is_active !== false,
         lastStatus: latestStatus(runs),
-        dots: sevenDayDots(runs),
+        dots: daily ? sevenDayDotsFromStats(statsByJob.get(job.id) || []) : sevenDayDots(runs),
       };
       if (!entry.isActive) disabled.push(entry);
       else if (entry.nextRunAt) withNext.push(entry);
@@ -380,12 +421,14 @@ export default function FetchRunsTab({
       kind: 'adhoc',
       id: 'adhoc',
       name: '临时抓取',
-      todayCount: adhocRuns.filter(run => dayKey(run.started_at) === todayKey).length,
+      todayCount: daily
+        ? statsAdhoc.filter(r => r.day === todayKey).reduce((acc, r) => acc + (r.runs || 0), 0)
+        : adhocRuns.filter(run => dayKey(run.started_at) === todayKey).length,
       lastStatus: latestStatus(adhocRuns),
-      dots: sevenDayDots(adhocRuns),
+      dots: daily ? sevenDayDotsFromStats(statsAdhoc) : sevenDayDots(adhocRuns),
     };
     return { active: [...withNext, ...manual], adhoc: adhocEntry, disabled };
-  }, [collectionJobs, runsByJobId, adhocRuns]);
+  }, [collectionJobs, runsByJobId, adhocRuns, daily]);
 
   // 统一运行流水:任务级 + 无 job_run_id 的节点级,按 started_at 降序。
   const unifiedRuns = useMemo(() => {
@@ -424,10 +467,26 @@ export default function FetchRunsTab({
     return unifiedRuns.filter(run => (run.rowType === 'fetch' ? true : parentIds.has(run.id)));
   }, [unifiedRuns, fetchRuns, serverFetcherId]);
 
-  // 总账条计数:窗口口径(scopedRuns),独立于 状态/触发/对象/任务 本地筛选。
+  // 总账条计数:stats 精确口径(近 30 天,A 波);来源过滤生效或端点不可用时
+  // 回退窗口口径(stats 不分来源,精确数与来源作用域会口径打架)。
+  const statsCounts = !serverFetcherId && daily;
   const counts = useMemo(() => {
     const acc = { total: 0, running: 0, success: 0, partial: 0, failed: 0, saved: 0, fetched: 0, skipped: 0, today: 0 };
     const todayKey = localDayStr(new Date());
+    if (statsCounts) {
+      [...daily.runs, ...daily.solo].forEach(r => {
+        acc.total += r.runs || 0;
+        acc.running += r.running || 0;
+        acc.success += r.success || 0;
+        acc.partial += r.partial || 0;
+        acc.failed += r.failed || 0;
+        acc.saved += r.saved || 0;
+        acc.fetched += r.fetched || 0;
+        acc.skipped += r.skipped || 0;
+        if (r.day === todayKey) acc.today += r.runs || 0;
+      });
+      return acc;
+    }
     scopedRuns.forEach(run => {
       acc.total += 1;
       acc.saved += run.saved_count || 0;
@@ -440,7 +499,7 @@ export default function FetchRunsTab({
       else if (run.status === 'failed') acc.failed += 1;
     });
     return acc;
-  }, [scopedRuns]);
+  }, [scopedRuns, statsCounts, daily]);
 
   const pct = (n) => (counts.total ? `${((n / counts.total) * 100).toFixed(1)}%` : '0%');
 
@@ -789,7 +848,7 @@ export default function FetchRunsTab({
                 </>
               )}
             </div>
-            <div className="tt-foot">按下次触发时间排序 · 点任务过滤右侧流水</div>
+            <div className="tt-foot">按下次触发时间排序;点任务过滤右侧流水</div>
           </aside>
 
           {/* ════ 右区:运行流水 ════ */}
@@ -800,7 +859,7 @@ export default function FetchRunsTab({
                 <button className={`flow-stat ${statusFilter === '' ? 'is-on' : ''}`} onClick={() => setStatusFilter('')}>
                   <span className="flow-stat-num">{counts.total}</span>
                   <span className="flow-stat-lbl">全部运行</span>
-                  <span className="flow-stat-sub">窗口内 · 今日 {counts.today}</span>
+                  <span className="flow-stat-sub">{statsCounts ? '近 30 天' : '窗口内'} · 今日 {counts.today}</span>
                 </button>
                 <button className={`flow-stat ${statusFilter === 'running' ? 'is-on' : ''}`} onClick={() => setStatusFilter(statusFilter === 'running' ? '' : 'running')}>
                   <span className="flow-stat-num is-run">{counts.running}</span>
