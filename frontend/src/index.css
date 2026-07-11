@@ -4014,13 +4014,16 @@ input[type="radio"] {
      「向量雷达」区退役为服务区只读统计行(用户拍板)。主题分段复用 .segmented-control。
      刻度 1:1 取自 docs/design/dorami-settings-quiet.html。 ── */
 
-  .sett-cab { width: min(760px, 92vw); height: min(560px, 88vh); display: flex; overflow: hidden; }
-  /* 与 .modal-panel 复合使用:panel 供表面/高程/开合动画;其 flex-direction: column
-     定义在后会压过同特异性的 row——用复合选择器提特异性钉住双栏 */
-  .modal-panel.sett-cab { flex-direction: row; }
+  /* 字号语境挂容器(13px,样页口径;按钮经 button{font:inherit} 继承它) */
+  .sett-cab { display: flex; overflow: hidden; font-size: 13px; }
+  /* 与 .modal-panel 复合使用:panel 供表面/高程/开合动画;其 width:100%/flex-direction:column
+     定义在后会压过同特异性声明——布局向属性一律用复合选择器钉住(弹窗波陷阱) */
+  .modal-panel.sett-cab { width: min(760px, 92vw); height: min(560px, 88vh); flex-direction: row; }
 
   .sett-nav { width: 168px; flex: none; display: flex; flex-direction: column;
-    background: var(--dorami-soft); border-right: 1px solid var(--dorami-border); padding: 14px 8px; }
+    background: var(--dorami-soft); border-right: 1px solid var(--dorami-border); padding: 14px 8px;
+    /* 字号/字重挂容器:button{font:inherit}(未分层)会压掉 @layer 里按钮类的 font-* */
+    font-size: 12.5px; font-weight: 600; }
   .sett-nav-title { padding: 0 10px 10px; font-size: 14px; font-weight: 800; }
   .sett-nav-btn { position: relative; display: flex; align-items: center; gap: 9px; width: 100%;
     padding: 8px 10px; border-radius: var(--r-sm); font-size: 12.5px; font-weight: 600;
@@ -4049,6 +4052,15 @@ input[type="radio"] {
   .sett-lbl { font-size: 13px; font-weight: 600; }
   .sett-sub { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); margin-top: 1px; line-height: 1.6; }
   .sett-ctl { flex: none; display: flex; align-items: center; gap: 8px; }
+
+  /* 外观三态分段(样页刻度:28px 紧凑白拇指;字号字重挂容器继承穿透) */
+  .sett-seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--r-control);
+    background: var(--dorami-well); font-size: 12px; font-weight: 600; }
+  .sett-seg-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 28px;
+    padding: 0 12px; border-radius: 8px; color: var(--dorami-muted); }
+  .sett-seg-btn:hover:not(.is-on) { color: var(--dorami-ink-2); }
+  .sett-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+  .sett-seg-btn svg { width: 13px; height: 13px; }
 
   .sett-avatar { width: 44px; height: 44px; flex: none; border-radius: var(--r-pill);
     display: grid; place-items: center; font-size: 16px; font-weight: 800; overflow: hidden; }
@@ -8151,6 +8163,11 @@ input[type="radio"] {
   background-size: 1200px 100%;
 }
 [data-theme="dark"] :is(.date-range-day, .source-meta-val) { color: var(--dorami-ink-2); }
+
+/* ── 弹窗波·未分层字重修正:button{font:inherit}(未分层)压掉 @layer 内按钮类的
+   font-*;基础字号已挂容器继承,此处仅补选中态加粗(unlayered 同源比特异性,0,2,0 胜)── */
+.sett-nav-btn.is-on { font-weight: 700; }
+.sett-seg-btn.is-on { font-weight: 700; }
 
 /* ── 运行浮窗(坞内双形态)= accent 实底 ──
    它是「运行中」活动态的全站唯一持续运动元素,主题色实底作醒目标识

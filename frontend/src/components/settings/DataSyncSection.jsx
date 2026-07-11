@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowRight, Check, Download, FileText, Loader2, Upload } from 'lucide-react';
+import { Check, Download, Loader2, Upload } from 'lucide-react';
 import { exportArchiveArticles, importArchiveArticlesJsonl } from '../../api';
 
 function downloadFile(url, filename) {
@@ -134,26 +134,11 @@ export default function DataSyncSection({ showToast, canExport, canImport, onArt
   };
 
   return (
-    <div>
-      <div className="mb-4 flex items-center justify-center gap-2.5 rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-soft)] px-4 py-3 text-xs font-bold text-slate-500">
-        <span className="flex items-center gap-1.5"><Download className="h-3.5 w-3.5 text-indigo-500" /> 本端导出</span>
-        <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
-        <span className="flex items-center gap-1.5"><FileText className="h-3.5 w-3.5 text-slate-500" /> 归档包</span>
-        <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
-        <span className="flex items-center gap-1.5"><Upload className="h-3.5 w-3.5 text-emerald-500" /> 另一端导入</span>
-      </div>
-
+    <div className="sett-sync-grid">
       {canExport && (
         <div className="sett-sync-card">
-          <div className="mb-4 flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--r-control)] bg-[var(--dorami-wash)] text-indigo-500">
-              <Download className="h-4 w-4" />
-            </div>
-            <div className="min-w-0">
-              <span className="block text-sm font-bold text-slate-700">导出归档包</span>
-              <span className="tiny-meta">把已归档文章打包成 JSONL 文件，供另一个端导入。</span>
-            </div>
-          </div>
+          <div className="sett-sync-title">导出归档包</div>
+          <p className="sett-sync-sub">把本端文章导出为 .jsonl 归档包,用于搬运到另一部署端;默认导出今天收录的内容。</p>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="space-y-1">
@@ -186,7 +171,6 @@ export default function DataSyncSection({ showToast, canExport, canImport, onArt
               />
             </label>
           </div>
-          <p className="tiny-meta mt-2">默认导出今天收录的全部来源内容；可自行调整时间范围，留空则导出至今全部。</p>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--dorami-border)] pt-4">
             <label className="flex items-center gap-2 text-sm font-bold text-slate-500">
@@ -198,25 +182,18 @@ export default function DataSyncSection({ showToast, canExport, canImport, onArt
               />
               gzip 压缩下载
             </label>
-            <button onClick={handleExport} disabled={exporting} className="action-button action-button-primary">
+            <button onClick={handleExport} disabled={exporting} className="action-button action-button-secondary">
               {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              生成并下载归档包
+              导出 .jsonl
             </button>
           </div>
         </div>
       )}
 
       {canImport && (
-        <div className={`sett-sync-card ${canExport ? 'mt-4' : ''}`}>
-          <div className="mb-4 flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--r-control)] bg-emerald-50 text-emerald-500">
-              <Upload className="h-4 w-4" />
-            </div>
-            <div className="min-w-0">
-              <span className="block text-sm font-bold text-slate-700">导入归档包</span>
-              <span className="tiny-meta">导入其他端生成的归档包；重复导入会自动跳过已存在文章。</span>
-            </div>
-          </div>
+        <div className="sett-sync-card">
+          <div className="sett-sync-title">导入归档包</div>
+          <p className="sett-sync-sub">选择另一端导出的 .jsonl(.gz)导入本端;按内容指纹去重,重复导入自动跳过。</p>
 
           <label className="block cursor-pointer rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] bg-[var(--dorami-soft)] p-4 transition-colors hover:border-[var(--dorami-border-strong)]">
             <span className="block text-sm font-bold text-slate-700">选择归档包</span>
@@ -234,7 +211,7 @@ export default function DataSyncSection({ showToast, canExport, canImport, onArt
             )}
           </label>
 
-          <button onClick={handleImport} disabled={importing || !importFile} className="action-button action-button-primary mt-4">
+          <button onClick={handleImport} disabled={importing || !importFile} className="action-button action-button-secondary mt-4">
             {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             导入归档包
           </button>

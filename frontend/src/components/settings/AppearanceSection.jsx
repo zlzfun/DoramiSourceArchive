@@ -14,13 +14,13 @@ export default function AppearanceSection({ theme, onThemeChange }) {
         <div className="sett-sub">跟随系统时,随操作系统亮暗自动切换</div>
       </span>
       <span className="sett-ctl">
-        <span className="segmented-control">
+        <span className="sett-seg" role="group" aria-label="主题">
           {options.map(opt => (
             <button
               key={opt.id}
               type="button"
               onClick={() => onThemeChange(opt.id)}
-              className={`segmented-option ${theme === opt.id ? 'segmented-option-active' : ''}`}
+              className={`sett-seg-btn ${theme === opt.id ? 'is-on' : ''}`}
             >
               <opt.icon /> {opt.label}
             </button>
