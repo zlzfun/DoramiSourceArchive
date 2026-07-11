@@ -3520,7 +3520,8 @@ input[type="radio"] {
   .tt-row.is-off { opacity: 0.55; }
   .tt-row.is-off:hover { opacity: 0.8; }
 
-  .tt-foot { flex: none; padding: 9px 16px; border-top: 1px solid var(--dorami-border);
+  .tt-foot { flex: none; display: flex; align-items: center; min-height: 47px;
+    padding: 9px 16px; border-top: 1px solid var(--dorami-border);
     background: var(--dorami-soft); font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
 
   /* ════════ 右区:运行流水 ════════ */
@@ -3571,7 +3572,9 @@ input[type="radio"] {
 
   /* ── 流水表 ── */
   .flow-scroll { flex: 1; min-height: 0; overflow: auto; }
-  .flow-table { width: 100%; border-collapse: collapse; }
+  /* fixed 布局:列宽只由表头定宽决定,不随行集内容变化——修「筛选切换列头漂移」
+     与「标题与内容偶发错位」(auto 布局下数字宽度差引起) */
+  .flow-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 
   .flow-err-bar { display: flex; align-items: center; gap: 8px; padding: 10px 16px;
     background: var(--state-bad-bg); color: var(--state-bad); font-size: 12px; font-weight: 600;
@@ -3643,6 +3646,12 @@ input[type="radio"] {
   .run-dur { text-align: right; font-family: var(--mono); font-size: 11px;
     font-variant-numeric: tabular-nums; color: var(--dorami-faint); white-space: nowrap; }
 
+  /* 操作并入耗时列(独立操作列退役,右缘不再空旷):hover 行时耗时让位、动作浮现;
+     无动作的行 hover 耗时保持可见 */
+  .run-durcell { position: relative; }
+  .run-durcell .rowacts { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); }
+  .run-row:hover .run-dur.has-acts { opacity: 0; }
+
   /* 行末操作(台账 rowacts 范式):hover 浮现;临时运行=存为采集任务,失败行=重跑 */
   .rowacts { display: flex; justify-content: flex-end; gap: 2px; opacity: 0;
     transition: opacity var(--motion-fast) var(--motion-ease); }
@@ -3685,7 +3694,7 @@ input[type="radio"] {
 
   /* 表脚 + 页码范式 .pager(直接引用) */
   .flow-foot { flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    padding: 10px 16px; border-top: 1px solid var(--dorami-border); background: var(--dorami-soft); }
+    padding: 10px 16px; border-top: 1px solid var(--dorami-border); background: var(--dorami-soft); min-height: 47px; }
   .flow-foot-info { font-size: 12px; font-weight: 600; color: var(--dorami-faint);
     font-variant-numeric: tabular-nums; }
 

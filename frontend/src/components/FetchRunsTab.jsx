@@ -577,9 +577,16 @@ export default function FetchRunsTab({
   }, [collectionJobs, runsByJobId, adhocRuns, daily]);
 
   // 统一运行流水:任务级 + 无 job_run_id 的节点级,按 started_at 降序。
+  // 口径统一(目检 #5):行集与总账条同为「近 30 天」——否则统计(stats 精确)与
+  // 列表(加载窗口可含更早行)数字对不上;更久历史超出本页问题域。
   const unifiedRuns = useMemo(() => {
+    const cutoff = new Date();
+    cutoff.setHours(0, 0, 0, 0);
+    cutoff.setDate(cutoff.getDate() - 29);
+    const cutoffKey = localDayStr(cutoff);
+    const inWindow = run => (dayKey(run.started_at) || '') >= cutoffKey;
     const rows = [];
-    collectionRuns.forEach(run => {
+    collectionRuns.filter(inWindow).forEach(run => {
       const job = run.job_id ? jobsById[run.job_id] : null;
       const rawName = normalizeCollectorDisplayName(run.name || job?.name || `采集运行 #${run.id}`);
       // 单节点临时运行的后端拼名「临时抓取: {fetcher_id}」→ 节点友好名(scope 已在副行表达,
@@ -594,7 +601,7 @@ export default function FetchRunsTab({
         ...run,
       });
     });
-    nodeRunsWithoutParent.forEach(run => {
+    nodeRunsWithoutParent.filter(inWindow).forEach(run => {
       rows.push({
         key: `f-${run.id}`,
         rowType: 'fetch',
@@ -1065,8 +1072,7 @@ export default function FetchRunsTab({
                     <th className="flow-th is-num" style={{ width: 64 }}>抓取</th>
                     <th className="flow-th is-num" style={{ width: 64 }}>新增</th>
                     <th className="flow-th is-num" style={{ width: 64 }}>跳过</th>
-                    <th className="flow-th is-num" style={{ width: 76 }}>耗时</th>
-                    <th className="flow-th" style={{ width: 56 }} aria-label="操作" />
+                    <th className="flow-th is-num" style={{ width: 96 }}>耗时</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1086,7 +1092,7 @@ export default function FetchRunsTab({
                     ))
                   ) : pageRuns.length === 0 ? (
                     <tr>
-                      <td colSpan={9}>
+                      <td colSpan={8}>
                         <div className="flow-empty">
                           当前筛选下暂无运行记录<br />
                           去左侧时刻表选一个任务立即运行,或在节点管理发起一次临时抓取
@@ -1097,7 +1103,7 @@ export default function FetchRunsTab({
                     dayGroups.map(group => (
                       <Fragment key={`day-${group.key}`}>
                         <tr className="day-row">
-                          <td colSpan={9}>
+                          <td colSpan={8}>
                             <span className="d">{group.label}<em>{group.weekday}</em></span>
                             <span className="sum">{group.runs.length} 次 · 新增 <b>{group.saved}</b> · 失败 <b>{group.failed}</b></span>
                           </td>
@@ -1148,8 +1154,8 @@ export default function FetchRunsTab({
                                 <td><span className={`run-n ${!run.fetched_count ? 'is-zero' : ''}`}>{run.fetched_count || '–'}</span></td>
                                 <td><span className={`run-n is-main ${!run.saved_count ? 'is-zero' : ''}`}>{run.saved_count || '–'}</span></td>
                                 <td><span className={`run-n ${!run.skipped_count ? 'is-zero' : ''}`}>{run.skipped_count || '–'}</span></td>
-                                <td><span className="run-dur">{formatDuration(run.duration_ms)}</span></td>
-                                <td>
+                                <td className="run-durcell">
+                                  <span className={`run-dur ${(saveable || rerunnable) ? 'has-acts' : ''}`}>{formatDuration(run.duration_ms)}</span>
                                   {(saveable || rerunnable) && (
                                     <div className="rowacts">
                                       {rerunnable && (
@@ -1164,7 +1170,7 @@ export default function FetchRunsTab({
                               </tr>
                               {showErr && (
                                 <tr className="err-row">
-                                  <td colSpan={9}>
+                                  <td colSpan={8}>
                                     <div className="err-msg"><AlertTriangle /> <span>{run.error_message}</span></div>
                                   </td>
                                 </tr>
@@ -1187,11 +1193,10 @@ export default function FetchRunsTab({
                                       <td><span className={`run-n is-main ${!child.saved_count ? 'is-zero' : ''}`}>{child.saved_count || '–'}</span></td>
                                       <td><span className={`run-n ${!child.skipped_count ? 'is-zero' : ''}`}>{child.skipped_count || '–'}</span></td>
                                       <td><span className="run-dur">{formatDuration(child.duration_ms)}</span></td>
-                                      <td />
                                     </tr>
                                     {childErr && (
                                       <tr className="child-err">
-                                        <td colSpan={9}>
+                                        <td colSpan={8}>
                                           <div className="err-msg"><AlertTriangle /> <span>{child.error_message}</span></div>
                                         </td>
                                       </tr>
@@ -1211,7 +1216,7 @@ export default function FetchRunsTab({
 
             <div className="flow-foot">
               <span className="flow-foot-info">
-                {tableRuns.length} 次运行 · 窗口内已加载
+                {tableRuns.length} 次运行 · 近 30 天
                 {selectedJob ? ` · 已按「${selectedJob.name}」过滤` : selectedJobId === 'adhoc' ? ' · 仅临时抓取' : ''}
               </span>
               {pageCount > 1 && (
