@@ -184,7 +184,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
       {/* ════ 区 1：交付通道（全角色） ════ */}
       <div className="zone-head zone-head-first">
         <span className="zone-title">交付通道</span>
-        <span className="zone-hint">把归档内容接进你的 Agent、RSS 阅读器或工作流</span>
+        <span className="zone-hint">把内容接进你的 Agent、RSS 阅读器或工作流</span>
       </div>
 
       <div className="channels">
@@ -219,7 +219,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
               </span>
             )}
           </div>
-          <p className="card-desc">标准 Model Context Protocol 端点，Agent 直接调用归档的检索与浏览工具。</p>
+          <p className="card-desc">标准 Model Context Protocol 端点，Agent 直接调用内容的检索与浏览工具。</p>
 
           {enabled ? configBlock : (
             <>

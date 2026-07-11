@@ -426,7 +426,7 @@ export default function AdminOpsTab({ showToast }) {
 
           <div className="zone-head">
             <span className="zone-title">账户管理</span>
-            <span className="zone-hint">停用 / 删除会立即让对应账户的会话失效 · 点行查看活动详情</span>
+            <span className="zone-hint">停用 / 删除会立即让对应账户的会话失效；点行查看活动详情</span>
             <span className="zone-acts flex items-center gap-2">
               {accounts && accounts.length > 0 && (
                 <span className="relative">

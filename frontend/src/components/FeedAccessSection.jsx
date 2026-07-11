@@ -113,7 +113,7 @@ export default function FeedAccessSection({ showToast }) {
       </div>
       <div className="token-meta">
         {exists
-          ? `${issuedAt ? `签发于 ${issuedAt} · ` : ''}重新生成会让旧令牌立即失效`
+          ? `${issuedAt ? `签发于 ${issuedAt}，` : ''}重新生成会让旧令牌立即失效`
           : '尚未签发，点上方「重新生成」创建你的第一个令牌'}
       </div>
 
@@ -143,7 +143,7 @@ export default function FeedAccessSection({ showToast }) {
       <details className="scope-note">
         <summary>接口参数</summary>
         {FEED_PARAMS.map(([name, desc]) => (
-          <p key={name}><code className="font-mono">{name}</code> — {desc}</p>
+          <p key={name}><code className="font-mono">{name}</code>：{desc}</p>
         ))}
       </details>
     </section>
