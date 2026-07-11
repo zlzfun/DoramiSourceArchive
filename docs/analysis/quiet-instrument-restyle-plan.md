@@ -519,3 +519,23 @@ pendingJobDraft 预填)原样保留;Modal 外壳沿用。
   三个旧 schema 契约测试改写;pytest 319 全绿,lint/build 绿;
 - 观察记录:迁移任务引用了一个已不在 registry 的化石节点 id(web_bytedance_seed_models),
   编排单以原始 id 兜底显示、运行时自动跳过——无害,用户可自行从任务中移除。
+
+
+## 十七、点名册波(任务编辑器 v2,2026-07-11,主线自做)
+
+**样页 = 唯一视觉契约**:`docs/design/dorami-job-roster-quiet.html`(用户认可;
+替代 dorami-job-editor-quiet.html 的双面板体,其头部时刻区设计被继承)。
+
+参数四波收敛后,任务编辑本体 = **勾人 + 定额 + 一个时刻**——「目录→编排单」双面板
+(同批节点显示两遍、右栏为一个数字耗一行)随功能过时,重构为**单栏点名册**:
+
+- 勾选与配置同一行:勾中行尾浮现「上限」输入;值=默认 muted、改动 ink 加粗(安静 diff 信号);
+- 模态 5xl(1020px)→ 2xl(672px);工具行 = 搜索 +「已编入 N / 总数 · 改动 M」;
+- 组头 sticky + hover 浮现 全选/清空(setGroupChecked 批量,保留已改参数防误触丢配置);
+- **编外兜底组**(实装中发现):已编入但不在目录的化石节点(如迁移遗留
+  web_bytedance_seed_models)原本只出现在计数里没法清理——列表尾追加「不在目录」组,
+  可见可移除;
+- 行尾定额按 schema 遍历渲染(当前非模板契约=仅 limit;未来长出新参数同款顺排,
+  形态可增长不回退双面板);数据层(jobDraft/toggle/updateDraftParam/保存校验)零改动;
+- css:je-* 区段整体替换为 jr-*(je 零残留);
+- 实机验收:编辑/改值 diff/搜索/暗色零 pageerror;pytest 319 全绿,lint/build 绿。

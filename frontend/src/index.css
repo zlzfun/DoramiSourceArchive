@@ -3905,106 +3905,89 @@ input[type="radio"] {
     .brief-col + .brief-col { border-left: none; border-top: 1px solid var(--dorami-border); }
   }
 
-  /* ── 任务编辑器 静默仪器(弹窗波):班次编排单 ──
-     任务 = 一组节点 + 一个时刻。头=时刻(名称/启用/整体 cron+人话回显+距下次走字,soft 底);
-     体=目录(分组勾选)→编排单(每节点班次行:cron 覆盖+参数);脚=唯一 CTA。
-     外壳复用 Modal 组件;输入 .form-input、开关 .ledger-switch、按钮 .action-button* 均复用。
-     刻度 1:1 取自 docs/design/dorami-job-editor-quiet.html。 ── */
+  /* ── 任务编辑器 静默仪器(点名册波):muster sheet ──
+     参数四波收敛后,任务编辑本体 = 勾人 + 定额 + 一个时刻——原「目录→编排单」双面板
+     (同批节点显示两遍)随功能过时,重构为单栏点名册:勾选与配置同一行,勾中行尾浮现
+     「上限」输入;值=默认 muted、改动后 ink 加粗(安静 diff 信号)。模态收窄 2xl(672px)。
+     输入 .form-input、开关 .ledger-switch、按钮 .action-button* 复用。
+     刻度 1:1 取自 docs/design/dorami-job-roster-quiet.html。 ── */
 
-  .je-sheet { display: flex; flex-direction: column; max-height: min(86vh, 780px); }
+  .jr-sheet { display: flex; flex-direction: column; max-height: min(88vh, 800px); }
 
-  .je-head { flex: none; padding: 16px 20px 14px; background: var(--dorami-soft);
+  .jr-head { flex: none; padding: 16px 20px 14px; background: var(--dorami-soft);
     border-bottom: 1px solid var(--dorami-border); }
-  .je-head-top { display: flex; align-items: center; gap: 12px; }
-  .je-kicker { font-size: 11px; font-weight: 700; letter-spacing: 0.07em; color: var(--dorami-faint); }
-  .je-switch-row { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
-    color: var(--dorami-ink-2); white-space: nowrap; }
-  .je-fields { margin-top: 10px; display: grid; grid-template-columns: 1.3fr auto 1fr;
-    gap: 10px 14px; align-items: end; }
-  .je-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-  .je-field-lbl { font-size: 11px; font-weight: 600; color: var(--dorami-faint); }
-  .je-name-input { font-size: 15px; font-weight: 700; min-height: 36px; }
-  /* cron 人话回显:编辑器的仪器读数 */
-  .je-echo { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 8px;
+  .jr-head-top { display: flex; align-items: center; gap: 12px; }
+  .jr-kicker { font-size: 11px; font-weight: 700; letter-spacing: 0.07em; color: var(--dorami-faint); }
+  .jr-switch-row { margin-left: auto; display: flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); white-space: nowrap; }
+  .jr-name-input { font-size: 15px; font-weight: 700; min-height: 36px; margin-top: 10px; width: 100%; }
+  .jr-head-row2 { margin-top: 8px; display: grid; grid-template-columns: 150px 1fr; gap: 10px; }
+  .jr-echo { margin-top: 8px; display: flex; align-items: baseline; gap: 8px;
     font-size: 11.5px; color: var(--dorami-muted); }
-  .je-echo b { font-weight: 600; color: var(--dorami-ink-2); }
-  .je-echo-next { margin-left: auto; font-family: var(--mono); font-size: 11px;
+  .jr-echo b { font-weight: 600; color: var(--dorami-ink-2); }
+  .jr-echo-next { margin-left: auto; font-family: var(--mono); font-size: 11px;
     font-variant-numeric: tabular-nums; color: var(--dorami-faint); }
 
-  .je-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px 1fr; }
-
-  .je-catalog { display: flex; flex-direction: column; min-height: 0;
-    border-right: 1px solid var(--dorami-border); }
-  .je-catalog-head { flex: none; padding: 12px 14px 10px; border-bottom: 1px solid var(--dorami-border); }
-  .je-catalog-title { display: flex; align-items: baseline; gap: 7px; margin-bottom: 8px; }
-  .je-catalog-title b { font-size: 12.5px; font-weight: 700; }
-  .je-catalog-title .n { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint);
-    font-variant-numeric: tabular-nums; }
-  .je-searchbox { display: flex; align-items: center; gap: 7px; background: var(--dorami-well);
-    border-radius: var(--r-control); padding: 7px 10px; box-shadow: var(--dorami-inset-input); }
-  .je-searchbox:focus-within { box-shadow: 0 0 0 3px var(--dorami-focus); }
-  .je-searchbox svg { width: 13px; height: 13px; flex: none; color: var(--dorami-faint); }
-  .je-searchbox input { border: none; background: none; outline: none; width: 100%;
+  .jr-tools { flex: none; display: flex; align-items: center; gap: 10px;
+    padding: 10px 20px; border-bottom: 1px solid var(--dorami-border); }
+  .jr-searchbox { flex: 1; display: flex; align-items: center; gap: 7px; background: var(--dorami-well);
+    border-radius: var(--r-control); padding: 6px 10px; box-shadow: var(--dorami-inset-input); }
+  .jr-searchbox:focus-within { box-shadow: 0 0 0 3px var(--dorami-focus); }
+  .jr-searchbox svg { width: 13px; height: 13px; flex: none; color: var(--dorami-faint); }
+  .jr-searchbox input { border: none; background: none; outline: none; width: 100%;
     font-size: 12px; color: var(--dorami-ink); }
-  .je-searchbox input::placeholder { color: var(--dorami-faint); }
-  .je-catalog-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px 10px; }
-  .je-cat-group { padding: 10px 8px 3px; font-size: 10.5px; font-weight: 600;
-    letter-spacing: 0.07em; color: var(--dorami-faint); }
-  .je-cat-row { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 8px;
-    border-radius: var(--r-sm); text-align: left;
+  .jr-searchbox input::placeholder { color: var(--dorami-faint); }
+  .jr-count { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .jr-count b { color: var(--dorami-ink-2); font-weight: 700; }
+
+  .jr-list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 8px; }
+  .jr-group-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px;
+    padding: 9px 20px 5px; background: var(--dorami-surface);
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; color: var(--dorami-faint); }
+  .jr-group-all { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--dorami-faint);
+    padding: 1px 7px; border-radius: var(--r-sm); opacity: 0;
+    transition: opacity var(--motion-fast) var(--motion-ease); }
+  .jr-group-head:hover .jr-group-all, .jr-group-all:focus-visible { opacity: 1; }
+  .jr-group-all:hover { background: var(--dorami-well); color: var(--dorami-ink-2); }
+
+  .jr-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 20px;
+    text-align: left; cursor: pointer;
     transition: background var(--motion-fast) var(--motion-ease); }
-  .je-cat-row:hover { background: var(--dorami-soft); }
-  .je-cat-row.is-in { background: var(--dorami-wash); }
-  .je-check { width: 15px; height: 15px; flex: none; border-radius: 4px;
+  .jr-row:hover { background: var(--dorami-soft); }
+  .jr-row.is-in { background: var(--dorami-wash); }
+  .jr-check { width: 15px; height: 15px; flex: none; border-radius: 4px;
     border: 1px solid var(--dorami-border-strong); display: grid; place-items: center;
     background: var(--dorami-surface); }
-  .je-cat-row.is-in .je-check { background: var(--dorami-blue); border-color: var(--dorami-blue); }
-  .je-cat-row.is-in .je-check::after { content: ""; width: 8px; height: 4px;
+  .jr-row.is-in .jr-check { background: var(--dorami-blue); border-color: var(--dorami-blue); }
+  .jr-row.is-in .jr-check::after { content: ""; width: 8px; height: 4px;
     border-left: 2px solid #fff; border-bottom: 2px solid #fff;
     transform: rotate(-45deg) translateY(-1px); }
-  .je-cat-id { min-width: 0; display: flex; flex-direction: column; }
-  .je-cat-name { font-size: 12.5px; font-weight: 600; color: var(--dorami-ink);
+  .jr-id { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+  .jr-name { font-size: 13px; font-weight: 600; color: var(--dorami-ink);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .je-cat-sid { font-family: var(--mono); font-size: 10px; color: var(--dorami-faint);
+  .jr-sid { font-family: var(--mono); font-size: 10px; color: var(--dorami-faint);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  .je-roster { display: flex; flex-direction: column; min-height: 0; }
-  .je-roster-head { flex: none; display: flex; align-items: baseline; gap: 8px;
-    padding: 12px 18px 10px; border-bottom: 1px solid var(--dorami-border); }
-  .je-roster-title { font-size: 12.5px; font-weight: 700; }
-  .je-roster-meta { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint);
-    font-variant-numeric: tabular-nums; }
-  .je-roster-hint { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
-  .je-roster-list { flex: 1; min-height: 0; overflow-y: auto; }
-  .je-ros-row { padding: 12px 18px; border-bottom: 1px solid var(--dorami-border); }
-  .je-ros-row:hover { background: var(--dorami-soft); }
-  .je-ros-top { display: flex; align-items: center; gap: 9px; }
-  .je-ros-name { font-size: 13px; font-weight: 700; }
-  .je-ros-sid { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); }
-  .je-ros-remove { margin-left: auto; width: 24px; height: 24px; display: grid; place-items: center;
-    border-radius: var(--r-sm); color: var(--dorami-faint); opacity: 0;
-    transition: opacity var(--motion-fast) var(--motion-ease); }
-  .je-ros-row:hover .je-ros-remove, .je-ros-remove:focus-visible { opacity: 1; }
-  .je-ros-remove:hover { background: var(--state-idle-bg); color: var(--dorami-ink); }
-  .je-ros-fields { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: end; }
-  .je-ros-field { display: flex; flex-direction: column; gap: 3px; }
-  /* 编排单内参数输入取紧凑刻度(样页 28px) */
-  .je-ros-field .form-input { min-height: 28px; font-size: 11.5px; }
-  .je-ros-check { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px;
-    font-weight: 600; color: var(--dorami-ink-2); padding-bottom: 5px; }
-  /* (je-cron-mark 已随单节点 cron 退役删除) */
-  .je-roster-empty { flex: 1; display: grid; place-items: center; padding: 40px;
-    color: var(--dorami-faint); font-size: 12.5px; font-weight: 600; text-align: center; line-height: 1.8; }
+  /* 行尾定额:勾中才出现;值=默认 muted,改动后 ink 加粗(安静 diff 信号) */
+  .jr-quota { flex: none; display: none; align-items: center; gap: 6px; }
+  .jr-row.is-in .jr-quota { display: flex; }
+  .jr-quota-lbl { font-size: 10.5px; font-weight: 600; color: var(--dorami-faint); }
+  .jr-quota input { width: 52px; min-height: 26px; padding: 0 7px; border: none;
+    border-radius: var(--r-sm); background: var(--dorami-well);
+    box-shadow: var(--dorami-inset-input); text-align: right;
+    font-family: var(--mono); font-size: 11.5px; font-variant-numeric: tabular-nums;
+    color: var(--dorami-faint); }
+  .jr-quota input.is-changed { color: var(--dorami-ink); font-weight: 700; }
+  .jr-quota input:focus { outline: none; box-shadow: 0 0 0 3px var(--dorami-focus);
+    color: var(--dorami-ink); }
 
-  .je-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 18px;
+  .jr-empty { padding: 32px 20px; text-align: center; color: var(--dorami-faint);
+    font-size: 12.5px; font-weight: 600; }
+
+  .jr-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 18px;
     background: var(--dorami-soft); border-top: 1px solid var(--dorami-border); }
-  .je-foot-note { font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
-
-  @media (max-width: 1023px) {
-    .je-body { grid-template-columns: 1fr; }
-    .je-catalog { border-right: none; border-bottom: 1px solid var(--dorami-border); max-height: 40%; }
-    .je-fields { grid-template-columns: 1fr; }
-  }
+  .jr-foot-note { font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
 
   /* ── 设置面板 静默仪器(弹窗波):控制柜 ──
      全局快速面 = 居中模态;左导航(竖条选中)+ 右内容;五区共用「设置行范式」

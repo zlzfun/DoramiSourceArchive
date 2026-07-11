@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>任务编辑器 v2 · 点名册 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   任务编辑器 v2(点名册 muster sheet)· 静默仪器样页(从零到一设计稿)
+   背景:参数四波收敛后,节点仅剩「单次获取上限」——原「目录→编排单」双面板
+   让同一批节点显示两遍、右栏为一个数字消耗整行,形态过时。
+   概念:点名册——单栏列表,勾选与配置同一行:勾到谁,谁的行尾出现上限输入;
+   没勾的行保持安静。任务编辑的本体 = 勾人 + 定额 + 一个时刻。
+   头部时刻区沿用班次单已验证设计,按窄幅(~680px)重排。
+   令牌与刻度 1:1 取自 frontend/src/index.css。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --dorami-blue: #5b54e8; --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445; --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-card: rgba(255, 255, 255, 0.96); --dorami-wash: rgba(91, 84, 232, 0.08);
+  --dorami-well: #f1f5f9; --dorami-inset-input: inset 0 1px 3px rgba(11, 18, 32, 0.08);
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-strong: rgba(11, 18, 32, 0.15);
+  --dorami-card-bd: transparent;
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-3: 0 4px 10px rgba(11, 18, 32, 0.08), 0 16px 36px rgba(11, 18, 32, 0.11);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-overlay: 16px; --r-pill: 9999px;
+  --state-idle-bg: #f1f5f9;
+  --dorami-scrollbar: rgba(11, 18, 32, 0.2);
+  --motion-fast: 150ms; --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-card: rgba(32, 37, 47, 0.96);
+  --dorami-wash: rgba(124, 112, 235, 0.13); --dorami-inset-input: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-strong: rgba(255, 255, 255, 0.16);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08);
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-3: 0 4px 10px rgba(0, 0, 0, 0.5), 0 16px 36px rgba(0, 0, 0, 0.6);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --state-idle-bg: #15181f;
+  --dorami-blue: #4d45b5; --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink); font-size: 13px;
+  line-height: 1.55; -webkit-font-smoothing: antialiased; min-height: 100vh; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+input { font: inherit; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+* { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+*:hover { scrollbar-color: var(--dorami-scrollbar) transparent; }
+
+.bg-hint { position: fixed; inset: 0; padding: 22px 28px; filter: blur(2px); opacity: 0.5; pointer-events: none; }
+.bg-block { background: var(--dorami-card); border-radius: var(--r-card); box-shadow: var(--sh-1); }
+.scrim { position: fixed; inset: 0; background: rgba(11, 18, 32, 0.38); }
+.modal { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; }
+
+/* ── 点名册模态:窄幅单栏 ── */
+.sheet { width: min(680px, 100%); max-height: min(88vh, 800px); display: flex; flex-direction: column;
+  background: var(--dorami-surface); border: 1px solid var(--dorami-card-bd);
+  border-radius: var(--r-overlay); box-shadow: var(--sh-3); overflow: hidden; }
+
+/* 头:时刻区(窄幅重排:kicker 行 / 名称大字 / cron+说明 / echo) */
+.sheet-head { flex: none; padding: 16px 20px 14px; background: var(--dorami-soft);
+  border-bottom: 1px solid var(--dorami-border); }
+.head-top { display: flex; align-items: center; gap: 12px; }
+.kicker { font-size: 11px; font-weight: 700; letter-spacing: 0.07em; color: var(--dorami-faint); }
+.switch-row { margin-left: auto; display: flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); }
+.switch { position: relative; width: 34px; height: 19px; flex: none; border-radius: var(--r-pill);
+  background: var(--dorami-well); box-shadow: var(--dorami-inset-input);
+  transition: background var(--motion-fast) var(--motion-ease); }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+  background: #fff; border-radius: var(--r-pill); box-shadow: 0 1px 2px rgba(11, 18, 32, 0.3);
+  transition: transform var(--motion-fast) var(--motion-ease); }
+.switch.is-on { background: var(--dorami-blue); }
+.switch.is-on::after { transform: translateX(15px); }
+.sheet-close { width: 28px; height: 28px; display: grid; place-items: center;
+  border-radius: var(--r-sm); color: var(--dorami-faint); }
+.sheet-close:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+.sheet-close svg { width: 14px; height: 14px; }
+
+.input { min-height: 32px; padding: 0 10px; border: none; border-radius: var(--r-control);
+  background: var(--dorami-well); box-shadow: var(--dorami-inset-input);
+  font-size: 12.5px; color: var(--dorami-ink); width: 100%; }
+.input::placeholder { color: var(--dorami-faint); }
+.input:focus { outline: none; box-shadow: 0 0 0 3px var(--dorami-focus); }
+.input.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.name-input { font-size: 15px; font-weight: 700; min-height: 36px; margin-top: 10px; }
+.head-row2 { margin-top: 8px; display: grid; grid-template-columns: 150px 1fr; gap: 10px; }
+.echo { margin-top: 8px; display: flex; align-items: baseline; gap: 8px;
+  font-size: 11.5px; color: var(--dorami-muted); }
+.echo b { font-weight: 600; color: var(--dorami-ink-2); }
+.echo-next { margin-left: auto; font-family: var(--mono); font-size: 11px;
+  font-variant-numeric: tabular-nums; color: var(--dorami-faint); }
+
+/* ── 点名册工具行:搜索 + 计数 + 快捷 ── */
+.muster-tools { flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 10px 20px; border-bottom: 1px solid var(--dorami-border); }
+.searchbox { flex: 1; display: flex; align-items: center; gap: 7px; background: var(--dorami-well);
+  border-radius: var(--r-control); padding: 6px 10px; box-shadow: var(--dorami-inset-input); }
+.searchbox:focus-within { box-shadow: 0 0 0 3px var(--dorami-focus); }
+.searchbox svg { width: 13px; height: 13px; flex: none; color: var(--dorami-faint); }
+.searchbox input { border: none; background: none; outline: none; width: 100%;
+  font-size: 12px; color: var(--dorami-ink); }
+.searchbox input::placeholder { color: var(--dorami-faint); }
+.muster-count { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.muster-count b { color: var(--dorami-ink-2); font-weight: 700; }
+
+/* ── 点名册列表:分组 + 勾选行(勾中行尾浮现上限) ── */
+.muster-list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 8px; }
+.group-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px;
+  padding: 9px 20px 5px; background: var(--dorami-surface);
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; color: var(--dorami-faint); }
+.group-all { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--dorami-faint);
+  padding: 1px 7px; border-radius: var(--r-sm); opacity: 0;
+  transition: opacity var(--motion-fast) var(--motion-ease); }
+.group-head:hover .group-all, .group-all:focus-visible { opacity: 1; }
+.group-all:hover { background: var(--dorami-well); color: var(--dorami-ink-2); }
+
+.m-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 20px;
+  text-align: left; transition: background var(--motion-fast) var(--motion-ease); cursor: pointer; }
+.m-row:hover { background: var(--dorami-soft); }
+.m-row.is-in { background: var(--dorami-wash); }
+.m-check { width: 15px; height: 15px; flex: none; border-radius: 4px;
+  border: 1px solid var(--dorami-border-strong); display: grid; place-items: center;
+  background: var(--dorami-surface); }
+.m-row.is-in .m-check { background: var(--dorami-blue); border-color: var(--dorami-blue); }
+.m-row.is-in .m-check::after { content: ""; width: 8px; height: 4px;
+  border-left: 2px solid #fff; border-bottom: 2px solid #fff;
+  transform: rotate(-45deg) translateY(-1px); }
+.m-logo { width: 24px; height: 24px; flex: none; border-radius: var(--r-sm);
+  background: var(--dorami-well); display: grid; place-items: center;
+  font-size: 10px; font-weight: 700; color: var(--dorami-muted); }
+.m-id { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.m-name { font-size: 13px; font-weight: 600; color: var(--dorami-ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-sid { font-family: var(--mono); font-size: 10px; color: var(--dorami-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 行尾定额:勾中才出现;值=默认时 muted,改动后 ink 加粗(安静的 diff 信号) */
+.m-quota { flex: none; display: none; align-items: center; gap: 6px; }
+.m-row.is-in .m-quota { display: flex; }
+.m-quota-lbl { font-size: 10.5px; font-weight: 600; color: var(--dorami-faint); }
+.m-quota input { width: 52px; min-height: 26px; padding: 0 7px; border: none;
+  border-radius: var(--r-sm); background: var(--dorami-well);
+  box-shadow: var(--dorami-inset-input); text-align: right;
+  font-family: var(--mono); font-size: 11.5px; font-variant-numeric: tabular-nums;
+  color: var(--dorami-faint); }
+.m-quota input.is-changed { color: var(--dorami-ink); font-weight: 700; }
+.m-quota input:focus { outline: none; box-shadow: 0 0 0 3px var(--dorami-focus); color: var(--dorami-ink); }
+
+/* ── 脚 ── */
+.sheet-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 18px;
+  background: var(--dorami-soft); border-top: 1px solid var(--dorami-border); }
+.foot-note { font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
+.btn-quiet { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 12px;
+  border-radius: var(--r-control); font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+.btn-quiet:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+.primary-action { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 16px;
+  border-radius: var(--r-control); background: var(--dorami-blue); color: #fff;
+  font-size: 12.5px; font-weight: 700; box-shadow: var(--sh-1);
+  transition: background var(--motion-fast) var(--motion-ease); }
+.primary-action:hover { background: var(--dorami-accent-ink); }
+.ml-auto { margin-left: auto; }
+
+.theme-toggle { position: fixed; right: 16px; bottom: 16px; z-index: 50; width: 36px; height: 36px;
+  display: grid; place-items: center; border-radius: var(--r-control);
+  background: var(--dorami-surface); box-shadow: var(--sh-1); color: var(--dorami-faint); }
+.theme-toggle svg { width: 17px; height: 17px; }
+
+.spec-notes { position: relative; z-index: 5; margin: 12px auto 0; max-width: 680px;
+  background: var(--dorami-surface); border-radius: var(--r-card); box-shadow: var(--sh-1);
+  padding: 16px 20px; color: var(--dorami-muted); font-size: 12.5px; line-height: 1.8; }
+.spec-notes h2 { font-size: 13.5px; font-weight: 700; color: var(--dorami-ink); margin: 10px 0 4px; }
+.spec-notes ul { padding-left: 18px; }
+.spec-notes code { font-family: var(--mono); font-size: 11px; background: var(--dorami-well);
+  border-radius: 4px; padding: 1px 5px; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0.01ms !important; } }
+</style>
+</head>
+<body>
+
+<div class="bg-hint" aria-hidden="true">
+  <div class="bg-block" style="height:48px;width:60%;margin-bottom:16px"></div>
+  <div style="display:flex;gap:16px;height:70vh">
+    <div class="bg-block" style="width:300px"></div>
+    <div class="bg-block" style="flex:1"></div>
+  </div>
+</div>
+<div class="scrim"></div>
+
+<div class="modal" role="dialog" aria-modal="true" aria-label="编辑采集任务">
+  <div style="width:min(680px,100%)">
+  <div class="sheet">
+
+    <!-- 头:时刻区 -->
+    <header class="sheet-head">
+      <div class="head-top">
+        <span class="kicker">编辑采集任务</span>
+        <span class="switch-row">
+          <button class="switch is-on" role="switch" aria-checked="true" aria-label="启用任务"></button>启用
+        </span>
+        <button class="sheet-close" aria-label="关闭">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <input class="input name-input" value="每日全量采集" aria-label="任务名称">
+      <div class="head-row2">
+        <input class="input mono" value="0 9 * * *" aria-label="整体 cron" placeholder="cron,如 0 9 * * *">
+        <input class="input" value="工作日早读前的主力批次" aria-label="说明" placeholder="给未来的自己一句话">
+      </div>
+      <div class="echo">
+        <span>= <b>每天 09:00</b> 触发</span>
+        <span class="echo-next" id="echo-next">距下次 18:24:11</span>
+      </div>
+    </header>
+
+    <!-- 工具行 -->
+    <div class="muster-tools">
+      <div class="searchbox">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input placeholder="搜索节点名或 ID" aria-label="搜索节点">
+      </div>
+      <span class="muster-count">已编入 <b>14</b> / 23 · 改动 <b>2</b></span>
+    </div>
+
+    <!-- 点名册 -->
+    <div class="muster-list">
+      <div class="group-head">厂商官方<button class="group-all">全选</button></div>
+
+      <button class="m-row is-in">
+        <span class="m-check"></span><span class="m-logo">An</span>
+        <span class="m-id"><span class="m-name">Anthropic News</span><span class="m-sid">web_anthropic_news</span></span>
+        <span class="m-quota"><span class="m-quota-lbl">上限</span><input value="10" aria-label="单次获取上限"></span>
+      </button>
+      <button class="m-row is-in">
+        <span class="m-check"></span><span class="m-logo">Cl</span>
+        <span class="m-id"><span class="m-name">Claude Blog</span><span class="m-sid">web_claude_blog</span></span>
+        <span class="m-quota"><span class="m-quota-lbl">上限</span><input value="10" aria-label="单次获取上限"></span>
+      </button>
+      <button class="m-row is-in">
+        <span class="m-check"></span><span class="m-logo">Cl</span>
+        <span class="m-id"><span class="m-name">Claude Code Changelog</span><span class="m-sid">docs_claude_code_changelog</span></span>
+        <span class="m-quota"><span class="m-quota-lbl">上限</span><input value="20" class="is-changed" aria-label="单次获取上限"></span>
+      </button>
+      <button class="m-row">
+        <span class="m-check"></span><span class="m-logo">Op</span>
+        <span class="m-id"><span class="m-name">OpenAI News</span><span class="m-sid">rss_openai_news</span></span>
+        <span class="m-quota"><span class="m-quota-lbl">上限</span><input value="12" aria-label="单次获取上限"></span>
+      </button>
+      <button class="m-row is-in">
+        <span class="m-check"></span><span class="m-logo">Ge</span>
+        <span class="m-id"><span class="m-name">Google Blog Gemini Models</span><span class="m-sid">rss_google_gemini_models</span></span>
+        <span class="m-quota"><span class="m-quota-lbl">上限</span><input value="12" aria-label="单次获取上限"></span>
+      </button>
+      <button class="m-row is-in">
+        <span class="m-check"></span><span class="m-logo">DS</span>
+        <span class="m-id"><span class="m-name">DeepSeek GitHub 新仓库</span><span class="m-sid">github_deepseek_repositories</span></span>
+        <span class="m-quota"><span class="m-quota-lbl">上限</span><input value="30" class="is-changed" aria-label="单次获取上限"></span>
+      </button>
+
+      <div class="group-head">科技媒体<button class="group-all">全选</button></div>
+      <button class="m-row is-in">
+        <span class="m-check"></span><span class="m-logo">机</span>
+        <span class="m-id"><span class="m-name">机器之心</span><span class="m-sid">rss_jiqizhixin</span></span>
+        <span class="m-quota"><span class="m-quota-lbl">上限</span><input value="15" aria-label="单次获取上限"></span>
+      </button>
+      <button class="m-row">
+        <span class="m-check"></span><span class="m-logo">量</span>
+        <span class="m-id"><span class="m-name">量子位 Website</span><span class="m-sid">web_qbitai</span></span>
+        <span class="m-quota"><span class="m-quota-lbl">上限</span><input value="18" aria-label="单次获取上限"></span>
+      </button>
+      <button class="m-row">
+        <span class="m-check"></span><span class="m-logo">新</span>
+        <span class="m-id"><span class="m-name">新智元 Website</span><span class="m-sid">web_aiera</span></span>
+        <span class="m-quota"><span class="m-quota-lbl">上限</span><input value="18" aria-label="单次获取上限"></span>
+      </button>
+
+      <div class="group-head">论文与模型<button class="group-all">全选</button></div>
+      <button class="m-row is-in">
+        <span class="m-check"></span><span class="m-logo">HF</span>
+        <span class="m-id"><span class="m-name">HF Daily Papers</span><span class="m-sid">hf_daily_papers</span></span>
+        <span class="m-quota"><span class="m-quota-lbl">上限</span><input value="20" aria-label="单次获取上限"></span>
+      </button>
+      <button class="m-row">
+        <span class="m-check"></span><span class="m-logo">DS</span>
+        <span class="m-id"><span class="m-name">DeepSeek Hugging Face 新模型</span><span class="m-sid">hf_deepseek_models</span></span>
+        <span class="m-quota"><span class="m-quota-lbl">上限</span><input value="20" aria-label="单次获取上限"></span>
+      </button>
+    </div>
+
+    <!-- 脚 -->
+    <footer class="sheet-foot">
+      <span class="foot-note">保存后时刻表立即更新;运行中的批次不受影响</span>
+      <button class="btn-quiet ml-auto">取消</button>
+      <button class="primary-action">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+        保存任务
+      </button>
+    </footer>
+
+  </div>
+
+  <!-- 设计注记 -->
+  <section class="spec-notes">
+    <h2>设计推导:点名册(muster sheet)</h2>
+    <p>参数四波收敛后,任务编辑的本体 = <b>勾人 + 定额 + 一个时刻</b>。原「目录 → 编排单」双面板让
+    同一批节点显示两遍、右栏为一个数字消耗整行——形态随功能过时。点名册把勾选与配置合到同一行:
+    <b>勾到谁,谁的行尾出现「上限」输入</b>;未勾的行保持安静。模态由 1020px 收窄到 680px。</p>
+    <h2>关键交互</h2>
+    <ul>
+      <li>行尾定额:值 = 节点默认时 <b>muted 灰字</b>,与默认不同时 <b>ink 加粗</b>(安静的 diff 信号);
+        聚焦即变 ink 可编辑;点击输入框不切换勾选(stopPropagation);</li>
+      <li>组头 sticky(surface 底)+ hover 浮现「全选」(该组整组编入;已全选时变「清空」);</li>
+      <li>工具行:搜索(过滤列表,组头随空组隐藏)+「已编入 N / 总数 · 改动 M」mono 计数;</li>
+      <li>头部时刻区沿用班次单已验证设计,窄幅重排:kicker+启用 / 名称大字 / cron+说明 / 人话回显+距下次;</li>
+      <li>取消勾选不清空该节点已改的上限值(会话内保留,重勾即恢复——防误触丢配置)。</li>
+    </ul>
+    <h2>与现实现的关系</h2>
+    <ul>
+      <li>替代 docs/design/dorami-job-editor-quiet.html 的双面板体(其头部设计保留);数据层
+        (jobDraft/toggleDraftFetcher/updateDraftParam/保存校验)不变,纯渲染形态更换;</li>
+      <li>若未来某 preset 重新长出第二个参数:行勾中后可下挂一条参数行(点名册行支持展开),
+        形态可增长、不必回退双面板。</li>
+    </ul>
+    <p>复用范式:well 输入/ledger-switch/wash 编入底/自绘勾选/r-overlay + sh-3。右下月亮切换亮暗。
+    本文件:docs/design/dorami-job-roster-quiet.html</p>
+  </section>
+  </div>
+</div>
+
+<button class="theme-toggle" id="theme-toggle" title="切换亮暗">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+</button>
+
+<script>
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === 'dark' ? '' : 'dark';
+});
+// 勾选切换(输入框点击不切换)
+document.querySelectorAll('.m-row').forEach(r => r.addEventListener('click', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  r.classList.toggle('is-in');
+}));
+document.querySelectorAll('.m-quota input').forEach(i => i.addEventListener('click', e => e.stopPropagation()));
+// 距下次走字(演示)
+let s = 18 * 3600 + 24 * 60 + 11;
+const pad = n => String(n).padStart(2, '0');
+setInterval(() => {
+  s = Math.max(0, s - 1);
+  document.getElementById('echo-next').textContent =
+    `距下次 ${Math.floor(s / 3600)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+}, 1000);
+document.querySelectorAll('.switch').forEach(sw => sw.addEventListener('click', () => {
+  sw.classList.toggle('is-on'); sw.setAttribute('aria-checked', sw.classList.contains('is-on'));
+}));
+</script>
+</body>
+</html>

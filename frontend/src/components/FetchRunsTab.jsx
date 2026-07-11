@@ -358,6 +358,25 @@ export default function FetchRunsTab({
   // 目录同款分组(节点页 groupBySection):板块 → 公司 → 节点。
   const groupedCatalog = useMemo(() => groupBySection(filteredModalFetchers), [filteredModalFetchers]);
 
+  // 点名册组全选/清空:整组编入(补默认参数)或整组移出;已改参数保留(重勾恢复,防误触丢配置)。
+  const setGroupChecked = (fetchers, add) => {
+    setJobDraft(prev => {
+      const cur = new Set(prev.fetcher_ids || []);
+      const perParams = { ...(prev.per_fetcher_params || {}) };
+      fetchers.forEach(f => {
+        if (add) {
+          if (!cur.has(f.id)) {
+            cur.add(f.id);
+            perParams[f.id] = perParams[f.id] || defaultParamsFor(f);
+          }
+        } else {
+          cur.delete(f.id);
+        }
+      });
+      return { ...prev, fetcher_ids: normalizeIds([...cur]), per_fetcher_params: perParams };
+    });
+  };
+
   // 编辑器读数:整体 cron 人话 + 距下次(距下次每秒随台面时钟走字)。
   const cronInfo = useMemo(() => readCron(jobDraft.cron_expr), [jobDraft.cron_expr]);
   const cronCountdown = cronInfo.nextMs != null
@@ -1212,15 +1231,15 @@ export default function FetchRunsTab({
       <Modal
         open={jobModalOpen}
         onClose={() => setJobModalOpen(false)}
-        size="5xl"
+        size="2xl"
         ariaLabel={editingJobId ? '编辑采集任务' : '新建采集任务'}
       >
-        <div className="je-sheet">
-          {/* ── 头:时刻区(名称/启用/整体 cron + 人话回显 + 距下次走字) ── */}
-          <header className="je-head">
-            <div className="je-head-top">
-              <span className="je-kicker">{editingJobId ? '编辑采集任务' : '新建采集任务'}</span>
-              <span className="je-switch-row ml-auto">
+        <div className="jr-sheet">
+          {/* ── 头:时刻区(kicker/启用 · 名称 · cron+说明 · 人话回显+距下次) ── */}
+          <header className="jr-head">
+            <div className="jr-head-top">
+              <span className="jr-kicker">{editingJobId ? '编辑采集任务' : '新建采集任务'}</span>
+              <span className="jr-switch-row">
                 <button
                   type="button"
                   role="switch"
@@ -1233,167 +1252,162 @@ export default function FetchRunsTab({
               </span>
               <button onClick={() => setJobModalOpen(false)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
             </div>
-            <div className="je-fields">
-              <div className="je-field">
-                <label className="je-field-lbl" htmlFor="je-name">名称</label>
-                <input
-                  id="je-name"
-                  value={jobDraft.name}
-                  onChange={event => setJobDraft(prev => ({ ...prev, name: event.target.value }))}
-                  placeholder="给这组班次起个名"
-                  className="form-input je-name-input"
-                />
-              </div>
-              <div className="je-field" style={{ width: 150 }}>
-                <label className="je-field-lbl" htmlFor="je-cron">整体 cron(5 段)</label>
-                <input
-                  id="je-cron"
-                  value={jobDraft.cron_expr}
-                  onChange={event => setJobDraft(prev => ({ ...prev, cron_expr: event.target.value }))}
-                  placeholder="0 9 * * *"
-                  className="form-input font-mono"
-                />
-              </div>
-              <div className="je-field">
-                <label className="je-field-lbl" htmlFor="je-desc">说明</label>
-                <input
-                  id="je-desc"
-                  value={jobDraft.description}
-                  onChange={event => setJobDraft(prev => ({ ...prev, description: event.target.value }))}
-                  placeholder="给未来的自己一句话"
-                  className="form-input"
-                />
-              </div>
-              <div className="je-echo">
-                {cronInfo.nextMs != null
-                  ? <span>= <b>{cronInfo.human}</b> 触发</span>
-                  : <span><b>{cronInfo.human}</b></span>}
-                {cronCountdown && <span className="je-echo-next">距下次 {cronCountdown}</span>}
-              </div>
+            <input
+              value={jobDraft.name}
+              onChange={event => setJobDraft(prev => ({ ...prev, name: event.target.value }))}
+              placeholder="给这组班次起个名"
+              aria-label="任务名称"
+              className="form-input jr-name-input"
+            />
+            <div className="jr-head-row2">
+              <input
+                value={jobDraft.cron_expr}
+                onChange={event => setJobDraft(prev => ({ ...prev, cron_expr: event.target.value }))}
+                placeholder="0 9 * * *"
+                aria-label="整体 cron(5 段)"
+                className="form-input font-mono"
+              />
+              <input
+                value={jobDraft.description}
+                onChange={event => setJobDraft(prev => ({ ...prev, description: event.target.value }))}
+                placeholder="给未来的自己一句话"
+                aria-label="说明"
+                className="form-input"
+              />
+            </div>
+            <div className="jr-echo">
+              {cronInfo.nextMs != null
+                ? <span>= <b>{cronInfo.human}</b> 触发</span>
+                : <span><b>{cronInfo.human}</b></span>}
+              {cronCountdown && <span className="jr-echo-next">距下次 {cronCountdown}</span>}
             </div>
           </header>
 
-          {/* ── 体:节点目录(分组勾选) → 编排单(每节点班次行) ── */}
-          <div className="je-body">
-            <aside className="je-catalog" aria-label="节点目录">
-              <div className="je-catalog-head">
-                <div className="je-catalog-title">
-                  <b>节点目录</b>
-                  <span className="n">{availableFetchers.length} 个 · 已编入 {draftFetcherIds.length}</span>
-                </div>
-                <div className="je-searchbox">
-                  <Search />
-                  <input
-                    value={jobSearch}
-                    onChange={event => setJobSearch(event.target.value)}
-                    placeholder="搜索节点名或 ID"
-                    aria-label="搜索节点"
-                  />
-                </div>
-              </div>
-              <div className="je-catalog-list">
-                {groupedCatalog.length === 0 ? (
-                  <div className="je-cat-group">无匹配节点</div>
-                ) : groupedCatalog.map(section => (
-                  <Fragment key={section.id}>
-                    <div className="je-cat-group">{section.label}</div>
-                    {section.companies.flatMap(bucket => bucket.fetchers).map(fetcher => {
-                      const checked = draftFetcherIds.includes(fetcher.id);
-                      return (
-                        <button
-                          key={fetcher.id}
-                          type="button"
-                          onClick={() => toggleDraftFetcher(fetcher)}
-                          className={`je-cat-row ${checked ? 'is-in' : ''}`}
-                        >
-                          <span className="je-check" />
-                          <LogoMark company={companyForId(fetcher.id)} size="xs" />
-                          <span className="je-cat-id">
-                            <span className="je-cat-name">{fetcher.name}</span>
-                            <span className="je-cat-sid">{fetcher.id}</span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </Fragment>
-                ))}
-              </div>
-            </aside>
+          {/* ── 工具行:搜索 + 编入/改动计数 ── */}
+          <div className="jr-tools">
+            <div className="jr-searchbox">
+              <Search />
+              <input
+                value={jobSearch}
+                onChange={event => setJobSearch(event.target.value)}
+                placeholder="搜索节点名或 ID"
+                aria-label="搜索节点"
+              />
+            </div>
+            <span className="jr-count">
+              已编入 <b>{draftFetcherIds.length}</b> / {availableFetchers.length} · 改动 <b>{paramChangeCount}</b>
+            </span>
+          </div>
 
-            <main className="je-roster">
-              <div className="je-roster-head">
-                <span className="je-roster-title">编排单</span>
-                <span className="je-roster-meta">
-                  {draftFetcherIds.length} 节点 · {paramChangeCount} 项参数改动
-                </span>
-              </div>
-              {draftFetcherIds.length === 0 ? (
-                <div className="je-roster-empty">编排单还是空的<br />从左侧目录勾选节点即可加入班次</div>
-              ) : (
-                <div className="je-roster-list">
-                  {draftFetcherIds.map(fetcherId => {
-                    const fetcher = fetchersById[fetcherId];
-                    const params = (jobDraft.per_fetcher_params || {})[fetcherId] || {};
+          {/* ── 点名册:勾选与定额同一行(勾中行尾浮现上限;默认值 muted、改动 ink 加粗) ── */}
+          <div className="jr-list">
+            {groupedCatalog.length === 0 ? (
+              <div className="jr-empty">没有匹配「{jobSearch.trim()}」的节点,换个关键词试试</div>
+            ) : groupedCatalog.map(section => {
+              const sectionFetchers = section.companies.flatMap(bucket => bucket.fetchers);
+              const allIn = sectionFetchers.every(f => draftFetcherIds.includes(f.id));
+              return (
+                <Fragment key={section.id}>
+                  <div className="jr-group-head">
+                    {section.label}
+                    <button
+                      type="button"
+                      className="jr-group-all"
+                      onClick={() => setGroupChecked(sectionFetchers, !allIn)}
+                    >
+                      {allIn ? '清空' : '全选'}
+                    </button>
+                  </div>
+                  {sectionFetchers.map(fetcher => {
+                    const checked = draftFetcherIds.includes(fetcher.id);
+                    const params = (jobDraft.per_fetcher_params || {})[fetcher.id] || {};
                     return (
-                      <div key={fetcherId} className="je-ros-row">
-                        <div className="je-ros-top">
-                          <LogoMark company={companyForId(fetcherId)} size="xs" />
-                          <span className="je-ros-name">{fetcher?.name || fetcherId}</span>
-                          <span className="je-ros-sid">{fetcherId}</span>
-                          <button
-                            type="button"
-                            className="je-ros-remove"
-                            aria-label="移出编排单"
-                            onClick={() => toggleDraftFetcher(fetcher || { id: fetcherId })}
-                          >
-                            <X />
-                          </button>
-                        </div>
-                        <div className="je-ros-fields">
-                          {(fetcher?.parameters || []).map(param => {
-                            if (param.type === 'boolean') {
-                              const raw = params[param.field] ?? param.default ?? '';
-                              const checked = typeof raw === 'boolean'
-                                ? raw
-                                : ['1', 'true', 'yes', 'on'].includes(String(raw).toLowerCase());
-                              return (
-                                <label key={param.field} className="je-ros-check">
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={event => updateDraftParam(fetcherId, param.field, event.target.checked)}
-                                  />
-                                  {param.label}
-                                </label>
-                              );
-                            }
+                      <div
+                        key={fetcher.id}
+                        role="checkbox"
+                        aria-checked={checked}
+                        tabIndex={0}
+                        onClick={() => toggleDraftFetcher(fetcher)}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            toggleDraftFetcher(fetcher);
+                          }
+                        }}
+                        className={`jr-row ${checked ? 'is-in' : ''}`}
+                      >
+                        <span className="jr-check" />
+                        <LogoMark company={companyForId(fetcher.id)} size="xs" />
+                        <span className="jr-id">
+                          <span className="jr-name">{fetcher.name}</span>
+                          <span className="jr-sid">{fetcher.id}</span>
+                        </span>
+                        {/* 行尾定额:当前非模板节点契约 = 仅 limit;若未来长出新参数,同款紧凑输入顺排
+                            (形态可增长,见样页注记,不回退双面板) */}
+                        <span className="jr-quota">
+                          {(fetcher.parameters || []).map(param => {
                             const value = params[param.field] ?? param.default ?? '';
-                            const isNum = param.type === 'number';
+                            const changed = String(value) !== String(param.default ?? '');
                             return (
-                              <div key={param.field} className="je-ros-field">
-                                <span className="je-field-lbl">{param.label}</span>
+                              <Fragment key={param.field}>
+                                <span className="jr-quota-lbl">{param.field === 'limit' ? '上限' : param.label}</span>
                                 <input
-                                  type={param.type || 'text'}
+                                  type={param.type === 'number' ? 'number' : 'text'}
                                   value={value}
-                                  onChange={event => updateDraftParam(fetcherId, param.field, isNum ? Number(event.target.value) : event.target.value)}
-                                  className={`form-input py-1.5 text-xs ${isNum ? 'font-mono' : ''}`}
-                                  style={{ width: isNum ? 88 : 160 }}
+                                  aria-label={`${fetcher.name} ${param.label}`}
+                                  onClick={event => event.stopPropagation()}
+                                  onKeyDown={event => event.stopPropagation()}
+                                  onChange={event => updateDraftParam(
+                                    fetcher.id,
+                                    param.field,
+                                    param.type === 'number' ? Number(event.target.value) : event.target.value
+                                  )}
+                                  className={changed ? 'is-changed' : ''}
                                 />
-                              </div>
+                              </Fragment>
                             );
                           })}
-                        </div>
+                        </span>
                       </div>
                     );
                   })}
-                </div>
-              )}
-            </main>
+                </Fragment>
+              );
+            })}
           </div>
 
+          {/* 编外兜底:已编入但不在目录的节点(改名/退役的化石引用)——可见、可移除,
+              否则只出现在计数里没法清理 */}
+          {draftFetcherIds.some(id => !fetchersById[id]) && (
+            <div className="jr-list" style={{ flex: 'none', overflow: 'visible' }}>
+              <div className="jr-group-head">不在目录(已改名或退役,建议移出)</div>
+              {draftFetcherIds.filter(id => !fetchersById[id]).map(id => (
+                <div
+                  key={id}
+                  role="checkbox"
+                  aria-checked
+                  tabIndex={0}
+                  onClick={() => toggleDraftFetcher({ id })}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      toggleDraftFetcher({ id });
+                    }
+                  }}
+                  className="jr-row is-in"
+                >
+                  <span className="jr-check" />
+                  <span className="jr-id">
+                    <span className="jr-name font-mono">{id}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* ── 脚:注记 + 唯一 primary CTA ── */}
-          <footer className="je-foot">
-            <span className="je-foot-note">保存后时刻表立即更新;运行中的批次不受影响</span>
+          <footer className="jr-foot">
+            <span className="jr-foot-note">保存后时刻表立即更新;运行中的批次不受影响</span>
             <button onClick={() => setJobModalOpen(false)} className="action-button action-button-quiet ml-auto">取消</button>
             <button onClick={handleSaveJob} className="action-button action-button-primary"><Save /> 保存任务</button>
           </footer>
