@@ -1255,7 +1255,7 @@ export default function FetchRunsTab({
             <input
               value={jobDraft.name}
               onChange={event => setJobDraft(prev => ({ ...prev, name: event.target.value }))}
-              placeholder="给这组班次起个名"
+              placeholder="任务名称"
               aria-label="任务名称"
               className="form-input jr-name-input"
             />
@@ -1270,17 +1270,19 @@ export default function FetchRunsTab({
               <input
                 value={jobDraft.description}
                 onChange={event => setJobDraft(prev => ({ ...prev, description: event.target.value }))}
-                placeholder="给未来的自己一句话"
+                placeholder="说明(可选)"
                 aria-label="说明"
                 className="form-input"
               />
             </div>
-            <div className="jr-echo">
-              {cronInfo.nextMs != null
-                ? <span>= <b>{cronInfo.human}</b> 触发</span>
-                : <span><b>{cronInfo.human}</b></span>}
-              {cronCountdown && <span className="jr-echo-next">距下次 {cronCountdown}</span>}
-            </div>
+            {jobDraft.cron_expr.trim() !== '' && (
+              <div className="jr-echo">
+                {cronInfo.nextMs != null
+                  ? <span>= <b>{cronInfo.human}</b> 触发</span>
+                  : <span><b>{cronInfo.human}</b></span>}
+                {cronCountdown && <span className="jr-echo-next">距下次 {cronCountdown}</span>}
+              </div>
+            )}
           </header>
 
           {/* ── 工具行:搜索 + 编入/改动计数 ── */}

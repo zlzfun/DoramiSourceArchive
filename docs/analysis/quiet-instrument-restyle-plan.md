@@ -539,3 +539,8 @@ pendingJobDraft 预填)原样保留;Modal 外壳沿用。
   形态可增长不回退双面板);数据层(jobDraft/toggle/updateDraftParam/保存校验)零改动;
 - css:je-* 区段整体替换为 jr-*(je 零残留);
 - 实机验收:编辑/改值 diff/搜索/暗色零 pageerror;pytest 319 全绿,lint/build 绿。
+
+**目检修复(97bc3d5)**:①模态夺焦根治——useModalA11y 的 effect 依赖含 onClose(调用方内联箭头
+每渲染新引用),每秒走字重渲染触发 cleanup 归还焦点→重聚焦面板首元素;hook 内 ref 化 onClose
+(**陷阱档案:含回调的 a11y/事件 hook,回调一律 ref 化,不进 effect 依赖**——全站模态受益);
+②placeholder 去口语化;③jr-sheet 高度与 modal-panel 同步(88vh 低视口裁脚);④空 cron 不渲染 echo。

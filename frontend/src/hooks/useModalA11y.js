@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 // 模态可访问性：Esc 关闭 + 打开时焦点移入面板 + Tab 焦点陷阱 + 关闭后焦点归还触发者。
 // 用法：给面板元素挂 ref（面板需可聚焦，建议 tabIndex={-1}），active 为弹窗是否打开。
@@ -12,6 +12,11 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function useModalA11y(active, onClose, panelRef) {
+  // onClose ref 化:调用方常传内联箭头(每次渲染新引用),若进 effect 依赖,任何重渲染
+  // (如编辑器每秒走字)都会让 effect 重跑——cleanup 把焦点归还给遮罩下的触发者、再抢回
+  // 面板首元素,表现为「输入框打字 1-2 秒后被夺焦」。依赖只留 active/panelRef。
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; });
   useEffect(() => {
     if (!active) return undefined;
     const panel = panelRef.current;
@@ -27,7 +32,7 @@ export function useModalA11y(active, onClose, panelRef) {
     }
 
     const onKeyDown = (e) => {
-      if (e.key === 'Escape') { e.stopPropagation(); onClose?.(); return; }
+      if (e.key === 'Escape') { e.stopPropagation(); onCloseRef.current?.(); return; }
       if (e.key !== 'Tab') return;
       const items = focusables();
       if (items.length === 0) { e.preventDefault(); return; }
@@ -44,5 +49,5 @@ export function useModalA11y(active, onClose, panelRef) {
         previouslyFocused.focus();
       }
     };
-  }, [active, onClose, panelRef]);
+  }, [active, panelRef]);
 }
