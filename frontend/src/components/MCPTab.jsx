@@ -39,13 +39,23 @@ const TOOLS = [
   },
 ];
 
-const LOCAL_TOOLS = ['Claude Code', 'Cursor', 'Codex', 'OpenCode'];
-const ONLINE_TOOLS = ['Claude.ai Projects', 'Coze'];
+// 配置格式与适用客户端(按格式联动,2026-07 查证):
+// - mcpServers JSON 是 Claude Code 系事实标准,Claude Desktop/Cursor/Windsurf/Cline 同 schema;
+// - Codex CLI 用 TOML([mcp_servers.<name>],远程服务器 url + bearer_token_env_var),不吃 mcpServers JSON;
+// - OpenCode 用 opencode.json 的 mcp 键,自成一格;
+// - URL 直连适用任何支持 streamable-HTTP 的 MCP 客户端(在线接入 Claude.ai Projects/Coze 也走它)。
+const FORMAT_TARGETS = {
+  claude: ['Claude Code', 'Claude Desktop', 'Cursor', 'Windsurf', 'Cline'],
+  opencode: ['OpenCode'],
+  codex: ['Codex CLI'],
+  url: ['Claude.ai Projects', 'Coze'],
+};
 
+// SKILL.md 已是跨家开放标准(Agent Skills):Claude Code/Codex/OpenCode/Cursor/Gemini CLI 等均支持。
 const SKILL_STEPS = [
   <>下载技能包 <code>dorami-daily-brief.zip</code></>,
-  <>解压到工具的 skills 目录（Claude Code：<code>~/.claude/skills/</code>）</>,
-  <>对 Claude 说「看看今天的 AI 日报」即可对话取用</>,
+  <>解压到工具的 skills 目录（如 Claude Code：<code>~/.claude/skills/</code>）</>,
+  <>对 Agent 说「看看今天的 AI 日报」即可对话取用</>,
 ];
 
 /** 复制小钮：图标随复制状态在 Copy / Check 间切换，成功走 §1 文案 toast。 */
@@ -68,7 +78,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
 
   const [status, setStatus] = useState(null);
   const [llmStatus, setLlmStatus] = useState(null);
-  const [codeKind, setCodeKind] = useState('json');   // MCP 代码块：JSON 配置 / URL
+  const [codeKind, setCodeKind] = useState('claude');   // MCP 代码块：claude | opencode | codex | url
   const [stoppedConfigOpen, setStoppedConfigOpen] = useState(false);  // 停止时接入配置默认折叠
   const [copiedKey, setCopiedKey] = useState('');
 
@@ -116,6 +126,15 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
       },
     },
   }, null, 2);
+  // Codex CLI 用 TOML(~/.codex/config.toml):远程服务器 = url + bearer_token_env_var
+  // (指向环境变量名,令牌值不落配置文件)
+  const codexToml = [
+    '# ~/.codex/config.toml',
+    '[mcp_servers.dorami-archive]',
+    `url = "${mcpUrl}"`,
+    'bearer_token_env_var = "DORAMI_TOKEN"',
+    '# 令牌放环境变量:export DORAMI_TOKEN=dfeed_你的令牌',
+  ].join('\n');
 
   const handleCopy = (text, key, label) => runAction(() => copyText(text), {
     showToast: (m, t) => showToastRef.current?.(m, t),
@@ -138,12 +157,15 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
       ? { cls: 'stamp-ok', label: '运行中' }
       : { cls: 'stamp-bad', label: '已停止' };
   const showConfig = enabled || stoppedConfigOpen;
-  const codeText = codeKind === 'url' ? mcpUrl : codeKind === 'opencode' ? opencodeJson : mcpJson;
+  const codeText = codeKind === 'url' ? mcpUrl
+    : codeKind === 'opencode' ? opencodeJson
+    : codeKind === 'codex' ? codexToml
+    : mcpJson;
   const llmOk = Boolean(llmStatus?.api_key_set);
 
   const copyProps = { copiedKey, onCopy: handleCopy };
 
-  // 接入配置块：端点行 + JSON/URL mini-seg + 代码块。运行时直接展开，停止时折叠到展开器后。
+  // 接入配置块：端点行 + 格式 mini-seg + 代码块。运行时直接展开，停止时折叠到展开器后。
   const configBlock = (
     <>
       <div className="endpoint">
@@ -160,7 +182,11 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
           {...copyProps}
         />
       </div>
-      {codeKind !== 'url' && (
+      {codeKind === 'codex' ? (
+        <p className="tiny-meta mt-2">
+          <code className="font-mono">bearer_token_env_var</code> 填的是<b>环境变量名</b>：把右侧「个人聚合接口」的 dfeed_ 令牌 export 到该变量即可，令牌值不落配置文件。
+        </p>
+      ) : codeKind !== 'url' && (
         <p className="tiny-meta mt-2">
           把 <code className="font-mono">Authorization</code> 里的 <code className="font-mono">dfeed_你的令牌</code> 换成右侧「个人聚合接口」的 dfeed_ 令牌（或单订阅 <code className="font-mono">dsub_</code>）；连接后按你的订阅范围自动过滤。字段名随客户端而异，请以其文档为准。
         </p>
@@ -210,27 +236,16 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
             <span className={`stamp ${mcpStamp.cls}`}>{mcpStamp.label}</span>
             {showConfig && (
               <span className="mini-seg" style={{ marginLeft: 'auto' }} role="group" aria-label="配置格式">
-                <button
-                  type="button"
-                  className={`mini-seg-btn ${codeKind === 'json' ? 'is-on' : ''}`}
-                  onClick={() => setCodeKind('json')}
-                >
-                  JSON 配置
-                </button>
-                <button
-                  type="button"
-                  className={`mini-seg-btn ${codeKind === 'opencode' ? 'is-on' : ''}`}
-                  onClick={() => setCodeKind('opencode')}
-                >
-                  OpenCode
-                </button>
-                <button
-                  type="button"
-                  className={`mini-seg-btn ${codeKind === 'url' ? 'is-on' : ''}`}
-                  onClick={() => setCodeKind('url')}
-                >
-                  URL
-                </button>
+                {[['claude', 'Claude Code'], ['opencode', 'OpenCode'], ['codex', 'Codex'], ['url', 'URL']].map(([kind, label]) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    className={`mini-seg-btn ${codeKind === kind ? 'is-on' : ''}`}
+                    onClick={() => setCodeKind(kind)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </span>
             )}
           </div>
@@ -253,11 +268,11 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
             </>
           )}
 
+          {/* 适用面随所选格式联动(mcpServers JSON ≠ 万能:Codex 走 TOML、OpenCode 自成一格) */}
           <div className="targets">
-            适用
-            {LOCAL_TOOLS.map(t => <span key={t} className="target-chip">{t}</span>)}
-            · 在线
-            {ONLINE_TOOLS.map(t => <span key={t} className="target-chip">{t}</span>)}
+            {codeKind === 'url' ? '在线接入' : '本格式适用'}
+            {(FORMAT_TARGETS[codeKind] || FORMAT_TARGETS.claude).map(t => <span key={t} className="target-chip">{t}</span>)}
+            {codeKind === 'url' && <>· 及任何支持 streamable-HTTP 的 MCP 客户端</>}
           </div>
 
           <div className="tools-head">
@@ -291,15 +306,16 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
           </details>
         </section>
 
-        {/* 次行：个人聚合接口 + Claude 技能包 并排等高 */}
+        {/* 次行：个人聚合接口 + Agent 技能包 并排等高 */}
         <div className="channels-pair">
           <FeedAccessSection showToast={showToast} isAdmin={isAdmin} />
 
           <section className="surface-card card-pad">
             <div className="card-head">
-              <span className="card-title">Claude 技能包</span>
+              <span className="card-title">Agent 技能包</span>
+              <span className="target-chip">SKILL.md 开放标准</span>
             </div>
-            <p className="card-desc">按本站地址模板化的日报技能，装进 Claude 即可对话取用每日资讯。</p>
+            <p className="card-desc">按本站地址模板化的日报技能，装进 Claude Code、Codex、OpenCode 等支持 Agent Skills 的工具即可对话取用每日资讯。</p>
             <div className="steps">
               {SKILL_STEPS.map((step, i) => <div key={i} className="step">{step}</div>)}
             </div>

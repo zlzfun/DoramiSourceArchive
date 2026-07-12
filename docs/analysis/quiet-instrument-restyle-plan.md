@@ -643,3 +643,24 @@ CSS 化(.brief-cursor-*):11px mono 刻度(同 token-meta),19 位时间戳 280px 
 
 验收:两列标题 computed 15px 且 y 严格相等;游标 scrollWidth ≤ clientWidth(无截断);
 五页扫描所有 *-title 类,每类单一字号(无同类多字号);零 pageerror。
+
+### 十九-补3:MCP 配置格式正名 + Skill 开放标准化(2026-07-12,主线,外部资料查证)
+
+用户目检:①「JSON 配置/OpenCode/URL」分类失准(OpenCode 也是 JSON),且「适用」清单有误;
+②「Claude 技能包」说法过时(Skill 已是跨家标准)。
+
+查证事实(2026-07):mcpServers JSON 是 Claude Code 系事实标准(Claude Code/Claude Desktop/
+Cursor/Windsurf/Cline 同 schema;VS Code 用 servers 键例外);**Codex CLI 用 TOML**
+(~/.codex/config.toml 的 [mcp_servers.<name>],远程 = url + bearer_token_env_var),
+不吃 mcpServers JSON——原「适用」列表把 Codex 归在 JSON 下是错的;OpenCode 用 opencode.json
+的 mcp 键自成一格;SKILL.md(Agent Skills)已是开放标准,Claude Code/Codex/Cursor/
+Gemini CLI/OpenCode 等 30+ 工具支持。
+
+处置:①mini-seg 改四态 Claude Code / OpenCode / Codex(新增 TOML 变体,
+bearer_token_env_var 指环境变量名、令牌不落配置文件,tip 单独说明)/ URL;
+②「适用」chips 随所选格式联动(FORMAT_TARGETS,取代静态 LOCAL/ONLINE_TOOLS 双清单),
+URL 态标注「及任何支持 streamable-HTTP 的 MCP 客户端」;③技能卡改「Agent 技能包」
++「SKILL.md 开放标准」chip,文案与步骤去 Claude 独占口径(「对 Agent 说…」)。
+
+验收:四态逐一切换,代码块(mcpServers JSON / mcp JSON / TOML / 纯 URL)与适用 chips
+联动正确;技能卡无 Claude 独占残留;零 pageerror。
