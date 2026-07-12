@@ -782,8 +782,6 @@ input[type="radio"] {
   }
 
   /* 页头内的 segmented 收紧到 48 箱高内 */
-  .page-head-actions .segmented-control { padding: 3px; }
-
   .page-head-actions {
     margin-left: auto;
     display: flex;
@@ -1747,32 +1745,34 @@ input[type="radio"] {
 
   /* ── Segmented control ── */
 
+  /* 分段控件(视图切换):总高与页头 M 档按钮同轴 32(壳 3 + 拇指 24 + 边 2)。
+     字号/字重写在容器上靠继承穿透——button{font:inherit} 未分层陷阱(见 conventions §3)。 */
   .segmented-control {
     display: inline-flex;
     width: fit-content;
     align-items: center;
     gap: 3px;
     border: 1px solid rgba(11, 18, 32, 0.12);
-    border-radius: var(--r-card);
+    border-radius: var(--r-control);
     background: rgba(240, 242, 246, 0.58);
     box-shadow: inset 0 1px 2px rgba(11, 18, 32, 0.04), 0 4px 14px rgba(11, 18, 32, 0.05);
-    padding: 4px;
+    padding: 3px;
     backdrop-filter: blur(12px);
+    font-size: 12.5px;
+    font-weight: 650;
   }
 
   .segmented-option {
     display: inline-flex;
-    min-height: 40px;
+    min-height: 24px;
     align-items: center;
     justify-content: center;
-    gap: 7px;
-    border-radius: var(--r-control);
-    padding: 0 22px;
+    gap: 6px;
+    border-radius: calc(var(--r-control) - 3px);
+    padding: 0 14px;
     color: #64748b;
-    font-size: 14px;
-    font-weight: 700;
     letter-spacing: 0;
-    line-height: 20px;
+    line-height: 18px;
     transition:
       background var(--motion-fast) var(--motion-ease),
       color var(--motion-fast) var(--motion-ease),
@@ -1782,8 +1782,8 @@ input[type="radio"] {
   }
 
   .segmented-option svg {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     flex-shrink: 0;
   }
 
