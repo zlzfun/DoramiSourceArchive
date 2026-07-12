@@ -3871,10 +3871,12 @@ input[type="radio"] {
 
   .brief-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
   .brief-field .form-label { margin-bottom: 0; }
+  /* 开关 + 保存配置同一行(用户目检:原保存钮独占一行,列内多耗一档高度) */
   .brief-switch-row {
-    display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
-    color: var(--dorami-ink-2); margin-bottom: 12px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); margin-bottom: 12px;
   }
+  .brief-switch-main { display: inline-flex; align-items: center; gap: 8px; }
 
   /* 增量游标行:11px mono 刻度(同 token-meta/brief-run-date),19 位时间戳在 280px
      列内完整展示不截断(字体审计波:原 13px 继承 + truncate 恰好溢出) */

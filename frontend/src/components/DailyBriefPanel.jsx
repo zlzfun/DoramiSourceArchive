@@ -174,16 +174,20 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
       {/* ── 定时配置 ── */}
       <div className="brief-col">
         <div className="brief-col-title">定时配置</div>
+        {/* 开关与保存同一行:开关即时生效,保存针对下方 cron/条数 的编辑 */}
         <div className="brief-switch-row">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={enabled}
-            aria-label="启用每日定时生成"
-            onClick={handleToggle}
-            className={`ledger-switch ${enabled ? 'is-on' : ''}`}
-          />
-          每日自动生成
+          <span className="brief-switch-main">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={enabled}
+              aria-label="启用每日定时生成"
+              onClick={handleToggle}
+              className={`ledger-switch ${enabled ? 'is-on' : ''}`}
+            />
+            每日自动生成
+          </span>
+          <button onClick={handleSaveSettings} className="action-button action-button-quiet min-h-[28px] px-3 text-xs">保存配置</button>
         </div>
         <div className="brief-field">
           <label className="form-label" htmlFor="brief-cron">cron 表达式（5 段）</label>
@@ -193,7 +197,6 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
           <label className="form-label" htmlFor="brief-topn">每期条数（Top N，1–50）</label>
           <input id="brief-topn" type="number" min="1" max="50" step="1" value={topN} onChange={e => setTopN(e.target.value)} className="form-input" />
         </div>
-        <button onClick={handleSaveSettings} className="action-button action-button-quiet min-h-[30px] px-3 text-xs">保存配置</button>
 
         <div className="brief-cursor-row">
           <span className="tiny-meta shrink-0">增量游标</span>
