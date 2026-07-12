@@ -76,6 +76,54 @@ def test_ensure_migrated_adopts_legacy_db(tmp_path):
         engine.dispose()
 
 
+def _make_pre_baseline_legacy_db(tmp_path, name):
+    """构造比基线更老的断代老库:create_all 后删掉一列一表(模拟旧手写 ALTER
+    路径时代的历史断面——生产实例:users 缺 ai_beta_enabled、缺 login_events 表)。"""
+    db_url = f"sqlite:///{tmp_path / name}"
+    DatabaseStorage(db_url=db_url)
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            # 先删索引再删列(SQLite 拒删被索引引用的列;真实老库本就无此索引)
+            conn.exec_driver_sql("DROP INDEX IF EXISTS ix_users_ai_beta_enabled")
+            conn.exec_driver_sql("ALTER TABLE users DROP COLUMN ai_beta_enabled")
+            conn.exec_driver_sql("DROP TABLE login_events")
+    finally:
+        engine.dispose()
+    return db_url
+
+
+def _assert_healed_to_head(db_url):
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            assert MigrationContext.configure(conn).get_current_revision() == _head_revision()
+        insp = inspect(engine)
+        assert "login_events" in insp.get_table_names()
+        user_cols = {c["name"] for c in insp.get_columns("users")}
+        assert "ai_beta_enabled" in user_cols
+        assert "ix_users_ai_beta_enabled" in {ix["name"] for ix in insp.get_indexes("users")}
+    finally:
+        engine.dispose()
+
+
+def test_ensure_migrated_aligns_pre_baseline_legacy_db(tmp_path):
+    """断代早于基线的老库(缺列缺表):收养前对齐到基线,再升级到 head 不崩。
+
+    肇因:生产库 users 缺 ai_beta_enabled,ccae184ca0a1 对不存在的列建索引而崩。"""
+    db_url = _make_pre_baseline_legacy_db(tmp_path, "prebaseline.db")
+    ensure_migrated(db_url)
+    _assert_healed_to_head(db_url)
+
+
+def test_ensure_migrated_resumes_after_stamped_then_failed(tmp_path):
+    """生产现场形态:上次收养已 stamp 到基线、升级中途崩——重跑要能继续对齐并修复。"""
+    db_url = _make_pre_baseline_legacy_db(tmp_path, "stamped.db")
+    command.stamp(make_alembic_config(db_url), BASELINE_REVISION)
+    ensure_migrated(db_url)
+    _assert_healed_to_head(db_url)
+
+
 def test_ensure_migrated_is_idempotent(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'idem.db'}"
     DatabaseStorage(db_url=db_url)

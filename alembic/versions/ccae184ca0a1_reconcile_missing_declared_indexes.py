@@ -57,6 +57,11 @@ def upgrade() -> None:
     for table, column in _MISSING_INDEXES:
         if table not in tables:
             continue
+        # 列守卫:断代早于基线的老库可能连列都没有(生产实例:users 缺
+        # ai_beta_enabled)。收养对齐(_align_legacy_to_baseline)后不会触发,
+        # 此处防御保证任何断面回放都不崩——列都不在,索引自然无从谈起。
+        if column not in {c["name"] for c in insp.get_columns(table)}:
+            continue
         existing = {ix["name"] for ix in insp.get_indexes(table)}
         index_name = f"ix_{table}_{column}"
         if index_name not in existing:
