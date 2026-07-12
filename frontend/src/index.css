@@ -3860,10 +3860,14 @@ input[type="radio"] {
   .brief-card { display: grid; grid-template-columns: 280px 1fr; }
   .brief-col { padding: 18px 20px; min-width: 0; }
   .brief-col + .brief-col { border-left: 1px solid var(--dorami-border); }
-  .brief-col-title { font-size: 12px; font-weight: 700; color: var(--dorami-ink-2); margin-bottom: 12px; }
-  /* 近期日报列头:标题 + 右侧紧凑生成钮同排 */
-  .brief-col-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+  /* 列标题 = 卡标题职责(brief-card 无独立卡题,「定时配置/近期日报」即最高标题层)
+     ——刻度与 .card-title 同(15/700/ink),不得低于辖区正文(字体审计波) */
+  .brief-col-title { font-size: 15px; font-weight: 700; line-height: 21px; color: var(--dorami-ink); margin-bottom: 12px; }
+  /* 近期日报列头:标题与左列标题**顶对齐**(flex-start),右侧紧凑生成钮负 margin 上提
+     视觉配平——否则 32px 按钮把 center 对齐的标题压低,与左列错位 */
+  .brief-col-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
   .brief-col-head .brief-col-title { margin-bottom: 0; }
+  .brief-col-head .action-button { margin-top: -5px; }
 
   .brief-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
   .brief-field .form-label { margin-bottom: 0; }
@@ -3871,6 +3875,16 @@ input[type="radio"] {
     display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
     color: var(--dorami-ink-2); margin-bottom: 12px;
   }
+
+  /* 增量游标行:11px mono 刻度(同 token-meta/brief-run-date),19 位时间戳在 280px
+     列内完整展示不截断(字体审计波:原 13px 继承 + truncate 恰好溢出) */
+  .brief-cursor-row { display: flex; align-items: center; gap: 8px; margin-top: 12px;
+    padding-top: 12px; border-top: 1px solid var(--dorami-border); }
+  .brief-cursor-val { flex: 1; min-width: 0; font-family: var(--mono); font-size: 11px;
+    color: var(--dorami-muted); font-variant-numeric: tabular-nums;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .brief-cursor-reset { flex: none; font-size: 11px; font-weight: 600; color: var(--dorami-muted); }
+  .brief-cursor-reset:hover { color: var(--dorami-ink); }
 
   /* 生成流水线计数微字(步进条本体复用 .ledger-pipeline) */
   .pipeline-note { margin-top: 8px; font-family: var(--mono); font-size: 11px; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }

@@ -82,6 +82,22 @@
 
 语境化标签（`.form-label`/`.node-param-label`/`.active-filter-label` 等）各自就地维护，不必归一。
 
+**标题层级刻度(2026-07 字体审计波,硬约束)**:工作区标题按**职责层**取刻度,禁止就地发明字号:
+
+| 职责层 | 刻度 | 在册类 |
+|---|---|---|
+| 页 | 24/800 | `.page-title` |
+| 区(页内分区头) | 14/700 | `.zone-title`、`.tt-head-title`、`.sett-head-title`、`.section-title` |
+| 卡(surface-card 的实体标题) | 15/700/ink | `.card-title`、`.brief-col-title` |
+| 卡内小节 | 12.5–13/700 | `.tools-title`、`.sett-sync-title`、`.drawer-sec-title` |
+
+三条规则:①**同职责同刻度**——同一页面上并列的同层标题必须同字号(肇因:brief 卡列标题 12px
+与邻卡 `.card-title` 15px 并排);②**标题字号不得小于其辖区正文**(肇因:「定时配置」12px <
+表单标签/输入 13px 的倒挂);③新标题**必须复用在册类**,需要新刻度先改本表再落码。
+注意:无独立卡题的卡,其最高层分区标题**就是卡题职责**,取卡级刻度(brief-card 两列标题即此例)。
+并列多列的标题要求**顶对齐**——列头行若含更高的控件(按钮),用 `align-items: flex-start` +
+控件负 margin 配平,不许让控件把标题压离基线。
+
 > ⚠️ **`button { font: inherit }` 陷阱(未分层压层)**:`index.css` 顶部这条全局规则是**未分层**的
 > `font` 简写,按 cascade layers 规则会压过 `@layer components` 里任何类选择器的 `font-size`——
 > 给按钮类写 `font-size` 看似合法实则不生效(计算值回落到继承链)。给按钮定字号要么写在**容器**上

@@ -195,12 +195,10 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
         </div>
         <button onClick={handleSaveSettings} className="action-button action-button-quiet min-h-[30px] px-3 text-xs">保存配置</button>
 
-        <div className="mt-3 flex items-center justify-between gap-2 border-t border-[var(--dorami-border)] pt-3">
+        <div className="brief-cursor-row">
           <span className="tiny-meta shrink-0">增量游标</span>
-          <span className="flex min-w-0 items-center gap-2">
-            <code className="truncate font-mono text-slate-500" title={cursorVal}>{cursorVal}</code>
-            <button onClick={handleResetCursor} className="micro-label shrink-0 text-slate-500 hover:text-slate-700" title="重置增量游标（用于重做 / 补生成）">重置</button>
-          </span>
+          <code className="brief-cursor-val" title={cursorVal}>{cursorVal}</code>
+          <button onClick={handleResetCursor} className="brief-cursor-reset" title="重置增量游标（用于重做 / 补生成）">重置</button>
         </div>
       </div>
 
