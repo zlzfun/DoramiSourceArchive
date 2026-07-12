@@ -3731,9 +3731,10 @@ input[type="radio"] {
      .ledger-switch/.ledger-pipeline/.action-button*;此处只落接入页专属类。
      刻度 1:1 取自 docs/design/dorami-integrations-quiet.html。 ── */
 
-  /* 流式页容器:承载 --mono 语境 + 密度字号(壳由 App 的 <main> 给内边距,此处不加导轨/内距) */
+  /* 流式页容器:承载 --mono 语境 + 密度字号(壳由 App 的 <main> 给内边距,此处不加导轨/内距)。
+     不设 max-width——与 .admin-page/壳页同为满幅(集成页曾是全站唯一被 1200 卡住的页,
+     右边距比别页宽的元凶)。 */
   .integ-page {
-    max-width: 1200px;
     font-size: 13px;
   }
 
@@ -3920,7 +3921,6 @@ input[type="radio"] {
   .scope-note p { margin-top: 8px; }
 
   @media (max-width: 1023px) {
-    .integ-page { max-width: none; }
     .channels-pair, .brief-card { grid-template-columns: 1fr; }
     .brief-col + .brief-col { border-left: none; border-top: 1px solid var(--dorami-border); }
   }
@@ -4105,12 +4105,16 @@ input[type="radio"] {
      charts/DashboardCharts(MultiSeriesArea 自带 surface-card + card-head + 图例),此处只落
      KPI 条 / 账户表 / AI 总闸板 / 抽屉 tiles / 榜单等页面专属类。
      复用既有范式(不迁,直接引用):.page-head/.surface-card/.stamp/.mini-seg/.segmented-control/
-     .zone-head|title|hint/.card-pad|head|title/.rowacts/.rowact-btn/.ledger-scrim/.ledger-drawer*/
-     .ledger-switch/.pager/.action-button*/.form-input。刻度 1:1 取自 docs/design/dorami-admin-quiet.html。 ── */
+     .zone-head|title|hint/.card-pad|head|title/.rowacts/.rowact-btn/.ledger-scrim/.ledger-drawer*、
+     .ledger-switch/.pager/.action-button*、.form-input。刻度 1:1 取自 docs/design/dorami-admin-quiet.html。 ── */
+  /* (陷阱档案:上行注释原本在「.action-button*」后紧跟「/.form-input」,星号与斜杠
+     拼成注释终止符提前收口,残文粘进下一条选择器,曾把 .admin-page 的基础规则整条毒死
+     ——注释里列举通配类名时,星号后禁止紧跟斜杠。) */
 
-  /* 流式页容器:承载 --mono 语境 + 密度字号(壳由 App 的 <main> 给内边距) */
+  /* 流式页容器:承载 --mono 语境 + 密度字号(壳由 App 的 <main> 给内边距)。
+     不设 max-width——壳页满幅是全站口径,流式页同幅(原 1240 上限即被上述注释炸弹毒死,
+     实际从未生效,满幅是历次目检通过的既成形态)。 */
   .admin-page {
-    max-width: 1240px;
     font-size: 13px;
   }
   .win-label { font-size: 11px; font-weight: 600; color: var(--dorami-faint); margin-right: 2px; }
@@ -4231,7 +4235,6 @@ input[type="radio"] {
   }
 
   @media (max-width: 1023px) {
-    .admin-page { max-width: none; }
     .admin-grid { grid-template-columns: 1fr; }
     .kpi-strip { flex-direction: column; }
     .kpi + .kpi { border-left: none; border-top: 1px solid var(--dorami-border); }
