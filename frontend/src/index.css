@@ -4207,13 +4207,15 @@ input[type="radio"] {
   .rowact-btn.is-on { color: var(--dorami-accent-ink); }
 
   /* ── AI 子页:总闸开关板 + 行内模型配置(状态灯 + ledger-switch + hairline 分隔) ── */
-  .ai-switchboard { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 13px 18px; }
+  /* 单行开关板:总闸 + 模型配置压一行(说明句退居 title tooltip);窄屏媒体回退换行 */
+  .ai-switchboard { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; padding: 13px 18px; }
   .ai-light { width: 8px; height: 8px; border-radius: var(--r-pill); background: var(--state-ok); flex: none; }
   .ai-light.is-off { background: var(--state-warn); }
   .ai-switch-lbl { font-size: 13px; font-weight: 700; color: var(--dorami-ink); }
-  .ai-switch-sub { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); }
   .ai-divider { width: 1px; height: 26px; background: var(--dorami-border); }
-  .model-fields { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1; min-width: 0; }
+  .model-fields { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; flex: 1; min-width: 0; }
+  .model-field:has(.model-input-grow) { flex: 1; min-width: 0; }
+  .model-field .model-input-grow { flex: 1; min-width: 120px; width: auto; }
   .model-field { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--dorami-faint); }
   .model-field input {
     min-height: 28px; padding: 0 9px; border: none; border-radius: var(--r-sm);
@@ -4264,6 +4266,7 @@ input[type="radio"] {
   }
 
   @media (max-width: 1023px) {
+    .ai-switchboard, .model-fields { flex-wrap: wrap; }
     .admin-grid { grid-template-columns: 1fr; }
     .kpi-strip { flex-direction: column; }
     .kpi + .kpi { border-left: none; border-top: 1px solid var(--dorami-border); }

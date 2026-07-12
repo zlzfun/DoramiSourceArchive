@@ -66,24 +66,7 @@ export function MultiSeriesArea({
   const [dim, setDim] = useState(defaultDim ?? dims[0][0]);
   const ds = datasets[dim] || { data: [], keys: [] };
   const colorOf = (k) => colorForEntity(`${namespace}:${dim}`, k);
-  // 末端直标:总量 Top2 系列(选择性直标,不逐点标数;「其它」不参与)
-  const endLabelKeys = new Set(
-    ds.keys
-      .filter((k) => k !== '其它')
-      .map((k) => [k, ds.data.reduce((acc, row) => acc + (row[k] || 0), 0)])
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 2)
-      .map(([k]) => k)
-  );
-  const lastIndex = ds.data.length - 1;
-  const renderEndLabel = (k) => (props) => {
-    if (props.index !== lastIndex) return null;
-    return (
-      <text x={props.x} y={props.y} dx={4} dy={3} fontSize={10} fontWeight={700} fill={colorOf(k)}>
-        {k}
-      </text>
-    );
-  };
+  // (末端直标已退役:两系列末端相近时文字互叠、右缘裁字,且与常备自绘图例信息重复。)
   return (
     <div className="surface-card card-pad rounded-[var(--r-card)]">
       <div className="card-head">
@@ -111,7 +94,7 @@ export function MultiSeriesArea({
       )}
       <div style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={ds.data} margin={{ top: 4, right: 44, bottom: 0, left: 0 }}>
+          <AreaChart data={ds.data} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
             <CartesianGrid stroke={GRID} vertical={false} />
             <XAxis dataKey="label" tick={AXIS_TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={40} />
             <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={40} tickCount={3} tickFormatter={kFormatter} allowDecimals={false} />
@@ -127,7 +110,6 @@ export function MultiSeriesArea({
                 fill={colorOf(k)}
                 fillOpacity={0.9}
                 strokeWidth={2}
-                label={endLabelKeys.has(k) ? renderEndLabel(k) : undefined}
               />
             ))}
           </AreaChart>

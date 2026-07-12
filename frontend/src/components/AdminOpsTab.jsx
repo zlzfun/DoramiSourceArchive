@@ -611,10 +611,7 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
         <div>
           <section className="surface-card ai-switchboard rounded-[var(--r-card)]">
             <span className={`ai-light ${globalAi ? '' : 'is-off'}`} />
-            <div>
-              <div className="ai-switch-lbl">用户 AI 功能</div>
-              <div className="ai-switch-sub">总闸，关闭立即暂停全员翻译 / 问答；不影响单账户开关记忆</div>
-            </div>
+            <div className="ai-switch-lbl" title="总闸:关闭立即暂停全员翻译 / 问答,不影响单账户开关记忆">用户 AI 功能</div>
             <button
               type="button"
               role="switch"
@@ -627,7 +624,7 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
             <span className="ai-divider" />
             <div className="model-fields">
               <label className="model-field">base_url
-                <input value={llmForm.base_url} onChange={(e) => updateLlm('base_url', e.target.value)} placeholder="https://api.deepseek.com/v1" size={24} />
+                <input value={llmForm.base_url} onChange={(e) => updateLlm('base_url', e.target.value)} placeholder="https://api.deepseek.com/v1" className="model-input-grow" />
               </label>
               <label className="model-field">model
                 <input value={llmForm.model} onChange={(e) => updateLlm('model', e.target.value)} placeholder="deepseek-chat" size={12} />
