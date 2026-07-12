@@ -204,6 +204,15 @@
 注意:分段拇指是 button,**字号/字重必须写在容器上靠继承穿透**(`button{font:inherit}`
 未分层陷阱,§3);`.scope-toggle` 已无使用者,属死类待清扫,新分段勿取用。
 
+**输入框两档(2026-07 补)**:表单档 = `.form-input` 默认(36px,竖排表单配 `.form-label`);
+行内工具档 = `.form-input.form-input-inline`(32px/12px,与 M 档按钮、segmented 同排等高——
+工具行/zone-head 里的搜索框一律取此档;`.board-search` 已同轴 32)。`.catalog-search` 死类待清扫。
+
+**小表单模态语法 `.form-sheet`(2026-07)**:头(`-head`:card-title + 30px 关闭 icon-button)/
+身(`-body` + `-field`)/脚(`-foot`:取消 quiet + 主钮,右对齐),hairline 分隔、无色底条——
+旧「well 标题条 + soft 脚条 + indigo 图标」三段横条语法退役;新小弹窗一律用此三件套
+(在册消费者:运维新建读者/重置密码)。
+
 ## 9. 暗色主题（已落地）
 
 暗色主题通过 `[data-theme=dark]`（挂在 `<html>`，由 `src/theme.js` 的主题控制器写入）实现，三态偏好

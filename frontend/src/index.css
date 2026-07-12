@@ -799,6 +799,18 @@ input[type="radio"] {
     min-height: 70px;
   }
 
+  /* ── 小表单模态语法 form-sheet:头(标题+关闭)/身(字段)/脚(取消+主钮),
+     hairline 分隔、无色底条(旧「well 标题条 + soft 脚条」三段横条语法退役)。 ── */
+  .form-sheet { display: flex; flex-direction: column; }
+  .form-sheet-head { display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 16px 20px 12px; border-bottom: 1px solid var(--dorami-border); }
+  .form-sheet-head .icon-button { width: 30px; height: 30px; }
+  .form-sheet-body { display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; }
+  .form-sheet-field { display: flex; flex-direction: column; gap: 5px; }
+  .form-sheet-field .form-label { margin-bottom: 0; }
+  .form-sheet-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+    padding: 12px 20px 16px; border-top: 1px solid var(--dorami-border); }
+
   /* ── Cards & surfaces ── */
 
   .surface-card {
@@ -4401,6 +4413,14 @@ input[type="radio"] {
     transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
   }
 
+  /* 行内工具档输入:与 M 档按钮/segmented 同排等高 32(表单档 form-input 默认 36)。
+     全站行内搜索框统一取此档(输入框规格审计,2026-07)。 */
+  .form-input-inline {
+    min-height: 32px;
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+
   .form-input:focus {
     border-color: rgba(91, 84, 232, 0.42);
     background: #fff;
@@ -5674,7 +5694,7 @@ input[type="radio"] {
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    height: 34px;
+    height: 32px;
     flex: 1 1 220px;
     min-width: 180px;
     max-width: 320px;

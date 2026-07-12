@@ -340,6 +340,31 @@ def test_admin_accounts_windowed_and_activity(monkeypatch, tmp_path):
         assert client.get("/api/admin/accounts/user/activity").status_code == 403
 
 
+def test_admin_accounts_last_login_falls_back_to_event_stream(monkeypatch, tmp_path):
+    """快照 last_login_at 缺失(历史数据疤痕)时,列表/详情以登录事件流兜底。
+
+    肇因:实库出现「窗口登录 241 次但最近登录显示 –」的矛盾行。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from services import accounts as accounts_service
+
+    with Session(app_module.db_sink.engine) as session:
+        accounts_service.touch_login(session, "user")
+        # 模拟疤痕:抹掉快照,事件流仍在
+        record = accounts_service.get_user(session, "user")
+        record.last_login_at = None
+        session.add(record)
+        session.commit()
+        expected = accounts_service.last_login_by_user(session)["user"]
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        row = next(a for a in client.get("/api/admin/accounts?days=30").json() if a["username"] == "user")
+        assert row["last_login_at"] == expected
+        assert row["logged_in_window"] is True
+        detail = client.get("/api/admin/accounts/user/activity?days=30").json()
+        assert detail["account"]["last_login_at"] == expected
+
+
 def test_reader_read_endpoint_records(monkeypatch, tmp_path):
     app_module = _setup_app(monkeypatch, tmp_path)
     from services import reader_activity

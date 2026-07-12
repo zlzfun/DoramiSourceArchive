@@ -417,7 +417,7 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
                   ))}
                 </span>
               </div>
-              <section className="surface-card card-pad rounded-[var(--r-card)]" style={{ maxWidth: 620 }}>
+              <section className="surface-card card-pad rounded-[var(--r-card)]">
                 <RankBars
                   rows={activeUserRows}
                   labelKey="name"
@@ -442,7 +442,7 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
                     value={accountQuery}
                     onChange={(e) => { setAccountQuery(e.target.value); setAccountPage(1); }}
                     placeholder="搜索用户名"
-                    className="form-input w-40 pl-8 text-xs"
+                    className="form-input form-input-inline w-44 pl-8"
                   />
                 </span>
               )}
@@ -754,24 +754,23 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
       {/* ── 新建账户弹窗（Portal 到 body，避开变换祖先造成的 fixed 错位） ── */}
       {createModal.mounted && createPortal(
         <div className={`modal-overlay ${createModal.closing ? 'is-closing' : ''}`} onClick={() => setCreateModalOpen(false)}>
-          <form ref={createPanelRef} role="dialog" aria-modal="true" aria-label="新建读者账户" tabIndex={-1} className="modal-panel max-w-md" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
-            <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex items-center justify-between bg-[var(--dorami-well)]">
-              <h3 className="card-title flex items-center gap-2">
-                <UserPlus className="w-5 h-5 text-indigo-500" /> 新建读者账户
-              </h3>
-              <button type="button" onClick={() => setCreateModalOpen(false)} className="text-slate-500 hover:text-slate-700"><X className="w-5 h-5" /></button>
+          <form ref={createPanelRef} role="dialog" aria-modal="true" aria-label="新建读者账户" tabIndex={-1} className="modal-panel max-w-md form-sheet" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
+            <div className="form-sheet-head">
+              <h3 className="card-title">新建读者账户</h3>
+              <button type="button" onClick={() => setCreateModalOpen(false)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
             </div>
-            <div className="p-6 space-y-3">
-              <div>
-                <p className="form-label">用户名</p>
-                <input value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder="用户名" autoComplete="off" className="form-input w-full" />
+            <div className="form-sheet-body">
+              <div className="form-sheet-field">
+                <label className="form-label" htmlFor="acct-new-name">用户名</label>
+                <input id="acct-new-name" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder="用户名" autoComplete="off" className="form-input w-full" />
               </div>
-              <div>
-                <p className="form-label">初始密码</p>
-                <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="至少 6 位" autoComplete="new-password" className="form-input w-full" />
+              <div className="form-sheet-field">
+                <label className="form-label" htmlFor="acct-new-pw">初始密码</label>
+                <input id="acct-new-pw" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="至少 6 位" autoComplete="new-password" className="form-input w-full" />
               </div>
             </div>
-            <div className="px-6 py-4 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex items-center justify-end">
+            <div className="form-sheet-foot">
+              <button type="button" onClick={() => setCreateModalOpen(false)} className="action-button action-button-quiet">取消</button>
               <button type="submit" disabled={busy} className="action-button action-button-primary">
                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />} 创建读者账户
               </button>
@@ -784,18 +783,17 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
       {/* ── 重置密码弹窗（Portal 到 body） ── */}
       {resetModal.mounted && createPortal(
         <div className={`modal-overlay ${resetModal.closing ? 'is-closing' : ''}`} onClick={() => setResetTarget(null)}>
-          <form ref={resetPanelRef} role="dialog" aria-modal="true" aria-label="重置密码" tabIndex={-1} className="modal-panel max-w-md" onClick={(e) => e.stopPropagation()} onSubmit={handleResetSubmit}>
-            <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex items-center justify-between bg-[var(--dorami-well)]">
-              <h3 className="card-title flex items-center gap-2">
-                <KeyRound className="w-5 h-5 text-indigo-500" /> 重置密码
-              </h3>
-              <button type="button" onClick={() => setResetTarget(null)} className="text-slate-500 hover:text-slate-700"><X className="w-5 h-5" /></button>
+          <form ref={resetPanelRef} role="dialog" aria-modal="true" aria-label="重置密码" tabIndex={-1} className="modal-panel max-w-md form-sheet" onClick={(e) => e.stopPropagation()} onSubmit={handleResetSubmit}>
+            <div className="form-sheet-head">
+              <h3 className="card-title">重置密码</h3>
+              <button type="button" onClick={() => setResetTarget(null)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
             </div>
-            <div className="p-6 space-y-3">
+            <div className="form-sheet-body">
               <p className="tiny-meta">为账户「{resetTarget?.username}」设置新密码，设置后该账户需用新密码登录。</p>
-              <div>
-                <p className="form-label">新密码</p>
+              <div className="form-sheet-field">
+                <label className="form-label" htmlFor="acct-reset-pw">新密码</label>
                 <input
+                  id="acct-reset-pw"
                   type="password"
                   value={resetPassword}
                   onChange={(e) => setResetPassword(e.target.value)}
@@ -806,7 +804,8 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
                 />
               </div>
             </div>
-            <div className="px-6 py-4 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex items-center justify-end">
+            <div className="form-sheet-foot">
+              <button type="button" onClick={() => setResetTarget(null)} className="action-button action-button-quiet">取消</button>
               <button type="submit" disabled={resetBusy} className="action-button action-button-primary">
                 {resetBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />} 保存新密码
               </button>
