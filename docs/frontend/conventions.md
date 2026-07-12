@@ -178,6 +178,19 @@
 - 复用既有原语（`.action-button*` / `.icon-button` / `.surface-card` / `.modal-*` / `.toast-*`），
   不要为同类元素另起样式。
 
+**按钮尺寸三档(2026-07 按钮规格波,硬约束)**——按**语境**取档,同语境同档,禁止就地发明高度:
+
+| 档 | 规格 | 语境 |
+|---|---|---|
+| L | 裸 `.action-button`(40px/14px) | 页头 `page-head-actions`、模态脚部、页级批量条(board-batchbar)、空态 CTA |
+| M | `min-h-[32px] px-3 text-xs` | 卡头/卡内、抽屉脚部、设置面板、表格工具条 |
+| S | ≤28px,各范式类自治 | 行内微操作:`.rowact-btn`/`.copybtn`(26)、`.tt-act-btn`(格条)、行内文字微钮 |
+
+三条规则:①**页头按钮必须裸用 L 档**,禁止 `min-h-*` 覆盖(肇因:运行页页头 36px 与节点页
+40px 并存,切页违和);②M 档写法固定为 `min-h-[32px] px-3 text-xs` 三件套,30/34/36/48 等
+中间值一律并档(48 档已随向量雷达检索行降为 40 退役);③`.icon-button`(32)与 chips
+(model-chip/stamp/target-chip)不是按钮档位,不受本表约束。
+
 ## 9. 暗色主题（已落地）
 
 暗色主题通过 `[data-theme=dark]`（挂在 `<html>`，由 `src/theme.js` 的主题控制器写入）实现，三态偏好

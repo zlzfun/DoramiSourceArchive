@@ -446,7 +446,7 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
                   />
                 </span>
               )}
-              <button onClick={() => setCreateModalOpen(true)} className="action-button action-button-secondary">
+              <button onClick={() => setCreateModalOpen(true)} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
                 <UserPlus className="h-4 w-4" /> 新建读者
               </button>
             </span>
@@ -772,7 +772,7 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
               </div>
             </div>
             <div className="px-6 py-4 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex items-center justify-end">
-              <button type="submit" disabled={busy} className="action-button action-button-primary text-xs">
+              <button type="submit" disabled={busy} className="action-button action-button-primary">
                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />} 创建读者账户
               </button>
             </div>
@@ -807,7 +807,7 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
               </div>
             </div>
             <div className="px-6 py-4 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex items-center justify-end">
-              <button type="submit" disabled={resetBusy} className="action-button action-button-primary text-xs">
+              <button type="submit" disabled={resetBusy} className="action-button action-button-primary">
                 {resetBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />} 保存新密码
               </button>
             </div>

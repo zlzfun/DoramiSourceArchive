@@ -114,7 +114,7 @@ export default function AccountSection({ username, avatar, accountRoleLabel, onU
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={avatarBusy}
-            className="action-button action-button-secondary min-h-[30px] px-3 text-xs"
+            className="action-button action-button-secondary min-h-[32px] px-3 text-xs"
           >
             {avatarBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} 更换头像
           </button>
@@ -123,7 +123,7 @@ export default function AccountSection({ username, avatar, accountRoleLabel, onU
               type="button"
               onClick={handleRemoveAvatar}
               disabled={avatarBusy}
-              className="action-button action-button-quiet min-h-[30px] px-3 text-xs"
+              className="action-button action-button-quiet min-h-[32px] px-3 text-xs"
             >
               移除
             </button>
@@ -177,7 +177,7 @@ export default function AccountSection({ username, avatar, accountRoleLabel, onU
           <div className="sett-sub">仅退出本浏览器的会话</div>
         </span>
         <span className="sett-ctl">
-          <button type="button" onClick={onLogout} className="action-button action-button-danger min-h-[30px] px-3 text-xs">
+          <button type="button" onClick={onLogout} className="action-button action-button-danger min-h-[32px] px-3 text-xs">
             退出登录
           </button>
         </span>

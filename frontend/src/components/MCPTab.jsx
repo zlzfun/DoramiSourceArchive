@@ -320,7 +320,7 @@ export default function MCPTab({ showToast, ragEnabled = false, collectorEnabled
               {SKILL_STEPS.map((step, i) => <div key={i} className="step">{step}</div>)}
             </div>
             <div className="mt-4">
-              <button type="button" onClick={handleDownloadSkill} className="action-button action-button-secondary min-h-[34px] px-3 text-xs">
+              <button type="button" onClick={handleDownloadSkill} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
                 <Download className="w-3.5 h-3.5" />
                 下载技能包
               </button>

@@ -109,7 +109,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
 
         {/* 检索控制行 */}
         <div className="vector-search-layout mb-3">
-          <label className="search-box min-h-[48px] flex-1">
+          <label className="search-box min-h-[40px] flex-1">
             <Search className="mr-3 h-5 w-5 text-slate-500" />
           <input
             type="text"
@@ -120,10 +120,10 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
             className="py-3"
           />
           </label>
-          <button onClick={handleSearch} disabled={searching} className="action-button action-button-primary min-h-[48px] w-full justify-center px-6">
+          <button onClick={handleSearch} disabled={searching} className="action-button action-button-primary min-h-[40px] w-full justify-center px-6">
             {searching ? <RefreshCw className="animate-spin" /> : <><Search />检索</>}
           </button>
-          <button onClick={handleCopyContext} disabled={copyingContext || !searchQuery.trim()} title="将检索结果组装为 RAG 上下文并复制到剪贴板（可直接粘贴到下游 LLM 工作流）" className="action-button action-button-secondary min-h-[48px] w-full justify-center disabled:opacity-40">
+          <button onClick={handleCopyContext} disabled={copyingContext || !searchQuery.trim()} title="将检索结果组装为 RAG 上下文并复制到剪贴板（可直接粘贴到下游 LLM 工作流）" className="action-button action-button-secondary min-h-[40px] w-full justify-center disabled:opacity-40">
             {copiedContext ? <Check /> : copyingContext ? <RefreshCw className="animate-spin" /> : <Copy />}
             复制上下文
           </button>

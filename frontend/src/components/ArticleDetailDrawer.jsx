@@ -131,7 +131,7 @@ export default function ArticleDetailDrawer({
                     type="button"
                     onClick={() => onVectorize?.(article)}
                     disabled={vectorizing || status === 'indexing'}
-                    className="action-button action-button-secondary min-h-[36px] px-3 text-xs"
+                    className="action-button action-button-secondary min-h-[32px] px-3 text-xs"
                   >
                     {vectorizing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5 text-amber-500" />}
                     {status === 'indexed' ? '重建向量' : '立即向量化'}
@@ -140,7 +140,7 @@ export default function ArticleDetailDrawer({
                 <button
                   type="button"
                   onClick={() => onEdit?.(article)}
-                  className="action-button action-button-quiet min-h-[36px] px-3 text-xs"
+                  className="action-button action-button-quiet min-h-[32px] px-3 text-xs"
                 >
                   <Edit2 className="h-3.5 w-3.5" /> 编辑
                 </button>
@@ -148,7 +148,7 @@ export default function ArticleDetailDrawer({
                 <button
                   type="button"
                   onClick={() => onDelete?.(article)}
-                  className="action-button action-button-danger min-h-[36px] px-3 text-xs"
+                  className="action-button action-button-danger min-h-[32px] px-3 text-xs"
                 >
                   <Trash2 className="h-3.5 w-3.5" /> 删除
                 </button>

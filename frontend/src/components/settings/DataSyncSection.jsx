@@ -182,7 +182,7 @@ export default function DataSyncSection({ showToast, canExport, canImport, onArt
               />
               gzip 压缩下载
             </label>
-            <button onClick={handleExport} disabled={exporting} className="action-button action-button-secondary">
+            <button onClick={handleExport} disabled={exporting} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
               {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
               导出 .jsonl
             </button>
@@ -211,7 +211,7 @@ export default function DataSyncSection({ showToast, canExport, canImport, onArt
             )}
           </label>
 
-          <button onClick={handleImport} disabled={importing || !importFile} className="action-button action-button-secondary mt-4">
+          <button onClick={handleImport} disabled={importing || !importFile} className="action-button action-button-secondary min-h-[32px] px-3 text-xs mt-4">
             {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             导入归档包
           </button>

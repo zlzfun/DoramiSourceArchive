@@ -26,7 +26,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
           </div>
           <div className="flex items-center space-x-2">
             {canEdit && (
-              <button onClick={onToggleEdit} disabled={!canToggleEdit} className={`action-button min-h-[34px] px-3 text-xs ${isEditing ? 'action-button-danger' : 'action-button-quiet'}`}>
+              <button onClick={onToggleEdit} disabled={!canToggleEdit} className={`action-button min-h-[32px] px-3 text-xs ${isEditing ? 'action-button-danger' : 'action-button-quiet'}`}>
                 {isEditing ? <X /> : <Edit2 />}
                 {isLoading ? '加载中' : isEditing ? '取消编辑' : '进入编辑模式'}
               </button>
