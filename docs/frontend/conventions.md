@@ -188,8 +188,10 @@
 
 三条规则:①**页头按钮必须裸用 L 档**,禁止 `min-h-*` 覆盖(肇因:运行页页头 36px 与节点页
 40px 并存,切页违和);②M 档写法固定为 `min-h-[32px] px-3 text-xs` 三件套,30/34/36/48 等
-中间值一律并档(48 档已随向量雷达检索行降为 40 退役);③`.icon-button`(32)与 chips
-(model-chip/stamp/target-chip)不是按钮档位,不受本表约束。
+中间值一律并档(48 档已随向量雷达检索行降为 40 退役);③chips(model-chip/stamp/target-chip)
+不是按钮档位,不受本表约束;④**同一排并列的按钮必须等高**——页头内的 `.icon-button`
+升为 40×40 与 L 档同排(`.page-head-actions .icon-button` 规则),其它语境保持 32/38;
+mini-seg 等文字分段控件视作标签,不强行对齐。
 
 ## 9. 暗色主题（已落地）
 
