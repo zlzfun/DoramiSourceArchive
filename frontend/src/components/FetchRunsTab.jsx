@@ -936,7 +936,7 @@ export default function FetchRunsTab({
           <button onClick={loadAll} disabled={loading} title="刷新" aria-label="刷新" className="icon-button signal-refresh">
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
-          <button onClick={openCreateJob} className="action-button action-button-primary">
+          <button onClick={openCreateJob} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
             <Plus /> 新建采集任务
           </button>
         </div>

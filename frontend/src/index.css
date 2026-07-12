@@ -5624,10 +5624,6 @@ input[type="radio"] {
     flex: none;
   }
 
-  /* 页头语境:图标钮与 L 档主按钮(40px)同排等高——同一排并列的按钮必须等高
-     (按钮规格波补:32px 刷新钮挨着 40px 主钮违和) */
-  .page-head-actions .icon-button { width: 40px; height: 40px; }
-
   /* (「自动刷新」开关 UI 已退役——两页轮询转为静默;.signal-switch 仍被自动向量化等开关引用) */
 
   /* 开关：反馈类动效（拇指滑动），亮暗两态 */

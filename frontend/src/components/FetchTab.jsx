@@ -884,7 +884,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           <button
             type="button"
             onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
-            className="action-button action-button-quiet"
+            className="action-button action-button-quiet min-h-[32px] px-3 text-xs"
             title={selectMode ? '退出批量选择(ESC)' : '勾选若干节点后批量运行或存为采集任务'}
           >
             <ListChecks /> {selectMode ? '退出批量选择' : '批量选择'}
@@ -894,7 +894,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               type="button"
               onClick={handleBatchRun}
               disabled={fetchLoading || visibleFetchers.length === 0}
-              className="action-button action-button-primary"
+              className="action-button action-button-primary min-h-[32px] px-3 text-xs"
               title="对当前筛选下的全部节点触发临时抓取"
             >
               {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 批量运行 {visibleFetchers.length}

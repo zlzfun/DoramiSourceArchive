@@ -182,16 +182,16 @@
 
 | 档 | 规格 | 语境 |
 |---|---|---|
-| L | 裸 `.action-button`(40px/14px) | 页头 `page-head-actions`、模态脚部、页级批量条(board-batchbar)、空态 CTA |
-| M | `min-h-[32px] px-3 text-xs` | 卡头/卡内、抽屉脚部、设置面板、表格工具条 |
+| L | 裸 `.action-button`(40px/14px) | 模态脚部、页级批量条(board-batchbar)、空态 CTA |
+| M | `min-h-[32px] px-3 text-xs` | **页头 `page-head-actions`**(用户拍板:页头取矮档更优雅)、卡头/卡内、抽屉脚部、设置面板、表格工具条 |
 | S | ≤28px,各范式类自治 | 行内微操作:`.rowact-btn`/`.copybtn`(26)、`.tt-act-btn`(格条)、行内文字微钮 |
 
-三条规则:①**页头按钮必须裸用 L 档**,禁止 `min-h-*` 覆盖(肇因:运行页页头 36px 与节点页
-40px 并存,切页违和);②M 档写法固定为 `min-h-[32px] px-3 text-xs` 三件套,30/34/36/48 等
-中间值一律并档(48 档已随向量雷达检索行降为 40 退役);③chips(model-chip/stamp/target-chip)
-不是按钮档位,不受本表约束;④**同一排并列的按钮必须等高**——页头内的 `.icon-button`
-升为 40×40 与 L 档同排(`.page-head-actions .icon-button` 规则),其它语境保持 32/38;
-mini-seg 等文字分段控件视作标签,不强行对齐。
+三条规则:①**同语境同档**——页头按钮一律 M 档三件套(肇因:运行页页头 36px 与节点页
+40px 并存,切页违和;后拍板全站页头降 M);②M 档写法固定为 `min-h-[32px] px-3 text-xs`
+三件套,30/34/36/48 等中间值一律并档(48 档已随向量雷达检索行降为 40 退役);
+③chips(model-chip/stamp/target-chip)不是按钮档位,不受本表约束;④**同一排并列的按钮
+必须等高**——页头 M 档 32 与 `.icon-button.signal-refresh`(32)天然同高;mini-seg 等
+文字分段控件视作标签,不强行对齐。
 
 ## 9. 暗色主题（已落地）
 

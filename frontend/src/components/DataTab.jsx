@@ -566,11 +566,11 @@ export default function DataTab({
         <h1 className="page-title">知识台账</h1>
         <div className="page-head-actions">
           {canManageArticles && (
-            <button onClick={() => setManualAddModal(true)} className="action-button action-button-primary">
+            <button onClick={() => setManualAddModal(true)} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
               <Plus /> 手工录入
             </button>
           )}
-          <button onClick={refreshArticles} disabled={loading} className="action-button action-button-secondary">
+          <button onClick={refreshArticles} disabled={loading} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
             <RefreshCw className={loading ? 'animate-spin' : ''} /> 同步最新
           </button>
         </div>
