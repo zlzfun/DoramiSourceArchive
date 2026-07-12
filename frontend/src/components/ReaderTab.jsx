@@ -19,7 +19,8 @@ import LogoMark from './LogoMark';
 import ReaderMarkdown from './ReaderMarkdown';
 import ReaderAiPanel from './ReaderAiPanel';
 import { resolveCompany } from '../sourceTaxonomy';
-import { formatDate, excerptOf } from '../utils/readerText';
+import { excerptOf } from '../utils/readerText';
+import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { contentTypeLabel } from '../utils/contentType';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
 import {
@@ -592,7 +593,7 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
               </span>
             </div>
           ) : (
-            <div className="row-stagger">
+            <div>
               {articles.map((article) => {
                 const active = activeArticle?.id === article.id;
                 const favored = favoriteIds.has(article.id);
@@ -610,7 +611,7 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
                       <div className="reader-article-foot">
                         <span className="reader-article-source">{sourceNameMap[article.source_id] || article.source_id}</span>
                         {article.publish_date && (
-                          <span className="reader-article-date">{formatDate(article.publish_date)}</span>
+                          <span className="reader-article-date" title={formatDateTime(article.publish_date)}>{formatRelativeTime(article.publish_date)}</span>
                         )}
                       </div>
                     </button>
@@ -660,8 +661,8 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
               <div className="reader-pane-meta">
                 <span className="reader-pane-source">{sourceNameMap[activeArticle.source_id] || activeArticle.source_id}</span>
                 {activeArticle.publish_date && (
-                  <span className="reader-pane-date">
-                    <CalendarDays className="h-3.5 w-3.5" /> {formatDate(activeArticle.publish_date)}
+                  <span className="reader-pane-date" title={formatDateTime(activeArticle.publish_date)}>
+                    <CalendarDays className="h-3.5 w-3.5" /> {formatRelativeTime(activeArticle.publish_date)}
                   </span>
                 )}
                 {activeArticle.content_type && (

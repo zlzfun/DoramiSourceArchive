@@ -15,6 +15,7 @@ class GenericGitHubReleasesFetcher(BaseFetcher):
     与 GitHub Atom feed 相比，API 形态能保留 tag、作者、预发布标记、资产列表等结构化字段，
     更适合归档产品/开发者生态的版本更新。
     """
+    is_template = True  # 通用模板节点:后端保留,前端目录不显现
     source_id = "generic_github_releases"
     content_type = "github_release"
     category = "advanced"
@@ -168,6 +169,7 @@ class GenericGitHubReleasesFetcher(BaseFetcher):
 
 class PresetGitHubReleasesFetcher(GenericGitHubReleasesFetcher):
     """预设 GitHub Releases API 抓取器基类。"""
+    is_template = False  # preset 固化节点:重置 Generic 基类的模板标志
 
     source_id = "unknown_source"
     owner = ""
@@ -178,15 +180,9 @@ class PresetGitHubReleasesFetcher(GenericGitHubReleasesFetcher):
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
-        return [
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {
-                "field": "include_prereleases",
-                "label": "包含预发布",
-                "type": "boolean",
-                "default": cls.default_include_prereleases,
-            },
-        ]
+        # 参数固化波:是否含预发布由各 preset 按该仓库的发版习惯以类默认配好
+        # (default_include_prereleases),不作用户参数。
+        return [{"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit}]
 
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
         params = {

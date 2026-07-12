@@ -50,6 +50,7 @@ def _app():
 def get_articles(
         request: Request,
         content_type: Optional[str] = None,
+        content_types: Optional[str] = None,  # CSV:多类型筛选(类型归组分面用),与 feed 契约对齐
         source_id: Optional[str] = None,
         exclude_source_ids: Optional[str] = None,  # CSV：从结果中排除的来源（如知识台账排除日报源）
         job_id: Optional[int] = None,
@@ -58,6 +59,7 @@ def get_articles(
         run_scope: Optional[str] = None,
         is_vectorized: Optional[bool] = None,
         index_status: Optional[str] = None,
+        has_content: Optional[bool] = None,
         search: Optional[str] = None,
         publish_date_start: Optional[str] = None,
         publish_date_end: Optional[str] = None,
@@ -79,6 +81,7 @@ def get_articles(
     )
     filter_kwargs = {
         "content_type": content_type,
+        "content_types": content_types,
         "source_id": source_id,
         "exclude_source_ids": exclude_source_ids,
         "job_id": job_id,
@@ -87,6 +90,7 @@ def get_articles(
         "run_scope": run_scope,
         "is_vectorized": is_vectorized,
         "index_status": index_status,
+        "has_content": has_content,
         "search": search,
         "publish_date_start": publish_date_start,
         "publish_date_end": publish_date_end,
@@ -115,6 +119,40 @@ def get_articles(
         "skip": safe_skip,
         "limit": safe_limit,
         "next_skip": safe_skip + len(records) if safe_skip + len(records) < total else None,
+    }
+
+
+@router.get("/api/articles/facets")
+def get_article_facets(
+        exclude_source_ids: Optional[str] = None,
+        session: Session = Depends(deps.get_session),
+):
+    """分面目录:content_type / source_id 的全量 group-by 计数。
+
+    台账分面栏的单一数据源——选项必须来自全量归档而非当前页,
+    点击当前页不存在的类别也能对全量筛选;计数即样页分面右侧的 `.n`。
+    访问口径与 GET /api/articles 相同(路径共享 reader/collector 判定)。
+    """
+    excludes = [x.strip() for x in (exclude_source_ids or "").split(",") if x.strip()]
+
+    def _facet(column):
+        q = select(column, func.count(ArticleRecord.id)).group_by(column)
+        if excludes:
+            q = q.where(ArticleRecord.source_id.notin_(excludes))
+        rows = session.exec(q).all()
+        return [
+            {"value": value, "count": int(count)}
+            for value, count in sorted(rows, key=lambda r: -r[1])
+            if value
+        ]
+
+    total_q = select(func.count(ArticleRecord.id))
+    if excludes:
+        total_q = total_q.where(ArticleRecord.source_id.notin_(excludes))
+    return {
+        "total": int(session.exec(total_q).one() or 0),
+        "content_types": _facet(ArticleRecord.content_type),
+        "source_ids": _facet(ArticleRecord.source_id),
     }
 
 

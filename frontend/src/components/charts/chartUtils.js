@@ -2,32 +2,42 @@
 
 // 主色（沿用品牌令牌，暗色翻转）—— 单系列图表用。
 export const C_PRIMARY = 'var(--dorami-blue)';
-export const C_LIGHT = 'var(--dorami-blue-2)';
 export const AXIS = 'var(--dorami-faint)';
 export const GRID = 'var(--dorami-border)';
 
 /**
- * 多系列分类调色板：图表里不同用户/用途靠颜色区分，故跳出单一主题色、补一组
- * 中等饱和的离散色（在亮/暗底上均可辨识）。按系列索引循环取色。
+ * 分类调色板(运维波,dataviz 纪律):固定序 6 槽 + 中性「其它」槽,
+ * 值走 --chart-* token(亮暗两组均已过 validate_palette.js 六项校验,暗色自动翻转)。
+ * 纪律:固定序取色、不循环生成第 7 色——超出 6 系一律由 pivotDaily 并入「其它」;
+ * 「其它」恒为中性灰,不占彩色配额。
  */
-export const CATEGORICAL = [
-  '#5b54e8', // indigo（品牌）
-  '#14b8a6', // teal
-  '#f59e0b', // amber
-  '#ef4444', // red
-  '#0ea5e9', // sky
-  '#a855f7', // violet
-  '#10b981', // emerald
-  '#f97316', // orange
-  '#ec4899', // pink
-  '#64748b', // slate（兜底/其它）
+export const CHART_SLOTS = [
+  'var(--chart-1)', // indigo(品牌)
+  'var(--chart-2)', // teal
+  'var(--chart-3)', // amber
+  'var(--chart-4)', // red
+  'var(--chart-5)', // sky
+  'var(--chart-6)', // violet
 ];
+export const C_OTHER = 'var(--chart-other)';
 
-export const seriesColor = (i) => CATEGORICAL[i % CATEGORICAL.length];
+/**
+ * 色随实体不随排位:同一命名空间里,一个实体(用户名/用途名)首次出现时按固定序
+ * 认领一个槽位并终身持有——时间窗切换导致的重排/增减不会重刷幸存系列的颜色。
+ * 「其它」恒走中性槽。(会话级记忆,刷新页面重新分配;跨会话稳定需后端排序保证。)
+ */
+const slotMemory = new Map(); // namespace → Map(entity → slotIndex)
+export function colorForEntity(namespace, name) {
+  if (name === '其它') return C_OTHER;
+  let mem = slotMemory.get(namespace);
+  if (!mem) { mem = new Map(); slotMemory.set(namespace, mem); }
+  if (!mem.has(name)) mem.set(name, mem.size % CHART_SLOTS.length);
+  return CHART_SLOTS[mem.get(name)];
+}
 
-// 各源互动分组柱的语义色：阅读=品牌靛蓝，收藏=青绿（跳出靛蓝同族，明显可分）。
-export const C_READ = CATEGORICAL[0];
-export const C_FAVORITE = CATEGORICAL[1];
+// 各源互动分组柱的语义色：阅读=槽1 靛蓝，收藏=槽2 青绿(固定语义对,全站一致)。
+export const C_READ = CHART_SLOTS[0];
+export const C_FAVORITE = CHART_SLOTS[1];
 
 export const fmtNumLocale = (n) => Number(n || 0).toLocaleString();
 

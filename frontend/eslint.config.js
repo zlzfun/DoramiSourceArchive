@@ -45,8 +45,41 @@ function checkBridge(context, raw, node) {
   }
 }
 
+// 静默仪器防回潮(B 残债清尾):工作区 900 字重与仪式性入场编排已整体退场
+// (conventions §3/§7),此处拦增量。popover/modal 开合的 animate-in fade-in 属
+// feedback 白名单,不禁;禁的是字重回潮与列表/卡片入场位移编排。
+const FORBIDDEN_CEREMONY = [
+  { re: /\bfont-black\b/, msg: '工作区 900/font-black 已退场(conventions §3):页面级标题 font-extrabold、指标数字 font-bold' },
+  { re: /\b(?:row-stagger|entrance-stagger)\b/, msg: '仪式性入场编排已拆除(conventions §7 feedback-only),不要再给列表/卡片加入场' },
+  { re: /\bslide-in-from-(?:bottom|top|left|right)(?:-\d+)?\b/, msg: '入场位移动效属仪式性编排(conventions §7 feedback-only);浮层开合复用既有 popover/modal 范式' },
+]
+
+function checkCeremony(context, raw, node) {
+  if (typeof raw !== 'string') return
+  for (const { re, msg } of FORBIDDEN_CEREMONY) {
+    if (re.test(raw)) context.report({ node, message: msg })
+  }
+}
+
 const doramiPlugin = {
   rules: {
+    'no-ceremonial-entrance': {
+      meta: {
+        type: 'suggestion',
+        docs: { description: '静默仪器防回潮:禁 font-black 与仪式性入场编排类(row-stagger/slide-in-from-*)' },
+        schema: [],
+      },
+      create(context) {
+        return {
+          Literal(node) {
+            if (typeof node.value === 'string') checkCeremony(context, node.value, node)
+          },
+          TemplateElement(node) {
+            checkCeremony(context, node.value.raw, node)
+          },
+        }
+      },
+    },
     'no-hardcoded-style': {
       meta: {
         type: 'problem',
@@ -108,6 +141,8 @@ export default defineConfig([
       // Legacy bridge 护栏：F8-B 已令牌化全部存量并删除 index.css 桥接段，规则以 'error' 把关增量。
       // 见 docs/analysis/frontend-refactor-{plan,progress}.md。
       'dorami/no-legacy-bridge-class': 'error',
+      // 静默仪器防回潮:字重/入场编排增量拦截(B 残债清尾)
+      'dorami/no-ceremonial-entrance': 'error',
     },
   },
 ])

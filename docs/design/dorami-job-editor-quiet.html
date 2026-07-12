@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>任务编辑器 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   任务编辑器(采集任务 新建/编辑 弹窗)· 静默仪器样页(从零到一设计稿)
+   概念:班次编排单(dispatch sheet)——任务 = 一组节点 + 一个时刻。
+   头 = 时刻(名称/启用/整体 cron + 人话回显);体 = 目录→编排单的左右流
+   (左勾选节点,右即时出现班次行:cron 覆盖 + 参数);脚 = 唯一 CTA。
+   令牌与刻度 1:1 取自 frontend/src/index.css。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --dorami-blue: #5b54e8; --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445; --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-card: rgba(255, 255, 255, 0.96); --dorami-wash: rgba(91, 84, 232, 0.08);
+  --dorami-well: #f1f5f9; --dorami-inset-input: inset 0 1px 3px rgba(11, 18, 32, 0.08);
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-strong: rgba(11, 18, 32, 0.15);
+  --dorami-card-bd: transparent; --dorami-edge: rgba(255, 255, 255, 0.62);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-3: 0 4px 10px rgba(11, 18, 32, 0.08), 0 16px 36px rgba(11, 18, 32, 0.11);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-overlay: 16px; --r-pill: 9999px;
+  --state-ok: #059669; --state-ok-bg: #ecfdf5; --state-idle: #64748b; --state-idle-bg: #f1f5f9;
+  --dorami-scrollbar: rgba(11, 18, 32, 0.2);
+  --motion-fast: 150ms; --motion-slow: 300ms; --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-card: rgba(32, 37, 47, 0.96);
+  --dorami-wash: rgba(124, 112, 235, 0.13); --dorami-inset-input: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-strong: rgba(255, 255, 255, 0.16);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08); --dorami-edge: rgba(255, 255, 255, 0.05);
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-3: 0 4px 10px rgba(0, 0, 0, 0.5), 0 16px 36px rgba(0, 0, 0, 0.6);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --state-ok: #34d399; --state-ok-bg: #0f241b; --state-idle: #99a1ad; --state-idle-bg: #15181f;
+  --dorami-blue: #4d45b5; --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink); font-size: 13px;
+  line-height: 1.55; -webkit-font-smoothing: antialiased; min-height: 100vh; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+input { font: inherit; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+* { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+*:hover { scrollbar-color: var(--dorami-scrollbar) transparent; }
+
+/* 背景:任务页淡出示意(非样页主体) */
+.bg-hint { position: fixed; inset: 0; padding: 22px 28px; filter: blur(2px); opacity: 0.5; pointer-events: none; }
+.bg-block { background: var(--dorami-card); border-radius: var(--r-card); box-shadow: var(--sh-1); }
+.scrim { position: fixed; inset: 0; background: rgba(11, 18, 32, 0.38); }
+
+/* ── 模态(r-overlay + sh-3,唯一强高程) ── */
+.modal { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; }
+.sheet { width: min(1020px, 100%); max-height: min(86vh, 780px); display: flex; flex-direction: column;
+  background: var(--dorami-surface); border: 1px solid var(--dorami-card-bd);
+  border-radius: var(--r-overlay); box-shadow: var(--sh-3); overflow: hidden; }
+
+/* ── 头:时刻区(soft 底) ── */
+.sheet-head { flex: none; padding: 16px 20px 14px; background: var(--dorami-soft);
+  border-bottom: 1px solid var(--dorami-border); }
+.sheet-head-top { display: flex; align-items: center; gap: 12px; }
+.sheet-kicker { font-size: 11px; font-weight: 700; letter-spacing: 0.07em; color: var(--dorami-faint); }
+.sheet-close { margin-left: auto; width: 28px; height: 28px; display: grid; place-items: center;
+  border-radius: var(--r-sm); color: var(--dorami-faint); }
+.sheet-close:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+.sheet-close svg { width: 14px; height: 14px; }
+
+.sheet-fields { margin-top: 10px; display: grid; grid-template-columns: 1.3fr auto 1fr; gap: 10px 14px; align-items: end; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field-lbl { font-size: 11px; font-weight: 600; color: var(--dorami-faint); }
+.input { min-height: 32px; padding: 0 10px; border: none; border-radius: var(--r-control);
+  background: var(--dorami-well); box-shadow: var(--dorami-inset-input);
+  font-size: 12.5px; color: var(--dorami-ink); width: 100%; }
+.input::placeholder { color: var(--dorami-faint); }
+.input:focus { outline: none; box-shadow: 0 0 0 3px var(--dorami-focus); }
+.input.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.name-input { font-size: 15px; font-weight: 700; min-height: 36px; }
+
+/* cron 人话回显:mono 走字,是编辑器的「仪器读数」 */
+.cron-echo { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 8px;
+  font-size: 11.5px; color: var(--dorami-muted); }
+.cron-echo b { font-weight: 600; color: var(--dorami-ink-2); }
+.cron-echo .next { margin-left: auto; font-family: var(--mono); font-size: 11px;
+  font-variant-numeric: tabular-nums; color: var(--dorami-faint); }
+
+/* 启用开关(ledger-switch 刻度) */
+.switch-row { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
+  color: var(--dorami-ink-2); padding-bottom: 7px; white-space: nowrap; }
+.switch { position: relative; width: 34px; height: 19px; flex: none; border-radius: var(--r-pill);
+  background: var(--dorami-well); box-shadow: var(--dorami-inset-input);
+  transition: background var(--motion-fast) var(--motion-ease); }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+  background: #fff; border-radius: var(--r-pill); box-shadow: 0 1px 2px rgba(11, 18, 32, 0.3);
+  transition: transform var(--motion-fast) var(--motion-ease); }
+.switch.is-on { background: var(--dorami-blue); }
+.switch.is-on::after { transform: translateX(15px); }
+
+/* ── 体:目录 | 编排单 ── */
+.sheet-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px 1fr; }
+
+/* 左:节点目录 */
+.catalog { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--dorami-border); }
+.catalog-head { flex: none; padding: 12px 14px 10px; border-bottom: 1px solid var(--dorami-border); }
+.catalog-title { display: flex; align-items: baseline; gap: 7px; margin-bottom: 8px; }
+.catalog-title b { font-size: 12.5px; font-weight: 700; }
+.catalog-title .n { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); }
+.searchbox { display: flex; align-items: center; gap: 7px; background: var(--dorami-well);
+  border-radius: var(--r-control); padding: 7px 10px; box-shadow: var(--dorami-inset-input); }
+.searchbox:focus-within { box-shadow: 0 0 0 3px var(--dorami-focus); }
+.searchbox svg { width: 13px; height: 13px; flex: none; color: var(--dorami-faint); }
+.searchbox input { border: none; background: none; outline: none; width: 100%;
+  font-size: 12px; color: var(--dorami-ink); }
+.catalog-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px 10px; }
+.cat-row { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 8px;
+  border-radius: var(--r-sm); text-align: left;
+  transition: background var(--motion-fast) var(--motion-ease); }
+.cat-row:hover { background: var(--dorami-soft); }
+.cat-row.is-in { background: var(--dorami-wash); }
+.cat-check { width: 15px; height: 15px; flex: none; border-radius: 4px;
+  border: 1px solid var(--dorami-border-strong); display: grid; place-items: center;
+  background: var(--dorami-surface); }
+.cat-row.is-in .cat-check { background: var(--dorami-blue); border-color: var(--dorami-blue); }
+.cat-row.is-in .cat-check::after { content: ""; width: 8px; height: 4px;
+  border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: rotate(-45deg) translateY(-1px); }
+.cat-logo { width: 22px; height: 22px; flex: none; border-radius: var(--r-sm);
+  background: var(--dorami-well); display: grid; place-items: center;
+  font-size: 10px; font-weight: 700; color: var(--dorami-muted); }
+.cat-id { min-width: 0; display: flex; flex-direction: column; }
+.cat-name { font-size: 12.5px; font-weight: 600; color: var(--dorami-ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-sid { font-family: var(--mono); font-size: 10px; color: var(--dorami-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-group { padding: 10px 8px 3px; font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.07em; color: var(--dorami-faint); }
+
+/* 右:编排单 */
+.sheet-roster { display: flex; flex-direction: column; min-height: 0; }
+.roster-head { flex: none; display: flex; align-items: baseline; gap: 8px; padding: 12px 18px 10px;
+  border-bottom: 1px solid var(--dorami-border); }
+.roster-title { font-size: 12.5px; font-weight: 700; }
+.roster-meta { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint);
+  font-variant-numeric: tabular-nums; }
+.roster-hint { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
+.roster-list { flex: 1; min-height: 0; overflow-y: auto; }
+
+.ros-row { padding: 12px 18px; border-bottom: 1px solid var(--dorami-border); }
+.ros-row:hover { background: var(--dorami-soft); }
+.ros-top { display: flex; align-items: center; gap: 9px; }
+.ros-name { font-size: 13px; font-weight: 700; }
+.ros-sid { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); }
+.ros-remove { margin-left: auto; width: 24px; height: 24px; display: grid; place-items: center;
+  border-radius: var(--r-sm); color: var(--dorami-faint); opacity: 0;
+  transition: opacity var(--motion-fast) var(--motion-ease); }
+.ros-row:hover .ros-remove, .ros-remove:focus-visible { opacity: 1; }
+.ros-remove:hover { background: var(--state-idle-bg); color: var(--dorami-ink); }
+.ros-remove svg { width: 13px; height: 13px; }
+.ros-fields { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: end; }
+.ros-field { display: flex; flex-direction: column; gap: 3px; }
+.ros-field .field-lbl { font-size: 10.5px; }
+.ros-field .input { min-height: 28px; font-size: 11.5px; }
+.ros-check { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px;
+  font-weight: 600; color: var(--dorami-ink-2); padding-bottom: 5px; }
+.ros-check input { width: 14px; height: 14px; accent-color: var(--dorami-blue); }
+/* cron 覆盖生效章:wash = 状态标记 */
+.ros-cron-mark { font-size: 10px; font-weight: 700; padding: 1.5px 7px; border-radius: var(--r-pill);
+  background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+
+.roster-empty { flex: 1; display: grid; place-items: center; padding: 40px;
+  color: var(--dorami-faint); font-size: 12.5px; font-weight: 600; text-align: center; line-height: 1.8; }
+
+/* ── 脚 ── */
+.sheet-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 18px;
+  background: var(--dorami-soft); border-top: 1px solid var(--dorami-border); }
+.foot-note { font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
+.btn-quiet { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 12px;
+  border-radius: var(--r-control); font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+.btn-quiet:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+.primary-action { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 16px;
+  border-radius: var(--r-control); background: var(--dorami-blue); color: #fff;
+  font-size: 12.5px; font-weight: 700; box-shadow: var(--sh-1);
+  transition: background var(--motion-fast) var(--motion-ease); }
+.primary-action:hover { background: var(--dorami-accent-ink); }
+.ml-auto { margin-left: auto; }
+
+/* 主题切换钮(样页专用) */
+.theme-toggle { position: fixed; right: 16px; bottom: 16px; z-index: 50; width: 36px; height: 36px;
+  display: grid; place-items: center; border-radius: var(--r-control);
+  background: var(--dorami-surface); box-shadow: var(--sh-1); color: var(--dorami-faint); }
+.theme-toggle svg { width: 17px; height: 17px; }
+
+.spec-notes { position: relative; z-index: 5; margin: 12px auto 0; max-width: 1020px;
+  background: var(--dorami-surface); border-radius: var(--r-card); box-shadow: var(--sh-1);
+  padding: 16px 20px; color: var(--dorami-muted); font-size: 12.5px; line-height: 1.8; }
+.spec-notes h2 { font-size: 13.5px; font-weight: 700; color: var(--dorami-ink); margin: 10px 0 4px; }
+.spec-notes ul { padding-left: 18px; }
+.spec-notes code { font-family: var(--mono); font-size: 11px; background: var(--dorami-well);
+  border-radius: 4px; padding: 1px 5px; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0.01ms !important; } }
+@media (max-width: 1023px) {
+  .sheet-body { grid-template-columns: 1fr; }
+  .catalog { border-right: none; border-bottom: 1px solid var(--dorami-border); max-height: 40%; }
+  .sheet-fields { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- 背景示意:任务页淡出 -->
+<div class="bg-hint" aria-hidden="true">
+  <div class="bg-block" style="height:48px;width:60%;margin-bottom:16px"></div>
+  <div style="display:flex;gap:16px;height:70vh">
+    <div class="bg-block" style="width:300px"></div>
+    <div class="bg-block" style="flex:1"></div>
+  </div>
+</div>
+<div class="scrim"></div>
+
+<div class="modal" role="dialog" aria-modal="true" aria-label="编辑采集任务">
+  <div style="width:min(1020px,100%)">
+  <div class="sheet">
+
+    <!-- 头:时刻区 -->
+    <header class="sheet-head">
+      <div class="sheet-head-top">
+        <span class="sheet-kicker">编辑采集任务</span>
+        <span class="switch-row" style="margin-left:auto;padding:0">
+          <button class="switch is-on" role="switch" aria-checked="true" aria-label="启用任务"></button>启用
+        </span>
+        <button class="sheet-close" aria-label="关闭">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="sheet-fields">
+        <div class="field">
+          <label class="field-lbl" for="j-name">名称</label>
+          <input class="input name-input" id="j-name" value="每日全量采集">
+        </div>
+        <div class="field" style="width:150px">
+          <label class="field-lbl" for="j-cron">整体 cron(5 段)</label>
+          <input class="input mono" id="j-cron" value="0 9 * * *">
+        </div>
+        <div class="field">
+          <label class="field-lbl" for="j-desc">说明</label>
+          <input class="input" id="j-desc" placeholder="给未来的自己一句话" value="工作日早读前的主力批次">
+        </div>
+        <div class="cron-echo">
+          <span>= <b>每天 09:00</b> 触发</span><span>·</span><span>2 个节点另有单独时刻</span>
+          <span class="next" id="cron-next">距下次 18:24:11</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- 体:目录 | 编排单 -->
+    <div class="sheet-body">
+      <aside class="catalog" aria-label="节点目录">
+        <div class="catalog-head">
+          <div class="catalog-title"><b>节点目录</b><span class="n">27 个 · 已编入 12</span></div>
+          <div class="searchbox">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <input placeholder="搜索节点名或 ID" aria-label="搜索节点">
+          </div>
+        </div>
+        <div class="catalog-list">
+          <div class="cat-group">厂商官方</div>
+          <button class="cat-row is-in"><span class="cat-check"></span><span class="cat-logo">An</span>
+            <span class="cat-id"><span class="cat-name">Anthropic News</span><span class="cat-sid">web_anthropic_news</span></span></button>
+          <button class="cat-row is-in"><span class="cat-check"></span><span class="cat-logo">Cl</span>
+            <span class="cat-id"><span class="cat-name">Claude Blog</span><span class="cat-sid">web_claude_blog</span></span></button>
+          <button class="cat-row"><span class="cat-check"></span><span class="cat-logo">Op</span>
+            <span class="cat-id"><span class="cat-name">OpenAI News</span><span class="cat-sid">rss_openai_news</span></span></button>
+          <button class="cat-row is-in"><span class="cat-check"></span><span class="cat-logo">Cu</span>
+            <span class="cat-id"><span class="cat-name">Cursor Changelog</span><span class="cat-sid">web_cursor_changelog</span></span></button>
+          <div class="cat-group">科技媒体</div>
+          <button class="cat-row is-in"><span class="cat-check"></span><span class="cat-logo">机</span>
+            <span class="cat-id"><span class="cat-name">机器之心</span><span class="cat-sid">rss_jiqizhixin</span></span></button>
+          <button class="cat-row is-in"><span class="cat-check"></span><span class="cat-logo">量</span>
+            <span class="cat-id"><span class="cat-name">量子位 Website</span><span class="cat-sid">web_qbitai</span></span></button>
+          <button class="cat-row"><span class="cat-check"></span><span class="cat-logo">新</span>
+            <span class="cat-id"><span class="cat-name">新智元 Website</span><span class="cat-sid">web_aiera</span></span></button>
+          <div class="cat-group">论文与模型</div>
+          <button class="cat-row is-in"><span class="cat-check"></span><span class="cat-logo">HF</span>
+            <span class="cat-id"><span class="cat-name">HF Daily Papers</span><span class="cat-sid">hf_daily_papers</span></span></button>
+          <button class="cat-row"><span class="cat-check"></span><span class="cat-logo">ar</span>
+            <span class="cat-id"><span class="cat-name">arXiv cs.CL</span><span class="cat-sid">arxiv_cs_cl</span></span></button>
+        </div>
+      </aside>
+
+      <main class="sheet-roster">
+        <div class="roster-head">
+          <span class="roster-title">编排单</span>
+          <span class="roster-meta">12 节点 · 2 个 cron 覆盖 · 3 项参数改动</span>
+          <span class="roster-hint">留空的时刻随整体 cron</span>
+        </div>
+        <div class="roster-list">
+
+          <div class="ros-row">
+            <div class="ros-top">
+              <span class="cat-logo">An</span><span class="ros-name">Anthropic News</span>
+              <span class="ros-sid">web_anthropic_news</span>
+              <button class="ros-remove" aria-label="移出编排单"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <div class="ros-fields">
+              <div class="ros-field"><span class="field-lbl">该节点 cron</span>
+                <input class="input mono" style="width:130px" placeholder="随整体 0 9 * * *"></div>
+              <div class="ros-field"><span class="field-lbl">单次获取上限</span>
+                <input class="input mono" style="width:72px" value="10"></div>
+              <label class="ros-check"><input type="checkbox" checked>抓取正文页</label>
+            </div>
+          </div>
+
+          <div class="ros-row">
+            <div class="ros-top">
+              <span class="cat-logo">HF</span><span class="ros-name">HF Daily Papers</span>
+              <span class="ros-sid">hf_daily_papers</span>
+              <span class="ros-cron-mark">单独时刻</span>
+              <button class="ros-remove" aria-label="移出编排单"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <div class="ros-fields">
+              <div class="ros-field"><span class="field-lbl">该节点 cron</span>
+                <input class="input mono" style="width:130px" value="30 8 * * 1-5"></div>
+              <div class="ros-field"><span class="field-lbl">单次获取上限</span>
+                <input class="input mono" style="width:72px" value="20"></div>
+            </div>
+          </div>
+
+          <div class="ros-row">
+            <div class="ros-top">
+              <span class="cat-logo">机</span><span class="ros-name">机器之心</span>
+              <span class="ros-sid">rss_jiqizhixin</span>
+              <button class="ros-remove" aria-label="移出编排单"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <div class="ros-fields">
+              <div class="ros-field"><span class="field-lbl">该节点 cron</span>
+                <input class="input mono" style="width:130px" placeholder="随整体 0 9 * * *"></div>
+              <div class="ros-field"><span class="field-lbl">单次获取上限</span>
+                <input class="input mono" style="width:72px" value="15"></div>
+              <label class="ros-check"><input type="checkbox">抓取正文页</label>
+            </div>
+          </div>
+
+          <div class="ros-row">
+            <div class="ros-top">
+              <span class="cat-logo">量</span><span class="ros-name">量子位 Website</span>
+              <span class="ros-sid">web_qbitai</span>
+              <button class="ros-remove" aria-label="移出编排单"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <div class="ros-fields">
+              <div class="ros-field"><span class="field-lbl">该节点 cron</span>
+                <input class="input mono" style="width:130px" placeholder="随整体 0 9 * * *"></div>
+              <div class="ros-field"><span class="field-lbl">单次获取上限</span>
+                <input class="input mono" style="width:72px" value="18"></div>
+            </div>
+          </div>
+
+        </div>
+      </main>
+    </div>
+
+    <!-- 脚 -->
+    <footer class="sheet-foot">
+      <span class="foot-note">保存后时刻表立即更新;运行中的批次不受影响</span>
+      <button class="btn-quiet ml-auto">取消</button>
+      <button class="primary-action">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+        保存任务
+      </button>
+    </footer>
+
+  </div>
+
+  <!-- 设计注记 -->
+  <section class="spec-notes">
+    <h2>设计推导:班次编排单(dispatch sheet)</h2>
+    <p>任务 = 一组节点 + 一个时刻,编辑器按此拆三段:<b>头 = 时刻</b>(名称/启用/整体 cron + 人话回显与
+    「距下次」走字——把时刻表页的仪器读数带进编辑现场);<b>体 = 目录 → 编排单</b>(左侧勾选,右侧即时
+    出现该节点的班次行:cron 覆盖 + schema 参数;有单独时刻的行挂 wash「单独时刻」章);<b>脚 = 唯一 CTA</b>。</p>
+    <h2>与现实现的差异(决策点)</h2>
+    <ul>
+      <li>目录按板块分组(厂商官方/科技媒体/…,沿用节点页分类学),不再是无分组长列表;已编入行 wash 底;</li>
+      <li>cron 人话回显 + 距下次预览:前端粗解析常见五段式,解析不了则只显示原式(诚实降级);</li>
+      <li>编排单行 hover 才出移除钮(rowacts 语法);参数字段紧凑行内(28px input),布尔项原生 checkbox;</li>
+      <li>「启用任务」从脚部 checkbox 升到头部 switch(它是任务级状态,不是表单杂项);</li>
+      <li>脚部注记「保存后时刻表立即更新」呼应调度台;取消/保存右对齐,保存唯一 primary。</li>
+    </ul>
+    <p>复用范式:well 输入/ledger-switch/wash 状态标记/rowacts hover/r-overlay 模态 + sh-3(全站唯一强高程场景)。
+    亮暗均走 token,右下月亮切换。本文件:docs/design/dorami-job-editor-quiet.html</p>
+  </section>
+  </div>
+</div>
+
+<button class="theme-toggle" id="theme-toggle" title="切换亮暗">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+</button>
+
+<script>
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === 'dark' ? '' : 'dark';
+});
+// 距下次走字(演示)
+let s = 18 * 3600 + 24 * 60 + 11;
+const pad = n => String(n).padStart(2, '0');
+setInterval(() => {
+  s = Math.max(0, s - 1);
+  document.getElementById('cron-next').textContent =
+    `距下次 ${Math.floor(s / 3600)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+}, 1000);
+// 目录勾选(演示)
+document.querySelectorAll('.cat-row').forEach(r => r.addEventListener('click', () => r.classList.toggle('is-in')));
+document.querySelectorAll('.switch').forEach(sw => sw.addEventListener('click', () => {
+  sw.classList.toggle('is-on'); sw.setAttribute('aria-checked', sw.classList.contains('is-on'));
+}));
+</script>
+</body>
+</html>

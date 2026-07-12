@@ -1,35 +1,76 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { RefreshCw, CheckCircle, Zap, Search, Plus, Trash2, SlidersHorizontal } from 'lucide-react';
+import { RefreshCw, Zap, Search, Plus, Trash2, Edit2, ChevronDown } from 'lucide-react';
 import DateRangePicker from './DateRangePicker';
 import ArticleDetailModal from './ArticleDetailModal';
+import ArticleDetailDrawer from './ArticleDetailDrawer';
 import ManualAddModal from './ManualAddModal';
-import ActiveFilterBar from './ActiveFilterBar';
-import LogoMark from './LogoMark';
-import { resolveCompany } from '../sourceTaxonomy';
 import {
   fetchArticles as apiFetchArticles,
   fetchArticle,
+  fetchArticleFacets,
+  fetchDailyStats,
   batchDeleteArticles,
+  deleteArticle,
   vectorizeArticle,
   batchVectorizeArticles,
   vectorizeAllPending,
+  reindexAll,
+  getAutoVectorize,
+  setAutoVectorize,
   updateArticle,
   createArticle,
 } from '../api';
+import Sparkline from './charts/Sparkline';
 import { runAction } from '../utils/runAction';
 import { excerptOf } from '../utils/readerText';
-import { contentTypeLabel } from '../utils/contentType';
+import { contentTypeLabel, CONTENT_TYPE_GROUPS } from '../utils/contentType';
 import { useConfirm } from '../hooks/useConfirm';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
 
 const ARTICLE_PAGE_SIZE = 30;
+
+// 总账条（RAG 开）：每格 = 一个 index_status，点击即按该状态筛选表格。
+const STAT_DEFS = [
+  { key: 'all', label: '总收录', tone: '' },
+  { key: 'indexed', label: '已入索引', tone: 'is-ok' },
+  { key: 'pending', label: '待处理', tone: '' },
+  { key: 'indexing', label: '索引中', tone: 'is-run' },
+  { key: 'failed', label: '失败', tone: 'is-bad' },
+  { key: 'stale', label: '陈旧', tone: 'is-warn' },
+];
+
+// 总账条（RAG 关）：向量索引维度失去意义，退化为三格收录量看板，
+// 点击即应用对应 fetched_date 快捷区间（quick=setFetchedQuick 的键）。
+const PLAIN_STAT_DEFS = [
+  { key: 'all', quick: 'all', label: '总收录', tone: '' },
+  { key: 'today', quick: '1', label: '今日收录', tone: '' },
+  { key: 'week', quick: '7', label: '近 7 天收录', tone: '' },
+];
+
+// 索引状态 → .stamp 范式（淡底+深字+形状点，见 index.css .stamp-*）。
+const INDEX_STAMP = {
+  indexed: { cls: 'stamp-ok', label: '已入索引' },
+  pending: { cls: 'stamp-idle', label: '待索引' },
+  indexing: { cls: 'stamp-run', label: '索引中' },
+  failed: { cls: 'stamp-bad', label: '失败' },
+  stale: { cls: 'stamp-warn', label: '陈旧' },
+};
+
+// 收录时间快捷段（今天 / 近 7 天 / 近 30 天）→ fetched_date 区间。
+// 用本地日期分量（与 DateRangePicker 同口径，避免 UTC 跨日偏移）。
+const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function quickFetchedRange(days) {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - (days - 1));
+  return { start: isoDay(start), end: isoDay(end) };
+}
 
 export default function DataTab({
   availableFetchers,
   showToast,
   isActive = true,
   canManageArticles = true,
-  isReader = true,
   ragEnabled = false,
   articlesDirty = false,
   onArticlesRefreshed,
@@ -53,19 +94,30 @@ export default function DataTab({
   const [manualAddModal, setManualAddModal] = useState(false);
   const [vectorizingId, setVectorizingId] = useState(null);
   const [vectorizingAll, setVectorizingAll] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  // 整刷一次自增（loadArticles），作为 tbody 的 key：查询/筛选/分页一变即整体重挂载，
-  // 让行入场动画对每次切换都触发。
+  const [reindexing, setReindexing] = useState(false);
+  const [autoVec, setAutoVec] = useState(false);
+  const [showMore, setShowMore] = useState(false);
+  // 表格密度:舒适(含摘录行)/紧凑(仅标题,44px 行高)。持久化偏好。
+  const [density, setDensity] = useState(() => localStorage.getItem('dorami-ledger-density') || 'comfortable');
+  const setDensityPersist = (d) => { setDensity(d); localStorage.setItem('dorami-ledger-density', d); };
+  // 总账条计数（全局概览，不随分面筛选变化；见 loadLedgerStats）。
+  const [ledgerStats, setLedgerStats] = useState(null);
+  // 分面目录：{total, content_types:[{value,count}], source_ids:[{value,count}]}（计数降序）。
+  // 台账分面栏的单一数据源——全量 group-by，挂载拉取一次，增删/录入后随列表刷新。
+  const [facets, setFacets] = useState(null);
+  // 详情抽屉：查看 + 快捷操作（编辑仍走 ArticleDetailModal）。
+  const [drawer, setDrawer] = useState({ open: false, article: null });
+  // 整刷一次自增（loadArticles），作为 tbody 的 key：查询/筛选/分页一变即整体重挂载。
   const [listVersion, setListVersion] = useState(0);
 
-  // 搜索是提交式：searchInput 为输入框即时值（不触发加载），appliedSearch 为已提交值
-  // （回车/清除时更新，进入 loadArticles 依赖 → 触发一次加载并回到第 1 页）。
+  // 搜索是提交式：searchInput 为输入框即时值（不触发加载），appliedSearch 为已提交值。
   const [searchInput, setSearchInput] = useState('');
   const [appliedSearch, setAppliedSearch] = useState('');
   const [filters, setFilters] = useState({
-    content_type: '',
+    content_types: '', // CSV：类型归组分面下发的多类型筛选（单类型组也走 CSV）
     source_id: '',
     index_status: '',
+    has_content: '', // '' 不限 | 'true' 仅有正文 | 'false' 仅无正文
     publish_date_start: '',
     publish_date_end: '',
     fetched_date_start: '',
@@ -79,58 +131,102 @@ export default function DataTab({
   );
 
   const getFetcherName = (id) => fetchersById[id]?.name || id;
-  const companyFor = (sourceId) => {
-    const fetcher = fetchersById[sourceId];
-    if (fetcher) return resolveCompany(fetcher);
-    // 阅读端运行时无 fetcher 元数据：用 source_id 兜底，保证标识仍可区分
-    const sid = String(sourceId || 'unknown');
-    const mono = sid.replace(/[^a-zA-Z0-9一-龥]/g, '').slice(0, 2).toUpperCase() || '··';
-    return { key: `sid:${sid}`, name: sid, en: sid, accent: '#64748b', domain: '', monogram: mono };
-  };
 
-  const uniqueContentTypes = [...new Set(articles.map(a => a.content_type).filter(Boolean))];
-  const uniqueSourceIds = [...new Set([
+  // 内容类型分面：按 CONTENT_TYPE_GROUPS 归组（组内计数求和），未归组类型落「其他」；
+  // count=0 的组不显示。选项/计数均来自 facets（全量 group-by），不从当前页推导。
+  const typeGroups = useMemo(() => {
+    const counts = new Map((facets?.content_types ?? []).map(c => [c.value, c.count]));
+    const claimed = new Set();
+    const grouped = [];
+    for (const g of CONTENT_TYPE_GROUPS) {
+      let sum = 0;
+      for (const t of g.types) { if (counts.has(t)) sum += counts.get(t); claimed.add(t); }
+      if (sum > 0) grouped.push({ label: g.label, csv: g.types.join(','), count: sum });
+    }
+    let otherSum = 0;
+    const otherTypes = [];
+    for (const [value, count] of counts) {
+      if (!claimed.has(value)) { otherSum += count; otherTypes.push(value); }
+    }
+    if (otherSum > 0) grouped.push({ label: '其他', csv: otherTypes.join(','), count: otherSum });
+    return grouped;
+  }, [facets]);
+
+  // 来源分面：取消厂商分组，扁平列表按计数降序（后端已降序），显示 fetcher 名 + 计数。
+  const sourceFacets = facets?.source_ids ?? [];
+
+  // 来源分面标题截断检测:只有名字真被省略号截断的行,才在 hover 停留后隐去计数、
+  // 让标题占满整行(motion 服务于信息获取,非装饰;未截断的行不参与,计数保持稳定)。
+  const sourceListRef = useRef(null);
+  useEffect(() => {
+    const el = sourceListRef.current;
+    if (!el) return;
+    const measure = () => {
+      el.querySelectorAll('.ledger-facet-item').forEach(btn => {
+        const name = btn.querySelector('.ledger-facet-name');
+        if (!name) return;
+        const clipped = name.scrollWidth > name.clientWidth + 1;
+        btn.classList.toggle('is-clipped', clipped);
+        // 揭示后可用宽 = 按钮内宽(计数已让位);仍不够的部分作为滑移距离,
+        // CSS 侧沿用同一延时把文字整体左移,尾部进入可视区。
+        const available = btn.clientWidth - 18; // padding 9px × 2
+        const shift = clipped ? Math.max(0, name.scrollWidth - available + 2) : 0;
+        btn.style.setProperty('--reveal-shift', `-${shift}px`);
+      });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [facets, fetchersById]);
+
+  // 手工录入的 datalist 选项：类型/来源同样吃 facets（全量目录），并入已注册 fetcher。
+  const manualContentTypes = useMemo(() => (facets?.content_types ?? []).map(c => c.value), [facets]);
+  const uniqueSourceIds = useMemo(() => [...new Set([
     ...availableFetchers.map(f => f.id).filter(Boolean),
-    ...articles.map(a => a.source_id).filter(Boolean),
-    ...(filters.source_id ? [filters.source_id] : []),
-  ])];
-
-  // 数据来源下拉：按公司分组（optgroup），让来源更易定位
-  const sourceKey = uniqueSourceIds.join('|');
-  const sourceGroups = useMemo(() => {
-    const groups = new Map();
-    uniqueSourceIds.forEach(src => {
-      const company = companyFor(src);
-      if (!groups.has(company.key)) groups.set(company.key, { name: company.name, items: [] });
-      groups.get(company.key).items.push(src);
-    });
-    return Array.from(groups.values()).sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceKey, fetchersById]);
-
-  const advancedCount = [
-    filters.content_type,
-    filters.index_status,
-    filters.publish_date_start || filters.publish_date_end,
-    filters.fetched_date_start || filters.fetched_date_end,
-  ].filter(Boolean).length;
+    ...(facets?.source_ids ?? []).map(s => s.value),
+  ])], [availableFetchers, facets]);
 
   const canSelectArticles = canManageArticles;
+  // 向量化「动作」(自动开关/全量/重建/单条构建)与索引状态列都依赖 RAG:
+  // 向量子系统关闭时相关端点 503,列直接隐藏,总账条退化为收录量三格。
+  const showVectorActions = canManageArticles && ragEnabled;
   const totalPages = Math.max(1, Math.ceil((articlePageInfo.total || 0) / ARTICLE_PAGE_SIZE));
-  const pageStart = articlePageInfo.total === 0 ? 0 : (currentPage - 1) * ARTICLE_PAGE_SIZE + 1;
-  const pageEnd = Math.min(currentPage * ARTICLE_PAGE_SIZE, articlePageInfo.total || 0);
   const canGoPrev = currentPage > 1 && !loading;
   const canGoNext = currentPage < totalPages && !loading;
+  const activeStatus = filters.index_status || 'all';
 
-  // 列表加载：竞态由 runList 兜底（发新弃旧）。依赖 filters + appliedSearch —— 二者一变
-  // loadArticles 身份即变，驱动 effect 重载并回到第 1 页；搜索输入（searchInput）不在此列，
-  // 故打字不触发加载（提交式搜索）。
+  // 页码窗口：首页、当前±1、末页；间断处以省略号占位（.pager 范式）。
+  const pageWindow = useMemo(() => {
+    const wanted = [1, currentPage - 1, currentPage, currentPage + 1, totalPages]
+      .filter(p => p >= 1 && p <= totalPages);
+    const uniq = [...new Set(wanted)].sort((a, b) => a - b);
+    const out = [];
+    let prev = 0;
+    for (const p of uniq) {
+      if (p - prev > 1) out.push({ ellipsis: true, key: `e${p}` });
+      out.push({ page: p, key: p });
+      prev = p;
+    }
+    return out;
+  }, [currentPage, totalPages]);
+
+  // 收录时间快捷段的当前选中：由 filters 反推，保证与深链/清除一致。
+  const activeFetchedQuick = useMemo(() => {
+    const { fetched_date_start: s, fetched_date_end: e } = filters;
+    if (!s && !e) return 'all';
+    for (const days of [1, 7, 30]) {
+      const r = quickFetchedRange(days);
+      if (r.start === s && r.end === e) return String(days);
+    }
+    return 'custom';
+  }, [filters]);
+
+  // 列表加载：竞态由 runList 兜底（发新弃旧）。依赖 filters + appliedSearch。
   const loadArticles = useCallback(async (page = 1) => {
     setSelectedArticles(new Set());
     setLoading(true);
     const skip = (page - 1) * ARTICLE_PAGE_SIZE;
-    // 知识台账只展示采集归档的原始内容；日报是 LLM 加工产物，从台账排除
-    // （阅读器订阅侧不带此参数，用户订阅日报后仍可正常查看）。
+    // 知识台账只展示采集归档的原始内容；日报是 LLM 加工产物，从台账排除。
     const queryFilters = { ...filters, search: appliedSearch, exclude_source_ids: 'dorami_daily_brief' };
     let data;
     try {
@@ -141,11 +237,10 @@ export default function DataTab({
       setLoading(false);
       return;
     }
-    if (data === undefined) return; // 被更新的请求取代：loading 归新请求所有，不在此清除
+    if (data === undefined) return; // 被更新的请求取代
     const total = data.total || 0;
     const maxPage = Math.max(1, Math.ceil(total / ARTICLE_PAGE_SIZE));
     if (page > maxPage) {
-      // 越界页：修正 currentPage 触发再次加载（loading 保持，直到修正后的加载完成）
       setArticlePageInfo({ total });
       setCurrentPage(maxPage);
       return;
@@ -156,10 +251,79 @@ export default function DataTab({
     setLoading(false);
   }, [filters, appliedSearch, runList, showToast]);
 
+  // 总账条计数：全局概览（仅排除日报源），与分面筛选无关。挂载时 + 文章增删/向量化后刷新。
+  //  · RAG 开：总收录 + 5 个 index_status 计数（6 格）。
+  //  · RAG 关：向量维度失效，只查总收录 / 今日 / 近 7 天（后两格用 fetched_date 快捷区间），
+  //    5 个状态计数不再发起。
+  const loadLedgerStats = useCallback(async () => {
+    const base = { exclude_source_ids: 'dorami_daily_brief' };
+    const countFor = async (extra) => {
+      try {
+        const d = await apiFetchArticles({ ...base, ...extra }, 1, 0, true, { includeContent: false });
+        return d.total ?? 0;
+      } catch {
+        return null;
+      }
+    };
+    if (showVectorActions) {
+      const [total, indexed, pending, indexing, failed, stale] = await Promise.all([
+        countFor({}),
+        countFor({ index_status: 'indexed' }),
+        countFor({ index_status: 'pending' }),
+        countFor({ index_status: 'indexing' }),
+        countFor({ index_status: 'failed' }),
+        countFor({ index_status: 'stale' }),
+      ]);
+      setLedgerStats({ total, indexed, pending, indexing, failed, stale });
+      return;
+    }
+    const day1 = quickFetchedRange(1);
+    const day7 = quickFetchedRange(7);
+    const [total, today, week] = await Promise.all([
+      countFor({}),
+      countFor({ fetched_date_start: day1.start, fetched_date_end: day1.end }),
+      countFor({ fetched_date_start: day7.start, fetched_date_end: day7.end }),
+    ]);
+    setLedgerStats({ total, today, week });
+  }, [showVectorActions]);
+
+  // 近 7 日收录趋势(A 每日聚合端点波):挂在「总收录」格,端点失败静默不渲染。
+  const [weekTrend, setWeekTrend] = useState(null);
+  const loadWeekTrend = useCallback(() => {
+    fetchDailyStats(7)
+      .then(d => {
+        const byDay = {};
+        d.articles.forEach(a => { byDay[a.day] = (byDay[a.day] || 0) + a.count; });
+        setWeekTrend({ values: d.days.map(k => byDay[k] || 0), labels: d.days });
+      })
+      .catch(() => setWeekTrend(null));
+  }, []);
+  useEffect(() => { loadWeekTrend(); }, [loadWeekTrend]);
+
+  const loadFacets = useCallback(async () => {
+    try {
+      const d = await fetchArticleFacets({ exclude_source_ids: 'dorami_daily_brief' });
+      setFacets(d);
+    } catch { /* 分面加载失败不阻断列表 */ }
+  }, []);
+
+  const refreshAfterMutation = useCallback((page) => {
+    loadArticles(page);
+    loadLedgerStats();
+    loadFacets();
+  }, [loadArticles, loadLedgerStats, loadFacets]);
+
   const handleVectorize = async (id) => {
     setVectorizingId(id);
     await runAction(() => vectorizeArticle(id), {
-      showToast, success: '已建立向量索引', onSuccess: () => loadArticles(currentPage),
+      showToast,
+      success: '已建立向量索引',
+      onSuccess: () => {
+        refreshAfterMutation(currentPage);
+        setDrawer(prev => (prev.article?.id === id
+          ? { ...prev, article: { ...prev.article, index_status: 'indexed', is_vectorized: true } }
+          : prev));
+      },
     });
     setVectorizingId(null);
   };
@@ -168,7 +332,7 @@ export default function DataTab({
     await runAction(() => batchVectorizeArticles(Array.from(selectedArticles)), {
       showToast,
       success: (data) => `已为 ${data.count} 条记录建立向量索引`,
-      onSuccess: () => loadArticles(currentPage),
+      onSuccess: () => refreshAfterMutation(currentPage),
     });
   };
 
@@ -176,37 +340,83 @@ export default function DataTab({
     await runAction(() => vectorizeAllPending(), {
       showToast,
       success: (data) => `已向量化 ${data.count}/${data.total_pending} 篇待处理文章`,
-      onSuccess: () => loadArticles(currentPage),
+      onSuccess: () => refreshAfterMutation(currentPage),
       setLoading: setVectorizingAll,
     });
+  };
+
+  const handleReindex = async () => {
+    if (!(await confirm('全量重索引将清空并重建整个向量库（更换 Embedding 模型后使用）。确认继续？'))) return;
+    await runAction(() => reindexAll(), {
+      showToast,
+      success: (data) => `已全量重索引 ${data.total_reindexed}/${data.total_articles} 篇`,
+      onSuccess: () => refreshAfterMutation(currentPage),
+      setLoading: setReindexing,
+    });
+  };
+
+  const handleToggleAutoVec = async () => {
+    const next = !autoVec;
+    setAutoVec(next);
+    try {
+      await setAutoVectorize(next);
+      showToast(next ? '已开启：抓取后自动向量化' : '已关闭自动向量化', 'success');
+    } catch (error) {
+      setAutoVec(!next);
+      showToast(error.message || '设置失败，请重试', 'error');
+    }
   };
 
   const refreshArticles = () => {
     if (currentPage === 1) loadArticles(1);
     else setCurrentPage(1);
+    loadLedgerStats();
+    loadFacets();
+    loadWeekTrend();
   };
 
-  // 回车提交搜索：把输入值提交为 appliedSearch → loadArticles 变身 → 加载并回到第 1 页。
   const handleSearchSubmit = () => setAppliedSearch(searchInput.trim());
 
-  // 唯一列表加载驱动：区分「筛选/搜索变化」（loadArticles 身份变，回第 1 页）与「翻页」
-  // （仅 currentPage 变，加载该页），取代旧的 activeFilterKey 串 + searchReloadTick 补丁。
+  const setFetchedQuick = (key) => {
+    if (key === 'all') {
+      setFilters(prev => ({ ...prev, fetched_date_start: '', fetched_date_end: '' }));
+      return;
+    }
+    const { start, end } = quickFetchedRange(Number(key));
+    setFilters(prev => ({ ...prev, fetched_date_start: start, fetched_date_end: end }));
+  };
+
+  // 唯一列表加载驱动：区分「筛选/搜索变化」（回第 1 页）与「翻页」（加载该页）。
   useEffect(() => {
     const loaderChanged = loaderRef.current !== loadArticles;
     loaderRef.current = loadArticles;
     if (loaderChanged && currentPage !== 1) {
-      setCurrentPage(1); // 会再次触发本 effect，届时以第 1 页加载
+      setCurrentPage(1);
       return;
     }
     loadArticles(currentPage);
   }, [loadArticles, currentPage]);
 
+  // 总账条计数：挂载 / rag·权限变化时加载一次。
+  useEffect(() => { loadLedgerStats(); }, [loadLedgerStats]);
+
+  // 分面目录：挂载拉取一次（增删/录入后随 refreshAfterMutation 刷新）。
+  useEffect(() => { loadFacets(); }, [loadFacets]);
+
+  // 自动向量化开关：读取当前配置（仅管理员 + RAG 开启）。
+  useEffect(() => {
+    if (!showVectorActions) return;
+    let alive = true;
+    getAutoVectorize().then(d => { if (alive) setAutoVec(Boolean(d.enabled)); }).catch(() => {});
+    return () => { alive = false; };
+  }, [showVectorActions]);
+
   useEffect(() => {
     if (isActive && articlesDirty) {
-      loadArticles(currentPage);
+      refreshAfterMutation(currentPage);
       onArticlesRefreshed?.();
     }
-  }, [isActive, articlesDirty, loadArticles, currentPage, onArticlesRefreshed]);
+  }, [isActive, articlesDirty, refreshAfterMutation, currentPage, onArticlesRefreshed]);
 
   useEffect(() => {
     if (!pendingFilter) return;
@@ -214,9 +424,10 @@ export default function DataTab({
     setAppliedSearch('');
     setFilters(prev => ({
       ...prev,
-      content_type: '',
+      content_types: '',
       source_id: pendingFilter.source_id ?? prev.source_id,
       index_status: '',
+      has_content: '',
       publish_date_start: '',
       publish_date_end: '',
       fetched_date_start: '',
@@ -224,59 +435,6 @@ export default function DataTab({
     }));
     onPendingFilterApplied?.();
   }, [pendingFilter, onPendingFilterApplied]);
-
-  // 当前生效筛选（用于「当前筛选」条的可移除胶囊）。键控筛选清除后由 activeFilterKey effect 自动重载；
-  const VECTOR_STATUS_LABELS = {
-    indexed: '向量已构建', pending: '待索引', indexing: '构建中', failed: '构建失败', stale: '待重建',
-  };
-  const dateRangeText = (start, end) => `${start || '…'} ~ ${end || '…'}`;
-  const activeFilterItems = [];
-  if (appliedSearch) {
-    activeFilterItems.push({
-      key: 'search', label: '搜索', value: appliedSearch,
-      onRemove: () => { setSearchInput(''); setAppliedSearch(''); },
-    });
-  }
-  if (filters.source_id) {
-    activeFilterItems.push({
-      key: 'source', label: '数据来源', value: getFetcherName(filters.source_id),
-      onRemove: () => setFilters(prev => ({ ...prev, source_id: '' })),
-    });
-  }
-  if (filters.content_type) {
-    activeFilterItems.push({
-      key: 'type', label: '结构类型', value: contentTypeLabel(filters.content_type, filters.content_type),
-      onRemove: () => setFilters(prev => ({ ...prev, content_type: '' })),
-    });
-  }
-  if (filters.index_status) {
-    activeFilterItems.push({
-      key: 'vector', label: '向量状态', value: VECTOR_STATUS_LABELS[filters.index_status] || filters.index_status,
-      onRemove: () => setFilters(prev => ({ ...prev, index_status: '' })),
-    });
-  }
-  if (filters.publish_date_start || filters.publish_date_end) {
-    activeFilterItems.push({
-      key: 'publish', label: '发布日期', value: dateRangeText(filters.publish_date_start, filters.publish_date_end),
-      onRemove: () => setFilters(prev => ({ ...prev, publish_date_start: '', publish_date_end: '' })),
-    });
-  }
-  if (filters.fetched_date_start || filters.fetched_date_end) {
-    activeFilterItems.push({
-      key: 'fetched', label: '收录时间', value: dateRangeText(filters.fetched_date_start, filters.fetched_date_end),
-      onRemove: () => setFilters(prev => ({ ...prev, fetched_date_start: '', fetched_date_end: '' })),
-    });
-  }
-
-  const clearAllFilters = () => {
-    setSearchInput('');
-    setAppliedSearch('');
-    setFilters(prev => ({
-      ...prev,
-      content_type: '', source_id: '', index_status: '',
-      publish_date_start: '', publish_date_end: '', fetched_date_start: '', fetched_date_end: '',
-    }));
-  };
 
   const toggleArticleSelection = (id) => {
     const newSet = new Set(selectedArticles);
@@ -293,7 +451,19 @@ export default function DataTab({
   const handleBatchDeleteArticles = async () => {
     if (!(await confirm(`确定彻底删除选中的 ${selectedArticles.size} 条数据吗？`))) return;
     await runAction(() => batchDeleteArticles(Array.from(selectedArticles)), {
-      showToast, success: `已删除 ${selectedArticles.size} 篇文章`, onSuccess: () => loadArticles(),
+      showToast, success: `已删除 ${selectedArticles.size} 篇文章`, onSuccess: () => refreshAfterMutation(),
+    });
+  };
+
+  const handleDeleteSingle = async (article) => {
+    if (!(await confirm(`确定彻底删除「${article.title || article.id}」吗？`))) return;
+    await runAction(() => deleteArticle(article.id), {
+      showToast,
+      success: '已删除文章',
+      onSuccess: () => {
+        setDrawer({ open: false, article: null });
+        refreshAfterMutation(currentPage);
+      },
     });
   };
 
@@ -303,7 +473,8 @@ export default function DataTab({
       success: '已保存修改',
       onSuccess: () => {
         setModalState({ isOpen: false, data: null, isEditing: false });
-        loadArticles();
+        setDrawer({ open: false, article: null });
+        refreshAfterMutation(currentPage);
       },
     });
   };
@@ -324,13 +495,14 @@ export default function DataTab({
       success: '已录入文章',
       onSuccess: () => {
         setManualAddModal(false);
-        loadArticles();
+        refreshAfterMutation();
       },
     });
   };
 
-  const openDetailModal = async (article) => {
-    setModalState({ isOpen: true, data: article, isEditing: false });
+  // 行点击 → 打开详情抽屉并拉取全文（竞态由 runDetail 兜底）。
+  const openDrawer = async (article) => {
+    setDrawer({ open: true, article });
     setDetailLoading(true);
     let detail;
     try {
@@ -341,344 +513,478 @@ export default function DataTab({
       return;
     }
     if (detail === undefined) return; // 被更新的详情请求取代，丢弃
-    setModalState(prev => (
-      prev.isOpen && prev.data?.id === article.id
-        ? { ...prev, data: { ...prev.data, ...detail } }
+    setDrawer(prev => (
+      prev.open && prev.article?.id === article.id
+        ? { ...prev, article: { ...prev.article, ...detail } }
         : prev
     ));
     setDetailLoading(false);
   };
 
-  const closeDetailModal = () => {
-    // 在飞行的详情请求由 runDetail 在下次调用/卸载时中止；此处仅复位 UI，
-    // 迟到的响应被 openDetailModal 里 prev.isOpen 的守卫挡下，不会污染已关闭的弹窗。
+  const closeDrawer = () => {
     setDetailLoading(false);
+    setDrawer({ open: false, article: null });
+  };
+
+  // 抽屉「编辑」→ 复用既有编辑模态（抽屉已载入全文，直接进编辑态）；
+  // 编辑模态 z-index(90) 高于抽屉，收起抽屉避免叠层混乱。
+  const openEditModal = (article) => {
+    if (detailLoading) return;
+    setDrawer({ open: false, article: null });
+    setModalState({ isOpen: true, data: article, isEditing: true });
+  };
+
+  const closeEditModal = () => {
     setModalState({ isOpen: false, data: null, isEditing: false });
   };
 
+  // 行内「编辑」：列表项无全文，编辑模态需完整记录才可进编辑态——先拉详情再打开。
+  const handleEditRow = async (article) => {
+    let detail;
+    try {
+      detail = await fetchArticle(article.id);
+    } catch (e) {
+      showToast(e.message || '获取文章详情失败', 'error');
+      return;
+    }
+    setModalState({ isOpen: true, data: { ...article, ...detail }, isEditing: true });
+  };
+
+  const renderStatValue = (key) => {
+    if (!ledgerStats) return '…';
+    const v = key === 'all' ? ledgerStats.total : ledgerStats[key];
+    return v === null || v === undefined ? '—' : v.toLocaleString();
+  };
+
+  const coverage = ledgerStats && ledgerStats.total
+    ? Math.round(((ledgerStats.indexed || 0) / ledgerStats.total) * 1000) / 10
+    : null;
+
   return (
-    <div className={`space-y-6 animate-in fade-in ${selectedArticles.size > 0 ? 'pb-24' : ''}`}>
-      <div className="page-header flex-col xl:flex-row">
-        <div className="page-heading">
-          <h2 className="page-title">知识台账</h2>
-          <p className="page-subtitle mt-3 max-w-4xl">按类型、来源、日期与关键词过滤，查找并管理全部归档内容。</p>
-        </div>
-        <div className="page-actions">
-          {canManageArticles && ragEnabled && (
-            <button onClick={handleVectorizeAllPending} disabled={vectorizingAll} className="action-button action-button-secondary">
-              {vectorizingAll ? <RefreshCw className="animate-spin" /> : <Zap className="text-amber-500" />} 全量向量化
-            </button>
-          )}
+    <div className="ledger-shell">
+      <div className="page-head">
+        <h1 className="page-title">知识台账</h1>
+        <div className="page-head-actions">
           {canManageArticles && (
-            <button onClick={() => setManualAddModal(true)} className="action-button action-button-primary">
+            <button onClick={() => setManualAddModal(true)} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
               <Plus /> 手工录入
             </button>
           )}
-          <button onClick={refreshArticles} disabled={loading} className="action-button action-button-secondary">
-            <RefreshCw className={`text-[var(--dorami-blue)] ${loading ? 'animate-spin' : ''}`} /> 同步最新
+          <button onClick={refreshArticles} disabled={loading} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
+            <RefreshCw className={loading ? 'animate-spin' : ''} /> 同步最新
           </button>
         </div>
       </div>
 
-      <div className="surface-card relative z-30 rounded-[var(--r-overlay)] p-5">
-        <div className="flex flex-col gap-4">
-          <div className="ledger-filter-row flex flex-col gap-3 lg:flex-row lg:items-center">
-            <label className="search-box min-h-[52px] flex-1">
-              <Search className="mr-3 h-5 w-5 text-slate-500" />
-              <input type="text" placeholder="搜索标题、内容、来源网站、标签等关键词..." value={searchInput} onChange={e => setSearchInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSearchSubmit()} className="py-3" />
-              <span className="hidden rounded-[var(--r-sm)] border border-[var(--dorami-border)] px-2 py-1 text-xs font-bold text-slate-500 sm:inline-flex">⌘ /</span>
-            </label>
-            <div className="field-box lg:w-64">
-              <span>数据来源</span>
-              <select value={filters.source_id} onChange={e => setFilters({ ...filters, source_id: e.target.value })}>
-                <option value="">全部节点</option>
-                {sourceGroups.map(group => (
-                  <optgroup key={group.name} label={group.name}>
-                    {group.items.map(src => <option key={src} value={src}>{getFetcherName(src)}</option>)}
-                  </optgroup>
-                ))}
-              </select>
+      <div className="ledger-work">
+        {/* 分面栏：裸放画布 */}
+        <aside className="ledger-facets" aria-label="筛选">
+          <label className="ledger-searchbox">
+            <Search className="ledger-searchbox-icon" />
+            <input
+              type="search"
+              placeholder="标题 / 关键词检索…"
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSearchSubmit()}
+              aria-label="检索标题关键词"
+            />
+          </label>
+
+
+          <div className="ledger-facet">
+            <h3 className="micro-label ledger-facet-title">内容类型</h3>
+            <div className="ledger-facet-list">
+              <button
+                type="button"
+                onClick={() => setFilters(prev => ({ ...prev, content_types: '' }))}
+                className={`ledger-facet-item ${!filters.content_types ? 'is-on' : ''}`}
+              >
+                全部类型
+              </button>
+              {typeGroups.map(g => (
+                <button
+                  key={g.label}
+                  type="button"
+                  onClick={() => setFilters(prev => ({ ...prev, content_types: g.csv }))}
+                  className={`ledger-facet-item ${filters.content_types === g.csv ? 'is-on' : ''}`}
+                  title={g.csv}
+                >
+                  <span className="ledger-facet-name">{g.label}</span>
+                  <span className="n">{g.count.toLocaleString()}</span>
+                </button>
+              ))}
             </div>
-            <button
-              type="button"
-              onClick={() => setShowAdvanced(v => !v)}
-              className={`action-button action-button-secondary min-h-[52px] ${showAdvanced ? 'text-[var(--dorami-blue)]' : ''}`}
-            >
-              <SlidersHorizontal /> 高级筛选{advancedCount > 0 && <span className="ml-1 rounded-full bg-indigo-100 px-1.5 micro-label font-black text-indigo-700">{advancedCount}</span>}
-            </button>
           </div>
 
-          {isReader && (
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="text-xs font-bold text-slate-500">个性化视图</span>
-              <div className="segmented-control">
-                {[
-                  { id: 'off', label: '全部内容' },
-                  { id: 'prioritize', label: '我的订阅优先' },
-                  { id: 'only', label: '仅看我的订阅' },
-                ].map(opt => (
+          <div className="ledger-facet">
+            <h3 className="micro-label ledger-facet-title">来源</h3>
+            <div className="ledger-facet-list ledger-facet-scroll" ref={sourceListRef}>
+              <button
+                type="button"
+                onClick={() => setFilters(prev => ({ ...prev, source_id: '' }))}
+                className={`ledger-facet-item ${!filters.source_id ? 'is-on' : ''}`}
+              >
+                全部节点
+              </button>
+              {sourceFacets.map(s => (
+                <button
+                  key={s.value}
+                  type="button"
+                  onClick={() => setFilters(prev => ({ ...prev, source_id: s.value }))}
+                  className={`ledger-facet-item ${filters.source_id === s.value ? 'is-on' : ''}`}
+                  title={s.value}
+                >
+                  <span className="ledger-facet-name">{getFetcherName(s.value)}</span>
+                  <span className="n">{s.count.toLocaleString()}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="ledger-facet">
+            <h3 className="micro-label ledger-facet-title">收录时间</h3>
+            <div className="ledger-facet-list">
+              {[
+                { id: 'all', label: '全部时间' },
+                { id: '1', label: '今天' },
+                { id: '7', label: '近 7 天' },
+                { id: '30', label: '近 30 天' },
+              ].map(opt => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setFetchedQuick(opt.id)}
+                  className={`ledger-facet-item ${activeFetchedQuick === opt.id ? 'is-on' : ''}`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <div className="ledger-facet-range">
+              <DateRangePicker compact
+                startDate={filters.fetched_date_start}
+                endDate={filters.fetched_date_end}
+                onChange={(start, end) => setFilters({ ...filters, fetched_date_start: start, fetched_date_end: end })}
+                placeholder="自定义收录区间"
+              />
+            </div>
+          </div>
+
+          <div className="ledger-facet">
+            <button
+              type="button"
+              onClick={() => setShowMore(v => !v)}
+              className="ledger-facet-more"
+              aria-expanded={showMore}
+            >
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showMore ? 'rotate-180' : ''}`} />
+              更多筛选
+            </button>
+            {showMore && (
+              <>
+                <h3 className="micro-label ledger-facet-title mt-2">原始发布日期</h3>
+                <div className="ledger-facet-range">
+                  <DateRangePicker compact
+                    startDate={filters.publish_date_start}
+                    endDate={filters.publish_date_end}
+                    onChange={(start, end) => setFilters({ ...filters, publish_date_start: start, publish_date_end: end })}
+                    placeholder="自定义发布区间"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        </aside>
+
+        {/* 主纸：总账条 + 表格 + 批量条 + 表脚 */}
+        <div className="ledger-paper surface-card">
+          <div className="ledger-strip" role="group" aria-label={showVectorActions ? '索引状态总览与筛选' : '收录量总览与筛选'}>
+            <div className="ledger-strip-stats">
+              {(showVectorActions ? STAT_DEFS : PLAIN_STAT_DEFS).map(stat => {
+                // RAG 开：格 = index_status 筛选；RAG 关：格 = fetched_date 快捷区间筛选。
+                const on = showVectorActions
+                  ? activeStatus === stat.key
+                  : activeFetchedQuick === stat.quick;
+                const onClickStat = () => (showVectorActions
+                  ? setFilters(prev => ({ ...prev, index_status: stat.key === 'all' ? '' : stat.key }))
+                  : setFetchedQuick(stat.quick));
+                return (
                   <button
-                    key={opt.id}
+                    key={stat.key}
                     type="button"
-                    onClick={() => setFilters({ ...filters, subscribed_scope: opt.id })}
-                    className={`segmented-option ${filters.subscribed_scope === opt.id ? 'segmented-option-active' : ''}`}
+                    onClick={onClickStat}
+                    className={`ledger-stat ${on ? 'is-on' : ''}`}
+                    aria-pressed={on}
                   >
-                    {opt.label}
+                    <span className={`ledger-stat-num ${stat.tone}`}>{renderStatValue(stat.key)}</span>
+                    <span className="ledger-stat-lbl">{stat.label}</span>
+                    {stat.key === 'all' && weekTrend && (
+                      <span className="mt-2 block" aria-hidden="true">
+                        <Sparkline values={weekTrend.values} labels={weekTrend.labels} title="近 7 日收录趋势" />
+                      </span>
+                    )}
+                    {stat.key === 'indexed' && coverage !== null && (
+                      <>
+                        <span className="ledger-stat-sub">覆盖率 {coverage}%</span>
+                        <span className="ledger-coverbar"><i style={{ width: `${coverage}%` }} /></span>
+                      </>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            {showVectorActions && (
+              <div className="ledger-strip-actions">
+                <button
+                  type="button"
+                  onClick={handleToggleAutoVec}
+                  className="ledger-strip-toggle"
+                  role="switch"
+                  aria-checked={autoVec}
+                >
+                  <span className={`ledger-switch ${autoVec ? 'is-on' : ''}`} aria-hidden="true" />
+                  随采自动向量化
+                </button>
+                <div className="ledger-strip-btns">
+                  <button onClick={handleVectorizeAllPending} disabled={vectorizingAll} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
+                    {vectorizingAll ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5 text-amber-500" />} 全量向量化
+                  </button>
+                  <button onClick={handleReindex} disabled={reindexing} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">
+                    {reindexing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : null} 重建索引
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="ledger-table-scroll">
+            <table className={`ledger-table w-full min-w-[980px] text-left ${density === 'compact' ? 'is-compact' : ''}`}>
+              <colgroup>
+                {canSelectArticles && <col className="ledger-col-select" />}
+                <col className="ledger-col-title" />
+                <col className="ledger-col-source" />
+                <col className="ledger-col-type" />
+                <col className="ledger-col-publish" />
+                <col className="ledger-col-publish" />
+                {showVectorActions && <col className="ledger-col-vector" />}
+                <col className="ledger-col-acts" />
+              </colgroup>
+              <thead>
+                <tr>
+                  {canSelectArticles && (
+                    <th className="ledger-th px-4 text-center">
+                      <input type="checkbox" aria-label="全选当前页记录" checked={selectedArticles.size === articles.length && articles.length > 0} onChange={toggleAllArticles} className="h-4 w-4 cursor-pointer rounded" />
+                    </th>
+                  )}
+                  <th className="ledger-th px-4">条目</th>
+                  <th className="ledger-th px-3">来源</th>
+                  <th className="ledger-th px-3">类型</th>
+                  <th className="ledger-th px-3 text-right">发布</th>
+                  <th className="ledger-th px-3 text-right">收录</th>
+                  {showVectorActions && <th className="ledger-th px-3">索引状态</th>}
+                  <th className="ledger-th px-3" />
+                </tr>
+              </thead>
+              <tbody key={listVersion}>
+                {loading && articles.length === 0 ? (
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <tr key={`skeleton-${i}`} className="ledger-row">
+                      {canSelectArticles && <td className="px-4"><div className="skeleton mx-auto h-4 w-4" /></td>}
+                      <td className="px-4"><div className="skeleton h-4 w-3/4" /><div className="skeleton mt-2 h-3 w-1/2" /></td>
+                      <td className="px-3"><div className="flex items-center gap-2.5"><div className="skeleton h-8 w-8 rounded-[var(--r-control)]" /><div className="skeleton h-4 w-20" /></div></td>
+                      <td className="px-3"><div className="skeleton h-5 w-16 rounded-full" /></td>
+                      <td className="px-3"><div className="skeleton ml-auto h-4 w-16" /></td>
+                      <td className="px-3"><div className="skeleton ml-auto h-4 w-16" /></td>
+                      {showVectorActions && <td className="px-3"><div className="skeleton h-6 w-20 rounded-full" /></td>}
+                      <td className="px-3" />
+                    </tr>
+                  ))
+                ) : articles.length === 0 ? (
+                  <tr><td colSpan={2 + (canSelectArticles ? 1 : 0) + (showVectorActions ? 1 : 0) + 4} className="px-6 py-16 text-center font-medium text-slate-500">当前筛选条件下未查询到相关数据，试试放宽时间区间或清除筛选</td></tr>
+                ) : articles.map((article) => {
+                  const status = article.index_status || (article.is_vectorized ? 'indexed' : 'pending');
+                  const busy = vectorizingId === article.id || status === 'indexing';
+                  const isSel = drawer.open && drawer.article?.id === article.id;
+                  return (
+                    <tr
+                      key={article.id}
+                      className={`ledger-row ${isSel ? 'is-sel' : ''}`}
+                      onClick={() => openDrawer(article)}
+                      tabIndex={0}
+                      onKeyDown={e => { if (e.key === 'Enter') openDrawer(article); }}
+                    >
+                      {canSelectArticles && (
+                        <td className="px-4 text-center" onClick={e => e.stopPropagation()}>
+                          <input type="checkbox" aria-label={`选择：${article.title || article.id}`} checked={selectedArticles.has(article.id)} onChange={() => toggleArticleSelection(article.id)} className="h-4 w-4 cursor-pointer rounded" />
+                        </td>
+                      )}
+                      <td className="ledger-td-title px-4">
+                        <div className="ledger-tt">{article.title}</div>
+                        <div className="ledger-ex">{excerptOf(article.content_preview || article.content) || '暂无摘要内容'}</div>
+                      </td>
+                      <td className="px-3" onClick={e => e.stopPropagation()}>
+                        {(() => {
+                          const name = getFetcherName(article.source_id);
+                          return (
+                            <button
+                              type="button"
+                              disabled={!onFocusSource}
+                              onClick={() => onFocusSource?.(article.source_id)}
+                              className="ledger-source-link block min-w-0 max-w-full text-left"
+                              title={onFocusSource ? `定位来源「${name}」（${article.source_id}）` : article.source_id}
+                            >
+                              <span className="ledger-source-name line-clamp-1 text-xs font-semibold text-slate-700">{name}</span>
+                            </button>
+                          );
+                        })()}
+                      </td>
+                      <td className="px-3"><span className="ledger-type-chip max-w-full overflow-hidden text-ellipsis" title={article.content_type || ''}>{contentTypeLabel(article.content_type)}</span></td>
+                      <td className="px-3 text-right"><span className="ledger-date">{article.publish_date?.split('T')[0] || '-'}</span></td>
+                      <td className="px-3 text-right"><span className="ledger-date" title={`收录时间：${article.fetched_date?.replace('T', ' ').substring(0, 16) || '—'}`}>{article.fetched_date?.split('T')[0] || '-'}</span></td>
+                      {showVectorActions && (
+                        <td className="px-3" onClick={e => e.stopPropagation()}>
+                          {status === 'indexed' ? (
+                            <span className="stamp stamp-ok">已入索引</span>
+                          ) : (() => {
+                            // 非 indexed 态 = 可点构建章（busy 禁用、文案「构建中」）。
+                            const def = INDEX_STAMP[status] || INDEX_STAMP.pending;
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => handleVectorize(article.id)}
+                                disabled={busy}
+                                className={`stamp ${busy ? 'stamp-run' : def.cls}`}
+                                title={busy ? '构建中' : `点击构建向量索引（当前：${def.label}）`}
+                              >
+                                {busy ? '构建中' : def.label}
+                              </button>
+                            );
+                          })()}
+                        </td>
+                      )}
+                      <td className="px-3" onClick={e => e.stopPropagation()}>
+                        <div className="ledger-rowacts">
+                          {showVectorActions && (
+                            <button
+                              type="button"
+                              className="ledger-iconbtn"
+                              title="向量化"
+                              aria-label={`向量化：${article.title || article.id}`}
+                              disabled={busy}
+                              onClick={() => handleVectorize(article.id)}
+                            >
+                              {busy ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="ledger-iconbtn"
+                            title="编辑"
+                            aria-label={`编辑：${article.title || article.id}`}
+                            onClick={() => handleEditRow(article)}
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            className="ledger-iconbtn is-danger"
+                            title="删除"
+                            aria-label={`删除：${article.title || article.id}`}
+                            onClick={() => handleDeleteSingle(article)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {selectedArticles.size > 0 && canSelectArticles && (
+            <div className="ledger-batchbar">
+              <span className="ledger-batch-n">{selectedArticles.size} 条已选</span>
+              {showVectorActions && (
+                <button onClick={handleBatchVectorize} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
+                  <Zap className="h-3.5 w-3.5" /> 批量构建
+                </button>
+              )}
+              <button onClick={handleBatchDeleteArticles} className="action-button action-button-danger min-h-[32px] px-3 text-xs">
+                <Trash2 className="h-3.5 w-3.5" /> 批量删除
+              </button>
+              <span className="flex-1" />
+              <button onClick={() => setSelectedArticles(new Set())} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消选择</button>
+            </div>
+          )}
+
+          {articlePageInfo.total > 0 && (
+            <div className="ledger-foot">
+              <span className="ledger-foot-info">
+                共 {(articlePageInfo.total || 0).toLocaleString()} 条 · 每页 {ARTICLE_PAGE_SIZE} 条
+              </span>
+              <div className="mini-seg" role="group" aria-label="表格密度">
+                {[['comfortable', '舒适'], ['compact', '紧凑']].map(([d, label]) => (
+                  <button key={d} type="button" onClick={() => setDensityPersist(d)}
+                    className={`mini-seg-btn ${density === d ? 'is-on' : ''}`} aria-pressed={density === d}>
+                    {label}
                   </button>
                 ))}
               </div>
+              <div className="pager">
+                <button type="button" onClick={() => setCurrentPage(page => Math.max(1, page - 1))} disabled={!canGoPrev} className="pager-btn" aria-label="上一页">«</button>
+                {pageWindow.map(item => (item.ellipsis ? (
+                  <span key={item.key} className="pager-ellipsis">…</span>
+                ) : (
+                  <button
+                    type="button"
+                    key={item.key}
+                    onClick={() => setCurrentPage(item.page)}
+                    disabled={loading}
+                    className={`pager-btn ${item.page === currentPage ? 'is-on' : ''}`}
+                    aria-current={item.page === currentPage ? 'page' : undefined}
+                  >
+                    {item.page}
+                  </button>
+                )))}
+                <button type="button" onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))} disabled={!canGoNext} className="pager-btn" aria-label="下一页">»</button>
+              </div>
             </div>
           )}
-
-          {showAdvanced && (
-            <div className="grid grid-cols-1 gap-3 border-t border-[var(--dorami-border)] pt-4 animate-in fade-in slide-in-from-top-1 md:grid-cols-2 xl:grid-cols-[1fr_1.35fr_1.35fr_1fr]">
-              <div className="field-box">
-                <span>结构类型</span>
-                <select value={filters.content_type} onChange={e => setFilters({ ...filters, content_type: e.target.value })}>
-                  <option value="">全部类型</option>
-                  {uniqueContentTypes.map(t => <option key={t} value={t}>{contentTypeLabel(t)}</option>)}
-                </select>
-              </div>
-              <div className="field-box">
-                <span>原始发布日期</span>
-                <DateRangePicker
-                  startDate={filters.publish_date_start}
-                  endDate={filters.publish_date_end}
-                  onChange={(start, end) => setFilters({ ...filters, publish_date_start: start, publish_date_end: end })}
-                  placeholder="开始日期 → 结束日期"
-                />
-              </div>
-              <div className="field-box">
-                <span>抓取 / 收录时间</span>
-                <DateRangePicker
-                  startDate={filters.fetched_date_start}
-                  endDate={filters.fetched_date_end}
-                  onChange={(start, end) => setFilters({ ...filters, fetched_date_start: start, fetched_date_end: end })}
-                  placeholder="开始日期 → 结束日期"
-                />
-              </div>
-              {canManageArticles && ragEnabled && (
-                <div className="field-box">
-                  <span>向量状态</span>
-                  <select value={filters.index_status} onChange={e => setFilters({ ...filters, index_status: e.target.value })}>
-                    <option value="">全部状态</option>
-                    <option value="indexed">向量已构建</option>
-                    <option value="pending">待索引</option>
-                    <option value="indexing">构建中</option>
-                    <option value="failed">构建失败</option>
-                    <option value="stale">待重建</option>
-                  </select>
-                </div>
-              )}
-            </div>
-          )}
-
-          <ActiveFilterBar items={activeFilterItems} onClearAll={clearAllFilters} />
         </div>
       </div>
 
-      <div className="surface-card relative z-10 rounded-[var(--r-overlay)] overflow-x-auto overflow-y-visible">
-        <div className="toolbar-card min-w-[980px]">
-          <div className="toolbar-title">
-            <span>
-              显示 {pageStart.toLocaleString()}-{pageEnd.toLocaleString()} / 共 {articlePageInfo.total.toLocaleString()} 条记录
-            </span>
-            <span className="text-slate-500">第 {currentPage.toLocaleString()} / {totalPages.toLocaleString()} 页</span>
-            <span className="text-slate-500">已选择 {selectedArticles.size} 条</span>
-          </div>
-        </div>
-
-        <table className="data-table ledger-table w-full min-w-[980px] text-left">
-          <colgroup>
-            <col className="ledger-col-select" />
-            <col className="ledger-col-type" />
-            <col className="ledger-col-source" />
-            <col className="ledger-col-title" />
-            <col className="ledger-col-publish" />
-            {canManageArticles && ragEnabled && <col className="ledger-col-vector" />}
-          </colgroup>
-          <thead className="bg-[var(--dorami-well)] border-b border-[var(--dorami-border)] text-slate-500 text-xs tracking-wider">
-            <tr>
-              <th className="px-4 py-3 w-12 text-center">
-                {canSelectArticles && (
-                  <input type="checkbox" aria-label="全选当前页记录" checked={selectedArticles.size === articles.length && articles.length > 0} onChange={toggleAllArticles} className="w-4 h-4 text-[var(--dorami-blue)] rounded cursor-pointer" />
-                )}
-              </th>
-              <th className="px-3 py-4 w-36 font-bold">内容类型</th>
-              <th className="px-3 py-4 w-44 font-bold">数据来源</th>
-              <th className="px-4 py-4 font-bold">标题 / 内容摘要</th>
-              <th className="px-3 py-4 w-[150px] font-bold">发布 / 收录</th>
-              {canManageArticles && ragEnabled && <th className="px-3 py-4 w-36 font-bold">向量状态</th>}
-            </tr>
-          </thead>
-          <tbody key={listVersion} className="row-stagger divide-y divide-[var(--dorami-border)] text-sm">
-            {loading && articles.length === 0 ? (
-              Array.from({ length: 8 }).map((_, i) => (
-                <tr key={`skeleton-${i}`}>
-                  <td className="px-4 py-4"><div className="skeleton mx-auto h-4 w-4" /></td>
-                  <td className="px-3 py-4"><div className="skeleton h-5 w-20 rounded-full" /></td>
-                  <td className="px-3 py-4"><div className="flex items-center gap-2.5"><div className="skeleton h-8 w-8 rounded-[var(--r-control)]" /><div className="skeleton h-4 w-24" /></div></td>
-                  <td className="px-4 py-4"><div className="skeleton h-4 w-3/4" /><div className="skeleton mt-2 h-3 w-1/2" /></td>
-                  <td className="px-3 py-4"><div className="skeleton h-4 w-20" /><div className="skeleton mt-1.5 h-3 w-24" /></td>
-                  {canManageArticles && ragEnabled && <td className="px-3 py-4"><div className="skeleton h-6 w-24 rounded-full" /></td>}
-                </tr>
-              ))
-            ) : articles.length === 0 ? (
-              <tr><td colSpan={canManageArticles && ragEnabled ? 6 : 5} className="px-6 py-16 text-center text-slate-500 font-medium">当前时间区间或过滤条件下，未查询到相关数据</td></tr>
-            ) : articles.map((article) => (
-              <tr key={article.id} className="hover:bg-[var(--dorami-wash)] transition-colors group">
-                <td className="px-4 py-4 text-center">
-                  {canSelectArticles && (
-                    <input type="checkbox" aria-label={`选择：${article.title || article.id}`} checked={selectedArticles.has(article.id)} onChange={() => toggleArticleSelection(article.id)} className="w-4 h-4 text-[var(--dorami-blue)] rounded cursor-pointer" />
-                  )}
-                </td>
-                <td className="px-3 py-4"><span className="data-chip max-w-full overflow-hidden text-ellipsis" title={article.content_type || ''}>{contentTypeLabel(article.content_type)}</span></td>
-                <td className="px-3 py-4">
-                  {(() => {
-                    const company = companyFor(article.source_id);
-                    const name = getFetcherName(article.source_id);
-                    const showCompany = company.name && company.name !== name && !company.key.startsWith('sid:');
-                    return (
-                      <button
-                        type="button"
-                        disabled={!onFocusSource}
-                        onClick={() => onFocusSource?.(article.source_id)}
-                        className="ledger-source-link flex max-w-full items-center gap-2.5 min-w-0 text-left"
-                        title={onFocusSource ? `定位来源「${name}」` : article.source_id}
-                      >
-                        <LogoMark company={company} size="sm" />
-                        <div className="min-w-0">
-                          <div className="ledger-source-name font-bold text-slate-700 text-xs line-clamp-1" title={article.source_id}>{name}</div>
-                          {showCompany && <div className="text-xs text-slate-500 truncate">{company.name}</div>}
-                        </div>
-                      </button>
-                    );
-                  })()}
-                </td>
-                <td className="px-4 py-4 font-bold text-slate-800 cursor-pointer hover:text-[var(--dorami-blue)] transition-colors" onClick={() => openDetailModal(article)}>
-                  <div className="line-clamp-1">{article.title}</div>
-                  <div className="mt-1 line-clamp-1 text-xs font-medium text-slate-500">{excerptOf(article.content_preview || article.content) || '暂无摘要内容'}</div>
-                </td>
-                <td className="px-3 py-4">
-                  <div className="text-slate-500 text-xs font-mono">{article.publish_date?.split('T')[0] || '-'}</div>
-                  <div className="tiny-meta mt-0.5 font-mono" title={`收录时间：${article.fetched_date?.replace('T', ' ').substring(0, 16) || '—'}`}>{article.fetched_date?.split('T')[0] || '-'}</div>
-                </td>
-                {canManageArticles && ragEnabled && (
-                  <td className="px-3 py-4">
-                    {(() => {
-                      // index_status 优先；缺省回退到旧布尔位（向后兼容）。
-                      const status = article.index_status || (article.is_vectorized ? 'indexed' : 'pending');
-                      const busy = vectorizingId === article.id || status === 'indexing';
-                      if (status === 'indexed') {
-                        return (
-                          <span className="vector-status vector-status-done">
-                            <CheckCircle className="vector-status-icon" strokeWidth={2.35} />
-                            <span className="vector-status-label">向量已构建</span>
-                          </span>
-                        );
-                      }
-                      // 待索引/失败/陈旧/索引中：可点击（重）构建；失败/陈旧带语义色。
-                      const restModifier = busy ? '' : { failed: ' vector-status-failed', stale: ' vector-status-stale' }[status] || '';
-                      const restLabel = busy ? '构建中' : VECTOR_STATUS_LABELS[status] || '待索引';
-                      const hoverLabel = status === 'failed' ? '重试构建' : (status === 'stale' ? '重建向量' : '构建向量');
-                      return (
-                        <button onClick={() => handleVectorize(article.id)} disabled={busy} className={`vector-status vector-status-pending${restModifier} group`}>
-                          {busy ? <RefreshCw className="vector-status-icon animate-spin" strokeWidth={2.35} /> : <Zap className="vector-status-icon" strokeWidth={2.35} />}
-                          <span className="vector-status-label vector-status-default">{restLabel}</span>
-                          <span className="vector-status-label vector-status-hover">{busy ? '构建中' : hoverLabel}</span>
-                        </button>
-                      );
-                    })()}
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {articlePageInfo.total > 0 && (
-          <div className="flex min-w-[980px] flex-wrap items-center justify-between gap-3 border-t border-[var(--dorami-border)] bg-[var(--dorami-soft)] p-4">
-            <div className="text-xs font-bold text-slate-500">
-              每页 {ARTICLE_PAGE_SIZE} 条，当前 {pageStart.toLocaleString()}-{pageEnd.toLocaleString()} 条
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setCurrentPage(1)}
-                disabled={!canGoPrev}
-                className="action-button action-button-secondary min-h-[36px] px-3 text-xs"
-              >
-                首页
-              </button>
-              <button
-                type="button"
-                onClick={() => setCurrentPage(page => Math.max(1, page - 1))}
-                disabled={!canGoPrev}
-                className="action-button action-button-secondary min-h-[36px] px-3 text-xs"
-              >
-                上一页
-              </button>
-              <span className="rounded-[var(--r-control)] border border-[var(--dorami-border)] bg-[var(--dorami-surface)] px-3 py-2 text-xs font-bold text-slate-500">
-                第 {currentPage.toLocaleString()} / {totalPages.toLocaleString()} 页
-              </span>
-              <button
-                type="button"
-                onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))}
-                disabled={!canGoNext}
-                className="action-button action-button-secondary min-h-[36px] px-3 text-xs"
-              >
-                下一页
-              </button>
-              <button
-                type="button"
-                onClick={() => setCurrentPage(totalPages)}
-                disabled={!canGoNext}
-                className="action-button action-button-secondary min-h-[36px] px-3 text-xs"
-              >
-                末页
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {selectedArticles.size > 0 && canSelectArticles && (
-        <div className="selection-bar animate-in slide-in-from-bottom-4">
-          <div className="selection-bar-info">
-            <CheckCircle /> 已选择 {selectedArticles.size} 条记录
-          </div>
-          <div className="selection-bar-actions">
-            {canManageArticles && ragEnabled && (
-              <button onClick={handleBatchVectorize} className="action-button action-button-secondary text-blue-700">
-                <Zap /> 批量构建
-              </button>
-            )}
-            {canManageArticles && (
-              <button onClick={handleBatchDeleteArticles} className="action-button action-button-danger">
-                <Trash2 /> 批量删除
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+      <ArticleDetailDrawer
+        open={drawer.open}
+        article={drawer.article}
+        loading={detailLoading}
+        ragEnabled={showVectorActions}
+        canManage={canManageArticles}
+        getFetcherName={getFetcherName}
+        vectorizing={vectorizingId === drawer.article?.id}
+        onClose={closeDrawer}
+        onVectorize={(a) => handleVectorize(a.id)}
+        onEdit={openEditModal}
+        onDelete={handleDeleteSingle}
+      />
 
       <ArticleDetailModal
         isOpen={modalState.isOpen}
         data={modalState.data}
         isEditing={modalState.isEditing}
-        isLoading={detailLoading}
+        isLoading={false}
         getFetcherName={getFetcherName}
         canEdit={canManageArticles}
-        onClose={closeDetailModal}
-        onToggleEdit={() => {
-          if (detailLoading) return;
-          setModalState({ ...modalState, isEditing: !modalState.isEditing });
-        }}
+        onClose={closeEditModal}
+        onToggleEdit={() => setModalState(prev => ({ ...prev, isEditing: !prev.isEditing }))}
         onSave={handleUpdateArticle}
       />
 
       <ManualAddModal
         isOpen={manualAddModal}
-        uniqueContentTypes={uniqueContentTypes}
+        uniqueContentTypes={manualContentTypes}
         uniqueSourceIds={uniqueSourceIds}
         onClose={() => setManualAddModal(false)}
         onSubmit={handleManualAddSubmit}

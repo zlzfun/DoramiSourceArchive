@@ -41,6 +41,7 @@ from models.content import BaseContent
 # 引入动态抓取器注册中心
 from fetchers.registry import fetcher_registry, DECOMMISSIONED_FETCHER_IDS
 from api.skill_router import router as skill_router
+from version import __version__
 from api import deps
 from api.security_checks import enforce_security_config
 from api.serializers import serialize_user
@@ -156,6 +157,7 @@ from api.routers.collection import (
     serialize_collection_job_run,
 )
 from api.routers import fetchers as fetchers_router
+from api.routers import stats as stats_router
 from api.routers.fetchers import FetchBatchItem, FetchBatchParams
 from services import daily_brief as daily_brief_service
 from services import accounts as accounts_service
@@ -240,6 +242,7 @@ def reader_role_enabled(session: Optional[Dict[str, Any]] = None) -> bool:
 def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     ai_beta_enabled, llm_configured = _ai_capabilities(session)
     return {
+        "version": __version__,
         "role": runtime_role(),
         "account_role": session.get("role") if session else None,
         "collector_enabled": collector_role_enabled(session),
@@ -287,6 +290,8 @@ COLLECTOR_API_PREFIXES = (
     "/api/import/social-posts",
     "/api/collection-jobs",
     "/api/collection-job-runs",
+    # 每日聚合统计(运行页点阵/台账与节点 sparkline)——采集面只读。
+    "/api/stats",
     "/api/jobs",
     # LLM 配置与日报生成/配置归管理员（collector）。
     "/api/llm",
@@ -468,6 +473,7 @@ app.include_router(monitoring_router.router)
 app.include_router(source_configs_router.router)
 app.include_router(archive_sync_router.router)
 app.include_router(collection_router.router)
+app.include_router(stats_router.router)
 app.include_router(fetchers_router.router)
 
 scheduler = AsyncIOScheduler()
@@ -977,26 +983,6 @@ async def execute_collection_job(job_id: int):
     )
 
 
-async def execute_collection_job_node(job_id: int, fetcher_id: str):
-    with Session(db_sink.engine) as session:
-        job = session.get(CollectionJobRecord, job_id)
-        if not job or not job.is_active:
-            print(f"⚠️ 采集任务不可用或已停用: {job_id}")
-            return
-        items = [item for item in build_collection_job_items(job) if item["fetcher_id"] == fetcher_id]
-        job_name = job.name
-    if not items:
-        print(f"⚠️ 采集任务节点不可用: {job_id}/{fetcher_id}")
-        return
-    await run_collection_items(
-        items,
-        name=f"{job_name} / {fetcher_id}",
-        trigger_type="scheduled",
-        job_id=job_id,
-        run_scope="saved_job",
-    )
-
-
 def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]):
     parts = cron_expr.split()
     if len(parts) != 5:
@@ -1013,16 +999,9 @@ def load_tasks_to_scheduler():
             .where(CollectionJobRecord.is_active == True)
         ).all()
         for job in jobs:
+            # 单节点 cron 覆盖已退役:一任务一 cron(想要不同节奏 = 建新任务)
             if job.cron_expr:
                 add_cron_job(f"collection_job_{job.id}", execute_collection_job, job.cron_expr, [job.id])
-            for fetcher_id, cron_expr in _json_loads(job.per_fetcher_cron_json, {}).items():
-                if cron_expr:
-                    add_cron_job(
-                        f"collection_job_{job.id}_{fetcher_id}",
-                        execute_collection_job_node,
-                        cron_expr,
-                        [job.id, fetcher_id],
-                    )
         # 每日 AI 资讯日报（独立于采集任务，默认排在全量采集之后）
         if daily_brief_service.daily_brief_enabled(session):
             add_cron_job(

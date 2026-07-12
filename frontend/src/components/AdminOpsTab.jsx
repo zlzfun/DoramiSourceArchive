@@ -3,27 +3,17 @@ import { createPortal } from 'react-dom';
 import {
   Users,
   Database,
-  Bookmark,
-  Sparkles,
-  Zap,
+  Brain,
+  UserPlus,
   KeyRound,
   Trash2,
-  UserPlus,
-  Loader2,
-  ServerCog,
-  Brain,
-  Check,
-  X,
-  BarChart3,
-  Rss,
-  Heart,
-  Search,
-  Activity,
-  Clock,
-  CalendarClock,
-  BookOpen,
-  ChevronDown,
+  Power,
   Ban,
+  Zap,
+  Search,
+  X,
+  Loader2,
+  Check,
 } from 'lucide-react';
 import {
   fetchAdminAccounts,
@@ -44,18 +34,33 @@ import { useConfirm } from '../hooks/useConfirm';
 import { useModalTransition } from '../hooks/useModalTransition';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { MultiSeriesArea, RankBars, BarList } from './charts/DashboardCharts';
-import { pivotDaily, CATEGORICAL, C_READ, C_FAVORITE } from './charts/chartUtils';
-import { ChartPanel, StatCard, PanelHeader } from './admin/adminShared';
-import { KPI_COLOR, PURPOSE_LABELS, formatStamp, fmtNum, pct, truncLabel, vectorizedRateClass } from './admin/adminUtils';
-
-const INPUT_CLS = 'w-full rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-soft)] px-4 py-2.5 text-sm text-[var(--dorami-ink)] placeholder:text-[var(--dorami-faint)]';
+import { pivotDaily, C_READ, C_FAVORITE, C_OTHER } from './charts/chartUtils';
+import { PURPOSE_LABELS, formatStamp, fmtNum, pct, truncLabel, vectorizedRateClass } from './admin/adminUtils';
 
 // 账户列表分页大小：超过即翻页，避免成百上千账户一次性平铺。
 const ACCOUNTS_PAGE_SIZE = 15;
 
-export default function AdminOpsTab({ showToast }) {
+// KPI 总账条单格（被动读数，数字全 ink；tone 只给需要语义色的异常指标）。
+function Kpi({ num, label, sub, tone }) {
+  return (
+    <div className="kpi">
+      <span className={`kpi-num${tone ? ` ${tone}` : ''}`}>{num}</span>
+      <span className="kpi-lbl">{label}</span>
+      {sub != null && <span className="kpi-sub">{sub}</span>}
+    </div>
+  );
+}
+
+export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingFocusApplied }) {
   const confirm = useConfirm();
   const [sub, setSub] = useState('user'); // 子页：user | content | ai
+
+  // 跨页聚焦(pendingFocus 单通道):目前只解释 { sub } —— 集成页模型 chip 跳到 AI 子页。
+  useEffect(() => {
+    if (!pendingFocus) return;
+    if (pendingFocus.sub) setSub(pendingFocus.sub);
+    onPendingFocusApplied?.();
+  }, [pendingFocus, onPendingFocusApplied]);
   const [accounts, setAccounts] = useState(null);
   const [globalAi, setGlobalAi] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -63,28 +68,24 @@ export default function AdminOpsTab({ showToast }) {
   const [newPassword, setNewPassword] = useState('');
   const [accountQuery, setAccountQuery] = useState('');
   const [accountPage, setAccountPage] = useState(1);
-  // 用户子页时间窗口（近 N 天）：驱动账户列表窗口指标与详情面板。
-  const [userDays, setUserDays] = useState(30);
+  // 单一时间窗（近 N 天）：页头统一驱动用户子页窗口指标 + AI 用量子页（内容子页为累计口径，不受影响）。
+  const [days, setDays] = useState(30);
   // 活跃用户 Top 维度：阅读 | 登录。
   const [topMetric, setTopMetric] = useState('reads');
 
-  // ── 单用户活动详情面板 ──
+  // ── 单用户活动详情抽屉 ──
   const [detailUser, setDetailUser] = useState(null);
   const [detailData, setDetailData] = useState(null);
-  const [loginListOpen, setLoginListOpen] = useState(false); // 详情页「最近登录」展开列表
-  const detailModal = useModalTransition(Boolean(detailUser));
+  const [loginListOpen, setLoginListOpen] = useState(false); // 抽屉「最近登录」展开列表
 
-  // ── 模型配置（日报 + 阅读器 AI 共用的全局唯一配置）──
+  // ── 模型配置（日报 + 阅读器 AI 共用的全局唯一配置，行内于 AI 子页总闸板）──
   const [llmStatus, setLlmStatus] = useState(null);
   const [llmForm, setLlmForm] = useState({ base_url: '', model: '', api_key: '', temperature: 0.3, max_tokens: 4096 });
   const [savingLlm, setSavingLlm] = useState(false);
   const [testingLlm, setTestingLlm] = useState(false);
-  const [llmModalOpen, setLlmModalOpen] = useState(false);
-  const llmModal = useModalTransition(llmModalOpen);
 
   // ── AI 用量看板 ──
   const [usage, setUsage] = useState(null);
-  const [usageDays, setUsageDays] = useState(7);
 
   // ── 内容看板（各源内容健康 + 收藏热度榜）──
   const [content, setContent] = useState(null);
@@ -99,22 +100,20 @@ export default function AdminOpsTab({ showToast }) {
   const [resetBusy, setResetBusy] = useState(false);
   const resetModal = useModalTransition(Boolean(resetTarget));
 
-  // 四个 Portal 弹窗的可访问性（Esc 关闭 / 焦点陷阱 / 焦点归还）：各挂一个 panelRef。
-  const llmPanelRef = useRef(null);
+  // 弹窗/抽屉可访问性（Esc 关闭 / 焦点陷阱 / 焦点归还）：各挂一个 panelRef。
   const createPanelRef = useRef(null);
   const resetPanelRef = useRef(null);
   const detailPanelRef = useRef(null);
-  useModalA11y(llmModalOpen && llmModal.mounted, () => setLlmModalOpen(false), llmPanelRef);
   useModalA11y(createModalOpen && createModal.mounted, () => setCreateModalOpen(false), createPanelRef);
   useModalA11y(Boolean(resetTarget) && resetModal.mounted, () => setResetTarget(null), resetPanelRef);
-  useModalA11y(Boolean(detailUser) && detailModal.mounted, () => setDetailUser(null), detailPanelRef);
+  useModalA11y(Boolean(detailUser), () => setDetailUser(null), detailPanelRef);
 
   const loadLlm = useCallback(() => getLLMConfig().then((d) => {
     setLlmStatus(d);
     setLlmForm((f) => ({ ...f, base_url: d.base_url || '', model: d.model || '', temperature: d.temperature ?? 0.3, max_tokens: d.max_tokens ?? 4096, api_key: '' }));
   }).catch(() => {}), []);
 
-  const loadUsage = useCallback((days) => fetchAiUsage(days).then(setUsage).catch(() => {}), []);
+  const loadUsage = useCallback((d) => fetchAiUsage(d).then(setUsage).catch(() => {}), []);
 
   const loadContent = useCallback(() => fetchAdminContent().then(setContent).catch(() => {}), []);
 
@@ -129,25 +128,25 @@ export default function AdminOpsTab({ showToast }) {
 
   const reloadAccounts = useCallback(async () => {
     try {
-      setAccounts(await fetchAdminAccounts(userDays));
+      setAccounts(await fetchAdminAccounts(days));
     } catch (error) {
       showToast(error.message || '加载账户失败', 'error');
       setAccounts((prev) => prev ?? []);
     }
-  }, [userDays, showToast]);
+  }, [days, showToast]);
 
   useEffect(() => { loadGlobals(); loadLlm(); loadContent(); }, [loadGlobals, loadLlm, loadContent]);
-  // 账户列表随时间窗口变化重载（窗口指标按 userDays 聚合）。
+  // 账户列表随时间窗口变化重载（窗口指标按 days 聚合）。
   useEffect(() => { reloadAccounts(); }, [reloadAccounts]);
-  useEffect(() => { loadUsage(usageDays); }, [loadUsage, usageDays]);
+  useEffect(() => { loadUsage(days); }, [loadUsage, days]);
 
-  // 配置 / 新建 / 详情 / 重置密码弹窗打开时锁定页面滚动。
+  // 新建 / 详情 / 重置密码打开时锁定页面滚动。
   useEffect(() => {
-    if (!llmModalOpen && !createModalOpen && !detailUser && !resetTarget) return undefined;
+    if (!createModalOpen && !detailUser && !resetTarget) return undefined;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
-  }, [llmModalOpen, createModalOpen, detailUser, resetTarget]);
+  }, [createModalOpen, detailUser, resetTarget]);
 
   const updateLlm = (key, value) => setLlmForm((f) => ({ ...f, [key]: value }));
   const canTestLlm = Boolean(llmForm.base_url.trim() && llmForm.model.trim() && (llmForm.api_key.trim() || llmStatus?.api_key_set));
@@ -169,7 +168,6 @@ export default function AdminOpsTab({ showToast }) {
       await persistLlm();
       showToast('已保存模型配置', 'success');
       await loadLlm();
-      setLlmModalOpen(false);
     } catch (error) {
       showToast(error.message || '保存失败', 'error');
     } finally {
@@ -283,23 +281,21 @@ export default function AdminOpsTab({ showToast }) {
   };
 
   // ── AI 用量图表数据：每日图按用途/用户拆多系列（透视 + 零填充）──
-  // 用途键预先映射为中文标签，作为系列名直接进图例/Tooltip。
   const dayPurpose = useMemo(
     () => (usage?.by_day_purpose ?? []).map((r) => ({ ...r, purpose: PURPOSE_LABELS[r.purpose] || r.purpose })),
     [usage],
   );
   const dayUser = useMemo(() => usage?.by_day_user ?? [], [usage]);
   const callsDatasets = useMemo(() => ({
-    purpose: pivotDaily(dayPurpose, usageDays, 'purpose', 'calls'),
-    user: pivotDaily(dayUser, usageDays, 'username', 'calls'),
-  }), [dayPurpose, dayUser, usageDays]);
+    purpose: pivotDaily(dayPurpose, days, 'purpose', 'calls'),
+    user: pivotDaily(dayUser, days, 'username', 'calls'),
+  }), [dayPurpose, dayUser, days]);
   const tokensDatasets = useMemo(() => ({
-    purpose: pivotDaily(dayPurpose, usageDays, 'purpose', 'total_tokens'),
-    user: pivotDaily(dayUser, usageDays, 'username', 'total_tokens'),
-  }), [dayPurpose, dayUser, usageDays]);
+    purpose: pivotDaily(dayPurpose, days, 'purpose', 'total_tokens'),
+    user: pivotDaily(dayUser, days, 'username', 'total_tokens'),
+  }), [dayPurpose, dayUser, days]);
 
   // ── 内容看板图表数据 ──
-  // 各源热度：阅读 / 收藏 / 订阅三指标合一，全量（有任一互动即入榜），可滚动条形列表承载（全名 + 多色）。
   const contentSourceRows = useMemo(
     () => [...(content?.sources ?? [])]
       .filter((s) => (s.read_count || 0) + (s.favorite_count || 0) + (s.subscription_count || 0) > 0)
@@ -308,7 +304,11 @@ export default function AdminOpsTab({ showToast }) {
     [content],
   );
   const topArticleRows = useMemo(
-    () => (content?.top_articles ?? []).slice(0, 10).map((a) => ({ title: a.title || '无标题', fav: a.favorite_count })),
+    () => (content?.top_articles ?? []).slice(0, 10).map((a) => ({
+      title: a.title || '无标题',
+      src: a.source_name || a.source_id || '',
+      fav: a.favorite_count,
+    })),
     [content],
   );
 
@@ -330,12 +330,15 @@ export default function AdminOpsTab({ showToast }) {
     const list = accounts ?? [];
     return {
       readers: list.length,
+      disabled: list.filter((a) => !a.is_active).length,
       loggedIn: list.filter((a) => a.logged_in_window).length,
       logins: list.reduce((s, a) => s + (a.logins || 0), 0),
       reads: list.reduce((s, a) => s + (a.reads || 0), 0),
       aiCalls: list.reduce((s, a) => s + (a.ai_calls || 0), 0),
+      aiTokens: list.reduce((s, a) => s + (a.ai_tokens || 0), 0),
     };
   }, [accounts]);
+  const perDay = (n) => (days > 0 ? (n / days).toFixed(1) : '0');
   // 活跃用户 Top：按所选维度（阅读 / 登录）排行。
   const activeUserRows = useMemo(
     () => [...(accounts ?? [])]
@@ -346,47 +349,44 @@ export default function AdminOpsTab({ showToast }) {
     [accounts, topMetric],
   );
 
-  // ── 单用户详情：打开面板并拉取窗口活动 ──
+  // ── 单用户详情：打开抽屉并拉取窗口活动 ──
   const openDetail = useCallback(async (username) => {
     setDetailUser(username);
     setDetailData(null);
     setLoginListOpen(false);
     try {
-      setDetailData(await fetchAccountActivity(username, userDays));
+      setDetailData(await fetchAccountActivity(username, days));
     } catch (error) {
       showToast(error.message || '获取用户详情失败', 'error');
     }
-  }, [userDays, showToast]);
+  }, [days, showToast]);
 
-  // 详情面板图表数据：每日 AI 用量（按用途堆叠，calls / tokens 两套）+ 用途构成。
+  // 详情抽屉图表数据：每日 AI 用量（按用途堆叠，calls / tokens 两套）+ 各源阅读/收藏。
   const detailDayPurpose = useMemo(
     () => (detailData?.usage?.by_day_purpose ?? []).map((r) => ({ ...r, purpose: PURPOSE_LABELS[r.purpose] || r.purpose })),
     [detailData],
   );
-  const detailWindow = detailData?.usage?.window_days ?? userDays;
+  const detailWindow = detailData?.usage?.window_days ?? days;
   const detailDatasets = useMemo(() => ({
     calls: pivotDaily(detailDayPurpose, detailWindow, 'purpose', 'calls'),
     tokens: pivotDaily(detailDayPurpose, detailWindow, 'purpose', 'total_tokens'),
   }), [detailDayPurpose, detailWindow]);
-  // 各源互动：阅读 + 收藏两维度（替代原「使用方式构成」——后者已被每日 AI 用量图涵盖）。
-  // 全量（后端已按 reads 降序），由可滚动条形列表承载，源多也不撑高。
   const detailEngagementRows = useMemo(
     () => (detailData?.source_engagement ?? []).map((s) => ({ name: s.name || s.source_id, reads: s.reads, favorites: s.favorites })),
     [detailData],
   );
 
   return (
-    <div>
-      <div className="page-header flex-col xl:flex-row">
-        <div className="page-heading">
-          <h1 className="page-title">运维管理</h1>
-          <p className="page-subtitle mt-3 max-w-3xl">
-            {sub === 'user' && '管理读者账号：创建、停用、AI 功能授权、重置密码。'}
-            {sub === 'content' && '各源与文章的受欢迎度看板：订阅与收藏热度。'}
-            {sub === 'ai' && 'AI 总开关、模型配置与用量监控（日报与阅读器 AI 共用一套模型）。'}
-          </p>
-        </div>
-        <div className="page-actions">
+    <div className="admin-page">
+      <div className="page-head">
+        <h1 className="page-title">运维管理</h1>
+        <div className="page-head-actions">
+          <span className="win-label">时间窗</span>
+          <div className="mini-seg" role="group" aria-label="时间窗">
+            {[7, 14, 30, 90].map((d) => (
+              <button key={d} type="button" onClick={() => setDays(d)} className={`mini-seg-btn ${days === d ? 'is-on' : ''}`}>{d} 天</button>
+            ))}
+          </div>
           <div className="segmented-control">
             <button onClick={() => setSub('user')} className={`segmented-option ${sub === 'user' ? 'segmented-option-active' : ''}`}><Users /> 用户</button>
             <button onClick={() => setSub('content')} className={`segmented-option ${sub === 'content' ? 'segmented-option-active' : ''}`}><Database /> 内容</button>
@@ -395,409 +395,380 @@ export default function AdminOpsTab({ showToast }) {
         </div>
       </div>
 
-      <div className="mt-6">
-        {/* ══ AI 子页 ══════════════════════════════════════════════ */}
-        {sub === 'ai' && (
-        <div className="surface-card rounded-[var(--r-card)] overflow-hidden animate-in fade-in">
-          <PanelHeader barClass="bg-violet-500" title="AI 配置与用量" hint="日报与阅读器 AI 共用一套模型">
-            {/* 用户 AI 功能：状态灯 + 开关（取代原「总闸」整块） */}
-            <div className="ml-auto flex items-center gap-2">
-              <span className={`h-2 w-2 rounded-full ${globalAi ? 'bg-emerald-500' : 'bg-amber-500'}`} title={globalAi ? '用户 AI 功能：开启' : '用户 AI 功能：关闭（全员暂停）'} />
-              <span className="micro-label text-slate-500">用户 AI 功能</span>
-              <button
-                onClick={handleToggleGlobalAi}
-                disabled={globalAi === null}
-                role="switch"
-                aria-checked={!!globalAi}
-                aria-label="用户 AI 功能开关"
-                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${globalAi ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[var(--dorami-raised)]'}`}
-              >
-                <span className={`inline-block h-4 w-4 rounded-full bg-[var(--dorami-surface)] shadow transition-transform ${globalAi ? 'translate-x-4' : 'translate-x-0.5'}`} />
-              </button>
-            </div>
-          </PanelHeader>
-          <div className="p-6">
-            {/* 模型概览行 */}
-            <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="flex items-center gap-2 text-sm font-bold text-slate-700">
-                  <Brain className="h-4 w-4 text-slate-500" /> 大模型
-                  <span className={`h-1.5 w-1.5 rounded-full ${llmStatus?.api_key_set ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                </p>
-                <p className="tiny-meta mt-1 truncate font-mono">
-                  {llmStatus?.api_key_set
-                    ? `${llmStatus.base_url || '—'} · ${llmStatus.model || '—'}`
-                    : '尚未配置 · 配置后日报与阅读器 AI 方可使用'}
-                </p>
+      {/* ══ 用户子页 ══════════════════════════════════════════════ */}
+      {sub === 'user' && (
+        <div>
+          <section className="surface-card kpi-strip" aria-label="窗口活跃概览">
+            <Kpi num={fmtNum(userKpis.readers)} label="读者账户" sub={userKpis.disabled ? `停用 ${userKpis.disabled}` : '全部启用'} />
+            <Kpi num={fmtNum(userKpis.loggedIn)} label={`近 ${days} 天活跃`} sub="登录过 ≥1 次" />
+            <Kpi num={fmtNum(userKpis.logins)} label="登录次数" sub={`日均 ${perDay(userKpis.logins)}`} />
+            <Kpi num={fmtNum(userKpis.reads)} label="阅读次数" sub={`日均 ${perDay(userKpis.reads)}`} />
+            <Kpi num={fmtNum(userKpis.aiCalls)} label="AI 调用" sub={`tokens ${fmtNum(userKpis.aiTokens)}`} />
+          </section>
+
+          {(userKpis.reads + userKpis.logins) > 0 && (
+            <>
+              <div className="zone-head">
+                <span className="zone-title">活跃用户 Top</span>
+                <span className="zone-hint">近 {days} 天</span>
+                <span className="zone-acts mini-seg" role="group" aria-label="排序维度">
+                  {[['reads', '按阅读'], ['logins', '按登录']].map(([k, lbl]) => (
+                    <button key={k} type="button" onClick={() => setTopMetric(k)} className={`mini-seg-btn ${topMetric === k ? 'is-on' : ''}`}>{lbl}</button>
+                  ))}
+                </span>
               </div>
-              <button onClick={() => setLlmModalOpen(true)} className="action-button action-button-secondary shrink-0">
-                <ServerCog className="h-4 w-4" /> 配置模型
-              </button>
-            </div>
-
-            {/* 用量子区 */}
-            <div className="mt-6 border-t border-[var(--dorami-border)] pt-6">
-              <div className="mb-4 flex items-center gap-3">
-                <p className="flex items-center gap-2 text-sm font-bold text-slate-700">
-                  <BarChart3 className="h-4 w-4 text-slate-500" /> AI 用量
-                </p>
-                <select
-                  value={usageDays}
-                  onChange={(e) => setUsageDays(Number(e.target.value))}
-                  className="form-input ml-auto w-auto py-1.5 text-xs"
-                >
-                  <option value={7}>近 7 天</option>
-                  <option value={14}>近 14 天</option>
-                  <option value={30}>近 30 天</option>
-                  <option value={90}>近 90 天</option>
-                </select>
-              </div>
-              {!usage || usage.totals.calls === 0 ? (
-              <p className="rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] p-4 text-center tiny-meta">
-                <BarChart3 className="mx-auto mb-1 h-4 w-4 text-slate-500" />
-                近 {usageDays} 天还没有 AI 调用记录，触发一次翻译/问答或日报生成后这里会出现统计。
-              </p>
-            ) : (
-              <>
-                {/* 头条 KPI（数字明示）*/}
-                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  <StatCard icon={Sparkles} label="总调用" value={fmtNum(usage.totals.calls)} iconClass={KPI_COLOR.ai} />
-                  <StatCard icon={BarChart3} label="总 tokens" value={fmtNum(usage.totals.total_tokens)} iconClass="text-sky-600" />
-                  <StatCard icon={BarChart3} label="输入 tokens" value={fmtNum(usage.totals.prompt_tokens)} iconClass={KPI_COLOR.read} />
-                  <StatCard icon={BarChart3} label="输出 tokens" value={fmtNum(usage.totals.completion_tokens)} iconClass={KPI_COLOR.active} />
-                </div>
-
-                {/* 时间序列主图：每日调用 / 每日 tokens，各自可切「按用途 / 按用户」拆系列 */}
-                <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
-                  <MultiSeriesArea title="每日调用次数" datasets={callsDatasets} />
-                  <MultiSeriesArea title="每日 tokens" datasets={tokensDatasets} defaultDim="user" />
-                </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-        )}
-
-        {/* ══ 用户子页 ════════════════════════════════════════════ */}
-        {sub === 'user' && (
-        <div className="space-y-6 animate-in fade-in">
-        {/* ── 上半：活跃概览（数据看板）── */}
-        <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
-          <PanelHeader barClass="bg-sky-500" title="活跃概览" hint="读者登录 / 阅读 / AI 使用一览">
-            <select
-              value={userDays}
-              onChange={(e) => setUserDays(Number(e.target.value))}
-              className="action-button action-button-secondary ml-auto shrink-0 cursor-pointer"
-              aria-label="活跃度统计时间窗口"
-            >
-              <option value={7}>近 7 天</option>
-              <option value={14}>近 14 天</option>
-              <option value={30}>近 30 天</option>
-              <option value={90}>近 90 天</option>
-            </select>
-          </PanelHeader>
-          <div className="p-6 space-y-5">
-            {/* 总览 KPI（窗口活跃度）：人数（活跃用户）与次数（登录/阅读/AI）分列、彩色数字 */}
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-              <StatCard icon={Users} label="读者账户" value={fmtNum(userKpis.readers)} />
-              <StatCard icon={Activity} label={`近 ${userDays} 天活跃`} value={fmtNum(userKpis.loggedIn)} iconClass={KPI_COLOR.active} />
-              <StatCard icon={CalendarClock} label={`近 ${userDays} 天登录`} value={fmtNum(userKpis.logins)} iconClass={KPI_COLOR.login} />
-              <StatCard icon={BookOpen} label={`近 ${userDays} 天阅读`} value={fmtNum(userKpis.reads)} iconClass={KPI_COLOR.read} />
-              <StatCard icon={Sparkles} label={`近 ${userDays} 天 AI 调用`} value={fmtNum(userKpis.aiCalls)} iconClass={KPI_COLOR.ai} />
-            </div>
-            {(userKpis.reads + userKpis.logins) > 0 && (
-              <ChartPanel
-                title={`活跃用户 Top · 近 ${userDays} 天`}
-                action={(
-                  <div className="inline-flex rounded-[var(--r-control)] border border-[var(--dorami-border)] p-0.5">
-                    {[['reads', '阅读'], ['logins', '登录']].map(([k, lbl]) => (
-                      <button
-                        key={k}
-                        onClick={() => setTopMetric(k)}
-                        className={`rounded-[var(--r-sm)] px-2 py-0.5 micro-label transition-colors ${topMetric === k ? 'bg-[var(--dorami-wash)] text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
-                      >
-                        {lbl}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              >
+              <section className="surface-card card-pad rounded-[var(--r-card)]">
                 <RankBars
                   rows={activeUserRows}
                   labelKey="name"
                   valueKey="value"
                   name={topMetric === 'reads' ? '阅读' : '登录'}
-                  height={Math.max(120, activeUserRows.length * 28)}
+                  height={Math.max(120, activeUserRows.length * 30)}
                   tickFormatter={truncLabel}
-                  colorByIndex
                   emptyHint={topMetric === 'reads' ? '窗口内还没有阅读记录' : '窗口内还没有登录记录'}
                 />
-              </ChartPanel>
-            )}
-          </div>
-        </div>
+              </section>
+            </>
+          )}
 
-        {/* ── 下半：账户管理（操作）── */}
-        <div className="surface-card rounded-[var(--r-card)] overflow-hidden">
-          <PanelHeader barClass="bg-indigo-500" title="账户管理" hint="停用 / 删除会立即让对应账户的会话失效">
-            <button onClick={() => setCreateModalOpen(true)} className="action-button action-button-primary ml-auto shrink-0">
-              <UserPlus className="h-4 w-4" /> 新建账户
-            </button>
-          </PanelHeader>
-          <div className="p-6">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm font-bold text-slate-700">
-                  现有账户
-                  {accounts ? <span className="ml-1.5 font-bold text-slate-500">{accounts.length}</span> : null}
-                </p>
-                {accounts && accounts.length > 0 && (
-                  <div className="relative w-full sm:w-64">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                    <input
-                      value={accountQuery}
-                      onChange={(e) => { setAccountQuery(e.target.value); setAccountPage(1); }}
-                      placeholder="搜索用户名"
-                      className="form-input w-full pl-9"
-                    />
-                  </div>
-                )}
-              </div>
-              {accounts === null ? (
-                <p className="tiny-meta">加载中…</p>
-              ) : accounts.length === 0 ? (
-                <p className="rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] p-4 text-center tiny-meta">
-                  还没有账户，用上方「新建账户」创建第一个。
-                </p>
-              ) : filteredAccounts.length === 0 ? (
-                <p className="rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] p-4 text-center tiny-meta">
-                  没有匹配「{accountQuery.trim()}」的账户。
-                </p>
-              ) : (
-                <>
-                <div className="space-y-2">
-                  {pagedAccounts.map((account) => (
-                    <div
-                      key={account.username}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => openDetail(account.username)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(account.username); } }}
-                      className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-control)] border border-[var(--dorami-border)] bg-[var(--dorami-surface)] px-3 py-2.5 cursor-pointer transition-colors hover:border-[var(--dorami-blue)]"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="truncate text-sm font-bold text-slate-800">{account.username}</span>
-                          <span className="rounded bg-slate-100 px-1.5 py-0.5 micro-label text-slate-500">读者</span>
-                          {!account.is_active && <span className="rounded bg-rose-50 px-1.5 py-0.5 micro-label text-rose-500">已停用</span>}
-                          {account.ai_beta_enabled && (
-                            <span className="inline-flex items-center gap-0.5 rounded bg-[var(--dorami-wash)] px-1.5 py-0.5 micro-label text-indigo-500">
-                              <Zap className="h-3 w-3" /> AI Beta
+          <div className="zone-head">
+            <span className="zone-title">账户管理</span>
+            <span className="zone-hint">停用 / 删除会立即让对应账户的会话失效；点行查看活动详情</span>
+            <span className="zone-acts flex items-center gap-2">
+              {accounts && accounts.length > 0 && (
+                <span className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+                  <input
+                    value={accountQuery}
+                    onChange={(e) => { setAccountQuery(e.target.value); setAccountPage(1); }}
+                    placeholder="搜索用户名"
+                    className="form-input form-input-inline w-44 pl-8"
+                  />
+                </span>
+              )}
+              <button onClick={() => setCreateModalOpen(true)} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
+                <UserPlus className="h-4 w-4" /> 新建读者
+              </button>
+            </span>
+          </div>
+
+          <section className="surface-card rounded-[var(--r-card)] overflow-hidden">
+            {accounts === null ? (
+              <p className="p-6 tiny-meta">加载中…</p>
+            ) : accounts.length === 0 ? (
+              <p className="p-6 text-center tiny-meta">还没有读者账户，用右上角「新建读者」创建第一个。</p>
+            ) : filteredAccounts.length === 0 ? (
+              <p className="p-6 text-center tiny-meta">没有匹配「{accountQuery.trim()}」的账户。</p>
+            ) : (
+              <>
+                <div className="acct-scroll">
+                  <table className="acct-table">
+                    <thead>
+                      <tr>
+                        <th className="acct-th">用户</th>
+                        <th className="acct-th">状态</th>
+                        <th className="acct-th">最近登录</th>
+                        <th className="acct-th is-num">登录</th>
+                        <th className="acct-th is-num">阅读</th>
+                        <th className="acct-th is-num">AI 调用</th>
+                        <th className="acct-th is-num">订阅</th>
+                        <th className="acct-th" aria-label="操作" style={{ width: 130 }} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pagedAccounts.map((account) => (
+                        <tr
+                          key={account.username}
+                          className={`acct-row ${detailUser === account.username ? 'is-sel' : ''}`}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`${account.username} 活动详情`}
+                          onClick={() => openDetail(account.username)}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(account.username); } }}
+                        >
+                          <td>
+                            <span className="acct-user">
+                              <span className="acct-avatar">{account.username.charAt(0).toUpperCase()}</span>
+                              <span className="acct-name">{account.username}</span>
                             </span>
-                          )}
-                        </div>
-                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 tiny-meta text-slate-500">
-                          <span className="inline-flex items-center gap-1">
-                            <KeyRound className="h-3 w-3" /> 登录 {formatStamp(account.last_login_at)}
-                            {(account.logins ?? 0) > 0 && <span className="text-slate-700">· {account.logins} 次</span>}
-                          </span>
-                          <span className="inline-flex items-center gap-1"><BookOpen className="h-3 w-3" /> 阅读 {account.reads ?? 0} 次</span>
-                          <span className="inline-flex items-center gap-1"><Sparkles className="h-3 w-3" /> AI {account.ai_calls ?? 0} 次</span>
-                          <span className="inline-flex items-center gap-1"><Bookmark className="h-3 w-3" /> 订阅 {account.subscription_count ?? 0}</span>
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => handleToggleActive(account)} className="action-button action-button-secondary text-xs">
-                          {account.is_active ? '停用' : '启用'}
-                        </button>
-                        {globalAi === false ? (
-                          // 总闸关闭：明确的失效态（去按钮外观 + 灰化 + 禁用光标 + 禁止标），一眼可辨不可操作
-                          <span
-                            title="AI 功能总闸已关闭（运维管理 · AI 子页），单账户开关暂不可用"
-                            className="action-button text-xs cursor-not-allowed select-none border-dashed border-[var(--dorami-border)] bg-[var(--dorami-well)] text-[var(--dorami-faint)]"
-                          >
-                            <Ban className="h-3.5 w-3.5" /> AI 总闸已关
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => handleToggleAiBeta(account)}
-                            className="action-button action-button-secondary text-xs"
-                          >
-                            <Zap className="h-3.5 w-3.5" /> {account.ai_beta_enabled ? '关闭 AI' : '开启 AI'}
-                          </button>
-                        )}
-                        <button onClick={() => handleResetPassword(account)} className="action-button action-button-secondary text-xs">
-                          <KeyRound className="h-3.5 w-3.5" /> 重置密码
-                        </button>
-                        <button onClick={() => handleDelete(account)} className="action-button action-button-danger text-xs">
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                          </td>
+                          <td>{account.is_active ? <span className="stamp stamp-ok">启用</span> : <span className="stamp stamp-idle">停用</span>}</td>
+                          <td><span className="acct-mono">{formatStamp(account.last_login_at)}</span></td>
+                          <td className={`acct-n ${(account.logins || 0) ? '' : 'is-zero'}`}>{account.logins || '–'}</td>
+                          <td className={`acct-n is-main ${(account.reads || 0) ? '' : 'is-zero'}`}>{account.reads || '–'}</td>
+                          <td className={`acct-n ${(account.ai_calls || 0) ? '' : 'is-zero'}`}>{account.ai_calls || '–'}</td>
+                          <td className="acct-n">{account.subscription_count ?? 0}</td>
+                          <td>
+                            <span className="rowacts" onClick={(e) => e.stopPropagation()}>
+                              {globalAi === false ? (
+                                <span className="rowact-btn" title="AI 功能总闸已关闭（AI 子页），单账户开关暂不可用" aria-disabled="true"><Ban /></span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className={`rowact-btn ${account.ai_beta_enabled ? 'is-on' : ''}`}
+                                  title={account.ai_beta_enabled ? `关闭 ${account.username} 的 AI` : `开启 ${account.username} 的 AI`}
+                                  onClick={() => handleToggleAiBeta(account)}
+                                >
+                                  <Zap />
+                                </button>
+                              )}
+                              <button type="button" className="rowact-btn" title="重置密码" onClick={() => handleResetPassword(account)}><KeyRound /></button>
+                              <button type="button" className="rowact-btn" title={account.is_active ? '停用账户' : '启用账户'} onClick={() => handleToggleActive(account)}><Power /></button>
+                              <button type="button" className="rowact-btn is-danger" title="删除账户" onClick={() => handleDelete(account)}><Trash2 /></button>
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
                 {accountTotalPages > 1 && (
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2 border-t border-[var(--dorami-border)] px-4 py-2.5">
                     <span className="tiny-meta">
                       共 {filteredAccounts.length} 个 · 第 {(accountSafePage - 1) * ACCOUNTS_PAGE_SIZE + 1}–{Math.min(accountSafePage * ACCOUNTS_PAGE_SIZE, filteredAccounts.length)} 个
                     </span>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setAccountPage((p) => Math.max(1, p - 1))}
-                        disabled={accountSafePage <= 1}
-                        className="action-button action-button-secondary text-xs"
-                      >
-                        上一页
-                      </button>
-                      <span className="rounded-[var(--r-control)] border border-[var(--dorami-border)] px-2.5 py-1 tiny-meta font-bold text-slate-500">
-                        {accountSafePage} / {accountTotalPages}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setAccountPage((p) => Math.min(accountTotalPages, p + 1))}
-                        disabled={accountSafePage >= accountTotalPages}
-                        className="action-button action-button-secondary text-xs"
-                      >
-                        下一页
-                      </button>
+                    <div className="pager">
+                      <button className="pager-btn" disabled={accountSafePage <= 1} onClick={() => setAccountPage((p) => Math.max(1, p - 1))}>‹</button>
+                      {Array.from({ length: accountTotalPages }, (_, i) => (
+                        <button key={i} className={`pager-btn ${i + 1 === accountSafePage ? 'is-on' : ''}`} onClick={() => setAccountPage(i + 1)}>{i + 1}</button>
+                      ))}
+                      <button className="pager-btn" disabled={accountSafePage >= accountTotalPages} onClick={() => setAccountPage((p) => Math.min(accountTotalPages, p + 1))}>›</button>
                     </div>
                   </div>
                 )}
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-        )}
-
-        {/* ══ 内容子页 ════════════════════════════════════════════ */}
-        {sub === 'content' && (
-        <div className="surface-card rounded-[var(--r-card)] overflow-hidden animate-in fade-in">
-          <PanelHeader barClass="bg-rose-500" title="内容看板" hint="哪些源、哪些内容受欢迎" />
-          <div className="p-6">
-            {!content ? (
-              <p className="rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] p-4 text-center tiny-meta">
-                <Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin text-slate-500" />
-                正在加载内容统计…
-              </p>
-            ) : (
-              <>
-                <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-                  <StatCard icon={Rss} label="内容源" value={fmtNum(content.totals.sources)} />
-                  <StatCard icon={Database} label="归档文章" value={fmtNum(content.totals.articles)} iconClass="text-sky-600" />
-                  <StatCard icon={BookOpen} label="阅读总数" value={fmtNum(content.totals.reads)} iconClass={KPI_COLOR.read} />
-                  <StatCard icon={Heart} label="收藏总数" value={fmtNum(content.totals.favorites)} iconClass="text-rose-600" />
-                  <StatCard icon={BarChart3} label="向量化率" value={pct(content.totals.vectorized_rate)} valueClass={vectorizedRateClass(content.totals.vectorized_rate)} />
-                </div>
-
-                {/* 各源热度（阅读/收藏/订阅三指标）+ 文章收藏榜：全名可滚动列表，多色 */}
-                <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
-                  <ChartPanel title={`各源 · 文章阅读 / 文章收藏 / 源订阅${contentSourceRows.length ? ` · ${contentSourceRows.length} 个源` : ''}`}>
-                    <BarList
-                      rows={contentSourceRows}
-                      nameKey="name"
-                      metrics={[
-                        { key: 'reads', name: '文章阅读', color: C_READ },
-                        { key: 'favorites', name: '文章收藏', color: C_FAVORITE },
-                        { key: 'subs', name: '源订阅', color: CATEGORICAL[2] },
-                      ]}
-                      emptyHint="还没有阅读 / 收藏 / 订阅记录"
-                    />
-                  </ChartPanel>
-                  <ChartPanel title={`文章 · 收藏${topArticleRows.length ? ` · TOP ${topArticleRows.length}` : ''}`}>
-                    <BarList
-                      rows={topArticleRows}
-                      nameKey="title"
-                      metrics={[{ key: 'fav', name: '收藏', color: C_FAVORITE }]}
-                      alwaysShowValue
-                      emptyHint="还没有任何收藏记录，读者在阅读器收藏文章后这里会出现热度榜。"
-                    />
-                  </ChartPanel>
-                </div>
               </>
             )}
-          </div>
+          </section>
         </div>
-        )}
-      </div>
+      )}
 
-      {/* ── 模型配置弹窗（Portal 到 body，避开变换祖先造成的 fixed 错位） ── */}
-      {llmModal.mounted && createPortal(
-        <div className={`modal-overlay ${llmModal.closing ? 'is-closing' : ''}`} onClick={() => setLlmModalOpen(false)}>
-          <div ref={llmPanelRef} role="dialog" aria-modal="true" aria-label="模型配置" tabIndex={-1} className="modal-panel max-w-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex items-center justify-between bg-[var(--dorami-well)]">
-              <h3 className="card-title flex items-center gap-2">
-                <Brain className="w-5 h-5 text-indigo-500" /> 模型配置
-              </h3>
-              <button onClick={() => setLlmModalOpen(false)} className="text-slate-500 hover:text-slate-700"><X className="w-5 h-5" /></button>
-            </div>
-            <div className="p-6">
-              <p className="tiny-meta mb-4">日报与阅读器 AI 共用 · OpenAI 兼容协议（/chat/completions）· API Key 不回显</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <p className="form-label">Base URL</p>
-                  <input value={llmForm.base_url} onChange={(e) => updateLlm('base_url', e.target.value)} placeholder="https://api.deepseek.com/v1" className={`${INPUT_CLS} font-mono`} />
-                </div>
-                <div>
-                  <p className="form-label">模型</p>
-                  <input value={llmForm.model} onChange={(e) => updateLlm('model', e.target.value)} placeholder="deepseek-chat" className={`${INPUT_CLS} font-mono`} />
-                </div>
+      {/* ══ 内容子页 ══════════════════════════════════════════════ */}
+      {sub === 'content' && (
+        <div>
+          {!content ? (
+            <p className="surface-card card-pad rounded-[var(--r-card)] text-center tiny-meta">
+              <Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin text-slate-500" /> 正在加载内容统计…
+            </p>
+          ) : (
+            <>
+              <section className="surface-card kpi-strip" aria-label="内容概览">
+                <Kpi num={fmtNum(content.totals.sources)} label="内容源" sub="累计" />
+                <Kpi num={fmtNum(content.totals.articles)} label="归档文章" sub="累计" />
+                <Kpi num={fmtNum(content.totals.reads)} label="阅读总数" sub="累计" />
+                <Kpi num={fmtNum(content.totals.favorites)} label="收藏总数" sub="累计" />
+                <Kpi num={pct(content.totals.vectorized_rate)} label="向量化率" tone={vectorizedRateClass(content.totals.vectorized_rate)} />
+              </section>
+
+              <div className="zone-head">
+                <span className="zone-title">各源热度</span>
+                <span className="zone-hint">阅读 / 收藏 / 订阅为累计口径，不随时间窗变化</span>
               </div>
-              <div className="mt-3">
-                <p className="form-label">
-                  API Key
-                  {llmStatus?.api_key_set ? <span className="ml-1 text-emerald-500 normal-case">已配置（{llmStatus.api_key_preview}）</span> : <span className="ml-1 text-amber-500 normal-case">未配置</span>}
-                </p>
-                <input type="password" value={llmForm.api_key} onChange={(e) => updateLlm('api_key', e.target.value)} placeholder={llmStatus?.api_key_set ? '留空表示不修改' : 'sk-...'} className={`${INPUT_CLS} font-mono`} />
+              <div className="admin-grid">
+                <section className="surface-card card-pad rounded-[var(--r-card)]">
+                  <div className="card-head">
+                    <span className="card-title">各源 · 文章阅读 / 文章收藏 / 源订阅{contentSourceRows.length ? ` · ${contentSourceRows.length} 个源` : ''}</span>
+                  </div>
+                  <BarList
+                    rows={contentSourceRows}
+                    nameKey="name"
+                    metrics={[
+                      { key: 'reads', name: '文章阅读', color: C_READ },
+                      { key: 'favorites', name: '文章收藏', color: C_FAVORITE },
+                      { key: 'subs', name: '源订阅', color: C_OTHER },
+                    ]}
+                    emptyHint="还没有阅读 / 收藏 / 订阅记录"
+                  />
+                </section>
+                <section className="surface-card card-pad rounded-[var(--r-card)]">
+                  <div className="card-head">
+                    <span className="card-title">文章 · 收藏 TOP{topArticleRows.length ? ` ${topArticleRows.length}` : ''}</span>
+                  </div>
+                  {topArticleRows.length === 0 ? (
+                    <div className="flex items-center justify-center rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] tiny-meta" style={{ minHeight: 120 }}>
+                      还没有任何收藏记录，读者在阅读器收藏文章后这里会出现热度榜。
+                    </div>
+                  ) : (
+                    <div className="toplist">
+                      {topArticleRows.map((a, i) => (
+                        <div key={`${a.title}-${i}`} className="toplist-row">
+                          <span className="toplist-rank">{i + 1}</span>
+                          <span className="toplist-title" title={a.title}>{a.title}</span>
+                          {a.src && <span className="toplist-src">{a.src}</span>}
+                          <span className="toplist-n">{a.fav}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <div>
-                  <p className="form-label">Temperature</p>
-                  <input type="number" step="0.1" min="0" max="2" value={llmForm.temperature} onChange={(e) => updateLlm('temperature', e.target.value)} className={INPUT_CLS} />
-                </div>
-                <div>
-                  <p className="form-label">Max Tokens</p>
-                  <input type="number" step="256" min="256" value={llmForm.max_tokens} onChange={(e) => updateLlm('max_tokens', e.target.value)} className={INPUT_CLS} />
-                </div>
-              </div>
-            </div>
-            <div className="px-6 py-4 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex items-center gap-3">
-              <button onClick={handleSaveLlm} disabled={savingLlm} className="action-button action-button-primary text-xs">
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ══ AI 子页 ══════════════════════════════════════════════ */}
+      {sub === 'ai' && (
+        <div>
+          <section className="surface-card ai-switchboard rounded-[var(--r-card)]">
+            <span className={`ai-light ${globalAi ? '' : 'is-off'}`} />
+            <div className="ai-switch-lbl" title="总闸:关闭立即暂停全员翻译 / 问答,不影响单账户开关记忆">用户 AI 功能</div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!globalAi}
+              aria-label="用户 AI 功能总闸"
+              disabled={globalAi === null}
+              onClick={handleToggleGlobalAi}
+              className={`ledger-switch ${globalAi ? 'is-on' : ''}`}
+            />
+            <span className="ai-divider" />
+            <div className="model-fields">
+              <label className="model-field">base_url
+                <input value={llmForm.base_url} onChange={(e) => updateLlm('base_url', e.target.value)} placeholder="https://api.deepseek.com/v1" className="model-input-grow" />
+              </label>
+              <label className="model-field">model
+                <input value={llmForm.model} onChange={(e) => updateLlm('model', e.target.value)} placeholder="deepseek-chat" size={12} />
+              </label>
+              <label className="model-field">api_key
+                <input type="password" value={llmForm.api_key} onChange={(e) => updateLlm('api_key', e.target.value)} placeholder={llmStatus?.api_key_set ? '留空不改' : 'sk-...'} size={12} />
+              </label>
+              <label className="model-field">temp
+                <input type="number" step="0.1" min="0" max="2" value={llmForm.temperature} onChange={(e) => updateLlm('temperature', e.target.value)} style={{ width: 52 }} />
+              </label>
+              <label className="model-field">max_tokens
+                <input type="number" step="256" min="256" value={llmForm.max_tokens} onChange={(e) => updateLlm('max_tokens', e.target.value)} style={{ width: 68 }} />
+              </label>
+              <button type="button" className="model-btn" onClick={handleTestLlm} disabled={testingLlm || savingLlm || !canTestLlm}>
+                {testingLlm ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />} 测试连通
+              </button>
+              <button type="button" className="model-btn" onClick={handleSaveLlm} disabled={savingLlm}>
                 {savingLlm ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} 保存
               </button>
-              <button onClick={handleTestLlm} disabled={testingLlm || savingLlm || !canTestLlm} className="action-button action-button-secondary text-xs">
-                {testingLlm ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5 text-amber-500" />} 测试连接
-              </button>
-              <span className="tiny-meta">{canTestLlm ? '测试会自动保存当前配置' : '填写 Base URL / 模型 / API Key 后可测试'}</span>
             </div>
-          </div>
-        </div>,
-        document.body,
+          </section>
+
+          {!usage || usage.totals.calls === 0 ? (
+            <>
+              <div className="zone-head"><span className="zone-title">每日用量</span><span className="zone-hint">近 {days} 天</span></div>
+              <p className="surface-card card-pad rounded-[var(--r-card)] text-center tiny-meta">
+                近 {days} 天还没有 AI 调用记录，触发一次翻译 / 问答或日报生成后这里会出现统计。
+              </p>
+            </>
+          ) : (
+            <>
+              <section className="surface-card kpi-strip" style={{ marginTop: 16 }} aria-label="AI 用量概览">
+                <Kpi num={fmtNum(usage.totals.calls)} label="总调用" sub={`近 ${days} 天`} />
+                <Kpi num={fmtNum(usage.totals.prompt_tokens)} label="输入 tokens" sub={`日均 ${fmtNum(Math.round(usage.totals.prompt_tokens / Math.max(1, days)))}`} />
+                <Kpi num={fmtNum(usage.totals.completion_tokens)} label="输出 tokens" sub={`日均 ${fmtNum(Math.round(usage.totals.completion_tokens / Math.max(1, days)))}`} />
+              </section>
+              <div className="zone-head"><span className="zone-title">每日用量</span><span className="zone-hint">悬停看当日明细；系列色恒随实体，不随排位</span></div>
+              <div className="admin-grid">
+                <MultiSeriesArea title="每日调用次数" datasets={callsDatasets} namespace="ai-calls" />
+                <MultiSeriesArea title="每日 tokens" datasets={tokensDatasets} namespace="ai-tokens" />
+              </div>
+            </>
+          )}
+        </div>
       )}
+
+      {/* ── 单用户活动详情抽屉（右缘滑入，ledger-drawer 语法） ── */}
+      <div className={`ledger-scrim ${detailUser ? 'is-open' : ''}`} onClick={() => setDetailUser(null)} aria-hidden="true" />
+      <aside
+        ref={detailPanelRef}
+        className={`ledger-drawer ${detailUser ? 'is-open' : ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={detailUser ? `${detailUser} · 活动详情` : '用户活动详情'}
+        aria-hidden={!detailUser}
+      >
+        <div className="ledger-drawer-head">
+          <span className="acct-avatar">{detailUser ? detailUser.charAt(0).toUpperCase() : ''}</span>
+          <span className="ledger-drawer-title">{detailUser}</span>
+          {detailData && (detailData.account.is_active ? <span className="stamp stamp-ok">启用</span> : <span className="stamp stamp-idle">停用</span>)}
+          <button type="button" className="icon-button shrink-0" onClick={() => setDetailUser(null)} aria-label="关闭详情"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="ledger-drawer-body">
+          {!detailData ? (
+            <p className="rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] p-6 text-center tiny-meta">
+              <Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin text-slate-500" /> 正在加载活动详情…
+            </p>
+          ) : (
+            <>
+              <div className="tiles">
+                <div className="tile"><div className="tile-num">{fmtNum(detailData.reads.total)}</div><div className="tile-lbl">近 {detailWindow} 天阅读</div></div>
+                <div className="tile"><div className="tile-num">{fmtNum(detailData.usage.totals.calls)}</div><div className="tile-lbl">近 {detailWindow} 天 AI 调用</div></div>
+                <div className="tile"><div className="tile-num">{fmtNum(detailData.account.subscription_count)}</div><div className="tile-lbl">订阅来源</div></div>
+              </div>
+
+              {detailData.logins.recent.length > 0 ? (
+                <details className="login-card" open={loginListOpen} onToggle={(e) => setLoginListOpen(e.currentTarget.open)}>
+                  <summary>
+                    <span className="tile-num" style={{ fontSize: '18px', lineHeight: '22px' }}>{fmtNum(detailData.logins.count)}</span>
+                    <span className="tile-lbl" style={{ alignSelf: 'center' }}>近 {detailWindow} 天登录 · 最近 {formatStamp(detailData.account.last_login_at)}</span>
+                    <span className="login-toggle">{loginListOpen ? '收起' : `展开近 ${detailData.logins.recent.length} 次`}</span>
+                  </summary>
+                  <ul className="login-list">
+                    {detailData.logins.recent.map((at, i) => <li key={`${at}-${i}`}>{formatStamp(at)}</li>)}
+                  </ul>
+                </details>
+              ) : (
+                <div className="login-card">
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <span className="tile-num" style={{ fontSize: '18px', lineHeight: '22px' }}>{fmtNum(detailData.logins.count)}</span>
+                    <span className="tile-lbl" style={{ alignSelf: 'center' }}>近 {detailWindow} 天登录</span>
+                  </div>
+                </div>
+              )}
+
+              {(detailData.usage.totals.calls === 0 && detailData.reads.total === 0 && detailData.favorites_total === 0) ? (
+                <p className="rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] p-4 text-center tiny-meta">
+                  近 {detailWindow} 天该用户没有阅读 / 收藏 / AI 调用记录。
+                </p>
+              ) : (
+                <>
+                  <div>
+                    <div className="drawer-sec-title">各源 · 文章阅读 / 文章收藏{detailEngagementRows.length ? ` · ${detailEngagementRows.length} 个源` : ''}</div>
+                    <BarList
+                      rows={detailEngagementRows}
+                      nameKey="name"
+                      metrics={[{ key: 'reads', name: '文章阅读', color: C_READ }, { key: 'favorites', name: '文章收藏', color: C_FAVORITE }]}
+                      emptyHint="窗口内无阅读、且无收藏记录"
+                    />
+                  </div>
+                  <MultiSeriesArea
+                    title="每日 AI 用量"
+                    datasets={detailDatasets}
+                    dims={[['calls', '调用'], ['tokens', 'tokens']]}
+                    namespace="user-detail"
+                  />
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </aside>
 
       {/* ── 新建账户弹窗（Portal 到 body，避开变换祖先造成的 fixed 错位） ── */}
       {createModal.mounted && createPortal(
         <div className={`modal-overlay ${createModal.closing ? 'is-closing' : ''}`} onClick={() => setCreateModalOpen(false)}>
-          <form ref={createPanelRef} role="dialog" aria-modal="true" aria-label="新建账户" tabIndex={-1} className="modal-panel max-w-md" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
-            <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex items-center justify-between bg-[var(--dorami-well)]">
-              <h3 className="card-title flex items-center gap-2">
-                <UserPlus className="w-5 h-5 text-indigo-500" /> 新建账户
-              </h3>
-              <button type="button" onClick={() => setCreateModalOpen(false)} className="text-slate-500 hover:text-slate-700"><X className="w-5 h-5" /></button>
+          <form ref={createPanelRef} role="dialog" aria-modal="true" aria-label="新建读者账户" tabIndex={-1} className="modal-panel max-w-md form-sheet" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
+            <div className="form-sheet-head">
+              <h3 className="card-title">新建读者账户</h3>
+              <button type="button" onClick={() => setCreateModalOpen(false)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
             </div>
-            <div className="p-6 space-y-3">
-              <div>
-                <p className="form-label">用户名</p>
-                <input value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder="用户名" autoComplete="off" className="form-input w-full" />
+            <div className="form-sheet-body">
+              <div className="form-sheet-field">
+                <label className="form-label" htmlFor="acct-new-name">用户名</label>
+                <input id="acct-new-name" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder="用户名" autoComplete="off" className="form-input w-full" />
               </div>
-              <div>
-                <p className="form-label">初始密码</p>
-                <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="至少 6 位" autoComplete="new-password" className="form-input w-full" />
+              <div className="form-sheet-field">
+                <label className="form-label" htmlFor="acct-new-pw">初始密码</label>
+                <input id="acct-new-pw" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="至少 6 位" autoComplete="new-password" className="form-input w-full" />
               </div>
             </div>
-            <div className="px-6 py-4 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex items-center justify-end">
-              <button type="submit" disabled={busy} className="action-button action-button-primary text-xs">
+            <div className="form-sheet-foot">
+              <button type="button" onClick={() => setCreateModalOpen(false)} className="action-button action-button-quiet">取消</button>
+              <button type="submit" disabled={busy} className="action-button action-button-primary">
                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />} 创建读者账户
               </button>
             </div>
@@ -809,18 +780,17 @@ export default function AdminOpsTab({ showToast }) {
       {/* ── 重置密码弹窗（Portal 到 body） ── */}
       {resetModal.mounted && createPortal(
         <div className={`modal-overlay ${resetModal.closing ? 'is-closing' : ''}`} onClick={() => setResetTarget(null)}>
-          <form ref={resetPanelRef} role="dialog" aria-modal="true" aria-label="重置密码" tabIndex={-1} className="modal-panel max-w-md" onClick={(e) => e.stopPropagation()} onSubmit={handleResetSubmit}>
-            <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex items-center justify-between bg-[var(--dorami-well)]">
-              <h3 className="card-title flex items-center gap-2">
-                <KeyRound className="w-5 h-5 text-indigo-500" /> 重置密码
-              </h3>
-              <button type="button" onClick={() => setResetTarget(null)} className="text-slate-500 hover:text-slate-700"><X className="w-5 h-5" /></button>
+          <form ref={resetPanelRef} role="dialog" aria-modal="true" aria-label="重置密码" tabIndex={-1} className="modal-panel max-w-md form-sheet" onClick={(e) => e.stopPropagation()} onSubmit={handleResetSubmit}>
+            <div className="form-sheet-head">
+              <h3 className="card-title">重置密码</h3>
+              <button type="button" onClick={() => setResetTarget(null)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
             </div>
-            <div className="p-6 space-y-3">
+            <div className="form-sheet-body">
               <p className="tiny-meta">为账户「{resetTarget?.username}」设置新密码，设置后该账户需用新密码登录。</p>
-              <div>
-                <p className="form-label">新密码</p>
+              <div className="form-sheet-field">
+                <label className="form-label" htmlFor="acct-reset-pw">新密码</label>
                 <input
+                  id="acct-reset-pw"
                   type="password"
                   value={resetPassword}
                   onChange={(e) => setResetPassword(e.target.value)}
@@ -831,102 +801,13 @@ export default function AdminOpsTab({ showToast }) {
                 />
               </div>
             </div>
-            <div className="px-6 py-4 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex items-center justify-end">
-              <button type="submit" disabled={resetBusy} className="action-button action-button-primary text-xs">
+            <div className="form-sheet-foot">
+              <button type="button" onClick={() => setResetTarget(null)} className="action-button action-button-quiet">取消</button>
+              <button type="submit" disabled={resetBusy} className="action-button action-button-primary">
                 {resetBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />} 保存新密码
               </button>
             </div>
           </form>
-        </div>,
-        document.body,
-      )}
-
-      {/* ── 单用户活动详情面板（Portal 到 body） ── */}
-      {detailModal.mounted && createPortal(
-        <div className={`modal-overlay ${detailModal.closing ? 'is-closing' : ''}`} onClick={() => setDetailUser(null)}>
-          <div ref={detailPanelRef} role="dialog" aria-modal="true" aria-label={`${detailUser} · 活动详情`} tabIndex={-1} className="modal-panel max-w-3xl" onClick={(e) => e.stopPropagation()}>
-            <div className="px-6 py-4 border-b border-[var(--dorami-border)] flex items-center justify-between bg-[var(--dorami-well)]">
-              <h3 className="card-title flex items-center gap-2">
-                <Activity className="w-5 h-5 text-indigo-500" />
-                {detailUser}
-                <span className="rounded bg-slate-100 px-1.5 py-0.5 micro-label text-slate-500">读者</span>
-                {detailData && !detailData.account.is_active && <span className="rounded bg-rose-50 px-1.5 py-0.5 micro-label text-rose-500">已停用</span>}
-                {detailData?.account.ai_beta_enabled && (
-                  <span className="inline-flex items-center gap-0.5 rounded bg-[var(--dorami-wash)] px-1.5 py-0.5 micro-label text-indigo-500"><Zap className="h-3 w-3" /> AI Beta</span>
-                )}
-              </h3>
-              <button onClick={() => setDetailUser(null)} className="text-slate-500 hover:text-slate-700"><X className="w-5 h-5" /></button>
-            </div>
-            <div className="p-6 max-h-[70vh] overflow-y-auto">
-              {!detailData ? (
-                <p className="rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] p-6 text-center tiny-meta">
-                  <Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin text-slate-500" /> 正在加载活动详情…
-                </p>
-              ) : (
-                <>
-                  {/* 账户与订阅概况 */}
-                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                    {/* 登录：点击展开最近若干次登录时间 */}
-                    <button
-                      type="button"
-                      onClick={() => detailData.logins.recent.length > 0 && setLoginListOpen((o) => !o)}
-                      className={`rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-surface)] p-4 text-left ${detailData.logins.recent.length > 0 ? 'cursor-pointer transition-colors hover:border-[var(--dorami-blue)]' : 'cursor-default'}`}
-                    >
-                      <div className="flex items-center gap-2 text-slate-500">
-                        <Clock className={`h-4 w-4 ${KPI_COLOR.login}`} />
-                        <span className="micro-label">近 {detailWindow} 天登录</span>
-                        {detailData.logins.recent.length > 0 && (
-                          <ChevronDown className={`ml-auto h-3.5 w-3.5 transition-transform ${loginListOpen ? 'rotate-180' : ''}`} />
-                        )}
-                      </div>
-                      <p className="stat-number mt-2 text-slate-800">{fmtNum(detailData.logins.count)}</p>
-                      <p className="tiny-meta mt-0.5">最近 {formatStamp(detailData.account.last_login_at)}</p>
-                    </button>
-                    <StatCard icon={BookOpen} label={`近 ${detailWindow} 天阅读`} value={fmtNum(detailData.reads.total)} sub={`${detailData.reads.by_source.length} 个源`} iconClass={KPI_COLOR.read} />
-                    <StatCard icon={Sparkles} label={`近 ${detailWindow} 天 AI`} value={fmtNum(detailData.usage.totals.calls)} sub={`累计 ${(detailData.account.ai_translate_count || 0) + (detailData.account.ai_ask_count || 0)} 次`} iconClass={KPI_COLOR.ai} />
-                    <StatCard icon={Bookmark} label="订阅来源" value={fmtNum(detailData.account.subscription_count)} sub={`创建 ${formatStamp(detailData.account.created_at)}`} iconClass={KPI_COLOR.subscription} />
-                  </div>
-
-                  {/* 最近登录时间列表（展开） */}
-                  {loginListOpen && detailData.logins.recent.length > 0 && (
-                    <div className="mt-3 rounded-[var(--r-card)] border border-[var(--dorami-border)] bg-[var(--dorami-soft)] p-4">
-                      <p className="micro-label mb-2 text-slate-500">最近 {detailData.logins.recent.length} 次登录</p>
-                      <div className="flex flex-wrap gap-2">
-                        {detailData.logins.recent.map((at, i) => (
-                          <span key={`${at}-${i}`} className="inline-flex items-center gap-1 rounded bg-[var(--dorami-surface)] px-2 py-1 tiny-meta text-slate-700">
-                            <Clock className="h-3 w-3 text-slate-500" /> {formatStamp(at)}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {(detailData.usage.totals.calls === 0 && detailData.reads.total === 0 && detailData.favorites_total === 0) ? (
-                    <p className="mt-5 rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] p-4 text-center tiny-meta">
-                      <Activity className="mx-auto mb-1 h-4 w-4 text-slate-500" />
-                      近 {detailWindow} 天该用户没有阅读 / 收藏 / AI 调用记录。
-                    </p>
-                  ) : (
-                    <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
-                      <ChartPanel title={`各源 · 文章阅读 / 文章收藏${detailEngagementRows.length ? ` · ${detailEngagementRows.length} 个源` : ''}`}>
-                        <BarList
-                          rows={detailEngagementRows}
-                          nameKey="name"
-                          metrics={[{ key: 'reads', name: '文章阅读', color: C_READ }, { key: 'favorites', name: '文章收藏', color: C_FAVORITE }]}
-                          emptyHint="窗口内无阅读、且无收藏记录"
-                        />
-                      </ChartPanel>
-                      <MultiSeriesArea
-                        title="每日 AI 用量"
-                        datasets={detailDatasets}
-                        dims={[['calls', '调用'], ['tokens', 'tokens']]}
-                      />
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
         </div>,
         document.body,
       )}

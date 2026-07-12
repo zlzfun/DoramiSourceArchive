@@ -9,7 +9,7 @@ import feedparser
 import httpx
 from bs4 import BeautifulSoup, Tag
 
-from fetchers.impl.article_extractor import clean_text, extract_article_detail, extract_detail_from_html
+from fetchers.impl.article_extractor import DETAIL_HARD_CAP, clean_text, extract_article_detail, extract_detail_from_html
 from fetchers.base import BaseFetcher
 from models.content import BaseContent, RssArticleContent
 
@@ -21,6 +21,7 @@ class GenericRssFetcher(BaseFetcher):
     该抓取器通过运行时参数承载具体数据源身份，因此一次执行只处理一个 feed。
     后续 SourceConfig 调度可以把配置中的 source_id/url/name/category 转换为这些参数。
     """
+    is_template = True  # 通用模板节点:后端保留,前端目录不显现
     source_id = "generic_rss"
     content_type = "rss_article"
     category = "advanced"
@@ -31,7 +32,8 @@ class GenericRssFetcher(BaseFetcher):
     default_limit = 12
     default_fetch_detail_if_missing = True
     default_detail_min_chars = 200
-    default_detail_max_chars = 8000
+    # 参数退场波:详情页截断仅剩硬上限兜底(GenericRssFetcher 仍暴露参数作自定义源逃生阀)
+    default_detail_max_chars = DETAIL_HARD_CAP
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
@@ -306,6 +308,7 @@ class PresetRssFetcher(GenericRssFetcher):
 
     子类只声明稳定 feed 地址和展示元数据，即可被注册中心自动发现为独立节点。
     """
+    is_template = False  # preset 固化节点:重置 Generic 基类的模板标志
     source_id = "unknown_source"
     feed_url = ""
     category = "official"
@@ -315,9 +318,6 @@ class PresetRssFetcher(GenericRssFetcher):
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {"field": "fetch_detail_if_missing", "label": "短正文时抓取详情页", "type": "boolean", "default": cls.default_fetch_detail_if_missing},
-            {"field": "detail_min_chars", "label": "触发详情抓取的正文长度", "type": "number", "default": cls.default_detail_min_chars},
-            {"field": "detail_max_chars", "label": "详情页正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
@@ -588,14 +588,9 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
-        return [
-            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {"field": "min_points", "label": "最低分数门槛", "type": "number", "default": cls.default_min_points},
-            {"field": "min_comments", "label": "最低评论数门槛", "type": "number", "default": cls.default_min_comments},
-            {"field": "fetch_detail_if_missing", "label": "抓取外链正文（默认关闭，建议保持）", "type": "boolean", "default": cls.default_fetch_detail_if_missing},
-            {"field": "detail_min_chars", "label": "触发详情抓取的正文长度", "type": "number", "default": cls.default_detail_min_chars},
-            {"field": "detail_max_chars", "label": "详情页正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
-        ]
+        # 参数固化波:去噪门槛(10 分/0 评)与「外链贴不抓正文」是本节点的设计本身
+        # (discovery source),固化为类默认,不作用户参数;调整 = 改代码。
+        return [{"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit}]
 
     def _finalize_content_text(self, entry: Any, content_text: str, detail_text: str) -> str:
         # 真抓到了外链正文（用户手动开启详情抓取且成功）→ 保留。

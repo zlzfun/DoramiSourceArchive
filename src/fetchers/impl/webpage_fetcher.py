@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup, Tag
 
 from fetchers.base import BaseFetcher
 from fetchers.impl.article_extractor import (
+    DETAIL_HARD_CAP,
     extract_article_detail,
     extract_detail_from_html,
     node_to_markdown,
@@ -65,8 +66,9 @@ class BaseWebPageListFetcher(BaseFetcher):
     article_url_patterns: List[str] = []
     exclude_url_patterns: List[str] = []
     default_limit = 12
-    default_fetch_detail = False
-    default_detail_max_chars = 8000
+    # 参数退场波:恒抓正文(fetch_detail/detail_max_chars 用户参数已退场,
+    # 读取逻辑保留作兼容 fallback);截断仅剩 DETAIL_HARD_CAP 病态页兜底。
+    default_detail_max_chars = DETAIL_HARD_CAP
     generic_link_titles = {"read more", "learn more", "blog", "news", "publication", "publications"}
     # 列表页常把导航/页脚链接（定价、企业版等）也匹配进来：它们既无正文、详情页又多为 404。
     # 置 True 时丢弃正文为空的条目，避免把这类导航垃圾入库。默认 False，保持既有行为不变。
@@ -78,8 +80,6 @@ class BaseWebPageListFetcher(BaseFetcher):
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         return [
             {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
-            {"field": "fetch_detail", "label": "抓取正文页", "type": "boolean", "default": cls.default_fetch_detail},
-            {"field": "detail_max_chars", "label": "正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
     def _entry_limit(self, raw_limit: Any) -> int:
@@ -506,7 +506,6 @@ class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
     article_url_patterns = ["anthropic.com/news/"]
     exclude_url_patterns = ["anthropic.com/news#"]
     default_limit = 10
-    default_fetch_detail = True
     # 旁路验收：crawl4ai 详情与生产路径相似度 0.97，已迁移（装了 crawl4ai 时走浏览器后端，否则回退）
     web_backend_enabled = True
     source_owner = "anthropic"
@@ -653,7 +652,6 @@ class ClaudeBlogWebFetcher(BaseWebPageListFetcher):
     article_url_patterns = ["claude.com/blog/"]
     exclude_url_patterns = ["claude.com/blog/category/"]
     default_limit = 10
-    default_fetch_detail = True
     # 旁路验收：crawl4ai(main 容器) 与生产路径相似度 0.855，已迁移；未装 crawl4ai 时回退通用提取器
     web_backend_enabled = True
     source_owner = "anthropic"
@@ -682,7 +680,6 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
     # 旁路验收：crawl4ai 详情与生产路径相似度 0.81（≥0.8 门槛），已迁移；未装 crawl4ai 时回退专用提取器
     web_backend_enabled = True
     default_limit = 18
-    default_fetch_detail = True
     source_owner = "ithome"
     source_brand = "IT之家"
     source_scope = "tech_media"
@@ -833,7 +830,6 @@ class QwenBlogWebFetcher(BaseWebPageListFetcher):
     article_url_patterns = ["qwen.ai/blog", "docs.qwenlm.ai/"]
     exclude_url_patterns = ["qwen.ai/blog#"]
     default_limit = 10
-    default_fetch_detail = True
     source_owner = "alibaba"
     source_brand = "qwen"
     source_scope = "model_family"

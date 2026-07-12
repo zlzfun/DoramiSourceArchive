@@ -153,7 +153,6 @@ def ensure_collection_job(
         record.params_json = "{}"
         record.per_fetcher_params_json = "{}"
         record.cron_expr = cron_expr
-        record.per_fetcher_cron_json = "{}"
         record.is_active = is_active
         record.downstream_policy_json = json_dumps(downstream_policy)
         record.updated_at = now

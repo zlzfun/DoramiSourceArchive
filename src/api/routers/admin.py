@@ -123,11 +123,16 @@ def admin_list_accounts(days: int = 30, session: Session = Depends(deps.get_sess
     usage_map = ai_usage_service.usage_by_user(session, days=days)
     reads_map = reader_activity_service.reads_by_user(session, days=days)
     logins_map = accounts_service.logins_by_user(session, days=days)
+    # 最近登录以事件流兜底快照:last_login_at 是缓存,历史疤痕可能缺失
+    # (曾出现「窗口登录 241 次但最近登录为空」的矛盾行)。
+    last_login_map = accounts_service.last_login_by_user(session)
     result = []
     for record in accounts_service.list_users(session):
         if record.role == "admin":
             continue
         payload = serialize_user(record)
+        last_login = record.last_login_at or last_login_map.get(record.username)
+        payload["last_login_at"] = last_login
         payload["subscription_count"] = sub_counts.get(record.username, 0)
         usage = usage_map.get(record.username, {"calls": 0, "total_tokens": 0})
         payload["window_days"] = days
@@ -135,9 +140,7 @@ def admin_list_accounts(days: int = 30, session: Session = Depends(deps.get_sess
         payload["ai_tokens"] = usage["total_tokens"]
         payload["reads"] = reads_map.get(record.username, 0)
         payload["logins"] = logins_map.get(record.username, 0)
-        payload["logged_in_window"] = bool(
-            record.last_login_at and record.last_login_at >= since
-        )
+        payload["logged_in_window"] = bool(last_login and last_login >= since)
         result.append(payload)
     return result
 
@@ -189,7 +192,9 @@ def admin_account_activity(
             "username": record.username,
             "is_active": record.is_active,
             "ai_beta_enabled": record.ai_beta_enabled,
-            "last_login_at": record.last_login_at,
+            # 快照缺失时以事件流兜底(与账户列表同一口径)
+            "last_login_at": record.last_login_at
+            or accounts_service.last_login_by_user(session).get(username),
             "ai_last_used_at": record.ai_last_used_at,
             "created_at": record.created_at,
             "subscription_count": int(subscription_count),

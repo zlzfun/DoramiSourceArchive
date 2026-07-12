@@ -16,8 +16,10 @@ APScheduler 启动编排同源），经 _app() 延迟动态调用。序列化与
 """
 
 import importlib
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session, select
@@ -47,6 +49,30 @@ def _app():
 
 # ==================== 序列化 ====================
 
+def _next_fire_iso(cron_exprs: List[str]) -> Optional[str]:
+    """若干 5 段 cron 中最早的下次触发时间(本地时区 ISO);无有效表达式返回 None。
+
+    与 app.add_cron_job 同一解析语义(minute/hour/day/month/day_of_week),
+    保证「时刻表倒计时」与调度器实际注册的触发一致。
+    """
+    best = None
+    now = datetime.now().astimezone()
+    for expr in cron_exprs:
+        parts = (expr or "").split()
+        if len(parts) != 5:
+            continue
+        try:
+            trigger = CronTrigger(
+                minute=parts[0], hour=parts[1], day=parts[2], month=parts[3], day_of_week=parts[4]
+            )
+            fire = trigger.get_next_fire_time(None, now)
+        except ValueError:
+            continue
+        if fire and (best is None or fire < best):
+            best = fire
+    return best.isoformat() if best else None
+
+
 def serialize_collection_job(record: CollectionJobRecord) -> Dict[str, Any]:
     return {
         "id": record.id,
@@ -56,12 +82,12 @@ def serialize_collection_job(record: CollectionJobRecord) -> Dict[str, Any]:
         "params": _json_loads(record.params_json, {}),
         "per_fetcher_params": _json_loads(record.per_fetcher_params_json, {}),
         "cron_expr": record.cron_expr,
-        "per_fetcher_cron": _json_loads(record.per_fetcher_cron_json, {}),
         "is_active": record.is_active,
         "downstream_policy": _json_loads(record.downstream_policy_json, {}),
         "legacy_task_id": record.legacy_task_id,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
+        "next_run_at": _next_fire_iso([record.cron_expr]) if record.is_active else None,
     }
 
 
@@ -96,7 +122,6 @@ class CollectionJobCreate(BaseModel):
     params: Dict[str, Any] = PydanticField(default_factory=dict)
     per_fetcher_params: Dict[str, Dict[str, Any]] = PydanticField(default_factory=dict)
     cron_expr: str = ""
-    per_fetcher_cron: Dict[str, str] = PydanticField(default_factory=dict)
     is_active: bool = True
     downstream_policy: Dict[str, Any] = PydanticField(default_factory=dict)
 
@@ -108,7 +133,6 @@ class CollectionJobUpdate(BaseModel):
     params: Optional[Dict[str, Any]] = None
     per_fetcher_params: Optional[Dict[str, Dict[str, Any]]] = None
     cron_expr: Optional[str] = None
-    per_fetcher_cron: Optional[Dict[str, str]] = None
     is_active: Optional[bool] = None
     downstream_policy: Optional[Dict[str, Any]] = None
 
@@ -139,7 +163,6 @@ def create_collection_job(data: CollectionJobCreate, session: Session = Depends(
         params_json=_json_dumps(data.params),
         per_fetcher_params_json=_json_dumps(data.per_fetcher_params),
         cron_expr=data.cron_expr.strip(),
-        per_fetcher_cron_json=_json_dumps(data.per_fetcher_cron),
         is_active=data.is_active,
         downstream_policy_json=_json_dumps(data.downstream_policy),
         created_at=now,
@@ -173,8 +196,6 @@ def update_collection_job(job_id: int, data: CollectionJobUpdate, session: Sessi
         record.per_fetcher_params_json = _json_dumps(update_data["per_fetcher_params"])
     if "cron_expr" in update_data:
         record.cron_expr = (update_data["cron_expr"] or "").strip()
-    if "per_fetcher_cron" in update_data:
-        record.per_fetcher_cron_json = _json_dumps(update_data["per_fetcher_cron"])
     if "is_active" in update_data:
         record.is_active = update_data["is_active"]
     if "downstream_policy" in update_data:

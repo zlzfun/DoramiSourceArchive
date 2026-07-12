@@ -19,7 +19,7 @@ import hmac
 import secrets
 from typing import List, Optional
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from models.db import AppSettingRecord, LoginEventRecord, UserRecord
 
@@ -227,6 +227,17 @@ def touch_login(session: Session, username: str) -> None:
 def _since(days: int) -> str:
     days = max(1, min(int(days or 30), 365))
     return (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
+
+
+def last_login_by_user(session: Session) -> dict:
+    """事件流口径的每用户最近登录时间 `{username: at}`。
+
+    `UserRecord.last_login_at` 只是省查询的快照缓存,历史数据疤痕(迁移/手工操作)
+    可能使其缺失——事件表才是最近登录的可靠源,读侧应以本函数兜底快照。"""
+    rows = session.exec(
+        select(LoginEventRecord.username, func.max(LoginEventRecord.at)).group_by(LoginEventRecord.username)
+    ).all()
+    return {username: at for username, at in rows}
 
 
 def logins_by_user(session: Session, *, days: int = 30) -> dict:

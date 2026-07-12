@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>接入集成 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   接入集成 · 静默仪器样页(从零到一设计稿)
+   概念:出口面板(patch bay)——页面回答「下游怎么把内容取走」。
+   三个交付通道(MCP / 个人聚合接口 / Claude 技能包)+ 日报工坊(admin)。
+   决策:①「日报生成/Agent 接入」segmented 退役,单页纵排就地可见;
+        ② integration-hero 大渐变面降级撤除(品牌感归登录页,
+          接入页的内容就是端点与凭据本身);
+        ③ 流式页(文档型),非全屏仪表壳。
+   令牌与刻度 1:1 取自 frontend/src/index.css。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --dorami-blue: #5b54e8; --dorami-blue-2: #7b6cf0;
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-card: rgba(255, 255, 255, 0.96); --dorami-wash: rgba(91, 84, 232, 0.08);
+  --dorami-well: #f1f5f9; --dorami-inset-input: inset 0 1px 3px rgba(11, 18, 32, 0.08);
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-strong: rgba(11, 18, 32, 0.15);
+  --dorami-card-bd: transparent; --dorami-edge: rgba(255, 255, 255, 0.62);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --sh-3: 0 4px 10px rgba(11, 18, 32, 0.08), 0 16px 36px rgba(11, 18, 32, 0.11);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-overlay: 16px; --r-pill: 9999px;
+  --state-ok: #059669;   --state-ok-bg: #ecfdf5;
+  --state-warn: #b45309; --state-warn-bg: #fffbeb;
+  --state-bad: #e11d48;  --state-bad-bg: #fff1f2;
+  --state-run: #0284c7;  --state-run-bg: #f0f9ff;
+  --state-idle: #64748b; --state-idle-bg: #f1f5f9;
+  --dorami-scrollbar: rgba(11, 18, 32, 0.2); --dorami-scrollbar-strong: rgba(11, 18, 32, 0.34);
+  --motion-fast: 150ms; --motion-medium: 240ms; --motion-slow: 300ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --rail-w: 78px;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-card: rgba(32, 37, 47, 0.96); --dorami-raised: #2a313c;
+  --dorami-wash: rgba(124, 112, 235, 0.13); --dorami-inset-input: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-strong: rgba(255, 255, 255, 0.16);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08); --dorami-edge: rgba(255, 255, 255, 0.05);
+  --dorami-scrollbar: rgba(255, 255, 255, 0.2); --dorami-scrollbar-strong: rgba(255, 255, 255, 0.34);
+  --state-ok: #34d399;   --state-ok-bg: #0f241b;
+  --state-warn: #fbbf24; --state-warn-bg: #281e10;
+  --state-bad: #fb7185;  --state-bad-bg: #2a151a;
+  --state-run: #38bdf8;  --state-run-bg: #0e1c27;
+  --state-idle: #99a1ad; --state-idle-bg: #15181f;
+  --dorami-blue: #4d45b5; --dorami-blue-2: #5f57c8;
+  --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --sh-3: 0 4px 10px rgba(0, 0, 0, 0.5), 0 16px 36px rgba(0, 0, 0, 0.6);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--dorami-canvas); color: var(--dorami-ink);
+  font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased;
+}
+[data-theme="dark"] body {
+  background:
+    radial-gradient(ellipse 70% 50% at 12% -8%, rgba(124, 112, 235, 0.10), transparent 58%),
+    linear-gradient(180deg, #11131a 0%, var(--dorami-canvas) 55%);
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+* { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+*:hover { scrollbar-color: var(--dorami-scrollbar) transparent; }
+
+/* ── 导轨(壳层上下文)── */
+.app-rail { position: fixed; inset-block: 0; left: 0; width: var(--rail-w); z-index: 45;
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 14px 0 16px;
+  background: var(--dorami-surface); border-right: 1px solid var(--dorami-card-bd); box-shadow: var(--sh-1); }
+.rail-brand { margin-bottom: 14px; width: 34px; height: 34px; border-radius: var(--r-control);
+  background: var(--dorami-blue); display: grid; place-items: center; color: #fff; font-size: 15px; font-weight: 800; }
+.rail-nav-btn { position: relative; width: 100%; padding: 10px 0 8px; display: flex;
+  flex-direction: column; align-items: center; gap: 4px; color: var(--dorami-faint); }
+.rail-nav-btn svg { width: 19px; height: 19px; }
+.rail-nav-btn span { font-size: 11px; font-weight: 600; }
+.rail-nav-btn:hover { color: var(--dorami-ink-2); }
+.rail-nav-btn.rail-nav-on { color: var(--dorami-accent); }
+.rail-nav-btn.rail-nav-on span { font-weight: 700; }
+.rail-nav-btn.rail-nav-on::before { content: ""; position: absolute; left: 0; top: 50%;
+  transform: translateY(-50%); width: 3px; height: 26px; background: var(--dorami-blue);
+  border-radius: 0 var(--r-pill) var(--r-pill) 0; }
+.rail-spacer { flex: 1; }
+.rail-tool { width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: var(--r-control); color: var(--dorami-faint); }
+.rail-tool:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+.rail-tool svg { width: 18px; height: 18px; }
+
+/* ── 流式页容器 ── */
+.page { margin-left: var(--rail-w); padding: 22px 32px 48px; max-width: 1200px; }
+
+.page-head { display: flex; align-items: center; gap: 14px; min-height: 48px; margin-bottom: 24px; }
+.page-title { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; }
+.page-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+/* 模型状态 chip(read-only,指向运维管理) */
+.model-chip { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px;
+  border-radius: var(--r-pill); background: var(--dorami-surface); box-shadow: var(--sh-1);
+  font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+.model-chip i { width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--state-ok); }
+.model-chip b { font-family: var(--mono); font-weight: 600; color: var(--dorami-ink-2); }
+
+/* ── 区标题(section-title 语法:短竖条已退役为纯文字层级) ── */
+.zone-head { display: flex; align-items: baseline; gap: 10px; margin: 26px 2px 12px; }
+.zone-title { font-size: 14px; font-weight: 700; color: var(--dorami-ink); }
+.zone-hint { font-size: 12px; font-weight: 500; color: var(--dorami-faint); }
+.zone-badge { font-size: 10.5px; font-weight: 700; padding: 1.5px 8px; border-radius: var(--r-pill);
+  background: var(--dorami-well); color: var(--dorami-muted); }
+
+/* ── 卡片(surface-card 语法) ── */
+.card { border: 1px solid var(--dorami-card-bd); background: var(--dorami-card);
+  border-radius: var(--r-card); box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge); }
+.card-pad { padding: 18px 20px; }
+.card-head { display: flex; align-items: center; gap: 9px; margin-bottom: 4px; }
+.card-title { font-size: 15px; font-weight: 700; }
+.card-desc { font-size: 12px; font-weight: 500; color: var(--dorami-muted); margin-top: 2px; }
+
+/* 通道区布局:MCP 大卡(左)+ Feed/技能包纵排(右) */
+.channels { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; align-items: start; }
+.channels-side { display: flex; flex-direction: column; gap: 16px; }
+
+/* 状态章 .stamp(共享范式) */
+.stamp { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700;
+  padding: 2.5px 9px; border-radius: var(--r-pill); white-space: nowrap; }
+.stamp::before { content: ""; width: 6px; height: 6px; flex: none; border-radius: 1px; }
+.stamp-ok   { color: var(--state-ok);   background: var(--state-ok-bg); }
+.stamp-ok::before   { background: var(--state-ok); }
+.stamp-idle { color: var(--state-idle); background: var(--state-idle-bg); }
+.stamp-idle::before { background: var(--dorami-faint); border-radius: 50%; }
+.stamp-run  { color: var(--state-run);  background: var(--state-run-bg); }
+.stamp-run::before  { background: var(--state-run); border-radius: 50%; animation: pulse 1.6s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* endpoint 行:mono + copy */
+.endpoint { display: flex; align-items: center; gap: 8px; margin-top: 12px;
+  background: var(--dorami-well); border-radius: var(--r-control); padding: 8px 8px 8px 12px; }
+.endpoint-method { font-size: 10px; font-weight: 700; letter-spacing: 0.05em; color: var(--dorami-faint); flex: none; }
+.endpoint-url { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--dorami-ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.copybtn { width: 26px; height: 26px; flex: none; display: grid; place-items: center;
+  border-radius: var(--r-sm); color: var(--dorami-faint); }
+.copybtn:hover { background: var(--dorami-surface); color: var(--dorami-ink); }
+.copybtn svg { width: 13px; height: 13px; }
+
+/* mini-seg(共享范式) */
+.mini-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-sm);
+  background: var(--dorami-well); font-size: 11px; }
+.mini-seg-btn { min-height: 22px; padding: 0 8px; border-radius: 4px; font-weight: 600; color: var(--dorami-muted); }
+.mini-seg-btn:hover:not(.is-on) { color: var(--dorami-ink-2); }
+.mini-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+
+/* 代码块:well 底 mono(被动容器 ≤ surface) */
+.codeblock { position: relative; margin-top: 10px; background: var(--dorami-well);
+  border-radius: var(--r-control); padding: 12px 40px 12px 14px;
+  font-family: var(--mono); font-size: 11px; line-height: 1.7; color: var(--dorami-muted);
+  overflow-x: auto; white-space: pre; }
+.codeblock .k { color: var(--dorami-ink-2); }
+.codeblock .copybtn { position: absolute; top: 8px; right: 8px; }
+
+/* 适用工具行 */
+.targets { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 6px; margin-top: 12px;
+  font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
+.target-chip { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: var(--r-pill);
+  background: var(--dorami-well); color: var(--dorami-muted); }
+
+/* MCP 工具清单:hairline 行表 */
+.tools { margin-top: 16px; border-top: 1px solid var(--dorami-border); }
+.tool-row { display: grid; grid-template-columns: 168px 1fr auto; gap: 12px; align-items: baseline;
+  padding: 9px 2px; border-bottom: 1px solid var(--dorami-border); }
+.tool-row:last-child { border-bottom: none; }
+.tool-name { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); }
+.tool-desc { font-size: 12px; font-weight: 400; color: var(--dorami-muted); line-height: 1.6; }
+.tool-desc .p { display: block; font-family: var(--mono); font-size: 10px; color: var(--dorami-faint);
+  margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 52ch; }
+.tools-head { display: flex; align-items: baseline; gap: 8px; margin-top: 16px; }
+.tools-title { font-size: 13px; font-weight: 700; }
+.tools-n { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); }
+
+/* token 行 */
+.token-row { display: flex; align-items: center; gap: 8px; margin-top: 12px;
+  background: var(--dorami-well); border-radius: var(--r-control); padding: 8px 8px 8px 12px; }
+.token-val { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--dorami-ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: 0.03em; }
+.token-meta { margin-top: 8px; font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
+
+/* 按钮 */
+.btn-secondary { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px;
+  border-radius: var(--r-control); border: 1px solid var(--dorami-border-strong);
+  background: var(--dorami-surface); font-size: 12px; font-weight: 600; color: var(--dorami-ink-2);
+  transition: background var(--motion-fast) var(--motion-ease); }
+.btn-secondary:hover { background: var(--dorami-soft); }
+.btn-secondary svg { width: 13px; height: 13px; }
+.btn-quiet { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 0 10px;
+  border-radius: var(--r-sm); font-size: 11.5px; font-weight: 600; color: var(--dorami-muted); }
+.btn-quiet:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+.btn-quiet svg { width: 12px; height: 12px; }
+.primary-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 36px; padding: 0 16px; border-radius: var(--r-control);
+  background: var(--dorami-blue); color: #fff; font-size: 12.5px; font-weight: 700; box-shadow: var(--sh-1);
+  transition: background var(--motion-fast) var(--motion-ease); }
+.primary-action:hover { background: var(--dorami-accent-ink); }
+.primary-action svg { width: 14px; height: 14px; }
+
+/* 安装步骤 */
+.steps { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; counter-reset: step; }
+.step { display: flex; gap: 10px; font-size: 12px; color: var(--dorami-muted); line-height: 1.6; }
+.step::before { counter-increment: step; content: counter(step); flex: none; width: 18px; height: 18px;
+  display: grid; place-items: center; border-radius: var(--r-pill); background: var(--dorami-well);
+  font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--dorami-faint); margin-top: 1px; }
+.step code { font-family: var(--mono); font-size: 11px; background: var(--dorami-well);
+  border-radius: 4px; padding: 1px 5px; color: var(--dorami-ink-2); }
+
+/* ── 日报工坊:一张宽卡,三段 hairline 分区(检视器语法) ── */
+.brief-card { display: grid; grid-template-columns: 260px 1.2fr 1fr; }
+.brief-col { padding: 18px 20px; }
+.brief-col + .brief-col { border-left: 1px solid var(--dorami-border); }
+.brief-col-title { font-size: 12px; font-weight: 700; color: var(--dorami-ink-2); margin-bottom: 12px; }
+
+.form-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+.form-label { font-size: 11px; font-weight: 600; color: var(--dorami-faint); }
+.form-input { width: 100%; min-height: 32px; padding: 0 10px; border: none; border-radius: var(--r-control);
+  background: var(--dorami-well); box-shadow: var(--dorami-inset-input);
+  font-size: 12px; color: var(--dorami-ink); font-family: var(--mono); }
+.form-input:focus { outline: none; box-shadow: 0 0 0 3px var(--dorami-focus); }
+.switch-row { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
+  color: var(--dorami-ink-2); margin-bottom: 12px; }
+.switch { position: relative; width: 34px; height: 19px; flex: none; border-radius: var(--r-pill);
+  background: var(--dorami-well); box-shadow: var(--dorami-inset-input);
+  transition: background var(--motion-fast) var(--motion-ease); }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+  background: #fff; border-radius: var(--r-pill); box-shadow: 0 1px 2px rgba(11, 18, 32, 0.3);
+  transition: transform var(--motion-fast) var(--motion-ease); }
+.switch.is-on { background: var(--dorami-blue); }
+.switch.is-on::after { transform: translateX(15px); }
+
+/* 生成流水线(ledger-pipeline 范式,横向 5 段) */
+.pipeline { display: flex; align-items: center; gap: 2px; margin-top: 14px; font-size: 10.5px; font-weight: 700; }
+.pipeline-step { flex: 1; text-align: center; padding: 6px 2px; color: var(--dorami-faint);
+  background: var(--dorami-well); border-radius: var(--r-sm); }
+.pipeline-step.is-done { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+.pipeline-step.is-now { background: var(--dorami-ink); color: var(--dorami-surface); }
+.pipeline-note { margin-top: 8px; font-family: var(--mono); font-size: 11px; color: var(--dorami-muted);
+  font-variant-numeric: tabular-nums; }
+
+/* 近期运行列表 */
+.brief-run { display: flex; align-items: center; gap: 10px; padding: 8px 2px;
+  border-bottom: 1px solid var(--dorami-border); }
+.brief-run:last-child { border-bottom: none; }
+.brief-run:hover { background: var(--dorami-soft); }
+.brief-run-date { font-family: var(--mono); font-size: 11px; color: var(--dorami-ink-2);
+  font-variant-numeric: tabular-nums; flex: none; }
+.brief-run-meta { flex: 1; min-width: 0; font-size: 11px; font-weight: 500; color: var(--dorami-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* 说明折叠(启停与取数范围) */
+.scope-note { margin-top: 14px; font-size: 11.5px; line-height: 1.7; color: var(--dorami-faint); }
+.scope-note summary { cursor: pointer; font-weight: 600; color: var(--dorami-muted); list-style: none;
+  display: inline-flex; align-items: center; gap: 5px; }
+.scope-note summary::before { content: "▸"; font-size: 9px; transition: transform var(--motion-fast) var(--motion-ease); }
+.scope-note[open] summary::before { transform: rotate(90deg); }
+.scope-note p { margin-top: 8px; }
+
+/* 设计注记 */
+.spec-notes { margin: 34px 2px 0; max-width: 900px; color: var(--dorami-muted); font-size: 12.5px; line-height: 1.8; }
+.spec-notes h2 { font-size: 14px; font-weight: 700; color: var(--dorami-ink); margin: 22px 0 8px; }
+.spec-notes ul { padding-left: 18px; }
+.spec-notes li { margin: 3px 0; }
+.spec-notes code { font-family: var(--mono); font-size: 11px; background: var(--dorami-well); border-radius: 4px; padding: 1px 5px; }
+.spec-notes .hint { font-size: 11px; color: var(--dorami-faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+@media (max-width: 1023px) {
+  .app-rail { display: none; }
+  .page { margin-left: 0; padding: 18px 16px 40px; }
+  .channels, .brief-card { grid-template-columns: 1fr; }
+  .brief-col + .brief-col { border-left: none; border-top: 1px solid var(--dorami-border); }
+}
+</style>
+</head>
+<body>
+
+<nav class="app-rail" aria-label="主导航">
+  <div class="rail-brand">哆</div>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg><span>台账</span></button>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.2 4.2l2.8 2.8M17 17l2.8 2.8M1 12h4M19 12h4M4.2 19.8L7 17M17 7l2.8-2.8"/></svg><span>节点</span></button>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span>运行</span></button>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l3-9 4 18 3-9h6"/></svg><span>向量</span></button>
+  <button class="rail-nav-btn rail-nav-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2M15 8V2"/><path d="M6 8h12v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4z"/></svg><span>集成</span></button>
+  <button class="rail-nav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span>运维</span></button>
+  <div class="rail-spacer"></div>
+  <button class="rail-tool" id="theme-toggle" title="切换亮暗"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button>
+</nav>
+
+<div class="page">
+  <header class="page-head">
+    <h1 class="page-title">接入集成</h1>
+    <div class="page-head-actions">
+      <span class="model-chip" title="日报与阅读器 AI 共用的大模型,在「运维管理」统一配置"><i></i>模型 <b>glm-4.7</b></span>
+    </div>
+  </header>
+
+  <!-- ════ 区 1:交付通道 ════ -->
+  <div class="zone-head" style="margin-top:0">
+    <span class="zone-title">交付通道</span>
+    <span class="zone-hint">把归档内容接进你的 Agent、RSS 阅读器或工作流</span>
+  </div>
+
+  <div class="channels">
+
+    <!-- MCP 大卡 -->
+    <section class="card card-pad">
+      <div class="card-head">
+        <span class="card-title">MCP 服务</span>
+        <span class="stamp stamp-ok">运行中</span>
+        <span style="margin-left:auto" class="mini-seg" role="group" aria-label="配置格式">
+          <button class="mini-seg-btn is-on">JSON 配置</button>
+          <button class="mini-seg-btn">URL</button>
+        </span>
+      </div>
+      <p class="card-desc">标准 Model Context Protocol 端点,Agent 直接调用归档的检索与浏览工具。</p>
+
+      <div class="endpoint">
+        <span class="endpoint-method">POST</span>
+        <span class="endpoint-url">https://dorami.example.com/mcp</span>
+        <button class="copybtn" title="复制端点"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+      </div>
+
+      <div class="codeblock">{
+  <span class="k">"mcpServers"</span>: {
+    <span class="k">"dorami-archive"</span>: {
+      <span class="k">"type"</span>: "http",
+      <span class="k">"url"</span>: "https://dorami.example.com/mcp"
+    }
+  }
+}<button class="copybtn" title="复制配置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+
+      <div class="targets">
+        适用
+        <span class="target-chip">Claude Code</span><span class="target-chip">Cursor</span>
+        <span class="target-chip">Codex</span><span class="target-chip">OpenCode</span>
+        · 在线
+        <span class="target-chip">Claude.ai Projects</span><span class="target-chip">Coze</span>
+      </div>
+
+      <div class="tools-head">
+        <span class="tools-title">可用工具</span>
+        <span class="tools-n">5</span>
+        <span class="zone-hint" style="margin-left:auto">传入 dfeed_ 令牌即限定到订阅范围</span>
+      </div>
+      <div class="tools">
+        <div class="tool-row">
+          <span class="tool-name">list_sources</span>
+          <span class="tool-desc">列出全部数据来源与内容类型,建议首先调用。<span class="p">(无参数)</span></span>
+          <span></span>
+        </div>
+        <div class="tool-row">
+          <span class="tool-name">browse_articles</span>
+          <span class="tool-desc">按来源 / 类型 / 日期区间条件过滤浏览。<span class="p">source_id?, content_type?, publish_date_start?, limit?, …</span></span>
+          <span></span>
+        </div>
+        <div class="tool-row">
+          <span class="tool-name">get_article</span>
+          <span class="tool-desc">按 ID 取单篇完整内容(含正文与扩展元数据)。<span class="p">article_id, subscription_token?</span></span>
+          <span></span>
+        </div>
+        <div class="tool-row">
+          <span class="tool-name">search_articles</span>
+          <span class="tool-desc">语义向量搜索,中英跨语,按相关性排序。<span class="p">query, top_k?, content_type?, source_id?, …</span></span>
+          <span class="stamp stamp-ok">RAG</span>
+        </div>
+        <div class="tool-row">
+          <span class="tool-name">get_rag_context</span>
+          <span class="tool-desc">组装可直接拼入 System Prompt 的 RAG 上下文串。<span class="p">query, top_k?, max_chars?, …</span></span>
+          <span class="stamp stamp-ok">RAG</span>
+        </div>
+      </div>
+
+      <details class="scope-note">
+        <summary>启停与取数范围</summary>
+        <p>MCP 服务随后端进程启停,无需单独部署。管理员会话检索全库;携带 dfeed_ / dsub_ 令牌的调用
+        硬限定到该令牌的订阅范围。RAG 关闭时,两个语义工具返回结构化的「RAG disabled」而非报错。</p>
+      </details>
+    </section>
+
+    <!-- 右列:Feed + 技能包 -->
+    <div class="channels-side">
+      <section class="card card-pad">
+        <div class="card-head">
+          <span class="card-title">个人聚合接口</span>
+          <span class="stamp stamp-ok">已签发</span>
+        </div>
+        <p class="card-desc">一个令牌拉走你订阅的全部来源,适合 RSS 工具与脚本。</p>
+        <div class="token-row">
+          <span class="token-val">dfeed_9f3c••••••••••••4b1e</span>
+          <button class="copybtn" title="显示"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          <button class="copybtn" title="复制令牌"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+          <button class="copybtn" title="重新生成(旧令牌立即失效)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+        </div>
+        <div class="token-meta">签发于 2026-06-30 · 重新生成会让旧令牌立即失效</div>
+        <div class="endpoint">
+          <span class="endpoint-method">GET</span>
+          <span class="endpoint-url">/api/public/feed/articles</span>
+          <button class="copybtn" title="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        </div>
+        <div class="endpoint" style="margin-top:6px">
+          <span class="endpoint-method">GET</span>
+          <span class="endpoint-url">/api/public/feed/articles.md</span>
+          <button class="copybtn" title="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        </div>
+        <div class="codeblock">curl -H <span class="k">"Authorization: Bearer dfeed_…"</span> \
+  "https://dorami.example.com/api/public/feed/articles?limit=20"<button class="copybtn" title="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+      </section>
+
+      <section class="card card-pad">
+        <div class="card-head">
+          <span class="card-title">Claude 技能包</span>
+        </div>
+        <p class="card-desc">按本站地址模板化的日报技能,装进 Claude 即可对话取用每日资讯。</p>
+        <div class="steps">
+          <div class="step">下载技能包 <code>dorami-daily-brief.zip</code></div>
+          <div class="step">解压到 <code>~/.claude/skills/</code>(或经 <code>/plugin</code> 安装)</div>
+          <div class="step">对 Claude 说「看看今天的 AI 日报」</div>
+        </div>
+        <div style="margin-top:14px">
+          <button class="btn-secondary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg> 下载技能包</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ════ 区 2:日报工坊(admin) ════ -->
+  <div class="zone-head">
+    <span class="zone-title">AI 资讯日报</span>
+    <span class="zone-badge">仅管理员</span>
+    <span class="zone-hint">LLM 每日汇编归档精选;读者经阅读器订阅 dorami_daily_brief 即可看到</span>
+  </div>
+
+  <section class="card brief-card">
+    <div class="brief-col">
+      <div class="brief-col-title">定时配置</div>
+      <div class="switch-row"><button class="switch is-on" role="switch" aria-checked="true" aria-label="启用定时生成"></button>每日自动生成</div>
+      <div class="form-row">
+        <label class="form-label" for="brief-cron">cron</label>
+        <input class="form-input" id="brief-cron" value="30 8 * * *">
+      </div>
+      <div class="form-row">
+        <label class="form-label" for="brief-topn">每期条数(Top N)</label>
+        <input class="form-input" id="brief-topn" value="12" style="width:80px">
+      </div>
+      <button class="btn-quiet">保存配置</button>
+    </div>
+
+    <div class="brief-col">
+      <div class="brief-col-title">手动生成</div>
+      <button class="primary-action" style="width:100%"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> 立即生成日报</button>
+      <div class="pipeline" aria-label="生成阶段">
+        <span class="pipeline-step is-done">收集</span>
+        <span class="pipeline-step is-now">摘要</span>
+        <span class="pipeline-step">去重</span>
+        <span class="pipeline-step">精选</span>
+        <span class="pipeline-step">成稿</span>
+      </div>
+      <div class="pipeline-note">摘要评分中 · 23/48 篇 · 已用 1.4 min</div>
+      <details class="scope-note">
+        <summary>取材与去重口径</summary>
+        <p>候选取自上次成功生成之后新入库的文章(游标不回退);同日同事件聚类合并,近几日正文
+        注入 reduce 阶段做跨日语义去重。生成在后台任务中执行,可离开本页。</p>
+      </details>
+    </div>
+
+    <div class="brief-col">
+      <div class="brief-col-title">近期日报</div>
+      <div class="brief-run"><span class="brief-run-date">07-10</span><span class="brief-run-meta">Top 12 · 3.2 min · 定时</span><span class="stamp stamp-ok">成功</span></div>
+      <div class="brief-run"><span class="brief-run-date">07-09</span><span class="brief-run-meta">Top 12 · 2.8 min · 定时</span><span class="stamp stamp-ok">成功</span></div>
+      <div class="brief-run"><span class="brief-run-date">07-08</span><span class="brief-run-meta">Top 12 · 3.5 min · 手动</span><span class="stamp stamp-ok">成功</span></div>
+      <div class="brief-run"><span class="brief-run-date">07-07</span><span class="brief-run-meta">LLM 超时,已重试 · 手动</span><span class="stamp stamp-idle">未产出</span></div>
+      <div class="brief-run"><span class="brief-run-date">07-06</span><span class="brief-run-meta">Top 12 · 3.0 min · 定时</span><span class="stamp stamp-ok">成功</span></div>
+    </div>
+  </section>
+
+  <!-- 设计注记 -->
+  <section class="spec-notes">
+    <h2>设计推导:出口面板(patch bay)</h2>
+    <p>接入页回答一个问题:「下游怎么把内容取走?」——所以页面就是通道清单:每个通道一张卡,
+    卡内恒定三件事:<b>状态章 → 端点/凭据 → 接入片段</b>。MCP 是能力最富的通道(五个工具),
+    占左侧大卡;聚合接口与技能包纵排右列。</p>
+    <h2>两项退役决策(需拍板)</h2>
+    <ul>
+      <li><b>「日报生成 / Agent 接入」segmented 退役</b>:与运行页同理,分区就地可见优于藏在视图切换后;
+        日报工坊收敛为一张三段卡(配置/生成/近期),不再需要整页切换。</li>
+      <li><b>integration-hero 大渐变面撤除</b>:P4 曾标注「接入页唯一品牌陈述面,是否降级留给布局波」——
+        本设计的答案是撤:静默仪器里品牌感归登录页,接入页的内容就是端点与凭据本身;
+        页头右侧只留一枚只读「模型」status chip(指向运维管理)。</li>
+    </ul>
+    <h2>角色降级与既有范式</h2>
+    <ul>
+      <li>读者视角 = 仅「交付通道」区(MCP 卡隐藏管理注记、日报区整体不渲染、模型 chip 不显示);管理员全量。</li>
+      <li>RAG 关闭时:两个语义工具的「RAG」章翻为 <code>stamp-idle</code>「RAG 未启用」,行文字灰显——不隐藏,能力可见但不可用。</li>
+      <li>复用:<code>.stamp</code>/<code>.mini-seg</code>/检视器 hairline 三段分区/<code>ledger-pipeline</code> 步进条
+        (替代 DailyBriefFlow 动画编排——feedback-only:进行中段实底 + 计数走字,不再做流动动效);
+        代码块/端点行 = well 底被动容器。</li>
+      <li>流式页(文档型),不用全屏仪表壳;CTA 预算 = 唯一 primary「立即生成日报」。</li>
+    </ul>
+    <p class="hint">令牌与刻度 1:1 引自 frontend/src/index.css;右下月亮切换亮暗。本文件:docs/design/dorami-integrations-quiet.html</p>
+  </section>
+</div>
+
+<script>
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === 'dark' ? '' : 'dark';
+});
+document.querySelectorAll('.mini-seg').forEach(seg => {
+  seg.querySelectorAll('.mini-seg-btn').forEach(btn => btn.addEventListener('click', () => {
+    seg.querySelectorAll('.mini-seg-btn').forEach(b => b.classList.remove('is-on'));
+    btn.classList.add('is-on');
+  }));
+});
+document.querySelectorAll('.switch').forEach(sw => sw.addEventListener('click', () => {
+  sw.classList.toggle('is-on');
+  sw.setAttribute('aria-checked', sw.classList.contains('is-on'));
+}));
+</script>
+</body>
+</html>

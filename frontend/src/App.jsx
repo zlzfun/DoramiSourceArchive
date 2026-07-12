@@ -20,6 +20,8 @@ import LoginScreen from './components/LoginScreen';
 import BrandLogoImage from './components/BrandLogoImage';
 import { useTheme } from './theme';
 import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
+import RunningWidget from './components/RunningWidget';
+import { useRunningProgress } from './hooks/useRunningProgress';
 
 // Tab 组件按路由惰性加载：各自独立 chunk，登录页与读者态不再下载用不到的重依赖
 // （AdminOpsTab→recharts、ReaderTab/MCPTab→react-markdown）。每个 Tab 挂在独立
@@ -45,8 +47,10 @@ function TabFallback() {
 // 把「标签 + 子视图」镜像到 URL hash（#/runs/history），跨页跳转的聚焦上下文存在 history.state 里。
 // 让浏览器「返回」能逐级退回：子视图切换 → 标签切换 → 跨页跳转的原位。
 const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'vector', 'mcp', 'admin'];
-const TAB_DEFAULT_VIEW = { fetch: 'catalog', runs: 'jobs' };
-const SUBVIEW_TABS = new Set(['fetch', 'runs']);
+// runs 的双视图已随运行波(调度台)退役:旧书签 #/runs/history、#/runs/jobs 在
+// hashToRoute 里因 runs 不再是 SUBVIEW 而自然归一到 #/runs,无需特判。
+const TAB_DEFAULT_VIEW = { fetch: 'catalog' };
+const SUBVIEW_TABS = new Set(['fetch']);
 
 // 运行能力的非乐观初始/重置值：能力未知（未登录 / 登出 / 会话过期）时按「都未启用」，
 // 避免在 fetchRuntimeInfo 返回前把 collector 界面闪给读者。初始化与两处重置共用同一形状，
@@ -61,7 +65,7 @@ const INITIAL_RUNTIME = {
 };
 
 function defaultViews() {
-  return { fetch: 'catalog', runs: 'jobs' };
+  return { fetch: 'catalog' };
 }
 
 function routeToHash(tab, views) {
@@ -162,12 +166,19 @@ export default function App() {
   }, [commitNav]);
 
   const setFetchView = useCallback((v) => goView('fetch', v), [goView]);
-  const setRunsView = useCallback((v) => goView('runs', v), [goView]);
 
   const markArticlesDirty = useCallback(() => setArticlesDirty(true), []);
   const clearArticlesDirty = useCallback(() => setArticlesDirty(false), []);
 
-  const markRunsDirty = useCallback(() => setRunsDirty(true), []);
+  // 全局运行进度:跨页浮窗数据源。kick 通道复用 onRunsChanged(两页发起运行都会经过);
+  // 节点页自身有行内进度+信号灯条,浮窗在该页隐藏(去重),其余页面获得跨页感知。
+  const {
+    progress: globalRunProgress,
+    runningIds: globalRunningIds,
+    kick: kickRunningProgress,
+  } = useRunningProgress(authState.status === 'authenticated' && runtimeInfo.collector_enabled);
+
+  const markRunsDirty = useCallback(() => { setRunsDirty(true); kickRunningProgress(); }, [kickRunningProgress]);
   const clearRunsDirty = useCallback(() => setRunsDirty(false), []);
 
   const viewArticlesForSource = useCallback((sourceId) => {
@@ -175,16 +186,16 @@ export default function App() {
   }, [jumpWithFocus]);
 
   const viewRunsForSource = useCallback((fetcherId, options = {}) => {
-    jumpWithFocus('runs', 'history', { tab: 'runs', payload: { fetcher_id: fetcherId, status: options.status || '' } });
+    jumpWithFocus('runs', null, { tab: 'runs', payload: { fetcher_id: fetcherId, status: options.status || '' } });
   }, [jumpWithFocus]);
   const viewRunningTasks = useCallback(() => {
-    jumpWithFocus('runs', 'history', { tab: 'runs', payload: { fetcher_id: '', status: '' } });
+    jumpWithFocus('runs', null, { tab: 'runs', payload: { fetcher_id: '', status: 'running' } });
   }, [jumpWithFocus]);
 
-  // 节点管理「保存为采集任务」→ 切到任务与运行·采集任务，预填新建编辑器（草稿）。
+  // 节点管理「保存为采集任务」→ 切到任务与运行，本地打开新建编辑器（草稿）。
   const saveSelectionAsJob = useCallback((draft) => {
     setPendingJobDraft(draft);
-    jumpWithFocus('runs', 'jobs', null);
+    jumpWithFocus('runs', null, null);
   }, [jumpWithFocus]);
 
   // 知识台账「数据来源」列点击 → 定位并展开节点管理（采集端）里对应来源。
@@ -235,9 +246,11 @@ export default function App() {
       const runtime = await fetchRuntimeInfo();
       setRuntimeInfo(runtime);
       if (runtime.collector_enabled) {
-        // 配置驱动通用抓取器（generic_web，中级目标）暂不开放前端入口：后端保留，目录里隐藏。
+        // 模板节点(is_template:generic_* 参数驱动通用抓取器)只在后端保留——
+        // 作 source-configs/source_builder 执行底座与新节点开发模板;目录一律不显现
+        // (新增源的正道 = 写代码固化质量有保障的 preset)。
         const fetchers = await fetchFetchers();
-        setAvailableFetchers(fetchers.filter(f => f.id !== 'generic_web'));
+        setAvailableFetchers(fetchers.filter(f => !f.is_template));
       } else {
         setAvailableFetchers([]);
       }
@@ -316,13 +329,13 @@ export default function App() {
   // 受限读者（user 账号）只看到「阅读器 + 订阅分发 + 接入集成」；admin（采集+阅读超级用户）保持现有全部 tab。
   const readerOnly = runtimeInfo.account_role === 'user';
   const tabs = useMemo(() => [
-    { id: 'reader', icon: BookOpen, label: '阅读器', onlyReader: true },
-    { id: 'data', icon: Database, label: '知识台账', hideForReader: true },
-    { id: 'fetch', icon: CloudDownload, label: '节点管理', surface: 'collector' },
-    { id: 'runs', icon: History, label: '任务与运行', surface: 'collector' },
-    { id: 'vector', icon: BarChart2, label: '向量雷达', surface: 'reader', requiresRag: true, hideForReader: true },
-    { id: 'mcp', icon: Plug2, label: '接入集成', surface: 'reader' },
-    { id: 'admin', icon: ShieldCheck, label: '运维管理', adminOnly: true },
+    { id: 'reader', icon: BookOpen, label: '阅读器', railLabel: '阅读', onlyReader: true },
+    { id: 'data', icon: Database, label: '知识台账', railLabel: '台账', hideForReader: true },
+    { id: 'fetch', icon: CloudDownload, label: '节点管理', railLabel: '节点', surface: 'collector' },
+    { id: 'runs', icon: History, label: '任务与运行', railLabel: '运行', surface: 'collector' },
+    { id: 'vector', icon: BarChart2, label: '向量雷达', railLabel: '雷达', surface: 'reader', requiresRag: true, hideForReader: true },
+    { id: 'mcp', icon: Plug2, label: '接入集成', railLabel: '集成', surface: 'reader' },
+    { id: 'admin', icon: ShieldCheck, label: '运维管理', railLabel: '运维', adminOnly: true },
   ].filter(tab => {
     if (tab.onlyReader && !readerOnly) return false;
     if (tab.hideForReader && readerOnly) return false;
@@ -331,6 +344,11 @@ export default function App() {
     if (tab.requiresRag && !runtimeInfo.rag_enabled) return false;
     return true;
   }), [runtimeInfo, readerOnly]);
+
+  const fetchersById = useMemo(
+    () => Object.fromEntries(availableFetchers.map(f => [f.id, f])),
+    [availableFetchers],
+  );
 
   const avatarInitials = useMemo(() => {
     const name = authState.user?.username?.trim();
@@ -351,10 +369,12 @@ export default function App() {
   }, [readerOnly, runtimeInfo.collector_enabled, runtimeInfo.reader_enabled]);
 
   useEffect(() => {
+    // 能力未载入前 tabs 为空,此时重定向会把深链(#/fetch 等书签)误弹回默认页——等载入后再判。
+    if (!runtimeLoaded) return;
     if (!tabs.some(tab => tab.id === activeTab)) {
       goTab(tabs[0]?.id || 'data', { replace: true });
     }
-  }, [activeTab, goTab, tabs]);
+  }, [activeTab, goTab, tabs, runtimeLoaded]);
 
   if (authState.status === 'checking') {
     return (
@@ -381,28 +401,67 @@ export default function App() {
 
   return (
     <div className="app-shell font-sans">
-      <header className="app-header flex items-center justify-between gap-4 px-5 sm:px-8">
-        <div className="flex min-w-0 items-center gap-3">
+      {/* ── lg+:左侧固定导轨(品牌/导航/工具/账号);布局波 L1 ── */}
+      <aside className="app-rail hidden lg:flex" aria-label="主导航">
+        <div className="rail-brand" title={`${brandTitle} · ${brandSubtitle}`}>
           <BrandLogo logoError={logoError} onLogoError={() => setLogoError(true)} />
-          <div className="hidden min-w-0 sm:block">
-            <h1 className="brand-title truncate text-xl font-black leading-tight">{brandTitle}</h1>
-            <p className="brand-subtitle mt-1 text-xs font-bold">{brandSubtitle}</p>
-          </div>
         </div>
-
-        <nav className="hidden flex-1 items-center justify-center gap-6 lg:flex">
+        <nav className="flex w-full flex-col items-center gap-0.5" aria-label="页面">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => goTab(tab.id)}
-              className={`top-tab relative flex items-center gap-2 whitespace-nowrap px-6 py-3 text-sm font-extrabold transition-colors ${activeTab === tab.id ? 'top-tab-active' : 'text-slate-500 hover:text-slate-950 dark:hover:text-slate-100'}`}
+              className={`rail-nav-btn ${activeTab === tab.id ? 'rail-nav-on' : ''}`}
+              aria-current={activeTab === tab.id ? 'page' : undefined}
+              title={tab.label}
             >
-              <tab.icon className="h-4.5 w-4.5" /> {tab.label}
+              <tab.icon />
+              <span>{tab.railLabel || tab.label}</span>
             </button>
           ))}
         </nav>
+        <div className="flex-1" />
+        <div className="flex flex-col items-center gap-1.5">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="rail-tool"
+            title={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+            aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+          >
+            {effective === 'dark' ? <Sun /> : <Moon />}
+          </button>
+          <button type="button" onClick={() => setSettingsOpen(true)} className="rail-tool" title="设置" aria-label="设置">
+            <Settings />
+          </button>
+          {authState.user?.avatar ? (
+            <img
+              src={authState.user.avatar}
+              alt="头像"
+              title={`${authState.user?.username || 'admin'} · ${roleLabel}`}
+              className="h-9 w-9 rounded-full object-cover shadow-sm ring-1 ring-black/5"
+            />
+          ) : (
+            <div
+              className="avatar-badge flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white"
+              title={`${authState.user?.username || 'admin'} · ${roleLabel}`}
+            >
+              {avatarInitials}
+            </div>
+          )}
+          <button type="button" onClick={handleLogout} className="rail-tool" title="退出登录" aria-label="退出登录">
+            <LogOut />
+          </button>
+        </div>
+      </aside>
 
-        <nav className="mobile-tabs flex max-w-full flex-1 items-center gap-1 overflow-x-auto lg:hidden">
+      {/* ── lg 以下:保留移动顶栏 ── */}
+      <header className="app-header flex items-center justify-between gap-4 px-5 sm:px-8 lg:hidden">
+        <div className="flex min-w-0 items-center gap-3">
+          <BrandLogo logoError={logoError} onLogoError={() => setLogoError(true)} />
+        </div>
+
+        <nav className="mobile-tabs flex max-w-full flex-1 items-center gap-1 overflow-x-auto">
           {tabs.map(tab => (
             <button
               key={tab.id}
@@ -414,53 +473,57 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="flex shrink-0 items-center gap-4">
-          <div className="flex items-center gap-2">
-            <div className="hidden text-right sm:block">
-              <p className="text-xs font-black text-slate-800">{authState.user?.username || 'admin'}</p>
-              <p className="micro-label text-slate-500">{roleLabel}</p>
-            </div>
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="icon-button"
-              title={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
-              aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
-            >
-              {effective === 'dark' ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}
-            </button>
-            <button
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-              className="icon-button"
-              title="设置"
-              aria-label="设置"
-            >
-              <Settings className="h-4.5 w-4.5" />
-            </button>
-            {authState.user?.avatar ? (
-              <img
-                src={authState.user.avatar}
-                alt="头像"
-                className="h-9 w-9 rounded-full object-cover shadow-sm ring-1 ring-black/5"
-              />
-            ) : (
-              <div className="avatar-badge flex h-9 w-9 items-center justify-center rounded-full text-xs font-black text-white">{avatarInitials}</div>
-            )}
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="icon-button"
-              title="退出登录"
-              aria-label="退出登录"
-            >
-              <LogOut className="h-4.5 w-4.5" />
-            </button>
-          </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="icon-button"
+            title={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+            aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+          >
+            {effective === 'dark' ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}
+          </button>
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            className="icon-button"
+            title="设置"
+            aria-label="设置"
+          >
+            <Settings className="h-4.5 w-4.5" />
+          </button>
+          {authState.user?.avatar ? (
+            <img
+              src={authState.user.avatar}
+              alt="头像"
+              className="h-9 w-9 rounded-full object-cover shadow-sm ring-1 ring-black/5"
+            />
+          ) : (
+            <div className="avatar-badge flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white">{avatarInitials}</div>
+          )}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="icon-button"
+            title="退出登录"
+            aria-label="退出登录"
+          >
+            <LogOut className="h-4.5 w-4.5" />
+          </button>
         </div>
       </header>
 
       <Toast show={toast.show} message={toast.message} type={toast.type} onClose={hideToast} />
+
+      {globalRunningIds.size > 0 && (
+        <RunningWidget
+          variant="floating"
+          runningIds={globalRunningIds}
+          fetchProgress={globalRunProgress}
+          fetchersById={fetchersById}
+          onViewRunning={viewRunningTasks}
+        />
+      )}
 
       <SettingsModal
         open={settingsOpen}
@@ -476,17 +539,17 @@ export default function App() {
         onArticlesChanged={markArticlesDirty}
       />
 
-      <main className="mx-auto max-w-[1540px] px-5 py-9 sm:px-8 xl:px-10">
+      <main className="ml-[var(--rail-w)] px-5 pt-[22px] pb-9 sm:px-7">
         <div className="page-shell">
           {readerOnly && mountedTabs.has('reader') && (
-            <div className="tab-panel" style={{ display: activeTab === 'reader' ? 'block' : 'none' }}>
+            <div className={`tab-panel${activeTab === 'reader' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <ReaderTab showToast={showToast} aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured} />
               </Suspense>
             </div>
           )}
           {!readerOnly && mountedTabs.has('data') && (
-            <div className="tab-panel" style={{ display: activeTab === 'data' ? 'block' : 'none' }}>
+            <div className={`tab-panel${activeTab === 'data' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <DataTab
                   availableFetchers={availableFetchers}
@@ -505,7 +568,7 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('fetch') && runtimeInfo.collector_enabled && (
-            <div className="tab-panel" style={{ display: activeTab === 'fetch' ? 'block' : 'none' }}>
+            <div className={`tab-panel${activeTab === 'fetch' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <FetchTab
                   availableFetchers={availableFetchers}
@@ -525,13 +588,11 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('runs') && runtimeInfo.collector_enabled && (
-            <div className="tab-panel" style={{ display: activeTab === 'runs' ? 'block' : 'none' }}>
+            <div className={`tab-panel${activeTab === 'runs' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <FetchRunsTab
                   availableFetchers={availableFetchers}
                   showToast={showToast}
-                  view={nav.views.runs}
-                  setView={setRunsView}
                   onArticlesChanged={markArticlesDirty}
                   onRunsChanged={markRunsDirty}
                   isActive={activeTab === 'runs'}
@@ -546,23 +607,33 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('vector') && runtimeInfo.reader_enabled && (
-            <div className="tab-panel" style={{ display: activeTab === 'vector' ? 'block' : 'none' }}>
+            <div className={`tab-panel${activeTab === 'vector' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <VectorTab availableFetchers={availableFetchers} showToast={showToast} accountRole={runtimeInfo.account_role} />
               </Suspense>
             </div>
           )}
           {mountedTabs.has('mcp') && runtimeInfo.reader_enabled && (
-            <div className="tab-panel" style={{ display: activeTab === 'mcp' ? 'block' : 'none' }}>
+            <div className={`tab-panel${activeTab === 'mcp' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
-                <MCPTab showToast={showToast} ragEnabled={runtimeInfo.rag_enabled} collectorEnabled={runtimeInfo.collector_enabled} isAdmin={runtimeInfo.account_role === 'admin'} />
+                <MCPTab
+                  showToast={showToast}
+                  ragEnabled={runtimeInfo.rag_enabled}
+                  collectorEnabled={runtimeInfo.collector_enabled}
+                  isAdmin={runtimeInfo.account_role === 'admin'}
+                  onOpenModelConfig={() => jumpWithFocus('admin', null, { tab: 'admin', payload: { sub: 'ai' } })}
+                />
               </Suspense>
             </div>
           )}
           {mountedTabs.has('admin') && runtimeInfo.account_role === 'admin' && (
-            <div className="tab-panel" style={{ display: activeTab === 'admin' ? 'block' : 'none' }}>
+            <div className={`tab-panel${activeTab === 'admin' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
-                <AdminOpsTab showToast={showToast} />
+                <AdminOpsTab
+                  showToast={showToast}
+                  pendingFocus={pendingFocus?.tab === 'admin' ? pendingFocus.payload : null}
+                  onPendingFocusApplied={clearPendingFocus}
+                />
               </Suspense>
             </div>
           )}

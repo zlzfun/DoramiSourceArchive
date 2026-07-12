@@ -20,7 +20,7 @@ from api.articles_view import apply_article_query_filters
 from api.sources import subscription_source_ids
 from api.textutils import _json_loads
 from api.tokens import hash_subscription_token, normalize_delivery_policy
-from models.db import ArticleRecord, ReaderFeedTokenRecord, ReaderSubscriptionRecord
+from models.db import ArticleRecord, ReaderFeedTokenRecord, ReaderSubscriptionRecord, UserRecord
 
 
 def serialize_subscription(record: ReaderSubscriptionRecord, token: Optional[str] = None) -> Dict[str, Any]:
@@ -137,6 +137,9 @@ def resolve_subscription_sources_by_token(token: str) -> Optional[List[str]]:
             return subscription_source_ids(record)
         owner = resolve_feed_token_owner(session, token)
         if owner is not None:
+            user = session.get(UserRecord, owner)
+            if user is not None and user.role == "admin":
+                return []  # 管理员令牌不限来源（[] 即调用方契约中的「未限定」）
             return resolve_subscribed_source_ids(session, owner)
     return None
 
@@ -159,19 +162,28 @@ def feed_articles_for_owner(
 
     仅按发布时间过滤（不暴露归档时间这一内部细节）。若调用方传入 source_ids，
     取其与已订阅集合的交集，避免越权拉取未订阅来源。
+
+    管理员例外：admin 不设订阅（订阅是读者面的概念），其聚合令牌直通全库——
+    不按订阅收窄，显式传入的 source_ids 原样生效（与 MCP 侧「返回 [] = 不限
+    来源」的管理员语义一致）。
     """
-    subscribed = resolve_subscribed_source_ids(session, username)
-    if not subscribed:
-        return []
     requested = [s.strip() for s in (source_ids or "").split(",") if s.strip()]
-    allowed = [s for s in requested if s in set(subscribed)] if requested else subscribed
-    if not allowed:
-        return []
+    user = session.get(UserRecord, username)
+    if user is not None and user.role == "admin":
+        scoped_csv = ",".join(requested) if requested else None
+    else:
+        subscribed = resolve_subscribed_source_ids(session, username)
+        if not subscribed:
+            return []
+        allowed = [s for s in requested if s in set(subscribed)] if requested else subscribed
+        if not allowed:
+            return []
+        scoped_csv = ",".join(allowed)
     query = apply_article_query_filters(
         select(ArticleRecord),
         content_type=content_type,
         content_types=content_types,
-        source_ids=",".join(allowed),
+        source_ids=scoped_csv,
         has_content=has_content,
         search=search,
         publish_date_start=publish_date_start,

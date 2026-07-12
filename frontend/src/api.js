@@ -171,6 +171,13 @@ export function fetchArticle(id, options = {}) {
   return request(`/articles/${enc(id)}`, { ...options, errorMsg: '获取文章详情失败' });
 }
 
+// 分面目录：content_type / source_id 的全量 group-by 计数（{total, content_types, source_ids}，计数降序）。
+// 台账分面栏的单一数据源——选项来自全量归档而非当前页。
+export function fetchArticleFacets(filters = {}) {
+  const query = withFilters(new URLSearchParams(), filters).toString();
+  return request(`/articles/facets${query ? `?${query}` : ''}`, { errorMsg: '获取分面统计失败' });
+}
+
 export function deleteArticle(id) {
   return request(`/articles/${enc(id)}`, { method: 'DELETE', errorMsg: '删除失败' });
 }
@@ -227,6 +234,12 @@ export async function fetchRunningProgress() {
 export function fetchFetchRuns(filters = {}, limit = 100) {
   const params = withFilters(new URLSearchParams({ limit }), filters);
   return request(`/fetch-runs?${params}`, { errorMsg: '获取抓取运行历史失败' });
+}
+
+// 每日聚合统计(A 波):runs 按 day×job×scope 状态分列,articles 按 day×source 计数。
+// 运行页点阵/总账条精确化、台账 7 日趋势、节点行收录 mini 柱共用。
+export function fetchDailyStats(days = 30) {
+  return request(`/stats/daily?days=${days}`, { errorMsg: '获取每日统计失败' });
 }
 
 // ==================== 采集任务（Collection Jobs） ====================

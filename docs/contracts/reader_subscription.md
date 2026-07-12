@@ -127,6 +127,13 @@ The same applies to MCP via token: `search_articles` / `browse_articles` accept 
 (`dsub_` single subscription, or `dfeed_` the user's whole subscription union) that scopes
 results; the tokenless endpoint remains the global archive surface for trusted integrations.
 
+**Admin exception (2026-07)**: the `admin` account does not subscribe (subscriptions are a
+reader concept), so its `dfeed_` token is **not** narrowed by subscriptions — the personal
+feed endpoints (`GET /api/public/feed/articles[.md]`) return the whole archive, an explicit
+`source_ids` filter is honored verbatim (no subscription intersection), and the MCP scope
+resolver returns `[]` ("unrestricted") for an admin feed token. This mirrors the existing
+rule that admin's own session retrieval is never subscription-scoped.
+
 The 阅读器 is the user's browse surface; its 我的订阅 view is backed by
 `GET /api/articles?subscribed_scope=only` (the same `subscribed_scope=only|prioritize`
 filter also powers admin's 知识台账 lens; `off` is the default).

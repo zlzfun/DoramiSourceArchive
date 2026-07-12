@@ -24,6 +24,7 @@ from models.content import BaseContent, WebPageArticleContent
 
 
 class ConfigurableWebFetcher(BaseWebPageListFetcher):
+    is_template = True  # 通用模板节点:后端保留,前端目录不显现
     source_id = "generic_web"
     content_type = "web_article"
     category = "advanced"

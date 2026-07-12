@@ -89,12 +89,6 @@ class DatabaseStorage(BaseStorage):
         # node_groups 的遗留 additive 迁移已随节点组退役移除（实体简化阶段 2）；
         # 存量表由 Alembic 迁移内联进采集任务后 DROP。
 
-        if "collection_jobs" in inspector.get_table_names():
-            collection_job_columns = {column["name"] for column in inspector.get_columns("collection_jobs")}
-            if "per_fetcher_cron_json" not in collection_job_columns:
-                with self.engine.begin() as conn:
-                    conn.execute(text("ALTER TABLE collection_jobs ADD COLUMN per_fetcher_cron_json VARCHAR DEFAULT '{}'"))
-
         if "reader_subscriptions" in inspector.get_table_names():
             subscription_columns = {column["name"] for column in inspector.get_columns("reader_subscriptions")}
             if "owner_username" not in subscription_columns:

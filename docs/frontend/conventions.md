@@ -20,6 +20,12 @@
 - **进行中态用现在进行式 + 省略号**：`生成中…`、`保存中…`、`抓取中…`。
 - **动作命名用"动词+名词"**，不要"确认/确定/OK"：`删除文章`、`导出归档`。
 - 读者可见文案不得泄露内部架构术语（归档/采集/分发/层）；副本按 readerOnly/isAdmin 分流。
+- **`·` 间隔号配给（文案波 2026-07）**：仅用于行内同级 meta 的并列（`时间 · 来源 · 计数`），
+  两侧各一空格，一行至多 3 段；不用于句子内部连接或标题。
+- **破折号**：中文文案统一双横「——」且两侧不加空格；不用单「—」/「--」作中文破折号
+  （单「—」仅限英文语境与表格空值占位）；toast 与说明句不以破折号做装饰性收尾。
+- **相对时间**：阅读器等读者面的时间戳用相对时间（`x 分钟前 / x 小时前 / x 天前`，
+  超 7 天回落绝对日期），hover title 给完整时间；工作区台账/流水保持绝对时间（审计语境）。
 
 ## 2. 可访问性（Accessibility）
 
@@ -58,15 +64,44 @@
 
 | 角色类 | 用途 | 规格 |
 |---|---|---|
-| `.page-title` | 页面 H1 | clamp(26–32px)/900 |
-| `.page-subtitle` | 页面副标题/说明 | 14px/600·muted |
+| `.page-title` | 页面 H1(页头范式 `.page-head`) | 24px/800 |
+| `.page-subtitle` | 卡内说明(页级副标题已随页头范式退役) | 14px/600·muted |
 | `.card-title` / `.section-title` | 卡片/区块标题 | 15px/700 · 14px/700 |
 | `.body-text` | 默认正文/可读多行 | 14px/1.6/600 |
 | `.tiny-meta` | 次要 meta | 12px/500 |
 | `.micro-label` | 微标签/徽标/角标 | 11px/700 |
-| `.stat-number` | 指标数字 | 26px/900 |
+| `.stat-number` | 指标数字 | 26px/700·tabular |
+
+**页头范式(2026-07,全站统一)**:每页页头 = `.page-head`(`h1.page-title` 24/800 + 右侧
+`.page-head-actions`),**不带副标题**;流式页自带下边距,全屏壳页由壳选择器给内边距。
+新页面照此,勿再造 page-header/自定义标题。
+
+**静默仪器·字重纪律(2026-07)**:工作区 900/`font-black` 全面退场——页面级标题 800、
+指标数字 700、列表条目标题 ≤700(阅读器文章卡 600);大字号配中粗,仪表感靠 tabular 对齐而非超粗。
+数字列/计数/时间戳一律 `tabular-nums`。(登录/品牌面豁免。)
 
 语境化标签（`.form-label`/`.node-param-label`/`.active-filter-label` 等）各自就地维护，不必归一。
+
+**标题层级刻度(2026-07 字体审计波,硬约束)**:工作区标题按**职责层**取刻度,禁止就地发明字号:
+
+| 职责层 | 刻度 | 在册类 |
+|---|---|---|
+| 页 | 24/800 | `.page-title` |
+| 区(页内分区头) | 14/700 | `.zone-title`、`.tt-head-title`、`.sett-head-title`、`.section-title` |
+| 卡(surface-card 的实体标题) | 15/700/ink | `.card-title`、`.brief-col-title` |
+| 卡内小节 | 12.5–13/700 | `.tools-title`、`.sett-sync-title`、`.drawer-sec-title` |
+
+三条规则:①**同职责同刻度**——同一页面上并列的同层标题必须同字号(肇因:brief 卡列标题 12px
+与邻卡 `.card-title` 15px 并排);②**标题字号不得小于其辖区正文**(肇因:「定时配置」12px <
+表单标签/输入 13px 的倒挂);③新标题**必须复用在册类**,需要新刻度先改本表再落码。
+注意:无独立卡题的卡,其最高层分区标题**就是卡题职责**,取卡级刻度(brief-card 两列标题即此例)。
+并列多列的标题要求**顶对齐**——列头行若含更高的控件(按钮),用 `align-items: flex-start` +
+控件负 margin 配平,不许让控件把标题压离基线。
+
+> ⚠️ **`button { font: inherit }` 陷阱(未分层压层)**:`index.css` 顶部这条全局规则是**未分层**的
+> `font` 简写,按 cascade layers 规则会压过 `@layer components` 里任何类选择器的 `font-size`——
+> 给按钮类写 `font-size` 看似合法实则不生效(计算值回落到继承链)。给按钮定字号要么写在**容器**上
+> 靠继承穿透(实例:`.ledger-scope`),要么用未分层规则/工具类。排查「字号怎么改都不生效」先想到这条。
 
 ## 4. 颜色令牌（语义四套，互不混用）
 
@@ -78,6 +113,19 @@
 - **强调/状态**：`--dorami-accent`(=`--dorami-blue`) / `blue-2` / `accent-ink` ——
   **唯一饱和色，只用于「激活/状态」与「一个视图里最重要的那个动作（CTA）」。**
 - 散落的 indigo/blue 原子类已在 `@theme` 折叠为同一 accent；emerald/amber/red/slate 语义中性色照常用。
+
+**静默仪器·accent 纪律（2026-07，全站已落地）**：
+- **实心/渐变 accent 一屏 ≤2 处**：主按钮（CTA）+ 选中标记。chip/徽标激活态一律
+  「`--dorami-wash` 底 + `--dorami-accent-ink` 字 + 无描边」，不再渐变实心。
+- **hover 不得引入 accent**：hover 背景 `--dorami-soft`（暗色可点控件 `--dorami-raised`），
+  文字/描边走 ink/border-strong；wash 基底元素的 hover 只允许同族加深。
+  例外：focus 焦点环（a11y）、checkbox 类控件、CTA 自身的提亮。
+- **选中语法全站统一 = accent 竖条**：纵向列表/导航项选中 = 3px `--dorami-blue` 左竖条
+  （`inset 3px 0 0` 或 `::before`）+ `--dorami-soft` 底，**不用 indigo 描边/ring/glow**；
+  横向控件：segmented 拇指 = surface 底 + ink 字 + 中性 `--sh-1`，顶栏 tab = 底部 accent 条。
+- 「运行中/进度」类活动态（进度线、运行 pulse、running 徽标）与 accent 同族，是有意的产品语义。
+- **语义状态 token(2026-07)**:ok/warn/bad/run/idle 五态一律引用 `--state-*` / `--state-*-bg`
+  成对 token(亮暗自动翻转),不再散写 emerald/rose/amber hex。
 
 ## 5. 圆角（canonical 家族）
 
@@ -94,16 +142,32 @@
 一个视图内只用同一圆角家族，勿混圆与方。Tailwind 具名 `rounded-lg/xl/2xl/full` 为标准梯度可共存；
 `50%`（正圆）/`0`（显式去角）等特例保留。
 
-## 6. 高程/阴影
+## 6. 高程/阴影与描边预算
 
-层级**先靠色面 + 边框**，阴影克制（参考 `--sh-1/2/3`，工作区已调淡）。新建卡片优先用 `.surface-card`
-而非自定义重阴影；模态等确需悬浮的浮层才用强高程。
+**静默仪器·描边预算（2026-07）：同一层级只用一种分隔手段。**
+- 卡片级容器：描边走 `--dorami-card-bd`（亮=transparent、暗=细白线），分隔靠 `--sh-2` +
+  顶部内高光 `inset 0 1px 0 var(--dorami-edge)`；`.surface-card` 已内置，新卡片直接复用。
+- 状态章/chip：淡底 + 深字，**无描边**（准绳：`.vector-status-*`）。
+- 表格行分隔：至多一条 `--dorami-border` hairline；禁 zebra+行线双保险、禁 border-strong 行线。
+- 禁止 border + inset ring + 外阴影三重叠加；卡片无 hover 抬升（装饰性位移已拆）。
+模态等确需悬浮的浮层才用强高程（`--sh-3`）。
+
+**组件范式速查(新增展示一律复用,勿另造)**:
+- **状态章 `.stamp` + `.stamp-{ok|warn|bad|run|idle}`**:淡底+深字+形状点(方/三角/菱/圆呼吸/圆),无描边;可点章用 `button.stamp`(hover wash)。
+- **页码 `.pager` / `.pager-btn`(`.is-on`=accent 实底,选中标记) / `.pager-ellipsis`**:所有分页统一。
+- **微型分段 `.mini-seg` / `.mini-seg-btn`(`.is-on`=白拇指)**:表脚/工具条级轻量二择(如表格密度 舒适/紧凑),勿再造小开关。
+- **滚动条**:全局范式已定——常态隐形、悬停所在容器显现(`--dorami-scrollbar*` token);组件内**禁止**再写 `::-webkit-scrollbar`。
+- **主按钮扁平化**:`.action-button-primary`/`.primary-action` = 实心 accent + `--sh-1`,hover 加深;无渐变无 glow(登录 auth-* 豁免)。
+- **分面数据源**:筛选栏选项一律来自聚合端点(`GET /api/articles/facets` 之类的全量 group-by),不得从当前页数据推导。
 
 ## 7. 动效（区分场景）
 
-- **工作区**：功能态 ~150ms、浮层/弹层 ~200–240ms、面板/模态 ~300ms。引用 motion token：
-  `--motion-fast`(150) / `--motion-medium`(240) / `--motion-slow`(300) + `--motion-ease`。
-  **动效只为澄清状态变化，勿装饰**；长列表逐行 stagger 已弱化封顶，勿再加长。
+- **工作区（静默仪器，2026-07）：动效 = feedback-only。** 仪式性入场已整体拆除
+  （`tab-enter`/`row-stagger`/`entrance-stagger` keyframes 已删，`.tab-panel`/`.row-stagger`/`.stagger`
+  仅存为无动效锚点）——**不要再给切页/列表/卡片加入场编排**。
+  保留白名单：modal/toast/popover 开合、`selection-bar` 上下文条、进度条/进度线、骨架屏 shimmer、
+  开关/拇指滑动、运行中 pulse、hover 即时变底、瞬态定位高亮（`source-row-focus`）。
+  时长引用 motion token：`--motion-fast`(150) / `--motion-medium`(240) / `--motion-slow`(300) + `--motion-ease`。
 - **品牌/登录页**：电影感动画（秒级、硬编码）保留，不引用上述 token，不收敛。
 - 所有动画都要在 `@media (prefers-reduced-motion: reduce)` 下降级（已有兜底，新增动画须遵守）。
 
@@ -113,6 +177,41 @@
   次要动作用 `.action-button-secondary / -quiet`，破坏性动作用 `.action-button-danger`。
 - 复用既有原语（`.action-button*` / `.icon-button` / `.surface-card` / `.modal-*` / `.toast-*`），
   不要为同类元素另起样式。
+
+**按钮尺寸三档(2026-07 按钮规格波,硬约束)**——按**语境**取档,同语境同档,禁止就地发明高度:
+
+| 档 | 规格 | 语境 |
+|---|---|---|
+| L | 裸 `.action-button`(40px/14px) | 模态脚部、页级批量条(board-batchbar)、空态 CTA |
+| M | `min-h-[32px] px-3 text-xs` | **页头 `page-head-actions`**(用户拍板:页头取矮档更优雅)、卡头/卡内、抽屉脚部、设置面板、表格工具条 |
+| S | ≤28px,各范式类自治 | 行内微操作:`.rowact-btn`/`.copybtn`(26)、`.tt-act-btn`(格条)、行内文字微钮 |
+
+三条规则:①**同语境同档**——页头按钮一律 M 档三件套(肇因:运行页页头 36px 与节点页
+40px 并存,切页违和;后拍板全站页头降 M);②M 档写法固定为 `min-h-[32px] px-3 text-xs`
+三件套,30/34/36/48 等中间值一律并档(48 档已随向量雷达检索行降为 40 退役);
+③chips(model-chip/stamp/target-chip)不是按钮档位,不受本表约束;④**同一排并列的按钮
+必须等高**——页头 M 档 32 与 `.icon-button.signal-refresh`(32)天然同高;mini-seg 等
+文字分段控件视作标签,不强行对齐。
+
+**分段控件家族刻度(2026-07 补)**——三档,按语境取用,高度对齐所在排:
+
+| 类 | 总高(壳+拇指) | 语境 |
+|---|---|---|
+| `.segmented-control` | 32(3+24+边2),字 12.5/650 | 页头视图/子页切换(与页头 M 档同轴) |
+| `.sett-seg` | ~34(3+28) | 设置面板行内(外观三态等) |
+| `.mini-seg` | ~26(2+22),字 11 | 工具条/表脚/卡头轻量刻度(时间窗、密度) |
+
+注意:分段拇指是 button,**字号/字重必须写在容器上靠继承穿透**(`button{font:inherit}`
+未分层陷阱,§3);`.scope-toggle` 已无使用者,属死类待清扫,新分段勿取用。
+
+**输入框两档(2026-07 补)**:表单档 = `.form-input` 默认(36px,竖排表单配 `.form-label`);
+行内工具档 = `.form-input.form-input-inline`(32px/12px,与 M 档按钮、segmented 同排等高——
+工具行/zone-head 里的搜索框一律取此档;`.board-search` 已同轴 32)。`.catalog-search` 死类待清扫。
+
+**小表单模态语法 `.form-sheet`(2026-07)**:头(`-head`:card-title + 30px 关闭 icon-button)/
+身(`-body` + `-field`)/脚(`-foot`:取消 quiet + 主钮,右对齐),hairline 分隔、无色底条——
+旧「well 标题条 + soft 脚条 + indigo 图标」三段横条语法退役;新小弹窗一律用此三件套
+(在册消费者:运维新建读者/重置密码)。
 
 ## 9. 暗色主题（已落地）
 

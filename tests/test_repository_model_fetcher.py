@@ -147,7 +147,9 @@ def test_github_repos_skip_readme_for_already_stored_via_dedup():
     assert readme_calls == []
 
 
-def test_deepseek_repos_inherits_readme_params_in_schema():
+def test_deepseek_repos_schema_is_limit_only_with_fixed_readme_defaults():
+    # 参数固化波:抓取偏好固化为类默认,schema 只剩 limit;README 补充恒开且对齐全文硬上限。
     schema_fields = {entry["field"] for entry in DeepSeekGitHubRepositoriesFetcher.get_parameter_schema()}
-    assert "fetch_readme" in schema_fields
-    assert "readme_max_chars" in schema_fields
+    assert schema_fields == {"limit"}
+    assert DeepSeekGitHubRepositoriesFetcher.default_fetch_readme is True
+    assert DeepSeekGitHubRepositoriesFetcher.default_readme_max_chars == 40_000

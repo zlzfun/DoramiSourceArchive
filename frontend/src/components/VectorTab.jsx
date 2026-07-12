@@ -76,19 +76,16 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in">
-      <div className="page-header flex-col xl:flex-row">
-        <div className="page-heading">
-          <h2 className="page-title">向量雷达</h2>
-          <p className="page-subtitle mt-3 max-w-3xl">在你订阅的来源范围内进行语义检索与 RAG 上下文导出。向量构建由管理员统一维护。</p>
-        </div>
+    <div className="space-y-6">
+      <div className="page-head">
+        <h1 className="page-title">向量雷达</h1>
       </div>
 
       <div className="surface-card flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[var(--r-card)] px-5 py-3 text-xs font-bold text-slate-500">
         {!scopedToSubscriptions ? (
           <span>检索覆盖全部归档（管理员视图）。</span>
         ) : subStats.subscribed_source_count === 0 ? (
-          <span>你还没有订阅任何来源 —— 先在 阅读器 的「发现更多来源」订阅即可在此检索。</span>
+          <span>你还没有订阅任何来源——先在 阅读器 的「发现更多来源」订阅即可在此检索。</span>
         ) : (
           <span>
             已订阅 {subStats.subscribed_source_count} 个源 · 已建向量 {subStats.vectorized}/{subStats.total} 篇
@@ -98,12 +95,12 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[340px_1fr]">
-        <div className="relative overflow-hidden rounded-[var(--r-card)] bg-gradient-to-br from-[var(--dorami-accent-ink)] via-[var(--dorami-blue)] to-[var(--dorami-blue-2)] p-6 text-white shadow-[var(--sh-accent)]">
-          <div className="absolute -right-14 -top-14 h-40 w-40 rounded-full bg-white/16" />
+        <div className="surface-card relative overflow-hidden rounded-[var(--r-card)] p-6">
+          <div className="absolute -right-14 -top-14 h-40 w-40 rounded-full bg-[var(--dorami-wash)]" />
           <div className="relative">
-            <h4 className="text-indigo-100 font-bold text-sm mb-2 flex items-center"><Database className="w-4 h-4 mr-1.5" /> ChromaDB 挂载块数</h4>
-            <div className="text-5xl font-bold">{vectorStats.total} <span className="text-lg font-medium opacity-80">Chunks</span></div>
-            <p className="mt-4 text-xs font-bold text-indigo-100">向量库状态会随索引和重索引操作刷新。</p>
+            <h4 className="mb-2 flex items-center text-sm font-bold text-slate-500"><Database className="mr-1.5 h-4 w-4 text-[var(--dorami-blue)]" /> ChromaDB 挂载块数</h4>
+            <div className="text-5xl font-bold tabular-nums text-slate-800">{vectorStats.total} <span className="text-lg font-medium text-slate-500">Chunks</span></div>
+            <p className="mt-4 text-xs font-bold text-slate-500">向量库状态会随索引和重索引操作刷新。</p>
           </div>
         </div>
 
@@ -112,7 +109,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
 
         {/* 检索控制行 */}
         <div className="vector-search-layout mb-3">
-          <label className="search-box min-h-[48px] flex-1">
+          <label className="search-box min-h-[40px] flex-1">
             <Search className="mr-3 h-5 w-5 text-slate-500" />
           <input
             type="text"
@@ -123,10 +120,10 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
             className="py-3"
           />
           </label>
-          <button onClick={handleSearch} disabled={searching} className="action-button action-button-primary min-h-[48px] w-full justify-center px-6">
+          <button onClick={handleSearch} disabled={searching} className="action-button action-button-primary min-h-[40px] w-full justify-center px-6">
             {searching ? <RefreshCw className="animate-spin" /> : <><Search />检索</>}
           </button>
-          <button onClick={handleCopyContext} disabled={copyingContext || !searchQuery.trim()} title="将检索结果组装为 RAG 上下文并复制到剪贴板（可直接粘贴到下游 LLM 工作流）" className="action-button action-button-secondary min-h-[48px] w-full justify-center disabled:opacity-40">
+          <button onClick={handleCopyContext} disabled={copyingContext || !searchQuery.trim()} title="将检索结果组装为 RAG 上下文并复制到剪贴板（可直接粘贴到下游 LLM 工作流）" className="action-button action-button-secondary min-h-[40px] w-full justify-center disabled:opacity-40">
             {copiedContext ? <Check /> : copyingContext ? <RefreshCw className="animate-spin" /> : <Copy />}
             复制上下文
           </button>
@@ -180,7 +177,7 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
         </div>
 
         {/* 结果列表 */}
-        <div className="row-stagger space-y-4">
+        <div className="space-y-4">
           {searching && searchResults.length === 0 && (
             Array.from({ length: 3 }).map((_, i) => (
               <div key={`vec-skeleton-${i}`} className="surface-card rounded-[var(--r-card)] p-5">
@@ -202,13 +199,13 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
                 <div className="flex items-start justify-between mb-2">
                   <h4 className="card-title pr-4 line-clamp-1 flex-1">
                     {sourceUrl
-                      ? <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="hover:text-[var(--dorami-blue)] transition-colors flex items-center gap-1">
+                      ? <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="hover:underline flex items-center gap-1">
                           {res.metadata?.title || '未知片段'}<ExternalLink className="w-3 h-3 shrink-0" />
                         </a>
                       : (res.metadata?.title || '未知片段')
                     }
                   </h4>
-                  <StatusBadge meta={meta} className="shrink-0">{meta.label} {res.distance.toFixed(3)}</StatusBadge>
+                  <StatusBadge meta={meta} className="shrink-0 tabular-nums">{meta.label} {res.distance.toFixed(3)}</StatusBadge>
                 </div>
                 <div className="flex flex-wrap gap-1.5 mb-3">
                   <span className="data-chip" title={res.metadata?.content_type || ''}>{contentTypeLabel(res.metadata?.content_type, res.metadata?.content_type)}</span>
