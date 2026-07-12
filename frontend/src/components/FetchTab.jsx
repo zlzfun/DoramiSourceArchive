@@ -822,6 +822,9 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                       <span className={`inspector-run-dot inspector-run-${meta.tone}`} />
                       <b>{meta.label}</b>
                       <span className="inspector-run-saved">+{run.saved_count ?? 0}</span>
+                      {(run.skipped_count ?? 0) > 0 && (
+                        <span className="inspector-run-skip">跳过 {run.skipped_count}</span>
+                      )}
                       <time>{formatRelativeTime(run.started_at)}</time>
                     </button>
                   );

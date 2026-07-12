@@ -6506,6 +6506,14 @@ input[type="radio"] {
     font-weight: 700;
   }
 
+  /* 跳过读数:解释「成功 +0」(内容全为已入库重复);仅 skipped>0 时出现 */
+  .inspector-run-skip {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
   .inspector-runrow time {
     margin-left: auto;
     font-size: 10px;
