@@ -4151,7 +4151,8 @@ input[type="radio"] {
   .zone-acts { margin-left: auto; }
 
   /* 双列图表栅格(内容/AI 子页) */
-  .admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  /* stretch:并排两卡等高、底缘成线(集成页 channels-pair 同法;内容子页两卡曾 start 不齐) */
+  .admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; }
 
   /* ── KPI 总账条(被动读数,数字全 ink;语义色只留异常) ── */
   .kpi-strip { display: flex; align-items: stretch; flex-wrap: wrap; border-radius: var(--r-card); overflow: hidden; }
