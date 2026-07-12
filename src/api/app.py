@@ -41,6 +41,7 @@ from models.content import BaseContent
 # 引入动态抓取器注册中心
 from fetchers.registry import fetcher_registry, DECOMMISSIONED_FETCHER_IDS
 from api.skill_router import router as skill_router
+from version import __version__
 from api import deps
 from api.security_checks import enforce_security_config
 from api.serializers import serialize_user
@@ -241,6 +242,7 @@ def reader_role_enabled(session: Optional[Dict[str, Any]] = None) -> bool:
 def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     ai_beta_enabled, llm_configured = _ai_capabilities(session)
     return {
+        "version": __version__,
         "role": runtime_role(),
         "account_role": session.get("role") if session else None,
         "collector_enabled": collector_role_enabled(session),

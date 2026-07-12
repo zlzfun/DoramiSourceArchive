@@ -193,7 +193,11 @@ def test_disabling_user_revokes_existing_cookie(monkeypatch, tmp_path):
     with TestClient(app_module.app) as user_client, TestClient(app_module.app) as admin_client:
         _login(admin_client, "admin", "admin")
         _login(user_client, "user", "user")
-        assert user_client.get("/api/runtime").status_code == 200
+        runtime = user_client.get("/api/runtime")
+        assert runtime.status_code == 200
+        # 版本号透出(单一事实来源 src/version.py,设置-关于展示)
+        from version import __version__
+        assert runtime.json()["version"] == __version__
 
         # 管理员停用 user → user 已签发的 cookie 在下一次请求即失效。
         assert admin_client.put("/api/accounts/user", json={"is_active": False}).status_code == 200

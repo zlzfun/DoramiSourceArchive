@@ -124,7 +124,7 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange, run
               />
             )}
             {activeSection.id === 'about' && (
-              <AboutSection accountRoleLabel={accountRoleLabel} isAdmin={isAdmin} />
+              <AboutSection accountRoleLabel={accountRoleLabel} isAdmin={isAdmin} version={runtimeInfo?.version} />
             )}
           </div>
         </div>

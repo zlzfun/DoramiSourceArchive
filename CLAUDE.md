@@ -50,6 +50,10 @@ Data is stored in the `data/` directory (SQLite `cms_data.db` and ChromaDB `chro
 
 `./deploy.sh` is the one-shot production deploy: it installs backend deps into a `venv/`, builds the frontend, copies `frontend/dist/*` into the Nginx html dir, then (re)starts the backend under PM2 via `ecosystem.config.js` (app `dorami-backend-v2`, `interpreter: ./venv/bin/python`, `script: src/main.py`) and reloads Nginx. It requires `config/production.ini` (the deploy points the backend at it via `DORAMI_CONFIG_FILE`); create it from `config/production.example.ini` first. The frontend is served as static assets by Nginx in production, **not** by Vite — only the backend runs as a process.
 
+## Versioning
+
+单一事实来源是 `src/version.py` 的 `__version__`(SemVer:MAJOR=产品形态级改版 / MINOR=功能波 / PATCH=修复)。升版本改它并同步 `pyproject.toml` 的 `version`(项目非 editable install,importlib.metadata 不可用);`/api/runtime` 透出 `version`,前端「设置 → 关于」展示;合入 main 的版本节点打 annotated tag `v{__version__}`。纪元:1.x 采集归档原型 → 2.x 读者分发平台(PM2 app 名 dorami-backend-v2 即此纪元遗痕)→ 3.0.0 静默仪器全站重构收官。
+
 ## Architecture Overview
 
 **DoramiSourceArchive** (哆啦美·归档中枢) is an AI content aggregation CMS with RAG capabilities. It fetches content from multiple sources, stores it in SQLite, and builds a vector index in ChromaDB for semantic search. It splits into two cooperating layers — a **collector/archive** side (fetching, archival, vectorization) and a **reader/distribution** side (per-user subscriptions, semantic search, tokenized feed/MCP delivery) — gated primarily by login account role (`admin` superuser vs restricted `user` reader), with an optional deployment runtime-role axis for split deployments (see *Access control — login account role*).
