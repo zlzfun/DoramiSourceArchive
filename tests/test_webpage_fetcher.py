@@ -1230,3 +1230,32 @@ def test_qbitai_detail_scoped_to_article_body_drops_noise_and_tags():
     assert "热门文章" not in text and "关于量子位" not in text and "ICP备" not in text
     # 不残留任何 HTML 标签。
     assert "<" not in text and ">" not in text
+
+
+def test_detail_fallback_survives_whitelisted_kwargs():
+    """参数固化后,定时/手动运行的 kwargs 经 schema 白名单过滤已不含 fetch_detail,
+    _bool_param(None) 必走类级行为开关回落线——该属性曾被参数退场波连带删除,
+    生产定时任务批量 AttributeError('default_fetch_detail')(本地测试均显式传参,
+    从未踩到回落线)。遍历注册中心全部 web 系节点,保证任何断面不再炸。"""
+    from fetchers.registry import FetcherRegistry
+    from fetchers.impl.webpage_fetcher import BaseWebPageListFetcher
+
+    registry = FetcherRegistry()
+    registry.discover()
+    web_classes = [
+        registry.get_class(meta["id"]) for meta in registry.get_all_metadata()
+        if issubclass(registry.get_class(meta["id"]), BaseWebPageListFetcher)
+    ]
+    assert web_classes, "注册中心应至少有一个 web 系节点"
+    detail_on = set()
+    for cls in web_classes:
+        value = cls()._bool_param(None)  # 回落线:不得抛 AttributeError
+        assert isinstance(value, bool)
+        if value:
+            detail_on.add(cls.__name__)
+    # 参数退场波前声明恒抓详情页的七个节点,行为开关必须为 True(忠实恢复)
+    assert {
+        "AnthropicNewsWebFetcher", "ClaudeBlogWebFetcher", "IThomeAiWebFetcher",
+        "QwenBlogWebFetcher", "CursorChangelogWebFetcher", "QbitAiWebsiteFetcher",
+        "AieraWebsiteFetcher",
+    } <= detail_on

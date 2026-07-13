@@ -68,6 +68,10 @@ class BaseWebPageListFetcher(BaseFetcher):
     default_limit = 12
     # 参数退场波:恒抓正文(fetch_detail/detail_max_chars 用户参数已退场,
     # 读取逻辑保留作兼容 fallback);截断仅剩 DETAIL_HARD_CAP 病态页兜底。
+    # default_fetch_detail 是**类级行为开关**(节点声明是否抓详情页),不是用户参数
+    # ——退场波曾把它连带删除,致 _bool_param 回落线 AttributeError(生产定时批量炸,
+    # 本地测试均显式传参未踩回落):行为开关必须保留,子类按源质量声明 True。
+    default_fetch_detail = False
     default_detail_max_chars = DETAIL_HARD_CAP
     generic_link_titles = {"read more", "learn more", "blog", "news", "publication", "publications"}
     # 列表页常把导航/页脚链接（定价、企业版等）也匹配进来：它们既无正文、详情页又多为 404。
@@ -496,6 +500,7 @@ class BaseWebPageListFetcher(BaseFetcher):
             )
 
 class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
+    default_fetch_detail = True
     source_id = "web_anthropic_news"
     name = "Anthropic News"
     description = "抓取 Anthropic 官网 News 页面中的产品、研究、企业与安全动态。"
@@ -642,6 +647,7 @@ class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
 
 
 class ClaudeBlogWebFetcher(BaseWebPageListFetcher):
+    default_fetch_detail = True
     source_id = "web_claude_blog"
     name = "Claude Blog"
     description = "抓取 Claude 官方 Blog 页面中的 Claude、Claude Code、Agent 与企业 AI 更新。"
@@ -667,6 +673,7 @@ class ClaudeBlogWebFetcher(BaseWebPageListFetcher):
 
 
 class IThomeAiWebFetcher(BaseWebPageListFetcher):
+    default_fetch_detail = True
     source_id = "web_ithome_ai"
     name = "IT之家 AI"
     description = "抓取 IT之家智能时代人工智能分类页中的 AI 模型、产品、智能体和产业资讯。"
@@ -820,6 +827,7 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
 
 
 class QwenBlogWebFetcher(BaseWebPageListFetcher):
+    default_fetch_detail = True
     source_id = "web_qwen_blog"
     name = "Qwen Blog"
     description = "抓取 Qwen 官方 Blog 中的模型、产品、多模态与 Agent 动态。"

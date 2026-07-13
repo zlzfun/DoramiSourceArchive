@@ -1238,6 +1238,7 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
 
 
 class CursorChangelogWebFetcher(BaseWebPageListFetcher):
+    default_fetch_detail = True
     source_id = "web_cursor_changelog"
     name = "Cursor Changelog"
     description = "抓取 Cursor 官方 Changelog 中的 AI 编程、Agent 与 IDE 产品更新。"
@@ -1288,6 +1289,7 @@ class CursorChangelogWebFetcher(BaseWebPageListFetcher):
 
 
 class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
+    default_fetch_detail = True
     source_id = "web_qbitai"
     name = "量子位 Website"
     description = "抓取量子位官网中的中文 AI 新闻、模型、产品和产业动态。"
@@ -1491,6 +1493,7 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
 
 
 class AieraWebsiteFetcher(BaseWebPageListFetcher):
+    default_fetch_detail = True
     source_id = "web_aiera"
     name = "新智元 Website"
     description = "抓取新智元官网公开文章列表中的中文 AI 模型、产品、产业和研究资讯。"
