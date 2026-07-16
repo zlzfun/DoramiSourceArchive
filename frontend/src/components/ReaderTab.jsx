@@ -14,6 +14,10 @@ import {
   ChevronRight,
   Star,
   Languages,
+  CheckCheck,
+  CircleDot,
+  RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import ReaderMarkdown from './ReaderMarkdown';
@@ -34,9 +38,18 @@ import {
   removeFavorite,
   translateArticle,
   recordArticleRead,
+  fetchUnreadCounts,
+  markAllRead,
+  markArticleRead,
+  markArticleUnread,
+  summarizeArticle,
 } from '../api';
 
 const PAGE_SIZE = 30;
+const UNREAD_POLL_MS = 60000; // 未读轻轮询间隔（标签页可见时才真正请求）
+
+// 未读徽标数显示上限
+const formatBadge = (n) => (n > 99 ? '99+' : String(n));
 
 // ── 骨架屏 · 大块加载态形状占位 ──
 // 形状贴近真实内容，替代居中 spinner；条数固定、宽度错落，纯装饰故 aria-hidden。
@@ -109,6 +122,26 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // ── 内容形态视图轴(迭代 2):我的订阅聚合分「文章 / 动态」两个流 ──
+  // 文章 = 阅读内容(默认);动态 = changelog/Release/仓库/模型监控等短条目。
+  // 单源视图不需要该轴(源是形态同质的),由源自身 shape 决定卡片密度。
+  const [shape, setShape] = useState('article');
+
+  // ── 未读体系 ──
+  // 计数来自 GET /api/reader/unread-counts(挂载即拉一次以校准水位,随后 60s 轻轮询);
+  // 条目未读标记来自列表接口的 with_unread 页级标记 + 本会话逐篇覆盖(readOverrides)。
+  const [unreadBySource, setUnreadBySource] = useState({});
+  const [unreadOnly, setUnreadOnly] = useState(false);   // 只看未读
+  // 本会话逐篇覆盖:id → true(已读)/false(未读)。打开=覆盖已读(圆点即消);
+  // 手动「标为未读」=覆盖未读(圆点复现)。无覆盖时以服务端 article.unread 为准。
+  const [readOverrides, setReadOverrides] = useState(() => new Map());
+  const readOverridesRef = useRef(new Map());
+  const [markingRead, setMarkingRead] = useState(false);
+  const [paneReadToggling, setPaneReadToggling] = useState(false);
+  // 「有 N 篇新文章」提示:相邻两次轮询同视图未读数的正增量累计;切视图/刷新列表归零。
+  const [freshCount, setFreshCount] = useState(0);
+  const prevScopeUnreadRef = useRef(null);
+
   const [articles, setArticles] = useState([]);
   const [articlesTotal, setArticlesTotal] = useState(0);
   const [articlesLoading, setArticlesLoading] = useState(false);
@@ -123,6 +156,14 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
   const [translating, setTranslating] = useState(false);
   const [translatedBody, setTranslatedBody] = useState(null);
   const translationCacheRef = useRef(new Map());                  // id → 译文
+
+  // ── 用户面 AI · 要点摘要(正文顶部「AI 总结」卡;缓存 id → 摘要)──
+  const [activeSummary, setActiveSummary] = useState(null);
+  const [summarizing, setSummarizing] = useState(false);
+  const summaryCacheRef = useRef(new Map());
+
+  // ── 日报置顶卡:最新一期 AI 资讯日报(独立拉取,不依赖订阅关系)──
+  const [latestBrief, setLatestBrief] = useState(null);
 
   const listRef = useRef(null);
   // 正文缓存（id → content）+ 「最新选中 id」防竞态：快速连点时丢弃晚到的过期正文响应
@@ -158,6 +199,51 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
 
   useEffect(() => { loadFavoriteIds(); }, [loadFavoriteIds]);
 
+  // source_id → 形态('article'|'bulletin'),目录未含的源按文章形兜底
+  // (声明在未读逻辑之前:applyUnreadCounts 的视图口径依赖它)
+  const sourceShapeMap = useMemo(() => {
+    const map = {};
+    for (const s of sources) map[s.source_id] = s.shape || 'article';
+    return map;
+  }, [sources]);
+
+  // ── 未读计数:应用响应 + 正增量检测(驱动「有 N 篇新文章」提示条)──
+  const applyUnreadCounts = useCallback((data) => {
+    const bySource = data.by_source || {};
+    setUnreadBySource(bySource);
+    if (showFavorites) return; // 收藏视图不做新内容提示
+    // 视图范围:单源看该源;聚合只累计当前形态轴下的源(文章/动态两个流独立提示)
+    const scope = activeSourceId
+      ? (bySource[activeSourceId] || 0)
+      : Object.entries(bySource).reduce(
+          (sum, [sid, n]) =>
+            sum + ((sourceShapeMap[sid] === 'bulletin' ? 'bulletin' : 'article') === shape ? n : 0),
+          0,
+        );
+    const prev = prevScopeUnreadRef.current;
+    prevScopeUnreadRef.current = scope;
+    if (prev !== null && scope > prev) setFreshCount((c) => c + (scope - prev));
+  }, [activeSourceId, showFavorites, shape, sourceShapeMap]);
+
+  const loadUnreadCounts = useCallback(async () => {
+    try {
+      applyUnreadCounts(await fetchUnreadCounts());
+    } catch { /* 未读计数非关键路径,静默失败,等下个轮询周期 */ }
+  }, [applyUnreadCounts]);
+
+  // 挂载即拉一次(顺带校准存量订阅的水位),此后 60s 轻轮询;标签页不可见时跳过请求。
+  useEffect(() => {
+    let timer = null;
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      if (!document.hidden) await loadUnreadCounts();
+      if (!cancelled) timer = setTimeout(tick, UNREAD_POLL_MS);
+    };
+    tick();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [loadUnreadCounts]);
+
   // 搜索防抖
   useEffect(() => {
     const timer = setTimeout(() => setSearchQuery(searchInput.trim()), 300);
@@ -177,11 +263,42 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
     [sources, subscribedIds],
   );
 
+  const subscribedArticleSources = useMemo(
+    () => subscribedSources.filter(s => (s.shape || 'article') === 'article'),
+    [subscribedSources],
+  );
+  const subscribedBulletinSources = useMemo(
+    () => subscribedSources.filter(s => (s.shape || 'article') === 'bulletin'),
+    [subscribedSources],
+  );
+
   const discoverSources = useMemo(
     () => sources
       .filter(s => !subscribedIds.has(s.source_id))
       .sort((a, b) => (b.count || 0) - (a.count || 0)),
     [sources, subscribedIds],
+  );
+  const discoverArticleSources = useMemo(
+    () => discoverSources.filter(s => (s.shape || 'article') === 'article'),
+    [discoverSources],
+  );
+  const discoverBulletinSources = useMemo(
+    () => discoverSources.filter(s => (s.shape || 'article') === 'bulletin'),
+    [discoverSources],
+  );
+
+  // 未读按形态拆分:文章未读是主徽标(我的订阅行),动态未读弱化为分组小计
+  const unreadByShape = useMemo(() => {
+    const totals = { article: 0, bulletin: 0 };
+    for (const [sid, n] of Object.entries(unreadBySource)) {
+      totals[sourceShapeMap[sid] === 'bulletin' ? 'bulletin' : 'article'] += n;
+    }
+    return totals;
+  }, [unreadBySource, sourceShapeMap]);
+
+  // 当前列表是否呈现动态形(决定卡片密度):单源看源的 shape,聚合看视图轴
+  const bulletinView = !showFavorites && (
+    activeSourceId ? sourceShapeMap[activeSourceId] === 'bulletin' : shape === 'bulletin'
   );
 
   const hasNoSubscriptions = !sourcesLoading && subscribedSources.length === 0;
@@ -200,11 +317,28 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
     const id = article?.id || null;
     activeIdRef.current = id;
     // 主动打开一篇新文章即记一次阅读（同篇连点不重复计；fire-and-forget）。
-    if (id && id !== prevId) recordArticleRead(id);
+    // 后端同一请求里双写计量+逐篇已读状态;此处同步做乐观清点:圆点即消、未读数-1。
+    if (id && id !== prevId) {
+      recordArticleRead(id);
+      const override = readOverridesRef.current.get(id);
+      const wasUnread = override === undefined ? !!article.unread : !override;
+      if (wasUnread) {
+        readOverridesRef.current.set(id, true);
+        setReadOverrides(new Map(readOverridesRef.current));
+        const sid = article.source_id;
+        setUnreadBySource((prev) => {
+          const n = prev[sid] || 0;
+          return n > 0 ? { ...prev, [sid]: n - 1 } : prev;
+        });
+      }
+    }
     // 切文章即回到原文视图；译文若已缓存则备好，等用户主动点「译为中文」再显示。
     setShowTranslation(false);
     setTranslating(false);
     setTranslatedBody(id ? (translationCacheRef.current.get(id) ?? null) : null);
+    // 摘要:会话缓存 → 列表条目自带的 summary_zh(服务端缓存)→ 空(显示生成入口)
+    setSummarizing(false);
+    setActiveSummary(id ? (summaryCacheRef.current.get(id) ?? article.summary_zh ?? null) : null);
     if (!id) { setActiveBody(null); setActiveBodyLoading(false); return; }
     // 兜底：若列表项偶然已带正文（如详情接口回填），直接用
     if (article.content != null) { setActiveBody(article.content); setActiveBodyLoading(false); return; }
@@ -226,6 +360,35 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
         }
       });
   }, [showToast]);
+
+  // ── AI · 要点摘要(结果双层缓存:服务端 extensions_json + 本会话 Map)──
+  const handleSummarize = useCallback(async () => {
+    const id = activeArticle?.id;
+    if (!id || summarizing) return;
+    setSummarizing(true);
+    try {
+      const data = await summarizeArticle(id);
+      summaryCacheRef.current.set(id, data.summary);
+      if (activeIdRef.current === id) setActiveSummary(data.summary);
+      // 列表条目同步带上摘要,卡片摘要行即时更新
+      setArticles((prev) => prev.map((a) => (a.id === id ? { ...a, summary_zh: data.summary } : a)));
+    } catch (error) {
+      showToast(error.message || '摘要生成失败，请稍后重试', 'error');
+    } finally {
+      if (activeIdRef.current === id) setSummarizing(false);
+    }
+  }, [activeArticle, summarizing, showToast]);
+
+  // ── 日报置顶卡:进入阅读器拉一次最新一期(无日报则整卡隐藏)──
+  useEffect(() => {
+    let cancelled = false;
+    fetchArticles({ source_id: 'dorami_daily_brief' }, 1, 0, false, { includeContent: false })
+      .then((items) => {
+        if (!cancelled) setLatestBrief(Array.isArray(items) && items.length > 0 ? items[0] : null);
+      })
+      .catch(() => { /* 日报卡非关键路径,静默失败 */ });
+    return () => { cancelled = true; };
+  }, []);
 
   // ── AI · 一键译为中文（结果按 id 缓存，再次切回直接复用）──
   const handleTranslate = useCallback(async () => {
@@ -263,8 +426,13 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
         }
         const filters = {};
         if (activeSourceId) filters.source_id = activeSourceId;
-        else filters.subscribed_scope = 'only'; // 「我的订阅」聚合：后端硬过滤到已订阅源
+        else {
+          filters.subscribed_scope = 'only'; // 「我的订阅」聚合：后端硬过滤到已订阅源
+          filters.shape = shape;             // 聚合流按形态轴分流(文章/动态);单源无需
+        }
         if (searchQuery) filters.search = searchQuery;
+        filters.with_unread = 'true';           // 条目附页级未读标记（水位由 unread-counts 校准）
+        if (unreadOnly) filters.unread_only = 'true';
         return fetchArticles(filters, PAGE_SIZE, skip, true, { signal, includeContent: false });
       });
     } catch (error) {
@@ -279,8 +447,9 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
     setArticles(prev => (append ? [...prev, ...items] : items));
     // 不再自动展开第一篇——避免「被动打开」污染阅读计量；右栏停在提示态，
     // 等用户主动点选一篇才加载正文并计一次阅读（见 selectArticle）。
+    if (!append) setFreshCount(0); // 列表已刷新,新内容提示归零
     if (append) setLoadingMore(false); else setArticlesLoading(false);
-  }, [activeSourceId, searchQuery, showFavorites, showToast, runList]);
+  }, [activeSourceId, searchQuery, showFavorites, unreadOnly, shape, showToast, runList]);
 
   // 切换来源/搜索 → 重置列表、回顶、清空右栏
   // 用 useLayoutEffect：在绘制前同步进入加载态，避免「切源瞬间旧列表被画出一帧」的陈旧帧闪现
@@ -290,6 +459,8 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
     setActiveBodyLoading(false);
     activeIdRef.current = null;
     if (listRef.current) listRef.current.scrollTop = 0;
+    prevScopeUnreadRef.current = null; // 切视图:新内容增量检测重新起算
+    setFreshCount(0);
     loadArticles(0, false);
   }, [loadArticles]);
 
@@ -310,6 +481,7 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
     try {
       applyResult(await subscribeSource(source.source_id));
       refreshAggregateIfActive();
+      loadUnreadCounts(); // 订阅集合变化,未读统计随之刷新
       showToast(`已订阅 ${source.name}`, 'success');
     } catch (error) {
       showToast(error.message || '订阅失败', 'error');
@@ -324,6 +496,7 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
       applyResult(await unsubscribeSource(source.source_id));
       if (activeSourceId === source.source_id) setActiveSourceId(null);  // 改 activeSourceId → 自动重拉
       else refreshAggregateIfActive();
+      loadUnreadCounts();
       showToast(`已取消订阅 ${source.name}`, 'success');
     } catch (error) {
       showToast(error.message || '取消订阅失败', 'error');
@@ -370,6 +543,73 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
       showToast(error.message || '操作失败', 'error');
     } finally {
       setFavTogglingId(null);
+    }
+  };
+
+  // ── 全部标读（当前范围：某来源 / 全部订阅）──
+  const handleMarkAllRead = async () => {
+    if (markingRead) return;
+    setMarkingRead(true);
+    try {
+      const data = await markAllRead(activeSourceId);
+      // 后端返回更新后的统计;本页在列条目全部乐观清点(圆点即消)。
+      prevScopeUnreadRef.current = null;
+      applyUnreadCounts(data);
+      for (const a of articles) readOverridesRef.current.set(a.id, true);
+      setReadOverrides(new Map(readOverridesRef.current));
+      if (unreadOnly) loadArticles(0, false); // 只看未读视图下列表应清空重拉
+      showToast('已全部标为已读', 'success');
+    } catch (error) {
+      showToast(error.message || '标记已读失败', 'error');
+    } finally {
+      setMarkingRead(false);
+    }
+  };
+
+  // 刷新新到内容:重拉列表 + 未读统计(提示条点击)
+  const handleRefreshFresh = () => {
+    loadArticles(0, false);
+    loadUnreadCounts();
+  };
+
+  // 逐篇已读态(覆盖优先,服务端标记兜底)
+  const isArticleUnread = useCallback((article) => {
+    if (!article?.id) return false;
+    const override = readOverrides.get(article.id);
+    return override === undefined ? !!article.unread : !override;
+  }, [readOverrides]);
+
+  // ── 阅读窗格:手动标为已读/未读(显式覆盖,可撤销误触;不计阅读量)──
+  const handleTogglePaneRead = async () => {
+    const article = activeArticle;
+    const id = article?.id;
+    if (!id || paneReadToggling) return;
+    const toUnread = !isArticleUnread(article); // 当前已读 → 标为未读;反之标为已读
+    const sid = article.source_id;
+    const bump = (delta) => {
+      setUnreadBySource((prev) => {
+        const n = Math.max(0, (prev[sid] || 0) + delta);
+        return { ...prev, [sid]: n };
+      });
+      // 同步校正轮询基线,避免手动标未读被误判为「新文章到达」
+      if (prevScopeUnreadRef.current !== null && (!activeSourceId || activeSourceId === sid)) {
+        prevScopeUnreadRef.current = Math.max(0, prevScopeUnreadRef.current + delta);
+      }
+    };
+    // 乐观更新 + 失败回滚
+    readOverridesRef.current.set(id, !toUnread);
+    setReadOverrides(new Map(readOverridesRef.current));
+    bump(toUnread ? 1 : -1);
+    setPaneReadToggling(true);
+    try {
+      await (toUnread ? markArticleUnread(id) : markArticleRead(id));
+    } catch (error) {
+      readOverridesRef.current.set(id, toUnread);
+      setReadOverrides(new Map(readOverridesRef.current));
+      bump(toUnread ? -1 : 1);
+      showToast(error.message || '操作失败', 'error');
+    } finally {
+      setPaneReadToggling(false);
     }
   };
 
@@ -438,6 +678,11 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
               <p className="reader-source-name">我的订阅</p>
               <p className="reader-source-meta">{subscribedTotal} 篇 · {subscribedSources.length} 个来源</p>
             </div>
+            {unreadByShape.article > 0 && (
+              <span className="reader-unread-badge" title={`${unreadByShape.article} 篇文章未读`}>
+                {formatBadge(unreadByShape.article)}
+              </span>
+            )}
           </button>
         </nav>
 
@@ -446,14 +691,24 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
             <SourceRowsSkeleton />
           ) : (
             <>
-              {subscribedSources.length > 0 && (
-                <section className="reader-subs">
+              {/* 订阅来源按形态分组:文章来源(主流)在前,动态来源(changelog/发布监控)在后;
+                  动态组的组头带弱化的未读小计,主未读徽标只属于文章(见「我的订阅」行)。 */}
+              {[
+                { key: 'article', label: '文章来源', list: subscribedArticleSources, groupUnread: 0 },
+                { key: 'bulletin', label: '动态来源', list: subscribedBulletinSources, groupUnread: unreadByShape.bulletin },
+              ].map(({ key, label, list, groupUnread }) => list.length > 0 && (
+                <section className="reader-subs" key={key}>
                   <div className="reader-group-band">
-                    <span>订阅来源</span>
-                    <span className="reader-group-count">{subscribedSources.length}</span>
+                    <span>{label}</span>
+                    <span className="reader-group-count">{list.length}</span>
+                    {groupUnread > 0 && (
+                      <span className="reader-unread-badge" title={`${groupUnread} 条未读动态`}>
+                        {formatBadge(groupUnread)}
+                      </span>
+                    )}
                   </div>
                   <div className="reader-group-body">
-                  {subscribedSources.map((source) => {
+                  {list.map((source) => {
                     const active = activeSourceId === source.source_id;
                     return (
                       <div
@@ -469,6 +724,11 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
                           <p className="reader-source-name">{source.name || source.source_id}</p>
                           <p className="reader-source-meta">{source.count || 0} 篇</p>
                         </div>
+                        {(unreadBySource[source.source_id] || 0) > 0 && (
+                          <span className="reader-unread-badge" title={`${unreadBySource[source.source_id]} 篇未读`}>
+                            {formatBadge(unreadBySource[source.source_id])}
+                          </span>
+                        )}
                         <button
                           type="button"
                           title="取消订阅"
@@ -485,7 +745,7 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
                   })}
                   </div>
                 </section>
-              )}
+              ))}
 
               {hasNoSubscriptions && (
                 <p className="reader-side-hint">还没有订阅任何来源，从下方「发现更多来源」开始添加。</p>
@@ -506,24 +766,32 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
                   </button>
                   {discoverOpen && (
                     <div className="reader-group-body">
-                      {discoverSources.map((source) => (
-                        <div key={source.source_id} className="reader-source-row reader-discover-row">
-                          <LogoMark company={resolveCompany(source)} size="sm" emoji={source.icon} />
-                          <div className="min-w-0 flex-1">
-                            <p className="reader-source-name">{source.name || source.source_id}</p>
-                            <p className="reader-source-meta">{source.count || 0} 篇 · {source.category || '其他来源'}</p>
-                          </div>
-                          <button
-                            type="button"
-                            title="订阅"
-                            onClick={() => handleSubscribe(source)}
-                            disabled={pinningId === source.source_id}
-                            className="reader-pin reader-pin-off"
-                          >
-                            {pinningId === source.source_id
-                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              : <Plus className="h-3.5 w-3.5" />}
-                          </button>
+                      {[
+                        { key: 'article', label: '文章', list: discoverArticleSources },
+                        { key: 'bulletin', label: '动态', list: discoverBulletinSources },
+                      ].map(({ key, label, list }) => list.length > 0 && (
+                        <div key={key}>
+                          <p className="reader-subgroup-label">{label}</p>
+                          {list.map((source) => (
+                            <div key={source.source_id} className="reader-source-row reader-discover-row">
+                              <LogoMark company={resolveCompany(source)} size="sm" emoji={source.icon} />
+                              <div className="min-w-0 flex-1">
+                                <p className="reader-source-name">{source.name || source.source_id}</p>
+                                <p className="reader-source-meta">{source.count || 0} 篇 · {source.category || '其他来源'}</p>
+                              </div>
+                              <button
+                                type="button"
+                                title="订阅"
+                                onClick={() => handleSubscribe(source)}
+                                disabled={pinningId === source.source_id}
+                                className="reader-pin reader-pin-off"
+                              >
+                                {pinningId === source.source_id
+                                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  : <Plus className="h-3.5 w-3.5" />}
+                              </button>
+                            </div>
+                          ))}
                         </div>
                       ))}
                     </div>
@@ -555,6 +823,48 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
               ? (activeSourceId ? `${sourceNameMap[activeSourceId] || activeSourceId} · 收藏` : '我的收藏')
               : activeSourceId ? (sourceNameMap[activeSourceId] || activeSourceId) : '我的订阅'}
           </span>
+          {/* 形态视图轴:仅「我的订阅」聚合流需要(文章=阅读内容 / 动态=发布类短条目) */}
+          {!showFavorites && !activeSourceId && (
+            <div className="mini-seg" role="tablist" aria-label="内容形态">
+              {[['article', '文章'], ['bulletin', '动态']].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="tab"
+                  aria-selected={shape === value}
+                  onClick={() => setShape(value)}
+                  className={`mini-seg-btn ${shape === value ? 'is-on' : ''}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* 未读动作对：只看未读（过滤切换）+ 全部标读（当前范围）。收藏视图下不适用。 */}
+          {!showFavorites && (
+            <>
+              <button
+                type="button"
+                onClick={() => setUnreadOnly((v) => !v)}
+                aria-pressed={unreadOnly}
+                aria-label={unreadOnly ? '显示全部文章' : '只看未读'}
+                title={unreadOnly ? '显示全部文章' : '只看未读'}
+                className={`reader-unread-icon ${unreadOnly ? 'reader-unread-icon-on' : ''}`}
+              >
+                <CircleDot className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={handleMarkAllRead}
+                disabled={markingRead}
+                aria-label={activeSourceId ? '本来源全部标为已读' : '全部订阅标为已读'}
+                title={activeSourceId ? '本来源全部标为已读' : '全部订阅标为已读'}
+                className="reader-unread-icon"
+              >
+                {markingRead ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
+              </button>
+            </>
+          )}
           {/* 收藏是文章级集合：中栏头部的星标切换，与逐篇卡片星标同色呼应。
               在某来源时只看该来源收藏；在「我的订阅」聚合时看全部收藏。 */}
           <button
@@ -571,6 +881,29 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
         </div>
 
         <div className="reader-list-scroll" ref={listRef}>
+          {/* 日报置顶卡:「我的订阅·文章」流顶部的一等公民入口;过滤中(搜索/只看未读)让位 */}
+          {!showFavorites && !activeSourceId && shape === 'article' && !searchQuery && !unreadOnly
+            && !articlesLoading && latestBrief && (
+            <button type="button" className="reader-brief-card" onClick={() => selectArticle(latestBrief)}>
+              <span className="reader-brief-head">
+                <Sparkles className="h-3.5 w-3.5" />
+                AI 资讯日报
+                {latestBrief.publish_date && (
+                  <span className="reader-brief-date" title={formatDateTime(latestBrief.publish_date)}>
+                    {formatRelativeTime(latestBrief.publish_date)}
+                  </span>
+                )}
+              </span>
+              <span className="reader-brief-title">{latestBrief.title || '（无标题）'}</span>
+            </button>
+          )}
+          {/* 新内容提示条:轮询发现未读正增量时出现,点击刷新——不自动插入打断阅读 */}
+          {!showFavorites && !articlesLoading && freshCount > 0 && (
+            <button type="button" className="reader-fresh-pill" onClick={handleRefreshFresh}>
+              <RefreshCw className="h-3.5 w-3.5" />
+              有 {freshCount} 篇新文章 · 点击刷新
+            </button>
+          )}
           {articlesLoading ? (
             <ArticleCardsSkeleton />
           ) : !showFavorites && hasNoSubscriptions && !activeSourceId ? (
@@ -589,7 +922,11 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
                   ? '没有匹配的文章'
                   : showFavorites
                     ? (activeSourceId ? '该来源还没有收藏的文章' : '还没有收藏任何文章，点文章上的星标即可收藏')
-                    : '该来源暂无文章'}
+                    : unreadOnly
+                      ? (bulletinView ? '没有未读动态，都看完啦' : '没有未读文章，都读完啦')
+                      : activeSourceId
+                        ? '该来源暂无内容'
+                        : (bulletinView ? '暂无动态' : '暂无文章')}
               </span>
             </div>
           ) : (
@@ -597,16 +934,19 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
               {articles.map((article) => {
                 const active = activeArticle?.id === article.id;
                 const favored = favoriteIds.has(article.id);
+                const isUnread = isArticleUnread(article);
                 return (
                   <div key={article.id} className="reader-article-wrap">
+                    {isUnread && <span className="reader-unread-dot" aria-hidden="true" />}
                     <button
                       type="button"
                       onClick={() => selectArticle(article)}
-                      className={`reader-article-card ${active ? 'reader-article-card-active' : ''}`}
+                      className={`reader-article-card ${bulletinView ? 'reader-bulletin-card' : ''} ${active ? 'reader-article-card-active' : ''}`}
                     >
                       <p className="reader-article-title">{article.title || '（无标题）'}</p>
-                      {excerptOf(article.content_preview || article.content) && (
-                        <p className="reader-article-excerpt">{excerptOf(article.content_preview || article.content)}</p>
+                      {/* 摘要行:AI 要点摘要(summary_zh)优先——正文截断对英文长文几乎无信息量 */}
+                      {!bulletinView && excerptOf(article.summary_zh || article.content_preview || article.content) && (
+                        <p className="reader-article-excerpt">{excerptOf(article.summary_zh || article.content_preview || article.content)}</p>
                       )}
                       <div className="reader-article-foot">
                         <span className="reader-article-source">{sourceNameMap[article.source_id] || article.source_id}</span>
@@ -687,6 +1027,21 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
                     : <Star className="h-3.5 w-3.5" fill={favoriteIds.has(activeArticle.id) ? 'currentColor' : 'none'} />}
                   {favoriteIds.has(activeArticle.id) ? '已收藏' : '收藏'}
                 </button>
+                {/* 手动标读/标未读:撤销误触的已读(打开即读),Folo 式单篇切换;不计阅读量 */}
+                <button
+                  type="button"
+                  onClick={handleTogglePaneRead}
+                  disabled={paneReadToggling}
+                  title={isArticleUnread(activeArticle) ? '标为已读' : '标为未读(撤销已读)'}
+                  className="reader-pane-link"
+                >
+                  {paneReadToggling
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : isArticleUnread(activeArticle)
+                      ? <CheckCheck className="h-3.5 w-3.5" />
+                      : <CircleDot className="h-3.5 w-3.5" />}
+                  {isArticleUnread(activeArticle) ? '标为已读' : '标为未读'}
+                </button>
                 {aiEnabled && (
                   <button
                     type="button"
@@ -705,6 +1060,28 @@ export default function ReaderTab({ showToast, aiEnabled = false }) {
               </div>
             </header>
             <div className="reader-pane-body markdown-body">
+              {/* AI 总结卡:有缓存直接展示;无缓存给低调的生成入口(MVP 不自动生成,控成本) */}
+              {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
+                <div className="reader-ai-summary">
+                  <div className="reader-ai-summary-head">
+                    <Sparkles className="h-3.5 w-3.5" /> AI 总结
+                  </div>
+                  {activeSummary ? (
+                    <p className="reader-ai-summary-text">{activeSummary}</p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleSummarize}
+                      disabled={summarizing}
+                      className="reader-ai-summary-generate"
+                    >
+                      {summarizing
+                        ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在总结…</>
+                        : '生成本文要点总结'}
+                    </button>
+                  )}
+                </div>
+              )}
               {activeBodyLoading ? (
                 <PaneBodySkeleton />
               ) : (showTranslation && translatedBody) ? (

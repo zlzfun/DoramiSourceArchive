@@ -368,6 +368,24 @@ def build_translate_user_prompt(title: str, body: str) -> str:
     return "\n".join(parts)
 
 
+SUMMARIZE_SYSTEM_PROMPT = """你是一份面向中文 AI 从业者的阅读器里的摘要引擎。请为给定文章生成一段**简体中文摘要**，帮助读者在打开正文前快速判断「这篇讲了什么、关键信息是什么」。
+
+要求：
+- 2~3 句话、总长不超过 160 字：第一句说清文章主题/事件，随后给出最关键的事实或结论（数字、版本、性能、时间等硬信息优先）。
+- 客观陈述正文内容，不评价、不引申、不编造正文之外的信息。
+- 专有名词、产品名、模型名保留英文原文。
+- 只输出摘要本身：纯文本，不要 Markdown 标记、不要「本文/该文章/摘要：」之类的引导语。"""
+
+
+def build_summarize_user_prompt(title: str, body: str) -> str:
+    parts = []
+    if title:
+        parts.append(f"【文章标题】{title}")
+    parts.append("【文章正文】")
+    parts.append(body or "（空）")
+    return "\n".join(parts)
+
+
 # ==================== 阅读器 AI：基于文章的问答 ====================
 QA_SYSTEM_PROMPT = """你是「哆啦美」，一位专业、可靠又亲切的 AI 资讯助手，正在一份面向中文读者的阅读器里与读者多轮对话。读者可能就「当前文章」或「他们订阅的若干篇文章」提问，也可能只是打招呼、闲聊或追问上一轮的内容。需要称呼自己时用「哆啦美」（如「我是哆啦美」）。
 

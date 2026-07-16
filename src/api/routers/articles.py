@@ -19,7 +19,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_
 from sqlmodel import Session, select
 
 from api import deps
@@ -34,9 +34,14 @@ from api.articles_view import (
 from api.collection_planning import resolve_delivery_source_ids
 from api.feed_service import resolve_subscribed_source_ids
 from api.schemas import BatchOpParams
-from api.sources import DAILY_BRIEF_SOURCE_ID
+from api.sources import (
+    BULLETIN_CONTENT_TYPES,
+    DAILY_BRIEF_SOURCE_ID,
+    bulletin_registry_source_ids,
+)
 from api.textutils import _json_loads
 from models.db import ArticleRecord
+from services import reader_state as reader_state_service
 
 router = APIRouter(tags=["articles"])
 
@@ -44,6 +49,16 @@ router = APIRouter(tags=["articles"])
 def _app():
     """延迟取 api.app（避免导入环；动态调用其留守的 current_username）。"""
     return importlib.import_module("api.app")
+
+
+def _bulletin_shape_condition():
+    """「动态形」文章的 SQL 条件：源级标记（注册表 bulletin 源）∪ content_type 兜底
+    （覆盖注册表之外的历史归档源）。article 形 = 取反。"""
+    conditions = [ArticleRecord.content_type.in_(sorted(BULLETIN_CONTENT_TYPES))]
+    bulletin_sources = bulletin_registry_source_ids()
+    if bulletin_sources:
+        conditions.append(ArticleRecord.source_id.in_(bulletin_sources))
+    return or_(*conditions)
 
 
 @router.get("/api/articles")
@@ -66,6 +81,9 @@ def get_articles(
         fetched_date_start: Optional[str] = None,
         fetched_date_end: Optional[str] = None,
         subscribed_scope: str = "off",  # off | only | prioritize：相对当前用户订阅的源
+        shape: Optional[str] = None,  # article | bulletin：内容形态分流（阅读器文章/动态视图）
+        unread_only: bool = False,  # 只看未读（按当前用户订阅源的水位+逐篇已读判定）
+        with_unread: bool = False,  # 给返回条目附 unread 标记（页级，reader 列表用）
         skip: int = 0,
         limit: int = 100,
         include_total: bool = False,
@@ -75,9 +93,13 @@ def get_articles(
     scope = (subscribed_scope or "off").strip().lower()
     safe_limit = min(max(int(limit), 1), 500)
     safe_skip = max(int(skip), 0)
+    username = (
+        _app().current_username(request)
+        if (scope in {"only", "prioritize"} or unread_only or with_unread) else ""
+    )
     subscribed_ids = (
-        resolve_subscribed_source_ids(session, _app().current_username(request))
-        if scope in {"only", "prioritize"} else []
+        resolve_subscribed_source_ids(session, username)
+        if scope in {"only", "prioritize"} or unread_only else []
     )
     filter_kwargs = {
         "content_type": content_type,
@@ -103,6 +125,23 @@ def get_articles(
         # 仅当前用户已订阅的源；无订阅时显式返回空集。
         query = query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
         count_query = count_query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
+    shape_value = (shape or "").strip().lower()
+    if shape_value in {"article", "bulletin"}:
+        bulletin_cond = _bulletin_shape_condition()
+        cond = bulletin_cond if shape_value == "bulletin" else ~bulletin_cond
+        query = query.where(cond)
+        count_query = count_query.where(cond)
+    if unread_only:
+        # 未读 = 订阅源内 fetched_date 越过水位 ∧ 未逐篇读过；无可判定源时显式空集。
+        unread_cond = reader_state_service.unread_filter_condition(
+            session, username=username, source_ids=subscribed_ids
+        )
+        if unread_cond is None:
+            query = query.where(ArticleRecord.id.in_(["__none__"]))
+            count_query = count_query.where(ArticleRecord.id.in_(["__none__"]))
+        else:
+            query = query.where(unread_cond)
+            count_query = count_query.where(unread_cond)
     if scope == "prioritize" and subscribed_ids:
         subscribed_first = case((ArticleRecord.source_id.in_(subscribed_ids), 0), else_=1)
         query = query.order_by(*article_recency_order(subscribed_first))
@@ -111,6 +150,13 @@ def get_articles(
     total = int(session.exec(count_query).one() or 0) if include_total else None
     records = session.exec(query.offset(safe_skip).limit(safe_limit)).all()
     items = [serialize_article_list_item(record, include_content=include_content) for record in records]
+    if with_unread:
+        # 页级未读标记：只读现有水位（不写库）；水位由 /api/reader/unread-counts 挂载校准。
+        unread_ids = reader_state_service.unread_ids_among(
+            session, username=username, records=records
+        )
+        for item in items:
+            item["unread"] = item.get("id") in unread_ids
     if not include_total:
         return items
     return {

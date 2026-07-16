@@ -7082,12 +7082,205 @@ input[type="radio"] {
   .reader-fav-icon-on { color: #f59e0b; }
   .reader-fav-icon-on:hover { color: #d97706; }
 
+  /* ── 未读体系 ──
+     · 徽标（源行/我的订阅行）：品牌蓝淡底数字芯片，量级同 reader-group-count；
+     · 圆点（文章卡）：卡左缘 6px 品牌蓝点，读过即消，不改标题字重（静默仪器：单一标记）；
+     · 列表头动作（只看未读 / 全部标读）：金属感同收藏星标（reader-fav-icon），语义色换品牌蓝；
+     · 新内容提示条：列表顶 sticky 胶囊，点击刷新——轮询只提示、不自动插入打断阅读。 */
+  .reader-unread-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 16px;
+    padding: 0 5px;
+    flex-shrink: 0;
+    border-radius: var(--r-sm);
+    background: rgba(91, 84, 232, 0.10);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--dorami-blue);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .reader-unread-dot {
+    position: absolute;
+    top: 19px;
+    left: 3px;
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background: var(--dorami-blue);
+    z-index: 1;
+  }
+
+  .reader-unread-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--r-control);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--dorami-faint);
+    cursor: pointer;
+    transition: color 140ms ease, background 140ms ease;
+  }
+
+  .reader-unread-icon:hover {
+    color: var(--dorami-blue);
+    background: var(--dorami-well);
+  }
+
+  .reader-unread-icon:disabled { opacity: 0.6; cursor: default; }
+  .reader-unread-icon-on { color: var(--dorami-blue); }
+
+  .reader-fresh-pill {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: calc(100% - 4px);
+    margin: 0 2px 6px;
+    padding: 7px 10px;
+    border-radius: var(--r-control);
+    border: 1px solid var(--dorami-border);
+    background: var(--dorami-surface);
+    color: var(--dorami-blue);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 140ms ease;
+  }
+
+  .reader-fresh-pill:hover { background: var(--dorami-soft); }
+
+  /* ── 内容形态分流(迭代 2) ──
+     · 动态卡:changelog/Release/仓库/模型监控的紧凑条目——单行标题+脚注,无摘要,
+       密度约为文章卡两倍;点击仍进右栏阅读(changelog 正文有价值)。
+     · 子分组标签:左栏「发现更多来源」内按形态分组的轻量小节头。 */
+  .reader-bulletin-card { padding: 8px 14px; }
+
+  .reader-bulletin-card .reader-article-title {
+    font-size: 13px;
+    -webkit-line-clamp: 1;
+  }
+
+  .reader-bulletin-card .reader-article-foot { margin-top: 3px; }
+
+  .reader-subgroup-label {
+    padding: 8px 10px 2px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--dorami-faint);
+  }
+
+  /* ── AI 总结卡(迭代 3):正文顶部的要点摘要——静默克制,soft 底、无渐变,
+     品牌蓝只用于小节标;未生成时是一行低调的「生成总结」入口。 ── */
+  .reader-ai-summary {
+    margin-bottom: 18px;
+    padding: 12px 14px;
+    border-radius: var(--r-control);
+    background: var(--dorami-soft);
+    border: 1px solid var(--dorami-border);
+  }
+
+  .reader-ai-summary-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--dorami-blue);
+  }
+
+  .reader-ai-summary-text {
+    margin-top: 7px;
+    font-size: 13px;
+    line-height: 1.75;
+    color: var(--dorami-ink-2);
+  }
+
+  .reader-ai-summary-generate {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 7px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--dorami-muted);
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    padding: 0;
+  }
+
+  .reader-ai-summary-generate:hover:not(:disabled) { color: var(--dorami-blue); }
+  .reader-ai-summary-generate:disabled { cursor: default; opacity: 0.7; }
+
+  /* ── 日报置顶卡(迭代 3):「我的订阅·文章」流顶部的每日日报入口,
+     不参与未读计数;搜索/只看未读过滤时隐藏。 ── */
+  .reader-brief-card {
+    display: block;
+    width: calc(100% - 4px);
+    margin: 0 2px 8px;
+    padding: 10px 14px;
+    text-align: left;
+    border-radius: var(--r-control);
+    border: 1px solid var(--dorami-border);
+    background: var(--dorami-surface);
+    cursor: pointer;
+    transition: background 140ms ease;
+  }
+
+  .reader-brief-card:hover { background: var(--dorami-soft); }
+
+  .reader-brief-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--dorami-blue);
+  }
+
+  .reader-brief-date {
+    margin-left: auto;
+    font-weight: 600;
+    color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .reader-brief-title {
+    margin-top: 5px;
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--dorami-ink);
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
   .reader-list-count {
     font-size: 11px;
     font-weight: 700;
     color: var(--dorami-faint);
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
+    /* 定宽右对齐:数字位数变化不再挤压左侧动作按钮(只看未读/全部标读/收藏)横跳 */
+    min-width: 52px;
+    text-align: right;
   }
 
   .reader-list-scroll {
@@ -8162,6 +8355,7 @@ input[type="radio"] {
 [data-theme="dark"] .reader-article-card:hover { background: var(--dorami-raised); }
 [data-theme="dark"] .date-range-day:hover { background: var(--dorami-raised); }
 [data-theme="dark"] .reader-group-count { background: rgba(255, 255, 255, 0.08); }
+[data-theme="dark"] .reader-unread-badge { background: rgba(122, 116, 255, 0.18); }
 
 /* ── 状态色块（保留语义色，仅压深底 + 提亮文字）── */
 [data-theme="dark"] .action-button-danger { background: rgba(248, 113, 113, 0.12); color: #fca5a5; border-color: rgba(248, 113, 113, 0.28); }

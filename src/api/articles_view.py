@@ -132,6 +132,17 @@ def serialize_feed_article(record: ArticleRecord, include_content: bool = True) 
 
 def serialize_article_list_item(record: ArticleRecord, include_content: bool = True) -> Dict[str, Any]:
     content = record.content or ""
+    # AI 要点摘要(extensions_json.summary_zh)作为轻字段随条目透出:
+    # 列表卡摘要优先用它替代正文截断(content_preview 对英文长文几乎无信息量)。
+    summary = None
+    try:
+        ext = json.loads(record.extensions_json or "{}")
+        if isinstance(ext, dict):
+            value = ext.get("summary_zh")
+            if isinstance(value, str) and value.strip():
+                summary = value
+    except (ValueError, TypeError):
+        pass
     item = {
         "id": record.id,
         "title": record.title,
@@ -149,6 +160,7 @@ def serialize_article_list_item(record: ArticleRecord, include_content: bool = T
         "is_vectorized": record.is_vectorized,
         "index_status": record.index_status,
         "content_preview": content[:280],
+        "summary_zh": summary,
     }
     if include_content:
         item["content"] = content

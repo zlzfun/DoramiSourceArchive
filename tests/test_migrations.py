@@ -403,3 +403,47 @@ def test_retired_param_fields_purged_from_jobs(tmp_path):
     assert cleaned["rss_hn_ai"] == {"limit": 20}
     # 模板节点参数面不清洗
     assert cleaned["generic_rss"] == {"limit": 5, "detail_max_chars": 9000}
+
+
+def test_reader_read_states_migration_adds_missing_is_read(tmp_path):
+    """老形状收养:运行期 create_all 抢先建出早期形状的 reader_article_read_states
+    (无 is_read 列)时,未读体系迁移应补列对齐,存量行回填为显式已读(=1)。"""
+    from alembic import command as alembic_command
+    from sqlalchemy import text
+
+    db_url = f"sqlite:///{tmp_path / 'oldshape.db'}"
+    cfg = make_alembic_config(db_url)
+    alembic_command.upgrade(cfg, "e7a3c19b5d02")  # 未读体系迁移的前一版
+
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "CREATE TABLE reader_article_read_states ("
+                "owner_username VARCHAR NOT NULL, article_id VARCHAR NOT NULL, "
+                "read_at VARCHAR NOT NULL, PRIMARY KEY (owner_username, article_id))"
+            ))
+            conn.execute(text(
+                "CREATE INDEX ix_reader_article_read_states_article_id "
+                "ON reader_article_read_states (article_id)"
+            ))
+            conn.execute(text(
+                "INSERT INTO reader_article_read_states VALUES ('u', 'a1', '2026-07-16T00:00:00')"
+            ))
+    finally:
+        engine.dispose()
+
+    alembic_command.upgrade(cfg, "head")
+
+    engine = create_engine(db_url)
+    try:
+        columns = {c["name"] for c in inspect(engine).get_columns("reader_article_read_states")}
+        assert "is_read" in columns
+        with engine.begin() as conn:
+            row = conn.execute(text(
+                "SELECT is_read FROM reader_article_read_states WHERE article_id='a1'"
+            )).scalar()
+        assert row == 1  # 存量行回填为显式已读
+        assert "reader_read_cursors" in inspect(engine).get_table_names()  # 另一表照常创建
+    finally:
+        engine.dispose()

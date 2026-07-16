@@ -28,6 +28,7 @@ from api.sources import (
     _friendly_source_name,
     _registry_source_meta,
     _source_category,
+    source_shape,
     subscription_source_ids,
 )
 from fetchers.registry import DECOMMISSIONED_FETCHER_IDS
@@ -42,6 +43,7 @@ from services import accounts as accounts_service
 from services import daily_brief as daily_brief_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
+from services import reader_state as reader_state_service
 
 router = APIRouter(prefix="/api/reader", tags=["reader"])
 
@@ -86,6 +88,9 @@ def subscribe_source(source_id: str, request: Request, session: Session = Depend
         app._create_single_source_subscription(
             session, username, source_id, _friendly_source_name(source_id, registry_meta)
         )
+        # 订阅即初始化未读水位（backlog 语义：最近 K 篇成为未读积压，Folo 式;
+        # 再订阅也重新起算）。
+        reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
         session.commit()
     subscribed_ids = sorted(set(app.resolve_subscribed_source_ids(session, username)))
     return {
@@ -124,6 +129,8 @@ def unsubscribe_source(source_id: str, request: Request, session: Session = Depe
             session.add(record)
         else:
             session.delete(record)
+    # 退订清未读水位（逐篇已读行保留无害：无水位即不判未读，且不影响其他源）。
+    reader_state_service.drop_cursor(session, username=username, source_id=source_id)
     session.commit()
     subscribed_ids = sorted(set(app.resolve_subscribed_source_ids(session, username)))
     return {
@@ -148,10 +155,85 @@ def record_article_read(article_id: str, request: Request, session: Session = De
         return {"status": "ignored"}
     source_id = article.source_id
     try:
+        # 双写：先挂逐篇已读状态（不自 commit），由紧随的计量写入一并提交。
+        reader_state_service.mark_read(session, username=username, article_id=article.id)
         reader_activity_service.record_read(session, username=username, source_id=source_id)
-    except Exception:  # noqa: BLE001 - 计量失败不影响阅读
+    except Exception:  # noqa: BLE001 - 计量/状态失败不影响阅读
         return {"status": "ignored"}
     return {"status": "ok", "source_id": source_id}
+
+
+# ==================== 未读体系 ====================
+
+def _set_article_read_state(article_id: str, request: Request, session: Session, *, is_read: bool):
+    """单篇显式标读/标未读的公共实现：写覆盖行（不计阅读量），404 于文章不存在。"""
+    username = _app().current_username(request)
+    article = session.get(ArticleRecord, (article_id or "").strip())
+    if article is None:
+        raise HTTPException(status_code=404, detail="文章不存在")
+    if is_read:
+        reader_state_service.mark_read(session, username=username, article_id=article.id)
+    else:
+        reader_state_service.mark_unread(session, username=username, article_id=article.id)
+    session.commit()
+    return {"status": "success", "article_id": article.id, "is_read": is_read}
+
+
+@router.post("/articles/{article_id}/mark-read")
+def mark_article_read(article_id: str, request: Request, session: Session = Depends(deps.get_session)):
+    """手动把单篇标为已读（显式覆盖；不同于 /read，不累计阅读计量）。"""
+    return _set_article_read_state(article_id, request, session, is_read=True)
+
+
+@router.post("/articles/{article_id}/mark-unread")
+def mark_article_unread(article_id: str, request: Request, session: Session = Depends(deps.get_session)):
+    """手动把单篇标回未读（显式覆盖：即使被水位盖过也生效，可撤销误触的已读）。"""
+    return _set_article_read_state(article_id, request, session, is_read=False)
+
+
+@router.get("/unread-counts")
+def get_unread_counts(request: Request, session: Session = Depends(deps.get_session)):
+    """当前用户各订阅源的未读数（只回 n>0 的源）+ 总数。
+
+    对缺水位的存量订阅懒初始化为当下（升级后首访未读从 0 起算），
+    故本端点也是水位体系的「挂载即校准」入口——阅读器进入即拉一次。
+    """
+    app = _app()
+    username = app.current_username(request)
+    source_ids = app.resolve_subscribed_source_ids(session, username)
+    by_source = reader_state_service.unread_counts(
+        session, username=username, source_ids=source_ids
+    )
+    return {"by_source": by_source, "total": sum(by_source.values())}
+
+
+def _mark_all_read_response(app, session: Session, username: str, source_ids: List[str]):
+    reader_state_service.mark_all_read(session, username=username, source_ids=source_ids)
+    subscribed = app.resolve_subscribed_source_ids(session, username)
+    by_source = reader_state_service.unread_counts(
+        session, username=username, source_ids=subscribed
+    )
+    return {"status": "success", "by_source": by_source, "total": sum(by_source.values())}
+
+
+@router.post("/mark-all-read")
+def mark_all_read(request: Request, session: Session = Depends(deps.get_session)):
+    """把当前用户全部订阅源标为已读（推进各源水位到当下），返回更新后的未读统计。"""
+    app = _app()
+    username = app.current_username(request)
+    source_ids = app.resolve_subscribed_source_ids(session, username)
+    return _mark_all_read_response(app, session, username, source_ids)
+
+
+@router.post("/sources/{source_id}/mark-all-read")
+def mark_source_all_read(source_id: str, request: Request, session: Session = Depends(deps.get_session)):
+    """把单个来源标为已读，返回更新后的未读统计。"""
+    app = _app()
+    username = app.current_username(request)
+    source_id = (source_id or "").strip()
+    if not source_id:
+        raise HTTPException(status_code=400, detail="source_id 不能为空")
+    return _mark_all_read_response(app, session, username, [source_id])
 
 
 # ==================== 文章收藏 ====================
@@ -324,6 +406,7 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
                 "content_tags": meta.get("content_tags", []),
                 "content_type": resolved_type,
                 "category": _source_category(resolved_type),
+                "shape": source_shape(source_id, resolved_type, registry_meta),
                 "count": 0,
                 "last_fetched": "",
                 "subscribed": source_id in subscribed_ids,
@@ -356,6 +439,7 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
             entry["_primary_count"] = int(count or 0)
             entry["content_type"] = content_type
             entry["category"] = _source_category(content_type)
+            entry["shape"] = source_shape(source_id, content_type, registry_meta)
 
     # 3. 已订阅但既未注册也无归档的来源也要出现，便于退订。
     for source_id in subscribed_ids:
@@ -443,6 +527,25 @@ async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
         raise HTTPException(status_code=502, detail=f"翻译失败：{exc}")
     with Session(db_sink.engine) as session:
         accounts_service.record_ai_usage(session, username, "translate")
+    return {"status": "success", **result}
+
+
+@router.post("/ai/summarize")
+async def reader_ai_summarize(params: ReaderTranslateParams, request: Request):
+    """为指定文章生成中文要点摘要（结果缓存复用；入参形状与 translate 相同）。"""
+    username, llm_config = _require_reader_ai(request)
+    db_sink = deps.get_db_sink()
+    try:
+        result = await reader_ai_service.summarize_article(
+            db_sink, params.article_id, llm_config,
+            UsageMeta(purpose="summarize", username=username),
+        )
+    except reader_ai_service.ReaderAIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=f"摘要生成失败：{exc}")
+    with Session(db_sink.engine) as session:
+        accounts_service.record_ai_usage(session, username, "summarize")
     return {"status": "success", **result}
 
 

@@ -297,3 +297,93 @@ def test_admin_can_toggle_ai_beta_via_api(monkeypatch, tmp_path):
         listed = client.get("/api/accounts").json()
         target = next(a for a in listed if a["username"] == "user")
         assert target["ai_beta_enabled"] is True
+
+
+# ==================== 要点摘要(迭代 3) ====================
+
+def test_summarize_403_when_ai_beta_disabled(monkeypatch, tmp_path):
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "sum_beta_off.db")
+    _configure_llm(sink.engine)
+    _seed_article(sink.engine, "a1", "rss_x", "Title", "Hello world")
+    _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        resp = client.post("/api/reader/ai/summarize", json={"article_id": "a1"})
+        assert resp.status_code == 403
+
+
+def test_summarize_caches_and_surfaces_in_list(monkeypatch, tmp_path):
+    """首次生成走 LLM 并落缓存;再次调用命中缓存;列表条目轻字段透出 summary_zh。"""
+    import json as _json
+
+    import services.reader_ai as rai
+    from models.db import ArticleRecord
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "sum_cache.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_article(sink.engine, "a1", "rss_x", "Title", "Hello world body")
+
+    metas = []
+
+    async def fake_chat_completion(*, messages, config, **kwargs):
+        metas.append(kwargs.get("usage_meta"))
+        return "两句话的要点摘要。"
+
+    monkeypatch.setattr(rai, "chat_completion", fake_chat_completion)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        first = client.post("/api/reader/ai/summarize", json={"article_id": "a1"})
+        assert first.status_code == 200
+        assert first.json() == {"status": "success", "summary": "两句话的要点摘要。", "cached": False}
+        assert len(metas) == 1
+        # 用量归属:purpose=summarize,记在发起的读者名下
+        assert metas[0] is not None and metas[0].purpose == "summarize" and metas[0].username == "user"
+
+        second = client.post("/api/reader/ai/summarize", json={"article_id": "a1"})
+        assert second.json()["cached"] is True
+        assert len(metas) == 1  # 命中缓存,不再调 LLM
+
+        # 缓存写进 extensions_json.summary_zh,且不触碰向量状态
+        with Session(sink.engine) as session:
+            record = session.get(ArticleRecord, "a1")
+            assert _json.loads(record.extensions_json)["summary_zh"] == "两句话的要点摘要。"
+            assert record.is_vectorized is False and record.index_status == "pending"
+
+        # 列表条目(不含正文)轻字段透出摘要,供列表卡摘要行与阅读入口即时展示
+        items = client.get(
+            "/api/articles",
+            params={"source_id": "rss_x", "include_content": "false"},
+        ).json()
+        assert items[0]["summary_zh"] == "两句话的要点摘要。"
+
+
+def test_summarize_400_when_no_content(monkeypatch, tmp_path):
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "sum_empty.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_article(sink.engine, "a1", "rss_x", "Title", "")
+    _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        resp = client.post("/api/reader/ai/summarize", json={"article_id": "a1"})
+        assert resp.status_code == 400
+
+
+def test_latest_daily_brief_reachable_for_reader(monkeypatch, tmp_path):
+    """日报置顶卡的数据通路:按 source_id=dorami_daily_brief 取最新一期(读者可达)。"""
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "brief_card.db")
+    _seed_article(sink.engine, "brief_1", "dorami_daily_brief", "AI 资讯日报 · 7 月 15 日", "日报正文")
+    _seed_article(sink.engine, "brief_2", "dorami_daily_brief", "AI 资讯日报 · 7 月 16 日", "日报正文")
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        items = client.get(
+            "/api/articles",
+            params={"source_id": "dorami_daily_brief", "limit": 1, "include_content": "false"},
+        ).json()
+        assert len(items) == 1
+        assert items[0]["id"] in ("brief_1", "brief_2")  # 同 publish_date 时按 id 兜底排序

@@ -168,6 +168,7 @@ class FetcherRegistry:
                 "desc": cls.description,
                 "category": category,
                 "content_type": cls.content_type,
+                "shape": getattr(cls, "content_shape", "article"),
                 "active": True,
                 "is_template": getattr(cls, "is_template", False),
                 "parameters": cls.get_parameter_schema(),

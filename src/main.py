@@ -17,6 +17,15 @@ if __name__ == "__main__":
     print(f"👉 请在浏览器中打开 Web 调试面板: http://{settings.server.host}:{settings.server.port}/docs")
     print("=====================================================")
 
+    # 3. 数据库迁移前置（与 deploy.sh 的生产路径同一入口 ensure_migrated）：
+    #    dev 裸起 / pm2 直接 restart 也先把文件库演进到 head，杜绝「运行期
+    #    create_all 只建缺失表、schema 变更从未应用」的断面（内存库内部跳过；
+    #    已在 head 时为幂等零操作）。迁移失败则让异常炸出来——带着漂移 schema
+    #    起服务只会产生更难懂的运行时报错。
+    from storage.migrations import ensure_migrated
+    print("🗂  正在核对数据库迁移（alembic upgrade head）...")
+    ensure_migrated(settings.storage.database_url)
+
     # 启动 Uvicorn 服务器，指向 api.app 模块中的 app 实例。
     # reload 由配置驱动（开发热更新）；但生产环境（PM2 注入 NODE_ENV=production）
     # 一律强制关闭——reload 会另起文件监视子进程，徒增内存且不稳定，且与

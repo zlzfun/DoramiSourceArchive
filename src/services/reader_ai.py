@@ -3,6 +3,8 @@
 为用户面（阅读器）提供两项 AI 能力，复用项目既有的 OpenAI 兼容 LLM 客户端：
 
 - translate_article: 整篇正文一键译为简体中文，结果缓存进 extensions_json 复用（省 token）。
+- summarize_article: 生成 2~3 句中文要点摘要（阅读入口的「AI 总结」卡 + 列表卡摘要），
+  缓存约定与翻译完全一致（extensions_json.summary_zh）。
 - answer_question: 基于给定上下文回答读者提问（上下文由调用方按三档策略组装）。
 
 本模块只负责「正文/上下文 → LLM → 文本」与翻译缓存，不直接依赖 FastAPI/向量层：
@@ -19,9 +21,13 @@ from config import LLMConfig
 from llm import prompts
 from llm.client import ChatMessage, UsageMeta, chat_completion
 
-# 译文缓存在 ArticleRecord.extensions_json 下的键；只新增此键，不触碰正文，
+# 译文/摘要缓存在 ArticleRecord.extensions_json 下的键；只新增键，不触碰正文，
 # 因此不影响向量化状态（向量化只在 content/title 变更时重置）。
 TRANSLATION_KEY = "translation_zh"
+SUMMARY_KEY = "summary_zh"
+
+# 摘要输入正文的字符上限（要点摘要不需要全文,开头已承载主旨;超长截断省 token）。
+_SUMMARIZE_BODY_CHARS = 12000
 
 # 单段翻译的字符上限（按段落切分后并发翻译再拼接，避免超出模型上下文/输出窗口）。
 _TRANSLATE_SEGMENT_CHARS = 3500
@@ -128,6 +134,53 @@ async def translate_article(
     ext[TRANSLATION_KEY] = translated
     await db_sink.update(article_id, {"extensions_json": json.dumps(ext, ensure_ascii=False)})
     return {"translation": translated, "cached": False}
+
+
+# ==================== 要点摘要 ====================
+def _load_extensions(record) -> dict:
+    try:
+        ext = json.loads(record.extensions_json or "{}")
+        return ext if isinstance(ext, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+async def summarize_article(
+    db_sink, article_id: str, llm_config: LLMConfig, usage_meta: Optional[UsageMeta] = None
+) -> dict:
+    """为指定文章生成中文要点摘要；命中缓存直接返回，否则生成后写回 extensions_json。
+
+    返回 {"summary": str, "cached": bool}。缓存/写回约定与 translate_article 一致。
+    """
+    record = await db_sink.get(article_id)
+    if record is None:
+        raise ReaderAIError("文章不存在", status_code=404)
+    body = (record.content or "").strip()
+    if not body:
+        raise ReaderAIError("该文章暂无可总结的正文", status_code=400)
+
+    ext = _load_extensions(record)
+    cached = ext.get(SUMMARY_KEY)
+    if isinstance(cached, str) and cached.strip():
+        return {"summary": cached, "cached": True}
+
+    if len(body) > _SUMMARIZE_BODY_CHARS:
+        body = body[:_SUMMARIZE_BODY_CHARS] + "\n...(正文已截断)"
+    raw = await chat_completion(
+        messages=[
+            ChatMessage(role="system", content=prompts.SUMMARIZE_SYSTEM_PROMPT),
+            ChatMessage(role="user", content=prompts.build_summarize_user_prompt(record.title or "", body)),
+        ],
+        config=llm_config,
+        usage_meta=usage_meta,
+    )
+    summary = raw.strip()
+    if not summary:
+        raise ReaderAIError("摘要生成失败，请稍后重试", status_code=502)
+
+    ext[SUMMARY_KEY] = summary
+    await db_sink.update(article_id, {"extensions_json": json.dumps(ext, ensure_ascii=False)})
+    return {"summary": summary, "cached": False}
 
 
 # ==================== 文章问答 ====================

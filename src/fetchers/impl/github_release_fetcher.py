@@ -18,6 +18,7 @@ class GenericGitHubReleasesFetcher(BaseFetcher):
     is_template = True  # 通用模板节点:后端保留,前端目录不显现
     source_id = "generic_github_releases"
     content_type = "github_release"
+    content_shape = "bulletin"  # 版本发布是动态形:短条目只扫不读(预设子类继承)
     category = "advanced"
 
     name = "通用 GitHub Releases"

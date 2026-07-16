@@ -17,6 +17,7 @@ class GenericGitHubRepositoriesFetcher(BaseFetcher):
 
     source_id = "generic_github_repositories"
     content_type = "github_repository"
+    content_shape = "bulletin"  # 新仓库监控是动态形(预设子类继承)
     category = "advanced"
 
     name = "通用 GitHub 新仓库"
@@ -271,6 +272,7 @@ class GenericHuggingFaceModelsFetcher(BaseFetcher):
 
     source_id = "generic_huggingface_models"
     content_type = "hf_model"
+    content_shape = "bulletin"  # 新模型监控是动态形(预设子类继承)
     category = "advanced"
 
     name = "通用 Hugging Face 新模型"

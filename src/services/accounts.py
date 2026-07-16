@@ -288,9 +288,11 @@ def summarize_user_logins(
 
 
 def record_ai_usage(session: Session, username: str, kind: str) -> None:
-    """记录一次成功的 AI 调用（kind ∈ {"translate","ask"}）并刷新最近使用时间。
+    """记录一次成功的 AI 调用并刷新最近使用时间。
 
-    仅在调用成功后写，失败不计数。账户不存在时静默跳过。
+    仅在调用成功后写，失败不计数。账户不存在时静默跳过。轻量计数列只覆盖
+    translate/ask 两个高频用途；其它 kind（如 summarize）只刷新 ai_last_used_at,
+    其精确统计由 AiUsageRecord token 计量承担（运维看板的事实源）。
     """
     record = get_user(session, username)
     if record is None:

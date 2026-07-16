@@ -224,6 +224,40 @@ class ReaderFavoriteRecord(SQLModel, table=True):
     created_at: str = Field(index=True, description="收藏时间")
 
 
+class ReaderArticleReadStateRecord(SQLModel, table=True):
+    """读者文章已读/未读的逐篇显式覆盖：一行 = 某读者对某篇文章的明确态度。
+
+    `is_read=True` 显式已读（打开文章、手动标已读）；`is_read=False` 显式未读
+    （手动「标为未读」，可撤销水位/误触带来的已读）；**无行 = 交给
+    ReaderReadCursorRecord 水位裁决**。与 ReaderReadRecord（按天×用户×来源的
+    计量聚合，供运维看板）职责分离：那张管「读了多少」，这张管「哪篇读没读」。
+    复合主键同 ReaderFavoriteRecord；文章删除后留存的孤儿行在未读统计的 join
+    中自然不可达，无害。「全部标读」不逐篇写行，而是推进水位并清掉水位覆盖的
+    存量行（防表膨胀，显式未读行同样被覆盖清除）。
+    """
+    __tablename__ = "reader_article_read_states"
+
+    owner_username: str = Field(primary_key=True, description="状态归属用户名")
+    article_id: str = Field(primary_key=True, index=True, description="文章 ID")
+    is_read: bool = Field(default=True, description="True=显式已读；False=显式未读（撤销覆盖）")
+    read_at: str = Field(description="最近一次状态变更时间")
+
+
+class ReaderReadCursorRecord(SQLModel, table=True):
+    """读者按源已读水位：`mark_read_before` 时刻（含）之前抓取入库的文章全部视为已读。
+
+    未读判定基准用 fetched_date 而非 publish_date——补抓历史文章不应人人弹未读。
+    订阅成功时初始化水位为订阅时刻（历史存量不算未读）；存量订阅无水位行时由
+    读侧懒初始化为当下（升级后首访未读从 0 起算）。「全部标读」= 推进水位到当下。
+    """
+    __tablename__ = "reader_read_cursors"
+
+    owner_username: str = Field(primary_key=True, description="水位归属用户名")
+    source_id: str = Field(primary_key=True, description="来源标识")
+    mark_read_before: str = Field(default="", description="该 fetched_date（含）之前视为已读")
+    updated_at: str = Field(description="最近一次推进时间")
+
+
 class AppSettingRecord(SQLModel, table=True):
     __tablename__ = "app_settings"
     key: str = Field(primary_key=True)

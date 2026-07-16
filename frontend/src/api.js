@@ -140,6 +140,11 @@ export function translateArticle(articleId) {
   return request('/reader/ai/translate', { method: 'POST', body: { article_id: articleId }, errorMsg: '翻译失败，请稍后重试' });
 }
 
+// 生成/读取文章的中文要点摘要(后端缓存于 extensions_json.summary_zh,幂等)
+export function summarizeArticle(articleId) {
+  return request('/reader/ai/summarize', { method: 'POST', body: { article_id: articleId }, errorMsg: '摘要生成失败，请稍后重试' });
+}
+
 export function askReaderAi({ question, scope = 'article', articleId = null, history = [] }) {
   return request('/reader/ai/ask', {
     method: 'POST',
@@ -482,6 +487,26 @@ export function unsubscribeSource(sourceId) {
 export function recordArticleRead(articleId) {
   return apiFetch(`${API_BASE_URL}/reader/articles/${enc(articleId)}/read`, { method: 'POST' })
     .catch(() => {});
+}
+
+// ==================== 未读体系 ====================
+export function fetchUnreadCounts(options = {}) {
+  return request('/reader/unread-counts', { ...options, errorMsg: '获取未读统计失败' });
+}
+
+// 手动单篇标读/标未读(显式覆盖;不同于 recordArticleRead,不累计阅读计量)
+export function markArticleRead(articleId) {
+  return request(`/reader/articles/${enc(articleId)}/mark-read`, { method: 'POST', errorMsg: '标为已读失败' });
+}
+
+export function markArticleUnread(articleId) {
+  return request(`/reader/articles/${enc(articleId)}/mark-unread`, { method: 'POST', errorMsg: '标为未读失败' });
+}
+
+// sourceId 为空 = 全部订阅源标为已读；返回更新后的 {by_source, total}。
+export function markAllRead(sourceId = null) {
+  const path = sourceId ? `/reader/sources/${enc(sourceId)}/mark-all-read` : '/reader/mark-all-read';
+  return request(path, { method: 'POST', errorMsg: '标记已读失败' });
 }
 
 export function createSubscription(data) {

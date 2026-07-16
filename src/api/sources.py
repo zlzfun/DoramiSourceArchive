@@ -65,6 +65,37 @@ def _source_category(content_type: Optional[str]) -> str:
     return CONTENT_TYPE_CATEGORY.get(content_type, content_type)
 
 
+# ==================== 内容形态（阅读器分流轴，迭代 2）====================
+# 形态是**源级标记**（fetcher.content_shape），registry 是第一事实源;
+# 对注册表之外的历史归档源（已下线节点、导入源），按 content_type 兜底:
+# 这三类结构化监控产物必然是动态形。
+BULLETIN_CONTENT_TYPES = frozenset({
+    "github_release", "github_repository", "hf_model", "huggingface_model",
+})
+
+
+def source_shape(
+    source_id: Optional[str],
+    content_type: Optional[str],
+    registry_meta: Dict[str, Dict[str, Any]],
+) -> str:
+    """解析某源的内容形态："article"（文章）| "bulletin"（动态）。"""
+    meta = registry_meta.get(source_id or "")
+    if meta is not None:
+        return meta.get("shape") or "article"
+    if (content_type or "") in BULLETIN_CONTENT_TYPES:
+        return "bulletin"
+    return "article"
+
+
+def bulletin_registry_source_ids() -> List[str]:
+    """注册表中动态形源的 source_id 集合（articles 的 shape= 过滤用）。"""
+    return sorted(
+        sid for sid, meta in _registry_source_meta().items()
+        if (meta.get("shape") or "article") == "bulletin"
+    )
+
+
 def _registry_source_meta() -> Dict[str, Dict[str, Any]]:
     """source_id -> 抓取器注册元数据（名称/简介/图标），用于内容源目录展示。"""
     return {meta["id"]: meta for meta in fetcher_registry.get_all_metadata()}
