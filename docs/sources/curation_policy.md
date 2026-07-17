@@ -24,6 +24,15 @@ Sources stay outside the focused catalog when they are:
 
 Historical concrete preset nodes, workflow trigger nodes, broad firehoses, framework/infrastructure release streams, and unvalidated WeChat presets are removed from the built-in fetcher implementation in this branch.
 
+## Incubation (观察期)
+
+Every newly admitted source batch starts in the `incubating` fetcher category, regardless of its target category (official/media/community/...). While incubating:
+
+- The source is default-visible, subscribable, and manually fetchable — but **excluded from the daily auto-collection job** (`scripts/ensure_daily_collection_job.py` excludes the `incubating` category alongside `advanced`/`workflow`).
+- The 节点管理 board shows an 「观察」 badge on incubating nodes for focused review.
+- Promotion (转正): after fetch-quality review over a few manual/observed runs (body cleanliness, dates/order, dedup, no boilerplate leakage — see `node_audit_playbook.md`), change the class `category` back to the target category noted in its code comment, update the category snapshot assertion in `tests/test_rss_fetcher.py`, and re-run `ensure_daily_collection_job.py` to admit it into the daily schedule.
+- Demotion: a source that fails review is removed from `ESSENTIAL_FETCHER_IDS` and recorded in its candidate file's Parking Lot with the reason (the class may stay for a later retry).
+
 ## Default Essential Sources
 
 The current default-visible catalog is the admitted first additive batch. Each source should keep the v1.0 dimensions in code metadata: source owner, brand, scope, channel, base URL, provenance tier, content tags, signal strength, noise risk, and fetch reliability.
@@ -35,7 +44,10 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `web_anthropic_news` | Anthropic company, model, safety, and enterprise announcements. |
 | `web_claude_blog` | Claude product, Claude Code, and agent updates. |
 | `docs_claude_code_changelog` | Claude Code version-level tool updates. |
+| `rss_deepmind_blog` | Google DeepMind official model, research, and product announcements. |
 | `docs_gemma_release_notes` | Gemma open model release notes. |
+| `rss_mistral_news` | Mistral official model, API, and product newsroom updates. |
+| `rss_hf_blog` | Hugging Face model, product, practice, and research blog updates. |
 | `docs_xai_release_notes` | xAI developer release notes (Grok model/API/product updates), split per release entry. |
 | `web_qwen_blog` | Qwen model, product, multimodal, and agent updates. |
 | `docs_deepseek_api_changelog` | DeepSeek API and model changelog. |
@@ -44,8 +56,13 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `docs_zai_new_released` | Z.ai/GLM model, API, and product release notes. |
 | `web_bytedance_seed_research` | ByteDance Seed research papers/tech reports, split per publication. |
 | `web_qbitai` | Tier1 Chinese AI media coverage from 量子位. |
+| `rss_the_decoder` | Focused English AI model, market, and product reporting from The Decoder. |
 | `rss_hn_ai` | Developer community AI discussion signal from Hacker News, filtered to community-upvoted submissions (min points/comments threshold). |
+| `rss_testingcatalog` | Focused tracking of AI product launches and changes from TestingCatalog. |
 | `web_huggingface_daily_papers` | Hugging Face daily papers as curated research signal, split per paper (title/abstract/date). |
+| `rss_ruanyifeng` | Chinese weekly technology digest with high-signal AI coverage from 阮一峰. |
+| `rss_simonwillison` | Full-text LLM tool and developer-practice essays from Simon Willison. |
+| `rss_latent_space` | Full-text AI engineering interviews and industry analysis from Latent Space. |
 | `web_cursor_changelog` | Cursor product changelog for agent coding practice. |
 | `github_opencode_releases` | OpenCode release updates. |
 | `github_openclaw_releases` | OpenClaw release updates. |

@@ -6,10 +6,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from fetchers.impl.rss_fetcher import (
     GenericRssFetcher,
+    GoogleDeepMindBlogRssFetcher,
     GoogleGeminiModelsRssFetcher,
     HackerNewsAiRssFetcher,
+    HuggingFaceBlogRssFetcher,
+    LatentSpaceRssFetcher,
+    MistralNewsRssFetcher,
     OpenAINewsRssFetcher,
+    RuanYifengRssFetcher,
+    SimonWillisonRssFetcher,
+    TestingCatalogRssFetcher as CatalogRssFetcher,
+    TheDecoderRssFetcher,
 )
+from fetchers.registry import ESSENTIAL_FETCHER_IDS, fetcher_registry
 
 
 class DummyResponse:
@@ -509,6 +518,132 @@ def test_openai_news_trailer_strip_is_noop_without_article():
 
 def test_google_gemini_models_uses_category_rss():
     assert GoogleGeminiModelsRssFetcher.feed_url == "https://blog.google/innovation-and-ai/models-and-research/gemini-models/rss/"
+
+
+def test_full_text_rss_preset_uses_feed_body_without_detail_request():
+    # Simon Willison 的 entries Atom 是全文源，类默认应关闭详情抓取。
+    feed_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <feed xmlns="http://www.w3.org/2005/Atom">
+      <title>Simon Willison's Weblog</title>
+      <entry>
+        <title>Full-text entry</title>
+        <id>https://simonwillison.net/2026/full-text-entry/</id>
+        <link href="https://simonwillison.net/2026/full-text-entry/" />
+        <updated>2026-07-17T00:00:00Z</updated>
+        <content type="html">&lt;p&gt;This complete Atom article body must be kept without fetching its detail page.&lt;/p&gt;</content>
+      </entry>
+    </feed>
+    """
+    fetcher = SimonWillisonRssFetcher()
+    requested_urls = []
+
+    async def fake_safe_get(client, url):
+        requested_urls.append(url)
+        if url == fetcher.feed_url:
+            return DummyResponse(feed_xml, url)
+        raise AssertionError(f"全文 feed 不应请求详情页: {url}")
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=1)]
+
+    items = asyncio.run(collect_items())
+
+    assert fetcher.default_fetch_detail_if_missing is False
+    assert requested_urls == [fetcher.feed_url]
+    assert items[0].content == "This complete Atom article body must be kept without fetching its detail page."
+    assert items[0].raw_data["detail_fetched"] is False
+
+
+def test_summary_rss_preset_backfills_body_from_detail_page():
+    # DeepMind 是摘要 feed，继承默认详情抓取开关并用文章页正文回填。
+    feed_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0"><channel><title>Google DeepMind Blog</title>
+      <item>
+        <title>Summary-only entry</title>
+        <link>https://deepmind.google/blog/summary-only-entry/</link>
+        <pubDate>Fri, 17 Jul 2026 00:00:00 GMT</pubDate>
+        <description>Short feed summary.</description>
+      </item>
+    </channel></rss>
+    """
+    detail_html = (
+        "<html><body><article><h1>Summary-only entry</h1><p>"
+        + "This full DeepMind article body is fetched from the detail page and replaces the short summary. " * 4
+        + "</p></article></body></html>"
+    )
+    fetcher = GoogleDeepMindBlogRssFetcher()
+    detail_url = "https://deepmind.google/blog/summary-only-entry/"
+    requested_urls = []
+
+    async def fake_safe_get(client, url):
+        requested_urls.append(url)
+        if url == fetcher.feed_url:
+            return DummyResponse(feed_xml, url)
+        if url == detail_url:
+            return DummyResponse(detail_html, url)
+        raise AssertionError(f"Unexpected URL fetched: {url}")
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=1)]
+
+    items = asyncio.run(collect_items())
+
+    assert fetcher.default_fetch_detail_if_missing is True
+    assert requested_urls == [fetcher.feed_url, detail_url]
+    assert "full DeepMind article body" in items[0].content
+    assert items[0].raw_data["detail_fetched"] is True
+
+
+def test_second_expansion_rss_presets_are_registered_with_complete_curation_metadata():
+    expansion_classes = (
+        GoogleDeepMindBlogRssFetcher,
+        MistralNewsRssFetcher,
+        HuggingFaceBlogRssFetcher,
+        TheDecoderRssFetcher,
+        RuanYifengRssFetcher,
+        CatalogRssFetcher,
+        SimonWillisonRssFetcher,
+        LatentSpaceRssFetcher,
+    )
+    expected_ids = {fetcher_class.source_id for fetcher_class in expansion_classes}
+    metadata_by_id = {item["id"]: item for item in fetcher_registry.get_all_metadata()}
+    required_dimensions = (
+        "source_owner",
+        "source_brand",
+        "source_scope",
+        "source_channel",
+        "source_url",
+        "provenance_tier",
+        "signal_strength",
+        "noise_risk",
+        "fetch_reliability",
+    )
+
+    assert expected_ids <= ESSENTIAL_FETCHER_IDS
+    assert expected_ids <= metadata_by_id.keys()
+    # 观察期(incubating):新节点批次统一在此分类集中观察、不进每日自动采集
+    # (curation_policy「Incubation」节)。质量验收转正时,改回各类注释里的
+    # 目标分类(official/media/community)并同步更新本断言——这是转正的显式护栏。
+    assert {item_id: metadata_by_id[item_id]["category"] for item_id in expected_ids} == {
+        "rss_deepmind_blog": "incubating",
+        "rss_mistral_news": "incubating",
+        "rss_hf_blog": "incubating",
+        "rss_the_decoder": "incubating",
+        "rss_ruanyifeng": "incubating",
+        "rss_testingcatalog": "incubating",
+        "rss_simonwillison": "incubating",
+        "rss_latent_space": "incubating",
+    }
+    for fetcher_class in expansion_classes:
+        item = metadata_by_id[fetcher_class.source_id]
+        assert all(item[dimension] for dimension in required_dimensions)
+        assert item["content_tags"]
+        assert item["shape"] == "article"
+        assert "content_shape" not in fetcher_class.__dict__
 
 
 def test_database_storage_backfills_existing_empty_article():

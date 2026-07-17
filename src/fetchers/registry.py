@@ -20,9 +20,14 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "web_anthropic_news",
     "web_claude_blog",
     "docs_claude_code_changelog",
-    # Google / Gemini / Gemma / Antigravity
+    # Google / Gemini / Gemma / DeepMind
     "rss_google_gemini_models",
+    "rss_deepmind_blog",
     "docs_gemma_release_notes",
+    # Mistral
+    "rss_mistral_news",
+    # Hugging Face
+    "rss_hf_blog",
     # xAI / Grok
     "docs_xai_release_notes",
     # Alibaba / Qwen
@@ -39,8 +44,14 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "web_qbitai",
     "web_aiera",
     "web_ithome_ai",
+    "rss_the_decoder",
     "rss_hn_ai",
+    "rss_testingcatalog",
     "web_huggingface_daily_papers",
+    # Personal commentary / newsletter
+    "rss_ruanyifeng",
+    "rss_simonwillison",
+    "rss_latent_space",
     # Agent coding tools
     "web_cursor_changelog",
     "github_opencode_releases",

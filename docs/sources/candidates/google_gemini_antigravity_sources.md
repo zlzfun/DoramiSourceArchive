@@ -140,6 +140,40 @@ Overlaps with Google DeepMind News, Google Blog Developer Tools, and Gemini API 
 
 Validate whether listing entries and article detail pages are accessible through standard HTTP fetching.
 
+## Source: Google DeepMind Blog
+
+- status: `proposed`
+- source_owner: `google_deepmind`
+- source_brand: `deepmind`
+- source_scope: `company`
+- source_channel: `blog`
+- source_url: `https://deepmind.google/blog/rss.xml`
+- provenance_tier: `tier0_primary`
+- content_tags: `model_release`, `research_paper`, `product_update`
+- signal_strength: `high_signal`
+- noise_risk: `low_noise`
+- fetch_reliability: `stable_public`
+
+### Target Coverage
+
+Frontier Google DeepMind model and research announcements, including Gemini, Veo, Imagen, Genie, Gemini Robotics, and Alpha-series science models. First-hand reporting of frontier-lab launches at first-party level.
+
+### Inclusion Reasons
+
+Google DeepMind is a first-tier frontier lab and the first venue for Gemini/Veo/AlphaFold-class releases. The Google owner family currently carries two admitted sources (Gemini Models blog, Gemma release notes); adding this brings the family to three, within the 3–5-per-vendor admission cap. This is the second-batch RSS realization of the previously parked "Google DeepMind News" candidate, now anchored to the concrete `deepmind.google/blog/rss.xml` feed.
+
+### Risks / Open Questions
+
+The feed carries summaries only (no full body). Detail must be backfilled via `fetch_detail` through `article_extractor`; the `deepmind.google` front end is heavy, so if extraction quality is insufficient a per-site `CrawlProfile` (B-class methodology) should be added, with acceptance at `compare_web_backends.py` similarity ≥0.8 or manual review.
+
+### Known Overlap
+
+Overlaps with Google Blog Gemini Models, Gemma Release Notes, and Google Blog AI for major model launches. Value is broader frontier coverage (Veo/Imagen/Genie/Robotics/science models) that the focused Gemini-only sources miss.
+
+### Validation Notes
+
+2026-07-17 feed probe: `https://deepmind.google/blog/rss.xml` returned HTTP 200 with ~81 items, most recent updated 2026-07-16; feed is summary-only (no full-text body). 2026-07-17 live `_run` validation: 2/2 entries fetched with detail backfill (`html_selector`, 5.2-5.4k chars), clean body, correct dates/order.
+
 # Parking Lot
 
 ## Source: Google DeepMind News
@@ -311,3 +345,37 @@ May overlap with Google Blog Developer Tools for larger Gemini CLI announcements
 ### Validation Notes
 
 The GitHub Releases API should be preferred over scraping the HTML page during implementation.
+
+## Source: Google Research Blog
+
+- status: `proposed`
+- source_owner: `google`
+- source_brand: `google_research`
+- source_scope: `ai_lab`
+- source_channel: `blog`
+- source_url: `https://research.google/blog/`
+- provenance_tier: `tier0_primary`
+- content_tags: `research_paper`, `model_release`, `product_update`
+- signal_strength: `medium_signal`
+- noise_risk: `medium_noise`
+- fetch_reliability: `stable_public`
+
+### Target Coverage
+
+Google Research publications, applied-research write-ups, and technical announcements across Google's broader research organization.
+
+### Inclusion Reasons
+
+A first-party Google research venue that could supplement DeepMind coverage.
+
+### Risks / Open Questions
+
+Parked because it overlaps heavily with Google DeepMind Blog and academic paper sources, and its signal is `medium_signal`. Revisit only after the DeepMind Blog node has run stably.
+
+### Known Overlap
+
+Overlaps with Google DeepMind Blog, arXiv/paper sources, and Google Blog AI.
+
+### Validation Notes
+
+Feed reachable (HTTP 200) on prior probing. Deferred pending the DeepMind Blog node bedding in; not part of this batch.

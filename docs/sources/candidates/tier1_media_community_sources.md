@@ -258,6 +258,74 @@ Validate whether the Daily Papers page provides stable dates/ranking and whether
 
 Implemented as `web_huggingface_daily_papers` and audited 2026-06-02. It was a `SinglePageDocumentFetcher`, so the whole page (47 paper cards) collapsed into **one** article. The page carries a hydration blob — `<div data-target="DailyPapers" data-props="{…}">` — whose JSON has a `dailyPapers` array; each entry's `paper` object holds `id` (arxiv), `title`, `summary` (abstract), `publishedAt`, `upvotes`, `authors`, `ai_keywords`, `githubRepo`. Rewrote the fetcher to parse that JSON and split per paper: title, abstract as body, `paper.publishedAt` as the date, `https://huggingface.co/papers/{id}` as the URL, sorted newest-first — no per-paper detail requests. Live run: 40 papers (limit), 0 empty dates/bodies, newest-first, upvotes/keywords in raw_data.
 
+## Source: The Decoder
+
+- status: `proposed`
+- source_owner: `the_decoder`
+- source_brand: `THE DECODER`
+- source_scope: `ai_media`
+- source_channel: `blog`
+- source_url: `https://the-decoder.com/feed/`
+- provenance_tier: `tier1_curated`
+- content_tags: `market_news`, `model_release`, `product_update`
+- signal_strength: `medium_signal`
+- noise_risk: `medium_noise`
+- fetch_reliability: `stable_public`
+
+### Target Coverage
+
+English-language AI-focused reporting on model releases, product updates, and industry/market news, written as edited articles rather than raw discussion links.
+
+### Inclusion Reasons
+
+The current tier1 media roster is all Chinese (量子位 / 新智元 / IT之家), leaving English AI vertical media uncovered. The Decoder is the tier1 example named in classification standard v1.1, is AI-focused with no general-tech noise, and provides written reporting.
+
+### Risks / Open Questions
+
+WordPress summary feed → detail must be backfilled via `article_extractor`. As a tier1 curated source it can duplicate tier0 official launches; value is edited synthesis and gap coverage, so it should stay lower priority than direct official sources.
+
+### Known Overlap
+
+Moderate event-level overlap with `rss_hn_ai` (Hacker News AI): HN is a discovery source where most posts carry no body, whereas The Decoder provides finished reporting — complementary rather than duplicative. Also overlaps with tier0 vendor sources on major launches.
+
+### Validation Notes
+
+2026-07-17 feed probe: `https://the-decoder.com/feed/` returned HTTP 200 with 10 items (WordPress summary feed), updated as of the probe date. Detail backfill via `article_extractor`. 2026-07-17 live `_run` validation: feed summaries run 288-530 chars, above the generic 200-char detail trigger — preset raises `default_detail_min_chars` to 1200; with that, 2/2 entries backfill full bodies (2.4-6.6k chars) and the theme's literal template string (`H1 Heading ~ same to H2 in feed`) is stripped. Author byline remains at head (acceptable).
+
+## Source: TestingCatalog
+
+- status: `proposed`
+- source_owner: `testingcatalog`
+- source_brand: `TestingCatalog`
+- source_scope: `ai_media`
+- source_channel: `blog`
+- source_url: `https://www.testingcatalog.com/rss/`
+- provenance_tier: `tier1_curated`
+- content_tags: `product_update`, `model_release`
+- signal_strength: `high_signal`
+- noise_risk: `medium_noise`
+- fetch_reliability: `stable_public`
+
+### Target Coverage
+
+Close tracking of AI product feature rollouts, staged/gradual releases, and leaks across ChatGPT / Gemini / Claude and other AI apps — short, factual, product-movement items.
+
+### Inclusion Reasons
+
+Hits the reader profile's second tier ("AI applications / product updates"), which the current catalog covers most weakly. Items are short, factual, and cheap to digest with the existing auto-translate / summarization path.
+
+### Risks / Open Questions
+
+The feed carries **unconfirmed leaks (rumor) content**, giving it `medium_noise`. Removal condition: if noise exceeds expectations during the observation window, remove it from the `ESSENTIAL_FETCHER_IDS` whitelist (keep the fetcher class, move the record to Parking Lot with the reason). Ghost-site summary feed → detail backfill via `article_extractor`.
+
+### Known Overlap
+
+Overlaps with tier0 vendor product-release channels and with The Decoder on product-launch events; distinct value is early/granular rollout and leak coverage the official sources omit.
+
+### Validation Notes
+
+2026-07-17 feed probe: `https://www.testingcatalog.com/rss/` returned HTTP 200 (Ghost summary feed), updated as of the probe date. Detail backfill via `article_extractor` (SSR site). 2026-07-17 live `_run` validation: 2/2 entries with detail backfill (3.0-6.1k chars). Minor known noise: a `Google Preferred Source` badge image at head; acceptable, revisit if it bothers readers.
+
 # Parking Lot
 
 | Source | URL | Reason |

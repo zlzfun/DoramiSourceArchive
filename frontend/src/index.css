@@ -4704,6 +4704,13 @@ input[type="radio"] {
     text-transform: none;
   }
 
+  /* 观察期徽标:新节点转正前的集中观察标记,琥珀警示色系 */
+  .incubating-pill {
+    color: #b45309;
+    border-color: rgba(180, 83, 9, 0.35);
+    background: rgba(245, 158, 11, 0.10);
+  }
+
   /* ── 目录顶栏：板块/主体展开控制 ── */
   .dept-expand-toggle {
     display: inline-flex;

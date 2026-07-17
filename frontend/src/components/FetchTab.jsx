@@ -571,6 +571,10 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               {fetcher.provenance_tier && (
                 <span className={`tier-pill ${tierPillClass(fetcher.provenance_tier)}`}>{tierMeta(fetcher.provenance_tier).short}</span>
               )}
+              {/* 观察期:新节点批次质量验收转正前的集中观察标记(不进每日自动采集) */}
+              {fetcher.category === 'incubating' && (
+                <span className="tier-pill incubating-pill" title="观察期:质量验收转正前不进每日自动采集">观察</span>
+              )}
             </span>
             <span className="board-node-sid" title={fetcher.id}>{fetcher.id}</span>
           </span>

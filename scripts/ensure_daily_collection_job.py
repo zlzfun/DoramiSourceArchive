@@ -35,7 +35,9 @@ from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
 DEFAULT_JOB_NAME = "每日全量采集"
 DEFAULT_CRON_EXPR = "10 7 * * *"
-DEFAULT_EXCLUDED_CATEGORIES = frozenset({"advanced", "workflow"})
+# incubating = 新节点观察期(curation_policy「Incubation」节):质量验收转正前
+# 不进每日自动采集,只手动触发、集中观察抓取结果。
+DEFAULT_EXCLUDED_CATEGORIES = frozenset({"advanced", "workflow", "incubating"})
 
 
 def json_dumps(value: Any) -> str:

@@ -9,7 +9,14 @@ import feedparser
 import httpx
 from bs4 import BeautifulSoup, Tag
 
-from fetchers.impl.article_extractor import DETAIL_HARD_CAP, clean_text, extract_article_detail, extract_detail_from_html
+from fetchers.impl.article_extractor import (
+    DETAIL_HARD_CAP,
+    clean_text,
+    compact_text,
+    extract_article_detail,
+    extract_detail_from_html,
+    node_to_markdown,
+)
 from fetchers.base import BaseFetcher
 from models.content import BaseContent, RssArticleContent
 
@@ -34,6 +41,10 @@ class GenericRssFetcher(BaseFetcher):
     default_detail_min_chars = 200
     # 参数退场波:详情页截断仅剩硬上限兜底(GenericRssFetcher 仍暴露参数作自定义源逃生阀)
     default_detail_max_chars = DETAIL_HARD_CAP
+    # 全文 feed 的正文保结构开关(类级行为,不进参数 schema):默认沿用 get_text
+    # 拍平(摘要 feed 无所谓);全文源置 True 走 node_to_markdown——保留标题/列表/
+    # 链接/图片结构,否则链接密集的全文(如阮一峰周刊)会被拍成逐行断裂的碎文本。
+    feed_content_as_markdown: bool = False
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
@@ -130,6 +141,20 @@ class GenericRssFetcher(BaseFetcher):
         if not html_text:
             return ""
         return clean_text(html_text)
+
+    def _entry_content_text(self, html_text: str, base_url: str) -> str:
+        """feed 条目 HTML → 正文文本:默认 get_text 拍平;全文源保结构转 markdown。"""
+        if not html_text:
+            return ""
+        if self.feed_content_as_markdown:
+            try:
+                soup = BeautifulSoup(html_text, "html.parser")
+                text = compact_text(node_to_markdown(soup, base_url=base_url))
+                if text:
+                    return text
+            except Exception:  # noqa: BLE001 - 结构化失败退回拍平,不阻断条目
+                self.logger.warning("feed 正文 markdown 化失败,退回纯文本拍平")
+        return self._clean_text(html_text)
 
     def _media_url(self, entry: Any) -> str:
         media_content = entry.get("media_content") or []
@@ -253,7 +278,7 @@ class GenericRssFetcher(BaseFetcher):
         for entry in entries:
             entry_id = self._entry_id(runtime_source_id, entry)
             html_text = self._entry_html(entry)
-            content_text = self._clean_text(html_text)
+            content_text = self._entry_content_text(html_text, entry.get("link", "") or feed_url)
             publish_date = self._entry_datetime(entry, "published")
             updated_date = self._entry_datetime(entry, "updated") if "updated" in entry or "updated_parsed" in entry else ""
             title = entry.get("title", "未命名 RSS 条目")
@@ -635,3 +660,288 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
         self.feed_url = self._build_feed_url(min_points, min_comments)
         async for item in super()._run(client, **kwargs):
             yield item
+
+
+class GoogleDeepMindBlogRssFetcher(PresetRssFetcher):
+    source_id = "rss_deepmind_blog"
+    name = "Google DeepMind 博客"
+    description = "抓取 Google DeepMind 的模型、研究与产品官方动态。"
+    icon = "🧬"
+    feed_url = "https://deepmind.google/blog/rss.xml"
+    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "official"
+    default_limit = 12
+    default_fetch_detail_if_missing = True
+    source_owner = "google_deepmind"
+    source_brand = "deepmind"
+    source_scope = "company"
+    source_channel = "blog"
+    source_url = "https://deepmind.google/blog/"
+    provenance_tier = "tier0_primary"
+    content_tags = ["model_release", "research_paper", "product_update"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public"
+
+
+class MistralNewsRssFetcher(PresetRssFetcher):
+    source_id = "rss_mistral_news"
+    name = "Mistral AI 新闻"
+    description = "抓取 Mistral AI 的模型、产品与 API 平台官方新闻。"
+    icon = "🌬️"
+    feed_url = "https://mistral.ai/rss.xml"
+    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "official"
+    default_limit = 8
+    default_fetch_detail_if_missing = True
+    source_owner = "mistral"
+    source_brand = "mistral"
+    source_scope = "company"
+    source_channel = "newsroom"
+    source_url = "https://mistral.ai/news/"
+    provenance_tier = "tier0_primary"
+    content_tags = ["model_release", "product_update", "api_platform"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public"
+
+    async def _detail_for_url(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        max_chars: int,
+        detail_min_chars: int,
+    ) -> Dict[str, str]:
+        """Mistral 详情:`<article>` 内含页头 hero(标签/日期/Back to Blog/x min read)、
+        `mistral-atom-*` 自定义控件(分享/复制 tooltip、Thinking Summary 摘要卡)与
+        阅读进度条,通用提取会整块吞进正文(2026-07-17 抽检)。取 article 直接子级中
+        文本最长块为正文(同 Anthropic「多顶层取最长」先例),块内再剔自定义控件;
+        失败或过短回退通用提取。"""
+        response = await self._safe_get(client, url)
+        if not response:
+            return {"title": "", "text": "", "method": "", "url": ""}
+        try:
+            soup = BeautifulSoup(response.text, "html.parser")
+            article = soup.select_one("article")
+            if article is not None:
+                body = max(
+                    (child for child in article.children if isinstance(child, Tag)),
+                    key=lambda tag: len(tag.get_text(" ", strip=True)),
+                    default=None,
+                )
+                if body is not None:
+                    for node in body.find_all(
+                        lambda tag: tag.name and tag.name.startswith("mistral-atom")
+                    ):
+                        node.decompose()
+                    text = compact_text(node_to_markdown(body, base_url=str(response.url)))
+                    if len(text) >= detail_min_chars:
+                        return {
+                            "title": "",
+                            "text": text[:max_chars],
+                            "method": "mistral_article_main",
+                            "url": str(response.url),
+                        }
+        except Exception:  # noqa: BLE001 - 精确路径任何异常都回退通用提取
+            pass
+        detail = await extract_article_detail(
+            client, self._safe_get, str(response.url), response.text, max_chars, detail_min_chars
+        )
+        return {"title": detail.title, "text": detail.text, "method": detail.method, "url": detail.url}
+
+
+class HuggingFaceBlogRssFetcher(PresetRssFetcher):
+    source_id = "rss_hf_blog"
+    name = "Hugging Face 博客"
+    description = "抓取 Hugging Face 的模型、产品、实践与研究博客动态。"
+    icon = "🤗"
+    feed_url = "https://huggingface.co/blog/feed.xml"
+    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "official"
+    default_limit = 8
+    default_fetch_detail_if_missing = True
+    source_owner = "huggingface"
+    source_brand = "huggingface"
+    source_scope = "company"
+    source_channel = "blog"
+    source_url = "https://huggingface.co/blog"
+    provenance_tier = "tier0_primary"
+    content_tags = ["model_release", "product_update", "tutorial_or_practice", "research_paper"]
+    signal_strength = "high_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public"
+
+    async def _detail_for_url(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        max_chars: int,
+        detail_min_chars: int,
+    ) -> Dict[str, str]:
+        """HF 博客详情:精确取 `div.blog-content` 并剔除页头控件后转 markdown。
+
+        通用提取会把容器内的 Upvote/作者头像/返回导航等控件渲染成 "[0 [0 …"
+        噪声混进正文头部(2026-07-17 实测);这些控件带 `not-prose` 标记,
+        剔除即得干净正文。容器缺失或正文过短时回退通用提取。
+        """
+        response = await self._safe_get(client, url)
+        if not response:
+            return {"title": "", "text": "", "method": "", "url": ""}
+        try:
+            soup = BeautifulSoup(response.text, "html.parser")
+            container = soup.select_one("div.blog-content")
+            if container is not None:
+                for node in container.select(".not-prose, dialog, button, svg"):
+                    node.decompose()
+                for anchor in container.select('a[href="/blog"]'):
+                    anchor.decompose()
+                # 空文本/纯数字锚点(标题锚、Upvote 计数)会被行内渲染成 "[0]" 类记号
+                for anchor in container.find_all("a"):
+                    label = anchor.get_text(strip=True)
+                    if not label or label.isdigit():
+                        anchor.decompose()
+                # HF 的 SSR 在交互岛周围输出 "[0"/"[-1"/"]" 水合标记**字面文本节点**
+                # (2026-07-17 实测),全匹配摘除,防止混进 markdown。
+                for text_node in container.find_all(string=True):
+                    if re.fullmatch(r"\[+-?\d*|\]+", str(text_node).strip()):
+                        text_node.extract()
+                text = compact_text(node_to_markdown(container, base_url=str(response.url)))
+                if len(text) >= detail_min_chars:
+                    return {
+                        "title": "",
+                        "text": text[:max_chars],
+                        "method": "hf_blog_content",
+                        "url": str(response.url),
+                    }
+        except Exception:  # noqa: BLE001 - 精确路径任何异常都回退通用提取
+            pass
+        detail = await extract_article_detail(
+            client, self._safe_get, str(response.url), response.text, max_chars, detail_min_chars
+        )
+        return {"title": detail.title, "text": detail.text, "method": detail.method, "url": detail.url}
+
+
+class TheDecoderRssFetcher(PresetRssFetcher):
+    source_id = "rss_the_decoder"
+    name = "The Decoder"
+    description = "抓取 The Decoder 的英文 AI 模型、市场与产品报道。"
+    icon = "📰"
+    feed_url = "https://the-decoder.com/feed/"
+    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "media"
+    default_limit = 12
+    default_fetch_detail_if_missing = True
+    # 该 feed 的摘要长 288-530 字符,超过通用触发线 200 导致详情永不回填
+    # (2026-07-17 实测);提高触发线,确保正文从文章页回填。
+    default_detail_min_chars = 1200
+
+    async def _detail_for_url(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        max_chars: int,
+        detail_min_chars: int,
+    ) -> Dict[str, str]:
+        """通用提取后剔除站点模板残句(页面里字面存在的占位文本,2026-07-17 实测)。"""
+        detail = await super()._detail_for_url(client, url, max_chars, detail_min_chars)
+        text = (detail.get("text") or "").replace("H1 Heading ~ same to H2 in feed", "").strip()
+        return {**detail, "text": text}
+    source_owner = "the_decoder"
+    source_brand = "THE DECODER"
+    source_scope = "ai_media"
+    source_channel = "blog"
+    source_url = "https://the-decoder.com/"
+    provenance_tier = "tier1_curated"
+    content_tags = ["market_news", "model_release", "product_update"]
+    signal_strength = "medium_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public"
+
+
+class RuanYifengRssFetcher(PresetRssFetcher):
+    source_id = "rss_ruanyifeng"
+    name = "阮一峰·科技爱好者周刊"
+    description = "抓取阮一峰科技爱好者周刊的中文技术与 AI 精选内容。"
+    icon = "📮"
+    feed_url = "https://www.ruanyifeng.com/blog/atom.xml"
+    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
+    default_limit = 5
+    source_owner = "ruanyifeng"
+    source_brand = "科技爱好者周刊"
+    source_scope = "personal_commentary"
+    source_channel = "blog"
+    source_url = "https://www.ruanyifeng.com/blog/"
+    provenance_tier = "tier2_personal_social"
+    content_tags = ["market_news", "developer_tool", "tutorial_or_practice", "opinion"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public"
+    # Atom 条目自带全文，避免重复访问详情页。
+    default_fetch_detail_if_missing = False
+    # 全文 feed 保结构:走 node_to_markdown,保留标题/列表/链接/图片
+    feed_content_as_markdown = True
+
+
+class TestingCatalogRssFetcher(PresetRssFetcher):
+    source_id = "rss_testingcatalog"
+    name = "TestingCatalog"
+    description = "抓取 TestingCatalog 对主流 AI 产品功能上线与变化的追踪。"
+    icon = "🧪"
+    feed_url = "https://www.testingcatalog.com/rss/"
+    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "media"
+    default_limit = 12
+    default_fetch_detail_if_missing = True
+    source_owner = "testingcatalog"
+    source_brand = "TestingCatalog"
+    source_scope = "ai_media"
+    source_channel = "blog"
+    source_url = "https://www.testingcatalog.com/"
+    provenance_tier = "tier1_curated"
+    content_tags = ["product_update", "model_release"]
+    signal_strength = "high_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public"
+
+
+class SimonWillisonRssFetcher(PresetRssFetcher):
+    source_id = "rss_simonwillison"
+    name = "Simon Willison 博客"
+    description = "抓取 Simon Willison 的 LLM 工具与开发实践长文。"
+    icon = "🛠️"
+    feed_url = "https://simonwillison.net/atom/entries/"
+    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
+    default_limit = 8
+    source_owner = "simonwillison"
+    source_brand = "Simon Willison"
+    source_scope = "personal_commentary"
+    source_channel = "blog"
+    source_url = "https://simonwillison.net/"
+    provenance_tier = "tier2_personal_social"
+    content_tags = ["developer_tool", "tutorial_or_practice", "opinion"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public"
+    # Atom 条目自带全文，避免重复访问详情页。
+    default_fetch_detail_if_missing = False
+    # 全文 feed 保结构:走 node_to_markdown,保留标题/列表/链接/图片
+    feed_content_as_markdown = True
+
+
+class LatentSpaceRssFetcher(PresetRssFetcher):
+    source_id = "rss_latent_space"
+    name = "Latent Space"
+    description = "抓取 Latent Space 的 AI 工程访谈与行业分析长文。"
+    icon = "🎙️"
+    feed_url = "https://www.latent.space/feed"
+    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
+    default_limit = 5
+    source_owner = "latent_space"
+    source_brand = "Latent Space"
+    source_scope = "personal_commentary"
+    source_channel = "newsletter"
+    source_url = "https://www.latent.space/"
+    provenance_tier = "tier2_personal_social"
+    content_tags = ["opinion", "market_news", "tutorial_or_practice"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public"
+    # Substack 条目自带全文，避免重复访问详情页。
+    default_fetch_detail_if_missing = False
+    # 全文 feed 保结构:走 node_to_markdown,保留标题/列表/链接/图片
+    feed_content_as_markdown = True
