@@ -45,8 +45,10 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `web_claude_blog` | Claude product, Claude Code, and agent updates. |
 | `docs_claude_code_changelog` | Claude Code version-level tool updates. |
 | `rss_deepmind_blog` | Google DeepMind official model, research, and product announcements. |
+| `rss_apple_mlr` | Apple Machine Learning Research papers and technical articles. |
 | `docs_gemma_release_notes` | Gemma open model release notes. |
 | `rss_mistral_news` | Mistral official model, API, and product newsroom updates. |
+| `rss_nvidia_genai` | NVIDIA generative AI product, platform, and practice updates. |
 | `rss_hf_blog` | Hugging Face model, product, practice, and research blog updates. |
 | `docs_xai_release_notes` | xAI developer release notes (Grok model/API/product updates), split per release entry. |
 | `web_qwen_blog` | Qwen model, product, multimodal, and agent updates. |
@@ -58,8 +60,10 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `web_qbitai` | Tier1 Chinese AI media coverage from 量子位. |
 | `rss_the_decoder` | Focused English AI model, market, and product reporting from The Decoder. |
 | `rss_hn_ai` | Developer community AI discussion signal from Hacker News, filtered to community-upvoted submissions (min points/comments threshold). |
+| `rss_reddit_localllama` | Daily community-upvoted open-model signal from r/LocalLLaMA. |
 | `rss_testingcatalog` | Focused tracking of AI product launches and changes from TestingCatalog. |
 | `web_huggingface_daily_papers` | Hugging Face daily papers as curated research signal, split per paper (title/abstract/date). |
+| `github_trending_daily` | GitHub site-wide daily trending repositories as open-source heat discovery signal (first-time-on-board stream). |
 | `rss_ruanyifeng` | Chinese weekly technology digest with high-signal AI coverage from 阮一峰. |
 | `rss_simonwillison` | Full-text LLM tool and developer-practice essays from Simon Willison. |
 | `rss_latent_space` | Full-text AI engineering interviews and industry analysis from Latent Space. |

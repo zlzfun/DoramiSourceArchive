@@ -318,3 +318,17 @@ def serialize_to_metadata(content_obj: BaseContent) -> Dict[str, Any]:
         metadata["extensions"] = extensions
 
     return metadata
+
+
+@dataclass
+class GitHubTrendingDigestContent(BaseContent):
+    """GitHub Trending 每日汇总内容类:一天一条,正文为当日榜单的 GFM 表格。
+
+    逐仓库条目模式已否决(2026-07 用户拍板):连续在榜者要么沉底要么反复置顶,
+    且逐条刷动态流;榜单本是「一天一景」的快照,汇总即原生形态。结构化榜单
+    数据保留在 items_json 扩展字段供下游使用。
+    """
+    content_type: ClassVar[str] = "github_trending"
+
+    items_json: str = field(default="[]", metadata={"description": "当日榜单结构化数组 JSON"})
+    repo_count: int = field(default=0, metadata={"description": "榜单条目数"})

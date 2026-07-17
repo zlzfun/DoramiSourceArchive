@@ -208,3 +208,14 @@ def test_node_to_markdown_single_row_table_kept():
         "<div><table><tr><td>a</td><td>b</td></tr></table></div>", "html.parser"
     ).div)
     assert md.split("\n") == ["| a | b |", "| --- | --- |"]
+
+
+def test_node_to_markdown_skips_html_comments():
+    """HTML 注释(Reddit feed 的 <!-- SC_OFF --> 等)不得混入正文(Comment 是
+    NavigableString 子类,不先判会被当文本 emit)。"""
+    from bs4 import BeautifulSoup
+    from fetchers.impl.article_extractor import node_to_markdown
+
+    html = "<div><!-- SC_OFF --><p>real <!-- inline note -->body</p><!-- SC_ON --></div>"
+    md = node_to_markdown(BeautifulSoup(html, "html.parser").div)
+    assert md == "real body"

@@ -28,6 +28,7 @@ CONTENT_TYPE_CATEGORY = {
     "social_post": "社交动态",
     "webhook_trigger": "工作流",
     "daily_brief": "AI 日报",
+    "github_trending": "GitHub 趋势",
 }
 
 # 日报作为「特殊源」的展示元数据。日报不是抓取器（不进 FetcherRegistry），
@@ -71,6 +72,7 @@ def _source_category(content_type: Optional[str]) -> str:
 # 这三类结构化监控产物必然是动态形。
 BULLETIN_CONTENT_TYPES = frozenset({
     "github_release", "github_repository", "hf_model", "huggingface_model",
+    "github_trending",
 })
 
 

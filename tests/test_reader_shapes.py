@@ -39,6 +39,8 @@ EXPECTED_BULLETIN_SOURCE_IDS = {
     "github_deepseek_repositories",
     "generic_huggingface_models",
     "hf_deepseek_models",
+    # 榜单类(短条目发现流)
+    "github_trending_daily",
 }
 
 

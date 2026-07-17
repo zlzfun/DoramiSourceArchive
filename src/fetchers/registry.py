@@ -26,6 +26,10 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "docs_gemma_release_notes",
     # Mistral
     "rss_mistral_news",
+    # Apple
+    "rss_apple_mlr",
+    # NVIDIA
+    "rss_nvidia_genai",
     # Hugging Face
     "rss_hf_blog",
     # xAI / Grok
@@ -46,8 +50,10 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "web_ithome_ai",
     "rss_the_decoder",
     "rss_hn_ai",
+    "rss_reddit_localllama",
     "rss_testingcatalog",
     "web_huggingface_daily_papers",
+    "github_trending_daily",
     # Personal commentary / newsletter
     "rss_ruanyifeng",
     "rss_simonwillison",

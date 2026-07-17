@@ -7990,8 +7990,12 @@ input[type="radio"] {
     background: none;
     padding: 0;
   }
+  /* 表格保底:禁止单元格逐字断行(窄列被压成竖排字的根因),列宽由内容决定;
+     整表超出窗格宽度时在自身容器内横向滚动,而非挤压列。 */
   .markdown-body table {
-    width: 100%;
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
     margin: 0 0 16px;
     border-collapse: collapse;
     font-size: 14px;
@@ -8001,6 +8005,8 @@ input[type="radio"] {
     border: 1px solid var(--dorami-border);
     padding: 6px 10px;
     text-align: left;
+    word-break: keep-all;
+    overflow-wrap: normal;
   }
   .markdown-body hr {
     margin: 24px 0;

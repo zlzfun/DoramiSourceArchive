@@ -5,6 +5,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from fetchers.impl.rss_fetcher import (
+    AppleMachineLearningResearchRssFetcher,
     BairBlogRssFetcher,
     GenericRssFetcher,
     GoogleDeepMindBlogRssFetcher,
@@ -15,9 +16,11 @@ from fetchers.impl.rss_fetcher import (
     LatentSpaceRssFetcher,
     LilianWengRssFetcher,
     MistralNewsRssFetcher,
+    NvidiaGenAiBlogRssFetcher,
     OneUsefulThingRssFetcher,
     OpenAINewsRssFetcher,
     RaschkaRssFetcher,
+    RedditLocalLlamaRssFetcher,
     RuanYifengRssFetcher,
     SimonWillisonRssFetcher,
     TestingCatalogRssFetcher as CatalogRssFetcher,
@@ -618,6 +621,9 @@ def test_second_expansion_rss_presets_are_registered_with_complete_curation_meta
         OneUsefulThingRssFetcher,
         LilianWengRssFetcher,
         BairBlogRssFetcher,
+        AppleMachineLearningResearchRssFetcher,
+        NvidiaGenAiBlogRssFetcher,
+        RedditLocalLlamaRssFetcher,
     )
     expected_ids = {fetcher_class.source_id for fetcher_class in expansion_classes}
     metadata_by_id = {item["id"]: item for item in fetcher_registry.get_all_metadata()}
@@ -652,6 +658,9 @@ def test_second_expansion_rss_presets_are_registered_with_complete_curation_meta
         "rss_oneusefulthing": "incubating",
         "rss_lilianweng": "incubating",
         "rss_bair_blog": "incubating",
+        "rss_apple_mlr": "incubating",
+        "rss_nvidia_genai": "incubating",
+        "rss_reddit_localllama": "incubating",
     }
     for fetcher_class in expansion_classes:
         item = metadata_by_id[fetcher_class.source_id]

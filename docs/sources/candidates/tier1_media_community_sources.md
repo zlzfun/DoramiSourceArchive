@@ -326,10 +326,80 @@ Overlaps with tier0 vendor product-release channels and with The Decoder on prod
 
 2026-07-17 feed probe: `https://www.testingcatalog.com/rss/` returned HTTP 200 (Ghost summary feed), updated as of the probe date. Detail backfill via `article_extractor` (SSR site). 2026-07-17 live `_run` validation: 2/2 entries with detail backfill (3.0-6.1k chars). Minor known noise: a `Google Preferred Source` badge image at head; acceptable, revisit if it bothers readers.
 
+## Source: r/LocalLLaMA
+
+- status: `proposed`
+- source_owner: `reddit`
+- source_brand: `r/LocalLLaMA`
+- source_scope: `community`
+- source_channel: `forum`
+- source_url: `https://www.reddit.com/r/LocalLLaMA/top/.rss?t=day`
+- provenance_tier: `tier1_curated`
+- content_tags: `model_release`, `developer_tool`, `opinion`
+- signal_strength: `medium_signal`
+- noise_risk: `medium_noise`
+- fetch_reliability: `stable_public`
+
+### Target Coverage
+
+The open-source LLM community's primary discussion hub: local/open-weight model releases, quantization and inference tooling, benchmarks, and practitioner opinion on running models locally.
+
+### Inclusion Reasons
+
+The first-stop information source for the open-source model community. The `top/.rss?t=day` (top-of-day) variant is community-vote de-noising baked into the URL — the Reddit equivalent of the HN `min_points` floor, so only upvoted posts pass. Self-posts carry a body usable directly; external-link posts degrade to discovery entries (title + URL + discussion, no body), following the Hacker News precedent.
+
+### Risks / Open Questions
+
+Reddit rate-limits / 429s traffic from data-center IPs — a real risk in the production deployment environment, and the focus of the observation window. If the failure rate is high, consider OAuth or removal. Admitted under the `incubating` observation window.
+
+### Known Overlap
+
+Overlaps with tier0 vendor model-release channels and other tier1 media on major open-model launches; distinct value is early community signal, quantization/tooling chatter, and practitioner opinion the official sources omit.
+
+### Validation Notes
+
+2026-07-17 feed probe (wave3 plan 轨道 N3): `https://www.reddit.com/r/LocalLLaMA/top/.rss?t=day` returned HTTP 200, 25 entries/day, Atom feed carrying self-post bodies inline. Detail策略: self-post body used directly, external-link posts degrade to discovery entries, no detail fetch. 2026-07-17 live `_run` validation: 2/2 entries clean (self-post bodies via feed_content_as_markdown; external-link posts degrade to thumbnail-card discovery entries; the SC_OFF/SC_ON comment-leak found here was fixed globally in node_to_markdown). **429 risk confirmed empirically during acceptance**: the 4th+ request within a few minutes from one IP hit 429 (with retries exhausted); a once-daily cadence is expected to be fine — the incubation window must confirm this on the production egress IP before promotion.
+
+## Source: GitHub Trending (daily)
+
+- status: `proposed`
+- source_owner: `github`
+- source_brand: `GitHub Trending`
+- source_scope: `community`
+- source_channel: `ranking`
+- source_url: `https://github.com/trending?since=daily`
+- provenance_tier: `tier1_curated`
+- content_tags: `developer_tool`
+- signal_strength: `medium_signal`
+- noise_risk: `medium_noise`
+- fetch_reliability: `stable_public`
+
+### Target Coverage
+
+Site-wide daily trending repositories on GitHub as an open-source heat discovery signal (user-requested; the equivalent RSSHub route has ~46.8K subscribers on Folo).
+
+### Inclusion Reasons
+
+GitHub exposes no official Trending API/RSS. This is the first realized instance of the closed H2 track's Form A (port-on-demand): a Python preset parsing the SSR `github.com/trending` page (referencing the RSSHub `github/trending` route's approach, MIT). Entry ids key on the repository full name, so a repo trending for multiple days is stored once — the stream reads as "first time on the board".
+
+### Risks / Open Questions
+
+Site-wide board — AI density varies day by day (medium_noise accepted; the reader skims it in the bulletin flow). Page structure (`article.Box-row`) has been stable for years but is not a contract.
+
+### Known Overlap
+
+Complements (not duplicates) the org-scoped new-repo monitors (`github_deepseek_repositories`); overlap with release monitors is minimal.
+
+### Validation Notes
+
+2026-07-17 initial per-repo mode validated (17/17 rows parsed), then **reworked to a daily-digest form on user decision**: per-repo entries either sink (first-on-board stream) or repeatedly resurface (update stream) for long-running trending repos, and flood the bulletin flow. Now one entry per day — title `GitHub Trending 日榜 · YYYY-MM-DD`, body = GFM table (rank / linked repo / description / language / stars / stars-today; renders as a real table via the reader's remark-gfm), structured board kept in `items_json`; id keyed by date so same-day refetches are idempotent (first snapshot wins). README backfill dropped with the per-repo mode (board rows stay lean; click through for details). Re-fetched: 1 digest entry, 14 repos.
 # Parking Lot
 
 | Source | URL | Reason |
 | --- | --- | --- |
+| Microsoft Research feed | `https://www.microsoft.com/en-us/research/feed/` | `tier0_primary` but broad general research; overlap面 with existing sources待观察. Feed 2026-07-17 probe returned HTTP 200. |
+| Product Hunt | `https://www.producthunt.com/feed` | Feed 2026-07-17 probe returned HTTP 200; surfaces AI product discovery but high noise. |
+| 即刻「AI探索站」等 AI 圈子 | 即刻 App (jike) | Transferred from the closed H2 track (2026-07-17): a potential target for a Chinese activity/dynamics stream, but requires reverse-engineering 即刻's API and the platform's stability is unverified. Revisit only if there is a real need for a Chinese activity feed. |
 | 机器之心 WeChat | WeChat account `机器之心` | Likely high coverage, but requires WeChat credential flow and authenticated scraping. |
 | 量子位 WeChat | WeChat account `量子位` | Likely core distribution channel, but requires authenticated WeChat fetching. |
 | 新智元 WeChat | WeChat account `AI_era` | Likely core distribution channel, but requires authenticated WeChat fetching and higher noise filtering. |

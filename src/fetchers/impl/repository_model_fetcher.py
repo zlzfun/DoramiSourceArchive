@@ -8,7 +8,12 @@ import httpx
 
 from fetchers.base import BaseFetcher
 from fetchers.impl.article_extractor import DETAIL_HARD_CAP
-from models.content import BaseContent, GitHubRepositoryContent, HuggingFaceModelContent
+from models.content import (
+    BaseContent,
+    GitHubRepositoryContent,
+    GitHubTrendingDigestContent,
+    HuggingFaceModelContent,
+)
 
 
 class GenericGitHubRepositoriesFetcher(BaseFetcher):
@@ -402,3 +407,124 @@ class DeepSeekHuggingFaceModelsFetcher(PresetHuggingFaceModelsFetcher):
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
+
+
+class GitHubTrendingFetcher(BaseFetcher):
+    """GitHub Trending 日榜(github.com/trending?since=daily,SSR 公开页)。
+
+    GitHub 无官方 Trending API/RSS;本节点即「RSSHub 按需移植」形态 A 的首例
+    (参考 RSSHub github/trending 路由的解析思路,MIT;wave3 方案 H.2/N3)。
+
+    **每日汇总形态(2026-07 用户拍板)**:一天 yield 一条,正文为当日榜单的
+    GFM 表格(仓库链接/描述/语言/星数/今日新增)。逐仓库条目模式已否决——
+    连续在榜者要么沉底(首次上榜流)要么反复置顶(更新流),且逐条刷动态流;
+    榜单本是「一天一景」的快照,汇总即原生形态,连续热榜者每天自然在列。
+    条目 id 按日期幂等:当日重抓 save 跳过(以首抓快照为准)。
+    """
+    source_id = "github_trending_daily"
+    content_type = "github_trending"
+    content_shape = "bulletin"  # 榜单快照:动态形,进「动态」视图
+    category = "incubating"  # 观察期(准入方案 wave3 N3);验收转正后改回 "community"
+
+    name = "GitHub Trending 日榜"
+    description = "GitHub 全站每日趋势仓库榜,每天一则汇总,开源热度信号。"
+    icon = "📈"
+
+    source_owner = "github"
+    source_brand = "GitHub Trending"
+    source_scope = "community"
+    source_channel = "ranking"
+    source_url = "https://github.com/trending"
+    provenance_tier = "tier1_curated"
+    content_tags = ["developer_tool"]
+    signal_strength = "medium_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public"
+
+    trending_url = "https://github.com/trending?since=daily"
+    default_limit = 25
+
+    @classmethod
+    def get_parameter_schema(cls) -> List[Dict[str, Any]]:
+        return [
+            {"field": "limit", "label": "榜单条目上限", "type": "number", "default": cls.default_limit},
+        ]
+
+    def _int_of(self, text: str) -> int:
+        digits = re.sub(r"[^\d]", "", text or "")
+        return int(digits) if digits else 0
+
+    def _parse_rows(self, html: str, limit: int) -> List[Dict[str, Any]]:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html, "html.parser")
+        parsed: List[Dict[str, Any]] = []
+        for rank, row in enumerate(soup.select("article.Box-row")[:limit], start=1):
+            anchor = row.select_one("h2 a")
+            if anchor is None:
+                continue
+            full_name = "".join(anchor.get_text().split())
+            if "/" not in full_name:
+                continue
+            desc_el = row.select_one("p")
+            lang_el = row.select_one('[itemprop="programmingLanguage"]')
+            stars_el = row.select_one('a[href$="/stargazers"]')
+            today_el = row.select_one("span.d-inline-block.float-sm-right")
+            parsed.append({
+                "rank": rank,
+                "repo": full_name,
+                "url": f"https://github.com/{full_name}",
+                "description": desc_el.get_text(" ", strip=True) if desc_el else "",
+                "language": lang_el.get_text(strip=True) if lang_el else "",
+                "stars": self._int_of(stars_el.get_text(strip=True) if stars_el else ""),
+                "stars_today": today_el.get_text(strip=True) if today_el else "",
+            })
+        return parsed
+
+    def _digest_markdown(self, items: List[Dict[str, Any]]) -> str:
+        """榜单 → 紧凑列表(每条两行:标题行 + 简介行)。
+
+        不用表格:6 列表格在阅读窗格宽度下窄列会被压成逐字竖排(2026-07 用户
+        抽检);列表形态为窄栏设计,渲染稳定。今日增星归一化为「+N today」。
+        """
+        blocks: List[str] = []
+        for it in items:
+            today = re.sub(r"[^\d,]", "", it["stars_today"] or "")
+            heat = " · ".join(x for x in [
+                f"⭐ {it['stars']:,}" + (f"(+{today} today)" if today else ""),
+                it["language"],
+            ] if x)
+            head = f"**{it['rank']}. [{it['repo']}]({it['url']})** — {heat}"
+            desc = (it["description"] or "").strip()
+            blocks.append(head + ("\n" + desc if desc else ""))
+        return "\n\n".join(blocks)
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = kwargs.get("limit", self.default_limit)
+        try:
+            limit = max(int(limit), 1) if limit not in (None, "") else self.default_limit
+        except (TypeError, ValueError):
+            limit = self.default_limit
+
+        response = await self._safe_get(client, self.trending_url)
+        if not response:
+            raise RuntimeError(f"GitHub Trending 请求失败: {self.trending_url}")
+
+        items = self._parse_rows(response.text, limit)
+        if not items:
+            raise RuntimeError("GitHub Trending 页面解析为空(结构可能变更)")
+
+        now = datetime.now(timezone.utc)
+        day = now.strftime("%Y-%m-%d")
+        import json as _json
+
+        yield GitHubTrendingDigestContent(
+            id=f"{self.source_id}_{day.replace('-', '')}",  # 每日一条,当日重抓幂等
+            title=f"GitHub Trending 日榜 · {day}",
+            source_url=self.trending_url,
+            publish_date=now.isoformat(),
+            content=self._digest_markdown(items),
+            has_content=True,
+            items_json=_json.dumps(items, ensure_ascii=False),
+            repo_count=len(items),
+        )

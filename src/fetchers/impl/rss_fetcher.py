@@ -1097,3 +1097,76 @@ class BairBlogRssFetcher(PresetRssFetcher):
     default_fetch_detail_if_missing = False
     # 全文 feed 保结构:走 node_to_markdown,保留标题/列表/链接/图片
     feed_content_as_markdown = True
+
+
+class AppleMachineLearningResearchRssFetcher(PresetRssFetcher):
+    source_id = "rss_apple_mlr"
+    name = "Apple ML Research"
+    description = "Apple 机器学习研究的论文与技术文章。"
+    icon = "🍎"
+    feed_url = "https://machinelearning.apple.com/rss.xml"
+    # 摘要 feed 型统一规则(wave3 方法论固化,三连发教训):摘要长 ~600 字符
+    # 超通用触发线 200,不提线则详情永不回填。
+    default_detail_min_chars = 1500
+    category = "incubating"  # 观察期;验收转正后改回 "official"
+    default_limit = 8
+    source_owner = "apple"
+    source_brand = "Apple MLR"
+    source_scope = "company"
+    source_channel = "blog"
+    source_url = "https://machinelearning.apple.com/"
+    provenance_tier = "tier0_primary"
+    content_tags = ["research_paper", "model_release"]
+    signal_strength = "medium_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public"
+
+
+class NvidiaGenAiBlogRssFetcher(PresetRssFetcher):
+    source_id = "rss_nvidia_genai"
+    name = "NVIDIA GenAI Blog"
+    description = "NVIDIA 生成式 AI 的产品、平台与实践动态。"
+    icon = "🟩"
+    feed_url = "https://blogs.nvidia.com/blog/category/generative-ai/feed/"
+    category = "incubating"  # 观察期;验收转正后改回 "official"
+    default_limit = 8
+    source_owner = "nvidia"
+    source_brand = "NVIDIA"
+    source_scope = "company"
+    source_channel = "blog"
+    source_url = "https://blogs.nvidia.com/blog/category/generative-ai/"
+    provenance_tier = "tier0_primary"
+    content_tags = ["product_update", "api_platform", "tutorial_or_practice"]
+    signal_strength = "medium_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public"
+    # feed 条目自带全文，避免重复访问详情页。
+    default_fetch_detail_if_missing = False
+    # 全文 feed 保结构:走 node_to_markdown,保留标题/列表/链接/图片
+    feed_content_as_markdown = True
+
+
+class RedditLocalLlamaRssFetcher(PresetRssFetcher):
+    source_id = "rss_reddit_localllama"
+    name = "r/LocalLLaMA 日榜"
+    description = "Reddit LocalLLaMA 社区每日高票帖，开源模型社区信号。"
+    icon = "🦙"
+    # top/.rss?t=day 变体即社区投票去噪，是 HN min_points 的 Reddit 等价物。
+    feed_url = "https://www.reddit.com/r/LocalLLaMA/top/.rss?t=day"
+    category = "incubating"  # 观察期;验收转正后改回 "community"
+    default_limit = 12
+    source_owner = "reddit"
+    source_brand = "r/LocalLLaMA"
+    source_scope = "community"
+    source_channel = "forum"
+    source_url = "https://www.reddit.com/r/LocalLLaMA/"
+    provenance_tier = "tier1_curated"
+    content_tags = ["model_release", "developer_tool", "opinion"]
+    signal_strength = "medium_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public"
+    # Atom content 自带 self-post 正文；外链帖作为发现条目，不抓外链详情。
+    default_fetch_detail_if_missing = False
+    # feed 正文保结构，保留 self-post 的链接、列表与图片。
+    feed_content_as_markdown = True
+    # Reddit 对数据中心 IP 存在 429 风险，观察期重点验证。

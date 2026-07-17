@@ -81,12 +81,31 @@ Meta 的重大发布(Llama 系)**新闻面已被现有源覆盖**:The Decoder/Te
 - **重启前置条件(未来立项:管理面账号池)**:凭据池表(多账号、加密存储)、按源分配与轮换、凭据健康探测(主动发现失效而非等抓取失败)、过期通知(接运维面)与人工刷新流程。届时自建 RSSHub 实例(PM2 纳管,形态 B)作为账号池的执行载体一并设计。
 - 止损通路已备:X 动态可由既有 import bridge(`POST /api/import/social-posts`)人工/外部工作流喂入。
 
-### H.2(保留)RSSHub 按需移植 —— 形态 A,零运行时依赖
+### H.2(已关闭,2026-07-17 用户拍板)RSSHub 按需移植 —— 归档
 
-RSSHub 定位澄清:**站点适配器集合**(5000+ 路由代码,MIT),非内容源。对本项目的即时增量价值集中在**无凭据路由**,其中最有价值的是 **Telegram 公共频道**(走 `t.me/s/<频道>` 网页预览,无凭据、结构稳定;不少 AI 情报频道质量佳)——GitHub 类已有 API fetcher,中文媒体已有节点,X/微博/知乎被 H1 前置挡住。
+RSSHub 定位澄清:**站点适配器集合**(5000+ 路由代码,MIT),非内容源。无凭据目录逐类盘点后,对本项目的真移植标的所剩无几:Telegram AI 频道被用户降级搁置后,仅剩**即刻 AI 圈子**(中文动态,X 的最接近中文替代;但平台小众、逆向维护归本项目、稳定性未验)——**不足以支撑一条独立轨道,H2 关闭**。
 
-- 整合形态(三选一已定):**A. 按需移植路由逻辑为 Python preset**(参考 RSSHub 对应路由的上游逆向成果,注明出处;零新增运行时,走硬化 preset + 观察期正道;代价:失去社区跟修,移植路由归本项目维护——限于结构稳定源)✔;B. PM2 纳管 node 实例——推迟到账号池立项时作为其载体;C. 整库移植 ✘。
-- ☐ 首候选:Telegram AI 频道(N 结束后讨论;频道名单由用户定或主线调研候选送审);实现即一个 `BaseWebPageListFetcher` 预设,`incubating` 观察期管辖。
+- 即刻 AI 圈子 → Parking(若对中文动态流有真需求单独重启);
+- 整合形态结论存档:A 按需移植(零运行时)✔ / B PM2 纳管实例(推迟到 H1 账号池立项时作为其载体——那才是 RSSHub 的真正用武之地)/ C 整库移植 ✘;
+- 盘点的重要副产品:**多个候选其实有官方 RSS,根本不需要 RSSHub**(Reddit `.rss`、YouTube channel feed、Apple MLR、NVIDIA 博客、Microsoft Research、Product Hunt,2026-07-17 实测全通)→ 转化为轨道 N3。
+
+---
+
+## 轨道 N3 · 官方 RSS 直连三批(2026-07-17 立项,H2 盘点的转化产出) —— ☑ 已完成(2026-07-17)
+
+**准入 3 个**(feed 预验证已完成),照旧 `incubating` 观察期、不进每日采集与日报名单:
+
+| 源 | feed 实测 | detail 策略 |
+|---|---|---|
+| ☑ Apple Machine Learning Research → `rss_apple_mlr` | `machinelearning.apple.com/rss.xml`:200,10 条,摘要 feed,活跃(2026-07-16) | detail 回填(静态站,实施验证);tier0 厂商矩阵真空缺(Apple 端侧/基础研究一方原文) |
+| ☑ NVIDIA GenAI Blog → `rss_nvidia_genai` | `blogs.nvidia.com/blog/category/generative-ai/feed/`:200,9 条,**content:encoded 全文**,活跃 | 全文 feed(`feed_content_as_markdown`);tier0,硬件+推理栈生态位独特;企业博客营销倾向 → medium_noise 观察 |
+| ☑ r/LocalLLaMA(Reddit 日榜)→ `rss_reddit_localllama` | `reddit.com/r/LocalLLaMA/top/.rss?t=day`:200,25 条/日,Atom 自带 self-post 正文 | **top-of-day 变体即天然去噪**(HN `min_points` 的 Reddit 等价物);self-post 正文即用、外链帖降级为发现条目(HN 先例)、不抓详情;风险:Reddit 对数据中心 IP 限流(429),观察期重点验证 |
+
+| ☑ GitHub Trending 日榜 → `github_trending_daily`(**用户点名追加**,2026-07-17) | `github.com/trending?since=daily`:SSR 200,17 行解析 | **H2 形态 A 首例**(无官方 API/RSS,参考 RSSHub 路由思路移植为 Python preset);`content_shape=bulletin` 进「动态」流(bulletin 快照护栏首次更新);**每日汇总形态**(2026-07 用户拍板,否决逐仓库条目):一天一条 GFM 表格榜单,id 按日期幂等;连续在榜者每天自然在列,不沉底不刷屏 |
+
+Parking(留痕):Microsoft Research feed(tier0 但泛研究,重叠面待观察)/ Product Hunt(高噪)/ 即刻 AI 圈子(自 H2 转入)。
+
+**方法论固化(三连发教训,2026-07-17)**:The Decoder、Lil'Log、Apple MLR 先后踩中同一坑——**摘要 feed 的摘要长度(300-900 字符)超过通用 detail 触发线 200,导致详情永不回填**。自本批起规则化:**凡"摘要 feed 型"preset 一律显式声明 `default_detail_min_chars = 1500`**(全文 feed 型与 discovery 型不受影响);预验证清单必须包含"摘要实际长度 vs 触发线"检查项。
 
 ---
 

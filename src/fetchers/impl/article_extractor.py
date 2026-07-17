@@ -13,7 +13,7 @@ from typing import Awaitable, Callable, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 
 SafeGet = Callable[[httpx.AsyncClient, str], Awaitable[Optional[httpx.Response]]]
@@ -104,6 +104,8 @@ def _inline_markdown(node: Tag, base_url: str) -> str:
     """把行内内容（文本 + <a> + 行内 <img> + <br>）转成单段 markdown 文本。"""
     parts: List[str] = []
     for child in node.children:
+        if isinstance(child, Comment):
+            continue  # HTML 注释(如 Reddit feed 的 SC_OFF/SC_ON)不是正文;Comment 是 NavigableString 子类,须先判
         if isinstance(child, NavigableString):
             parts.append(str(child))
             continue
@@ -176,6 +178,8 @@ def node_to_markdown(root: Tag, base_url: str = "") -> str:
 
     def walk(el: Tag) -> None:
         for child in el.children:
+            if isinstance(child, Comment):
+                continue  # HTML 注释(如 Reddit feed 的 SC_OFF/SC_ON)不是正文;Comment 是 NavigableString 子类,须先判
             if isinstance(child, NavigableString):
                 stray = re.sub(r"[ \t ]+", " ", str(child)).strip()
                 if stray:

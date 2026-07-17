@@ -156,3 +156,72 @@ def test_deepseek_repos_schema_is_limit_only_with_fixed_readme_defaults():
 
     # 断言「对齐全文硬上限」这一语义本身,而非其具体取值(取值随上限调整漂移)
     assert DeepSeekGitHubRepositoriesFetcher.default_readme_max_chars == DETAIL_HARD_CAP
+
+
+def test_github_trending_yields_single_daily_digest():
+    """每日汇总形态:一天一条,紧凑列表正文(表格形态已否决:窄列竖排),
+    id 按日期幂等,结构化榜单入扩展字段。"""
+    import asyncio
+    import json
+
+    from fetchers.impl.repository_model_fetcher import GitHubTrendingFetcher
+
+    html = """
+    <html><body>
+      <article class="Box-row">
+        <h2><a href="/foo/bar">foo /\n  bar</a></h2>
+        <p>A test repo | with pipe</p>
+        <span itemprop="programmingLanguage">Python</span>
+        <a href="/foo/bar/stargazers">1,234</a>
+        <span class="d-inline-block float-sm-right">99 stars today</span>
+      </article>
+      <article class="Box-row">
+        <h2><a href="/baz/qux">baz/qux</a></h2>
+        <a href="/baz/qux/stargazers">10</a>
+      </article>
+    </body></html>
+    """
+
+    class DummyResponse:
+        def __init__(self, text):
+            self.text = text
+
+    fetcher = GitHubTrendingFetcher()
+
+    async def fake_safe_get(client, url, **kwargs):
+        return DummyResponse(html)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect():
+        return [item async for item in fetcher._run(None, limit=10)]
+
+    items = asyncio.run(collect())
+    assert len(items) == 1  # 一天恰好一条
+    digest = items[0]
+    assert digest.title.startswith("GitHub Trending 日榜 · ")
+    assert digest.repo_count == 2
+
+    blocks = digest.content.split("\n\n")
+    assert len(blocks) == 2  # 每仓库一块(标题行 + 简介行)
+    head1, desc1 = blocks[0].split("\n")
+    assert head1.startswith("**1. [foo/bar](https://github.com/foo/bar)**")
+    assert "⭐ 1,234(+99 today)" in head1 and "Python" in head1
+    assert desc1 == "A test repo | with pipe"
+    assert blocks[1].startswith("**2. [baz/qux](https://github.com/baz/qux)**")
+    assert "\n" not in blocks[1]  # 无简介则只有标题行
+
+    rows = json.loads(digest.items_json)
+    assert [r["repo"] for r in rows] == ["foo/bar", "baz/qux"]
+
+    # 同日重抓 id 幂等(save 跳过,以首抓快照为准)
+    again = asyncio.run(collect())
+    assert again[0].id == digest.id
+
+    # 形态与观察期元数据
+    assert GitHubTrendingFetcher.content_shape == "bulletin"
+    assert GitHubTrendingFetcher.category == "incubating"
+    assert GitHubTrendingFetcher.content_type == "github_trending"
+    for dim in ("source_owner", "source_brand", "provenance_tier", "signal_strength",
+                "noise_risk", "fetch_reliability"):
+        assert getattr(GitHubTrendingFetcher, dim)
