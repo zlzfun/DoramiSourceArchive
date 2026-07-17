@@ -12,7 +12,7 @@
 """
 
 import importlib
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -111,6 +111,8 @@ class DailyBriefConfigUpdate(BaseModel):
     cron: Optional[str] = None
     cursor: Optional[str] = None  # 手动设置/重置增量游标；空串=重置（下次用近 1 天兜底窗口）
     top_n: Optional[int] = None   # 日报精选条数
+    # 日报源范围手工名单:缺省(None)=不改;[]=清空回到全部源;非空=只取名单内源
+    source_ids: Optional[List[str]] = None
 
 
 class DailyBriefGenerateParams(BaseModel):
@@ -125,6 +127,8 @@ def _daily_brief_config_response(session: Session) -> Dict[str, Any]:
         "cron": daily_brief_service.daily_brief_cron(session),
         "cursor": daily_brief_service.read_cursor(session),
         "top_n": daily_brief_service.daily_brief_top_n(session),
+        # None = 全部源;非空名单 = 候选只取名单内源(手工维护)
+        "source_ids": daily_brief_service.read_source_scope(session),
         "last_run": daily_brief_service.get_json_setting(session, daily_brief_service.KEY_LAST_RUN, None),
     }
 
@@ -157,6 +161,8 @@ def set_daily_brief_config(payload: DailyBriefConfigUpdate, session: Session = D
         daily_brief_service.set_setting(session, daily_brief_service.KEY_CURSOR, payload.cursor.strip())
     if payload.top_n is not None:
         daily_brief_service.set_setting(session, daily_brief_service.KEY_TOP_N, str(payload.top_n))
+    if payload.source_ids is not None:
+        daily_brief_service.write_source_scope(session, payload.source_ids)
     # 仅在 collector 运行角色下有调度引擎；reader 角色不接日报 cron。
     app = _app()
     if app.runtime_collector_enabled():

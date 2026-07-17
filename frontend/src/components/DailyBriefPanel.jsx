@@ -6,6 +6,7 @@ import {
   generateDailyBrief,
   getDailyBriefProgress,
   fetchArticles,
+  fetchReaderSources,
   deleteArticle,
 } from '../api';
 import { useConfirm } from '../hooks/useConfirm';
@@ -38,6 +39,11 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
   const [cron, setCron] = useState('30 8 * * *');
   const [topN, setTopN] = useState(12);
   const [enabled, setEnabled] = useState(false);
+  // 源范围手工名单(用户拍板):all=全部源(后端 source_ids 空);custom=只取勾选名单。
+  // 新增源默认不进名单——高噪即时源的取舍交给名单 + LLM 打分,不做类型规则过滤。
+  const [scopeMode, setScopeMode] = useState('all');
+  const [scopeIds, setScopeIds] = useState(() => new Set());
+  const [sourceCatalog, setSourceCatalog] = useState(null); // null=未加载
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState(null);
   const [stepIndex, setStepIndex] = useState(0);   // 当前流水线段索引(0..5),error 时停在最后已知段
@@ -47,8 +53,29 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
   const [deletingId, setDeletingId] = useState(null);
 
   const loadBrief = () => getDailyBriefConfig()
-    .then(d => { setBriefConfig(d); setCron(d.cron || '30 8 * * *'); setTopN(d.top_n ?? 12); setEnabled(Boolean(d.enabled)); })
+    .then(d => {
+      setBriefConfig(d); setCron(d.cron || '30 8 * * *'); setTopN(d.top_n ?? 12); setEnabled(Boolean(d.enabled));
+      const ids = Array.isArray(d.source_ids) ? d.source_ids : null;
+      setScopeMode(ids && ids.length > 0 ? 'custom' : 'all');
+      setScopeIds(new Set(ids || []));
+    })
     .catch(() => {});
+
+  // 源目录懒加载:切到自定名单时才拉(注册源 ∪ 归档源并集,与阅读器目录同一接口)
+  const ensureSourceCatalog = () => {
+    if (sourceCatalog !== null) return;
+    fetchReaderSources()
+      .then(d => setSourceCatalog((d.sources || []).filter(s => s.source_id !== DAILY_BRIEF_SOURCE_ID)))
+      .catch(() => setSourceCatalog([]));
+  };
+
+  const toggleScopeId = (sourceId) => {
+    setScopeIds(prev => {
+      const next = new Set(prev);
+      if (next.has(sourceId)) next.delete(sourceId); else next.add(sourceId);
+      return next;
+    });
+  };
 
   const loadHistory = () => fetchArticles({ source_id: DAILY_BRIEF_SOURCE_ID }, 60, 0, true)
     .then(d => setHistory(d.items || []))
@@ -128,8 +155,13 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
       showToast('Cron 表达式不能为空,请填写 5 段 cron', 'error');
       return;
     }
+    if (scopeMode === 'custom' && scopeIds.size === 0) {
+      showToast('自定名单至少勾选一个来源(或切回「全部来源」)', 'error');
+      return;
+    }
     try {
-      await saveDailyBriefConfig({ cron: c, top_n: n });
+      // 全部来源 → 传 [] 清空名单(后端语义:空=全部);自定 → 传勾选集合
+      await saveDailyBriefConfig({ cron: c, top_n: n, source_ids: scopeMode === 'custom' ? [...scopeIds] : [] });
       showToast('已保存 日报配置', 'success');
       loadBrief();
     } catch (error) {
@@ -196,6 +228,52 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
         <div className="brief-field">
           <label className="form-label" htmlFor="brief-topn">每期条数（Top N，1–50）</label>
           <input id="brief-topn" type="number" min="1" max="50" step="1" value={topN} onChange={e => setTopN(e.target.value)} className="form-input" />
+        </div>
+
+        {/* ── 源范围:手工名单(全部来源 ⇄ 自定名单) ── */}
+        <div className="brief-field">
+          <span className="form-label">日报源范围</span>
+          <div className="mini-seg" role="tablist" aria-label="日报源范围">
+            {[['all', '全部来源'], ['custom', '自定名单']].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={scopeMode === value}
+                onClick={() => { setScopeMode(value); if (value === 'custom') ensureSourceCatalog(); }}
+                className={`mini-seg-btn ${scopeMode === value ? 'is-on' : ''}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {scopeMode === 'custom' && (
+            <div className="brief-scope-list" role="group" aria-label="日报来源名单">
+              {sourceCatalog === null ? (
+                <p className="tiny-meta px-2 py-1.5">加载来源目录…</p>
+              ) : sourceCatalog.length === 0 ? (
+                <p className="tiny-meta px-2 py-1.5">来源目录为空</p>
+              ) : (
+                sourceCatalog.map(s => (
+                  <label key={s.source_id} className="brief-scope-row">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5"
+                      checked={scopeIds.has(s.source_id)}
+                      onChange={() => toggleScopeId(s.source_id)}
+                    />
+                    <span className="brief-scope-name">{s.name || s.source_id}</span>
+                    <span className="tiny-meta shrink-0">{s.count || 0} 篇{s.shape === 'bulletin' ? ' · 动态' : ''}</span>
+                  </label>
+                ))
+              )}
+            </div>
+          )}
+          <p className="tiny-meta mt-1">
+            {scopeMode === 'custom'
+              ? `候选只取名单内来源(已选 ${scopeIds.size} 个);新增来源默认不进名单`
+              : '候选取全部来源(新增来源自动纳入)'}
+          </p>
         </div>
 
         <div className="brief-cursor-row">

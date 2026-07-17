@@ -143,3 +143,30 @@ def test_generate_rejects_bad_top_n_synchronously(monkeypatch, tmp_path):
         _login(client)
         resp = client.post("/api/daily-brief/generate", json={"top_n": 999999})
         assert resp.status_code == 400
+
+
+def test_daily_brief_source_scope_roundtrip(monkeypatch, tmp_path):
+    """源范围手工名单:未配置=None(全部);设名单/清空([])经端点往返一致。"""
+    app_module = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client)
+
+        # 未配置 → None(全部源)
+        assert client.get("/api/daily-brief/config").json()["source_ids"] is None
+
+        # 设名单(去重排序、剔空白)
+        resp = client.post("/api/daily-brief/config", json={
+            "source_ids": ["rss_openai_news", " web_anthropic_news ", "rss_openai_news", ""],
+        })
+        assert resp.status_code == 200
+        assert resp.json()["source_ids"] == ["rss_openai_news", "web_anthropic_news"]
+
+        # 缺省字段不改名单
+        client.post("/api/daily-brief/config", json={"top_n": 10})
+        assert client.get("/api/daily-brief/config").json()["source_ids"] == [
+            "rss_openai_news", "web_anthropic_news",
+        ]
+
+        # 空列表 = 清空回到全部源
+        resp = client.post("/api/daily-brief/config", json={"source_ids": []})
+        assert resp.json()["source_ids"] is None

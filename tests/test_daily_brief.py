@@ -412,3 +412,45 @@ def test_resolve_llm_config_kv_override(tmp_path, monkeypatch):
     assert cfg.model == "kv-model"      # KV 覆盖
     assert cfg.base_url == "ini-url"    # 未覆盖回退 ini
     assert cfg.api_key == "ini-key"
+
+
+def test_collect_candidates_respects_source_scope(tmp_path):
+    """源范围名单只圈定扫描面:名单外文章不进候选、不推进游标;None=全部。"""
+    from sqlmodel import Session
+    from storage.impl.db_storage import DatabaseStorage
+    from models.db import ArticleRecord
+    import services.daily_brief as db
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'scope.db'}")
+    with Session(sink.engine) as session:
+        for i, sid in enumerate(["src_a", "src_a", "src_b"]):
+            session.add(ArticleRecord(
+                id=f"a{i}", title=f"t{i}", content_type="rss_article", source_id=sid,
+                source_url=f"https://x.test/{i}", publish_date="2026-07-17T00:00:00",
+                fetched_date=f"2026-07-17T0{i}:00:00", has_content=True,
+                content="正文" * 50, extensions_json="{}", is_vectorized=False,
+            ))
+        session.commit()
+
+        all_cands, seen_all = db.collect_candidates(session, cursor="")
+        assert {c.source_id for c in all_cands} == {"src_a", "src_b"}
+        assert seen_all == "2026-07-17T02:00:00"
+
+        scoped, seen_scoped = db.collect_candidates(session, cursor="", source_ids=["src_a"])
+        assert {c.source_id for c in scoped} == {"src_a"} and len(scoped) == 2
+        # 游标只由名单内文章推进(src_b 的 02:00 不计)
+        assert seen_scoped == "2026-07-17T01:00:00"
+
+
+def test_source_scope_setting_roundtrip(tmp_path):
+    from sqlmodel import Session
+    from storage.impl.db_storage import DatabaseStorage
+    import services.daily_brief as db
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'scope_kv.db'}")
+    with Session(sink.engine) as session:
+        assert db.read_source_scope(session) is None
+        db.write_source_scope(session, ["b", "a", "a", " "])
+        assert db.read_source_scope(session) == ["a", "b"]
+        db.write_source_scope(session, [])
+        assert db.read_source_scope(session) is None

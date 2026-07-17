@@ -4711,6 +4711,38 @@ input[type="radio"] {
     background: rgba(245, 158, 11, 0.10);
   }
 
+  /* ── 日报源范围:自定名单多选清单(配置卡内,定高滚动) ── */
+  .brief-scope-list {
+    margin-top: 6px;
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid var(--dorami-border);
+    border-radius: var(--r-control);
+    background: var(--dorami-surface);
+    padding: 4px;
+  }
+
+  .brief-scope-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    font-size: 12.5px;
+    color: var(--dorami-ink-2);
+  }
+
+  .brief-scope-row:hover { background: var(--dorami-soft); }
+
+  .brief-scope-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   /* ── 目录顶栏：板块/主体展开控制 ── */
   .dept-expand-toggle {
     display: inline-flex;

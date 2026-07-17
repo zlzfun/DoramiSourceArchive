@@ -170,7 +170,7 @@ Meta AI Blog 类:`BaseWebPageListFetcher` 声明 `listing_url + article_url_patt
 
 ## 5. 后续(非本批)
 
-- **日报生成逻辑适配扩源(用户提出,待办)**:源数量与形态扩张后,`daily_brief` 的候选收集/打分/配额可能需要调整——候选池被高频源(HF Blog/TestingCatalog/[AINews])稀释、周刊类聚合内容(阮一峰)与逐条资讯的打分口径不同、`paper_cap` 类配额或需按源/形态细化;集中解决源相关问题后单独立项;
+- **日报生成逻辑适配扩源**:第一步已落地(2026-07-17)——**源范围手工名单**(`daily_brief_source_ids` KV;未配置=全部源,配置后候选只扫名单内源、游标只由名单内推进;日报配置页「全部来源 ⇄ 自定名单」多选)。设计取舍:用户拍板不做形态/tier 规则过滤——高噪即时源(如未来的 X 动态)有时优先级更高,取舍交给名单 + map 阶段 LLM 打分;周刊类口径问题也由名单吸收(不想要就不勾)。`per_source_cap=15` 既有配额继续兜稀释。后续如仍需:按源差异化配额/打分提示词注入源特性,视名单实践再议;
 - Newsletter 二批(Raschka/Mollick/Weng/Huyen)视 P2 试点体感;
 - Meta AI Blog 网页路线立项(B 类);
 - RSSHub 上游评估(中期,见 reader-usability-plan §并行线 D);

@@ -68,6 +68,7 @@ KEY_CURSOR = "daily_brief_cursor"
 KEY_ENABLED = "daily_brief_enabled"
 KEY_CRON = "daily_brief_cron"
 KEY_TOP_N = "daily_brief_top_n"
+KEY_SOURCE_IDS = "daily_brief_source_ids"
 KEY_LAST_RUN = "daily_brief_last_run"
 KEY_LLM_BASE_URL = "llm_base_url"
 KEY_LLM_MODEL = "llm_model"
@@ -178,6 +179,34 @@ def daily_brief_top_n(session: Session) -> int:
     return max(TOP_N_MIN, min(TOP_N_MAX, value))
 
 
+def read_source_scope(session: Session) -> Optional[List[str]]:
+    """日报候选的源范围名单(手工维护,用户拍板 2026-07-17):
+
+    - None = 未配置 → 全部源(向后兼容既有行为);
+    - 非空名单 → 候选只取名单内的源。新增源(含未来的 X 动态类导入源)默认
+      **不进**日报,由 admin 在日报配置页显式勾入——不做形态/tier 规则过滤,
+      高噪即时源的取舍交给名单 + map 阶段 LLM 打分。
+    - 空名单视同 None(防呆:空名单必然产出空日报,基本是误操作)。
+    """
+    raw = get_setting(session, KEY_SOURCE_IDS, "")
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(value, list):
+        return None
+    ids = sorted({str(v).strip() for v in value if str(v).strip()})
+    return ids or None
+
+
+def write_source_scope(session: Session, source_ids: Optional[List[str]]) -> None:
+    """写日报源范围名单;空/None → 清空配置(回到全部源)。"""
+    ids = sorted({str(v).strip() for v in (source_ids or []) if str(v).strip()})
+    set_setting(session, KEY_SOURCE_IDS, json.dumps(ids, ensure_ascii=False) if ids else "")
+
+
 # ==========================================
 # LLM 配置合并（ini 默认 ∪ KV 运行期覆盖）
 # ==========================================
@@ -229,6 +258,7 @@ def collect_candidates(
     cursor: str,
     max_total: int = 120,
     per_source_cap: int = 15,
+    source_ids: Optional[List[str]] = None,
 ) -> Tuple[List[BriefCandidate], str]:
     """取游标之后新入库的文章作为候选。
 
@@ -236,6 +266,10 @@ def collect_candidates(
     fetched_date，用于推进游标（避免下次重复处理已看过但被裁剪的条目）。
     游标为空（首次或手动重置）时不设时间地板，按 fetched_date 倒序取最新
     max_total 篇重做——成本由 max_total 上限兜住，不会全库进 LLM。
+
+    source_ids 非空时只扫描名单内的源(read_source_scope 的手工名单):范围外
+    文章不进扫描、也不推进游标——之后把某源加入名单,其游标后的积压会一次性
+    进入候选(由 per_source_cap/max_total 兜住),新纳入源立刻有内容,符合预期。
     """
     # 空游标 → "" ，fetched_date > "" 命中全部，靠下方倒序 + max_total 截断取最新批
     effective_cursor = cursor or ""
@@ -246,6 +280,8 @@ def collect_candidates(
         .where(ArticleRecord.source_id != DAILY_BRIEF_SOURCE_ID)  # 防自我递归
         .order_by(ArticleRecord.fetched_date.desc())
     )
+    if source_ids:
+        statement = statement.where(ArticleRecord.source_id.in_(list(source_ids)))
     rows = session.exec(statement).all()
 
     max_fetched_seen = cursor
@@ -583,8 +619,10 @@ async def generate_daily_brief(
         if top_n is None:
             top_n = daily_brief_top_n(session)
         cursor_before = read_cursor(session)
+        source_scope = read_source_scope(session)
         candidates, max_fetched_seen = collect_candidates(
-            session, cursor=cursor_before, max_total=max_total, per_source_cap=per_source_cap
+            session, cursor=cursor_before, max_total=max_total,
+            per_source_cap=per_source_cap, source_ids=source_scope,
         )
     n_body = sum(1 for c in candidates if c.has_content)
     logger.info("日报[%s]：取到候选 %d 篇（有正文 %d）", report_date, len(candidates), n_body)
