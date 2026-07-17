@@ -3,9 +3,17 @@ import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 
 // react-markdown 默认不渲染原始 HTML（无 rehype-raw），无 XSS 风险
-const MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
+// remark-math + KaTeX:渲染正文里的 $...$/$$...$$ LaTeX(学术型源如 Lil'Log 公式密集;
+// 提取侧忠实保留 TeX 源码,渲染在此收口)。单 $ 行内数学有内建启发式
+// (开 $ 后与闭 $ 前不允许空格),金额串「$100M and $2B」不会误判;
+// 若未来仍现误判,收紧口子是给 remarkMath 传 { singleDollarTextMath: false }。
+const MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks, remarkMath];
+const REHYPE_PLUGINS = [rehypeKatex];
 
 // 灯箱开关注入：img 组件是模块级常量（避免 react-markdown 每次渲染重解析），
 // 故用 Context 把「放大」回调下传给 MarkdownImage，而非重建 components 表。
@@ -100,7 +108,7 @@ export default function ReaderMarkdown({ children }) {
 
   return (
     <LightboxContext.Provider value={openLightbox}>
-      <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS}>
+      <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
         {children || ''}
       </ReactMarkdown>
       {lightbox ? (

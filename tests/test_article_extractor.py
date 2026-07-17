@@ -169,3 +169,42 @@ def test_spa_markdown_asset_can_be_inferred_from_js_template():
     assert detail.method == "markdown_asset"
     assert "loaded from a markdown path inferred" in detail.text
     assert detail.url == "https://example.test/content/articles/spa-article.md"
+
+
+def test_node_to_markdown_renders_table_as_gfm_block():
+    """<table> 应转成单块 GFM 表格,而非逐文本节点散块(Lil'Log 抽检回归)。"""
+    from bs4 import BeautifulSoup
+    from fetchers.impl.article_extractor import node_to_markdown
+
+    html = """
+    <div>
+      <p>before</p>
+      <table><tbody>
+        <tr><td>File system</td><td>- File discovery: <code>glob</code>, <code>grep</code><br/>- File read: <code>read</code></td></tr>
+        <tr><td>Shell</td><td>Run <code>bash</code></td></tr>
+      </tbody></table>
+      <p>after</p>
+    </div>
+    """
+    md = node_to_markdown(BeautifulSoup(html, "html.parser").div)
+    blocks = md.split("\n\n")
+    assert blocks[0] == "before" and blocks[-1] == "after"
+    table_block = blocks[1]
+    lines = table_block.split("\n")
+    # 单块表格:首行数据 + 分隔行 + 第二行数据;cell 内 <br> 折叠为「; 」
+    assert lines[0].startswith("| File system |")
+    assert "glob, grep ; - File read: read" in lines[0]
+    assert set(lines[1].replace("|", "").split()) == {"---"}
+    assert lines[2] == "| Shell | Run bash |"
+    # 逐词散块的旧症状不复现:code 词不再独立成块
+    assert "\n\nglob\n\n" not in md
+
+
+def test_node_to_markdown_single_row_table_kept():
+    from bs4 import BeautifulSoup
+    from fetchers.impl.article_extractor import node_to_markdown
+
+    md = node_to_markdown(BeautifulSoup(
+        "<div><table><tr><td>a</td><td>b</td></tr></table></div>", "html.parser"
+    ).div)
+    assert md.split("\n") == ["| a | b |", "| --- | --- |"]

@@ -5,14 +5,19 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from fetchers.impl.rss_fetcher import (
+    BairBlogRssFetcher,
     GenericRssFetcher,
     GoogleDeepMindBlogRssFetcher,
     GoogleGeminiModelsRssFetcher,
     HackerNewsAiRssFetcher,
     HuggingFaceBlogRssFetcher,
+    InterconnectsRssFetcher,
     LatentSpaceRssFetcher,
+    LilianWengRssFetcher,
     MistralNewsRssFetcher,
+    OneUsefulThingRssFetcher,
     OpenAINewsRssFetcher,
+    RaschkaRssFetcher,
     RuanYifengRssFetcher,
     SimonWillisonRssFetcher,
     TestingCatalogRssFetcher as CatalogRssFetcher,
@@ -608,6 +613,11 @@ def test_second_expansion_rss_presets_are_registered_with_complete_curation_meta
         CatalogRssFetcher,
         SimonWillisonRssFetcher,
         LatentSpaceRssFetcher,
+        InterconnectsRssFetcher,
+        RaschkaRssFetcher,
+        OneUsefulThingRssFetcher,
+        LilianWengRssFetcher,
+        BairBlogRssFetcher,
     )
     expected_ids = {fetcher_class.source_id for fetcher_class in expansion_classes}
     metadata_by_id = {item["id"]: item for item in fetcher_registry.get_all_metadata()}
@@ -637,6 +647,11 @@ def test_second_expansion_rss_presets_are_registered_with_complete_curation_meta
         "rss_testingcatalog": "incubating",
         "rss_simonwillison": "incubating",
         "rss_latent_space": "incubating",
+        "rss_interconnects": "incubating",
+        "rss_raschka": "incubating",
+        "rss_oneusefulthing": "incubating",
+        "rss_lilianweng": "incubating",
+        "rss_bair_blog": "incubating",
     }
     for fetcher_class in expansion_classes:
         item = metadata_by_id[fetcher_class.source_id]

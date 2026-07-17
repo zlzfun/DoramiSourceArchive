@@ -2,7 +2,9 @@
 # 正文硬上限(参数退场波,2026-07):detail_max_chars 用户参数已退场——内置节点恒抓全文,
 # 下游(阅读器/翻译/QA/向量化)吃完整正文。此常量仅作病态页兜底(提取失败把导航/评论
 # 吞进正文的超长文本),正常文章永不触顶;它不是给用户调的旋钮。
-DETAIL_HARD_CAP = 40_000
+# 40K → 200K(2026-07-17):Lil'Log 的深度长文正文 45K+ 字符被 40K 截断(用户抽检,
+# 结尾戛然而止)——40K 低估了正常长文上界;200K 仍拦得住病态页(其量级通常 MB 级)。
+DETAIL_HARD_CAP = 200_000
 
 import json
 import re
@@ -131,6 +133,33 @@ def _inline_markdown(node: Tag, base_url: str) -> str:
     return "\n".join(ln for ln in lines if ln)
 
 
+def _table_markdown(table: Tag, base_url: str) -> str:
+    """把 <table> 转成 GFM 表格(单块文本,行间单换行)。
+
+    单元格用行内渲染(保 code/链接),内部 <br>/换行折叠为「; 」——GFM 单元格
+    不允许换行。首个数据行之后强制补分隔行(GFM 要求表头才渲染为表格;源表格
+    无 <th> 时把首行当表头,与主流转换器一致)。嵌套表格经行内渲染退化为文本。
+    """
+    lines: List[str] = []
+    for tr in table.find_all("tr"):
+        if tr.find_parent("table") is not table:
+            continue  # 嵌套表格的行:已由外层单元格行内渲染退化,防重复
+        cells = tr.find_all(["th", "td"], recursive=False)
+        if not cells:
+            continue
+        texts = []
+        for cell in cells:
+            text = _inline_markdown(cell, base_url).replace("\n", " ; ")
+            text = re.sub(r"[ \t]+", " ", text).strip().replace("|", "\\|")
+            texts.append(text or " ")
+        if not any(t.strip() for t in texts):
+            continue
+        lines.append("| " + " | ".join(texts) + " |")
+        if len(lines) == 1:
+            lines.append("|" + "|".join([" --- "] * len(texts)) + "|")
+    return "\n".join(lines) if len(lines) >= 2 else ""
+
+
 def node_to_markdown(root: Tag, base_url: str = "") -> str:
     """把一个正文容器节点转成 markdown-ish 文本：保留图片、段落、列表与标题。
 
@@ -183,10 +212,17 @@ def node_to_markdown(root: Tag, base_url: str = "") -> str:
                     if text:
                         for ln in text.split("\n"):
                             emit("- " + ln)
+            elif name == "table":
+                # 表格转 GFM 语法(前端 remark-gfm 渲染):整表作为**单个 block**
+                # emit——GFM 表格行之间不能有空行。此前表格落到递归兜底,每个
+                # 文本节点/<code> 被逐个散块(2026-07-17 Lil'Log 用户抽检)。
+                table_md = _table_markdown(child, base_url)
+                if table_md:
+                    emit(table_md)
             elif name in _MD_BLOCK_CONTAINERS:
                 walk(child)
             else:
-                # 其余块级元素（table/tr/td 等）退化为递归取内容
+                # 其余块级元素（tr/td 等）退化为递归取内容
                 walk(child)
 
     walk(root)

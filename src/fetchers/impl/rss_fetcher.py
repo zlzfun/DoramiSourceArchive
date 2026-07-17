@@ -945,3 +945,155 @@ class LatentSpaceRssFetcher(PresetRssFetcher):
     default_fetch_detail_if_missing = False
     # 全文 feed 保结构:走 node_to_markdown,保留标题/列表/链接/图片
     feed_content_as_markdown = True
+
+
+class InterconnectsRssFetcher(PresetRssFetcher):
+    source_id = "rss_interconnects"
+    name = "Interconnects"
+    description = "抓取 Nathan Lambert 对 RLHF 与开源模型的深度分析。"
+    icon = "🧵"
+    feed_url = "https://www.interconnects.ai/feed"
+    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
+    default_limit = 5
+    source_owner = "nathan_lambert"
+    source_brand = "Interconnects"
+    source_scope = "personal_commentary"
+    source_channel = "newsletter"
+    source_url = "https://www.interconnects.ai/"
+    provenance_tier = "tier2_personal_social"
+    content_tags = ["opinion", "research_paper", "model_release"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public"
+    # Substack 条目自带全文，避免重复访问详情页。
+    default_fetch_detail_if_missing = False
+    # 全文 feed 保结构:走 node_to_markdown,保留标题/列表/链接/图片
+    feed_content_as_markdown = True
+
+
+class RaschkaRssFetcher(PresetRssFetcher):
+    source_id = "rss_raschka"
+    name = "Ahead of AI (Raschka)"
+    description = "抓取 Sebastian Raschka 的 LLM 研究解读与实践。"
+    icon = "📚"
+    feed_url = "https://magazine.sebastianraschka.com/feed"
+    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
+    default_limit = 5
+    source_owner = "sebastian_raschka"
+    source_brand = "Ahead of AI"
+    source_scope = "personal_commentary"
+    source_channel = "newsletter"
+    source_url = "https://magazine.sebastianraschka.com/"
+    provenance_tier = "tier2_personal_social"
+    content_tags = ["research_paper", "tutorial_or_practice", "opinion"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public"
+    # Substack 条目自带全文，避免重复访问详情页。
+    default_fetch_detail_if_missing = False
+    # 全文 feed 保结构:走 node_to_markdown,保留标题/列表/链接/图片
+    feed_content_as_markdown = True
+
+
+class OneUsefulThingRssFetcher(PresetRssFetcher):
+    source_id = "rss_oneusefulthing"
+    name = "One Useful Thing (Mollick)"
+    description = "抓取 Ethan Mollick 对 AI 应用与工作方式的洞察。"
+    icon = "💡"
+    feed_url = "https://www.oneusefulthing.org/feed"
+    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
+    default_limit = 5
+    source_owner = "ethan_mollick"
+    source_brand = "One Useful Thing"
+    source_scope = "personal_commentary"
+    source_channel = "newsletter"
+    source_url = "https://www.oneusefulthing.org/"
+    provenance_tier = "tier2_personal_social"
+    content_tags = ["opinion", "tutorial_or_practice", "product_update"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public"
+    # Substack 条目自带全文，避免重复访问详情页。
+    default_fetch_detail_if_missing = False
+    # 全文 feed 保结构:走 node_to_markdown,保留标题/列表/链接/图片
+    feed_content_as_markdown = True
+
+
+class LilianWengRssFetcher(PresetRssFetcher):
+    source_id = "rss_lilianweng"
+    name = "Lil'Log (Lilian Weng)"
+    description = "抓取 Lilian Weng 的深度技术长文。"
+    icon = "🪵"
+    feed_url = "https://lilianweng.github.io/index.xml"
+    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
+    default_limit = 5
+    # 该 Hugo feed 的摘要长 500-900 字符,超过通用触发线 200 导致详情永不回填
+    # (2026-07-17 实测,与 The Decoder 同款);提高触发线,正文从文章页回填。
+    default_detail_min_chars = 1500
+
+    async def _detail_for_url(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        max_chars: int,
+        detail_min_chars: int,
+    ) -> Dict[str, str]:
+        """Lil'Log 详情:通用提取会命中页面 json_ld 的 articleBody——纯文本,
+        图片与标题层级全丢(2026-07-17 用户抽检)。改取 Hugo PaperMod 的
+        `div.post-content` 容器(实测 18 图/10 小标题,无页头 meta)转 markdown;
+        容器缺失或过短回退通用提取。"""
+        response = await self._safe_get(client, url)
+        if not response:
+            return {"title": "", "text": "", "method": "", "url": ""}
+        try:
+            soup = BeautifulSoup(response.text, "html.parser")
+            container = soup.select_one("div.post-content")
+            if container is not None:
+                text = compact_text(node_to_markdown(container, base_url=str(response.url)))
+                if len(text) >= detail_min_chars:
+                    return {
+                        "title": "",
+                        "text": text[:max_chars],
+                        "method": "lilianweng_post_content",
+                        "url": str(response.url),
+                    }
+        except Exception:  # noqa: BLE001 - 精确路径任何异常都回退通用提取
+            pass
+        detail = await extract_article_detail(
+            client, self._safe_get, str(response.url), response.text, max_chars, detail_min_chars
+        )
+        return {"title": detail.title, "text": detail.text, "method": detail.method, "url": detail.url}
+    source_owner = "lilian_weng"
+    source_brand = "Lil'Log"
+    source_scope = "personal_commentary"
+    source_channel = "blog"
+    source_url = "https://lilianweng.github.io/"
+    provenance_tier = "tier2_personal_social"
+    content_tags = ["research_paper", "tutorial_or_practice"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public"
+
+
+class BairBlogRssFetcher(PresetRssFetcher):
+    source_id = "rss_bair_blog"
+    name = "BAIR Blog"
+    description = "抓取伯克利 AI 实验室的研究博客。"
+    icon = "🎓"
+    feed_url = "https://bair.berkeley.edu/blog/feed.xml"
+    category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "official"
+    default_limit = 5
+    source_owner = "uc_berkeley"
+    source_brand = "BAIR"
+    source_scope = "research_repository"
+    source_channel = "blog"
+    source_url = "https://bair.berkeley.edu/blog/"
+    provenance_tier = "tier0_primary"
+    content_tags = ["research_paper"]
+    signal_strength = "medium_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public"
+    # Jekyll 条目 description 自带全文，避免重复访问详情页。
+    default_fetch_detail_if_missing = False
+    # 全文 feed 保结构:走 node_to_markdown,保留标题/列表/链接/图片
+    feed_content_as_markdown = True

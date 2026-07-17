@@ -63,6 +63,11 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `rss_ruanyifeng` | Chinese weekly technology digest with high-signal AI coverage from 阮一峰. |
 | `rss_simonwillison` | Full-text LLM tool and developer-practice essays from Simon Willison. |
 | `rss_latent_space` | Full-text AI engineering interviews and industry analysis from Latent Space. |
+| `rss_interconnects` | Full-text analysis of RLHF and open models from Nathan Lambert. |
+| `rss_raschka` | Full-text LLM research interpretation and practice from Sebastian Raschka. |
+| `rss_oneusefulthing` | Full-text insight on AI application and work practices from Ethan Mollick. |
+| `rss_lilianweng` | Deep technical essays on AI research and practice from Lilian Weng. |
+| `rss_bair_blog` | Primary research blog posts from the Berkeley Artificial Intelligence Research lab. |
 | `web_cursor_changelog` | Cursor product changelog for agent coding practice. |
 | `github_opencode_releases` | OpenCode release updates. |
 | `github_openclaw_releases` | OpenClaw release updates. |

@@ -152,4 +152,7 @@ def test_deepseek_repos_schema_is_limit_only_with_fixed_readme_defaults():
     schema_fields = {entry["field"] for entry in DeepSeekGitHubRepositoriesFetcher.get_parameter_schema()}
     assert schema_fields == {"limit"}
     assert DeepSeekGitHubRepositoriesFetcher.default_fetch_readme is True
-    assert DeepSeekGitHubRepositoriesFetcher.default_readme_max_chars == 40_000
+    from fetchers.impl.article_extractor import DETAIL_HARD_CAP
+
+    # 断言「对齐全文硬上限」这一语义本身,而非其具体取值(取值随上限调整漂移)
+    assert DeepSeekGitHubRepositoriesFetcher.default_readme_max_chars == DETAIL_HARD_CAP

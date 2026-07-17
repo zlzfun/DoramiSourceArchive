@@ -52,6 +52,12 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "rss_ruanyifeng",
     "rss_simonwillison",
     "rss_latent_space",
+    "rss_interconnects",
+    "rss_raschka",
+    "rss_oneusefulthing",
+    "rss_lilianweng",
+    # Academic labs
+    "rss_bair_blog",
     # Agent coding tools
     "web_cursor_changelog",
     "github_opencode_releases",
