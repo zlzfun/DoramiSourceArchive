@@ -504,8 +504,11 @@ export function markArticleUnread(articleId) {
 }
 
 // sourceId 为空 = 全部订阅源标为已读；返回更新后的 {by_source, total}。
-export function markAllRead(sourceId = null) {
-  const path = sourceId ? `/reader/sources/${enc(sourceId)}/mark-all-read` : '/reader/mark-all-read';
+export function markAllRead(sourceId = null, shape = null) {
+  // shape=article|bulletin:容器化视图下「文章/动态」各自的全部标读只作用于本容器
+  const path = sourceId
+    ? `/reader/sources/${enc(sourceId)}/mark-all-read`
+    : `/reader/mark-all-read${shape ? `?shape=${enc(shape)}` : ''}`;
   return request(path, { method: 'POST', errorMsg: '标记已读失败' });
 }
 

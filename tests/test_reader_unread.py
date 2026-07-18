@@ -270,6 +270,33 @@ def test_mark_all_read_single_source_and_global(monkeypatch, tmp_path):
             assert session.exec(select(ReaderArticleReadStateRecord)).all() == []
 
 
+def test_mark_all_read_shape_scoped(monkeypatch, tmp_path):
+    """容器级全部标读(阅读器容器化):shape=article|bulletin 只推进本容器源的水位。
+
+    src_a 未注册 → source_shape 兜底 article;github_trending_daily 是注册表动态形源。
+    """
+    import datetime
+
+    app_module, sink = _make_app(monkeypatch, tmp_path, "markall_shape.db")
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        client.post("/api/reader/sources/src_a/subscribe")
+        client.post("/api/reader/sources/github_trending_daily/subscribe")
+        now = datetime.datetime.now().isoformat()
+        _seed_article(sink.engine, "a1", "src_a", fetched_date=now)
+        _seed_article(sink.engine, "t1", "github_trending_daily", fetched_date=now)
+        assert _unread(client)["total"] == 2
+
+        # 只标文章容器:动态源的未读原样保留
+        data = client.post("/api/reader/mark-all-read?shape=article").json()
+        assert data["by_source"].get("src_a", 0) == 0
+        assert data["by_source"].get("github_trending_daily", 0) == 1
+
+        # 再标动态容器 → 全部归零
+        assert client.post("/api/reader/mark-all-read?shape=bulletin").json()["total"] == 0
+
+
 # ==================== unread_only 过滤 / with_unread 标记 ====================
 
 def test_unread_only_filter_and_with_unread_flag(monkeypatch, tmp_path):

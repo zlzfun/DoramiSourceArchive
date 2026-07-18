@@ -207,8 +207,9 @@ export default function ReaderTab({
   const [sources, setSources] = useState([]);
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
   const [sourcesLoading, setSourcesLoading] = useState(true);
-  const [activeSourceId, setActiveSourceId] = useState(null); // null = 聚合视图(今日/文章/动态)
-  const [showFavorites, setShowFavorites] = useState(false); // true = 「收藏」视图
+  const [activeSourceId, setActiveSourceId] = useState(null); // null = 当前容器的聚合流
+  // 收藏 = 容器内的正交过滤器(Folo 语义:各视图有自己的收藏钮),不再是独立视图
+  const [favOnly, setFavOnly] = useState(false);
   const [favoriteIds, setFavoriteIds] = useState(() => new Set());
   const [favTogglingId, setFavTogglingId] = useState(null);
   const [discoverOpen, setDiscoverOpen] = useState(false);
@@ -220,10 +221,10 @@ export default function ReaderTab({
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false); // 视图轨「搜索」开合中栏搜索行
 
-  // ── 内容形态视图轴(重构升格为视图轨一级导航) ──
-  // 'all' = 今日(混合流,默认) / 'article' = 文章 / 'bulletin' = 动态。
-  // 单源视图不需要该轴(源是形态同质的),由源自身 shape 决定卡片密度。
-  const [shape, setShape] = useState('all');
+  // ── 容器模型(Folo 语义):文章/动态是两个内容宇宙,今日是跨宇宙混合时间线 ──
+  // 'today'(默认) | 'article' | 'bulletin'。选中源=在容器内收窄(mode 与 activeSourceId
+  // 共存,轨钮保持点亮);今日不承担单源浏览——点源自动跳入该源所属容器。
+  const [mode, setMode] = useState('today');
 
   // ── 未读体系 ──
   // 计数来自 GET /api/reader/unread-counts(挂载即拉一次以校准水位,随后 60s 轻轮询);
@@ -312,19 +313,19 @@ export default function ReaderTab({
   const applyUnreadCounts = useCallback((data) => {
     const bySource = data.by_source || {};
     setUnreadBySource(bySource);
-    if (showFavorites) return; // 收藏视图不做新内容提示
-    // 视图范围:单源看该源;聚合按形态轴口径(今日=全形态,文章/动态各自独立提示)
+    if (favOnly) return; // 收藏过滤中不做新内容提示
+    // 范围口径:单源看该源;容器聚合看本容器形态;今日=全形态
     const scope = activeSourceId
       ? (bySource[activeSourceId] || 0)
       : Object.entries(bySource).reduce(
           (sum, [sid, n]) =>
-            sum + (shape === 'all' || (sourceShapeMap[sid] === 'bulletin' ? 'bulletin' : 'article') === shape ? n : 0),
+            sum + (mode === 'today' || (sourceShapeMap[sid] === 'bulletin' ? 'bulletin' : 'article') === mode ? n : 0),
           0,
         );
     const prev = prevScopeUnreadRef.current;
     prevScopeUnreadRef.current = scope;
     if (prev !== null && scope > prev) setFreshCount((c) => c + (scope - prev));
-  }, [activeSourceId, showFavorites, shape, sourceShapeMap]);
+  }, [activeSourceId, favOnly, mode, sourceShapeMap]);
 
   const loadUnreadCounts = useCallback(async () => {
     try {
@@ -408,18 +409,16 @@ export default function ReaderTab({
 
   // 当前列表范围的未读小计(条目列头读数)
   const scopeUnread = useMemo(() => {
-    if (showFavorites) return 0;
+    if (favOnly) return 0;
     if (activeSourceId) return unreadBySource[activeSourceId] || 0;
-    if (shape === 'all') return unreadTotal;
-    return unreadByShape[shape] || 0;
-  }, [showFavorites, activeSourceId, unreadBySource, unreadByShape, unreadTotal, shape]);
+    if (mode === 'today') return unreadTotal;
+    return unreadByShape[mode] || 0;
+  }, [favOnly, activeSourceId, unreadBySource, unreadByShape, unreadTotal, mode]);
 
-  // 当前列表是否整体呈动态形(决定卡片密度):单源看源的 shape,聚合看视图轴
-  const bulletinView = !showFavorites && (
-    activeSourceId ? sourceShapeMap[activeSourceId] === 'bulletin' : shape === 'bulletin'
-  );
-  // 今日混合流:逐条判形态,动态条目带「动态」chip
-  const mixedFlow = !showFavorites && !activeSourceId && shape === 'all';
+  // 动态容器整体呈紧凑形(源在容器内形态同质,单源由 goSource 归位到所属容器)
+  const bulletinView = mode === 'bulletin';
+  // 今日混合流:逐条判形态,动态条目带「动态」chip(今日无单源态)
+  const mixedFlow = mode === 'today';
 
   const hasNoSubscriptions = !sourcesLoading && subscribedSources.length === 0;
 
@@ -577,9 +576,11 @@ export default function ReaderTab({
       // 列表只渲染摘要（content_preview），故请求统一不带全文，正文按需懒加载（见 selectArticle）。
       // 「我的订阅」聚合由后端 subscribed_scope=only 自行解析范围，前端无需先拿到订阅集合即可发请求。
       data = await runList((signal) => {
-        if (showFavorites) {
+        if (favOnly) {
+          // 容器内收藏:范围跟随当前容器/源(今日+收藏=跨容器全部收藏)
           const filters = {};
-          if (activeSourceId) filters.source_id = activeSourceId; // 收藏视图跟随当前来源
+          if (activeSourceId) filters.source_id = activeSourceId;
+          else if (mode !== 'today') filters.shape = mode;
           if (searchQuery) filters.search = searchQuery;
           return fetchFavorites(filters, PAGE_SIZE, skip, { signal, includeContent: false });
         }
@@ -587,7 +588,7 @@ export default function ReaderTab({
         if (activeSourceId) filters.source_id = activeSourceId;
         else {
           filters.subscribed_scope = 'only'; // 聚合视图：后端硬过滤到已订阅源
-          if (shape !== 'all') filters.shape = shape; // 文章/动态分流;今日=混合不传
+          if (mode !== 'today') filters.shape = mode; // 容器分流;今日=混合不传
         }
         if (searchQuery) filters.search = searchQuery;
         filters.with_unread = 'true';           // 条目附页级未读标记（水位由 unread-counts 校准）
@@ -600,7 +601,7 @@ export default function ReaderTab({
       return;
     }
     if (data === undefined) return; // 被更新的请求取代，loading 交给新请求，不在此清除
-    if (showFavorites && data.favorite_ids) setFavoriteIds(new Set(data.favorite_ids));
+    if (favOnly && data.favorite_ids) setFavoriteIds(new Set(data.favorite_ids));
     const items = data.items || [];
     setArticlesTotal(data.total || 0);
     setArticles(prev => (append ? [...prev, ...items] : items));
@@ -608,7 +609,7 @@ export default function ReaderTab({
     // 等用户主动点选一篇才加载正文并计一次阅读（见 selectArticle）。
     if (!append) setFreshCount(0); // 列表已刷新,新内容提示归零
     if (append) setLoadingMore(false); else setArticlesLoading(false);
-  }, [activeSourceId, searchQuery, showFavorites, unreadOnly, shape, showToast, runList]);
+  }, [activeSourceId, searchQuery, favOnly, unreadOnly, mode, showToast, runList]);
 
   // 切换来源/搜索 → 重置列表、回顶、清空右栏
   // 用 useLayoutEffect：在绘制前同步进入加载态，避免「切源瞬间旧列表被画出一帧」的陈旧帧闪现
@@ -632,7 +633,7 @@ export default function ReaderTab({
   // 订阅集合变化后，若正看聚合视图需显式重拉（loadArticles 已不依赖 subscribedIds，
   // 故不会自动刷新）；看具体来源时由 activeSourceId 变化驱动，无需在此处理。
   const refreshAggregateIfActive = () => {
-    if (!showFavorites && !activeSourceId) loadArticles(0, false);
+    if (!favOnly && !activeSourceId) loadArticles(0, false);
   };
 
   const handleSubscribe = async (source) => {
@@ -680,8 +681,8 @@ export default function ReaderTab({
     try {
       const result = wasFav ? await removeFavorite(id) : await addFavorite(id);
       if (result.favorite_ids) setFavoriteIds(new Set(result.favorite_ids));
-      // 收藏视图里取消收藏 → 从当前列表移除
-      if (showFavorites && wasFav) {
+      // 收藏过滤中取消收藏 → 从当前列表移除
+      if (favOnly && wasFav) {
         setArticles((prev) => prev.filter((a) => a.id !== id));
         setArticlesTotal((t) => Math.max(0, t - 1));
         if (activeArticle?.id === id) selectArticle(null);  // 移除的正是当前阅读项 → 清空右栏
@@ -700,12 +701,12 @@ export default function ReaderTab({
     }
   };
 
-  // ── 全部标读（当前范围：某来源 / 全部订阅）──
+  // ── 全部标读(当前范围:某来源 / 本容器 / 今日全订阅)──
   const handleMarkAllRead = async () => {
     if (markingRead) return;
     setMarkingRead(true);
     try {
-      const data = await markAllRead(activeSourceId);
+      const data = await markAllRead(activeSourceId, !activeSourceId && mode !== 'today' ? mode : null);
       // 后端返回更新后的统计;本页在列条目全部乐观清点(圆点即消)。
       prevScopeUnreadRef.current = null;
       applyUnreadCounts(data);
@@ -767,15 +768,16 @@ export default function ReaderTab({
     }
   };
 
-  // ── 视图轨导航:今日/文章/动态/收藏 互斥,搜索是叠加开关 ──
+  // ── 视图轨导航(容器语义):点容器钮=进入该容器聚合(源内时=回到聚合);搜索是叠加开关 ──
   const goView = (v) => {
-    if (v === 'fav') { setShowFavorites(true); setActiveSourceId(null); return; }
-    setShowFavorites(false);
+    setMode(v);
     setActiveSourceId(null);
-    setShape(v === 'today' ? 'all' : v);
   };
-  // 单源视图(左栏导航,离开收藏视图)
-  const goSource = (sourceId) => { setShowFavorites(false); setActiveSourceId(sourceId); };
+  // 单源=容器内收窄:源所属容器自动点亮(今日不承担单源,从今日点源即跳入所属容器)
+  const goSource = (sourceId) => {
+    setActiveSourceId(sourceId);
+    setMode(sourceShapeMap[sourceId] === 'bulletin' ? 'bulletin' : 'article');
+  };
   // 搜索开关:关闭即清词(searchQuery 经防抖同步清空,列表回到无过滤)
   const toggleSearch = () => {
     setSearchOpen((open) => {
@@ -783,14 +785,12 @@ export default function ReaderTab({
       return !open;
     });
   };
-  // 视图轨激活态:选中单源时轨上不点亮(范围属于左栏)
-  const railActive = activeSourceId ? null : (showFavorites ? 'fav' : shape === 'all' ? 'today' : shape);
+  // 视图轨激活态 = 当前容器(源内保持点亮——层级关系,不再互斥)
+  const railActive = mode;
 
-  const listTitle = showFavorites
-    ? '收藏'
-    : activeSourceId
-      ? (sourceNameMap[activeSourceId] || activeSourceId)
-      : shape === 'all' ? '今日' : shape === 'article' ? '文章' : '动态';
+  const listTitle = activeSourceId
+    ? (sourceNameMap[activeSourceId] || activeSourceId)
+    : mode === 'today' ? '今日' : mode === 'article' ? '文章' : '动态';
 
   // ── 翻页(上一篇/下一篇):沿当前列表序 ──
   const activeIndex = useMemo(
@@ -818,8 +818,8 @@ export default function ReaderTab({
     return { chars, minutes: Math.max(1, Math.round(chars / 400)) };
   }, [activeBody]);
 
-  // 日期分组只在「到货序」列表上有意义;收藏按收藏时间排序,不分组
-  const grouping = !showFavorites;
+  // 日期分组只在「到货序」列表上有意义;收藏过滤按收藏时间排序,不分组
+  const grouping = !favOnly;
 
   return (
     <div className="reader-shell">
@@ -840,11 +840,11 @@ export default function ReaderTab({
             </svg>
           </div>
         )}
+        {/* 三个容器:今日(混合时间线) / 文章 / 动态。收藏降为容器内过滤器(条目列头星标) */}
         {[
           ['today', '今日', Inbox],
           ['article', '文章', FileText],
           ['bulletin', '动态', Zap],
-          ['fav', '收藏', Star],
         ].map(([view, label, Icon]) => (
           <button
             key={view}
@@ -928,9 +928,33 @@ export default function ReaderTab({
             <SourceRowsSkeleton />
           ) : (
             <>
+              {/* 容器聚合入口(文章/动态容器内):回到本容器全部流;今日无此行(今日即聚合) */}
+              {mode !== 'today' && (
+                <div className="reader-subs">
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setActiveSourceId(null)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveSourceId(null); } }}
+                    className={`reader-source-row ${activeSourceId === null ? 'reader-source-row-active' : ''} ${scopeUnread > 0 && activeSourceId === null ? 'has-unread' : ''}`}
+                  >
+                    <span className="reader-src-allicon" aria-hidden="true">
+                      {mode === 'bulletin' ? <Zap className="h-3.5 w-3.5" /> : <FileText className="h-3.5 w-3.5" />}
+                    </span>
+                    <p className="reader-source-name min-w-0 flex-1">{mode === 'bulletin' ? '全部动态' : '全部文章'}</p>
+                    {(unreadByShape[mode] || 0) > 0 && (
+                      <span className="reader-src-count">{formatBadge(unreadByShape[mode])}</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* 订阅来源按编辑分层分组(样页):官方·一手信息 / 媒体·观察 / 个人·洞见 / 榜单·动态。
+                  源栏跟随容器(层级化):文章容器只列文章形源,动态容器只列榜单·动态,今日列全部。
                   组头=样页 .src-label 细字距灰签。退订钮浮层化:绝对定位悬停现,不占布局。 */}
-              {subscribedGroups.map(({ key, label, list }) => (
+              {subscribedGroups
+                .filter(({ key }) => mode === 'today' || (mode === 'bulletin' ? key === 'bulletin' : key !== 'bulletin'))
+                .map(({ key, label, list }) => (
                 <section className="reader-subs" key={key}>
                   <div className="reader-src-label">{label}</div>
                   <div className="reader-group-body">
@@ -989,10 +1013,12 @@ export default function ReaderTab({
                   </button>
                   {discoverOpen && (
                     <div className="reader-group-body">
+                      {/* 发现区亦跟随容器:文章容器只推文章形源,动态容器只推动态形,今日推全部 */}
                       {[
                         { key: 'article', label: '文章', list: discoverArticleSources },
                         { key: 'bulletin', label: '动态', list: discoverBulletinSources },
-                      ].map(({ key, label, list }) => list.length > 0 && (
+                      ].filter(({ key }) => mode === 'today' || key === mode)
+                        .map(({ key, label, list }) => list.length > 0 && (
                         <div key={key}>
                           <p className="reader-subgroup-label">{label}</p>
                           {list.map((source) => (
@@ -1037,8 +1063,8 @@ export default function ReaderTab({
               {articlesTotal} 条{scopeUnread > 0 ? ` · ${formatBadge(scopeUnread)} 未读` : ''}
             </span>
           </span>
-          {/* 未读筛选(全部/未读)+ 全部标读。收藏视图下不适用。 */}
-          {!showFavorites && (
+          {/* 未读筛选(全部/未读)+ 全部标读。收藏过滤中不适用(未读语义关闭)。 */}
+          {!favOnly && (
             <>
               <div className="reader-seg" role="tablist" aria-label="未读筛选">
                 {[[false, '全部'], [true, '未读']].map(([value, label]) => (
@@ -1058,14 +1084,25 @@ export default function ReaderTab({
                 type="button"
                 onClick={handleMarkAllRead}
                 disabled={markingRead}
-                aria-label={activeSourceId ? '本来源全部标为已读' : '全部订阅标为已读'}
-                title={activeSourceId ? '本来源全部标为已读' : '全部订阅标为已读'}
+                aria-label={activeSourceId ? '本来源全部标为已读' : mode === 'today' ? '全部订阅标为已读' : `本容器全部标为已读`}
+                title={activeSourceId ? '本来源全部标为已读' : mode === 'today' ? '全部订阅标为已读' : '本容器全部标为已读'}
                 className="reader-unread-icon"
               >
                 {markingRead ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
               </button>
             </>
           )}
+          {/* 收藏过滤器(Folo 语义:每个容器自己的收藏钮):只看当前范围内的收藏 */}
+          <button
+            type="button"
+            onClick={() => setFavOnly((v) => !v)}
+            aria-pressed={favOnly}
+            aria-label={favOnly ? '退出收藏过滤' : '只看收藏'}
+            title={favOnly ? '退出收藏过滤' : '只看收藏'}
+            className={`reader-fav-icon ${favOnly ? 'is-on' : ''}`}
+          >
+            <Star className="h-4 w-4" fill={favOnly ? 'currentColor' : 'none'} />
+          </button>
         </div>
 
         {/* 搜索行:视图轨「搜索」开合 */}
@@ -1084,8 +1121,8 @@ export default function ReaderTab({
         )}
 
         <div className="reader-list-scroll" ref={listRef}>
-          {/* 日报置顶卡 · 报头形态:今日/文章 流顶部的一等公民入口;过滤中(搜索/只看未读)让位 */}
-          {!showFavorites && !activeSourceId && shape !== 'bulletin' && !searchQuery && !unreadOnly
+          {/* 日报置顶卡 · 报头形态:今日/文章 容器聚合流顶部的一等公民入口;过滤中(收藏/搜索/只看未读)让位 */}
+          {!favOnly && !activeSourceId && mode !== 'bulletin' && !searchQuery && !unreadOnly
             && !articlesLoading && latestBrief && (
             <button type="button" className="reader-brief-card" onClick={() => selectArticle(latestBrief)}>
               <span className="reader-brief-head">
@@ -1100,7 +1137,7 @@ export default function ReaderTab({
             </button>
           )}
           {/* 新内容提示条:轮询发现未读正增量时出现,点击刷新——不自动插入打断阅读 */}
-          {!showFavorites && !articlesLoading && freshCount > 0 && (
+          {!favOnly && !articlesLoading && freshCount > 0 && (
             <button type="button" className="reader-fresh-pill" onClick={handleRefreshFresh}>
               <RefreshCw className="h-3.5 w-3.5" />
               有 {freshCount} 篇新文章 · 点击刷新
@@ -1108,7 +1145,7 @@ export default function ReaderTab({
           )}
           {articlesLoading ? (
             <ArticleCardsSkeleton />
-          ) : !showFavorites && hasNoSubscriptions && !activeSourceId ? (
+          ) : !favOnly && hasNoSubscriptions && !activeSourceId ? (
             <div className="reader-empty reader-empty-tall">
               <Compass className="h-7 w-7 text-slate-300" />
               <span>你还没有订阅任何来源</span>
@@ -1118,22 +1155,22 @@ export default function ReaderTab({
             </div>
           ) : articles.length === 0 ? (
             <div className="reader-empty">
-              {showFavorites ? <Star className="h-6 w-6 text-slate-300" /> : <Inbox className="h-6 w-6 text-slate-300" />}
+              {favOnly ? <Star className="h-6 w-6 text-slate-300" /> : <Inbox className="h-6 w-6 text-slate-300" />}
               <span>
                 {searchQuery
                   ? '没有匹配的文章'
-                  : showFavorites
-                    ? '还没有收藏任何文章，阅读时点右上角星标即可收藏'
+                  : favOnly
+                    ? '当前范围还没有收藏，阅读时点右上角星标即可收藏'
                     : unreadOnly
                       ? '没有未读内容，都看完啦'
                       : activeSourceId
                         ? '该来源暂无内容'
-                        : (shape === 'bulletin' ? '暂无动态' : shape === 'article' ? '暂无文章' : '暂无内容')}
+                        : (mode === 'bulletin' ? '暂无动态' : mode === 'article' ? '暂无文章' : '暂无内容')}
               </span>
             </div>
           ) : (
-            /* key 按视图范围重挂载,切源/切视图时列表整体淡入(A1) */
-            <div key={`${activeSourceId ?? '__all__'}|${shape}|${showFavorites ? 'fav' : 'flow'}`} className="reader-list-enter">
+            /* key 按视图范围重挂载,切源/切容器时列表整体淡入(A1) */
+            <div key={`${activeSourceId ?? '__all__'}|${mode}|${favOnly ? 'fav' : 'flow'}`} className="reader-list-enter">
               {articles.map((article, index) => {
                 const active = activeArticle?.id === article.id;
                 const isUnread = isArticleUnread(article);

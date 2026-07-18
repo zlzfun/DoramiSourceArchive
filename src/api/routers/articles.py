@@ -51,7 +51,7 @@ def _app():
     return importlib.import_module("api.app")
 
 
-def _bulletin_shape_condition():
+def bulletin_shape_condition():
     """「动态形」文章的 SQL 条件：源级标记（注册表 bulletin 源）∪ content_type 兜底
     （覆盖注册表之外的历史归档源）。article 形 = 取反。"""
     conditions = [ArticleRecord.content_type.in_(sorted(BULLETIN_CONTENT_TYPES))]
@@ -127,7 +127,7 @@ def get_articles(
         count_query = count_query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
     shape_value = (shape or "").strip().lower()
     if shape_value in {"article", "bulletin"}:
-        bulletin_cond = _bulletin_shape_condition()
+        bulletin_cond = bulletin_shape_condition()
         cond = bulletin_cond if shape_value == "bulletin" else ~bulletin_cond
         query = query.where(cond)
         count_query = count_query.where(cond)

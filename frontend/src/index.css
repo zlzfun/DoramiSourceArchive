@@ -7048,6 +7048,43 @@ input[type="radio"] {
     user-select: none;
   }
 
+  /* 容器聚合入口行(全部文章/全部动态)的图标槽:与 s20 LogoMark 同槽位 */
+  .reader-src-allicon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: var(--r-sm);
+    background: color-mix(in srgb, var(--dorami-ink) 7%, transparent);
+    color: var(--dorami-muted);
+    flex-shrink: 0;
+  }
+
+  /* 收藏过滤器(条目列头星标,Folo 语义:每个容器自己的收藏钮) */
+  .reader-fav-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--dorami-faint);
+    cursor: pointer;
+    transition: color 130ms var(--motion-ease), background 130ms var(--motion-ease);
+  }
+
+  .reader-fav-icon:hover {
+    color: #f59e0b;
+    background: color-mix(in srgb, var(--dorami-ink) 6%, transparent);
+  }
+
+  .reader-fav-icon.is-on { color: #f59e0b; }
+  .reader-fav-icon.is-on:hover { color: #d97706; }
+
   /* 源行未读计数(样页 .src-count):等宽裸数字,不做徽标芯片 */
   .reader-src-count {
     font-family: var(--mono);

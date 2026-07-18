@@ -21,6 +21,7 @@ from sqlmodel import Session, func, select
 
 from api import deps
 from api.articles_view import serialize_article_list_item
+from api.routers.articles import bulletin_shape_condition
 from api.tokens import generate_feed_token, hash_subscription_token, subscription_token_preview
 from api.sources import (
     DAILY_BRIEF_SOURCE_ID,
@@ -217,11 +218,26 @@ def _mark_all_read_response(app, session: Session, username: str, source_ids: Li
 
 
 @router.post("/mark-all-read")
-def mark_all_read(request: Request, session: Session = Depends(deps.get_session)):
-    """把当前用户全部订阅源标为已读（推进各源水位到当下），返回更新后的未读统计。"""
+def mark_all_read(
+    request: Request,
+    shape: Optional[str] = None,
+    session: Session = Depends(deps.get_session),
+):
+    """把当前用户订阅源标为已读（推进各源水位到当下），返回更新后的未读统计。
+
+    可选 shape=article|bulletin:只标对应形态的源(阅读器容器化视图——「文章/动态」
+    各自的全部标读作用于本容器,不越界)。未传 = 全部订阅。
+    """
     app = _app()
     username = app.current_username(request)
     source_ids = app.resolve_subscribed_source_ids(session, username)
+    shape_value = (shape or "").strip().lower()
+    if shape_value in {"article", "bulletin"}:
+        registry_meta = _registry_source_meta()
+        source_ids = [
+            sid for sid in source_ids
+            if source_shape(sid, None, registry_meta) == shape_value
+        ]
     return _mark_all_read_response(app, session, username, source_ids)
 
 
@@ -243,6 +259,7 @@ def list_favorites(
     request: Request,
     search: Optional[str] = None,
     source_id: Optional[str] = None,
+    shape: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
     include_content: bool = False,
@@ -251,6 +268,7 @@ def list_favorites(
     """当前用户的收藏文章列表，按收藏时间倒序；同时回传全部收藏 ID 集合。
 
     join 文章表后，已被删除文章的孤儿收藏自然被过滤掉，不出现在列表里。
+    可选 shape=article|bulletin:容器内收藏(「文章/动态」视图各自的收藏过滤器)。
     """
     app = _app()
     username = app.current_username(request)
@@ -270,6 +288,12 @@ def list_favorites(
     if source_id:
         base = base.where(ArticleRecord.source_id == source_id)
         count_query = count_query.where(ArticleRecord.source_id == source_id)
+    shape_value = (shape or "").strip().lower()
+    if shape_value in {"article", "bulletin"}:
+        bulletin_cond = bulletin_shape_condition()
+        cond = bulletin_cond if shape_value == "bulletin" else ~bulletin_cond
+        base = base.where(cond)
+        count_query = count_query.where(cond)
     if search:
         base = base.where(ArticleRecord.title.contains(search))
         count_query = count_query.where(ArticleRecord.title.contains(search))

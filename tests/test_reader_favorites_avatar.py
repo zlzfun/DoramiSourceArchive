@@ -53,7 +53,7 @@ def _set_runtime_role(monkeypatch, app_module, role: str):
     )
 
 
-def _seed_article(engine, article_id: str, source_id: str, title: str):
+def _seed_article(engine, article_id: str, source_id: str, title: str, content_type: str = "rss_article"):
     from models.db import ArticleRecord
 
     with Session(engine) as session:
@@ -61,7 +61,7 @@ def _seed_article(engine, article_id: str, source_id: str, title: str):
             ArticleRecord(
                 id=article_id,
                 title=title,
-                content_type="rss_article",
+                content_type=content_type,
                 source_id=source_id,
                 source_url=f"https://example.test/{article_id}",
                 publish_date="2026-05-20T00:00:00",
@@ -170,6 +170,30 @@ def test_favorite_add_list_remove_flow(monkeypatch, tmp_path):
         assert removed.json()["favorited"] is False
         assert set(removed.json()["favorite_ids"]) == {"a2"}
         assert client.get("/api/reader/favorites").json()["total"] == 1
+
+
+def test_favorites_shape_filter(monkeypatch, tmp_path):
+    """容器内收藏(阅读器容器化):shape=article|bulletin 过滤收藏列表。
+
+    动态形判定走 content_type 兜底(github_trending ∈ BULLETIN_CONTENT_TYPES)
+    ∪ 注册表动态源(github_trending_daily 亦命中源级标记)。
+    """
+    app_module, sink = _prepare(monkeypatch, tmp_path, "fav_shape.db")
+    _seed_article(sink.engine, "art1", "rss_openai", "文章形")
+    _seed_article(sink.engine, "bul1", "github_trending_daily", "动态形", content_type="github_trending")
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        assert client.post("/api/reader/favorites/art1").status_code == 200
+        assert client.post("/api/reader/favorites/bul1").status_code == 200
+
+        assert client.get("/api/reader/favorites").json()["total"] == 2
+        art = client.get("/api/reader/favorites", params={"shape": "article"}).json()
+        assert art["total"] == 1 and [i["id"] for i in art["items"]] == ["art1"]
+        bul = client.get("/api/reader/favorites", params={"shape": "bulletin"}).json()
+        assert bul["total"] == 1 and [i["id"] for i in bul["items"]] == ["bul1"]
+        # 非法值忽略(等同不过滤)
+        assert client.get("/api/reader/favorites", params={"shape": "weird"}).json()["total"] == 2
 
 
 def test_favorite_nonexistent_article_404(monkeypatch, tmp_path):
