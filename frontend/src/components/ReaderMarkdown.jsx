@@ -23,7 +23,12 @@ const LightboxContext = createContext(null);
 // 这里只兜底裂图——源站删图/防盗链时给出体面占位，而非浏览器默认破图标。不重试、不代理。
 function MarkdownImage({ node, alt, ...props }) {
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const openLightbox = useContext(LightboxContext);
+  // 缓存命中的图片可能在 onLoad 绑定前就 complete,挂载时兜底检查
+  const imgRef = useCallback((el) => {
+    if (el && el.complete && el.naturalWidth > 0) setLoaded(true);
+  }, []);
   if (failed) {
     // 裂图态不加点击放大：没有可展示的原图
     return (
@@ -45,10 +50,13 @@ function MarkdownImage({ node, alt, ...props }) {
     >
       <img
         {...props}
+        ref={imgRef}
         alt={alt || ''}
         loading="eager"
         decoding="async"
         referrerPolicy="no-referrer"
+        className={loaded ? 'is-loaded' : ''}
+        onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
       />
     </button>

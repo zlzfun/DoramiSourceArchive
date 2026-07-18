@@ -222,6 +222,10 @@ export function labelFrom(map, value) {
 
 /* 品牌标识尺寸表（供 LogoMark 组件使用） */
 export const LOGO_SIZES = {
+  /* s15/s17/s20:阅读器样页刻度(条目首行 15 / 阅读窗 crumb 17 / 源栏行 20) */
+  s15: { box: 15, radius: 4.5, font: 7.5, img: 10 },
+  s17: { box: 17, radius: 5.5, font: 8, img: 11 },
+  s20: { box: 20, radius: 6, font: 9, img: 13 },
   xs: { box: 22, radius: 7, font: 9, img: 14 },
   sm: { box: 30, radius: 9, font: 11, img: 18 },
   md: { box: 44, radius: 13, font: 15, img: 26 },

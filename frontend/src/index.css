@@ -34,6 +34,9 @@
   font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
   /* 全局 mono 栈 token(B 残债清尾):数字/时间戳/代码一律引用,勿再散写字体栈 */
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  /* 衬线栈 token(阅读器重构):编辑感三落点专用——阅读窗大标题/正文小节标题/日报报头,
+     西文 Georgia、中文回落宋体;工作台面(管理面)不使用 */
+  --font-serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif;
   /* 显式声明浅色配色域：否则 color-scheme 为 normal，原生表单控件
      （checkbox/radio/下拉等）会跟随操作系统外观——OS 处于深色模式时，
      浅色 App 里的勾选框会被系统渲染成深色方块。暗色主题另行覆盖为 dark。 */
@@ -94,6 +97,7 @@
 
   --dorami-border: rgba(11, 18, 32, 0.09);
   --dorami-border-strong: rgba(11, 18, 32, 0.15);
+  --dorami-border-soft: rgba(11, 18, 32, 0.06);  /* 阅读器带间软分隔(样页 --line-soft) */
   /* 静默仪器·描边预算:卡片级容器的描边 token——亮色下透明(分隔全靠高程),
      暗色下重定义为细白线(深底上阴影不可读,需要一条弱描边兜层级)。 */
   --dorami-card-bd: transparent;
@@ -6735,15 +6739,20 @@ input[type="radio"] {
     background: rgba(16, 185, 129, 0.16);
   }
 
-  /* ── 阅读器（全屏三栏） ── */
+  /* ── 阅读器（全屏四带:视图轨 · 源栏 · 条目列 · 阅读窗,按靛版设计样页） ── */
   /* 用「视口宽 − 导轨宽」+ 负 margin 跳出 main 的 max-w/padding，铺满导轨右侧的工作区；
      高度填到视口底（顶部留出 --app-top：移动端 76px 顶栏、lg+ 无顶栏为 0），
-     三栏各自内部滚动，页面本身不滚。 */
+     各带各自内部滚动，页面本身不滚。 */
   .reader-shell {
-    --col-l: 300px;
-    --col-m: 420px;
+    --vrail: 56px;
+    --col-l: 232px;
+    --col-m: 372px;
+    /* 三面阶梯的逐主题映射(样页暗色不是亮色的简单换 token 阶,单列出来):
+       亮色 list=soft(#f8fafc)/pane=surface(#fff);暗色 list=#15181f/pane=#1a1e26 */
+    --rd-list-bg: var(--dorami-soft);
+    --rd-pane-bg: var(--dorami-surface);
     display: grid;
-    grid-template-columns: var(--col-l) var(--col-m) minmax(0, 1fr);
+    grid-template-columns: var(--vrail) var(--col-l) var(--col-m) minmax(0, 1fr);
     width: calc(100vw - var(--rail-w));
     margin-inline: calc(50% - 50vw + var(--rail-w) / 2);
     margin-top: -22px; /* 抵消 main 的 pt-22(页头范式统一顶距) */
@@ -6751,9 +6760,8 @@ input[type="radio"] {
     height: calc(100vh - var(--app-top));
     overflow: hidden;
     position: relative;
-    background: var(--dorami-surface);
-    border-top: 1px solid var(--dorami-border);
-    transition: grid-template-columns 260ms cubic-bezier(0.4, 0, 0.2, 1);
+    background: var(--rd-pane-bg);
+    border-top: 1px solid var(--dorami-border-soft);
   }
 
   .reader-col {
@@ -6761,7 +6769,187 @@ input[type="radio"] {
     flex-direction: column;
     min-height: 0;
     min-width: 0;
-    border-right: 1px solid var(--dorami-border);
+    border-right: 1px solid var(--dorami-border-soft);
+  }
+
+  /* ── 视图轨:阅读器自己的一级视图导航(今日/文章/动态/收藏/搜索) ──
+     内容形态轴从中栏分段控件升格为一级视图;与应用导轨并列(Folo 的 dock+视图结构)。
+     数值严格对齐样页:56px 带宽 / 品牌铃铛 32px / 钮 38px / 自绘右侧 tooltip。 */
+  .reader-vrail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 14px 0 16px;
+    background: var(--dorami-canvas);
+    border-right: 1px solid var(--dorami-border-soft);
+  }
+
+  .reader-vrail-brand {
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    background: linear-gradient(145deg, var(--dorami-blue-2), var(--dorami-blue));
+    color: #fff;
+    display: grid;
+    place-items: center;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), var(--sh-1);
+    margin-bottom: 16px;
+    flex: none;
+  }
+
+  .reader-vrail-brand svg { width: 17px; height: 17px; }
+
+  .reader-vrail-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--dorami-faint);
+    cursor: pointer;
+    transition: background 140ms var(--motion-ease),
+                color 140ms var(--motion-ease),
+                transform 140ms var(--motion-ease);
+  }
+
+  .reader-vrail-btn svg { width: 18px; height: 18px; }
+
+  .reader-vrail-btn:hover {
+    background: color-mix(in srgb, var(--dorami-ink) 6%, transparent);
+    color: var(--dorami-ink-2);
+  }
+
+  .reader-vrail-btn:active { transform: scale(0.94); }
+
+  .reader-vrail-btn.is-on {
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
+  }
+
+  /* 自绘 tooltip(样页):右侧墨底浮签,悬停 350ms 后现 */
+  .reader-vrail-tip {
+    position: absolute;
+    left: 48px;
+    top: 50%;
+    translate: 0 -50%;
+    background: var(--dorami-ink);
+    color: var(--dorami-canvas);
+    font-size: 11.5px;
+    line-height: 1;
+    padding: 6px 9px;
+    border-radius: var(--r-sm);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms var(--motion-ease);
+    z-index: 30;
+  }
+
+  .reader-vrail-btn:hover .reader-vrail-tip {
+    opacity: 1;
+    transition-delay: 350ms;
+  }
+
+  /* 品牌 logo 图(替代铃铛,32px 对齐样页品牌位) */
+  .reader-vrail-brand-img {
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    object-fit: contain;
+    box-shadow: var(--sh-1);
+    margin-bottom: 16px;
+    flex: none;
+  }
+
+  /* ── 轨底用户区(standalone):单一头像收纳 设置/主题/接入集成/退出 ── */
+  .reader-vrail-spring { flex: 1; }
+
+  .reader-vrail-user { position: relative; }
+
+  .reader-vrail-avatar {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    background: var(--dorami-surface);
+    border: 1px solid var(--dorami-border);
+    color: var(--dorami-muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    cursor: pointer;
+    transition: border-color 130ms var(--motion-ease), transform 130ms var(--motion-ease);
+  }
+
+  .reader-vrail-avatar:hover { border-color: var(--dorami-border-strong); }
+  .reader-vrail-avatar:active { transform: scale(0.94); }
+  .reader-vrail-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+  .reader-user-menu {
+    position: absolute;
+    left: 44px;
+    bottom: 0;
+    z-index: 40;
+    min-width: 168px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: var(--dorami-surface);
+    border: 1px solid var(--dorami-border);
+    border-radius: 12px;
+    box-shadow: var(--sh-3);
+    animation: reader-ai-rise var(--motion-fast) var(--motion-ease);
+  }
+
+  .reader-user-menu-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 7px 9px 5px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--dorami-ink);
+  }
+
+  .reader-user-menu-head span {
+    margin-left: auto;
+    font-size: 10.5px;
+    font-weight: 400;
+    color: var(--dorami-faint);
+  }
+
+  .reader-user-menu button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 9px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--dorami-ink-2);
+    text-align: left;
+    cursor: pointer;
+    transition: background 130ms var(--motion-ease), color 130ms var(--motion-ease);
+  }
+
+  .reader-user-menu button:hover { background: color-mix(in srgb, var(--dorami-ink) 6%, transparent); }
+  .reader-user-menu button svg { flex: none; color: var(--dorami-faint); }
+  .reader-user-menu button.is-danger { color: #dc2626; }
+  .reader-user-menu button.is-danger svg { color: #dc2626; }
+  .reader-user-menu button.is-danger:hover { background: rgba(220, 38, 38, 0.08); }
+
+  .reader-user-menu-sep {
+    height: 1px;
+    margin: 4px 2px;
+    background: var(--dorami-border-soft);
   }
 
   /* 可折叠栏内层固定宽度：列轨收缩到 0 时由外层 overflow 裁切，内容不回流 */
@@ -6773,69 +6961,28 @@ input[type="radio"] {
     min-height: 0;
   }
 
-  .reader-sources-inner { width: 300px; }
-  .reader-list-inner { width: 420px; }
+  .reader-sources-inner { width: 232px; }
+  .reader-list-inner { width: 372px; }
 
-  /* ── 分隔线浮动把手：折叠/展开触发控件 ──
-     挂在 reader-shell 的绝对定位层（不在任何会被裁切的列内）；
-     left 用与 grid 同源的 --col-l/--col-m 变量，跟随列宽动画一起滑动。
-     有效态约束（见 JSX）保证任一时刻可见把手位置互不重叠，故统一垂直居中、等高。 */
-  .reader-handle {
-    position: absolute;
-    z-index: 5;
-    top: 50%;
-    transform: translateY(-50%);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 46px;
-    padding: 0;
-    border: 1px solid var(--dorami-border);
-    border-radius: var(--r-control);
-    background: var(--dorami-surface);
-    color: var(--dorami-faint);
-    cursor: pointer;
-    box-shadow: var(--sh-1);
-    opacity: 0.55;
-    transition: left 260ms cubic-bezier(0.4, 0, 0.2, 1),
-                opacity 140ms ease, color 140ms ease,
-                background 140ms ease, border-color 140ms ease;
-  }
-
-  .reader-handle:hover {
-    opacity: 1;
-    color: var(--dorami-ink-2);
-    border-color: var(--dorami-border-strong);
-  }
-
-  .reader-handle:active { transform: translateY(-50%) scale(0.93); }
-
-  /* 把手贴在分隔线右侧（列宽为 0 时仍完整可见不被裁切） */
-  .reader-handle-l { left: var(--col-l); }
-  .reader-handle-m { left: calc(var(--col-l) + var(--col-m)); }
+  /* (折叠把手已按样页舍弃——样页无此控件;专注阅读需求后续另议) */
 
   .reader-col-read { border-right: none; }
 
   .reader-col-sources {
-    background: var(--dorami-well);
-    box-shadow: var(--dorami-inset);
+    /* 样页:源栏与视图轨同底(canvas 阶),平面无内嵌阴影 */
+    background: var(--dorami-canvas);
     overflow: hidden;
   }
 
   .reader-col-list {
-    background: var(--dorami-surface);
+    /* 三面阶梯(样页,逐主题映射见 --rd-list-bg):源栏 canvas → 条目列 → 阅读窗 */
+    background: var(--rd-list-bg);
     overflow: hidden;
   }
 
-  /* 列宽收到 0 时去掉残留的 1px 分隔线 */
-  .reader-shell.is-l-collapsed .reader-col-sources { border-right: none; }
-  .reader-shell.is-m-collapsed .reader-col-list { border-right: none; }
-
   .reader-col-read {
     position: relative; /* 阅读进度线绝对定位锚点 */
-    /* 静默仪器·R5:去掉顶部装饰性 indigo 辉光,阅读窗格 accent 只保留进度线 + 原文链接 */
-    background: var(--dorami-surface);
+    background: var(--rd-pane-bg);
   }
 
   /* 阅读进度线（渐进增强）：滚动条位于 .reader-pane 内，用具名 scroll-timeline
@@ -6868,23 +7015,89 @@ input[type="radio"] {
     }
   }
 
-  /* 左栏：搜索 + 来源 */
-  .reader-search {
+  /* 源栏头:「我的订阅」+ 未读总数(聚合入口移交视图轨「今日」,此处只作台账读数) */
+  .reader-src-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 18px 16px 10px;
+  }
+
+  .reader-src-title {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--dorami-ink);
+  }
+
+  .reader-src-unread {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dorami-accent-ink);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+
+  /* 源分组小节头(样页 .src-label):细字距灰签,无计数芯片 */
+  .reader-src-label {
+    padding: 14px 10px 6px;
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    color: var(--dorami-faint);
+    user-select: none;
+  }
+
+  /* 源行未读计数(样页 .src-count):等宽裸数字,不做徽标芯片 */
+  .reader-src-count {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+
+  /* 「发现更多来源」触发行(样页 .src-more):虚线框幽灵行 */
+  .reader-src-more {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin: 14px 14px 8px;
-    padding: 0 12px;
-    border: 1px solid rgba(11, 18, 32, 0.1);
-    border-radius: var(--r-control);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(248, 250, 252, 0.9));
-    box-shadow: 0 3px 12px rgba(11, 18, 32, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.86);
+    width: calc(100% - 4px);
+    margin: 10px 2px 0;
+    padding: 8px 10px;
+    border: 1px dashed var(--dorami-border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--dorami-faint);
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: color 130ms var(--motion-ease), border-color 130ms var(--motion-ease);
+  }
+
+  .reader-src-more:hover {
+    color: var(--dorami-accent-ink);
+    border-color: color-mix(in srgb, var(--dorami-accent) 32%, transparent);
+  }
+
+  .reader-src-more svg { flex: none; }
+  .reader-src-more .reader-group-chevron { margin-left: auto; }
+
+  /* 中栏搜索行:由视图轨「搜索」钮开合,不常驻 */
+  .reader-search-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 12px 2px;
+    padding: 0 10px;
+    border: 1px solid var(--dorami-border);
+    border-radius: 8px;
+    background: var(--dorami-surface);
     transition: border-color 150ms ease, box-shadow 150ms ease;
   }
 
-  .reader-search:focus-within {
-    border-color: rgba(91, 84, 232, 0.42);
-    box-shadow: 0 0 0 3px rgba(91, 84, 232, 0.08);
+  .reader-search-row:focus-within {
+    border-color: var(--dorami-accent);
+    box-shadow: 0 0 0 3px var(--dorami-wash);
   }
 
   .reader-search-input {
@@ -6893,7 +7106,7 @@ input[type="radio"] {
     border: none;
     outline: none;
     background: transparent;
-    padding: 9px 0;
+    padding: 8px 0;
     font-size: 13px;
     font-weight: 600;
     color: var(--dorami-ink);
@@ -6905,16 +7118,17 @@ input[type="radio"] {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 4px 8px 16px;
+    padding: 0 8px 12px;
   }
 
   .reader-source-row {
+    position: relative; /* 退订浮层钮的定位锚点 */
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 9px;
     width: 100%;
-    padding: 8px 10px;
-    border-radius: var(--r-control);
+    padding: 6px 9px;
+    border-radius: 8px;
     border: 1px solid transparent;
     background: transparent;
     cursor: pointer;
@@ -6922,41 +7136,17 @@ input[type="radio"] {
     transition: background 140ms ease, border-color 140ms ease;
   }
 
-  .reader-source-row:hover { background: var(--dorami-soft); }
+  .reader-source-row:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
 
-  /* 静默仪器·R1:选中 = accent 竖条 + 灰阶底,去 indigo 描边 */
+  /* 选中源行 = 浮白 + 弱高程(样页语法:色面抬起,弃 accent 竖条) */
   .reader-source-row-active {
-    background: var(--dorami-soft);
+    background: var(--dorami-surface);
     border-color: transparent;
-    box-shadow: inset 3px 0 0 var(--dorami-blue);
+    box-shadow: var(--sh-1);
   }
 
-  /* 我的订阅 / 我的收藏：统一成一组导航，彼此紧凑、与下方订阅来源用细分隔线断开 */
-  .reader-nav-group {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 8px;
-    border-bottom: 1px solid var(--dorami-border);
-  }
-
-  .reader-nav-row { width: 100%; }
-
-  /* 订阅来源分区：与上方导航组拉开一点距离 */
-  .reader-subs { margin-top: 6px; }
-
-  .reader-all-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: var(--r-control);
-    /* 静默仪器·R5:导航图标常态色改灰阶,不作实心 indigo 装饰 */
-    color: var(--dorami-ink-2);
-    background: var(--dorami-soft);
-    flex-shrink: 0;
-  }
+  /* 订阅来源分区 */
+  .reader-subs { margin-top: 2px; }
 
   .reader-side-hint {
     padding: 6px 12px 12px;
@@ -6966,18 +7156,24 @@ input[type="radio"] {
     color: var(--dorami-faint);
   }
 
+  /* 源名(样页字重语法):常态 400 墨二阶;行有未读 → 500 全墨(由 has-unread 驱动) */
   .reader-source-name {
     font-size: 13px;
-    font-weight: 700;
-    color: var(--dorami-ink-2);
+    font-weight: 400;
+    color: var(--dorami-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
+  .reader-source-row.has-unread .reader-source-name {
+    color: var(--dorami-ink);
+    font-weight: 500;
+  }
+
   .reader-source-meta {
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 400;
     color: var(--dorami-faint);
     margin-top: 1px;
     font-variant-numeric: tabular-nums;
@@ -7010,12 +7206,29 @@ input[type="radio"] {
 
   .reader-pin-off:hover:not(:disabled) { color: var(--dorami-accent-ink); background: rgba(91, 84, 232, 0.16); }
 
-  /* 取消订阅：减号默认隐藏，仅在该行 hover/选中/聚焦时浮现，避免一排减号 */
-  .reader-pin-on { opacity: 0; }
+  /* 取消订阅:样页无此钮——浮层化(绝对定位,悬停才现,零布局占位;
+     浮现时覆盖未读计数位,计数同步淡出让位) */
+  .reader-pin-on {
+    position: absolute;
+    right: 5px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 22px;
+    height: 22px;
+    opacity: 0;
+    pointer-events: none;
+    background: var(--dorami-surface);
+    box-shadow: var(--sh-1);
+  }
 
   .reader-source-row:hover .reader-pin-on,
-  .reader-source-row-active .reader-pin-on,
-  .reader-pin-on:focus-visible { opacity: 1; }
+  .reader-pin-on:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .reader-source-row:hover .reader-src-count { opacity: 0; }
+  .reader-src-count { transition: opacity 130ms var(--motion-ease); }
 
   /* hover 提示移除（红） */
   .reader-pin-on:hover:not(:disabled) {
@@ -7023,49 +7236,12 @@ input[type="radio"] {
     background: rgba(220, 38, 38, 0.1);
   }
 
-  .reader-discover {
-    margin-top: 14px;
-    padding-top: 6px;
-    border-top: 1px solid var(--dorami-border);
-  }
+  .reader-discover { margin-top: 6px; }
 
   .reader-discover-row { cursor: default; }
   .reader-discover-row:hover { background: transparent; }
 
   .reader-group { margin-top: 10px; }
-
-  .reader-group-band {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    width: 100%;
-    padding: 6px 10px;
-    color: var(--dorami-muted);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    background: transparent;
-    border: none;
-  }
-
-  .reader-group-band-toggle { cursor: pointer; }
-  .reader-group-band-toggle:hover { color: var(--dorami-ink-2); }
-
-  .reader-group-count {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 18px;
-    height: 16px;
-    padding: 0 5px;
-    border-radius: var(--r-sm);
-    background: rgba(11, 18, 32, 0.06);
-    font-size: 10px;
-    font-weight: 700;
-    color: var(--dorami-muted);
-    font-variant-numeric: tabular-nums;
-  }
 
   .reader-group-chevron {
     margin-left: auto;
@@ -7077,80 +7253,73 @@ input[type="radio"] {
 
   .reader-group-body { display: flex; flex-direction: column; gap: 1px; }
 
-  /* 中栏：文章列表 */
+  /* 中栏：条目列头(标题+读数小计 | 全部/未读分段 | 全部标读) */
   .reader-list-head {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 14px 18px 11px;
-    border-bottom: 1px solid var(--dorami-border);
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--dorami-border-soft);
   }
 
   .reader-list-title {
     flex: 1;
     min-width: 0;
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--dorami-ink);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  /* 收藏星标切换：纯图标，与文章卡星标、阅读窗格收藏按钮统一用琥珀色语义 */
-  .reader-fav-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    width: 28px;
-    height: 28px;
-    border-radius: var(--r-control);
-    border: 1px solid transparent;
-    background: transparent;
+  .reader-list-sub {
+    margin-left: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 400;
     color: var(--dorami-faint);
-    cursor: pointer;
-    transition: color 140ms ease, background 140ms ease;
-  }
-
-  .reader-fav-icon:hover {
-    color: #f59e0b;
-    background: var(--dorami-well);
-  }
-
-  .reader-fav-icon-on { color: #f59e0b; }
-  .reader-fav-icon-on:hover { color: #d97706; }
-
-  /* ── 未读体系 ──
-     · 徽标（源行/我的订阅行）：品牌蓝淡底数字芯片，量级同 reader-group-count；
-     · 圆点（文章卡）：卡左缘 6px 品牌蓝点，读过即消，不改标题字重（静默仪器：单一标记）；
-     · 列表头动作（只看未读 / 全部标读）：金属感同收藏星标（reader-fav-icon），语义色换品牌蓝；
-     · 新内容提示条：列表顶 sticky 胶囊，点击刷新——轮询只提示、不自动插入打断阅读。 */
-  .reader-unread-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 18px;
-    height: 16px;
-    padding: 0 5px;
-    flex-shrink: 0;
-    border-radius: var(--r-sm);
-    background: rgba(91, 84, 232, 0.10);
-    font-size: 10px;
-    font-weight: 700;
-    color: var(--dorami-blue);
     font-variant-numeric: tabular-nums;
   }
 
+  /* 全部/未读分段(样页 .seg):well 底胶囊,选中片浮白 */
+  .reader-seg {
+    display: flex;
+    flex-shrink: 0;
+    padding: 2px;
+    border-radius: 8px;
+    background: var(--dorami-canvas);
+  }
+
+  .reader-seg-btn {
+    padding: 3px 10px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    font-size: 12px;
+    color: var(--dorami-faint);
+    cursor: pointer;
+    transition: background 140ms var(--motion-ease), color 140ms var(--motion-ease);
+  }
+
+  .reader-seg-btn.is-on {
+    background: var(--dorami-surface);
+    color: var(--dorami-ink);
+    box-shadow: var(--sh-1);
+  }
+
+  /* ── 未读体系 ──
+     · 源行计数：等宽裸数字(.reader-src-count),行整体 has-unread 提字重;
+     · 圆点（条目首行右缘）：7px 品牌蓝点，读过缩零淡出；
+     · 列表头动作（全部标读）：安静图标钮，语义色品牌蓝；
+     · 新内容提示条：列表顶 sticky 胶囊，点击刷新——轮询只提示、不自动插入打断阅读。 */
+  /* 未读点:条目首行右缘的行内点(样页),已读缩零淡出 */
   .reader-unread-dot {
-    position: absolute;
-    top: 19px;
-    left: 3px;
-    width: 6px;
-    height: 6px;
+    width: 7px;
+    height: 7px;
     border-radius: 9999px;
-    background: var(--dorami-blue);
-    z-index: 1;
+    background: var(--dorami-accent);
+    flex-shrink: 0;
   }
 
   .reader-unread-icon {
@@ -7160,7 +7329,7 @@ input[type="radio"] {
     flex-shrink: 0;
     width: 28px;
     height: 28px;
-    border-radius: var(--r-control);
+    border-radius: 7px;
     border: 1px solid transparent;
     background: transparent;
     color: var(--dorami-faint);
@@ -7170,7 +7339,7 @@ input[type="radio"] {
 
   .reader-unread-icon:hover {
     color: var(--dorami-blue);
-    background: var(--dorami-well);
+    background: color-mix(in srgb, var(--dorami-ink) 6%, transparent);
   }
 
   .reader-unread-icon:disabled { opacity: 0.6; cursor: default; }
@@ -7200,17 +7369,26 @@ input[type="radio"] {
   .reader-fresh-pill:hover { background: var(--dorami-soft); }
 
   /* ── 内容形态分流(迭代 2) ──
-     · 动态卡:changelog/Release/仓库/模型监控的紧凑条目——单行标题+脚注,无摘要,
-       密度约为文章卡两倍;点击仍进右栏阅读(changelog 正文有价值)。
+     · 动态条目:changelog/Release/榜单的紧凑形——单行标题、无摘要;
+       混合流(今日)里由「动态」chip 标注形态。
      · 子分组标签:左栏「发现更多来源」内按形态分组的轻量小节头。 */
-  .reader-bulletin-card { padding: 8px 14px; }
+  .reader-entry.is-bulletin { padding-top: 7px; padding-bottom: 7px; }
 
-  .reader-bulletin-card .reader-article-title {
+  .reader-entry.is-bulletin .reader-entry-title {
     font-size: 13px;
     -webkit-line-clamp: 1;
   }
 
-  .reader-bulletin-card .reader-article-foot { margin-top: 3px; }
+  .reader-shape-chip {
+    flex-shrink: 0;
+    padding: 0.5px 5px;
+    border: 1px solid var(--dorami-border);
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--dorami-faint);
+    letter-spacing: 0.06em;
+  }
 
   .reader-subgroup-label {
     padding: 8px 10px 2px;
@@ -7221,14 +7399,120 @@ input[type="radio"] {
     color: var(--dorami-faint);
   }
 
-  /* ── AI 总结卡(迭代 3):正文顶部的要点摘要——静默克制,soft 底、无渐变,
-     品牌蓝只用于小节标;未生成时是一行低调的「生成总结」入口。 ── */
+  /* ── 体验二波(对照 Folo,reader-polish-wave2):微动效 / 扫视密度 ──
+     动效原则:120-250ms、ease-out、一次一属性——仪器阻尼感,非表演。 */
+
+  /* A1 · 切换动效:正文切换淡入+轻上移(key 重挂载触发);切源列表淡入 */
+  @keyframes reader-enter {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  .reader-enter { animation: reader-enter 180ms var(--motion-ease) both; }
+
+  @keyframes reader-list-enter {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .reader-list-enter { animation: reader-list-enter 130ms ease-out both; }
+
+  /* A1 · 左栏源行选中/悬停过渡(此前瞬变) */
+  .reader-source-row {
+    transition: background 140ms ease, box-shadow 140ms ease;
+  }
+
+  /* A2 · 已读降灰:未读黑亮/已读退后,列表扫视一眼即知「还剩什么没读」
+     (翻案迭代1「单一标记」克制——对照 Folo 后确认灰阶差是低成本高感知) */
+  .reader-entry.is-read .reader-entry-title {
+    color: var(--dorami-muted);
+    font-weight: 500;
+  }
+
+  .reader-entry .reader-entry-title {
+    transition: color 180ms ease;
+  }
+
+  /* A2 · 未读点:常驻渲染,已读时缩零淡出(条件卸载无法过渡) */
+  .reader-unread-dot {
+    transition: transform 180ms var(--motion-ease), opacity 180ms ease;
+  }
+
+  .reader-unread-dot.is-off {
+    transform: scale(0);
+    opacity: 0;
+  }
+
+  /* A3 · 条目首行的源 LogoMark 锚点(s15 精确尺寸,无需缩放) */
+  .reader-entry-logo {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  /* A5 · 骨架延迟显现:快路径(<150ms)不闪骨架,慢路径才浮现 */
+  .skeleton-delay {
+    opacity: 0;
+    animation: skeleton-appear 1ms linear 150ms forwards;
+  }
+
+  @keyframes skeleton-appear {
+    to { opacity: 1; }
+  }
+
+  /* A5 · 正文图片加载淡入(替代突然弹入) */
+  .markdown-img-button img {
+    opacity: 0;
+    transition: opacity 220ms ease-out;
+  }
+
+  .markdown-img-button img.is-loaded { opacity: 1; }
+
+  /* B2 · 正文 actions 图标化:成组安静图标钮替代文字链(降正文区噪音);
+     语义色:收藏=琥珀、翻译/标读=品牌蓝,激活态填充 */
+  .reader-pane-iconbtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--dorami-faint);
+    cursor: pointer;
+    transition: color 130ms var(--motion-ease), background 130ms var(--motion-ease), transform 120ms var(--motion-ease);
+  }
+
+  .reader-pane-iconbtn:hover {
+    background: color-mix(in srgb, var(--dorami-ink) 6%, transparent);
+    color: var(--dorami-ink-2);
+  }
+
+  .reader-pane-iconbtn:active { transform: scale(0.92); }
+
+  .reader-pane-iconbtn:disabled { opacity: 0.55; cursor: default; }
+  .reader-pane-iconbtn.is-amber { color: #f59e0b; }
+  .reader-pane-iconbtn.is-blue { color: var(--dorami-blue); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reader-enter,
+    .reader-list-enter,
+    .skeleton-delay { animation: none; opacity: 1; }
+    .reader-unread-dot,
+    .markdown-img-button img,
+    .reader-vrail-btn,
+    .reader-entry .reader-entry-title { transition: none; }
+    .markdown-img-button img { opacity: 1; }
+  }
+
+  /* ── AI 总结卡(迭代 3):正文顶部的要点摘要——样页「哆啦美速读」形态:
+     accent 洗地、无描边;未生成时是一行低调的「生成总结」入口。 ── */
   .reader-ai-summary {
-    margin-bottom: 18px;
-    padding: 12px 14px;
+    margin-bottom: 26px;
+    padding: 13px 16px 12px;
     border-radius: var(--r-control);
-    background: var(--dorami-soft);
-    border: 1px solid var(--dorami-border);
+    background: var(--dorami-wash);
+    border: none;
   }
 
   .reader-ai-summary-head {
@@ -7238,14 +7522,14 @@ input[type="radio"] {
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.04em;
-    color: var(--dorami-blue);
+    color: var(--dorami-accent-ink);
   }
 
   .reader-ai-summary-text {
-    margin-top: 7px;
-    font-size: 13px;
-    line-height: 1.75;
-    color: var(--dorami-ink-2);
+    margin-top: 6px;
+    font-size: 13.5px;
+    line-height: 1.8;
+    color: var(--dorami-muted);
   }
 
   .reader-ai-summary-generate {
@@ -7267,166 +7551,151 @@ input[type="radio"] {
 
   /* ── 日报置顶卡(迭代 3):「我的订阅·文章」流顶部的每日日报入口,
      不参与未读计数;搜索/只看未读过滤时隐藏。 ── */
+  /* 日报置顶卡 · 报头形态(样页):accent 洗地 + 顶部双细线 + 衬线刊名 */
   .reader-brief-card {
     display: block;
     width: calc(100% - 4px);
-    margin: 0 2px 8px;
-    padding: 10px 14px;
+    margin: 2px 2px 10px;
+    padding: 10px 14px 11px;
     text-align: left;
-    border-radius: var(--r-control);
-    border: 1px solid var(--dorami-border);
-    background: var(--dorami-surface);
+    border: none;
+    border-top: 3px double color-mix(in srgb, var(--dorami-accent) 32%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--dorami-accent) 22%, transparent);
+    border-radius: 4px 4px 10px 10px;
+    background: var(--dorami-wash);
     cursor: pointer;
-    transition: background 140ms ease;
+    transition: filter 140ms ease;
   }
 
-  .reader-brief-card:hover { background: var(--dorami-soft); }
+  .reader-brief-card:hover { filter: brightness(0.98); }
 
   .reader-brief-head {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: 6px;
-    font-size: 11px;
+  }
+
+  .reader-brief-name {
+    font-family: var(--font-serif);
+    font-size: 15.5px;
     font-weight: 700;
     letter-spacing: 0.04em;
-    color: var(--dorami-blue);
+    color: var(--dorami-accent-ink);
   }
 
   .reader-brief-date {
     margin-left: auto;
-    font-weight: 600;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 400;
     color: var(--dorami-faint);
     font-variant-numeric: tabular-nums;
   }
 
   .reader-brief-title {
-    margin-top: 5px;
-    font-size: 13.5px;
-    font-weight: 600;
-    line-height: 1.4;
-    color: var(--dorami-ink);
+    margin-top: 4px;
+    font-size: 12.5px;
+    font-weight: 400;
+    line-height: 1.75;
+    color: var(--dorami-muted);
     display: -webkit-box;
     -webkit-line-clamp: 1;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
 
-  .reader-list-count {
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--dorami-faint);
-    flex-shrink: 0;
-    font-variant-numeric: tabular-nums;
-    /* 定宽右对齐:数字位数变化不再挤压左侧动作按钮(只看未读/全部标读/收藏)横跳 */
-    min-width: 52px;
-    text-align: right;
-  }
-
   .reader-list-scroll {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 8px;
+    padding: 10px 10px 24px;
   }
 
-  .reader-article-card {
+  /* 日期分组小节头(样页 .group-label):等宽小字距签,sticky 底色与列底同 soft */
+  .reader-date-label {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding: 12px 8px 5px;
+    background: var(--rd-list-bg);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 400;
+    letter-spacing: 0.1em;
+    color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── 条目卡(样页结构:首行[源标·源名·chip·时间·未读点] / 标题 / 一行摘要) ── */
+  .reader-entry {
     display: block;
     width: 100%;
     text-align: left;
-    padding: 12px 14px;
+    padding: 10px 12px;
+    border: none;
     border-radius: var(--r-control);
-    border: 1px solid transparent;
     background: transparent;
     cursor: pointer;
-    transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+    transition: background 130ms var(--motion-ease), box-shadow 130ms var(--motion-ease);
   }
 
-  /* 静默仪器·R3/R4:hover 仅底色反馈(soft,与 surface 容器区分),去描边 */
-  .reader-article-card:hover {
-    background: var(--dorami-soft);
+  .reader-entry:hover { background: color-mix(in srgb, var(--dorami-ink) 4%, transparent); }
+
+  /* 选中 = 浮白 + 弱高程(与源行同语法;弃 accent 竖条) */
+  .reader-entry.is-active {
+    background: var(--dorami-surface);
+    box-shadow: var(--sh-1);
   }
 
-  /* 静默仪器·R1:竖条已是选中标记,去掉叠加的 indigo 描边 */
-  .reader-article-card-active {
-    background: var(--dorami-soft);
-    border-color: transparent;
-    box-shadow: inset 3px 0 0 var(--dorami-blue);
-  }
-
-  .reader-article-title {
-    font-size: 13.5px;
-    font-weight: 600;
-    line-height: 1.4;
-    color: var(--dorami-ink);
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    padding-right: 22px; /* 给右上角收藏星标留位，避免标题压到星标 */
-  }
-
-  .reader-article-wrap { position: relative; }
-
-  .reader-fav-toggle {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    z-index: 2;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 26px;
-    border-radius: var(--r-control);
-    color: var(--dorami-faint);
-    background: transparent;
-    opacity: 0;
-    transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
-  }
-
-  .reader-article-wrap:hover .reader-fav-toggle { opacity: 1; }
-  .reader-fav-toggle:hover { background: var(--dorami-surface); color: #f59e0b; }
-  .reader-fav-toggle:disabled { cursor: default; opacity: 1; }
-  .reader-fav-toggle-on { opacity: 1; color: #f59e0b; }
-  .reader-fav-toggle-on:hover { color: #d97706; }
-
-  .reader-article-excerpt {
-    margin-top: 5px;
-    font-size: 12px;
-    font-weight: 500;
-    line-height: 1.5;
-    color: var(--dorami-muted);
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .reader-article-foot {
+  .reader-entry-top {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-top: 8px;
+    gap: 7px;
+    margin-bottom: 3px;
   }
 
-  .reader-article-source {
-    font-size: 11px;
-    font-weight: 700;
-    /* 静默仪器·R5:来源名常态色降为墨阶,不占用一屏 accent 预算 */
-    color: var(--dorami-ink-2);
+  .reader-entry-src {
+    flex: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    font-weight: 400;
+    color: var(--dorami-faint);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .reader-article-date {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--dorami-faint);
+  .reader-entry-time {
     flex-shrink: 0;
-    /* 日期是数字排印：等宽数字让列表内日期纵向对齐更稳 */
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 400;
+    color: var(--dorami-faint);
     font-variant-numeric: tabular-nums;
+  }
+
+  .reader-entry-title {
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.5;
+    color: var(--dorami-ink);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-wrap: pretty;
+  }
+
+  .reader-entry-excerpt {
+    margin-top: 2px;
+    font-size: 12.5px;
+    font-weight: 400;
+    line-height: 1.55;
+    color: var(--dorami-faint);
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .reader-load-more {
@@ -7451,104 +7720,219 @@ input[type="radio"] {
   .reader-load-more:hover:not(:disabled) { background: var(--dorami-soft); color: var(--dorami-ink-2); }
   .reader-load-more:disabled { cursor: default; opacity: 0.7; }
 
-  /* 右栏：阅读面板 */
+  /* ── 阅读窗 ── */
+  /* 顶部工具条:crumb(源标+源名·域名)| 动作图标组——动作常驻可见,不随正文滚走 */
+  .reader-pane-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--dorami-border-soft);
+    background: var(--rd-pane-bg);
+  }
+
+  .reader-crumb {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .reader-crumb-name {
+    font-size: 12.5px;
+    font-weight: 400;
+    color: var(--dorami-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 「译」字钮字形(样页):以汉字本身作图标 */
+  .reader-tr-glyph {
+    font-size: 12.5px;
+    font-weight: 600;
+    line-height: 1;
+  }
+
   .reader-pane {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 36px clamp(28px, 5vw, 72px);
+    padding: 44px clamp(28px, 5vw, 72px) 96px;
   }
 
-  .reader-pane-head { max-width: 720px; margin: 0 auto; }
+  .reader-pane-head {
+    max-width: 720px;
+    margin: 0 auto;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--dorami-border);
+  }
+
+  /* kicker:源·类型 眉头(样页:等宽小字距,accent 文本级) */
+  .reader-kicker {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    color: var(--dorami-accent-ink);
+    margin-bottom: 10px;
+  }
+
+  .reader-pane-title {
+    margin: 0 0 10px;
+    font-size: 27px;
+    line-height: 1.35;
+    font-weight: 700;
+    color: var(--dorami-ink);
+    letter-spacing: 0.01em;
+    /* 编辑感的落点(样页):阅读窗大标题走衬线,西文 Georgia、中文回落宋体 */
+    font-family: var(--font-serif);
+    text-wrap: balance;
+  }
 
   .reader-pane-meta {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 14px;
-  }
-
-  .reader-pane-source {
-    font-size: 12px;
-    font-weight: 700;
-    /* 静默仪器·R5:阅读窗格来源名降为墨阶,accent 仅留进度线 + 原文链接 */
-    color: var(--dorami-ink-2);
-  }
-
-  .reader-pane-date {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    font-weight: 600;
+    gap: 6px 14px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 400;
     color: var(--dorami-faint);
-    /* 日期是数字排印：等宽数字让日期字形更稳 */
     font-variant-numeric: tabular-nums;
   }
 
-  .reader-pane-title {
-    font-size: clamp(22px, 2.6vw, 30px);
-    line-height: 1.3;
-    font-weight: 800;
-    color: var(--dorami-ink);
-    letter-spacing: -0.01em;
-    /* 与正文一致：英文标题也走优质拉丁字形（零资产系统字体栈），中文回落 PingFang/雅黑。 */
-    font-family: "SF Pro Text", -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  /* 日报报头(样页):衬线居中刊名 + 双细线 */
+  .reader-brief-mast {
+    max-width: 720px;
+    margin: 0 auto;
+    text-align: center;
+    padding: 6px 0 18px;
+    border-bottom: 3px double var(--dorami-border-strong);
   }
 
-  .reader-pane-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    margin-top: 14px;
-    font-size: 12px;
+  .reader-brief-mast h1 {
+    margin: 0 0 6px;
+    font-family: var(--font-serif);
+    font-size: 30px;
     font-weight: 700;
-    color: var(--dorami-blue);
+    letter-spacing: 0.12em;
+    color: var(--dorami-ink);
   }
 
-  .reader-pane-link:hover { color: var(--dorami-accent-ink); text-decoration: underline; }
+  .reader-brief-mast-date {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 400;
+    letter-spacing: 0.14em;
+    color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums;
+  }
 
-  /* 字号/字重/行高放在容器上：全局无 layer 的 `button{font:inherit}` 会压过
-     layer 内对 button 写的 font-size，导致 button（收藏/译为中文）字号回退到继承值、
-     与 <a>（查看来源）不齐。把字体属性挂到 div 容器，button 经 font:inherit 自然继承，
-     三者字号/字重/字体族即统一。 */
-  .reader-pane-actions {
+  /* 上一篇/下一篇:沿当前列表序的真实翻页 */
+  .reader-pager {
+    display: flex;
+    gap: 12px;
+    max-width: 720px;
+    margin: 44px auto 0;
+    padding-top: 18px;
+    border-top: 1px solid var(--dorami-border);
+  }
+
+  .reader-pager-btn {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    padding: 10px 14px;
+    border: 1px solid var(--dorami-border);
+    border-radius: var(--r-control);
+    background: transparent;
+    cursor: pointer;
+    transition: border-color 140ms ease, background 140ms ease;
+  }
+
+  .reader-pager-btn:hover:not(:disabled) {
+    border-color: var(--dorami-border-strong);
+    background: var(--dorami-soft);
+  }
+
+  .reader-pager-btn:disabled { opacity: 0.45; cursor: default; }
+  .reader-pager-next { text-align: right; }
+
+  .reader-pager-dir {
+    display: block;
+    margin-bottom: 3px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 400;
+    letter-spacing: 0.1em;
+    color: var(--dorami-faint);
+  }
+
+  .reader-pager-title {
+    display: block;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--dorami-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 空态(列表/阅读窗共用) */
+  .reader-empty {
+    flex: 1;
+    min-height: 220px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 40px 24px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.7;
+    color: var(--dorami-faint);
+  }
+
+  .reader-empty-tall { min-height: 320px; }
+
+  /* ── 接入集成全屏浮层(读者账号:从页签降级,入口在轨底头像菜单) ── */
+  .reader-integrations-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    background: var(--dorami-canvas);
+    animation: reader-ai-rise var(--motion-medium) var(--motion-ease);
+  }
+
+  .reader-integrations-bar {
     display: flex;
     align-items: center;
-    gap: 16px;
-    margin-top: 14px;
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 1;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--dorami-surface);
+    border-bottom: 1px solid var(--dorami-border-soft);
   }
 
-  .reader-pane-actions > a,
-  .reader-pane-actions > button { margin-top: 0; }
-  .reader-pane-actions > a svg,
-  .reader-pane-actions > button svg { flex: none; }
-
-  .reader-pane-fav {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--dorami-muted);
-    transition: color 140ms ease;
+  .reader-integrations-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--dorami-ink);
   }
 
-  .reader-pane-fav:hover { color: #f59e0b; }
-  .reader-pane-fav:disabled { cursor: default; }
-  .reader-pane-fav-on { color: #f59e0b; }
-  .reader-pane-fav-on:hover { color: #d97706; }
+  .reader-integrations-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 24px 20px 48px;
+  }
 
-  /* ── 阅读器 AI：译为中文按钮态 + 问答浮层 ── */
-  .reader-pane-link.reader-pane-link-on { color: var(--dorami-accent); }
-  .reader-pane-link:disabled { color: var(--dorami-faint); cursor: default; }
-  .reader-pane-link:disabled:hover { text-decoration: none; }
-
-  /* 收起态为纯图标圆钮；悬停约 0.5s 后向左展开「问问哆啦美」标签，移开即收起。 */
+  /* 问哆啦美胶囊(样页):墨色底常显标签,accent 星标点睛 */
   .reader-ai-fab {
     position: absolute;
     right: 22px;
@@ -7556,40 +7940,24 @@ input[type="radio"] {
     z-index: 30;
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    height: 44px;
-    padding: 0 14px;
+    gap: 7px;
+    height: 40px;
+    padding: 0 16px 0 13px;
     border-radius: var(--r-pill);
-    background: var(--dorami-accent);
-    color: #fff;
+    background: var(--dorami-ink);
+    color: var(--dorami-canvas);
     white-space: nowrap;
-    overflow: hidden;
     box-shadow: var(--dorami-shadow);
-    transition: background var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
+    transition: transform var(--motion-fast) var(--motion-ease);
     animation: reader-ai-rise var(--motion-medium) var(--motion-ease);
   }
-  .reader-ai-fab svg { flex: none; }
-  .reader-ai-fab:hover { background: var(--dorami-accent-ink); transform: translateY(-1px); }
+  .reader-ai-fab svg { flex: none; color: var(--dorami-accent); }
+  .reader-ai-fab:hover { transform: translateY(-2px); }
+  .reader-ai-fab:active { transform: scale(0.97); }
 
   .reader-ai-fab-label {
-    display: inline-block;
-    max-width: 0;
-    margin-left: 0;
-    opacity: 0;
-    overflow: hidden;
     font-size: 13px;
-    font-weight: 700;
-    /* 收起：立即；展开延时见 :hover 规则 */
-    transition:
-      max-width var(--motion-medium) var(--motion-ease),
-      margin-left var(--motion-medium) var(--motion-ease),
-      opacity var(--motion-fast) var(--motion-ease);
-  }
-  .reader-ai-fab:hover .reader-ai-fab-label {
-    max-width: 120px;
-    margin-left: 8px;
-    opacity: 1;
-    transition-delay: 500ms;
+    font-weight: 600;
   }
 
   .reader-ai-panel {
@@ -7828,21 +8196,25 @@ input[type="radio"] {
 
   .reader-pane-body {
     max-width: 720px;
-    margin: 26px auto 0;
-    padding-top: 22px;
-    border-top: 1px solid var(--dorami-border);
-    /* 长文阅读容器：字号提到 16.5px（720px 下约 43 字/行，中文长文舒适区），
-       字号变大后行高从 1.85 收到 1.8 免得行距发散。PingFang 只有固定字重档、
-       :root 又设了 font-synthesis:none，450 会解析回 400——显式写 400 免误导。 */
+    /* 分隔线归 header(.reader-pane-head/.reader-brief-mast 的 border-bottom),此处只留呼吸距 */
+    margin: 24px auto 0;
+    /* 长文阅读容器(样页 .a-body):16.5px/1.85,墨色全黑(ink)。 */
     font-size: 16.5px;
-    line-height: 1.8;
+    line-height: 1.85;
     font-weight: 400;
     /* 正文源大量英文（arxiv/HN/GitHub/blog）：单独给阅读容器一条「优质拉丁在前、
        中文回落」的字体栈（零资产、不引 webfont），拉丁字形走 SF Pro/Segoe 等系统优质
        西文字体，中文仍回落 PingFang/雅黑。只作用于阅读正文，不动 :root 全局栈。 */
     font-family: "SF Pro Text", -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-    color: var(--dorami-ink-2);
+    color: var(--dorami-ink);
     word-break: break-word;
+  }
+
+  /* 阅读正文的样页化局部覆写:accent 引文线(仅阅读窗,不影响其他 markdown 场景) */
+  .reader-pane-body.markdown-body blockquote {
+    border-left: 2px solid var(--dorami-accent);
+    padding: 2px 0 2px 18px;
+    color: var(--dorami-muted);
   }
 
   /* 阅读器正文 markdown 渲染样式 */
@@ -7868,6 +8240,13 @@ input[type="radio"] {
   .markdown-body h2 { font-size: 20.5px; }
   .markdown-body h3 { font-size: 18px; }
   .markdown-body h4 { font-size: 16.5px; }
+  /* 阅读窗小节标题走衬线(样页编辑感三落点之一);只作用于阅读正文,不影响其他 markdown 场景 */
+  .reader-pane-body.markdown-body h1,
+  .reader-pane-body.markdown-body h2,
+  .reader-pane-body.markdown-body h3 {
+    font-family: var(--font-serif);
+    letter-spacing: 0.01em;
+  }
   .markdown-body ul,
   .markdown-body ol {
     margin: 0 0 16px;
@@ -8050,7 +8429,6 @@ input[type="radio"] {
     /* 纵向堆叠时取消折叠相关的固定宽度/裁切与浮动把手 */
     .reader-col-sources, .reader-col-list { overflow: visible; }
     .reader-sources-inner, .reader-list-inner { width: 100%; }
-    .reader-handle { display: none; }
     .reader-source-scroll { max-height: 320px; }
     .reader-list-scroll { max-height: 420px; }
     .reader-pane { padding: 24px; }
@@ -8193,6 +8571,7 @@ input[type="radio"] {
 
   /* —— 描边 —— */
   --dorami-border: rgba(255, 255, 255, 0.10);
+  --dorami-border-soft: rgba(255, 255, 255, 0.06);
   --dorami-border-strong: rgba(255, 255, 255, 0.16);
   /* 静默仪器:暗色卡片描边降级为细白线(深底上阴影不可读),内高光减弱 */
   --dorami-card-bd: rgba(255, 255, 255, 0.08);
@@ -8328,7 +8707,7 @@ input[type="radio"] {
 
 /* ════ 规则①：输入 / 轨道 / 表头 / 代码预览 → well（深凹陷）════ */
 [data-theme="dark"] :is(
-  .segmented-control, .scope-toggle, .search-box, .catalog-search, .reader-search,
+  .segmented-control, .scope-toggle, .search-box, .catalog-search, .reader-search-row,
   .field-box, .vector-option-box, .node-param-input, .node-param-checkbox, .form-input,
   .config-toggle, .vector-status-pending, .empty-state, .source-param-empty, .subscription-catalog-toolbar
 ) {
@@ -8396,11 +8775,24 @@ input[type="radio"] {
 [data-theme="dark"] .modal-overlay { background: rgba(0, 0, 0, 0.62); }
 /* 灯箱遮罩暗色再加深（同 .modal-overlay 惯例），让放大原图更聚焦 */
 [data-theme="dark"] .reader-lightbox { background: rgba(0, 0, 0, 0.88); }
-/* 静默仪器·R3:文章卡挂在 surface 容器上,暗色 hover 需用 raised(比卡片亮的一档)才可见反馈 */
-[data-theme="dark"] .reader-article-card:hover { background: var(--dorami-raised); }
+/* (条目卡 hover 用 color-mix(ink) 自适应明暗,无需暗色覆写) */
 [data-theme="dark"] .date-range-day:hover { background: var(--dorami-raised); }
-[data-theme="dark"] .reader-group-count { background: rgba(255, 255, 255, 0.08); }
-[data-theme="dark"] .reader-unread-badge { background: rgba(122, 116, 255, 0.18); }
+
+/* ── 阅读器三面阶梯 · 暗色映射(对齐样页暗色实值,非亮色 token 阶的机械翻转):
+   源栏/轨 canvas(#0c0e13) → 条目列 #15181f(=well) → 阅读窗 #1a1e26(=soft);
+   卡面仍走 --dorami-surface(#20252f)。 ── */
+[data-theme="dark"] .reader-shell {
+  --rd-list-bg: var(--dorami-well);
+  --rd-pane-bg: var(--dorami-soft);
+}
+
+/* 阅读器字号修复:全局无 layer 的 `button{font:inherit}` 会压过 @layer 内
+   对 button 写的字号(库内已知陷阱)——把带文字的按钮字号写在 unlayered 区胜出。 */
+.reader-seg-btn { font-size: 12px; font-weight: 400; }
+.reader-src-more { font-size: 12.5px; font-weight: 400; }
+.reader-load-more { font-size: 12px; font-weight: 500; }
+.reader-user-menu button { font-size: 12.5px; font-weight: 400; }
+.reader-pager-btn { font: inherit; }
 
 /* ── 状态色块（保留语义色，仅压深底 + 提亮文字）── */
 [data-theme="dark"] .action-button-danger { background: rgba(248, 113, 113, 0.12); color: #fca5a5; border-color: rgba(248, 113, 113, 0.28); }

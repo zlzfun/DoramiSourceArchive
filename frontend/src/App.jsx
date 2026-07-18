@@ -13,6 +13,7 @@ import {
   Settings,
   ShieldCheck,
   Sun,
+  X,
 } from 'lucide-react';
 import Toast from './components/Toast';
 import SettingsModal from './components/SettingsModal';
@@ -334,7 +335,7 @@ export default function App() {
     { id: 'fetch', icon: CloudDownload, label: '节点管理', railLabel: '节点', surface: 'collector' },
     { id: 'runs', icon: History, label: '任务与运行', railLabel: '运行', surface: 'collector' },
     { id: 'vector', icon: BarChart2, label: '向量雷达', railLabel: '雷达', surface: 'reader', requiresRag: true, hideForReader: true },
-    { id: 'mcp', icon: Plug2, label: '接入集成', railLabel: '集成', surface: 'reader' },
+    { id: 'mcp', icon: Plug2, label: '接入集成', railLabel: '集成', surface: 'reader', hideForReader: true },
     { id: 'admin', icon: ShieldCheck, label: '运维管理', railLabel: '运维', adminOnly: true },
   ].filter(tab => {
     if (tab.onlyReader && !readerOnly) return false;
@@ -357,6 +358,14 @@ export default function App() {
 
   // 账号身份标签：读者不感知部署「层」概念，只显示自己的角色。
   const roleLabel = readerOnly ? '读者' : '管理员';
+
+  // ── 读者账号:应用导轨隐藏(阅读器视图轨独占,轨底头像菜单承接 设置/主题/退出),
+  //    「接入集成」从页签降为头像菜单里的全屏浮层 ──
+  const [integrationsOpen, setIntegrationsOpen] = useState(false);
+  useEffect(() => {
+    // 无导轨即无页签切换;历史 hash(#mcp 等)一律归位到阅读器
+    if (readerOnly && activeTab !== 'reader') goTab('reader', { replace: true });
+  }, [readerOnly, activeTab, goTab]);
 
   // 品牌标题/副标题按账号视角区分：读者侧只讲「AI 资讯阅读」，不暴露归档/采集/分发。
   const brandTitle = readerOnly ? '哆啦美' : '哆啦美·归档中枢';
@@ -402,6 +411,7 @@ export default function App() {
   return (
     <div className="app-shell font-sans">
       {/* ── lg+:左侧固定导轨(品牌/导航/工具/账号);布局波 L1 ── */}
+      {!readerOnly && (
       <aside className="app-rail hidden lg:flex" aria-label="主导航">
         <div className="rail-brand" title={`${brandTitle} · ${brandSubtitle}`}>
           <BrandLogo logoError={logoError} onLogoError={() => setLogoError(true)} />
@@ -454,6 +464,7 @@ export default function App() {
           </button>
         </div>
       </aside>
+      )}
 
       {/* ── lg 以下:保留移动顶栏 ── */}
       <header className="app-header flex items-center justify-between gap-4 px-5 sm:px-8 lg:hidden">
@@ -539,12 +550,56 @@ export default function App() {
         onArticlesChanged={markArticlesDirty}
       />
 
-      <main className="ml-[var(--rail-w)] px-5 pt-[22px] pb-9 sm:px-7">
+      {/* 读者账号的「接入集成」:从页签降为全屏浮层(入口在阅读器轨底头像菜单) */}
+      {readerOnly && integrationsOpen && (
+        <div className="reader-integrations-overlay" role="dialog" aria-modal="true" aria-label="接入集成">
+          <div className="reader-integrations-bar">
+            <span className="reader-integrations-title">接入集成</span>
+            <button
+              type="button"
+              className="reader-pane-iconbtn"
+              onClick={() => setIntegrationsOpen(false)}
+              aria-label="关闭接入集成"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="reader-integrations-body">
+            <div className="page-shell">
+              <Suspense fallback={<TabFallback />}>
+                <MCPTab
+                  showToast={showToast}
+                  ragEnabled={runtimeInfo.rag_enabled}
+                  collectorEnabled={runtimeInfo.collector_enabled}
+                  isAdmin={false}
+                  onOpenModelConfig={() => {}}
+                />
+              </Suspense>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <main
+        className={`${readerOnly ? '' : 'ml-[var(--rail-w)] '}px-5 pt-[22px] pb-9 sm:px-7`}
+        style={readerOnly ? { '--rail-w': '0px' } : undefined}
+      >
         <div className="page-shell">
           {readerOnly && mountedTabs.has('reader') && (
             <div className={`tab-panel${activeTab === 'reader' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
-                <ReaderTab showToast={showToast} aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured} />
+                <ReaderTab
+                  showToast={showToast}
+                  aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured}
+                  standalone
+                  account={authState.user}
+                  avatarText={avatarInitials}
+                  themeDark={effective === 'dark'}
+                  onToggleTheme={toggleTheme}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                  onOpenIntegrations={() => setIntegrationsOpen(true)}
+                  onLogout={handleLogout}
+                />
               </Suspense>
             </div>
           )}
