@@ -181,7 +181,7 @@ html:has(.tab-panel:not(.is-off) :is(.ledger-shell, .nodes-shell, .reader-shell,
 /* 壳层几何:lg+ 启用左导轨、撤顶栏(与 :root 基础值同为未分层,媒体命中即胜出) */
 @media (min-width: 1024px) {
   :root {
-    --rail-w: 78px;
+    --rail-w: 56px; /* 与阅读器视图轨同宽(导轨风格向视图轨靠拢) */
     --app-top: 0px;
   }
 }
@@ -558,70 +558,30 @@ input[type="radio"] {
     color: var(--dorami-ink);
   }
 
-  /* ── 左侧导轨(布局波 L1,lg+ 生效;lg 以下走 .app-header 移动顶栏)── */
+  /* ── 左侧导轨(布局波 L1,lg+ 生效;lg 以下走 .app-header 移动顶栏)──
+     形制与阅读器视图轨统一(2026-07-19 导轨靠拢波):56px 带宽 / canvas 底 / 软分隔线,
+     钮与 tooltip / 轨底头像菜单直接复用 .reader-vrail-* / .reader-user-menu 类族
+     (该族已是全站「轨语言」,选中语法 = wash 块,不再用 accent 竖条)。 */
 
   .app-rail {
     position: fixed;
     inset-block: 0;
     left: 0;
-    width: 78px;
+    width: 56px;
     z-index: 45;
     flex-direction: column;
     align-items: center;
-    gap: 2px;
-    padding: 14px 0 16px;
-    background: var(--dorami-surface);
-    border-right: 1px solid var(--dorami-card-bd);
-    box-shadow: var(--sh-1);
-  }
-
-  .rail-brand {
-    margin-bottom: 14px;
-    display: grid;
-    place-items: center;
-  }
-
-  .rail-nav-btn {
-    position: relative;
-    width: 100%;
-    padding: 10px 0 8px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
     gap: 4px;
-    color: var(--dorami-faint);
+    padding: 14px 0 16px;
+    background: var(--dorami-canvas);
+    border-right: 1px solid var(--dorami-border-soft);
   }
 
-  .rail-nav-btn svg { width: 19px; height: 19px; }
-  .rail-nav-btn span { font-size: 11px; font-weight: 600; }
-  .rail-nav-btn:hover { color: var(--dorami-ink-2); }
-  .rail-nav-btn.rail-nav-on { color: var(--dorami-accent); }
-  .rail-nav-btn.rail-nav-on span { font-weight: 700; }
-
-  /* 选中语法 = accent 竖条(全站统一) */
-  .rail-nav-btn.rail-nav-on::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 3px;
-    height: 26px;
-    background: var(--dorami-blue);
-    border-radius: 0 var(--r-pill) var(--r-pill) 0;
-  }
-
-  .rail-tool {
-    width: 36px;
-    height: 36px;
+  /* 品牌位:间距沿用 vrail 品牌类自带的 margin-bottom(16px),与视图轨节奏一致 */
+  .rail-brand {
     display: grid;
     place-items: center;
-    border-radius: var(--r-control);
-    color: var(--dorami-faint);
   }
-
-  .rail-tool:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
-  .rail-tool svg { width: 18px; height: 18px; }
 
   .app-header {
     position: sticky;

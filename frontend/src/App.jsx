@@ -90,7 +90,22 @@ function navFromHash() {
   return { tab: r.tab, views, focus: null };
 }
 
-function BrandLogo({ logoError, onLogoError }) {
+function BrandLogo({ logoError, onLogoError, rail = false }) {
+  // rail 变体:32px 品牌位,与阅读器视图轨同规格(导轨风格向视图轨靠拢)
+  if (rail) {
+    return !logoError ? (
+      <BrandLogoImage
+        displaySize={32}
+        alt="哆啦美"
+        className="reader-vrail-brand-img"
+        onError={onLogoError}
+      />
+    ) : (
+      <div className="reader-vrail-brand" aria-hidden="true">
+        <Bot />
+      </div>
+    );
+  }
   return !logoError ? (
     <BrandLogoImage
       displaySize={48}
@@ -330,13 +345,13 @@ export default function App() {
   // 受限读者（user 账号）只看到「阅读器 + 订阅分发 + 接入集成」；admin（采集+阅读超级用户）保持现有全部 tab。
   const readerOnly = runtimeInfo.account_role === 'user';
   const tabs = useMemo(() => [
-    { id: 'reader', icon: BookOpen, label: '阅读器', railLabel: '阅读', onlyReader: true },
-    { id: 'data', icon: Database, label: '知识台账', railLabel: '台账', hideForReader: true },
-    { id: 'fetch', icon: CloudDownload, label: '节点管理', railLabel: '节点', surface: 'collector' },
-    { id: 'runs', icon: History, label: '任务与运行', railLabel: '运行', surface: 'collector' },
-    { id: 'vector', icon: BarChart2, label: '向量雷达', railLabel: '雷达', surface: 'reader', requiresRag: true, hideForReader: true },
-    { id: 'mcp', icon: Plug2, label: '接入集成', railLabel: '集成', surface: 'reader', hideForReader: true },
-    { id: 'admin', icon: ShieldCheck, label: '运维管理', railLabel: '运维', adminOnly: true },
+    { id: 'reader', icon: BookOpen, label: '阅读器', onlyReader: true },
+    { id: 'data', icon: Database, label: '知识台账', hideForReader: true },
+    { id: 'fetch', icon: CloudDownload, label: '节点管理', surface: 'collector' },
+    { id: 'runs', icon: History, label: '任务与运行', surface: 'collector' },
+    { id: 'vector', icon: BarChart2, label: '向量雷达', surface: 'reader', requiresRag: true, hideForReader: true },
+    { id: 'mcp', icon: Plug2, label: '接入集成', surface: 'reader', hideForReader: true },
+    { id: 'admin', icon: ShieldCheck, label: '运维管理', adminOnly: true },
   ].filter(tab => {
     if (tab.onlyReader && !readerOnly) return false;
     if (tab.hideForReader && readerOnly) return false;
@@ -366,6 +381,23 @@ export default function App() {
     // 无导轨即无页签切换;历史 hash(#mcp 等)一律归位到阅读器
     if (readerOnly && activeTab !== 'reader') goTab('reader', { replace: true });
   }, [readerOnly, activeTab, goTab]);
+
+  // ── 管理面导轨:轨底 主题/设置/头像/退出 四钮并入单一头像菜单(与读者视图轨同语言)──
+  const [railMenuOpen, setRailMenuOpen] = useState(false);
+  const railMenuRef = useRef(null);
+  useEffect(() => {
+    if (!railMenuOpen) return undefined;
+    const onDown = (e) => {
+      if (railMenuRef.current && !railMenuRef.current.contains(e.target)) setRailMenuOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setRailMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [railMenuOpen]);
 
   // 品牌标题/副标题按账号视角区分：读者侧只讲「AI 资讯阅读」，不暴露归档/采集/分发。
   const brandTitle = readerOnly ? '哆啦美' : '哆啦美·归档中枢';
@@ -410,58 +442,62 @@ export default function App() {
 
   return (
     <div className="app-shell font-sans">
-      {/* ── lg+:左侧固定导轨(品牌/导航/工具/账号);布局波 L1 ── */}
+      {/* ── lg+:左侧固定导轨(管理面),形制向阅读器视图轨靠拢:
+             56px 带宽 / 32px 品牌位 / 38px icon-only 钮 + 右侧墨底 tooltip /
+             轨底单一头像菜单(设置·主题·退出)。复用 reader-vrail-* 类族(已是全站轨语言)。 ── */}
       {!readerOnly && (
       <aside className="app-rail hidden lg:flex" aria-label="主导航">
         <div className="rail-brand" title={`${brandTitle} · ${brandSubtitle}`}>
-          <BrandLogo logoError={logoError} onLogoError={() => setLogoError(true)} />
+          <BrandLogo rail logoError={logoError} onLogoError={() => setLogoError(true)} />
         </div>
-        <nav className="flex w-full flex-col items-center gap-0.5" aria-label="页面">
+        <nav className="flex w-full flex-col items-center gap-1" aria-label="页面">
           {tabs.map(tab => (
             <button
               key={tab.id}
+              type="button"
               onClick={() => goTab(tab.id)}
-              className={`rail-nav-btn ${activeTab === tab.id ? 'rail-nav-on' : ''}`}
+              className={`reader-vrail-btn ${activeTab === tab.id ? 'is-on' : ''}`}
               aria-current={activeTab === tab.id ? 'page' : undefined}
-              title={tab.label}
+              aria-label={tab.label}
             >
-              <tab.icon />
-              <span>{tab.railLabel || tab.label}</span>
+              <tab.icon className="h-[18px] w-[18px]" />
+              <span className="reader-vrail-tip">{tab.label}</span>
             </button>
           ))}
         </nav>
-        <div className="flex-1" />
-        <div className="flex flex-col items-center gap-1.5">
+        <div className="reader-vrail-spring" />
+        <div className="reader-vrail-user" ref={railMenuRef}>
           <button
             type="button"
-            onClick={toggleTheme}
-            className="rail-tool"
-            title={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
-            aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+            className="reader-vrail-avatar"
+            aria-haspopup="menu"
+            aria-expanded={railMenuOpen}
+            title={`${authState.user?.username || 'admin'} · ${roleLabel}`}
+            onClick={() => setRailMenuOpen((o) => !o)}
           >
-            {effective === 'dark' ? <Sun /> : <Moon />}
+            {authState.user?.avatar
+              ? <img src={authState.user.avatar} alt="" />
+              : <span>{avatarInitials}</span>}
           </button>
-          <button type="button" onClick={() => setSettingsOpen(true)} className="rail-tool" title="设置" aria-label="设置">
-            <Settings />
-          </button>
-          {authState.user?.avatar ? (
-            <img
-              src={authState.user.avatar}
-              alt="头像"
-              title={`${authState.user?.username || 'admin'} · ${roleLabel}`}
-              className="h-9 w-9 rounded-full object-cover shadow-sm ring-1 ring-black/5"
-            />
-          ) : (
-            <div
-              className="avatar-badge flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white"
-              title={`${authState.user?.username || 'admin'} · ${roleLabel}`}
-            >
-              {avatarInitials}
+          {railMenuOpen && (
+            <div className="reader-user-menu" role="menu" aria-label="账号菜单">
+              <div className="reader-user-menu-head">
+                {authState.user?.username || 'admin'}
+                <span>{roleLabel}</span>
+              </div>
+              <button type="button" role="menuitem" onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}>
+                <Settings className="h-[15px] w-[15px]" /> 设置
+              </button>
+              <button type="button" role="menuitem" onClick={() => toggleTheme()}>
+                {effective === 'dark' ? <Sun className="h-[15px] w-[15px]" /> : <Moon className="h-[15px] w-[15px]" />}
+                {effective === 'dark' ? '切换亮色' : '切换暗色'}
+              </button>
+              <div className="reader-user-menu-sep" aria-hidden="true" />
+              <button type="button" role="menuitem" className="is-danger" onClick={() => { setRailMenuOpen(false); handleLogout(); }}>
+                <LogOut className="h-[15px] w-[15px]" /> 退出登录
+              </button>
             </div>
           )}
-          <button type="button" onClick={handleLogout} className="rail-tool" title="退出登录" aria-label="退出登录">
-            <LogOut />
-          </button>
         </div>
       </aside>
       )}
