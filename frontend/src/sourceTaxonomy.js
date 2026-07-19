@@ -226,8 +226,31 @@ export const LOGO_SIZES = {
   s15: { box: 15, radius: 4.5, font: 7.5, img: 10 },
   s17: { box: 17, radius: 5.5, font: 8, img: 11 },
   s20: { box: 20, radius: 6, font: 9, img: 13 },
+  /* s34:发现页源卡刻度 */
+  s34: { box: 34, radius: 9, font: 13, img: 21 },
   xs: { box: 22, radius: 7, font: 9, img: 14 },
   sm: { box: 30, radius: 9, font: 11, img: 18 },
   md: { box: 44, radius: 13, font: 15, img: 26 },
   lg: { box: 56, radius: 16, font: 19, img: 34 },
+};
+
+/* ── 编辑分层(阅读器源栏/发现页共用):由策展元数据推导 ──
+   动态形先归「榜单·动态」;个人层看 tier2/个人评论 scope;
+   媒体层看媒体/社区 scope 或 tier1;其余(tier0 官方博客/发布厅)归「官方」。 */
+export const EDITORIAL_GROUPS = [
+  { key: 'official', label: '官方 · 一手信息' },
+  { key: 'media', label: '媒体 · 观察' },
+  { key: 'personal', label: '个人 · 洞见' },
+  { key: 'bulletin', label: '榜单 · 动态' },
+];
+
+const MEDIA_SCOPES = new Set([
+  'ai_media', 'tech_media', 'community', 'developer_community', 'research_community', 'forum',
+]);
+
+export const editorialGroupOf = (source) => {
+  if ((source.shape || 'article') === 'bulletin') return 'bulletin';
+  if (source.provenance_tier === 'tier2_personal_social' || source.source_scope === 'personal_commentary') return 'personal';
+  if (MEDIA_SCOPES.has(source.source_scope) || source.provenance_tier === 'tier1_curated') return 'media';
+  return 'official';
 };

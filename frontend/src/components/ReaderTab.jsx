@@ -1,10 +1,9 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
-  Plus,
   Minus,
+  Plus,
   ExternalLink,
-  ChevronDown,
   Loader2,
   Inbox,
   Compass,
@@ -24,7 +23,8 @@ import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
 import ReaderMarkdown from './ReaderMarkdown';
 import ReaderAiPanel from './ReaderAiPanel';
-import { resolveCompany } from '../sourceTaxonomy';
+import { EDITORIAL_GROUPS, editorialGroupOf, resolveCompany } from '../sourceTaxonomy';
+import DiscoverPage from './DiscoverPage';
 import { excerptOf } from '../utils/readerText';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { contentTypeLabel } from '../utils/contentType';
@@ -117,25 +117,8 @@ const timeOfDay = (raw) => {
 const BRIEF_SOURCE_ID = 'dorami_daily_brief';
 
 // ── 源栏编辑分层(样页:官方·一手信息 / 媒体·观察 / 个人·洞见 / 榜单·动态) ──
-// 由策展元数据推导:动态形先归「榜单·动态」;个人层看 tier2/个人评论 scope;
-// 媒体层看媒体/社区 scope 或 tier1;其余(tier0 官方博客/发布厅)归「官方」。
-const EDITORIAL_GROUPS = [
-  { key: 'official', label: '官方 · 一手信息' },
-  { key: 'media', label: '媒体 · 观察' },
-  { key: 'personal', label: '个人 · 洞见' },
-  { key: 'bulletin', label: '榜单 · 动态' },
-];
-
-const MEDIA_SCOPES = new Set([
-  'ai_media', 'tech_media', 'community', 'developer_community', 'research_community', 'forum',
-]);
-
-const editorialGroupOf = (source) => {
-  if ((source.shape || 'article') === 'bulletin') return 'bulletin';
-  if (source.provenance_tier === 'tier2_personal_social' || source.source_scope === 'personal_commentary') return 'personal';
-  if (MEDIA_SCOPES.has(source.source_scope) || source.provenance_tier === 'tier1_curated') return 'media';
-  return 'official';
-};
+// 编辑分层判定(EDITORIAL_GROUPS/editorialGroupOf)已上移 sourceTaxonomy.js,
+// 与发现页(DiscoverPage)共享同一分组语法。
 
 // ── 骨架屏 · 大块加载态形状占位 ──
 // 形状贴近真实内容，替代居中 spinner；条数固定、宽度错落，纯装饰故 aria-hidden。
@@ -208,7 +191,8 @@ export default function ReaderTab({
   const [favOnly, setFavOnly] = useState(false);
   const [favoriteIds, setFavoriteIds] = useState(() => new Set());
   const [favTogglingId, setFavTogglingId] = useState(null);
-  const [discoverOpen, setDiscoverOpen] = useState(false);
+  // 发现页(整页视图,取代源栏内联「发现更多来源」):true 时 条目列+阅读窗 被发现页取代
+  const [discover, setDiscover] = useState(false);
   const [brandFailed, setBrandFailed] = useState(false); // 品牌 logo 加载失败 → 回退铃铛
 
   const [searchInput, setSearchInput] = useState('');
@@ -375,21 +359,6 @@ export default function ReaderTab({
       .filter((g) => g.list.length > 0);
   }, [subscribedSources]);
 
-  const discoverSources = useMemo(
-    () => sources
-      .filter(s => !subscribedIds.has(s.source_id))
-      .sort((a, b) => (b.count || 0) - (a.count || 0)),
-    [sources, subscribedIds],
-  );
-  const discoverArticleSources = useMemo(
-    () => discoverSources.filter(s => (s.shape || 'article') === 'article'),
-    [discoverSources],
-  );
-  const discoverBulletinSources = useMemo(
-    () => discoverSources.filter(s => (s.shape || 'article') === 'bulletin'),
-    [discoverSources],
-  );
-
   // 未读按形态拆分:驱动视图轨口径与源栏头的未读总数
   const unreadByShape = useMemo(() => {
     const totals = { article: 0, bulletin: 0 };
@@ -416,9 +385,9 @@ export default function ReaderTab({
 
   const hasNoSubscriptions = !sourcesLoading && subscribedSources.length === 0;
 
-  // 零订阅时自动展开「发现更多来源」，引导用户添加
+  // 零订阅时自动进入发现页,引导用户添加第一个订阅
   useEffect(() => {
-    if (hasNoSubscriptions) setDiscoverOpen(true);
+    if (hasNoSubscriptions) setDiscover(true);
   }, [hasNoSubscriptions]);
 
   // ── hover 预取正文(A4):150ms 去抖;命中缓存/进行中/无 id 都不发 ──
@@ -748,24 +717,28 @@ export default function ReaderTab({
   };
 
   // ── 视图轨导航(容器语义):点容器钮=进入该容器聚合(源内时=回到聚合);搜索是叠加开关 ──
+  // 任何内容导航都退出发现页(发现是与容器并列的一级视图,占据 条目列+阅读窗)
   const goView = (v) => {
+    setDiscover(false);
     setMode(v);
     setActiveSourceId(null);
   };
   // 单源=容器内收窄:源所属容器自动点亮(今日不承担单源,从今日点源即跳入所属容器)
   const goSource = (sourceId) => {
+    setDiscover(false);
     setActiveSourceId(sourceId);
     setMode(sourceShapeMap[sourceId] === 'bulletin' ? 'bulletin' : 'article');
   };
-  // 搜索开关:关闭即清词(searchQuery 经防抖同步清空,列表回到无过滤)
+  // 搜索开关:关闭即清词(searchQuery 经防抖同步清空,列表回到无过滤);搜索作用于条目列,开启即离开发现页
   const toggleSearch = () => {
+    setDiscover(false);
     setSearchOpen((open) => {
       if (open) setSearchInput('');
       return !open;
     });
   };
-  // 视图轨激活态 = 当前容器(源内保持点亮——层级关系,不再互斥)
-  const railActive = mode;
+  // 视图轨激活态 = 发现页 或 当前容器(源内保持点亮——层级关系,不再互斥)
+  const railActive = discover ? 'discover' : mode;
 
   const listTitle = activeSourceId
     ? (sourceNameMap[activeSourceId] || activeSourceId)
@@ -799,6 +772,12 @@ export default function ReaderTab({
 
   // 日期分组只在「到货序」列表上有意义;收藏过滤按收藏时间排序,不分组
   const grouping = !favOnly;
+
+  // 预览中的未订阅源(发现页「预览」跳入,Folo 语义):源栏顶浮现锚点行,
+  // 条目列头下给显眼「＋ 订阅」横幅;订阅成功后两者自然消失、源落入所属分组。
+  const activeUnsubscribed = activeSourceId && !subscribedIds.has(activeSourceId)
+    ? (sourceMap[activeSourceId] || { source_id: activeSourceId, name: activeSourceId })
+    : null;
 
   return (
     <div className="reader-shell">
@@ -837,6 +816,17 @@ export default function ReaderTab({
             <span className="reader-vrail-tip">{label}</span>
           </button>
         ))}
+        {/* 发现:整页源目录(取代源栏内联「发现更多来源」),与容器并列的一级视图 */}
+        <button
+          type="button"
+          aria-label="发现"
+          aria-pressed={discover}
+          onClick={() => setDiscover(true)}
+          className={`reader-vrail-btn ${discover ? 'is-on' : ''}`}
+        >
+          <Compass className="h-[18px] w-[18px]" />
+          <span className="reader-vrail-tip">发现</span>
+        </button>
         <button
           type="button"
           aria-label="搜索"
@@ -901,6 +891,17 @@ export default function ReaderTab({
             <SourceRowsSkeleton />
           ) : (
             <>
+              {/* 预览锚点行(Folo):正在预览的未订阅源浮现在源栏顶部,交代「你在哪」 */}
+              {activeUnsubscribed && (
+                <div className="reader-subs">
+                  <div className="reader-source-row reader-source-row-active">
+                    <LogoMark company={resolveCompany(activeUnsubscribed)} size="s20" emoji={activeUnsubscribed.icon} />
+                    <p className="reader-source-name min-w-0 flex-1">{activeUnsubscribed.name || activeUnsubscribed.source_id}</p>
+                    <span className="reader-src-preview-tag">预览</span>
+                  </div>
+                </div>
+              )}
+
               {/* 容器聚合入口(文章/动态容器内):回到本容器全部流;今日无此行(今日即聚合) */}
               {mode !== 'today' && (
                 <div className="reader-subs">
@@ -969,56 +970,19 @@ export default function ReaderTab({
               ))}
 
               {hasNoSubscriptions && (
-                <p className="reader-side-hint">还没有订阅任何来源，从下方「发现更多来源」开始添加。</p>
+                <p className="reader-side-hint">还没有订阅任何来源，在「发现」页挑选并添加。</p>
               )}
 
-              {/* ── 发现更多来源(样页 .src-more 虚线幽灵行) ── */}
-              {discoverSources.length > 0 && (
-                <section className="reader-discover">
-                  <button
-                    type="button"
-                    onClick={() => setDiscoverOpen(o => !o)}
-                    className="reader-src-more"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    <span>发现更多来源</span>
-                    <ChevronDown className={`reader-group-chevron h-4 w-4 ${discoverOpen ? '' : 'reader-group-chevron-collapsed'}`} />
-                  </button>
-                  {discoverOpen && (
-                    <div className="reader-group-body">
-                      {/* 发现区亦跟随容器:文章容器只推文章形源,动态容器只推动态形,今日推全部 */}
-                      {[
-                        { key: 'article', label: '文章', list: discoverArticleSources },
-                        { key: 'bulletin', label: '动态', list: discoverBulletinSources },
-                      ].filter(({ key }) => mode === 'today' || key === mode)
-                        .map(({ key, label, list }) => list.length > 0 && (
-                        <div key={key}>
-                          <p className="reader-subgroup-label">{label}</p>
-                          {list.map((source) => (
-                            <div key={source.source_id} className="reader-source-row reader-discover-row">
-                              <LogoMark company={resolveCompany(source)} size="s20" emoji={source.icon} />
-                              <div className="min-w-0 flex-1">
-                                <p className="reader-source-name">{source.name || source.source_id}</p>
-                                <p className="reader-source-meta">{source.count || 0} 篇 · {source.category || '其他来源'}</p>
-                              </div>
-                              <button
-                                type="button"
-                                title="订阅"
-                                onClick={() => handleSubscribe(source)}
-                                disabled={pinningId === source.source_id}
-                                className="reader-pin reader-pin-off"
-                              >
-                                {pinningId === source.source_id
-                                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  : <Plus className="h-3.5 w-3.5" />}
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
+              {/* 「发现更多来源」内联子列表已退役——发现升格为整页视图(视图轨 Compass 钮) */}
+              {!hasNoSubscriptions && (
+                <button
+                  type="button"
+                  onClick={() => setDiscover(true)}
+                  className="reader-src-more"
+                >
+                  <Compass className="h-3.5 w-3.5" />
+                  <span>发现更多来源</span>
+                </button>
               )}
             </>
           )}
@@ -1026,7 +990,21 @@ export default function ReaderTab({
         </div>
       </aside>
 
+      {/* ── 发现页:占据 条目列+阅读窗 的整片区域(源栏保持在场,订阅结果即时可见) ── */}
+      {discover && (
+        <DiscoverPage
+          sources={sources}
+          subscribedIds={subscribedIds}
+          loading={sourcesLoading}
+          pinningId={pinningId}
+          onSubscribe={handleSubscribe}
+          onUnsubscribe={handleUnsubscribe}
+          onPreview={(source) => goSource(source.source_id)}
+        />
+      )}
+
       {/* ── 条目列 ── */}
+      {!discover && (
       <section className="reader-col reader-col-list">
         <div className="reader-list-inner">
         <div className="reader-list-head">
@@ -1078,6 +1056,21 @@ export default function ReaderTab({
           </button>
         </div>
 
+        {/* 预览未订阅源:显眼订阅横幅(Folo 的「＋ 订阅」条),订阅成功即消失 */}
+        {activeUnsubscribed && (
+          <button
+            type="button"
+            className="reader-sub-banner"
+            disabled={pinningId === activeUnsubscribed.source_id}
+            onClick={() => handleSubscribe(activeUnsubscribed)}
+          >
+            {pinningId === activeUnsubscribed.source_id
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <Plus className="h-3.5 w-3.5" />}
+            订阅「{activeUnsubscribed.name || activeUnsubscribed.source_id}」
+          </button>
+        )}
+
         {/* 搜索行:视图轨「搜索」开合 */}
         {searchOpen && (
           <div className="reader-search-row">
@@ -1122,7 +1115,7 @@ export default function ReaderTab({
             <div className="reader-empty reader-empty-tall">
               <Compass className="h-7 w-7 text-slate-300" />
               <span>你还没有订阅任何来源</span>
-              <button type="button" className="action-button action-button-primary" onClick={() => setDiscoverOpen(true)}>
+              <button type="button" className="action-button action-button-primary" onClick={() => setDiscover(true)}>
                 去发现来源
               </button>
             </div>
@@ -1204,8 +1197,10 @@ export default function ReaderTab({
         </div>
         </div>
       </section>
+      )}
 
       {/* ── 阅读窗 ── */}
+      {!discover && (
       <section className="reader-col reader-col-read">
         {activeArticle ? (
           <>
@@ -1376,8 +1371,9 @@ export default function ReaderTab({
           </div>
         )}
       </section>
+      )}
 
-      <ReaderAiPanel aiEnabled={aiEnabled} activeArticle={activeArticle} showToast={showToast} />
+      {!discover && <ReaderAiPanel aiEnabled={aiEnabled} activeArticle={activeArticle} showToast={showToast} />}
     </div>
   );
 }

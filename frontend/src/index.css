@@ -7842,6 +7842,201 @@ input[type="radio"] {
 
   /* (接入集成全屏浮层已退役——并入设置波:读者头像菜单「接入集成」深链设置柜·聚合接口分区) */
 
+  /* ── 发现页(按发现页样页):占据 条目列+阅读窗 的整片区域,源栏保持在场。
+     头部 = 标题+目录搜索+形态分段(复用 .reader-seg);正文 = 编辑分层组头 + 双列源卡;
+     卡 = s34 logo + 名称/两行简介/收录 meta + 订阅胶囊/预览抽出(近期三篇)。 ── */
+  .reader-disc {
+    grid-column: 3 / -1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    background: var(--rd-list-bg);
+  }
+
+  .reader-disc-head {
+    flex: none;
+    padding: 18px 28px 0;
+    border-bottom: 1px solid var(--dorami-border-soft);
+  }
+
+  .reader-disc-head-inner,
+  .reader-disc-body { max-width: 920px; margin: 0 auto; }
+
+  .reader-disc-title-row { display: flex; align-items: baseline; gap: 12px; }
+  .reader-disc-title { font-size: 17px; font-weight: 700; color: var(--dorami-ink); }
+  .reader-disc-hint { font-size: 11.5px; color: var(--dorami-faint); }
+
+  .reader-disc-tools { display: flex; align-items: center; gap: 10px; margin: 14px 0; }
+
+  .reader-disc-search {
+    flex: 1;
+    max-width: 320px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 11px;
+    background: var(--dorami-well);
+    border-radius: 9px;
+    box-shadow: var(--dorami-inset-input);
+    color: var(--dorami-faint);
+  }
+
+  .reader-disc-search input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    outline: none;
+    color: var(--dorami-ink);
+  }
+
+  .reader-disc-search input::placeholder { color: var(--dorami-faint); }
+
+  .reader-disc-seg { margin-left: auto; }
+
+  .reader-disc-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 28px 40px; }
+  .reader-disc-body { width: 100%; }
+
+  .reader-disc-grp { display: flex; align-items: baseline; gap: 8px; margin: 22px 2px 10px; }
+  .reader-disc-body section:first-child .reader-disc-grp { margin-top: 0; }
+  .reader-disc-grp-label { padding: 0; }
+  .reader-disc-grp-n { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); }
+
+  .reader-disc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 1280px) { .reader-disc-grid { grid-template-columns: 1fr; } }
+
+  /* 卡=纵向 flex 且 main 撑满:网格拉伸等高时高度传导到内层,
+     meta 的 margin-top:auto / 右列 space-between 才有施力空间(贴底对齐的前提) */
+  .reader-disc-card {
+    display: flex;
+    flex-direction: column;
+    background: var(--dorami-surface);
+    border-radius: 10px;
+    box-shadow: var(--sh-1);
+    padding: 12px 13px;
+    transition: box-shadow var(--motion-fast) var(--motion-ease);
+  }
+
+  .reader-disc-card:hover { box-shadow: 0 1px 3px rgba(11, 18, 32, 0.06), 0 5px 14px rgba(11, 18, 32, 0.07); }
+
+  .reader-disc-card-main { flex: 1; display: flex; gap: 11px; }
+  .reader-disc-card-main > .logo-mark { margin-top: 1px; }
+  /* 中列纵向弹性:meta 行贴底;右列上下两端对齐(订阅顶、预览底)——
+     简介 1 行/2 行时,meta 与「预览」始终同贴卡底(用户目检反馈) */
+  .reader-disc-card-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .reader-disc-name-row { display: flex; align-items: center; gap: 7px; }
+
+  .reader-disc-name {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--dorami-ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .reader-disc-desc {
+    margin-top: 3px;
+    font-size: 11.5px;
+    color: var(--dorami-muted);
+    line-height: 1.55;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .reader-disc-meta { margin-top: auto; padding-top: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); }
+
+  .reader-disc-card-side {
+    flex: none;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 7px;
+  }
+
+  /* 订阅胶囊:视图内首要动作;已订阅退为描边态,悬停翻「取消订阅」变危险色 */
+  .reader-disc-sub {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-width: 64px;
+    padding: 4.5px 12px;
+    border: 1px solid transparent;
+    border-radius: var(--r-pill);
+    background: var(--dorami-accent);
+    color: #fff;
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--motion-ease),
+                color var(--motion-fast) var(--motion-ease),
+                border-color var(--motion-fast) var(--motion-ease),
+                transform var(--motion-fast) var(--motion-ease);
+  }
+
+  .reader-disc-sub:hover { background: var(--dorami-accent-ink); }
+  .reader-disc-sub:active { transform: scale(0.96); }
+  .reader-disc-sub:disabled { opacity: 0.6; cursor: default; }
+
+  .reader-disc-sub.is-subbed {
+    background: transparent;
+    color: var(--dorami-faint);
+    border-color: var(--dorami-border);
+  }
+
+  .reader-disc-sub.is-subbed:hover { color: #dc2626; border-color: rgba(220, 38, 38, 0.35); background: transparent; }
+  .reader-disc-sub.is-subbed .t-off { display: none; }
+  .reader-disc-sub.is-subbed:hover .t-on { display: none; }
+  .reader-disc-sub.is-subbed:hover .t-off { display: inline; }
+
+  .reader-disc-prev {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--dorami-faint);
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+
+  .reader-disc-prev:hover { background: color-mix(in srgb, var(--dorami-ink) 6%, transparent); color: var(--dorami-ink-2); }
+  /* (预览抽出已退役——预览改 Folo 语义:直接跳转该源的条目列表) */
+
+  .reader-disc-empty { padding: 60px 0; text-align: center; font-size: 12.5px; color: var(--dorami-faint); }
+
+  /* 预览着陆(Folo):源栏顶锚点行的「预览」签 + 条目列头下的显眼订阅横幅 */
+  .reader-src-preview-tag {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--dorami-accent-ink);
+  }
+
+  .reader-sub-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    padding: 9px 12px;
+    border: none;
+    border-bottom: 1px solid var(--dorami-border-soft);
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--motion-ease);
+  }
+
+  .reader-sub-banner:hover { background: color-mix(in srgb, var(--dorami-accent) 14%, transparent); }
+  .reader-sub-banner:disabled { opacity: 0.6; cursor: default; }
+
   /* 问哆啦美胶囊(样页):墨色底常显标签,accent 星标点睛 */
   .reader-ai-fab {
     position: absolute;
@@ -8701,6 +8896,12 @@ input[type="radio"] {
 .reader-seg-btn { font-size: 12px; font-weight: 400; }
 .reader-src-more { font-size: 12.5px; font-weight: 400; }
 .reader-load-more { font-size: 12px; font-weight: 500; }
+.reader-disc-sub { font-size: 11.5px; font-weight: 500; }
+.reader-disc-sub.is-subbed { font-weight: 400; }
+.reader-disc-prev { font-size: 11px; font-weight: 400; }
+/* 输入框同陷阱:无层级 input{font:inherit} 压 @layer 字号,发现页目录搜索框字号在此钉住 */
+.reader-disc-search input { font-size: 12.5px; }
+.reader-sub-banner { font-size: 12.5px; font-weight: 500; }
 .reader-pager-btn { font: inherit; }
 
 /* ── 状态色块（保留语义色，仅压深底 + 提亮文字）── */

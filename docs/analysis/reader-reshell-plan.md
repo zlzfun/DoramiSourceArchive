@@ -129,6 +129,41 @@
   读者「接入集成」入口收敛到设置柜导航;`.reader-user-menu` 类族与两处菜单 state/effect 删除,
   ReaderTab 的 onOpenIntegrations/onLogout props 随之退役。
 
+## 发现页轮(参照 Folo,2026-07-20)
+
+样页(Artifact `discover-page-sample.html`)经用户认可后落地(实施完成,待目检):
+- ☑ **「发现」升格为视图轨一级视图**(Compass 钮,列 今日/文章/动态 之后):点击后
+  条目列+阅读窗 的整片区域(`grid-column: 3/-1`)被发现页取代,源栏保持在场——订阅后
+  左栏即时长出新行;任何内容导航(容器钮/点源/搜索开关)自动退出发现页。
+  零订阅自动进入发现页(原「自动展开发现区」升级);源栏保留一行「发现更多来源」
+  幽灵行作跳转入口(点击即进发现页,原内联子列表整套退役)。
+- ☑ **发现页结构**(新组件 `DiscoverPage.jsx`):头部 = 标题+目录搜索+形态分段
+  (全部/文章/动态,复用 .reader-seg);正文 = 编辑分层组头(官方/媒体/个人/榜单,
+  判定函数 `editorialGroupOf` 上移 sourceTaxonomy.js 与源栏共享)+ 双列源卡
+  (≤1280px 降单列),组内按收录数降序,含已订阅源(卡上呈订阅态)。
+- ☑ **源卡**:s34 logo(LOGO_SIZES 新增)+ 名称+动态 chip + 两行简介(目录 description)
+  + mono meta(收录 N 篇 · 今日有更新/昨日更新/最近 MM-DD,来自 count/last_fetched)
+  + 订阅胶囊(accent;已订阅→描边「✓ 已订阅」,悬停翻红「取消订阅」)+ 预览。
+- ☑ **零后端改动**:目录 `GET /api/reader/sources` 的 count/last_fetched/description/shape
+  字段全部现成;订阅动作复用 handleSubscribe/handleUnsubscribe(计数/聚合流联动照旧)。
+
+目检修正(用户反馈三条,2026-07-20):
+- ☑ 搜索框字号被无层级 `input{font:inherit}` 压掉(按钮字号陷阱的输入框版)——
+  字号钉进 unlayered 区 + 补占位符 faint 色;
+- ☑ 简介 1/2 行时卡内基线错位——中列转纵向 flex(meta `margin-top:auto` 贴底),
+  右列 `align-self:stretch + space-between`(订阅顶、预览底),两侧恒对齐卡底;
+- ☑ 预览抽出取不到内容且交互偏重——改 **Folo 语义:预览=直接跳转该源的条目列表**
+  (onPreview → goSource,自动退出发现页;未订阅源同样可看,列表接口不按订阅收窄),
+  卡内抽出与其 CSS/状态整套退役。
+
+二轮修正(2026-07-20):
+- ☑ 贴底一轮未生效的根因:网格拉伸的是 `.reader-disc-card`(block),内层 card-main
+  只有内容高,`margin-top:auto` 无施力空间——卡改纵向 flex + main `flex:1` 传导高度。
+- ☑ **预览着陆的快捷订阅**(Folo 的 + 订阅条):`activeUnsubscribed` 派生态
+  (activeSourceId ∉ subscribedIds)驱动两处——源栏顶浮现**锚点行**(active 态 + mono
+  「预览」签)、条目列头下渲染**全宽订阅横幅**(wash 底 accent-ink「＋ 订阅「源名」」,
+  点击即 handleSubscribe);订阅成功后两者自然消失、源落入所属编辑分组。
+
 ## 待办(用户拍板记录)
 
 - ☑ **管理面应用导轨风格向用户面视图轨靠拢**(「导轨靠拢轮」,v3.8.0 已提交)。
