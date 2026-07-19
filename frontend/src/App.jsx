@@ -9,11 +9,10 @@ import {
   Loader2,
   LogOut,
   Moon,
-  Plug2,
+  Newspaper,
   Settings,
   ShieldCheck,
   Sun,
-  X,
 } from 'lucide-react';
 import Toast from './components/Toast';
 import SettingsModal from './components/SettingsModal';
@@ -25,13 +24,13 @@ import RunningWidget from './components/RunningWidget';
 import { useRunningProgress } from './hooks/useRunningProgress';
 
 // Tab 组件按路由惰性加载：各自独立 chunk，登录页与读者态不再下载用不到的重依赖
-// （AdminOpsTab→recharts、ReaderTab/MCPTab→react-markdown）。每个 Tab 挂在独立
+// （AdminOpsTab→recharts、ReaderTab/DailyBriefTab→react-markdown）。每个 Tab 挂在独立
 // Suspense 边界内，故加载新 Tab 不会波及已挂载 Tab（避免切换时整屏闪 fallback）。
 const DataTab = lazy(() => import('./components/DataTab'));
 const FetchTab = lazy(() => import('./components/FetchTab'));
 const VectorTab = lazy(() => import('./components/VectorTab'));
 const FetchRunsTab = lazy(() => import('./components/FetchRunsTab'));
-const MCPTab = lazy(() => import('./components/MCPTab'));
+const DailyBriefTab = lazy(() => import('./components/DailyBriefTab'));
 const AdminOpsTab = lazy(() => import('./components/AdminOpsTab'));
 const ReaderTab = lazy(() => import('./components/ReaderTab'));
 
@@ -126,6 +125,12 @@ export default function App() {
   const activeTab = nav.tab;
   const { theme, setTheme, toggleTheme, effective } = useTheme();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 设置柜深链:读者头像菜单「接入集成」直落聚合接口分区;常规入口落账户区。
+  const [settingsSection, setSettingsSection] = useState('account');
+  const openSettings = useCallback((section = 'account') => {
+    setSettingsSection(section);
+    setSettingsOpen(true);
+  }, []);
   const [mountedTabs, setMountedTabs] = useState(() => new Set([nav.tab]));
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
   const [logoError, setLogoError] = useState(false);
@@ -350,7 +355,9 @@ export default function App() {
     { id: 'fetch', icon: CloudDownload, label: '节点管理', surface: 'collector' },
     { id: 'runs', icon: History, label: '任务与运行', surface: 'collector' },
     { id: 'vector', icon: BarChart2, label: '向量雷达', surface: 'reader', requiresRag: true, hideForReader: true },
-    { id: 'mcp', icon: Plug2, label: '接入集成', surface: 'reader', hideForReader: true },
+    // 「接入集成」页签已并入设置柜(交付通道三卡→设置·接入集成组);页签瘦身改名「AI 日报」
+    // (只剩日报运营面),id 保持 'mcp' 兼容历史 hash 书签。
+    { id: 'mcp', icon: Newspaper, label: 'AI 日报', surface: 'collector' },
     { id: 'admin', icon: ShieldCheck, label: '运维管理', adminOnly: true },
   ].filter(tab => {
     if (tab.onlyReader && !readerOnly) return false;
@@ -374,30 +381,11 @@ export default function App() {
   // 账号身份标签：读者不感知部署「层」概念，只显示自己的角色。
   const roleLabel = readerOnly ? '读者' : '管理员';
 
-  // ── 读者账号:应用导轨隐藏(阅读器视图轨独占,轨底头像菜单承接 设置/主题/退出),
-  //    「接入集成」从页签降为头像菜单里的全屏浮层 ──
-  const [integrationsOpen, setIntegrationsOpen] = useState(false);
+  // ── 读者账号:应用导轨隐藏(阅读器视图轨独占,轨底头像菜单承接 设置/主题/退出)──
   useEffect(() => {
     // 无导轨即无页签切换;历史 hash(#mcp 等)一律归位到阅读器
     if (readerOnly && activeTab !== 'reader') goTab('reader', { replace: true });
   }, [readerOnly, activeTab, goTab]);
-
-  // ── 管理面导轨:轨底 主题/设置/头像/退出 四钮并入单一头像菜单(与读者视图轨同语言)──
-  const [railMenuOpen, setRailMenuOpen] = useState(false);
-  const railMenuRef = useRef(null);
-  useEffect(() => {
-    if (!railMenuOpen) return undefined;
-    const onDown = (e) => {
-      if (railMenuRef.current && !railMenuRef.current.contains(e.target)) setRailMenuOpen(false);
-    };
-    const onKey = (e) => { if (e.key === 'Escape') setRailMenuOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [railMenuOpen]);
 
   // 品牌标题/副标题按账号视角区分：读者侧只讲「AI 资讯阅读」，不暴露归档/采集/分发。
   const brandTitle = readerOnly ? '哆啦美' : '哆啦美·归档中枢';
@@ -465,40 +453,38 @@ export default function App() {
             </button>
           ))}
         </nav>
+        {/* 轨底:主题/设置 直排 + 头像(点击进设置·账户;退出登录收敛在设置·账户区)——
+            头像菜单已退役(与设置页功能重复,用户拍板) */}
         <div className="reader-vrail-spring" />
-        <div className="reader-vrail-user" ref={railMenuRef}>
-          <button
-            type="button"
-            className="reader-vrail-avatar"
-            aria-haspopup="menu"
-            aria-expanded={railMenuOpen}
-            title={`${authState.user?.username || 'admin'} · ${roleLabel}`}
-            onClick={() => setRailMenuOpen((o) => !o)}
-          >
-            {authState.user?.avatar
-              ? <img src={authState.user.avatar} alt="" />
-              : <span>{avatarInitials}</span>}
-          </button>
-          {railMenuOpen && (
-            <div className="reader-user-menu" role="menu" aria-label="账号菜单">
-              <div className="reader-user-menu-head">
-                {authState.user?.username || 'admin'}
-                <span>{roleLabel}</span>
-              </div>
-              <button type="button" role="menuitem" onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}>
-                <Settings className="h-[15px] w-[15px]" /> 设置
-              </button>
-              <button type="button" role="menuitem" onClick={() => toggleTheme()}>
-                {effective === 'dark' ? <Sun className="h-[15px] w-[15px]" /> : <Moon className="h-[15px] w-[15px]" />}
-                {effective === 'dark' ? '切换亮色' : '切换暗色'}
-              </button>
-              <div className="reader-user-menu-sep" aria-hidden="true" />
-              <button type="button" role="menuitem" className="is-danger" onClick={() => { setRailMenuOpen(false); handleLogout(); }}>
-                <LogOut className="h-[15px] w-[15px]" /> 退出登录
-              </button>
-            </div>
-          )}
-        </div>
+        <button
+          type="button"
+          onClick={toggleTheme}
+          className="reader-vrail-btn"
+          aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+        >
+          {effective === 'dark' ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
+          <span className="reader-vrail-tip">{effective === 'dark' ? '切换亮色' : '切换暗色'}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => openSettings()}
+          className="reader-vrail-btn"
+          aria-label="设置"
+        >
+          <Settings className="h-[18px] w-[18px]" />
+          <span className="reader-vrail-tip">设置</span>
+        </button>
+        <button
+          type="button"
+          className="reader-vrail-avatar"
+          title={`${authState.user?.username || 'admin'} · ${roleLabel}`}
+          aria-label="账号设置"
+          onClick={() => openSettings('account')}
+        >
+          {authState.user?.avatar
+            ? <img src={authState.user.avatar} alt="" />
+            : <span>{avatarInitials}</span>}
+        </button>
       </aside>
       )}
 
@@ -532,7 +518,7 @@ export default function App() {
           </button>
           <button
             type="button"
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => openSettings()}
             className="icon-button"
             title="设置"
             aria-label="设置"
@@ -574,6 +560,7 @@ export default function App() {
 
       <SettingsModal
         open={settingsOpen}
+        initialSection={settingsSection}
         onClose={() => setSettingsOpen(false)}
         theme={theme}
         onThemeChange={setTheme}
@@ -585,36 +572,6 @@ export default function App() {
         showToast={showToast}
         onArticlesChanged={markArticlesDirty}
       />
-
-      {/* 读者账号的「接入集成」:从页签降为全屏浮层(入口在阅读器轨底头像菜单) */}
-      {readerOnly && integrationsOpen && (
-        <div className="reader-integrations-overlay" role="dialog" aria-modal="true" aria-label="接入集成">
-          <div className="reader-integrations-bar">
-            <span className="reader-integrations-title">接入集成</span>
-            <button
-              type="button"
-              className="reader-pane-iconbtn"
-              onClick={() => setIntegrationsOpen(false)}
-              aria-label="关闭接入集成"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="reader-integrations-body">
-            <div className="page-shell">
-              <Suspense fallback={<TabFallback />}>
-                <MCPTab
-                  showToast={showToast}
-                  ragEnabled={runtimeInfo.rag_enabled}
-                  collectorEnabled={runtimeInfo.collector_enabled}
-                  isAdmin={false}
-                  onOpenModelConfig={() => {}}
-                />
-              </Suspense>
-            </div>
-          </div>
-        </div>
-      )}
 
       <main
         className={`${readerOnly ? '' : 'ml-[var(--rail-w)] '}px-5 pt-[22px] pb-9 sm:px-7`}
@@ -632,9 +589,7 @@ export default function App() {
                   avatarText={avatarInitials}
                   themeDark={effective === 'dark'}
                   onToggleTheme={toggleTheme}
-                  onOpenSettings={() => setSettingsOpen(true)}
-                  onOpenIntegrations={() => setIntegrationsOpen(true)}
-                  onLogout={handleLogout}
+                  onOpenSettings={() => openSettings()}
                 />
               </Suspense>
             </div>
@@ -704,12 +659,11 @@ export default function App() {
               </Suspense>
             </div>
           )}
-          {mountedTabs.has('mcp') && runtimeInfo.reader_enabled && (
+          {mountedTabs.has('mcp') && runtimeInfo.collector_enabled && (
             <div className={`tab-panel${activeTab === 'mcp' ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
-                <MCPTab
+                <DailyBriefTab
                   showToast={showToast}
-                  ragEnabled={runtimeInfo.rag_enabled}
                   collectorEnabled={runtimeInfo.collector_enabled}
                   isAdmin={runtimeInfo.account_role === 'admin'}
                   onOpenModelConfig={() => jumpWithFocus('admin', null, { tab: 'admin', payload: { sub: 'ai' } })}

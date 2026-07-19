@@ -6,15 +6,10 @@
 
 ## 进行中
 
-- ▶ **管理面应用导轨风格向用户面视图轨靠拢**(用户拍板,2026-07-19 动工;**实施完成,待目检**)
-  统一管理面与用户面的左栏风格。实现:复用 `.reader-vrail-*`/`.reader-user-menu` 类族,
-  56px icon-only 轨 + 墨底 tooltip + 轨底单一头像菜单;执行记录见
-  `docs/analysis/reader-reshell-plan.md`「导轨靠拢轮」。
+- (暂无)
 
 ## 排队中(用户拍板、未动工)
 
-- ☐ **「接入集成」并入设置页的完整设计**
-  当前为最小实现(读者账号:头像菜单 → 全屏浮层宿主 MCPTab);完整设计含信息架构与页面归属。
 - ☐ **17 个 incubating 源观察期转正评审**
   转正流程见 `docs/analysis/curation_policy.md`「Incubation」节;
   Reddit 转正门槛 = 生产出口 IP 复验 429。
@@ -33,7 +28,9 @@
 
 ## 已完结(近期,留档索引)
 
+- ☑ 「接入集成」并入设置柜(v3.9.0):同享 + 页签瘦身改名「AI 日报」+ MCP 开关并入
+  MCP 接入页(服务区退役)+ 轨底头像菜单退役 —— 执行记录:reader-reshell-plan「并入设置轮」。
 - ☑ 阅读器样页复刻重构 + 读者态双轨合并(v3.6.0)→ 信息架构容器化(v3.7.0)
-  —— 方案与执行记录:`docs/analysis/reader-reshell-plan.md`。
+  → 管理面导轨靠拢·全站轨语言统一(v3.8.0)—— 方案与执行记录:`docs/analysis/reader-reshell-plan.md`。
 - ☑ 源扩容 wave1–3(v3.2.0 → v3.5.0)—— `docs/analysis/source-expansion-plan.md` 及 wave3 篇。
 - ☑ 静默仪器全站重构(v3.0.0)—— `docs/frontend/conventions.md` + 视觉打磨方案文档。

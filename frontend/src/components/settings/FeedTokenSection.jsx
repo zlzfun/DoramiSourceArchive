@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Check, Copy, Eye, EyeOff, Loader2, RotateCw } from 'lucide-react';
-import { API_BASE_URL } from '../config';
-import { fetchFeedToken, rotateFeedToken } from '../api';
-import { copyText } from '../utils/clipboard';
-import { runAction } from '../utils/runAction';
+import { API_BASE_URL } from '../../config';
+import { fetchFeedToken, rotateFeedToken } from '../../api';
+import { copyText } from '../../utils/clipboard';
+import { runAction } from '../../utils/runAction';
 
 function apiRoot() {
   const base = API_BASE_URL.startsWith('http') ? API_BASE_URL : `${window.location.origin}${API_BASE_URL}`;
@@ -24,11 +24,11 @@ const FEED_PARAMS = [
 ];
 
 /**
- * 个人聚合接口卡（交付通道之一）：一个 dfeed_ 令牌拉走当前用户全部已订阅来源，
- * 适合 RSS 工具与脚本。令牌 get/rotate 逻辑内聚于此（原 AccessTokenCard 的 hero 已退役）。
- * MCP 工具调用与这里的 HTTP 拉取共用同一枚令牌。
+ * 聚合接口（设置柜·接入集成组）：一个 dfeed_ 令牌拉走当前用户全部已订阅来源，
+ * 适合 RSS 工具与脚本。前身是接入集成页签的 FeedAccessSection 卡（并入设置波），
+ * 令牌 get/rotate 逻辑原样内聚；MCP 工具调用与这里的 HTTP 拉取共用同一枚令牌。
  */
-export default function FeedAccessSection({ showToast, isAdmin = false }) {
+export default function FeedTokenSection({ showToast, isAdmin = false }) {
   const [feedToken, setFeedToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [plainToken, setPlainToken] = useState('');   // 明文仅本次生成后可见
@@ -92,9 +92,9 @@ export default function FeedAccessSection({ showToast, isAdmin = false }) {
   const curlExample = `curl -H "Authorization: Bearer $DORAMI_TOKEN" \\\n  "${feedEndpoint('?limit=20')}"`;
 
   return (
-    <section className="surface-card card-pad">
+    <div>
       <div className="card-head">
-        <span className="card-title">个人聚合接口</span>
+        <span className="sett-lbl">个人聚合令牌</span>
         <span className={`stamp ${exists ? 'stamp-ok' : 'stamp-idle'}`}>{exists ? '已签发' : '未签发'}</span>
       </div>
       <p className="card-desc">{isAdmin
@@ -148,6 +148,6 @@ export default function FeedAccessSection({ showToast, isAdmin = false }) {
           <p key={name}><code className="font-mono">{name}</code>：{desc}</p>
         ))}
       </details>
-    </section>
+    </div>
   );
 }

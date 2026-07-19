@@ -560,8 +560,8 @@ input[type="radio"] {
 
   /* ── 左侧导轨(布局波 L1,lg+ 生效;lg 以下走 .app-header 移动顶栏)──
      形制与阅读器视图轨统一(2026-07-19 导轨靠拢波):56px 带宽 / canvas 底 / 软分隔线,
-     钮与 tooltip / 轨底头像菜单直接复用 .reader-vrail-* / .reader-user-menu 类族
-     (该族已是全站「轨语言」,选中语法 = wash 块,不再用 accent 竖条)。 */
+     钮与 tooltip / 轨底头像直接复用 .reader-vrail-* 类族(该族已是全站「轨语言」,
+     选中语法 = wash 块,不再用 accent 竖条);轨底 = 主题/设置钮 + 头像,头像菜单已退役。 */
 
   .app-rail {
     position: fixed;
@@ -4005,30 +4005,34 @@ input[type="radio"] {
     background: var(--dorami-soft); border-top: 1px solid var(--dorami-border); }
   .jr-foot-note { font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
 
-  /* ── 设置面板 静默仪器(弹窗波):控制柜 ──
-     全局快速面 = 居中模态;左导航(竖条选中)+ 右内容;五区共用「设置行范式」
-     (标签+说明左、控件右、hairline 分隔)。MCP 行无状态灯(switch 即状态)、不体现地址;
-     「向量雷达」区退役为服务区只读统计行(用户拍板)。主题分段复用 .segmented-control。
-     刻度 1:1 取自 docs/design/dorami-settings-quiet.html。 ── */
+  /* ── 设置面板 静默仪器(弹窗波→并入设置波):控制柜 ──
+     全局快速面 = 居中模态;左导航(分组灰签,wash 块选中=全站轨语言)+ 右内容;共用「设置行范式」
+     (标签+说明左、控件右、hairline 分隔)。「接入集成」组(聚合接口/MCP 接入/技能包)自原
+     接入集成页签并入,柜体随内容扩容 880×640(接入分区带代码块/工具表,原 760×560 放不下);
+     admin 的 服务/数据同步 归入「管理」组。基础刻度取自 docs/design/dorami-settings-quiet.html。 ── */
 
   /* 字号语境挂容器(13px,样页口径;按钮经 button{font:inherit} 继承它) */
   .sett-cab { display: flex; overflow: hidden; font-size: 13px; }
   /* 与 .modal-panel 复合使用:panel 供表面/高程/开合动画;其 width:100%/flex-direction:column
      定义在后会压过同特异性声明——布局向属性一律用复合选择器钉住(弹窗波陷阱) */
-  .modal-panel.sett-cab { width: min(760px, 92vw); height: min(560px, 88vh); flex-direction: row; }
+  .modal-panel.sett-cab { width: min(880px, 94vw); height: min(640px, 90vh); flex-direction: row; }
 
-  .sett-nav { width: 168px; flex: none; display: flex; flex-direction: column;
+  .sett-nav { width: 184px; flex: none; display: flex; flex-direction: column;
     background: var(--dorami-soft); border-right: 1px solid var(--dorami-border); padding: 14px 8px;
     /* 字号/字重挂容器:button{font:inherit}(未分层)会压掉 @layer 里按钮类的 font-* */
     font-size: 12.5px; font-weight: 600; }
   .sett-nav-title { padding: 0 10px 10px; font-size: 14px; font-weight: 800; }
+  .sett-nav-sec { display: flex; flex-direction: column; }
+  /* 分组灰签(与源栏编辑分层同语法) */
+  .sett-nav-group { padding: 10px 10px 5px; font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.12em; color: var(--dorami-faint); }
   .sett-nav-btn { position: relative; display: flex; align-items: center; gap: 9px; width: 100%;
     padding: 8px 10px; border-radius: var(--r-sm); font-size: 12.5px; font-weight: 600;
     color: var(--dorami-muted); text-align: left;
     transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
   .sett-nav-btn:hover { background: var(--dorami-well); color: var(--dorami-ink-2); }
-  .sett-nav-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); font-weight: 700;
-    box-shadow: inset 3px 0 0 var(--dorami-blue), var(--sh-1); }
+  /* 选中语法 = wash 块(导轨靠拢波后的全站轨语言;弃白底浮起+accent 竖条) */
+  .sett-nav-btn.is-on { background: var(--dorami-wash); color: var(--dorami-accent-ink); font-weight: 700; }
   .sett-nav-btn svg { width: 15px; height: 15px; flex: none; }
   .sett-nav-spacer { flex: 1; }
   .sett-nav-foot { padding: 0 10px; font-family: var(--mono); font-size: 10px; color: var(--dorami-faint); }
@@ -4087,7 +4091,9 @@ input[type="radio"] {
     .modal-panel.sett-cab { flex-direction: column; height: 92vh; }
     .sett-nav { width: 100%; flex-direction: row; overflow-x: auto; padding: 8px;
       border-right: none; border-bottom: 1px solid var(--dorami-border); }
-    .sett-nav-title, .sett-nav-spacer, .sett-nav-foot { display: none; }
+    .sett-nav-sec { flex-direction: row; }
+    .sett-nav-btn { width: auto; white-space: nowrap; }
+    .sett-nav-title, .sett-nav-group, .sett-nav-spacer, .sett-nav-foot { display: none; }
     .sett-sync-grid, .sett-pw-grid { grid-template-columns: 1fr; }
   }
 
@@ -6826,10 +6832,9 @@ input[type="radio"] {
     flex: none;
   }
 
-  /* ── 轨底用户区(standalone):单一头像收纳 设置/主题/接入集成/退出 ── */
+  /* ── 轨底用户区:主题/设置 直排(.reader-vrail-btn)+ 头像(点击进设置·账户)。
+     头像菜单已退役(与设置柜功能重复,用户拍板);退出登录在设置·账户区。 ── */
   .reader-vrail-spring { flex: 1; }
-
-  .reader-vrail-user { position: relative; }
 
   .reader-vrail-avatar {
     width: 30px;
@@ -6850,67 +6855,6 @@ input[type="radio"] {
   .reader-vrail-avatar:hover { border-color: var(--dorami-border-strong); }
   .reader-vrail-avatar:active { transform: scale(0.94); }
   .reader-vrail-avatar img { width: 100%; height: 100%; object-fit: cover; }
-
-  .reader-user-menu {
-    position: absolute;
-    left: 44px;
-    bottom: 0;
-    z-index: 40;
-    min-width: 168px;
-    padding: 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    background: var(--dorami-surface);
-    border: 1px solid var(--dorami-border);
-    border-radius: 12px;
-    box-shadow: var(--sh-3);
-    animation: reader-ai-rise var(--motion-fast) var(--motion-ease);
-  }
-
-  .reader-user-menu-head {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 7px 9px 5px;
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--dorami-ink);
-  }
-
-  .reader-user-menu-head span {
-    margin-left: auto;
-    font-size: 10.5px;
-    font-weight: 400;
-    color: var(--dorami-faint);
-  }
-
-  .reader-user-menu button {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 7px 9px;
-    border: none;
-    border-radius: 8px;
-    background: transparent;
-    color: var(--dorami-ink-2);
-    text-align: left;
-    cursor: pointer;
-    transition: background 130ms var(--motion-ease), color 130ms var(--motion-ease);
-  }
-
-  .reader-user-menu button:hover { background: color-mix(in srgb, var(--dorami-ink) 6%, transparent); }
-  .reader-user-menu button svg { flex: none; color: var(--dorami-faint); }
-  .reader-user-menu button.is-danger { color: #dc2626; }
-  .reader-user-menu button.is-danger svg { color: #dc2626; }
-  .reader-user-menu button.is-danger:hover { background: rgba(220, 38, 38, 0.08); }
-
-  .reader-user-menu-sep {
-    height: 1px;
-    margin: 4px 2px;
-    background: var(--dorami-border-soft);
-  }
 
   /* 可折叠栏内层固定宽度：列轨收缩到 0 时由外层 overflow 裁切，内容不回流 */
   .reader-sources-inner,
@@ -7896,38 +7840,7 @@ input[type="radio"] {
 
   .reader-empty-tall { min-height: 320px; }
 
-  /* ── 接入集成全屏浮层(读者账号:从页签降级,入口在轨底头像菜单) ── */
-  .reader-integrations-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    display: flex;
-    flex-direction: column;
-    background: var(--dorami-canvas);
-    animation: reader-ai-rise var(--motion-medium) var(--motion-ease);
-  }
-
-  .reader-integrations-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 20px;
-    background: var(--dorami-surface);
-    border-bottom: 1px solid var(--dorami-border-soft);
-  }
-
-  .reader-integrations-title {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--dorami-ink);
-  }
-
-  .reader-integrations-body {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 24px 20px 48px;
-  }
+  /* (接入集成全屏浮层已退役——并入设置波:读者头像菜单「接入集成」深链设置柜·聚合接口分区) */
 
   /* 问哆啦美胶囊(样页):墨色底常显标签,accent 星标点睛 */
   .reader-ai-fab {
@@ -8788,7 +8701,6 @@ input[type="radio"] {
 .reader-seg-btn { font-size: 12px; font-weight: 400; }
 .reader-src-more { font-size: 12.5px; font-weight: 400; }
 .reader-load-more { font-size: 12px; font-weight: 500; }
-.reader-user-menu button { font-size: 12.5px; font-weight: 400; }
 .reader-pager-btn { font: inherit; }
 
 /* ── 状态色块（保留语义色，仅压深底 + 提亮文字）── */

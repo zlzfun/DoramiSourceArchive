@@ -30,7 +30,7 @@ const PHASE_NOTE = {
 };
 
 /* 每日 AI 资讯日报:定时配置 / 手动生成 / 近期日报,三段 hairline 卡(surface-card.brief-card)。
-   管理控件仅对管理员(collector + admin)开放;模型 chip 已移至页头(MCPTab)。 */
+   管理控件仅对管理员(collector + admin)开放;模型 chip 已移至页头(DailyBriefTab)。 */
 export default function DailyBriefPanel({ showToast, collectorEnabled = false, isAdmin = false }) {
   const canManage = collectorEnabled && isAdmin;
   const confirm = useConfirm();

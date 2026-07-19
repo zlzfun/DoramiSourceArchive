@@ -16,11 +16,9 @@ import {
   CircleDot,
   RefreshCw,
   Sparkles,
-  Plug2,
   Settings,
   Sun,
   Moon,
-  LogOut,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
@@ -201,8 +199,6 @@ export default function ReaderTab({
   themeDark = false,
   onToggleTheme,
   onOpenSettings,
-  onOpenIntegrations,
-  onLogout,
 }) {
   const [sources, setSources] = useState([]);
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
@@ -214,8 +210,6 @@ export default function ReaderTab({
   const [favTogglingId, setFavTogglingId] = useState(null);
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [brandFailed, setBrandFailed] = useState(false); // 品牌 logo 加载失败 → 回退铃铛
-  const [userMenuOpen, setUserMenuOpen] = useState(false); // 轨底头像菜单
-  const userMenuRef = useRef(null);
 
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -426,21 +420,6 @@ export default function ReaderTab({
   useEffect(() => {
     if (hasNoSubscriptions) setDiscoverOpen(true);
   }, [hasNoSubscriptions]);
-
-  // 轨底用户菜单:点外/Esc 关闭
-  useEffect(() => {
-    if (!userMenuOpen) return undefined;
-    const onDown = (e) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) setUserMenuOpen(false);
-    };
-    const onKey = (e) => { if (e.key === 'Escape') setUserMenuOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [userMenuOpen]);
 
   // ── hover 预取正文(A4):150ms 去抖;命中缓存/进行中/无 id 都不发 ──
   const cancelPrefetch = useCallback(() => {
@@ -869,46 +848,40 @@ export default function ReaderTab({
           <span className="reader-vrail-tip">搜索</span>
         </button>
 
-        {/* 轨底(standalone):应用导轨的 设置/主题/退出/接入集成 并入单一头像菜单(样页头像位) */}
+        {/* 轨底(standalone):主题/设置 直排 + 头像(点击进设置·账户)——头像菜单已退役
+            (与设置页功能重复,用户拍板);接入集成/退出登录都在设置柜内 */}
         {standalone && (
           <>
             <div className="reader-vrail-spring" />
-            <div className="reader-vrail-user" ref={userMenuRef}>
-              <button
-                type="button"
-                className="reader-vrail-avatar"
-                aria-haspopup="menu"
-                aria-expanded={userMenuOpen}
-                title={account?.username || '账号'}
-                onClick={() => setUserMenuOpen((o) => !o)}
-              >
-                {account?.avatar
-                  ? <img src={account.avatar} alt="" />
-                  : <span>{avatarText || (account?.username || '?').slice(0, 2).toUpperCase()}</span>}
-              </button>
-              {userMenuOpen && (
-                <div className="reader-user-menu" role="menu" aria-label="账号菜单">
-                  <div className="reader-user-menu-head">
-                    {account?.username || '读者'}
-                    <span>读者</span>
-                  </div>
-                  <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); onOpenIntegrations?.(); }}>
-                    <Plug2 className="h-[15px] w-[15px]" /> 接入集成
-                  </button>
-                  <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); onOpenSettings?.(); }}>
-                    <Settings className="h-[15px] w-[15px]" /> 设置
-                  </button>
-                  <button type="button" role="menuitem" onClick={() => onToggleTheme?.()}>
-                    {themeDark ? <Sun className="h-[15px] w-[15px]" /> : <Moon className="h-[15px] w-[15px]" />}
-                    {themeDark ? '切换亮色' : '切换暗色'}
-                  </button>
-                  <div className="reader-user-menu-sep" aria-hidden="true" />
-                  <button type="button" role="menuitem" className="is-danger" onClick={() => onLogout?.()}>
-                    <LogOut className="h-[15px] w-[15px]" /> 退出登录
-                  </button>
-                </div>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={() => onToggleTheme?.()}
+              className="reader-vrail-btn"
+              aria-label={themeDark ? '切换到亮色' : '切换到暗色'}
+            >
+              {themeDark ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
+              <span className="reader-vrail-tip">{themeDark ? '切换亮色' : '切换暗色'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenSettings?.()}
+              className="reader-vrail-btn"
+              aria-label="设置"
+            >
+              <Settings className="h-[18px] w-[18px]" />
+              <span className="reader-vrail-tip">设置</span>
+            </button>
+            <button
+              type="button"
+              className="reader-vrail-avatar"
+              title={account?.username || '账号'}
+              aria-label="账号设置"
+              onClick={() => onOpenSettings?.()}
+            >
+              {account?.avatar
+                ? <img src={account.avatar} alt="" />
+                : <span>{avatarText || (account?.username || '?').slice(0, 2).toUpperCase()}</span>}
+            </button>
           </>
         )}
       </nav>

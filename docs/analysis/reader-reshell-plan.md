@@ -98,10 +98,41 @@
 - admin 双轨(应用导轨+阅读器视图轨)的最终消解:admin 无阅读器页,当前即无双轨;若日后给
   admin 开阅读器再议合并。
 
+## 并入设置轮(「接入集成」并入设置柜,2026-07-19)
+
+样页(Artifact `settings-integrations-sample.html`)经用户认可后,按「**同享 + 页签瘦身改名**」
+方案落地(用户拍板;实施完成,待目检):
+- ☑ **设置柜导航分组化**:通用(账户/外观)→ **接入集成(聚合接口 / MCP 接入 / Agent 技能包)**
+  → 管理(服务/数据同步,admin-only)→ 关于沉底;分组灰签与源栏编辑分层同语法;
+  选中语法改 **wash 块**(弃白底浮起+accent 竖条,对齐导轨靠拢轮的全站轨语言);
+  柜体扩容 760×560 → 880×640、导航 168 → 184(接入分区带代码块/工具表);
+  轨脚品牌文案按角色分支(读者不见「归档中枢」)。
+- ☑ **接入集成组两种角色同享**:三个分区组件自 MCPTab/FeedAccessSection 拆迁至
+  `components/settings/`(FeedTokenSection / McpAccessSection / SkillSection),逻辑原样、
+  卡壳退去改设置柜语境(card-head+sett-lbl);admin 文案分支(全库/不限订阅)保留在组件内;
+  MCP 启停仍在「服务」区(运维动作),「MCP 接入」是消费视角,`dorami-mcp-changed` 事件同步两区。
+  指引文案「右侧个人聚合接口」→「聚合接口页」(同页双卡布局失效后的方向修正)。
+- ☑ **接入集成页签瘦身改名「AI 日报」**:交付通道三卡移除后只剩日报运营面——
+  MCPTab.jsx 退役,新 `DailyBriefTab.jsx` = 页头(标题+模型 chip)+ DailyBriefPanel;
+  页签 icon Plug2→Newspaper,gating reader→collector,id 保持 `mcp`(hash 书签兼容)。
+- ☑ **读者全屏浮层退役**:头像菜单「接入集成」降为**设置柜深链**(SettingsModal 新增
+  `initialSection`,App `openSettings('feed')` 直落聚合接口分区);
+  `.reader-integrations-*` CSS 与浮层 JSX 删除。
+
+二轮修正(用户目检反馈,2026-07-19):
+- ☑ **MCP 开关并入「MCP 接入」页,「服务」区退役**:canManage(admin)时页头渲染启停
+  switch(switch 即状态,替代状态章;读者仍见状态章),向量索引只读统计行(RAG 工具的
+  底层索引状态)同迁至该页底部;ServiceSection.jsx 删除,「管理」组只剩数据同步,
+  SettingsModal 的 mcpStatus 状态下放(McpAccessSection 自管拉取与 `dorami-mcp-changed` 同步)。
+- ☑ **轨底头像菜单退役(两条轨)**:与设置柜功能重复——轨底改为 主题切换/设置 直排钮
+  (.reader-vrail-btn+tip)+ 头像(点击进设置·账户);退出登录收敛到设置·账户区,
+  读者「接入集成」入口收敛到设置柜导航;`.reader-user-menu` 类族与两处菜单 state/effect 删除,
+  ReaderTab 的 onOpenIntegrations/onLogout props 随之退役。
+
 ## 待办(用户拍板记录)
 
-- ☑ **管理面应用导轨风格向用户面视图轨靠拢**(见上「导轨靠拢轮」;待目检)。
-- ☐ 「接入集成」并入设置页的完整设计(当前为头像菜单→全屏浮层的最小实现)。
+- ☑ **管理面应用导轨风格向用户面视图轨靠拢**(「导轨靠拢轮」,v3.8.0 已提交)。
+- ☑ 「接入集成」并入设置页的完整设计(见上「并入设置轮」;待目检)。
 
 ## 验收
 
