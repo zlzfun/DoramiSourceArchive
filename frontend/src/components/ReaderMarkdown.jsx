@@ -6,6 +6,7 @@ import remarkBreaks from 'remark-breaks';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
+import { mediaProxyUrl } from '../api';
 
 // react-markdown 默认不渲染原始 HTML（无 rehype-raw），无 XSS 风险
 // remark-math + KaTeX:渲染正文里的 $...$/$$...$$ LaTeX(学术型源如 Lil'Log 公式密集;
@@ -19,16 +20,26 @@ const REHYPE_PLUGINS = [rehypeKatex];
 // 故用 Context 把「放大」回调下传给 MarkdownImage，而非重建 components 表。
 const LightboxContext = createContext(null);
 
-// 正文图：外链直连加载，图床/代理已评估后明确不做（生产由各用户 IP 分散直连）。
-// 这里只兜底裂图——源站删图/防盗链时给出体面占位，而非浏览器默认破图标。不重试、不代理。
+// 正文图（图床波 v3.11 推翻早前「外链直连、不代理」决策）：统一经后端媒体库代理取图
+// （命中本地缓存回文件；未命中后端即时下载；后端失败 302 回源）。代理自身加载失败时
+// 前端再回退原链直连一次，仍失败才落裂图占位——三层降级保证可用性只增不减。
 function MarkdownImage({ node, alt, ...props }) {
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  // 初始走代理；onError 回退原链（fallback=true 后不再重试）
+  const [src, setSrc] = useState(() => mediaProxyUrl(props.src));
   const openLightbox = useContext(LightboxContext);
   // 缓存命中的图片可能在 onLoad 绑定前就 complete,挂载时兜底检查
   const imgRef = useCallback((el) => {
     if (el && el.complete && el.naturalWidth > 0) setLoaded(true);
   }, []);
+  const handleError = useCallback(() => {
+    setSrc((current) => {
+      if (current !== props.src && props.src) return props.src; // 代理失败→原链直连
+      setFailed(true);
+      return current;
+    });
+  }, [props.src]);
   if (failed) {
     // 裂图态不加点击放大：没有可展示的原图
     return (
@@ -45,11 +56,12 @@ function MarkdownImage({ node, alt, ...props }) {
       type="button"
       className="markdown-img-button"
       // e.currentTarget（button 本体）作触发元素传出，关闭灯箱后焦点归还到它
-      onClick={(e) => openLightbox?.(props.src, alt || '', e.currentTarget)}
+      onClick={(e) => openLightbox?.(src, alt || '', e.currentTarget)}
       aria-label={alt ? `放大图片：${alt}` : '放大图片'}
     >
       <img
         {...props}
+        src={src}
         ref={imgRef}
         alt={alt || ''}
         loading="eager"
@@ -57,7 +69,7 @@ function MarkdownImage({ node, alt, ...props }) {
         referrerPolicy="no-referrer"
         className={loaded ? 'is-loaded' : ''}
         onLoad={() => setLoaded(true)}
-        onError={() => setFailed(true)}
+        onError={handleError}
       />
     </button>
   );

@@ -152,6 +152,17 @@
   --chart-1: #5b54e8; --chart-2: #14b8a6; --chart-3: #f59e0b;
   --chart-4: #ef4444; --chart-5: #0ea5e9; --chart-6: #a855f7;
   --chart-other: #94a3b8;
+
+  /* ── 热点格色阶(图床波·媒体热点图):深浅 = 当日图片缓存覆盖率的四档。
+     取 accent 靛的明度阶,不引入 GitHub 绿——全站唯一饱和色的纪律不破。
+     heat-0 = 有文章但正文无图(中性);heat-empty = 当日无文章入库。
+     失败信号不占本通道,走格子右上角标(--state-warn),两条通道正交。 ── */
+  --heat-0: #e8ebf1;
+  --heat-1: rgba(91, 84, 232, 0.20);
+  --heat-2: rgba(91, 84, 232, 0.42);
+  --heat-3: rgba(91, 84, 232, 0.66);
+  --heat-4: #5b54e8;
+  --heat-empty: rgba(11, 18, 32, 0.035);
   /* lg+ 的导轨几何覆盖见本文件 :root 块后的 @media (min-width: 1024px) */
 
   /* 工作区动效收敛（P4）：功能态向 Geist 节奏靠拢（状态~150 / 浮层~200-240 / 面板~300）。
@@ -4200,6 +4211,130 @@ input[type="radio"] {
   }
   .model-btn:hover:not(:disabled) { background: var(--dorami-soft); color: var(--dorami-ink); }
   .model-btn:disabled { opacity: 0.5; cursor: default; }
+
+  /* ══ 媒体热点图(图床波):GitHub 式逐日格阵 ══════════════════════
+     格子深浅 = 当日图片缓存覆盖率(--heat-0…4);右上角三角 = 当日有失败。
+     刻度 1:1 取自样页 media-heatmap.html(2026-07-20 拍板)。 */
+  .heat-scroll { overflow-x: auto; padding-bottom: 4px; }
+  .heat-wrap { display: inline-grid; grid-template-columns: auto 1fr; gap: 5px 7px; }
+  .heat-months {
+    grid-column: 2; display: grid; grid-auto-flow: column;
+    grid-template-columns: repeat(53, 16px);
+    font-size: 11px; color: var(--dorami-muted); height: 15px;
+  }
+  .heat-month { white-space: nowrap; }
+  .heat-dows {
+    grid-column: 1; display: grid; grid-template-rows: repeat(7, 13px); gap: 3px;
+    font-size: 10px; color: var(--dorami-faint); align-items: center;
+  }
+  .heat-dow { line-height: 1; height: 13px; display: flex; align-items: center; }
+  .heat-grid {
+    grid-column: 2; display: grid; grid-auto-flow: column;
+    grid-template-columns: repeat(53, 13px); grid-template-rows: repeat(7, 13px); gap: 3px;
+  }
+  .heat-cell {
+    width: 13px; height: 13px; border-radius: 3px; padding: 0;
+    border: 1px solid transparent; background: var(--heat-empty);
+    cursor: pointer; position: relative;
+    transition: transform var(--motion-fast) var(--motion-ease);
+  }
+  .heat-cell:disabled { cursor: default; }
+  .heat-cell[data-lvl="0"] { background: var(--heat-0); }
+  .heat-cell[data-lvl="1"] { background: var(--heat-1); }
+  .heat-cell[data-lvl="2"] { background: var(--heat-2); }
+  .heat-cell[data-lvl="3"] { background: var(--heat-3); }
+  .heat-cell[data-lvl="4"] { background: var(--heat-4); }
+  .heat-cell.has-fail::after {
+    content: ""; position: absolute; top: 0; right: 0;
+    border-width: 0 5px 5px 0; border-style: solid;
+    border-color: transparent var(--state-warn) transparent transparent;
+    border-radius: 0 3px 0 0;
+  }
+  .heat-cell:hover:not(:disabled) { transform: scale(1.35); z-index: 2; }
+  .heat-cell.is-on { outline: 2px solid var(--dorami-accent); outline-offset: 1px; z-index: 3; }
+
+  /* 状态分色模式:三态各占一色(与覆盖率深浅二选一,分段控件切换) */
+  .heat-wrap.mode-status .heat-cell[data-st="ok"] { background: var(--state-ok); }
+  .heat-wrap.mode-status .heat-cell[data-st="partial"] { background: var(--state-warn); }
+  .heat-wrap.mode-status .heat-cell[data-st="none"] { background: var(--state-idle); opacity: 0.45; }
+  .heat-wrap.mode-status .heat-cell[data-st="noimg"] { background: var(--heat-0); }
+  .heat-wrap.mode-status .heat-cell.has-fail::after { display: none; }
+
+  .heat-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; margin-top: 14px; flex-wrap: wrap;
+  }
+  .heat-legend, .heat-note {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 11px; color: var(--dorami-faint);
+  }
+  .heat-legend-cells { display: flex; gap: 3px; }
+  .heat-swatch { width: 12px; height: 12px; border-radius: 3px; }
+  .heat-swatch.is-notch { background: var(--heat-2); position: relative; }
+  .heat-swatch.is-notch::after {
+    content: ""; position: absolute; top: 0; right: 0;
+    border-width: 0 5px 5px 0; border-style: solid;
+    border-color: transparent var(--state-warn) transparent transparent;
+    border-radius: 0 3px 0 0;
+  }
+  .heat-legend-item { display: inline-flex; align-items: center; gap: 5px; margin-left: 10px; }
+
+  /* ── 热点图抽屉内容(挂在 ledger-drawer 语法里)── */
+  .heat-dstats { display: flex; gap: 0; }
+  .heat-dstat { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+  .heat-dstat-num {
+    font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1;
+    color: var(--dorami-ink);
+  }
+  .heat-dstat-num.is-ok { color: var(--state-ok); }
+  .heat-dstat-num.is-warn { color: var(--state-warn); }
+  .heat-dstat-num.is-idle { color: var(--dorami-faint); }
+  .heat-dstat-lbl { font-size: 10.5px; color: var(--dorami-faint); }
+  .heat-arow { padding: 11px 8px; border-bottom: 1px solid var(--dorami-border-soft); border-radius: var(--r-control); }
+  .heat-arow:last-child { border-bottom: 0; }
+  .heat-arow:hover { background: var(--dorami-soft); }
+  .heat-arow-top { display: flex; align-items: baseline; gap: 8px; }
+  .heat-arow-title {
+    font-size: 12.5px; font-weight: 500; color: var(--dorami-ink-2); line-height: 1.5;
+    flex: 1; min-width: 0;
+  }
+  .heat-arow-src {
+    font-size: 10.5px; color: var(--dorami-faint); font-family: var(--mono);
+    white-space: nowrap; flex: none;
+  }
+  .heat-arow-meta { display: flex; align-items: center; gap: 8px; margin-top: 7px; flex-wrap: wrap; }
+  .heat-pill {
+    display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px;
+    border-radius: var(--r-pill); font-size: 10.5px; font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .heat-pill.is-ok { background: var(--state-ok-bg); color: var(--state-ok); }
+  .heat-pill.is-warn { background: var(--state-warn-bg); color: var(--state-warn); }
+  .heat-pill.is-idle { background: var(--state-idle-bg); color: var(--state-idle); }
+  .heat-pill.is-none { background: transparent; color: var(--dorami-faint); }
+  .heat-retry {
+    border: 1px solid var(--dorami-border); background: transparent; color: var(--dorami-muted);
+    padding: 2px 9px; border-radius: var(--r-pill); margin-left: auto;
+    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+  .heat-retry:hover:not(:disabled) { background: var(--dorami-wash); color: var(--dorami-accent-ink); border-color: transparent; }
+  .heat-retry:disabled { opacity: 0.55; cursor: default; }
+  .heat-errs { margin-top: 7px; display: flex; flex-direction: column; gap: 3px; }
+  .heat-err {
+    font-size: 10.5px; color: var(--dorami-faint); font-family: var(--mono);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .heat-err b { color: var(--state-warn); font-weight: 500; }
+  .heat-empty-hint { padding: 26px 10px; text-align: center; font-size: 12px; color: var(--dorami-faint); }
+
+  /* 悬停浮标:跟随格子,墨底(与全站 tooltip 同语法) */
+  .heat-tip {
+    position: fixed; z-index: 60; pointer-events: none;
+    background: var(--dorami-ink); color: var(--dorami-canvas);
+    padding: 7px 10px; border-radius: var(--r-sm); font-size: 11px; line-height: 1.55;
+    box-shadow: var(--sh-3); white-space: nowrap;
+  }
+  .heat-tip b { font-family: var(--mono); font-weight: 600; }
 
   /* ── 用户活动抽屉:tiles / 登录卡 / 榜单(ledger-drawer 语法换肤) ── */
   .drawer-sec-title { font-size: 12px; font-weight: 700; color: var(--dorami-ink-2); margin-bottom: 8px; }
@@ -8718,6 +8853,14 @@ input[type="radio"] {
   --chart-4: #ef4444; --chart-5: #0284c7; --chart-6: #a855f7;
   --chart-other: #5b6678;
 
+  /* 热点格色阶暗面:同族提亮(深底上低透明度靛不可见),空格改用白系微透 */
+  --heat-0: #262b35;
+  --heat-1: rgba(139, 132, 240, 0.24);
+  --heat-2: rgba(139, 132, 240, 0.46);
+  --heat-3: rgba(139, 132, 240, 0.70);
+  --heat-4: #8b84f0;
+  --heat-empty: rgba(255, 255, 255, 0.045);
+
   /* —— 强调（深底略提亮：按钮不发灰、accent 文字达对比）—— */
   /* 填充类 accent（hero 渐变 / 主按钮 / 部门卡）在暗色下调深、去霓虹：
      大面积实色用提亮过的 accent 会刺眼，且白字在 #7670ec 上仅 ~3.6:1 不达 AA。
@@ -8930,6 +9073,8 @@ input[type="radio"] {
 .reader-disc-search input { font-size: 12.5px; }
 .reader-sub-banner { font-size: 12.5px; font-weight: 500; }
 .reader-pager-btn { font: inherit; }
+/* 媒体热点图的带文字按钮同陷阱(重抓钮) */
+.heat-retry { font-size: 10.5px; font-weight: 500; }
 
 /* ── 状态色块（保留语义色，仅压深底 + 提亮文字）── */
 [data-theme="dark"] .action-button-danger { background: rgba(248, 113, 113, 0.12); color: #fca5a5; border-color: rgba(248, 113, 113, 0.28); }

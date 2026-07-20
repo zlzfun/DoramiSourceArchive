@@ -127,6 +127,35 @@ export function fetchAdminContent(top = 12) {
   return request(`/admin/content?top=${enc(top)}`, { errorMsg: '获取内容看板失败' });
 }
 
+// ── 媒体库（图床） ──
+// 正文外链图统一改经后端代理取图（命中本地缓存回文件，失败 302 回源降级）。
+// 非 http(s) 地址（data: URI、相对路径）原样返回不代理。
+export function mediaProxyUrl(src) {
+  if (typeof src !== 'string' || !/^https?:\/\//i.test(src)) return src;
+  return `${API_BASE_URL}/media/proxy?url=${encodeURIComponent(src)}`;
+}
+
+export function fetchMediaStats() {
+  return request('/admin/media/stats', { errorMsg: '获取媒体库统计失败' });
+}
+
+export function fetchMediaHeatmap(days = 365) {
+  return request(`/admin/media/heatmap?days=${enc(days)}`, { errorMsg: '获取媒体热点图失败' });
+}
+
+export function fetchMediaDay(date) {
+  return request(`/admin/media/days/${enc(date)}`, { errorMsg: '获取当日媒体明细失败' });
+}
+
+// 单篇定点重抓：强制绕过失败退避冷却，返回该篇刷新后的逐图状态。
+export function prefetchArticleMedia(articleId) {
+  return request(`/admin/media/articles/${enc(articleId)}/prefetch`, {
+    method: 'POST', errorMsg: '重抓图片失败',
+  });
+}
+// （全量回填端点 /admin/media/backfill 保留在后端作脚本化应急通道,前端入口已撤——
+//  生产只做随抓预取;存量补录走热点图抽屉的单篇定点重抓。）
+
 export function getAiBetaGlobal() {
   return request('/admin/ai-beta/global', { errorMsg: '获取 AI 全局开关失败' });
 }

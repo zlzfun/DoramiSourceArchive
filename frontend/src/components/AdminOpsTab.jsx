@@ -19,6 +19,7 @@ import {
   fetchAdminAccounts,
   fetchAccountActivity,
   fetchAdminContent,
+  fetchMediaStats,
   getAiBetaGlobal,
   setAiBetaGlobal,
   fetchAiUsage,
@@ -34,11 +35,22 @@ import { useConfirm } from '../hooks/useConfirm';
 import { useModalTransition } from '../hooks/useModalTransition';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { MultiSeriesArea, RankBars, BarList } from './charts/DashboardCharts';
+import MediaHeatmap from './admin/MediaHeatmap';
 import { pivotDaily, C_READ, C_FAVORITE, C_OTHER } from './charts/chartUtils';
 import { PURPOSE_LABELS, formatStamp, fmtNum, pct, truncLabel, vectorizedRateClass } from './admin/adminUtils';
 
 // 账户列表分页大小：超过即翻页，避免成百上千账户一次性平铺。
 const ACCOUNTS_PAGE_SIZE = 15;
+
+// 媒体库占用空间可读化（去重后落盘字节）。
+function fmtBytes(n) {
+  if (!n) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = n;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) { value /= 1024; i += 1; }
+  return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
+}
 
 // KPI 总账条单格（被动读数，数字全 ink；tone 只给需要语义色的异常指标）。
 function Kpi({ num, label, sub, tone }) {
@@ -90,6 +102,11 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
   // ── 内容看板（各源内容健康 + 收藏热度榜）──
   const [content, setContent] = useState(null);
 
+  // ── 媒体库（图床）：缓存统计 ──
+  // 全量回填按钮已撤（2026-07-20 拍板：生产只做「随抓预取」,突发回填易触发反爬且
+  // 死链超时极慢;后端 /api/admin/media/backfill 端点保留作脚本化应急通道）。
+  const [media, setMedia] = useState(null);
+
   // ── 新建账户弹窗 ──
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const createModal = useModalTransition(createModalOpen);
@@ -117,6 +134,8 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
 
   const loadContent = useCallback(() => fetchAdminContent().then(setContent).catch(() => {}), []);
 
+  const loadMedia = useCallback(() => fetchMediaStats().then(setMedia).catch(() => {}), []);
+
   const loadGlobals = useCallback(async () => {
     try {
       const g = await getAiBetaGlobal();
@@ -135,7 +154,7 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
     }
   }, [days, showToast]);
 
-  useEffect(() => { loadGlobals(); loadLlm(); loadContent(); }, [loadGlobals, loadLlm, loadContent]);
+  useEffect(() => { loadGlobals(); loadLlm(); loadContent(); loadMedia(); }, [loadGlobals, loadLlm, loadContent, loadMedia]);
   // 账户列表随时间窗口变化重载（窗口指标按 days 聚合）。
   useEffect(() => { reloadAccounts(); }, [reloadAccounts]);
   useEffect(() => { loadUsage(days); }, [loadUsage, days]);
@@ -601,6 +620,33 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
                   )}
                 </section>
               </div>
+
+              {/* ── 媒体库（图床）：正文外链图片本地缓存 ── */}
+              <div className="zone-head">
+                <span className="zone-title">媒体库</span>
+                <span className="zone-hint">正文外链图片的本地缓存：抓取入库时随文预取，逐日覆盖见下方热点图</span>
+              </div>
+              {media?.enabled === false ? (
+                <section className="surface-card card-pad rounded-[var(--r-card)]">
+                  <p className="tiny-meta">媒体库未启用（[media] enabled = false），正文图片走外链直连。</p>
+                </section>
+              ) : (
+                <>
+                  <section className="surface-card kpi-strip" aria-label="媒体库概览">
+                    {!media ? (
+                      <Kpi num="—" label="图片缓存" sub="加载中…" />
+                    ) : (
+                      <>
+                        <Kpi num={fmtNum(media.cached_count)} label="已缓存图片" sub="按 URL 计" />
+                        <Kpi num={fmtNum(media.distinct_files)} label="去重文件" sub="按内容计" />
+                        <Kpi num={fmtBytes(media.disk_bytes)} label="占用空间" sub="去重后落盘" />
+                        <Kpi num={fmtNum(media.failed_count)} label="下载失败" sub="多为签名过期 / 防盗链" tone={media.failed_count > 0 ? 'is-warn' : undefined} />
+                      </>
+                    )}
+                  </section>
+                  <MediaHeatmap showToast={showToast} />
+                </>
+              )}
             </>
           )}
         </div>

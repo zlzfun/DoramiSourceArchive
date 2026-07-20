@@ -186,3 +186,21 @@ map_concurrency = 4   ; 日报 map 阶段的并发数
 - **运行时可在「运维管理」页编辑并持久化**(存 `AppSettingRecord` KV,优先级高于 ini);
   三者(base_url+api_key+model)齐备才算已配置,前端各 AI 入口据此显隐。
 - 兼容 OpenAI/DeepSeek/Kimi/智谱/通义/火山方舟/OpenRouter/Ollama/vLLM 等任意 `/chat/completions` 端点。
+
+## `[media]`——媒体库(图床)
+
+正文外链图片的本地缓存:抓取入库后自动预取、阅读器经 `/api/media/proxy` 取图、
+管理面可对存量回填。归档正文里的原始图链**从不改写**,缓存只是显示层供给。
+
+```ini
+[media]
+enabled = true            ; 关闭后代理 302 回源、不再预取,整体退回外链直连
+media_dir = data/media    ; 缓存落盘目录(按内容 sha256 去重分桶)
+max_file_mb = 20          ; 单文件大小上限
+timeout_seconds = 20      ; 单图下载超时
+prefetch_concurrency = 4  ; 抓取后预取/回填的并发数
+```
+
+- 环境变量覆盖:`DORAMI_MEDIA_ENABLED`。
+- 下载防护:仅 http(s)、SSRF 拦截(环回/私网/链路本地拒绝;豁免 Clash/Surge fake-ip 段
+  `198.18.0.0/15`,否则本机代理环境整体误杀)、魔数嗅探确认图片、失败负缓存退避。

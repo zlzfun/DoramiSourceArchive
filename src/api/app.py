@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, Body, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field as PydanticField
@@ -158,6 +159,7 @@ from api.routers.collection import (
 )
 from api.routers import fetchers as fetchers_router
 from api.routers import stats as stats_router
+from api.routers import media as media_router
 from api.routers.fetchers import FetchBatchItem, FetchBatchParams
 from services import daily_brief as daily_brief_service
 from services import accounts as accounts_service
@@ -166,6 +168,7 @@ from services import ai_usage as ai_usage_service
 from services import reader_activity as reader_activity_service
 from services import content_analytics as content_analytics_service
 from services import jobs as jobs_service
+from services.media_store import MediaStore
 from llm.client import LLMNotConfigured, LLMError, UsageMeta, ping as llm_ping
 from llm.client import set_usage_recorder as _set_llm_usage_recorder
 
@@ -315,6 +318,8 @@ READER_API_PREFIXES = (
     "/api/vector/search",
     "/api/vector/stats",
     "/api/vector/subscribed-stats",
+    # 媒体库图片代理（阅读器正文图经此取图）；/api/admin/media/* 由 admin 前缀独立裁决。
+    "/api/media",
 )
 
 
@@ -452,6 +457,45 @@ vector_sink: Optional[ChromaVectorStorage] = (
 )
 pipeline = DataPipeline(storages=[db_sink])
 
+# 媒体库（图床）：[media] enabled = false 时为 None，代理端点 302 回源、抓取后不预取，
+# 行为完全退回「外链直连」。归档正文原链从不改写，本地缓存只是显示层供给。
+media_store: Optional[MediaStore] = (
+    MediaStore(
+        db_sink.engine,
+        Path(settings.media.media_dir),
+        max_bytes=settings.media.max_file_mb * 1024 * 1024,
+        timeout_seconds=settings.media.timeout_seconds,
+    )
+    if settings.media.enabled else None
+)
+
+# 抓取后媒体预取的 fire-and-forget 任务强引用（asyncio 只保弱引用）。
+_MEDIA_PREFETCH_TASKS: set = set()
+
+
+def schedule_media_prefetch(article_ids: List[str]) -> None:
+    """抓取入库钩子：异步预取新文章正文里的外链图片，绝不阻塞抓取主流程。"""
+    store = media_store
+    if store is None or not article_ids:
+        return
+
+    async def _run() -> None:
+        try:
+            counts = await store.prefetch_articles(
+                article_ids, concurrency=settings.media.prefetch_concurrency
+            )
+            if counts.get("cached") or counts.get("failed"):
+                logging.getLogger("dorami.media").info(
+                    "📦 媒体预取完成: %d 篇文章, 缓存 %d, 失败 %d",
+                    counts["articles"], counts["cached"], counts["failed"],
+                )
+        except Exception:  # noqa: BLE001
+            logging.getLogger("dorami.media").warning("媒体预取任务异常", exc_info=True)
+
+    task = asyncio.create_task(_run())
+    _MEDIA_PREFETCH_TASKS.add(task)
+    task.add_done_callback(_MEDIA_PREFETCH_TASKS.discard)
+
 
 def require_vector_sink() -> ChromaVectorStorage:
     # 委托给统一的依赖提供者（deps.get_vector_sink），保持单一实现；
@@ -475,6 +519,7 @@ app.include_router(archive_sync_router.router)
 app.include_router(collection_router.router)
 app.include_router(stats_router.router)
 app.include_router(fetchers_router.router)
+app.include_router(media_router.router)
 
 scheduler = AsyncIOScheduler()
 COLLECTION_FETCH_CONCURRENCY = 4
@@ -1242,6 +1287,7 @@ async def run_fetcher_with_tracking(
         finish_fetch_run(run_id, status="success", result=result)
         mark_source_state_finished(fetcher_id, params, run_id, status="success", result=result)
         await auto_vectorize_after_fetch(result.saved_content_ids)
+        schedule_media_prefetch(result.saved_content_ids)
         return {
             "status": "success",
             "run_id": run_id,

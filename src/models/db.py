@@ -258,6 +258,32 @@ class ReaderReadCursorRecord(SQLModel, table=True):
     updated_at: str = Field(description="最近一次推进时间")
 
 
+class MediaAssetRecord(SQLModel, table=True):
+    """媒体库（图床）资产：正文外链图片的本地缓存登记，一行 = 一个原始 URL。
+
+    主键 url_hash = sha256(url)，寻址与查重都走它；content_hash = sha256(字节)
+    用于**跨 URL 内容去重**——不同 URL 拿到相同字节时共用同一份落盘文件
+    （data/media/{content_hash[:2]}/{content_hash}{ext}），删除需检查引用计数。
+    归档正文里的原链**从不改写**（档案忠实性）：显示层经 /api/media/proxy 按
+    url_hash 命中缓存，未命中即时下载入库，失败 302 回源优雅降级。
+    status=failed 行是负缓存（带退避重试），避免对死链反复发起下载。
+    """
+    __tablename__ = "media_assets"
+
+    url_hash: str = Field(primary_key=True, description="sha256(原始 URL) 十六进制")
+    url: str = Field(description="原始图片 URL")
+    status: str = Field(default="cached", index=True, description="cached/failed")
+    content_hash: Optional[str] = Field(default=None, index=True, description="sha256(文件字节)，failed 行为空")
+    mime: str = Field(default="", description="Content-Type，如 image/png")
+    ext: str = Field(default="", description="落盘扩展名，含点，如 .png")
+    size_bytes: int = Field(default=0, description="文件字节数")
+    fail_count: int = Field(default=0, description="累计下载失败次数")
+    last_error: Optional[str] = Field(default=None, description="最近一次失败原因摘要")
+    created_at: str = Field(description="首次登记时间")
+    fetched_at: Optional[str] = Field(default=None, description="最近一次成功下载时间")
+    updated_at: str = Field(description="最近一次状态变更时间")
+
+
 class AppSettingRecord(SQLModel, table=True):
     __tablename__ = "app_settings"
     key: str = Field(primary_key=True)

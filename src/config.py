@@ -151,6 +151,21 @@ class LLMConfig:
 
 
 @dataclass(frozen=True)
+class MediaConfig:
+    """媒体库（图床）配置：正文外链图片的本地缓存与代理。
+
+    enabled 关闭时 /api/media/proxy 直接 302 回源、抓取后不做预取——
+    行为退回「外链直连」时代。缓存按内容 sha256 去重落盘 media_dir。
+    """
+
+    enabled: bool = True
+    media_dir: str = ""
+    max_file_mb: int = 20
+    timeout_seconds: int = 20
+    prefetch_concurrency: int = 4
+
+
+@dataclass(frozen=True)
 class ImageHostConfig:
     upload_url_template: str = (
         "http://3ms.huawei.com/hi/restnew/editor/attach/upload"
@@ -175,6 +190,7 @@ class AppConfig:
     xiaoluban: XiaolubanConfig
     image_host: ImageHostConfig
     llm: LLMConfig
+    media: MediaConfig
 
     def apply_process_environment(self) -> None:
         if self.network.disable_ca_bundle:
@@ -247,6 +263,11 @@ def load_config() -> AppConfig:
         rag_enabled = parser.getboolean("rag", "enabled", fallback=False)
     else:
         rag_enabled = rag_enabled_raw.strip().lower() in {"1", "true", "yes", "on"}
+    media_enabled_raw = os.getenv("DORAMI_MEDIA_ENABLED")
+    if media_enabled_raw is None:
+        media_enabled = parser.getboolean("media", "enabled", fallback=True)
+    else:
+        media_enabled = media_enabled_raw.strip().lower() in {"1", "true", "yes", "on"}
     legacy_auth_user = parser.get("auth", "username", fallback="admin")
     legacy_auth_password = parser.get("auth", "password", fallback="admin")
     admin_users = _auth_credentials(
@@ -313,6 +334,13 @@ def load_config() -> AppConfig:
             ),
             secret_key=parser.get("image_host", "secret_key", fallback=""),
             timeout_seconds=parser.getint("image_host", "timeout_seconds", fallback=15),
+        ),
+        media=MediaConfig(
+            enabled=media_enabled,
+            media_dir=_path(parser.get("media", "media_dir", fallback=str(PROJECT_ROOT / "data" / "media"))),
+            max_file_mb=parser.getint("media", "max_file_mb", fallback=20),
+            timeout_seconds=parser.getint("media", "timeout_seconds", fallback=20),
+            prefetch_concurrency=parser.getint("media", "prefetch_concurrency", fallback=4),
         ),
         llm=LLMConfig(
             base_url=(os.getenv("DORAMI_LLM_BASE_URL") or parser.get("llm", "base_url", fallback="")).strip(),
