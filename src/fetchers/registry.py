@@ -70,11 +70,11 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "github_openclaw_releases",
     "github_hermes_agent_releases",
     # X 社交波（观察期，category=incubating；默认目录可见但不进每日采集）
-    "x_ai_at_meta",
+    # 2026-07-21 压缩成本删两源：x_ai_at_meta（低频零覆盖但增量小）、
+    # x_openrouter（高频哨兵、成本大头）——见下方 DECOMMISSIONED。
     "x_deepseek_ai",
     "x_alibaba_qwen",
     "x_moonshot_ai",
-    "x_openrouter",
     "x_karpathy",
     "x_sama",
     "x_openai",
@@ -92,6 +92,10 @@ DECOMMISSIONED_FETCHER_IDS = frozenset({
     "github_qwen_code_releases",
     "docs_alibaba_model_studio_announcements",
     "web_bytedance_seed_models",
+    # X 社交波压缩成本下线（2026-07-21，观察期内）：类已删，历史归档推文留库，
+    # 在此登记以免经"归档来源"并集回流到读者订阅目录。
+    "x_ai_at_meta",
+    "x_openrouter",
 })
 
 

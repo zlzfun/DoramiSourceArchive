@@ -38,7 +38,7 @@
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
 
 - ☑ X 社交波(v3.12.0):X API v2 官方按量付费采集 + 社交媒体第三容器(shape=social,SocialFlow 卡片流);
-  8 个白名单账号 preset(全批 incubating)+ config 自助加号双路径;引用推/转推扁平化跨平台抽象、真实头像、
+  6 个白名单账号 preset(全批 incubating;立项 8 个,7-21 压缩成本删 meta/openrouter)+ config 自助加号双路径;引用推/转推扁平化跨平台抽象、真实头像、
   配额守卫与配置面板、零成本本地回填;取缔「今日」容器、隐藏通用源、社交收藏筛选。方案 `docs/social-x-wave-plan.md`。
 - ☑ 图床波(v3.11.0):媒体库——正文外链图本地缓存(懒代理 + 随文预取 + 媒体热点图/定点重抓),
   原链不改写、三层降级、防盗链 Referer 解;设计细节见 `CLAUDE.md`「媒体库」节。

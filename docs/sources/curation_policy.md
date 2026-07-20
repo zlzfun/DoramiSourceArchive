@@ -79,9 +79,10 @@ The current default-visible catalog is the admitted first additive batch. Each s
 
 ## 社交平台账号(X 社交波,v3.12 · 观察期)
 
-2026-07-20 admitted a first batch of 8 X (Twitter) accounts as `incubating` sources
-(`x_ai_at_meta` / `x_deepseek_ai` / `x_alibaba_qwen` / `x_moonshot_ai` /
-`x_openrouter` / `x_karpathy` / `x_sama` / `x_openai`). They follow the same
+2026-07-20 admitted a first batch of 8 X (Twitter) accounts as `incubating` sources;
+**2 removed 2026-07-21 to compress cost** (`x_ai_at_meta` low-freq / `x_openrouter`
+high-freq cost driver). Now 6: `x_deepseek_ai` / `x_alibaba_qwen` / `x_moonshot_ai` /
+`x_karpathy` / `x_sama` / `x_openai`. They follow the same
 incubation rules above. Two things differ from web/RSS sources:
 
 - **They cost real money** (X API v2 pay-per-use, budget-guarded — see CLAUDE.md

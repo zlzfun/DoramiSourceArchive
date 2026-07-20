@@ -44,13 +44,11 @@ EXPECTED_BULLETIN_SOURCE_IDS = {
 }
 
 EXPECTED_SOCIAL_SOURCE_IDS = {
-    # X 社交卡片流（通用模板 + 首批 8 个 preset）
+    # X 社交卡片流（通用模板 + preset；2026-07-21 压缩成本删 x_ai_at_meta / x_openrouter）
     "generic_x_timeline",
-    "x_ai_at_meta",
     "x_deepseek_ai",
     "x_alibaba_qwen",
     "x_moonshot_ai",
-    "x_openrouter",
     "x_karpathy",
     "x_sama",
     "x_openai",

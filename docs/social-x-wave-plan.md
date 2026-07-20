@@ -28,21 +28,27 @@
 审计基线 = `docs/sources/curation_policy.md` 选择规则 + 日报 map 阶段的读者兴趣画像。
 Codex 拟的 15 人清单经审计后:**删 2、降 2、增 5**,V0 先开 8 个跑观察期。
 
-### V0 首批(8 个,本波实现)
+### V0 首批(立项 8 个;**2026-07-21 压缩成本后现存 6 个**)
 
 | source_id | 账号 | 入选理由 |
 |---|---|---|
-| `x_ai_at_meta` | @AIatMeta | **归档零覆盖**——backlog「M:Meta AI 源」httpx 全灭挂起,X 是唯一通道 |
+| ~~`x_ai_at_meta`~~ | ~~@AIatMeta~~ | ~~归档零覆盖~~ **已下线(2026-07-21)**:低频(0.57 条/天)、增量小,删之省成本而丢的信号有限;Meta AI 重回零覆盖(backlog「M:Meta AI 源」)。 |
 | `x_deepseek_ai` | @deepseek_ai | 发布首发常在 X,官网/中文源滞后 |
 | `x_alibaba_qwen` | @Alibaba_Qwen | 同上,且发布节奏极快 |
 | `x_moonshot_ai` | @Kimi_Moonshot | **归档零覆盖**,K2 系列已在开源第一梯队 |
-| `x_openrouter` | @openrouter | **事件哨兵**:全厂商新模型上线播报,给其余官方号做交叉验证与兜底(原拟 @OpenRouterAI 经实测已不存在,2026-07-20 订正 handle,`source_id` 不变) |
+| ~~`x_openrouter`~~ | ~~@openrouter~~ | ~~事件哨兵~~ **已下线(2026-07-21)**:高频(~4–5 条/天)是月成本大头,压缩成本优先删;交叉验证价值让位于预算。 |
 | `x_karpathy` | @karpathy | 单账号信噪比最高 |
 | `x_sama` | @sama | OpenAI 战略与发布口风的唯一一手来源,常先于官方公告 |
 | `x_openai` | @OpenAI | 对照组:与 `rss_openai_news` 高度重叠,用来量化「X 比 blog 早多久」 |
 
 选择偏向**归档零覆盖**与**哨兵型**,先验证社交容器本身的形态价值,
 再补与文章流高度重叠的官方号。
+
+**成本压缩决策(2026-07-21)**:据试抓密度估算,8 源每日增量月成本约 $9–13、
+超 $5 预算(单条顶层推均摊全成本 ≈ $0.019,详见 §5)。用户拍板删
+`x_ai_at_meta`(低频、删之丢信号少)+ `x_openrouter`(高频、成本大头),
+现存 6 源月成本估降至约 **$6–8**。两源类已删、归档推文留库(登记进
+`DECOMMISSIONED_FETCHER_IDS` 避免回流订阅目录)。
 
 ### 第二批候补(观察期后按数据决定)
 

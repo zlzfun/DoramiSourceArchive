@@ -12,12 +12,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from config import XApiConfig  # noqa: E402
 from fetchers.impl.x_timeline_fetcher import (  # noqa: E402
-    AIAtMetaXTimelineFetcher,
     DeepSeekXTimelineFetcher,
     KarpathyXTimelineFetcher,
     MoonshotXTimelineFetcher,
     OpenAIXTimelineFetcher,
-    OpenRouterXTimelineFetcher,
     QwenXTimelineFetcher,
     SamAltmanXTimelineFetcher,
     XTimelineFetcher,
@@ -31,11 +29,9 @@ from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
 
 PRESETS = {
-    "x_ai_at_meta": (AIAtMetaXTimelineFetcher, "AIatMeta"),
     "x_deepseek_ai": (DeepSeekXTimelineFetcher, "deepseek_ai"),
     "x_alibaba_qwen": (QwenXTimelineFetcher, "Alibaba_Qwen"),
     "x_moonshot_ai": (MoonshotXTimelineFetcher, "Kimi_Moonshot"),
-    "x_openrouter": (OpenRouterXTimelineFetcher, "openrouter"),
     "x_karpathy": (KarpathyXTimelineFetcher, "karpathy"),
     "x_sama": (SamAltmanXTimelineFetcher, "sama"),
     "x_openai": (OpenAIXTimelineFetcher, "OpenAI"),

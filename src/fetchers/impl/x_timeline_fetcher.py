@@ -218,7 +218,7 @@ class XTimelineFetcher(BaseFetcher):
         quota: XApiQuotaGuard,
     ) -> tuple[str, Dict[str, Any]]:
         # 该持久缓存主要服务管理面创建的 handle-only config 源：第一次解析后，
-        # 后续抓取不再付费调用 users/by/username。8 个策展 preset 均已固化稳定
+        # 后续抓取不再付费调用 users/by/username。策展 preset 均已固化稳定
         # user_id，本来就直接走下方 user_id 分支，不依赖此缓存来节省解析费用。
         with Session(self._require_runtime_engine()) as session:
             cached = read_user_cache(session, runtime_source_id, handle=handle)
@@ -395,19 +395,6 @@ class PresetXTimelineFetcher(XTimelineFetcher):
             yield item
 
 
-class AIAtMetaXTimelineFetcher(PresetXTimelineFetcher):
-    source_id = "x_ai_at_meta"
-    handle = "AIatMeta"
-    user_id = "1034844617261248512"
-    name = "X · AI at Meta"
-    description = "Meta AI 官方研究与模型动态。"
-    source_owner = "meta"
-    source_brand = "meta_ai"
-    source_scope = "frontier_ai_lab"
-    source_url = "https://x.com/AIatMeta"
-    content_tags = ["model_release", "research_paper", "open_model"]
-
-
 class DeepSeekXTimelineFetcher(PresetXTimelineFetcher):
     source_id = "x_deepseek_ai"
     handle = "deepseek_ai"
@@ -445,21 +432,6 @@ class MoonshotXTimelineFetcher(PresetXTimelineFetcher):
     source_scope = "frontier_ai_lab"
     source_url = "https://x.com/Kimi_Moonshot"
     content_tags = ["model_release", "open_model", "product_update"]
-
-
-class OpenRouterXTimelineFetcher(PresetXTimelineFetcher):
-    source_id = "x_openrouter"
-    # 2026-07 品牌更新后官方站页脚已指向 @openrouter；旧 @OpenRouterAI 已被 X API
-    # 判定为 resource-not-found。source_id 保持既定契约不变。
-    handle = "openrouter"
-    user_id = "1681349314797240320"
-    name = "X · OpenRouter"
-    description = "OpenRouter 新模型上线与跨厂商事件哨兵。"
-    source_owner = "openrouter"
-    source_brand = "openrouter"
-    source_scope = "model_platform"
-    source_url = "https://x.com/openrouter"
-    content_tags = ["model_release", "api_platform", "industry_signal"]
 
 
 class KarpathyXTimelineFetcher(PresetXTimelineFetcher):
