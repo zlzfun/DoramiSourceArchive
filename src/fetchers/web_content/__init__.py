@@ -8,7 +8,7 @@
 - ``CrawlProfile`` / ``PROFILES`` —— 站点级声明式 Profile（profiles.py）
 - ``compare_detail`` —— 双路对比指标（compare.py）
 
-设计原则（见 docs/analysis/crawl4ai-feasibility.md）：httpx 优先、按需浏览器；crawl4ai 为可选依赖，
+设计原则（见 docs/archive/crawl4ai-feasibility.md）：httpx 优先、按需浏览器；crawl4ai 为可选依赖，
 未安装时 ``Crawl4AIContentBackend.is_available()`` 为 False 且不会在 import 期破坏其余子系统。
 """
 

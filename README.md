@@ -60,7 +60,7 @@ cd frontend && npm install && npm run dev
 |---|---|
 | `api.js` | 所有后端 `fetch()` 的唯一出口 |
 | `App.jsx` | 根：登录门控 + tab 路由（按运行时能力与账号角色过滤） |
-| `components/` | 各 tab 与弹窗：`ReaderTab`（阅读器，user 主界面）、`DataTab`（知识台账）、`FetchTab`/`FetchRunsTab`（采集）、`VectorTab`（向量雷达）、`MCPTab`（接入集成）、`DailyBriefPanel` 等 |
+| `components/` | 各 tab 与弹窗：`ReaderTab`（阅读器，user 唯一主界面）+`DiscoverPage`（发现页）、`DataTab`（知识台账）、`FetchTab`/`FetchRunsTab`（采集）、`VectorTab`（向量雷达）、`DailyBriefTab`（AI 日报）、`SettingsModal`（设置柜，含接入集成分区）、`AdminOpsTab`（运维管理）等 |
 | `hooks/` · `utils/` · `config.js` · `sourceTaxonomy.js` | 复用 hook、工具函数、单点配置、来源分类表 |
 
 ### 文档 `docs/` — 见 [`docs/README.md`](./docs/README.md)
@@ -69,7 +69,8 @@ cd frontend && npm install && npm run dev
 | `configuration.md` | `config/backend.ini`、运行时角色、两层部署 |
 | `contracts/` | 下游集成契约：`feed_delivery` / `archive_sync` / `reader_subscription` |
 | `sources/` | 来源治理：分类标准、收录策略、准入流程、节点审计 playbook、节点目录与风险、`candidates/` 各厂商候选源 |
-| `analysis/` | 横向分析（如 `horizon-vs-dorami.md`：与 Horizon 的抓取/日报原理对比） |
+| `backlog.md` | 跨波次待办总账（进行中/排队/展望） |
+| `archive/` | 已完结方案与执行记录（按故事分组，见其 README） |
 | `archive/` | 历史/已落地的计划文档（如 `frontend-optimization-plan.md`） |
 
 ### 脚本 `scripts/` — 见 [`scripts/README.md`](./scripts/README.md)

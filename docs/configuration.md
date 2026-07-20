@@ -1,5 +1,7 @@
 # 配置文件说明
 
+> 本文偏**部署操作视角**(改哪、何时需重启);各配置节的完整语义与环境变量总表见 `CLAUDE.md` 的 Configuration / Environment Variables 节。
+
 后端配置集中在 INI 文件中读取。默认查找顺序：
 
 1. `DORAMI_CONFIG_FILE` 指定的文件。
@@ -164,3 +166,23 @@ secret = change-me-to-a-long-random-string
 - `logoPath`：控制台 logo 静态资源路径。
 - `devServer.port`：Vite 本地开发端口。
 - `devServer.proxyTarget`：Vite `/api` 代理的后端地址。
+
+## `[llm]`——OpenAI 兼容模型(日报 / 读者 AI 共用)
+
+日报生成、读者面翻译/问答、AI 建源等全部 LLM 能力共用一份 OpenAI 兼容配置:
+
+```ini
+[llm]
+base_url =            ; 形如 https://api.deepseek.com/v1(留空则 LLM 功能整体惰性关闭)
+api_key =
+model =
+timeout_seconds = 120
+temperature = 0.3
+max_tokens = 4096
+map_concurrency = 4   ; 日报 map 阶段的并发数
+```
+
+- 环境变量覆盖:`DORAMI_LLM_BASE_URL` / `DORAMI_LLM_API_KEY` / `DORAMI_LLM_MODEL`。
+- **运行时可在「运维管理」页编辑并持久化**(存 `AppSettingRecord` KV,优先级高于 ini);
+  三者(base_url+api_key+model)齐备才算已配置,前端各 AI 入口据此显隐。
+- 兼容 OpenAI/DeepSeek/Kimi/智谱/通义/火山方舟/OpenRouter/Ollama/vLLM 等任意 `/chat/completions` 端点。

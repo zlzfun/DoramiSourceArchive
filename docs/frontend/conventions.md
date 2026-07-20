@@ -98,10 +98,12 @@
 并列多列的标题要求**顶对齐**——列头行若含更高的控件(按钮),用 `align-items: flex-start` +
 控件负 margin 配平,不许让控件把标题压离基线。
 
-> ⚠️ **`button { font: inherit }` 陷阱(未分层压层)**:`index.css` 顶部这条全局规则是**未分层**的
-> `font` 简写,按 cascade layers 规则会压过 `@layer components` 里任何类选择器的 `font-size`——
-> 给按钮类写 `font-size` 看似合法实则不生效(计算值回落到继承链)。给按钮定字号要么写在**容器**上
-> 靠继承穿透(实例:`.ledger-scope`),要么用未分层规则/工具类。排查「字号怎么改都不生效」先想到这条。
+> ⚠️ **`button/input { font: inherit }` 陷阱(未分层压层)**:`index.css` 顶部这条全局规则是**未分层**的
+> `font` 简写(作用于 button/input/select/textarea),按 cascade layers 规则会压过 `@layer components`
+> 里任何类选择器的 `font-size`——给按钮/输入框类写 `font-size` 看似合法实则不生效(计算值回落到继承链)。
+> 定字号要么写在**容器**上靠继承穿透(实例:`.ledger-scope`/`.sett-nav`),要么写进文件尾的**未分层修复区**
+> (实例:`.reader-seg-btn`/`.reader-disc-search input`)。排查「字号怎么改都不生效」先想到这条。
+> 已知踩坑记录:分段钮(弹窗波)、阅读器 全部/未读 分段(v3.6)、发现页搜索框(v3.10)。
 
 ## 4. 颜色令牌（语义四套，互不混用）
 
@@ -120,9 +122,14 @@
 - **hover 不得引入 accent**：hover 背景 `--dorami-soft`（暗色可点控件 `--dorami-raised`），
   文字/描边走 ink/border-strong；wash 基底元素的 hover 只允许同族加深。
   例外：focus 焦点环（a11y）、checkbox 类控件、CTA 自身的提亮。
-- **选中语法全站统一 = accent 竖条**：纵向列表/导航项选中 = 3px `--dorami-blue` 左竖条
-  （`inset 3px 0 0` 或 `::before`）+ `--dorami-soft` 底，**不用 indigo 描边/ring/glow**；
-  横向控件：segmented 拇指 = surface 底 + ink 字 + 中性 `--sh-1`，顶栏 tab = 底部 accent 条。
+- **选中语法(v3.8 轨语言统一后分双轨)**：
+  ① **轨与轨延伸面**(应用导轨/阅读器视图轨/设置柜左导航)= **wash 块**
+  (`--dorami-wash` 底 + `--dorami-accent-ink` 字,无描边无竖条;`.reader-vrail-btn.is-on`
+  类族即全站轨语言的单一事实来源);
+  ② **工作区纵向列表/导航项** = 3px `--dorami-blue` 左竖条(`inset 3px 0 0` 或 `::before`)
+  + `--dorami-soft` 底。两者都**不用 indigo 描边/ring/glow**；
+  横向控件：segmented 拇指 = surface 底 + ink 字 + 中性 `--sh-1`，顶栏 tab = 底部 accent 条；
+  阅读器条目卡/源行选中 = surface 浮起 + `--sh-1`(阅读器样页语法)。
 - 「运行中/进度」类活动态（进度线、运行 pulse、running 徽标）与 accent 同族，是有意的产品语义。
 - **语义状态 token(2026-07)**:ok/warn/bad/run/idle 五态一律引用 `--state-*` / `--state-*-bg`
   成对 token(亮暗自动翻转),不再散写 emerald/rose/amber hex。

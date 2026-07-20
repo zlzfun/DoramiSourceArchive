@@ -139,7 +139,7 @@ export default defineConfig([
       // 设计令牌护栏：收敛已完成，直接以 error 把关
       'dorami/no-hardcoded-style': 'error',
       // Legacy bridge 护栏：F8-B 已令牌化全部存量并删除 index.css 桥接段，规则以 'error' 把关增量。
-      // 见 docs/analysis/frontend-refactor-{plan,progress}.md。
+      // 见 docs/archive/frontend-refactor-{plan,progress}.md。
       'dorami/no-legacy-bridge-class': 'error',
       // 静默仪器防回潮:字重/入场编排增量拦截(B 残债清尾)
       'dorami/no-ceremonial-entrance': 'error',

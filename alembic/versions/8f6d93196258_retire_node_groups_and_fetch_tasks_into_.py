@@ -1,6 +1,6 @@
 """retire node_groups and fetch_tasks into collection jobs
 
-实体简化阶段 2（docs/analysis/entity-simplification-plan.md）：退役「采集范围
+实体简化阶段 2（docs/archive/entity-simplification-plan.md）：退役「采集范围
 （node_groups）」与「旧版单节点定时任务（fetch_tasks）」两个实体，DROP 前先把
 存量数据合并进采集任务（collection_jobs），保证行为不丢：
 

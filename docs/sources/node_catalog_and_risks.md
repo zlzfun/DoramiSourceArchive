@@ -1,5 +1,9 @@
 # Node Catalog, Adaptations & Risks
 
+> ⚠️ **快照日期 2026-06-16**:此后源扩容 wave1–3(v3.2–v3.5,约 20 个新节点,多数 incubating)
+> **未包含在本目录中**。节点现势以 `src/fetchers/impl/` 注册表与前端节点管理页为准;
+> 本文对已列节点的「适配手法/风险评级」仍然有效。计划在 incubating 转正评审时一并补全(见 `docs/backlog.md`)。
+
 The current built-in fetcher catalog: what each node is, **what special
 adaptation it required** to capture clean records, and its **stability risk** —
 how likely that adaptation is to break when the upstream source changes.
