@@ -222,7 +222,7 @@ src/
 
 frontend/src/
 ├── api.js                   # All fetch() calls to the backend (single source of truth)
-├── sourceTaxonomy.js        # 来源谱系: 公司/板块归并 + LogoMark 品牌注册表 + LOGO_SIZES 刻度 + 编辑分层 (EDITORIAL_GROUPS/editorialGroupOf — 官方/媒体/个人/榜单, 阅读器源栏与发现页共用)
+├── sourceTaxonomy.js        # 来源谱系: 公司/板块归并 + LogoMark 品牌注册表 + LOGO_SIZES 刻度 + **信息角色单轴** (sourceRoleOf/SOURCE_ROLES — 官方/媒体/个人/榜单, 判定序 个人→榜单→媒体→官方; 阅读器源栏/发现页/管理面共用一套词汇; 形态交给容器+seg, 组头只表角色)
 ├── App.jsx                  # Root: login gate + tab routing. admin 走左侧应用导轨 (56px, 与阅读器视图轨同形制 — 复用 .reader-vrail-* 「轨语言」类族, icon-only + 墨底 tooltip; 轨底 = 主题/设置钮 + 头像→设置·账户, 头像菜单已退役 v3.9); readerOnly 隐藏应用导轨 (整页即阅读器). tabs 按 runtime capabilities × account_role 过滤
 └── components/
     ├── LoginScreen.jsx      # Account login

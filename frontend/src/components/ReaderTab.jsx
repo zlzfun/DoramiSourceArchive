@@ -24,7 +24,7 @@ import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
 import ReaderMarkdown from './ReaderMarkdown';
 import ReaderAiPanel from './ReaderAiPanel';
-import { EDITORIAL_GROUPS, editorialGroupOf, editorialTierOf, platformLabelOf, resolveCompany } from '../sourceTaxonomy';
+import { SOURCE_ROLES, sourceRoleOf, resolveCompany } from '../sourceTaxonomy';
 import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
 import { excerptOf } from '../utils/readerText';
@@ -89,9 +89,8 @@ const hostOf = (url) => {
 // 日报的源标识(置顶卡/报头形态判定)
 const BRIEF_SOURCE_ID = 'dorami_daily_brief';
 
-// ── 源栏编辑分层(样页:官方·一手信息 / 媒体·观察 / 个人·洞见 / 榜单·动态) ──
-// 编辑分层判定(EDITORIAL_GROUPS/editorialGroupOf)已上移 sourceTaxonomy.js,
-// 与发现页(DiscoverPage)共享同一分组语法。
+// ── 源栏分类:统一「信息角色」单轴(官方 / 媒体 / 个人 / 榜单) ──
+// 判定(sourceRoleOf/SOURCE_ROLES)在 sourceTaxonomy.js,与发现页、管理面共用同一套词汇。
 
 // ── 骨架屏 · 大块加载态形状占位 ──
 // 形状贴近真实内容，替代居中 spinner；条数固定、宽度错落，纯装饰故 aria-hidden。
@@ -335,52 +334,17 @@ export default function ReaderTab({
     [sources, subscribedIds],
   );
 
-  // 订阅源按编辑分层分组(样页),空组不渲染。
-  // 社交源不入编辑分层——它们归社交容器,按「平台 · 分层」自成一套(见 socialGroups)。
-  const subscribedGroups = useMemo(() => {
-    const buckets = { official: [], media: [], personal: [], bulletin: [] };
-    for (const s of subscribedSources) {
-      if (shapeOfSource(s.source_id) === 'social') continue;
-      buckets[editorialGroupOf(s)].push(s);
-    }
-    // EDITORIAL_GROUPS 含 social 组,但这里 buckets 有意不建 social 桶
-    // (社交源归社交容器,由 socialGroups 处理)——故 social 组 list 兜底为空、被 filter 掉。
-    return EDITORIAL_GROUPS
-      .map((g) => ({ ...g, list: buckets[g.key] || [] }))
-      .filter((g) => g.list.length > 0);
-  }, [subscribedSources, shapeOfSource]);
-
+  // 社交源集合(仅用于平台角标计数;分组统一走 sidebarGroups)
   const socialSources = useMemo(
     () => subscribedSources.filter((s) => shapeOfSource(s.source_id) === 'social'),
     [subscribedSources, shapeOfSource],
   );
 
-  // 平台是「源」的属性(不是每条内容的属性):社交容器的源栏按「平台 · 分层」分组,
-  // 日后接 Mastodon/Bluesky 无需改结构。platform 由后端源目录透出,
-  // 兜底取 source_id 的平台前缀(社交源命名即 x_karpathy / mastodon_xxx)。
+  // 平台由 source 透出,兜底取 source_id 前缀(x_karpathy / mastodon_xxx)
   const platformOfSource = useCallback(
     (s) => s.platform || (s.source_id || '').split('_')[0] || '',
     [],
   );
-
-  const socialGroups = useMemo(() => {
-    const labels = { official: '官方', media: '媒体', personal: '个人', bulletin: '榜单' };
-    const map = new Map();
-    for (const s of socialSources) {
-      const platform = platformOfSource(s);
-      const editorial = editorialTierOf(s); // 容器内已确定形态,二级分层只看策展元数据
-      const key = `${platform}|${editorial}`;
-      if (!map.has(key)) {
-        map.set(key, {
-          key,
-          label: `${platformLabelOf(platform)} · ${labels[editorial] || '其它'}`,
-          list: [],
-        });
-      }
-      map.get(key).list.push(s);
-    }
-    return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, 'zh'));
-  }, [socialSources, platformOfSource]);
 
   // 已订阅的平台数 —— 决定卡片是否挂平台角标(单平台时每卡同一图标是纯噪声)
   const platformCount = useMemo(
@@ -409,12 +373,20 @@ export default function ReaderTab({
   // 社交容器:整幅卡片流(SocialFlow),不走条目列+阅读窗的四带式
   const socialView = mode === 'social';
 
-  // 源栏分组随容器切换:社交容器给「平台 · 分层」组;文章/动态各列自己那类。
+  // 源栏分组(全站统一「信息角色」单轴):当前容器(shape=mode)的源按角色分组,空组不渲染。
+  // 形态已由左侧视图轨容器承担,组头只表角色——文章=官方/媒体/个人/榜单,
+  // 动态=官方/榜单,社交=官方/个人。三容器共用一套逻辑,不再各写一份。
   const sidebarGroups = useMemo(() => {
-    if (socialView) return socialGroups;
-    return subscribedGroups.filter(({ key }) =>
-      mode === 'bulletin' ? key === 'bulletin' : key !== 'bulletin' && key !== 'social');
-  }, [socialView, socialGroups, subscribedGroups, mode]);
+    const buckets = {};
+    for (const s of subscribedSources) {
+      if (shapeOfSource(s.source_id) !== mode) continue;
+      const role = sourceRoleOf(s);
+      (buckets[role] ||= []).push(s);
+    }
+    return SOURCE_ROLES
+      .map((r) => ({ ...r, list: buckets[r.key] || [] }))
+      .filter((g) => g.list.length > 0);
+  }, [subscribedSources, shapeOfSource, mode]);
 
   const hasNoSubscriptions = !sourcesLoading && subscribedSources.length === 0;
 

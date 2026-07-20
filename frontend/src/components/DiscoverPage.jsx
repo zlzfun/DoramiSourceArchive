@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ChevronRight, Loader2, Search } from 'lucide-react';
 import LogoMark from './LogoMark';
 import { mediaProxyUrl } from '../api';
-import { EDITORIAL_GROUPS, editorialGroupOf, platformLabelOf, resolveCompany } from '../sourceTaxonomy';
+import { SOURCE_ROLES, sourceRoleOf, platformLabelOf, resolveCompany } from '../sourceTaxonomy';
 
 // last_fetched(ISO)→ 人话:今日 / 昨日 / MM-DD;空值不显示
 function lastLabel(lastFetched) {
@@ -37,20 +37,21 @@ export default function DiscoverPage({
   const [shape, setShape] = useState('all');   // all | article | bulletin | social
   const [query, setQuery] = useState('');
 
+  // 分组统一「信息角色」单轴;形态(文章/动态/社交)交给上方过滤条,不作分组维度。
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const buckets = { official: [], media: [], personal: [], bulletin: [], social: [] };
+    const buckets = {};
     for (const s of sources) {
       const sShape = s.shape || 'article';
       if (shape !== 'all' && sShape !== shape) continue;
       if (q && !`${s.name || ''} ${s.description || ''} ${s.source_id}`.toLowerCase().includes(q)) continue;
-      buckets[editorialGroupOf(s)].push(s);
+      (buckets[sourceRoleOf(s)] ||= []).push(s);
     }
     for (const key of Object.keys(buckets)) {
       buckets[key].sort((a, b) => (b.count || 0) - (a.count || 0));
     }
-    return EDITORIAL_GROUPS
-      .map((g) => ({ ...g, list: buckets[g.key] || [] })) // buckets 缺某组键时兜底空,勿让 filter 触 undefined.length
+    return SOURCE_ROLES
+      .map((r) => ({ ...r, list: buckets[r.key] || [] }))
       .filter((g) => g.list.length > 0);
   }, [sources, shape, query]);
 

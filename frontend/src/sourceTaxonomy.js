@@ -234,43 +234,43 @@ export const LOGO_SIZES = {
   lg: { box: 56, radius: 16, font: 19, img: 34 },
 };
 
-/* ── 编辑分层(阅读器源栏/发现页共用):由策展元数据推导 ──
-   动态形先归「榜单·动态」;个人层看 tier2/个人评论 scope;
-   媒体层看媒体/社区 scope 或 tier1;其余(tier0 官方博客/发布厅)归「官方」。 */
-export const EDITORIAL_GROUPS = [
-  { key: 'official', label: '官方 · 一手信息' },
-  { key: 'media', label: '媒体 · 观察' },
-  { key: 'personal', label: '个人 · 洞见' },
-  { key: 'bulletin', label: '榜单 · 动态' },
-  { key: 'social', label: '社交 · 账号' },
+/* ── 信息角色(单一分类轴,全站统一:阅读器源栏/发现页/管理面共用)──
+   容器化之后,形态(文章/动态/社交)已由左侧视图轨容器 + 发现页过滤条承担,
+   源栏组头不再重复形态,而是回答唯一一个问题:这个源是什么身份。四类角色:
+   · 官方   —— 厂商/机构一手发布(tier0 company/model_family/product/developer_tool…)
+   · 媒体   —— 有编辑的第三方报道(ai_media / tech_media)
+   · 个人   —— 研究者/从业者/高管的个人视角(personal/expert/executive commentary、tier2)
+   · 榜单   —— 无编辑的聚合排序信号(community/research 榜:HN、reddit、GitHub 趋势、HF 每日论文)
+   判定顺序 个人 → 榜单 → 媒体 → 官方(先具体后兜底)。 */
+export const SOURCE_ROLES = [
+  { key: 'official', label: '官方', tone: 'emerald' },
+  { key: 'media', label: '媒体', tone: 'sky' },
+  { key: 'personal', label: '个人', tone: 'violet' },
+  { key: 'leaderboard', label: '榜单', tone: 'amber' },
 ];
 
-const MEDIA_SCOPES = new Set([
-  'ai_media', 'tech_media', 'community', 'developer_community', 'research_community', 'forum',
-]);
+const ROLE_LABEL = Object.fromEntries(SOURCE_ROLES.map((r) => [r.key, r.label]));
+const ROLE_TONE = Object.fromEntries(SOURCE_ROLES.map((r) => [r.key, r.tone]));
 
-/* ── 社交平台标签(shape=social 的源)──
-   平台是「源」的属性、不是每条内容的属性:源栏按「平台 · 分层」分组、
-   发现页源卡标平台,卡片角标只在订阅了 >=2 个平台时才挂。
-   接新平台在此加一行即可。 */
-const PLATFORM_LABELS = { x: 'X', mastodon: 'Mastodon', bluesky: 'Bluesky' };
+const PERSONAL_SCOPES = new Set(['personal_commentary', 'expert_commentary', 'executive_commentary']);
+const LEADERBOARD_SCOPES = new Set(['community', 'developer_community', 'research_community', 'forum']);
+const MEDIA_SCOPES = new Set(['ai_media', 'tech_media']);
 
-export const platformLabelOf = (platform) => PLATFORM_LABELS[platform] || platform || '社交';
-
-/* 只按策展元数据判分层(官方/媒体/个人),不看形态。
-   社交容器的源栏用它做二级分层(「X · 官方」/「X · 个人」)——那里形态已经
-   由容器本身确定,再让 shape 吃掉分层就没得分了。 */
-export const editorialTierOf = (source) => {
-  if (source.provenance_tier === 'tier2_personal_social' || source.source_scope === 'personal_commentary') return 'personal';
-  if (MEDIA_SCOPES.has(source.source_scope) || source.provenance_tier === 'tier1_curated') return 'media';
+/* 源 → 信息角色 key。仅看策展元数据(provenance_tier / source_scope),不看形态。 */
+export const sourceRoleOf = (source) => {
+  const scope = source?.source_scope || '';
+  if (source?.provenance_tier === 'tier2_personal_social' || PERSONAL_SCOPES.has(scope)) return 'personal';
+  if (LEADERBOARD_SCOPES.has(scope)) return 'leaderboard';
+  if (MEDIA_SCOPES.has(scope) || source?.provenance_tier === 'tier1_curated') return 'media';
   return 'official';
 };
 
-/* 形态优先的分组(发现页目录 / 阅读器非社交容器用):
-   social 与 bulletin 各自独立成组,其余按分层。 */
-export const editorialGroupOf = (source) => {
-  const shape = source.shape || 'article';
-  if (shape === 'social') return 'social';
-  if (shape === 'bulletin') return 'bulletin';
-  return editorialTierOf(source);
-};
+export const roleLabelOf = (source) => ROLE_LABEL[sourceRoleOf(source)] || '官方';
+export const roleToneOf = (source) => ROLE_TONE[sourceRoleOf(source)] || 'slate';
+
+/* ── 社交平台标签(shape=social 的源)──
+   平台是「源」的属性、不是每条内容的属性:社交卡片角标只在订阅了 >=2 个平台时才挂、
+   发现页源卡标平台。源栏组头已回归纯角色,不再带平台前缀。 */
+const PLATFORM_LABELS = { x: 'X', mastodon: 'Mastodon', bluesky: 'Bluesky' };
+
+export const platformLabelOf = (platform) => PLATFORM_LABELS[platform] || platform || '社交';

@@ -32,7 +32,8 @@ const ENABLE_CUSTOM_NODE_BUILDER = false;
 import {
   groupBySection,
   labelFrom,
-  tierMeta,
+  roleLabelOf,
+  roleToneOf,
   SOURCE_CHANNEL_LABELS,
   SIGNAL_LABELS,
   NOISE_LABELS,
@@ -73,12 +74,10 @@ const TIER_TONE_CLASS = {
   emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
   sky: 'bg-sky-50 text-sky-700 border-sky-100',
   violet: 'bg-violet-50 text-violet-700 border-violet-100',
+  amber: 'bg-amber-50 text-amber-700 border-amber-100',
   slate: 'bg-[var(--dorami-soft)] text-slate-500 border-[var(--dorami-border)]',
 };
 
-function tierPillClass(tier) {
-  return TIER_TONE_CLASS[tierMeta(tier).tone] || TIER_TONE_CLASS.slate;
-}
 
 function typeLabelOf(fetcher) {
   return labelFrom(SOURCE_CHANNEL_LABELS, fetcher.source_channel) || fetcher.content_type || '节点';
@@ -568,8 +567,9 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           <span className="board-node-id">
             <span className="board-node-name" title={fetcher.name}>
               <span className="board-node-name-text">{fetcher.name}</span>
+              {/* 信息角色标签(官方/媒体/个人/榜单)——与阅读器源栏、发现页统一同一套词汇 */}
               {fetcher.provenance_tier && (
-                <span className={`tier-pill ${tierPillClass(fetcher.provenance_tier)}`}>{tierMeta(fetcher.provenance_tier).short}</span>
+                <span className={`tier-pill ${TIER_TONE_CLASS[roleToneOf(fetcher)]}`} title="信息角色">{roleLabelOf(fetcher)}</span>
               )}
               {/* 观察期:新节点批次质量验收转正前的集中观察标记(不进每日自动采集) */}
               {fetcher.category === 'incubating' && (
