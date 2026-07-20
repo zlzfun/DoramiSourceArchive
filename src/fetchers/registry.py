@@ -86,7 +86,10 @@ DECOMMISSIONED_FETCHER_IDS = frozenset({
     # 它们的抓取器类已从 impl/ 移除，但历史归档文章仍留在库里——若不在此登记，
     # 这些 source_id 会经由"归档来源"并集重新回流到读者层订阅目录，造成订阅分发
     # 与节点管理不同步。读者目录据此排除它们（已订阅者除外，以便退订）。
-    # 删除一个节点时，除了删类 + 从 ESSENTIAL_FETCHER_IDS 移除，也应在此追加其 id。
+    # 删除一个节点时，除了删类 + 从 ESSENTIAL_FETCHER_IDS 移除，也应在此追加其 id，
+    # 并清理指向它的孤儿订阅（reader_subscriptions 中 source_ids 命中该 id 的行）——
+    # 否则 GET /api/reader/sources 的“已订阅者除外，以便退订”口子会让被订阅的下线源
+    # 仍出现在发现页/源栏（2026-07-21 删 x_ai_at_meta/x_openrouter 时踩到，已清理）。
     "docs_gemini_api_changelog",
     "docs_openai_api_changelog",
     "github_qwen_code_releases",
