@@ -8037,17 +8037,21 @@ input[type="radio"] {
   .reader-sub-banner:hover { background: color-mix(in srgb, var(--dorami-accent) 14%, transparent); }
   .reader-sub-banner:disabled { opacity: 0.6; cursor: default; }
 
-  /* 问哆啦美胶囊(样页):墨色底常显标签,accent 星标点睛 */
+  /* 问哆啦美 fab:默认收缩为圆形图标钮(少遮正文),悬停短暂停留后展开为带字胶囊
+     (旧版行为回归,用户拍板;墨色底 + accent 星标不变)。纯 CSS:标签 max-width/opacity
+     过渡,展开加 200ms 延时防扫过误展,收起无延时即时归位。 */
   .reader-ai-fab {
+    /* 星标色挂点:亮色主题胶囊是近黑墨底,accent 原值(#5b54e8)在其上仅 ~2:1 看不清——
+       取品牌亮端混白提亮;暗色主题胶囊翻浅(ink 令牌翻白),由暗色区改派深靛。 */
+    --fab-star: color-mix(in srgb, var(--dorami-blue-2) 55%, #fff);
     position: absolute;
     right: 22px;
     bottom: 22px;
     z-index: 30;
     display: inline-flex;
     align-items: center;
-    gap: 7px;
     height: 40px;
-    padding: 0 16px 0 13px;
+    padding: 0 13px;
     border-radius: var(--r-pill);
     background: var(--dorami-ink);
     color: var(--dorami-canvas);
@@ -8056,13 +8060,33 @@ input[type="radio"] {
     transition: transform var(--motion-fast) var(--motion-ease);
     animation: reader-ai-rise var(--motion-medium) var(--motion-ease);
   }
-  .reader-ai-fab svg { flex: none; color: var(--dorami-accent); }
+  .reader-ai-fab svg { flex: none; color: var(--fab-star); }
   .reader-ai-fab:hover { transform: translateY(-2px); }
   .reader-ai-fab:active { transform: scale(0.97); }
 
   .reader-ai-fab-label {
+    max-width: 0;
+    opacity: 0;
+    margin-left: 0;
+    overflow: hidden;
     font-size: 13px;
     font-weight: 600;
+    transition: max-width var(--motion-medium) var(--motion-ease),
+                opacity var(--motion-medium) var(--motion-ease),
+                margin-left var(--motion-medium) var(--motion-ease);
+  }
+
+  .reader-ai-fab:hover .reader-ai-fab-label,
+  .reader-ai-fab:focus-visible .reader-ai-fab-label {
+    max-width: 6em;
+    opacity: 1;
+    margin-left: 7px;
+    transition-delay: 200ms;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reader-ai-fab { animation: none; transition: none; }
+    .reader-ai-fab-label { transition: none; }
   }
 
   .reader-ai-panel {
@@ -8890,6 +8914,9 @@ input[type="radio"] {
   --rd-list-bg: var(--dorami-well);
   --rd-pane-bg: var(--dorami-soft);
 }
+
+/* 问哆啦美 fab 星标:暗色下胶囊翻浅(bg=ink 令牌=近白),星标改深靛保对比 */
+[data-theme="dark"] .reader-ai-fab { --fab-star: var(--dorami-blue); }
 
 /* 阅读器字号修复:全局无 layer 的 `button{font:inherit}` 会压过 @layer 内
    对 button 写的字号(库内已知陷阱)——把带文字的按钮字号写在 unlayered 区胜出。 */
