@@ -36,7 +36,9 @@ from services import accounts as accounts_service
 from services import ai_usage as ai_usage_service
 from services import content_analytics as content_analytics_service
 from services import daily_brief as daily_brief_service
+from services import jobs as jobs_service
 from services import reader_activity as reader_activity_service
+from services import social_backfill as social_backfill_service
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -289,3 +291,23 @@ def admin_set_ai_beta_global(
 ):
     accounts_service.set_ai_beta_global_enabled(session, params.enabled)
     return {"enabled": accounts_service.ai_beta_global_enabled(session)}
+
+
+@router.post("/social/backfill")
+async def admin_social_backfill():
+    """从归档 raw_data 零网络回填社交扁平字段与源头像缓存。
+
+    提交持久化 ``social_backfill`` job 后立即返回；工作函数的依赖图不包含
+    httpx/fetcher，且只写 extensions_json 与 AppSettingRecord 用户缓存。
+    """
+    engine = deps.get_db_sink().engine
+
+    async def _work(job: jobs_service.Job) -> Dict[str, int]:
+        return social_backfill_service.backfill_social_posts(
+            engine,
+            set_total=job.set_total,
+            advance=job.advance,
+        )
+
+    job = jobs_service.launch(engine, "social_backfill", _work)
+    return {"status": "accepted", "job_id": job.id}

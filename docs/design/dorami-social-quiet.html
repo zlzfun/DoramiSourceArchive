@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>社交媒体流 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   社交媒体流 · 静默仪器样页(X 社交波 v3.12)
+   概念:与「文章」「动态」并列的**第三容器** —— 不是列表条,是宽流卡片。
+
+   七条设计决策(样页即论据):
+   ① **社交独立成容器**(shape: article | bulletin | social)。理由:「动态」装的是
+      changelog / release notes / GitHub trending —— 短条目扫读形态;推文是卡片流
+      直读形态。渲染差异大到要在容器内再分叉,就说明本不该是同一个容器。
+      (2026-07-20 用户目检后提出,采纳。)
+   ② 占「条目列 + 阅读窗」全幅(grid-column 3/-1),单列宽卡、全文直出。
+      理由:推文平均 2~4 行,四带式的阅读窗会空旷得荒谬;点一下才看到
+      全文更是把"刷"变成了"翻"。发现页 DiscoverPage 已开此先例。
+   ③ 头像用项目既有的 LogoMark 品牌语言(官方号)/ handle 首字母色块(个人号),
+      **不引外链 avatar**。理由:全站源标语言一致,且避免为头像再开一条媒体链路。
+   ④ **不展示点赞/转发/评论数**。理由不是取数成本(public_metrics 随请求返回、
+      不额外计费),而是诚实:抓取时刻的数字是永久快照,三天后仍显示当时数值
+      等于主动展示错误信息;要更新就得重抓、烧配额,且违背"归档即快照"。
+      字段照常入库,只是不展示。(Folo 亦如此。)
+   ⑤ **时间戳即原推链接**,不设独立外链按钮。理由:社交媒体通用语汇,零学习成本;
+      早先版本的右上角 ↗ 按钮被用户误读成"分享",语义没传达到即设计失败。
+      腾出的右上角改放悬停浮出的收藏 / 标读 —— 全卡仅有的两个真实动作。
+   ⑥ 转推 = 顶部归属行 + 原作者卡;引用推 = 内缩嵌套卡。二者形态必须可区分,
+      否则读者无法判断"这话是谁说的"。
+   ⑦ **平台是「源」的属性,不是每条内容的属性**(为日后接 Mastodon/Bluesky 预留)。
+      故:源栏分组标签带平台前缀(X · 官方 / X · 个人)始终显示;发现页源卡标平台;
+      而卡片头像角标**仅当订阅了 ≥2 个平台时出现** —— 单平台时每卡挂同一图标是
+      纯噪声,多平台混流时它才是"这话在哪儿说的"的关键。渐进披露,不是条件复杂度。
+      (source_id 命名 x_karpathy 已带平台前缀,扩展时即 mastodon_xxx。)
+
+   密度:定舒适档(单一档,不做密度切换设置项)。
+
+   令牌与刻度 1:1 取自 frontend/src/index.css。
+   卡片内容为**设计占位示意**,非真实推文记录。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --dorami-blue: #5b54e8; --dorami-blue-2: #7b6cf0;
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-card: rgba(255, 255, 255, 0.96); --dorami-wash: rgba(91, 84, 232, 0.08);
+  --dorami-well: #f1f5f9; --dorami-inset-input: inset 0 1px 3px rgba(11, 18, 32, 0.08);
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-strong: rgba(11, 18, 32, 0.15);
+  --dorami-border-soft: rgba(11, 18, 32, 0.06);
+  --dorami-card-bd: transparent; --dorami-edge: rgba(255, 255, 255, 0.62);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --sh-3: 0 4px 10px rgba(11, 18, 32, 0.08), 0 16px 36px rgba(11, 18, 32, 0.11);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-overlay: 16px; --r-pill: 9999px;
+  --state-ok: #059669;   --state-ok-bg: #ecfdf5;
+  --state-warn: #b45309; --state-warn-bg: #fffbeb;
+  --state-bad: #e11d48;  --state-bad-bg: #fff1f2;
+  --state-run: #0284c7;  --state-run-bg: #f0f9ff;
+  --state-idle: #64748b; --state-idle-bg: #f1f5f9;
+  --dorami-scrollbar: rgba(11, 18, 32, 0.2); --dorami-scrollbar-strong: rgba(11, 18, 32, 0.34);
+  --motion-fast: 150ms; --motion-medium: 240ms; --motion-slow: 300ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --vrail: 56px; --col-l: 232px;
+  --rd-list-bg: var(--dorami-soft); --rd-pane-bg: var(--dorami-surface);
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-card: rgba(32, 37, 47, 0.96);
+  --dorami-wash: rgba(124, 112, 235, 0.13);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-strong: rgba(255, 255, 255, 0.16);
+  --dorami-border-soft: rgba(255, 255, 255, 0.07);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08); --dorami-edge: rgba(255, 255, 255, 0.05);
+  --state-ok: #34d399;   --state-ok-bg: #0f241b;
+  --state-warn: #fbbf24; --state-warn-bg: #281e10;
+  --state-bad: #fb7185;  --state-bad-bg: #2a151a;
+  --state-run: #38bdf8;  --state-run-bg: #0e1c27;
+  --state-idle: #99a1ad; --state-idle-bg: #15181f;
+  --dorami-blue: #4d45b5; --dorami-blue-2: #5f57c8;
+  --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --sh-3: 0 4px 10px rgba(0, 0, 0, 0.5), 0 16px 36px rgba(0, 0, 0, 0.6);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --rd-list-bg: var(--dorami-well); --rd-pane-bg: var(--dorami-soft);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink);
+  font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 2px; border-radius: var(--r-sm); }
+img { display: block; max-width: 100%; }
+* { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+*:hover { scrollbar-color: var(--dorami-scrollbar) transparent; }
+
+/* ══ 样页标识条(仅样页,不进产品)══ */
+.demo-bar { position: fixed; top: 0; left: 0; right: 0; height: 26px; z-index: 90;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  background: var(--state-warn-bg); color: var(--state-warn);
+  font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
+  border-bottom: 1px solid color-mix(in srgb, var(--state-warn) 24%, transparent); }
+.demo-bar .demo-tools { position: absolute; right: 12px; display: flex; gap: 6px; }
+.demo-tools button { height: 18px; padding: 0 9px; border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--state-warn) 14%, transparent);
+  color: var(--state-warn); font-size: 10.5px; font-weight: 700; }
+.demo-tools button:hover { background: color-mix(in srgb, var(--state-warn) 24%, transparent); }
+
+/* ══ 四带式壳 ══ */
+.reader-shell { position: fixed; top: 26px; left: 0; right: 0; bottom: 0;
+  display: grid; grid-template-columns: var(--vrail) var(--col-l) minmax(0, 1fr);
+  background: var(--dorami-canvas); }
+.reader-col { min-width: 0; height: 100%; overflow-y: auto; }
+
+/* 视图轨(轨语言) */
+.vrail { background: var(--dorami-surface); border-right: 1px solid var(--dorami-border-soft);
+  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 12px 0 14px; }
+.vrail-brand { width: 30px; height: 30px; border-radius: var(--r-control); background: var(--dorami-blue);
+  display: grid; place-items: center; color: #fff; font-size: 14px; font-weight: 800; margin-bottom: 12px; }
+.vrail-btn { position: relative; width: 40px; height: 40px; border-radius: var(--r-control);
+  display: grid; place-items: center; color: var(--dorami-faint);
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+.vrail-btn:hover { background: var(--dorami-soft); color: var(--dorami-ink-2); }
+.vrail-btn.is-on { background: var(--dorami-wash); color: var(--dorami-accent); }
+.vrail-btn.is-on::before { content: ""; position: absolute; left: -8px; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 20px; background: var(--dorami-blue); border-radius: 0 var(--r-pill) var(--r-pill) 0; }
+.vrail-btn svg { width: 18px; height: 18px; }
+.vrail-spacer { flex: 1; }
+
+/* 源栏 */
+.srcbar { background: var(--rd-list-bg); border-right: 1px solid var(--dorami-border-soft); padding: 10px 8px 20px; }
+.srcbar-head { padding: 4px 8px 10px; display: flex; align-items: center; gap: 7px; }
+.srcbar-title { font-size: 13px; font-weight: 700; }
+.srcbar-count { margin-left: auto; font-size: 11px; font-weight: 700; color: var(--dorami-faint); }
+.src-group { margin-top: 12px; }
+.src-group-label { padding: 0 8px 5px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em;
+  color: var(--dorami-faint); text-transform: uppercase; }
+.src-row { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px;
+  border-radius: var(--r-control); color: var(--dorami-ink-2); cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease); }
+.src-row:hover { background: color-mix(in srgb, var(--dorami-ink) 4%, transparent); }
+.src-row.is-on { background: var(--dorami-wash); color: var(--dorami-accent); font-weight: 600; }
+.src-name { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.src-unread { font-size: 10.5px; font-weight: 700; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.src-row.is-on .src-unread { color: var(--dorami-accent); }
+
+/* ══ 社交流:占「条目列 + 阅读窗」全幅 ══ */
+.social-pane { background: var(--rd-pane-bg); display: flex; flex-direction: column; }
+
+.social-head { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 10px;
+  height: 52px; padding: 0 24px; background: color-mix(in srgb, var(--rd-pane-bg) 88%, transparent);
+  backdrop-filter: blur(12px); border-bottom: 1px solid var(--dorami-border-soft); }
+.social-head-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+.social-head-sub { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); }
+.social-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+.seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--r-pill); background: var(--dorami-well); }
+.seg button { height: 24px; padding: 0 11px; border-radius: var(--r-pill);
+  font-size: 12px; font-weight: 500; color: var(--dorami-muted);
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+.seg button.is-on { background: var(--dorami-surface); color: var(--dorami-ink); font-weight: 600; box-shadow: var(--sh-1); }
+.icon-btn { width: 28px; height: 28px; border-radius: var(--r-control); display: grid; place-items: center;
+  color: var(--dorami-faint); transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+.icon-btn:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+.icon-btn svg { width: 16px; height: 16px; }
+
+.social-scroll { flex: 1; overflow-y: auto; padding: 0 0 60px; }
+/* 单列宽卡 + 最大行长约束(conventions:正文行长纪律) */
+.social-col { max-width: 680px; margin: 0 auto; padding: 0 24px; }
+
+/* 日期组头(与阅读器 sticky 组头同语法) */
+.day-head { position: sticky; top: 0; z-index: 10; margin: 0 -24px; padding: 14px 24px 7px;
+  background: linear-gradient(180deg, var(--rd-pane-bg) 62%, transparent);
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: var(--dorami-faint); }
+
+/* ══ 推文卡 ══ */
+.tweet { position: relative; padding: 16px 0 15px; border-bottom: 1px solid var(--dorami-border-soft); }
+.tweet:last-child { border-bottom: none; }
+/* 未读点:与 reader-entry 的未读语法同源 */
+.tweet::before { content: ""; position: absolute; left: -13px; top: 26px; width: 6px; height: 6px;
+  border-radius: var(--r-pill); background: var(--dorami-accent);
+  transition: opacity var(--motion-medium) var(--motion-ease); }
+.tweet.is-read::before { opacity: 0; }
+.tweet.is-read .tw-text, .tweet.is-read .tw-name { color: var(--dorami-muted); }
+
+/* 转推归属行 */
+.tw-repost { display: flex; align-items: center; gap: 6px; margin: 0 0 8px 46px;
+  font-size: 11.5px; font-weight: 600; color: var(--dorami-faint); }
+.tw-repost svg { width: 13px; height: 13px; }
+
+.tw-body { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 10px; }
+
+/* 头像 = LogoMark 品牌语言(官方号)/ 首字母色块(个人号) */
+.tw-avatar { width: 36px; height: 36px; border-radius: var(--r-pill); display: grid; place-items: center;
+  font-size: 13px; font-weight: 800; color: #fff; overflow: hidden; user-select: none; }
+.tw-avatar.brand { background: var(--dorami-well); color: var(--dorami-ink); font-size: 15px; }
+.tw-avatar.is-openai   { background: #0b1220; color: #fff; }
+.tw-avatar.is-meta     { background: #0064e0; }
+.tw-avatar.is-deepseek { background: #4d6bfe; }
+.tw-avatar.is-qwen     { background: #615ced; }
+.tw-avatar.is-kimi     { background: #0f1114; }
+.tw-avatar.is-router   { background: #6566f1; }
+.tw-avatar.is-person-a { background: linear-gradient(135deg, #f59e0b, #d97706); }
+.tw-avatar.is-person-b { background: linear-gradient(135deg, #14b8a6, #0d9488); }
+
+.tw-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.tw-name { font-size: 13.5px; font-weight: 700; color: var(--dorami-ink); white-space: nowrap; }
+.tw-badge { width: 13px; height: 13px; flex-shrink: 0; color: var(--dorami-accent); align-self: center; }
+.tw-handle, .tw-dot, .tw-time { font-size: 12px; font-weight: 500; color: var(--dorami-faint); white-space: nowrap; }
+.tw-head-sp { flex: 1; min-width: 8px; }
+/* 时间戳即原推链接(社交媒体通用语汇,零学习成本) */
+a.tw-time { text-decoration: none; transition: color var(--motion-fast) var(--motion-ease); }
+a.tw-time:hover { color: var(--dorami-accent); text-decoration: underline; }
+/* 右上角动作组:悬停浮出,只有我们真能做的两件事 */
+.tw-acts { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+
+.tw-text { margin-top: 3px; font-size: 13.5px; line-height: 1.62; color: var(--dorami-ink-2);
+  white-space: pre-wrap; word-break: break-word; }
+.tw-text a { color: var(--dorami-accent); text-decoration: none; }
+.tw-text a:hover { text-decoration: underline; }
+/* 长推折叠 */
+.tw-text.is-clamped { display: -webkit-box; -webkit-line-clamp: 7; -webkit-box-orient: vertical; overflow: hidden; }
+.tw-more { margin-top: 4px; font-size: 12.5px; font-weight: 600; color: var(--dorami-accent); }
+.tw-more:hover { text-decoration: underline; }
+
+/* 图片网格 */
+.tw-media { margin-top: 10px; display: grid; gap: 3px; border-radius: var(--r-card); overflow: hidden;
+  border: 1px solid var(--dorami-border-soft); }
+.tw-media.n1 { grid-template-columns: 1fr; }
+.tw-media.n2 { grid-template-columns: 1fr 1fr; }
+.tw-media.n3 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.tw-media.n3 .ph:first-child { grid-row: span 2; }
+.tw-media.n4 { grid-template-columns: 1fr 1fr; }
+.ph { position: relative; background: var(--dorami-well); aspect-ratio: 16 / 9;
+  display: grid; place-items: center; overflow: hidden; }
+.tw-media.n1 .ph { aspect-ratio: 16 / 8.4; }
+.tw-media.n3 .ph:first-child { aspect-ratio: auto; }
+.tw-media.n2 .ph, .tw-media.n4 .ph { aspect-ratio: 1 / 1; }
+/* 占位图纹(样页示意;产品里是 mediaProxyUrl 取回的真实图) */
+.ph::after { content: ""; position: absolute; inset: 0;
+  background: repeating-linear-gradient(135deg, transparent 0 9px, color-mix(in srgb, var(--dorami-ink) 3.5%, transparent) 9px 18px); }
+.ph i { position: relative; z-index: 1; font-size: 10.5px; font-style: normal; font-weight: 600;
+  color: var(--dorami-faint); letter-spacing: 0.03em; }
+
+/* 引用推嵌套卡 */
+.tw-quote { margin-top: 10px; padding: 11px 13px; border-radius: var(--r-card);
+  border: 1px solid var(--dorami-border); background: color-mix(in srgb, var(--dorami-ink) 2.5%, transparent);
+  transition: background var(--motion-fast) var(--motion-ease); cursor: pointer; }
+.tw-quote:hover { background: color-mix(in srgb, var(--dorami-ink) 4.5%, transparent); }
+.tw-quote-head { display: flex; align-items: center; gap: 6px; }
+.tw-quote-avatar { width: 17px; height: 17px; border-radius: var(--r-pill); display: grid; place-items: center;
+  font-size: 8.5px; font-weight: 800; color: #fff; }
+.tw-quote-name { font-size: 12.5px; font-weight: 700; color: var(--dorami-ink); }
+.tw-quote-meta { font-size: 11.5px; color: var(--dorami-faint); }
+.tw-quote-text { margin-top: 4px; font-size: 12.5px; line-height: 1.55; color: var(--dorami-muted); }
+
+/* 平台角标:仅当订阅了 ≥2 个平台时出现(单平台时每卡同一图标 = 纯噪声)。
+   贴在头像右下,不占额外行。 */
+.tw-avatar-wrap { position: relative; width: 36px; height: 36px; }
+.tw-plat { position: absolute; right: -3px; bottom: -3px; width: 15px; height: 15px;
+  border-radius: var(--r-pill); display: none; place-items: center;
+  background: var(--rd-pane-bg); box-shadow: 0 0 0 1.5px var(--rd-pane-bg); }
+.tw-plat svg { width: 9px; height: 9px; color: var(--dorami-ink); }
+body.multi-platform .tw-plat { display: grid; }
+/* 第二平台的源分组:单平台态不存在,故隐藏 */
+.src-group.platform-2 { display: none; }
+body.multi-platform .src-group.platform-2 { display: block; }
+
+/* 收藏 / 标读 —— 全卡仅有的两个动作 */
+.tw-act { width: 26px; height: 26px; border-radius: var(--r-sm); display: grid; place-items: center;
+  color: var(--dorami-faint); opacity: 0; transition: opacity var(--motion-fast) var(--motion-ease),
+  background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+.tweet:hover .tw-act { opacity: 1; }
+.tw-act:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+.tw-act.is-fav { opacity: 1; color: var(--state-warn); }
+.tw-act svg { width: 15px; height: 15px; }
+/* 收藏是持久状态,不随悬停消失 */
+.tweet .tw-act.is-fav { opacity: 1; }
+
+/* 底部到底提示 */
+.flow-end { padding: 26px 0 10px; text-align: center; font-size: 11.5px; color: var(--dorami-faint); }
+</style>
+</head>
+<body>
+
+<div class="demo-bar">
+  样页 · 卡片内容为设计占位示意,非真实推文记录
+  <span class="demo-tools">
+    <button onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? '' : 'dark'">亮 / 暗</button>
+    <button onclick="document.body.classList.toggle('multi-platform')">单平台 / 多平台</button>
+  </span>
+</div>
+
+<div class="reader-shell">
+
+  <!-- ── 视图轨 ── -->
+  <nav class="reader-col vrail">
+    <div class="vrail-brand">哆</div>
+    <button class="vrail-btn" title="今日">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+    </button>
+    <button class="vrail-btn" title="文章">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
+    </button>
+    <button class="vrail-btn" title="动态">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg>
+    </button>
+    <button class="vrail-btn is-on" title="社交媒体">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.9 7.9"/></svg>
+    </button>
+    <button class="vrail-btn" title="发现">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg>
+    </button>
+    <button class="vrail-btn" title="搜索">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    </button>
+    <div class="vrail-spacer"></div>
+    <button class="vrail-btn" title="设置">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  </nav>
+
+  <!-- ── 源栏(动态容器内) ── -->
+  <aside class="reader-col srcbar">
+    <div class="srcbar-head">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--dorami-accent)"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.9 7.9"/></svg>
+      <span class="srcbar-title">全部社交</span>
+      <span class="srcbar-count">37</span>
+    </div>
+
+    <div class="src-group">
+      <div class="src-group-label">X · 官方</div>
+      <div class="src-row is-on"><span class="src-name">OpenAI</span><span class="src-unread">6</span></div>
+      <div class="src-row"><span class="src-name">Meta AI</span><span class="src-unread">4</span></div>
+      <div class="src-row"><span class="src-name">DeepSeek</span><span class="src-unread">3</span></div>
+      <div class="src-row"><span class="src-name">Qwen</span><span class="src-unread">8</span></div>
+      <div class="src-row"><span class="src-name">Moonshot AI</span><span class="src-unread">2</span></div>
+      <div class="src-row"><span class="src-name">OpenRouter</span><span class="src-unread">9</span></div>
+    </div>
+
+    <div class="src-group">
+      <div class="src-group-label">X · 个人</div>
+      <div class="src-row"><span class="src-name">Andrej Karpathy</span><span class="src-unread">3</span></div>
+      <div class="src-row"><span class="src-name">Sam Altman</span><span class="src-unread">2</span></div>
+    </div>
+
+    <!-- 多平台示意:平台是「源」的属性,分组标签天然承载它,加平台无需改结构 -->
+    <div class="src-group platform-2">
+      <div class="src-group-label">Mastodon · 个人</div>
+      <div class="src-row"><span class="src-name">某研究者</span><span class="src-unread">1</span></div>
+    </div>
+  </aside>
+
+  <!-- ── 社交流(占条目列 + 阅读窗全幅) ── -->
+  <section class="reader-col social-pane">
+
+    <header class="social-head">
+      <span class="social-head-title">社交媒体</span>
+      <span class="social-head-sub">8 个账号 · 37 条未读</span>
+      <div class="social-head-actions">
+        <div class="seg">
+          <button>全部</button>
+          <button class="is-on">未读</button>
+        </div>
+        <button class="icon-btn" title="全部标为已读">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 12 5 5L17 7"/><path d="m12 17 5-5"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="social-scroll">
+      <div class="social-col">
+
+        <div class="day-head">今天 · 7月20日</div>
+
+        <!-- ① 官方 + 单张大图 -->
+        <article class="tweet">
+          <div class="tw-body">
+            <div class="tw-avatar-wrap"><div class="tw-avatar is-openai">◎</div><span class="tw-plat" title="X(推特)"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.9 1.2h3.7l-8 9.2 9.4 12.4h-7.4l-5.8-7.6-6.6 7.6H.5l8.6-9.8L0 1.2h7.6l5.2 6.9zM17.6 20.6h2L6.5 3.3H4.3z"/></svg></span></div>
+            <div>
+              <div class="tw-head">
+                <span class="tw-name">OpenAI</span>
+                <svg class="tw-badge" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 9.8 4.6 6.4 4l-.6 3.4L2.6 9.6 4.4 12l-1.8 2.4 3.2 2.2.6 3.4 3.4-.6L12 22l2.2-2.6 3.4.6.6-3.4 3.2-2.2L19.6 12l1.8-2.4-3.2-2.2-.6-3.4-3.4.6z"/></svg>
+                <span class="tw-handle">@OpenAI</span><span class="tw-dot">·</span><a class="tw-time" href="#" title="在 X 打开原推">2 小时前</a>
+                <span class="tw-head-sp"></span>
+                <span class="tw-acts"><button class="tw-act" title="收藏"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 20.9l1.1-6.5L2.6 9.8l6.5-.9z"/></svg> </button><button class="tw-act" title="标为已读"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 12 6 6 12-12"/></svg> </button></span>
+              </div>
+              <div class="tw-text">新版本已开始向全部付费用户灰度推送,上下文窗口与工具调用稳定性均有提升。完整更新说明见文档站,API 侧无需改动即可享受。</div>
+              <div class="tw-media n1"><div class="ph"><i>推文配图 · 经媒体库代理</i></div></div>
+              </div>
+          </div>
+        </article>
+
+        <!-- ② 个人长推 + 折叠 -->
+        <article class="tweet">
+          <div class="tw-body">
+            <div class="tw-avatar-wrap"><div class="tw-avatar is-person-a">A</div><span class="tw-plat" title="X(推特)"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.9 1.2h3.7l-8 9.2 9.4 12.4h-7.4l-5.8-7.6-6.6 7.6H.5l8.6-9.8L0 1.2h7.6l5.2 6.9zM17.6 20.6h2L6.5 3.3H4.3z"/></svg></span></div>
+            <div>
+              <div class="tw-head">
+                <span class="tw-name">Andrej Karpathy</span>
+                <span class="tw-handle">@karpathy</span><span class="tw-dot">·</span><a class="tw-time" href="#" title="在 X 打开原推">4 小时前</a>
+                <span class="tw-head-sp"></span>
+                <span class="tw-acts"><button class="tw-act is-fav" title="已收藏"> <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="m12 3 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 20.9l1.1-6.5L2.6 9.8l6.5-.9z"/></svg> </button><button class="tw-act" title="标为已读"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 12 6 6 12-12"/></svg> </button></span>
+              </div>
+              <div class="tw-text is-clamped">这段时间在重写训练循环,记一些体会。
+
+第一,绝大多数所谓的"优化"在真实数据规模下都会失效,因为瓶颈根本不在你以为的地方。先测量,再动手,这条老规矩在这里格外管用。
+
+第二,把评测做扎实的收益远大于再调一轮超参。评测不可信的时候,所有的改进都只是噪声上的随机游走,而你会浪费好几周去追一个并不存在的提升。
+
+第三,代码的可读性就是迭代速度。半年后回头看,读不懂的聪明写法一律是负资产。
+
+第四,小规模复现能力被严重低估了。能在单卡上跑通的最小版本,是你理解整个系统最便宜的入口。</div>
+              <button class="tw-more">显示更多</button>
+              </div>
+          </div>
+        </article>
+
+        <!-- ③ 哨兵号 + 引用推嵌套 -->
+        <article class="tweet">
+          <div class="tw-body">
+            <div class="tw-avatar-wrap"><div class="tw-avatar is-router">↗</div><span class="tw-plat" title="X(推特)"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.9 1.2h3.7l-8 9.2 9.4 12.4h-7.4l-5.8-7.6-6.6 7.6H.5l8.6-9.8L0 1.2h7.6l5.2 6.9zM17.6 20.6h2L6.5 3.3H4.3z"/></svg></span></div>
+            <div>
+              <div class="tw-head">
+                <span class="tw-name">OpenRouter</span>
+                <span class="tw-handle">@openrouter</span><span class="tw-dot">·</span><a class="tw-time" href="#" title="在 X 打开原推">5 小时前</a>
+                <span class="tw-head-sp"></span>
+                <span class="tw-acts"><button class="tw-act" title="收藏"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 20.9l1.1-6.5L2.6 9.8l6.5-.9z"/></svg> </button><button class="tw-act" title="标为已读"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 12 6 6 12-12"/></svg> </button></span>
+              </div>
+              <div class="tw-text">已上线,现在可以直接在平台上调用。前 24 小时限流会宽松一些。</div>
+              <div class="tw-quote">
+                <div class="tw-quote-head">
+                  <span class="tw-quote-avatar is-qwen">Q</span>
+                  <span class="tw-quote-name">Qwen</span>
+                  <span class="tw-quote-meta">@Alibaba_Qwen · 6 小时前</span>
+                </div>
+                <div class="tw-quote-text">新一代开源模型权重已发布,提供多个参数规模档位,许可证保持宽松。评测与技术报告随后放出。</div>
+              </div>
+              </div>
+          </div>
+        </article>
+
+        <!-- ④ 转推 + 双图 -->
+        <article class="tweet">
+          <div class="tw-repost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2.1 21 6l-4 3.9"/><path d="M3 12V9a3 3 0 0 1 3-3h15"/><path d="M7 21.9 3 18l4-3.9"/><path d="M21 12v3a3 3 0 0 1-3 3H3"/></svg>
+            Meta AI 转推
+          </div>
+          <div class="tw-body">
+            <div class="tw-avatar-wrap"><div class="tw-avatar is-person-b">R</div><span class="tw-plat" title="X(推特)"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.9 1.2h3.7l-8 9.2 9.4 12.4h-7.4l-5.8-7.6-6.6 7.6H.5l8.6-9.8L0 1.2h7.6l5.2 6.9zM17.6 20.6h2L6.5 3.3H4.3z"/></svg></span></div>
+            <div>
+              <div class="tw-head">
+                <span class="tw-name">研究员账号</span>
+                <span class="tw-handle">@researcher</span><span class="tw-dot">·</span><a class="tw-time" href="#" title="在 X 打开原推">7 小时前</a>
+                <span class="tw-head-sp"></span>
+                <span class="tw-acts"><button class="tw-act" title="收藏"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 20.9l1.1-6.5L2.6 9.8l6.5-.9z"/></svg> </button><button class="tw-act" title="标为已读"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 12 6 6 12-12"/></svg> </button></span>
+              </div>
+              <div class="tw-text">把训练细节整理成了一篇长文,包含消融实验与失败尝试。希望对做同方向的人有帮助。</div>
+              <div class="tw-media n2"><div class="ph"><i>图 1</i></div><div class="ph"><i>图 2</i></div></div>
+              </div>
+          </div>
+        </article>
+
+        <!-- ⑤ 极短一句 -->
+        <article class="tweet">
+          <div class="tw-body">
+            <div class="tw-avatar-wrap"><div class="tw-avatar is-person-a" style="background:linear-gradient(135deg,#64748b,#475569)">S</div><span class="tw-plat" title="X(推特)"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.9 1.2h3.7l-8 9.2 9.4 12.4h-7.4l-5.8-7.6-6.6 7.6H.5l8.6-9.8L0 1.2h7.6l5.2 6.9zM17.6 20.6h2L6.5 3.3H4.3z"/></svg></span></div>
+            <div>
+              <div class="tw-head">
+                <span class="tw-name">Sam Altman</span>
+                <span class="tw-handle">@sama</span><span class="tw-dot">·</span><a class="tw-time" href="#" title="在 X 打开原推">9 小时前</a>
+                <span class="tw-head-sp"></span>
+                <span class="tw-acts"><button class="tw-act" title="收藏"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 20.9l1.1-6.5L2.6 9.8l6.5-.9z"/></svg> </button><button class="tw-act" title="标为已读"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 12 6 6 12-12"/></svg> </button></span>
+              </div>
+              <div class="tw-text">下周会很有意思。</div>
+              </div>
+          </div>
+        </article>
+
+        <div class="day-head">昨天 · 7月19日</div>
+
+        <!-- ⑥ 四图 2×2 -->
+        <article class="tweet">
+          <div class="tw-body">
+            <div class="tw-avatar-wrap"><div class="tw-avatar is-deepseek">D</div><span class="tw-plat" title="X(推特)"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.9 1.2h3.7l-8 9.2 9.4 12.4h-7.4l-5.8-7.6-6.6 7.6H.5l8.6-9.8L0 1.2h7.6l5.2 6.9zM17.6 20.6h2L6.5 3.3H4.3z"/></svg></span></div>
+            <div>
+              <div class="tw-head">
+                <span class="tw-name">DeepSeek</span>
+                <svg class="tw-badge" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 9.8 4.6 6.4 4l-.6 3.4L2.6 9.6 4.4 12l-1.8 2.4 3.2 2.2.6 3.4 3.4-.6L12 22l2.2-2.6 3.4.6.6-3.4 3.2-2.2L19.6 12l1.8-2.4-3.2-2.2-.6-3.4-3.4.6z"/></svg>
+                <span class="tw-handle">@deepseek_ai</span><span class="tw-dot">·</span><a class="tw-time" href="#" title="在 X 打开原推">昨天 21:40</a>
+                <span class="tw-head-sp"></span>
+                <span class="tw-acts"><button class="tw-act" title="收藏"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 20.9l1.1-6.5L2.6 9.8l6.5-.9z"/></svg> </button><button class="tw-act" title="标为已读"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 12 6 6 12-12"/></svg> </button></span>
+              </div>
+              <div class="tw-text">技术报告已上传,四张图概括了本次的主要改动与评测结果。权重与推理代码同步开放。</div>
+              <div class="tw-media n4"><div class="ph"><i>图 1</i></div><div class="ph"><i>图 2</i></div><div class="ph"><i>图 3</i></div><div class="ph"><i>图 4</i></div></div>
+              </div>
+          </div>
+        </article>
+
+        <!-- ⑦ 三图布局 -->
+        <article class="tweet">
+          <div class="tw-body">
+            <div class="tw-avatar-wrap"><div class="tw-avatar is-kimi">K</div><span class="tw-plat" title="X(推特)"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.9 1.2h3.7l-8 9.2 9.4 12.4h-7.4l-5.8-7.6-6.6 7.6H.5l8.6-9.8L0 1.2h7.6l5.2 6.9zM17.6 20.6h2L6.5 3.3H4.3z"/></svg></span></div>
+            <div>
+              <div class="tw-head">
+                <span class="tw-name">Moonshot AI</span>
+                <span class="tw-handle">@Kimi_Moonshot</span><span class="tw-dot">·</span><a class="tw-time" href="#" title="在 X 打开原推">昨天 16:05</a>
+                <span class="tw-head-sp"></span>
+                <span class="tw-acts"><button class="tw-act" title="收藏"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 20.9l1.1-6.5L2.6 9.8l6.5-.9z"/></svg> </button><button class="tw-act" title="标为已读"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 12 6 6 12-12"/></svg> </button></span>
+              </div>
+              <div class="tw-text">长上下文场景下的三组对比实验,横轴是输入长度。</div>
+              <div class="tw-media n3"><div class="ph"><i>主图</i></div><div class="ph"><i>图 2</i></div><div class="ph"><i>图 3</i></div></div>
+              </div>
+          </div>
+        </article>
+
+        <!-- ⑧ 已读态(对比) -->
+        <article class="tweet is-read">
+          <div class="tw-body">
+            <div class="tw-avatar-wrap"><div class="tw-avatar is-meta">M</div><span class="tw-plat" title="X(推特)"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.9 1.2h3.7l-8 9.2 9.4 12.4h-7.4l-5.8-7.6-6.6 7.6H.5l8.6-9.8L0 1.2h7.6l5.2 6.9zM17.6 20.6h2L6.5 3.3H4.3z"/></svg></span></div>
+            <div>
+              <div class="tw-head">
+                <span class="tw-name">Meta AI</span>
+                <span class="tw-handle">@AIatMeta</span><span class="tw-dot">·</span><a class="tw-time" href="#" title="在 X 打开原推">昨天 11:22</a>
+                <span class="tw-head-sp"></span>
+                <span class="tw-acts"><button class="tw-act" title="收藏"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 20.9l1.1-6.5L2.6 9.8l6.5-.9z"/></svg> </button><button class="tw-act" title="标为未读"> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/></svg> </button></span>
+              </div>
+              <div class="tw-text">研究团队开放了一批新的基准数据集,附带评测脚本与基线结果。已读状态下正文与名称降一档灰度,未读点隐去。</div>
+              </div>
+          </div>
+        </article>
+
+        <div class="flow-end">已到底部 · 下次采集在 06:00</div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+document.querySelectorAll('.tw-more').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    var text = btn.previousElementSibling;
+    var clamped = text.classList.toggle('is-clamped');
+    btn.textContent = clamped ? '显示更多' : '收起';
+  });
+});
+document.querySelectorAll('.seg button').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    btn.parentElement.querySelectorAll('button').forEach(function (b) { b.classList.remove('is-on'); });
+    btn.classList.add('is-on');
+  });
+});
+</script>
+</body>
+</html>

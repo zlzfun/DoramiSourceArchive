@@ -19,6 +19,7 @@ GENERIC_ADVANCED_FETCHER_IDS = {
     "generic_github_releases",
     "generic_github_repositories",
     "generic_huggingface_models",
+    "generic_x_timeline",
 }
 
 
@@ -27,6 +28,7 @@ def test_selected_fetcher_ids_excludes_generic_advanced_by_default():
 
     assert fetcher_ids
     assert not (fetcher_ids & GENERIC_ADVANCED_FETCHER_IDS)
+    assert not any(fetcher_id.startswith("x_") for fetcher_id in fetcher_ids)
 
 
 def test_selected_fetcher_ids_can_include_advanced_nodes():

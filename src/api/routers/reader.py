@@ -21,7 +21,7 @@ from sqlmodel import Session, func, select
 
 from api import deps
 from api.articles_view import serialize_article_list_item
-from api.routers.articles import bulletin_shape_condition
+from api.routers.articles import content_shape_condition
 from api.tokens import generate_feed_token, hash_subscription_token, subscription_token_preview
 from api.sources import (
     DAILY_BRIEF_SOURCE_ID,
@@ -29,6 +29,10 @@ from api.sources import (
     _friendly_source_name,
     _registry_source_meta,
     _source_category,
+    VALID_CONTENT_SHAPES,
+    configured_source_content_type,
+    configured_source_platform,
+    configured_source_shape,
     source_shape,
     subscription_source_ids,
 )
@@ -39,12 +43,14 @@ from models.db import (
     ReaderFavoriteRecord,
     ReaderFeedTokenRecord,
     ReaderSubscriptionRecord,
+    SourceConfigRecord,
 )
 from services import accounts as accounts_service
 from services import daily_brief as daily_brief_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
 from services import reader_state as reader_state_service
+from services import x_api_config as x_api_config_service
 
 router = APIRouter(prefix="/api/reader", tags=["reader"])
 
@@ -56,6 +62,50 @@ def _app():
 
 def _now_iso() -> str:
     return datetime.datetime.now().isoformat()
+
+
+def _configured_source_meta(session: Session) -> Dict[str, Dict[str, Any]]:
+    """SourceConfig 的读者目录元数据；尤其覆盖尚无产出的配置源形态。"""
+    result: Dict[str, Dict[str, Any]] = {}
+    for record in session.exec(select(SourceConfigRecord)).all():
+        try:
+            tags = json.loads(record.content_tags_json or "[]")
+        except (TypeError, json.JSONDecodeError):
+            tags = []
+        result[record.source_id] = {
+            "id": record.source_id,
+            "name": record.name,
+            "desc": record.description,
+            "icon": "𝕏" if configured_source_shape(record.source_type, record.fetcher_id) == "social" else "",
+            "content_type": configured_source_content_type(record.source_type, record.fetcher_id),
+            "shape": configured_source_shape(record.source_type, record.fetcher_id),
+            "platform": configured_source_platform(record.source_type, record.fetcher_id),
+            "source_owner": record.source_owner,
+            "source_brand": record.source_brand,
+            "source_scope": record.source_scope,
+            "source_channel": record.source_channel,
+            "provenance_tier": record.provenance_tier,
+            "base_url": record.base_url or record.url,
+            "content_tags": tags if isinstance(tags, list) else [],
+        }
+    return result
+
+
+def _primary_content_types(session: Session, source_ids: List[str]) -> Dict[str, str]:
+    """未注册/未配置源按归档主 content_type 解析形态。"""
+    if not source_ids:
+        return {}
+    rows = session.exec(
+        select(ArticleRecord.source_id, ArticleRecord.content_type, func.count(ArticleRecord.id))
+        .where(ArticleRecord.source_id.in_(source_ids))
+        .group_by(ArticleRecord.source_id, ArticleRecord.content_type)
+    ).all()
+    primary: Dict[str, tuple[int, str]] = {}
+    for source_id, content_type, count in rows:
+        candidate = (int(count or 0), content_type)
+        if candidate[0] > primary.get(source_id, (-1, ""))[0]:
+            primary[source_id] = candidate
+    return {source_id: value[1] for source_id, value in primary.items()}
 
 
 def resolve_favorite_article_ids(session: Session, username: str) -> List[str]:
@@ -225,18 +275,20 @@ def mark_all_read(
 ):
     """把当前用户订阅源标为已读（推进各源水位到当下），返回更新后的未读统计。
 
-    可选 shape=article|bulletin:只标对应形态的源(阅读器容器化视图——「文章/动态」
-    各自的全部标读作用于本容器,不越界)。未传 = 全部订阅。
+    可选 shape=article|bulletin|social:只标对应形态的源，不越容器边界。
+    未传 = 全部订阅。
     """
     app = _app()
     username = app.current_username(request)
     source_ids = app.resolve_subscribed_source_ids(session, username)
     shape_value = (shape or "").strip().lower()
-    if shape_value in {"article", "bulletin"}:
+    if shape_value in VALID_CONTENT_SHAPES:
         registry_meta = _registry_source_meta()
+        source_meta = {**_configured_source_meta(session), **registry_meta}
+        content_types = _primary_content_types(session, source_ids)
         source_ids = [
             sid for sid in source_ids
-            if source_shape(sid, None, registry_meta) == shape_value
+            if source_shape(sid, content_types.get(sid), source_meta) == shape_value
         ]
     return _mark_all_read_response(app, session, username, source_ids)
 
@@ -268,7 +320,7 @@ def list_favorites(
     """当前用户的收藏文章列表，按收藏时间倒序；同时回传全部收藏 ID 集合。
 
     join 文章表后，已被删除文章的孤儿收藏自然被过滤掉，不出现在列表里。
-    可选 shape=article|bulletin:容器内收藏(「文章/动态」视图各自的收藏过滤器)。
+    可选 shape=article|bulletin|social:容器内收藏过滤器。
     """
     app = _app()
     username = app.current_username(request)
@@ -289,9 +341,8 @@ def list_favorites(
         base = base.where(ArticleRecord.source_id == source_id)
         count_query = count_query.where(ArticleRecord.source_id == source_id)
     shape_value = (shape or "").strip().lower()
-    if shape_value in {"article", "bulletin"}:
-        bulletin_cond = bulletin_shape_condition()
-        cond = bulletin_cond if shape_value == "bulletin" else ~bulletin_cond
+    if shape_value in VALID_CONTENT_SHAPES:
+        cond = content_shape_condition(shape_value, session)
         base = base.where(cond)
         count_query = count_query.where(cond)
     if search:
@@ -395,6 +446,9 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
     username = app.current_username(request)
     app.ensure_default_subscriptions(username)
     registry_meta = _registry_source_meta()
+    configured_meta = _configured_source_meta(session)
+    source_meta = {**configured_meta, **registry_meta}
+    x_user_caches = x_api_config_service.all_user_caches(session)
     rows = session.exec(
         select(
             ArticleRecord.source_id,
@@ -412,13 +466,14 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
     def _ensure_entry(source_id: str, content_type: Optional[str] = None) -> Dict[str, Any]:
         entry = by_source.get(source_id)
         if entry is None:
-            meta = registry_meta.get(source_id, {})
+            meta = source_meta.get(source_id, {})
             if source_id == DAILY_BRIEF_SOURCE_ID:
                 meta = {**DAILY_BRIEF_SOURCE_META, **meta}
             resolved_type = content_type or meta.get("content_type") or ""
+            cached_profile = x_user_caches.get(source_id, {})
             entry = {
                 "source_id": source_id,
-                "name": meta.get("name") or _friendly_source_name(source_id, registry_meta),
+                "name": meta.get("name") or _friendly_source_name(source_id, source_meta),
                 "description": meta.get("desc", ""),
                 "icon": meta.get("icon", ""),
                 "source_owner": meta.get("source_owner", ""),
@@ -430,21 +485,36 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
                 "content_tags": meta.get("content_tags", []),
                 "content_type": resolved_type,
                 "category": _source_category(resolved_type),
-                "shape": source_shape(source_id, resolved_type, registry_meta),
+                "shape": source_shape(source_id, resolved_type, source_meta),
+                "platform": meta.get("platform") or "",
+                # 源栏优先使用 400x400 头像；同时保留原始 URL 供降级/调试。
+                "avatar_url": cached_profile.get("author_avatar_url_large")
+                or cached_profile.get("author_avatar_url") or "",
+                "avatar_url_original": cached_profile.get("author_avatar_url") or "",
                 "count": 0,
                 "last_fetched": "",
                 "subscribed": source_id in subscribed_ids,
                 "registered": source_id in registry_meta,
+                "configured": source_id in configured_meta,
                 "_primary_count": -1,
             }
             by_source[source_id] = entry
         return entry
 
     # 1. 所有已注册抓取源（含历史产出为 0 者，使新源可被提前订阅）。
-    for source_id in registry_meta:
+    #    跳过 is_template 模板源（generic_rss / generic_x_timeline 等）：它们是
+    #    source-config/source-builder 的执行基座、非可订阅的具体来源，前端节点目录
+    #    已按 is_template 过滤，读者订阅目录同样不应出现「通用 XXX」。
+    for source_id, meta in registry_meta.items():
+        if meta.get("is_template"):
+            continue
         _ensure_entry(source_id)
 
-    # 1b. 日报特殊源：即使尚未生成过日报也预先出现，便于提前订阅。
+    # 1b. 所有 SourceConfig 源：即使尚未产出，也携带正确形态进入可订阅目录。
+    for source_id in configured_meta:
+        _ensure_entry(source_id)
+
+    # 1c. 日报特殊源：即使尚未生成过日报也预先出现，便于提前订阅。
     _ensure_entry(DAILY_BRIEF_SOURCE_ID, "daily_brief")
 
     # 2. 叠加归档文章聚合（含未注册的导入源，如 social_post）；主 content_type 取计数最高者。
@@ -463,7 +533,7 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
             entry["_primary_count"] = int(count or 0)
             entry["content_type"] = content_type
             entry["category"] = _source_category(content_type)
-            entry["shape"] = source_shape(source_id, content_type, registry_meta)
+            entry["shape"] = source_shape(source_id, content_type, source_meta)
 
     # 3. 已订阅但既未注册也无归档的来源也要出现，便于退订。
     for source_id in subscribed_ids:

@@ -12,6 +12,7 @@ GENERIC_ADVANCED_FETCHER_IDS = {
     "generic_github_releases",
     "generic_github_repositories",
     "generic_huggingface_models",
+    "generic_x_timeline",
 }
 
 

@@ -140,6 +140,8 @@ class SocialPostContent(BaseContent):
     author_id: str = field(default="", metadata={"description": "作者稳定 ID"})
     author_handle: str = field(default="", metadata={"description": "作者 handle"})
     author_name: str = field(default="", metadata={"description": "作者展示名称"})
+    author_avatar_url: str = field(default="", metadata={"description": "作者原始头像 URL"})
+    author_avatar_url_large: str = field(default="", metadata={"description": "作者大尺寸头像 URL"})
     post_id: str = field(default="", metadata={"description": "平台原始帖子 ID"})
     conversation_id: str = field(default="", metadata={"description": "会话或 thread ID"})
     in_reply_to_id: str = field(default="", metadata={"description": "回复目标 ID"})
@@ -149,6 +151,19 @@ class SocialPostContent(BaseContent):
     tags: List[str] = field(default_factory=list, metadata={"description": "标签"})
     media_urls: List[str] = field(default_factory=list, metadata={"description": "媒体 URL 列表"})
     metrics: Dict[str, Any] = field(default_factory=dict, metadata={"description": "平台指标，如点赞/转发/回复"})
+    # 跨平台引用/转载抽象：适配器在入库前把各平台原始 JSON 归一化为
+    # {author_name, author_handle, author_avatar_url, author_avatar_url_large,
+    #  text, url, media_urls}，前端不得依赖 X includes.tweets。
+    # 作者契约：顶层 author_* 始终是时间线账号（转推者）；
+    # reposted.author_* 才是原帖作者。无对应语义时序列化器省略该键。
+    quoted: Optional[Dict[str, Any]] = field(
+        default=None,
+        metadata={"description": "被引用帖摘要", "omit_if_none": True},
+    )
+    reposted: Optional[Dict[str, Any]] = field(
+        default=None,
+        metadata={"description": "被转载原帖摘要", "omit_if_none": True},
+    )
     raw_data: Optional[Dict[str, Any]] = field(default_factory=dict,
                                                metadata={"description": "外部采集器提供的原始数据"})
 
@@ -309,6 +324,8 @@ def serialize_to_metadata(content_obj: BaseContent) -> Dict[str, Any]:
 
     for f in fields(content_obj):
         value = getattr(content_obj, f.name)
+        if value is None and f.metadata.get("omit_if_none"):
+            continue
         if f.name in base_field_names:
             metadata[f.name] = value
         else:

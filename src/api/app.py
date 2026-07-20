@@ -128,6 +128,7 @@ from api.routers.monitoring import (
     build_fetcher_health,
     build_fetcher_health_from_state,
 )
+from api.routers import x_api as x_api_router
 from api.routers import source_configs as source_configs_router
 from api.routers.source_configs import (
     SourceConfigCreate,
@@ -281,6 +282,7 @@ COLLECTOR_API_PREFIXES = (
     "/api/fetchers",
     "/api/source-health",
     "/api/source-states",
+    "/api/x-api",
     "/api/fetch-runs",
     # 注意：必须是 "/api/fetch"（不带尾斜杠）。_path_matches 用 startswith(prefix + "/")，
     # 若写成 "/api/fetch/" 会比对 "/api/fetch//"，导致 /api/fetch/{id}、/api/fetch/batch
@@ -358,8 +360,8 @@ def archive_import_requires_admin(path: str, method: str) -> bool:
 
 
 def account_admin_required(path: str) -> bool:
-    """账户管理面（/api/accounts*）与运维管理面（/api/admin*）一律仅限 admin 角色，独立于 runtime 采集轴。"""
-    return _path_matches(path, ("/api/accounts", "/api/admin"))
+    """账户/运维/X API 机密与计费管理一律仅限 admin，独立于 runtime 采集轴。"""
+    return _path_matches(path, ("/api/accounts", "/api/admin", "/api/x-api"))
 
 
 @asynccontextmanager
@@ -514,6 +516,7 @@ app.include_router(subscriptions_router.router)
 app.include_router(articles_router.router)
 app.include_router(vector_router.router)
 app.include_router(monitoring_router.router)
+app.include_router(x_api_router.router)
 app.include_router(source_configs_router.router)
 app.include_router(archive_sync_router.router)
 app.include_router(collection_router.router)
@@ -1223,10 +1226,11 @@ def mark_source_state_finished(
             state.latest_error_type = ""
             state.latest_error_message = None
             latest_content_id = getattr(result, "latest_content_id", "") if result else ""
+            latest_cursor_value = getattr(result, "latest_cursor_value", "") if result else ""
             latest_publish_date = getattr(result, "latest_content_publish_date", "") if result else ""
             if latest_content_id:
                 state.last_content_id = latest_content_id
-                state.last_cursor_value = latest_content_id
+                state.last_cursor_value = latest_cursor_value or latest_content_id
             if latest_publish_date:
                 state.last_cursor_date = latest_publish_date
             if result and getattr(result, "latest_content_type", ""):

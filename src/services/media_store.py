@@ -19,6 +19,7 @@ import datetime
 import hashlib
 import html as html_lib
 import ipaddress
+import json
 import logging
 import re
 from pathlib import Path
@@ -96,16 +97,43 @@ def url_hash_of(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
 
-def extract_image_urls(content: Optional[str]) -> List[str]:
-    """从正文（markdown，可能内嵌 HTML）提取全部 http(s) 图链，保序去重。"""
-    if not content:
-        return []
+def extract_image_urls(
+    content: Optional[str],
+    extensions_json: Optional[str | Dict[str, Any]] = None,
+) -> List[str]:
+    """从正文及扩展字段提取全部 http(s) 图链，保序去重。
+
+    社交帖的正文必须保持纯文本，图片位于 ``media_urls`` 以及
+    ``quoted/reposted.media_urls``；这里统一纳入媒体预取，但不把图链反写进正文。
+    """
     seen: Dict[str, None] = {}
-    for match in _MD_IMAGE_RE.finditer(content):
-        seen.setdefault(match.group(1).strip(), None)
-    for match in _HTML_IMAGE_RE.finditer(content):
-        # HTML 属性里的 &amp; 等实体还原成真实 URL
-        seen.setdefault(html_lib.unescape(match.group(1)).strip(), None)
+    if content:
+        for match in _MD_IMAGE_RE.finditer(content):
+            seen.setdefault(match.group(1).strip(), None)
+        for match in _HTML_IMAGE_RE.finditer(content):
+            # HTML 属性里的 &amp; 等实体还原成真实 URL
+            seen.setdefault(html_lib.unescape(match.group(1)).strip(), None)
+
+    extensions: Dict[str, Any] = {}
+    if isinstance(extensions_json, dict):
+        extensions = extensions_json
+    elif extensions_json:
+        try:
+            parsed = json.loads(extensions_json)
+            if isinstance(parsed, dict):
+                extensions = parsed
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+    media_groups = [extensions.get("media_urls")]
+    for reference_key in ("quoted", "reposted"):
+        reference = extensions.get(reference_key)
+        if isinstance(reference, dict):
+            media_groups.append(reference.get("media_urls"))
+    for media_urls in media_groups:
+        if isinstance(media_urls, list):
+            for url in media_urls:
+                if isinstance(url, str):
+                    seen.setdefault(url.strip(), None)
     return [u for u in seen if u.lower().startswith(("http://", "https://"))]
 
 
@@ -380,11 +408,15 @@ class MediaStore:
             return {"articles": 0, "cached": 0, "failed": 0}
         with Session(self.engine) as session:
             rows = session.exec(
-                select(ArticleRecord.id, ArticleRecord.content).where(ArticleRecord.id.in_(ids))
+                select(
+                    ArticleRecord.id,
+                    ArticleRecord.content,
+                    ArticleRecord.extensions_json,
+                ).where(ArticleRecord.id.in_(ids))
             ).all()
         urls: List[str] = []
-        for _, content in rows:
-            urls.extend(extract_image_urls(content))
+        for _, content, extensions_json in rows:
+            urls.extend(extract_image_urls(content, extensions_json))
         counts = await self.prefetch_urls(urls, concurrency=concurrency, force=force)
         return {"articles": len(rows), **counts}
 

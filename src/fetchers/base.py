@@ -43,11 +43,14 @@ class BaseFetcher(abc.ABC):
     # 面向管理台的来源分类，用于在节点较多时筛选和分组展示。
     category: str = "general"
 
-    # 内容形态（阅读器分流轴，迭代 2）："article" 文章形（进阅读流）｜
-    # "bulletin" 动态形（changelog/Release/仓库/模型监控等——短条目、只扫不读，
-    # 进阅读器的「动态」视图）。必须是源级标记：6 个 docs_* changelog 的
-    # content_type 也是 web_article，靠 content_type 分不开。
+    # 内容形态（阅读器分流轴，迭代 3）：article 文章形｜bulletin 短条目扫读形
+    # （changelog/Release/仓库/模型监控）｜social 社交卡片流直读形。必须是源级标记：
+    # docs_* changelog 的 content_type 也是 web_article，靠 content_type 分不开。
     content_shape: str = "article"
+
+    # 社交平台标识（x / mastodon / bluesky 等）。非社交源留空；作为源级
+    # 元数据透出给阅读器，不从单篇 raw_data 反推。
+    platform: str = ""
 
     # 新一代数据源准入元数据。用于区分来源身份、准入层级、内容标签与抓取可靠性。
     source_owner: str = ""

@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { ChevronRight, Loader2, Search } from 'lucide-react';
 import LogoMark from './LogoMark';
-import { EDITORIAL_GROUPS, editorialGroupOf, resolveCompany } from '../sourceTaxonomy';
+import { mediaProxyUrl } from '../api';
+import { EDITORIAL_GROUPS, editorialGroupOf, platformLabelOf, resolveCompany } from '../sourceTaxonomy';
 
 // last_fetched(ISO)→ 人话:今日 / 昨日 / MM-DD;空值不显示
 function lastLabel(lastFetched) {
@@ -33,12 +34,12 @@ export default function DiscoverPage({
   onUnsubscribe,
   onPreview,
 }) {
-  const [shape, setShape] = useState('all');   // all | article | bulletin
+  const [shape, setShape] = useState('all');   // all | article | bulletin | social
   const [query, setQuery] = useState('');
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const buckets = { official: [], media: [], personal: [], bulletin: [] };
+    const buckets = { official: [], media: [], personal: [], bulletin: [], social: [] };
     for (const s of sources) {
       const sShape = s.shape || 'article';
       if (shape !== 'all' && sShape !== shape) continue;
@@ -49,7 +50,7 @@ export default function DiscoverPage({
       buckets[key].sort((a, b) => (b.count || 0) - (a.count || 0));
     }
     return EDITORIAL_GROUPS
-      .map((g) => ({ ...g, list: buckets[g.key] }))
+      .map((g) => ({ ...g, list: buckets[g.key] || [] })) // buckets 缺某组键时兜底空,勿让 filter 触 undefined.length
       .filter((g) => g.list.length > 0);
   }, [sources, shape, query]);
 
@@ -73,7 +74,7 @@ export default function DiscoverPage({
               />
             </label>
             <span className="reader-seg reader-disc-seg" role="group" aria-label="形态筛选">
-              {[['all', '全部'], ['article', '文章'], ['bulletin', '动态']].map(([key, label]) => (
+              {[['all', '全部'], ['article', '文章'], ['bulletin', '动态'], ['social', '社交']].map(([key, label]) => (
                 <button
                   key={key}
                   type="button"
@@ -108,12 +109,20 @@ export default function DiscoverPage({
                     return (
                       <div key={source.source_id} className="reader-disc-card">
                         <div className="reader-disc-card-main">
-                          <LogoMark company={resolveCompany(source)} size="s34" emoji={source.icon} />
+                          {source.avatar_url ? (
+                            <img className="reader-disc-avatar" src={mediaProxyUrl(source.avatar_url)} alt="" loading="lazy" decoding="async" />
+                          ) : (
+                            <LogoMark company={resolveCompany(source)} size="s34" emoji={source.icon} />
+                          )}
                           <div className="reader-disc-card-mid">
                             <div className="reader-disc-name-row">
                               <span className="reader-disc-name">{source.name || source.source_id}</span>
+                              {/* 形态标;社交源标到平台(平台是「源」的属性,订阅前就该知道) */}
                               {(source.shape || 'article') === 'bulletin' && (
                                 <span className="reader-shape-chip">动态</span>
+                              )}
+                              {(source.shape || 'article') === 'social' && (
+                                <span className="reader-shape-chip">{platformLabelOf(source.platform)}</span>
                               )}
                             </div>
                             {source.description && (

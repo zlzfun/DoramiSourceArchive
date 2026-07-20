@@ -151,6 +151,26 @@ class LLMConfig:
 
 
 @dataclass(frozen=True)
+class XApiConfig:
+    """X API v2 公开数据读取配置。
+
+    bearer_token 默认从环境变量/ini 进入进程；管理端可写入运行期
+    AppSettingRecord 覆盖，但 API 永不回显明文且不记日志。其余字段用于把
+    单次抓取和月度费用锁在小额观察期范围内。
+    """
+
+    bearer_token: str = ""
+    base_url: str = "https://api.x.com/2"
+    timeout_seconds: int = 30
+    max_results: int = 25
+    monthly_budget_usd: float = 5.0
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.bearer_token)
+
+
+@dataclass(frozen=True)
 class MediaConfig:
     """媒体库（图床）配置：正文外链图片的本地缓存与代理。
 
@@ -190,6 +210,7 @@ class AppConfig:
     xiaoluban: XiaolubanConfig
     image_host: ImageHostConfig
     llm: LLMConfig
+    x_api: XApiConfig
     media: MediaConfig
 
     def apply_process_environment(self) -> None:
@@ -350,6 +371,16 @@ def load_config() -> AppConfig:
             temperature=parser.getfloat("llm", "temperature", fallback=0.3),
             max_tokens=parser.getint("llm", "max_tokens", fallback=4096),
             map_concurrency=parser.getint("llm", "map_concurrency", fallback=4),
+        ),
+        x_api=XApiConfig(
+            bearer_token=(
+                os.getenv("DORAMI_X_BEARER_TOKEN")
+                or parser.get("x_api", "bearer_token", fallback="")
+            ).strip(),
+            base_url=parser.get("x_api", "base_url", fallback="https://api.x.com/2").strip().rstrip("/"),
+            timeout_seconds=parser.getint("x_api", "timeout_seconds", fallback=30),
+            max_results=parser.getint("x_api", "max_results", fallback=25),
+            monthly_budget_usd=parser.getfloat("x_api", "monthly_budget_usd", fallback=5.0),
         ),
     )
 

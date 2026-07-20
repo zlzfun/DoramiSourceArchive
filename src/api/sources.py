@@ -66,14 +66,21 @@ def _source_category(content_type: Optional[str]) -> str:
     return CONTENT_TYPE_CATEGORY.get(content_type, content_type)
 
 
-# ==================== 内容形态（阅读器分流轴，迭代 2）====================
+# ==================== 内容形态（阅读器分流轴，迭代 3）====================
 # 形态是**源级标记**（fetcher.content_shape），registry 是第一事实源;
 # 对注册表之外的历史归档源（已下线节点、导入源），按 content_type 兜底:
-# 这三类结构化监控产物必然是动态形。
+# 结构化监控产物属于 bulletin，社交帖属于 social。
+VALID_CONTENT_SHAPES = frozenset({"article", "bulletin", "social"})
 BULLETIN_CONTENT_TYPES = frozenset({
     "github_release", "github_repository", "hf_model", "huggingface_model",
     "github_trending",
 })
+SOCIAL_CONTENT_TYPES = frozenset({"social_post"})
+CONTENT_TYPES_BY_SHAPE = {
+    "bulletin": BULLETIN_CONTENT_TYPES,
+    "social": SOCIAL_CONTENT_TYPES,
+}
+X_SOURCE_TYPES = frozenset({"x", "x_timeline"})
 
 
 def source_shape(
@@ -81,21 +88,80 @@ def source_shape(
     content_type: Optional[str],
     registry_meta: Dict[str, Dict[str, Any]],
 ) -> str:
-    """解析某源的内容形态："article"（文章）| "bulletin"（动态）。"""
+    """解析某源的内容形态：article | bulletin | social。"""
     meta = registry_meta.get(source_id or "")
     if meta is not None:
-        return meta.get("shape") or "article"
+        shape = str(meta.get("shape") or "article").strip().lower()
+        return shape if shape in VALID_CONTENT_SHAPES else "article"
     if (content_type or "") in BULLETIN_CONTENT_TYPES:
         return "bulletin"
+    if (content_type or "") in SOCIAL_CONTENT_TYPES:
+        return "social"
     return "article"
 
 
-def bulletin_registry_source_ids() -> List[str]:
-    """注册表中动态形源的 source_id 集合（articles 的 shape= 过滤用）。"""
+def configured_source_shape(source_type: str, fetcher_id: str = "") -> str:
+    """解析 SourceConfigRecord 的形态，无需给配置表增加派生列。
+
+    显式 fetcher_id 的类属性优先；未显式绑定时，X 配置源稳定归入 social。
+    """
+    if fetcher_id:
+        fetcher_class = fetcher_registry.get_class(fetcher_id)
+        if fetcher_class is not None:
+            shape = str(getattr(fetcher_class, "content_shape", "article")).strip().lower()
+            if shape in VALID_CONTENT_SHAPES:
+                return shape
+    if (source_type or "").strip().lower() in X_SOURCE_TYPES:
+        return "social"
+    return "article"
+
+
+def configured_source_content_type(source_type: str, fetcher_id: str = "") -> str:
+    """解析配置源的预期 content_type，供零产出的阅读器目录使用。"""
+    if fetcher_id:
+        fetcher_class = fetcher_registry.get_class(fetcher_id)
+        if fetcher_class is not None:
+            return str(getattr(fetcher_class, "content_type", "") or "")
+    source_type_value = (source_type or "").strip().lower()
+    if source_type_value in X_SOURCE_TYPES:
+        return "social_post"
+    if source_type_value in {"rss", "atom"}:
+        return "rss_article"
+    if source_type_value in {"web", "webpage"}:
+        return "web_article"
+    return ""
+
+
+def configured_source_platform(source_type: str, fetcher_id: str = "") -> str:
+    """SourceConfig 的平台标识：显式 fetcher 优先，X 类型兜底为 x。"""
+    if fetcher_id:
+        fetcher_class = fetcher_registry.get_class(fetcher_id)
+        if fetcher_class is not None:
+            return str(getattr(fetcher_class, "platform", "") or "").strip().lower()
+    if (source_type or "").strip().lower() in X_SOURCE_TYPES:
+        return "x"
+    return ""
+
+
+def registry_source_ids_for_shape(shape: str) -> List[str]:
+    """注册表中指定形态的 source_id 集合（shape= SQL 过滤用）。"""
+    shape_value = (shape or "").strip().lower()
+    if shape_value not in VALID_CONTENT_SHAPES:
+        return []
     return sorted(
         sid for sid, meta in _registry_source_meta().items()
-        if (meta.get("shape") or "article") == "bulletin"
+        if (meta.get("shape") or "article") == shape_value
     )
+
+
+def bulletin_registry_source_ids() -> List[str]:
+    """向后兼容：注册表中 bulletin 源的 source_id 集合。"""
+    return registry_source_ids_for_shape("bulletin")
+
+
+def social_registry_source_ids() -> List[str]:
+    """注册表中 social 源的 source_id 集合。"""
+    return registry_source_ids_for_shape("social")
 
 
 def _registry_source_meta() -> Dict[str, Dict[str, Any]]:

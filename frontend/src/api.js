@@ -422,6 +422,25 @@ export function testLLMConfig() {
   return request('/llm/config/test', { method: 'POST', errorMsg: '大模型连接测试失败' });
 }
 
+// ==================== X API（社交源采集）====================
+// bearer_token 只写不回显（后端脱敏，与 llm 的 api_key 同规矩）；
+// quota 是按量付费的开销读数（按返回资源计费，非请求次数）。
+export function getXApiConfig() {
+  return request('/x-api/config', { errorMsg: '获取 X API 配置失败' });
+}
+
+export function saveXApiConfig(payload) {
+  return request('/x-api/config', { method: 'POST', body: payload, errorMsg: '保存 X API 配置失败' });
+}
+
+export function testXApiConfig() {
+  return request('/x-api/config/test', { method: 'POST', errorMsg: 'X API 连接测试失败' });
+}
+
+export function getXApiQuota() {
+  return request('/x-api/quota', { errorMsg: '获取 X API 用量失败' });
+}
+
 export function getDailyBriefConfig() {
   return request('/daily-brief/config', { errorMsg: '获取日报配置失败' });
 }

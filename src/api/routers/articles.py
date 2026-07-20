@@ -19,7 +19,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
-from sqlalchemy import case, func, or_
+from sqlalchemy import and_, case, false, func, or_
 from sqlmodel import Session, select
 
 from api import deps
@@ -36,11 +36,15 @@ from api.feed_service import resolve_subscribed_source_ids
 from api.schemas import BatchOpParams
 from api.sources import (
     BULLETIN_CONTENT_TYPES,
+    CONTENT_TYPES_BY_SHAPE,
     DAILY_BRIEF_SOURCE_ID,
-    bulletin_registry_source_ids,
+    SOCIAL_CONTENT_TYPES,
+    VALID_CONTENT_SHAPES,
+    configured_source_shape,
+    registry_source_ids_for_shape,
 )
 from api.textutils import _json_loads
-from models.db import ArticleRecord
+from models.db import ArticleRecord, SourceConfigRecord
 from services import reader_state as reader_state_service
 
 router = APIRouter(tags=["articles"])
@@ -51,14 +55,59 @@ def _app():
     return importlib.import_module("api.app")
 
 
-def bulletin_shape_condition():
-    """「动态形」文章的 SQL 条件：源级标记（注册表 bulletin 源）∪ content_type 兜底
-    （覆盖注册表之外的历史归档源）。article 形 = 取反。"""
-    conditions = [ArticleRecord.content_type.in_(sorted(BULLETIN_CONTENT_TYPES))]
-    bulletin_sources = bulletin_registry_source_ids()
-    if bulletin_sources:
-        conditions.append(ArticleRecord.source_id.in_(bulletin_sources))
+def _source_ids_by_shape(session: Optional[Session] = None) -> dict[str, set[str]]:
+    """合并内置注册源与 SourceConfig 源的源级形态。"""
+    result = {
+        shape: set(registry_source_ids_for_shape(shape))
+        for shape in VALID_CONTENT_SHAPES
+    }
+    if session is not None:
+        registered_ids = set().union(*result.values())
+        records = session.exec(select(SourceConfigRecord)).all()
+        for record in records:
+            if record.source_id in registered_ids:
+                continue  # registry 是源级形态的第一事实源
+            result[configured_source_shape(record.source_type, record.fetcher_id)].add(
+                record.source_id
+            )
+    return result
+
+
+def content_shape_condition(shape: str, session: Optional[Session] = None):
+    """按三态形态构造 SQL 条件，严格遵循「源级标记优先」。
+
+    content_type 只对注册表/SourceConfig 之外的历史归档源兜底，
+    因此 article 不再是简单的 NOT bulletin，不会把 social 误收进来。
+    """
+    shape_value = (shape or "").strip().lower()
+    if shape_value not in VALID_CONTENT_SHAPES:
+        return false()
+
+    ids_by_shape = _source_ids_by_shape(session)
+    exact_source_ids = sorted(ids_by_shape[shape_value])
+    known_source_ids = sorted(set().union(*ids_by_shape.values()))
+    unknown_source = ArticleRecord.source_id.notin_(known_source_ids)
+
+    conditions = []
+    if exact_source_ids:
+        conditions.append(ArticleRecord.source_id.in_(exact_source_ids))
+    if shape_value == "article":
+        non_article_types = sorted(BULLETIN_CONTENT_TYPES | SOCIAL_CONTENT_TYPES)
+        conditions.append(and_(unknown_source, ArticleRecord.content_type.notin_(non_article_types)))
+    else:
+        fallback_types = sorted(CONTENT_TYPES_BY_SHAPE[shape_value])
+        conditions.append(and_(unknown_source, ArticleRecord.content_type.in_(fallback_types)))
     return or_(*conditions)
+
+
+def bulletin_shape_condition(session: Optional[Session] = None):
+    """向后兼容：bulletin 形文章的 SQL 条件。"""
+    return content_shape_condition("bulletin", session)
+
+
+def social_shape_condition(session: Optional[Session] = None):
+    """social 形文章的 SQL 条件。"""
+    return content_shape_condition("social", session)
 
 
 @router.get("/api/articles")
@@ -81,7 +130,7 @@ def get_articles(
         fetched_date_start: Optional[str] = None,
         fetched_date_end: Optional[str] = None,
         subscribed_scope: str = "off",  # off | only | prioritize：相对当前用户订阅的源
-        shape: Optional[str] = None,  # article | bulletin：内容形态分流（阅读器文章/动态视图）
+        shape: Optional[str] = None,  # article | bulletin | social：阅读器内容形态分流
         unread_only: bool = False,  # 只看未读（按当前用户订阅源的水位+逐篇已读判定）
         with_unread: bool = False,  # 给返回条目附 unread 标记（页级，reader 列表用）
         skip: int = 0,
@@ -126,9 +175,8 @@ def get_articles(
         query = query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
         count_query = count_query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
     shape_value = (shape or "").strip().lower()
-    if shape_value in {"article", "bulletin"}:
-        bulletin_cond = bulletin_shape_condition()
-        cond = bulletin_cond if shape_value == "bulletin" else ~bulletin_cond
+    if shape_value in VALID_CONTENT_SHAPES:
+        cond = content_shape_condition(shape_value, session)
         query = query.where(cond)
         count_query = count_query.where(cond)
     if unread_only:

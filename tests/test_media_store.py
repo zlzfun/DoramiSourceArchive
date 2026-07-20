@@ -8,6 +8,7 @@ GET /api/media/proxy 的命中回文件/失败 302 回源/停用 302/参数校�
 """
 
 import asyncio
+import json
 import os
 import sys
 from dataclasses import replace
@@ -68,6 +69,52 @@ def test_extract_image_urls_markdown_html_dedup():
     ]
     assert extract_image_urls(None) == []
     assert extract_image_urls("无图正文") == []
+
+
+def test_extract_image_urls_reads_social_media_extensions_without_polluting_content():
+    content = "纯文本推文，不含 markdown 图片"
+    extensions_json = json.dumps({
+        "media_urls": [
+            "https://pbs.twimg.com/media/a.jpg",
+            "https://pbs.twimg.com/media/a.jpg",
+            "https://video.twimg.com/preview/b.jpg",
+            "data:image/png;base64,AAAA",
+        ],
+        "quoted": {"media_urls": ["https://pbs.twimg.com/media/quoted.jpg"]},
+        "reposted": {"media_urls": ["https://pbs.twimg.com/media/reposted.jpg"]},
+    })
+    assert extract_image_urls(content, extensions_json) == [
+        "https://pbs.twimg.com/media/a.jpg",
+        "https://video.twimg.com/preview/b.jpg",
+        "https://pbs.twimg.com/media/quoted.jpg",
+        "https://pbs.twimg.com/media/reposted.jpg",
+    ]
+    assert "pbs.twimg.com" not in content
+
+
+def test_prefetch_articles_reads_social_media_extensions(monkeypatch, tmp_path):
+    monkeypatch.setattr(ms, "_resolve_is_public", _public_ok)
+    sink = _sink(tmp_path, "social-media.db")
+    image_url = "https://pbs.twimg.com/media/social.jpg"
+    with Session(sink.engine) as session:
+        session.add(ArticleRecord(
+            id="x_openai_1",
+            title="纯文本推文",
+            content_type="social_post",
+            source_id="x_openai",
+            source_url="https://x.com/OpenAI/status/1",
+            publish_date="2026-07-20T00:00:00Z",
+            fetched_date="2026-07-20T00:00:01Z",
+            content="正文没有图片 markdown",
+            extensions_json=json.dumps({"media_urls": [image_url]}),
+        ))
+        session.commit()
+
+    calls = []
+    store = _store(sink.engine, tmp_path, _counting_transport(calls))
+    counts = asyncio.run(store.prefetch_articles(["x_openai_1"]))
+    assert counts == {"articles": 1, "cached": 1, "failed": 0}
+    assert calls == [image_url]
 
 
 # ==================== 下载缓存与去重 ====================

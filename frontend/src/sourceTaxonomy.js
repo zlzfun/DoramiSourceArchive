@@ -242,15 +242,35 @@ export const EDITORIAL_GROUPS = [
   { key: 'media', label: '媒体 · 观察' },
   { key: 'personal', label: '个人 · 洞见' },
   { key: 'bulletin', label: '榜单 · 动态' },
+  { key: 'social', label: '社交 · 账号' },
 ];
 
 const MEDIA_SCOPES = new Set([
   'ai_media', 'tech_media', 'community', 'developer_community', 'research_community', 'forum',
 ]);
 
-export const editorialGroupOf = (source) => {
-  if ((source.shape || 'article') === 'bulletin') return 'bulletin';
+/* ── 社交平台标签(shape=social 的源)──
+   平台是「源」的属性、不是每条内容的属性:源栏按「平台 · 分层」分组、
+   发现页源卡标平台,卡片角标只在订阅了 >=2 个平台时才挂。
+   接新平台在此加一行即可。 */
+const PLATFORM_LABELS = { x: 'X', mastodon: 'Mastodon', bluesky: 'Bluesky' };
+
+export const platformLabelOf = (platform) => PLATFORM_LABELS[platform] || platform || '社交';
+
+/* 只按策展元数据判分层(官方/媒体/个人),不看形态。
+   社交容器的源栏用它做二级分层(「X · 官方」/「X · 个人」)——那里形态已经
+   由容器本身确定,再让 shape 吃掉分层就没得分了。 */
+export const editorialTierOf = (source) => {
   if (source.provenance_tier === 'tier2_personal_social' || source.source_scope === 'personal_commentary') return 'personal';
   if (MEDIA_SCOPES.has(source.source_scope) || source.provenance_tier === 'tier1_curated') return 'media';
   return 'official';
+};
+
+/* 形态优先的分组(发现页目录 / 阅读器非社交容器用):
+   social 与 bulletin 各自独立成组,其余按分层。 */
+export const editorialGroupOf = (source) => {
+  const shape = source.shape || 'article';
+  if (shape === 'social') return 'social';
+  if (shape === 'bulletin') return 'bulletin';
+  return editorialTierOf(source);
 };

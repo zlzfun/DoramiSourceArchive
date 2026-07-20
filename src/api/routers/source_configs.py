@@ -16,12 +16,14 @@ deps.get_session()。
 import importlib
 import json
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session, select
 
 from api import deps
+from api.sources import X_SOURCE_TYPES, configured_source_platform, configured_source_shape
 from api.textutils import _json_dumps, _now_iso
 from models.db import SourceConfigRecord
 from services import jobs
@@ -90,7 +92,7 @@ class SourceFetchParams(BaseModel):
 # ==================== 序列化 / 路由 helper ====================
 
 def serialize_source_config(record: SourceConfigRecord) -> Dict[str, Any]:
-    data = record.dict()
+    data = record.model_dump()
     try:
         data["params"] = json.loads(record.params_json or "{}")
     except json.JSONDecodeError:
@@ -100,6 +102,12 @@ def serialize_source_config(record: SourceConfigRecord) -> Dict[str, Any]:
         data["content_tags"] = tags if isinstance(tags, list) else []
     except json.JSONDecodeError:
         data["content_tags"] = []
+    data["shape"] = configured_source_shape(
+        record.source_type, resolve_source_fetcher_id(record)
+    )
+    data["platform"] = configured_source_platform(
+        record.source_type, resolve_source_fetcher_id(record)
+    )
     return data
 
 
@@ -118,12 +126,28 @@ def parse_json_object(raw_json: str) -> Dict[str, Any]:
 def resolve_source_fetcher_id(source_config: SourceConfigRecord) -> str:
     if source_config.fetcher_id:
         return source_config.fetcher_id
-    source_type = source_config.source_type.lower()
+    source_type = (source_config.source_type or "").strip().lower()
     if source_type in {"rss", "atom"}:
         return "generic_rss"
     if source_type in {"web", "webpage"}:
         return "generic_web"
+    if source_type in X_SOURCE_TYPES:
+        return "generic_x_timeline"
     return ""
+
+
+def _configured_x_handle(source_config: SourceConfigRecord, params: Dict[str, Any]) -> str:
+    """优先使用 params.handle，并兼容把 url 填成 @handle 或 x.com/handle。"""
+    handle = str(params.get("handle") or "").strip().lstrip("@")
+    if handle:
+        return handle
+    raw_url = (source_config.url or "").strip()
+    if not raw_url:
+        return ""
+    if "://" not in raw_url:
+        return raw_url.strip("/").split("/", 1)[0].lstrip("@")
+    parsed = urlparse(raw_url)
+    return parsed.path.strip("/").split("/", 1)[0].lstrip("@")
 
 
 def build_source_fetch_params(source_config: SourceConfigRecord, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -132,13 +156,20 @@ def build_source_fetch_params(source_config: SourceConfigRecord, overrides: Opti
         "source_id": source_config.source_id,
         "category": source_config.category,
     })
-    if source_config.source_type.lower() in {"web", "webpage"}:
+    source_type = (source_config.source_type or "").strip().lower()
+    if source_type in {"web", "webpage"}:
         # 通用网页抓取器（generic_web）：url 即列表页；其余 web 配置（URL 模式 / 详情 Profile /
         # listing_css）已在 params_json 内，随上面的 parse_json_object 透传。
         params.update({
             "listing_url": source_config.url,
             "site_name": params.get("site_name") or source_config.name,
         })
+    elif source_type in X_SOURCE_TYPES:
+        # X 通用模板：handle/user_id 均从 params_json 透传；url 只是
+        # handle 未填时的便捷兜底，不注入 RSS/Web 专用参数。
+        handle = _configured_x_handle(source_config, params)
+        if handle:
+            params["handle"] = handle
     else:
         # RSS/Atom 等：维持既有 feed_url/feed_name 语义不变。
         params.update({

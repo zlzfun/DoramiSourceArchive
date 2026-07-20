@@ -77,6 +77,23 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `github_openclaw_releases` | OpenClaw release updates. |
 | `github_hermes_agent_releases` | Hermes Agent release updates. |
 
+## 社交平台账号(X 社交波,v3.12 · 观察期)
+
+2026-07-20 admitted a first batch of 8 X (Twitter) accounts as `incubating` sources
+(`x_ai_at_meta` / `x_deepseek_ai` / `x_alibaba_qwen` / `x_moonshot_ai` /
+`x_openrouter` / `x_karpathy` / `x_sama` / `x_openai`). They follow the same
+incubation rules above. Two things differ from web/RSS sources:
+
+- **They cost real money** (X API v2 pay-per-use, budget-guarded — see CLAUDE.md
+  *社交媒体流*). Promotion/demotion therefore weighs cost-per-signal, not just quality.
+- **Selection favoured zero-coverage and sentinel accounts** over official accounts that
+  merely duplicate an existing RSS/web source — the X增量 is timeliness, format and
+  non-announcement content, not new coverage.
+
+The full V0 roster with per-account rationale, the rejected candidates with reasons,
+and the observation-window exit criteria live in
+[`docs/social-x-wave-plan.md`](../social-x-wave-plan.md) §1 / §5.
+
 ## Candidate Queue
 
 Future candidates should be recorded first in `docs/sources/candidates/` with the same dimensions, then implemented and admitted only when they pass validation.

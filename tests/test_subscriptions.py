@@ -665,13 +665,20 @@ def test_reader_sources_includes_zero_article_registered_source(monkeypatch, tmp
     _set_runtime_role(monkeypatch, app_module, "reader")
 
     # 一个真实注册、但库中没有任何归档文章的源，应当出现在目录里并可被订阅。
+    # 但 is_template 模板源（generic_*）是 source-config/builder 的执行基座、非可订阅来源，
+    # 不应出现在读者目录（X 社交波「隐藏通用 XXX 源」契约）。
     meta = app_module.fetcher_registry.get_all_metadata()
     assert meta, "fetcher registry should expose at least one source"
-    fresh = meta[0]["id"]
+    fresh = next(m["id"] for m in meta if not m.get("is_template"))
+    template_ids = [m["id"] for m in meta if m.get("is_template")]
 
     with TestClient(app_module.app) as client:
         _login(client)
         catalog = client.get("/api/reader/sources").json()
+        catalog_ids = {s["source_id"] for s in catalog["sources"]}
+        # 模板源被读者目录排除
+        for tid in template_ids:
+            assert tid not in catalog_ids, f"模板源 {tid} 不应出现在读者可订阅目录"
         entry = {s["source_id"]: s for s in catalog["sources"]}.get(fresh)
         assert entry is not None
         assert entry["count"] == 0  # 历史产出为 0

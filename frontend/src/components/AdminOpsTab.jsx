@@ -20,6 +20,10 @@ import {
   fetchAccountActivity,
   fetchAdminContent,
   fetchMediaStats,
+  getXApiConfig,
+  saveXApiConfig,
+  testXApiConfig,
+  getXApiQuota,
   getAiBetaGlobal,
   setAiBetaGlobal,
   fetchAiUsage,
@@ -96,6 +100,14 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
   const [savingLlm, setSavingLlm] = useState(false);
   const [testingLlm, setTestingLlm] = useState(false);
 
+  // ── X API（社交源采集）：凭据配置 + 按量付费开销（内容子页）──
+  // 与模型配置同构:token 只写不回显(后端脱敏),测试连通复用保存后的运行时配置。
+  const [xStatus, setXStatus] = useState(null);
+  const [xQuota, setXQuota] = useState(null);
+  const [xForm, setXForm] = useState({ bearer_token: '', base_url: '', max_results: 25, monthly_budget_usd: 5 });
+  const [savingX, setSavingX] = useState(false);
+  const [testingX, setTestingX] = useState(false);
+
   // ── AI 用量看板 ──
   const [usage, setUsage] = useState(null);
 
@@ -136,6 +148,20 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
 
   const loadMedia = useCallback(() => fetchMediaStats().then(setMedia).catch(() => {}), []);
 
+  const loadX = useCallback(() => Promise.all([
+    getXApiConfig().then((d) => {
+      setXStatus(d);
+      setXForm((f) => ({
+        ...f,
+        base_url: d.base_url || '',
+        max_results: d.max_results ?? 25,
+        monthly_budget_usd: d.monthly_budget_usd ?? 5,
+        bearer_token: '', // 后端永不回显明文,输入框始终留空 = 不改
+      }));
+    }).catch(() => {}),
+    getXApiQuota().then(setXQuota).catch(() => {}),
+  ]), []);
+
   const loadGlobals = useCallback(async () => {
     try {
       const g = await getAiBetaGlobal();
@@ -154,7 +180,7 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
     }
   }, [days, showToast]);
 
-  useEffect(() => { loadGlobals(); loadLlm(); loadContent(); loadMedia(); }, [loadGlobals, loadLlm, loadContent, loadMedia]);
+  useEffect(() => { loadGlobals(); loadLlm(); loadContent(); loadMedia(); loadX(); }, [loadGlobals, loadLlm, loadContent, loadMedia, loadX]);
   // 账户列表随时间窗口变化重载（窗口指标按 days 聚合）。
   useEffect(() => { reloadAccounts(); }, [reloadAccounts]);
   useEffect(() => { loadUsage(days); }, [loadUsage, days]);
@@ -191,6 +217,51 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
       showToast(error.message || '保存失败', 'error');
     } finally {
       setSavingLlm(false);
+    }
+  };
+
+  // ── X API 配置:保存 / 测试连通 ──
+  const updateX = (key, value) => setXForm((f) => ({ ...f, [key]: value }));
+  const xTokenReady = Boolean(xForm.bearer_token.trim() || xStatus?.bearer_token_set);
+
+  const persistX = async () => {
+    const payload = {
+      base_url: xForm.base_url.trim(),
+      max_results: Number(xForm.max_results),
+      monthly_budget_usd: Number(xForm.monthly_budget_usd),
+    };
+    if (xForm.bearer_token.trim()) payload.bearer_token = xForm.bearer_token.trim();
+    await saveXApiConfig(payload);
+  };
+
+  const handleSaveX = async () => {
+    setSavingX(true);
+    try {
+      await persistX();
+      showToast('已保存 X API 配置', 'success');
+      await loadX();
+    } catch (error) {
+      showToast(error.message || '保存失败', 'error');
+    } finally {
+      setSavingX(false);
+    }
+  };
+
+  const handleTestX = async () => {
+    setTestingX(true);
+    try {
+      await persistX();
+      const r = await testXApiConfig();
+      await loadX();
+      // 探针花费如实转述,不隐瞒开销:命中当日去重时为 $0,否则约 $0.005~0.010
+      const cost = r.deduplicated_today
+        ? '本次未产生费用'
+        : `本次探针 $${Number(r.estimated_cost_usd || 0).toFixed(3)}`;
+      showToast(`连接正常 · ${cost}`, 'success');
+    } catch (error) {
+      showToast(error.message || '连接失败', 'error');
+    } finally {
+      setTestingX(false);
     }
   };
 
@@ -620,6 +691,67 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
                   )}
                 </section>
               </div>
+
+              {/* ── X API（社交源采集）：唯一按量付费的外部接口，凭据与开销都在此 ── */}
+              <div className="zone-head">
+                <span className="zone-title">X API</span>
+                <span className="zone-hint">社交源采集凭据与按量付费开销</span>
+                {/* 配置来源:凭据可能来自环境变量/ini,此时表单里保存的运行时值不一定生效 */}
+                {xStatus?.source && (
+                  <span className="zone-badge">
+                    {{ runtime_kv: '运行时配置', env: '环境变量', ini: '配置文件', default: '默认值' }[xStatus.source] || xStatus.source}
+                  </span>
+                )}
+                {xQuota?.blocked && <span className="zone-badge" style={{ color: 'var(--state-bad)' }}>已达预算上限 · 停止抓取</span>}
+              </div>
+              <section className="surface-card card-pad rounded-[var(--r-card)]">
+                <div className="model-fields">
+                  <label className="model-field">bearer_token
+                    <input
+                      type="password"
+                      value={xForm.bearer_token}
+                      onChange={(e) => updateX('bearer_token', e.target.value)}
+                      placeholder={xStatus?.bearer_token_set ? '留空不改' : 'AAAA…'}
+                      className="model-input-grow"
+                    />
+                  </label>
+                  <label className="model-field">base_url
+                    <input value={xForm.base_url} onChange={(e) => updateX('base_url', e.target.value)} placeholder="https://api.x.com/2" size={20} />
+                  </label>
+                  <label className="model-field">单次上限
+                    <input type="number" step="5" min="5" max="100" value={xForm.max_results} onChange={(e) => updateX('max_results', e.target.value)} style={{ width: 58 }} />
+                  </label>
+                  <label className="model-field">月度预算 $
+                    <input type="number" step="0.5" min="0" value={xForm.monthly_budget_usd} onChange={(e) => updateX('monthly_budget_usd', e.target.value)} style={{ width: 64 }} />
+                  </label>
+                  <button type="button" className="model-btn" onClick={handleTestX} disabled={testingX || savingX || !xTokenReady}>
+                    {testingX ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />} 测试连通
+                  </button>
+                  <button type="button" className="model-btn" onClick={handleSaveX} disabled={savingX}>
+                    {savingX ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} 保存
+                  </button>
+                </div>
+                <p className="tiny-meta" style={{ marginTop: 10 }}>
+                  计费按<b>实际返回的资源</b>而非请求次数，所以「单次上限」调大不会增加开销，只会降低积压漏抓的风险。
+                  达到月度预算后自动停止抓取（发出请求前即拦截），Developer Console 的硬上限仍是最后一道保险。
+                </p>
+              </section>
+
+              {xQuota && (
+                <section className="surface-card kpi-strip" style={{ marginTop: 12 }} aria-label="X API 用量">
+                  <Kpi
+                    num={`$${Number(xQuota.estimated_cost_usd || 0).toFixed(2)}`}
+                    label="本月开销"
+                    sub={xQuota.month}
+                    tone={xQuota.blocked ? 'bad' : undefined}
+                  />
+                  <Kpi num={`$${Number(xQuota.remaining_usd || 0).toFixed(2)}`} label="剩余额度" sub={`预算 $${xQuota.monthly_budget_usd}`} />
+                  <Kpi num={fmtNum(xQuota.post_reads)} label="推文" sub="$0.005 / 条" />
+                  <Kpi num={fmtNum(xQuota.media_reads)} label="图片 / 视频" sub="$0.005 / 个" />
+                  <Kpi num={fmtNum(xQuota.note_reads)} label="长文" sub="$0.005 / 条" />
+                  <Kpi num={fmtNum(xQuota.user_reads)} label="账号解析" sub="$0.010 / 次" />
+                </section>
+              )}
 
               {/* ── 媒体库（图床）：正文外链图片本地缓存 ── */}
               <div className="zone-head">

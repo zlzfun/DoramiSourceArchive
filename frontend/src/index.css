@@ -7977,6 +7977,255 @@ input[type="radio"] {
 
   /* (接入集成全屏浮层已退役——并入设置波:读者头像菜单「接入集成」深链设置柜·聚合接口分区) */
 
+  /* ══ 社交媒体流(按 docs/design/dorami-social-quiet.html 样页,X 社交波 v3.12)══
+     第三容器(shape=social)。与「文章/动态」的四带式不同:社交流**占据 条目列+阅读窗
+     整片区域**、单列宽卡、全文直出 —— 推文平均 2~4 行,给它配阅读窗会空旷得荒谬,
+     点开才看到全文更是把「刷」变成了「翻」。源栏保持在场(与发现页同构)。 */
+  .reader-social {
+    grid-column: 3 / -1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    background: var(--rd-pane-bg);
+  }
+
+  .reader-social-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 52px;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--dorami-border-soft);
+  }
+  .reader-social-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+  .reader-social-sub { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); }
+  .reader-social-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+  .reader-social-scroll { flex: 1; overflow-y: auto; padding-bottom: 56px; }
+  /* 单列宽卡 + 行长约束(conventions 正文行长纪律) */
+  .reader-social-col { max-width: 680px; margin: 0 auto; padding: 0 24px; }
+
+  /* 日期组头:与条目列 .reader-date-label 同语义,但社交流是 sticky 渐隐式 */
+  .reader-social-day {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    margin: 0 -24px;
+    padding: 14px 24px 7px;
+    background: linear-gradient(180deg, var(--rd-pane-bg) 62%, transparent);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--dorami-faint);
+  }
+
+  /* ── 推文卡 ── */
+  /* 卡间距比条目列宽松:社交流是「刷」不是「扫」,条目本身高度参差
+     (一行短句到七行长推 + 图),间距太紧会让相邻两条黏成一坨。 */
+  .social-post {
+    position: relative;
+    padding: 22px 0 20px;
+    border-bottom: 1px solid var(--dorami-border-soft);
+  }
+  .social-post:last-of-type { border-bottom: none; }
+  /* 未读点:与 .reader-unread-dot 同语法(常驻渲染 + 淡出,条件卸载无法过渡) */
+  .social-post::before {
+    content: "";
+    position: absolute;
+    left: -13px;
+    top: 32px; /* 随卡片 padding 上移量同步,保持与首行文字对齐 */
+    width: 6px;
+    height: 6px;
+    border-radius: var(--r-pill);
+    background: var(--dorami-accent);
+    transition: opacity var(--motion-medium) var(--motion-ease);
+  }
+  .social-post.is-read::before { opacity: 0; }
+  .social-post.is-read .social-text,
+  .social-post.is-read .social-name { color: var(--dorami-muted); }
+
+  /* 转推归属行:与引用推形态必须可区分,否则读者判断不了「这话是谁说的」 */
+  .social-repost {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 8px 44px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--dorami-faint);
+  }
+
+  .social-body { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; }
+
+  /* 头像 = 项目既有 LogoMark 品牌语言 / handle 首字母色块,不引外链 avatar。
+     社交语汇要求圆形,而 LogoMark 的圆角由 LOGO_SIZES 写成 inline style,
+     故此处必须 !important 才能压过它(唯一一处,不外扩)。 */
+  .social-avatar-wrap { position: relative; width: 34px; height: 34px; }
+  .logo-mark.social-avatar { border-radius: var(--r-pill) !important; }
+  /* 真实平台头像(经媒体库代理);失败逐级降级到原链 → LogoMark → 首字母 */
+  .social-avatar-img {
+    width: 34px;
+    height: 34px;
+    border-radius: var(--r-pill);
+    object-fit: cover;
+    background: var(--dorami-well);
+  }
+  .social-quote-avatar {
+    width: 17px;
+    height: 17px;
+    border-radius: var(--r-pill);
+    object-fit: cover;
+    flex: none;
+    background: var(--dorami-well);
+  }
+  /* 源栏 / 发现页的社交源:同样用头像取代品牌标(社交源在 LogoMark 里没有条目) */
+  .reader-src-avatar {
+    width: 20px;
+    height: 20px;
+    border-radius: var(--r-pill);
+    object-fit: cover;
+    flex: none;
+    background: var(--dorami-well);
+  }
+  .reader-disc-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: var(--r-pill);
+    object-fit: cover;
+    flex: none;
+    background: var(--dorami-well);
+  }
+  .social-initial {
+    width: 34px;
+    height: 34px;
+    border-radius: var(--r-pill);
+    display: grid;
+    place-items: center;
+    font-size: 13px;
+    font-weight: 800;
+    color: #fff;
+    background: var(--dorami-blue);
+    user-select: none;
+  }
+  /* 平台角标:仅当订阅了 ≥2 个平台时挂载(单平台时每卡同一图标 = 纯噪声) */
+  .social-plat {
+    position: absolute;
+    right: -3px;
+    bottom: -3px;
+    width: 15px;
+    height: 15px;
+    border-radius: var(--r-pill);
+    display: grid;
+    place-items: center;
+    background: var(--rd-pane-bg);
+    box-shadow: 0 0 0 1.5px var(--rd-pane-bg);
+    color: var(--dorami-ink);
+  }
+
+  .social-post-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .social-name { font-size: 13.5px; font-weight: 700; color: var(--dorami-ink); white-space: nowrap; }
+  .social-handle, .social-dot { font-size: 12px; font-weight: 500; color: var(--dorami-faint); white-space: nowrap; }
+  /* 时间戳即原推链接(社交媒体通用语汇,零学习成本;不另设外链按钮) */
+  a.social-time {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--dorami-faint);
+    white-space: nowrap;
+    text-decoration: none;
+    transition: color var(--motion-fast) var(--motion-ease);
+  }
+  a.social-time:hover { color: var(--dorami-accent); text-decoration: underline; }
+  .social-head-sp { flex: 1; min-width: 8px; }
+
+  /* 收藏 / 标读 —— 全卡仅有的两个动作(本系统对 X 只有读权限) */
+  .social-acts { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+  .social-act {
+    width: 26px;
+    height: 26px;
+    border-radius: var(--r-sm);
+    display: grid;
+    place-items: center;
+    color: var(--dorami-faint);
+    opacity: 0;
+    transition: opacity var(--motion-fast) var(--motion-ease),
+                background var(--motion-fast) var(--motion-ease),
+                color var(--motion-fast) var(--motion-ease);
+  }
+  .social-post:hover .social-act,
+  .social-act:focus-visible { opacity: 1; }
+  .social-act:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+  /* 收藏是持久状态,不随悬停消失 */
+  .social-post .social-act.is-fav { opacity: 1; color: var(--state-warn); }
+
+  .social-text {
+    margin-top: 3px;
+    font-size: 13.5px;
+    line-height: 1.62;
+    color: var(--dorami-ink-2);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .social-text a { color: var(--dorami-accent); text-decoration: none; }
+  .social-text a:hover { text-decoration: underline; }
+  .social-text.is-clamped {
+    display: -webkit-box;
+    -webkit-line-clamp: 7;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .social-more { margin-top: 4px; color: var(--dorami-accent); }
+  .social-more:hover { text-decoration: underline; }
+
+  /* 图片网格:1/2/3/4 张四种布局。图一律经 mediaProxyUrl(媒体库三层降级) */
+  .social-media {
+    margin-top: 10px;
+    display: grid;
+    gap: 3px;
+    border-radius: var(--r-card);
+    overflow: hidden;
+    border: 1px solid var(--dorami-border-soft);
+  }
+  .social-media.n1 { grid-template-columns: 1fr; }
+  .social-media.n2, .social-media.n4 { grid-template-columns: 1fr 1fr; }
+  .social-media.n3 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  .social-media.n3 > :first-child { grid-row: span 2; }
+  .social-media-item {
+    position: relative;
+    background: var(--dorami-well);
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    display: block;
+  }
+  .social-media.n1 .social-media-item { aspect-ratio: 16 / 8.4; }
+  .social-media.n2 .social-media-item,
+  .social-media.n4 .social-media-item { aspect-ratio: 1 / 1; }
+  .social-media.n3 > :first-child { aspect-ratio: auto; }
+  .social-media-item img { width: 100%; height: 100%; object-fit: cover; }
+  .social-media-item.is-failed { display: grid; place-items: center; }
+
+  /* 引用推:内缩嵌套卡 */
+  .social-quote {
+    margin-top: 10px;
+    padding: 11px 13px;
+    border-radius: var(--r-card);
+    border: 1px solid var(--dorami-border);
+    background: color-mix(in srgb, var(--dorami-ink) 2.5%, transparent);
+    transition: background var(--motion-fast) var(--motion-ease);
+    display: block;
+    width: 100%;
+    text-align: left;
+    text-decoration: none;
+  }
+  .social-quote:hover { background: color-mix(in srgb, var(--dorami-ink) 4.5%, transparent); }
+  .social-quote-head { display: flex; align-items: center; gap: 6px; }
+  .social-quote-name { font-size: 12.5px; font-weight: 700; color: var(--dorami-ink); }
+  .social-quote-meta { font-size: 11.5px; color: var(--dorami-faint); }
+  .social-quote-text { margin-top: 4px; font-size: 12.5px; line-height: 1.55; color: var(--dorami-muted); }
+
+  .reader-social-end { padding: 26px 0 10px; text-align: center; font-size: 11.5px; color: var(--dorami-faint); }
+
   /* ── 发现页(按发现页样页):占据 条目列+阅读窗 的整片区域,源栏保持在场。
      头部 = 标题+目录搜索+形态分段(复用 .reader-seg);正文 = 编辑分层组头 + 双列源卡;
      卡 = s34 logo + 名称/两行简介/收录 meta + 订阅胶囊/预览抽出(近期三篇)。 ── */
@@ -9066,6 +9315,7 @@ input[type="radio"] {
 .reader-seg-btn { font-size: 12px; font-weight: 400; }
 .reader-src-more { font-size: 12.5px; font-weight: 400; }
 .reader-load-more { font-size: 12px; font-weight: 500; }
+.social-more { font-size: 12.5px; font-weight: 600; }
 .reader-disc-sub { font-size: 11.5px; font-weight: 500; }
 .reader-disc-sub.is-subbed { font-weight: 400; }
 .reader-disc-prev { font-size: 11px; font-weight: 400; }

@@ -18,6 +18,7 @@ class PipelineRunResult:
     skipped_count: int = 0
     saved_content_ids: List[str] = field(default_factory=list)
     latest_content_id: str = ""
+    latest_cursor_value: str = ""
     latest_content_publish_date: str = ""
     latest_content_source_id: str = ""
     latest_content_type: str = ""
@@ -62,6 +63,21 @@ class DataPipeline:
                 fetcher.dedup_lookup = lookup
                 return
 
+    def _inject_runtime_engine(self, fetcher: BaseFetcher) -> None:
+        """给需要持久化运行上下文的 fetcher 注入现有数据库 engine。
+
+        当前由 XTimelineFetcher 使用，用于读取 SourceState cursor 与 AppSetting 配额；
+        采用鸭子类型，普通 fetcher 和非数据库 sink 行为不变。
+        """
+        binder = getattr(fetcher, "bind_runtime_engine", None)
+        if not callable(binder):
+            return
+        for storage in self.storages:
+            engine = getattr(storage, "engine", None)
+            if engine is not None:
+                binder(engine)
+                return
+
     async def run_task(
             self,
             fetcher: BaseFetcher,
@@ -75,6 +91,7 @@ class DataPipeline:
 
         # 注入去重预检钩子：让抓取器在请求正文前先批量查库，跳过重复条目的正文抓取。
         self._inject_dedup_lookup(fetcher)
+        self._inject_runtime_engine(fetcher)
 
         result = PipelineRunResult()
         source_id = getattr(fetcher, "source_id", None)
@@ -88,6 +105,9 @@ class DataPipeline:
                     setattr(item, key, value)
                 if _is_newer_content(item, result.latest_content_publish_date):
                     result.latest_content_id = item.id
+                    result.latest_cursor_value = str(
+                        getattr(item, "_cursor_value", "") or item.id
+                    )
                     result.latest_content_publish_date = item.publish_date
                     result.latest_content_source_id = item.source_id
                     result.latest_content_type = item.content_type

@@ -69,6 +69,15 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "github_opencode_releases",
     "github_openclaw_releases",
     "github_hermes_agent_releases",
+    # X 社交波（观察期，category=incubating；默认目录可见但不进每日采集）
+    "x_ai_at_meta",
+    "x_deepseek_ai",
+    "x_alibaba_qwen",
+    "x_moonshot_ai",
+    "x_openrouter",
+    "x_karpathy",
+    "x_sama",
+    "x_openai",
 })
 
 
@@ -192,6 +201,7 @@ class FetcherRegistry:
                 "category": category,
                 "content_type": cls.content_type,
                 "shape": getattr(cls, "content_shape", "article"),
+                "platform": getattr(cls, "platform", ""),
                 "active": True,
                 "is_template": getattr(cls, "is_template", False),
                 "parameters": cls.get_parameter_schema(),
