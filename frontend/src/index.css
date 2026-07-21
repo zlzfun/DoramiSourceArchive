@@ -7224,9 +7224,7 @@ input[type="radio"] {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    scrollbar-width: auto;  /* macOS 原生 overlay:不占位、源行顶满右侧(见 .reader-list-scroll 说明) */
-    scrollbar-color: auto;
-    padding: 0 6px 12px;   /* 收紧,源行更铺满 */
+    padding: 0 2px 12px;   /* 最小边距:源行贴近细滚动条(见 .reader-list-scroll) */
   }
 
   .reader-source-row {
@@ -7366,7 +7364,7 @@ input[type="radio"] {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 14px 10px 10px;   /* 左内边距对齐卡片内容(4+6),右侧同步收紧 */
+    padding: 14px 6px 10px;   /* 左内边距对齐卡片内容(0+6),右侧同步收紧 */
     border-bottom: 1px solid var(--dorami-border-soft);
   }
 
@@ -7709,12 +7707,17 @@ input[type="radio"] {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    /* macOS 原生 overlay 滚动条:不占布局宽度、半透明悬浮压在卡片上(内容顶满右侧)。
-       覆盖全局 `* {scrollbar-width:thin}`——thin 会强制占位的经典滚动条,把内容顶左。
-       (`overflow:overlay` 已被 Chrome 124+ 移除,故走 scrollbar-width 路线。) */
-    scrollbar-width: auto;
-    scrollbar-color: auto;
-    padding: 10px 4px 24px;   /* 收紧水平留白,内容更铺满右侧(配 card 6px = 内容内缩 10px) */
+    padding: 10px 0 24px;   /* 卡片自带 6px = 内容内缩 6px,右侧紧邻 5px 细滚动条 */
+  }
+
+  /* 阅读器滚动容器:沿用全局标准细滚动条(scrollbar-width:thin,约 8px,是 Chrome 里
+     CSS 能给的最细),滑块透明、悬停才浮出更淡的 slate。想再细只能整条隐藏(scrollbar-width:none)。
+     不走 ::-webkit-scrollbar 自定义——Chrome 121+ 下与标准属性互斥,实测不生效。 */
+  .reader-list-scroll:hover,
+  .reader-source-scroll:hover,
+  .reader-social-scroll:hover,
+  .reader-disc-scroll:hover {
+    scrollbar-color: rgba(100, 116, 139, 0.35) transparent;   /* 比全局 dark 0.2 更淡的 slate */
   }
 
   /* 日期分组小节头(样页 .group-label):等宽小字距签,sticky 底色与列底同 soft */
@@ -8069,7 +8072,7 @@ input[type="radio"] {
   /* 社交头很宽,内联搜索限宽左置(动作组仍靠 margin-auto 右对齐) */
   .reader-social-search { flex: 0 1 380px; }
 
-  .reader-social-scroll { flex: 1; overflow-y: auto; scrollbar-width: auto; scrollbar-color: auto; padding-bottom: 56px; }
+  .reader-social-scroll { flex: 1; overflow-y: auto; padding-bottom: 56px; }
   /* 单列宽卡 + 行长约束(conventions 正文行长纪律) */
   .reader-social-col { max-width: 680px; margin: 0 auto; padding: 0 24px; }
 
@@ -8345,7 +8348,7 @@ input[type="radio"] {
 
   .reader-disc-seg { margin-left: auto; }
 
-  .reader-disc-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: auto; scrollbar-color: auto; padding: 18px 28px 40px; }
+  .reader-disc-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 28px 40px; }
   .reader-disc-body { width: 100%; }
 
   .reader-disc-grp { display: flex; align-items: baseline; gap: 8px; margin: 22px 2px 10px; }
