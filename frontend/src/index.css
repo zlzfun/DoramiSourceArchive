@@ -953,203 +953,41 @@ input[type="radio"] {
     min-height: 100dvh;
     padding: clamp(24px, 5vw, 72px);
     overflow: hidden;
-    color: #eef1ff;
-    background: #060812;
+    color: #edeefb;
+    background: #04040e;
   }
 
   /* —— layered atmosphere —— */
-  .auth-bg {
+  /* 舞台开场“落定”微缩放：背景容器整体 1.05 → 1 */
+  .auth-scene-inner {
     position: absolute;
     inset: 0;
     z-index: -1;
     pointer-events: none;
-    background:
-      radial-gradient(120% 90% at 50% -10%, #11142b 0%, #0a0c1c 42%, #060812 78%);
+    transform: scale(1.05);
+    transition: transform 2600ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  .is-ready .auth-scene-inner {
+    transform: scale(1);
   }
 
-  /* —— parallax aurora orbs (wrapper = depth shift, inner = float) —— */
-  .auth-orb {
+  /* —— 背景：近黑 + 朝登录卡一侧的极淡靛辉 —— */
+  .auth-bg {
     position: absolute;
-    will-change: transform;
-    transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
+    inset: 0;
+    background:
+      radial-gradient(58% 70% at 74% 50%, rgba(91, 84, 232, 0.15) 0%, transparent 60%),
+      radial-gradient(92% 82% at 50% -12%, #100e28 0%, #04040e 62%),
+      #04040e;
   }
 
-  .auth-orb-glow {
-    display: block;
+  /* —— 信号星座（三维摄像机：横move=偏航 / 纵move=推进，见 LoginScreen 的 canvas effect）—— */
+  .auth-net {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
-    border-radius: 50%;
-    filter: blur(70px);
-    opacity: 0.85;
-    will-change: transform, opacity;
-  }
-
-  .auth-orb-1 {
-    top: -16%;
-    left: -8%;
-    width: min(640px, 64vw);
-    height: min(640px, 64vw);
-    transform: translate3d(calc(var(--px, 0) * 110px), calc(var(--py, 0) * 90px), 0);
-  }
-  .auth-orb-1 .auth-orb-glow {
-    background: radial-gradient(circle at 50% 50%, rgba(91, 84, 232, 0.55), transparent 66%);
-    animation: aurora-float-a 16s ease-in-out infinite;
-  }
-
-  .auth-orb-2 {
-    bottom: -22%;
-    right: -10%;
-    width: min(720px, 70vw);
-    height: min(720px, 70vw);
-    transform: translate3d(calc(var(--px, 0) * -150px), calc(var(--py, 0) * -120px), 0);
-  }
-  .auth-orb-2 .auth-orb-glow {
-    background: radial-gradient(circle at 50% 50%, rgba(123, 108, 240, 0.42), transparent 64%);
-    animation: aurora-float-b 21s ease-in-out infinite;
-  }
-
-  .auth-orb-3 {
-    top: 32%;
-    left: 46%;
-    width: min(420px, 44vw);
-    height: min(420px, 44vw);
-    transform: translate3d(calc(var(--px, 0) * 220px), calc(var(--py, 0) * 180px), 0);
-  }
-  .auth-orb-3 .auth-orb-glow {
-    background: radial-gradient(circle at 50% 50%, rgba(56, 189, 248, 0.22), transparent 70%);
-    animation: aurora-float-a 19s ease-in-out infinite reverse;
-  }
-
-  .auth-grid {
-    position: absolute;
-    inset: -2px;
-    background-image:
-      linear-gradient(rgba(170, 180, 255, 0.06) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(170, 180, 255, 0.06) 1px, transparent 1px);
-    background-size: 52px 52px;
-    transform: translate3d(calc(var(--px, 0) * -40px), calc(var(--py, 0) * -32px), 0);
-    transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
-    mask-image: radial-gradient(120% 90% at 50% 30%, #000 0%, transparent 72%);
-    -webkit-mask-image: radial-gradient(120% 90% at 50% 30%, #000 0%, transparent 72%);
-  }
-
-  /* —— grid that lights up around the cursor —— */
-  .auth-grid-spot {
-    position: absolute;
-    inset: -2px;
-    background-image:
-      linear-gradient(rgba(167, 159, 241, 0.55) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(167, 159, 241, 0.55) 1px, transparent 1px);
-    background-size: 52px 52px;
-    opacity: calc(var(--spot, 0) * 0.85);
-    transform: translate3d(calc(var(--px, 0) * -40px), calc(var(--py, 0) * -32px), 0);
-    mask-image: radial-gradient(140px circle at var(--mx, 50%) var(--my, 50%), #000 0%, transparent 70%);
-    -webkit-mask-image: radial-gradient(140px circle at var(--mx, 50%) var(--my, 50%), #000 0%, transparent 70%);
-    transition: opacity 600ms var(--motion-ease);
-  }
-
-  /* —— soft luminous halo trailing the cursor —— */
-  .auth-spotlight {
-    position: absolute;
-    inset: 0;
-    opacity: var(--spot, 0);
-    background: radial-gradient(
-      200px circle at var(--mx, 50%) var(--my, 50%),
-      rgba(123, 108, 240, 0.18),
-      rgba(91, 84, 232, 0.06) 40%,
-      transparent 70%
-    );
-    transition: opacity 600ms var(--motion-ease);
-    mix-blend-mode: screen;
-  }
-
-  /* —— occasional meteors streaking across the sky —— */
-  .auth-meteors {
-    position: absolute;
-    inset: 0;
-    overflow: hidden;
-  }
-
-  .auth-meteor {
-    position: absolute;
-    width: 180px;
-    height: 1.5px;
-    border-radius: var(--r-pill);
-    background: linear-gradient(90deg, transparent, rgba(214, 218, 255, 0.95));
-    filter: drop-shadow(0 0 6px rgba(167, 159, 241, 0.85));
-    opacity: 0;
-    will-change: transform, opacity;
-  }
-
-  .auth-meteor::after {
-    content: "";
-    position: absolute;
-    right: -2px;
-    top: 50%;
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: #eef0ff;
-    box-shadow: 0 0 10px 2px rgba(186, 192, 255, 0.9);
-    transform: translateY(-50%);
-  }
-
-  .auth-meteor-1 {
-    top: -6%;
-    left: 8%;
-    animation: auth-meteor-fall 11s ease-in 2.5s infinite;
-  }
-  .auth-meteor-2 {
-    top: -10%;
-    left: 42%;
-    animation: auth-meteor-fall 15s ease-in 7s infinite;
-  }
-  .auth-meteor-3 {
-    top: -4%;
-    left: 70%;
-    animation: auth-meteor-fall 13s ease-in 12s infinite;
-  }
-
-  /* —— scanning beam sweeping down the grid —— */
-  .auth-beam {
-    position: absolute;
-    inset: 0 0 auto 0;
-    height: 38%;
-    background: linear-gradient(180deg, transparent, rgba(123, 108, 240, 0.1) 60%, rgba(167, 159, 241, 0.22) 100%);
-    mask-image: radial-gradient(120% 90% at 50% 30%, #000 0%, transparent 72%);
-    -webkit-mask-image: radial-gradient(120% 90% at 50% 30%, #000 0%, transparent 72%);
-    animation: auth-beam-scan 9s cubic-bezier(0.5, 0, 0.5, 1) infinite;
-  }
-
-  /* —— drifting star dust —— */
-  .auth-particles {
-    position: absolute;
-    inset: 0;
-    transform: translate3d(calc(var(--px, 0) * 70px), calc(var(--py, 0) * 58px), 0);
-    transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
-  }
-
-  .auth-particle {
-    position: absolute;
-    border-radius: 50%;
-    background: rgba(206, 210, 255, 0.9);
-    box-shadow: 0 0 8px rgba(150, 142, 244, 0.8);
-    opacity: 0;
-    transform: scale(var(--pd, 1));
-    animation-name: auth-twinkle;
-    animation-timing-function: ease-in-out;
-    animation-iteration-count: infinite;
-  }
-
-  /* —— one-time cinematic light sweep on load —— */
-  .auth-sweep {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: linear-gradient(115deg, transparent 38%, rgba(186, 192, 255, 0.14) 50%, transparent 62%);
-    background-size: 280% 100%;
-    background-position: 180% 0;
-    animation: auth-sweep-once 2300ms cubic-bezier(0.22, 1, 0.36, 1) 300ms 1 both;
+    display: block;
   }
 
   .auth-grain {
@@ -1277,12 +1115,12 @@ input[type="radio"] {
   }
 
   .auth-wordmark {
-    font-family: var(--mono);
-    font-size: 20px;
-    font-weight: 700;
-    letter-spacing: 0.42em;
-    color: rgba(226, 230, 255, 0.92);
-    text-indent: 0.42em;
+    font-family: var(--font-serif);
+    font-size: 27px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    color: rgba(232, 235, 255, 0.95);
+    text-indent: 0.14em;
   }
 
   .auth-eyebrow {
@@ -1297,12 +1135,13 @@ input[type="radio"] {
 
   .auth-title {
     margin-top: 18px;
-    font-size: clamp(40px, 6vw, 68px);
-    font-weight: 900;
-    line-height: 1.08;
-    letter-spacing: -0.02em;
+    font-family: var(--font-serif);
+    font-size: clamp(42px, 6.2vw, 72px);
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: 0.01em;
     color: #f6f7ff;
-    text-shadow: 0 2px 30px rgba(91, 84, 232, 0.28);
+    text-shadow: 0 2px 40px rgba(91, 84, 232, 0.35);
   }
 
   .auth-title-line {
@@ -1319,18 +1158,11 @@ input[type="radio"] {
   }
 
   .auth-title-accent {
-    background: linear-gradient(100deg, #a79ff1 0%, #7b6cf0 30%, #56b6f5 50%, #7b6cf0 70%, #a79ff1 100%);
-    background-size: 220% 100%;
+    background: linear-gradient(100deg, #8f8bf6 0%, #6d5cf0 46%, #5b54e8 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
-  }
-
-  /* 标题流光：入场结束后，光泽缓慢横扫渐变描字 */
-  .auth-title-accent.auth-word {
-    animation:
-      auth-word-in 1200ms cubic-bezier(0.22, 1, 0.36, 1) var(--d, 0ms) both,
-      auth-text-shimmer 6s ease-in-out calc(var(--d, 0ms) + 2200ms) infinite;
+    filter: drop-shadow(0 4px 26px rgba(109, 92, 240, 0.5));
   }
 
   .auth-lede {
@@ -1450,8 +1282,8 @@ input[type="radio"] {
       from var(--auth-angle, 0deg),
       transparent 0deg,
       transparent 70deg,
-      rgba(167, 159, 241, 0.9) 110deg,
-      rgba(56, 182, 245, 0.7) 130deg,
+      rgba(143, 139, 246, 0.9) 110deg,
+      rgba(91, 84, 232, 0.7) 130deg,
       transparent 170deg,
       transparent 360deg
     );
@@ -1656,6 +1488,31 @@ input[type="radio"] {
     font-size: 11px;
     letter-spacing: 0.04em;
     color: rgba(160, 168, 204, 0.5);
+  }
+
+  /* —— 开场跳过提示（第二幕后隐去）—— */
+  .auth-hint {
+    position: absolute;
+    bottom: clamp(20px, 4vh, 36px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: rgba(150, 158, 196, 0.5);
+    opacity: 0;
+    animation: auth-rise-in 800ms var(--motion-ease) 2200ms both;
+    transition: opacity 500ms var(--motion-ease);
+  }
+  .auth-hint b {
+    color: rgba(143, 139, 246, 0.95);
+    font-weight: 600;
+  }
+  .is-ready .auth-hint {
+    opacity: 0 !important;
+    pointer-events: none;
   }
 
   /* —— orchestrated staggered entrance —— */

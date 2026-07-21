@@ -17,12 +17,20 @@ export default function BrandLogoImage({
   // 开启后：解码完成前保持透明，onLoad 时加 is-loaded 整张淡入——杜绝大图自上而下「半张」渲染。
   // 默认关，不影响其它调用点（小图标无此需求）。
   fadeInOnLoad = false,
+  // 基图加载完成（含缓存命中）后触发一次；用于把非关键资源（如登录页闭眼彩蛋图）
+  // 的预取排在基图之后、不与首屏争抢带宽。默认无。
+  onLoaded,
 }) {
   const [loaded, setLoaded] = useState(false);
+  const wants = fadeInOnLoad || !!onLoaded;
+  const handleLoad = useCallback(() => {
+    if (fadeInOnLoad) setLoaded(true);
+    onLoaded?.();
+  }, [fadeInOnLoad, onLoaded]);
   // 缓存命中时 onLoad 可能早于 React 绑定，故用回调 ref 检查 complete 兜底
   const imgRef = useCallback((node) => {
-    if (node && fadeInOnLoad && node.complete && node.naturalWidth > 0) setLoaded(true);
-  }, [fadeInOnLoad]);
+    if (node && wants && node.complete && node.naturalWidth > 0) handleLoad();
+  }, [wants, handleLoad]);
   const cls = `${className}${fadeInOnLoad && loaded ? ' is-loaded' : ''}`.trim();
   return (
     <img
@@ -36,7 +44,7 @@ export default function BrandLogoImage({
       className={cls}
       decoding="async"
       loading={loading}
-      onLoad={fadeInOnLoad ? () => setLoaded(true) : undefined}
+      onLoad={wants ? handleLoad : undefined}
       onError={onError}
     />
   );

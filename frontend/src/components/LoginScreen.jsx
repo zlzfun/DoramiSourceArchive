@@ -1,12 +1,29 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Archive, ArrowRight, Bot, KeyRound, Loader2, Radar, Sparkles, User } from 'lucide-react';
 import BrandLogoImage from './BrandLogoImage';
 import { LOGO_COVER_EYES_PATH, LOGO_COVER_EYES_SRC_SET } from '../config';
 
 function LoginBrandMark({ logoError, onLogoError, covering }) {
-  // 蒙眼彩蛋图（30KB）移出首屏关键路径：首次聚焦密码框后才挂载，避免与 hero 头像争抢带宽
+  // 蒙眼彩蛋图（30KB）移出首屏关键路径，但改为「基图加载完成后、浏览器空闲时预取」，
+  // 而非「聚焦密码框才下载」——后者在海外高延迟节点会让闭眼滞后甚至来不及呈现。
+  // 预取排在 hero 头像之后、不与首屏关键资源争抢带宽，聚焦时闭眼即时呈现。
   const [coverArmed, setCoverArmed] = useState(false);
+  const idleRef = useRef(0);
+  // 聚焦即需要：兜底，若预取尚未触发则立刻挂载
   useEffect(() => { if (covering) setCoverArmed(true); }, [covering]);
+  const warmCover = useCallback(() => {
+    if (idleRef.current || coverArmed) return;
+    const w = window;
+    idleRef.current = w.requestIdleCallback
+      ? w.requestIdleCallback(() => setCoverArmed(true), { timeout: 2000 })
+      : setTimeout(() => setCoverArmed(true), 600);
+  }, [coverArmed]);
+  useEffect(() => () => {
+    const w = window;
+    if (!idleRef.current) return;
+    if (w.cancelIdleCallback) w.cancelIdleCallback(idleRef.current);
+    else clearTimeout(idleRef.current);
+  }, []);
   return (
     <span className={`auth-logo-shell${covering ? ' is-covering' : ''}`}>
       <span className="auth-logo-halo" aria-hidden="true" />
@@ -18,6 +35,7 @@ function LoginBrandMark({ logoError, onLogoError, covering }) {
             className="auth-logo auth-logo-base"
             onError={onLogoError}
             fadeInOnLoad
+            onLoaded={warmCover}
           />
           {/* 蒙眼彩蛋：密码框聚焦时叠加淡入，失焦淡出（首次聚焦后才挂载） */}
           {coverArmed && (
@@ -49,26 +67,168 @@ const TITLE_LINES = [
   [{ t: '有处可栖。', accent: true, delay: 1130 }],
 ];
 
-function seededFraction(index, salt) {
-  const value = Math.sin((index + 1) * (salt + 11) * 91.731) * 43758.5453;
-  return value - Math.floor(value);
-}
-
-const PARTICLES = Array.from({ length: 18 }, (_, index) => ({
-  id: index,
-  left: seededFraction(index, 1) * 100,
-  top: seededFraction(index, 2) * 100,
-  size: 1.5 + seededFraction(index, 3) * 2.5,
-  delay: seededFraction(index, 4) * 8,
-  duration: 9 + seededFraction(index, 5) * 10,
-  depth: 0.3 + seededFraction(index, 6) * 1.4,
-}));
-
 // 第一幕「标题卡」停留时长，之后进入第二幕（文字归位 + 登录卡浮现）
 const TITLE_HOLD_MS = 3600;
 
 const prefersReducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+// —— 信号星座（三维摄像机）：横向鼠标移动=偏航转头，纵向=镜头推进/后拉。
+//    运动全部由鼠标移动量注入、靠摩擦衰减，手停即冻结（并停掉 RAF）。 ——
+function mountConstellation(canvas) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return () => {};
+  const reduce = prefersReducedMotion();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  let W = 0, H = 0, cx = 0, cy = 0, XR = 0, YR = 0;
+  let nodes = [];
+  let running = false, rafId = 0, last;
+
+  // 三维投影 + 光标灵敏度
+  const FOCAL = 560, ZNEAR = 150, ZFAR = 1650, ZMID = (ZNEAR + ZFAR) / 2, ZSPAN = ZFAR - ZNEAR, ZCLIP = 50;
+  const LINK = 150, LINK2 = LINK * LINK;
+  const KYAW = 0.00085, KDOLLY = 2.4, FRIC = 0.9, YAWMAX = 0.55, VZMAX = 780;
+  const cam = { yaw: 0, yawV: 0, vz: 0, phase: 0, lx: 0, ly: 0, has: false };
+  const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+  const reseat = (n) => { n.x = (Math.random() * 2 - 1) * XR; n.y = (Math.random() * 2 - 1) * YR; };
+
+  function build() {
+    const count = Math.round(Math.min(190, Math.max(90, (W * H) / 13000)));
+    nodes = [];
+    for (let i = 0; i < count; i++) {
+      nodes.push({
+        x: (Math.random() * 2 - 1) * XR, y: (Math.random() * 2 - 1) * YR, z: ZNEAR + Math.random() * ZSPAN,
+        r0: 0.8 + Math.random() * 1.4,
+        f1: 0.5 + Math.random() * 1.3, f2: 0.5 + Math.random() * 1.3,
+        p1: Math.random() * 6.2832, p2: Math.random() * 6.2832, amp: 10 + Math.random() * 24,
+        sx: 0, sy: 0, s: 0, a: 0, vis: false,
+      });
+    }
+  }
+
+  function resize() {
+    W = window.innerWidth; H = window.innerHeight; cx = W / 2; cy = H / 2; XR = W * 0.95; YR = H * 0.95;
+    canvas.width = Math.floor(W * dpr); canvas.height = Math.floor(H * dpr);
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    build();
+    drawStatic();
+  }
+
+  function drawStatic() {
+    // 静止一帧（yaw=0、当前深度）：reduced-motion / 首帧 / 冻结态
+    for (const n of nodes) {
+      const zc = n.z; if (zc <= ZCLIP) { n.vis = false; continue; }
+      const s = FOCAL / zc; n.sx = cx + n.x * s; n.sy = cy + n.y * s; n.s = s;
+      n.a = clamp01((zc - ZCLIP) / (ZNEAR * 1.1)) * clamp01((ZFAR - zc) / (ZFAR * 0.55)); n.vis = true;
+    }
+    ctx.clearRect(0, 0, W, H); ctx.lineWidth = 1;
+    for (let i = 0; i < nodes.length; i++) {
+      const a = nodes[i]; if (!a.vis) continue;
+      for (let j = i + 1; j < nodes.length; j++) {
+        const b = nodes[j]; if (!b.vis) continue;
+        const dx = a.sx - b.sx, dy = a.sy - b.sy, d2 = dx * dx + dy * dy;
+        if (d2 < LINK2) {
+          const al = (1 - Math.sqrt(d2) / LINK) * 0.4 * Math.min(a.a, b.a);
+          ctx.strokeStyle = 'rgba(123,118,236,' + al.toFixed(3) + ')';
+          ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
+        }
+      }
+    }
+    for (const n of nodes) {
+      if (!n.vis) continue;
+      ctx.fillStyle = 'rgba(150,146,248,' + (0.35 + 0.6 * n.a).toFixed(3) + ')';
+      ctx.beginPath(); ctx.arc(n.sx, n.sy, n.r0 * Math.min(n.s, 2.6), 0, 6.28); ctx.fill();
+    }
+  }
+
+  function tick(now) {
+    const dt = Math.min(0.05, last == null ? 0 : (now - last) / 1000); last = now;
+
+    cam.yawV *= FRIC; cam.vz *= FRIC;
+    if (Math.abs(cam.yawV) < 1e-4) cam.yawV = 0;
+    if (Math.abs(cam.vz) < 0.4) cam.vz = 0;
+    cam.yaw += cam.yawV * dt;
+    cam.phase += (Math.abs(cam.yawV) * 1.4 + Math.abs(cam.vz) * 0.0016) * dt;
+
+    const cyaw = Math.cos(cam.yaw), syaw = Math.sin(cam.yaw);
+    ctx.clearRect(0, 0, W, H);
+
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      n.z -= cam.vz * dt;
+      if (n.z < ZNEAR) { n.z += ZSPAN; reseat(n); } else if (n.z > ZFAR) { n.z -= ZSPAN; reseat(n); }
+      const wx = n.x + Math.sin(cam.phase * n.f1 + n.p1) * n.amp;
+      const wy = n.y + Math.cos(cam.phase * n.f2 + n.p2) * n.amp;
+      const zr = n.z - ZMID;
+      const xr = wx * cyaw - zr * syaw;
+      const zc = wx * syaw + zr * cyaw + ZMID;
+      if (zc <= ZCLIP) { n.vis = false; continue; }
+      const s = FOCAL / zc;
+      n.sx = cx + xr * s; n.sy = cy + wy * s; n.s = s;
+      n.a = clamp01((zc - ZCLIP) / (ZNEAR * 1.1)) * clamp01((ZFAR - zc) / (ZFAR * 0.55));
+      n.vis = true;
+    }
+
+    ctx.lineWidth = 1;
+    for (let i = 0; i < nodes.length; i++) {
+      const a = nodes[i]; if (!a.vis) continue;
+      for (let j = i + 1; j < nodes.length; j++) {
+        const b = nodes[j]; if (!b.vis) continue;
+        const dx = a.sx - b.sx, dy = a.sy - b.sy, d2 = dx * dx + dy * dy;
+        if (d2 < LINK2) {
+          const al = (1 - Math.sqrt(d2) / LINK) * 0.42 * Math.min(a.a, b.a);
+          if (al < 0.01) continue;
+          ctx.strokeStyle = 'rgba(123,118,236,' + al.toFixed(3) + ')';
+          ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
+        }
+      }
+    }
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i]; if (!n.vis || n.a <= 0) continue;
+      const R = n.r0 * Math.min(n.s, 2.6);
+      ctx.fillStyle = 'rgba(150,146,248,' + (0.35 + 0.6 * n.a).toFixed(3) + ')';
+      ctx.shadowColor = 'rgba(143,139,246,.9)'; ctx.shadowBlur = 6 * Math.min(n.s, 2);
+      ctx.beginPath(); ctx.arc(n.sx, n.sy, R, 0, 6.2832); ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+
+    if (cam.yawV === 0 && cam.vz === 0) { running = false; rafId = 0; }
+    else rafId = requestAnimationFrame(tick);
+  }
+
+  function wake() {
+    if (running || reduce) return;
+    running = true; last = undefined; rafId = requestAnimationFrame(tick);
+  }
+
+  const onMove = (e) => {
+    if (cam.has) {
+      const dx = e.clientX - cam.lx, dy = e.clientY - cam.ly;
+      cam.yawV = Math.max(-YAWMAX, Math.min(YAWMAX, cam.yawV + dx * KYAW));
+      cam.vz = Math.max(-VZMAX, Math.min(VZMAX, cam.vz - dy * KDOLLY)); // 上移(dy<0)→推进
+    }
+    cam.lx = e.clientX; cam.ly = e.clientY; cam.has = true;
+    wake();
+  };
+  const onLeave = () => { cam.has = false; };
+
+  resize();
+  window.addEventListener('resize', resize);
+  if (!reduce) {
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerleave', onLeave);
+  }
+
+  return () => {
+    window.removeEventListener('resize', resize);
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerleave', onLeave);
+    if (rafId) cancelAnimationFrame(rafId);
+  };
+}
 
 export default function LoginScreen({ logoError, onLogoError, onLogin }) {
   const [username, setUsername] = useState('');
@@ -76,9 +236,15 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  // 'title' = 第一幕（仅文字）；'ready' = 第二幕（登录卡浮现）
+  // 'title' = 第一幕（居中强调）；'ready' = 第二幕（登录卡浮现）
   const [phase, setPhase] = useState(() => (prefersReducedMotion() ? 'ready' : 'title'));
-  const stageRef = useRef(null);
+  const netRef = useRef(null);
+
+  // 背景：三维摄像机星座（挂载即绘制，随鼠标运动变幻）
+  useEffect(() => {
+    if (!netRef.current) return undefined;
+    return mountConstellation(netRef.current);
+  }, []);
 
   // 第一幕 → 第二幕：定时推进；任意点击/按键可提前跳过开场
   useEffect(() => {
@@ -94,41 +260,6 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
     };
   }, [phase]);
 
-  // 鼠标：背景景深视差（--px/--py，归一化）+ 光标聚光坐标（--mx/--my，像素）
-  useEffect(() => {
-    const stage = stageRef.current;
-    if (!stage || prefersReducedMotion()) return undefined;
-
-    let frame = 0;
-    const handleMove = (event) => {
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        const rect = stage.getBoundingClientRect();
-        const mx = event.clientX - rect.left;
-        const my = event.clientY - rect.top;
-        stage.style.setProperty('--px', (mx / rect.width - 0.5).toFixed(4));
-        stage.style.setProperty('--py', (my / rect.height - 0.5).toFixed(4));
-        stage.style.setProperty('--mx', `${mx.toFixed(1)}px`);
-        stage.style.setProperty('--my', `${my.toFixed(1)}px`);
-        stage.style.setProperty('--spot', '1');
-      });
-    };
-    const reset = () => {
-      stage.style.setProperty('--px', '0');
-      stage.style.setProperty('--py', '0');
-      stage.style.setProperty('--spot', '0');
-    };
-    stage.addEventListener('pointermove', handleMove);
-    stage.addEventListener('pointerenter', () => stage.style.setProperty('--spot', '1'));
-    stage.addEventListener('pointerleave', reset);
-    return () => {
-      if (frame) cancelAnimationFrame(frame);
-      stage.removeEventListener('pointermove', handleMove);
-      stage.removeEventListener('pointerleave', reset);
-    };
-  }, []);
-
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
@@ -143,46 +274,12 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
   };
 
   return (
-    <main className={`auth-stage is-${phase}`} ref={stageRef}>
-      <div className="auth-bg" aria-hidden="true">
-        <div className="auth-orb auth-orb-1">
-          <span className="auth-orb-glow" />
-        </div>
-        <div className="auth-orb auth-orb-2">
-          <span className="auth-orb-glow" />
-        </div>
-        <div className="auth-orb auth-orb-3">
-          <span className="auth-orb-glow" />
-        </div>
-        <span className="auth-grid" />
-        <span className="auth-grid-spot" />
-        <span className="auth-beam" />
-        <div className="auth-meteors">
-          <span className="auth-meteor auth-meteor-1" />
-          <span className="auth-meteor auth-meteor-2" />
-          <span className="auth-meteor auth-meteor-3" />
-        </div>
-        <div className="auth-particles">
-          {PARTICLES.map((p) => (
-            <span
-              key={p.id}
-              className="auth-particle"
-              style={{
-                left: `${p.left}%`,
-                top: `${p.top}%`,
-                width: `${p.size}px`,
-                height: `${p.size}px`,
-                '--pd': p.depth,
-                animationDelay: `${p.delay}s`,
-                animationDuration: `${p.duration}s`,
-              }}
-            />
-          ))}
-        </div>
+    <main className={`auth-stage is-${phase}`}>
+      <div className="auth-scene-inner" aria-hidden="true">
+        <div className="auth-bg" />
+        <canvas className="auth-net" ref={netRef} />
         <span className="auth-grain" />
-        <span className="auth-spotlight" />
         <span className="auth-vignette" />
-        <span className="auth-sweep" />
       </div>
 
       <div className="auth-shell">
@@ -199,17 +296,15 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
           <h1 className="auth-title">
             {TITLE_LINES.map((line, li) => (
               <span className="auth-title-line" key={li}>
-                {line.map((word, wi) => {
-                  return (
-                    <span
-                      key={wi}
-                      className={`auth-word${word.accent ? ' auth-title-accent' : ''}`}
-                      style={{ '--d': `${word.delay}ms` }}
-                    >
-                      {word.t}
-                    </span>
-                  );
-                })}
+                {line.map((word, wi) => (
+                  <span
+                    key={wi}
+                    className={`auth-word${word.accent ? ' auth-title-accent' : ''}`}
+                    style={{ '--d': `${word.delay}ms` }}
+                  >
+                    {word.t}
+                  </span>
+                ))}
               </span>
             ))}
           </h1>
@@ -290,6 +385,8 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
           </section>
         </div>
       </div>
+
+      <p className="auth-hint">按 <b>任意键</b> 进入</p>
     </main>
   );
 }

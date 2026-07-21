@@ -52,7 +52,7 @@ Data is stored in the `data/` directory (SQLite `cms_data.db` and ChromaDB `chro
 
 ## Versioning
 
-单一事实来源是 `src/version.py` 的 `__version__`(SemVer:MAJOR=产品形态级改版 / MINOR=功能波 / PATCH=修复)。升版本改它并同步 `pyproject.toml` 的 `version`(项目非 editable install,importlib.metadata 不可用);`/api/runtime` 透出 `version`,前端「设置 → 关于」展示;合入 main 的版本节点打 annotated tag `v{__version__}`。纪元:1.x 采集归档原型 → 2.x 读者分发平台(PM2 app 名 dorami-backend-v2 即此纪元遗痕)→ 3.0.0 静默仪器全站重构收官 → 3.6–3.10 阅读器 Folo 化五波(四带式/容器模型/全站轨语言/设置柜归一/发现页) → 3.11 图床波(媒体库 + 媒体热点图) → 3.12 X 社交波(X API v2 采集 + 社交媒体第三容器)。
+单一事实来源是 `src/version.py` 的 `__version__`(SemVer:MAJOR=产品形态级改版 / MINOR=功能波 / PATCH=修复)。升版本改它并同步 `pyproject.toml` 的 `version`(项目非 editable install,importlib.metadata 不可用);`/api/runtime` 透出 `version`,前端「设置 → 关于」展示;合入 main 的版本节点打 annotated tag `v{__version__}`。纪元:1.x 采集归档原型 → 2.x 读者分发平台(PM2 app 名 dorami-backend-v2 即此纪元遗痕)→ 3.0.0 静默仪器全站重构收官 → 3.6–3.10 阅读器 Folo 化五波(四带式/容器模型/全站轨语言/设置柜归一/发现页) → 3.11 图床波(媒体库 + 媒体热点图) → 3.12 X 社交波(X API v2 采集 + 社交媒体第三容器) → 3.13 登录电影化(信号星座三维摄像机背景 + 居中强调→左移→登录卡浮现两幕开场,LoginScreen 重构)。
 
 ## 文档地图(分层索引,L0)
 
