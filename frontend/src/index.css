@@ -7159,21 +7159,23 @@ input[type="radio"] {
   .reader-src-more .reader-group-chevron { margin-left: auto; }
 
   /* 中栏搜索行:由视图轨「搜索」钮开合,不常驻 */
-  .reader-search-row {
+  /* 搜索就地展开:条目列头内顶替标题的软槽输入(与发现页目录搜索 .reader-disc-search 同风格) */
+  .reader-search-inline {
+    flex: 1;
+    min-width: 0;
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin: 8px 12px 2px;
-    padding: 0 10px;
-    border: 1px solid var(--dorami-border);
-    border-radius: 8px;
-    background: var(--dorami-surface);
-    transition: border-color 150ms ease, box-shadow 150ms ease;
+    gap: 7px;
+    padding: 6px 11px;
+    border-radius: 9px;
+    background: var(--dorami-well);
+    box-shadow: var(--dorami-inset-input);
+    color: var(--dorami-faint);
+    transition: box-shadow 150ms ease;
   }
 
-  .reader-search-row:focus-within {
-    border-color: var(--dorami-accent);
-    box-shadow: 0 0 0 3px var(--dorami-wash);
+  .reader-search-inline:focus-within {
+    box-shadow: var(--dorami-inset-input), 0 0 0 3px var(--dorami-wash);
   }
 
   .reader-search-input {
@@ -7182,13 +7184,35 @@ input[type="radio"] {
     border: none;
     outline: none;
     background: transparent;
-    padding: 8px 0;
-    font-size: 13px;
-    font-weight: 600;
+    padding: 0;
     color: var(--dorami-ink);
+    /* font-size 钉在未分层区(见文件尾),否则被全局 input{font:inherit} 压回 16px */
   }
 
   .reader-search-input::placeholder { color: var(--dorami-faint); }
+
+  /* 搜索开关钮:与 .reader-unread-icon / .reader-fav-icon 同规格(28px),开启态品牌蓝 */
+  .reader-search-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--dorami-faint);
+    cursor: pointer;
+    transition: color 140ms ease, background 140ms ease;
+  }
+
+  .reader-search-icon:hover {
+    color: var(--dorami-blue);
+    background: color-mix(in srgb, var(--dorami-ink) 6%, transparent);
+  }
+
+  .reader-search-icon.is-on { color: var(--dorami-blue); }
 
   .reader-source-scroll {
     flex: 1;
@@ -7333,7 +7357,7 @@ input[type="radio"] {
   .reader-list-head {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     padding: 14px 16px 10px;
     border-bottom: 1px solid var(--dorami-border-soft);
   }
@@ -7349,15 +7373,6 @@ input[type="radio"] {
     white-space: nowrap;
   }
 
-  .reader-list-sub {
-    margin-left: 6px;
-    font-family: var(--mono);
-    font-size: 11px;
-    font-weight: 400;
-    color: var(--dorami-faint);
-    font-variant-numeric: tabular-nums;
-  }
-
   /* 全部/未读分段(样页 .seg):well 底胶囊,选中片浮白 */
   .reader-seg {
     display: flex;
@@ -7368,7 +7383,7 @@ input[type="radio"] {
   }
 
   .reader-seg-btn {
-    padding: 3px 10px;
+    padding: 3px 8px;
     border: none;
     border-radius: 6px;
     background: transparent;
@@ -7704,10 +7719,11 @@ input[type="radio"] {
 
   /* ── 条目卡(样页结构:首行[源标·源名·chip·时间·未读点] / 标题 / 一行摘要) ── */
   .reader-entry {
+    position: relative;               /* 收藏星标的定位锚点 */
     display: block;
     width: 100%;
     text-align: left;
-    padding: 10px 12px;
+    padding: 10px 30px 10px 12px;     /* 右侧预留星道,防星标压正文 */
     border: none;
     border-radius: var(--r-control);
     background: transparent;
@@ -7722,6 +7738,26 @@ input[type="radio"] {
     background: var(--dorami-surface);
     box-shadow: var(--sh-1);
   }
+
+  /* 收藏标注(Folo 式):卡右缘竖直居中。已收藏=琥珀实星常显;
+     未收藏=默认隐形,悬停卡片时浮出空心星(可点亮);点星本身高亮。 */
+  .reader-entry-fav {
+    position: absolute;
+    top: 50%;
+    right: 9px;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--dorami-faint);
+    opacity: 0;
+    cursor: pointer;
+    transition: opacity 140ms ease, color 140ms ease;
+  }
+
+  .reader-entry:hover .reader-entry-fav { opacity: 1; }
+  .reader-entry-fav:hover { color: #f59e0b; }
+  .reader-entry-fav.is-on { opacity: 1; color: #f59e0b; }
 
   .reader-entry-top {
     display: flex;
@@ -8002,6 +8038,8 @@ input[type="radio"] {
   .reader-social-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
   .reader-social-sub { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); }
   .reader-social-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  /* 社交头很宽,内联搜索限宽左置(动作组仍靠 margin-auto 右对齐) */
+  .reader-social-search { flex: 0 1 380px; }
 
   .reader-social-scroll { flex: 1; overflow-y: auto; padding-bottom: 56px; }
   /* 单列宽卡 + 行长约束(conventions 正文行长纪律) */
@@ -9228,7 +9266,7 @@ input[type="radio"] {
 
 /* ════ 规则①：输入 / 轨道 / 表头 / 代码预览 → well（深凹陷）════ */
 [data-theme="dark"] :is(
-  .segmented-control, .scope-toggle, .search-box, .catalog-search, .reader-search-row,
+  .segmented-control, .scope-toggle, .search-box, .catalog-search,
   .field-box, .vector-option-box, .node-param-input, .node-param-checkbox, .form-input,
   .config-toggle, .vector-status-pending, .empty-state, .source-param-empty, .subscription-catalog-toolbar
 ) {
@@ -9321,6 +9359,8 @@ input[type="radio"] {
 .reader-disc-prev { font-size: 11px; font-weight: 400; }
 /* 输入框同陷阱:无层级 input{font:inherit} 压 @layer 字号,发现页目录搜索框字号在此钉住 */
 .reader-disc-search input { font-size: 12.5px; }
+/* 条目列头就地展开的搜索框同理钉字号+行高,与发现页目录搜索一致(否则回落 16px/40px 高) */
+.reader-search-input { font-size: 12.5px; line-height: 1.5; }
 .reader-sub-banner { font-size: 12.5px; font-weight: 500; }
 .reader-pager-btn { font: inherit; }
 /* 媒体热点图的带文字按钮同陷阱(重抓钮) */

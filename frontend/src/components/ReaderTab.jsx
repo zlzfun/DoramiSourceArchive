@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
+  X,
   Minus,
   Plus,
   ExternalLink,
@@ -747,16 +748,24 @@ export default function ReaderTab({
     setDiscover(false);
     setMode(v);
     setActiveSourceId(null);
+    setFavOnly(false);
+    setSearchOpen(false);
+    setSearchInput('');
   };
   // 单源=容器内收窄:源所属容器自动点亮(今日不承担单源,从今日点源即跳入所属容器)
   const goSource = (sourceId) => {
     setDiscover(false);
     setActiveSourceId(sourceId);
     setMode(shapeOfSource(sourceId));
+    setFavOnly(false);
   };
-  // 搜索开关:关闭即清词(searchQuery 经防抖同步清空,列表回到无过滤);搜索作用于条目列,开启即离开发现页
+  // 收藏入口(源栏,与「全部XX」并列):看本容器全部收藏(容器级、不逐源)。
+  // Folo 语义——收藏是与「全部」并列的一级过滤,不再挂在列头逐源。
+  const goContainerAll = () => { setDiscover(false); setActiveSourceId(null); setFavOnly(false); };
+  const goFavorites = () => { setDiscover(false); setActiveSourceId(null); setFavOnly(true); };
+  // 搜索开关(条目列头就地展开):关闭即清词(searchQuery 经防抖同步清空,列表回到无过滤)。
+  // 已从视图轨降为条目列内的过滤器,只在文章/动态容器列头出现,故无需再退发现页。
   const toggleSearch = () => {
-    setDiscover(false);
     setSearchOpen((open) => {
       if (open) setSearchInput('');
       return !open;
@@ -765,9 +774,11 @@ export default function ReaderTab({
   // 视图轨激活态 = 发现页 或 当前容器(源内保持点亮——层级关系,不再互斥)
   const railActive = discover ? 'discover' : mode;
 
-  const listTitle = activeSourceId
-    ? (sourceNameMap[activeSourceId] || activeSourceId)
-    : mode === 'article' ? '文章' : mode === 'social' ? '社交媒体' : '动态';
+  const listTitle = favOnly
+    ? '收藏'
+    : activeSourceId
+      ? (sourceNameMap[activeSourceId] || activeSourceId)
+      : mode === 'article' ? '文章' : mode === 'social' ? '社交媒体' : '动态';
 
   // ── 翻页(上一篇/下一篇):沿当前列表序 ──
   const activeIndex = useMemo(
@@ -854,16 +865,6 @@ export default function ReaderTab({
           <Compass className="h-[18px] w-[18px]" />
           <span className="reader-vrail-tip">发现</span>
         </button>
-        <button
-          type="button"
-          aria-label="搜索"
-          aria-pressed={searchOpen}
-          onClick={toggleSearch}
-          className={`reader-vrail-btn ${searchOpen ? 'is-on' : ''}`}
-        >
-          <Search className="h-[18px] w-[18px]" />
-          <span className="reader-vrail-tip">搜索</span>
-        </button>
 
         {/* 轨底(standalone):主题/设置 直排 + 头像(点击进设置·账户)——头像菜单已退役
             (与设置页功能重复,用户拍板);接入集成/退出登录都在设置柜内 */}
@@ -929,14 +930,14 @@ export default function ReaderTab({
                 </div>
               )}
 
-              {/* 容器聚合入口:回到本容器全部流 */}
+              {/* 容器聚合入口 + 收藏入口(Folo 语义:收藏与「全部」并列,容器级过滤) */}
               <div className="reader-subs">
                 <div
                   role="button"
                   tabIndex={0}
-                  onClick={() => setActiveSourceId(null)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveSourceId(null); } }}
-                  className={`reader-source-row ${activeSourceId === null ? 'reader-source-row-active' : ''} ${scopeUnread > 0 && activeSourceId === null ? 'has-unread' : ''}`}
+                  onClick={goContainerAll}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goContainerAll(); } }}
+                  className={`reader-source-row ${activeSourceId === null && !favOnly ? 'reader-source-row-active' : ''} ${scopeUnread > 0 && activeSourceId === null && !favOnly ? 'has-unread' : ''}`}
                 >
                   <span className="reader-src-allicon" aria-hidden="true">
                     {mode === 'bulletin' ? <Zap className="h-3.5 w-3.5" />
@@ -944,11 +945,23 @@ export default function ReaderTab({
                         : <FileText className="h-3.5 w-3.5" />}
                   </span>
                   <p className="reader-source-name min-w-0 flex-1">
-                    {mode === 'bulletin' ? '全部动态' : socialView ? '全部社交' : '全部文章'}
+                    {mode === 'bulletin' ? '全部动态' : socialView ? '全部社媒' : '全部文章'}
                   </p>
                   {(unreadByShape[mode] || 0) > 0 && (
                     <span className="reader-src-count">{formatBadge(unreadByShape[mode])}</span>
                   )}
+                </div>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={goFavorites}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goFavorites(); } }}
+                  className={`reader-source-row ${favOnly ? 'reader-source-row-active' : ''}`}
+                >
+                  <span className="reader-src-allicon" aria-hidden="true">
+                    <Star className="h-3.5 w-3.5" fill={favOnly ? 'currentColor' : 'none'} />
+                  </span>
+                  <p className="reader-source-name min-w-0 flex-1">收藏</p>
                 </div>
               </div>
 
@@ -1051,7 +1064,10 @@ export default function ReaderTab({
           favTogglingId={favTogglingId}
           onToggleFavorite={handleToggleFavorite}
           favOnly={favOnly}
-          onFavOnlyChange={setFavOnly}
+          searchOpen={searchOpen}
+          searchInput={searchInput}
+          onSearchInputChange={setSearchInput}
+          onToggleSearch={toggleSearch}
           readTogglingId={socialReadToggling}
           onToggleRead={handleToggleSocialRead}
           onMarkAllRead={handleMarkAllRead}
@@ -1071,14 +1087,24 @@ export default function ReaderTab({
       <section className="reader-col reader-col-list">
         <div className="reader-list-inner">
         <div className="reader-list-head">
-          <span className="reader-list-title">
-            {listTitle}
-            <span className="reader-list-sub">
-              {articlesTotal} 条{scopeUnread > 0 ? ` · ${formatBadge(scopeUnread)} 未读` : ''}
-            </span>
-          </span>
-          {/* 未读筛选(全部/未读)+ 全部标读。收藏过滤中不适用(未读语义关闭)。 */}
-          {!favOnly && (
+          {/* 搜索就地展开:输入框顶替标题+未读 seg,占满列头左侧(不新增控件,防拥挤) */}
+          {searchOpen ? (
+            <div className="reader-search-inline">
+              <Search className="h-4 w-4 shrink-0 text-slate-500" />
+              <input
+                type="text"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="搜索我的阅读…"
+                className="reader-search-input"
+                autoFocus
+              />
+            </div>
+          ) : (
+            <span className="reader-list-title">{listTitle}</span>
+          )}
+          {/* 未读筛选(全部/未读)+ 全部标读:搜索展开或收藏过滤时让位(未读语义此时关闭)。 */}
+          {!favOnly && !searchOpen && (
             <>
               <div className="reader-seg" role="tablist" aria-label="未读筛选">
                 {[[false, '全部'], [true, '未读']].map(([value, label]) => (
@@ -1106,17 +1132,18 @@ export default function ReaderTab({
               </button>
             </>
           )}
-          {/* 收藏过滤器(Folo 语义:每个容器自己的收藏钮):只看当前范围内的收藏 */}
+          {/* 搜索开关(就地展开:图标 ↔ ✕):由视图轨降级而来的条目列过滤器,与未读/收藏同维度 */}
           <button
             type="button"
-            onClick={() => setFavOnly((v) => !v)}
-            aria-pressed={favOnly}
-            aria-label={favOnly ? '退出收藏过滤' : '只看收藏'}
-            title={favOnly ? '退出收藏过滤' : '只看收藏'}
-            className={`reader-fav-icon ${favOnly ? 'is-on' : ''}`}
+            onClick={toggleSearch}
+            aria-pressed={searchOpen}
+            aria-label={searchOpen ? '关闭搜索' : '搜索'}
+            title={searchOpen ? '关闭搜索' : '搜索'}
+            className={`reader-search-icon ${searchOpen ? 'is-on' : ''}`}
           >
-            <Star className="h-4 w-4" fill={favOnly ? 'currentColor' : 'none'} />
+            {searchOpen ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
           </button>
+          {/* 收藏过滤器已移出列头 → 源栏「收藏」入口(容器级,与「全部XX」并列) */}
         </div>
 
         {/* 预览未订阅源:显眼订阅横幅(Folo 的「＋ 订阅」条),订阅成功即消失 */}
@@ -1132,21 +1159,6 @@ export default function ReaderTab({
               : <Plus className="h-3.5 w-3.5" />}
             订阅「{activeUnsubscribed.name || activeUnsubscribed.source_id}」
           </button>
-        )}
-
-        {/* 搜索行:视图轨「搜索」开合 */}
-        {searchOpen && (
-          <div className="reader-search-row">
-            <Search className="h-4 w-4 text-slate-500" />
-            <input
-              type="text"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="搜索我的阅读…"
-              className="reader-search-input"
-              autoFocus
-            />
-          </div>
         )}
 
         <div className="reader-list-scroll" ref={listRef}>
@@ -1209,6 +1221,7 @@ export default function ReaderTab({
                 const excerpt = entryBulletin
                   ? ''
                   : excerptOf(article.summary_zh || article.content_preview || article.content);
+                const isFav = favoriteIds.has(article.id);
                 const key = dayKeyOf(article);
                 const showLabel = grouping && (index === 0 || key !== dayKeyOf(articles[index - 1]));
                 return (
@@ -1219,7 +1232,7 @@ export default function ReaderTab({
                       onClick={() => selectArticle(article)}
                       onMouseEnter={() => schedulePrefetch(article)}
                       onMouseLeave={cancelPrefetch}
-                      className={`reader-entry ${entryBulletin ? 'is-bulletin' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'}`}
+                      className={`reader-entry ${entryBulletin ? 'is-bulletin' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''}`}
                     >
                       <span className="reader-entry-top">
                         {sourceMap[article.source_id] && (
@@ -1234,12 +1247,22 @@ export default function ReaderTab({
                         >
                           {timeOfDay(article.fetched_date || article.publish_date)}
                         </span>
-                        {/* 圆点常驻渲染:已读时缩零淡出(A2;条件卸载无法过渡) */}
-                        <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
                       </span>
                       <span className="reader-entry-title">{article.title || '（无标题）'}</span>
                       {/* 摘要行:AI 要点摘要(summary_zh)优先——正文截断对英文长文几乎无信息量 */}
                       {excerpt && <span className="reader-entry-excerpt">{excerpt}</span>}
+                      {/* 收藏标注(Folo 式,卡右缘):已收藏常显琥珀实星;未收藏悬停浮出空心星,点击切换。
+                          卡本身是 <button>,故收藏钮用 role=button 的 span,避免按钮嵌套。 */}
+                      <span
+                        role="button"
+                        tabIndex={-1}
+                        aria-label={isFav ? '取消收藏' : '收藏'}
+                        title={isFav ? '取消收藏' : '收藏'}
+                        onClick={(e) => { e.stopPropagation(); handleToggleFavorite(article, e); }}
+                        className={`reader-entry-fav ${isFav ? 'is-on' : ''}`}
+                      >
+                        <Star className="h-[15px] w-[15px]" fill={isFav ? 'currentColor' : 'none'} />
+                      </span>
                     </button>
                   </Fragment>
                 );

@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useMemo, useState } from 'react';
-import { AtSign, Check, CheckCheck, Circle, Loader2, Repeat2, Star } from 'lucide-react';
+import { AtSign, Check, CheckCheck, Circle, Loader2, Repeat2, Search, Star, X } from 'lucide-react';
 import LogoMark from './LogoMark';
 import { platformLabelOf, resolveCompany } from '../sourceTaxonomy';
 import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
@@ -253,7 +253,10 @@ export default function SocialFlow({
   favTogglingId,
   onToggleFavorite,
   favOnly = false,
-  onFavOnlyChange,
+  searchOpen = false,
+  searchInput = '',
+  onSearchInputChange,
+  onToggleSearch,
   readTogglingId,
   onToggleRead,
   onMarkAllRead,
@@ -272,18 +275,35 @@ export default function SocialFlow({
   return (
     <section className="reader-col reader-social" aria-label="社交媒体">
       <header className="reader-social-head">
-        <span className="reader-social-title">{scopeName || '社交媒体'}</span>
-        <span className="reader-social-sub">
-          {favOnly
-            ? '只看收藏'
-            : scopeName
-              ? (unreadCount > 0 ? `${unreadCount} 条未读` : '已读完')
-              : `${subscribedCount} 个账号${unreadCount > 0 ? ` · ${unreadCount} 条未读` : ''}`}
-        </span>
-        {/* 与条目列头统一顺序:全部/未读 seg → 全部标读 → 只看收藏(收藏钮恒在最右)。
-            收藏过滤时未读语义关闭,seg 与标读钮让位隐藏,只留收藏钮。 */}
+        {/* 搜索就地展开(与条目列头同构):输入框顶替标题+副标 */}
+        {searchOpen ? (
+          <div className="reader-search-inline reader-social-search">
+            <Search className="h-4 w-4 shrink-0 text-slate-500" />
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => onSearchInputChange?.(e.target.value)}
+              placeholder="搜索我的阅读…"
+              className="reader-search-input"
+              autoFocus
+            />
+          </div>
+        ) : (
+          <>
+            <span className="reader-social-title">{favOnly ? '收藏' : scopeName || '社交媒体'}</span>
+            <span className="reader-social-sub">
+              {favOnly
+                ? '只看收藏'
+                : scopeName
+                  ? (unreadCount > 0 ? `${unreadCount} 条未读` : '已读完')
+                  : `${subscribedCount} 个账号${unreadCount > 0 ? ` · ${unreadCount} 条未读` : ''}`}
+            </span>
+          </>
+        )}
+        {/* 与条目列头统一:全部/未读 seg → 全部标读 → 搜索。收藏过滤入口已移至源栏。
+            收藏过滤/搜索展开时未读语义关闭,seg 与标读钮让位隐藏。 */}
         <div className="reader-social-actions">
-          {!favOnly && (
+          {!favOnly && !searchOpen && (
             <>
               <div className="reader-seg" role="group" aria-label="未读过滤">
                 <button
@@ -319,13 +339,13 @@ export default function SocialFlow({
           )}
           <button
             type="button"
-            aria-pressed={favOnly}
-            aria-label={favOnly ? '退出收藏过滤' : '只看收藏'}
-            title={favOnly ? '退出收藏过滤' : '只看收藏'}
-            className={`reader-fav-icon ${favOnly ? 'is-on' : ''}`}
-            onClick={() => onFavOnlyChange?.(!favOnly)}
+            aria-pressed={searchOpen}
+            aria-label={searchOpen ? '关闭搜索' : '搜索'}
+            title={searchOpen ? '关闭搜索' : '搜索'}
+            className={`reader-search-icon ${searchOpen ? 'is-on' : ''}`}
+            onClick={() => onToggleSearch?.()}
           >
-            <Star className="h-4 w-4" fill={favOnly ? 'currentColor' : 'none'} />
+            {searchOpen ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
           </button>
         </div>
       </header>
