@@ -3,6 +3,7 @@ import { ChevronRight, Loader2, Search } from 'lucide-react';
 import LogoMark from './LogoMark';
 import { mediaProxyUrl } from '../api';
 import { SOURCE_ROLES, sourceRoleOf, platformLabelOf, resolveCompany } from '../sourceTaxonomy';
+import { highlightMatch } from '../utils/highlight';
 
 // last_fetched(ISO)→ 人话:今日 / 昨日 / MM-DD;空值不显示
 function lastLabel(lastFetched) {
@@ -117,7 +118,7 @@ export default function DiscoverPage({
                           )}
                           <div className="reader-disc-card-mid">
                             <div className="reader-disc-name-row">
-                              <span className="reader-disc-name">{source.name || source.source_id}</span>
+                              <span className="reader-disc-name">{query.trim() ? highlightMatch(source.name || source.source_id, query) : (source.name || source.source_id)}</span>
                               {/* 形态标;社交源标到平台(平台是「源」的属性,订阅前就该知道) */}
                               {(source.shape || 'article') === 'bulletin' && (
                                 <span className="reader-shape-chip">动态</span>
@@ -127,7 +128,7 @@ export default function DiscoverPage({
                               )}
                             </div>
                             {source.description && (
-                              <p className="reader-disc-desc">{source.description}</p>
+                              <p className="reader-disc-desc">{query.trim() ? highlightMatch(source.description, query) : source.description}</p>
                             )}
                             <p className="reader-disc-meta">
                               收录 {(source.count || 0).toLocaleString()} 篇

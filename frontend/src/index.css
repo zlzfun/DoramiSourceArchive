@@ -7220,6 +7220,15 @@ input[type="radio"] {
 
   .reader-search-icon.is-on { color: var(--dorami-blue); }
 
+  /* 搜索命中高亮(条目列/社交流/发现页共用):accent 淡底、字色继承,
+     不改字重——避免命中词在明暗主题下跳动。UA 的 <mark> 黄底黑字被此处覆盖。 */
+  .search-hl {
+    background: color-mix(in srgb, var(--dorami-accent) 28%, transparent);
+    color: inherit;
+    border-radius: 3px;
+    padding: 0 1.5px;
+  }
+
   .reader-source-scroll {
     flex: 1;
     min-height: 0;
@@ -7249,6 +7258,23 @@ input[type="radio"] {
     background: var(--dorami-surface);
     border-color: transparent;
     box-shadow: var(--sh-1);
+  }
+
+  /* 选中态两行统一:名字加粗全墨(与「全部XX」看齐),左侧图标随之着色——
+     全部XX = 品牌靛,只看收藏 = 琥珀星(logo 变彩色) */
+  .reader-source-row-active .reader-source-name {
+    color: var(--dorami-ink);
+    font-weight: 600;
+  }
+
+  .reader-source-row-active .reader-src-allicon {
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
+  }
+
+  .reader-source-row-active .reader-src-allicon-fav {
+    background: color-mix(in srgb, #f59e0b 15%, transparent);
+    color: #f59e0b;
   }
 
   /* 订阅来源分区 */
@@ -7364,7 +7390,7 @@ input[type="radio"] {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 14px 6px 10px;   /* 左内边距对齐卡片内容(0+6),右侧同步收紧 */
+    padding: 14px 6px 10px 16px;   /* 左内边距对齐卡片内容(16),右侧收紧 */
     border-bottom: 1px solid var(--dorami-border-soft);
   }
 
@@ -7410,13 +7436,16 @@ input[type="radio"] {
      · 圆点（条目首行右缘）：7px 品牌蓝点，读过缩零淡出；
      · 列表头动作（全部标读）：安静图标钮，语义色品牌蓝；
      · 新内容提示条：列表顶 sticky 胶囊，点击刷新——轮询只提示、不自动插入打断阅读。 */
-  /* 未读点:条目首行右缘的行内点(样页),已读缩零淡出 */
+  /* 未读点:绝对定位于标题左侧栏(标题行 position:relative 的锚点),
+     与右缘收藏星标错开;7px 品牌蓝点,读过缩零淡出。 */
   .reader-unread-dot {
+    position: absolute;
+    left: -12px;
+    top: 7px;
     width: 7px;
     height: 7px;
     border-radius: 9999px;
     background: var(--dorami-accent);
-    flex-shrink: 0;
   }
 
   .reader-unread-icon {
@@ -7519,16 +7548,8 @@ input[type="radio"] {
     transition: background 140ms ease, box-shadow 140ms ease;
   }
 
-  /* A2 · 已读降灰:未读黑亮/已读退后,列表扫视一眼即知「还剩什么没读」
-     (翻案迭代1「单一标记」克制——对照 Folo 后确认灰阶差是低成本高感知) */
-  .reader-entry.is-read .reader-entry-title {
-    color: var(--dorami-muted);
-    font-weight: 500;
-  }
-
-  .reader-entry .reader-entry-title {
-    transition: color 180ms ease;
-  }
+  /* A2 · 已读/未读区分回到首行小蓝点(.reader-unread-dot):标题不再降灰,
+     一律全墨(用户拍板:灰标题与圆点二者取圆点,减一层灰阶冗余)。 */
 
   /* A2 · 未读点:常驻渲染,已读时缩零淡出(条件卸载无法过渡) */
   .reader-unread-dot {
@@ -7631,13 +7652,13 @@ input[type="radio"] {
     color: var(--dorami-muted);
   }
 
+  /* 未生成时的引导入口:低调文字链(样页原样)。字号钉在未分层区——否则被全局
+     button{font:inherit} 压回正文 markdown 字号,那才是「老前端」观感的根因(唯一要改的点)。 */
   .reader-ai-summary-generate {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     margin-top: 7px;
-    font-size: 12px;
-    font-weight: 600;
     color: var(--dorami-muted);
     cursor: pointer;
     background: transparent;
@@ -7654,7 +7675,7 @@ input[type="radio"] {
   .reader-brief-card {
     display: block;
     width: calc(100% - 4px);
-    margin: 2px 2px 10px;
+    margin: 10px 2px 10px;   /* 顶部呼吸(scroll padding-top 已归零,由首元素自担) */
     padding: 10px 14px 11px;
     text-align: left;
     border: none;
@@ -7707,7 +7728,9 @@ input[type="radio"] {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 10px 0 24px;   /* 卡片自带 6px = 内容内缩 6px,右侧紧邻 5px 细滚动条 */
+    /* 顶部 padding 归零:否则 sticky 日期签停在 padding 边、上方留一条缝,滚动内容
+       从中透出(用户目检)。顶部呼吸交给首元素自身(日报卡 margin / 日期签 top padding)。 */
+    padding: 0 0 24px;
   }
 
   /* 阅读器滚动容器:沿用全局标准细滚动条(scrollbar-width:thin,约 8px,是 Chrome 里
@@ -7725,7 +7748,7 @@ input[type="radio"] {
     position: sticky;
     top: 0;
     z-index: 2;
-    padding: 12px 6px 5px;   /* 左对齐卡片内容(scroll4 + 6 = 10) */
+    padding: 12px 12px 5px 16px;   /* 左对齐卡片内容(16) */
     background: var(--rd-list-bg);
     font-family: var(--mono);
     font-size: 10.5px;
@@ -7740,7 +7763,7 @@ input[type="radio"] {
     display: block;
     width: 100%;
     text-align: left;
-    padding: 10px 6px;                /* 对称留白,正文/摘要铺满整宽(星标绝对定位于标题右上) */
+    padding: 10px 6px 10px 16px;      /* 左内边距加宽:给标题左侧未读点留出不局促的槽,右侧仍铺满 */
     border: none;
     border-radius: var(--r-control);
     background: transparent;
@@ -7862,6 +7885,9 @@ input[type="radio"] {
 
   .reader-load-more:hover:not(:disabled) { background: var(--dorami-soft); color: var(--dorami-ink-2); }
   .reader-load-more:disabled { cursor: default; opacity: 0.7; }
+
+  /* 无限滚动哨兵:空时近零高(仅作视口触发锚点),加载时容纳追加骨架条 */
+  .reader-load-sentinel { min-height: 4px; }
 
   /* ── 阅读窗 ── */
   /* 顶部工具条:crumb(源标+源名·域名)| 动作图标组——动作常驻可见,不随正文滚走 */
@@ -8069,12 +8095,25 @@ input[type="radio"] {
   .reader-social-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
   .reader-social-sub { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); }
   .reader-social-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-  /* 社交头很宽,内联搜索限宽左置(动作组仍靠 margin-auto 右对齐) */
-  .reader-social-search { flex: 0 1 380px; }
+  /* 社交头:标题常显于左,搜索框在右侧 actions 组内展开(限宽,紧邻开关钮);
+     actions 自身 margin-left:auto 已把整组推到右侧,故搜索框无需再单独 auto 外距。 */
+  .reader-social-search { flex: 0 1 420px; }
 
   .reader-social-scroll { flex: 1; overflow-y: auto; padding-bottom: 56px; }
   /* 单列宽卡 + 行长约束(conventions 正文行长纪律) */
   .reader-social-col { max-width: 680px; margin: 0 auto; padding: 0 24px; }
+
+  /* 推文卡骨架(初次加载 + 无限滚动追加):形状贴近 .social-post/.social-body */
+  .social-skel {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 10px;
+    padding: 22px 0 20px;
+    border-bottom: 1px solid var(--dorami-border-soft);
+  }
+  .social-skel:last-child { border-bottom: none; }
+  .social-skel-avatar { width: 34px; height: 34px; border-radius: var(--r-pill); }
+  .social-skel-body { min-width: 0; }
 
   /* 日期组头:与条目列 .reader-date-label 同语义,但社交流是 sticky 渐隐式 */
   .reader-social-day {
@@ -9384,6 +9423,7 @@ input[type="radio"] {
 .reader-seg-btn { font-size: 12px; font-weight: 400; }
 .reader-src-more { font-size: 12.5px; font-weight: 400; }
 .reader-load-more { font-size: 12px; font-weight: 500; }
+.reader-ai-summary-generate { font-size: 12px; font-weight: 600; }
 .social-more { font-size: 12.5px; font-weight: 600; }
 .reader-disc-sub { font-size: 11.5px; font-weight: 500; }
 .reader-disc-sub.is-subbed { font-weight: 400; }

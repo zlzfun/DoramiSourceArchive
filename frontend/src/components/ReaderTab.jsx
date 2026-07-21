@@ -29,6 +29,7 @@ import { SOURCE_ROLES, sourceRoleOf, resolveCompany } from '../sourceTaxonomy';
 import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
 import { excerptOf } from '../utils/readerText';
+import { highlightMatch } from '../utils/highlight';
 import { WEEKDAY_CHARS, fmtDayKey, dayKeyOf, dayLabelOf, timeOfDay } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { contentTypeLabel } from '../utils/contentType';
@@ -54,9 +55,6 @@ import {
 
 const PAGE_SIZE = 30;
 const UNREAD_POLL_MS = 60000; // 未读轻轮询间隔（标签页可见时才真正请求）
-
-// 未读徽标数显示上限
-const formatBadge = (n) => (n > 99 ? '99+' : String(n));
 
 // 日期分组 & 条目时刻的实现已上移 utils/readerTime.js —— 社交媒体流(SocialFlow)
 // 与条目列共用同一套组头语法,复制一份会漂移。
@@ -112,16 +110,18 @@ function SourceRowsSkeleton() {
 }
 
 // 条目卡：首行短条 + 标题条 + 摘要条（形状贴近 .reader-entry）
-function ArticleCardsSkeleton() {
+// count/delayed 可调:初次加载走 5 条 + 150ms 延迟显现(快路径不闪);
+// 无限滚动追加走少量、即时(已在触发点,给即时反馈)。
+function ArticleCardsSkeleton({ count = 5, delayed = true }) {
   const cards = [
     { title: 'w-3/4', excerpt: 'w-1/2' },
     { title: 'w-5/6', excerpt: 'w-2/3' },
     { title: 'w-2/3', excerpt: 'w-3/5' },
     { title: 'w-4/5', excerpt: 'w-1/2' },
     { title: 'w-3/5', excerpt: 'w-2/3' },
-  ];
+  ].slice(0, count);
   return (
-    <div className="skeleton-delay" aria-hidden="true">
+    <div className={delayed ? 'skeleton-delay' : ''} aria-hidden="true">
       {cards.map((c, i) => (
         <div key={i} className="px-3 py-2.5">
           <div className="skeleton h-2.5 w-24" />
@@ -219,6 +219,7 @@ export default function ReaderTab({
   const [latestBrief, setLatestBrief] = useState(null);
 
   const listRef = useRef(null);
+  const sentinelRef = useRef(null); // 无限滚动哨兵:进入视口即追加下一页
   // 正文缓存（id → content）+ 「最新选中 id」防竞态：快速连点时丢弃晚到的过期正文响应
   const bodyCacheRef = useRef(new Map());
   const activeIdRef = useRef(null);
@@ -359,8 +360,6 @@ export default function ReaderTab({
     for (const [sid, n] of Object.entries(unreadBySource)) totals[shapeOfSource(sid)] += n;
     return totals;
   }, [unreadBySource, shapeOfSource]);
-
-  const unreadTotal = unreadByShape.article + unreadByShape.bulletin + unreadByShape.social;
 
   // 当前列表范围的未读小计(条目列头读数)
   const scopeUnread = useMemo(() => {
@@ -583,6 +582,24 @@ export default function ReaderTab({
 
   const hasMore = articles.length < articlesTotal;
   const handleLoadMore = () => loadArticles(articles.length, true);
+
+  // 无限滚动:哨兵进入视口(提前 400px)即自动追加下一页,取代「加载更多」按钮。
+  // 依赖变化即重建 observer——追加后 articles.length 变、loadingMore 置真都会重新求值,
+  // 天然防重入(loadingMore 时不触发)。
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loadingMore && !articlesLoading) {
+          loadArticles(articles.length, true);
+        }
+      },
+      { rootMargin: '400px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, loadingMore, articlesLoading, articles.length, loadArticles]);
 
   // ── 订阅 / 取消订阅 ──
   const applyResult = (result) => setSubscribedIds(new Set(result.subscribed_source_ids || []));
@@ -909,9 +926,6 @@ export default function ReaderTab({
         <div className="reader-sources-inner">
         <div className="reader-src-head">
           <span className="reader-src-title">我的订阅</span>
-          {unreadTotal > 0 && (
-            <span className="reader-src-unread" title={`${unreadTotal} 篇未读`}>{formatBadge(unreadTotal)} 未读</span>
-          )}
         </div>
 
         <div className="reader-source-scroll">
@@ -947,9 +961,6 @@ export default function ReaderTab({
                   <p className="reader-source-name min-w-0 flex-1">
                     {mode === 'bulletin' ? '全部动态' : socialView ? '全部社媒' : '全部文章'}
                   </p>
-                  {(unreadByShape[mode] || 0) > 0 && (
-                    <span className="reader-src-count">{formatBadge(unreadByShape[mode])}</span>
-                  )}
                 </div>
                 <div
                   role="button"
@@ -958,10 +969,10 @@ export default function ReaderTab({
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goFavorites(); } }}
                   className={`reader-source-row ${favOnly ? 'reader-source-row-active' : ''}`}
                 >
-                  <span className="reader-src-allicon" aria-hidden="true">
+                  <span className="reader-src-allicon reader-src-allicon-fav" aria-hidden="true">
                     <Star className="h-3.5 w-3.5" fill={favOnly ? 'currentColor' : 'none'} />
                   </span>
-                  <p className="reader-source-name min-w-0 flex-1">收藏</p>
+                  <p className="reader-source-name min-w-0 flex-1">只看收藏</p>
                 </div>
               </div>
 
@@ -1052,7 +1063,6 @@ export default function ReaderTab({
           articles={articles}
           sourceMap={sourceMap}
           sourceNameMap={sourceNameMap}
-          subscribedCount={socialSources.length}
           unreadCount={scopeUnread}
           unreadOnly={unreadOnly}
           onUnreadOnlyChange={setUnreadOnly}
@@ -1063,6 +1073,7 @@ export default function ReaderTab({
           favOnly={favOnly}
           searchOpen={searchOpen}
           searchInput={searchInput}
+          searchQuery={searchQuery}
           onSearchInputChange={setSearchInput}
           onToggleSearch={toggleSearch}
           readTogglingId={socialReadToggling}
@@ -1250,7 +1261,10 @@ export default function ReaderTab({
                           卡本身是 <button>,故收藏钮用 role=button 的 span,避免按钮嵌套;
                           已收藏常显琥珀实星,未收藏悬停浮出空心星、点击切换。 */}
                       <span className="reader-entry-titlerow">
-                        <span className="reader-entry-title">{article.title || '（无标题）'}</span>
+                        {/* 未读小蓝点移到标题左侧栏(与右缘收藏星标错开——两者同现时不再挤在右侧);
+                            绝对定位于左槽,不挤占标题宽度,已读缩零淡出 */}
+                        <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
+                        <span className="reader-entry-title">{searchQuery ? highlightMatch(article.title || '（无标题）', searchQuery) : (article.title || '（无标题）')}</span>
                         <span
                           role="button"
                           tabIndex={-1}
@@ -1263,21 +1277,16 @@ export default function ReaderTab({
                         </span>
                       </span>
                       {/* 摘要行:AI 要点摘要(summary_zh)优先——正文截断对英文长文几乎无信息量 */}
-                      {excerpt && <span className="reader-entry-excerpt">{excerpt}</span>}
+                      {excerpt && <span className="reader-entry-excerpt">{searchQuery ? highlightMatch(excerpt, searchQuery) : excerpt}</span>}
                     </button>
                   </Fragment>
                 );
               })}
+              {/* 无限滚动:哨兵进入视口即自动追加,加载中以骨架条占位(不再有「加载更多」按钮) */}
               {hasMore && (
-                <button
-                  type="button"
-                  onClick={handleLoadMore}
-                  disabled={loadingMore}
-                  className="reader-load-more"
-                >
-                  {loadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  {loadingMore ? '加载中…' : `加载更多（剩余 ${articlesTotal - articles.length}）`}
-                </button>
+                <div ref={sentinelRef} className="reader-load-sentinel" aria-hidden="true">
+                  {loadingMore && <ArticleCardsSkeleton count={3} delayed={false} />}
+                </div>
               )}
             </div>
           )}

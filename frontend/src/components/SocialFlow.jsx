@@ -1,9 +1,10 @@
-import { Fragment, useCallback, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AtSign, Check, CheckCheck, Circle, Loader2, Repeat2, Search, Star, X } from 'lucide-react';
 import LogoMark from './LogoMark';
 import { platformLabelOf, resolveCompany } from '../sourceTaxonomy';
 import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
+import { highlightMatch } from '../utils/highlight';
 import { mediaProxyUrl } from '../api';
 
 /* 社交媒体流 —— 阅读器第三容器(shape=social)的呈现形态。
@@ -118,6 +119,26 @@ function SocialQuote({ quoted }) {
   );
 }
 
+// 推文卡骨架:头像块 + 名条 + 数行文本(形状贴近 .social-post,参照 Folo 加载态)
+function SocialCardsSkeleton({ count = 3 }) {
+  const widths = ['w-11/12', 'w-full', 'w-3/5'];
+  return (
+    <div aria-hidden="true">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="social-skel">
+          <div className="skeleton social-skel-avatar" />
+          <div className="social-skel-body">
+            <div className="skeleton h-3 w-32" />
+            {widths.map((w, j) => (
+              <div key={j} className={`skeleton mt-2 h-3 ${w}`} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const CLAMP_CHARS = 360; // 超过此长度折叠(约样页的 7 行)
 
 function SocialPost({
@@ -129,6 +150,7 @@ function SocialPost({
   favPending,
   readPending,
   showPlatform,
+  searchQuery = '',
   onToggleFavorite,
   onToggleRead,
 }) {
@@ -225,7 +247,7 @@ function SocialPost({
             </span>
           </div>
 
-          {text && <p className={`social-text ${clamped ? 'is-clamped' : ''}`}>{text}</p>}
+          {text && <p className={`social-text ${clamped ? 'is-clamped' : ''}`}>{searchQuery ? highlightMatch(text, searchQuery) : text}</p>}
           {text.length > CLAMP_CHARS && (
             <button type="button" className="social-more" onClick={() => setExpanded((v) => !v)}>
               {expanded ? '收起' : '显示更多'}
@@ -244,7 +266,6 @@ export default function SocialFlow({
   articles = [],
   sourceMap = {},
   sourceNameMap = {},
-  subscribedCount = 0,
   unreadCount = 0,
   unreadOnly = false,
   onUnreadOnlyChange,
@@ -255,6 +276,7 @@ export default function SocialFlow({
   favOnly = false,
   searchOpen = false,
   searchInput = '',
+  searchQuery = '',
   onSearchInputChange,
   onToggleSearch,
   readTogglingId,
@@ -272,35 +294,28 @@ export default function SocialFlow({
   const showPlatform = platformCount > 1;
   const scopeName = activeSourceId ? (sourceNameMap[activeSourceId] || activeSourceId) : null;
 
+  // 无限滚动:哨兵进入视口(提前 500px)即自动追加,取代「加载更多」按钮
+  const sentinelRef = useRef(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loadingMore && !loading) onLoadMore?.();
+      },
+      { rootMargin: '500px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, loadingMore, loading, onLoadMore]);
+
   return (
     <section className="reader-col reader-social" aria-label="社交媒体">
       <header className="reader-social-head">
-        {/* 搜索就地展开(与条目列头同构):输入框顶替标题+副标 */}
-        {searchOpen ? (
-          <div className="reader-search-inline reader-social-search">
-            <Search className="h-4 w-4 shrink-0 text-slate-500" />
-            <input
-              type="text"
-              value={searchInput}
-              onChange={(e) => onSearchInputChange?.(e.target.value)}
-              placeholder="搜索我的阅读…"
-              className="reader-search-input"
-              autoFocus
-            />
-          </div>
-        ) : (
-          <>
-            <span className="reader-social-title">{favOnly ? '收藏' : scopeName || '社交媒体'}</span>
-            <span className="reader-social-sub">
-              {favOnly
-                ? '只看收藏'
-                : scopeName
-                  ? (unreadCount > 0 ? `${unreadCount} 条未读` : '已读完')
-                  : `${subscribedCount} 个账号${unreadCount > 0 ? ` · ${unreadCount} 条未读` : ''}`}
-            </span>
-          </>
-        )}
-        {/* 与条目列头统一:全部/未读 seg → 全部标读 → 搜索。收藏过滤入口已移至源栏。
+        {/* 标题常显(搜索靠右展开、已不与标题冲突,故不再隐藏);副标「N 个账号 · M 未读」
+            已撤(减噪);收藏筛选时标题仅「收藏」二字。 */}
+        <span className="reader-social-title">{favOnly ? '收藏' : scopeName || '社交媒体'}</span>
+        {/* 全部/未读 seg → 全部标读 →(搜索展开时)搜索框 → 搜索开关。收藏过滤入口已移至源栏;
             收藏过滤/搜索展开时未读语义关闭,seg 与标读钮让位隐藏。 */}
         <div className="reader-social-actions">
           {!favOnly && !searchOpen && (
@@ -337,6 +352,19 @@ export default function SocialFlow({
               </button>
             </>
           )}
+          {searchOpen && (
+            <div className="reader-search-inline reader-social-search">
+              <Search className="h-4 w-4 shrink-0 text-slate-500" />
+              <input
+                type="text"
+                value={searchInput}
+                onChange={(e) => onSearchInputChange?.(e.target.value)}
+                placeholder="搜索我的阅读…"
+                className="reader-search-input"
+                autoFocus
+              />
+            </div>
+          )}
           <button
             type="button"
             aria-pressed={searchOpen}
@@ -353,9 +381,7 @@ export default function SocialFlow({
       <div className="reader-social-scroll">
         <div className="reader-social-col">
           {loading ? (
-            <div className="reader-empty reader-empty-tall">
-              <Loader2 className="h-5 w-5 animate-spin text-slate-300" />
-            </div>
+            <SocialCardsSkeleton count={3} />
           ) : articles.length === 0 ? (
             <div className="reader-empty reader-empty-tall">
               {favOnly ? <Star className="h-6 w-6 text-slate-300" /> : <AtSign className="h-6 w-6 text-slate-300" />}
@@ -382,17 +408,18 @@ export default function SocialFlow({
                       favPending={favTogglingId === article.id}
                       readPending={readTogglingId === article.id}
                       showPlatform={showPlatform}
+                      searchQuery={searchQuery}
                       onToggleFavorite={onToggleFavorite}
                       onToggleRead={onToggleRead}
                     />
                   </Fragment>
                 );
               })}
+              {/* 无限滚动哨兵 + 骨架占位(不再有「加载更多」按钮) */}
               {hasMore && (
-                <button type="button" onClick={onLoadMore} disabled={loadingMore} className="reader-load-more">
-                  {loadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  {loadingMore ? '加载中…' : '加载更多'}
-                </button>
+                <div ref={sentinelRef} className="reader-load-sentinel" aria-hidden="true">
+                  {loadingMore && <SocialCardsSkeleton count={2} />}
+                </div>
               )}
               {!hasMore && articles.length > 0 && (
                 <p className="reader-social-end">已到底部</p>
