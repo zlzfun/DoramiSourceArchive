@@ -7158,8 +7158,8 @@ input[type="radio"] {
   .reader-src-more svg { flex: none; }
   .reader-src-more .reader-group-chevron { margin-left: auto; }
 
-  /* 中栏搜索行:由视图轨「搜索」钮开合,不常驻 */
-  /* 搜索就地展开:条目列头内顶替标题的软槽输入(与发现页目录搜索 .reader-disc-search 同风格) */
+  /* 搜索就地展开:条目列头内顶替标题的软槽输入(与发现页目录搜索 .reader-disc-search 同风格)。
+     开合有质感:自右侧(搜索钮那侧)clip 揭示 + 淡入,像从按钮处「抽出」输入框。 */
   .reader-search-inline {
     flex: 1;
     min-width: 0;
@@ -7172,6 +7172,12 @@ input[type="radio"] {
     box-shadow: var(--dorami-inset-input);
     color: var(--dorami-faint);
     transition: box-shadow 150ms ease;
+    animation: reader-search-expand 220ms var(--motion-ease) both;
+  }
+
+  @keyframes reader-search-expand {
+    from { opacity: 0; clip-path: inset(0 0 0 88%); }
+    to   { opacity: 1; clip-path: inset(0 0 0 0); }
   }
 
   .reader-search-inline:focus-within {
@@ -7218,7 +7224,9 @@ input[type="radio"] {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 0 8px 12px;
+    scrollbar-width: auto;  /* macOS 原生 overlay:不占位、源行顶满右侧(见 .reader-list-scroll 说明) */
+    scrollbar-color: auto;
+    padding: 0 6px 12px;   /* 收紧,源行更铺满 */
   }
 
   .reader-source-row {
@@ -7227,7 +7235,7 @@ input[type="radio"] {
     align-items: center;
     gap: 9px;
     width: 100%;
-    padding: 6px 9px;
+    padding: 6px 8px;
     border-radius: 8px;
     border: 1px solid transparent;
     background: transparent;
@@ -7358,7 +7366,7 @@ input[type="radio"] {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 14px 16px 10px;
+    padding: 14px 10px 10px;   /* 左内边距对齐卡片内容(4+6),右侧同步收紧 */
     border-bottom: 1px solid var(--dorami-border-soft);
   }
 
@@ -7588,7 +7596,9 @@ input[type="radio"] {
   @media (prefers-reduced-motion: reduce) {
     .reader-enter,
     .reader-list-enter,
+    .reader-search-inline,
     .skeleton-delay { animation: none; opacity: 1; }
+    .reader-search-inline { clip-path: none; }
     .reader-unread-dot,
     .markdown-img-button img,
     .reader-vrail-btn,
@@ -7699,7 +7709,12 @@ input[type="radio"] {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 10px 10px 24px;
+    /* macOS 原生 overlay 滚动条:不占布局宽度、半透明悬浮压在卡片上(内容顶满右侧)。
+       覆盖全局 `* {scrollbar-width:thin}`——thin 会强制占位的经典滚动条,把内容顶左。
+       (`overflow:overlay` 已被 Chrome 124+ 移除,故走 scrollbar-width 路线。) */
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+    padding: 10px 4px 24px;   /* 收紧水平留白,内容更铺满右侧(配 card 6px = 内容内缩 10px) */
   }
 
   /* 日期分组小节头(样页 .group-label):等宽小字距签,sticky 底色与列底同 soft */
@@ -7707,7 +7722,7 @@ input[type="radio"] {
     position: sticky;
     top: 0;
     z-index: 2;
-    padding: 12px 8px 5px;
+    padding: 12px 6px 5px;   /* 左对齐卡片内容(scroll4 + 6 = 10) */
     background: var(--rd-list-bg);
     font-family: var(--mono);
     font-size: 10.5px;
@@ -7719,11 +7734,10 @@ input[type="radio"] {
 
   /* ── 条目卡(样页结构:首行[源标·源名·chip·时间·未读点] / 标题 / 一行摘要) ── */
   .reader-entry {
-    position: relative;               /* 收藏星标的定位锚点 */
     display: block;
     width: 100%;
     text-align: left;
-    padding: 10px 30px 10px 12px;     /* 右侧预留星道,防星标压正文 */
+    padding: 10px 6px;                /* 对称留白,正文/摘要铺满整宽(星标绝对定位于标题右上) */
     border: none;
     border-radius: var(--r-control);
     background: transparent;
@@ -7739,25 +7753,38 @@ input[type="radio"] {
     box-shadow: var(--sh-1);
   }
 
-  /* 收藏标注(Folo 式):卡右缘竖直居中。已收藏=琥珀实星常显;
-     未收藏=默认隐形,悬停卡片时浮出空心星(可点亮);点星本身高亮。 */
+  /* 标题行:标题满宽铺开;星标绝对覆盖在右上角,不占标题宽度(未收藏标题=满满当当)。
+     必须 display:block——它是 <span>,默认 inline 时绝对定位子元素会错位到左侧。 */
+  .reader-entry-titlerow {
+    position: relative;
+    display: block;
+  }
+
+  /* 标题恒留星道:星标绝对定位在右上(15px),标题右内边距让位,收藏/悬停都不压字。
+     摘要不留(铺满全宽)——星标只在标题行高度。 */
+  .reader-entry-title {
+    padding-right: 18px;
+  }
+
+  /* 收藏标注(Folo 式):已收藏=琥珀实星常显;未收藏=默认隐形、
+     悬停卡片时浮出空心星(可点亮);隐形时不接管点击(pointer-events:none)。 */
   .reader-entry-fav {
     position: absolute;
-    top: 50%;
-    right: 9px;
-    transform: translateY(-50%);
+    top: 1px;
+    right: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     color: var(--dorami-faint);
     opacity: 0;
+    pointer-events: none;
     cursor: pointer;
     transition: opacity 140ms ease, color 140ms ease;
   }
 
-  .reader-entry:hover .reader-entry-fav { opacity: 1; }
+  .reader-entry:hover .reader-entry-fav { opacity: 1; pointer-events: auto; }
   .reader-entry-fav:hover { color: #f59e0b; }
-  .reader-entry-fav.is-on { opacity: 1; color: #f59e0b; }
+  .reader-entry-fav.is-on { opacity: 1; pointer-events: auto; color: #f59e0b; }
 
   .reader-entry-top {
     display: flex;
@@ -7795,7 +7822,8 @@ input[type="radio"] {
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    text-wrap: pretty;
+    /* 不用 text-wrap:pretty/balance——它会平衡两行、故意缩短第一行,
+       导致右侧留白还提前折行;默认贪婪换行才铺满(对照 Folo)。 */
   }
 
   .reader-entry-excerpt {
@@ -8041,7 +8069,7 @@ input[type="radio"] {
   /* 社交头很宽,内联搜索限宽左置(动作组仍靠 margin-auto 右对齐) */
   .reader-social-search { flex: 0 1 380px; }
 
-  .reader-social-scroll { flex: 1; overflow-y: auto; padding-bottom: 56px; }
+  .reader-social-scroll { flex: 1; overflow-y: auto; scrollbar-width: auto; scrollbar-color: auto; padding-bottom: 56px; }
   /* 单列宽卡 + 行长约束(conventions 正文行长纪律) */
   .reader-social-col { max-width: 680px; margin: 0 auto; padding: 0 24px; }
 
@@ -8317,7 +8345,7 @@ input[type="radio"] {
 
   .reader-disc-seg { margin-left: auto; }
 
-  .reader-disc-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 28px 40px; }
+  .reader-disc-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: auto; scrollbar-color: auto; padding: 18px 28px 40px; }
   .reader-disc-body { width: 100%; }
 
   .reader-disc-grp { display: flex; align-items: baseline; gap: 8px; margin: 22px 2px 10px; }

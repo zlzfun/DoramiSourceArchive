@@ -991,12 +991,9 @@ export default function ReaderTab({
                         ) : (
                           <LogoMark company={resolveCompany(source)} size="s20" emoji={source.icon} />
                         )}
+                        {/* 每源未读数字已撤(减噪 + 名字铺满右侧);未读靠行整体加粗(has-unread)示意,
+                            总数看顶部「我的订阅 · N 未读」。退订钮浮层化,不占布局。 */}
                         <p className="reader-source-name min-w-0 flex-1">{source.name || source.source_id}</p>
-                        {unread > 0 && (
-                          <span className="reader-src-count" title={`${unread} 篇未读`}>
-                            {formatBadge(unread)}
-                          </span>
-                        )}
                         <button
                           type="button"
                           title="取消订阅"
@@ -1248,21 +1245,25 @@ export default function ReaderTab({
                           {timeOfDay(article.fetched_date || article.publish_date)}
                         </span>
                       </span>
-                      <span className="reader-entry-title">{article.title || '（无标题）'}</span>
+                      {/* 标题行:标题占位 + 右缘收藏星标(Folo 式)。星内联于标题行,
+                          正文/摘要照旧铺满整宽,只标题让出星位——不再整卡右缩(修右侧留白)。
+                          卡本身是 <button>,故收藏钮用 role=button 的 span,避免按钮嵌套;
+                          已收藏常显琥珀实星,未收藏悬停浮出空心星、点击切换。 */}
+                      <span className="reader-entry-titlerow">
+                        <span className="reader-entry-title">{article.title || '（无标题）'}</span>
+                        <span
+                          role="button"
+                          tabIndex={-1}
+                          aria-label={isFav ? '取消收藏' : '收藏'}
+                          title={isFav ? '取消收藏' : '收藏'}
+                          onClick={(e) => { e.stopPropagation(); handleToggleFavorite(article, e); }}
+                          className={`reader-entry-fav ${isFav ? 'is-on' : ''}`}
+                        >
+                          <Star className="h-[15px] w-[15px]" fill={isFav ? 'currentColor' : 'none'} />
+                        </span>
+                      </span>
                       {/* 摘要行:AI 要点摘要(summary_zh)优先——正文截断对英文长文几乎无信息量 */}
                       {excerpt && <span className="reader-entry-excerpt">{excerpt}</span>}
-                      {/* 收藏标注(Folo 式,卡右缘):已收藏常显琥珀实星;未收藏悬停浮出空心星,点击切换。
-                          卡本身是 <button>,故收藏钮用 role=button 的 span,避免按钮嵌套。 */}
-                      <span
-                        role="button"
-                        tabIndex={-1}
-                        aria-label={isFav ? '取消收藏' : '收藏'}
-                        title={isFav ? '取消收藏' : '收藏'}
-                        onClick={(e) => { e.stopPropagation(); handleToggleFavorite(article, e); }}
-                        className={`reader-entry-fav ${isFav ? 'is-on' : ''}`}
-                      >
-                        <Star className="h-[15px] w-[15px]" fill={isFav ? 'currentColor' : 'none'} />
-                      </span>
                     </button>
                   </Fragment>
                 );
