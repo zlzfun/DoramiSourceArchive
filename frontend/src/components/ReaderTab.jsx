@@ -34,6 +34,7 @@ import { WEEKDAY_CHARS, fmtDayKey, dayKeyOf, dayLabelOf, timeOfDay } from '../ut
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { contentTypeLabel } from '../utils/contentType';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
+import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import {
   fetchReaderSources,
   mediaProxyUrl,
@@ -219,6 +220,8 @@ export default function ReaderTab({
   const [latestBrief, setLatestBrief] = useState(null);
 
   const listRef = useRef(null);
+  const listThumbRef = useRef(null); // 浮层滚动条滑块(压在卡片上,内容满宽)
+  const resyncListScrollbar = useOverlayScrollbar(listRef, listThumbRef);
   const sentinelRef = useRef(null); // 无限滚动哨兵:进入视口即追加下一页
   // 正文缓存（id → content）+ 「最新选中 id」防竞态：快速连点时丢弃晚到的过期正文响应
   const bodyCacheRef = useRef(new Map());
@@ -600,6 +603,9 @@ export default function ReaderTab({
     io.observe(el);
     return () => io.disconnect();
   }, [hasMore, loadingMore, articlesLoading, articles.length, loadArticles]);
+
+  // 列表内容高度变化(切源/追加/加载态)后重算浮层滚动条滑块
+  useEffect(() => { resyncListScrollbar(); }, [articles, articlesLoading, activeArticle, resyncListScrollbar]);
 
   // ── 订阅 / 取消订阅 ──
   const applyResult = (result) => setSubscribedIds(new Set(result.subscribed_source_ids || []));
@@ -1169,6 +1175,7 @@ export default function ReaderTab({
           </button>
         )}
 
+        <div className="reader-scrollwrap">
         <div className="reader-list-scroll" ref={listRef}>
           {/* 日报置顶卡 · 报头形态:今日/文章 容器聚合流顶部的一等公民入口;过滤中(收藏/搜索/只看未读)让位 */}
           {!favOnly && !activeSourceId && mode !== 'bulletin' && !searchQuery && !unreadOnly
@@ -1290,6 +1297,8 @@ export default function ReaderTab({
               )}
             </div>
           )}
+        </div>
+        <div ref={listThumbRef} className="ovl-thumb" aria-hidden="true" />
         </div>
         </div>
       </section>

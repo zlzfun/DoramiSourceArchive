@@ -5,6 +5,7 @@ import { platformLabelOf, resolveCompany } from '../sourceTaxonomy';
 import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { highlightMatch } from '../utils/highlight';
+import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
 
 /* 社交媒体流 —— 阅读器第三容器(shape=social)的呈现形态。
@@ -294,6 +295,12 @@ export default function SocialFlow({
   const showPlatform = platformCount > 1;
   const scopeName = activeSourceId ? (sourceNameMap[activeSourceId] || activeSourceId) : null;
 
+  // 浮层滚动条(压在卡片上,内容满宽)
+  const socialScrollRef = useRef(null);
+  const socialThumbRef = useRef(null);
+  const resyncSocialScrollbar = useOverlayScrollbar(socialScrollRef, socialThumbRef);
+  useEffect(() => { resyncSocialScrollbar(); }, [articles, loading, resyncSocialScrollbar]);
+
   // 无限滚动:哨兵进入视口(提前 500px)即自动追加,取代「加载更多」按钮
   const sentinelRef = useRef(null);
   useEffect(() => {
@@ -378,7 +385,8 @@ export default function SocialFlow({
         </div>
       </header>
 
-      <div className="reader-social-scroll">
+      <div className="reader-scrollwrap">
+      <div className="reader-social-scroll" ref={socialScrollRef}>
         <div className="reader-social-col">
           {loading ? (
             <SocialCardsSkeleton count={3} />
@@ -427,6 +435,8 @@ export default function SocialFlow({
             </>
           )}
         </div>
+      </div>
+      <div ref={socialThumbRef} className="ovl-thumb" aria-hidden="true" />
       </div>
     </section>
   );

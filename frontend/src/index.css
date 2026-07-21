@@ -7724,6 +7724,15 @@ input[type="radio"] {
     overflow: hidden;
   }
 
+  /* 滚动壳:滚动容器 + 浮层滑块的定位祖先(占据列头以下的剩余高度) */
+  .reader-scrollwrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
   .reader-list-scroll {
     flex: 1;
     min-height: 0;
@@ -7733,14 +7742,39 @@ input[type="radio"] {
     padding: 0 0 24px;
   }
 
-  /* 阅读器滚动容器:沿用全局标准细滚动条(scrollbar-width:thin,约 8px,是 Chrome 里
-     CSS 能给的最细),滑块透明、悬停才浮出更淡的 slate。想再细只能整条隐藏(scrollbar-width:none)。
-     不走 ::-webkit-scrollbar 自定义——Chrome 121+ 下与标准属性互斥,实测不生效。 */
-  .reader-list-scroll:hover,
+  /* 条目列/社交流隐藏原生滚动条 → 改用浮层滑块 .ovl-thumb 压在卡片上(内容满宽、
+     右侧不再被 gutter 占位)。scrollbar-width:none 必须钉在未分层区(见文件尾)——否则
+     被全局未分层的 `* { scrollbar-width: thin }` 压回(layered 敌不过 unlayered)。
+     macOS「始终显示」下纯 CSS 无法让原生条 overlay(Chrome 124+ 移除 overflow:overlay)。 */
+
+  /* 浮层滑块:绝对压在滚动内容右缘之上,半透明故与卡片重叠不违和;
+     滚动/悬停浮现、静止淡出,可拖拽(位置/高度由 JS 同步)。 */
+  .ovl-thumb {
+    position: absolute;
+    top: 0;
+    right: 2px;
+    width: 6px;
+    height: 0;
+    border-radius: var(--r-pill);
+    background: rgba(100, 116, 139, 0.42);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease;
+    z-index: 6;
+  }
+  .reader-scrollwrap:hover .ovl-thumb,
+  .ovl-thumb.is-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .ovl-thumb.is-dragging,
+  .ovl-thumb:hover { background: rgba(100, 116, 139, 0.62); }
+
+  /* 源栏 / 发现页仍用全局标准细滚动条(悬停浮出更淡的 slate);它们非「满宽卡片流」,
+     无右缘留白诉求,不必上浮层方案。 */
   .reader-source-scroll:hover,
-  .reader-social-scroll:hover,
   .reader-disc-scroll:hover {
-    scrollbar-color: rgba(100, 116, 139, 0.35) transparent;   /* 比全局 dark 0.2 更淡的 slate */
+    scrollbar-color: rgba(100, 116, 139, 0.35) transparent;
   }
 
   /* 日期分组小节头(样页 .group-label):等宽小字距签,sticky 底色与列底同 soft */
@@ -7786,10 +7820,10 @@ input[type="radio"] {
     display: block;
   }
 
-  /* 标题恒留星道:星标绝对定位在右上(15px),标题右内边距让位,收藏/悬停都不压字。
-     摘要不留(铺满全宽)——星标只在标题行高度。 */
+  /* 标题恒留星道:星标绝对定位在右上,标题右内边距让位,收藏/悬停都不压字。
+     星标右移避开浮层滚动条(right:8),星道随之加宽到 24;摘要不留(铺满全宽、可压在滑块下)。 */
   .reader-entry-title {
-    padding-right: 18px;
+    padding-right: 24px;
   }
 
   /* 收藏标注(Folo 式):已收藏=琥珀实星常显;未收藏=默认隐形、
@@ -7797,7 +7831,7 @@ input[type="radio"] {
   .reader-entry-fav {
     position: absolute;
     top: 1px;
-    right: 0;
+    right: 8px;   /* 右移避开浮层滚动条(滑块占最右 8px);其右缘落在距卡右 ~14px */
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -7832,6 +7866,7 @@ input[type="radio"] {
 
   .reader-entry-time {
     flex-shrink: 0;
+    margin-right: 8px;   /* 右移避开浮层滚动条,与星标右缘对齐(距卡右 ~14px) */
     font-family: var(--mono);
     font-size: 10.5px;
     font-weight: 400;
@@ -9436,6 +9471,11 @@ input[type="radio"] {
 .reader-pager-btn { font: inherit; }
 /* 媒体热点图的带文字按钮同陷阱(重抓钮) */
 .heat-retry { font-size: 10.5px; font-weight: 500; }
+
+/* 浮层滚动条容器隐藏原生条:同陷阱——未分层的 `* { scrollbar-width: thin }` 压过
+   @layer 内的 none,故在此未分层区钉住(条目列/社交流改用 .ovl-thumb 浮层滑块)。 */
+.reader-list-scroll,
+.reader-social-scroll { scrollbar-width: none; }
 
 /* ── 状态色块（保留语义色，仅压深底 + 提亮文字）── */
 [data-theme="dark"] .action-button-danger { background: rgba(248, 113, 113, 0.12); color: #fca5a5; border-color: rgba(248, 113, 113, 0.28); }
