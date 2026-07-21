@@ -30,7 +30,7 @@ import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
 import { excerptOf } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
-import { WEEKDAY_CHARS, fmtDayKey, dayKeyOf, dayLabelOf, timeOfDay } from '../utils/readerTime';
+import { WEEKDAY_CHARS, fmtDayKey, dayKeyOf, dayLabelOf } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { contentTypeLabel } from '../utils/contentType';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
@@ -1260,7 +1260,7 @@ export default function ReaderTab({
                           className="reader-entry-time"
                           title={formatDateTime(article.publish_date || article.fetched_date)}
                         >
-                          {timeOfDay(article.fetched_date || article.publish_date)}
+                          {formatRelativeTime(article.publish_date || article.fetched_date, '')}
                         </span>
                       </span>
                       {/* 标题行:标题占位 + 右缘收藏星标(Folo 式)。星内联于标题行,
