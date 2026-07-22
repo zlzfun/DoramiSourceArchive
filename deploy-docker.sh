@@ -23,10 +23,15 @@ echo "[2/3] 启动容器..."
 docker compose up -d --remove-orphans
 
 echo "[3/3] 健康验证..."
-PORT="${DORAMI_HTTP_PORT:-80}"
+# DORAMI_HTTP_LISTEN 可以是纯端口(80)或绑定形式(127.0.0.1:8080),探针地址随之推导
+LISTEN="${DORAMI_HTTP_LISTEN:-80}"
+case "$LISTEN" in
+    *:*) PROBE="http://${LISTEN}" ;;
+    *)   PROBE="http://127.0.0.1:${LISTEN}" ;;
+esac
 # /api/auth/session 免鉴权,未登录也 200——作全链路(nginx→backend)探针
 for _ in $(seq 1 45); do
-    if curl -fsS "http://127.0.0.1:${PORT}/api/auth/session" >/dev/null 2>&1; then
+    if curl -fsS "${PROBE}/api/auth/session" >/dev/null 2>&1; then
         VERSION="$(grep -o '"[0-9][^"]*"' src/version.py | head -1 | tr -d '"')"
         echo ""
         echo "Deploy complete. 后端版本: ${VERSION:-unknown}"

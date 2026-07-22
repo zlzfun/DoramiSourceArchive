@@ -40,7 +40,9 @@ services:
       # args: { NPM_REGISTRY: "https://registry.npmmirror.com" }
     restart: unless-stopped
     ports:
-      - "${DORAMI_HTTP_PORT:-80}:80"
+      # 默认 80(全接口);外层还有 TLS 反代时用绑定形式收进环回,
+      # 如 DORAMI_HTTP_LISTEN=127.0.0.1:8080(生产:宿主 Nginx 443 终止 TLS 后反代到这里)
+      - "${DORAMI_HTTP_LISTEN:-80}:80"
     depends_on:
       backend:
         condition: service_healthy

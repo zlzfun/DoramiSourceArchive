@@ -39,7 +39,8 @@ docker compose restart backend      # 仅重启后端
 docker compose down                 # 停站(数据在宿主目录,安全)
 ```
 
-对外端口默认 80,可用 `DORAMI_HTTP_PORT=8080 ./deploy-docker.sh` 改;时区默认
+对外监听默认 80,`DORAMI_HTTP_LISTEN` 可改端口(`8080`)或收进环回
+(`127.0.0.1:8080`,配合外层 TLS 反代);时区默认
 `Asia/Shanghai`(影响采集任务/日报的 cron 语义),`TZ` 环境变量可覆盖。
 
 ## ini 在容器内的语义差异
@@ -53,7 +54,7 @@ docker compose down                 # 停站(数据在宿主目录,安全)
 ## HTTPS
 
 容器只做 HTTP,TLS 终止放外层,三选一:
-1. 宿主继续跑一个带证书的 Nginx/Caddy 反代到 `127.0.0.1:80`(把 compose 端口改成 `127.0.0.1:8080:80` 之类);
+1. 宿主继续跑一个带证书的 Nginx/Caddy 全站反代到容器(`DORAMI_HTTP_LISTEN=127.0.0.1:8080` 起栈,宿主 443 → `proxy_pass http://127.0.0.1:8080`;生产即此形态);
 2. 云厂商 LB/CDN 终止 TLS;
 3. 在 compose 里加一个 caddy 服务自动签发(将来需要再加)。
 启用 HTTPS 后记得把 ini `[auth] cookie_secure = true`(启动安全校验的生产姿态随之生效)。
