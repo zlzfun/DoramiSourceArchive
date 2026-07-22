@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>哆啦美 · 晨刊登录(样页)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700;900&family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet" />
+<style>
+/* ============================================================
+   哆啦美 · 登录样页 —— 方向「晨刊 Morning Edition」
+   立意:AI 资讯阅读器的门 = 一张刚印好的报纸头版。
+   纸、墨、朱砂印;登录 = 读者登记,提交 = 盖章。
+   与旧版(深空粒子/玻璃拟态)彻底反向,与产品内的
+   衬线阅读窗、安静编辑部气质同宗。
+   ============================================================ */
+
+:root{
+  /* —— 纸 —— */
+  --paper:#f5f0e4;          /* 微暖的新闻纸 */
+  --paper-hi:#faf6ec;       /* 登记条略亮一档 */
+  --paper-shade:#e9e2d0;    /* 折痕/阴影 */
+  /* —— 墨(靛墨 = 品牌靛的印刷态) —— */
+  --ink:#232a54;            /* 主墨:靛黑 */
+  --ink-soft:rgba(35,42,84,.72);
+  --ink-dim:rgba(35,42,84,.52);
+  --ink-faint:rgba(35,42,84,.30);
+  --hairline:rgba(35,42,84,.22);
+  --indigo:#4441c8;         /* 品牌靛(强调/焦点) */
+  /* —— 朱砂(印泥,唯一暖色,克制使用) —— */
+  --seal:#bf3b28;
+  --seal-deep:#a02f1f;
+  --seal-ink:rgba(191,59,40,.92);
+  /* —— 字 —— */
+  --serif:"Noto Serif SC","Songti SC","STSong",serif;
+  --mono:"IBM Plex Mono","SF Mono",Menlo,monospace;
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+
+*{ margin:0; padding:0; box-sizing:border-box; }
+html,body{ height:100%; }
+
+body{
+  font-family:var(--serif);
+  color:var(--ink);
+  background:var(--paper);
+  overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ---------- 纸面:纤维噪点 + 印刷网点 + 中缝折痕 ---------- */
+.sheet{
+  position:relative;
+  height:100vh; height:100dvh;
+  display:flex; flex-direction:column;
+  padding:clamp(20px,3.2vw,44px) clamp(24px,4.5vw,72px) 0;
+  isolation:isolate;
+}
+.sheet::before{ /* 纸纤维 */
+  content:""; position:absolute; inset:0; z-index:-2; pointer-events:none;
+  opacity:.5; mix-blend-mode:multiply;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.72 0 0 0 0 0.68 0 0 0 0 0.58 0 0 0 0.10 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23p)'/%3E%3C/svg%3E");
+}
+.sheet::after{ /* 横向折痕(报纸对折的光影) */
+  content:""; position:absolute; inset:0; z-index:-1; pointer-events:none;
+  background:
+    linear-gradient(180deg, transparent 47.6%, rgba(35,42,84,.045) 49.4%, rgba(250,246,236,.5) 50.2%, transparent 52.4%),
+    radial-gradient(130% 100% at 50% 0%, transparent 62%, rgba(35,42,84,.05) 100%);
+}
+
+/* ============ 报眼(顶栏):日期 · 刊名铭 · 期号 ============ */
+.ears{
+  display:flex; align-items:baseline; justify-content:space-between;
+  gap:16px;
+  font-family:var(--mono); font-size:12px; letter-spacing:.08em;
+  color:var(--ink-soft);
+  padding-bottom:10px;
+}
+.ears .ear-motto{ color:var(--ink-dim); }
+.ears b{ font-weight:500; color:var(--ink); }
+.ear-weather{ transition:opacity .3s var(--ease); }
+
+/* 双细线(报头上下的经典双栏线) */
+.rule-double{
+  height:5px; border-top:2.5px solid var(--ink); border-bottom:1px solid var(--ink);
+  transform-origin:left center;
+}
+.rule-thin{ height:1px; background:var(--hairline); transform-origin:left center; }
+
+/* ============ 版心三栏 ============ */
+.page{
+  flex:1; min-height:0;
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) clamp(320px,30vw,392px);
+  gap:clamp(28px,4.6vw,84px);
+  align-items:stretch;
+  padding-top:clamp(20px,3.4vh,40px);
+}
+
+/* ---------- 左:竖排标语(带朱砂着重号) ---------- */
+.slogan-col{
+  display:flex; gap:clamp(14px,1.4vw,22px);
+  padding-top:6px;
+}
+.slogan{
+  writing-mode:vertical-rl;
+  font-size:clamp(26px,2.6vw,40px);
+  font-weight:600; line-height:1.16; letter-spacing:.34em;
+  color:var(--ink);
+}
+.slogan .em{
+  -webkit-text-emphasis:filled circle var(--seal);
+  text-emphasis:filled circle var(--seal);
+  -webkit-text-emphasis-position:over right;
+  text-emphasis-position:over right;
+}
+.slogan-en{
+  writing-mode:vertical-rl;
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.42em;
+  text-transform:uppercase; color:var(--ink-faint);
+  padding-top:4px;
+}
+
+/* ---------- 中:报头 + 栏目索引 ---------- */
+.mast{ min-width:0; display:flex; flex-direction:column; }
+.mast-kicker{
+  font-family:var(--mono); font-size:11.5px; letter-spacing:.5em;
+  text-transform:uppercase; color:var(--indigo);
+}
+.mast-title-row{ display:flex; align-items:flex-end; gap:clamp(16px,1.8vw,28px); margin-top:clamp(8px,1.6vh,18px); }
+.mast-title{
+  font-size:clamp(72px,9.6vw,148px);
+  font-weight:900; line-height:1; letter-spacing:.045em;
+  text-shadow:0 1px 0 rgba(250,246,236,.9), 0 2px 2px rgba(35,42,84,.14); /* 轻微铅印压痕 */
+  white-space:nowrap;
+}
+.mast-title .char{ display:inline-block; }
+
+/* 藏书印(报头旁的小方印) */
+.owner-seal{
+  flex-shrink:0;
+  width:clamp(52px,4.6vw,68px); height:clamp(52px,4.6vw,68px);
+  margin-bottom:clamp(8px,1.2vw,14px);
+  display:grid; grid-template-columns:1fr 1fr; place-items:center;
+  background:var(--seal-ink); color:var(--paper-hi);
+  border-radius:3px;
+  font-weight:700; font-size:clamp(15px,1.3vw,19px); line-height:1;
+  transform:rotate(-4deg);
+  filter:url(#inkbleed);
+  box-shadow:0 1px 0 rgba(160,47,31,.35);
+}
+.owner-seal span{ transform:translateY(.5px); }
+
+.mast-sub{
+  margin-top:clamp(10px,1.8vh,20px);
+  font-size:clamp(15px,1.35vw,19px); letter-spacing:.52em; font-weight:600;
+  color:var(--ink-soft);
+}
+.mast-dateline{
+  margin-top:clamp(14px,2.4vh,26px);
+  padding:9px 2px;
+  border-top:1px solid var(--ink); border-bottom:1px solid var(--hairline);
+  display:flex; justify-content:space-between; gap:12px;
+  font-family:var(--mono); font-size:11.5px; letter-spacing:.1em; color:var(--ink-soft);
+}
+
+/* 栏目索引(壹贰叁肆) */
+.sections{ margin-top:clamp(16px,3vh,34px); display:flex; flex-direction:column; }
+.section-row{
+  display:flex; align-items:baseline; gap:clamp(12px,1.4vw,20px);
+  padding:clamp(9px,1.5vh,14px) 2px;
+  border-bottom:1px solid var(--hairline);
+}
+.section-row .no{
+  font-size:13px; font-weight:700; color:var(--seal);
+  flex-shrink:0; width:1.4em;
+}
+.section-row .name{ font-size:clamp(15px,1.35vw,18px); font-weight:700; letter-spacing:.14em; white-space:nowrap; }
+.section-row .desc{
+  font-size:13px; color:var(--ink-dim); letter-spacing:.06em;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.section-row .pg{
+  margin-left:auto; flex-shrink:0;
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.14em; color:var(--ink-faint);
+}
+
+/* ---------- 右:读者登记(登录) ---------- */
+.checkin{
+  align-self:center;
+  position:relative;
+  background:var(--paper-hi);
+  border:1px solid var(--ink-faint);
+  padding:clamp(22px,2.6vw,32px) clamp(22px,2.4vw,30px) clamp(18px,2vw,24px);
+  box-shadow:0 1px 0 rgba(250,246,236,.8) inset, 0 10px 28px -18px rgba(35,42,84,.4);
+}
+.checkin::before{ /* 登记条顶部的双线 */
+  content:""; position:absolute; left:0; right:0; top:6px;
+  height:4px; border-top:2px solid var(--ink); border-bottom:1px solid var(--ink);
+  margin:0 10px;
+}
+.checkin-head{ display:flex; align-items:baseline; justify-content:space-between; margin-top:10px; }
+.checkin-title{ font-size:19px; font-weight:900; letter-spacing:.3em; }
+.checkin-en{ font-family:var(--mono); font-size:10px; letter-spacing:.18em; color:var(--ink-faint); text-transform:uppercase; }
+.checkin-sub{ margin-top:8px; font-size:12.5px; color:var(--ink-dim); letter-spacing:.05em; }
+
+.field{ display:block; margin-top:clamp(18px,2.6vh,26px); }
+.field-label{
+  display:flex; justify-content:space-between; align-items:baseline;
+  font-size:12.5px; font-weight:700; letter-spacing:.3em; color:var(--ink-soft);
+}
+.field-label .en{ font-family:var(--mono); font-size:9.5px; letter-spacing:.16em; color:var(--ink-faint); font-weight:400; }
+.field input{
+  width:100%; margin-top:6px; padding:8px 2px 9px;
+  font-family:var(--serif); font-size:16px; letter-spacing:.04em; color:var(--ink);
+  background:
+    linear-gradient(var(--indigo),var(--indigo)) left bottom/0% 2px no-repeat,
+    linear-gradient(var(--hairline),var(--hairline)) left bottom/100% 1px no-repeat;
+  border:none; outline:none;
+  transition:background-size .5s var(--ease);
+}
+.field input:focus{ background-size:100% 2px, 100% 1px; }
+.field input::placeholder{ color:var(--ink-faint); font-size:14px; letter-spacing:.08em; }
+
+.error-slot{ min-height:20px; margin-top:12px; font-size:12.5px; color:var(--seal); letter-spacing:.06em; }
+
+.checkin-foot{
+  margin-top:6px;
+  display:flex; align-items:flex-end; justify-content:space-between; gap:16px;
+}
+.checkin-note{
+  font-family:var(--mono); font-size:10px; line-height:1.9; letter-spacing:.1em;
+  color:var(--ink-faint);
+}
+
+/* 登录印章按钮 */
+.seal-btn{
+  flex-shrink:0;
+  width:clamp(76px,6.2vw,88px); height:clamp(76px,6.2vw,88px);
+  border:none; cursor:pointer;
+  background:var(--seal); color:#faf3e6;
+  border-radius:4px;
+  font-family:var(--serif); font-weight:900;
+  font-size:clamp(24px,2vw,29px); letter-spacing:0;
+  line-height:1.05;
+  display:grid; place-items:center;
+  filter:url(#inkbleed);
+  box-shadow:0 3px 0 var(--seal-deep), 0 10px 18px -10px rgba(191,59,40,.55);
+  transform:rotate(2deg);
+  transition:transform .18s var(--ease), box-shadow .18s var(--ease), background .18s;
+}
+.seal-btn .v{ display:flex; flex-direction:column; align-items:center; gap:1px; }
+.seal-btn:hover{ background:var(--seal-deep); transform:rotate(0deg) translateY(-1px); }
+.seal-btn:active{ transform:rotate(0deg) translateY(2px) scale(.97); box-shadow:0 1px 0 var(--seal-deep), 0 4px 10px -8px rgba(191,59,40,.5); }
+.seal-btn:disabled{ cursor:default; opacity:.75; }
+.seal-btn:focus-visible{ outline:2px solid var(--indigo); outline-offset:3px; }
+
+/* 盖下的「已登记」印(提交成功演示) */
+.stamped{
+  position:absolute; right:18px; bottom:64px;
+  pointer-events:none;
+  font-weight:900; font-size:30px; letter-spacing:.14em;
+  color:var(--seal);
+  border:3px solid var(--seal);
+  border-radius:6px;
+  padding:4px 12px;
+  transform:rotate(-9deg) scale(1);
+  filter:url(#inkbleed);
+  opacity:0;
+}
+.stamped.show{ animation:stampDown .42s cubic-bezier(.34,1.4,.64,1) both; }
+@keyframes stampDown{
+  0%{ opacity:0; transform:rotate(-14deg) scale(1.9); }
+  62%{ opacity:.95; transform:rotate(-9deg) scale(.94); }
+  100%{ opacity:.9; transform:rotate(-9deg) scale(1); }
+}
+
+/* 摇头(校验失败) */
+.checkin.shake{ animation:shake .4s var(--ease); }
+@keyframes shake{
+  20%{ transform:translateX(-5px); } 40%{ transform:translateX(4px); }
+  60%{ transform:translateX(-3px); } 80%{ transform:translateX(2px); }
+}
+
+/* ============ 底部:通讯社跑马灯(真实源名) ============ */
+.wire{
+  margin:0 calc(-1 * clamp(24px,4.5vw,72px));
+  border-top:1px solid var(--ink);
+  background:rgba(35,42,84,.035);
+  overflow:hidden;
+  display:flex; align-items:center;
+  height:40px;
+  font-family:var(--mono); font-size:11px; letter-spacing:.12em; color:var(--ink-soft);
+}
+.wire-tag{
+  flex-shrink:0; align-self:stretch; display:flex; align-items:center;
+  padding:0 14px 0 clamp(24px,4.5vw,72px);
+  background:var(--ink); color:var(--paper);
+  letter-spacing:.22em; font-size:10px;
+}
+.wire-track{ display:flex; white-space:nowrap; animation:wire 46s linear infinite; }
+.wire:hover .wire-track{ animation-play-state:paused; }
+.wire-track span{ padding:0 1.1em; }
+.wire-track i{ font-style:normal; color:var(--seal); }
+@keyframes wire{ to{ transform:translateX(-50%); } }
+
+/* ============ 入场编排 ============ */
+.rise{ opacity:0; transform:translateY(14px); animation:rise .9s var(--ease) var(--d,0ms) both; }
+@keyframes rise{ to{ opacity:1; transform:none; } }
+
+.rule-double,.mast-dateline{ }
+.draw{ transform:scaleX(0); animation:draw .9s var(--ease) var(--d,0ms) both; }
+@keyframes draw{ to{ transform:scaleX(1); } }
+
+.mast-title .char{
+  opacity:0; transform:translateY(.42em);
+  animation:charUp .8s var(--ease) var(--d,0ms) both;
+}
+@keyframes charUp{ to{ opacity:1; transform:none; } }
+
+.slogan-clip{ clip-path:inset(0 0 100% 0); animation:unclip 1.1s var(--ease) .7s both; }
+@keyframes unclip{ to{ clip-path:inset(0 0 -8% 0); } }
+
+.owner-seal{ opacity:0; animation:sealIn .5s cubic-bezier(.34,1.4,.64,1) 1.55s both; }
+@keyframes sealIn{
+  from{ opacity:0; transform:rotate(-14deg) scale(1.8); }
+  to{ opacity:1; transform:rotate(-4deg) scale(1); }
+}
+
+@media (prefers-reduced-motion:reduce){
+  .rise,.draw,.mast-title .char,.slogan-clip,.owner-seal{ animation:none; opacity:1; transform:none; clip-path:none; }
+  .owner-seal{ transform:rotate(-4deg); }
+  .wire-track{ animation:none; }
+}
+
+/* ============ 响应式 ============ */
+@media (max-width:1080px){
+  .page{ grid-template-columns:minmax(0,1fr) clamp(300px,38vw,380px); }
+  .slogan-col{ display:none; }
+}
+@media (max-width:760px){
+  body{ overflow:auto; }
+  .sheet{ height:auto; min-height:100dvh; padding-bottom:0; }
+  .page{ grid-template-columns:1fr; gap:28px; }
+  .checkin{ align-self:stretch; margin-bottom:24px; }
+  .mast-title{ font-size:clamp(64px,17vw,96px); }
+  .ears{ flex-wrap:wrap; row-gap:4px; }
+  .wire{ position:sticky; bottom:0; }
+}
+</style>
+</head>
+<body>
+
+<!-- 印泥晕染滤镜:让印章边缘带真实的不规则感 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="inkbleed">
+    <feTurbulence type="fractalNoise" baseFrequency="0.045" numOctaves="3" seed="7" result="n"/>
+    <feDisplacementMap in="SourceGraphic" in2="n" scale="2.6"/>
+  </filter>
+</svg>
+
+<main class="sheet">
+
+  <!-- 报眼 -->
+  <header class="ears rise" style="--d:80ms">
+    <span id="earDate">——</span>
+    <span class="ear-motto">让 AI 资讯有处可栖 · DORAMI DAILY</span>
+    <span><span class="ear-weather" id="earWeather">晴 · 宜读</span>&ensp;·&ensp;<b id="earIssue">第 —— 期</b></span>
+  </header>
+  <div class="rule-double draw" style="--d:160ms"></div>
+
+  <!-- 版心 -->
+  <section class="page">
+
+    <!-- 左:竖排标语 -->
+    <aside class="slogan-col" aria-hidden="true">
+      <p class="slogan slogan-clip">让 AI 资讯<br />有处<span class="em">可栖</span>。</p>
+      <p class="slogan-en slogan-clip" style="animation-delay:.9s">A QUIET ROOST FOR AI NEWS</p>
+    </aside>
+
+    <!-- 中:报头 -->
+    <section class="mast">
+      <p class="mast-kicker rise" style="--d:340ms">AI INTELLIGENCE, PRESSED DAILY</p>
+
+      <div class="mast-title-row">
+        <h1 class="mast-title" aria-label="哆啦美">
+          <span class="char" style="--d:420ms">哆</span><span class="char" style="--d:530ms">啦</span><span class="char" style="--d:640ms">美</span>
+        </h1>
+        <span class="owner-seal" aria-hidden="true">
+          <!-- 印文右起竖读:右列「哆美」左列「之印」→ 哆美之印 -->
+          <span>之</span><span>哆</span><span>印</span><span>美</span>
+        </span>
+      </div>
+
+      <p class="mast-sub rise" style="--d:760ms">AI 资 讯 平 台</p>
+
+      <div class="mast-dateline rise" style="--d:880ms">
+        <span>多源聚合 · 全文留存 · 语义检索</span>
+        <span id="mastEdition">EDITION —</span>
+      </div>
+
+      <!-- 栏目索引 -->
+      <nav class="sections" aria-label="栏目">
+        <div class="section-row rise" style="--d:1000ms">
+          <span class="no">壹</span><span class="name">多源聚合</span>
+          <span class="desc">三十余源尽收一档,官方 · 媒体 · 个人 · 榜单</span>
+          <span class="pg">SEC. A</span>
+        </div>
+        <div class="section-row rise" style="--d:1090ms">
+          <span class="no">贰</span><span class="name">全文留存</span>
+          <span class="desc">原文归档,恒久可溯</span>
+          <span class="pg">SEC. B</span>
+        </div>
+        <div class="section-row rise" style="--d:1180ms">
+          <span class="no">叁</span><span class="name">语义检索</span>
+          <span class="desc">一问即达,跨语寻文</span>
+          <span class="pg">SEC. C</span>
+        </div>
+        <div class="section-row rise" style="--d:1270ms">
+          <span class="no">肆</span><span class="name">每日晨报</span>
+          <span class="desc">AI 撰要,晨读一览</span>
+          <span class="pg">SEC. D</span>
+        </div>
+      </nav>
+    </section>
+
+    <!-- 右:读者登记 -->
+    <form class="checkin rise" style="--d:1150ms" id="checkinForm" novalidate>
+      <div class="checkin-head">
+        <h2 class="checkin-title">读者登记</h2>
+        <span class="checkin-en">Reader Check-in</span>
+      </div>
+      <p class="checkin-sub">登记账号,领取今日份 AI 资讯。</p>
+
+      <label class="field">
+        <span class="field-label">账 号 <span class="en">ACCOUNT</span></span>
+        <input id="fUser" autocomplete="username" placeholder="输入登录账号" />
+      </label>
+
+      <label class="field">
+        <span class="field-label">密 码 <span class="en">PASSWORD</span></span>
+        <input id="fPass" type="password" autocomplete="current-password" placeholder="输入登录密码" />
+      </label>
+
+      <p class="error-slot" id="errSlot" role="alert"></p>
+
+      <div class="checkin-foot">
+        <p class="checkin-note">受 HMAC 会话保护<br />哆啦美 · 归档中枢</p>
+        <button class="seal-btn" type="submit" id="sealBtn" aria-label="登录">
+          <span class="v"><span>登</span><span>录</span></span>
+        </button>
+      </div>
+
+      <span class="stamped" id="stamped" aria-hidden="true">已登记</span>
+    </form>
+
+  </section>
+
+  <!-- 通讯社跑马灯 -->
+  <footer class="wire rise" style="--d:1400ms" aria-hidden="true">
+    <span class="wire-tag">今日来源 WIRE</span>
+    <div class="wire-track" id="wireTrack"></div>
+  </footer>
+
+</main>
+
+<script>
+// —— 报眼:真实日期 / 期号(自 2025-06-01 起算) ——
+const now = new Date();
+const week = ['日','一','二','三','四','五','六'][now.getDay()];
+document.getElementById('earDate').textContent =
+  `${now.getFullYear()} 年 ${now.getMonth()+1} 月 ${now.getDate()} 日 · 星期${week}`;
+const issue = Math.max(1, Math.floor((now - new Date('2025-06-01')) / 86400000) + 1);
+document.getElementById('earIssue').textContent = `第 ${issue} 期`;
+document.getElementById('mastEdition').textContent =
+  `EDITION ${String(issue).padStart(4,'0')}`;
+
+// —— 跑马灯:真实源名单 ——
+const SOURCES = ['机器之心','量子位','新智元','Anthropic','OpenAI','Hacker News','arXiv','Hugging Face','GitHub Releases','IT之家 · AI','Google DeepMind','Cursor Changelog','Karpathy / X','每日 AI 晨报'];
+const seg = SOURCES.map(s => `<span>${s}</span><i>◆</i>`).join('');
+document.getElementById('wireTrack').innerHTML = seg + seg; // 两份内容循环平移 50%
+
+// —— 密码聚焦彩蛋:报眼天气变「非礼勿视」(正式版此处联动蒙眼 logo) ——
+const weather = document.getElementById('earWeather');
+const pass = document.getElementById('fPass');
+pass.addEventListener('focus', () => { weather.style.opacity = 0; setTimeout(() => { weather.textContent = '闭目 · 非礼勿视'; weather.style.opacity = 1; }, 160); });
+pass.addEventListener('blur', () => { weather.style.opacity = 0; setTimeout(() => { weather.textContent = '晴 · 宜读'; weather.style.opacity = 1; }, 160); });
+
+// —— 提交演示:空值摇头,有值盖「已登记」章 ——
+const form = document.getElementById('checkinForm');
+const err = document.getElementById('errSlot');
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  err.textContent = '';
+  const u = document.getElementById('fUser').value.trim();
+  const p = pass.value;
+  if (!u || !p) {
+    err.textContent = '账号与密码均需填写。';
+    form.classList.remove('shake'); void form.offsetWidth; form.classList.add('shake');
+    return;
+  }
+  const st = document.getElementById('stamped');
+  st.classList.remove('show'); void st.offsetWidth; st.classList.add('show');
+  err.textContent = '';
+  // 样页演示:正式实现此处调用 POST /api/auth/login
+});
+</script>
+</body>
+</html>

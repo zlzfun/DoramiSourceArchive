@@ -262,7 +262,12 @@ export default function App() {
     toastTimerRef.current = setTimeout(() => setToast(t => ({ ...t, show: false })), duration);
   }, []);
 
+  // 防止「登录预热」与「authenticated 副作用」并发重复拉取
+  const runtimeLoadingRef = useRef(false);
+
   const loadRuntimeAndFetchers = useCallback(async () => {
+    if (runtimeLoadingRef.current) return;
+    runtimeLoadingRef.current = true;
     try {
       const runtime = await fetchRuntimeInfo();
       setRuntimeInfo(runtime);
@@ -279,6 +284,7 @@ export default function App() {
       showToast(error.message || `网络连接异常，无法获取后端数据。`, 'error');
     } finally {
       // 能力已就绪（成功或失败都放行渲染，失败时退回非乐观默认）
+      runtimeLoadingRef.current = false;
       setRuntimeLoaded(true);
     }
   }, [showToast]);
@@ -305,9 +311,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (authState.status !== 'authenticated') return;
+    // 已由登录预热载入(runtimeLoaded)或正在载入(ref 内部去重)时不再重复拉取
+    if (authState.status !== 'authenticated' || runtimeLoaded) return;
     loadRuntimeAndFetchers();
-  }, [authState.status, loadRuntimeAndFetchers]);
+  }, [authState.status, runtimeLoaded, loadRuntimeAndFetchers]);
 
   useEffect(() => {
     const handleAuthExpired = () => {
@@ -321,11 +328,57 @@ export default function App() {
     return () => window.removeEventListener('dorami-auth-expired', handleAuthExpired);
   }, [showToast]);
 
+  // 登录拆两拍：onLogin 只做认证请求并返回会话；界面切换延后到 LoginScreen
+  // 播完「跃迁」转场后经 onLoginComplete 提交（reduced-motion 时立即提交）。
+  // 认证成功即预热 runtime/fetchers——跃迁的 1.2s 足够拉完,闪光退去时直达完整主界面。
   const handleLogin = async (username, password) => {
     const session = await loginAdmin(username, password);
-    setAuthState({ status: 'authenticated', user: session.user });
-    showToast(session.user?.username ? `已登录 · ${session.user.username}` : '已登录', 'success');
+    loadRuntimeAndFetchers();
+    return session;
   };
+
+  // 跃迁抵达幕(三段式):hold = 与登录侧闪光同帧接管(切换藏在全亮帧背后)
+  // → settle = 白光溶入主题色幕布(暗色主题从暗幕显影;数据未就绪时幕布兼任
+  //   延迟护罩,浮现着陆提示,不落朴素加载屏)→ fading = 幕布淡出、主界面显影。
+  // 演出本身即登录确认,cinematic 路径不再叠「已登录」toast。
+  const [arrival, setArrival] = useState(null);
+  const settleStartRef = useRef(0);
+
+  const handleLoginComplete = useCallback((session, opts) => {
+    setAuthState({ status: 'authenticated', user: session.user });
+    if (opts?.cinematic) {
+      setArrival('hold');
+    } else {
+      showToast(session.user?.username ? `已登录 · ${session.user.username}` : '已登录', 'success');
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    if (arrival !== 'hold') return undefined;
+    // 双 rAF:确保全亮幕布先以 opacity:1 上屏一帧,再进入白光消散段
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        settleStartRef.current = performance.now();
+        setArrival('settle');
+      });
+    });
+    return () => { cancelAnimationFrame(raf1); if (raf2) cancelAnimationFrame(raf2); };
+  }, [arrival]);
+
+  useEffect(() => {
+    // settle → fading:等 runtime 就绪(海外/慢网延迟护罩),且至少让白光完整溶入幕布
+    if (arrival !== 'settle' || !runtimeLoaded) return undefined;
+    const elapsed = performance.now() - settleStartRef.current;
+    const timer = setTimeout(() => setArrival('fading'), Math.max(0, 700 - elapsed));
+    return () => clearTimeout(timer);
+  }, [arrival, runtimeLoaded]);
+
+  useEffect(() => {
+    if (arrival !== 'fading') return undefined;
+    const timer = setTimeout(() => setArrival(null), 1050);
+    return () => clearTimeout(timer);
+  }, [arrival]);
 
   // 头像/账户字段就地更新（如改头像），让顶栏与设置面板即时同步，无需重登。
   const handleUserUpdated = useCallback((patch) => {
@@ -415,8 +468,28 @@ export default function App() {
   }
 
   if (authState.status !== 'authenticated') {
-    return <LoginScreen logoError={logoError} onLogoError={() => setLogoError(true)} onLogin={handleLogin} />;
+    return (
+      <LoginScreen
+        logoError={logoError}
+        onLogoError={() => setLogoError(true)}
+        onLogin={handleLogin}
+        onLoginComplete={handleLoginComplete}
+      />
+    );
   }
+
+  // 抵达幕布:跨越「载入中 → 主界面」两个分支常驻,直到淡出完毕
+  const arrivalOverlay = arrival ? (
+    <div className={`app-arrive is-${arrival}`} aria-hidden="true">
+      <span className="app-arrive-light" />
+      {arrival === 'settle' && !runtimeLoaded && (
+        <span className="app-arrive-wait">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          正在铺开你的资讯世界
+        </span>
+      )}
+    </div>
+  ) : null;
 
   // 运行能力就绪前不渲染主界面，避免读者态下 collector 界面/请求闪现（403）。
   if (!runtimeLoaded) {
@@ -424,12 +497,14 @@ export default function App() {
       <div className="checking-state app-shell flex min-h-screen items-center justify-center font-sans">
         <Loader2 className="mr-3 h-5 w-5 animate-spin text-blue-600" />
         <span className="text-sm font-bold">正在载入工作台</span>
+        {arrivalOverlay}
       </div>
     );
   }
 
   return (
-    <div className="app-shell font-sans">
+    <div className={`app-shell font-sans${arrival === 'fading' ? ' app-arriving' : ''}`}>
+      {arrivalOverlay}
       {/* ── lg+:左侧固定导轨(管理面),形制向阅读器视图轨靠拢:
              56px 带宽 / 32px 品牌位 / 38px icon-only 钮 + 右侧墨底 tooltip /
              轨底单一头像菜单(设置·主题·退出)。复用 reader-vrail-* 类族(已是全站轨语言)。 ── */}

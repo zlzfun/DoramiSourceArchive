@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>哆啦美 · 靛色极光登录（样页）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Noto+Serif+SC:wght@500;700;900&family=Noto+Sans+SC:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+@property --ring-a{syntax:'<angle>';inherits:false;initial-value:0deg}
+:root{
+  --void-0:#04030c;         /* 天顶最深 */
+  --void-1:#070616;
+  --void-2:#0b0a20;
+  --indigo:#5b54e8;         /* 品牌真色 */
+  --indigo-hi:#8f8bf6;
+  --indigo-lo:#3a34b8;
+  --violet:#6d5cf0;
+  --haze:rgba(91,84,232,.55);
+  --text:#edeefb;
+  --dim:#a6a8d4;
+  --faint:#6b6e9b;
+  --r-overlay:16px;
+  --r-control:11px;
+  --ease:cubic-bezier(.2,.7,.2,1);
+  --ease-soft:cubic-bezier(.22,.61,.36,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--void-0);color:var(--text);
+  font-family:"Noto Sans SC",-apple-system,BlinkMacSystemFont,sans-serif;
+  -webkit-font-smoothing:antialiased;overflow:hidden;
+}
+
+/* ============ 舞台 ============ */
+.scene{position:fixed;inset:0;overflow:hidden;isolation:isolate;
+  --mx:50%;--my:42%;--spot:0;--px:0;--py:0;}
+.scene-inner{position:absolute;inset:0;transform:scale(1.05);
+  transition:transform 2800ms var(--ease-soft)}
+.scene.is-ready .scene-inner{transform:scale(1)}
+
+/* —— CSS 极光兜底（无 WebGL 时可见） —— */
+.aurora-css{position:absolute;inset:0;
+  background:
+    radial-gradient(42% 52% at 22% 32%, rgba(91,84,232,.55) 0%, transparent 70%),
+    radial-gradient(46% 56% at 76% 24%, rgba(143,139,246,.42) 0%, transparent 70%),
+    radial-gradient(52% 60% at 62% 78%, rgba(109,92,240,.40) 0%, transparent 70%),
+    radial-gradient(42% 52% at 30% 82%, rgba(58,52,184,.45) 0%, transparent 70%),
+    var(--void-0);}
+.aurora-css::before{content:"";position:absolute;inset:-10%;
+  background:conic-gradient(from 120deg at 50% 35%,var(--indigo-lo),var(--violet),var(--indigo-hi),var(--indigo),var(--indigo-lo));
+  filter:blur(90px) saturate(1.4);opacity:.42;
+  animation:auroraDrift 22s ease-in-out infinite alternate}
+@keyframes auroraDrift{from{transform:translate3d(-4%,-2%,0) rotate(0deg)}to{transform:translate3d(4%,3%,0) rotate(9deg)}}
+
+/* —— WebGL 极光画布（成功初始化后淡入盖在兜底之上） —— */
+#gl{position:absolute;inset:0;width:100%;height:100%;opacity:0;
+  transition:opacity 1200ms var(--ease)}
+.scene.gl-on #gl{opacity:1}
+
+/* 视差层 */
+.parallax{position:absolute;inset:0;will-change:transform;
+  transform:translate3d(calc(var(--px)*-14px),calc(var(--py)*-10px),0);
+  transition:transform .5s var(--ease-soft)}
+.parallax.near{transform:translate3d(calc(var(--px)*-28px),calc(var(--py)*-20px),0)}
+
+/* 漂浮微光 */
+.mote{position:absolute;border-radius:50%;background:#d6d8ff;
+  box-shadow:0 0 7px 1px var(--haze);opacity:0;
+  animation:rise linear infinite,twinkle ease-in-out infinite}
+@keyframes rise{0%{transform:translateY(14vh);opacity:0}12%{opacity:var(--mo,.85)}
+  88%{opacity:var(--mo,.85)}100%{transform:translateY(-16vh);opacity:0}}
+@keyframes twinkle{0%,100%{filter:brightness(.65)}50%{filter:brightness(1.5)}}
+
+/* 光标聚光 */
+.spotlight{position:absolute;inset:0;pointer-events:none;mix-blend-mode:screen;
+  background:radial-gradient(300px 300px at var(--mx) var(--my),rgba(143,139,246,.16),transparent 70%);
+  opacity:var(--spot);transition:opacity .4s var(--ease)}
+
+/* 颗粒 + 暗角 */
+.grain{position:absolute;inset:0;pointer-events:none;opacity:.055;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+.vignette{position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(120% 100% at 50% 40%,transparent 50%,rgba(2,2,8,.78) 100%);
+  transition:background .6s var(--ease)}
+.scene.is-dim .vignette{background:radial-gradient(120% 100% at 50% 40%,transparent 36%,rgba(2,2,8,.9) 100%)}
+
+/* ============ 内容 ============ */
+.stage{position:absolute;inset:0;z-index:5;display:grid;
+  grid-template-columns:1.15fr .85fr;align-items:center;gap:clamp(24px,5vw,90px);
+  padding:clamp(28px,6vw,96px);max-width:1360px;margin:0 auto;left:0;right:0}
+
+/* —— HERO —— */
+.hero{max-width:620px}
+.brandrow{display:flex;align-items:center;gap:16px;margin-bottom:34px}
+.logo-shell{position:relative;width:66px;height:66px;flex:none;display:grid;place-items:center}
+.logo-halo{position:absolute;inset:-32%;border-radius:50%;
+  background:radial-gradient(circle,var(--haze),transparent 62%);filter:blur(11px);
+  opacity:.85;animation:breathe 5s ease-in-out infinite}
+@keyframes breathe{0%,100%{opacity:.5;transform:scale(.95)}50%{opacity:1;transform:scale(1.07)}}
+.logo{position:absolute;width:66px;height:66px;border-radius:50%;object-fit:cover;
+  box-shadow:0 6px 24px rgba(0,0,0,.5),0 0 0 1px rgba(143,139,246,.25);transition:opacity .5s var(--ease)}
+.logo-cover{opacity:0}
+.scene.is-dim .logo-base{opacity:0}
+.scene.is-dim .logo-cover{opacity:1}
+.wordmark{font-family:"Fraunces",serif;font-weight:500;font-size:30px;letter-spacing:.12em;
+  color:var(--text);position:relative}
+.wordmark::after{content:"";position:absolute;left:2px;right:2px;bottom:-8px;height:1px;
+  background:linear-gradient(90deg,var(--indigo-hi),transparent);opacity:.7}
+
+.kicker{font-family:"IBM Plex Mono",monospace;font-size:12px;letter-spacing:.34em;
+  text-transform:uppercase;color:var(--indigo-hi);margin-bottom:22px;
+  display:flex;align-items:center;gap:12px}
+.kicker::before{content:"";width:26px;height:1px;background:var(--indigo-hi);opacity:.7}
+
+.title{font-family:"Noto Serif SC",serif;font-weight:900;color:var(--text);
+  font-size:clamp(46px,6.6vw,84px);line-height:1.06;letter-spacing:.01em;
+  text-shadow:0 2px 46px rgba(91,84,232,.4)}
+.title .line{display:block;overflow:hidden}
+.word{display:inline-block;transform:translateY(115%);opacity:0}
+.title .accent{color:transparent;
+  background:linear-gradient(100deg,var(--indigo-hi) 0%,var(--violet) 46%,var(--indigo) 100%);
+  -webkit-background-clip:text;background-clip:text;
+  filter:drop-shadow(0 4px 26px rgba(109,92,240,.55))}
+.play .word{animation:wordUp 1050ms var(--ease-soft) forwards;animation-delay:var(--d,0ms)}
+@keyframes wordUp{to{transform:translateY(0);opacity:1}}
+
+.lede{margin-top:26px;max-width:440px;color:var(--dim);font-size:16px;line-height:1.75;
+  opacity:0;transform:translateY(14px)}
+.feats{margin-top:30px;display:flex;gap:10px;flex-wrap:wrap;opacity:0;transform:translateY(14px)}
+.feat{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;border-radius:999px;
+  font-size:13px;color:var(--dim);background:rgba(143,139,246,.08);
+  border:1px solid rgba(143,139,246,.18);backdrop-filter:blur(6px)}
+.feat svg{width:15px;height:15px;stroke:var(--indigo-hi)}
+.rise-in{animation:riseIn 900ms var(--ease-soft) forwards}
+@keyframes riseIn{to{opacity:1;transform:translateY(0)}}
+
+/* —— 玻璃卡 —— */
+.card-wrap{justify-self:end;width:100%;max-width:410px;position:relative;
+  opacity:0;transform:translateY(40px) scale(.97);filter:blur(6px);
+  transition:opacity 1100ms var(--ease-soft),transform 1100ms var(--ease-soft),filter 1100ms var(--ease-soft)}
+.scene.is-ready .card-wrap{opacity:1;transform:none;filter:none}
+
+.card{position:relative;border-radius:var(--r-overlay);padding:38px 34px 30px;
+  background:linear-gradient(180deg,rgba(24,22,46,.62),rgba(12,11,26,.72));
+  border:1px solid rgba(143,139,246,.18);
+  box-shadow:0 40px 90px -30px rgba(0,0,0,.75),0 0 0 1px rgba(255,255,255,.03) inset,
+    0 1px 0 rgba(143,139,246,.25) inset;
+  backdrop-filter:blur(16px) saturate(1.15);overflow:hidden}
+/* 旋转渐变描边 */
+.card::before{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:conic-gradient(from var(--ring-a) at 50% 50%,transparent 0deg,var(--indigo-hi) 40deg,var(--indigo) 90deg,transparent 150deg,transparent 360deg);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  opacity:.7;animation:ringSpin 7s linear infinite}
+@keyframes ringSpin{to{--ring-a:360deg}}
+/* 顶缘冷光条 */
+.card-glow{position:absolute;top:-38%;left:50%;transform:translateX(-50%);
+  width:120%;height:78%;pointer-events:none;
+  background:radial-gradient(50% 60% at 50% 40%,rgba(143,139,246,.22),transparent 66%);
+  opacity:.5;transition:opacity .6s var(--ease)}
+.scene.is-dim .card-glow{opacity:1}
+
+.card-eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.32em;
+  text-transform:uppercase;color:var(--indigo-hi);opacity:.9;position:relative}
+.card-title{font-family:"Noto Serif SC",serif;font-weight:700;font-size:27px;color:var(--text);
+  margin-top:12px;letter-spacing:.02em;position:relative}
+.card-sub{color:var(--dim);font-size:14px;margin-top:8px;line-height:1.6;position:relative}
+
+.field{display:block;margin-top:20px;position:relative}
+.field-label{font-size:12.5px;color:var(--dim);letter-spacing:.04em;margin-bottom:9px;display:block}
+.input-wrap{position:relative;display:flex;align-items:center}
+.input-wrap svg{position:absolute;left:14px;width:17px;height:17px;stroke:var(--indigo-hi);opacity:.65;
+  transition:opacity .3s,stroke .3s}
+.input{width:100%;padding:13px 15px 13px 42px;border-radius:var(--r-control);
+  background:rgba(8,7,18,.6);color:var(--text);font-size:15px;font-family:inherit;
+  border:1px solid rgba(143,139,246,.16);outline:none;
+  transition:border-color .3s,box-shadow .3s,background .3s}
+.input::placeholder{color:#6b6d92}
+.input:focus{border-color:rgba(143,139,246,.6);background:rgba(10,9,22,.8);
+  box-shadow:0 0 0 3px rgba(91,84,232,.18),0 0 26px -4px rgba(91,84,232,.5)}
+.input-wrap:focus-within svg{opacity:1;stroke:var(--indigo-hi)}
+
+.error-slot{min-height:22px;margin-top:12px;position:relative}
+.error{color:#ff9a8b;font-size:13px;display:flex;align-items:center;gap:6px}
+
+.submit{position:relative;width:100%;margin-top:10px;padding:14px;border:none;cursor:pointer;
+  border-radius:var(--r-control);font-family:inherit;font-size:15.5px;font-weight:600;letter-spacing:.06em;
+  color:#fff;overflow:hidden;display:flex;align-items:center;justify-content:center;gap:9px;
+  background:linear-gradient(180deg,var(--violet),var(--indigo) 55%,var(--indigo-lo));
+  box-shadow:0 12px 34px -8px rgba(91,84,232,.7),0 1px 0 rgba(255,255,255,.28) inset;
+  transition:transform .2s var(--ease),box-shadow .3s}
+.submit:hover{transform:translateY(-1px);box-shadow:0 18px 44px -10px rgba(91,84,232,.85),0 1px 0 rgba(255,255,255,.35) inset}
+.submit:active{transform:translateY(0)}
+.submit svg{width:18px;height:18px;stroke:#fff;transition:transform .3s}
+.submit:hover svg{transform:translateX(3px)}
+.submit-gloss{position:absolute;top:0;left:-60%;width:40%;height:100%;
+  background:linear-gradient(105deg,transparent,rgba(255,255,255,.4),transparent);
+  transform:skewX(-18deg);animation:gloss 4.5s ease-in-out infinite}
+@keyframes gloss{0%,64%{left:-60%}80%{left:130%}100%{left:130%}}
+
+.foot{margin-top:20px;text-align:center;font-size:11.5px;color:#7f82a8;letter-spacing:.03em;
+  font-family:"IBM Plex Mono",monospace;position:relative}
+
+.hint{position:absolute;bottom:32px;left:50%;transform:translateX(-50%);z-index:6;
+  font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.3em;text-transform:uppercase;
+  color:var(--faint);opacity:0;animation:hintIn 800ms var(--ease) 2200ms forwards;transition:opacity .5s}
+.scene.is-ready .hint{opacity:0 !important;pointer-events:none}
+@keyframes hintIn{to{opacity:.7}}
+.hint span{color:var(--indigo-hi);opacity:.95}
+
+@media (max-width:920px){
+  .stage{grid-template-columns:1fr;justify-items:center;text-align:center;gap:40px;align-content:center;overflow-y:auto}
+  .hero{max-width:560px}.kicker,.brandrow,.feats{justify-content:center}
+  .card-wrap{justify-self:center}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important}
+  .word{transform:none;opacity:1}
+}
+</style>
+</head>
+<body>
+<main class="scene is-title" id="scene">
+  <div class="scene-inner">
+    <div class="aurora-css"></div>
+    <canvas id="gl"></canvas>
+    <div class="parallax near"><div class="motes" id="motes"></div></div>
+    <div class="spotlight"></div>
+    <div class="grain"></div>
+    <div class="vignette"></div>
+  </div>
+
+  <div class="stage">
+    <section class="hero">
+      <div class="brandrow">
+        <span class="logo-shell">
+          <span class="logo-halo"></span>
+          <img class="logo logo-base" src="../../frontend/public/brand/dorami-logo-256.jpg" alt="哆啦美" />
+          <img class="logo logo-cover" src="../../frontend/public/brand/dorami-logo-cover-eyes-256.jpg" alt="" aria-hidden="true" />
+        </span>
+        <span class="wordmark">DORAMI</span>
+      </div>
+
+      <p class="kicker">Nightly&nbsp;AI&nbsp;Digest · 聚合 · 订阅 · 检索</p>
+
+      <h1 class="title" id="title">
+        <span class="line"><span class="word" style="--d:520ms">让&nbsp;</span><span class="word" style="--d:660ms">AI&nbsp;</span><span class="word" style="--d:800ms">资讯</span></span>
+        <span class="line"><span class="word accent" style="--d:980ms">有处可栖。</span></span>
+      </h1>
+
+      <p class="lede" id="lede">汇聚多源 AI 资讯，订阅、检索、随手可读——尽在一处。</p>
+
+      <div class="feats" id="feats">
+        <span class="feat"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg>多源聚合</span>
+        <span class="feat"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="3" y="5" width="18" height="4"/><path d="M5 9v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/></svg>全文留存</span>
+        <span class="feat"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></svg>语义检索</span>
+      </div>
+    </section>
+
+    <div class="card-wrap">
+      <section class="card">
+        <span class="card-glow"></span>
+        <form id="form">
+          <p class="card-eyebrow">Account&nbsp;Access</p>
+          <h2 class="card-title">欢迎回来</h2>
+          <p class="card-sub">登录账号，继续浏览你的 AI 资讯。</p>
+
+          <label class="field">
+            <span class="field-label">账号</span>
+            <span class="input-wrap">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>
+              <input class="input" id="user" autocomplete="username" placeholder="输入登录账号" />
+            </span>
+          </label>
+
+          <label class="field">
+            <span class="field-label">密码</span>
+            <span class="input-wrap">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+              <input class="input" id="pass" type="password" autocomplete="current-password" placeholder="输入登录密码" />
+            </span>
+          </label>
+
+          <div class="error-slot"></div>
+
+          <button class="submit" type="submit">
+            <span class="submit-gloss"></span>
+            <span>登录</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+
+          <p class="foot">受 HMAC 会话保护 · 哆啦美</p>
+        </form>
+      </section>
+    </div>
+  </div>
+
+  <p class="hint">按<span> 任意键 </span>进入</p>
+</main>
+
+<script>
+(function(){
+  const scene = document.getElementById('scene');
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* —— 漂浮微光 —— */
+  const motes = document.getElementById('motes');
+  const N = reduce ? 0 : 40;
+  let seed = 11;
+  const rnd = () => { seed = (seed*16807)%2147483647; return seed/2147483647; };
+  for(let i=0;i<N;i++){
+    const m = document.createElement('span'); m.className='mote';
+    const s = 1+rnd()*2.4;
+    m.style.left=(rnd()*100)+'%'; m.style.top=(rnd()*100)+'%';
+    m.style.width=s+'px'; m.style.height=s+'px';
+    m.style.setProperty('--mo',(.35+rnd()*.55).toFixed(2));
+    m.style.animationDelay=(-rnd()*22)+'s, '+(-rnd()*4)+'s';
+    m.style.animationDuration=(16+rnd()*18)+'s, '+(3+rnd()*3)+'s';
+    motes.appendChild(m);
+  }
+
+  /* —— WebGL 流动极光（fbm 域扭曲，靛色 ramp）—— */
+  const glOK = initGL();
+
+  function initGL(){
+    if(reduce) return false;
+    const cv = document.getElementById('gl');
+    const gl = cv.getContext('webgl') || cv.getContext('experimental-webgl');
+    if(!gl) return false;
+
+    const vs = `attribute vec2 p; void main(){ gl_Position = vec4(p,0.0,1.0); }`;
+    const fs = `
+      precision highp float;
+      uniform vec2 u_res; uniform float u_time; uniform vec2 u_mouse;
+      float hash(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
+      float noise(vec2 p){
+        vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.0-2.0*f);
+        float a=hash(i), b=hash(i+vec2(1.0,0.0)), c=hash(i+vec2(0.0,1.0)), d=hash(i+vec2(1.0,1.0));
+        return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);
+      }
+      float fbm(vec2 p){ float v=0.0,a=0.5; for(int i=0;i<5;i++){ v+=a*noise(p); p*=2.0; a*=0.5; } return v; }
+      void main(){
+        vec2 uv = gl_FragCoord.xy/u_res.xy;
+        vec2 p = (uv-0.5)*vec2(u_res.x/u_res.y,1.0)*3.0;
+        float t = u_time*0.05;
+        vec2 q = vec2(fbm(p+vec2(0.0,t)), fbm(p+vec2(5.2,1.3)-t));
+        float f = fbm(p + q*2.4 + vec2(t*0.6, t*1.4));
+        f = pow(clamp(f,0.0,1.0),1.55);
+        vec3 base   = vec3(0.016,0.014,0.045);
+        vec3 indLo  = vec3(0.227,0.204,0.72);   // 3a34b8
+        vec3 ind    = vec3(0.357,0.329,0.909);  // 5b54e8
+        vec3 indHi  = vec3(0.56,0.545,0.965);   // 8f8bf6
+        vec3 col = base;
+        col = mix(col, indLo, smoothstep(0.15,0.55,f));
+        col = mix(col, ind,   smoothstep(0.45,0.8,f));
+        col = mix(col, indHi, smoothstep(0.72,0.98,f)*0.85);
+        float d = distance(uv, vec2(0.5,0.42));
+        col *= smoothstep(1.1,0.15,d);
+        float m = distance(uv*vec2(u_res.x/u_res.y,1.0), u_mouse*vec2(u_res.x/u_res.y,1.0));
+        col += ind*0.10*smoothstep(0.4,0.0,m);
+        gl_FragColor = vec4(col,1.0);
+      }`;
+
+    function sh(type,src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+      if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){ console.warn(gl.getShaderInfoLog(s)); return null; } return s; }
+    const v=sh(gl.VERTEX_SHADER,vs), f=sh(gl.FRAGMENT_SHADER,fs);
+    if(!v||!f) return false;
+    const prog=gl.createProgram(); gl.attachShader(prog,v); gl.attachShader(prog,f); gl.linkProgram(prog);
+    if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) return false;
+    gl.useProgram(prog);
+    const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+    const loc=gl.getAttribLocation(prog,'p'); gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+    const uRes=gl.getUniformLocation(prog,'u_res'),uT=gl.getUniformLocation(prog,'u_time'),uM=gl.getUniformLocation(prog,'u_mouse');
+
+    let mouse=[0.5,0.5];
+    const dpr=Math.min(window.devicePixelRatio||1,1.5);
+    function resize(){ cv.width=Math.floor(innerWidth*dpr); cv.height=Math.floor(innerHeight*dpr);
+      gl.viewport(0,0,cv.width,cv.height); }
+    resize(); window.addEventListener('resize',resize);
+    window.addEventListener('pointermove',e=>{ mouse=[e.clientX/innerWidth, 1-e.clientY/innerHeight]; });
+
+    const start=performance.now();
+    function frame(now){ gl.uniform2f(uRes,cv.width,cv.height);
+      gl.uniform1f(uT,(now-start)/1000); gl.uniform2f(uM,mouse[0],mouse[1]);
+      gl.drawArrays(gl.TRIANGLES,0,3); requestAnimationFrame(frame); }
+    requestAnimationFrame(frame);
+    requestAnimationFrame(()=>scene.classList.add('gl-on'));
+    return true;
+  }
+
+  /* —— 两幕开场 —— */
+  const title = document.getElementById('title');
+  const toReady = () => {
+    if(scene.classList.contains('is-ready')) return;
+    scene.classList.remove('is-title'); scene.classList.add('is-ready');
+    document.getElementById('lede').classList.add('rise-in');
+    document.getElementById('feats').classList.add('rise-in');
+    setTimeout(()=>document.getElementById('user').focus(),600);
+  };
+  if(reduce){ title.classList.add('play'); toReady(); }
+  else{
+    requestAnimationFrame(()=>title.classList.add('play'));
+    const t=setTimeout(toReady,3600);
+    const skip=()=>{ clearTimeout(t); toReady(); };
+    window.addEventListener('pointerdown',skip,{once:true});
+    window.addEventListener('keydown',skip,{once:true});
+  }
+
+  /* —— 视差 + 光标聚光 —— */
+  if(!reduce){
+    let raf=0;
+    window.addEventListener('pointermove',e=>{
+      if(raf) return;
+      raf=requestAnimationFrame(()=>{ raf=0;
+        scene.style.setProperty('--px',((e.clientX/innerWidth)-.5).toFixed(4));
+        scene.style.setProperty('--py',((e.clientY/innerHeight)-.5).toFixed(4));
+        scene.style.setProperty('--mx',e.clientX+'px');
+        scene.style.setProperty('--my',e.clientY+'px');
+        scene.style.setProperty('--spot','1');
+      });
+    });
+    window.addEventListener('pointerleave',()=>scene.style.setProperty('--spot','0'));
+  }
+
+  /* —— 密码聚焦：压暗 + 蒙眼 —— */
+  const pass=document.getElementById('pass');
+  pass.addEventListener('focus',()=>scene.classList.add('is-dim'));
+  pass.addEventListener('blur',()=>scene.classList.remove('is-dim'));
+
+  document.getElementById('form').addEventListener('submit',e=>{
+    e.preventDefault();
+    document.querySelector('.error-slot').innerHTML='<p class="error">◦ 样页演示——此处接后端登录。</p>';
+  });
+})();
+</script>
+</body>
+</html>

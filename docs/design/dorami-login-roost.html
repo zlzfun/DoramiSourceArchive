@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>哆啦美 · 归巢登录（样页）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Noto+Serif+SC:wght@500;700;900&family=Noto+Sans+SC:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{
+  /* —— 夜空（冷靛） —— */
+  --ink-0:#04050b;         /* 最深天顶 */
+  --ink-1:#080a16;
+  --ink-2:#0d1024;
+  --indigo:#5b54e8;        /* 品牌真色 */
+  --indigo-soft:#8f8bf6;
+  --indigo-haze:rgba(91,84,232,.55);
+  /* —— 灯笼（暖琥珀 = 收藏星的暖，作「家」的光） —— */
+  --amber:#f6b552;
+  --amber-hi:#ffd487;
+  --amber-deep:#e08b3a;
+  --amber-haze:rgba(246,181,82,.5);
+  /* —— 文字 —— */
+  --sky-text:#ecedfb;
+  --sky-dim:#a7abcf;
+  --sky-faint:#6f7398;
+  --warm-text:#f6efe2;
+  --warm-dim:#c8bda6;
+  --r-overlay:16px;
+  --r-control:11px;
+  --ease:cubic-bezier(.2,.7,.2,1);
+  --ease-soft:cubic-bezier(.22,.61,.36,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--ink-0);
+  color:var(--sky-text);
+  font-family:"Noto Sans SC",-apple-system,BlinkMacSystemFont,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;
+}
+
+/* ============ 舞台 ============ */
+.scene{
+  position:fixed;inset:0;
+  overflow:hidden;
+  --mx:50%;--my:42%;--spot:0;
+  --px:0;--py:0;
+  isolation:isolate;
+}
+/* 全局「落定」：开场轻微俯冲收束 */
+.scene-inner{
+  position:absolute;inset:0;
+  transform:scale(1.045);
+  transition:transform 2600ms var(--ease-soft);
+}
+.scene.is-ready .scene-inner{transform:scale(1)}
+
+/* —— 天幕基底：径向天顶 + 地平线暖光 —— */
+.sky{
+  position:absolute;inset:0;
+  background:
+    radial-gradient(120% 90% at 50% -18%, #12142c 0%, var(--ink-1) 42%, var(--ink-0) 78%),
+    linear-gradient(180deg, var(--ink-0) 0%, #060713 55%, #0a0a14 100%);
+}
+/* 地平线的「家」光——蓝调时刻的暖底 */
+.horizon{
+  position:absolute;left:50%;bottom:-32vh;
+  width:170vw;height:70vh;transform:translateX(-50%);
+  background:radial-gradient(50% 60% at 50% 100%,
+      rgba(246,181,82,.28) 0%, rgba(224,139,58,.14) 34%, transparent 68%);
+  filter:blur(6px);
+  opacity:.5;
+  transition:opacity 2200ms var(--ease);
+}
+.scene.is-ready .horizon{opacity:.92}
+.scene.is-dim .horizon{opacity:1}
+
+/* 高空靛色气幕 */
+.aurora{
+  position:absolute;left:50%;top:-26vh;transform:translateX(-50%);
+  width:150vw;height:90vh;
+  background:
+    radial-gradient(46% 40% at 32% 30%, var(--indigo-haze) 0%, transparent 60%),
+    radial-gradient(40% 46% at 74% 20%, rgba(143,139,246,.4) 0%, transparent 62%);
+  filter:blur(30px);
+  opacity:.45;
+  mix-blend-mode:screen;
+  animation:drift 26s ease-in-out infinite alternate;
+}
+@keyframes drift{from{transform:translateX(calc(-50% - 3vw)) translateY(-1vh)}to{transform:translateX(calc(-50% + 3vw)) translateY(2vh)}}
+
+/* 顶部斜射天光（godray），随第二幕增强 */
+.godray{
+  position:absolute;top:-40vh;left:8%;
+  width:60vw;height:150vh;
+  transform:rotate(14deg);transform-origin:top center;
+  background:linear-gradient(180deg, rgba(180,180,255,.10), transparent 60%);
+  filter:blur(24px);
+  opacity:.4;
+  animation:sweep 18s ease-in-out infinite alternate;
+}
+@keyframes sweep{from{opacity:.28;transform:rotate(11deg)}to{opacity:.55;transform:rotate(17deg)}}
+
+/* 视差层承载：跟随鼠标做景深 */
+.parallax{position:absolute;inset:0;will-change:transform;
+  transform:translate3d(calc(var(--px)*-16px), calc(var(--py)*-12px),0);
+  transition:transform .5s var(--ease-soft);}
+.parallax.far{transform:translate3d(calc(var(--px)*-8px), calc(var(--py)*-6px),0);}
+.parallax.near{transform:translate3d(calc(var(--px)*-30px), calc(var(--py)*-22px),0);}
+
+/* 栖落的信号光点（JS 注入） */
+.mote{position:absolute;border-radius:50%;background:var(--dot,#cfd2ff);
+  box-shadow:0 0 6px 1px var(--glow,rgba(143,139,246,.7));
+  opacity:0;animation:rise linear infinite, twinkle ease-in-out infinite;}
+@keyframes rise{
+  0%{transform:translateY(14vh);opacity:0}
+  12%{opacity:var(--maxop,.9)}
+  88%{opacity:var(--maxop,.9)}
+  100%{transform:translateY(-16vh);opacity:0}
+}
+@keyframes twinkle{0%,100%{filter:brightness(.7)}50%{filter:brightness(1.4)}}
+
+/* 归巢信号线：从边缘弯向灯笼 */
+.signals{position:absolute;inset:0;width:100%;height:100%;opacity:0;
+  transition:opacity 1400ms var(--ease) 400ms;mix-blend-mode:screen;}
+.scene.is-ready .signals{opacity:.7}
+.signals path{
+  fill:none;stroke:url(#sigGrad);stroke-width:1.1;
+  stroke-dasharray:6 220;stroke-linecap:round;
+  animation:flow 5.5s linear infinite;
+}
+.signals path:nth-child(2){animation-duration:7s;animation-delay:-2s}
+.signals path:nth-child(3){animation-duration:6.2s;animation-delay:-3.5s}
+.signals path:nth-child(4){animation-duration:8s;animation-delay:-1s}
+@keyframes flow{to{stroke-dashoffset:-226}}
+
+/* 光标聚光 */
+.spotlight{position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(280px 280px at var(--mx) var(--my),
+    rgba(143,139,246,.14), transparent 70%);
+  opacity:var(--spot);transition:opacity .4s var(--ease);mix-blend-mode:screen;}
+
+/* 颗粒 + 暗角 */
+.grain{position:absolute;inset:0;pointer-events:none;opacity:.05;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+.vignette{position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(120% 100% at 50% 40%, transparent 52%, rgba(2,3,8,.72) 100%);}
+.scene.is-dim .vignette{background:radial-gradient(120% 100% at 50% 40%, transparent 40%, rgba(2,3,8,.85) 100%);transition:background .6s var(--ease)}
+
+/* ============ 内容 ============ */
+.stage{position:absolute;inset:0;z-index:5;
+  display:grid;grid-template-columns:1.15fr .85fr;align-items:center;
+  gap:clamp(24px,5vw,90px);
+  padding:clamp(28px,6vw,96px);
+  max-width:1360px;margin:0 auto;left:0;right:0;}
+
+/* —— HERO —— */
+.hero{max-width:620px}
+.brandrow{display:flex;align-items:center;gap:16px;margin-bottom:34px}
+.logo-shell{position:relative;width:66px;height:66px;flex:none;display:grid;place-items:center}
+.logo-halo{position:absolute;inset:-30%;border-radius:50%;
+  background:radial-gradient(circle,var(--amber-haze),transparent 62%);
+  filter:blur(10px);opacity:.85;animation:breathe 5s ease-in-out infinite}
+@keyframes breathe{0%,100%{opacity:.55;transform:scale(.96)}50%{opacity:1;transform:scale(1.06)}}
+.logo{position:absolute;width:66px;height:66px;border-radius:50%;object-fit:cover;
+  box-shadow:0 6px 24px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.08);transition:opacity .5s var(--ease)}
+.logo-cover{opacity:0}
+.scene.is-dim .logo-base{opacity:0}
+.scene.is-dim .logo-cover{opacity:1}
+.wordmark{font-family:"Fraunces",serif;font-weight:500;font-size:30px;letter-spacing:.12em;
+  color:var(--sky-text);position:relative}
+.wordmark::after{content:"";position:absolute;left:2px;right:2px;bottom:-8px;height:1px;
+  background:linear-gradient(90deg,var(--amber),transparent);opacity:.6}
+
+.kicker{font-family:"IBM Plex Mono",monospace;font-size:12px;letter-spacing:.34em;
+  text-transform:uppercase;color:var(--indigo-soft);margin-bottom:22px;
+  display:flex;align-items:center;gap:12px}
+.kicker::before{content:"";width:26px;height:1px;background:var(--indigo-soft);opacity:.7}
+
+.title{font-family:"Noto Serif SC",serif;font-weight:900;color:var(--sky-text);
+  font-size:clamp(46px,6.6vw,84px);line-height:1.06;letter-spacing:.01em;
+  text-shadow:0 2px 40px rgba(91,84,232,.25)}
+.title .line{display:block;overflow:hidden}
+.word{display:inline-block;transform:translateY(115%);opacity:0}
+.title .accent{color:transparent;
+  background:linear-gradient(100deg,var(--amber-hi) 0%,var(--amber) 42%,var(--amber-deep) 100%);
+  -webkit-background-clip:text;background-clip:text;
+  filter:drop-shadow(0 4px 22px rgba(246,181,82,.4))}
+.play .word{animation:wordUp 1050ms var(--ease-soft) forwards;animation-delay:var(--d,0ms)}
+@keyframes wordUp{to{transform:translateY(0);opacity:1}}
+
+.lede{margin-top:26px;max-width:440px;color:var(--sky-dim);font-size:16px;line-height:1.75;
+  opacity:0;transform:translateY(14px)}
+.feats{margin-top:30px;display:flex;gap:10px;flex-wrap:wrap;opacity:0;transform:translateY(14px)}
+.feat{display:inline-flex;align-items:center;gap:8px;
+  padding:8px 15px;border-radius:999px;font-size:13px;color:var(--sky-dim);
+  background:rgba(143,139,246,.07);border:1px solid rgba(143,139,246,.16);
+  backdrop-filter:blur(6px)}
+.feat svg{width:15px;height:15px;stroke:var(--indigo-soft)}
+.rise-in{animation:riseIn 900ms var(--ease-soft) forwards}
+@keyframes riseIn{to{opacity:1;transform:translateY(0)}}
+
+/* —— 灯笼卡 —— */
+.card-wrap{justify-self:end;width:100%;max-width:410px;position:relative;
+  opacity:0;transform:translateY(40px) scale(.97);filter:blur(6px);
+  transition:opacity 1100ms var(--ease-soft), transform 1100ms var(--ease-soft), filter 1100ms var(--ease-soft)}
+.scene.is-ready .card-wrap{opacity:1;transform:none;filter:none}
+
+.card{position:relative;border-radius:var(--r-overlay);padding:38px 34px 30px;
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(246,181,82,.14), transparent 55%),
+    linear-gradient(180deg, rgba(28,25,44,.86), rgba(16,15,28,.9));
+  border:1px solid rgba(246,181,82,.16);
+  box-shadow:
+    0 40px 90px -30px rgba(0,0,0,.75),
+    0 0 0 1px rgba(255,255,255,.03) inset,
+    0 1px 0 rgba(255,214,135,.18) inset;
+  backdrop-filter:blur(14px) saturate(1.1);
+  overflow:hidden;}
+/* 灯笼顶缘暖光条 */
+.card::before{content:"";position:absolute;top:0;left:12%;right:12%;height:1px;
+  background:linear-gradient(90deg,transparent,var(--amber-hi),transparent);opacity:.7}
+/* 内部暖光晕，随聚焦增强 */
+.card-glow{position:absolute;top:-40%;left:50%;transform:translateX(-50%);
+  width:120%;height:80%;pointer-events:none;
+  background:radial-gradient(50% 60% at 50% 40%,rgba(246,181,82,.22),transparent 66%);
+  opacity:.5;transition:opacity .6s var(--ease)}
+.scene.is-dim .card-glow{opacity:1}
+
+.card-eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.32em;
+  text-transform:uppercase;color:var(--amber);opacity:.85}
+.card-title{font-family:"Noto Serif SC",serif;font-weight:700;font-size:27px;color:var(--warm-text);
+  margin-top:12px;letter-spacing:.02em}
+.card-sub{color:var(--warm-dim);font-size:14px;margin-top:8px;line-height:1.6}
+
+.field{display:block;margin-top:20px}
+.field-label{font-size:12.5px;color:var(--warm-dim);letter-spacing:.04em;margin-bottom:9px;display:block}
+.input-wrap{position:relative;display:flex;align-items:center}
+.input-wrap svg{position:absolute;left:14px;width:17px;height:17px;stroke:var(--amber);opacity:.7;
+  transition:opacity .3s,stroke .3s}
+.input{width:100%;padding:13px 15px 13px 42px;border-radius:var(--r-control);
+  background:rgba(9,8,16,.6);color:var(--warm-text);font-size:15px;font-family:inherit;
+  border:1px solid rgba(246,181,82,.14);outline:none;
+  transition:border-color .3s,box-shadow .3s,background .3s}
+.input::placeholder{color:#7a7364}
+.input:focus{border-color:rgba(246,181,82,.6);background:rgba(12,10,18,.8);
+  box-shadow:0 0 0 3px rgba(246,181,82,.14), 0 0 24px -4px rgba(246,181,82,.4)}
+.input-wrap:focus-within svg{opacity:1;stroke:var(--amber-hi)}
+
+.error-slot{min-height:22px;margin-top:12px}
+.error{color:#ff9a8b;font-size:13px;display:flex;align-items:center;gap:6px}
+
+.submit{position:relative;width:100%;margin-top:10px;padding:14px;border:none;cursor:pointer;
+  border-radius:var(--r-control);font-family:inherit;font-size:15.5px;font-weight:600;letter-spacing:.06em;
+  color:#3a2708;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;gap:9px;
+  background:linear-gradient(180deg,var(--amber-hi),var(--amber) 55%,var(--amber-deep));
+  box-shadow:0 12px 30px -8px rgba(246,181,82,.6), 0 1px 0 rgba(255,255,255,.4) inset;
+  transition:transform .2s var(--ease), box-shadow .3s}
+.submit:hover{transform:translateY(-1px);box-shadow:0 18px 40px -10px rgba(246,181,82,.75), 0 1px 0 rgba(255,255,255,.5) inset}
+.submit:active{transform:translateY(0)}
+.submit svg{width:18px;height:18px;stroke:#3a2708;transition:transform .3s}
+.submit:hover svg{transform:translateX(3px)}
+.submit-gloss{position:absolute;top:0;left:-60%;width:40%;height:100%;
+  background:linear-gradient(105deg,transparent,rgba(255,255,255,.55),transparent);
+  transform:skewX(-18deg);animation:gloss 4.5s ease-in-out infinite}
+@keyframes gloss{0%,64%{left:-60%}80%{left:130%}100%{left:130%}}
+
+.foot{margin-top:20px;text-align:center;font-size:11.5px;color:#8a8172;letter-spacing:.03em;
+  font-family:"IBM Plex Mono",monospace}
+
+/* 开场跳过提示 */
+.hint{position:absolute;bottom:32px;left:50%;transform:translateX(-50%);z-index:6;
+  font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.3em;text-transform:uppercase;
+  color:var(--sky-faint);opacity:0;animation:hintIn 800ms var(--ease) 2200ms forwards;
+  transition:opacity .5s}
+.scene.is-ready .hint{opacity:0 !important;pointer-events:none}
+@keyframes hintIn{to{opacity:.7}}
+.hint span{color:var(--amber);opacity:.9}
+
+@media (max-width:920px){
+  .stage{grid-template-columns:1fr;justify-items:center;text-align:center;gap:40px;align-content:center;overflow-y:auto}
+  .hero{max-width:560px}
+  .kicker,.brandrow{justify-content:center}
+  .feats{justify-content:center}
+  .card-wrap{justify-self:center}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important}
+  .word{transform:none;opacity:1}
+}
+</style>
+</head>
+<body>
+<main class="scene is-title" id="scene">
+  <div class="scene-inner">
+    <div class="sky"></div>
+    <div class="aurora parallax far"></div>
+    <div class="godray"></div>
+    <div class="horizon"></div>
+
+    <div class="parallax near"><div class="motes" id="motes"></div></div>
+
+    <svg class="signals" viewBox="0 0 1000 700" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="sigGrad" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="rgba(143,139,246,0)"/>
+          <stop offset=".6" stop-color="rgba(143,139,246,.9)"/>
+          <stop offset="1" stop-color="rgba(246,181,82,.95)"/>
+        </linearGradient>
+      </defs>
+      <path d="M-40,120 C 260,90 520,300 760,360"/>
+      <path d="M-40,420 C 300,470 560,300 780,330"/>
+      <path d="M120,-40 C 300,180 640,220 800,300"/>
+      <path d="M-40,640 C 340,600 600,420 800,380"/>
+    </svg>
+
+    <div class="spotlight"></div>
+    <div class="grain"></div>
+    <div class="vignette"></div>
+  </div>
+
+  <div class="stage">
+    <!-- HERO -->
+    <section class="hero">
+      <div class="brandrow">
+        <span class="logo-shell">
+          <span class="logo-halo"></span>
+          <img class="logo logo-base" src="../../frontend/public/brand/dorami-logo-256.jpg" alt="哆啦美" />
+          <img class="logo logo-cover" src="../../frontend/public/brand/dorami-logo-cover-eyes-256.jpg" alt="" aria-hidden="true" />
+        </span>
+        <span class="wordmark">DORAMI</span>
+      </div>
+
+      <p class="kicker">Nightly&nbsp;AI&nbsp;Digest · 聚合 · 订阅 · 检索</p>
+
+      <h1 class="title" id="title">
+        <span class="line"><span class="word" style="--d:520ms">让&nbsp;</span><span class="word" style="--d:660ms">AI&nbsp;</span><span class="word" style="--d:800ms">资讯</span></span>
+        <span class="line"><span class="word accent" style="--d:980ms">有处可栖。</span></span>
+      </h1>
+
+      <p class="lede" id="lede">四散于各处的 AI 信号，在此收束、栖落——订阅、检索、随手可读，尽在一盏灯下。</p>
+
+      <div class="feats" id="feats">
+        <span class="feat"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg>多源聚合</span>
+        <span class="feat"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="3" y="5" width="18" height="4"/><path d="M5 9v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/></svg>全文留存</span>
+        <span class="feat"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></svg>语义检索</span>
+      </div>
+    </section>
+
+    <!-- 灯笼卡 -->
+    <div class="card-wrap">
+      <section class="card">
+        <span class="card-glow"></span>
+        <form id="form">
+          <p class="card-eyebrow">Account&nbsp;Access</p>
+          <h2 class="card-title">欢迎回来</h2>
+          <p class="card-sub">点亮账号，回到你的资讯栖所。</p>
+
+          <label class="field">
+            <span class="field-label">账号</span>
+            <span class="input-wrap">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>
+              <input class="input" id="user" autocomplete="username" placeholder="输入登录账号" />
+            </span>
+          </label>
+
+          <label class="field">
+            <span class="field-label">密码</span>
+            <span class="input-wrap">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+              <input class="input" id="pass" type="password" autocomplete="current-password" placeholder="输入登录密码" />
+            </span>
+          </label>
+
+          <div class="error-slot"></div>
+
+          <button class="submit" type="submit">
+            <span class="submit-gloss"></span>
+            <span>登录</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+
+          <p class="foot">受 HMAC 会话保护 · 哆啦美</p>
+        </form>
+      </section>
+    </div>
+  </div>
+
+  <p class="hint">按<span> 任意键 </span>进入</p>
+</main>
+
+<script>
+(function(){
+  const scene = document.getElementById('scene');
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* —— 栖落信号光点 —— */
+  const motes = document.getElementById('motes');
+  const N = reduce ? 0 : 46;
+  let seed = 7;
+  const rnd = () => { seed = (seed*16807) % 2147483647; return seed/2147483647; };
+  for(let i=0;i<N;i++){
+    const m = document.createElement('span');
+    m.className='mote';
+    const size = 1 + rnd()*2.6;
+    const warm = rnd() > .72;
+    m.style.left = (rnd()*100)+'%';
+    m.style.top = (rnd()*100)+'%';
+    m.style.width = size+'px'; m.style.height = size+'px';
+    m.style.setProperty('--maxop', (.4+rnd()*.55).toFixed(2));
+    m.style.setProperty('--dot', warm ? '#ffe0a8' : '#d4d6ff');
+    m.style.setProperty('--glow', warm ? 'rgba(246,181,82,.75)' : 'rgba(143,139,246,.7)');
+    m.style.animationDelay = (-rnd()*22)+'s, '+(-rnd()*4)+'s';
+    m.style.animationDuration = (16+rnd()*18)+'s, '+(3+rnd()*3)+'s';
+    motes.appendChild(m);
+  }
+
+  /* —— 两幕开场 —— */
+  const title = document.getElementById('title');
+  const toReady = () => {
+    if(scene.classList.contains('is-ready')) return;
+    scene.classList.remove('is-title');
+    scene.classList.add('is-ready');
+    document.getElementById('lede').classList.add('rise-in');
+    document.getElementById('feats').classList.add('rise-in');
+    setTimeout(()=>document.getElementById('user').focus(), 600);
+  };
+  if(reduce){
+    title.classList.add('play'); toReady();
+  } else {
+    requestAnimationFrame(()=>title.classList.add('play'));
+    const t = setTimeout(toReady, 3600);
+    const skip = () => { clearTimeout(t); toReady(); };
+    window.addEventListener('pointerdown', skip, {once:true});
+    window.addEventListener('keydown', skip, {once:true});
+  }
+
+  /* —— 视差 + 光标聚光 —— */
+  if(!reduce){
+    let raf = 0;
+    window.addEventListener('pointermove', (e)=>{
+      if(raf) return;
+      raf = requestAnimationFrame(()=>{
+        raf = 0;
+        const w = innerWidth, h = innerHeight;
+        scene.style.setProperty('--px', ((e.clientX/w)-.5).toFixed(4));
+        scene.style.setProperty('--py', ((e.clientY/h)-.5).toFixed(4));
+        scene.style.setProperty('--mx', e.clientX+'px');
+        scene.style.setProperty('--my', e.clientY+'px');
+        scene.style.setProperty('--spot','1');
+      });
+    });
+    window.addEventListener('pointerleave', ()=>scene.style.setProperty('--spot','0'));
+  }
+
+  /* —— 密码聚焦：压暗天光、点亮灯笼、哆啦美蒙眼 —— */
+  const pass = document.getElementById('pass');
+  pass.addEventListener('focus', ()=>scene.classList.add('is-dim'));
+  pass.addEventListener('blur', ()=>scene.classList.remove('is-dim'));
+
+  /* —— 表单（样页演示） —— */
+  document.getElementById('form').addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const slot = document.querySelector('.error-slot');
+    slot.innerHTML = '<p class="error">◦ 样页演示——此处接后端登录。</p>';
+  });
+})();
+</script>
+</body>
+</html>

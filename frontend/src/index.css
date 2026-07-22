@@ -11,6 +11,31 @@
    否则所有 dark: 补丁会退化成系统偏好媒体查询、在浅色系统下整体失效。 */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
+/* —— 登录页专用字体子集(仅含登录页用字:让AI资讯有处可栖。哆啦美平台DORAMI + A–Z) ——
+   思源宋体 ~4KB/字重、Plex Mono ~2KB,本地打包不走外网;缺字按字形回退到后续字体栈。
+   来源:Google Fonts text= 子集接口(OFL 许可),完整字重不入仓。 */
+@font-face {
+  font-family: "Dorami Login Serif";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./assets/fonts/noto-serif-sc-login-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Dorami Login Serif";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./assets/fonts/noto-serif-sc-login-700.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Dorami Login Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./assets/fonts/plex-mono-login-600.woff2") format("woff2");
+}
+
 /* 把 Tailwind 的 indigo 与 blue 色阶折叠进品牌 accent（方向 A 单宝石色）：
    JSX 里散落的 indigo、blue 系原子类不再各自为政，全部映射到同一 indigo accent；
    emerald、amber、red、slate 等语义与中性色保持原样。 */
@@ -438,6 +463,20 @@ input[type="radio"] {
 /* 按钮高光斜掠 */
 @keyframes auth-gloss-sweep {
   to { transform: translateX(320%) skewX(-18deg); }
+}
+
+/* 高光「快扫慢歇」：16% 时间内干脆扫过,其余静息——高光是偶发的,不是常驻缓移的 */
+@keyframes auth-gloss-rest {
+  0% { transform: translateX(-180%) skewX(-18deg); }
+  16%, 100% { transform: translateX(320%) skewX(-18deg); }
+}
+
+/* 登录失败:卡片摇头(配合星座震镜) */
+@keyframes auth-card-shake {
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
 }
 
 /* 卡片描边流光环绕（@property 让 conic 角度可平滑动画） */
@@ -1040,6 +1079,122 @@ input[type="radio"] {
     gap: clamp(40px, 7vw, 120px);
     width: 100%;
     max-width: 1180px;
+    transition: opacity 1250ms var(--motion-ease), transform 1600ms var(--motion-ease);
+  }
+
+  /* —— 终幕「跃迁」:登录成功后前景整体缓缓消散,星座光轨 + 闪光收束(见 LoginScreen) —— */
+  .is-warping .auth-shell {
+    opacity: 0;
+    transform: scale(0.97);
+    pointer-events: none;
+  }
+
+  .auth-warp-flash {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    pointer-events: none;
+    opacity: 0;
+    background: radial-gradient(
+      circle at 50% 50%,
+      rgba(228, 228, 255, 0.98) 0%,
+      rgba(122, 114, 244, 0.92) 42%,
+      rgba(4, 4, 14, 0) 78%
+    );
+    transition: opacity 0.3s ease;
+  }
+  .auth-warp-flash.is-on {
+    opacity: 1;
+  }
+
+  /* —— 跃迁抵达幕(App 层,三段式):
+     hold   = 与登录侧闪光同帧接管(白光层全亮 + 近黑底,边角与登录暗场一致);
+     settle = 白光层 700ms 溶入「主题色幕布」——亮色幕布≈页面底色、暗色幕布≈canvas,
+              暗色主题由此从暗中显影、不再从白光里蹦出;数据未就绪时幕布兼任延迟护罩;
+     fading = 整幕在主界面之上淡出,主界面同步显影(app-arriving)。 —— */
+  .app-arrive {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    pointer-events: none;
+    opacity: 1;
+    background: #eef1f6;
+  }
+  [data-theme="dark"] .app-arrive {
+    background: #0c0e13;
+  }
+  .app-arrive.is-fading {
+    opacity: 0;
+    transition: opacity 950ms var(--motion-ease);
+  }
+  .app-arrive-light {
+    position: absolute;
+    inset: 0;
+    opacity: 1;
+    background:
+      radial-gradient(
+        circle at 50% 50%,
+        rgba(228, 228, 255, 0.98) 0%,
+        rgba(122, 114, 244, 0.92) 42%,
+        rgba(4, 4, 14, 0) 78%
+      ),
+      #04040e;
+    transition: opacity 700ms var(--motion-ease);
+  }
+  .app-arrive.is-settle .app-arrive-light,
+  .app-arrive.is-fading .app-arrive-light {
+    opacity: 0;
+  }
+  /* 暗色主题:闪光峰值柔一档(白心减淡、靛紫加深)——登录侧与抵达侧同步生效 */
+  [data-theme="dark"] .auth-warp-flash,
+  [data-theme="dark"] .app-arrive-light {
+    background:
+      radial-gradient(
+        circle at 50% 50%,
+        rgba(202, 202, 246, 0.85) 0%,
+        rgba(96, 89, 214, 0.9) 45%,
+        rgba(4, 4, 14, 0) 78%
+      ),
+      #04040e;
+  }
+
+  .app-arrive-wait {
+    position: absolute;
+    left: 50%;
+    bottom: 16vh;
+    transform: translateX(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.26em;
+    text-indent: 0.26em;
+    color: rgba(11, 18, 32, 0.55);
+    opacity: 0;
+    animation: app-wait-in 500ms var(--motion-ease) 350ms forwards;
+  }
+  [data-theme="dark"] .app-arrive-wait {
+    color: rgba(206, 210, 240, 0.6);
+  }
+  @keyframes app-wait-in {
+    to { opacity: 1; }
+  }
+
+  .app-arriving {
+    animation: app-arrive-in 900ms var(--motion-ease) 100ms both;
+  }
+  @keyframes app-arrive-in {
+    from {
+      opacity: 0.5;
+      transform: scale(1.015);
+      filter: blur(5px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+      filter: blur(0);
+    }
   }
 
   /* —— hero (left, floating in open space) —— */
@@ -1142,7 +1297,7 @@ input[type="radio"] {
   }
 
   .auth-wordmark {
-    font-family: var(--font-serif);
+    font-family: "Dorami Login Serif", var(--font-serif);
     font-size: 27px;
     font-weight: 600;
     letter-spacing: 0.14em;
@@ -1152,7 +1307,7 @@ input[type="radio"] {
 
   .auth-eyebrow {
     margin-top: clamp(36px, 6vh, 64px);
-    font-family: var(--mono);
+    font-family: "Dorami Login Mono", var(--mono);
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.34em;
@@ -1162,7 +1317,7 @@ input[type="radio"] {
 
   .auth-title {
     margin-top: 18px;
-    font-family: var(--font-serif);
+    font-family: "Dorami Login Serif", var(--font-serif);
     font-size: clamp(42px, 6.2vw, 72px);
     font-weight: 700;
     line-height: 1.1;
@@ -1324,6 +1479,14 @@ input[type="radio"] {
       0 40px 90px rgba(4, 6, 18, 0.7),
       0 0 60px rgba(91, 84, 232, 0.16);
     overflow: hidden;
+    /* 3D 倾斜跟随:JS 写入 --tilt-x/--tilt-y(±3° 内),外层 slot 的 perspective 终于派上用场 */
+    transform: rotateY(calc(var(--tilt-x, 0) * 1deg)) rotateX(calc(var(--tilt-y, 0) * 1deg));
+    transition: transform 0.35s var(--motion-ease);
+    will-change: transform;
+  }
+
+  .auth-card.is-shaking {
+    animation: auth-card-shake 0.42s var(--motion-ease);
   }
 
   .auth-card::before {
@@ -1332,6 +1495,9 @@ input[type="radio"] {
     inset: 0 0 auto 0;
     height: 1px;
     background: linear-gradient(90deg, transparent, rgba(167, 159, 241, 0.85), transparent);
+    /* 卡顶高光线随倾角反向微移,制造玻璃厚度 */
+    transform: translateX(calc(var(--tilt-x, 0) * -6px));
+    transition: transform 0.35s var(--motion-ease);
   }
 
   .auth-card-glow {
@@ -1344,6 +1510,8 @@ input[type="radio"] {
     background: radial-gradient(circle, rgba(91, 84, 232, 0.4), transparent 64%);
     filter: blur(50px);
     pointer-events: none;
+    transform: translate(calc(var(--tilt-x, 0) * -8px), calc(var(--tilt-y, 0) * 8px));
+    transition: transform 0.35s var(--motion-ease);
   }
 
   /* 卡片描边流光：一束亮点沿圆角边框缓慢环绕 */
@@ -1376,7 +1544,7 @@ input[type="radio"] {
   }
 
   .auth-card-eyebrow {
-    font-family: var(--mono);
+    font-family: "Dorami Login Mono", var(--mono);
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.3em;
@@ -1525,6 +1693,11 @@ input[type="radio"] {
     opacity: 0.78;
   }
 
+  .auth-submit:focus-visible {
+    outline: 2px solid var(--dorami-blue-2);
+    outline-offset: 3px;
+  }
+
   .auth-submit svg {
     position: relative;
     width: 18px;
@@ -1549,7 +1722,7 @@ input[type="radio"] {
     height: 100%;
     background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.45), transparent);
     transform: translateX(-180%) skewX(-18deg);
-    animation: auth-gloss-sweep 5.5s ease-in-out 2.2s infinite;
+    animation: auth-gloss-rest 5.6s var(--motion-ease) 2.2s infinite;
   }
 
   .auth-submit:hover:not(:disabled) .auth-submit-gloss {
@@ -1654,6 +1827,24 @@ input[type="radio"] {
     }
     .auth-card {
       transform: none;
+    }
+    .auth-card::before,
+    .auth-card-glow {
+      transform: none;
+      transition: none;
+    }
+    .auth-card.is-shaking {
+      animation: none;
+    }
+    .auth-warp-flash {
+      transition: none;
+    }
+    .app-arrive,
+    .app-arrive-light,
+    .app-arrive-wait,
+    .app-arriving {
+      animation: none;
+      transition: none;
     }
     /* 头像仍保留透明门控（杜绝半张渲染），但去掉位移/过渡，加载完成即瞬时显现 */
     .auth-logo-base {

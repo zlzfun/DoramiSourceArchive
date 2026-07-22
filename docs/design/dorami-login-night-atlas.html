@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>哆啦美 · 夜航星图登录(样页)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700;900&family=Cormorant+Garamond:ital,wght@1,400;1,500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+/* ============================================================
+   哆啦美 · 登录样页 —— 方向「夜航星图 Night Atlas」
+   与现版同宗(深空靛蓝 · 星座 · 两幕电影开场),但换执行范式:
+   无名粒子网格 → 雕版天文图集。信息源本身即星,连成一只
+   栖在枝头的鸟(「让 AI 资讯有处可栖」的字面星座化)。
+   全 SVG 雕线,无 Canvas、无常驻粒子模拟。
+   ============================================================ */
+
+:root{
+  --night-0:#05060f;
+  --night-1:#0a0d22;
+  --panel:#0c1029;
+  --star:#eceefc;
+  --dim:#9aa0c8;
+  --faint:#5f6490;
+  --hairline:rgba(148,150,220,.16);
+  --indigo:#6a63f2;
+  --indigo-soft:#948ff8;
+  --amber:#f2b45c;       /* 栖鸟之心 = 应用内收藏星的暖 */
+  --serif:"Noto Serif SC","Songti SC","STSong",serif;
+  --flourish:"Cormorant Garamond",serif;
+  --mono:"IBM Plex Mono","SF Mono",Menlo,monospace;
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+
+*{ margin:0; padding:0; box-sizing:border-box; }
+html,body{ height:100%; }
+
+body{
+  font-family:var(--serif);
+  color:var(--star);
+  background:var(--night-0);
+  overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ============ 舞台 ============ */
+.stage{
+  position:relative; isolation:isolate;
+  height:100vh; height:100dvh;
+  display:flex; flex-direction:column;
+  overflow:hidden;
+}
+
+/* 夜幕:近黑 + 右侧极淡靛晕 + 颗粒 + 暗角 */
+.night{ position:absolute; inset:0; z-index:-3;
+  background:
+    radial-gradient(56% 64% at 70% 46%, rgba(90,84,236,.13) 0%, transparent 62%),
+    radial-gradient(100% 90% at 50% -10%, var(--night-1) 0%, var(--night-0) 60%);
+}
+.grain{ position:absolute; inset:0; z-index:-1; pointer-events:none; opacity:.4; mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
+}
+.vignette{ position:absolute; inset:0; z-index:-1; pointer-events:none;
+  background:radial-gradient(125% 125% at 50% 50%, transparent 55%, rgba(2,3,10,.8) 100%);
+}
+
+/* 流星:稀疏,约 16s 一次 */
+.meteor{ position:absolute; z-index:-2; top:12%; left:64%; width:130px; height:1.5px;
+  background:linear-gradient(90deg, rgba(236,238,252,.9), transparent);
+  border-radius:2px; opacity:0; transform:rotate(-34deg);
+  animation:meteor 16s linear 5s infinite;
+}
+.meteor.m2{ top:64%; left:18%; width:90px; animation-delay:11s; animation-duration:19s; }
+@keyframes meteor{
+  0%,96%{ opacity:0; transform:rotate(-34deg) translateX(0); }
+  96.5%{ opacity:.9; }
+  100%{ opacity:0; transform:rotate(-34deg) translateX(-340px); }
+}
+
+/* ============ 星图(SVG 雕版) ============ */
+.atlas{
+  position:absolute; z-index:0; pointer-events:none;
+  top:50%; left:50%;
+  width:min(88vmin,860px); aspect-ratio:1;
+  transform:translate(-50%,-52%) scale(1.06);
+  transition:transform 2200ms var(--ease), opacity 1400ms var(--ease), filter .7s var(--ease);
+}
+.is-ready .atlas{ transform:translate(-27%,-50%) scale(1); opacity:.94; }
+.is-veiled .atlas{ filter:brightness(.5) saturate(.7); }
+
+/* 鼠标视差:内外两层反向微移 */
+.atlas-parallax{ width:100%; height:100%;
+  transform:translate(calc(var(--mx,0)*9px), calc(var(--my,0)*7px));
+  transition:transform .6s var(--ease);
+}
+.atlas svg{ width:100%; height:100%; display:block; overflow:visible; }
+
+/* 环规:极慢自转 */
+.rings{ transform-origin:360px 320px; animation:spin 260s linear infinite; }
+@keyframes spin{ to{ transform:rotate(360deg); } }
+.rings circle, .rings path{ fill:none; stroke:var(--hairline); }
+.graticule path{ fill:none; stroke:rgba(148,150,220,.09); }
+
+/* 星座连线:雕线描绘入场 */
+.c-line{
+  fill:none; stroke:rgba(148,143,248,.5); stroke-width:1;
+  stroke-dasharray:var(--len); stroke-dashoffset:var(--len);
+  animation:draw 1.6s var(--ease) var(--d,0s) forwards;
+}
+@keyframes draw{ to{ stroke-dashoffset:0; } }
+
+/* 星与标签 */
+.star-g{ opacity:0; animation:starIn .7s var(--ease) var(--d,0s) forwards; }
+@keyframes starIn{ from{ opacity:0; } to{ opacity:1; } }
+.star-core{ fill:var(--star); }
+.star-halo{ fill:none; stroke:rgba(148,143,248,.4); stroke-width:.8; }
+.star-glow{ fill:rgba(148,143,248,.16); }
+.star-g text{
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.14em;
+  fill:var(--faint);
+}
+.star-g .zh{ font-family:var(--serif); font-size:11px; letter-spacing:.2em; fill:var(--dim); }
+
+/* 栖鸟之心(哆啦美):琥珀,呼吸 */
+.star-g.home .star-core{ fill:var(--amber); }
+.star-g.home .star-halo{ stroke:rgba(242,180,92,.5); animation:homePulse 3.6s ease-in-out infinite; }
+.star-g.home .star-glow{ fill:rgba(242,180,92,.14); }
+.star-g.home .zh{ fill:var(--amber); }
+@keyframes homePulse{ 0%,100%{ opacity:.5; } 50%{ opacity:1; } }
+.is-veiled .star-g.home{ opacity:.25; transition:opacity .5s; }
+
+/* 栖枝 */
+.branch line{ stroke:rgba(148,150,220,.3); stroke-width:1; }
+.branch text{ font-family:var(--mono); font-size:8.5px; letter-spacing:.3em; fill:var(--faint); }
+
+/* 背景细星 */
+.dust circle{ fill:var(--star); }
+.dust .tw{ animation:twinkle 4.2s ease-in-out infinite; }
+@keyframes twinkle{ 0%,100%{ opacity:.16; } 50%{ opacity:.7; } }
+
+/* ============ 前景内容 ============ */
+.shell{
+  position:relative; z-index:1;
+  flex:1; min-height:0;
+  display:grid; grid-template-columns:1.04fr .96fr;
+  align-items:center;
+  gap:clamp(36px,6vw,110px);
+  width:100%; max-width:1180px;
+  margin:0 auto;
+  padding:clamp(24px,4.5vw,64px);
+}
+
+/* —— 左:题词(两幕位移与现版同法:仅 transform,不换对齐) —— */
+.hero{
+  max-width:540px;
+  transition:transform 1700ms var(--ease);
+}
+.is-title .hero{ transform:translateX(56%) translateY(16vh) scale(1.08); }
+.is-ready .hero{ transform:none; }
+
+.brandrow{ display:flex; align-items:center; gap:14px; }
+.moon-mark{
+  width:44px; height:44px; flex-shrink:0;
+  border-radius:50%;
+  border:1px solid var(--hairline);
+  display:grid; place-items:center;
+  background:radial-gradient(120% 120% at 30% 25%, rgba(148,143,248,.2), rgba(12,16,41,.6));
+  font-size:19px; font-weight:900; color:var(--indigo-soft);
+}
+.wordmark{ font-family:var(--mono); font-size:12.5px; letter-spacing:.5em; color:var(--dim); }
+
+.hero-eyebrow{
+  margin-top:clamp(18px,3.4vh,30px);
+  font-family:var(--mono); font-size:11px; letter-spacing:.42em; color:var(--faint);
+  text-transform:uppercase;
+}
+.hero-title{
+  margin-top:14px;
+  font-size:clamp(38px,4.6vw,60px);
+  font-weight:900; line-height:1.3; letter-spacing:.06em;
+}
+.hero-title .roost{ color:var(--amber); position:relative; }
+.hero-title .roost::after{ /* 栖字下的枝线 */
+  content:""; position:absolute; left:-2%; right:-2%; bottom:-6px;
+  height:1px; background:linear-gradient(90deg, transparent, rgba(242,180,92,.7), transparent);
+}
+.hero-flourish{
+  margin-top:16px;
+  font-family:var(--flourish); font-style:italic;
+  font-size:clamp(15px,1.5vw,19px); letter-spacing:.08em; color:var(--faint);
+}
+.hero-lede{
+  margin-top:14px;
+  font-size:14.5px; line-height:2; letter-spacing:.05em; color:var(--dim);
+}
+
+/* 题词逐段入场 */
+.rise{ opacity:0; transform:translateY(16px); animation:rise 1.1s var(--ease) var(--d,0ms) both; }
+@keyframes rise{ to{ opacity:1; transform:none; } }
+
+/* —— 右:观测许可(登录面板,仪器铭牌语法,非玻璃拟态) —— */
+.pass-slot{
+  transition:opacity 1s var(--ease) .35s, transform 1.3s var(--ease) .35s;
+}
+.is-title .pass-slot{ opacity:0; transform:translateY(34px); pointer-events:none; }
+.is-ready .pass-slot{ opacity:1; transform:none; }
+
+.pass{
+  position:relative;
+  background:linear-gradient(168deg, rgba(17,22,52,.92), rgba(9,12,30,.94));
+  border:1px solid var(--hairline);
+  padding:clamp(26px,3vw,38px) clamp(24px,2.8vw,36px);
+  box-shadow:0 30px 70px -30px rgba(2,4,14,.9), 0 0 0 1px rgba(5,6,15,.6);
+}
+/* 四角刻度(仪器铭牌) */
+.pass .tick{ position:absolute; width:14px; height:14px; border:1px solid rgba(148,143,248,.55); }
+.pass .t1{ top:-1px; left:-1px; border-right:none; border-bottom:none; }
+.pass .t2{ top:-1px; right:-1px; border-left:none; border-bottom:none; }
+.pass .t3{ bottom:-1px; left:-1px; border-right:none; border-top:none; }
+.pass .t4{ bottom:-1px; right:-1px; border-left:none; border-top:none; }
+
+.pass-eyebrow{
+  display:flex; align-items:center; gap:10px;
+  font-family:var(--mono); font-size:10px; letter-spacing:.3em; color:var(--faint);
+  text-transform:uppercase;
+}
+.pass-eyebrow::after{ content:""; flex:1; height:1px; background:var(--hairline); }
+.pass-title{ margin-top:14px; font-size:24px; font-weight:900; letter-spacing:.1em; }
+.pass-sub{ margin-top:8px; font-size:13px; color:var(--dim); letter-spacing:.05em; }
+
+.field{ display:block; margin-top:clamp(20px,2.8vh,28px); }
+.field-label{
+  display:flex; justify-content:space-between; align-items:baseline;
+  font-size:12px; font-weight:700; letter-spacing:.32em; color:var(--dim);
+}
+.field-label .en{ font-family:var(--mono); font-size:9px; letter-spacing:.16em; color:var(--faint); font-weight:400; }
+.field input{
+  width:100%; margin-top:8px; padding:9px 2px 10px;
+  font-family:var(--serif); font-size:15.5px; letter-spacing:.05em; color:var(--star);
+  background:
+    linear-gradient(var(--indigo-soft),var(--indigo-soft)) left bottom/0% 1.5px no-repeat,
+    linear-gradient(var(--hairline),var(--hairline)) left bottom/100% 1px no-repeat;
+  border:none; outline:none;
+  transition:background-size .5s var(--ease);
+  caret-color:var(--indigo-soft);
+}
+.field input:focus{ background-size:100% 1.5px, 100% 1px; }
+.field input::placeholder{ color:var(--faint); font-size:13.5px; letter-spacing:.08em; }
+
+.error-slot{ min-height:20px; margin-top:14px; font-size:12.5px; color:#f0917e; letter-spacing:.06em; }
+
+.pass-submit{
+  width:100%; margin-top:4px;
+  padding:13px 16px;
+  border:none; cursor:pointer;
+  background:var(--indigo); color:#f2f1ff;
+  font-family:var(--serif); font-weight:700; font-size:15px; letter-spacing:.5em; text-indent:.5em;
+  transition:background .2s, transform .2s var(--ease), box-shadow .2s;
+  box-shadow:0 12px 30px -14px rgba(106,99,242,.7);
+}
+.pass-submit:hover{ background:#7a74f5; transform:translateY(-1px); }
+.pass-submit:active{ transform:translateY(1px); }
+.pass-submit:focus-visible{ outline:2px solid var(--indigo-soft); outline-offset:3px; }
+.pass-submit:disabled{ opacity:.7; cursor:default; }
+
+.pass-foot{
+  margin-top:16px;
+  display:flex; justify-content:space-between;
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.14em; color:var(--faint);
+}
+
+.pass.shake{ animation:shake .4s var(--ease); }
+@keyframes shake{
+  20%{ transform:translateX(-5px); } 40%{ transform:translateX(4px); }
+  60%{ transform:translateX(-3px); } 80%{ transform:translateX(2px); }
+}
+
+/* ============ 底部星历行 ============ */
+.ephemeris{
+  position:relative; z-index:1;
+  border-top:1px solid var(--hairline);
+  display:flex; justify-content:space-between; gap:16px;
+  padding:11px clamp(24px,4.5vw,64px);
+  font-family:var(--mono); font-size:10px; letter-spacing:.18em; color:var(--faint);
+  text-transform:uppercase;
+  opacity:0; animation:rise 1.2s var(--ease) 1.9s both;
+}
+.ephemeris b{ font-weight:500; color:var(--dim); }
+
+/* 开场提示 */
+.hint{
+  position:absolute; z-index:2; left:50%; bottom:52px; transform:translateX(-50%);
+  font-size:12px; letter-spacing:.3em; color:var(--faint);
+  opacity:0; transition:opacity .8s;
+}
+.is-title .hint{ opacity:1; animation:hintPulse 2.6s ease-in-out 1.4s infinite; }
+@keyframes hintPulse{ 0%,100%{ opacity:.4; } 50%{ opacity:.95; } }
+.hint b{ color:var(--dim); font-weight:600; }
+
+/* ============ Reduced motion ============ */
+@media (prefers-reduced-motion:reduce){
+  .rise,.ephemeris{ animation:none; opacity:1; transform:none; }
+  .c-line{ animation:none; stroke-dashoffset:0; }
+  .star-g{ animation:none; opacity:1; }
+  .rings,.meteor,.dust .tw,.star-g.home .star-halo{ animation:none; }
+  .atlas,.hero,.pass-slot{ transition:none; }
+}
+
+/* ============ 响应式 ============ */
+@media (max-width:1024px){
+  body{ overflow:auto; }
+  .stage{ height:auto; min-height:100dvh; }
+  .shell{ grid-template-columns:1fr; gap:34px; padding-top:clamp(48px,9vh,90px); }
+  .is-title .hero{ transform:none; }
+  .atlas{ opacity:.4; }
+  .is-ready .atlas{ transform:translate(-50%,-64%) scale(1.15); opacity:.35; }
+  .hero{ max-width:none; }
+  .hint{ display:none; }
+}
+</style>
+</head>
+<body>
+
+<main class="stage is-title" id="stage">
+  <div class="night" aria-hidden="true"></div>
+  <span class="meteor" aria-hidden="true"></span>
+  <span class="meteor m2" aria-hidden="true"></span>
+
+  <!-- ============ 星图 ============ -->
+  <div class="atlas" aria-hidden="true">
+    <div class="atlas-parallax" id="parallax">
+      <svg viewBox="0 0 720 640">
+        <!-- 环规与刻度 -->
+        <g class="rings" id="rings">
+          <circle cx="360" cy="320" r="170" stroke-dasharray="1 7"/>
+          <circle cx="360" cy="320" r="238" stroke-dasharray="3 9"/>
+          <circle cx="360" cy="320" r="300"/>
+          <g id="ringTicks"></g>
+        </g>
+        <!-- 经纬弧 -->
+        <g class="graticule">
+          <path d="M 60 320 A 300 300 0 0 1 660 320" transform="rotate(18 360 320)"/>
+          <path d="M 360 20 A 300 300 0 0 1 360 620" transform="rotate(-14 360 320)"/>
+          <ellipse cx="360" cy="320" rx="300" ry="104" transform="rotate(-21 360 320)" fill="none"/>
+        </g>
+        <!-- 背景细星(JS 生成) -->
+        <g class="dust" id="dust"></g>
+
+        <!-- 星座连线:喙-头-颈-翼根-翼尖 / 颈…尾 / 头-心-腹-足 / 腹-尾根 -->
+        <g id="cLines">
+          <path class="c-line" d="M218,258 L272,222 L330,246 L398,262 L472,196" style="--d:.5s"/>
+          <path class="c-line" d="M398,262 L474,330 L540,372" style="--d:1.0s"/>
+          <path class="c-line" d="M272,222 L300,306 L352,352 L330,414" style="--d:1.4s"/>
+          <path class="c-line" d="M352,352 L474,330" style="--d:1.8s"/>
+          <path class="c-line" d="M330,414 L334,431" style="--d:2.0s"/>
+        </g>
+
+        <!-- 源星(JS 生成) -->
+        <g id="cStars"></g>
+
+        <!-- 栖枝 -->
+        <g class="branch">
+          <line x1="212" y1="436" x2="544" y2="428" class="c-line" style="--d:2.1s;--len:340"/>
+          <text x="212" y="456" class="star-g" style="--d:2.5s">PERCH · 哆啦美归档中枢</text>
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  <!-- ============ 前景 ============ -->
+  <div class="shell">
+    <section class="hero">
+      <div class="brandrow rise" style="--d:200ms">
+        <span class="moon-mark" aria-hidden="true">美</span>
+        <span class="wordmark">DORAMI</span>
+      </div>
+
+      <p class="hero-eyebrow rise" style="--d:420ms">Night Atlas · AI 资讯 · 聚合 · 订阅 · 检索</p>
+
+      <h1 class="hero-title">
+        <span class="rise" style="--d:640ms">让 AI 资讯</span><br />
+        <span class="rise" style="--d:880ms">有处<span class="roost">可栖</span>。</span>
+      </h1>
+
+      <p class="hero-flourish rise" style="--d:1150ms">Every source, a star; every night, charted.</p>
+
+      <p class="hero-lede rise" style="--d:1350ms">
+        三十余个信息源在此连成星座——聚合、留存、语义检索,
+        每晚为你重绘一张 AI 天区图。
+      </p>
+    </section>
+
+    <div class="pass-slot">
+      <form class="pass" id="passForm" novalidate>
+        <span class="tick t1" aria-hidden="true"></span><span class="tick t2" aria-hidden="true"></span>
+        <span class="tick t3" aria-hidden="true"></span><span class="tick t4" aria-hidden="true"></span>
+
+        <p class="pass-eyebrow">Observatory Pass · 夜航许可</p>
+        <h2 class="pass-title">欢迎回来</h2>
+        <p class="pass-sub">登录账号,继续今晚的观测。</p>
+
+        <label class="field">
+          <span class="field-label">账 号 <span class="en">ACCOUNT</span></span>
+          <input id="fUser" autocomplete="username" placeholder="输入登录账号" />
+        </label>
+
+        <label class="field">
+          <span class="field-label">密 码 <span class="en">PASSWORD</span></span>
+          <input id="fPass" type="password" autocomplete="current-password" placeholder="输入登录密码" />
+        </label>
+
+        <p class="error-slot" id="errSlot" role="alert"></p>
+
+        <button class="pass-submit" type="submit">登 录</button>
+
+        <div class="pass-foot">
+          <span>HMAC SESSION</span>
+          <span>哆啦美 · DORAMI</span>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 星历行 -->
+  <footer class="ephemeris">
+    <span id="ephDate">OBS. NIGHT — · ——</span>
+    <span>FIELD <b>AI INTELLIGENCE</b> · SOURCES <b>30+</b></span>
+    <span>SEEING <b id="ephSeeing">EXCELLENT</b></span>
+  </footer>
+
+  <p class="hint">按 <b>任意键</b> 进入</p>
+</main>
+
+<script>
+// ============ 源星数据:label 上下错位避让连线 ============
+const STARS = [
+  { x:218, y:258, zh:'OpenAI',      dx:-10, dy:-12, anchor:'end',   d:0.6 },
+  { x:272, y:222, zh:'Anthropic',   dx:0,   dy:-16, anchor:'middle',d:0.8 },
+  { x:330, y:246, zh:'机器之心',     dx:6,   dy:-14, anchor:'start', d:1.0, cn:true },
+  { x:398, y:262, zh:'Hugging Face',dx:10,  dy:-10, anchor:'start', d:1.2 },
+  { x:472, y:196, zh:'arXiv',       dx:8,   dy:-10, anchor:'start', d:1.3 },
+  { x:474, y:330, zh:'量子位',       dx:12,  dy:-6,  anchor:'start', d:1.5, cn:true },
+  { x:540, y:372, zh:'Hacker News', dx:10,  dy:12,  anchor:'start', d:1.7 },
+  { x:352, y:352, zh:'GitHub',      dx:12,  dy:14,  anchor:'start', d:1.8 },
+  { x:330, y:414, zh:'新智元',       dx:-14, dy:8,   anchor:'end',   d:2.0, cn:true },
+  { x:300, y:306, zh:'哆啦美',       dx:-14, dy:2,   anchor:'end',   d:2.3, cn:true, home:true },
+];
+
+const NS = 'http://www.w3.org/2000/svg';
+const cStars = document.getElementById('cStars');
+for (const s of STARS) {
+  const g = document.createElementNS(NS,'g');
+  g.setAttribute('class','star-g' + (s.home ? ' home' : ''));
+  g.style.setProperty('--d', s.d + 's');
+  const glow = document.createElementNS(NS,'circle');
+  glow.setAttribute('cx',s.x); glow.setAttribute('cy',s.y); glow.setAttribute('r', s.home ? 13 : 9);
+  glow.setAttribute('class','star-glow');
+  const halo = document.createElementNS(NS,'circle');
+  halo.setAttribute('cx',s.x); halo.setAttribute('cy',s.y); halo.setAttribute('r', s.home ? 6.5 : 5);
+  halo.setAttribute('class','star-halo');
+  const core = document.createElementNS(NS,'circle');
+  core.setAttribute('cx',s.x); core.setAttribute('cy',s.y); core.setAttribute('r', s.home ? 3 : 2.2);
+  core.setAttribute('class','star-core');
+  const t = document.createElementNS(NS,'text');
+  t.setAttribute('x', s.x + s.dx); t.setAttribute('y', s.y + s.dy);
+  t.setAttribute('text-anchor', s.anchor);
+  if (s.cn) t.setAttribute('class','zh');
+  t.textContent = s.zh;
+  g.append(glow, halo, core, t);
+  cStars.appendChild(g);
+}
+
+// 连线长度(供 dasharray 描绘)
+for (const p of document.querySelectorAll('.c-line')) {
+  if (!p.style.getPropertyValue('--len')) {
+    const len = Math.ceil(p.getTotalLength());
+    p.style.setProperty('--len', len);
+  }
+}
+
+// 背景细星
+const dust = document.getElementById('dust');
+for (let i = 0; i < 88; i++) {
+  const c = document.createElementNS(NS,'circle');
+  c.setAttribute('cx', Math.round(Math.random()*720));
+  c.setAttribute('cy', Math.round(Math.random()*640));
+  c.setAttribute('r', (0.5 + Math.random()*0.9).toFixed(2));
+  c.setAttribute('opacity', (0.1 + Math.random()*0.4).toFixed(2));
+  if (Math.random() < 0.22) { c.setAttribute('class','tw'); c.style.animationDelay = (Math.random()*4).toFixed(1)+'s'; }
+  dust.appendChild(c);
+}
+
+// 外环刻度
+const ticks = document.getElementById('ringTicks');
+for (let i = 0; i < 72; i++) {
+  const a = i * Math.PI * 2 / 72;
+  const r1 = 300, r2 = i % 6 === 0 ? 291 : 296;
+  const l = document.createElementNS(NS,'line');
+  l.setAttribute('x1', 360 + Math.cos(a)*r1); l.setAttribute('y1', 320 + Math.sin(a)*r1);
+  l.setAttribute('x2', 360 + Math.cos(a)*r2); l.setAttribute('y2', 320 + Math.sin(a)*r2);
+  l.setAttribute('stroke','rgba(148,150,220,.22)');
+  ticks.appendChild(l);
+}
+
+// ============ 两幕:标题幕 → 观测幕(任意键/点击可跳过) ============
+const stage = document.getElementById('stage');
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+function ready(){ stage.classList.remove('is-title'); stage.classList.add('is-ready'); }
+if (reduce) ready();
+else {
+  const timer = setTimeout(ready, 3400);
+  const skip = () => { clearTimeout(timer); ready(); };
+  addEventListener('pointerdown', skip, { once:true });
+  addEventListener('keydown', skip, { once:true });
+}
+
+// ============ 视差 ============
+if (!reduce) {
+  addEventListener('pointermove', (e) => {
+    const p = document.getElementById('parallax');
+    p.style.setProperty('--mx', (e.clientX / innerWidth - .5).toFixed(3));
+    p.style.setProperty('--my', (e.clientY / innerHeight - .5).toFixed(3));
+  });
+}
+
+// ============ 星历行:真实日期 / 观测夜序号 ============
+const now = new Date();
+const night = Math.max(1, Math.floor((now - new Date('2025-06-01')) / 86400000) + 1);
+const pad = (n) => String(n).padStart(2,'0');
+document.getElementById('ephDate').textContent =
+  `OBS. NIGHT ${night} · ${now.getFullYear()}.${pad(now.getMonth()+1)}.${pad(now.getDate())}`;
+
+// ============ 密码聚焦:云遮星图(正式版联动蒙眼 logo) ============
+const pass = document.getElementById('fPass');
+const seeing = document.getElementById('ephSeeing');
+pass.addEventListener('focus', () => { stage.classList.add('is-veiled'); seeing.textContent = 'EYES CLOSED'; });
+pass.addEventListener('blur',  () => { stage.classList.remove('is-veiled'); seeing.textContent = 'EXCELLENT'; });
+
+// ============ 提交演示 ============
+const form = document.getElementById('passForm');
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const err = document.getElementById('errSlot');
+  err.textContent = '';
+  const u = document.getElementById('fUser').value.trim();
+  if (!u || !pass.value) {
+    err.textContent = '账号与密码均需填写。';
+    form.classList.remove('shake'); void form.offsetWidth; form.classList.add('shake');
+    return;
+  }
+  // 样页演示:正式实现此处调用 POST /api/auth/login
+  err.textContent = '';
+  err.style.color = 'var(--amber)';
+  err.textContent = '✦ 观测许可已签发(样页演示)';
+});
+</script>
+</body>
+</html>

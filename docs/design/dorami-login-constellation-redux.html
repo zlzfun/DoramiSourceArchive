@@ -1,0 +1,996 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>哆啦美 · 信号星座登录(重拍 + 炫技增强版)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700;900&family=Noto+Sans+SC:wght@400;500;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet" />
+<style>
+/* ============================================================
+   哆啦美 · 登录样页 —— 「信号星座」重拍 + 炫技增强版
+   基底:照剧本重拍版(dorami-login-constellation-script.md)
+   增强:①登录成功「跃迁」转场(星点拉光轨+闪光)
+        ②登录卡 3D 倾斜跟随 / 摩擦帧率归一化 / 失败震镜
+        ③有名之星(悬停亮标签) / 信号脉冲(连线跑数据包)
+        ④密码隐私幕(星座随 logo 一起闭眼) / 星等色温
+   ============================================================ */
+
+:root{
+  --stage:#04040e;
+  --indigo:#5b54e8;
+  --indigo-hi:#8f8bf6;
+  --indigo-soft:#a79ff1;
+  --text:#eef0fd;
+  --text-dim:rgba(198,204,233,.78);
+  --text-faint:rgba(150,158,196,.55);
+  --edge:rgba(170,180,255,.16);
+  --serif:"Noto Serif SC","Songti SC",serif;
+  --sans:"Noto Sans SC",-apple-system,"PingFang SC",sans-serif;
+  --mono:"IBM Plex Mono","SF Mono",Menlo,monospace;
+  --spring:cubic-bezier(.22,1,.36,1);
+  --ease:cubic-bezier(.4,0,.2,1);
+  --r-card:12px;
+  --r-overlay:16px;
+}
+
+*{ margin:0; padding:0; box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  font-family:var(--sans);
+  color:var(--text);
+  background:var(--stage);
+  overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ============ 舞台与大气层 ============ */
+.stage{
+  position:relative; isolation:isolate;
+  min-height:100vh; min-height:100dvh;
+  display:flex; align-items:center; justify-content:center;
+  padding:clamp(24px,5vw,72px);
+  overflow:hidden;
+}
+
+.scene{
+  position:absolute; inset:0; z-index:-1; pointer-events:none;
+  transform:scale(1.05);
+  transition:transform 2600ms cubic-bezier(.22,.61,.36,1);
+}
+.is-ready .scene{ transform:scale(1); }
+
+.scene-glow{
+  position:absolute; inset:0;
+  background:
+    radial-gradient(56% 68% at 73% 50%, rgba(91,84,232,.15) 0%, transparent 62%),
+    radial-gradient(94% 80% at 50% -10%, #0f0d26 0%, var(--stage) 62%);
+}
+.scene-net{ position:absolute; inset:0; width:100%; height:100%; display:block; }
+.scene-grain{
+  position:absolute; inset:0; opacity:.5; mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+}
+.scene-vignette{
+  position:absolute; inset:0;
+  background:radial-gradient(120% 120% at 50% 50%, transparent 52%, rgba(2,4,12,.74) 100%);
+}
+
+/* ============ 双栏 ============ */
+.shell{
+  position:relative;
+  display:grid; grid-template-columns:1.05fr .95fr;
+  align-items:center;
+  gap:clamp(40px,7vw,120px);
+  width:100%; max-width:1180px;
+  transition:opacity 700ms var(--ease), transform 900ms var(--ease);
+}
+/* 跃迁时前景整体退场 */
+.is-warping .shell{ opacity:0; transform:scale(.97); pointer-events:none; }
+
+/* ============ 左:题词区 ============ */
+.hero{
+  max-width:560px;
+  transition:transform 1500ms var(--spring);
+}
+.is-title .hero{ transform:translateX(58%) scale(1.2); }
+.is-ready .hero{ transform:none; }
+
+.rise{
+  opacity:0;
+  animation:riseIn 1100ms var(--spring) var(--d,0ms) both;
+}
+@keyframes riseIn{
+  from{ opacity:0; transform:translateY(26px) scale(.985); filter:blur(6px); }
+  to{ opacity:1; transform:none; filter:blur(0); }
+}
+
+.brandrow{ display:flex; align-items:center; gap:16px; }
+.logo-shell{ position:relative; width:72px; height:72px; flex-shrink:0; }
+.logo-halo{
+  position:absolute; inset:-8px; border-radius:var(--r-overlay);
+  background:conic-gradient(from 0deg,
+    rgba(91,84,232,0), rgba(167,159,241,.9), rgba(56,182,245,.6), rgba(91,84,232,0));
+  filter:blur(7px);
+  animation:haloSpin 6s linear infinite, haloBreathe 3.4s ease-in-out infinite;
+}
+@keyframes haloSpin{ to{ transform:rotate(360deg); } }
+@keyframes haloBreathe{ 0%,100%{ opacity:.6; } 50%{ opacity:1; } }
+.logo-tile{
+  position:relative; width:72px; height:72px;
+  border-radius:var(--r-overlay);
+  background:linear-gradient(135deg, var(--indigo), var(--indigo-hi));
+  box-shadow:0 0 0 1px rgba(170,180,255,.18), 0 16px 40px rgba(91,84,232,.5),
+    inset 0 1px 0 rgba(255,255,255,.35);
+  display:grid; place-items:center;
+}
+.logo-tile svg{ width:44px; height:44px; }
+.eye-open{ opacity:1; transition:opacity .32s ease; }
+.eye-shut{ opacity:0; transition:opacity .32s ease; }
+.is-peeking .eye-open{ opacity:0; }
+.is-peeking .eye-shut{ opacity:1; }
+
+.wordmark{
+  font-family:var(--serif);
+  font-size:27px; font-weight:600; letter-spacing:.14em; text-indent:.14em;
+  color:rgba(232,235,255,.95);
+}
+
+.eyebrow{
+  margin-top:clamp(36px,6vh,64px);
+  font-family:var(--mono); font-size:12px; font-weight:600;
+  letter-spacing:.34em; text-indent:.34em;
+  color:rgba(150,142,244,.95);
+}
+
+.title{
+  position:relative;
+  margin-top:18px;
+  font-family:var(--serif);
+  font-size:clamp(42px,6.2vw,72px);
+  font-weight:700; line-height:1.1; letter-spacing:.01em;
+  color:#f6f7ff;
+  text-shadow:0 2px 40px rgba(91,84,232,.35);
+}
+.title-line{ display:block; }
+
+.word{
+  display:inline-block; opacity:0;
+  will-change:transform,opacity,filter;
+  animation:wordIn 1200ms var(--spring) var(--d,0ms) both;
+}
+@keyframes wordIn{
+  from{ opacity:0; transform:translateY(.5em) rotate(1.5deg); filter:blur(8px); }
+  to{ opacity:1; transform:none; filter:blur(0); }
+}
+.accent{
+  background:linear-gradient(100deg, #8f8bf6 0%, #6d5cf0 46%, #5b54e8 100%);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+  filter:drop-shadow(0 4px 26px rgba(109,92,240,.5));
+}
+
+.title-orig{ display:block; }
+.title-brand{
+  position:absolute; inset:0; display:block; pointer-events:none;
+  letter-spacing:.02em;
+}
+.bchar{
+  display:inline-block; opacity:0;
+  will-change:transform,opacity,filter;
+}
+.bchar.is-hi{ color:#a8a4ff; text-shadow:0 2px 26px rgba(109,92,240,.55); }
+.is-branded .title-orig{ animation:brandOut 640ms var(--ease) forwards; }
+.is-branded .title-brand{ animation:brandTrack 1500ms var(--ease) both; }
+.is-branded .bchar{ animation:brandIn 1000ms var(--ease) var(--d,0ms) both; }
+@keyframes brandOut{ to{ opacity:0; transform:translateY(-10px); filter:blur(6px); } }
+@keyframes brandIn{
+  from{ opacity:0; transform:translateY(16px); filter:blur(12px); }
+  to{ opacity:1; transform:none; filter:blur(0); }
+}
+@keyframes brandTrack{ from{ letter-spacing:.24em; } to{ letter-spacing:.02em; } }
+
+.lede{
+  margin-top:22px; max-width:460px;
+  font-size:15px; font-weight:500; line-height:1.8;
+  color:var(--text-dim);
+}
+
+.feats{
+  list-style:none;
+  display:flex; flex-wrap:wrap; gap:10px;
+  margin-top:34px;
+  transition:transform 1100ms var(--spring) 450ms, opacity 1100ms var(--ease) 450ms;
+}
+.is-title .feats{ opacity:0; transform:translateY(16px); }
+.is-ready .feats{ opacity:1; transform:none; }
+.feats li{
+  display:inline-flex; align-items:center; gap:8px;
+  padding:9px 15px; border-radius:999px;
+  border:1px solid var(--edge);
+  background:rgba(120,130,220,.08);
+  backdrop-filter:blur(6px);
+  font-size:13px; font-weight:700; color:rgba(216,221,250,.9);
+}
+.feats svg{ width:15px; height:15px; color:var(--indigo-hi); }
+
+/* ============ 右:登录卡 ============ */
+.card-slot{
+  perspective:1300px;
+  transition:opacity 1300ms var(--ease), transform 1500ms var(--spring), filter 1300ms var(--ease);
+}
+.is-title .card-slot{
+  opacity:0; transform:translateX(70px) scale(.9); filter:blur(14px);
+  pointer-events:none;
+}
+.is-ready .card-slot{ opacity:1; transform:none; filter:blur(0); }
+
+.card{
+  position:relative; overflow:hidden;
+  padding:clamp(30px,3.4vw,44px);
+  border-radius:var(--r-overlay);
+  border:1px solid var(--edge);
+  background:linear-gradient(165deg, rgba(28,31,58,.82), rgba(14,16,34,.72));
+  backdrop-filter:blur(26px) saturate(1.3);
+  -webkit-backdrop-filter:blur(26px) saturate(1.3);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.1) inset,
+    0 -1px 0 rgba(0,0,0,.4) inset,
+    0 40px 90px rgba(4,6,18,.7),
+    0 0 60px rgba(91,84,232,.16);
+  /* 3D 倾斜跟随:JS 写入 --tx/--ty */
+  transform:rotateY(calc(var(--tx,0) * 1deg)) rotateX(calc(var(--ty,0) * 1deg));
+  transition:transform .35s var(--ease);
+  will-change:transform;
+}
+.card::before{
+  content:""; position:absolute; left:0; right:0; top:0; height:1px;
+  background:linear-gradient(90deg, transparent, rgba(167,159,241,.85), transparent);
+  transform:translateX(calc(var(--tx,0) * -6px)); /* 高光线随倾角轻移 */
+  transition:transform .35s var(--ease);
+}
+.card-glow{
+  position:absolute; top:-40%; right:-30%; width:70%; height:80%;
+  border-radius:50%; pointer-events:none;
+  background:radial-gradient(circle, rgba(91,84,232,.4), transparent 64%);
+  filter:blur(50px);
+  transform:translate(calc(var(--tx,0) * -8px), calc(var(--ty,0) * 8px));
+  transition:transform .35s var(--ease);
+}
+.card.shake{ animation:cardShake .42s var(--spring); }
+@keyframes cardShake{
+  20%{ transform:translateX(-6px); } 40%{ transform:translateX(5px); }
+  60%{ transform:translateX(-3px); } 80%{ transform:translateX(2px); }
+}
+
+@property --ringA{ syntax:"<angle>"; initial-value:0deg; inherits:false; }
+.card-ring{
+  position:absolute; inset:0; border-radius:var(--r-overlay);
+  padding:1px; pointer-events:none;
+  background:conic-gradient(from var(--ringA,0deg),
+    transparent 0deg, transparent 70deg,
+    rgba(143,139,246,.9) 110deg, rgba(91,84,232,.7) 130deg,
+    transparent 170deg, transparent 360deg);
+  -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;
+  mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite:exclude;
+  animation:ringSpin 7s linear infinite;
+}
+@keyframes ringSpin{ to{ --ringA:360deg; } }
+
+.form{ position:relative; display:flex; flex-direction:column; }
+.card-eyebrow{
+  font-family:var(--mono); font-size:11px; font-weight:600;
+  letter-spacing:.3em; text-indent:.3em;
+  color:rgba(150,142,244,.95);
+}
+.card-title{ margin-top:12px; font-size:28px; font-weight:800; letter-spacing:-.01em; color:#f4f5ff; }
+.card-sub{ margin-top:8px; margin-bottom:26px; font-size:13.5px; font-weight:500; line-height:1.6; color:rgba(190,196,228,.66); }
+
+.field{ display:block; margin-bottom:18px; }
+.field-label{ display:block; margin-bottom:9px; font-size:12.5px; font-weight:700; color:rgba(206,212,240,.82); }
+.input-wrap{
+  display:flex; align-items:center; gap:12px;
+  height:50px; padding:0 16px;
+  border-radius:var(--r-card);
+  border:1px solid var(--edge);
+  background:rgba(8,10,24,.55);
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.35);
+  transition:border-color .18s var(--ease), box-shadow .18s var(--ease), background .18s var(--ease);
+}
+.input-wrap:focus-within{
+  border-color:rgba(123,108,240,.7);
+  background:rgba(12,14,32,.7);
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.35),
+    0 0 0 4px rgba(91,84,232,.18),
+    0 8px 24px rgba(91,84,232,.22);
+}
+.input-wrap svg{
+  width:18px; height:18px; flex-shrink:0;
+  color:rgba(150,142,244,.95);
+  transition:color .18s var(--ease);
+}
+.input-wrap:focus-within svg{ color:var(--indigo-hi); }
+.input-wrap input{
+  flex:1; min-width:0; border:0; background:transparent; outline:none;
+  font-family:inherit; font-size:14.5px; font-weight:600; color:#f1f2ff;
+}
+.input-wrap input::placeholder{ color:var(--text-faint); font-weight:500; }
+
+.error-slot{ min-height:26px; display:flex; align-items:center; }
+.error{ font-size:13px; font-weight:700; color:#ff8fa3; }
+
+.submit{
+  position:relative; overflow:hidden;
+  display:inline-flex; align-items:center; justify-content:center; gap:10px;
+  height:52px; margin-top:6px;
+  border:0; border-radius:var(--r-card); cursor:pointer;
+  font-family:inherit; font-size:15.5px; font-weight:800; color:#fff;
+  background:linear-gradient(135deg, var(--indigo) 0%, var(--indigo-hi) 100%);
+  box-shadow:0 14px 34px rgba(91,84,232,.45), inset 0 1px 0 rgba(255,255,255,.28);
+  transition:transform .18s var(--spring), box-shadow .18s var(--ease), filter .18s var(--ease);
+}
+.submit:hover:not(:disabled){
+  filter:brightness(1.08); transform:translateY(-2px);
+  box-shadow:0 20px 46px rgba(91,84,232,.55), inset 0 1px 0 rgba(255,255,255,.3);
+}
+.submit:active:not(:disabled){ transform:translateY(0); }
+.submit:disabled{ cursor:progress; opacity:.78; }
+.submit:focus-visible{ outline:2px solid var(--indigo-hi); outline-offset:3px; }
+.submit svg{ position:relative; width:18px; height:18px; transition:transform .18s var(--ease); }
+.submit:hover:not(:disabled) .arrow{ transform:translateX(3px); }
+.submit .spin{ animation:spin .9s linear infinite; }
+@keyframes spin{ to{ transform:rotate(360deg); } }
+.submit > span{ position:relative; }
+
+.gloss{
+  position:absolute; top:0; left:0; width:60%; height:100%;
+  background:linear-gradient(100deg, transparent, rgba(255,255,255,.45), transparent);
+  transform:translateX(-180%) skewX(-18deg);
+  animation:gloss 5.6s var(--ease) 2.2s infinite;
+}
+.submit:hover .gloss{ animation:glossFast .9s var(--ease); }
+@keyframes gloss{
+  0%{ transform:translateX(-180%) skewX(-18deg); }
+  16%,100%{ transform:translateX(320%) skewX(-18deg); }
+}
+@keyframes glossFast{
+  from{ transform:translateX(-180%) skewX(-18deg); }
+  to{ transform:translateX(320%) skewX(-18deg); }
+}
+
+.foot{
+  margin-top:20px; text-align:center;
+  font-size:11px; color:rgba(150,158,196,.6); letter-spacing:.04em;
+}
+.demo-tip{
+  margin-top:8px; text-align:center;
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.06em;
+  color:rgba(150,158,196,.35);
+}
+
+/* ============ 跃迁闪光 & 抵达幕 ============ */
+.warp-flash{
+  position:fixed; inset:0; z-index:50; pointer-events:none;
+  background:radial-gradient(circle at 50% 50%,
+    rgba(228,228,255,.98) 0%, rgba(122,114,244,.92) 42%, rgba(4,4,14,0) 78%);
+  opacity:0;
+  transition:opacity .3s ease;
+}
+.is-flash .warp-flash{ opacity:1; }
+.is-after .warp-flash{ opacity:0; transition:opacity 1.1s ease .25s; }
+
+.after{
+  position:fixed; inset:0; z-index:60;
+  display:grid; place-items:center;
+  background:radial-gradient(80% 80% at 50% 40%, #0c0f26 0%, var(--stage) 70%);
+  opacity:0; visibility:hidden;
+  transition:opacity .9s var(--ease), visibility 0s .9s;
+}
+.is-after .after{ opacity:1; visibility:visible; transition:opacity .9s var(--ease) .3s; }
+.after-inner{ text-align:center; max-width:440px; padding:24px; }
+.after-inner .logo-tile{ margin:0 auto; }
+.after-title{
+  margin-top:26px;
+  font-family:var(--serif); font-size:30px; font-weight:900; letter-spacing:.04em;
+}
+.after-sub{ margin-top:12px; font-size:13.5px; line-height:1.8; color:var(--text-dim); }
+.replay{
+  margin-top:30px;
+  padding:10px 22px;
+  border-radius:999px; cursor:pointer;
+  border:1px solid var(--edge);
+  background:rgba(120,130,220,.08); color:rgba(216,221,250,.9);
+  font-family:inherit; font-size:13px; font-weight:700; letter-spacing:.06em;
+  transition:border-color .2s, background .2s, transform .2s var(--spring);
+}
+.replay:hover{ border-color:rgba(143,139,246,.6); background:rgba(120,130,220,.16); transform:translateY(-1px); }
+.after-inner > *{ opacity:0; transform:translateY(14px); transition:opacity .8s var(--ease), transform .8s var(--spring); }
+.is-after .after-inner > *{ opacity:1; transform:none; }
+.is-after .after-inner > :nth-child(1){ transition-delay:.45s; }
+.is-after .after-inner > :nth-child(2){ transition-delay:.6s; }
+.is-after .after-inner > :nth-child(3){ transition-delay:.75s; }
+.is-after .after-inner > :nth-child(4){ transition-delay:.9s; }
+
+/* ============ 屏底提示(仅第一幕) ============ */
+.hint{
+  position:absolute; left:50%; bottom:44px; transform:translateX(-50%);
+  font-size:12px; letter-spacing:.22em; color:rgba(150,158,196,.7);
+  opacity:0; pointer-events:none;
+  transition:opacity .7s var(--ease);
+}
+.hint b{ color:rgba(216,221,250,.95); font-weight:700; }
+.is-title .hint{ opacity:1; animation:hintBreathe 2.4s ease-in-out 1.2s infinite; }
+@keyframes hintBreathe{ 0%,100%{ opacity:.45; } 50%{ opacity:1; } }
+
+/* ============ Reduced motion ============ */
+@media (prefers-reduced-motion:reduce){
+  .rise,.word{ animation:none; opacity:1; }
+  .scene{ transition:none; transform:none; }
+  .hero,.card-slot,.feats,.card,.card::before,.card-glow{ transition:none; }
+  .logo-halo,.card-ring,.gloss,.hint{ animation:none; }
+  .is-branded .title-orig{ animation:none; opacity:0; }
+  .is-branded .title-brand{ animation:none; }
+  .is-branded .bchar{ animation:none; opacity:1; }
+  .card{ transform:none; }
+}
+
+/* ============ 响应式 ============ */
+@media (max-width:1024px){
+  body{ overflow:auto; }
+  .stage{ align-items:flex-start; padding-top:clamp(40px,8vh,80px); }
+  .shell{ grid-template-columns:1fr; gap:40px; }
+  .is-title .hero{ transform:none; }
+  .hero{ max-width:none; }
+  .hint{ display:none; }
+}
+</style>
+</head>
+<body>
+
+<main class="stage is-title" id="stage">
+  <div class="scene" aria-hidden="true">
+    <div class="scene-glow"></div>
+    <canvas class="scene-net" id="net"></canvas>
+    <span class="scene-grain"></span>
+    <span class="scene-vignette"></span>
+  </div>
+
+  <div class="shell">
+    <!-- 左:题词区 -->
+    <section class="hero">
+      <div class="brandrow rise" style="--d:120ms">
+        <span class="logo-shell">
+          <span class="logo-halo" aria-hidden="true"></span>
+          <span class="logo-tile" aria-hidden="true">
+            <svg viewBox="0 0 44 44" fill="none">
+              <rect x="4" y="8" width="36" height="30" rx="9" fill="rgba(255,255,255,.92)"/>
+              <g class="eye-open">
+                <circle cx="16.5" cy="22" r="3.2" fill="#2d2a6e"/>
+                <circle cx="27.5" cy="22" r="3.2" fill="#2d2a6e"/>
+                <circle cx="17.6" cy="20.9" r="1.1" fill="#fff"/>
+                <circle cx="28.6" cy="20.9" r="1.1" fill="#fff"/>
+              </g>
+              <g class="eye-shut" stroke="#2d2a6e" stroke-width="2.2" stroke-linecap="round">
+                <path d="M13.4 22.4 Q16.5 25 19.6 22.4"/>
+                <path d="M24.4 22.4 Q27.5 25 30.6 22.4"/>
+              </g>
+              <path d="M17 31 Q22 34 27 31" stroke="#2d2a6e" stroke-width="2" stroke-linecap="round"/>
+              <circle cx="22" cy="5.4" r="2.4" fill="rgba(255,255,255,.92)"/>
+              <rect x="21" y="6" width="2" height="4" rx="1" fill="rgba(255,255,255,.92)"/>
+            </svg>
+          </span>
+        </span>
+        <span class="wordmark">DORAMI</span>
+      </div>
+
+      <p class="eyebrow rise" style="--d:260ms">AI 资讯 · 聚合 · 订阅 · 检索</p>
+
+      <h1 class="title" aria-label="哆啦美 · AI 资讯平台——让 AI 资讯有处可栖">
+        <span class="title-orig" aria-hidden="true">
+          <span class="title-line">
+            <span class="word" style="--d:560ms">让&nbsp;</span><span class="word" style="--d:750ms">AI&nbsp;</span><span class="word" style="--d:940ms">资讯</span>
+          </span>
+          <span class="title-line">
+            <span class="word accent" style="--d:1130ms">有处可栖。</span>
+          </span>
+        </span>
+        <span class="title-brand" aria-hidden="true">
+          <span class="title-line">
+            <span class="bchar is-hi" style="--d:260ms">哆</span><span class="bchar is-hi" style="--d:315ms">啦</span><span class="bchar is-hi" style="--d:370ms">美</span>
+          </span>
+          <span class="title-line">
+            <span class="bchar" style="--d:425ms">AI</span><span class="bchar" style="--d:480ms">&nbsp;资</span><span class="bchar" style="--d:535ms">讯</span><span class="bchar" style="--d:590ms">平</span><span class="bchar" style="--d:645ms">台</span>
+          </span>
+        </span>
+      </h1>
+
+      <p class="lede rise" style="--d:900ms">
+        汇聚多源 AI 资讯,订阅、检索、随手可读——尽在一处。
+      </p>
+
+      <ul class="feats">
+        <li>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19.07 4.93A10 10 0 0 0 6.99 3.34"/><path d="M4 6h.01"/><path d="M2.29 9.62a10 10 0 1 0 19.02-1.27"/><path d="M16.24 7.76a6 6 0 1 0-8.01 8.91"/><path d="M12 18h.01"/><path d="M17.99 11.66a6 6 0 0 1-2.22 4.75"/><circle cx="12" cy="12" r="2"/><path d="m13.41 10.59 5.66-5.66"/></svg>
+          多源聚合
+        </li>
+        <li>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>
+          全文留存
+        </li>
+        <li>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.14-1.53a.6.6 0 0 1 0-1.15l6.14-1.54a2 2 0 0 0 1.44-1.44l1.53-6.14a.6.6 0 0 1 1.15 0l1.54 6.14a2 2 0 0 0 1.44 1.44l6.14 1.53a.6.6 0 0 1 0 1.15l-6.14 1.54a2 2 0 0 0-1.44 1.44l-1.54 6.14a.6.6 0 0 1-1.15 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/></svg>
+          语义检索
+        </li>
+      </ul>
+    </section>
+
+    <!-- 右:登录卡 -->
+    <div class="card-slot">
+      <section class="card" id="card">
+        <span class="card-ring" aria-hidden="true"></span>
+        <span class="card-glow" aria-hidden="true"></span>
+        <form class="form" id="form" novalidate>
+          <p class="card-eyebrow">ACCOUNT ACCESS</p>
+          <h2 class="card-title">欢迎回来</h2>
+          <p class="card-sub">登录账号,继续浏览你的 AI 资讯。</p>
+
+          <label class="field">
+            <span class="field-label">账号</span>
+            <span class="input-wrap">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg>
+              <input id="fUser" autocomplete="username" placeholder="输入登录账号" />
+            </span>
+          </label>
+
+          <label class="field">
+            <span class="field-label">密码</span>
+            <span class="input-wrap">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>
+              <input id="fPass" type="password" autocomplete="current-password" placeholder="输入登录密码" />
+            </span>
+          </label>
+
+          <div class="error-slot"><p class="error" id="err" role="alert" hidden></p></div>
+
+          <button class="submit" type="submit" id="submitBtn">
+            <span class="gloss" aria-hidden="true"></span>
+            <span id="submitText">登录</span>
+            <svg class="arrow" id="submitArrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </button>
+
+          <p class="foot">受 HMAC 会话保护 · 哆啦美</p>
+          <p class="demo-tip">样页:任意账密 = 跃迁演出 · 账号填 fail = 失败演出</p>
+        </form>
+      </section>
+    </div>
+  </div>
+
+  <p class="hint">按 <b>任意键</b> 进入</p>
+
+  <!-- 跃迁闪光 & 抵达幕 -->
+  <div class="warp-flash" aria-hidden="true"></div>
+  <div class="after" aria-hidden="true">
+    <div class="after-inner">
+      <span class="logo-tile">
+        <svg viewBox="0 0 44 44" fill="none">
+          <rect x="4" y="8" width="36" height="30" rx="9" fill="rgba(255,255,255,.92)"/>
+          <circle cx="16.5" cy="22" r="3.2" fill="#2d2a6e"/>
+          <circle cx="27.5" cy="22" r="3.2" fill="#2d2a6e"/>
+          <circle cx="17.6" cy="20.9" r="1.1" fill="#fff"/>
+          <circle cx="28.6" cy="20.9" r="1.1" fill="#fff"/>
+          <path d="M15.5 31 Q22 36 28.5 31" stroke="#2d2a6e" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="22" cy="5.4" r="2.4" fill="rgba(255,255,255,.92)"/>
+          <rect x="21" y="6" width="2" height="4" rx="1" fill="rgba(255,255,255,.92)"/>
+        </svg>
+      </span>
+      <h2 class="after-title">跃迁完成。</h2>
+      <p class="after-sub">正式实现中,此刻应用主界面已在光晕里浮现——<br />样页以这一幕代之。</p>
+      <button class="replay" id="replayBtn">↺ 再看一遍</button>
+    </div>
+  </div>
+</main>
+
+<script>
+'use strict';
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const stage = document.getElementById('stage');
+
+/* ============================================================
+   信号星座:三维摄像机点云 + 有名之星 + 信号脉冲 + 跃迁
+   ============================================================ */
+const net = (function(canvas){
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return { wake(){}, kick(){}, setVeil(){}, startWarp(){}, stopWarp(){}, repaint(){} };
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  const FOCAL = 560, NEAR = 150, FAR = 1650, CLIP = 50;
+  const MID = (NEAR + FAR) / 2, SPAN = FAR - NEAR;
+  const LINK = 150, LINK2 = LINK * LINK;
+  const K_YAW = 0.00085, K_DOLLY = 2.4, FRICTION = 0.9;   // FRICTION 为「每 1/60s」的衰减
+  const YAW_MAX = 0.55, VZ_MAX = 780;
+
+  // 有名之星:粒子不再无名——它们是产品真的聚合的东西
+  const NAMES = ['Anthropic','OpenAI','arXiv','Hugging Face','Hacker News',
+                 '机器之心','量子位','新智元','GitHub','DeepMind'];
+  // 星等色温:大多数靛蓝,少数琥珀(收藏星的暖)与青白
+  const TONES = [
+    { core:'150,146,248', glow:'143,139,246' },
+    { core:'244,199,138', glow:'240,182,112' },
+    { core:'186,226,248', glow:'176,220,250' },
+  ];
+
+  let W = 0, H = 0, cx = 0, cy = 0, spanX = 0, spanY = 0;
+  let pts = [];
+  let rafId = 0, running = false, tPrev;
+  const cam = { yaw: 0, vyaw: 0, vz: 0, sway: 0, mx: 0, my: 0, tracked: false };
+  let hover = null;          // 悬停的有名之星
+  let veil = false;          // 密码隐私幕
+  let pulses = [];           // 信号脉冲(沿连线跑的数据包)
+  let warp = null;           // 跃迁状态 { t, v }
+
+  const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
+  const depthAlpha = z => clamp01((z - CLIP) / (NEAR * 1.1)) * clamp01((FAR - z) / (FAR * 0.55));
+
+  function scatter(p){ p.x = (Math.random()*2-1)*spanX; p.y = (Math.random()*2-1)*spanY; }
+
+  function build(){
+    const n = Math.round(Math.min(190, Math.max(90, W*H/13000)));
+    pts = [];
+    for (let i = 0; i < n; i++){
+      const roll = Math.random();
+      pts.push({
+        x:(Math.random()*2-1)*spanX, y:(Math.random()*2-1)*spanY,
+        z: NEAR + Math.random()*SPAN,
+        r: .8 + Math.random()*1.4,
+        tone: roll < .08 ? 1 : roll < .14 ? 2 : 0,
+        name: i < NAMES.length ? NAMES[i] : null,
+        fa:.5+Math.random()*1.3, fb:.5+Math.random()*1.3,
+        pa:Math.random()*Math.PI*2, pb:Math.random()*Math.PI*2,
+        amp:10+Math.random()*24,
+        sx:0, sy:0, k:0, a:0, on:false,
+      });
+    }
+    // 有名之星略大、置于中景(更容易被看见与悬停)
+    for (let i = 0; i < NAMES.length && i < pts.length; i++){
+      pts[i].r = Math.max(pts[i].r, 1.5);
+      pts[i].z = NEAR + SPAN * (0.22 + Math.random() * 0.4);
+    }
+    hover = null;
+    pulses = [];
+  }
+
+  function paint(){
+    const c = Math.cos(cam.yaw), s = Math.sin(cam.yaw);
+    const linkFade = (veil ? 0.12 : 1) * (warp ? Math.max(0, 1 - warp.t * 2.4) : 1);
+    const starFade = veil ? 0.45 : 1;
+    // 跃迁光轨长度因子
+    const streak = warp ? Math.min(1, warp.v / 5200) : 0;
+
+    ctx.clearRect(0, 0, W, H);
+
+    for (const p of pts){
+      const wx = p.x + Math.sin(cam.sway*p.fa + p.pa) * p.amp;
+      const wy = p.y + Math.cos(cam.sway*p.fb + p.pb) * p.amp;
+      const zr = p.z - MID;
+      const xr = wx*c - zr*s;
+      const zc = wx*s + zr*c + MID;
+      if (zc <= CLIP){ p.on = false; continue; }
+      const k = FOCAL / zc;
+      p.sx = cx + xr*k; p.sy = cy + wy*k; p.k = k;
+      p.a = depthAlpha(zc); p.on = true;
+    }
+
+    // 连线
+    if (linkFade > .01){
+      ctx.lineWidth = 1;
+      for (let i = 0; i < pts.length; i++){
+        const a = pts[i]; if (!a.on) continue;
+        for (let j = i+1; j < pts.length; j++){
+          const b = pts[j]; if (!b.on) continue;
+          const dx = a.sx-b.sx, dy = a.sy-b.sy, d2 = dx*dx + dy*dy;
+          if (d2 >= LINK2) continue;
+          const al = (1 - Math.sqrt(d2)/LINK) * .4 * Math.min(a.a, b.a) * linkFade;
+          if (al < .01) continue;
+          ctx.strokeStyle = 'rgba(123,118,236,' + al.toFixed(3) + ')';
+          ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
+        }
+      }
+    }
+
+    // 信号脉冲:数据包沿连线滑行,首尾渐隐
+    for (const pu of pulses){
+      const a = pu.a, b = pu.b;
+      if (!a.on || !b.on) continue;
+      const t = pu.t, t0 = Math.max(0, t - .1);
+      const x1 = a.sx + (b.sx - a.sx)*t0, y1 = a.sy + (b.sy - a.sy)*t0;
+      const x2 = a.sx + (b.sx - a.sx)*t,  y2 = a.sy + (b.sy - a.sy)*t;
+      const al = Math.sin(Math.PI * t) * Math.min(a.a, b.a) * (veil ? .2 : 1);
+      if (al < .02) continue;
+      ctx.strokeStyle = 'rgba(196,192,255,' + (al*.9).toFixed(3) + ')';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      ctx.fillStyle = 'rgba(224,222,255,' + al.toFixed(3) + ')';
+      ctx.shadowColor = 'rgba(160,155,250,.95)'; ctx.shadowBlur = 10;
+      ctx.beginPath(); ctx.arc(x2, y2, 1.8, 0, Math.PI*2); ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    // 星点(跃迁时拉成径向光轨)
+    for (const p of pts){
+      if (!p.on || p.a <= 0) continue;
+      const tone = TONES[p.tone];
+      const R = p.r * Math.min(p.k, 2.6);
+      const alpha = (.35 + .6*p.a) * starFade;
+
+      if (streak > .02){
+        const dx = p.sx - cx, dy = p.sy - cy;
+        const d = Math.hypot(dx, dy) || 1;
+        const len = Math.min(160, p.k * streak * (18 + d * .16));
+        ctx.strokeStyle = 'rgba(' + tone.core + ',' + (alpha*.9).toFixed(3) + ')';
+        ctx.lineWidth = Math.max(.8, R * .9);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(p.sx - dx/d*len, p.sy - dy/d*len);
+        ctx.lineTo(p.sx, p.sy);
+        ctx.stroke();
+        continue;
+      }
+
+      ctx.fillStyle = 'rgba(' + tone.core + ',' + alpha.toFixed(3) + ')';
+      ctx.shadowColor = 'rgba(' + tone.glow + ',.9)';
+      ctx.shadowBlur = 6 * Math.min(p.k, 2);
+      ctx.beginPath(); ctx.arc(p.sx, p.sy, R, 0, Math.PI*2); ctx.fill();
+
+      // 有名之星悬停:亮环 + 标签
+      if (p === hover && !warp){
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(196,192,255,.85)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(p.sx, p.sy, R + 6, 0, Math.PI*2); ctx.stroke();
+        ctx.font = '600 11px "IBM Plex Mono", monospace';
+        ctx.textBaseline = 'bottom';
+        const label = p.name;
+        const tw = ctx.measureText(label).width;
+        const lx = Math.min(W - tw - 14, p.sx + 12), ly = p.sy - 10;
+        ctx.fillStyle = 'rgba(6,7,20,.72)';
+        ctx.fillRect(lx - 5, ly - 15, tw + 10, 19);
+        ctx.fillStyle = 'rgba(222,224,255,.95)';
+        ctx.fillText(label, lx, ly);
+      }
+    }
+    ctx.shadowBlur = 0;
+  }
+
+  function frame(now){
+    const dt = Math.min(.05, tPrev == null ? 0 : (now - tPrev)/1000);
+    tPrev = now;
+
+    // 摩擦帧率归一化:120Hz 与 60Hz 手感一致
+    const decay = Math.pow(FRICTION, dt * 60);
+    cam.vyaw *= decay; cam.vz *= decay;
+    if (Math.abs(cam.vyaw) < 1e-4) cam.vyaw = 0;
+    if (Math.abs(cam.vz) < .4 && !warp) cam.vz = 0;
+
+    if (warp){
+      warp.t += dt;
+      warp.v = Math.min(26000, (warp.v + 9000*dt) * (1 + 2.4*dt));
+      cam.vz = warp.v;
+    }
+
+    cam.yaw += cam.vyaw * dt;
+    cam.sway += (Math.abs(cam.vyaw)*1.4 + Math.abs(cam.vz)*.0016) * dt;
+
+    for (const p of pts){
+      p.z -= cam.vz * dt;
+      if (p.z < NEAR){ p.z += SPAN; scatter(p); }
+      else if (p.z > FAR){ p.z -= SPAN; scatter(p); }
+    }
+
+    for (const pu of pulses) pu.t += dt / pu.dur;
+    pulses = pulses.filter(pu => pu.t < 1);
+
+    paint();
+
+    if (cam.vyaw === 0 && cam.vz === 0 && !pulses.length && !warp){
+      running = false; rafId = 0;
+    } else {
+      rafId = requestAnimationFrame(frame);
+    }
+  }
+
+  function wake(){
+    if (running || reduce) return;
+    running = true; tPrev = undefined;
+    rafId = requestAnimationFrame(frame);
+  }
+
+  function resize(){
+    W = innerWidth; H = innerHeight; cx = W/2; cy = H/2;
+    spanX = W*.95; spanY = H*.95;
+    canvas.width = Math.floor(W*dpr); canvas.height = Math.floor(H*dpr);
+    canvas.style.width = W+'px'; canvas.style.height = H+'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    build();
+    paint();
+  }
+
+  // 信号脉冲:低频生成,沿一条现存连线跑一粒亮点
+  function spawnPulse(){
+    if (reduce || warp || document.hidden || pulses.length >= 2) return;
+    for (let tries = 0; tries < 60; tries++){
+      const a = pts[Math.random()*pts.length|0], b = pts[Math.random()*pts.length|0];
+      if (a === b || !a.on || !b.on || a.a < .25 || b.a < .25) continue;
+      const dx = a.sx-b.sx, dy = a.sy-b.sy;
+      if (dx*dx + dy*dy < LINK2 * .8){
+        pulses.push({ a, b, t: 0, dur: .7 + Math.random()*.5 });
+        wake();
+        return;
+      }
+    }
+  }
+  if (!reduce) setInterval(spawnPulse, 2600);
+
+  resize();
+  addEventListener('resize', resize);
+
+  if (!reduce){
+    addEventListener('pointermove', (e) => {
+      if (cam.tracked && !warp){
+        const dx = e.clientX - cam.mx, dy = e.clientY - cam.my;
+        cam.vyaw = Math.max(-YAW_MAX, Math.min(YAW_MAX, cam.vyaw + dx*K_YAW));
+        cam.vz   = Math.max(-VZ_MAX,  Math.min(VZ_MAX,  cam.vz - dy*K_DOLLY));
+      }
+      cam.mx = e.clientX; cam.my = e.clientY; cam.tracked = true;
+
+      // 有名之星悬停检测(冻结时也生效,变化则重绘一帧)
+      let best = null, bestD = 46*46;
+      for (let i = 0; i < NAMES.length && i < pts.length; i++){
+        const p = pts[i];
+        if (!p.on || p.a < .18) continue;
+        const hx = p.sx - e.clientX, hy = p.sy - e.clientY;
+        const d2 = hx*hx + hy*hy;
+        if (d2 < bestD){ best = p; bestD = d2; }
+      }
+      if (best !== hover){ hover = best; if (!running) paint(); }
+
+      wake();
+    });
+    addEventListener('pointerleave', () => { cam.tracked = false; });
+  }
+
+  return {
+    wake,
+    // 失败震镜:注入一记瞬时偏航脉冲
+    kick(){
+      if (reduce) return;
+      cam.vyaw += (Math.random() < .5 ? -1 : 1) * .22;
+      cam.vz += 120;
+      wake();
+    },
+    setVeil(v){ veil = v; if (!running) paint(); },
+    startWarp(){
+      if (reduce) return;
+      warp = { t: 0, v: Math.max(cam.vz, 900) };
+      hover = null;
+      wake();
+    },
+    stopWarp(){
+      warp = null; cam.vz = 0; cam.vyaw = 0;
+      if (!running) paint();
+    },
+    repaint(){ if (!running) paint(); },
+  };
+})(document.getElementById('net'));
+
+/* ============================================================
+   三幕演出:3.6s 标题卡(可跳过)→ 登录卡 → 2.8s 后品牌变幻
+   ============================================================ */
+const TITLE_HOLD = 3600, BRAND_DELAY = 2800;
+function toReady(){
+  stage.classList.remove('is-title');
+  stage.classList.add('is-ready');
+  setTimeout(() => stage.classList.add('is-branded'), reduce ? 0 : BRAND_DELAY);
+}
+if (reduce) toReady();
+else {
+  const t = setTimeout(toReady, TITLE_HOLD);
+  const skip = () => { clearTimeout(t); if (!stage.classList.contains('is-ready')) toReady(); };
+  addEventListener('pointerdown', skip, { once:true });
+  addEventListener('keydown', skip, { once:true });
+}
+
+/* ============ 登录卡 3D 倾斜跟随(透视容器终于派上用场) ============ */
+const card = document.getElementById('card');
+if (!reduce){
+  addEventListener('pointermove', (e) => {
+    if (!stage.classList.contains('is-ready') || stage.classList.contains('is-warping')) return;
+    const r = card.getBoundingClientRect();
+    if (!r.width) return;
+    const nx = Math.max(-1, Math.min(1, (e.clientX - (r.left + r.width/2)) / (r.width * 1.4)));
+    const ny = Math.max(-1, Math.min(1, (e.clientY - (r.top + r.height/2)) / (r.height * 1.4)));
+    card.style.setProperty('--tx', (nx * 3).toFixed(2));
+    card.style.setProperty('--ty', (-ny * 2.4).toFixed(2));
+  });
+  addEventListener('pointerleave', () => {
+    card.style.setProperty('--tx', 0);
+    card.style.setProperty('--ty', 0);
+  });
+}
+
+/* ============ 密码聚焦:logo 闭眼 + 星座隐私幕 ============ */
+const fPass = document.getElementById('fPass');
+fPass.addEventListener('focus', () => { stage.classList.add('is-peeking'); net.setVeil(true); });
+fPass.addEventListener('blur',  () => { stage.classList.remove('is-peeking'); net.setVeil(false); });
+
+/* ============ 提交:成功=跃迁转场 / 失败=震镜+卡片摇头 ============ */
+const form = document.getElementById('form');
+const err = document.getElementById('err');
+const btn = document.getElementById('submitBtn');
+const btnText = document.getElementById('submitText');
+const arrow = document.getElementById('submitArrow');
+let busy = false;
+
+function setLoading(on, label){
+  btn.disabled = on;
+  btnText.textContent = label;
+  arrow.style.display = on ? 'none' : '';
+  document.getElementById('spinIco')?.remove();
+  if (on) arrow.insertAdjacentHTML('beforebegin',
+    '<svg class="spin" id="spinIco" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>');
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (busy) return;
+  err.hidden = true;
+  const u = document.getElementById('fUser').value.trim();
+  if (!u || !fPass.value){
+    err.textContent = '账号与密码均需填写。';
+    err.hidden = false;
+    return;
+  }
+  busy = true;
+  setLoading(true, '正在登录');
+
+  // 样页演示:800ms 模拟请求;账号 fail 走失败分支,其余成功跃迁
+  setTimeout(() => {
+    if (u.toLowerCase() === 'fail'){
+      busy = false;
+      setLoading(false, '登录');
+      err.textContent = '登录失败:账号或密码有误。';
+      err.hidden = false;
+      net.kick();                                  // 世界抖一下
+      card.classList.remove('shake'); void card.offsetWidth;
+      card.classList.add('shake');
+      return;
+    }
+    // —— 跃迁 ——(正式实现:登录成功后由 App 延迟切换主界面)
+    setLoading(true, '跃迁中');
+    if (reduce){
+      stage.classList.add('is-after');
+      busy = false;
+      return;
+    }
+    stage.classList.add('is-warping');
+    net.startWarp();
+    setTimeout(() => stage.classList.add('is-flash'), 950);
+    setTimeout(() => {
+      stage.classList.add('is-after');
+      net.stopWarp();
+      busy = false;
+    }, 1400);
+  }, 800);
+});
+
+/* ============ 抵达幕:重播(便于目检反复观看) ============ */
+document.getElementById('replayBtn').addEventListener('click', () => {
+  stage.classList.remove('is-after', 'is-flash', 'is-warping');
+  setLoading(false, '登录');
+  err.hidden = true;
+  net.repaint();
+});
+</script>
+</body>
+</html>
