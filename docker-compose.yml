@@ -1,0 +1,49 @@
+# Dorami 生产部署(Docker 版,取代 PM2 路径;裸机 deploy.sh 保留作过渡备用)。
+# 用法见 docs/deploy-docker.md;一键部署:./deploy-docker.sh
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      # 受限网络可换 PyPI 镜像,如:
+      # args: { PIP_INDEX: "https://pypi.tuna.tsinghua.edu.cn/simple" }
+    restart: unless-stopped
+    environment:
+      DORAMI_CONFIG_FILE: /app/config/production.ini
+      # 机密只走环境变量注入(宿主 export 或 .env 文件),不进镜像不入库
+      DORAMI_X_BEARER_TOKEN: ${DORAMI_X_BEARER_TOKEN:-}
+      # cron 语义按此时区解释(与裸机部署的宿主时区行为对齐)
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./data:/app/data
+      - ./config/production.ini:/app/config/production.ini:ro
+      # RAG 开启时挂载本地模型目录(路径须与 ini [models] 一致):
+      # - /opt/dorami/models:/opt/dorami/models:ro
+    # Chromium 渲染需要:Docker 默认 /dev/shm 只有 64MB,页面渲染会崩
+    shm_size: "1gb"
+    healthcheck:
+      # /api/auth/session 是免鉴权端点(全局鉴权中间件的白名单);/api/runtime 未登录会 401
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8088/api/auth/session"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/nginx.Dockerfile
+      # 受限网络可换 npm 镜像,如:
+      # args: { NPM_REGISTRY: "https://registry.npmmirror.com" }
+    restart: unless-stopped
+    ports:
+      - "${DORAMI_HTTP_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
