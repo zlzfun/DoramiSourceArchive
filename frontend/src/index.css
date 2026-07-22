@@ -451,6 +451,33 @@ input[type="radio"] {
   to { --auth-angle: 360deg; }
 }
 
+/* 第三幕：主标题优雅变幻为品牌名——旧字整体轻抬淡出 / 新字自下缓升、模糊转清、字距由松收拢 */
+@keyframes auth-brand-out {
+  to {
+    opacity: 0;
+    transform: translateY(-10px);
+    filter: blur(6px);
+  }
+}
+
+@keyframes auth-brand-in {
+  0% {
+    opacity: 0;
+    transform: translateY(16px);
+    filter: blur(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+@keyframes auth-brand-track {
+  from { letter-spacing: 0.24em; }
+  to { letter-spacing: 0.02em; }
+}
+
 /* (静默仪器:entrance-stagger keyframes 已随仪式性入场退场) */
 
 /* ── Animate-in helpers ── */
@@ -1163,6 +1190,54 @@ input[type="radio"] {
     background-clip: text;
     color: transparent;
     filter: drop-shadow(0 4px 26px rgba(109, 92, 240, 0.5));
+  }
+
+  /* —— 第三幕：主标题变幻为品牌名（brand 层叠在原标题上，收束成形） —— */
+  .auth-title-swap {
+    position: relative;
+  }
+  .auth-title-orig {
+    display: block;
+  }
+  .auth-title-brand {
+    position: absolute;
+    inset: 0;
+    display: block;
+    pointer-events: none;
+    letter-spacing: 0.02em;
+  }
+  .auth-brandchar {
+    display: inline-block;
+    opacity: 0;
+    will-change: transform, opacity, filter;
+  }
+  .auth-brandchar.is-accent {
+    color: #a8a4ff;
+    text-shadow: 0 2px 26px rgba(109, 92, 240, 0.55);
+  }
+  .is-branded .auth-title-orig {
+    animation: auth-brand-out 640ms var(--motion-ease) forwards;
+  }
+  .is-branded .auth-title-brand {
+    animation: auth-brand-track 1500ms var(--motion-ease) both;
+  }
+  .is-branded .auth-brandchar {
+    animation: auth-brand-in 1000ms var(--motion-ease) both;
+    animation-delay: var(--d, 0ms);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .is-branded .auth-title-orig {
+      opacity: 0;
+      animation: none;
+    }
+    .is-branded .auth-title-brand {
+      animation: none;
+    }
+    .is-branded .auth-brandchar {
+      opacity: 1;
+      animation: none;
+    }
   }
 
   .auth-lede {

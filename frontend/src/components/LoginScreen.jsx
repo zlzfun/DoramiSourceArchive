@@ -67,8 +67,16 @@ const TITLE_LINES = [
   [{ t: '有处可栖。', accent: true, delay: 1130 }],
 ];
 
+// 第三幕：标题左侧稳定若干秒后，变幻为品牌名
+const BRAND_LINES = [
+  { accent: true, chars: ['哆', '啦', '美'] },
+  { accent: false, chars: ['AI', '资', '讯', '平', '台'] },
+];
+
 // 第一幕「标题卡」停留时长，之后进入第二幕（文字归位 + 登录卡浮现）
 const TITLE_HOLD_MS = 3600;
+// 第二幕稳定后 → 第三幕（标题变幻为品牌名）的间隔
+const BRAND_DELAY_MS = 2800;
 
 const prefersReducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -238,6 +246,8 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   // 'title' = 第一幕（居中强调）；'ready' = 第二幕（登录卡浮现）
   const [phase, setPhase] = useState(() => (prefersReducedMotion() ? 'ready' : 'title'));
+  // 第三幕：标题变幻为品牌名
+  const [branded, setBranded] = useState(false);
   const netRef = useRef(null);
 
   // 背景：三维摄像机星座（挂载即绘制，随鼠标运动变幻）
@@ -259,6 +269,13 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
       window.removeEventListener('keydown', advance);
     };
   }, [phase]);
+
+  // 第二幕稳定后 → 隔若干秒触发第三幕：主标题变幻为品牌名
+  useEffect(() => {
+    if (phase !== 'ready' || branded) return undefined;
+    const timer = setTimeout(() => setBranded(true), BRAND_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [phase, branded]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -293,20 +310,48 @@ export default function LoginScreen({ logoError, onLogoError, onLogin }) {
             AI 资讯 · 聚合 · 订阅 · 检索
           </p>
 
-          <h1 className="auth-title">
-            {TITLE_LINES.map((line, li) => (
-              <span className="auth-title-line" key={li}>
-                {line.map((word, wi) => (
-                  <span
-                    key={wi}
-                    className={`auth-word${word.accent ? ' auth-title-accent' : ''}`}
-                    style={{ '--d': `${word.delay}ms` }}
-                  >
-                    {word.t}
+          <h1
+            className={`auth-title auth-title-swap${branded ? ' is-branded' : ''}`}
+            aria-label="哆啦美 · AI 资讯平台——让 AI 资讯有处可栖"
+          >
+            {/* 原标题：稳定后整体轻抬淡出 */}
+            <span className="auth-title-orig" aria-hidden="true">
+              {TITLE_LINES.map((line, li) => (
+                <span className="auth-title-line" key={li}>
+                  {line.map((word, wi) => (
+                    <span
+                      key={wi}
+                      className={`auth-word${word.accent ? ' auth-title-accent' : ''}`}
+                      style={{ '--d': `${word.delay}ms` }}
+                    >
+                      {word.t}
+                    </span>
+                  ))}
+                </span>
+              ))}
+            </span>
+            {/* 品牌名：逐字自下缓升、模糊转清 */}
+            <span className="auth-title-brand" aria-hidden="true">
+              {(() => {
+                let k = 0;
+                return BRAND_LINES.map((line, li) => (
+                  <span className="auth-title-line" key={li}>
+                    {line.chars.map((ch) => {
+                      const idx = k++;
+                      return (
+                        <span
+                          key={idx}
+                          className={`auth-brandchar${line.accent ? ' is-accent' : ''}`}
+                          style={{ '--d': `${260 + idx * 55}ms` }}
+                        >
+                          {ch}
+                        </span>
+                      );
+                    })}
                   </span>
-                ))}
-              </span>
-            ))}
+                ));
+              })()}
+            </span>
           </h1>
 
           <p className="auth-lede auth-rise" style={{ '--d': '900ms' }}>
