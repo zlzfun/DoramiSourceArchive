@@ -105,6 +105,24 @@ DB 热备与 nginx 旧站点配置在生产机 `/root/backups/`;需要考古看 
 
 ## RAG
 
-生产默认关(`[rag] enabled = false`)。开启时:把模型目录挂进容器
-(compose 里已留注释行,路径与 ini `[models]` 一致),并留意后端容器内存
-(bge-m3 常驻约 2GB+,必要时给 backend 加 `mem_limit`)。
+生产默认关(`[rag] enabled = false`)。启用推荐**远程形态**(v3.17 服务化,后端保持瘦身镜像),三步:
+
+```bash
+# 1. 起 RAG 服务组(chroma server + TEI 嵌入;TEI 首启拉 bge-m3 权重 ~2.3GB,缓存 data/tei_cache)
+docker compose --profile rag up -d
+# 2. production.ini 配置
+#    [rag] enabled = true
+#    chroma_url = http://chroma:8000
+#    embedding_url = http://tei-embed:80
+# 3. 重启后端并从 SQLite 归档重建索引(向量库是派生数据,换形态/换模型一律重建、不搬旧目录)
+docker compose restart backend
+curl -X POST .../api/vector/reindex-all   # 或前端知识台账触发
+```
+
+资源:chroma 数百 MB、TEI + bge-m3 约 3-4GB —— **RAG 宿主建议 ≥8GB 内存**(可与 backend 分机:
+把 chroma/tei 起在别处,ini 两个 URL 指过去即可)。重排精排(再 +2GB)按需:compose 取消
+`tei-rerank` 注释 + ini 配 `rerank_url`;不配则自动跳过重排,检索照常。
+
+**嵌入形态**(单机全量、进程内推理)仍保留:镜像 `--build-arg WITH_RAG=1` 构建、
+三 URL 留空、模型目录挂进容器(compose 注释行,路径与 ini `[models]` 一致),
+并留意后端容器内存(bge-m3 常驻约 2GB+)。

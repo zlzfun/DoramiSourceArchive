@@ -12,11 +12,84 @@ import os
 import re
 import threading
 from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
 import chromadb
-from chromadb.utils import embedding_functions
+import httpx
 from storage.base import BaseStorage
 from models.content import BaseContent
 from config import settings
+
+
+# ── 嵌入/重排 provider(v3.17 服务化:进程内推理与 TEI HTTP 双模)─────────────
+#
+# 统一契约:嵌入向量一律由 provider 显式计算,再以 embeddings= 传给 chroma 的
+# add/query——collection 不再挂 embedding_function,嵌入/远程两模式走同一条代码路径。
+# provider 方法均为阻塞式(调用方已经过 asyncio.to_thread 卸载到线程池)。
+
+_TEI_EMBED_BATCH = 16  # 单次 /embed 请求的文本条数上限(控制 payload 与 TEI 批内存)
+
+
+class TeiEmbeddingClient:
+    """HuggingFace text-embeddings-inference 的 /embed 客户端。"""
+
+    def __init__(self, base_url: str, timeout: float = 60.0, transport=None):
+        self._client = httpx.Client(base_url=base_url, timeout=timeout, transport=transport)
+
+    def embed(self, texts: List[str]) -> List[List[float]]:
+        vectors: List[List[float]] = []
+        for start in range(0, len(texts), _TEI_EMBED_BATCH):
+            batch = texts[start:start + _TEI_EMBED_BATCH]
+            response = self._client.post("/embed", json={"inputs": batch, "truncate": True})
+            response.raise_for_status()
+            vectors.extend(response.json())
+        return vectors
+
+
+class LocalEmbeddingClient:
+    """进程内 sentence-transformers 嵌入(需 rag-embedded extra)。"""
+
+    def __init__(self, model_name_or_path: str):
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as exc:  # pragma: no cover - 依赖缺失的明确报错
+            raise RuntimeError(
+                "嵌入模式需要 rag-embedded extra(uv sync --extra rag-embedded / "
+                "镜像 --build-arg WITH_RAG=1),或改配 [rag] embedding_url 走 TEI 远程推理"
+            ) from exc
+        self._model = SentenceTransformer(model_name_or_path)
+
+    def embed(self, texts: List[str]) -> List[List[float]]:
+        return self._model.encode(list(texts)).tolist()
+
+
+class TeiRerankClient:
+    """TEI 的 /rerank 客户端(bge-reranker 系列)。"""
+
+    def __init__(self, base_url: str, timeout: float = 60.0, transport=None):
+        self._client = httpx.Client(base_url=base_url, timeout=timeout, transport=transport)
+
+    def rerank_scores(self, query: str, texts: List[str]) -> List[float]:
+        response = self._client.post(
+            "/rerank", json={"query": query, "texts": texts, "truncate": True}
+        )
+        response.raise_for_status()
+        scores = [0.0] * len(texts)
+        for row in response.json():
+            scores[int(row["index"])] = float(row["score"])
+        return scores
+
+
+class LocalRerankClient:
+    """进程内 CrossEncoder 重排(需 rag-embedded extra)。"""
+
+    def __init__(self, model_name_or_path: str, logger):
+        from sentence_transformers import CrossEncoder
+        logger.info(f"🔀 正在加载 Cross-Encoder 重排模型: {model_name_or_path}")
+        self._model = CrossEncoder(model_name_or_path)
+        logger.info("✅ Cross-Encoder 就绪")
+
+    def rerank_scores(self, query: str, texts: List[str]) -> List[float]:
+        return [float(s) for s in self._model.predict([(query, t) for t in texts])]
 
 # ── T8: 文本清洗 ─────────────────────────────────────────────────────────────
 
@@ -177,16 +250,19 @@ class ChromaVectorStorage(BaseStorage):
         super().__init__()
         if db_path is None:
             db_path = settings.storage.chroma_path
-        os.makedirs(db_path, exist_ok=True)
+        # 远程模式(chroma_url 配置)不落本地目录;嵌入模式才建 PersistentClient 目录
+        if not settings.rag.remote:
+            os.makedirs(db_path, exist_ok=True)
         self._db_path = db_path
         self._collection_name = collection_name
-        # chromadb client / embedding 函数 / collection 均推迟到首次使用时再加载，
-        # 避免后端启动时即下载/加载 sentence-transformers 权重。
+        # chromadb client / 嵌入 provider / collection 均推迟到首次使用时再加载，
+        # 避免后端启动时即下载/加载模型权重或连远端服务。
         self._client = None
-        self._embedding_fn = None
+        self._embedder = None
         self._collection = None
 
-        # T12: Cross-encoder reranker — lazy-loaded on first use
+        # T12: reranker provider — lazy-loaded on first use;加载失败(依赖缺失且
+        # 未配 rerank_url)时置 False 哨兵,rerank() 优雅跳过而非反复重试。
         self._reranker = None
         self._reranker_model = settings.models.reranker_model
 
@@ -211,22 +287,34 @@ class ChromaVectorStorage(BaseStorage):
 
     def _load_collection(self):
         if self._collection is None:
-            model_name_or_path = settings.models.embedding_model
-            self.logger.info(f"🧬 正在加载 Embedding 模型: {model_name_or_path}")
-            self._client = chromadb.PersistentClient(path=self._db_path)
-            try:
-                self._embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-                    model_name=model_name_or_path
+            rag = settings.rag
+            if rag.remote:
+                parsed = urlparse(rag.chroma_url)
+                self.logger.info(f"🧬 连接 Chroma server: {rag.chroma_url} | TEI 嵌入: {rag.embedding_url}")
+                self._client = chromadb.HttpClient(
+                    host=parsed.hostname or "localhost",
+                    port=parsed.port or (443 if parsed.scheme == "https" else 8000),
+                    ssl=parsed.scheme == "https",
                 )
-            except Exception as e:
-                self.logger.error(f"❌ 向量模型加载失败 [{model_name_or_path}]: {e}")
-                raise
+                if not rag.embedding_url:
+                    raise RuntimeError("[rag] chroma_url 已配置但 embedding_url 为空——远程模式需要 TEI 嵌入服务")
+                self._embedder = TeiEmbeddingClient(rag.embedding_url)
+            else:
+                model_name_or_path = settings.models.embedding_model
+                self.logger.info(f"🧬 正在加载 Embedding 模型: {model_name_or_path}")
+                self._client = chromadb.PersistentClient(path=self._db_path)
+                try:
+                    self._embedder = LocalEmbeddingClient(model_name_or_path)
+                except Exception as e:
+                    self.logger.error(f"❌ 向量模型加载失败 [{model_name_or_path}]: {e}")
+                    raise
+            # 不再挂 embedding_function——向量一律由 provider 显式计算后传入,
+            # add/query 两侧共用同一嵌入来源,嵌入/远程模式行为一致。
             self._collection = self._client.get_or_create_collection(
                 name=self._collection_name,
-                embedding_function=self._embedding_fn,
                 metadata={"hnsw:space": "cosine"},
             )
-            self.logger.info(f"🗂️ 向量特征库就绪: {self._db_path} | 集合: {self._collection_name}")
+            self.logger.info(f"🗂️ 向量特征库就绪: 集合 {self._collection_name}")
         return self._collection
 
     @property
@@ -239,9 +327,9 @@ class ChromaVectorStorage(BaseStorage):
         return self._ensure_collection()
 
     @property
-    def embedding_fn(self):
+    def embedder(self):
         self._ensure_collection()
-        return self._embedding_fn
+        return self._embedder
 
     def _locked(self, fn, *args, **kwargs):
         """在 collection 操作级互斥锁下执行 fn（在工作线程内调用）。
@@ -304,7 +392,12 @@ class ChromaVectorStorage(BaseStorage):
         ]
 
         try:
-            self.collection.add(ids=ids, documents=full_chunks, metadatas=metadatas)
+            self.collection.add(
+                ids=ids,
+                documents=full_chunks,
+                metadatas=metadatas,
+                embeddings=self.embedder.embed(full_chunks),
+            )
             body_note = f"{len(full_chunks)} chunks" if body else "header-only"
             self.logger.info(f"✅ [{item.title[:50]}] → {body_note}")
             return True
@@ -390,7 +483,7 @@ class ChromaVectorStorage(BaseStorage):
             where = {"$and": conditions}
 
         results = self.collection.query(
-            query_texts=[query],
+            query_embeddings=self.embedder.embed([query]),
             n_results=n_results,
             where=where,
         )
@@ -430,21 +523,36 @@ class ChromaVectorStorage(BaseStorage):
     # ── T12: Cross-encoder 重排序 ─────────────────────────────────────────────
 
     def _ensure_reranker(self):
-        """Lazy-load cross-encoder model on first rerank call."""
+        """Lazy-load rerank provider on first call.
+
+        远程:配置了 [rag] rerank_url → TEI /rerank;
+        本地:CrossEncoder(需 rag-embedded extra)。
+        二者皆不可得(远程模式未配 rerank_url,或本地依赖缺失)→ 置 False 哨兵,
+        rerank() 从此优雅跳过——重排本就是可选的精排增强,不该让检索整体失败。
+        """
         if self._reranker is None:
             with self._init_lock:
                 if self._reranker is None:
-                    from sentence_transformers import CrossEncoder
-                    self.logger.info(f"🔀 正在加载 Cross-Encoder 重排模型: {self._reranker_model}")
-                    self._reranker = CrossEncoder(self._reranker_model)
-                    self.logger.info(f"✅ Cross-Encoder 就绪")
+                    rag = settings.rag
+                    if rag.rerank_url:
+                        self._reranker = TeiRerankClient(rag.rerank_url)
+                    elif rag.remote:
+                        self.logger.info("ℹ️ 远程模式未配置 rerank_url,跳过重排")
+                        self._reranker = False
+                    else:
+                        try:
+                            self._reranker = LocalRerankClient(self._reranker_model, self.logger)
+                        except ImportError:
+                            self.logger.warning("⚠️ 未安装 rag-embedded extra 且未配 rerank_url,跳过重排")
+                            self._reranker = False
         return self._reranker
 
     async def rerank(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        T12: 用 cross-encoder 对 bi-encoder 候选结果重打分，提升精确率。
+        T12: 对 bi-encoder 候选结果重打分，提升精确率。
         返回列表已按 rerank_score 降序排列；原 distance 字段保留供前端显示。
-        cross-encoder 推理为 CPU 重操作，经线程池卸载，避免冻结事件循环。
+        推理/HTTP 为阻塞重操作，经线程池卸载，避免冻结事件循环。
+        无可用重排 provider 时原样返回(可选精排,不阻断检索)。
         """
         if not candidates:
             return candidates
@@ -452,10 +560,11 @@ class ChromaVectorStorage(BaseStorage):
 
     def _rerank_blocking(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         reranker = self._ensure_reranker()
-        pairs = [(query, c["document"]) for c in candidates]
-        scores = reranker.predict(pairs)
+        if not reranker:
+            return candidates
+        scores = reranker.rerank_scores(query, [c["document"] for c in candidates])
         for i, c in enumerate(candidates):
-            c["rerank_score"] = float(scores[i])
+            c["rerank_score"] = scores[i]
         return sorted(candidates, key=lambda x: x["rerank_score"], reverse=True)
 
     # ── T13: 相邻 chunk 上下文扩展 ────────────────────────────────────────────
@@ -496,7 +605,7 @@ class ChromaVectorStorage(BaseStorage):
         在操作级锁内执行删除+重建，确保不与并发的 add/query/delete 撞同一 collection。
         """
         with self._op_lock:
-            # 强制初始化 client / embedding_fn，再删除并重建集合。
+            # 强制初始化 client / 嵌入 provider，再删除并重建集合。
             self._ensure_collection()
             try:
                 self._client.delete_collection(self._collection_name)
@@ -504,7 +613,6 @@ class ChromaVectorStorage(BaseStorage):
                 pass
             self._collection = self._client.get_or_create_collection(
                 name=self._collection_name,
-                embedding_function=self._embedding_fn,
                 metadata={"hnsw:space": "cosine"},
             )
             self.logger.info(f"🔄 向量集合已重建: {self._collection_name}")

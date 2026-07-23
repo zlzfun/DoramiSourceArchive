@@ -44,7 +44,24 @@ class RuntimeConfig:
 
 @dataclass(frozen=True)
 class RagConfig:
+    """RAG 子系统开关与部署形态。
+
+    三个 URL 决定形态(v3.17 服务化):
+    - 全空 = **嵌入模式**(chromadb PersistentClient + 进程内 sentence-transformers,
+      需装 rag-embedded extra / WITH_RAG=1 镜像)——dev 与单机全量形态;
+    - chroma_url + embedding_url 有值 = **远程模式**(chroma server + TEI 容器,
+      compose --profile rag;后端保持瘦身镜像);
+    - rerank_url 独立可选:空则远程模式跳过重排(嵌入模式回落本地 CrossEncoder)。
+    """
+
     enabled: bool = False
+    chroma_url: str = ""
+    embedding_url: str = ""
+    rerank_url: str = ""
+
+    @property
+    def remote(self) -> bool:
+        return bool(self.chroma_url)
 
 
 @dataclass(frozen=True)
@@ -279,6 +296,9 @@ def load_config() -> AppConfig:
         ),
         rag=RagConfig(
             enabled=rag_enabled,
+            chroma_url=(os.getenv("DORAMI_RAG_CHROMA_URL") or parser.get("rag", "chroma_url", fallback="")).strip().rstrip("/"),
+            embedding_url=(os.getenv("DORAMI_RAG_EMBEDDING_URL") or parser.get("rag", "embedding_url", fallback="")).strip().rstrip("/"),
+            rerank_url=(os.getenv("DORAMI_RAG_RERANK_URL") or parser.get("rag", "rerank_url", fallback="")).strip().rstrip("/"),
         ),
         network=NetworkConfig(
             disable_ca_bundle=parser.getboolean("network", "disable_ca_bundle", fallback=True),

@@ -32,6 +32,47 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
+  # ── RAG 服务组(按需启用:docker compose --profile rag up -d)──────────────
+  # 后端保持瘦身镜像,经 HTTP 使用这两个服务;ini 配置:
+  #   [rag] enabled = true
+  #   chroma_url = http://chroma:8000
+  #   embedding_url = http://tei-embed:80
+  # 首次启用后执行 POST /api/vector/reindex-all 从 SQLite 归档重建索引
+  # (向量库是派生数据,不做旧嵌入式目录的搬运兼容)。
+  chroma:
+    image: chromadb/chroma:1.5.9   # 与后端 chromadb 客户端同版本(uv.lock);拉不到该 tag 时就近选同 minor
+    profiles: ["rag"]
+    restart: unless-stopped
+    volumes:
+      - ./data/chroma_server:/data
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  tei-embed:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    profiles: ["rag"]
+    restart: unless-stopped
+    command: --model-id BAAI/bge-m3
+    environment:
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+    volumes:
+      - ./data/tei_cache:/data   # 模型权重缓存(首启下载 ~2.3GB,之后离线可用)
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # 重排(可选精排,再吃 ~2GB 内存;需要时取消注释并在 ini 配 rerank_url=http://tei-rerank:80)
+  # tei-rerank:
+  #   image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+  #   profiles: ["rag"]
+  #   restart: unless-stopped
+  #   command: --model-id BAAI/bge-reranker-v2-m3
+  #   environment:
+  #     HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+  #   volumes:
+  #     - ./data/tei_cache:/data
+
   nginx:
     build:
       context: .
