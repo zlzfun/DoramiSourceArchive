@@ -1,7 +1,8 @@
 # Docker 部署(生产推荐路径)
 
 > 2026-07 部署重构:取代「裸机 venv + PM2 + 宿主 Nginx + 服务器现场构建前端」的
-> `deploy.sh` 路径(该脚本保留作过渡备用)。动机与完整分析见当次会话结论,要点:
+> `deploy.sh` 路径(生产实测一个完整采集日 + 日报 cron 后,该路径已于 v3.15.1
+> 连同 `ecosystem.config.js`、ini `[nginx]` 节一起退役删除,历史见 git)。动机与完整分析要点:
 > 依赖版本锁定(uv.lock `--frozen`)、Playwright/Chromium 环境固化(镜像内 OS 恒为
 > bookworm,宿主 OS 兼容性兜底全删)、发布原子化(整镜像切换)、重启自愈
 > (`restart: unless-stopped` 取代缺失的 `pm2 save/startup`)、为迁移部署铺路
@@ -59,15 +60,41 @@ docker compose down                 # 停站(数据在宿主目录,安全)
 3. 在 compose 里加一个 caddy 服务自动签发(将来需要再加)。
 启用 HTTPS 后记得把 ini `[auth] cookie_secure = true`(启动安全校验的生产姿态随之生效)。
 
-## 从 PM2 路径切换(同机)
+## 全新服务器部署(含迁移)
 
 ```bash
-pm2 stop dorami-backend-v2 && pm2 delete dorami-backend-v2
-sudo systemctl stop nginx && sudo systemctl disable nginx   # 让出 80 端口
+# 1. 装 Docker(Ubuntu 走发行版仓库即可;内存 ≤2G 的小机先确认有 swap)
+apt-get install -y docker.io docker-compose-v2 && systemctl enable --now docker
+
+# 2. 取代码 + 配置
+git clone https://github.com/zlzfun/DoramiSourceArchive.git && cd DoramiSourceArchive
+cp config/production.example.ini config/production.ini
+#    必改:[auth] secret(长随机串)、admin_users/user_users 首启种子密码;
+#    走 HTTPS 边缘则 cookie_secure = true
+
+# 3.(迁移场景)搬数据——LLM 配置、X token、账号、订阅、采集游标全在 DB 的
+#    运行时 KV 里,拷 data/ 即全部带走,无需在新机重配:
+#    老机先 docker compose stop backend(静止 WAL),再整目录拷:
+#    rsync -a old:/root/DoramiSourceArchive/data/ ./data/
+#    全新空库则跳过本步(首启自动建库+种子账号,LLM/X 到管理面重配)
+
+# 4. 监听形态二选一:
+echo "DORAMI_HTTP_LISTEN=127.0.0.1:8080" > .env   # A:外层有 TLS 边缘(推荐,生产即此)
+#    (然后照下方「HTTPS」节配宿主 Nginx/Caddy + 证书)
+#    B:纯 HTTP 直出则不写 .env,容器 nginx 直接占 80
+
+# 5. 构建 + 起站 + 健康验证一条龙
 ./deploy-docker.sh
 ```
-数据零迁移:两条路径读写同一个 `./data` 与 `config/production.ini`;
-回滚 = `docker compose down` 后重跑 `./deploy.sh`。
+
+迁移收尾:老机 `docker compose down`(或 PM2 时代 `pm2 delete`),DNS 切到新机。
+数据只有 `data/` 一个目录 + `production.ini` 一个文件,这就是 SQLite 形态下迁移成本的全部。
+
+## PM2 路径(已退役)
+
+生产已于 2026-07-22 完成同机切换(v3.15),观察一个完整采集日 + 日报 cron 正常后,
+v3.15.1 删除了 `deploy.sh` / `ecosystem.config.js` 与 ini `[nginx]` 节。切换前的
+DB 热备与 nginx 旧站点配置在生产机 `/root/backups/`;需要考古看 git 历史(tag v3.15.0 之前)。
 
 ## 网络受限环境
 

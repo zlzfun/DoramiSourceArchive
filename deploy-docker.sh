@@ -1,6 +1,5 @@
 #!/bin/bash
-# Docker 版一键部署:构建镜像 → 起容器 → 全链路健康验证(nginx → backend)。
-# 裸机 PM2 路径的 deploy.sh 保留作过渡备用;二者别同时占 80 端口。
+# 一键部署(唯一部署路径):构建镜像 → 起容器 → 全链路健康验证(nginx → backend)。
 set -euo pipefail
 cd "$(dirname "$0")"
 

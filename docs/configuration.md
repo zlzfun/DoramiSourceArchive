@@ -49,83 +49,7 @@ role = collector
 role = reader
 ```
 
-PM2 使用方案 A：启动 `src/main.py`，由应用代码读取 `[server] host/port/reload` 后调用 Uvicorn。仓库根目录提供的 `ecosystem.config.js` 只保留进程管理配置和 `DORAMI_CONFIG_FILE` 路径，不再注入代理、模型或业务密钥。默认读取 `./config/production.ini`，也可以在启动 PM2 前覆盖：
-
-```bash
-DORAMI_CONFIG_FILE=/opt/dorami/config/production.ini pm2 start ecosystem.config.js
-```
-
-仓库根目录提供 `deploy.sh`，用于直接完成基础系统依赖安装、后端依赖安装、前端构建、Nginx 站点配置、静态资源同步、PM2 启动/重载和 Nginx reload：
-
-```bash
-./deploy.sh
-```
-
-`deploy.sh` 的 Nginx 行为默认从 `production.ini` 的 `[nginx]` 段读取；同名大写环境变量仍可临时覆盖配置文件。
-
-默认配置项：
-
-- `DORAMI_CONFIG_FILE`：`$(pwd)/config/production.ini`
-- `VENV_DIR`：`venv`
-- `PM2_APP_NAME`：`dorami-backend-v2`
-- `[nginx] html_dir`：`/var/www/my_site`
-- `[nginx] site_name`：`dorami`
-- `[nginx] server_name`：`_`
-- `[nginx] listen_port`：`80`
-- `[nginx] listen_options`：`default_server`
-- `[nginx] enable_ssl`：`false`
-- `[nginx] ssl_listen_port`：`443`
-- `[nginx] ssl_redirect`：`true`
-- `[nginx] ssl_cert_file`：启用 SSL 且留空时默认为 `/etc/nginx/ssl/${server_name}.pem`
-- `[nginx] ssl_key_file`：启用 SSL 且留空时默认为 `/etc/nginx/ssl/${server_name}.key`
-- `[nginx] enable_hsts`：`false`
-- `[nginx] backend_proxy_host`：`127.0.0.1`
-- `[nginx] backend_proxy_port`：默认读取 `[server] port`，通常为 `8088`
-- `[nginx] disable_default_site`：`true`
-
-部署脚本假定 `uv` 已安装并配置好包源。它会在缺失时通过 `apt-get`、`dnf` 或 `yum` 安装 `nginx`、`nodejs`、`npm`，并通过 `npm install -g pm2` 安装 PM2。
-
-脚本会写入 Nginx 站点配置：Debian/Ubuntu 风格环境使用 `/etc/nginx/sites-available/{site_name}` 并链接到 `sites-enabled`；其他环境使用 `/etc/nginx/conf.d/{site_name}.conf`。生成的站点配置会将静态根目录设为 `[nginx] html_dir`，并把 `/api/` 反代到 `http://{backend_proxy_host}:{backend_proxy_port}`。脚本随后用 `nginx -T` 和 `nginx -t` 校验启用后的配置确实包含该 root 和 proxy_pass。
-
-如果已经有商业证书或云厂商证书，可以把 `.pem` 和 `.key` 放到 `/etc/nginx/ssl`，然后在 `production.ini` 中启用 SSL：
-
-```ini
-[nginx]
-server_name = your.domain.com
-enable_ssl = true
-ssl_cert_file = /etc/nginx/ssl/your.domain.com.pem
-ssl_key_file = /etc/nginx/ssl/your.domain.com.key
-ssl_redirect = true
-```
-
-之后直接执行：
-
-```bash
-./deploy.sh
-```
-
-如果证书文件名正好是 `/etc/nginx/ssl/${server_name}.pem` 和 `/etc/nginx/ssl/${server_name}.key`，可以省略 `ssl_cert_file` / `ssl_key_file`。启用 SSL 时，脚本默认生成 HTTP 到 HTTPS 的 301 跳转，并在 HTTPS server 上启用 TLSv1.2/TLSv1.3 和基础安全响应头。HSTS 默认关闭，确认 HTTPS 证书续期和访问都稳定后再通过 `enable_hsts = true` 开启。
-
-HTTPS 访问确认稳定后，建议把 `config/production.ini` 里的 `[auth] cookie_secure` 改为 `true` 并重新执行部署脚本；SSL 开启但该值不是 `true` 时，脚本会给出警告。
-
-当 `[rag] enabled = true` 或设置了 `DORAMI_RAG_ENABLED=true` 时，脚本会检查 `[models] embedding_model` 和 `reranker_model` 指向的模型目录是否存在；RAG 关闭时跳过模型目录检查。
-
-部署脚本会使用 `uv pip install -e .` 按 `pyproject.toml` 安装后端依赖到 `venv`。它不会读取 `uv.lock` 中锁定的包下载 URL，因此服务器可以通过 uv 环境变量或 uv 配置使用内网 PyPI 源：
-
-```bash
-UV_DEFAULT_INDEX=https://pypi.company.example/simple ./deploy.sh
-```
-
-前端依赖使用 `npm install --verbose --no-audit --no-fund --replace-registry-host=always` 安装，避免 lockfile 中的历史 registry host 覆盖服务器 npm registry 配置。
-
-如果服务器路径不同，建议写入 `production.ini`：
-
-```ini
-[nginx]
-html_dir = /var/www/my_site
-```
-
-需要临时指定另一份配置文件时，仍可使用 `DORAMI_CONFIG_FILE=/opt/dorami/config/production.ini ./deploy.sh`。
+生产部署走 Docker(唯一路径,详见 [`deploy-docker.md`](./deploy-docker.md)):容器入口固定监听 `0.0.0.0:8088`,`[server]` 节在容器内不生效(仅 dev 裸起 `python src/main.py` 使用);TLS 由宿主边缘 Nginx 终止。原 PM2/deploy.sh 路径及其 `[nginx]` 配置节已于 v3.15.1 退役,考古看 git 历史。
 
 代理配置迁移到后端配置文件：
 
@@ -158,7 +82,7 @@ secret = change-me-to-a-long-random-string
 - 内容台账读取对两类账号开放；手工录入、编辑、删除、离线归档导入等归档写操作只对 admin 账号开放。
 - （仅分离部署）账号角色会再和 `[runtime] role` 取交集：`role = collector` / `reader` 时，部署角色作为外层硬限制叠加在账号角色之上。
 
-账户增删改在前端「账户管理」即时生效、无需重启；但 `[auth]` 的其余项（`cookie_name`、`session_seconds`、`secret`、`cookie_secure`）以及种子白名单只在后端进程启动时读取，修改这些后需要重新执行 `./deploy.sh` 或 `pm2 reload ecosystem.config.js --only dorami-backend-v2 --update-env`。
+账户增删改在前端「账户管理」即时生效、无需重启；但 `[auth]` 的其余项（`cookie_name`、`session_seconds`、`secret`、`cookie_secure`）以及种子白名单只在后端进程启动时读取，修改这些后需要重启后端(`docker compose restart backend`;dev 裸起则重启进程)。
 
 前端配置集中在 `frontend/app.config.json`：
 

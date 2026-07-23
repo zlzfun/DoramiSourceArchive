@@ -10,7 +10,7 @@
    `upgrade head` 会重跑基线建表而失败——故先 `stamp` 基线，再 `upgrade`。
    `ensure_migrated()` 封装了这套「有表无版本→stamp，然后 upgrade」逻辑。
 2. **回放后续迁移**：基线之后的每次 schema 变更都是一个迁移，部署时
-   `alembic upgrade head`（deploy.sh 已接入）把已有库演进到最新。
+   `alembic upgrade head`（容器入口 docker/entrypoint.py 与 dev 裸起均已接入）把已有库演进到最新。
 
 `create_all`(=metadata) 与 `upgrade head` 的一致性由 `tests/test_migrations.py`
 的漂移守卫强制保证，故双通道不会漂移。

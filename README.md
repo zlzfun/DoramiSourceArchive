@@ -28,8 +28,8 @@ cd frontend && npm install && npm run dev
 # 测试（整套，排除 tests/rag/ 自有 harness）
 .venv/bin/python -m pytest tests/
 
-# 生产部署（venv + 构建前端 + PM2 + Nginx，一键）
-./deploy.sh
+# 生产部署（Docker:构建镜像 + 起容器 + 健康验证,一键;详见 docs/deploy-docker.md）
+./deploy-docker.sh
 ```
 
 数据落在 `data/`（SQLite `cms_data.db` + ChromaDB `chroma_db/`，已 gitignore）。
@@ -85,4 +85,4 @@ cd frontend && npm install && npm run dev
 | `CLAUDE.md` | 架构详解 + 开发命令（最权威） |
 | `pyproject.toml` · `uv.lock` · `requirements.txt` | Python 依赖 |
 | `config/*.example.ini` | 配置模板（真实 `backend.ini`/`production.ini` 不入库） |
-| `deploy.sh` · `ecosystem.config.js` | 一键生产部署 / PM2 进程定义 |
+| `deploy-docker.sh` · `docker-compose.yml` · `docker/` | 一键生产部署(Docker 双容器) |

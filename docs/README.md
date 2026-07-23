@@ -13,8 +13,8 @@
   找「下一步做什么/哪些方向被搁置及原因」看这里。
 - ◉ [configuration.md](./configuration.md) — `config/*.ini` 配置项逐节说明(runtime 角色/auth/RAG/LLM/
   网络代理),含生产 production.ini 与环境变量覆盖。
-- ◉ [deploy-docker.md](./deploy-docker.md) — **Docker 部署(生产推荐路径)**:compose 双容器形态/
-  用法与运维/ini 容器内语义差异/HTTPS/从 PM2 切换/受限网络镜像源。裸机 deploy.sh 保留作过渡备用。
+- ◉ [deploy-docker.md](./deploy-docker.md) — **Docker 部署(唯一生产路径)**:compose 双容器形态/
+  用法与运维/ini 容器内语义差异/HTTPS/全新服务器部署与迁移/受限网络镜像源。PM2 裸机路径已于 v3.15.1 退役。
 
 ## contracts/ —— 对外契约(◇ 耐久)
 

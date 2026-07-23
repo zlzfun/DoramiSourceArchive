@@ -1,4 +1,4 @@
-# Dorami 生产部署(Docker 版,取代 PM2 路径;裸机 deploy.sh 保留作过渡备用)。
+# Dorami 生产部署(唯一部署路径;裸机 PM2 路径已于 v3.15.1 退役)。
 # 用法见 docs/deploy-docker.md;一键部署:./deploy-docker.sh
 services:
   backend:

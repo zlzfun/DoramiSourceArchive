@@ -15,8 +15,6 @@ frontend/dist
 **/__pycache__
 *.pyc
 .DS_Store
-ecosystem.config.js
-deploy.sh
 deploy-docker.sh
 
 # 配置一律运行期挂载,绝不烤进镜像(production.ini 含机密)
