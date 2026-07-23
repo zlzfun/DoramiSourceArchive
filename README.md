@@ -83,6 +83,6 @@ cd frontend && npm install && npm run dev
 | 路径 | 概述 |
 |---|---|
 | `CLAUDE.md` | 架构详解 + 开发命令（最权威） |
-| `pyproject.toml` · `uv.lock` · `requirements.txt` | Python 依赖 |
+| `pyproject.toml` · `uv.lock` | Python 依赖(单一事实来源) |
 | `config/*.example.ini` | 配置模板（真实 `backend.ini`/`production.ini` 不入库） |
 | `deploy-docker.sh` · `docker-compose.yml` · `docker/` | 一键生产部署(Docker 双容器) |

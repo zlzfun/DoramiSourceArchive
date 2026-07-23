@@ -55,7 +55,7 @@ docker compose down                 # 停站(数据在宿主目录,安全)
 ## HTTPS
 
 容器只做 HTTP,TLS 终止放外层,三选一:
-1. 宿主继续跑一个带证书的 Nginx/Caddy 全站反代到容器(`DORAMI_HTTP_LISTEN=127.0.0.1:8080` 起栈,宿主 443 → `proxy_pass http://127.0.0.1:8080`;生产即此形态);
+1. 宿主继续跑一个带证书的 Nginx 全站反代到容器(`DORAMI_HTTP_LISTEN=127.0.0.1:8080` 起栈,宿主 443 → `proxy_pass http://127.0.0.1:8080`;生产即此形态,**模板见 [`docker/edge-nginx.conf.example`](../docker/edge-nginx.conf.example)**);
 2. 云厂商 LB/CDN 终止 TLS;
 3. 在 compose 里加一个 caddy 服务自动签发(将来需要再加)。
 启用 HTTPS 后记得把 ini `[auth] cookie_secure = true`(启动安全校验的生产姿态随之生效)。

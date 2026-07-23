@@ -6,8 +6,7 @@
 
 1. `DORAMI_CONFIG_FILE` 指定的文件。
 2. 仓库内 `config/backend.ini`。
-3. 仓库内 `config/local.ini`。
-4. 代码内默认值。
+3. 代码内默认值。
 
 仓库提供两份示例文件：
 

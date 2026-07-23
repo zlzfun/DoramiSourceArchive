@@ -117,18 +117,6 @@ class CorsConfig:
 
 
 @dataclass(frozen=True)
-class WechatConfig:
-    auth_base_dir: str
-
-
-@dataclass(frozen=True)
-class XiaolubanConfig:
-    url: str = "http://xiaoluban.rnd.huawei.com:80/"
-    auth: str = ""
-    receiver: str = ""
-
-
-@dataclass(frozen=True)
 class LLMConfig:
     """大模型（OpenAI 兼容协议）配置。
 
@@ -186,16 +174,6 @@ class MediaConfig:
 
 
 @dataclass(frozen=True)
-class ImageHostConfig:
-    upload_url_template: str = (
-        "http://3ms.huawei.com/hi/restnew/editor/attach/upload"
-        "?app_id=67&public_key=10067&current_timestamp={timestamp}&verify_code={verify_code}"
-    )
-    secret_key: str = ""
-    timeout_seconds: int = 15
-
-
-@dataclass(frozen=True)
 class AppConfig:
     server: ServerConfig
     runtime: RuntimeConfig
@@ -206,9 +184,6 @@ class AppConfig:
     storage: StorageConfig
     models: ModelConfig
     cors: CorsConfig
-    wechat: WechatConfig
-    xiaoluban: XiaolubanConfig
-    image_host: ImageHostConfig
     llm: LLMConfig
     x_api: XApiConfig
     media: MediaConfig
@@ -233,10 +208,7 @@ def _candidate_config_paths() -> list[Path]:
     configured = os.getenv("DORAMI_CONFIG_FILE", "").strip()
     if configured:
         return [Path(configured).expanduser()]
-    return [
-        PROJECT_ROOT / "config" / "backend.ini",
-        PROJECT_ROOT / "config" / "local.ini",
-    ]
+    return [PROJECT_ROOT / "config" / "backend.ini"]
 
 
 def _read_config_file() -> configparser.ConfigParser:
@@ -338,23 +310,6 @@ def load_config() -> AppConfig:
             allow_credentials=parser.getboolean("cors", "allow_credentials", fallback=True),
             allow_methods=_csv(parser.get("cors", "allow_methods", fallback="*")),
             allow_headers=_csv(parser.get("cors", "allow_headers", fallback="*")),
-        ),
-        wechat=WechatConfig(
-            auth_base_dir=_path(parser.get("wechat", "auth_base_dir", fallback=".wechat_auth")),
-        ),
-        xiaoluban=XiaolubanConfig(
-            url=parser.get("xiaoluban", "url", fallback="http://xiaoluban.rnd.huawei.com:80/"),
-            auth=parser.get("xiaoluban", "auth", fallback=""),
-            receiver=parser.get("xiaoluban", "receiver", fallback=""),
-        ),
-        image_host=ImageHostConfig(
-            upload_url_template=parser.get(
-                "image_host",
-                "upload_url_template",
-                fallback=ImageHostConfig.upload_url_template,
-            ),
-            secret_key=parser.get("image_host", "secret_key", fallback=""),
-            timeout_seconds=parser.getint("image_host", "timeout_seconds", fallback=15),
         ),
         media=MediaConfig(
             enabled=media_enabled,
