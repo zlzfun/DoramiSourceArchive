@@ -1,6 +1,6 @@
 [project]
 name = "doramisourcearchive"
-version = "3.15.2"
+version = "3.16.0"
 description = "Add your description here"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,7 +15,6 @@ dependencies = [
     "mcp>=1.0.0",
     "playwright>=1.35.0",
     "pydantic>=2.0.0",
-    "sentence-transformers>=2.2.2",
     "sqlmodel>=0.0.8",
     "uvicorn>=0.23.0",
 ]
@@ -28,6 +27,13 @@ dev = [
 # 默认 `uv sync` 不安装；启用浏览器后端时 `uv sync --extra crawl4ai` 并 `playwright install chromium`。
 crawl4ai = [
     "crawl4ai>=0.9.0",
+]
+# 嵌入式 RAG:embedding/rerank 模型在后端进程内推理(torch/科学计算栈 ~1GB)。
+# 默认镜像不装(WITH_RAG=0);单机全量形态 `--build-arg WITH_RAG=1` 或 dev
+# `uv sync --extra rag-embedded`。远程形态(chroma server + TEI)不需要本 extra,
+# 见 docs/deploy-docker.md 的 RAG 节。chromadb 客户端保留在核心依赖(轻,双模共用)。
+rag-embedded = [
+    "sentence-transformers>=2.2.2",
 ]
 
 [dependency-groups]

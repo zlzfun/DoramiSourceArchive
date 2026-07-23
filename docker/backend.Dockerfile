@@ -24,8 +24,12 @@ WORKDIR /app
 # 届时按 https://docs.astral.sh/uv/guides/integration/pytorch/ 换显式 CPU 索引方案。
 ARG PIP_INDEX=https://pypi.org/simple
 ENV UV_DEFAULT_INDEX=${PIP_INDEX}
+# WITH_RAG=1 时附带 rag-embedded extra(进程内嵌入/重排,含 torch 科学计算栈 ~1GB);
+# 默认 0 = 瘦身镜像:RAG 关闭或走远程形态(chroma server + TEI)都不需要这批依赖。
+ARG WITH_RAG=0
 COPY pyproject.toml uv.lock ./
-RUN uv export --frozen --no-dev --no-hashes --no-emit-project -o /tmp/requirements.txt \
+RUN if [ "$WITH_RAG" = "1" ]; then EXTRA="--extra rag-embedded"; else EXTRA=""; fi \
+ && uv export --frozen --no-dev --no-hashes --no-emit-project $EXTRA -o /tmp/requirements.txt \
  && grep -vE '^(nvidia-|cuda-|triton==)' /tmp/requirements.txt > /tmp/requirements.cpu.txt \
  && UV_TORCH_BACKEND=cpu uv pip install --system -r /tmp/requirements.cpu.txt \
  && rm /tmp/requirements*.txt
