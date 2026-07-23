@@ -44,6 +44,27 @@ docker compose down                 # 停站(数据在宿主目录,安全)
 (`127.0.0.1:8080`,配合外层 TLS 反代);时区默认
 `Asia/Shanghai`(影响采集任务/日报的 cron 语义),`TZ` 环境变量可覆盖。
 
+## 低版本 Docker 兼容路径(内网 Docker 18.x + docker-compose v1)
+
+内网机器常见 Docker 18.x + 独立二进制 `docker-compose`(带横杠,无 `docker compose`
+插件),主路径的两处新版依赖会失效:`docker-compose.yml` 无 `version:` 键(旧版不识别
+compose-spec 格式)且用了 `profiles`(1.28+ 特性)。为此提供一套平行文件,**三个文件与
+主路径同源维护,改主 compose 须同步**:
+
+```bash
+./deploy-docker-legacy.sh          # 同 deploy-docker.sh 一条龙;自动探测 docker-compose / docker compose
+./deploy-docker-legacy.sh --rag    # 叠加 RAG 服务组(替代 --profile rag)
+
+# 常用运维(手动 -f 指定 legacy 文件)
+docker-compose -f docker-compose.legacy.yml logs -f backend
+```
+
+- `docker-compose.legacy.yml` — 钉 `version: "2.4"`(需 docker-compose 1.21+ /
+  Engine 17.12+;v2 格式原生支持 `depends_on.condition` 与 `healthcheck.start_period`),
+  服务定义与主文件一致,仅去掉 RAG 组。
+- `docker-compose.legacy-rag.yml` — chroma + tei-embed(profiles 的 `-f` 叠加替代)。
+- 两个 Dockerfile 无需改动:只用了多阶段构建(Docker 17.05+),不依赖 BuildKit。
+
 ## ini 在容器内的语义差异
 
 | ini 节 | 容器内行为 |
