@@ -8,7 +8,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Install dependencies (use uv, the project uses uv.lock)
-uv sync
+uv sync    # dev 全量:uv sync --extra rag-embedded(进程内 RAG)--extra crawl4ai(浏览器详情后端)
+
+# ⚠️ 改依赖(pyproject dependencies/extras)后的完整流程——uv.lock 按惯例不入库
+# (含开发机镜像源改写),镜像构建的版本事实来源是入库的导出清单,改完必须重导出并提交:
+#   uv lock && uv sync --extra rag-embedded --extra crawl4ai
+#   uv export --frozen --no-dev --no-hashes --no-emit-project -o docker/requirements.txt
+#   uv export --frozen --no-dev --no-hashes --no-emit-project --extra rag-embedded -o docker/requirements-rag.txt
+# tests/test_docker_requirements.py 守卫清单与 pyproject 的一致性(v3.17.0 生产曾因旧锁静默装回 torch)
 
 # Run the backend server (starts on http://127.0.0.1:8088, hot-reload enabled)
 python src/main.py
