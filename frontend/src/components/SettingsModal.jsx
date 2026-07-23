@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FileText, Info, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
+import { FileText, Info, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
 import { useModalTransition } from '../hooks/useModalTransition';
 import { useModalA11y } from '../hooks/useModalA11y';
 import AccountSection from './settings/AccountSection';
@@ -8,6 +8,7 @@ import FeedTokenSection from './settings/FeedTokenSection';
 import McpAccessSection from './settings/McpAccessSection';
 import SkillSection from './settings/SkillSection';
 import DataSyncSection from './settings/DataSyncSection';
+import FeedbackSection from './settings/FeedbackSection';
 import AboutSection from './settings/AboutSection';
 
 // 设置面板(弹窗波→并入设置波):控制柜——左导航(分组灰签 + wash 块选中,全站轨语言)+ 右内容。
@@ -22,6 +23,7 @@ const HINTS = {
   mcp: '把内容接进你的 Agent 工具',
   skill: '装进 Agent 的每日资讯技能',
   sync: '部署端之间搬运文章归档',
+  feedback: '把想法与问题告诉管理员',
   about: '产品与账户信息',
 };
 
@@ -46,6 +48,7 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
       items: [
         { id: 'account', label: '账户', icon: User },
         { id: 'appearance', label: '外观', icon: Palette },
+        { id: 'feedback', label: '反馈与建议', icon: MessageSquare },
       ],
     },
     {
@@ -158,6 +161,9 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
                 canImport={readerEnabled}
                 onArticlesChanged={onArticlesChanged}
               />
+            )}
+            {activeSection.id === 'feedback' && (
+              <FeedbackSection showToast={showToast} />
             )}
             {activeSection.id === 'about' && (
               <AboutSection accountRoleLabel={accountRoleLabel} isAdmin={isAdmin} version={runtimeInfo?.version} />

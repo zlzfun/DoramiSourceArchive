@@ -575,3 +575,82 @@ export function rotateSubscriptionToken(id) {
 export function deleteSubscription(id) {
   return request(`/subscriptions/${id}`, { method: 'DELETE', errorMsg: '删除订阅源失败' });
 }
+
+// ==================== 反馈与建议（v3.18 互通波） ====================
+export function submitFeedback(category, content) {
+  return request('/reader/feedback', { method: 'POST', body: { category, content }, errorMsg: '提交反馈失败' });
+}
+
+export function fetchMyFeedback() {
+  return request('/reader/feedback', { errorMsg: '获取反馈列表失败' });
+}
+
+export function withdrawFeedback(id) {
+  return request(`/reader/feedback/${id}`, { method: 'DELETE', errorMsg: '撤回反馈失败' });
+}
+
+export function fetchAdminFeedback(status = null, limit = 200) {
+  const params = new URLSearchParams({ limit });
+  if (status) params.append('status', status);
+  return request(`/admin/feedback?${params}`, { errorMsg: '获取反馈收件箱失败' });
+}
+
+export function updateFeedbackStatus(id, status, adminNote = undefined) {
+  const body = { status };
+  if (adminNote !== undefined) body.admin_note = adminNote;
+  return request(`/admin/feedback/${id}/status`, { method: 'POST', body, errorMsg: '处理反馈失败' });
+}
+
+// ==================== 公告（v3.18 互通波） ====================
+export function fetchReaderAnnouncements() {
+  return request('/reader/announcements', { errorMsg: '获取公告失败' });
+}
+
+// 关闭公告为一次性动作，失败静默（下次会话还会出现，无害）。
+export function dismissAnnouncement(id) {
+  return apiFetch(`${API_BASE_URL}/reader/announcements/${id}/dismiss`, { method: 'POST' })
+    .catch(() => {});
+}
+
+export function fetchAdminAnnouncements() {
+  return request('/admin/announcements', { errorMsg: '获取公告列表失败' });
+}
+
+export function createAnnouncement(payload) {
+  return request('/admin/announcements', { method: 'POST', body: payload, errorMsg: '发布公告失败' });
+}
+
+export function updateAnnouncement(id, payload) {
+  return request(`/admin/announcements/${id}`, { method: 'PUT', body: payload, errorMsg: '更新公告失败' });
+}
+
+export function toggleAnnouncement(id) {
+  return request(`/admin/announcements/${id}/toggle`, { method: 'POST', errorMsg: '切换公告状态失败' });
+}
+
+export function deleteAnnouncement(id) {
+  return request(`/admin/announcements/${id}`, { method: 'DELETE', errorMsg: '删除公告失败' });
+}
+
+// ==================== 远程内容同步（v3.18 互通波，admin） ====================
+export function testRemoteSync(baseUrl, username, password) {
+  return request('/admin/remote-sync/test', {
+    method: 'POST',
+    body: { base_url: baseUrl, username, password },
+    errorMsg: '远端连接测试失败',
+  });
+}
+
+// 提交后台拉取任务，返回 { job_id }；调用方用 fetchBackgroundJob 轮询进度
+// （processed/total 逐条推进），不在这里 pollJob 到终态。
+export function startRemoteSync(baseUrl, username, password, options = {}) {
+  const { fetchedDateStart, sourceIds } = options;
+  const body = { base_url: baseUrl, username, password };
+  if (fetchedDateStart) body.fetched_date_start = fetchedDateStart;
+  if (sourceIds && sourceIds.length) body.source_ids = sourceIds;
+  return request('/admin/remote-sync/start', { method: 'POST', body, errorMsg: '启动远程同步失败' });
+}
+
+export function fetchRemoteSyncStatus() {
+  return request('/admin/remote-sync/status', { errorMsg: '获取远程同步状态失败' });
+}

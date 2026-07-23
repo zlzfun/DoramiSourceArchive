@@ -28,6 +28,7 @@ import ReaderAiPanel from './ReaderAiPanel';
 import { SOURCE_ROLES, sourceRoleOf, resolveCompany } from '../sourceTaxonomy';
 import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
+import AnnouncementBanner from './AnnouncementBanner';
 import { excerptOf } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
 import { WEEKDAY_CHARS, fmtDayKey, dayKeyOf, dayLabelOf } from '../utils/readerTime';
@@ -840,6 +841,8 @@ export default function ReaderTab({
 
   return (
     <div className="reader-shell">
+      {/* ── 管理员公告横幅(v3.18):无公告时渲染 null,:has 不命中,四带布局逐像素不变 ── */}
+      <AnnouncementBanner />
       {/* ── 视图轨 · 一级视图导航(样页:品牌标 + 自绘右侧 tooltip + 轨底头像) ── */}
       <nav className="reader-vrail" aria-label="阅读视图">
         {!brandFailed ? (

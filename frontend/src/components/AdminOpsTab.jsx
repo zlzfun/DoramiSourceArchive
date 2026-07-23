@@ -14,6 +14,7 @@ import {
   X,
   Loader2,
   Check,
+  MessageSquare,
 } from 'lucide-react';
 import {
   fetchAdminAccounts,
@@ -40,6 +41,8 @@ import { useModalTransition } from '../hooks/useModalTransition';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { MultiSeriesArea, RankBars, BarList } from './charts/DashboardCharts';
 import MediaHeatmap from './admin/MediaHeatmap';
+import FeedbackInboxPanel from './admin/FeedbackInboxPanel';
+import AnnouncementsPanel from './admin/AnnouncementsPanel';
 import { pivotDaily, C_READ, C_FAVORITE, C_OTHER } from './charts/chartUtils';
 import { PURPOSE_LABELS, formatStamp, fmtNum, pct, truncLabel, vectorizedRateClass } from './admin/adminUtils';
 
@@ -481,9 +484,18 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
             <button onClick={() => setSub('user')} className={`segmented-option ${sub === 'user' ? 'segmented-option-active' : ''}`}><Users /> 用户</button>
             <button onClick={() => setSub('content')} className={`segmented-option ${sub === 'content' ? 'segmented-option-active' : ''}`}><Database /> 内容</button>
             <button onClick={() => setSub('ai')} className={`segmented-option ${sub === 'ai' ? 'segmented-option-active' : ''}`}><Brain /> AI</button>
+            <button onClick={() => setSub('engage')} className={`segmented-option ${sub === 'engage' ? 'segmented-option-active' : ''}`}><MessageSquare /> 消息</button>
           </div>
         </div>
       </div>
+
+      {/* ══ 消息子页(v3.18 互通波:反馈收件箱 + 公告管理)════════════ */}
+      {sub === 'engage' && (
+        <div className="grid gap-4">
+          <FeedbackInboxPanel showToast={showToast} />
+          <AnnouncementsPanel showToast={showToast} />
+        </div>
+      )}
 
       {/* ══ 用户子页 ══════════════════════════════════════════════ */}
       {sub === 'user' && (

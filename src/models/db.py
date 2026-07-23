@@ -363,6 +363,61 @@ class LoginEventRecord(SQLModel, table=True):
     at: str = Field(index=True, description="登录时间 ISO 串")
 
 
+FEEDBACK_CATEGORIES = frozenset({"source_request", "bug", "suggestion", "other"})
+FEEDBACK_STATUSES = frozenset({"open", "in_progress", "resolved", "dismissed"})
+
+
+class FeedbackRecord(SQLModel, table=True):
+    """读者反馈:读者提交诉求/问题(想要新源、bug、建议),管理员收件处理并回复。
+
+    读者只能看/撤回自己的(撤回仅限 open 态);管理员全量可见,流转 status 并写
+    admin_note(读者可见的回复)。分类与状态枚举见 FEEDBACK_CATEGORIES / FEEDBACK_STATUSES。
+    """
+    __tablename__ = "feedbacks"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    owner_username: str = Field(index=True, description="提交者用户名")
+    category: str = Field(index=True, description="source_request/bug/suggestion/other")
+    content: str = Field(description="反馈正文,≤2000 字")
+    status: str = Field(default="open", index=True, description="open/in_progress/resolved/dismissed")
+    admin_note: str = Field(default="", description="管理员回复/处理备注(读者可见)")
+    created_at: str = Field(index=True, description="提交时间")
+    updated_at: str = Field(description="最近一次状态/回复变更时间")
+
+
+ANNOUNCEMENT_LEVELS = frozenset({"info", "accent", "warning"})
+
+
+class AnnouncementRecord(SQLModel, table=True):
+    """管理员公告:读者面顶部横幅,逐用户一次性(dismiss 后不再出现,跨设备一致)。
+
+    content 为受限 markdown 子集(仅 **加粗** 与 [文字](http(s)链接)),渲染端
+    白名单解析、绝不注入 HTML;level 决定横幅配色(映射 design token,不存任意色值)。
+    """
+    __tablename__ = "announcements"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(default="", description="可空短标题")
+    content: str = Field(description="正文,受限 markdown 子集")
+    level: str = Field(default="info", index=True, description="info/accent/warning → 横幅配色档")
+    is_active: bool = Field(default=True, index=True, description="是否在读者面展示")
+    created_by: str = Field(default="", description="发布者用户名")
+    created_at: str = Field(index=True, description="发布时间")
+    updated_at: str = Field(description="最近一次编辑时间")
+
+
+class AnnouncementDismissRecord(SQLModel, table=True):
+    """公告逐用户关闭记录:一行 = 某读者关闭了某条公告(「一次性通知」语义的落点)。
+
+    复合主键防重;公告删除时级联清理本表对应行。
+    """
+    __tablename__ = "announcement_dismissals"
+
+    owner_username: str = Field(primary_key=True, description="关闭者用户名")
+    announcement_id: int = Field(primary_key=True, index=True, description="公告 ID")
+    dismissed_at: str = Field(description="关闭时间")
+
+
 class UserRecord(SQLModel, table=True):
     """登录账户：数据库托管，密码以 PBKDF2 哈希存储。
 

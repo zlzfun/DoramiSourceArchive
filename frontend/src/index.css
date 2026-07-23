@@ -9667,3 +9667,226 @@ input[type="radio"] {
 .running-dock .running-widget-progress-queued { color: rgba(255, 255, 255, 0.62); }
 .running-dock .running-widget-more { color: rgba(255, 255, 255, 0.68); }
 .running-mini-n { color: #fff; }
+
+
+/* ══ v3.18 互通波:公告与反馈 ══
+   读者横幅 + 管理面公告撰写/预览/列表 + 反馈回复气泡/收件箱。
+   全程语义 token(soft/wash/state-warn/ink/border,亮暗自动翻转);
+   工作区表面纪律:克制、无动效、hairline 单一分隔手段。 */
+
+/* ── 读者面:悬浮横幅(Apple 毛玻璃语法)──
+   不占布局:absolute 悬浮于阅读器上方,整页水平居中,关闭/自动隐藏均零位移。
+   玻璃四要素(参照 iOS/macOS 材质的通行 CSS 复刻):① 低不透明度 surface 底
+   (color-mix 亮暗自动翻转)② 大半径 blur + saturate 提饱和(透出的底色更鲜活,
+   玻璃感的主要来源)③ 顶部光泽渐变 + inset 1px 高光(--dorami-edge,光从上方来)
+   ④ 细 hairline 外缘 + 柔和落影。**中性材质**:不做档位底色/左缘描边,语义只由
+   图标(形状+颜色)承载——通知材质保持一色,才像系统级浮层而非站内色块。 */
+.reader-shell { position: relative; } /* 悬浮横幅的定位上下文;对 grid 布局无影响 */
+
+.reader-ann-band {
+  position: absolute;
+  top: 14px;
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  width: min(560px, calc(100% - 32px));
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* 入场动效(iOS 通知式滑入→溶解成玻璃),绕开 Chrome 合成器的硬限制:
+   元素(或祖先)带 active 动画时 backdrop-filter 一律不取样——无论动画挂在谁身上,
+   动画期间玻璃必失效。最小复现验证过两种失败形态:动画期"清晰直透"(blur 断开)、
+   opacity 动画把实底打薄照样透字。因此入场做成两段:
+   ① entering:纯 transform 从屏幕顶缘滑入(**无 opacity**),底色临时调实(78%)、
+     不开 blur——动画期间底下内容被完全遮住,没有"清晰直透"帧;
+   ② JS 摘类落定:blur 挂上、底色经 transition 溶解回 18% 玻璃态——
+     模糊内容随溶解渐显,与稳态无缝统一。
+   离场语义是"消散",淡出过程露出底下内容不违和,维持 opacity+transform 出场。 */
+.reader-ann-band.is-entering .ann-card {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background-color: color-mix(in srgb, var(--dorami-surface) 78%, transparent);
+  transition: none;
+  animation: ann-card-in 350ms cubic-bezier(0.32, 0.72, 0.25, 1) both;
+}
+.reader-ann-band.is-leaving .ann-card {
+  animation: ann-card-out var(--motion-slow) var(--motion-ease) both;
+}
+.reader-ann-band.is-leaving { pointer-events: none; }
+@keyframes ann-card-in {
+  from { transform: translateY(calc(-100% - 26px)); }
+  to   { transform: none; }
+}
+@keyframes ann-card-out {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateY(-12px) scale(0.97); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reader-ann-band.is-entering .ann-card, .reader-ann-band.is-leaving .ann-card { animation-duration: 1ms; }
+}
+
+/* 单条公告卡:彩色玻璃胶囊卡(overlay 级大圆角)+ 档位图标 + 标题/正文同段流式 + 关闭钮。
+   透明度显著压低(surface 42%)——玻璃感 = 底下内容透出 + tint 变色的双重证据;
+   档位 tint 是彩色半透明叠层(通知=灰蓝/强调=靛/警示=琥珀),文字与图标取同档深色。 */
+.ann-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 15px;
+  border: 1px solid var(--dorami-border);
+  border-radius: var(--r-overlay);
+  color: var(--dorami-ink);
+  background-color: color-mix(in srgb, var(--dorami-surface) 18%, transparent);
+  /* 两层叠加:档位彩色 tint(变量,各档覆写)+ 顶部光泽(edge 高光渐隐,顶光扫过玻璃面)。
+     覆盖度刻意压得很低(18%+tint):横幅背后常是近纯色的阅读器空白,覆盖度一高,
+     "物理透明"也读不出玻璃——底透必须是主体,卡片自身只提供 tint 与光泽。 */
+  --ann-tint: transparent;
+  background-image:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--dorami-edge) 32%, transparent),
+      transparent 62%),
+    linear-gradient(var(--ann-tint), var(--ann-tint));
+  /* blur 半径刻意取小(6px):模糊半径一旦大于底下小字字高(12px),文字会被
+     彻底抹平成均匀色——"物理透明、视觉实心"。玻璃感的验收标准是底下内容
+     轮廓可辨(用户拍板:要能看到透过来的字样),不是把一切糊成一色。 */
+  backdrop-filter: blur(6px) saturate(1.8);
+  -webkit-backdrop-filter: blur(6px) saturate(1.8);
+  /* 入场落定后底色从 78% 实底溶解回 18% 玻璃(entering 态覆写为 transition:none) */
+  transition: background-color var(--motion-slow) var(--motion-ease);
+  box-shadow: inset 0 1px 0 var(--dorami-edge), var(--sh-3);
+}
+/* 档位 = 彩色玻璃 tint + 同档文字/图标(形状+色双通道,合 §2;accent-ink/state-warn
+   为亮暗成对 token,暗色自动换亮端保对比) */
+.ann-info    { --ann-tint: color-mix(in srgb, var(--dorami-muted) 9%, transparent); }
+.ann-accent  { --ann-tint: color-mix(in srgb, var(--dorami-accent) 14%, transparent);
+               color: var(--dorami-accent-ink); }
+.ann-warning { --ann-tint: color-mix(in srgb, var(--state-warn) 14%, transparent);
+               color: var(--state-warn); }
+.ann-info    .ann-icon { color: var(--dorami-muted); }
+.ann-accent  .ann-icon { color: var(--dorami-accent); }
+.ann-warning .ann-icon { color: var(--state-warn); }
+
+.ann-icon { flex: none; width: 15px; height: 15px; margin-top: 3px; }
+.ann-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;      /* 卡内小节刻度(12.5–13),横幅正文取上限保可读 */
+  font-weight: 600;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.ann-text .ann-title { font-weight: 700; margin-right: 7px; }
+.ann-text strong { font-weight: 700; }
+/* 链接随档位文字色走(彩底卡上引入第二饱和色会撞色),下划线承载可点性 */
+.ann-text a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.ann-text a:hover { opacity: 0.82; }   /* hover 只允许同族变化,不引入新色 */
+
+.ann-close {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-pill);
+  color: inherit;
+  opacity: 0.55;
+  transition: opacity var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
+}
+/* hover 底用 currentColor 淡染(不引入不透明底,保玻璃通透),跟随档位色,亮暗两主题都可见 */
+.ann-close:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); }
+.ann-close svg { width: 14px; height: 14px; }
+
+/* ── 管理面:撰写 + 预览 + 已发列表 ── */
+.ann-composer { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.ann-composer-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.ann-composer-spacer { flex: 1; }
+.ann-charcount { font-variant-numeric: tabular-nums; }
+
+/* 预览 = 真实悬浮卡形态(卡片自带玻璃/圆角/阴影),容器只限宽,所见即读者所得 */
+.ann-preview { max-width: 560px; }
+
+.ann-mgr-list { margin-top: 14px; }
+.ann-mgr-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 2px;
+  border-top: 1px solid var(--dorami-border);
+}
+.ann-mgr-row .ann-icon { margin-top: 0; }
+.ann-level-info    { color: var(--dorami-faint); }
+.ann-level-accent  { color: var(--dorami-accent); }
+.ann-level-warning { color: var(--state-warn); }
+
+.ann-mgr-main { flex: 1; min-width: 0; }
+.ann-mgr-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dorami-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ann-mgr-text .ann-title { font-weight: 700; margin-right: 7px; }
+.ann-mgr-row.is-off .ann-mgr-text { color: var(--dorami-faint); }
+.ann-mgr-meta { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.ann-mgr-acts { flex: none; display: flex; align-items: center; gap: 4px; }
+
+/* ── 反馈:管理员回复气泡(读者面/收件箱同款)── */
+.fb-reply {
+  margin-top: 8px;
+  padding: 7px 10px;
+  background: var(--dorami-wash);
+  border-left: 3px solid var(--dorami-accent);
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.6;
+  color: var(--dorami-ink-2);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.fb-reply .fb-reply-label { color: var(--dorami-accent-ink); margin-right: 6px; }
+
+/* ── 反馈:读者「我的反馈」列表行 / 管理收件箱行 ── */
+.fb-row { padding: 12px 2px; border-top: 1px solid var(--dorami-border); }
+.fb-row:first-child { border-top: none; }
+.fb-row-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.fb-row-body {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.65;
+  color: var(--dorami-ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 行内文字微钮(S 档):撤回/处理这类低频行级动作 */
+.fb-textbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 0 7px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dorami-muted);
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+.fb-textbtn:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+.fb-textbtn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
+.fb-textbtn svg { width: 12px; height: 12px; }
+.fb-textbtn[aria-expanded="true"] { background: var(--dorami-soft); color: var(--dorami-ink); }
+
+/* 收件箱行内处理区(展开态) */
+.fb-process {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
