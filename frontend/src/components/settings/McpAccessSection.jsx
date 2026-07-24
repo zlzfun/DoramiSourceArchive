@@ -67,8 +67,9 @@ function CopyBtn({ text, label, copiedKey, itemKey, onCopy, title }) {
 /**
  * MCP 接入（设置柜·接入集成组）：端点 + 客户端配置 + 工具清单。
  * 前身是接入集成页签的 MCP 大卡（并入设置波）；原「服务」区随开关并入退役（用户拍板）——
- * canManage（admin）时头部渲染启停 switch（switch 即状态，替代状态章），
+ * canManage（管理台界面的 admin）时头部渲染启停 switch（switch 即状态，替代状态章），
  * 底部追加向量索引只读统计行（RAG 工具的底层索引状态，构建管理仍归知识台账）。
+ * 读者观感（含 admin 在阅读器界面）：无开关、无管理面文案，「启停与取数范围」走读者版说明。
  */
 export default function McpAccessSection({ showToast, ragEnabled = false, canManage = false, onClose }) {
   const [status, setStatus] = useState(null);
@@ -288,9 +289,15 @@ export default function McpAccessSection({ showToast, ragEnabled = false, canMan
 
       <details className="scope-note">
         <summary>启停与取数范围</summary>
-        <p>
-          MCP 服务随后端进程启停，无需单独部署，启停由管理员统一控制。管理员会话检索全库；携带 dfeed_ / dsub_ 令牌的调用硬限定到该令牌的订阅范围（仅 <code className="font-mono">list_sources</code> 例外，可直接列目录）。管理员的 dfeed_ 令牌不受此限，检索全库。RAG 关闭时，两个语义工具返回结构化的「RAG disabled」而非报错。
-        </p>
+        {canManage ? (
+          <p>
+            MCP 服务随后端进程启停，无需单独部署，启停由管理员统一控制。管理员会话检索全库；携带 dfeed_ / dsub_ 令牌的调用硬限定到该令牌的订阅范围（仅 <code className="font-mono">list_sources</code> 例外，可直接列目录）。管理员的 dfeed_ 令牌不受此限，检索全库。RAG 关闭时，两个语义工具返回结构化的「RAG disabled」而非报错。
+          </p>
+        ) : (
+          <p>
+            MCP 服务由管理员统一开启。携带你的 dfeed_ / dsub_ 令牌的调用会限定在你的订阅范围（仅 <code className="font-mono">list_sources</code> 例外，可直接列目录）。语义检索未开启时，两个语义工具会返回说明性结果而非报错。
+          </p>
+        )}
       </details>
 
       {/* admin+RAG:语义工具的底层索引状态(只读);构建/重索引/自动向量化归知识台账总账条独管 */}

@@ -81,6 +81,11 @@ export function updateAvatar(avatar) {
   return request('/auth/avatar', { method: 'POST', body: { avatar }, errorMsg: '更新头像失败' });
 }
 
+// 自助偏好(v3.19 多管理员波):目前仅 default_surface(管理员登录后默认落地界面)。
+export function updateOwnPreferences(payload) {
+  return request('/auth/preferences', { method: 'POST', body: payload, errorMsg: '保存偏好失败' });
+}
+
 // ==================== 账户管理（仅管理员） ====================
 export function fetchAccounts() {
   return request('/accounts', { errorMsg: '获取账户列表失败' });
@@ -111,8 +116,10 @@ export function fetchAdminOverview() {
   return request('/admin/overview', { errorMsg: '获取运维概览失败' });
 }
 
-export function fetchAdminAccounts(days = 30) {
-  return request(`/admin/accounts?days=${enc(days)}`, { errorMsg: '获取账户列表失败' });
+// 规模化波:服务端分页 + 用户名搜索;响应 {items, total, summary}(summary 聚合全量,不受分页/搜索影响)。
+export function fetchAdminAccounts(days = 30, { skip = 0, limit = 15, q = '' } = {}) {
+  const params = withFilters(new URLSearchParams({ days, skip, limit }), { q: q.trim() });
+  return request(`/admin/accounts?${params.toString()}`, { errorMsg: '获取账户列表失败' });
 }
 
 export function fetchAccountActivity(username, days = 30) {
@@ -127,6 +134,11 @@ export function fetchAdminContent(top = 12) {
   return request(`/admin/content?top=${enc(top)}`, { errorMsg: '获取内容看板失败' });
 }
 
+// 管理操作审计(v3.19 多管理员波):中间件对管理面写操作逐条落行,按时间倒序;服务端分页。
+export function fetchAdminAuditLog(days = 30, { skip = 0, limit = 15 } = {}) {
+  return request(`/admin/audit-log?days=${enc(days)}&skip=${enc(skip)}&limit=${enc(limit)}`, { errorMsg: '获取操作审计失败' });
+}
+
 // ── 媒体库（图床） ──
 // 正文外链图统一改经后端代理取图（命中本地缓存回文件，失败 302 回源降级）。
 // 非 http(s) 地址（data: URI、相对路径）原样返回不代理。
@@ -139,8 +151,10 @@ export function fetchMediaStats() {
   return request('/admin/media/stats', { errorMsg: '获取媒体库统计失败' });
 }
 
-export function fetchMediaHeatmap(days = 365) {
-  return request(`/admin/media/heatmap?days=${enc(days)}`, { errorMsg: '获取媒体热点图失败' });
+// year 传自然年取该年切片(年份切换轨);缺省为近 days 天滚动窗。响应恒带 years 可用年份列表。
+export function fetchMediaHeatmap(days = 365, year = null) {
+  const params = withFilters(new URLSearchParams({ days }), { year });
+  return request(`/admin/media/heatmap?${params.toString()}`, { errorMsg: '获取媒体热点图失败' });
 }
 
 export function fetchMediaDay(date) {
@@ -574,4 +588,98 @@ export function rotateSubscriptionToken(id) {
 
 export function deleteSubscription(id) {
   return request(`/subscriptions/${id}`, { method: 'DELETE', errorMsg: '删除订阅源失败' });
+}
+
+// ==================== 反馈与建议（v3.18 互通波） ====================
+export function submitFeedback(category, content) {
+  return request('/reader/feedback', { method: 'POST', body: { category, content }, errorMsg: '提交反馈失败' });
+}
+
+export function fetchMyFeedback() {
+  return request('/reader/feedback', { errorMsg: '获取反馈列表失败' });
+}
+
+export function withdrawFeedback(id) {
+  return request(`/reader/feedback/${id}`, { method: 'DELETE', errorMsg: '撤回反馈失败' });
+}
+
+// 规模化波:服务端分页;响应 {items, total, counts}(total = 当前 status 过滤下总数)。
+export function fetchAdminFeedback(status = null, { skip = 0, limit = 10 } = {}) {
+  const params = new URLSearchParams({ skip, limit });
+  if (status) params.append('status', status);
+  return request(`/admin/feedback?${params}`, { errorMsg: '获取反馈收件箱失败' });
+}
+
+export function updateFeedbackStatus(id, status, adminNote = undefined) {
+  const body = { status };
+  if (adminNote !== undefined) body.admin_note = adminNote;
+  return request(`/admin/feedback/${id}/status`, { method: 'POST', body, errorMsg: '处理反馈失败' });
+}
+
+// ==================== 公告（v3.18 互通波） ====================
+export function fetchReaderAnnouncements() {
+  return request('/reader/announcements', { errorMsg: '获取公告失败' });
+}
+
+// 关闭公告为一次性动作，失败静默（下次会话还会出现，无害）。
+export function dismissAnnouncement(id) {
+  return apiFetch(`${API_BASE_URL}/reader/announcements/${id}/dismiss`, { method: 'POST' })
+    .catch(() => {});
+}
+
+export function fetchAdminAnnouncements() {
+  return request('/admin/announcements', { errorMsg: '获取公告列表失败' });
+}
+
+export function createAnnouncement(payload) {
+  return request('/admin/announcements', { method: 'POST', body: payload, errorMsg: '发布公告失败' });
+}
+
+export function updateAnnouncement(id, payload) {
+  return request(`/admin/announcements/${id}`, { method: 'PUT', body: payload, errorMsg: '更新公告失败' });
+}
+
+export function toggleAnnouncement(id) {
+  return request(`/admin/announcements/${id}/toggle`, { method: 'POST', errorMsg: '切换公告状态失败' });
+}
+
+export function deleteAnnouncement(id) {
+  return request(`/admin/announcements/${id}`, { method: 'DELETE', errorMsg: '删除公告失败' });
+}
+
+// ==================== 远程内容同步（v3.18 互通波，admin） ====================
+export function testRemoteSync(baseUrl, username, password) {
+  return request('/admin/remote-sync/test', {
+    method: 'POST',
+    body: { base_url: baseUrl, username, password },
+    errorMsg: '远端连接测试失败',
+  });
+}
+
+// 提交后台拉取任务，返回 { job_id }；调用方用 fetchBackgroundJob 轮询进度
+// （processed/total 逐条推进），不在这里 pollJob 到终态。
+export function startRemoteSync(baseUrl, username, password, options = {}) {
+  const { fetchedDateStart, sourceIds } = options;
+  const body = { base_url: baseUrl, username, password };
+  if (fetchedDateStart) body.fetched_date_start = fetchedDateStart;
+  if (sourceIds && sourceIds.length) body.source_ids = sourceIds;
+  return request('/admin/remote-sync/start', { method: 'POST', body, errorMsg: '启动远程同步失败' });
+}
+
+export function fetchRemoteSyncStatus() {
+  return request('/admin/remote-sync/status', { errorMsg: '获取远程同步状态失败' });
+}
+
+// 定时同步(v3.19.2):凭据只写不回显——GET 永不含 password,仅 password_set;
+// POST 的 password 传空串表示保留已存密码。
+export function fetchRemoteSyncSchedule() {
+  return request('/admin/remote-sync/schedule', { errorMsg: '获取定时同步配置失败' });
+}
+
+export function saveRemoteSyncSchedule(payload) {
+  return request('/admin/remote-sync/schedule', {
+    method: 'POST',
+    body: payload,
+    errorMsg: '保存定时同步配置失败',
+  });
 }

@@ -15,21 +15,12 @@ from sqlmodel import Session
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-
-def _auth_config(admin="admin:admin", user="user:user"):
-    from config import _auth_credentials
-
-    return replace(
-        __import__("api.app", fromlist=["settings"]).settings.auth,
-        admin_users=_auth_credentials(admin) if admin else [],
-        user_users=_auth_credentials(user) if user else [],
-    )
+from tests.conftest import seed_default_accounts  # noqa: E402
 
 
 def _setup_app(monkeypatch, tmp_path):
     import api.app as app_module
     from config import RuntimeConfig
-    from services import accounts as accounts_service
 
     sink = __import__("storage.impl.db_storage", fromlist=["DatabaseStorage"]).DatabaseStorage(
         db_url=f"sqlite:///{tmp_path / 'app_admin_ops.db'}"
@@ -38,7 +29,7 @@ def _setup_app(monkeypatch, tmp_path):
     monkeypatch.setattr(
         app_module, "settings", replace(app_module.settings, runtime=RuntimeConfig(role="all"))
     )
-    accounts_service.seed_users_if_empty(sink.engine, _auth_config())
+    seed_default_accounts(sink.engine)
     return app_module
 
 
@@ -52,7 +43,7 @@ def test_touch_login_and_record_ai_usage(tmp_path):
     from storage.impl.db_storage import DatabaseStorage
 
     engine = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'helpers.db'}").engine
-    accounts_service.seed_users_if_empty(engine, _auth_config())
+    seed_default_accounts(engine)
     with Session(engine) as session:
         assert accounts_service.get_user(session, "user").last_login_at is None
         accounts_service.touch_login(session, "user")
@@ -103,9 +94,17 @@ def test_admin_overview_and_gating(monkeypatch, tmp_path):
         assert "articles" in body["archive"]
         assert "calls_total" in body["ai"]
 
-        # 账户列表带订阅数字段。
-        accounts = client.get("/api/admin/accounts").json()
-        assert all("subscription_count" in a for a in accounts)
+        # 账户列表带订阅数字段;响应为 {items,total,summary}。
+        body = client.get("/api/admin/accounts").json()
+        assert set(body) == {"items", "total", "summary"}
+        assert all("subscription_count" in a for a in body["items"])
+        # summary/total 聚合全部账户(seed admin+user)。
+        assert body["total"] == 2
+        assert body["summary"]["accounts"] == 2
+        assert body["summary"]["admins"] == 1
+        assert body["summary"]["disabled"] == 0
+        assert isinstance(body["summary"]["top_reads"], list)
+        assert isinstance(body["summary"]["top_logins"], list)
 
     # 受限读者无权访问运维面。
     with TestClient(app_module.app) as client:
@@ -113,6 +112,55 @@ def test_admin_overview_and_gating(monkeypatch, tmp_path):
         assert client.get("/api/admin/overview").status_code == 403
         assert client.get("/api/admin/accounts").status_code == 403
         assert client.get("/api/admin/ai-beta/global").status_code == 403
+
+
+def test_admin_accounts_pagination_and_q_filter(monkeypatch, tmp_path):
+    """账户列表规模化:q 子串过滤(命中/未命中)+ skip/limit 切片;
+    summary/total 聚合全部账户不受 q/分页影响。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from services import accounts as accounts_service
+
+    with Session(app_module.db_sink.engine) as session:
+        # seed = admin + user;再造若干读者。
+        for name in ("alpha", "alberta", "beta", "gamma"):
+            accounts_service.create_user(session, name, f"{name}pw1", "user")
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+
+        # 全量:total=6(admin+user+4),summary 聚合全部账户。
+        full = client.get("/api/admin/accounts").json()
+        assert full["total"] == 6
+        assert full["summary"]["accounts"] == 6
+        assert full["summary"]["admins"] == 1
+        assert full["summary"]["disabled"] == 0
+
+        # q 命中(大小写不敏感):"AL" → alpha/alberta 两条,total/summary 不变。
+        hit = client.get("/api/admin/accounts", params={"q": "AL"}).json()
+        assert {a["username"] for a in hit["items"]} == {"alpha", "alberta"}
+        assert hit["total"] == 2
+        assert hit["summary"]["accounts"] == 6  # summary 不受 q 影响
+
+        # q 未命中:空 items、total=0,summary 仍全量。
+        miss = client.get("/api/admin/accounts", params={"q": "zzz"}).json()
+        assert miss["items"] == [] and miss["total"] == 0
+        assert miss["summary"]["accounts"] == 6
+
+        # skip/limit 切片:每页 2 条,三页并集覆盖全部 6 且互不重叠。
+        seen = []
+        for skip in (0, 2, 4):
+            page = client.get(
+                "/api/admin/accounts", params={"skip": skip, "limit": 2}
+            ).json()
+            assert page["total"] == 6
+            assert len(page["items"]) == 2
+            seen.extend(a["username"] for a in page["items"])
+        assert len(seen) == 6 and len(set(seen)) == 6
+
+        # limit clamp:超界 limit 收敛到 200,不报错。
+        assert client.get(
+            "/api/admin/accounts", params={"limit": 9999}
+        ).status_code == 200
 
 
 def test_global_switch_disables_ai(monkeypatch, tmp_path):
@@ -264,7 +312,7 @@ def test_login_events_aggregation(tmp_path):
     from storage.impl.db_storage import DatabaseStorage
 
     engine = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'logins.db'}").engine
-    accounts_service.seed_users_if_empty(engine, _auth_config())
+    seed_default_accounts(engine)
     with Session(engine) as session:
         accounts_service.touch_login(session, "user")
         accounts_service.touch_login(session, "user")
@@ -310,7 +358,8 @@ def test_admin_accounts_windowed_and_activity(monkeypatch, tmp_path):
 
     with TestClient(app_module.app) as client:
         _login(client, "admin", "admin")
-        accounts = client.get("/api/admin/accounts?days=30").json()
+        body = client.get("/api/admin/accounts?days=30").json()
+        accounts = body["items"]
         row = next(a for a in accounts if a["username"] == "user")
         assert row["window_days"] == 30
         assert row["ai_calls"] == 1 and row["ai_tokens"] == 12
@@ -319,6 +368,13 @@ def test_admin_accounts_windowed_and_activity(monkeypatch, tmp_path):
         assert row["logins"] == 2
         assert row["logged_in_window"] is True
         assert row["subscription_count"] == 1
+        # summary 全表聚合:user 窗口阅读 2 次进 top_reads,登录 2 次进 top_logins。
+        summary = body["summary"]
+        assert summary["reads"] >= 2 and summary["ai_calls"] >= 1
+        top_read = next(t for t in summary["top_reads"] if t["username"] == "user")
+        assert top_read["value"] == 2
+        top_login = next(t for t in summary["top_logins"] if t["username"] == "user")
+        assert top_login["value"] == 2
 
         detail = client.get("/api/admin/accounts/user/activity?days=30").json()
         assert detail["usage"]["totals"]["calls"] == 1
@@ -330,8 +386,8 @@ def test_admin_accounts_windowed_and_activity(monkeypatch, tmp_path):
         assert eng["reads"] == 2 and eng["favorites"] == 1 and "name" in eng
         assert detail["favorites_total"] == 1
         assert detail["account"]["subscription_count"] == 1
-        # 不存在 / admin 账户走 404。
-        assert client.get("/api/admin/accounts/admin/activity").status_code == 404
+        # 多管理员平权后 admin 活动详情同样可查（200）；不存在账户仍 404。
+        assert client.get("/api/admin/accounts/admin/activity").status_code == 200
         assert client.get("/api/admin/accounts/ghost/activity").status_code == 404
 
     # 受限读者无权访问。
@@ -358,7 +414,7 @@ def test_admin_accounts_last_login_falls_back_to_event_stream(monkeypatch, tmp_p
 
     with TestClient(app_module.app) as client:
         _login(client, "admin", "admin")
-        row = next(a for a in client.get("/api/admin/accounts?days=30").json() if a["username"] == "user")
+        row = next(a for a in client.get("/api/admin/accounts?days=30").json()["items"] if a["username"] == "user")
         assert row["last_login_at"] == expected
         assert row["logged_in_window"] is True
         detail = client.get("/api/admin/accounts/user/activity?days=30").json()

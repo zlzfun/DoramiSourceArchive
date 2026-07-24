@@ -174,6 +174,8 @@
      已过 dataviz 六项校验(validate_palette.js,白面 PASS;对比 WARN 由图例+直标+tooltip 承接)。
      纪律:固定序取色、色随实体不随排位、超出 6 系并入「其它」,不循环生成新色。
      暗色在 [data-theme=dark] 按 L 0.48–0.67 带同色相族降档重定义。 ── */
+  /* 图表分类六槽(主题色版,2026-07-24 用户拍板回归:曾两度尝试更亮的通用调色板,
+     实测观感不如品牌系;亮暗两组均已过 validate_palette.js 六项校验) */
   --chart-1: #5b54e8; --chart-2: #14b8a6; --chart-3: #f59e0b;
   --chart-4: #ef4444; --chart-5: #0ea5e9; --chart-6: #a855f7;
   --chart-other: #94a3b8;
@@ -1089,29 +1091,28 @@ input[type="radio"] {
     pointer-events: none;
   }
 
+  /* 跃迁收尾改全局隐出(2026-07-24 拍板:弃用「中心白光团 + 暗角」的径向闪光——
+     登录页整体淡入平色主题幕布,与 App 抵达幕同色,切换仍藏在幕布全亮帧背后)。 */
   .auth-warp-flash {
     position: fixed;
     inset: 0;
     z-index: 50;
     pointer-events: none;
     opacity: 0;
-    background: radial-gradient(
-      circle at 50% 50%,
-      rgba(228, 228, 255, 0.98) 0%,
-      rgba(122, 114, 244, 0.92) 42%,
-      rgba(4, 4, 14, 0) 78%
-    );
-    transition: opacity 0.3s ease;
+    background: #eef1f6;
+    transition: opacity 620ms var(--motion-ease);
+  }
+  [data-theme="dark"] .auth-warp-flash {
+    background: #0c0e13;
   }
   .auth-warp-flash.is-on {
     opacity: 1;
   }
 
-  /* —— 跃迁抵达幕(App 层,三段式):
-     hold   = 与登录侧闪光同帧接管(白光层全亮 + 近黑底,边角与登录暗场一致);
-     settle = 白光层 700ms 溶入「主题色幕布」——亮色幕布≈页面底色、暗色幕布≈canvas,
-              暗色主题由此从暗中显影、不再从白光里蹦出;数据未就绪时幕布兼任延迟护罩;
-     fading = 整幕在主界面之上淡出,主界面同步显影(app-arriving)。 —— */
+  /* —— 跃迁抵达幕(App 层,三段式,2026-07-24 全局隐出/隐入版):
+     hold   = 与登录侧「淡入幕布」的全亮帧同帧接管(平色主题幕布,无白光无暗角);
+     settle = 幕布静置一拍;数据未就绪时兼任延迟护罩(浮现着陆提示);
+     fading = 幕布在主界面之上整体淡出,主界面同步显影(app-arriving)。 —— */
   .app-arrive {
     position: fixed;
     inset: 0;
@@ -1126,36 +1127,6 @@ input[type="radio"] {
   .app-arrive.is-fading {
     opacity: 0;
     transition: opacity 950ms var(--motion-ease);
-  }
-  .app-arrive-light {
-    position: absolute;
-    inset: 0;
-    opacity: 1;
-    background:
-      radial-gradient(
-        circle at 50% 50%,
-        rgba(228, 228, 255, 0.98) 0%,
-        rgba(122, 114, 244, 0.92) 42%,
-        rgba(4, 4, 14, 0) 78%
-      ),
-      #04040e;
-    transition: opacity 700ms var(--motion-ease);
-  }
-  .app-arrive.is-settle .app-arrive-light,
-  .app-arrive.is-fading .app-arrive-light {
-    opacity: 0;
-  }
-  /* 暗色主题:闪光峰值柔一档(白心减淡、靛紫加深)——登录侧与抵达侧同步生效 */
-  [data-theme="dark"] .auth-warp-flash,
-  [data-theme="dark"] .app-arrive-light {
-    background:
-      radial-gradient(
-        circle at 50% 50%,
-        rgba(202, 202, 246, 0.85) 0%,
-        rgba(96, 89, 214, 0.9) 45%,
-        rgba(4, 4, 14, 0) 78%
-      ),
-      #04040e;
   }
 
   .app-arrive-wait {
@@ -1840,7 +1811,6 @@ input[type="radio"] {
       transition: none;
     }
     .app-arrive,
-    .app-arrive-light,
     .app-arrive-wait,
     .app-arriving {
       animation: none;
@@ -4149,7 +4119,9 @@ input[type="radio"] {
   .sett-cab { display: flex; overflow: hidden; font-size: 13px; }
   /* 与 .modal-panel 复合使用:panel 供表面/高程/开合动画;其 width:100%/flex-direction:column
      定义在后会压过同特异性声明——布局向属性一律用复合选择器钉住(弹窗波陷阱) */
-  .modal-panel.sett-cab { width: min(880px, 94vw); height: min(640px, 90vh); flex-direction: row; }
+  /* 柜高 640→576(2026-07-24 拍板):多数分区内容集中上半部,过高的柜体下半空置;
+     长分区(MCP/数据同步)本就滚动,矮柜不损内容。宽度保 880(代码块/工具表下限)。 */
+  .modal-panel.sett-cab { width: min(880px, 94vw); height: min(576px, 90vh); flex-direction: row; }
 
   .sett-nav { width: 184px; flex: none; display: flex; flex-direction: column;
     background: var(--dorami-soft); border-right: 1px solid var(--dorami-border); padding: 14px 8px;
@@ -4178,8 +4150,8 @@ input[type="radio"] {
   .sett-head-hint { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); }
   .sett-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px 20px; }
 
-  /* 设置行范式 */
-  .sett-row { display: flex; align-items: center; gap: 14px; padding: 12px 2px;
+  /* 设置行范式(行距 12→14:配合矮柜的纵向舒展,短分区不再头重脚轻) */
+  .sett-row { display: flex; align-items: center; gap: 14px; padding: 14px 2px;
     border-bottom: 1px solid var(--dorami-border); }
   .sett-row:last-child { border-bottom: none; }
   .sett-row.is-block { display: block; }
@@ -4188,10 +4160,11 @@ input[type="radio"] {
   .sett-sub { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); margin-top: 1px; line-height: 1.6; }
   .sett-ctl { flex: none; display: flex; align-items: center; gap: 8px; }
 
-  /* 外观三态分段(样页刻度:28px 紧凑白拇指;字号字重挂容器继承穿透) */
+  /* 外观三态分段(紧凑白拇指;字号字重挂容器继承穿透)。
+     26+3×2=32:与设置柜 M 档按钮(min-h-32)同一高度刻度(按钮尺寸统一,2026-07-24)。 */
   .sett-seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--r-control);
     background: var(--dorami-well); font-size: 12px; font-weight: 600; }
-  .sett-seg-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 28px;
+  .sett-seg-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 26px;
     padding: 0 12px; border-radius: 8px; color: var(--dorami-muted); }
   .sett-seg-btn:hover:not(.is-on) { color: var(--dorami-ink-2); }
   .sett-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
@@ -4210,12 +4183,39 @@ input[type="radio"] {
   .sett-link { color: var(--dorami-accent-ink); font-weight: 600; }
   .sett-link:hover { text-decoration: underline; }
 
-  /* 数据同步:动作台虚线卡(区别于设置行) */
-  .sett-sync-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px; }
-  .sett-sync-card { border: 1px dashed var(--dorami-border-strong); border-radius: var(--r-card);
+  /* 数据同步(v3.19.2 重设计):单列纵排动作卡。双列半宽卡曾把 datetime 输入挤到截断,
+     且虚线卡+裸 Tailwind 灰阶是旧前端痕迹——改整幅实线 hairline 卡 + 统一字段刻度。 */
+  .sett-sync-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 4px; }
+  .sett-sync-card { border: 1px solid var(--dorami-border); border-radius: var(--r-card);
     padding: 14px 16px; }
-  .sett-sync-title { font-size: 12.5px; font-weight: 700; margin-bottom: 3px; }
+  .sett-sync-head { display: flex; align-items: center; gap: 7px; margin-bottom: 2px; }
+  .sett-sync-head svg { width: 14px; height: 14px; flex: none; color: var(--dorami-muted); }
+  .sett-sync-title { font-size: 12.5px; font-weight: 700; }
   .sett-sync-sub { font-size: 11.5px; color: var(--dorami-faint); line-height: 1.7; margin-bottom: 10px; }
+  /* 字段网格:整幅三栏等宽,datetime-local 有足额宽度不再截断;窄屏落单列 */
+  .sett-sync-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .sett-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .sett-field-lbl { font-size: 11px; font-weight: 600; color: var(--dorami-faint); }
+  /* 卡内脚部:hairline 上缘,开关/元信息居左、动作钮居右 */
+  .sett-sync-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--dorami-border); }
+  .sett-sw { display: inline-flex; align-items: center; gap: 8px; font-size: 12px;
+    font-weight: 600; color: var(--dorami-muted); }
+  /* 文件拾取域:虚线仅保留在「投放区」语义上(可点整行) */
+  .sett-file { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 12px;
+    border: 1px dashed var(--dorami-border-strong); border-radius: var(--r-control);
+    background: var(--dorami-soft); text-align: left;
+    transition: border-color var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease); }
+  .sett-file:hover { border-color: var(--dorami-accent-ink); background: var(--dorami-wash); }
+  .sett-file.has-file { border-style: solid; }
+  .sett-file svg { width: 16px; height: 16px; flex: none; color: var(--dorami-muted); }
+  .sett-file-name { display: block; font-size: 12.5px; font-weight: 700; }
+  .sett-file-hint { display: block; font-size: 11px; font-weight: 500; color: var(--dorami-faint); margin-top: 1px; }
+  /* 结果/进度盘:soft 底信息块(导入结果/同步进度/探针结果共用) */
+  .sett-sync-panel { margin-top: 12px; border: 1px solid var(--dorami-border);
+    border-radius: var(--r-card); background: var(--dorami-soft); padding: 10px 14px; }
+  .sett-sync-stats { display: flex; flex-wrap: wrap; gap: 6px 26px; }
+  .sett-sync-stats b { font-size: 13px; font-variant-numeric: tabular-nums; }
 
   .sett-kv { display: grid; grid-template-columns: 88px 1fr; gap: 7px 12px; font-size: 12.5px; padding: 4px 2px; }
   .sett-kv dt { color: var(--dorami-faint); font-size: 11px; font-weight: 600; padding-top: 1px; }
@@ -4228,7 +4228,7 @@ input[type="radio"] {
     .sett-nav-sec { flex-direction: row; }
     .sett-nav-btn { width: auto; white-space: nowrap; }
     .sett-nav-title, .sett-nav-group, .sett-nav-spacer, .sett-nav-foot { display: none; }
-    .sett-sync-grid, .sett-pw-grid { grid-template-columns: 1fr; }
+    .sett-sync-grid, .sett-sync-fields, .sett-pw-grid { grid-template-columns: 1fr; }
   }
 
   /* ── 运维管理 静默仪器(运维波):仪表墙 ──
@@ -4401,6 +4401,26 @@ input[type="radio"] {
     border-radius: 0 3px 0 0;
   }
   .heat-legend-item { display: inline-flex; align-items: center; gap: 5px; margin-left: 10px; }
+
+  /* 格阵 + 年份轨(GitHub 式,规模化波):格阵占满,右缘竖排「近一年 + 各归档年」。
+     选中态沿用 .pager-btn.is-on 的蓝底语法(同为翻页/范围切换语义)。 */
+  .heat-body { display: flex; align-items: flex-start; gap: 18px; }
+  .heat-body .heat-scroll { flex: 1; min-width: 0; }
+  .heat-years { display: flex; flex-direction: column; gap: 4px; flex: none; padding-top: 15px; }
+  .heat-year-btn {
+    min-width: 72px; height: 28px; padding: 0 12px; text-align: left;
+    border: none; border-radius: var(--r-control); background: transparent;
+    font-family: inherit; font-size: 12px; font-weight: 600; color: var(--dorami-muted);
+    font-variant-numeric: tabular-nums; cursor: pointer;
+    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+  .heat-year-btn:hover:not(.is-on) { background: var(--dorami-well); color: var(--dorami-ink-2); }
+  .heat-year-btn.is-on { background: var(--dorami-blue); color: #fff; font-weight: 700; }
+  /* 窄屏:年份轨换行到格阵下方横排,避免挤压可滚动格阵 */
+  @media (max-width: 900px) {
+    .heat-body { flex-direction: column; gap: 10px; }
+    .heat-years { flex-direction: row; flex-wrap: wrap; padding-top: 0; }
+  }
 
   /* ── 热点图抽屉内容(挂在 ledger-drawer 语法里)── */
   .heat-dstats { display: flex; gap: 0; }
@@ -7055,7 +7075,9 @@ input[type="radio"] {
     color: var(--dorami-accent-ink);
   }
 
-  /* 自绘 tooltip(样页):右侧墨底浮签,悬停 350ms 后现 */
+  /* 自绘 tooltip(样页):右侧墨底浮签。轨面全 icon-only,浮签是新用户唯一的
+     文字锚点——延迟取 120ms(2026-07-24 拍板,原 350ms 对生手太迟钝;
+     保留短延迟防指针扫过时逐个闪烁)。 */
   .reader-vrail-tip {
     position: absolute;
     left: 48px;
@@ -7076,7 +7098,17 @@ input[type="radio"] {
 
   .reader-vrail-btn:hover .reader-vrail-tip {
     opacity: 1;
-    transition-delay: 350ms;
+    transition-delay: 120ms;
+  }
+
+  /* 轨内分组分隔线:内容容器(文章/动态/社交)与「发现」(找内容)语义不同,
+     以一道 hairline 分组(2026-07-24 拍板)。 */
+  .reader-vrail-divider {
+    width: 22px;
+    height: 1px;
+    flex: none;
+    background: var(--dorami-border);
+    margin: 5px 0;
   }
 
   /* 品牌 logo 图(替代铃铛,32px 对齐样页品牌位) */
@@ -7113,6 +7145,62 @@ input[type="radio"] {
   .reader-vrail-avatar:hover { border-color: var(--dorami-border-strong); }
   .reader-vrail-avatar:active { transform: scale(0.94); }
   .reader-vrail-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+  /* ── 轨底用户滑出菜单(RailUserFlyout):常态只见头像,hover/focus-within 时
+     工具钮自头像上方滑出,头像同帧变为关机样式退出钮(点击即退)。
+     滑出层绝对定位于头像上方——不占轨内布局,展开无回流;padding-bottom 兼作
+     头像→菜单之间的 hover 桥,指针穿行不塌。 ── */
+  .rail-flyout { position: relative; display: flex; flex-direction: column; align-items: center; }
+  .rail-flyout-items {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding-bottom: 8px;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translate(-50%, 10px);
+    transition: opacity 280ms var(--motion-ease), transform 320ms var(--motion-ease),
+      visibility 0s linear 320ms;
+  }
+  .rail-flyout:hover .rail-flyout-items,
+  .rail-flyout:focus-within .rail-flyout-items {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translate(-50%, 0);
+    transition: opacity 280ms var(--motion-ease), transform 320ms var(--motion-ease),
+      visibility 0s;
+  }
+  .rail-flyout-avatar { position: relative; }
+  .rail-avatar-face,
+  .rail-avatar-power {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    transition: opacity 240ms var(--motion-ease);
+  }
+  .rail-avatar-face img { width: 100%; height: 100%; object-fit: cover; }
+  .rail-avatar-power {
+    opacity: 0;
+    background: var(--dorami-surface);
+    color: var(--state-bad);
+  }
+  .rail-avatar-power svg { width: 15px; height: 15px; }
+  .rail-flyout:hover .rail-avatar-face,
+  .rail-flyout:focus-within .rail-avatar-face { opacity: 0; }
+  .rail-flyout:hover .rail-avatar-power,
+  .rail-flyout:focus-within .rail-avatar-power { opacity: 1; }
+  .rail-flyout:hover .rail-flyout-avatar,
+  .rail-flyout:focus-within .rail-flyout-avatar { border-color: var(--state-bad); }
+  @media (prefers-reduced-motion: reduce) {
+    .rail-flyout-items, .rail-avatar-face, .rail-avatar-power { transition: none; }
+  }
 
   /* 可折叠栏内层固定宽度：列轨收缩到 0 时由外层 overflow 裁切，内容不回流 */
   .reader-sources-inner,
@@ -9667,3 +9755,226 @@ input[type="radio"] {
 .running-dock .running-widget-progress-queued { color: rgba(255, 255, 255, 0.62); }
 .running-dock .running-widget-more { color: rgba(255, 255, 255, 0.68); }
 .running-mini-n { color: #fff; }
+
+
+/* ══ v3.18 互通波:公告与反馈 ══
+   读者横幅 + 管理面公告撰写/预览/列表 + 反馈回复气泡/收件箱。
+   全程语义 token(soft/wash/state-warn/ink/border,亮暗自动翻转);
+   工作区表面纪律:克制、无动效、hairline 单一分隔手段。 */
+
+/* ── 读者面:悬浮横幅(Apple 毛玻璃语法)──
+   不占布局:absolute 悬浮于阅读器上方,整页水平居中,关闭/自动隐藏均零位移。
+   玻璃四要素(参照 iOS/macOS 材质的通行 CSS 复刻):① 低不透明度 surface 底
+   (color-mix 亮暗自动翻转)② 大半径 blur + saturate 提饱和(透出的底色更鲜活,
+   玻璃感的主要来源)③ 顶部光泽渐变 + inset 1px 高光(--dorami-edge,光从上方来)
+   ④ 细 hairline 外缘 + 柔和落影。**中性材质**:不做档位底色/左缘描边,语义只由
+   图标(形状+颜色)承载——通知材质保持一色,才像系统级浮层而非站内色块。 */
+.reader-shell { position: relative; } /* 悬浮横幅的定位上下文;对 grid 布局无影响 */
+
+.reader-ann-band {
+  position: absolute;
+  top: 14px;
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  width: min(560px, calc(100% - 32px));
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* 入场动效(iOS 通知式滑入→溶解成玻璃),绕开 Chrome 合成器的硬限制:
+   元素(或祖先)带 active 动画时 backdrop-filter 一律不取样——无论动画挂在谁身上,
+   动画期间玻璃必失效。最小复现验证过两种失败形态:动画期"清晰直透"(blur 断开)、
+   opacity 动画把实底打薄照样透字。因此入场做成两段:
+   ① entering:纯 transform 从屏幕顶缘滑入(**无 opacity**),底色临时调实(78%)、
+     不开 blur——动画期间底下内容被完全遮住,没有"清晰直透"帧;
+   ② JS 摘类落定:blur 挂上、底色经 transition 溶解回 18% 玻璃态——
+     模糊内容随溶解渐显,与稳态无缝统一。
+   离场语义是"消散",淡出过程露出底下内容不违和,维持 opacity+transform 出场。 */
+.reader-ann-band.is-entering .ann-card {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background-color: color-mix(in srgb, var(--dorami-surface) 78%, transparent);
+  transition: none;
+  animation: ann-card-in 350ms cubic-bezier(0.32, 0.72, 0.25, 1) both;
+}
+.reader-ann-band.is-leaving .ann-card {
+  animation: ann-card-out var(--motion-slow) var(--motion-ease) both;
+}
+.reader-ann-band.is-leaving { pointer-events: none; }
+@keyframes ann-card-in {
+  from { transform: translateY(calc(-100% - 26px)); }
+  to   { transform: none; }
+}
+@keyframes ann-card-out {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateY(-12px) scale(0.97); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reader-ann-band.is-entering .ann-card, .reader-ann-band.is-leaving .ann-card { animation-duration: 1ms; }
+}
+
+/* 单条公告卡:彩色玻璃胶囊卡(overlay 级大圆角)+ 档位图标 + 标题/正文同段流式 + 关闭钮。
+   透明度显著压低(surface 42%)——玻璃感 = 底下内容透出 + tint 变色的双重证据;
+   档位 tint 是彩色半透明叠层(通知=灰蓝/强调=靛/警示=琥珀),文字与图标取同档深色。 */
+.ann-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 15px;
+  border: 1px solid var(--dorami-border);
+  border-radius: var(--r-overlay);
+  color: var(--dorami-ink);
+  background-color: color-mix(in srgb, var(--dorami-surface) 18%, transparent);
+  /* 两层叠加:档位彩色 tint(变量,各档覆写)+ 顶部光泽(edge 高光渐隐,顶光扫过玻璃面)。
+     覆盖度刻意压得很低(18%+tint):横幅背后常是近纯色的阅读器空白,覆盖度一高,
+     "物理透明"也读不出玻璃——底透必须是主体,卡片自身只提供 tint 与光泽。 */
+  --ann-tint: transparent;
+  background-image:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--dorami-edge) 32%, transparent),
+      transparent 62%),
+    linear-gradient(var(--ann-tint), var(--ann-tint));
+  /* blur 半径刻意取小(6px):模糊半径一旦大于底下小字字高(12px),文字会被
+     彻底抹平成均匀色——"物理透明、视觉实心"。玻璃感的验收标准是底下内容
+     轮廓可辨(用户拍板:要能看到透过来的字样),不是把一切糊成一色。 */
+  backdrop-filter: blur(6px) saturate(1.8);
+  -webkit-backdrop-filter: blur(6px) saturate(1.8);
+  /* 入场落定后底色从 78% 实底溶解回 18% 玻璃(entering 态覆写为 transition:none) */
+  transition: background-color var(--motion-slow) var(--motion-ease);
+  box-shadow: inset 0 1px 0 var(--dorami-edge), var(--sh-3);
+}
+/* 档位 = 彩色玻璃 tint + 同档文字/图标(形状+色双通道,合 §2;accent-ink/state-warn
+   为亮暗成对 token,暗色自动换亮端保对比) */
+.ann-info    { --ann-tint: color-mix(in srgb, var(--dorami-muted) 9%, transparent); }
+.ann-accent  { --ann-tint: color-mix(in srgb, var(--dorami-accent) 14%, transparent);
+               color: var(--dorami-accent-ink); }
+.ann-warning { --ann-tint: color-mix(in srgb, var(--state-warn) 14%, transparent);
+               color: var(--state-warn); }
+.ann-info    .ann-icon { color: var(--dorami-muted); }
+.ann-accent  .ann-icon { color: var(--dorami-accent); }
+.ann-warning .ann-icon { color: var(--state-warn); }
+
+.ann-icon { flex: none; width: 15px; height: 15px; margin-top: 3px; }
+.ann-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;      /* 卡内小节刻度(12.5–13),横幅正文取上限保可读 */
+  font-weight: 600;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.ann-text .ann-title { font-weight: 700; margin-right: 7px; }
+.ann-text strong { font-weight: 700; }
+/* 链接随档位文字色走(彩底卡上引入第二饱和色会撞色),下划线承载可点性 */
+.ann-text a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.ann-text a:hover { opacity: 0.82; }   /* hover 只允许同族变化,不引入新色 */
+
+.ann-close {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-pill);
+  color: inherit;
+  opacity: 0.55;
+  transition: opacity var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
+}
+/* hover 底用 currentColor 淡染(不引入不透明底,保玻璃通透),跟随档位色,亮暗两主题都可见 */
+.ann-close:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); }
+.ann-close svg { width: 14px; height: 14px; }
+
+/* ── 管理面:撰写 + 预览 + 已发列表 ── */
+.ann-composer { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.ann-composer-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.ann-composer-spacer { flex: 1; }
+.ann-charcount { font-variant-numeric: tabular-nums; }
+
+/* 预览 = 真实悬浮卡形态(卡片自带玻璃/圆角/阴影),容器只限宽,所见即读者所得 */
+.ann-preview { max-width: 560px; }
+
+.ann-mgr-list { margin-top: 14px; }
+.ann-mgr-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 2px;
+  border-top: 1px solid var(--dorami-border);
+}
+.ann-mgr-row .ann-icon { margin-top: 0; }
+.ann-level-info    { color: var(--dorami-faint); }
+.ann-level-accent  { color: var(--dorami-accent); }
+.ann-level-warning { color: var(--state-warn); }
+
+.ann-mgr-main { flex: 1; min-width: 0; }
+.ann-mgr-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dorami-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ann-mgr-text .ann-title { font-weight: 700; margin-right: 7px; }
+.ann-mgr-row.is-off .ann-mgr-text { color: var(--dorami-faint); }
+.ann-mgr-meta { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.ann-mgr-acts { flex: none; display: flex; align-items: center; gap: 4px; }
+
+/* ── 反馈:管理员回复气泡(读者面/收件箱同款)── */
+.fb-reply {
+  margin-top: 8px;
+  padding: 7px 10px;
+  background: var(--dorami-wash);
+  border-left: 3px solid var(--dorami-accent);
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.6;
+  color: var(--dorami-ink-2);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.fb-reply .fb-reply-label { color: var(--dorami-accent-ink); margin-right: 6px; }
+
+/* ── 反馈:读者「我的反馈」列表行 / 管理收件箱行 ── */
+.fb-row { padding: 12px 2px; border-top: 1px solid var(--dorami-border); }
+.fb-row:first-child { border-top: none; }
+.fb-row-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.fb-row-body {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.65;
+  color: var(--dorami-ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 行内文字微钮(S 档):撤回/处理这类低频行级动作 */
+.fb-textbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 0 7px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dorami-muted);
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+.fb-textbtn:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+.fb-textbtn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
+.fb-textbtn svg { width: 12px; height: 12px; }
+.fb-textbtn[aria-expanded="true"] { background: var(--dorami-soft); color: var(--dorami-ink); }
+
+/* 收件箱行内处理区(展开态) */
+.fb-process {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}

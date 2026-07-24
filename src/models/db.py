@@ -363,6 +363,79 @@ class LoginEventRecord(SQLModel, table=True):
     at: str = Field(index=True, description="登录时间 ISO 串")
 
 
+class AdminAuditRecord(SQLModel, table=True):
+    """管理操作审计流：每次穿透到 handler 的管理写请求写一行（多管理员平权后需要
+    留痕「谁改了什么」）。故意**不存请求体全文**（防密码等敏感字段落盘）、不存
+    IP/UA（对齐 LoginEventRecord 颗粒度）；summary 是按注册表渲染的语义描述，
+    无匹配时为空串（前端退化显示 `method path`）。
+    """
+    __tablename__ = "admin_audit_logs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True, description="操作者账户")
+    method: str = Field(description="HTTP 方法")
+    path: str = Field(description="请求路径")
+    status_code: int = Field(description="响应状态码")
+    summary: str = Field(default="", description="语义描述，无匹配为空串")
+    target: Optional[str] = Field(default=None, index=True, description="操作目标，如目标用户名")
+    at: str = Field(index=True, description="操作时间 ISO 串")
+
+
+FEEDBACK_CATEGORIES = frozenset({"source_request", "bug", "suggestion", "other"})
+FEEDBACK_STATUSES = frozenset({"open", "in_progress", "resolved", "dismissed"})
+
+
+class FeedbackRecord(SQLModel, table=True):
+    """读者反馈:读者提交诉求/问题(想要新源、bug、建议),管理员收件处理并回复。
+
+    读者只能看/撤回自己的(撤回仅限 open 态);管理员全量可见,流转 status 并写
+    admin_note(读者可见的回复)。分类与状态枚举见 FEEDBACK_CATEGORIES / FEEDBACK_STATUSES。
+    """
+    __tablename__ = "feedbacks"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    owner_username: str = Field(index=True, description="提交者用户名")
+    category: str = Field(index=True, description="source_request/bug/suggestion/other")
+    content: str = Field(description="反馈正文,≤2000 字")
+    status: str = Field(default="open", index=True, description="open/in_progress/resolved/dismissed")
+    admin_note: str = Field(default="", description="管理员回复/处理备注(读者可见)")
+    created_at: str = Field(index=True, description="提交时间")
+    updated_at: str = Field(description="最近一次状态/回复变更时间")
+
+
+ANNOUNCEMENT_LEVELS = frozenset({"info", "accent", "warning"})
+
+
+class AnnouncementRecord(SQLModel, table=True):
+    """管理员公告:读者面顶部横幅,逐用户一次性(dismiss 后不再出现,跨设备一致)。
+
+    content 为受限 markdown 子集(仅 **加粗** 与 [文字](http(s)链接)),渲染端
+    白名单解析、绝不注入 HTML;level 决定横幅配色(映射 design token,不存任意色值)。
+    """
+    __tablename__ = "announcements"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(default="", description="可空短标题")
+    content: str = Field(description="正文,受限 markdown 子集")
+    level: str = Field(default="info", index=True, description="info/accent/warning → 横幅配色档")
+    is_active: bool = Field(default=True, index=True, description="是否在读者面展示")
+    created_by: str = Field(default="", description="发布者用户名")
+    created_at: str = Field(index=True, description="发布时间")
+    updated_at: str = Field(description="最近一次编辑时间")
+
+
+class AnnouncementDismissRecord(SQLModel, table=True):
+    """公告逐用户关闭记录:一行 = 某读者关闭了某条公告(「一次性通知」语义的落点)。
+
+    复合主键防重;公告删除时级联清理本表对应行。
+    """
+    __tablename__ = "announcement_dismissals"
+
+    owner_username: str = Field(primary_key=True, description="关闭者用户名")
+    announcement_id: int = Field(primary_key=True, index=True, description="公告 ID")
+    dismissed_at: str = Field(description="关闭时间")
+
+
 class UserRecord(SQLModel, table=True):
     """登录账户：数据库托管，密码以 PBKDF2 哈希存储。
 
@@ -377,6 +450,9 @@ class UserRecord(SQLModel, table=True):
     avatar: Optional[str] = Field(default=None, description="头像，存为 data:image/* base64 URL；空表示用首字母占位")
     role: str = Field(default="user", index=True, description="账户角色：admin | user")
     is_active: bool = Field(default=True, index=True, description="是否启用该账户")
+    # 登录默认落地界面：admin 可在 console（管理台）/ reader（阅读器）间选择；
+    # user 恒为读者、该字段不生效。server_default 由迁移补，兼容存量行。
+    default_surface: str = Field(default="console", description="登录默认落地界面：console | reader")
     ai_beta_enabled: bool = Field(default=False, index=True, description="是否为该用户开启 AI Beta 功能（阅读器内翻译/问答）")
     # 轻量运维埋点：仅在成功登录/成功调用 AI 时写入，供管理员运维面板统计活跃度与用量。
     last_login_at: Optional[str] = Field(default=None, description="最近一次成功登录时间")

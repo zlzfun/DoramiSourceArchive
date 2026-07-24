@@ -20,14 +20,17 @@ import {
   Settings,
   Sun,
   Moon,
+  LayoutDashboard,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
+import RailUserFlyout from './RailUserFlyout';
 import ReaderMarkdown from './ReaderMarkdown';
 import ReaderAiPanel from './ReaderAiPanel';
 import { SOURCE_ROLES, sourceRoleOf, resolveCompany } from '../sourceTaxonomy';
 import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
+import AnnouncementBanner from './AnnouncementBanner';
 import { excerptOf } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
 import { WEEKDAY_CHARS, fmtDayKey, dayKeyOf, dayLabelOf } from '../utils/readerTime';
@@ -156,6 +159,9 @@ export default function ReaderTab({
   themeDark = false,
   onToggleTheme,
   onOpenSettings,
+  onLogout,
+  // ── v3.19 多管理员波:admin 从管理台切入阅读器时传入,轨底浮现「返回管理台」;读者账号恒 undefined ──
+  onExitReader = null,
 }) {
   const [sources, setSources] = useState([]);
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
@@ -840,6 +846,8 @@ export default function ReaderTab({
 
   return (
     <div className="reader-shell">
+      {/* ── 管理员公告横幅(v3.18):无公告时渲染 null,:has 不命中,四带布局逐像素不变 ── */}
+      <AnnouncementBanner />
       {/* ── 视图轨 · 一级视图导航(样页:品牌标 + 自绘右侧 tooltip + 轨底头像) ── */}
       <nav className="reader-vrail" aria-label="阅读视图">
         {!brandFailed ? (
@@ -877,7 +885,9 @@ export default function ReaderTab({
             <span className="reader-vrail-tip">{label}</span>
           </button>
         ))}
-        {/* 发现:整页源目录(取代源栏内联「发现更多来源」),与容器并列的一级视图 */}
+        {/* 发现:整页源目录(取代源栏内联「发现更多来源」)。与上方三个内容容器
+            语义有别(读内容 vs 找内容),以分隔线分组。 */}
+        <span className="reader-vrail-divider" aria-hidden="true" />
         <button
           type="button"
           aria-label="发现"
@@ -889,40 +899,48 @@ export default function ReaderTab({
           <span className="reader-vrail-tip">发现</span>
         </button>
 
-        {/* 轨底(standalone):主题/设置 直排 + 头像(点击进设置·账户)——头像菜单已退役
-            (与设置页功能重复,用户拍板);接入集成/退出登录都在设置柜内 */}
+        {/* 轨底(standalone):用户滑出菜单(2026-07-24 拍板)——常态只见头像,
+            hover 滑出 返回管理台(仅 admin)/主题/设置,头像同帧变关机退出钮点击即退。 */}
         {standalone && (
           <>
             <div className="reader-vrail-spring" />
-            <button
-              type="button"
-              onClick={() => onToggleTheme?.()}
-              className="reader-vrail-btn"
-              aria-label={themeDark ? '切换到亮色' : '切换到暗色'}
+            <RailUserFlyout
+              avatar={account?.avatar}
+              avatarText={avatarText}
+              username={account?.username}
+              onLogout={onLogout}
             >
-              {themeDark ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
-              <span className="reader-vrail-tip">{themeDark ? '切换亮色' : '切换暗色'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onOpenSettings?.()}
-              className="reader-vrail-btn"
-              aria-label="设置"
-            >
-              <Settings className="h-[18px] w-[18px]" />
-              <span className="reader-vrail-tip">设置</span>
-            </button>
-            <button
-              type="button"
-              className="reader-vrail-avatar"
-              title={account?.username || '账号'}
-              aria-label="账号设置"
-              onClick={() => onOpenSettings?.()}
-            >
-              {account?.avatar
-                ? <img src={account.avatar} alt="" />
-                : <span>{avatarText || (account?.username || '?').slice(0, 2).toUpperCase()}</span>}
-            </button>
+              {/* 返回管理台(v3.19):与应用导轨轨底「进入阅读器」对称的隐藏切换钮,仅 admin 有 */}
+              {onExitReader && (
+                <button
+                  type="button"
+                  onClick={onExitReader}
+                  className="reader-vrail-btn"
+                  aria-label="返回管理台"
+                >
+                  <LayoutDashboard className="h-[18px] w-[18px]" />
+                  <span className="reader-vrail-tip">返回管理台</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => onToggleTheme?.()}
+                className="reader-vrail-btn"
+                aria-label={themeDark ? '切换到亮色' : '切换到暗色'}
+              >
+                {themeDark ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
+                <span className="reader-vrail-tip">{themeDark ? '切换亮色' : '切换暗色'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenSettings?.()}
+                className="reader-vrail-btn"
+                aria-label="设置"
+              >
+                <Settings className="h-[18px] w-[18px]" />
+                <span className="reader-vrail-tip">设置</span>
+              </button>
+            </RailUserFlyout>
           </>
         )}
       </nav>

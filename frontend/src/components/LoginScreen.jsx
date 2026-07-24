@@ -77,11 +77,12 @@ const BRAND_LINES = [
 const TITLE_HOLD_MS = 3600;
 // 第二幕稳定后 → 第三幕（标题变幻为品牌名）的间隔
 const BRAND_DELAY_MS = 2800;
-// 跃迁转场时序：闪光起始 / 完成切换。切换须落在闪光全亮帧(闪光起始 + 300ms 过渡),
-// 界面切换藏在幕布背后,由 App 的抵达幕(app-arrive)接力「白光→主题幕布→显影」——不露硬切。
+// 跃迁转场时序：幕布淡入起始 / 完成切换。切换须落在幕布全亮帧(淡入起始 + 620ms 过渡,
+// 与 .auth-warp-flash 的 transition 同步),界面切换藏在平色主题幕布背后,由 App 的抵达幕
+// (app-arrive)接力「幕布静置→淡出显影」——全局隐出/隐入,无白光闪切(2026-07-24 拍板)。
 // 加速曲线是由慢到快的(见 tick 内 ramp),前段是温和的推进感,后段才爆发,故整段稍长。
 const WARP_FLASH_MS = 1500;
-const WARP_DONE_MS = 1820;
+const WARP_DONE_MS = 2140;
 
 const prefersReducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;

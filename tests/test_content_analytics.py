@@ -12,15 +12,7 @@ from sqlmodel import Session
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-
-def _auth_config(admin="admin:admin", user="user:user"):
-    from config import _auth_credentials
-
-    return replace(
-        __import__("api.app", fromlist=["settings"]).settings.auth,
-        admin_users=_auth_credentials(admin) if admin else [],
-        user_users=_auth_credentials(user) if user else [],
-    )
+from tests.conftest import seed_default_accounts  # noqa: E402
 
 
 def _setup_app(monkeypatch, tmp_path):
@@ -35,7 +27,7 @@ def _setup_app(monkeypatch, tmp_path):
     monkeypatch.setattr(
         app_module, "settings", replace(app_module.settings, runtime=RuntimeConfig(role="all"))
     )
-    accounts_service.seed_users_if_empty(sink.engine, _auth_config())
+    seed_default_accounts(sink.engine)
     return app_module
 
 

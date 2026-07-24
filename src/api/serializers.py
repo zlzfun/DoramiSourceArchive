@@ -16,6 +16,7 @@ def serialize_user(record: UserRecord) -> Dict[str, Any]:
         "role": record.role,
         "avatar": record.avatar or None,
         "is_active": record.is_active,
+        "default_surface": record.default_surface or "console",
         "ai_beta_enabled": record.ai_beta_enabled,
         "last_login_at": record.last_login_at,
         "ai_translate_count": record.ai_translate_count or 0,

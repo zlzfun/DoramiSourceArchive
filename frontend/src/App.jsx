@@ -18,6 +18,7 @@ import Toast from './components/Toast';
 import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
 import BrandLogoImage from './components/BrandLogoImage';
+import RailUserFlyout from './components/RailUserFlyout';
 import { useTheme } from './theme';
 import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
 import RunningWidget from './components/RunningWidget';
@@ -62,7 +63,23 @@ const INITIAL_RUNTIME = {
   rag_enabled: false,
   ai_beta_enabled: false,
   llm_configured: false,
+  default_surface: 'console',
 };
+
+// 管理员双界面(v3.19 多管理员波):surfaceMode 存 sessionStorage——刷新不丢、关标签页归零,
+// 符合「隐藏切换」低调气质;登出/会话过期时清除。
+const SURFACE_KEY = 'dorami-surface';
+
+function readStoredSurface() {
+  try { return sessionStorage.getItem(SURFACE_KEY); } catch { return null; }
+}
+
+function writeStoredSurface(value) {
+  try {
+    if (value) sessionStorage.setItem(SURFACE_KEY, value);
+    else sessionStorage.removeItem(SURFACE_KEY);
+  } catch { /* 沙箱环境禁用 storage,忽略 */ }
+}
 
 function defaultViews() {
   return { fetch: 'catalog' };
@@ -148,6 +165,31 @@ export default function App() {
   // 独立于 pendingFocus 通道，避免与运行历史的 pendingFilter（同走 tab==='runs'）相撞。
   const [pendingJobDraft, setPendingJobDraft] = useState(null);
   const clearPendingJobDraft = useCallback(() => setPendingJobDraft(null), []);
+
+  // ── 角色 × 界面模式(v3.19 多管理员波)──
+  // isReaderRole:账号角色语义(tabs 过滤/重定向/文案);admin 也是读者:经轨底隐藏切换钮
+  // 进入阅读器 standalone 形态。surfaceMode('console'|'reader')只对 admin 有意义,
+  // 不动 tabs/activeTab/hash——退出即回原页签。
+  const isReaderRole = runtimeInfo.account_role === 'user';
+  const isAdminRole = runtimeInfo.account_role === 'admin';
+  const [surfaceMode, setSurfaceMode] = useState(readStoredSurface);
+
+  const enterReader = useCallback(() => {
+    setMountedTabs(prev => (prev.has('reader') ? prev : new Set(prev).add('reader')));
+    setSurfaceMode('reader');
+    writeStoredSurface('reader');
+  }, []);
+  const exitReader = useCallback(() => {
+    setSurfaceMode('console');
+    writeStoredSurface('console');
+  }, []);
+
+  // 登录默认落地界面:本会话尚无切换记录(sessionStorage 空)时,按账户偏好落地。
+  useEffect(() => {
+    if (!runtimeLoaded || !isAdminRole || surfaceMode !== null) return;
+    if (runtimeInfo.default_surface === 'reader') enterReader();
+    else setSurfaceMode('console');
+  }, [runtimeLoaded, isAdminRole, surfaceMode, runtimeInfo.default_surface, enterReader]);
 
   // history.state 回放时重新点燃这一次性聚焦，让目标页重新定位/筛选。
   const applyFocus = useCallback((focus) => {
@@ -322,6 +364,8 @@ export default function App() {
       setAvailableFetchers([]);
       setRuntimeInfo(INITIAL_RUNTIME);
       setRuntimeLoaded(false);
+      setSurfaceMode(null);
+      writeStoredSurface(null);
       showToast('登录已过期，请重新登录。', 'error');
     };
     window.addEventListener('dorami-auth-expired', handleAuthExpired);
@@ -337,9 +381,9 @@ export default function App() {
     return session;
   };
 
-  // 跃迁抵达幕(三段式):hold = 与登录侧闪光同帧接管(切换藏在全亮帧背后)
-  // → settle = 白光溶入主题色幕布(暗色主题从暗幕显影;数据未就绪时幕布兼任
-  //   延迟护罩,浮现着陆提示,不落朴素加载屏)→ fading = 幕布淡出、主界面显影。
+  // 跃迁抵达幕(三段式,全局隐出/隐入版):hold = 与登录侧幕布全亮帧同帧接管
+  // (切换藏在平色主题幕布背后,无白光无暗角)→ settle = 幕布静置一拍(数据未就绪时
+  //   兼任延迟护罩,浮现着陆提示,不落朴素加载屏)→ fading = 幕布淡出、主界面显影。
   // 演出本身即登录确认,cinematic 路径不再叠「已登录」toast。
   const [arrival, setArrival] = useState(null);
   const settleStartRef = useRef(0);
@@ -355,7 +399,7 @@ export default function App() {
 
   useEffect(() => {
     if (arrival !== 'hold') return undefined;
-    // 双 rAF:确保全亮幕布先以 opacity:1 上屏一帧,再进入白光消散段
+    // 双 rAF:确保全亮幕布先以 opacity:1 上屏一帧,再进入静置段
     let raf2 = 0;
     const raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
@@ -367,10 +411,11 @@ export default function App() {
   }, [arrival]);
 
   useEffect(() => {
-    // settle → fading:等 runtime 就绪(海外/慢网延迟护罩),且至少让白光完整溶入幕布
+    // settle → fading:等 runtime 就绪(海外/慢网延迟护罩),幕布至少静置一拍再淡出
+    // (原 700ms 是白光溶入时长;白光已弃用,只留短暂呼吸避免闪切)。
     if (arrival !== 'settle' || !runtimeLoaded) return undefined;
     const elapsed = performance.now() - settleStartRef.current;
-    const timer = setTimeout(() => setArrival('fading'), Math.max(0, 700 - elapsed));
+    const timer = setTimeout(() => setArrival('fading'), Math.max(0, 260 - elapsed));
     return () => clearTimeout(timer);
   }, [arrival, runtimeLoaded]);
 
@@ -397,11 +442,13 @@ export default function App() {
       setAvailableFetchers([]);
       setRuntimeInfo(INITIAL_RUNTIME);
       setRuntimeLoaded(false);
+      setSurfaceMode(null);
+      writeStoredSurface(null);
     }
   };
 
-  // 受限读者（user 账号）只看到「阅读器 + 订阅分发 + 接入集成」；admin（采集+阅读超级用户）保持现有全部 tab。
-  const readerOnly = runtimeInfo.account_role === 'user';
+  // readerView:布局分叉(导轨隐藏/阅读器整页)。读者角色恒为阅读器;admin 由 surfaceMode 决定。
+  const readerView = isReaderRole || (isAdminRole && surfaceMode === 'reader');
   const tabs = useMemo(() => [
     { id: 'reader', icon: BookOpen, label: '阅读器', onlyReader: true },
     { id: 'data', icon: Database, label: '知识台账', hideForReader: true },
@@ -413,13 +460,13 @@ export default function App() {
     { id: 'mcp', icon: Newspaper, label: 'AI 日报', surface: 'collector' },
     { id: 'admin', icon: ShieldCheck, label: '运维管理', adminOnly: true },
   ].filter(tab => {
-    if (tab.onlyReader && !readerOnly) return false;
-    if (tab.hideForReader && readerOnly) return false;
+    if (tab.onlyReader && !isReaderRole) return false;
+    if (tab.hideForReader && isReaderRole) return false;
     if (tab.adminOnly && runtimeInfo.account_role !== 'admin') return false;
     if (tab.surface && !runtimeInfo[`${tab.surface}_enabled`]) return false;
     if (tab.requiresRag && !runtimeInfo.rag_enabled) return false;
     return true;
-  }), [runtimeInfo, readerOnly]);
+  }), [runtimeInfo, isReaderRole]);
 
   const fetchersById = useMemo(
     () => Object.fromEntries(availableFetchers.map(f => [f.id, f])),
@@ -432,23 +479,23 @@ export default function App() {
   }, [authState.user?.username]);
 
   // 账号身份标签：读者不感知部署「层」概念，只显示自己的角色。
-  const roleLabel = readerOnly ? '读者' : '管理员';
+  const roleLabel = isReaderRole ? '读者' : '管理员';
 
   // ── 读者账号:应用导轨隐藏(阅读器视图轨独占,轨底头像菜单承接 设置/主题/退出)──
   useEffect(() => {
     // 无导轨即无页签切换;历史 hash(#mcp 等)一律归位到阅读器
-    if (readerOnly && activeTab !== 'reader') goTab('reader', { replace: true });
-  }, [readerOnly, activeTab, goTab]);
+    if (isReaderRole && activeTab !== 'reader') goTab('reader', { replace: true });
+  }, [isReaderRole, activeTab, goTab]);
 
   // 品牌标题/副标题按账号视角区分：读者侧只讲「AI 资讯阅读」，不暴露归档/采集/分发。
-  const brandTitle = readerOnly ? '哆啦美' : '哆啦美·归档中枢';
+  const brandTitle = isReaderRole ? '哆啦美' : '哆啦美·归档中枢';
 
   const brandSubtitle = useMemo(() => {
-    if (readerOnly) return 'AI 资讯阅读器';
+    if (isReaderRole) return 'AI 资讯阅读器';
     if (runtimeInfo.collector_enabled && !runtimeInfo.reader_enabled) return 'External Collector Archive';
     if (runtimeInfo.reader_enabled && !runtimeInfo.collector_enabled) return 'Reader Subscription Layer';
     return 'Dorami Agent Archive';
-  }, [readerOnly, runtimeInfo.collector_enabled, runtimeInfo.reader_enabled]);
+  }, [isReaderRole, runtimeInfo.collector_enabled, runtimeInfo.reader_enabled]);
 
   useEffect(() => {
     // 能力未载入前 tabs 为空,此时重定向会把深链(#/fetch 等书签)误弹回默认页——等载入后再判。
@@ -481,7 +528,6 @@ export default function App() {
   // 抵达幕布:跨越「载入中 → 主界面」两个分支常驻,直到淡出完毕
   const arrivalOverlay = arrival ? (
     <div className={`app-arrive is-${arrival}`} aria-hidden="true">
-      <span className="app-arrive-light" />
       {arrival === 'settle' && !runtimeLoaded && (
         <span className="app-arrive-wait">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -508,7 +554,7 @@ export default function App() {
       {/* ── lg+:左侧固定导轨(管理面),形制向阅读器视图轨靠拢:
              56px 带宽 / 32px 品牌位 / 38px icon-only 钮 + 右侧墨底 tooltip /
              轨底单一头像菜单(设置·主题·退出)。复用 reader-vrail-* 类族(已是全站轨语言)。 ── */}
-      {!readerOnly && (
+      {!readerView && (
       <aside className="app-rail hidden lg:flex" aria-label="主导航">
         <div className="rail-brand" title={`${brandTitle} · ${brandSubtitle}`}>
           <BrandLogo rail logoError={logoError} onLogoError={() => setLogoError(true)} />
@@ -528,43 +574,52 @@ export default function App() {
             </button>
           ))}
         </nav>
-        {/* 轨底:主题/设置 直排 + 头像(点击进设置·账户;退出登录收敛在设置·账户区)——
-            头像菜单已退役(与设置页功能重复,用户拍板) */}
+        {/* 轨底:用户滑出菜单(2026-07-24 拍板)——常态只见头像,hover 滑出
+            进入阅读器/主题/设置,头像同帧变关机退出钮点击即退;
+            原「头像点击进设置」与设置钮功能重复,就此收敛。 */}
         <div className="reader-vrail-spring" />
-        <button
-          type="button"
-          onClick={toggleTheme}
-          className="reader-vrail-btn"
-          aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+        <RailUserFlyout
+          avatar={authState.user?.avatar}
+          avatarText={avatarInitials}
+          username={authState.user?.username}
+          roleLabel={roleLabel}
+          onLogout={handleLogout}
         >
-          {effective === 'dark' ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
-          <span className="reader-vrail-tip">{effective === 'dark' ? '切换亮色' : '切换暗色'}</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => openSettings()}
-          className="reader-vrail-btn"
-          aria-label="设置"
-        >
-          <Settings className="h-[18px] w-[18px]" />
-          <span className="reader-vrail-tip">设置</span>
-        </button>
-        <button
-          type="button"
-          className="reader-vrail-avatar"
-          title={`${authState.user?.username || 'admin'} · ${roleLabel}`}
-          aria-label="账号设置"
-          onClick={() => openSettings('account')}
-        >
-          {authState.user?.avatar
-            ? <img src={authState.user.avatar} alt="" />
-            : <span>{avatarInitials}</span>}
-        </button>
+          {/* 隐藏切换钮(v3.19):管理员也是读者——进入阅读器 standalone 整页形态,
+              阅读器轨底有对称的「返回管理台」钮。 */}
+          <button
+            type="button"
+            onClick={enterReader}
+            className="reader-vrail-btn"
+            aria-label="进入阅读器"
+          >
+            <BookOpen className="h-[18px] w-[18px]" />
+            <span className="reader-vrail-tip">进入阅读器</span>
+          </button>
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="reader-vrail-btn"
+            aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+          >
+            {effective === 'dark' ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
+            <span className="reader-vrail-tip">{effective === 'dark' ? '切换亮色' : '切换暗色'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => openSettings()}
+            className="reader-vrail-btn"
+            aria-label="设置"
+          >
+            <Settings className="h-[18px] w-[18px]" />
+            <span className="reader-vrail-tip">设置</span>
+          </button>
+        </RailUserFlyout>
       </aside>
       )}
 
-      {/* ── lg 以下:保留移动顶栏 ── */}
-      <header className="app-header flex items-center justify-between gap-4 px-5 sm:px-8 lg:hidden">
+      {/* ── lg 以下:保留移动顶栏(admin 的阅读器模式下隐藏,由阅读器视图轨承接) ── */}
+      <header className={`app-header ${readerView && !isReaderRole ? 'hidden' : 'flex'} items-center justify-between gap-4 px-5 sm:px-8 lg:hidden`}>
         <div className="flex min-w-0 items-center gap-3">
           <BrandLogo logoError={logoError} onLogoError={() => setLogoError(true)} />
         </div>
@@ -640,6 +695,7 @@ export default function App() {
         theme={theme}
         onThemeChange={setTheme}
         runtimeInfo={runtimeInfo}
+        readerSurface={readerView}
         username={authState.user?.username}
         avatar={authState.user?.avatar}
         onUserUpdated={handleUserUpdated}
@@ -649,12 +705,14 @@ export default function App() {
       />
 
       <main
-        className={`${readerOnly ? '' : 'ml-[var(--rail-w)] '}px-5 pt-[22px] pb-9 sm:px-7`}
-        style={readerOnly ? { '--rail-w': '0px' } : undefined}
+        className={`${readerView ? '' : 'ml-[var(--rail-w)] '}px-5 pt-[22px] pb-9 sm:px-7`}
+        style={readerView ? { '--rail-w': '0px' } : undefined}
       >
         <div className="page-shell">
-          {readerOnly && mountedTabs.has('reader') && (
-            <div className={`tab-panel${activeTab === 'reader' ? '' : ' is-off'}`}>
+          {/* 阅读器:读者角色恒挂载;admin 经轨底切换钮进入(enterReader 挂载),退出后保持
+              挂载但 is-off——阅读位置/订阅状态不丢。 */}
+          {mountedTabs.has('reader') && (
+            <div className={`tab-panel${readerView && (!isReaderRole || activeTab === 'reader') ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <ReaderTab
                   showToast={showToast}
@@ -665,12 +723,14 @@ export default function App() {
                   themeDark={effective === 'dark'}
                   onToggleTheme={toggleTheme}
                   onOpenSettings={() => openSettings()}
+                  onLogout={handleLogout}
+                  onExitReader={isAdminRole ? exitReader : undefined}
                 />
               </Suspense>
             </div>
           )}
-          {!readerOnly && mountedTabs.has('data') && (
-            <div className={`tab-panel${activeTab === 'data' ? '' : ' is-off'}`}>
+          {!isReaderRole && mountedTabs.has('data') && (
+            <div className={`tab-panel${activeTab === 'data' && !readerView ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <DataTab
                   availableFetchers={availableFetchers}
@@ -689,7 +749,7 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('fetch') && runtimeInfo.collector_enabled && (
-            <div className={`tab-panel${activeTab === 'fetch' ? '' : ' is-off'}`}>
+            <div className={`tab-panel${activeTab === 'fetch' && !readerView ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <FetchTab
                   availableFetchers={availableFetchers}
@@ -709,7 +769,7 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('runs') && runtimeInfo.collector_enabled && (
-            <div className={`tab-panel${activeTab === 'runs' ? '' : ' is-off'}`}>
+            <div className={`tab-panel${activeTab === 'runs' && !readerView ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <FetchRunsTab
                   availableFetchers={availableFetchers}
@@ -728,14 +788,14 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('vector') && runtimeInfo.reader_enabled && (
-            <div className={`tab-panel${activeTab === 'vector' ? '' : ' is-off'}`}>
+            <div className={`tab-panel${activeTab === 'vector' && !readerView ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <VectorTab availableFetchers={availableFetchers} showToast={showToast} accountRole={runtimeInfo.account_role} />
               </Suspense>
             </div>
           )}
           {mountedTabs.has('mcp') && runtimeInfo.collector_enabled && (
-            <div className={`tab-panel${activeTab === 'mcp' ? '' : ' is-off'}`}>
+            <div className={`tab-panel${activeTab === 'mcp' && !readerView ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <DailyBriefTab
                   showToast={showToast}
@@ -747,10 +807,11 @@ export default function App() {
             </div>
           )}
           {mountedTabs.has('admin') && runtimeInfo.account_role === 'admin' && (
-            <div className={`tab-panel${activeTab === 'admin' ? '' : ' is-off'}`}>
+            <div className={`tab-panel${activeTab === 'admin' && !readerView ? '' : ' is-off'}`}>
               <Suspense fallback={<TabFallback />}>
                 <AdminOpsTab
                   showToast={showToast}
+                  currentUsername={authState.user?.username}
                   pendingFocus={pendingFocus?.tab === 'admin' ? pendingFocus.payload : null}
                   onPendingFocusApplied={clearPendingFocus}
                 />

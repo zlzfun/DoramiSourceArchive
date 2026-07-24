@@ -27,6 +27,7 @@ from api.sources import (
 )
 from config import settings
 from models.db import (
+    AdminAuditRecord,
     ArticleRecord,
     ReaderFavoriteRecord,
     ReaderFeedTokenRecord,
@@ -106,14 +107,26 @@ def admin_overview(session: Session = Depends(deps.get_session)):
 
 
 @router.get("/accounts")
-def admin_list_accounts(days: int = 30, session: Session = Depends(deps.get_session)):
+def admin_list_accounts(
+    days: int = 30,
+    skip: int = 0,
+    limit: int = 50,
+    q: str | None = None,
+    session: Session = Depends(deps.get_session),
+):
     """账户列表（运维视图）：基础账户字段 + 订阅数 + **近 days 天窗口指标**。
 
     窗口指标（ai_calls / ai_tokens 取自 AiUsageRecord 聚合，logged_in_window 由
-    last_login_at 派生）让列表反映「近况」而非生命周期累计。管理员为系统唯一内置
-    账号、不可管理，故不在此列表展示（仅列读者账户）。
+    last_login_at 派生）让列表反映「近况」而非生命周期累计。多管理员平权后，管理员
+    账户同样计入列表（payload 带 role），供角色管理与末位保护裁决。
+
+    规模化：服务端分页（skip/limit）+ 用户名子串过滤（q）。`items` 为过滤后按
+    username 排序的分页切片；`total` 为过滤后的账户总数；`summary` 与 top 榜聚合
+    **全部账户**（不受 q/分页影响），直接在既有全表窗口 map 上求和/排序得到。
     """
     days = max(1, min(int(days or 30), 365))
+    skip = max(0, int(skip or 0))
+    limit = max(1, min(int(limit or 50), 200))
     since = (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
     rows = session.exec(
         select(
@@ -128,10 +141,50 @@ def admin_list_accounts(days: int = 30, session: Session = Depends(deps.get_sess
     # 最近登录以事件流兜底快照:last_login_at 是缓存,历史疤痕可能缺失
     # (曾出现「窗口登录 241 次但最近登录为空」的矛盾行)。
     last_login_map = accounts_service.last_login_by_user(session)
+
+    all_users = accounts_service.list_users(session)
+
+    # summary + top 榜:聚合全部账户,不受 q/分页影响。
+    summary = {
+        "accounts": len(all_users),
+        "admins": sum(1 for u in all_users if u.role == "admin"),
+        "disabled": sum(1 for u in all_users if not u.is_active),
+        "logged_in_window": sum(
+            1
+            for u in all_users
+            if (u.last_login_at or last_login_map.get(u.username))
+            and (u.last_login_at or last_login_map.get(u.username)) >= since
+        ),
+        "logins": sum(logins_map.values()),
+        "reads": sum(reads_map.values()),
+        "ai_calls": sum(u["calls"] for u in usage_map.values()),
+        "ai_tokens": sum(u["total_tokens"] for u in usage_map.values()),
+        "top_reads": [
+            {"username": name, "value": value}
+            for name, value in sorted(
+                reads_map.items(), key=lambda kv: (-kv[1], kv[0])
+            )
+            if value > 0
+        ][:8],
+        "top_logins": [
+            {"username": name, "value": value}
+            for name, value in sorted(
+                logins_map.items(), key=lambda kv: (-kv[1], kv[0])
+            )
+            if value > 0
+        ][:8],
+    }
+
+    # q 子串过滤(大小写不敏感),排序沿用 list_users 的 username 序。
+    if q:
+        needle = q.strip().lower()
+        filtered = [u for u in all_users if needle in u.username.lower()]
+    else:
+        filtered = list(all_users)
+    total = len(filtered)
+
     result = []
-    for record in accounts_service.list_users(session):
-        if record.role == "admin":
-            continue
+    for record in filtered[skip : skip + limit]:
         payload = serialize_user(record)
         last_login = record.last_login_at or last_login_map.get(record.username)
         payload["last_login_at"] = last_login
@@ -144,7 +197,7 @@ def admin_list_accounts(days: int = 30, session: Session = Depends(deps.get_sess
         payload["logins"] = logins_map.get(record.username, 0)
         payload["logged_in_window"] = bool(last_login and last_login >= since)
         result.append(payload)
-    return result
+    return {"items": result, "total": total, "summary": summary}
 
 
 @router.get("/accounts/{username}/activity")
@@ -154,7 +207,7 @@ def admin_account_activity(
     """单读者活动详情：近 days 天 AI 用量 + 各源阅读/收藏互动 + 登录活跃 + 账户快照。"""
     registry_meta = _registry_source_meta()
     record = accounts_service.get_user(session, username)
-    if record is None or record.role == "admin":
+    if record is None:
         raise HTTPException(status_code=404, detail="账户不存在")
     usage = ai_usage_service.summarize_user(session, username, days=days)
     reads = reader_activity_service.summarize_user_reads(session, username, days=days)
@@ -210,6 +263,51 @@ def admin_account_activity(
 def admin_ai_usage(days: int = 30, session: Session = Depends(deps.get_session)):
     """AI 用量看板：近 days 天按用途/用户/日期聚合的调用数与 token 消耗。"""
     return ai_usage_service.summarize(session, days=days)
+
+
+@router.get("/audit-log")
+def admin_audit_log(
+    days: int = 30,
+    limit: int = 100,
+    skip: int = 0,
+    session: Session = Depends(deps.get_session),
+):
+    """读取近 days 天管理操作审计；当前尚未实现留存期限与自动清理。"""
+    safe_days = max(1, min(int(days), 365))
+    safe_limit = max(1, min(int(limit), 500))
+    safe_skip = max(0, int(skip or 0))
+    window_start = (
+        datetime.date.today() - datetime.timedelta(days=safe_days - 1)
+    ).isoformat()
+    in_window = AdminAuditRecord.at >= window_start
+    total = session.exec(
+        select(func.count())
+        .select_from(AdminAuditRecord)
+        .where(in_window)
+    ).one()
+    records = session.exec(
+        select(AdminAuditRecord)
+        .where(in_window)
+        .order_by(AdminAuditRecord.at.desc(), AdminAuditRecord.id.desc())
+        .offset(safe_skip)
+        .limit(safe_limit)
+    ).all()
+    return {
+        "items": [
+            {
+                "id": record.id,
+                "username": record.username,
+                "method": record.method,
+                "path": record.path,
+                "status_code": record.status_code,
+                "summary": record.summary,
+                "target": record.target,
+                "at": record.at,
+            }
+            for record in records
+        ],
+        "total": int(total),
+    }
 
 
 @router.get("/content")

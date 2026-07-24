@@ -35,7 +35,7 @@ export default function ManualAddModal({ isOpen, uniqueContentTypes, uniqueSourc
           <label className="form-field"><span>任意扩展元数据 (严格的 JSON 格式)</span><textarea name="extensions_json" defaultValue="{}" rows="4" className="form-input font-mono" /></label>
         </div>
         <div className="p-5 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex justify-end">
-          <button type="submit" className="action-button action-button-primary">确认写入数据库</button>
+          <button type="submit" className="action-button action-button-primary min-h-[32px] px-3 text-xs">确认写入数据库</button>
         </div>
       </form>
     </Modal>

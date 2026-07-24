@@ -17,11 +17,11 @@ import importlib
 import logging
 import re
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from models.db import ArticleRecord
 from services import jobs as jobs_service
@@ -97,18 +97,27 @@ def _article_url_statuses(store, rows: List[tuple]) -> Dict[str, List[Dict[str, 
 
 
 @router.get("/api/admin/media/heatmap")
-async def media_heatmap(days: int = Query(365, ge=1, le=730)):
+async def media_heatmap(
+    days: int = Query(365, ge=1, le=730),
+    year: Optional[int] = Query(None, ge=2000, le=2100),
+):
     """媒体热点图数据：按文章 fetched_date 逐日聚合图片缓存覆盖情况。
 
     现算不落表（admin 低频访问，当前归档规模亚秒级）：正文提取图链 →
     按 url_hash 批查 media_assets → cached/failed/pending 三态计数。
-    仅返回有文章的日子，空日由前端补格。
+    仅返回有文章的日子，空日由前端补格。默认「近 days 天」滚动窗；
+    传 year 则取该自然年（年份切换轨），响应恒带 years = 归档覆盖的年份列表（降序）。
     """
     store = _require_store()
     engine = _app().db_sink.engine
-    cutoff = (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
+    if year is not None:
+        cutoff = f"{year}-01-01"
+        upper = f"{year + 1}-01-01"
+    else:
+        cutoff = (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
+        upper = None
     with Session(engine) as session:
-        articles = session.exec(
+        query = (
             select(
                 ArticleRecord.id,
                 ArticleRecord.fetched_date,
@@ -116,7 +125,17 @@ async def media_heatmap(days: int = Query(365, ge=1, le=730)):
                 ArticleRecord.extensions_json,
             )
             .where(ArticleRecord.fetched_date >= cutoff)  # ISO 串字典序即时间序
-        ).all()
+        )
+        if upper is not None:
+            query = query.where(ArticleRecord.fetched_date < upper)
+        articles = session.exec(query).all()
+        # 可用年份:最早归档年 → 当前年(降序),供前端年份切换轨;无归档时为空列表。
+        earliest = session.exec(select(func.min(ArticleRecord.fetched_date))).one()
+        years: List[int] = []
+        if earliest:
+            first_year = int(str(earliest)[:4])
+            this_year = datetime.date.today().year
+            years = list(range(this_year, first_year - 1, -1))
 
     statuses = _article_url_statuses(store, [(a[0], a[2], a[3]) for a in articles])
     day_agg: Dict[str, Dict[str, int]] = defaultdict(
@@ -137,6 +156,8 @@ async def media_heatmap(days: int = Query(365, ge=1, le=730)):
                 agg[item["status"] if item["status"] in ("cached", "failed") else "pending"] += 1
     return {
         "since": cutoff,
+        "year": year,
+        "years": years,
         "days": [{"date": day, **agg} for day, agg in sorted(day_agg.items())],
     }
 

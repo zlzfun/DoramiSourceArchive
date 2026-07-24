@@ -82,8 +82,8 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
         {isEditing && (
           <div className="p-4 bg-[var(--dorami-soft)] border-t border-[var(--dorami-border)] flex justify-end space-x-3">
             <span className="text-xs text-amber-600 flex items-center mr-auto px-2"><AlertCircle className="w-3.5 h-3.5 mr-1" /> 修改内容后系统将自动抹除旧的向量索引，需重新构建。</span>
-            <button onClick={onToggleEdit} className="action-button action-button-quiet">取消</button>
-            <button onClick={handleSave} className="action-button action-button-primary">
+            <button onClick={onToggleEdit} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
+            <button onClick={handleSave} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
               <Save /> 确认保存修改
             </button>
           </div>

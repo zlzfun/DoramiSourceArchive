@@ -15,6 +15,8 @@
   网络代理),含生产 production.ini 与环境变量覆盖。
 - ◉ [deploy-docker.md](./deploy-docker.md) — **Docker 部署(唯一生产路径)**:compose 双容器形态/
   用法与运维/ini 容器内语义差异/HTTPS/全新服务器部署与迁移/受限网络镜像源。PM2 裸机路径已于 v3.15.1 退役。
+- ◉ [engage-sync-wave-plan.md](./engage-sync-wave-plan.md) — v3.18 互通波设计:读者反馈收件箱/
+  管理员公告横幅(逐用户一次性 dismiss)/远程内容同步(接收方拉取,复用归档同步契约)。
 
 ## contracts/ —— 对外契约(◇ 耐久)
 

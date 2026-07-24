@@ -35,9 +35,12 @@ export function colorForEntity(namespace, name) {
   return CHART_SLOTS[mem.get(name)];
 }
 
-// 各源互动分组柱的语义色：阅读=槽1 靛蓝，收藏=槽2 青绿(固定语义对,全站一致)。
+// 各源互动的语义色三件套(固定语义,全站一致):阅读=槽1 靛蓝,收藏=槽3 琥珀
+// (与阅读器的琥珀收藏星同色呼应,2026-07-24 拍板),订阅=槽2 青绿(原走中性灰
+// 「其它」槽,信息被降权——它是真实指标,该有自己的颜色;靛/青/琥珀为验证过的相邻三槽)。
 export const C_READ = CHART_SLOTS[0];
-export const C_FAVORITE = CHART_SLOTS[1];
+export const C_FAVORITE = CHART_SLOTS[2];
+export const C_SUBSCRIBE = CHART_SLOTS[1];
 
 export const fmtNumLocale = (n) => Number(n || 0).toLocaleString();
 

@@ -14,6 +14,9 @@ import {
   X,
   Loader2,
   Check,
+  MessageSquare,
+  ShieldCheck,
+  ShieldOff,
 } from 'lucide-react';
 import {
   fetchAdminAccounts,
@@ -40,7 +43,11 @@ import { useModalTransition } from '../hooks/useModalTransition';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { MultiSeriesArea, RankBars, BarList } from './charts/DashboardCharts';
 import MediaHeatmap from './admin/MediaHeatmap';
-import { pivotDaily, C_READ, C_FAVORITE, C_OTHER } from './charts/chartUtils';
+import FeedbackInboxPanel from './admin/FeedbackInboxPanel';
+import AnnouncementsPanel from './admin/AnnouncementsPanel';
+import AdminAuditPanel from './admin/AdminAuditPanel';
+import Pager from './admin/Pager';
+import { pivotDaily, C_READ, C_FAVORITE, C_SUBSCRIBE } from './charts/chartUtils';
 import { PURPOSE_LABELS, formatStamp, fmtNum, pct, truncLabel, vectorizedRateClass } from './admin/adminUtils';
 
 // 账户列表分页大小：超过即翻页，避免成百上千账户一次性平铺。
@@ -67,7 +74,7 @@ function Kpi({ num, label, sub, tone }) {
   );
 }
 
-export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingFocusApplied }) {
+export default function AdminOpsTab({ showToast, currentUsername = '', pendingFocus = null, onPendingFocusApplied }) {
   const confirm = useConfirm();
   const [sub, setSub] = useState('user'); // 子页：user | content | ai
 
@@ -77,12 +84,15 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
     if (pendingFocus.sub) setSub(pendingFocus.sub);
     onPendingFocusApplied?.();
   }, [pendingFocus, onPendingFocusApplied]);
-  const [accounts, setAccounts] = useState(null);
+  // 账户列表(规模化波):服务端分页 + 搜索,前端只持有当前页;summary 聚合全量供 KPI/排行。
+  const [acctData, setAcctData] = useState(null); // {items,total,summary} | null = 加载中
   const [globalAi, setGlobalAi] = useState(null);
   const [busy, setBusy] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [accountQuery, setAccountQuery] = useState('');
+  const [newRole, setNewRole] = useState('user'); // 新建账户角色(v3.19 多管理员:可直建管理员,默认读者防误触)
+  const [accountQuery, setAccountQuery] = useState(''); // 输入框即时值
+  const [acctQ, setAcctQ] = useState(''); // 防抖后生效的搜索词(300ms)
   const [accountPage, setAccountPage] = useState(1);
   // 单一时间窗（近 N 天）：页头统一驱动用户子页窗口指标 + AI 用量子页（内容子页为累计口径，不受影响）。
   const [days, setDays] = useState(30);
@@ -171,17 +181,30 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
     }
   }, [showToast]);
 
+  // 搜索防抖:停键 300ms 后生效并归位第一页(服务端过滤)。
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setAcctQ(accountQuery.trim());
+      setAccountPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [accountQuery]);
+
   const reloadAccounts = useCallback(async () => {
     try {
-      setAccounts(await fetchAdminAccounts(days));
+      setAcctData(await fetchAdminAccounts(days, {
+        skip: (accountPage - 1) * ACCOUNTS_PAGE_SIZE,
+        limit: ACCOUNTS_PAGE_SIZE,
+        q: acctQ,
+      }));
     } catch (error) {
       showToast(error.message || '加载账户失败', 'error');
-      setAccounts((prev) => prev ?? []);
+      setAcctData((prev) => prev ?? { items: [], total: 0, summary: null });
     }
-  }, [days, showToast]);
+  }, [days, accountPage, acctQ, showToast]);
 
   useEffect(() => { loadGlobals(); loadLlm(); loadContent(); loadMedia(); loadX(); }, [loadGlobals, loadLlm, loadContent, loadMedia, loadX]);
-  // 账户列表随时间窗口变化重载（窗口指标按 days 聚合）。
+  // 账户列表随时间窗口/页码/搜索词变化重载（窗口指标按 days 聚合）。
   useEffect(() => { reloadAccounts(); }, [reloadAccounts]);
   useEffect(() => { loadUsage(days); }, [loadUsage, days]);
 
@@ -303,16 +326,38 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
     }
     setBusy(true);
     try {
-      await createAccount({ username: newUsername.trim(), password: newPassword, role: 'user' });
-      showToast(`已创建读者账户 ${newUsername.trim()}`, 'success');
+      await createAccount({ username: newUsername.trim(), password: newPassword, role: newRole });
+      showToast(`已创建${newRole === 'admin' ? '管理员' : '读者'}账户 ${newUsername.trim()}`, 'success');
       setNewUsername('');
       setNewPassword('');
+      setNewRole('user');
       setCreateModalOpen(false);
       await reloadAccounts();
     } catch (error) {
       showToast(error.message || '创建账户失败', 'error');
     } finally {
       setBusy(false);
+    }
+  };
+
+  // 角色变更(v3.19 多管理员):提升/降级都需确认;降级自己额外预警——生效后当前
+  // 会话在下一次请求即被吊销(read_auth_token 回查),表现为被登出,不预警会像 bug。
+  const handleToggleRole = async (acc) => {
+    const toAdmin = acc.role !== 'admin';
+    const selfNote = !toAdmin && acc.username === currentUsername
+      ? '这是你当前登录的账号,取消后将立即被登出管理台。'
+      : '';
+    const message = toAdmin
+      ? `确认将「${acc.username}」设为管理员?管理员拥有采集、归档、账户与系统配置的全部权限。`
+      : `确认取消「${acc.username}」的管理员身份?该账户将变为读者,仅保留阅读与订阅能力。${selfNote}`;
+    if (!(await confirm(message))) return;
+    try {
+      await updateAccount(acc.username, { role: toAdmin ? 'admin' : 'user' });
+      showToast(toAdmin ? `已将 ${acc.username} 设为管理员` : `已取消 ${acc.username} 的管理员身份`, 'success');
+      await reloadAccounts();
+    } catch (error) {
+      // 末位管理员保护等后端裁决文案直接透传
+      showToast(error.message || '更新失败', 'error');
     }
   };
 
@@ -402,42 +447,33 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
     [content],
   );
 
-  // 账户搜索 + 分页（前端裁切，承载成百上千读者账户而不撑爆页面）。
-  const filteredAccounts = useMemo(() => {
-    const list = accounts ?? [];
-    const q = accountQuery.trim().toLowerCase();
-    return q ? list.filter((a) => a.username.toLowerCase().includes(q)) : list;
-  }, [accounts, accountQuery]);
-  const accountTotalPages = Math.max(1, Math.ceil(filteredAccounts.length / ACCOUNTS_PAGE_SIZE));
-  const accountSafePage = Math.min(accountPage, accountTotalPages);
-  const pagedAccounts = useMemo(
-    () => filteredAccounts.slice((accountSafePage - 1) * ACCOUNTS_PAGE_SIZE, accountSafePage * ACCOUNTS_PAGE_SIZE),
-    [filteredAccounts, accountSafePage],
-  );
+  // 账户分页派生(服务端分页:items 即当前页,total 为过滤后总数)。
+  const pagedAccounts = acctData?.items ?? [];
+  const acctTotal = acctData?.total ?? 0;
+  const acctSummary = acctData?.summary || null;
+  const accountTotalPages = Math.max(1, Math.ceil(acctTotal / ACCOUNTS_PAGE_SIZE));
+  // 数据收缩(删号/改窗)后当前页越界时回落到末页。
+  useEffect(() => {
+    if (acctData && accountPage > accountTotalPages) setAccountPage(accountTotalPages);
+  }, [acctData, accountPage, accountTotalPages]);
 
-  // ── 用户子页总览 KPI（窗口指标，源自账户列表的窗口字段）──
-  const userKpis = useMemo(() => {
-    const list = accounts ?? [];
-    return {
-      readers: list.length,
-      disabled: list.filter((a) => !a.is_active).length,
-      loggedIn: list.filter((a) => a.logged_in_window).length,
-      logins: list.reduce((s, a) => s + (a.logins || 0), 0),
-      reads: list.reduce((s, a) => s + (a.reads || 0), 0),
-      aiCalls: list.reduce((s, a) => s + (a.ai_calls || 0), 0),
-      aiTokens: list.reduce((s, a) => s + (a.ai_tokens || 0), 0),
-    };
-  }, [accounts]);
+  // ── 用户子页总览 KPI（窗口指标，服务端 summary 聚合全量,不受分页/搜索影响）──
+  const userKpis = useMemo(() => ({
+    accounts: acctSummary?.accounts ?? 0,
+    admins: acctSummary?.admins ?? 0,
+    disabled: acctSummary?.disabled ?? 0,
+    loggedIn: acctSummary?.logged_in_window ?? 0,
+    logins: acctSummary?.logins ?? 0,
+    reads: acctSummary?.reads ?? 0,
+    aiCalls: acctSummary?.ai_calls ?? 0,
+    aiTokens: acctSummary?.ai_tokens ?? 0,
+  }), [acctSummary]);
   const perDay = (n) => (days > 0 ? (n / days).toFixed(1) : '0');
-  // 活跃用户 Top：按所选维度（阅读 / 登录）排行。
-  const activeUserRows = useMemo(
-    () => [...(accounts ?? [])]
-      .filter((a) => (a[topMetric] || 0) > 0)
-      .sort((a, b) => (b[topMetric] || 0) - (a[topMetric] || 0))
-      .slice(0, 8)
-      .map((a) => ({ name: a.username, value: a[topMetric] || 0 })),
-    [accounts, topMetric],
-  );
+  // 活跃用户 Top：按所选维度（阅读 / 登录）排行,服务端全量聚合。
+  const activeUserRows = useMemo(() => {
+    const rows = topMetric === 'reads' ? acctSummary?.top_reads : acctSummary?.top_logins;
+    return (rows ?? []).map((r) => ({ name: r.username, value: r.value }));
+  }, [acctSummary, topMetric]);
 
   // ── 单用户详情：打开抽屉并拉取窗口活动 ──
   const openDetail = useCallback(async (username) => {
@@ -481,15 +517,24 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
             <button onClick={() => setSub('user')} className={`segmented-option ${sub === 'user' ? 'segmented-option-active' : ''}`}><Users /> 用户</button>
             <button onClick={() => setSub('content')} className={`segmented-option ${sub === 'content' ? 'segmented-option-active' : ''}`}><Database /> 内容</button>
             <button onClick={() => setSub('ai')} className={`segmented-option ${sub === 'ai' ? 'segmented-option-active' : ''}`}><Brain /> AI</button>
+            <button onClick={() => setSub('engage')} className={`segmented-option ${sub === 'engage' ? 'segmented-option-active' : ''}`}><MessageSquare /> 消息</button>
           </div>
         </div>
       </div>
+
+      {/* ══ 消息子页(v3.18 互通波:反馈收件箱 + 公告管理)════════════ */}
+      {sub === 'engage' && (
+        <div className="grid gap-4">
+          <FeedbackInboxPanel showToast={showToast} />
+          <AnnouncementsPanel showToast={showToast} />
+        </div>
+      )}
 
       {/* ══ 用户子页 ══════════════════════════════════════════════ */}
       {sub === 'user' && (
         <div>
           <section className="surface-card kpi-strip" aria-label="窗口活跃概览">
-            <Kpi num={fmtNum(userKpis.readers)} label="读者账户" sub={userKpis.disabled ? `停用 ${userKpis.disabled}` : '全部启用'} />
+            <Kpi num={fmtNum(userKpis.accounts)} label="账户" sub={`管理员 ${userKpis.admins}${userKpis.disabled ? ` · 停用 ${userKpis.disabled}` : ''}`} />
             <Kpi num={fmtNum(userKpis.loggedIn)} label={`近 ${days} 天活跃`} sub="登录过 ≥1 次" />
             <Kpi num={fmtNum(userKpis.logins)} label="登录次数" sub={`日均 ${perDay(userKpis.logins)}`} />
             <Kpi num={fmtNum(userKpis.reads)} label="阅读次数" sub={`日均 ${perDay(userKpis.reads)}`} />
@@ -513,7 +558,7 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
                   labelKey="name"
                   valueKey="value"
                   name={topMetric === 'reads' ? '阅读' : '登录'}
-                  height={Math.max(120, activeUserRows.length * 30)}
+                  height={Math.max(112, activeUserRows.length * 26)}
                   tickFormatter={truncLabel}
                   emptyHint={topMetric === 'reads' ? '窗口内还没有阅读记录' : '窗口内还没有登录记录'}
                 />
@@ -525,30 +570,30 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
             <span className="zone-title">账户管理</span>
             <span className="zone-hint">停用 / 删除会立即让对应账户的会话失效；点行查看活动详情</span>
             <span className="zone-acts flex items-center gap-2">
-              {accounts && accounts.length > 0 && (
+              {acctData !== null && (acctTotal > 0 || accountQuery.trim() !== '') && (
                 <span className="relative">
                   <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
                   <input
                     value={accountQuery}
-                    onChange={(e) => { setAccountQuery(e.target.value); setAccountPage(1); }}
+                    onChange={(e) => setAccountQuery(e.target.value)}
                     placeholder="搜索用户名"
                     className="form-input form-input-inline w-44 pl-8"
                   />
                 </span>
               )}
               <button onClick={() => setCreateModalOpen(true)} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
-                <UserPlus className="h-4 w-4" /> 新建读者
+                <UserPlus className="h-4 w-4" /> 新建账户
               </button>
             </span>
           </div>
 
           <section className="surface-card rounded-[var(--r-card)] overflow-hidden">
-            {accounts === null ? (
+            {acctData === null ? (
               <p className="p-6 tiny-meta">加载中…</p>
-            ) : accounts.length === 0 ? (
-              <p className="p-6 text-center tiny-meta">还没有读者账户，用右上角「新建读者」创建第一个。</p>
-            ) : filteredAccounts.length === 0 ? (
-              <p className="p-6 text-center tiny-meta">没有匹配「{accountQuery.trim()}」的账户。</p>
+            ) : acctTotal === 0 && acctQ === '' ? (
+              <p className="p-6 text-center tiny-meta">还没有账户，用右上角「新建账户」创建第一个。</p>
+            ) : acctTotal === 0 ? (
+              <p className="p-6 text-center tiny-meta">没有匹配「{acctQ}」的账户。</p>
             ) : (
               <>
                 <div className="acct-scroll">
@@ -556,13 +601,14 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
                     <thead>
                       <tr>
                         <th className="acct-th">用户</th>
+                        <th className="acct-th">角色</th>
                         <th className="acct-th">状态</th>
                         <th className="acct-th">最近登录</th>
                         <th className="acct-th is-num">登录</th>
                         <th className="acct-th is-num">阅读</th>
                         <th className="acct-th is-num">AI 调用</th>
                         <th className="acct-th is-num">订阅</th>
-                        <th className="acct-th" aria-label="操作" style={{ width: 130 }} />
+                        <th className="acct-th" aria-label="操作" style={{ width: 156 }} />
                       </tr>
                     </thead>
                     <tbody>
@@ -581,6 +627,11 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
                               <span className="acct-avatar">{account.username.charAt(0).toUpperCase()}</span>
                               <span className="acct-name">{account.username}</span>
                             </span>
+                          </td>
+                          <td>
+                            {account.role === 'admin'
+                              ? <span className="sett-role-chip" style={{ color: 'var(--dorami-accent-ink)' }}><ShieldCheck className="h-3 w-3" /> 管理员</span>
+                              : <span className="sett-role-chip">读者</span>}
                           </td>
                           <td>{account.is_active ? <span className="stamp stamp-ok">启用</span> : <span className="stamp stamp-idle">停用</span>}</td>
                           <td><span className="acct-mono">{formatStamp(account.last_login_at)}</span></td>
@@ -602,6 +653,14 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
                                   <Zap />
                                 </button>
                               )}
+                              <button
+                                type="button"
+                                className={`rowact-btn ${account.role === 'admin' ? 'is-on' : ''}`}
+                                title={account.role === 'admin' ? `取消 ${account.username} 的管理员身份` : `将 ${account.username} 设为管理员`}
+                                onClick={() => handleToggleRole(account)}
+                              >
+                                {account.role === 'admin' ? <ShieldOff /> : <ShieldCheck />}
+                              </button>
                               <button type="button" className="rowact-btn" title="重置密码" onClick={() => handleResetPassword(account)}><KeyRound /></button>
                               <button type="button" className="rowact-btn" title={account.is_active ? '停用账户' : '启用账户'} onClick={() => handleToggleActive(account)}><Power /></button>
                               <button type="button" className="rowact-btn is-danger" title="删除账户" onClick={() => handleDelete(account)}><Trash2 /></button>
@@ -615,20 +674,17 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
                 {accountTotalPages > 1 && (
                   <div className="flex flex-wrap items-center gap-2 border-t border-[var(--dorami-border)] px-4 py-2.5">
                     <span className="tiny-meta">
-                      共 {filteredAccounts.length} 个 · 第 {(accountSafePage - 1) * ACCOUNTS_PAGE_SIZE + 1}–{Math.min(accountSafePage * ACCOUNTS_PAGE_SIZE, filteredAccounts.length)} 个
+                      共 {acctTotal} 个 · 第 {(accountPage - 1) * ACCOUNTS_PAGE_SIZE + 1}–{Math.min(accountPage * ACCOUNTS_PAGE_SIZE, acctTotal)} 个
                     </span>
-                    <div className="pager">
-                      <button className="pager-btn" disabled={accountSafePage <= 1} onClick={() => setAccountPage((p) => Math.max(1, p - 1))}>‹</button>
-                      {Array.from({ length: accountTotalPages }, (_, i) => (
-                        <button key={i} className={`pager-btn ${i + 1 === accountSafePage ? 'is-on' : ''}`} onClick={() => setAccountPage(i + 1)}>{i + 1}</button>
-                      ))}
-                      <button className="pager-btn" disabled={accountSafePage >= accountTotalPages} onClick={() => setAccountPage((p) => Math.min(accountTotalPages, p + 1))}>›</button>
-                    </div>
+                    <Pager page={accountPage} totalPages={accountTotalPages} onPage={setAccountPage} />
                   </div>
                 )}
               </>
             )}
           </section>
+
+          {/* ── 操作审计(v3.19 多管理员):管理面写操作逐条落行,多管理员互相可查 ── */}
+          <AdminAuditPanel days={days} showToast={showToast} />
         </div>
       )}
 
@@ -664,7 +720,7 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
                     metrics={[
                       { key: 'reads', name: '文章阅读', color: C_READ },
                       { key: 'favorites', name: '文章收藏', color: C_FAVORITE },
-                      { key: 'subs', name: '源订阅', color: C_OTHER },
+                      { key: 'subs', name: '源订阅', color: C_SUBSCRIBE },
                     ]}
                     emptyHint="还没有阅读 / 收藏 / 订阅记录"
                   />
@@ -929,9 +985,9 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
       {/* ── 新建账户弹窗（Portal 到 body，避开变换祖先造成的 fixed 错位） ── */}
       {createModal.mounted && createPortal(
         <div className={`modal-overlay ${createModal.closing ? 'is-closing' : ''}`} onClick={() => setCreateModalOpen(false)}>
-          <form ref={createPanelRef} role="dialog" aria-modal="true" aria-label="新建读者账户" tabIndex={-1} className="modal-panel max-w-md form-sheet" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
+          <form ref={createPanelRef} role="dialog" aria-modal="true" aria-label="新建账户" tabIndex={-1} className="modal-panel max-w-md form-sheet" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
             <div className="form-sheet-head">
-              <h3 className="card-title">新建读者账户</h3>
+              <h3 className="card-title">新建账户</h3>
               <button type="button" onClick={() => setCreateModalOpen(false)} className="icon-button" aria-label="关闭"><X className="w-4 h-4" /></button>
             </div>
             <div className="form-sheet-body">
@@ -943,11 +999,29 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
                 <label className="form-label" htmlFor="acct-new-pw">初始密码</label>
                 <input id="acct-new-pw" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="至少 6 位" autoComplete="new-password" className="form-input w-full" />
               </div>
+              <div className="form-sheet-field">
+                <span className="form-label">角色</span>
+                <div className="mini-seg" role="group" aria-label="账户角色">
+                  {[['user', '读者'], ['admin', '管理员']].map(([role, label]) => (
+                    <button
+                      key={role}
+                      type="button"
+                      onClick={() => setNewRole(role)}
+                      className={`mini-seg-btn ${newRole === role ? 'is-on' : ''}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {newRole === 'admin' && (
+                  <p className="tiny-meta" style={{ marginTop: 6 }}>管理员拥有采集、归档、账户与系统配置的全部权限。</p>
+                )}
+              </div>
             </div>
             <div className="form-sheet-foot">
-              <button type="button" onClick={() => setCreateModalOpen(false)} className="action-button action-button-quiet">取消</button>
-              <button type="submit" disabled={busy} className="action-button action-button-primary">
-                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />} 创建读者账户
+              <button type="button" onClick={() => setCreateModalOpen(false)} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
+              <button type="submit" disabled={busy} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />} 创建{newRole === 'admin' ? '管理员' : '读者'}账户
               </button>
             </div>
           </form>
@@ -980,8 +1054,8 @@ export default function AdminOpsTab({ showToast, pendingFocus = null, onPendingF
               </div>
             </div>
             <div className="form-sheet-foot">
-              <button type="button" onClick={() => setResetTarget(null)} className="action-button action-button-quiet">取消</button>
-              <button type="submit" disabled={resetBusy} className="action-button action-button-primary">
+              <button type="button" onClick={() => setResetTarget(null)} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">取消</button>
+              <button type="submit" disabled={resetBusy} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
                 {resetBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />} 保存新密码
               </button>
             </div>

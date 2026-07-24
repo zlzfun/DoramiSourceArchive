@@ -27,6 +27,7 @@ import api.app as app_module  # noqa: E402
 AUTHENTICATED_ANY_ALLOWLIST = {
     "/api/auth/avatar",
     "/api/auth/change-password",
+    "/api/auth/preferences",
     "/api/runtime",
 }
 

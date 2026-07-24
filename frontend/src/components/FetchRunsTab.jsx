@@ -1397,8 +1397,8 @@ export default function FetchRunsTab({
           {/* ── 脚:注记 + 唯一 primary CTA ── */}
           <footer className="jr-foot">
             <span className="jr-foot-note">保存后时刻表立即更新;运行中的批次不受影响</span>
-            <button onClick={() => setJobModalOpen(false)} className="action-button action-button-quiet ml-auto">取消</button>
-            <button onClick={handleSaveJob} className="action-button action-button-primary"><Save /> 保存任务</button>
+            <button onClick={() => setJobModalOpen(false)} className="action-button action-button-quiet min-h-[32px] px-3 text-xs ml-auto">取消</button>
+            <button onClick={handleSaveJob} className="action-button action-button-primary min-h-[32px] px-3 text-xs"><Save /> 保存任务</button>
           </footer>
         </div>
       </Modal>

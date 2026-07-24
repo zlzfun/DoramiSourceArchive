@@ -161,9 +161,14 @@ from api.routers.collection import (
 from api.routers import fetchers as fetchers_router
 from api.routers import stats as stats_router
 from api.routers import media as media_router
+from api.routers import feedback as feedback_router
+from api.routers import announcements as announcements_router
+from api.routers import remote_sync as remote_sync_router
 from api.routers.fetchers import FetchBatchItem, FetchBatchParams
 from services import daily_brief as daily_brief_service
+from services import remote_sync as remote_sync_service
 from services import accounts as accounts_service
+from services import admin_audit as admin_audit_service
 from services import reader_ai as reader_ai_service
 from services import ai_usage as ai_usage_service
 from services import reader_activity as reader_activity_service
@@ -244,7 +249,7 @@ def reader_role_enabled(session: Optional[Dict[str, Any]] = None) -> bool:
 
 
 def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    ai_beta_enabled, llm_configured = _ai_capabilities(session)
+    ai_beta_enabled, llm_configured, default_surface = _ai_capabilities(session)
     return {
         "version": __version__,
         "role": runtime_role(),
@@ -255,27 +260,34 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
         # 用户面 AI（阅读器内翻译/问答）：该账户开关 AND LLM 已配置才视为可用。
         "ai_beta_enabled": ai_beta_enabled,
         "llm_configured": llm_configured,
+        # 登录默认落地界面（admin 双界面切换用；无会话/异常时回落 console）。
+        "default_surface": default_surface,
     }
 
 
-def _ai_capabilities(session: Optional[Dict[str, Any]] = None) -> tuple[bool, bool]:
-    """返回 (该账户是否开启 AI Beta, LLM 是否已配置)。任一异常时降级为 False。"""
+def _ai_capabilities(session: Optional[Dict[str, Any]] = None) -> tuple[bool, bool, str]:
+    """返回 (该账户是否开启 AI Beta, LLM 是否已配置, 默认落地界面)。异常时降级。
+
+    三项都在同一 DB 会话内取，避免 runtime 接口多开会话。"""
     username = str(session.get("sub")) if session else ""
     ai_beta_enabled = False
     llm_configured = False
+    default_surface = "console"
     if db_sink is None:
-        return ai_beta_enabled, llm_configured
+        return ai_beta_enabled, llm_configured, default_surface
     try:
         with Session(db_sink.engine) as db:
             llm_configured = daily_brief_service.resolve_llm_config(db).configured
             # 全局总开关关闭即视为该账户 AI 不可用（前端入口随之隐藏）。
             global_on = accounts_service.ai_beta_global_enabled(db)
-            if username and global_on:
+            if username:
                 record = accounts_service.get_user(db, username)
-                ai_beta_enabled = bool(record and record.ai_beta_enabled)
+                if record is not None:
+                    ai_beta_enabled = bool(global_on and record.ai_beta_enabled)
+                    default_surface = record.default_surface or "console"
     except Exception:  # 能力探测不应阻断 runtime 接口
-        return False, False
-    return ai_beta_enabled, llm_configured
+        return False, False, "console"
+    return ai_beta_enabled, llm_configured, default_surface
 
 
 COLLECTOR_API_PREFIXES = (
@@ -402,6 +414,8 @@ async def lifespan(app: FastAPI):
             # RAG 开启时注册每日向量索引对账巡检（只报告、发现漂移告警，每日 04:00）。
             if vector_sink is not None:
                 add_cron_job("vector_reconcile", execute_vector_reconcile_job, "0 4 * * *", [])
+            # 远程内容同步定时任务(启用且 cron 合法时注册,否则移除既有 job)。
+            reload_remote_sync_schedule()
     else:
         print("⏸️ 当前 reader 运行角色不启动抓取调度引擎。")
 
@@ -447,10 +461,9 @@ def _record_llm_usage(meta: UsageMeta, usage: Dict[str, Any], model: str) -> Non
 
 _set_llm_usage_recorder(_record_llm_usage)
 
-# 首次启动（users 表为空）时，从 config 的 [auth] 播种初始账户；之后以数据库为准。
-_seeded_accounts = accounts_service.seed_users_if_empty(db_sink.engine, settings.auth)
-if _seeded_accounts:
-    logging.getLogger("dorami.auth").info("👤 从配置播种了 %d 个初始账户", _seeded_accounts)
+# 首次启动（users 表为空）时自动种一个根管理员 admin/admin；表非空一动不动。
+if accounts_service.seed_root_admin_if_empty(db_sink.engine):
+    logging.getLogger("dorami.auth").info("👤 已自动生成根管理员 admin/admin，请登录后立即修改密码")
 # 向量库默认按需创建：[rag] enabled = false 时不构造 ChromaVectorStorage，
 # 后端启动既快且不占用 embedding 模型所需内存。开启后实例仍会懒加载模型权重。
 vector_sink: Optional[ChromaVectorStorage] = (
@@ -523,6 +536,9 @@ app.include_router(collection_router.router)
 app.include_router(stats_router.router)
 app.include_router(fetchers_router.router)
 app.include_router(media_router.router)
+app.include_router(feedback_router.router)
+app.include_router(announcements_router.router)
+app.include_router(remote_sync_router.router)
 
 scheduler = AsyncIOScheduler()
 COLLECTION_FETCH_CONCURRENCY = 4
@@ -531,8 +547,8 @@ COLLECTION_FETCH_CONCURRENCY = 4
 # ==================== 管理员登录与会话 ====================
 AUTH_COOKIE_NAME = settings.auth.cookie_name
 AUTH_SESSION_SECONDS = settings.auth.session_seconds
-# 账户已迁移到数据库（UserRecord）托管：登录与每请求会话校验均查库，config 的
-# [auth] 仅作首次启动播种（见 seed_users_if_empty）。AUTH_SECRET 与订阅/聚合令牌
+# 账户已迁移到数据库（UserRecord）托管：登录与每请求会话校验均查库；ini 不再承载
+# 账户名单，首启空表由 seed_root_admin_if_empty 自动种根管理员。AUTH_SECRET 与订阅/聚合令牌
 # helper 现以 api.tokens 为单一来源（上方 import re-export），保持原推导以兼容历史令牌。
 
 
@@ -549,6 +565,11 @@ class ChangePasswordParams(BaseModel):
 class AvatarUpdateParams(BaseModel):
     # data:image/* base64 URL；空字符串或 null 表示清除头像。
     avatar: Optional[str] = None
+
+
+class PreferencesUpdateParams(BaseModel):
+    # 登录默认落地界面：console（管理台）| reader（阅读器）。
+    default_surface: str
 
 
 def _auth_cookie_secure() -> bool:
@@ -693,7 +714,46 @@ async def require_admin_session(request: Request, call_next):
             },
             status_code=403,
         )
-    return await call_next(request)
+
+    audit_body = None
+    normalized_method = request.method.upper()
+    account_update_path = (
+        path.startswith("/api/accounts/")
+        and "/" not in path[len("/api/accounts/"):]
+    )
+    audit_rule_needs_body = (
+        (normalized_method == "POST" and path == "/api/accounts")
+        or (normalized_method == "PUT" and account_update_path)
+        or (
+            normalized_method == "POST"
+            and path == "/api/admin/ai-beta/global"
+        )
+    )
+    if (auth_session or {}).get("role") == "admin" and audit_rule_needs_body:
+        try:
+            raw_body = await request.body()
+            if len(raw_body) <= 32 * 1024:
+                parsed_body = json.loads(raw_body)
+                if isinstance(parsed_body, dict):
+                    audit_body = parsed_body
+        except Exception:  # noqa: BLE001 - 审计体提取失败不得影响原请求
+            audit_body = None
+
+    response = await call_next(request)
+    if (
+        auth_session is not None
+        and auth_session.get("role") == "admin"
+        and admin_audit_service.should_audit(path, normalized_method)
+    ):
+        admin_audit_service.record_audit(
+            db_sink.engine,
+            username=auth_session["sub"],
+            method=normalized_method,
+            path=path,
+            status_code=response.status_code,
+            body=audit_body,
+        )
+    return response
 
 
 def _auth_user_payload(username: str, role: str, avatar: Optional[str] = None) -> Dict[str, Any]:
@@ -782,6 +842,23 @@ def update_own_avatar(params: AvatarUpdateParams, request: Request):
         record = accounts_service.set_avatar(session, username, avatar or None)
         result = _auth_user_payload(record.username, record.role, record.avatar)
     return {"ok": True, "user": result}
+
+
+@app.post("/api/auth/preferences")
+def update_own_preferences(params: PreferencesUpdateParams, request: Request):
+    """任意已登录账户设置自己的登录默认落地界面（console | reader）。"""
+    username = current_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+    with Session(db_sink.engine) as session:
+        record = accounts_service.get_active_user(session, username)
+        if record is None:
+            raise HTTPException(status_code=401, detail="账户不存在或已停用")
+        try:
+            record = accounts_service.set_default_surface(session, username, params.default_surface)
+        except accounts_service.AccountError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"ok": True, "default_surface": record.default_surface}
 
 
 # ==================== 账户管理（仅 admin） ====================
@@ -1113,6 +1190,68 @@ def reload_daily_brief_schedule():
         add_cron_job("daily_brief", execute_daily_brief_job, cron_expr, [])
     elif scheduler.get_job("daily_brief"):
         scheduler.remove_job("daily_brief")
+
+
+async def execute_remote_sync_job():
+    """定时回调：远程内容同步拉取。凭据只进任务内存，失败仅记录，不影响调度引擎。
+
+    与手动 start 端点复用同一后台 job 构造（api.routers.remote_sync）；成功后
+    落 KV 游标。防重叠：上一轮 job 仍 queued/running 时跳过本轮。
+    """
+    engine = db_sink.engine
+    schedule = remote_sync_service.load_schedule(engine, include_secret=True)
+    if not (
+        schedule.get("enabled")
+        and schedule.get("base_url")
+        and schedule.get("username")
+        and schedule.get("password")
+    ):
+        _dorami_logger.warning("定时远程同步触发但配置不完整，跳过本轮")
+        return
+
+    # 防重叠：已有排队/运行中的同步任务时不再叠加。
+    existing = jobs_service.list_jobs(
+        engine, job_type=remote_sync_service.REMOTE_SYNC_JOB_TYPE, limit=5
+    )
+    if any(j.get("status") in ("queued", "running") for j in existing):
+        _dorami_logger.info("上一轮远程同步仍在进行，跳过本轮定时触发")
+        return
+
+    # 增量起点：取该目标 KV 游标(按规整后的 base_url 分目标；无则全量)。
+    try:
+        normalized_base = remote_sync_service.normalize_base_url(schedule["base_url"])
+    except remote_sync_service.RemoteSyncError as exc:
+        _dorami_logger.warning("定时远程同步 base_url 非法，跳过本轮: %s", exc)
+        return
+    target = (remote_sync_service.load_sync_state(engine).get("targets") or {}).get(
+        normalized_base
+    ) or {}
+    fetched_date_start = target.get("last_fetched_date") or None
+    source_ids = schedule.get("source_ids") or None
+
+    try:
+        remote_sync_router.launch_remote_sync_job(
+            engine,
+            base_url=schedule["base_url"],
+            username=schedule["username"],
+            password=schedule["password"],
+            fetched_date_start=fetched_date_start,
+            source_ids=source_ids,
+            created_by="system",
+        )
+        _dorami_logger.info("⏰ 定时远程同步已启动（目标 %s）", normalized_base)
+    except Exception as exc:  # noqa: BLE001 启动失败不影响调度引擎
+        _dorami_logger.error("定时远程同步启动失败: %s", exc)
+
+
+def reload_remote_sync_schedule():
+    """远程同步配置变更后热生效：精准增删 remote_sync 这一个 job。"""
+    schedule = remote_sync_service.load_schedule(db_sink.engine)
+    cron_expr = str(schedule.get("cron") or "")
+    if schedule.get("enabled") and len(cron_expr.split()) == 5:
+        add_cron_job("remote_sync", execute_remote_sync_job, cron_expr, [])
+    elif scheduler.get_job("remote_sync"):
+        scheduler.remove_job("remote_sync")
 
 
 # ==================== 1. 数据台账与 CRUD ====================
