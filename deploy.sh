@@ -602,6 +602,23 @@ $SUDO rm -rf "${NGINX_HTML_DIR:?}/"*
 $SUDO cp -r frontend/dist/* "$NGINX_HTML_DIR"/
 $SUDO chmod -R 755 "$NGINX_HTML_DIR"
 
+# nginx worker(源码装默认 nobody)必须能逐级穿越 html_dir 的每个父目录,
+# 任何一级缺 others 的 x 位(如 /var/www 是 700)都会 stat Permission denied →
+# try_files 内部重定向循环 → 500。只补穿越位 o+x,不动读写等其它权限。
+dir="$NGINX_HTML_DIR"
+while [ "$dir" != "/" ] && [ -n "$dir" ]; do
+    perms="$($SUDO stat -c '%A' "$dir" 2>/dev/null || echo "")"
+    case "$perms" in
+        "") ;;            # stat 不到就跳过
+        *x|*t) ;;         # others 已有穿越位
+        *)
+            echo "Adding o+x to $dir (nginx worker needs directory traversal)"
+            $SUDO chmod o+x "$dir"
+            ;;
+    esac
+    dir="$(dirname "$dir")"
+done
+
 echo "[7/7] Reloading backend and Nginx..."
 export DORAMI_CONFIG_FILE="$CONFIG_FILE"
 
