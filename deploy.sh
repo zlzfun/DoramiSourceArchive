@@ -14,6 +14,18 @@ set -euo pipefail
 # Always run from the project root, no matter where the command is invoked.
 cd "$(dirname "$0")"
 
+# 手动安装的 nginx/node 常落在非默认 PATH:源码装的 nginx 在 /usr/local/nginx/sbin,
+# nvm 装的 node 只写进 ~/.bashrc(仅交互 shell 生效)。本脚本以非交互 shell 运行,
+# 先把常见位置并进 PATH,再探测 nvm 的最新版本 node。
+export PATH="$PATH:/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/local/nginx/sbin"
+if ! command -v node >/dev/null 2>&1 && [ -d "${NVM_DIR:-$HOME/.nvm}/versions/node" ]; then
+    NVM_NODE_BIN="$(ls -d "${NVM_DIR:-$HOME/.nvm}/versions/node"/*/bin 2>/dev/null | sort -V | tail -1)"
+    if [ -n "$NVM_NODE_BIN" ]; then
+        export PATH="$PATH:$NVM_NODE_BIN"
+        echo "Detected nvm node: $NVM_NODE_BIN"
+    fi
+fi
+
 APP_NAME="${PM2_APP_NAME:-dorami-backend-v2}"
 VENV_DIR="${VENV_DIR:-venv}"
 CONFIG_FILE="${DORAMI_CONFIG_FILE:-$(pwd)/config/production.ini}"
@@ -74,27 +86,39 @@ truthy() {
 }
 
 install_system_packages() {
-    if command -v nginx >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 && { command -v node >/dev/null 2>&1 || command -v nodejs >/dev/null 2>&1; }; then
+    # 逐个探测,只装缺失的;包管理器装不上(内网源没有该包)不再直接打断——
+    # 允许手动安装的二进制通过后面的复核。
+    local missing=()
+    command -v nginx >/dev/null 2>&1 || missing+=(nginx)
+    command -v npm >/dev/null 2>&1 || missing+=(npm)
+    { command -v node >/dev/null 2>&1 || command -v nodejs >/dev/null 2>&1; } || missing+=(nodejs)
+
+    if [ ${#missing[@]} -eq 0 ]; then
         echo "System packages already installed."
         return
     fi
 
-    echo "Installing nginx, node, and npm..."
+    echo "Installing missing packages: ${missing[*]} ..."
     if command -v apt-get >/dev/null 2>&1; then
-        $SUDO apt-get update
-        $SUDO apt-get install -y nginx nodejs npm
+        $SUDO apt-get update || true
+        $SUDO apt-get install -y "${missing[@]}" || echo "WARNING: apt-get install failed; will re-check for manually installed binaries."
     elif command -v dnf >/dev/null 2>&1; then
-        $SUDO dnf install -y nginx nodejs npm
+        $SUDO dnf install -y "${missing[@]}" || echo "WARNING: dnf install failed (内网源可能没有这些包); will re-check for manually installed binaries."
     elif command -v yum >/dev/null 2>&1; then
-        $SUDO yum install -y nginx nodejs npm
+        $SUDO yum install -y "${missing[@]}" || echo "WARNING: yum install failed (内网源可能没有这些包); will re-check for manually installed binaries."
     else
-        fail "No supported package manager found. Install nginx, nodejs, and npm manually."
+        echo "WARNING: no supported package manager found; expecting manually installed binaries."
     fi
 
-    need_command nginx "Install nginx and rerun this script."
-    need_command npm "Install npm and rerun this script."
+    # 安装尝试后逐一复核。找不到时的常见原因:手动安装的命令只在交互 shell 的
+    # PATH 里(nvm 写在 ~/.bashrc / 源码装在自定义目录)。脚本已自动追加
+    # /usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/local/nginx/sbin 与 nvm 目录,
+    # 仍找不到就 `export PATH="$PATH:<安装目录>"` 后重跑本脚本。
+    local hint="内网源没有该包时请手动安装,并确保命令对非交互 shell 可见(见脚本头部 PATH 注释)。"
+    command -v nginx >/dev/null 2>&1 || fail "nginx not found in script PATH. $hint"
+    command -v npm >/dev/null 2>&1 || fail "npm not found in script PATH. $hint"
     if ! command -v node >/dev/null 2>&1 && ! command -v nodejs >/dev/null 2>&1; then
-        fail "node/nodejs is required. Install Node.js and rerun this script."
+        fail "node/nodejs not found in script PATH. $hint"
     fi
 }
 
@@ -105,7 +129,16 @@ install_pm2() {
     fi
 
     echo "Installing PM2..."
-    $SUDO npm install -g pm2 ${NPM_REGISTRY:+--registry=${NPM_REGISTRY}}
+    # 先以当前用户全局装(nvm/用户级 node 的全局前缀本就可写,且 sudo 环境里
+    # 往往根本没有 npm);权限不足再退 sudo。
+    if ! npm install -g pm2 ${NPM_REGISTRY:+--registry=${NPM_REGISTRY}}; then
+        $SUDO npm install -g pm2 ${NPM_REGISTRY:+--registry=${NPM_REGISTRY}}
+    fi
+    # 装好但全局 bin 不在 PATH(自定义 npm prefix)时补进来
+    if ! command -v pm2 >/dev/null 2>&1; then
+        NPM_GLOBAL_BIN="$(npm prefix -g 2>/dev/null)/bin"
+        [ -x "$NPM_GLOBAL_BIN/pm2" ] && export PATH="$PATH:$NPM_GLOBAL_BIN"
+    fi
     need_command pm2 "npm global bin directory is not on PATH, or PM2 installation failed."
 }
 
@@ -325,7 +358,7 @@ validate_nginx_config() {
         fi
     fi
 
-    if ! nginx_dump="$($SUDO nginx -T 2>&1)"; then
+    if ! nginx_dump="$($SUDO "$NGINX_BIN" -T 2>&1)"; then
         echo "$nginx_dump" >&2
         fail "nginx -T failed"
     fi
@@ -340,18 +373,22 @@ validate_nginx_config() {
             || fail "Enabled Nginx config does not include ssl_certificate_key ${NGINX_SSL_KEY_FILE}"
     fi
 
-    $SUDO nginx -t
+    $SUDO "$NGINX_BIN" -t
 }
 
 ensure_nginx_running_or_reload() {
-    if command -v systemctl >/dev/null 2>&1 && $SUDO systemctl list-unit-files nginx.service >/dev/null 2>&1; then
+    # 手动安装的 nginx 可能没有 systemd 单元;已在跑就 reload,没在跑则
+    # 优先 systemd 起,退回直接执行二进制(sudo 全程用绝对路径,绕开 secure_path)。
+    if pgrep -x nginx >/dev/null 2>&1; then
+        $SUDO "$NGINX_BIN" -s reload
+        return
+    fi
+    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files 2>/dev/null | grep -q '^nginx\.service'; then
         $SUDO systemctl start nginx
-        $SUDO nginx -s reload
-    elif command -v service >/dev/null 2>&1; then
-        $SUDO service nginx start || true
-        $SUDO nginx -s reload
+    elif command -v service >/dev/null 2>&1 && service nginx status >/dev/null 2>&1; then
+        $SUDO service nginx start
     else
-        $SUDO nginx -s reload
+        $SUDO "$NGINX_BIN"
     fi
 }
 
@@ -440,6 +477,10 @@ echo "RAG mode: $RAG_MODE"
 echo "[1/7] Installing system dependencies..."
 install_system_packages
 install_pm2
+
+# sudo 的 secure_path 往往不含手装 nginx 的目录,后续 sudo 调用一律走绝对路径
+NGINX_BIN="$(command -v nginx)"
+echo "Using nginx binary: $NGINX_BIN"
 
 echo "[2/7] Validating production config..."
 validate_models_if_needed
