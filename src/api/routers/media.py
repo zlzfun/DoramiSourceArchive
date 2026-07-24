@@ -170,8 +170,17 @@ async def media_day_detail(date: str):
     store = _require_store()
     engine = _app().db_sink.engine
     with Session(engine) as session:
+        # 只取渲染明细抽屉真正用到的列（id/title/source_id + 提图链的 content/
+        # extensions_json），避免把整 ORM 对象连未用列一并拉进内存；已按 date 前缀
+        # 过滤，只扫当日行。
         articles = session.exec(
-            select(ArticleRecord)
+            select(
+                ArticleRecord.id,
+                ArticleRecord.title,
+                ArticleRecord.source_id,
+                ArticleRecord.content,
+                ArticleRecord.extensions_json,
+            )
             .where(ArticleRecord.fetched_date.like(f"{date}%"))
             .order_by(ArticleRecord.fetched_date)
         ).all()

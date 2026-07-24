@@ -39,6 +39,7 @@ import {
   deleteAccount,
 } from '../api';
 import { useConfirm } from '../hooks/useConfirm';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useModalTransition } from '../hooks/useModalTransition';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { MultiSeriesArea, RankBars, BarList } from './charts/DashboardCharts';
@@ -182,13 +183,11 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
   }, [showToast]);
 
   // 搜索防抖:停键 300ms 后生效并归位第一页(服务端过滤)。
+  const debouncedAccountQuery = useDebouncedValue(accountQuery, 300);
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setAcctQ(accountQuery.trim());
-      setAccountPage(1);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [accountQuery]);
+    setAcctQ(debouncedAccountQuery.trim());
+    setAccountPage(1);
+  }, [debouncedAccountQuery]);
 
   const reloadAccounts = useCallback(async () => {
     try {

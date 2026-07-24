@@ -168,8 +168,8 @@ def get_articles(
         "fetched_date_start": fetched_date_start,
         "fetched_date_end": fetched_date_end,
     }
-    query = apply_article_query_filters(select(ArticleRecord), **filter_kwargs)
-    count_query = apply_article_query_filters(select(func.count(ArticleRecord.id)), **filter_kwargs)
+    query = apply_article_query_filters(select(ArticleRecord), session=session, **filter_kwargs)
+    count_query = apply_article_query_filters(select(func.count(ArticleRecord.id)), session=session, **filter_kwargs)
     if scope == "only":
         # 仅当前用户已订阅的源；无订阅时显式返回空集。
         query = query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
@@ -404,6 +404,7 @@ def get_feed_articles(
         publish_date_end=publish_date_end,
         fetched_date_start=fetched_date_start,
         fetched_date_end=fetched_date_end,
+        session=session,
     )
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
@@ -459,6 +460,7 @@ def export_feed_articles_markdown(
         publish_date_end=publish_date_end,
         fetched_date_start=fetched_date_start,
         fetched_date_end=fetched_date_end,
+        session=session,
     )
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)

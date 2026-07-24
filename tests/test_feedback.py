@@ -266,6 +266,85 @@ def test_reader_cannot_see_other_readers_feedback(monkeypatch, tmp_path):
         assert bob_id not in {item["id"] for item in alice_items}
 
 
+def _reply(client, feedback_id, note, status="in_progress"):
+    return client.post(
+        f"/api/admin/feedback/{feedback_id}/status",
+        json={"status": status, "admin_note": note},
+    )
+
+
+def test_feedback_unread_reply_count_flow(monkeypatch, tmp_path):
+    """未读回复计数:无回复=0 → 管理员回复后计 1 → mark-seen 归零 → 新回复再计 1。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        feedback_id = _submit(client, "希望增加一个新源").json()["id"]
+        # 尚无管理员回复 → 未读为 0
+        assert client.get("/api/reader/feedback/unread-count").json() == {"unread_count": 0}
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        assert _reply(client, feedback_id, "已收到,正在评估。").status_code == 200
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        # 有新回复且尚未查看 → 计 1
+        assert client.get("/api/reader/feedback/unread-count").json()["unread_count"] == 1
+        # 标记已看 → 归零
+        seen = client.post("/api/reader/feedback/mark-seen")
+        assert seen.status_code == 200
+        assert seen.json()["unread_count"] == 0
+        assert client.get("/api/reader/feedback/unread-count").json()["unread_count"] == 0
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        # 管理员再次回复(updated_at 晚于上次查看)
+        assert _reply(client, feedback_id, "已排期,下个版本上线。", status="resolved").status_code == 200
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        assert client.get("/api/reader/feedback/unread-count").json()["unread_count"] == 1
+
+
+def test_feedback_unread_count_isolated_per_reader(monkeypatch, tmp_path):
+    """未读计数只统计本人的反馈回复,不串号。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        alice_id = _submit(client, "Alice 的诉求").json()["id"]
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        assert _reply(client, alice_id, "给 Alice 的回复").status_code == 200
+
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        # Bob 没有任何被回复的反馈
+        assert client.get("/api/reader/feedback/unread-count").json()["unread_count"] == 0
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        assert client.get("/api/reader/feedback/unread-count").json()["unread_count"] == 1
+
+
+def test_feedback_unread_count_gating(monkeypatch, tmp_path):
+    """门控:未登录 401;管理员是读者语义,可调用(自身无被回复反馈即 0)。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+
+    with TestClient(app_module.app) as client:
+        assert client.get("/api/reader/feedback/unread-count").status_code == 401
+        assert client.post("/api/reader/feedback/mark-seen").status_code == 401
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        resp = client.get("/api/reader/feedback/unread-count")
+        assert resp.status_code == 200
+        assert resp.json() == {"unread_count": 0}
+        assert client.post("/api/reader/feedback/mark-seen").status_code == 200
+
+
 def test_admin_list_pagination_and_total(monkeypatch, tmp_path):
     """管理面分页:建 3 条反馈,limit=2&skip=2 返回 1 条,total==3;
     带 status 过滤时 total 为过滤后数,counts 仍全量。"""

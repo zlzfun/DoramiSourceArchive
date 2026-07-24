@@ -83,6 +83,7 @@ def query_subscription_articles(
         publish_date_end=filters.get("publish_date_end"),
         fetched_date_start=filters.get("fetched_date_start"),
         fetched_date_end=filters.get("fetched_date_end"),
+        session=session,
     )
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
@@ -188,6 +189,7 @@ def feed_articles_for_owner(
         search=search,
         publish_date_start=publish_date_start,
         publish_date_end=publish_date_end,
+        session=session,
     )
     return session.exec(
         query.order_by(ArticleRecord.publish_date.desc()).offset(skip).limit(limit)

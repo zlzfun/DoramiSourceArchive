@@ -414,6 +414,8 @@ async def lifespan(app: FastAPI):
             # RAG 开启时注册每日向量索引对账巡检（只报告、发现漂移告警，每日 04:00）。
             if vector_sink is not None:
                 add_cron_job("vector_reconcile", execute_vector_reconcile_job, "0 4 * * *", [])
+            # 明细/埋点表滚动窗清理（每日 04:30，与向量对账巡检 04:00 错开）。
+            add_cron_job("retention_cleanup", execute_retention_cleanup_job, "30 4 * * *", [])
             # 远程内容同步定时任务(启用且 cron 合法时注册,否则移除既有 job)。
             reload_remote_sync_schedule()
     else:
@@ -455,8 +457,9 @@ def _record_llm_usage(meta: UsageMeta, usage: Dict[str, Any], model: str) -> Non
                 model=model,
                 usage=usage,
             )
-    except Exception:  # noqa: BLE001
-        logging.getLogger("dorami.llm").debug("AI 用量写库失败（忽略）", exc_info=True)
+    except Exception as exc:  # noqa: BLE001
+        # 计量失败不阻断主流程，但升级为 warning 以便可见（仅异常摘要，无敏感字段）。
+        logging.getLogger("dorami.llm").warning("AI 用量写库失败（忽略）: %s", exc)
 
 
 _set_llm_usage_recorder(_record_llm_usage)
@@ -1179,6 +1182,19 @@ async def execute_vector_reconcile_job():
             report["present_but_unflagged"]["count"],
             report["orphan_chunks"]["count"],
         )
+
+
+async def execute_retention_cleanup_job():
+    """定时巡检：对只增不删的明细/埋点表做滚动窗清理（超窗历史行删除）。
+
+    清理失败不影响调度引擎（内部逐表吞异常，此处再兜一层）。清理的都是派生/埋点
+    明细，业务实体（归档正文/账户/订阅）不在其列。
+    """
+    from services import retention
+    try:
+        retention.run_retention_cleanup(db_sink.engine)
+    except Exception as exc:  # noqa: BLE001 巡检失败不影响调度引擎
+        _dorami_logger.error("明细表滚动窗清理失败: %s", exc)
 
 
 def reload_daily_brief_schedule():

@@ -1,5 +1,6 @@
 from typing import Optional
 from sqlmodel import SQLModel, Field
+from sqlalchemy import Index
 
 
 # 向量索引状态枚举（阶段2/3 跨存储一致性）：比布尔 is_vectorized 更细，区分
@@ -19,6 +20,12 @@ INDEX_STATUSES = frozenset({
 class ArticleRecord(SQLModel, table=True):
     """关系型数据库表结构：用于 CMS 后端管理系统"""
     __tablename__ = "articles"
+    # fetched_date 是读者 feed 主排序、媒体热点图、未读水位的高频过滤/排序键，
+    # 除单列索引外再建 (source_id, fetched_date) 复合索引——单源按时间倒序取条目
+    # （阅读器源栏、feed 交付、热点图逐源统计）走复合索引即可命中，免二次排序。
+    __table_args__ = (
+        Index("ix_articles_source_id_fetched_date", "source_id", "fetched_date"),
+    )
 
     id: str = Field(primary_key=True, description="唯一序号")
     title: str = Field(index=True, description="文章标题")
@@ -29,7 +36,7 @@ class ArticleRecord(SQLModel, table=True):
 
     source_url: str
     publish_date: str = Field(index=True, description="发布日期")
-    fetched_date: str = Field(description="抓取入库的系统时间")
+    fetched_date: str = Field(index=True, description="抓取入库的系统时间")
     fetch_run_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的节点级运行 ID")
     job_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的采集任务 ID")
     job_run_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的采集任务级运行 ID")

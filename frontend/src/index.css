@@ -4141,6 +4141,21 @@ input[type="radio"] {
   .sett-nav-btn.is-on { background: var(--dorami-wash); color: var(--dorami-accent-ink); font-weight: 700; }
   .sett-nav-btn svg { width: 15px; height: 15px; flex: none; }
   .sett-nav-spacer { flex: 1; }
+  /* 反馈未读回复角标:数字胶囊贴导航行尾;accent 实底,与未读点同色系(不引第二饱和色) */
+  .sett-nav-badge {
+    margin-left: auto;
+    min-width: 17px;
+    padding: 1px 5px;
+    border-radius: 9999px;
+    background: var(--dorami-accent);
+    color: #fff;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.5;
+    text-align: center;
+    flex: none;
+  }
   .sett-nav-foot { padding: 0 10px; font-family: var(--mono); font-size: 10px; color: var(--dorami-faint); }
 
   .sett-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -7177,6 +7192,22 @@ input[type="radio"] {
       visibility 0s;
   }
   .rail-flyout-avatar { position: relative; }
+  /* 轨底轻通知点(反馈有新回复):挂头像右上角——flyout 常态收起只见头像,点必须常显;
+     描边用面板底色把点从头像上「抠」出来,亮暗主题自适应 */
+  .rail-avatar-dot,
+  .vrail-btn-dot {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background: var(--dorami-accent);
+    box-shadow: 0 0 0 2px var(--dorami-surface);
+    pointer-events: none;
+    z-index: 1;
+  }
+  .vrail-btn-dot { top: 6px; right: 6px; width: 7px; height: 7px; }
   .rail-avatar-face,
   .rail-avatar-power {
     position: absolute;
@@ -8014,6 +8045,10 @@ input[type="radio"] {
     background: transparent;
     cursor: pointer;
     transition: background 130ms var(--motion-ease), box-shadow 130ms var(--motion-ease);
+    /* 无限滚动 DOM 累积的对症解:滚出视口的条目跳过 layout/paint(DOM 保留,
+       锚点/搜索不受影响);auto 记忆实际高,90px 仅首测估值防滚动条跳动 */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 90px;
   }
 
   .reader-entry:hover { background: color-mix(in srgb, var(--dorami-ink) 4%, transparent); }
@@ -8382,6 +8417,9 @@ input[type="radio"] {
     position: relative;
     padding: 22px 0 20px;
     border-bottom: 1px solid var(--dorami-border-soft);
+    /* 同 .reader-entry:滚出视口的卡片跳过 layout/paint,治无限滚动 DOM 累积 */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 280px;
   }
   .social-post:last-of-type { border-bottom: none; }
   /* 未读点:与 .reader-unread-dot 同语法(常驻渲染 + 淡出,条件卸载无法过渡) */

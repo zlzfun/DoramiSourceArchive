@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ChevronRight, Loader2, Play, Trash2 } from 'lucide-react';
 import {
   getDailyBriefConfig,
@@ -10,6 +10,7 @@ import {
   deleteArticle,
 } from '../api';
 import { useConfirm } from '../hooks/useConfirm';
+import { usePolling } from '../hooks/usePolling';
 
 const DAILY_BRIEF_SOURCE_ID = 'dorami_daily_brief';
 
@@ -87,18 +88,16 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
     loadHistory();
   }, [canManage]);
 
+  const pollProgress = useCallback(async () => {
+    const p = await getDailyBriefProgress();
+    setProgress(p);
+    const idx = PHASE_NOW[p?.phase];
+    if (idx !== undefined) setStepIndex(idx);   // error/empty(idx undefined)不动,停在最后已知段
+  }, []);
+
   // 生成进行中才轮询后端实时阶段;卸载/结束时清除,避免退出登录后仍打 collector 端点。
-  useEffect(() => {
-    if (!generating) return undefined;
-    const poll = setInterval(() => {
-      getDailyBriefProgress().then(p => {
-        setProgress(p);
-        const idx = PHASE_NOW[p?.phase];
-        if (idx !== undefined) setStepIndex(idx);   // error/empty(idx undefined)不动,停在最后已知段
-      }).catch(() => {});
-    }, 1200);
-    return () => clearInterval(poll);
-  }, [generating]);
+  // 生成动画需要持续走字,故不随页面隐藏暂停。
+  usePolling(pollProgress, 1200, { immediate: false, pauseWhenHidden: false, enabled: generating });
 
   const briefMeta = (record) => {
     try { return JSON.parse(record.extensions_json || '{}'); } catch { return {}; }

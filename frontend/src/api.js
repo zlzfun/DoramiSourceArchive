@@ -496,12 +496,12 @@ export async function importArchiveArticlesJsonl(rawText) {
   return res.json();
 }
 
-// ==================== MCP（无 ok 校验，容忍 502/未就绪） ====================
-export const fetchMcpStatus = () =>
-  apiFetch(`${API_BASE_URL}/mcp/status`).then(r => r.json());
+// ==================== MCP ====================
+// 走统一封装:后端未就绪/网关 502 时抛可读错误(此前裸 r.json() 对 HTML 错误页
+// 会抛 SyntaxError);调用方各有 catch 兜底降级,行为不变。
+export const fetchMcpStatus = () => request('/mcp/status', { errorMsg: '获取 MCP 状态失败' });
 
-export const toggleMcp = () =>
-  apiFetch(`${API_BASE_URL}/mcp/toggle`, { method: 'POST' }).then(r => r.json());
+export const toggleMcp = () => request('/mcp/toggle', { method: 'POST', errorMsg: '切换 MCP 状态失败' });
 
 // ==================== 订阅 / 阅读器 ====================
 export function fetchSubscriptions(filters = {}) {
@@ -601,6 +601,17 @@ export function fetchMyFeedback() {
 
 export function withdrawFeedback(id) {
   return request(`/reader/feedback/${id}`, { method: 'DELETE', errorMsg: '撤回反馈失败' });
+}
+
+// 未读回复角标:管理员回复后读者侧的轻通知(轮询计数 + 打开反馈页即清)。
+export function fetchFeedbackUnreadCount() {
+  return request('/reader/feedback/unread-count', { errorMsg: '获取未读回复数失败' });
+}
+
+// 进入反馈页视为已读(fire-and-forget:失败静默,角标下轮轮询自然校准)。
+export function markFeedbackSeen() {
+  return apiFetch(`${API_BASE_URL}/reader/feedback/mark-seen`, { method: 'POST' })
+    .catch(() => {});
 }
 
 // 规模化波:服务端分页;响应 {items, total, counts}(total = 当前 status 过滤下总数)。

@@ -30,6 +30,7 @@ from llm.prompts import (
     build_detail_profile_user_prompt,
     build_source_config_user_prompt,
 )
+from services.media_store import SSRFError, ensure_public_host
 
 logger = logging.getLogger("dorami.source_builder")
 
@@ -47,7 +48,12 @@ _NAV_TITLES = {
 # ============ 抓取 ============
 
 async def _fetch(url: str, *, timeout: int = 20) -> Tuple[str, str, str, Optional[int]]:
-    """GET 一个 URL，返回 (text, final_url, content_type, status)。失败时 text 为空。"""
+    """GET 一个 URL，返回 (text, final_url, content_type, status)。失败时 text 为空。
+
+    请求前先做 SSRF 判定（用户可任意指定 URL）：指向本机/内网时抛 SSRFError，
+    由上层转 400——不并入下方 httpx.HTTPError 的静默降级分支，避免内网探测被当「抓取失败」。
+    """
+    await ensure_public_host(urlparse(url).hostname or "")
     try:
         async with httpx.AsyncClient(
             timeout=timeout, headers={"User-Agent": _UA}, follow_redirects=True
@@ -482,6 +488,13 @@ async def preview_config(payload: Dict[str, Any], *, max_entries: int = 5) -> Di
     params["source_id"] = payload.get("source_id") or params["source_id"]
     params["category"] = payload.get("category") or params.get("category") or ""
     params["limit"] = min(int(params.get("limit") or max_entries), max_entries)
+
+    # 预览会用建议配置真去抓 listing/detail，先按 SSRF 判定挡住指向内网的目标。
+    target_url = str(
+        payload.get("url") or params.get("listing_url") or params.get("feed_url") or ""
+    )
+    if target_url:
+        await ensure_public_host(urlparse(target_url).hostname or "")
 
     if source_type in {"web", "webpage"}:
         from fetchers.impl.configurable_web_fetcher import ConfigurableWebFetcher

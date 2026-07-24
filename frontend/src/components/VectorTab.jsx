@@ -30,7 +30,10 @@ export default function VectorTab({ availableFetchers, showToast, accountRole })
       const [stats, sub] = await Promise.all([fetchVectorStats(), fetchSubscribedVectorStats()]);
       setVectorStats({ total: stats.total_vectors });
       setSubStats(sub);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      showToast?.(e.message || '获取向量统计失败', 'error');
+    }
   };
 
   useEffect(() => { loadStats(); }, []);
