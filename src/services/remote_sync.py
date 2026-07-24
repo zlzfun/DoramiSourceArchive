@@ -37,6 +37,7 @@ from urllib.parse import urlparse
 import httpx
 from sqlmodel import Session
 
+from config import settings
 from models.db import AppSettingRecord
 
 _logger = logging.getLogger("dorami.remote_sync")
@@ -174,7 +175,10 @@ async def _fetch_export_page(
 
 def _make_client(transport: Optional[httpx.AsyncBaseTransport] = None) -> httpx.AsyncClient:
     """transport 可注入(测试用 httpx.MockTransport 假远端,不打真网——仓内约定)。"""
-    return httpx.AsyncClient(timeout=_REQUEST_TIMEOUT, follow_redirects=True, transport=transport)
+    return httpx.AsyncClient(
+        timeout=_REQUEST_TIMEOUT, follow_redirects=True, transport=transport,
+        verify=settings.network.tls_verify,
+    )
 
 
 async def probe(

@@ -13,6 +13,7 @@ from typing import Optional, Tuple
 
 import httpx
 
+from config import settings
 from fetchers.impl.article_extractor import extract_article_detail
 
 from .backend import DetailResult, WebContentBackend
@@ -38,6 +39,7 @@ class LegacyArticleExtractorBackend(WebContentBackend):
             timeout=self.timeout,
             headers={"User-Agent": _DEFAULT_UA},
             follow_redirects=True,
+            verify=settings.network.tls_verify,
         )
         return self
 

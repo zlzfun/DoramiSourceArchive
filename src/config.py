@@ -68,6 +68,16 @@ class RagConfig:
 class NetworkConfig:
     disable_ca_bundle: bool = True
     hf_endpoint: str = "https://hf-mirror.com"
+    # 全局禁用后端出网 TLS 证书校验(httpx verify=False)。供企业 MITM 网关
+    # (出网流量被自签证书链重签)的内网环境使用;公网部署保持 false。
+    # 注意 disable_ca_bundle 只影响 requests/curl 系(REQUESTS_CA_BUNDLE),
+    # 对项目主 HTTP 栈 httpx 无效——httpx 路径由本开关统一控制。
+    disable_tls_verify: bool = False
+
+    @property
+    def tls_verify(self) -> bool:
+        """httpx 各出网 client 统一使用的 verify= 参数。"""
+        return not self.disable_tls_verify
 
 
 @dataclass(frozen=True)
@@ -189,6 +199,8 @@ class AppConfig:
         if self.network.disable_ca_bundle:
             os.environ["CURL_CA_BUNDLE"] = ""
             os.environ["REQUESTS_CA_BUNDLE"] = ""
+        if self.network.disable_tls_verify:
+            print("⚠️  [network] disable_tls_verify=true:后端出网 TLS 证书校验已全局禁用(仅限受控内网环境)。")
         if self.network.hf_endpoint:
             os.environ["HF_ENDPOINT"] = self.network.hf_endpoint
         proxy_values = {
@@ -243,6 +255,11 @@ def load_config() -> AppConfig:
         media_enabled = parser.getboolean("media", "enabled", fallback=True)
     else:
         media_enabled = media_enabled_raw.strip().lower() in {"1", "true", "yes", "on"}
+    disable_tls_verify_raw = os.getenv("DORAMI_DISABLE_TLS_VERIFY")
+    if disable_tls_verify_raw is None:
+        disable_tls_verify = parser.getboolean("network", "disable_tls_verify", fallback=False)
+    else:
+        disable_tls_verify = disable_tls_verify_raw.strip().lower() in {"1", "true", "yes", "on"}
     return AppConfig(
         server=ServerConfig(
             host=parser.get("server", "host", fallback="127.0.0.1"),
@@ -261,6 +278,7 @@ def load_config() -> AppConfig:
         network=NetworkConfig(
             disable_ca_bundle=parser.getboolean("network", "disable_ca_bundle", fallback=True),
             hf_endpoint=parser.get("network", "hf_endpoint", fallback="https://hf-mirror.com"),
+            disable_tls_verify=disable_tls_verify,
         ),
         proxy=ProxyConfig(
             http_proxy=parser.get("proxy", "http_proxy", fallback=""),

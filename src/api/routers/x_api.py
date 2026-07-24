@@ -6,6 +6,8 @@ from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+
+from config import settings
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -195,7 +197,7 @@ async def test_x_api_config(session: Session = Depends(deps.get_session)):
             raise HTTPException(status_code=409, detail=str(exc))
     before = guard.snapshot()
     try:
-        async with httpx.AsyncClient(timeout=cfg.timeout_seconds) as client:
+        async with httpx.AsyncClient(timeout=cfg.timeout_seconds, verify=settings.network.tls_verify) as client:
             response = await client.get(
                 f"{cfg.base_url.rstrip('/')}/{probe['path']}",
                 params=probe["params"],

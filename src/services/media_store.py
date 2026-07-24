@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 import httpx
 from sqlmodel import Session, select, func
 
+from config import settings
 from models.db import ArticleRecord, MediaAssetRecord
 
 logger = logging.getLogger("dorami.media")
@@ -237,6 +238,7 @@ class MediaStore:
                 timeout=self.timeout_seconds,
                 headers=_DOWNLOAD_HEADERS,
                 transport=self._transport,
+                verify=settings.network.tls_verify,
             )
         return self._client
 

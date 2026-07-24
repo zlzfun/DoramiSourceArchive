@@ -33,7 +33,10 @@ class TeiEmbeddingClient:
     """HuggingFace text-embeddings-inference 的 /embed 客户端。"""
 
     def __init__(self, base_url: str, timeout: float = 60.0, transport=None):
-        self._client = httpx.Client(base_url=base_url, timeout=timeout, transport=transport)
+        self._client = httpx.Client(
+            base_url=base_url, timeout=timeout, transport=transport,
+            verify=settings.network.tls_verify,
+        )
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         vectors: List[List[float]] = []
@@ -66,7 +69,10 @@ class TeiRerankClient:
     """TEI 的 /rerank 客户端(bge-reranker 系列)。"""
 
     def __init__(self, base_url: str, timeout: float = 60.0, transport=None):
-        self._client = httpx.Client(base_url=base_url, timeout=timeout, transport=transport)
+        self._client = httpx.Client(
+            base_url=base_url, timeout=timeout, transport=transport,
+            verify=settings.network.tls_verify,
+        )
 
     def rerank_scores(self, query: str, texts: List[str]) -> List[float]:
         response = self._client.post(
