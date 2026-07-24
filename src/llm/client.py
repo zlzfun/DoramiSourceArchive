@@ -179,8 +179,9 @@ def _maybe_record_usage(
         return
     try:
         recorder(meta, usage or {}, model)
-    except Exception:  # noqa: BLE001
-        logger.debug("usage recorder 异常（忽略）", exc_info=True)
+    except Exception as exc:  # noqa: BLE001
+        # 计量失败不阻断主流程，但升级为 warning 以便可见（仅异常摘要，无敏感字段）。
+        logger.warning("usage recorder 异常（忽略）: %s", exc)
 
 
 def parse_json_object(text: str) -> dict:

@@ -40,6 +40,7 @@ import {
   RELIABILITY_LABELS,
 } from '../sourceTaxonomy';
 import { healthMeta, errorTypeLabel, runStatusMeta } from '../statusMeta';
+import { usePolling } from '../hooks/usePolling';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { collectionRunMessage, TEST_RUN_LIMIT } from '../utils/collection';
 
@@ -180,7 +181,11 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     try {
       const healthItems = await fetchSourceHealth();
       setHealthByFetcher(Object.fromEntries(healthItems.map(item => [item.fetcher_id, item])));
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      // 健康读数是行内装饰,且本函数被挂载/抓取完成/定时刷新多点触发——
+      // 失败静默降级(行内不渲染),不弹 toast 以免重复刷屏。
+      console.error(e);
+    }
     // 7 日收录趋势(A 每日聚合端点波):随健康刷新同步;失败静默,行内不渲染。
     try {
       const stats = await fetchDailyStats(7);
@@ -208,13 +213,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
 
   // 静默轮询:健康数据每 REFRESH_SECONDS 后台刷新(页面隐藏时暂停)。
   // 无开关、无倒计时——「自动刷新」UI 已退役,数据保持最新对用户无感。
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (document.hidden) return;
-      loadSourceHealth();
-    }, REFRESH_SECONDS * 1000);
-    return () => clearInterval(id);
-  }, [loadSourceHealth]);
+  usePolling(loadSourceHealth, REFRESH_SECONDS * 1000, { immediate: false });
 
   useEffect(() => {
     if (runningFetcherIds.size === 0) {

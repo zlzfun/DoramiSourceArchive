@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
   X,
@@ -32,6 +32,8 @@ import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
 import AnnouncementBanner from './AnnouncementBanner';
 import { excerptOf } from '../utils/readerText';
+import { usePolling } from '../hooks/usePolling';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { highlightMatch } from '../utils/highlight';
 import { WEEKDAY_CHARS, fmtDayKey, dayKeyOf, dayLabelOf } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
@@ -149,6 +151,75 @@ function PaneBodySkeleton() {
   );
 }
 
+// 条目行(memo):未读轮询、搜索键入、hover 预取等高频父级渲染下,只有 props 实际
+// 变化的行才重渲(此前整列随任意父级 state 重渲)。回调经父级 latest-ref 稳定包装,
+// article/source 对象引用在增量追加下保持不变,memo 浅比较即可生效。
+const ArticleRow = memo(function ArticleRow({
+  article, active, isUnread, isFav, entryBulletin, showLabel, dayKey, searchQuery,
+  source, sourceName, onSelect, onPrefetchEnter, onPrefetchLeave, onToggleFavorite,
+}) {
+  const excerpt = entryBulletin
+    ? ''
+    : excerptOf(article.summary_zh || article.content_preview || article.content);
+  return (
+    <>
+      {showLabel && <div className="reader-date-label">{dayLabelOf(dayKey)}</div>}
+      <button
+        type="button"
+        onClick={() => onSelect(article)}
+        onMouseEnter={() => onPrefetchEnter(article)}
+        onMouseLeave={onPrefetchLeave}
+        className={`reader-entry ${entryBulletin ? 'is-bulletin' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''}`}
+      >
+        <span className="reader-entry-top">
+          {source && (
+            <span className="reader-entry-logo" aria-hidden="true">
+              <LogoMark company={resolveCompany(source)} size="s15" emoji={source.icon} />
+            </span>
+          )}
+          <span className="reader-entry-src">{sourceName}</span>
+          <span
+            className="reader-entry-time"
+            title={formatDateTime(article.publish_date || article.fetched_date)}
+          >
+            {formatRelativeTime(article.publish_date || article.fetched_date, '')}
+          </span>
+        </span>
+        {/* 标题行:标题占位 + 右缘收藏星标(Folo 式)。星内联于标题行,
+            正文/摘要照旧铺满整宽,只标题让出星位——不再整卡右缩(修右侧留白)。
+            卡本身是 <button>,故收藏钮用 role=button 的 span,避免按钮嵌套;
+            已收藏常显琥珀实星,未收藏悬停浮出空心星、点击切换。
+            键盘可达:tabIndex=0 + 回车/空格触发(不动 stopPropagation 语义)。 */}
+        <span className="reader-entry-titlerow">
+          {/* 未读小蓝点移到标题左侧栏(与右缘收藏星标错开——两者同现时不再挤在右侧);
+              绝对定位于左槽,不挤占标题宽度,已读缩零淡出 */}
+          <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
+          <span className="reader-entry-title">{searchQuery ? highlightMatch(article.title || '（无标题）', searchQuery) : (article.title || '（无标题）')}</span>
+          <span
+            role="button"
+            tabIndex={0}
+            aria-label={isFav ? '取消收藏' : '收藏'}
+            title={isFav ? '取消收藏' : '收藏'}
+            onClick={(e) => { e.stopPropagation(); onToggleFavorite(article, e); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                e.stopPropagation();
+                onToggleFavorite(article, e);
+              }
+            }}
+            className={`reader-entry-fav ${isFav ? 'is-on' : ''}`}
+          >
+            <Star className="h-[15px] w-[15px]" fill={isFav ? 'currentColor' : 'none'} />
+          </span>
+        </span>
+        {/* 摘要行:AI 要点摘要(summary_zh)优先——正文截断对英文长文几乎无信息量 */}
+        {excerpt && <span className="reader-entry-excerpt">{searchQuery ? highlightMatch(excerpt, searchQuery) : excerpt}</span>}
+      </button>
+    </>
+  );
+});
+
 export default function ReaderTab({
   showToast,
   aiEnabled = false,
@@ -162,6 +233,8 @@ export default function ReaderTab({
   onLogout,
   // ── v3.19 多管理员波:admin 从管理台切入阅读器时传入,轨底浮现「返回管理台」;读者账号恒 undefined ──
   onExitReader = null,
+  // 反馈有未读管理员回复(读者账号):轨底头像/设置钮挂轻通知点
+  feedbackUnread = 0,
 }) {
   const [sources, setSources] = useState([]);
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
@@ -307,23 +380,11 @@ export default function ReaderTab({
   }, [applyUnreadCounts]);
 
   // 挂载即拉一次(顺带校准存量订阅的水位),此后 60s 轻轮询;标签页不可见时跳过请求。
-  useEffect(() => {
-    let timer = null;
-    let cancelled = false;
-    const tick = async () => {
-      if (cancelled) return;
-      if (!document.hidden) await loadUnreadCounts();
-      if (!cancelled) timer = setTimeout(tick, UNREAD_POLL_MS);
-    };
-    tick();
-    return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, [loadUnreadCounts]);
+  usePolling(loadUnreadCounts, UNREAD_POLL_MS);
 
   // 搜索防抖
-  useEffect(() => {
-    const timer = setTimeout(() => setSearchQuery(searchInput.trim()), 300);
-    return () => clearTimeout(timer);
-  }, [searchInput]);
+  const debouncedSearchInput = useDebouncedValue(searchInput, 300);
+  useEffect(() => { setSearchQuery(debouncedSearchInput.trim()); }, [debouncedSearchInput]);
 
   const sourceNameMap = useMemo(() => {
     const map = {};
@@ -720,6 +781,16 @@ export default function ReaderTab({
     return override === undefined ? !!article.unread : !override;
   }, [readOverrides]);
 
+  // memo 行(ArticleRow/SocialPost)的稳定回调:latest-ref 模式——传给行的引用永不变,
+  // 内部转发到最新实现,行组件不因父级回调重建而整列重渲。
+  // (ref 的 .current 赋值在各 handler 定义齐全后进行,见 handleToggleSocialRead 之后。)
+  const rowHandlersRef = useRef({});
+  const onRowSelect = useCallback((a) => rowHandlersRef.current.select(a), []);
+  const onRowPrefetchEnter = useCallback((a) => rowHandlersRef.current.prefetchEnter(a), []);
+  const onRowPrefetchLeave = useCallback(() => rowHandlersRef.current.prefetchLeave(), []);
+  const onRowToggleFavorite = useCallback((a, e) => rowHandlersRef.current.toggleFav(a, e), []);
+  const onRowToggleSocialRead = useCallback((a) => rowHandlersRef.current.toggleSocialRead(a), []);
+
   // ── 手动标为已读/未读(显式覆盖,可撤销误触;不计阅读量)──
   // 阅读窗与社交流共用:社交流全文直出、没有「打开」动作,标读是它唯一的读态入口。
   const toggleArticleRead = useCallback(async (article) => {
@@ -770,6 +841,18 @@ export default function ReaderTab({
       setSocialReadToggling(null);
     }
   }, [socialReadToggling, toggleArticleRead]);
+
+  // latest-ref 稳定回调的实现同步(每次渲染后更新为最新闭包;声明见 isArticleUnread 后。
+  // 事件回调只在渲染完成后触发,useEffect 时序上足够)
+  useEffect(() => {
+    rowHandlersRef.current = {
+      select: selectArticle,
+      prefetchEnter: schedulePrefetch,
+      prefetchLeave: cancelPrefetch,
+      toggleFav: handleToggleFavorite,
+      toggleSocialRead: handleToggleSocialRead,
+    };
+  });
 
   // ── 视图轨导航(容器语义):点容器钮=进入该容器聚合(源内时=回到聚合);搜索是叠加开关 ──
   // 任何内容导航都退出发现页(发现是与容器并列的一级视图,占据 条目列+阅读窗)
@@ -909,6 +992,7 @@ export default function ReaderTab({
               avatarText={avatarText}
               username={account?.username}
               onLogout={onLogout}
+              notify={feedbackUnread > 0}
             >
               {/* 返回管理台(v3.19):与应用导轨轨底「进入阅读器」对称的隐藏切换钮,仅 admin 有 */}
               {onExitReader && (
@@ -935,10 +1019,11 @@ export default function ReaderTab({
                 type="button"
                 onClick={() => onOpenSettings?.()}
                 className="reader-vrail-btn"
-                aria-label="设置"
+                aria-label={feedbackUnread > 0 ? '设置(反馈有新回复)' : '设置'}
               >
                 <Settings className="h-[18px] w-[18px]" />
-                <span className="reader-vrail-tip">设置</span>
+                {feedbackUnread > 0 && <span className="vrail-btn-dot" aria-hidden="true" />}
+                <span className="reader-vrail-tip">{feedbackUnread > 0 ? '设置 · 反馈有新回复' : '设置'}</span>
               </button>
             </RailUserFlyout>
           </>
@@ -1093,7 +1178,7 @@ export default function ReaderTab({
           isArticleUnread={isArticleUnread}
           favoriteIds={favoriteIds}
           favTogglingId={favTogglingId}
-          onToggleFavorite={handleToggleFavorite}
+          onToggleFavorite={onRowToggleFavorite}
           favOnly={favOnly}
           searchOpen={searchOpen}
           searchInput={searchInput}
@@ -1101,7 +1186,7 @@ export default function ReaderTab({
           onSearchInputChange={setSearchInput}
           onToggleSearch={toggleSearch}
           readTogglingId={socialReadToggling}
-          onToggleRead={handleToggleSocialRead}
+          onToggleRead={onRowToggleSocialRead}
           onMarkAllRead={handleMarkAllRead}
           markingRead={markingRead}
           loading={articlesLoading}
@@ -1246,65 +1331,27 @@ export default function ReaderTab({
             /* key 按视图范围重挂载,切源/切容器时列表整体淡入(A1) */
             <div key={`${activeSourceId ?? '__all__'}|${mode}|${favOnly ? 'fav' : 'flow'}`} className="reader-list-enter">
               {articles.map((article, index) => {
-                const active = activeArticle?.id === article.id;
-                const isUnread = isArticleUnread(article);
-                // 条目列只在文章/动态容器渲染(社交走 SocialFlow),容器内形态同质:
-                // 动态容器整条呈紧凑形(无独立标题,不挂摘要),不再需要逐条形态 chip。
-                const entryBulletin = bulletinView;
-                const excerpt = entryBulletin
-                  ? ''
-                  : excerptOf(article.summary_zh || article.content_preview || article.content);
-                const isFav = favoriteIds.has(article.id);
                 const key = dayKeyOf(article);
-                const showLabel = grouping && (index === 0 || key !== dayKeyOf(articles[index - 1]));
                 return (
-                  <Fragment key={article.id}>
-                    {showLabel && <div className="reader-date-label">{dayLabelOf(key)}</div>}
-                    <button
-                      type="button"
-                      onClick={() => selectArticle(article)}
-                      onMouseEnter={() => schedulePrefetch(article)}
-                      onMouseLeave={cancelPrefetch}
-                      className={`reader-entry ${entryBulletin ? 'is-bulletin' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''}`}
-                    >
-                      <span className="reader-entry-top">
-                        {sourceMap[article.source_id] && (
-                          <span className="reader-entry-logo" aria-hidden="true">
-                            <LogoMark company={resolveCompany(sourceMap[article.source_id])} size="s15" emoji={sourceMap[article.source_id].icon} />
-                          </span>
-                        )}
-                        <span className="reader-entry-src">{sourceNameMap[article.source_id] || article.source_id}</span>
-                        <span
-                          className="reader-entry-time"
-                          title={formatDateTime(article.publish_date || article.fetched_date)}
-                        >
-                          {formatRelativeTime(article.publish_date || article.fetched_date, '')}
-                        </span>
-                      </span>
-                      {/* 标题行:标题占位 + 右缘收藏星标(Folo 式)。星内联于标题行,
-                          正文/摘要照旧铺满整宽,只标题让出星位——不再整卡右缩(修右侧留白)。
-                          卡本身是 <button>,故收藏钮用 role=button 的 span,避免按钮嵌套;
-                          已收藏常显琥珀实星,未收藏悬停浮出空心星、点击切换。 */}
-                      <span className="reader-entry-titlerow">
-                        {/* 未读小蓝点移到标题左侧栏(与右缘收藏星标错开——两者同现时不再挤在右侧);
-                            绝对定位于左槽,不挤占标题宽度,已读缩零淡出 */}
-                        <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
-                        <span className="reader-entry-title">{searchQuery ? highlightMatch(article.title || '（无标题）', searchQuery) : (article.title || '（无标题）')}</span>
-                        <span
-                          role="button"
-                          tabIndex={-1}
-                          aria-label={isFav ? '取消收藏' : '收藏'}
-                          title={isFav ? '取消收藏' : '收藏'}
-                          onClick={(e) => { e.stopPropagation(); handleToggleFavorite(article, e); }}
-                          className={`reader-entry-fav ${isFav ? 'is-on' : ''}`}
-                        >
-                          <Star className="h-[15px] w-[15px]" fill={isFav ? 'currentColor' : 'none'} />
-                        </span>
-                      </span>
-                      {/* 摘要行:AI 要点摘要(summary_zh)优先——正文截断对英文长文几乎无信息量 */}
-                      {excerpt && <span className="reader-entry-excerpt">{searchQuery ? highlightMatch(excerpt, searchQuery) : excerpt}</span>}
-                    </button>
-                  </Fragment>
+                  <ArticleRow
+                    key={article.id}
+                    article={article}
+                    active={activeArticle?.id === article.id}
+                    isUnread={isArticleUnread(article)}
+                    isFav={favoriteIds.has(article.id)}
+                    /* 条目列只在文章/动态容器渲染(社交走 SocialFlow),容器内形态同质:
+                       动态容器整条呈紧凑形(无独立标题,不挂摘要),不再需要逐条形态 chip。 */
+                    entryBulletin={bulletinView}
+                    showLabel={grouping && (index === 0 || key !== dayKeyOf(articles[index - 1]))}
+                    dayKey={key}
+                    searchQuery={searchQuery}
+                    source={sourceMap[article.source_id]}
+                    sourceName={sourceNameMap[article.source_id] || article.source_id}
+                    onSelect={onRowSelect}
+                    onPrefetchEnter={onRowPrefetchEnter}
+                    onPrefetchLeave={onRowPrefetchLeave}
+                    onToggleFavorite={onRowToggleFavorite}
+                  />
                 );
               })}
               {/* 无限滚动:哨兵进入视口即自动追加,加载中以骨架条占位(不再有「加载更多」按钮) */}

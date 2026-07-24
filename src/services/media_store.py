@@ -207,6 +207,21 @@ async def _resolve_host_ips(host: str) -> List[str]:
     return [info[4][0] for info in infos]
 
 
+class SSRFError(ValueError):
+    """目标主机指向本机/内网，已按 SSRF 防护拒绝。"""
+
+
+async def ensure_public_host(host: str) -> None:
+    """SSRF 守卫：主机为空或解析后指向本机/内网则抛 SSRFError（中文信息）。
+
+    复用图床下载同款判定（``_resolve_is_public``：字面 IP 严拦、域名解析后查、豁免
+    fake-ip 段），供 source_builder 等外部调用方以「拒绝即抛异常」形式复用；图床自身
+    下载仍走 ``_resolve_is_public`` 返回布尔的既有分支，行为完全不变。
+    """
+    if not host or not await _resolve_is_public(host):
+        raise SSRFError("目标地址指向本机或内网，已按安全策略拒绝")
+
+
 class MediaStore:
     """URL → 本地缓存文件 的单一实现（懒代理 / 预取 / 回填三径共用）。"""
 

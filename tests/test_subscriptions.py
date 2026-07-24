@@ -1,5 +1,6 @@
 import os
 import sys
+import xml.etree.ElementTree as ET
 from dataclasses import replace
 
 from fastapi.testclient import TestClient
@@ -736,13 +737,25 @@ def test_reader_sources_excludes_decommissioned_node_with_lingering_archive(monk
         assert entry["count"] == 1
 
 
-def _seed_article_dated(engine, article_id, source_id, title, publish_date):
+def _seed_article_dated(
+        engine,
+        article_id,
+        source_id,
+        title,
+        publish_date,
+        *,
+        content_type="rss_article",
+        fetched_date="2026-05-26T00:00:00",
+        content=None,
+        source_url=None,
+):
     from models.db import ArticleRecord
     with Session(engine) as session:
         session.add(ArticleRecord(
-            id=article_id, title=title, content_type="rss_article", source_id=source_id,
-            source_url=f"https://example.test/{article_id}", publish_date=publish_date,
-            fetched_date="2026-05-26T00:00:00", has_content=True, content=f"{title} body",
+            id=article_id, title=title, content_type=content_type, source_id=source_id,
+            source_url=source_url or f"https://example.test/{article_id}",
+            publish_date=publish_date, fetched_date=fetched_date, has_content=True,
+            content=content if content is not None else f"{title} body",
             extensions_json="{}", is_vectorized=False,
         ))
         session.commit()
@@ -798,6 +811,173 @@ def test_personal_feed_requires_valid_token(monkeypatch, tmp_path):
     with TestClient(app_module.app) as client:
         assert client.get("/api/public/feed/articles").status_code == 401
         assert client.get("/api/public/feed/articles?token=dfeed_wrong").status_code == 401
+
+
+def test_personal_feed_atom_is_valid_and_escapes_special_characters(monkeypatch, tmp_path):
+    import api.app as app_module
+
+    sink = _make_sink(tmp_path, "feed_atom.db")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    _set_auth_accounts(monkeypatch, app_module)
+    _set_runtime_role(monkeypatch, app_module, "reader")
+    title = "R&D <Launch> > Alpha"
+    content = "Markdown & details <tag> > ending"
+    source_url = "https://example.test/special?a=1&b=<two>"
+    _seed_article_dated(
+        sink.engine,
+        "special",
+        "atom_special_source",
+        title,
+        "",
+        fetched_date="2026-05-27T04:05:06+00:00",
+        content=content,
+        source_url=source_url,
+    )
+    _seed_article_dated(
+        sink.engine,
+        "older",
+        "atom_special_source",
+        "Older entry",
+        "2026-05-20T00:00:00Z",
+    )
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        client.post("/api/reader/sources/atom_special_source/subscribe")
+        token = client.post("/api/reader/feed-token/rotate").json()["token"]
+        response = client.get(
+            "/api/public/feed/articles.xml",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        summary_response = client.get(
+            "/api/public/feed/articles.xml?include_content=false",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/atom+xml")
+    root = ET.fromstring(response.content)
+    atom = {"atom": "http://www.w3.org/2005/Atom"}
+    assert root.tag == "{http://www.w3.org/2005/Atom}feed"
+    assert root.findtext("atom:id", namespaces=atom).startswith("tag:dorami.local,2026:feed:")
+    assert root.findtext("atom:title", namespaces=atom) == "哆啦美订阅聚合 · user"
+    assert root.findtext("atom:updated", namespaces=atom) == "2026-05-27T04:05:06Z"
+
+    entries = root.findall("atom:entry", atom)
+    assert len(entries) == 2
+    special = next(entry for entry in entries if entry.findtext("atom:title", namespaces=atom) == title)
+    assert special.findtext("atom:id", namespaces=atom) == source_url
+    assert special.find("atom:link", atom).attrib["href"] == source_url
+    assert special.findtext("atom:updated", namespaces=atom) == "2026-05-27T04:05:06Z"
+    assert special.findtext("atom:published", namespaces=atom) == "2026-05-27T04:05:06Z"
+    assert special.findtext("atom:author/atom:name", namespaces=atom) == "atom_special_source"
+    content_node = special.find("atom:content", atom)
+    assert content_node.attrib["type"] == "text"
+    assert content_node.text == content
+    assert {
+        category.attrib["term"] for category in special.findall("atom:category", atom)
+    } == {"rss_article", "atom_special_source"}
+    assert b"R&amp;D &lt;Launch&gt; &gt; Alpha" in response.content
+    assert b"Markdown &amp; details &lt;tag&gt; &gt; ending" in response.content
+    summary_root = ET.fromstring(summary_response.content)
+    summary_entry = next(
+        entry
+        for entry in summary_root.findall("atom:entry", atom)
+        if entry.findtext("atom:title", namespaces=atom) == title
+    )
+    assert summary_entry.find("atom:content", atom) is None
+    assert summary_entry.findtext("atom:summary", namespaces=atom) == content
+
+
+def test_personal_feed_atom_filters_narrow_entries(monkeypatch, tmp_path):
+    import api.app as app_module
+
+    sink = _make_sink(tmp_path, "feed_atom_filters.db")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    _set_auth_accounts(monkeypatch, app_module)
+    _set_runtime_role(monkeypatch, app_module, "reader")
+    _seed_article_dated(
+        sink.engine, "target", "atom_source_a", "Needle target",
+        "2026-05-20T00:00:00", content_type="web_article",
+    )
+    _seed_article_dated(
+        sink.engine, "wrong_type", "atom_source_a", "Needle RSS",
+        "2026-05-20T00:00:00", content_type="rss_article",
+    )
+    _seed_article_dated(
+        sink.engine, "other_source", "atom_source_b", "Other source",
+        "2026-05-20T00:00:00", content_type="web_article",
+    )
+    _seed_article_dated(
+        sink.engine, "search_hit", "atom_source_a", "Haystack marker",
+        "2026-05-20T00:00:00", content_type="web_article",
+    )
+    _seed_article_dated(
+        sink.engine, "old", "atom_source_a", "Needle old",
+        "2026-05-10T00:00:00", content_type="web_article",
+    )
+    _seed_article_dated(
+        sink.engine, "future", "atom_source_a", "Needle future",
+        "2026-05-30T00:00:00", content_type="web_article",
+    )
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        client.post("/api/reader/sources/atom_source_a/subscribe")
+        client.post("/api/reader/sources/atom_source_b/subscribe")
+        token = client.post("/api/reader/feed-token/rotate").json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        def entry_urls(query):
+            response = client.get(f"/api/public/feed/articles.xml?{query}", headers=headers)
+            assert response.status_code == 200
+            root = ET.fromstring(response.content)
+            namespace = {"atom": "http://www.w3.org/2005/Atom"}
+            return {
+                entry.find("atom:link", namespace).attrib["href"]
+                for entry in root.findall("atom:entry", namespace)
+            }
+
+        assert entry_urls("content_types=web_article") == {
+            "https://example.test/target",
+            "https://example.test/other_source",
+            "https://example.test/search_hit",
+            "https://example.test/old",
+            "https://example.test/future",
+        }
+        assert entry_urls("source_ids=atom_source_b") == {
+            "https://example.test/other_source"
+        }
+        assert entry_urls("search=Haystack") == {
+            "https://example.test/search_hit"
+        }
+        ranged = entry_urls(
+            "publish_date_start=2026-05-19&publish_date_end=2026-05-21"
+        )
+        assert ranged == {
+            "https://example.test/target",
+            "https://example.test/wrong_type",
+            "https://example.test/other_source",
+            "https://example.test/search_hit",
+        }
+
+
+def test_personal_feed_atom_invalid_token_matches_markdown(monkeypatch, tmp_path):
+    import api.app as app_module
+
+    sink = _make_sink(tmp_path, "feed_atom_auth.db")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    _set_auth_accounts(monkeypatch, app_module)
+    _set_runtime_role(monkeypatch, app_module, "reader")
+
+    with TestClient(app_module.app) as client:
+        for suffix in ("", "?token=dfeed_wrong"):
+            markdown = client.get(f"/api/public/feed/articles.md{suffix}")
+            atom = client.get(f"/api/public/feed/articles.xml{suffix}")
+            assert atom.status_code == markdown.status_code == 401
+            assert atom.json() == markdown.json() == {
+                "detail": "个人聚合接口令牌无效"
+            }
 
 
 def test_personal_feed_disabled_in_collector_role(monkeypatch, tmp_path):
