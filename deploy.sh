@@ -528,7 +528,18 @@ else
     fi
 fi
 
-mkdir -p logs
+mkdir -p logs data
+
+# SQLite 只会创建库文件、不会创建父目录:全新 clone 没有 data/,迁移会直接
+# "unable to open database file"。从 ini 解析库路径并确保父目录存在
+# (sqlite:///relative 与 sqlite:////absolute 两种形式都覆盖;非 sqlite URL 跳过)。
+DB_URL="$(ini_get storage database_url "sqlite:///data/cms_data.db")"
+case "$DB_URL" in
+    sqlite:///*)
+        DB_PATH="${DB_URL#sqlite:///}"
+        mkdir -p "$(dirname "$DB_PATH")"
+        ;;
+esac
 
 # 数据库迁移(schema 变更走 Alembic):ensure_migrated 对「有表无版本」的
 # 老库先 stamp 基线再 upgrade,避免裸 `alembic upgrade` 对已存在的表重跑建表而失败;
