@@ -364,3 +364,252 @@ def test_start_submits_job_without_password(monkeypatch, tmp_path):
         target = status["state"]["targets"]["http://remote.test"]
         assert target["last_fetched_date"] == "2026-07-05T10:00:00"
         assert status["jobs"][0]["job_id"] == job_id
+
+
+# ==================== 定时同步配置(KV,凭据只写不回显)====================
+
+def test_schedule_service_roundtrip_hides_password(tmp_path, monkeypatch):
+    sink = _make_local_sink(tmp_path, monkeypatch, "sched_svc.db")
+    engine = sink.engine
+
+    # 默认(KV 缺失):停用 + 默认 cron,无密码。
+    default = remote_sync_service.load_schedule(engine)
+    assert default["enabled"] is False
+    assert default["cron"] == "0 3 * * *"
+    assert default["password_set"] is False
+    assert "password" not in default
+
+    saved = remote_sync_service.save_schedule(
+        engine,
+        {
+            "enabled": True, "cron": "0 5 * * *", "base_url": "http://remote.test",
+            "username": "admin", "password": "s3cret", "source_ids": ["rss_a"],
+        },
+        updated_at="2026-07-24T00:00:00",
+    )
+    # 返回形状(不回显密码)。
+    assert saved["enabled"] is True
+    assert saved["cron"] == "0 5 * * *"
+    assert saved["password_set"] is True
+    assert "password" not in saved
+    assert saved["source_ids"] == ["rss_a"]
+    assert saved["updated_at"] == "2026-07-24T00:00:00"
+
+    # GET 视图不含密码;include_secret 才拿得到明文。
+    view = remote_sync_service.load_schedule(engine)
+    assert "password" not in view and view["password_set"] is True
+    secret = remote_sync_service.load_schedule(engine, include_secret=True)
+    assert secret["password"] == "s3cret"
+
+    # 空密码再存 → 保留已存密码(只写不回显范式)。
+    remote_sync_service.save_schedule(
+        engine,
+        {"enabled": True, "cron": "0 6 * * *", "base_url": "http://remote.test",
+         "username": "admin", "password": "", "source_ids": []},
+        updated_at="2026-07-24T01:00:00",
+    )
+    kept = remote_sync_service.load_schedule(engine, include_secret=True)
+    assert kept["password"] == "s3cret"
+    assert kept["cron"] == "0 6 * * *"
+
+
+def test_schedule_endpoint_roundtrip_and_validation(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    # 调度热生效由 test_reload_remote_sync_schedule_* 单独覆盖;这里只验保存/校验,
+    # 且共享的模块级 scheduler 会被先前 TestClient 的已关闭 loop 污染(add_job→
+    # wakeup 崩),故 stub 掉重载调用。
+    monkeypatch.setattr(app_module, "reload_remote_sync_schedule", lambda: None)
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+
+        # 初始 GET:默认停用,无密码键。
+        res = client.get("/api/admin/remote-sync/schedule")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["enabled"] is False and body["password_set"] is False
+        assert "password" not in body
+
+        # 启用保存。
+        res = client.post("/api/admin/remote-sync/schedule", json={
+            "enabled": True, "cron": "30 2 * * *", "base_url": "http://remote.test/",
+            "username": "admin", "password": "pw123", "source_ids": ["rss_a", " "],
+        })
+        assert res.status_code == 200
+        saved = res.json()
+        assert saved["enabled"] is True
+        assert saved["base_url"] == "http://remote.test"  # 规整去尾斜杠
+        assert saved["password_set"] is True and "password" not in saved
+        assert saved["source_ids"] == ["rss_a"]  # 空白项被清理
+
+        # GET 仍不回显密码。
+        assert "password" not in client.get("/api/admin/remote-sync/schedule").json()
+
+        # 空密码再存 → 保留已存密码,允许通过启用校验。
+        res = client.post("/api/admin/remote-sync/schedule", json={
+            "enabled": True, "cron": "0 4 * * *", "base_url": "http://remote.test",
+            "username": "admin", "password": "",
+        })
+        assert res.status_code == 200
+        assert remote_sync_service.load_schedule(
+            app_module.db_sink.engine, include_secret=True
+        )["password"] == "pw123"
+
+        # 非法 cron → 400。
+        assert client.post("/api/admin/remote-sync/schedule", json={
+            "enabled": False, "cron": "not a cron",
+        }).status_code == 400
+
+        # 启用但无凭据(密码从未存过,先清库场景用新账号)→ 400。
+        assert client.post("/api/admin/remote-sync/schedule", json={
+            "enabled": True, "cron": "0 3 * * *", "base_url": "http://other.test",
+            "username": "", "password": "",
+        }).status_code == 400
+
+        # 启用但地址非法 → 400。
+        assert client.post("/api/admin/remote-sync/schedule", json={
+            "enabled": True, "cron": "0 3 * * *", "base_url": "nope",
+            "username": "admin", "password": "x",
+        }).status_code == 400
+
+        # 停用可宽松保存(无凭据)。
+        res = client.post("/api/admin/remote-sync/schedule", json={
+            "enabled": False, "cron": "0 3 * * *", "base_url": "", "username": "",
+        })
+        assert res.status_code == 200 and res.json()["enabled"] is False
+
+
+def test_schedule_endpoints_admin_gated(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        assert client.get("/api/admin/remote-sync/schedule").status_code == 401
+    with TestClient(app_module.app) as client:
+        _login(client, "user", "user")
+        assert client.get("/api/admin/remote-sync/schedule").status_code == 403
+        assert client.post(
+            "/api/admin/remote-sync/schedule", json={"enabled": False}
+        ).status_code == 403
+
+
+# ==================== 定时任务回调 execute_remote_sync_job ====================
+
+def _seed_enabled_schedule(engine, *, base_url="http://remote.test"):
+    remote_sync_service.save_schedule(
+        engine,
+        {"enabled": True, "cron": "0 3 * * *", "base_url": base_url,
+         "username": "admin", "password": "secret", "source_ids": []},
+        updated_at="2026-07-24T00:00:00",
+    )
+
+
+def test_execute_remote_sync_job_uses_kv_cursor_and_system_actor(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from api.routers import remote_sync as remote_sync_router
+    engine = app_module.db_sink.engine
+
+    _seed_enabled_schedule(engine)
+    # 预置 KV 游标。
+    remote_sync_service.record_sync_success(
+        engine,
+        {"base_url": "http://remote.test", "username": "admin",
+         "max_fetched_date": "2026-07-05T10:00:00"},
+        synced_at="2026-07-23T00:00:00",
+    )
+
+    captured = {}
+
+    def _fake_launch(engine_arg, **kwargs):
+        captured.update(kwargs)
+
+        class _J:
+            id = "job-fake"
+        return _J()
+
+    monkeypatch.setattr(remote_sync_router, "launch_remote_sync_job", _fake_launch)
+
+    asyncio.run(app_module.execute_remote_sync_job())
+
+    assert captured["fetched_date_start"] == "2026-07-05T10:00:00"
+    assert captured["created_by"] == "system"
+    assert captured["base_url"] == "http://remote.test"
+    assert captured["password"] == "secret"
+
+
+def test_execute_remote_sync_job_skips_when_running(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from api.routers import remote_sync as remote_sync_router
+    from models.db import JobRecord
+    from sqlmodel import Session
+    engine = app_module.db_sink.engine
+
+    _seed_enabled_schedule(engine)
+    # 已有运行中的同步任务。
+    with Session(engine) as session:
+        session.add(JobRecord(
+            id="running-1", type=remote_sync_service.REMOTE_SYNC_JOB_TYPE,
+            status="running", payload_json="{}", created_at=time.time(),
+        ))
+        session.commit()
+
+    called = {"n": 0}
+    monkeypatch.setattr(
+        remote_sync_router, "launch_remote_sync_job",
+        lambda *a, **k: called.__setitem__("n", called["n"] + 1),
+    )
+    asyncio.run(app_module.execute_remote_sync_job())
+    assert called["n"] == 0  # 防重叠:跳过本轮
+
+
+def test_execute_remote_sync_job_skips_when_disabled(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from api.routers import remote_sync as remote_sync_router
+
+    called = {"n": 0}
+    monkeypatch.setattr(
+        remote_sync_router, "launch_remote_sync_job",
+        lambda *a, **k: called.__setitem__("n", called["n"] + 1),
+    )
+    # 未配置(KV 缺失,enabled=False)→ 不启动。
+    asyncio.run(app_module.execute_remote_sync_job())
+    assert called["n"] == 0
+
+
+# ==================== reload_remote_sync_schedule 注册/移除 ====================
+
+class _FakeScheduler:
+    """最小假调度器:回避共享模块级 scheduler 被已关闭 loop 污染的问题
+    (真 scheduler.add_job 会 wakeup 已关闭事件循环),只验注册/移除语义。"""
+
+    def __init__(self):
+        self.jobs = {}
+
+    def add_job(self, callback, trigger, args, id, replace_existing):
+        self.jobs[id] = callback
+
+    def get_job(self, id):
+        return self.jobs.get(id)
+
+    def remove_job(self, id):
+        self.jobs.pop(id, None)
+
+
+def test_reload_remote_sync_schedule_registers_and_removes(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    engine = app_module.db_sink.engine
+    fake = _FakeScheduler()
+    monkeypatch.setattr(app_module, "scheduler", fake)
+
+    # 停用(默认)→ 无 job。
+    app_module.reload_remote_sync_schedule()
+    assert fake.get_job("remote_sync") is None
+
+    # 启用 → 注册(真 add_cron_job 构 CronTrigger 后落到假 scheduler)。
+    _seed_enabled_schedule(engine)
+    app_module.reload_remote_sync_schedule()
+    assert fake.get_job("remote_sync") is not None
+
+    # 再停用 → 移除。
+    remote_sync_service.save_schedule(
+        engine, {"enabled": False}, updated_at="2026-07-24T02:00:00",
+    )
+    app_module.reload_remote_sync_schedule()
+    assert fake.get_job("remote_sync") is None

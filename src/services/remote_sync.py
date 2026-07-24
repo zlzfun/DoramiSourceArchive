@@ -17,6 +17,13 @@
 增量游标:每次成功同步把本次所见最大 `fetched_date` 记入 KV
 (`remote_sync:state`,按 base_url 分目标),下次以 `fetched_date_start` 透传给
 远端导出实现增量;重复区间由导入端幂等跳过,天然安全。
+
+定时任务的凭据存储(有意的契约变更):v3.18 的「凭据绝不落库」是针对一次性
+**手动**同步(`probe`/`start` 端点的凭据只进单次请求/任务内存,至今不落库)。
+但**定时同步**无人值守,必须持久化凭据——沿用 X API token 的既有范式:凭据存
+AppSettingRecord KV(`remote_sync:schedule`),**只写不回显**。读取端点
+(`load_schedule` 默认 `include_secret=False`)绝不回传 password 键、只给
+`password_set: bool`;日志绝不打印 password;后台 job 的 payload 快照同样不含。
 """
 
 from __future__ import annotations
@@ -35,7 +42,11 @@ from models.db import AppSettingRecord
 _logger = logging.getLogger("dorami.remote_sync")
 
 REMOTE_SYNC_STATE_KEY = "remote_sync:state"
+REMOTE_SYNC_SCHEDULE_KEY = "remote_sync:schedule"
 REMOTE_SYNC_JOB_TYPE = "remote_archive_sync"
+
+# 定时同步默认配置(未配置时 GET 返回的形状)。
+_SCHEDULE_DEFAULT_CRON = "0 3 * * *"
 
 # 每页拉取条数:与导出端 5000 上限留余量,单页体量适中(正文全量,页大易超时)。
 DEFAULT_PAGE_SIZE = 1000
@@ -346,3 +357,73 @@ def record_sync_success(engine, result: Dict[str, Any], *, synced_at: str) -> No
             record.value = value
         session.add(record)
         session.commit()
+
+
+# ── 定时同步配置(KV,凭据只写不回显)──────────────────────────────────────────
+
+def _load_schedule_raw(engine) -> Dict[str, Any]:
+    with Session(engine) as session:
+        record = session.get(AppSettingRecord, REMOTE_SYNC_SCHEDULE_KEY)
+        if record is None or not record.value:
+            return {}
+        try:
+            data = json.loads(record.value)
+        except json.JSONDecodeError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+
+def load_schedule(engine, *, include_secret: bool = False) -> Dict[str, Any]:
+    """读定时同步配置。
+
+    默认 **不含 password 键**,只给 `password_set: bool`(是否已存密码);
+    `include_secret=True` 时额外带 `password`(仅供无人值守 job 内部使用,绝不
+    经端点回传)。KV 缺失时返回全默认(enabled=False)。
+    """
+    raw = _load_schedule_raw(engine)
+    password = str(raw.get("password") or "")
+    result: Dict[str, Any] = {
+        "enabled": bool(raw.get("enabled", False)),
+        "cron": str(raw.get("cron") or _SCHEDULE_DEFAULT_CRON),
+        "base_url": str(raw.get("base_url") or ""),
+        "username": str(raw.get("username") or ""),
+        "source_ids": list(raw.get("source_ids") or []),
+        "updated_at": str(raw.get("updated_at") or ""),
+        "password_set": bool(password),
+    }
+    if include_secret:
+        result["password"] = password
+    return result
+
+
+def save_schedule(engine, updates: Dict[str, Any], *, updated_at: str) -> Dict[str, Any]:
+    """合并写回定时同步配置,返回 `load_schedule(include_secret=False)` 形状。
+
+    `updates` 里 `password` 为空串/None 表示**保留已存密码**(与 X API token
+    的「只写不回显、不改即留旧」范式一致);服务层不依赖 FastAPI,`updated_at`
+    由调用方传入。
+    """
+    merged = dict(_load_schedule_raw(engine))
+    for key in ("enabled", "cron", "base_url", "username", "source_ids"):
+        if key in updates:
+            merged[key] = updates[key]
+    if updates.get("password"):
+        merged["password"] = str(updates["password"])
+    # 空/缺失 password 时保留 merged 里已存的密码。
+    merged["enabled"] = bool(merged.get("enabled", False))
+    merged["cron"] = str(merged.get("cron") or _SCHEDULE_DEFAULT_CRON)
+    merged["base_url"] = str(merged.get("base_url") or "")
+    merged["username"] = str(merged.get("username") or "")
+    merged["source_ids"] = list(merged.get("source_ids") or [])
+    merged["updated_at"] = updated_at
+
+    with Session(engine) as session:
+        record = session.get(AppSettingRecord, REMOTE_SYNC_SCHEDULE_KEY)
+        value = json.dumps(merged, ensure_ascii=False)
+        if record is None:
+            record = AppSettingRecord(key=REMOTE_SYNC_SCHEDULE_KEY, value=value)
+        else:
+            record.value = value
+        session.add(record)
+        session.commit()
+    return load_schedule(engine, include_secret=False)

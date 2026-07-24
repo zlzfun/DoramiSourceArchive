@@ -695,6 +695,7 @@ export default function App() {
         theme={theme}
         onThemeChange={setTheme}
         runtimeInfo={runtimeInfo}
+        readerSurface={readerView}
         username={authState.user?.username}
         avatar={authState.user?.avatar}
         onUserUpdated={handleUserUpdated}

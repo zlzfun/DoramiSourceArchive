@@ -166,6 +166,7 @@ from api.routers import announcements as announcements_router
 from api.routers import remote_sync as remote_sync_router
 from api.routers.fetchers import FetchBatchItem, FetchBatchParams
 from services import daily_brief as daily_brief_service
+from services import remote_sync as remote_sync_service
 from services import accounts as accounts_service
 from services import admin_audit as admin_audit_service
 from services import reader_ai as reader_ai_service
@@ -413,6 +414,8 @@ async def lifespan(app: FastAPI):
             # RAG 开启时注册每日向量索引对账巡检（只报告、发现漂移告警，每日 04:00）。
             if vector_sink is not None:
                 add_cron_job("vector_reconcile", execute_vector_reconcile_job, "0 4 * * *", [])
+            # 远程内容同步定时任务(启用且 cron 合法时注册,否则移除既有 job)。
+            reload_remote_sync_schedule()
     else:
         print("⏸️ 当前 reader 运行角色不启动抓取调度引擎。")
 
@@ -1187,6 +1190,68 @@ def reload_daily_brief_schedule():
         add_cron_job("daily_brief", execute_daily_brief_job, cron_expr, [])
     elif scheduler.get_job("daily_brief"):
         scheduler.remove_job("daily_brief")
+
+
+async def execute_remote_sync_job():
+    """定时回调：远程内容同步拉取。凭据只进任务内存，失败仅记录，不影响调度引擎。
+
+    与手动 start 端点复用同一后台 job 构造（api.routers.remote_sync）；成功后
+    落 KV 游标。防重叠：上一轮 job 仍 queued/running 时跳过本轮。
+    """
+    engine = db_sink.engine
+    schedule = remote_sync_service.load_schedule(engine, include_secret=True)
+    if not (
+        schedule.get("enabled")
+        and schedule.get("base_url")
+        and schedule.get("username")
+        and schedule.get("password")
+    ):
+        _dorami_logger.warning("定时远程同步触发但配置不完整，跳过本轮")
+        return
+
+    # 防重叠：已有排队/运行中的同步任务时不再叠加。
+    existing = jobs_service.list_jobs(
+        engine, job_type=remote_sync_service.REMOTE_SYNC_JOB_TYPE, limit=5
+    )
+    if any(j.get("status") in ("queued", "running") for j in existing):
+        _dorami_logger.info("上一轮远程同步仍在进行，跳过本轮定时触发")
+        return
+
+    # 增量起点：取该目标 KV 游标(按规整后的 base_url 分目标；无则全量)。
+    try:
+        normalized_base = remote_sync_service.normalize_base_url(schedule["base_url"])
+    except remote_sync_service.RemoteSyncError as exc:
+        _dorami_logger.warning("定时远程同步 base_url 非法，跳过本轮: %s", exc)
+        return
+    target = (remote_sync_service.load_sync_state(engine).get("targets") or {}).get(
+        normalized_base
+    ) or {}
+    fetched_date_start = target.get("last_fetched_date") or None
+    source_ids = schedule.get("source_ids") or None
+
+    try:
+        remote_sync_router.launch_remote_sync_job(
+            engine,
+            base_url=schedule["base_url"],
+            username=schedule["username"],
+            password=schedule["password"],
+            fetched_date_start=fetched_date_start,
+            source_ids=source_ids,
+            created_by="system",
+        )
+        _dorami_logger.info("⏰ 定时远程同步已启动（目标 %s）", normalized_base)
+    except Exception as exc:  # noqa: BLE001 启动失败不影响调度引擎
+        _dorami_logger.error("定时远程同步启动失败: %s", exc)
+
+
+def reload_remote_sync_schedule():
+    """远程同步配置变更后热生效：精准增删 remote_sync 这一个 job。"""
+    schedule = remote_sync_service.load_schedule(db_sink.engine)
+    cron_expr = str(schedule.get("cron") or "")
+    if schedule.get("enabled") and len(cron_expr.split()) == 5:
+        add_cron_job("remote_sync", execute_remote_sync_job, cron_expr, [])
+    elif scheduler.get_job("remote_sync"):
+        scheduler.remove_job("remote_sync")
 
 
 # ==================== 1. 数据台账与 CRUD ====================

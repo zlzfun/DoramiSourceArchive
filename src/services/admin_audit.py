@@ -155,6 +155,15 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
         ),
     ),
     ("POST", re.compile(r"^/api/llm/config$"), lambda _m, _b: ("更新 LLM 配置", None)),
+    (
+        "POST",
+        re.compile(r"^/api/admin/remote-sync/schedule$"),
+        # 绝不读 body 的 password 字段——仅记开关状态。
+        lambda _m, body: (
+            f"{'启用' if (body or {}).get('enabled') else '停用'}远程定时同步",
+            None,
+        ),
+    ),
 ]
 
 

@@ -4119,7 +4119,9 @@ input[type="radio"] {
   .sett-cab { display: flex; overflow: hidden; font-size: 13px; }
   /* 与 .modal-panel 复合使用:panel 供表面/高程/开合动画;其 width:100%/flex-direction:column
      定义在后会压过同特异性声明——布局向属性一律用复合选择器钉住(弹窗波陷阱) */
-  .modal-panel.sett-cab { width: min(880px, 94vw); height: min(640px, 90vh); flex-direction: row; }
+  /* 柜高 640→576(2026-07-24 拍板):多数分区内容集中上半部,过高的柜体下半空置;
+     长分区(MCP/数据同步)本就滚动,矮柜不损内容。宽度保 880(代码块/工具表下限)。 */
+  .modal-panel.sett-cab { width: min(880px, 94vw); height: min(576px, 90vh); flex-direction: row; }
 
   .sett-nav { width: 184px; flex: none; display: flex; flex-direction: column;
     background: var(--dorami-soft); border-right: 1px solid var(--dorami-border); padding: 14px 8px;
@@ -4148,8 +4150,8 @@ input[type="radio"] {
   .sett-head-hint { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); }
   .sett-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px 20px; }
 
-  /* 设置行范式 */
-  .sett-row { display: flex; align-items: center; gap: 14px; padding: 12px 2px;
+  /* 设置行范式(行距 12→14:配合矮柜的纵向舒展,短分区不再头重脚轻) */
+  .sett-row { display: flex; align-items: center; gap: 14px; padding: 14px 2px;
     border-bottom: 1px solid var(--dorami-border); }
   .sett-row:last-child { border-bottom: none; }
   .sett-row.is-block { display: block; }
@@ -4158,10 +4160,11 @@ input[type="radio"] {
   .sett-sub { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); margin-top: 1px; line-height: 1.6; }
   .sett-ctl { flex: none; display: flex; align-items: center; gap: 8px; }
 
-  /* 外观三态分段(样页刻度:28px 紧凑白拇指;字号字重挂容器继承穿透) */
+  /* 外观三态分段(紧凑白拇指;字号字重挂容器继承穿透)。
+     26+3×2=32:与设置柜 M 档按钮(min-h-32)同一高度刻度(按钮尺寸统一,2026-07-24)。 */
   .sett-seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--r-control);
     background: var(--dorami-well); font-size: 12px; font-weight: 600; }
-  .sett-seg-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 28px;
+  .sett-seg-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 26px;
     padding: 0 12px; border-radius: 8px; color: var(--dorami-muted); }
   .sett-seg-btn:hover:not(.is-on) { color: var(--dorami-ink-2); }
   .sett-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
@@ -4180,12 +4183,39 @@ input[type="radio"] {
   .sett-link { color: var(--dorami-accent-ink); font-weight: 600; }
   .sett-link:hover { text-decoration: underline; }
 
-  /* 数据同步:动作台虚线卡(区别于设置行) */
-  .sett-sync-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px; }
-  .sett-sync-card { border: 1px dashed var(--dorami-border-strong); border-radius: var(--r-card);
+  /* 数据同步(v3.19.2 重设计):单列纵排动作卡。双列半宽卡曾把 datetime 输入挤到截断,
+     且虚线卡+裸 Tailwind 灰阶是旧前端痕迹——改整幅实线 hairline 卡 + 统一字段刻度。 */
+  .sett-sync-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 4px; }
+  .sett-sync-card { border: 1px solid var(--dorami-border); border-radius: var(--r-card);
     padding: 14px 16px; }
-  .sett-sync-title { font-size: 12.5px; font-weight: 700; margin-bottom: 3px; }
+  .sett-sync-head { display: flex; align-items: center; gap: 7px; margin-bottom: 2px; }
+  .sett-sync-head svg { width: 14px; height: 14px; flex: none; color: var(--dorami-muted); }
+  .sett-sync-title { font-size: 12.5px; font-weight: 700; }
   .sett-sync-sub { font-size: 11.5px; color: var(--dorami-faint); line-height: 1.7; margin-bottom: 10px; }
+  /* 字段网格:整幅三栏等宽,datetime-local 有足额宽度不再截断;窄屏落单列 */
+  .sett-sync-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .sett-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .sett-field-lbl { font-size: 11px; font-weight: 600; color: var(--dorami-faint); }
+  /* 卡内脚部:hairline 上缘,开关/元信息居左、动作钮居右 */
+  .sett-sync-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--dorami-border); }
+  .sett-sw { display: inline-flex; align-items: center; gap: 8px; font-size: 12px;
+    font-weight: 600; color: var(--dorami-muted); }
+  /* 文件拾取域:虚线仅保留在「投放区」语义上(可点整行) */
+  .sett-file { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 12px;
+    border: 1px dashed var(--dorami-border-strong); border-radius: var(--r-control);
+    background: var(--dorami-soft); text-align: left;
+    transition: border-color var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease); }
+  .sett-file:hover { border-color: var(--dorami-accent-ink); background: var(--dorami-wash); }
+  .sett-file.has-file { border-style: solid; }
+  .sett-file svg { width: 16px; height: 16px; flex: none; color: var(--dorami-muted); }
+  .sett-file-name { display: block; font-size: 12.5px; font-weight: 700; }
+  .sett-file-hint { display: block; font-size: 11px; font-weight: 500; color: var(--dorami-faint); margin-top: 1px; }
+  /* 结果/进度盘:soft 底信息块(导入结果/同步进度/探针结果共用) */
+  .sett-sync-panel { margin-top: 12px; border: 1px solid var(--dorami-border);
+    border-radius: var(--r-card); background: var(--dorami-soft); padding: 10px 14px; }
+  .sett-sync-stats { display: flex; flex-wrap: wrap; gap: 6px 26px; }
+  .sett-sync-stats b { font-size: 13px; font-variant-numeric: tabular-nums; }
 
   .sett-kv { display: grid; grid-template-columns: 88px 1fr; gap: 7px 12px; font-size: 12.5px; padding: 4px 2px; }
   .sett-kv dt { color: var(--dorami-faint); font-size: 11px; font-weight: 600; padding-top: 1px; }
@@ -4198,7 +4228,7 @@ input[type="radio"] {
     .sett-nav-sec { flex-direction: row; }
     .sett-nav-btn { width: auto; white-space: nowrap; }
     .sett-nav-title, .sett-nav-group, .sett-nav-spacer, .sett-nav-foot { display: none; }
-    .sett-sync-grid, .sett-pw-grid { grid-template-columns: 1fr; }
+    .sett-sync-grid, .sett-sync-fields, .sett-pw-grid { grid-template-columns: 1fr; }
   }
 
   /* ── 运维管理 静默仪器(运维波):仪表墙 ──

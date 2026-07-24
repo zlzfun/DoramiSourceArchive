@@ -12,9 +12,10 @@ import FeedbackSection from './settings/FeedbackSection';
 import AboutSection from './settings/AboutSection';
 
 // 设置面板(弹窗波→并入设置波):控制柜——左导航(分组灰签 + wash 块选中,全站轨语言)+ 右内容。
-// 「接入集成」组(聚合接口/MCP 接入/技能包)自原接入集成页签并入,两种角色同享(admin 文案分支
-// 在各分区组件内);「管理」组(数据同步)admin-only——原「服务」区随 MCP 开关并入「MCP 接入」
-// 退役(用户拍板,向量统计行同迁);柜体随内容扩容 880×640。
+// 「接入集成」组(聚合接口/MCP 接入/技能包)自原接入集成页签并入,两种角色同享。
+// 内容门控按「当前界面」而非仅账号角色(v3.19.2 排查拍板):管理能力(MCP 开关/数据同步/
+// 管理员文案)只在**管理台界面**出现——admin 经轨底切换进入阅读器时,设置柜与读者同观感,
+// 不露管理面细节;「反馈与建议」只给读者账号(admin 不向自己反馈,两界面均不显)。
 // initialSection 供深链(读者轨底/头像入口直落对应分区)。
 const HINTS = {
   account: '身份、头像与登录凭据',
@@ -27,13 +28,15 @@ const HINTS = {
   about: '产品与账户信息',
 };
 
-export default function SettingsModal({ open, initialSection, onClose, theme, onThemeChange, runtimeInfo, username, avatar, onUserUpdated, onLogout, showToast, onArticlesChanged }) {
+export default function SettingsModal({ open, initialSection, onClose, theme, onThemeChange, runtimeInfo, readerSurface = false, username, avatar, onUserUpdated, onLogout, showToast, onArticlesChanged }) {
   const { mounted, closing } = useModalTransition(open);
   const collectorEnabled = Boolean(runtimeInfo?.collector_enabled);
   const readerEnabled = Boolean(runtimeInfo?.reader_enabled);
   const ragEnabled = Boolean(runtimeInfo?.rag_enabled);
   const accountRole = runtimeInfo?.account_role;
   const isAdmin = accountRole === 'admin';
+  // 管理台观感:admin 账号且当前在管理台界面。admin 切到阅读器时按读者观感呈现。
+  const adminConsole = isAdmin && !readerSurface;
 
   const accountRoleLabel = useMemo(() => {
     if (accountRole === 'admin') return '管理员';
@@ -48,7 +51,8 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
       items: [
         { id: 'account', label: '账户', icon: User },
         { id: 'appearance', label: '外观', icon: Palette },
-        { id: 'feedback', label: '反馈与建议', icon: MessageSquare },
+        // 反馈是「读者→管理员」的通道:admin 账号不向自己反馈,两个界面均不显。
+        { id: 'feedback', label: '反馈与建议', icon: MessageSquare, show: !isAdmin },
       ],
     },
     {
@@ -62,11 +66,12 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
     {
       label: '管理',
       items: [
-        { id: 'sync', label: '数据同步', icon: FileText, show: isAdmin && (collectorEnabled || readerEnabled) },
+        // 管理组只在管理台界面出现;admin 在阅读器界面时设置柜与读者同观感。
+        { id: 'sync', label: '数据同步', icon: FileText, show: adminConsole && (collectorEnabled || readerEnabled) },
       ],
     },
   ].map(group => ({ ...group, items: group.items.filter(item => item.show !== false) }))
-    .filter(group => group.items.length > 0), [collectorEnabled, isAdmin, readerEnabled]);
+    .filter(group => group.items.length > 0), [adminConsole, collectorEnabled, isAdmin, readerEnabled]);
 
   const aboutItem = useMemo(() => ({ id: 'about', label: '关于', icon: Info }), []);
   const sections = useMemo(
@@ -122,7 +127,7 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
           ))}
           <div className="sett-nav-spacer" />
           {navButton(aboutItem)}
-          <div className="sett-nav-foot">{isAdmin ? '哆啦美 · 归档中枢' : '哆啦美 · AI 资讯阅读器'}</div>
+          <div className="sett-nav-foot">{adminConsole ? '哆啦美 · 归档中枢' : '哆啦美 · AI 资讯阅读器'}</div>
         </nav>
 
         <div className="sett-body">
@@ -150,20 +155,20 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
               <AppearanceSection theme={theme} onThemeChange={onThemeChange} />
             )}
             {activeSection.id === 'feed' && (
-              <FeedTokenSection showToast={showToast} isAdmin={isAdmin} />
+              <FeedTokenSection showToast={showToast} isAdmin={adminConsole} />
             )}
             {activeSection.id === 'mcp' && (
               <McpAccessSection
                 showToast={showToast}
                 ragEnabled={ragEnabled}
-                canManage={isAdmin && collectorEnabled}
+                canManage={adminConsole && collectorEnabled}
                 onClose={onClose}
               />
             )}
             {activeSection.id === 'skill' && (
               <SkillSection />
             )}
-            {activeSection.id === 'sync' && isAdmin && (collectorEnabled || readerEnabled) && (
+            {activeSection.id === 'sync' && adminConsole && (collectorEnabled || readerEnabled) && (
               <DataSyncSection
                 showToast={showToast}
                 canExport={collectorEnabled}
@@ -175,7 +180,7 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
               <FeedbackSection showToast={showToast} />
             )}
             {activeSection.id === 'about' && (
-              <AboutSection accountRoleLabel={accountRoleLabel} isAdmin={isAdmin} version={runtimeInfo?.version} />
+              <AboutSection accountRoleLabel={accountRoleLabel} isAdmin={adminConsole} version={runtimeInfo?.version} />
             )}
           </div>
         </div>

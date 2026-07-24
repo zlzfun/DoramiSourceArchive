@@ -11,6 +11,7 @@ GET /api/archive/export/articles.jsonl → 本地 import_archive_sync_jsonl 幂�
 import importlib
 from typing import Any, Dict, List, Optional
 
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -41,12 +42,68 @@ class RemoteSyncStartParams(RemoteSyncCredentials):
     page_size: int = remote_sync_service.DEFAULT_PAGE_SIZE
 
 
+class RemoteSyncScheduleParams(BaseModel):
+    enabled: bool = False
+    cron: str = remote_sync_service._SCHEDULE_DEFAULT_CRON
+    base_url: str = ""
+    username: str = ""
+    # 空串 = 保留已存密码(只写不回显范式);非空则覆盖。
+    password: str = ""
+    source_ids: List[str] = []
+
+
 def _validated_credentials(params: RemoteSyncCredentials) -> Dict[str, str]:
     base_url = remote_sync_service.normalize_base_url(params.base_url)
     username = (params.username or "").strip()
     if not username or not params.password:
         raise HTTPException(status_code=400, detail="远端管理员账号与密码不能为空")
     return {"base_url": base_url, "username": username, "password": params.password}
+
+
+def launch_remote_sync_job(
+    engine,
+    *,
+    base_url: str,
+    username: str,
+    password: str,
+    fetched_date_start: Optional[str] = None,
+    source_ids: Optional[List[str]] = None,
+    page_size: int = remote_sync_service.DEFAULT_PAGE_SIZE,
+    created_by: str = "",
+) -> jobs.Job:
+    """提交远程拉取后台 job(手动 start 端点与定时任务共用)。
+
+    凭据只进任务内存;`jobs.launch` 的 payload 快照绝不含密码。成功后落 KV 游标。
+    """
+    archive_sync_router = importlib.import_module("api.routers.archive_sync")
+
+    async def _work(job: jobs.Job) -> Dict[str, Any]:
+        result = await remote_sync_service.run_pull(
+            base_url=base_url,
+            username=username,
+            password=password,
+            fetched_date_start=fetched_date_start,
+            source_ids=source_ids,
+            page_size=page_size,
+            import_fn=archive_sync_router.import_archive_sync_jsonl,
+            on_total=job.set_total,
+            on_advance=job.advance,
+        )
+        remote_sync_service.record_sync_success(engine, result, synced_at=_now_iso())
+        return result
+
+    return jobs.launch(
+        engine,
+        REMOTE_SYNC_JOB_TYPE,
+        _work,
+        created_by=created_by,
+        payload={
+            "base_url": base_url,
+            "username": username,
+            "fetched_date_start": fetched_date_start or "",
+            "source_ids": source_ids or [],
+        },
+    )
 
 
 @router.post("/api/admin/remote-sync/test")
@@ -71,37 +128,68 @@ async def start_remote_sync(params: RemoteSyncStartParams, request: Request):
 
     engine = deps.get_db_sink().engine
     triggered_by = _app().current_username(request)
-    archive_sync_router = importlib.import_module("api.routers.archive_sync")
     fetched_date_start = (params.fetched_date_start or "").strip() or None
     source_ids = [s.strip() for s in (params.source_ids or []) if s and s.strip()] or None
 
-    async def _work(job: jobs.Job) -> Dict[str, Any]:
-        result = await remote_sync_service.run_pull(
-            base_url=creds["base_url"],
-            username=creds["username"],
-            password=creds["password"],
-            fetched_date_start=fetched_date_start,
-            source_ids=source_ids,
-            page_size=params.page_size,
-            import_fn=archive_sync_router.import_archive_sync_jsonl,
-            on_total=job.set_total,
-            on_advance=job.advance,
-        )
-        remote_sync_service.record_sync_success(engine, result, synced_at=_now_iso())
-        return result
-
-    # payload 快照绝不含密码(会落库)。
-    job = jobs.launch(
-        engine, REMOTE_SYNC_JOB_TYPE, _work,
+    job = launch_remote_sync_job(
+        engine,
+        base_url=creds["base_url"],
+        username=creds["username"],
+        password=creds["password"],
+        fetched_date_start=fetched_date_start,
+        source_ids=source_ids,
+        page_size=params.page_size,
         created_by=triggered_by,
-        payload={
-            "base_url": creds["base_url"],
-            "username": creds["username"],
-            "fetched_date_start": fetched_date_start or "",
-            "source_ids": source_ids or [],
-        },
     )
     return {"status": "accepted", "job_id": job.id}
+
+
+@router.get("/api/admin/remote-sync/schedule")
+def get_remote_sync_schedule():
+    """读定时同步配置(不回显密码,含 password_set)。"""
+    engine = deps.get_db_sink().engine
+    return remote_sync_service.load_schedule(engine)
+
+
+@router.post("/api/admin/remote-sync/schedule")
+def set_remote_sync_schedule(params: RemoteSyncScheduleParams):
+    """写定时同步配置并热生效调度。凭据只写不回显(密码空串 = 保留已存)。"""
+    engine = deps.get_db_sink().engine
+
+    cron = (params.cron or "").strip()
+    try:
+        CronTrigger.from_crontab(cron)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="cron 表达式无效")
+
+    source_ids = [s.strip() for s in (params.source_ids or []) if s and s.strip()]
+    updates: Dict[str, Any] = {
+        "enabled": bool(params.enabled),
+        "cron": cron,
+        "username": (params.username or "").strip(),
+        "password": params.password,
+        "source_ids": source_ids,
+    }
+
+    if params.enabled:
+        try:
+            base_url = remote_sync_service.normalize_base_url(params.base_url)
+        except RemoteSyncError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        existing = remote_sync_service.load_schedule(engine, include_secret=True)
+        has_password = bool(params.password) or bool(existing.get("password"))
+        if not updates["username"] or not has_password:
+            raise HTTPException(
+                status_code=400, detail="启用定时同步需要远端地址、账号与密码"
+            )
+        updates["base_url"] = base_url
+    else:
+        # 停用时宽松保存:允许清着配置,base_url 仅规整不强校验。
+        updates["base_url"] = (params.base_url or "").strip()
+
+    saved = remote_sync_service.save_schedule(engine, updates, updated_at=_now_iso())
+    _app().reload_remote_sync_schedule()
+    return saved
 
 
 @router.get("/api/admin/remote-sync/status")

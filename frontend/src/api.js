@@ -669,3 +669,17 @@ export function startRemoteSync(baseUrl, username, password, options = {}) {
 export function fetchRemoteSyncStatus() {
   return request('/admin/remote-sync/status', { errorMsg: '获取远程同步状态失败' });
 }
+
+// 定时同步(v3.19.2):凭据只写不回显——GET 永不含 password,仅 password_set;
+// POST 的 password 传空串表示保留已存密码。
+export function fetchRemoteSyncSchedule() {
+  return request('/admin/remote-sync/schedule', { errorMsg: '获取定时同步配置失败' });
+}
+
+export function saveRemoteSyncSchedule(payload) {
+  return request('/admin/remote-sync/schedule', {
+    method: 'POST',
+    body: payload,
+    errorMsg: '保存定时同步配置失败',
+  });
+}

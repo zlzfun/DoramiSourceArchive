@@ -213,7 +213,8 @@ export default function AccountSection({ username, avatar, accountRoleLabel, isA
             aria-label="确认新密码"
             className="form-input"
           />
-          <button type="submit" disabled={saving} className="action-button action-button-primary min-h-[32px] px-3 text-xs">
+          {/* self-center:阻断 grid 拉伸(输入 36px 会把按钮抻高),与页内其它 M 档按钮同 32px */}
+          <button type="submit" disabled={saving} className="action-button action-button-primary min-h-[32px] self-center px-3 text-xs">
             {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />} 更新密码
           </button>
         </div>
