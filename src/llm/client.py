@@ -20,6 +20,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 
+from config import settings
+
 from config import LLMConfig
 
 logger = logging.getLogger("dorami.llm")
@@ -114,7 +116,10 @@ async def chat_completion(
     want_json = response_json
     last_error: Optional[Exception] = None
 
-    async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+        timeout=config.timeout_seconds, follow_redirects=True,
+        verify=settings.network.tls_verify,
+    ) as client:
         for attempt in range(1, max_retries + 1):
             try:
                 resp = await client.post(url, headers=headers, json=_build_payload(want_json))

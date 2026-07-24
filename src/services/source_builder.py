@@ -21,6 +21,8 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup, Tag
 
+from config import settings
+
 import config
 from llm import client as llm_client
 from llm.client import ChatMessage, LLMError, UsageMeta
@@ -50,7 +52,8 @@ async def _fetch(url: str, *, timeout: int = 20) -> Tuple[str, str, str, Optiona
     """GET 一个 URL，返回 (text, final_url, content_type, status)。失败时 text 为空。"""
     try:
         async with httpx.AsyncClient(
-            timeout=timeout, headers={"User-Agent": _UA}, follow_redirects=True
+            timeout=timeout, headers={"User-Agent": _UA}, follow_redirects=True,
+            verify=settings.network.tls_verify,
         ) as client:
             resp = await client.get(url)
             ct = resp.headers.get("content-type", "")

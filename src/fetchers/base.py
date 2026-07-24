@@ -11,6 +11,7 @@ import asyncio
 from typing import AsyncGenerator, Awaitable, Callable, Iterable, Optional, Dict, Any, List
 import httpx
 
+from config import settings
 from models.content import BaseContent
 
 
@@ -132,7 +133,8 @@ class BaseFetcher(abc.ABC):
             async with httpx.AsyncClient(
                     timeout=self.timeout,
                     headers=self.default_headers,
-                    follow_redirects=True
+                    follow_redirects=True,
+                    verify=settings.network.tls_verify,
             ) as client:
                 # 将 client 传递给子类的具体实现逻辑
                 async for content_item in self._run(client, **kwargs):
