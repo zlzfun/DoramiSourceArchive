@@ -34,6 +34,15 @@
 - ◇ **Newsletter 三批候补**(见 `docs/archive/source-expansion-wave3-plan.md` 候补名单)。
 - ◇ **暗色 / 登录 / 动效三区扩审**(静默仪器重构收官时留下的截图立项项)。
 - ◇ **M:Meta AI 源**(httpx 全灭,需浏览器发现;挂起)。
+- ◇ **Agentic 源接入(长期愿景,2026-07-25 用户表态)**:产品差异化 = **开箱即用的策展源**——
+  最好的源已事先备好,用户不需要像 Folo 那样自己发现和收集。权限形态**永久维持**:仅管理员侧添加源,
+  用户侧只提建议/申请,管理侧审核。长期演进方向是**类 OpenClaw 的 Agentic 后端**:接入模型智能 +
+  Loop 构建,基于既有经验与流程(curation_policy 准入/观察期、preset 硬化范式)自动化完成
+  「接纳审批 → 拉分支编写源固化代码 → 合入 → 添加源 → 观察孵化 → 转正」全流程,
+  管理员/维护者只做观察或极小工作量的 Human-in-the-Loop 确认。
+  近期铺垫参考(2026-07-25 分析,均未立项):0 级 = 放开 `ENABLE_CUSTOM_NODE_BUILDER` +
+  source-configs 管理列表(基建已齐,见 `CustomNodeBuilder.jsx` / `source_builder.py`);
+  1 级 = RSSHub 可选容器 + `rsshub://` 路由识别;2 级 = 读者「推荐源」申请 → 管理员收件箱审核。
 
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
 
