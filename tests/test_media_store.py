@@ -276,28 +276,17 @@ def test_prefetch_articles_counts(tmp_path, monkeypatch):
 
 # ==================== API 面 ====================
 
-def _auth_config():
-    from config import _auth_credentials
-    import api.app as app_module
-
-    return replace(
-        app_module.settings.auth,
-        admin_users=_auth_credentials("admin:admin"),
-        user_users=_auth_credentials("user:user"),
-    )
-
-
 def _setup_app(monkeypatch, tmp_path, *, transport=None, store_none=False):
     import api.app as app_module
     from config import RuntimeConfig
-    from services import accounts as accounts_service
+    from tests.conftest import seed_default_accounts
 
     sink = _sink(tmp_path, "app_media.db")
     monkeypatch.setattr(app_module, "db_sink", sink)
     monkeypatch.setattr(
         app_module, "settings", replace(app_module.settings, runtime=RuntimeConfig(role="all"))
     )
-    accounts_service.seed_users_if_empty(sink.engine, _auth_config())
+    seed_default_accounts(sink.engine)
     if store_none:
         monkeypatch.setattr(app_module, "media_store", None)
     else:

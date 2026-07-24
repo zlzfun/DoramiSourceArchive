@@ -242,8 +242,8 @@
 
 | 档 | 规格 | 语境 |
 |---|---|---|
-| L | 裸 `.action-button`(40px/14px) | 模态脚部、页级批量条(board-batchbar)、空态 CTA |
-| M | `min-h-[32px] px-3 text-xs` | **页头 `page-head-actions`**(用户拍板:页头取矮档更优雅)、卡头/卡内、抽屉脚部、设置面板、表格工具条 |
+| L | 裸 `.action-button`(40px/14px) | 页级批量条(board-batchbar)、空态 CTA |
+| M | `min-h-[32px] px-3 text-xs` | **页头 `page-head-actions`**(用户拍板:页头取矮档更优雅)、**模态/弹窗脚部**(2026-07-24 拍板:确认弹窗 40px 过高,模态脚部由 L 并入 M——在册:ConfirmDialog/form-sheet 弹窗/ManualAdd/文章详情编辑/任务编辑器)、卡头/卡内、抽屉脚部、设置面板、表格工具条 |
 | S | ≤28px,各范式类自治 | 行内微操作:`.rowact-btn`/`.copybtn`(26)、`.tt-act-btn`(格条)、行内文字微钮 |
 
 三条规则:①**同语境同档**——页头按钮一律 M 档三件套(肇因:运行页页头 36px 与节点页

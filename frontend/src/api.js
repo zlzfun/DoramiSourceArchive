@@ -81,6 +81,11 @@ export function updateAvatar(avatar) {
   return request('/auth/avatar', { method: 'POST', body: { avatar }, errorMsg: '更新头像失败' });
 }
 
+// 自助偏好(v3.19 多管理员波):目前仅 default_surface(管理员登录后默认落地界面)。
+export function updateOwnPreferences(payload) {
+  return request('/auth/preferences', { method: 'POST', body: payload, errorMsg: '保存偏好失败' });
+}
+
 // ==================== 账户管理（仅管理员） ====================
 export function fetchAccounts() {
   return request('/accounts', { errorMsg: '获取账户列表失败' });
@@ -111,8 +116,10 @@ export function fetchAdminOverview() {
   return request('/admin/overview', { errorMsg: '获取运维概览失败' });
 }
 
-export function fetchAdminAccounts(days = 30) {
-  return request(`/admin/accounts?days=${enc(days)}`, { errorMsg: '获取账户列表失败' });
+// 规模化波:服务端分页 + 用户名搜索;响应 {items, total, summary}(summary 聚合全量,不受分页/搜索影响)。
+export function fetchAdminAccounts(days = 30, { skip = 0, limit = 15, q = '' } = {}) {
+  const params = withFilters(new URLSearchParams({ days, skip, limit }), { q: q.trim() });
+  return request(`/admin/accounts?${params.toString()}`, { errorMsg: '获取账户列表失败' });
 }
 
 export function fetchAccountActivity(username, days = 30) {
@@ -125,6 +132,11 @@ export function fetchAiUsage(days = 30) {
 
 export function fetchAdminContent(top = 12) {
   return request(`/admin/content?top=${enc(top)}`, { errorMsg: '获取内容看板失败' });
+}
+
+// 管理操作审计(v3.19 多管理员波):中间件对管理面写操作逐条落行,按时间倒序;服务端分页。
+export function fetchAdminAuditLog(days = 30, { skip = 0, limit = 15 } = {}) {
+  return request(`/admin/audit-log?days=${enc(days)}&skip=${enc(skip)}&limit=${enc(limit)}`, { errorMsg: '获取操作审计失败' });
 }
 
 // ── 媒体库（图床） ──
@@ -589,8 +601,9 @@ export function withdrawFeedback(id) {
   return request(`/reader/feedback/${id}`, { method: 'DELETE', errorMsg: '撤回反馈失败' });
 }
 
-export function fetchAdminFeedback(status = null, limit = 200) {
-  const params = new URLSearchParams({ limit });
+// 规模化波:服务端分页;响应 {items, total, counts}(total = 当前 status 过滤下总数)。
+export function fetchAdminFeedback(status = null, { skip = 0, limit = 10 } = {}) {
+  const params = new URLSearchParams({ skip, limit });
   if (status) params.append('status', status);
   return request(`/admin/feedback?${params}`, { errorMsg: '获取反馈收件箱失败' });
 }

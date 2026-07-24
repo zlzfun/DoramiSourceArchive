@@ -1,13 +1,16 @@
 """账户服务 (src/services/accounts.py)
 
 数据库托管的登录账户：密码以 PBKDF2-HMAC-SHA256 哈希存储（标准库，无新增依赖），
-集中提供哈希/校验、用户 CRUD、管理员唯一内置账号保护与首次启动播种。
+集中提供哈希/校验、用户 CRUD、末位活跃管理员保护与空表自动种根管理员。
 
-管理员为系统唯一内置账号：不支持新建管理员、不支持把读者提升为管理员、
-管理员账户不可改角色 / 不可停用 / 不可删除（人人统一登录这一个 admin 进行管理）。
+**多管理员平权（v3.19）**：管理员不再是系统唯一内置账号——任意多个管理员可互相
+新建/提升/降级/停用/删除，人人平权。唯一护栏是「末位活跃管理员保护」：当某操作会
+使活跃管理员数量降到 0（降级/停用/删除最后一个活跃管理员）时拒绝，保证系统始终至少
+留一名活跃管理员可登录管理。停用态管理员不计入活跃数（可被删除）。竞态不设防
+（单进程 SQLite 串行提交，两个并发请求同时删最后一个 admin 的窗口不构成现实威胁）。
 
-config 的 [auth] admin_users/user_users 仅在 users 表为空时作为初始种子；
-之后账户以本表为准（改 ini 不再生效）。username 即全局唯一身份，不可重命名。
+首次启动（users 表为空）时自动落一行根管理员 admin/admin（不再从 ini 播种）；
+表非空则一动不动，对存量生产零影响。username 即全局唯一身份，不可重命名。
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from sqlmodel import Session, func, select
 from models.db import AppSettingRecord, LoginEventRecord, UserRecord
 
 VALID_ROLES = ("admin", "user")
+VALID_SURFACES = ("console", "reader")
 
 # AI Beta 全局总开关：存 app_settings KV，默认开启。关闭即全员 AI 熔断。
 AI_BETA_GLOBAL_KEY = "ai_beta_global_enabled"
@@ -42,6 +46,27 @@ class AccountError(ValueError):
 
 def _now_iso() -> str:
     return datetime.datetime.now().isoformat()
+
+
+# ==================== 末位活跃管理员保护 ====================
+def count_active_admins(session: Session) -> int:
+    """当前活跃管理员数量（role=admin AND is_active）。"""
+    return int(
+        session.exec(
+            select(func.count())
+            .select_from(UserRecord)
+            .where(UserRecord.role == "admin", UserRecord.is_active == True)  # noqa: E712
+        ).one()
+    )
+
+
+def _guard_last_active_admin(session: Session, record: UserRecord, action: str) -> None:
+    """若 record 是活跃管理员且系统活跃管理员总数 ≤1，则拒绝该 action。
+
+    竞态不设防（单进程 SQLite）：并发同时降级/删除最后一个 admin 的窗口不构成现实威胁。
+    """
+    if record.role == "admin" and record.is_active and count_active_admins(session) <= 1:
+        raise AccountError(f"系统至少需保留一名活跃管理员，无法{action}最后一个管理员账户")
 
 
 # ==================== 密码哈希（PBKDF2-HMAC-SHA256） ====================
@@ -119,8 +144,6 @@ def create_user(session: Session, username: str, password: str, role: str) -> Us
     if ":" in username:
         raise AccountError("用户名不能包含冒号")
     role = _normalize_role(role)
-    if role == "admin":
-        raise AccountError("不支持新建管理员账户：管理员为系统唯一内置账号")
     if session.get(UserRecord, username) is not None:
         raise AccountError(f"账户 '{username}' 已存在")
     now = _now_iso()
@@ -168,11 +191,12 @@ def set_role(session: Session, username: str, role: str) -> UserRecord:
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
     role = _normalize_role(role)
-    # 管理员为系统唯一内置账号：其角色不可更改，也不接受将其他账户提升为管理员。
-    if record.role == "admin":
-        raise AccountError("管理员账户的角色不可更改")
-    if role == "admin":
-        raise AccountError("不支持将账户提升为管理员：管理员为系统唯一内置账号")
+    # 幂等：角色未变直接返回，不触发末位保护（把 admin 设成 admin 不该被拒）。
+    if role == record.role:
+        return record
+    # admin → user 降级前守卫：不能降掉最后一个活跃管理员。
+    if record.role == "admin" and role != "admin":
+        _guard_last_active_admin(session, record, "降级")
     record.role = role
     record.updated_at = _now_iso()
     session.add(record)
@@ -185,9 +209,9 @@ def set_active(session: Session, username: str, is_active: bool) -> UserRecord:
     record = get_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
-    # 管理员为系统唯一内置账号：不可停用。
-    if not is_active and record.role == "admin":
-        raise AccountError("管理员账户不可停用")
+    # 停用最后一个活跃管理员前守卫。
+    if not is_active:
+        _guard_last_active_admin(session, record, "停用")
     record.is_active = is_active
     record.updated_at = _now_iso()
     session.add(record)
@@ -202,6 +226,25 @@ def set_ai_beta_enabled(session: Session, username: str, enabled: bool) -> UserR
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
     record.ai_beta_enabled = bool(enabled)
+    record.updated_at = _now_iso()
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return record
+
+
+def set_default_surface(session: Session, username: str, surface: str) -> UserRecord:
+    """设置账户登录默认落地界面（console 管理台 / reader 阅读器）。
+
+    任意登录账户可为自己设置；user 恒为读者、该字段不生效但仍可写。非法值抛 AccountError。
+    """
+    record = get_user(session, username)
+    if record is None:
+        raise AccountError(f"账户 '{username}' 不存在")
+    surface = (surface or "").strip()
+    if surface not in VALID_SURFACES:
+        raise AccountError(f"默认落地界面必须是 {VALID_SURFACES} 之一")
+    record.default_surface = surface
     record.updated_at = _now_iso()
     session.add(record)
     session.commit()
@@ -331,44 +374,30 @@ def delete_user(session: Session, username: str) -> None:
     record = get_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
-    # 管理员为系统唯一内置账号：不可删除。
-    if record.role == "admin":
-        raise AccountError("管理员账户不可删除")
+    # 删除最后一个活跃管理员前守卫（非活跃 admin 不计入活跃数，可删）。
+    _guard_last_active_admin(session, record, "删除")
     session.delete(record)
     session.commit()
 
 
 # ==================== 首次启动播种 ====================
-def seed_users_if_empty(engine, auth_config) -> int:
-    """users 表为空时，从 config 的 admin_users/user_users 播种。
+def seed_root_admin_if_empty(engine) -> bool:
+    """users 表为空时落一行根管理员 admin/admin（role=admin），返回 True；否则 False。
 
-    幂等：表非空直接返回 0。返回新建账户数。
+    多管理员平权后不再从 ini 播种任意名单——新部署自动得到一个可登录的根管理员，
+    登录后应立即改密并按需新建其它管理员/读者。幂等：表非空一动不动，存量生产零影响。
     """
-    created = 0
     with Session(engine) as session:
         if session.exec(select(UserRecord)).first() is not None:
-            return 0
+            return False
         now = _now_iso()
-        seen: set[str] = set()
-
-        def _seed(credentials, role: str) -> None:
-            nonlocal created
-            for credential in credentials or []:
-                username = (credential.username or "").strip()
-                if not username or username in seen:
-                    continue
-                seen.add(username)
-                session.add(UserRecord(
-                    username=username,
-                    password_hash=hash_password(credential.password),
-                    role=role,
-                    is_active=True,
-                    created_at=now,
-                    updated_at=now,
-                ))
-                created += 1
-
-        _seed(auth_config.admin_users, "admin")
-        _seed(auth_config.user_users, "user")
+        session.add(UserRecord(
+            username="admin",
+            password_hash=hash_password("admin"),
+            role="admin",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        ))
         session.commit()
-    return created
+    return True

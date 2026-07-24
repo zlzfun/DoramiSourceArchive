@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
-import { KeyRound, Loader2 } from 'lucide-react';
-import { changeOwnPassword, updateAvatar } from '../../api';
+import { useEffect, useRef, useState } from 'react';
+import { BookOpen, KeyRound, LayoutDashboard, Loader2 } from 'lucide-react';
+import { changeOwnPassword, updateAvatar, updateOwnPreferences } from '../../api';
 
 // 客户端把头像缩到 maxSize 见方以内并转成 JPEG data URL，控制体积（后端再做上限校验）。
 function readImageAsDataUrl(file, maxSize = 256) {
@@ -28,14 +28,35 @@ function readImageAsDataUrl(file, maxSize = 256) {
   });
 }
 
-// 账户(弹窗波,设置行范式):头像行 + 改密码行内表单(区内唯一 primary)+ 退出登录 danger 行。
-export default function AccountSection({ username, avatar, accountRoleLabel, onUserUpdated, onLogout, showToast }) {
+// 账户(弹窗波,设置行范式):头像行 + (admin)默认落地界面 + 改密码行内表单(区内唯一 primary)+ 退出登录 danger 行。
+export default function AccountSection({ username, avatar, accountRoleLabel, isAdmin = false, defaultSurface, onUserUpdated, onLogout, showToast }) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [saving, setSaving] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const fileInputRef = useRef(null);
+
+  // 默认落地界面(v3.19 多管理员波,仅 admin):乐观切换,失败回滚。
+  const [surface, setSurface] = useState(defaultSurface || 'console');
+  useEffect(() => { setSurface(defaultSurface || 'console'); }, [defaultSurface]);
+  const [surfaceBusy, setSurfaceBusy] = useState(false);
+
+  const handleSurfaceChange = async (value) => {
+    if (value === surface || surfaceBusy) return;
+    const prev = surface;
+    setSurface(value);
+    setSurfaceBusy(true);
+    try {
+      await updateOwnPreferences({ default_surface: value });
+      showToast(value === 'reader' ? '下次登录将直接进入阅读器' : '下次登录将进入管理台', 'success');
+    } catch (error) {
+      setSurface(prev);
+      showToast(error.message || '保存偏好失败', 'error');
+    } finally {
+      setSurfaceBusy(false);
+    }
+  };
 
   const initials = (username?.trim()?.slice(0, 2) || 'AD').toUpperCase();
 
@@ -131,6 +152,33 @@ export default function AccountSection({ username, avatar, accountRoleLabel, onU
           <input ref={fileInputRef} type="file" accept="image/*" onChange={handleAvatarFile} className="hidden" />
         </span>
       </div>
+
+      {isAdmin && (
+        <div className="sett-row">
+          <span className="sett-id">
+            <span className="sett-lbl">登录后先看到</span>
+            <div className="sett-sub">下次登录生效;本次会话随时可用导轨底部按钮切换</div>
+          </span>
+          <span className="sett-ctl">
+            <span className="sett-seg" role="group" aria-label="默认落地界面">
+              {[
+                ['console', '管理台', LayoutDashboard],
+                ['reader', '阅读器', BookOpen],
+              ].map(([id, label, Icon]) => (
+                <button
+                  key={id}
+                  type="button"
+                  disabled={surfaceBusy}
+                  onClick={() => handleSurfaceChange(id)}
+                  className={`sett-seg-btn ${surface === id ? 'is-on' : ''}`}
+                >
+                  <Icon /> {label}
+                </button>
+              ))}
+            </span>
+          </span>
+        </div>
+      )}
 
       <form className="sett-row is-block" onSubmit={handleChangePassword}>
         <span className="sett-id">

@@ -5,6 +5,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { Loader2, PenLine } from 'lucide-react';
 import { fetchAdminFeedback, updateFeedbackStatus } from '../../api';
 import { formatStamp } from './adminUtils';
+import Pager from './Pager';
+
+// 规模化波:服务端分页,前端只持有当前页(反馈行是高卡片,页容量取小)。
+const FEEDBACK_PAGE_SIZE = 10;
 
 const FILTERS = [
   ['all', '全部'],
@@ -23,20 +27,34 @@ export default function FeedbackInboxPanel({ showToast }) {
   const [filter, setFilter] = useState('all');
   const [items, setItems] = useState(null); // null = 加载中
   const [counts, setCounts] = useState(null);
+  const [total, setTotal] = useState(0); // 当前过滤下总条数(服务端给)
+  const [page, setPage] = useState(1);
   const [openId, setOpenId] = useState(null); // 展开处理区的那一条
   const [draftNote, setDraftNote] = useState('');
   const [busyId, setBusyId] = useState(null);
 
-  const load = useCallback((status) => {
-    fetchAdminFeedback(status === 'all' ? null : status, 200)
+  const load = useCallback((status, targetPage) => {
+    fetchAdminFeedback(status === 'all' ? null : status, {
+      skip: (targetPage - 1) * FEEDBACK_PAGE_SIZE,
+      limit: FEEDBACK_PAGE_SIZE,
+    })
       .then((data) => {
         setItems(Array.isArray(data?.items) ? data.items : []);
         setCounts(data?.counts || null);
+        setTotal(Number(data?.total) || 0);
       })
       .catch((error) => { setItems([]); showToast(error.message, 'error'); });
   }, [showToast]);
 
-  useEffect(() => { setItems(null); load(filter); }, [filter, load]);
+  // 切过滤归位第一页;翻页/首载取对应页。
+  useEffect(() => { setPage(1); }, [filter]);
+  useEffect(() => { setItems(null); load(filter, page); }, [filter, page, load]);
+
+  const totalPages = Math.max(1, Math.ceil(total / FEEDBACK_PAGE_SIZE));
+  // 数据收缩(处理完最后一页的条目等)后当前页越界时回落到末页。
+  useEffect(() => {
+    if (items !== null && page > totalPages) setPage(totalPages);
+  }, [items, page, totalPages]);
 
   const toggleProcess = (item) => {
     if (openId === item.id) {
@@ -53,7 +71,7 @@ export default function FeedbackInboxPanel({ showToast }) {
     try {
       await updateFeedbackStatus(item.id, status);
       showToast(`已将反馈标为「${STATUS_LABELS[status]}」`, 'success');
-      load(filter);
+      load(filter, page);
     } catch (error) {
       showToast(error.message, 'error');
     } finally {
@@ -66,7 +84,7 @@ export default function FeedbackInboxPanel({ showToast }) {
     try {
       await updateFeedbackStatus(item.id, item.status, draftNote.trim());
       showToast(`已回复 ${item.owner_username}`, 'success');
-      load(filter);
+      load(filter, page);
     } catch (error) {
       showToast(error.message, 'error');
     } finally {
@@ -184,6 +202,15 @@ export default function FeedbackInboxPanel({ showToast }) {
           })
         )}
       </div>
+
+      {items !== null && totalPages > 1 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-[var(--dorami-border)] pt-2.5">
+          <span className="tiny-meta">
+            共 {total} 条 · 第 {(page - 1) * FEEDBACK_PAGE_SIZE + 1}–{Math.min(page * FEEDBACK_PAGE_SIZE, total)} 条
+          </span>
+          <Pager page={page} totalPages={totalPages} onPage={setPage} />
+        </div>
+      )}
     </section>
   );
 }

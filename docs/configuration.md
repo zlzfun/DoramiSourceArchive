@@ -61,18 +61,16 @@ no_proxy = 127.0.0.1,localhost
 
 应用启动时会把这组配置同步到 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 及其小写形式，供底层网络库使用。
 
-登录账户已迁移到**数据库托管**（`users` 表，密码以 PBKDF2 哈希存储）。配置文件中的 `[auth]` 只在**首次启动（`users` 表为空）时作为初始种子**，之后账户以数据库为准——改 `[auth]` 不再影响已存在的账户。
+登录账户**全部数据库托管**（`users` 表，密码以 PBKDF2 哈希存储）。v3.19 起 `[auth]` 不再承担账户种子：**首次启动（`users` 表为空）时系统自动生成根管理员 `admin`/`admin`**，之后一切账户由管理员在前端「运维管理 → 用户」创建与管理（可创建任意数量的管理员或读者）。旧配置项 `admin_users`/`user_users` 已移除，写了也不会被读取。
 
 ```ini
 [auth]
-admin_users = admin:change-me,ops:another-secret
-user_users = user:change-me,reader:reader-secret
 secret = change-me-to-a-long-random-string
 ```
 
-`admin_users` 和 `user_users` 都是逗号分隔的种子白名单，单项格式为 `账号:密码`；`admin_users` 播种为 admin 角色、`user_users` 播种为 user 角色。`secret` 用于会话 token 与订阅/聚合令牌的 HMAC 签名，**请保持稳定**（变更会使已签发的会话与令牌失效）。
+`secret` 用于会话 token 与订阅/聚合令牌的 HMAC 签名，**请保持稳定**（变更会使已签发的会话与令牌失效）。
 
-**首次启动后请尽快改掉种子密码**：管理员在前端「设置 → 账户管理」可创建账户、分配角色、重置密码、停用/删除账户（停用或删除会立即让对应账户的会话失效，且不能删除最后一个启用的管理员）；任意账户可在「设置 → 账户」自助修改自己的登录密码。账户运维不再需要改配置文件或重启后端。
+**首次登录后请立即修改根管理员的初始密码**：管理员在前端「运维管理 → 用户」可创建账户（读者或管理员）、提升/取消管理员、重置密码、停用/删除账户（停用/删除/改角色会立即让对应账户的会话失效）；唯一护栏是**末位管理员保护**——系统中最后一个活跃管理员不可被降级/停用/删除。任意账户可在「设置 → 账户」自助修改自己的登录密码。管理面的写操作会记入操作审计（「运维管理 → 用户 → 操作审计」）。
 
 账号角色是默认 `all` 部署下唯一生效的访问控制轴：
 
@@ -81,7 +79,7 @@ secret = change-me-to-a-long-random-string
 - 内容台账读取对两类账号开放；手工录入、编辑、删除、离线归档导入等归档写操作只对 admin 账号开放。
 - （仅分离部署）账号角色会再和 `[runtime] role` 取交集：`role = collector` / `reader` 时，部署角色作为外层硬限制叠加在账号角色之上。
 
-账户增删改在前端「账户管理」即时生效、无需重启；但 `[auth]` 的其余项（`cookie_name`、`session_seconds`、`secret`、`cookie_secure`）以及种子白名单只在后端进程启动时读取，修改这些后需要重启后端(`docker compose restart backend`;dev 裸起则重启进程)。
+账户增删改在前端「运维管理 → 用户」即时生效、无需重启；但 `[auth]` 各项（`cookie_name`、`session_seconds`、`secret`、`cookie_secure`）只在后端进程启动时读取，修改这些后需要重启后端(`docker compose restart backend`;dev 裸起则重启进程)。
 
 前端配置集中在 `frontend/app.config.json`：
 

@@ -271,28 +271,18 @@ def test_source_ids_filter_passthrough(monkeypatch, tmp_path):
 
 # ==================== 端点门控与 job 提交 ====================
 
-def _auth_config(admin="admin:admin", user="user:user"):
-    from config import _auth_credentials
-    import api.app as app_module
-    return replace(
-        app_module.settings.auth,
-        admin_users=_auth_credentials(admin) if admin else [],
-        user_users=_auth_credentials(user) if user else [],
-    )
-
-
 def _setup_app(monkeypatch, tmp_path):
     import api.app as app_module
     from config import RuntimeConfig
-    from services import accounts as accounts_service
     from storage.impl.db_storage import DatabaseStorage
+    from tests.conftest import seed_default_accounts
 
     sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'app_remote_sync.db'}")
     monkeypatch.setattr(app_module, "db_sink", sink)
     monkeypatch.setattr(
         app_module, "settings", replace(app_module.settings, runtime=RuntimeConfig(role="all"))
     )
-    accounts_service.seed_users_if_empty(sink.engine, _auth_config())
+    seed_default_accounts(sink.engine)
     return app_module
 
 

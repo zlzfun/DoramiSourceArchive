@@ -77,14 +77,15 @@ export function ConfirmProvider({ children }) {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <div className="flex justify-end gap-3 border-t border-[var(--dorami-border)] bg-[var(--dorami-soft)] px-6 py-4">
-              <button type="button" onClick={() => settle(false)} className="action-button action-button-quiet" autoFocus>
+            {/* 脚部按钮取 M 档三件套(2026-07-24 拍板:模态脚部由 L 降 M,40px 在弹窗里过高) */}
+            <div className="flex justify-end gap-3 border-t border-[var(--dorami-border)] bg-[var(--dorami-soft)] px-6 py-3">
+              <button type="button" onClick={() => settle(false)} className="action-button action-button-quiet min-h-[32px] px-3 text-xs" autoFocus>
                 {state.cancelText}
               </button>
               <button
                 type="button"
                 onClick={() => settle(true)}
-                className={`action-button ${state.tone === 'danger' ? 'action-button-danger' : 'action-button-primary'}`}
+                className={`action-button min-h-[32px] px-3 text-xs ${state.tone === 'danger' ? 'action-button-danger' : 'action-button-primary'}`}
               >
                 {state.confirmText}
               </button>

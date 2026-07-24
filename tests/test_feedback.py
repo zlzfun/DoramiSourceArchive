@@ -12,15 +12,9 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+from tests.conftest import seed_default_accounts  # noqa: E402
 
-def _auth_config(admin="admin:admin", user="alice:alice,bob:bob"):
-    from config import _auth_credentials
-
-    return replace(
-        __import__("api.app", fromlist=["settings"]).settings.auth,
-        admin_users=_auth_credentials(admin) if admin else [],
-        user_users=_auth_credentials(user) if user else [],
-    )
+_ACCOUNTS = (("admin", "admin", "admin"), ("alice", "alice", "user"), ("bob", "bob", "user"))
 
 
 def _setup_app(monkeypatch, tmp_path):
@@ -35,7 +29,7 @@ def _setup_app(monkeypatch, tmp_path):
     monkeypatch.setattr(
         app_module, "settings", replace(app_module.settings, runtime=RuntimeConfig(role="all"))
     )
-    accounts_service.seed_users_if_empty(sink.engine, _auth_config())
+    seed_default_accounts(sink.engine, _ACCOUNTS)
     return app_module
 
 
@@ -270,3 +264,43 @@ def test_reader_cannot_see_other_readers_feedback(monkeypatch, tmp_path):
         alice_items = client.get("/api/reader/feedback").json()["items"]
         assert [item["id"] for item in alice_items] == [alice_id]
         assert bob_id not in {item["id"] for item in alice_items}
+
+
+def test_admin_list_pagination_and_total(monkeypatch, tmp_path):
+    """管理面分页:建 3 条反馈,limit=2&skip=2 返回 1 条,total==3;
+    带 status 过滤时 total 为过滤后数,counts 仍全量。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        first_id = _submit(client, "反馈一").json()["id"]
+        _submit(client, "反馈二")
+        _submit(client, "反馈三")
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        # 全量:total 反映过滤前(此处无过滤)总条数。
+        full = client.get("/api/admin/feedback").json()
+        assert full["total"] == 3
+        assert len(full["items"]) == 3
+
+        # 分页切片:limit=2 & skip=2 → 只剩最后 1 条,total 仍为 3。
+        page = client.get("/api/admin/feedback", params={"limit": 2, "skip": 2}).json()
+        assert page["total"] == 3
+        assert len(page["items"]) == 1
+
+        # 首页 2 条与尾页 1 条并集覆盖全部 3 条,互不重叠。
+        head = client.get("/api/admin/feedback", params={"limit": 2, "skip": 0}).json()
+        head_ids = {item["id"] for item in head["items"]}
+        tail_ids = {item["id"] for item in page["items"]}
+        assert len(head_ids) == 2 and head_ids.isdisjoint(tail_ids)
+
+        # status 过滤:把一条置为 resolved 后,total 为过滤后条数,counts 仍全量。
+        assert client.post(
+            f"/api/admin/feedback/{first_id}/status", json={"status": "resolved"}
+        ).status_code == 200
+        resolved = client.get("/api/admin/feedback", params={"status": "resolved"}).json()
+        assert resolved["total"] == 1
+        assert [item["id"] for item in resolved["items"]] == [first_id]
+        assert resolved["counts"]["total"] == 3
+        assert resolved["counts"]["open"] == 2

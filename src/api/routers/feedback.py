@@ -169,20 +169,33 @@ def withdraw_feedback(
 def list_admin_feedback(
     status: Optional[str] = None,
     limit: int = 100,
+    skip: int = 0,
     session: Session = Depends(deps.get_session),
 ):
-    """全量反馈列表;counts 始终聚合完整数据集,不受 status 过滤影响。"""
+    """全量反馈列表;counts 始终聚合完整数据集,不受 status 过滤影响。
+
+    规模化:服务端分页(skip/limit);`total` = 当前 status 过滤下的总条数
+    (无过滤即全部),counts 语义不变(仍全量按状态聚合)。
+    """
     normalized_status = None
     if status is not None:
         normalized_status = _validate_status(status)
     safe_limit = min(max(int(limit), 1), 500)
+    safe_skip = max(0, int(skip or 0))
 
     query = select(FeedbackRecord)
     if normalized_status is not None:
         query = query.where(FeedbackRecord.status == normalized_status)
     records = session.exec(
-        query.order_by(FeedbackRecord.created_at.desc()).limit(safe_limit)
+        query.order_by(FeedbackRecord.created_at.desc())
+        .offset(safe_skip)
+        .limit(safe_limit)
     ).all()
+
+    total_query = select(func.count()).select_from(FeedbackRecord)
+    if normalized_status is not None:
+        total_query = total_query.where(FeedbackRecord.status == normalized_status)
+    total = int(session.exec(total_query).one())
 
     counts = {item_status: 0 for item_status in sorted(FEEDBACK_STATUSES)}
     status_rows = session.exec(
@@ -196,6 +209,7 @@ def list_admin_feedback(
     return {
         "items": [_serialize(record) for record in records],
         "counts": counts,
+        "total": total,
     }
 
 

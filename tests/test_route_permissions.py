@@ -27,6 +27,8 @@ EXPECTED_AUTHENTICATED_ANY = {
     ("GET", "/api/runtime"),
     ("POST", "/api/auth/avatar"),
     ("POST", "/api/auth/change-password"),
+    # 自助设置登录默认落地界面（任意登录账户，不属任何 surface 闸）。
+    ("POST", "/api/auth/preferences"),
 }
 
 

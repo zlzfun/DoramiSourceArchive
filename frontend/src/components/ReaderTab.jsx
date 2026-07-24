@@ -20,6 +20,7 @@ import {
   Settings,
   Sun,
   Moon,
+  LayoutDashboard,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
@@ -157,6 +158,8 @@ export default function ReaderTab({
   themeDark = false,
   onToggleTheme,
   onOpenSettings,
+  // ── v3.19 多管理员波:admin 从管理台切入阅读器时传入,轨底浮现「返回管理台」;读者账号恒 undefined ──
+  onExitReader = null,
 }) {
   const [sources, setSources] = useState([]);
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
@@ -897,6 +900,18 @@ export default function ReaderTab({
         {standalone && (
           <>
             <div className="reader-vrail-spring" />
+            {/* 返回管理台(v3.19):与应用导轨轨底「进入阅读器」对称的隐藏切换钮,仅 admin 有 */}
+            {onExitReader && (
+              <button
+                type="button"
+                onClick={onExitReader}
+                className="reader-vrail-btn"
+                aria-label="返回管理台"
+              >
+                <LayoutDashboard className="h-[18px] w-[18px]" />
+                <span className="reader-vrail-tip">返回管理台</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => onToggleTheme?.()}

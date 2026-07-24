@@ -17,8 +17,8 @@ def _login(client: TestClient, username: str = "admin", password: str = "admin")
 def _seed_users(engine, accounts=_DEFAULT_ACCOUNTS):
     """将测试账户播种进给定引擎的 users 表（账户已迁移到数据库托管）。
 
-    直接落库 UserRecord（等价于首次启动播种），因为业务层已禁止经 create_user
-    新建管理员——管理员只能由 seed 路径产生。
+    直接落库 UserRecord（等价于首次启动播种）；v3.19 多管理员平权后 create_user
+    亦可建 admin，此处保留直造仅为不依赖会话粒度。
     """
     import datetime
     from sqlmodel import Session
@@ -68,11 +68,10 @@ def _set_runtime_role(monkeypatch, role: str, *, tmp_path=None):
 
 
 def test_runtime_role_normalization_rejects_invalid_role():
-    from config import _auth_credentials, _runtime_role
+    from config import _runtime_role
 
     assert _runtime_role("") == "all"
     assert _runtime_role(" Reader ") == "reader"
-    assert [item.username for item in _auth_credentials("admin:a,user:b")] == ["admin", "user"]
 
     try:
         _runtime_role("invalid")

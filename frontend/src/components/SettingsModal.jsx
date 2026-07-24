@@ -135,7 +135,16 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
           </div>
           <div className="sett-scroll">
             {activeSection.id === 'account' && (
-              <AccountSection username={username} avatar={avatar} accountRoleLabel={accountRoleLabel} onUserUpdated={onUserUpdated} onLogout={onLogout} showToast={showToast} />
+              <AccountSection
+                username={username}
+                avatar={avatar}
+                accountRoleLabel={accountRoleLabel}
+                isAdmin={isAdmin}
+                defaultSurface={runtimeInfo?.default_surface}
+                onUserUpdated={onUserUpdated}
+                onLogout={onLogout}
+                showToast={showToast}
+              />
             )}
             {activeSection.id === 'appearance' && (
               <AppearanceSection theme={theme} onThemeChange={onThemeChange} />
