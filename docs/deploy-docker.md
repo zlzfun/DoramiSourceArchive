@@ -44,26 +44,33 @@ docker compose down                 # 停站(数据在宿主目录,安全)
 (`127.0.0.1:8080`,配合外层 TLS 反代);时区默认
 `Asia/Shanghai`(影响采集任务/日报的 cron 语义),`TZ` 环境变量可覆盖。
 
-## 低版本 Docker 兼容路径(内网 Docker 18.x + docker-compose v1)
+## 内网裸机部署路径(intranet 分支专属)
 
-内网机器常见 Docker 18.x + 独立二进制 `docker-compose`(带横杠,无 `docker compose`
-插件),主路径的两处新版依赖会失效:`docker-compose.yml` 无 `version:` 键(旧版不识别
-compose-spec 格式)且用了 `profiles`(1.28+ 特性)。为此提供一套平行文件,**三个文件与
-主路径同源维护,改主 compose 须同步**:
+内网机器 Docker 版本过低/环境受限,实测 Docker 化部署难以落地(曾试过钉
+version "2.4" 的 legacy compose 兼容方案,已弃用)。**intranet 分支复活了 main 于
+v3.15.1 退役的裸机路径**:uv 装依赖 + PM2 托管后端 + 现场构建前端 + 生成宿主
+Nginx 站点配置,一个脚本一条龙:
 
 ```bash
-./deploy-docker-legacy.sh          # 同 deploy-docker.sh 一条龙;自动探测 docker-compose / docker compose
-./deploy-docker-legacy.sh --rag    # 叠加 RAG 服务组(替代 --profile rag)
+./deploy.sh          # 装系统依赖 → uv 装后端 → alembic 迁移 → npm 构建前端 → 写 Nginx → pm2 起后端
 
-# 常用运维(手动 -f 指定 legacy 文件)
-docker-compose -f docker-compose.legacy.yml logs -f backend
+# 常用运维
+pm2 logs dorami-backend-v2        # 后端日志
+pm2 restart dorami-backend-v2     # 重启后端
 ```
 
-- `docker-compose.legacy.yml` — 钉 `version: "2.4"`(需 docker-compose 1.21+ /
-  Engine 17.12+;v2 格式原生支持 `depends_on.condition` 与 `healthcheck.start_period`),
-  服务定义与主文件一致,仅去掉 RAG 组。
-- `docker-compose.legacy-rag.yml` — chroma + tei-embed(profiles 的 `-f` 叠加替代)。
-- 两个 Dockerfile 无需改动:只用了多阶段构建(Docker 17.05+),不依赖 BuildKit。
+与退役前版本的差异(已适配 v3.16+):
+- RAG 形态感知:`[rag] enabled` 且 `chroma_url` 为空(嵌入形态)时自动
+  `uv pip install -e ".[rag-embedded]"` 并校验 `[models]` 模型目录;远程形态
+  (`chroma_url` 有值)不装重依赖,但 chroma/TEI 服务需自行保证可达;关闭则瘦身安装。
+- 受限网络:`UV_DEFAULT_INDEX=<内网 PyPI 镜像>`、`NPM_REGISTRY=<内网 npm 镜像>`
+  环境变量传给 uv/npm。
+- `[server]`/`[nginx]` 两节在本分支的 `config/production.example.ini` 保留
+  (main 上是死配置已删),`deploy.sh` 自读 ini 生成 Nginx 站点。
+
+配套文件:`deploy.sh`、`ecosystem.config.js`(PM2 应用定义,NODE_ENV=production
+会让 main.py 强制关闭 uvicorn reload)。同步节奏:main 更新后
+`git checkout intranet && git merge main`;本分支不合回 main。
 
 ## ini 在容器内的语义差异
 
