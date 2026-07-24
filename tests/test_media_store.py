@@ -437,6 +437,41 @@ def test_heatmap_day_detail_and_article_prefetch(monkeypatch, tmp_path):
         assert client.get("/api/admin/media/days/2026-7-1").status_code == 400
 
 
+def test_heatmap_year_view_and_years_list(monkeypatch, tmp_path):
+    """热点图年份切换：year 参数取自然年切片；years 覆盖最早归档年→当前年（降序）。"""
+    app_module, sink = _setup_app(monkeypatch, tmp_path)
+    today = __import__("datetime").date.today()
+    last_year = today.year - 1
+    with Session(sink.engine) as session:
+        session.add(ArticleRecord(
+            id="y1", title="今年文章", content_type="web_article", source_id="s1",
+            source_url="http://x", publish_date=today.isoformat(),
+            fetched_date=f"{today.isoformat()}T09:00:00",
+            content="![a](https://cdn.example.com/y1.png)",
+        ))
+        session.add(ArticleRecord(
+            id="y2", title="去年文章", content_type="web_article", source_id="s1",
+            source_url="http://y", publish_date=f"{last_year}-06-15",
+            fetched_date=f"{last_year}-06-15T09:00:00",
+            content="![b](https://cdn.example.com/y2.png)",
+        ))
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        # 默认滚动窗:years 从最早归档年到当前年降序
+        body = client.get("/api/admin/media/heatmap").json()
+        assert body["year"] is None
+        assert body["years"] == [today.year, last_year]
+        # 指定去年:只含去年的日子,since 为该年 1 月 1 日
+        body = client.get(f"/api/admin/media/heatmap?year={last_year}").json()
+        assert body["year"] == last_year and body["since"] == f"{last_year}-01-01"
+        assert [d["date"] for d in body["days"]] == [f"{last_year}-06-15"]
+        # 指定今年:不含去年的日子
+        body = client.get(f"/api/admin/media/heatmap?year={today.year}").json()
+        assert all(d["date"].startswith(str(today.year)) for d in body["days"])
+
+
 def test_admin_media_endpoints_gated_and_backfill_e2e(monkeypatch, tmp_path):
     app_module, sink = _setup_app(monkeypatch, tmp_path)
     with Session(sink.engine) as session:

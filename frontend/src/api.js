@@ -151,8 +151,10 @@ export function fetchMediaStats() {
   return request('/admin/media/stats', { errorMsg: '获取媒体库统计失败' });
 }
 
-export function fetchMediaHeatmap(days = 365) {
-  return request(`/admin/media/heatmap?days=${enc(days)}`, { errorMsg: '获取媒体热点图失败' });
+// year 传自然年取该年切片(年份切换轨);缺省为近 days 天滚动窗。响应恒带 years 可用年份列表。
+export function fetchMediaHeatmap(days = 365, year = null) {
+  const params = withFilters(new URLSearchParams({ days }), { year });
+  return request(`/admin/media/heatmap?${params.toString()}`, { errorMsg: '获取媒体热点图失败' });
 }
 
 export function fetchMediaDay(date) {

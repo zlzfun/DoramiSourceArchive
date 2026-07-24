@@ -18,6 +18,7 @@ import Toast from './components/Toast';
 import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
 import BrandLogoImage from './components/BrandLogoImage';
+import RailUserFlyout from './components/RailUserFlyout';
 import { useTheme } from './theme';
 import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
 import RunningWidget from './components/RunningWidget';
@@ -380,9 +381,9 @@ export default function App() {
     return session;
   };
 
-  // 跃迁抵达幕(三段式):hold = 与登录侧闪光同帧接管(切换藏在全亮帧背后)
-  // → settle = 白光溶入主题色幕布(暗色主题从暗幕显影;数据未就绪时幕布兼任
-  //   延迟护罩,浮现着陆提示,不落朴素加载屏)→ fading = 幕布淡出、主界面显影。
+  // 跃迁抵达幕(三段式,全局隐出/隐入版):hold = 与登录侧幕布全亮帧同帧接管
+  // (切换藏在平色主题幕布背后,无白光无暗角)→ settle = 幕布静置一拍(数据未就绪时
+  //   兼任延迟护罩,浮现着陆提示,不落朴素加载屏)→ fading = 幕布淡出、主界面显影。
   // 演出本身即登录确认,cinematic 路径不再叠「已登录」toast。
   const [arrival, setArrival] = useState(null);
   const settleStartRef = useRef(0);
@@ -398,7 +399,7 @@ export default function App() {
 
   useEffect(() => {
     if (arrival !== 'hold') return undefined;
-    // 双 rAF:确保全亮幕布先以 opacity:1 上屏一帧,再进入白光消散段
+    // 双 rAF:确保全亮幕布先以 opacity:1 上屏一帧,再进入静置段
     let raf2 = 0;
     const raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
@@ -410,10 +411,11 @@ export default function App() {
   }, [arrival]);
 
   useEffect(() => {
-    // settle → fading:等 runtime 就绪(海外/慢网延迟护罩),且至少让白光完整溶入幕布
+    // settle → fading:等 runtime 就绪(海外/慢网延迟护罩),幕布至少静置一拍再淡出
+    // (原 700ms 是白光溶入时长;白光已弃用,只留短暂呼吸避免闪切)。
     if (arrival !== 'settle' || !runtimeLoaded) return undefined;
     const elapsed = performance.now() - settleStartRef.current;
-    const timer = setTimeout(() => setArrival('fading'), Math.max(0, 700 - elapsed));
+    const timer = setTimeout(() => setArrival('fading'), Math.max(0, 260 - elapsed));
     return () => clearTimeout(timer);
   }, [arrival, runtimeLoaded]);
 
@@ -526,7 +528,6 @@ export default function App() {
   // 抵达幕布:跨越「载入中 → 主界面」两个分支常驻,直到淡出完毕
   const arrivalOverlay = arrival ? (
     <div className={`app-arrive is-${arrival}`} aria-hidden="true">
-      <span className="app-arrive-light" />
       {arrival === 'settle' && !runtimeLoaded && (
         <span className="app-arrive-wait">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -573,49 +574,47 @@ export default function App() {
             </button>
           ))}
         </nav>
-        {/* 轨底:主题/设置 直排 + 头像(点击进设置·账户;退出登录收敛在设置·账户区)——
-            头像菜单已退役(与设置页功能重复,用户拍板) */}
+        {/* 轨底:用户滑出菜单(2026-07-24 拍板)——常态只见头像,hover 滑出
+            进入阅读器/主题/设置,头像同帧变关机退出钮点击即退;
+            原「头像点击进设置」与设置钮功能重复,就此收敛。 */}
         <div className="reader-vrail-spring" />
-        {/* 隐藏切换钮(v3.19):管理员也是读者——进入阅读器 standalone 整页形态,
-            阅读器轨底有对称的「返回管理台」钮。低调但可发现,符合轨语言。 */}
-        <button
-          type="button"
-          onClick={enterReader}
-          className="reader-vrail-btn"
-          aria-label="进入阅读器"
+        <RailUserFlyout
+          avatar={authState.user?.avatar}
+          avatarText={avatarInitials}
+          username={authState.user?.username}
+          roleLabel={roleLabel}
+          onLogout={handleLogout}
         >
-          <BookOpen className="h-[18px] w-[18px]" />
-          <span className="reader-vrail-tip">进入阅读器</span>
-        </button>
-        <button
-          type="button"
-          onClick={toggleTheme}
-          className="reader-vrail-btn"
-          aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
-        >
-          {effective === 'dark' ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
-          <span className="reader-vrail-tip">{effective === 'dark' ? '切换亮色' : '切换暗色'}</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => openSettings()}
-          className="reader-vrail-btn"
-          aria-label="设置"
-        >
-          <Settings className="h-[18px] w-[18px]" />
-          <span className="reader-vrail-tip">设置</span>
-        </button>
-        <button
-          type="button"
-          className="reader-vrail-avatar"
-          title={`${authState.user?.username || 'admin'} · ${roleLabel}`}
-          aria-label="账号设置"
-          onClick={() => openSettings('account')}
-        >
-          {authState.user?.avatar
-            ? <img src={authState.user.avatar} alt="" />
-            : <span>{avatarInitials}</span>}
-        </button>
+          {/* 隐藏切换钮(v3.19):管理员也是读者——进入阅读器 standalone 整页形态,
+              阅读器轨底有对称的「返回管理台」钮。 */}
+          <button
+            type="button"
+            onClick={enterReader}
+            className="reader-vrail-btn"
+            aria-label="进入阅读器"
+          >
+            <BookOpen className="h-[18px] w-[18px]" />
+            <span className="reader-vrail-tip">进入阅读器</span>
+          </button>
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="reader-vrail-btn"
+            aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+          >
+            {effective === 'dark' ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
+            <span className="reader-vrail-tip">{effective === 'dark' ? '切换亮色' : '切换暗色'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => openSettings()}
+            className="reader-vrail-btn"
+            aria-label="设置"
+          >
+            <Settings className="h-[18px] w-[18px]" />
+            <span className="reader-vrail-tip">设置</span>
+          </button>
+        </RailUserFlyout>
       </aside>
       )}
 
@@ -723,6 +722,7 @@ export default function App() {
                   themeDark={effective === 'dark'}
                   onToggleTheme={toggleTheme}
                   onOpenSettings={() => openSettings()}
+                  onLogout={handleLogout}
                   onExitReader={isAdminRole ? exitReader : undefined}
                 />
               </Suspense>

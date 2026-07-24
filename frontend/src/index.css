@@ -174,6 +174,8 @@
      已过 dataviz 六项校验(validate_palette.js,白面 PASS;对比 WARN 由图例+直标+tooltip 承接)。
      纪律:固定序取色、色随实体不随排位、超出 6 系并入「其它」,不循环生成新色。
      暗色在 [data-theme=dark] 按 L 0.48–0.67 带同色相族降档重定义。 ── */
+  /* 图表分类六槽(主题色版,2026-07-24 用户拍板回归:曾两度尝试更亮的通用调色板,
+     实测观感不如品牌系;亮暗两组均已过 validate_palette.js 六项校验) */
   --chart-1: #5b54e8; --chart-2: #14b8a6; --chart-3: #f59e0b;
   --chart-4: #ef4444; --chart-5: #0ea5e9; --chart-6: #a855f7;
   --chart-other: #94a3b8;
@@ -1089,29 +1091,28 @@ input[type="radio"] {
     pointer-events: none;
   }
 
+  /* 跃迁收尾改全局隐出(2026-07-24 拍板:弃用「中心白光团 + 暗角」的径向闪光——
+     登录页整体淡入平色主题幕布,与 App 抵达幕同色,切换仍藏在幕布全亮帧背后)。 */
   .auth-warp-flash {
     position: fixed;
     inset: 0;
     z-index: 50;
     pointer-events: none;
     opacity: 0;
-    background: radial-gradient(
-      circle at 50% 50%,
-      rgba(228, 228, 255, 0.98) 0%,
-      rgba(122, 114, 244, 0.92) 42%,
-      rgba(4, 4, 14, 0) 78%
-    );
-    transition: opacity 0.3s ease;
+    background: #eef1f6;
+    transition: opacity 620ms var(--motion-ease);
+  }
+  [data-theme="dark"] .auth-warp-flash {
+    background: #0c0e13;
   }
   .auth-warp-flash.is-on {
     opacity: 1;
   }
 
-  /* —— 跃迁抵达幕(App 层,三段式):
-     hold   = 与登录侧闪光同帧接管(白光层全亮 + 近黑底,边角与登录暗场一致);
-     settle = 白光层 700ms 溶入「主题色幕布」——亮色幕布≈页面底色、暗色幕布≈canvas,
-              暗色主题由此从暗中显影、不再从白光里蹦出;数据未就绪时幕布兼任延迟护罩;
-     fading = 整幕在主界面之上淡出,主界面同步显影(app-arriving)。 —— */
+  /* —— 跃迁抵达幕(App 层,三段式,2026-07-24 全局隐出/隐入版):
+     hold   = 与登录侧「淡入幕布」的全亮帧同帧接管(平色主题幕布,无白光无暗角);
+     settle = 幕布静置一拍;数据未就绪时兼任延迟护罩(浮现着陆提示);
+     fading = 幕布在主界面之上整体淡出,主界面同步显影(app-arriving)。 —— */
   .app-arrive {
     position: fixed;
     inset: 0;
@@ -1126,36 +1127,6 @@ input[type="radio"] {
   .app-arrive.is-fading {
     opacity: 0;
     transition: opacity 950ms var(--motion-ease);
-  }
-  .app-arrive-light {
-    position: absolute;
-    inset: 0;
-    opacity: 1;
-    background:
-      radial-gradient(
-        circle at 50% 50%,
-        rgba(228, 228, 255, 0.98) 0%,
-        rgba(122, 114, 244, 0.92) 42%,
-        rgba(4, 4, 14, 0) 78%
-      ),
-      #04040e;
-    transition: opacity 700ms var(--motion-ease);
-  }
-  .app-arrive.is-settle .app-arrive-light,
-  .app-arrive.is-fading .app-arrive-light {
-    opacity: 0;
-  }
-  /* 暗色主题:闪光峰值柔一档(白心减淡、靛紫加深)——登录侧与抵达侧同步生效 */
-  [data-theme="dark"] .auth-warp-flash,
-  [data-theme="dark"] .app-arrive-light {
-    background:
-      radial-gradient(
-        circle at 50% 50%,
-        rgba(202, 202, 246, 0.85) 0%,
-        rgba(96, 89, 214, 0.9) 45%,
-        rgba(4, 4, 14, 0) 78%
-      ),
-      #04040e;
   }
 
   .app-arrive-wait {
@@ -1840,7 +1811,6 @@ input[type="radio"] {
       transition: none;
     }
     .app-arrive,
-    .app-arrive-light,
     .app-arrive-wait,
     .app-arriving {
       animation: none;
@@ -4401,6 +4371,26 @@ input[type="radio"] {
     border-radius: 0 3px 0 0;
   }
   .heat-legend-item { display: inline-flex; align-items: center; gap: 5px; margin-left: 10px; }
+
+  /* 格阵 + 年份轨(GitHub 式,规模化波):格阵占满,右缘竖排「近一年 + 各归档年」。
+     选中态沿用 .pager-btn.is-on 的蓝底语法(同为翻页/范围切换语义)。 */
+  .heat-body { display: flex; align-items: flex-start; gap: 18px; }
+  .heat-body .heat-scroll { flex: 1; min-width: 0; }
+  .heat-years { display: flex; flex-direction: column; gap: 4px; flex: none; padding-top: 15px; }
+  .heat-year-btn {
+    min-width: 72px; height: 28px; padding: 0 12px; text-align: left;
+    border: none; border-radius: var(--r-control); background: transparent;
+    font-family: inherit; font-size: 12px; font-weight: 600; color: var(--dorami-muted);
+    font-variant-numeric: tabular-nums; cursor: pointer;
+    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+  .heat-year-btn:hover:not(.is-on) { background: var(--dorami-well); color: var(--dorami-ink-2); }
+  .heat-year-btn.is-on { background: var(--dorami-blue); color: #fff; font-weight: 700; }
+  /* 窄屏:年份轨换行到格阵下方横排,避免挤压可滚动格阵 */
+  @media (max-width: 900px) {
+    .heat-body { flex-direction: column; gap: 10px; }
+    .heat-years { flex-direction: row; flex-wrap: wrap; padding-top: 0; }
+  }
 
   /* ── 热点图抽屉内容(挂在 ledger-drawer 语法里)── */
   .heat-dstats { display: flex; gap: 0; }
@@ -7055,7 +7045,9 @@ input[type="radio"] {
     color: var(--dorami-accent-ink);
   }
 
-  /* 自绘 tooltip(样页):右侧墨底浮签,悬停 350ms 后现 */
+  /* 自绘 tooltip(样页):右侧墨底浮签。轨面全 icon-only,浮签是新用户唯一的
+     文字锚点——延迟取 120ms(2026-07-24 拍板,原 350ms 对生手太迟钝;
+     保留短延迟防指针扫过时逐个闪烁)。 */
   .reader-vrail-tip {
     position: absolute;
     left: 48px;
@@ -7076,7 +7068,17 @@ input[type="radio"] {
 
   .reader-vrail-btn:hover .reader-vrail-tip {
     opacity: 1;
-    transition-delay: 350ms;
+    transition-delay: 120ms;
+  }
+
+  /* 轨内分组分隔线:内容容器(文章/动态/社交)与「发现」(找内容)语义不同,
+     以一道 hairline 分组(2026-07-24 拍板)。 */
+  .reader-vrail-divider {
+    width: 22px;
+    height: 1px;
+    flex: none;
+    background: var(--dorami-border);
+    margin: 5px 0;
   }
 
   /* 品牌 logo 图(替代铃铛,32px 对齐样页品牌位) */
@@ -7113,6 +7115,62 @@ input[type="radio"] {
   .reader-vrail-avatar:hover { border-color: var(--dorami-border-strong); }
   .reader-vrail-avatar:active { transform: scale(0.94); }
   .reader-vrail-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+  /* ── 轨底用户滑出菜单(RailUserFlyout):常态只见头像,hover/focus-within 时
+     工具钮自头像上方滑出,头像同帧变为关机样式退出钮(点击即退)。
+     滑出层绝对定位于头像上方——不占轨内布局,展开无回流;padding-bottom 兼作
+     头像→菜单之间的 hover 桥,指针穿行不塌。 ── */
+  .rail-flyout { position: relative; display: flex; flex-direction: column; align-items: center; }
+  .rail-flyout-items {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding-bottom: 8px;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translate(-50%, 10px);
+    transition: opacity 280ms var(--motion-ease), transform 320ms var(--motion-ease),
+      visibility 0s linear 320ms;
+  }
+  .rail-flyout:hover .rail-flyout-items,
+  .rail-flyout:focus-within .rail-flyout-items {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translate(-50%, 0);
+    transition: opacity 280ms var(--motion-ease), transform 320ms var(--motion-ease),
+      visibility 0s;
+  }
+  .rail-flyout-avatar { position: relative; }
+  .rail-avatar-face,
+  .rail-avatar-power {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    transition: opacity 240ms var(--motion-ease);
+  }
+  .rail-avatar-face img { width: 100%; height: 100%; object-fit: cover; }
+  .rail-avatar-power {
+    opacity: 0;
+    background: var(--dorami-surface);
+    color: var(--state-bad);
+  }
+  .rail-avatar-power svg { width: 15px; height: 15px; }
+  .rail-flyout:hover .rail-avatar-face,
+  .rail-flyout:focus-within .rail-avatar-face { opacity: 0; }
+  .rail-flyout:hover .rail-avatar-power,
+  .rail-flyout:focus-within .rail-avatar-power { opacity: 1; }
+  .rail-flyout:hover .rail-flyout-avatar,
+  .rail-flyout:focus-within .rail-flyout-avatar { border-color: var(--state-bad); }
+  @media (prefers-reduced-motion: reduce) {
+    .rail-flyout-items, .rail-avatar-face, .rail-avatar-power { transition: none; }
+  }
 
   /* 可折叠栏内层固定宽度：列轨收缩到 0 时由外层 overflow 裁切，内容不回流 */
   .reader-sources-inner,

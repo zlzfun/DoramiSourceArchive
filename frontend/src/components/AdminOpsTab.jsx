@@ -47,7 +47,7 @@ import FeedbackInboxPanel from './admin/FeedbackInboxPanel';
 import AnnouncementsPanel from './admin/AnnouncementsPanel';
 import AdminAuditPanel from './admin/AdminAuditPanel';
 import Pager from './admin/Pager';
-import { pivotDaily, C_READ, C_FAVORITE, C_OTHER } from './charts/chartUtils';
+import { pivotDaily, C_READ, C_FAVORITE, C_SUBSCRIBE } from './charts/chartUtils';
 import { PURPOSE_LABELS, formatStamp, fmtNum, pct, truncLabel, vectorizedRateClass } from './admin/adminUtils';
 
 // 账户列表分页大小：超过即翻页，避免成百上千账户一次性平铺。
@@ -558,7 +558,7 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
                   labelKey="name"
                   valueKey="value"
                   name={topMetric === 'reads' ? '阅读' : '登录'}
-                  height={Math.max(120, activeUserRows.length * 30)}
+                  height={Math.max(112, activeUserRows.length * 26)}
                   tickFormatter={truncLabel}
                   emptyHint={topMetric === 'reads' ? '窗口内还没有阅读记录' : '窗口内还没有登录记录'}
                 />
@@ -720,7 +720,7 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
                     metrics={[
                       { key: 'reads', name: '文章阅读', color: C_READ },
                       { key: 'favorites', name: '文章收藏', color: C_FAVORITE },
-                      { key: 'subs', name: '源订阅', color: C_OTHER },
+                      { key: 'subs', name: '源订阅', color: C_SUBSCRIBE },
                     ]}
                     emptyHint="还没有阅读 / 收藏 / 订阅记录"
                   />

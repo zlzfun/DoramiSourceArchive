@@ -40,6 +40,9 @@ function statusOf(day) {
 export default function MediaHeatmap({ showToast }) {
   const [data, setData] = useState(null);
   const [mode, setMode] = useState('coverage'); // coverage | status
+  // 视图:'rolling'(近一年滚动窗,默认) | 具体年份数字(自然年,GitHub 式年份轨切换)
+  const [view, setView] = useState('rolling');
+  const [years, setYears] = useState([]); // 归档覆盖的年份(降序),随响应更新
   const [activeDate, setActiveDate] = useState(null);
   const [dayDetail, setDayDetail] = useState(null);
   const [retrying, setRetrying] = useState(null); // 正在重抓的 article_id
@@ -50,9 +53,16 @@ export default function MediaHeatmap({ showToast }) {
   const closeDrawer = useCallback(() => setActiveDate(null), []);
   useModalA11y(Boolean(activeDate), closeDrawer, drawerRef);
 
-  useEffect(() => {
-    fetchMediaHeatmap(365).then(setData).catch(() => {});
-  }, []);
+  const loadHeatmap = useCallback(() => {
+    fetchMediaHeatmap(365, view === 'rolling' ? null : view)
+      .then((d) => {
+        setData(d);
+        if (Array.isArray(d?.years)) setYears(d.years);
+      })
+      .catch(() => {});
+  }, [view]);
+
+  useEffect(() => { loadHeatmap(); }, [loadHeatmap]);
 
   // 打开某天 → 拉当日明细（切换日期时先清空，避免看到上一天的残影）
   useEffect(() => {
@@ -71,31 +81,48 @@ export default function MediaHeatmap({ showToast }) {
     return map;
   }, [data]);
 
-  // 53 周 × 7 天格阵：自今天回溯，列首对齐周日。
-  const { columns, monthLabels } = useMemo(() => {
+  // 格阵几何:滚动视图 = 53 周自今天回溯;年份视图 = 该自然年(列首对齐周日,
+  // 年首前的对齐格与年尾后的格隐藏)。周数随视图变化,列模板以内联样式下发。
+  const { columns, monthLabels, weekCount } = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const start = new Date(today);
-    start.setDate(start.getDate() - 7 * (WEEKS - 1) - today.getDay());
+    let gridStart;
+    let rangeStart;
+    let rangeEnd;
+    let weeks;
+    if (view === 'rolling') {
+      gridStart = new Date(today);
+      gridStart.setDate(gridStart.getDate() - 7 * (WEEKS - 1) - today.getDay());
+      rangeStart = gridStart;
+      rangeEnd = today;
+      weeks = WEEKS;
+    } else {
+      rangeStart = new Date(view, 0, 1);
+      rangeEnd = new Date(view, 11, 31);
+      gridStart = new Date(rangeStart);
+      gridStart.setDate(gridStart.getDate() - rangeStart.getDay());
+      weeks = Math.ceil((rangeStart.getDay() + (view % 4 === 0 && (view % 100 !== 0 || view % 400 === 0) ? 366 : 365)) / 7);
+    }
     const cols = [];
     const labels = [];
     let lastMonth = -1;
-    for (let w = 0; w < WEEKS; w += 1) {
+    for (let w = 0; w < weeks; w += 1) {
       const cells = [];
       let weekMonth = null;
       for (let dow = 0; dow < 7; dow += 1) {
-        const dt = new Date(start);
-        dt.setDate(start.getDate() + w * 7 + dow);
-        if (dow === 0) weekMonth = dt.getMonth();
-        cells.push({ date: iso(dt), future: dt > today });
+        const dt = new Date(gridStart);
+        dt.setDate(gridStart.getDate() + w * 7 + dow);
+        const future = dt > today || dt < rangeStart || dt > rangeEnd;
+        // 月份标签取本周第一个落在范围内的日子(年份视图的年首周含上一年对齐格)
+        if (weekMonth === null && !future) weekMonth = dt.getMonth();
+        cells.push({ date: iso(dt), future });
       }
       cols.push(cells);
-      labels.push(weekMonth !== lastMonth ? `${weekMonth + 1}月` : '');
-      if (weekMonth !== lastMonth) lastMonth = weekMonth;
+      labels.push(weekMonth !== null && weekMonth !== lastMonth ? `${weekMonth + 1}月` : '');
+      if (weekMonth !== null && weekMonth !== lastMonth) lastMonth = weekMonth;
     }
-    // 格阵几何只依赖「今天」，与数据无关：挂载时算一次即可（跨零点的偏差可忽略）。
-    return { columns: cols, monthLabels: labels };
-  }, []);
+    return { columns: cols, monthLabels: labels, weekCount: weeks };
+  }, [view]);
 
   const totals = useMemo(() => {
     const acc = { images: 0, cached: 0, failed: 0, pending: 0 };
@@ -143,7 +170,7 @@ export default function MediaHeatmap({ showToast }) {
           pending: result.images.filter((i) => i.status === 'pending').length,
         })),
       });
-      fetchMediaHeatmap(365).then(setData).catch(() => {});
+      loadHeatmap();
       showToast?.(
         result.failed ? `重抓完成：成功 ${result.cached} 张，仍失败 ${result.failed} 张` : `重抓完成：${result.cached} 张图片已缓存`,
         result.failed ? 'info' : 'success',
@@ -153,11 +180,11 @@ export default function MediaHeatmap({ showToast }) {
     } finally {
       setRetrying(null);
     }
-  }, [showToast]);
+  }, [showToast, loadHeatmap]);
 
   if (!data) {
     return (
-      <section className="surface-card card-pad rounded-[var(--r-card)]">
+      <section className="surface-card card-pad rounded-[var(--r-card)]" style={{ marginTop: 12 }}>
         <p className="tiny-meta text-center">
           <Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin text-slate-500" /> 正在加载媒体热点图…
         </p>
@@ -166,13 +193,14 @@ export default function MediaHeatmap({ showToast }) {
   }
 
   const coverage = totals.images ? Math.round((totals.cached / totals.images) * 100) : 0;
+  const rangeLabel = view === 'rolling' ? '近一年' : `${view} 年`;
 
   return (
     <>
-      <section className="surface-card card-pad rounded-[var(--r-card)]">
+      <section className="surface-card card-pad rounded-[var(--r-card)]" style={{ marginTop: 12 }}>
         <div className="card-head">
           <span className="card-title">
-            近一年 · 逐日缓存覆盖{totals.images ? ` · 覆盖率 ${coverage}%` : ''}
+            {rangeLabel} · 逐日缓存覆盖{totals.images ? ` · 覆盖率 ${coverage}%` : ''}
           </span>
           <div className="mini-seg" role="group" aria-label="配色语义">
             {[['coverage', '覆盖率深浅'], ['status', '状态分色']].map(([key, label]) => (
@@ -188,9 +216,11 @@ export default function MediaHeatmap({ showToast }) {
           </div>
         </div>
 
+        {/* 格阵 + 右侧年份轨(GitHub 式):滚动窗与自然年切换,填掉宽屏下右缘的空旷 */}
+        <div className="heat-body">
         <div className="heat-scroll">
           <div className={`heat-wrap ${mode === 'status' ? 'mode-status' : ''}`}>
-            <div className="heat-months">
+            <div className="heat-months" style={{ gridTemplateColumns: `repeat(${weekCount}, 16px)` }}>
               {monthLabels.map((label, i) => (
                 <span key={`m${i}`} className="heat-month" style={{ gridColumn: i + 1 }}>{label}</span>
               ))}
@@ -198,7 +228,11 @@ export default function MediaHeatmap({ showToast }) {
             <div className="heat-dows">
               {DOW_LABELS.map((label, i) => <span key={`d${i}`} className="heat-dow">{label}</span>)}
             </div>
-            <div className="heat-grid" onMouseLeave={() => setTip(null)}>
+            <div
+              className="heat-grid"
+              style={{ gridTemplateColumns: `repeat(${weekCount}, 13px)` }}
+              onMouseLeave={() => setTip(null)}
+            >
               {columns.map((week, w) => week.map((cell, dow) => {
                 const day = byDate.get(cell.date);
                 const level = levelOf(day);
@@ -224,6 +258,31 @@ export default function MediaHeatmap({ showToast }) {
               }))}
             </div>
           </div>
+        </div>
+
+        {(years.length > 0) && (
+          <div className="heat-years" role="group" aria-label="时间范围">
+            <button
+              type="button"
+              className={`heat-year-btn ${view === 'rolling' ? 'is-on' : ''}`}
+              aria-pressed={view === 'rolling'}
+              onClick={() => setView('rolling')}
+            >
+              近一年
+            </button>
+            {years.map((y) => (
+              <button
+                key={y}
+                type="button"
+                className={`heat-year-btn ${view === y ? 'is-on' : ''}`}
+                aria-pressed={view === y}
+                onClick={() => setView(y)}
+              >
+                {y}
+              </button>
+            ))}
+          </div>
+        )}
         </div>
 
         <div className="heat-foot">

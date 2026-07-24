@@ -141,7 +141,8 @@ export function RankBars({ rows, labelKey, valueKey, name, color = C_PRIMARY, he
           <XAxis type="number" hide allowDecimals={false} />
           <YAxis type="category" dataKey={labelKey} tick={AXIS_TICK} axisLine={false} tickLine={false} width={labelWidth} interval={0} tickFormatter={tickFormatter} />
           <Tooltip cursor={{ fill: 'var(--dorami-wash)' }} content={<ThemedTooltip titleKey={labelKey} />} />
-          <Bar dataKey={valueKey} name={name} fill={color} radius={[0, 4, 4, 0]} maxBarSize={22} />
+          {/* 细标记纪律:排行柱厚 22→14(2026-07-24 拍板,原柱偏粗) */}
+          <Bar dataKey={valueKey} name={name} fill={color} radius={[0, 4, 4, 0]} maxBarSize={14} />
         </BarChart>
       </ResponsiveContainer>
     </div>
