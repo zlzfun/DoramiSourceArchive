@@ -330,6 +330,44 @@ EOF
             $SUDO rm -f /etc/nginx/sites-enabled/default
         fi
     fi
+
+    ensure_site_included
+}
+
+resolve_nginx_main_conf() {
+    # 源码装的 nginx 主配置不在 /etc/nginx:从 nginx -V 的 --conf-path 推导,
+    # 探不到再退回常见默认位置。
+    NGINX_MAIN_CONF="$("$NGINX_BIN" -V 2>&1 | tr ' ' '\n' | sed -n 's/^--conf-path=//p')"
+    if [ -z "$NGINX_MAIN_CONF" ] || ! $SUDO test -f "$NGINX_MAIN_CONF"; then
+        local candidate
+        for candidate in /etc/nginx/nginx.conf /usr/local/nginx/conf/nginx.conf; do
+            if $SUDO test -f "$candidate"; then
+                NGINX_MAIN_CONF="$candidate"
+                break
+            fi
+        done
+    fi
+    [ -n "$NGINX_MAIN_CONF" ] || fail "cannot locate the main nginx.conf (nginx -V has no --conf-path and no default candidate exists)"
+}
+
+ensure_site_included() {
+    # 包管理器装的 nginx 自带 include /etc/nginx/conf.d/*.conf;源码装的默认
+    # 什么都不 include,站点文件写了也不生效。用 nginx -T(实际生效配置)复核,
+    # 缺失则备份主配置后往 http 块里插一行 include。
+    if $SUDO "$NGINX_BIN" -T 2>/dev/null | grep -qF "configuration file ${NGINX_SITE_FILE}"; then
+        return
+    fi
+
+    resolve_nginx_main_conf
+    echo "Main nginx config ($NGINX_MAIN_CONF) does not include ${NGINX_SITE_FILE}; adding include..."
+    if ! $SUDO grep -qE "include[[:space:]]+${NGINX_SITE_FILE}[[:space:]]*;" "$NGINX_MAIN_CONF"; then
+        $SUDO cp "$NGINX_MAIN_CONF" "${NGINX_MAIN_CONF}.dorami-bak"
+        $SUDO sed -i "s|^\([[:space:]]*\)http[[:space:]]*{|&\n    include ${NGINX_SITE_FILE};|" "$NGINX_MAIN_CONF"
+        echo "Backed up original config to ${NGINX_MAIN_CONF}.dorami-bak"
+    fi
+
+    $SUDO "$NGINX_BIN" -T 2>/dev/null | grep -qF "configuration file ${NGINX_SITE_FILE}" \
+        || fail "自动插入 include 后站点文件仍未生效。请手动在 ${NGINX_MAIN_CONF} 的 http { } 块内加入一行:  include ${NGINX_SITE_FILE};  然后重跑本脚本(原配置已备份为 ${NGINX_MAIN_CONF}.dorami-bak)。"
 }
 
 validate_nginx_config() {
