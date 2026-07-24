@@ -1,5 +1,10 @@
 # AGENTS.md — Agent 入口(L0)
 
+> ## ⚠️ 你在 `intranet` 分支(内网特殊适配分支)
+> 一切改动只提交本分支、**绝不合并/cherry-pick 回 main**;同步单向 `git merge main`;
+> 开工前先核对与 origin/main 的差异。完整纪律与本分支独有内容清单见
+> [`CLAUDE.md`](./CLAUDE.md) 顶部「intranet 分支须知」块(该块仅存在于本分支)。
+
 > 面向所有在本仓工作的 Agent。**权威的架构简报 + 开发命令 + 全部工程约定在
 > [`CLAUDE.md`](./CLAUDE.md)**(与本文件同层,内容以它为准,此处不重复);
 > 本文件只提供最小定向 + 文档分层索引入口。
