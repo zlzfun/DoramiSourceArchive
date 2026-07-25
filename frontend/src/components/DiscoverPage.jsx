@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronRight, Loader2, Search } from 'lucide-react';
+import { ArrowDownWideNarrow, ChevronRight, Loader2, Search } from 'lucide-react';
 import LogoMark from './LogoMark';
 import { mediaProxyUrl } from '../api';
 import { SOURCE_ROLES, sourceRoleOf, platformLabelOf, resolveCompany } from '../sourceTaxonomy';
@@ -24,7 +24,7 @@ function lastLabel(lastFetched) {
  * 按编辑分层分组、双列卡片;形态分段 + 目录搜索过滤。
  * 「预览」= Folo 语义:直接跳转到该源的条目列表(onPreview → goSource,退出发现页),
  * 未订阅的源同样可看——列表接口本就不按订阅收窄。目录数据全部来自
- * GET /api/reader/sources(count/last_fetched 现成),零后端改动。
+ * GET /api/reader/sources(count/last_fetched/subscriber_count)。
  */
 export default function DiscoverPage({
   sources,
@@ -37,6 +37,8 @@ export default function DiscoverPage({
 }) {
   const [shape, setShape] = useState('all');   // all | article | bulletin | social
   const [query, setQuery] = useState('');
+  // 排序小开关:默认(收录量降序,原有秩序)⇄ 订阅降序(全站订阅人数,选源社会证明)
+  const [sortBySubs, setSortBySubs] = useState(false);
 
   // 分组统一「信息角色」单轴;形态(文章/动态/社交)交给上方过滤条,不作分组维度。
   const groups = useMemo(() => {
@@ -49,12 +51,14 @@ export default function DiscoverPage({
       (buckets[sourceRoleOf(s)] ||= []).push(s);
     }
     for (const key of Object.keys(buckets)) {
-      buckets[key].sort((a, b) => (b.count || 0) - (a.count || 0));
+      buckets[key].sort((a, b) => (sortBySubs
+        ? (b.subscriber_count || 0) - (a.subscriber_count || 0) || (b.count || 0) - (a.count || 0)
+        : (b.count || 0) - (a.count || 0)));
     }
     return SOURCE_ROLES
       .map((r) => ({ ...r, list: buckets[r.key] || [] }))
       .filter((g) => g.list.length > 0);
-  }, [sources, shape, query]);
+  }, [sources, shape, query, sortBySubs]);
 
   return (
     <main className="reader-disc" aria-label="发现">
@@ -87,6 +91,18 @@ export default function DiscoverPage({
                 </button>
               ))}
             </span>
+            {/* 排序小开关(icon-only ghost):点击在「默认排序 ⇄ 订阅降序」间切换
+                (组内排序,不打散角色分组);状态靠点亮态 + tooltip 表达 */}
+            <button
+              type="button"
+              className={`reader-disc-sort ${sortBySubs ? 'is-on' : ''}`}
+              aria-pressed={sortBySubs}
+              aria-label={sortBySubs ? '订阅降序(点击切回默认排序)' : '默认排序(点击切换为订阅降序)'}
+              title={sortBySubs ? '订阅降序 · 点击切回默认排序' : '默认排序 · 点击按订阅人数降序'}
+              onClick={() => setSortBySubs((v) => !v)}
+            >
+              <ArrowDownWideNarrow className="h-[14px] w-[14px]" aria-hidden="true" />
+            </button>
           </div>
         </div>
       </div>
@@ -119,7 +135,12 @@ export default function DiscoverPage({
                           <div className="reader-disc-card-mid">
                             <div className="reader-disc-name-row">
                               <span className="reader-disc-name">{query.trim() ? highlightMatch(source.name || source.source_id, query) : (source.name || source.source_id)}</span>
-                              {/* 形态标;社交源标到平台(平台是「源」的属性,订阅前就该知道) */}
+                              {/* 形态标;社交源标到平台(平台是「源」的属性,订阅前就该知道)。
+                                  「全部」视图下文章源也挂「文章」标——三形态混排时无标即无从分辨;
+                                  已按形态过滤时不标(每卡同词是纯噪声)。 */}
+                              {(source.shape || 'article') === 'article' && shape === 'all' && (
+                                <span className="reader-shape-chip">文章</span>
+                              )}
                               {(source.shape || 'article') === 'bulletin' && (
                                 <span className="reader-shape-chip">动态</span>
                               )}
@@ -130,8 +151,11 @@ export default function DiscoverPage({
                             {source.description && (
                               <p className="reader-disc-desc">{query.trim() ? highlightMatch(source.description, query) : source.description}</p>
                             )}
+                            {/* 收录篇数对选源无甄别力,让位给订阅人数(社会证明);无人订阅时给「暂无订阅」 */}
                             <p className="reader-disc-meta">
-                              收录 {(source.count || 0).toLocaleString()} 篇
+                              {(source.subscriber_count || 0) > 0
+                                ? `${(source.subscriber_count || 0).toLocaleString()} 人订阅`
+                                : '暂无订阅'}
                               {source.last_fetched ? ` · ${lastLabel(source.last_fetched)}` : ''}
                             </p>
                           </div>

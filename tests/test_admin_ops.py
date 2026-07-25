@@ -437,11 +437,17 @@ def test_reader_read_endpoint_records(monkeypatch, tmp_path):
         _login(client, "user", "user")
         res = client.post("/api/reader/articles/a1/read")
         assert res.status_code == 200 and res.json()["status"] == "ok"
+        # 文章级累计阅读数随之 +1 并回传（阅读窗「累计阅读 N 次」的数据源）。
+        assert res.json()["read_count"] == 1
+        assert client.post("/api/reader/articles/a1/read").json()["read_count"] == 2
         # 不存在的文章安静忽略（不报错、不计量）。
         assert client.post("/api/reader/articles/ghost/read").json()["status"] == "ignored"
+        # 列表载荷透出 read_count。
+        items = client.get("/api/articles?source_id=src_x").json()
+        assert items and items[0]["read_count"] == 2
 
     with Session(app_module.db_sink.engine) as session:
-        assert reader_activity.reads_by_user(session, days=30).get("user") == 1
+        assert reader_activity.reads_by_user(session, days=30).get("user") == 2
 
 
 def test_usage_recorder_gating_and_ping_excluded():

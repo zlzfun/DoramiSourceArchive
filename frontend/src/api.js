@@ -548,8 +548,10 @@ export function unsubscribeSource(sourceId) {
 
 // 记录一次主动阅读（fire-and-forget：失败静默，不阻断阅读）。
 export function recordArticleRead(articleId) {
+  // fire-and-forget 但解析响应:成功时带回 read_count(全站累计阅读数)供阅读窗就地刷新
   return apiFetch(`${API_BASE_URL}/reader/articles/${enc(articleId)}/read`, { method: 'POST' })
-    .catch(() => {});
+    .then((res) => (res.ok ? res.json() : null))
+    .catch(() => null);
 }
 
 // ==================== 未读体系 ====================

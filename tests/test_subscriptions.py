@@ -255,6 +255,8 @@ def test_reader_sources_catalog_marks_subscribed(monkeypatch, tmp_path):
     with TestClient(app_module.app) as client:
         _login(client)
         client.post("/api/subscriptions", json={"name": "OpenAI", "filters": {"source_ids": "rss_openai"}})
+        # 同一用户的第二份含 rss_openai 的订阅:订阅人数按 owner 去重,不重复计。
+        client.post("/api/subscriptions", json={"name": "Dup", "filters": {"source_ids": "rss_openai"}})
         data = client.get("/api/reader/sources").json()
 
     # 目录是 注册源 ∪ 归档源 ∪ 已订阅源，会包含尚未产出文章的注册源，故只校验具体条目。
@@ -264,6 +266,10 @@ def test_reader_sources_catalog_marks_subscribed(monkeypatch, tmp_path):
     assert by_id["rss_openai"]["subscribed"] is True
     assert by_id["gh_repo"]["subscribed"] is False
     assert by_id["gh_repo"]["category"] == "代码仓库"
+    # 全站订阅人数(发现页选源参考):按 owner 去重,同一用户多份订阅只计一人。
+    assert by_id["rss_openai"]["subscriber_count"] == 1
+    assert by_id["gh_repo"]["subscriber_count"] == 0
+    assert by_id["dorami_daily_brief"]["subscriber_count"] == 1
     # 新读者账号会被默认播种「哆啦美·AI资讯日报」订阅（可取消），故并集含日报源。
     assert set(data["subscribed_source_ids"]) == {"rss_openai", "dorami_daily_brief"}
     assert by_id["dorami_daily_brief"]["subscribed"] is True

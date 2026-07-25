@@ -175,6 +175,7 @@ def serialize_article_list_item(
         "index_status": record.index_status,
         "content_preview": content[:280],
         "summary_zh": summary,
+        "read_count": record.read_count or 0,
     }
     if include_content:
         item["content"] = content

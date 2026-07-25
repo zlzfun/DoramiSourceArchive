@@ -21,6 +21,7 @@ import {
   Sun,
   Moon,
   LayoutDashboard,
+  MessageSquare,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
@@ -500,7 +501,12 @@ export default function ReaderTab({
     // 主动打开一篇新文章即记一次阅读（同篇连点不重复计；fire-and-forget）。
     // 后端同一请求里双写计量+逐篇已读状态;此处同步做乐观清点:圆点即消、未读数-1。
     if (id && id !== prevId) {
-      recordArticleRead(id);
+      // 上报成功即回填全站累计阅读数(含本次),阅读窗 meta 行就地刷新;失败静默。
+      recordArticleRead(id).then((res) => {
+        if (typeof res?.read_count === 'number') {
+          setActiveArticle((prev) => (prev?.id === id ? { ...prev, read_count: res.read_count } : prev));
+        }
+      }).catch(() => {});
       const override = readOverridesRef.current.get(id);
       const wasUnread = override === undefined ? !!article.unread : !override;
       if (wasUnread) {
@@ -1015,15 +1021,28 @@ export default function ReaderTab({
                 {themeDark ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
                 <span className="reader-vrail-tip">{themeDark ? '切换亮色' : '切换暗色'}</span>
               </button>
+              {/* 反馈与建议(仅读者账号;admin 的设置柜没有反馈分区):原先只藏在
+                  设置柜二级分区里入口太深,提为轨底一级钮,深链直达该分区。 */}
+              {!onExitReader && (
+                <button
+                  type="button"
+                  onClick={() => onOpenSettings?.('feedback')}
+                  className="reader-vrail-btn"
+                  aria-label={feedbackUnread > 0 ? '反馈与建议(有新回复)' : '反馈与建议'}
+                >
+                  <MessageSquare className="h-[18px] w-[18px]" />
+                  {feedbackUnread > 0 && <span className="vrail-btn-dot" aria-hidden="true" />}
+                  <span className="reader-vrail-tip">{feedbackUnread > 0 ? '反馈与建议 · 有新回复' : '反馈与建议'}</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => onOpenSettings?.()}
                 className="reader-vrail-btn"
-                aria-label={feedbackUnread > 0 ? '设置(反馈有新回复)' : '设置'}
+                aria-label="设置"
               >
                 <Settings className="h-[18px] w-[18px]" />
-                {feedbackUnread > 0 && <span className="vrail-btn-dot" aria-hidden="true" />}
-                <span className="reader-vrail-tip">{feedbackUnread > 0 ? '设置 · 反馈有新回复' : '设置'}</span>
+                <span className="reader-vrail-tip">设置</span>
               </button>
             </RailUserFlyout>
           </>
@@ -1471,8 +1490,12 @@ export default function ReaderTab({
                       {formatDateTime(activeArticle.publish_date)}
                     </span>
                   )}
-                  {bodyStats && <span>约 {bodyStats.chars.toLocaleString()} 字</span>}
-                  {bodyStats && <span>阅读 {bodyStats.minutes} 分钟</span>}
+                  {/* 字数与时长信息冗余(时长即由字数换算),只留时长;
+                      阅读量 = 全站累计阅读次数(跨读者;含本次打开,由 /read 响应回填) */}
+                  {bodyStats && <span>阅读时长 {bodyStats.minutes} 分钟</span>}
+                  {typeof activeArticle.read_count === 'number' && activeArticle.read_count > 0 && (
+                    <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
+                  )}
                 </div>
               </header>
             )}

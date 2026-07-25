@@ -50,6 +50,11 @@ class ArticleRecord(SQLModel, table=True):
     is_vectorized: bool = Field(default=False, index=True, description="是否已向量化（向后兼容派生位，== index_status 'indexed'）")
     index_status: str = Field(default=INDEX_STATUS_PENDING, index=True, description="向量索引状态: pending/indexing/indexed/failed/stale")
 
+    # 全站累计阅读次数（跨读者）：由 POST /api/reader/articles/{id}/read 随逐用户
+    # 计量一并 +1。与 ReaderReadRecord（日×用户×来源聚合，运维口径）互补——
+    # 本列是文章粒度的轻量计数器，供阅读窗标题下直接展示，免去逐请求聚合。
+    read_count: int = Field(default=0, description="全站累计阅读次数")
+
 
 # （实体简化阶段 2）FetchTaskRecord（旧版单节点定时任务）与 NodeGroupRecord（采集范围/
 # 节点组）已退役：存量数据由 Alembic 迁移（drop 前先内联/转换）合并进 CollectionJobRecord；

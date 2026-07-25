@@ -7178,11 +7178,20 @@ input[type="radio"] {
      工具钮自头像上方滑出,头像同帧变为关机样式退出钮(点击即退)。
      滑出层绝对定位于头像上方——不占轨内布局,展开无回流;padding-bottom 兼作
      头像→菜单之间的 hover 桥,指针穿行不塌。 ── */
-  .rail-flyout { position: relative; display: flex; flex-direction: column; align-items: center; }
+  .rail-flyout {
+    --rail-flyout-linger: 600ms; /* 光标移开后菜单/头像态的挂起时长 */
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
   .rail-flyout-items {
     position: absolute;
     bottom: 100%;
     left: 50%;
+    /* transform 使本层自成 stacking context,内部 tip 的 z-index 出不去——
+       整层抬到与 .reader-vrail-tip 同档,否则浮签被后绘的源栏 logo 盖住 */
+    z-index: 30;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -7192,8 +7201,11 @@ input[type="radio"] {
     visibility: hidden;
     pointer-events: none;
     transform: translate(-50%, 10px);
-    transition: opacity 280ms var(--motion-ease), transform 320ms var(--motion-ease),
-      visibility 0s linear 320ms;
+    /* 收起加 600ms 挂起延迟(--rail-flyout-linger):光标离开后菜单再停留一会儿,
+       给「滑过头/短暂移出」留返回余地;展开侧(hover 规则)延迟归零不受影响。 */
+    transition: opacity 280ms var(--motion-ease) var(--rail-flyout-linger),
+      transform 320ms var(--motion-ease) var(--rail-flyout-linger),
+      visibility 0s linear calc(var(--rail-flyout-linger) + 320ms);
   }
   .rail-flyout:hover .rail-flyout-items,
   .rail-flyout:focus-within .rail-flyout-items {
@@ -7204,7 +7216,12 @@ input[type="radio"] {
     transition: opacity 280ms var(--motion-ease), transform 320ms var(--motion-ease),
       visibility 0s;
   }
-  .rail-flyout-avatar { position: relative; }
+  .rail-flyout-avatar {
+    position: relative;
+    /* 收起侧描边复原与菜单/头像态同拍挂起(展开侧下方 hover 规则延迟归零) */
+    transition: border-color 130ms var(--motion-ease) var(--rail-flyout-linger),
+      transform 130ms var(--motion-ease);
+  }
   /* 轨底轻通知点(反馈有新回复):挂头像右上角——flyout 常态收起只见头像,点必须常显;
      描边用面板底色把点从头像上「抠」出来,亮暗主题自适应 */
   .rail-avatar-dot,
@@ -7227,7 +7244,8 @@ input[type="radio"] {
     inset: 0;
     display: grid;
     place-items: center;
-    transition: opacity 240ms var(--motion-ease);
+    /* 复原(hover-out)与菜单同步挂起,避免菜单还在、头像已先切回的错拍 */
+    transition: opacity 240ms var(--motion-ease) var(--rail-flyout-linger);
   }
   .rail-avatar-face img { width: 100%; height: 100%; object-fit: cover; }
   .rail-avatar-power {
@@ -7237,11 +7255,11 @@ input[type="radio"] {
   }
   .rail-avatar-power svg { width: 15px; height: 15px; }
   .rail-flyout:hover .rail-avatar-face,
-  .rail-flyout:focus-within .rail-avatar-face { opacity: 0; }
+  .rail-flyout:focus-within .rail-avatar-face { opacity: 0; transition-delay: 0s; }
   .rail-flyout:hover .rail-avatar-power,
-  .rail-flyout:focus-within .rail-avatar-power { opacity: 1; }
+  .rail-flyout:focus-within .rail-avatar-power { opacity: 1; transition-delay: 0s; }
   .rail-flyout:hover .rail-flyout-avatar,
-  .rail-flyout:focus-within .rail-flyout-avatar { border-color: var(--state-bad); }
+  .rail-flyout:focus-within .rail-flyout-avatar { border-color: var(--state-bad); transition-delay: 0s; }
   @media (prefers-reduced-motion: reduce) {
     .rail-flyout-items, .rail-avatar-face, .rail-avatar-power { transition: none; }
   }
@@ -8685,6 +8703,32 @@ input[type="radio"] {
   .reader-disc-search input::placeholder { color: var(--dorami-faint); }
 
   .reader-disc-seg { margin-left: auto; }
+
+  /* 发现页排序小开关:默认排序 ⇄ 订阅降序。ghost 图标钮(沿轨钮语言:无边框、
+     hover 淡墨、开启 wash+accent),不与相邻 seg 抢轮廓——带框文字钮试过,突兀。 */
+  .reader-disc-sort {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--dorami-faint);
+    cursor: pointer;
+    transition: color var(--motion-fast) var(--motion-ease),
+      background-color var(--motion-fast) var(--motion-ease);
+  }
+  .reader-disc-sort:hover {
+    color: var(--dorami-ink-2);
+    background: color-mix(in srgb, var(--dorami-ink) 6%, transparent);
+  }
+  .reader-disc-sort.is-on {
+    color: var(--dorami-accent-ink);
+    background: var(--dorami-wash);
+  }
 
   .reader-disc-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 28px 40px; }
   .reader-disc-body { width: 100%; }

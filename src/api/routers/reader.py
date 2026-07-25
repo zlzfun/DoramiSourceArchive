@@ -209,12 +209,15 @@ def record_article_read(article_id: str, request: Request, session: Session = De
         return {"status": "ignored"}
     source_id = article.source_id
     try:
-        # 双写：先挂逐篇已读状态（不自 commit），由紧随的计量写入一并提交。
+        # 三写：逐篇已读状态 + 文章级累计阅读数（均不自 commit），由紧随的计量写入一并提交。
         reader_state_service.mark_read(session, username=username, article_id=article.id)
+        article.read_count = (article.read_count or 0) + 1
+        session.add(article)
         reader_activity_service.record_read(session, username=username, source_id=source_id)
     except Exception:  # noqa: BLE001 - 计量/状态失败不影响阅读
         return {"status": "ignored"}
-    return {"status": "ok", "source_id": source_id}
+    # 回传累计阅读数：前端就地刷新阅读窗「累计阅读 N 次」，含读者本次这一下。
+    return {"status": "ok", "source_id": source_id, "read_count": article.read_count}
 
 
 # ==================== 未读体系 ====================
@@ -470,6 +473,16 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
     ).all()
     subscribed_ids = set(app.resolve_subscribed_source_ids(session, username))
 
+    # 全站各源订阅人数（按 owner 去重）：发现页选源参考。扫描全部订阅行在当前
+    # 账号规模下开销可忽略；一行订阅可含多个 source_id，逐一归集。
+    subscriber_owners: Dict[str, set] = {}
+    for record in session.exec(
+        select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.is_active == True)  # noqa: E712
+    ).all():
+        for sid in subscription_source_ids(record):
+            subscriber_owners.setdefault(sid, set()).add(record.owner_username or "")
+    subscriber_counts = {sid: len(owners) for sid, owners in subscriber_owners.items()}
+
     by_source: Dict[str, Dict[str, Any]] = {}
 
     def _ensure_entry(source_id: str, content_type: Optional[str] = None) -> Dict[str, Any]:
@@ -502,6 +515,7 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
                 "avatar_url_original": cached_profile.get("author_avatar_url") or "",
                 "count": 0,
                 "last_fetched": "",
+                "subscriber_count": subscriber_counts.get(source_id, 0),
                 "subscribed": source_id in subscribed_ids,
                 "registered": source_id in registry_meta,
                 "configured": source_id in configured_meta,

@@ -751,7 +751,7 @@ export default function App() {
                   avatarText={avatarInitials}
                   themeDark={effective === 'dark'}
                   onToggleTheme={toggleTheme}
-                  onOpenSettings={() => openSettings()}
+                  onOpenSettings={(section) => openSettings(section)}
                   onLogout={handleLogout}
                   onExitReader={isAdminRole ? exitReader : undefined}
                   feedbackUnread={feedbackUnread}
