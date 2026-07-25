@@ -43,7 +43,8 @@
   身份+分类元数据规范 v1.1(owner/scope/channel/provenance_tier/信噪评级)。
 - ◇ [sources/admission_workflow.md](./sources/admission_workflow.md) — 新源提案→验证→准入的 add-only 流程。
 - ◇ [sources/node_audit_playbook.md](./sources/node_audit_playbook.md) — 节点体检与修复手册
-  (检查步骤/质量核对/故障模式目录/删类标准)。
+  (检查步骤/质量核对/故障模式目录/删类标准;v3.22.4 增《Content-quality proofing》——
+  正文质量三层诊断、共享转换层保证清单、站点镶边三修法与新源上线抽查清单)。
 - ◉ [sources/node_catalog_and_risks.md](./sources/node_catalog_and_risks.md) — 内置节点逐个的
   适配手法与稳定性风险评级(**快照 2026-06-16**,wave1–3 新节点待补,现势以注册表为准)。
 - ◇ [sources/candidates/](./sources/candidates/README.md) — 候选源证据库(13 册,按厂商/板块;

@@ -84,6 +84,57 @@ These recurred across the audit. Recognize the symptom, apply the known fix.
 | Empty `Description` on repo/model records | **Sparse upstream metadata** | Backfill from a secondary field (README excerpt, model card), dedup-gated so re-runs cost no extra quota |
 | Nav/footer links captured as articles | **Link-scan over-reach** | Declare a precise list container and `exclude_url_patterns`; set `drop_empty_content=True` to discard bodyless nav entries |
 
+## Content-quality proofing(v3.22.4 文章质量校对波沉淀)
+
+推广前对 55 个源的全量抽查(每源 2–3 篇,查开头 800 字 + 中段 + 结尾 500 字)暴露的
+问题几乎全部落在三个层,**修哪一层要先诊断清楚**:
+
+| 层 | 典型症状 | 修在哪 |
+| --- | --- | --- |
+| ① markdown 转换(共享) | 链接/粗体前后空格丢失(`take shape inAbilene`)、`<code>` 空格塌陷、行内内容散块、零宽字符 | `article_extractor.py` —— 一处修全站受益,**不要在单个 fetcher 里绕** |
+| ② 详情容器圈定(站点级) | 开头混入重复标题/日期/栏目/作者/CTA 按钮/Share,结尾混入相关推荐/订阅框/版权尾注,中段夹推荐卡 | CrawlProfile 的 `target_elements`/`excluded_selector`,或 fetcher 覆写 `_detail_for_url` 做 HTML 预清洗 |
+| ③ 文本层清洗(站点级) | 站点固定文案(`(opens in a new window)`、`一键三连`、`View details`) | fetcher 内文本后处理;通用形态(sr-only/`<summary>`/播放器)已下沉到 ① |
+
+### ① 共享转换层现在保证什么(新 fetcher 不要重复造)
+
+`node_to_markdown` / `_inline_markdown`(v3.22.4 起)已内建:
+
+- **行内空白保真**:嵌套 `<a>/<b>/<span>` 内侧的边界空格不丢(曾是全站性 bug,波及几乎所有 rss_*/web_* 源);
+- `<strong>/<b>`→`**`、`<em>/<i>`→`*` 粗斜体标记;
+- 跳过 sr-only 类视觉隐藏元素(`(opens in a new window)`)、`<summary>` 折叠开关、`<video>/<audio>` 子树与 Ghost `kg-*-player` 播放器控件;
+- 剥标题自链锚(`[#]`/¶/§ permalink,Hugo/Docusaurus);解包 `google.com/url?q=` 跳转链接;
+- 清零宽字符(ZWSP/WJ/BOM;孤立成行的 ZWJ 单清,组合 emoji 保留);
+- 行内-only 容器整体按单段渲染(`<p>text <code>x</code></p>` 不再散成多块);根节点本身是 `p`/行内容器时同样成立;
+- `json_ld_article_body` 保留 `\r\n\r\n` 段落结构(the_decoder 曾整篇塌成一段)。
+
+**推论——新 fetcher 的铁律:凡有结构的正文一律走 `node_to_markdown`,禁用
+`get_text(" ")` 拍平**(它既吞导航页脚又压平块级换行;qwen_blog/xAI 均是此病)。
+列表项转单行用 `SinglePageDocumentFetcher._li_markdown`(保链接/码内空格,无强插分隔符)。
+
+### ② 站点镶边(chrome)的三种成熟修法,按类名稳定性选
+
+1. **类名有语义 → CrawlProfile `excluded_selector`**(anthropic/claude_blog/qbitai/aiera 先例):最declarative,优先用。
+2. **类名是哈希/混淆(Tailwind、Next 混淆类)→ `keep_dominant_child_html()`**(article_extractor 提供;OpenAI News/DeepMind 先例):容器是「头部横幅 + 正文 + 尾部推荐」三段式时,保留文本最长的直接子块即可——标题/日期由页面 meta 单独提取,不靠头部横幅。
+3. **两者都不稳 → 文本层截断兜底**(在已转出的 markdown 上找 `## Related posts`/`版权所有…` 等标记截断)。可与 1/2 叠加做双保险(claude_blog 先例)。
+
+**教训:markdown 化会改变文本形态**——站点级正则要容忍转换产物,如 `<em>` 包裹的
+版权行是 `*版权所有…违者必究。*`(qbitai 曾因正则没料到星号而漏截)。
+
+### 新源上线前的正文抽查清单
+
+跑 `f.fetch(limit=2)` 真实端到端(B 类含 crawl4ai 渲染),对每篇看
+`content[:300]` 与 `content[-300:]`,核对:
+
+- **开头**:无重复标题/日期行/栏目名/作者卡/CTA 按钮/Share;
+- **结尾**:无相关推荐卡/订阅表单文案(含「订阅成功/失败」提示语!)/版权样板/页脚;
+- **中段**(长文抽一篇全读):无夹在正文中间的推荐卡(anthropic 曾有水合重复副本);
+- **链接**:前后空格正常、锚文本无辅助文案、无跳转包裹;**列表/码块**:分行正常、空格未塌;
+- **样板残留**:grep 站点固定文案(`submitted by`、`opens in a new window`、播放器时间码等);
+- 与《What "healthy" looks like》各轴一并核对。
+
+已知豁免(不算抓取错):feed 自带的作者推广位(oneusefulthing 卖书、simonwillison
+订阅提示、阮一峰刊头)属原文行文;数学博客的 `$$…$$`(阅读器不渲染 LaTeX,存档忠实)。
+
 ## When to remove a node instead of fixing it
 
 Delete the node (delete the class, remove its id from `ESSENTIAL_FETCHER_IDS`, **and**
