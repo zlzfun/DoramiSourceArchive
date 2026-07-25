@@ -52,9 +52,15 @@ PROFILES: Tuple[CrawlProfile, ...] = (
         domains=("anthropic.com",),
         path_pattern=r"^/news/",
         target_elements=("article",),
-        # <article> 末尾含 "Related content" 区块（其标题与 Read more 卡片都带 LinkGrid-* 哈希类，
-        # 语义前缀 LinkGrid 稳定），用属性子串选择器剔除，避免相关文章混入正文。
-        excluded_selector=COMMON_EXCLUDED_SELECTOR + ', [class*="LinkGrid"]',
+        # News 模板有两代相关推荐组件：旧版 LinkGrid-*，新版 RelatedContent/RelatedPosts。
+        # 同时排除 article 自带的 header，避免栏目、重复标题和日期混进正文。
+        excluded_selector=(
+            COMMON_EXCLUDED_SELECTOR
+            + ', article > header, [class*="ArticleHeader"], [class*="PostHeader"], '
+            '[class*="LinkGrid"], [class*="RelatedContent"], [class*="RelatedPosts"], '
+            '[class*="related-content"], [class*="related-posts"], '
+            '[data-component*="related"], [data-testid*="related"]'
+        ),
         wait_for="css:article",
     ),
     CrawlProfile(
@@ -81,7 +87,16 @@ PROFILES: Tuple[CrawlProfile, ...] = (
         # testimonials/FAQ/资源卡等 CMS 控件，它们都带 Webflow 隐藏/空标记类
         # （w-condition-invisible=浏览器中本就隐藏、w-dyn-empty=空集合），一并剔除。
         target_elements=(".blog_post_section_wrap",),
-        excluded_selector=COMMON_EXCLUDED_SELECTOR + ", .w-condition-invisible, .w-dyn-empty",
+        excluded_selector=(
+            COMMON_EXCLUDED_SELECTOR
+            + ", .w-condition-invisible, .w-dyn-empty, "
+            '[class*="blog_post"][class*="meta"], [class*="blog-post"][class*="meta"], '
+            '[class*="blog_post"][class*="related"], [class*="blog-post"][class*="related"], '
+            '[class*="blog_post"][class*="newsletter"], [class*="blog-post"][class*="newsletter"], '
+            '[class*="blog_post"][class*="cta"], [class*="blog-post"][class*="cta"], '
+            '[class*="blog_post"][class*="carousel"], [class*="blog-post"][class*="carousel"], '
+            '[class*="blog_post"][class*="faq"], [class*="blog-post"][class*="faq"]'
+        ),
         wait_for="css:.blog_post_section_wrap",
     ),
     CrawlProfile(
@@ -100,7 +115,12 @@ PROFILES: Tuple[CrawlProfile, ...] = (
         target_elements=(".content .article", "div.article"),
         excluded_selector=(
             "script, style, noscript, button, "
-            ".wx_img, .share_pc, .tags, .person_box, .xiangguan, img.avatar, .avatar"
+            ".wx_img, .share_pc, .tags, .person_box, .xiangguan, img.avatar, .avatar, "
+            ".article > h1:first-child, .article .article-title, .article .article_title, "
+            ".article .article-info, .article .article_info, .article .post-meta, "
+            ".article > .meta, .article > .info, .article > .source, "
+            ".article > .subtitle, .article > .sub_title, "
+            ".article > .article-subtitle, .article > .article_subtitle"
         ),
     ),
     CrawlProfile(
@@ -110,6 +130,12 @@ PROFILES: Tuple[CrawlProfile, ...] = (
         # WordPress：页面有 9 个 <article>（含相关文章），正文唯一容器是 article .entry-content。
         # 服务端渲染，正文在初始 HTML 中，无需 wait_for（加了反而易误判超时）。
         target_elements=("article .entry-content",),
+        # 编辑模板把固定头图包在首个 h3，紧邻的第二个 h3 是“新智元报道”。
+        excluded_selector=(
+            COMMON_EXCLUDED_SELECTOR
+            + ", article .entry-content > h3:first-child, "
+            "article .entry-content > h3:first-child + h3"
+        ),
     ),
 )
 

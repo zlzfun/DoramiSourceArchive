@@ -524,6 +524,33 @@ class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
 
+    @staticmethod
+    def _clean_anthropic_detail_text(text: str) -> str:
+        """剔除 News 文章头部元数据与水合后夹入的 Related content 副本。
+
+        新版页面的 ``<article>`` 会把完整正文放在相关推荐之前，随后再出现 Related
+        content 卡片和一份水合重复正文；因此在第一个 Related content 标题处截断不会
+        丢正文，反而同时消除卡片与重复副本。
+        """
+        blocks = (text or "").split("\n\n")
+        for index, block in enumerate(blocks[:8]):
+            if re.fullmatch(r"[A-Z][a-z]{2} \d{1,2}, \d{4}", block.strip()):
+                blocks = blocks[index + 1 :]
+                break
+        cleaned = "\n\n".join(blocks).strip()
+        for marker in ("\n\n## Related content", "\n\nRelated content"):
+            marker_index = cleaned.find(marker)
+            if marker_index >= 0:
+                cleaned = cleaned[:marker_index].rstrip()
+        return cleaned
+
+    async def _detail_for_url(
+        self, client: httpx.AsyncClient, url: str, max_chars: int
+    ) -> Dict[str, str]:
+        detail = await super()._detail_for_url(client, url, max_chars)
+        detail["text"] = self._clean_anthropic_detail_text(detail.get("text", ""))[:max_chars]
+        return detail
+
     # Anthropic News 是 Next.js RSC 流式渲染：初始 DOM 里只有首屏约 11 条 <a>，更早的
     # 文章（页面里要点 “See More” 才显示）都嵌在 self.__next_f 的转义 JSON 流中，作为
     # Sanity 风格的 {"_type":"post", "publishedOn", "slug":{"current":...}, "title",
@@ -670,6 +697,45 @@ class ClaudeBlogWebFetcher(BaseWebPageListFetcher):
     signal_strength = "high_signal"
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
+
+    @staticmethod
+    def _clean_claude_blog_detail_text(text: str) -> str:
+        """清掉 Webflow 正文容器内的 meta 清单、轮播控件、相关推荐和订阅 CTA。"""
+        blocks = [
+            block
+            for block in (text or "").split("\n\n")
+            if not re.match(
+                r"^- (?:Category|Product|Date|Reading time|Share)(?:\b|[A-Z0-9])",
+                block.strip(),
+            )
+        ]
+        cleaned = "\n\n".join(blocks).strip()
+
+        trailer_positions = [
+            cleaned.find(marker)
+            for marker in (
+                "\n\n## Related posts",
+                "\n\n## Transform how your organization operates with Claude",
+                "\n\nGet the developer newsletter",
+            )
+        ]
+        trailer_positions = [position for position in trailer_positions if position >= 0]
+        if trailer_positions:
+            cleaned = cleaned[: min(trailer_positions)].rstrip()
+
+        # Webflow 轮播/FAQ 的空态紧邻 Related posts，属于控件而非文章正文。
+        for marker in ("\n\nNo items found.\n\nPrev", "\n\nFAQ\n\nNo items found."):
+            marker_index = cleaned.find(marker)
+            if marker_index >= 0:
+                cleaned = cleaned[:marker_index].rstrip()
+        return cleaned
+
+    async def _detail_for_url(
+        self, client: httpx.AsyncClient, url: str, max_chars: int
+    ) -> Dict[str, str]:
+        detail = await super()._detail_for_url(client, url, max_chars)
+        detail["text"] = self._clean_claude_blog_detail_text(detail.get("text", ""))[:max_chars]
+        return detail
 
 
 class IThomeAiWebFetcher(BaseWebPageListFetcher):
@@ -849,6 +915,68 @@ class QwenBlogWebFetcher(BaseWebPageListFetcher):
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_api"
 
+    def _extract_qwen_inline_html(
+        self, html_content: str, max_chars: int, base_url: str
+    ) -> str:
+        """从 retrieval API 内联的 Hugo 整页 HTML 中只取正文。
+
+        API 当前把一层转义过的文章 HTML 嵌在整页模板里；旧逻辑直接 ``get_text(" ")``
+        因而既吞进导航/页脚，又把块级换行压平，还会泄漏 ``<span>``/``&nbsp;``。
+        这里优先从原 HTML 圈 Hugo 正文；只有整页找不到容器时才解一层实体重试。
+        """
+        selectors = (
+            "article .post-content",
+            "article .entry-content",
+            "article .article-content",
+            "article .post-body",
+            ".post-content",
+            ".entry-content",
+            ".article-content",
+            ".post-body",
+            "article",
+            "main",
+        )
+
+        def find_body(document: BeautifulSoup) -> Tag | None:
+            for selector in selectors:
+                node = document.select_one(selector)
+                if node is not None:
+                    return node
+            return None
+
+        # 先按原 HTML 解析，避免把正文代码示例里的 &lt;tag&gt; 误解成真实标签。
+        soup = BeautifulSoup(html_content or "", "html.parser")
+        body = find_body(soup)
+        # 仅当整份内容本身被实体转义、原文完全找不到正文容器时，解一层后重试。
+        if body is None:
+            decoded = html.unescape(html_content or "")
+            if decoded != html_content:
+                soup = BeautifulSoup(decoded, "html.parser")
+                body = find_body(soup)
+        if body is None:
+            return ""
+
+        for selector in (
+            "script",
+            "style",
+            "noscript",
+            "nav",
+            "footer",
+            "aside",
+            "form",
+            "header",
+            ".post-header",
+            ".post-meta",
+            ".translations",
+        ):
+            for node in body.select(selector):
+                node.decompose()
+
+        text = node_to_markdown(body, base_url)
+        text = re.sub(r"[ \t]{2,}", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        return text[:max_chars]
+
     def _qwen_block_text(self, value: Any) -> List[str]:
         texts: List[str] = []
         if isinstance(value, dict):
@@ -928,15 +1056,14 @@ class QwenBlogWebFetcher(BaseWebPageListFetcher):
             if self._bool_param(kwargs.get("fetch_detail")):
                 max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
                 if html_content:
-                    soup = BeautifulSoup(html_content, "html.parser")
-                    for tag in soup(["script", "style", "noscript"]):
-                        tag.decompose()
-                    text = self._clean_text(soup.get_text(" "))
+                    text = self._extract_qwen_inline_html(
+                        html_content, max_chars, source_url
+                    )
                     if text:
-                        content = text[:max_chars]
+                        content = text
                     raw_data.update({
                         "detail_text_length": len(content),
-                        "detail_extraction_method": "qwen_article_retrieval_html",
+                        "detail_extraction_method": "qwen_article_retrieval_html_scoped",
                         "detail_source_url": source_url,
                     })
                 # 列表 API 未内联正文时才需二次请求；若该条已入库且有正文则跳过，避免重复抓取。

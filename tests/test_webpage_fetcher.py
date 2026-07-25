@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from fetchers.impl.webpage_fetcher import (
     AnthropicNewsWebFetcher,
     BaseWebPageListFetcher,
+    ClaudeBlogWebFetcher,
     QwenBlogWebFetcher,
 )
 from fetchers.impl.curated_core_fetcher import (
@@ -23,6 +24,7 @@ from fetchers.impl.curated_core_fetcher import (
     XAiDeveloperReleaseNotesFetcher,
     ZaiNewReleasedFetcher,
 )
+from fetchers.web_content.profiles import resolve_profile
 
 
 class DummyResponse:
@@ -436,7 +438,23 @@ def test_qwen_blog_fetcher_uses_current_article_retrieval_api():
                     "id": "479a326d-c932-49ff-a8bb-fe31849529d5",
                     "type": "qwen_ai",
                     "title": "Qwen3.7: The Agent Frontier",
-                    "content": "<html><body><article><h1>Qwen3.7-Max</h1><p>Latest proprietary model designed for the agent era.</p></article></body></html>",
+                    "content": """
+                        <html><body>
+                          <nav>Publication About Try Qwen Chat</nav>
+                          <main><article>
+                            <header>
+                              <h1>Qwen3.7: The Agent Frontier</h1>
+                              &lt;span title='2026-05-20'&gt;May 20, 2026&lt;/span&gt;
+                              &amp;nbsp;·&amp;nbsp;Qwen Team
+                            </header>
+                            <div class="post-content">
+                              <p>Latest proprietary model designed for the agent era.</p>
+                              <p>The model keeps paragraph boundaries and technical detail.</p>
+                            </div>
+                          </article></main>
+                          <footer>© 2026 Qwen Powered by Hugo</footer>
+                        </body></html>
+                    """,
                     "path": "qwen3.7",
                     "language": "en-US",
                     "extra": {
@@ -477,9 +495,156 @@ def test_qwen_blog_fetcher_uses_current_article_retrieval_api():
     assert items[0].title == "Qwen3.7: The Agent Frontier"
     assert items[0].source_url == "https://qwen.ai/blog?id=qwen3.7"
     assert items[0].publish_date == "2026-05-20T10:00:00+08:00"
-    assert "Latest proprietary model" in items[0].content
+    assert items[0].content == (
+        "Latest proprietary model designed for the agent era.\n\n"
+        "The model keeps paragraph boundaries and technical detail."
+    )
+    assert "Publication About" not in items[0].content
+    assert "Powered by Hugo" not in items[0].content
+    assert "<span" not in items[0].content
+    assert "&nbsp;" not in items[0].content
     assert items[0].raw_data["listing_source"] == "qwen_article_retrieval"
-    assert items[0].raw_data["detail_extraction_method"] == "qwen_article_retrieval_html"
+    assert (
+        items[0].raw_data["detail_extraction_method"]
+        == "qwen_article_retrieval_html_scoped"
+    )
+
+
+def test_anthropic_detail_cleaner_drops_header_related_cards_and_hydration_copy():
+    text = """
+Economic Research
+
+# A research agenda for the Economic Futures Research Fund
+
+Jul 22, 2026
+
+![Hero](https://example.test/hero.jpg)
+
+The first complete body paragraph.
+
+The final complete body paragraph.
+
+## Related content
+
+### A recommended article
+
+Recommendation summary.
+
+Read more
+
+The first complete body paragraph.
+""".strip()
+
+    cleaned = AnthropicNewsWebFetcher._clean_anthropic_detail_text(text)
+
+    assert cleaned == (
+        "![Hero](https://example.test/hero.jpg)\n\n"
+        "The first complete body paragraph.\n\n"
+        "The final complete body paragraph."
+    )
+    assert "Economic Research" not in cleaned
+    assert "A recommended article" not in cleaned
+    assert cleaned.count("The first complete body paragraph.") == 1
+
+
+def test_claude_blog_detail_cleaner_drops_meta_related_posts_and_subscription():
+    text = """
+![Hero](https://example.test/hero.svg)
+
+# Building verification loops
+
+How to close the feedback loop.
+
+- Category[Claude Code](https://claude.com/blog/category/claude-code)
+
+- ProductClaude Code
+
+- DateJuly 22, 2026
+
+- Reading time5min
+
+- Share[Copy link](https://claude.com/blog/example)
+
+The first body paragraph.
+
+The final body paragraph.
+
+FAQ
+
+No items found.
+
+## Related posts
+
+### Repeated recommendation title
+
+Repeated recommendation title
+
+## Transform how your organization operates with Claude
+
+Get the developer newsletter
+
+Thank you! You’re subscribed.
+
+Sorry, there was a problem with your submission, please try again later.
+""".strip()
+
+    cleaned = ClaudeBlogWebFetcher._clean_claude_blog_detail_text(text)
+
+    assert cleaned.endswith("The final body paragraph.")
+    assert "Category" not in cleaned
+    assert "Reading time" not in cleaned
+    assert "Related posts" not in cleaned
+    assert "Get the developer newsletter" not in cleaned
+    assert "Thank you!" not in cleaned
+
+
+def test_aiera_detail_cleaner_drops_fixed_heading_and_promotion_tail():
+    text = """
+### ![](https://aiera.com.cn/fixed-cover.jpg)
+
+### 新智元报道
+
+![](https://aiera.com.cn/article-banner.png)
+
+正文第一段。
+
+正文最后一段。
+
+秒追ASI
+
+⭐
+
+点赞、转发、在看一键三连
+
+点亮星标，锁定新智元极速推送！
+
+![](https://aiera.com.cn/qr-1.jpg)
+
+![](https://aiera.com.cn/qr-2.jpg)
+""".strip()
+
+    cleaned = AieraWebsiteFetcher._clean_aiera_detail_text(text)
+
+    assert cleaned == (
+        "![](https://aiera.com.cn/article-banner.png)\n\n"
+        "正文第一段。\n\n"
+        "正文最后一段。"
+    )
+
+
+def test_noise_profiles_include_current_site_component_variants():
+    anthropic = resolve_profile("https://www.anthropic.com/news/example")
+    claude = resolve_profile("https://claude.com/blog/example")
+    qbitai = resolve_profile("https://www.qbitai.com/2026/07/1.html")
+    aiera = resolve_profile("https://aiera.com.cn/2026/07/23/example")
+
+    assert '[class*="RelatedContent"]' in anthropic.excluded_selector
+    assert "article > header" in anthropic.excluded_selector
+    assert '[class*="blog_post"][class*="related"]' in claude.excluded_selector
+    assert '[class*="blog_post"][class*="newsletter"]' in claude.excluded_selector
+    assert ".article .article_info" in qbitai.excluded_selector
+    assert ".article > .subtitle" in qbitai.excluded_selector
+    assert "article .entry-content > h3:first-child + h3" in aiera.excluded_selector
 
 
 def test_qbitai_fetcher_uses_main_article_list_only():
@@ -1203,8 +1368,13 @@ def test_qbitai_detail_scoped_to_article_body_drops_noise_and_tags():
         <div class="content">
           <div class="wx_img">< img id="wx_img" src="https://www.qbitai.com/logo.png" width="400" height="400"></div>
           <div class="article">
+            <h1>测试标题</h1>
+            <div class="article_info">测试作者 2026-07-23 09:43:44 来源：量子位</div>
+            <p class="subtitle">这是不属于正文的文章副标题</p>
             <p>这是文章正文第一段，包含实际内容与观点。</p>
             <p>第二段正文继续展开说明，给出更多细节。</p>
+            <p>*本文系量子位获授权刊载，观点仅为原作者所有。</p>
+            <p>版权所有，未经授权不得以任何形式转载及使用，违者必究。</p>
           </div>
           <div class="tags"><a>标签A</a><a>标签B</a></div>
           <div class="person_box">作者简介信息</div>
@@ -1228,8 +1398,43 @@ def test_qbitai_detail_scoped_to_article_body_drops_noise_and_tags():
     assert "作者简介信息" not in text
     assert "相关阅读" not in text
     assert "热门文章" not in text and "关于量子位" not in text and "ICP备" not in text
+    assert "测试标题" not in text
+    assert "测试作者" not in text and "2026-07-23" not in text and "来源" not in text
+    assert "文章副标题" not in text
+    assert "获授权刊载" not in text and "版权所有" not in text and "违者必究" not in text
     # 不残留任何 HTML 标签。
     assert "<" not in text and ">" not in text
+
+
+def test_qbitai_detail_cleaner_uses_listing_summary_to_drop_subtitle():
+    text = """
+# 重复标题
+
+作者
+
+2026-07-23
+
+16:23:49
+
+来源：
+
+量子位
+
+VLA不是终局
+
+这是正文第一段，不能随副标题一起删除。
+
+这是正文最后一段。
+
+版权所有，未经授权不得以任何形式转载及使用，违者必究。
+""".strip()
+
+    cleaned = QbitAiWebsiteFetcher._clean_qbitai_detail_text(text, "VLA不是终局")
+
+    assert cleaned == (
+        "这是正文第一段，不能随副标题一起删除。\n\n"
+        "这是正文最后一段。"
+    )
 
 
 def test_detail_fallback_survives_whitelisted_kwargs():

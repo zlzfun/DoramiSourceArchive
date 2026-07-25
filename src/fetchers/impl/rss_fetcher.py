@@ -15,6 +15,7 @@ from fetchers.impl.article_extractor import (
     compact_text,
     extract_article_detail,
     extract_detail_from_html,
+    keep_dominant_child_html,
     node_to_markdown,
 )
 from fetchers.base import BaseFetcher
@@ -475,13 +476,14 @@ class OpenAINewsRssFetcher(PresetRssFetcher):
         return self._render_placeholder_re.sub("", text)
 
     def _strip_openai_trailers(self, html: str) -> str:
-        """移除 OpenAI 文章 ``<article>`` 正文之后的尾部噪声（作者署名 + “Keep reading” 相关推荐）。
+        """把 OpenAI 文章 ``<article>`` 收敛为纯正文块（剔除头部横幅与尾部噪声）。
 
-        openai.com 文章页把作者署名块（“… GPT Author OpenAI”）与相关推荐（“Keep reading / View
-        all”）作为 ``<article>`` 内**正文块之后的同级子节点**，类名全是无语义的 Tailwind 哈希工具类，
-        无法靠选择器精确剔除。但版式稳定：正文是 ``<article>`` 直接子节点中**文本最长**的那个，其后
-        的同级子节点均为尾部噪声。删除正文块之后的全部同级子节点即可，标题/导语块（在正文块之前）保留。
-        两条渲染路（crawl4ai/Playwright）产出的 HTML 都经此清洗，保持一致。失败/结构不符时原样返回。"""
+        openai.com 文章页的 ``<article>`` 直接子节点版式稳定：正文块之前是头部横幅
+        （日期/栏目/与元数据重复的标题/CTA 按钮/Share），之后是作者署名块与 “Keep reading”
+        相关推荐——类名全是无语义的 Tailwind 哈希工具类，无法靠选择器精确剔除。但正文
+        是直接子节点中**文本最长**的那个；标题/日期已从页面元数据单独取得，头尾兄弟节点
+        均为噪声，只保留正文块本身。两条渲染路（crawl4ai/Playwright）产出的 HTML 都经此
+        清洗，保持一致。失败/结构不符时原样返回。"""
         if not html:
             return html
         try:
@@ -493,12 +495,9 @@ class OpenAINewsRssFetcher(PresetRssFetcher):
             if len(children) < 2:
                 return html
             body = max(children, key=lambda c: len(c.get_text(" ", strip=True)))
-            cutting = False
             for child in children:
-                if cutting:
+                if child is not body:
                     child.decompose()
-                elif child is body:
-                    cutting = True
             return str(soup)
         except Exception as e:
             self.logger.warning(f"⚠️ OpenAI 尾部噪声清洗失败，使用原始 HTML: {e}")
@@ -681,6 +680,29 @@ class GoogleDeepMindBlogRssFetcher(PresetRssFetcher):
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
+
+    # 文章页(deepmind.google 或跳转后的 cloud.google.com)的 <article> 是
+    # 「头部横幅(栏目/重复标题/日期) + 正文 + Related articles 卡」三段式,
+    # 类名是混淆哈希无法选择器化——收敛为正文主块(与 OpenAI News 同法)。
+    async def _detail_for_url(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        max_chars: int,
+        detail_min_chars: int,
+    ) -> Dict[str, str]:
+        response = await self._safe_get(client, url)
+        if not response:
+            return {"title": "", "text": "", "method": "", "url": ""}
+        detail = await extract_article_detail(
+            client,
+            self._safe_get,
+            str(response.url),
+            keep_dominant_child_html(response.text),
+            max_chars,
+            detail_min_chars,
+        )
+        return {"title": detail.title, "text": detail.text, "method": detail.method, "url": detail.url}
 
 
 class MistralNewsRssFetcher(PresetRssFetcher):
@@ -1121,6 +1143,44 @@ class AppleMachineLearningResearchRssFetcher(PresetRssFetcher):
     noise_risk = "low_noise"
     fetch_reliability = "stable_public"
 
+    def _strip_apple_chrome(self, html: str) -> str:
+        """剔除 machinelearning.apple.com 论文页的站点镶边(2026-07 抽检)。
+
+        页面 <main> 四段式:头部 meta(research area 标签/重复标题,.header-border)、
+        正文(摘要)、相关论文卡(.cards-alt——曾把别的论文摘要混进正文)、招聘横幅
+        (.banner-footer)。侧栏 .column.large-3 是标签/按钮列。失败时原样返回。"""
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            for section in soup.find_all("section"):
+                if section.select_one(".cards-alt, .cards, .banner-footer, .header-border"):
+                    section.decompose()
+            for node in soup.select(".column.large-3"):
+                node.decompose()
+            return str(soup)
+        except Exception as e:
+            self.logger.warning(f"⚠️ Apple MLR 镶边清洗失败,使用原始 HTML: {e}")
+            return html
+
+    async def _detail_for_url(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        max_chars: int,
+        detail_min_chars: int,
+    ) -> Dict[str, str]:
+        response = await self._safe_get(client, url)
+        if not response:
+            return {"title": "", "text": "", "method": "", "url": ""}
+        detail = await extract_article_detail(
+            client,
+            self._safe_get,
+            str(response.url),
+            self._strip_apple_chrome(response.text),
+            max_chars,
+            detail_min_chars,
+        )
+        return {"title": detail.title, "text": detail.text, "method": detail.method, "url": detail.url}
+
 
 class NvidiaGenAiBlogRssFetcher(PresetRssFetcher):
     source_id = "rss_nvidia_genai"
@@ -1169,4 +1229,26 @@ class RedditLocalLlamaRssFetcher(PresetRssFetcher):
     default_fetch_detail_if_missing = False
     # feed 正文保结构，保留 self-post 的链接、列表与图片。
     feed_content_as_markdown = True
+
+    # Reddit feed 每条尾部的固定样板:"submitted by /u/xxx [link] [comments]"
+    # (提交者是元数据不是正文;[link]/[comments] 是站内跳转钮)。markdown 化后
+    # 链接可能保留也可能被剥,两种形态都匹配。
+    _reddit_trailer_re = re.compile(
+        r"\s*submitted by\s+(?:\[)?/u/\S+[\s\S]*$", re.IGNORECASE
+    )
+
+    def _entry_content_text(self, html_text: str, base_url: str) -> str:
+        if html_text:
+            try:
+                # 外链帖把缩略图+简介包在布局表格里,GFM 化后是半截表格残骸;拆表取内容
+                soup = BeautifulSoup(html_text, "html.parser")
+                if soup.find("table") is not None:
+                    for tag in soup.find_all(["table", "tbody", "tr", "td", "th"]):
+                        tag.unwrap()
+                    html_text = str(soup)
+            except Exception:  # noqa: BLE001 - 清洗失败不阻断条目
+                pass
+        text = super()._entry_content_text(html_text, base_url)
+        return self._reddit_trailer_re.sub("", text).strip()
+
     # Reddit 对数据中心 IP 存在 429 风险，观察期重点验证。
