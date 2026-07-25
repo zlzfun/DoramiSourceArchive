@@ -1352,19 +1352,7 @@ input[type="radio"] {
     animation-delay: var(--d, 0ms);
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .is-branded .auth-title-orig {
-      opacity: 0;
-      animation: none;
-    }
-    .is-branded .auth-title-brand {
-      animation: none;
-    }
-    .is-branded .auth-brandchar {
-      opacity: 1;
-      animation: none;
-    }
-  }
+  /* (登录页 reduced-motion 降级规则已删——品牌豁免,见文件末尾全局规则的说明) */
 
   .auth-lede {
     margin-top: 22px;
@@ -1768,60 +1756,9 @@ input[type="radio"] {
     }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .auth-orb-glow,
-    .auth-beam,
-    .auth-meteor,
-    .auth-particle,
-    .auth-sweep,
-    .auth-logo-halo,
-    .auth-card-ring,
-    .auth-submit-gloss,
-    .auth-title-accent.auth-word,
-    .auth-rise,
-    .auth-word {
-      animation: none !important;
-    }
-    .auth-rise,
-    .auth-word {
-      opacity: 1;
-    }
-    .auth-orb,
-    .auth-grid,
-    .auth-particles,
-    .auth-shell,
-    .auth-hero,
-    .auth-card-slot,
-    .auth-card,
-    .auth-feats {
-      transition: none;
-    }
-    .auth-card {
-      transform: none;
-    }
-    .auth-card::before,
-    .auth-card-glow {
-      transform: none;
-      transition: none;
-    }
-    .auth-card.is-shaking {
-      animation: none;
-    }
-    .auth-warp-flash {
-      transition: none;
-    }
-    .app-arrive,
-    .app-arrive-wait,
-    .app-arriving {
-      animation: none;
-      transition: none;
-    }
-    /* 头像仍保留透明门控（杜绝半张渲染），但去掉位移/过渡，加载完成即瞬时显现 */
-    .auth-logo-base {
-      transform: none;
-      transition: none;
-    }
-  }
+  /* (登录页/抵达幕 reduced-motion 降级规则已删——品牌豁免,2026-07-25 拍板:
+     登录电影感不随 OS「减少动画」降级,Windows 关动画效果时也完整呈现;
+     LoginScreen 的 prefersReducedMotion() 同步恒为 false,工作区规则不受影响) */
 
   /* ── Segmented control ── */
 
@@ -9461,10 +9398,14 @@ input[type="radio"] {
   }
 }
 
+/* 全局减动画收敛,但放行品牌演出子树(品牌豁免,2026-07-25 拍板):
+   .auth-stage(登录页)/.app-arrive(跃迁抵达幕)/.app-arriving(主界面显影)是刻意的
+   品牌表达,不随 OS「减少动画」降级——Windows「关闭动画效果」即命中此查询,
+   此前登录页因此只剩静止一帧。工作区(其余一切)仍全面尊重该设置。 */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *:not(.auth-stage, .auth-stage *, .app-arrive, .app-arrive *, .app-arriving),
+  *:not(.auth-stage, .auth-stage *, .app-arrive, .app-arrive *, .app-arriving)::before,
+  *:not(.auth-stage, .auth-stage *, .app-arrive, .app-arrive *, .app-arriving)::after {
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
