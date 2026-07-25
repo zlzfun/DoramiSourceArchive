@@ -10,7 +10,13 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 from fetchers.base import BaseFetcher
-from fetchers.impl.article_extractor import DETAIL_HARD_CAP, extract_article_detail, node_to_markdown
+from fetchers.impl.article_extractor import (
+    DETAIL_HARD_CAP,
+    _inline_markdown,
+    compact_text,
+    extract_article_detail,
+    node_to_markdown,
+)
 from fetchers.impl.webpage_fetcher import BaseWebPageListFetcher
 from models.content import BaseContent, WebPageArticleContent
 
@@ -54,6 +60,10 @@ class SinglePageDocumentFetcher(BaseFetcher):
 
     def _clean_text(self, text: str) -> str:
         return " ".join((text or "").split())
+
+    def _li_markdown(self, node: Tag, base_url: str) -> str:
+        """列表项转单行 markdown:保留链接/粗斜体/行内 code 的空格,取代 get_text 的强插分隔符。"""
+        return " ".join(ln for ln in _inline_markdown(node, base_url).split("\n") if ln)
 
     async def _render_page_html(self, url: str) -> str | None:
         """httpx 拆条为空时的浏览器兜底：惰性起一个 crawl4ai 后端取**渲染后的原始 HTML**。
@@ -363,9 +373,9 @@ class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
             raw_date = desc_node.get_text(" ", strip=True) if desc_node else ""
             publish_date = self._parse_release_date(raw_date)
 
-            bullets = [self._clean_text(node.get_text(" ", strip=True)) for node in content_node.select("li")]
+            bullets = [self._li_markdown(node, base_url) for node in content_node.select("li")]
             bullets = [bullet for bullet in bullets if bullet]
-            body = "\n\n".join(bullets) if bullets else self._clean_text(content_node.get_text(" ", strip=True))
+            body = "\n\n".join(bullets) if bullets else compact_text(node_to_markdown(content_node, base_url))
             body = body[:max_chars]
             if not body:
                 continue
@@ -497,11 +507,12 @@ class DevsiteReleaseNotesFetcher(SinglePageDocumentFetcher):
                 if isinstance(sibling, Tag):
                     if sibling.name in {"ul", "ol"}:
                         parts.extend(
-                            self._clean_text(li.get_text(" ", strip=True))
+                            self._li_markdown(li, base_url)
                             for li in sibling.find_all("li", recursive=False)
                         )
                     else:
-                        text = self._clean_text(sibling.get_text(" ", strip=True))
+                        # 容器兄弟节点(div 内嵌段落/子列表)markdown 化,免得 get_text 塌成单行
+                        text = compact_text(node_to_markdown(sibling, base_url))
                         if text:
                             parts.append(text)
                 sibling = sibling.find_next_sibling()
@@ -689,7 +700,10 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
             if not release_title or anchor in seen:
                 continue
 
-            body = self._clean_text(content_col.get_text(" ", strip=True))[:max_chars]
+            # 标题已单独成字段,从正文列摘除避免重复;markdown 化保段落/列表/链接
+            # (此前 get_text 整块塌陷成单行,块级换行全丢)
+            heading.extract()
+            body = compact_text(node_to_markdown(content_col, base_url))[:max_chars]
             if not body:
                 continue
 
@@ -821,11 +835,11 @@ class DeepSeekApiChangeLogFetcher(DevsiteReleaseNotesFetcher):
                             parts.append(model_name)
                     elif sibling.name in {"ul", "ol"}:
                         parts.extend(
-                            self._clean_text(li.get_text(" ", strip=True))
+                            self._li_markdown(li, base_url)
                             for li in sibling.find_all("li", recursive=False)
                         )
                     else:
-                        text = self._clean_text(sibling.get_text(" ", strip=True))
+                        text = compact_text(node_to_markdown(sibling, base_url))
                         if text:
                             parts.append(text)
                 sibling = sibling.find_next_sibling()
@@ -907,7 +921,8 @@ class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
                 continue
             model_name = text_parts[1]
 
-            bullets = [self._clean_text(node.get_text(" ", strip=True)) for node in item.select("li")]
+            base_url = resolved_url.split("#", 1)[0]
+            bullets = [self._li_markdown(node, base_url) for node in item.select("li")]
             bullets = [bullet for bullet in bullets if bullet]
             content = "\n\n".join(bullets) if bullets else "\n\n".join(text_parts[2:])
             content = content[:max_chars]
@@ -1363,6 +1378,48 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
 
         return ""
 
+    @staticmethod
+    def _clean_qbitai_detail_text(text: str, subtitle: str = "") -> str:
+        """移除文章容器内的标题/meta 头与固定授权版权尾注。"""
+        blocks = compact_text(text or "").split("\n\n")
+        for index, block in enumerate(blocks[:8]):
+            if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", block.strip()):
+                continue
+            end = index
+            if end + 1 < len(blocks) and re.fullmatch(
+                r"\d{1,2}:\d{2}(?::\d{2})?", blocks[end + 1].strip()
+            ):
+                end += 1
+            if end + 1 < len(blocks) and blocks[end + 1].strip() in {"来源：", "来源:"}:
+                end += 1
+            if end + 1 < len(blocks) and blocks[end + 1].strip() == "量子位":
+                end += 1
+            blocks = blocks[end + 1 :]
+            break
+
+        normalized_subtitle = " ".join((subtitle or "").split())
+        if (
+            normalized_subtitle
+            and len(normalized_subtitle) <= 100
+            and blocks
+            and " ".join(blocks[0].split()) == normalized_subtitle
+        ):
+            blocks = blocks[1:]
+
+        cleaned = "\n\n".join(blocks).strip()
+        trailer_matches = [
+            match.start()
+            for pattern in (
+                r"\n\n\*?本文[^\n]*量子位获授权[^\n]*",
+                # 正文经 markdown 化后该行可能带 <em> 转出的 *…* 斜体包裹
+                r"\n\n\*?版权所有，未经授权不得以任何形式转载及使用，违者必究[。.]?\*?",
+            )
+            for match in re.finditer(pattern, cleaned)
+        ]
+        if trailer_matches:
+            cleaned = cleaned[: min(trailer_matches)].rstrip()
+        return cleaned
+
     def _extract_qbitai_detail(self, html_text: str, max_chars: int, base_url: str = "") -> Dict[str, str]:
         """限定到量子位文章正文容器 ``div.content > div.article``。
 
@@ -1376,7 +1433,16 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
         if not body:
             return {"title": title, "text": "", "method": ""}
 
-        for selector in ["script", "style", "noscript", "button", ".wx_img", ".share_pc", ".tags", ".person_box", ".xiangguan", "img.avatar", ".avatar"]:
+        for selector in [
+            "script", "style", "noscript", "button", ".wx_img", ".share_pc",
+            ".tags", ".person_box", ".xiangguan", "img.avatar", ".avatar",
+            ".article > h1:first-child", ".article .article-title",
+            ".article .article_title", ".article .article-info",
+            ".article .article_info", ".article .post-meta", ".article > .meta",
+            ".article > .info", ".article > .source", ".article > .subtitle",
+            ".article > .sub_title", ".article > .article-subtitle",
+            ".article > .article_subtitle",
+        ]:
             for node in body.select(selector):
                 node.decompose()
 
@@ -1384,11 +1450,15 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
         text = node_to_markdown(body, base_url)
         if not text:
             text = self._clean_text(body.get_text(" ", strip=True))
+        text = self._clean_qbitai_detail_text(text)
         return {"title": title, "text": text[:max_chars], "method": "qbitai_article_body"}
 
     async def _detail_for_url(self, client: httpx.AsyncClient, url: str, max_chars: int) -> Dict[str, str]:
         backend_detail = await self._web_backend_detail(url, max_chars)
         if backend_detail:
+            backend_detail["text"] = self._clean_qbitai_detail_text(
+                backend_detail.get("text", "")
+            )[:max_chars]
             return backend_detail
         response = await self._safe_get(client, url)
         if not response:
@@ -1465,6 +1535,10 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
             detail_fetched = fetch_detail and not await self._should_skip_detail_fetch(content_id)
             if detail_fetched:
                 detail = await self._detail_for_url(client, url, detail_max_chars)
+                if detail["text"]:
+                    detail["text"] = self._clean_qbitai_detail_text(
+                        detail["text"], summary
+                    )[:detail_max_chars]
                 if detail["title"] and not title:
                     title = detail["title"]
             content = detail["text"] or summary
@@ -1531,6 +1605,37 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
     signal_strength = "medium_signal"
     noise_risk = "high_noise"
     fetch_reliability = "stable_public_website"
+
+    @staticmethod
+    def _clean_aiera_detail_text(text: str) -> str:
+        """剔除编辑模板的固定头图/“新智元报道”标题与文末推广二维码块。"""
+        cleaned = compact_text(text or "")
+        cleaned = re.sub(
+            r"\A### !\[[^\]]*\]\([^)]+\)\n\n### 新智元报道\n\n",
+            "",
+            cleaned,
+        )
+        cleaned = re.sub(r"\A### 新智元报道\n\n", "", cleaned)
+
+        trailer_positions = [
+            cleaned.find(marker)
+            for marker in (
+                "\n\n秒追ASI",
+                "\n\n点赞、转发、在看一键三连",
+                "\n\n点亮星标，锁定新智元极速推送",
+            )
+        ]
+        trailer_positions = [position for position in trailer_positions if position >= 0]
+        if trailer_positions:
+            cleaned = cleaned[: min(trailer_positions)].rstrip()
+        return cleaned
+
+    async def _detail_for_url(
+        self, client: httpx.AsyncClient, url: str, max_chars: int
+    ) -> Dict[str, str]:
+        detail = await super()._detail_for_url(client, url, max_chars)
+        detail["text"] = self._clean_aiera_detail_text(detail.get("text", ""))[:max_chars]
+        return detail
 
     def _matches_article_url(self, url: str) -> bool:
         if not super()._matches_article_url(url):

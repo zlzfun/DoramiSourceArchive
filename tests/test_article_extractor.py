@@ -219,3 +219,77 @@ def test_node_to_markdown_skips_html_comments():
     html = "<div><!-- SC_OFF --><p>real <!-- inline note -->body</p><!-- SC_ON --></div>"
     md = node_to_markdown(BeautifulSoup(html, "html.parser").div)
     assert md == "real body"
+
+
+def test_inline_nested_boundary_whitespace_preserved():
+    # 嵌套行内元素内侧的边界空格不得丢失（OpenAI 页 "take shape inAbilene" 黏连问题）
+    html = (
+        '<div><p><span>take shape in </span>'
+        '<a href="https://ex.com/a"><u><span>Abilene, Texas</span></u>'
+        '<span class="sr-only">(opens in a new window)</span></a>'
+        '<span>, where our first campus…</span></p></div>'
+    )
+    node = BeautifulSoup(html, "html.parser").div
+    md = node_to_markdown(node, "https://openai.com/index/x/")
+    assert "take shape in [Abilene, Texas](https://ex.com/a)," in md
+    # 视觉隐藏的无障碍文案不进正文/链接文本
+    assert "opens in a new window" not in md
+
+
+def test_inline_bold_and_italic_markers_with_boundary_space():
+    # <b>/<strong> 转 **，<em>/<i> 转 *；元素内侧尾随空格垫到标记外，避免与后文黏连
+    html = (
+        "<div><p><b><span>1. Rates will not go up. </span></b>"
+        "<span>Georgia families will not subsidize.</span> "
+        "An <em>emphasis</em> word.</p></div>"
+    )
+    node = BeautifulSoup(html, "html.parser").div
+    md = node_to_markdown(node, "https://x.com/a")
+    assert "**1. Rates will not go up.** Georgia families" in md
+    assert "An *emphasis* word." in md
+
+
+def test_compact_text_strips_zero_width_chars():
+    from fetchers.impl.article_extractor import compact_text
+
+    assert compact_text("A⁠B​C﻿D") == "ABCD"
+
+
+def test_heading_permalink_anchor_stripped():
+    # Hugo/Docusaurus 标题自链([#]/¶)不是正文,须剥离(cursor changelog/lilianweng)
+    html = (
+        '<div><h2><a href="https://cursor.com/changelog#run">#</a>Run Bugbot</h2>'
+        '<h1>Harness Design Patterns<a href="https://x.io/p#h">#</a></h1></div>'
+    )
+    node = BeautifulSoup(html, "html.parser").div
+    md = node_to_markdown(node, "https://cursor.com/changelog")
+    assert "## Run Bugbot" in md
+    assert "# Harness Design Patterns" in md
+    assert "[#]" not in md and "](" not in md
+
+
+def test_google_redirect_link_unwrapped():
+    # Google Docs 导出的 google.com/url?q= 包裹链接应解包为真实地址(rss_raschka)
+    html = (
+        '<div><p>See <a href="https://www.google.com/url?q=https://example.com/post&amp;sa=D&amp;ust=1">'
+        'the post</a> here.</p></div>'
+    )
+    node = BeautifulSoup(html, "html.parser").div
+    md = node_to_markdown(node, "https://x.com/a")
+    assert "[the post](https://example.com/post)" in md
+    assert "google.com/url" not in md
+
+
+def test_video_player_chrome_skipped():
+    # Ghost 视频卡的 <video> 子树与 kg-video-player 控件条(时间码)不是正文
+    html = (
+        '<div><p>正文前。</p>'
+        '<figure class="kg-video-card"><video src="/v.mp4">fallback</video>'
+        '<div class="kg-video-player-container"><span>0:00</span><div>/</div><span>1:34</span></div>'
+        '<figcaption>视频标题</figcaption></figure>'
+        '<p>正文后。</p></div>'
+    )
+    node = BeautifulSoup(html, "html.parser").div
+    md = node_to_markdown(node, "https://x.com/a")
+    assert "0:00" not in md and "1:34" not in md and "fallback" not in md
+    assert "视频标题" in md and "正文前。" in md and "正文后。" in md

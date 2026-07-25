@@ -495,13 +495,13 @@ def test_openai_news_falls_back_to_summary_when_all_renderers_fail():
     assert detail["text"] == ""
 
 
-def test_openai_news_strips_trailing_related_and_byline():
-    # OpenAI 文章 <article> 内，正文块之后的署名 section 与 "Keep reading" 相关推荐应被剔除，
-    # 正文块之前的标题/导语保留。
+def test_openai_news_strips_header_banner_and_trailers():
+    # OpenAI 文章 <article> 只保留正文块：之前的头部横幅（日期/栏目/重复标题/CTA）与
+    # 之后的署名 section、"Keep reading" 相关推荐均剔除（标题/日期另取自页面元数据）。
     fetcher = OpenAINewsRssFetcher()
     html = (
         "<html><body><article>"
-        "<div>June 23, 2026 Applied AI The Real Title Intro lead paragraph.</div>"
+        "<div>June 23, 2026 Applied AI The Real Title Visit Project CTA</div>"
         "<div>" + ("Actual article body sentence. " * 40) + "Final real sentence.</div>"
         "<section>2026 GPT Author OpenAI</section>"
         "<div><h2>Keep reading</h2><a>View all</a><p>Related article one</p></div>"
@@ -511,9 +511,10 @@ def test_openai_news_strips_trailing_related_and_byline():
     assert "Keep reading" not in cleaned
     assert "Related article one" not in cleaned
     assert "Author OpenAI" not in cleaned
-    # 正文与导语保留
+    # 头部横幅剔除，正文保留
+    assert "Visit Project CTA" not in cleaned
+    assert "June 23, 2026" not in cleaned
     assert "Final real sentence." in cleaned
-    assert "Intro lead paragraph." in cleaned
 
 
 def test_openai_news_trailer_strip_is_noop_without_article():
