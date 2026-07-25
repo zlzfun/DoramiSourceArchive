@@ -611,6 +611,7 @@ export default function App() {
           username={authState.user?.username}
           roleLabel={roleLabel}
           onLogout={handleLogout}
+          onLogoutHint={() => showToast('再次点击头像即可退出登录', 'info')}
         >
           {/* 隐藏切换钮(v3.19):管理员也是读者——进入阅读器 standalone 整页形态,
               阅读器轨底有对称的「返回管理台」钮。 */}

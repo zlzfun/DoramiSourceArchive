@@ -270,13 +270,13 @@ def test_reader_sources_catalog_marks_subscribed(monkeypatch, tmp_path):
     assert by_id["rss_openai"]["subscriber_count"] == 1
     assert by_id["gh_repo"]["subscriber_count"] == 0
     assert by_id["dorami_daily_brief"]["subscriber_count"] == 1
-    # 新读者账号会被默认播种「哆啦美·AI资讯日报」订阅（可取消），故并集含日报源。
-    assert set(data["subscribed_source_ids"]) == {"rss_openai", "dorami_daily_brief"}
+    # 新读者账号会被默认播种精选订阅（日报 + 精选源，可取消），故并集 = 手动订阅 ∪ 默认名单。
+    assert set(data["subscribed_source_ids"]) == {"rss_openai", *app_module.DEFAULT_SUBSCRIPTION_SOURCE_IDS}
     assert by_id["dorami_daily_brief"]["subscribed"] is True
 
 
 def test_default_subscription_seeded_once_and_not_resurrected(monkeypatch, tmp_path):
-    """新读者首次访问目录自带日报订阅；取消后不会被再次播种。"""
+    """新读者首次访问目录自带精选默认订阅；取消后不会被再次播种。"""
     import api.app as app_module
 
     sink = _make_sink(tmp_path, "defaults.db")
@@ -286,14 +286,16 @@ def test_default_subscription_seeded_once_and_not_resurrected(monkeypatch, tmp_p
 
     with TestClient(app_module.app) as client:
         _login(client)
-        # 首次访问即自带日报订阅
+        # 首次访问即自带全部默认精选订阅（v3.22 扩为 5 源）
         first = client.get("/api/reader/sources").json()
-        assert "dorami_daily_brief" in first["subscribed_source_ids"]
+        assert set(app_module.DEFAULT_SUBSCRIPTION_SOURCE_IDS) <= set(first["subscribed_source_ids"])
 
         # 取消订阅后应彻底移除
         client.delete("/api/reader/sources/dorami_daily_brief/subscribe")
         after_unsub = client.get("/api/reader/sources").json()
         assert "dorami_daily_brief" not in after_unsub["subscribed_source_ids"]
+        # 其余默认源不受影响
+        assert "web_qbitai" in after_unsub["subscribed_source_ids"]
 
         # 再次访问目录不会被重新播种（标记守卫生效）
         again = client.get("/api/reader/sources").json()

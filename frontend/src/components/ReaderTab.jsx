@@ -998,6 +998,7 @@ export default function ReaderTab({
               avatarText={avatarText}
               username={account?.username}
               onLogout={onLogout}
+              onLogoutHint={() => showToast('再次点击头像即可退出登录', 'info')}
               notify={feedbackUnread > 0}
             >
               {/* 返回管理台(v3.19):与应用导轨轨底「进入阅读器」对称的隐藏切换钮,仅 admin 有 */}
@@ -1560,7 +1561,11 @@ export default function ReaderTab({
         ) : (
           <div className="reader-empty reader-empty-read">
             <BookOpenText className="h-8 w-8 text-slate-300" />
-            <span>从中间选择一篇文章开始阅读</span>
+            <span>选择一篇文章以开始阅读</span>
+            {/* 新老用户通用的轻引导:空态下一行小字直达发现页(欢迎卡方案已否决——太啰嗦) */}
+            <button type="button" className="reader-empty-link" onClick={() => setDiscover(true)}>
+              去「发现」添加订阅
+            </button>
           </div>
         )}
       </section>
