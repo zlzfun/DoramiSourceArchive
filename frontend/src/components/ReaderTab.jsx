@@ -227,7 +227,6 @@ export default function ReaderTab({
   // ── standalone(读者账号):应用导轨已隐藏,视图轨独占——轨底并入用户菜单 ──
   standalone = false,
   account = null,
-  avatarText = '',
   themeDark = false,
   onToggleTheme,
   onOpenSettings,
@@ -995,7 +994,6 @@ export default function ReaderTab({
             <div className="reader-vrail-spring" />
             <RailUserFlyout
               avatar={account?.avatar}
-              avatarText={avatarText}
               username={account?.username}
               onLogout={onLogout}
               onLogoutHint={() => showToast('再次点击以退出登录', 'info')}

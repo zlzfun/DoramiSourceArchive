@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Power } from 'lucide-react';
+import { avatarInitial, avatarHue } from '../utils/avatarColor';
 
 // 轨底用户滑出菜单(2026-07-24 拍板:头像与设置钮功能重复——改为「常态只见头像,
 // hover/聚焦时工具钮向上滑出、头像同时变为关机样式的退出钮」)。
@@ -11,7 +12,7 @@ import { Power } from 'lucide-react';
 // 光标移出滑出菜单或超时即解除。实测首次用户会因好奇点头像而误退,故加此闸。
 const ARM_WINDOW_MS = 4000;
 
-export default function RailUserFlyout({ avatar, avatarText, username, roleLabel, onLogout, onLogoutHint, notify = false, children }) {
+export default function RailUserFlyout({ avatar, username, roleLabel, onLogout, onLogoutHint, notify = false, children }) {
   const [armed, setArmed] = useState(false);
   const armTimerRef = useRef(null);
 
@@ -44,10 +45,12 @@ export default function RailUserFlyout({ avatar, avatarText, username, roleLabel
       >
         {/* 轻通知点(如:反馈有新回复):挂头像因 flyout 常态收起只见头像 */}
         {notify && <span className="rail-avatar-dot" aria-hidden="true" />}
-        <span className="rail-avatar-face" aria-hidden="true">
-          {avatar
-            ? <img src={avatar} alt="" />
-            : <span>{avatarText || (username || '?').slice(0, 2).toUpperCase()}</span>}
+        <span
+          className={`rail-avatar-face${avatar ? '' : ' avatar-letter'}`}
+          style={avatar ? undefined : { '--avatar-h': avatarHue(username) }}
+          aria-hidden="true"
+        >
+          {avatar ? <img src={avatar} alt="" /> : <span>{avatarInitial(username)}</span>}
         </span>
         <span className="rail-avatar-power" aria-hidden="true">
           <Power />

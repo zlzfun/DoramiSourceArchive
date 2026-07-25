@@ -50,6 +50,7 @@ import AdminAuditPanel from './admin/AdminAuditPanel';
 import Pager from './admin/Pager';
 import { pivotDaily, C_READ, C_FAVORITE, C_SUBSCRIBE } from './charts/chartUtils';
 import { PURPOSE_LABELS, formatStamp, fmtNum, pct, truncLabel, vectorizedRateClass } from './admin/adminUtils';
+import { avatarInitial, avatarHue } from '../utils/avatarColor';
 
 // 账户列表分页大小：超过即翻页，避免成百上千账户一次性平铺。
 const ACCOUNTS_PAGE_SIZE = 15;
@@ -623,7 +624,7 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
                         >
                           <td>
                             <span className="acct-user">
-                              <span className="acct-avatar">{account.username.charAt(0).toUpperCase()}</span>
+                              <span className="acct-avatar avatar-letter" style={{ '--avatar-h': avatarHue(account.username) }}>{avatarInitial(account.username)}</span>
                               <span className="acct-name">{account.username}</span>
                             </span>
                           </td>
@@ -915,7 +916,7 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
         aria-hidden={!detailUser}
       >
         <div className="ledger-drawer-head">
-          <span className="acct-avatar">{detailUser ? detailUser.charAt(0).toUpperCase() : ''}</span>
+          <span className="acct-avatar avatar-letter" style={{ '--avatar-h': avatarHue(detailUser) }}>{detailUser ? avatarInitial(detailUser) : ''}</span>
           <span className="ledger-drawer-title">{detailUser}</span>
           {detailData && (detailData.account.is_active ? <span className="stamp stamp-ok">启用</span> : <span className="stamp stamp-idle">停用</span>)}
           <button type="button" className="icon-button shrink-0" onClick={() => setDetailUser(null)} aria-label="关闭详情"><X className="h-5 w-5" /></button>

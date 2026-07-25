@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { BookOpen, KeyRound, LayoutDashboard, Loader2 } from 'lucide-react';
 import { changeOwnPassword, updateAvatar, updateOwnPreferences } from '../../api';
+import { avatarInitial, avatarHue } from '../../utils/avatarColor';
 
 // 客户端把头像缩到 maxSize 见方以内并转成 JPEG data URL，控制体积（后端再做上限校验）。
 function readImageAsDataUrl(file, maxSize = 256) {
@@ -58,7 +59,7 @@ export default function AccountSection({ username, avatar, accountRoleLabel, isA
     }
   };
 
-  const initials = (username?.trim()?.slice(0, 2) || 'AD').toUpperCase();
+  const initial = avatarInitial(username);
 
   const handleAvatarFile = async (event) => {
     const file = event.target.files?.[0];
@@ -124,7 +125,7 @@ export default function AccountSection({ username, avatar, accountRoleLabel, isA
         {avatar ? (
           <img src={avatar} alt="头像" className="sett-avatar object-cover" />
         ) : (
-          <span className="sett-avatar avatar-badge text-white">{initials}</span>
+          <span className="sett-avatar avatar-letter" style={{ '--avatar-h': avatarHue(username) }}>{initial}</span>
         )}
         <span className="sett-id">
           <span className="sett-acct-name">{username || '—'}</span>

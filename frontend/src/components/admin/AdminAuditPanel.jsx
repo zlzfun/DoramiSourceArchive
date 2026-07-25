@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { fetchAdminAuditLog } from '../../api';
 import { formatStamp } from './adminUtils';
+import { avatarInitial, avatarHue } from '../../utils/avatarColor';
 import Pager from './Pager';
 
 // 操作审计(v3.19 多管理员波):中间件对命中管理面前缀的非 GET 请求逐条落行,
@@ -89,7 +90,7 @@ export default function AdminAuditPanel({ days, showToast }) {
                       <td><span className="acct-mono">{formatStamp(it.at)}</span></td>
                       <td>
                         <span className="acct-user">
-                          <span className="acct-avatar">{(it.username || '?').charAt(0).toUpperCase()}</span>
+                          <span className="acct-avatar avatar-letter" style={{ '--avatar-h': avatarHue(it.username) }}>{avatarInitial(it.username)}</span>
                           <span className="acct-name">{it.username}</span>
                         </span>
                       </td>
