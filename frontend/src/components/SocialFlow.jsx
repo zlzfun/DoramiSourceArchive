@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AtSign, Check, CheckCheck, Circle, Loader2, Repeat2, Search, Star, X } from 'lucide-react';
 import LogoMark from './LogoMark';
 import { platformLabelOf, resolveCompany } from '../sourceTaxonomy';
@@ -142,7 +142,9 @@ function SocialCardsSkeleton({ count = 3 }) {
 
 const CLAMP_CHARS = 360; // 超过此长度折叠(约样页的 7 行)
 
-function SocialPost({
+// memo:未读轮询/搜索键入等高频父级渲染下,仅 props 实际变化的卡片重渲
+// (回调经 ReaderTab latest-ref 稳定包装,article 引用在增量追加下不变)。
+const SocialPost = memo(function SocialPost({
   article,
   source,
   sourceName,
@@ -261,7 +263,7 @@ function SocialPost({
       </div>
     </article>
   );
-}
+});
 
 export default function SocialFlow({
   articles = [],

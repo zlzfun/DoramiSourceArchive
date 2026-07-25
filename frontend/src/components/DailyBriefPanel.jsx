@@ -1,17 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronRight, Loader2, Play, Trash2 } from 'lucide-react';
 import {
   getDailyBriefConfig,
   saveDailyBriefConfig,
   generateDailyBrief,
   getDailyBriefProgress,
+  fetchArticle,
   fetchArticles,
   fetchReaderSources,
   deleteArticle,
 } from '../api';
 import { useConfirm } from '../hooks/useConfirm';
+import { usePolling } from '../hooks/usePolling';
 
 const DAILY_BRIEF_SOURCE_ID = 'dorami_daily_brief';
+// 近期日报分页尺寸:列表只取标题/meta(不带正文),正文在展开单期时懒加载——
+// 全量带正文取数曾在生产造成进页长卡顿(60 期日报全文一次性拉回)。
+const HISTORY_PAGE_SIZE = 10;
 
 // 生成流水线五段:收集 / 摘要 / 去重 / 精选 / 成稿。
 // 后端 progress phase(collecting/mapping/selecting/reducing/persisting/done)映射到段索引;
@@ -48,8 +53,13 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
   const [progress, setProgress] = useState(null);
   const [stepIndex, setStepIndex] = useState(0);   // 当前流水线段索引(0..5),error 时停在最后已知段
 
-  const [history, setHistory] = useState([]);
+  const [history, setHistory] = useState(null);  // null=未加载(区别于「确认为空」)
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
+  const [bodyCache, setBodyCache] = useState({});      // id → 正文(''=确认无正文,null=加载失败)
+  const [bodyLoadingId, setBodyLoadingId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
 
   const loadBrief = () => getDailyBriefConfig()
@@ -77,31 +87,59 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
     });
   };
 
-  const loadHistory = () => fetchArticles({ source_id: DAILY_BRIEF_SOURCE_ID }, 60, 0, true)
-    .then(d => setHistory(d.items || []))
-    .catch(() => {});
+  const loadHistory = useCallback((page = 1) => {
+    setHistoryLoading(true);
+    setExpandedId(null);
+    return fetchArticles(
+      { source_id: DAILY_BRIEF_SOURCE_ID },
+      HISTORY_PAGE_SIZE, (page - 1) * HISTORY_PAGE_SIZE, true,
+      { includeContent: false, includeExtensions: true },  // 行 meta(收录条数/模型)在 extensions 里
+    )
+      .then(d => {
+        setHistory(d.items || []);
+        setHistoryTotal(d.total ?? (d.items || []).length);
+        setHistoryPage(page);
+      })
+      .catch(() => {})
+      .finally(() => setHistoryLoading(false));
+  }, []);
 
   useEffect(() => {
     if (!canManage) return;
     loadBrief();
-    loadHistory();
-  }, [canManage]);
+    loadHistory(1);
+  }, [canManage, loadHistory]);
+
+  const pollProgress = useCallback(async () => {
+    const p = await getDailyBriefProgress();
+    setProgress(p);
+    const idx = PHASE_NOW[p?.phase];
+    if (idx !== undefined) setStepIndex(idx);   // error/empty(idx undefined)不动,停在最后已知段
+  }, []);
 
   // 生成进行中才轮询后端实时阶段;卸载/结束时清除,避免退出登录后仍打 collector 端点。
-  useEffect(() => {
-    if (!generating) return undefined;
-    const poll = setInterval(() => {
-      getDailyBriefProgress().then(p => {
-        setProgress(p);
-        const idx = PHASE_NOW[p?.phase];
-        if (idx !== undefined) setStepIndex(idx);   // error/empty(idx undefined)不动,停在最后已知段
-      }).catch(() => {});
-    }, 1200);
-    return () => clearInterval(poll);
-  }, [generating]);
+  // 生成动画需要持续走字,故不随页面隐藏暂停。
+  usePolling(pollProgress, 1200, { immediate: false, pauseWhenHidden: false, enabled: generating });
 
   const briefMeta = (record) => {
     try { return JSON.parse(record.extensions_json || '{}'); } catch { return {}; }
+  };
+
+  // 展开单期时才拉正文(列表取数不带 content);null=失败,再次展开可重试。
+  const toggleExpand = async (record) => {
+    if (expandedId === record.id) { setExpandedId(null); return; }
+    setExpandedId(record.id);
+    if (bodyCache[record.id] == null) {
+      setBodyLoadingId(record.id);
+      try {
+        const full = await fetchArticle(record.id);
+        setBodyCache(prev => ({ ...prev, [record.id]: full.content || '' }));
+      } catch {
+        setBodyCache(prev => ({ ...prev, [record.id]: null }));
+      } finally {
+        setBodyLoadingId(null);
+      }
+    }
   };
 
   const handleDelete = async (id) => {
@@ -111,7 +149,9 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
       await deleteArticle(id);
       if (expandedId === id) setExpandedId(null);
       showToast('已删除 日报', 'success');
-      loadHistory();
+      // 删掉当页最后一条后回退一页,避免落在空页
+      const emptied = (history?.length || 0) <= 1 && historyPage > 1;
+      loadHistory(emptied ? historyPage - 1 : historyPage);
       loadBrief();
     } catch (error) {
       showToast(error.message || '删除失败', 'error');
@@ -178,7 +218,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
       if (r.status === 'empty') showToast('暂无新增内容可生成日报', 'info');
       else showToast(`已生成 日报 ${r.report_date} · 收录 ${r.articles_count} 条`, 'success');
       loadBrief();
-      loadHistory();
+      loadHistory(1);
     } catch (error) {
       showToast(error.message || '生成失败', 'error');
     } finally {
@@ -186,6 +226,22 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
       setGenerating(false);
     }
   };
+
+  // 页码窗口:首页、当前±1、末页,间断处省略号(.pager 范式,与台账同式)
+  const historyTotalPages = Math.max(1, Math.ceil(historyTotal / HISTORY_PAGE_SIZE));
+  const historyPageWindow = useMemo(() => {
+    const wanted = [1, historyPage - 1, historyPage, historyPage + 1, historyTotalPages]
+      .filter(p => p >= 1 && p <= historyTotalPages);
+    const uniq = [...new Set(wanted)].sort((a, b) => a - b);
+    const out = [];
+    let prev = 0;
+    for (const p of uniq) {
+      if (p - prev > 1) out.push({ ellipsis: true, key: `e${p}` });
+      out.push({ page: p, key: p });
+      prev = p;
+    }
+    return out;
+  }, [historyPage, historyTotalPages]);
 
   if (!canManage) return null;
 
@@ -206,7 +262,8 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
       {/* ── 定时配置 ── */}
       <div className="brief-col">
         <div className="brief-col-title">定时配置</div>
-        {/* 开关与保存同一行:开关即时生效,保存针对下方 cron/条数 的编辑 */}
+        {/* 开关独立成行、开即生效;下方 cron/条数/源范围 是一组编辑字段,由表尾「保存配置」统一提交
+           (原保存钮与开关同行,会被误读为只保存开关——用户目检后拆开) */}
         <div className="brief-switch-row">
           <span className="brief-switch-main">
             <button
@@ -219,7 +276,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
             />
             每日自动生成
           </span>
-          <button onClick={handleSaveSettings} className="action-button action-button-quiet min-h-[28px] px-3 text-xs">保存配置</button>
+          <span className="tiny-meta shrink-0">开关即时生效</span>
         </div>
         <div className="brief-field">
           <label className="form-label" htmlFor="brief-cron">cron 表达式（5 段）</label>
@@ -233,7 +290,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
         {/* ── 源范围:手工名单(全部来源 ⇄ 自定名单) ── */}
         <div className="brief-field">
           <span className="form-label">日报源范围</span>
-          <div className="mini-seg" role="tablist" aria-label="日报源范围">
+          <div className="mini-seg is-fluid" role="tablist" aria-label="日报源范围">
             {[['all', '全部来源'], ['custom', '自定名单']].map(([value, label]) => (
               <button
                 key={value}
@@ -276,6 +333,12 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
           </p>
         </div>
 
+        {/* 表尾保存:统一提交上方 cron/条数/源范围 三项编辑(hairline 分隔标明辖区) */}
+        <div className="brief-save-row">
+          <button onClick={handleSaveSettings} className="action-button action-button-secondary min-h-[32px] px-3 text-xs w-full justify-center">保存配置</button>
+          <p className="tiny-meta">cron、每期条数与源范围的改动,保存后生效</p>
+        </div>
+
         <div className="brief-cursor-row">
           <span className="tiny-meta shrink-0">增量游标</span>
           <code className="brief-cursor-val" title={cursorVal}>{cursorVal}</code>
@@ -316,44 +379,74 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
           <p>候选取自上次成功生成之后新入库的文章（游标不回退）；同日同事件聚类合并，近几日正文注入 reduce 阶段做跨日语义去重。生成在后台任务中执行，可离开本页。</p>
         </details>
 
-        {history.length === 0 ? (
-          <p className="brief-empty">还没有生成过日报。配置好模型后点「立即生成日报」试试。</p>
-        ) : (
-          history.map(record => {
-            const meta = briefMeta(record);
-            const open = expandedId === record.id;
-            const metaBits = [
-              typeof meta.articles_count === 'number' ? `收录 ${meta.articles_count} 条` : null,
-              meta.llm_model || null,
-            ].filter(Boolean);
-            return (
-              <div key={record.id} className="brief-run">
-                <div className="brief-run-line">
-                  <button
-                    type="button"
-                    className="brief-run-head"
-                    aria-expanded={open}
-                    onClick={() => setExpandedId(open ? null : record.id)}
-                  >
-                    <ChevronRight className="brief-run-caret" />
-                    <span className="brief-run-date">{record.publish_date || record.id}</span>
-                    <span className="brief-run-meta">{metaBits.join(' · ')}</span>
-                    <span className="stamp stamp-ok">已生成</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="brief-run-del"
-                    onClick={() => handleDelete(record.id)}
-                    disabled={deletingId === record.id}
-                    title="删除该日报"
-                  >
-                    {deletingId === record.id ? <Loader2 className="animate-spin" /> : <Trash2 />}
-                  </button>
-                </div>
-                {open && <pre className="brief-run-body">{record.content || '（无正文）'}</pre>}
+        {history !== null && history.length === 0 && (
+          historyPage === 1
+            ? <p className="brief-empty">还没有生成过日报。配置好模型后点「立即生成日报」试试。</p>
+            : <p className="brief-empty">本页已无日报,请回到前一页。</p>
+        )}
+        {(history || []).map(record => {
+          const meta = briefMeta(record);
+          const open = expandedId === record.id;
+          const body = bodyCache[record.id];
+          const metaBits = [
+            typeof meta.articles_count === 'number' ? `收录 ${meta.articles_count} 条` : null,
+            meta.llm_model || null,
+          ].filter(Boolean);
+          return (
+            <div key={record.id} className="brief-run">
+              <div className="brief-run-line">
+                <button
+                  type="button"
+                  className="brief-run-head"
+                  aria-expanded={open}
+                  onClick={() => toggleExpand(record)}
+                >
+                  <ChevronRight className="brief-run-caret" />
+                  <span className="brief-run-date">{record.publish_date || record.id}</span>
+                  <span className="brief-run-meta">{metaBits.join(' · ')}</span>
+                  <span className="stamp stamp-ok">已生成</span>
+                </button>
+                <button
+                  type="button"
+                  className="brief-run-del"
+                  onClick={() => handleDelete(record.id)}
+                  disabled={deletingId === record.id}
+                  title="删除该日报"
+                >
+                  {deletingId === record.id ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                </button>
               </div>
-            );
-          })
+              {open && (
+                bodyLoadingId === record.id
+                  ? <p className="pipeline-note">加载正文…</p>
+                  : <pre className="brief-run-body">{body == null ? '正文加载失败,重新展开可重试' : (body || '（无正文）')}</pre>
+              )}
+            </div>
+          );
+        })}
+
+        {historyTotal > HISTORY_PAGE_SIZE && (
+          <div className="brief-pager-row">
+            <span className="tiny-meta">共 {historyTotal} 期</span>
+            <div className="pager">
+              <button type="button" className="pager-btn" onClick={() => loadHistory(historyPage - 1)} disabled={historyPage <= 1 || historyLoading} aria-label="上一页">«</button>
+              {historyPageWindow.map(item => (item.ellipsis ? (
+                <span key={item.key} className="pager-ellipsis">…</span>
+              ) : (
+                <button
+                  type="button"
+                  key={item.key}
+                  onClick={() => loadHistory(item.page)}
+                  disabled={historyLoading}
+                  className={`pager-btn ${item.page === historyPage ? 'is-on' : ''}`}
+                  aria-current={item.page === historyPage ? 'page' : undefined}
+                >
+                  {item.page}
+                </button>
+              )))}
+              <button type="button" className="pager-btn" onClick={() => loadHistory(historyPage + 1)} disabled={historyPage >= historyTotalPages || historyLoading} aria-label="下一页">»</button>
+            </div>
+          </div>
         )}
       </div>
     </section>

@@ -3502,6 +3502,9 @@ input[type="radio"] {
   }
   .mini-seg-btn:hover:not(.is-on) { color: var(--dorami-ink-2); }
   .mini-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+  /* 流体档:表单字段语境下撑满字段宽、选项对半分(inline 缩在左侧会显得挤缩) */
+  .mini-seg.is-fluid { display: flex; width: 100%; }
+  .mini-seg.is-fluid .mini-seg-btn { flex: 1; }
 
   /* ── 任务与运行 静默仪器(运行波):时刻表 + 流水 ──
      调度台:左栏时刻表(何时跑)+ 右区运行流水(跑得怎么样)+ 总账条运行中灯(什么在跑)。
@@ -3951,12 +3954,19 @@ input[type="radio"] {
 
   .brief-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
   .brief-field .form-label { margin-bottom: 0; }
-  /* 开关 + 保存配置同一行(用户目检:原保存钮独占一行,列内多耗一档高度) */
+  /* 开关独立成行(右侧「即时生效」微注);保存钮已移到表尾 brief-save-row——
+     原与开关同行会被误读为只保存开关(2026-07 用户目检) */
   .brief-switch-row {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); margin-bottom: 12px;
   }
   .brief-switch-main { display: inline-flex; align-items: center; gap: 8px; }
+
+  /* 表尾保存行:hairline 划出「以上字段一起提交」的辖区,整幅按钮 + 生效说明 */
+  .brief-save-row {
+    display: flex; flex-direction: column; gap: 6px;
+    margin-bottom: 12px; padding-top: 12px; border-top: 1px solid var(--dorami-border);
+  }
 
   /* 增量游标行:11px mono 刻度(同 token-meta/brief-run-date),19 位时间戳在 280px
      列内完整展示不截断(字体审计波:原 13px 继承 + truncate 恰好溢出) */
@@ -3999,6 +4009,9 @@ input[type="radio"] {
     background: var(--dorami-well); border-radius: var(--r-control); padding: 12px 14px;
     font-family: var(--mono); font-size: 11px; line-height: 1.7; color: var(--dorami-ink-2);
   }
+  /* 近期日报表脚:期数计数 + .pager 页码(pager 自带 margin-left:auto 靠右) */
+  .brief-pager-row { display: flex; align-items: center; margin-top: 10px; }
+
   .brief-empty {
     margin-top: 4px; padding: 20px 14px; text-align: center; font-size: 12px; color: var(--dorami-faint);
     background: var(--dorami-soft); border-radius: var(--r-control);
@@ -4141,6 +4154,21 @@ input[type="radio"] {
   .sett-nav-btn.is-on { background: var(--dorami-wash); color: var(--dorami-accent-ink); font-weight: 700; }
   .sett-nav-btn svg { width: 15px; height: 15px; flex: none; }
   .sett-nav-spacer { flex: 1; }
+  /* 反馈未读回复角标:数字胶囊贴导航行尾;accent 实底,与未读点同色系(不引第二饱和色) */
+  .sett-nav-badge {
+    margin-left: auto;
+    min-width: 17px;
+    padding: 1px 5px;
+    border-radius: 9999px;
+    background: var(--dorami-accent);
+    color: #fff;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.5;
+    text-align: center;
+    flex: none;
+  }
   .sett-nav-foot { padding: 0 10px; font-family: var(--mono); font-size: 10px; color: var(--dorami-faint); }
 
   .sett-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -7150,11 +7178,20 @@ input[type="radio"] {
      工具钮自头像上方滑出,头像同帧变为关机样式退出钮(点击即退)。
      滑出层绝对定位于头像上方——不占轨内布局,展开无回流;padding-bottom 兼作
      头像→菜单之间的 hover 桥,指针穿行不塌。 ── */
-  .rail-flyout { position: relative; display: flex; flex-direction: column; align-items: center; }
+  .rail-flyout {
+    --rail-flyout-linger: 600ms; /* 光标移开后菜单/头像态的挂起时长 */
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
   .rail-flyout-items {
     position: absolute;
     bottom: 100%;
     left: 50%;
+    /* transform 使本层自成 stacking context,内部 tip 的 z-index 出不去——
+       整层抬到与 .reader-vrail-tip 同档,否则浮签被后绘的源栏 logo 盖住 */
+    z-index: 30;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -7164,8 +7201,11 @@ input[type="radio"] {
     visibility: hidden;
     pointer-events: none;
     transform: translate(-50%, 10px);
-    transition: opacity 280ms var(--motion-ease), transform 320ms var(--motion-ease),
-      visibility 0s linear 320ms;
+    /* 收起加 600ms 挂起延迟(--rail-flyout-linger):光标离开后菜单再停留一会儿,
+       给「滑过头/短暂移出」留返回余地;展开侧(hover 规则)延迟归零不受影响。 */
+    transition: opacity 280ms var(--motion-ease) var(--rail-flyout-linger),
+      transform 320ms var(--motion-ease) var(--rail-flyout-linger),
+      visibility 0s linear calc(var(--rail-flyout-linger) + 320ms);
   }
   .rail-flyout:hover .rail-flyout-items,
   .rail-flyout:focus-within .rail-flyout-items {
@@ -7176,14 +7216,36 @@ input[type="radio"] {
     transition: opacity 280ms var(--motion-ease), transform 320ms var(--motion-ease),
       visibility 0s;
   }
-  .rail-flyout-avatar { position: relative; }
+  .rail-flyout-avatar {
+    position: relative;
+    /* 收起侧描边复原与菜单/头像态同拍挂起(展开侧下方 hover 规则延迟归零) */
+    transition: border-color 130ms var(--motion-ease) var(--rail-flyout-linger),
+      transform 130ms var(--motion-ease);
+  }
+  /* 轨底轻通知点(反馈有新回复):挂头像右上角——flyout 常态收起只见头像,点必须常显;
+     描边用面板底色把点从头像上「抠」出来,亮暗主题自适应 */
+  .rail-avatar-dot,
+  .vrail-btn-dot {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background: var(--dorami-accent);
+    box-shadow: 0 0 0 2px var(--dorami-surface);
+    pointer-events: none;
+    z-index: 1;
+  }
+  .vrail-btn-dot { top: 6px; right: 6px; width: 7px; height: 7px; }
   .rail-avatar-face,
   .rail-avatar-power {
     position: absolute;
     inset: 0;
     display: grid;
     place-items: center;
-    transition: opacity 240ms var(--motion-ease);
+    /* 复原(hover-out)与菜单同步挂起,避免菜单还在、头像已先切回的错拍 */
+    transition: opacity 240ms var(--motion-ease) var(--rail-flyout-linger);
   }
   .rail-avatar-face img { width: 100%; height: 100%; object-fit: cover; }
   .rail-avatar-power {
@@ -7193,11 +7255,11 @@ input[type="radio"] {
   }
   .rail-avatar-power svg { width: 15px; height: 15px; }
   .rail-flyout:hover .rail-avatar-face,
-  .rail-flyout:focus-within .rail-avatar-face { opacity: 0; }
+  .rail-flyout:focus-within .rail-avatar-face { opacity: 0; transition-delay: 0s; }
   .rail-flyout:hover .rail-avatar-power,
-  .rail-flyout:focus-within .rail-avatar-power { opacity: 1; }
+  .rail-flyout:focus-within .rail-avatar-power { opacity: 1; transition-delay: 0s; }
   .rail-flyout:hover .rail-flyout-avatar,
-  .rail-flyout:focus-within .rail-flyout-avatar { border-color: var(--state-bad); }
+  .rail-flyout:focus-within .rail-flyout-avatar { border-color: var(--state-bad); transition-delay: 0s; }
   @media (prefers-reduced-motion: reduce) {
     .rail-flyout-items, .rail-avatar-face, .rail-avatar-power { transition: none; }
   }
@@ -7682,28 +7744,30 @@ input[type="radio"] {
   .reader-unread-icon:disabled { opacity: 0.6; cursor: default; }
   .reader-unread-icon-on { color: var(--dorami-blue); }
 
+  /* 新内容提示胶囊:居中悬浮小胶囊(轨语言 wash 底 + accent-ink 字),
+     不再是整幅白卡描边条——那是旧版工作区语法,与阅读器静默语言不符(2026-07 目检)。
+     sticky 悬浮在滚动内容上,底色用 accent 混 surface 的实色(wash 半透明会透字)。 */
   .reader-fresh-pill {
     position: sticky;
-    top: 0;
+    top: 6px;
     z-index: 3;
     display: flex;
     align-items: center;
-    justify-content: center;
     gap: 6px;
-    width: calc(100% - 4px);
-    margin: 0 2px 6px;
-    padding: 7px 10px;
-    border-radius: var(--r-control);
-    border: 1px solid var(--dorami-border);
-    background: var(--dorami-surface);
-    color: var(--dorami-blue);
+    width: fit-content;
+    margin: 0 auto 8px;
+    padding: 5px 14px;
+    border-radius: var(--r-pill);
+    background: color-mix(in srgb, var(--dorami-accent) 9%, var(--dorami-surface));
+    color: var(--dorami-accent-ink);
     font-size: 12px;
     font-weight: 600;
+    box-shadow: var(--sh-1);
     cursor: pointer;
-    transition: background 140ms ease;
+    transition: filter var(--motion-fast) var(--motion-ease);
   }
 
-  .reader-fresh-pill:hover { background: var(--dorami-soft); }
+  .reader-fresh-pill:hover { filter: brightness(0.97); }
 
   /* ── 内容形态分流(迭代 2) ──
      · 动态条目:changelog/Release/榜单的紧凑形——单行标题、无摘要;
@@ -8014,6 +8078,10 @@ input[type="radio"] {
     background: transparent;
     cursor: pointer;
     transition: background 130ms var(--motion-ease), box-shadow 130ms var(--motion-ease);
+    /* 无限滚动 DOM 累积的对症解:滚出视口的条目跳过 layout/paint(DOM 保留,
+       锚点/搜索不受影响);auto 记忆实际高,90px 仅首测估值防滚动条跳动 */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 90px;
   }
 
   .reader-entry:hover { background: color-mix(in srgb, var(--dorami-ink) 4%, transparent); }
@@ -8382,6 +8450,9 @@ input[type="radio"] {
     position: relative;
     padding: 22px 0 20px;
     border-bottom: 1px solid var(--dorami-border-soft);
+    /* 同 .reader-entry:滚出视口的卡片跳过 layout/paint,治无限滚动 DOM 累积 */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 280px;
   }
   .social-post:last-of-type { border-bottom: none; }
   /* 未读点:与 .reader-unread-dot 同语法(常驻渲染 + 淡出,条件卸载无法过渡) */
@@ -8632,6 +8703,32 @@ input[type="radio"] {
   .reader-disc-search input::placeholder { color: var(--dorami-faint); }
 
   .reader-disc-seg { margin-left: auto; }
+
+  /* 发现页排序小开关:默认排序 ⇄ 订阅降序。ghost 图标钮(沿轨钮语言:无边框、
+     hover 淡墨、开启 wash+accent),不与相邻 seg 抢轮廓——带框文字钮试过,突兀。 */
+  .reader-disc-sort {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--dorami-faint);
+    cursor: pointer;
+    transition: color var(--motion-fast) var(--motion-ease),
+      background-color var(--motion-fast) var(--motion-ease);
+  }
+  .reader-disc-sort:hover {
+    color: var(--dorami-ink-2);
+    background: color-mix(in srgb, var(--dorami-ink) 6%, transparent);
+  }
+  .reader-disc-sort.is-on {
+    color: var(--dorami-accent-ink);
+    background: var(--dorami-wash);
+  }
 
   .reader-disc-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 28px 40px; }
   .reader-disc-body { width: 100%; }

@@ -250,6 +250,7 @@ def export_archive_articles_jsonl(
             publish_date_end=publish_date_end,
             fetched_date_start=fetched_date_start,
             fetched_date_end=fetched_date_end,
+            session=session,
         )
         records = session.exec(
             query.order_by(ArticleRecord.fetched_date.asc(), ArticleRecord.id.asc()).offset(skip).limit(safe_limit)

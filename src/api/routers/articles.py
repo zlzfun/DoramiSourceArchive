@@ -137,6 +137,7 @@ def get_articles(
         limit: int = 100,
         include_total: bool = False,
         include_content: bool = True,
+        include_extensions: bool = False,  # 不带正文时仍需 extensions_json 的轻取数场景(如日报列表 meta)
         session: Session = Depends(deps.get_session),
 ):
     scope = (subscribed_scope or "off").strip().lower()
@@ -168,8 +169,8 @@ def get_articles(
         "fetched_date_start": fetched_date_start,
         "fetched_date_end": fetched_date_end,
     }
-    query = apply_article_query_filters(select(ArticleRecord), **filter_kwargs)
-    count_query = apply_article_query_filters(select(func.count(ArticleRecord.id)), **filter_kwargs)
+    query = apply_article_query_filters(select(ArticleRecord), session=session, **filter_kwargs)
+    count_query = apply_article_query_filters(select(func.count(ArticleRecord.id)), session=session, **filter_kwargs)
     if scope == "only":
         # 仅当前用户已订阅的源；无订阅时显式返回空集。
         query = query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
@@ -197,7 +198,12 @@ def get_articles(
         query = query.order_by(*article_recency_order())
     total = int(session.exec(count_query).one() or 0) if include_total else None
     records = session.exec(query.offset(safe_skip).limit(safe_limit)).all()
-    items = [serialize_article_list_item(record, include_content=include_content) for record in records]
+    items = [
+        serialize_article_list_item(
+            record, include_content=include_content, include_extensions=include_extensions,
+        )
+        for record in records
+    ]
     if with_unread:
         # 页级未读标记：只读现有水位（不写库）；水位由 /api/reader/unread-counts 挂载校准。
         unread_ids = reader_state_service.unread_ids_among(
@@ -272,10 +278,12 @@ async def create_article_manual(params: dict = Body(...)):
     content_obj.content_type = params.get("content_type", "manual_entry")
     content_obj.source_id = params.get("source_id", "manual")
 
+    # 扩展字段经 extra_extensions 通道随 serialize_to_metadata 落库——
+    # 旧写法逐键 setattr 不进 dataclass fields(),extensions_json 静默丢失
     try:
         extensions = json.loads(params.get("extensions_json", "{}"))
-        for k, v in extensions.items():
-            setattr(content_obj, k, v)
+        if isinstance(extensions, dict) and extensions:
+            content_obj.extra_extensions = extensions
     except Exception:
         pass
 
@@ -404,6 +412,7 @@ def get_feed_articles(
         publish_date_end=publish_date_end,
         fetched_date_start=fetched_date_start,
         fetched_date_end=fetched_date_end,
+        session=session,
     )
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
@@ -459,6 +468,7 @@ def export_feed_articles_markdown(
         publish_date_end=publish_date_end,
         fetched_date_start=fetched_date_start,
         fetched_date_end=fetched_date_end,
+        session=session,
     )
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)

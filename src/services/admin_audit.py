@@ -203,5 +203,6 @@ def record_audit(
                 )
             )
             session.commit()
-    except Exception:  # noqa: BLE001 - 审计绝不能阻断业务请求
-        _logger.debug("管理员操作审计写库失败（忽略）", exc_info=True)
+    except Exception as exc:  # noqa: BLE001 - 审计绝不能阻断业务请求
+        # 只记异常摘要，绝不带请求体（可能含密码/token）——审计写库失败需可见，但不静默。
+        _logger.warning("管理员操作审计写库失败（忽略）: %s", exc)

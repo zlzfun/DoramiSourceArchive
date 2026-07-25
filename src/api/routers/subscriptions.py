@@ -10,7 +10,10 @@ api.feed_service、api.tokens、api.articles_view 等共享模块；current_user
 异步 run_vector_search 经 _app() 延迟动态调用（保持测试 monkeypatch 兼容、避免成环）。
 """
 
+import datetime
 import importlib
+import urllib.parse
+import xml.etree.ElementTree as ET
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -26,7 +29,7 @@ from api.feed_service import (
     resolve_subscription_by_token,
     serialize_subscription,
 )
-from api.sources import subscription_source_ids
+from api.sources import _friendly_source_name, _registry_source_meta, subscription_source_ids
 from api.textutils import _json_dumps, _json_loads, _model_dump, _model_to_clean_dict, _now_iso
 from api.tokens import (
     generate_subscription_token,
@@ -38,6 +41,10 @@ from api.tokens import (
 from models.db import ReaderSubscriptionRecord
 
 router = APIRouter(tags=["subscriptions"])
+
+ATOM_NAMESPACE = "http://www.w3.org/2005/Atom"
+PUBLIC_FEED_EXPORT_LIMIT = 200
+ET.register_namespace("", ATOM_NAMESPACE)
 
 
 def _app():
@@ -95,6 +102,103 @@ class PublicSubscriptionSearchBody(BaseModel):
 
 # ==================== 个人聚合拉取（dfeed_ 令牌）====================
 
+def _atom_tag(name: str) -> str:
+    return f"{{{ATOM_NAMESPACE}}}{name}"
+
+
+def _parse_atom_datetime(value: Optional[str]) -> Optional[datetime.datetime]:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.astimezone(datetime.timezone.utc)
+
+
+def _format_atom_datetime(value: datetime.datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _xml_text(value: Optional[str]) -> str:
+    """Return XML 1.0-safe text; ElementTree handles reserved-character escaping."""
+    return "".join(
+        char
+        for char in str(value or "")
+        if (
+            char in "\t\n\r"
+            or 0x20 <= ord(char) <= 0xD7FF
+            or 0xE000 <= ord(char) <= 0xFFFD
+            or 0x10000 <= ord(char) <= 0x10FFFF
+        )
+    )
+
+
+def _atom_feed_xml(owner: str, records: list, include_content: bool) -> bytes:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    entries = [
+        (
+            record,
+            _parse_atom_datetime(record.publish_date)
+            or _parse_atom_datetime(record.fetched_date)
+            or now,
+        )
+        for record in records
+    ]
+    feed_updated = max((timestamp for _, timestamp in entries), default=now)
+    registry_meta = _registry_source_meta()
+
+    feed = ET.Element(_atom_tag("feed"))
+    owner_id = urllib.parse.quote(owner, safe="")
+    ET.SubElement(feed, _atom_tag("id")).text = f"tag:dorami.local,2026:feed:{owner_id}"
+    ET.SubElement(feed, _atom_tag("title")).text = _xml_text(f"哆啦美订阅聚合 · {owner}")
+    ET.SubElement(feed, _atom_tag("updated")).text = _format_atom_datetime(feed_updated)
+
+    for record, timestamp in entries:
+        entry = ET.SubElement(feed, _atom_tag("entry"))
+        article_id = record.source_url or (
+            f"tag:dorami.local,2026:article:{urllib.parse.quote(record.id, safe='')}"
+        )
+        ET.SubElement(entry, _atom_tag("id")).text = _xml_text(article_id)
+        ET.SubElement(entry, _atom_tag("title")).text = _xml_text(record.title)
+        if record.source_url:
+            ET.SubElement(
+                entry,
+                _atom_tag("link"),
+                {"href": _xml_text(record.source_url), "rel": "alternate"},
+            )
+        atom_timestamp = _format_atom_datetime(timestamp)
+        ET.SubElement(entry, _atom_tag("updated")).text = atom_timestamp
+        ET.SubElement(entry, _atom_tag("published")).text = atom_timestamp
+
+        author = ET.SubElement(entry, _atom_tag("author"))
+        source_name = _friendly_source_name(record.source_id, registry_meta)
+        ET.SubElement(author, _atom_tag("name")).text = _xml_text(source_name)
+
+        if include_content:
+            ET.SubElement(entry, _atom_tag("content"), {"type": "text"}).text = _xml_text(
+                record.content
+            )
+        else:
+            ET.SubElement(entry, _atom_tag("summary"), {"type": "text"}).text = _xml_text(
+                (record.content or "")[:280]
+            )
+        ET.SubElement(
+            entry,
+            _atom_tag("category"),
+            {"term": _xml_text(record.content_type), "scheme": "urn:dorami:content-type"},
+        )
+        ET.SubElement(
+            entry,
+            _atom_tag("category"),
+            {"term": _xml_text(record.source_id), "scheme": "urn:dorami:source-id"},
+        )
+
+    return ET.tostring(feed, encoding="utf-8", xml_declaration=True)
+
 @router.get("/api/public/feed/articles")
 def get_public_feed_articles(
         request: Request,
@@ -151,7 +255,7 @@ def export_public_feed_articles_markdown(
         session: Session = Depends(deps.get_session),
 ):
     """个人聚合拉取接口的 Markdown 批量导出变体（最多 200 条）。"""
-    safe_limit = min(max(limit, 1), 200)
+    safe_limit = min(max(limit, 1), PUBLIC_FEED_EXPORT_LIMIT)
     token = read_bearer_or_query_token(request)
     owner = resolve_feed_token_owner(session, token)
     if not owner:
@@ -165,6 +269,40 @@ def export_public_feed_articles_markdown(
     )
     body = "\n\n---\n\n".join(article_to_markdown(record) for record in records)
     return Response(content=body, media_type="text/markdown; charset=utf-8")
+
+
+@router.get("/api/public/feed/articles.xml")
+def export_public_feed_articles_atom(
+        request: Request,
+        content_type: Optional[str] = None,
+        content_types: Optional[str] = None,
+        source_ids: Optional[str] = None,
+        search: Optional[str] = None,
+        has_content: Optional[bool] = True,
+        include_content: bool = True,
+        publish_date_start: Optional[str] = None,
+        publish_date_end: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100,
+        session: Session = Depends(deps.get_session),
+):
+    """个人聚合拉取接口的 Atom 1.0 变体（最多 200 条）。"""
+    safe_limit = min(max(limit, 1), PUBLIC_FEED_EXPORT_LIMIT)
+    token = read_bearer_or_query_token(request)
+    owner = resolve_feed_token_owner(session, token)
+    if not owner:
+        raise HTTPException(status_code=401, detail="个人聚合接口令牌无效")
+    records = feed_articles_for_owner(
+        session, owner,
+        content_type=content_type, content_types=content_types, source_ids=source_ids,
+        search=search, has_content=has_content,
+        publish_date_start=publish_date_start, publish_date_end=publish_date_end,
+        skip=skip, limit=safe_limit,
+    )
+    return Response(
+        content=_atom_feed_xml(owner, records, include_content),
+        media_type="application/atom+xml",
+    )
 
 
 # ==================== 订阅生命周期（owner 作用域）====================

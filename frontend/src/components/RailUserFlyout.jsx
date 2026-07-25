@@ -4,7 +4,7 @@ import { Power } from 'lucide-react';
 // hover/聚焦时工具钮向上滑出、头像同时变为关机样式的退出钮,点击即退」)。
 // 管理面应用导轨与阅读器视图轨(standalone)共用;children = 滑出的工具钮
 // (主题/设置/界面切换等,沿用 .reader-vrail-btn 语法)。键盘可达:focus-within 同样展开。
-export default function RailUserFlyout({ avatar, avatarText, username, roleLabel, onLogout, children }) {
+export default function RailUserFlyout({ avatar, avatarText, username, roleLabel, onLogout, notify = false, children }) {
   return (
     <div className="rail-flyout">
       <div className="rail-flyout-items">
@@ -17,6 +17,8 @@ export default function RailUserFlyout({ avatar, avatarText, username, roleLabel
         aria-label="退出登录"
         title={`${username || '账号'}${roleLabel ? ` · ${roleLabel}` : ''} · 点击退出登录`}
       >
+        {/* 轻通知点(如:反馈有新回复):挂头像因 flyout 常态收起只见头像 */}
+        {notify && <span className="rail-avatar-dot" aria-hidden="true" />}
         <span className="rail-avatar-face" aria-hidden="true">
           {avatar
             ? <img src={avatar} alt="" />

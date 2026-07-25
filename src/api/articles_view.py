@@ -9,9 +9,12 @@ app 级可变全局（db_sink 等），故可被任意 Router 安全 import、�
 import json
 from typing import Any, Dict, Optional
 
+from sqlalchemy import literal_column
+
 from api.textutils import _date_end_value, _json_loads, _split_csv
 from models.content import BaseContent
 from models.db import ArticleRecord
+from storage.fts import fts_search_ids
 
 
 class GenericContent(BaseContent):
@@ -51,6 +54,7 @@ def apply_article_query_filters(
         publish_date_end: Optional[str] = None,
         fetched_date_start: Optional[str] = None,
         fetched_date_end: Optional[str] = None,
+        session=None,
 ):
     if content_type:
         query = query.where(ArticleRecord.content_type == content_type)
@@ -83,7 +87,13 @@ def apply_article_query_filters(
     if has_content is not None:
         query = query.where(ArticleRecord.has_content == has_content)
     if search:
-        query = query.where(ArticleRecord.title.contains(search))
+        # 先试 FTS5 全文检索（标题+正文）；不可用/输入过短时 fts_search_ids 返回
+        # None，回退到原标题 LIKE。命中按 rowid 过滤，排序/分页/其它过滤保持不变。
+        fts_ids = fts_search_ids(session, search) if session is not None else None
+        if fts_ids is not None:
+            query = query.where(literal_column("articles.rowid").in_(fts_ids))
+        else:
+            query = query.where(ArticleRecord.title.contains(search))
 
     if publish_date_start:
         query = query.where(ArticleRecord.publish_date >= publish_date_start)
@@ -130,7 +140,11 @@ def serialize_feed_article(record: ArticleRecord, include_content: bool = True) 
     return item
 
 
-def serialize_article_list_item(record: ArticleRecord, include_content: bool = True) -> Dict[str, Any]:
+def serialize_article_list_item(
+    record: ArticleRecord,
+    include_content: bool = True,
+    include_extensions: bool = False,
+) -> Dict[str, Any]:
     content = record.content or ""
     # AI 要点摘要(extensions_json.summary_zh)作为轻字段随条目透出:
     # 列表卡摘要优先用它替代正文截断(content_preview 对英文长文几乎无信息量)。
@@ -161,9 +175,11 @@ def serialize_article_list_item(record: ArticleRecord, include_content: bool = T
         "index_status": record.index_status,
         "content_preview": content[:280],
         "summary_zh": summary,
+        "read_count": record.read_count or 0,
     }
     if include_content:
         item["content"] = content
+    if include_content or include_extensions:
         item["extensions_json"] = record.extensions_json or "{}"
     return item
 

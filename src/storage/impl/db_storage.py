@@ -32,6 +32,11 @@ class DatabaseStorage(BaseStorage):
             self._enable_sqlite_concurrency(self.engine)
         SQLModel.metadata.create_all(self.engine)
         self._ensure_compatible_schema()
+        if is_sqlite:
+            # FTS5 全文搜索索引（标题+正文）。与 Alembic 迁移共享同一 ensure_fts；
+            # 老 SQLite 无 trigram 时内部吞异常降级为标题 LIKE，不影响启动。
+            from storage.fts import ensure_fts
+            ensure_fts(self.engine)
         self.logger.info(f"🗄️ 关系型数据库已连接: {db_url}")
 
     @staticmethod

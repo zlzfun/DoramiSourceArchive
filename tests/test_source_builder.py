@@ -217,3 +217,44 @@ def test_preview_config_web(monkeypatch):
 def test_preview_config_rejects_unknown_type():
     result = _run(source_builder.preview_config({"source_type": "json", "url": "https://x"}))
     assert result["ok"] is False
+
+
+# ---------- SSRF 防护（复用图床同款判定）----------
+
+def test_fetch_rejects_private_host():
+    """_fetch 请求前做 SSRF 判定：字面私网/环回 IP 直接抛 SSRFError。"""
+    from services.media_store import SSRFError
+
+    for url in (
+        "http://127.0.0.1:8000/",
+        "http://10.0.0.5/admin",
+        "http://169.254.169.254/latest/meta-data/",
+    ):
+        try:
+            _run(source_builder._fetch(url))
+        except SSRFError:
+            continue
+        raise AssertionError(f"未按 SSRF 拒绝内网 URL: {url}")
+
+
+def test_analyze_url_ssrf_propagates(monkeypatch):
+    """analyze_url 走真实 _fetch：内网 URL 的 SSRFError 一路上抛（API 层转 400）。"""
+    from services.media_store import SSRFError
+
+    try:
+        _run(source_builder.analyze_url("http://127.0.0.1/news", session=None))
+    except SSRFError:
+        return
+    raise AssertionError("analyze_url 未抛出 SSRFError")
+
+
+def test_preview_config_ssrf_rejects_private_url():
+    """preview_config 在试抓前挡住指向内网的目标。"""
+    from services.media_store import SSRFError
+
+    payload = {"source_type": "web", "url": "http://127.0.0.1/news", "params": {}}
+    try:
+        _run(source_builder.preview_config(payload))
+    except SSRFError:
+        return
+    raise AssertionError("preview_config 未抛出 SSRFError")

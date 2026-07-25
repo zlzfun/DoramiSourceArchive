@@ -331,6 +331,16 @@ def serialize_to_metadata(content_obj: BaseContent) -> Dict[str, Any]:
         else:
             extensions[f.name] = value
 
+    # 实例可挂 extra_extensions dict(非 dataclass 字段)携带任意扩展键:
+    # 手工录入等无类型化子类的场景用它——直接 setattr 任意键不进 fields()、
+    # 曾导致 extensions_json 静默丢失。类型化字段与基础字段优先,不可被覆写。
+    extra = getattr(content_obj, "extra_extensions", None)
+    if isinstance(extra, dict):
+        for key, value in extra.items():
+            if key in metadata or key in extensions:
+                continue
+            extensions[key] = value
+
     if extensions:
         metadata["extensions"] = extensions
 

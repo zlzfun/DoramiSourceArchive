@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Info, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
 import { useModalTransition } from '../hooks/useModalTransition';
 import { useModalA11y } from '../hooks/useModalA11y';
+import { markFeedbackSeen } from '../api';
 import AccountSection from './settings/AccountSection';
 import AppearanceSection from './settings/AppearanceSection';
 import FeedTokenSection from './settings/FeedTokenSection';
@@ -28,7 +29,7 @@ const HINTS = {
   about: '产品与账户信息',
 };
 
-export default function SettingsModal({ open, initialSection, onClose, theme, onThemeChange, runtimeInfo, readerSurface = false, username, avatar, onUserUpdated, onLogout, showToast, onArticlesChanged }) {
+export default function SettingsModal({ open, initialSection, onClose, theme, onThemeChange, runtimeInfo, readerSurface = false, username, avatar, onUserUpdated, onLogout, showToast, onArticlesChanged, feedbackUnread = 0, onFeedbackSeen }) {
   const { mounted, closing } = useModalTransition(open);
   const collectorEnabled = Boolean(runtimeInfo?.collector_enabled);
   const readerEnabled = Boolean(runtimeInfo?.reader_enabled);
@@ -91,6 +92,14 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
     return () => { document.body.style.overflow = previousOverflow; };
   }, [open, initialSection]);
 
+  // 打开反馈分区即视为已读:上报 mark-seen(fire-and-forget)+ 通知 App 清角标。
+  useEffect(() => {
+    if (open && active === 'feedback' && feedbackUnread > 0) {
+      markFeedbackSeen();
+      onFeedbackSeen?.();
+    }
+  }, [open, active, feedbackUnread, onFeedbackSeen]);
+
   if (!mounted) return null;
 
   const activeSection = sections.find(s => s.id === active) || sections[0];
@@ -103,6 +112,10 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
       className={`sett-nav-btn ${activeSection.id === section.id ? 'is-on' : ''}`}
     >
       <section.icon /> {section.label}
+      {/* 反馈未读回复角标:数字胶囊贴行尾(读者账号才有反馈入口) */}
+      {section.id === 'feedback' && feedbackUnread > 0 && (
+        <span className="sett-nav-badge">{feedbackUnread > 99 ? '99+' : feedbackUnread}</span>
+      )}
     </button>
   );
 

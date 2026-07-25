@@ -19,10 +19,12 @@ import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
 import BrandLogoImage from './components/BrandLogoImage';
 import RailUserFlyout from './components/RailUserFlyout';
+import TabErrorBoundary from './components/TabErrorBoundary';
 import { useTheme } from './theme';
-import { fetchAuthSession, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
+import { fetchAuthSession, fetchFeedbackUnreadCount, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
 import RunningWidget from './components/RunningWidget';
 import { useRunningProgress } from './hooks/useRunningProgress';
+import { usePolling } from './hooks/usePolling';
 
 // Tab 组件按路由惰性加载：各自独立 chunk，登录页与读者态不再下载用不到的重依赖
 // （AdminOpsTab→recharts、ReaderTab/DailyBriefTab→react-markdown）。每个 Tab 挂在独立
@@ -44,10 +46,22 @@ function TabFallback() {
   );
 }
 
+// 每个 Tab 独立的 错误边界 × Suspense 组合:chunk 拉取失败或子树渲染抛错只降级本页,
+// 不再整站白屏(此前无任何 ErrorBoundary,lazy chunk 失败会击穿到根)。
+function TabBoundary({ children }) {
+  return (
+    <TabErrorBoundary>
+      <Suspense fallback={<TabFallback />}>{children}</Suspense>
+    </TabErrorBoundary>
+  );
+}
+
 // ── 导航 / 历史锚点 ──
 // 把「标签 + 子视图」镜像到 URL hash（#/runs/history），跨页跳转的聚焦上下文存在 history.state 里。
 // 让浏览器「返回」能逐级退回：子视图切换 → 标签切换 → 跨页跳转的原位。
-const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'vector', 'mcp', 'admin'];
+const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'vector', 'brief', 'admin'];
+
+const FEEDBACK_UNREAD_POLL_MS = 5 * 60 * 1000; // 反馈回复角标轮询:回复非即时通讯,低频足够
 // runs 的双视图已随运行波(调度台)退役:旧书签 #/runs/history、#/runs/jobs 在
 // hashToRoute 里因 runs 不再是 SUBVIEW 而自然归一到 #/runs,无需特判。
 const TAB_DEFAULT_VIEW = { fetch: 'catalog' };
@@ -92,6 +106,8 @@ function routeToHash(tab, views) {
 
 function hashToRoute(hash) {
   const parts = String(hash || '').replace(/^#\/?/, '').split('/').filter(Boolean);
+  // 历史书签兼容:AI 日报页签曾长期沿用「接入集成」纪元的 id 'mcp'(#/mcp),现已与 MCP 无关。
+  if (parts[0] === 'mcp') parts[0] = 'brief';
   const tab = ALL_TABS.includes(parts[0]) ? parts[0] : 'data';
   let view = SUBVIEW_TABS.has(tab) ? (parts[1] || TAB_DEFAULT_VIEW[tab]) : null;
   // 已下线的子视图归一到默认视图，兼容陈旧书签：#/fetch/groups（「采集范围」，实体简化阶段 1 移除）。
@@ -173,6 +189,17 @@ export default function App() {
   const isReaderRole = runtimeInfo.account_role === 'user';
   const isAdminRole = runtimeInfo.account_role === 'admin';
   const [surfaceMode, setSurfaceMode] = useState(readStoredSurface);
+
+  // ── 反馈未读回复角标(读者账号;反馈是「读者→管理员」通道,admin 无此入口)──
+  // 低频轮询计数;打开设置柜反馈分区即 mark-seen 清零(SettingsModal 回调)。
+  const [feedbackUnread, setFeedbackUnread] = useState(0);
+  const feedbackBadgeEnabled = isReaderRole && authState.status === 'authenticated';
+  const pollFeedbackUnread = useCallback(async () => {
+    const data = await fetchFeedbackUnreadCount();
+    setFeedbackUnread(data?.unread ?? 0);
+  }, []);
+  usePolling(pollFeedbackUnread, FEEDBACK_UNREAD_POLL_MS, { enabled: feedbackBadgeEnabled });
+  const handleFeedbackSeen = useCallback(() => setFeedbackUnread(0), []);
 
   const enterReader = useCallback(() => {
     setMountedTabs(prev => (prev.has('reader') ? prev : new Set(prev).add('reader')));
@@ -456,8 +483,8 @@ export default function App() {
     { id: 'runs', icon: History, label: '任务与运行', surface: 'collector' },
     { id: 'vector', icon: BarChart2, label: '向量雷达', surface: 'reader', requiresRag: true, hideForReader: true },
     // 「接入集成」页签已并入设置柜(交付通道三卡→设置·接入集成组);页签瘦身改名「AI 日报」
-    // (只剩日报运营面),id 保持 'mcp' 兼容历史 hash 书签。
-    { id: 'mcp', icon: Newspaper, label: 'AI 日报', surface: 'collector' },
+    // (只剩日报运营面),id 改为 'brief'(历史 hash #/mcp 由 hashToRoute 归一兼容)。
+    { id: 'brief', icon: Newspaper, label: 'AI 日报', surface: 'collector' },
     { id: 'admin', icon: ShieldCheck, label: '运维管理', adminOnly: true },
   ].filter(tab => {
     if (tab.onlyReader && !isReaderRole) return false;
@@ -483,7 +510,7 @@ export default function App() {
 
   // ── 读者账号:应用导轨隐藏(阅读器视图轨独占,轨底头像菜单承接 设置/主题/退出)──
   useEffect(() => {
-    // 无导轨即无页签切换;历史 hash(#mcp 等)一律归位到阅读器
+    // 无导轨即无页签切换;历史 hash(#/brief 等)一律归位到阅读器
     if (isReaderRole && activeTab !== 'reader') goTab('reader', { replace: true });
   }, [isReaderRole, activeTab, goTab]);
 
@@ -702,6 +729,8 @@ export default function App() {
         onLogout={() => { setSettingsOpen(false); handleLogout(); }}
         showToast={showToast}
         onArticlesChanged={markArticlesDirty}
+        feedbackUnread={feedbackUnread}
+        onFeedbackSeen={handleFeedbackSeen}
       />
 
       <main
@@ -713,7 +742,7 @@ export default function App() {
               挂载但 is-off——阅读位置/订阅状态不丢。 */}
           {mountedTabs.has('reader') && (
             <div className={`tab-panel${readerView && (!isReaderRole || activeTab === 'reader') ? '' : ' is-off'}`}>
-              <Suspense fallback={<TabFallback />}>
+              <TabBoundary>
                 <ReaderTab
                   showToast={showToast}
                   aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured}
@@ -722,16 +751,17 @@ export default function App() {
                   avatarText={avatarInitials}
                   themeDark={effective === 'dark'}
                   onToggleTheme={toggleTheme}
-                  onOpenSettings={() => openSettings()}
+                  onOpenSettings={(section) => openSettings(section)}
                   onLogout={handleLogout}
                   onExitReader={isAdminRole ? exitReader : undefined}
+                  feedbackUnread={feedbackUnread}
                 />
-              </Suspense>
+              </TabBoundary>
             </div>
           )}
           {!isReaderRole && mountedTabs.has('data') && (
             <div className={`tab-panel${activeTab === 'data' && !readerView ? '' : ' is-off'}`}>
-              <Suspense fallback={<TabFallback />}>
+              <TabBoundary>
                 <DataTab
                   availableFetchers={availableFetchers}
                   showToast={showToast}
@@ -745,12 +775,12 @@ export default function App() {
                   onPendingFilterApplied={clearPendingFocus}
                   onFocusSource={focusSourceNode}
                 />
-              </Suspense>
+              </TabBoundary>
             </div>
           )}
           {mountedTabs.has('fetch') && runtimeInfo.collector_enabled && (
             <div className={`tab-panel${activeTab === 'fetch' && !readerView ? '' : ' is-off'}`}>
-              <Suspense fallback={<TabFallback />}>
+              <TabBoundary>
                 <FetchTab
                   availableFetchers={availableFetchers}
                   showToast={showToast}
@@ -765,12 +795,12 @@ export default function App() {
                   pendingFocus={pendingFocus?.tab === 'fetch' ? pendingFocus.payload : null}
                   onPendingFocusApplied={clearPendingFocus}
                 />
-              </Suspense>
+              </TabBoundary>
             </div>
           )}
           {mountedTabs.has('runs') && runtimeInfo.collector_enabled && (
             <div className={`tab-panel${activeTab === 'runs' && !readerView ? '' : ' is-off'}`}>
-              <Suspense fallback={<TabFallback />}>
+              <TabBoundary>
                 <FetchRunsTab
                   availableFetchers={availableFetchers}
                   showToast={showToast}
@@ -784,38 +814,38 @@ export default function App() {
                   pendingJobDraft={pendingJobDraft}
                   onPendingJobDraftApplied={clearPendingJobDraft}
                 />
-              </Suspense>
+              </TabBoundary>
             </div>
           )}
           {mountedTabs.has('vector') && runtimeInfo.reader_enabled && (
             <div className={`tab-panel${activeTab === 'vector' && !readerView ? '' : ' is-off'}`}>
-              <Suspense fallback={<TabFallback />}>
+              <TabBoundary>
                 <VectorTab availableFetchers={availableFetchers} showToast={showToast} accountRole={runtimeInfo.account_role} />
-              </Suspense>
+              </TabBoundary>
             </div>
           )}
-          {mountedTabs.has('mcp') && runtimeInfo.collector_enabled && (
-            <div className={`tab-panel${activeTab === 'mcp' && !readerView ? '' : ' is-off'}`}>
-              <Suspense fallback={<TabFallback />}>
+          {mountedTabs.has('brief') && runtimeInfo.collector_enabled && (
+            <div className={`tab-panel${activeTab === 'brief' && !readerView ? '' : ' is-off'}`}>
+              <TabBoundary>
                 <DailyBriefTab
                   showToast={showToast}
                   collectorEnabled={runtimeInfo.collector_enabled}
                   isAdmin={runtimeInfo.account_role === 'admin'}
                   onOpenModelConfig={() => jumpWithFocus('admin', null, { tab: 'admin', payload: { sub: 'ai' } })}
                 />
-              </Suspense>
+              </TabBoundary>
             </div>
           )}
           {mountedTabs.has('admin') && runtimeInfo.account_role === 'admin' && (
             <div className={`tab-panel${activeTab === 'admin' && !readerView ? '' : ' is-off'}`}>
-              <Suspense fallback={<TabFallback />}>
+              <TabBoundary>
                 <AdminOpsTab
                   showToast={showToast}
                   currentUsername={authState.user?.username}
                   pendingFocus={pendingFocus?.tab === 'admin' ? pendingFocus.payload : null}
                   onPendingFocusApplied={clearPendingFocus}
                 />
-              </Suspense>
+              </TabBoundary>
             </div>
           )}
         </div>

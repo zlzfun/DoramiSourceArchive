@@ -22,6 +22,7 @@ from alembic.runtime.migration import MigrationContext  # noqa: E402
 from sqlalchemy import create_engine, inspect  # noqa: E402
 
 from models.db import SQLModel  # noqa: E402
+from storage.fts import fts_include_object  # noqa: E402
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 from storage.migrations import (  # noqa: E402
     BASELINE_REVISION,
@@ -44,7 +45,15 @@ def test_upgrade_head_has_no_drift_from_metadata(tmp_path):
     try:
         with engine.connect() as conn:
             ctx = MigrationContext.configure(
-                conn, opts={"compare_type": True, "render_as_batch": True}
+                conn,
+                opts={
+                    "compare_type": True,
+                    "render_as_batch": True,
+                    # 排除 FTS5 虚拟表及 shadow 表（articles_fts*）——它们不在
+                    # metadata 里，与 env.py 的 autogenerate 过滤保持一致；
+                    # 只排该前缀，真实模型漂移照常被本测试捕获。
+                    "include_object": fts_include_object,
+                },
             )
             diffs = compare_metadata(ctx, SQLModel.metadata)
     finally:

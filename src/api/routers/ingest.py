@@ -22,6 +22,7 @@ from api import deps
 from fetchers.registry import fetcher_registry
 from models.content import SocialPostContent
 from models.db import SourceConfigRecord
+from services.media_store import SSRFError
 
 router = APIRouter(tags=["ingest"])
 
@@ -55,10 +56,13 @@ async def source_builder_analyze(
 
     existing = {row.source_id for row in session.exec(select(SourceConfigRecord.source_id)).all()}
     existing |= set(fetcher_registry._fetchers.keys())
-    result = await source_builder.analyze_url(
-        req.url, session=session, existing_ids=existing,
-        usage_username=_app().current_username(request) or None,
-    )
+    try:
+        result = await source_builder.analyze_url(
+            req.url, session=session, existing_ids=existing,
+            usage_username=_app().current_username(request) or None,
+        )
+    except SSRFError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "分析失败"))
     return result
@@ -69,7 +73,10 @@ async def source_builder_preview(req: SourceBuilderPreviewRequest):
     """用建议配置试抓样例条目做验证（不落库）。"""
     from services import source_builder
 
-    result = await source_builder.preview_config(req.model_dump())
+    try:
+        result = await source_builder.preview_config(req.model_dump())
+    except SSRFError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "试抓失败"))
     return result

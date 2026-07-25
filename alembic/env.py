@@ -24,6 +24,7 @@ if _SRC not in sys.path:
 
 from config import settings  # noqa: E402
 from models.db import SQLModel  # noqa: E402  —— 导入即注册所有表到 metadata
+from storage.fts import fts_include_object  # noqa: E402  —— 排除 FTS 虚拟/shadow 表
 
 config = context.config
 
@@ -51,6 +52,7 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         render_as_batch=_is_sqlite(url or ""),
         compare_type=True,
+        include_object=fts_include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -68,6 +70,7 @@ def run_migrations_online() -> None:
             target_metadata=target_metadata,
             render_as_batch=_is_sqlite(str(connectable.url)),
             compare_type=True,
+            include_object=fts_include_object,
         )
         with context.begin_transaction():
             context.run_migrations()

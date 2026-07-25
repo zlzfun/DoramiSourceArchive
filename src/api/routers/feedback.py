@@ -15,7 +15,12 @@ from sqlmodel import Session, func, select
 
 from api import deps
 from api.textutils import _now_iso
-from models.db import FEEDBACK_CATEGORIES, FEEDBACK_STATUSES, FeedbackRecord
+from models.db import (
+    FEEDBACK_CATEGORIES,
+    FEEDBACK_STATUSES,
+    AppSettingRecord,
+    FeedbackRecord,
+)
 
 router = APIRouter(tags=["feedback"])
 
@@ -137,6 +142,62 @@ def list_reader_feedback(
         .order_by(FeedbackRecord.created_at.desc())
     ).all()
     return {"items": [_serialize(record) for record in records]}
+
+
+# 读者「最后查看反馈页时间戳」存 AppSettingRecord KV（零新列、零 migration）；
+# 未读回复数 = admin_note 非空且回复晚于该水位的反馈条数。
+_FEEDBACK_SEEN_KEY_PREFIX = "feedback_seen:"
+
+
+def _feedback_seen_at(session: Session, username: str) -> str:
+    """读者最后一次查看反馈页的时间戳（ISO；从未查看即空串，空串 < 任何时间戳）。"""
+    record = session.get(AppSettingRecord, f"{_FEEDBACK_SEEN_KEY_PREFIX}{username}")
+    return record.value if record else ""
+
+
+def _unread_reply_count(session: Session, username: str, seen_at: str) -> int:
+    """该读者「有管理员回复(admin_note 非空)且回复晚于其最后查看时间」的反馈条数。"""
+    return int(
+        session.exec(
+            select(func.count())
+            .select_from(FeedbackRecord)
+            .where(
+                FeedbackRecord.owner_username == username,
+                FeedbackRecord.admin_note != "",
+                FeedbackRecord.updated_at > seen_at,
+            )
+        ).one()
+    )
+
+
+@router.get("/api/reader/feedback/unread-count")
+def reader_feedback_unread_count(
+    request: Request,
+    session: Session = Depends(deps.get_session),
+):
+    """当前读者尚未查看的管理员回复条数（供阅读器给反馈入口挂小红点）。"""
+    username = _app().current_username(request)
+    seen_at = _feedback_seen_at(session, username)
+    return {"unread_count": _unread_reply_count(session, username, seen_at)}
+
+
+@router.post("/api/reader/feedback/mark-seen")
+def reader_feedback_mark_seen(
+    request: Request,
+    session: Session = Depends(deps.get_session),
+):
+    """把当前读者的反馈查看水位推进到此刻（读者打开反馈页即调用），未读回复随之归零。"""
+    username = _app().current_username(request)
+    now = _now_iso()
+    key = f"{_FEEDBACK_SEEN_KEY_PREFIX}{username}"
+    record = session.get(AppSettingRecord, key)
+    if record is None:
+        record = AppSettingRecord(key=key, value=now)
+    else:
+        record.value = now
+    session.add(record)
+    session.commit()
+    return {"status": "success", "unread_count": 0}
 
 
 @router.delete("/api/reader/feedback/{feedback_id}")

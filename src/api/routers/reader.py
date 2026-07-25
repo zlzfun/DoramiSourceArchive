@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import literal_column
 from sqlmodel import Session, func, select
 
 from api import deps
@@ -38,7 +39,9 @@ from api.sources import (
 )
 from fetchers.registry import DECOMMISSIONED_FETCHER_IDS
 from llm.client import LLMError, UsageMeta
+from storage.fts import fts_search_ids
 from models.db import (
+    AiUsageRecord,
     ArticleRecord,
     ReaderFavoriteRecord,
     ReaderFeedTokenRecord,
@@ -206,12 +209,15 @@ def record_article_read(article_id: str, request: Request, session: Session = De
         return {"status": "ignored"}
     source_id = article.source_id
     try:
-        # 双写：先挂逐篇已读状态（不自 commit），由紧随的计量写入一并提交。
+        # 三写：逐篇已读状态 + 文章级累计阅读数（均不自 commit），由紧随的计量写入一并提交。
         reader_state_service.mark_read(session, username=username, article_id=article.id)
+        article.read_count = (article.read_count or 0) + 1
+        session.add(article)
         reader_activity_service.record_read(session, username=username, source_id=source_id)
     except Exception:  # noqa: BLE001 - 计量/状态失败不影响阅读
         return {"status": "ignored"}
-    return {"status": "ok", "source_id": source_id}
+    # 回传累计阅读数：前端就地刷新阅读窗「累计阅读 N 次」，含读者本次这一下。
+    return {"status": "ok", "source_id": source_id, "read_count": article.read_count}
 
 
 # ==================== 未读体系 ====================
@@ -346,8 +352,14 @@ def list_favorites(
         base = base.where(cond)
         count_query = count_query.where(cond)
     if search:
-        base = base.where(ArticleRecord.title.contains(search))
-        count_query = count_query.where(ArticleRecord.title.contains(search))
+        # FTS5 全文检索（标题+正文）；不可用/过短时回退标题 LIKE。base 与 count 同条件。
+        fts_ids = fts_search_ids(session, search)
+        if fts_ids is not None:
+            cond = literal_column("articles.rowid").in_(fts_ids)
+        else:
+            cond = ArticleRecord.title.contains(search)
+        base = base.where(cond)
+        count_query = count_query.where(cond)
     base = base.order_by(ReaderFavoriteRecord.created_at.desc(), ArticleRecord.id.desc())
     total = int(session.exec(count_query).one() or 0)
     rows = session.exec(base.offset(safe_skip).limit(safe_limit)).all()
@@ -461,6 +473,16 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
     ).all()
     subscribed_ids = set(app.resolve_subscribed_source_ids(session, username))
 
+    # 全站各源订阅人数（按 owner 去重）：发现页选源参考。扫描全部订阅行在当前
+    # 账号规模下开销可忽略；一行订阅可含多个 source_id，逐一归集。
+    subscriber_owners: Dict[str, set] = {}
+    for record in session.exec(
+        select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.is_active == True)  # noqa: E712
+    ).all():
+        for sid in subscription_source_ids(record):
+            subscriber_owners.setdefault(sid, set()).add(record.owner_username or "")
+    subscriber_counts = {sid: len(owners) for sid, owners in subscriber_owners.items()}
+
     by_source: Dict[str, Dict[str, Any]] = {}
 
     def _ensure_entry(source_id: str, content_type: Optional[str] = None) -> Dict[str, Any]:
@@ -493,6 +515,7 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
                 "avatar_url_original": cached_profile.get("author_avatar_url") or "",
                 "count": 0,
                 "last_fetched": "",
+                "subscriber_count": subscriber_counts.get(source_id, 0),
                 "subscribed": source_id in subscribed_ids,
                 "registered": source_id in registry_meta,
                 "configured": source_id in configured_meta,
@@ -586,6 +609,34 @@ def _require_reader_ai(request: Request):
     return username, llm_config
 
 
+# 读者 AI 逐用户每日配额（常量，可调）：护住共享 LLM 预算不被单账户刷爆。
+# 计数复用 AiUsageRecord.calls，即底层 LLM 调用次数——translate 会按段并发多次调用，
+# 故该额度更接近「若干篇整文翻译」而非固定篇数；ask 通常一问一次调用。
+_AI_DAILY_CALL_LIMITS = {"translate": 50, "ask": 100}
+
+
+def _enforce_ai_daily_quota(username: str, purpose: str) -> None:
+    """按当日 AiUsageRecord 聚合的 calls 判该账户此用途是否超额；超则 429。
+
+    admin 不豁免：配额护的是共享 LLM 预算/成本，与账户角色无关，统一限最简单可预期。
+    请求前置校验（未产生 LLM 调用即拦），与 feedback「单日 10 条限额」同范式。
+    """
+    limit = _AI_DAILY_CALL_LIMITS.get(purpose)
+    if not limit:
+        return
+    today = datetime.date.today().isoformat()
+    with Session(deps.get_db_sink().engine) as session:
+        used = session.exec(
+            select(func.coalesce(func.sum(AiUsageRecord.calls), 0)).where(
+                AiUsageRecord.day == today,
+                AiUsageRecord.username == username,
+                AiUsageRecord.purpose == purpose,
+            )
+        ).one()
+    if int(used or 0) >= limit:
+        raise HTTPException(status_code=429, detail="今日 AI 使用次数已达上限，请明日再试")
+
+
 def _recent_subscribed_articles(username: str, limit: int) -> List[ArticleRecord]:
     """取该用户订阅来源内、按抓取时间倒序的最近若干篇有正文的文章（RAG 关闭时的问答上下文）。"""
     app = _app()
@@ -609,6 +660,7 @@ def _recent_subscribed_articles(username: str, limit: int) -> List[ArticleRecord
 async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
     """把指定文章正文译为简体中文（结果缓存复用）。"""
     username, llm_config = _require_reader_ai(request)
+    _enforce_ai_daily_quota(username, "translate")
     db_sink = deps.get_db_sink()
     try:
         result = await reader_ai_service.translate_article(
@@ -654,6 +706,7 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
     """
     app = _app()
     username, llm_config = _require_reader_ai(request)
+    _enforce_ai_daily_quota(username, "ask")
     db_sink = deps.get_db_sink()
     scope = params.scope if params.scope in ("article", "subscription") else "article"
 
