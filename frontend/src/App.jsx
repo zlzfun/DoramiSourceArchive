@@ -59,7 +59,7 @@ function TabBoundary({ children }) {
 // ── 导航 / 历史锚点 ──
 // 把「标签 + 子视图」镜像到 URL hash（#/runs/history），跨页跳转的聚焦上下文存在 history.state 里。
 // 让浏览器「返回」能逐级退回：子视图切换 → 标签切换 → 跨页跳转的原位。
-const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'vector', 'mcp', 'admin'];
+const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'vector', 'brief', 'admin'];
 
 const FEEDBACK_UNREAD_POLL_MS = 5 * 60 * 1000; // 反馈回复角标轮询:回复非即时通讯,低频足够
 // runs 的双视图已随运行波(调度台)退役:旧书签 #/runs/history、#/runs/jobs 在
@@ -106,6 +106,8 @@ function routeToHash(tab, views) {
 
 function hashToRoute(hash) {
   const parts = String(hash || '').replace(/^#\/?/, '').split('/').filter(Boolean);
+  // 历史书签兼容:AI 日报页签曾长期沿用「接入集成」纪元的 id 'mcp'(#/mcp),现已与 MCP 无关。
+  if (parts[0] === 'mcp') parts[0] = 'brief';
   const tab = ALL_TABS.includes(parts[0]) ? parts[0] : 'data';
   let view = SUBVIEW_TABS.has(tab) ? (parts[1] || TAB_DEFAULT_VIEW[tab]) : null;
   // 已下线的子视图归一到默认视图，兼容陈旧书签：#/fetch/groups（「采集范围」，实体简化阶段 1 移除）。
@@ -481,8 +483,8 @@ export default function App() {
     { id: 'runs', icon: History, label: '任务与运行', surface: 'collector' },
     { id: 'vector', icon: BarChart2, label: '向量雷达', surface: 'reader', requiresRag: true, hideForReader: true },
     // 「接入集成」页签已并入设置柜(交付通道三卡→设置·接入集成组);页签瘦身改名「AI 日报」
-    // (只剩日报运营面),id 保持 'mcp' 兼容历史 hash 书签。
-    { id: 'mcp', icon: Newspaper, label: 'AI 日报', surface: 'collector' },
+    // (只剩日报运营面),id 改为 'brief'(历史 hash #/mcp 由 hashToRoute 归一兼容)。
+    { id: 'brief', icon: Newspaper, label: 'AI 日报', surface: 'collector' },
     { id: 'admin', icon: ShieldCheck, label: '运维管理', adminOnly: true },
   ].filter(tab => {
     if (tab.onlyReader && !isReaderRole) return false;
@@ -508,7 +510,7 @@ export default function App() {
 
   // ── 读者账号:应用导轨隐藏(阅读器视图轨独占,轨底头像菜单承接 设置/主题/退出)──
   useEffect(() => {
-    // 无导轨即无页签切换;历史 hash(#mcp 等)一律归位到阅读器
+    // 无导轨即无页签切换;历史 hash(#/brief 等)一律归位到阅读器
     if (isReaderRole && activeTab !== 'reader') goTab('reader', { replace: true });
   }, [isReaderRole, activeTab, goTab]);
 
@@ -822,8 +824,8 @@ export default function App() {
               </TabBoundary>
             </div>
           )}
-          {mountedTabs.has('mcp') && runtimeInfo.collector_enabled && (
-            <div className={`tab-panel${activeTab === 'mcp' && !readerView ? '' : ' is-off'}`}>
+          {mountedTabs.has('brief') && runtimeInfo.collector_enabled && (
+            <div className={`tab-panel${activeTab === 'brief' && !readerView ? '' : ' is-off'}`}>
               <TabBoundary>
                 <DailyBriefTab
                   showToast={showToast}

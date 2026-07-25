@@ -257,7 +257,7 @@ frontend/src/
     ├── FetchTab.jsx         # 节点管理: fetcher catalog/triggers (collector)
     ├── FetchRunsTab.jsx     # 任务与运行: scheduled tasks + fetch-run history (collector)
     ├── VectorTab.jsx        # 向量雷达: semantic search + RAG context export (reader surface, but admin-facing — hidden for `user`, who searches via the 阅读器)
-    ├── DailyBriefTab.jsx    # AI 日报页签 (原「接入集成」页签瘦身改名 v3.9, tab id 仍 'mcp' 兼容书签; gating collector): DailyBriefPanel + 只读模型 chip; 交付通道内容 (MCP/聚合接口/技能包) 已并入设置柜
+    ├── DailyBriefTab.jsx    # AI 日报页签 (原「接入集成」页签瘦身改名 v3.9; tab id 已更名 'brief', 历史书签 #/mcp 由 hashToRoute 归一兼容; gating collector): DailyBriefPanel + 只读模型 chip; 交付通道内容 (MCP/聚合接口/技能包) 已并入设置柜
     ├── DailyBriefPanel.jsx   # 每日 AI 资讯日报: config + manual generate + run history (admin-managed)
     ├── DailyBriefFlow.jsx    # Animated map-reduce stage visualization for the daily-brief generation progress
     ├── SettingsModal.jsx    # 设置柜 (880×576, v3.9 「接入集成并入设置」; v3.19.2 整备): 分组左导航 通用(账户/外观/反馈与建议 — 反馈仅读者账号)/接入集成(聚合接口/MCP 接入/Agent 技能包 — 两角色同享)/管理(数据同步)/关于; wash 块选中 (轨语言); initialSection 深链。**内容门控按「当前界面」而非仅角色**(v3.19.2): App 下传 readerSurface, adminConsole = admin 账号 × 管理台界面 —— MCP 启停 switch/「管理员令牌拉走全库」文案/数据同步组/归档中枢产品名只在 adminConsole 出现, admin 切阅读器后设置柜与读者同观感。分区组件在 components/settings/ (FeedTokenSection/McpAccessSection — adminConsole 含 MCP 启停 switch + 向量统计行, 取数范围说明分管理版/读者版/SkillSection/AccountSection/AppearanceSection/DataSyncSection — v3.19.2 重设计为单列整幅实线卡(根治 datetime 截断), 含 RemoteSyncCard 远程同步块(测连/范围三选/进度轮询)与 RemoteSyncScheduleCard 定时同步卡(开关+只写不回显凭据+频率预设)/FeedbackSection — v3.18 读者反馈入口/AboutSection)
