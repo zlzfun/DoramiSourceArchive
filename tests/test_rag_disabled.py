@@ -119,6 +119,16 @@ def test_vector_search_user_no_subscriptions_returns_empty_without_loading_model
         replace(app_module.settings, runtime=RuntimeConfig(role="reader")),
     )
 
+    # 预标记「默认订阅已播种」：登录点播种会给新账号带上精选订阅，
+    # 本测试要的是零订阅初态（验证硬性范围拦截先于 require_vector_sink）。
+    from sqlmodel import Session
+    from services import daily_brief as daily_brief_service
+
+    with Session(sink.engine) as session:
+        daily_brief_service.set_setting(
+            session, f"{app_module.DEFAULTS_SEEDED_KEY_PREFIX}:user", "test-preseeded"
+        )
+
     with TestClient(app_module.app) as client:
         _login(client, "user", "user")
         resp = client.post("/api/vector/search", json={"query": "anything"})
