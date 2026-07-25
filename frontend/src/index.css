@@ -700,6 +700,20 @@ input[type="radio"] {
     background: var(--dorami-blue);
   }
 
+  /* 默认字母头像:--avatar-h 由 utils/avatarColor.js 按用户名首字符派生,
+     同一 hue 亮色取浅底深字、暗色翻转——参数化生色,无法落成固定 token(同 heat 阶范式)。
+     双类提升 specificity:该类总与宿主类(.acct-avatar/.rail-avatar-face 等,声明在后)叠用,
+     单类会被宿主的 background/color 按顺序压回。 */
+  .avatar-letter.avatar-letter {
+    background: hsl(var(--avatar-h, 243) 48% 90%);
+    color: hsl(var(--avatar-h, 243) 42% 34%);
+    font-weight: 700;
+  }
+  [data-theme="dark"] .avatar-letter.avatar-letter {
+    background: hsl(var(--avatar-h, 243) 28% 26%);
+    color: hsl(var(--avatar-h, 243) 48% 78%);
+  }
+
   /* ── Navigation ── */
 
   .nav-pill {

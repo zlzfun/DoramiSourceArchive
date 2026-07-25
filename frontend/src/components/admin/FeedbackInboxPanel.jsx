@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Loader2, PenLine } from 'lucide-react';
 import { fetchAdminFeedback, updateFeedbackStatus } from '../../api';
 import { formatStamp } from './adminUtils';
+import { avatarInitial, avatarHue } from '../../utils/avatarColor';
 import Pager from './Pager';
 
 // 规模化波:服务端分页,前端只持有当前页(反馈行是高卡片,页容量取小)。
@@ -133,7 +134,7 @@ export default function FeedbackInboxPanel({ showToast }) {
               <article key={item.id} className="fb-row">
                 <div className="fb-row-head">
                   <span className="acct-user">
-                    <span className="acct-avatar">{(item.owner_username || '?').charAt(0).toUpperCase()}</span>
+                    <span className="acct-avatar avatar-letter" style={{ '--avatar-h': avatarHue(item.owner_username) }}>{avatarInitial(item.owner_username)}</span>
                     <span className="acct-name">{item.owner_username}</span>
                   </span>
                   <span className="micro-label text-slate-500">{CATEGORY_LABELS[item.category] || '其他'}</span>

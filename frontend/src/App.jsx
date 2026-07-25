@@ -21,6 +21,7 @@ import BrandLogoImage from './components/BrandLogoImage';
 import RailUserFlyout from './components/RailUserFlyout';
 import TabErrorBoundary from './components/TabErrorBoundary';
 import { useTheme } from './theme';
+import { avatarInitial, avatarHue } from './utils/avatarColor';
 import { fetchAuthSession, fetchFeedbackUnreadCount, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
 import RunningWidget from './components/RunningWidget';
 import { useRunningProgress } from './hooks/useRunningProgress';
@@ -500,11 +501,6 @@ export default function App() {
     [availableFetchers],
   );
 
-  const avatarInitials = useMemo(() => {
-    const name = authState.user?.username?.trim();
-    return name ? name.slice(0, 2).toUpperCase() : 'AD';
-  }, [authState.user?.username]);
-
   // 账号身份标签：读者不感知部署「层」概念，只显示自己的角色。
   const roleLabel = isReaderRole ? '读者' : '管理员';
 
@@ -607,7 +603,6 @@ export default function App() {
         <div className="reader-vrail-spring" />
         <RailUserFlyout
           avatar={authState.user?.avatar}
-          avatarText={avatarInitials}
           username={authState.user?.username}
           roleLabel={roleLabel}
           onLogout={handleLogout}
@@ -690,7 +685,12 @@ export default function App() {
               className="h-9 w-9 rounded-full object-cover shadow-sm ring-1 ring-black/5"
             />
           ) : (
-            <div className="avatar-badge flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white">{avatarInitials}</div>
+            <div
+              className="avatar-letter flex h-9 w-9 items-center justify-center rounded-full text-xs"
+              style={{ '--avatar-h': avatarHue(authState.user?.username) }}
+            >
+              {avatarInitial(authState.user?.username)}
+            </div>
           )}
           <button
             type="button"
@@ -749,8 +749,7 @@ export default function App() {
                   aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured}
                   standalone
                   account={authState.user}
-                  avatarText={avatarInitials}
-                  themeDark={effective === 'dark'}
+                          themeDark={effective === 'dark'}
                   onToggleTheme={toggleTheme}
                   onOpenSettings={(section) => openSettings(section)}
                   onLogout={handleLogout}
