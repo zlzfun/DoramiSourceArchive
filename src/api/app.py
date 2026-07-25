@@ -170,6 +170,7 @@ from services import remote_sync as remote_sync_service
 from services import accounts as accounts_service
 from services import admin_audit as admin_audit_service
 from services import reader_ai as reader_ai_service
+from services import reader_state as reader_state_service
 from services import ai_usage as ai_usage_service
 from services import reader_activity as reader_activity_service
 from services import content_analytics as content_analytics_service
@@ -1612,7 +1613,16 @@ def _create_single_source_subscription(session: Session, username: str, source_i
 
 
 # 新读者账号默认自带的订阅源（可随时取消，且取消后不会被再次播种）。
-DEFAULT_SUBSCRIPTION_SOURCE_IDS = [DAILY_BRIEF_SOURCE_ID]
+# 精选名单（2026-07-25 拍板，5 源均衡版）：日报聚合最适合首屏，再配中文媒体两家 +
+# 头部官方两家，让新账号首次进入阅读器即有内容可读；名单刻意少而低噪，
+# 更多来源引导用户去「发现」页自选。
+DEFAULT_SUBSCRIPTION_SOURCE_IDS = [
+    DAILY_BRIEF_SOURCE_ID,   # 每日 AI 资讯日报（全站聚合）
+    "web_qbitai",            # 量子位（中文媒体）
+    "web_ithome_ai",         # IT之家 AI（中文快讯）
+    "web_anthropic_news",    # Anthropic 官方
+    "rss_openai_news",       # OpenAI 官方
+]
 DEFAULTS_SEEDED_KEY_PREFIX = "reader_defaults_seeded"
 
 
@@ -1638,6 +1648,9 @@ def ensure_default_subscriptions(username: str) -> None:
             else:
                 name = _friendly_source_name(source_id, registry_meta)
             _create_single_source_subscription(session, username, source_id, name)
+            # 与一键订阅同语义：播种即初始化未读水位（backlog 式，最近 K 篇成为未读积压），
+            # 新账号首屏就有未读可读，而不是一片「全已读」。
+            reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
         # set_setting 内部 commit，会一并提交上面新增的订阅记录。
         daily_brief_service.set_setting(session, key, _now_iso())
 
