@@ -255,8 +255,8 @@ class PresetGitHubRepositoriesFetcher(GenericGitHubRepositoriesFetcher):
 
 class DeepSeekGitHubRepositoriesFetcher(PresetGitHubRepositoriesFetcher):
     source_id = "github_deepseek_repositories"
-    name = "DeepSeek GitHub 新仓库"
-    description = "跟踪 deepseek-ai GitHub 组织下的新公开仓库。"
+    name = "DeepSeek 新仓库"
+    description = "deepseek-ai GitHub 组织下的新公开仓库。"
     icon = "🧠"
     owner = "deepseek-ai"
     source_owner = "deepseek-ai"
@@ -393,8 +393,8 @@ class PresetHuggingFaceModelsFetcher(GenericHuggingFaceModelsFetcher):
 
 class DeepSeekHuggingFaceModelsFetcher(PresetHuggingFaceModelsFetcher):
     source_id = "hf_deepseek_models"
-    name = "DeepSeek Hugging Face 新模型"
-    description = "跟踪 DeepSeek 在 Hugging Face 上发布的新模型。"
+    name = "DeepSeek 新模型"
+    description = "DeepSeek 在 Hugging Face 上发布的新模型。"
     icon = "🤗"
     author = "deepseek-ai"
     source_owner = "deepseek-ai"

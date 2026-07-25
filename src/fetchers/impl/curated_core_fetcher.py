@@ -158,7 +158,7 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
     source_id = "docs_openai_codex_changelog"
     content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
     name = "Codex Changelog"
-    description = "抓取 OpenAI Codex 官方 Changelog 中的 Codex、CLI、IDE 与自动化更新。"
+    description = "OpenAI Codex 官方 Changelog 中的 Codex、CLI、IDE 与自动化更新。"
     icon = "🟢"
     page_url = "https://developers.openai.com/codex/changelog"
     source_url = page_url
@@ -291,7 +291,7 @@ class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
     source_id = "docs_claude_code_changelog"
     content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
     name = "Claude Code Changelog"
-    description = "抓取 Claude Code 官方 Changelog 中的版本级工具更新。"
+    description = "Claude Code 官方 Changelog 中的版本级工具更新。"
     icon = "🟧"
     page_url = "https://code.claude.com/docs/en/changelog"
     source_url = page_url
@@ -578,7 +578,7 @@ class GemmaReleaseNotesFetcher(DevsiteReleaseNotesFetcher):
     source_id = "docs_gemma_release_notes"
     content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
     name = "Gemma Release Notes"
-    description = "抓取 Gemma 官方 Release Notes 中的开放模型发布与更新。"
+    description = "Gemma 官方 Release Notes 中的开放模型发布与更新。"
     icon = "💎"
     page_url = "https://ai.google.dev/gemma/docs/releases"
     source_url = page_url
@@ -599,8 +599,8 @@ class GemmaReleaseNotesFetcher(DevsiteReleaseNotesFetcher):
 class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
     source_id = "docs_xai_release_notes"
     content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
-    name = "xAI Developer Release Notes"
-    description = "抓取 xAI 开发者 Release Notes 中的 Grok 模型、API 与产品更新（按发布条目逐条切分）。"
+    name = "xAI Release Notes"
+    description = "xAI 官方 Release Notes 中的 Grok 模型、API 与产品更新。"
     icon = "𝕏"
     page_url = "https://docs.x.ai/developers/release-notes"
     source_url = page_url
@@ -763,8 +763,8 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
 class DeepSeekApiChangeLogFetcher(DevsiteReleaseNotesFetcher):
     source_id = "docs_deepseek_api_changelog"
     content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
-    name = "DeepSeek API Change Log"
-    description = "抓取 DeepSeek API Change Log 中的模型、API 与平台更新（按发布日期逐条切分）。"
+    name = "DeepSeek API Changelog"
+    description = "DeepSeek API 官方 Changelog 中的模型、API 与平台更新。"
     icon = "🧠"
     page_url = "https://api-docs.deepseek.com/updates/"
     source_url = page_url
@@ -866,8 +866,8 @@ class DeepSeekApiChangeLogFetcher(DevsiteReleaseNotesFetcher):
 class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
     source_id = "docs_zai_new_released"
     content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
-    name = "Z.ai New Released"
-    description = "抓取 Z.ai New Released 页面中的 GLM 模型、API、Agent 与产品更新。"
+    name = "Z.ai 更新公告"
+    description = "Z.ai 官方发布页的 GLM 模型、API、Agent 与产品更新。"
     icon = "🧩"
     page_url = "https://docs.z.ai/release-notes/new-released"
     source_url = page_url
@@ -933,7 +933,7 @@ class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
             entries.append({
                 "release_date": release_date,
                 "model_name": model_name,
-                "title": f"Z.ai New Released: {model_name}",
+                "title": f"{self.site_name}: {model_name}",
                 "source_url": source_url,
                 "publish_date": f"{release_date}T00:00:00+00:00",
                 "content": content,
@@ -982,7 +982,7 @@ class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
 class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
     source_id = "web_bytedance_seed_research"
     name = "ByteDance Seed Research"
-    description = "抓取 ByteDance Seed Research 页面 Publications 中的研究论文与技术报告（逐篇切分）。"
+    description = "ByteDance Seed 官方 Publications 中的研究论文与技术报告。"
     icon = "🌱"
     page_url = "https://seed.bytedance.com/en/research"
     source_url = page_url
@@ -1119,7 +1119,7 @@ class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
 class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
     source_id = "web_huggingface_daily_papers"
     name = "Hugging Face Daily Papers"
-    description = "抓取 Hugging Face Daily Papers 中的社区热门论文（逐篇切分，含摘要与发布日期）。"
+    description = "Hugging Face Daily Papers 的社区每日热门论文精选。"
     icon = "🤗"
     page_url = "https://huggingface.co/papers"
     source_url = page_url
@@ -1263,7 +1263,7 @@ class CursorChangelogWebFetcher(BaseWebPageListFetcher):
     source_id = "web_cursor_changelog"
     content_shape = "bulletin"  # changelog/发布说明:动态形,进「动态」视图
     name = "Cursor Changelog"
-    description = "抓取 Cursor 官方 Changelog 中的 AI 编程、Agent 与 IDE 产品更新。"
+    description = "Cursor 官方 Changelog 中的 AI 编程、Agent 与 IDE 产品更新。"
     icon = "⌨️"
     listing_url = "https://cursor.com/changelog"
     source_url = listing_url
@@ -1313,8 +1313,8 @@ class CursorChangelogWebFetcher(BaseWebPageListFetcher):
 class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_qbitai"
-    name = "量子位 Website"
-    description = "抓取量子位官网中的中文 AI 新闻、模型、产品和产业动态。"
+    name = "量子位"
+    description = "量子位官网的中文 AI 新闻、模型、产品和产业动态。"
     icon = "📰"
     listing_url = "https://www.qbitai.com/category/%E8%B5%84%E8%AE%AF"
     source_url = listing_url
@@ -1576,8 +1576,8 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
 class AieraWebsiteFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_aiera"
-    name = "新智元 Website"
-    description = "抓取新智元官网公开文章列表中的中文 AI 模型、产品、产业和研究资讯。"
+    name = "新智元"
+    description = "新智元官网的中文 AI 模型、产品、产业和研究资讯。"
     icon = "📰"
     listing_url = "https://aiera.com.cn/"
     source_url = listing_url

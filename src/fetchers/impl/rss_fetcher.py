@@ -365,7 +365,7 @@ class PresetRssFetcher(GenericRssFetcher):
 
 class OpenAINewsRssFetcher(PresetRssFetcher):
     source_id = "rss_openai_news"
-    name = "OpenAI News"
+    name = "OpenAI 新闻"
     description = "OpenAI 官方新闻、产品、研究与工程博客动态。"
     icon = "🧠"
     feed_url = "https://openai.com/news/rss.xml"
@@ -557,8 +557,8 @@ class OpenAINewsRssFetcher(PresetRssFetcher):
 
 class GoogleGeminiModelsRssFetcher(PresetRssFetcher):
     source_id = "rss_google_gemini_models"
-    name = "Google Blog Gemini Models"
-    description = "抓取 Google Blog Gemini Models 分类 RSS 中的 Gemini 模型、能力与产品公告。"
+    name = "Gemini 模型公告"
+    description = "Google 官方的 Gemini 模型、能力与产品公告。"
     icon = "🔷"
     feed_url = "https://blog.google/innovation-and-ai/models-and-research/gemini-models/rss/"
     category = "official"
@@ -576,7 +576,7 @@ class GoogleGeminiModelsRssFetcher(PresetRssFetcher):
 
 class HackerNewsAiRssFetcher(PresetRssFetcher):
     source_id = "rss_hn_ai"
-    name = "Hacker News: AI"
+    name = "Hacker News · AI"
     description = "Hacker News 中已获得社区投票/讨论的 AI 相关提交（按最低分数过滤掉招聘贴、0 赞自荐等噪声）。"
     icon = "🟧"
     # hnrss 的 ?q=AI 是无过滤的「最新提交」全文搜索 firehose——把 AI 当关键词捞新帖，
@@ -664,7 +664,7 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
 class GoogleDeepMindBlogRssFetcher(PresetRssFetcher):
     source_id = "rss_deepmind_blog"
     name = "Google DeepMind 博客"
-    description = "抓取 Google DeepMind 的模型、研究与产品官方动态。"
+    description = "Google DeepMind 的模型、研究与产品官方动态。"
     icon = "🧬"
     feed_url = "https://deepmind.google/blog/rss.xml"
     category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "official"
@@ -708,7 +708,7 @@ class GoogleDeepMindBlogRssFetcher(PresetRssFetcher):
 class MistralNewsRssFetcher(PresetRssFetcher):
     source_id = "rss_mistral_news"
     name = "Mistral AI 新闻"
-    description = "抓取 Mistral AI 的模型、产品与 API 平台官方新闻。"
+    description = "Mistral AI 的模型、产品与 API 平台官方新闻。"
     icon = "🌬️"
     feed_url = "https://mistral.ai/rss.xml"
     category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "official"
@@ -773,7 +773,7 @@ class MistralNewsRssFetcher(PresetRssFetcher):
 class HuggingFaceBlogRssFetcher(PresetRssFetcher):
     source_id = "rss_hf_blog"
     name = "Hugging Face 博客"
-    description = "抓取 Hugging Face 的模型、产品、实践与研究博客动态。"
+    description = "Hugging Face 的模型、产品、实践与研究博客动态。"
     icon = "🤗"
     feed_url = "https://huggingface.co/blog/feed.xml"
     category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "official"
@@ -843,7 +843,7 @@ class HuggingFaceBlogRssFetcher(PresetRssFetcher):
 class TheDecoderRssFetcher(PresetRssFetcher):
     source_id = "rss_the_decoder"
     name = "The Decoder"
-    description = "抓取 The Decoder 的英文 AI 模型、市场与产品报道。"
+    description = "The Decoder 的英文 AI 模型、市场与产品报道。"
     icon = "📰"
     feed_url = "https://the-decoder.com/feed/"
     category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "media"
@@ -879,7 +879,7 @@ class TheDecoderRssFetcher(PresetRssFetcher):
 class RuanYifengRssFetcher(PresetRssFetcher):
     source_id = "rss_ruanyifeng"
     name = "阮一峰·科技爱好者周刊"
-    description = "抓取阮一峰科技爱好者周刊的中文技术与 AI 精选内容。"
+    description = "阮一峰科技爱好者周刊的中文技术与 AI 精选内容。"
     icon = "📮"
     feed_url = "https://www.ruanyifeng.com/blog/atom.xml"
     category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
@@ -903,7 +903,7 @@ class RuanYifengRssFetcher(PresetRssFetcher):
 class TestingCatalogRssFetcher(PresetRssFetcher):
     source_id = "rss_testingcatalog"
     name = "TestingCatalog"
-    description = "抓取 TestingCatalog 对主流 AI 产品功能上线与变化的追踪。"
+    description = "TestingCatalog 对主流 AI 产品功能上线与变化的追踪。"
     icon = "🧪"
     feed_url = "https://www.testingcatalog.com/rss/"
     category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "media"
@@ -924,7 +924,7 @@ class TestingCatalogRssFetcher(PresetRssFetcher):
 class SimonWillisonRssFetcher(PresetRssFetcher):
     source_id = "rss_simonwillison"
     name = "Simon Willison 博客"
-    description = "抓取 Simon Willison 的 LLM 工具与开发实践长文。"
+    description = "Simon Willison 的 LLM 工具与开发实践长文。"
     icon = "🛠️"
     feed_url = "https://simonwillison.net/atom/entries/"
     category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
@@ -948,7 +948,7 @@ class SimonWillisonRssFetcher(PresetRssFetcher):
 class LatentSpaceRssFetcher(PresetRssFetcher):
     source_id = "rss_latent_space"
     name = "Latent Space"
-    description = "抓取 Latent Space 的 AI 工程访谈与行业分析长文。"
+    description = "Latent Space 的 AI 工程访谈与行业分析长文。"
     icon = "🎙️"
     feed_url = "https://www.latent.space/feed"
     category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
@@ -972,7 +972,7 @@ class LatentSpaceRssFetcher(PresetRssFetcher):
 class InterconnectsRssFetcher(PresetRssFetcher):
     source_id = "rss_interconnects"
     name = "Interconnects"
-    description = "抓取 Nathan Lambert 对 RLHF 与开源模型的深度分析。"
+    description = "Nathan Lambert 对 RLHF 与开源模型的深度分析。"
     icon = "🧵"
     feed_url = "https://www.interconnects.ai/feed"
     category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
@@ -996,7 +996,7 @@ class InterconnectsRssFetcher(PresetRssFetcher):
 class RaschkaRssFetcher(PresetRssFetcher):
     source_id = "rss_raschka"
     name = "Ahead of AI (Raschka)"
-    description = "抓取 Sebastian Raschka 的 LLM 研究解读与实践。"
+    description = "Sebastian Raschka 的 LLM 研究解读与实践。"
     icon = "📚"
     feed_url = "https://magazine.sebastianraschka.com/feed"
     category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
@@ -1020,7 +1020,7 @@ class RaschkaRssFetcher(PresetRssFetcher):
 class OneUsefulThingRssFetcher(PresetRssFetcher):
     source_id = "rss_oneusefulthing"
     name = "One Useful Thing (Mollick)"
-    description = "抓取 Ethan Mollick 对 AI 应用与工作方式的洞察。"
+    description = "Ethan Mollick 对 AI 应用与工作方式的洞察。"
     icon = "💡"
     feed_url = "https://www.oneusefulthing.org/feed"
     category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
@@ -1044,7 +1044,7 @@ class OneUsefulThingRssFetcher(PresetRssFetcher):
 class LilianWengRssFetcher(PresetRssFetcher):
     source_id = "rss_lilianweng"
     name = "Lil'Log (Lilian Weng)"
-    description = "抓取 Lilian Weng 的深度技术长文。"
+    description = "Lilian Weng 的深度技术长文。"
     icon = "🪵"
     feed_url = "https://lilianweng.github.io/index.xml"
     category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "community"
@@ -1099,8 +1099,8 @@ class LilianWengRssFetcher(PresetRssFetcher):
 
 class BairBlogRssFetcher(PresetRssFetcher):
     source_id = "rss_bair_blog"
-    name = "BAIR Blog"
-    description = "抓取伯克利 AI 实验室的研究博客。"
+    name = "BAIR 博客"
+    description = "伯克利 AI 实验室（BAIR）的研究博客。"
     icon = "🎓"
     feed_url = "https://bair.berkeley.edu/blog/feed.xml"
     category = "incubating"  # 观察期(准入方案 §3.5);验收转正后改回 "official"
@@ -1184,7 +1184,7 @@ class AppleMachineLearningResearchRssFetcher(PresetRssFetcher):
 
 class NvidiaGenAiBlogRssFetcher(PresetRssFetcher):
     source_id = "rss_nvidia_genai"
-    name = "NVIDIA GenAI Blog"
+    name = "NVIDIA GenAI 博客"
     description = "NVIDIA 生成式 AI 的产品、平台与实践动态。"
     icon = "🟩"
     feed_url = "https://blogs.nvidia.com/blog/category/generative-ai/feed/"

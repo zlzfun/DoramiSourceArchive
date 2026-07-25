@@ -502,8 +502,8 @@ class BaseWebPageListFetcher(BaseFetcher):
 class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_anthropic_news"
-    name = "Anthropic News"
-    description = "抓取 Anthropic 官网 News 页面中的产品、研究、企业与安全动态。"
+    name = "Anthropic 新闻"
+    description = "Anthropic 官网的产品、研究、企业与安全动态。"
     icon = "🟫"
     listing_url = "https://www.anthropic.com/news"
     site_name = "Anthropic"
@@ -676,8 +676,8 @@ class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
 class ClaudeBlogWebFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_claude_blog"
-    name = "Claude Blog"
-    description = "抓取 Claude 官方 Blog 页面中的 Claude、Claude Code、Agent 与企业 AI 更新。"
+    name = "Claude 博客"
+    description = "Claude 官方博客的 Claude、Claude Code、Agent 与企业 AI 更新。"
     icon = "🟧"
     listing_url = "https://claude.com/blog"
     site_name = "Claude"
@@ -742,7 +742,7 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_ithome_ai"
     name = "IT之家 AI"
-    description = "抓取 IT之家智能时代人工智能分类页中的 AI 模型、产品、智能体和产业资讯。"
+    description = "IT之家智能时代频道的 AI 模型、产品、智能体和产业资讯。"
     icon = "📰"
     listing_url = "https://next.ithome.com/ai"
     site_name = "IT之家"
@@ -895,8 +895,8 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
 class QwenBlogWebFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_qwen_blog"
-    name = "Qwen Blog"
-    description = "抓取 Qwen 官方 Blog 中的模型、产品、多模态与 Agent 动态。"
+    name = "Qwen 博客"
+    description = "Qwen 官方博客的模型、产品、多模态与 Agent 动态。"
     icon = "🟦"
     listing_url = "https://qwen.ai/api/v2/article/retrieval"
     site_name = "Qwen"

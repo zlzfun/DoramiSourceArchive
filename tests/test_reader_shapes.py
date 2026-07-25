@@ -261,6 +261,14 @@ def test_articles_shape_composes_with_subscribed_scope(monkeypatch, tmp_path):
     _seed_article(sink.engine, "a1", "web_anthropic_news", content_type="web_article")
     _seed_article(sink.engine, "s1", "x_openai", content_type="social_post")
     _seed_article(sink.engine, "x1", "web_qbitai", content_type="web_article")  # 未订阅
+    # 预标记「默认订阅已播种」：web_qbitai 在精选名单里，若放任登录点播种,
+    # 「未订阅对照源」会被自动订阅、破坏本测试的范围断言。
+    from services import daily_brief as daily_brief_service
+
+    with Session(sink.engine) as session:
+        daily_brief_service.set_setting(
+            session, f"{app_module.DEFAULTS_SEEDED_KEY_PREFIX}:user", "test-preseeded"
+        )
 
     with TestClient(app_module.app) as client:
         _login(client)

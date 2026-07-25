@@ -49,6 +49,22 @@ def _set_auth_accounts(monkeypatch, app_module, accounts=_DEFAULT_ACCOUNTS):
     _seed_users(app_module.db_sink.engine, accounts)
 
 
+def _mark_defaults_seeded(engine, usernames=("user",)):
+    """预标记「默认订阅已播种」，使登录点播种跳过——供关注零订阅初态的测试保持原语义。
+
+    （默认订阅自登录点播种起，凡真实登录都会自带精选订阅；这些测试验证的是
+    订阅机制本身，需要一个干净的零订阅账号。）
+    """
+    from services import daily_brief as daily_brief_service
+    import api.app as app_module
+
+    with Session(engine) as session:
+        for username in usernames:
+            daily_brief_service.set_setting(
+                session, f"{app_module.DEFAULTS_SEEDED_KEY_PREFIX}:{username}", "test-preseeded"
+            )
+
+
 def _set_runtime_role(monkeypatch, app_module, role: str):
     from config import RuntimeConfig
 
@@ -202,6 +218,7 @@ def test_subscriptions_are_isolated_per_user(monkeypatch, tmp_path):
     sink = _make_sink(tmp_path, "owners.db")
     monkeypatch.setattr(app_module, "db_sink", sink)
     _seed_users(sink.engine, (("alice", "alice", "user"), ("bob", "bob", "user")))
+    _mark_defaults_seeded(sink.engine, ("alice", "bob"))
     _set_runtime_role(monkeypatch, app_module, "reader")
 
     with TestClient(app_module.app) as alice:
@@ -300,6 +317,44 @@ def test_default_subscription_seeded_once_and_not_resurrected(monkeypatch, tmp_p
         # 再次访问目录不会被重新播种（标记守卫生效）
         again = client.get("/api/reader/sources").json()
         assert "dorami_daily_brief" not in again["subscribed_source_ids"]
+
+
+def test_default_subscriptions_seeded_at_login(monkeypatch, tmp_path):
+    """播种挂在登录点：仅登录、不触碰任何 reader 端点，默认订阅即已就位。
+
+    回归自新账号首屏竞态：此前播种只在 GET /api/reader/sources，与其并行的
+    文章列表（subscribed_scope=only）/未读计数请求可能抢跑查到零订阅，
+    表现为空列表 + 积压未读被误判成「载入 N 篇新文章」提示。
+    """
+    import api.app as app_module
+
+    sink = _make_sink(tmp_path, "login_seed.db")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    _set_auth_accounts(monkeypatch, app_module)
+    _set_runtime_role(monkeypatch, app_module, "reader")
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+
+    with Session(sink.engine) as session:
+        subscribed = set(app_module.resolve_subscribed_source_ids(session, "user"))
+    assert set(app_module.DEFAULT_SUBSCRIPTION_SOURCE_IDS) <= subscribed
+
+
+def test_login_seeding_skipped_on_collector_runtime(monkeypatch, tmp_path):
+    """collector 形态无读者面，登录点不播种（原 reader 端点调用路径也不可达）。"""
+    import api.app as app_module
+
+    sink = _make_sink(tmp_path, "login_seed_collector.db")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    _set_auth_accounts(monkeypatch, app_module)
+    _set_runtime_role(monkeypatch, app_module, "collector")
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+
+    with Session(sink.engine) as session:
+        assert app_module.resolve_subscribed_source_ids(session, "admin") == []
 
 
 def test_articles_subscribed_scope_only_and_prioritize(monkeypatch, tmp_path):
@@ -439,6 +494,7 @@ def test_vector_search_hard_scoped_empty_when_no_subscriptions(monkeypatch, tmp_
     sink = _make_sink(tmp_path, "vec.db")
     monkeypatch.setattr(app_module, "db_sink", sink)
     _set_auth_accounts(monkeypatch, app_module)
+    _mark_defaults_seeded(sink.engine)
     _set_runtime_role(monkeypatch, app_module, "reader")
 
     with TestClient(app_module.app) as client:
@@ -584,6 +640,7 @@ def test_one_click_subscribe_creates_single_source_subscription(monkeypatch, tmp
     sink = _make_sink(tmp_path, "oneclick.db")
     monkeypatch.setattr(app_module, "db_sink", sink)
     _set_auth_accounts(monkeypatch, app_module)
+    _mark_defaults_seeded(sink.engine)
     _set_runtime_role(monkeypatch, app_module, "reader")
     _seed_article(sink.engine, "o1", "rss_openai", "OpenAI Update")
 
@@ -612,6 +669,7 @@ def test_one_click_unsubscribe_removes_source_and_prunes_empty(monkeypatch, tmp_
     sink = _make_sink(tmp_path, "oneclick_off.db")
     monkeypatch.setattr(app_module, "db_sink", sink)
     _set_auth_accounts(monkeypatch, app_module)
+    _mark_defaults_seeded(sink.engine)
     _set_runtime_role(monkeypatch, app_module, "reader")
     _seed_article(sink.engine, "o1", "rss_openai", "OpenAI Update")
     _seed_article(sink.engine, "a1", "rss_anthropic", "Anthropic Update")
@@ -1062,6 +1120,7 @@ def test_vectorize_endpoints_blocked_for_reader_user(monkeypatch, tmp_path):
     sink = _make_sink(tmp_path, "vecgate.db")
     monkeypatch.setattr(app_module, "db_sink", sink)
     _set_auth_accounts(monkeypatch, app_module)
+    _mark_defaults_seeded(sink.engine)
     _set_runtime_role(monkeypatch, app_module, "reader")
 
     with TestClient(app_module.app) as client:

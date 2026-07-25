@@ -21,7 +21,7 @@ from apscheduler.schedulers.base import STATE_STOPPED
 from apscheduler.triggers.cron import CronTrigger
 
 from storage.impl.db_storage import DatabaseStorage
-from storage.impl.vector_storage import ChromaVectorStorage, SOURCE_FRIENDLY_NAMES
+from storage.impl.vector_storage import ChromaVectorStorage
 from pipeline.core import DataPipeline
 from models.db import (
     ArticleRecord,
@@ -779,6 +779,16 @@ def login_admin(params: AuthLoginParams, response: Response):
         role = record.role
         avatar = record.avatar
         accounts_service.touch_login(session, username)
+    # 预置订阅在登录点播种（而非仅首个 reader 请求）：登录响应先于前端阅读器挂载，
+    # 消除新账号首屏的竞态——此前播种只挂在 GET /api/reader/sources，与它并行的
+    # 文章列表/未读计数请求可能抢跑查到零订阅，表现为空列表 + 积压被误判成
+    # 「载入 N 篇新文章」。KV 守卫保证仅播一次；失败不阻断登录，
+    # GET /api/reader/sources 的既有调用仍是兜底。
+    if runtime_reader_enabled():
+        try:
+            ensure_default_subscriptions(username)
+        except Exception:
+            _dorami_logger.warning("登录点播种默认订阅失败，等待 reader 端点兜底", exc_info=True)
     set_auth_cookie(response, username, role)
     return {"authenticated": True, "user": _auth_user_payload(username, role, avatar)}
 
