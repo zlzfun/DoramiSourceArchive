@@ -998,7 +998,7 @@ export default function ReaderTab({
               avatarText={avatarText}
               username={account?.username}
               onLogout={onLogout}
-              onLogoutHint={() => showToast('再次点击头像即可退出登录', 'info')}
+              onLogoutHint={() => showToast('再次点击以退出登录', 'info')}
               notify={feedbackUnread > 0}
             >
               {/* 返回管理台(v3.19):与应用导轨轨底「进入阅读器」对称的隐藏切换钮,仅 admin 有 */}

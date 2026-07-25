@@ -37,9 +37,9 @@ export default function RailUserFlyout({ avatar, avatarText, username, roleLabel
         type="button"
         className={`reader-vrail-avatar rail-flyout-avatar ${armed ? 'is-armed' : ''}`}
         onClick={handleAvatarClick}
-        aria-label={armed ? '再次点击退出登录' : '退出登录(点击两次确认)'}
+        aria-label={armed ? '再次点击以退出登录' : '退出登录(点击两次确认)'}
         title={armed
-          ? '再次点击退出登录'
+          ? '再次点击以退出登录'
           : `${username || '账号'}${roleLabel ? ` · ${roleLabel}` : ''} · 点击两次退出登录`}
       >
         {/* 轻通知点(如:反馈有新回复):挂头像因 flyout 常态收起只见头像 */}
