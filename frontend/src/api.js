@@ -207,10 +207,11 @@ export function fetchSourceHealth() {
 
 // ==================== 文章 ====================
 export function fetchArticles(filters = {}, limit = 100, skip = 0, includeTotal = false, options = {}) {
-  const { includeContent, ...fetchOptions } = options;
+  const { includeContent, includeExtensions, ...fetchOptions } = options;
   const params = new URLSearchParams({ limit, skip });
   if (includeTotal) params.append('include_total', 'true');
   if (includeContent !== undefined) params.append('include_content', includeContent ? 'true' : 'false');
+  if (includeExtensions !== undefined) params.append('include_extensions', includeExtensions ? 'true' : 'false');
   withFilters(params, filters);
   return request(`/articles?${params}`, { ...fetchOptions, errorMsg: '获取文章列表失败' });
 }

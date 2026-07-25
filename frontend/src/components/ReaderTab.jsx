@@ -1298,8 +1298,8 @@ export default function ReaderTab({
           {/* 新内容提示条:轮询发现未读正增量时出现,点击刷新——不自动插入打断阅读 */}
           {!favOnly && !articlesLoading && freshCount > 0 && (
             <button type="button" className="reader-fresh-pill" onClick={handleRefreshFresh}>
-              <RefreshCw className="h-3.5 w-3.5" />
-              有 {freshCount} 篇新文章 · 点击刷新
+              <RefreshCw className="h-3 w-3" />
+              载入 {freshCount} 篇新文章
             </button>
           )}
           {articlesLoading ? (
