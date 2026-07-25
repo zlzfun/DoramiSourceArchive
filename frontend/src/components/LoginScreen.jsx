@@ -84,8 +84,11 @@ const BRAND_DELAY_MS = 2800;
 const WARP_FLASH_MS = 1500;
 const WARP_DONE_MS = 2140;
 
-const prefersReducedMotion = () =>
-  typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+// 品牌豁免(2026-07-25 拍板):登录电影感是刻意的品牌表达,不随 OS「减少动画」降级——
+// Windows「关闭动画效果」会让浏览器报告 prefers-reduced-motion: reduce,此前登录页
+// 因此只剩静止一帧。工作区仍全面尊重该设置;豁免仅限登录/跃迁演出(index.css 的
+// 全局 reduced-motion 规则同步放行 .auth-stage/.app-arrive 子树)。
+const prefersReducedMotion = () => false;
 
 // —— 信号星座（三维摄像机）：横向鼠标移动=偏航转头，纵向=镜头推进/后拉。
 //    鼠标注入的运动靠摩擦衰减；无输入时保留极缓的环境漂移（缓慢自转 + 星点正弦漂移，
