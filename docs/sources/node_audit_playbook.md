@@ -135,6 +135,27 @@ These recurred across the audit. Recognize the symptom, apply the known fix.
 已知豁免(不算抓取错):feed 自带的作者推广位(oneusefulthing 卖书、simonwillison
 订阅提示、阮一峰刊头)属原文行文;数学博客的 `$$…$$`(阅读器不渲染 LaTeX,存档忠实)。
 
+## Source naming & description(2026-07-26 命名核对波沉淀)
+
+`name`/`description` 是读者面文案(源栏/发现页/订阅名单直出),不是内部节点标签。规则:
+
+- **标题 = 品牌/主体名 +(必要时)内容限定词**。渠道机制词不入标题:读者不关心内容来自
+  Website/RSS/GitHub API,后端也可能换复合/降级方式构造同一个源(反例已清:「新智元 Website」
+  「OpenCode GitHub Releases」「Google Blog Gemini Models」)。
+- **体裁词描述内容本身的可保留**:Changelog/Release Notes/Releases/Daily Papers/日榜是
+  内容形态专名,不是渠道;通用体裁词用中文(博客/新闻/公告/新仓库/新模型)。
+- **不照抄站点残缺文案**(反例:「Z.ai New Released」);构造式文章标题统一用
+  `f"{site_name}: …"` 前缀,不另造英文短语。
+- **分隔符统一「·」**(如「X · DeepSeek」「Hacker News · AI」);个人源括注用其最广为人知
+  的称呼(「Ahead of AI (Raschka)」)。
+- **description 用内容式名词短语**,禁以「抓取/通过 XX API 抓取/跟踪」开头,禁提逐条切分等
+  处理细节——发现页源卡直出这段文案(读者面不漏采集词汇纪律);`is_template=True` 的通用
+  模板源仅后端可见,不受此限。
+- **取名的运行时单点**:现役源名一律从 registry 现取(`vector_storage.friendly_source_name`,
+  chunk 头部/RAG 来源/目录兜底共用);`SOURCE_FRIENDLY_NAMES` 只登记非注册表源(日报特殊源 +
+  下线归档源,名单同步 `DECOMMISSIONED_FETCHER_IDS`)。**删类下线一个节点时在此补一行友好名**。
+  改名后存量 chunk 头部仍是旧名,在意就 `reindex-all`。
+
 ## When to remove a node instead of fixing it
 
 Delete the node (delete the class, remove its id from `ESSENTIAL_FETCHER_IDS`, **and**

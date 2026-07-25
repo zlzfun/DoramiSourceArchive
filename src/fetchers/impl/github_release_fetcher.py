@@ -200,8 +200,8 @@ class PresetGitHubReleasesFetcher(GenericGitHubReleasesFetcher):
 
 class OpenCodeGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     source_id = "github_opencode_releases"
-    name = "OpenCode GitHub Releases"
-    description = "通过 GitHub API 抓取 OpenCode Release 元数据。"
+    name = "OpenCode Releases"
+    description = "OpenCode 的版本发布与更新说明。"
     icon = "⌨️"
     # 原 opencode-ai/opencode 自 2025-06(v0.0.55)起停更，项目已迁移；活跃仓库现为
     # anomalyco/opencode（前 sst/opencode，持续发布 v1.x）。指向活跃仓库以恢复有效信号。
@@ -221,8 +221,8 @@ class OpenCodeGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
 
 class OpenClawGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     source_id = "github_openclaw_releases"
-    name = "OpenClaw GitHub Releases"
-    description = "通过 GitHub API 抓取 OpenClaw 正式 Release 元数据（默认跳过 beta 预发布）。"
+    name = "OpenClaw Releases"
+    description = "OpenClaw 的正式版本发布（默认跳过 beta 预发布）。"
     icon = "🧰"
     owner = "openclaw"
     repo = "openclaw"
@@ -243,8 +243,8 @@ class OpenClawGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
 
 class HermesAgentGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     source_id = "github_hermes_agent_releases"
-    name = "Hermes Agent GitHub Releases"
-    description = "通过 GitHub API 抓取 NousResearch Hermes Agent Release 元数据。"
+    name = "Hermes Agent Releases"
+    description = "NousResearch Hermes Agent 的版本发布与更新说明。"
     icon = "🪽"
     owner = "NousResearch"
     repo = "hermes-agent"

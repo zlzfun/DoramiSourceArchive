@@ -961,8 +961,8 @@ def test_zai_new_released_fetcher_splits_updates_by_model():
     items = asyncio.run(collect_items())
 
     assert [item.title for item in items] == [
-        "Z.ai New Released: GLM-5.1",
-        "Z.ai New Released: GLM-5V-Turbo",
+        "Z.ai: GLM-5.1",
+        "Z.ai: GLM-5V-Turbo",
     ]
     assert [item.publish_date for item in items] == [
         "2026-04-07T00:00:00+00:00",

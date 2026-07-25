@@ -5,7 +5,7 @@ from mcp.server.fastmcp import FastMCP
 from sqlmodel import Session, select
 from models.db import ArticleRecord, SourceStateRecord
 from storage.impl.db_storage import DatabaseStorage
-from storage.impl.vector_storage import ChromaVectorStorage, SOURCE_FRIENDLY_NAMES
+from storage.impl.vector_storage import ChromaVectorStorage, friendly_source_name
 from fetchers.registry import fetcher_registry
 
 
@@ -216,7 +216,7 @@ async def _get_rag_context_impl(
         pid = res["metadata"].get("parent_id", res["id"])
         record = await db_sink.get(pid)
         source_id_val = res["metadata"].get("source_id", "")
-        source_name = SOURCE_FRIENDLY_NAMES.get(source_id_val, source_id_val)
+        source_name = friendly_source_name(source_id_val)
         pub_date = res["metadata"].get("publish_date", "")
         title = record.title if record else res["metadata"].get("title", "")
         source_url = record.source_url if record else ""

@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from fetchers.registry import fetcher_registry
 from models.db import ReaderSubscriptionRecord
 from services import daily_brief as daily_brief_service
-from storage.impl.vector_storage import SOURCE_FRIENDLY_NAMES
+from storage.impl.vector_storage import friendly_source_name
 
 
 # content_type -> 中文分类名（内容源目录/看板展示用）。
@@ -173,4 +173,4 @@ def _friendly_source_name(source_id: str, registry_meta: Dict[str, Dict[str, Any
     meta = registry_meta.get(source_id)
     if meta and meta.get("name"):
         return meta["name"]
-    return SOURCE_FRIENDLY_NAMES.get(source_id, source_id)
+    return friendly_source_name(source_id)

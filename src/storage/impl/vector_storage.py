@@ -154,25 +154,39 @@ def clean_text(text: str) -> str:
 
 
 # ── T1: 来源名称映射（提升头部可读性，辅助中文查询匹配）────────────────────────
+# 非注册表源的兜底友好名：现役源一律经 friendly_source_name() 从注册表现取（改名
+# 零维护），这里只登记注册表查不到的 id——日报特殊源（非抓取器）与「删类下线但归档
+# 文章仍留库」的历史源（名单同步 registry.DECOMMISSIONED_FETCHER_IDS）。
 SOURCE_FRIENDLY_NAMES: Dict[str, str] = {
-    "rss_arxiv_cs_ai":           "arXiv cs.AI",
-    "rss_arxiv_cs_cl":           "arXiv cs.CL",
-    "rss_google_ai_blog":        "Google AI Blog",
-    "rss_google_deepmind_news":  "Google DeepMind",
-    "rss_hn_ai":                 "Hacker News AI",
-    "rss_huggingface_blog":      "HuggingFace Blog",
-    "rss_microsoft_ai_blog":     "Microsoft AI Blog",
-    "rss_nvidia_developer_blog": "NVIDIA Developer Blog",
-    "rss_openai_news":           "OpenAI News",
-    "rss_dify_releases":         "Dify Releases",
-    "rss_ollama_releases":       "Ollama Releases",
-    "rss_vllm_releases":         "vLLM Releases",
-    "web_anthropic_news":        "Anthropic News",
-    "web_claude_blog":           "Claude Blog (Anthropic)",
-    "web_mistral_news":          "Mistral AI News",
-    "web_runway_news":           "Runway ML News",
-    "dorami_daily_brief":        "哆啦美·AI资讯日报",
+    "dorami_daily_brief": "哆啦美·AI资讯日报",
+    # 已下线源（历史归档仍在，chunk 头部/检索来源展示需要可读名）
+    "docs_gemini_api_changelog":               "Gemini API Changelog",
+    "docs_openai_api_changelog":               "OpenAI API Changelog",
+    "docs_alibaba_model_studio_announcements": "阿里云百炼公告",
+    "github_qwen_code_releases":               "Qwen Code Releases",
+    "web_bytedance_seed_models":               "ByteDance Seed Models",
+    "x_ai_at_meta":                            "X · AI at Meta",
+    "x_openrouter":                            "X · OpenRouter",
 }
+
+
+def friendly_source_name(source_id: str) -> str:
+    """source_id → 读者可读来源名：现役源取注册表 name，其余查兜底映射，最后回落原 id。
+
+    延迟导入注册表（触发 impl/ 扫描），避免存储层在 import 期背上抓取器依赖。
+    """
+    if not source_id:
+        return source_id
+    try:
+        from fetchers.registry import fetcher_registry
+
+        fetcher_class = fetcher_registry.get_class(source_id)
+        name = getattr(fetcher_class, "name", "") if fetcher_class else ""
+        if name:
+            return str(name)
+    except Exception:  # noqa: BLE001 - 取名失败绝不阻断存储/检索主流程
+        pass
+    return SOURCE_FRIENDLY_NAMES.get(source_id, source_id)
 
 
 # ── T2: 文档头部构建 ──────────────────────────────────────────────────────────
@@ -182,7 +196,7 @@ def build_document_header(source_id: str, publish_date: str, title: str) -> str:
     为每个 chunk 构建元数据头部。
     将来源名称、日期、标题嵌入 chunk 文本，使时效性/来源类查询可直接命中。
     """
-    friendly_name = SOURCE_FRIENDLY_NAMES.get(source_id, source_id)
+    friendly_name = friendly_source_name(source_id)
     date_str = publish_date[:10] if publish_date else ""
     return f"来源: {friendly_name} | 日期: {date_str}\n标题: {title}\n\n"
 

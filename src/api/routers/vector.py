@@ -392,7 +392,7 @@ async def rag_context(query: RagContextQuery, request: Request):
     返回组装好的 context_text（可直接注入 LLM prompt）及结构化 sources 列表。
     不调用任何 LLM，纯检索层输出。
     """
-    from storage.impl.vector_storage import SOURCE_FRIENDLY_NAMES
+    from storage.impl.vector_storage import friendly_source_name
 
     vs = deps.get_vector_sink()
     db_sink = deps.get_db_sink()
@@ -441,7 +441,7 @@ async def rag_context(query: RagContextQuery, request: Request):
         record = await db_sink.get(pid)
 
         source_id = res["metadata"].get("source_id", "")
-        source_name = SOURCE_FRIENDLY_NAMES.get(source_id, source_id)
+        source_name = friendly_source_name(source_id)
         pub_date = res["metadata"].get("publish_date", "")
         title = record.title if record else res["metadata"].get("title", "")
         source_url = record.source_url if record else ""
