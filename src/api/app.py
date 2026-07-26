@@ -1623,15 +1623,17 @@ def _create_single_source_subscription(session: Session, username: str, source_i
 
 
 # 新读者账号默认自带的订阅源（可随时取消，且取消后不会被再次播种）。
-# 精选名单（2026-07-25 拍板，5 源均衡版）：日报聚合最适合首屏，再配中文媒体两家 +
-# 头部官方两家，让新账号首次进入阅读器即有内容可读；名单刻意少而低噪，
-# 更多来源引导用户去「发现」页自选。
+# 精选名单（2026-07-25 拍板 5 源均衡版；2026-07-26 补动态/社交各一）：日报聚合最适合首屏，
+# 再配中文媒体两家 + 头部官方两家，让新账号首次进入阅读器即有内容可读；动态与社交容器
+# 各播一源，避免新用户切换视图时面对空列表。名单刻意少而低噪，更多来源引导用户去「发现」页自选。
 DEFAULT_SUBSCRIPTION_SOURCE_IDS = [
-    DAILY_BRIEF_SOURCE_ID,   # 每日 AI 资讯日报（全站聚合）
-    "web_qbitai",            # 量子位（中文媒体）
-    "web_ithome_ai",         # IT之家 AI（中文快讯）
-    "web_anthropic_news",    # Anthropic 官方
-    "rss_openai_news",       # OpenAI 官方
+    DAILY_BRIEF_SOURCE_ID,          # 每日 AI 资讯日报（全站聚合）
+    "web_qbitai",                   # 量子位（中文媒体）
+    "web_ithome_ai",                # IT之家 AI（中文快讯）
+    "web_anthropic_news",           # Anthropic 官方
+    "rss_openai_news",              # OpenAI 官方
+    "docs_claude_code_changelog",   # Claude Code Changelog（动态容器）
+    "x_openai",                     # X · OpenAI（社交容器）
 ]
 DEFAULTS_SEEDED_KEY_PREFIX = "reader_defaults_seeded"
 
