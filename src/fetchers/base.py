@@ -65,6 +65,11 @@ class BaseFetcher(abc.ABC):
     noise_risk: str = ""
     fetch_reliability: str = ""
 
+    # 极少数官方源的列表元数据是权威且会因解析器修正而需要回填。
+    # 开启后，DatabaseStorage 允许同 ID 已有正文的记录只刷新标题/日期/
+    # 原文 URL，绝不覆盖正文。默认关闭，保持全站幂等归档语义。
+    refresh_existing_metadata: bool = False
+
     # 网页详情迁移开关：置 True 的节点，若运行环境装了 crawl4ai 且 URL 命中专用 Profile，
     # 则详情正文走统一的 crawl4ai 后端；否则（未装/未命中/失败）回退现有 httpx 提取。
     # 默认 False —— 协议型/API 型节点不启动浏览器，行为与改动前完全一致。
@@ -142,6 +147,9 @@ class BaseFetcher(abc.ABC):
                     # 防止由于具体实现者疏忽，导致进入台账的数据标识错乱
                     content_item.source_id = self.source_id
                     content_item.content_type = self.content_type
+                    # 运行期控制位不是归档字段；动态挂载避免污染
+                    # serialize_to_metadata()/archive-sync 对外契约。
+                    content_item._refresh_existing_metadata = self.refresh_existing_metadata
 
                     yield content_item
 

@@ -117,7 +117,7 @@ For *which* nodes are default-visible and *why*, see [curation_policy.md](./cura
 | --- | --- | --- | --- |
 | `rss_microsoft_ai_models` | `microsoft.ai/news-categories/models/feed/` | Full-text RSS; source-local WordPress reader UA bypasses a Cloudflare false positive; concatenates only `.wysiwyg` body blocks | 🟡 Medium — custom UA and WordPress body classes |
 | `web_artificial_analysis` | `artificialanalysis.ai/articles` | Paginated article cards; detail scoped to `.prose.prose-sm.max-w-none`, duplicate H1 removed | 🟡 Medium — Tailwind class coupling |
-| `web_meta_ai_blog` | `ai.meta.com/blog/` | Overlay-card discovery with single-card parent boundary; detail scoped to obfuscated `._amgj`; author/share/recommendation/newsletter tails trimmed | 🔴 High — obfuscated CSS class can change without notice |
+| `web_meta_ai_blog` | `ai.meta.com/blog/` | Locale-independent overlay/nested-CTA card boundary lookup + pinned English request locale; detail title/date fallback; authoritative metadata-only refresh repairs archived dates without touching bodies; body scoped to obfuscated `._amgj` with tail trimming | 🔴 High — obfuscated CSS class can change without notice |
 | `web_kimi_research` | `kimi.com/blog/` | De-duplicates header/latest-card links, parses `YYYY/MM/DD`, detail scoped to `.blog-v2-main .markdown` | 🟡 Medium — Next.js/Tailwind class coupling |
 | `web_minimax_research` | `minimax.io/blog` | Detail scoped to `article .prose`; tag-like model tokens are rendered as inline code; purchase CTA/brand tail removed | 🟡 Medium — Tailwind class coupling |
 | `rss_import_ai` | `jack-clark.net/feed/` | Full-text RSS markdown; removes fixed thumbnail/welcome/Subscribe/Thanks-for-reading chrome | 🟢 Low — stable WordPress RSS plus small text cleanup |

@@ -1482,6 +1482,7 @@ def test_meta_ai_scopes_article_and_drops_author_share_and_newsletter_tail():
     """
     fetcher = MetaAiBlogWebFetcher()
     assert fetcher.default_headers["User-Agent"] == "Mozilla/5.0"
+    assert fetcher.default_headers["Accept-Language"] == "en-US,en;q=0.9"
     detail = fetcher._extract_scoped_detail(
         html, 12000, "https://ai.meta.com/blog/meta-model/"
     )
@@ -1494,6 +1495,91 @@ def test_meta_ai_scopes_article_and_drops_author_share_and_newsletter_tail():
     assert "updates delivered" not in detail["text"]
     assert "Subscribe" not in detail["text"]
     assert "Products AI Research" not in detail["text"]
+
+
+def test_meta_ai_multilingual_cta_card_uses_ancestor_title_and_date():
+    listing_template = """
+    <html><body>
+      <div class="latest-news">
+        <div class="card">
+          <h4>Research</h4>
+          <h4>Introducing Muse Spark: Scaling Towards Personal Superintelligence</h4>
+          <div class="meta-row">
+            <div><p>April 08, 2026</p></div>
+            <div><a href="/blog/introducing-muse-spark-msl/">
+              <span>{cta_text}</span>
+            </a></div>
+          </div>
+        </div>
+      </div>
+    </body></html>
+    """
+    detail_html = """
+    <html><head>
+      <title>Introducing Muse Spark: Scaling Towards Personal Superintelligence</title>
+    </head><body>
+      <h1>Introducing Muse Spark: Scaling Towards Personal Superintelligence</h1>
+      <div><span>April 8, 2026</span><span>15 minute read</span></div>
+      <div class="_amgj"><p>Muse Spark is a natively multimodal reasoning model.</p></div>
+    </body></html>
+    """
+    for cta_text in ("Learn More", "Más información", "详细了解"):
+        fetcher = MetaAiBlogWebFetcher()
+        listing_html = listing_template.format(cta_text=cta_text)
+
+        async def fake_safe_get(client, url, **kwargs):
+            if url == fetcher.listing_url:
+                return DummyResponse(listing_html, url)
+            if url == "https://ai.meta.com/blog/introducing-muse-spark-msl":
+                return DummyResponse(detail_html, url)
+            raise AssertionError(f"Unexpected URL: {url}")
+
+        fetcher._safe_get = fake_safe_get
+
+        async def collect_items():
+            return [item async for item in fetcher.fetch(limit=1)]
+
+        item = asyncio.run(collect_items())[0]
+        assert item.title == "Introducing Muse Spark: Scaling Towards Personal Superintelligence"
+        assert item.publish_date == "2026-04-08T00:00:00+00:00"
+        assert item.raw_data["detail_title"] == item.title
+        assert item.content.startswith("Muse Spark is a natively multimodal reasoning model.")
+        assert item._refresh_existing_metadata is True
+
+
+def test_meta_ai_detail_date_repairs_undated_localized_cta():
+    listing_html = """
+    <html><body><div class="card">
+      <h4>Introducing Muse Spark: Scaling Towards Personal Superintelligence</h4>
+      <div><a href="/blog/introducing-muse-spark-msl/">详细了解</a></div>
+    </div></body></html>
+    """
+    detail_html = """
+    <html><head>
+      <title>Introducing Muse Spark: Scaling Towards Personal Superintelligence</title>
+    </head><body>
+      <h1>Introducing Muse Spark: Scaling Towards Personal Superintelligence</h1>
+      <div><span>April 8, 2026</span><span>15 minute read</span></div>
+      <div class="_amgj"><p>Muse Spark is a natively multimodal reasoning model.</p></div>
+    </body></html>
+    """
+    fetcher = MetaAiBlogWebFetcher()
+
+    async def fake_safe_get(client, url, **kwargs):
+        if url == fetcher.listing_url:
+            return DummyResponse(listing_html, url)
+        if url == "https://ai.meta.com/blog/introducing-muse-spark-msl":
+            return DummyResponse(detail_html, url)
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=1)]
+
+    item = asyncio.run(collect_items())[0]
+    assert item.title == "Introducing Muse Spark: Scaling Towards Personal Superintelligence"
+    assert item.publish_date == "2026-04-08T00:00:00+00:00"
 
 
 def test_kimi_listing_prefers_dated_card_over_header_duplicate_and_keeps_body_markdown():

@@ -463,15 +463,20 @@ class BaseWebPageListFetcher(BaseFetcher):
             url = entry["url"]
             title = entry["title"]
             summary = entry["summary"]
-            publish_date = entry.get("publish_date") or self._extract_datetime(f"{title} {summary}")
+            publish_date = entry.get("publish_date") or ""
             content_id = self._content_id(url)
-            detail = {"title": "", "text": ""}
+            detail = {"title": "", "text": "", "publish_date": ""}
             # 已入库且有正文则跳过详情请求，避免对重复条目重复抓取正文。
             detail_fetched = fetch_detail and not await self._should_skip_detail_fetch(content_id)
             if detail_fetched:
                 detail = await self._detail_for_url(client, url, detail_max_chars)
                 if (title == "未命名网页条目" or title.lower() in self.generic_link_titles) and detail["title"]:
                     title = detail["title"]
+                if not publish_date and detail.get("publish_date"):
+                    publish_date = detail["publish_date"]
+
+            if not publish_date:
+                publish_date = self._extract_datetime(f"{title} {summary}")
 
             raw_data = self._raw_entry(url, title, summary)
             raw_data.update({
@@ -1252,6 +1257,9 @@ class MetaAiBlogWebFetcher(_ScopedArticleBodyFetcher):
     signal_strength = "high_signal"
     noise_risk = "low_noise"
     fetch_reliability = "stable_public_website_obfuscated_css"
+    # Meta 官方列表的标题/日期是权威元数据；解析器修正后允许再抓
+    # 只回填存量元数据（正文仍不覆盖），修复生产已存的抓取时间伪日期。
+    refresh_existing_metadata = True
 
     _non_title_labels = {
         "featured",
@@ -1264,34 +1272,122 @@ class MetaAiBlogWebFetcher(_ScopedArticleBodyFetcher):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # 2026-07-26 live probe: Meta 对带完整 Chrome token 的 UA 返回 400，
-        # 简洁的通用 Mozilla UA 则稳定返回 SSR 列表与详情。仅在本源内覆盖。
+        # 简洁的通用 Mozilla UA 则稳定返回 SSR 列表与详情。同时固定
+        # Accept-Language，避免 CDN/出口 IP 把 CTA 分流成不同语言。
         self.default_headers["User-Agent"] = "Mozilla/5.0"
+        self.default_headers["Accept-Language"] = "en-US,en;q=0.9"
 
     def _matches_article_url(self, url: str) -> bool:
         return bool(re.fullmatch(r"https://ai\.meta\.com/blog/[^/?#]+/?", url))
 
     def _candidate_container(self, link: Tag) -> Tag:
-        # Meta 的卡片链接是无标题 overlay；紧邻父 div 才是单卡边界。继续上溯会
-        # 落进整片 Latest News，导致每条都错拿第一张卡的 h4。
-        parent = link.find_parent("div")
-        return parent if isinstance(parent, Tag) else link
+        # Meta 同页存在两套卡片：首屏用无文字 overlay 链接，后续列表的
+        # CTA 链接则嵌在四层容器内。向上找到第一个含真实标题的单文章
+        # 容器；一旦祖先包含多个不同文章 URL 就停，避免落进整片 Latest News。
+        closest = link.find_parent("div")
+        if not isinstance(closest, Tag):
+            return link
 
-    def _title_from_container(self, link: Tag, container: Tag) -> str:
-        heading = container.find(["h1", "h2", "h3", "h4"])
-        if heading is not None:
-            text = self._clean_text(heading.get_text(" ", strip=True))
-            if text:
-                return text
+        link_text = self._clean_text(link.get_text(" ", strip=True)).casefold()
+        current = closest
+        for _ in range(6):
+            article_urls = {
+                self._normalize_article_url(urljoin(self.listing_url, str(anchor["href"])))
+                for anchor in current.find_all("a", href=True)
+                if self._matches_article_url(
+                    self._normalize_article_url(urljoin(self.listing_url, str(anchor["href"])))
+                )
+            }
+            if len(article_urls) > 1:
+                break
+            if current.find(["h1", "h2", "h3", "h4"]) is not None:
+                return current
+            # CTA 文案会被 Meta 本地化为 Learn More / Más información /
+            # 详细了解 / 任意其它语言。不枚举译文：若容器里唯一候选就是
+            # 链接自身文字，它只是 CTA，继续向上找真正卡片。
+            candidates = self._container_title_candidates(current)
+            if any(candidate.casefold() != link_text for candidate in candidates):
+                return current
+            parent = current.parent
+            if not isinstance(parent, Tag):
+                break
+            current = parent
+        return closest
 
+    def _container_title_candidates(self, container: Tag) -> List[str]:
         candidates = []
         for raw_text in container.stripped_strings:
             text = self._clean_text(str(raw_text))
-            if not text or text.lower() in self._non_title_labels:
+            if (
+                not text
+                or text.lower() in self._non_title_labels
+                or text.lower() in self.generic_link_titles
+            ):
                 continue
             if self._extract_datetime_or_empty(text):
                 continue
             candidates.append(text)
-        return max(candidates, key=len) if candidates else super()._title_from_container(link, container)
+        return candidates
+
+    def _title_from_container(self, link: Tag, container: Tag) -> str:
+        link_text = self._clean_text(link.get_text(" ", strip=True))
+        heading_candidates = [
+            text
+            for heading in container.find_all(["h1", "h2", "h3", "h4"])
+            if (text := self._clean_text(heading.get_text(" ", strip=True)))
+            and text.lower() not in self._non_title_labels
+            and text.lower() not in self.generic_link_titles
+            and not self._extract_datetime_or_empty(text)
+        ]
+        if heading_candidates:
+            # 部分列表卡先用短 H4 放分类，再用 H4 放真正标题。
+            return max(heading_candidates, key=len)
+
+        # 高层卡片无 heading 时仍可从普通文字取标题，但永不把链接
+        # 自身 CTA 文字当标题；这条规则与 CTA 语言无关。
+        candidates = [
+            candidate
+            for candidate in self._container_title_candidates(container)
+            if candidate.casefold() != link_text.casefold()
+        ]
+        if candidates:
+            return max(candidates, key=len)
+        if link_text.lower() in self.generic_link_titles:
+            return "未命名网页条目"
+        return super()._title_from_container(link, container)
+
+    def _extract_scoped_detail(
+        self, html_text: str, max_chars: int, base_url: str = ""
+    ) -> Dict[str, str]:
+        detail = super()._extract_scoped_detail(html_text, max_chars, base_url)
+        soup = BeautifulSoup(html_text, "html.parser")
+
+        raw_dates: List[str] = []
+        for selector, attr in (
+            ('meta[property="article:published_time"]', "content"),
+            ('meta[name="article:published_time"]', "content"),
+            ("time[datetime]", "datetime"),
+        ):
+            if (node := soup.select_one(selector)) is not None:
+                raw_dates.append(str(node.get(attr) or ""))
+
+        # 当前 Meta 详情页未提供 article:published_time，日期位于 H1 后的
+        # hero 元数据行。只检查标题后少量元素，避免误拿正文中的其它日期。
+        if heading := soup.find("h1"):
+            raw_dates.extend(
+                node.get_text(" ", strip=True)
+                for node in heading.find_all_next(["time", "span", "p"], limit=12)
+            )
+
+        detail["publish_date"] = next(
+            (
+                parsed
+                for raw_date in raw_dates
+                if (parsed := self._extract_datetime_or_empty(raw_date))
+            ),
+            "",
+        )
+        return detail
 
     def _clean_scoped_text(self, text: str) -> str:
         text = compact_text(text)

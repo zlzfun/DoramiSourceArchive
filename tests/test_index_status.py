@@ -90,6 +90,83 @@ def test_save_content_backfill_marks_stale(tmp_path):
     assert _get(sink, "a1")[0] == "stale"
 
 
+def test_save_repairs_placeholder_title_metadata_without_replacing_body(tmp_path):
+    sink = _sink(tmp_path)
+    with Session(sink.engine) as session:
+        session.add(ArticleRecord(
+            id="meta-muse", title="Más información", content_type="web_article",
+            source_id="web_meta_ai_blog", source_url="https://ai.meta.com/blog/muse",
+            publish_date="2026-07-26T00:00:00+00:00", fetched_date="2026-07-26T00:00:00+00:00",
+            has_content=True, content="archived body must stay unchanged",
+            is_vectorized=True, index_status="indexed",
+        ))
+        session.commit()
+
+    corrected = GenericContent(
+        id="meta-muse",
+        title="Introducing Muse Spark: Scaling Towards Personal Superintelligence",
+        source_url="https://ai.meta.com/blog/muse",
+        publish_date="2026-04-08T00:00:00+00:00",
+        fetched_date="2026-07-27T00:00:00+00:00",
+        has_content=True,
+        content="a newly fetched body that must not overwrite the archive",
+    )
+    corrected.source_id = "web_meta_ai_blog"
+
+    assert asyncio.run(sink.save(corrected)) is True
+    with Session(sink.engine) as session:
+        record = session.get(ArticleRecord, "meta-muse")
+        assert record.title == corrected.title
+        assert record.publish_date == corrected.publish_date
+        assert record.content == "archived body must stay unchanged"
+        assert record.index_status == "stale"
+        assert record.is_vectorized is False
+
+
+def test_authoritative_metadata_refresh_repairs_date_with_correct_title(tmp_path):
+    sink = _sink(tmp_path)
+    title = "Introducing Muse Spark: Scaling Towards Personal Superintelligence"
+    with Session(sink.engine) as session:
+        session.add(ArticleRecord(
+            id="meta-muse-date", title=title, content_type="web_article",
+            source_id="web_meta_ai_blog", source_url="https://ai.meta.com/blog/muse",
+            publish_date="2026-07-26T03:39:57+00:00",
+            fetched_date="2026-07-26T11:39:58+00:00",
+            has_content=True, content="production body must stay unchanged",
+            is_vectorized=True, index_status="indexed",
+        ))
+        session.commit()
+
+    corrected = GenericContent(
+        id="meta-muse-date", title=title,
+        source_url="https://ai.meta.com/blog/muse",
+        publish_date="2026-04-08T00:00:00+00:00",
+        fetched_date="2026-07-27T00:00:00+00:00",
+        has_content=True,
+        content="a newly fetched body that must not overwrite production",
+    )
+    corrected.source_id = "web_meta_ai_blog"
+
+    # 普通内容仍保持幂等跳过；只有抓取器显式 opt-in 才能刷元数据。
+    assert asyncio.run(sink.save(corrected)) is False
+    with Session(sink.engine) as session:
+        unchanged = session.get(ArticleRecord, "meta-muse-date")
+        assert unchanged.publish_date == "2026-07-26T03:39:57+00:00"
+        assert unchanged.content == "production body must stay unchanged"
+
+    corrected._refresh_existing_metadata = True
+
+    assert asyncio.run(sink.save(corrected)) is True
+    with Session(sink.engine) as session:
+        record = session.get(ArticleRecord, "meta-muse-date")
+        assert record.title == title
+        assert record.publish_date == "2026-04-08T00:00:00+00:00"
+        assert record.content == "production body must stay unchanged"
+        assert record.fetched_date == "2026-07-26T11:39:58+00:00"
+        assert record.index_status == "stale"
+        assert record.is_vectorized is False
+
+
 def _seed_users(engine):
     now = datetime.datetime.now().isoformat()
     with Session(engine) as session:
