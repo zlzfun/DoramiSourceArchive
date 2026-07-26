@@ -952,7 +952,7 @@ wheels = [
 
 [[package]]
 name = "doramisourcearchive"
-version = "3.23.1"
+version = "3.23.2"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },

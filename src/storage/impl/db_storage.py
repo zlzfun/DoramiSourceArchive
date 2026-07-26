@@ -15,6 +15,19 @@ from models.db import (
 )
 
 
+_PLACEHOLDER_ARTICLE_TITLES = {
+    "",
+    "未命名网页条目",
+    "read more",
+    "learn more",
+    "más información",
+}
+
+
+def _is_placeholder_article_title(value: str) -> bool:
+    return (value or "").strip().casefold() in _PLACEHOLDER_ARTICLE_TITLES
+
+
 class DatabaseStorage(BaseStorage):
     def __init__(self, db_url: str = "sqlite:///./data/cms_data.db"):
         super().__init__()
@@ -154,6 +167,41 @@ class DatabaseStorage(BaseStorage):
                     existing.is_vectorized = False
                     # 正文回填后内容已变，若曾索引则需重建 → 标记陈旧（is_vectorized=False 仍会被 all-pending 拾取）
                     existing.index_status = INDEX_STATUS_STALE
+                    session.add(existing)
+                    session.commit()
+                    return True
+                # 两条极窄的元数据自愈路径：① 旧标题明确是 CTA/占位文案；
+                # ② 抓取器显式声明官方元数据权威。普通源默认仍幂等跳过，
+                # 绝不因上游改标题而改写忠实归档；两路都不覆盖正文。
+                placeholder_repair = (
+                    _is_placeholder_article_title(existing.title)
+                    and not _is_placeholder_article_title(item.title)
+                )
+                authoritative_refresh = bool(
+                    getattr(item, "_refresh_existing_metadata", False)
+                )
+                title_changed = bool(item.title) and existing.title != item.title
+                publish_date_changed = (
+                    bool(item.publish_date)
+                    and existing.publish_date != item.publish_date
+                )
+                source_url_changed = (
+                    bool(item.source_url)
+                    and existing.source_url != item.source_url
+                )
+                if (
+                    (placeholder_repair or authoritative_refresh)
+                    and (title_changed or publish_date_changed or source_url_changed)
+                ):
+                    if title_changed:
+                        existing.title = item.title
+                    if publish_date_changed:
+                        existing.publish_date = item.publish_date
+                    if source_url_changed:
+                        existing.source_url = item.source_url
+                    if title_changed or publish_date_changed:
+                        existing.is_vectorized = False
+                        existing.index_status = INDEX_STATUS_STALE
                     session.add(existing)
                     session.commit()
                     return True
