@@ -1,8 +1,8 @@
 # Node Catalog, Adaptations & Risks
 
-> ⚠️ **快照日期 2026-06-16**:此后源扩容 wave1–3(v3.2–v3.5,约 20 个新节点,多数 incubating)
-> **未包含在本目录中**。节点现势以 `src/fetchers/impl/` 注册表与前端节点管理页为准;
-> 本文对已列节点的「适配手法/风险评级」仍然有效。计划在 incubating 转正评审时一并补全(见 `docs/backlog.md`)。
+> ⚠️ **快照更新 2026-07-26**:本文已补入 wave4 的 7 个新节点；wave1–3 的部分
+> incubating 节点仍未逐项回填。节点现势以 `src/fetchers/impl/` 注册表与前端节点管理页
+> 为准；本文对已列节点的「适配手法/风险评级」有效，完整补全仍挂在转正评审待办。
 
 The current built-in fetcher catalog: what each node is, **what special
 adaptation it required** to capture clean records, and its **stability risk** —
@@ -21,8 +21,8 @@ For *which* nodes are default-visible and *why*, see [curation_policy.md](./cura
 
 | Group | Count | Notes |
 | --- | ---: | --- |
-| Default-visible nodes | 23 | The exact set in `ESSENTIAL_FETCHER_IDS`. |
-| Generic advanced fetchers | 4 | Runtime-configured RSS / GitHub releases / GitHub repos / HF models for user-defined source configs. Hidden by default. |
+| Default-visible nodes | 53 | The exact set in `ESSENTIAL_FETCHER_IDS` (including 30 incubating sources). |
+| Generic advanced fetchers | 6 | Runtime-configured RSS / web / GitHub releases / GitHub repos / HF models / X timeline. Hidden by default. |
 | Historical concrete presets | 0 | Removed from `src/fetchers/impl`, not merely hidden. |
 
 ## OpenAI / ChatGPT / Codex
@@ -105,9 +105,23 @@ For *which* nodes are default-visible and *why*, see [curation_policy.md](./cura
 | Source ID | Purpose |
 | --- | --- |
 | `generic_rss` | Runtime-configured RSS/Atom ingestion for user-defined source configs. |
+| `generic_web` | Runtime-configured webpage-list ingestion for user-defined source configs. |
 | `generic_github_releases` | Runtime-configured GitHub Releases ingestion. |
 | `generic_github_repositories` | Runtime-configured GitHub org/user repository ingestion. |
 | `generic_huggingface_models` | Runtime-configured Hugging Face author/org model ingestion. |
+| `generic_x_timeline` | Runtime-configured X account ingestion (credential and cost gated). |
+
+## Source Expansion Wave 4 (2026-07-26, incubating)
+
+| Source ID | Base URL | Special adaptation | Risk |
+| --- | --- | --- | --- |
+| `rss_microsoft_ai_models` | `microsoft.ai/news-categories/models/feed/` | Full-text RSS; source-local WordPress reader UA bypasses a Cloudflare false positive; concatenates only `.wysiwyg` body blocks | 🟡 Medium — custom UA and WordPress body classes |
+| `web_artificial_analysis` | `artificialanalysis.ai/articles` | Paginated article cards; detail scoped to `.prose.prose-sm.max-w-none`, duplicate H1 removed | 🟡 Medium — Tailwind class coupling |
+| `web_meta_ai_blog` | `ai.meta.com/blog/` | Overlay-card discovery with single-card parent boundary; detail scoped to obfuscated `._amgj`; author/share/recommendation/newsletter tails trimmed | 🔴 High — obfuscated CSS class can change without notice |
+| `web_kimi_research` | `kimi.com/blog/` | De-duplicates header/latest-card links, parses `YYYY/MM/DD`, detail scoped to `.blog-v2-main .markdown` | 🟡 Medium — Next.js/Tailwind class coupling |
+| `web_minimax_research` | `minimax.io/blog` | Detail scoped to `article .prose`; tag-like model tokens are rendered as inline code; purchase CTA/brand tail removed | 🟡 Medium — Tailwind class coupling |
+| `rss_import_ai` | `jack-clark.net/feed/` | Full-text RSS markdown; removes fixed thumbnail/welcome/Subscribe/Thanks-for-reading chrome | 🟢 Low — stable WordPress RSS plus small text cleanup |
+| `docs_arena_leaderboard_changelog` | `arena.ai/blog/leaderboard-changelog` | SSR single page split into one bulletin per dated card; preserves links and same-day distinct updates | 🟡 Medium — date-card DOM coupling; page grows continuously |
 
 ## Watch list — most likely to break
 
@@ -116,6 +130,8 @@ Concentrate periodic re-audits here (🔴, then the most coupled 🟡):
 - `rss_openai_news` — Playwright render path; fails if the browser is unavailable or CF changes the challenge.
 - `github_opencode_releases` — depends on the repo not moving again (it already did once).
 - `web_qwen_blog` — private JSON API with no stability guarantee.
+- `web_meta_ai_blog` — obfuscated detail-body class is the most fragile wave4 selector.
+- `rss_microsoft_ai_models` — recheck the source-local feed-reader UA if Cloudflare behavior changes.
 - The HTML-structure-coupled nodes (`web_qbitai`, `web_aiera`, `web_bytedance_seed_research`, `web_cursor_changelog`, `docs_xai_release_notes`, `web_huggingface_daily_papers`) all break on an upstream redesign; the playbook's failure-pattern table is the recovery guide.
 
 > Removed node: `web_jiqizhixin` (机器之心) — **do not re-attempt.** Re-investigated

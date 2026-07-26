@@ -7,13 +7,18 @@ from urllib.parse import urljoin
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from fetchers.impl.webpage_fetcher import (
+    ArtificialAnalysisArticlesWebFetcher,
     AnthropicNewsWebFetcher,
     BaseWebPageListFetcher,
     ClaudeBlogWebFetcher,
+    KimiResearchWebFetcher,
+    MetaAiBlogWebFetcher,
+    MiniMaxResearchWebFetcher,
     QwenBlogWebFetcher,
 )
 from fetchers.impl.curated_core_fetcher import (
     AieraWebsiteFetcher,
+    ArenaLeaderboardChangelogFetcher,
     ByteDanceSeedResearchFetcher,
     ClaudeCodeChangelogFetcher,
     DeepSeekApiChangeLogFetcher,
@@ -1435,6 +1440,177 @@ VLA不是终局
         "这是正文第一段，不能随副标题一起删除。\n\n"
         "这是正文最后一段。"
     )
+
+
+def test_artificial_analysis_scopes_prose_and_drops_duplicate_title():
+    html = """
+    <html><head><title>Benchmark Article</title></head><body>
+      <nav>Models Coding Agents</nav>
+      <div class="prose prose-sm max-w-none">
+        <h1>Benchmark Article</h1>
+        <p><strong>Frontier result:</strong> the model leads the benchmark.</p>
+        <p><img src="/chart.png" alt="Benchmark chart"></p>
+        <p>See <a href="/evaluations/test">the full evaluation</a>.</p>
+      </div>
+      <section>Read the latest Other unrelated article</section>
+    </body></html>
+    """
+    detail = ArtificialAnalysisArticlesWebFetcher()._extract_scoped_detail(
+        html, 12000, "https://artificialanalysis.ai/articles/benchmark"
+    )
+
+    assert detail["method"] == "artificial_analysis_prose"
+    assert detail["text"].startswith("**Frontier result:**")
+    assert "Benchmark Article" not in detail["text"]
+    assert "![Benchmark chart](https://artificialanalysis.ai/chart.png)" in detail["text"]
+    assert "[the full evaluation](https://artificialanalysis.ai/evaluations/test)" in detail["text"]
+    assert "Read the latest" not in detail["text"]
+
+
+def test_meta_ai_scopes_article_and_drops_author_share_and_newsletter_tail():
+    html = """
+    <html><head><title>Meta Model</title></head><body>
+      <div class="_amgj">
+        <div><p>First real paragraph with <a href="/research/report">the report</a>.</p></div>
+        <div><h2>Evaluation</h2><p>Benchmark details remain readable.</p></div>
+        <div>Learn More About Meta Model</div>
+        <div>Our latest updates delivered to your inbox</div>
+        <a href="/subscribe">Subscribe</a>
+      </div>
+      <footer>Products AI Research Resources</footer>
+    </body></html>
+    """
+    fetcher = MetaAiBlogWebFetcher()
+    assert fetcher.default_headers["User-Agent"] == "Mozilla/5.0"
+    detail = fetcher._extract_scoped_detail(
+        html, 12000, "https://ai.meta.com/blog/meta-model/"
+    )
+
+    assert detail["method"] == "meta_ai_article_body"
+    assert "First real paragraph" in detail["text"]
+    assert "## Evaluation" in detail["text"]
+    assert "[the report](https://ai.meta.com/research/report)" in detail["text"]
+    assert "Learn More About" not in detail["text"]
+    assert "updates delivered" not in detail["text"]
+    assert "Subscribe" not in detail["text"]
+    assert "Products AI Research" not in detail["text"]
+
+
+def test_kimi_listing_prefers_dated_card_over_header_duplicate_and_keeps_body_markdown():
+    listing_html = """
+    <html><body>
+      <header><a class="header-mobile-nav-link" href="/blog/kimi-k3">Kimi K3 Kimi K3</a></header>
+      <div class="menu-card"><a class="absolute" href="/blog/kimi-k3"></a>
+        <h3>Kimi K3</h3><span>2026/07/16</span></div>
+    </body></html>
+    """
+    detail_html = """
+    <html><head><title>Kimi K3 Tech Blog</title></head><body>
+      <main><h1>Kimi K3</h1><a>Try Kimi</a>
+        <div class="blog-v2-main"><div class="markdown">
+          <p>Today we introduce <strong>Kimi K3</strong>.</p>
+          <h2>Architecture</h2>
+          <ul><li>Native vision and long context.</li></ul>
+          <p><a href="/docs/k3">Read the model docs</a>.</p>
+        </div></div>
+      </main>
+    </body></html>
+    """
+    fetcher = KimiResearchWebFetcher()
+
+    async def fake_safe_get(client, url, **kwargs):
+        if url == fetcher.listing_url:
+            return DummyResponse(listing_html, url)
+        if url == "https://www.kimi.com/blog/kimi-k3":
+            return DummyResponse(detail_html, url)
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=1)]
+
+    item = asyncio.run(collect_items())[0]
+    assert item.title == "Kimi K3"
+    assert item.publish_date == "2026-07-16T00:00:00+00:00"
+    assert item.summary == ""
+    assert item.content.startswith("Today we introduce **Kimi K3**.")
+    assert "## Architecture" in item.content
+    assert "[Read the model docs](https://www.kimi.com/docs/k3)" in item.content
+    assert "Try Kimi" not in item.content
+    assert item.raw_data["detail_extraction_method"] == "kimi_research_markdown_body"
+
+
+def test_minimax_scopes_prose_without_title_meta_or_site_navigation():
+    html = """
+    <html><head><title>MiniMax M3 - MiniMax Research</title></head><body>
+      <header>Models Product Research Company</header>
+      <article><h1>MiniMax M3</h1><time>2026-06-01</time><div>AI M3</div>
+        <div class="prose max-w-none">
+          <p>MiniMax M3 is officially released today.</p>
+          <h2>Sparse Attention</h2>
+          <pre><code>context = 1_000_000</code></pre>
+          <p>The special token &lt;fim_middle&gt; must remain visible.</p>
+          <p>All three tiers are fully available. Subscribe and start immediately!</p>
+          <p>Subscription link: <a href="/subscribe/token-plan">platform.minimax.io</a></p>
+          <p><strong>Intelligence with Everyone.</strong></p>
+        </div>
+      </article>
+      <footer>Contact Us</footer>
+    </body></html>
+    """
+    detail = MiniMaxResearchWebFetcher()._extract_scoped_detail(
+        html, 12000, "https://www.minimax.io/blog/minimax-m3"
+    )
+
+    assert detail["method"] == "minimax_research_prose"
+    assert detail["text"].startswith("MiniMax M3 is officially released today.")
+    assert "## Sparse Attention" in detail["text"]
+    assert "context = 1_000_000" in detail["text"]
+    assert "`<fim_middle>`" in detail["text"]
+    assert "All three tiers are fully available." in detail["text"]
+    assert "Subscribe and start immediately" not in detail["text"]
+    assert "Subscription link" not in detail["text"]
+    assert "Intelligence with Everyone" not in detail["text"]
+    assert "2026-06-01" not in detail["text"]
+    assert "Contact Us" not in detail["text"]
+
+
+def test_arena_changelog_splits_each_date_card_and_preserves_links():
+    html = """
+    <html><body><main>
+      <h1>Leaderboard Changelog</h1>
+      <div class="entry"><p>July 20, 2026</p>
+        <p><a href="/models/kimi-k3">Kimi K3</a> was added to Agent Arena.</p>
+      </div>
+      <div class="entry"><p>July 17, 2026</p>
+        <p>Scores were recalculated after a methodology update.</p>
+        <ul><li><a href="/leaderboard/text">Text Arena</a></li></ul>
+      </div>
+      <footer>Try Arena Subscribe</footer>
+    </main></body></html>
+    """
+    fetcher = ArenaLeaderboardChangelogFetcher()
+
+    async def fake_safe_get(client, url):
+        return DummyResponse(html, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=10)]
+
+    items = asyncio.run(collect_items())
+    assert [item.publish_date for item in items] == [
+        "2026-07-20T00:00:00+00:00",
+        "2026-07-17T00:00:00+00:00",
+    ]
+    assert "[Kimi K3](https://arena.ai/models/kimi-k3)" in items[0].content
+    assert "[Text Arena](https://arena.ai/leaderboard/text)" in items[1].content
+    assert "July 20, 2026" not in items[0].content
+    assert "Try Arena" not in items[0].content
+    assert items[0].raw_data["detail_extraction_method"] == "arena_changelog_date_card"
+    assert len({item.id for item in items}) == 2
 
 
 def test_detail_fallback_survives_whitelisted_kwargs():

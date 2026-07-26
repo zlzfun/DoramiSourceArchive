@@ -1573,6 +1573,147 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
             )
 
 
+class ArenaLeaderboardChangelogFetcher(SinglePageDocumentFetcher):
+    """把 Arena 单页 Leaderboard Changelog 按日期卡片拆成独立动态。"""
+
+    source_id = "docs_arena_leaderboard_changelog"
+    content_shape = "bulletin"
+    name = "Arena 排行榜更新"
+    description = "Arena 各类排行榜新增模型、分数修订与方法变更。"
+    icon = "🏟️"
+    page_url = "https://arena.ai/blog/leaderboard-changelog"
+    source_url = page_url
+    site_name = "Arena"
+    source_section = "Leaderboard Changelog"
+    category = "incubating"  # 观察期;验收转正后改回 "official_doc"
+    default_limit = 20
+    source_owner = "arena_intelligence"
+    source_brand = "Arena"
+    source_scope = "ai_benchmark_platform"
+    source_channel = "leaderboard_changelog"
+    provenance_tier = "tier0_primary"
+    content_tags = ["benchmark", "model_release", "leaderboard_update"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public_ssr_page"
+
+    _date_re = re.compile(
+        r"^(January|February|March|April|May|June|July|August|September|October|November|December)"
+        r"\s+(\d{1,2}),\s+(20\d{2})$"
+    )
+
+    @classmethod
+    def get_parameter_schema(cls) -> List[Dict[str, Any]]:
+        return [
+            {"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit},
+        ]
+
+    def _entry_limit(self, raw_limit: Any) -> int:
+        if raw_limit in (None, ""):
+            return self.default_limit
+        try:
+            return max(int(raw_limit), 0)
+        except (TypeError, ValueError):
+            self.logger.warning(f"Arena 更新条数参数无效，使用默认值: {raw_limit}")
+            return self.default_limit
+
+    def _parse_date(self, value: str) -> str:
+        value = self._clean_text(value)
+        if not self._date_re.fullmatch(value):
+            return ""
+        try:
+            return datetime.strptime(value, "%B %d, %Y").replace(tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            return ""
+
+    def _content_id(self, publish_date: str, content: str) -> str:
+        digest = hashlib.sha1(f"{publish_date}:{content}".encode("utf-8")).hexdigest()[:16]
+        return f"{self.source_id}_{digest}"
+
+    def _changelog_entries(
+        self, html_text: str, resolved_url: str, max_chars: int
+    ) -> List[Dict[str, str]]:
+        soup = BeautifulSoup(html_text, "html.parser")
+        base_url = resolved_url.split("#", 1)[0]
+        entries: List[Dict[str, str]] = []
+        seen = set()
+
+        for date_node in soup.find_all("p"):
+            raw_date = self._clean_text(date_node.get_text(" ", strip=True))
+            publish_date = self._parse_date(raw_date)
+            if not publish_date or not isinstance(date_node.parent, Tag):
+                continue
+
+            parts: List[str] = []
+            for sibling in date_node.next_siblings:
+                if isinstance(sibling, Tag):
+                    text = compact_text(node_to_markdown(sibling, base_url))
+                    if text:
+                        parts.append(text)
+            content = "\n\n".join(parts).strip()[:max_chars]
+            if not content:
+                continue
+
+            key = (publish_date, content)
+            if key in seen:
+                continue
+            seen.add(key)
+            plain_headline = self._clean_text(date_node.parent.get_text(" ", strip=True))
+            if plain_headline.startswith(raw_date):
+                plain_headline = plain_headline[len(raw_date):].strip()
+            plain_headline = re.sub(r"\s+([.,;:!?])", r"\1", plain_headline)
+            if len(plain_headline) > 90:
+                plain_headline = f"{plain_headline[:89].rstrip()}…"
+            entries.append({
+                "title": f"Arena 排行榜：{plain_headline or raw_date}",
+                "source_url": base_url,
+                "publish_date": publish_date,
+                "content": content,
+                "summary": content[:500],
+                "raw_date": raw_date,
+            })
+        return entries
+
+    async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        limit = self._entry_limit(kwargs.get("limit"))
+        max_chars = self._positive_int_param(
+            kwargs.get("detail_max_chars"), self.default_detail_max_chars
+        )
+        if limit <= 0:
+            return
+
+        response = await self._safe_get(client, self.page_url)
+        if not response:
+            raise RuntimeError(f"Arena Leaderboard Changelog 请求失败: {self.page_url}")
+
+        entries = await self._segment_with_render_fallback(
+            response,
+            lambda html: self._changelog_entries(html, str(response.url), max_chars),
+        )
+        entries = sorted(entries, key=lambda entry: entry["publish_date"], reverse=True)
+        for entry in entries[:limit]:
+            yield WebPageArticleContent(
+                id=self._content_id(entry["publish_date"], entry["content"]),
+                title=entry["title"],
+                source_url=entry["source_url"],
+                publish_date=entry["publish_date"],
+                content=entry["content"],
+                has_content=True,
+                site_name=self.site_name,
+                source_section=self.source_section,
+                summary=entry["summary"],
+                tags=[self.category, *list(self.content_tags or [])],
+                raw_data={
+                    "listing_url": self.page_url,
+                    "url": entry["source_url"],
+                    "listing_source": "arena_leaderboard_changelog_cards",
+                    "listing_publish_date": entry["raw_date"],
+                    "detail_text_length": len(entry["content"]),
+                    "detail_extraction_method": "arena_changelog_date_card",
+                },
+            )
+
+
 class AieraWebsiteFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_aiera"

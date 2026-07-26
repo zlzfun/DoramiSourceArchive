@@ -54,6 +54,43 @@ def test_recovered_sources_are_default_visible_with_stable_metadata():
     assert metadata["web_aiera"]["base_url"] == "https://aiera.com.cn/"
 
 
+def test_fourth_expansion_sources_are_visible_incubating_and_fully_classified():
+    source_ids = {
+        "rss_microsoft_ai_models",
+        "web_artificial_analysis",
+        "web_meta_ai_blog",
+        "web_kimi_research",
+        "web_minimax_research",
+        "rss_import_ai",
+        "docs_arena_leaderboard_changelog",
+    }
+    metadata = {item["id"]: item for item in fetcher_registry.get_all_metadata()}
+    required_dimensions = (
+        "source_owner",
+        "source_brand",
+        "source_scope",
+        "source_channel",
+        "base_url",
+        "provenance_tier",
+        "signal_strength",
+        "noise_risk",
+        "fetch_reliability",
+    )
+
+    assert source_ids <= ESSENTIAL_FETCHER_IDS
+    for source_id in source_ids:
+        item = metadata[source_id]
+        assert item["category"] == "incubating"
+        assert item["default_visible"] is True
+        assert item["content_tags"]
+        assert all(item[dimension] for dimension in required_dimensions)
+
+    assert metadata["docs_arena_leaderboard_changelog"]["shape"] == "bulletin"
+    assert all(metadata[source_id]["shape"] == "article" for source_id in source_ids - {
+        "docs_arena_leaderboard_changelog"
+    })
+
+
 def test_non_whitelisted_source_cannot_become_default_visible(monkeypatch):
     import fetchers.registry as registry_module
 

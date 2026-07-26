@@ -10,7 +10,7 @@
 
 ## 排队中(用户拍板、未动工)
 
-- ☐ **17 个 incubating 源观察期转正评审**
+- ☐ **30 个 incubating 源观察期转正评审**
   转正流程见 `docs/sources/curation_policy.md`「Incubation」节;
   Reddit 转正门槛 = 生产出口 IP 复验 429。转正时顺带更新 `docs/sources/node_catalog_and_risks.md` 快照。
 - ☐ **日报源手工名单实践观察**(v3.3.0 落地 `daily_brief_source_ids` KV,观察实际日报质量后调整名单)
@@ -33,7 +33,6 @@
 - ◇ **F 语义搜索入阅读器**(RAG 检索接入用户面)。
 - ◇ **Newsletter 三批候补**(见 `docs/archive/source-expansion-wave3-plan.md` 候补名单)。
 - ◇ **暗色 / 登录 / 动效三区扩审**(静默仪器重构收官时留下的截图立项项)。
-- ◇ **M:Meta AI 源**(httpx 全灭,需浏览器发现;挂起)。
 - ◇ **Agentic 源接入(长期愿景,2026-07-25 用户表态)**:产品差异化 = **开箱即用的策展源**——
   最好的源已事先备好,用户不需要像 Folo 那样自己发现和收集。权限形态**永久维持**:仅管理员侧添加源,
   用户侧只提建议/申请,管理侧审核。长期演进方向是**类 OpenClaw 的 Agentic 后端**:接入模型智能 +
@@ -46,6 +45,10 @@
 
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
 
+- ☑ 源扩容 wave4(v3.23.0):Microsoft AI 模型、Artificial Analysis、Meta AI 博客、
+  Kimi Research、MiniMax Research、Import AI、Arena 排行榜更新 7 个 preset 全链路接入；
+  全批 `incubating`，真实抓取/正文首中尾/格式与 CTA 清洗验收记录见
+  `docs/sources/candidates/source_expansion_wave4_sources.md`。
 - ☑ X 社交波(v3.12.0):X API v2 官方按量付费采集 + 社交媒体第三容器(shape=social,SocialFlow 卡片流);
   6 个白名单账号 preset(全批 incubating;立项 8 个,7-21 压缩成本删 meta/openrouter)+ config 自助加号双路径;引用推/转推扁平化跨平台抽象、真实头像、
   配额守卫与配置面板、零成本本地回填;取缔「今日」容器、隐藏通用源、社交收藏筛选。方案 `docs/social-x-wave-plan.md`。

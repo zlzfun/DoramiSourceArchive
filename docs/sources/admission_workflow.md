@@ -72,6 +72,7 @@ Use these status values:
 | `proposed` | Candidate has been identified but not fully reviewed. |
 | `under_review` | Candidate is being checked for scope, quality, overlap, and fetch reliability. |
 | `accepted_for_build` | Candidate should be implemented in the next unified development pass. |
+| `implemented_incubating` | Preset is built and default-visible, but remains excluded from daily automation during its observation window. |
 | `postponed` | Candidate is valuable but blocked by reliability, scope, or priority concerns. |
 | `rejected` | Candidate should not be implemented under the current strategy. |
 
