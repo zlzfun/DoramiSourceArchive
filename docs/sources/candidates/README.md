@@ -7,12 +7,13 @@
 
 ## 状态总览
 
-- **wave1–3 已消化**(v3.2.0–v3.5.0,2026-07):各文档中被采纳的源已建为 preset 节点
+- **wave1–4 已消化**(v3.2.0–v3.23.0,2026-07):各文档中被采纳的源已建为 preset 节点
   (多数仍在 incubating 观察期,转正评审见 `docs/backlog.md`);未采纳者留在各档 Parking Lot。
 - **待启用候补**:`personal_newsletter_sources.md` 的三批候补(Newsletter 长文分析师,
   待二批实践反馈)——backlog 展望层挂账。
-- **已裁决关闭**:RSSHub 轨道(H2)、X/微信(H1,前置=账号池)、Meta AI(M,httpx 全灭)
-  ——裁决记录在 `docs/archive/source-expansion-wave3-plan.md`。
+- **已裁决关闭**:RSSHub 轨道(H2)、X/微信旧 Cookie 轨道(H1,前置=账号池)
+  ——裁决记录在 `docs/archive/source-expansion-wave3-plan.md`。Meta AI 的旧关闭结论已于
+  2026-07-26 复验推翻(列表/详情均可直接 HTTP 获取),现已作为 wave4 观察源接入。
 
 ## 分册索引(按板块)
 
@@ -28,3 +29,4 @@
 | `academic_lab_sources.md` | 学术实验室 | 复审(07-17) |
 | `tier1_media_community_sources.md` | 媒体/社区/日榜(量子位·HN·Reddit 等,次全一册) | wave3(07-18) |
 | `personal_newsletter_sources.md` | 个人博客/Newsletter(**含三批候补**) | wave2(07-17) |
+| `source_expansion_wave4_sources.md` | Microsoft/Meta/Kimi/MiniMax 官方、Artificial Analysis、Import AI、Arena Changelog | wave4(07-26) |

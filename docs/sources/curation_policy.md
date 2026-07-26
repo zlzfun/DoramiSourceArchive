@@ -48,6 +48,8 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `rss_apple_mlr` | Apple Machine Learning Research papers and technical articles. |
 | `docs_gemma_release_notes` | Gemma open model release notes. |
 | `rss_mistral_news` | Mistral official model, API, and product newsroom updates. |
+| `rss_microsoft_ai_models` | Microsoft AI first-party model releases and technical evaluations from the Models full-text feed. |
+| `web_meta_ai_blog` | Meta AI first-party model, open-source, multimodal, and agent research posts. |
 | `rss_nvidia_genai` | NVIDIA generative AI product, platform, and practice updates. |
 | `rss_hf_blog` | Hugging Face model, product, practice, and research blog updates. |
 | `docs_xai_release_notes` | xAI developer release notes (Grok model/API/product updates), split per release entry. |
@@ -63,6 +65,8 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `rss_reddit_localllama` | Daily community-upvoted open-model signal from r/LocalLLaMA. |
 | `rss_testingcatalog` | Focused tracking of AI product launches and changes from TestingCatalog. |
 | `web_huggingface_daily_papers` | Hugging Face daily papers as curated research signal, split per paper (title/abstract/date). |
+| `web_artificial_analysis` | Independent frontier-model benchmark, cost, speed, and launch analysis. |
+| `docs_arena_leaderboard_changelog` | Arena leaderboard additions, score revisions, and methodology changes, split per dated update. |
 | `github_trending_daily` | GitHub site-wide daily trending repositories as open-source heat discovery signal (first-time-on-board stream). |
 | `rss_ruanyifeng` | Chinese weekly technology digest with high-signal AI coverage from 阮一峰. |
 | `rss_simonwillison` | Full-text LLM tool and developer-practice essays from Simon Willison. |
@@ -71,11 +75,14 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `rss_raschka` | Full-text LLM research interpretation and practice from Sebastian Raschka. |
 | `rss_oneusefulthing` | Full-text insight on AI application and work practices from Ethan Mollick. |
 | `rss_lilianweng` | Deep technical essays on AI research and practice from Lilian Weng. |
+| `rss_import_ai` | Jack Clark's full-text weekly synthesis of AI research, industry, and policy signals. |
 | `rss_bair_blog` | Primary research blog posts from the Berkeley Artificial Intelligence Research lab. |
 | `web_cursor_changelog` | Cursor product changelog for agent coding practice. |
 | `github_opencode_releases` | OpenCode release updates. |
 | `github_openclaw_releases` | OpenClaw release updates. |
 | `github_hermes_agent_releases` | Hermes Agent release updates. |
+| `web_kimi_research` | Kimi first-party model, agent, multimodal, and training research articles. |
+| `web_minimax_research` | MiniMax first-party model, agent, long-context, and reinforcement-learning research articles. |
 
 ## 社交平台账号(X 社交波,v3.12 · 观察期)
 

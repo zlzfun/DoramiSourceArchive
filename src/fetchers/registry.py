@@ -26,6 +26,9 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "docs_gemma_release_notes",
     # Mistral
     "rss_mistral_news",
+    # Microsoft AI / Meta AI
+    "rss_microsoft_ai_models",
+    "web_meta_ai_blog",
     # Apple
     "rss_apple_mlr",
     # NVIDIA
@@ -54,6 +57,8 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "rss_testingcatalog",
     "web_huggingface_daily_papers",
     "github_trending_daily",
+    "web_artificial_analysis",
+    "docs_arena_leaderboard_changelog",
     # Personal commentary / newsletter
     "rss_ruanyifeng",
     "rss_simonwillison",
@@ -62,6 +67,7 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "rss_raschka",
     "rss_oneusefulthing",
     "rss_lilianweng",
+    "rss_import_ai",
     # Academic labs
     "rss_bair_blog",
     # Agent coding tools
@@ -69,6 +75,9 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "github_opencode_releases",
     "github_openclaw_releases",
     "github_hermes_agent_releases",
+    # Kimi / MiniMax research
+    "web_kimi_research",
+    "web_minimax_research",
     # X 社交波（观察期，category=incubating；默认目录可见但不进每日采集）
     # 2026-07-21 压缩成本删两源：x_ai_at_meta（低频零覆盖但增量小）、
     # x_openrouter（高频哨兵、成本大头）——见下方 DECOMMISSIONED。

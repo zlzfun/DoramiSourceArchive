@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup, Tag
 from fetchers.base import BaseFetcher
 from fetchers.impl.article_extractor import (
     DETAIL_HARD_CAP,
+    compact_text,
     extract_article_detail,
     extract_detail_from_html,
     node_to_markdown,
@@ -1103,3 +1104,337 @@ class QwenBlogWebFetcher(BaseWebPageListFetcher):
                 tags=[self.category, "webpage", *tags],
                 raw_data=raw_data,
             )
+
+
+class _ScopedArticleBodyFetcher(BaseWebPageListFetcher):
+    """HTML 列表源的精确正文圈选底座；``unknown_source`` 不会被注册。"""
+
+    source_id = "unknown_source"
+    default_fetch_detail = True
+    drop_empty_content = True
+    body_selectors: tuple[str, ...] = ()
+    body_noise_selectors: tuple[str, ...] = ()
+    detail_method = "scoped_article_body"
+    drop_leading_title = False
+
+    def _clean_scoped_text(self, text: str) -> str:
+        return compact_text(text)
+
+    def _extract_scoped_detail(
+        self, html_text: str, max_chars: int, base_url: str = ""
+    ) -> Dict[str, str]:
+        soup = BeautifulSoup(html_text, "html.parser")
+        title = self._detail_title(soup)
+        body = next(
+            (node for selector in self.body_selectors if (node := soup.select_one(selector)) is not None),
+            None,
+        )
+        if body is None:
+            return {"title": title, "text": "", "method": ""}
+
+        for selector in (
+            "script",
+            "style",
+            "noscript",
+            "nav",
+            "footer",
+            "aside",
+            "form",
+            "button",
+            *self.body_noise_selectors,
+        ):
+            for node in body.select(selector):
+                node.decompose()
+
+        if self.drop_leading_title:
+            first_heading = body.find(["h1", "h2"])
+            if first_heading is not None:
+                heading_text = self._clean_text(first_heading.get_text(" ", strip=True))
+                heading_core = re.sub(
+                    r"^(introducing|announcing)\s+", "", heading_text, flags=re.IGNORECASE
+                )
+                if (
+                    not title
+                    or heading_text in title
+                    or title in heading_text
+                    or heading_core in title
+                ):
+                    first_heading.decompose()
+
+        text = self._clean_scoped_text(node_to_markdown(body, base_url))[:max_chars]
+        return {"title": title, "text": text, "method": self.detail_method if text else ""}
+
+    async def _detail_for_url(
+        self, client: httpx.AsyncClient, url: str, max_chars: int
+    ) -> Dict[str, str]:
+        response = await self._safe_get(client, url)
+        if not response:
+            return {"title": "", "text": "", "method": "", "url": ""}
+        resolved_url = str(response.url)
+        detail = self._extract_scoped_detail(response.text, max_chars, resolved_url)
+        if detail["text"]:
+            return {**detail, "url": resolved_url}
+
+        fallback = await extract_article_detail(
+            client,
+            self._safe_get,
+            resolved_url,
+            response.text,
+            max_chars,
+        )
+        return {
+            "title": fallback.title,
+            "text": fallback.text,
+            "method": fallback.method,
+            "url": fallback.url or resolved_url,
+        }
+
+
+class ArtificialAnalysisArticlesWebFetcher(_ScopedArticleBodyFetcher):
+    source_id = "web_artificial_analysis"
+    name = "Artificial Analysis"
+    description = "前沿 AI 模型的独立基准结果、成本速度比较与发布解读。"
+    icon = "📊"
+    listing_url = "https://artificialanalysis.ai/articles"
+    source_url = listing_url
+    site_name = "Artificial Analysis"
+    source_section = "Articles"
+    category = "incubating"  # 观察期;验收转正后改回 "media"
+    article_url_patterns = ["artificialanalysis.ai/articles/"]
+    max_listing_pages = 7
+    default_limit = 12
+    body_selectors = (".prose.prose-sm.max-w-none", ".prose.max-w-none")
+    detail_method = "artificial_analysis_prose"
+    drop_leading_title = True
+    source_owner = "artificial_analysis"
+    source_brand = "Artificial Analysis"
+    source_scope = "ai_benchmark_analysis"
+    source_channel = "articles"
+    provenance_tier = "tier1_curated"
+    content_tags = ["benchmark", "model_release", "market_news"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public_website"
+
+    def _matches_article_url(self, url: str) -> bool:
+        return bool(re.fullmatch(r"https://artificialanalysis\.ai/articles/[^/?#]+/?", url))
+
+    def _clean_scoped_text(self, text: str) -> str:
+        text = compact_text(text)
+        return re.sub(r"^(?:See|View) model page\s*\n\n", "", text, count=1, flags=re.I)
+
+    def _next_listing_page_url(self, soup: BeautifulSoup, current_url: str) -> Optional[str]:
+        next_link = soup.find("a", attrs={"aria-label": re.compile(r"next page", re.I)}, href=True)
+        return urljoin(current_url, str(next_link["href"])) if next_link else None
+
+
+class MetaAiBlogWebFetcher(_ScopedArticleBodyFetcher):
+    source_id = "web_meta_ai_blog"
+    name = "Meta AI 博客"
+    description = "Meta AI 的模型、开源研究、多模态与智能体进展。"
+    icon = "♾️"
+    listing_url = "https://ai.meta.com/blog/?page=1"
+    source_url = "https://ai.meta.com/blog/"
+    site_name = "Meta AI"
+    source_section = "Blog"
+    category = "incubating"  # 观察期;验收转正后改回 "official"
+    article_url_patterns = ["ai.meta.com/blog/"]
+    max_listing_pages = 5
+    default_limit = 12
+    body_selectors = ("._amgj",)
+    detail_method = "meta_ai_article_body"
+    source_owner = "meta"
+    source_brand = "Meta AI"
+    source_scope = "ai_lab"
+    source_channel = "official_blog"
+    provenance_tier = "tier0_primary"
+    content_tags = ["model_release", "research_paper", "open_source", "product_update"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public_website_obfuscated_css"
+
+    _non_title_labels = {
+        "featured",
+        "research",
+        "open source",
+        "product",
+        "engineering",
+    }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 2026-07-26 live probe: Meta 对带完整 Chrome token 的 UA 返回 400，
+        # 简洁的通用 Mozilla UA 则稳定返回 SSR 列表与详情。仅在本源内覆盖。
+        self.default_headers["User-Agent"] = "Mozilla/5.0"
+
+    def _matches_article_url(self, url: str) -> bool:
+        return bool(re.fullmatch(r"https://ai\.meta\.com/blog/[^/?#]+/?", url))
+
+    def _candidate_container(self, link: Tag) -> Tag:
+        # Meta 的卡片链接是无标题 overlay；紧邻父 div 才是单卡边界。继续上溯会
+        # 落进整片 Latest News，导致每条都错拿第一张卡的 h4。
+        parent = link.find_parent("div")
+        return parent if isinstance(parent, Tag) else link
+
+    def _title_from_container(self, link: Tag, container: Tag) -> str:
+        heading = container.find(["h1", "h2", "h3", "h4"])
+        if heading is not None:
+            text = self._clean_text(heading.get_text(" ", strip=True))
+            if text:
+                return text
+
+        candidates = []
+        for raw_text in container.stripped_strings:
+            text = self._clean_text(str(raw_text))
+            if not text or text.lower() in self._non_title_labels:
+                continue
+            if self._extract_datetime_or_empty(text):
+                continue
+            candidates.append(text)
+        return max(candidates, key=len) if candidates else super()._title_from_container(link, container)
+
+    def _clean_scoped_text(self, text: str) -> str:
+        text = compact_text(text)
+        trailer_positions = [
+            position
+            for marker in (
+                "\n\nWritten by:",
+                "\n\nLearn More About",
+                "\n\n## Explore additional resources",
+                "\n\nOur latest updates delivered to your inbox",
+            )
+            if (position := text.find(marker)) >= 0
+        ]
+        resource_links = re.search(
+            r"\n\n(?=(?:(?:#{1,6}\s*)?(?:Read|Download|Try|Explore|Check|Learn)\b[^\n]*"
+            r"(?:\n\n|$)){2,}\s*$)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if resource_links:
+            trailer_positions.append(resource_links.start())
+        return text[: min(trailer_positions)].rstrip() if trailer_positions else text
+
+    def _next_listing_page_url(self, soup: BeautifulSoup, current_url: str) -> Optional[str]:
+        query = dict(parse_qsl(urlparse(current_url).query))
+        current_page = int(query.get("page", "1") or 1)
+        for link in soup.find_all("a", href=True):
+            candidate = urljoin(current_url, str(link["href"]))
+            candidate_query = dict(parse_qsl(urlparse(candidate).query))
+            if candidate_query.get("page") == str(current_page + 1):
+                return candidate
+        return None
+
+
+class KimiResearchWebFetcher(_ScopedArticleBodyFetcher):
+    source_id = "web_kimi_research"
+    name = "Kimi Research"
+    description = "Kimi 模型、智能体、多模态与训练方法的研究和技术文章。"
+    icon = "🌙"
+    listing_url = "https://www.kimi.com/blog/"
+    source_url = listing_url
+    site_name = "Kimi"
+    source_section = "Research"
+    category = "incubating"  # 观察期;验收转正后改回 "official"
+    article_url_patterns = ["kimi.com/blog/"]
+    default_limit = 12
+    body_selectors = (".blog-v2-main .markdown", ".blog-v2-main", "main .markdown")
+    detail_method = "kimi_research_markdown_body"
+    drop_leading_title = True
+    source_owner = "moonshot_ai"
+    source_brand = "Kimi"
+    source_scope = "model_family"
+    source_channel = "research_blog"
+    provenance_tier = "tier0_primary"
+    content_tags = ["model_release", "research_paper", "agent", "multimodal"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public_website"
+
+    def _matches_article_url(self, url: str) -> bool:
+        return bool(re.fullmatch(r"https://www\.kimi\.com/blog/[^/?#]+/?", url))
+
+    def _candidate_container(self, link: Tag) -> Tag:
+        # 顶部移动导航也链接最新文章；若沿通用规则上溯，会把整页研究卡片列表
+        # 圈进 header 容器，并在真实卡片出现前错误获得一个“带日期”的大摘要。
+        if "header-mobile-nav-link" in (link.get("class") or []):
+            return link
+        return super()._candidate_container(link)
+
+    def _extract_datetime_or_empty(self, text: str) -> str:
+        value = super()._extract_datetime_or_empty(text)
+        if value:
+            return value
+        match = re.search(r"\b(20\d{2})/(\d{1,2})/(\d{1,2})\b", text)
+        if not match:
+            return ""
+        year, month, day = (int(part) for part in match.groups())
+        try:
+            return datetime(year, month, day, tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            return ""
+
+    def _merge_entry(self, entries_by_url: Dict[str, Dict[str, Any]], entry: Dict[str, Any]) -> None:
+        existing = entries_by_url.get(entry["url"])
+        prefer_dated_card = bool(entry.get("publish_date")) and bool(existing) and not existing.get("publish_date")
+        super()._merge_entry(entries_by_url, entry)
+        merged = entries_by_url[entry["url"]]
+        if prefer_dated_card:
+            merged["title"] = entry["title"]
+            merged["summary"] = entry["summary"]
+        if re.fullmatch(r"20\d{2}/\d{1,2}/\d{1,2}", str(merged.get("summary") or "")):
+            merged["summary"] = ""
+
+
+class MiniMaxResearchWebFetcher(_ScopedArticleBodyFetcher):
+    source_id = "web_minimax_research"
+    name = "MiniMax Research"
+    description = "MiniMax 模型、Agent、长上下文与强化学习的研究和技术文章。"
+    icon = "🧬"
+    listing_url = "https://www.minimax.io/blog"
+    source_url = listing_url
+    site_name = "MiniMax"
+    source_section = "Research"
+    category = "incubating"  # 观察期;验收转正后改回 "official"
+    article_url_patterns = ["minimax.io/blog/"]
+    default_limit = 10
+    body_selectors = ("article .prose.max-w-none", "article .prose")
+    detail_method = "minimax_research_prose"
+    source_owner = "minimax"
+    source_brand = "MiniMax"
+    source_scope = "ai_lab"
+    source_channel = "research_blog"
+    provenance_tier = "tier0_primary"
+    content_tags = ["model_release", "research_paper", "agent", "multimodal"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public_website"
+
+    def _matches_article_url(self, url: str) -> bool:
+        return bool(re.fullmatch(r"https://www\.minimax\.io/blog/[^/?#]+/?", url))
+
+    def _clean_scoped_text(self, text: str) -> str:
+        text = compact_text(text)
+        # 技术文章会直接写模型特殊 token / verifier XML（如 <fim_middle>、
+        # <assessment>）。裸尖括号会被 Markdown 渲染器当 HTML 标签吞掉，统一转为
+        # 行内 code，既保真又可见。
+        text = re.sub(
+            r"</?[A-Za-z][A-Za-z0-9:_-]*>",
+            lambda match: f"`{match.group(0)}`",
+            text,
+        )
+        # 保留套餐/价格事实，只移除站内购买号召和固定品牌口号。
+        text = re.sub(
+            r"All three tiers are fully available\.\s*Subscribe and start immediately!",
+            "All three tiers are fully available.",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"\n\nSubscription link:\s*\[[^\]]+\]\([^)]+\)",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(r"\n+\*\*Intelligence with Everyone\.\*\*\s*$", "", text)
+        return text.strip()

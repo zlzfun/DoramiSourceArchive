@@ -300,7 +300,13 @@ export default function ReaderTab({
 
   const listRef = useRef(null);
   const listThumbRef = useRef(null); // 浮层滚动条滑块(压在卡片上,内容满宽)
-  const resyncListScrollbar = useOverlayScrollbar(listRef, listThumbRef);
+  // 文章/动态中栏会被发现页与社交流整段卸载；active 让自绘滚动条在 DOM 重建后
+  // 重新绑定到新节点，避免监听器滞留在旧节点、出现“内容滚动但滑块不动”。
+  const resyncListScrollbar = useOverlayScrollbar(
+    listRef,
+    listThumbRef,
+    !discover && mode !== 'social',
+  );
   const sentinelRef = useRef(null); // 无限滚动哨兵:进入视口即追加下一页
   // 正文缓存（id → content）+ 「最新选中 id」防竞态：快速连点时丢弃晚到的过期正文响应
   const bodyCacheRef = useRef(new Map());

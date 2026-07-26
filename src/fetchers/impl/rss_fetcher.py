@@ -1252,3 +1252,95 @@ class RedditLocalLlamaRssFetcher(PresetRssFetcher):
         return self._reddit_trailer_re.sub("", text).strip()
 
     # Reddit 对数据中心 IP 存在 429 风险，观察期重点验证。
+
+
+class MicrosoftAiModelsRssFetcher(PresetRssFetcher):
+    """Microsoft AI 模型栏目全文 RSS。
+
+    microsoft.ai 当前的 Cloudflare 规则会拦截浏览器形态的 User-Agent，却允许
+    WordPress feed reader。feed 的 ``content:encoded`` 已含完整正文，因此直接在
+    条目 HTML 内圈选所有 ``.wysiwyg`` 正文块，避开标题/日期/分享按钮、招聘横幅、
+    Related Stories 与 WordPress ``appeared first`` 尾注。
+    """
+
+    source_id = "rss_microsoft_ai_models"
+    name = "Microsoft AI 模型"
+    description = "Microsoft AI 自研模型的发布、能力评测与技术说明。"
+    icon = "🪟"
+    feed_url = "https://microsoft.ai/news-categories/models/feed/"
+    category = "incubating"  # 观察期;验收转正后改回 "official"
+    default_limit = 10
+    source_owner = "microsoft"
+    source_brand = "Microsoft AI"
+    source_scope = "ai_lab"
+    source_channel = "models_rss"
+    source_url = "https://microsoft.ai/news-categories/models/"
+    provenance_tier = "tier0_primary"
+    content_tags = ["model_release", "research_paper", "product_update"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public_rss_custom_user_agent"
+    default_fetch_detail_if_missing = False
+    feed_content_as_markdown = True
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 2026-07-26 live probe: browser UA => Cloudflare block page;
+        # a feed-reader UA => the real RSS document. Keep this source-local.
+        self.default_headers["User-Agent"] = "WordPress/6.0; https://microsoft.ai"
+
+    def _entry_content_text(self, html_text: str, base_url: str) -> str:
+        if not html_text:
+            return ""
+        try:
+            soup = BeautifulSoup(html_text, "html.parser")
+            body_blocks = soup.select(".wysiwyg")
+            if body_blocks:
+                parts = [
+                    compact_text(node_to_markdown(block, base_url=base_url))
+                    for block in body_blocks
+                ]
+                text = "\n\n".join(part for part in parts if part).strip()
+                if text:
+                    # WordPress 模块偶尔输出空 h1/h2，转换后会留下单独的 ``#`` 行。
+                    return re.sub(r"(?m)^#{1,6}\s*$\n?", "", text).strip()
+        except Exception:  # noqa: BLE001 - 精确圈选失败时仍保留全文 feed 兜底
+            self.logger.warning("Microsoft AI feed 正文圈选失败，回退全文 markdown")
+        return super()._entry_content_text(html_text, base_url)
+
+
+class ImportAiRssFetcher(PresetRssFetcher):
+    """Jack Clark 的 Import AI 全文 newsletter。"""
+
+    source_id = "rss_import_ai"
+    name = "Import AI"
+    description = "Jack Clark 对 AI 研究、产业与政策信号的周度深度综述。"
+    icon = "🗞️"
+    feed_url = "https://jack-clark.net/feed/"
+    category = "incubating"  # 观察期;验收转正后改回 "media"
+    default_limit = 6
+    source_owner = "jack_clark"
+    source_brand = "Import AI"
+    source_scope = "expert_newsletter"
+    source_channel = "newsletter_rss"
+    source_url = "https://jack-clark.net/"
+    provenance_tier = "tier1_curated"
+    content_tags = ["research_paper", "market_news", "opinion", "ai_policy"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public_rss"
+    default_fetch_detail_if_missing = False
+    feed_content_as_markdown = True
+
+    _intro_re = re.compile(
+        r"^\s*(?:!\[[^\]]*\]\([^)]+\)\s*)?"
+        r"Welcome to Import AI, a newsletter about AI research\.[\s\S]*?"
+        r"\[Subscribe now\]\([^)]+\)\s*",
+        re.IGNORECASE,
+    )
+    _thanks_re = re.compile(r"\s*\*Thanks for reading[.!]?\*\s*$", re.IGNORECASE)
+
+    def _entry_content_text(self, html_text: str, base_url: str) -> str:
+        text = super()._entry_content_text(html_text, base_url)
+        text = self._intro_re.sub("", text, count=1)
+        return self._thanks_re.sub("", text).strip()

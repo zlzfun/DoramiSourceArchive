@@ -13,9 +13,11 @@ from fetchers.impl.rss_fetcher import (
     HackerNewsAiRssFetcher,
     HuggingFaceBlogRssFetcher,
     InterconnectsRssFetcher,
+    ImportAiRssFetcher,
     LatentSpaceRssFetcher,
     LilianWengRssFetcher,
     MistralNewsRssFetcher,
+    MicrosoftAiModelsRssFetcher,
     NvidiaGenAiBlogRssFetcher,
     OneUsefulThingRssFetcher,
     OpenAINewsRssFetcher,
@@ -669,6 +671,82 @@ def test_second_expansion_rss_presets_are_registered_with_complete_curation_meta
         assert item["content_tags"]
         assert item["shape"] == "article"
         assert "content_shape" not in fetcher_class.__dict__
+
+
+def test_microsoft_ai_models_rss_uses_feed_reader_ua_and_scopes_full_body():
+    feed_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+      <channel><title>Models Archives | Microsoft AI</title><item>
+        <title>MAI Model Release</title>
+        <link>https://microsoft.ai/news/mai-model-release/</link>
+        <pubDate>Thu, 23 Jul 2026 12:00:00 +0000</pubDate>
+        <content:encoded><![CDATA[
+          <section><h1>MAI Model Release</h1><p>July 23, 2026</p><a>LI</a><a>X</a></section>
+          <div class="w-grid24-col-span-12 space-y-100fx"><div class="wysiwyg">
+            <p>The first real paragraph explains the model capability.</p>
+            <ul><li><a href="/model-card">Model card</a></li></ul>
+          </div><div class="wysiwyg"><h2>Evaluation</h2><p>The second body block keeps results.</p></div></div>
+          <section><h2>Related Stories</h2><p>Unrelated recommendation.</p></section>
+          <p>The post MAI Model Release appeared first on Microsoft AI.</p>
+        ]]></content:encoded>
+      </item></channel>
+    </rss>"""
+    fetcher = MicrosoftAiModelsRssFetcher()
+
+    assert fetcher.default_headers["User-Agent"] == "WordPress/6.0; https://microsoft.ai"
+
+    async def fake_safe_get(client, url):
+        assert url == fetcher.feed_url
+        return DummyResponse(feed_xml, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=1)]
+
+    item = asyncio.run(collect_items())[0]
+    assert "first real paragraph" in item.content
+    assert "## Evaluation" in item.content
+    assert "[Model card](https://microsoft.ai/model-card)" in item.content
+    assert "Related Stories" not in item.content
+    assert "appeared first" not in item.content
+    assert "MAI Model Release" not in item.content
+    assert item.raw_data["detail_fetched"] is False
+
+
+def test_import_ai_fulltext_rss_removes_subscription_chrome_but_keeps_structure():
+    feed_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+      <channel><title>Import AI</title><item>
+        <title>Import AI 999: research signals</title>
+        <link>https://jack-clark.net/2026/07/20/import-ai-999/</link>
+        <pubDate>Mon, 20 Jul 2026 12:31:45 +0000</pubDate>
+        <content:encoded><![CDATA[
+          <img src="https://jack-clark.net/thumb.png" />
+          <p>Welcome to Import AI, a newsletter about AI research. Import AI runs on arXiv, cappuccinos, and feedback from readers. If you’d like to support this, please subscribe.</p>
+          <p><a href="https://importai.substack.com/subscribe">Subscribe now</a></p>
+          <p><strong>First research signal:</strong> A substantive finding.</p>
+          <ul><li><a href="https://arxiv.org/abs/2607.00001">Read the paper</a></li></ul>
+          <p><em>Thanks for reading.</em></p>
+        ]]></content:encoded>
+      </item></channel>
+    </rss>"""
+    fetcher = ImportAiRssFetcher()
+
+    async def fake_safe_get(client, url):
+        return DummyResponse(feed_xml, url)
+
+    fetcher._safe_get = fake_safe_get
+
+    async def collect_items():
+        return [item async for item in fetcher._run(None, limit=1)]
+
+    item = asyncio.run(collect_items())[0]
+    assert item.content.startswith("**First research signal:**")
+    assert "[Read the paper](https://arxiv.org/abs/2607.00001)" in item.content
+    assert "Welcome to Import AI" not in item.content
+    assert "Subscribe now" not in item.content
+    assert "Thanks for reading" not in item.content
 
 
 def test_database_storage_backfills_existing_empty_article():

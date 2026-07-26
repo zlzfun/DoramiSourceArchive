@@ -7,8 +7,9 @@ import { useCallback, useEffect, useRef } from 'react';
    滚动/悬停时浮现、静止 ~900ms 后淡出。
 
    用法:给滚动元素与滑块元素各一个 ref,滑块是滚动元素的兄弟节点、其定位祖先要 relative。
+   条件渲染的滚动区还要传 active；DOM 离场/重建时据此解绑旧节点、绑定新节点。
    返回 sync():内容高度变化(如无限滚动追加)时由调用方主动重算一次。 */
-export function useOverlayScrollbar(scrollRef, thumbRef) {
+export function useOverlayScrollbar(scrollRef, thumbRef, active = true) {
   const idleTimer = useRef(null);
   const dragRef = useRef(null);
 
@@ -42,6 +43,7 @@ export function useOverlayScrollbar(scrollRef, thumbRef) {
   }, [scrollRef, thumbRef]);
 
   useEffect(() => {
+    if (!active) return undefined;
     const el = scrollRef.current;
     const thumb = thumbRef.current;
     if (!el || !thumb) return undefined;
@@ -91,7 +93,7 @@ export function useOverlayScrollbar(scrollRef, thumbRef) {
       window.removeEventListener('pointerup', onUp);
       if (idleTimer.current) clearTimeout(idleTimer.current);
     };
-  }, [scrollRef, thumbRef, sync, flash]);
+  }, [active, scrollRef, thumbRef, sync, flash]);
 
   return sync;
 }

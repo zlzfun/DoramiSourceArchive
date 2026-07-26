@@ -28,6 +28,7 @@ EXPECTED_BULLETIN_SOURCE_IDS = {
     "docs_xai_release_notes",
     "docs_deepseek_api_changelog",
     "docs_zai_new_released",
+    "docs_arena_leaderboard_changelog",
     "web_cursor_changelog",
     # GitHub Releases(基类标记,预设继承)
     "generic_github_releases",
