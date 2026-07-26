@@ -170,6 +170,17 @@ export function prefetchArticleMedia(articleId) {
 // （全量回填端点 /admin/media/backfill 保留在后端作脚本化应急通道,前端入口已撤——
 //  生产只做随抓预取;存量补录走热点图抽屉的单篇定点重抓。）
 
+// ── 读者面源可见性（管理面隐藏节点） ──
+export function fetchSourceVisibility() {
+  return request('/admin/source-visibility', { errorMsg: '获取源可见性失败' });
+}
+
+export function setSourceVisibility(sourceId, hidden) {
+  return request(`/admin/source-visibility/${enc(sourceId)}`, {
+    method: 'POST', body: { hidden }, errorMsg: '更新源可见性失败',
+  });
+}
+
 export function getAiBetaGlobal() {
   return request('/admin/ai-beta/global', { errorMsg: '获取 AI 全局开关失败' });
 }

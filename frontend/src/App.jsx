@@ -165,7 +165,14 @@ export default function App() {
     setSettingsSection(section);
     setSettingsOpen(true);
   }, []);
-  const [mountedTabs, setMountedTabs] = useState(() => new Set([nav.tab]));
+  const [mountedTabs, setMountedTabs] = useState(() => {
+    const base = new Set([nav.tab]);
+    // 刷新恢复(v3.19 双界面):admin 上次停留在阅读器界面时,surfaceMode 由 sessionStorage
+    // 恢复为 'reader',但 reader 面板只靠 enterReader() 挂载——刷新不经它,导致
+    // readerView 下管理页签全部 is-off 而 reader 未挂载,整页空白。首帧即补挂载。
+    if (readStoredSurface() === 'reader') base.add('reader');
+    return base;
+  });
   const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
   const [logoError, setLogoError] = useState(false);
   const [availableFetchers, setAvailableFetchers] = useState([]);

@@ -40,12 +40,46 @@ from services import daily_brief as daily_brief_service
 from services import jobs as jobs_service
 from services import reader_activity as reader_activity_service
 from services import social_backfill as social_backfill_service
+from services import source_visibility as source_visibility_service
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 class AiBetaGlobalParams(BaseModel):
     enabled: bool
+
+
+class SourceVisibilityParams(BaseModel):
+    hidden: bool
+
+
+@router.get("/source-visibility")
+def get_source_visibility(session: Session = Depends(deps.get_session)):
+    """读者面源可见性：当前对读者隐藏的 source_id 名单（节点管理页开关取数）。"""
+    return {"hidden_source_ids": sorted(source_visibility_service.hidden_source_ids(session))}
+
+
+@router.post("/source-visibility/{source_id}")
+def set_source_visibility(
+    source_id: str,
+    params: SourceVisibilityParams,
+    session: Session = Depends(deps.get_session),
+):
+    """把单个源在读者面隐藏/恢复可见（幂等）。
+
+    「读者面临时下架」：目录/源栏/文章列表/聚合 feed/MCP 检索一并排除，订阅与归档
+    原样保留。观察期节点故障、文章缺陷等场景无需改代码即可即时止损。
+    """
+    source_id = (source_id or "").strip()
+    if not source_id:
+        raise HTTPException(status_code=400, detail="source_id 不能为空")
+    hidden_ids = source_visibility_service.set_source_hidden(session, source_id, params.hidden)
+    return {
+        "status": "success",
+        "source_id": source_id,
+        "hidden": params.hidden,
+        "hidden_source_ids": hidden_ids,
+    }
 
 
 @router.get("/overview")

@@ -22,6 +22,7 @@ import {
   Moon,
   LayoutDashboard,
   MessageSquare,
+  CloudOff,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
@@ -405,6 +406,13 @@ export default function ReaderTab({
     return map;
   }, [sources]);
 
+  // 当前选中源被临时隐藏(「暂不可用」):已订阅条目留在源栏,内容不再交付——
+  // 列表请求就地短路成空态,保证 admin/读者两种会话在阅读器里同观感。
+  const activeSourceHidden = !!(activeSourceId && sourceMap[activeSourceId]?.hidden);
+
+  // 发现页目录不含暂不可用源(已订阅者仅在源栏保留退订/等待入口,不再对外招订)
+  const discoverSources = useMemo(() => sources.filter((s) => !s.hidden), [sources]);
+
   const subscribedSources = useMemo(
     () => sources
       .filter(s => subscribedIds.has(s.source_id))
@@ -603,6 +611,16 @@ export default function ReaderTab({
 
   // ── 文章列表 ──
   const loadArticles = useCallback(async (skip = 0, append = false) => {
+    if (activeSourceHidden) {
+      // 暂不可用源不发请求:读者侧服务端本就返回空,admin 会话的按源查询不过滤,
+      // 前端统一短路,空态与文案由渲染层给出。
+      setArticles([]);
+      setArticlesTotal(0);
+      setArticlesLoading(false);
+      setLoadingMore(false);
+      setFreshCount(0);
+      return;
+    }
     // 竞态由 runList 兜底：发新弃旧，杜绝乱序晚到的响应覆盖当前列表。
     if (append) setLoadingMore(true); else { setArticlesLoading(true); setLoadingMore(false); }
     let data;
@@ -646,7 +664,7 @@ export default function ReaderTab({
     // 等用户主动点选一篇才加载正文并计一次阅读（见 selectArticle）。
     if (!append) setFreshCount(0); // 列表已刷新,新内容提示归零
     if (append) setLoadingMore(false); else setArticlesLoading(false);
-  }, [activeSourceId, searchQuery, favOnly, unreadOnly, mode, showToast, runList]);
+  }, [activeSourceId, activeSourceHidden, searchQuery, favOnly, unreadOnly, mode, showToast, runList]);
 
   // 切换来源/搜索 → 重置列表、回顶、清空右栏
   // 用 useLayoutEffect：在绘制前同步进入加载态，避免「切源瞬间旧列表被画出一帧」的陈旧帧闪现
@@ -1126,7 +1144,7 @@ export default function ReaderTab({
                         tabIndex={0}
                         onClick={() => goSource(source.source_id)}
                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goSource(source.source_id); } }}
-                        className={`reader-source-row ${active ? 'reader-source-row-active' : ''} ${unread > 0 ? 'has-unread' : ''}`}
+                        className={`reader-source-row ${active ? 'reader-source-row-active' : ''} ${unread > 0 ? 'has-unread' : ''} ${source.hidden ? 'is-unavailable' : ''}`}
                       >
                         {/* 社交源用真实头像(它们在 LogoMark 品牌表里没有条目,
                             否则整列会退化成同一个平台图标);图经媒体库代理 */}
@@ -1138,6 +1156,8 @@ export default function ReaderTab({
                         {/* 每源未读数字已撤(减噪 + 名字铺满右侧);未读靠行整体加粗(has-unread)示意,
                             总数看顶部「我的订阅 · N 未读」。退订钮浮层化,不占布局。 */}
                         <p className="reader-source-name min-w-0 flex-1">{source.name || source.source_id}</p>
+                        {/* 临时隐藏的已订阅源:条目保留但内容停发,标记说明状态;悬停退订钮照常浮出 */}
+                        {source.hidden && <span className="reader-src-off">暂不可用</span>}
                         <button
                           type="button"
                           title="取消订阅"
@@ -1180,7 +1200,7 @@ export default function ReaderTab({
       {/* ── 发现页:占据 条目列+阅读窗 的整片区域(源栏保持在场,订阅结果即时可见) ── */}
       {discover && (
         <DiscoverPage
-          sources={sources}
+          sources={discoverSources}
           subscribedIds={subscribedIds}
           loading={sourcesLoading}
           pinningId={pinningId}
@@ -1219,7 +1239,11 @@ export default function ReaderTab({
           onLoadMore={handleLoadMore}
           platformCount={platformCount}
           activeSourceId={activeSourceId}
-          emptyHint={socialSources.length === 0 ? '还没有订阅社交账号，去「发现」看看' : '暂无动态'}
+          emptyHint={
+            activeSourceHidden
+              ? '该账号暂时不可用'
+              : socialSources.length === 0 ? '还没有订阅社交账号，去「发现」看看' : '暂无动态'
+          }
         />
       )}
 
@@ -1335,6 +1359,11 @@ export default function ReaderTab({
               <button type="button" className="action-button action-button-primary" onClick={() => setDiscover(true)}>
                 去发现来源
               </button>
+            </div>
+          ) : activeSourceHidden ? (
+            <div className="reader-empty reader-empty-tall">
+              <CloudOff className="h-7 w-7 text-slate-300" />
+              <span>该来源暂时不可用</span>
             </div>
           ) : articles.length === 0 ? (
             <div className="reader-empty">

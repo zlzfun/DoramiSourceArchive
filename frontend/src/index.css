@@ -4938,6 +4938,13 @@ input[type="radio"] {
     background: rgba(245, 158, 11, 0.10);
   }
 
+  /* 读者面已隐藏徽标:临时下架状态,静默灰系(非异常,不用警示色) */
+  .reader-hidden-pill {
+    color: var(--dorami-muted);
+    border-color: var(--dorami-border);
+    background: var(--dorami-soft);
+  }
+
   /* ── 日报源范围:自定名单多选清单(配置卡内,定高滚动) ── */
   .brief-scope-list {
     margin-top: 6px;
@@ -6580,6 +6587,57 @@ input[type="radio"] {
     color: var(--dorami-ink-2);
   }
 
+  /* 读者可见性行:隐藏开关 + 说明,wash 底与 metabtn 同灰阶;隐藏态整行降调提示 */
+  .inspector-visibility {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 9px 11px;
+    border-radius: var(--r-control);
+    background: var(--dorami-soft);
+    color: var(--dorami-muted);
+  }
+
+  .inspector-visibility.is-hidden {
+    background: var(--dorami-well);
+    color: var(--dorami-ink-2);
+  }
+
+  .inspector-visibility > svg {
+    margin-top: 1px;
+  }
+
+  .inspector-visibility-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .inspector-visibility-title {
+    font-size: 11.5px;
+    font-weight: 700;
+  }
+
+  .inspector-visibility-hint {
+    font-size: 10.5px;
+    line-height: 1.6;
+    font-weight: 500;
+  }
+
+  .inspector-visibility-toggle {
+    display: inline-flex;
+    align-items: center;
+    margin-top: 1px;
+    flex-shrink: 0;
+  }
+
+  .inspector-visibility-toggle:disabled {
+    opacity: 0.5;
+    cursor: wait;
+  }
+
   .inspector-section {
     display: flex;
     flex-direction: column;
@@ -7535,6 +7593,29 @@ input[type="radio"] {
     color: var(--dorami-ink);
     font-weight: 500;
   }
+
+  /* 暂不可用源(管理面临时隐藏):整行降调灰显,名字不再随未读/选中加深 */
+  .reader-source-row.is-unavailable { opacity: 0.62; }
+
+  .reader-source-row.is-unavailable .reader-source-name {
+    color: var(--dorami-faint);
+    font-weight: 400;
+  }
+
+  /* 「暂不可用」微标:行右缘细灰签;悬停时退订浮层钮照常盖于其上 */
+  .reader-src-off {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--dorami-faint);
+    border: 1px solid var(--dorami-border);
+    border-radius: var(--r-sm);
+    padding: 0 5px;
+    line-height: 15px;
+  }
+
+  .reader-source-row:hover .reader-src-off { opacity: 0; }
 
   .reader-source-meta {
     font-size: 11px;

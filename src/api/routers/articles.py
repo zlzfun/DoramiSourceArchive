@@ -46,6 +46,7 @@ from api.sources import (
 from api.textutils import _json_loads
 from models.db import ArticleRecord, SourceConfigRecord
 from services import reader_state as reader_state_service
+from services import source_visibility as source_visibility_service
 
 router = APIRouter(tags=["articles"])
 
@@ -143,9 +144,12 @@ def get_articles(
     scope = (subscribed_scope or "off").strip().lower()
     safe_limit = min(max(int(limit), 1), 500)
     safe_skip = max(int(skip), 0)
+    auth_session = _app().current_auth_session(request)
+    is_admin = bool(auth_session and auth_session.get("role") == "admin")
     username = (
-        _app().current_username(request)
-        if (scope in {"only", "prioritize"} or unread_only or with_unread) else ""
+        str(auth_session.get("sub", ""))
+        if auth_session and (scope in {"only", "prioritize"} or unread_only or with_unread)
+        else ""
     )
     subscribed_ids = (
         resolve_subscribed_source_ids(session, username)
@@ -171,6 +175,17 @@ def get_articles(
     }
     query = apply_article_query_filters(select(ArticleRecord), session=session, **filter_kwargs)
     count_query = apply_article_query_filters(select(func.count(ArticleRecord.id)), session=session, **filter_kwargs)
+    if not is_admin:
+        # 管理面隐藏的源对读者会话整体不可见：不止订阅范围，「全部XX」跨源列表与
+        # 直连按 source_id 查询同样排除（admin 会话不受影响，知识台账仍见全档）。
+        hidden = source_visibility_service.hidden_source_ids(session)
+        if hidden:
+            hidden_cond = or_(
+                ArticleRecord.source_id.is_(None),
+                ArticleRecord.source_id.notin_(sorted(hidden)),
+            )
+            query = query.where(hidden_cond)
+            count_query = count_query.where(hidden_cond)
     if scope == "only":
         # 仅当前用户已订阅的源；无订阅时显式返回空集。
         query = query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
@@ -257,10 +272,17 @@ def get_article_facets(
 
 
 @router.get("/api/articles/{article_id:path}")
-async def get_article(article_id: str):
+async def get_article(article_id: str, request: Request):
     record = await deps.get_db_sink().get(article_id)
     if not record:
         raise HTTPException(status_code=404, detail="文章未找到")
+    if record.source_id:
+        auth_session = _app().current_auth_session(request)
+        if not (auth_session and auth_session.get("role") == "admin"):
+            with Session(deps.get_db_sink().engine) as session:
+                if record.source_id in source_visibility_service.hidden_source_ids(session):
+                    # 与列表口径一致：隐藏源的单条详情对读者会话按不存在处理。
+                    raise HTTPException(status_code=404, detail="文章未找到")
     return serialize_article_list_item(record, include_content=True)
 
 

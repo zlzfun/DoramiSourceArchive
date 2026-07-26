@@ -732,6 +732,10 @@ async def require_admin_session(request: Request, call_next):
             normalized_method == "POST"
             and path == "/api/admin/ai-beta/global"
         )
+        or (
+            normalized_method == "POST"
+            and path.startswith("/api/admin/source-visibility/")
+        )
     )
     if (auth_session or {}).get("role") == "admin" and audit_rule_needs_body:
         try:
@@ -1651,7 +1655,9 @@ def ensure_default_subscriptions(username: str) -> None:
     with Session(db_sink.engine) as session:
         if daily_brief_service.get_setting(session, key, ""):
             return
-        existing = set(resolve_subscribed_source_ids(session, username))
+        # 幂等判定要用原始订阅并集（include_hidden）：默认减隐藏的解析结果会把
+        # 已订阅但被临时隐藏的源误判为「未订阅」，导致重复播种。
+        existing = set(resolve_subscribed_source_ids(session, username, include_hidden=True))
         for source_id in DEFAULT_SUBSCRIPTION_SOURCE_IDS:
             if source_id in existing:
                 continue
