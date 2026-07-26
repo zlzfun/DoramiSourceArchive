@@ -1565,7 +1565,7 @@ export default function ReaderTab({
         ) : (
           <div className="reader-empty reader-empty-read">
             <BookOpenText className="h-8 w-8 text-slate-300" />
-            <span>选择一篇文章以开始阅读</span>
+            <span>{bulletinView ? '选择一条动态以开始阅读' : '选择一篇文章以开始阅读'}</span>
             {/* 新老用户通用的轻引导:空态下一行小字直达发现页(欢迎卡方案已否决——太啰嗦) */}
             <button type="button" className="reader-empty-link" onClick={() => setDiscover(true)}>
               去「发现」添加订阅
