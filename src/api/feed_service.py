@@ -13,6 +13,7 @@ import hmac
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from api import deps
@@ -21,6 +22,7 @@ from api.sources import subscription_source_ids
 from api.textutils import _json_loads
 from api.tokens import hash_subscription_token, normalize_delivery_policy
 from models.db import ArticleRecord, ReaderFeedTokenRecord, ReaderSubscriptionRecord, UserRecord
+from services import source_visibility
 
 
 def serialize_subscription(record: ReaderSubscriptionRecord, token: Optional[str] = None) -> Dict[str, Any]:
@@ -85,14 +87,28 @@ def query_subscription_articles(
         fetched_date_end=filters.get("fetched_date_end"),
         session=session,
     )
+    # 管理面隐藏的源在单订阅令牌交付中同样下架（读者面临时不可见的一部分）。
+    hidden = source_visibility.hidden_source_ids(session)
+    if hidden:
+        query = query.where(
+            or_(ArticleRecord.source_id.is_(None), ArticleRecord.source_id.notin_(sorted(hidden)))
+        )
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
     ).all()
     return records, {"limit": safe_limit, "policy": policy, "filters": filters}
 
 
-def resolve_subscribed_source_ids(session: Session, username: str) -> List[str]:
-    """Union of source_ids across the user's active subscriptions, sorted & de-duplicated."""
+def resolve_subscribed_source_ids(
+        session: Session, username: str, *, include_hidden: bool = False
+) -> List[str]:
+    """Union of source_ids across the user's active subscriptions, sorted & de-duplicated.
+
+    默认减去管理面隐藏的源（读者面临时下架）：本函数是订阅范围的单一咽喉——文章列表
+    （subscribed_scope）、未读计数、聚合 feed、MCP/RAG 检索范围全部由此派生，故隐藏在此
+    统一生效。订阅记录本身不动，恢复可见后范围自动回来。需要「原始订阅并集」的调用方
+    （默认订阅播种的幂等判定等）显式传 include_hidden=True。
+    """
     if not username:
         return []
     subs = session.exec(
@@ -104,6 +120,8 @@ def resolve_subscribed_source_ids(session: Session, username: str) -> List[str]:
     collected: set[str] = set()
     for sub in subs:
         collected.update(subscription_source_ids(sub))
+    if not include_hidden:
+        collected -= source_visibility.hidden_source_ids(session)
     return sorted(collected)
 
 
@@ -135,7 +153,9 @@ def resolve_subscription_sources_by_token(token: str) -> Optional[List[str]]:
             )
         ).first()
         if record:
-            return subscription_source_ids(record)
+            # 减去管理面隐藏的源；减空即空作用域（MCP 契约中空列表 = 应返回空，不会放大）。
+            hidden = source_visibility.hidden_source_ids(session)
+            return [sid for sid in subscription_source_ids(record) if sid not in hidden]
         owner = resolve_feed_token_owner(session, token)
         if owner is not None:
             user = session.get(UserRecord, owner)

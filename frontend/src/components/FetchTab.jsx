@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  EyeOff,
   FileText,
   FlaskConical,
   Inbox,
@@ -21,6 +22,8 @@ import {
   fetchFetchRuns,
   fetchRunningProgress,
   fetchSourceHealth,
+  fetchSourceVisibility,
+  setSourceVisibility,
   triggerBatchFetch,
   triggerFetch,
 } from '../api';
@@ -176,6 +179,33 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       localStorage.setItem(FETCH_CONFIGS_STORAGE_KEY, JSON.stringify(overrides));
     } catch { /* localStorage 不可用时静默降级，不影响本次会话内的参数 */ }
   }, []);
+
+  // 读者面隐藏名单(管理面隐藏节点):观察期故障/内容缺陷时临时下架,不改代码即时生效。
+  const [hiddenSourceIds, setHiddenSourceIds] = useState(() => new Set());
+  const [visibilityBusyId, setVisibilityBusyId] = useState(null);
+
+  useEffect(() => {
+    fetchSourceVisibility()
+      .then(data => setHiddenSourceIds(new Set(data.hidden_source_ids || [])))
+      .catch(e => console.error(e)); // 读数失败静默降级:开关按未隐藏渲染,操作时仍会如实报错
+  }, []);
+
+  const toggleSourceHidden = useCallback(async (fetcher) => {
+    const nextHidden = !hiddenSourceIds.has(fetcher.id);
+    setVisibilityBusyId(fetcher.id);
+    try {
+      const data = await setSourceVisibility(fetcher.id, nextHidden);
+      setHiddenSourceIds(new Set(data.hidden_source_ids || []));
+      showToast(
+        nextHidden ? `「${fetcher.name}」已在读者面隐藏` : `「${fetcher.name}」已恢复读者面可见`,
+        'success'
+      );
+    } catch (e) {
+      showToast(e.message || '更新源可见性失败', 'error');
+    } finally {
+      setVisibilityBusyId(null);
+    }
+  }, [hiddenSourceIds, showToast]);
 
   const loadSourceHealth = useCallback(async () => {
     try {
@@ -574,6 +604,10 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               {fetcher.category === 'incubating' && (
                 <span className="tier-pill incubating-pill" title="观察期:质量验收转正前不进每日自动采集">观察</span>
               )}
+              {/* 读者面隐藏:发现页/源栏/文章流对读者不可见,采集照常 */}
+              {hiddenSourceIds.has(fetcher.id) && (
+                <span className="tier-pill reader-hidden-pill" title="读者面已隐藏:发现页与阅读器均不可见,订阅与归档保留">已隐藏</span>
+              )}
             </span>
             <span className="board-node-sid" title={fetcher.id}>{fetcher.id}</span>
           </span>
@@ -730,6 +764,28 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             <button type="button" className="inspector-metabtn" onClick={() => onViewRuns?.(fetcher.id)} title="查看全部运行历史">
               <Activity className="h-3.5 w-3.5" />
               <span>运行历史</span>
+            </button>
+          </div>
+
+          {/* 读者可见性:观察期故障/文章缺陷等场景临时下架,采集/归档照常,恢复即回归 */}
+          <div className={`inspector-visibility ${hiddenSourceIds.has(fetcher.id) ? 'is-hidden' : ''}`}>
+            <EyeOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <div className="inspector-visibility-text">
+              <span className="inspector-visibility-title">在读者面隐藏</span>
+              <span className="inspector-visibility-hint">
+                隐藏后发现页与阅读器不再出现该源；订阅与归档保留，恢复可见即回归。
+              </span>
+            </div>
+            <button
+              type="button"
+              className="inspector-visibility-toggle"
+              role="switch"
+              aria-checked={hiddenSourceIds.has(fetcher.id)}
+              aria-label={`在读者面隐藏 ${fetcher.name}`}
+              disabled={visibilityBusyId === fetcher.id}
+              onClick={() => toggleSourceHidden(fetcher)}
+            >
+              <span className={`ledger-switch ${hiddenSourceIds.has(fetcher.id) ? 'is-on' : ''}`} aria-hidden="true" />
             </button>
           </div>
 

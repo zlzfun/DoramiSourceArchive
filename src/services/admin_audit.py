@@ -154,6 +154,15 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
             match, body, noun="反馈", action="更新"
         ),
     ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/source-visibility/(?P<target>[^/]+)$"),
+        lambda match, body: (
+            f"{'在读者面隐藏源' if (body or {}).get('hidden') else '恢复源读者面可见'} "
+            f"{unquote(match.group('target'))}",
+            unquote(match.group("target")),
+        ),
+    ),
     ("POST", re.compile(r"^/api/llm/config$"), lambda _m, _b: ("更新 LLM 配置", None)),
     (
         "POST",

@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from sqlalchemy import literal_column
+from sqlalchemy import literal_column, or_
 from sqlmodel import Session, func, select
 
 from api import deps
@@ -53,6 +53,7 @@ from services import daily_brief as daily_brief_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
 from services import reader_state as reader_state_service
+from services import source_visibility as source_visibility_service
 from services import x_api_config as x_api_config_service
 
 router = APIRouter(prefix="/api/reader", tags=["reader"])
@@ -136,6 +137,9 @@ def subscribe_source(source_id: str, request: Request, session: Session = Depend
     source_id = (source_id or "").strip()
     if not source_id:
         raise HTTPException(status_code=400, detail="source_id 不能为空")
+    if source_id in source_visibility_service.hidden_source_ids(session):
+        # 管理面隐藏的源不接受新订阅（目录里也不可见；防旧页面状态/直连 API 绕过）。
+        raise HTTPException(status_code=404, detail="该内容源暂不可用")
     registry_meta = _registry_source_meta()
     already = source_id in set(app.resolve_subscribed_source_ids(session, username))
     if not already:
@@ -146,7 +150,10 @@ def subscribe_source(source_id: str, request: Request, session: Session = Depend
         # 再订阅也重新起算）。
         reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
         session.commit()
-    subscribed_ids = sorted(set(app.resolve_subscribed_source_ids(session, username)))
+    subscribed_ids = sorted(set(
+        # 目录口径:含被隐藏的已订阅源(源栏「暂不可用」条目依赖此集合渲染)。
+        app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+    ))
     return {
         "status": "success",
         "source_id": source_id,
@@ -186,7 +193,10 @@ def unsubscribe_source(source_id: str, request: Request, session: Session = Depe
     # 退订清未读水位（逐篇已读行保留无害：无水位即不判未读，且不影响其他源）。
     reader_state_service.drop_cursor(session, username=username, source_id=source_id)
     session.commit()
-    subscribed_ids = sorted(set(app.resolve_subscribed_source_ids(session, username)))
+    subscribed_ids = sorted(set(
+        # 目录口径:含被隐藏的已订阅源(源栏「暂不可用」条目依赖此集合渲染)。
+        app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+    ))
     return {
         "status": "success",
         "source_id": source_id,
@@ -329,7 +339,8 @@ def list_favorites(
     可选 shape=article|bulletin|social:容器内收藏过滤器。
     """
     app = _app()
-    username = app.current_username(request)
+    auth_session = app.current_auth_session(request)
+    username = str(auth_session.get("sub", "")) if auth_session else ""
     safe_limit = min(max(int(limit), 1), 500)
     safe_skip = max(int(skip), 0)
     base = (
@@ -343,6 +354,17 @@ def list_favorites(
         .join(ArticleRecord, ReaderFavoriteRecord.article_id == ArticleRecord.id)
         .where(ReaderFavoriteRecord.owner_username == username)
     )
+    if not (auth_session and auth_session.get("role") == "admin"):
+        # 与 /api/articles 同口径：管理面隐藏的源在读者收藏列表里也临时不可见
+        # （收藏行保留，恢复可见即回归）。
+        hidden = source_visibility_service.hidden_source_ids(session)
+        if hidden:
+            hidden_cond = or_(
+                ArticleRecord.source_id.is_(None),
+                ArticleRecord.source_id.notin_(sorted(hidden)),
+            )
+            base = base.where(hidden_cond)
+            count_query = count_query.where(hidden_cond)
     if source_id:
         base = base.where(ArticleRecord.source_id == source_id)
         count_query = count_query.where(ArticleRecord.source_id == source_id)
@@ -471,7 +493,11 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
         .where(ArticleRecord.source_id.isnot(None))
         .group_by(ArticleRecord.source_id, ArticleRecord.content_type)
     ).all()
-    subscribed_ids = set(app.resolve_subscribed_source_ids(session, username))
+    # 目录用原始订阅并集(include_hidden):被隐藏的已订阅源要以「暂不可用」形态留在
+    # 源栏(订阅是读者资产,静默消失像数据丢失);检索/列表/feed 范围仍走默认减隐藏的解析。
+    subscribed_ids = set(
+        app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+    )
 
     # 全站各源订阅人数（按 owner 去重）：发现页选源参考。扫描全部订阅行在当前
     # 账号规模下开销可忽略；一行订阅可含多个 source_id，逐一归集。
@@ -562,8 +588,20 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
     for source_id in subscribed_ids:
         _ensure_entry(source_id)
 
+    # 管理面隐藏的源:未订阅者完全不可见(发现页/目录不出现,也不可新订);已订阅者
+    # 保留条目并标 hidden=True——前端呈「暂不可用」灰显形态,读者可退订也可留着等
+    # 恢复(临时下架的常态结局是恢复,静默消失会像数据丢失)。内容交付(列表/未读/
+    # feed/检索)仍全量排除,见 resolve_subscribed_source_ids。
+    hidden_ids = source_visibility_service.hidden_source_ids(session)
     sources = sorted(
-        ({k: v for k, v in entry.items() if k != "_primary_count"} for entry in by_source.values()),
+        (
+            {
+                **{k: v for k, v in entry.items() if k != "_primary_count"},
+                "hidden": entry["source_id"] in hidden_ids,
+            }
+            for entry in by_source.values()
+            if entry["source_id"] not in hidden_ids or entry["source_id"] in subscribed_ids
+        ),
         key=lambda s: (s["category"], -s["count"], s["name"]),
     )
     return {
