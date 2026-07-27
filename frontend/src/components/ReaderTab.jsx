@@ -676,6 +676,11 @@ export default function ReaderTab({
     if (listRef.current) listRef.current.scrollTop = 0;
     prevScopeUnreadRef.current = null; // 切视图:新内容增量检测重新起算
     setFreshCount(0);
+    // 切作用域先清列表:加载中本有骨架屏遮挡,但若请求失败(loading 复位)会把上一
+    // 容器的旧条目画进新容器(如文章列表残留被 SocialFlow 当推文渲染,卡片显示
+    // 非社交源的源名)。同作用域内的刷新失败仍保留旧列表(不走本 effect)。
+    setArticles([]);
+    setArticlesTotal(0);
     loadArticles(0, false);
   }, [loadArticles]);
 
