@@ -709,7 +709,27 @@ export default function ReaderTab({
   useEffect(() => { resyncListScrollbar(); }, [articles, articlesLoading, activeArticle, resyncListScrollbar]);
 
   // ── 订阅 / 取消订阅 ──
-  const applyResult = (result) => setSubscribedIds(new Set(result.subscribed_source_ids || []));
+  const applyResult = (result) => {
+    const nextSubscribedIds = new Set(result.subscribed_source_ids || []);
+    setSubscribedIds(nextSubscribedIds);
+
+    // 发现页直接渲染 sources 里的全站订阅人数；同步目标源的订阅态与计数，
+    // 避免按钮已经切换、人数仍停留在目录首次加载时的快照。
+    setSources((current) => current.map((source) => {
+      if (source.source_id !== result.source_id) return source;
+      const wasSubscribed = Boolean(source.subscribed);
+      const subscribed = nextSubscribedIds.has(source.source_id);
+      if (wasSubscribed === subscribed) return source;
+      return {
+        ...source,
+        subscribed,
+        subscriber_count: Math.max(
+          0,
+          Number(source.subscriber_count || 0) + (subscribed ? 1 : -1),
+        ),
+      };
+    }));
+  };
 
   // 订阅集合变化后，若正看聚合视图需显式重拉（loadArticles 已不依赖 subscribedIds，
   // 故不会自动刷新）；看具体来源时由 activeSourceId 变化驱动，无需在此处理。
