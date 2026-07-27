@@ -216,6 +216,10 @@ ${hsts_header}
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 300s;
+        # 关闭代理缓冲:默认缓冲下超过内存缓冲(~64KB)的响应要落 proxy_temp 临时
+        # 目录,源码装 nginx 的 worker(nobody)对该目录无写权限时会静默截断大响应
+        # (上游 200、浏览器 Failed to fetch);直通转发同时也是 /mcp SSE 流的正确形态。
+        proxy_buffering off;
         proxy_pass ${backend_upstream};
     }
 
@@ -226,7 +230,18 @@ ${hsts_header}
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 300s;
+        # 关闭代理缓冲:默认缓冲下超过内存缓冲(~64KB)的响应要落 proxy_temp 临时
+        # 目录,源码装 nginx 的 worker(nobody)对该目录无写权限时会静默截断大响应
+        # (上游 200、浏览器 Failed to fetch);直通转发同时也是 /mcp SSE 流的正确形态。
+        proxy_buffering off;
         proxy_pass ${backend_upstream};
+    }
+
+    # SPA 入口禁启发式缓存:资产文件名带内容哈希天然免疫,但 index.html 若被浏览器
+    # 启发式缓存,部署后用户会继续引用旧 bundle——「推了修复却没生效」的经典成因。
+    # 用 expires 而非 add_header,避免 location 级 add_header 清空 server 级安全头继承。
+    location = /index.html {
+        expires -1;
     }
 
     location / {
@@ -265,6 +280,10 @@ server {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 300s;
+        # 关闭代理缓冲:默认缓冲下超过内存缓冲(~64KB)的响应要落 proxy_temp 临时
+        # 目录,源码装 nginx 的 worker(nobody)对该目录无写权限时会静默截断大响应
+        # (上游 200、浏览器 Failed to fetch);直通转发同时也是 /mcp SSE 流的正确形态。
+        proxy_buffering off;
         proxy_pass ${backend_upstream};
     }
 
@@ -275,7 +294,18 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 300s;
+        # 关闭代理缓冲:默认缓冲下超过内存缓冲(~64KB)的响应要落 proxy_temp 临时
+        # 目录,源码装 nginx 的 worker(nobody)对该目录无写权限时会静默截断大响应
+        # (上游 200、浏览器 Failed to fetch);直通转发同时也是 /mcp SSE 流的正确形态。
+        proxy_buffering off;
         proxy_pass ${backend_upstream};
+    }
+
+    # SPA 入口禁启发式缓存:资产文件名带内容哈希天然免疫,但 index.html 若被浏览器
+    # 启发式缓存,部署后用户会继续引用旧 bundle——「推了修复却没生效」的经典成因。
+    # 用 expires 而非 add_header,避免 location 级 add_header 清空 server 级安全头继承。
+    location = /index.html {
+        expires -1;
     }
 
     location / {
@@ -303,6 +333,10 @@ server {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 300s;
+        # 关闭代理缓冲:默认缓冲下超过内存缓冲(~64KB)的响应要落 proxy_temp 临时
+        # 目录,源码装 nginx 的 worker(nobody)对该目录无写权限时会静默截断大响应
+        # (上游 200、浏览器 Failed to fetch);直通转发同时也是 /mcp SSE 流的正确形态。
+        proxy_buffering off;
         proxy_pass ${backend_upstream};
     }
 
@@ -313,7 +347,18 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 300s;
+        # 关闭代理缓冲:默认缓冲下超过内存缓冲(~64KB)的响应要落 proxy_temp 临时
+        # 目录,源码装 nginx 的 worker(nobody)对该目录无写权限时会静默截断大响应
+        # (上游 200、浏览器 Failed to fetch);直通转发同时也是 /mcp SSE 流的正确形态。
+        proxy_buffering off;
         proxy_pass ${backend_upstream};
+    }
+
+    # SPA 入口禁启发式缓存:资产文件名带内容哈希天然免疫,但 index.html 若被浏览器
+    # 启发式缓存,部署后用户会继续引用旧 bundle——「推了修复却没生效」的经典成因。
+    # 用 expires 而非 add_header,避免 location 级 add_header 清空 server 级安全头继承。
+    location = /index.html {
+        expires -1;
     }
 
     location / {
