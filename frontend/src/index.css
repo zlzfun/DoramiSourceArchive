@@ -56,10 +56,12 @@
 }
 
 :root {
-  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
-  /* 全局 mono 栈 token(B 残债清尾):数字/时间戳/代码一律引用,勿再散写字体栈 */
-  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  /* 衬线栈 token(阅读器重构):编辑感三落点专用——阅读窗大标题/正文小节标题/日报报头,
+  /* Windows 西文走 Segoe UI(雅黑西文在小字号下偏轻偏窄、hinting 差),中文仍落雅黑;mac 命中序不变 */
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  /* 全局 mono 栈 token(B 残债清尾):数字/时间戳/代码一律引用,勿再散写字体栈;
+     CJK 显式回落苹方/雅黑——generic monospace 在 Windows 上可能把中文落到宋体 */
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "PingFang SC", "Microsoft YaHei", monospace;
+  /* 衬线栈 token(阅读器重构):编辑感落点专用——阅读窗大标题/正文小节标题,
      西文 Georgia、中文回落宋体;工作台面(管理面)不使用 */
   --font-serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif;
   /* 显式声明浅色配色域：否则 color-scheme 为 normal，原生表单控件
@@ -2592,7 +2594,7 @@ input[type="radio"] {
     border-radius: var(--r-control);
     background: rgba(255, 255, 255, 0.84);
     cursor: default;
-    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    font-family: "PingFang SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
     padding: 12px 14px;
     transition:
       border-color var(--motion-fast) var(--motion-ease),
@@ -2697,7 +2699,7 @@ input[type="radio"] {
     border-radius: var(--r-control);
     appearance: none;
     -webkit-appearance: none;
-    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    font-family: "PingFang SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
     font-size: 13px;
     font-style: normal;
     font-variant: normal;
@@ -2837,7 +2839,7 @@ input[type="radio"] {
     gap: 6px;
     color: var(--dorami-ink);
     cursor: pointer;
-    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    font-family: "PingFang SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
     font-size: 15px;
     font-weight: 600;
     line-height: 24px;
@@ -7985,61 +7987,6 @@ input[type="radio"] {
   .reader-ai-summary-generate:hover:not(:disabled) { color: var(--dorami-blue); }
   .reader-ai-summary-generate:disabled { cursor: default; opacity: 0.7; }
 
-  /* ── 日报置顶卡(迭代 3):「我的订阅·文章」流顶部的每日日报入口,
-     不参与未读计数;搜索/只看未读过滤时隐藏。 ── */
-  /* 日报置顶卡 · 报头形态(样页):accent 洗地 + 顶部双细线 + 衬线刊名 */
-  .reader-brief-card {
-    display: block;
-    width: calc(100% - 4px);
-    margin: 10px 2px 10px;   /* 顶部呼吸(scroll padding-top 已归零,由首元素自担) */
-    padding: 10px 14px 11px;
-    text-align: left;
-    border: none;
-    border-top: 3px double color-mix(in srgb, var(--dorami-accent) 32%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--dorami-accent) 22%, transparent);
-    border-radius: 4px 4px 10px 10px;
-    background: var(--dorami-wash);
-    cursor: pointer;
-    transition: filter 140ms ease;
-  }
-
-  .reader-brief-card:hover { filter: brightness(0.98); }
-
-  .reader-brief-head {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-  }
-
-  .reader-brief-name {
-    font-family: var(--font-serif);
-    font-size: 15.5px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    color: var(--dorami-accent-ink);
-  }
-
-  .reader-brief-date {
-    margin-left: auto;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    font-weight: 400;
-    color: var(--dorami-faint);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .reader-brief-title {
-    margin-top: 4px;
-    font-size: 12.5px;
-    font-weight: 400;
-    line-height: 1.75;
-    color: var(--dorami-muted);
-    display: -webkit-box;
-    -webkit-line-clamp: 1;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
   /* 滚动壳:滚动容器 + 浮层滑块的定位祖先(占据列头以下的剩余高度) */
   .reader-scrollwrap {
     position: relative;
@@ -8101,7 +8048,7 @@ input[type="radio"] {
     padding: 12px 12px 5px 16px;   /* 左对齐卡片内容(16) */
     background: var(--rd-list-bg);
     font-family: var(--mono);
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 400;
     letter-spacing: 0.1em;
     color: var(--dorami-faint);
@@ -8187,8 +8134,10 @@ input[type="radio"] {
   .reader-entry-time {
     flex-shrink: 0;
     margin-right: 8px;   /* 右移避开浮层滚动条,与星标右缘对齐(距卡右 ~14px) */
-    font-family: var(--mono);
-    font-size: 10.5px;
+    /* 不用 mono 栈:「2 天前」数字/汉字会混排两种字体,Windows 上尤其毛糙;
+       继承正文栈 + tabular-nums,数字仍对齐。字号对齐 .reader-entry-src——
+       同行两段小字规格不一会显得基线错位 */
+    font-size: 11.5px;
     font-weight: 400;
     color: var(--dorami-faint);
     font-variant-numeric: tabular-nums;
@@ -8213,10 +8162,13 @@ input[type="radio"] {
     font-weight: 400;
     line-height: 1.55;
     color: var(--dorami-faint);
-    display: -webkit-box;
-    -webkit-line-clamp: 1;
-    -webkit-box-orient: vertical;
+    display: block;
+    white-space: nowrap;
     overflow: hidden;
+    /* 溢出呈现:行尾 28px 渐隐淡出(短文本不进淡出带即不受影响);
+       弃 line-clamp 原生「…」——恒定落在卡片右下角,会被误认成功能按钮 */
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
   }
 
   .reader-load-more {
@@ -8323,33 +8275,6 @@ input[type="radio"] {
     font-family: var(--mono);
     font-size: 11.5px;
     font-weight: 400;
-    color: var(--dorami-faint);
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* 日报报头(样页):衬线居中刊名 + 双细线 */
-  .reader-brief-mast {
-    max-width: 720px;
-    margin: 0 auto;
-    text-align: center;
-    padding: 6px 0 18px;
-    border-bottom: 3px double var(--dorami-border-strong);
-  }
-
-  .reader-brief-mast h1 {
-    margin: 0 0 6px;
-    font-family: var(--font-serif);
-    font-size: 30px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    color: var(--dorami-ink);
-  }
-
-  .reader-brief-mast-date {
-    font-family: var(--mono);
-    font-size: 11.5px;
-    font-weight: 400;
-    letter-spacing: 0.14em;
     color: var(--dorami-faint);
     font-variant-numeric: tabular-nums;
   }
@@ -9201,7 +9126,7 @@ input[type="radio"] {
 
   .reader-pane-body {
     max-width: 720px;
-    /* 分隔线归 header(.reader-pane-head/.reader-brief-mast 的 border-bottom),此处只留呼吸距 */
+    /* 分隔线归 header(.reader-pane-head 的 border-bottom),此处只留呼吸距 */
     margin: 24px auto 0;
     /* 长文阅读容器(样页 .a-body):16.5px/1.85,墨色全黑(ink)。 */
     font-size: 16.5px;

@@ -37,7 +37,7 @@ import { excerptOf } from '../utils/readerText';
 import { usePolling } from '../hooks/usePolling';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { highlightMatch } from '../utils/highlight';
-import { WEEKDAY_CHARS, fmtDayKey, dayKeyOf, dayLabelOf } from '../utils/readerTime';
+import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { contentTypeLabel } from '../utils/contentType';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
@@ -67,22 +67,6 @@ const UNREAD_POLL_MS = 60000; // 未读轻轮询间隔（标签页可见时才�
 // 日期分组 & 条目时刻的实现已上移 utils/readerTime.js —— 社交媒体流(SocialFlow)
 // 与条目列共用同一套组头语法,复制一份会漂移。
 
-// 样页日报卡日期:「07-18 · 六」
-const briefDateOf = (raw) => {
-  if (!raw) return '';
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return '';
-  return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} · ${WEEKDAY_CHARS[d.getDay()]}`;
-};
-
-// 样页日报报头日期:「2026-07-18 · 星期六」
-const briefMastDateOf = (raw) => {
-  if (!raw) return '';
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return '';
-  return `${fmtDayKey(d)} · 星期${WEEKDAY_CHARS[d.getDay()]}`;
-};
-
 // crumb 的「源名 · 域名」域名段(样页:Simon Willison · simonwillison.net)
 const hostOf = (url) => {
   if (!url) return '';
@@ -92,9 +76,6 @@ const hostOf = (url) => {
     return '';
   }
 };
-
-// 日报的源标识(置顶卡/报头形态判定)
-const BRIEF_SOURCE_ID = 'dorami_daily_brief';
 
 // ── 源栏分类:统一「信息角色」单轴(官方 / 媒体 / 个人 / 榜单) ──
 // 判定(sourceRoleOf/SOURCE_ROLES)在 sourceTaxonomy.js,与发现页、管理面共用同一套词汇。
@@ -295,9 +276,6 @@ export default function ReaderTab({
   const [activeSummary, setActiveSummary] = useState(null);
   const [summarizing, setSummarizing] = useState(false);
   const summaryCacheRef = useRef(new Map());
-
-  // ── 日报置顶卡:最新一期 AI 资讯日报(独立拉取,不依赖订阅关系)──
-  const [latestBrief, setLatestBrief] = useState(null);
 
   const listRef = useRef(null);
   const listThumbRef = useRef(null); // 浮层滚动条滑块(压在卡片上,内容满宽)
@@ -578,17 +556,6 @@ export default function ReaderTab({
       if (activeIdRef.current === id) setSummarizing(false);
     }
   }, [activeArticle, summarizing, showToast]);
-
-  // ── 日报置顶卡:进入阅读器拉一次最新一期(无日报则整卡隐藏)──
-  useEffect(() => {
-    let cancelled = false;
-    fetchArticles({ source_id: BRIEF_SOURCE_ID }, 1, 0, false, { includeContent: false })
-      .then((items) => {
-        if (!cancelled) setLatestBrief(Array.isArray(items) && items.length > 0 ? items[0] : null);
-      })
-      .catch(() => { /* 日报卡非关键路径,静默失败 */ });
-    return () => { cancelled = true; };
-  }, []);
 
   // ── AI · 一键译为中文（结果按 id 缓存，再次切回直接复用）──
   const handleTranslate = useCallback(async () => {
@@ -954,16 +921,12 @@ export default function ReaderTab({
   const prevArticle = activeIndex > 0 ? articles[activeIndex - 1] : null;
   const nextArticle = activeIndex >= 0 && activeIndex < articles.length - 1 ? articles[activeIndex + 1] : null;
 
-  // ── 阅读窗 crumb / 日报报头判定 ──
-  const isBrief = !!activeArticle
-    && (activeArticle.source_id === BRIEF_SOURCE_ID || activeArticle.content_type === 'daily_brief');
+  // ── 阅读窗 crumb ──
   const crumbSource = activeArticle ? sourceMap[activeArticle.source_id] : null;
-  const crumbHost = activeArticle && !isBrief ? hostOf(activeArticle.source_url) : '';
-  const crumbName = !activeArticle
-    ? ''
-    : isBrief
-      ? '每日 AI 资讯日报 · 哆啦美整理'
-      : `${sourceNameMap[activeArticle.source_id] || activeArticle.source_id}${crumbHost ? ` · ${crumbHost}` : ''}`;
+  const crumbHost = activeArticle ? hostOf(activeArticle.source_url) : '';
+  const crumbName = activeArticle
+    ? `${sourceNameMap[activeArticle.source_id] || activeArticle.source_id}${crumbHost ? ` · ${crumbHost}` : ''}`
+    : '';
   // 样页 meta:约 N 字 · 阅读 X 分钟(正文到位后计算;中文阅读速率取 ~400 字/分)
   const bodyStats = useMemo(() => {
     if (!activeBody) return null;
@@ -1353,21 +1316,6 @@ export default function ReaderTab({
 
         <div className="reader-scrollwrap">
         <div className="reader-list-scroll" ref={listRef}>
-          {/* 日报置顶卡 · 报头形态:今日/文章 容器聚合流顶部的一等公民入口;过滤中(收藏/搜索/只看未读)让位 */}
-          {!favOnly && !activeSourceId && mode !== 'bulletin' && !searchQuery && !unreadOnly
-            && !articlesLoading && latestBrief && (
-            <button type="button" className="reader-brief-card" onClick={() => selectArticle(latestBrief)}>
-              <span className="reader-brief-head">
-                <span className="reader-brief-name">每日 AI 资讯日报</span>
-                {latestBrief.publish_date && (
-                  <span className="reader-brief-date" title={formatDateTime(latestBrief.publish_date)}>
-                    {briefDateOf(latestBrief.publish_date)}
-                  </span>
-                )}
-              </span>
-              <span className="reader-brief-title">{latestBrief.title || '（无标题）'}</span>
-            </button>
-          )}
           {/* 新内容提示条:轮询发现未读正增量时出现,点击刷新——不自动插入打断阅读 */}
           {!favOnly && !articlesLoading && freshCount > 0 && (
             <button type="button" className="reader-fresh-pill" onClick={handleRefreshFresh}>
@@ -1461,9 +1409,7 @@ export default function ReaderTab({
             {/* 顶部工具条:crumb + 动作图标组(常驻,不随正文滚走) */}
             <div className="reader-pane-bar">
               <div className="reader-crumb">
-                {isBrief ? (
-                  <Sparkles className="h-4 w-4 flex-none text-[var(--dorami-accent)]" aria-hidden="true" />
-                ) : crumbSource ? (
+                {crumbSource ? (
                   <LogoMark company={resolveCompany(crumbSource)} size="s17" emoji={crumbSource.icon} />
                 ) : null}
                 <span className="reader-crumb-name">{crumbName}</span>
@@ -1526,38 +1472,28 @@ export default function ReaderTab({
 
           {/* key 按文章 id 重挂载,触发 reader-enter 淡入+轻上移(体验二波 A1) */}
           <article className="reader-pane reader-enter" key={activeArticle.id}>
-            {isBrief ? (
-              /* 日报报头(样页):衬线居中刊名 + 双细线,整页唯一的「报纸时刻」 */
-              <header className="reader-brief-mast">
-                <h1>每日 AI 资讯日报</h1>
-                <div className="reader-brief-mast-date">
-                  {activeArticle.publish_date ? briefMastDateOf(activeArticle.publish_date) : (activeArticle.title || '')} · 由哆啦美整理
-                </div>
-              </header>
-            ) : (
-              <header className="reader-pane-head">
-                <div className="reader-kicker">
-                  {(sourceNameMap[activeArticle.source_id] || activeArticle.source_id)}
-                  {activeArticle.content_type
-                    ? ` · ${contentTypeLabel(activeArticle.content_type, activeArticle.content_type)}`
-                    : ''}
-                </div>
-                <h1 className="reader-pane-title">{activeArticle.title || '（无标题）'}</h1>
-                <div className="reader-pane-meta">
-                  {activeArticle.publish_date && (
-                    <span title={formatRelativeTime(activeArticle.publish_date)}>
-                      {formatDateTime(activeArticle.publish_date)}
-                    </span>
-                  )}
-                  {/* 字数与时长信息冗余(时长即由字数换算),只留时长;
-                      阅读量 = 全站累计阅读次数(跨读者;含本次打开,由 /read 响应回填) */}
-                  {bodyStats && <span>阅读时长 {bodyStats.minutes} 分钟</span>}
-                  {typeof activeArticle.read_count === 'number' && activeArticle.read_count > 0 && (
-                    <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
-                  )}
-                </div>
-              </header>
-            )}
+            <header className="reader-pane-head">
+              <div className="reader-kicker">
+                {(sourceNameMap[activeArticle.source_id] || activeArticle.source_id)}
+                {activeArticle.content_type
+                  ? ` · ${contentTypeLabel(activeArticle.content_type, activeArticle.content_type)}`
+                  : ''}
+              </div>
+              <h1 className="reader-pane-title">{activeArticle.title || '（无标题）'}</h1>
+              <div className="reader-pane-meta">
+                {activeArticle.publish_date && (
+                  <span title={formatRelativeTime(activeArticle.publish_date)}>
+                    {formatDateTime(activeArticle.publish_date)}
+                  </span>
+                )}
+                {/* 字数与时长信息冗余(时长即由字数换算),只留时长;
+                    阅读量 = 全站累计阅读次数(跨读者;含本次打开,由 /read 响应回填) */}
+                {bodyStats && <span>阅读时长 {bodyStats.minutes} 分钟</span>}
+                {typeof activeArticle.read_count === 'number' && activeArticle.read_count > 0 && (
+                  <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
+                )}
+              </div>
+            </header>
             <div className="reader-pane-body markdown-body">
               {/* 哆啦美速读:有缓存直接展示;无缓存给低调的生成入口(MVP 不自动生成,控成本) */}
               {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
@@ -1591,7 +1527,7 @@ export default function ReaderTab({
                 '该文章暂无正文内容，点击「查看来源」阅读完整内容。'
               )}
             </div>
-            {/* 上一篇/下一篇:沿当前列表序的真实翻页(选中项不在列表时隐藏,如日报置顶卡) */}
+            {/* 上一篇/下一篇:沿当前列表序的真实翻页(选中项不在列表时隐藏) */}
             {activeIndex >= 0 && (prevArticle || nextArticle) && (
               <nav className="reader-pager" aria-label="上一篇 / 下一篇">
                 <button
