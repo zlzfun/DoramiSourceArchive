@@ -22,7 +22,7 @@ import {
 } from '../api';
 import LogoMark from './LogoMark';
 import Modal from './Modal';
-import { groupBySection, resolveCompany } from '../sourceTaxonomy';
+import { groupByRole, resolveCompany } from '../sourceTaxonomy';
 import { runAction } from '../utils/runAction';
 import { useConfirm } from '../hooks/useConfirm';
 import { TEST_RUN_LIMIT, normalizeIds, collectionRunMessage } from '../utils/collection';
@@ -350,8 +350,8 @@ export default function FetchRunsTab({
     );
   }, [availableFetchers, jobSearch]);
 
-  // 目录同款分组(节点页 groupBySection):板块 → 公司 → 节点。
-  const groupedCatalog = useMemo(() => groupBySection(filteredModalFetchers), [filteredModalFetchers]);
+  // 目录同款分组(节点页 groupByRole):信息角色 → 节点(组内按公司名聚拢)。
+  const groupedCatalog = useMemo(() => groupByRole(filteredModalFetchers), [filteredModalFetchers]);
 
   // 点名册组全选/清空:整组编入(补默认参数)或整组移出;已改参数保留(重勾恢复,防误触丢配置)。
   const setGroupChecked = (fetchers, add) => {
@@ -1293,7 +1293,7 @@ export default function FetchRunsTab({
             {groupedCatalog.length === 0 ? (
               <div className="jr-empty">没有匹配「{jobSearch.trim()}」的节点,换个关键词试试</div>
             ) : groupedCatalog.map(section => {
-              const sectionFetchers = section.companies.flatMap(bucket => bucket.fetchers);
+              const sectionFetchers = section.fetchers;
               const allIn = sectionFetchers.every(f => draftFetcherIds.includes(f.id));
               return (
                 <Fragment key={section.id}>

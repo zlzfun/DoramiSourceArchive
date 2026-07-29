@@ -236,6 +236,35 @@ class ReaderFavoriteRecord(SQLModel, table=True):
     created_at: str = Field(index=True, description="收藏时间")
 
 
+class ArticleShareRecord(SQLModel, table=True):
+    """公开分享链接：一行 = 某读者为某篇文章签发的一个免登录只读入口。
+
+    诉求来源：读者想把一篇内容发给同事，此前只能截屏。分享分两档，本表只承载
+    「公开链接」这一档（另一档是站内深链，纯前端 URL、不落库、不外泄）。
+
+    **令牌以明文存储，这是与 dsub_/dfeed_ 的有意口径差异**：那两者存 hash、明文
+    只回显一次，因为它们能拉走整个订阅库；本表的令牌权限极小（单篇、只读、可设
+    有效期、可随时撤销），而分享链接天然是「生成一次、反复复制」的东西——只存
+    hash 会让读者关掉弹窗后再也复制不到，只能重新生成，链接越堆越多且旧的仍有效。
+    权衡后取可用性：明文入库，仅签发者本人的会话能读回。
+
+    过期与撤销：expires_at 为 None 表示永久；revoked_at 非空即失效（软删，保留
+    view_count 供签发者查看触达）。被隐藏源（source_visibility）的文章在访问时
+    一律 404——与「读者面隐藏 = 内容交付全量排除」口径一致。
+    """
+    __tablename__ = "article_shares"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    token: str = Field(unique=True, index=True, description="分享令牌明文（dshr_ 前缀），URL 中的凭据")
+    article_id: str = Field(index=True, description="被分享文章 ID")
+    owner_username: str = Field(index=True, description="签发者用户名")
+    created_at: str = Field(index=True, description="签发时间")
+    expires_at: Optional[str] = Field(default=None, description="过期时间；None = 永久有效")
+    revoked_at: Optional[str] = Field(default=None, description="撤销时间；非空即失效")
+    view_count: int = Field(default=0, description="累计打开次数（含未登录访客）")
+    last_viewed_at: Optional[str] = Field(default=None, description="最近一次打开时间")
+
+
 class ReaderArticleReadStateRecord(SQLModel, table=True):
     """读者文章已读/未读的逐篇显式覆盖：一行 = 某读者对某篇文章的明确态度。
 

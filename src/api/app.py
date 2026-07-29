@@ -164,6 +164,7 @@ from api.routers import media as media_router
 from api.routers import feedback as feedback_router
 from api.routers import announcements as announcements_router
 from api.routers import remote_sync as remote_sync_router
+from api.routers import share as share_router
 from api.routers.fetchers import FetchBatchItem, FetchBatchParams
 from services import daily_brief as daily_brief_service
 from services import remote_sync as remote_sync_service
@@ -543,6 +544,7 @@ app.include_router(media_router.router)
 app.include_router(feedback_router.router)
 app.include_router(announcements_router.router)
 app.include_router(remote_sync_router.router)
+app.include_router(share_router.router)
 
 scheduler = AsyncIOScheduler()
 COLLECTION_FETCH_CONCURRENCY = 4

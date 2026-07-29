@@ -23,17 +23,20 @@ import {
   LayoutDashboard,
   MessageSquare,
   CloudOff,
+  Share2,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
 import RailUserFlyout from './RailUserFlyout';
 import ReaderMarkdown from './ReaderMarkdown';
 import ReaderAiPanel from './ReaderAiPanel';
+import ShareMenu from './ShareMenu';
 import { SOURCE_ROLES, sourceRoleOf, resolveCompany } from '../sourceTaxonomy';
 import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
 import AnnouncementBanner from './AnnouncementBanner';
 import { excerptOf } from '../utils/readerText';
+import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
 import { usePolling } from '../hooks/usePolling';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { highlightMatch } from '../utils/highlight';
@@ -217,6 +220,9 @@ export default function ReaderTab({
   onExitReader = null,
   // 反馈有未读管理员回复(读者账号):轨底头像/设置钮挂轻通知点
   feedbackUnread = 0,
+  // ── 站内分享深链(#/reader/a/{id}):带 id 进来时直接开这篇,消费后回调清空 ──
+  initialArticleId = '',
+  onDeepLinkConsumed,
 }) {
   const [sources, setSources] = useState([]);
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
@@ -265,6 +271,8 @@ export default function ReaderTab({
   const [activeBody, setActiveBody] = useState(null);        // 选中文章的全文正文（按需拉取）
   const [activeBodyLoading, setActiveBodyLoading] = useState(false);
   const [pinningId, setPinningId] = useState(null);
+  const [shareOpen, setShareOpen] = useState(false);   // 分享浮层（切文章时关闭，见下方 effect）
+  const deepLinkKeepRef = useRef(false);               // 深链落地中:作用域清场保留右栏(见 useLayoutEffect)
 
   // ── 用户面 AI · 译为中文（问答浮层已抽到 ReaderAiPanel，自持其状态）──
   const [showTranslation, setShowTranslation] = useState(false);  // 右栏是否展示译文
@@ -487,6 +495,8 @@ export default function ReaderTab({
   const selectArticle = useCallback((article) => {
     const prevId = activeIdRef.current;
     setActiveArticle(article);
+    setShareOpen(false);   // 分享浮层属于「上一篇」,换篇即收
+
     const id = article?.id || null;
     activeIdRef.current = id;
     // 主动打开一篇新文章即记一次阅读（同篇连点不重复计；fire-and-forget）。
@@ -636,6 +646,19 @@ export default function ReaderTab({
   // 切换来源/搜索 → 重置列表、回顶、清空右栏
   // 用 useLayoutEffect：在绘制前同步进入加载态，避免「切源瞬间旧列表被画出一帧」的陈旧帧闪现
   useLayoutEffect(() => {
+    // 深链落地保护:分享深链要「切作用域 + 选中该篇」一次完成,而本清场会把刚
+    // selectArticle 的右栏立刻抹掉(深链效果 setActiveSourceId → loadArticles 变引用
+    // → 本 effect 触发)。深链发起的那一次作用域切换只重置列表、保留右栏选中。
+    if (deepLinkKeepRef.current) {
+      deepLinkKeepRef.current = false;
+      if (listRef.current) listRef.current.scrollTop = 0;
+      prevScopeUnreadRef.current = null;
+      setFreshCount(0);
+      setArticles([]);
+      setArticlesTotal(0);
+      loadArticles(0, false);
+      return;
+    }
     setActiveArticle(null);
     setActiveBody(null);
     setActiveBodyLoading(false);
@@ -892,6 +915,36 @@ export default function ReaderTab({
     setMode(shapeOfSource(sourceId));
     setFavOnly(false);
   };
+  // 站内分享深链:分享出来的 #/reader/a/{id},进来直接开这篇。
+  // 等 sources 到位再执行——要靠 shapeOfSource 把容器切到这篇所属的宇宙(文章/动态/社交),
+  // 否则会出现「在动态容器里显示一篇文章」的错位。取不到(已删/无权限)就静默留在默认视图,
+  // 不弹错——收到链接的人对这篇失效与否无能为力,报错只是噪声。
+  // ⚠️ deps 只留真正的触发条件,回调经 ref 取最新:selectArticle/shapeOfSource 会随无关
+  // 状态(未读轮询等)重建,若列入 deps,fetch 在途中的任何一次重建都会 cleanup 掉本次
+  // 落地(done 已置真不再重试)——表现为深链时灵时不灵的竞态。
+  const deepLinkDoneRef = useRef(false);
+  const deepLinkCtxRef = useRef(null);
+  useEffect(() => {   // 每轮渲染后同步最新回调(声明在深链 effect 之前,同轮先执行)
+    deepLinkCtxRef.current = { shapeOfSource, selectArticle, onDeepLinkConsumed };
+  });
+  useEffect(() => {
+    if (!initialArticleId || deepLinkDoneRef.current || sourcesLoading) return;
+    deepLinkDoneRef.current = true;
+    fetchArticle(initialArticleId)
+      .then((article) => {
+        if (!article?.id) return;
+        const ctx = deepLinkCtxRef.current;
+        deepLinkKeepRef.current = true; // 通知作用域清场 effect:这次切换保留右栏(见 useLayoutEffect)
+        setDiscover(false);
+        setFavOnly(false);
+        setActiveSourceId(article.source_id || null);
+        setMode(ctx.shapeOfSource(article.source_id));
+        ctx.selectArticle(article);
+      })
+      .catch(() => {})
+      .finally(() => { deepLinkCtxRef.current?.onDeepLinkConsumed?.(); });
+  }, [initialArticleId, sourcesLoading]);
+
   // 收藏入口(源栏,与「全部XX」并列):看本容器全部收藏(容器级、不逐源)。
   // Folo 语义——收藏是与「全部」并列的一级过滤,不再挂在列头逐源。
   const goContainerAll = () => { setDiscover(false); setActiveSourceId(null); setFavOnly(false); };
@@ -927,6 +980,18 @@ export default function ReaderTab({
   const crumbName = activeArticle
     ? `${sourceNameMap[activeArticle.source_id] || activeArticle.source_id}${crumbHost ? ` · ${crumbHost}` : ''}`
     : '';
+  // 阅读窗已用 reader-pane-title 画了标题,正文首行若是同名标题(哆啦美日报的
+  // 「# 🤖 哆啦美 AI 资讯日报 · 日期」是典型)就会连看两遍——渲染侧剥离。
+  // 只动阅读窗:归档正文原样保留,导出/同步的独立 markdown 首行标题仍是正确的。
+  const displayBody = useMemo(
+    () => stripDuplicateLeadingHeading(activeBody, activeArticle?.title),
+    [activeBody, activeArticle?.title],
+  );
+  const displayTranslatedBody = useMemo(
+    () => stripDuplicateLeadingHeading(translatedBody, activeArticle?.title),
+    [translatedBody, activeArticle?.title],
+  );
+
   // 样页 meta:约 N 字 · 阅读 X 分钟(正文到位后计算;中文阅读速率取 ~400 字/分)
   const bodyStats = useMemo(() => {
     if (!activeBody) return null;
@@ -1453,6 +1518,26 @@ export default function ReaderTab({
                     ? <CheckCheck className="h-4 w-4" />
                     : <CircleDot className="h-4 w-4" />}
               </button>
+              {/* 分享:站内深链 + 公开只读链接(浮层锚定本钮,见 ShareMenu) */}
+              <div className="reader-share-anchor">
+                <button
+                  type="button"
+                  onClick={() => setShareOpen(v => !v)}
+                  title="分享"
+                  aria-label="分享"
+                  aria-expanded={shareOpen}
+                  className={`reader-pane-iconbtn ${shareOpen ? 'is-blue' : ''}`}
+                >
+                  <Share2 className="h-4 w-4" />
+                </button>
+                {shareOpen && (
+                  <ShareMenu
+                    articleId={activeArticle.id}
+                    onClose={() => setShareOpen(false)}
+                    showToast={showToast}
+                  />
+                )}
+              </div>
               {aiEnabled && (
                 <button
                   type="button"
@@ -1520,9 +1605,9 @@ export default function ReaderTab({
               {activeBodyLoading ? (
                 <PaneBodySkeleton />
               ) : (showTranslation && translatedBody) ? (
-                <ReaderMarkdown>{translatedBody}</ReaderMarkdown>
+                <ReaderMarkdown>{displayTranslatedBody}</ReaderMarkdown>
               ) : activeBody ? (
-                <ReaderMarkdown>{activeBody}</ReaderMarkdown>
+                <ReaderMarkdown>{displayBody}</ReaderMarkdown>
               ) : (
                 '该文章暂无正文内容，点击「查看来源」阅读完整内容。'
               )}
