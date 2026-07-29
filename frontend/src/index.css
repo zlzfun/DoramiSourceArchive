@@ -8207,6 +8207,268 @@ input[type="radio"] {
     background: var(--rd-pane-bg);
   }
 
+  /* ── 分享浮层(阅读窗工具条锚定,见 components/ShareMenu.jsx)──
+     两档分享:站内链接是主操作(实心 wash 块、说明文案),公开链接退一档放在虚线分隔之下。 */
+  .reader-share-anchor {
+    position: relative;
+    display: inline-flex;
+  }
+
+  /* ── 公开分享页(免登录只读单篇,components/SharedArticlePage.jsx)──
+     不属于工作台:没有导轨/源栏/设置柜,只有一栏读物。排版沿用阅读窗的衬线语言,
+     让收到链接的人一眼看出这是「一篇正经内容」而非某个系统的截图。 */
+  .shared-page {
+    min-height: 100vh;
+    background: var(--dorami-bg);
+    color: var(--dorami-ink);
+    padding: 48px 20px 64px;
+  }
+
+  .shared-page-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--dorami-faint);
+  }
+
+  .shared-empty-icon { color: var(--dorami-faint); }
+
+  .shared-empty-title {
+    margin: 4px 0 0;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--dorami-ink);
+  }
+
+  .shared-empty-hint {
+    max-width: 34ch;
+    text-align: center;
+    font-size: 13px;
+    color: var(--dorami-faint);
+    line-height: 1.7;
+  }
+
+  .shared-article {
+    max-width: 46rem;
+    margin: 0 auto;
+  }
+
+  .shared-head {
+    padding-bottom: 18px;
+    margin-bottom: 22px;
+    border-bottom: 1px solid var(--dorami-border-soft);
+  }
+
+  .shared-kicker {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--dorami-accent-ink);
+    margin-bottom: 10px;
+  }
+
+  .shared-title {
+    margin: 0 0 12px;
+    font-size: 30px;
+    line-height: 1.32;
+    font-weight: 700;
+    font-family: var(--font-serif);
+    letter-spacing: 0.01em;
+    text-wrap: balance;
+  }
+
+  .shared-meta {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 12px;
+    color: var(--dorami-faint);
+  }
+
+  .shared-source-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--dorami-accent-ink);
+  }
+
+  .shared-source-link:hover { text-decoration: underline; }
+
+  .shared-foot {
+    max-width: 46rem;
+    margin: 40px auto 0;
+    padding-top: 16px;
+    border-top: 1px solid var(--dorami-border-soft);
+    font-size: 11.5px;
+    color: var(--dorami-faint);
+  }
+
+  /* 浮层壳:popover 开合动效属白名单(§7);宽度收在 288 —— 内容只有两档路径,大了发空 */
+  .share-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 40;
+    width: 288px;
+    padding: 12px;
+    border-radius: var(--r-overlay);
+    background: var(--dorami-surface);
+    border: 1px solid var(--dorami-border);   /* 浮层描边对齐 .reader-ai-panel(悬浮面,非卡) */
+    box-shadow: var(--sh-3);
+    animation: share-menu-in var(--motion-fast) var(--motion-ease);
+  }
+
+  @keyframes share-menu-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .share-menu-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    padding-left: 2px;
+  }
+
+  /* 卡内小节刻度(§3 标题层级表:12.5–13/700) */
+  .share-menu-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--dorami-ink);
+  }
+
+  .share-menu-close {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: var(--r-sm);
+    color: var(--dorami-faint);
+    cursor: pointer;
+  }
+
+  .share-menu-close:hover { background: var(--dorami-soft); color: var(--dorami-ink-2); }
+
+  /* ── 初版方案(数轮重设计后用户拍板回归):wash 主行 + 虚线分隔的公开链接区。 ── */
+
+  /* 站内链接行:主路径,wash 可点行;hover 只允许同族加深(§4:hover 不得引入 accent) */
+  .share-primary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: var(--r-control);
+    background: var(--dorami-wash);
+    color: var(--dorami-ink);
+    cursor: pointer;
+    text-align: left;
+    transition: background var(--motion-fast) var(--motion-ease);
+  }
+
+  .share-primary:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, var(--dorami-wash)); }
+  .share-primary-icon { flex: none; color: var(--dorami-accent-ink); }
+  .share-primary-copy { flex: none; color: var(--dorami-faint); }
+  .share-primary-label { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; }
+  .share-ok { color: var(--state-ok); }
+
+  /* 组头(两区同构):micro 标题 + 右侧属性注记(需要登录/无需登录——两区核心差异) */
+  .share-group-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding: 0 2px;
+  }
+
+  .share-group-head .micro-label { color: var(--dorami-muted); }
+  .share-group-note { font-size: 11px; font-weight: 500; color: var(--dorami-faint); }
+
+  /* 公开链接区:虚线分隔退一档(初版语法) */
+  .share-public {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--dorami-border);
+  }
+
+  .share-public-off { font-size: 12px; font-weight: 500; color: var(--dorami-faint); line-height: 1.6; }
+
+  /* 档位 pill + 生成小钮同一行。⚠️ 字号/字重写在本容器上靠继承穿透——
+     button{font:inherit} 未分层陷阱(§3):初版把 11px 写在 .share-create 按钮类上,
+     被压回阅读窗继承链渲染成大字,即当时被评「违和」的按钮;设计意图本是小胶囊。 */
+  .share-expiry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+
+  .share-expiry-opts { display: flex; align-items: center; gap: 4px; }
+
+  .share-expiry-btn {
+    padding: 4px 9px;
+    border-radius: var(--r-control);
+    border: 1px solid var(--dorami-border);
+    background: transparent;
+    color: var(--dorami-ink-2);
+    cursor: pointer;
+    transition: border-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
+  }
+
+  .share-expiry-btn:hover:not(.is-on) { background: var(--dorami-soft); }
+  /* 选中:wash 底 + accent-ink 字(全站激活态语法;初版的 accent 描边不合 §4,收敛) */
+  .share-expiry-btn.is-on {
+    border-color: transparent;
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
+    font-weight: 700;
+  }
+
+  /* 生成/换新:小胶囊实心 CTA(本浮层唯一实心 accent) */
+  .share-create {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    padding: 5px 11px;
+    border-radius: var(--r-control);
+    background: var(--dorami-accent);
+    color: #fff;
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--motion-ease);
+  }
+
+  .share-create:hover { background: var(--dorami-blue-2); }
+  .share-create:disabled { opacity: 0.6; cursor: default; }
+
+  /* 存活链接状态行(一篇一链,恒 ≤1 条):状态+触达 + 复制/撤销(.rowact-btn 在册 S 档) */
+  .share-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 7px 6px 7px 10px;
+    border-radius: var(--r-control);
+    background: var(--dorami-soft);
+  }
+
+  .share-item-meta {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .share-item-state { font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); }
+  .share-item-views { font-size: 11px; font-weight: 500; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+  .share-item-revoke:hover { color: var(--state-bad); }
+
   .reader-crumb {
     flex: 1;
     min-width: 0;

@@ -29,6 +29,8 @@ import {
   getXApiQuota,
   getAiBetaGlobal,
   setAiBetaGlobal,
+  fetchPublicShareGlobal,
+  updatePublicShareGlobal,
   fetchAiUsage,
   getLLMConfig,
   saveLLMConfig,
@@ -89,6 +91,7 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
   // 账户列表(规模化波):服务端分页 + 搜索,前端只持有当前页;summary 聚合全量供 KPI/排行。
   const [acctData, setAcctData] = useState(null); // {items,total,summary} | null = 加载中
   const [globalAi, setGlobalAi] = useState(null);
+  const [publicShare, setPublicShare] = useState(null);   // 公开分享总闸 + 存活链接盘点
   const [busy, setBusy] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -181,7 +184,25 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
     } catch (error) {
       showToast(error.message || '加载运维数据失败', 'error');
     }
+    // 分享总闸单独 try:它读不到不该连带把 AI 总闸的错误提示也吞掉/重复弹。
+    try {
+      setPublicShare(await fetchPublicShareGlobal());
+    } catch { /* 读不到就保持 null,卡片显示「正在读取…」且开关禁用 */ }
   }, [showToast]);
+
+  const handleTogglePublicShare = async () => {
+    const next = !publicShare?.enabled;
+    try {
+      const res = await updatePublicShareGlobal(next);
+      setPublicShare((prev) => ({ ...(prev || { live_count: 0, total_count: 0 }), ...res }));
+      showToast(
+        res.enabled ? '已开启公开分享链接' : '已关闭公开分享链接（已发出的链接立即失效）',
+        'success',
+      );
+    } catch (error) {
+      showToast(error.message || '更新分享总闸失败', 'error');
+    }
+  };
 
   // 搜索防抖:停键 300ms 后生效并归位第一页(服务端过滤)。
   const debouncedAccountQuery = useDebouncedValue(accountQuery, 300);
@@ -691,6 +712,31 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
       {/* ══ 内容子页 ══════════════════════════════════════════════ */}
       {sub === 'content' && (
         <div>
+          {/* 公开分享总闸:与 AI 总闸同形制。放「内容」而非「用户」——它管的是内容能否
+              被摊到登录之外,和媒体库、X 接入同类(对外的内容出口)。 */}
+          <section className="surface-card ai-switchboard rounded-[var(--r-card)] mb-4">
+            <span className={`ai-light ${publicShare?.enabled ? '' : 'is-off'}`} />
+            <div className="ai-switch-lbl" title="总闸:关闭后已发出的公开链接立即失效,签发记录保留,重新开启即回归">
+              公开分享链接
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!publicShare?.enabled}
+              aria-label="公开分享链接总闸"
+              disabled={publicShare === null}
+              onClick={handleTogglePublicShare}
+              className={`ledger-switch ${publicShare?.enabled ? 'is-on' : ''}`}
+            />
+            <span className="ai-divider" />
+            <span className="tiny-meta">
+              {publicShare === null
+                ? '正在读取…'
+                : `当前有效 ${publicShare.live_count} 条 · 累计签发 ${publicShare.total_count} 条`}
+              {' · '}读者可为单篇内容生成免登录只读链接，可设有效期并随时撤销
+            </span>
+          </section>
+
           {!content ? (
             <p className="surface-card card-pad rounded-[var(--r-card)] text-center tiny-meta">
               <Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin text-slate-500" /> 正在加载内容统计…

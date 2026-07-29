@@ -29,12 +29,14 @@ from config import settings
 from models.db import (
     AdminAuditRecord,
     ArticleRecord,
+    ArticleShareRecord,
     ReaderFavoriteRecord,
     ReaderFeedTokenRecord,
     ReaderSubscriptionRecord,
 )
 from services import accounts as accounts_service
 from services import ai_usage as ai_usage_service
+from services import article_share as article_share_service
 from services import content_analytics as content_analytics_service
 from services import daily_brief as daily_brief_service
 from services import jobs as jobs_service
@@ -46,6 +48,10 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 class AiBetaGlobalParams(BaseModel):
+    enabled: bool
+
+
+class PublicShareGlobalParams(BaseModel):
     enabled: bool
 
 
@@ -423,6 +429,27 @@ def admin_set_ai_beta_global(
 ):
     accounts_service.set_ai_beta_global_enabled(session, params.enabled)
     return {"enabled": accounts_service.ai_beta_global_enabled(session)}
+
+
+@router.get("/public-share")
+def admin_get_public_share(session: Session = Depends(deps.get_session)):
+    """公开分享总闸读数 + 存活链接盘点（关闭前先让管理员看见影响面）。"""
+    records = session.exec(select(ArticleShareRecord)).all()
+    return {
+        "enabled": article_share_service.public_share_enabled(session),
+        "live_count": sum(1 for r in records if article_share_service.is_live(r)),
+        "total_count": len(records),
+    }
+
+
+@router.post("/public-share")
+def admin_set_public_share(
+    params: PublicShareGlobalParams, session: Session = Depends(deps.get_session)
+):
+    """开关公开分享总闸。**关闭立即让已发出的链接全部 404**（见 routers/share.py）——
+    这正是总闸的意义：出事时不必逐条撤销，且不销毁签发记录，恢复即回归。"""
+    article_share_service.set_public_share_enabled(session, params.enabled)
+    return {"enabled": article_share_service.public_share_enabled(session)}
 
 
 @router.post("/social/backfill")

@@ -541,6 +541,41 @@ export function removeFavorite(articleId) {
   return request(`/reader/favorites/${enc(articleId)}`, { method: 'DELETE', errorMsg: '取消收藏失败' });
 }
 
+/* ── 文章分享 ──
+   站内深链纯前端拼装(见 utils/shareLink.js),不经后端;此处三个接口只服务
+   「公开链接」这一档:签发 / 我的分享列表 / 撤销。 */
+export function createArticleShare(articleId, expiresInDays) {
+  return request(`/reader/articles/${enc(articleId)}/share`, {
+    method: 'POST',
+    body: { expires_in_days: expiresInDays ?? null },
+    errorMsg: '生成分享链接失败',
+  });
+}
+
+export function fetchArticleShares(articleId) {
+  const params = articleId ? `?article_id=${enc(articleId)}` : '';
+  return request(`/reader/shares${params}`, { errorMsg: '获取分享链接失败' });
+}
+
+export function revokeArticleShare(shareId) {
+  return request(`/reader/shares/${enc(shareId)}`, { method: 'DELETE', errorMsg: '撤销分享链接失败' });
+}
+
+// 公开只读页取数:免登录端点,不带会话;失败由调用方渲染失效态,不触发全局登录过期事件。
+export async function fetchSharedArticle(token) {
+  const res = await fetch(`${API_BASE_URL}/public/share/${enc(token)}`);
+  if (!res.ok) await handleApiError(res, '分享链接无效或已失效');
+  return res.json();
+}
+
+export function fetchPublicShareGlobal() {
+  return request('/admin/public-share', { errorMsg: '获取分享总闸失败' });
+}
+
+export function updatePublicShareGlobal(enabled) {
+  return request('/admin/public-share', { method: 'POST', body: { enabled }, errorMsg: '更新分享总闸失败' });
+}
+
 export function fetchFeedToken() {
   return request('/reader/feed-token', { errorMsg: '获取聚合接口令牌失败' });
 }

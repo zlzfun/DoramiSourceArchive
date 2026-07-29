@@ -49,6 +49,7 @@ from models.db import (
     SourceConfigRecord,
 )
 from services import accounts as accounts_service
+from services import article_share as article_share_service
 from services import daily_brief as daily_brief_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
@@ -428,6 +429,97 @@ def remove_favorite(article_id: str, request: Request, session: Session = Depend
         session.commit()
     favorite_ids = resolve_favorite_article_ids(session, username)
     return {"status": "success", "article_id": article_id, "favorited": False, "favorite_ids": favorite_ids}
+
+
+# ==================== 文章分享 ====================
+
+class ShareCreateParams(BaseModel):
+    # None = 永久有效；其余取 SHARE_EXPIRY_CHOICES 中的天数档位。
+    expires_in_days: Optional[int] = 7
+
+
+def _serialize_share(record, *, article: Optional[ArticleRecord] = None) -> Dict[str, Any]:
+    return {
+        "id": record.id,
+        "token": record.token,
+        "article_id": record.article_id,
+        "article_title": (article.title if article else "") or "",
+        "created_at": record.created_at,
+        "expires_at": record.expires_at,
+        "revoked_at": record.revoked_at,
+        "live": article_share_service.is_live(record),
+        "view_count": int(record.view_count or 0),
+        "last_viewed_at": record.last_viewed_at,
+    }
+
+
+@router.post("/articles/{article_id}/share")
+def create_article_share(
+    article_id: str,
+    params: ShareCreateParams,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+):
+    """为一篇文章签发公开分享链接（免登录只读）。明文令牌随响应返回。"""
+    username = _app().current_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="需要登录")
+    if not article_share_service.public_share_enabled(session):
+        raise HTTPException(status_code=403, detail="公开分享当前已关闭，可改用站内链接分享给同事")
+
+    article_id = (article_id or "").strip()
+    article = session.get(ArticleRecord, article_id) if article_id else None
+    if article is None:
+        raise HTTPException(status_code=404, detail="文章不存在")
+    # 与「读者面隐藏 = 内容交付全量排除」同口径：暂不可用的源不能被摊开成公开链接。
+    if article.source_id in source_visibility_service.hidden_source_ids(session):
+        raise HTTPException(status_code=403, detail="该内容暂不可用，无法分享")
+
+    expires_in_days = params.expires_in_days
+    if expires_in_days is not None:
+        expires_in_days = int(expires_in_days)
+        if expires_in_days not in article_share_service.SHARE_EXPIRY_CHOICES:
+            raise HTTPException(status_code=400, detail="有效期取值不合法")
+
+    if article_share_service.count_today(session, username) >= article_share_service.DAILY_SHARE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=f"今天创建的分享链接已达 {article_share_service.DAILY_SHARE_LIMIT} 条上限，请明天再试",
+        )
+
+    record = article_share_service.create_share(
+        session, article_id=article_id, username=username, expires_in_days=expires_in_days,
+    )
+    return _serialize_share(record, article=article)
+
+
+@router.get("/shares")
+def list_article_shares(
+    request: Request,
+    article_id: Optional[str] = None,
+    session: Session = Depends(deps.get_session),
+):
+    """当前用户签发过的分享链接（可按文章过滤），最新在前。"""
+    username = _app().current_username(request)
+    records = article_share_service.list_shares(session, username, article_id=article_id)
+    titles: Dict[str, ArticleRecord] = {}
+    for record in records:
+        if record.article_id not in titles:
+            titles[record.article_id] = session.get(ArticleRecord, record.article_id)
+    return {
+        "items": [_serialize_share(r, article=titles.get(r.article_id)) for r in records],
+        "public_share_enabled": article_share_service.public_share_enabled(session),
+    }
+
+
+@router.delete("/shares/{share_id}")
+def revoke_article_share(share_id: int, request: Request, session: Session = Depends(deps.get_session)):
+    """撤销自己签发的分享链接（幂等）；链接立即失效。"""
+    username = _app().current_username(request)
+    record = article_share_service.revoke_share(session, share_id, username)
+    if record is None:
+        raise HTTPException(status_code=404, detail="分享不存在")
+    return _serialize_share(record, article=session.get(ArticleRecord, record.article_id))
 
 
 # ==================== 个人聚合接口令牌 ====================

@@ -26,6 +26,7 @@ import { fetchAuthSession, fetchFeedbackUnreadCount, fetchFetchers, fetchRuntime
 import RunningWidget from './components/RunningWidget';
 import { useRunningProgress } from './hooks/useRunningProgress';
 import { usePolling } from './hooks/usePolling';
+import { deepLinkArticleId } from './utils/shareLink';
 
 // Tab 组件按路由惰性加载：各自独立 chunk，登录页与读者态不再下载用不到的重依赖
 // （AdminOpsTab→recharts、ReaderTab/DailyBriefTab→react-markdown）。每个 Tab 挂在独立
@@ -219,12 +220,31 @@ export default function App() {
     writeStoredSurface('console');
   }, []);
 
+  // 文章深链(#/reader/a/{id},同事分享的站内链接):在导航体系 replace 掉 hash 之前
+  // 就地取走文章 id——commitNav 的初始播种会把 hash 改写成 #/{tab},晚一步就读不到了。
+  // 消费后清空 deepLinkArticle,避免同一会话里返回阅读器时反复跳回这篇;
+  // hadDeepLink 不清,专供下面的界面决策——子组件的 effect 先于父组件跑,
+  // 若两者共用一个会被清空的值,消费与界面切换会形成时序竞态。
+  const [deepLinkArticle, setDeepLinkArticle] = useState(
+    () => (typeof window !== 'undefined' ? deepLinkArticleId(window.location.hash) : ''),
+  );
+  const [hadDeepLink] = useState(() => Boolean(deepLinkArticle));
+  const clearDeepLink = useCallback(() => setDeepLinkArticle(''), []);
+
+  // 带文章深链进来的 admin 一律落到阅读器:深链的意图明确到具体一篇,压过
+  // 默认落地偏好、也压过本 tab 会话里「上次停在管理台」的记忆——否则同事发来的
+  // 链接会开在看不见的隐藏阅读器里,用户只看到管理台,以为链接坏了。
+  useEffect(() => {
+    if (!runtimeLoaded || !isAdminRole || !hadDeepLink) return;
+    enterReader();
+  }, [runtimeLoaded, isAdminRole, hadDeepLink, enterReader]);
+
   // 登录默认落地界面:本会话尚无切换记录(sessionStorage 空)时,按账户偏好落地。
   useEffect(() => {
     if (!runtimeLoaded || !isAdminRole || surfaceMode !== null) return;
-    if (runtimeInfo.default_surface === 'reader') enterReader();
+    if (hadDeepLink || runtimeInfo.default_surface === 'reader') enterReader();
     else setSurfaceMode('console');
-  }, [runtimeLoaded, isAdminRole, surfaceMode, runtimeInfo.default_surface, enterReader]);
+  }, [runtimeLoaded, isAdminRole, surfaceMode, runtimeInfo.default_surface, enterReader, hadDeepLink]);
 
   // history.state 回放时重新点燃这一次性聚焦，让目标页重新定位/筛选。
   const applyFocus = useCallback((focus) => {
@@ -762,6 +782,8 @@ export default function App() {
                   onLogout={handleLogout}
                   onExitReader={isAdminRole ? exitReader : undefined}
                   feedbackUnread={feedbackUnread}
+                  initialArticleId={deepLinkArticle}
+                  onDeepLinkConsumed={clearDeepLink}
                 />
               </TabBoundary>
             </div>

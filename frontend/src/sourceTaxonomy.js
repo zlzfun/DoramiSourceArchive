@@ -1,10 +1,16 @@
 /**
  * 来源谱系 (Source Taxonomy)
  *
- * 单一事实来源：把后端返回的扁平 fetcher 元数据，归并为「公司 → 板块」两级谱系，
- * 并为每个公司提供品牌标识（真实 favicon logo + 字母徽标兜底 + 主题色）。
+ * 单一事实来源：为每个来源提供①品牌标识（真实 favicon logo + 字母徽标兜底 + 主题色）
+ * 与②唯一的分类轴——「信息角色」（官方 / 媒体 / 个人 / 榜单，见文件末尾 SOURCE_ROLES）。
  *
- * 三个采集侧界面（节点管理 / 知识台账 / 任务与运行）共用本模块，保证视觉与分类一致。
+ * 分类轴口径（2026-07-29 统一）：全站只有角色这一根轴。此前管理面另用「公司 → 板块」
+ * 两级谱系分组，但板块表只登记了 17 家公司，现役 44 个 owner 里 27 家掉进「其他来源」
+ * 兜底，占了半个目录；同一家的节点还会因 owner 写法不同而分家（Moonshot 的 Kimi
+ * Research 与 X · Moonshot 落「其他」，X · OpenAI 却在「厂商官方」）。故板块轴退役，
+ * 管理面与阅读器源栏、发现页共用同一套角色词汇，公司降为组内排序键。
+ *
+ * 采集侧界面（节点管理 / 知识台账 / 任务与运行）与读者侧共用本模块。
  * 品牌标识组件见 components/LogoMark.jsx。
  */
 
@@ -51,53 +57,7 @@ export const COMPANY_REGISTRY = {
 };
 
 /* ──────────────────────────────────────────────────────────
- * 3. 板块（section）：把公司聚成「站在用户视角」的内容阵营
- * ────────────────────────────────────────────────────────── */
-export const SECTIONS = [
-  {
-    id: 'model_vendor',
-    label: '厂商官方',
-    en: 'Official Vendors',
-    blurb: '国内外 AI 厂商的一手发布、模型更新、应用产品与平台动态',
-    accent: '#4f46e5',
-    companies: ['anthropic', 'google', 'openai', 'xai', 'alibaba', 'deepseek', 'bytedance_seed', 'zai'],
-  },
-  {
-    id: 'agent',
-    label: 'Agent 与编程工具',
-    en: 'Agent & Coding',
-    blurb: 'AI 编程、Agent 框架与开发者工具版本流',
-    accent: '#7c3aed',
-    companies: ['cursor', 'opencode', 'openclaw', 'nousresearch'],
-  },
-  {
-    id: 'signal',
-    label: '社区 · 媒体 · 论文信号',
-    en: 'Community Signal',
-    blurb: '聚合筛选层：热门论文、行业媒体与社区热度',
-    accent: '#e8392e',
-    companies: ['huggingface', 'qbitai', 'ycombinator'],
-  },
-  {
-    id: 'custom',
-    label: '通用能力节点',
-    en: 'Custom Nodes',
-    blurb: '通用 RSS / GitHub / HuggingFace 等可自配置能力',
-    accent: '#64748b',
-    companies: [CUSTOM_COMPANY_KEY],
-  },
-];
-
-const SECTION_BY_COMPANY = (() => {
-  const map = {};
-  SECTIONS.forEach(section => section.companies.forEach(company => { map[company] = section.id; }));
-  return map;
-})();
-
-const OTHER_SECTION = { id: 'other', label: '其他来源', en: 'Other', blurb: '尚未归类的来源', accent: '#94a3b8', companies: [] };
-
-/* ──────────────────────────────────────────────────────────
- * 4. 解析单个 fetcher 的公司身份
+ * 3. 解析单个 fetcher 的公司身份
  * ────────────────────────────────────────────────────────── */
 export function resolveCompany(fetcher) {
   const key = normalizeOwner(fetcher?.source_owner);
@@ -116,49 +76,34 @@ export function companyLogoUrl(company) {
 }
 
 /* ──────────────────────────────────────────────────────────
- * 5. 把（已过滤的）fetcher 列表组织成 section → company → fetchers
+ * 4. 把（已过滤的）fetcher 列表按信息角色分组
+ *
+ * 唯一分类轴 = 角色（官方/媒体/个人/榜单，定义见末尾 SOURCE_ROLES）；节点在组内平铺。
+ * 组内排序键是「公司标识 → 节点名」而非节点名——同一家的节点（Anthropic 新闻 /
+ * Claude 博客 / Claude Code Changelog）借此天然相邻，30+ 个节点的「官方」组仍可扫读。
+ * 用 company.key（归一化后的 owner，恒为拉丁标识）而非 company.name 作排序键：中英混排的
+ * 显示名在 zh-Hans-CN 排序下会把中文名公司整体浮到组首（智谱/量子位），反而显得没有章法。
  * ────────────────────────────────────────────────────────── */
-export function groupBySection(fetchers) {
-  const byCompany = new Map();
+export function groupByRole(fetchers) {
+  const byRole = new Map();
   fetchers.forEach(fetcher => {
-    const company = resolveCompany(fetcher);
-    if (!byCompany.has(company.key)) byCompany.set(company.key, { company, fetchers: [] });
-    byCompany.get(company.key).fetchers.push(fetcher);
+    const key = sourceRoleOf(fetcher);
+    if (!byRole.has(key)) byRole.set(key, []);
+    byRole.get(key).push(fetcher);
   });
 
-  const sectionMap = new Map();
-  const ensureSection = (def) => {
-    if (!sectionMap.has(def.id)) sectionMap.set(def.id, { ...def, companies: [] });
-    return sectionMap.get(def.id);
-  };
-
-  // 按 SECTIONS 的固定顺序优先填充
-  SECTIONS.forEach(sectionDef => {
-    sectionDef.companies.forEach(companyKey => {
-      const bucket = byCompany.get(companyKey);
-      if (bucket) {
-        ensureSection(sectionDef).companies.push(bucket);
-        byCompany.delete(companyKey);
-      }
-    });
-  });
-
-  // 剩余未归类的公司 → 其他
-  byCompany.forEach(bucket => {
-    const sectionId = SECTION_BY_COMPANY[bucket.company.key] || 'other';
-    const def = SECTIONS.find(s => s.id === sectionId) || OTHER_SECTION;
-    ensureSection(def).companies.push(bucket);
-  });
-
-  // 输出按 SECTIONS 顺序，其他垫底
-  const ordered = [];
-  SECTIONS.forEach(def => { if (sectionMap.has(def.id)) ordered.push(sectionMap.get(def.id)); });
-  if (sectionMap.has('other')) ordered.push(sectionMap.get('other'));
-  // 每个 section 内公司保持 SECTIONS 中人工策展顺序；只排序未登记的剩余公司。
-  ordered.forEach(section => {
-    section.companies.forEach(bucket => bucket.fetchers.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')));
-  });
-  return ordered;
+  return SOURCE_ROLES
+    .filter(role => byRole.has(role.key))
+    .map(role => ({
+      id: role.key,
+      label: role.label,
+      accent: role.accent,
+      blurb: role.blurb,
+      fetchers: byRole.get(role.key).sort((a, b) => (
+        resolveCompany(a).key.localeCompare(resolveCompany(b).key)
+        || a.name.localeCompare(b.name, 'zh-Hans-CN')
+      )),
+    }));
 }
 
 /* ──────────────────────────────────────────────────────────
@@ -239,21 +184,33 @@ export const LOGO_SIZES = {
    源栏组头不再重复形态,而是回答唯一一个问题:这个源是什么身份。四类角色:
    · 官方   —— 厂商/机构一手发布(tier0 company/model_family/product/developer_tool…)
    · 媒体   —— 有编辑的第三方报道(ai_media / tech_media)
-   · 个人   —— 研究者/从业者/高管的个人视角(personal/expert/executive commentary、tier2)
-   · 榜单   —— 无编辑的聚合排序信号(community/research 榜:HN、reddit、GitHub 趋势、HF 每日论文)
-   判定顺序 个人 → 榜单 → 媒体 → 官方(先具体后兜底)。 */
+   · 个人   —— 研究者/从业者/高管的个人视角(personal/expert/executive commentary、
+              专家自营 newsletter、tier2)
+   · 榜单   —— 无编辑立场的聚合排序/评测信号(HN、reddit、GitHub 趋势、HF 每日论文,
+              以及 Arena / Artificial Analysis 这类基准评测榜)
+   判定顺序 个人 → 榜单 → 媒体 → 官方(先具体后兜底)。
+   accent 供分组标记条取色(管理面 board-group-marker);tone 供角色胶囊配色。 */
 export const SOURCE_ROLES = [
-  { key: 'official', label: '官方', tone: 'emerald' },
-  { key: 'media', label: '媒体', tone: 'sky' },
-  { key: 'personal', label: '个人', tone: 'violet' },
-  { key: 'leaderboard', label: '榜单', tone: 'amber' },
+  { key: 'official', label: '官方', tone: 'emerald', accent: '#059669', blurb: '厂商与研究机构的一手发布' },
+  { key: 'media', label: '媒体', tone: 'sky', accent: '#0284c7', blurb: '有编辑立场的第三方报道' },
+  { key: 'personal', label: '个人', tone: 'violet', accent: '#7c3aed', blurb: '研究者与从业者的个人视角' },
+  { key: 'leaderboard', label: '榜单', tone: 'amber', accent: '#d97706', blurb: '社区热度与基准评测的聚合排序' },
 ];
 
 const ROLE_LABEL = Object.fromEntries(SOURCE_ROLES.map((r) => [r.key, r.label]));
 const ROLE_TONE = Object.fromEntries(SOURCE_ROLES.map((r) => [r.key, r.tone]));
 
-const PERSONAL_SCOPES = new Set(['personal_commentary', 'expert_commentary', 'executive_commentary']);
-const LEADERBOARD_SCOPES = new Set(['community', 'developer_community', 'research_community', 'forum']);
+// expert_newsletter:专家自营 newsletter(Import AI = Jack Clark 个人执笔),
+// 此前因 tier1_curated 被判成「媒体」,但它没有编辑部,归「个人」才对。
+const PERSONAL_SCOPES = new Set([
+  'personal_commentary', 'expert_commentary', 'executive_commentary', 'expert_newsletter',
+]);
+// 基准评测榜(Arena 排行榜更新 / Artificial Analysis):此前 Arena 因 tier0 被判「官方」、
+// AA 因 tier1 被判「媒体」——两个同类源分居两组。它们产出的是排序信号,归「榜单」。
+const LEADERBOARD_SCOPES = new Set([
+  'community', 'developer_community', 'research_community', 'forum',
+  'ai_benchmark_platform', 'ai_benchmark_analysis',
+]);
 const MEDIA_SCOPES = new Set(['ai_media', 'tech_media']);
 
 /* 源 → 信息角色 key。仅看策展元数据(provenance_tier / source_scope),不看形态。 */

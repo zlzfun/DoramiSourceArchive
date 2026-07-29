@@ -33,10 +33,8 @@ import CustomNodeBuilder from './CustomNodeBuilder';
 // 高级目标「AI 自定义节点」暂不开放前端入口：后端流程保留，UI 入口与面板用此开关隐藏。
 const ENABLE_CUSTOM_NODE_BUILDER = false;
 import {
-  groupBySection,
+  groupByRole,
   labelFrom,
-  roleLabelOf,
-  roleToneOf,
   SOURCE_CHANNEL_LABELS,
   SIGNAL_LABELS,
   NOISE_LABELS,
@@ -73,14 +71,6 @@ function loadStoredConfigOverrides() {
     return {};
   }
 }
-
-const TIER_TONE_CLASS = {
-  emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
-  sky: 'bg-sky-50 text-sky-700 border-sky-100',
-  violet: 'bg-violet-50 text-violet-700 border-violet-100',
-  amber: 'bg-amber-50 text-amber-700 border-amber-100',
-  slate: 'bg-[var(--dorami-soft)] text-slate-500 border-[var(--dorami-border)]',
-};
 
 
 function typeLabelOf(fetcher) {
@@ -306,17 +296,9 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     [availableFetchers, matchesHealth],
   );
 
-  // 调度板：按现有类别（板块）分组，组内节点铺成行（去掉主体中间层）。
-  const groupedBoard = useMemo(() => (
-    groupBySection(visibleFetchers).map(section => ({
-      id: section.id,
-      label: section.label,
-      accent: section.accent,
-      fetchers: section.companies
-        .flatMap(bucket => bucket.fetchers)
-        .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),
-    }))
-  ), [visibleFetchers]);
+  // 调度板：按信息角色（官方/媒体/个人/榜单）分组，组内节点按「公司名 → 节点名」平铺。
+  // 与阅读器源栏、发现页同一套词汇；组头即角色，故节点行上不再重复挂角色胶囊。
+  const groupedBoard = useMemo(() => groupByRole(visibleFetchers), [visibleFetchers]);
 
   // 默认选中第一个失败节点（最需关注），否则第一个可见节点；已选节点仍可见时保持不变。
   useEffect(() => {
@@ -596,10 +578,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           <span className="board-node-id">
             <span className="board-node-name" title={fetcher.name}>
               <span className="board-node-name-text">{fetcher.name}</span>
-              {/* 信息角色标签(官方/媒体/个人/榜单)——与阅读器源栏、发现页统一同一套词汇 */}
-              {fetcher.provenance_tier && (
-                <span className={`tier-pill ${TIER_TONE_CLASS[roleToneOf(fetcher)]}`} title="信息角色">{roleLabelOf(fetcher)}</span>
-              )}
+              {/* 信息角色已由所在分组的组头承担,行上不再重复挂胶囊(同一信息画两遍即噪声) */}
               {/* 观察期:新节点批次质量验收转正前的集中观察标记(不进每日自动采集) */}
               {fetcher.category === 'incubating' && (
                 <span className="tier-pill incubating-pill" title="观察期:质量验收转正前不进每日自动采集">观察</span>
@@ -1025,7 +1004,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                       />
                     )}
                     <span className="board-group-marker" style={{ '--group-accent': section.accent }} />
-                    <span className="board-group-name">{section.label}</span>
+                    <span className="board-group-name" title={section.blurb}>{section.label}</span>
                     <span className="board-group-count">{section.fetchers.length} 个节点</span>
                     <span className="board-group-rule" />
                   </div>

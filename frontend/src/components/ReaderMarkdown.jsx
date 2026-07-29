@@ -20,14 +20,20 @@ const REHYPE_PLUGINS = [rehypeKatex];
 // 故用 Context 把「放大」回调下传给 MarkdownImage，而非重建 components 表。
 const LightboxContext = createContext(null);
 
+// 图片取图路径注入（同为 Context，理由同上）：默认走登录面的媒体库代理;
+// 公开分享页(SharedArticlePage)传入指向 /api/public/share/{token}/media 的 builder——
+// 访客没有会话,打默认代理只会吃 401 再回退直连,防盗链源(qbitai/mmbiz)直连又 403,整页裂图。
+const ImageSrcContext = createContext(mediaProxyUrl);
+
 // 正文图（图床波 v3.11 推翻早前「外链直连、不代理」决策）：统一经后端媒体库代理取图
 // （命中本地缓存回文件；未命中后端即时下载；后端失败 302 回源）。代理自身加载失败时
 // 前端再回退原链直连一次，仍失败才落裂图占位——三层降级保证可用性只增不减。
 function MarkdownImage({ node, alt, ...props }) {
+  const resolveSrc = useContext(ImageSrcContext);
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  // 初始走代理；onError 回退原链（fallback=true 后不再重试）
-  const [src, setSrc] = useState(() => mediaProxyUrl(props.src));
+  // 初始走代理（取图路径由 ImageSrcContext 决定）；onError 回退原链（fallback=true 后不再重试）
+  const [src, setSrc] = useState(() => resolveSrc(props.src));
   const openLightbox = useContext(LightboxContext);
   // 缓存命中的图片可能在 onLoad 绑定前就 complete,挂载时兜底检查
   const imgRef = useCallback((el) => {
@@ -109,7 +115,9 @@ function ImageLightbox({ src, alt, onClose }) {
 }
 
 // 阅读器统一 Markdown 渲染：正文、译文、AI 问答回答共用同一套插件/组件（图片兜底、外链新窗、点击放大）。
-export default function ReaderMarkdown({ children }) {
+// resolveImageSrc（可选）：图片取图路径 builder（url → 请求地址），缺省为登录面媒体库代理；
+// 传入方需保证引用稳定（useCallback），否则每次渲染都会打散图片组件的 state。
+export default function ReaderMarkdown({ children, resolveImageSrc }) {
   const [lightbox, setLightbox] = useState(null); // { src, alt } | null
   const triggerRef = useRef(null); // 触发放大的 button，关闭后焦点归还
 
@@ -127,13 +135,15 @@ export default function ReaderMarkdown({ children }) {
   }, []);
 
   return (
-    <LightboxContext.Provider value={openLightbox}>
-      <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
-        {children || ''}
-      </ReactMarkdown>
-      {lightbox ? (
-        <ImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={closeLightbox} />
-      ) : null}
-    </LightboxContext.Provider>
+    <ImageSrcContext.Provider value={resolveImageSrc || mediaProxyUrl}>
+      <LightboxContext.Provider value={openLightbox}>
+        <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
+          {children || ''}
+        </ReactMarkdown>
+        {lightbox ? (
+          <ImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={closeLightbox} />
+        ) : null}
+      </LightboxContext.Provider>
+    </ImageSrcContext.Provider>
   );
 }
