@@ -35,6 +35,8 @@ const ENABLE_CUSTOM_NODE_BUILDER = false;
 import {
   groupByRole,
   labelFrom,
+  sourceRoleOf,
+  SOURCE_ROLES,
   SOURCE_CHANNEL_LABELS,
   SIGNAL_LABELS,
   NOISE_LABELS,
@@ -86,6 +88,8 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   const [fetchProgress, setFetchProgress] = useState({});
   const progressSeenFetcherIdsRef = useRef(new Set());
   const [healthFilter, setHealthFilter] = useState('all');
+  // 信息角色筛选(官方/媒体/个人/榜单):与健康灯正交的第二筛选轴;点击过滤、再点还原。
+  const [roleFilter, setRoleFilter] = useState('all');
 
   // 批量选择模式(方案 A):常态零勾选框;进入模式后行首浮现勾选框、分组头可整组勾选,
   // 底部批量条承载动作(批量运行/存为采集任务),ESC 或「取消」退出。
@@ -279,21 +283,31 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   ), [healthByFetcher]);
 
   const matchesHealth = useCallback((f) => healthFilter === 'all' || statusOf(f) === healthFilter, [healthFilter, statusOf]);
+  const matchesRole = useCallback((f) => roleFilter === 'all' || sourceRoleOf(f) === roleFilter, [roleFilter]);
 
-  // 信号灯计数:唯一保留的筛选维度(搜索/板块/层级工具栏已退役,分组本身即板块导航)。
+  // 双轴筛选计数:健康灯按当前角色范围收窄(灯位如实反映所看角色的健康分布);
+  // 角色计数恒为全目录量(与调度板分组组头的节点数一致,作稳定的身份读数)。
   const healthCounts = useMemo(() => {
-    const counts = { all: availableFetchers.length };
-    availableFetchers.forEach(f => { const st = statusOf(f); counts[st] = (counts[st] || 0) + 1; });
+    const scoped = availableFetchers.filter(matchesRole);
+    const counts = { all: scoped.length };
+    scoped.forEach(f => { const st = statusOf(f); counts[st] = (counts[st] || 0) + 1; });
     return counts;
-  }, [availableFetchers, statusOf]);
+  }, [availableFetchers, matchesRole, statusOf]);
 
+  const roleCounts = useMemo(() => {
+    const counts = {};
+    availableFetchers.forEach(f => { const r = sourceRoleOf(f); counts[r] = (counts[r] || 0) + 1; });
+    return counts;
+  }, [availableFetchers]);
+
+  // 当前健康档在所选角色下为空时回落「全部」:角色点选永远有结果,不出现死空态。
   useEffect(() => {
     if (healthFilter !== 'all' && (healthCounts[healthFilter] || 0) === 0) setHealthFilter('all');
   }, [healthCounts, healthFilter]);
 
   const visibleFetchers = useMemo(
-    () => availableFetchers.filter(matchesHealth),
-    [availableFetchers, matchesHealth],
+    () => availableFetchers.filter(f => matchesHealth(f) && matchesRole(f)),
+    [availableFetchers, matchesHealth, matchesRole],
   );
 
   // 调度板：按信息角色（官方/媒体/个人/榜单）分组，组内节点按「公司名 → 节点名」平铺。
@@ -333,6 +347,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     }
     setView('catalog');
     setHealthFilter('all');
+    setRoleFilter('all');
     setSelectedNodeId(sid);
     setHighlightedFetcherId(sid);
   }, [pendingFocus, availableFetchers, fetchersById, onPendingFocusApplied, showToast, setView]);
@@ -945,7 +960,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       </div>
 
       <div className="nodespaper">
-        <div className="signal-strip" role="group" aria-label="节点健康总览与筛选">
+        <div className="signal-strip" role="group" aria-label="节点健康总览与角色筛选">
           {SIGNAL_STATS.map((stat, idx) => (
             <div key={stat.key} className="signal-stat-wrap">
               {idx === 1 && <span className="signal-strip-divider" />}
@@ -959,6 +974,22 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
                 <span className="signal-stat-label">{stat.label}</span>
               </button>
             </div>
+          ))}
+          <span className="signal-strip-divider" />
+          {SOURCE_ROLES.map(role => (
+            <button
+              key={role.key}
+              type="button"
+              className={`signal-stat ${roleFilter === role.key ? 'signal-stat-on' : ''}`}
+              style={{ '--group-accent': role.accent }}
+              aria-pressed={roleFilter === role.key}
+              title={role.blurb}
+              onClick={() => setRoleFilter(prev => (prev === role.key ? 'all' : role.key))}
+            >
+              <span className="signal-role-marker" />
+              <span className="signal-stat-n">{roleCounts[role.key] || 0}</span>
+              <span className="signal-stat-label">{role.label}</span>
+            </button>
           ))}
           <div className="signal-strip-tools">
             <button
