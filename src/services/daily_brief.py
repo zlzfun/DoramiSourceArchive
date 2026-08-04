@@ -34,6 +34,7 @@ def _usage_meta(purpose: str, username: Optional[str]) -> UsageMeta:
     return UsageMeta(purpose=purpose, username=(username or USAGE_SYSTEM))
 from models.content import DailyBriefContent
 from models.db import AppSettingRecord, ArticleRecord
+from services import credentials
 
 logger = logging.getLogger("dorami.daily_brief")
 
@@ -70,11 +71,12 @@ KEY_CRON = "daily_brief_cron"
 KEY_TOP_N = "daily_brief_top_n"
 KEY_SOURCE_IDS = "daily_brief_source_ids"
 KEY_LAST_RUN = "daily_brief_last_run"
-KEY_LLM_BASE_URL = "llm_base_url"
-KEY_LLM_MODEL = "llm_model"
-KEY_LLM_TEMPERATURE = "llm_temperature"
-KEY_LLM_MAX_TOKENS = "llm_max_tokens"
-KEY_LLM_API_KEY = "llm_api_key"
+# LLM 配置的 KV key 沿用 services/credentials 注册表(与历史存量一致,零迁移)。
+KEY_LLM_BASE_URL = credentials.LLM_NAMESPACE.field_by_name("base_url").kv_key
+KEY_LLM_MODEL = credentials.LLM_NAMESPACE.field_by_name("model").kv_key
+KEY_LLM_TEMPERATURE = credentials.LLM_NAMESPACE.field_by_name("temperature").kv_key
+KEY_LLM_MAX_TOKENS = credentials.LLM_NAMESPACE.field_by_name("max_tokens").kv_key
+KEY_LLM_API_KEY = credentials.LLM_NAMESPACE.field_by_name("api_key").kv_key
 
 
 # ==========================================
@@ -214,33 +216,11 @@ def write_source_scope(session: Session, source_ids: Optional[List[str]]) -> Non
 def resolve_llm_config(session: Session) -> config.LLMConfig:
     """合并 ini/env 默认配置与 KV 运行期覆盖，产出有效 LLMConfig。"""
     base = config.settings.llm
-
-    def _str(key: str, fallback: str) -> str:
-        val = get_setting(session, key, "")
-        return val if val else fallback
-
-    def _float(key: str, fallback: float) -> float:
-        val = get_setting(session, key, "")
-        try:
-            return float(val) if val else fallback
-        except ValueError:
-            return fallback
-
-    def _int(key: str, fallback: int) -> int:
-        val = get_setting(session, key, "")
-        try:
-            return int(val) if val else fallback
-        except ValueError:
-            return fallback
-
+    values = credentials.resolve_values(session, credentials.LLM_NAMESPACE, base)
     return config.LLMConfig(
-        base_url=_str(KEY_LLM_BASE_URL, base.base_url),
-        api_key=_str(KEY_LLM_API_KEY, base.api_key),
-        model=_str(KEY_LLM_MODEL, base.model),
         timeout_seconds=base.timeout_seconds,
-        temperature=_float(KEY_LLM_TEMPERATURE, base.temperature),
-        max_tokens=_int(KEY_LLM_MAX_TOKENS, base.max_tokens),
         map_concurrency=base.map_concurrency,
+        **values,
     )
 
 

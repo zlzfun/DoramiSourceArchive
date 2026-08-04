@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 from api import deps
 from fetchers.registry import fetcher_registry
 from models.db import SourceStateRecord
+from services import credentials
 from services import x_api_config as x_config_service
 from services.x_api_quota import (
     POST_READ_MICROS,
@@ -27,22 +28,13 @@ router = APIRouter(prefix="/api/x-api", tags=["x-api"])
 _PROBE_USER_FIELDS = "id,name,username,profile_image_url"
 
 
-def _token_preview(token: str) -> str:
-    value = (token or "").strip()
-    if not value:
-        return ""
-    if len(value) <= 4:
-        return "*" * len(value)
-    return f"••••{value[-4:]}"
-
-
 def _config_response(session: Session) -> Dict[str, Any]:
     cfg = x_config_service.resolve_x_api_config(session)
     field_sources = x_config_service.config_field_sources(session)
     return {
         "configured": cfg.configured,
         "bearer_token_set": bool(cfg.bearer_token),
-        "bearer_token_preview": _token_preview(cfg.bearer_token),
+        "bearer_token_preview": credentials.mask_tail(cfg.bearer_token),
         "base_url": cfg.base_url,
         "timeout_seconds": cfg.timeout_seconds,
         "max_results": cfg.max_results,
@@ -72,30 +64,27 @@ def set_x_api_config(
     session: Session = Depends(deps.get_session),
 ):
     """写入 AppSettingRecord 运行时覆盖；空 token 表示不修改既有机密。"""
-    updates: Dict[str, str] = {}
+    updates: Dict[str, Any] = {}
     if payload.bearer_token and payload.bearer_token.strip():
-        updates[x_config_service.KEY_BEARER_TOKEN] = payload.bearer_token.strip()
+        updates["bearer_token"] = payload.bearer_token.strip()
     if payload.base_url is not None:
         base_url = payload.base_url.strip().rstrip("/")
         if not base_url.startswith(("http://", "https://")):
             raise HTTPException(status_code=400, detail="base_url 必须是 http(s) URL")
-        updates[x_config_service.KEY_BASE_URL] = base_url
+        updates["base_url"] = base_url
     if payload.timeout_seconds is not None:
         if not 1 <= payload.timeout_seconds <= 300:
             raise HTTPException(status_code=400, detail="timeout_seconds 必须在 1..300 之间")
-        updates[x_config_service.KEY_TIMEOUT_SECONDS] = str(payload.timeout_seconds)
+        updates["timeout_seconds"] = payload.timeout_seconds
     if payload.max_results is not None:
         if not 5 <= payload.max_results <= 100:
             raise HTTPException(status_code=400, detail="max_results 必须在 5..100 之间")
-        updates[x_config_service.KEY_MAX_RESULTS] = str(payload.max_results)
+        updates["max_results"] = payload.max_results
     if payload.monthly_budget_usd is not None:
         if payload.monthly_budget_usd <= 0:
             raise HTTPException(status_code=400, detail="monthly_budget_usd 必须大于 0")
-        updates[x_config_service.KEY_MONTHLY_BUDGET_USD] = str(
-            payload.monthly_budget_usd
-        )
-    for key, value in updates.items():
-        x_config_service.set_setting(session, key, value)
+        updates["monthly_budget_usd"] = payload.monthly_budget_usd
+    credentials.save_updates(session, credentials.X_API_NAMESPACE, updates)
     return _config_response(session)
 
 

@@ -23,6 +23,7 @@ from api.sources import DAILY_BRIEF_SOURCE_ID
 from llm.client import LLMError, LLMNotConfigured
 from llm.client import ping as llm_ping
 from models.db import ArticleRecord
+from services import credentials
 from services import daily_brief as daily_brief_service
 
 router = APIRouter(tags=["daily-brief"])
@@ -35,17 +36,9 @@ def _app():
 
 # ==================== 全局大模型配置 ====================
 
-def _llm_api_key_preview(api_key: str) -> str:
-    key = (api_key or "").strip()
-    if not key:
-        return ""
-    if len(key) <= 8:
-        return "*" * len(key)
-    return f"{key[:4]}…{key[-4:]}"
-
-
 def _llm_config_response(session: Session) -> Dict[str, Any]:
     cfg = daily_brief_service.resolve_llm_config(session)
+    sources = credentials.field_sources(session, credentials.LLM_NAMESPACE)
     return {
         "base_url": cfg.base_url,
         "model": cfg.model,
@@ -53,7 +46,9 @@ def _llm_config_response(session: Session) -> Dict[str, Any]:
         "max_tokens": cfg.max_tokens,
         "configured": cfg.configured,
         "api_key_set": bool(cfg.api_key),
-        "api_key_preview": _llm_api_key_preview(cfg.api_key),
+        "api_key_preview": credentials.mask_tail(cfg.api_key),
+        "source": credentials.overall_source(sources),
+        "field_sources": sources,
     }
 
 
@@ -75,18 +70,10 @@ def get_llm_config(session: Session = Depends(deps.get_session)):
 def set_llm_config(payload: LLMConfigUpdate, session: Session = Depends(deps.get_session)):
     """更新大模型运行期配置（写入 app_settings 覆盖 ini 默认）。
 
-    api_key 留空（None 或空串）表示不修改；base_url/model 等同理按需覆盖。
+    api_key 留空（None 或空串）表示不修改；base_url/model 等同理按需覆盖
+    （None=不动，空串=清除覆盖回落 ini/env——secret 字段除外，空即保留）。
     """
-    if payload.base_url is not None:
-        daily_brief_service.set_setting(session, daily_brief_service.KEY_LLM_BASE_URL, payload.base_url.strip())
-    if payload.model is not None:
-        daily_brief_service.set_setting(session, daily_brief_service.KEY_LLM_MODEL, payload.model.strip())
-    if payload.api_key:  # 仅在非空时更新，避免清空已有机密
-        daily_brief_service.set_setting(session, daily_brief_service.KEY_LLM_API_KEY, payload.api_key.strip())
-    if payload.temperature is not None:
-        daily_brief_service.set_setting(session, daily_brief_service.KEY_LLM_TEMPERATURE, str(payload.temperature))
-    if payload.max_tokens is not None:
-        daily_brief_service.set_setting(session, daily_brief_service.KEY_LLM_MAX_TOKENS, str(payload.max_tokens))
+    credentials.save_updates(session, credentials.LLM_NAMESPACE, payload.model_dump(exclude_unset=True))
     return _llm_config_response(session)
 
 
