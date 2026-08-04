@@ -8389,6 +8389,75 @@ input[type="radio"] {
 
   .share-menu-close:hover { background: var(--dorami-soft); color: var(--dorami-ink-2); }
 
+  /* ── 右键上下文菜单(v3.28,样页 dorami-context-menu-quiet) ──
+     刻度对齐「源栏行的浮起版」而非浮层面板(v3.28.1 用户目检修正:初版取
+     --r-overlay 16 + 全菜单 600 字重,在 200px 窄条上显得比阅读器饱满圆润——
+     16px 大圆角属于 288px 宽、带分区结构的 .share-menu 那类面板;窄条菜单的
+     参照系是源栏行:13px/400–500、8px 行圆角、30px 行高):
+     壳 = --r-card 14 + surface + 1px border + --sh-3;项 = 28px/8px 圆角/500 字重。
+     字号字重挂容器:button{font:inherit}(未分层)会压掉 @layer 里按钮类的 font-*,
+     菜单项靠继承穿透。开合 dorami-popover-in × --motion-fast,单次、无 stagger(§7)。 */
+  .ctx-menu {
+    position: fixed;
+    z-index: 70;   /* 压过抽屉/heat-tip(60),低于 modal(90) */
+    min-width: 200px;
+    padding: 4px;
+    border-radius: var(--r-card);
+    background: var(--dorami-surface);
+    border: 1px solid var(--dorami-border);
+    box-shadow: var(--sh-3);
+    font-size: 13px;
+    font-weight: 500;
+    animation: dorami-popover-in var(--motion-fast) var(--motion-ease);
+    transform-origin: top left;
+  }
+
+  .ctx-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 8px;
+    color: var(--dorami-ink-2);
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+
+  .ctx-item svg { width: 14px; height: 14px; flex: none; color: var(--dorami-faint); }
+  .ctx-item:hover:not(:disabled) { background: var(--dorami-soft); color: var(--dorami-ink); }
+  .ctx-item:hover:not(:disabled) svg { color: var(--dorami-muted); }
+  /* 破坏性项:末组位置 + --state-bad 色 + 图标,三通道传达(§2 状态不靠颜色单独传达) */
+  .ctx-item.is-danger,
+  .ctx-item.is-danger svg { color: var(--state-bad); }
+  .ctx-item.is-danger:hover:not(:disabled) { background: var(--state-bad-bg); color: var(--state-bad); }
+  .ctx-item.is-danger:hover:not(:disabled) svg { color: var(--state-bad); }
+  /* disabled 不隐藏(结构稳定,用户不用每次重扫菜单):降透明,方向键/Tab 天然跳过 */
+  .ctx-item:disabled { opacity: 0.45; cursor: default; }
+  .ctx-item:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+
+  .ctx-sep { height: 1px; margin: 4px 8px; background: var(--dorami-border); }
+
+  /* 分组头(如源菜单的「管理」,仅 admin 会话渲染):.micro-label 规格 */
+  .ctx-label {
+    padding: 7px 10px 2px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--dorami-faint);
+  }
+
+  /* 锚定态:被右键卡在菜单存续期的作用对象标记(wash 淡底,关菜单即除)。
+     刻意不复用 .is-on/.is-active——那是全站「选中/激活」语法,混用即语义污染。 */
+  .is-ctx-anchor,
+  .is-ctx-anchor:hover { background: var(--dorami-wash); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ctx-menu { animation: none; }
+  }
+
   /* ── 初版方案(数轮重设计后用户拍板回归):wash 主行 + 虚线分隔的公开链接区。 ── */
 
   /* 站内链接行:主路径,wash 可点行;hover 只允许同族加深(§4:hover 不得引入 accent) */
@@ -9984,7 +10053,7 @@ input[type="radio"] {
   background: var(--dorami-surface);
   border-color: var(--dorami-border);
 }
-[data-theme="dark"] :is(.modal-panel, .date-range-popover, .dept-card, .running-widget, .selection-bar) { box-shadow: var(--sh-3); }
+[data-theme="dark"] :is(.modal-panel, .date-range-popover, .dept-card, .running-widget, .selection-bar, .ctx-menu) { box-shadow: var(--sh-3); }
 [data-theme="dark"] :is(.segmented-option-active, .scope-toggle-option-active) { box-shadow: var(--sh-1); }
 [data-theme="dark"] :is(.field-box:focus-within, .search-box:focus-within, .catalog-search:focus-within, .node-param-input:focus, .form-input:focus) { border-color: rgba(124, 112, 235, 0.5); }
 [data-theme="dark"] .source-row { background: var(--dorami-soft); border-color: var(--dorami-border); }

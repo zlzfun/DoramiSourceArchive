@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>右键上下文菜单 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   右键上下文菜单(Folo 式自绘)· 静默仪器样页(v3.28 提案)
+   概念:阅读器三处交互区(文章卡 / 源栏源条目 / 社交推文卡)右键弹出
+   应用自绘菜单——标读/收藏/复制链接等动作的快捷入口,不再只藏在
+   悬停小按钮或阅读窗工具条里。contextmenu + preventDefault + DOM 浮层,
+   无 Electron 原生菜单一说(纯 web)。
+
+   设计决策(样页即论据):
+   ① **拦截让位于浏览器**:onContextMenu 只绑三种卡/行的根元素;卡内有**既有**
+      文字选区 → 放行系统默认菜单(保住「右键复制选中文字」);
+      input/textarea/contenteditable → 放行。阅读窗正文、输入框天然不拦——
+      用户在正文右键通常想复制/搜索/翻译,抢掉是负体验。
+      「既有」不能在 contextmenu 时刻判(2026-08-04 实测修正):macOS 浏览器在
+      右键 mousedown 的默认行为里自动选中光标下的单词,右键卡片极易被自动选词
+      顶掉自绘菜单。监听器先于默认行为执行,故在 mousedown(button=2) 捕获阶段
+      快照「右键前是否已有选区」;自动选词不算让位理由,拦截成功后顺带清除。
+   ② **右键不选中该篇**(同 Folo):菜单动作自带对象,不调 selectArticle。
+      被右键卡在菜单存续期加 .is-ctx-anchor 锚定态(--dorami-wash 淡底,
+      2026-08-04 拍板「加」)——刻意不复用 .is-on:那是全站「选中/激活」
+      语法,混用即语义污染。关菜单即除。
+   ③ **快照定位纪律**(引 DateRangePicker):fixed 定位是打开时算一次的
+      快照,滚动(capture 一网打尽有 ref 无 ref 的容器)/缩放一律关闭,
+      绝不跟随。夹取 min(x, innerWidth-w-8) 下限 8;垂直不足且上方够则上翻。
+   ④ **单例**:全局唯一实例;菜单开着时右键另一卡直接换坐标与条目,
+      不经关-开两帧。z-index 70(压过抽屉/heat-tip 60,低于 modal 90)。
+   ⑤ **三份清单同类项同位置**:读态/收藏首组 → 链接类次组 → 重操作/
+      破坏性末组,跨落点肌肉记忆。全部为同步动作零 async——「公开分享」
+      「在发现页查看」两项本波拍板不做(分享仍走阅读窗工具条)。
+   ⑥ **退订不二次确认**:与源行悬停减号完全同行为——同一动作两个入口
+      不该有两种确认策略。破坏性只标红(--state-bad),靠位置(末组)+
+      色彩 + 图标三通道传达(§2 状态不靠颜色单独传达)。
+   ⑦ **disabled 不隐藏**(如无 source_url 的「打开原文」):菜单结构稳定,
+      用户不用每次重新扫描;降透明 + aria-disabled,方向键跳过。
+   纪律:壳圆角 --r-card(v3.28.1 从 --r-overlay 收档,见 .ctx-menu 注)/开合动效复用
+   dorami-popover-in × --motion-fast 单次、禁逐项 stagger、
+   prefers-reduced-motion 降级(§7)/字号字重写在 .ctx-menu 容器上靠
+   继承穿透 button{font:inherit} 陷阱/实现时 .ctx-menu 须加进
+   index.css [data-theme=dark] :is(...) 暗色 --sh-3 列表(§9)/
+   role=menu/menuitem + 方向键循环 + focus-visible 焦点环(§2)/
+   文案「动词+名词」、Toast「已+动作+对象」(§1)。
+
+   令牌与刻度 1:1 取自 frontend/src/index.css;卡片内容为设计占位示意。
+   **本页可真实右键**:三个画面里的卡/行都拦了 contextmenu,弹的是活菜单
+   (夹取/上翻/Esc/外点/滚动即关/锚定态俱真),拍板手感直接试。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --dorami-blue: #5b54e8; --dorami-blue-2: #7b6cf0;
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-card: rgba(255, 255, 255, 0.96); --dorami-wash: rgba(91, 84, 232, 0.08);
+  --dorami-well: #f1f5f9; --dorami-inset-input: inset 0 1px 3px rgba(11, 18, 32, 0.08);
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-strong: rgba(11, 18, 32, 0.15);
+  --dorami-border-soft: rgba(11, 18, 32, 0.06);
+  --dorami-card-bd: transparent; --dorami-edge: rgba(255, 255, 255, 0.62);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --sh-3: 0 4px 10px rgba(11, 18, 32, 0.08), 0 16px 36px rgba(11, 18, 32, 0.11);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-overlay: 16px; --r-pill: 9999px;
+  --state-ok: #059669;   --state-ok-bg: #ecfdf5;
+  --state-warn: #b45309; --state-warn-bg: #fffbeb;
+  --state-bad: #e11d48;  --state-bad-bg: #fff1f2;
+  --state-idle: #64748b; --state-idle-bg: #f1f5f9;
+  --motion-fast: 150ms; --motion-medium: 240ms; --motion-slow: 300ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --rd-list-bg: var(--dorami-soft); --rd-pane-bg: var(--dorami-surface);
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-card: rgba(32, 37, 47, 0.96);
+  --dorami-wash: rgba(124, 112, 235, 0.13);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-strong: rgba(255, 255, 255, 0.16);
+  --dorami-border-soft: rgba(255, 255, 255, 0.07);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08); --dorami-edge: rgba(255, 255, 255, 0.05);
+  --state-ok: #34d399;   --state-ok-bg: #0f241b;
+  --state-warn: #fbbf24; --state-warn-bg: #281e10;
+  --state-bad: #fb7185;  --state-bad-bg: #2a151a;
+  --state-idle: #99a1ad; --state-idle-bg: #15181f;
+  --dorami-blue: #4d45b5; --dorami-blue-2: #5f57c8;
+  --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --sh-3: 0 4px 10px rgba(0, 0, 0, 0.5), 0 16px 36px rgba(0, 0, 0, 0.6);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --rd-list-bg: var(--dorami-well); --rd-pane-bg: var(--dorami-soft);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink);
+  font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+[data-theme="dark"] body {
+  background:
+    radial-gradient(ellipse 70% 50% at 12% -8%, rgba(124, 112, 235, 0.10), transparent 58%),
+    linear-gradient(180deg, #11131a 0%, var(--dorami-canvas) 55%);
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+
+/* ── 导轨(语境示意) ── */
+.app-rail { position: fixed; inset-block: 0; left: 0; width: 78px; z-index: 45;
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 14px 0 16px;
+  background: var(--dorami-surface); border-right: 1px solid var(--dorami-card-bd); box-shadow: var(--sh-1); }
+.rail-brand { margin-bottom: 14px; width: 34px; height: 34px; border-radius: var(--r-control);
+  background: var(--dorami-blue); display: grid; place-items: center; color: #fff; font-size: 15px; font-weight: 800; }
+.rail-nav-btn { position: relative; width: 100%; padding: 10px 0 8px; display: flex;
+  flex-direction: column; align-items: center; gap: 4px; color: var(--dorami-faint); }
+.rail-nav-btn svg { width: 19px; height: 19px; }
+.rail-nav-btn span { font-size: 11px; font-weight: 600; }
+.rail-nav-btn.rail-nav-on { color: var(--dorami-accent); }
+.rail-nav-btn.rail-nav-on::before { content: ""; position: absolute; left: 0; top: 50%;
+  transform: translateY(-50%); width: 3px; height: 26px; background: var(--dorami-blue);
+  border-radius: 0 var(--r-pill) var(--r-pill) 0; }
+.rail-spacer { flex: 1; }
+.rail-tool { width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: var(--r-control); color: var(--dorami-faint); }
+.rail-tool:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+.rail-tool svg { width: 18px; height: 18px; }
+
+.page { margin-left: 78px; padding: 22px 32px 48px; max-width: 1160px; }
+.page-head { display: flex; align-items: center; gap: 14px; min-height: 48px; margin-bottom: 20px; }
+.page-title { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; }
+.zone-head { display: flex; align-items: baseline; gap: 10px; margin: 26px 2px 12px; }
+.zone-head:first-of-type { margin-top: 0; }
+.zone-title { font-size: 14px; font-weight: 700; }
+.zone-hint { font-size: 12px; font-weight: 500; color: var(--dorami-faint); }
+.card { border: 1px solid var(--dorami-card-bd); background: var(--dorami-card);
+  border-radius: var(--r-card); box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge); }
+
+/* ════════════════════════════════════════════════════════════════════
+   .ctx-menu 类族(实现时原样入 index.css @layer components)
+   刻度对齐「源栏行的浮起版」(v3.28.1 用户目检修正:初版取 --r-overlay 16 +
+   全菜单 600 字重,在 200px 窄条上比阅读器饱满圆润——16px 大圆角属于 288px 宽、
+   带分区结构的 .share-menu 那类面板;窄条菜单的参照系是源栏行 13px/400–500、
+   8px 行圆角):壳 --r-card 14 + surface + 1px border + --sh-3;
+   项 28px 高、内圆角 8px、500 字重。
+   字号字重写在容器上 —— button{font:inherit} 未分层规则会把
+   按钮字号压成上下文大字,继承穿透是既有纪律(ShareMenu 注释③)。
+   开合:dorami-popover-in × --motion-fast,单次、无 stagger(§7 白名单)。
+   ════════════════════════════════════════════════════════════════════ */
+.ctx-menu { position: absolute; z-index: 70; min-width: 200px; padding: 4px;
+  background: var(--dorami-surface); border: 1px solid var(--dorami-border);
+  border-radius: var(--r-card); box-shadow: var(--sh-3);
+  font-size: 13px; font-weight: 500;
+  animation: dorami-popover-in var(--motion-fast) var(--motion-ease);
+  transform-origin: top left; }
+.ctx-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px;
+  padding: 0 10px; border-radius: 8px; color: var(--dorami-ink-2); text-align: left;
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+.ctx-item svg { width: 14px; height: 14px; flex: none; color: var(--dorami-faint); }
+.ctx-item:hover:not([aria-disabled]) { background: var(--dorami-soft); color: var(--dorami-ink); }
+.ctx-item:hover:not([aria-disabled]) svg { color: var(--dorami-muted); }
+.ctx-item.is-danger, .ctx-item.is-danger svg { color: var(--state-bad); }
+.ctx-item.is-danger:hover { background: var(--state-bad-bg); }
+.ctx-item[aria-disabled] { opacity: 0.45; cursor: default; }
+.ctx-sep { height: 1px; margin: 4px 8px; background: var(--dorami-border); }
+.ctx-label { padding: 7px 10px 2px; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.04em; color: var(--dorami-faint); }
+/* 键盘焦点环(§2:绝不移除 outline;.demo-focus 仅样页模拟展示) */
+.ctx-item:focus-visible, .ctx-item.demo-focus { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) { .ctx-menu { animation: none; } }
+
+/* 锚定态:被右键卡在菜单存续期的作用对象标记(非选中,勿与 .is-on 混用) */
+.is-ctx-anchor { background: var(--dorami-wash) !important; }
+
+/* 真实右键的活菜单:视口坐标 fixed(实现同此;静态画面用 absolute 摆位) */
+#live-menu { position: fixed; }
+
+/* ════ 画面①:阅读器条目列(整框模拟) ════ */
+.stage { position: relative; overflow: hidden; height: 470px;
+  display: grid; grid-template-columns: 56px 216px 340px minmax(0, 1fr); }
+.st-vrail { background: var(--dorami-surface); border-right: 1px solid var(--dorami-border-soft);
+  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 12px 0; }
+.st-vrail-brand { width: 30px; height: 30px; border-radius: var(--r-control); background: var(--dorami-blue);
+  display: grid; place-items: center; color: #fff; font-size: 14px; font-weight: 800; margin-bottom: 10px; }
+.st-vrail-btn { position: relative; width: 40px; height: 40px; border-radius: var(--r-control);
+  display: grid; place-items: center; color: var(--dorami-faint); }
+.st-vrail-btn.is-on { background: var(--dorami-wash); color: var(--dorami-accent); }
+.st-vrail-btn svg { width: 18px; height: 18px; }
+
+.st-srcbar { background: var(--rd-list-bg); border-right: 1px solid var(--dorami-border-soft);
+  padding: 12px 8px; overflow: hidden; }
+.srcbar-title { padding: 0 8px 10px; font-size: 13px; font-weight: 700; }
+.src-group-label { padding: 8px 8px 5px; font-size: 10.5px; font-weight: 700;
+  letter-spacing: 0.04em; color: var(--dorami-faint); }
+.reader-source-row { position: relative; display: flex; align-items: center; gap: 9px;
+  width: 100%; padding: 6px 8px; border-radius: 8px; border: 1px solid transparent;
+  cursor: default; text-align: left; transition: background 140ms ease, box-shadow 140ms ease; }
+.reader-source-row:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+.reader-source-row.is-active { background: var(--dorami-surface); box-shadow: var(--sh-1); }
+.src-logo { width: 18px; height: 18px; flex: none; border-radius: var(--r-sm);
+  display: grid; place-items: center; font-size: 10px; font-weight: 800; color: #fff; }
+.reader-source-name { font-size: 13px; font-weight: 400; color: var(--dorami-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.reader-source-row.has-unread .reader-source-name { color: var(--dorami-ink); font-weight: 500; }
+.reader-source-row.is-active .reader-source-name { color: var(--dorami-ink); font-weight: 600; }
+
+.st-list { background: var(--rd-list-bg); border-right: 1px solid var(--dorami-border-soft);
+  padding: 0 6px; overflow: hidden; }
+.reader-date-label { padding: 12px 12px 5px 16px; font-family: var(--mono); font-size: 11px;
+  font-weight: 400; letter-spacing: 0.1em; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.reader-entry { position: relative; display: block; width: 100%; text-align: left;
+  padding: 10px 6px 10px 16px; border-radius: var(--r-control); cursor: default;
+  transition: background 130ms var(--motion-ease), box-shadow 130ms var(--motion-ease); }
+.reader-entry:hover { background: color-mix(in srgb, var(--dorami-ink) 4%, transparent); }
+.reader-entry.is-active { background: var(--dorami-surface); box-shadow: var(--sh-1); }
+.reader-entry-top { display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
+.reader-entry-src { flex: 1; min-width: 0; font-size: 11.5px; font-weight: 400;
+  color: var(--dorami-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reader-entry-time { flex-shrink: 0; margin-right: 8px; font-size: 11.5px; font-weight: 400;
+  color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.reader-entry-titlerow { position: relative; display: block; }
+.reader-unread-dot { position: absolute; left: -10px; top: 7px; width: 6px; height: 6px;
+  border-radius: var(--r-pill); background: var(--dorami-accent); }
+.reader-entry-title { font-size: 14px; font-weight: 600; line-height: 1.5; color: var(--dorami-ink);
+  padding-right: 24px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.reader-entry-fav { position: absolute; top: 1px; right: 8px; color: #f59e0b; }
+.reader-entry-fav svg { width: 14px; height: 14px; }
+.reader-entry-excerpt { margin-top: 2px; font-size: 12.5px; font-weight: 400; line-height: 1.55;
+  color: var(--dorami-faint); display: block; white-space: nowrap; overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+
+.st-pane { background: var(--rd-pane-bg); display: grid; place-items: center; }
+.st-pane-empty { font-size: 12.5px; font-weight: 500; color: var(--dorami-faint); text-align: center; }
+
+/* ════ 画面②③:特写双列 ════ */
+.duo { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+@media (max-width: 980px) { .duo { grid-template-columns: 1fr; } }
+.closeup { position: relative; overflow: hidden; padding: 16px; min-height: 320px; }
+.closeup-cap { font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--dorami-faint); margin-bottom: 12px; }
+.closeup-srcbar { width: 216px; background: var(--rd-list-bg);
+  border: 1px solid var(--dorami-border-soft); border-radius: var(--r-control); padding: 8px 6px; }
+
+/* 社交推文卡(取 social-quiet 语法的最小子集) */
+.tweet { position: relative; max-width: 560px; padding: 14px 16px;
+  border: 1px solid var(--dorami-border-soft); border-radius: var(--r-card);
+  background: var(--rd-pane-bg); }
+.tw-body { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 10px; }
+.tw-avatar { width: 36px; height: 36px; border-radius: var(--r-pill); display: grid;
+  place-items: center; font-size: 13px; font-weight: 800; color: #fff;
+  background: linear-gradient(135deg, #f59e0b, #d97706); }
+.tw-head { display: flex; align-items: baseline; gap: 6px; }
+.tw-name { font-size: 13.5px; font-weight: 700; }
+.tw-handle, .tw-time { font-size: 12px; font-weight: 500; color: var(--dorami-faint); }
+.tw-head-sp { flex: 1; }
+.tw-text { margin-top: 3px; font-size: 13.5px; line-height: 1.6; color: var(--dorami-ink-2); }
+
+/* ════ 画面④:菜单壳四态并排 ════ */
+.shell-states { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; align-items: start; }
+@media (max-width: 980px) { .shell-states { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.shell-state { display: flex; flex-direction: column; gap: 10px; }
+.shell-state .ctx-menu { position: static; animation: none; }
+.shell-cap { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--dorami-faint); }
+.shell-note { font-size: 11.5px; font-weight: 500; line-height: 1.6; color: var(--dorami-faint); }
+
+@keyframes dorami-popover-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+footer { margin: 34px 2px 0; font-size: 11px; color: var(--dorami-faint); }
+</style>
+</head>
+<body>
+
+<!-- 导轨(语境示意:阅读器视角,样页仅作页面壳) -->
+<aside class="app-rail">
+  <div class="rail-brand">哆</div>
+  <button class="rail-nav-btn rail-nav-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg><span>阅读</span></button>
+  <div class="rail-spacer"></div>
+  <button class="rail-tool" id="theme-toggle" title="切换亮暗">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>
+  </button>
+</aside>
+
+<main class="page">
+  <div class="page-head">
+    <h1 class="page-title">右键上下文菜单</h1>
+  </div>
+
+  <!-- ═══ 画面①:条目列文章卡(本页可真实右键任意卡) ═══ -->
+  <div class="zone-head">
+    <span class="zone-title">① 条目列 · 文章卡菜单</span>
+    <span class="zone-hint">被右键卡带 wash 锚定态(非选中);读态/收藏 → 链接 → 重操作三组;试试在摘要上选中文字再右键——放行浏览器菜单</span>
+  </div>
+  <section class="card stage">
+    <div class="st-vrail">
+      <div class="st-vrail-brand">哆</div>
+      <button class="st-vrail-btn is-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9h4"/></svg></button>
+      <button class="st-vrail-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M3 12h18M3 17h12"/></svg></button>
+      <button class="st-vrail-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88"/></svg></button>
+    </div>
+    <div class="st-srcbar">
+      <div class="srcbar-title">我的订阅</div>
+      <div class="src-group-label">官方</div>
+      <div class="reader-source-row has-unread"><span class="src-logo" style="background:#0b1220">O</span><span class="reader-source-name">OpenAI News</span></div>
+      <div class="reader-source-row"><span class="src-logo" style="background:#c96f4a">A</span><span class="reader-source-name">Anthropic 新闻</span></div>
+      <div class="src-group-label">媒体</div>
+      <div class="reader-source-row is-active"><span class="src-logo" style="background:#5b54e8">量</span><span class="reader-source-name">量子位</span></div>
+      <div class="reader-source-row has-unread"><span class="src-logo" style="background:#d3403c">IT</span><span class="reader-source-name">IT之家 AI</span></div>
+    </div>
+    <div class="st-list">
+      <div class="reader-date-label">今天 · 08-04</div>
+      <div class="reader-entry" data-ctx="article">
+        <span class="reader-entry-top"><span class="reader-entry-src">量子位 · 资讯</span><span class="reader-entry-time">2 小时前</span></span>
+        <span class="reader-entry-titlerow"><span class="reader-unread-dot"></span><span class="reader-entry-title">大模型推理成本一年降了 90%,这条曲线还在陡降</span></span>
+        <span class="reader-entry-excerpt">从 API 定价到开源部署,推理成本的下降速度超过了所有人的预期,背后是三条技术路线的合流……</span>
+      </div>
+      <div class="reader-entry is-ctx-anchor" data-ctx="article" id="anchor-demo">
+        <span class="reader-entry-top"><span class="reader-entry-src">量子位 · 资讯</span><span class="reader-entry-time">4 小时前</span></span>
+        <span class="reader-entry-titlerow"><span class="reader-unread-dot"></span><span class="reader-entry-title">具身智能新进展:双臂机器人学会叠衣服了</span>
+        <span class="reader-entry-fav"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg></span></span>
+        <span class="reader-entry-excerpt">训练数据只用了 40 小时的真机演示,泛化到了没见过的衣物类型,论文与演示视频已放出……</span>
+      </div>
+      <div class="reader-entry" data-ctx="article">
+        <span class="reader-entry-top"><span class="reader-entry-src">量子位 · 资讯</span><span class="reader-entry-time">6 小时前</span></span>
+        <span class="reader-entry-titlerow"><span class="reader-entry-title">开源周报:本周值得关注的 8 个 AI 项目</span></span>
+        <span class="reader-entry-excerpt">从推理框架到数据管线,本周开源社区的动向整理,附上手体验与选型建议……</span>
+      </div>
+      <div class="reader-entry" data-ctx="article">
+        <span class="reader-entry-top"><span class="reader-entry-src">量子位 · 资讯</span><span class="reader-entry-time">8 小时前</span></span>
+        <span class="reader-entry-titlerow"><span class="reader-entry-title">对话式编程一年后:开发者工作流真的变了吗</span></span>
+        <span class="reader-entry-excerpt">我们访谈了 20 位一线工程师,聊了聊 AI 结对编程真实的收益与落差……</span>
+      </div>
+    </div>
+    <div class="st-pane"><div class="st-pane-empty">选择一篇文章以开始阅读<br><span style="font-size:11.5px">或到发现页添加更多订阅源</span></div></div>
+
+    <!-- 静态摆位的文章卡菜单(即真实右键的克隆源) -->
+    <div class="ctx-menu" id="menu-article" role="menu" aria-label="文章操作" style="left: 470px; top: 150px;">
+      <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>标为已读</button>
+      <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>取消收藏</button>
+      <div class="ctx-sep" role="separator"></div>
+      <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>复制站内链接</button>
+      <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>打开原文</button>
+      <div class="ctx-sep" role="separator"></div>
+      <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg>标记该源全部已读</button>
+    </div>
+  </section>
+
+  <!-- ═══ 画面②③:源栏 / 社交卡特写 ═══ -->
+  <div class="zone-head">
+    <span class="zone-title">② 源栏源条目 · ③ 社交推文卡</span>
+    <span class="zone-hint">源栏含 admin 才见的「管理」分组与破坏性红项;社交卡链接类复制的是原推外链(社交卡无详情页语义)</span>
+  </div>
+  <div class="duo">
+    <section class="card closeup">
+      <div class="closeup-cap">② 源栏源条目菜单(admin 会话)</div>
+      <div class="closeup-srcbar">
+        <div class="src-group-label">媒体</div>
+        <div class="reader-source-row"><span class="src-logo" style="background:#5b54e8">量</span><span class="reader-source-name">量子位</span></div>
+        <div class="reader-source-row is-ctx-anchor" data-ctx="source"><span class="src-logo" style="background:#d3403c">IT</span><span class="reader-source-name">IT之家 AI</span></div>
+        <div class="reader-source-row" data-ctx="source"><span class="src-logo" style="background:#16a34a">机</span><span class="reader-source-name">机器之心</span></div>
+      </div>
+      <div class="ctx-menu" id="menu-source" role="menu" aria-label="源操作" style="left: 200px; top: 74px;">
+        <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg>全部标为已读</button>
+        <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>打开原站</button>
+        <div class="ctx-sep" role="separator"></div>
+        <div class="ctx-label">管理</div>
+        <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>在读者面隐藏</button>
+        <div class="ctx-sep" role="separator"></div>
+        <button class="ctx-item is-danger" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>退订此源</button>
+      </div>
+      <p class="shell-note" style="margin-top: 152px; max-width: 380px">「管理」分组仅 admin 会话渲染(读者账号无此段,菜单随之短一截)。退订与源行悬停减号完全同行为:直接执行 + Toast「已退订该源」,不加确认弹窗——同一动作两个入口不该有两种确认策略。</p>
+    </section>
+    <section class="card closeup">
+      <div class="closeup-cap">③ 社交推文卡菜单</div>
+      <article class="tweet is-ctx-anchor" data-ctx="social">
+        <div class="tw-body">
+          <span class="tw-avatar">K</span>
+          <div>
+            <div class="tw-head"><span class="tw-name">Andrej Karpathy</span><span class="tw-handle">@karpathy</span><span class="tw-head-sp"></span><span class="tw-time">3 小时前</span></div>
+            <p class="tw-text">The hottest new programming language is English. Prompting well is a real skill — underrated, learnable, and it compounds with everything else you know.</p>
+          </div>
+        </div>
+      </article>
+      <div class="ctx-menu" id="menu-social" role="menu" aria-label="推文操作" style="left: 236px; top: 118px;">
+        <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>标为未读</button>
+        <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>收藏推文</button>
+        <div class="ctx-sep" role="separator"></div>
+        <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>复制推文链接</button>
+        <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>打开原推</button>
+      </div>
+      <p class="shell-note" style="margin-top: 158px; max-width: 380px">读态/收藏项与文章卡同位置(跨落点肌肉记忆);链接组复制/打开的都是原推外链——与卡上时间戳外链同目标,给右键用户一条不用瞄准时间戳的路。悬停浮出的收藏/标读小钮照旧保留,右键是并联入口。</p>
+    </section>
+  </div>
+
+  <!-- ═══ 画面④:菜单壳状态特写 ═══ -->
+  <div class="zone-head">
+    <span class="zone-title">④ 菜单壳四态</span>
+    <span class="zone-hint">disabled 不隐藏 · 破坏性三通道 · 分组分隔 · 键盘焦点环;贴近视口下缘时整体上翻(bottom 锚定,不逐项裁切,此处不另画)</span>
+  </div>
+  <section class="card" style="padding: 18px">
+    <div class="shell-states">
+      <div class="shell-state">
+        <span class="shell-cap">DISABLED(无 SOURCE_URL)</span>
+        <div class="ctx-menu" role="menu">
+          <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>复制站内链接</button>
+          <button class="ctx-item" role="menuitem" aria-disabled="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>打开原文</button>
+        </div>
+        <span class="shell-note">结构稳定不隐藏:降透明 + aria-disabled,方向键跳过、点击无效。</span>
+      </div>
+      <div class="shell-state">
+        <span class="shell-cap">破坏性项</span>
+        <div class="ctx-menu" role="menu">
+          <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg>全部标为已读</button>
+          <div class="ctx-sep" role="separator"></div>
+          <button class="ctx-item is-danger" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>退订此源</button>
+        </div>
+        <span class="shell-note">末组位置 + --state-bad 色 + 图标,三通道传达(§2)。</span>
+      </div>
+      <div class="shell-state">
+        <span class="shell-cap">分组与分隔</span>
+        <div class="ctx-menu" role="menu">
+          <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>打开原站</button>
+          <div class="ctx-sep" role="separator"></div>
+          <div class="ctx-label">管理</div>
+          <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>在读者面隐藏</button>
+        </div>
+        <span class="shell-note">hairline 分隔 + .micro-label 规格分组头;「管理」组仅 admin 渲染。</span>
+      </div>
+      <div class="shell-state">
+        <span class="shell-cap">键盘焦点环</span>
+        <div class="ctx-menu" role="menu">
+          <button class="ctx-item" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>标为已读</button>
+          <button class="ctx-item demo-focus" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>收藏文章</button>
+        </div>
+        <span class="shell-note">↑↓ 循环 · Home/End 首尾 · Enter/Space 激活 · Esc 关闭并归还焦点(复用 useModalA11y)。</span>
+      </div>
+    </div>
+  </section>
+
+  <footer>右键上下文菜单样页 · v3.28 提案 · 亮暗双态(轨底月亮切换) · 画面内卡/行可真实右键试手感;菜单项点击仅关闭示意</footer>
+</main>
+
+<!-- 真实右键的活菜单(单例;从三个静态菜单克隆条目) -->
+<div class="ctx-menu" id="live-menu" role="menu" hidden></div>
+
+<script>
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    const root = document.documentElement;
+    root.dataset.theme = root.dataset.theme === 'dark' ? '' : 'dark';
+  });
+
+  /* ── 真实右键 demo:单例活菜单,行为即实现规范 ── */
+  const live = document.getElementById('live-menu');
+  let anchorEl = null;
+  let anchorWasStatic = false;   /* 画面①②③的静态锚定示意被真实右键后,关闭时保留其 wash 底 */
+  /* macOS 右键 mousedown 会自动选词,contextmenu 时刻分不清「既有拖选」与「自动选词」;
+     监听器先于默认行为执行,在捕获阶段快照右键前的选区状态(决策①,实测修正) */
+  let hadSelBeforeRightDown = false;
+  document.addEventListener('mousedown', (e) => {
+    if (e.button !== 2) return;
+    const sel = window.getSelection();
+    hadSelBeforeRightDown = !!(sel && !sel.isCollapsed);
+  }, true);
+
+  function closeMenu() {
+    if (live.hidden) return;
+    live.hidden = true;
+    if (anchorEl && !anchorWasStatic) anchorEl.classList.remove('is-ctx-anchor');
+    anchorEl = null;
+  }
+
+  document.querySelectorAll('[data-ctx]').forEach((el) => {
+    el.addEventListener('contextmenu', (e) => {
+      /* 决策①:选区让位——仅卡内「既有」选区放行浏览器默认菜单;
+         右键顺手自动选中的单词不算,且拦截后清除(不动用户先前的拖选) */
+      const sel = window.getSelection();
+      const hasSel = !!(sel && !sel.isCollapsed);
+      if (hadSelBeforeRightDown && hasSel && el.contains(sel.anchorNode)) return;
+      e.preventDefault();
+      if (!hadSelBeforeRightDown && hasSel) sel.removeAllRanges();
+      /* 决策④:单例——开着时直接换条目与坐标,不经关-开两帧 */
+      if (anchorEl && !anchorWasStatic) anchorEl.classList.remove('is-ctx-anchor');
+      anchorEl = el;
+      anchorWasStatic = el.classList.contains('is-ctx-anchor');
+      el.classList.add('is-ctx-anchor');
+      live.innerHTML = document.getElementById('menu-' + el.dataset.ctx).innerHTML;
+      live.hidden = false;
+      /* 重放开合动效(仅换内容不触发 animation) */
+      live.style.animation = 'none';
+      void live.offsetWidth;
+      live.style.animation = '';
+      /* 决策③:快照定位——打开时算一次,夹取 + 上翻 */
+      live.style.left = '0px'; live.style.top = '0px';
+      const w = live.offsetWidth, h = live.offsetHeight;
+      const x = Math.max(8, Math.min(e.clientX, innerWidth - w - 8));
+      let y = e.clientY;
+      if (y + h > innerHeight - 8 && y - h > 8) y = y - h;
+      live.style.left = x + 'px';
+      live.style.top = Math.max(8, y) + 'px';
+    });
+  });
+
+  /* 菜单上二次右键不弹系统菜单 */
+  live.addEventListener('contextmenu', (e) => e.preventDefault());
+  /* 菜单项点击即关(样页不执行真实动作) */
+  live.addEventListener('click', (e) => { if (e.target.closest('.ctx-item')) closeMenu(); });
+  /* 关闭时机:外点 mousedown / Esc(捕获) / 滚动(捕获,覆盖无 ref 容器) / resize */
+  document.addEventListener('mousedown', (e) => { if (!live.contains(e.target)) closeMenu(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); }, true);
+  document.addEventListener('scroll', closeMenu, true);
+  window.addEventListener('resize', closeMenu);
+</script>
+</body>
+</html>

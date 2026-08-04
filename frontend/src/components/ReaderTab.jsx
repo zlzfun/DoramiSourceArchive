@@ -13,6 +13,8 @@ import {
   Zap,
   AtSign,
   Star,
+  StarOff,
+  Check,
   CheckCheck,
   CircleDot,
   RefreshCw,
@@ -24,6 +26,11 @@ import {
   MessageSquare,
   CloudOff,
   Share2,
+  Undo2,
+  Link,
+  Eye,
+  EyeOff,
+  Trash2,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
@@ -31,6 +38,10 @@ import RailUserFlyout from './RailUserFlyout';
 import ReaderMarkdown from './ReaderMarkdown';
 import ReaderAiPanel from './ReaderAiPanel';
 import ShareMenu from './ShareMenu';
+import ContextMenu from './ContextMenu';
+import { useContextMenu } from '../hooks/useContextMenu';
+import { copyText } from '../utils/clipboard';
+import { articleDeepLink } from '../utils/shareLink';
 import { SOURCE_ROLES, sourceRoleOf, resolveCompany } from '../sourceTaxonomy';
 import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
@@ -62,6 +73,7 @@ import {
   markArticleRead,
   markArticleUnread,
   summarizeArticle,
+  setSourceVisibility,
 } from '../api';
 
 const PAGE_SIZE = 30;
@@ -143,6 +155,7 @@ function PaneBodySkeleton() {
 const ArticleRow = memo(function ArticleRow({
   article, active, isUnread, isFav, entryBulletin, showLabel, dayKey, searchQuery,
   source, sourceName, onSelect, onPrefetchEnter, onPrefetchLeave, onToggleFavorite,
+  onContextMenu, ctxAnchor,
 }) {
   const excerpt = entryBulletin
     ? ''
@@ -155,7 +168,8 @@ const ArticleRow = memo(function ArticleRow({
         onClick={() => onSelect(article)}
         onMouseEnter={() => onPrefetchEnter(article)}
         onMouseLeave={onPrefetchLeave}
-        className={`reader-entry ${entryBulletin ? 'is-bulletin' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''}`}
+        onContextMenu={(e) => onContextMenu(e, article, 'article')}
+        className={`reader-entry ${entryBulletin ? 'is-bulletin' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}`}
       >
         <span className="reader-entry-top">
           {source && (
@@ -756,6 +770,20 @@ export default function ReaderTab({
     }
   };
 
+  // ── 在读者面隐藏/恢复源(admin 会话的右键菜单入口;与节点管理检视器同一 API)──
+  // 操作后重拉源目录:hidden 标记驱动源栏灰显与内容门控,不做本地乐观改。
+  const handleToggleSourceHidden = async (source) => {
+    const toHidden = !source.hidden;
+    try {
+      await setSourceVisibility(source.source_id, toHidden);
+      showToast(toHidden ? '已在读者面隐藏该源' : '已恢复该源', 'success');
+      loadSources();
+      loadUnreadCounts();
+    } catch (error) {
+      showToast(error.message || '操作失败', 'error');
+    }
+  };
+
   // ── 收藏 / 取消收藏 ──
   const handleToggleFavorite = async (article, event) => {
     event?.stopPropagation();
@@ -812,6 +840,24 @@ export default function ReaderTab({
     }
   };
 
+  // ── 按源全部标读(右键菜单入口:不依赖当前视图范围,按条目/源行携带的 source_id)──
+  const markSourceAllRead = async (sourceId) => {
+    if (!sourceId) return;
+    try {
+      const data = await markAllRead(sourceId, null);
+      prevScopeUnreadRef.current = null;
+      applyUnreadCounts(data);
+      for (const a of articles) {
+        if (a.source_id === sourceId) readOverridesRef.current.set(a.id, true);
+      }
+      setReadOverrides(new Map(readOverridesRef.current));
+      if (unreadOnly) loadArticles(0, false);
+      showToast('已全部标为已读', 'success');
+    } catch (error) {
+      showToast(error.message || '标记已读失败', 'error');
+    }
+  };
+
   // 刷新新到内容:重拉列表 + 未读统计(提示条点击)
   const handleRefreshFresh = () => {
     loadArticles(0, false);
@@ -834,6 +880,9 @@ export default function ReaderTab({
   const onRowPrefetchLeave = useCallback(() => rowHandlersRef.current.prefetchLeave(), []);
   const onRowToggleFavorite = useCallback((a, e) => rowHandlersRef.current.toggleFav(a, e), []);
   const onRowToggleSocialRead = useCallback((a) => rowHandlersRef.current.toggleSocialRead(a), []);
+  // 右键菜单(v3.28):同走 latest-ref——onContextMenu 是新的一列级 prop,引用漂移会让
+  // ArticleRow/SocialPost 的 memo 整列失效。
+  const onRowContextMenu = useCallback((e, entity, kind) => rowHandlersRef.current.contextMenu(e, entity, kind), []);
 
   // ── 手动标为已读/未读(显式覆盖,可撤销误触;不计阅读量)──
   // 阅读窗与社交流共用:社交流全文直出、没有「打开」动作,标读是它唯一的读态入口。
@@ -886,6 +935,81 @@ export default function ReaderTab({
     }
   }, [socialReadToggling, toggleArticleRead]);
 
+  // ── 右键上下文菜单(v3.28,样页 dorami-context-menu-quiet) ──
+  // 三份清单同类项同位置:读态/收藏首组 → 链接类次组 → 重操作/破坏性末组(跨落点
+  // 肌肉记忆)。动作全部复用既有函数(乐观更新/回滚/Toast 原样),菜单只是并联入口;
+  // items 在 open 时闭包构建,天然携带最新读态/收藏态。
+  const { menu: ctxMenu, openMenu: openCtxMenu, closeMenu: closeCtxMenu } = useContextMenu();
+  const isAdminSession = account?.role === 'admin';
+
+  const copyWithToast = async (text, doneMessage) => {
+    try {
+      await copyText(text);
+      showToast(doneMessage, 'success');
+    } catch (error) {
+      showToast(error.message || '复制失败', 'error');
+    }
+  };
+
+  const buildArticleMenuItems = (article) => {
+    const unread = isArticleUnread(article);
+    const fav = favoriteIds.has(article.id);
+    return [
+      { key: 'read', label: unread ? '标为已读' : '标为未读', icon: unread ? Check : Undo2, onClick: () => toggleArticleRead(article) },
+      { key: 'fav', label: fav ? '取消收藏' : '收藏文章', icon: fav ? StarOff : Star, onClick: () => handleToggleFavorite(article) },
+      { type: 'sep' },
+      { key: 'copy', label: '复制站内链接', icon: Link, onClick: () => copyWithToast(articleDeepLink(article.id), '已复制站内链接') },
+      // disabled 不隐藏:菜单结构稳定,无 source_url 时降透明(§2 状态不靠颜色单独传达)
+      { key: 'open', label: '打开原文', icon: ExternalLink, disabled: !article.source_url, onClick: () => window.open(article.source_url, '_blank', 'noopener') },
+      { type: 'sep' },
+      { key: 'markall', label: '标记该源全部已读', icon: CheckCheck, onClick: () => markSourceAllRead(article.source_id) },
+    ];
+  };
+
+  const buildSourceMenuItems = (source) => {
+    const items = [
+      { key: 'markall', label: '全部标为已读', icon: CheckCheck, onClick: () => markSourceAllRead(source.source_id) },
+      { key: 'open', label: '打开原站', icon: ExternalLink, disabled: !source.base_url, onClick: () => window.open(source.base_url, '_blank', 'noopener') },
+    ];
+    if (isAdminSession) {
+      items.push(
+        { type: 'sep' },
+        { type: 'label', text: '管理' },
+        { key: 'hide', label: source.hidden ? '在读者面恢复' : '在读者面隐藏', icon: source.hidden ? Eye : EyeOff, onClick: () => handleToggleSourceHidden(source) },
+      );
+    }
+    // 退订=破坏性末组红项;与源行悬停减号完全同行为,不加确认弹窗
+    // (同一动作两个入口不该有两种确认策略)
+    items.push(
+      { type: 'sep' },
+      { key: 'unsub', label: '退订此源', icon: Trash2, danger: true, onClick: () => handleUnsubscribe(source) },
+    );
+    return items;
+  };
+
+  const buildSocialMenuItems = (article) => {
+    const unread = isArticleUnread(article);
+    const fav = favoriteIds.has(article.id);
+    return [
+      { key: 'read', label: unread ? '标为已读' : '标为未读', icon: unread ? Check : Undo2, onClick: () => handleToggleSocialRead(article) },
+      { key: 'fav', label: fav ? '取消收藏' : '收藏推文', icon: fav ? StarOff : Star, onClick: () => handleToggleFavorite(article) },
+      { type: 'sep' },
+      // 链接组复制/打开的都是原推外链(社交卡无详情页语义),与时间戳外链同目标
+      { key: 'copy', label: '复制推文链接', icon: Link, disabled: !article.source_url, onClick: () => copyWithToast(article.source_url, '已复制推文链接') },
+      { key: 'open', label: '打开原推', icon: ExternalLink, disabled: !article.source_url, onClick: () => window.open(article.source_url, '_blank', 'noopener') },
+    ];
+  };
+
+  const openRowContextMenu = (e, entity, kind) => {
+    const items = kind === 'source'
+      ? buildSourceMenuItems(entity)
+      : kind === 'social'
+        ? buildSocialMenuItems(entity)
+        : buildArticleMenuItems(entity);
+    const anchorId = kind === 'source' ? entity.source_id : entity.id;
+    openCtxMenu(e, items, `${kind}:${anchorId}`);
+  };
+
   // latest-ref 稳定回调的实现同步(每次渲染后更新为最新闭包;声明见 isArticleUnread 后。
   // 事件回调只在渲染完成后触发,useEffect 时序上足够)
   useEffect(() => {
@@ -895,6 +1019,7 @@ export default function ReaderTab({
       prefetchLeave: cancelPrefetch,
       toggleFav: handleToggleFavorite,
       toggleSocialRead: handleToggleSocialRead,
+      contextMenu: openRowContextMenu,
     };
   });
 
@@ -1197,7 +1322,8 @@ export default function ReaderTab({
                         tabIndex={0}
                         onClick={() => goSource(source.source_id)}
                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goSource(source.source_id); } }}
-                        className={`reader-source-row ${active ? 'reader-source-row-active' : ''} ${unread > 0 ? 'has-unread' : ''} ${source.hidden ? 'is-unavailable' : ''}`}
+                        onContextMenu={(e) => onRowContextMenu(e, source, 'source')}
+                        className={`reader-source-row ${active ? 'reader-source-row-active' : ''} ${unread > 0 ? 'has-unread' : ''} ${source.hidden ? 'is-unavailable' : ''} ${ctxMenu?.anchorKey === `source:${source.source_id}` ? 'is-ctx-anchor' : ''}`}
                       >
                         {/* 社交源用真实头像(它们在 LogoMark 品牌表里没有条目,
                             否则整列会退化成同一个平台图标);图经媒体库代理 */}
@@ -1284,6 +1410,8 @@ export default function ReaderTab({
           onToggleSearch={toggleSearch}
           readTogglingId={socialReadToggling}
           onToggleRead={onRowToggleSocialRead}
+          onPostContextMenu={onRowContextMenu}
+          ctxAnchorKey={ctxMenu?.anchorKey || null}
           onMarkAllRead={handleMarkAllRead}
           markingRead={markingRead}
           loading={articlesLoading}
@@ -1442,6 +1570,8 @@ export default function ReaderTab({
                     onPrefetchEnter={onRowPrefetchEnter}
                     onPrefetchLeave={onRowPrefetchLeave}
                     onToggleFavorite={onRowToggleFavorite}
+                    onContextMenu={onRowContextMenu}
+                    ctxAnchor={ctxMenu?.anchorKey === `article:${article.id}`}
                   />
                 );
               })}
@@ -1651,6 +1781,11 @@ export default function ReaderTab({
       )}
 
       {!discover && <ReaderAiPanel aiEnabled={aiEnabled} activeArticle={activeArticle} showToast={showToast} />}
+
+      {/* 右键上下文菜单(单例,portal 到 body):关闭即 ctxMenu 置空,锚定态随之消失 */}
+      {ctxMenu && (
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={closeCtxMenu} />
+      )}
     </div>
   );
 }

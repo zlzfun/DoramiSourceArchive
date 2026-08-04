@@ -156,6 +156,8 @@ const SocialPost = memo(function SocialPost({
   searchQuery = '',
   onToggleFavorite,
   onToggleRead,
+  onContextMenu,
+  ctxAnchor = false,
 }) {
   const ext = useMemo(() => parseExt(article), [article]);
   const [expanded, setExpanded] = useState(false);
@@ -178,7 +180,10 @@ const SocialPost = memo(function SocialPost({
   const stamp = article.publish_date || article.fetched_date;
 
   return (
-    <article className={`social-post ${unread ? '' : 'is-read'}`}>
+    <article
+      className={`social-post ${unread ? '' : 'is-read'} ${ctxAnchor ? 'is-ctx-anchor' : ''}`}
+      onContextMenu={onContextMenu ? (e) => onContextMenu(e, article, 'social') : undefined}
+    >
       {reposted && (
         <p className="social-repost">
           <Repeat2 className="h-[13px] w-[13px]" aria-hidden="true" />
@@ -284,6 +289,8 @@ export default function SocialFlow({
   onToggleSearch,
   readTogglingId,
   onToggleRead,
+  onPostContextMenu,
+  ctxAnchorKey = null,
   onMarkAllRead,
   markingRead = false,
   loading = false,
@@ -421,6 +428,8 @@ export default function SocialFlow({
                       searchQuery={searchQuery}
                       onToggleFavorite={onToggleFavorite}
                       onToggleRead={onToggleRead}
+                      onContextMenu={onPostContextMenu}
+                      ctxAnchor={ctxAnchorKey === `social:${article.id}`}
                     />
                   </Fragment>
                 );
