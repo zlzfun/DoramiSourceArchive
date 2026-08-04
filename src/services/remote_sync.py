@@ -39,6 +39,7 @@ from sqlmodel import Session
 
 from config import settings
 from models.db import AppSettingRecord
+from services import credentials
 
 _logger = logging.getLogger("dorami.remote_sync")
 
@@ -403,17 +404,16 @@ def load_schedule(engine, *, include_secret: bool = False) -> Dict[str, Any]:
 def save_schedule(engine, updates: Dict[str, Any], *, updated_at: str) -> Dict[str, Any]:
     """合并写回定时同步配置,返回 `load_schedule(include_secret=False)` 形状。
 
-    `updates` 里 `password` 为空串/None 表示**保留已存密码**(与 X API token
-    的「只写不回显、不改即留旧」范式一致);服务层不依赖 FastAPI,`updated_at`
-    由调用方传入。
+    `updates` 里 `password` 为空串/None 表示**保留已存密码**(统一凭据保管
+    契约的写入半边,见 `services/credentials`;本 blob 是该契约下的 JSON blob
+    历史形态);服务层不依赖 FastAPI,`updated_at` 由调用方传入。
     """
     merged = dict(_load_schedule_raw(engine))
     for key in ("enabled", "cron", "base_url", "username", "source_ids"):
         if key in updates:
             merged[key] = updates[key]
-    if updates.get("password"):
-        merged["password"] = str(updates["password"])
     # 空/缺失 password 时保留 merged 里已存的密码。
+    credentials.apply_secret_update(merged, updates, "password")
     merged["enabled"] = bool(merged.get("enabled", False))
     merged["cron"] = str(merged.get("cron") or _SCHEDULE_DEFAULT_CRON)
     merged["base_url"] = str(merged.get("base_url") or "")

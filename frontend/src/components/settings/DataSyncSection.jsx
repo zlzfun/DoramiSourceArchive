@@ -10,6 +10,7 @@ import {
   saveRemoteSyncSchedule,
   fetchBackgroundJob,
 } from '../../api';
+import SecretField from '../SecretField';
 
 function downloadFile(url, filename) {
   const a = document.createElement('a');
@@ -661,12 +662,10 @@ function RemoteSyncScheduleCard({ showToast }) {
         </label>
         <label className="sett-field">
           <span className="sett-field-lbl">远端密码</span>
-          <input
-            type="password"
-            autoComplete="new-password"
-            placeholder={passwordSet ? '已保存,留空保持不变' : ''}
+          <SecretField
             value={password}
-            onChange={e => setPassword(e.target.value)}
+            onChange={setPassword}
+            isSet={passwordSet}
             className="form-input"
             disabled={loading}
           />

@@ -9,6 +9,7 @@
 """
 
 import datetime
+import os
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -57,6 +58,21 @@ class PublicShareGlobalParams(BaseModel):
 
 class SourceVisibilityParams(BaseModel):
     hidden: bool
+
+
+@router.get("/credentials")
+def get_credentials_overview():
+    """设置柜凭据区的只读补充:部署级 env-only 机密的存在性。
+
+    LLM/X 的状态与编辑走各自 config 端点(/api/llm/config、/api/x-api/config,
+    统一保管契约见 services/credentials);此端点只补「无面板编辑」的部署级
+    凭据(GITHUB_TOKEN)供只读回指行显示状态——只回存在性,不回任何值。
+    """
+    return {
+        "github_token_set": bool(
+            (os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN") or "").strip()
+        ),
+    }
 
 
 @router.get("/source-visibility")

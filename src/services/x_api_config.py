@@ -2,6 +2,8 @@
 
 机密 Bearer Token 可由 env/ini 提供，也可按管理端契约写入
 ``AppSettingRecord`` 作为运行时覆盖。本模块不记录配置值，API 也只返回脱敏预览。
+配置的保管契约（解析序/只写不回显/来源标注）走 ``services/credentials`` 统一层，
+本模块只保留 X 特有的 User 缓存与头像派生。
 User 缓存以 source_id 为粒度，同时记录 handle；handle 变更时缓存自动失效。它主要
 服务只有 handle 的 SourceConfig 源；策展 preset 已固化稳定 user_id，不靠缓存避免解析。
 """
@@ -10,7 +12,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import os
 import re
 from typing import Any, Dict
 
@@ -18,92 +19,43 @@ from sqlmodel import Session, select
 
 import config
 from models.db import AppSettingRecord
+from services import credentials
 
 
-KEY_BEARER_TOKEN = "x_api_bearer_token"
-KEY_BASE_URL = "x_api_base_url"
-KEY_TIMEOUT_SECONDS = "x_api_timeout_seconds"
-KEY_MAX_RESULTS = "x_api_max_results"
-KEY_MONTHLY_BUDGET_USD = "x_api_monthly_budget_usd"
+NAMESPACE = credentials.X_API_NAMESPACE
+
+# KV key 沿用抽象层注册表(与历史存量一致,零迁移)。
+KEY_BEARER_TOKEN = NAMESPACE.field_by_name("bearer_token").kv_key
+KEY_BASE_URL = NAMESPACE.field_by_name("base_url").kv_key
+KEY_TIMEOUT_SECONDS = NAMESPACE.field_by_name("timeout_seconds").kv_key
+KEY_MAX_RESULTS = NAMESPACE.field_by_name("max_results").kv_key
+KEY_MONTHLY_BUDGET_USD = NAMESPACE.field_by_name("monthly_budget_usd").kv_key
 USER_CACHE_KEY_PREFIX = "x_api_user_cache:"
-
-_FIELD_KEYS = {
-    "bearer_token": KEY_BEARER_TOKEN,
-    "base_url": KEY_BASE_URL,
-    "timeout_seconds": KEY_TIMEOUT_SECONDS,
-    "max_results": KEY_MAX_RESULTS,
-    "monthly_budget_usd": KEY_MONTHLY_BUDGET_USD,
-}
 
 
 def _get_setting(session: Session, key: str) -> str:
-    record = session.get(AppSettingRecord, key)
-    return str(record.value or "") if record is not None else ""
+    return credentials.get_setting(session, key)
 
 
 def set_setting(session: Session, key: str, value: str) -> None:
-    record = session.get(AppSettingRecord, key)
-    if record is None:
-        record = AppSettingRecord(key=key, value=value)
-    else:
-        record.value = value
-    session.add(record)
-    session.commit()
+    credentials.set_setting(session, key, value)
 
 
 def resolve_x_api_config(session: Session) -> config.XApiConfig:
     """合并 env/ini 基线与 AppSettingRecord 运行时覆盖。"""
-    base = config.settings.x_api
-
-    def _str(key: str, fallback: str) -> str:
-        value = _get_setting(session, key).strip()
-        return value if value else fallback
-
-    def _int(key: str, fallback: int) -> int:
-        value = _get_setting(session, key).strip()
-        try:
-            return int(value) if value else fallback
-        except ValueError:
-            return fallback
-
-    def _float(key: str, fallback: float) -> float:
-        value = _get_setting(session, key).strip()
-        try:
-            return float(value) if value else fallback
-        except ValueError:
-            return fallback
-
-    return config.XApiConfig(
-        bearer_token=_str(KEY_BEARER_TOKEN, base.bearer_token),
-        base_url=_str(KEY_BASE_URL, base.base_url).rstrip("/"),
-        timeout_seconds=_int(KEY_TIMEOUT_SECONDS, base.timeout_seconds),
-        max_results=_int(KEY_MAX_RESULTS, base.max_results),
-        monthly_budget_usd=_float(KEY_MONTHLY_BUDGET_USD, base.monthly_budget_usd),
-    )
+    values = credentials.resolve_values(session, NAMESPACE, config.settings.x_api)
+    values["base_url"] = str(values["base_url"]).rstrip("/")
+    return config.XApiConfig(**values)
 
 
 def config_field_sources(session: Session) -> Dict[str, str]:
     """返回各字段有效值来源：runtime_kv | env | ini | default。"""
-    parser = config._read_config_file()  # 与 load_config 使用同一路径裁决
-    sources: Dict[str, str] = {}
-    for field, key in _FIELD_KEYS.items():
-        if _get_setting(session, key).strip():
-            sources[field] = "runtime_kv"
-        elif field == "bearer_token" and os.getenv("DORAMI_X_BEARER_TOKEN", "").strip():
-            sources[field] = "env"
-        elif parser.has_option("x_api", field):
-            sources[field] = "ini"
-        else:
-            sources[field] = "default"
-    return sources
+    return credentials.field_sources(session, NAMESPACE)
 
 
 def overall_config_source(field_sources: Dict[str, str]) -> str:
     """按优先级概括当前配置来源，详情仍以 field_sources 为准。"""
-    for source in ("runtime_kv", "env", "ini", "default"):
-        if source in field_sources.values():
-            return source
-    return "default"
+    return credentials.overall_source(field_sources)
 
 
 def user_cache_key(source_id: str) -> str:

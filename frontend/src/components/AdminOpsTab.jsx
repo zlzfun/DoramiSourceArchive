@@ -13,7 +13,6 @@ import {
   Search,
   X,
   Loader2,
-  Check,
   MessageSquare,
   ShieldCheck,
   ShieldOff,
@@ -24,8 +23,6 @@ import {
   fetchAdminContent,
   fetchMediaStats,
   getXApiConfig,
-  saveXApiConfig,
-  testXApiConfig,
   getXApiQuota,
   getAiBetaGlobal,
   setAiBetaGlobal,
@@ -33,8 +30,6 @@ import {
   updatePublicShareGlobal,
   fetchAiUsage,
   getLLMConfig,
-  saveLLMConfig,
-  testLLMConfig,
   createAccount,
   updateAccount,
   resetAccountPassword,
@@ -78,7 +73,7 @@ function Kpi({ num, label, sub, tone }) {
   );
 }
 
-export default function AdminOpsTab({ showToast, currentUsername = '', pendingFocus = null, onPendingFocusApplied }) {
+export default function AdminOpsTab({ showToast, currentUsername = '', pendingFocus = null, onPendingFocusApplied, onOpenCredentials }) {
   const confirm = useConfirm();
   const [sub, setSub] = useState('user'); // 子页：user | content | ai
 
@@ -109,19 +104,10 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
   const [detailData, setDetailData] = useState(null);
   const [loginListOpen, setLoginListOpen] = useState(false); // 抽屉「最近登录」展开列表
 
-  // ── 模型配置（日报 + 阅读器 AI 共用的全局唯一配置，行内于 AI 子页总闸板）──
+  // ── 模型/X API 状态(只读 chip;编辑已收敛到 设置 → 凭据,v3.27 凭据整合台)──
   const [llmStatus, setLlmStatus] = useState(null);
-  const [llmForm, setLlmForm] = useState({ base_url: '', model: '', api_key: '', temperature: 0.3, max_tokens: 4096 });
-  const [savingLlm, setSavingLlm] = useState(false);
-  const [testingLlm, setTestingLlm] = useState(false);
-
-  // ── X API（社交源采集）：凭据配置 + 按量付费开销（内容子页）──
-  // 与模型配置同构:token 只写不回显(后端脱敏),测试连通复用保存后的运行时配置。
   const [xStatus, setXStatus] = useState(null);
   const [xQuota, setXQuota] = useState(null);
-  const [xForm, setXForm] = useState({ bearer_token: '', base_url: '', max_results: 25, monthly_budget_usd: 5 });
-  const [savingX, setSavingX] = useState(false);
-  const [testingX, setTestingX] = useState(false);
 
   // ── AI 用量看板 ──
   const [usage, setUsage] = useState(null);
@@ -152,10 +138,7 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
   useModalA11y(Boolean(resetTarget) && resetModal.mounted, () => setResetTarget(null), resetPanelRef);
   useModalA11y(Boolean(detailUser), () => setDetailUser(null), detailPanelRef);
 
-  const loadLlm = useCallback(() => getLLMConfig().then((d) => {
-    setLlmStatus(d);
-    setLlmForm((f) => ({ ...f, base_url: d.base_url || '', model: d.model || '', temperature: d.temperature ?? 0.3, max_tokens: d.max_tokens ?? 4096, api_key: '' }));
-  }).catch(() => {}), []);
+  const loadLlm = useCallback(() => getLLMConfig().then(setLlmStatus).catch(() => {}), []);
 
   const loadUsage = useCallback((d) => fetchAiUsage(d).then(setUsage).catch(() => {}), []);
 
@@ -164,16 +147,7 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
   const loadMedia = useCallback(() => fetchMediaStats().then(setMedia).catch(() => {}), []);
 
   const loadX = useCallback(() => Promise.all([
-    getXApiConfig().then((d) => {
-      setXStatus(d);
-      setXForm((f) => ({
-        ...f,
-        base_url: d.base_url || '',
-        max_results: d.max_results ?? 25,
-        monthly_budget_usd: d.monthly_budget_usd ?? 5,
-        bearer_token: '', // 后端永不回显明文,输入框始终留空 = 不改
-      }));
-    }).catch(() => {}),
+    getXApiConfig().then(setXStatus).catch(() => {}),
     getXApiQuota().then(setXQuota).catch(() => {}),
   ]), []);
 
@@ -236,92 +210,6 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, [createModalOpen, detailUser, resetTarget]);
-
-  const updateLlm = (key, value) => setLlmForm((f) => ({ ...f, [key]: value }));
-  const canTestLlm = Boolean(llmForm.base_url.trim() && llmForm.model.trim() && (llmForm.api_key.trim() || llmStatus?.api_key_set));
-
-  const persistLlm = async () => {
-    const payload = {
-      base_url: llmForm.base_url.trim(),
-      model: llmForm.model.trim(),
-      temperature: Number(llmForm.temperature),
-      max_tokens: Number(llmForm.max_tokens),
-    };
-    if (llmForm.api_key.trim()) payload.api_key = llmForm.api_key.trim();
-    await saveLLMConfig(payload);
-  };
-
-  const handleSaveLlm = async () => {
-    setSavingLlm(true);
-    try {
-      await persistLlm();
-      showToast('已保存模型配置', 'success');
-      await loadLlm();
-    } catch (error) {
-      showToast(error.message || '保存失败', 'error');
-    } finally {
-      setSavingLlm(false);
-    }
-  };
-
-  // ── X API 配置:保存 / 测试连通 ──
-  const updateX = (key, value) => setXForm((f) => ({ ...f, [key]: value }));
-  const xTokenReady = Boolean(xForm.bearer_token.trim() || xStatus?.bearer_token_set);
-
-  const persistX = async () => {
-    const payload = {
-      base_url: xForm.base_url.trim(),
-      max_results: Number(xForm.max_results),
-      monthly_budget_usd: Number(xForm.monthly_budget_usd),
-    };
-    if (xForm.bearer_token.trim()) payload.bearer_token = xForm.bearer_token.trim();
-    await saveXApiConfig(payload);
-  };
-
-  const handleSaveX = async () => {
-    setSavingX(true);
-    try {
-      await persistX();
-      showToast('已保存 X API 配置', 'success');
-      await loadX();
-    } catch (error) {
-      showToast(error.message || '保存失败', 'error');
-    } finally {
-      setSavingX(false);
-    }
-  };
-
-  const handleTestX = async () => {
-    setTestingX(true);
-    try {
-      await persistX();
-      const r = await testXApiConfig();
-      await loadX();
-      // 探针花费如实转述,不隐瞒开销:命中当日去重时为 $0,否则约 $0.005~0.010
-      const cost = r.deduplicated_today
-        ? '本次未产生费用'
-        : `本次探针 $${Number(r.estimated_cost_usd || 0).toFixed(3)}`;
-      showToast(`连接正常 · ${cost}`, 'success');
-    } catch (error) {
-      showToast(error.message || '连接失败', 'error');
-    } finally {
-      setTestingX(false);
-    }
-  };
-
-  const handleTestLlm = async () => {
-    setTestingLlm(true);
-    try {
-      await persistLlm();
-      const r = await testLLMConfig();
-      await loadLlm();
-      showToast(`已连接 · ${r.model} · ${r.latency_ms}ms`, 'success');
-    } catch (error) {
-      showToast(error.message || '连接失败', 'error');
-    } finally {
-      setTestingLlm(false);
-    }
-  };
 
   const handleToggleGlobalAi = async () => {
     const next = !globalAi;
@@ -794,50 +682,23 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
                 </section>
               </div>
 
-              {/* ── X API（社交源采集）：唯一按量付费的外部接口，凭据与开销都在此 ── */}
+              {/* ── X API(社交源采集):按量付费开销观测面;凭据编辑已收敛到 设置 → 凭据 ── */}
               <div className="zone-head">
                 <span className="zone-title">X API</span>
-                <span className="zone-hint">社交源采集凭据与按量付费开销</span>
-                {/* 配置来源:凭据可能来自环境变量/ini,此时表单里保存的运行时值不一定生效 */}
-                {xStatus?.source && (
-                  <span className="zone-badge">
-                    {{ runtime_kv: '运行时配置', env: '环境变量', ini: '配置文件', default: '默认值' }[xStatus.source] || xStatus.source}
-                  </span>
-                )}
-                {xQuota?.blocked && <span className="zone-badge" style={{ color: 'var(--state-bad)' }}>已达预算上限 · 停止抓取</span>}
-              </div>
-              <section className="surface-card card-pad rounded-[var(--r-card)]">
-                <div className="model-fields">
-                  <label className="model-field">bearer_token
-                    <input
-                      type="password"
-                      value={xForm.bearer_token}
-                      onChange={(e) => updateX('bearer_token', e.target.value)}
-                      placeholder={xStatus?.bearer_token_set ? '留空不改' : 'AAAA…'}
-                      className="model-input-grow"
-                    />
-                  </label>
-                  <label className="model-field">base_url
-                    <input value={xForm.base_url} onChange={(e) => updateX('base_url', e.target.value)} placeholder="https://api.x.com/2" size={20} />
-                  </label>
-                  <label className="model-field">单次上限
-                    <input type="number" step="5" min="5" max="100" value={xForm.max_results} onChange={(e) => updateX('max_results', e.target.value)} style={{ width: 58 }} />
-                  </label>
-                  <label className="model-field">月度预算 $
-                    <input type="number" step="0.5" min="0" value={xForm.monthly_budget_usd} onChange={(e) => updateX('monthly_budget_usd', e.target.value)} style={{ width: 64 }} />
-                  </label>
-                  <button type="button" className="model-btn" onClick={handleTestX} disabled={testingX || savingX || !xTokenReady}>
-                    {testingX ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />} 测试连通
-                  </button>
-                  <button type="button" className="model-btn" onClick={handleSaveX} disabled={savingX}>
-                    {savingX ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} 保存
+                <span className="zone-hint">社交源采集的按量付费开销(按返回资源计费,非请求次数)</span>
+                {xQuota?.blocked && <span className="stamp stamp-bad">已达预算上限 · 停止抓取</span>}
+                <div className="zone-acts">
+                  <button
+                    type="button"
+                    className="model-chip"
+                    title="前往设置编辑 X API 凭据"
+                    onClick={() => onOpenCredentials?.()}
+                  >
+                    <i className={xStatus?.configured ? '' : 'is-off'} />凭据{' '}
+                    <b>{xStatus?.bearer_token_set ? (xStatus.bearer_token_preview || '已配置') : '未配置'}</b>
                   </button>
                 </div>
-                <p className="tiny-meta" style={{ marginTop: 10 }}>
-                  计费按<b>实际返回的资源</b>而非请求次数，所以「单次上限」调大不会增加开销，只会降低积压漏抓的风险。
-                  达到月度预算后自动停止抓取（发出请求前即拦截），Developer Console 的硬上限仍是最后一道保险。
-                </p>
-              </section>
+              </div>
 
               {xQuota && (
                 <section className="surface-card kpi-strip" style={{ marginTop: 12 }} aria-label="X API 用量">
@@ -902,29 +763,16 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
               className={`ledger-switch ${globalAi ? 'is-on' : ''}`}
             />
             <span className="ai-divider" />
-            <div className="model-fields">
-              <label className="model-field">base_url
-                <input value={llmForm.base_url} onChange={(e) => updateLlm('base_url', e.target.value)} placeholder="https://api.deepseek.com/v1" className="model-input-grow" />
-              </label>
-              <label className="model-field">model
-                <input value={llmForm.model} onChange={(e) => updateLlm('model', e.target.value)} placeholder="deepseek-chat" size={12} />
-              </label>
-              <label className="model-field">api_key
-                <input type="password" value={llmForm.api_key} onChange={(e) => updateLlm('api_key', e.target.value)} placeholder={llmStatus?.api_key_set ? '留空不改' : 'sk-...'} size={12} />
-              </label>
-              <label className="model-field">temp
-                <input type="number" step="0.1" min="0" max="2" value={llmForm.temperature} onChange={(e) => updateLlm('temperature', e.target.value)} style={{ width: 52 }} />
-              </label>
-              <label className="model-field">max_tokens
-                <input type="number" step="256" min="256" value={llmForm.max_tokens} onChange={(e) => updateLlm('max_tokens', e.target.value)} style={{ width: 68 }} />
-              </label>
-              <button type="button" className="model-btn" onClick={handleTestLlm} disabled={testingLlm || savingLlm || !canTestLlm}>
-                {testingLlm ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />} 测试连通
-              </button>
-              <button type="button" className="model-btn" onClick={handleSaveLlm} disabled={savingLlm}>
-                {savingLlm ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} 保存
-              </button>
-            </div>
+            {/* 模型编辑已收敛到 设置 → 凭据(v3.27);此处只留状态 chip 回指 */}
+            <button
+              type="button"
+              className="model-chip"
+              title="前往设置编辑模型凭据"
+              onClick={() => onOpenCredentials?.()}
+            >
+              <i className={llmStatus?.configured ? '' : 'is-off'} />模型{' '}
+              <b>{llmStatus?.configured ? (llmStatus.model || '已配置') : '未配置'}</b>
+            </button>
           </section>
 
           {!usage || usage.totals.calls === 0 ? (

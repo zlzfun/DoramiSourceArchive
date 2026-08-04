@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FileText, Info, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
+import { FileText, Info, KeyRound, MessageSquare, Package, Palette, Plug2, Rss, User, X } from 'lucide-react';
 import { useModalTransition } from '../hooks/useModalTransition';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { markFeedbackSeen } from '../api';
@@ -9,6 +9,7 @@ import FeedTokenSection from './settings/FeedTokenSection';
 import McpAccessSection from './settings/McpAccessSection';
 import SkillSection from './settings/SkillSection';
 import DataSyncSection from './settings/DataSyncSection';
+import CredentialsSection from './settings/CredentialsSection';
 import FeedbackSection from './settings/FeedbackSection';
 import AboutSection from './settings/AboutSection';
 
@@ -25,6 +26,7 @@ const HINTS = {
   mcp: '把内容接进你的 Agent 工具',
   skill: '装进 Agent 的每日资讯技能',
   sync: '部署端之间搬运文章归档',
+  credentials: '对外访问机密的单点保管与编辑',
   feedback: '把想法与问题告诉管理员',
   about: '产品与账户信息',
 };
@@ -69,6 +71,8 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
       items: [
         // 管理组只在管理台界面出现;admin 在阅读器界面时设置柜与读者同观感。
         { id: 'sync', label: '数据同步', icon: FileText, show: adminConsole && (collectorEnabled || readerEnabled) },
+        // 凭据整合台(v3.27 拍板 B):外部凭据单点编辑;消费页 chip 深链至此。
+        { id: 'credentials', label: '凭据', icon: KeyRound, show: adminConsole },
       ],
     },
   ].map(group => ({ ...group, items: group.items.filter(item => item.show !== false) }))
@@ -188,6 +192,9 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
                 canImport={readerEnabled}
                 onArticlesChanged={onArticlesChanged}
               />
+            )}
+            {activeSection.id === 'credentials' && adminConsole && (
+              <CredentialsSection showToast={showToast} onNavigate={setActive} />
             )}
             {activeSection.id === 'feedback' && (
               <FeedbackSection showToast={showToast} />

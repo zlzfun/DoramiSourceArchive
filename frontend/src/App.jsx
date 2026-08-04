@@ -860,7 +860,7 @@ export default function App() {
                   showToast={showToast}
                   collectorEnabled={runtimeInfo.collector_enabled}
                   isAdmin={runtimeInfo.account_role === 'admin'}
-                  onOpenModelConfig={() => jumpWithFocus('admin', null, { tab: 'admin', payload: { sub: 'ai' } })}
+                  onOpenModelConfig={() => openSettings('credentials')}
                 />
               </TabBoundary>
             </div>
@@ -873,6 +873,7 @@ export default function App() {
                   currentUsername={authState.user?.username}
                   pendingFocus={pendingFocus?.tab === 'admin' ? pendingFocus.payload : null}
                   onPendingFocusApplied={clearPendingFocus}
+                  onOpenCredentials={() => openSettings('credentials')}
                 />
               </TabBoundary>
             </div>
