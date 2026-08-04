@@ -486,3 +486,22 @@ def test_admin_ai_usage_endpoint(monkeypatch, tmp_path):
     with TestClient(app_module.app) as client:
         _login(client, "user", "user")
         assert client.get("/api/admin/ai-usage").status_code == 403
+
+
+# ==================== 设置柜凭据区补充端点(v3.27) ====================
+def test_admin_credentials_overview(monkeypatch, tmp_path):
+    """GITHUB_TOKEN/GH_TOKEN 只回存在性布尔、绝不回值;admin-only。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        assert client.get("/api/admin/credentials").json() == {"github_token_set": False}
+        monkeypatch.setenv("GH_TOKEN", "ghp_should_never_leak")
+        body = client.get("/api/admin/credentials").json()
+        assert body == {"github_token_set": True}
+        assert "ghp_should_never_leak" not in str(body)
+
+    with TestClient(app_module.app) as client:
+        _login(client, "user", "user")
+        assert client.get("/api/admin/credentials").status_code == 403

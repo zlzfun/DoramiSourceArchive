@@ -28,7 +28,7 @@ export default function DailyBriefTab({ showToast, collectorEnabled = false, isA
             <button
               type="button"
               className="model-chip"
-              title="前往运维管理配置模型"
+              title="前往设置编辑模型凭据"
               onClick={() => onOpenModelConfig?.()}
             >
               <i className={llmOk ? '' : 'is-off'} />模型 <b>{llmOk ? (llmStatus.model || '已配置') : '未配置'}</b>

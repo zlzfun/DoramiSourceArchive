@@ -4198,6 +4198,31 @@ input[type="radio"] {
   .sett-sync-stats { display: flex; flex-wrap: wrap; gap: 6px 26px; }
   .sett-sync-stats b { font-size: 13px; font-variant-numeric: tabular-nums; }
 
+  /* 凭据区(v3.27 凭据整合台):外部凭据的单点编辑卡 + 只读回指行。
+     卡语法沿数据同步整幅实线卡;来源徽记(mono 微签)回答「有效值从哪来」——
+     凭据可能来自环境变量/ini,徽记与后端 field_sources 对应。 */
+  .cred-card { border: 1px solid var(--dorami-border); border-radius: var(--r-card); padding: 14px 16px 13px; }
+  .cred-card + .cred-card { margin-top: 12px; }
+  .cred-head { display: flex; align-items: center; gap: 7px; }
+  .cred-head svg { width: 15px; height: 15px; flex: none; color: var(--dorami-muted); }
+  .cred-title { font-size: 12.5px; font-weight: 700; }
+  .cred-head-right { margin-left: auto; display: flex; align-items: center; gap: 7px; }
+  .cred-sub { font-size: 11.5px; color: var(--dorami-faint); line-height: 1.7; margin: 2px 0 10px; }
+  .cred-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .cred-field-wide { grid-column: 1 / -1; }
+  .src-badge { font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--dorami-muted);
+    background: var(--dorami-well); padding: 1.5px 6px; border-radius: var(--r-sm); white-space: nowrap; }
+  .src-badge.is-env { color: var(--state-warn); background: var(--state-warn-bg); }
+  .cred-sec { margin-top: 16px; }
+  .cred-sec-title { font-size: 12.5px; font-weight: 700; margin-bottom: 8px; }
+  .cred-refs { border: 1px solid var(--dorami-border); border-radius: var(--r-card); }
+  .cred-ref-row { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; padding: 10px 14px; }
+  .cred-ref-row + .cred-ref-row { border-top: 1px solid var(--dorami-border); }
+  .cred-ref-name { font-size: 12.5px; font-weight: 700; }
+  .cred-ref-meta { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); min-width: 0; }
+  .cred-ref-meta b { font-family: var(--mono); font-weight: 600; color: var(--dorami-muted); }
+  .cred-ref-act { margin-left: auto; flex: none; }
+
   .sett-kv { display: grid; grid-template-columns: 88px 1fr; gap: 7px 12px; font-size: 12.5px; padding: 4px 2px; }
   .sett-kv dt { color: var(--dorami-faint); font-size: 11px; font-weight: 600; padding-top: 1px; }
   .sett-kv dd { color: var(--dorami-ink-2); font-weight: 500; font-family: var(--mono); font-size: 11.5px; }

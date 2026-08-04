@@ -463,6 +463,11 @@ export function testXApiConfig() {
   return request('/x-api/config/test', { method: 'POST', errorMsg: 'X API 连接测试失败' });
 }
 
+// 设置柜凭据区补充:部署级 env-only 机密(GITHUB_TOKEN)的存在性,只回布尔。
+export function fetchCredentialsOverview() {
+  return request('/admin/credentials', { errorMsg: '获取凭据概览失败' });
+}
+
 export function getXApiQuota() {
   return request('/x-api/quota', { errorMsg: '获取 X API 用量失败' });
 }
