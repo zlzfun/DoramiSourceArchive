@@ -38,6 +38,9 @@ const FetchRunsTab = lazy(() => import('./components/FetchRunsTab'));
 const DailyBriefTab = lazy(() => import('./components/DailyBriefTab'));
 const AdminOpsTab = lazy(() => import('./components/AdminOpsTab'));
 const ReaderTab = lazy(() => import('./components/ReaderTab'));
+// 移动壳(移动波 Wave2):≤767px 视口整站以「页面栈 + 底部 TabBar」形态呈现阅读器,
+// 桌面四带布局不下放;独立 chunk,桌面用户不下载。
+const MobileReader = lazy(() => import('./components/mobile/MobileReader'));
 
 // Tab chunk 加载期的占位（与顶层 checking-state 同语汇，克制不喧宾夺主）。
 function TabFallback() {
@@ -155,6 +158,11 @@ function BrandLogo({ logoError, onLogoError, rail = false }) {
 }
 
 export default function App() {
+  // 移动分流(移动波 Wave2):首帧一次性判定,不做拖拽窗口热切换——两棵渲染树间的
+  // 状态迁移不值得为非真实场景买单;手机旋转横屏仍是触屏,保持移动壳。
+  const [isMobile] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
+  );
   const [nav, setNav] = useState(navFromHash);
   const navRef = useRef(nav);
   const activeTab = nav.tab;
@@ -594,6 +602,48 @@ export default function App() {
         <Loader2 className="mr-3 h-5 w-5 animate-spin text-blue-600" />
         <span className="text-sm font-bold">正在载入工作台</span>
         {arrivalOverlay}
+      </div>
+    );
+  }
+
+  // ── 移动壳(≤767px):登录门/runtime/主题/设置柜等管道全部共用,仅渲染树分叉。
+  //    admin 在手机上同样落阅读器(管理台不下放移动端);设置柜按读者面观感呈现。
+  if (isMobile) {
+    return (
+      <div className={`m-root font-sans${arrival === 'fading' ? ' app-arriving' : ''}`}>
+        {arrivalOverlay}
+        <Toast show={toast.show} message={toast.message} type={toast.type} onClose={hideToast} />
+        <SettingsModal
+          open={settingsOpen}
+          initialSection={settingsSection}
+          onClose={() => setSettingsOpen(false)}
+          theme={theme}
+          onThemeChange={setTheme}
+          runtimeInfo={runtimeInfo}
+          readerSurface
+          username={authState.user?.username}
+          avatar={authState.user?.avatar}
+          onUserUpdated={handleUserUpdated}
+          onLogout={() => { setSettingsOpen(false); handleLogout(); }}
+          showToast={showToast}
+          onArticlesChanged={markArticlesDirty}
+          feedbackUnread={feedbackUnread}
+          onFeedbackSeen={handleFeedbackSeen}
+        />
+        <TabBoundary>
+          <MobileReader
+            showToast={showToast}
+            aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured}
+            account={authState.user}
+            themePref={theme}
+            onSetTheme={setTheme}
+            onOpenSettings={(section) => openSettings(section)}
+            onLogout={handleLogout}
+            feedbackUnread={feedbackUnread}
+            initialArticleId={deepLinkArticle}
+            onDeepLinkConsumed={clearDeepLink}
+          />
+        </TabBoundary>
       </div>
     );
   }

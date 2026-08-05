@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* 移动壳样式(移动波 Wave2):全部选择器 .m-* 前缀,桌面零波及;见文件头注 */
+@import "./mobile.css";
 
 /* 排除 ESLint 配置：eslint.config.js 的设计护栏提示文案里含示例 class 字面量
    （如 rounded-[var(--r-sm|control|card|overlay|pill)]），会被 Tailwind v4 自动内容

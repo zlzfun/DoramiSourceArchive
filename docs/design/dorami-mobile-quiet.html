@@ -1,0 +1,685 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>移动端 H5 阅读器 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   移动端 H5 阅读器 · 静默仪器样页(移动波提案)
+   概念:同一部署、同一会话,375px 视口下由 main.jsx 按 matchMedia 分流出
+   移动壳(MobileApp)——桌面四带布局不下放,移动端是「页面栈 + 底部 TabBar」
+   的原生形态翻译。数据层/工具层/叶子组件全量复用,布局层全新。
+
+   设计决策(样页即论据):
+   ① **底部 4-Tab = 视图轨的移动翻译**:文章/动态/社交/我的。三容器模型
+      原样保留(社交仍是卡片流直读、不进正文页);「发现」不占 Tab——它是
+      低频目的地,从 我的/源抽屉 进入。选中语法沿全站轨语言:wash 块 +
+      accent-ink 字(.reader-vrail-btn.is-on 的横向变体),icon 带 11px 文字
+      标签(触屏无 tooltip,icon-only 不可读)。
+   ② **源栏降级为过滤抽屉**(§4.1.2 导航是目的地,过滤是修饰符):选源是
+      作用在当前容器上的过滤,不是目的地,故不占 Tab、从条目流顶栏左钮
+      滑入。聚合入口(全部文章/只看收藏)与分组源行语法照搬桌面源栏。
+   ③ **hover 原语的触屏翻译表**:条目卡收藏星→已收藏常显、未收藏不画
+      (呈现的诚实:动作入长按单,不画摸不到的钮);右键菜单→**长按底部
+      动作单**(items 三组次序与桌面 v3.28 右键完全同构,跨端肌肉记忆);
+      源行退订→长按源行;RailUserFlyout→「我的」页,退出两击防呆→
+      确认对话框(触屏 hover 展开会吞首击)。
+   ④ **正文页 = push 全屏页**:无底部 Tab(沉浸阅读,返回即出栈);衬线
+      标题/正文语法(--font-serif)、阅读进度线、上一/下一篇 pager 照搬
+      阅读窗;顶栏动作 = 收藏/分享/更多(更多=同款底部动作单)。
+   ⑤ **整页滚动 + 原生滚动条**:useOverlayScrollbar 不下放(它解决的是
+      macOS gutter 占位,移动端原生即 overlay);根滚动封死规则按断点豁免。
+   ⑥ **safe-area**:viewport-fit=cover + env(safe-area-inset-bottom) 垫进
+      TabBar/动作单底部(样页以 home 指示条示意)。
+   ⑦ **搜索就地展开**照搬:顶栏紧凑图标,点开输入框顶替标题(§4.1.2)。
+   纪律:token/刻度 1:1 取自 frontend/src/index.css;工作区动效
+   feedback-only(§7);读者可见文案不泄内部架构词(§1);
+   触摸目标 ≥44px(动作单行高、TabBar);正文对比度 AA(§2)。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif;
+
+  --dorami-blue: #5b54e8; --dorami-blue-2: #7b6cf0;
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-card: rgba(255, 255, 255, 0.96); --dorami-wash: rgba(91, 84, 232, 0.08);
+  --dorami-well: #f1f5f9;
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-strong: rgba(11, 18, 32, 0.15);
+  --dorami-border-soft: rgba(11, 18, 32, 0.06);
+  --dorami-card-bd: transparent; --dorami-edge: rgba(255, 255, 255, 0.62);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --sh-3: 0 4px 10px rgba(11, 18, 32, 0.08), 0 16px 36px rgba(11, 18, 32, 0.11);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-overlay: 16px; --r-pill: 9999px;
+  --state-ok: #059669;   --state-ok-bg: #ecfdf5;
+  --state-warn: #b45309; --state-warn-bg: #fffbeb;
+  --state-bad: #e11d48;  --state-bad-bg: #fff1f2;
+  --state-idle: #64748b; --state-idle-bg: #f1f5f9;
+  --motion-fast: 150ms; --motion-medium: 240ms; --motion-slow: 300ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --rd-list-bg: var(--dorami-soft); --rd-pane-bg: var(--dorami-surface);
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-card: rgba(32, 37, 47, 0.96);
+  --dorami-wash: rgba(124, 112, 235, 0.13);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-strong: rgba(255, 255, 255, 0.16);
+  --dorami-border-soft: rgba(255, 255, 255, 0.07);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08); --dorami-edge: rgba(255, 255, 255, 0.05);
+  --state-ok: #34d399;   --state-ok-bg: #0f241b;
+  --state-warn: #fbbf24; --state-warn-bg: #281e10;
+  --state-bad: #fb7185;  --state-bad-bg: #2a151a;
+  --state-idle: #99a1ad; --state-idle-bg: #15181f;
+  --dorami-blue: #4d45b5; --dorami-blue-2: #5f57c8;
+  --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --sh-3: 0 4px 10px rgba(0, 0, 0, 0.5), 0 16px 36px rgba(0, 0, 0, 0.6);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --rd-list-bg: var(--dorami-well); --rd-pane-bg: var(--dorami-soft);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink);
+  font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+[data-theme="dark"] body {
+  background:
+    radial-gradient(ellipse 70% 50% at 12% -8%, rgba(124, 112, 235, 0.10), transparent 58%),
+    linear-gradient(180deg, #11131a 0%, var(--dorami-canvas) 55%);
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+svg { flex: none; }
+
+.page { padding: 26px 32px 48px; max-width: 1300px; margin: 0 auto; }
+.page-head { display: flex; align-items: center; gap: 14px; min-height: 48px; margin-bottom: 6px; }
+.page-title { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; }
+.page-head-sp { flex: 1; }
+.theme-btn { width: 34px; height: 34px; display: grid; place-items: center;
+  border-radius: var(--r-control); color: var(--dorami-faint);
+  border: 1px solid var(--dorami-border); background: var(--dorami-surface); }
+.theme-btn:hover { color: var(--dorami-ink); }
+.theme-btn svg { width: 17px; height: 17px; }
+.zone-head { display: flex; align-items: baseline; gap: 10px; margin: 26px 2px 14px; flex-wrap: wrap; }
+.zone-title { font-size: 14px; font-weight: 700; }
+.zone-hint { font-size: 12px; font-weight: 500; color: var(--dorami-faint); }
+
+.phones { display: grid; grid-template-columns: repeat(auto-fill, 375px); gap: 24px; justify-content: start; }
+.phone-slot { display: flex; flex-direction: column; gap: 10px; }
+.phone-cap { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--dorami-faint); }
+.phone-note { font-size: 11.5px; font-weight: 500; line-height: 1.6; color: var(--dorami-faint); }
+
+/* 手机画框(样页机壳,非工作区 UI,圆角不入 canonical 家族) */
+.phone { position: relative; width: 375px; height: 724px; overflow: hidden;
+  border-radius: 30px; border: 1px solid var(--dorami-border-strong);
+  background: var(--rd-list-bg); box-shadow: var(--sh-3); }
+.p-status { height: 40px; display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 22px 0; font-family: var(--mono); font-size: 12px; font-weight: 500;
+  color: var(--dorami-ink-2); font-variant-numeric: tabular-nums; }
+.p-status svg { width: 15px; height: 15px; color: var(--dorami-ink-2); }
+.p-screen { position: absolute; inset: 40px 0 0; display: flex; flex-direction: column; }
+
+/* ── 顶栏(48px):左入口 / 标题 / 过滤器带 ── */
+.m-topbar { flex: none; height: 48px; display: flex; align-items: center; gap: 8px;
+  padding: 0 10px; background: var(--rd-list-bg); }
+.m-topbar.on-pane { background: var(--rd-pane-bg); border-bottom: 1px solid var(--dorami-border-soft); }
+.m-iconbtn { width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: var(--r-control); color: var(--dorami-muted); }
+.m-iconbtn:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+.m-iconbtn svg { width: 19px; height: 19px; }
+.m-iconbtn.is-fav { color: #f59e0b; }
+.m-title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+.m-title-src { font-size: 12px; font-weight: 500; color: var(--dorami-faint); margin-left: 2px; }
+.m-topbar-sp { flex: 1; }
+/* 全部/未读 seg(.mini-seg 刻度:壳26,拇指22,字11) */
+.mini-seg { display: inline-flex; align-items: center; gap: 2px; padding: 2px;
+  background: var(--dorami-well); border-radius: var(--r-pill); font-size: 11px; font-weight: 600; }
+.mini-seg-btn { min-height: 22px; padding: 0 10px; border-radius: var(--r-pill); color: var(--dorami-faint); }
+.mini-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+
+/* ── 条目流(语法照搬桌面 .reader-entry,含未读点/星标/日期组头) ── */
+.m-list { flex: 1; overflow: hidden; padding: 0 6px; }
+.reader-date-label { padding: 12px 12px 5px 18px; font-family: var(--mono); font-size: 11px;
+  font-weight: 400; letter-spacing: 0.1em; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.reader-entry { position: relative; display: block; width: 100%; text-align: left;
+  padding: 11px 8px 11px 18px; border-radius: var(--r-control); cursor: default; }
+.reader-entry.is-active { background: var(--dorami-surface); box-shadow: var(--sh-1); }
+/* 长按锚定态(桌面 .is-ctx-anchor 同语义):wash 淡底,抬到遮罩上方与动作单同层 */
+.reader-entry.is-ctx-anchor { background: var(--dorami-wash); position: relative; z-index: 6; }
+.reader-entry-top { display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
+.reader-entry-src { flex: 1; min-width: 0; font-size: 11.5px; font-weight: 400;
+  color: var(--dorami-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reader-entry-time { flex-shrink: 0; font-size: 11.5px; font-weight: 400;
+  color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.reader-entry-titlerow { position: relative; display: block; }
+.reader-unread-dot { position: absolute; left: -11px; top: 7px; width: 6px; height: 6px;
+  border-radius: var(--r-pill); background: var(--dorami-accent); }
+.reader-entry-title { font-size: 14px; font-weight: 600; line-height: 1.5; color: var(--dorami-ink);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.reader-entry.has-fav .reader-entry-title { padding-right: 22px; }
+.reader-entry-fav { position: absolute; top: 1px; right: 0; color: #f59e0b; }
+.reader-entry-fav svg { width: 14px; height: 14px; }
+.reader-entry-excerpt { margin-top: 2px; font-size: 12.5px; font-weight: 400; line-height: 1.55;
+  color: var(--dorami-faint); display: block; white-space: nowrap; overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+
+/* ── 底部 TabBar(决策①:轨语言的横向翻译;wash 块 + accent-ink + 文字标签) ── */
+.m-tabbar { flex: none; display: flex; align-items: stretch; padding: 6px 8px 0;
+  background: var(--rd-pane-bg); border-top: 1px solid var(--dorami-border-soft); }
+.m-tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 2px 0 6px; color: var(--dorami-faint); }
+.m-tab-ic { width: 46px; height: 28px; display: grid; place-items: center; border-radius: var(--r-control); }
+.m-tab svg { width: 20px; height: 20px; }
+.m-tab span { font-size: 11px; font-weight: 600; }
+.m-tab.is-on { color: var(--dorami-accent-ink); }
+.m-tab.is-on .m-tab-ic { background: var(--dorami-wash); }
+.m-home { height: 22px; display: grid; place-items: center; background: var(--rd-pane-bg); }
+.m-home i { width: 120px; height: 5px; border-radius: var(--r-pill); background: var(--dorami-border-strong); }
+
+/* ── 正文页(决策④:push 全屏,无 TabBar;衬线语法照搬阅读窗) ── */
+.m-progress { position: relative; flex: none; height: 2px; background: transparent; }
+.m-progress i { position: absolute; left: 0; top: 0; height: 2px; width: 34%;
+  background: var(--dorami-accent); border-radius: var(--r-pill); }
+.m-pane { flex: 1; overflow: hidden; background: var(--rd-pane-bg); padding: 18px 20px 0; }
+.m-kicker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+  color: var(--dorami-faint); margin-bottom: 10px; }
+.m-pane-title { font-family: var(--font-serif); font-size: 23px; font-weight: 700;
+  line-height: 1.35; letter-spacing: -0.005em; margin-bottom: 10px; }
+.m-pane-meta { font-size: 12px; font-weight: 500; color: var(--dorami-faint); margin-bottom: 16px; }
+.m-pane-body { font-size: 15px; line-height: 1.78; color: var(--dorami-ink-2); }
+.m-pane-body p { margin-bottom: 14px; }
+.m-pane-body .m-img { height: 148px; border-radius: var(--r-control); background: var(--dorami-well);
+  display: grid; place-items: center; color: var(--dorami-faint); margin-bottom: 14px; }
+.m-pane-body .m-img svg { width: 22px; height: 22px; }
+.m-pager { flex: none; display: flex; gap: 10px; padding: 10px 14px 12px;
+  background: var(--rd-pane-bg); border-top: 1px solid var(--dorami-border-soft); }
+.m-pager-btn { flex: 1; min-height: 44px; display: flex; flex-direction: column; justify-content: center;
+  gap: 1px; padding: 0 12px; border-radius: var(--r-control); background: var(--dorami-soft); text-align: left; }
+.m-pager-btn.next { text-align: right; }
+.m-pager-k { font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em; color: var(--dorami-faint); }
+.m-pager-t { font-size: 12px; font-weight: 600; color: var(--dorami-ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── 我的页(决策③:RailUserFlyout 职责并入;分组列表) ── */
+.m-me { flex: 1; overflow: hidden; padding: 4px 14px 0; }
+.m-me-card { display: flex; align-items: center; gap: 12px; padding: 14px;
+  background: var(--dorami-surface); border: 1px solid var(--dorami-card-bd);
+  border-radius: var(--r-card); box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge); }
+.m-avatar { width: 44px; height: 44px; border-radius: var(--r-pill); display: grid; place-items: center;
+  font-size: 18px; font-weight: 800; color: #fff; background: linear-gradient(135deg, #14b8a6, #0d9488); }
+.m-me-name { font-size: 15px; font-weight: 700; }
+.m-me-sub { font-size: 12px; font-weight: 500; color: var(--dorami-faint); }
+.m-group { margin-top: 14px; background: var(--dorami-surface); border: 1px solid var(--dorami-card-bd);
+  border-radius: var(--r-card); box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge); overflow: hidden; }
+.m-row { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 46px;
+  padding: 0 14px; text-align: left; }
+.m-row + .m-row { border-top: 1px solid var(--dorami-border-soft); }
+.m-row svg { width: 18px; height: 18px; color: var(--dorami-muted); }
+.m-row-label { flex: 1; font-size: 13.5px; font-weight: 500; color: var(--dorami-ink-2); }
+.m-row-meta { font-size: 12px; font-weight: 500; color: var(--dorami-faint); }
+.m-row-chev svg { width: 15px; height: 15px; color: var(--dorami-faint); }
+.m-row.is-danger .m-row-label, .m-row.is-danger svg { color: var(--state-bad); }
+.m-seg3 { display: inline-flex; gap: 2px; padding: 2px; background: var(--dorami-well);
+  border-radius: var(--r-pill); font-size: 11px; font-weight: 600; }
+.m-seg3 button { min-height: 22px; padding: 0 9px; border-radius: var(--r-pill); color: var(--dorami-faint); }
+.m-seg3 button.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+
+/* ── 源抽屉(决策②:过滤抽屉,语法照搬桌面源栏) ── */
+.m-dim { position: absolute; inset: 0; background: rgba(11, 18, 32, 0.32); z-index: 5; }
+[data-theme="dark"] .m-dim { background: rgba(0, 0, 0, 0.5); }
+.m-drawer { position: absolute; inset-block: 0; left: 0; width: 300px; z-index: 6;
+  background: var(--rd-list-bg); box-shadow: var(--sh-3); padding: 52px 8px 12px;
+  display: flex; flex-direction: column; overflow: hidden; }
+.m-drawer-title { padding: 0 10px 10px; font-size: 14px; font-weight: 700; }
+.reader-agg-row { display: flex; align-items: center; gap: 9px; width: 100%;
+  min-height: 38px; padding: 0 10px; border-radius: var(--r-control); text-align: left; }
+.reader-agg-row svg { width: 16px; height: 16px; color: var(--dorami-faint); }
+.reader-agg-row span { font-size: 13px; font-weight: 400; color: var(--dorami-muted); }
+.reader-agg-row.is-on { background: var(--dorami-surface); box-shadow: var(--sh-1); }
+.reader-agg-row.is-on span { color: var(--dorami-ink); font-weight: 600; }
+.reader-agg-row.is-on svg { color: var(--dorami-accent); }
+.reader-agg-row.agg-fav.is-on svg { color: #f59e0b; }
+.src-group-label { padding: 12px 10px 5px; font-size: 10.5px; font-weight: 700;
+  letter-spacing: 0.04em; color: var(--dorami-faint); }
+.reader-source-row { position: relative; display: flex; align-items: center; gap: 9px;
+  width: 100%; min-height: 38px; padding: 0 10px; border-radius: var(--r-control);
+  border: 1px solid transparent; cursor: default; text-align: left; }
+.reader-source-row.is-active { background: var(--dorami-surface); box-shadow: var(--sh-1); }
+.src-logo { width: 18px; height: 18px; flex: none; border-radius: var(--r-sm);
+  display: grid; place-items: center; font-size: 10px; font-weight: 800; color: #fff; }
+.src-logo.is-round { border-radius: var(--r-pill); }
+.reader-source-name { font-size: 13px; font-weight: 400; color: var(--dorami-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.reader-source-row.has-unread .reader-source-name { color: var(--dorami-ink); font-weight: 500; }
+.reader-source-row.is-active .reader-source-name { color: var(--dorami-ink); font-weight: 600; }
+.m-drawer-foot { margin-top: auto; padding: 10px 10px 4px; font-size: 11.5px; font-weight: 500;
+  line-height: 1.6; color: var(--dorami-faint); border-top: 1px solid var(--dorami-border-soft); }
+.m-drawer-disc { display: flex; align-items: center; gap: 9px; min-height: 40px;
+  padding: 0 10px; border-radius: var(--r-control); }
+.m-drawer-disc svg { width: 16px; height: 16px; color: var(--dorami-muted); }
+.m-drawer-disc span { font-size: 13px; font-weight: 500; color: var(--dorami-ink-2); }
+
+/* ── 长按动作单(决策③:桌面右键菜单的 bottom-sheet 翻译,同组序) ── */
+.m-sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6;
+  background: var(--dorami-surface); border-radius: var(--r-overlay) var(--r-overlay) 0 0;
+  box-shadow: var(--sh-3); padding: 6px 10px 24px; }
+.m-sheet-grab { width: 36px; height: 5px; border-radius: var(--r-pill);
+  background: var(--dorami-border-strong); margin: 4px auto 8px; }
+.m-sheet-obj { padding: 4px 10px 10px; font-size: 12px; font-weight: 500; line-height: 1.5;
+  color: var(--dorami-faint); border-bottom: 1px solid var(--dorami-border-soft); margin-bottom: 4px;
+  display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.ctx-item { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 44px;
+  padding: 0 10px; border-radius: var(--r-control); color: var(--dorami-ink-2);
+  text-align: left; font-size: 14px; font-weight: 500; }
+.ctx-item svg { width: 17px; height: 17px; color: var(--dorami-faint); }
+.ctx-item.is-danger, .ctx-item.is-danger svg { color: var(--state-bad); }
+.ctx-item[aria-disabled] { opacity: 0.45; }
+.ctx-sep { height: 1px; margin: 4px 10px; background: var(--dorami-border); }
+
+/* ── 社交流(卡片语法取 social-quiet 子集;动作常显) ── */
+.m-social { flex: 1; overflow: hidden; padding: 10px 12px 0; display: flex;
+  flex-direction: column; gap: 10px; background: var(--rd-list-bg); }
+.tweet { position: relative; padding: 13px 14px; border: 1px solid var(--dorami-border-soft);
+  border-radius: var(--r-card); background: var(--rd-pane-bg); }
+.tw-body { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 10px; }
+.tw-avatar { width: 36px; height: 36px; border-radius: var(--r-pill); display: grid;
+  place-items: center; font-size: 13px; font-weight: 800; color: #fff; }
+.tw-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.tw-name { font-size: 13.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-handle { font-size: 12px; font-weight: 500; color: var(--dorami-faint); flex: none; }
+.tw-head-sp { flex: 1; }
+.tw-time { font-size: 12px; font-weight: 500; color: var(--dorami-faint); flex: none; }
+.tw-text { margin-top: 3px; font-size: 13.5px; line-height: 1.6; color: var(--dorami-ink-2); }
+.tw-acts { display: flex; gap: 2px; margin: 6px 0 0 -8px; }
+.tw-act { width: 32px; height: 28px; display: grid; place-items: center;
+  border-radius: var(--r-control); color: var(--dorami-faint); }
+.tw-act svg { width: 15px; height: 15px; }
+.tw-act.is-fav { color: #f59e0b; }
+.tw-media { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.tw-media i { height: 110px; border-radius: var(--r-control); background: var(--dorami-well);
+  display: grid; place-items: center; color: var(--dorami-faint); }
+.tw-media svg { width: 20px; height: 20px; }
+.tw-unread { position: absolute; left: -1px; top: 18px; width: 6px; height: 6px;
+  border-radius: var(--r-pill); background: var(--dorami-accent); }
+
+footer { margin: 34px 2px 0; font-size: 11px; color: var(--dorami-faint); }
+</style>
+</head>
+<body>
+
+<main class="page">
+  <div class="page-head">
+    <h1 class="page-title">移动端 H5 阅读器</h1>
+    <div class="page-head-sp"></div>
+    <button class="theme-btn" id="theme-toggle" title="切换亮暗">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>
+    </button>
+  </div>
+
+  <!-- ═══ 核心三屏 ═══ -->
+  <div class="zone-head">
+    <span class="zone-title">核心三屏 · 条目流 / 正文页 / 我的</span>
+    <span class="zone-hint">底部 4-Tab = 视图轨的移动翻译(wash 块选中);正文页 push 全屏无 Tab;「我的」承接 RailUserFlyout 全部职责</span>
+  </div>
+  <div class="phones">
+
+    <!-- ① 条目流(文章 Tab) -->
+    <div class="phone-slot">
+      <span class="phone-cap">① 文章 TAB · 条目流</span>
+      <div class="phone">
+        <div class="p-status"><span>9:41</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16"/></svg>
+        </div>
+        <div class="p-screen">
+          <div class="m-topbar">
+            <button class="m-iconbtn" title="订阅源">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h6"/></svg>
+            </button>
+            <span class="m-title">文章</span><span class="m-title-src">全部</span>
+            <div class="m-topbar-sp"></div>
+            <div class="mini-seg"><button class="mini-seg-btn is-on">全部</button><button class="mini-seg-btn">未读</button></div>
+            <button class="m-iconbtn" title="搜索">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            </button>
+          </div>
+          <div class="m-list">
+            <div class="reader-date-label">今天 · 08-05</div>
+            <div class="reader-entry">
+              <span class="reader-entry-top"><span class="reader-entry-src">量子位 · 资讯</span><span class="reader-entry-time">2 小时前</span></span>
+              <span class="reader-entry-titlerow"><span class="reader-unread-dot"></span><span class="reader-entry-title">大模型推理成本一年降了 90%,这条曲线还在陡降</span></span>
+              <span class="reader-entry-excerpt">从 API 定价到开源部署,推理成本的下降速度超过了所有人的预期,背后是三条技术路线的合流……</span>
+            </div>
+            <div class="reader-entry has-fav">
+              <span class="reader-entry-top"><span class="reader-entry-src">Anthropic 新闻 · 官方</span><span class="reader-entry-time">4 小时前</span></span>
+              <span class="reader-entry-titlerow"><span class="reader-unread-dot"></span><span class="reader-entry-title">Claude 新版本发布:更长的上下文与更稳的工具调用</span>
+              <span class="reader-entry-fav"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg></span></span>
+              <span class="reader-entry-excerpt">官方博客详解了本次更新的能力边界与评测结果,并给出迁移建议……</span>
+            </div>
+            <div class="reader-entry">
+              <span class="reader-entry-top"><span class="reader-entry-src">IT之家 AI · 资讯</span><span class="reader-entry-time">6 小时前</span></span>
+              <span class="reader-entry-titlerow"><span class="reader-entry-title">开源周报:本周值得关注的 8 个 AI 项目</span></span>
+              <span class="reader-entry-excerpt">从推理框架到数据管线,本周开源社区的动向整理,附上手体验与选型建议……</span>
+            </div>
+            <div class="reader-date-label">昨天 · 08-04</div>
+            <div class="reader-entry">
+              <span class="reader-entry-top"><span class="reader-entry-src">机器之心 · 资讯</span><span class="reader-entry-time">昨天 21:18</span></span>
+              <span class="reader-entry-titlerow"><span class="reader-unread-dot"></span><span class="reader-entry-title">对话式编程一年后:开发者工作流真的变了吗</span></span>
+              <span class="reader-entry-excerpt">我们访谈了 20 位一线工程师,聊了聊 AI 结对编程真实的收益与落差……</span>
+            </div>
+            <div class="reader-entry">
+              <span class="reader-entry-top"><span class="reader-entry-src">量子位 · 资讯</span><span class="reader-entry-time">昨天 18:02</span></span>
+              <span class="reader-entry-titlerow"><span class="reader-entry-title">具身智能新进展:双臂机器人学会叠衣服了</span></span>
+              <span class="reader-entry-excerpt">训练数据只用了 40 小时的真机演示,泛化到了没见过的衣物类型……</span>
+            </div>
+          </div>
+          <div class="m-tabbar">
+            <button class="m-tab is-on"><span class="m-tab-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><span>文章</span></button>
+            <button class="m-tab"><span class="m-tab-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M3 12h18M3 17h12"/></svg></span><span>动态</span></button>
+            <button class="m-tab"><span class="m-tab-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg></span><span>社交</span></button>
+            <button class="m-tab"><span class="m-tab-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><span>我的</span></button>
+          </div>
+          <div class="m-home"><i></i></div>
+        </div>
+      </div>
+      <p class="phone-note">收藏星仅已收藏时常显(未收藏不画摸不到的悬停钮,动作入长按单);未读点/日期组头/摘要渐隐语法与桌面条目列同源。顶栏搜索点开后输入框顶替标题(就地展开,§4.1.2)。</p>
+    </div>
+
+    <!-- ② 正文页 -->
+    <div class="phone-slot">
+      <span class="phone-cap">② 正文页(PUSH 全屏)</span>
+      <div class="phone">
+        <div class="p-status"><span>9:41</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16"/></svg>
+        </div>
+        <div class="p-screen">
+          <div class="m-topbar on-pane">
+            <button class="m-iconbtn" title="返回">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <div class="m-topbar-sp"></div>
+            <button class="m-iconbtn is-fav" title="取消收藏">
+              <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>
+            </button>
+            <button class="m-iconbtn" title="分享">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98m-.01-10.98-6.82 3.98"/></svg>
+            </button>
+            <button class="m-iconbtn" title="更多">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
+            </button>
+          </div>
+          <div class="m-progress"><i></i></div>
+          <div class="m-pane">
+            <div class="m-kicker">ANTHROPIC 新闻 · 官方</div>
+            <h2 class="m-pane-title">Claude 新版本发布:更长的上下文与更稳的工具调用</h2>
+            <div class="m-pane-meta">4 小时前 · 阅读量 36 · 译为中文</div>
+            <div class="m-pane-body">
+              <p>今天发布的新版本在两个方向上有明显提升:上下文窗口进一步扩展,长文档任务的稳定性显著改善;工具调用在多步任务里的成功率也有可观的提高。</p>
+              <div class="m-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div>
+              <p>官方给出的评测显示,在长程规划与代码理解两类任务上,新版本相对上一代的提升幅度分别达到……</p>
+              <p>迁移方面,API 兼容旧的调用方式,已有集成无需修改即可……</p>
+            </div>
+          </div>
+          <div class="m-pager">
+            <button class="m-pager-btn"><span class="m-pager-k">上一篇</span><span class="m-pager-t">大模型推理成本一年降了 90%</span></button>
+            <button class="m-pager-btn next"><span class="m-pager-k">下一篇</span><span class="m-pager-t">开源周报:本周值得关注的 8 个项目</span></button>
+          </div>
+          <div class="m-home"><i></i></div>
+        </div>
+      </div>
+      <p class="phone-note">衬线标题/kicker/进度线/上一下一篇全部照搬阅读窗语法;顶栏动作 = 收藏/分享/更多(更多弹画面⑤同款动作单)。进入即记一次阅读(刻意打开语义在 push 导航下天然成立)。</p>
+    </div>
+
+    <!-- ③ 我的页 -->
+    <div class="phone-slot">
+      <span class="phone-cap">③ 我的 TAB</span>
+      <div class="phone">
+        <div class="p-status"><span>9:41</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16"/></svg>
+        </div>
+        <div class="p-screen">
+          <div class="m-topbar"><span class="m-title" style="margin-left:8px">我的</span></div>
+          <div class="m-me">
+            <div class="m-me-card">
+              <span class="m-avatar">L</span>
+              <div>
+                <div class="m-me-name">linan</div>
+                <div class="m-me-sub">已订阅 12 个来源</div>
+              </div>
+            </div>
+            <div class="m-group">
+              <button class="m-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>
+                <span class="m-row-label">收藏</span><span class="m-row-meta">28</span>
+                <span class="m-row-chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></span>
+              </button>
+              <button class="m-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88"/></svg>
+                <span class="m-row-label">发现更多来源</span>
+                <span class="m-row-chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></span>
+              </button>
+            </div>
+            <div class="m-group">
+              <button class="m-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <span class="m-row-label">反馈与建议</span>
+                <span class="m-row-chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></span>
+              </button>
+              <div class="m-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+                <span class="m-row-label">外观</span>
+                <span class="m-seg3"><button>亮</button><button>暗</button><button class="is-on">跟随</button></span>
+              </div>
+              <button class="m-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span class="m-row-label">设置</span><span class="m-row-meta">账户 · 接入集成</span>
+                <span class="m-row-chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></span>
+              </button>
+            </div>
+            <div class="m-group">
+              <button class="m-row is-danger">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                <span class="m-row-label">退出登录</span>
+              </button>
+            </div>
+          </div>
+          <div class="m-tabbar">
+            <button class="m-tab"><span class="m-tab-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><span>文章</span></button>
+            <button class="m-tab"><span class="m-tab-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M3 12h18M3 17h12"/></svg></span><span>动态</span></button>
+            <button class="m-tab"><span class="m-tab-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg></span><span>社交</span></button>
+            <button class="m-tab is-on"><span class="m-tab-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><span>我的</span></button>
+          </div>
+          <div class="m-home"><i></i></div>
+        </div>
+      </div>
+      <p class="phone-note">RailUserFlyout 的全部职责(主题/设置/反馈/退出)并入本页;退出改确认对话框(触屏 hover 展开会吞首击,两击防呆语义换壳不换心)。「发现」从这里进——低频目的地不占 Tab。外观三态就地切换。</p>
+    </div>
+
+  </div>
+
+  <!-- ═══ 三个关键态 ═══ -->
+  <div class="zone-head">
+    <span class="zone-title">关键态 · 源抽屉 / 长按动作单 / 社交流</span>
+    <span class="zone-hint">抽屉=过滤器不是目的地;长按单与桌面右键菜单同组序(跨端肌肉记忆);社交卡动作常显、时间戳即原推链接</span>
+  </div>
+  <div class="phones">
+
+    <!-- ④ 源抽屉 -->
+    <div class="phone-slot">
+      <span class="phone-cap">④ 源抽屉(条目流顶栏左钮滑入)</span>
+      <div class="phone">
+        <div class="p-status"><span>9:41</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16"/></svg>
+        </div>
+        <div class="p-screen">
+          <div class="m-topbar">
+            <button class="m-iconbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h6"/></svg></button>
+            <span class="m-title">文章</span>
+          </div>
+          <div class="m-list">
+            <div class="reader-date-label">今天 · 08-05</div>
+            <div class="reader-entry">
+              <span class="reader-entry-top"><span class="reader-entry-src">量子位 · 资讯</span><span class="reader-entry-time">2 小时前</span></span>
+              <span class="reader-entry-titlerow"><span class="reader-unread-dot"></span><span class="reader-entry-title">大模型推理成本一年降了 90%,这条曲线还在陡降</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="m-dim"></div>
+        <aside class="m-drawer">
+          <div class="m-drawer-title">我的订阅</div>
+          <button class="reader-agg-row is-on">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            <span>全部文章</span>
+          </button>
+          <button class="reader-agg-row agg-fav">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>
+            <span>只看收藏</span>
+          </button>
+          <div class="src-group-label">官方</div>
+          <div class="reader-source-row has-unread"><span class="src-logo" style="background:#0b1220">O</span><span class="reader-source-name">OpenAI News</span></div>
+          <div class="reader-source-row"><span class="src-logo" style="background:#c96f4a">A</span><span class="reader-source-name">Anthropic 新闻</span></div>
+          <div class="src-group-label">媒体</div>
+          <div class="reader-source-row"><span class="src-logo" style="background:#5b54e8">量</span><span class="reader-source-name">量子位</span></div>
+          <div class="reader-source-row has-unread"><span class="src-logo" style="background:#d3403c">IT</span><span class="reader-source-name">IT之家 AI</span></div>
+          <div class="reader-source-row has-unread"><span class="src-logo" style="background:#16a34a">机</span><span class="reader-source-name">机器之心</span></div>
+          <div class="src-group-label">个人</div>
+          <div class="reader-source-row"><span class="src-logo" style="background:#7c3aed">IA</span><span class="reader-source-name">Import AI</span></div>
+          <div class="m-drawer-foot">
+            <button class="m-drawer-disc">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88"/></svg>
+              <span>发现更多来源</span>
+            </button>
+          </div>
+        </aside>
+      </div>
+      <p class="phone-note">选源是作用在当前容器上的过滤,不是目的地(§4.1.2),故走抽屉不占 Tab。聚合入口选中态语法照搬源栏(全部=品牌靛/只看收藏=琥珀星);角色分组、未读加粗同桌面。长按源行弹动作单(全部标读/退订)。</p>
+    </div>
+
+    <!-- ⑤ 长按动作单 -->
+    <div class="phone-slot">
+      <span class="phone-cap">⑤ 长按动作单(桌面右键菜单的翻译)</span>
+      <div class="phone">
+        <div class="p-status"><span>9:41</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16"/></svg>
+        </div>
+        <div class="p-screen">
+          <div class="m-topbar">
+            <button class="m-iconbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h6"/></svg></button>
+            <span class="m-title">文章</span>
+          </div>
+          <div class="m-list">
+            <div class="reader-date-label">今天 · 08-05</div>
+            <div class="reader-entry is-ctx-anchor">
+              <span class="reader-entry-top"><span class="reader-entry-src">量子位 · 资讯</span><span class="reader-entry-time">2 小时前</span></span>
+              <span class="reader-entry-titlerow"><span class="reader-unread-dot"></span><span class="reader-entry-title">大模型推理成本一年降了 90%,这条曲线还在陡降</span></span>
+            </div>
+            <div class="reader-entry">
+              <span class="reader-entry-top"><span class="reader-entry-src">IT之家 AI · 资讯</span><span class="reader-entry-time">6 小时前</span></span>
+              <span class="reader-entry-titlerow"><span class="reader-entry-title">开源周报:本周值得关注的 8 个 AI 项目</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="m-dim"></div>
+        <div class="m-sheet">
+          <div class="m-sheet-grab"></div>
+          <div class="m-sheet-obj">大模型推理成本一年降了 90%,这条曲线还在陡降</div>
+          <button class="ctx-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>标为已读</button>
+          <button class="ctx-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>收藏文章</button>
+          <div class="ctx-sep"></div>
+          <button class="ctx-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>复制站内链接</button>
+          <button class="ctx-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>打开原文</button>
+          <div class="ctx-sep"></div>
+          <button class="ctx-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg>标记该源全部已读</button>
+        </div>
+      </div>
+      <p class="phone-note">items 与桌面右键完全同构:读态/收藏首组 → 链接次组 → 重操作末组,跨端肌肉记忆;行高 44px(触摸目标);被长按卡带 wash 锚定态。disabled 不隐藏(降透明);iOS 需抑制长按原生 callout。</p>
+    </div>
+
+    <!-- ⑥ 社交流 -->
+    <div class="phone-slot">
+      <span class="phone-cap">⑥ 社交 TAB · 卡片流</span>
+      <div class="phone">
+        <div class="p-status"><span>9:41</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16"/></svg>
+        </div>
+        <div class="p-screen">
+          <div class="m-topbar">
+            <button class="m-iconbtn" title="账号">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h6"/></svg>
+            </button>
+            <span class="m-title">社交</span>
+            <div class="m-topbar-sp"></div>
+            <div class="mini-seg"><button class="mini-seg-btn">全部</button><button class="mini-seg-btn is-on">未读</button></div>
+            <button class="m-iconbtn" title="搜索">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            </button>
+          </div>
+          <div class="m-social">
+            <article class="tweet">
+              <span class="tw-unread"></span>
+              <div class="tw-body">
+                <span class="tw-avatar" style="background:linear-gradient(135deg,#f59e0b,#d97706)">K</span>
+                <div>
+                  <div class="tw-head"><span class="tw-name">Andrej Karpathy</span><span class="tw-handle">@karpathy</span><span class="tw-head-sp"></span><span class="tw-time">3 小时前</span></div>
+                  <p class="tw-text">The hottest new programming language is English. Prompting well is a real skill — underrated, learnable, and it compounds with everything else you know.</p>
+                  <div class="tw-acts">
+                    <button class="tw-act" title="收藏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg></button>
+                    <button class="tw-act" title="标为已读"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></button>
+                  </div>
+                </div>
+              </div>
+            </article>
+            <article class="tweet">
+              <div class="tw-body">
+                <span class="tw-avatar" style="background:linear-gradient(135deg,#0ea5e9,#0369a1)">S</span>
+                <div>
+                  <div class="tw-head"><span class="tw-name">Sam Altman</span><span class="tw-handle">@sama</span><span class="tw-head-sp"></span><span class="tw-time">6 小时前</span></div>
+                  <p class="tw-text">compute is the currency of the future. we are building for abundance.</p>
+                  <div class="tw-media">
+                    <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></i>
+                    <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></i>
+                  </div>
+                  <div class="tw-acts">
+                    <button class="tw-act is-fav" title="取消收藏"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg></button>
+                    <button class="tw-act" title="标为未读"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+          <div class="m-tabbar">
+            <button class="m-tab"><span class="m-tab-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><span>文章</span></button>
+            <button class="m-tab"><span class="m-tab-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M3 12h18M3 17h12"/></svg></span><span>动态</span></button>
+            <button class="m-tab is-on"><span class="m-tab-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg></span><span>社交</span></button>
+            <button class="m-tab"><span class="m-tab-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><span>我的</span></button>
+          </div>
+          <div class="m-home"><i></i></div>
+        </div>
+      </div>
+      <p class="phone-note">卡片流直读、不进正文页(容器模型)。桌面 hover 浮出的收藏/标读改为文末常显小钮(社交卡无长按单也可达);不展示互动数字、时间戳即原推链接、未读点挂卡左缘——三条诚实纪律照搬。账号过滤走同款抽屉。</p>
+    </div>
+
+  </div>
+
+  <footer>移动端 H5 阅读器样页 · 移动波提案 · 亮暗双态(右上月亮切换) · 六画框均为静态示意;token/刻度 1:1 取自 frontend/src/index.css</footer>
+</main>
+
+<script>
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    const root = document.documentElement;
+    root.dataset.theme = root.dataset.theme === 'dark' ? '' : 'dark';
+  });
+</script>
+</body>
+</html>
