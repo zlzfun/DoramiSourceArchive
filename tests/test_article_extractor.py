@@ -191,11 +191,12 @@ def test_node_to_markdown_renders_table_as_gfm_block():
     assert blocks[0] == "before" and blocks[-1] == "after"
     table_block = blocks[1]
     lines = table_block.split("\n")
-    # 单块表格:首行数据 + 分隔行 + 第二行数据;cell 内 <br> 折叠为「; 」
+    # 单块表格:首行数据 + 分隔行 + 第二行数据;cell 内 <br> 折叠为「; 」;
+    # <code> 保留反引号(修复前曾丢失为纯文本)
     assert lines[0].startswith("| File system |")
-    assert "glob, grep ; - File read: read" in lines[0]
+    assert "`glob`, `grep` ; - File read: `read`" in lines[0]
     assert set(lines[1].replace("|", "").split()) == {"---"}
-    assert lines[2] == "| Shell | Run bash |"
+    assert lines[2] == "| Shell | Run `bash` |"
     # 逐词散块的旧症状不复现:code 词不再独立成块
     assert "\n\nglob\n\n" not in md
 
@@ -293,3 +294,101 @@ def test_video_player_chrome_skipped():
     md = node_to_markdown(node, "https://x.com/a")
     assert "0:00" not in md and "1:34" not in md and "fallback" not in md
     assert "视频标题" in md and "正文前。" in md and "正文后。" in md
+
+
+def test_pre_becomes_fenced_code_block_with_language_and_indent():
+    # 语法高亮的 token <span> 不破坏文本节点空白;language- 类识别为围栏语言标注
+    html = (
+        '<div><p>用法如下:</p>'
+        '<pre><code class="language-python">def f(x):\n'
+        '    return <span class="token">x</span> + 1</code></pre>'
+        '<p>结束。</p></div>'
+    )
+    node = BeautifulSoup(html, "html.parser").div
+    md = node_to_markdown(node, "https://x.com/a")
+    assert "```python\ndef f(x):\n    return x + 1\n```" in md
+    # 代码块与前后段落以空行分隔
+    assert "用法如下:" in md and "结束。" in md
+
+
+def test_pre_fence_lengthens_when_body_contains_backticks():
+    html = "<div><pre>echo ```raw```</pre></div>"
+    node = BeautifulSoup(html, "html.parser").div
+    md = node_to_markdown(node, "")
+    assert "````\necho ```raw```\n````" in md
+
+
+def test_inline_code_wrapped_in_backticks():
+    html = "<p>set to <code>deepseek-v4-pro</code> or later</p>"
+    node = BeautifulSoup(html, "html.parser").p
+    md = node_to_markdown(node, "")
+    assert md == "set to `deepseek-v4-pro` or later"
+
+
+def test_inline_code_with_backtick_content_uses_longer_delimiter():
+    html = "<p>见 <code>a`b</code> 用法</p>"
+    node = BeautifulSoup(html, "html.parser").p
+    md = node_to_markdown(node, "")
+    assert "`` a`b ``" in md
+
+
+def test_ordered_list_keeps_numbering_and_start():
+    html = '<div><ol start="3"><li>丙</li><li>丁</li></ol></div>'
+    node = BeautifulSoup(html, "html.parser").div
+    md = node_to_markdown(node, "")
+    assert "3. 丙\n4. 丁" in md
+
+
+def test_nested_list_indented_under_parent_item():
+    html = (
+        "<div><ul><li>甲<ul><li>子</li><li>丑</li></ul></li>"
+        "<li>乙</li></ul></div>"
+    )
+    node = BeautifulSoup(html, "html.parser").div
+    md = node_to_markdown(node, "")
+    assert "- 甲\n  - 子\n  - 丑\n- 乙" in md
+
+
+def test_nested_list_under_ordered_parent_aligns_to_marker_width():
+    html = "<div><ol><li>第一<ul><li>细项</li></ul></li></ol></div>"
+    node = BeautifulSoup(html, "html.parser").div
+    md = node_to_markdown(node, "")
+    assert "1. 第一\n   - 细项" in md
+
+
+def test_iframe_video_audio_become_placeholder_links():
+    html = (
+        '<div><p>开场。</p>'
+        '<iframe src="https://www.youtube.com/embed/abc123"></iframe>'
+        '<video src="/media/demo.mp4">fallback</video>'
+        '<audio src="https://cdn.x.com/pod.mp3"></audio>'
+        '<iframe src="https://example.com/widget"></iframe>'
+        '</div>'
+    )
+    node = BeautifulSoup(html, "html.parser").div
+    md = node_to_markdown(node, "https://x.com/a")
+    assert "[▶ 视频](https://www.youtube.com/embed/abc123)" in md
+    assert "[▶ 视频](https://x.com/media/demo.mp4)" in md
+    assert "[▶ 音频](https://cdn.x.com/pod.mp3)" in md
+    assert "[嵌入内容 ↗](https://example.com/widget)" in md
+    assert "fallback" not in md  # 播放器兜底内容仍不入正文
+
+
+def test_embed_without_http_src_stays_dropped():
+    html = (
+        '<div><p>正文。</p>'
+        '<iframe src="about:blank"></iframe>'
+        '<video><source src="blob:local"></video>'
+        '<svg><text>icon</text></svg></div>'
+    )
+    node = BeautifulSoup(html, "html.parser").div
+    md = node_to_markdown(node, "https://x.com/a")
+    assert md == "正文。"
+
+
+def test_embed_inside_paragraph_rendered_inline():
+    # 嵌入常被包在 <p>/<figure> 里走行内路径,同样要出占位链接
+    html = '<div><p>看这个 <iframe src="https://player.vimeo.com/video/9"></iframe> 视频</p></div>'
+    node = BeautifulSoup(html, "html.parser").div
+    md = node_to_markdown(node, "")
+    assert "[▶ 视频](https://player.vimeo.com/video/9)" in md

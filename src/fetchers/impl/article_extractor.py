@@ -6,6 +6,7 @@
 # 结尾戛然而止)——40K 低估了正常长文上界;200K 仍拦得住病态页(其量级通常 MB 级)。
 DETAIL_HARD_CAP = 200_000
 
+import copy
 import json
 import re
 from dataclasses import dataclass
@@ -48,9 +49,9 @@ _MD_BLOCK_CONTAINERS = {
     "div", "section", "article", "main", "figure", "header", "footer", "aside", "ul", "ol",
 }
 _MD_HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
-# summary 是 <details> 折叠控件的开关标签("View details");video/audio 的子树是
-# 播放器兜底内容与控件——均属 UI 件非正文
-_MD_SKIP_TAGS = {"script", "style", "noscript", "svg", "form", "button", "iframe", "summary", "video", "audio"}
+# summary 是 <details> 折叠控件的开关标签("View details")。iframe/video/audio 不在此列:
+# 它们经 _embed_markdown 降级为占位链接(子树仍不渲染——那是播放器兜底内容与控件)
+_MD_SKIP_TAGS = {"script", "style", "noscript", "svg", "form", "button", "summary"}
 
 
 # 懒加载图片的真实地址常放在这些属性里，src 多为占位图
@@ -106,6 +107,38 @@ def _img_markdown(node: Tag, base_url: str) -> str:
     return f"![{alt}]({url})"
 
 
+# iframe src 域名命中即按「视频」标注(其余 iframe 统一「嵌入内容」)
+_VIDEO_IFRAME_HINTS = ("youtube.", "youtu.be", "vimeo.", "bilibili.", "player.")
+
+
+def _embed_markdown(node: Tag, base_url: str) -> str:
+    """iframe/video/audio → 占位链接:嵌入媒体在 markdown 里无法还原,降级为一行
+    可点的原始链接而非静默丢弃——读者需要知道原文此处有内容。子树不渲染。"""
+    name = node.name.lower()
+    src = ""
+    for attr in ("src", "data-src"):
+        value = (node.get(attr) or "").strip()
+        if value and not value.startswith(("data:", "blob:", "about:")):
+            src = value
+            break
+    if not src and name in ("video", "audio"):
+        source = node.find("source", src=True)
+        if source is not None:
+            src = (source.get("src") or "").strip()
+    url = urljoin(base_url or "", src) if src else ""
+    if not url.startswith(("http://", "https://")):
+        return ""
+    if name == "audio":
+        label = "▶ 音频"
+    elif name == "video" or any(
+        hint in (urlparse(url).hostname or "").lower() for hint in _VIDEO_IFRAME_HINTS
+    ):
+        label = "▶ 视频"
+    else:
+        label = "嵌入内容 ↗"
+    return f"[{label}]({url})"
+
+
 # 非正文元素的 class 特征:前三个是视觉隐藏的无障碍辅助文案(如 OpenAI 外链的
 # "(opens in a new window)");kg-*-player 是 Ghost 博客的播放器控件条(时间码
 # "0:00 / 1:34" 等,testingcatalog 抽检混入正文)
@@ -145,6 +178,18 @@ def _wrap_boundary(raw: str, core: str) -> str:
     lead = " " if raw[:1].isspace() else ""
     trail = " " if raw[-1:].isspace() else ""
     return f"{lead}{core}{trail}" if core else (lead or trail)
+
+
+def _code_span(text: str) -> str:
+    """行内代码:按 CommonMark 规则包反引号——内容自含反引号时加长定界符并垫空格。"""
+    text = " ".join(text.split())
+    if not text:
+        return ""
+    if "`" not in text:
+        return f"`{text}`"
+    longest = max(len(match.group(0)) for match in re.finditer(r"`+", text))
+    fence = "`" * (longest + 1)
+    return f"{fence} {text} {fence}"
 
 
 def _inline_render(node: Tag, base_url: str) -> str:
@@ -187,6 +232,13 @@ def _inline_render(node: Tag, base_url: str) -> str:
             if text and not (text.startswith(marker) and text.endswith(marker)):
                 text = f"{marker}{text}{marker}"
             parts.append(_wrap_boundary(raw, text))
+        elif name in ("code", "kbd", "samp", "tt"):
+            raw = _inline_render(child, base_url)
+            parts.append(_wrap_boundary(raw, _code_span(raw)))
+        elif name in ("iframe", "video", "audio"):
+            md = _embed_markdown(child, base_url)
+            if md:
+                parts.append(f" {md} ")
         else:
             parts.append(_inline_render(child, base_url))
     return "".join(parts)
@@ -198,6 +250,58 @@ def _inline_markdown(node: Tag, base_url: str) -> str:
     # 折叠行内多余空白，但保留 <br> 引入的换行
     lines = [re.sub(r"[ \t ]+", " ", ln).strip() for ln in text.split("\n")]
     return "\n".join(ln for ln in lines if ln)
+
+
+def _pre_text(node: Tag) -> str:
+    """<pre> 子树的原始文本:保留全部空白与缩进(语法高亮的 token <span> 不破坏
+    文本节点空白,拼接即还原),跳过非正文元素,<br> 还原为换行。"""
+    parts: List[str] = []
+
+    def walk(el: Tag) -> None:
+        for child in el.children:
+            if isinstance(child, Comment):
+                continue
+            if isinstance(child, NavigableString):
+                parts.append(str(child))
+                continue
+            if not isinstance(child, Tag):
+                continue
+            name = child.name.lower()
+            if name in _MD_SKIP_TAGS or _is_visually_hidden(child):
+                continue
+            if name == "br":
+                parts.append("\n")
+                continue
+            walk(child)
+
+    walk(node)
+    return "".join(parts)
+
+
+def _code_language(node: Tag) -> str:
+    """从 pre 或内层 code 的 class 识别 language-xxx / lang-xxx 语言标注。"""
+    candidates = [node]
+    inner = node.find("code")
+    if inner is not None:
+        candidates.append(inner)
+    for el in candidates:
+        for cls in el.get("class") or []:
+            match = re.match(r"(?:language|lang)-([\w#+.-]+)$", cls)
+            if match:
+                return match.group(1)
+    return ""
+
+
+def _pre_markdown(node: Tag) -> str:
+    """<pre> → 围栏代码块:缩进/空行原样保留,定界符按内容避让加长。"""
+    text = _pre_text(node).strip("\n")
+    if not text.strip():
+        return ""
+    body = "\n".join(ln.rstrip() for ln in text.split("\n"))
+    fence = "```"
+    while fence in body:
+        fence += "`"
+    return f"{fence}{_code_language(node)}\n{body}\n{fence}"
 
 
 # 块级探针:容器内出现任一此类后代即视为"结构容器"须递归;否则是"行内-only 容器",
@@ -240,6 +344,42 @@ def _table_markdown(table: Tag, base_url: str) -> str:
     return "\n".join(lines) if len(lines) >= 2 else ""
 
 
+def _list_markdown(list_tag: Tag, base_url: str, indent: str = "") -> List[str]:
+    """<ul>/<ol> → markdown 列表行:有序列表保编号(含 start 起点),嵌套子列表按
+    父项标记宽度缩进(CommonMark 要求子内容对齐父项的内容列)。<br> 产生的多行
+    内容缩进为同项续行(remark-breaks 渲染为换行),不再散成平行列表项。"""
+    ordered = (list_tag.name or "").lower() == "ol"
+    try:
+        counter = int(list_tag.get("start") or 1)
+    except (TypeError, ValueError):
+        counter = 1
+    lines: List[str] = []
+    for li in list_tag.find_all("li", recursive=False):
+        # 本级嵌套列表 = 最近的 ul/ol 祖先是当前列表(中间隔 p/div 也算本级)
+        nested = [
+            lst for lst in li.find_all(["ul", "ol"])
+            if lst.find_parent(["ul", "ol"]) is list_tag
+        ]
+        li_view = copy.copy(li)
+        for lst in li_view.find_all(["ul", "ol"]):
+            lst.extract()  # 行内文本只取本项内容,子列表另行递归
+        text = _inline_markdown(li_view, base_url)
+        if not text and not nested:
+            continue
+        marker = f"{counter}. " if ordered else "- "
+        counter += 1
+        if text:
+            body_lines = text.split("\n")
+            lines.append(indent + marker + body_lines[0])
+            lines.extend(indent + " " * len(marker) + ln for ln in body_lines[1:])
+        else:
+            lines.append((indent + marker).rstrip())
+        child_indent = indent + " " * len(marker)
+        for lst in nested:
+            lines.extend(_list_markdown(lst, base_url, child_indent))
+    return lines
+
+
 def node_to_markdown(root: Tag, base_url: str = "") -> str:
     """把一个正文容器节点转成 markdown-ish 文本：保留图片、段落、列表与标题。
 
@@ -251,8 +391,12 @@ def node_to_markdown(root: Tag, base_url: str = "") -> str:
     root_name = (getattr(root, "name", "") or "").lower()
     if root_name == "table":
         return _table_markdown(root, base_url)
-    if root_name in ("p", "figcaption", "pre") or (
-        root_name not in ("ul", "ol", "blockquote") and _is_inline_only(root)
+    if root_name == "pre":
+        return _pre_markdown(root)
+    if root_name in ("ul", "ol"):
+        return "\n".join(_list_markdown(root, base_url))
+    if root_name in ("p", "figcaption") or (
+        root_name != "blockquote" and _is_inline_only(root)
     ):
         return _inline_markdown(root, base_url)
 
@@ -287,7 +431,11 @@ def node_to_markdown(root: Tag, base_url: str = "") -> str:
                 text = _inline_markdown(child, base_url)
                 if text:
                     emit("#" * int(name[1]) + " " + text.replace("\n", " "))
-            elif name in ("p", "blockquote", "figcaption", "pre"):
+            elif name == "pre":
+                md = _pre_markdown(child)
+                if md:
+                    emit(md)
+            elif name in ("p", "blockquote", "figcaption"):
                 inner_imgs = child.find_all("img")
                 text = _inline_markdown(child, base_url)
                 if name == "blockquote" and text:
@@ -299,11 +447,15 @@ def node_to_markdown(root: Tag, base_url: str = "") -> str:
                     if md:
                         seen_imgs.add(md)
             elif name in ("ul", "ol"):
-                for li in child.find_all("li", recursive=False):
-                    text = _inline_markdown(li, base_url)
-                    if text:
-                        for ln in text.split("\n"):
-                            emit("- " + ln)
+                list_lines = _list_markdown(child, base_url)
+                if list_lines:
+                    # 整列表单 block emit——嵌套缩进行之间不能有空行
+                    emit("\n".join(list_lines))
+            elif name in ("iframe", "video", "audio"):
+                md = _embed_markdown(child, base_url)
+                if md and md not in seen_imgs:
+                    seen_imgs.add(md)  # 复用图片去重集:同 URL 嵌入只留一条占位
+                    emit(md)
             elif name == "table":
                 # 表格转 GFM 语法(前端 remark-gfm 渲染):整表作为**单个 block**
                 # emit——GFM 表格行之间不能有空行。此前表格落到递归兜底,每个
