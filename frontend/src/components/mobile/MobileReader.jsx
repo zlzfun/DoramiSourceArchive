@@ -11,6 +11,7 @@ import {
   Menu,
   RefreshCw,
   Search,
+  Share2,
   Star,
   UserRound,
   X,
@@ -18,6 +19,8 @@ import {
 } from 'lucide-react';
 import { useReaderState } from '../../hooks/useReaderState';
 import { useLongPress } from '../../hooks/useLongPress';
+import { useLayerHistory } from '../../hooks/useLayerHistory';
+import { articleDeepLink } from '../../utils/shareLink';
 import { ArticleRow, ArticleCardsSkeleton } from '../ReaderTab';
 import SocialFlow from '../SocialFlow';
 import DiscoverPage from '../DiscoverPage';
@@ -104,11 +107,23 @@ export default function MobileReader({
     goView(t);
   };
 
-  const openArticleSheet = (article) => setSheet({
-    title: article.title || '（无标题）',
-    items: buildArticleMenuItems(article),
-    anchorKey: `article:${article.id}`,
-  });
+  const openArticleSheet = (article) => {
+    const items = buildArticleMenuItems(article);
+    // 系统分享(Wave3):支持 Web Share 的环境(手机浏览器/微信内)在链接组补一项
+    // 「分享给…」——调起系统分享面板,载荷即站内深链;不支持则不画(呈现的诚实)。
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      const openIdx = items.findIndex((it) => it.key === 'open');
+      items.splice(openIdx < 0 ? items.length : openIdx, 0, {
+        key: 'sysshare',
+        label: '分享给…',
+        icon: Share2,
+        onClick: () => {
+          navigator.share({ title: article.title || '哆啦美', url: articleDeepLink(article.id) }).catch(() => {});
+        },
+      });
+    }
+    setSheet({ title: article.title || '（无标题）', items, anchorKey: `article:${article.id}` });
+  };
   const openSourceSheet = (source) => setSheet({
     title: source.name || source.source_id,
     items: buildSourceMenuItems(source),
@@ -126,21 +141,20 @@ export default function MobileReader({
   // 正文页(push 全屏):文章/动态容器里选中了一篇即入栈;社交流直读不进正文页
   const readOpen = listView && !discover && Boolean(activeArticle);
 
+  // ── 返回键握手(Wave3):层开着时按返回=关层,不是退出站点(微信内浏览器的肌肉记忆)──
+  useLayerHistory(readOpen, () => selectArticle(null));
+  useLayerHistory(discover, () => setDiscover(false));
+  useLayerHistory(drawerOpen, () => setDrawerOpen(false));
+  useLayerHistory(Boolean(sheet), () => setSheet(null));
+
   return (
     <div className="m-shell font-sans">
       <AnnouncementBanner />
 
-      {/* ── 顶栏 ── */}
+      {/* ── 顶栏(三个内容容器共用:抽屉入口 + 标题/搜索 + seg + 标读 + 搜索开关;
+             社交流 headless 化后其控件行由此承担——Wave3 收口,两层头部合一) ── */}
       {tab === 'me' ? (
         <div className="m-topbar"><span className="m-title m-title-solo">我的</span></div>
-      ) : socialView ? (
-        // 社交 Tab:SocialFlow 自带 seg/标读/搜索控件行,顶栏只承担 抽屉入口+标题
-        <div className="m-topbar">
-          <button type="button" className="m-iconbtn" onClick={() => setDrawerOpen(true)} aria-label="订阅源">
-            <Menu />
-          </button>
-          <span className="m-title">{listTitle}</span>
-        </div>
       ) : (
         <div className="m-topbar">
           <button type="button" className="m-iconbtn" onClick={() => setDrawerOpen(true)} aria-label="订阅源">
@@ -247,6 +261,7 @@ export default function MobileReader({
               onLoadMore={handleLoadMore}
               platformCount={platformCount}
               activeSourceId={activeSourceId}
+              headless
               emptyHint={
                 activeSourceHidden
                   ? '该账号暂时不可用'

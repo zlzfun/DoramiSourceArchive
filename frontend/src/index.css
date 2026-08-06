@@ -1774,6 +1774,31 @@ input[type="radio"] {
     }
   }
 
+  /* ── 登录页 ≤480 轻档(移动波 Wave3):收纳排版,不动演出——
+     星座保留环境漂移(pointermove 缺席时的既有基础),跃迁终幕原样;
+     手机上「静谧版」而非「残缺版」。 ── */
+  @media (max-width: 480px) {
+    .auth-stage {
+      padding: 20px 18px calc(20px + env(safe-area-inset-bottom));
+    }
+    .auth-shell {
+      max-width: 400px;
+      gap: 26px;
+    }
+    .auth-title {
+      margin-top: 12px;
+      font-size: clamp(32px, 9.5vw, 42px);
+    }
+    .auth-lede {
+      margin-top: 14px;
+      font-size: 13.5px;
+      line-height: 1.7;
+    }
+    .auth-card {
+      padding: 26px 22px;
+    }
+  }
+
   /* (登录页/抵达幕 reduced-motion 降级规则已删——品牌豁免,2026-07-25 拍板:
      登录电影感不随 OS「减少动画」降级,Windows 关动画效果时也完整呈现;
      LoginScreen 的 prefersReducedMotion() 同步恒为 false,工作区规则不受影响) */
