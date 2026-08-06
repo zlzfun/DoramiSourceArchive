@@ -41,6 +41,8 @@ const ReaderTab = lazy(() => import('./components/ReaderTab'));
 // 移动壳(移动波 Wave2):≤767px 视口整站以「页面栈 + 底部 TabBar」形态呈现阅读器,
 // 桌面四带布局不下放;独立 chunk,桌面用户不下载。
 const MobileReader = lazy(() => import('./components/mobile/MobileReader'));
+// 移动设置栈(Wave3):桌面 880×576 设置柜的页面栈翻译,分区组件同源(components/settings/)。
+const MobileSettings = lazy(() => import('./components/mobile/MobileSettings'));
 
 // Tab chunk 加载期的占位（与顶层 checking-state 同语汇，克制不喧宾夺主）。
 function TabFallback() {
@@ -613,23 +615,6 @@ export default function App() {
       <div className={`m-root font-sans${arrival === 'fading' ? ' app-arriving' : ''}`}>
         {arrivalOverlay}
         <Toast show={toast.show} message={toast.message} type={toast.type} onClose={hideToast} />
-        <SettingsModal
-          open={settingsOpen}
-          initialSection={settingsSection}
-          onClose={() => setSettingsOpen(false)}
-          theme={theme}
-          onThemeChange={setTheme}
-          runtimeInfo={runtimeInfo}
-          readerSurface
-          username={authState.user?.username}
-          avatar={authState.user?.avatar}
-          onUserUpdated={handleUserUpdated}
-          onLogout={() => { setSettingsOpen(false); handleLogout(); }}
-          showToast={showToast}
-          onArticlesChanged={markArticlesDirty}
-          feedbackUnread={feedbackUnread}
-          onFeedbackSeen={handleFeedbackSeen}
-        />
         <TabBoundary>
           <MobileReader
             showToast={showToast}
@@ -642,6 +627,22 @@ export default function App() {
             feedbackUnread={feedbackUnread}
             initialArticleId={deepLinkArticle}
             onDeepLinkConsumed={clearDeepLink}
+          />
+          {/* 移动设置栈(Wave3,取代设置柜):页面栈两级,分区组件与桌面设置柜同源 */}
+          <MobileSettings
+            open={settingsOpen}
+            initialSection={settingsSection}
+            onClose={() => setSettingsOpen(false)}
+            theme={theme}
+            onThemeChange={setTheme}
+            runtimeInfo={runtimeInfo}
+            username={authState.user?.username}
+            avatar={authState.user?.avatar}
+            onUserUpdated={handleUserUpdated}
+            onLogout={() => { setSettingsOpen(false); handleLogout(); }}
+            showToast={showToast}
+            feedbackUnread={feedbackUnread}
+            onFeedbackSeen={handleFeedbackSeen}
           />
         </TabBoundary>
       </div>

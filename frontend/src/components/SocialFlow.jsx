@@ -300,6 +300,9 @@ export default function SocialFlow({
   platformCount = 1,
   activeSourceId = null,
   emptyHint = '暂无动态',
+  // 移动壳(v3.29 Wave3):头部控件(seg/标读/搜索)由移动顶栏承担,本组件只出卡片流;
+  // 自绘浮层滚动条一并关闭——它解决的是桌面 macOS gutter 占位,移动端原生即 overlay。
+  headless = false,
 }) {
   const showPlatform = platformCount > 1;
   const scopeName = activeSourceId ? (sourceNameMap[activeSourceId] || activeSourceId) : null;
@@ -307,7 +310,7 @@ export default function SocialFlow({
   // 浮层滚动条(压在卡片上,内容满宽)
   const socialScrollRef = useRef(null);
   const socialThumbRef = useRef(null);
-  const resyncSocialScrollbar = useOverlayScrollbar(socialScrollRef, socialThumbRef);
+  const resyncSocialScrollbar = useOverlayScrollbar(socialScrollRef, socialThumbRef, !headless);
   useEffect(() => { resyncSocialScrollbar(); }, [articles, loading, resyncSocialScrollbar]);
 
   // 无限滚动:哨兵进入视口(提前 500px)即自动追加,取代「加载更多」按钮
@@ -327,6 +330,7 @@ export default function SocialFlow({
 
   return (
     <section className="reader-col reader-social" aria-label="社交媒体">
+      {!headless && (
       <header className="reader-social-head">
         {/* 标题常显(搜索靠右展开、已不与标题冲突,故不再隐藏);副标「N 个账号 · M 未读」
             已撤(减噪);收藏筛选时标题仅「收藏」二字。 */}
@@ -393,6 +397,7 @@ export default function SocialFlow({
           </button>
         </div>
       </header>
+      )}
 
       <div className="reader-scrollwrap">
       <div className="reader-social-scroll" ref={socialScrollRef}>

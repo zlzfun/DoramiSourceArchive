@@ -9,10 +9,21 @@
    ════════════════════════════════════════════════════════════════════ */
 
 /* ── 壳:固定视口,页面栈根(html 滚动从不参与——桌面根滚动封死规则天然不相干) ── */
-.m-shell {
-  /* 三面阶梯与桌面阅读器同映射(列表面/纸面),暗色沿同一相对明暗次序 */
+/* 三面阶梯与桌面阅读器同映射(列表面/纸面),暗色沿同一相对明暗次序。
+   变量同时挂 .m-page:整页层(设置栈)可渲染在壳外(App 层兄弟节点),
+   只挂 .m-shell 会取不到值、页面透底(Wave3 实测修正)。 */
+.m-shell,
+.m-page {
   --rd-list-bg: var(--dorami-soft);
   --rd-pane-bg: var(--dorami-surface);
+}
+[data-theme="dark"] .m-shell,
+[data-theme="dark"] .m-page {
+  --rd-list-bg: var(--dorami-well);
+  --rd-pane-bg: var(--dorami-soft);
+}
+
+.m-shell {
   position: fixed;
   inset: 0;
   display: flex;
@@ -21,10 +32,6 @@
   padding-top: env(safe-area-inset-top);
   background: var(--rd-list-bg);
   overflow: hidden;
-}
-[data-theme="dark"] .m-shell {
-  --rd-list-bg: var(--dorami-well);
-  --rd-pane-bg: var(--dorami-soft);
 }
 
 /* ── 顶栏(48px):抽屉入口 / 标题 / 过滤器带(全部|未读 seg + 标读 + 搜索) ── */
@@ -490,7 +497,7 @@
   box-shadow: var(--sh-1);
 }
 
-/* ── 社交流窄屏覆盖(Wave2 复用 SocialFlow,Wave3 收口) ── */
+/* ── 社交流(Wave3 收口:SocialFlow headless——控件行归移动顶栏,本体只出卡片流) ── */
 .m-social-host {
   flex: 1;
   min-height: 0;
@@ -504,9 +511,6 @@
   flex-direction: column;
   border-right: none;
 }
-/* 顶栏已交代标题(抽屉入口在旁),SocialFlow 头只留 seg/标读/搜索 动作行 */
-.m-social-host .reader-social-title { display: none; }
-.m-social-host .reader-social-head { padding: 0 12px; }
 .m-social-host .reader-social-col { padding: 0 12px; }
 /* hover 动作钮触屏常显(呈现的诚实:不画摸不到的钮) */
 .m-shell .social-act { opacity: 1; pointer-events: auto; }
@@ -514,3 +518,41 @@
 /* ── 条目卡窄屏微调:时间/星标不再为桌面浮层滚动条让位 ── */
 .m-list .reader-entry-time { margin-right: 0; }
 .m-list .reader-entry-fav { right: 2px; }
+
+/* ── 公告横幅:悬浮带避开刘海(桌面 .reader-ann-band 语法原样复用) ── */
+.m-shell .reader-ann-band { top: calc(10px + env(safe-area-inset-top)); }
+
+/* ── 分享浮层(ShareMenu 复用):窄屏钳制,不超出视口 ── */
+.m-read .share-menu { max-width: calc(100vw - 24px); }
+
+/* ── 移动设置栈(Wave3,桌面设置柜的页面栈翻译) ── */
+.m-sett { z-index: 55; }
+.m-sett-list { padding: 4px 14px calc(16px + env(safe-area-inset-bottom)); }
+.m-sett-group {
+  padding: 14px 4px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--dorami-faint);
+}
+/* 分区行说明(HINTS):右对齐灰签,放不下按省略截断,不挤压标签 */
+.m-sett-hint {
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+.m-row-badge {
+  flex: none;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  background: var(--dorami-wash);
+  color: var(--dorami-accent-ink);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+/* 分区页正文:分区组件与桌面设置柜同源,窄屏给统一留白;栅格已由 ≤767 断点塌陷 */
+.m-sett-body { padding: 14px 16px calc(24px + env(safe-area-inset-bottom)); background: var(--rd-pane-bg); }
