@@ -65,7 +65,6 @@ def _seed_article(engine, article_id, source_id, title, content="正文内容"):
             has_content=True,
             content=content,
             extensions_json="{}",
-            is_vectorized=False,
         ))
         session.commit()
 

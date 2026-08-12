@@ -7,7 +7,7 @@
   缓存约定与翻译完全一致（extensions_json.summary_zh）。
 - answer_question: 基于给定上下文回答读者提问（上下文由调用方按三档策略组装）。
 
-本模块只负责「正文/上下文 → LLM → 文本」与翻译缓存，不直接依赖 FastAPI/向量层：
+本模块只负责「正文/上下文 → LLM → 文本」与翻译缓存，不直接依赖 FastAPI/检索层：
 问答的上下文组装（当前文章 / 订阅列表 / RAG 召回）由 API 层完成后传入，避免循环依赖。
 """
 
@@ -21,8 +21,7 @@ from config import LLMConfig
 from llm import prompts
 from llm.client import ChatMessage, UsageMeta, chat_completion
 
-# 译文/摘要缓存在 ArticleRecord.extensions_json 下的键；只新增键，不触碰正文，
-# 因此不影响向量化状态（向量化只在 content/title 变更时重置）。
+# 译文/摘要缓存在 ArticleRecord.extensions_json 下的键；只新增键，不触碰正文。
 TRANSLATION_KEY = "translation_zh"
 SUMMARY_KEY = "summary_zh"
 
@@ -31,10 +30,9 @@ _SUMMARIZE_BODY_CHARS = 12000
 
 # 单段翻译的字符上限（按段落切分后并发翻译再拼接，避免超出模型上下文/输出窗口）。
 _TRANSLATE_SEGMENT_CHARS = 3500
-# 列表问答上下文：单篇正文截断与整体字符上限、最多纳入的文章数。
+# 列表问答上下文：单篇正文截断与整体字符上限。
 _LIST_PER_ARTICLE_CHARS = 1500
 _LIST_TOTAL_CHARS = 12000
-LIST_MAX_ARTICLES = 25
 
 # 多轮对话：最多带入的历史消息条数（user/assistant 计）与单条字符上限，控制 token 预算。
 MAX_HISTORY_MESSAGES = 8
@@ -230,21 +228,18 @@ async def assemble_reader_context(
     article_id: Optional[str],
     username: str,
     db_sink: Any,
-    rag_enabled: bool,
-    rag_fetch: Any,
-    recent_fetch: Any,
+    search_fetch: Any,
 ) -> tuple:
-    """按 scope 组装 reader 问答上下文（三档 graceful degrade），返回 ``(context, sources)``。
+    """按 scope 组装 reader 问答上下文，返回 ``(context, sources)``。
 
-    - ``scope=article``：取该文正文（零 RAG 依赖）；
-    - ``scope=subscription`` 且 ``rag_enabled``：``await rag_fetch(question)`` 语义召回
-      （召回自带订阅域硬隔离）；
-    - 否则：``recent_fetch(username)`` 取订阅来源最近文章拼接。
+    - ``scope=article``：取该文正文（零检索依赖）；
+    - ``scope=subscription``：``await search_fetch(question, username)`` 走订阅域
+      检索管线（v3.30 起为「LLM 计划检索 + FTS5」两段式，见 services/reader_search，
+      降级链在管线内部自持）。
 
-    ``rag_fetch``（async，取 ``question`` → ``{context_text, sources}``）与
-    ``recent_fetch``（取 ``username`` → 文章记录列表）由调用方注入：API 层用闭包 over
-    ``request`` 承载鉴权作用域，worker/CLI 可注入无请求版本——从而本组装逻辑与 HTTP
-    请求解耦、可独立单测复用（阶段4 D11 编排下沉）。
+    ``search_fetch``（async，取 ``(question, username)`` → ``(context, sources)``）由
+    调用方注入：API 层用闭包承载鉴权作用域与 LLM 配置，worker/CLI 可注入无请求
+    版本——从而本组装逻辑与 HTTP 请求解耦、可独立单测复用（阶段4 D11 编排下沉）。
     """
     if scope == "article":
         if not article_id:
@@ -254,16 +249,7 @@ async def assemble_reader_context(
             raise ReaderAIError("文章不存在", status_code=404)
         return build_article_context(record.title, record.content or ""), []
 
-    if rag_enabled:
-        rag_result = await rag_fetch(question)
-        return rag_result.get("context_text", ""), rag_result.get("sources", [])
-
-    records = recent_fetch(username)
-    sources = [
-        {"title": r.title, "source_id": r.source_id, "source_url": r.source_url}
-        for r in records
-    ]
-    return build_list_context(records), sources
+    return await search_fetch(question, username)
 
 
 def _sanitize_history(history: Optional[List[Any]]) -> List[ChatMessage]:

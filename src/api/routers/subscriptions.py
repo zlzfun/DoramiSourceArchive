@@ -2,12 +2,12 @@
 
 阶段1 从 app.py 迁出的订阅分发端点（路径不变，reader 网关仍由中间件统一强制）：
 - /api/subscriptions/* —— 订阅生命周期（owner 作用域 CRUD + 轮换令牌）；
-- /api/public/subscriptions/{id}/articles|vector/search —— 单订阅令牌拉取/检索；
+- /api/public/subscriptions/{id}/articles|vector/search —— 单订阅令牌拉取/全文检索(v3.31 起 FTS5 芯)；
 - /api/public/feed/articles[.md] —— 个人聚合令牌一次性拉取全部订阅来源。
 
 数据访问经 Depends(deps.get_session)/deps.get_db_sink()；查询/令牌/序列化复用
 api.feed_service、api.tokens、api.articles_view 等共享模块；current_username 与
-异步 run_vector_search 经 _app() 延迟动态调用（保持测试 monkeypatch 兼容、避免成环）。
+全文检索与 MCP search_articles 同源（mcp_server._search_articles_impl,FTS5）。
 """
 
 import datetime
@@ -48,7 +48,7 @@ ET.register_namespace("", ATOM_NAMESPACE)
 
 
 def _app():
-    """延迟取 api.app（避免导入环；动态调用其留守的 current_username/run_vector_search）。"""
+    """延迟取 api.app（避免导入环；动态调用其留守的 current_username 等）。"""
     return importlib.import_module("api.app")
 
 
@@ -96,6 +96,7 @@ class SubscriptionUpdate(BaseModel):
 class PublicSubscriptionSearchBody(BaseModel):
     query: str
     top_k: int = 5
+    # v3.31 检索改 FTS5 全文检索后无相关性阈值/重排语义;两字段保留兼容旧调用方,忽略。
     score_threshold: float = 1.5
     rerank: bool = False
 
@@ -448,7 +449,13 @@ async def public_subscription_vector_search(
         body: PublicSubscriptionSearchBody,
         request: Request,
 ):
-    """带令牌的、按订阅源范围约束的语义检索（供下游 Agent 应用个性化使用）。"""
+    """带令牌的、按订阅源范围约束的全文检索（供下游 Agent 应用个性化使用）。
+
+    v3.31 检索扶正/退役清仓:向量检索退役,同路径换 FTS5 全文检索芯(标题+正文,
+    中英文子串匹配,按发布日期倒序)——与 MCP search_articles 同源实现。
+    """
+    from mcp_server import _search_articles_impl
+
     with Session(deps.get_db_sink().engine) as session:
         subscription = resolve_subscription_by_token(
             session, subscription_id, read_bearer_or_query_token(request),
@@ -457,11 +464,10 @@ async def public_subscription_vector_search(
         source_ids = subscription_source_ids(subscription)
         sub_id, sub_name = subscription.id, subscription.name
 
-    results = await _app().run_vector_search(
-        body.query,
+    results = await _search_articles_impl(
+        deps.get_db_sink(),
+        query=body.query,
         top_k=body.top_k,
-        score_threshold=body.score_threshold,
-        rerank=body.rerank,
         content_type=filters.get("content_type"),
         source_ids=source_ids or None,
     )
@@ -471,5 +477,4 @@ async def public_subscription_vector_search(
         "scoped_source_ids": source_ids,
         "count": len(results),
         "results": results,
-        "reranked": body.rerank,
     }

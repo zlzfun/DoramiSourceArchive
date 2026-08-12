@@ -1,25 +1,6 @@
-import { X, Zap, Edit2, Trash2, ExternalLink, RefreshCw } from 'lucide-react';
+import { X, Edit2, Trash2, ExternalLink } from 'lucide-react';
 import { contentTypeLabel } from '../utils/contentType';
 import { excerptOf } from '../utils/readerText';
-
-// 索引流水线：已收录 → 待处理 → 索引中 → 已入索引；failed/stale 在对应位置改字/改色。
-const PIPELINE_STEPS = ['已收录', '待处理', '索引中', '已入索引'];
-const PIPELINE_POS = { pending: 1, indexing: 2, indexed: 3, failed: 2, stale: 1 };
-
-function IndexPipeline({ status }) {
-  const pos = PIPELINE_POS[status] ?? 1;
-  return (
-    <div className="ledger-pipeline" role="img" aria-label={`索引状态：${status}`}>
-      {PIPELINE_STEPS.map((step, i) => {
-        let cls = i < pos ? 'is-done' : i === pos ? 'is-now' : '';
-        let label = step;
-        if (status === 'failed' && i === pos) { cls = 'is-now is-err'; label = '失败'; }
-        if (status === 'stale' && i === pos) label = '陈旧';
-        return <span key={step} className={`ledger-pipeline-step ${cls}`}>{label}</span>;
-      })}
-    </div>
-  );
-}
 
 const fmtTime = (value) => (value ? value.replace('T', ' ').substring(0, 16) : '—');
 
@@ -41,18 +22,12 @@ export default function ArticleDetailDrawer({
   open,
   article,
   loading = false,
-  ragEnabled = false,
   canManage = true,
   getFetcherName,
-  vectorizing = false,
   onClose,
-  onVectorize,
   onEdit,
   onDelete,
 }) {
-  const status = article
-    ? (article.index_status || (article.is_vectorized ? 'indexed' : 'pending'))
-    : 'pending';
   const content = article ? (article.content ?? article.content_preview ?? '') : '';
   const chars = content ? content.replace(/\s+/g, '').length : 0;
 
@@ -80,13 +55,6 @@ export default function ArticleDetailDrawer({
             </div>
 
             <div className="ledger-drawer-body">
-              {ragEnabled && (
-                <section>
-                  <h3 className="micro-label mb-2">索引流水线</h3>
-                  <IndexPipeline status={status} />
-                </section>
-              )}
-
               <dl className="ledger-kv">
                 <dt>来源</dt>
                 <dd>
@@ -126,17 +94,6 @@ export default function ArticleDetailDrawer({
 
             {canManage && (
               <div className="ledger-drawer-foot">
-                {ragEnabled && (
-                  <button
-                    type="button"
-                    onClick={() => onVectorize?.(article)}
-                    disabled={vectorizing || status === 'indexing'}
-                    className="action-button action-button-secondary min-h-[32px] px-3 text-xs"
-                  >
-                    {vectorizing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5 text-amber-500" />}
-                    {status === 'indexed' ? '重建向量' : '立即向量化'}
-                  </button>
-                )}
                 <button
                   type="button"
                   onClick={() => onEdit?.(article)}

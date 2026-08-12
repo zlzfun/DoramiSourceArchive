@@ -26,7 +26,6 @@ from api.sources import (
     _source_category,
     subscription_source_ids,
 )
-from config import settings
 from models.db import (
     AdminAuditRecord,
     ArticleRecord,
@@ -157,7 +156,6 @@ def admin_overview(session: Session = Depends(deps.get_session)):
             "global_enabled": global_ai_on,
             "llm_configured": llm_configured,
         },
-        "rag_enabled": settings.rag.enabled,
         "recent_logins": recent_logins,
     }
 
@@ -368,7 +366,7 @@ def admin_audit_log(
 
 @router.get("/content")
 def admin_content(top: int = 12, session: Session = Depends(deps.get_session)):
-    """内容看板：各源内容健康（文章数/类型/新鲜度/向量化率）+ 订阅数 + 收藏数，
+    """内容看板：各源内容健康（文章数/类型/新鲜度）+ 订阅数 + 收藏数，
     及文章级收藏热度榜（top 篇）。纯读侧聚合，全部来自已有归档/收藏/订阅表。"""
     registry_meta = _registry_source_meta()
     agg = content_analytics_service.summarize(session, top_n=top)
@@ -399,7 +397,6 @@ def admin_content(top: int = 12, session: Session = Depends(deps.get_session)):
             meta = {**DAILY_BRIEF_SOURCE_META, **meta}
         info = by_source.get(source_id, {})
         article_count = int(info.get("article_count", 0))
-        vectorized_count = int(info.get("vectorized_count", 0))
         content_type = info.get("primary_content_type") or meta.get("content_type") or ""
         sources.append({
             "source_id": source_id,
@@ -412,7 +409,6 @@ def admin_content(top: int = 12, session: Session = Depends(deps.get_session)):
             "subscription_count": subs_by_source.get(source_id, 0),
             "favorite_count": favorites_by_source.get(source_id, 0),
             "read_count": reads_by_source.get(source_id, 0),
-            "vectorized_rate": round(vectorized_count / article_count, 4) if article_count else 0.0,
         })
     sources.sort(key=lambda s: (-s["favorite_count"], -s["read_count"], -s["subscription_count"], -s["article_count"], s["name"]))
 
@@ -427,9 +423,6 @@ def admin_content(top: int = 12, session: Session = Depends(deps.get_session)):
     totals["sources"] = len(sources)
     totals["subscriptions"] = sum(subs_by_source.values())
     totals["reads"] = sum(reads_by_source.values())
-    totals["vectorized_rate"] = (
-        round(totals["vectorized"] / totals["articles"], 4) if totals.get("articles") else 0.0
-    )
 
     return {"totals": totals, "sources": sources, "top_articles": top_articles}
 

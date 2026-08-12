@@ -14,11 +14,6 @@
   转正流程见 `docs/sources/curation_policy.md`「Incubation」节;
   Reddit 转正门槛 = 生产出口 IP 复验 429。转正时顺带更新 `docs/sources/node_catalog_and_risks.md` 快照。
 - ☐ **日报源手工名单实践观察**(v3.3.0 落地 `daily_brief_source_ids` KV,观察实际日报质量后调整名单)
-- ☐ **RAG 退役与问答检索重构**(2026-08-11 审视定向,方案已固化待拍板:
-  `docs/rag-retirement-plan.md`)。两波:Wave A 检索扶正(ask 订阅域改「LLM 计划检索 + FTS5」
-  两段式 + MCP 两工具同名换 FTS 芯)→ 观察期 → Wave B 退役清仓(chromadb/extras/compose profile/
-  双状态列/对账巡检/向量雷达全面下架)。原展望项 ◇F「语义搜索入阅读器」由此取代——
-  语义搜索不再以向量形态入用户面。
 
 ## 展望(用户表态、未立项)
 
@@ -51,6 +46,11 @@
   1 级 = RSSHub 可选容器 + `rsshub://` 路由识别;2 级 = 读者「推荐源」申请 → 管理员收件箱审核。
 
 ## 已完结(近期,留档索引;执行记录与更早波次见 `docs/archive/README.md`)
+
+- ☑ RAG 退役与问答检索重构(v3.30 检索扶正 + v3.31 退役清仓,2026-08-11/12):
+  ask 订阅域改「LLM 计划检索 + FTS5」两段式、MCP 两工具同名换 FTS 芯;向量子系统
+  (chromadb/extras/compose rag profile/双状态列/对账巡检/向量雷达)整体下架。
+  审视结论、两波清单与重新引入触发器见 `docs/rag-retirement-plan.md`。
 
 - ☑ 源扩容 wave4(v3.23.0):Microsoft AI 模型、Artificial Analysis、Meta AI 博客、
   Kimi Research、MiniMax Research、Import AI、Arena 排行榜更新 7 个 preset 全链路接入；

@@ -1,6 +1,6 @@
 # DoramiSourceArchive · 哆啦美·归档中枢
 
-一个带 RAG 能力的 **AI 内容聚合 CMS**：从多源抓取内容 → 存入 SQLite → 在 ChromaDB 建向量索引做语义检索，并按用户订阅做分发（Feed / MCP / 每日日报）。系统分为**采集/归档**（collector）与**阅读/分发**（reader）两层，由运行时角色与登录账号角色共同门控。
+一个 **AI 内容聚合 CMS**：从多源抓取内容 → 存入 SQLite（内建 FTS5 全文索引），按用户订阅做分发（Feed / MCP / 每日日报），并提供「LLM 计划检索 + FTS5」的问答助手。系统分为**采集/归档**（collector）与**阅读/分发**（reader）两层，由运行时角色与登录账号角色共同门控。
 
 > 本文件是**全仓导航地图**（鸟瞰 + 路径索引）。需要深入时按「渐进式披露」逐层下钻 ↓
 
@@ -32,7 +32,7 @@ cd frontend && npm install && npm run dev
 ./deploy-docker.sh
 ```
 
-数据落在 `data/`（SQLite `cms_data.db` + ChromaDB `chroma_db/`，已 gitignore）。
+数据落在 `data/`（SQLite `cms_data.db`，已 gitignore）。
 
 ## 仓库地图
 
@@ -49,18 +49,18 @@ cd frontend && npm install && npm run dev
 | `fetchers/` | 插件式抓取器：`registry.py` 启动时自动扫描 `impl/`；基类见 `base.py`、`webpage_fetcher.py`、`github_release_fetcher.py` |
 | `fetchers/impl/` | 各来源实现（RSS / GitHub Releases / repo+model / 网页列表 / curated / Playwright 渲染等） |
 | `pipeline/` | `core.py` DataPipeline（fetcher → storages 广播）+ `progress.py` 内存进度 |
-| `storage/impl/` | `db_storage.py`（SQLite）/ `vector_storage.py`（ChromaDB + 分块 + sentence-transformers） |
+| `storage/impl/` | `db_storage.py`（SQLite,含 FTS5 建表引导） |
 | `mcp_server.py` | `build_mcp_app()`：FastMCP streamable-HTTP，挂到 `/mcp` |
 | `skill_templates/` | 可下载 Claude skill 模板源（被 `skill_router` 打包） |
 
-> 各模块的设计决策（双维内容身份、`extensions_json` 序列化、向量分块、RAG 懒加载、双轴访问控制、Collection Jobs、Archive Sync 等）详见 [`CLAUDE.md`](./CLAUDE.md)。
+> 各模块的设计决策（双维内容身份、`extensions_json` 序列化、问答检索、双轴访问控制、Collection Jobs、Archive Sync 等）详见 [`CLAUDE.md`](./CLAUDE.md)。
 
 ### 前端 `frontend/src/`
 | 路径 | 概述 |
 |---|---|
 | `api.js` | 所有后端 `fetch()` 的唯一出口 |
 | `App.jsx` | 根：登录门控 + tab 路由（按运行时能力与账号角色过滤） |
-| `components/` | 各 tab 与弹窗：`ReaderTab`（阅读器，user 唯一主界面）+`DiscoverPage`（发现页）、`DataTab`（知识台账）、`FetchTab`/`FetchRunsTab`（采集）、`VectorTab`（向量雷达）、`DailyBriefTab`（AI 日报）、`SettingsModal`（设置柜，含接入集成分区）、`AdminOpsTab`（运维管理）等 |
+| `components/` | 各 tab 与弹窗：`ReaderTab`（阅读器，user 唯一主界面）+`DiscoverPage`（发现页）、`DataTab`（知识台账）、`FetchTab`/`FetchRunsTab`（采集）、`DailyBriefTab`（AI 日报）、`SettingsModal`（设置柜，含接入集成分区）、`AdminOpsTab`（运维管理）等 |
 | `hooks/` · `utils/` · `config.js` · `sourceTaxonomy.js` | 复用 hook、工具函数、单点配置、来源分类表 |
 
 ### 文档 `docs/` — 见 [`docs/README.md`](./docs/README.md)
@@ -77,7 +77,7 @@ cd frontend && npm install && npm run dev
 独立于后端运行时的运维/导出脚本（每日采集 job 幂等创建、shendeng 日报导出）。
 
 ### 测试 `tests/`
-单测直接放在 `tests/test_*.py`（每个文件自举 `sys.path` 到 `src/`）。`tests/rag/` 是独立的离线 RAG 评测 harness（见 [`CLAUDE.md`](./CLAUDE.md) 的 *RAG Evaluation*）。
+单测直接放在 `tests/test_*.py`（每个文件自举 `sys.path` 到 `src/`）。
 
 ### 根目录配置 / 部署
 | 路径 | 概述 |

@@ -1,6 +1,6 @@
 # Feed Delivery API
 
-This document records the current downstream delivery contract for RAG/agent consumers.
+This document records the current downstream delivery contract for LLM/agent consumers.
 
 DoramiSourceArchive remains the source collection and archival hub. These APIs expose archived records without adding a reader-facing product surface.
 
@@ -42,7 +42,6 @@ Returns archive records as downstream-friendly document objects:
         "publish_date": "2026-05-12T00:00:00",
         "fetched_date": "2026-05-12T01:00:00",
         "has_content": true,
-        "is_vectorized": false,
         "extensions": {}
       }
     }

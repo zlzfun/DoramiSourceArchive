@@ -22,8 +22,8 @@ Access scope is the user's subscriptions when a `dfeed_` personal feed token or 
 | `list_sources()` | List all source IDs — call this first if you need to know what's available |
 | `browse_articles(publish_date_start, publish_date_end, limit=100, subscription_token=token)` | Fetch articles by date range within the user's subscription scope |
 | `get_article(article_id, subscription_token=token)` | Get full body text for a specific article after subscription-scope validation |
-| `search_articles(query, subscription_token=token)` | Search articles within the user's subscription scope when RAG is enabled |
-| `get_rag_context(query, subscription_token=token)` | Build scoped RAG context when RAG is enabled |
+| `search_articles(query, subscription_token=token)` | Keyword full-text search (title + body, Chinese & English) within the user's subscription scope |
+| `get_rag_context(query, subscription_token=token)` | Keyword-search the scoped archive and build a ready-to-inject context string |
 
 **2. REST API** (if MCP is not connected, or to supplement). Prefer this endpoint for daily brief generation because it is token-authenticated and scoped to the user's active subscriptions:
 

@@ -53,6 +53,7 @@ from services import article_share as article_share_service
 from services import daily_brief as daily_brief_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
+from services import reader_search as reader_search_service
 from services import reader_state as reader_state_service
 from services import source_visibility as source_visibility_service
 from services import x_api_config as x_api_config_service
@@ -767,25 +768,6 @@ def _enforce_ai_daily_quota(username: str, purpose: str) -> None:
         raise HTTPException(status_code=429, detail="今日 AI 使用次数已达上限，请明日再试")
 
 
-def _recent_subscribed_articles(username: str, limit: int) -> List[ArticleRecord]:
-    """取该用户订阅来源内、按抓取时间倒序的最近若干篇有正文的文章（RAG 关闭时的问答上下文）。"""
-    app = _app()
-    with Session(deps.get_db_sink().engine) as session:
-        source_ids = app.resolve_subscribed_source_ids(session, username)
-        if not source_ids:
-            return []
-        statement = (
-            select(ArticleRecord)
-            .where(
-                ArticleRecord.source_id.in_(source_ids),
-                ArticleRecord.has_content == True,  # noqa: E712
-            )
-            .order_by(ArticleRecord.fetched_date.desc())
-            .limit(limit)
-        )
-        return list(session.exec(statement).all())
-
-
 @router.post("/ai/translate")
 async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
     """把指定文章正文译为简体中文（结果缓存复用）。"""
@@ -829,10 +811,11 @@ async def reader_ai_summarize(params: ReaderTranslateParams, request: Request):
 async def reader_ai_ask(params: ReaderAskParams, request: Request):
     """基于当前文章或用户订阅文章回答提问。
 
-    三档上下文（graceful degrade）：
-      - scope=article：直接用该文正文（零 RAG 依赖）；
-      - scope=subscription 且 RAG 开启：走 /api/rag/context 语义召回（已自带订阅域硬隔离）；
-      - scope=subscription 且 RAG 关闭：取订阅来源最近 N 篇标题+截断正文拼成上下文。
+    上下文组装（graceful degrade）：
+      - scope=article：直接用该文正文（零检索依赖）；
+      - scope=subscription：「LLM 计划检索 + FTS5」两段式（services/reader_search，
+        v3.30 检索扶正波）——规划→FTS 召回→选篇→全文注入，降级链在管线内部自持
+        （规划失败→原词检索→零命中→订阅域时序窗口）。
     """
     app = _app()
     username, llm_config = _require_reader_ai(request)
@@ -840,11 +823,18 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
     db_sink = deps.get_db_sink()
     scope = params.scope if params.scope in ("article", "subscription") else "article"
 
-    # 三档上下文组装下沉到 reader_ai.assemble_reader_context；此处注入 rag/recent 取数闭包
-    # （闭包 over request 承载鉴权作用域），使组装逻辑与 HTTP 请求解耦、可独立单测（D11）。
-    async def _rag_fetch(question: str) -> Dict[str, Any]:
-        return await app.rag_context(
-            app.RagContextQuery(query=question, top_k=6, max_chars=12000), request
+    # 上下文组装下沉到 reader_ai.assemble_reader_context；此处注入订阅域检索闭包
+    # （承载鉴权作用域与 LLM 配置），使组装逻辑与 HTTP 请求解耦、可独立单测（D11）。
+    # 检索的规划/选篇两次 LLM 调用计费归因并入 ask。
+    async def _search_fetch(question: str, user: str):
+        with Session(db_sink.engine) as session:
+            source_ids = app.resolve_subscribed_source_ids(session, user)
+        return await reader_search_service.subscription_context(
+            question,
+            engine=db_sink.engine,
+            source_ids=source_ids,
+            llm_config=llm_config,
+            usage_meta=UsageMeta(purpose="ask", username=username),
         )
 
     try:
@@ -854,11 +844,7 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
             article_id=params.article_id,
             username=username,
             db_sink=db_sink,
-            rag_enabled=bool(app.settings.rag.enabled and app.vector_sink is not None),
-            rag_fetch=_rag_fetch,
-            recent_fetch=lambda user: _recent_subscribed_articles(
-                user, reader_ai_service.LIST_MAX_ARTICLES
-            ),
+            search_fetch=_search_fetch,
         )
     except reader_ai_service.ReaderAIError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))

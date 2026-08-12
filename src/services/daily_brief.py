@@ -733,5 +733,4 @@ async def _persist_brief(storage, content_obj: DailyBriefContent) -> None:
         "has_content": True,
         "content": content_obj.content,
         "extensions_json": json.dumps(metadata.get("extensions", {}), ensure_ascii=False),
-        "is_vectorized": False,
     })

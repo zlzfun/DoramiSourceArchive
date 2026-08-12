@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { RefreshCw, Zap, Search, Plus, Trash2, Edit2, ChevronDown } from 'lucide-react';
+import { RefreshCw, Search, Plus, Trash2, Edit2, ChevronDown } from 'lucide-react';
 import DateRangePicker from './DateRangePicker';
 import ArticleDetailModal from './ArticleDetailModal';
 import ArticleDetailDrawer from './ArticleDetailDrawer';
@@ -11,12 +11,6 @@ import {
   fetchDailyStats,
   batchDeleteArticles,
   deleteArticle,
-  vectorizeArticle,
-  batchVectorizeArticles,
-  vectorizeAllPending,
-  reindexAll,
-  getAutoVectorize,
-  setAutoVectorize,
   updateArticle,
   createArticle,
 } from '../api';
@@ -29,32 +23,13 @@ import { useAbortableLoad } from '../hooks/useAbortableLoad';
 
 const ARTICLE_PAGE_SIZE = 30;
 
-// 总账条（RAG 开）：每格 = 一个 index_status，点击即按该状态筛选表格。
-const STAT_DEFS = [
-  { key: 'all', label: '总收录', tone: '' },
-  { key: 'indexed', label: '已入索引', tone: 'is-ok' },
-  { key: 'pending', label: '待处理', tone: '' },
-  { key: 'indexing', label: '索引中', tone: 'is-run' },
-  { key: 'failed', label: '失败', tone: 'is-bad' },
-  { key: 'stale', label: '陈旧', tone: 'is-warn' },
-];
-
-// 总账条（RAG 关）：向量索引维度失去意义，退化为三格收录量看板，
-// 点击即应用对应 fetched_date 快捷区间（quick=setFetchedQuick 的键）。
+// 总账条：三格收录量看板，点击即应用对应 fetched_date 快捷区间
+// （quick=setFetchedQuick 的键）。v3.31 向量索引维度随 RAG 退役移除。
 const PLAIN_STAT_DEFS = [
   { key: 'all', quick: 'all', label: '总收录', tone: '' },
   { key: 'today', quick: '1', label: '今日收录', tone: '' },
   { key: 'week', quick: '7', label: '近 7 天收录', tone: '' },
 ];
-
-// 索引状态 → .stamp 范式（淡底+深字+形状点，见 index.css .stamp-*）。
-const INDEX_STAMP = {
-  indexed: { cls: 'stamp-ok', label: '已入索引' },
-  pending: { cls: 'stamp-idle', label: '待索引' },
-  indexing: { cls: 'stamp-run', label: '索引中' },
-  failed: { cls: 'stamp-bad', label: '失败' },
-  stale: { cls: 'stamp-warn', label: '陈旧' },
-};
 
 // 收录时间快捷段（今天 / 近 7 天 / 近 30 天）→ fetched_date 区间。
 // 用本地日期分量（与 DateRangePicker 同口径，避免 UTC 跨日偏移）。
@@ -71,7 +46,6 @@ export default function DataTab({
   showToast,
   isActive = true,
   canManageArticles = true,
-  ragEnabled = false,
   articlesDirty = false,
   onArticlesRefreshed,
   pendingFilter,
@@ -92,10 +66,6 @@ export default function DataTab({
   const [modalState, setModalState] = useState({ isOpen: false, data: null, isEditing: false });
   const [detailLoading, setDetailLoading] = useState(false);
   const [manualAddModal, setManualAddModal] = useState(false);
-  const [vectorizingId, setVectorizingId] = useState(null);
-  const [vectorizingAll, setVectorizingAll] = useState(false);
-  const [reindexing, setReindexing] = useState(false);
-  const [autoVec, setAutoVec] = useState(false);
   const [showMore, setShowMore] = useState(false);
   // 表格密度:舒适(含摘录行)/紧凑(仅标题,44px 行高)。持久化偏好。
   const [density, setDensity] = useState(() => localStorage.getItem('dorami-ledger-density') || 'comfortable');
@@ -116,7 +86,6 @@ export default function DataTab({
   const [filters, setFilters] = useState({
     content_types: '', // CSV：类型归组分面下发的多类型筛选（单类型组也走 CSV）
     source_id: '',
-    index_status: '',
     has_content: '', // '' 不限 | 'true' 仅有正文 | 'false' 仅无正文
     publish_date_start: '',
     publish_date_end: '',
@@ -187,13 +156,9 @@ export default function DataTab({
   ])], [availableFetchers, facets]);
 
   const canSelectArticles = canManageArticles;
-  // 向量化「动作」(自动开关/全量/重建/单条构建)与索引状态列都依赖 RAG:
-  // 向量子系统关闭时相关端点 503,列直接隐藏,总账条退化为收录量三格。
-  const showVectorActions = canManageArticles && ragEnabled;
   const totalPages = Math.max(1, Math.ceil((articlePageInfo.total || 0) / ARTICLE_PAGE_SIZE));
   const canGoPrev = currentPage > 1 && !loading;
   const canGoNext = currentPage < totalPages && !loading;
-  const activeStatus = filters.index_status || 'all';
 
   // 页码窗口：首页、当前±1、末页；间断处以省略号占位（.pager 范式）。
   const pageWindow = useMemo(() => {
@@ -251,10 +216,8 @@ export default function DataTab({
     setLoading(false);
   }, [filters, appliedSearch, runList, showToast]);
 
-  // 总账条计数：全局概览（仅排除日报源），与分面筛选无关。挂载时 + 文章增删/向量化后刷新。
-  //  · RAG 开：总收录 + 5 个 index_status 计数（6 格）。
-  //  · RAG 关：向量维度失效，只查总收录 / 今日 / 近 7 天（后两格用 fetched_date 快捷区间），
-  //    5 个状态计数不再发起。
+  // 总账条计数：全局概览（仅排除日报源），与分面筛选无关。挂载时 + 文章增删后刷新。
+  // 总收录 / 今日 / 近 7 天（后两格用 fetched_date 快捷区间）。
   const loadLedgerStats = useCallback(async () => {
     const base = { exclude_source_ids: 'dorami_daily_brief' };
     const countFor = async (extra) => {
@@ -265,18 +228,6 @@ export default function DataTab({
         return null;
       }
     };
-    if (showVectorActions) {
-      const [total, indexed, pending, indexing, failed, stale] = await Promise.all([
-        countFor({}),
-        countFor({ index_status: 'indexed' }),
-        countFor({ index_status: 'pending' }),
-        countFor({ index_status: 'indexing' }),
-        countFor({ index_status: 'failed' }),
-        countFor({ index_status: 'stale' }),
-      ]);
-      setLedgerStats({ total, indexed, pending, indexing, failed, stale });
-      return;
-    }
     const day1 = quickFetchedRange(1);
     const day7 = quickFetchedRange(7);
     const [total, today, week] = await Promise.all([
@@ -285,7 +236,7 @@ export default function DataTab({
       countFor({ fetched_date_start: day7.start, fetched_date_end: day7.end }),
     ]);
     setLedgerStats({ total, today, week });
-  }, [showVectorActions]);
+  }, []);
 
   // 近 7 日收录趋势(A 每日聚合端点波):挂在「总收录」格,端点失败静默不渲染。
   const [weekTrend, setWeekTrend] = useState(null);
@@ -312,60 +263,6 @@ export default function DataTab({
     loadLedgerStats();
     loadFacets();
   }, [loadArticles, loadLedgerStats, loadFacets]);
-
-  const handleVectorize = async (id) => {
-    setVectorizingId(id);
-    await runAction(() => vectorizeArticle(id), {
-      showToast,
-      success: '已建立向量索引',
-      onSuccess: () => {
-        refreshAfterMutation(currentPage);
-        setDrawer(prev => (prev.article?.id === id
-          ? { ...prev, article: { ...prev.article, index_status: 'indexed', is_vectorized: true } }
-          : prev));
-      },
-    });
-    setVectorizingId(null);
-  };
-
-  const handleBatchVectorize = async () => {
-    await runAction(() => batchVectorizeArticles(Array.from(selectedArticles)), {
-      showToast,
-      success: (data) => `已为 ${data.count} 条记录建立向量索引`,
-      onSuccess: () => refreshAfterMutation(currentPage),
-    });
-  };
-
-  const handleVectorizeAllPending = async () => {
-    await runAction(() => vectorizeAllPending(), {
-      showToast,
-      success: (data) => `已向量化 ${data.count}/${data.total_pending} 篇待处理文章`,
-      onSuccess: () => refreshAfterMutation(currentPage),
-      setLoading: setVectorizingAll,
-    });
-  };
-
-  const handleReindex = async () => {
-    if (!(await confirm('全量重索引将清空并重建整个向量库（更换 Embedding 模型后使用）。确认继续？'))) return;
-    await runAction(() => reindexAll(), {
-      showToast,
-      success: (data) => `已全量重索引 ${data.total_reindexed}/${data.total_articles} 篇`,
-      onSuccess: () => refreshAfterMutation(currentPage),
-      setLoading: setReindexing,
-    });
-  };
-
-  const handleToggleAutoVec = async () => {
-    const next = !autoVec;
-    setAutoVec(next);
-    try {
-      await setAutoVectorize(next);
-      showToast(next ? '已开启：抓取后自动向量化' : '已关闭自动向量化', 'success');
-    } catch (error) {
-      setAutoVec(!next);
-      showToast(error.message || '设置失败，请重试', 'error');
-    }
-  };
 
   const refreshArticles = () => {
     if (currentPage === 1) loadArticles(1);
@@ -397,19 +294,11 @@ export default function DataTab({
     loadArticles(currentPage);
   }, [loadArticles, currentPage]);
 
-  // 总账条计数：挂载 / rag·权限变化时加载一次。
+  // 总账条计数：挂载时加载一次。
   useEffect(() => { loadLedgerStats(); }, [loadLedgerStats]);
 
   // 分面目录：挂载拉取一次（增删/录入后随 refreshAfterMutation 刷新）。
   useEffect(() => { loadFacets(); }, [loadFacets]);
-
-  // 自动向量化开关：读取当前配置（仅管理员 + RAG 开启）。
-  useEffect(() => {
-    if (!showVectorActions) return;
-    let alive = true;
-    getAutoVectorize().then(d => { if (alive) setAutoVec(Boolean(d.enabled)); }).catch(() => {});
-    return () => { alive = false; };
-  }, [showVectorActions]);
 
   useEffect(() => {
     if (isActive && articlesDirty) {
@@ -426,7 +315,6 @@ export default function DataTab({
       ...prev,
       content_types: '',
       source_id: pendingFilter.source_id ?? prev.source_id,
-      index_status: '',
       has_content: '',
       publish_date_start: '',
       publish_date_end: '',
@@ -555,10 +443,6 @@ export default function DataTab({
     const v = key === 'all' ? ledgerStats.total : ledgerStats[key];
     return v === null || v === undefined ? '—' : v.toLocaleString();
   };
-
-  const coverage = ledgerStats && ledgerStats.total
-    ? Math.round(((ledgerStats.indexed || 0) / ledgerStats.total) * 1000) / 10
-    : null;
 
   return (
     <div className="ledger-shell">
@@ -699,21 +583,16 @@ export default function DataTab({
 
         {/* 主纸：总账条 + 表格 + 批量条 + 表脚 */}
         <div className="ledger-paper surface-card">
-          <div className="ledger-strip" role="group" aria-label={showVectorActions ? '索引状态总览与筛选' : '收录量总览与筛选'}>
+          <div className="ledger-strip" role="group" aria-label="收录量总览与筛选">
             <div className="ledger-strip-stats">
-              {(showVectorActions ? STAT_DEFS : PLAIN_STAT_DEFS).map(stat => {
-                // RAG 开：格 = index_status 筛选；RAG 关：格 = fetched_date 快捷区间筛选。
-                const on = showVectorActions
-                  ? activeStatus === stat.key
-                  : activeFetchedQuick === stat.quick;
-                const onClickStat = () => (showVectorActions
-                  ? setFilters(prev => ({ ...prev, index_status: stat.key === 'all' ? '' : stat.key }))
-                  : setFetchedQuick(stat.quick));
+              {PLAIN_STAT_DEFS.map(stat => {
+                // 格 = fetched_date 快捷区间筛选。
+                const on = activeFetchedQuick === stat.quick;
                 return (
                   <button
                     key={stat.key}
                     type="button"
-                    onClick={onClickStat}
+                    onClick={() => setFetchedQuick(stat.quick)}
                     className={`ledger-stat ${on ? 'is-on' : ''}`}
                     aria-pressed={on}
                   >
@@ -724,38 +603,10 @@ export default function DataTab({
                         <Sparkline values={weekTrend.values} labels={weekTrend.labels} title="近 7 日收录趋势" />
                       </span>
                     )}
-                    {stat.key === 'indexed' && coverage !== null && (
-                      <>
-                        <span className="ledger-stat-sub">覆盖率 {coverage}%</span>
-                        <span className="ledger-coverbar"><i style={{ width: `${coverage}%` }} /></span>
-                      </>
-                    )}
                   </button>
                 );
               })}
             </div>
-            {showVectorActions && (
-              <div className="ledger-strip-actions">
-                <button
-                  type="button"
-                  onClick={handleToggleAutoVec}
-                  className="ledger-strip-toggle"
-                  role="switch"
-                  aria-checked={autoVec}
-                >
-                  <span className={`ledger-switch ${autoVec ? 'is-on' : ''}`} aria-hidden="true" />
-                  随采自动向量化
-                </button>
-                <div className="ledger-strip-btns">
-                  <button onClick={handleVectorizeAllPending} disabled={vectorizingAll} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
-                    {vectorizingAll ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5 text-amber-500" />} 全量向量化
-                  </button>
-                  <button onClick={handleReindex} disabled={reindexing} className="action-button action-button-quiet min-h-[32px] px-3 text-xs">
-                    {reindexing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : null} 重建索引
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
 
           <div className="ledger-table-scroll">
@@ -767,7 +618,6 @@ export default function DataTab({
                 <col className="ledger-col-type" />
                 <col className="ledger-col-publish" />
                 <col className="ledger-col-publish" />
-                {showVectorActions && <col className="ledger-col-vector" />}
                 <col className="ledger-col-acts" />
               </colgroup>
               <thead>
@@ -782,7 +632,6 @@ export default function DataTab({
                   <th className="ledger-th px-3">类型</th>
                   <th className="ledger-th px-3 text-right">发布</th>
                   <th className="ledger-th px-3 text-right">收录</th>
-                  {showVectorActions && <th className="ledger-th px-3">索引状态</th>}
                   <th className="ledger-th px-3" />
                 </tr>
               </thead>
@@ -796,15 +645,12 @@ export default function DataTab({
                       <td className="px-3"><div className="skeleton h-5 w-16 rounded-full" /></td>
                       <td className="px-3"><div className="skeleton ml-auto h-4 w-16" /></td>
                       <td className="px-3"><div className="skeleton ml-auto h-4 w-16" /></td>
-                      {showVectorActions && <td className="px-3"><div className="skeleton h-6 w-20 rounded-full" /></td>}
                       <td className="px-3" />
                     </tr>
                   ))
                 ) : articles.length === 0 ? (
-                  <tr><td colSpan={2 + (canSelectArticles ? 1 : 0) + (showVectorActions ? 1 : 0) + 4} className="px-6 py-16 text-center font-medium text-slate-500">当前筛选条件下未查询到相关数据，试试放宽时间区间或清除筛选</td></tr>
+                  <tr><td colSpan={2 + (canSelectArticles ? 1 : 0) + 4} className="px-6 py-16 text-center font-medium text-slate-500">当前筛选条件下未查询到相关数据，试试放宽时间区间或清除筛选</td></tr>
                 ) : articles.map((article) => {
-                  const status = article.index_status || (article.is_vectorized ? 'indexed' : 'pending');
-                  const busy = vectorizingId === article.id || status === 'indexing';
                   const isSel = drawer.open && drawer.article?.id === article.id;
                   return (
                     <tr
@@ -842,41 +688,8 @@ export default function DataTab({
                       <td className="px-3"><span className="ledger-type-chip max-w-full overflow-hidden text-ellipsis" title={article.content_type || ''}>{contentTypeLabel(article.content_type)}</span></td>
                       <td className="px-3 text-right"><span className="ledger-date">{article.publish_date?.split('T')[0] || '-'}</span></td>
                       <td className="px-3 text-right"><span className="ledger-date" title={`收录时间：${article.fetched_date?.replace('T', ' ').substring(0, 16) || '—'}`}>{article.fetched_date?.split('T')[0] || '-'}</span></td>
-                      {showVectorActions && (
-                        <td className="px-3" onClick={e => e.stopPropagation()}>
-                          {status === 'indexed' ? (
-                            <span className="stamp stamp-ok">已入索引</span>
-                          ) : (() => {
-                            // 非 indexed 态 = 可点构建章（busy 禁用、文案「构建中」）。
-                            const def = INDEX_STAMP[status] || INDEX_STAMP.pending;
-                            return (
-                              <button
-                                type="button"
-                                onClick={() => handleVectorize(article.id)}
-                                disabled={busy}
-                                className={`stamp ${busy ? 'stamp-run' : def.cls}`}
-                                title={busy ? '构建中' : `点击构建向量索引（当前：${def.label}）`}
-                              >
-                                {busy ? '构建中' : def.label}
-                              </button>
-                            );
-                          })()}
-                        </td>
-                      )}
                       <td className="px-3" onClick={e => e.stopPropagation()}>
                         <div className="ledger-rowacts">
-                          {showVectorActions && (
-                            <button
-                              type="button"
-                              className="ledger-iconbtn"
-                              title="向量化"
-                              aria-label={`向量化：${article.title || article.id}`}
-                              disabled={busy}
-                              onClick={() => handleVectorize(article.id)}
-                            >
-                              {busy ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                            </button>
-                          )}
                           <button
                             type="button"
                             className="ledger-iconbtn"
@@ -907,11 +720,6 @@ export default function DataTab({
           {selectedArticles.size > 0 && canSelectArticles && (
             <div className="ledger-batchbar">
               <span className="ledger-batch-n">{selectedArticles.size} 条已选</span>
-              {showVectorActions && (
-                <button onClick={handleBatchVectorize} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
-                  <Zap className="h-3.5 w-3.5" /> 批量构建
-                </button>
-              )}
               <button onClick={handleBatchDeleteArticles} className="action-button action-button-danger min-h-[32px] px-3 text-xs">
                 <Trash2 className="h-3.5 w-3.5" /> 批量删除
               </button>
@@ -960,12 +768,9 @@ export default function DataTab({
         open={drawer.open}
         article={drawer.article}
         loading={detailLoading}
-        ragEnabled={showVectorActions}
         canManage={canManageArticles}
         getFetcherName={getFetcherName}
-        vectorizing={vectorizingId === drawer.article?.id}
         onClose={closeDrawer}
-        onVectorize={(a) => handleVectorize(a.id)}
         onEdit={openEditModal}
         onDelete={handleDeleteSingle}
       />

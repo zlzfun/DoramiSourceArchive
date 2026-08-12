@@ -39,7 +39,6 @@ export default function MobileSettings({
   feedbackUnread = 0,
   onFeedbackSeen,
 }) {
-  const ragEnabled = Boolean(runtimeInfo?.rag_enabled);
   const accountRole = runtimeInfo?.account_role;
   const isAdmin = accountRole === 'admin';
   const accountRoleLabel = isAdmin ? '管理员' : accountRole === 'user' ? '读者' : '—';
@@ -128,7 +127,7 @@ export default function MobileSettings({
               <FeedTokenSection showToast={showToast} isAdmin={false} />
             )}
             {active.id === 'mcp' && (
-              <McpAccessSection showToast={showToast} ragEnabled={ragEnabled} canManage={false} onClose={onClose} />
+              <McpAccessSection showToast={showToast} canManage={false} />
             )}
             {active.id === 'skill' && <SkillSection />}
             {active.id === 'feedback' && <FeedbackSection showToast={showToast} />}

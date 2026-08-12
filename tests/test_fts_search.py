@@ -40,7 +40,7 @@ def _add(sink, rid, title, content):
         session.add(ArticleRecord(
             id=rid, title=title, content_type="web_article", source_id="src_a",
             source_url="http://x", publish_date="2026-06-01", fetched_date="2026-06-01",
-            has_content=True, content=content, is_vectorized=False,
+            has_content=True, content=content,
         ))
         session.commit()
 

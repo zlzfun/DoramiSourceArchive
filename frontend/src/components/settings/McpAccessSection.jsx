@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronRight, Copy } from 'lucide-react';
-import { fetchMcpStatus, fetchVectorStats, toggleMcp } from '../../api';
+import { fetchMcpStatus, toggleMcp } from '../../api';
 import { MCP_URL } from '../../config';
 import { copyText } from '../../utils/clipboard';
 import { runAction } from '../../utils/runAction';
 
-// 五个 MCP 工具，顺序照样页(list_sources 建议首先调用 → 语义检索工具垫后)。
-// requiresRag 的两个语义工具在 RAG 关闭时整行灰显 + 右侧翻为「RAG 未启用」章。
+// 五个 MCP 工具，顺序照样页(list_sources 建议首先调用 → 检索工具垫后)。
+// v3.30 检索扶正波:两个检索工具改 FTS5 全文检索芯,不再依赖 RAG 开关。
 const TOOLS = [
   {
     name: 'list_sources',
@@ -25,15 +25,13 @@ const TOOLS = [
   },
   {
     name: 'search_articles',
-    desc: '语义向量搜索，中英跨语，按相关性排序。',
-    params: 'query, top_k?, content_type?, source_id?, publish_date_gte?, distance_threshold?, subscription_token?',
-    requiresRag: true,
+    desc: '关键词全文搜索（标题+正文，中英文皆可），按发布日期倒序。',
+    params: 'query, top_k?, content_type?, source_id?, publish_date_gte?, subscription_token?',
   },
   {
     name: 'get_rag_context',
-    desc: '组装可直接拼入 System Prompt 的 RAG 上下文串。',
-    params: 'query, top_k?, max_chars?, distance_threshold?, content_type?, source_id?, publish_date_gte?, subscription_token?',
-    requiresRag: true,
+    desc: '关键词检索后组装可直接拼入 System Prompt 的上下文串。',
+    params: 'query, top_k?, max_chars?, content_type?, source_id?, publish_date_gte?, subscription_token?',
   },
 ];
 
@@ -67,17 +65,15 @@ function CopyBtn({ text, label, copiedKey, itemKey, onCopy, title }) {
 /**
  * MCP 接入（设置柜·接入集成组）：端点 + 客户端配置 + 工具清单。
  * 前身是接入集成页签的 MCP 大卡（并入设置波）；原「服务」区随开关并入退役（用户拍板）——
- * canManage（管理台界面的 admin）时头部渲染启停 switch（switch 即状态，替代状态章），
- * 底部追加向量索引只读统计行（RAG 工具的底层索引状态，构建管理仍归知识台账）。
+ * canManage（管理台界面的 admin）时头部渲染启停 switch（switch 即状态，替代状态章）。
  * 读者观感（含 admin 在阅读器界面）：无开关、无管理面文案，「启停与取数范围」走读者版说明。
  */
-export default function McpAccessSection({ showToast, ragEnabled = false, canManage = false, onClose }) {
+export default function McpAccessSection({ showToast, canManage = false }) {
   const [status, setStatus] = useState(null);
   const [codeKind, setCodeKind] = useState('claude');   // claude | opencode | codex | url
   const [stoppedConfigOpen, setStoppedConfigOpen] = useState(false);  // 停止时接入配置默认折叠
   const [copiedKey, setCopiedKey] = useState('');
   const [toggling, setToggling] = useState(false);
-  const [vectorStats, setVectorStats] = useState(null);
 
   const showToastRef = useRef(showToast);
   useEffect(() => { showToastRef.current = showToast; }, [showToast]);
@@ -97,13 +93,6 @@ export default function McpAccessSection({ showToast, ragEnabled = false, canMan
     return () => window.removeEventListener('dorami-mcp-changed', handleMcpChanged);
   }, []);
 
-  useEffect(() => {
-    if (!(canManage && ragEnabled)) return undefined;
-    let alive = true;
-    fetchVectorStats().then(d => { if (alive) setVectorStats(d); }).catch(() => {});
-    return () => { alive = false; };
-  }, [canManage, ragEnabled]);
-
   const handleToggle = async () => {
     setToggling(true);
     try {
@@ -118,11 +107,6 @@ export default function McpAccessSection({ showToast, ragEnabled = false, canMan
     }
   };
 
-  // 台账跳转:关设置柜 + 直切知识台账(构建/重索引/自动向量化归总账条独管)
-  const goLedger = () => {
-    window.location.hash = '#/data';
-    onClose?.();
-  };
 
   const mcpUrl = status?.url ?? MCP_URL;
   const mcpJson = JSON.stringify({
@@ -270,53 +254,30 @@ export default function McpAccessSection({ showToast, ragEnabled = false, canMan
         <span className="zone-hint" style={{ marginLeft: 'auto' }}>传入 dfeed_ 令牌即限定到订阅范围</span>
       </div>
       <div className="tools">
-        {TOOLS.map(tool => {
-          const off = tool.requiresRag && !ragEnabled;
-          return (
-            <div key={tool.name} className={`tool-row ${off ? 'is-off' : ''}`}>
-              <span className="tool-name">{tool.name}</span>
-              <span className="tool-desc">
-                {tool.desc}
-                <span className="p" title={tool.params}>{tool.params}</span>
-              </span>
-              {tool.requiresRag
-                ? <span className={`stamp ${ragEnabled ? 'stamp-ok' : 'stamp-idle'}`}>{ragEnabled ? 'RAG' : 'RAG 未启用'}</span>
-                : <span />}
-            </div>
-          );
-        })}
+        {TOOLS.map(tool => (
+          <div key={tool.name} className="tool-row">
+            <span className="tool-name">{tool.name}</span>
+            <span className="tool-desc">
+              {tool.desc}
+              <span className="p" title={tool.params}>{tool.params}</span>
+            </span>
+            <span />
+          </div>
+        ))}
       </div>
 
       <details className="scope-note">
         <summary>启停与取数范围</summary>
         {canManage ? (
           <p>
-            MCP 服务随后端进程启停，无需单独部署，启停由管理员统一控制。管理员会话检索全库；携带 dfeed_ / dsub_ 令牌的调用硬限定到该令牌的订阅范围（仅 <code className="font-mono">list_sources</code> 例外，可直接列目录）。管理员的 dfeed_ 令牌不受此限，检索全库。RAG 关闭时，两个语义工具返回结构化的「RAG disabled」而非报错。
+            MCP 服务随后端进程启停，无需单独部署，启停由管理员统一控制。管理员会话检索全库；携带 dfeed_ / dsub_ 令牌的调用硬限定到该令牌的订阅范围（仅 <code className="font-mono">list_sources</code> 例外，可直接列目录）。管理员的 dfeed_ 令牌不受此限，检索全库。
           </p>
         ) : (
           <p>
-            MCP 服务由管理员统一开启。携带你的 dfeed_ / dsub_ 令牌的调用会限定在你的订阅范围（仅 <code className="font-mono">list_sources</code> 例外，可直接列目录）。语义检索未开启时，两个语义工具会返回说明性结果而非报错。
+            MCP 服务由管理员统一开启。携带你的 dfeed_ / dsub_ 令牌的调用会限定在你的订阅范围（仅 <code className="font-mono">list_sources</code> 例外，可直接列目录）。
           </p>
         )}
       </details>
-
-      {/* admin+RAG:语义工具的底层索引状态(只读);构建/重索引/自动向量化归知识台账总账条独管 */}
-      {canManage && ragEnabled && (
-        <div className="sett-row" style={{ marginTop: 10 }}>
-          <span className="sett-id">
-            <span className="sett-lbl">向量索引</span>
-            <div className="sett-sub">
-              <span className="sett-stat">
-                {vectorStats === null ? '统计加载中…' : `${Number(vectorStats.total_vectors ?? 0).toLocaleString()} 块`}
-                <span className="mx-1">·</span>BAAI/bge-m3
-              </span>
-              —— 构建、重索引与自动向量化在{' '}
-              <button type="button" className="sett-link" onClick={goLedger}>知识台账 → 总账条</button>
-              {' '}统一管理
-            </div>
-          </span>
-        </div>
-      )}
     </div>
   );
 }

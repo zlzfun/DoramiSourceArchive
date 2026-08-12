@@ -2,15 +2,6 @@
 
 // KPI 彩色数字体系已退役（运维波·仪表墙）：KPI 数字全 ink，语义色只留异常。
 
-// 向量化率健康度 → KPI 数字语义色变体（这是真正需要语义色的指标，是「数字全 ink」的例外）：
-// ≥80% 中性达标（无 tone）、40~80% 琥珀待补（is-warn）、<40% 偏红告警（is-bad）。
-export function vectorizedRateClass(rate) {
-  const r = Number(rate || 0);
-  if (r >= 0.8) return '';
-  if (r >= 0.4) return 'is-warn';
-  return 'is-bad';
-}
-
 // 用途标签：与后端 AiUsageRecord.purpose 对齐。
 export const PURPOSE_LABELS = {
   translate: '阅读器翻译',

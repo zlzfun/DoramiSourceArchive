@@ -406,3 +406,49 @@ def build_qa_user_prompt(question: str, context: str, *, scope: str = "article")
         "\n【读者的问题】\n"
         f"{question.strip()}"
     )
+
+
+# ==================== 阅读器 AI：订阅域检索(规划 + 选篇) ====================
+# v3.30 检索扶正波(docs/rag-retirement-plan.md §2):scope=subscription 问答的
+# 两段式检索——先由 LLM 把自然语言问题规划成 FTS5 关键词查询,召回后再由 LLM 选篇。
+
+SEARCH_PLAN_SYSTEM_PROMPT = """你是一份 AI 资讯归档库的检索规划器。归档库支持关键词全文检索(标题+正文,中英文均可,子串匹配)。给你一个读者的自然语言问题,请把它规划成检索计划,并输出**纯 JSON 对象**(不要任何解释文字、不要代码围栏)。
+
+输出 JSON 形状:
+{"keywords": ["关键词或短语", ...], "date_gte": "YYYY-MM-DD" 或 null, "date_lte": "YYYY-MM-DD" 或 null, "temporal": true/false, "use_brief": true/false}
+
+规划原则:
+- keywords:2~6 组彼此独立的检索词,任一命中即算候选(OR 语义)。**中英文都要给**——归档里中英文来源混杂(如问「Claude 的新功能」应同时给 "Claude" 相关的中英词)。每组可以是单词或短语;避免「的/了/最新/相关」这类无区分度的虚词;每组至少 3 个字符(过短无法匹配)。围绕问题的核心实体与事件展开,宁可多给几组同义/相关表达。
+- date_gte / date_lte:问题带明确时间范围时(「上周」「7 月」「最近几天」)据今天日期折算,否则给 null。
+- temporal:true 表示这是**无明确主题的时效浏览型**问题(如「最近有什么新闻」「今天有什么值得看」)——这类问题不需要关键词检索,直接浏览最新内容即可;此时 keywords 可给空数组。
+- use_brief:true 表示这是**跨期盘点/回顾型**问题(如「这个月 AI 圈发生了什么」「过去两周的大事」)——归档里有每日精选日报,检索日报比检索原文更合适。
+只输出 JSON。"""
+
+
+def build_search_plan_user_prompt(question: str, *, today: str) -> str:
+    return (
+        f"今天的日期:{today}\n"
+        "\n读者的问题:\n"
+        f"{question.strip()}"
+    )
+
+
+SEARCH_SELECT_SYSTEM_PROMPT = """你是一份 AI 资讯归档库的选篇器。给你一个读者的问题和一批候选文章(每条带数字 idx、标题、来源、日期、开头引子),请挑出**与问题最相关**的若干篇,输出**纯 JSON 对象**(不要任何解释文字、不要代码围栏)。
+
+输出 JSON 形状:{"selected": [idx, idx, ...]}
+
+原则:
+- 按相关性从高到低排列,最多选 8 篇;确实相关的少就少选。
+- 只凭标题/来源/日期/引子判断;拿不准但可能相关的可以入选(后续会读全文)。
+- 时效浏览型问题(「最近有什么」)按重要性与新近度挑出值得读的条目。
+- 没有任何一条与问题相关时输出 {"selected": []}。
+只输出 JSON。"""
+
+
+def build_search_select_user_prompt(question: str, candidate_lines: List[str]) -> str:
+    return (
+        "读者的问题:\n"
+        f"{question.strip()}\n"
+        "\n候选文章:\n"
+        + "\n".join(candidate_lines)
+    )

@@ -6,9 +6,8 @@
 - collector 网关仍由 app.py 中间件统一强制（COLLECTOR_API_PREFIXES 含 /api/llm、
   /api/daily-brief）；
 - 数据访问经 Depends(deps.get_session)；少数仍留在 app.py 的编排 helper
-  （scheduler 重载 / runtime 判定 / 当前用户名 / 抓取后自动向量化）经 _app() 延迟
-  动态调用——既避免与 api.app 的导入环，也兼容测试对 auto_vectorize_after_fetch 等的
-  monkeypatch。
+  （scheduler 重载 / runtime 判定 / 当前用户名）经 _app() 延迟动态调用——既避免与
+  api.app 的导入环，也兼容测试 monkeypatch。
 """
 
 import importlib
@@ -197,8 +196,6 @@ async def generate_daily_brief_endpoint(
         except Exception as exc:  # noqa: BLE001 兜底：让进度反映失败，再抛出（记入 job.error）
             daily_brief_service.set_progress("error", f"生成失败: {exc}")
             raise
-        if not params.dry_run and result.get("article_id"):
-            await app.auto_vectorize_after_fetch([result["article_id"]])
         return result
 
     from services import jobs

@@ -309,7 +309,7 @@ button:disabled {
 /* 原生勾选/单选框统一走品牌 accent —— 否则在 [data-theme=dark] 的
    color-scheme: dark 下会退化成浏览器暗色 UA 默认（深色方块、无品牌色）。
    JSX 里散落的 text-[var(--dorami-blue)] 只设 color，原生控件并不读取，
-   故在此一处兜底（与 .vector-option-chip input 的 accent-color 同口径）。 */
+   故在此一处兜底（节点参数勾选等原生控件同受益）。 */
 input[type="checkbox"],
 input[type="radio"] {
   accent-color: var(--dorami-blue);
@@ -2713,184 +2713,6 @@ input[type="radio"] {
     width: 14px;
   }
 
-  /* ── Vector status ── */
-
-  .vector-status {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    width: 116px;
-    height: 28px;
-    border: 0;
-    border-radius: var(--r-control);
-    appearance: none;
-    -webkit-appearance: none;
-    font-family: "PingFang SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-    font-size: 13px;
-    font-style: normal;
-    font-variant: normal;
-    font-weight: 700;
-    letter-spacing: 0;
-    line-height: 28px;
-    padding: 0;
-    text-rendering: geometricPrecision;
-    white-space: nowrap;
-  }
-
-  .vector-status-icon {
-    flex: 0 0 15px;
-    width: 15px;
-    height: 15px;
-    margin: 0;
-  }
-
-  .vector-status-label {
-    display: inline-block;
-    min-width: 65px;
-    font: inherit;
-    line-height: inherit;
-    text-align: left;
-  }
-
-  .vector-status-done {
-    background: #f0fdf4;
-    color: #15803d;
-  }
-
-  .vector-status-pending {
-    background: #f1f5f9;
-    color: #64748b;
-    cursor: pointer;
-    transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
-  }
-
-  /* 静默仪器:可点状态章 hover 用 wash 提示可操作,不实心化 */
-  .vector-status-pending:hover {
-    background: var(--dorami-wash);
-    color: var(--dorami-accent-ink);
-  }
-
-  /* 细粒度索引状态：失败(rose)/陈旧(amber) 的静息色，覆盖 pending 的中性色；
-     交互与 hover 仍复用 .vector-status-pending（可点击重建）。 */
-  .vector-status-failed {
-    background: #fef2f2;
-    color: #b91c1c;
-  }
-
-  .vector-status-stale {
-    background: #fffbeb;
-    color: #b45309;
-  }
-
-  .vector-status-indexing {
-    background: #eff6ff;
-    color: #1d4ed8;
-  }
-
-  .vector-status-hover {
-    display: none;
-  }
-
-  .vector-status-pending:hover .vector-status-default {
-    display: none;
-  }
-
-  .vector-status-pending:hover .vector-status-hover {
-    display: inline-block;
-  }
-
-  /* ── Vector layouts ── */
-
-  .vector-search-layout,
-  .vector-filter-layout {
-    display: grid;
-    gap: 12px;
-  }
-
-  .vector-search-layout {
-    grid-template-columns: minmax(0, 1fr) 156px 204px;
-    align-items: stretch;
-  }
-
-  .vector-filter-layout {
-    grid-template-columns: minmax(0, 1fr) 372px;
-    align-items: stretch;
-  }
-
-  .vector-inline-filters {
-    display: grid;
-    min-width: 0;
-    grid-template-columns: 120px minmax(180px, 0.92fr) minmax(220px, 1.1fr);
-    gap: 12px;
-  }
-
-  .vector-option-box {
-    display: grid;
-    min-width: 0;
-    grid-template-rows: auto 1fr;
-    gap: 8px;
-    border: 1px solid rgba(11, 18, 32, 0.12);
-    border-radius: var(--r-control);
-    background: rgba(255, 255, 255, 0.84);
-    padding: 12px 14px;
-    transition:
-      border-color var(--motion-fast) var(--motion-ease),
-      box-shadow var(--motion-fast) var(--motion-ease),
-      background var(--motion-fast) var(--motion-ease);
-  }
-
-  .vector-option-box:hover {
-    border-color: var(--dorami-border-strong);
-    background: #fff;
-    box-shadow: 0 7px 18px rgba(11, 18, 32, 0.08);
-  }
-
-  .vector-option-box > span {
-    color: #64748b;
-    font-size: 14px;
-    font-weight: 700;
-    line-height: 20px;
-  }
-
-  .vector-option-list {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    min-height: 24px;
-  }
-
-  .vector-option-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--dorami-ink);
-    cursor: pointer;
-    font-family: "PingFang SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-    font-size: 15px;
-    font-weight: 600;
-    line-height: 24px;
-    user-select: none;
-    white-space: nowrap;
-  }
-
-  .vector-option-chip input {
-    flex: 0 0 16px;
-    width: 16px;
-    height: 16px;
-    accent-color: var(--dorami-blue);
-    cursor: pointer;
-    margin: 0;
-  }
-
-  .vector-option-chip span {
-    display: inline-block;
-    color: inherit;
-    font: inherit;
-    letter-spacing: 0;
-    line-height: inherit;
-  }
-
   /* ── Data table ── */
 
   .data-table {
@@ -2926,7 +2748,6 @@ input[type="radio"] {
   .ledger-col-source { width: 150px; }
   .ledger-col-title { width: auto; }
   .ledger-col-publish { width: 84px; }
-  .ledger-col-vector { width: 120px; }
 
   /* 可滚动容器底部渐隐：内容自然淡出以暗示「还可下滑」，替代文字提示条。
      仅在「可滚动且未到底」时挂到滚动元素上（见 BarList），到底即撤除、末行完整可见。 */
@@ -3164,7 +2985,6 @@ input[type="radio"] {
   .ledger-stat-num.is-run { color: var(--state-run); }
 
   .ledger-stat-lbl { display: block; margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
-  .ledger-stat-sub { display: block; margin-top: 1px; font-size: 11px; font-weight: 500; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
 
   /* 选中态 = 底部 accent 条(横向控件语法) */
   .ledger-stat.is-on::after {
@@ -3178,20 +2998,6 @@ input[type="radio"] {
     border-radius: var(--r-pill) var(--r-pill) 0 0;
   }
 
-  .ledger-coverbar { display: block; height: 4px; border-radius: var(--r-pill); background: var(--dorami-well); margin-top: 10px; overflow: hidden; }
-  .ledger-coverbar i { display: block; height: 100%; border-radius: var(--r-pill); background: var(--state-ok); transition: width var(--motion-slow) var(--motion-ease); }
-
-  .ledger-strip-actions {
-    flex: none;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 8px;
-    padding: 12px 18px;
-    background: var(--dorami-soft);
-  }
-  .ledger-strip-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); }
-  .ledger-strip-btns { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
   /* 开关拇指:on = accent 底(功能状态,允许) */
   .ledger-switch {
@@ -3238,7 +3044,7 @@ input[type="radio"] {
 
   .ledger-col-acts { width: 100px; }
 
-  /* 行末操作:hover 浮现的三枚 26px 图标钮(向量化/编辑/删除),样页 .rowacts/.iconbtn 直移 */
+  /* 行末操作:hover 浮现的 26px 图标钮(编辑/删除),样页 .rowacts/.iconbtn 直移 */
   .ledger-rowacts {
     display: flex;
     justify-content: flex-end;
@@ -3418,7 +3224,7 @@ input[type="radio"] {
 
   /* ── 状态章范式 .stamp(样页直移):淡底 + 深字 + 形状点,无描边。
      形状编码保证色弱可辨:ok=方 / idle=圆 / run=圆·呼吸 / bad=菱 / warn=三角。
-     新状态展示一律用它(向量索引态、节点健康、运行结果…),勿再造 chip。 ── */
+     新状态展示一律用它(节点健康、运行结果…),勿再造 chip。 ── */
   .stamp {
     display: inline-flex;
     align-items: center;
@@ -4555,33 +4361,12 @@ input[type="radio"] {
 
   /* ── Status badges & chips ── */
 
-  .status-badge {
-    display: inline-flex;
-    min-height: 26px;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    border: 1px solid transparent;
-    border-radius: var(--r-control);
-    padding: 0 9px;
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 18px;
-    white-space: nowrap;
-  }
-
-  .status-badge svg {
-    width: 14px;
-    height: 14px;
-    flex-shrink: 0;
-  }
-
   .data-chip {
     display: inline-flex;
     min-height: 24px;
     align-items: center;
     justify-content: center;
-    /* 静默仪器·R4:淡底状态章无描边(以 .vector-status-* 为准绳);border:none 让暗色的
+    /* 静默仪器·R4:淡底状态章无描边(以 .stamp-* 为准绳);border:none 让暗色的
        accent border 覆盖同样落空,wash 淡底 + accent-ink 深字随主题翻转 */
     border: none;
     border-radius: var(--r-control);
@@ -4647,19 +4432,6 @@ input[type="radio"] {
     letter-spacing: 0;
     line-height: 32px;
     font-variant-numeric: tabular-nums;
-  }
-
-  .empty-state {
-    border: 1px dashed rgba(11, 18, 32, 0.18);
-    border-radius: var(--r-card);
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(240, 242, 246, 0.42));
-    color: #64748b;
-    font-size: 14px;
-    font-weight: 500;
-    line-height: 22px;
-    text-align: center;
-    text-wrap: balance;
   }
 
   /* ── Forms ── */
@@ -5468,7 +5240,7 @@ input[type="radio"] {
     white-space: nowrap;
   }
 
-  /* 静默仪器·R4 状态章:淡底 + 深字、无描边(以 .vector-status-* 为准绳) */
+  /* 静默仪器·R4 状态章:淡底 + 深字、无描边(以 .stamp-* 为准绳) */
   .source-health-healthy {
     background: rgba(16, 185, 129, 0.08);
     color: #047857;
@@ -5985,7 +5757,7 @@ input[type="radio"] {
     flex: none;
   }
 
-  /* (「自动刷新」开关 UI 已退役——两页轮询转为静默;.signal-switch 仍被自动向量化等开关引用) */
+  /* (「自动刷新」开关 UI 已退役——两页轮询转为静默;.signal-switch 仍被其它开关引用) */
 
   /* 开关：反馈类动效（拇指滑动），亮暗两态 */
   .signal-switch {
@@ -9776,15 +9548,6 @@ input[type="radio"] {
 /* ── Responsive ── */
 
 @media (max-width: 1024px) {
-  .vector-search-layout,
-  .vector-filter-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .vector-inline-filters {
-    grid-template-columns: 1fr;
-  }
-
   .catalog-topbar .section-title {
     width: 100%;
     margin-right: 0;
@@ -10058,8 +9821,8 @@ input[type="radio"] {
 /* ════ 规则①：输入 / 轨道 / 表头 / 代码预览 → well（深凹陷）════ */
 [data-theme="dark"] :is(
   .segmented-control, .scope-toggle, .search-box, .catalog-search,
-  .field-box, .vector-option-box, .node-param-input, .node-param-checkbox, .form-input,
-  .config-toggle, .vector-status-pending, .empty-state, .source-param-empty, .subscription-catalog-toolbar
+  .field-box, .node-param-input, .node-param-checkbox, .form-input,
+  .config-toggle, .source-param-empty, .subscription-catalog-toolbar
 ) {
   background: var(--dorami-well);
   border-color: var(--dorami-border);
@@ -10099,7 +9862,7 @@ input[type="radio"] {
 }
 [data-theme="dark"] :is(
   .ghost-action:hover, .action-button-secondary:hover, .icon-button:hover, .action-button-quiet:hover,
-  .config-toggle:hover, .field-box:hover, .vector-option-box:hover,
+  .config-toggle:hover, .field-box:hover,
   .category-chip:hover:not(.category-chip-active), .tier-segment-btn:hover:not(:disabled):not(.tier-segment-btn-active),
   .scope-toggle-option:hover:not(.scope-toggle-option-active)
 ) {
@@ -10168,10 +9931,6 @@ input[type="radio"] {
 [data-theme="dark"] .action-button-danger:hover { background: rgba(248, 113, 113, 0.2); }
 [data-theme="dark"] .action-button-success { background: rgba(16, 185, 129, 0.13); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.3); }
 [data-theme="dark"] .action-button-success:hover { background: rgba(16, 185, 129, 0.22); }
-[data-theme="dark"] .vector-status-done { background: rgba(16, 185, 129, 0.13); color: #6ee7b7; }
-[data-theme="dark"] .vector-status-failed { background: rgba(248, 113, 113, 0.13); color: #fca5a5; }
-[data-theme="dark"] .vector-status-stale { background: rgba(245, 158, 11, 0.14); color: #fcd34d; }
-[data-theme="dark"] .vector-status-indexing { background: rgba(59, 130, 246, 0.14); color: #93c5fd; }
 /* (台账状态数字/覆盖率条已 token 化(--state-*),暗色随 token 自动翻转) */
 [data-theme="dark"] .source-health-healthy { color: #6ee7b7; }
 [data-theme="dark"] .source-health-failing { color: #fca5a5; }
@@ -10182,7 +9941,7 @@ input[type="radio"] {
 /* ── 组件层写死的 slate-hex 文字：成组提到 muted / ink（不随 --color-* 翻转）── */
 [data-theme="dark"] :is(
   .segmented-option, .scope-toggle-option, .node-param-title, .node-param-label,
-  .field-box > span, .vector-option-box > span, .catalog-dimension-label,
+  .field-box > span, .catalog-dimension-label,
   .tiny-meta, .form-field, .form-field > span, .form-label, .date-range-weekday,
   .panel-header-subtitle, .running-widget-more, .running-widget-progress-queued, .running-widget-name,
   .category-chip, .tier-segment-btn, .section-band-count, .section-band-chevron, .dept-alias,

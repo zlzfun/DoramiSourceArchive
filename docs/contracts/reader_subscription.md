@@ -114,14 +114,11 @@ multi-source subscription is an admin/automation concern handled directly throug
 
 "我订阅" resolves to the union of `source_id`s across the user's active subscriptions.
 
-`POST /api/vector/search` and `POST /api/rag/context` restrict semantic retrieval to the
-restricted `user` account's subscribed sources — there is no whole-archive opt-out for that
-role. A requested `source_id` is only honored if it falls inside that set; a `user` with no
-subscriptions gets an empty result (`scoped: true`). The `admin` superuser (and the
-no-auth case) is **not** scoped — admin searches the whole archive. `GET
-/api/vector/subscribed-stats` exposes the `user`'s read-only coverage
-(`subscribed_source_count`, `total`, `vectorized`, `pending`); 向量雷达 itself is now
-admin-facing (a `user` searches through the 阅读器's keyword search instead).
+Retrieval surfaces (the 阅读器's search, the QA assistant's subscription scope, and the
+tokenized endpoints below) restrict a restricted `user` account to its subscribed sources —
+there is no whole-archive opt-out for that role. A `user` with no subscriptions gets an
+empty result. (v3.31 起检索为 SQLite FTS5 全文检索;向量/RAG 端点已退役,见
+`docs/rag-retirement-plan.md`。)
 
 The same applies to MCP via token: `search_articles` / `browse_articles` accept a token
 (`dsub_` single subscription, or `dfeed_` the user's whole subscription union) that scopes
@@ -137,25 +134,6 @@ rule that admin's own session retrieval is never subscription-scoped.
 The 阅读器 is the user's browse surface; its 我的订阅 view is backed by
 `GET /api/articles?subscribed_scope=only` (the same `subscribed_scope=only|prioritize`
 filter also powers admin's 知识台账 lens; `off` is the default).
-
-### Vectorization is an admin (collector) concern, not user-facing
-
-Because the vector collection is shared, "what gets vectorized" is a global decision and
-cannot belong to any single user (one user vectorizing an article would affect every other
-subscriber of that source). Vectorization is therefore managed only on collector/admin
-surfaces; user (`reader`) accounts cannot trigger or select it — they only consume via the
-hard-scoped retrieval above.
-
-- `GET` / `POST /api/vector/auto-vectorize` (`{enabled}`) — admin toggle for "auto-vectorize
-  newly fetched articles". When on, `run_fetcher_with_tracking` vectorizes each run's newly
-  saved articles (best-effort; failures never abort the fetch).
-- `POST /api/vectorize/{id}`, `POST /api/vectorize/batch`, `POST /api/vectorize/all-pending`,
-  `POST /api/vector/reindex-all` — admin manual build/maintenance, surfaced in the admin
-  knowledge ledger.
-
-All `/api/vectorize/*` and `/api/vector/*` paths are collector-gated **except** the
-read-only `/api/vector/search`, `/api/vector/stats`, `/api/vector/subscribed-stats`, which
-stay reader-gated. A `reader` account calling a build/manage endpoint gets `403`.
 
 ## Personal Aggregated Feed (primary consumer surface)
 
@@ -234,20 +212,22 @@ Response shape matches the existing feed article delivery shape:
 }
 ```
 
-### Tokenized semantic search
+### Tokenized full-text search
 
 ```http
 POST /api/public/subscriptions/{subscription_id}/vector/search
 Authorization: Bearer dsub_...
 Content-Type: application/json
 
-{"query": "agent frameworks", "top_k": 5, "rerank": false}
+{"query": "agent frameworks", "top_k": 5}
 ```
 
-Runs semantic search constrained to the subscription's `source_ids` (and its single
-`content_type` when set). The response includes `scoped_source_ids` and ranked
-`results`. This is the per-subscription, personalized retrieval surface for downstream
-agents over HTTP.
+Runs FTS5 full-text search (title + body, Chinese & English substrings; v3.31 起换芯,
+路径为历史兼容保留) constrained to the subscription's `source_ids` (and its single
+`content_type` when set). The response includes `scoped_source_ids` and `results`
+ordered by publish date desc. Legacy body fields `score_threshold` / `rerank` are
+accepted and ignored. This is the per-subscription, personalized retrieval surface
+for downstream agents over HTTP.
 
 ### Per-subscription MCP scope
 
@@ -259,8 +239,8 @@ consumer a personalized MCP view through one shared MCP endpoint. A missing, inv
 inactive token makes the tool return an error instead of any data — there is no unscoped
 global surface over MCP. `list_sources` is the only exception: it returns just the source
 catalog (ids/types, no article bodies) and needs no token, so a consumer can discover what
-to subscribe to. Admins searching the whole archive use the in-app surfaces (向量雷达 /
-知识台账), not MCP; to debug MCP they pass their own `dfeed_` token like any reader.
+to subscribe to. Admins searching the whole archive use the in-app surfaces (知识台账检索),
+not MCP; to debug MCP they pass their own `dfeed_` token like any reader.
 
 A token is either a per-subscription `dsub_` token or the per-user aggregated `dfeed_` token
 (obtainable from 接入集成 → 访问令牌 / `GET /api/reader/feed-token`).

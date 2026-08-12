@@ -31,19 +31,11 @@ def test_app_setting_crud():
 
 # ── Task 3 helpers ────────────────────────────────────────────────────────────
 
-from unittest.mock import MagicMock, AsyncMock
 from storage.impl.db_storage import DatabaseStorage
-from storage.impl.vector_storage import ChromaVectorStorage
 
 
 def make_db_sink():
     sink = DatabaseStorage(db_url="sqlite:///:memory:")
-    return sink
-
-
-def make_vector_sink():
-    sink = MagicMock(spec=ChromaVectorStorage)
-    sink.search = AsyncMock()
     return sink
 
 
@@ -62,7 +54,6 @@ def seed_article(db_sink, title="Test Article", source_id="test_src",
         has_content=bool(content),
         content=content,
         extensions_json='{"key": "val"}',
-        is_vectorized=False,
     )
     record_id = rec.id
     with Session(db_sink.engine) as s:
@@ -169,84 +160,77 @@ def run(coro):
     return asyncio.run(coro)
 
 
+# v3.30 检索扶正波:search_articles / get_rag_context 换 FTS5 全文检索芯
+# （工具名与出入参形状兼容,distance 退役;make_db_sink 的 DatabaseStorage 会
+# ensure_fts,trigger 同步使 seed 的文章即刻可检索）。
+
 def test_search_articles_empty_index():
     from mcp_server import _search_articles_impl
-    vec = make_vector_sink()
-    vec.search.return_value = []
-    result = run(_search_articles_impl(vec, query="embodied intelligence"))
+    db = make_db_sink()
+    result = run(_search_articles_impl(db, query="embodied intelligence"))
     assert result == []
-    vec.search.assert_called_once()
 
 
-def test_search_articles_deduplicates_chunks():
+def test_search_articles_matches_body_keyword():
     from mcp_server import _search_articles_impl
-    vec = make_vector_sink()
-    vec.search.return_value = [
-        {"id": "art1_chunk_0", "document": "chunk A", "distance": 0.3,
-         "metadata": {"parent_id": "art1", "title": "Robot Survey",
-                      "source_id": "arxiv_src", "content_type": "arxiv",
-                      "publish_date": "2025-03-01"}},
-        {"id": "art1_chunk_1", "document": "chunk B", "distance": 0.8,
-         "metadata": {"parent_id": "art1", "title": "Robot Survey",
-                      "source_id": "arxiv_src", "content_type": "arxiv",
-                      "publish_date": "2025-03-01"}},
-    ]
-    result = run(_search_articles_impl(vec, query="robots"))
+    db = make_db_sink()
+    article_id = seed_article(db, title="Robot Survey", content="a survey about embodied robots")
+    seed_article(db, title="Other Topic", content="nothing related at all")
+    result = run(_search_articles_impl(db, query="embodied"))
     assert len(result) == 1
-    assert result[0]["id"] == "art1"
-    assert result[0]["distance"] == 0.3
+    assert result[0]["id"] == article_id
+    assert result[0]["title"] == "Robot Survey"
+    assert "embodied" in result[0]["summary"]
+    assert "distance" not in result[0]
 
 
-def test_search_articles_filters_by_threshold():
+def test_search_articles_respects_subscription_scope():
     from mcp_server import _search_articles_impl
-    vec = make_vector_sink()
-    vec.search.return_value = [
-        {"id": "art2_chunk_0", "document": "irrelevant", "distance": 1.8,
-         "metadata": {"parent_id": "art2", "title": "Off-topic",
-                      "source_id": "other", "content_type": "misc",
-                      "publish_date": "2025-01-01"}},
-    ]
-    result = run(_search_articles_impl(vec, query="something", distance_threshold=1.5))
-    assert result == []
+    db = make_db_sink()
+    seed_article(db, title="Scoped Hit", source_id="src_a", content="quantum computing news")
+    seed_article(db, title="Out of Scope", source_id="src_b", content="quantum computing news too")
+    allowed = run(_search_articles_impl(db, query="quantum", source_ids=["src_a"]))
+    assert [r["title"] for r in allowed] == ["Scoped Hit"]
+    # 空订阅域（source_ids=[]）= 零结果，不放大到全库。
+    none = run(_search_articles_impl(db, query="quantum", source_ids=[]))
+    assert none == []
+
+
+def test_search_articles_filters_by_publish_date():
+    from mcp_server import _search_articles_impl
+    db = make_db_sink()
+    seed_article(db, title="Fresh News", content="framework release announcement")
+    result_all = run(_search_articles_impl(db, query="framework"))
+    assert len(result_all) == 1
+    result_future = run(_search_articles_impl(db, query="framework", publish_date_gte="2999-01-01"))
+    assert result_future == []
 
 
 def test_get_rag_context_empty():
     from mcp_server import _get_rag_context_impl
     db = make_db_sink()
-    vec = make_vector_sink()
-    vec.search.return_value = []
-    result = run(_get_rag_context_impl(db, vec, query="test"))
+    result = run(_get_rag_context_impl(db, query="test query"))
     assert result == ""
 
 
 def test_get_rag_context_formats_block():
     from mcp_server import _get_rag_context_impl
     db = make_db_sink()
-    article_id = seed_article(db, title="Embodied AI Survey", content="Survey content here.")
-    vec = make_vector_sink()
-    vec.search.return_value = [
-        {"id": f"{article_id}_chunk_0",
-         "document": "Header line\n\nSurvey content here.",
-         "distance": 0.4,
-         "metadata": {"parent_id": article_id, "title": "Embodied AI Survey",
-                      "source_id": "test_src", "content_type": "arxiv",
-                      "publish_date": "2025-03-01"}},
-    ]
-    result = run(_get_rag_context_impl(db, vec, query="embodied AI"))
-    assert "Embodied AI Survey" in result
-    assert "2025-03-01" in result
+    seed_article(db, title="Embodied AI Survey", content="Survey content here about embodied AI.")
+    result = run(_get_rag_context_impl(db, query="embodied"))
     assert isinstance(result, str)
+    assert "Embodied AI Survey" in result
+    assert "来源:" in result and "链接:" in result
+    assert "Survey content here" in result
 
 
-def test_get_rag_context_passes_subscription_scope_to_vector_search():
+def test_get_rag_context_respects_subscription_scope():
     from mcp_server import _get_rag_context_impl
     db = make_db_sink()
-    vec = make_vector_sink()
-    vec.search.return_value = []
-    result = run(_get_rag_context_impl(db, vec, query="embodied AI", source_ids=["src_a"]))
-    assert result == ""
-    kwargs = vec.search.call_args.kwargs
-    assert kwargs["source_ids"] == ["src_a"]
+    seed_article(db, title="Visible", source_id="src_a", content="tokenizer deep dive")
+    seed_article(db, title="Hidden", source_id="src_b", content="tokenizer deep dive as well")
+    result = run(_get_rag_context_impl(db, query="tokenizer", source_ids=["src_a"]))
+    assert "Visible" in result and "Hidden" not in result
 
 
 # ── Task 5 ────────────────────────────────────────────────────────────────────

@@ -32,8 +32,7 @@ def backfill_social_posts(
 ) -> Dict[str, int]:
     """从本地 raw_data 回填 social extensions 与源头像缓存。
 
-    重复执行只会得到 ``extensions_unchanged``，不会改写正文、is_vectorized、
-    index_status，也不会刷新未变化缓存的 updated_at。
+    重复执行只会得到 ``extensions_unchanged``，不会改写正文，也不会刷新未变化缓存的 updated_at。
     """
     result = {
         "articles_scanned": 0,

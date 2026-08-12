@@ -6,8 +6,8 @@
 
 ## 一分钟定向
 
-- **项目**:DoramiSourceArchive(哆啦美·归档中枢)——AI 内容聚合 CMS + RAG。
-  采集/归档侧(fetcher → SQLite → 可选 ChromaDB 向量化)+ 读者分发侧
+- **项目**:DoramiSourceArchive(哆啦美·归档中枢)——AI 内容聚合 CMS。
+  采集/归档侧(fetcher → SQLite,内建 FTS5 全文索引)+ 读者分发侧
   (订阅制阅读器、令牌化 feed/MCP 交付、LLM 日报),按登录角色 admin/user 分面。
 - **技术栈**:Python FastAPI + SQLModel + Alembic(后端,`uv` 管依赖,入口 `python src/main.py`);
   React + Vite + Tailwind v4(前端,`frontend/`,`npm run dev|build|lint`);测试 `pytest tests/`。

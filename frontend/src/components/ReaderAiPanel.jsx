@@ -199,8 +199,8 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast }) {
                 {qaScopeMenuOpen && (
                   <div className="reader-ai-scope-menu" role="listbox">
                     {[
-                      { id: 'article', label: '基于本文' },
-                      { id: 'subscription', label: '基于我的订阅' },
+                      { id: 'article', label: '基于本文', hint: '只基于当前打开的这篇文章作答' },
+                      { id: 'subscription', label: '基于我的订阅', hint: '在你订阅的内容里检索相关文章后作答' },
                     ].map((opt) => {
                       // 「基于本文」需先选中一篇文章，未选时置灰不可选。
                       const disabled = opt.id === 'article' && !activeArticle;
@@ -211,7 +211,7 @@ export default function ReaderAiPanel({ aiEnabled, activeArticle, showToast }) {
                         role="option"
                         aria-selected={qaScope === opt.id}
                         disabled={disabled}
-                        title={disabled ? '先从中间选择一篇文章' : undefined}
+                        title={disabled ? '先从中间选择一篇文章' : opt.hint}
                         className={`reader-ai-scope-option ${qaScope === opt.id ? 'is-on' : ''} ${disabled ? 'is-disabled' : ''}`}
                         onClick={() => {
                           if (disabled) return;

@@ -1,6 +1,6 @@
 """内容看板（content_analytics）回归测试。
 
-覆盖：summarize 的每源文章/向量化/最新抓取/主类型聚合、收藏的按源 + 文章级
+覆盖：summarize 的每源文章/最新抓取/主类型聚合、收藏的按源 + 文章级
 top 榜聚合、totals；以及 /api/admin/content 端点的源名/订阅数富化与 admin 鉴权。
 """
 import os
@@ -44,7 +44,7 @@ def _seed_content(engine):
         return ArticleRecord(
             id=aid, title=title, content_type=ctype, source_id=source,
             source_url=f"http://x/{aid}", publish_date="2026-06-01", fetched_date=fetched,
-            has_content=True, content="body", is_vectorized=vec,
+            has_content=True, content="body",
         )
 
     with Session(engine) as session:
@@ -78,7 +78,6 @@ def test_summarize_aggregates(monkeypatch, tmp_path):
 
     alpha = agg["by_source"]["src_alpha"]
     assert alpha["article_count"] == 3
-    assert alpha["vectorized_count"] == 2
     assert alpha["last_fetched"] == "2026-06-20"
     assert alpha["primary_content_type"] == "arxiv"  # 计数最高者（2 > 1）
     assert alpha["content_types"] == {"arxiv": 2, "wechat_article": 1}
@@ -90,7 +89,7 @@ def test_summarize_aggregates(monkeypatch, tmp_path):
     assert agg["top_articles"][0]["article_id"] == "a1"
     assert agg["top_articles"][0]["favorite_count"] == 2
 
-    assert agg["totals"] == {"articles": 4, "vectorized": 2, "favorites": 3}
+    assert agg["totals"] == {"articles": 4, "favorites": 3}
 
 
 def test_admin_content_endpoint(monkeypatch, tmp_path):
@@ -108,11 +107,10 @@ def test_admin_content_endpoint(monkeypatch, tmp_path):
         assert body["totals"]["sources"] >= 2
 
         by_id = {s["source_id"]: s for s in body["sources"]}
-        # src_alpha：2 人订阅、2 收藏、3 文章、向量化率 2/3。
+        # src_alpha：2 人订阅、2 收藏、3 文章。
         assert by_id["src_alpha"]["subscription_count"] == 2
         assert by_id["src_alpha"]["favorite_count"] == 2
         assert by_id["src_alpha"]["article_count"] == 3
-        assert round(by_id["src_alpha"]["vectorized_rate"], 2) == 0.67
         # src_beta：1 人订阅、1 收藏。
         assert by_id["src_beta"]["subscription_count"] == 1
         assert by_id["src_beta"]["favorite_count"] == 1

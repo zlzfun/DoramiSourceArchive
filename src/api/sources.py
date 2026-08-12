@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from fetchers.registry import fetcher_registry
 from models.db import ReaderSubscriptionRecord
 from services import daily_brief as daily_brief_service
-from storage.impl.vector_storage import friendly_source_name
+from services.source_naming import friendly_source_name
 
 
 # content_type -> 中文分类名（内容源目录/看板展示用）。

@@ -32,7 +32,11 @@ def upgrade() -> None:
                 nullable=False, server_default='pending',
             ))
         # 回填：已向量化 → indexed；其余保持 pending（server_default）。
-        op.execute("UPDATE articles SET index_status='indexed' WHERE is_vectorized=1")
+        # 列守卫（v3.31 追加）：新库经现行 metadata create_all 后走「stamp 基线 +
+        # upgrade head」收养路径时已无 is_vectorized 列（f2c9d4e07a11 起随模型删除），
+        # 真旧库必有该列、回填照常。
+        if "is_vectorized" in columns:
+            op.execute("UPDATE articles SET index_status='indexed' WHERE is_vectorized=1")
 
     indexes = {i["name"] for i in inspect(op.get_bind()).get_indexes("articles")}
     if "ix_articles_index_status" not in indexes:

@@ -135,49 +135,6 @@ def _seed_users(engine):
         session.commit()
 
 
-def test_vectorize_all_pending_end_to_end_via_endpoint(monkeypatch, tmp_path):
-    """端到端：POST /api/vectorize/all-pending → job_id → 轮询 /api/jobs/{id} 到 succeeded。"""
-    from sqlmodel import Session
-    from fastapi.testclient import TestClient
-    from models.db import ArticleRecord
-    import api.app as app_module
-
-    sink = _sink(tmp_path, "e2e.db")
-    _seed_users(sink.engine)
-    with Session(sink.engine) as session:
-        session.add(ArticleRecord(
-            id="x1", title="t", content_type="web_article", source_id="s",
-            source_url="http://x", publish_date="2026-06-01", fetched_date="2026-06-01",
-            has_content=True, content="body", is_vectorized=False,
-        ))
-        session.commit()
-    monkeypatch.setattr(app_module, "db_sink", sink)
-
-    class FakeVectorSink:
-        async def save(self, content):
-            return True
-
-    monkeypatch.setattr(app_module, "vector_sink", FakeVectorSink())
-
-    with TestClient(app_module.app) as client:
-        client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
-        resp = client.post("/api/vectorize/all-pending")
-        assert resp.status_code == 200
-        job_id = resp.json()["job_id"]
-
-        # TestClient 同步轮询：每次 GET 驱动事件循环推进后台任务。
-        final = None
-        for _ in range(200):
-            final = client.get(f"/api/jobs/{job_id}").json()
-            if final["status"] in ("succeeded", "failed"):
-                break
-        assert final["status"] == "succeeded", final
-        assert final["result"] == {"count": 1, "total_pending": 1}
-        # 落库确认已向量化
-        with Session(sink.engine) as session:
-            assert session.get(ArticleRecord, "x1").is_vectorized is True
-
-
 def test_to_dict_shape(tmp_path):
     engine = _sink(tmp_path).engine
 

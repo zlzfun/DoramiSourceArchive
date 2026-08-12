@@ -4,13 +4,13 @@
 - GET  /api/articles                —— 列表/查询（含订阅作用域 off|only|prioritize）
 - GET  /api/articles/{id}           —— 单条详情
 - POST /api/articles                —— 手工录入
-- PUT  /api/articles/{id}           —— 更新（改 content/title 重置向量状态并清块）
-- DELETE /api/articles/{id}         —— 删除（清向量块 + 必要时回退日报游标）
+- PUT  /api/articles/{id}           —— 更新
+- DELETE /api/articles/{id}         —— 删除（必要时回退日报游标）
 - POST /api/articles/batch-delete   —— 批量删除
 
 说明：article import（归档同步）与 /api/feed/articles[.md]（依赖采集投递作用域
-helper）暂留 app.py。数据访问经 deps.get_session()/deps.get_db_sink()/
-deps.get_vector_sink_optional()；current_username 经 _app() 延迟动态调用。
+helper）暂留 app.py。数据访问经 deps.get_session()/deps.get_db_sink()；
+current_username 经 _app() 延迟动态调用。
 """
 
 import importlib
@@ -122,8 +122,6 @@ def get_articles(
         job_run_id: Optional[int] = None,
         fetch_run_id: Optional[int] = None,
         run_scope: Optional[str] = None,
-        is_vectorized: Optional[bool] = None,
-        index_status: Optional[str] = None,
         has_content: Optional[bool] = None,
         search: Optional[str] = None,
         publish_date_start: Optional[str] = None,
@@ -164,8 +162,6 @@ def get_articles(
         "job_run_id": job_run_id,
         "fetch_run_id": fetch_run_id,
         "run_scope": run_scope,
-        "is_vectorized": is_vectorized,
-        "index_status": index_status,
         "has_content": has_content,
         "search": search,
         "publish_date_start": publish_date_start,
@@ -339,12 +335,9 @@ def _maybe_rewind_daily_brief_cursor(record) -> None:
 @router.delete("/api/articles/{article_id:path}")
 async def delete_article(article_id: str):
     db_sink = deps.get_db_sink()
-    vector_sink = deps.get_vector_sink_optional()
     record = await db_sink.get(article_id)
     if not record:
         raise HTTPException(status_code=404, detail="文章未找到")
-    if record.is_vectorized and vector_sink is not None:
-        await vector_sink.delete(article_id)
     await db_sink.delete(article_id)
     _maybe_rewind_daily_brief_cursor(record)
     return {"status": "success"}
@@ -353,12 +346,9 @@ async def delete_article(article_id: str):
 @router.post("/api/articles/batch-delete")
 async def batch_delete_articles(params: BatchOpParams):
     db_sink = deps.get_db_sink()
-    vector_sink = deps.get_vector_sink_optional()
     for uid in params.ids:
         record = await db_sink.get(uid)
         if record:
-            if record.is_vectorized and vector_sink is not None:
-                await vector_sink.delete(uid)
             await db_sink.delete(uid)
             _maybe_rewind_daily_brief_cursor(record)
     return {"status": "success"}
@@ -374,15 +364,7 @@ class ArticleUpdateParams(BaseModel):
 @router.put("/api/articles/{article_id:path}")
 async def update_article(article_id: str, params: ArticleUpdateParams):
     db_sink = deps.get_db_sink()
-    vector_sink = deps.get_vector_sink_optional()
     update_data = {k: v for k, v in params.dict().items() if v is not None}
-    if "content" in update_data or "title" in update_data:
-        # 内容/标题改动使已有向量失效：清 chunk 并标陈旧（stale 仍会被 all-pending 重新拾取）。
-        update_data["is_vectorized"] = False
-        update_data["index_status"] = "stale"
-        if vector_sink is not None:
-            await vector_sink.delete(article_id)
-
     success = await db_sink.update(article_id, update_data)
     if not success:
         raise HTTPException(status_code=404, detail="更新失败")
@@ -390,7 +372,7 @@ async def update_article(article_id: str, params: ArticleUpdateParams):
 
 
 # ==================== 投递视图（/api/feed/articles[.md]）====================
-# 下游 LLM/RAG 消费者推荐契约：按采集投递作用域（source/job）过滤后的档案视图。
+# 下游 LLM 消费者推荐契约：按采集投递作用域（source/job）过滤后的档案视图。
 # （?group_id= 作用域随节点组退役移除——实体简化阶段 2。）
 
 @router.get("/api/feed/articles")

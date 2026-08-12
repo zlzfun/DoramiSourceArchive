@@ -22,10 +22,6 @@ def test_collection_fetch_items_run_with_limited_concurrency(monkeypatch, tmp_pa
     fake_pipeline = FakePipeline()
     monkeypatch.setattr(app_module, "pipeline", fake_pipeline)
 
-    async def noop_auto_vectorize(content_ids):
-        return None
-
-    monkeypatch.setattr(app_module, "auto_vectorize_after_fetch", noop_auto_vectorize)
 
     items = [
         {"fetcher_id": f"fetcher_{index}", "params": {"marker": f"item_{index}"}}

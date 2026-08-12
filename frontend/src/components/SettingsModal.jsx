@@ -35,7 +35,6 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
   const { mounted, closing } = useModalTransition(open);
   const collectorEnabled = Boolean(runtimeInfo?.collector_enabled);
   const readerEnabled = Boolean(runtimeInfo?.reader_enabled);
-  const ragEnabled = Boolean(runtimeInfo?.rag_enabled);
   const accountRole = runtimeInfo?.account_role;
   const isAdmin = accountRole === 'admin';
   // 管理台观感:admin 账号且当前在管理台界面。admin 切到阅读器时按读者观感呈现。
@@ -177,9 +176,7 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
             {activeSection.id === 'mcp' && (
               <McpAccessSection
                 showToast={showToast}
-                ragEnabled={ragEnabled}
                 canManage={adminConsole && collectorEnabled}
-                onClose={onClose}
               />
             )}
             {activeSection.id === 'skill' && (

@@ -26,8 +26,8 @@ role = all
 
 `collector` / `reader` 仅用于把采集与分发拆到不同主机的**分离部署**：
 
-- `collector`：外网采集归档层，开启抓取、调度、采集任务和运行观测，关闭 MCP/Dify/RAG 等 reader 交付面。
-- `reader`：内网分发订阅层，开启内容阅览、向量/RAG、Dify 和 MCP，关闭抓取、调度和采集任务。
+- `collector`：外网采集归档层，开启抓取、调度、采集任务和运行观测，关闭 MCP/feed 等 reader 交付面。
+- `reader`：内网分发订阅层，开启内容阅览、全文检索、feed 和 MCP，关闭抓取、调度和采集任务。
 
 分离部署步骤：
 
