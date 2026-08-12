@@ -81,9 +81,38 @@ function MarkdownImage({ node, alt, ...props }) {
   );
 }
 
+// 行内引用注入（AI 问答 v3.32）：回答文本里的 [n] 标记在面板侧被预转换为
+// `[n](#dorami-cite-n)` 链接，这里把命中该形状的链接渲染成可点的引用 chip
+// （Context 注入回调，理由同图片：components 表是模块级常量）。普通正文里
+// 不会出现这种 href，未注入 citations 时命中也只降级为纯文本序号。
+const CitationContext = createContext(null);
+const CITE_HREF_RE = /^#dorami-cite-(\d{1,2})$/;
+
+function MarkdownAnchor({ node, href, children, ...props }) {
+  const citations = useContext(CitationContext);
+  const match = CITE_HREF_RE.exec(href || '');
+  if (match) {
+    const num = Number(match[1]);
+    if (citations) {
+      return (
+        <button
+          type="button"
+          className="reader-ai-cite"
+          title={citations.titleFor?.(num) || undefined}
+          onClick={() => citations.onCite?.(num)}
+        >
+          {num}
+        </button>
+      );
+    }
+    return <span>[{num}]</span>;
+  }
+  return <a href={href} {...props} target="_blank" rel="noreferrer" />;
+}
+
 const MARKDOWN_COMPONENTS = {
   img: MarkdownImage,
-  a: ({ node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+  a: MarkdownAnchor,
 };
 
 // 图片灯箱：全屏深色遮罩居中放大原图；点任意处或 Esc 关闭。挂到 document.body
@@ -117,7 +146,9 @@ function ImageLightbox({ src, alt, onClose }) {
 // 阅读器统一 Markdown 渲染：正文、译文、AI 问答回答共用同一套插件/组件（图片兜底、外链新窗、点击放大）。
 // resolveImageSrc（可选）：图片取图路径 builder（url → 请求地址），缺省为登录面媒体库代理；
 // 传入方需保证引用稳定（useCallback），否则每次渲染都会打散图片组件的 state。
-export default function ReaderMarkdown({ children, resolveImageSrc }) {
+// citations（可选，AI 问答）：{ titleFor(n) → 标题, onCite(n) } —— 激活行内引用 chip 渲染；
+// 同样要求引用稳定（useMemo/useCallback）。
+export default function ReaderMarkdown({ children, resolveImageSrc, citations }) {
   const [lightbox, setLightbox] = useState(null); // { src, alt } | null
   const triggerRef = useRef(null); // 触发放大的 button，关闭后焦点归还
 
@@ -136,14 +167,16 @@ export default function ReaderMarkdown({ children, resolveImageSrc }) {
 
   return (
     <ImageSrcContext.Provider value={resolveImageSrc || mediaProxyUrl}>
-      <LightboxContext.Provider value={openLightbox}>
-        <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
-          {children || ''}
-        </ReactMarkdown>
-        {lightbox ? (
-          <ImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={closeLightbox} />
-        ) : null}
-      </LightboxContext.Provider>
+      <CitationContext.Provider value={citations || null}>
+        <LightboxContext.Provider value={openLightbox}>
+          <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
+            {children || ''}
+          </ReactMarkdown>
+          {lightbox ? (
+            <ImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={closeLightbox} />
+          ) : null}
+        </LightboxContext.Provider>
+      </CitationContext.Provider>
     </ImageSrcContext.Provider>
   );
 }

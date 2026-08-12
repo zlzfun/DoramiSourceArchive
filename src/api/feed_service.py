@@ -125,6 +125,19 @@ def resolve_subscribed_source_ids(
     return sorted(collected)
 
 
+def resolve_all_visible_source_ids(session: Session) -> List[str]:
+    """全库可见检索域(v3.32 scope=all):归档里实际存在的 source_id 全集减隐藏源。
+
+    与 resolve_subscribed_source_ids 同为范围解析的单一咽喉——发现页本就允许读者
+    预览任意非隐藏源的文章,故全库问答对读者不泄露新信息;隐藏源(读者面临时下架)
+    照旧排除。以 articles 实存 source_id 为准(注册表里无文章的源对检索无意义)。
+    """
+    rows = session.exec(select(ArticleRecord.source_id).distinct()).all()
+    collected = {str(value) for value in rows if value}
+    collected -= source_visibility.hidden_source_ids(session)
+    return sorted(collected)
+
+
 def resolve_feed_token_owner(session: Session, token: str) -> Optional[str]:
     """个人聚合令牌 → 归属用户名；令牌缺失/无效返回 None。"""
     if not token:

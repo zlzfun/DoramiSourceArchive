@@ -78,6 +78,7 @@ def test_plan_query_parses_and_cleans(monkeypatch):
     assert plan["date_lte"] is None
     assert plan["temporal"] is False
     assert plan["use_brief"] is True
+    assert plan["chat"] is False  # 缺省字段清洗为 False
 
 
 def test_plan_query_failure_returns_none(monkeypatch):
@@ -195,6 +196,24 @@ def test_subscription_context_planned_search(monkeypatch):
     assert sources[0]["source_url"] == "https://example.test/a1"
 
 
+def test_subscription_context_chat_skips_retrieval(monkeypatch):
+    """闲聊/对话元问题(chat=true):不检索、不落时序窗口兜底,纯对话作答。"""
+    sink = make_sink()
+    seed(sink.engine, "a1", "src_a", "库里有文章", "some article body")
+
+    async def fake_plan(question, llm_config, usage_meta=None):
+        return {"keywords": [], "date_gte": None, "date_lte": None,
+                "temporal": False, "use_brief": False, "chat": True}
+
+    monkeypatch.setattr(reader_search, "plan_query", fake_plan)
+    stages = []
+    ctx, sources = run(reader_search.subscription_context(
+        "你是谁?", engine=sink.engine, source_ids=["src_a"], llm_config=_LLM,
+        progress=lambda stage, detail=None: stages.append(stage)))
+    assert ctx == "" and sources == []
+    assert stages == ["plan"]  # 不上报 search/select——等待态不画未发生的阶段
+
+
 def test_subscription_context_temporal_uses_window(monkeypatch):
     sink = make_sink()
     seed(sink.engine, "a1", "src_a", "最新文章", "fresh body text")
@@ -235,6 +254,46 @@ def test_subscription_context_zero_hits_falls_back_to_window(monkeypatch):
     ctx, sources = run(reader_search.subscription_context(
         "问题", engine=sink.engine, source_ids=["src_a"], llm_config=_LLM))
     assert "兜底文章" in ctx  # FTS 零命中 → 时序窗口兜底
+    # 主题已丢失:上下文头部机械注入检索说明,防作答层把最新条目强行关联成答案
+    assert ctx.startswith("(检索说明:没有检索到与问题直接相关的文章")
+
+
+def test_subscription_context_window_miss_relaxes_and_notices(monkeypatch):
+    """日期窗内零命中:放宽日期窗保主题,并机械注入「窗口内无命中」检索说明。
+
+    实测教训:降级链静默改写检索语义时,弱模型会把 7 月旧闻包装成「最近一周」
+    的新进展——诚实性不能只靠作答模型对照日期,须由检索层陈述事实。"""
+    sink = make_sink()
+    seed(sink.engine, "old", "src_a", "七月的模型发布", "frontier model launch recap",
+         publish_date="2026-07-17")
+
+    async def fake_plan(question, llm_config, usage_meta=None):
+        return {"keywords": ["model launch"], "date_gte": "2026-08-05", "date_lte": None,
+                "temporal": False, "use_brief": False}
+
+    monkeypatch.setattr(reader_search, "plan_query", fake_plan)
+    ctx, sources = run(reader_search.subscription_context(
+        "最近一周有什么模型发布?", engine=sink.engine, source_ids=["src_a"], llm_config=_LLM))
+    # 主题保留(不是丢主题看最新),且说明里带上了读者要求的时间范围
+    assert "七月的模型发布" in ctx
+    assert ctx.startswith("(检索说明:读者要求的时间范围(2026-08-05 之后)内没有命中的文章")
+    assert [s["id"] for s in sources] == ["old"]
+
+
+def test_subscription_context_temporal_has_no_notice(monkeypatch):
+    """时效浏览型走时序窗口是「本意」而非降级,不注入检索说明。"""
+    sink = make_sink()
+    seed(sink.engine, "a1", "src_a", "最新文章", "fresh body")
+
+    async def fake_plan(question, llm_config, usage_meta=None):
+        return {"keywords": [], "date_gte": None, "date_lte": None,
+                "temporal": True, "use_brief": False}
+
+    monkeypatch.setattr(reader_search, "plan_query", fake_plan)
+    ctx, sources = run(reader_search.subscription_context(
+        "最近有什么?", engine=sink.engine, source_ids=["src_a"], llm_config=_LLM))
+    assert "检索说明" not in ctx
+    assert ctx.startswith("[1] 最新文章")
 
 
 def test_subscription_context_use_brief_scopes_to_daily_brief(monkeypatch):

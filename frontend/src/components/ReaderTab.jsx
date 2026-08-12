@@ -224,7 +224,7 @@ export default function ReaderTab({
     articles, articlesLoading, loadingMore, hasMore, handleLoadMore,
     listRef, sentinelRef,
     // 选中文章 / 正文
-    activeArticle, activeBody, activeBodyLoading, selectArticle,
+    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById,
     schedulePrefetch, cancelPrefetch,
     activeIndex, prevArticle, nextArticle,
     crumbSource, crumbName, displayBody, displayTranslatedBody, bodyStats,
@@ -935,7 +935,14 @@ export default function ReaderTab({
       </section>
       )}
 
-      {!discover && <ReaderAiPanel aiEnabled={aiEnabled} activeArticle={activeArticle} showToast={showToast} />}
+      {!discover && (
+        <ReaderAiPanel
+          aiEnabled={aiEnabled}
+          activeArticle={activeArticle}
+          showToast={showToast}
+          onOpenArticle={openArticleById}
+        />
+      )}
 
       {/* 右键上下文菜单(单例,portal 到 body):关闭即 ctxMenu 置空,锚定态随之消失 */}
       {ctxMenu && (

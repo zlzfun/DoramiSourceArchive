@@ -9009,9 +9009,9 @@ input[type="radio"] {
      (旧版行为回归,用户拍板;墨色底 + accent 星标不变)。纯 CSS:标签 max-width/opacity
      过渡,展开加 200ms 延时防扫过误展,收起无延时即时归位。 */
   .reader-ai-fab {
-    /* 星标色挂点:亮色主题胶囊是近黑墨底,accent 原值(#5b54e8)在其上仅 ~2:1 看不清——
-       取品牌亮端混白提亮;暗色主题胶囊翻浅(ink 令牌翻白),由暗色区改派深靛。 */
-    --fab-star: color-mix(in srgb, var(--dorami-blue-2) 55%, #fff);
+    /* 星标色挂点:统一琥珀(v3.32.1 目检拍板)——与展开面板的字头/身份行星标同色,
+       呼应收藏星;亮色墨底(~9:1)与暗色浅底(装饰性图标,有文字标签伴随)均可辨。 */
+    --fab-star: #f59e0b;
     position: absolute;
     right: 22px;
     bottom: 22px;
@@ -9055,6 +9055,11 @@ input[type="radio"] {
   @media (prefers-reduced-motion: reduce) {
     .reader-ai-fab { animation: none; transition: none; }
     .reader-ai-fab-label { transition: none; }
+    .reader-ai-panel,
+    .reader-ai-turn,
+    .reader-ai-a,
+    .reader-ai-wait-row,
+    .reader-ai-suggest-btn { animation: none; transition: none; }
   }
 
   .reader-ai-panel {
@@ -9062,7 +9067,10 @@ input[type="radio"] {
     right: 22px;
     bottom: 22px;
     z-index: 31;
-    width: 380px;
+    width: 440px; /* v3.32 方案 A:380→440,回答去框化后正文行长需要余量 */
+    /* 标准态也给显式高度(v3.32.1):height 有具体值,放大/还原的 width/height
+       过渡才真的动画得起来——auto↔固定值不可过渡,是此前尺寸切换生硬的根因 */
+    height: min(600px, calc(100% - 44px));
     max-width: calc(100% - 44px);
     max-height: calc(100% - 44px);
     display: flex;
@@ -9072,47 +9080,49 @@ input[type="radio"] {
     border-radius: var(--r-overlay);
     box-shadow: var(--dorami-shadow);
     overflow: hidden;
-    /* 从右下角锚点优雅浮现/收起；缩放用更慢的曲线让放大/还原更有「高级感」 */
+    /* 从右下角锚点浮现/收起;开场带一点回弹(自定义 bezier 轻过冲),尺寸切换同曲线 */
     transform-origin: bottom right;
-    animation: reader-ai-rise var(--motion-medium) var(--motion-ease);
-    transition: width var(--motion-slow) var(--motion-ease), height var(--motion-slow) var(--motion-ease);
+    animation: reader-ai-rise var(--motion-slow) cubic-bezier(0.32, 1.2, 0.42, 1);
+    transition: width var(--motion-slow) cubic-bezier(0.32, 1.2, 0.42, 1),
+                height var(--motion-slow) cubic-bezier(0.32, 1.2, 0.42, 1);
   }
-  /* 退场：先播放 fall 再卸载（JS 端 180ms 后 unmount）；forwards 保住末帧避免回弹 */
+  /* 退场：先播放 fall 再卸载（JS 端 200ms 后 unmount）；forwards 保住末帧避免回弹 */
   .reader-ai-panel.is-closing {
-    animation: reader-ai-fall 180ms var(--motion-ease) forwards;
+    animation: reader-ai-fall 200ms var(--motion-ease) forwards;
     pointer-events: none;
   }
-  /* 放大态：更宽并拉到接近满高（标准态保持 max-height 自适应内容）。
-     max-width: calc(100% - 44px) 仍会在窄阅读窗格下钳制宽度，不会溢出视口。 */
+  /* 放大态：更宽并拉到满高。max-width 钳制保证窄阅读窗格下不溢出视口。 */
   .reader-ai-panel.is-large {
     width: 560px;
     height: calc(100% - 44px);
   }
   @keyframes reader-ai-rise {
-    from { opacity: 0; transform: translateY(12px) scale(0.96); }
+    from { opacity: 0; transform: translateY(16px) scale(0.95); }
     to { opacity: 1; transform: translateY(0) scale(1); }
   }
   @keyframes reader-ai-fall {
     from { opacity: 1; transform: translateY(0) scale(1); }
-    to { opacity: 0; transform: translateY(12px) scale(0.96); }
+    to { opacity: 0; transform: translateY(10px) scale(0.97); }
   }
 
   .reader-ai-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--dorami-border);
-    background: var(--dorami-soft);
+    padding: 11px 12px 11px 15px;
+    border-bottom: 1px solid var(--dorami-border-soft);
   }
+  /* 头部克制点题(v3.32):衬线字头 + 琥珀星标(呼应收藏星),工作区仍 quiet */
   .reader-ai-title {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    font-size: 13px;
+    gap: 7px;
+    font-family: var(--font-serif);
+    font-size: 14px;
     font-weight: 700;
     color: var(--dorami-ink);
   }
+  .reader-ai-title svg { color: #f59e0b; }
   .reader-ai-head-actions { display: inline-flex; align-items: center; gap: 4px; }
   /* 两个头部按钮用等大方形盒 + 居中图标，成为视觉一致的图标按钮对（消除裸图标的细微错位） */
   .reader-ai-head-btn {
@@ -9134,62 +9144,253 @@ input[type="radio"] {
     flex: 1;
     min-height: 120px;
     overflow-y: auto;
-    padding: 14px;
+    padding: 16px 16px 8px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 18px;
   }
-  .reader-ai-hint {
-    font-size: 12.5px;
-    line-height: 1.6;
-    color: var(--dorami-faint);
+  .reader-ai-turn {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    animation: reader-ai-block-in 220ms var(--motion-ease);
   }
-  .reader-ai-turn { display: flex; flex-direction: column; gap: 8px; }
-  /* 用户气泡（右）与哆啦美气泡（左）左右对称 */
+  /* 回答落地(PendingBlock → AnswerBlock 换装)时轻浮现 */
+  .reader-ai-a { animation: reader-ai-block-in 220ms var(--motion-ease); }
+  @keyframes reader-ai-block-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  /* 读者问句:右缘 wash 胶囊(右下角收小圆角以示指向) */
   .reader-ai-q {
     align-self: flex-end;
-    max-width: 88%;
-    padding: 8px 11px;
+    max-width: 86%;
+    padding: 8px 12px;
     border-radius: var(--r-card);
+    border-bottom-right-radius: var(--r-sm);
     background: var(--dorami-wash);
     color: var(--dorami-accent-ink);
     font-size: 13px;
     font-weight: 600;
     line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
-  .reader-ai-a {
-    align-self: flex-start;
-    max-width: 88%;
-    padding: 8px 11px;
-    border-radius: var(--r-card);
-    background: var(--dorami-soft);
-    border: 1px solid var(--dorami-border);
-    font-size: 13px;
-    line-height: 1.65;
+  /* 回答去框化(v3.32 方案 A):无底无边全宽——回答是内容,不是气泡;
+     身份由行首星标 + 微标签表达,正文排印向阅读窗气质靠拢 */
+  .reader-ai-a { align-self: stretch; }
+  .reader-ai-a-id {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 6px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    color: var(--dorami-faint);
+  }
+  .reader-ai-a-id svg { flex: none; color: #f59e0b; }
+  .reader-ai-a-body {
+    font-size: 13.5px;
+    line-height: 1.7;
     color: var(--dorami-ink-2);
   }
-  .reader-ai-a > :first-child { margin-top: 0; }
-  .reader-ai-a > :last-child { margin-bottom: 0; }
-  .reader-ai-a-pending { display: inline-flex; align-items: center; gap: 6px; color: var(--dorami-muted); }
-  .reader-ai-a-error { color: #dc2626; background: #fef2f2; border-color: #fecaca; }
-  .reader-ai-sources {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 8px;
-    padding-top: 8px;
+  .reader-ai-a-body > :first-child { margin-top: 0; }
+  .reader-ai-a-body > :last-child { margin-bottom: 0; }
+  /* 面板内 markdown 排印降档(双类选择器压过 .markdown-body 的阅读窗字阶):
+     模型偶发用标题/长段组织回答,阅读窗的 24px 标题与 16px 段距在 440px 浮层里过大 */
+  .reader-ai-a-body.markdown-body p { margin: 0 0 8px; }
+  .reader-ai-a-body.markdown-body ul,
+  .reader-ai-a-body.markdown-body ol { margin: 0 0 8px; }
+  .reader-ai-a-body.markdown-body h1,
+  .reader-ai-a-body.markdown-body h2,
+  .reader-ai-a-body.markdown-body h3,
+  .reader-ai-a-body.markdown-body h4 { margin: 14px 0 6px; font-size: 14px; }
+  .reader-ai-a-error {
+    align-self: flex-start;
+    padding: 8px 11px;
+    border-radius: var(--r-card);
+    font-size: 13px;
+    line-height: 1.65;
+    color: #dc2626;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+  }
+  /* 行内引用 chip(button 语义):由 ReaderMarkdown 的 citations 扩展点渲染,
+     与出处行编号同规格同色(同源);悬停实心 accent。 */
+  .reader-ai-cite {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 15px;
+    padding: 0 4.5px;
+    margin: 0 1px;
+    vertical-align: 2px;
+    border-radius: var(--r-pill);
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+  .reader-ai-cite:hover { background: var(--dorami-accent); color: #fff; }
+  /* 末尾集中出处列表:前端据 sources 确定性渲染(保底必有,不靠 LLM 生成) */
+  .reader-ai-refs {
+    margin-top: 12px;
+    padding-top: 10px;
     border-top: 1px dashed var(--dorami-border);
   }
-  .reader-ai-source {
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--dorami-accent);
-    max-width: 100%;
+  .reader-ai-refs-label {
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: var(--dorami-faint);
+    margin-bottom: 6px;
+  }
+  .reader-ai-ref-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: calc(100% + 14px);
+    margin: 0 -7px;
+    padding: 5px 7px;
+    border-radius: var(--r-control);
+    text-align: left;
+    transition: background var(--motion-fast) var(--motion-ease);
+  }
+  .reader-ai-ref-row:hover { background: var(--dorami-wash); }
+  .reader-ai-ref-num {
+    flex: none;
+    min-width: 16px;
+    height: 15px;
+    padding: 0 4.5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--r-pill);
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
+    font-size: 10px;
+    font-weight: 800;
+  }
+  .reader-ai-ref-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--dorami-ink-2);
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
   }
-  a.reader-ai-source:hover { text-decoration: underline; }
+  .reader-ai-ref-row:hover .reader-ai-ref-title { color: var(--dorami-ink); }
+  .reader-ai-ref-meta { flex: none; font-size: 10.5px; color: var(--dorami-faint); }
+  .reader-ai-ref-ext {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--r-sm);
+    color: var(--dorami-faint);
+    opacity: 0;
+    transition: opacity var(--motion-fast) var(--motion-ease);
+  }
+  .reader-ai-ref-row:hover .reader-ai-ref-ext { opacity: 1; }
+  .reader-ai-ref-ext:hover { color: var(--dorami-accent); background: var(--dorami-well); }
+  /* 无原文链接的行保留等宽占位,meta 列右缘对齐(v3.32.1 目检返修) */
+  .reader-ai-ref-ext.is-empty { pointer-events: none; }
+  /* 空态:星标点题 + 按范围的建议问题(点击填入输入框) */
+  .reader-ai-empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 24px 18px;
+    text-align: center;
+  }
+  .reader-ai-empty > svg { color: #f59e0b; margin-bottom: 2px; }
+  .reader-ai-empty-title {
+    font-family: var(--font-serif);
+    font-size: 14.5px;
+    font-weight: 700;
+    color: var(--dorami-ink);
+  }
+  .reader-ai-empty-sub { font-size: 12px; color: var(--dorami-faint); margin-bottom: 10px; }
+  /* 建议问题(v3.32.1 重设计):居中、无框线、引号包裹的轻文本行;整组随
+     SuggestRotator 定时轮换——.is-leaving 相整组淡出下沉,换词后回到常态浮现
+     (transition-delay 由 JSX 逐行 50ms 递进,形成错落)。悬停醒目:accent + wash 胶囊。 */
+  .reader-ai-suggest {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    /* 字号字重挂容器:未分层的 button{font:inherit} 会压掉 @layer 里按钮上的
+       font-*(写在 .reader-ai-suggest-btn 上不生效——实测按钮继承了面板 13px,
+       比空态副文案还大);挂容器则按钮恰好经 font:inherit 拿到这里的值。
+       比副文案(12px)再小半档,同 faint 淡度。 */
+    font-size: 11.5px;
+    font-weight: 400;
+  }
+  .reader-ai-suggest-btn {
+    padding: 3px 11px;
+    border-radius: var(--r-pill);
+    color: var(--dorami-faint);
+    transition: color var(--motion-fast) var(--motion-ease),
+                background var(--motion-fast) var(--motion-ease),
+                opacity 850ms var(--motion-ease),
+                transform 850ms var(--motion-ease);
+  }
+  .reader-ai-suggest-btn::before { content: '「'; }
+  .reader-ai-suggest-btn::after { content: '」'; }
+  .reader-ai-suggest-btn:hover {
+    color: var(--dorami-accent-ink);
+    background: var(--dorami-wash);
+  }
+  .reader-ai-suggest.is-leaving .reader-ai-suggest-btn {
+    opacity: 0;
+    transform: translateY(3px);
+    pointer-events: none;
+  }
+  /* 换词后的新行以浮现相进场(key 变更即重挂载;delay 由 JSX 逐行递进)。
+     节奏(目检两轮定稿):轮换间隔 6s 不拖沓,淡出/浮现本身放到 ~0.9s 的缓速——
+     建议是氛围,不是通知;换得勤但换的过程要慢。 */
+  .reader-ai-suggest-btn { animation: reader-ai-suggest-in 900ms var(--motion-ease) both; }
+  @keyframes reader-ai-suggest-in {
+    from { opacity: 0; transform: translateY(-3px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  /* 阶段化等待态(检索管线 plan→search→select→answer 轮询呈现;流式挂 backlog) */
+  .reader-ai-wait { display: flex; flex-direction: column; gap: 7px; }
+  .reader-ai-wait-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--dorami-muted);
+  }
+  .reader-ai-wait-dot {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--dorami-accent);
+    animation: reader-ai-wait-pulse 1s ease-in-out infinite;
+  }
+  .reader-ai-wait-row.is-done { color: var(--dorami-faint); }
+  .reader-ai-wait-row.is-done .reader-ai-wait-dot { background: var(--state-ok); animation: none; }
+  /* 新阶段行浮现(清单是动态生长的,只画实际发生的阶段) */
+  .reader-ai-wait-row { animation: reader-ai-block-in 240ms var(--motion-ease); }
+  @keyframes reader-ai-wait-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
+  }
 
   /* 容器化输入区：上方 textarea + 底部工具条（范围切换在左、发送在右），
      参考桌面端 AI 对话框，消除 textarea 与发送钮平级时的高度差。 */
@@ -9219,6 +9420,7 @@ input[type="radio"] {
     color: var(--dorami-ink-2);
   }
   .reader-ai-input:focus { outline: none; }
+  /* 全局 textarea:focus-visible 矩形外环的压制在文件尾未分层区(层内写压不过) */
   .reader-ai-toolbar {
     display: flex;
     align-items: center;
@@ -9226,56 +9428,29 @@ input[type="radio"] {
     gap: 8px;
     padding: 4px 8px 8px;
   }
-  /* 范围切换：折叠式下拉（仿桌面端底部配置项），默认只显示当前项 + ⌄，点击向上展开菜单 */
-  .reader-ai-scope { position: relative; display: inline-flex; }
-  .reader-ai-scope-trigger {
+  /* 范围切换(v3.32):下拉换 composer 内 seg 胶囊(全站 segmented 语法的紧凑档);
+     「本文」未选中文章时置灰;切范围=新对话(JSX 侧 switchScope 保留该语义) */
+  .reader-ai-seg {
     display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 5px 8px 5px 10px;
-    border-radius: var(--r-pill);
-    color: var(--dorami-muted);
-    transition: color var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
-  }
-  .reader-ai-scope-trigger:hover { color: var(--dorami-ink); background: var(--dorami-well); }
-  .reader-ai-scope-caret { transition: transform var(--motion-fast) var(--motion-ease); }
-  .reader-ai-scope-caret.is-open { transform: rotate(180deg); }
-  .reader-ai-scope-menu {
-    position: absolute;
-    left: 0;
-    bottom: calc(100% + 6px);
-    z-index: 5;
-    min-width: 148px;
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
     gap: 2px;
-    background: var(--dorami-surface);
-    border: 1px solid var(--dorami-border);
-    border-radius: var(--r-card);
-    box-shadow: var(--dorami-shadow);
-    animation: reader-ai-rise var(--motion-fast) var(--motion-ease);
+    padding: 2px;
+    border-radius: var(--r-pill);
+    background: var(--dorami-well);
   }
-  .reader-ai-scope-option {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 7px 9px;
-    border-radius: var(--r-control);
-    font-size: 12.5px;
+  .reader-ai-seg-btn {
+    padding: 4px 11px;
+    border-radius: var(--r-pill);
+    font-size: 11.5px;
     font-weight: 700;
-    color: var(--dorami-ink-2);
+    color: var(--dorami-muted);
     transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
   }
-  .reader-ai-scope-option:hover { background: var(--dorami-well); }
-  .reader-ai-scope-option.is-on { color: var(--dorami-accent); }
-  .reader-ai-scope-option.is-disabled {
-    color: var(--dorami-faint);
-    cursor: not-allowed;
-    opacity: 0.55;
+  .reader-ai-seg-btn.is-on {
+    background: var(--dorami-surface);
+    color: var(--dorami-ink);
+    box-shadow: var(--sh-1);
   }
-  .reader-ai-scope-option.is-disabled:hover { background: transparent; }
+  .reader-ai-seg-btn:disabled { color: var(--dorami-faint); opacity: 0.5; cursor: not-allowed; }
   .reader-ai-send {
     flex: none;
     display: inline-flex;
@@ -9900,7 +10075,6 @@ input[type="radio"] {
 }
 
 /* 问哆啦美 fab 星标:暗色下胶囊翻浅(bg=ink 令牌=近白),星标改深靛保对比 */
-[data-theme="dark"] .reader-ai-fab { --fab-star: var(--dorami-blue); }
 
 /* 阅读器字号修复:全局无 layer 的 `button{font:inherit}` 会压过 @layer 内
    对 button 写的字号(库内已知陷阱)——把带文字的按钮字号写在 unlayered 区胜出。 */
@@ -9968,6 +10142,11 @@ input[type="radio"] {
    font-*;基础字号已挂容器继承,此处仅补选中态加粗(unlayered 同源比特异性,0,2,0 胜)── */
 .sett-nav-btn.is-on { font-weight: 700; }
 .sett-seg-btn.is-on { font-weight: 700; }
+
+/* ── AI 问答输入框聚焦外环(v3.32 二轮返修):全局 textarea:focus-visible 的矩形
+   外环是未分层规则,@layer 内写 outline:none 压不过(未分层恒胜层内)——在此钉住。
+   聚焦态由 .reader-ai-composer:focus-within 的容器 accent 圆角描边统一表达。 ── */
+.reader-ai-input:focus-visible { outline: none; }
 
 /* ── 运行浮窗(坞内双形态)= accent 实底 ──
    它是「运行中」活动态的全站唯一持续运动元素,主题色实底作醒目标识

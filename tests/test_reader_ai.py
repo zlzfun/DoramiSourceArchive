@@ -229,6 +229,103 @@ def test_ask_subscription_uses_search_pipeline(monkeypatch, tmp_path):
         assert "SEARCH-RETRIEVED-CTX" in user_prompt
 
 
+def test_ask_articles_scope_uses_explicit_list(monkeypatch, tmp_path):
+    """v3.32 范围四档:scope=articles 显式多篇——编号上下文 + sources 同源同序。"""
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "ask_articles.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_article(sink.engine, "a1", "rss_x", "第一篇标题", "甲独特正文")
+    _seed_article(sink.engine, "a2", "rss_y", "第二篇标题", "乙独特正文")
+    calls = _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        resp = client.post(
+            "/api/reader/ai/ask",
+            json={"question": "对比这两篇", "scope": "articles", "article_ids": ["a1", "a2"]},
+        )
+        assert resp.status_code == 200
+        user_prompt = calls[-1][-1]
+        assert "[1] 第一篇标题" in user_prompt and "[2] 第二篇标题" in user_prompt
+        assert "甲独特正文" in user_prompt and "乙独特正文" in user_prompt
+        # 时效性依据:块头带发布日期,提示词带今天的日期(「最近」类问题的甄别基准)
+        assert "2026-05-20" in user_prompt
+        assert "【今天的日期】" in user_prompt
+        sources = resp.json()["sources"]
+        assert [s["id"] for s in sources] == ["a1", "a2"]
+        # 全部缺失 → 404
+        gone = client.post(
+            "/api/reader/ai/ask",
+            json={"question": "q", "scope": "articles", "article_ids": ["nope"]},
+        )
+        assert gone.status_code == 404
+
+
+def test_ask_all_scope_covers_unsubscribed_but_not_hidden(monkeypatch, tmp_path):
+    """scope=all:检索域=全库可见源(未订阅源可达,隐藏源照旧排除)。
+
+    规划/选篇桩输出非 JSON → 降级链落到时序窗口,窗口即全库可见域。"""
+    from services import source_visibility
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "ask_all.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_article(sink.engine, "a1", "rss_unsub", "未订阅源文章", "未订阅正文")
+    _seed_article(sink.engine, "a2", "rss_hidden", "隐藏源文章", "隐藏正文")
+    with Session(sink.engine) as session:
+        source_visibility.set_source_hidden(session, "rss_hidden", True)
+    calls = _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        resp = client.post(
+            "/api/reader/ai/ask",
+            json={"question": "最近有什么？", "scope": "all"},
+        )
+        assert resp.status_code == 200
+        user_prompt = calls[-1][-1]
+        assert "未订阅源文章" in user_prompt
+        assert "隐藏源文章" not in user_prompt
+        assert "整个资讯归档库" in user_prompt  # 范围提示语四档化
+
+
+def test_ask_progress_lifecycle(monkeypatch, tmp_path):
+    """阶段进度:请求完成后 ask_id 即清(轮询读到 stage=None);非法 ask_id 视同没有。"""
+    from api.routers import reader as reader_router
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "ask_progress.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_article(sink.engine, "a1", "rss_x", "标题", "正文")
+    _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        # 完整问答后进度已清理
+        resp = client.post(
+            "/api/reader/ai/ask",
+            json={"question": "q", "scope": "article", "article_id": "a1", "ask_id": "test-ask-1"},
+        )
+        assert resp.status_code == 200
+        assert "test-ask-1" not in reader_router._ASK_PROGRESS
+        probe = client.get("/api/reader/ai/ask/progress", params={"ask_id": "test-ask-1"})
+        assert probe.status_code == 200
+        assert probe.json()["stage"] is None
+
+        # 进行中的条目可读(直接写内存字典模拟在途请求);阶段历史服务端累积——
+        # 瞬时阶段轮询采样必漏,GET 须回全量 stages 供前端重建清单
+        reader_router._ask_progress_update("test-ask-2", "plan")
+        reader_router._ask_progress_update("test-ask-2", "search", {"keywords": 4})
+        mid = client.get("/api/reader/ai/ask/progress", params={"ask_id": "test-ask-2"}).json()
+        assert mid["stage"] == "search" and mid["detail"]["keywords"] == 4
+        assert [s["stage"] for s in mid["stages"]] == ["plan", "search"]
+        reader_router._ASK_PROGRESS.pop("test-ask-2", None)
+
+        # 非法字符的 ask_id 清洗为无
+        assert reader_router._valid_ask_id("bad id!") is None
+        assert reader_router._valid_ask_id("ok-Id_09") == "ok-Id_09"
+
+
 def test_ask_includes_history_for_multi_turn(monkeypatch, tmp_path):
     app_module, sink = _base_setup(monkeypatch, tmp_path, "ask_history.db")
     _configure_llm(sink.engine)

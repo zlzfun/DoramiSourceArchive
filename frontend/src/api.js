@@ -199,11 +199,18 @@ export function summarizeArticle(articleId) {
   return request('/reader/ai/summarize', { method: 'POST', body: { article_id: articleId }, errorMsg: '摘要生成失败，请稍后重试' });
 }
 
-export function askReaderAi({ question, scope = 'article', articleId = null, history = [] }) {
+export function askReaderAi({ question, scope = 'article', articleId = null, history = [], askId = null }) {
   return request('/reader/ai/ask', {
     method: 'POST',
-    body: { question, scope, article_id: articleId, history },
+    body: { question, scope, article_id: articleId, history, ask_id: askId },
     errorMsg: '提问失败，请稍后重试',
+  });
+}
+
+// ask 阶段进度轮询(阶段化等待态):未知/已完成的 ask_id 返回 { stage: null }
+export function fetchAskProgress(askId) {
+  return request(`/reader/ai/ask/progress?ask_id=${encodeURIComponent(askId)}`, {
+    errorMsg: '获取进度失败',
   });
 }
 

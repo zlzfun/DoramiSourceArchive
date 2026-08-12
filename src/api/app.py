@@ -62,6 +62,7 @@ from api.feed_service import (
     resolve_subscription_by_token,
     query_subscription_articles,
     resolve_subscribed_source_ids,
+    resolve_all_visible_source_ids,
     resolve_subscription_sources_by_token,
     resolve_feed_token_owner,
     feed_articles_for_owner,
