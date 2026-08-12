@@ -189,7 +189,9 @@ def test_reconcile_migration_restores_dropped_declared_indexes(tmp_path):
 
 
 def test_index_status_migration_backfills_from_is_vectorized(tmp_path):
-    """升级到含 index_status 的迁移前：旧库无该列；升级后 is_vectorized=1 应回填为 indexed。"""
+    """历史迁移回放守卫：升级到含 index_status 的迁移前旧库无该列；升级后
+    is_vectorized=1 应回填为 indexed。两列已在 f2c9d4e07a11（v3.31 退役清仓）
+    删除，故断言停在删列迁移之前的 9548caa15eea，不再升到 head。"""
     from alembic import command as alembic_command
     from sqlalchemy import text
 
@@ -213,7 +215,7 @@ def test_index_status_migration_backfills_from_is_vectorized(tmp_path):
     finally:
         engine.dispose()
 
-    alembic_command.upgrade(cfg, "head")
+    alembic_command.upgrade(cfg, "9548caa15eea")  # 停在 f2c9d4e07a11 删列迁移之前
 
     engine = create_engine(db_url)
     try:

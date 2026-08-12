@@ -100,7 +100,6 @@ def _seed_article(engine, article_id: str, source_id: str, content_type: str = "
                 has_content=True,
                 content=f"{article_id} body",
                 extensions_json="{}",
-                is_vectorized=False,
             )
         )
         session.commit()

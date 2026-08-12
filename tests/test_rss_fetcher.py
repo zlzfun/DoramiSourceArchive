@@ -782,7 +782,6 @@ def test_database_storage_backfills_existing_empty_article():
         record = session.get(ArticleRecord, empty.id)
         assert record.has_content is True
         assert "standalone desktop application" in record.content
-        assert record.is_vectorized is False
 
 
 def _hn_feed_xml():

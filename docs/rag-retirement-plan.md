@@ -1,6 +1,8 @@
 # RAG 退役与问答检索重构方案
 
-> 状态:**提案(待拍板)** | 起草 2026-08-11 | 源起:RAG 层全面审视(本文 §1 即审视结论存档)
+> 状态:**已完成**——Wave A 已实施(v3.30,2026-08-11);Wave B 已实施(v3.31,2026-08-12,
+> 用户拍板跳过观察期连做,论证见下注*)。本文档转入执行记录归档态。 | 起草 2026-08-11 |
+> 源起:RAG 层全面审视(本文 §1 即审视结论存档)
 > 结论:**取缔向量 RAG,问答检索改「LLM 计划检索 + FTS5」两段式**;分两波实施(检索扶正 → 退役清仓),
 > 波间留观察期。向量层保留**显式的重新引入触发器**(§4),届时按轻形态重建,不回滚现架构。
 
@@ -162,59 +164,73 @@ TEI/chroma compose `--profile rag` + `is_vectorized`/`index_status` 双状态机
 
 ## §3 分波实施
 
-### Wave A:检索扶正波(先做,RAG 开关此后无读者面语义)
+### Wave A:检索扶正波(✅ 已实施 v3.30,2026-08-11;RAG 开关此后无读者面语义)
 
 后端:
 
-- ☐ 新建 `src/services/reader_search.py`:查询规划(prompt 入 `llm/prompts.py`)+ FTS 召回 +
-  选篇 + 候选表示;与 `reader_ai.assemble_reader_context` 对接(替换 rag_fetch/recent_fetch 两档,
-  保留 D11 的闭包注入形态便于单测)。
-- ☐ `reader.py /ai/ask`:scope=subscription 改走新管线;时序窗口档按 §2.3 升级。
-- ☐ MCP 两工具同名换 FTS 实现(§2.4);`SKILL.md` 措辞同步(去「when RAG is enabled」)。
-- ☐ 测试:reader_search 单测(规划 JSON 解析降级/FTS 组合/选篇截断)+ ask 端到端(MockTransport
-  假 LLM)+ MCP 工具换芯回归。
+- ☑ 新建 `src/services/reader_search.py`:查询规划(prompt 入 `llm/prompts.py`:SEARCH_PLAN/
+  SEARCH_SELECT 两对)+ FTS 召回 + 选篇 + 编排;`assemble_reader_context` 收敛为 search_fetch
+  闭包注入(D11 形态保留)。实现细节:候选 ≤8 时选篇短路省一跳;选篇 LLM 判「无一相关」时
+  诚实返回空(问答侧如实说资料不足);FTS 全部不可用时 LIKE 标题回退;rowid IN 防御上限 10000。
+- ☑ `reader.py /ai/ask`:scope=subscription 改走新管线(`_search_fetch` 闭包注入订阅域与
+  UsageMeta,两次检索调用计费并入 ask);`_recent_subscribed_articles` 移入
+  reader_search.fetch_recent_window,窗口升至 100 篇 + 选篇压缩(§2.3)。
+- ☑ MCP 两工具同名换 FTS 实现(§2.4;distance 参数与字段退役,`_MCP_TOOLS_MANIFEST` 文案同步);
+  `SKILL.md` 措辞同步。`build_mcp_app` 的 vector_sink 参数保留签名兼容,Wave B 删。
+- ☑ 测试:新增 `tests/test_reader_search.py`(16 用例:规划解析清洗/失败降级、FTS 并集×订阅域×
+  日期窗、选篇短路/索引校验/诚实空选/失败回退、编排降级链、日报即索引作用域含未订阅忽略);
+  `test_reader_context` 改 search_fetch 委托;`test_reader_ai` 订阅域两用例改版(管线委托 +
+  桩输出非 JSON 走降级链落窗口);`test_mcp` 检索工具七用例换芯。全套 561 passed。
 
 前端(轻):
 
-- ☐ `ReaderAiPanel`「基于我的订阅」说明文案更新(不再有静默降级歧义)。
-- ☐ `McpAccessSection`:语义工具描述改 FTS 文案,删 `BAAI/bge-m3` 硬编码,撤「RAG 未启用」灰显逻辑。
+- ☑ `ReaderAiPanel` 范围选项加 hint(title):「在你订阅的内容里检索相关文章后作答」。
+- ☑ `McpAccessSection`:工具描述改 FTS 文案,撤 requiresRag 灰显/「RAG 未启用」章、
+  撤向量索引统计行(含 `BAAI/bge-m3` 硬编码与 fetchVectorStats 调用),ragEnabled prop 退役
+  (SettingsModal/MobileSettings 透传同步删除)。
 
 **观察期**:生产跑一个完整问答周期(建议 1–2 周),用 `AiUsageRecord` 的 ask 用量与实际问答质量
 目检验收;期间 RAG 代码原样留守(它默认关,不碍事)。
 
-### Wave B:退役清仓波(观察期满后)
+### Wave B:退役清仓波(✅ 已实施 v3.31,2026-08-12;用户拍板跳过观察期连做)
+
+> *跳过观察期的论证(2026-08-12 复核后拍板):观察期护错了对象——向量层不构成
+> Wave A 新管线的回退路径(生产 0 向量化、从未运行;新管线的兜底是自身降级链或
+> git revert),留着不增加任何安全冗余;「回头开 RAG」的退路因生产硬件(1.6GB 内存)
+> 而本就不存在;删列零信息损失(两列全 False/pending)、无 Chroma 数据可丢;
+> archive sync 线格式不携带 is_vectorized(import 侧本地生成),跨部署同步互通无破坏。
 
 后端:
 
-- ☐ `friendly_source_name` + `SOURCE_FRIENDLY_NAMES` **先迁出**至 `src/services/source_naming.py`
+- ☑ `friendly_source_name` + `SOURCE_FRIENDLY_NAMES` **先迁出**至 `src/services/source_naming.py`
   (8 个模块引用:mcp_server / api/sources / app / routers/{subscriptions,admin,reader,vector,share}),
   再动存储层。
-- ☐ 删 `src/api/routers/vector.py` 整册(/api/vectorize*、/api/vector*、/api/rag* 全部端点)、
+- ☑ 删 `src/api/routers/vector.py` 整册(/api/vectorize*、/api/vector*、/api/rag* 全部端点)、
   `src/storage/impl/vector_storage.py`、`src/services/vector_reconcile.py`、04:00 巡检 job、
   `auto_vectorize_after_fetch` 抓取钩子、`deps.get_vector_sink*`、app.py 前缀表两处、
   runtime `rag_enabled` 字段(前端消费点同波清)。
-- ☐ `models/db.py`:删 `is_vectorized`/`index_status` 列与 `INDEX_STATUS_*` 常量;
+- ☑ `models/db.py`:删 `is_vectorized`/`index_status` 列与 `INDEX_STATUS_*` 常量;
   `db_storage` 删 mark_as_* / set_index_status 与 stale 触点;Alembic 删列迁移(SQLite batch,
   历史迁移与 backfill 迁移保留可跑);`?is_vectorized=`/`?index_status=` 查询参数退役。
-- ☐ 依赖与部署:pyproject 删 chromadb 核心依赖与 rag-embedded extra → `uv lock` + 双导出清单;
+- ☑ 依赖与部署:pyproject 删 chromadb 核心依赖与 rag-embedded extra → `uv lock` + 双导出清单;
   compose 删 `--profile rag`(chroma/TEI 服务)与 `WITH_RAG` build-arg、`docker/requirements-rag.txt`;
   config 删 `[rag]` 节 / RagConfig / `DORAMI_RAG_*` / `[models]` embedding/reranker 两键;
   本地 `data/chroma_db/` 目录清理(生产无向量数据,无需动)。
-- ☐ 测试:删 test_rag_disabled / test_vector_reconcile / test_vector_remote / test_index_status /
+- ☑ 测试:删 test_rag_disabled / test_vector_reconcile / test_vector_remote / test_index_status /
   tests/rag/ harness;test_jobs、test_migrations、test_mcp 中相关用例改写。
 
 前端:
 
-- ☐ 删 `VectorTab.jsx` + 页签 + 孤儿原语(`EmptyState.jsx`/`StatusBadge.jsx`/`statusMeta.distanceMeta`);
+- ☑ 删 `VectorTab.jsx` + 页签 + 孤儿原语(`EmptyState.jsx`/`StatusBadge.jsx`/`statusMeta.distanceMeta`);
   `DataTab` 删向量列/auto-vectorize 开关/批量向量化/reindex(RAG-off 三格看板形态转正);
   `api.js` 删 10 个 vector/rag 函数(含死函数 `ragSimilar`);`App.jsx` 删 vector 挂载与
   `runtimeInfo.rag_enabled` 消费点。
-- ☐ `index.css` 删 `.vector-status-*` 死类(~85 行)与暗色覆盖三处;
+- ☑ `index.css` 删 `.vector-status-*` 死类(~85 行)与暗色覆盖三处;
   `conventions.md:210` 状态章准绳改指 `.stamp-*`。
 
 文档:
 
-- ☐ CLAUDE.md 重写 RAG 相关段(双形态/opt-in/vectorization admin-managed/reconcile/embedding 模型节
+- ☑ CLAUDE.md 重写 RAG 相关段(双形态/opt-in/vectorization admin-managed/reconcile/embedding 模型节
   → 换为「问答检索:LLM 计划检索 + FTS」一节);configuration.md 删 [rag];deploy-docker.md 删
   rag profile 节;docs/README.md 索引更新;本方案完结后按惯例归档至 `docs/archive/`。
 
@@ -243,7 +259,26 @@ TEI/chroma compose `--profile rag` + `is_vectorized`/`index_status` 双状态机
 | MCP 换芯后外部消费者语义变化(vector→keyword) | 工具名/出入参形状不变;docstring 明示 keyword 语义;skill 同步更新 |
 | 删列迁移在存量生产库上的风险 | SQLite batch 迁移 + 迁移前 DB 热备(生产已有 /root/backups 惯例);drift 守卫测试兜底 |
 
-## §6 波前护栏
+## §6 波前护栏(已随 Wave B 完成而失效,留档)
 
 - Wave B 落地前**不要开启** `[rag] enabled`(Bug 2 的 `/api/rag/similar` 越域会随之暴露);
   若观察期内确需临时开启,先给该端点接 `resolve_scoped_search_args`。
+
+---
+
+## §7 Wave B 执行注记(2026-08-12,实施与清单的差异点)
+
+- Alembic 迁移 `f2c9d4e07a11`:SQLite 两个特有陷阱的处置——索引列不能原地 DROP
+  (先显式删两索引再 batch 删列);batch 重建表会连带删掉 articles 上的 FTS 同步
+  triggers(收尾 `ensure_fts` 幂等补回,数据未变无需 rebuild)。历史迁移
+  `8bba6f81b240` 的回填 UPDATE 加了列守卫——新库经现行 metadata create_all 后走
+  「stamp 基线 + upgrade head」收养路径时已无 is_vectorized 列,真旧库回填照常。
+- `POST /api/public/subscriptions/{id}/vector/search`(方案清单遗漏项):路径留存、
+  换 FTS 芯(与 MCP `search_articles` 同源复用 `_search_articles_impl`),
+  body 的 score_threshold/rerank 字段保留兼容旧调用方、忽略。
+- `content_analytics`/`/api/admin/content`:向量化聚合字段(vectorized_count/
+  vectorized_rate)随列删除一并退役,运维内容板「向量化率」KPI 移除。
+- 保留未动:`NetworkConfig.hf_endpoint`(通用网络配置,且属 intranet 分支
+  merge 冲突敏感面);`storage.chroma_path` 配置键删除但本地 `data/chroma_db/`
+  目录(空)由使用者自行清理;Bug 2(rag/similar 越域)随端点删除自然消亡。
+- 验收:后端全套 529 passed;前端 eslint 零告警、vite build 通过。

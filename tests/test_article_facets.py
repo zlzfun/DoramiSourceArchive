@@ -27,7 +27,7 @@ def _add(sink, rid, ctype, src):
         session.add(ArticleRecord(
             id=rid, title=f"t-{rid}", content_type=ctype, source_id=src,
             source_url="http://x", publish_date="2026-06-01", fetched_date="2026-06-01",
-            has_content=True, content="body", is_vectorized=False,
+            has_content=True, content="body",
         ))
         session.commit()
 

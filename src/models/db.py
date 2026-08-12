@@ -3,20 +3,6 @@ from sqlmodel import SQLModel, Field
 from sqlalchemy import Index
 
 
-# 向量索引状态枚举（阶段2/3 跨存储一致性）：比布尔 is_vectorized 更细，区分
-# 从未索引 / 索引中 / 已索引 / 失败 / 陈旧（内容改动待重索引）。
-# is_vectorized 保留为向后兼容派生位（== indexed），二者由存储层同步维护。
-INDEX_STATUS_PENDING = "pending"
-INDEX_STATUS_INDEXING = "indexing"
-INDEX_STATUS_INDEXED = "indexed"
-INDEX_STATUS_FAILED = "failed"
-INDEX_STATUS_STALE = "stale"
-INDEX_STATUSES = frozenset({
-    INDEX_STATUS_PENDING, INDEX_STATUS_INDEXING, INDEX_STATUS_INDEXED,
-    INDEX_STATUS_FAILED, INDEX_STATUS_STALE,
-})
-
-
 class ArticleRecord(SQLModel, table=True):
     """关系型数据库表结构：用于 CMS 后端管理系统"""
     __tablename__ = "articles"
@@ -46,9 +32,6 @@ class ArticleRecord(SQLModel, table=True):
     has_content: bool = Field(default=True)
     content: Optional[str] = Field(default=None, description="文章正文或长摘要")
     extensions_json: Optional[str] = Field(default="{}", description="扩展元数据 (JSON 字符串)")
-
-    is_vectorized: bool = Field(default=False, index=True, description="是否已向量化（向后兼容派生位，== index_status 'indexed'）")
-    index_status: str = Field(default=INDEX_STATUS_PENDING, index=True, description="向量索引状态: pending/indexing/indexed/failed/stale")
 
     # 全站累计阅读次数（跨读者）：由 POST /api/reader/articles/{id}/read 随逐用户
     # 计量一并 +1。与 ReaderReadRecord（日×用户×来源聚合，运维口径）互补——
@@ -334,7 +317,7 @@ class AppSettingRecord(SQLModel, table=True):
 class JobRecord(SQLModel, table=True):
     """持久化后台任务状态机（阶段3）：取代进程内内存态 background_jobs。
 
-    长任务（全量向量化、全量重索引、日报、批量抓取等）提交后立即返回 job_id，
+    长任务（日报、媒体回填、批量抓取等）提交后立即返回 job_id，
     执行状态/进度/结果落库，从而重启不丢、可跨进程查询、为多实例与 worker 拆分铺路。
     时间戳沿用 epoch 浮点（与旧 to_dict 契约一致，前端轮询无感切换）。
     """

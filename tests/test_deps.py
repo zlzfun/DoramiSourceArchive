@@ -27,25 +27,6 @@ def test_get_db_sink_reads_dynamically(monkeypatch):
     assert deps.get_db_sink() is sentinel
 
 
-def test_get_vector_sink_raises_503_when_disabled(monkeypatch):
-    import api.app as app_module
-    from api import deps
-
-    monkeypatch.setattr(app_module, "vector_sink", None)
-    with pytest.raises(HTTPException) as exc:
-        deps.get_vector_sink()
-    assert exc.value.status_code == 503
-
-
-def test_get_vector_sink_returns_sink_when_enabled(monkeypatch):
-    import api.app as app_module
-    from api import deps
-
-    sentinel = object()
-    monkeypatch.setattr(app_module, "vector_sink", sentinel)
-    assert deps.get_vector_sink() is sentinel
-
-
 def test_require_login_rejects_anonymous(monkeypatch):
     import api.app as app_module
     from api import deps
@@ -87,7 +68,6 @@ def test_require_collector_and_reader_follow_role_predicates(monkeypatch):
 
 
 def test_access_policy_from_session(monkeypatch):
-    import api.app as app_module
     from api import deps
 
     policy = deps.AccessPolicy.from_session({"sub": "a", "role": "admin"})

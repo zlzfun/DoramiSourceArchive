@@ -8,10 +8,6 @@ from models.content import BaseContent, serialize_to_metadata
 from models.db import (
     ArticleRecord,
     SQLModel,
-    INDEX_STATUS_INDEXED,
-    INDEX_STATUS_PENDING,
-    INDEX_STATUS_STALE,
-    INDEX_STATUSES,
 )
 
 
@@ -164,9 +160,6 @@ class DatabaseStorage(BaseStorage):
                     existing.has_content = True
                     existing.content = item.content
                     existing.extensions_json = json.dumps(raw_metadata.get("extensions", {}), ensure_ascii=False)
-                    existing.is_vectorized = False
-                    # 正文回填后内容已变，若曾索引则需重建 → 标记陈旧（is_vectorized=False 仍会被 all-pending 拾取）
-                    existing.index_status = INDEX_STATUS_STALE
                     session.add(existing)
                     session.commit()
                     return True
@@ -199,9 +192,6 @@ class DatabaseStorage(BaseStorage):
                         existing.publish_date = item.publish_date
                     if source_url_changed:
                         existing.source_url = item.source_url
-                    if title_changed or publish_date_changed:
-                        existing.is_vectorized = False
-                        existing.index_status = INDEX_STATUS_STALE
                     session.add(existing)
                     session.commit()
                     return True
@@ -228,7 +218,6 @@ class DatabaseStorage(BaseStorage):
                 has_content=item.has_content,
                 content=actual_content,
                 extensions_json=json.dumps(extensions, ensure_ascii=False),
-                is_vectorized=False
             )
             session.add(record)
             session.commit()
@@ -279,23 +268,3 @@ class DatabaseStorage(BaseStorage):
             session.commit()
             return True
 
-    # --- 业务特化方法 (依然基于标准 CRUD) ---
-
-    async def mark_as_vectorized(self, article_id: str) -> bool:
-        """标记文章已完成向量化（index_status=indexed，同步派生位 is_vectorized=True）"""
-        return await self.update(article_id, {"is_vectorized": True, "index_status": INDEX_STATUS_INDEXED})
-
-    async def mark_as_unvectorized(self, article_id: str) -> bool:
-        """重置文章向量化状态为待索引（index_status=pending，is_vectorized=False）"""
-        return await self.update(article_id, {"is_vectorized": False, "index_status": INDEX_STATUS_PENDING})
-
-    async def set_index_status(self, article_id: str, status: str) -> bool:
-        """设置向量索引状态并同步派生位 is_vectorized（仅 indexed 为 True）。
-
-        供向量化流置 indexing/failed、内容编辑置 stale 等细粒度状态。非法状态忽略。
-        """
-        if status not in INDEX_STATUSES:
-            return False
-        return await self.update(
-            article_id, {"index_status": status, "is_vectorized": status == INDEX_STATUS_INDEXED}
-        )

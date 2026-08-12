@@ -5,9 +5,9 @@
 这些依赖供后续逐域迁出的 Router 以 ``Depends(...)`` 声明式使用，最终替代前缀表。
 
 ### 与现有测试的兼容性（关键约束）
-现有测试大量 ``monkeypatch.setattr(api.app, "db_sink", ...)`` / ``vector_sink`` 等。为保证
-被 patch 的单例在依赖里也能取到**最新值**，本模块一律通过 :func:`_app` 在**调用时**从
-``api.app`` 动态取属性，绝不在导入期把单例的值绑定到本模块。``_app`` 用延迟 import 避免与
+现有测试大量 ``monkeypatch.setattr(api.app, "db_sink", ...)`` 等。为保证被 patch 的单例
+在依赖里也能取到**最新值**，本模块一律通过 :func:`_app` 在**调用时**从 ``api.app``
+动态取属性，绝不在导入期把单例的值绑定到本模块。``_app`` 用延迟 import 避免与
 ``api.app`` 形成导入环。
 """
 
@@ -17,10 +17,6 @@ from typing import Any, Dict, Iterator, Optional
 
 from fastapi import HTTPException, Request
 from sqlmodel import Session
-
-_RAG_DISABLED_DETAIL = (
-    "RAG 功能未启用。请在 config/backend.ini 中设置 [rag] enabled = true 后重启后端。"
-)
 
 
 def _app():
@@ -33,20 +29,6 @@ def _app():
 def get_db_sink():
     """关系库 sink（DatabaseStorage）。动态读取以兼容测试替换。"""
     return _app().db_sink
-
-
-def get_vector_sink():
-    """向量库 sink；RAG 未启用（vector_sink is None）时与现有 require_vector_sink 一致抛 503。"""
-    vector_sink = _app().vector_sink
-    if vector_sink is None:
-        raise HTTPException(status_code=503, detail=_RAG_DISABLED_DETAIL)
-    return vector_sink
-
-
-def get_vector_sink_optional():
-    """向量库 sink，可能为 None（RAG 未启用）。供「向量化是可选副作用」的端点使用，
-    不抛 503——调用方自行判空（如文章删除时顺带清向量块）。"""
-    return _app().vector_sink
 
 
 def get_session() -> Iterator[Session]:

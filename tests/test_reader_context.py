@@ -1,7 +1,8 @@
-"""reader 问答三档上下文组装（阶段4 D11 编排下沉）。
+"""reader 问答上下文组装（阶段4 D11 编排下沉;v3.30 检索扶正波改版）。
 
-直接单测 reader_ai.assemble_reader_context 的 graceful-degrade 分支，脱离 HTTP 请求
-与 LLM：article 取正文、subscription+RAG 走注入的 rag_fetch、RAG 关走 recent_fetch。
+直接单测 reader_ai.assemble_reader_context 的分支，脱离 HTTP 请求与 LLM：
+article 取正文、subscription 委托注入的 search_fetch（检索管线本体单测在
+test_reader_search.py）。
 """
 
 import asyncio
@@ -28,12 +29,14 @@ def _run(**kwargs):
     return asyncio.run(reader_ai.assemble_reader_context(**kwargs))
 
 
+async def _noop_search(question, username):
+    return "", []
+
+
 _BASE = dict(
     question="q",
     username="u",
-    rag_enabled=False,
-    rag_fetch=None,
-    recent_fetch=lambda user: [],
+    search_fetch=_noop_search,
 )
 
 
@@ -56,24 +59,12 @@ def test_article_scope_missing_record_raises_404():
     assert ei.value.status_code == 404
 
 
-def test_subscription_scope_rag_enabled_uses_rag_fetch():
-    async def fake_rag(question):
-        assert question == "q"
-        return {"context_text": "RAG 召回上下文", "sources": [{"title": "s1"}]}
+def test_subscription_scope_delegates_to_search_fetch():
+    async def fake_search(question, username):
+        assert question == "q" and username == "u"
+        return "检索召回上下文", [{"title": "s1"}]
 
     ctx, sources = _run(**{**_BASE, "scope": "subscription", "article_id": None,
-                           "db_sink": _FakeDb(None), "rag_enabled": True, "rag_fetch": fake_rag})
-    assert ctx == "RAG 召回上下文"
+                           "db_sink": _FakeDb(None), "search_fetch": fake_search})
+    assert ctx == "检索召回上下文"
     assert sources == [{"title": "s1"}]
-
-
-def test_subscription_scope_rag_disabled_uses_recent_fetch():
-    recent = [
-        SimpleNamespace(title="A", content="正文A", source_id="s", source_url="http://a"),
-        SimpleNamespace(title="B", content="正文B", source_id="s", source_url="http://b"),
-    ]
-    ctx, sources = _run(**{**_BASE, "scope": "subscription", "article_id": None,
-                           "db_sink": _FakeDb(None), "rag_enabled": False,
-                           "recent_fetch": lambda user: recent})
-    assert "A" in ctx and "B" in ctx
-    assert [s["source_url"] for s in sources] == ["http://a", "http://b"]

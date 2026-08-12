@@ -23,7 +23,7 @@ from models.db import ArticleRecord, ArticleShareRecord
 from services import article_share as article_share_service
 from services import source_visibility as source_visibility_service
 from services.media_store import extract_image_urls
-from storage.impl.vector_storage import friendly_source_name
+from services.source_naming import friendly_source_name
 
 router = APIRouter(tags=["share"])
 

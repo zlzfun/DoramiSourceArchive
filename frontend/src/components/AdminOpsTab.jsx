@@ -46,7 +46,7 @@ import AnnouncementsPanel from './admin/AnnouncementsPanel';
 import AdminAuditPanel from './admin/AdminAuditPanel';
 import Pager from './admin/Pager';
 import { pivotDaily, C_READ, C_FAVORITE, C_SUBSCRIBE } from './charts/chartUtils';
-import { PURPOSE_LABELS, formatStamp, fmtNum, pct, truncLabel, vectorizedRateClass } from './admin/adminUtils';
+import { PURPOSE_LABELS, formatStamp, fmtNum, truncLabel } from './admin/adminUtils';
 import { avatarInitial, avatarHue } from '../utils/avatarColor';
 
 // 账户列表分页大小：超过即翻页，避免成百上千账户一次性平铺。
@@ -636,7 +636,6 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
                 <Kpi num={fmtNum(content.totals.articles)} label="归档文章" sub="累计" />
                 <Kpi num={fmtNum(content.totals.reads)} label="阅读总数" sub="累计" />
                 <Kpi num={fmtNum(content.totals.favorites)} label="收藏总数" sub="累计" />
-                <Kpi num={pct(content.totals.vectorized_rate)} label="向量化率" tone={vectorizedRateClass(content.totals.vectorized_rate)} />
               </section>
 
               <div className="zone-head">

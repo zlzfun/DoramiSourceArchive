@@ -207,7 +207,7 @@
 **静默仪器·描边预算（2026-07）：同一层级只用一种分隔手段。**
 - 卡片级容器：描边走 `--dorami-card-bd`（亮=transparent、暗=细白线），分隔靠 `--sh-2` +
   顶部内高光 `inset 0 1px 0 var(--dorami-edge)`；`.surface-card` 已内置，新卡片直接复用。
-- 状态章/chip：淡底 + 深字，**无描边**（准绳：`.vector-status-*`）。
+- 状态章/chip：淡底 + 深字，**无描边**（准绳：`.stamp-*` 范式;原准绳 `.vector-status-*` 已随 v3.31 RAG 退役删除）。
 - 表格行分隔：至多一条 `--dorami-border` hairline；禁 zebra+行线双保险、禁 border-strong 行线。
 - 禁止 border + inset ring + 外阴影三重叠加；卡片无 hover 抬升（装饰性位移已拆）。
 模态等确需悬浮的浮层才用强高程（`--sh-3`）。

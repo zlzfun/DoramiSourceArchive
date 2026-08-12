@@ -34,10 +34,6 @@ def test_fetcher_exception_is_marked_failed(monkeypatch, tmp_path):
     monkeypatch.setattr(app_module, "pipeline", DataPipeline(storages=[sink]))
     monkeypatch.setattr(app_module.fetcher_registry, "get_class", lambda fetcher_id: FailingFetcher)
 
-    async def noop_auto_vectorize(content_ids):
-        return None
-
-    monkeypatch.setattr(app_module, "auto_vectorize_after_fetch", noop_auto_vectorize)
 
     with pytest.raises(RuntimeError, match="detail page exploded"):
         asyncio.run(app_module.run_fetcher_with_tracking("failing_fetcher", {}))
@@ -78,10 +74,6 @@ def test_collection_result_surfaces_partial_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(app_module, "pipeline", SelectivePipeline())
     monkeypatch.setattr(app_module.fetcher_registry, "get_class", lambda fetcher_id: FakeFetcher)
 
-    async def noop_auto_vectorize(content_ids):
-        return None
-
-    monkeypatch.setattr(app_module, "auto_vectorize_after_fetch", noop_auto_vectorize)
 
     result = asyncio.run(app_module.run_collection_items(
         [

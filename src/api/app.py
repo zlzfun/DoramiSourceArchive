@@ -21,7 +21,6 @@ from apscheduler.schedulers.base import STATE_STOPPED
 from apscheduler.triggers.cron import CronTrigger
 
 from storage.impl.db_storage import DatabaseStorage
-from storage.impl.vector_storage import ChromaVectorStorage
 from pipeline.core import DataPipeline
 from models.db import (
     ArticleRecord,
@@ -43,7 +42,6 @@ from models.content import BaseContent
 from fetchers.registry import fetcher_registry, DECOMMISSIONED_FETCHER_IDS
 from api.skill_router import router as skill_router
 from version import __version__
-from api import deps
 from api.security_checks import enforce_security_config
 from api.serializers import serialize_user
 from api.textutils import (
@@ -108,19 +106,6 @@ from api.collection_planning import (
     apply_run_param_overrides,
     test_run_overrides,
     resolve_delivery_source_ids,
-)
-from api.routers import vector as vector_router
-from api.routers.vector import (
-    SearchQuery,
-    RagContextQuery,
-    AutoVectorizeConfig,
-    run_vector_search,
-    rag_context,
-    auto_vectorize_after_fetch,
-    is_auto_vectorize_enabled,
-    enforced_search_scope,
-    resolve_scoped_search_args,
-    AUTO_VECTORIZE_SETTING_KEY,
 )
 from api.routers import monitoring as monitoring_router
 from api.routers.monitoring import (
@@ -258,7 +243,6 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "account_role": session.get("role") if session else None,
         "collector_enabled": collector_role_enabled(session),
         "reader_enabled": reader_role_enabled(session),
-        "rag_enabled": settings.rag.enabled,
         # 用户面 AI（阅读器内翻译/问答）：该账户开关 AND LLM 已配置才视为可用。
         "ai_beta_enabled": ai_beta_enabled,
         "llm_configured": llm_configured,
@@ -315,9 +299,6 @@ COLLECTOR_API_PREFIXES = (
     # LLM 配置与日报生成/配置归管理员（collector）。
     "/api/llm",
     "/api/daily-brief",
-    # 向量构建/管理归管理员（collector）；/api/vector/search|stats|subscribed-stats 例外归 reader。
-    "/api/vectorize",
-    "/api/vector",
 )
 
 READER_API_PREFIXES = (
@@ -327,13 +308,8 @@ READER_API_PREFIXES = (
     "/api/reader",
     "/api/public/feed",
     "/api/public/subscriptions",
-    "/api/rag",
     "/api/skill",
     "/api/subscriptions",
-    # 仅检索/只读统计归 reader（用户侧）；其余 /api/vector/* 与 /api/vectorize/* 归 collector。
-    "/api/vector/search",
-    "/api/vector/stats",
-    "/api/vector/subscribed-stats",
     # 媒体库图片代理（阅读器正文图经此取图）；/api/admin/media/* 由 admin 前缀独立裁决。
     "/api/media",
 )
@@ -345,7 +321,7 @@ def _path_matches(path: str, prefixes: tuple[str, ...]) -> bool:
 
 def disabled_runtime_surface(path: str, session: Optional[Dict[str, Any]] = None) -> Optional[str]:
     # Reader-surface paths短路判定：命中即只按 reader 权限裁决，不再落到 collector 检查，
-    # 从而允许 reader/collector 前缀重叠（如 /api/vector/search 归 reader、/api/vector/* 归 collector）。
+    # 从而允许 reader/collector 前缀重叠。
     is_reader_path = (
         path == "/mcp"
         or path.startswith("/mcp/")
@@ -399,8 +375,7 @@ async def lifespan(app: FastAPI):
             else:
                 _mcp_enabled = rec.value.lower() == "true"
         # Build fresh FastMCP instance (session_manager can only be run() once per instance)
-        mcp = build_mcp_app(db_sink, vector_sink, subscription_resolver=resolve_subscription_sources_by_token)
-        # vector_sink 为 None 时 MCP 内部会让向量类工具直接报「RAG disabled」
+        mcp = build_mcp_app(db_sink, subscription_resolver=resolve_subscription_sources_by_token)
         _mcp_gate._app = mcp.streamable_http_app()
     else:
         _mcp_gate._app = None
@@ -413,10 +388,7 @@ async def lifespan(app: FastAPI):
             scheduler.start()
             print("⏰ APScheduler 定时调度引擎已启动！")
             # 仅在调度器新鲜启动（绑定当前事件循环）时注册巡检，避免跨 loop add_job。
-            # RAG 开启时注册每日向量索引对账巡检（只报告、发现漂移告警，每日 04:00）。
-            if vector_sink is not None:
-                add_cron_job("vector_reconcile", execute_vector_reconcile_job, "0 4 * * *", [])
-            # 明细/埋点表滚动窗清理（每日 04:30，与向量对账巡检 04:00 错开）。
+            # 明细/埋点表滚动窗清理（每日 04:30）。
             add_cron_job("retention_cleanup", execute_retention_cleanup_job, "30 4 * * *", [])
             # 远程内容同步定时任务(启用且 cron 合法时注册,否则移除既有 job)。
             reload_remote_sync_schedule()
@@ -469,12 +441,6 @@ _set_llm_usage_recorder(_record_llm_usage)
 # 首次启动（users 表为空）时自动种一个根管理员 admin/admin；表非空一动不动。
 if accounts_service.seed_root_admin_if_empty(db_sink.engine):
     logging.getLogger("dorami.auth").info("👤 已自动生成根管理员 admin/admin，请登录后立即修改密码")
-# 向量库默认按需创建：[rag] enabled = false 时不构造 ChromaVectorStorage，
-# 后端启动既快且不占用 embedding 模型所需内存。开启后实例仍会懒加载模型权重。
-vector_sink: Optional[ChromaVectorStorage] = (
-    ChromaVectorStorage(db_path=settings.storage.chroma_path)
-    if settings.rag.enabled else None
-)
 pipeline = DataPipeline(storages=[db_sink])
 
 # 媒体库（图床）：[media] enabled = false 时为 None，代理端点 302 回源、抓取后不预取，
@@ -517,11 +483,6 @@ def schedule_media_prefetch(article_ids: List[str]) -> None:
     task.add_done_callback(_MEDIA_PREFETCH_TASKS.discard)
 
 
-def require_vector_sink() -> ChromaVectorStorage:
-    # 委托给统一的依赖提供者（deps.get_vector_sink），保持单一实现；
-    # deps 动态读取 api.app.vector_sink，故测试 monkeypatch 仍生效。
-    return deps.get_vector_sink()
-
 app.mount("/mcp", _mcp_gate)
 app.include_router(skill_router)
 # 阶段1：按域迁出的 Router（路径保持不变；鉴权仍由中间件统一强制）。
@@ -532,7 +493,6 @@ app.include_router(reader_router.router)
 app.include_router(ingest_router.router)
 app.include_router(subscriptions_router.router)
 app.include_router(articles_router.router)
-app.include_router(vector_router.router)
 app.include_router(monitoring_router.router)
 app.include_router(x_api_router.router)
 app.include_router(source_configs_router.router)
@@ -1162,7 +1122,6 @@ async def execute_daily_brief_job():
     print("⏰ 定时任务触发: 正在生成每日 AI 资讯日报...")
     try:
         result = await daily_brief_service.generate_daily_brief(storage=db_sink, trigger="scheduled")
-        await auto_vectorize_after_fetch([result["article_id"]] if result.get("article_id") else [])
         print(f"✅ 日报生成完成: {result.get('status')} ({result.get('article_id')})")
     except Exception as exc:  # noqa: BLE001
         print(f"❌ 日报生成失败: {exc}")
@@ -1175,30 +1134,6 @@ async def execute_daily_brief_job():
                 })
         except Exception:  # noqa: BLE001
             pass
-
-
-async def execute_vector_reconcile_job():
-    """定时巡检：SQLite↔Chroma 向量索引对账（只报告、不自动修复）。
-
-    发现漂移仅告警（管理员可用 POST /api/vector/reconcile 择时修复），避免定时任务
-    静默改动数据。RAG 关闭（vector_sink 为 None）时不注册本任务，故此处必有 sink。
-    """
-    from services import vector_reconcile
-    try:
-        report = await vector_reconcile.reconcile(db_sink, vector_sink, repair=False)
-    except Exception as exc:  # noqa: BLE001 巡检失败不影响调度引擎
-        _dorami_logger.error("向量索引对账巡检失败: %s", exc)
-        return
-    if report.get("in_sync"):
-        _dorami_logger.info("向量索引对账巡检: 一致（db=%s, chroma=%s）",
-                     report.get("db_total"), report.get("chroma_parents"))
-    else:
-        _dorami_logger.warning(
-            "向量索引对账巡检发现漂移: 丢索引=%s 未标记=%s 孤儿chunk=%s（可 POST /api/vector/reconcile 修复）",
-            report["flagged_but_absent"]["count"],
-            report["present_but_unflagged"]["count"],
-            report["orphan_chunks"]["count"],
-        )
 
 
 async def execute_retention_cleanup_job():
@@ -1288,7 +1223,7 @@ def reload_remote_sync_schedule():
 
 
 # ==================== 1. 数据台账与 CRUD ====================
-# BatchOpParams 已迁至 api/schemas.py（下方 import re-export，供 articles/vector 共用）。
+# BatchOpParams 已迁至 api/schemas.py（下方 import re-export，供 articles 批量操作使用）。
 
 
 # SourceConfigCreate / SourceConfigUpdate / SourceFetchParams 已迁至
@@ -1462,7 +1397,6 @@ async def run_fetcher_with_tracking(
         )
         finish_fetch_run(run_id, status="success", result=result)
         mark_source_state_finished(fetcher_id, params, run_id, status="success", result=result)
-        await auto_vectorize_after_fetch(result.saved_content_ids)
         schedule_media_prefetch(result.saved_content_ids)
         return {
             "status": "success",
@@ -1683,7 +1617,7 @@ def ensure_default_subscriptions(username: str) -> None:
 # translate/ask 已迁出至 api/routers/reader.py
 #（_require_reader_ai / _recent_subscribed_articles 随迁）。
 # 订阅生命周期（/api/subscriptions/*）、单订阅令牌拉取/检索
-# （/api/public/subscriptions/{id}/articles|vector/search）、个人聚合拉取
+# （/api/public/subscriptions/{id}/articles）、个人聚合拉取
 # （/api/public/feed/articles[.md]）已迁出至 api/routers/subscriptions.py
 # （含 SubscriptionCreate/Update/Filters/DeliveryPolicy/PublicSubscriptionSearchBody
 #  与 _owned_subscription_or_404；见 app.include_router）。
@@ -1732,15 +1666,12 @@ def ensure_default_subscriptions(username: str) -> None:
 # collector 网关仍由中间件统一强制（COLLECTOR_API_PREFIXES 含 /api/llm、/api/daily-brief）。
 
 
-# 向量化(单条/批量/all-pending)、自动向量化开关、向量检索/统计/删除、RAG 上下文/相似、
-# 全库重建索引，及 SearchQuery/RagContextQuery/AutoVectorizeConfig、run_vector_search/
-# enforced_search_scope/resolve_scoped_search_args/auto_vectorize_after_fetch/
-# is_auto_vectorize_enabled 已迁出至 api/routers/vector.py（见 app.include_router）。
+# 向量化/RAG 端点已随 v3.31 退役清仓波整体移除（见 docs/rag-retirement-plan.md）。
 
 
 @app.get("/api/jobs/{job_id}")
 async def get_background_job(job_id: str):
-    """查询后台任务状态/进度/结果（向量化、重索引等长任务）。"""
+    """查询后台任务状态/进度/结果（采集运行、媒体回填等长任务）。"""
     job = jobs_service.get_job(db_sink.engine, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="任务不存在或已过期")
@@ -1767,7 +1698,7 @@ async def get_background_job(job_id: str):
 
 _MCP_TOOLS_MANIFEST = [
     {"name": "search_articles",
-     "description": "语义向量搜索文章，支持中英文，可按日期/来源/类型过滤；必须携带 subscription_token，结果限定到订阅范围"},
+     "description": "关键词全文搜索文章（标题+正文，中英文皆可），可按日期/来源/类型过滤；必须携带 subscription_token，结果限定到订阅范围"},
     {"name": "browse_articles",
      "description": "按条件过滤浏览文章列表（来源、类型、日期区间），适合日报生成；必须携带 subscription_token，结果限定到订阅范围"},
     {"name": "get_article",
@@ -1775,7 +1706,7 @@ _MCP_TOOLS_MANIFEST = [
     {"name": "list_sources",
      "description": "列出所有已知数据来源，获取可用的 source_id 和 content_type（无需令牌）"},
     {"name": "get_rag_context",
-     "description": "语义检索后组装格式化 RAG 上下文字符串；必须携带 subscription_token，结果限定到订阅范围"},
+     "description": "关键词检索后组装格式化上下文字符串；必须携带 subscription_token，结果限定到订阅范围"},
 ]
 
 

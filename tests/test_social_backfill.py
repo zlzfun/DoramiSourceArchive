@@ -14,8 +14,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from models.db import (  # noqa: E402
     ArticleRecord,
-    INDEX_STATUS_INDEXED,
-    INDEX_STATUS_STALE,
     UserRecord,
 )
 from services import accounts as accounts_service  # noqa: E402
@@ -84,8 +82,6 @@ def _article(
     extensions_json: str,
     *,
     content: str = "archived body",
-    is_vectorized: bool = False,
-    index_status: str = INDEX_STATUS_STALE,
 ):
     return ArticleRecord(
         id=article_id,
@@ -97,8 +93,6 @@ def _article(
         fetched_date="2026-07-20T08:01:00Z",
         content=content,
         extensions_json=extensions_json,
-        is_vectorized=is_vectorized,
-        index_status=index_status,
     )
 
 
@@ -116,8 +110,6 @@ def _seed_backfill_cases(engine):
                 "x_quote",
                 json.dumps({"author_handle": "quoted_source", "raw_data": quoted_raw}),
                 content="quote body must stay byte-identical",
-                is_vectorized=True,
-                index_status=INDEX_STATUS_INDEXED,
             )
         )
         session.add(
@@ -178,11 +170,7 @@ def test_social_backfill_is_local_idempotent_and_preserves_archive_state(
         quoted_ext = json.loads(quoted.extensions_json)
         reposted_ext = json.loads(reposted.extensions_json)
         assert quoted.content == "quote body must stay byte-identical"
-        assert quoted.is_vectorized is True
-        assert quoted.index_status == INDEX_STATUS_INDEXED
         assert reposted.content == "repost body must stay byte-identical"
-        assert reposted.is_vectorized is False
-        assert reposted.index_status == INDEX_STATUS_STALE
         assert quoted_ext["raw_data"] == quoted_raw
         assert reposted_ext["raw_data"] == reposted_raw
         assert quoted_ext["author_avatar_url_large"].endswith(

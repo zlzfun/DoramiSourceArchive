@@ -1,8 +1,8 @@
 """文章查询过滤与对外视图序列化（阶段1 共享 helper 模块化）。
 
-把原本散落在 app.py、被 articles/feed/reader/vector/public 多域共享的文章相关 helper
+把原本散落在 app.py、被 articles/feed/reader/public 多域共享的文章相关 helper
 集中到此：查询过滤器拼装、列表/feed 视图序列化、Markdown 导出，以及 ArticleRecord →
-可向量化 GenericContent 的转换。仅依赖 ORM、内容模型与 textutils 的纯工具，不依赖
+GenericContent 的转换。仅依赖 ORM、内容模型与 textutils 的纯工具，不依赖
 app 级可变全局（db_sink 等），故可被任意 Router 安全 import、不与 api.app 成环。
 """
 
@@ -24,7 +24,7 @@ class GenericContent(BaseContent):
 
 
 def _record_to_content(record: ArticleRecord) -> GenericContent:
-    """将 ArticleRecord 转换为可向量化的 GenericContent 对象。"""
+    """将 ArticleRecord 还原为 GenericContent 内容对象。"""
     obj = GenericContent(
         id=record.id, title=record.title, publish_date=record.publish_date,
         source_url=record.source_url, content=record.content,
@@ -46,8 +46,6 @@ def apply_article_query_filters(
         job_run_id: Optional[int] = None,
         fetch_run_id: Optional[int] = None,
         run_scope: Optional[str] = None,
-        is_vectorized: Optional[bool] = None,
-        index_status: Optional[str] = None,
         has_content: Optional[bool] = None,
         search: Optional[str] = None,
         publish_date_start: Optional[str] = None,
@@ -80,10 +78,6 @@ def apply_article_query_filters(
     if run_scope:
         query = query.where(ArticleRecord.run_scope == run_scope)
 
-    if is_vectorized is not None:
-        query = query.where(ArticleRecord.is_vectorized == is_vectorized)
-    if index_status:
-        query = query.where(ArticleRecord.index_status == index_status)
     if has_content is not None:
         query = query.where(ArticleRecord.has_content == has_content)
     if search:
@@ -124,8 +118,6 @@ def serialize_feed_article(record: ArticleRecord, include_content: bool = True) 
         "source_group_id": record.source_group_id,
         "run_scope": record.run_scope,
         "has_content": record.has_content,
-        "is_vectorized": record.is_vectorized,
-        "index_status": record.index_status,
         "extensions": extensions,
     }
 
@@ -171,8 +163,6 @@ def serialize_article_list_item(
         "source_group_id": record.source_group_id,
         "run_scope": record.run_scope,
         "has_content": record.has_content,
-        "is_vectorized": record.is_vectorized,
-        "index_status": record.index_status,
         "content_preview": content[:280],
         "summary_zh": summary,
         "read_count": record.read_count or 0,

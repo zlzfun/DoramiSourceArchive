@@ -32,7 +32,6 @@ def _article_record(**overrides):
         "has_content": True,
         "content": "Full archive body.",
         "extensions_json": json.dumps({"tag": "sync"}, ensure_ascii=False),
-        "is_vectorized": True,
     }
     data.update(overrides)
     return ArticleRecord(**data)
@@ -68,7 +67,6 @@ def test_archive_sync_import_is_idempotent_and_preserves_lineage(monkeypatch):
         assert record.run_scope == "saved_job"
         assert record.content == "Full archive body."
         assert json.loads(record.extensions_json) == {"tag": "sync"}
-        assert record.is_vectorized is False
 
 
 def test_archive_sync_import_backfills_empty_existing_record(monkeypatch):
@@ -79,7 +77,7 @@ def test_archive_sync_import_backfills_empty_existing_record(monkeypatch):
     sink = DatabaseStorage(db_url="sqlite:///:memory:")
     monkeypatch.setattr("api.app.db_sink", sink)
 
-    empty = _article_record(has_content=False, content="", extensions_json="{}", is_vectorized=True)
+    empty = _article_record(has_content=False, content="", extensions_json="{}")
     with Session(sink.engine) as session:
         session.add(empty)
         session.commit()
@@ -96,7 +94,6 @@ def test_archive_sync_import_backfills_empty_existing_record(monkeypatch):
         assert record.has_content is True
         assert record.content == "Backfilled body."
         assert json.loads(record.extensions_json) == {"full": True}
-        assert record.is_vectorized is False
 
 
 def test_archive_sync_rejects_checksum_mismatch(monkeypatch):

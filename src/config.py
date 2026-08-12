@@ -43,28 +43,6 @@ class RuntimeConfig:
 
 
 @dataclass(frozen=True)
-class RagConfig:
-    """RAG 子系统开关与部署形态。
-
-    三个 URL 决定形态(v3.17 服务化):
-    - 全空 = **嵌入模式**(chromadb PersistentClient + 进程内 sentence-transformers,
-      需装 rag-embedded extra / WITH_RAG=1 镜像)——dev 与单机全量形态;
-    - chroma_url + embedding_url 有值 = **远程模式**(chroma server + TEI 容器,
-      compose --profile rag;后端保持瘦身镜像);
-    - rerank_url 独立可选:空则远程模式跳过重排(嵌入模式回落本地 CrossEncoder)。
-    """
-
-    enabled: bool = False
-    chroma_url: str = ""
-    embedding_url: str = ""
-    rerank_url: str = ""
-
-    @property
-    def remote(self) -> bool:
-        return bool(self.chroma_url)
-
-
-@dataclass(frozen=True)
 class NetworkConfig:
     disable_ca_bundle: bool = True
     hf_endpoint: str = "https://hf-mirror.com"
@@ -100,13 +78,6 @@ class AuthConfig:
 @dataclass(frozen=True)
 class StorageConfig:
     database_url: str
-    chroma_path: str
-
-
-@dataclass(frozen=True)
-class ModelConfig:
-    embedding_model: str = "BAAI/bge-m3"
-    reranker_model: str = "BAAI/bge-reranker-v2-m3"
 
 
 @dataclass(frozen=True)
@@ -184,12 +155,10 @@ class MediaConfig:
 class AppConfig:
     server: ServerConfig
     runtime: RuntimeConfig
-    rag: RagConfig
     network: NetworkConfig
     proxy: ProxyConfig
     auth: AuthConfig
     storage: StorageConfig
-    models: ModelConfig
     cors: CorsConfig
     llm: LLMConfig
     x_api: XApiConfig
@@ -243,13 +212,7 @@ def load_config() -> AppConfig:
     parser = _read_config_file()
 
     storage_db = f"sqlite:///{PROJECT_ROOT / 'data' / 'cms_data.db'}"
-    storage_chroma = str(PROJECT_ROOT / "data" / "chroma_db")
     runtime_role = os.getenv("DORAMI_RUNTIME_ROLE") or parser.get("runtime", "role", fallback="all")
-    rag_enabled_raw = os.getenv("DORAMI_RAG_ENABLED")
-    if rag_enabled_raw is None:
-        rag_enabled = parser.getboolean("rag", "enabled", fallback=False)
-    else:
-        rag_enabled = rag_enabled_raw.strip().lower() in {"1", "true", "yes", "on"}
     media_enabled_raw = os.getenv("DORAMI_MEDIA_ENABLED")
     if media_enabled_raw is None:
         media_enabled = parser.getboolean("media", "enabled", fallback=True)
@@ -269,12 +232,6 @@ def load_config() -> AppConfig:
         runtime=RuntimeConfig(
             role=_runtime_role(runtime_role),
         ),
-        rag=RagConfig(
-            enabled=rag_enabled,
-            chroma_url=(os.getenv("DORAMI_RAG_CHROMA_URL") or parser.get("rag", "chroma_url", fallback="")).strip().rstrip("/"),
-            embedding_url=(os.getenv("DORAMI_RAG_EMBEDDING_URL") or parser.get("rag", "embedding_url", fallback="")).strip().rstrip("/"),
-            rerank_url=(os.getenv("DORAMI_RAG_RERANK_URL") or parser.get("rag", "rerank_url", fallback="")).strip().rstrip("/"),
-        ),
         network=NetworkConfig(
             disable_ca_bundle=parser.getboolean("network", "disable_ca_bundle", fallback=True),
             hf_endpoint=parser.get("network", "hf_endpoint", fallback="https://hf-mirror.com"),
@@ -293,11 +250,6 @@ def load_config() -> AppConfig:
         ),
         storage=StorageConfig(
             database_url=_database_url(parser.get("storage", "database_url", fallback=storage_db)),
-            chroma_path=_path(parser.get("storage", "chroma_path", fallback=storage_chroma)),
-        ),
-        models=ModelConfig(
-            embedding_model=parser.get("models", "embedding_model", fallback="BAAI/bge-m3"),
-            reranker_model=parser.get("models", "reranker_model", fallback="BAAI/bge-reranker-v2-m3"),
         ),
         cors=CorsConfig(
             allow_origins=_csv(parser.get("cors", "allow_origins", fallback="*")),

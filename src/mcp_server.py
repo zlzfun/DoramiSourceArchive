@@ -2,10 +2,12 @@ from __future__ import annotations
 import json
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
+from sqlalchemy import literal_column
 from sqlmodel import Session, select
 from models.db import ArticleRecord, SourceStateRecord
+from storage.fts import fts_search_ids
 from storage.impl.db_storage import DatabaseStorage
-from storage.impl.vector_storage import ChromaVectorStorage, friendly_source_name
+from services.source_naming import friendly_source_name
 from fetchers.registry import fetcher_registry
 
 
@@ -106,7 +108,6 @@ def _browse_articles_impl(
             "content_type": r.content_type,
             "publish_date": r.publish_date,
             "source_url": r.source_url,
-            "is_vectorized": r.is_vectorized,
         }
         for r in records
     ]
@@ -135,98 +136,103 @@ def _get_article_impl(
     }
 
 
+# 检索实现(v3.30 检索扶正波):FTS5 全文检索取代向量召回——工具名/出入参形状
+# 保持兼容(distance 字段退役),RAG 开关不再影响 MCP 的搜索能力。
+# FTS 不可用(老 SQLite)时降级为标题 LIKE;命中按发布日期倒序(新闻域的合理次序,
+# FTS5 trigram 不暴露 bm25 排序,相关性排序交给消费端 Agent 自行取舍)。
+
+_SEARCH_MAX_ROWIDS = 10000  # rowid IN (...) 防御性上限(SQLite 变量数限制)
+
+
+def _fts_hit_records(
+    db_sink: DatabaseStorage,
+    query: str,
+    *,
+    top_k: int,
+    content_type: Optional[str] = None,
+    source_id: Optional[str] = None,
+    source_ids: Optional[list[str]] = None,
+    publish_date_gte: Optional[str] = None,
+) -> list[ArticleRecord]:
+    """FTS 全文检索(标题+正文)+ 元数据过滤,返回命中文章记录。"""
+    with Session(db_sink.engine) as session:
+        stmt = select(ArticleRecord)
+        if source_ids is not None:
+            unique_ids = [sid for sid in dict.fromkeys(source_ids) if sid]
+            if not unique_ids:
+                return []
+            stmt = stmt.where(ArticleRecord.source_id.in_(unique_ids))
+        if source_id:
+            stmt = stmt.where(ArticleRecord.source_id == source_id)
+        if content_type:
+            stmt = stmt.where(ArticleRecord.content_type == content_type)
+        if publish_date_gte:
+            stmt = stmt.where(ArticleRecord.publish_date >= publish_date_gte)
+
+        fts_ids = fts_search_ids(session, query)
+        if fts_ids is not None:
+            if not fts_ids:
+                return []
+            stmt = stmt.where(
+                literal_column("articles.rowid").in_(fts_ids[:_SEARCH_MAX_ROWIDS])
+            )
+        else:
+            stmt = stmt.where(ArticleRecord.title.contains(query.strip()))
+        stmt = stmt.order_by(ArticleRecord.publish_date.desc()).limit(top_k)
+        return list(session.exec(stmt).all())
+
+
 async def _search_articles_impl(
-    vector_sink: Optional[ChromaVectorStorage],
+    db_sink: DatabaseStorage,
     query: str,
     top_k: int = 10,
     content_type: Optional[str] = None,
     source_id: Optional[str] = None,
     source_ids: Optional[list[str]] = None,
     publish_date_gte: Optional[str] = None,
-    distance_threshold: float = 1.5,
 ) -> list[dict]:
-    if vector_sink is None:
-        return [{"error": "RAG disabled", "detail": "向量检索功能未启用，请在后端启用 [rag] enabled = true 后重启。"}]
-    raw = await vector_sink.search(
-        query,
-        n_results=top_k * 4,
-        content_type=content_type,
-        source_id=source_id,
-        source_ids=source_ids,
-        publish_date_gte=publish_date_gte,
+    records = _fts_hit_records(
+        db_sink, query, top_k=top_k, content_type=content_type,
+        source_id=source_id, source_ids=source_ids, publish_date_gte=publish_date_gte,
     )
-    best: dict[str, dict] = {}
-    for chunk in raw:
-        if chunk["distance"] > distance_threshold:
-            continue
-        pid = chunk["metadata"].get("parent_id", chunk["id"])
-        if pid not in best or chunk["distance"] < best[pid]["distance"]:
-            best[pid] = chunk
-    ranked = sorted(best.values(), key=lambda x: x["distance"])[:top_k]
     return [
         {
-            "id": item["metadata"].get("parent_id", item["id"]),
-            "title": item["metadata"].get("title", ""),
-            "source_id": item["metadata"].get("source_id", ""),
-            "content_type": item["metadata"].get("content_type", ""),
-            "publish_date": item["metadata"].get("publish_date", ""),
-            "summary": item["document"][:200] if item.get("document") else "",
-            "distance": round(item["distance"], 4),
+            "id": r.id,
+            "title": r.title,
+            "source_id": r.source_id,
+            "content_type": r.content_type,
+            "publish_date": r.publish_date,
+            "summary": " ".join((r.content or "").split())[:200],
         }
-        for item in ranked
+        for r in records
     ]
 
 
 async def _get_rag_context_impl(
     db_sink: DatabaseStorage,
-    vector_sink: Optional[ChromaVectorStorage],
     query: str,
     top_k: int = 8,
     max_chars: int = 4000,
-    distance_threshold: float = 1.5,
     content_type: Optional[str] = None,
     source_id: Optional[str] = None,
     source_ids: Optional[list[str]] = None,
     publish_date_gte: Optional[str] = None,
     context_separator: str = "\n\n---\n\n",
 ) -> str:
-    if vector_sink is None:
-        return ""
-    raw = await vector_sink.search(
-        query,
-        n_results=top_k * 4,
-        content_type=content_type,
-        source_id=source_id,
-        source_ids=source_ids,
-        publish_date_gte=publish_date_gte,
+    records = _fts_hit_records(
+        db_sink, query, top_k=top_k, content_type=content_type,
+        source_id=source_id, source_ids=source_ids, publish_date_gte=publish_date_gte,
     )
-    best: dict[str, dict] = {}
-    for chunk in raw:
-        if chunk["distance"] > distance_threshold:
-            continue
-        pid = chunk["metadata"].get("parent_id", chunk["id"])
-        if pid not in best or chunk["distance"] < best[pid]["distance"]:
-            best[pid] = chunk
-
-    ranked = sorted(best.values(), key=lambda x: x["distance"])[:top_k]
-
-    parts = []
+    parts: list[str] = []
     total_chars = 0
-    for rank, res in enumerate(ranked, start=1):
-        pid = res["metadata"].get("parent_id", res["id"])
-        record = await db_sink.get(pid)
-        source_id_val = res["metadata"].get("source_id", "")
-        source_name = friendly_source_name(source_id_val)
-        pub_date = res["metadata"].get("publish_date", "")
-        title = record.title if record else res["metadata"].get("title", "")
-        source_url = record.source_url if record else ""
-        raw_doc = res.get("document", "")
-        body_start = raw_doc.find("\n\n")
-        excerpt = raw_doc[body_start + 2:].strip() if body_start != -1 else raw_doc.strip()
+    for rank, record in enumerate(records, start=1):
+        source_name = friendly_source_name(record.source_id or "")
+        pub_date = (record.publish_date or "")[:10]
+        excerpt = (record.content or "").strip()[:1500]
         block = (
             f"[{rank}] 来源: {source_name} | 日期: {pub_date}\n"
-            f"标题: {title}\n"
-            f"链接: {source_url}\n\n"
+            f"标题: {record.title}\n"
+            f"链接: {record.source_url}\n\n"
             f"{excerpt}"
         )
         if total_chars + len(block) > max_chars and parts:
@@ -241,7 +247,6 @@ async def _get_rag_context_impl(
 
 def build_mcp_app(
     db_sink: DatabaseStorage,
-    vector_sink: Optional[ChromaVectorStorage],
     subscription_resolver=None,
 ) -> FastMCP:
     """构建 FastMCP 实例。
@@ -252,7 +257,7 @@ def build_mcp_app(
     """
     mcp = FastMCP(
         "dorami-archive",
-        instructions="哆啦美·归档中枢 MCP Server — AI资讯检索与RAG上下文组装",
+        instructions="哆啦美·归档中枢 MCP Server — AI资讯检索与上下文组装",
         streamable_http_path="/",
     )
 
@@ -336,14 +341,14 @@ def build_mcp_app(
         content_type: Optional[str] = None,
         source_id: Optional[str] = None,
         publish_date_gte: Optional[str] = None,
-        distance_threshold: float = 1.5,
         subscription_token: Optional[str] = None,
     ) -> list[dict]:
-        """语义向量搜索文章，支持中英文，按相关性排序。适合主题查询场景。
-        Semantic vector search. Supports Chinese and English queries.
-        Scenarios: 「最近的具身智能资讯有哪些？」「Find papers on multimodal LLMs」
-        distance_threshold: cosine distance cutoff (lower = stricter, default 1.5).
-        publish_date_gte: YYYY-MM-DD. Returns articles ranked by relevance (distance asc).
+        """关键词全文搜索文章（标题+正文，中英文子串匹配），按发布日期倒序。
+        Keyword full-text search over title + body (Chinese & English substrings).
+        Scenarios: 「具身智能相关的资讯」「Find articles mentioning multimodal LLMs」
+        query: 关键词或短语（≥3 字符；多词以空格分隔时须全部命中）。归档中英文来源
+            混杂，中文查不到时换英文关键词再试（反之亦然）。
+        publish_date_gte: YYYY-MM-DD. Results ordered by publish_date desc.
         subscription_token: 把检索限定在访问令牌覆盖的来源内（个性化视图）。
             可经本参数传入，或由客户端在请求头 Authorization: Bearer 提供（二者皆缺或无效将被拒绝）；
             支持单订阅令牌（dsub_）或个人订阅令牌（dfeed_，覆盖你的全部订阅）。
@@ -352,9 +357,9 @@ def build_mcp_app(
         if not ok:
             return [{"error": _TOKEN_REQUIRED_MSG}]
         return await _search_articles_impl(
-            vector_sink, query=query, top_k=top_k,
+            db_sink, query=query, top_k=top_k,
             content_type=content_type, source_id=source_id, source_ids=scope_ids,
-            publish_date_gte=publish_date_gte, distance_threshold=distance_threshold,
+            publish_date_gte=publish_date_gte,
         )
 
     @mcp.tool()
@@ -362,18 +367,18 @@ def build_mcp_app(
         query: str,
         top_k: int = 8,
         max_chars: int = 4000,
-        distance_threshold: float = 1.5,
         content_type: Optional[str] = None,
         source_id: Optional[str] = None,
         publish_date_gte: Optional[str] = None,
         context_separator: str = "\n\n---\n\n",
         subscription_token: Optional[str] = None,
     ) -> str:
-        """语义检索后组装格式化RAG上下文字符串，可直接拼入LLM System Prompt。
-        Assemble a formatted RAG context string ready to inject into an LLM prompt.
-        Scenarios: 需要用归档资讯回答用户提问时的上下文准备。
-        Returns empty string when no relevant results found.
-        publish_date_gte: YYYY-MM-DD. distance_threshold: cosine distance cutoff (default 1.5).
+        """关键词检索后组装格式化上下文字符串（来源/日期/标题/链接+正文摘录），
+        可直接拼入 LLM System Prompt。
+        Keyword-search the archive and assemble a formatted context string ready
+        to inject into an LLM prompt. Returns empty string when nothing matches.
+        query: 关键词或短语（≥3 字符）；中英文来源混杂，必要时换语言重试。
+        publish_date_gte: YYYY-MM-DD.
         subscription_token: 把上下文限定在访问令牌覆盖来源内。可经本参数传入，
             或由客户端在请求头 Authorization: Bearer 提供；二者皆缺或无效将被拒绝。
         """
@@ -381,8 +386,7 @@ def build_mcp_app(
         if not ok:
             return f"ERROR: {_TOKEN_REQUIRED_MSG}"
         return await _get_rag_context_impl(
-            db_sink, vector_sink, query=query, top_k=top_k,
-            max_chars=max_chars, distance_threshold=distance_threshold,
+            db_sink, query=query, top_k=top_k, max_chars=max_chars,
             content_type=content_type, source_id=source_id, source_ids=scope_ids,
             publish_date_gte=publish_date_gte, context_separator=context_separator,
         )

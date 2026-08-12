@@ -1,6 +1,5 @@
 import os
 import sys
-from dataclasses import replace
 
 from fastapi.testclient import TestClient
 from sqlmodel import Session
@@ -59,7 +58,6 @@ def _seed_article(engine, article_id, source_id, title, content="正文内容"):
                 has_content=True,
                 content=content,
                 extensions_json="{}",
-                is_vectorized=False,
             )
         )
         session.commit()
@@ -82,8 +80,13 @@ def _enable_ai_beta(engine, username="user"):
 
 
 def _patch_llm(monkeypatch):
-    """把 reader_ai 用到的 chat_completion 换成可观测的桩，返回 calls 列表。"""
+    """把 reader_ai / reader_search 用到的 chat_completion 换成可观测的桩，返回 calls 列表。
+
+    reader_search 的规划/选篇调用收到非 JSON 的桩输出会走降级链（规划失败 →
+    原词 FTS → 时序窗口），恰好覆盖 degrade 行为且不触网。
+    """
     import services.reader_ai as rai
+    import services.reader_search as rsearch
 
     calls = []
 
@@ -92,6 +95,7 @@ def _patch_llm(monkeypatch):
         return "AI-MOCK-OUTPUT"
 
     monkeypatch.setattr(rai, "chat_completion", fake_chat_completion)
+    monkeypatch.setattr(rsearch, "chat_completion", fake_chat_completion)
     return calls
 
 
@@ -172,13 +176,12 @@ def test_ask_article_scope_uses_article_body(monkeypatch, tmp_path):
         assert "独特正文片段" in user_prompt
 
 
-def test_ask_subscription_rag_off_uses_articles(monkeypatch, tmp_path):
-    app_module, sink = _base_setup(monkeypatch, tmp_path, "ask_sub_ragoff.db")
+def test_ask_subscription_degrades_to_recent_window(monkeypatch, tmp_path):
+    """v3.30 检索扶正:规划/选篇桩输出非 JSON → 降级链落到订阅域时序窗口。"""
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "ask_sub_window.db")
     _configure_llm(sink.engine)
     _enable_ai_beta(sink.engine)
     _seed_article(sink.engine, "a1", "rss_sub", "订阅文章标题", "订阅文章正文")
-    # RAG 关闭：vector_sink 保持 None
-    monkeypatch.setattr(app_module, "vector_sink", None)
     calls = _patch_llm(monkeypatch)
 
     with TestClient(app_module.app) as client:
@@ -194,26 +197,25 @@ def test_ask_subscription_rag_off_uses_articles(monkeypatch, tmp_path):
         assert resp.status_code == 200
         user_prompt = calls[-1][-1]
         assert "订阅文章标题" in user_prompt
+        # sources 透出窗口选中的文章
+        assert resp.json()["sources"][0]["source_id"] == "rss_sub"
 
 
-def test_ask_subscription_rag_on_uses_rag_context(monkeypatch, tmp_path):
-    app_module, sink = _base_setup(monkeypatch, tmp_path, "ask_sub_ragon.db")
+def test_ask_subscription_uses_search_pipeline(monkeypatch, tmp_path):
+    """scope=subscription 委托 reader_search.subscription_context（闭包注入）。"""
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "ask_sub_search.db")
     _configure_llm(sink.engine)
     _enable_ai_beta(sink.engine)
     calls = _patch_llm(monkeypatch)
 
-    # 打开 RAG 并提供一个非 None 的 vector_sink 哨兵
-    monkeypatch.setattr(
-        app_module,
-        "settings",
-        replace(app_module.settings, rag=replace(app_module.settings.rag, enabled=True)),
-    )
-    monkeypatch.setattr(app_module, "vector_sink", object())
+    import services.reader_search as rsearch
 
-    async def fake_rag_context(query, request):
-        return {"context_text": "RAG-RETRIEVED-CTX", "sources": [{"title": "T", "source_url": "u"}]}
+    async def fake_subscription_context(question, **kwargs):
+        assert question == "问题"
+        assert "engine" in kwargs and "source_ids" in kwargs
+        return "SEARCH-RETRIEVED-CTX", [{"title": "T", "source_id": "s", "source_url": "u"}]
 
-    monkeypatch.setattr(app_module, "rag_context", fake_rag_context)
+    monkeypatch.setattr(rsearch, "subscription_context", fake_subscription_context)
 
     with TestClient(app_module.app) as client:
         _login(client)
@@ -222,9 +224,9 @@ def test_ask_subscription_rag_on_uses_rag_context(monkeypatch, tmp_path):
             json={"question": "问题", "scope": "subscription"},
         )
         assert resp.status_code == 200
-        assert resp.json()["sources"] == [{"title": "T", "source_url": "u"}]
+        assert resp.json()["sources"] == [{"title": "T", "source_id": "s", "source_url": "u"}]
         user_prompt = calls[-1][-1]
-        assert "RAG-RETRIEVED-CTX" in user_prompt
+        assert "SEARCH-RETRIEVED-CTX" in user_prompt
 
 
 def test_ask_includes_history_for_multi_turn(monkeypatch, tmp_path):
@@ -350,7 +352,6 @@ def test_summarize_caches_and_surfaces_in_list(monkeypatch, tmp_path):
         with Session(sink.engine) as session:
             record = session.get(ArticleRecord, "a1")
             assert _json.loads(record.extensions_json)["summary_zh"] == "两句话的要点摘要。"
-            assert record.is_vectorized is False and record.index_status == "pending"
 
         # 列表条目(不含正文)轻字段透出摘要,供列表卡摘要行与阅读入口即时展示
         items = client.get(

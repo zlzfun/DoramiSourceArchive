@@ -104,13 +104,11 @@ def test_non_public_api_routes_require_login():
 
 
 def test_collector_and_reader_prefixes_are_disjoint_enough():
-    """reader 前缀短路优先于 collector：确保 /api/vector 的 search/stats 例外不被 collector 吞。
-
-    （回归保护：CLAUDE.md 记录的 /api/vector 拆分——search/stats/subscribed-stats 归 reader，
-    其余 vector/* 归 collector。）"""
-    reader_vector = ["/api/vector/search", "/api/vector/stats", "/api/vector/subscribed-stats"]
-    for path in reader_vector:
+    """reader 前缀短路优先于 collector（历史上以 /api/vector 拆分为例；向量端点已随
+    v3.31 退役,改用 /api/media 与 /api/reader 等仍在的 reader 前缀验证短路语义）。"""
+    reader_paths = ["/api/media/proxy", "/api/reader/sources"]
+    for path in reader_paths:
         assert app_module._path_matches(path, app_module.READER_API_PREFIXES), path
     # 构建/管理类仍归 collector。
-    assert app_module._path_matches("/api/vector/reindex-all", app_module.COLLECTOR_API_PREFIXES)
-    assert app_module._path_matches("/api/vectorize/all-pending", app_module.COLLECTOR_API_PREFIXES)
+    assert app_module._path_matches("/api/llm/config", app_module.COLLECTOR_API_PREFIXES)
+    assert app_module._path_matches("/api/daily-brief/generate", app_module.COLLECTOR_API_PREFIXES)

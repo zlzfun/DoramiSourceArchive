@@ -91,7 +91,6 @@ def _seed_article(engine, article_id: str, source_id: str, title: str):
                 has_content=True,
                 content=f"{title} body",
                 extensions_json="{}",
-                is_vectorized=False,
             )
         )
         session.commit()
@@ -101,15 +100,6 @@ def _make_sink(tmp_path, name: str):
     from storage.impl.db_storage import DatabaseStorage
 
     return DatabaseStorage(db_url=f"sqlite:///{tmp_path / name}")
-
-
-def _enable_vector_sink(monkeypatch, app_module):
-    """让需要 vector_sink 的端点不 503——挂一个最小桩对象上去。
-
-    auto-vectorize 开关与全量重建只检查 vector_sink 是否为 None；不会真正调用其方法，
-    因此一个简单的非 None 哨兵足够。需要真实方法的测试应自行 monkeypatch。
-    """
-    monkeypatch.setattr(app_module, "vector_sink", object())
 
 
 def test_subscription_tokenized_delivery_filters_articles(monkeypatch, tmp_path):
@@ -259,13 +249,13 @@ def test_reader_sources_catalog_marks_subscribed(monkeypatch, tmp_path):
                 id=f"o{i}", title=f"o{i}", content_type="rss_article", source_id="rss_openai",
                 source_url="https://e.test", publish_date="2026-05-20T00:00:00",
                 fetched_date=f"2026-05-2{i}T00:00:00", has_content=True, content="x",
-                extensions_json="{}", is_vectorized=False,
+                extensions_json="{}",
             ))
         session.add(ArticleRecord(
             id="g1", title="g1", content_type="github_repository", source_id="gh_repo",
             source_url="https://e.test", publish_date="2026-05-20T00:00:00",
             fetched_date="2026-05-21T00:00:00", has_content=True, content="x",
-            extensions_json="{}", is_vectorized=False,
+            extensions_json="{}",
         ))
         session.commit()
 
@@ -372,14 +362,14 @@ def test_articles_subscribed_scope_only_and_prioritize(monkeypatch, tmp_path):
             id="sub1", title="sub1", content_type="rss_article", source_id="rss_openai",
             source_url="https://e.test", publish_date="2026-05-10T00:00:00",
             fetched_date="2026-05-30T00:00:00", has_content=True, content="x",
-            extensions_json="{}", is_vectorized=False,
+            extensions_json="{}",
         ))
         # Unsubscribed source: newer publish_date but older fetched_date.
         session.add(ArticleRecord(
             id="oth1", title="oth1", content_type="rss_article", source_id="rss_other",
             source_url="https://e.test", publish_date="2026-05-20T00:00:00",
             fetched_date="2026-05-20T00:00:00", has_content=True, content="x",
-            extensions_json="{}", is_vectorized=False,
+            extensions_json="{}",
         ))
         session.commit()
 
@@ -412,7 +402,7 @@ def test_articles_can_return_total_without_breaking_list_response(monkeypatch, t
                 id=f"a{index}", title=f"a{index}", content_type="rss_article", source_id="rss_openai",
                 source_url="https://e.test", publish_date=f"2026-05-2{index}T00:00:00",
                 fetched_date=f"2026-05-2{index}T00:00:00", has_content=True, content="x",
-                extensions_json="{}", is_vectorized=False,
+                extensions_json="{}",
             ))
         session.commit()
 
@@ -445,7 +435,7 @@ def test_articles_lightweight_list_and_detail_endpoint(monkeypatch, tmp_path):
             id="article_full", title="full", content_type="rss_article", source_id="rss_openai",
             source_url="https://e.test/full", publish_date="2026-05-20T00:00:00",
             fetched_date="2026-05-20T00:00:00", has_content=True, content=body,
-            extensions_json='{"tag": "full"}', is_vectorized=False,
+            extensions_json='{"tag": "full"}',
         ))
         session.commit()
 
@@ -479,7 +469,7 @@ def test_articles_subscribed_only_empty_when_no_subscriptions(monkeypatch, tmp_p
             id="x1", title="x1", content_type="rss_article", source_id="rss_openai",
             source_url="https://e.test", publish_date="2026-05-10T00:00:00",
             fetched_date="2026-05-10T00:00:00", has_content=True, content="x",
-            extensions_json="{}", is_vectorized=False,
+            extensions_json="{}",
         ))
         session.commit()
 
@@ -488,41 +478,16 @@ def test_articles_subscribed_only_empty_when_no_subscriptions(monkeypatch, tmp_p
         assert client.get("/api/articles?subscribed_scope=only").json() == []
 
 
-def test_vector_search_hard_scoped_empty_when_no_subscriptions(monkeypatch, tmp_path):
-    import api.app as app_module
-
-    sink = _make_sink(tmp_path, "vec.db")
-    monkeypatch.setattr(app_module, "db_sink", sink)
-    _set_auth_accounts(monkeypatch, app_module)
-    _mark_defaults_seeded(sink.engine)
-    _set_runtime_role(monkeypatch, app_module, "reader")
-
-    with TestClient(app_module.app) as client:
-        _login(client)
-        # 登录用户无订阅 → 硬性限定后直接返回空集（不退化为全库检索）。
-        resp = client.post("/api/vector/search", json={"query": "anything"})
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["results"] == []
-        assert body["scoped"] is True
-
-
 def test_public_subscription_vector_search_scopes_to_sources(monkeypatch, tmp_path):
+    """令牌检索端点(v3.31 起 FTS5 芯):作用域限定到订阅来源,域外命中不外泄。"""
     import api.app as app_module
 
     sink = _make_sink(tmp_path, "pubvec.db")
     monkeypatch.setattr(app_module, "db_sink", sink)
     _set_auth_accounts(monkeypatch, app_module)
     _set_runtime_role(monkeypatch, app_module, "reader")
-
-    captured = {}
-
-    async def fake_run_vector_search(query_text, **kwargs):
-        captured["query"] = query_text
-        captured["source_ids"] = kwargs.get("source_ids")
-        return [{"id": "c1", "metadata": {"source_id": "rss_openai", "title": "hit"}, "distance": 0.1}]
-
-    monkeypatch.setattr(app_module, "run_vector_search", fake_run_vector_search)
+    _seed_article(sink.engine, "o1", "rss_openai", "Agent news from OpenAI")
+    _seed_article(sink.engine, "e1", "rss_elsewhere", "Agent news elsewhere")
 
     with TestClient(app_module.app) as client:
         _login(client)
@@ -537,15 +502,14 @@ def test_public_subscription_vector_search_scopes_to_sources(monkeypatch, tmp_pa
         # Valid token scopes search to the subscription's sources.
         resp = public.post(
             f"/api/public/subscriptions/{sub['id']}/vector/search?token={sub['token']}",
-            json={"query": "agent news"},
+            json={"query": "Agent"},
         )
         assert resp.status_code == 200
         data = resp.json()
         assert sorted(data["scoped_source_ids"]) == ["rss_anthropic", "rss_openai"]
         assert data["count"] == 1
-
-    assert captured["query"] == "agent news"
-    assert sorted(captured["source_ids"]) == ["rss_anthropic", "rss_openai"]
+        assert data["results"][0]["id"] == "o1"
+        assert data["results"][0]["source_id"] == "rss_openai"
 
 
 def test_public_subscription_vector_search_disabled_in_collector(monkeypatch, tmp_path):
@@ -593,7 +557,7 @@ def test_mcp_browse_impl_scopes_by_source_ids(tmp_path):
                 id=f"{sid}_1", title=sid, content_type="rss_article", source_id=sid,
                 source_url="https://e.test", publish_date="2026-05-20T00:00:00",
                 fetched_date="2026-05-20T00:00:00", has_content=True, content="x",
-                extensions_json="{}", is_vectorized=False,
+                extensions_json="{}",
             ))
         session.commit()
 
@@ -777,14 +741,14 @@ def test_reader_sources_excludes_decommissioned_node_with_lingering_archive(monk
             id="d1", title="dead", content_type="rss_article", source_id=dead,
             source_url="https://e.test", publish_date="2026-05-20T00:00:00",
             fetched_date="2026-05-21T00:00:00", has_content=True, content="x",
-            extensions_json="{}", is_vectorized=False,
+            extensions_json="{}",
         ))
         # 合法的未注册导入源（如 social_post）不应被一并误伤。
         session.add(ArticleRecord(
             id="s1", title="post", content_type="social_post", source_id="import_x_feed",
             source_url="https://e.test", publish_date="2026-05-20T00:00:00",
             fetched_date="2026-05-21T00:00:00", has_content=True, content="x",
-            extensions_json="{}", is_vectorized=False,
+            extensions_json="{}",
         ))
         session.commit()
 
@@ -822,7 +786,7 @@ def _seed_article_dated(
             source_url=source_url or f"https://example.test/{article_id}",
             publish_date=publish_date, fetched_date=fetched_date, has_content=True,
             content=content if content is not None else f"{title} body",
-            extensions_json="{}", is_vectorized=False,
+            extensions_json="{}",
         ))
         session.commit()
 
@@ -1112,69 +1076,3 @@ def test_personal_feed_admin_token_covers_whole_archive(monkeypatch, tmp_path):
 
         # MCP 作用域解析：管理员令牌 → []（调用方契约中的「未限定来源」）
         assert resolve_subscription_sources_by_token(token) == []
-
-
-def test_vectorize_endpoints_blocked_for_reader_user(monkeypatch, tmp_path):
-    import api.app as app_module
-
-    sink = _make_sink(tmp_path, "vecgate.db")
-    monkeypatch.setattr(app_module, "db_sink", sink)
-    _set_auth_accounts(monkeypatch, app_module)
-    _mark_defaults_seeded(sink.engine)
-    _set_runtime_role(monkeypatch, app_module, "reader")
-
-    with TestClient(app_module.app) as client:
-        _login(client)  # user 账号
-        # 用户侧：向量构建/管理一律不可用（归管理员），但只读检索与订阅统计可用。
-        assert client.post("/api/vectorize/all-pending").status_code == 403
-        assert client.post("/api/vector/reindex-all").status_code == 403
-        assert client.post("/api/vector/auto-vectorize", json={"enabled": True}).status_code == 403
-        assert client.get("/api/vector/subscribed-stats").status_code == 200
-        assert client.post("/api/vector/search", json={"query": "x"}).status_code == 200
-
-
-def test_vectorization_managed_by_admin(monkeypatch, tmp_path):
-    import api.app as app_module
-
-    sink = _make_sink(tmp_path, "vecadmin.db")
-    monkeypatch.setattr(app_module, "db_sink", sink)
-    _set_auth_accounts(monkeypatch, app_module)
-    _set_runtime_role(monkeypatch, app_module, "all")
-    _enable_vector_sink(monkeypatch, app_module)  # 模拟 [rag] enabled=true 启动
-
-    with TestClient(app_module.app) as client:
-        _login(client, "admin", "admin")  # admin 账号 → collector 面
-        # 管理员可读写「抓取后自动向量化」开关
-        assert client.get("/api/vector/auto-vectorize").json() == {"enabled": False}
-        assert client.post("/api/vector/auto-vectorize", json={"enabled": True}).json() == {"enabled": True}
-        assert client.get("/api/vector/auto-vectorize").json() == {"enabled": True}
-
-
-def test_auto_vectorize_after_fetch_respects_setting(monkeypatch, tmp_path):
-    import asyncio
-    import api.app as app_module
-
-    sink = _make_sink(tmp_path, "autovec.db")
-    monkeypatch.setattr(app_module, "db_sink", sink)
-    _seed_article(sink.engine, "o1", "rss_openai", "OpenAI 1")
-
-    saved = []
-
-    class FakeVectorSink:
-        async def save(self, content):
-            saved.append(content.id)
-            return True
-
-    monkeypatch.setattr(app_module, "vector_sink", FakeVectorSink())
-
-    # 开关关闭：不向量化
-    asyncio.run(app_module.auto_vectorize_after_fetch(["o1"]))
-    assert saved == []
-
-    # 开关开启：抓取后自动向量化新入库文章
-    from models.db import AppSettingRecord
-    with Session(sink.engine) as session:
-        session.add(AppSettingRecord(key="auto_vectorize", value="true"))
-        session.commit()
-    asyncio.run(app_module.auto_vectorize_after_fetch(["o1"]))
-    assert saved == ["o1"]

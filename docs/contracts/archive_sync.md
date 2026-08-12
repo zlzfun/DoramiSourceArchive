@@ -92,11 +92,12 @@ Import is idempotent by `article.id`.
 - If the article ID does not exist, reader inserts the record.
 - If the article ID already exists, reader skips it.
 - If the existing reader record has no content and the incoming record has content,
-  reader backfills the content and resets `is_vectorized` to `false`.
+  reader backfills the content.
 
-Reader import always sets `is_vectorized = false` for imported or backfilled records.
-Vector storage is a reader-side derived index and is intentionally not the primary
-sync payload.
+Derived indexes (the reader-side FTS5 full-text index) are rebuilt locally by
+triggers on insert/update and are intentionally not part of the sync payload.
+(历史注记:v3.31 前此处还有 `is_vectorized` 重置语义,已随向量层退役删除——
+该字段从未进入线格式,新旧版本部署间同步互通不受影响。)
 
 ## Preserved Fields
 

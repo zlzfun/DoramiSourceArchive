@@ -37,7 +37,7 @@ def _seed(engine, article_id, source_id, fetched_date, *, content="正文内容"
             id=article_id, title=f"标题-{article_id}", content_type=content_type, source_id=source_id,
             source_url=f"https://example.test/{article_id}", publish_date=publish_date,
             fetched_date=fetched_date, has_content=has_content, content=content if has_content else None,
-            extensions_json="{}", is_vectorized=False,
+            extensions_json="{}",
         ))
         session.commit()
 
@@ -359,7 +359,6 @@ def test_delete_latest_brief_rewinds_cursor(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
     sink = _make_sink(tmp_path)
     monkeypatch.setattr(app_module, "db_sink", sink)
-    monkeypatch.setattr(app_module, "vector_sink", None)
 
     _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
     with Session(sink.engine) as session:
@@ -428,7 +427,7 @@ def test_collect_candidates_respects_source_scope(tmp_path):
                 id=f"a{i}", title=f"t{i}", content_type="rss_article", source_id=sid,
                 source_url=f"https://x.test/{i}", publish_date="2026-07-17T00:00:00",
                 fetched_date=f"2026-07-17T0{i}:00:00", has_content=True,
-                content="正文" * 50, extensions_json="{}", is_vectorized=False,
+                content="正文" * 50, extensions_json="{}",
             ))
         session.commit()
 

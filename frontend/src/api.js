@@ -254,15 +254,7 @@ export function createArticle(payload) {
   return request('/articles', { method: 'POST', body: payload, errorMsg: '录入失败' });
 }
 
-// ==================== 向量化（单篇 / 批量） ====================
-export function vectorizeArticle(id) {
-  return request(`/vectorize/${enc(id)}`, { method: 'POST', errorMsg: '向量化失败' });
-}
-
-export function batchVectorizeArticles(ids) {
-  return request('/vectorize/batch', { method: 'POST', body: { ids }, errorMsg: '批量向量化失败' });
-}
-
+// ==================== 运行参数 ====================
 function runQuery(options = {}) {
   const params = new URLSearchParams();
   if (options.testLimit !== undefined && options.testLimit !== null) {
@@ -375,23 +367,7 @@ export function previewSourceConfig(config) {
   return request('/source-builder/preview', { method: 'POST', body: config, errorMsg: '试抓预览失败' });
 }
 
-// ==================== 向量 / RAG 检索 ====================
-export function fetchVectorStats() {
-  return request('/vector/stats', { errorMsg: '获取向量统计失败' });
-}
-
-export function vectorSearch(query, topK = 5, options = {}) {
-  return request('/vector/search', { method: 'POST', body: { query, top_k: topK, ...options }, errorMsg: '检索失败' });
-}
-
-export function ragContext(query, topK = 5, options = {}) {
-  return request('/rag/context', { method: 'POST', body: { query, top_k: topK, ...options }, errorMsg: 'RAG 上下文检索失败' });
-}
-
-export function ragSimilar(articleId, topK = 5) {
-  return request(`/rag/similar/${enc(articleId)}?top_k=${topK}`, { errorMsg: '相似文章检索失败' });
-}
-
+// ==================== 后台任务轮询 ====================
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // 轮询后台任务直到终态；成功时 resolve 其 result（字段与旧同步接口一致），
@@ -409,30 +385,8 @@ async function pollJob(jobId, { intervalMs = 1500, timeoutMs = 60 * 60 * 1000, d
   throw new Error('任务超时，请稍后在任务列表查看结果');
 }
 
-export async function vectorizeAllPending() {
-  const { job_id: jobId } = await request('/vectorize/all-pending', { method: 'POST', errorMsg: '全量向量化失败' });
-  return pollJob(jobId, { defaultError: '全量向量化失败' });
-}
-
-export async function reindexAll() {
-  const { job_id: jobId } = await request('/vector/reindex-all', { method: 'POST', errorMsg: '全量重索引失败' });
-  return pollJob(jobId, { defaultError: '全量重索引失败' });
-}
-
 export function fetchBackgroundJob(jobId) {
   return request(`/jobs/${jobId}`, { errorMsg: '任务状态查询失败' });
-}
-
-export function fetchSubscribedVectorStats() {
-  return request('/vector/subscribed-stats', { errorMsg: '获取订阅向量统计失败' });
-}
-
-export function getAutoVectorize() {
-  return request('/vector/auto-vectorize', { errorMsg: '获取自动向量化配置失败' });
-}
-
-export function setAutoVectorize(enabled) {
-  return request('/vector/auto-vectorize', { method: 'POST', body: { enabled }, errorMsg: '设置自动向量化失败' });
 }
 
 // ==================== 大模型配置 & 每日日报 ====================

@@ -1,6 +1,5 @@
 // 状态徽标的单一事实来源：tone→配色的映射只在此处一份，
 // 各页面的状态语义（运行状态 / 来源健康 / 检索相关性）都归一为 { label, tone, icon? }。
-// 配合 <StatusBadge>（复用 .status-badge 角色类）使用。
 import {
   AlertTriangle,
   CheckCircle2,
@@ -9,17 +8,9 @@ import {
   XCircle,
 } from 'lucide-react';
 
-// 语义中性色 tone → status-badge 配色（emerald/amber/red/slate 为 conventions §4 许可的语义中性色；
+// 语义中性色 tone（emerald/amber/red/slate 为 conventions §4 许可的语义中性色；
 // indigo/blue 已在 @theme 折叠为同一 accent）。一处定义，全站复用。
-export const TONE_CLASS = {
-  emerald: 'text-emerald-700 bg-emerald-50 border-emerald-100',
-  amber: 'text-amber-700 bg-amber-50 border-amber-100',
-  red: 'text-red-700 bg-red-50 border-red-100',
-  accent: 'text-indigo-700 bg-[var(--dorami-wash)] border-transparent',
-  slate: 'text-slate-500 bg-[var(--dorami-soft)] border-[var(--dorami-border)]',
-};
-
-// 来源健康的小圆点（dept-dot 用），tone 对齐上表。
+// 来源健康的小圆点（dept-dot 用）。
 export const TONE_DOT = {
   emerald: 'bg-emerald-500',
   amber: 'bg-amber-400',
@@ -28,7 +19,6 @@ export const TONE_DOT = {
   slate: 'bg-slate-300',
 };
 
-// 运行状态（FetchRunRecord / CollectionJobRunRecord）。
 export function runStatusMeta(status) {
   switch (status) {
     case 'success':
@@ -75,12 +65,4 @@ const ERROR_TYPE_LABELS = {
 export function errorTypeLabel(type) {
   if (!type) return '抓取失败';
   return ERROR_TYPE_LABELS[type] || type;
-}
-
-// 向量检索相关性（distance 越小越相关）。
-export function distanceMeta(distance) {
-  if (distance < 0.3) return { label: '极高', tone: 'emerald' };
-  if (distance < 0.5) return { label: '高', tone: 'accent' };
-  if (distance < 0.7) return { label: '中', tone: 'amber' };
-  return { label: '低', tone: 'slate' };
 }

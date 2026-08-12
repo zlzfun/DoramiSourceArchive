@@ -1,6 +1,5 @@
 import { useCallback, useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import {
-  BarChart2,
   BookOpen,
   Bot,
   CloudDownload,
@@ -33,7 +32,6 @@ import { deepLinkArticleId } from './utils/shareLink';
 // Suspense 边界内，故加载新 Tab 不会波及已挂载 Tab（避免切换时整屏闪 fallback）。
 const DataTab = lazy(() => import('./components/DataTab'));
 const FetchTab = lazy(() => import('./components/FetchTab'));
-const VectorTab = lazy(() => import('./components/VectorTab'));
 const FetchRunsTab = lazy(() => import('./components/FetchRunsTab'));
 const DailyBriefTab = lazy(() => import('./components/DailyBriefTab'));
 const AdminOpsTab = lazy(() => import('./components/AdminOpsTab'));
@@ -66,7 +64,7 @@ function TabBoundary({ children }) {
 // ── 导航 / 历史锚点 ──
 // 把「标签 + 子视图」镜像到 URL hash（#/runs/history），跨页跳转的聚焦上下文存在 history.state 里。
 // 让浏览器「返回」能逐级退回：子视图切换 → 标签切换 → 跨页跳转的原位。
-const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'vector', 'brief', 'admin'];
+const ALL_TABS = ['reader', 'data', 'fetch', 'runs', 'brief', 'admin'];
 
 const FEEDBACK_UNREAD_POLL_MS = 5 * 60 * 1000; // 反馈回复角标轮询:回复非即时通讯,低频足够
 // runs 的双视图已随运行波(调度台)退役:旧书签 #/runs/history、#/runs/jobs 在
@@ -81,7 +79,6 @@ const INITIAL_RUNTIME = {
   role: 'all',
   collector_enabled: false,
   reader_enabled: false,
-  rag_enabled: false,
   ai_beta_enabled: false,
   llm_configured: false,
   default_surface: 'console',
@@ -519,7 +516,6 @@ export default function App() {
     { id: 'data', icon: Database, label: '知识台账', hideForReader: true },
     { id: 'fetch', icon: CloudDownload, label: '节点管理', surface: 'collector' },
     { id: 'runs', icon: History, label: '任务与运行', surface: 'collector' },
-    { id: 'vector', icon: BarChart2, label: '向量雷达', surface: 'reader', requiresRag: true, hideForReader: true },
     // 「接入集成」页签已并入设置柜(交付通道三卡→设置·接入集成组);页签瘦身改名「AI 日报」
     // (只剩日报运营面),id 改为 'brief'(历史 hash #/mcp 由 hashToRoute 归一兼容)。
     { id: 'brief', icon: Newspaper, label: 'AI 日报', surface: 'collector' },
@@ -529,7 +525,6 @@ export default function App() {
     if (tab.hideForReader && isReaderRole) return false;
     if (tab.adminOnly && runtimeInfo.account_role !== 'admin') return false;
     if (tab.surface && !runtimeInfo[`${tab.surface}_enabled`]) return false;
-    if (tab.requiresRag && !runtimeInfo.rag_enabled) return false;
     return true;
   }), [runtimeInfo, isReaderRole]);
 
@@ -848,7 +843,6 @@ export default function App() {
                   isActive={activeTab === 'data'}
                   canManageArticles={runtimeInfo.collector_enabled}
                   isReader={runtimeInfo.reader_enabled}
-                  ragEnabled={runtimeInfo.rag_enabled}
                   articlesDirty={articlesDirty}
                   onArticlesRefreshed={clearArticlesDirty}
                   pendingFilter={pendingFocus?.tab === 'data' ? pendingFocus.payload : null}
@@ -894,13 +888,6 @@ export default function App() {
                   pendingJobDraft={pendingJobDraft}
                   onPendingJobDraftApplied={clearPendingJobDraft}
                 />
-              </TabBoundary>
-            </div>
-          )}
-          {mountedTabs.has('vector') && runtimeInfo.reader_enabled && (
-            <div className={`tab-panel${activeTab === 'vector' && !readerView ? '' : ' is-off'}`}>
-              <TabBoundary>
-                <VectorTab availableFetchers={availableFetchers} showToast={showToast} accountRole={runtimeInfo.account_role} />
               </TabBoundary>
             </div>
           )}

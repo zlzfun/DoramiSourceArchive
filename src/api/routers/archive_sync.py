@@ -111,7 +111,6 @@ def build_import_article_record(article: Dict[str, Any]) -> ArticleRecord:
         has_content=has_content,
         content=str(article.get("content") or ""),
         extensions_json=json.dumps(extensions, ensure_ascii=False),
-        is_vectorized=False,
     )
 
 
@@ -170,8 +169,6 @@ def import_archive_sync_jsonl(raw_text: str) -> Dict[str, Any]:
                     existing.has_content = True
                     existing.content = incoming.content
                     existing.extensions_json = incoming.extensions_json
-                    existing.is_vectorized = False
-                    existing.index_status = "stale"  # 内容更新使旧向量失效，待 reader 侧重索引
                     session.add(existing)
                     updated_count += 1
                 else:
