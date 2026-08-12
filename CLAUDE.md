@@ -21,9 +21,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > **本分支独有内容**(即与 main 的预期差异面):`deploy.sh`(uv + PM2 + 宿主 Nginx
 > 裸机一键部署,替代 Docker 路径;兼容手装 nginx/nvm、自动补 include 与目录穿越权限)、
 > `ecosystem.config.js`、`config/production.example.ini` 的 `[server]`/`[nginx]` 节、
-> `[network] disable_tls_verify` 开关及 9 处 httpx `verify=settings.network.tls_verify`
+> `[network] disable_tls_verify` 开关及 7 处 httpx `verify=settings.network.tls_verify`
 > 接线(fetchers/base、legacy_backend、media_store、remote_sync、source_builder、
-> x_api、llm/client、vector_storage×2)、本须知块与 `.claude/settings.json` + hooks。
+> x_api、llm/client;原 vector_storage×2 已随 v3.31 RAG 退役清仓消亡)、
+> 本须知块与 `.claude/settings.json` + hooks。
 >
 > **merge main 冲突解决原则**:部署面文件(deploy.sh/ecosystem/ini 两节)以本分支为准;
 > `src/` 冲突以 main 的演进为准,但**必须保留 `verify=settings.network.tls_verify` 接线**
