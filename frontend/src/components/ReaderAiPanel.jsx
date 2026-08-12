@@ -7,7 +7,6 @@ import {
   Maximize2,
   Minimize2,
   SquarePen,
-  ExternalLink,
 } from 'lucide-react';
 import ReaderMarkdown from './ReaderMarkdown';
 import { askReaderAi, fetchAskProgress } from '../api';
@@ -57,10 +56,10 @@ const SUGGEST_POOL = {
 };
 
 const SUGGEST_VISIBLE = 3;
-// 轮换节奏(目检两轮定稿):间隔缩到 6s,但淡出/浮现本身放慢到 ~0.9s 缓速——
-// 换得勤、换的过程慢。淡出相须覆盖 850ms 过渡 + 逐行 120ms 错落延迟。
-const SUGGEST_ROTATE_MS = 6000;
-const SUGGEST_FADE_MS = 1150;
+// 轮换节奏(目检三轮定稿):间隔 4.5s、淡出/浮现拉长到 ~1.2s 且位移加大——
+// 换得更勤,而"换"本身是舒缓明显的慢动作。淡出相须覆盖 1200ms 过渡 + 逐行 120ms 错落。
+const SUGGEST_ROTATE_MS = 4500;
+const SUGGEST_FADE_MS = 1500;
 
 // 建议问题轮动(v3.32.1 目检返修):居中无框、引号包裹,整组「浮现-消失」两相轮换;
 // 悬停暂停(让用户来得及点),随机起点避免每次都同一批。
@@ -100,7 +99,7 @@ function SuggestRotator({ scope, onPick }) {
           key={text}
           type="button"
           className="reader-ai-suggest-btn"
-          style={{ transitionDelay: `${i * 120}ms`, animationDelay: `${i * 120}ms` }}
+          style={{ '--sg-delay': `${i * 120}ms`, animationDelay: `${i * 120}ms` }}
           onClick={() => onPick(text)}
         >
           {text}
@@ -213,21 +212,6 @@ function AnswerBlock({ turn, onOpenRef }) {
               <span className="reader-ai-ref-meta">
                 {[s.source_name, (s.publish_date || '').slice(5)].filter(Boolean).join(' · ')}
               </span>
-              {s.source_url ? (
-                <span
-                  className="reader-ai-ref-ext"
-                  title="打开原文"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    window.open(s.source_url, '_blank', 'noopener');
-                  }}
-                >
-                  <ExternalLink className="h-3 w-3" />
-                </span>
-              ) : (
-                // 无原文链接(如日报)也保留等宽占位,meta 列右缘才能对齐
-                <span className="reader-ai-ref-ext is-empty" aria-hidden="true" />
-              )}
             </button>
           ))}
         </div>

@@ -290,14 +290,20 @@ def test_admin_auth_session_lifecycle(monkeypatch, tmp_path):
         assert client.get("/api/auth/session").json()["authenticated"] is False
 
 
-def test_mcp_transport_does_not_require_admin_cookie():
-    with TestClient(__import__('api.app', fromlist=['app']).app) as client:
+def test_mcp_transport_does_not_require_admin_cookie(monkeypatch, tmp_path):
+    app_module = __import__('api.app', fromlist=['app'])
+    monkeypatch.setattr(app_module, "db_sink", DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'mcp_transport.db'}"))
+    with TestClient(app_module.app) as client:
         resp = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
         assert resp.status_code != 401
 
 
-def test_mcp_status_returns_correct_structure(monkeypatch):
+def test_mcp_status_returns_correct_structure(monkeypatch, tmp_path):
+    # ⚠️ 必须先替换 db_sink 再播种账户:此前三个测试漏了这一步,播种的
+    # 「删除重建 admin/user」直接砸在真实开发库上(密码/AI 开关/头像全被重置,
+    # 表现为「重启后 AI 已开启状态丢失」;2026-08-12 实录)。会话级兜底见 conftest.py。
     app_module = __import__('api.app', fromlist=['app'])
+    monkeypatch.setattr(app_module, "db_sink", DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'mcp_status.db'}"))
     set_test_auth_accounts(monkeypatch, app_module)
     with TestClient(app_module.app) as client:
         login_test_user(client)
@@ -314,10 +320,11 @@ def test_mcp_status_returns_correct_structure(monkeypatch):
                               "search_articles", "get_rag_context"}
 
 
-def test_daily_brief_skill_download_embeds_live_prompt(monkeypatch):
+def test_daily_brief_skill_download_embeds_live_prompt(monkeypatch, tmp_path):
     import io
     import zipfile
     app_module = __import__('api.app', fromlist=['app'])
+    monkeypatch.setattr(app_module, "db_sink", DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'mcp_skill.db'}"))
     set_test_auth_accounts(monkeypatch, app_module)
     with TestClient(app_module.app) as client:
         login_test_user(client)
@@ -330,8 +337,9 @@ def test_daily_brief_skill_download_embeds_live_prompt(monkeypatch):
         assert "{DAILY_BRIEF_STYLE_GUIDE}" not in skill_text
 
 
-def test_mcp_toggle_flips_state(monkeypatch):
+def test_mcp_toggle_flips_state(monkeypatch, tmp_path):
     app_module = __import__('api.app', fromlist=['app'])
+    monkeypatch.setattr(app_module, "db_sink", DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'mcp_toggle.db'}"))
     set_test_auth_accounts(monkeypatch, app_module)
     with TestClient(app_module.app) as client:
         login_test_user(client)

@@ -9067,10 +9067,12 @@ input[type="radio"] {
     right: 22px;
     bottom: 22px;
     z-index: 31;
-    width: 440px; /* v3.32 方案 A:380→440,回答去框化后正文行长需要余量 */
+    /* 标准态刻意收小(目检拍板):384×500——小视图的职责是「不遮文章」,
+       与阅读窗同屏共读;沉浸阅读回答交给放大态(560×满高)。 */
+    width: 384px;
     /* 标准态也给显式高度(v3.32.1):height 有具体值,放大/还原的 width/height
        过渡才真的动画得起来——auto↔固定值不可过渡,是此前尺寸切换生硬的根因 */
-    height: min(600px, calc(100% - 44px));
+    height: min(500px, calc(100% - 44px));
     max-width: calc(100% - 44px);
     max-height: calc(100% - 44px);
     display: flex;
@@ -9287,23 +9289,9 @@ input[type="radio"] {
     text-overflow: ellipsis;
   }
   .reader-ai-ref-row:hover .reader-ai-ref-title { color: var(--dorami-ink); }
+  /* 出处行不设外链小钮(目检拍板撤除):hover wash 已足够表达可点,悬浮图标的
+     等宽占位反而在右缘留白;整行点击=站内跳转,原文外链在打开的文章里本就有。 */
   .reader-ai-ref-meta { flex: none; font-size: 10.5px; color: var(--dorami-faint); }
-  .reader-ai-ref-ext {
-    flex: none;
-    width: 22px;
-    height: 22px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: var(--r-sm);
-    color: var(--dorami-faint);
-    opacity: 0;
-    transition: opacity var(--motion-fast) var(--motion-ease);
-  }
-  .reader-ai-ref-row:hover .reader-ai-ref-ext { opacity: 1; }
-  .reader-ai-ref-ext:hover { color: var(--dorami-accent); background: var(--dorami-well); }
-  /* 无原文链接的行保留等宽占位,meta 列右缘对齐(v3.32.1 目检返修) */
-  .reader-ai-ref-ext.is-empty { pointer-events: none; }
   /* 空态:星标点题 + 按范围的建议问题(点击填入输入框) */
   .reader-ai-empty {
     flex: 1;
@@ -9342,10 +9330,13 @@ input[type="radio"] {
     padding: 3px 11px;
     border-radius: var(--r-pill);
     color: var(--dorami-faint);
+    /* 逐行错落延迟(--sg-delay,JSX 行内注入)只挂轮动的 opacity/transform;
+       hover 的 color/background 必须零延迟——曾用行内 transitionDelay 一刀切,
+       第 2/3 行悬停要先等 120/240ms 才浮紫,体感卡顿。 */
     transition: color var(--motion-fast) var(--motion-ease),
                 background var(--motion-fast) var(--motion-ease),
-                opacity 850ms var(--motion-ease),
-                transform 850ms var(--motion-ease);
+                opacity 1200ms var(--motion-ease) var(--sg-delay, 0ms),
+                transform 1200ms var(--motion-ease) var(--sg-delay, 0ms);
   }
   .reader-ai-suggest-btn::before { content: '「'; }
   .reader-ai-suggest-btn::after { content: '」'; }
@@ -9355,15 +9346,15 @@ input[type="radio"] {
   }
   .reader-ai-suggest.is-leaving .reader-ai-suggest-btn {
     opacity: 0;
-    transform: translateY(3px);
+    transform: translateY(6px);
     pointer-events: none;
   }
   /* 换词后的新行以浮现相进场(key 变更即重挂载;delay 由 JSX 逐行递进)。
-     节奏(目检两轮定稿):轮换间隔 6s 不拖沓,淡出/浮现本身放到 ~0.9s 的缓速——
-     建议是氛围,不是通知;换得勤但换的过程要慢。 */
-  .reader-ai-suggest-btn { animation: reader-ai-suggest-in 900ms var(--motion-ease) both; }
+     节奏(目检三轮定稿):轮换间隔 4.5s,淡出/浮现各 ~1.2s 且位移 6px——
+     建议是氛围,不是通知;换得勤,但「换」本身是舒缓明显的慢动作。 */
+  .reader-ai-suggest-btn { animation: reader-ai-suggest-in 1300ms var(--motion-ease) both; }
   @keyframes reader-ai-suggest-in {
-    from { opacity: 0; transform: translateY(-3px); }
+    from { opacity: 0; transform: translateY(-6px); }
     to { opacity: 1; transform: translateY(0); }
   }
   /* 阶段化等待态(检索管线 plan→search→select→answer 轮询呈现;流式挂 backlog) */
