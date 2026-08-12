@@ -369,7 +369,7 @@ export default function App() {
   // 防止「登录预热」与「authenticated 副作用」并发重复拉取
   const runtimeLoadingRef = useRef(false);
 
-  const loadRuntimeAndFetchers = useCallback(async () => {
+  const loadRuntimeAndFetchers = useCallback(async (quiet = false) => {
     if (runtimeLoadingRef.current) return;
     runtimeLoadingRef.current = true;
     try {
@@ -385,13 +385,24 @@ export default function App() {
         setAvailableFetchers([]);
       }
     } catch (error) {
-      showToast(error.message || `网络连接异常，无法获取后端数据。`, 'error');
+      if (!quiet) showToast(error.message || `网络连接异常，无法获取后端数据。`, 'error');
     } finally {
       // 能力已就绪（成功或失败都放行渲染，失败时退回非乐观默认）
       runtimeLoadingRef.current = false;
       setRuntimeLoaded(true);
     }
   }, [showToast]);
+
+  // 失败自愈(v3.32):runtime 拉取失败时能力位以全 false 落地(FAB/管理页签随之消失),
+  // 而重拉闸门 runtimeLoaded 已置真、不会再试——dev 后端重启/热重载的窗口期一旦撞上,
+  // 就会卡死在「什么都没启用」的假象里,看起来像"配置丢了"(DB 其实原样)。
+  // 以 account_role 缺失为「从未成功载入」的哨兵,安静地每 3s 重拉直到成功。
+  useEffect(() => {
+    if (authState.status !== 'authenticated' || !runtimeLoaded) return undefined;
+    if (runtimeInfo.account_role) return undefined; // 已成功载入过,无需自愈
+    const timer = setInterval(() => { loadRuntimeAndFetchers(true); }, 3000);
+    return () => clearInterval(timer);
+  }, [authState.status, runtimeLoaded, runtimeInfo.account_role, loadRuntimeAndFetchers]);
 
   useEffect(() => {
     let mounted = true;

@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>问答面板重设计 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   阅读器 AI 问答面板重设计 · 静默仪器样页(v3.32 阅读面 AI 打磨波提案)
+   概念:「问问哆啦美」浮层的现代化重做 + 引用联动(行内引用 chip 可点跳
+   站内该篇 + 末尾集中出处列表)。两个形态方案供拍板:
+     画面① 方案 A —— 浮层原位升级(FAB→右下浮层的形态不动,重做内部)
+     画面② 方案 B —— 侧栏抽屉(与阅读窗并列,挤压式,全高)
+
+   设计决策(样页即论据):
+   ① **回答去框化**:读者问句保留右缘 wash 胶囊(现语法),哆啦美的回答
+      从「灰底描边小卡」改为**无框全宽正文块**——回答是内容,不是气泡;
+      身份用行首的星标 + 微标签表达,不靠卡框。正文排印 13.5px/1.7,
+      与阅读窗气质靠拢而非通用 markdown-body。
+   ② **行内引用 chip**:模型引用某篇资料的事实时输出 [n] 序号标记,前端
+      解析为上标小胶囊——可点,**站内跳转到该篇**(复用 v3.25 深链落地:
+      切作用域+选中一次完成,天然处理跨容器/未订阅源);悬停 title 出标题。
+      模型漏标/幻觉编号只降级不致命:漏标=少一个行内锚,越界=静默剥除。
+   ③ **末尾出处列表是保底,不靠 LLM 生成**:前端拿 sources 数组确定性
+      渲染(序号+标题+来源名+日期,整行可点站内跳转,悬停浮出原文外链钮)。
+      行内 chip 是「尽力而为」,集中列表是「保底必有」——可靠性的关键分层。
+      编号与行内 chip 同源同色(wash 底 accent 字)。
+   ④ **空态给建议问题**:首开时按当前范围给 2~3 条建议(基于本文:
+      「三句话总结这篇」…),点击即填入输入框。替代现在的空白。
+   ⑤ **阶段化等待态**:「正在思考…」拆为 规划检索→检索订阅→阅读 N 篇→
+      组织回答 的阶段行(检索管线阶段信息现成)——流式输出(SSE)本波
+      挂 backlog,以阶段感过渡。画面③可重播。
+   ⑥ **范围控件下拉换 seg**:composer 左下角 全站 .segmented-control
+      语法的两档胶囊(本文/我的订阅),未选中文章时「本文」置灰;
+      切范围=新对话的语义保留。scope=all / articles 本波仅后端能力,
+      前端不露出——seg 不加第三档。
+   ⑦ **头部克制点题**:星标 + 「问问哆啦美」衬线字头(品牌一点点,
+      工作区仍 quiet);新对话/放大/关闭 三个 28px 图标钮不变。
+      方案 B 抽屉无「放大」(本身全高)。
+
+   纪律:令牌与刻度 1:1 取自 frontend/src/index.css;实现时 .ask-* 类族
+   并回 .reader-ai-* 或整体换名;暗色走 [data-theme=dark] 变量翻转;
+   动效复用 --motion-* 且 prefers-reduced-motion 降级;引用 chip 是
+   button 语义(键盘可达),出处行是整行链接。
+   **本页可试**:行内 [n] chip 点击 → 对应出处行闪烁(示意站内跳转);
+   建议问题点击填入输入框;画面③「重播」看阶段等待态;右下月亮切亮暗。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --serif: "Songti SC", "Noto Serif SC", Georgia, serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --dorami-blue: #5b54e8; --dorami-blue-2: #7b6cf0;
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-card: rgba(255, 255, 255, 0.96); --dorami-wash: rgba(91, 84, 232, 0.08);
+  --dorami-well: #f1f5f9; --dorami-inset-input: inset 0 1px 3px rgba(11, 18, 32, 0.08);
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-strong: rgba(11, 18, 32, 0.15);
+  --dorami-border-soft: rgba(11, 18, 32, 0.06);
+  --dorami-card-bd: transparent; --dorami-edge: rgba(255, 255, 255, 0.62);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --sh-3: 0 4px 10px rgba(11, 18, 32, 0.08), 0 16px 36px rgba(11, 18, 32, 0.11);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-overlay: 16px; --r-pill: 9999px;
+  --state-ok: #059669;   --state-ok-bg: #ecfdf5;
+  --state-warn: #b45309; --state-warn-bg: #fffbeb;
+  --state-bad: #e11d48;  --state-bad-bg: #fff1f2;
+  --state-idle: #64748b; --state-idle-bg: #f1f5f9;
+  --motion-fast: 150ms; --motion-medium: 240ms; --motion-slow: 300ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --amber: #d97706;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-card: rgba(32, 37, 47, 0.96);
+  --dorami-wash: rgba(124, 112, 235, 0.13);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-strong: rgba(255, 255, 255, 0.16);
+  --dorami-border-soft: rgba(255, 255, 255, 0.07);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08); --dorami-edge: rgba(255, 255, 255, 0.05);
+  --state-ok: #34d399;   --state-ok-bg: #0f241b;
+  --state-warn: #fbbf24; --state-warn-bg: #281e10;
+  --state-bad: #fb7185;  --state-bad-bg: #2a151a;
+  --state-idle: #99a1ad; --state-idle-bg: #15181f;
+  --dorami-blue: #4d45b5; --dorami-blue-2: #5f57c8;
+  --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --sh-3: 0 4px 10px rgba(0, 0, 0, 0.5), 0 16px 36px rgba(0, 0, 0, 0.6);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --amber: #f59e0b;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink);
+  font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+[data-theme="dark"] body {
+  background:
+    radial-gradient(ellipse 70% 50% at 12% -8%, rgba(124, 112, 235, 0.10), transparent 58%),
+    linear-gradient(180deg, #11131a 0%, var(--dorami-canvas) 55%);
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+svg { display: block; }
+
+/* ── 导轨(语境示意) ── */
+.app-rail { position: fixed; inset-block: 0; left: 0; width: 78px; z-index: 45;
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 14px 0 16px;
+  background: var(--dorami-surface); border-right: 1px solid var(--dorami-card-bd); box-shadow: var(--sh-1); }
+.rail-brand { margin-bottom: 14px; width: 34px; height: 34px; border-radius: var(--r-control);
+  display: grid; place-items: center; background: var(--dorami-blue); color: #fff;
+  font-weight: 800; font-size: 15px; }
+.rail-nav-btn { width: 56px; padding: 8px 0 6px; border-radius: var(--r-control);
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  color: var(--dorami-muted); font-size: 10.5px; font-weight: 700; }
+.rail-nav-btn svg { width: 19px; height: 19px; }
+.rail-nav-on { color: var(--dorami-accent); background: var(--dorami-wash); }
+.rail-spacer { flex: 1; }
+.rail-tool { width: 34px; height: 34px; border-radius: var(--r-control);
+  display: grid; place-items: center; color: var(--dorami-muted); }
+.rail-tool:hover { background: var(--dorami-well); color: var(--dorami-ink); }
+.rail-tool svg { width: 17px; height: 17px; }
+
+/* ── 页骨架 ── */
+.page { margin-left: 78px; padding: 28px 34px 80px; max-width: 1180px; }
+.page-head { margin-bottom: 20px; }
+.page-title { font-size: 19px; font-weight: 800; letter-spacing: 0.01em; }
+.page-sub { margin-top: 4px; color: var(--dorami-muted); font-size: 12.5px; }
+.zone-head { display: flex; align-items: baseline; gap: 12px; margin: 30px 0 10px; }
+.zone-title { font-size: 14px; font-weight: 800; }
+.zone-hint { font-size: 12px; color: var(--dorami-faint); }
+.card { background: var(--dorami-card); border: 1px solid var(--dorami-card-bd);
+  border-radius: var(--r-overlay); box-shadow: var(--sh-2); overflow: hidden; }
+
+/* ── 舞台:简化的阅读器四带(语境) ── */
+.stage { position: relative; display: flex; height: 620px; }
+.st-srcbar { flex: none; width: 176px; background: var(--dorami-surface);
+  border-right: 1px solid var(--dorami-border-soft); padding: 14px 10px; overflow: hidden; }
+.srcbar-title { font-size: 11px; font-weight: 800; color: var(--dorami-faint);
+  letter-spacing: 0.08em; padding: 0 6px 10px; }
+.src-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border-radius: var(--r-control); color: var(--dorami-ink-2); font-size: 12.5px; font-weight: 600; }
+.src-row.is-active { background: var(--dorami-wash); color: var(--dorami-ink); }
+.src-logo { flex: none; width: 18px; height: 18px; border-radius: 5px; display: grid;
+  place-items: center; color: #fff; font-size: 10px; font-weight: 800; }
+.st-list { flex: none; width: 250px; background: var(--dorami-soft);
+  border-right: 1px solid var(--dorami-border-soft); padding: 12px; overflow: hidden; }
+.li-card { padding: 10px 10px 9px; border-radius: var(--r-card); margin-bottom: 6px; }
+.li-card.is-on { background: var(--dorami-surface); box-shadow: var(--sh-1); }
+.li-title { font-size: 12.5px; font-weight: 700; color: var(--dorami-ink); line-height: 1.45; }
+.li-meta { margin-top: 4px; font-size: 10.5px; color: var(--dorami-faint); }
+.st-pane { flex: 1; min-width: 0; background: var(--dorami-surface); padding: 34px 38px;
+  overflow: hidden; position: relative; }
+.pane-title { font-family: var(--serif); font-size: 21px; font-weight: 700;
+  line-height: 1.4; color: var(--dorami-ink); max-width: 640px; }
+.pane-meta { margin-top: 8px; font-size: 11.5px; color: var(--dorami-faint); }
+.pane-body { margin-top: 20px; max-width: 640px; color: var(--dorami-ink-2);
+  font-size: 14px; line-height: 1.85; }
+.pane-body p + p { margin-top: 12px; }
+
+/* ════════ 问答面板(新 .ask-* 类族;实现时并回 .reader-ai-*) ════════ */
+
+/* 方案 A:右下浮层(形态不动,重做内部)。示意宽 440(现 380→拍板可加宽一档) */
+.ask-panel { display: flex; flex-direction: column; background: var(--dorami-surface);
+  border: 1px solid var(--dorami-border); border-radius: var(--r-overlay);
+  box-shadow: var(--sh-3); overflow: hidden; }
+.ask-panel.as-float { position: absolute; right: 22px; bottom: 22px; z-index: 31;
+  width: 440px; height: calc(100% - 44px); max-width: calc(100% - 44px); }
+/* 方案 B:侧栏抽屉(全高,挤压阅读窗;无圆角右缘贴边) */
+.ask-panel.as-drawer { position: relative; flex: none; width: 396px; height: 100%;
+  border-radius: 0; border: none; border-left: 1px solid var(--dorami-border);
+  box-shadow: none; }
+
+.ask-head { flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 12px 11px 15px; border-bottom: 1px solid var(--dorami-border-soft); }
+.ask-title { display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--serif); font-size: 14px; font-weight: 700; color: var(--dorami-ink); }
+.ask-title svg { width: 15px; height: 15px; color: var(--amber); }
+.ask-head-actions { display: inline-flex; align-items: center; gap: 2px; }
+.ask-head-btn { display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: var(--r-control); color: var(--dorami-muted);
+  transition: color var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease); }
+.ask-head-btn:hover { color: var(--dorami-ink); background: var(--dorami-well); }
+.ask-head-btn svg { width: 15px; height: 15px; }
+
+.ask-thread { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 16px 8px;
+  display: flex; flex-direction: column; gap: 18px; }
+
+/* 读者问句:右缘 wash 胶囊(现语法保留) */
+.ask-turn { display: flex; flex-direction: column; gap: 10px; }
+.ask-q { align-self: flex-end; max-width: 86%; padding: 8px 12px;
+  border-radius: var(--r-card); border-bottom-right-radius: var(--r-sm);
+  background: var(--dorami-wash); color: var(--dorami-accent-ink);
+  font-size: 13px; font-weight: 600; line-height: 1.5; }
+
+/* 决策①:回答去框化——无底无边全宽,身份行 + 正文 */
+.ask-a { align-self: stretch; }
+.ask-a-id { display: inline-flex; align-items: center; gap: 5px; margin-bottom: 6px;
+  font-size: 11px; font-weight: 800; letter-spacing: 0.04em; color: var(--dorami-faint); }
+.ask-a-id svg { width: 12px; height: 12px; color: var(--amber); }
+.ask-a-body { font-size: 13.5px; line-height: 1.7; color: var(--dorami-ink-2); }
+.ask-a-body p + p { margin-top: 8px; }
+.ask-a-body strong { color: var(--dorami-ink); }
+.ask-a-body ul { margin: 6px 0 6px 18px; }
+.ask-a-body li + li { margin-top: 4px; }
+
+/* 决策②:行内引用 chip(button 语义,可点跳站内该篇) */
+.ask-cite { display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 15px; padding: 0 4.5px; margin: 0 1px;
+  vertical-align: 2px; border-radius: var(--r-pill);
+  background: var(--dorami-wash); color: var(--dorami-accent-ink);
+  font-size: 10px; font-weight: 800; line-height: 1; cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+.ask-cite:hover { background: var(--dorami-accent); color: #fff; }
+
+/* 决策③:末尾集中出处列表(前端据 sources 确定性渲染,保底必有) */
+.ask-refs { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--dorami-border); }
+.ask-refs-label { font-size: 10.5px; font-weight: 800; letter-spacing: 0.08em;
+  color: var(--dorami-faint); margin-bottom: 6px; }
+.ask-ref-row { display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 5px 7px; margin: 0 -7px; width: calc(100% + 14px);
+  border-radius: var(--r-control); text-align: left; cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease); }
+.ask-ref-row:hover { background: var(--dorami-wash); }
+.ask-ref-num { flex: none; min-width: 16px; height: 15px; padding: 0 4.5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--r-pill); background: var(--dorami-wash);
+  color: var(--dorami-accent-ink); font-size: 10px; font-weight: 800; }
+.ask-ref-title { flex: 1; min-width: 0; font-size: 12px; font-weight: 600;
+  color: var(--dorami-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ask-ref-row:hover .ask-ref-title { color: var(--dorami-ink); }
+.ask-ref-meta { flex: none; font-size: 10.5px; color: var(--dorami-faint); }
+.ask-ref-ext { flex: none; width: 22px; height: 22px; display: inline-flex; align-items: center;
+  justify-content: center; border-radius: var(--r-sm); color: var(--dorami-faint);
+  opacity: 0; transition: opacity var(--motion-fast) var(--motion-ease); }
+.ask-ref-row:hover .ask-ref-ext { opacity: 1; }
+.ask-ref-ext:hover { color: var(--dorami-accent); background: var(--dorami-well); }
+.ask-ref-ext svg { width: 12px; height: 12px; }
+/* 点行内 chip → 对应出处行闪烁(样页示意「站内跳转」;真实现为深链落地) */
+.ask-ref-row.is-flash { animation: ask-ref-flash 1.1s var(--motion-ease); }
+@keyframes ask-ref-flash {
+  0%, 55% { background: var(--dorami-wash); box-shadow: inset 0 0 0 1px var(--dorami-accent); }
+  100% { background: transparent; box-shadow: none; }
+}
+
+/* 决策④:空态建议问题 */
+.ask-empty { flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 6px; padding: 24px 18px; text-align: center; }
+.ask-empty svg { width: 22px; height: 22px; color: var(--amber); margin-bottom: 2px; }
+.ask-empty-title { font-family: var(--serif); font-size: 14.5px; font-weight: 700; color: var(--dorami-ink); }
+.ask-empty-sub { font-size: 12px; color: var(--dorami-faint); margin-bottom: 10px; }
+.ask-suggest { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 300px; }
+.ask-suggest-btn { padding: 8px 12px; border-radius: var(--r-card);
+  border: 1px solid var(--dorami-border); background: var(--dorami-soft);
+  font-size: 12.5px; font-weight: 600; color: var(--dorami-ink-2); text-align: left;
+  transition: border-color var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease); }
+.ask-suggest-btn:hover { border-color: var(--dorami-accent); background: var(--dorami-wash);
+  color: var(--dorami-accent-ink); }
+
+/* 决策⑤:阶段化等待态 */
+.ask-wait { display: flex; flex-direction: column; gap: 7px; }
+.ask-wait-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px;
+  color: var(--dorami-muted); }
+.ask-wait-row.is-done { color: var(--dorami-faint); }
+.ask-wait-row.is-done .ask-wait-dot { background: var(--state-ok); animation: none; }
+.ask-wait-dot { flex: none; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--dorami-accent); animation: ask-pulse 1s ease-in-out infinite; }
+@keyframes ask-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.ask-wait-row.is-todo { color: var(--dorami-faint); opacity: 0.5; }
+.ask-wait-row.is-todo .ask-wait-dot { background: var(--dorami-faint); animation: none; opacity: 0.4; }
+
+/* 决策⑥:composer——textarea + 底部工具条(scope seg 左 / 发送右) */
+.ask-composer { flex: none; margin: 8px 14px 14px; border: 1px solid var(--dorami-border);
+  border-radius: var(--r-card); background: var(--dorami-surface); font-size: 13px;
+  transition: border-color var(--motion-fast) var(--motion-ease); }
+.ask-composer:focus-within { border-color: var(--dorami-accent); }
+.ask-input { display: block; width: 100%; resize: none; border: none; background: transparent;
+  padding: 10px 12px 2px; font: inherit; line-height: 1.5; color: var(--dorami-ink-2); }
+.ask-input:focus { outline: none; }
+.ask-input::placeholder { color: var(--dorami-faint); }
+.ask-toolbar { display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 6px 8px 8px 10px; }
+.ask-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-pill);
+  background: var(--dorami-well); }
+.ask-seg-btn { padding: 4px 11px; border-radius: var(--r-pill); font-size: 11.5px;
+  font-weight: 700; color: var(--dorami-muted);
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+.ask-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+.ask-seg-btn.is-disabled { color: var(--dorami-faint); opacity: 0.5; cursor: not-allowed; }
+.ask-send { flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: var(--r-pill); background: var(--dorami-accent);
+  color: #fff; transition: background var(--motion-fast) var(--motion-ease); }
+.ask-send:hover { background: var(--dorami-accent-ink); }
+.ask-send svg { width: 14px; height: 14px; }
+
+/* ── 画面③ 特写排布 ── */
+.closeup-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.closeup { padding: 18px; }
+.closeup-title { font-size: 12.5px; font-weight: 800; margin-bottom: 4px; }
+.closeup-note { font-size: 11.5px; color: var(--dorami-faint); line-height: 1.6; margin-bottom: 14px; }
+.spec-row { display: flex; align-items: center; gap: 10px; margin-top: 10px;
+  font-size: 11.5px; color: var(--dorami-muted); }
+.spec-k { font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); }
+.replay-btn { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px;
+  padding: 5px 12px; border-radius: var(--r-pill); border: 1px solid var(--dorami-border);
+  font-size: 11.5px; font-weight: 700; color: var(--dorami-muted); }
+.replay-btn:hover { color: var(--dorami-accent); border-color: var(--dorami-accent); }
+
+/* ── 拍板清单 ── */
+.verdict { padding: 18px 20px; }
+.verdict-title { font-size: 13px; font-weight: 800; margin-bottom: 10px; }
+.verdict ol { margin-left: 18px; font-size: 12.5px; line-height: 1.7; color: var(--dorami-ink-2); }
+.verdict li + li { margin-top: 8px; }
+.verdict b { color: var(--dorami-ink); }
+.verdict .muted { color: var(--dorami-faint); }
+</style>
+</head>
+<body>
+
+<aside class="app-rail">
+  <div class="rail-brand">哆</div>
+  <button class="rail-nav-btn rail-nav-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg><span>阅读</span></button>
+  <div class="rail-spacer"></div>
+  <button class="rail-tool" id="theme-toggle" title="切换亮暗">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>
+  </button>
+</aside>
+
+<main class="page">
+  <div class="page-head">
+    <h1 class="page-title">问答面板重设计 · 引用联动</h1>
+    <div class="page-sub">v3.32 阅读面 AI 打磨波 · 方案 A 浮层原位升级 / 方案 B 侧栏抽屉 · 行内 [n] chip 可点试</div>
+  </div>
+
+  <!-- ═══ 画面①:方案 A 浮层原位升级 ═══ -->
+  <div class="zone-head">
+    <span class="zone-title">① 方案 A · 浮层原位升级(推荐)</span>
+    <span class="zone-hint">FAB→右下浮层形态不动,宽 380→440;回答去框化 + 行内引用 chip + 末尾出处列表——点 [n] 试跳转示意</span>
+  </div>
+  <section class="card stage">
+    <div class="st-srcbar">
+      <div class="srcbar-title">我的订阅</div>
+      <div class="src-row"><span class="src-logo" style="background:#0b1220">O</span>OpenAI News</div>
+      <div class="src-row is-active"><span class="src-logo" style="background:#c96f4a">A</span>Anthropic 新闻</div>
+      <div class="src-row"><span class="src-logo" style="background:#5b54e8">量</span>量子位</div>
+      <div class="src-row"><span class="src-logo" style="background:#d3403c">IT</span>IT之家 AI</div>
+      <div class="src-row"><span class="src-logo" style="background:#7c3aed">报</span>哆啦美日报</div>
+    </div>
+    <div class="st-list">
+      <div class="li-card is-on">
+        <div class="li-title">Anthropic 发布 Claude 5 家族与新一档 Mythos 模型层</div>
+        <div class="li-meta">Anthropic 新闻 · 今天 09:12</div>
+      </div>
+      <div class="li-card">
+        <div class="li-title">Claude Code 新增多智能体工作流编排能力</div>
+        <div class="li-meta">Anthropic 新闻 · 昨天 22:40</div>
+      </div>
+      <div class="li-card">
+        <div class="li-title">实测:新一代编码模型在真实仓库上的修复率对比</div>
+        <div class="li-meta">量子位 · 昨天 18:03</div>
+      </div>
+    </div>
+    <div class="st-pane">
+      <div class="pane-title">Anthropic 发布 Claude 5 家族与新一档 Mythos 模型层</div>
+      <div class="pane-meta">Anthropic 新闻 · 2026-08-11 · 阅读量 47</div>
+      <div class="pane-body">
+        <p>Anthropic 今日宣布推出 Claude 5 模型家族,并引入位于 Opus 之上的全新 Mythos 模型层。官方博客称,新家族在长程编码任务与多智能体协作场景中的表现较上一代有显著提升……</p>
+        <p>与以往不同的是,本次发布同步开放了面向企业的定制化对齐档位,允许在受控环境中……</p>
+      </div>
+
+      <!-- 方案 A 面板(浮层,打开态) -->
+      <aside class="ask-panel as-float" aria-label="问问哆啦美">
+        <header class="ask-head">
+          <span class="ask-title">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.1 6.2L20 10l-5.9 1.8L12 18l-2.1-6.2L4 10l5.9-1.8z"/></svg>
+            问问哆啦美
+          </span>
+          <div class="ask-head-actions">
+            <button class="ask-head-btn" title="新对话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L13 14l-4 1 1-4z"/></svg></button>
+            <button class="ask-head-btn" title="放大"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button>
+            <button class="ask-head-btn" title="收起"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+          </div>
+        </header>
+        <div class="ask-thread" id="thread-a"></div>
+        <div class="ask-composer">
+          <textarea class="ask-input" rows="2" placeholder="继续追问,或换个问题…"></textarea>
+          <div class="ask-toolbar">
+            <div class="ask-seg" role="tablist">
+              <button class="ask-seg-btn" data-seg>本文</button>
+              <button class="ask-seg-btn is-on" data-seg>我的订阅</button>
+            </div>
+            <button class="ask-send" title="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg></button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ═══ 画面②:方案 B 侧栏抽屉 ═══ -->
+  <div class="zone-head">
+    <span class="zone-title">② 方案 B · 侧栏抽屉</span>
+    <span class="zone-hint">全高与阅读窗并列(挤压式),正文与对话同屏共读;无「放大」钮;代价:窄屏下阅读窗被压、条目列或需自动收窄</span>
+  </div>
+  <section class="card stage">
+    <div class="st-list" style="width: 220px">
+      <div class="li-card is-on">
+        <div class="li-title">Anthropic 发布 Claude 5 家族与新一档 Mythos 模型层</div>
+        <div class="li-meta">Anthropic 新闻 · 今天 09:12</div>
+      </div>
+      <div class="li-card">
+        <div class="li-title">Claude Code 新增多智能体工作流编排能力</div>
+        <div class="li-meta">Anthropic 新闻 · 昨天 22:40</div>
+      </div>
+    </div>
+    <div class="st-pane">
+      <div class="pane-title">Anthropic 发布 Claude 5 家族与新一档 Mythos 模型层</div>
+      <div class="pane-meta">Anthropic 新闻 · 2026-08-11 · 阅读量 47</div>
+      <div class="pane-body">
+        <p>Anthropic 今日宣布推出 Claude 5 模型家族,并引入位于 Opus 之上的全新 Mythos 模型层……</p>
+      </div>
+    </div>
+    <aside class="ask-panel as-drawer" aria-label="问问哆啦美">
+      <header class="ask-head">
+        <span class="ask-title">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.1 6.2L20 10l-5.9 1.8L12 18l-2.1-6.2L4 10l5.9-1.8z"/></svg>
+          问问哆啦美
+        </span>
+        <div class="ask-head-actions">
+          <button class="ask-head-btn" title="新对话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L13 14l-4 1 1-4z"/></svg></button>
+          <button class="ask-head-btn" title="收起"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+      </header>
+      <div class="ask-thread" id="thread-b"></div>
+      <div class="ask-composer">
+        <textarea class="ask-input" rows="2" placeholder="继续追问,或换个问题…"></textarea>
+        <div class="ask-toolbar">
+          <div class="ask-seg">
+            <button class="ask-seg-btn" data-seg>本文</button>
+            <button class="ask-seg-btn is-on" data-seg>我的订阅</button>
+          </div>
+          <button class="ask-send" title="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg></button>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <!-- 对话内容模板(两方案共用,JS 注入) -->
+  <template id="tpl-thread">
+    <div class="ask-turn">
+      <div class="ask-q">Claude 最近有什么大动作?对写代码有什么影响?</div>
+      <div class="ask-a">
+        <div class="ask-a-id">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.1 6.2L20 10l-5.9 1.8L12 18l-2.1-6.2L4 10l5.9-1.8z"/></svg>
+          哆啦美
+        </div>
+        <div class="ask-a-body">
+          <p>最主要的动作是 <strong>Claude 5 家族发布</strong>,并首次引入了位于 Opus 之上的 Mythos 模型层<button class="ask-cite" data-ref="1" title="Anthropic 发布 Claude 5 家族与新一档 Mythos 模型层">1</button>。官方口径里,这一代在长程编码任务上的提升最为显著。</p>
+          <p>对写代码的直接影响有两点:</p>
+          <ul>
+            <li><strong>多智能体编排进入工作流</strong>:Claude Code 新增了原生的多智能体编排能力,复杂改动可以拆给并行子智能体完成<button class="ask-cite" data-ref="2" title="Claude Code 新增多智能体工作流编排能力">2</button>;</li>
+            <li><strong>真实仓库修复率提升</strong>:第三方在真实仓库上的实测显示,新一代模型的缺陷修复率相比上代提高了约三成<button class="ask-cite" data-ref="3" title="实测:新一代编码模型在真实仓库上的修复率对比">3</button>。</li>
+          </ul>
+          <p>如果你关心的是日常提效,当天日报把这波发布与同期竞品动态放在一起做了盘点,可以对照着看<button class="ask-cite" data-ref="4" title="哆啦美 AI 资讯日报 · 2026-08-11">4</button>。</p>
+          <div class="ask-refs">
+            <div class="ask-refs-label">本次回答参考</div>
+            <button class="ask-ref-row" data-ref-row="1" title="在阅读器中打开">
+              <span class="ask-ref-num">1</span>
+              <span class="ask-ref-title">Anthropic 发布 Claude 5 家族与新一档 Mythos 模型层</span>
+              <span class="ask-ref-meta">Anthropic 新闻 · 08-11</span>
+              <span class="ask-ref-ext" title="打开原文"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>
+            </button>
+            <button class="ask-ref-row" data-ref-row="2" title="在阅读器中打开">
+              <span class="ask-ref-num">2</span>
+              <span class="ask-ref-title">Claude Code 新增多智能体工作流编排能力</span>
+              <span class="ask-ref-meta">Anthropic 新闻 · 08-10</span>
+              <span class="ask-ref-ext" title="打开原文"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>
+            </button>
+            <button class="ask-ref-row" data-ref-row="3" title="在阅读器中打开">
+              <span class="ask-ref-num">3</span>
+              <span class="ask-ref-title">实测:新一代编码模型在真实仓库上的修复率对比</span>
+              <span class="ask-ref-meta">量子位 · 08-10</span>
+              <span class="ask-ref-ext" title="打开原文"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>
+            </button>
+            <button class="ask-ref-row" data-ref-row="4" title="在阅读器中打开">
+              <span class="ask-ref-num">4</span>
+              <span class="ask-ref-title">哆啦美 AI 资讯日报 · 2026-08-11</span>
+              <span class="ask-ref-meta">哆啦美日报 · 08-11</span>
+              <span class="ask-ref-ext" title="打开原文"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ═══ 画面③:状态特写 ═══ -->
+  <div class="zone-head">
+    <span class="zone-title">③ 特写 · 空态 / 等待态 / 引用规格</span>
+    <span class="zone-hint">空态按范围给建议问题(点击即填入);等待态阶段化(可重播);引用 chip 与出处行编号同源同色</span>
+  </div>
+  <div class="closeup-grid">
+    <section class="card closeup">
+      <div class="closeup-title">空态 · 建议问题</div>
+      <div class="closeup-note">首开无对话时,按当前范围给 2~3 条建议;点击填入输入框(本页试:填到方案 A 输入框)。</div>
+      <div class="ask-empty">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.1 6.2L20 10l-5.9 1.8L12 18l-2.1-6.2L4 10l5.9-1.8z"/></svg>
+        <div class="ask-empty-title">问问哆啦美</div>
+        <div class="ask-empty-sub">基于当前文章,或在你的订阅里检索后作答</div>
+        <div class="ask-suggest">
+          <button class="ask-suggest-btn" data-suggest>三句话总结这篇文章</button>
+          <button class="ask-suggest-btn" data-suggest>这波发布和上一代比,关键差异是什么?</button>
+          <button class="ask-suggest-btn" data-suggest>我订阅里最近还有哪些相关动态?</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card closeup">
+      <div class="closeup-title">等待态 · 阶段化</div>
+      <div class="closeup-note">替代单一「正在思考…」:检索管线的阶段信息现成(规划→召回→选篇→作答)。流式输出挂 backlog,本波以阶段感过渡。</div>
+      <div class="ask-wait" id="wait-demo">
+        <div class="ask-wait-row is-done"><span class="ask-wait-dot"></span>已规划检索(4 组关键词)</div>
+        <div class="ask-wait-row"><span class="ask-wait-dot"></span>正在检索你的订阅…</div>
+        <div class="ask-wait-row is-todo"><span class="ask-wait-dot"></span>阅读筛出的文章</div>
+        <div class="ask-wait-row is-todo"><span class="ask-wait-dot"></span>组织回答</div>
+      </div>
+      <button class="replay-btn" id="replay-wait">↺ 重播</button>
+    </section>
+
+    <section class="card closeup">
+      <div class="closeup-title">引用规格</div>
+      <div class="closeup-note">行内 chip 是 button 语义(键盘可达),悬停实心 accent;出处行整行可点站内跳转,悬停浮出「打开原文」外链小钮。模型漏标只是少行内锚——集中列表由前端据 sources 确定性渲染,保底必有。</div>
+      <div class="spec-row"><span class="spec-k">.ask-cite</span> 高 15 / 字 10 / 800 / wash 底 accent-ink 字 / 抬升 2px</div>
+      <div class="spec-row"><span class="spec-k">.ask-ref-num</span> 与行内 chip 同规格同色(编号同源)</div>
+      <div class="spec-row"><span class="spec-k">.ask-ref-row</span> 悬停 wash / 标题 12px 600 截断 / meta 10.5px</div>
+      <div class="spec-row"><span class="spec-k">跳转</span> 复用 v3.25 深链落地(切作用域+选中一次完成)</div>
+      <div class="spec-row"><span class="spec-k">降级</span> 无效编号剥除;文章已删→Toast「原文已不在库中」</div>
+    </section>
+  </div>
+
+  <!-- ═══ 画面④:拍板清单 ═══ -->
+  <div class="zone-head">
+    <span class="zone-title">④ 待拍板</span>
+  </div>
+  <section class="card verdict">
+    <div class="verdict-title">本波拍板清单</div>
+    <ol>
+      <li><b>形态:方案 A(浮层原位升级,推荐)vs 方案 B(侧栏抽屉)。</b>A 不动布局、移动壳可平移成 bottom-sheet;B 正文与对话同屏共读但挤压阅读窗,且与「放大」档位职责重叠。</li>
+      <li><b>移动壳是否本波下放问答</b>(bottom-sheet 形态,数据层现成)——还是留下一波。</li>
+      <li><b>流式输出</b>:挂 backlog(推荐,以阶段化等待态过渡)vs 本波做(需 SSE 通道改造)。</li>
+      <li><span class="muted">已按前述方案默认:scope=all / articles 仅后端能力,前端 seg 不加第三档;行内引用格式取 [n] 数字序号;末尾出处列表恒由前端渲染。</span></li>
+    </ol>
+  </section>
+</main>
+
+<script>
+  /* 亮暗切换 */
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    const root = document.documentElement;
+    root.dataset.theme = root.dataset.theme === 'dark' ? '' : 'dark';
+  });
+
+  /* 对话内容注入两方案(同一模板,拍板只看容器形态差异) */
+  const tpl = document.getElementById('tpl-thread');
+  for (const id of ['thread-a', 'thread-b']) {
+    document.getElementById(id).appendChild(tpl.content.cloneNode(true));
+  }
+
+  /* 行内 [n] chip / 出处行 点击 → 对应出处行闪烁(示意站内跳转) */
+  document.addEventListener('click', (e) => {
+    const cite = e.target.closest('.ask-cite');
+    const row = e.target.closest('.ask-ref-row');
+    const scope = e.target.closest('.ask-thread');
+    if (cite && scope) {
+      const target = scope.querySelector(`[data-ref-row="${cite.dataset.ref}"]`);
+      if (target) {
+        target.classList.remove('is-flash');
+        void target.offsetWidth;
+        target.classList.add('is-flash');
+        target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    } else if (row && !e.target.closest('.ask-ref-ext')) {
+      row.classList.remove('is-flash');
+      void row.offsetWidth;
+      row.classList.add('is-flash');
+    }
+    /* 建议问题 → 填入方案 A 输入框 */
+    const sug = e.target.closest('[data-suggest]');
+    if (sug) {
+      const input = document.querySelector('.as-float .ask-input');
+      input.value = sug.textContent;
+      input.focus();
+    }
+    /* scope seg 示意切换(禁用项除外) */
+    const seg = e.target.closest('[data-seg]');
+    if (seg && !seg.classList.contains('is-disabled')) {
+      seg.parentElement.querySelectorAll('[data-seg]').forEach((b) => b.classList.toggle('is-on', b === seg));
+    }
+  });
+
+  /* 等待态重播 */
+  const waitRows = () => [...document.querySelectorAll('#wait-demo .ask-wait-row')];
+  let waitTimer = null;
+  document.getElementById('replay-wait').addEventListener('click', () => {
+    if (waitTimer) { clearInterval(waitTimer); waitTimer = null; }
+    const rows = waitRows();
+    rows.forEach((r, i) => { r.className = 'ask-wait-row' + (i === 0 ? '' : ' is-todo'); });
+    let active = 0;
+    waitTimer = setInterval(() => {
+      rows[active].className = 'ask-wait-row is-done';
+      active += 1;
+      if (active >= rows.length) { clearInterval(waitTimer); waitTimer = null; return; }
+      rows[active].className = 'ask-wait-row';
+    }, 900);
+  });
+</script>
+</body>
+</html>

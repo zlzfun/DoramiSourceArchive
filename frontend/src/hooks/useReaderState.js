@@ -838,23 +838,34 @@ export function useReaderState({
   useEffect(() => {   // 每轮渲染后同步最新回调(声明在深链 effect 之前,同轮先执行)
     deepLinkCtxRef.current = { shapeOfSource, selectArticle, onDeepLinkConsumed };
   });
+  // 「按 id 打开一篇」的可复用落地(深链初始播种与 AI 问答引用跳转共用同一路):
+  // 切作用域+选中该篇一次完成,deepLinkKeepRef 通知清场 effect 保留右栏。
+  // silent=true(深链)取不到时静默——收到链接的人对失效无能为力,报错只是噪声;
+  // 默认(引用跳转)取不到时 Toast 说明,因为点击者正在等待跳转发生。
+  const openArticleById = useCallback(async (articleId, { silent = false } = {}) => {
+    if (!articleId) return false;
+    try {
+      const article = await fetchArticle(articleId);
+      if (!article?.id) throw new Error('empty');
+      const ctx = deepLinkCtxRef.current;
+      deepLinkKeepRef.current = true; // 通知作用域清场 effect:这次切换保留右栏(见 useLayoutEffect)
+      setDiscover(false);
+      setFavOnly(false);
+      setActiveSourceId(article.source_id || null);
+      setMode(ctx.shapeOfSource(article.source_id));
+      ctx.selectArticle(article);
+      return true;
+    } catch {
+      if (!silent) showToast('这篇文章已不在库中', 'error');
+      return false;
+    }
+  }, [showToast]);
   useEffect(() => {
     if (!initialArticleId || deepLinkDoneRef.current || sourcesLoading) return;
     deepLinkDoneRef.current = true;
-    fetchArticle(initialArticleId)
-      .then((article) => {
-        if (!article?.id) return;
-        const ctx = deepLinkCtxRef.current;
-        deepLinkKeepRef.current = true; // 通知作用域清场 effect:这次切换保留右栏(见 useLayoutEffect)
-        setDiscover(false);
-        setFavOnly(false);
-        setActiveSourceId(article.source_id || null);
-        setMode(ctx.shapeOfSource(article.source_id));
-        ctx.selectArticle(article);
-      })
-      .catch(() => {})
+    openArticleById(initialArticleId, { silent: true })
       .finally(() => { deepLinkCtxRef.current?.onDeepLinkConsumed?.(); });
-  }, [initialArticleId, sourcesLoading]);
+  }, [initialArticleId, sourcesLoading, openArticleById]);
 
   // 收藏入口(源栏,与「全部XX」并列):看本容器全部收藏(容器级、不逐源)。
   // Folo 语义——收藏是与「全部」并列的一级过滤,不再挂在列头逐源。
@@ -941,7 +952,7 @@ export function useReaderState({
     articles, articlesTotal, articlesLoading, loadingMore, hasMore, handleLoadMore,
     listRef, sentinelRef,
     // 选中文章 / 正文
-    activeArticle, activeBody, activeBodyLoading, selectArticle,
+    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById,
     schedulePrefetch, cancelPrefetch,
     activeIndex, prevArticle, nextArticle,
     crumbSource, crumbHost, crumbName, displayBody, displayTranslatedBody, bodyStats,

@@ -717,9 +717,47 @@ class ReaderChatTurn(BaseModel):
 
 class ReaderAskParams(BaseModel):
     question: str
-    scope: str = "article"  # article | subscription
+    scope: str = "article"  # article | articles | subscription | all（后两档 v3.32；前端当前只露 article/subscription）
     article_id: Optional[str] = None
+    article_ids: Optional[List[str]] = None  # scope=articles 的显式名单（≤ EXPLICIT_ARTICLES_MAX）
     history: Optional[List[ReaderChatTurn]] = None  # 多轮对话历史（纯文本问答，不含参考资料）
+    ask_id: Optional[str] = None  # 可选：客户端生成的进度标识（阶段化等待态轮询用）
+
+
+# ── ask 阶段进度（v3.32 阶段化等待态）──
+# 进程内存字典：ask_id → {stage, detail, ts}。ask_id 由客户端生成（UUID 级随机），
+# 内容只有阶段名与计数（低敏），完成即清；TTL 清扫防（客户端崩溃等）残留泄漏。
+# 刻意不落库：这是单次请求内的瞬时观测面，与 daily_brief 的内存 progress 同范式。
+_ASK_PROGRESS: Dict[str, Dict[str, Any]] = {}
+_ASK_PROGRESS_TTL_SECONDS = 300
+_ASK_PROGRESS_MAX_ENTRIES = 500
+
+
+def _valid_ask_id(ask_id: Optional[str]) -> Optional[str]:
+    """清洗客户端进度标识：非空、≤64、URL 安全字符集；不合法一律当没有。"""
+    value = (ask_id or "").strip()
+    if not value or len(value) > 64:
+        return None
+    if not all(c.isalnum() or c in "-_" for c in value):
+        return None
+    return value
+
+
+def _ask_progress_update(ask_id: Optional[str], stage: str, detail: Optional[Dict[str, Any]] = None) -> None:
+    """登记一个阶段。条目内**累积全量阶段历史**(stages 列表)——瞬时阶段(如 FTS
+    召回前后的 search)存活可能只有几毫秒,轮询采样必然漏拍;历史由服务端权威
+    累积、GET 全量返回,前端才不会把「没轮询到」误判成「没发生」。"""
+    if not ask_id:
+        return
+    now = datetime.datetime.now().timestamp()
+    if len(_ASK_PROGRESS) >= _ASK_PROGRESS_MAX_ENTRIES:
+        cutoff = now - _ASK_PROGRESS_TTL_SECONDS
+        for stale in [k for k, v in _ASK_PROGRESS.items() if v.get("ts", 0) < cutoff]:
+            _ASK_PROGRESS.pop(stale, None)
+    entry = _ASK_PROGRESS.get(ask_id) or {"stages": []}
+    stages = [s for s in entry["stages"] if s.get("stage") != stage]
+    stages.append({"stage": stage, "detail": detail or {}})
+    _ASK_PROGRESS[ask_id] = {"stage": stage, "detail": detail or {}, "stages": stages, "ts": now}
 
 
 def _require_reader_ai(request: Request):
@@ -807,58 +845,83 @@ async def reader_ai_summarize(params: ReaderTranslateParams, request: Request):
     return {"status": "success", **result}
 
 
+@router.get("/ai/ask/progress")
+async def reader_ai_ask_progress(request: Request, ask_id: str = ""):
+    """ask 请求的阶段进度（阶段化等待态轮询）。未知/已完成的 ask_id 返回 stage=None。"""
+    app = _app()
+    if not app.current_username(request):
+        raise HTTPException(status_code=401, detail="需要登录")
+    entry = _ASK_PROGRESS.get(_valid_ask_id(ask_id) or "")
+    if not entry:
+        return {"stage": None, "detail": {}, "stages": []}
+    return {"stage": entry["stage"], "detail": entry["detail"], "stages": entry.get("stages", [])}
+
+
 @router.post("/ai/ask")
 async def reader_ai_ask(params: ReaderAskParams, request: Request):
-    """基于当前文章或用户订阅文章回答提问。
+    """基于指定文章名单或检索圈定的文章回答提问（v3.32 四档 scope）。
 
     上下文组装（graceful degrade）：
-      - scope=article：直接用该文正文（零检索依赖）；
-      - scope=subscription：「LLM 计划检索 + FTS5」两段式（services/reader_search，
+      - scope=article / articles：显式名单直取正文（零检索依赖，article 是 n=1 特例）；
+      - scope=subscription / all：「LLM 计划检索 + FTS5」两段式（services/reader_search，
         v3.30 检索扶正波）——规划→FTS 召回→选篇→全文注入，降级链在管线内部自持
-        （规划失败→原词检索→零命中→订阅域时序窗口）。
+        （规划失败→原词检索→零命中→时序窗口）；两档只差检索域（订阅并集 vs 全库
+        可见源，后者与发现页预览同口径，隐藏源照旧排除）。
+    响应 sources 与上下文编号 [n] 同源同序（行内引用锚，见 reader_ai 核心层）。
     """
     app = _app()
     username, llm_config = _require_reader_ai(request)
     _enforce_ai_daily_quota(username, "ask")
     db_sink = deps.get_db_sink()
-    scope = params.scope if params.scope in ("article", "subscription") else "article"
+    scope = params.scope if params.scope in ("article", "articles", "subscription", "all") else "article"
+    ask_id = _valid_ask_id(params.ask_id)
 
-    # 上下文组装下沉到 reader_ai.assemble_reader_context；此处注入订阅域检索闭包
+    # 上下文组装下沉到 reader_ai.assemble_reader_context；此处注入检索闭包
     # （承载鉴权作用域与 LLM 配置），使组装逻辑与 HTTP 请求解耦、可独立单测（D11）。
     # 检索的规划/选篇两次 LLM 调用计费归因并入 ask。
     async def _search_fetch(question: str, user: str):
         with Session(db_sink.engine) as session:
-            source_ids = app.resolve_subscribed_source_ids(session, user)
+            if scope == "all":
+                source_ids = app.resolve_all_visible_source_ids(session)
+            else:
+                source_ids = app.resolve_subscribed_source_ids(session, user)
         return await reader_search_service.subscription_context(
             question,
             engine=db_sink.engine,
             source_ids=source_ids,
             llm_config=llm_config,
             usage_meta=UsageMeta(purpose="ask", username=username),
+            progress=lambda stage, detail=None: _ask_progress_update(ask_id, stage, detail),
         )
 
     try:
-        context, sources = await reader_ai_service.assemble_reader_context(
-            scope=scope,
-            question=params.question,
-            article_id=params.article_id,
-            username=username,
-            db_sink=db_sink,
-            search_fetch=_search_fetch,
-        )
-    except reader_ai_service.ReaderAIError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+        try:
+            context, sources = await reader_ai_service.assemble_reader_context(
+                scope=scope,
+                question=params.question,
+                article_id=params.article_id,
+                article_ids=params.article_ids,
+                username=username,
+                db_sink=db_sink,
+                search_fetch=_search_fetch,
+            )
+        except reader_ai_service.ReaderAIError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
-    history = [{"role": t.role, "content": t.content} for t in (params.history or [])]
-    try:
-        answer = await reader_ai_service.answer_question(
-            params.question, context, scope=scope, llm_config=llm_config, history=history,
-            usage_meta=UsageMeta(purpose="ask", username=username),
-        )
-    except reader_ai_service.ReaderAIError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc))
-    except LLMError as exc:
-        raise HTTPException(status_code=502, detail=f"提问失败：{exc}")
+        _ask_progress_update(ask_id, "answer", {"articles": len(sources)})
+        history = [{"role": t.role, "content": t.content} for t in (params.history or [])]
+        try:
+            answer = await reader_ai_service.answer_question(
+                params.question, context, scope=scope, llm_config=llm_config, history=history,
+                usage_meta=UsageMeta(purpose="ask", username=username),
+            )
+        except reader_ai_service.ReaderAIError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc))
+        except LLMError as exc:
+            raise HTTPException(status_code=502, detail=f"提问失败：{exc}")
+    finally:
+        if ask_id:
+            _ASK_PROGRESS.pop(ask_id, None)
     with Session(db_sink.engine) as session:
         accounts_service.record_ai_usage(session, username, "ask")
     return {"status": "success", "answer": answer, "sources": sources, "scope": scope}

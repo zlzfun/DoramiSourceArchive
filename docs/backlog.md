@@ -10,6 +10,15 @@
 
 ## 排队中(用户拍板、未动工)
 
+- ☐ **问答流式输出(SSE)**(阅读面 AI 打磨波 v3.32 遗留,拍板挂起):
+  `chat_completion` 增流式通道 + ask 端点 SSE 化,现代对话手感的最大增量;
+  本波以阶段化等待态(ask_id 进度轮询)过渡,体验已可接受故不急。
+- ☐ **移动壳问答下放**(v3.32 遗留):ReaderAiPanel 的 bottom-sheet 翻译
+  (数据层/引用联动均现成,长按/返回键握手沿 useLayerHistory 惯例)。
+- ☐ **scope=all / articles 的前端露出与门控档位**(v3.32 后端已全量落地,
+  前端仍只露 本文/我的订阅):等依赖它的新功能规划成形时一并拍
+  (全员开放 vs admin-only vs 总闸;all 检索域=发现页可见口径,无新信息泄露)。
+
 - ☐ **30 个 incubating 源观察期转正评审**
   转正流程见 `docs/sources/curation_policy.md`「Incubation」节;
   Reddit 转正门槛 = 生产出口 IP 复验 429。转正时顺带更新 `docs/sources/node_catalog_and_risks.md` 快照。
