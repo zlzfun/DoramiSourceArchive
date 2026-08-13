@@ -10,11 +10,15 @@ nginx 容器访问,对外端口由 compose 的端口映射决定;[nginx] 节同�
 """
 import warnings
 
-import urllib3
-
 from config import settings
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+try:
+    # urllib3 非项目直接依赖(HTTP 栈是 httpx),v3.31 退役 chromadb 后不再被
+    # 传递引入,生产镜像里可能不存在——仅在环境有它时压其证书告警。
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+except ModuleNotFoundError:
+    pass
 warnings.filterwarnings("ignore")
 
 settings.apply_process_environment()
