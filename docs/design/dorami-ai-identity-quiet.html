@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>渐变主题色 + 哆啦美速读 · 静默仪器样页(二轮)</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   渐变主题色 + 哆啦美速读 · 静默仪器样页(v3.33 提案 · 二轮)
+   一轮拍板已落:速读用「原卡 + 生成中 shimmer 骨架」(否决拆句/句首
+   短横/未生成胶囊钮——外部卡嵌套胶囊不好看);色彩方向改为尝试
+   **蓝→紫渐变主题色(涵盖全站)**。本页即渐变实验:
+
+   定位澄清(三轮):渐变**只作 AI 家族的身份色**——取代一轮讨论的
+   「琥珀方案」成为 AI 引导色;**全站主题色(solid 靛)原样不动**。
+
+   核心设计论点 —— **渐变与品牌同族,与收藏分家**:
+     两端取 #3f7bf6(蓝)→ #8b52f4(紫),线性中点 ≈ #655ff5,
+     与现行 --dorami-accent #5b54e8 几乎同位。AI 的引导色因此
+     与全站气质天然协调(不是第三门色),又与收藏琥珀色相彻底分开,
+     「琥珀撞收藏」问题就此关闭。引导性由「渐变 + Sparkles 字形」
+     双通道扛:全站唯一会出现渐变的地方=AI 触点,见渐变即 AI。
+
+   面板内纪律 —— **渐变只上身份标记,不上操作件**:
+     渐变触点=Sparkles 图标、「哆啦美」身份字头、速读头、译钮激活态、
+     FAB。问答面板内的通用操作件(发送钮、范围 seg、引用 chip、
+     建议问题 hover)保持现行 solid accent——它们是控件不是身份;
+     且小字号/1px 细件铺渐变会因反锯齿显脏,是渐变滥用的翻车点。
+
+   画面① 渐变实验台:同一阅读窗情境,seg 切 现状 / 渐变方案 直接对比
+     (一轮的 A/B/C 已裁撤,留档看 git 历史)。
+   画面② AI 家族全触点取样:FAB/面板头/回答身份行/空态/速读卡/
+     译钮激活态 逐处给出渐变形,并排「不铺渐变」的面板操作件纪律格。
+   画面③ 速读终稿:原卡形态不动(渐变 wash 版已获认可)+ 生成中
+     三行 shimmer;头部渐变字头。
+
+   纪律:令牌 1:1 对应 frontend/src/index.css;实现时渐变以
+   --grad-accent(+两端 --g1/--g2)入 :root,暗色端色值单独调亮;
+   SVG 图标渐变经 CSS fill: url(#agrad)(文档级 defs);文字渐变经
+   background-clip: text。**本页可试**:画面①切 现状/渐变;右下月亮
+   切亮暗(渐变端色值随暗色翻转)。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --serif: "Songti SC", "Noto Serif SC", Georgia, serif;
+  --dorami-blue: #5b54e8;
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-wash: rgba(91, 84, 232, 0.08);
+  --dorami-well: #f1f5f9;
+  --dorami-border: rgba(11, 18, 32, 0.09);
+  --dorami-border-soft: rgba(11, 18, 32, 0.06);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-pill: 9999px;
+  --motion-fast: 150ms; --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --amber: #f59e0b;
+
+  /* ── 渐变主题色(本页主角)── */
+  --g1: #3f7bf6;                 /* 蓝端 */
+  --g2: #8b52f4;                 /* 紫端 */
+  --grad-accent: linear-gradient(118deg, var(--g1), var(--g2));
+  --grad-wash: linear-gradient(118deg, rgba(63, 123, 246, 0.09), rgba(139, 82, 244, 0.10));
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #14171e;
+  --dorami-ink: #e8ebf2; --dorami-ink-2: #c3cad8;
+  --dorami-muted: #98a2b5; --dorami-faint: #7c8698;
+  --dorami-wash: rgba(123, 108, 240, 0.14);
+  --dorami-border: rgba(232, 235, 242, 0.10);
+  --dorami-border-soft: rgba(232, 235, 242, 0.06);
+  --dorami-accent: #8b7ff5; --dorami-accent-ink: #a89eff;
+  --sh-1: 0 1px 2px rgba(0,0,0,0.35);
+  --sh-2: 0 1px 3px rgba(0,0,0,0.4), 0 6px 16px rgba(0,0,0,0.45);
+  --amber: #fbbf24;
+  --g1: #6ea3ff;
+  --g2: #ab86ff;
+  --grad-wash: linear-gradient(118deg, rgba(110, 163, 255, 0.13), rgba(171, 134, 255, 0.15));
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink); padding: 40px 24px 120px; }
+.wrap { max-width: 1060px; margin: 0 auto; }
+h1 { font-family: var(--serif); font-size: 22px; font-weight: 700; letter-spacing: 0.02em; }
+.sub { margin-top: 6px; font-size: 12.5px; color: var(--dorami-muted); line-height: 1.7; }
+.frame-title { margin: 44px 0 4px; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: var(--dorami-faint); }
+.frame-note { font-size: 12px; color: var(--dorami-muted); line-height: 1.75; margin-bottom: 14px; max-width: 860px; }
+.frame-note b { color: var(--dorami-ink-2); font-weight: 600; }
+
+.seg { display: inline-flex; background: var(--dorami-well); border-radius: var(--r-pill); padding: 3px; gap: 2px; }
+.seg button {
+  border: none; background: transparent; cursor: pointer; font: inherit;
+  font-size: 12px; font-weight: 600; color: var(--dorami-muted);
+  padding: 5px 14px; border-radius: var(--r-pill);
+  transition: all var(--motion-fast) var(--motion-ease);
+}
+.seg button.on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+.icon { width: 16px; height: 16px; flex: none; display: inline-block; vertical-align: -3px; }
+.icon-sm { width: 14px; height: 14px; }
+.icon-xs { width: 12px; height: 12px; }
+.grad-text { background: var(--grad-accent); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+/* ════ 画面① 渐变实验台 ════ */
+.lab { background: var(--dorami-surface); border-radius: var(--r-card); box-shadow: var(--sh-2); padding: 22px 26px 26px; }
+.lab-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.lab-head .hint { font-size: 11.5px; color: var(--dorami-faint); }
+
+.stage { display: grid; grid-template-columns: 300px 1fr; gap: 22px; }
+
+/* 现状档:问答琥珀 / 速读靛 / 译靛(分裂原样) */
+.stage.scheme-now .fab .icon { color: var(--amber); }
+.stage.scheme-now .sr-head { color: var(--dorami-accent-ink); }
+.stage.scheme-now .tb-tr.on { color: var(--dorami-accent); background: var(--dorami-wash); }
+/* 渐变档:AI 家族统一主题渐变 */
+.stage.scheme-grad .fab .icon path,
+.stage.scheme-grad .sr-head .icon-xs path { fill: url(#agrad); }
+.stage.scheme-grad .sr-head .sr-head-t { background: var(--grad-accent); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.stage.scheme-grad .sr-head { color: var(--g2); }
+.stage.scheme-grad .tb-tr.on { background: var(--grad-wash); }
+.stage.scheme-grad .tb-tr.on span { background: var(--grad-accent); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+.entry-card { background: var(--dorami-soft); border-radius: var(--r-control); padding: 12px 14px; position: relative; }
+.entry-card .t { font-size: 13.5px; font-weight: 600; line-height: 1.5; padding-right: 26px; }
+.entry-card .x { margin-top: 5px; font-size: 12px; color: var(--dorami-muted); line-height: 1.6;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.entry-card .m { margin-top: 7px; font-size: 11px; color: var(--dorami-faint); }
+.entry-fav { position: absolute; top: 12px; right: 12px; color: var(--amber); }
+.caption { margin-top: 8px; font-size: 11px; color: var(--dorami-faint); line-height: 1.7; }
+
+.pane-mock { position: relative; background: var(--dorami-surface); border: 1px solid var(--dorami-border-soft); border-radius: var(--r-card); padding: 16px 22px 20px; min-height: 330px; }
+.toolbar { display: flex; justify-content: flex-end; gap: 4px; margin-bottom: 14px; }
+.tb {
+  width: 30px; height: 30px; border: none; border-radius: 8px; background: transparent;
+  color: var(--dorami-faint); cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  transition: all var(--motion-fast) var(--motion-ease); font: inherit;
+}
+.tb:hover { background: var(--dorami-well); color: var(--dorami-ink-2); }
+.tb.on-amber { color: var(--amber); }
+.tb-tr { font-size: 12.5px; font-weight: 700; }
+.kicker { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--dorami-accent); }
+.pane-title { font-family: var(--serif); font-size: 21px; font-weight: 700; line-height: 1.4; margin-top: 6px; }
+.pane-meta { margin-top: 7px; font-size: 11.5px; color: var(--dorami-faint); display: flex; gap: 12px; }
+
+/* 速读卡:终稿形态 = 原卡(整段 + muted 正文)——画面①里也用终稿 */
+.sr-card { margin-top: 18px; background: var(--dorami-wash); border-radius: var(--r-control); padding: 13px 16px 12px; }
+.scheme-grad .sr-card { background: var(--grad-wash); }
+.sr-head { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
+.sr-text { margin-top: 6px; font-size: 13.5px; line-height: 1.8; color: var(--dorami-muted); }
+
+.fab {
+  position: absolute; right: 18px; bottom: 16px;
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--dorami-surface); border: 1px solid var(--dorami-border-soft);
+  box-shadow: var(--sh-2); border-radius: var(--r-pill); padding: 9px 16px 9px 12px;
+  font-size: 12.5px; font-weight: 600; color: var(--dorami-ink-2); cursor: pointer;
+}
+
+/* ════ 画面② 全站取样 ════ */
+.sampler { background: var(--dorami-surface); border-radius: var(--r-card); box-shadow: var(--sh-2); padding: 22px 26px; }
+.sampler-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.swatch { background: var(--dorami-soft); border-radius: var(--r-control); padding: 14px 16px; }
+.swatch h4 { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--dorami-faint); margin-bottom: 10px; }
+.swatch .note { margin-top: 9px; font-size: 11px; color: var(--dorami-faint); line-height: 1.65; }
+
+/* (全站铺开方案已按三轮澄清裁撤:品牌字头/主 CTA/选中 wash/视图轨等取样件删除,
+   渐变收束为 AI 家族身份色;全站主题色 solid 靛不动。) */
+
+/* ════ 画面③ 速读终稿 ════ */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.card { background: var(--dorami-surface); border-radius: var(--r-card); box-shadow: var(--sh-2); padding: 20px 24px 22px; }
+.card h3 { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; color: var(--dorami-faint); margin-bottom: 14px; }
+.sr-final { background: var(--grad-wash); border-radius: var(--r-control); padding: 13px 16px 12px; }
+.sr-final .sr-head .icon-xs path { fill: url(#agrad); }
+.sr-final .sr-head-t { background: var(--grad-accent); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.sr0-gen { display: inline-flex; align-items: center; gap: 6px; margin-top: 7px; font-size: 12px; font-weight: 600; color: var(--dorami-muted); background: none; border: none; cursor: pointer; font-family: inherit; }
+.sr0-gen:hover { color: var(--dorami-accent); }
+.skel { height: 10px; border-radius: 5px; background: linear-gradient(90deg, color-mix(in srgb, var(--dorami-ink) 7%, transparent) 25%, color-mix(in srgb, var(--dorami-ink) 3%, transparent) 50%, color-mix(in srgb, var(--dorami-ink) 7%, transparent) 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite linear; }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.state-label { font-size: 11px; color: var(--dorami-faint); margin: 14px 0 8px; letter-spacing: 0.04em; }
+
+.decisions { margin-top: 44px; background: var(--dorami-surface); border-radius: var(--r-card); box-shadow: var(--sh-2); padding: 22px 26px; }
+.decisions h2 { font-size: 13px; font-weight: 700; letter-spacing: 0.06em; margin-bottom: 12px; }
+.decisions ol { padding-left: 20px; font-size: 12.5px; line-height: 2; color: var(--dorami-ink-2); }
+
+/* 暗色下 SVG 渐变换用调亮端色(defs 双份,CSS 切引用) */
+[data-theme="dark"] .stage.scheme-grad .fab .icon path,
+[data-theme="dark"] .stage.scheme-grad .sr-head .icon-xs path,
+[data-theme="dark"] svg path[fill="url(#agrad)"] { fill: url(#agrad-dark); }
+
+.theme-toggle {
+  position: fixed; right: 20px; bottom: 20px; width: 40px; height: 40px;
+  border-radius: 50%; border: 1px solid var(--dorami-border); background: var(--dorami-surface);
+  box-shadow: var(--sh-2); cursor: pointer; font-size: 16px;
+}
+</style>
+</head>
+<body>
+<!-- 文档级 SVG 渐变 defs:CSS fill: url(#agrad) 全页引用 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="agrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3f7bf6"/>
+      <stop offset="100%" stop-color="#8b52f4"/>
+    </linearGradient>
+    <linearGradient id="agrad-dark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6ea3ff"/>
+      <stop offset="100%" stop-color="#ab86ff"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<div class="wrap">
+  <h1><span class="grad-text">AI 家族渐变身份色</span> + 哆啦美速读(三轮)</h1>
+  <div class="sub">蓝→紫渐变 #3f7bf6 → #8b52f4 只作 AI 引导色(取代琥珀方案);全站主题色 solid 靛不动。中点 ≈ 现行靛,与品牌同族、与收藏琥珀分家。</div>
+
+  <!-- ════ 画面① ════ -->
+  <div class="frame-title">画面① · 渐变实验台(阅读窗情境)</div>
+  <div class="frame-note">
+    AI 三入口(FAB / 速读头 / 译钮激活态)统一用蓝→紫渐变身份色;全站其余(kicker/选中态/主操作)保持 solid 靛原样。收藏恒琥珀五角星,色相彻底分开。切换 seg 对比现状。
+  </div>
+  <div class="lab">
+    <div class="lab-head">
+      <div class="seg" id="schemeSeg">
+        <button data-s="now">现状(分裂)</button>
+        <button data-s="grad" class="on">蓝→紫渐变</button>
+      </div>
+      <span class="hint">收藏(★)恒琥珀 —— 它不是 AI</span>
+    </div>
+
+    <div class="stage scheme-grad" id="stage">
+      <div>
+        <div class="entry-card">
+          <div class="t">Anthropic 发布 Claude 5 家族与新的 Mythos 模型层级</div>
+          <div class="x">新家族包含 Fable 5 与 Mythos 5,两者共享同一底层模型;Fable 面向一般可用…</div>
+          <div class="m">Anthropic · 2 小时前</div>
+          <svg class="icon-sm entry-fav" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.9 6.26L21.5 9.27l-4.75 4.63L17.8 21 12 17.77 6.2 21l1.05-7.1L2.5 9.27l6.6-1.01z"/></svg>
+        </div>
+        <div class="caption">收藏星语义全站不变。渐变方案下 AI 与收藏色相分家(蓝紫 vs 琥珀),不再需要「同色异形」纪律。</div>
+      </div>
+
+      <div class="pane-mock">
+        <div class="toolbar">
+          <button class="tb" title="标为已读"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12l5 5L18 6M9 12l5 5L25 6"/></svg></button>
+          <button class="tb on-amber" title="已收藏"><svg class="icon-sm" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.9 6.26L21.5 9.27l-4.75 4.63L17.8 21 12 17.77 6.2 21l1.05-7.1L2.5 9.27l6.6-1.01z"/></svg></button>
+          <button class="tb" title="分享"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg></button>
+          <button class="tb tb-tr on" title="当前显示中文译文"><span>译</span></button>
+        </div>
+        <div class="kicker">Anthropic · 官方博客</div>
+        <div class="pane-title">Introducing the Claude 5 model family</div>
+        <div class="pane-meta"><span>2026-08-12 09:00</span><span>阅读时长 6 分钟</span><span>阅读量 128</span></div>
+
+        <div class="sr-card">
+          <div class="sr-head">
+            <svg class="icon-xs" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 15l.9 2.4L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.6zM5 15l.9 2.4L8 18l-2.1.9L5 21l-.9-2.1L2 18l2.1-.6z"/></svg>
+            <span class="sr-head-t">哆啦美速读</span>
+          </div>
+          <div class="sr-text">Claude 5 家族发布,新增 Mythos 模型层级,位于 Opus 之上;Fable 5 与 Mythos 5 共享同一底层模型,前者带附加安全措施、面向一般可用;官方定位其为当前最智能的一般可用模型,API 即日起开放。</div>
+        </div>
+
+        <button class="fab">
+          <svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 15l.9 2.4L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.6zM5 15l.9 2.4L8 18l-2.1.9L5 21l-.9-2.1L2 18l2.1-.6z"/></svg>
+          问问哆啦美
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ 画面② ════ -->
+  <div class="frame-title">画面② · AI 家族全触点取样</div>
+  <div class="frame-note">
+    渐变只出现在 AI 触点上——<b>全站唯一的渐变=AI 身份标记,见渐变即 AI</b>。面板内的通用操作件(发送钮/seg/引用 chip)保持 solid accent:它们是控件,不是身份。
+  </div>
+  <div class="sampler">
+    <div class="sampler-grid">
+      <div class="swatch">
+        <h4>问答 FAB(收缩 / 展开)</h4>
+        <div style="display:flex;align-items:center;gap:12px">
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:50%;background:var(--dorami-surface);box-shadow:var(--sh-2);border:1px solid var(--dorami-border-soft)">
+            <svg class="icon" viewBox="0 0 24 24"><path fill="url(#agrad)" d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 15l.9 2.4L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.6zM5 15l.9 2.4L8 18l-2.1.9L5 21l-.9-2.1L2 18l2.1-.6z"/></svg>
+          </span>
+          <button class="fab" style="position:static">
+            <svg class="icon" viewBox="0 0 24 24"><path fill="url(#agrad)" d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 15l.9 2.4L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.6zM5 15l.9 2.4L8 18l-2.1.9L5 21l-.9-2.1L2 18l2.1-.6z"/></svg>
+            问问哆啦美
+          </button>
+        </div>
+        <div class="note">星标渐变、文字保持 ink——入口本身仍是安静的,渐变只在星上。</div>
+      </div>
+      <div class="swatch">
+        <h4>面板字头 + 回答身份行</h4>
+        <div style="display:flex;align-items:center;gap:7px;font-family:var(--serif);font-size:15px;font-weight:700">
+          <svg class="icon-sm" viewBox="0 0 24 24"><path fill="url(#agrad)" d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 15l.9 2.4L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.6zM5 15l.9 2.4L8 18l-2.1.9L5 21l-.9-2.1L2 18l2.1-.6z"/></svg>
+          问问哆啦美
+        </div>
+        <div style="margin-top:10px;display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;letter-spacing:0.04em" class="grad-text-row">
+          <svg class="icon-xs" viewBox="0 0 24 24"><path fill="url(#agrad)" d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+          <span class="grad-text">哆啦美</span>
+        </div>
+        <div class="note">面板衬线字头保持 ink;回答身份行「哆啦美」小字头用渐变(11px 700,目检可读性)。</div>
+      </div>
+      <div class="swatch">
+        <h4>速读卡(已获认可)</h4>
+        <div class="sr-final" style="padding:11px 13px 10px">
+          <div class="sr-head">
+            <svg class="icon-xs" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 15l.9 2.4L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.6zM5 15l.9 2.4L8 18l-2.1.9L5 21l-.9-2.1L2 18l2.1-.6z"/></svg>
+            <span class="sr-head-t">哆啦美速读</span>
+          </div>
+          <div class="sr-text" style="font-size:12.5px">渐变 wash 底 + 渐变字头,正文 muted 原样。</div>
+        </div>
+        <div class="note">卡底 wash 用渐变低透明版(蓝 9% → 紫 10%),与现行 wash 同级安静。</div>
+      </div>
+      <div class="swatch">
+        <h4>译钮激活态</h4>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="tb tb-tr" style="background:var(--dorami-well)">译</button>
+          <span style="font-size:11px;color:var(--dorami-faint)">→</span>
+          <button class="tb tb-tr on" style="background:var(--grad-wash)"><span class="grad-text">译</span></button>
+        </div>
+        <div class="note">激活=渐变 wash 底 + 渐变「译」字;未激活保持 faint。速读/问答/翻译三入口自此同语。</div>
+      </div>
+      <div class="swatch">
+        <h4>空态星 + 建议问题</h4>
+        <div style="text-align:center;padding:4px 0">
+          <svg style="width:20px;height:20px" viewBox="0 0 24 24"><path fill="url(#agrad)" d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 15l.9 2.4L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.6zM5 15l.9 2.4L8 18l-2.1.9L5 21l-.9-2.1L2 18l2.1-.6z"/></svg>
+          <div style="margin-top:6px;font-size:11.5px;color:var(--dorami-faint)">「这篇文章的核心结论是什么?」</div>
+        </div>
+        <div class="note">空态星渐变;建议问题保持 faint 灰(氛围件,不是身份标记)。</div>
+      </div>
+      <div class="swatch">
+        <h4>纪律 —— 面板操作件不铺渐变</h4>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--dorami-accent);color:#fff">
+            <svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </span>
+          <span style="font-size:10.5px;font-weight:700;background:var(--dorami-wash);color:var(--dorami-accent);border-radius:4px;padding:1px 5px">3</span>
+          <span class="seg" style="padding:2px"><button class="on" style="padding:3px 10px;font-size:11px">本文</button><button style="padding:3px 10px;font-size:11px">我的订阅</button></span>
+        </div>
+        <div class="note">发送钮/引用 chip/范围 seg 保持 solid accent——控件不是身份;小件渐变会因反锯齿显脏。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ 画面③ ════ -->
+  <div class="frame-title">画面③ · 速读终稿(一轮拍板落实)</div>
+  <div class="frame-note">
+    原卡形态不动(整段 + muted 正文 + 文字链生成入口),仅:① 生成中改三行 shimmer 骨架;② 头部色随主题方案(渐变字头 + 渐变图标;若主题仍拍 solid,则头部用该 solid)。
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <h3>已生成 / 未生成(均为原样,仅头部换色)</h3>
+      <div class="sr-final">
+        <div class="sr-head">
+          <svg class="icon-xs" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 15l.9 2.4L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.6zM5 15l.9 2.4L8 18l-2.1.9L5 21l-.9-2.1L2 18l2.1-.6z"/></svg>
+          <span class="sr-head-t">哆啦美速读</span>
+        </div>
+        <div class="sr-text">Claude 5 家族发布,新增 Mythos 模型层级,位于 Opus 之上;Fable 5 与 Mythos 5 共享同一底层模型,前者带附加安全措施、面向一般可用。</div>
+      </div>
+      <div class="state-label">未生成态(文字链原样)</div>
+      <div class="sr-final">
+        <div class="sr-head">
+          <svg class="icon-xs" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+          <span class="sr-head-t">哆啦美速读</span>
+        </div>
+        <button class="sr0-gen">生成本文要点速读</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>生成中(shimmer 骨架,新增)</h3>
+      <div class="sr-final">
+        <div class="sr-head">
+          <svg class="icon-xs" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+          <span class="sr-head-t">哆啦美速读</span>
+        </div>
+        <div style="margin-top:10px;display:grid;gap:8px">
+          <div class="skel" style="width:92%"></div>
+          <div class="skel" style="width:78%"></div>
+          <div class="skel" style="width:85%"></div>
+        </div>
+      </div>
+      <div class="state-label">取代现状的「⟳ 正在总结…」一行转圈字;骨架行数固定 3,与摘要典型体量一致。</div>
+    </div>
+  </div>
+
+  <!-- 拍板清单 -->
+  <div class="decisions">
+    <h2>拍板清单(三轮)</h2>
+    <ol>
+      <li><b>渐变端色值</b>:#3f7bf6 → #8b52f4(暗色 #6ea3ff → #ab86ff)—— 接受 / 调色(可要求更蓝或更紫)。</li>
+      <li><b>AI 触点清单</b>:FAB 星标 / 面板字头星 / 回答身份行(星+「哆啦美」小字头)/ 空态星 / 速读卡(渐变 wash+渐变字头)/ 译钮激活态 —— 确认 / 增减。</li>
+      <li><b>纪律</b>:渐变只上身份标记;面板内操作件(发送钮/seg/引用 chip/建议问题)保持 solid accent;收藏恒琥珀 —— 确认。</li>
+      <li><b>速读终稿</b>:原卡 + 生成中 shimmer(骨架 3 行),头部渐变字头 —— 已拍板,待实现。</li>
+    </ol>
+  </div>
+</div>
+
+<button class="theme-toggle" id="themeBtn" title="切换亮暗">🌙</button>
+<script>
+  const seg = document.getElementById('schemeSeg');
+  const stage = document.getElementById('stage');
+  seg.addEventListener('click', (e) => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+    stage.className = 'stage scheme-' + btn.dataset.s;
+  });
+  const themeBtn = document.getElementById('themeBtn');
+  themeBtn.addEventListener('click', () => {
+    const root = document.documentElement;
+    const dark = root.getAttribute('data-theme') === 'dark';
+    if (dark) root.removeAttribute('data-theme'); else root.setAttribute('data-theme', 'dark');
+    themeBtn.textContent = dark ? '🌙' : '☀️';
+  });
+</script>
+</body>
+</html>

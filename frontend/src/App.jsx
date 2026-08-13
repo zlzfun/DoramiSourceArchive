@@ -19,6 +19,7 @@ import LoginScreen from './components/LoginScreen';
 import BrandLogoImage from './components/BrandLogoImage';
 import RailUserFlyout from './components/RailUserFlyout';
 import TabErrorBoundary from './components/TabErrorBoundary';
+import AiGradientDefs from './components/AiGradientDefs';
 import { useTheme } from './theme';
 import { avatarInitial, avatarHue } from './utils/avatarColor';
 import { fetchAuthSession, fetchFeedbackUnreadCount, fetchFetchers, fetchRuntimeInfo, loginAdmin, logoutAdmin } from './api';
@@ -619,6 +620,7 @@ export default function App() {
   if (isMobile) {
     return (
       <div className={`m-root font-sans${arrival === 'fading' ? ' app-arriving' : ''}`}>
+        <AiGradientDefs />
         {arrivalOverlay}
         <Toast show={toast.show} message={toast.message} type={toast.type} onClose={hideToast} />
         <TabBoundary>
@@ -657,6 +659,7 @@ export default function App() {
 
   return (
     <div className={`app-shell font-sans${arrival === 'fading' ? ' app-arriving' : ''}`}>
+      <AiGradientDefs />
       {arrivalOverlay}
       {/* ── lg+:左侧固定导轨(管理面),形制向阅读器视图轨靠拢:
              56px 带宽 / 32px 品牌位 / 38px icon-only 钮 + 右侧墨底 tooltip /
