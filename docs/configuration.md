@@ -101,9 +101,16 @@ timeout_seconds = 120
 temperature = 0.3
 max_tokens = 4096
 map_concurrency = 4   ; 日报 map 阶段的并发数
+thinking_mode =       ; 思考模式(v3.33.1):留空=不发送思考参数(默认,兼容一切端点);
+                      ; disabled=关闭思考;low/high/max=开启思考并指定努力档。
+                      ; 仅 DeepSeek V4 系等支持该参数的端点可设;不支持时 400 自动降级去掉重试。
 ```
 
-- 环境变量覆盖:`DORAMI_LLM_BASE_URL` / `DORAMI_LLM_API_KEY` / `DORAMI_LLM_MODEL`。
+- 环境变量覆盖:`DORAMI_LLM_BASE_URL` / `DORAMI_LLM_API_KEY` / `DORAMI_LLM_MODEL` / `DORAMI_LLM_THINKING_MODE`。
+- **思考型模型注意**(2026-08 生产事故教训):DeepSeek V4 系默认开思考且努力档 high,
+  思考 token 计入 `max_tokens`——日报 reduce 这类长输出任务可能被思考耗尽配额导致正文
+  空产。对策:`thinking_mode = disabled`,或保留思考但把 `max_tokens` 调大(≥16384)。
+  空正文自 v3.33.1 起会被判为调用失败(不写库、不推游标),不再静默落成空日报。
 - **运行时可在「运维管理」页编辑并持久化**(存 `AppSettingRecord` KV,优先级高于 ini);
   三者(base_url+api_key+model)齐备才算已配置,前端各 AI 入口据此显隐。
 - 兼容 OpenAI/DeepSeek/Kimi/智谱/通义/火山方舟/OpenRouter/Ollama/vLLM 等任意 `/chat/completions` 端点。

@@ -717,6 +717,12 @@ async def _persist_brief(storage, content_obj: DailyBriefContent) -> None:
     """写日报。db_storage.save() 不覆盖已有 has_content 记录，故同日重跑走 update。"""
     from models.content import serialize_to_metadata
 
+    # 落库前断言正文非空:空正文若放行,save() 的 summary 兜底会把空串写成 NULL
+    # 且 has_content=True 照写,阅读器呈现「暂无正文」而运行记录是 success——
+    # 2026-08 生产事故的静默半边。宁可失败留游标,下轮带着候选重来。
+    if not (content_obj.content or "").strip():
+        raise RuntimeError("日报正文为空,拒绝写库(疑似 LLM 输出被思考/截断耗尽,检查 max_tokens 与思考模式)")
+
     existing = await storage.get(content_obj.id)
     if existing is None:
         ok = await storage.save(content_obj)

@@ -308,6 +308,36 @@ def test_generate_success_writes_and_advances_cursor(tmp_path, monkeypatch):
         assert last["status"] == "success"
 
 
+def test_generate_empty_reduce_fails_no_write_no_cursor_move(tmp_path, monkeypatch):
+    """reduce 空产(思考型模型耗尽输出配额)必须失败:不写库、不推游标。
+
+    2026-08 生产事故回归:空正文曾以 status=success 落库成 NULL,
+    阅读器呈现「暂无正文」且当日候选被游标静默消费。
+    """
+    import pytest
+
+    async def _empty_reduce(*, messages, config, **kwargs):
+        system = messages[0].content
+        if "title_cn" in system and "score" in system:  # MAP 照常
+            return json.dumps({
+                "title_cn": "中文标题", "classification": "产业资讯", "source": "某来源",
+                "company": "OpenAI", "realm": "基础大模型", "summary": ["**X**：细节"],
+                "comment": "点评", "tags": ["标签"], "score": 8,
+            })
+        return ""  # reduce 空产
+
+    monkeypatch.setattr(db, "chat_completion", _empty_reduce)
+    sink = _make_sink(tmp_path)
+    _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    with pytest.raises(RuntimeError, match="日报正文为空"):
+        asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    assert asyncio.run(sink.get("daily_brief_2026-06-06")) is None  # 未写库
+    with Session(sink.engine) as session:
+        assert db.read_cursor(session) == "2026-06-01T00:00:00"  # 未推进,候选下轮重来
+
+
 def test_generate_idempotent_rerun_updates(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
     sink = _make_sink(tmp_path)

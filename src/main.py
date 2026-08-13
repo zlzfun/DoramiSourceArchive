@@ -1,11 +1,15 @@
 import os
 import uvicorn
 import warnings
-import urllib3
 from config import settings
 
 # 1. 屏蔽各类网络相关的警告
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+try:
+    # urllib3 非项目直接依赖(HTTP 栈是 httpx),仅在环境有它时压其证书告警
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+except ModuleNotFoundError:
+    pass
 warnings.filterwarnings("ignore")
 
 # 2. 全局网络与镜像环境配置
