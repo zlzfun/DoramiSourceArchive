@@ -100,7 +100,7 @@ async def chat_completion(
         "Content-Type": "application/json",
     }
 
-    def _build_payload(with_json: bool) -> dict:
+    def _build_payload(with_json: bool, with_thinking: bool) -> dict:
         payload: dict = {
             "model": config.model,
             "messages": [m.to_dict() for m in messages],
@@ -109,15 +109,25 @@ async def chat_completion(
         }
         if with_json:
             payload["response_format"] = {"type": "json_object"}
+        if with_thinking:
+            # OpenAI 兼容格式的思考模式参数(DeepSeek V4 系文档口径):
+            # disabled → thinking.type=disabled;low/high/max → 开启 + reasoning_effort。
+            mode = config.thinking_mode.strip().lower()
+            if mode == "disabled":
+                payload["thinking"] = {"type": "disabled"}
+            elif mode in ("low", "high", "max"):
+                payload["thinking"] = {"type": "enabled"}
+                payload["reasoning_effort"] = mode
         return payload
 
     want_json = response_json
+    want_thinking = bool(config.thinking_mode.strip())
     last_error: Optional[Exception] = None
 
     async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=True) as client:
         for attempt in range(1, max_retries + 1):
             try:
-                resp = await client.post(url, headers=headers, json=_build_payload(want_json))
+                resp = await client.post(url, headers=headers, json=_build_payload(want_json, want_thinking))
             except httpx.HTTPError as exc:
                 last_error = exc
                 logger.warning("LLM 请求异常 (%s/%s) [%s | %s]: %s",
@@ -128,7 +138,10 @@ async def chat_completion(
                 continue
 
             if resp.status_code == 200:
-                content, usage = _extract_content_and_usage(resp)
+                content, usage, finish_reason = _extract_content_and_usage(resp)
+                if finish_reason == "length":
+                    logger.warning("LLM 输出触及 max_tokens 上限被截断 [%s | %s]——考虑调大 max_tokens 或关闭思考模式",
+                                   config.base_url, config.model)
                 _maybe_record_usage(usage_meta, usage, config.model)
                 return content
 
@@ -138,6 +151,13 @@ async def chat_completion(
                 logger.info("端点疑似不支持 response_format，降级为普通模式重试 [%s | %s]",
                             config.base_url, config.model)
                 want_json = False
+                continue
+
+            # 思考模式参数不被支持时，去掉后重试一次(配置是 opt-in,但换端点后旧覆盖可能残留)
+            if resp.status_code == 400 and want_thinking:
+                logger.warning("端点疑似不支持思考模式参数(thinking/reasoning_effort)，去掉后重试 [%s | %s]",
+                               config.base_url, config.model)
+                want_thinking = False
                 continue
 
             if resp.status_code == 429 or resp.status_code >= 500:
@@ -155,7 +175,7 @@ async def chat_completion(
     raise LLMError(f"LLM 请求失败: {last_error}")
 
 
-def _extract_content_and_usage(resp: httpx.Response) -> tuple[str, Dict[str, Any]]:
+def _extract_content_and_usage(resp: httpx.Response) -> tuple[str, Dict[str, Any], Optional[str]]:
     try:
         data = resp.json()
     except Exception as exc:  # noqa: BLE001
@@ -164,10 +184,19 @@ def _extract_content_and_usage(resp: httpx.Response) -> tuple[str, Dict[str, Any
         content = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMError(f"LLM 响应缺少 choices/message/content: {str(data)[:300]}") from exc
-    if content is None:
-        raise LLMError("LLM 返回空内容")
+    finish_reason = None
+    if isinstance(data.get("choices"), list) and data["choices"]:
+        raw_reason = data["choices"][0].get("finish_reason")
+        finish_reason = str(raw_reason) if raw_reason is not None else None
+    # 空串与 None 同判:思考型模型把输出配额耗尽在思考里时,content 是 "" 而非 None——
+    # 静默放行曾让空日报以 status=success 落库(2026-08 生产事故),必须当错误抛出。
+    if content is None or not str(content).strip():
+        raise LLMError(
+            f"LLM 返回空内容(finish_reason={finish_reason})——"
+            "若为思考型模型,考虑调大 max_tokens 或将思考模式设为 disabled"
+        )
     usage = data.get("usage") if isinstance(data, dict) else None
-    return content, (usage if isinstance(usage, dict) else {})
+    return content, (usage if isinstance(usage, dict) else {}), finish_reason
 
 
 def _maybe_record_usage(

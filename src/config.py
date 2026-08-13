@@ -100,6 +100,12 @@ class LLMConfig:
     temperature: float = 0.3
     max_tokens: int = 4096
     map_concurrency: int = 4
+    # 思考模式(opt-in,仅支持该参数的端点可设,如 DeepSeek V4 系):
+    # "" = 不发送任何思考参数(默认,兼容一切 OpenAI 兼容端点);
+    # "disabled" = 关闭思考;"low"/"high"/"max" = 开启思考并指定努力档。
+    # 思考型模型默认开思考且努力档 high,长输出任务(日报 reduce)可能被
+    # 思考吃满 max_tokens 而正文空产——生产 2026-08 事故的根因。
+    thinking_mode: str = ""
 
     @property
     def configured(self) -> bool:
@@ -254,6 +260,7 @@ def load_config() -> AppConfig:
             temperature=parser.getfloat("llm", "temperature", fallback=0.3),
             max_tokens=parser.getint("llm", "max_tokens", fallback=4096),
             map_concurrency=parser.getint("llm", "map_concurrency", fallback=4),
+            thinking_mode=(os.getenv("DORAMI_LLM_THINKING_MODE") or parser.get("llm", "thinking_mode", fallback="")).strip(),
         ),
         x_api=XApiConfig(
             bearer_token=(

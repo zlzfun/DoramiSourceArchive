@@ -104,6 +104,57 @@ def test_response_format_degrade(monkeypatch):
     assert "response_format" not in calls[1]["json"]
 
 
+def test_thinking_mode_disabled_payload(monkeypatch):
+    # thinking_mode=disabled → payload 带 thinking.type=disabled,不带 reasoning_effort
+    cfg = LLMConfig(base_url="https://api.example.com/v1", api_key="sk-test",
+                    model="test-model", thinking_mode="disabled")
+    _patch_client(monkeypatch, [_chat_ok("ok")])
+    asyncio.run(chat_completion(messages=[ChatMessage("user", "hi")], config=cfg))
+    payload = _FakeAsyncClient.instances[0].calls[0]["json"]
+    assert payload["thinking"] == {"type": "disabled"}
+    assert "reasoning_effort" not in payload
+
+
+def test_thinking_mode_effort_payload(monkeypatch):
+    # thinking_mode=low → 开启思考 + reasoning_effort=low
+    cfg = LLMConfig(base_url="https://api.example.com/v1", api_key="sk-test",
+                    model="test-model", thinking_mode="low")
+    _patch_client(monkeypatch, [_chat_ok("ok")])
+    asyncio.run(chat_completion(messages=[ChatMessage("user", "hi")], config=cfg))
+    payload = _FakeAsyncClient.instances[0].calls[0]["json"]
+    assert payload["thinking"] == {"type": "enabled"}
+    assert payload["reasoning_effort"] == "low"
+
+
+def test_thinking_mode_default_absent(monkeypatch):
+    # 默认(空)不发送任何思考参数——兼容不支持该参数的端点
+    _patch_client(monkeypatch, [_chat_ok("ok")])
+    asyncio.run(chat_completion(messages=[ChatMessage("user", "hi")], config=CONFIGURED))
+    payload = _FakeAsyncClient.instances[0].calls[0]["json"]
+    assert "thinking" not in payload
+    assert "reasoning_effort" not in payload
+
+
+def test_thinking_degrade_on_400(monkeypatch):
+    # 端点不支持思考参数(400)→ 去掉后重试成功
+    cfg = LLMConfig(base_url="https://api.example.com/v1", api_key="sk-test",
+                    model="test-model", thinking_mode="disabled")
+    _patch_client(monkeypatch, [_FakeResponse(400, text="unknown param thinking"), _chat_ok("ok-degraded")])
+    out = asyncio.run(chat_completion(messages=[ChatMessage("user", "hi")], config=cfg))
+    assert out == "ok-degraded"
+    calls = _FakeAsyncClient.instances[0].calls
+    assert "thinking" in calls[0]["json"]
+    assert "thinking" not in calls[1]["json"]
+
+
+def test_empty_content_raises(monkeypatch):
+    # 空串 content(思考型模型把输出配额耗尽在思考里)必须当错误抛出,不得静默放行
+    resp = _FakeResponse(200, {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]})
+    _patch_client(monkeypatch, [resp])
+    with pytest.raises(LLMError, match="空内容"):
+        asyncio.run(chat_completion(messages=[ChatMessage("user", "hi")], config=CONFIGURED))
+
+
 def test_not_configured():
     empty = LLMConfig()
     with pytest.raises(LLMNotConfigured):

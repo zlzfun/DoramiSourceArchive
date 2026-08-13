@@ -43,6 +43,7 @@ def _llm_config_response(session: Session) -> Dict[str, Any]:
         "model": cfg.model,
         "temperature": cfg.temperature,
         "max_tokens": cfg.max_tokens,
+        "thinking_mode": cfg.thinking_mode,
         "configured": cfg.configured,
         "api_key_set": bool(cfg.api_key),
         "api_key_preview": credentials.mask_tail(cfg.api_key),
@@ -57,6 +58,8 @@ class LLMConfigUpdate(BaseModel):
     api_key: Optional[str] = None
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    # 思考模式:"" = 清除覆盖回落基线(默认不发送思考参数);disabled/low/high/max
+    thinking_mode: Optional[str] = None
 
 
 @router.get("/api/llm/config")
@@ -72,6 +75,11 @@ def set_llm_config(payload: LLMConfigUpdate, session: Session = Depends(deps.get
     api_key 留空（None 或空串）表示不修改；base_url/model 等同理按需覆盖
     （None=不动，空串=清除覆盖回落 ini/env——secret 字段除外，空即保留）。
     """
+    if payload.thinking_mode is not None:
+        normalized = payload.thinking_mode.strip().lower()
+        if normalized not in ("", "disabled", "low", "high", "max"):
+            raise HTTPException(status_code=400, detail="thinking_mode 仅支持 disabled/low/high/max 或留空")
+        payload.thinking_mode = normalized
     credentials.save_updates(session, credentials.LLM_NAMESPACE, payload.model_dump(exclude_unset=True))
     return _llm_config_response(session)
 

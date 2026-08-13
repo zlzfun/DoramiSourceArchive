@@ -31,6 +31,7 @@ class _Baseline:
     model = "ini-model"
     temperature = 0.3
     max_tokens = 4096
+    thinking_mode = ""
 
 
 NS = credentials.LLM_NAMESPACE
@@ -114,6 +115,7 @@ def test_registry_kv_keys_match_legacy_storage():
         "model": "llm_model",
         "temperature": "llm_temperature",
         "max_tokens": "llm_max_tokens",
+        "thinking_mode": "llm_thinking_mode",
     }
     x = {f.name: f.kv_key for f in credentials.X_API_NAMESPACE.fields}
     assert x == {

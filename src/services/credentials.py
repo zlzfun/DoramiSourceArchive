@@ -94,6 +94,7 @@ LLM_NAMESPACE = CredentialNamespace(
         CredentialField("model", "llm_model", env_var="DORAMI_LLM_MODEL"),
         CredentialField("temperature", "llm_temperature", kind="float"),
         CredentialField("max_tokens", "llm_max_tokens", kind="int"),
+        CredentialField("thinking_mode", "llm_thinking_mode", env_var="DORAMI_LLM_THINKING_MODE"),
     ),
 )
 
