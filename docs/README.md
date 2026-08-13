@@ -24,7 +24,9 @@
 - ◇ [im-bot-architecture.md](./im-bot-architecture.md) — **内网 IM 机器人后端架构(intranet 独有,
   给内网编码助理的开工指示)**:入站管道→按会话串行调度→处理器→出站管道四段式、
   会话生命周期(懒创建+双重回收+内存态)、asyncio 三层并发控制、网关哑管道纪律、
-  模块骨架与已拍板取舍表;契约面见 contracts/im_bot_integration.md。
+  模块骨架与已拍板取舍表;§8 平台化演进预案(连接层通用/应用层专属、Connector
+  Manager 目标形态、身份托管风险与合规一票否决、两个多租户就绪改造+触发器)。
+  契约面见 contracts/im_bot_integration.md。
 
 ## contracts/ —— 对外契约(◇ 耐久)
 
