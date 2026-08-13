@@ -192,7 +192,7 @@ function AnswerBlock({ turn, onOpenRef }) {
   }, [turn.a, sources]);
   return (
     <div className="reader-ai-a">
-      <div className="reader-ai-a-id"><Sparkles className="h-3 w-3" /> 哆啦美</div>
+      <div className="reader-ai-a-id"><Sparkles className="h-3 w-3" /> <span className="ai-grad-text">哆啦美</span></div>
       <div className="reader-ai-a-body markdown-body">
         <ReaderMarkdown citations={citations}>{markdown}</ReaderMarkdown>
       </div>

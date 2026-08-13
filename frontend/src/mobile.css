@@ -74,6 +74,8 @@
 .m-iconbtn svg { width: 19px; height: 19px; }
 .m-iconbtn.is-amber { color: #f59e0b; }
 .m-iconbtn.is-blue { color: var(--dorami-accent-ink); }
+/* 译钮激活态(v3.33 AI 家族渐变,与桌面 .reader-pane-iconbtn.is-ai 同语) */
+.m-iconbtn.is-ai { background: var(--grad-ai-wash); }
 /* 搜索就地展开:输入框顶替标题(§4.1.2,与桌面列头同法) */
 .m-search-inline {
   flex: 1;

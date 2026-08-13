@@ -97,7 +97,7 @@ export default function MobileArticlePage({
         {aiEnabled && (
           <button
             type="button"
-            className={`m-iconbtn ${showTranslation ? 'is-blue' : ''}`}
+            className={`m-iconbtn ${showTranslation ? 'is-ai' : ''}`}
             onClick={handleTranslate}
             disabled={translating || activeBodyLoading || !activeBody}
             title={showTranslation ? '当前显示中文译文，点击切回原文' : '将正文译为中文'}
@@ -140,20 +140,21 @@ export default function MobileArticlePage({
           {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
             <div className="reader-ai-summary">
               <div className="reader-ai-summary-head">
-                <Sparkles className="h-3.5 w-3.5" /> 哆啦美速读
+                <Sparkles className="h-3.5 w-3.5" /> <span className="ai-grad-text">哆啦美速读</span>
               </div>
               {activeSummary ? (
                 <p className="reader-ai-summary-text">{activeSummary}</p>
+              ) : summarizing ? (
+                <div className="reader-ai-summary-skel" role="status" aria-label="正在生成速读">
+                  <span className="skeleton" /><span className="skeleton" /><span className="skeleton" />
+                </div>
               ) : (
                 <button
                   type="button"
                   onClick={handleSummarize}
-                  disabled={summarizing}
                   className="reader-ai-summary-generate"
                 >
-                  {summarizing
-                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在总结…</>
-                    : '生成本文要点速读'}
+                  生成本文要点速读
                 </button>
               )}
             </div>

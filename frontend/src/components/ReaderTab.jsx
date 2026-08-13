@@ -831,7 +831,7 @@ export default function ReaderTab({
                   title={showTranslation ? '当前显示中文译文，点击切回原文' : '将正文译为中文'}
                   aria-label={showTranslation ? '显示原文' : '译为中文'}
                   aria-pressed={showTranslation}
-                  className={`reader-pane-iconbtn ${showTranslation ? 'is-blue' : ''}`}
+                  className={`reader-pane-iconbtn ${showTranslation ? 'is-ai' : ''}`}
                 >
                   {translating
                     ? <Loader2 className="h-4 w-4 animate-spin" />
@@ -869,20 +869,21 @@ export default function ReaderTab({
               {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
                 <div className="reader-ai-summary">
                   <div className="reader-ai-summary-head">
-                    <Sparkles className="h-3.5 w-3.5" /> 哆啦美速读
+                    <Sparkles className="h-3.5 w-3.5" /> <span className="ai-grad-text">哆啦美速读</span>
                   </div>
                   {activeSummary ? (
                     <p className="reader-ai-summary-text">{activeSummary}</p>
+                  ) : summarizing ? (
+                    <div className="reader-ai-summary-skel" role="status" aria-label="正在生成速读">
+                      <span className="skeleton" /><span className="skeleton" /><span className="skeleton" />
+                    </div>
                   ) : (
                     <button
                       type="button"
                       onClick={handleSummarize}
-                      disabled={summarizing}
                       className="reader-ai-summary-generate"
                     >
-                      {summarizing
-                        ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在总结…</>
-                        : '生成本文要点速读'}
+                      生成本文要点速读
                     </button>
                   )}
                 </div>
