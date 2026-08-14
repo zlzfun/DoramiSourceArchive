@@ -258,6 +258,26 @@ def test_subscription_context_zero_hits_falls_back_to_window(monkeypatch):
     assert ctx.startswith("(检索说明:没有检索到与问题直接相关的文章")
 
 
+def test_subscription_context_corpus_label_swaps_notice_wording(monkeypatch):
+    """corpus_label 换掉检索说明里的语料称呼(v3.33.2)。
+
+    all 档语料不归属提问者:IM 代答渠道曾把全库语料说成「你订阅的文章」——
+    检索说明的措辞必须跟检索域走,subscription 档默认值原样不变。"""
+    sink = make_sink()
+    seed(sink.engine, "a1", "src_a", "兜底文章", "window fallback body")
+
+    async def fake_plan(question, llm_config, usage_meta=None):
+        return {"keywords": ["绝无此词组合"], "date_gte": None, "date_lte": None,
+                "temporal": False, "use_brief": False}
+
+    monkeypatch.setattr(reader_search, "plan_query", fake_plan)
+    ctx, _ = run(reader_search.subscription_context(
+        "问题", engine=sink.engine, source_ids=["src_a"], llm_config=_LLM,
+        corpus_label="哆啦美收录内容"))
+    assert "哆啦美收录内容里最新的一批条目" in ctx
+    assert "订阅" not in ctx
+
+
 def test_subscription_context_window_miss_relaxes_and_notices(monkeypatch):
     """日期窗内零命中:放宽日期窗保主题,并机械注入「窗口内无命中」检索说明。
 

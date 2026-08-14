@@ -892,6 +892,9 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
             llm_config=llm_config,
             usage_meta=UsageMeta(purpose="ask", username=username),
             progress=lambda stage, detail=None: _ask_progress_update(ask_id, stage, detail),
+            # 检索说明的语料称呼跟档位走:all 的语料不归属提问者,不能说成「订阅」
+            # (IM 机器人等代答渠道即 all 档,v3.33.2)。
+            corpus_label="哆啦美收录内容" if scope == "all" else "读者订阅内容",
         )
 
     try:
