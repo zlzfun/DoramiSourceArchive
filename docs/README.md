@@ -39,7 +39,7 @@
 - ◇ [contracts/archive_sync.md](./contracts/archive_sync.md) — collector→reader 的 JSONL 导出/导入契约
   (身份/血缘/校验和)。
 - ◇ [contracts/im_bot_integration.md](./contracts/im_bot_integration.md) — 内网 IM 机器人接入契约:
-  dorami-bot 服务账号程序化登录 + ask(scope=subscription)问答/引用渲染/多轮 history +
+  dorami-bot 服务账号程序化登录 + ask(scope=all,2026-08-14 自 subscription 改判)问答/引用渲染/多轮 history +
   dfeed_ 日报拉取;责任分界与已拍板决策(哆啦美侧零改动)。
 
 ## frontend/ —— 前端纪律(◉ 活跃)

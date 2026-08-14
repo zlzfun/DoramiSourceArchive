@@ -17,8 +17,11 @@
 
 **已拍板决策**（2026-08-13）：
 
-- 问答检索域 **scope=subscription**：`dorami-bot` 账号的订阅名单即机器人的知识域
-  策展开关——哪些源进机器人的回答，管理员在发现页调整订阅即可，不改代码不重启。
+- 问答检索域 **scope=all**（2026-08-14 改判，原拍板 subscription）：检索域=全库
+  可见源（隐藏源照旧排除）。改判理由：subscription 的「策展旋钮」从未被使用，
+  且有诚实性缺陷——平台里有、但 dorami-bot 订阅之外的内容会被答成「没有资料」；
+  IM 用户的心智模型里哆啦美=整个平台。all 本就是 v3.32 给代答场景的预留原语。
+  若将来实测回答被高噪源污染，再回到 subscription+视角参数方案重新评估。
 - 群聊会话历史**群共享**（一个群一份上下文，而非按提问者隔离）。
 - IM 订阅日报是**纯机器人侧状态**（IM 用户/群 ID → 是否订阅，存机器人本地），
   **不映射**成哆啦美账号；哆啦美只对 `dorami-bot` 这一个服务账号可见。
@@ -28,8 +31,10 @@
 1. 内网 reader 实例 `[llm]` 配置可用的 OpenAI 兼容端点——ask 全链路
    （规划/选篇/作答）三处调 LLM，未配置时端点直接 403，这是硬前提。
 2. 管理员创建读者账号 **`dorami-bot`**（role=user），开启该账号的 AI Beta。
-3. 用 `dorami-bot` 登录阅读器，在发现页订阅策展名单（机器人可答范围）
-   **并订阅日报源 `dorami_daily_brief`**。
+3. 用 `dorami-bot` 登录阅读器，**订阅日报源 `dorami_daily_brief`**——scope=all
+   之后订阅名单对问答无影响，但 `dfeed_` 日报拉取的范围=该账号订阅的源，
+   **日报源必须保持订阅**（其余订阅可留可清）；将来清理订阅时勿动日报源，
+   否则日报推送静默断供。
 4. 在设置柜 → 接入集成取得该账号的 `dfeed_` 聚合令牌，交付给机器人配置。
 
 附带可观测性：机器人的全部 AI 调用以 `dorami-bot` 计入 `AiUsageRecord`，
@@ -67,7 +72,7 @@ Content-Type: application/json
 
 {
   "question": "最近一周有哪些模型发布？",
-  "scope": "subscription",
+  "scope": "all",
   "history": [
     {"role": "user", "content": "..."},
     {"role": "assistant", "content": "..."}
@@ -82,7 +87,7 @@ Content-Type: application/json
 {
   "status": "success",
   "answer": "……markdown，行内含 [n] 引用标记……",
-  "scope": "subscription",
+  "scope": "all",
   "sources": [
     {"id": "...", "title": "...", "source_id": "...",
      "source_name": "...", "source_url": "https://原文链接", "publish_date": "2026-08-12"}
