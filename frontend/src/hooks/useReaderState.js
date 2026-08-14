@@ -833,7 +833,7 @@ export function useReaderState({
   // ⚠️ deps 只留真正的触发条件,回调经 ref 取最新:selectArticle/shapeOfSource 会随无关
   // 状态(未读轮询等)重建,若列入 deps,fetch 在途中的任何一次重建都会 cleanup 掉本次
   // 落地(done 已置真不再重试)——表现为深链时灵时不灵的竞态。
-  const deepLinkDoneRef = useRef(false);
+  const deepLinkDoneRef = useRef('');
   const deepLinkCtxRef = useRef(null);
   useEffect(() => {   // 每轮渲染后同步最新回调(声明在深链 effect 之前,同轮先执行)
     deepLinkCtxRef.current = { shapeOfSource, selectArticle, onDeepLinkConsumed };
@@ -860,9 +860,13 @@ export function useReaderState({
       return false;
     }
   }, [showToast]);
+  // doneRef 存「已启动消费的 id」而非布尔:同一 id 在消费在途时 deps 重建重跑 effect
+  // 不会双跳;消费完成后 App 清空 initialArticleId,这里同步清 doneRef——运行时深链
+  // (粘进已开 tab,经 App 的 onPop 再次设值,含同一篇重复粘贴)才能再次落地。
   useEffect(() => {
-    if (!initialArticleId || deepLinkDoneRef.current || sourcesLoading) return;
-    deepLinkDoneRef.current = true;
+    if (!initialArticleId) { deepLinkDoneRef.current = ''; return; }
+    if (deepLinkDoneRef.current === initialArticleId || sourcesLoading) return;
+    deepLinkDoneRef.current = initialArticleId;
     openArticleById(initialArticleId, { silent: true })
       .finally(() => { deepLinkCtxRef.current?.onDeepLinkConsumed?.(); });
   }, [initialArticleId, sourcesLoading, openArticleById]);
