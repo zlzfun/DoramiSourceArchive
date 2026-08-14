@@ -287,6 +287,10 @@ def test_ask_all_scope_covers_unsubscribed_but_not_hidden(monkeypatch, tmp_path)
         assert "未订阅源文章" in user_prompt
         assert "隐藏源文章" not in user_prompt
         assert "整个资讯归档库" in user_prompt  # 范围提示语四档化
+        # 降级检索说明的语料称呼跟档位走(v3.33.2):all 档语料不归属提问者,
+        # 不得说成「读者订阅内容」——IM 代答渠道曾因此回出「基于你订阅的文章」。
+        assert "哆啦美收录内容" in user_prompt
+        assert "读者订阅内容" not in user_prompt
 
 
 def test_ask_progress_lifecycle(monkeypatch, tmp_path):

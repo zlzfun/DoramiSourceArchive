@@ -264,6 +264,7 @@ async def subscription_context(
     llm_config: LLMConfig,
     usage_meta: Optional[UsageMeta] = None,
     progress: Optional[Any] = None,
+    corpus_label: str = "读者订阅内容",
 ) -> tuple:
     """检索圈定型问答(scope=subscription/all)的上下文组装,返回 ``(context, sources)``。
 
@@ -271,6 +272,9 @@ async def subscription_context(
     本管线自身范围无关,名字保留 subscription_ 前缀是因为订阅域是它的主场景。
     空域返回空上下文,由问答提示词如实说明资料不足。
     progress(stage, detail) 可选:plan → search → select 三阶段上报(答案阶段由调用方报)。
+    corpus_label:检索说明里对语料域的称呼——subscription 档是「读者订阅内容」,
+    all 档应传「哆啦美收录内容」;措辞跟着检索域走,否则 all 档(如 IM 代答渠道)
+    的降级说明会把全库语料说成提问者的订阅(v3.33.2)。
     """
     if not source_ids:
         return "", []
@@ -325,7 +329,7 @@ async def subscription_context(
         candidates = fetch_recent_window(engine, source_ids)
         if candidates and not (plan and plan["temporal"]):
             notice = (
-                "(检索说明:没有检索到与问题直接相关的文章;以下是读者订阅内容里最新的一批条目,"
+                f"(检索说明:没有检索到与问题直接相关的文章;以下是{corpus_label}里最新的一批条目,"
                 "发布日期见各条标注。若其中没有能回答问题的内容,请如实说明,不要强行关联。)"
             )
     if not candidates:
