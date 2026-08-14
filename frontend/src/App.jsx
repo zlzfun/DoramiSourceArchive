@@ -242,10 +242,12 @@ export default function App() {
   // 带文章深链进来的 admin 一律落到阅读器:深链的意图明确到具体一篇,压过
   // 默认落地偏好、也压过本 tab 会话里「上次停在管理台」的记忆——否则同事发来的
   // 链接会开在看不见的隐藏阅读器里,用户只看到管理台,以为链接坏了。
+  // deepLinkArticle 也在条件里:运行时深链(把链接粘进已开着的 tab,见 onPop)同样
+  // 要把停在管理台的 admin 切过去;消费后清空重跑时二者皆空,原样返回。
   useEffect(() => {
-    if (!runtimeLoaded || !isAdminRole || !hadDeepLink) return;
+    if (!runtimeLoaded || !isAdminRole || (!hadDeepLink && !deepLinkArticle)) return;
     enterReader();
-  }, [runtimeLoaded, isAdminRole, hadDeepLink, enterReader]);
+  }, [runtimeLoaded, isAdminRole, hadDeepLink, deepLinkArticle, enterReader]);
 
   // 登录默认落地界面:本会话尚无切换记录(sessionStorage 空)时,按账户偏好落地。
   useEffect(() => {
@@ -333,9 +335,20 @@ export default function App() {
   }, [runtimeInfo.collector_enabled, jumpWithFocus]);
 
   // 历史锚点：初始播种 + 监听浏览器返回/前进。
+  // 只在已登录后接管 URL——登录门前播种会把文章深链(#/reader/a/{id})提前改写成
+  // #/reader,而深链 id 只存在 React state 里:登录页阶段任何一次页面重载(切去
+  // IM/密码管理器后 webview 被回收重建、手动刷新)都会让深链永久丢失,登录后落首页。
+  // 推迟到 authenticated 后,登录页期间 hash 保持原样,重载后重新 mount 仍取得到 id;
+  // 登录门本身没有导航体系,不播种也无历史可锚。会话过期再登录时重播 replace 无损。
   useEffect(() => {
+    if (authState.status !== 'authenticated') return undefined;
     commitNav(navRef.current, { replace: true });
     const onPop = (event) => {
+      // 运行时深链:把 #/reader/a/{id} 粘进已开着的 tab(地址栏 hash 导航同样走
+      // popstate,不 remount)——mount 时那次一次性取值接不住,这里补取。
+      // 非深链 hash(常规返回/前进)不动 deepLinkArticle,避免误清在途消费。
+      const deepId = deepLinkArticleId(window.location.hash);
+      if (deepId) setDeepLinkArticle(deepId);
       let route = event.state && event.state.tab ? event.state : null;
       if (!route) {
         const h = hashToRoute(window.location.hash);
@@ -351,7 +364,7 @@ export default function App() {
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [authState.status]);
 
   const toastTimerRef = useRef(null);
   const hideToast = useCallback(() => {
