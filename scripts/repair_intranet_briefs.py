@@ -6,9 +6,11 @@
 日报又被知识台账刻意排除(DataTab exclude_source_ids)、也不是节点,
 界面删不着,故走本脚本:不删记录、不动同步游标、幂等可重跑。
 
-用法(在内网服务器项目根,后端需在运行):
-  DORAMI_FEED_TOKEN=dfeed_xxx \
-  .venv/bin/python scripts/repair_intranet_briefs.py [--local http://127.0.0.1:8088] [--dry-run]
+用法(在内网服务器项目根,后端需在运行;**DORAMI_CONFIG_FILE 须与后端一致**,
+这样 ini 的 [proxy]/[network] 出网配置才会生效——脚本与后端同路出网,
+否则裸 httpx 直连 443 会被内网网关明文拦截,报 SSL WRONG_VERSION_NUMBER):
+  DORAMI_CONFIG_FILE=config/production.ini DORAMI_FEED_TOKEN=dfeed_xxx \
+  venv/bin/python scripts/repair_intranet_briefs.py [--local http://127.0.0.1:8088] [--dry-run]
 
   运行时交互输入内网 admin 账号密码(不落盘不回显);
   生产地址默认 https://www.dorami.cloud,可用 DORAMI_PROD_BASE 覆盖。
@@ -18,8 +20,16 @@ import getpass
 import os
 import sqlite3
 import sys
+from pathlib import Path
 
 import httpx
+
+# 复用项目网络配置:ini [proxy] 写进进程环境(httpx trust_env 拾取)、
+# [network] disable_tls_verify 决定 verify——与后端定时同步完全同路出网。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from config import settings  # noqa: E402
+
+settings.apply_process_environment()
 
 FOOTER = "由哆啦美·归档中枢生成"
 BRIEF_SOURCE = "dorami_daily_brief"
@@ -58,6 +68,7 @@ def main() -> int:
         params={"source_ids": BRIEF_SOURCE, "include_content": "true", "limit": 500},
         headers={"Authorization": f"Bearer {feed_token}"},
         timeout=60,
+        verify=settings.network.tls_verify,  # 内网 MITM 网关重签场景随 ini 关校验
     )
     r.raise_for_status()
     data = r.json()
@@ -75,7 +86,8 @@ def main() -> int:
     # 3. 登录内网 admin(密码交互输入,不回显不落盘)
     user = input("内网 admin 用户名: ").strip()
     pw = getpass.getpass("密码: ")
-    with httpx.Client(base_url=args.local, timeout=60) as c:
+    # 本机 API 不走代理(trust_env=False,免受刚注入的 proxy 环境影响)
+    with httpx.Client(base_url=args.local, timeout=60, trust_env=False) as c:
         lr = c.post("/api/auth/login", json={"username": user, "password": pw})
         lr.raise_for_status()
         # cookie_secure=true 时 Secure cookie 不回发 http,显式拼头兼容两种姿态
