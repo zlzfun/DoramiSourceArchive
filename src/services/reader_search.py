@@ -32,7 +32,7 @@ from llm import prompts
 from llm.client import ChatMessage, UsageMeta, chat_completion, parse_json_object
 from models.db import ArticleRecord
 from services.reader_ai import build_numbered_context, build_sources_payload
-from storage.fts import fts_search_ids
+from storage.fts import fts_search_ranked
 
 logger = logging.getLogger(__name__)
 
@@ -56,20 +56,46 @@ _MAX_FTS_IDS = 10000
 
 # ==================== 查询规划 ====================
 
+def _history_text(history: Optional[List[Any]]) -> str:
+    """把多轮历史压成规划器可读的短文本(最近几条,单条截断)。
+
+    追问型问题(「再展开讲讲第二点」)只有结合上文才能还原出可检索的完整问题;
+    清洗复用 reader_ai._sanitize_history(role 白名单/截断),这里再压到规划
+    prompt 的预算内——历史是给规划器理解指代用的,不是给它复述的。
+    """
+    from services.reader_ai import _sanitize_history
+
+    turns = _sanitize_history(history)[-4:]
+    lines: List[str] = []
+    for turn in turns:
+        speaker = "读者" if turn.role == "user" else "哆啦美"
+        content = turn.content if len(turn.content) <= 300 else turn.content[:300] + "…"
+        lines.append(f"{speaker}: {content}")
+    return "\n".join(lines)
+
+
 async def plan_query(
-    question: str, llm_config: LLMConfig, usage_meta: Optional[UsageMeta] = None
+    question: str,
+    llm_config: LLMConfig,
+    usage_meta: Optional[UsageMeta] = None,
+    *,
+    history_text: str = "",
 ) -> Optional[Dict[str, Any]]:
     """把自然语言问题规划成检索计划;任何失败返回 None(降级为原词检索)。
 
+    history_text 非空时随问题注入最近对话——追问/指代型问题须结合上文还原成
+    独立问题再规划(v3.34,此前每轮只看当前问句,追问会规划出无意义关键词)。
     返回形状:{"keywords": [str], "date_gte": str|None, "date_lte": str|None,
-    "temporal": bool, "use_brief": bool}(字段已清洗校验)。
+    "temporal": bool, "use_brief": bool, "chat": bool}(字段已清洗校验)。
     """
     today = datetime.now().strftime("%Y-%m-%d")
     try:
         raw = await chat_completion(
             messages=[
                 ChatMessage(role="system", content=prompts.SEARCH_PLAN_SYSTEM_PROMPT),
-                ChatMessage(role="user", content=prompts.build_search_plan_user_prompt(question, today=today)),
+                ChatMessage(role="user", content=prompts.build_search_plan_user_prompt(
+                    question, today=today, history_text=history_text,
+                )),
             ],
             config=llm_config,
             response_json=True,
@@ -103,22 +129,6 @@ async def plan_query(
 
 # ==================== 候选召回 ====================
 
-def _candidate_query(source_ids: List[str], date_gte: Optional[str], date_lte: Optional[str]):
-    query = (
-        select(ArticleRecord)
-        .where(
-            ArticleRecord.source_id.in_(source_ids),
-            ArticleRecord.has_content == True,  # noqa: E712
-        )
-    )
-    if date_gte:
-        query = query.where(ArticleRecord.publish_date >= date_gte)
-    if date_lte:
-        # 上限含当日(publish_date 可能带时间部分,补日末哨兵)。
-        query = query.where(ArticleRecord.publish_date <= f"{date_lte}~")
-    return query
-
-
 def fetch_candidates(
     engine,
     *,
@@ -128,34 +138,76 @@ def fetch_candidates(
     date_lte: Optional[str] = None,
     limit: int = CANDIDATE_LIMIT,
 ) -> List[ArticleRecord]:
-    """按关键词组并集做 FTS 召回,限定订阅域与日期窗,按发布日期倒序截断。
+    """按关键词组并集召回,限定检索域与日期窗,**相关性(bm25)优先**排序截断。
 
-    FTS 不可用(fts_search_ids 全部返回 None)时降级为标题 LIKE(任一关键词命中)。
+    v3.34 检索质量修复:此前召回只按发布日期倒序截断,FTS 的 bm25 分数被整个
+    丢弃——宽关键词高命中时真正对题但稍旧的文章会被日期序挤出候选池。现行为:
+
+    - trigram 可用的关键词走 FTS(fts_search_ranked),逐 rowid 取各关键词里
+      最好(最小)的 bm25 rank;
+    - 短于 trigram 下限(3 字符)的关键词(常见:两字中文实体名如「豆包」)与
+      FTS 整体不可用时的关键词,走标题 LIKE **补召回**——并入同一候选池,
+      无 rank 的命中排在 FTS 命中之后、按日期倒序;
+    - 排序:rank 升序(越小越相关)为主序,发布日期倒序为次序;两阶段取数——
+      先取轻量列(id/rowid/日期)排序截断,再按序装载完整记录,避免为排序把
+      全量正文载入内存。
     keywords 为空或无候选时返回 []。
     """
     if not keywords or not source_ids:
         return []
     with Session(engine) as session:
-        hit_ids: set = set()
-        fts_usable = False
+        ranks: Dict[int, float] = {}
+        like_keywords: List[str] = []
         for keyword in keywords:
-            ids = fts_search_ids(session, keyword)
-            if ids is not None:
-                fts_usable = True
-                hit_ids.update(ids)
+            hits = fts_search_ranked(session, keyword)
+            if hits is None:
+                # 不可用(FTS 缺失)或过短(trigram 命不中)——进 LIKE 补召回分支。
+                like_keywords.append(keyword)
+                continue
+            for rowid, rank in hits.items():
+                if rowid not in ranks or rank < ranks[rowid]:
+                    ranks[rowid] = rank
 
-        query = _candidate_query(source_ids, date_gte, date_lte)
-        if fts_usable:
-            if not hit_ids:
-                return []
-            rowids = list(hit_ids)[:_MAX_FTS_IDS]
-            query = query.where(literal_column("articles.rowid").in_(rowids))
-        else:
-            query = query.where(
-                or_(*[ArticleRecord.title.contains(keyword) for keyword in keywords])
+        rowid_col = literal_column("articles.rowid")
+        conditions = []
+        if ranks:
+            top_ids = sorted(ranks, key=ranks.get)[:_MAX_FTS_IDS]
+            conditions.append(rowid_col.in_(top_ids))
+        if like_keywords:
+            conditions.append(
+                or_(*[ArticleRecord.title.contains(keyword) for keyword in like_keywords])
             )
-        query = query.order_by(ArticleRecord.publish_date.desc()).limit(limit)
-        return list(session.exec(query).all())
+        if not conditions:
+            return []
+
+        query = (
+            select(ArticleRecord.id, rowid_col.label("rid"), ArticleRecord.publish_date)
+            .where(
+                ArticleRecord.source_id.in_(source_ids),
+                ArticleRecord.has_content == True,  # noqa: E712
+                or_(*conditions),
+            )
+        )
+        if date_gte:
+            query = query.where(ArticleRecord.publish_date >= date_gte)
+        if date_lte:
+            # 上限含当日(publish_date 可能带时间部分,补日末哨兵)。
+            query = query.where(ArticleRecord.publish_date <= f"{date_lte}~")
+        rows = list(session.exec(query).all())
+        # 稳定排序两趟:先日期倒序(次序),再 rank 升序(主序);LIKE 命中无 rank,
+        # 以 +inf 落在全部 FTS 命中之后、组内保持日期倒序。
+        rows.sort(key=lambda r: (r[2] or ""), reverse=True)
+        rows.sort(key=lambda r: ranks.get(r[1], float("inf")))
+        ordered_ids = [r[0] for r in rows[:limit]]
+        if not ordered_ids:
+            return []
+        by_id = {
+            rec.id: rec
+            for rec in session.exec(
+                select(ArticleRecord).where(ArticleRecord.id.in_(ordered_ids))
+            ).all()
+        }
+        return [by_id[i] for i in ordered_ids if i in by_id]
 
 
 def fetch_recent_window(
@@ -265,6 +317,7 @@ async def subscription_context(
     usage_meta: Optional[UsageMeta] = None,
     progress: Optional[Any] = None,
     corpus_label: str = "读者订阅内容",
+    history: Optional[List[Any]] = None,
 ) -> tuple:
     """检索圈定型问答(scope=subscription/all)的上下文组装,返回 ``(context, sources)``。
 
@@ -275,12 +328,16 @@ async def subscription_context(
     corpus_label:检索说明里对语料域的称呼——subscription 档是「读者订阅内容」,
     all 档应传「哆啦美收录内容」;措辞跟着检索域走,否则 all 档(如 IM 代答渠道)
     的降级说明会把全库语料说成提问者的订阅(v3.33.2)。
+    history:多轮对话历史(与作答侧同一份),供规划器还原追问/指代(v3.34)。
+    规划与选篇是轻量结构化调用,走辅助轻模型档(llm_config.for_aux(),未配置
+    aux_model 时即主模型)。
     """
     if not source_ids:
         return "", []
+    aux_config = llm_config.for_aux()
 
     _notify(progress, "plan")
-    plan = await plan_query(question, llm_config, usage_meta)
+    plan = await plan_query(question, aux_config, usage_meta, history_text=_history_text(history))
     if plan is not None and plan.get("chat"):
         # 闲聊/对话元问题(v3.32 二轮返修):与资讯内容无关,不检索不注入,纯对话作答
         # ——等待态由此从「理解问题」直接跳到「组织回答」,不画未发生的检索阶段。
@@ -336,10 +393,13 @@ async def subscription_context(
         return "", []
 
     _notify(progress, "select", {"candidates": len(candidates)})
-    chosen = await select_articles(question, candidates, llm_config, usage_meta)
+    chosen = await select_articles(question, candidates, aux_config, usage_meta)
     # 上下文与 sources 必须同源同序(编号 [n] 即引用锚,见 reader_ai 核心层)。
+    # 单篇预算按选中篇数摊分(下限保底):选中少时长文能带出更多正文,
+    # 不再固定每篇 2000 字符只喂开头(v3.34)。
+    per_article = max(_CONTEXT_PER_ARTICLE, _CONTEXT_TOTAL // max(1, len(chosen)))
     context, included = build_numbered_context(
-        chosen, per_article_chars=_CONTEXT_PER_ARTICLE, total_chars=_CONTEXT_TOTAL
+        chosen, per_article_chars=per_article, total_chars=_CONTEXT_TOTAL
     )
     if notice:
         context = f"{notice}\n\n{context}" if context else notice

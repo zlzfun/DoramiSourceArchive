@@ -211,3 +211,103 @@ def test_admin_not_exempt_from_quota(monkeypatch, tmp_path):
         _login(client, "admin", "admin")
         resp = client.post("/api/reader/ai/translate", json={"article_id": "a1"})
         assert resp.status_code == 429
+
+
+# ──────────────── 全局日 token 预算(v3.34) ────────────────
+
+def _seed_tokens(engine, purpose, total_tokens, username="someone"):
+    _seed_ai_usage(engine, username, purpose, calls=1)
+    from models.db import AiUsageRecord
+    from sqlmodel import select
+    with Session(engine) as session:
+        row = session.exec(select(AiUsageRecord).where(
+            AiUsageRecord.username == username, AiUsageRecord.purpose == purpose)).first()
+        row.total_tokens = total_tokens
+        session.add(row)
+        session.commit()
+
+
+def test_global_budget_429_when_exhausted(monkeypatch, tmp_path):
+    """全站日预算达上限:任何账户任何 AI 端点前置 429,不触发 LLM 调用。"""
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "budget_hit.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_article(sink.engine, "a1", "rss_x", "T", "body text")
+    calls = _patch_llm(monkeypatch)
+
+    from services import accounts as accounts_service
+    with Session(sink.engine) as session:
+        accounts_service.set_ai_daily_token_budget(session, 1000)
+    # 别的账户已把预算吃满——预算是全站合计,不分账户
+    _seed_tokens(sink.engine, "translate", 1000, username="others")
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        resp = client.post("/api/reader/ai/translate", json={"article_id": "a1"})
+        assert resp.status_code == 429
+        assert "全站上限" in resp.json()["detail"]
+        assert calls == []  # 前置拦截,未触发 LLM
+
+
+def test_global_budget_zero_means_unlimited(monkeypatch, tmp_path):
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "budget_off.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_article(sink.engine, "a1", "rss_x", "T", "body text")
+    _patch_llm(monkeypatch)
+    _seed_tokens(sink.engine, "ask", 10_000_000, username="others")  # 预算未设,消耗再大也不拦
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        resp = client.post("/api/reader/ai/translate", json={"article_id": "a1"})
+        assert resp.status_code == 200
+
+
+def test_global_budget_ignores_system_purposes(monkeypatch, tmp_path):
+    """日报等系统任务的 token 不计入读者面预算(purpose 白名单)。"""
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "budget_sys.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_article(sink.engine, "a1", "rss_x", "T", "body text")
+    _patch_llm(monkeypatch)
+
+    from services import accounts as accounts_service
+    with Session(sink.engine) as session:
+        accounts_service.set_ai_daily_token_budget(session, 1000)
+    _seed_tokens(sink.engine, "daily_brief_map", 999_999, username="system")
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        resp = client.post("/api/reader/ai/translate", json={"article_id": "a1"})
+        assert resp.status_code == 200  # 系统用途不占读者面预算
+
+
+def test_budget_helpers_roundtrip(tmp_path, monkeypatch):
+    from services import accounts as accounts_service
+    import api.app as app_module
+    sink = _make_sink(tmp_path, "budget_kv.db")
+    with Session(sink.engine) as session:
+        assert accounts_service.ai_daily_token_budget(session) == 0  # 默认不限
+        accounts_service.set_ai_daily_token_budget(session, 5000)
+        assert accounts_service.ai_daily_token_budget(session) == 5000
+        accounts_service.set_ai_daily_token_budget(session, -3)  # 负值夹到 0
+        assert accounts_service.ai_daily_token_budget(session) == 0
+
+
+def test_admin_endpoint_reads_and_writes_budget(monkeypatch, tmp_path):
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "budget_api.db")
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        got = client.get("/api/admin/ai-beta/global").json()
+        assert got["daily_token_budget"] == 0 and "tokens_used_today" in got
+        # 只写预算不动总闸
+        res = client.post("/api/admin/ai-beta/global", json={"daily_token_budget": 123456})
+        assert res.status_code == 200
+        body = res.json()
+        assert body["daily_token_budget"] == 123456 and body["enabled"] is True
+        # 负数 400
+        assert client.post("/api/admin/ai-beta/global", json={"daily_token_budget": -1}).status_code == 400
+        # 只写总闸不动预算(向后兼容旧前端 {enabled} 载荷)
+        res2 = client.post("/api/admin/ai-beta/global", json={"enabled": False})
+        assert res2.json()["enabled"] is False
+        assert res2.json()["daily_token_budget"] == 123456

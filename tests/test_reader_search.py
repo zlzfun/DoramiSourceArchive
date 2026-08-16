@@ -120,6 +120,36 @@ def test_fetch_candidates_empty_keywords():
     assert reader_search.fetch_candidates(sink.engine, keywords=[], source_ids=["src_a"]) == []
 
 
+def test_fetch_candidates_relevance_beats_recency():
+    """bm25 相关性是主序(v3.34):高度对题的旧文不再被日期序挤出候选头部。
+
+    旧文标题+正文密集命中关键词,新文只在长正文里一笔带过——bm25 应把旧文
+    排在前面;此前按 publish_date 倒序,新文永远在前。"""
+    sink = make_sink()
+    filler = "unrelated filler text about many other things. " * 40
+    seed(sink.engine, "hit_old", "src_a", "quantum computing deep dive",
+         "quantum computing quantum computing detailed analysis of quantum computing",
+         publish_date="2026-06-01")
+    seed(sink.engine, "graze_new", "src_a", "Daily digest",
+         filler + " one passing mention of quantum computing.", publish_date="2026-08-10")
+    hits = reader_search.fetch_candidates(
+        sink.engine, keywords=["quantum computing"], source_ids=["src_a"])
+    assert [r.id for r in hits] == ["hit_old", "graze_new"]
+
+
+def test_fetch_candidates_short_keyword_like_recall():
+    """短于 trigram 下限(3 字符)的关键词(两字中文实体名)走标题 LIKE 补召回,
+    与 FTS 命中并集;此前这类词被静默丢弃。"""
+    sink = make_sink()
+    seed(sink.engine, "zh", "src_a", "豆包大模型升级", "字节的模型有更新")
+    seed(sink.engine, "en", "src_a", "Claude update", "anthropic claude release notes body")
+    hits = reader_search.fetch_candidates(
+        sink.engine, keywords=["豆包", "claude"], source_ids=["src_a"])
+    assert {r.id for r in hits} == {"zh", "en"}
+    # LIKE 命中(无 rank)排在 FTS 命中之后
+    assert [r.id for r in hits] == ["en", "zh"]
+
+
 def test_fetch_recent_window_orders_by_fetched_desc():
     sink = make_sink()
     seed(sink.engine, "a1", "src_a", "Older", "body", publish_date="2026-08-01")
@@ -184,7 +214,7 @@ def test_subscription_context_planned_search(monkeypatch):
     seed(sink.engine, "a1", "src_a", "量子突破", "quantum computing breakthrough body")
     seed(sink.engine, "a2", "src_a", "无关文章", "totally unrelated body")
 
-    async def fake_plan(question, llm_config, usage_meta=None):
+    async def fake_plan(question, llm_config, usage_meta=None, **kwargs):
         return {"keywords": ["quantum"], "date_gte": None, "date_lte": None,
                 "temporal": False, "use_brief": False}
 
@@ -201,7 +231,7 @@ def test_subscription_context_chat_skips_retrieval(monkeypatch):
     sink = make_sink()
     seed(sink.engine, "a1", "src_a", "库里有文章", "some article body")
 
-    async def fake_plan(question, llm_config, usage_meta=None):
+    async def fake_plan(question, llm_config, usage_meta=None, **kwargs):
         return {"keywords": [], "date_gte": None, "date_lte": None,
                 "temporal": False, "use_brief": False, "chat": True}
 
@@ -218,7 +248,7 @@ def test_subscription_context_temporal_uses_window(monkeypatch):
     sink = make_sink()
     seed(sink.engine, "a1", "src_a", "最新文章", "fresh body text")
 
-    async def fake_plan(question, llm_config, usage_meta=None):
+    async def fake_plan(question, llm_config, usage_meta=None, **kwargs):
         return {"keywords": [], "date_gte": None, "date_lte": None,
                 "temporal": True, "use_brief": False}
 
@@ -233,7 +263,7 @@ def test_subscription_context_plan_failure_falls_back_to_raw_query(monkeypatch):
     sink = make_sink()
     seed(sink.engine, "a1", "src_a", "Kimi 发布", "Kimi new model announcement body")
 
-    async def fake_plan(question, llm_config, usage_meta=None):
+    async def fake_plan(question, llm_config, usage_meta=None, **kwargs):
         return None  # 规划失败
 
     monkeypatch.setattr(reader_search, "plan_query", fake_plan)
@@ -246,7 +276,7 @@ def test_subscription_context_zero_hits_falls_back_to_window(monkeypatch):
     sink = make_sink()
     seed(sink.engine, "a1", "src_a", "兜底文章", "window fallback body")
 
-    async def fake_plan(question, llm_config, usage_meta=None):
+    async def fake_plan(question, llm_config, usage_meta=None, **kwargs):
         return {"keywords": ["绝无此词组合"], "date_gte": None, "date_lte": None,
                 "temporal": False, "use_brief": False}
 
@@ -266,7 +296,7 @@ def test_subscription_context_corpus_label_swaps_notice_wording(monkeypatch):
     sink = make_sink()
     seed(sink.engine, "a1", "src_a", "兜底文章", "window fallback body")
 
-    async def fake_plan(question, llm_config, usage_meta=None):
+    async def fake_plan(question, llm_config, usage_meta=None, **kwargs):
         return {"keywords": ["绝无此词组合"], "date_gte": None, "date_lte": None,
                 "temporal": False, "use_brief": False}
 
@@ -287,7 +317,7 @@ def test_subscription_context_window_miss_relaxes_and_notices(monkeypatch):
     seed(sink.engine, "old", "src_a", "七月的模型发布", "frontier model launch recap",
          publish_date="2026-07-17")
 
-    async def fake_plan(question, llm_config, usage_meta=None):
+    async def fake_plan(question, llm_config, usage_meta=None, **kwargs):
         return {"keywords": ["model launch"], "date_gte": "2026-08-05", "date_lte": None,
                 "temporal": False, "use_brief": False}
 
@@ -305,7 +335,7 @@ def test_subscription_context_temporal_has_no_notice(monkeypatch):
     sink = make_sink()
     seed(sink.engine, "a1", "src_a", "最新文章", "fresh body")
 
-    async def fake_plan(question, llm_config, usage_meta=None):
+    async def fake_plan(question, llm_config, usage_meta=None, **kwargs):
         return {"keywords": [], "date_gte": None, "date_lte": None,
                 "temporal": True, "use_brief": False}
 
@@ -321,7 +351,7 @@ def test_subscription_context_use_brief_scopes_to_daily_brief(monkeypatch):
     seed(sink.engine, "b1", reader_search.BRIEF_SOURCE_ID, "八月第一周日报", "weekly recap of AI events")
     seed(sink.engine, "a1", "src_a", "原文报道", "weekly recap mentioned here too")
 
-    async def fake_plan(question, llm_config, usage_meta=None):
+    async def fake_plan(question, llm_config, usage_meta=None, **kwargs):
         return {"keywords": ["recap"], "date_gte": None, "date_lte": None,
                 "temporal": False, "use_brief": True}
 
@@ -336,3 +366,63 @@ def test_subscription_context_use_brief_scopes_to_daily_brief(monkeypatch):
     ctx2, sources2 = run(reader_search.subscription_context(
         "本周盘点", engine=sink.engine, source_ids=["src_a"], llm_config=_LLM))
     assert [s["title"] for s in sources2] == ["原文报道"]
+
+
+# ──────────────── 追问上下文与预算(v3.34) ────────────────
+
+def test_history_text_compacts_recent_turns():
+    history = [
+        {"role": "user", "content": "Claude 有什么新功能?"},
+        {"role": "assistant", "content": "最近发布了 X。" * 100},
+        {"role": "system", "content": "should be dropped"},
+        {"role": "user", "content": "再展开讲讲第二点"},
+    ]
+    text = reader_search._history_text(history)
+    lines = text.splitlines()
+    assert lines[0].startswith("读者: Claude 有什么新功能?")
+    assert lines[1].startswith("哆啦美: ") and lines[1].endswith("…")  # 超长截断
+    assert all("system" not in ln for ln in lines)  # 非法 role 剔除
+    assert reader_search._history_text(None) == ""
+
+
+def test_plan_query_injects_history_block(monkeypatch):
+    calls = _patch_chat(monkeypatch, '{"keywords": ["k12"], "temporal": false}')
+    run(reader_search.plan_query("再展开讲讲第二点", _LLM, history_text="读者: 上一个问题"))
+    user_prompt = calls[0][1]
+    assert "【最近对话" in user_prompt and "上一个问题" in user_prompt
+    # 不传历史时不渲染该块
+    calls2 = _patch_chat(monkeypatch, '{"keywords": ["k12"], "temporal": false}')
+    run(reader_search.plan_query("独立问题", _LLM))
+    assert "【最近对话" not in calls2[0][1]
+
+
+def test_subscription_context_passes_history_to_planner(monkeypatch):
+    sink = make_sink()
+    seen = {}
+
+    async def fake_plan(question, llm_config, usage_meta=None, *, history_text=""):
+        seen["history_text"] = history_text
+        return {"keywords": [], "date_gte": None, "date_lte": None,
+                "temporal": False, "use_brief": False, "chat": True}
+
+    monkeypatch.setattr(reader_search, "plan_query", fake_plan)
+    run(reader_search.subscription_context(
+        "再展开讲讲", engine=sink.engine, source_ids=["src_a"], llm_config=_LLM,
+        history=[{"role": "user", "content": "之前的问题"}]))
+    assert "之前的问题" in seen["history_text"]
+
+
+def test_subscription_context_budget_spreads_across_few_articles(monkeypatch):
+    """选中篇数少时单篇预算摊分:长文不再只喂开头 2000 字符。"""
+    sink = make_sink()
+    long_body = "quantum breakthrough details. " + ("x" * 5000) + " TAIL_MARKER_TOKEN"
+    seed(sink.engine, "long", "src_a", "长文", long_body)
+
+    async def fake_plan(question, llm_config, usage_meta=None, **kwargs):
+        return {"keywords": ["quantum"], "date_gte": None, "date_lte": None,
+                "temporal": False, "use_brief": False}
+
+    monkeypatch.setattr(reader_search, "plan_query", fake_plan)
+    ctx, _ = run(reader_search.subscription_context(
+        "量子进展?", engine=sink.engine, source_ids=["src_a"], llm_config=_LLM))
+    assert "TAIL_MARKER_TOKEN" in ctx  # 单篇独享全额预算,正文尾部可达

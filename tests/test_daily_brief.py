@@ -61,7 +61,7 @@ def test_collect_candidates_strict_cursor_and_excludes_self(tmp_path):
     _seed(sink.engine, "a2", "src_a", "2026-06-03T00:00:00")
     _seed(sink.engine, "old_brief", db.DAILY_BRIEF_SOURCE_ID, "2026-06-04T00:00:00")
     with Session(sink.engine) as session:
-        candidates, max_seen = collect_candidates(session, cursor="2026-06-02T00:00:00")
+        candidates, max_seen, _ = collect_candidates(session, cursor="2026-06-02T00:00:00")
     ids = {c.id for c in candidates}
     assert ids == {"a2"}  # a1 在游标前被排除；日报自身被排除
     assert max_seen == "2026-06-03T00:00:00"
@@ -73,7 +73,7 @@ def test_collect_candidates_empty_cursor_takes_all_recent(tmp_path):
     _seed(sink.engine, "old1", "src_a", "2026-01-01T00:00:00")
     _seed(sink.engine, "old2", "src_b", "2026-02-01T00:00:00")
     with Session(sink.engine) as session:
-        candidates, max_seen = collect_candidates(session, cursor="")
+        candidates, max_seen, _ = collect_candidates(session, cursor="")
     assert {c.id for c in candidates} == {"old1", "old2"}
     assert max_seen == "2026-02-01T00:00:00"
 
@@ -84,10 +84,11 @@ def test_collect_candidates_empty_cursor_caps_total(tmp_path):
     for i in range(6):
         _seed(sink.engine, f"n{i}", f"s{i}", f"2026-06-0{i+1}T00:00:00")
     with Session(sink.engine) as session:
-        candidates, _ = collect_candidates(session, cursor="", max_total=3)
+        candidates, _, scanned = collect_candidates(session, cursor="", max_total=3)
     assert len(candidates) == 3
     # 取最新的三篇（06-06 / 06-05 / 06-04）
     assert {c.id for c in candidates} == {"n5", "n4", "n3"}
+    assert scanned == 6  # 裁剪观测:扫描总数如实上报(6 篇里取用 3)
 
 
 def test_collect_candidates_per_source_cap(tmp_path):
@@ -95,7 +96,7 @@ def test_collect_candidates_per_source_cap(tmp_path):
     for i in range(5):
         _seed(sink.engine, f"x{i}", "busy", f"2026-06-1{i}T00:00:00")
     with Session(sink.engine) as session:
-        candidates, _ = collect_candidates(session, cursor="2026-06-01T00:00:00", per_source_cap=2)
+        candidates, _, _ = collect_candidates(session, cursor="2026-06-01T00:00:00", per_source_cap=2)
     assert len([c for c in candidates if c.source_id == "busy"]) == 2
 
 
@@ -308,25 +309,17 @@ def test_generate_success_writes_and_advances_cursor(tmp_path, monkeypatch):
         assert last["status"] == "success"
 
 
-def test_generate_empty_reduce_fails_no_write_no_cursor_move(tmp_path, monkeypatch):
-    """reduce 空产(思考型模型耗尽输出配额)必须失败:不写库、不推游标。
+def test_generate_empty_content_fails_no_write_no_cursor_move(tmp_path, monkeypatch):
+    """正文空产必须失败:不写库、不推游标(_persist_brief 断言护栏)。
 
-    2026-08 生产事故回归:空正文曾以 status=success 落库成 NULL,
-    阅读器呈现「暂无正文」且当日候选被游标静默消费。
+    2026-08 生产事故回归:空正文曾以 status=success 落库成 NULL。v3.34 起
+    正文由 render_brief_markdown 确定性渲染、LLM 空产已无从发生,此处直接
+    模拟渲染层回空,验证护栏仍在(防未来回归)。
     """
     import pytest
 
-    async def _empty_reduce(*, messages, config, **kwargs):
-        system = messages[0].content
-        if "title_cn" in system and "score" in system:  # MAP 照常
-            return json.dumps({
-                "title_cn": "中文标题", "classification": "产业资讯", "source": "某来源",
-                "company": "OpenAI", "realm": "基础大模型", "summary": ["**X**：细节"],
-                "comment": "点评", "tags": ["标签"], "score": 8,
-            })
-        return ""  # reduce 空产
-
-    monkeypatch.setattr(db, "chat_completion", _empty_reduce)
+    monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
+    monkeypatch.setattr(db, "render_brief_markdown", lambda *a, **k: "")
     sink = _make_sink(tmp_path)
     _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
     with Session(sink.engine) as session:
@@ -461,11 +454,11 @@ def test_collect_candidates_respects_source_scope(tmp_path):
             ))
         session.commit()
 
-        all_cands, seen_all = db.collect_candidates(session, cursor="")
+        all_cands, seen_all, _ = db.collect_candidates(session, cursor="")
         assert {c.source_id for c in all_cands} == {"src_a", "src_b"}
         assert seen_all == "2026-07-17T02:00:00"
 
-        scoped, seen_scoped = db.collect_candidates(session, cursor="", source_ids=["src_a"])
+        scoped, seen_scoped, _ = db.collect_candidates(session, cursor="", source_ids=["src_a"])
         assert {c.source_id for c in scoped} == {"src_a"} and len(scoped) == 2
         # 游标只由名单内文章推进(src_b 的 02:00 不计)
         assert seen_scoped == "2026-07-17T01:00:00"
@@ -483,3 +476,161 @@ def test_source_scope_setting_roundtrip(tmp_path):
         assert db.read_source_scope(session) == ["a", "b"]
         db.write_source_scope(session, [])
         assert db.read_source_scope(session) is None
+
+
+# ---------------- 确定性渲染(v3.34) ----------------
+
+def test_render_brief_markdown_sections_and_entries():
+    items = [
+        _scored_full(9, source="qbit", classification="模型发布", source_url="https://a.test/1",
+                     summary=["**新模型**：细节一", "**上下文**：128K"], item_id="m1"),
+        _scored_full(7, source="ithome", classification="行业资讯", source_url="https://b.test/2",
+                     summary=["**融资**：金额"], item_id="n1"),
+    ]
+    items[0].title_cn = "重磅模型发布"
+    items[0].comment = "为什么重要的判断"
+    items[0].extra_sources = ["https://mirror.test/path"]
+    items[1].title_cn = "行业新闻"
+    title_only = [BriefCandidate(id="t1", title="仅标题条目", source_id="s", source_url="https://c.test/3",
+                                 content_type="rss_article", publish_date="", fetched_date="", has_content=False, body="")]
+    md = db.render_brief_markdown(items, title_only, report_date="2026-08-16")
+    # 报头/报尾与收录计数
+    assert md.startswith("# 🤖 哆啦美 AI 资讯日报 · 2026-08-16")
+    assert "共收录 3 条资讯" in md and md.rstrip().endswith("*由哆啦美·归档中枢生成*")
+    # 分节按序:模型发布在行业资讯之前
+    assert md.index("## 🚀 模型发布（1 篇）") < md.index("## 📱 行业资讯（1 篇）")
+    # 条目四件套:标题链接/来源行(含 extra_sources 域名)/总结/点评
+    assert "### [重磅模型发布](https://a.test/1)" in md
+    assert "[mirror.test](https://mirror.test/path)" in md
+    assert "- **新模型**：细节一" in md
+    assert "> 💡 点评：为什么重要的判断" in md
+    # 无 comment 的条目不渲染点评行
+    entry2 = md[md.index("### [行业新闻]"):]
+    assert "点评" not in entry2.split("---")[0]
+    # 仅标题附录
+    assert "## 📎 其它收录" in md and "- [仅标题条目](https://c.test/3)" in md
+
+
+def test_render_brief_unknown_classification_falls_back():
+    item = _scored_full(5, classification="产业资讯", content_type="rss_article", item_id="u1")
+    md = db.render_brief_markdown([item], [], report_date="2026-08-16")
+    assert "## 🌐 资讯聚合（1 篇）" in md  # 非法分类回落 content_type 映射
+
+
+def test_render_brief_followup_note_rendered():
+    item = _scored_full(8, classification="模型发布", source_url="https://a.test/1", item_id="f1")
+    item.followup_note = "新增 API 定价与开放注册"
+    md = db.render_brief_markdown([item], [], report_date="2026-08-16")
+    assert "*（接前报）新增 API 定价与开放注册*" in md
+
+
+# ---------------- 跨天查重(v3.34) ----------------
+
+def _recent_days():
+    return [{"date": "2026-08-15", "titles": ["昨日已报的模型发布"]}]
+
+
+def test_cross_day_dedup_drops_and_annotates(monkeypatch):
+    async def _fake(*, messages, config, **kwargs):
+        return json.dumps({"drop": [0], "followups": [{"idx": 1, "note": "开放了 API"}]})
+
+    monkeypatch.setattr(db, "chat_completion", _fake)
+    items = [_scored_full(9, item_id="dup"), _scored_full(8, item_id="follow"), _scored_full(7, item_id="fresh")]
+    result = asyncio.run(db.cross_day_dedup(items, _recent_days(), CONFIGURED))
+    assert [it.candidate.id for it in result] == ["follow", "fresh"]
+    assert result[0].followup_note == "开放了 API"
+    assert result[1].followup_note == ""
+
+
+def test_cross_day_dedup_degrades_on_failure(monkeypatch):
+    async def _boom(*, messages, config, **kwargs):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr(db, "chat_completion", _boom)
+    items = [_scored_full(9, item_id="a"), _scored_full(8, item_id="b")]
+    result = asyncio.run(db.cross_day_dedup(items, _recent_days(), CONFIGURED))
+    assert [it.candidate.id for it in result] == ["a", "b"]  # 失败降级不丢条目
+
+
+def test_cross_day_dedup_all_drop_safety_valve(monkeypatch):
+    async def _fake(*, messages, config, **kwargs):
+        return json.dumps({"drop": [0, 1], "followups": []})
+
+    monkeypatch.setattr(db, "chat_completion", _fake)
+    items = [_scored_full(9, item_id="a"), _scored_full(8, item_id="b")]
+    result = asyncio.run(db.cross_day_dedup(items, _recent_days(), CONFIGURED))
+    assert len(result) == 2  # 要求丢弃全部视为误判,安全阀忽略 drop
+
+
+def test_cross_day_dedup_skips_without_recent(monkeypatch):
+    async def _boom(*, messages, config, **kwargs):
+        raise AssertionError("无近期日报时不应调用 LLM")
+
+    monkeypatch.setattr(db, "chat_completion", _boom)
+    items = [_scored_full(9, item_id="a")]
+    result = asyncio.run(db.cross_day_dedup(items, [], CONFIGURED))
+    assert [it.candidate.id for it in result] == ["a"]
+
+
+def test_fetch_recent_brief_items_reads_ext_and_falls_back(tmp_path):
+    sink = _make_sink(tmp_path)
+    # 有 extensions.items 的日报:读 title_cn
+    _seed(sink.engine, "daily_brief_2026-08-15", db.DAILY_BRIEF_SOURCE_ID, "2026-08-15T08:30:00",
+          content_type="daily_brief", publish_date="2026-08-15")
+    from models.db import ArticleRecord
+    with Session(sink.engine) as session:
+        rec = session.get(ArticleRecord, "daily_brief_2026-08-15")
+        rec.extensions_json = json.dumps({"items": [{"title_cn": "结构化条目标题"}]})
+        session.add(rec)
+        session.commit()
+    # 无 items 的旧日报:从正文 ### 标题行回退提取
+    _seed(sink.engine, "daily_brief_2026-08-14", db.DAILY_BRIEF_SOURCE_ID, "2026-08-14T08:30:00",
+          content_type="daily_brief", publish_date="2026-08-14",
+          content="# 报头\n\n### [正文提取的标题](https://x.test/1)\n内容\n")
+    with Session(sink.engine) as session:
+        days = db.fetch_recent_brief_items(session, days=3)
+    by_date = {d["date"]: d["titles"] for d in days}
+    assert by_date["2026-08-15"] == ["结构化条目标题"]
+    assert by_date["2026-08-14"] == ["正文提取的标题"]
+
+
+# ---------------- map 失败条目降级(v3.34) ----------------
+
+def test_generate_map_failed_items_fall_to_appendix(tmp_path, monkeypatch):
+    """map 失败的条目不得进正选(曾以默认 3 分混入,渲染出无总结残条目),
+    降入「📎 其它收录」附录保标题与链接。"""
+    async def _fail_one(*, messages, config, **kwargs):
+        user = messages[1].content
+        if "标题-bad" in user:
+            raise RuntimeError("llm down for this one")
+        return await _fake_chat_completion(messages=messages, config=config, **kwargs)
+
+    monkeypatch.setattr(db, "chat_completion", _fail_one)
+    sink = _make_sink(tmp_path)
+    _seed(sink.engine, "good", "src_a", "2026-06-05T10:00:00")
+    _seed(sink.engine, "bad", "src_b", "2026-06-05T11:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    result = asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    assert result["status"] == "success"
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    # 正选 items 只有 map 成功的一条;失败条目以附录形式仍在收录名单里
+    assert len(ext["items"]) == 1
+    assert set(ext["included_article_ids"]) == {"good", "bad"}
+    assert "## 📎 其它收录" in record.content and "标题-bad" in record.content
+
+
+def test_generate_last_run_reports_scan_and_use(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
+    sink = _make_sink(tmp_path)
+    for i in range(4):
+        _seed(sink.engine, f"c{i}", f"s{i}", f"2026-06-05T0{i}:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED,
+                                     report_date="2026-06-06", max_total=2))
+    with Session(sink.engine) as session:
+        last = db.get_json_setting(session, db.KEY_LAST_RUN, None)
+    assert last["candidates_scanned"] == 4
+    assert last["candidates_used"] == 2  # 裁剪不再静默:两个读数都进 last_run

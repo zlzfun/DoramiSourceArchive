@@ -15,17 +15,36 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from datetime import datetime
 from typing import Any, List, Optional
 
 from config import LLMConfig
 from llm import prompts
-from llm.client import ChatMessage, UsageMeta, chat_completion
+from llm.client import ChatMessage, UsageMeta, chat_completion, client_session
 
 # 译文/摘要缓存在 ArticleRecord.extensions_json 下的键；只新增键，不触碰正文。
 TRANSLATION_KEY = "translation_zh"
 SUMMARY_KEY = "summary_zh"
+# 缓存的正文指纹旁键(v3.34):正文被重抓/权威刷新后指纹失配即重新生成,
+# 防陈旧译文/速读。存量缓存无指纹——视为有效沿用(不作废、不返工),
+# 只在新一次生成时补写指纹。
+TRANSLATION_FP_KEY = "translation_zh_fp"
+SUMMARY_FP_KEY = "summary_zh_fp"
+
+
+def _body_fingerprint(body: str) -> str:
+    return hashlib.sha256((body or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _cache_valid(ext: dict, cache_key: str, fp_key: str, fingerprint: str) -> bool:
+    """缓存有效判定:文本非空,且(无指纹[存量兼容] 或 指纹与当前正文一致)。"""
+    cached = ext.get(cache_key)
+    if not (isinstance(cached, str) and cached.strip()):
+        return False
+    stored_fp = ext.get(fp_key)
+    return not stored_fp or stored_fp == fingerprint
 
 # 摘要输入正文的字符上限（要点摘要不需要全文,开头已承载主旨;超长截断省 token）。
 _SUMMARIZE_BODY_CHARS = 12000
@@ -75,7 +94,8 @@ def _split_for_translation(body: str, *, segment_chars: int = _TRANSLATE_SEGMENT
 
 
 async def _translate_segment(
-    title: str, segment: str, llm_config: LLMConfig, usage_meta: Optional[UsageMeta] = None
+    title: str, segment: str, llm_config: LLMConfig,
+    usage_meta: Optional[UsageMeta] = None, http_client=None,
 ) -> str:
     raw = await chat_completion(
         messages=[
@@ -84,6 +104,7 @@ async def _translate_segment(
         ],
         config=llm_config,
         usage_meta=usage_meta,
+        http_client=http_client,
     )
     return raw.strip()
 
@@ -109,9 +130,9 @@ async def translate_article(
     except (ValueError, TypeError):
         ext = {}
 
-    cached = ext.get(TRANSLATION_KEY)
-    if isinstance(cached, str) and cached.strip():
-        return {"translation": cached, "cached": True}
+    fingerprint = _body_fingerprint(body)
+    if _cache_valid(ext, TRANSLATION_KEY, TRANSLATION_FP_KEY, fingerprint):
+        return {"translation": ext[TRANSLATION_KEY], "cached": True}
 
     segments = _split_for_translation(body)
     if len(segments) == 1:
@@ -120,11 +141,15 @@ async def translate_article(
         concurrency = max(1, getattr(llm_config, "map_concurrency", 4))
         semaphore = asyncio.Semaphore(concurrency)
 
-        async def _guarded(seg: str) -> str:
-            async with semaphore:
-                return await _translate_segment(record.title or "", seg, llm_config, usage_meta)
+        # 多段并发共享一个连接池,避免逐段重建连接/TLS 握手。
+        async with client_session(llm_config) as http_client:
+            async def _guarded(seg: str) -> str:
+                async with semaphore:
+                    return await _translate_segment(
+                        record.title or "", seg, llm_config, usage_meta, http_client
+                    )
 
-        parts = await asyncio.gather(*[_guarded(seg) for seg in segments])
+            parts = await asyncio.gather(*[_guarded(seg) for seg in segments])
         translated = "\n\n".join(p for p in parts if p)
 
     translated = translated.strip()
@@ -132,6 +157,7 @@ async def translate_article(
         raise ReaderAIError("翻译失败，请稍后重试", status_code=502)
 
     ext[TRANSLATION_KEY] = translated
+    ext[TRANSLATION_FP_KEY] = fingerprint
     await db_sink.update(article_id, {"extensions_json": json.dumps(ext, ensure_ascii=False)})
     return {"translation": translated, "cached": False}
 
@@ -160,9 +186,9 @@ async def summarize_article(
         raise ReaderAIError("该文章暂无可总结的正文", status_code=400)
 
     ext = _load_extensions(record)
-    cached = ext.get(SUMMARY_KEY)
-    if isinstance(cached, str) and cached.strip():
-        return {"summary": cached, "cached": True}
+    fingerprint = _body_fingerprint(body)
+    if _cache_valid(ext, SUMMARY_KEY, SUMMARY_FP_KEY, fingerprint):
+        return {"summary": ext[SUMMARY_KEY], "cached": True}
 
     if len(body) > _SUMMARIZE_BODY_CHARS:
         body = body[:_SUMMARIZE_BODY_CHARS] + "\n...(正文已截断)"
@@ -179,6 +205,7 @@ async def summarize_article(
         raise ReaderAIError("摘要生成失败，请稍后重试", status_code=502)
 
     ext[SUMMARY_KEY] = summary
+    ext[SUMMARY_FP_KEY] = fingerprint
     await db_sink.update(article_id, {"extensions_json": json.dumps(ext, ensure_ascii=False)})
     return {"summary": summary, "cached": False}
 

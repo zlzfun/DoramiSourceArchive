@@ -104,9 +104,14 @@ map_concurrency = 4   ; 日报 map 阶段的并发数
 thinking_mode =       ; 思考模式(v3.33.1):留空=不发送思考参数(默认,兼容一切端点);
                       ; disabled=关闭思考;low/high/max=开启思考并指定努力档。
                       ; 仅 DeepSeek V4 系等支持该参数的端点可设;不支持时 400 自动降级去掉重试。
+aux_model =           ; 辅助轻模型(v3.34,可选):同端点同 api_key 下的第二个模型名,
+                      ; 供检索规划/选篇、日报 map/去重聚类等轻量结构化调用使用——
+                      ; 主模型走旗舰/思考档时这些调用不必陪跑高延迟高成本;
+                      ; 问答作答与翻译仍走主模型。留空=全部调用走主模型。
+                      ; 辅助档不下发思考参数(轻任务输出短 JSON,思考反易截断)。
 ```
 
-- 环境变量覆盖:`DORAMI_LLM_BASE_URL` / `DORAMI_LLM_API_KEY` / `DORAMI_LLM_MODEL` / `DORAMI_LLM_THINKING_MODE`。
+- 环境变量覆盖:`DORAMI_LLM_BASE_URL` / `DORAMI_LLM_API_KEY` / `DORAMI_LLM_MODEL` / `DORAMI_LLM_THINKING_MODE` / `DORAMI_LLM_AUX_MODEL`。
 - **思考型模型注意**(2026-08 生产事故教训):DeepSeek V4 系默认开思考且努力档 high,
   思考 token 计入 `max_tokens`——日报 reduce 这类长输出任务可能被思考耗尽配额导致正文
   空产。对策:`thinking_mode = disabled`,或保留思考但把 `max_tokens` 调大(≥16384)。

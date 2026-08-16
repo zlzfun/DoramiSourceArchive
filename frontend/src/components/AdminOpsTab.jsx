@@ -26,6 +26,7 @@ import {
   getXApiQuota,
   getAiBetaGlobal,
   setAiBetaGlobal,
+  setAiDailyTokenBudget,
   fetchPublicShareGlobal,
   updatePublicShareGlobal,
   fetchAiUsage,
@@ -86,6 +87,8 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
   // 账户列表(规模化波):服务端分页 + 搜索,前端只持有当前页;summary 聚合全量供 KPI/排行。
   const [acctData, setAcctData] = useState(null); // {items,total,summary} | null = 加载中
   const [globalAi, setGlobalAi] = useState(null);
+  const [aiBudget, setAiBudget] = useState(null);  // {daily_token_budget, tokens_used_today}(读者面 AI 日预算,0=不限)
+  const [budgetDraft, setBudgetDraft] = useState(''); // 预算输入框草稿(失焦/回车提交)
   const [publicShare, setPublicShare] = useState(null);   // 公开分享总闸 + 存活链接盘点
   const [busy, setBusy] = useState(false);
   const [newUsername, setNewUsername] = useState('');
@@ -155,6 +158,8 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
     try {
       const g = await getAiBetaGlobal();
       setGlobalAi(g.enabled);
+      setAiBudget({ daily_token_budget: g.daily_token_budget ?? 0, tokens_used_today: g.tokens_used_today ?? 0 });
+      setBudgetDraft(String(g.daily_token_budget ?? 0));
     } catch (error) {
       showToast(error.message || '加载运维数据失败', 'error');
     }
@@ -220,6 +225,24 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
       await reloadAccounts();
     } catch (error) {
       showToast(error.message || '更新 AI 全局开关失败', 'error');
+    }
+  };
+
+  // 日预算提交(失焦/回车):空或非法回落当前值;0 = 不限。
+  const handleCommitBudget = async () => {
+    const parsed = Math.max(0, Math.floor(Number(budgetDraft)));
+    if (!Number.isFinite(parsed) || String(parsed) === String(aiBudget?.daily_token_budget ?? 0)) {
+      setBudgetDraft(String(aiBudget?.daily_token_budget ?? 0));
+      return;
+    }
+    try {
+      const res = await setAiDailyTokenBudget(parsed);
+      setAiBudget({ daily_token_budget: res.daily_token_budget ?? parsed, tokens_used_today: res.tokens_used_today ?? 0 });
+      setBudgetDraft(String(res.daily_token_budget ?? parsed));
+      showToast(parsed ? `已设置日预算 ${parsed.toLocaleString()} tokens` : '已取消日预算限制', 'success');
+    } catch (error) {
+      showToast(error.message || '更新 AI 日预算失败', 'error');
+      setBudgetDraft(String(aiBudget?.daily_token_budget ?? 0));
     }
   };
 
@@ -772,6 +795,29 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
               <i className={llmStatus?.configured ? '' : 'is-off'} />模型{' '}
               <b>{llmStatus?.configured ? (llmStatus.model || '已配置') : '未配置'}</b>
             </button>
+            <span className="ai-divider" />
+            {/* 读者面 AI 全站日 token 预算(v3.34):0=不限;超限当日全员 429,次日自复。
+                与逐用户日调用限额互补——护总成本(多账户/IM bot 代答渠道的放大器)。 */}
+            <div className="ai-switch-lbl" title="读者面 AI(翻译/问答/速读)全站每日 token 预算;0 = 不限。超限当日全员暂停,次日自动恢复;失焦或回车保存">日预算</div>
+            <input
+              className="form-input font-mono"
+              style={{ width: 120, minHeight: 32 }}
+              type="number"
+              min="0"
+              step="100000"
+              value={budgetDraft}
+              disabled={aiBudget === null}
+              onChange={(e) => setBudgetDraft(e.target.value)}
+              onBlur={handleCommitBudget}
+              onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+              aria-label="读者面 AI 每日 token 预算(0 为不限)"
+            />
+            {aiBudget !== null && (
+              <span className="tiny-meta" title="今日 翻译/问答/速读 全账户合计消耗">
+                今日已用 {fmtNum(aiBudget.tokens_used_today)}
+                {aiBudget.daily_token_budget ? ` / ${fmtNum(aiBudget.daily_token_budget)}` : ' · 不限'}
+              </span>
+            )}
           </section>
 
           {!usage || usage.totals.calls === 0 ? (

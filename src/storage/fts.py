@@ -172,6 +172,19 @@ def fts_search_ids(bind, search: Optional[str]) -> Optional[list]:
     - `None`：不可用（表不存在 / 输入短于 3 字 / 切词后无达标词 / 执行异常）——
       调用方据此回退到标题 LIKE。
     """
+    ranked = fts_search_ranked(bind, search)
+    if ranked is None:
+        return None
+    return list(ranked.keys())
+
+
+def fts_search_ranked(bind, search: Optional[str]) -> Optional[dict]:
+    """FTS 检索标题 + 正文，返回 ``{rowid: rank}``（bm25，**越小越相关**）。
+
+    可用性语义与 :func:`fts_search_ids` 完全一致（``None`` = 不可用回退 LIKE，
+    空 dict = FTS 可用但零命中）。rank 供检索管线做相关性排序——此前召回只按
+    发布日期倒序截断，bm25 分数被整个丢弃（v3.34 检索质量修复）。
+    """
     if not search or len(search.strip()) < MIN_TRIGRAM_CHARS:
         return None
     match = build_match_query(search.strip())
@@ -182,10 +195,10 @@ def fts_search_ids(bind, search: Optional[str]) -> Optional[list]:
             if not _table_exists(conn):
                 return None
             rows = conn.execute(
-                text(f"SELECT rowid FROM {FTS_TABLE} WHERE {FTS_TABLE} MATCH :q"),
+                text(f"SELECT rowid, rank FROM {FTS_TABLE} WHERE {FTS_TABLE} MATCH :q"),
                 {"q": match},
             ).all()
-        return [r[0] for r in rows]
+        return {r[0]: float(r[1]) for r in rows}
     except Exception as exc:  # noqa: BLE001
         logger.warning("FTS 搜索失败，降级为标题 LIKE：%s", exc)
         return None

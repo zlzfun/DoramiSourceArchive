@@ -10,7 +10,7 @@
 
 import datetime
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -48,7 +48,8 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 class AiBetaGlobalParams(BaseModel):
-    enabled: bool
+    enabled: Optional[bool] = None  # None = 不改(v3.34 起本端点兼管日预算,两字段独立可改)
+    daily_token_budget: Optional[int] = None  # 读者面 AI 全局日 token 预算;0 = 不限;None = 不改
 
 
 class PublicShareGlobalParams(BaseModel):
@@ -429,15 +430,30 @@ def admin_content(top: int = 12, session: Session = Depends(deps.get_session)):
 
 @router.get("/ai-beta/global")
 def admin_get_ai_beta_global(session: Session = Depends(deps.get_session)):
-    return {"enabled": accounts_service.ai_beta_global_enabled(session)}
+    return {
+        "enabled": accounts_service.ai_beta_global_enabled(session),
+        # 读者面 AI 全局日 token 预算(v3.34):0=不限;tokens_used_today 为
+        # translate/ask/summarize 全账户今日合计,供运维面读数。
+        "daily_token_budget": accounts_service.ai_daily_token_budget(session),
+        "tokens_used_today": accounts_service.reader_ai_tokens_today(session),
+    }
 
 
 @router.post("/ai-beta/global")
 def admin_set_ai_beta_global(
     params: AiBetaGlobalParams, session: Session = Depends(deps.get_session)
 ):
-    accounts_service.set_ai_beta_global_enabled(session, params.enabled)
-    return {"enabled": accounts_service.ai_beta_global_enabled(session)}
+    if params.enabled is not None:
+        accounts_service.set_ai_beta_global_enabled(session, params.enabled)
+    if params.daily_token_budget is not None:
+        if params.daily_token_budget < 0:
+            raise HTTPException(status_code=400, detail="日 token 预算不能为负（0 = 不限）")
+        accounts_service.set_ai_daily_token_budget(session, params.daily_token_budget)
+    return {
+        "enabled": accounts_service.ai_beta_global_enabled(session),
+        "daily_token_budget": accounts_service.ai_daily_token_budget(session),
+        "tokens_used_today": accounts_service.reader_ai_tokens_today(session),
+    }
 
 
 @router.get("/public-share")

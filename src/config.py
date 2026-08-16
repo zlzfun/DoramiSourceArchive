@@ -1,6 +1,6 @@
 import configparser
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional
 
@@ -116,10 +116,23 @@ class LLMConfig:
     # 思考型模型默认开思考且努力档 high,长输出任务(日报 reduce)可能被
     # 思考吃满 max_tokens 而正文空产——生产 2026-08 事故的根因。
     thinking_mode: str = ""
+    # 辅助轻模型(可选):同端点同 api_key 下的第二个模型名,供检索规划/选篇/
+    # 日报 map/去重聚类这类「轻量结构化调用」使用——主模型走旗舰/思考档时,
+    # 这些调用没必要陪跑高延迟高成本。空 = 不启用,全部调用走主模型。
+    aux_model: str = ""
 
     @property
     def configured(self) -> bool:
         return bool(self.base_url and self.api_key and self.model)
+
+    def for_aux(self) -> "LLMConfig":
+        """轻量调用的有效配置:aux_model 已配置且异于主模型时换模型名,
+        并且**不下发思考参数**(轻任务输出短小 JSON,思考型默认档反易把
+        输出配额耗给思考);未配置时原样返回自身,调用方无需分支。"""
+        aux = (self.aux_model or "").strip()
+        if not aux or aux == self.model:
+            return self
+        return replace(self, model=aux, thinking_mode="")
 
 
 @dataclass(frozen=True)
@@ -279,6 +292,7 @@ def load_config() -> AppConfig:
             max_tokens=parser.getint("llm", "max_tokens", fallback=4096),
             map_concurrency=parser.getint("llm", "map_concurrency", fallback=4),
             thinking_mode=(os.getenv("DORAMI_LLM_THINKING_MODE") or parser.get("llm", "thinking_mode", fallback="")).strip(),
+            aux_model=(os.getenv("DORAMI_LLM_AUX_MODEL") or parser.get("llm", "aux_model", fallback="")).strip(),
         ),
         x_api=XApiConfig(
             bearer_token=(

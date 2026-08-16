@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, Dict, List
 
 
@@ -32,6 +31,37 @@ DEFAULT_CATEGORY_LABEL = "📌 其他资讯"
 # 允许的中文分类集合（约束 MAP 阶段 classification 取值），顺序即日报呈现顺序。
 # 注意：导出 shendeng 时由 export_shendeng_daily_news 原样透传分类（shendeng 已兼容多分类）。
 ALLOWED_CLASSIFICATIONS = ["模型发布", "行业资讯", "开源动态", "技术大会", "社交动态", "资讯聚合", "学术论文"]
+
+# classification（MAP 产出的中文分类词）→ 日报分节标签。确定性渲染层
+# (daily_brief.render_brief_markdown, v3.34) 据此分组排版——顺序沿
+# ALLOWED_CLASSIFICATIONS，未知分类回落 content_type 映射再落 DEFAULT。
+CLASSIFICATION_EMOJI_LABELS: Dict[str, str] = {
+    "模型发布": "🚀 模型发布",
+    "行业资讯": "📱 行业资讯",
+    "开源动态": "🔧 开源动态",
+    "技术大会": "🎤 技术大会",
+    "社交动态": "💬 社交动态",
+    "资讯聚合": "🌐 资讯聚合",
+    "学术论文": "📄 学术论文",
+}
+
+
+def classification_label(classification: str, content_type: str = "") -> str:
+    """条目 → 日报分节标签:classification 优先,回落 content_type 映射,再落兜底。"""
+    label = CLASSIFICATION_EMOJI_LABELS.get((classification or "").strip())
+    if label:
+        return label
+    return CATEGORY_LABELS.get(content_type, DEFAULT_CATEGORY_LABEL)
+
+
+def section_label_order() -> List[str]:
+    """日报分节的呈现顺序(去重):按 ALLOWED_CLASSIFICATIONS,兜底分类殿后。"""
+    ordered = [CLASSIFICATION_EMOJI_LABELS[c] for c in ALLOWED_CLASSIFICATIONS]
+    for label in CATEGORY_LABELS.values():
+        if label not in ordered:
+            ordered.append(label)
+    ordered.append(DEFAULT_CATEGORY_LABEL)
+    return list(dict.fromkeys(ordered))
 
 
 MAP_SYSTEM_PROMPT = """你是一位极具洞察力的前沿 AI 架构师与行业分析师，为一份面向 AI 从业者读者的资讯日报供稿。读者最关心的是：新模型/新能力发布、重要 AI 应用与产品更新、大厂与业界重大新闻、有明确新意的研究。请仔细阅读下方单篇资讯，严格基于正文事实提炼高质量中文简报。只依据正文事实，绝不臆造原文未出现的数字、结论或参数；正文信息不足时宁可少写也不要编造。
@@ -92,6 +122,11 @@ def build_map_user_prompt(*, title: str, source_name: str, body: str, max_body_c
     )
 
 
+# v3.34 起运行时 reduce 已改为**确定性渲染**(daily_brief.render_brief_markdown):
+# 日报 markdown 由代码从结构化条目排版,LLM 不再整篇长输出(截断/漏条/复制篡改
+# 类静默劣化就此根除,2026-08 空正文事故的形态性风险消除)。本提示词**保留**仅作
+# 下载技能包(skill_router / build_daily_brief_skill_style_guide)的编辑风格契约
+# ——外部 Claude 生成日报时仍照此风格;渲染层的分节/条目格式与之保持一致。
 REDUCE_SYSTEM_PROMPT = """你是哆啦美·归档中枢的资深 AI 资讯主编。下面会给你今天择优后的若干条结构化简报，以及最近几天已发布的日报正文。请把今天的内容汇编成一篇结构化的中文 Markdown 日报。
 
 【去重要求（重要）】
@@ -142,38 +177,6 @@ REDUCE_SYSTEM_PROMPT = """你是哆啦美·归档中枢的资深 AI 资讯主编
 - 务必输出完整日报直到结尾的「*由哆啦美·归档中枢生成*」，不要中途截断。"""
 
 
-def build_reduce_user_prompt(
-    *,
-    report_date: str,
-    selected_items: List[Dict[str, Any]],
-    title_only_items: List[Dict[str, Any]],
-    recent_briefs: List[str],
-) -> str:
-    """构造 REDUCE 阶段输入：今日择优条目 JSON + 仅标题附录 + 近期日报正文。"""
-    parts: List[str] = [f"报告日期：{report_date}", ""]
-
-    parts.append("【今日择优条目（JSON 数组）】")
-    parts.append(json.dumps(selected_items, ensure_ascii=False, indent=2))
-    parts.append("")
-
-    if title_only_items:
-        parts.append("【仅标题条目（无正文，放入「📎 其它收录」）】")
-        parts.append(json.dumps(title_only_items, ensure_ascii=False, indent=2))
-        parts.append("")
-
-    if recent_briefs:
-        parts.append("【近期日报正文（仅供去重参考，不要复述）】")
-        for idx, brief in enumerate(recent_briefs, 1):
-            clipped = brief.strip()
-            if len(clipped) > 4000:
-                clipped = clipped[:4000] + "\n...(已截断)"
-            parts.append(f"--- 近期日报 #{idx} ---")
-            parts.append(clipped)
-        parts.append("")
-
-    return "\n".join(parts)
-
-
 # ==========================================
 # 同事件去重聚类（map 之后、select 之前的一次性 LLM 调用）
 # ==========================================
@@ -197,6 +200,43 @@ def build_dedup_user_prompt(entries: List[Dict[str, Any]]) -> str:
         lines.append(f"idx={e.get('idx')}: {e.get('title') or ''}{suffix}")
         if hint:
             lines.append(f"    要点：{hint}")
+    return "\n".join(lines)
+
+
+# ==========================================
+# 跨天查重（确定性渲染层的唯一 LLM 决策，v3.34 取代整篇 reduce 长输出）
+# ==========================================
+
+CROSS_DAY_DEDUP_SYSTEM_PROMPT = """你是 AI 资讯日报的跨天查重编辑。日报正文由系统按结构化条目确定性排版,你只负责一件事:对照最近几天日报**已收录条目的标题清单**,判断今天条目(每条带数字 idx、标题、厂商与一句话要点)里——
+1. 哪些是**纯重复**:同一事件近期日报已充分覆盖、今天没有实质新信息,列入 drop;
+2. 哪些是同一事件的**后续进展**:有实质增量(新数据、新版本、新表态),列入 followups,并用一句话(30 字内)概括「相对前报的增量」。
+
+只凭标题与要点判断,拿不准的**不要** drop(宁可重复,不可误删);与近期条目无关的今天条目,两个清单都不列。
+
+【输出】只输出一个合法纯净的 JSON 对象,以 { 开始、} 结束,禁止代码围栏与多余文字:
+{"drop": [idx, ...], "followups": [{"idx": idx, "note": "一句增量说明"}, ...]}
+没有重复与后续时输出 {"drop": [], "followups": []}。"""
+
+
+def build_cross_day_dedup_user_prompt(
+    entries: List[Dict[str, Any]], recent_days: List[Dict[str, Any]]
+) -> str:
+    """构造跨天查重输入。entries 形如 {idx,title,company,hint};
+    recent_days 形如 {"date": "YYYY-MM-DD", "titles": [str]}(近几天日报条目标题)。"""
+    lines: List[str] = ["【今日条目】"]
+    for e in entries:
+        company = (e.get("company") or "").strip()
+        hint = (e.get("hint") or "").strip()
+        suffix = f"（{company}）" if company else ""
+        lines.append(f"idx={e.get('idx')}: {e.get('title') or ''}{suffix}")
+        if hint:
+            lines.append(f"    要点：{hint}")
+    lines.append("")
+    lines.append("【近期日报已收录条目（仅供查重对照）】")
+    for day in recent_days:
+        lines.append(f"--- {day.get('date') or ''} ---")
+        for title in day.get("titles") or []:
+            lines.append(f"- {title}")
     return "\n".join(lines)
 
 
@@ -433,17 +473,20 @@ SEARCH_PLAN_SYSTEM_PROMPT = """你是一份 AI 资讯归档库的检索规划器
 {"keywords": ["关键词或短语", ...], "date_gte": "YYYY-MM-DD" 或 null, "date_lte": "YYYY-MM-DD" 或 null, "temporal": true/false, "use_brief": true/false, "chat": true/false}
 
 规划原则:
+- 若给出了【最近对话】且「读者的问题」是对它的追问或含指代(如「再展开讲讲第二点」「它的价格呢」),先结合对话上文把问题**还原成完整独立的问题**,再按还原后的问题规划关键词与日期窗;追问资讯内容不算闲聊,不要因为问句短就给 chat:true。
 - chat:true 表示这个问题**与资讯/文章内容无关**——问候、感谢、闲聊,或是在问对话本身(如「我上一个问题是什么」「你是谁」)。这类问题不需要检索任何资料,直接对话作答即可;此时 keywords 给空数组、其余字段给 false/null。
-- keywords:2~6 组彼此独立的检索词,任一命中即算候选(OR 语义)。**中英文都要给**——归档里中英文来源混杂(如问「Claude 的新功能」应同时给 "Claude" 相关的中英词)。每组可以是单词或短语;避免「的/了/最新/相关」这类无区分度的虚词;每组至少 3 个字符(过短无法匹配)。围绕问题的核心实体与事件展开,宁可多给几组同义/相关表达。
+- keywords:2~6 组彼此独立的检索词,任一命中即算候选(OR 语义)。**中英文都要给**——归档里中英文来源混杂(如问「Claude 的新功能」应同时给 "Claude" 相关的中英词)。每组可以是单词或短语;避免「的/了/最新/相关」这类无区分度的虚词;每组至少 2 个字符,两字中文实体名(如「豆包」)可以给,但更长、更有区分度的表达优先。围绕问题的核心实体与事件展开,宁可多给几组同义/相关表达。
 - date_gte / date_lte:问题带时间限定时**必须**据今天日期折算成具体日期——「最近一周/近一周」「上周」「这几天」这类相对表达也算(例:今天若是 2026-08-12,「最近一周」→ date_gte "2026-08-05");只有问题完全不带时间限定时才给 null。
 - temporal:true 表示这是**无明确主题的时效浏览型**问题(如「最近有什么新闻」「今天有什么值得看」)——这类问题不需要关键词检索,直接浏览最新内容即可;此时 keywords 可给空数组。
 - use_brief:true 表示这是**跨期盘点/回顾型**问题(如「这个月 AI 圈发生了什么」「过去两周的大事」)——归档里有每日精选日报,检索日报比检索原文更合适。
 只输出 JSON。"""
 
 
-def build_search_plan_user_prompt(question: str, *, today: str) -> str:
+def build_search_plan_user_prompt(question: str, *, today: str, history_text: str = "") -> str:
+    history_block = f"\n【最近对话(供理解指代,不要复述)】\n{history_text}\n" if history_text else ""
     return (
         f"今天的日期:{today}\n"
+        f"{history_block}"
         "\n读者的问题:\n"
         f"{question.strip()}"
     )

@@ -24,13 +24,19 @@ from typing import List, Optional
 
 from sqlmodel import Session, func, select
 
-from models.db import AppSettingRecord, LoginEventRecord, UserRecord
+from models.db import AiUsageRecord, AppSettingRecord, LoginEventRecord, UserRecord
 
 VALID_ROLES = ("admin", "user")
 VALID_SURFACES = ("console", "reader")
 
 # AI Beta 全局总开关：存 app_settings KV，默认开启。关闭即全员 AI 熔断。
 AI_BETA_GLOBAL_KEY = "ai_beta_global_enabled"
+# 读者面 AI 全局日 token 预算(v3.34):存 app_settings KV,0 = 不限(默认)。
+# 与逐用户日调用限额(routers/reader._AI_DAILY_CALL_LIMITS)互补——那是防单账户
+# 刷爆,这是护全站总成本(多账户/IM bot 代答渠道的放大器);范式同 x_api 月预算。
+AI_DAILY_TOKEN_BUDGET_KEY = "ai_beta_daily_token_budget"
+# 计入日预算的用途:读者面三件套。日报等系统任务是 admin 排程的,不受此闸。
+READER_AI_BUDGET_PURPOSES = ("translate", "ask", "summarize")
 
 # PBKDF2 参数
 _PBKDF2_ALGO = "pbkdf2_sha256"
@@ -368,6 +374,47 @@ def set_ai_beta_global_enabled(session: Session, enabled: bool) -> None:
         record.value = value
     session.add(record)
     session.commit()
+
+
+def ai_daily_token_budget(session: Session) -> int:
+    """读者面 AI 全局日 token 预算；0 = 不限（默认/坏值回落）。"""
+    record = session.get(AppSettingRecord, AI_DAILY_TOKEN_BUDGET_KEY)
+    if record is None:
+        return 0
+    try:
+        return max(0, int((record.value or "").strip() or "0"))
+    except ValueError:
+        return 0
+
+
+def set_ai_daily_token_budget(session: Session, budget: int) -> None:
+    """写入读者面 AI 全局日 token 预算（0 = 不限）。"""
+    value = str(max(0, int(budget)))
+    record = session.get(AppSettingRecord, AI_DAILY_TOKEN_BUDGET_KEY)
+    if record is None:
+        record = AppSettingRecord(key=AI_DAILY_TOKEN_BUDGET_KEY, value=value)
+    else:
+        record.value = value
+    session.add(record)
+    session.commit()
+
+
+def reader_ai_tokens_today(session: Session) -> int:
+    """今日读者面 AI（translate/ask/summarize）全账户合计 token 消耗。"""
+    today = datetime.date.today().isoformat()
+    used = session.exec(
+        select(func.coalesce(func.sum(AiUsageRecord.total_tokens), 0)).where(
+            AiUsageRecord.day == today,
+            AiUsageRecord.purpose.in_(READER_AI_BUDGET_PURPOSES),
+        )
+    ).one()
+    return int(used or 0)
+
+
+def reader_ai_budget_exhausted(session: Session) -> bool:
+    """全局日预算已配置且今日读者面 AI 消耗已达上限。"""
+    budget = ai_daily_token_budget(session)
+    return bool(budget) and reader_ai_tokens_today(session) >= budget
 
 
 def delete_user(session: Session, username: str) -> None:
