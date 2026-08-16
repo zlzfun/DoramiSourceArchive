@@ -200,6 +200,8 @@ export const SOURCE_ROLES = [
 const ROLE_LABEL = Object.fromEntries(SOURCE_ROLES.map((r) => [r.key, r.label]));
 const ROLE_TONE = Object.fromEntries(SOURCE_ROLES.map((r) => [r.key, r.tone]));
 
+// ⚠️ 三个 scope 集合与 sourceRoleOf 的判定序在后端有镜像
+// (src/services/source_naming.py source_role,v3.35 日报权威机械层),改一处必须同步另一处。
 // expert_newsletter:专家自营 newsletter(Import AI = Jack Clark 个人执笔),
 // 此前因 tier1_curated 被判成「媒体」,但它没有编辑部,归「个人」才对。
 const PERSONAL_SCOPES = new Set([

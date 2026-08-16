@@ -409,6 +409,28 @@ class DeepSeekHuggingFaceModelsFetcher(PresetHuggingFaceModelsFetcher):
     fetch_reliability = "stable_public"
 
 
+class QwenHuggingFaceModelsFetcher(PresetHuggingFaceModelsFetcher):
+    """Qwen 开源权重的一手位(v3.35 官源排查):Qwen3.8-27B 发布未上官博,
+    官方宣发 = HF 模型卡 + X @Alibaba_Qwen + ModelScope——HF org 是权重发布的
+    确定性落点,补上后开源发布不再依赖媒体转述。"""
+
+    source_id = "hf_qwen_models"
+    name = "Qwen 新模型"
+    description = "通义千问 Qwen 在 Hugging Face 上发布的新模型。"
+    icon = "🤗"
+    author = "Qwen"
+    source_owner = "alibaba"
+    source_brand = "qwen"
+    source_scope = "open_model_family"
+    source_channel = "model_repository"
+    source_url = "https://huggingface.co/Qwen"
+    provenance_tier = "tier0_primary"
+    content_tags = ["model_release", "open_model"]
+    signal_strength = "high_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public"
+
+
 class GitHubTrendingFetcher(BaseFetcher):
     """GitHub Trending 日榜(github.com/trending?since=daily,SSR 公开页)。
 

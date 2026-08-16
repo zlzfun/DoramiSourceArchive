@@ -472,3 +472,21 @@ class OpenAIXTimelineFetcher(PresetXTimelineFetcher):
     source_scope = "frontier_ai_lab"
     source_url = "https://x.com/OpenAI"
     content_tags = ["model_release", "product_update", "research_paper", "api_platform"]
+
+
+class ZaiXTimelineFetcher(PresetXTimelineFetcher):
+    """智谱唯一可稳定采集的一手官源(v3.35 官源排查):docs.z.ai 发布页已停更
+    (GLM-5.2 后不更),z.ai/blog 是无列表页/无 RSS 的 SPA——GLM-5.3 的官方宣发
+    落在 @Zai_org 与 z.ai/blog 文章页,前者是当前唯一可达的发现通道。
+    user_id 留空走 handle 解析(首次 $0.01 User 读取后 KV 缓存,与 config 源同路)。"""
+
+    source_id = "x_zai_org"
+    handle = "Zai_org"
+    user_id = ""
+    name = "X · Z.ai"
+    description = "智谱 Z.ai 官方 GLM 模型发布、开源与产品动态。"
+    source_owner = "zai"
+    source_brand = "glm"
+    source_scope = "frontier_ai_lab"
+    source_url = "https://x.com/Zai_org"
+    content_tags = ["model_release", "open_model", "product_update"]
