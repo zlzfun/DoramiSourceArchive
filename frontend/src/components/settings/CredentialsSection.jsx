@@ -40,7 +40,7 @@ function CredStamp({ ok }) {
 export default function CredentialsSection({ showToast, onNavigate }) {
   // ── 大模型 ──
   const [llmStatus, setLlmStatus] = useState(null);
-  const [llmForm, setLlmForm] = useState({ base_url: '', model: '', api_key: '', temperature: 0.3, max_tokens: 4096, thinking_mode: '' });
+  const [llmForm, setLlmForm] = useState({ base_url: '', model: '', api_key: '', temperature: 0.3, max_tokens: 4096, thinking_mode: '', aux_model: '' });
   const [savingLlm, setSavingLlm] = useState(false);
   const [testingLlm, setTestingLlm] = useState(false);
 
@@ -63,6 +63,7 @@ export default function CredentialsSection({ showToast, onNavigate }) {
       temperature: d.temperature ?? 0.3,
       max_tokens: d.max_tokens ?? 4096,
       thinking_mode: d.thinking_mode || '',
+      aux_model: d.aux_model || '',
       api_key: '', // 后端永不回显明文,输入框始终空值起步 = 不改
     }));
   }).catch(() => {}), []);
@@ -96,6 +97,7 @@ export default function CredentialsSection({ showToast, onNavigate }) {
       temperature: Number(llmForm.temperature),
       max_tokens: Number(llmForm.max_tokens),
       thinking_mode: llmForm.thinking_mode, // ''=不发送思考参数(回落基线)
+      aux_model: llmForm.aux_model.trim(), // ''=清除覆盖(不启用辅助档)
     };
     if (llmForm.api_key.trim()) payload.api_key = llmForm.api_key.trim();
     await saveLLMConfig(payload);
@@ -215,6 +217,10 @@ export default function CredentialsSection({ showToast, onNavigate }) {
           <label className="sett-field">
             <span className="sett-field-lbl">max_tokens</span>
             <input className="form-input font-mono" type="number" step="256" min="256" value={llmForm.max_tokens} onChange={(e) => updateLlm('max_tokens', e.target.value)} />
+          </label>
+          <label className="sett-field" title="可选:同端点下的第二个模型名,供检索规划/选篇、日报单篇概括与去重聚类这类轻量调用使用——主模型走旗舰/思考档时它们不必陪跑高延迟高成本;问答作答与翻译仍走主模型。留空 = 全部调用走主模型">
+            <span className="sett-field-lbl">辅助轻模型</span>
+            <input className="form-input font-mono" value={llmForm.aux_model} onChange={(e) => updateLlm('aux_model', e.target.value)} placeholder="留空 = 不启用" />
           </label>
           <label className="sett-field" title="思考型模型(如 DeepSeek V4 系)默认开思考,长输出可能被思考耗尽 max_tokens;不支持该参数的端点请留「不发送」">
             <span className="sett-field-lbl">思考模式</span>

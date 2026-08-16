@@ -1,11 +1,18 @@
 """每日 AI 资讯日报编排 (src/services/daily_brief.py)
 
 流程：预处理(collect_candidates) → map_summarize(每篇 LLM 概括+打分)
-     → select_top(按分数+多样性择优) → reduce_to_markdown(汇总) → 写库(幂等 update)。
+     → dedup_clusters(同日同事件聚类) → select_top(按分数+多样性择优)
+     → cross_day_dedup(跨天查重,一次轻量 LLM) → render_brief_markdown(确定性渲染)
+     → 写库(幂等 update)。
 
-双层去重：
+v3.34 起 reduce 不再是整篇 LLM 长输出:markdown 由代码从结构化条目排版,
+LLM 在汇编段只做「对照近几天日报条目标题判断 drop/接前报」的小 JSON 决策——
+截断/漏条/复制篡改类静默劣化就此根除(2026-08 空正文事故的形态性风险消除)。
+
+三层去重：
   ① 确定性水位线游标 daily_brief_cursor（fetched_date），写库成功后才推进；
-  ② reduce 阶段注入近期日报正文，LLM 处理同一事件的语义/重复。
+  ② dedup_clusters 同日同事件聚类合并；
+  ③ cross_day_dedup 对照近期日报条目跨天去重（纯重复剔除/后续进展标注增量）。
 
 运行记录走 AppSettingRecord（KV），不新建 ORM 表。
 """
@@ -15,15 +22,20 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from sqlmodel import Session, select
 
 import config
-from llm.client import ChatMessage, LLMError, LLMNotConfigured, UsageMeta, chat_completion, parse_json_object
+from llm.client import (
+    ChatMessage, LLMError, LLMNotConfigured, UsageMeta,
+    chat_completion, client_session, parse_json_object,
+)
 from llm import prompts
 
 # 日报各阶段的 LLM 用量归属：手动触发归到触发它的 admin，定时调度无登录上下文则归 "system"。
@@ -111,6 +123,8 @@ class ScoredItem:
     map_ok: bool = True
     # 同事件去重合并后，被并入本条的其它来源链接（供 reduce 渲染多来源）
     extra_sources: List[str] = field(default_factory=list)
+    # 跨天查重判定为「同一事件的后续进展」时的一句增量说明（渲染成「（接前报）」行）
+    followup_note: str = ""
 
     def to_reduce_dict(self) -> Dict[str, Any]:
         return {
@@ -239,11 +253,13 @@ def collect_candidates(
     max_total: int = 120,
     per_source_cap: int = 15,
     source_ids: Optional[List[str]] = None,
-) -> Tuple[List[BriefCandidate], str]:
+) -> Tuple[List[BriefCandidate], str, int]:
     """取游标之后新入库的文章作为候选。
 
-    返回 (candidates, max_fetched_seen)。max_fetched_seen 是裁剪前扫描到的最大
-    fetched_date，用于推进游标（避免下次重复处理已看过但被裁剪的条目）。
+    返回 (candidates, max_fetched_seen, scanned_total)。max_fetched_seen 是裁剪前
+    扫描到的最大 fetched_date，用于推进游标（避免下次重复处理已看过但被裁剪的
+    条目）。scanned_total 是裁剪前的扫描总数——per_source_cap/max_total 裁掉的
+    条目会随游标永久跳过，扫描/取用两个读数写进日志与 last_run，裁剪不再静默。
     游标为空（首次或手动重置）时不设时间地板，按 fetched_date 倒序取最新
     max_total 篇重做——成本由 max_total 上限兜住，不会全库进 LLM。
 
@@ -297,7 +313,7 @@ def collect_candidates(
         if len(candidates) >= max_total:
             break
 
-    return candidates, (max_fetched_seen or effective_cursor)
+    return candidates, (max_fetched_seen or effective_cursor), len(rows)
 
 
 # ==========================================
@@ -305,7 +321,8 @@ def collect_candidates(
 # ==========================================
 
 async def _summarize_one(
-    candidate: BriefCandidate, llm_config: config.LLMConfig, usage_meta: Optional[UsageMeta] = None
+    candidate: BriefCandidate, llm_config: config.LLMConfig,
+    usage_meta: Optional[UsageMeta] = None, http_client=None,
 ) -> ScoredItem:
     try:
         user_prompt = prompts.build_map_user_prompt(
@@ -321,6 +338,7 @@ async def _summarize_one(
             config=llm_config,
             response_json=True,
             usage_meta=usage_meta,
+            http_client=http_client,
         )
         data = parse_json_object(raw)
         return ScoredItem(
@@ -364,25 +382,28 @@ async def map_summarize(
     usage_username: Optional[str] = None,
 ) -> List[ScoredItem]:
     """对有正文的候选并发 LLM 概括。无正文候选不进 map（reduce 单列附录）。
-    on_item_done(done, total) 每完成一篇回调一次，供上层上报进度。"""
+    on_item_done(done, total) 每完成一篇回调一次，供上层上报进度。
+    走辅助轻模型档（未配置 aux_model 时即主模型），整个 map 段共享一个连接池。"""
     with_body = [c for c in candidates if c.has_content]
     if not with_body:
         return []
     total = len(with_body)
     done = 0
     usage_meta = _usage_meta("daily_brief_map", usage_username)
+    map_config = llm_config.for_aux()
     semaphore = asyncio.Semaphore(max(1, llm_config.map_concurrency))
 
-    async def _guarded(c: BriefCandidate) -> ScoredItem:
-        nonlocal done
-        async with semaphore:
-            result = await _summarize_one(c, llm_config, usage_meta)
-        done += 1
-        if on_item_done is not None:
-            on_item_done(done, total)
-        return result
+    async with client_session(map_config) as http_client:
+        async def _guarded(c: BriefCandidate) -> ScoredItem:
+            nonlocal done
+            async with semaphore:
+                result = await _summarize_one(c, map_config, usage_meta, http_client)
+            done += 1
+            if on_item_done is not None:
+                on_item_done(done, total)
+            return result
 
-    return await asyncio.gather(*[_guarded(c) for c in with_body])
+        return await asyncio.gather(*[_guarded(c) for c in with_body])
 
 
 # ==========================================
@@ -414,7 +435,7 @@ async def dedup_clusters(
                 ChatMessage(role="system", content=prompts.DEDUP_SYSTEM_PROMPT),
                 ChatMessage(role="user", content=prompts.build_dedup_user_prompt(entries)),
             ],
-            config=llm_config,
+            config=llm_config.for_aux(),  # 聚类是轻量结构化判断,走辅助档
             response_json=True,
             usage_meta=_usage_meta("daily_brief_dedup", usage_username),
         )
@@ -505,51 +526,178 @@ def select_top(
 
 
 # ==========================================
-# 阶段 4：Reduce（汇总成 Markdown）
+# 阶段 4：汇编（v3.34 确定性渲染 + 跨天查重）
+# reduce 不再是整篇 LLM 长输出：markdown 由代码从结构化条目排版；
+# LLM 只做「对照近期日报条目标题判断 drop/接前报」的小 JSON 决策。
 # ==========================================
 
-def fetch_recent_briefs(session: Session, *, days: int = 3) -> List[str]:
+# 内容里提取「### [标题](url)」/「### 标题」标题行的回退正则（extensions.items 缺失时用）
+_BRIEF_HEADING_RE = re.compile(r"^###\s+\[?([^\]\n]+?)\]?(?:\(|$)", re.M)
+# 跨天查重单天注入的条目标题上限（近几天日报每天几十条，控 prompt 预算）
+_RECENT_TITLES_PER_DAY = 40
+# 「（接前报）」增量注的长度上限
+_FOLLOWUP_NOTE_CHARS = 60
+
+
+def fetch_recent_brief_items(session: Session, *, days: int = 3) -> List[Dict[str, Any]]:
+    """近几天日报的条目标题清单（跨天查重的对照物）。
+
+    优先读 extensions.items（结构化 title_cn），缺失时回退从正文提取「###」
+    标题行；返回形如 [{"date": "YYYY-MM-DD", "titles": [...]}, ...]。
+    """
     statement = (
         select(ArticleRecord)
         .where(ArticleRecord.source_id == DAILY_BRIEF_SOURCE_ID)
         .order_by(ArticleRecord.publish_date.desc())
         .limit(days)
     )
-    return [row.content for row in session.exec(statement).all() if row.content]
+    out: List[Dict[str, Any]] = []
+    for row in session.exec(statement).all():
+        titles: List[str] = []
+        try:
+            ext = json.loads(row.extensions_json or "{}")
+            items = ext.get("items") if isinstance(ext, dict) else None
+            for it in items or []:
+                if isinstance(it, dict):
+                    title = str(it.get("title_cn") or "").strip()
+                    if title:
+                        titles.append(title)
+        except (ValueError, TypeError):
+            pass
+        if not titles and row.content:
+            titles = [m.strip() for m in _BRIEF_HEADING_RE.findall(row.content) if m.strip()]
+        if titles:
+            out.append({"date": (row.publish_date or "")[:10], "titles": titles[:_RECENT_TITLES_PER_DAY]})
+    return out
 
 
-async def reduce_to_markdown(
-    selected: List[ScoredItem],
-    title_only: List[BriefCandidate],
-    recent_briefs: List[str],
-    *,
-    report_date: str,
+async def cross_day_dedup(
+    items: List[ScoredItem],
+    recent_items: List[Dict[str, Any]],
     llm_config: config.LLMConfig,
     usage_username: Optional[str] = None,
-) -> str:
-    selected_dicts = [it.to_reduce_dict() for it in selected]
-    title_only_dicts = [
-        {"title": c.title, "source_url": c.source_url, "source": c.source_id,
-         "publish_date": c.publish_date, "content_type": c.content_type}
-        for c in title_only
+) -> List[ScoredItem]:
+    """对照近几天日报条目做跨天查重：纯重复剔除、后续进展标注一句增量注。
+
+    LLM 失败/输出异常降级为不查重（原列表返回）；判定要求丢弃全部条目时
+    视为误判忽略 drop（安全阀）。计费归入 daily_brief_reduce（沿用原 reduce
+    的用途口径），走辅助轻模型档。
+    """
+    if not items or not recent_items:
+        return items
+    entries = [
+        {
+            "idx": i,
+            "title": it.title_cn or it.candidate.title,
+            "company": it.company,
+            "hint": (it.summary[0] if it.summary else ""),
+        }
+        for i, it in enumerate(items)
     ]
-    user_prompt = prompts.build_reduce_user_prompt(
-        report_date=report_date,
-        selected_items=selected_dicts,
-        title_only_items=title_only_dicts,
-        recent_briefs=recent_briefs,
-    )
-    system_prompt = prompts.REDUCE_SYSTEM_PROMPT.replace("{report_date}", report_date)
-    return await chat_completion(
-        messages=[
-            ChatMessage(role="system", content=system_prompt),
-            ChatMessage(role="user", content=user_prompt),
-        ],
-        config=llm_config,
-        # reduce 输出整篇日报，较长——放宽 token 上限，避免中途截断（实测 4096 会截断）
-        max_tokens=max(llm_config.max_tokens, 8192),
-        usage_meta=_usage_meta("daily_brief_reduce", usage_username),
-    )
+    try:
+        raw = await chat_completion(
+            messages=[
+                ChatMessage(role="system", content=prompts.CROSS_DAY_DEDUP_SYSTEM_PROMPT),
+                ChatMessage(role="user", content=prompts.build_cross_day_dedup_user_prompt(entries, recent_items)),
+            ],
+            config=llm_config.for_aux(),
+            response_json=True,
+            usage_meta=_usage_meta("daily_brief_reduce", usage_username),
+        )
+        data = parse_json_object(raw)
+    except (LLMError, Exception) as exc:  # noqa: BLE001 查重失败降级，不中断汇编
+        logger.warning("日报跨天查重失败，降级为不查重: %s", exc)
+        return items
+
+    n = len(items)
+    drops = {
+        int(i) for i in (data.get("drop") or [])
+        if isinstance(i, (int, float)) and 0 <= int(i) < n
+    }
+    if drops and len(drops) >= n:
+        logger.warning("日报跨天查重要求丢弃全部 %d 条，疑似误判，忽略 drop", n)
+        drops = set()
+    for entry in data.get("followups") or []:
+        if not isinstance(entry, dict):
+            continue
+        idx = entry.get("idx")
+        note = str(entry.get("note") or "").strip()
+        if isinstance(idx, (int, float)) and 0 <= int(idx) < n and note and int(idx) not in drops:
+            items[int(idx)].followup_note = note[:_FOLLOWUP_NOTE_CHARS]
+    if drops:
+        logger.info("日报跨天查重：剔除 %d 条与近期日报重复的条目", len(drops))
+    return [it for i, it in enumerate(items) if i not in drops]
+
+
+def _entry_markdown(item: ScoredItem) -> str:
+    """单条目的日报 markdown（格式与 REDUCE_SYSTEM_PROMPT 的风格契约一致）。"""
+    data = item.to_reduce_dict()
+    title = str(data["title_cn"] or "").strip() or "（无标题）"
+    url = (data["source_url"] or "").strip()
+    heading = f"### [{title}]({url})" if url else f"### {title}"
+    source_name = (data["source"] or "").strip() or item.candidate.source_id or "未知来源"
+    date = (data["publish_date"] or "")[:10]
+    source_line = f"**来源**: {source_name}" + (f" · {date}" if date else "")
+    for extra in data["extra_sources"]:
+        netloc = urlparse(extra).netloc or "另见"
+        source_line += f" · [{netloc}]({extra})"
+    lines = [heading, source_line]
+    if item.followup_note:
+        lines.append(f"*（接前报）{item.followup_note}*")
+    if data["summary"]:
+        lines.append("核心总结：")
+        lines.extend(f"- {s}" for s in data["summary"])
+    comment = str(data["comment"] or "").strip()
+    if comment:
+        lines.append(f"> 💡 点评：{comment}")
+    return "\n".join(lines)
+
+
+def render_brief_markdown(
+    selected: List[ScoredItem],
+    title_only: List[BriefCandidate],
+    *,
+    report_date: str,
+) -> str:
+    """把择优条目确定性渲染成日报 markdown（分节/条目格式忠实沿用原 reduce 契约）。
+
+    selected 已按 score 降序（select_top 出口），分节内顺序即重要性顺序。
+    """
+    sections: Dict[str, List[ScoredItem]] = {}
+    for item in selected:
+        label = prompts.classification_label(item.classification, item.candidate.content_type)
+        sections.setdefault(label, []).append(item)
+
+    parts: List[str] = [
+        f"# 🤖 哆啦美 AI 资讯日报 · {report_date}",
+        "",
+        f"> 共收录 {len(selected) + len(title_only)} 条资讯，涵盖 {len(sections)} 个分类",
+        "",
+        "---",
+        "",
+    ]
+    for label in prompts.section_label_order():
+        items = sections.get(label)
+        if not items:
+            continue
+        parts.append(f"## {label}（{len(items)} 篇）")
+        parts.append("")
+        for item in items:
+            parts.append(_entry_markdown(item))
+            parts.append("")
+        parts.append("---")
+        parts.append("")
+    if title_only:
+        parts.append("## 📎 其它收录")
+        parts.append("")
+        for c in title_only:
+            title = (c.title or "").strip() or "（无标题）"
+            parts.append(f"- [{title}]({c.source_url})" if c.source_url else f"- {title}")
+        parts.append("")
+        parts.append("---")
+        parts.append("")
+    parts.append("*由哆啦美·归档中枢生成*")
+    return "\n".join(parts)
 
 
 # ==========================================
@@ -600,12 +748,15 @@ async def generate_daily_brief(
             top_n = daily_brief_top_n(session)
         cursor_before = read_cursor(session)
         source_scope = read_source_scope(session)
-        candidates, max_fetched_seen = collect_candidates(
+        candidates, max_fetched_seen, scanned_total = collect_candidates(
             session, cursor=cursor_before, max_total=max_total,
             per_source_cap=per_source_cap, source_ids=source_scope,
         )
     n_body = sum(1 for c in candidates if c.has_content)
-    logger.info("日报[%s]：取到候选 %d 篇（有正文 %d）", report_date, len(candidates), n_body)
+    logger.info(
+        "日报[%s]：扫描 %d 篇 → 取用候选 %d 篇（有正文 %d，per_source_cap/max_total 裁剪 %d——被裁条目随游标跳过）",
+        report_date, scanned_total, len(candidates), n_body, scanned_total - len(candidates),
+    )
 
     # 3. 空日报：不写库、不推进游标
     if not candidates:
@@ -623,6 +774,7 @@ async def generate_daily_brief(
                     "status": "empty", "started_at": started_at,
                     "ended_at": datetime.now().isoformat(), "report_date": report_date,
                     "article_id": None, "articles_count": 0, "error_message": None,
+                    "candidates_scanned": scanned_total, "candidates_used": 0,
                 })
         return result
 
@@ -639,19 +791,23 @@ async def generate_daily_brief(
     set_progress("selecting", "同事件去重与择优排序…")
     deduped = await dedup_clusters(scored, cfg, usage_username=triggered_by)
     logger.info("日报[%s]：去重后 %d 条（map 前 %d）", report_date, len(deduped), len(scored))
-    selected = select_top(deduped, top_n=top_n)
-    title_only = [c for c in candidates if not c.has_content]
+    # map 失败的条目没有总结/点评且 score 是占位值——不参与择优（曾以默认 3 分
+    # 混入正选,渲染出无总结无点评的残条目),降入「📎 其它收录」附录保标题与链接。
+    map_failed = [it.candidate for it in deduped if not it.map_ok]
+    usable = [it for it in deduped if it.map_ok]
+    if map_failed:
+        logger.info("日报[%s]：map 失败 %d 条降入「其它收录」附录", report_date, len(map_failed))
+    selected = select_top(usable, top_n=top_n)
+    title_only = [c for c in candidates if not c.has_content] + map_failed
     logger.info("日报[%s]：择优 %d 条（+ 仅标题 %d 条）", report_date, len(selected), len(title_only))
 
     with Session(engine) as session:
-        recent_briefs = fetch_recent_briefs(session, days=recent_brief_days)
+        recent_items = fetch_recent_brief_items(session, days=recent_brief_days)
 
-    set_progress("reducing", "汇编日报正文…")
-    logger.info("日报[%s]：开始汇编（reduce），注入近期日报 %d 篇", report_date, len(recent_briefs))
-    markdown = await reduce_to_markdown(
-        selected, title_only, recent_briefs, report_date=report_date, llm_config=cfg,
-        usage_username=triggered_by,
-    )
+    set_progress("reducing", "跨天查重与汇编…")
+    logger.info("日报[%s]：跨天查重（对照近期日报 %d 天条目）后确定性渲染", report_date, len(recent_items))
+    selected = await cross_day_dedup(selected, recent_items, cfg, usage_username=triggered_by)
+    markdown = render_brief_markdown(selected, title_only, report_date=report_date)
 
     if dry_run:
         set_progress("done", "预览生成完成")
@@ -698,6 +854,9 @@ async def generate_daily_brief(
             "ended_at": datetime.now().isoformat(), "report_date": report_date,
             "article_id": article_id, "articles_count": content_obj.articles_count,
             "error_message": None,
+            # 候选裁剪观测(v3.34):扫描≫取用 说明 max_total/per_source_cap 在裁,
+            # 被裁条目随游标永久跳过——涨不涨上限看这两个数。
+            "candidates_scanned": scanned_total, "candidates_used": len(candidates),
         })
 
     logger.info("日报[%s]：生成完成，收录 %d 条", report_date, content_obj.articles_count)

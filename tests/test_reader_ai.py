@@ -489,3 +489,63 @@ def test_latest_daily_brief_reachable_for_reader(monkeypatch, tmp_path):
         ).json()
         assert len(items) == 1
         assert items[0]["id"] in ("brief_1", "brief_2")  # 同 publish_date 时按 id 兜底排序
+
+
+def test_translate_cache_invalidated_by_content_change(monkeypatch, tmp_path):
+    """正文指纹失效(v3.34):正文重抓更新后译文缓存重生成;存量无指纹缓存沿用。"""
+    import json as _json
+    from models.db import ArticleRecord
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "translate_fp.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_article(sink.engine, "a1", "rss_x", "Title", "original body")
+    calls = _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        assert client.post("/api/reader/ai/translate", json={"article_id": "a1"}).json()["cached"] is False
+        assert len(calls) == 1
+
+        # 正文更新 → 指纹失配 → 重新翻译
+        with Session(sink.engine) as session:
+            rec = session.get(ArticleRecord, "a1")
+            rec.content = "totally new body after refetch"
+            session.add(rec)
+            session.commit()
+        resp = client.post("/api/reader/ai/translate", json={"article_id": "a1"})
+        assert resp.json()["cached"] is False
+        assert len(calls) == 2
+
+        # 存量缓存无指纹(升级前写入)视为有效,不返工重译
+        with Session(sink.engine) as session:
+            rec = session.get(ArticleRecord, "a1")
+            ext = _json.loads(rec.extensions_json)
+            ext.pop("translation_zh_fp", None)
+            rec.extensions_json = _json.dumps(ext)
+            session.add(rec)
+            session.commit()
+        resp2 = client.post("/api/reader/ai/translate", json={"article_id": "a1"})
+        assert resp2.json()["cached"] is True
+        assert len(calls) == 2
+
+
+def test_summarize_cache_invalidated_by_content_change(monkeypatch, tmp_path):
+    from models.db import ArticleRecord
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "summary_fp.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_article(sink.engine, "a1", "rss_x", "Title", "original body")
+    calls = _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        assert client.post("/api/reader/ai/summarize", json={"article_id": "a1"}).json()["cached"] is False
+        with Session(sink.engine) as session:
+            rec = session.get(ArticleRecord, "a1")
+            rec.content = "new body"
+            session.add(rec)
+            session.commit()
+        assert client.post("/api/reader/ai/summarize", json={"article_id": "a1"}).json()["cached"] is False
+        assert len(calls) == 2

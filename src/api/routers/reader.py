@@ -772,6 +772,10 @@ def _require_reader_ai(request: Request):
         record = accounts_service.get_user(session, username)
         if record is None or not record.ai_beta_enabled:
             raise HTTPException(status_code=403, detail="AI 功能尚未开启，请联系管理员")
+        # 全局日 token 预算(v3.34):与逐用户日调用限额互补,护全站总成本
+        # (多账户/IM bot 代答渠道的放大器)。0=不限;超限当日全员 429,次日自复。
+        if accounts_service.reader_ai_budget_exhausted(session):
+            raise HTTPException(status_code=429, detail="今日 AI 用量已达全站上限，请明日再试")
         llm_config = daily_brief_service.resolve_llm_config(session)
     if not llm_config.configured:
         raise HTTPException(status_code=403, detail="AI 服务暂未就绪")
@@ -895,6 +899,8 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
             # 检索说明的语料称呼跟档位走:all 的语料不归属提问者,不能说成「订阅」
             # (IM 机器人等代答渠道即 all 档,v3.33.2)。
             corpus_label="哆啦美收录内容" if scope == "all" else "读者订阅内容",
+            # 与作答侧同一份多轮历史:规划器据此还原追问/指代(v3.34)。
+            history=params.history,
         )
 
     try:

@@ -44,6 +44,7 @@ def _llm_config_response(session: Session) -> Dict[str, Any]:
         "temperature": cfg.temperature,
         "max_tokens": cfg.max_tokens,
         "thinking_mode": cfg.thinking_mode,
+        "aux_model": cfg.aux_model,
         "configured": cfg.configured,
         "api_key_set": bool(cfg.api_key),
         "api_key_preview": credentials.mask_tail(cfg.api_key),
@@ -60,6 +61,8 @@ class LLMConfigUpdate(BaseModel):
     max_tokens: Optional[int] = None
     # 思考模式:"" = 清除覆盖回落基线(默认不发送思考参数);disabled/low/high/max
     thinking_mode: Optional[str] = None
+    # 辅助轻模型:"" = 清除覆盖(回落 ini/env,均无则不启用);非空 = 轻量调用换用该模型
+    aux_model: Optional[str] = None
 
 
 @router.get("/api/llm/config")
@@ -257,9 +260,10 @@ def get_daily_brief_pipeline(session: Session = Depends(deps.get_session)):
             "per_source_cap": 15,      # collect_candidates 每来源候选上限
             "map_concurrency": cfg.map_concurrency,
             "map_max_body_chars": 6000,  # MAP 单篇正文截断
-            "recent_brief_days": 3,    # REDUCE 注入的近期日报天数
+            "recent_brief_days": 3,    # 跨天查重对照的近期日报天数
         },
         "allowed_classifications": prompts.ALLOWED_CLASSIFICATIONS,
         "map_system_prompt": prompts.MAP_SYSTEM_PROMPT,
-        "reduce_system_prompt": prompts.REDUCE_SYSTEM_PROMPT,
+        # v3.34 起 reduce 为确定性渲染,汇编段唯一的 LLM 决策是跨天查重
+        "reduce_system_prompt": prompts.CROSS_DAY_DEDUP_SYSTEM_PROMPT,
     }

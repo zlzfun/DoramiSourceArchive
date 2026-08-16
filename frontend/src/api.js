@@ -189,6 +189,11 @@ export function setAiBetaGlobal(enabled) {
   return request('/admin/ai-beta/global', { method: 'POST', body: { enabled }, errorMsg: '更新 AI 全局开关失败' });
 }
 
+// 读者面 AI 全局日 token 预算（0 = 不限）：与总闸同端点，两字段独立可改。
+export function setAiDailyTokenBudget(budget) {
+  return request('/admin/ai-beta/global', { method: 'POST', body: { daily_token_budget: budget }, errorMsg: '更新 AI 日预算失败' });
+}
+
 // ── 阅读器 AI（用户面：翻译 / 问答） ──
 export function translateArticle(articleId) {
   return request('/reader/ai/translate', { method: 'POST', body: { article_id: articleId }, errorMsg: '翻译失败，请稍后重试' });

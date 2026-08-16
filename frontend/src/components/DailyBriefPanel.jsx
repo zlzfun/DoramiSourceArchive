@@ -376,7 +376,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
 
         <details className="scope-note">
           <summary>取材与去重口径</summary>
-          <p>候选取自上次成功生成之后新入库的文章（游标不回退）；同日同事件聚类合并，近几日正文注入 reduce 阶段做跨日语义去重。生成在后台任务中执行，可离开本页。</p>
+          <p>候选取自上次成功生成之后新入库的文章（游标不回退）；同日同事件聚类合并，汇编前对照近几日日报条目做跨天查重，正文由系统确定性排版。生成在后台任务中执行，可离开本页。</p>
         </details>
 
         {history !== null && history.length === 0 && (

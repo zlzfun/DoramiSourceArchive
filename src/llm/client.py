@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
@@ -73,6 +74,18 @@ def _endpoint(config: LLMConfig) -> str:
     return f"{base}/chat/completions"
 
 
+@asynccontextmanager
+async def client_session(config: LLMConfig):
+    """按 config 建一个可跨多次 chat_completion 复用的 HTTP 连接池。
+
+    高频调用段(日报 map 一晚上百次、翻译分段并发、ask 的规划→选篇→作答三连)
+    用它包住整段并把 client 经 ``http_client`` 传入 chat_completion,避免逐次
+    调用重建连接/TLS 握手;不传时 chat_completion 仍每次自建短连接(行为不变)。
+    """
+    async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=True) as client:
+        yield client
+
+
 async def chat_completion(
     *,
     messages: List[ChatMessage],
@@ -82,6 +95,7 @@ async def chat_completion(
     response_json: bool = False,
     max_retries: int = 3,
     usage_meta: Optional[UsageMeta] = None,
+    http_client: Optional[httpx.AsyncClient] = None,
 ) -> str:
     """调用 chat completions，返回 choices[0].message.content。
 
@@ -90,10 +104,36 @@ async def chat_completion(
     - response_json=True：附带 response_format={"type":"json_object"}；若端点不
       支持（返回 400），自动去掉该字段重试一次（degrade gracefully）。
     - usage_meta：提供时把响应里的 token usage 交给已注册的计量 recorder（可选、不阻断）。
+    - http_client：可选的共享连接（见 client_session）；传入时本函数不负责其生命周期。
     """
     if not config.configured:
         raise LLMNotConfigured("LLM 未配置（需 base_url / api_key / model）")
 
+    if http_client is not None:
+        return await _chat_completion_on(
+            http_client, messages=messages, config=config, temperature=temperature,
+            max_tokens=max_tokens, response_json=response_json,
+            max_retries=max_retries, usage_meta=usage_meta,
+        )
+    async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=True) as client:
+        return await _chat_completion_on(
+            client, messages=messages, config=config, temperature=temperature,
+            max_tokens=max_tokens, response_json=response_json,
+            max_retries=max_retries, usage_meta=usage_meta,
+        )
+
+
+async def _chat_completion_on(
+    client: httpx.AsyncClient,
+    *,
+    messages: List[ChatMessage],
+    config: LLMConfig,
+    temperature: Optional[float],
+    max_tokens: Optional[int],
+    response_json: bool,
+    max_retries: int,
+    usage_meta: Optional[UsageMeta],
+) -> str:
     url = _endpoint(config)
     headers = {
         "Authorization": f"Bearer {config.api_key}",
@@ -124,53 +164,52 @@ async def chat_completion(
     want_thinking = bool(config.thinking_mode.strip())
     last_error: Optional[Exception] = None
 
-    async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=True) as client:
-        for attempt in range(1, max_retries + 1):
-            try:
-                resp = await client.post(url, headers=headers, json=_build_payload(want_json, want_thinking))
-            except httpx.HTTPError as exc:
-                last_error = exc
-                logger.warning("LLM 请求异常 (%s/%s) [%s | %s]: %s",
-                               attempt, max_retries, config.base_url, config.model, exc)
-                if attempt == max_retries:
-                    raise LLMError(f"LLM 请求失败: {exc}") from exc
-                await asyncio.sleep(2 ** (attempt - 1))
-                continue
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = await client.post(url, headers=headers, json=_build_payload(want_json, want_thinking))
+        except httpx.HTTPError as exc:
+            last_error = exc
+            logger.warning("LLM 请求异常 (%s/%s) [%s | %s]: %s",
+                           attempt, max_retries, config.base_url, config.model, exc)
+            if attempt == max_retries:
+                raise LLMError(f"LLM 请求失败: {exc}") from exc
+            await asyncio.sleep(2 ** (attempt - 1))
+            continue
 
-            if resp.status_code == 200:
-                content, usage, finish_reason = _extract_content_and_usage(resp)
-                if finish_reason == "length":
-                    logger.warning("LLM 输出触及 max_tokens 上限被截断 [%s | %s]——考虑调大 max_tokens 或关闭思考模式",
-                                   config.base_url, config.model)
-                _maybe_record_usage(usage_meta, usage, config.model)
-                return content
-
-            body_preview = resp.text[:500]
-            # response_format 不被支持时，去掉后重试一次
-            if resp.status_code == 400 and want_json:
-                logger.info("端点疑似不支持 response_format，降级为普通模式重试 [%s | %s]",
-                            config.base_url, config.model)
-                want_json = False
-                continue
-
-            # 思考模式参数不被支持时，去掉后重试一次(配置是 opt-in,但换端点后旧覆盖可能残留)
-            if resp.status_code == 400 and want_thinking:
-                logger.warning("端点疑似不支持思考模式参数(thinking/reasoning_effort)，去掉后重试 [%s | %s]",
+        if resp.status_code == 200:
+            content, usage, finish_reason = _extract_content_and_usage(resp)
+            if finish_reason == "length":
+                logger.warning("LLM 输出触及 max_tokens 上限被截断 [%s | %s]——考虑调大 max_tokens 或关闭思考模式",
                                config.base_url, config.model)
-                want_thinking = False
-                continue
+            _maybe_record_usage(usage_meta, usage, config.model)
+            return content
 
-            if resp.status_code == 429 or resp.status_code >= 500:
-                last_error = LLMError(f"HTTP {resp.status_code}: {body_preview}")
-                logger.warning("LLM 响应可重试 (%s/%s) HTTP %s [%s | %s]",
-                               attempt, max_retries, resp.status_code, config.base_url, config.model)
-                if attempt == max_retries:
-                    raise last_error
-                await asyncio.sleep(2 ** (attempt - 1))
-                continue
+        body_preview = resp.text[:500]
+        # response_format 不被支持时，去掉后重试一次
+        if resp.status_code == 400 and want_json:
+            logger.info("端点疑似不支持 response_format，降级为普通模式重试 [%s | %s]",
+                        config.base_url, config.model)
+            want_json = False
+            continue
 
-            # 其它 4xx：不重试
-            raise LLMError(f"LLM 调用失败 HTTP {resp.status_code}: {body_preview}")
+        # 思考模式参数不被支持时，去掉后重试一次(配置是 opt-in,但换端点后旧覆盖可能残留)
+        if resp.status_code == 400 and want_thinking:
+            logger.warning("端点疑似不支持思考模式参数(thinking/reasoning_effort)，去掉后重试 [%s | %s]",
+                           config.base_url, config.model)
+            want_thinking = False
+            continue
+
+        if resp.status_code == 429 or resp.status_code >= 500:
+            last_error = LLMError(f"HTTP {resp.status_code}: {body_preview}")
+            logger.warning("LLM 响应可重试 (%s/%s) HTTP %s [%s | %s]",
+                           attempt, max_retries, resp.status_code, config.base_url, config.model)
+            if attempt == max_retries:
+                raise last_error
+            await asyncio.sleep(2 ** (attempt - 1))
+            continue
+
+        # 其它 4xx：不重试
+        raise LLMError(f"LLM 调用失败 HTTP {resp.status_code}: {body_preview}")
 
     raise LLMError(f"LLM 请求失败: {last_error}")
 

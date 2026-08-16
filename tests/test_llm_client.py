@@ -179,3 +179,20 @@ def test_endpoint_normalization():
     assert llm_client._endpoint(cfg) == "https://h/v1/chat/completions"
     cfg2 = LLMConfig(base_url="https://h/v1/", api_key="k", model="m")
     assert llm_client._endpoint(cfg2) == "https://h/v1/chat/completions"
+
+
+def test_shared_http_client_reused(monkeypatch):
+    # 传入 http_client 时不自建连接(工厂不被调用),请求走共享 client
+    _FakeAsyncClient.instances = []
+
+    def _factory(*args, **kwargs):
+        raise AssertionError("传入 http_client 时不应自建 AsyncClient")
+
+    monkeypatch.setattr(llm_client.httpx, "AsyncClient", _factory)
+    shared = _FakeAsyncClient([_chat_ok("one"), _chat_ok("two")])
+    out1 = asyncio.run(chat_completion(
+        messages=[ChatMessage("user", "hi")], config=CONFIGURED, http_client=shared))
+    out2 = asyncio.run(chat_completion(
+        messages=[ChatMessage("user", "again")], config=CONFIGURED, http_client=shared))
+    assert (out1, out2) == ("one", "two")
+    assert len(shared.calls) == 2  # 两次调用共用同一连接
