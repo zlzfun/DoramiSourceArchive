@@ -9,6 +9,13 @@ v3.34 起 reduce 不再是整篇 LLM 长输出:markdown 由代码从结构化条
 LLM 在汇编段只做「对照近几天日报条目标题判断 drop/接前报」的小 JSON 决策——
 截断/漏条/复制篡改类静默劣化就此根除(2026-08 空正文事故的形态性风险消除)。
 
+v3.35 权威机械层(生产实录:近 10 期日报头部名次官方源仅 1/30,官方并不迟到、
+是排不上去):BriefCandidate 带 source_role(source_naming 后端角色镜像),
+同事件代表权官方在分差门限内优先、select 排序官方 +0.5 有界加成、跨天查重
+官方 drop 机械降级为 followup——三处全是确定性代码,不靠 LLM 自觉。
+同波修同日重跑(合并而非覆盖,见 load_existing_brief_state/merge_same_day)、
+跨天剔条回补(top_n+buffer 预选后裁回)、map 瞬时失败串行重试、候选两段式轻列取数。
+
 三层去重：
   ① 确定性水位线游标 daily_brief_cursor（fetched_date），写库成功后才推进；
   ② dedup_clusters 同日同事件聚类合并；
@@ -47,6 +54,7 @@ def _usage_meta(purpose: str, username: Optional[str]) -> UsageMeta:
 from models.content import DailyBriefContent
 from models.db import AppSettingRecord, ArticleRecord
 from services import credentials
+from services.source_naming import source_role
 
 logger = logging.getLogger("dorami.daily_brief")
 
@@ -106,6 +114,31 @@ class BriefCandidate:
     fetched_date: str
     has_content: bool
     body: str
+    # 信息角色(source_naming.source_role):官方/媒体/个人/榜单,权威机械层的判定输入
+    source_role: str = "media"
+
+
+# ── 权威机械层(v3.35)──
+# 「官方内容靠前」靠三处确定性代码,不靠 LLM 自觉(v3.33 空正文事故后的既定纪律):
+# ① 同事件代表权:簇内官方在分差 REP_AUTHORITY_SCORE_GAP 内优先当代表——分差门限
+#    防「官方一行推文」压过媒体的深度整理(代表决定条目正文的丰度);
+# ② 同分排序:select_top 用 score + OFFICIAL_SCORE_BONUS 的**有界加成**排序——
+#    整数分布下等价于「同分段官方置顶但绝不跨分数段」,重要性仍由 score 主导,
+#    官方外围产品照沉(生产实测 76% 条目挤在 7/8 两档,平分段顺序此前由抓取顺序随机决定);
+# ③ 跨天查重官方例外:见 cross_day_dedup。
+AUTHORITY_RANK = {"official": 0, "leaderboard": 1, "media": 2, "personal": 3}
+OFFICIAL_SCORE_BONUS = 0.5
+REP_AUTHORITY_SCORE_GAP = 1.0
+
+
+def _authority_rank(item: "ScoredItem") -> int:
+    return AUTHORITY_RANK.get(item.candidate.source_role, AUTHORITY_RANK["media"])
+
+
+def _effective_score(item: "ScoredItem") -> float:
+    """排序用有效分:官方源加有界 bonus;item.score 本身(入库/导出值)不改。"""
+    bonus = OFFICIAL_SCORE_BONUS if item.candidate.source_role == "official" else 0.0
+    return item.score + bonus
 
 
 @dataclass
@@ -128,6 +161,11 @@ class ScoredItem:
 
     def to_reduce_dict(self) -> Dict[str, Any]:
         return {
+            # id/source_id/source_role(v3.35 增量键):同日重跑合并时从 extensions.items
+            # 重建条目所需;历史日报无这三键,合并侧按位对齐 included_article_ids 兜底。
+            "id": self.candidate.id,
+            "source_id": self.candidate.source_id,
+            "source_role": self.candidate.source_role,
             "title_cn": self.title_cn or self.candidate.title,
             "source_url": self.candidate.source_url,
             "source": self.source,
@@ -141,6 +179,7 @@ class ScoredItem:
             "tags": self.tags,
             "score": self.score,
             "extra_sources": self.extra_sources,
+            "followup_note": self.followup_note,
         }
 
 
@@ -270,50 +309,61 @@ def collect_candidates(
     # 空游标 → "" ，fetched_date > "" 命中全部，靠下方倒序 + max_total 截断取最新批
     effective_cursor = cursor or ""
 
-    statement = (
-        select(ArticleRecord)
+    # 两段式取数(v3.35):先只取轻列做扫描/裁剪(游标重置或长停摆恢复时,旧实现会把
+    # 游标后**全部行连正文**载入内存只为数 scanned_total),再按入选名单载全文。
+    light_statement = (
+        select(ArticleRecord.id, ArticleRecord.source_id, ArticleRecord.fetched_date)
         .where(ArticleRecord.fetched_date > effective_cursor)
         .where(ArticleRecord.source_id != DAILY_BRIEF_SOURCE_ID)  # 防自我递归
         .order_by(ArticleRecord.fetched_date.desc())
     )
     if source_ids:
-        statement = statement.where(ArticleRecord.source_id.in_(list(source_ids)))
-    rows = session.exec(statement).all()
+        light_statement = light_statement.where(ArticleRecord.source_id.in_(list(source_ids)))
+    light_rows = session.exec(light_statement).all()
 
     max_fetched_seen = cursor
-    for row in rows:
-        if row.fetched_date and row.fetched_date > max_fetched_seen:
-            max_fetched_seen = row.fetched_date
+    for _rid, _rsrc, fetched in light_rows:
+        if fetched and fetched > max_fetched_seen:
+            max_fetched_seen = fetched
 
-    # 去重 + per-source 裁剪 + 总量裁剪（rows 已按 fetched_date 倒序，保留较新）
-    seen_ids: set[str] = set()
+    # per-source 裁剪 + 总量裁剪（light_rows 已按 fetched_date 倒序，保留较新）
     per_source_count: Dict[str, int] = {}
-    candidates: List[BriefCandidate] = []
-    for row in rows:
-        if row.id in seen_ids:
-            continue
-        seen_ids.add(row.id)
-        count = per_source_count.get(row.source_id, 0)
+    chosen_ids: List[str] = []
+    for rid, rsrc, _fetched in light_rows:
+        count = per_source_count.get(rsrc, 0)
         if count >= per_source_cap:
             continue
-        per_source_count[row.source_id] = count + 1
-        candidates.append(
-            BriefCandidate(
-                id=row.id,
-                title=row.title or "",
-                source_id=row.source_id or "",
-                source_url=row.source_url or "",
-                content_type=row.content_type or "",
-                publish_date=row.publish_date or "",
-                fetched_date=row.fetched_date or "",
-                has_content=bool(row.has_content and row.content),
-                body=row.content or "",
-            )
-        )
-        if len(candidates) >= max_total:
+        per_source_count[rsrc] = count + 1
+        chosen_ids.append(rid)
+        if len(chosen_ids) >= max_total:
             break
 
-    return candidates, (max_fetched_seen or effective_cursor), len(rows)
+    candidates: List[BriefCandidate] = []
+    if chosen_ids:
+        full_rows = session.exec(
+            select(ArticleRecord).where(ArticleRecord.id.in_(chosen_ids))
+        ).all()
+        by_id = {row.id: row for row in full_rows}
+        for rid in chosen_ids:
+            row = by_id.get(rid)
+            if row is None:
+                continue
+            candidates.append(
+                BriefCandidate(
+                    id=row.id,
+                    title=row.title or "",
+                    source_id=row.source_id or "",
+                    source_url=row.source_url or "",
+                    content_type=row.content_type or "",
+                    publish_date=row.publish_date or "",
+                    fetched_date=row.fetched_date or "",
+                    has_content=bool(row.has_content and row.content),
+                    body=row.content or "",
+                    source_role=source_role(row.source_id or ""),
+                )
+            )
+
+    return candidates, (max_fetched_seen or effective_cursor), len(light_rows)
 
 
 # ==========================================
@@ -403,12 +453,40 @@ async def map_summarize(
                 on_item_done(done, total)
             return result
 
-        return await asyncio.gather(*[_guarded(c) for c in with_body])
+        results = await asyncio.gather(*[_guarded(c) for c in with_body])
+        # 瞬时故障补救(v3.35):map 失败会降入附录且游标照推——LLM 端点中段抖动几分钟,
+        # 那批文章就永久定格成裸标题。整轮结束后对失败者**串行**重试一次(避开并发压力,
+        # 端点恢复即救回),仍失败才认作真失败。
+        failed_idx = [i for i, r in enumerate(results) if not r.map_ok]
+        if failed_idx:
+            logger.info("日报 map:%d 条失败,串行重试一轮", len(failed_idx))
+            for i in failed_idx:
+                retried = await _summarize_one(with_body[i], map_config, usage_meta, http_client)
+                if retried.map_ok:
+                    results[i] = retried
+        return results
 
 
 # ==========================================
 # 阶段 2.5：Dedup（同事件去重聚类，一次性 LLM 调用）
 # ==========================================
+
+def _pick_cluster_representative(items: List[ScoredItem], idxs: List[int]) -> int:
+    """同事件簇的代表选择:官方在分差门限内优先,否则回归最高分。
+
+    「官方内容靠前」的本义在同一事件内是**归属权**——读者应看到官方标题/链接/口径,
+    媒体退来源行。但代表同时决定条目正文丰度:官方若只是一行推文而媒体有深度整理
+    (分差 > REP_AUTHORITY_SCORE_GAP),仍由媒体当代表、官方链接进 extra_sources。
+    多个官方并列时取分高者(官博自然赢过官推)。
+    """
+    best_score = max(items[i].score for i in idxs)
+    officials = [i for i in idxs if items[i].candidate.source_role == "official"]
+    if officials:
+        rep_official = max(officials, key=lambda i: items[i].score)
+        if items[rep_official].score >= best_score - REP_AUTHORITY_SCORE_GAP:
+            return rep_official
+    return max(idxs, key=lambda i: items[i].score)
+
 
 async def dedup_clusters(
     items: List[ScoredItem],
@@ -456,7 +534,7 @@ async def dedup_clusters(
         idxs = [i for i in idxs if i not in dropped]
         if len(idxs) < 2:
             continue
-        rep = max(idxs, key=lambda i: items[i].score)
+        rep = _pick_cluster_representative(items, idxs)
         for i in idxs:
             if i == rep:
                 continue
@@ -490,7 +568,9 @@ def select_top(
     per_realm_cap: int = 8,
     paper_cap: int = 3,
 ) -> List[ScoredItem]:
-    ranked = sorted(items, key=lambda it: it.score, reverse=True)
+    # 有效分 = score + 官方有界加成(v3.35):整数分高度压缩(生产实测 76% 挤在 7/8),
+    # 平分段顺序此前由抓取顺序随机决定;+0.5 让同分段官方置顶、且绝不跨分数段。
+    ranked = sorted(items, key=_effective_score, reverse=True)
     selected: List[ScoredItem] = []
     overflow: List[ScoredItem] = []
     source_count: Dict[str, int] = {}
@@ -519,9 +599,9 @@ def select_top(
             if len(selected) >= top_n:
                 break
             selected.append(item)
-    # 多样性配额只决定"哪些条目入选"；最终顺序统一按重要性（score）降序，
-    # 使日报 markdown 与导出 items（shendeng sort）都呈重要性排序。
-    selected.sort(key=lambda it: it.score, reverse=True)
+    # 多样性配额只决定"哪些条目入选"；最终顺序统一按有效分（score+官方加成）降序，
+    # 使日报 markdown 与导出 items（shendeng sort）都呈重要性排序、同分官方在前。
+    selected.sort(key=_effective_score, reverse=True)
     return selected
 
 
@@ -539,11 +619,15 @@ _RECENT_TITLES_PER_DAY = 40
 _FOLLOWUP_NOTE_CHARS = 60
 
 
-def fetch_recent_brief_items(session: Session, *, days: int = 3) -> List[Dict[str, Any]]:
+def fetch_recent_brief_items(
+    session: Session, *, days: int = 3, exclude_date: str = ""
+) -> List[Dict[str, Any]]:
     """近几天日报的条目标题清单（跨天查重的对照物）。
 
     优先读 extensions.items（结构化 title_cn），缺失时回退从正文提取「###」
     标题行；返回形如 [{"date": "YYYY-MM-DD", "titles": [...]}, ...]。
+    exclude_date(v3.35)：排除指定日期（传 report_date）——同日重跑时今天自己的
+    日报曾混进对照物，增量条目先被「查重」剔光、再整篇覆盖，产出残报。
     """
     statement = (
         select(ArticleRecord)
@@ -551,6 +635,8 @@ def fetch_recent_brief_items(session: Session, *, days: int = 3) -> List[Dict[st
         .order_by(ArticleRecord.publish_date.desc())
         .limit(days)
     )
+    if exclude_date:
+        statement = statement.where(ArticleRecord.publish_date != exclude_date)
     out: List[Dict[str, Any]] = []
     for row in session.exec(statement).all():
         titles: List[str] = []
@@ -582,14 +668,20 @@ async def cross_day_dedup(
     LLM 失败/输出异常降级为不查重（原列表返回）；判定要求丢弃全部条目时
     视为误判忽略 drop（安全阀）。计费归入 daily_brief_reduce（沿用原 reduce
     的用途口径），走辅助轻模型档。
+
+    官方例外(v3.35)：官方一手条目被判 drop 时降级为 followup 保留——近期日报的
+    对照物只有标题，分不清前报是官方还是媒体转述；「媒体先转述、官方后发文」时
+    删官方等于系统性压制一手信息。机械保证：官方条目最多被标「接前报」，绝不静默消失。
     """
     if not items or not recent_items:
         return items
+    role_labels = {"official": "官方", "media": "媒体", "personal": "个人", "leaderboard": "榜单"}
     entries = [
         {
             "idx": i,
             "title": it.title_cn or it.candidate.title,
             "company": it.company,
+            "role": role_labels.get(it.candidate.source_role, "媒体"),
             "hint": (it.summary[0] if it.summary else ""),
         }
         for i, it in enumerate(items)
@@ -617,6 +709,14 @@ async def cross_day_dedup(
     if drops and len(drops) >= n:
         logger.warning("日报跨天查重要求丢弃全部 %d 条，疑似误判，忽略 drop", n)
         drops = set()
+    # 官方例外:drop 降级为 followup(机械保证,不依赖提示词被遵守)
+    official_kept = {i for i in drops if items[i].candidate.source_role == "official"}
+    if official_kept:
+        drops -= official_kept
+        for i in official_kept:
+            if not items[i].followup_note:
+                items[i].followup_note = "官方一手确认"
+        logger.info("日报跨天查重：%d 条官方条目免删，改标「接前报」", len(official_kept))
     for entry in data.get("followups") or []:
         if not isinstance(entry, dict):
             continue
@@ -698,6 +798,114 @@ def render_brief_markdown(
         parts.append("")
     parts.append("*由哆啦美·归档中枢生成*")
     return "\n".join(parts)
+
+
+# ==========================================
+# 同日重跑合并（v3.35）
+# 旧行为是整篇覆盖:游标在首跑后已推进,二跑只有增量候选,早间条目整批消失、
+# 且今天自己的日报曾混进跨天查重对照物把增量剔光——净效果是重跑产出残报。
+# 现改为「已有当日日报 → 新旧条目合并 + 同事件聚类 + 重排」再覆盖写。
+# ==========================================
+
+def _scored_item_from_stored(entry: Dict[str, Any], article_id: str) -> ScoredItem:
+    """extensions.items 的存量 dict → ScoredItem(合并重排/重渲染用)。
+
+    v3.35 起 items 自带 id/source_id/source_role/followup_note;历史日报缺这些键,
+    id 由调用方按位对齐 included_article_ids 兜底,role 现算。
+    """
+    sid = str(entry.get("source_id") or "")
+    cand = BriefCandidate(
+        id=article_id,
+        title=str(entry.get("title_cn") or ""),
+        source_id=sid,
+        source_url=str(entry.get("source_url") or ""),
+        content_type=str(entry.get("content_type") or ""),
+        publish_date=str(entry.get("publish_date") or ""),
+        fetched_date="",
+        has_content=True,
+        body="",
+        source_role=str(entry.get("source_role") or "") or source_role(sid),
+    )
+    return ScoredItem(
+        candidate=cand,
+        title_cn=str(entry.get("title_cn") or ""),
+        classification=str(entry.get("classification") or ""),
+        source=str(entry.get("source") or ""),
+        company=str(entry.get("company") or ""),
+        realm=str(entry.get("realm") or ""),
+        summary=[str(s) for s in (entry.get("summary") or []) if s],
+        comment=str(entry.get("comment") or ""),
+        tags=[str(t) for t in (entry.get("tags") or []) if t],
+        score=_coerce_score(entry.get("score")),
+        extra_sources=[str(u) for u in (entry.get("extra_sources") or []) if u],
+        followup_note=str(entry.get("followup_note") or ""),
+    )
+
+
+def load_existing_brief_state(
+    session: Session, report_date: str
+) -> Optional[Tuple[List[ScoredItem], List[BriefCandidate]]]:
+    """读当日已有日报,重建 (正选条目, 附录候选);无当日日报返回 None。"""
+    row = session.get(ArticleRecord, f"daily_brief_{report_date}")
+    if row is None:
+        return None
+    try:
+        ext = json.loads(row.extensions_json or "{}")
+    except (ValueError, TypeError):
+        ext = {}
+    raw_items = ext.get("items") if isinstance(ext, dict) else None
+    raw_items = [e for e in (raw_items or []) if isinstance(e, dict)]
+    included = [str(i) for i in (ext.get("included_article_ids") or []) if i]
+    items: List[ScoredItem] = []
+    for i, entry in enumerate(raw_items):
+        article_id = str(entry.get("id") or "")
+        if not article_id:
+            # 历史日报无 id 键:items 与 included_article_ids 前段同源同序,按位兜底
+            article_id = included[i] if i < len(included) else f"legacy_{report_date}_{i}"
+        items.append(_scored_item_from_stored(entry, article_id))
+    # 附录 = included_article_ids 去掉正选前段后的余段,回库取标题/链接
+    title_only: List[BriefCandidate] = []
+    for article_id in included[len(raw_items):]:
+        art = session.get(ArticleRecord, article_id)
+        if art is None:
+            continue
+        title_only.append(
+            BriefCandidate(
+                id=art.id, title=art.title or "", source_id=art.source_id or "",
+                source_url=art.source_url or "", content_type=art.content_type or "",
+                publish_date=art.publish_date or "", fetched_date=art.fetched_date or "",
+                has_content=False, body="",
+                source_role=source_role(art.source_id or ""),
+            )
+        )
+    return items, title_only
+
+
+async def merge_same_day(
+    prior_items: List[ScoredItem],
+    new_items: List[ScoredItem],
+    prior_title_only: List[BriefCandidate],
+    new_title_only: List[BriefCandidate],
+    llm_config: config.LLMConfig,
+    usage_username: Optional[str] = None,
+) -> Tuple[List[ScoredItem], List[BriefCandidate]]:
+    """当日已有日报时的增量合并:旧∪新(按文章 id 去重)→ 同事件聚类 → 有效分重排。
+
+    合并结果**不裁 top_n**:早间已发布的条目是既成事实,为凑配置条数把它删掉
+    比日报略长更伤(神灯流水线 08:55 已消费过早间 items)。
+    """
+    seen = {it.candidate.id for it in prior_items}
+    combined = prior_items + [it for it in new_items if it.candidate.id not in seen]
+    # 早间批与增量批可能各报了同一事件(不同文章 id),再跑一次同事件聚类合并
+    combined = await dedup_clusters(combined, llm_config, usage_username=usage_username)
+    combined.sort(key=_effective_score, reverse=True)
+    selected_ids = {it.candidate.id for it in combined}
+    seen_titles = {c.id for c in prior_title_only}
+    title_only = prior_title_only + [
+        c for c in new_title_only if c.id not in seen_titles and c.id not in selected_ids
+    ]
+    title_only = [c for c in title_only if c.id not in selected_ids]
+    return combined, title_only
 
 
 # ==========================================
@@ -797,16 +1005,36 @@ async def generate_daily_brief(
     usable = [it for it in deduped if it.map_ok]
     if map_failed:
         logger.info("日报[%s]：map 失败 %d 条降入「其它收录」附录", report_date, len(map_failed))
-    selected = select_top(usable, top_n=top_n)
+    # 扩选池(v3.35):跨天查重会剔条,旧流程剔完不回补——热点连报日成品远少于 top_n。
+    # 现按 top_n+buffer 预选,查重幸存者再裁回 top_n:回补条目天然也过了跨天检查。
+    select_buffer = max(3, top_n // 3)
+    preselected = select_top(usable, top_n=top_n + select_buffer)
     title_only = [c for c in candidates if not c.has_content] + map_failed
-    logger.info("日报[%s]：择优 %d 条（+ 仅标题 %d 条）", report_date, len(selected), len(title_only))
+    logger.info("日报[%s]：预选 %d 条（目标 %d + 回补池 %d，仅标题 %d 条）",
+                report_date, len(preselected), top_n, select_buffer, len(title_only))
 
     with Session(engine) as session:
-        recent_items = fetch_recent_brief_items(session, days=recent_brief_days)
+        # exclude_date=report_date:同日重跑时今天自己的日报不进对照物(否则增量被剔光)
+        recent_items = fetch_recent_brief_items(
+            session, days=recent_brief_days, exclude_date=report_date,
+        )
 
     set_progress("reducing", "跨天查重与汇编…")
     logger.info("日报[%s]：跨天查重（对照近期日报 %d 天条目）后确定性渲染", report_date, len(recent_items))
-    selected = await cross_day_dedup(selected, recent_items, cfg, usage_username=triggered_by)
+    survivors = await cross_day_dedup(preselected, recent_items, cfg, usage_username=triggered_by)
+    selected = sorted(survivors, key=_effective_score, reverse=True)[:top_n]
+    if len(survivors) > len(selected):
+        logger.info("日报[%s]：查重幸存 %d 条，按有效分裁回 %d 条", report_date, len(survivors), len(selected))
+
+    # 同日重跑合并:当日已有日报 → 新旧条目合并重排,不再整篇覆盖丢早间条目
+    with Session(engine) as session:
+        prior_state = load_existing_brief_state(session, report_date)
+    if prior_state is not None:
+        prior_items, prior_title_only = prior_state
+        logger.info("日报[%s]：当日已有日报（%d 条），执行增量合并", report_date, len(prior_items))
+        selected, title_only = await merge_same_day(
+            prior_items, selected, prior_title_only, title_only, cfg, usage_username=triggered_by,
+        )
     markdown = render_brief_markdown(selected, title_only, report_date=report_date)
 
     if dry_run:

@@ -22,7 +22,13 @@
 - ☐ **30 个 incubating 源观察期转正评审**
   转正流程见 `docs/sources/curation_policy.md`「Incubation」节;
   Reddit 转正门槛 = 生产出口 IP 复验 429。转正时顺带更新 `docs/sources/node_catalog_and_risks.md` 快照。
-- ☐ **日报源手工名单实践观察**(v3.3.0 落地 `daily_brief_source_ids` KV,观察实际日报质量后调整名单)
+- ☐ **日报源手工名单实践观察**(v3.3.0 落地 `daily_brief_source_ids` KV,观察实际日报质量后调整名单;
+  v3.35 官源排查建议生产名单勾入 x_alibaba_qwen/x_deepseek_ai/x_openai/rss_deepmind_blog + 新源 x_zai_org/hf_qwen_models)
+- ☐ **z.ai 官方博客源**(v3.35 官源排查发现:智谱一手宣发已迁至 z.ai/blog/*[如 /blog/glm-5.3],
+  我们盯的 docs.z.ai/release-notes 官方停更于 GLM-5.2;z.ai/blog 无列表页/无 RSS/无 sitemap 收录/
+  冷 curl 无公开 JSON API,需浏览器后端(crawl4ai)或抓到它的数据接口;短期由 x_zai_org preset 顶发现通道)
+- ☐ **x.ai/news 产品线新闻源**(可选:docs_xai_release_notes 已覆盖模型发布且时效达标,
+  x.ai/news 补产品动态[如 Grok Bot];Cloudflare 盾,需 Playwright,与 rss_openai_news 同款处理)
 
 ## 展望(用户表态、未立项)
 

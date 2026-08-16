@@ -634,3 +634,170 @@ def test_generate_last_run_reports_scan_and_use(tmp_path, monkeypatch):
         last = db.get_json_setting(session, db.KEY_LAST_RUN, None)
     assert last["candidates_scanned"] == 4
     assert last["candidates_used"] == 2  # 裁剪不再静默:两个读数都进 last_run
+
+
+# ---------------- 权威机械层(v3.35) ----------------
+
+def _role(item, role):
+    item.candidate.source_role = role
+    return item
+
+
+def test_source_role_backend_mirror():
+    """后端 source_role 与前端 sourceTaxonomy 同判定序;注册表查不到默认 media。"""
+    from services.source_naming import source_role
+
+    assert source_role("rss_openai_news") == "official"
+    assert source_role("x_karpathy") == "personal"       # scope 判个人,压过基类 tier0
+    assert source_role("web_qbitai") == "media"
+    assert source_role("docs_arena_leaderboard_changelog") == "leaderboard"
+    assert source_role("some_config_source_not_in_registry") == "media"
+    assert source_role("") == "media"
+
+
+def test_select_top_official_bonus_breaks_ties_not_bands():
+    media_8 = _role(_scored(8, "media_a"), "media")
+    official_8 = _role(_scored(8, "official_a"), "official")
+    media_9 = _role(_scored(9, "media_b"), "media")
+    official_7 = _role(_scored(7, "official_b"), "official")
+    selected = select_top([media_8, official_8, media_9, official_7], top_n=4)
+    # 同分段官方置顶;+0.5 有界加成绝不跨分数段(官方 7→7.5 仍在媒体 8 之下)
+    assert [it.candidate.source_id for it in selected] == [
+        "media_b", "official_a", "media_a", "official_b",
+    ]
+
+
+def test_pick_cluster_representative_authority_gap():
+    official_8 = _role(_scored(8, "off"), "official")
+    media_9 = _role(_scored(9, "med"), "media")
+    media_7 = _role(_scored(7, "med2"), "media")
+    # 分差 1.0 内官方优先当代表
+    items = [media_9, official_8, media_7]
+    assert db._pick_cluster_representative(items, [0, 1, 2]) == 1
+    # 分差超门限(官方一行推文 vs 媒体深度整理)回归最高分
+    official_7 = _role(_scored(7, "off2"), "official")
+    items2 = [media_9, official_7]
+    assert db._pick_cluster_representative(items2, [0, 1]) == 0
+    # 多官方并列取分高者(官博赢过官推)
+    official_85 = _role(_scored(8.5, "off3"), "official")
+    items3 = [media_9, official_8, official_85]
+    assert db._pick_cluster_representative(items3, [0, 1, 2]) == 2
+
+
+def test_cross_day_dedup_official_drop_downgraded(monkeypatch):
+    """官方条目被判 drop 时机械降级为 followup 保留;媒体照删。"""
+    async def _fake(*, messages, config, **kwargs):
+        return json.dumps({"drop": [0, 1], "followups": []})
+
+    monkeypatch.setattr(db, "chat_completion", _fake)
+    official = _role(_scored_full(8, item_id="off"), "official")
+    media = _role(_scored_full(9, item_id="med"), "media")
+    fresh = _scored_full(7, item_id="fresh")
+    result = asyncio.run(db.cross_day_dedup([official, media, fresh], _recent_days(), CONFIGURED))
+    ids = [it.candidate.id for it in result]
+    assert "off" in ids and "med" not in ids and "fresh" in ids
+    kept = next(it for it in result if it.candidate.id == "off")
+    assert kept.followup_note == "官方一手确认"
+
+
+def test_collect_candidates_fills_source_role(tmp_path):
+    sink = _make_sink(tmp_path)
+    _seed(sink.engine, "a1", "src_unknown", "2026-06-05T00:00:00")
+    with Session(sink.engine) as session:
+        candidates, _, _ = collect_candidates(session, cursor="2026-06-01T00:00:00")
+    assert candidates[0].source_role == "media"  # 注册表查不到 → media,无官方待遇
+
+
+# ---------------- 同日重跑合并 / 查重回补 / map 重试(v3.35) ----------------
+
+def test_fetch_recent_brief_items_excludes_date(tmp_path):
+    sink = _make_sink(tmp_path)
+    from models.db import ArticleRecord
+
+    for date in ("2026-06-05", "2026-06-06"):
+        with Session(sink.engine) as session:
+            session.add(ArticleRecord(
+                id=f"daily_brief_{date}", title=f"日报{date}", content_type="daily_brief",
+                source_id=db.DAILY_BRIEF_SOURCE_ID, source_url="", publish_date=date,
+                fetched_date=f"{date}T09:00:00", has_content=True, content="### 条目",
+                extensions_json=json.dumps({"items": [{"title_cn": f"条目{date}"}]}),
+            ))
+            session.commit()
+    with Session(sink.engine) as session:
+        out = db.fetch_recent_brief_items(session, days=3, exclude_date="2026-06-06")
+    assert [d["date"] for d in out] == ["2026-06-05"]  # 当日自身不进对照物
+
+
+def test_generate_same_day_rerun_merges_not_shrinks(tmp_path, monkeypatch):
+    """同日二跑=增量合并:早间条目保留、新条目并入,不再整篇覆盖成残报。"""
+    monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
+    sink = _make_sink(tmp_path)
+    _seed(sink.engine, "morning1", "src_a", "2026-06-05T08:00:00")
+    _seed(sink.engine, "morning2", "src_b", "2026-06-05T08:30:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    r1 = asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    assert r1["articles_count"] == 2
+    # 午后新文章入库,游标已推进,二跑只有它一条增量
+    _seed(sink.engine, "noon1", "src_c", "2026-06-06T12:00:00")
+    r2 = asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    assert r2["status"] == "success"
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    ids = {e["id"] for e in ext["items"]}
+    assert ids == {"morning1", "morning2", "noon1"}  # 合并而非覆盖
+    assert set(ext["included_article_ids"]) == {"morning1", "morning2", "noon1"}
+
+
+def test_generate_refills_after_cross_day_drop(tmp_path, monkeypatch):
+    """跨天查重剔条后从回补池补足:成品仍达 top_n,不再缺斤短两。"""
+    async def _fake(*, messages, config, **kwargs):
+        system = messages[0].content
+        if "title_cn" in system and "score" in system:  # MAP
+            return await _fake_chat_completion(messages=messages, config=config, **kwargs)
+        if "跨天查重" in system:
+            return json.dumps({"drop": [0, 1], "followups": []})  # 剔掉预选前两条
+        return json.dumps({"clusters": []})
+
+    monkeypatch.setattr(db, "chat_completion", _fake)
+    sink = _make_sink(tmp_path)
+    from models.db import ArticleRecord
+
+    # 先放一篇昨日日报,让跨天查重有对照物
+    with Session(sink.engine) as session:
+        session.add(ArticleRecord(
+            id="daily_brief_2026-06-05", title="昨日日报", content_type="daily_brief",
+            source_id=db.DAILY_BRIEF_SOURCE_ID, source_url="", publish_date="2026-06-05",
+            fetched_date="2026-06-05T09:00:00", has_content=True, content="### 旧条目",
+            extensions_json=json.dumps({"items": [{"title_cn": "旧条目"}]}),
+        ))
+        session.commit()
+    for i in range(6):
+        _seed(sink.engine, f"n{i}", f"s{i}", f"2026-06-05T1{i}:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    result = asyncio.run(generate_daily_brief(
+        storage=sink, llm_config=CONFIGURED, report_date="2026-06-06", top_n=3))
+    # 预选 3+buffer,剔 2 后幸存者裁回 top_n=3——回补条目天然过了跨天检查
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    assert len(ext["items"]) == 3
+    assert result["status"] == "success"
+
+
+def test_map_summarize_retries_transient_failure(monkeypatch):
+    """map 单篇瞬时失败在整轮后串行重试一次,端点恢复即救回、不降附录。"""
+    calls = {"n": 0}
+
+    async def _flaky(*, messages, config, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient")
+        return await _fake_chat_completion(messages=messages, config=config, **kwargs)
+
+    monkeypatch.setattr(db, "chat_completion", _flaky)
+    cand = BriefCandidate(id="c1", title="t", source_id="s", source_url="", content_type="rss_article",
+                          publish_date="", fetched_date="", has_content=True, body="正文")
+    results = asyncio.run(map_summarize([cand], CONFIGURED))
+    assert calls["n"] == 2
+    assert results[0].map_ok is True  # 重试救回,不再定格失败

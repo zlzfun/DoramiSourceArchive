@@ -40,6 +40,7 @@ EXPECTED_BULLETIN_SOURCE_IDS = {
     "github_deepseek_repositories",
     "generic_huggingface_models",
     "hf_deepseek_models",
+    "hf_qwen_models",
     # 榜单类(短条目发现流)
     "github_trending_daily",
 }
@@ -53,6 +54,7 @@ EXPECTED_SOCIAL_SOURCE_IDS = {
     "x_karpathy",
     "x_sama",
     "x_openai",
+    "x_zai_org",
 }
 
 

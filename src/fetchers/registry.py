@@ -39,6 +39,7 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "docs_xai_release_notes",
     # Alibaba / Qwen
     "web_qwen_blog",
+    "hf_qwen_models",
     # DeepSeek
     "docs_deepseek_api_changelog",
     "github_deepseek_repositories",
@@ -87,6 +88,7 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "x_karpathy",
     "x_sama",
     "x_openai",
+    "x_zai_org",
 })
 
 
