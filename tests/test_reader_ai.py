@@ -72,6 +72,13 @@ def _configure_llm(engine):
         db.set_setting(session, db.KEY_LLM_MODEL, "test-model")
 
 
+def _disable_ai_beta(engine, username="user"):
+    from services import accounts as accounts_service
+
+    with Session(engine) as session:
+        accounts_service.set_ai_beta_enabled(session, username, False)
+
+
 def _enable_ai_beta(engine, username="user"):
     from services import accounts as accounts_service
 
@@ -112,6 +119,7 @@ def _base_setup(monkeypatch, tmp_path, name):
 
 def test_translate_403_when_ai_beta_disabled(monkeypatch, tmp_path):
     app_module, sink = _base_setup(monkeypatch, tmp_path, "ai_beta_off.db")
+    _disable_ai_beta(sink.engine)  # 新账号默认开(v3.36)后需显式关掉逐账户开关
     _configure_llm(sink.engine)
     _seed_article(sink.engine, "a1", "rss_x", "Title", "Hello world")
     _patch_llm(monkeypatch)
@@ -406,6 +414,7 @@ def test_admin_can_toggle_ai_beta_via_api(monkeypatch, tmp_path):
 
 def test_summarize_403_when_ai_beta_disabled(monkeypatch, tmp_path):
     app_module, sink = _base_setup(monkeypatch, tmp_path, "sum_beta_off.db")
+    _disable_ai_beta(sink.engine)  # 新账号默认开(v3.36)后需显式关掉逐账户开关
     _configure_llm(sink.engine)
     _seed_article(sink.engine, "a1", "rss_x", "Title", "Hello world")
     _patch_llm(monkeypatch)
