@@ -107,7 +107,7 @@ function MarkdownAnchor({ node, href, children, ...props }) {
     }
     return <span>[{num}]</span>;
   }
-  return <a href={href} {...props} target="_blank" rel="noreferrer" />;
+  return <a href={href} {...props} target="_blank" rel="noreferrer">{children}</a>;
 }
 
 const MARKDOWN_COMPONENTS = {
