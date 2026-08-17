@@ -31,6 +31,9 @@ VALID_SURFACES = ("console", "reader")
 
 # AI Beta 全局总开关：存 app_settings KV，默认开启。关闭即全员 AI 熔断。
 AI_BETA_GLOBAL_KEY = "ai_beta_global_enabled"
+# 新账号 AI 默认值:存 app_settings KV,默认开——新建账户的逐账户 AI 开关按此播种。
+# 只影响「创建时刻」的初值,存量账户与后续逐账户开关互不干扰;总闸仍是即时熔断层。
+AI_BETA_NEW_USER_DEFAULT_KEY = "ai_beta_new_user_default"
 # 读者面 AI 全局日 token 预算(v3.34):存 app_settings KV,0 = 不限(默认)。
 # 与逐用户日调用限额(routers/reader._AI_DAILY_CALL_LIMITS)互补——那是防单账户
 # 刷爆,这是护全站总成本(多账户/IM bot 代答渠道的放大器);范式同 x_api 月预算。
@@ -158,6 +161,7 @@ def create_user(session: Session, username: str, password: str, role: str) -> Us
         password_hash=hash_password(password),
         role=role,
         is_active=True,
+        ai_beta_enabled=ai_beta_new_user_default(session),
         created_at=now,
         updated_at=now,
     )
@@ -376,6 +380,26 @@ def set_ai_beta_global_enabled(session: Session, enabled: bool) -> None:
     session.commit()
 
 
+def ai_beta_new_user_default(session: Session) -> bool:
+    """新账号 AI 默认值，未设置时默认开启（创建账户时播种逐账户开关）。"""
+    record = session.get(AppSettingRecord, AI_BETA_NEW_USER_DEFAULT_KEY)
+    if record is None:
+        return True
+    return record.value.strip().lower() == "true"
+
+
+def set_ai_beta_new_user_default(session: Session, enabled: bool) -> None:
+    """写入新账号 AI 默认值。只影响此后新建的账户，存量账户不动。"""
+    record = session.get(AppSettingRecord, AI_BETA_NEW_USER_DEFAULT_KEY)
+    value = "true" if enabled else "false"
+    if record is None:
+        record = AppSettingRecord(key=AI_BETA_NEW_USER_DEFAULT_KEY, value=value)
+    else:
+        record.value = value
+    session.add(record)
+    session.commit()
+
+
 def ai_daily_token_budget(session: Session) -> int:
     """读者面 AI 全局日 token 预算；0 = 不限（默认/坏值回落）。"""
     record = session.get(AppSettingRecord, AI_DAILY_TOKEN_BUDGET_KEY)
@@ -443,6 +467,7 @@ def seed_root_admin_if_empty(engine) -> bool:
             password_hash=hash_password("admin"),
             role="admin",
             is_active=True,
+            ai_beta_enabled=ai_beta_new_user_default(session),
             created_at=now,
             updated_at=now,
         ))

@@ -50,6 +50,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 class AiBetaGlobalParams(BaseModel):
     enabled: Optional[bool] = None  # None = 不改(v3.34 起本端点兼管日预算,两字段独立可改)
     daily_token_budget: Optional[int] = None  # 读者面 AI 全局日 token 预算;0 = 不限;None = 不改
+    new_user_default: Optional[bool] = None  # 新账号 AI 默认值;只影响此后新建账户;None = 不改
 
 
 class PublicShareGlobalParams(BaseModel):
@@ -436,6 +437,7 @@ def admin_get_ai_beta_global(session: Session = Depends(deps.get_session)):
         # translate/ask/summarize 全账户今日合计,供运维面读数。
         "daily_token_budget": accounts_service.ai_daily_token_budget(session),
         "tokens_used_today": accounts_service.reader_ai_tokens_today(session),
+        "new_user_default": accounts_service.ai_beta_new_user_default(session),
     }
 
 
@@ -449,10 +451,13 @@ def admin_set_ai_beta_global(
         if params.daily_token_budget < 0:
             raise HTTPException(status_code=400, detail="日 token 预算不能为负（0 = 不限）")
         accounts_service.set_ai_daily_token_budget(session, params.daily_token_budget)
+    if params.new_user_default is not None:
+        accounts_service.set_ai_beta_new_user_default(session, params.new_user_default)
     return {
         "enabled": accounts_service.ai_beta_global_enabled(session),
         "daily_token_budget": accounts_service.ai_daily_token_budget(session),
         "tokens_used_today": accounts_service.reader_ai_tokens_today(session),
+        "new_user_default": accounts_service.ai_beta_new_user_default(session),
     }
 
 

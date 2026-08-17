@@ -71,6 +71,25 @@ def test_ai_beta_global_switch_roundtrip(tmp_path):
         assert accounts_service.ai_beta_global_enabled(session) is True
 
 
+def test_new_user_ai_default_seeds_created_accounts(tmp_path):
+    """新账号 AI 默认值(v3.36):默认开;关掉后只影响此后新建账户,存量不动。"""
+    from services import accounts as accounts_service
+    from storage.impl.db_storage import DatabaseStorage
+
+    engine = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'new_default.db'}").engine
+    with Session(engine) as session:
+        # KV 未设置时默认开:新建账户逐账户开关即为开。
+        assert accounts_service.ai_beta_new_user_default(session) is True
+        assert accounts_service.create_user(session, "alice", "secret", "user").ai_beta_enabled is True
+        # 关掉默认值后新建账户为关;已建账户不受影响。
+        accounts_service.set_ai_beta_new_user_default(session, False)
+        assert accounts_service.create_user(session, "bob", "secret", "user").ai_beta_enabled is False
+        assert accounts_service.get_user(session, "alice").ai_beta_enabled is True
+        # 重新打开即恢复播种。
+        accounts_service.set_ai_beta_new_user_default(session, True)
+        assert accounts_service.create_user(session, "carol", "secret", "admin").ai_beta_enabled is True
+
+
 # ==================== 端到端：埋点 / 全局开关 / overview / 门控 ====================
 def test_login_writes_last_login_at(monkeypatch, tmp_path):
     app_module = _setup_app(monkeypatch, tmp_path)
@@ -185,6 +204,33 @@ def test_global_switch_disables_ai(monkeypatch, tmp_path):
         blocked = user_client.post("/api/reader/ai/translate", json={"article_id": "any"})
         assert blocked.status_code == 403
         assert "临时关闭" in blocked.json()["detail"]
+
+
+def test_new_user_ai_default_endpoint_roundtrip(monkeypatch, tmp_path):
+    """/api/admin/ai-beta/global 兼管新账号 AI 默认值:读写往返 + 创建账户即生效。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from services import accounts as accounts_service
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        assert client.get("/api/admin/ai-beta/global").json()["new_user_default"] is True
+        # 只写默认值,不动总闸与预算。
+        res = client.post("/api/admin/ai-beta/global", json={"new_user_default": False})
+        assert res.status_code == 200
+        assert res.json()["new_user_default"] is False and res.json()["enabled"] is True
+        # 此后经管理端点新建的账户,逐账户 AI 开关为关。
+        assert client.post(
+            "/api/accounts", json={"username": "carol", "password": "secret123", "role": "user"}
+        ).status_code == 200
+        with Session(app_module.db_sink.engine) as session:
+            assert accounts_service.get_user(session, "carol").ai_beta_enabled is False
+        # 重新打开后新建账户为开。
+        client.post("/api/admin/ai-beta/global", json={"new_user_default": True})
+        assert client.post(
+            "/api/accounts", json={"username": "dave", "password": "secret123", "role": "user"}
+        ).status_code == 200
+        with Session(app_module.db_sink.engine) as session:
+            assert accounts_service.get_user(session, "dave").ai_beta_enabled is True
 
 
 # ==================== AI 用量计量 ====================

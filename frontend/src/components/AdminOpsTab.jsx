@@ -26,6 +26,7 @@ import {
   getXApiQuota,
   getAiBetaGlobal,
   setAiBetaGlobal,
+  setAiBetaNewUserDefault,
   setAiDailyTokenBudget,
   fetchPublicShareGlobal,
   updatePublicShareGlobal,
@@ -88,6 +89,7 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
   const [acctData, setAcctData] = useState(null); // {items,total,summary} | null = 加载中
   const [globalAi, setGlobalAi] = useState(null);
   const [aiBudget, setAiBudget] = useState(null);  // {daily_token_budget, tokens_used_today}(读者面 AI 日预算,0=不限)
+  const [newUserAiDefault, setNewUserAiDefault] = useState(null); // 新账号 AI 默认值(只影响此后新建账户)
   const [budgetDraft, setBudgetDraft] = useState(''); // 预算输入框草稿(失焦/回车提交)
   const [publicShare, setPublicShare] = useState(null);   // 公开分享总闸 + 存活链接盘点
   const [busy, setBusy] = useState(false);
@@ -160,6 +162,7 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
       setGlobalAi(g.enabled);
       setAiBudget({ daily_token_budget: g.daily_token_budget ?? 0, tokens_used_today: g.tokens_used_today ?? 0 });
       setBudgetDraft(String(g.daily_token_budget ?? 0));
+      setNewUserAiDefault(g.new_user_default ?? true);
     } catch (error) {
       showToast(error.message || '加载运维数据失败', 'error');
     }
@@ -225,6 +228,18 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
       await reloadAccounts();
     } catch (error) {
       showToast(error.message || '更新 AI 全局开关失败', 'error');
+    }
+  };
+
+  // 新账号 AI 默认值:只改「创建时刻」的播种初值,存量账户与总闸互不牵动。
+  const handleToggleNewUserDefault = async () => {
+    const next = !newUserAiDefault;
+    try {
+      const res = await setAiBetaNewUserDefault(next);
+      setNewUserAiDefault(res.new_user_default ?? next);
+      showToast(next ? '此后新建的账号将默认开启 AI 功能' : '此后新建的账号将默认关闭 AI 功能', 'success');
+    } catch (error) {
+      showToast(error.message || '更新新账号 AI 默认值失败', 'error');
     }
   };
 
@@ -783,6 +798,18 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
               disabled={globalAi === null}
               onClick={handleToggleGlobalAi}
               className={`ledger-switch ${globalAi ? 'is-on' : ''}`}
+            />
+            <span className="ai-divider" />
+            {/* 新账号 AI 默认值:只播种「创建时刻」的逐账户开关初值,存量账户不动 */}
+            <div className="ai-switch-lbl" title="此后新建的账号,逐账户 AI 开关按此初值播种;不影响已有账户,也不影响总闸">新账号默认开</div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!newUserAiDefault}
+              aria-label="新账号 AI 功能默认开启"
+              disabled={newUserAiDefault === null}
+              onClick={handleToggleNewUserDefault}
+              className={`ledger-switch ${newUserAiDefault ? 'is-on' : ''}`}
             />
             <span className="ai-divider" />
             {/* 模型编辑已收敛到 设置 → 凭据(v3.27);此处只留状态 chip 回指 */}
