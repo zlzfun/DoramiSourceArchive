@@ -173,7 +173,11 @@ def resolve_subscription_sources_by_token(token: str) -> Optional[List[str]]:
         if owner is not None:
             user = session.get(UserRecord, owner)
             if user is not None and user.role == "admin":
-                return []  # 管理员令牌不限来源（[] 即调用方契约中的「未限定」）
+                # 管理员令牌=全库可见域,显式枚举(与 scope=all 同口径,隐藏源排除)。
+                # 曾返回 [] 表「未限定」,与 MCP 侧「空列表=零订阅应返回空」契约相撞,
+                # 管理员令牌的 MCP 检索恒空(v3.36.1,内网 bot 接入实锤);歧义哨兵消灭,
+                # 空列表自此只有一种含义。
+                return resolve_all_visible_source_ids(session)
             return resolve_subscribed_source_ids(session, owner)
     return None
 

@@ -1074,5 +1074,22 @@ def test_personal_feed_admin_token_covers_whole_archive(monkeypatch, tmp_path):
         ).json()
         assert {item["id"] for item in scoped["items"]} == {"x1"}
 
-        # MCP 作用域解析：管理员令牌 → []（调用方契约中的「未限定来源」）
-        assert resolve_subscription_sources_by_token(token) == []
+        # MCP 作用域解析：管理员令牌 → 全库可见源显式枚举（v3.36.1 修复：
+        # 旧行为返回 [] 表「未限定」，与 MCP 侧「空列表=零订阅返回空」契约相撞，
+        # 管理员令牌经 MCP 检索恒空——内网 bot 接入实锤后拍板消灭歧义哨兵）
+        assert resolve_subscription_sources_by_token(token) == ["rss_openai", "rss_other"]
+
+        # 端到端回归：管理员令牌的解析作用域喂给 MCP 检索必须真能命中
+        import asyncio
+        import mcp_server
+        ok, scope = mcp_server._resolve_scope(resolve_subscription_sources_by_token, token)
+        assert ok is True
+        hits = asyncio.run(mcp_server._search_articles_impl(sink, "OpenAI", source_ids=scope))
+        assert {h["id"] for h in hits} == {"o1"}
+
+        # 隐藏源照旧排除（与 scope=all 同口径）
+        from services import source_visibility
+        from sqlmodel import Session as _S
+        with _S(sink.engine) as s:
+            source_visibility.set_source_hidden(s, "rss_other", True)
+        assert resolve_subscription_sources_by_token(token) == ["rss_openai"]
