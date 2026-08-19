@@ -225,7 +225,11 @@ ${hsts_header}
 
     location /mcp {
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
+        # MCP python SDK 的 DNS-rebinding 防护只认 localhost 形态的 Host,
+        # 经域名/EIP 反代进来会被 421 Invalid Host header 拒绝(2026-08-19 内网
+        # bot 接入实锤);服务端对服务端的可信反代在边缘改写 Host 即可,与
+        # proxy_pass 同源取值。/api 仍透传 \$host,不受影响。
+        proxy_set_header Host ${backend_host}:${backend_port};
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
@@ -289,7 +293,11 @@ server {
 
     location /mcp {
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
+        # MCP python SDK 的 DNS-rebinding 防护只认 localhost 形态的 Host,
+        # 经域名/EIP 反代进来会被 421 Invalid Host header 拒绝(2026-08-19 内网
+        # bot 接入实锤);服务端对服务端的可信反代在边缘改写 Host 即可,与
+        # proxy_pass 同源取值。/api 仍透传 \$host,不受影响。
+        proxy_set_header Host ${backend_host}:${backend_port};
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
@@ -342,7 +350,11 @@ server {
 
     location /mcp {
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
+        # MCP python SDK 的 DNS-rebinding 防护只认 localhost 形态的 Host,
+        # 经域名/EIP 反代进来会被 421 Invalid Host header 拒绝(2026-08-19 内网
+        # bot 接入实锤);服务端对服务端的可信反代在边缘改写 Host 即可,与
+        # proxy_pass 同源取值。/api 仍透传 \$host,不受影响。
+        proxy_set_header Host ${backend_host}:${backend_port};
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
