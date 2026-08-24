@@ -17,6 +17,9 @@
   用法与运维/ini 容器内语义差异/HTTPS/全新服务器部署与迁移/受限网络镜像源。PM2 裸机路径已于 v3.15.1 退役。
 - ◉ [engage-sync-wave-plan.md](./engage-sync-wave-plan.md) — v3.18 互通波设计:读者反馈收件箱/
   管理员公告横幅(逐用户一次性 dismiss)/远程内容同步(接收方拉取,复用归档同步契约)。
+- ◇ [reader-search-architecture.md](./reader-search-architecture.md) — 检索问答(类 RAG)模块
+  技术栈与原理报告(快照 v3.36.0,含 mermaid 架构图):FTS5 索引层/四阶段管线/降级链与
+  机械化诚实层/消费方范围/关键参数;权威事实来源仍是 reader_search.py 等代码。
 - ◇ [rag-retirement-plan.md](./rag-retirement-plan.md) — **RAG 退役与问答检索重构(已完成,
   v3.30+v3.31 执行记录)**:审视结论存档(生产 0 向量化/双存储复杂度税/两个实质 bug)+
   「LLM 计划检索 + FTS5」目标架构 + 两波执行清单与差异注记 + **重新引入触发器(§4,
