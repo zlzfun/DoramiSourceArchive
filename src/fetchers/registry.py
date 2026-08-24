@@ -69,6 +69,14 @@ ESSENTIAL_FETCHER_IDS = frozenset({
     "rss_oneusefulthing",
     "rss_lilianweng",
     "rss_import_ai",
+    # Hacker News Popular Blogs 2025：个人 AI / 开发者评论（观察期）
+    "rss_sean_goedecke",
+    "rss_giles_thomas",
+    "rss_max_woolf",
+    "rss_geohot",
+    "rss_geoffrey_litt",
+    "rss_martin_alderson",
+    "rss_anil_dash",
     # Academic labs
     "rss_bair_blog",
     # Agent coding tools

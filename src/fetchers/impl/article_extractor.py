@@ -40,7 +40,24 @@ def compact_text(text: str) -> str:
     text = re.sub("[\\u200b\\u200c\\u2060\\ufeff]", "", text or "")
     # ZWJ 组合 emoji 需保留,只清独占一行的孤立 ZWJ(Webflow 富文本的空行占位残留)
     text = re.sub("(?m)^\\u200d+$", "", text)
-    text = re.sub(r"[ \t]{2,}", " ", text)
+    # Markdown 正文里的 fenced code block 和嵌套列表依赖行首空格。旧实现对整篇文本
+    # 做全局空格压缩，会把 Python/JS 缩进及嵌套列表一并压成单空格，文章虽然仍能入库，
+    # 但在阅读器里已经不可执行/不可读。仅压缩普通行的行内空格，结构化区域原样保留。
+    fenced_parts = re.split(
+        r"([\x60]{3,}[^\n]*\n.*?^[\x60]{3,}[ \t]*(?:\n|$))",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    for index in range(0, len(fenced_parts), 2):
+        normal_part = fenced_parts[index]
+        normal_lines = []
+        for line in normal_part.split("\n"):
+            leading = re.match(r"^[ \t]*", line).group(0)
+            normal_lines.append(leading + re.sub(r"[ \t]{2,}", " ", line[len(leading):]))
+        fenced_parts[index] = "\n".join(normal_lines)
+
+    text = "".join(fenced_parts)
+    text = re.sub(r"(?m)^(?![ \t]*\x60\x60\x60)[ \t]+$", "", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
