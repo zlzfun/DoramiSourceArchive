@@ -657,6 +657,59 @@ def test_geoffrey_litt_removes_related_reads_tail_from_feed_body():
     assert "Old recommended post" not in item.content
 
 
+def test_geoffrey_litt_strips_talk_template_header_pair():
+    # talk 类文章模板固定以「日期 h3 + 标题 h1」开头(2026-08-24 生产抽查实证):
+    # 日期是站点 chrome,h1 与阅读窗标题行重复,成对剥离;普通段落开头的文章不受影响。
+    feed_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+      <channel><title>Geoffrey Litt</title>
+      <item>
+        <title>Understanding is the new bottleneck</title>
+        <link>https://www.geoffreylitt.com/2026/07/02/understanding</link>
+        <pubDate>Thu, 02 Jul 2026 10:00:00 GMT</pubDate>
+        <content:encoded><![CDATA[
+          <article class="talk"><div class="talk-header">
+            <h3 class="date">July 2026</h3>
+            <h1 class="title">Understanding is the new bottleneck</h1>
+            <p class="talk-context">This is a written version of a talk.</p>
+          </div><p>Actual talk body paragraph.</p></article>
+        ]]></content:encoded>
+      </item>
+      <item>
+        <title>Code like a surgeon</title>
+        <link>https://www.geoffreylitt.com/2026/06/01/surgeon</link>
+        <pubDate>Mon, 01 Jun 2026 10:00:00 GMT</pubDate>
+        <content:encoded><![CDATA[
+          <p>Normal post starting with a paragraph.</p>
+          <h1>July 2026 retrospective heading inside body stays</h1>
+        ]]></content:encoded>
+      </item>
+      </channel>
+    </rss>"""
+    fetcher = GeoffreyLittRssFetcher()
+
+    async def fake_safe_get(client, url):
+        assert url == fetcher.feed_url
+        return DummyResponse(feed_xml, url)
+
+    fetcher._safe_get = fake_safe_get
+    items = asyncio.run(_collect_two(fetcher))
+
+    talk = items[0]
+    assert "July 2026" not in talk.content.splitlines()[0]
+    assert "# Understanding is the new bottleneck" not in talk.content
+    assert "This is a written version of a talk." in talk.content
+    assert "Actual talk body paragraph." in talk.content
+
+    normal = items[1]
+    assert normal.content.startswith("Normal post starting with a paragraph.")
+    assert "July 2026 retrospective heading inside body stays" in normal.content
+
+
+async def _collect_two(fetcher):
+    return [item async for item in fetcher._run(None, limit=2)]
+
+
 def test_hn_popular_blogs_presets_are_visible_incubating_and_classified():
     fetcher_classes = (
         SeanGoedeckeRssFetcher,

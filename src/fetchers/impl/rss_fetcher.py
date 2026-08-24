@@ -1458,9 +1458,14 @@ class GeoffreyLittRssFetcher(PresetRssFetcher):
     # Feed 正文末尾固定附带相关文章推荐，不属于当前文章正文；若保留会在阅读器中
     # 形成第二份推荐流，并与归档粒度/去重语义混淆。
     _related_reads_re = re.compile(r"\n+## Related reads\b[\s\S]*$", re.IGNORECASE)
+    # talk 类文章模板以 <h3 class='date'>July 2026</h3> + <h1 class='title'>…</h1> 开头：
+    # 日期是站点 chrome，H1 与阅读窗标题行重复。仅当两者成对出现在正文起始时按对剥离，
+    # 普通文章（直接以段落开头）不受影响。
+    _talk_header_re = re.compile(r"\A#{2,4} +[A-Z][a-z]+ \d{4}\s*\n+# +[^\n]+\n+")
 
     def _entry_content_text(self, html_text: str, base_url: str) -> str:
         text = super()._entry_content_text(html_text, base_url)
+        text = self._talk_header_re.sub("", text.lstrip())
         return self._related_reads_re.sub("", text).rstrip()
 
 

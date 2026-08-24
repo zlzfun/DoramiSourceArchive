@@ -131,7 +131,7 @@ For *which* nodes are default-visible and *why*, see [curation_policy.md](./cura
 | `rss_giles_thomas` | `gilesthomas.com/feed/rss.xml` | Full-text RSS converted with `node_to_markdown`; code/diff blocks retained for reader rendering | 🟢 Low — public full-text feed; long entries need periodic size checks |
 | `rss_max_woolf` | `minimaxir.com/index.xml` | Full-text Atom/RSS converted with `node_to_markdown`; math and links kept as source markdown | 🟢 Low — public full-text feed |
 | `rss_geohot` | `geohot.github.io/blog/feed.xml` | Full-text Atom converted with `node_to_markdown` | 🟢 Low — public full-text feed; opinionated content is intentionally low-weight |
-| `rss_geoffrey_litt` | `geoffreylitt.com/feed.xml` | Full-text RSS converted with `node_to_markdown`; fixed `## Related reads` tail removed | 🟡 Medium — source template may change its recommendation heading |
+| `rss_geoffrey_litt` | `geoffreylitt.com/feed.xml` | Full-text RSS converted with `node_to_markdown`; fixed `## Related reads` tail removed; talk-template leading date-h3 + duplicate-title-h1 pair stripped | 🟡 Medium — source template may change its recommendation/talk-header markup |
 | `rss_martin_alderson` | `martinalderson.com/feed.xml` | Full-text RSS converted with `node_to_markdown`; source footnote links retained | 🟢 Low — public full-text feed |
 | `rss_anil_dash` | `anildash.com/feed.xml` | Full-text RSS converted with `node_to_markdown` | 🟢 Low — public full-text feed; broad social/technology scope is observed as medium noise |
 
