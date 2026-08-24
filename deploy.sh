@@ -636,6 +636,38 @@ case "$DB_URL" in
         ;;
 esac
 
+# 迁移前自动备份数据库(分叉仓形态下合入 main 后的首次迁移风险最高,炸了可直接
+# 回滚到备份文件):保留最近 10 份,更早的自动清理。
+case "$DB_URL" in
+    sqlite:///*)
+        if [ -f "$DB_PATH" ]; then
+            mkdir -p backups
+            BACKUP_FILE="backups/$(basename "$DB_PATH").$(date +%Y%m%d-%H%M%S)"
+            cp "$DB_PATH" "$BACKUP_FILE"
+            echo "    DB backup: $BACKUP_FILE"
+            ls -1t backups/"$(basename "$DB_PATH")".* 2>/dev/null | tail -n +11 | xargs -r rm -f
+        fi
+        ;;
+esac
+
+# 迁移预检观测:把库当前 revision 与迁移链 head 数打进部署日志——本分支自带迁移
+# 支线时,合入 main 新迁移后 DAG 会双头(git 零冲突),v3.38.1 起 ensure_migrated
+# 检测多头即 upgrade("heads") 并行全升;此处的观测线索让「哪次合入引入了双头」
+# 在部署日志里可追,而不是等启动失败再翻应用日志。
+DORAMI_CONFIG_FILE="$CONFIG_FILE" PYTHONPATH=src "$VENV_DIR/bin/python" - <<'PYEOF'
+from alembic.script import ScriptDirectory
+
+from config import settings
+from storage.migrations import _current_revision, make_alembic_config
+
+db_url = settings.storage.database_url
+heads = ScriptDirectory.from_config(make_alembic_config(db_url)).get_heads()
+print(f"    DB revision: {_current_revision(db_url)}")
+print(f"    migration heads({len(heads)}): {', '.join(heads)}")
+if len(heads) > 1:
+    print("    NOTE: 双头(分叉仓形态)——ensure_migrated 将并行全升两条支线")
+PYEOF
+
 # 数据库迁移(schema 变更走 Alembic):ensure_migrated 对「有表无版本」的
 # 老库先 stamp 基线再 upgrade,避免裸 `alembic upgrade` 对已存在的表重跑建表而失败;
 # 全新库则从零建到最新。指向生产库(DORAMI_CONFIG_FILE),失败即终止部署(set -e)。
