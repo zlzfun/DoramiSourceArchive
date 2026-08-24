@@ -55,6 +55,7 @@ from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
 from services import reader_search as reader_search_service
 from services import reader_state as reader_state_service
+from services import source_collections as source_collections_service
 from services import source_visibility as source_visibility_service
 from services import x_api_config as x_api_config_service
 
@@ -203,6 +204,121 @@ def unsubscribe_source(source_id: str, request: Request, session: Session = Depe
         "status": "success",
         "source_id": source_id,
         "subscribed": False,
+        "subscribed_source_ids": subscribed_ids,
+    }
+
+
+# ==================== 源合集(策展合集) ====================
+
+@router.get("/collections")
+def list_source_collections():
+    """发现页合集目录(代码注册表直出)。
+
+    轻载荷:只给合集自身元数据与成员 id 名单,成员的订阅态/头像/计数由前端
+    与已持有的 GET /api/reader/sources 目录 join,不重复下发。
+    """
+    return {
+        "collections": [
+            source_collections_service.serialize_collection(collection)
+            for collection in source_collections_service.list_collections()
+        ]
+    }
+
+
+@router.post("/collections/{collection_id}/subscribe")
+def subscribe_collection(collection_id: str, request: Request, session: Session = Depends(deps.get_session)):
+    """一键订阅合集 = 批量订阅其当前成员(批量动作,非持久绑定)。
+
+    逐成员沿用单源订阅的两条纪律:隐藏源与注册表外成员跳过(不整体 404,
+    回报在 unavailable),幂等基线用 include_hidden 的原始订阅并集;
+    整批单事务一次 commit(复刻 ensure_default_subscriptions 范式)。
+    """
+    app = _app()
+    username = app.current_username(request)
+    collection = source_collections_service.get_collection((collection_id or "").strip())
+    if collection is None:
+        raise HTTPException(status_code=404, detail="合集不存在")
+    hidden = source_visibility_service.hidden_source_ids(session)
+    registry_meta = _registry_source_meta()
+    existing = set(app.resolve_subscribed_source_ids(session, username, include_hidden=True))
+    added: List[str] = []
+    already_subscribed: List[str] = []
+    unavailable: List[str] = []
+    for source_id in collection.source_ids:
+        if source_id in hidden or source_id not in registry_meta:
+            # 隐藏源不接受新订阅;注册表外成员(注册表漂移的运行时兜底)不下单。
+            unavailable.append(source_id)
+            continue
+        if source_id in existing:
+            already_subscribed.append(source_id)
+            continue
+        app._create_single_source_subscription(
+            session, username, source_id, _friendly_source_name(source_id, registry_meta)
+        )
+        # 与单源一键订阅同语义:订阅即初始化未读水位(backlog 式)。
+        reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
+        added.append(source_id)
+    if added:
+        session.commit()
+    subscribed_ids = sorted(set(
+        app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+    ))
+    return {
+        "status": "success",
+        "collection_id": collection.collection_id,
+        "added": added,
+        "already_subscribed": already_subscribed,
+        "unavailable": unavailable,
+        "subscribed_source_ids": subscribed_ids,
+    }
+
+
+@router.delete("/collections/{collection_id}/subscribe")
+def unsubscribe_collection(collection_id: str, request: Request, session: Session = Depends(deps.get_session)):
+    """取消订阅合集 = 批量退订其当前成员。
+
+    无绑定记录的诚实推论:同属其它合集的成员也会被退订(前端确认框如实列出)。
+    逐成员语义与单源退订一致:剔 filters、清空即删订阅记录、清未读水位。
+    """
+    app = _app()
+    username = app.current_username(request)
+    collection = source_collections_service.get_collection((collection_id or "").strip())
+    if collection is None:
+        raise HTTPException(status_code=404, detail="合集不存在")
+    member_ids = set(collection.source_ids)
+    removed: set[str] = set()
+    records = session.exec(
+        select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.owner_username == username)
+    ).all()
+    for record in records:
+        ids = subscription_source_ids(record)
+        remaining = [sid for sid in ids if sid not in member_ids]
+        if len(remaining) == len(ids):
+            continue
+        removed.update(set(ids) & member_ids)
+        if remaining:
+            try:
+                filters = json.loads(record.filters_json) if record.filters_json else {}
+            except (TypeError, json.JSONDecodeError):
+                filters = {}
+            filters.pop("source_id", None)
+            filters["source_ids"] = ",".join(remaining)
+            record.filters_json = json.dumps(filters or {}, ensure_ascii=False)
+            record.updated_at = _now_iso()
+            session.add(record)
+        else:
+            session.delete(record)
+    # 与单源退订同语义:清全部成员的水位(未订阅成员无水位,drop 幂等无害)。
+    for source_id in collection.source_ids:
+        reader_state_service.drop_cursor(session, username=username, source_id=source_id)
+    session.commit()
+    subscribed_ids = sorted(set(
+        app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+    ))
+    return {
+        "status": "success",
+        "collection_id": collection.collection_id,
+        "removed": sorted(removed),
         "subscribed_source_ids": subscribed_ids,
     }
 

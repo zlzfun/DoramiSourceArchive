@@ -65,6 +65,8 @@ export default function MobileReader({
     sourcesLoading, discoverSources, subscribedIds, sourceMap, sourceNameMap,
     sidebarGroups, hasNoSubscriptions, socialSources, platformCount, pinningId,
     handleSubscribe, handleUnsubscribe,
+    collections, discoverCollectionId, setDiscoverCollectionId,
+    collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, setDiscover,
     bulletinView, socialView, listTitle,
@@ -144,6 +146,8 @@ export default function MobileReader({
   // ── 返回键握手(Wave3):层开着时按返回=关层,不是退出站点(微信内浏览器的肌肉记忆)──
   useLayerHistory(readOpen, () => selectArticle(null));
   useLayerHistory(discover, () => setDiscover(false));
+  // 合集详情是发现页之上的一层:返回先退详情、再退发现页(注册序在 discover 之后)
+  useLayerHistory(Boolean(discoverCollectionId), () => setDiscoverCollectionId(null));
   useLayerHistory(drawerOpen, () => setDrawerOpen(false));
   useLayerHistory(Boolean(sheet), () => setSheet(null));
 
@@ -404,6 +408,13 @@ export default function MobileReader({
               onSubscribe={handleSubscribe}
               onUnsubscribe={handleUnsubscribe}
               onPreview={(source) => goSource(source.source_id)}
+              collections={collections}
+              activeCollectionId={discoverCollectionId}
+              onOpenCollection={(c) => setDiscoverCollectionId(c.collection_id)}
+              onCloseCollection={() => setDiscoverCollectionId(null)}
+              collectionPinningId={collectionPinningId}
+              onSubscribeCollection={handleSubscribeCollection}
+              onUnsubscribeCollection={handleUnsubscribeCollection}
             />
           </div>
         </div>

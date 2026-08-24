@@ -9012,6 +9012,71 @@ input[type="radio"] {
 
   .reader-disc-empty { padding: 60px 0; text-align: center; font-size: 12.5px; color: var(--dorami-faint); }
 
+  /* ── 源合集(策展合集):「源 ⇄ 合集」目录视图的合集半边 ── */
+  .reader-disc-viewseg { flex: none; }
+
+  .reader-disc-coll-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 1280px) { .reader-disc-coll-grid { grid-template-columns: 1fr; } }
+
+  /* 合集卡:纵排(头像堆叠行 → 名称行 → 简介 → 来源注),整卡可点进详情 */
+  .reader-disc-coll-card { flex-direction: column; gap: 8px; cursor: pointer; }
+  .reader-disc-coll-card:focus-visible { outline: 2px solid var(--dorami-accent); outline-offset: 2px; }
+
+  .reader-disc-coll-toprow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+  /* 成员头像堆叠:负边距叠排,底色描边圈出层次;真实头像与 LogoMark 混排同框 */
+  .reader-disc-coll-avatars { display: flex; align-items: center; }
+  .reader-disc-coll-ava {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--dorami-surface);
+    box-shadow: 0 0 0 2px var(--dorami-surface);
+  }
+  .reader-disc-coll-ava + .reader-disc-coll-ava { margin-left: -6px; }
+  .reader-disc-coll-ava img { width: 100%; height: 100%; object-fit: cover; }
+  .reader-disc-coll-more { margin-left: 7px; font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); }
+
+  .reader-disc-coll-count { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--dorami-faint); }
+
+  /* 来源注(provenance):策展叙事,faint 一档;链接经公告白名单渲染器生成 */
+  .reader-disc-coll-note { font-size: 11px; line-height: 1.55; color: var(--dorami-faint); }
+  .reader-disc-coll-note a { color: var(--dorami-accent-ink); text-decoration: none; }
+  .reader-disc-coll-note a:hover { text-decoration: underline; }
+
+  /* 批量按钮:沿 .reader-disc-sub 三态;退订两击确认时翻危险色(同 is-subbed hover 语汇) */
+  .reader-disc-coll-sub { flex: none; }
+  .reader-disc-coll-sub.is-confirm { background: #dc2626; color: #fff; }
+  .reader-disc-coll-sub.is-confirm:hover { background: #b91c1c; }
+
+  /* 合集详情头:返回签 + 元信息行(标题/计数/右缘批量按钮)+ 简介与来源注;
+     底部留白撑开与 .reader-disc-head 分割线的距离(源视图由工具条 margin 承担) */
+  .reader-disc-coll-dethead { display: flex; flex-direction: column; gap: 6px; padding-bottom: 14px; }
+  .reader-disc-back {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px 3px 2px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    /* 字号/字族在文件尾未分层区(全局无 layer 的 button{font:inherit} 压层内声明) */
+    color: var(--dorami-faint);
+    cursor: pointer;
+    transition: color var(--motion-fast) var(--motion-ease);
+  }
+  .reader-disc-back:hover { color: var(--dorami-ink-2); }
+  .reader-disc-coll-detmain { display: flex; flex-direction: column; gap: 5px; }
+  .reader-disc-coll-detrow { display: flex; align-items: center; gap: 10px; }
+  .reader-disc-coll-detact { margin-left: auto; }
+  .reader-disc-coll-desc { font-size: 12.5px; line-height: 1.6; color: var(--dorami-ink-2); }
+
   /* 预览着陆(Folo):源栏顶锚点行的「预览」签 + 条目列头下的显眼订阅横幅 */
   .reader-src-preview-tag {
     flex: none;
@@ -10124,6 +10189,7 @@ input[type="radio"] {
 .reader-disc-sub { font-size: 11.5px; font-weight: 500; }
 .reader-disc-sub.is-subbed { font-weight: 400; }
 .reader-disc-prev { font-size: 11px; font-weight: 400; }
+.reader-disc-back { font-size: 11px; font-weight: 400; font-family: var(--mono); }
 /* 输入框同陷阱:无层级 input{font:inherit} 压 @layer 字号,发现页目录搜索框字号在此钉住 */
 .reader-disc-search input { font-size: 12.5px; }
 /* 条目列头就地展开的搜索框同理钉字号+行高,与发现页目录搜索一致(否则回落 16px/40px 高) */
