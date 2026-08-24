@@ -458,3 +458,55 @@ def test_reader_read_states_migration_adds_missing_is_read(tmp_path):
         assert "reader_read_cursors" in inspect(engine).get_table_names()  # 另一表照常创建
     finally:
         engine.dispose()
+
+
+def test_ensure_migrated_tolerates_forked_heads(tmp_path, monkeypatch):
+    """下游分叉仓形态(内网 intranet):分叉仓自带迁移支线,合入 main 新迁移后
+    DAG 双头——git 零冲突,但 upgrade("head") 无条件报错、启动路径直接炸。
+    ensure_migrated 应检测多头并 upgrade("heads") 并行全升两条支线。"""
+    import shutil
+
+    import storage.migrations as migrations_module
+
+    main_head = _head_revision()
+
+    # 复制真实迁移链,追加一个从基线分叉的支线迁移 → 双头
+    script_dir = tmp_path / "alembic"
+    shutil.copytree(migrations_module._PROJECT_ROOT / "alembic", script_dir)
+    (script_dir / "versions" / "zzzz_fork_branch.py").write_text(
+        '"""模拟内网本地迁移支线(与主线同父,git 无冲突但 DAG 分叉)。"""\n'
+        "import sqlalchemy as sa\n"
+        "from alembic import op\n\n"
+        "revision = 'aaaafork0001'\n"
+        f"down_revision = '{BASELINE_REVISION}'\n"
+        "branch_labels = None\n"
+        "depends_on = None\n\n\n"
+        "def upgrade():\n"
+        "    op.create_table('intranet_only', sa.Column('id', sa.Integer, primary_key=True))\n\n\n"
+        "def downgrade():\n"
+        "    op.drop_table('intranet_only')\n",
+        encoding="utf-8",
+    )
+
+    real_make = migrations_module.make_alembic_config
+
+    def patched_make(db_url=None):
+        cfg = real_make(db_url)
+        cfg.set_main_option("script_location", str(script_dir))
+        return cfg
+
+    monkeypatch.setattr(migrations_module, "make_alembic_config", patched_make)
+
+    db_url = f"sqlite:///{tmp_path / 'forked.db'}"
+    ensure_migrated(db_url)  # 双头下不应报错
+
+    engine = create_engine(db_url)
+    try:
+        insp = inspect(engine)
+        assert "intranet_only" in insp.get_table_names()  # 支线头已应用
+        assert "articles" in insp.get_table_names()       # 主线头已应用
+        with engine.connect() as conn:
+            heads = set(MigrationContext.configure(conn).get_current_heads())
+        assert heads == {"aaaafork0001", main_head}
+    finally:
+        engine.dispose()
