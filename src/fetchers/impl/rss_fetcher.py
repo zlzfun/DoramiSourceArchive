@@ -1344,3 +1344,165 @@ class ImportAiRssFetcher(PresetRssFetcher):
         text = super()._entry_content_text(html_text, base_url)
         text = self._intro_re.sub("", text, count=1)
         return self._thanks_re.sub("", text).strip()
+
+
+class SeanGoedeckeRssFetcher(PresetRssFetcher):
+    source_id = "rss_sean_goedecke"
+    name = "Sean Goedecke"
+    description = "Sean Goedecke 对 AI、软件工程与技术组织的个人分析。"
+    icon = "🧭"
+    feed_url = "https://www.seangoedecke.com/rss.xml"
+    category = "incubating"  # 观察期;验收转正后改回 "community"
+    default_limit = 5
+    source_owner = "sean_goedecke"
+    source_brand = "Sean Goedecke"
+    source_scope = "personal_commentary"
+    source_channel = "blog"
+    source_url = "https://www.seangoedecke.com/"
+    provenance_tier = "tier2_personal_social"
+    content_tags = ["opinion", "developer_tool", "tutorial_or_practice"]
+    signal_strength = "medium_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public_rss"
+    default_fetch_detail_if_missing = False
+    feed_content_as_markdown = True
+
+
+class GilesThomasRssFetcher(PresetRssFetcher):
+    source_id = "rss_giles_thomas"
+    name = "Giles Thomas"
+    description = "Giles Thomas 关于 LLM 实现、训练实验与开发实践的长文。"
+    icon = "🧪"
+    feed_url = "https://gilesthomas.com/feed/rss.xml"
+    category = "incubating"  # 观察期;验收转正后改回 "community"
+    default_limit = 5
+    source_owner = "giles_thomas"
+    source_brand = "Giles Thomas"
+    source_scope = "personal_commentary"
+    source_channel = "blog"
+    source_url = "https://gilesthomas.com/"
+    provenance_tier = "tier2_personal_social"
+    content_tags = ["research_paper", "tutorial_or_practice", "developer_tool", "opinion"]
+    signal_strength = "high_signal"
+    noise_risk = "low_noise"
+    fetch_reliability = "stable_public_rss"
+    default_fetch_detail_if_missing = False
+    feed_content_as_markdown = True
+
+
+class MaxWoolfRssFetcher(PresetRssFetcher):
+    source_id = "rss_max_woolf"
+    name = "Max Woolf"
+    description = "Max Woolf 关于 LLM 应用实验、模型行为与 Agent 实践的观察。"
+    icon = "🧮"
+    feed_url = "https://minimaxir.com/index.xml"
+    category = "incubating"  # 观察期;验收转正后改回 "community"
+    default_limit = 5
+    source_owner = "max_woolf"
+    source_brand = "Max Woolf"
+    source_scope = "personal_commentary"
+    source_channel = "blog"
+    source_url = "https://minimaxir.com/"
+    provenance_tier = "tier2_personal_social"
+    content_tags = ["research_paper", "developer_tool", "product_update", "opinion"]
+    signal_strength = "medium_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public_rss"
+    default_fetch_detail_if_missing = False
+    feed_content_as_markdown = True
+
+
+class GeohotRssFetcher(PresetRssFetcher):
+    source_id = "rss_geohot"
+    name = "geohot"
+    description = "geohot 关于 AI 系统、工程实践与行业炒作的评论。"
+    icon = "⚡"
+    feed_url = "https://geohot.github.io/blog/feed.xml"
+    category = "incubating"  # 观察期;验收转正后改回 "community"
+    default_limit = 5
+    source_owner = "geohot"
+    source_brand = "geohot"
+    source_scope = "personal_commentary"
+    source_channel = "blog"
+    source_url = "https://geohot.github.io/blog/"
+    provenance_tier = "tier2_personal_social"
+    content_tags = ["opinion", "developer_tool", "model_release"]
+    signal_strength = "medium_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public_rss"
+    default_fetch_detail_if_missing = False
+    feed_content_as_markdown = True
+
+
+class GeoffreyLittRssFetcher(PresetRssFetcher):
+    source_id = "rss_geoffrey_litt"
+    name = "Geoffrey Litt"
+    description = "Geoffrey Litt 关于 AI、HCI 与编程工具的长文。"
+    icon = "🧩"
+    feed_url = "https://www.geoffreylitt.com/feed.xml"
+    category = "incubating"  # 观察期;验收转正后改回 "community"
+    default_limit = 5
+    source_owner = "geoffrey_litt"
+    source_brand = "Geoffrey Litt"
+    source_scope = "personal_commentary"
+    source_channel = "blog"
+    source_url = "https://www.geoffreylitt.com/"
+    provenance_tier = "tier2_personal_social"
+    content_tags = ["developer_tool", "tutorial_or_practice", "opinion"]
+    signal_strength = "medium_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public_rss"
+    default_fetch_detail_if_missing = False
+    feed_content_as_markdown = True
+
+    # Feed 正文末尾固定附带相关文章推荐，不属于当前文章正文；若保留会在阅读器中
+    # 形成第二份推荐流，并与归档粒度/去重语义混淆。
+    _related_reads_re = re.compile(r"\n+## Related reads\b[\s\S]*$", re.IGNORECASE)
+
+    def _entry_content_text(self, html_text: str, base_url: str) -> str:
+        text = super()._entry_content_text(html_text, base_url)
+        return self._related_reads_re.sub("", text).rstrip()
+
+
+class MartinAldersonRssFetcher(PresetRssFetcher):
+    source_id = "rss_martin_alderson"
+    name = "Martin Alderson"
+    description = "Martin Alderson 关于开放权重、AI 成本与模型工程的分析。"
+    icon = "📉"
+    feed_url = "https://martinalderson.com/feed.xml"
+    category = "incubating"  # 观察期;验收转正后改回 "community"
+    default_limit = 5
+    source_owner = "martin_alderson"
+    source_brand = "Martin Alderson"
+    source_scope = "personal_commentary"
+    source_channel = "blog"
+    source_url = "https://martinalderson.com/"
+    provenance_tier = "tier2_personal_social"
+    content_tags = ["model_release", "api_platform", "market_news", "opinion"]
+    signal_strength = "high_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public_rss"
+    default_fetch_detail_if_missing = False
+    feed_content_as_markdown = True
+
+
+class AnilDashRssFetcher(PresetRssFetcher):
+    source_id = "rss_anil_dash"
+    name = "Anil Dash"
+    description = "Anil Dash 关于 AI 治理、技术社会影响与软件实践的评论。"
+    icon = "🗣️"
+    feed_url = "https://anildash.com/feed.xml"
+    category = "incubating"  # 观察期;验收转正后改回 "community"
+    default_limit = 5
+    source_owner = "anil_dash"
+    source_brand = "Anil Dash"
+    source_scope = "personal_commentary"
+    source_channel = "blog"
+    source_url = "https://anildash.com/"
+    provenance_tier = "tier2_personal_social"
+    content_tags = ["opinion", "market_news", "product_update", "developer_tool"]
+    signal_strength = "medium_signal"
+    noise_risk = "medium_noise"
+    fetch_reliability = "stable_public_rss"
+    default_fetch_detail_if_missing = False
+    feed_content_as_markdown = True

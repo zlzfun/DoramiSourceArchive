@@ -256,6 +256,17 @@ def test_compact_text_strips_zero_width_chars():
     assert compact_text("A⁠B​C﻿D") == "ABCD"
 
 
+def test_compact_text_preserves_code_and_nested_list_indentation():
+    from fetchers.impl.article_extractor import compact_text
+
+    text = "Paragraph  with  repeated spaces.\n\n  - nested item\n\n\x60\x60\x60python\nif ready:\n    return 1\n\x60\x60\x60"
+    compacted = compact_text(text)
+
+    assert "Paragraph with repeated spaces." in compacted
+    assert "  - nested item" in compacted
+    assert "\x60\x60\x60python\nif ready:\n    return 1\n\x60\x60\x60" in compacted
+
+
 def test_heading_permalink_anchor_stripped():
     # Hugo/Docusaurus 标题自链([#]/¶)不是正文,须剥离(cursor changelog/lilianweng)
     html = (

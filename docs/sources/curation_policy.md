@@ -76,6 +76,13 @@ The current default-visible catalog is the admitted first additive batch. Each s
 | `rss_oneusefulthing` | Full-text insight on AI application and work practices from Ethan Mollick. |
 | `rss_lilianweng` | Deep technical essays on AI research and practice from Lilian Weng. |
 | `rss_import_ai` | Jack Clark's full-text weekly synthesis of AI research, industry, and policy signals. |
+| `rss_sean_goedecke` | Sean Goedecke's AI, software-engineering, and technical-organization commentary. |
+| `rss_giles_thomas` | Giles Thomas's long-form LLM implementation, training, and developer-practice essays. |
+| `rss_max_woolf` | Max Woolf's LLM application experiments, model-behavior observations, and agent practice. |
+| `rss_geohot` | geohot's AI systems, engineering, and anti-hype commentary. |
+| `rss_geoffrey_litt` | Geoffrey Litt's AI, HCI, and programming-tool essays. |
+| `rss_martin_alderson` | Martin Alderson's open-weights, AI-cost, and model-engineering analysis. |
+| `rss_anil_dash` | Anil Dash's AI governance, technology-and-society, and software-practice commentary. |
 | `rss_bair_blog` | Primary research blog posts from the Berkeley Artificial Intelligence Research lab. |
 | `web_cursor_changelog` | Cursor product changelog for agent coding practice. |
 | `github_opencode_releases` | OpenCode release updates. |

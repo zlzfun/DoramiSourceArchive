@@ -8,6 +8,10 @@ from fetchers.impl.rss_fetcher import (
     AppleMachineLearningResearchRssFetcher,
     BairBlogRssFetcher,
     GenericRssFetcher,
+    AnilDashRssFetcher,
+    GeoffreyLittRssFetcher,
+    GeohotRssFetcher,
+    GilesThomasRssFetcher,
     GoogleDeepMindBlogRssFetcher,
     GoogleGeminiModelsRssFetcher,
     HackerNewsAiRssFetcher,
@@ -16,6 +20,8 @@ from fetchers.impl.rss_fetcher import (
     ImportAiRssFetcher,
     LatentSpaceRssFetcher,
     LilianWengRssFetcher,
+    MartinAldersonRssFetcher,
+    MaxWoolfRssFetcher,
     MistralNewsRssFetcher,
     MicrosoftAiModelsRssFetcher,
     NvidiaGenAiBlogRssFetcher,
@@ -25,6 +31,7 @@ from fetchers.impl.rss_fetcher import (
     RedditLocalLlamaRssFetcher,
     RuanYifengRssFetcher,
     SimonWillisonRssFetcher,
+    SeanGoedeckeRssFetcher,
     TestingCatalogRssFetcher as CatalogRssFetcher,
     TheDecoderRssFetcher,
 )
@@ -565,6 +572,123 @@ def test_full_text_rss_preset_uses_feed_body_without_detail_request():
     assert requested_urls == [fetcher.feed_url]
     assert items[0].content == "This complete Atom article body must be kept without fetching its detail page."
     assert items[0].raw_data["detail_fetched"] is False
+
+
+def test_hn_popular_blogs_presets_keep_markdown_and_skip_detail_fetches():
+    # 首批 7 个源均是全文 feed：正文应走 markdown 转换，避免代码/列表/链接在阅读器里塌平，
+    # 同时不再对同一篇文章发起详情页请求。
+    feed_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+      <channel><title>HN Popular Blog Test</title><item>
+        <title>Full-text entry</title>
+        <link>https://example.test/full-text-entry</link>
+        <pubDate>Fri, 17 Jul 2026 00:00:00 GMT</pubDate>
+        <content:encoded><![CDATA[
+          <p>First paragraph with a <a href="https://example.test/docs">documentation link</a>.</p>
+          <h2>Readable section</h2>
+          <ul><li>One item</li><li>Two item</li></ul>
+          <pre><code>def main():\n    return "ok"</code></pre>
+        ]]></content:encoded>
+      </item></channel>
+    </rss>"""
+    fetcher_classes = (
+        SeanGoedeckeRssFetcher,
+        GilesThomasRssFetcher,
+        MaxWoolfRssFetcher,
+        GeohotRssFetcher,
+        GeoffreyLittRssFetcher,
+        MartinAldersonRssFetcher,
+        AnilDashRssFetcher,
+    )
+
+    for fetcher_class in fetcher_classes:
+        fetcher = fetcher_class()
+        requested_urls = []
+
+        async def fake_safe_get(client, url):
+            requested_urls.append(url)
+            if url == fetcher.feed_url:
+                return DummyResponse(feed_xml, url)
+            raise AssertionError(f"全文 feed 不应请求详情页: {url}")
+
+        fetcher._safe_get = fake_safe_get
+        item = asyncio.run(_collect_fetcher_items(fetcher))[0]
+
+        assert fetcher.default_fetch_detail_if_missing is False
+        assert fetcher.feed_content_as_markdown is True
+        assert requested_urls == [fetcher.feed_url]
+        assert "## Readable section" in item.content
+        assert "[documentation link](https://example.test/docs)" in item.content
+        assert "- One item" in item.content
+        assert 'def main():\n    return "ok"' in item.content
+        assert "<p>" not in item.content
+        assert item.raw_data["detail_fetched"] is False
+
+
+async def _collect_fetcher_items(fetcher):
+    return [item async for item in fetcher._run(None, limit=1)]
+
+
+def test_geoffrey_litt_removes_related_reads_tail_from_feed_body():
+    feed_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+      <channel><title>Geoffrey Litt</title><item>
+        <title>Understanding is the new bottleneck</title>
+        <link>https://www.geoffreylitt.com/2026/07/02/understanding</link>
+        <pubDate>Thu, 02 Jul 2026 10:00:00 GMT</pubDate>
+        <content:encoded><![CDATA[
+          <p>Actual article body that belongs in the reader.</p>
+          <h2>Related reads</h2>
+          <ul><li><a href="https://www.geoffreylitt.com/old">Old recommended post</a></li></ul>
+        ]]></content:encoded>
+      </item></channel>
+    </rss>"""
+    fetcher = GeoffreyLittRssFetcher()
+
+    async def fake_safe_get(client, url):
+        assert url == fetcher.feed_url
+        return DummyResponse(feed_xml, url)
+
+    fetcher._safe_get = fake_safe_get
+    item = asyncio.run(_collect_fetcher_items(fetcher))[0]
+
+    assert "Actual article body" in item.content
+    assert "Related reads" not in item.content
+    assert "Old recommended post" not in item.content
+
+
+def test_hn_popular_blogs_presets_are_visible_incubating_and_classified():
+    fetcher_classes = (
+        SeanGoedeckeRssFetcher,
+        GilesThomasRssFetcher,
+        MaxWoolfRssFetcher,
+        GeohotRssFetcher,
+        GeoffreyLittRssFetcher,
+        MartinAldersonRssFetcher,
+        AnilDashRssFetcher,
+    )
+    metadata_by_id = {item["id"]: item for item in fetcher_registry.get_all_metadata()}
+    required_dimensions = (
+        "source_owner",
+        "source_brand",
+        "source_scope",
+        "source_channel",
+        "source_url",
+        "provenance_tier",
+        "signal_strength",
+        "noise_risk",
+        "fetch_reliability",
+    )
+
+    for fetcher_class in fetcher_classes:
+        source_id = fetcher_class.source_id
+        assert source_id in ESSENTIAL_FETCHER_IDS
+        item = metadata_by_id[source_id]
+        assert item["category"] == "incubating"
+        assert item["default_visible"] is True
+        assert item["shape"] == "article"
+        assert item["content_tags"]
+        assert all(item[dimension] for dimension in required_dimensions)
 
 
 def test_summary_rss_preset_backfills_body_from_detail_page():

@@ -21,7 +21,7 @@ For *which* nodes are default-visible and *why*, see [curation_policy.md](./cura
 
 | Group | Count | Notes |
 | --- | ---: | --- |
-| Default-visible nodes | 53 | The exact set in `ESSENTIAL_FETCHER_IDS` (including 30 incubating sources). |
+| Default-visible nodes | 62 | The exact set in `ESSENTIAL_FETCHER_IDS` (including 38 incubating sources). |
 | Generic advanced fetchers | 6 | Runtime-configured RSS / web / GitHub releases / GitHub repos / HF models / X timeline. Hidden by default. |
 | Historical concrete presets | 0 | Removed from `src/fetchers/impl`, not merely hidden. |
 
@@ -122,6 +122,18 @@ For *which* nodes are default-visible and *why*, see [curation_policy.md](./cura
 | `web_minimax_research` | `minimax.io/blog` | Detail scoped to `article .prose`; tag-like model tokens are rendered as inline code; purchase CTA/brand tail removed | 🟡 Medium — Tailwind class coupling |
 | `rss_import_ai` | `jack-clark.net/feed/` | Full-text RSS markdown; removes fixed thumbnail/welcome/Subscribe/Thanks-for-reading chrome | 🟢 Low — stable WordPress RSS plus small text cleanup |
 | `docs_arena_leaderboard_changelog` | `arena.ai/blog/leaderboard-changelog` | SSR single page split into one bulletin per dated card; preserves links and same-day distinct updates | 🟡 Medium — date-card DOM coupling; page grows continuously |
+
+## Hacker News Popular Blogs 2025（2026-08-24, incubating）
+
+| Source ID | Base URL | Special adaptation | Risk |
+| --- | --- | --- | --- |
+| `rss_sean_goedecke` | `seangoedecke.com/rss.xml` | Full-text RSS converted with `node_to_markdown`; no detail request | 🟢 Low — public full-text feed |
+| `rss_giles_thomas` | `gilesthomas.com/feed/rss.xml` | Full-text RSS converted with `node_to_markdown`; code/diff blocks retained for reader rendering | 🟢 Low — public full-text feed; long entries need periodic size checks |
+| `rss_max_woolf` | `minimaxir.com/index.xml` | Full-text Atom/RSS converted with `node_to_markdown`; math and links kept as source markdown | 🟢 Low — public full-text feed |
+| `rss_geohot` | `geohot.github.io/blog/feed.xml` | Full-text Atom converted with `node_to_markdown` | 🟢 Low — public full-text feed; opinionated content is intentionally low-weight |
+| `rss_geoffrey_litt` | `geoffreylitt.com/feed.xml` | Full-text RSS converted with `node_to_markdown`; fixed `## Related reads` tail removed | 🟡 Medium — source template may change its recommendation heading |
+| `rss_martin_alderson` | `martinalderson.com/feed.xml` | Full-text RSS converted with `node_to_markdown`; source footnote links retained | 🟢 Low — public full-text feed |
+| `rss_anil_dash` | `anildash.com/feed.xml` | Full-text RSS converted with `node_to_markdown` | 🟢 Low — public full-text feed; broad social/technology scope is observed as medium noise |
 
 ## Watch list — most likely to break
 
