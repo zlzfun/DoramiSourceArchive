@@ -568,6 +568,20 @@ export function unsubscribeSource(sourceId) {
   return request(`/reader/sources/${enc(sourceId)}/subscribe`, { method: 'DELETE', errorMsg: '取消订阅失败' });
 }
 
+// ==================== 源合集(策展合集) ====================
+
+export function fetchReaderCollections() {
+  return request('/reader/collections', { errorMsg: '获取合集目录失败' });
+}
+
+export function subscribeCollection(collectionId) {
+  return request(`/reader/collections/${enc(collectionId)}/subscribe`, { method: 'POST', errorMsg: '订阅合集失败' });
+}
+
+export function unsubscribeCollection(collectionId) {
+  return request(`/reader/collections/${enc(collectionId)}/subscribe`, { method: 'DELETE', errorMsg: '退订合集失败' });
+}
+
 // 记录一次主动阅读（fire-and-forget：失败静默，不阻断阅读）。
 export function recordArticleRead(articleId) {
   // fire-and-forget 但解析响应:成功时带回 read_count(全站累计阅读数)供阅读窗就地刷新

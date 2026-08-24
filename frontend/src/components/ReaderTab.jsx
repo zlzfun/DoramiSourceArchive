@@ -208,6 +208,8 @@ export default function ReaderTab({
     sourcesLoading, discoverSources, subscribedIds, sourceMap, sourceNameMap,
     sidebarGroups, hasNoSubscriptions, socialSources, platformCount, pinningId,
     handleSubscribe, handleUnsubscribe,
+    collections, discoverCollectionId, setDiscoverCollectionId,
+    collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, setDiscover,
     bulletinView, socialView, railActive, listTitle,
@@ -541,6 +543,13 @@ export default function ReaderTab({
           onSubscribe={handleSubscribe}
           onUnsubscribe={handleUnsubscribe}
           onPreview={(source) => goSource(source.source_id)}
+          collections={collections}
+          activeCollectionId={discoverCollectionId}
+          onOpenCollection={(c) => setDiscoverCollectionId(c.collection_id)}
+          onCloseCollection={() => setDiscoverCollectionId(null)}
+          collectionPinningId={collectionPinningId}
+          onSubscribeCollection={handleSubscribeCollection}
+          onUnsubscribeCollection={handleUnsubscribeCollection}
         />
       )}
 

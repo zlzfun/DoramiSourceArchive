@@ -20,6 +20,9 @@ import { useDebouncedValue } from './useDebouncedValue';
 import { useAbortableLoad } from './useAbortableLoad';
 import {
   fetchReaderSources,
+  fetchReaderCollections,
+  subscribeCollection,
+  unsubscribeCollection,
   fetchArticles,
   fetchArticle,
   subscribeSource,
@@ -80,6 +83,13 @@ export function useReaderState({
   const [favTogglingId, setFavTogglingId] = useState(null);
   // 发现页(整页视图,取代源栏内联「发现更多来源」):true 时 条目列+阅读窗 被发现页取代
   const [discover, setDiscover] = useState(false);
+  // ── 源合集(策展合集):发现页「源 ⇄ 合集」视图的合集半边 ──
+  // 目录来自 GET /api/reader/collections(轻载荷,成员卡数据由前端与 sources join);
+  // discoverCollectionId 提升到本 hook(而非 DiscoverPage 局部态)是为移动端返回键:
+  // MobileReader 需要把「合集详情」注册为独立历史层,返回先退详情再退发现页。
+  const [collections, setCollections] = useState([]);
+  const [discoverCollectionId, setDiscoverCollectionId] = useState(null);
+  const [collectionPinningId, setCollectionPinningId] = useState(null);
 
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -157,6 +167,19 @@ export function useReaderState({
   }, [showToast]);
 
   useEffect(() => { loadSources(); }, [loadSources]);
+
+  // 合集目录(策展注册表直出,低频变化):挂载拉一次;失败静默——合集是发现页的
+  // 增强视图,目录取不到时「源」视图完整可用,不值得打断。
+  useEffect(() => {
+    let cancelled = false;
+    fetchReaderCollections()
+      .then((data) => { if (!cancelled) setCollections(data.collections || []); })
+      .catch(() => { /* 非关键路径,静默 */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // 离开发现页即退出合集详情(下次进入回到发现页默认视图)
+  useEffect(() => { if (!discover) setDiscoverCollectionId(null); }, [discover]);
 
   // 进入阅读器先取一次收藏 ID 集合，让订阅/来源视图的文章卡也能显示收藏态。
   const loadFavoriteIds = useCallback(async () => {
@@ -593,6 +616,43 @@ export function useReaderState({
     }
   };
 
+  // ── 合集批量订阅/退订(批量动作,非持久绑定;见 docs/source-collections-wave-plan.md)──
+  // 批量结果不做逐源乐观调整(涉及多源订阅人数),直接重拉源目录校准订阅态与计数。
+  const handleSubscribeCollection = async (collection) => {
+    setCollectionPinningId(collection.collection_id);
+    try {
+      const result = await subscribeCollection(collection.collection_id);
+      setSubscribedIds(new Set(result.subscribed_source_ids || []));
+      loadSources();
+      refreshAggregateIfActive();
+      loadUnreadCounts();
+      const n = (result.added || []).length;
+      showToast(n > 0 ? `已订阅「${collection.name}」的 ${n} 个源` : '合集内的源已全部订阅', 'success');
+    } catch (error) {
+      showToast(error.message || '订阅合集失败', 'error');
+    } finally {
+      setCollectionPinningId(null);
+    }
+  };
+
+  const handleUnsubscribeCollection = async (collection) => {
+    setCollectionPinningId(collection.collection_id);
+    try {
+      const result = await unsubscribeCollection(collection.collection_id);
+      setSubscribedIds(new Set(result.subscribed_source_ids || []));
+      const removed = result.removed || [];
+      if (activeSourceId && removed.includes(activeSourceId)) setActiveSourceId(null);
+      else refreshAggregateIfActive();
+      loadSources();
+      loadUnreadCounts();
+      showToast(`已退订「${collection.name}」的 ${removed.length} 个源`, 'success');
+    } catch (error) {
+      showToast(error.message || '退订合集失败', 'error');
+    } finally {
+      setCollectionPinningId(null);
+    }
+  };
+
   // ── 在读者面隐藏/恢复源(admin 会话的右键菜单入口;与节点管理检视器同一 API)──
   // 操作后重拉源目录:hidden 标记驱动源栏灰显与内容门控,不做本地乐观改。
   const handleToggleSourceHidden = async (source) => {
@@ -940,6 +1000,9 @@ export function useReaderState({
     sourceMap, sourceNameMap, shapeOfSource, sidebarGroups, hasNoSubscriptions,
     socialSources, platformCount, pinningId,
     handleSubscribe, handleUnsubscribe, handleToggleSourceHidden,
+    // 源合集
+    collections, discoverCollectionId, setDiscoverCollectionId,
+    collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, setDiscover,
     bulletinView, socialView, railActive, listTitle,
