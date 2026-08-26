@@ -1,5 +1,6 @@
 #!/bin/bash
-# 一键部署(唯一部署路径):构建镜像 → 起容器 → 全链路健康验证(nginx → backend)。
+# 一键部署(推荐路径;装不了 Docker 时走 ./deploy.sh 裸机路径):
+# 构建镜像 → 起容器 → 全链路健康验证(nginx → backend)。
 set -euo pipefail
 cd "$(dirname "$0")"
 

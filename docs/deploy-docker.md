@@ -1,8 +1,12 @@
 # Docker 部署(生产推荐路径)
 
+> 两条官方部署路径之一,**能装 Docker 就走这条**;装不了 Docker 的机器走
+> [`deploy-baremetal.md`](./deploy-baremetal.md)(`deploy.sh`,uv + PM2 + 宿主 Nginx)。
+>
 > 2026-07 部署重构:取代「裸机 venv + PM2 + 宿主 Nginx + 服务器现场构建前端」的
-> `deploy.sh` 路径(生产实测一个完整采集日 + 日报 cron 后,该路径已于 v3.15.1
-> 连同 `ecosystem.config.js`、ini `[nginx]` 节一起退役删除,历史见 git)。动机与完整分析要点:
+> `deploy.sh` 路径(生产实测一个完整采集日 + 日报 cron 后,该路径于 v3.15.1
+> 连同 `ecosystem.config.js`、ini `[nginx]` 节退役删除;v3.39.0 因「公网机不便装
+> Docker」的真实场景扶正回归,与本路径并列)。动机与完整分析要点:
 > 依赖版本锁定(uv.lock `--frozen`)、Playwright/Chromium 环境固化(镜像内 OS 恒为
 > bookworm,宿主 OS 兼容性兜底全删)、发布原子化(整镜像切换)、重启自愈
 > (`restart: unless-stopped` 取代缺失的 `pm2 save/startup`)、为迁移部署铺路
@@ -90,11 +94,15 @@ echo "DORAMI_HTTP_LISTEN=127.0.0.1:8080" > .env   # A:外层有 TLS 边缘(推�
 迁移收尾:老机 `docker compose down`(或 PM2 时代 `pm2 delete`),DNS 切到新机。
 数据只有 `data/` 一个目录 + `production.ini` 一个文件,这就是 SQLite 形态下迁移成本的全部。
 
-## PM2 路径(已退役)
+## PM2 裸机路径(退役 → v3.39.0 扶正回归)
 
 生产已于 2026-07-22 完成同机切换(v3.15),观察一个完整采集日 + 日报 cron 正常后,
-v3.15.1 删除了 `deploy.sh` / `ecosystem.config.js` 与 ini `[nginx]` 节。切换前的
-DB 热备与 nginx 旧站点配置在生产机 `/root/backups/`;需要考古看 git 历史(tag v3.15.0 之前)。
+v3.15.1 删除了 `deploy.sh` / `ecosystem.config.js` 与 ini `[nginx]` 节;切换前的
+DB 热备与 nginx 旧站点配置在生产机 `/root/backups/`。
+
+删除期间该路径在 intranet 分支为内网环境(Docker 过旧不可用)复活并持续维护,
+2026-08 出现「公网机不便装 Docker」的场景后回迁 main,现为并列的第二条官方路径 ——
+用法与护栏见 [`deploy-baremetal.md`](./deploy-baremetal.md)。
 
 ## 网络受限环境
 
