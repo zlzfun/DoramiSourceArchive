@@ -1,14 +1,14 @@
 #!/bin/bash
-# 裸机一键部署(intranet 分支专用路径):uv 装依赖 + PM2 托管后端 + 现场构建前端
-# + 生成并校验宿主 Nginx 站点配置。
+# 裸机一键部署(两条官方部署路径之一):uv 装依赖 + PM2 托管后端 + 现场构建前端
+# + 生成并校验宿主 Nginx 站点配置(含 HTTPS 与 /mcp)。文档见 docs/deploy-baremetal.md。
 #
-# 背景:main 分支的生产推荐路径是 Docker(deploy-docker.sh),本脚本曾于 v3.15.1
-# 退役删除;内网机器 Docker 版本过低/不可用,故在 intranet 分支复活并适配现状:
-#   - RAG 依赖分离(v3.16):[rag] enabled 且嵌入形态时装 rag-embedded extra;
-#   - RAG 双形态(v3.17):远程形态(chroma_url 有值)不装重依赖,但内网无 docker
-#     需自行保证 chroma/TEI 服务可达;
-#   - [server]/[nginx] 节在本分支的 production.example.ini 中保留(main 上已删)。
-# 受限网络:uv 走环境变量 UV_DEFAULT_INDEX=<内网 PyPI 镜像>;npm 走 NPM_REGISTRY=<内网 npm 镜像>。
+# 与 Docker 路径(./deploy-docker.sh)的分工:能装 Docker 就走 Docker(依赖锁定、
+# 环境固化、发布原子化);装不了 Docker 的机器走本脚本(宿主装 Python/Node/Nginx)。
+# 沿革:本路径曾于 v3.15.1 随生产切 Docker 退役删除,v3.39.0 因「公网机不便装
+# Docker」的真实场景扶正回归,并清理了当年的 RAG 形态判定(向量子系统已于 v3.31 退役)。
+#
+# 受限网络/镜像加速:uv 走环境变量 UV_DEFAULT_INDEX=<PyPI 镜像>;
+# npm 走 NPM_REGISTRY=<npm 镜像>(离线内网源与国内加速源同一开关)。
 set -euo pipefail
 
 # Always run from the project root, no matter where the command is invoked.
@@ -86,7 +86,7 @@ truthy() {
 }
 
 install_system_packages() {
-    # 逐个探测,只装缺失的;包管理器装不上(内网源没有该包)不再直接打断——
+    # 逐个探测,只装缺失的;包管理器装不上(受限源没有该包)不再直接打断——
     # 允许手动安装的二进制通过后面的复核。
     local missing=()
     command -v nginx >/dev/null 2>&1 || missing+=(nginx)
@@ -103,9 +103,9 @@ install_system_packages() {
         $SUDO apt-get update || true
         $SUDO apt-get install -y "${missing[@]}" || echo "WARNING: apt-get install failed; will re-check for manually installed binaries."
     elif command -v dnf >/dev/null 2>&1; then
-        $SUDO dnf install -y "${missing[@]}" || echo "WARNING: dnf install failed (内网源可能没有这些包); will re-check for manually installed binaries."
+        $SUDO dnf install -y "${missing[@]}" || echo "WARNING: dnf install failed (受限源可能没有这些包); will re-check for manually installed binaries."
     elif command -v yum >/dev/null 2>&1; then
-        $SUDO yum install -y "${missing[@]}" || echo "WARNING: yum install failed (内网源可能没有这些包); will re-check for manually installed binaries."
+        $SUDO yum install -y "${missing[@]}" || echo "WARNING: yum install failed (受限源可能没有这些包); will re-check for manually installed binaries."
     else
         echo "WARNING: no supported package manager found; expecting manually installed binaries."
     fi
@@ -114,7 +114,7 @@ install_system_packages() {
     # PATH 里(nvm 写在 ~/.bashrc / 源码装在自定义目录)。脚本已自动追加
     # /usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/local/nginx/sbin 与 nvm 目录,
     # 仍找不到就 `export PATH="$PATH:<安装目录>"` 后重跑本脚本。
-    local hint="内网源没有该包时请手动安装,并确保命令对非交互 shell 可见(见脚本头部 PATH 注释)。"
+    local hint="源里没有该包时请手动安装,并确保命令对非交互 shell 可见(见脚本头部 PATH 注释)。"
     command -v nginx >/dev/null 2>&1 || fail "nginx not found in script PATH. $hint"
     command -v npm >/dev/null 2>&1 || fail "npm not found in script PATH. $hint"
     if ! command -v node >/dev/null 2>&1 && ! command -v nodejs >/dev/null 2>&1; then
@@ -487,44 +487,6 @@ ensure_nginx_running_or_reload() {
     fi
 }
 
-# RAG 部署形态判定(v3.17 双形态):
-#   - enabled=false → 不装重依赖、不查模型;
-#   - enabled=true 且 chroma_url 为空 → 嵌入形态:进程内推理,需 rag-embedded extra
-#     (torch 科学计算栈 ~1GB)+ 本地模型目录([models] 两个路径必须存在);
-#   - enabled=true 且 chroma_url 有值 → 远程形态:重依赖在 chroma/TEI 服务侧,
-#     本机不装;内网无 docker 时这两个服务需自行部署,这里只提醒不拦截。
-resolve_rag_mode() {
-    local rag_enabled="${DORAMI_RAG_ENABLED:-$(ini_get rag enabled false)}"
-    local chroma_url="${DORAMI_RAG_CHROMA_URL:-$(ini_get rag chroma_url "")}"
-    if ! truthy "$rag_enabled"; then
-        RAG_MODE="off"
-    elif [ -n "$chroma_url" ]; then
-        RAG_MODE="remote"
-    else
-        RAG_MODE="embedded"
-    fi
-}
-
-validate_models_if_needed() {
-    case "$RAG_MODE" in
-        off)
-            echo "RAG is disabled; skipping model directory checks."
-            ;;
-        remote)
-            echo "RAG remote mode (chroma_url set): make sure the chroma/TEI services are reachable from this host."
-            ;;
-        embedded)
-            local embedding_model
-            local reranker_model
-            embedding_model="$(ini_get models embedding_model /opt/dorami/models/bge-m3)"
-            reranker_model="$(ini_get models reranker_model /opt/dorami/models/bge-reranker-v2-m3)"
-
-            [ -d "$embedding_model" ] || fail "RAG embedded mode but embedding model directory is missing: $embedding_model"
-            [ -d "$reranker_model" ] || fail "RAG embedded mode but reranker model directory is missing: $reranker_model"
-            ;;
-    esac
-}
-
 warn_cookie_secure_if_needed() {
     if ! truthy "$NGINX_ENABLE_SSL"; then
         return
@@ -539,7 +501,7 @@ warn_cookie_secure_if_needed() {
 }
 
 echo "=================================================="
-echo "  Dorami production deploy (bare-metal, intranet)"
+echo "  Dorami production deploy (bare-metal)"
 echo "=================================================="
 echo ""
 
@@ -566,9 +528,6 @@ BACKEND_PROXY_HOST="${BACKEND_PROXY_HOST:-$(ini_get nginx backend_proxy_host 127
 SERVER_PORT="$(ini_get server port 8088)"
 BACKEND_PROXY_PORT="${BACKEND_PROXY_PORT:-$(ini_get nginx backend_proxy_port "$SERVER_PORT")}"
 
-resolve_rag_mode
-echo "RAG mode: $RAG_MODE"
-
 echo "[1/7] Installing system dependencies..."
 install_system_packages
 install_pm2
@@ -578,7 +537,6 @@ NGINX_BIN="$(command -v nginx)"
 echo "Using nginx binary: $NGINX_BIN"
 
 echo "[2/7] Validating production config..."
-validate_models_if_needed
 warn_cookie_secure_if_needed
 
 echo "[3/7] Installing backend dependencies..."
@@ -588,22 +546,18 @@ fi
 
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
-# 嵌入形态才装 rag-embedded extra(sentence-transformers/torch ~1GB);
-# 远程/关闭形态保持瘦身安装(chromadb 客户端在核心依赖里,双模共用)。
-if [ "$RAG_MODE" = "embedded" ]; then
-    uv pip install -e ".[rag-embedded]"
-else
-    uv pip install -e .
-fi
+# 依赖单一清单(v3.31 向量子系统退役后不再有可选重依赖形态);浏览器详情后端
+# 需要时另行 `uv pip install -e ".[crawl4ai]"`,默认不装。
+uv pip install -e .
 
 # Playwright 浏览器:rss_openai_news 节点用 headless Chromium 渲染 openai.com 正文页
 # (绕过其 Cloudflare 挑战)。Python 包已由上面的 uv 装好,但浏览器二进制需单独下载——
 # playwright 不会在首次启动时自动下载,缺浏览器时该节点只优雅降级为 RSS 摘要、不影响其余节点。
-# 内网 reader 部署(runtime role=reader 或不跑采集)用不到该节点,下载失败仅警告不阻断。
+# 纯分发部署(runtime role=reader 或不跑采集)用不到该节点,下载失败仅警告不阻断。
 # 三种情形自适应(任何失败都不阻断部署,set -euo pipefail 下已逐一兜底):
 #   1) 已显式指定 PLAYWRIGHT_CHROMIUM_EXECUTABLE → 尊重之,跳过下载;
 #   2) playwright 能为当前 OS 下载自带浏览器 → 用它,并装 Linux 系统依赖;
-#   3) OS 过新/不受支持或内网下载不通 → 自动探测系统已装的 chromium/chrome,
+#   3) OS 过新/不受支持或下载不通 → 自动探测系统已装的 chromium/chrome,
 #      export 给后续 pm2 reload/start --update-env(配合 ecosystem.config.js
 #      的透传送进后端)。都没有就提示装一个后重跑部署。
 echo "    Provisioning Playwright Chromium (for the OpenAI News render node)..."

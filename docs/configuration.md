@@ -48,7 +48,11 @@ role = collector
 role = reader
 ```
 
-生产部署走 Docker(唯一路径,详见 [`deploy-docker.md`](./deploy-docker.md)):容器入口固定监听 `0.0.0.0:8088`,`[server]` 节在容器内不生效(仅 dev 裸起 `python src/main.py` 使用);TLS 由宿主边缘 Nginx 终止。原 PM2/deploy.sh 路径及其 `[nginx]` 配置节已于 v3.15.1 退役,考古看 git 历史。
+生产部署有两条官方路径,`[server]`/`[nginx]` 两节的语义随路径而异:
+- **Docker**(推荐,详见 [`deploy-docker.md`](./deploy-docker.md)):容器入口固定监听 `0.0.0.0:8088`,这两节**在容器内不生效**;TLS 由宿主边缘 Nginx 终止。
+- **裸机**(装不了 Docker 时,详见 [`deploy-baremetal.md`](./deploy-baremetal.md)):`deploy.sh` 读 `[server]` 作为 PM2 后端监听地址、读 `[nginx]` 生成宿主站点配置(含可选 TLS)。该路径 v3.15.1 退役、v3.39.0 扶正回归。
+
+`[server]` 节在 dev 裸起(`python src/main.py`)下始终生效。
 
 代理配置迁移到后端配置文件：
 

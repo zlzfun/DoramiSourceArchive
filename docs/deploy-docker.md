@@ -1,8 +1,12 @@
 # Docker 部署(生产推荐路径)
 
+> 两条官方部署路径之一,**能装 Docker 就走这条**;装不了 Docker 的机器走
+> [`deploy-baremetal.md`](./deploy-baremetal.md)(`deploy.sh`,uv + PM2 + 宿主 Nginx)。
+>
 > 2026-07 部署重构:取代「裸机 venv + PM2 + 宿主 Nginx + 服务器现场构建前端」的
-> `deploy.sh` 路径(生产实测一个完整采集日 + 日报 cron 后,该路径已于 v3.15.1
-> 连同 `ecosystem.config.js`、ini `[nginx]` 节一起退役删除,历史见 git)。动机与完整分析要点:
+> `deploy.sh` 路径(生产实测一个完整采集日 + 日报 cron 后,该路径于 v3.15.1
+> 连同 `ecosystem.config.js`、ini `[nginx]` 节退役删除;v3.39.0 因「公网机不便装
+> Docker」的真实场景扶正回归,与本路径并列)。动机与完整分析要点:
 > 依赖版本锁定(uv.lock `--frozen`)、Playwright/Chromium 环境固化(镜像内 OS 恒为
 > bookworm,宿主 OS 兼容性兜底全删)、发布原子化(整镜像切换)、重启自愈
 > (`restart: unless-stopped` 取代缺失的 `pm2 save/startup`)、为迁移部署铺路
@@ -44,33 +48,26 @@ docker compose down                 # 停站(数据在宿主目录,安全)
 (`127.0.0.1:8080`,配合外层 TLS 反代);时区默认
 `Asia/Shanghai`(影响采集任务/日报的 cron 语义),`TZ` 环境变量可覆盖。
 
-## 内网裸机部署路径(intranet 分支专属)
+## 内网部署走裸机路径(本分支的姿态差异)
 
 内网机器 Docker 版本过低/环境受限,实测 Docker 化部署难以落地(曾试过钉
-version "2.4" 的 legacy compose 兼容方案,已弃用)。**intranet 分支复活了 main 于
-v3.15.1 退役的裸机路径**:uv 装依赖 + PM2 托管后端 + 现场构建前端 + 生成宿主
-Nginx 站点配置,一个脚本一条龙:
+version "2.4" 的 legacy compose 兼容方案,已弃用),故走裸机路径 `./deploy.sh`。
 
-```bash
-./deploy.sh          # 装系统依赖 → uv 装后端 → alembic 迁移 → npm 构建前端 → 写 Nginx → pm2 起后端
+**该路径自 v3.39.0 起是 main 上与 Docker 并列的官方路径,本分支不再本地维护**——
+用法、七步流程、六道护栏、全新机与迁移一律见 [`deploy-baremetal.md`](./deploy-baremetal.md)
+(该文档以**公网姿态**为默认)。本分支要做的只是姿态反转:
 
-# 常用运维
-pm2 logs dorami-backend-v2        # 后端日志
-pm2 restart dorami-backend-v2     # 重启后端
-```
+| 配置项 | 公网默认(文档口径) | 内网姿态 |
+|---|---|---|
+| `[network] disable_tls_verify` | `false` | **`true`**(出网被企业网关 MITM 重签,本分支独有开关) |
+| `[network] disable_ca_bundle` | 建议 `false` | `true` |
+| `[auth] cookie_secure` | `true`(走 HTTPS) | **`false`**(纯 HTTP + IP 访问) |
+| `[cors] allow_origins` | 具体域名 | `*` 可用(非 HTTPS 姿态不触发启动校验的 error) |
+| `[nginx] enable_ssl` | 按需 `true` | `false` |
+| 镜像源 | 可选加速 | `UV_DEFAULT_INDEX` / `NPM_REGISTRY` 指向内网源 |
 
-与退役前版本的差异(已适配 v3.16+):
-- RAG 形态感知:`[rag] enabled` 且 `chroma_url` 为空(嵌入形态)时自动
-  `uv pip install -e ".[rag-embedded]"` 并校验 `[models]` 模型目录;远程形态
-  (`chroma_url` 有值)不装重依赖,但 chroma/TEI 服务需自行保证可达;关闭则瘦身安装。
-- 受限网络:`UV_DEFAULT_INDEX=<内网 PyPI 镜像>`、`NPM_REGISTRY=<内网 npm 镜像>`
-  环境变量传给 uv/npm。
-- `[server]`/`[nginx]` 两节在本分支的 `config/production.example.ini` 保留
-  (main 上是死配置已删),`deploy.sh` 自读 ini 生成 Nginx 站点。
-
-配套文件:`deploy.sh`、`ecosystem.config.js`(PM2 应用定义,NODE_ENV=production
-会让 main.py 强制关闭 uvicorn reload)。同步节奏:main 更新后
-`git checkout intranet && git merge main`;本分支不合回 main。
+同步节奏:main 更新后 `git checkout intranet && git merge main`,部署面文件冲突
+**以 main 为准**(v3.39.0 反转);本分支不合回 main。
 
 ## ini 在容器内的语义差异
 
@@ -118,11 +115,15 @@ echo "DORAMI_HTTP_LISTEN=127.0.0.1:8080" > .env   # A:外层有 TLS 边缘(推�
 迁移收尾:老机 `docker compose down`(或 PM2 时代 `pm2 delete`),DNS 切到新机。
 数据只有 `data/` 一个目录 + `production.ini` 一个文件,这就是 SQLite 形态下迁移成本的全部。
 
-## PM2 路径(已退役)
+## PM2 裸机路径(退役 → v3.39.0 扶正回归)
 
 生产已于 2026-07-22 完成同机切换(v3.15),观察一个完整采集日 + 日报 cron 正常后,
-v3.15.1 删除了 `deploy.sh` / `ecosystem.config.js` 与 ini `[nginx]` 节。切换前的
-DB 热备与 nginx 旧站点配置在生产机 `/root/backups/`;需要考古看 git 历史(tag v3.15.0 之前)。
+v3.15.1 删除了 `deploy.sh` / `ecosystem.config.js` 与 ini `[nginx]` 节;切换前的
+DB 热备与 nginx 旧站点配置在生产机 `/root/backups/`。
+
+删除期间该路径在 intranet 分支为内网环境(Docker 过旧不可用)复活并持续维护,
+2026-08 出现「公网机不便装 Docker」的场景后回迁 main,现为并列的第二条官方路径 ——
+用法与护栏见 [`deploy-baremetal.md`](./deploy-baremetal.md)。
 
 ## 网络受限环境
 
