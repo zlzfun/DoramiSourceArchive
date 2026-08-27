@@ -546,9 +546,20 @@ fi
 
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
-# 依赖单一清单(v3.31 向量子系统退役后不再有可选重依赖形态);浏览器详情后端
-# 需要时另行 `uv pip install -e ".[crawl4ai]"`,默认不装。
-uv pip install -e .
+# 依赖版本事实来源与 Docker 路径共用入库的钉版清单 docker/requirements.txt
+# (由 `uv export` 从 uv.lock 生成,uv.lock 本身按惯例不入库;tests/test_docker_requirements.py
+# 守卫它与 pyproject 不漂移)。先按清单装钉死的运行时依赖,再以 --no-deps 装项目本身——
+# 否则宿主现解依赖会随上游发版漂移:v3.39.0 首次公网裸机部署即撞上 mcp 2.0(2026-07-28
+# 把 FastMCP 改名 MCPServer),`pip install -e .` 装到 2.x 后端直接起不来,而同版本
+# Docker 镜像因走清单安然无恙。清单缺失时退回现解安装(此时版本由 pyproject 约束兜底)。
+# 浏览器详情后端需要时另行 `uv pip install -e ".[crawl4ai]"`,默认不装。
+if [ -f docker/requirements.txt ]; then
+    uv pip install -r docker/requirements.txt
+    uv pip install -e . --no-deps
+else
+    echo "    ⚠️  docker/requirements.txt 缺失,退回现解安装(版本由 pyproject 约束兜底)。"
+    uv pip install -e .
+fi
 
 # Playwright 浏览器:rss_openai_news 节点用 headless Chromium 渲染 openai.com 正文页
 # (绕过其 Cloudflare 挑战)。Python 包已由上面的 uv 装好,但浏览器二进制需单独下载——

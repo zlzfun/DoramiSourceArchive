@@ -13,7 +13,7 @@
 | | Docker(`./deploy-docker.sh`) | 裸机(`./deploy.sh`) |
 |---|---|---|
 | 前提 | docker + compose 插件 | uv、Node ≥20.19、Nginx(PM2 脚本代装) |
-| 依赖版本 | 镜像内 `docker/requirements.txt` 钉版 | 宿主 `uv pip install -e .` 现解 |
+| 依赖版本 | `docker/requirements.txt` 钉版 | **同一份钉版清单**(v3.39.1 起) |
 | OS 兼容 | 镜像内恒为 bookworm,Playwright 环境固化 | 随宿主 OS,Chromium 有三层兜底 |
 | 发布 | 整镜像原子切换 | 逐步骤就地更新 |
 | 重启自愈 | `restart: unless-stopped` | 需 `pm2 save && pm2 startup` |
@@ -49,6 +49,14 @@
 仍找不到就 `export PATH="$PATH:<安装目录>"` 后重跑。
 
 受限网络/镜像加速:`UV_DEFAULT_INDEX=<PyPI 镜像>`、`NPM_REGISTRY=<npm 镜像>`。
+
+**依赖版本来源**(v3.39.1):脚本按入库的钉版清单 `docker/requirements.txt` 装运行时依赖,
+再以 `--no-deps` 装项目本身 —— 与 Docker 路径共享同一份版本事实来源。
+起因是 v3.39.0 首次公网裸机部署撞上 **mcp 2.0**(2026-07-28 把 `FastMCP` 改名 `MCPServer`
+并变更 API):彼时 `uv pip install -e .` 按 `mcp>=1.0.0` 现解装到 2.x,后端
+`ModuleNotFoundError: No module named 'mcp.server.fastmcp'` 起不来,而同版本 Docker
+镜像因走清单安然无恙。同轮给 pyproject 的 mcp 加了 `<2` 上限双保险。
+清单缺失时退回现解安装(版本由 pyproject 约束兜底)。
 
 ## 用法
 
