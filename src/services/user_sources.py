@@ -21,6 +21,7 @@
 import datetime
 import hashlib
 import json
+import threading
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlsplit, urlunsplit
 
@@ -31,11 +32,19 @@ from sqlmodel import Session, delete, select
 from models.db import (
     AppSettingRecord,
     ArticleRecord,
+    ArticleShareRecord,
     ReaderReadCursorRecord,
     ReaderSubscriptionRecord,
     SourceConfigRecord,
     SourceStateRecord,
+    UserRecord,
 )
+
+# 写路径串行锁(2026-08-28 检视返修 F7):建源/移除/强删的 check-then-write 段以
+# 进程内锁串行化——单进程部署(uvicorn 单 worker,本项目两条部署路径的现状)下
+# 等价于事务级互斥,免去 SQLite BEGIN IMMEDIATE 的编排;多 worker 部署时此锁
+# 失效,届时按方案 backlog 升级为成员表+DB 级约束。锁内全同步无网络 IO,极短。
+_WRITE_LOCK = threading.Lock()
 
 USER_SOURCE_PREFIX = "user_rss_"
 
@@ -50,10 +59,13 @@ REFRESH_MINUTES_KEY = "user_sources_refresh_minutes"
 DEFAULT_REFRESH_MINUTES = 60
 MIN_REFRESH_MINUTES = 15       # 下限保护:对目标站与本机负载都别太密
 
-# feed 拉取护栏(preview 与守门共用)
+# feed 拉取护栏:preview 与正式抓取(generic_rss 经 params 承接)共用同一上限。
 FEED_MAX_BYTES = 5 * 1024 * 1024
 FEED_TIMEOUT_SECONDS = 20
 PREVIEW_ENTRY_COUNT = 5
+
+# 日增计数 KV 前缀(检视返修 F9:改不可随删除回退的动作计数,建→删循环不再绕过日限)
+DAILY_ADD_KEY_PREFIX = "user_sources_added:"
 
 
 def _now_iso() -> str:
@@ -149,6 +161,23 @@ def user_source_ids(session: Session) -> Set[str]:
     return {str(value) for value in rows}
 
 
+def exclude_user_sources_condition(session: Session):
+    """「排除全部用户源」的 SQL 条件(无用户源时返回 None)。
+
+    检视返修 F1 的收口原语:凡**没有归属主体上下文**的交付查询(/api/feed、
+    空范围 dsub 订阅等)一律应用本条件——私有内容只经「订阅者本人」的域可达。
+    """
+    ids = user_source_ids(session)
+    if not ids:
+        return None
+    from sqlalchemy import or_
+
+    return or_(
+        ArticleRecord.source_id.is_(None),
+        ArticleRecord.source_id.notin_(sorted(ids)),
+    )
+
+
 def get_user_source(session: Session, source_id: str) -> Optional[SourceConfigRecord]:
     record = session.get(SourceConfigRecord, source_id)
     if record is None or not record.owner_username:
@@ -163,7 +192,8 @@ def _subscription_source_ids(subscription: ReaderSubscriptionRecord) -> List[str
 
 
 def active_subscriber_usernames(session: Session, source_id: str) -> List[str]:
-    """当前活跃订阅了该源的用户名(去重)。"""
+    """当前活跃订阅了该源的用户名(去重;账户须仍存在——删号路径的订阅级联在
+    router 层,此处以 users 表存在性兜底,防僵尸订阅把孤儿 GC 判成有主)。"""
     owners: Set[str] = set()
     for record in session.exec(
         select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.is_active == True)  # noqa: E712
@@ -171,7 +201,14 @@ def active_subscriber_usernames(session: Session, source_id: str) -> List[str]:
         if source_id in _subscription_source_ids(record):
             owners.add(record.owner_username or "")
     owners.discard("")
-    return sorted(owners)
+    if not owners:
+        return []
+    existing = {
+        str(u) for u in session.exec(
+            select(UserRecord.username).where(UserRecord.username.in_(sorted(owners)))
+        ).all()
+    }
+    return sorted(owners & existing)
 
 
 def subscribed_user_source_ids(session: Session, username: str) -> Set[str]:
@@ -191,15 +228,27 @@ def subscribed_user_source_ids(session: Session, username: str) -> Set[str]:
 
 
 def daily_created_count(session: Session, username: str) -> int:
-    """当日由该用户新建的配置行数(日增配额;删后重加可绕过,由源数上限兜底)。"""
-    today = datetime.date.today().isoformat()
-    rows = session.exec(
-        select(SourceConfigRecord.source_id).where(
-            SourceConfigRecord.owner_username == username,
-            SourceConfigRecord.created_at >= today,
-        )
-    ).all()
-    return len(rows)
+    """当日该用户的新建动作计数(KV 事件计数,检视返修 F9:不随删除回退,
+    「建→删」循环无法绕过日限;与建行同事务写入)。"""
+    key = f"{DAILY_ADD_KEY_PREFIX}{username}:{datetime.date.today().isoformat()}"
+    try:
+        return int(_kv_get(session, key) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _bump_daily_created(session: Session, username: str) -> None:
+    """日增计数 +1(不 commit,随建行事务提交;历史日期 key 由 retention 清理兜底)。"""
+    key = f"{DAILY_ADD_KEY_PREFIX}{username}:{datetime.date.today().isoformat()}"
+    record = session.get(AppSettingRecord, key)
+    if record is None:
+        record = AppSettingRecord(key=key, value="1")
+    else:
+        try:
+            record.value = str(int(record.value or 0) + 1)
+        except (TypeError, ValueError):
+            record.value = "1"
+    session.add(record)
 
 
 # ==================== 系统源撞库检测 ====================
@@ -259,17 +308,27 @@ async def fetch_feed_preview(
 
     await ensure_public_host(urlsplit(canonical).hostname or "")
 
+    # 流式限量(检视返修 F5):先按 Content-Length 预拒,再逐块累计、超限即断开——
+    # 巨大/无限 chunked body 不再先整段读入内存才检查。
     async with httpx.AsyncClient(
         follow_redirects=True,
         timeout=FEED_TIMEOUT_SECONDS,
         headers={"User-Agent": "DoramiSourceArchive/feed-preview"},
         transport=transport,
     ) as client:
-        response = await client.get(canonical)
-        response.raise_for_status()
-        body = response.content
-    if len(body) > FEED_MAX_BYTES:
-        raise ValueError("feed 体积超过上限")
+        async with client.stream("GET", canonical) as response:
+            response.raise_for_status()
+            declared = response.headers.get("Content-Length")
+            if declared and declared.isdigit() and int(declared) > FEED_MAX_BYTES:
+                raise ValueError("feed 体积超过上限")
+            chunks: List[bytes] = []
+            received = 0
+            async for chunk in response.aiter_bytes():
+                received += len(chunk)
+                if received > FEED_MAX_BYTES:
+                    raise ValueError("feed 体积超过上限")
+                chunks.append(chunk)
+            body = b"".join(chunks)
 
     parsed = feedparser.parse(body)
     entries = getattr(parsed, "entries", None) or []
@@ -335,8 +394,41 @@ def prepare_check(session: Session, url: str) -> Dict[str, Any]:
         return {"existing": {**conflict, "kind": "system"}}
     _, record = _resolve_config_slot(session, canonical)
     if record is not None:
+        from services import source_visibility
+
+        if record.source_id in source_visibility.hidden_source_ids(session):
+            # 被 admin 隐藏的既有用户源同样拒绝(检视返修 F6:防重新添加绕过止损)
+            return {"blocked": True}
+        if not record.is_active and not _auto_disabled(session, record.source_id):
+            # admin 手动停用(计数未达自动阈值)不可经再次添加复活
+            return {"blocked": True}
         return {"existing": {"source_id": record.source_id, "name": record.name, "kind": "user"}}
     return {}
+
+
+def unauthorized_user_source_ids(
+    session: Session, username: str, source_ids: List[str]
+) -> List[str]:
+    """给定 source_id 名单中「请求者无权订阅」的用户源(检视返修 F2)。
+
+    用户源的准入凭证是 feed URL(custom-sources 通道),不是 source_id——facets 等
+    途径泄露的 id 不能变成订阅资格。已订阅本人(原始并集,含隐藏)的用户源放行
+    (幂等/改订阅场景),其余用户源 id 一律视为不可见。
+    """
+    candidates = [sid for sid in source_ids if is_user_source(sid)]
+    if not candidates:
+        return []
+    from api.feed_service import resolve_subscribed_source_ids
+
+    mine = set(resolve_subscribed_source_ids(session, username, include_hidden=True))
+    return sorted(sid for sid in candidates if sid not in mine)
+
+
+def _auto_disabled(session: Session, source_id: str) -> bool:
+    """停用来源判别(不加列):连续失败达阈值=自动停抓特征,允许经再次添加复活;
+    计数低于阈值的停用行=admin 手动止损,复活须走运维面(检视返修 F6)。"""
+    state = session.get(SourceStateRecord, source_id)
+    return state is not None and state.consecutive_failures >= AUTO_DISABLE_FAILURES
 
 
 class UserSourceQuotaError(ValueError):
@@ -367,11 +459,18 @@ def prepare_user_source(
             return {"blocked": True}
         return {"existing_system": conflict}
 
+    from services import source_visibility
+
     mine = subscribed_user_source_ids(session, username)
     source_id, record = _resolve_config_slot(session, canonical)
     if record is not None:
         # 复用既有用户源(本人重复添加,或第二人添加同 URL→去重共享)。
-        # 新订阅同样占用源数配额;被自动停用的源经再次添加重新激活(有人还要看,值得再试)。
+        # 隐藏/admin 手动停用的源拒绝复用(F6:防绕过止损);自动停抓(连续失败达
+        # 阈值)的源允许经再次添加复活并清计数(有人还要看,值得再试)。
+        if record.source_id in source_visibility.hidden_source_ids(session):
+            return {"blocked": True}
+        if not record.is_active and not _auto_disabled(session, record.source_id):
+            return {"blocked": True}
         if source_id not in mine and len(mine) >= MAX_SOURCES_PER_USER:
             raise UserSourceQuotaError(
                 f"自定源数量已达上限({MAX_SOURCES_PER_USER} 个)", status_code=400
@@ -380,6 +479,10 @@ def prepare_user_source(
             record.is_active = True
             record.updated_at = _now_iso()
             session.add(record)
+            state = session.get(SourceStateRecord, record.source_id)
+            if state is not None:
+                state.consecutive_failures = 0  # 复活即重置失败态,给新一轮观察窗
+                session.add(state)
         return {"source_id": source_id, "created": False, "record": record}
 
     if len(mine) >= MAX_SOURCES_PER_USER:
@@ -388,6 +491,7 @@ def prepare_user_source(
         )
     if daily_created_count(session, username) >= DAILY_ADD_LIMIT:
         raise UserSourceQuotaError("今日新增自定源已达上限,请明天再试", status_code=429)
+    _bump_daily_created(session, username)
 
     now = _now_iso()
     record = SourceConfigRecord(
@@ -400,8 +504,14 @@ def prepare_user_source(
         description="",
         owner_username=username,
         is_active=True,
-        # 最简正文拍板:feed 给什么存什么,不触发详情页补抓(见模块 docstring)。
-        params_json=json.dumps({"fetch_detail_if_missing": False, "limit": 12}, ensure_ascii=False),
+        # 最简正文拍板:feed 给什么存什么,不触发详情页补抓。ssrf_guard 与响应上限
+        # 由 generic_rss 执行层承接(检视返修 D2/D3:首抓/调度/手工抓取全通道生效)。
+        params_json=json.dumps({
+            "fetch_detail_if_missing": False,
+            "limit": 12,
+            "ssrf_guard": True,
+            "max_response_bytes": FEED_MAX_BYTES,
+        }, ensure_ascii=False),
         created_at=now,
         updated_at=now,
     )
@@ -486,9 +596,10 @@ def remove_source_from_subscriptions(
 
 
 def purge_user_source(session: Session, source_id: str) -> Dict[str, int]:
-    """物理删除用户源:配置行 + 全部文章(FTS trigger 同步)+ 抓取状态 + 各用户水位。
+    """物理删除用户源:配置行 + 全部文章(FTS trigger 同步)+ 抓取状态 + 各用户水位
+    + 分享记录(检视返修 F8:分享行留存会在「我的分享」显示死链并占每日额度)。
 
-    收藏/已读态/分享的孤儿行沿既有「无害」口径不清(与 DELETE /api/articles 一致)。
+    收藏/已读态的孤儿行沿既有「无害」口径不清(与 DELETE /api/articles 一致)。
     不 commit,由调用方统一提交。
     """
     article_ids = [
@@ -498,6 +609,7 @@ def purge_user_source(session: Session, source_id: str) -> Dict[str, int]:
     ]
     if article_ids:
         session.exec(delete(ArticleRecord).where(ArticleRecord.source_id == source_id))
+        session.exec(delete(ArticleShareRecord).where(ArticleShareRecord.article_id.in_(article_ids)))
     session.exec(delete(ReaderReadCursorRecord).where(ReaderReadCursorRecord.source_id == source_id))
     state = session.get(SourceStateRecord, source_id)
     if state is not None:
@@ -510,28 +622,47 @@ def purge_user_source(session: Session, source_id: str) -> Dict[str, int]:
 
 def remove_user_source(session: Session, username: str, source_id: str) -> Dict[str, Any]:
     """读者「移除自定源」:退订本人;无其他活跃订阅者时物理删除。commit 由本函数负责。"""
-    record = get_user_source(session, source_id)
-    if record is None:
-        raise LookupError("自定源不存在")
-    remove_source_from_subscriptions(session, source_id, username=username)
-    session.commit()
-    remaining = active_subscriber_usernames(session, source_id)
-    purged = {}
-    if not remaining:
-        purged = purge_user_source(session, source_id)
+    with _WRITE_LOCK:
+        record = get_user_source(session, source_id)
+        if record is None:
+            raise LookupError("自定源不存在")
+        remove_source_from_subscriptions(session, source_id, username=username)
         session.commit()
+        remaining = active_subscriber_usernames(session, source_id)
+        purged = {}
+        if not remaining:
+            purged = purge_user_source(session, source_id)
+            session.commit()
     return {"source_id": source_id, "purged": bool(purged), **purged}
 
 
 def admin_delete_user_source(session: Session, source_id: str) -> Dict[str, Any]:
     """admin 强删:级联清所有订阅者的订阅行与水位后物理删除(读者路径碰不到这支)。"""
-    record = get_user_source(session, source_id)
-    if record is None:
-        raise LookupError("自定源不存在")
-    affected = remove_source_from_subscriptions(session, source_id, username=None)
-    purged = purge_user_source(session, source_id)
-    session.commit()
+    with _WRITE_LOCK:
+        record = get_user_source(session, source_id)
+        if record is None:
+            raise LookupError("自定源不存在")
+        affected = remove_source_from_subscriptions(session, source_id, username=None)
+        purged = purge_user_source(session, source_id)
+        session.commit()
     return {"source_id": source_id, "affected_subscribers": affected, **purged}
+
+
+def purge_orphan_user_sources(session: Session) -> List[str]:
+    """孤儿 GC(检视返修 F8):无任何活跃订阅者的用户源整体物理删除,返回清单。
+
+    覆盖所有绕过专用移除端点的退订路径(REST 订阅更新/删除、账户删除等)——
+    每轮定时刷新末尾执行,专用移除仍即时清理,GC 只是兜底。commit 由本函数负责。
+    """
+    with _WRITE_LOCK:
+        purged: List[str] = []
+        for source_id in sorted(user_source_ids(session)):
+            if not active_subscriber_usernames(session, source_id):
+                purge_user_source(session, source_id)
+                purged.append(source_id)
+        if purged:
+            session.commit()
+    return purged
 
 
 # ==================== 调度治理 ====================

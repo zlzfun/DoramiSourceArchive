@@ -144,6 +144,10 @@ def subscribe_source(source_id: str, request: Request, session: Session = Depend
     if source_id in source_visibility_service.hidden_source_ids(session):
         # 管理面隐藏的源不接受新订阅（目录里也不可见；防旧页面状态/直连 API 绕过）。
         raise HTTPException(status_code=404, detail="该内容源暂不可用")
+    if user_sources_service.unauthorized_user_source_ids(session, username, [source_id]):
+        # 用户源的准入凭证是 feed URL(custom-sources 通道),知道 source_id 不构成
+        # 订阅资格(检视返修 F2:防 facets 泄露的 id 被用来伪造成员资格)。
+        raise HTTPException(status_code=404, detail="该内容源暂不可用")
     registry_meta = _registry_source_meta()
     already = source_id in set(app.resolve_subscribed_source_ids(session, username))
     if not already:
@@ -174,6 +178,20 @@ def unsubscribe_source(source_id: str, request: Request, session: Session = Depe
     source_id = (source_id or "").strip()
     if not source_id:
         raise HTTPException(status_code=400, detail="source_id 不能为空")
+    if user_sources_service.is_user_source(source_id):
+        # 用户源的退订=移除语义(检视返修 F8:普通退订会留下无人订阅的孤儿源仍被
+        # 调度;前端已分流,此处是 API 直连的后端兜底,行为与专用移除端点一致)。
+        try:
+            result = user_sources_service.remove_user_source(session, username, source_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="该内容源暂不可用")
+        subscribed_ids = sorted(set(
+            app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+        ))
+        return {
+            "status": "success", "source_id": source_id, "subscribed": False,
+            "subscribed_source_ids": subscribed_ids, **result,
+        }
     records = session.exec(
         select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.owner_username == username)
     ).all()
@@ -334,8 +352,23 @@ class CustomSourceParams(BaseModel):
     name: Optional[str] = None
 
 
+def _deny_unsubscribed_user_source_article(session: Session, username: str, article) -> None:
+    """用户源文章的动作级授权(检视返修 F3):分享签发/AI 翻译/问答/速读等**动作**
+    要求请求者是该源订阅者——按 id 直达的只读详情维持既有豁免(id 不可枚举)。"""
+    source_id = getattr(article, "source_id", "") or ""
+    if user_sources_service.is_user_source(source_id) and \
+            user_sources_service.unauthorized_user_source_ids(session, username, [source_id]):
+        raise HTTPException(status_code=404, detail="文章不存在")
+
+
 def _require_user_sources_enabled(session: Session) -> None:
-    """功能总闸(KV,默认开):关闭时添加/preview 403;列表/删除不挡(允许清理)。"""
+    """功能总闸(KV,默认开):关闭时添加/preview 403;列表/删除不挡(允许清理)。
+
+    分离部署(检视返修 F10):reader runtime 明确不承担公网抓取,而添加/preview
+    都要出网拉 feed——非 collector 运行角色一律 403(单机 all 形态不受影响)。
+    """
+    if not _app().runtime_collector_enabled():
+        raise HTTPException(status_code=403, detail="当前部署形态不支持自助添加来源")
     if not user_sources_service.feature_enabled(session):
         raise HTTPException(status_code=403, detail="自定源功能未开放")
 
@@ -405,21 +438,35 @@ async def create_custom_source(
             raise HTTPException(status_code=400, detail=str(exc))
         except Exception:  # noqa: BLE001
             raise HTTPException(status_code=400, detail="无法访问该地址,请检查 URL 或稍后再试")
-    try:
-        prepared = user_sources_service.prepare_user_source(
-            session, username, params.url, name=(params.name or preview["feed_title"] or "")
-        )
-    except user_sources_service.UserSourceQuotaError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    source_id = prepared["source_id"]
-    record = prepared["record"]
-    already = source_id in set(app.resolve_subscribed_source_ids(session, username, include_hidden=True))
-    if not already:
-        app._create_single_source_subscription(session, username, source_id, record.name)
-        reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
-    session.commit()
+    # 建行→订阅→commit 是 check-then-write 段,以 service 写锁串行化(检视返修 F7;
+    # 段内全同步无 await,锁窗口极短)。prepared 的 blocked(隐藏/admin 停用的既有
+    # 用户源)统一按「暂不可用」处理。
+    with user_sources_service._WRITE_LOCK:  # noqa: SLF001 - 与 service 写路径同一把锁
+        try:
+            prepared = user_sources_service.prepare_user_source(
+                session, username, params.url, name=(params.name or preview["feed_title"] or "")
+            )
+        except user_sources_service.UserSourceQuotaError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        if prepared.get("blocked"):
+            raise HTTPException(status_code=404, detail="该来源暂不可用")
+        source_id = prepared["source_id"]
+        record = prepared["record"]
+        already = source_id in set(app.resolve_subscribed_source_ids(session, username, include_hidden=True))
+        if not already:
+            app._create_single_source_subscription(session, username, source_id, record.name)
+            reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
+        session.commit()
+
+    if already and not prepared["created"]:
+        # 幂等重放(检视返修 F9):已订阅者重复 POST 相同 URL 不再触发抓取——
+        # 否则可被脚本化成无限外网请求/抓取运行的放大器。
+        return {
+            "status": "success", "source_id": source_id, "name": record.name,
+            "created": False, "first_fetch": "skipped", "saved_count": 0,
+        }
 
     # 首抓同步等待(2026-08-28 返修:原后台 job 形态下,添加后立即点开该源列表为空,
     # 像「没文章」,刷新才出现——单 feed 首抓仅数秒,同步等完再返回,modal 的 busy 态
@@ -636,6 +683,18 @@ def list_favorites(
             )
             base = base.where(hidden_cond)
             count_query = count_query.where(hidden_cond)
+        # 用户自定源(v3.40 检视返修 D1):include_content 会带正文,收藏列表也是
+        # 内容出口——退订后(或经泄露 id 收藏的)未订阅用户源文章一并剔除。
+        blocked_user = user_sources_service.unauthorized_user_source_ids(
+            session, username, sorted(user_sources_service.user_source_ids(session))
+        )
+        if blocked_user:
+            user_cond = or_(
+                ArticleRecord.source_id.is_(None),
+                ArticleRecord.source_id.notin_(blocked_user),
+            )
+            base = base.where(user_cond)
+            count_query = count_query.where(user_cond)
     if source_id:
         base = base.where(ArticleRecord.source_id == source_id)
         count_query = count_query.where(ArticleRecord.source_id == source_id)
@@ -744,6 +803,9 @@ def create_article_share(
     # 与「读者面隐藏 = 内容交付全量排除」同口径：暂不可用的源不能被摊开成公开链接。
     if article.source_id in source_visibility_service.hidden_source_ids(session):
         raise HTTPException(status_code=403, detail="该内容暂不可用，无法分享")
+    # 用户自定源(v3.40 检视返修 F3):非订阅者不得把私有源内容摊开成公开链接——
+    # 分享是把内容公开化的动作,授权门槛高于按 id 直达的只读详情。
+    _deny_unsubscribed_user_source_article(session, username, article)
 
     expires_in_days = params.expires_in_days
     if expires_in_days is not None:
@@ -1090,6 +1152,10 @@ async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
     username, llm_config = _require_reader_ai(request)
     _enforce_ai_daily_quota(username, "translate")
     db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        _deny_unsubscribed_user_source_article(
+            session, username, session.get(ArticleRecord, params.article_id)
+        )
     try:
         result = await reader_ai_service.translate_article(
             db_sink, params.article_id, llm_config,
@@ -1109,6 +1175,10 @@ async def reader_ai_summarize(params: ReaderTranslateParams, request: Request):
     """为指定文章生成中文要点摘要（结果缓存复用；入参形状与 translate 相同）。"""
     username, llm_config = _require_reader_ai(request)
     db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        _deny_unsubscribed_user_source_article(
+            session, username, session.get(ArticleRecord, params.article_id)
+        )
     try:
         result = await reader_ai_service.summarize_article(
             db_sink, params.article_id, llm_config,
@@ -1153,6 +1223,17 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
     db_sink = deps.get_db_sink()
     scope = params.scope if params.scope in ("article", "articles", "subscription", "all") else "article"
     ask_id = _valid_ask_id(params.ask_id)
+
+    # 用户源文章的动作级授权(检视返修 F3):显式名单档把正文送入外部 LLM,
+    # 非订阅者的私有源文章按不存在处理(subscription/all 档的检索域天然不含)。
+    if scope in ("article", "articles"):
+        explicit_ids = [params.article_id] if scope == "article" else list(params.article_ids or [])
+        with Session(db_sink.engine) as session:
+            for aid in explicit_ids:
+                if aid:
+                    _deny_unsubscribed_user_source_article(
+                        session, username, session.get(ArticleRecord, aid)
+                    )
 
     # 上下文组装下沉到 reader_ai.assemble_reader_context；此处注入检索闭包
     # （承载鉴权作用域与 LLM 配置），使组装逻辑与 HTTP 请求解耦、可独立单测（D11）。

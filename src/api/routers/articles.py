@@ -252,6 +252,7 @@ def get_articles(
 
 @router.get("/api/articles/facets")
 def get_article_facets(
+        request: Request,
         exclude_source_ids: Optional[str] = None,
         session: Session = Depends(deps.get_session),
 ):
@@ -260,8 +261,13 @@ def get_article_facets(
     台账分面栏的单一数据源——选项必须来自全量归档而非当前页,
     点击当前页不存在的类别也能对全量筛选;计数即样页分面右侧的 `.n`。
     访问口径与 GET /api/articles 相同(路径共享 reader/collector 判定)。
+    用户自定源(v3.40 检视返修 F2):非 admin 会话的分面剔除全部用户源——
+    facets 曾把私有源 id 列给任意读者,是伪造订阅成员资格的入口。
     """
     excludes = [x.strip() for x in (exclude_source_ids or "").split(",") if x.strip()]
+    auth_session = _app().current_auth_session(request)
+    if not (auth_session and auth_session.get("role") == "admin"):
+        excludes.extend(sorted(user_sources_service.user_source_ids(session)))
 
     def _facet(column):
         q = select(column, func.count(ArticleRecord.id)).group_by(column)
@@ -435,6 +441,11 @@ def get_feed_articles(
         fetched_date_end=fetched_date_end,
         session=session,
     )
+    # 用户自定源隔离(v3.40 检视返修 F1):本端点无归属主体上下文(登录读者即可调),
+    # 私有源一律排除——显式指定的用户源 id 也不放行(无法证明请求者是订阅者)。
+    user_cond = user_sources_service.exclude_user_sources_condition(session)
+    if user_cond is not None:
+        query = query.where(user_cond)
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
     ).all()
@@ -491,6 +502,10 @@ def export_feed_articles_markdown(
         fetched_date_end=fetched_date_end,
         session=session,
     )
+    # 用户自定源隔离(F1):与 JSON 端点同口径,无主体上下文一律排除私有源。
+    user_cond = user_sources_service.exclude_user_sources_condition(session)
+    if user_cond is not None:
+        query = query.where(user_cond)
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
     ).all()

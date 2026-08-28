@@ -493,6 +493,217 @@ def test_auto_disable_failing_sources(monkeypatch, tmp_path):
         assert session.get(SourceConfigRecord, source_id).is_active is True
 
 
+# ==================== 隔离面二轮收口(codex 检视返修,2026-08-28) ====================
+
+def _add_as(app_module, username, url="https://blog.example.com/feed"):
+    with TestClient(app_module.app) as client:
+        _login(client, username, username)
+        res = _add(client, url)
+        assert res.status_code == 200
+        return res.json()["source_id"]
+
+
+def test_feed_endpoints_exclude_user_sources(monkeypatch, tmp_path):
+    """F1:/api/feed/articles[.md] 无归属主体上下文,私有源一律排除(显式指定也不放行)。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    source_id = _add_as(app_module, "alice")
+    _seed_article(app_module.db_sink.engine, "u1", source_id)
+    _seed_article(app_module.db_sink.engine, "n1", "rss_normal_source")
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        items = client.get("/api/feed/articles").json()["items"]
+        assert {i["id"] for i in items} == {"n1"}
+        # 显式指定私有源 id 同样得不到内容
+        items = client.get(f"/api/feed/articles?source_id={source_id}").json()["items"]
+        assert items == []
+        md = client.get("/api/feed/articles.md").text
+        assert "u1" not in md and "文章 u1" not in md
+
+
+def test_empty_filter_subscription_excludes_user_sources(monkeypatch, tmp_path):
+    """F1:空 filters 的 dsub 订阅=全库语义,交付必须减用户源;FTS 端点空范围返回空。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    source_id = _add_as(app_module, "alice")
+    _seed_article(app_module.db_sink.engine, "u1", source_id)
+    _seed_article(app_module.db_sink.engine, "n1", "rss_normal_source")
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        created = client.post("/api/subscriptions", json={"name": "全库", "filters": {}})
+        assert created.status_code == 200
+        sub = created.json()
+        token, sub_id = sub["token"], sub["id"]
+    with TestClient(app_module.app) as guest:
+        res = guest.get(f"/api/public/subscriptions/{sub_id}/articles?token={token}")
+        assert res.status_code == 200
+        assert {i["id"] for i in res.json()["items"]} == {"n1"}
+        fts = guest.post(
+            f"/api/public/subscriptions/{sub_id}/vector/search?token={token}",
+            json={"query": "文章"},
+        )
+        assert fts.status_code == 200
+        assert fts.json()["results"] == []  # 空范围=零订阅语义,不放大成全库
+
+
+def test_subscribe_endpoints_reject_foreign_user_source(monkeypatch, tmp_path):
+    """F2:知道 source_id 不构成订阅资格——一键订阅与 REST 订阅路径均拒绝。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    source_id = _add_as(app_module, "alice")
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        assert client.post(f"/api/reader/sources/{source_id}/subscribe").status_code == 404
+        res = client.post("/api/subscriptions", json={
+            "name": "偷看", "filters": {"source_ids": source_id},
+        })
+        assert res.status_code == 404
+        # facets 不再把私有源 id 列给读者
+        facets = client.get("/api/articles/facets").json()
+        assert all(f["value"] != source_id for f in facets["source_ids"])
+    # 订阅者本人在 REST 路径引用自己的用户源照常可用
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        res = client.post("/api/subscriptions", json={
+            "name": "我的", "filters": {"source_ids": source_id},
+        })
+        assert res.status_code == 200
+
+
+def test_share_and_ai_reject_unsubscribed_user_source(monkeypatch, tmp_path):
+    """F3:分享签发/AI 显式名单对非订阅者的私有源文章按不存在处理。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    source_id = _add_as(app_module, "alice")
+    _seed_article(app_module.db_sink.engine, "u1", source_id)
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        res = client.post("/api/reader/articles/u1/share", json={"expires_in_days": 7})
+        assert res.status_code == 404
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        res = client.post("/api/reader/articles/u1/share", json={"expires_in_days": 7})
+        assert res.status_code == 200  # 订阅者本人照常可分享
+
+
+def test_favorites_list_hides_unsubscribed_user_source(monkeypatch, tmp_path):
+    """D1:收藏列表是内容出口(include_content),未订阅用户源的收藏行不可见。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    source_id = _add_as(app_module, "alice")
+    _seed_article(app_module.db_sink.engine, "u1", source_id)
+    from models.db import ReaderFavoriteRecord
+
+    with Session(app_module.db_sink.engine) as session:
+        session.add(ReaderFavoriteRecord(
+            owner_username="bob", article_id="u1", created_at="2026-08-28T10:00:00",
+        ))
+        session.commit()
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        items = client.get("/api/reader/favorites?include_content=true").json()["items"]
+        assert all(i["id"] != "u1" for i in items)
+
+
+def test_hidden_or_admin_disabled_user_source_rejects_readd(monkeypatch, tmp_path):
+    """F6:隐藏/admin 手动停用的用户源不可经重新添加复活;自动停抓(达阈值)可复活。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from models.db import SourceConfigRecord, SourceStateRecord
+    from services import source_visibility, user_sources
+
+    source_id = _add_as(app_module, "alice")
+    # 隐藏 → 任何人再添加同 URL 均「暂不可用」
+    with Session(app_module.db_sink.engine) as session:
+        source_visibility.set_source_hidden(session, source_id, True)
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        assert _add(client).status_code == 404
+    with Session(app_module.db_sink.engine) as session:
+        source_visibility.set_source_hidden(session, source_id, False)
+    # admin 手动停用(失败计数未达阈值)→ 拒绝复活
+    with Session(app_module.db_sink.engine) as session:
+        record = session.get(SourceConfigRecord, source_id)
+        record.is_active = False
+        session.add(record)
+        session.commit()
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        assert _add(client).status_code == 404
+    # 自动停抓特征(计数达阈值)→ 允许复活并清计数
+    with Session(app_module.db_sink.engine) as session:
+        session.add(SourceStateRecord(
+            source_id=source_id, fetcher_id="generic_rss", status="failing",
+            consecutive_failures=user_sources.AUTO_DISABLE_FAILURES,
+            updated_at=datetime.datetime.now().isoformat(),
+        ))
+        session.commit()
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        assert _add(client).status_code == 200
+    with Session(app_module.db_sink.engine) as session:
+        assert session.get(SourceConfigRecord, source_id).is_active is True
+        assert session.get(SourceStateRecord, source_id).consecutive_failures == 0
+
+
+def test_repeat_post_skips_fetch_and_daily_counter_survives_delete(monkeypatch, tmp_path):
+    """F9:已订阅者重复 POST 不再触发抓取;日增计数不随删除回退。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from services import user_sources
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        first = _add(client).json()
+        assert first["first_fetch"] == "ok"
+        repeat = _add(client).json()
+        assert repeat["created"] is False and repeat["first_fetch"] == "skipped"
+        with Session(app_module.db_sink.engine) as session:
+            assert user_sources.daily_created_count(session, "alice") == 1
+        client.delete(f"/api/reader/custom-sources/{first['source_id']}")
+        with Session(app_module.db_sink.engine) as session:
+            # 删除后计数不回退——「建→删」循环无法绕过日限
+            assert user_sources.daily_created_count(session, "alice") == 1
+
+
+def test_orphan_gc_and_generic_config_delete(monkeypatch, tmp_path):
+    """F8:REST 退订留下的无主源由孤儿 GC 兜底;通用 source-config 删除分流强删。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from models.db import ArticleRecord, ReaderSubscriptionRecord, SourceConfigRecord
+    from services import user_sources
+
+    source_id = _add_as(app_module, "alice")
+    _seed_article(app_module.db_sink.engine, "u1", source_id)
+    # 绕过专用端点:直接删订阅行(模拟 REST 生命周期/删号路径)
+    with Session(app_module.db_sink.engine) as session:
+        for sub in session.exec(select(ReaderSubscriptionRecord)).all():
+            session.delete(sub)
+        session.commit()
+    with Session(app_module.db_sink.engine) as session:
+        purged = user_sources.purge_orphan_user_sources(session)
+        assert purged == [source_id]
+        assert session.get(SourceConfigRecord, source_id) is None
+        assert session.exec(select(ArticleRecord).where(
+            ArticleRecord.source_id == source_id)).all() == []
+    # 通用配置删除端点对用户源分流强删(清文章与订阅)
+    source_id2 = _add_as(app_module, "alice", "https://b.example.com/feed")
+    _seed_article(app_module.db_sink.engine, "u2", source_id2)
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        res = client.delete(f"/api/source-configs/{source_id2}")
+        assert res.status_code == 200 and res.json()["articles_deleted"] == 1
+    with Session(app_module.db_sink.engine) as session:
+        assert session.get(SourceConfigRecord, source_id2) is None
+
+
+def test_admin_config_validates_before_write(monkeypatch, tmp_path):
+    """F11:非法 refresh_minutes 的 400 不得已改掉总闸(先整体验证再写)。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(app_module, "reload_user_rss_schedule", lambda: None)
+    from services import user_sources
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        res = client.post("/api/admin/user-sources/config",
+                          json={"enabled": False, "refresh_minutes": 0})
+        assert res.status_code == 400
+    with Session(app_module.db_sink.engine) as session:
+        assert user_sources.feature_enabled(session) is True  # 总闸未被半途改写
+
+
 # ==================== 总闸 / admin 配置 / 门控 ====================
 
 def test_master_switch_blocks_add_but_not_cleanup(monkeypatch, tmp_path):

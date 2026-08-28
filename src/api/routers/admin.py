@@ -515,12 +515,16 @@ def admin_get_user_sources_config(session: Session = Depends(deps.get_session)):
 def admin_set_user_sources_config(
     params: UserSourcesConfigParams, session: Session = Depends(deps.get_session)
 ):
-    """总闸/刷新间隔写入,保存即调度热生效(总闸关=添加 403+调度移除,数据不动)。"""
+    """总闸/刷新间隔写入,保存即调度热生效(总闸关=添加 403+调度移除,数据不动)。
+
+    先整体验证再写任何 KV(检视返修 F11):否则 refresh_minutes 非法的 400 响应
+    可能已把总闸改掉且调度未 reload,DB 与 APScheduler 状态分叉。
+    """
+    if params.refresh_minutes is not None and params.refresh_minutes <= 0:
+        raise HTTPException(status_code=400, detail="刷新间隔必须为正整数分钟")
     if params.enabled is not None:
         user_sources_service.set_feature_enabled(session, params.enabled)
     if params.refresh_minutes is not None:
-        if params.refresh_minutes <= 0:
-            raise HTTPException(status_code=400, detail="刷新间隔必须为正整数分钟")
         user_sources_service.set_refresh_minutes(session, params.refresh_minutes)
     # 延迟取 api.app(避免导入环):调度器热生效动作留守 app 模块。
     importlib.import_module("api.app").reload_user_rss_schedule()

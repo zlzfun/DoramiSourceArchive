@@ -93,6 +93,15 @@ def query_subscription_articles(
         query = query.where(
             or_(ArticleRecord.source_id.is_(None), ArticleRecord.source_id.notin_(sorted(hidden)))
         )
+    # 用户自定源隔离(v3.40 检视返修 F1):未显式圈定来源的订阅=「全库」语义,
+    # 必须减去全部用户源——私有内容只经订阅者本人显式列出的 source_ids 可达
+    # (filters 由订阅 owner 创建,建/改订阅入口已校验用户源归属)。
+    if not filters.get("source_id") and not filters.get("source_ids"):
+        from services.user_sources import exclude_user_sources_condition
+
+        cond = exclude_user_sources_condition(session)
+        if cond is not None:
+            query = query.where(cond)
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
     ).all()

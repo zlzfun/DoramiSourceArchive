@@ -1287,19 +1287,45 @@ async def execute_user_rss_refresh_job():
                 "fetcher_id": fetcher_id,
                 "params": build_source_fetch_params(record, {}),
             })
-    if not items:
-        return
-    try:
-        await run_collection_items(
-            items, name="定时抓取: 用户自定源",
-            trigger_type="scheduled", run_scope="saved_job",
-        )
-    except Exception as exc:  # noqa: BLE001 - 单轮失败只记录,不影响调度引擎
-        _dorami_logger.warning("用户自定源定时抓取失败: %s", exc)
+    # SSRF 组装复检(方案 §4;generic_rss 执行层的 ssrf_guard 是主防线,此处双保险
+    # 且能在日志里点名跳过的源——域名在添加后改指内网时,该源本轮直接不进队列)。
+    if items:
+        from urllib.parse import urlsplit as _urlsplit
+
+        from services.media_store import SSRFError, ensure_public_host
+
+        checked = []
+        for item in items:
+            feed_url = str(item["params"].get("feed_url") or "")
+            try:
+                await ensure_public_host(_urlsplit(feed_url).hostname or "")
+                checked.append(item)
+            except SSRFError:
+                _dorami_logger.warning("用户自定源 SSRF 复检未通过,本轮跳过: %s", item["source_id"])
+            except Exception:  # noqa: BLE001 - 解析故障不拦(执行层守卫兜底)
+                checked.append(item)
+        items = checked
+    if items:
+        try:
+            await run_collection_items(
+                items, name="定时抓取: 用户自定源",
+                trigger_type="scheduled", run_scope="saved_job",
+            )
+        except Exception as exc:  # noqa: BLE001 - 单轮失败只记录,不影响调度引擎
+            _dorami_logger.warning("用户自定源定时抓取失败: %s", exc)
     with Session(db_sink.engine) as session:
         disabled = user_sources_service.auto_disable_failing(session)
     if disabled:
         _dorami_logger.warning("用户自定源连续失败达阈值,自动停抓: %s", ", ".join(disabled))
+    # 孤儿 GC(检视返修 F8):绕过专用移除端点的退订路径(REST 订阅更新/删除、
+    # 删号等)留下的无主用户源在此兜底清理,不再永久空转调度。
+    try:
+        with Session(db_sink.engine) as session:
+            orphans = user_sources_service.purge_orphan_user_sources(session)
+        if orphans:
+            _dorami_logger.info("用户自定源孤儿清理: %s", ", ".join(orphans))
+    except Exception:  # noqa: BLE001
+        _dorami_logger.warning("用户自定源孤儿清理失败", exc_info=True)
 
 
 def reload_user_rss_schedule():

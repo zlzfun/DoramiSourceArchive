@@ -175,8 +175,11 @@ preset 的规范化 `feed_url`(类属性可枚举,rss_fetcher.py 30 处)∪
   **自动入审计**(前缀已在 `AUDIT_PATH_PREFIXES`)。
 - 读者自助添加/删除**不入审计**(沿 reader-surface 豁免拍板);溯源靠配置行
   自带 `owner_username`/`created_at` + 本列表。
-- **不放进节点管理**:节点管理是策展 fetcher 目录(代码即记录),用户源是运行时
-  数据实体;source-config 本无前端管理 UI,不为此新建整套,治理动作收敛此处一点。
+- **节点管理呈现(v3.40.1 需求变更,取代初版「不放进节点管理」拍板)**:用户目检
+  提出「筛选自定源应看到刚触发的源」——source-health 以 fetcher-like 形状并入
+  用户源行,节点管理「自定源」角色档下渲染简化节点行+专属简化检视器(feed 身份/
+  健康事实/读者面隐藏开关/治理回指);手工抓取走 source-configs 通道(继承
+  ssrf_guard/响应上限护栏),批量通道仍排除用户源。停用/删除治理仍收敛运维→内容。
 
 ## 6. 前端(读者面)
 
@@ -217,8 +220,42 @@ admin 强删级联清订阅行。冲突面补(§3.1):`user_rss_` 前缀 registry
 **已拍板**(2026-08-28 对话):方案 B 隔离形态;最简正文(不分型不补抓,preview
 仅守门);入库存储(媒体不预取);删源即清(无订阅者时物理删);配置分档
 (总闸+刷新间隔 KV 可配,三护栏数值代码常量);admin 治理面收敛在
-运维管理→内容,不进节点管理;冲突面(§3.1:URL 撞系统源做撞库检测转引导,
-名称不设唯一性,取名链补 config 兜底)。
+运维管理→内容(节点管理另有健康呈现,v3.40.1 需求变更见 §5);冲突面(§3.1:
+URL 撞系统源做撞库检测转引导,名称不设唯一性,取名链补 config 兜底)。
+
+### 9.1 安全收口(codex gpt-5.6-sol 交叉检视返修,2026-08-28)
+
+首版隔离面漏了若干**非阅读器入口**的交付/订阅面,经 codex 检视逐条修复:
+
+- **F1 交付面**:`/api/feed/articles[.md]`(无归属主体上下文)一律排除用户源,
+  显式指定也不放行;空 filters 的 dsub 订阅=全库语义,交付减用户源
+  (`query_subscription_articles`);公开 FTS 端点撤销 `or None` 放大(空范围=
+  零订阅返回空,与 MCP 契约一致)。收口原语 `exclude_user_sources_condition`。
+- **F2 成员资格**:用户源准入凭证=feed URL(custom-sources 通道),source_id 不是
+  ——facets 对非 admin 剔除用户源 id;一键订阅与 REST 订阅 create/update 对
+  「非本人已订阅」的用户源 404(`unauthorized_user_source_ids`)。
+- **F3 动作级授权**:分享签发/AI 翻译/速读/问答显式名单对非订阅者的用户源文章
+  404(`_deny_unsubscribed_user_source_article`);favorites 列表(内容出口)同滤。
+  按 id 直达的只读详情维持豁免(id 不可枚举,拍板不变)。
+- **F4/F5 网络护栏**:用户源 params_json 固定携带 `ssrf_guard`+`max_response_bytes`,
+  generic_rss 执行层抓取前 SSRF 复检+流式响应限量(首抓/调度/手工全通道);调度
+  组装另做复检双保险;preview 改流式(Content-Length 预拒+逐块限量)。
+  redirect hop/连接 peer 级校验按既有拍板(与 source_builder 同水位)记 backlog。
+- **F6 止损不可绕过**:隐藏用户源拒绝重新添加;停用来源判别不加列——
+  `consecutive_failures>=阈值`=自动停抓可经再添加复活并清计数,低于阈值=admin
+  手动停用,复活须走运维面。
+- **F7 竞态**:建源/移除/强删/孤儿 GC 以进程内写锁串行化(单进程部署前提,
+  多 worker 时升级为成员表+DB 约束,记 backlog);IntegrityError 幂等兜底。
+- **F8 生命周期**:调度轮尾孤儿 GC(无活跃订阅者即 purge,订阅者以 users 表
+  存在性校验,覆盖 REST 退订/删号等一切绕行路径);unsubscribe 端点对用户源
+  后端分流移除;purge 顺清分享记录;source-configs 通用删除分流强删。
+- **F9 滥用面**:日增配额改 KV 事件计数(不随删除回退);已订阅者重复 POST
+  幂等返回不再触发抓取。
+- **F10 分离部署**:非 collector runtime 下添加/preview 403(reader split 不出网)。
+- **F11 配置原子**:admin config 端点先整体验证再写 KV。
+- **F12**:节点管理呈现属需求变更,方案 §5 已同步(codex 撤回该项)。
+
+全站正式抓取的统一响应上限(策展源共通)另记 backlog——全站级决策不随本波。
 
 **明确不做,留观察后二期**:用户源转正进策展档(admin 借 source_builder 生成
 CrawlProfile 后收编——「自助」反哺策展的漏斗);详情补抓/全文化;OPML 批量导入;

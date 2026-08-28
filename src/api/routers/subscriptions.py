@@ -333,6 +333,20 @@ def get_subscription(subscription_id: int, request: Request, session: Session = 
     return serialize_subscription(record)
 
 
+def _guard_filter_user_sources(session: Session, username: str, filters: dict) -> None:
+    """订阅 filters 中的用户源 id 归属校验(检视返修 F2:高级订阅路径同守门)。"""
+    from services import user_sources as user_sources_service
+
+    ids: list[str] = []
+    for key in ("source_ids", "source_id"):
+        value = (filters or {}).get(key)
+        if value:
+            ids.extend(part.strip() for part in str(value).split(",") if part.strip())
+    denied = user_sources_service.unauthorized_user_source_ids(session, username, ids)
+    if denied:
+        raise HTTPException(status_code=404, detail="来源不存在或暂不可用")
+
+
 @router.post("/api/subscriptions")
 def create_subscription(
         params: SubscriptionCreate, request: Request, session: Session = Depends(deps.get_session)
@@ -340,10 +354,12 @@ def create_subscription(
     name = params.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="订阅源名称不能为空")
+    username = _app().current_username(request)
+    _guard_filter_user_sources(session, username, _model_to_clean_dict(params.filters))
     token = generate_subscription_token()
     now = _now_iso()
     record = ReaderSubscriptionRecord(
-        owner_username=_app().current_username(request),
+        owner_username=username,
         name=name,
         description=params.description.strip(),
         filters_json=_json_dumps(_model_to_clean_dict(params.filters)),
@@ -375,9 +391,9 @@ def update_subscription(
     if "description" in update_data:
         record.description = (update_data["description"] or "").strip()
     if "filters" in update_data and update_data["filters"] is not None:
-        record.filters_json = _json_dumps(
-            {key: value for key, value in update_data["filters"].items() if value not in (None, "")}
-        )
+        clean_filters = {key: value for key, value in update_data["filters"].items() if value not in (None, "")}
+        _guard_filter_user_sources(session, record.owner_username, clean_filters)
+        record.filters_json = _json_dumps(clean_filters)
     if "delivery_policy" in update_data and update_data["delivery_policy"] is not None:
         record.delivery_policy_json = _json_dumps(normalize_delivery_policy(update_data["delivery_policy"]))
     if "is_active" in update_data:
@@ -469,7 +485,9 @@ async def public_subscription_vector_search(
         query=body.query,
         top_k=body.top_k,
         content_type=filters.get("content_type"),
-        source_ids=source_ids or None,
+        # 空范围保持空列表语义(=零订阅返回空,与 MCP 契约一致;检视返修 F1:
+        # 曾 `or None` 把空 filters 订阅放大成全库检索,连私有用户源一起搜)。
+        source_ids=source_ids,
     )
     return {
         "status": "success",

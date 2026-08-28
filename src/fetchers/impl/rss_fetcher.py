@@ -60,6 +60,22 @@ class GenericRssFetcher(BaseFetcher):
             {"field": "detail_max_chars", "label": "详情页正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
+    async def _fetch_feed_limited(self, client: httpx.AsyncClient, feed_url: str, max_bytes: int) -> bytes:
+        """流式拉取 feed 并限量:Content-Length 预拒 + 逐块累计超限即断开(用户源护栏)。"""
+        async with client.stream("GET", feed_url) as response:
+            response.raise_for_status()
+            declared = response.headers.get("Content-Length")
+            if declared and declared.isdigit() and int(declared) > max_bytes:
+                raise RuntimeError(f"feed 响应超过大小上限: {feed_url}")
+            chunks: List[bytes] = []
+            received = 0
+            async for chunk in response.aiter_bytes():
+                received += len(chunk)
+                if received > max_bytes:
+                    raise RuntimeError(f"feed 响应超过大小上限: {feed_url}")
+                chunks.append(chunk)
+            return b"".join(chunks)
+
     def _entry_id(self, runtime_source_id: str, entry: Any) -> str:
         stable_value = (
             entry.get("id")
@@ -258,11 +274,27 @@ class GenericRssFetcher(BaseFetcher):
         # BaseFetcher 会在 yield 后统一写入 self.source_id，因此这里把实例身份切换到具体配置源。
         self.source_id = runtime_source_id
 
-        response = await self._safe_get(client, feed_url)
-        if not response:
-            raise RuntimeError(f"RSS/Atom 请求失败: {feed_url}")
+        # 用户自定源网络护栏(v3.40 检视返修 D2/D3,经 params_json 承接——首抓/定时
+        # 调度/管理面手工抓取全通道自动生效):每次抓取前 SSRF 复检(域名解析可能在
+        # 添加后改指内网)+ 流式响应限量(不可信 feed 的巨大/无限 body 不入内存)。
+        ssrf_guard = self._bool_param(kwargs.get("ssrf_guard"), False)
+        max_response_bytes = self._positive_int_param(kwargs.get("max_response_bytes"), 0)
+        if ssrf_guard:
+            from urllib.parse import urlsplit as _urlsplit
 
-        parsed_feed = feedparser.parse(response.content)
+            from services.media_store import ensure_public_host
+
+            await ensure_public_host(_urlsplit(feed_url).hostname or "")
+
+        if max_response_bytes:
+            feed_bytes = await self._fetch_feed_limited(client, feed_url, max_response_bytes)
+        else:
+            response = await self._safe_get(client, feed_url)
+            if not response:
+                raise RuntimeError(f"RSS/Atom 请求失败: {feed_url}")
+            feed_bytes = response.content
+
+        parsed_feed = feedparser.parse(feed_bytes)
         if parsed_feed.bozo:
             self.logger.warning(f"RSS 解析存在异常: {parsed_feed.bozo_exception}")
 
