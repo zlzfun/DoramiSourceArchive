@@ -9,6 +9,7 @@
 """
 
 import datetime
+import importlib
 import os
 from typing import Any, Dict, List, Optional
 
@@ -43,6 +44,7 @@ from services import jobs as jobs_service
 from services import reader_activity as reader_activity_service
 from services import social_backfill as social_backfill_service
 from services import source_visibility as source_visibility_service
+from services import user_sources as user_sources_service
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -55,6 +57,15 @@ class AiBetaGlobalParams(BaseModel):
 
 class PublicShareGlobalParams(BaseModel):
     enabled: bool
+
+
+class UserSourcesConfigParams(BaseModel):
+    enabled: Optional[bool] = None          # None = 不改(总闸)
+    refresh_minutes: Optional[int] = None   # None = 不改(下限 MIN_REFRESH_MINUTES)
+
+
+class UserSourceToggleParams(BaseModel):
+    is_active: bool
 
 
 class SourceVisibilityParams(BaseModel):
@@ -480,6 +491,68 @@ def admin_set_public_share(
     这正是总闸的意义：出事时不必逐条撤销，且不销毁签发记录，恢复即回归。"""
     article_share_service.set_public_share_enabled(session, params.enabled)
     return {"enabled": article_share_service.public_share_enabled(session)}
+
+
+# ==================== 用户自定源治理(v3.40) ====================
+# 运维管理 → 内容 →「用户自定源」区的取数/写入口;/api/admin 前缀自动入审计。
+
+
+@router.get("/user-sources")
+def admin_list_user_sources(session: Session = Depends(deps.get_session)):
+    """KPI + 全量用户源列表(含创建者/订阅人数/健康摘要)+ 当前配置。"""
+    return user_sources_service.admin_overview(session)
+
+
+@router.get("/user-sources/config")
+def admin_get_user_sources_config(session: Session = Depends(deps.get_session)):
+    return {
+        "enabled": user_sources_service.feature_enabled(session),
+        "refresh_minutes": user_sources_service.refresh_minutes(session),
+    }
+
+
+@router.post("/user-sources/config")
+def admin_set_user_sources_config(
+    params: UserSourcesConfigParams, session: Session = Depends(deps.get_session)
+):
+    """总闸/刷新间隔写入,保存即调度热生效(总闸关=添加 403+调度移除,数据不动)。"""
+    if params.enabled is not None:
+        user_sources_service.set_feature_enabled(session, params.enabled)
+    if params.refresh_minutes is not None:
+        if params.refresh_minutes <= 0:
+            raise HTTPException(status_code=400, detail="刷新间隔必须为正整数分钟")
+        user_sources_service.set_refresh_minutes(session, params.refresh_minutes)
+    # 延迟取 api.app(避免导入环):调度器热生效动作留守 app 模块。
+    importlib.import_module("api.app").reload_user_rss_schedule()
+    return {
+        "enabled": user_sources_service.feature_enabled(session),
+        "refresh_minutes": user_sources_service.refresh_minutes(session),
+    }
+
+
+@router.post("/user-sources/{source_id}/toggle")
+def admin_toggle_user_source(
+    source_id: str, params: UserSourceToggleParams, session: Session = Depends(deps.get_session)
+):
+    """停用/启用单个用户源(停用=调度不再抓,配置与文章留存;启用顺带清失败态语义)。"""
+    record = user_sources_service.get_user_source(session, source_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="自定源不存在")
+    record.is_active = params.is_active
+    record.updated_at = datetime.datetime.now().isoformat()
+    session.add(record)
+    session.commit()
+    return {"source_id": source_id, "is_active": record.is_active}
+
+
+@router.delete("/user-sources/{source_id}")
+def admin_delete_user_source(source_id: str, session: Session = Depends(deps.get_session)):
+    """admin 强删:级联清所有订阅者的订阅行与水位后物理删除(含全部文章)。"""
+    try:
+        result = user_sources_service.admin_delete_user_source(session, source_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="自定源不存在")
+    return {"status": "success", **result}
 
 
 @router.post("/social/backfill")

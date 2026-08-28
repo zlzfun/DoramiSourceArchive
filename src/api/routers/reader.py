@@ -51,12 +51,14 @@ from models.db import (
 from services import accounts as accounts_service
 from services import article_share as article_share_service
 from services import daily_brief as daily_brief_service
+from services import jobs as jobs_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
 from services import reader_search as reader_search_service
 from services import reader_state as reader_state_service
 from services import source_collections as source_collections_service
 from services import source_visibility as source_visibility_service
+from services import user_sources as user_sources_service
 from services import x_api_config as x_api_config_service
 
 router = APIRouter(prefix="/api/reader", tags=["reader"])
@@ -321,6 +323,155 @@ def unsubscribe_collection(collection_id: str, request: Request, session: Sessio
         "removed": sorted(removed),
         "subscribed_source_ids": subscribed_ids,
     }
+
+
+# ==================== 用户自定源(v3.40) ====================
+# 读者自助添加私有 RSS 源;方案 docs/user-custom-rss-wave-plan.md。
+# 业务在 services/user_sources.py;此处只做门控/编排(订阅动作复用 app 既有助手)。
+
+
+class CustomSourceParams(BaseModel):
+    url: str
+    name: Optional[str] = None
+
+
+def _require_user_sources_enabled(session: Session) -> None:
+    """功能总闸(KV,默认开):关闭时添加/preview 403;列表/删除不挡(允许清理)。"""
+    if not user_sources_service.feature_enabled(session):
+        raise HTTPException(status_code=403, detail="自定源功能未开放")
+
+
+def _custom_source_conflict(session: Session, url: str) -> Optional[Dict[str, Any]]:
+    """撞库检测的端点半边:命中隐藏系统源直接 404;命中可见系统源/既有用户源返回引导载荷。"""
+    result = user_sources_service.prepare_check(session, url)
+    if result.get("blocked"):
+        # 与隐藏源既有口径一致的统一文案,不泄露「存在但被隐藏」这一事实。
+        raise HTTPException(status_code=404, detail="该来源暂不可用")
+    return result.get("existing") or None
+
+
+@router.post("/custom-sources/preview")
+async def preview_custom_source(
+        params: CustomSourceParams, request: Request, session: Session = Depends(deps.get_session)
+):
+    """贴 URL → 守门校验 + 条目样例预览(不落库)。撞中系统源/既有用户源时返回引导。"""
+    app = _app()
+    username = app.current_username(request)
+    _require_user_sources_enabled(session)
+    try:
+        existing = _custom_source_conflict(session, params.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if existing:
+        subscribed = existing["source_id"] in set(
+            app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+        )
+        return {"status": "exists", "existing": {**existing, "subscribed": subscribed}}
+    try:
+        preview = await user_sources_service.fetch_feed_preview(params.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:  # noqa: BLE001 - 网络失败归一为可读文案,不透传栈
+        raise HTTPException(status_code=400, detail="无法访问该地址,请检查 URL 或稍后再试")
+    quota_used = len(user_sources_service.subscribed_user_source_ids(session, username))
+    return {
+        "status": "ok",
+        **preview,
+        "quota": {"used": quota_used, "max": user_sources_service.MAX_SOURCES_PER_USER},
+    }
+
+
+@router.post("/custom-sources")
+async def create_custom_source(
+        params: CustomSourceParams, request: Request, session: Session = Depends(deps.get_session)
+):
+    """添加自定源:守门 → 撞库 → 建/复用配置行 → 订阅本人 → 提交首抓后台 job。"""
+    app = _app()
+    username = app.current_username(request)
+    _require_user_sources_enabled(session)
+    try:
+        existing = _custom_source_conflict(session, params.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if existing and existing.get("kind") == "system":
+        # 撞中可见系统源:不建用户源,前端引导走普通订阅(该来源已收录)。
+        return {"status": "exists", "existing": existing}
+    preview = {"feed_title": ""}
+    if not existing:
+        # 新 feed 才重跑守门(不能信任前端一定先走了 preview);顺带拿 feed_title 作默认名。
+        # 既有用户源(去重共享:第二人添加同 URL)跳过网络校验,直接进复用+订阅。
+        try:
+            preview = await user_sources_service.fetch_feed_preview(params.url)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail="无法访问该地址,请检查 URL 或稍后再试")
+    try:
+        prepared = user_sources_service.prepare_user_source(
+            session, username, params.url, name=(params.name or preview["feed_title"] or "")
+        )
+    except user_sources_service.UserSourceQuotaError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    source_id = prepared["source_id"]
+    record = prepared["record"]
+    already = source_id in set(app.resolve_subscribed_source_ids(session, username, include_hidden=True))
+    if not already:
+        app._create_single_source_subscription(session, username, source_id, record.name)
+        reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
+    session.commit()
+
+    # 首抓走后台 job(与 fetch-active-rss 同构),添加响应不等抓取;失败也无妨,随调度重试。
+    from api.routers.source_configs import build_source_fetch_params
+
+    fetch_params = build_source_fetch_params(record, {})
+
+    async def _work(bg) -> Dict[str, Any]:
+        return await app.run_single_fetch_as_collection(
+            "generic_rss", fetch_params,
+            name=f"自定源首抓: {record.name}", trigger_type="manual", run_scope="ad_hoc",
+        )
+
+    bg_job = jobs_service.launch(
+        deps.get_db_sink().engine, "user_source_first_fetch", _work,
+        created_by=username, payload={"source_id": source_id},
+    )
+    return {
+        "status": "success",
+        "source_id": source_id,
+        "name": record.name,
+        "created": prepared["created"],
+        "job_id": bg_job.id,
+    }
+
+
+@router.get("/custom-sources")
+def list_custom_sources(request: Request, session: Session = Depends(deps.get_session)):
+    """我的自定源(含健康摘要:暂停/失败态供前端细签)。"""
+    app = _app()
+    username = app.current_username(request)
+    items = user_sources_service.list_user_sources(session, username=username)
+    return {
+        "items": items,
+        "quota": {"used": len(items), "max": user_sources_service.MAX_SOURCES_PER_USER},
+        "enabled": user_sources_service.feature_enabled(session),
+    }
+
+
+@router.delete("/custom-sources/{source_id}")
+def remove_custom_source(source_id: str, request: Request, session: Session = Depends(deps.get_session)):
+    """移除自定源:退订本人;无其他活跃订阅者时物理删除(配置行+文章)。"""
+    app = _app()
+    username = app.current_username(request)
+    try:
+        result = user_sources_service.remove_user_source(session, username, source_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="自定源不存在")
+    subscribed_ids = sorted(set(
+        app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+    ))
+    return {"status": "success", **result, "subscribed_source_ids": subscribed_ids}
 
 
 # ==================== 阅读计量 ====================
@@ -802,14 +953,19 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
     # 恢复(临时下架的常态结局是恢复,静默消失会像数据丢失)。内容交付(列表/未读/
     # feed/检索)仍全量排除,见 resolve_subscribed_source_ids。
     hidden_ids = source_visibility_service.hidden_source_ids(session)
+    # 用户自定源(v3.40 私有):仅订阅者可见——非订阅者的目录/发现页完全不出现
+    # (添加即订阅、移除即退订,故「我的自定源」恒在 subscribed_ids 内)。
+    all_user_source_ids = user_sources_service.user_source_ids(session)
     sources = sorted(
         (
             {
                 **{k: v for k, v in entry.items() if k != "_primary_count"},
                 "hidden": entry["source_id"] in hidden_ids,
+                "user_source": entry["source_id"] in all_user_source_ids,
             }
             for entry in by_source.values()
-            if entry["source_id"] not in hidden_ids or entry["source_id"] in subscribed_ids
+            if (entry["source_id"] not in hidden_ids or entry["source_id"] in subscribed_ids)
+            and (entry["source_id"] not in all_user_source_ids or entry["source_id"] in subscribed_ids)
         ),
         key=lambda s: (s["category"], -s["count"], s["name"]),
     )

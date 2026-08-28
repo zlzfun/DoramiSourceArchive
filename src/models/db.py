@@ -168,6 +168,10 @@ class SourceConfigRecord(SQLModel, table=True):
     noise_risk: str = Field(default="", index=True, description="噪声风险判断")
     fetch_reliability: str = Field(default="", index=True, description="抓取可靠性判断")
 
+    # 用户自定源(v3.40):非空=读者自助添加的私有 RSS 源的创建者;空=平台源(admin 管理)。
+    # 仅作身份标记与溯源,不承担权限差异(删除语义="退订+无人订阅才物理删",与 owner 无关)。
+    owner_username: str = Field(default="", index=True, description="用户自定源创建者;空=平台源")
+
     is_active: bool = Field(default=True, index=True, description="是否启用该数据源")
     fetch_interval_minutes: Optional[int] = Field(default=None, description="建议抓取间隔，分钟")
     cron_expr: str = Field(default="", description="建议 Cron 表达式，可用于生成 FetchTaskRecord")

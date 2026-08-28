@@ -168,6 +168,15 @@ export default function MobileArticlePage({
           ) : (
             '该文章暂无正文内容，点击「查看来源」阅读完整内容。'
           )}
+          {/* 用户自定源(v3.40):正文尾部一律附原文链接(与桌面阅读窗同口径) */}
+          {!activeBodyLoading && String(activeArticle.source_id || '').startsWith('user_rss_')
+            && activeArticle.source_url && (
+            <p className="reader-pane-origin">
+              <a href={activeArticle.source_url} target="_blank" rel="noreferrer">
+                阅读原文 ↗
+              </a>
+            </p>
+          )}
         </div>
         {/* 上一篇/下一篇:沿当前列表序的真实翻页(选中项不在列表时隐藏) */}
         {activeIndex >= 0 && (prevArticle || nextArticle) && (

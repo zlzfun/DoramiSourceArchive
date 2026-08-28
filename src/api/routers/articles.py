@@ -47,6 +47,7 @@ from api.textutils import _json_loads
 from models.db import ArticleRecord, SourceConfigRecord
 from services import reader_state as reader_state_service
 from services import source_visibility as source_visibility_service
+from services import user_sources as user_sources_service
 
 router = APIRouter(tags=["articles"])
 
@@ -182,6 +183,22 @@ def get_articles(
             )
             query = query.where(hidden_cond)
             count_query = count_query.where(hidden_cond)
+        # 用户自定源(v3.40 私有):非订阅者不可达——「我未订阅的用户源」文章从
+        # 跨源列表与按 source_id 直查里一并排除(轻门槛:防 source_id 泄露后翻库)。
+        all_user_ids = user_sources_service.user_source_ids(session)
+        if all_user_ids:
+            viewer = str(auth_session.get("sub", "")) if auth_session else ""
+            my_ids = set(
+                resolve_subscribed_source_ids(session, viewer, include_hidden=True)
+            ) if viewer else set()
+            blocked_user_ids = sorted(all_user_ids - my_ids)
+            if blocked_user_ids:
+                user_cond = or_(
+                    ArticleRecord.source_id.is_(None),
+                    ArticleRecord.source_id.notin_(blocked_user_ids),
+                )
+                query = query.where(user_cond)
+                count_query = count_query.where(user_cond)
     if scope == "only":
         # 仅当前用户已订阅的源；无订阅时显式返回空集。
         query = query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))

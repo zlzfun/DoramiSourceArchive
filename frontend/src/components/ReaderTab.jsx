@@ -186,6 +186,7 @@ export const ArticleRow = memo(function ArticleRow({
 export default function ReaderTab({
   showToast,
   aiEnabled = false,
+  userSourcesEnabled = false,
   // ── standalone(读者账号):应用导轨已隐藏,视图轨独占——轨底并入用户菜单 ──
   standalone = false,
   account = null,
@@ -207,7 +208,7 @@ export default function ReaderTab({
     // 源目录 / 订阅
     sourcesLoading, discoverSources, subscribedIds, sourceMap, sourceNameMap,
     sidebarGroups, hasNoSubscriptions, socialSources, platformCount, pinningId,
-    handleSubscribe, handleUnsubscribe,
+    handleSubscribe, handleUnsubscribe, handleAddCustomSource,
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
@@ -550,6 +551,8 @@ export default function ReaderTab({
           collectionPinningId={collectionPinningId}
           onSubscribeCollection={handleSubscribeCollection}
           onUnsubscribeCollection={handleUnsubscribeCollection}
+          userSourcesEnabled={userSourcesEnabled}
+          onAddCustomSource={handleAddCustomSource}
         />
       )}
 
@@ -905,6 +908,16 @@ export default function ReaderTab({
                 <ReaderMarkdown>{displayBody}</ReaderMarkdown>
               ) : (
                 '该文章暂无正文内容，点击「查看来源」阅读完整内容。'
+              )}
+              {/* 用户自定源(v3.40):正文尾部一律附原文链接——feed 给什么存什么的
+                  最简正文口径下,摘要型源读完即达原文;全文源多一个出口也无碍 */}
+              {!activeBodyLoading && String(activeArticle.source_id || '').startsWith('user_rss_')
+                && activeArticle.source_url && (
+                <p className="reader-pane-origin">
+                  <a href={activeArticle.source_url} target="_blank" rel="noreferrer">
+                    阅读原文 ↗
+                  </a>
+                </p>
               )}
             </div>
             {/* 上一篇/下一篇:沿当前列表序的真实翻页(选中项不在列表时隐藏) */}

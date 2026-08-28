@@ -311,10 +311,15 @@ def collect_candidates(
 
     # 两段式取数(v3.35):先只取轻列做扫描/裁剪(游标重置或长停摆恢复时,旧实现会把
     # 游标后**全部行连正文**载入内存只为数 scanned_total),再按入选名单载全文。
+    from services.user_sources import USER_SOURCE_PREFIX
+
     light_statement = (
         select(ArticleRecord.id, ArticleRecord.source_id, ArticleRecord.fetched_date)
         .where(ArticleRecord.fetched_date > effective_cursor)
         .where(ArticleRecord.source_id != DAILY_BRIEF_SOURCE_ID)  # 防自我递归
+        # 用户自定源机械排除(v3.40):日报名单是手工 allowlist 本就不会勾用户源,
+        # 此处是「全部来源」档(名单未设)下的双保险——私有源绝不进公共日报。
+        .where(~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX))
         .order_by(ArticleRecord.fetched_date.desc())
     )
     if source_ids:

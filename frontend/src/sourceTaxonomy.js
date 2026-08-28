@@ -195,6 +195,10 @@ export const SOURCE_ROLES = [
   { key: 'media', label: '媒体', tone: 'sky', accent: '#0284c7', blurb: '有编辑立场的第三方报道' },
   { key: 'personal', label: '个人', tone: 'violet', accent: '#7c3aed', blurb: '研究者与从业者的个人视角' },
   { key: 'leaderboard', label: '榜单', tone: 'amber', accent: '#d97706', blurb: '社区热度与基准评测的聚合排序' },
+  /* 自定源(v3.40):读者自助添加的私有 RSS 源——不属于策展角色轴,单列一组,
+     防止无策展元数据的用户源回落进「官方」稀释组语义;仅订阅者的目录里出现。
+     后端 source_role 无需镜像本档:用户源被日报机械排除,权威层吃不到。 */
+  { key: 'custom', label: '自定源', tone: 'slate', accent: '#64748b', blurb: '你自己添加的私有来源' },
 ];
 
 const ROLE_LABEL = Object.fromEntries(SOURCE_ROLES.map((r) => [r.key, r.label]));
@@ -215,8 +219,11 @@ const LEADERBOARD_SCOPES = new Set([
 ]);
 const MEDIA_SCOPES = new Set(['ai_media', 'tech_media']);
 
-/* 源 → 信息角色 key。仅看策展元数据(provenance_tier / source_scope),不看形态。 */
+/* 源 → 信息角色 key。仅看策展元数据(provenance_tier / source_scope),不看形态。
+   用户自定源(user_rss_ 前缀/user_source 标记)最先短路进「自定」组——它们没有策展
+   元数据,不判定会全部回落「官方」。 */
 export const sourceRoleOf = (source) => {
+  if (source?.user_source || String(source?.source_id || '').startsWith('user_rss_')) return 'custom';
   const scope = source?.source_scope || '';
   if (source?.provenance_tier === 'tier2_personal_social' || PERSONAL_SCOPES.has(scope)) return 'personal';
   if (LEADERBOARD_SCOPES.has(scope)) return 'leaderboard';

@@ -131,9 +131,16 @@ def resolve_all_visible_source_ids(session: Session) -> List[str]:
     与 resolve_subscribed_source_ids 同为范围解析的单一咽喉——发现页本就允许读者
     预览任意非隐藏源的文章,故全库问答对读者不泄露新信息;隐藏源(读者面临时下架)
     照旧排除。以 articles 实存 source_id 为准(注册表里无文章的源对检索无意义)。
+    用户自定源(v3.40 私有订阅资产)同样排除——它们只经订阅域可达,scope=all 问答、
+    admin MCP 令牌、IM bot 检索域都不吃用户源,私有内容不外溢。
     """
+    from services.user_sources import USER_SOURCE_PREFIX
+
     rows = session.exec(select(ArticleRecord.source_id).distinct()).all()
-    collected = {str(value) for value in rows if value}
+    collected = {
+        str(value) for value in rows
+        if value and not str(value).startswith(USER_SOURCE_PREFIX)
+    }
     collected -= source_visibility.hidden_source_ids(session)
     return sorted(collected)
 

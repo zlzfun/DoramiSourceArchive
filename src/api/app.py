@@ -162,6 +162,7 @@ from services import ai_usage as ai_usage_service
 from services import reader_activity as reader_activity_service
 from services import content_analytics as content_analytics_service
 from services import jobs as jobs_service
+from services import user_sources as user_sources_service
 from services.media_store import MediaStore
 from llm.client import LLMNotConfigured, LLMError, UsageMeta, ping as llm_ping
 from llm.client import set_usage_recorder as _set_llm_usage_recorder
@@ -249,7 +250,20 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "llm_configured": llm_configured,
         # 登录默认落地界面（admin 双界面切换用；无会话/异常时回落 console）。
         "default_surface": default_surface,
+        # 用户自定源总闸(v3.40):关闭时前端隐藏「添加源」入口(端点侧另有 403)。
+        "user_sources_enabled": _user_sources_capability(),
     }
+
+
+def _user_sources_capability() -> bool:
+    """用户自定源总闸读数(runtime 透出用);无 DB/异常时按默认开。"""
+    if db_sink is None:
+        return True
+    try:
+        with Session(db_sink.engine) as session:
+            return user_sources_service.feature_enabled(session)
+    except Exception:  # noqa: BLE001
+        return True
 
 
 def _ai_capabilities(session: Optional[Dict[str, Any]] = None) -> tuple[bool, bool, str]:
@@ -393,6 +407,8 @@ async def lifespan(app: FastAPI):
             add_cron_job("retention_cleanup", execute_retention_cleanup_job, "30 4 * * *", [])
             # 远程内容同步定时任务(启用且 cron 合法时注册,否则移除既有 job)。
             reload_remote_sync_schedule()
+            # 用户自定源定时刷新(v3.40:间隔 KV 可配,总闸关闭即不注册)。
+            reload_user_rss_schedule()
     else:
         print("⏸️ 当前 reader 运行角色不启动抓取调度引擎。")
 
@@ -461,9 +477,28 @@ _MEDIA_PREFETCH_TASKS: set = set()
 
 
 def schedule_media_prefetch(article_ids: List[str]) -> None:
-    """抓取入库钩子：异步预取新文章正文里的外链图片，绝不阻塞抓取主流程。"""
+    """抓取入库钩子：异步预取新文章正文里的外链图片，绝不阻塞抓取主流程。
+
+    用户自定源(v3.40)豁免预取——实测媒体是存储大头(258MB vs 主库 125MB),私有源
+    的图走 /api/media/proxy 首次打开按需缓存,没人看的文章零媒体成本。
+    """
     store = media_store
     if store is None or not article_ids:
+        return
+    try:
+        with Session(db_sink.engine) as session:
+            rows = session.exec(
+                select(ArticleRecord.id, ArticleRecord.source_id).where(
+                    ArticleRecord.id.in_(article_ids)
+                )
+            ).all()
+        article_ids = [
+            str(rid) for rid, rsrc in rows
+            if not user_sources_service.is_user_source(str(rsrc or ""))
+        ]
+    except Exception:  # noqa: BLE001 - 豁免判定失败时按原名单预取(宁多缓存不误阻断)
+        pass
+    if not article_ids:
         return
 
     async def _run() -> None:
@@ -1221,6 +1256,64 @@ def reload_remote_sync_schedule():
         add_cron_job("remote_sync", execute_remote_sync_job, cron_expr, [])
     elif scheduler.get_job("remote_sync"):
         scheduler.remove_job("remote_sync")
+
+
+async def execute_user_rss_refresh_job():
+    """定时回调:批量抓取活跃用户自定源(v3.40)。
+
+    每轮 = 组装 active 用户源 items → run_collection_items(与 fetch-active-rss 同构)
+    → 连续失败达阈值者自动停抓。总闸关闭/无活跃用户源时空跑返回;
+    max_instances=1(注册处)防上一轮未完时叠加。
+    """
+    from api.routers.source_configs import build_source_fetch_params, resolve_source_fetcher_id
+
+    with Session(db_sink.engine) as session:
+        if not user_sources_service.feature_enabled(session):
+            return
+        records = session.exec(
+            select(SourceConfigRecord)
+            .where(SourceConfigRecord.owner_username != "")
+            .where(SourceConfigRecord.is_active == True)  # noqa: E712
+            .where(SourceConfigRecord.source_type.in_(["rss", "atom"]))
+            .order_by(SourceConfigRecord.source_id)
+        ).all()
+        items = []
+        for record in records:
+            fetcher_id = resolve_source_fetcher_id(record)
+            if not fetcher_id:
+                continue
+            items.append({
+                "source_id": record.source_id,
+                "fetcher_id": fetcher_id,
+                "params": build_source_fetch_params(record, {}),
+            })
+    if not items:
+        return
+    try:
+        await run_collection_items(
+            items, name="定时抓取: 用户自定源",
+            trigger_type="scheduled", run_scope="saved_job",
+        )
+    except Exception as exc:  # noqa: BLE001 - 单轮失败只记录,不影响调度引擎
+        _dorami_logger.warning("用户自定源定时抓取失败: %s", exc)
+    with Session(db_sink.engine) as session:
+        disabled = user_sources_service.auto_disable_failing(session)
+    if disabled:
+        _dorami_logger.warning("用户自定源连续失败达阈值,自动停抓: %s", ", ".join(disabled))
+
+
+def reload_user_rss_schedule():
+    """用户自定源刷新间隔变更后热生效(总闸关闭时移除 job)。"""
+    with Session(db_sink.engine) as session:
+        enabled = user_sources_service.feature_enabled(session)
+        minutes = user_sources_service.refresh_minutes(session)
+    if enabled:
+        scheduler.add_job(
+            execute_user_rss_refresh_job, "interval", minutes=minutes,
+            id="user_rss_refresh", replace_existing=True, max_instances=1,
+        )
+    elif scheduler.get_job("user_rss_refresh"):
+        scheduler.remove_job("user_rss_refresh")
 
 
 # ==================== 1. 数据台账与 CRUD ====================

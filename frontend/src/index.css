@@ -4112,6 +4112,53 @@ input[type="radio"] {
   .admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; }
 
   /* ── KPI 总账条(被动读数,数字全 ink;语义色只留异常) ── */
+  /* ── 用户自定源治理区(v3.40,运维管理 → 内容)── */
+  .usrc-minutes { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .usrc-minutes-input { width: 64px; text-align: center; }
+  .usrc-list { display: flex; flex-direction: column; }
+  .usrc-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 2px;
+  }
+  .usrc-row + .usrc-row { border-top: 1px solid var(--dorami-border); }
+  .usrc-main { flex: 1; min-width: 0; }
+  .usrc-name-row { display: flex; align-items: center; gap: 8px; }
+  .usrc-name { font-size: 13px; font-weight: 700; color: var(--dorami-ink); }
+  .usrc-meta {
+    margin-top: 2px;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--dorami-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .usrc-url { color: var(--dorami-faint); text-decoration: none; }
+  .usrc-url:hover { color: var(--dorami-ink-2); text-decoration: underline; }
+  /* 行动作:S 档文字微钮(字号写在容器上继承穿透,避 button{font:inherit} 未分层陷阱) */
+  .usrc-acts { display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 11px; font-weight: 600; }
+  .usrc-act-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-height: 26px;
+    padding: 0 9px;
+    border: 1px solid var(--dorami-border);
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--dorami-muted);
+    cursor: pointer;
+    transition: background-color var(--motion-fast) var(--motion-ease),
+      color var(--motion-fast) var(--motion-ease);
+  }
+  .usrc-act-btn:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
+  .usrc-act-btn:disabled { opacity: 0.55; cursor: default; }
+  .usrc-act-btn.is-danger:hover { color: var(--state-bad); background: var(--state-bad-bg); }
+  .usrc-act-btn.is-confirm { color: var(--state-bad); background: var(--state-bad-bg); border-color: transparent; }
+
   .kpi-strip { display: flex; align-items: stretch; flex-wrap: wrap; border-radius: var(--r-card); overflow: hidden; }
   .kpi { flex: 1; min-width: 130px; padding: 14px 18px 12px; }
   .kpi + .kpi { border-left: 1px solid var(--dorami-border); }
@@ -8896,6 +8943,77 @@ input[type="radio"] {
     background: var(--dorami-wash);
   }
 
+  /* ── 添加自定源入口(v3.40):头部工具行的 hairline 胶囊,与 28px 工具行对齐 ── */
+  .reader-disc-add {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+    height: 28px;
+    padding: 0 11px;
+    border: 1px solid var(--dorami-border);
+    border-radius: var(--r-pill);
+    background: transparent;
+    color: var(--dorami-ink-2);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color var(--motion-fast) var(--motion-ease),
+      border-color var(--motion-fast) var(--motion-ease);
+  }
+  .reader-disc-add:hover {
+    background: var(--dorami-soft);
+    border-color: var(--dorami-border-strong);
+  }
+
+  /* ── 添加自定源浮层(form-sheet 内的专属元素)── */
+  .csrc-url-row { display: flex; gap: 8px; align-items: center; }
+  .csrc-error { font-size: 12px; font-weight: 600; color: var(--state-bad); }
+  .csrc-exists {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    border-radius: var(--r-control);
+    background: var(--dorami-wash);
+    color: var(--dorami-accent-ink);
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .csrc-preview {
+    border-radius: var(--r-control);
+    background: var(--dorami-well);
+    padding: 10px 12px;
+  }
+  .csrc-preview-label { color: var(--dorami-faint); margin-bottom: 6px; }
+  .csrc-preview-list { display: flex; flex-direction: column; }
+  .csrc-preview-item {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 5px 0;
+  }
+  .csrc-preview-item + .csrc-preview-item { border-top: 1px solid var(--dorami-border); }
+  .csrc-preview-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--dorami-ink-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .csrc-preview-meta { flex-shrink: 0; font-size: 11px; color: var(--dorami-faint); }
+  .csrc-quota { margin-top: 8px; text-align: right; }
+
+  /* 用户自定源正文尾部「阅读原文」(桌面阅读窗与移动正文页共用) */
+  .reader-pane-origin { margin-top: 26px; font-size: 13px; }
+  .reader-pane-origin a {
+    color: var(--dorami-accent-ink);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .reader-pane-origin a:hover { text-decoration: underline; }
+
   .reader-disc-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 28px 40px; }
   .reader-disc-body { width: 100%; }
 
@@ -10190,6 +10308,7 @@ input[type="radio"] {
 .reader-disc-sub.is-subbed { font-weight: 400; }
 .reader-disc-prev { font-size: 11px; font-weight: 400; }
 .reader-disc-back { font-size: 11px; font-weight: 400; font-family: var(--mono); }
+.reader-disc-add { font-size: 12px; font-weight: 600; }
 /* 输入框同陷阱:无层级 input{font:inherit} 压 @layer 字号,发现页目录搜索框字号在此钉住 */
 .reader-disc-search input { font-size: 12.5px; }
 /* 条目列头就地展开的搜索框同理钉字号+行高,与发现页目录搜索一致(否则回落 16px/40px 高) */

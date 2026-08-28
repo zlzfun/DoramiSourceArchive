@@ -43,6 +43,7 @@ import { useModalTransition } from '../hooks/useModalTransition';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { MultiSeriesArea, RankBars, BarList } from './charts/DashboardCharts';
 import MediaHeatmap from './admin/MediaHeatmap';
+import UserSourcesPanel from './admin/UserSourcesPanel';
 import FeedbackInboxPanel from './admin/FeedbackInboxPanel';
 import AnnouncementsPanel from './admin/AnnouncementsPanel';
 import AdminAuditPanel from './admin/AdminAuditPanel';
@@ -779,6 +780,9 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
                   <MediaHeatmap showToast={showToast} />
                 </>
               )}
+
+              {/* ── 用户自定源(v3.40):读者自助 RSS 源的治理与观测 ── */}
+              <UserSourcesPanel showToast={showToast} />
             </>
           )}
         </div>
