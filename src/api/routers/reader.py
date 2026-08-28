@@ -51,7 +51,6 @@ from models.db import (
 from services import accounts as accounts_service
 from services import article_share as article_share_service
 from services import daily_brief as daily_brief_service
-from services import jobs as jobs_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
 from services import reader_search as reader_search_service
@@ -422,27 +421,30 @@ async def create_custom_source(
         reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
     session.commit()
 
-    # 首抓走后台 job(与 fetch-active-rss 同构),添加响应不等抓取;失败也无妨,随调度重试。
+    # 首抓同步等待(2026-08-28 返修:原后台 job 形态下,添加后立即点开该源列表为空,
+    # 像「没文章」,刷新才出现——单 feed 首抓仅数秒,同步等完再返回,modal 的 busy 态
+    # 自然覆盖,关闭浮层即一切就绪)。失败不阻断:源已建成,随定时调度重试。
     from api.routers.source_configs import build_source_fetch_params
 
     fetch_params = build_source_fetch_params(record, {})
-
-    async def _work(bg) -> Dict[str, Any]:
-        return await app.run_single_fetch_as_collection(
+    first_fetch = "ok"
+    saved_count = 0
+    try:
+        fetch_result = await app.run_single_fetch_as_collection(
             "generic_rss", fetch_params,
             name=f"自定源首抓: {record.name}", trigger_type="manual", run_scope="ad_hoc",
         )
-
-    bg_job = jobs_service.launch(
-        deps.get_db_sink().engine, "user_source_first_fetch", _work,
-        created_by=username, payload={"source_id": source_id},
-    )
+        saved_count = int(fetch_result.get("saved_count")
+                          or (fetch_result.get("results") or [{}])[0].get("saved_count", 0) or 0)
+    except Exception:  # noqa: BLE001 - 首抓失败不还原添加,健康面/调度接手
+        first_fetch = "failed"
     return {
         "status": "success",
         "source_id": source_id,
         "name": record.name,
         "created": prepared["created"],
-        "job_id": bg_job.id,
+        "first_fetch": first_fetch,
+        "saved_count": saved_count,
     }
 
 

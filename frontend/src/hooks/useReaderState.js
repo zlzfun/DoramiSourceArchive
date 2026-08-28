@@ -636,7 +636,13 @@ export function useReaderState({
         showToast(`该来源已收录且已订阅:${existing.name || existing.source_id}`, 'success');
       }
     } else {
-      showToast(`已添加自定源 ${result.name}`, 'success');
+      // 首抓已同步完成(v3.40 返修:添加响应等首抓落库,关浮层即可读),toast 如实带篇数
+      showToast(
+        result.first_fetch === 'failed'
+          ? `已添加自定源 ${result.name},首次抓取失败,稍后自动重试`
+          : `已添加自定源 ${result.name},收录 ${result.saved_count ?? 0} 篇`,
+        'success',
+      );
     }
     loadSources();
     refreshAggregateIfActive();

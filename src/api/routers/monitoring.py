@@ -112,6 +112,29 @@ def build_fetcher_health_from_state(fetcher_metadata: Dict[str, Any], state: Sou
 @router.get("/api/source-health")
 def get_source_health(session: Session = Depends(deps.get_session)):
     fetchers = fetcher_registry.get_all_metadata()
+
+    # 用户自定源(v3.40)以 fetcher-like 形状并入健康汇总:节点管理信号条的「自定源」
+    # 角色档由此有数据可看(设计 §5 承诺的筛选可见)。抓取经 generic_rss 执行,
+    # FetchRunRecord.fetcher_id 不是 source_id,故其健康只走 SourceStateRecord
+    # (无 state = never_run),不回退 run 聚合。
+    from models.db import SourceConfigRecord
+
+    user_configs = session.exec(
+        select(SourceConfigRecord).where(SourceConfigRecord.owner_username != "")
+    ).all()
+    for record in user_configs:
+        fetchers.append({
+            "id": record.source_id,
+            "name": record.name,
+            "icon": "",
+            "desc": record.url,
+            "category": "user",
+            "content_type": "rss_article",
+            "user_source": True,
+            "owner_username": record.owner_username,
+            "is_active": record.is_active,
+        })
+
     fetcher_ids = [fetcher["id"] for fetcher in fetchers]
 
     runs = session.exec(select(FetchRunRecord).where(FetchRunRecord.fetcher_id.in_(fetcher_ids))).all()
@@ -133,9 +156,18 @@ def get_source_health(session: Session = Depends(deps.get_session)):
         item = (
             build_fetcher_health_from_state(fetcher, states_by_source[fetcher["id"]])
             if fetcher["id"] in states_by_source
-            else build_fetcher_health(fetcher, runs_by_fetcher.get(fetcher["id"], []))
+            else build_fetcher_health(
+                fetcher,
+                [] if fetcher.get("user_source") else runs_by_fetcher.get(fetcher["id"], []),
+            )
         )
         item["total_articles"] = article_count_by_source.get(fetcher["id"], 0)
+        if fetcher.get("user_source"):
+            # builder 是白名单字段,用户源的身份标记在此透传(前端节点行/筛选依赖)。
+            item["user_source"] = True
+            item["owner_username"] = fetcher["owner_username"]
+            item["is_active"] = fetcher["is_active"]
+            item["feed_url"] = fetcher["desc"]
         health_items.append(item)
     return sorted(health_items, key=lambda item: (item["category"], item["name"]))
 

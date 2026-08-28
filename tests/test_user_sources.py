@@ -177,6 +177,7 @@ def test_add_custom_source_end_to_end(monkeypatch, tmp_path):
         source_id = body["source_id"]
         assert source_id.startswith("user_rss_")
         assert body["name"] == "Test Blog"  # 默认名取 feed title
+        assert body["first_fetch"] == "ok"  # 首抓同步完成后才返回(v3.40 返修)
 
         with Session(app_module.db_sink.engine) as session:
             record = session.get(SourceConfigRecord, source_id)
@@ -379,6 +380,24 @@ def test_article_list_gate_blocks_non_subscriber(monkeypatch, tmp_path):
         _login(client, "admin", "admin")
         res = client.get(f"/api/articles?source_id={source_id}")
         assert [a["id"] for a in res.json()] == ["u1"]
+
+
+def test_source_health_includes_user_sources(monkeypatch, tmp_path):
+    """节点管理数据半边:健康汇总以 fetcher-like 形状并入用户源行(设计 §5 筛选可见)。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        source_id = _add(client).json()["source_id"]
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        items = client.get("/api/source-health").json()
+        row = next(i for i in items if i["fetcher_id"] == source_id)
+        assert row["user_source"] is True
+        assert row["owner_username"] == "alice"
+        assert row["category"] == "user"
+        assert row["feed_url"].startswith("https://")
+        # registry 节点行不带 user_source 标记
+        assert all("user_source" not in i for i in items if i["fetcher_id"] != source_id)
 
 
 # ==================== 删除级联 ====================

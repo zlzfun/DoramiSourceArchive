@@ -22,6 +22,7 @@ import {
   fetchFetchRuns,
   fetchRunningProgress,
   fetchSourceHealth,
+  fetchSourceConfigNow,
   fetchSourceVisibility,
   setSourceVisibility,
   triggerBatchFetch,
@@ -76,12 +77,14 @@ function loadStoredConfigOverrides() {
 
 
 function typeLabelOf(fetcher) {
+  if (fetcher.user_source) return 'RSS';
   return labelFrom(SOURCE_CHANNEL_LABELS, fetcher.source_channel) || fetcher.content_type || '节点';
 }
 
 export default function FetchTab({ availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onSaveAsJob, pendingFocus, onPendingFocusApplied }) {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [healthByFetcher, setHealthByFetcher] = useState({});
+  const [customNodes, setCustomNodes] = useState([]); // 用户自定源的简化节点行(v3.40)
   const [trendBySource, setTrendBySource] = useState(null); // 7 日收录趋势 {days, bySource}(A 波)
   const [fetchConfigs, setFetchConfigs] = useState({});
   const [runningFetcherIds, setRunningFetcherIds] = useState(() => new Set());
@@ -205,6 +208,19 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     try {
       const healthItems = await fetchSourceHealth();
       setHealthByFetcher(Object.fromEntries(healthItems.map(item => [item.fetcher_id, item])));
+      // 用户自定源(v3.40):健康汇总里的 user_source 行 → 「自定源」组的简化节点行
+      // (registry 目录无此类源,健康数据就是它们的目录;treated as fetcher-like)。
+      setCustomNodes(healthItems.filter(item => item.user_source).map(item => ({
+        id: item.fetcher_id,
+        name: item.name,
+        icon: '',
+        desc: item.feed_url || '',
+        category: 'user',
+        content_type: item.content_type || 'rss_article',
+        user_source: true,
+        owner_username: item.owner_username || '',
+        is_active: item.is_active !== false,
+      })));
     } catch (e) {
       // 健康读数是行内装饰,且本函数被挂载/抓取完成/定时刷新多点触发——
       // 失败静默降级(行内不渲染),不弹 toast 以免重复刷屏。
@@ -285,20 +301,24 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   const matchesHealth = useCallback((f) => healthFilter === 'all' || statusOf(f) === healthFilter, [healthFilter, statusOf]);
   const matchesRole = useCallback((f) => roleFilter === 'all' || sourceRoleOf(f) === roleFilter, [roleFilter]);
 
+  // 目录全量 = registry 节点 ∪ 用户自定源简化行(v3.40:自定源经健康汇总并入,
+  // 「自定源」角色档由此筛得到东西;treated as fetcher-like,交互在 renderNode 特判)。
+  const allNodes = useMemo(() => [...availableFetchers, ...customNodes], [availableFetchers, customNodes]);
+
   // 双轴筛选计数:健康灯按当前角色范围收窄(灯位如实反映所看角色的健康分布);
   // 角色计数恒为全目录量(与调度板分组组头的节点数一致,作稳定的身份读数)。
   const healthCounts = useMemo(() => {
-    const scoped = availableFetchers.filter(matchesRole);
+    const scoped = allNodes.filter(matchesRole);
     const counts = { all: scoped.length };
     scoped.forEach(f => { const st = statusOf(f); counts[st] = (counts[st] || 0) + 1; });
     return counts;
-  }, [availableFetchers, matchesRole, statusOf]);
+  }, [allNodes, matchesRole, statusOf]);
 
   const roleCounts = useMemo(() => {
     const counts = {};
-    availableFetchers.forEach(f => { const r = sourceRoleOf(f); counts[r] = (counts[r] || 0) + 1; });
+    allNodes.forEach(f => { const r = sourceRoleOf(f); counts[r] = (counts[r] || 0) + 1; });
     return counts;
-  }, [availableFetchers]);
+  }, [allNodes]);
 
   // 当前健康档在所选角色下为空时回落「全部」:角色点选永远有结果,不出现死空态。
   useEffect(() => {
@@ -306,8 +326,8 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   }, [healthCounts, healthFilter]);
 
   const visibleFetchers = useMemo(
-    () => availableFetchers.filter(f => matchesHealth(f) && matchesRole(f)),
-    [availableFetchers, matchesHealth, matchesRole],
+    () => allNodes.filter(f => matchesHealth(f) && matchesRole(f)),
+    [allNodes, matchesHealth, matchesRole],
   );
 
   // 调度板：按信息角色（官方/媒体/个人/榜单）分组，组内节点按「公司名 → 节点名」平铺。
@@ -425,6 +445,31 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       });
   }, [runningFetcherIds, fetchConfigs, showToast, onRunsChanged, onArticlesChanged, loadSourceHealth]);
 
+  // 用户自定源立即运行(v3.40):经 source-configs 通道触发(generic_rss 执行基座),
+  // registry 触发端点对它 404。结果形状与 run_single_fetch_as_collection 一致。
+  const runUserSourceFetch = useCallback((fetcher) => {
+    if (runningFetcherIds.has(fetcher.id)) return;
+    setRunningFetcherIds(prev => new Set(prev).add(fetcher.id));
+    showToast(`开始抓取「${fetcher.name}」…`, 'info');
+    onRunsChanged?.();
+    fetchSourceConfigNow(fetcher.id)
+      .then((result) => {
+        const saved = result?.saved_count ?? result?.results?.[0]?.saved_count ?? 0;
+        showToast(`「${fetcher.name}」抓取完成：新增 ${saved} 条`, 'success');
+        loadSourceHealth();
+        onArticlesChanged?.();
+        onRunsChanged?.();
+      })
+      .catch(e => showToast(`「${fetcher.name}」抓取失败：${e.message || '未知错误'}`, 'error'))
+      .finally(() => {
+        setRunningFetcherIds(prev => {
+          const next = new Set(prev);
+          next.delete(fetcher.id);
+          return next;
+        });
+      });
+  }, [runningFetcherIds, showToast, onRunsChanged, onArticlesChanged, loadSourceHealth]);
+
   // 批量运行：对给定节点集触发临时抓取（后台任务，聚合结果回来后统一提示）。
   const runFetchers = useCallback(async (ids, options = {}) => {
     if (ids.length === 0) return;
@@ -463,8 +508,11 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     return result;
   }, [fetchConfigs, onRunsChanged, showToast, loadSourceHealth, onArticlesChanged]);
 
+  // 批量通道走 registry fetcher 语义,用户自定源不参与(其抓取经 source-configs/定时调度)。
+  const batchableFetchers = useMemo(() => visibleFetchers.filter(f => !f.user_source), [visibleFetchers]);
+
   const handleBatchRun = () => {
-    const ids = visibleFetchers.map(f => f.id);
+    const ids = batchableFetchers.map(f => f.id);
     if (ids.length === 0) return;
     runFetchers(ids);
   };
@@ -484,7 +532,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     });
     onSaveAsJob?.({ fetcher_ids: ids, per_fetcher_params: per });
   };
-  const checkAllVisible = () => setCheckedIds(new Set(visibleFetchers.map(f => f.id)));
+  const checkAllVisible = () => setCheckedIds(new Set(batchableFetchers.map(f => f.id)));
 
   // 单节点试抓预览：以当前参数抓取 1 条（会入库，与既有「试抓」同口径），结果内嵌到检视器。
   const runNodePreview = useCallback(async (fetcher) => {
@@ -569,6 +617,10 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     const totalArticles = health?.total_articles ?? 0;
     const consecutiveFailures = health?.consecutive_failures ?? 0;
 
+    // 用户自定源简化行(v3.40):可选中进简化检视器(feed/健康/创建者);不入批量,
+    // 触发走 source-configs 通道;治理动作(停用/删除)在 运维管理 → 内容。
+    const isUserSource = Boolean(fetcher.user_source);
+
     return (
       <div key={fetcher.id} ref={el => { sourceRowRefs.current[fetcher.id] = el; }}>
         <div
@@ -577,16 +629,20 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           onClick={() => selectNode(fetcher.id)}
           onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectNode(fetcher.id); } }}
           className={`board-node ${isSelected ? 'board-node-sel' : ''} ${selectMode && checkedIds.has(fetcher.id) ? 'board-node-checked' : ''} ${highlightedFetcherId === fetcher.id ? 'board-node-focus' : ''}`}
-          title={health?.latest_run_at ? `上次运行 ${formatDateTime(health.latest_run_at)}` : '从未运行'}
+          title={isUserSource
+            ? `读者自定源 · 创建者 ${fetcher.owner_username}${health?.latest_run_at ? ` · 上次运行 ${formatDateTime(health.latest_run_at)}` : ''}`
+            : (health?.latest_run_at ? `上次运行 ${formatDateTime(health.latest_run_at)}` : '从未运行')}
         >
           {selectMode && (
             <input
               type="checkbox"
               className="h-4 w-4 cursor-pointer rounded"
-              checked={checkedIds.has(fetcher.id)}
+              checked={!isUserSource && checkedIds.has(fetcher.id)}
+              disabled={isUserSource}
               onClick={e => e.stopPropagation()}
-              onChange={() => toggleChecked(fetcher.id)}
-              aria-label={`选择：${fetcher.name}`}
+              onChange={() => !isUserSource && toggleChecked(fetcher.id)}
+              aria-label={isUserSource ? `${fetcher.name}(自定源不入批量)` : `选择：${fetcher.name}`}
+              title={isUserSource ? '自定源不参与批量操作' : undefined}
             />
           )}
           <span className={`signal-dot signal-dot-${HEALTH_SIGNAL[status] || 'idle'}`} title={statusLabel} />
@@ -601,6 +657,10 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               {/* 读者面隐藏:发现页/源栏/文章流对读者不可见,采集照常 */}
               {hiddenSourceIds.has(fetcher.id) && (
                 <span className="tier-pill reader-hidden-pill" title="读者面已隐藏:发现页与阅读器均不可见,订阅与归档保留">已隐藏</span>
+              )}
+              {/* 用户自定源停抓态(连续失败自动停用或 admin 手动停用) */}
+              {isUserSource && !fetcher.is_active && (
+                <span className="tier-pill reader-hidden-pill" title="已停用:定时抓取跳过;读者重新添加同地址或在 运维管理 → 内容 启用即恢复">已停用</span>
               )}
             </span>
             <span className="board-node-sid" title={fetcher.id}>{fetcher.id}</span>
@@ -631,22 +691,24 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             <button
               type="button"
               className="board-node-act"
-              disabled={isRunning}
-              onClick={event => { event.stopPropagation(); runSingleFetcher(fetcher); }}
-              title="立即运行"
+              disabled={isRunning || (isUserSource && !fetcher.is_active)}
+              onClick={event => { event.stopPropagation(); isUserSource ? runUserSourceFetch(fetcher) : runSingleFetcher(fetcher); }}
+              title={isUserSource && !fetcher.is_active ? '已停用,先在 运维管理 → 内容 启用' : '立即运行'}
               aria-label={`立即运行 ${fetcher.name}`}
             >
               {isRunning ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
             </button>
-            <button
-              type="button"
-              className="board-node-act"
-              onClick={event => { event.stopPropagation(); selectNode(fetcher.id); runNodePreview(fetcher); }}
-              title="试抓预览"
-              aria-label={`试抓预览 ${fetcher.name}`}
-            >
-              <FlaskConical className="h-3.5 w-3.5" />
-            </button>
+            {!isUserSource && (
+              <button
+                type="button"
+                className="board-node-act"
+                onClick={event => { event.stopPropagation(); selectNode(fetcher.id); runNodePreview(fetcher); }}
+                title="试抓预览"
+                aria-label={`试抓预览 ${fetcher.name}`}
+              >
+                <FlaskConical className="h-3.5 w-3.5" />
+              </button>
+            )}
           </span>
         </div>
 
@@ -696,7 +758,9 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     );
   };
 
-  const selectedFetcher = selectedNodeId ? fetchersById[selectedNodeId] : null;
+  const selectedFetcher = selectedNodeId
+    ? (fetchersById[selectedNodeId] || customNodes.find(n => n.id === selectedNodeId) || null)
+    : null;
 
   const renderInspector = () => {
     if (!selectedFetcher) {
@@ -713,6 +777,95 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     const status = health?.health_status || 'never_run';
     const statusLabel = healthMeta(status).label;
     const isRunning = runningFetcherIds.has(fetcher.id);
+
+    // 用户自定源简化检视器(v3.40):无 registry 参数/试抓语义,呈现 feed 身份+健康
+    // 摘要+读者面隐藏开关;停用/删除等治理在 运维管理 → 内容(此处只读回指)。
+    if (fetcher.user_source) {
+      const totalUserArticles = health?.total_articles ?? 0;
+      return (
+        <>
+          <div className="inspector-head">
+            <div className="inspector-head-top">
+              <span className={`signal-dot signal-dot-${HEALTH_SIGNAL[status] || 'idle'}`} title={statusLabel} />
+              <h2 className="inspector-title" title={fetcher.name}>{fetcher.name}</h2>
+              <span className={`inspector-stamp inspector-stamp-${status}`}>{statusLabel}</span>
+              <button type="button" className="inspector-close" onClick={() => setMobileInspectorOpen(false)} aria-label="关闭检视器">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="inspector-sid">
+              <span className="font-mono truncate" title={fetcher.id}>{fetcher.id}</span>
+              <span className="inspector-sid-dot">RSS · 自定源</span>
+            </div>
+          </div>
+
+          <div className="inspector-body">
+            <p className="inspector-desc">
+              读者自助添加的私有 RSS 源 · 创建者 {fetcher.owner_username || '未知'}
+              {fetcher.is_active === false ? ' · 已停用（定时抓取跳过）' : ''}
+            </p>
+
+            {fetcher.desc && (
+              <a className="inspector-url" href={fetcher.desc} target="_blank" rel="noreferrer" title="打开 feed 地址">
+                <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{fetcher.desc}</span>
+              </a>
+            )}
+
+            <div className="inspector-metarow">
+              <button type="button" className="inspector-metabtn" onClick={() => onViewArticles?.(fetcher.id)} title="查看该源收录的文章">
+                <FileText className="h-3.5 w-3.5" />
+                <span>收录文章</span>
+                <b>{totalUserArticles}</b>
+              </button>
+              <button
+                type="button"
+                className="inspector-metabtn"
+                disabled={isRunning || fetcher.is_active === false}
+                onClick={() => runUserSourceFetch(fetcher)}
+                title={fetcher.is_active === false ? '已停用,先在 运维管理 → 内容 启用' : '立即抓取一次'}
+              >
+                {isRunning ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                <span>{isRunning ? '抓取中…' : '立即运行'}</span>
+              </button>
+            </div>
+
+            {/* 读者可见性:与策展节点同一通道(临时下架止损),admin 对用户源同样可用 */}
+            <div className={`inspector-visibility ${hiddenSourceIds.has(fetcher.id) ? 'is-hidden' : ''}`}>
+              <EyeOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <div className="inspector-visibility-text">
+                <span className="inspector-visibility-title">在读者面隐藏</span>
+                <span className="inspector-visibility-hint">
+                  隐藏后发现页与阅读器不再出现该源；订阅与归档保留，恢复可见即回归。
+                </span>
+              </div>
+              <button
+                type="button"
+                className="inspector-visibility-toggle"
+                role="switch"
+                aria-checked={hiddenSourceIds.has(fetcher.id)}
+                aria-label={`在读者面隐藏 ${fetcher.name}`}
+                disabled={visibilityBusyId === fetcher.id}
+                onClick={() => toggleSourceHidden(fetcher)}
+              >
+                <span className={`ledger-switch ${hiddenSourceIds.has(fetcher.id) ? 'is-on' : ''}`} aria-hidden="true" />
+              </button>
+            </div>
+
+            <dl className="inspector-facts">
+              <div><dt>最近成功</dt><dd>{health?.latest_success_at ? formatDateTime(health.latest_success_at) : '—'}</dd></div>
+              <div><dt>连续失败</dt><dd className="tabular-nums">{health?.consecutive_failures ?? 0}</dd></div>
+              <div><dt>累计运行</dt><dd className="tabular-nums">{health?.total_runs ?? 0}</dd></div>
+            </dl>
+
+            <p className="inspector-hint">
+              订阅人数、停用与删除等治理动作在 运维管理 → 内容 → 用户自定源。
+            </p>
+          </div>
+        </>
+      );
+    }
+
     const params = fetcher.parameters || [];
     const preview = previewByNode[fetcher.id];
     const signalLabel = labelFrom(SIGNAL_LABELS, fetcher.signal_strength);
@@ -953,7 +1106,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               className="action-button action-button-primary min-h-[32px] px-3 text-xs"
               title="对当前筛选下的全部节点触发临时抓取"
             >
-              {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 批量运行 {visibleFetchers.length}
+              {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 批量运行 {batchableFetchers.length}
             </button>
           )}
         </div>

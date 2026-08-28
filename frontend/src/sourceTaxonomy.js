@@ -14,6 +14,8 @@
  * 品牌标识组件见 components/LogoMark.jsx。
  */
 
+import { avatarHue, avatarInitial } from './utils/avatarColor';
+
 /* ──────────────────────────────────────────────────────────
  * 1. owner 归一化：把同义/同司的 source_owner 收敛为单一 company key
  * ────────────────────────────────────────────────────────── */
@@ -60,6 +62,19 @@ export const COMPANY_REGISTRY = {
  * 3. 解析单个 fetcher 的公司身份
  * ────────────────────────────────────────────────────────── */
 export function resolveCompany(fetcher) {
+  // 用户自定源(v3.40):无策展 owner,按源名派生个性标识——feed 站点 favicon 优先
+  // (domain 走 LogoMark 的 favicon 服务链),失败回退「首字母 + 名字稳定色相」
+  // (avatarHue 黄金角散列,同名恒同色;与账户默认字母头像 v3.22.3 同一套语义)。
+  if (fetcher?.user_source || String(fetcher?.source_id || '').startsWith('user_rss_')) {
+    const name = fetcher?.name || fetcher?.source_id || '?';
+    return {
+      key: fetcher?.source_id || 'user',
+      name,
+      accent: `hsl(${avatarHue(name)} 52% 46%)`,
+      domain: fetcher?.base_url || '',
+      monogram: avatarInitial(name),
+    };
+  }
   const key = normalizeOwner(fetcher?.source_owner);
   const base = COMPANY_REGISTRY[key];
   if (base) return { key, ...base };
