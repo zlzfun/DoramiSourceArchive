@@ -640,6 +640,7 @@ export default function App() {
           <MobileReader
             showToast={showToast}
             aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured}
+            userSourcesEnabled={runtimeInfo.user_sources_enabled !== false}
             account={authState.user}
             themePref={theme}
             onSetTheme={setTheme}
@@ -847,6 +848,7 @@ export default function App() {
                 <ReaderTab
                   showToast={showToast}
                   aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured}
+                  userSourcesEnabled={runtimeInfo.user_sources_enabled !== false}
                   standalone
                   account={authState.user}
                           themeDark={effective === 'dark'}

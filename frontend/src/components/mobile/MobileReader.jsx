@@ -50,6 +50,7 @@ const noopContextMenu = () => {};
 export default function MobileReader({
   showToast,
   aiEnabled = false,
+  userSourcesEnabled = false,
   account = null,
   themePref = 'system',
   onSetTheme,
@@ -64,7 +65,7 @@ export default function MobileReader({
     // 源目录 / 订阅
     sourcesLoading, discoverSources, subscribedIds, sourceMap, sourceNameMap,
     sidebarGroups, hasNoSubscriptions, socialSources, platformCount, pinningId,
-    handleSubscribe, handleUnsubscribe,
+    handleSubscribe, handleUnsubscribe, handleAddCustomSource,
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
@@ -415,6 +416,8 @@ export default function MobileReader({
               collectionPinningId={collectionPinningId}
               onSubscribeCollection={handleSubscribeCollection}
               onUnsubscribeCollection={handleUnsubscribeCollection}
+              userSourcesEnabled={userSourcesEnabled}
+              onAddCustomSource={handleAddCustomSource}
             />
           </div>
         </div>

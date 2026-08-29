@@ -582,6 +582,44 @@ export function unsubscribeCollection(collectionId) {
   return request(`/reader/collections/${enc(collectionId)}/subscribe`, { method: 'DELETE', errorMsg: '退订合集失败' });
 }
 
+// ==================== 用户自定源(v3.40) ====================
+
+export function previewCustomSource(url) {
+  return request('/reader/custom-sources/preview', { method: 'POST', body: { url }, errorMsg: '预览失败' });
+}
+
+export function createCustomSource(url, name) {
+  return request('/reader/custom-sources', {
+    method: 'POST', body: name ? { url, name } : { url }, errorMsg: '添加自定源失败',
+  });
+}
+
+export function fetchCustomSources() {
+  return request('/reader/custom-sources', { errorMsg: '获取自定源失败' });
+}
+
+export function removeCustomSource(sourceId) {
+  return request(`/reader/custom-sources/${enc(sourceId)}`, { method: 'DELETE', errorMsg: '移除自定源失败' });
+}
+
+export function fetchAdminUserSources() {
+  return request('/admin/user-sources', { errorMsg: '获取用户自定源失败' });
+}
+
+export function setAdminUserSourcesConfig(config) {
+  return request('/admin/user-sources/config', { method: 'POST', body: config, errorMsg: '保存自定源配置失败' });
+}
+
+export function toggleAdminUserSource(sourceId, isActive) {
+  return request(`/admin/user-sources/${enc(sourceId)}/toggle`, {
+    method: 'POST', body: { is_active: isActive }, errorMsg: '切换自定源状态失败',
+  });
+}
+
+export function deleteAdminUserSource(sourceId) {
+  return request(`/admin/user-sources/${enc(sourceId)}`, { method: 'DELETE', errorMsg: '删除自定源失败' });
+}
+
 // 记录一次主动阅读（fire-and-forget：失败静默，不阻断阅读）。
 export function recordArticleRead(articleId) {
   // fire-and-forget 但解析响应:成功时带回 read_count(全站累计阅读数)供阅读窗就地刷新

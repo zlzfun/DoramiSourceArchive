@@ -249,6 +249,10 @@ def export_archive_articles_jsonl(
             fetched_date_end=fetched_date_end,
             session=session,
         )
+        # 用户自定源(v3.40 私有订阅资产)不随归档同步外发:内网 reader/下游仓不吃私有内容。
+        from services.user_sources import USER_SOURCE_PREFIX
+
+        query = query.where(~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True))
         records = session.exec(
             query.order_by(ArticleRecord.fetched_date.asc(), ArticleRecord.id.asc()).offset(skip).limit(safe_limit)
         ).all()

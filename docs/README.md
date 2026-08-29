@@ -24,6 +24,10 @@
   含实施记录):发现页策展合集(「源 ⇄ 合集」seg + 合集卡/详情 + 一键批量订阅);定调=目录呈现层
   批量动作而非订阅实体,代码注册表策展,交付链路零感知。首发五枚:HN 博客 2025/前沿实验室官方/
   国产开源模型动态/AI 编程工具动态/AI 深度写作(构思纪律与被毙候选见实施记录)。
+- ◉ [user-custom-rss-wave-plan.md](./user-custom-rss-wave-plan.md) — 用户自定 RSS 源波(v3.40.0
+  已实现):读者贴 URL 自助添加私有 RSS 源(参照 Folo);方案 B 自助+隔离(不进公共目录/
+  all 检索域/日报/archive sync),最简正文(feed 给什么存什么,preview 仅守门不分型),
+  入库存储+媒体不预取+删源即清;技术底座复用 generic_rss + SourceConfigRecord(加 owner 列)。
 - ◇ [reader-search-architecture.md](./reader-search-architecture.md) — 检索问答(类 RAG)模块
   技术栈与原理报告(快照 v3.36.0,含 mermaid 架构图):FTS5 索引层/四阶段管线/降级链与
   机械化诚实层/消费方范围/关键参数;权威事实来源仍是 reader_search.py 等代码。

@@ -333,6 +333,20 @@ def get_subscription(subscription_id: int, request: Request, session: Session = 
     return serialize_subscription(record)
 
 
+def _guard_filter_user_sources(session: Session, username: str, filters: dict) -> None:
+    """订阅 filters 中的用户源 id 归属校验(检视返修 F2:高级订阅路径同守门)。"""
+    from services import user_sources as user_sources_service
+
+    ids: list[str] = []
+    for key in ("source_ids", "source_id"):
+        value = (filters or {}).get(key)
+        if value:
+            ids.extend(part.strip() for part in str(value).split(",") if part.strip())
+    denied = user_sources_service.unauthorized_user_source_ids(session, username, ids)
+    if denied:
+        raise HTTPException(status_code=404, detail="来源不存在或暂不可用")
+
+
 @router.post("/api/subscriptions")
 def create_subscription(
         params: SubscriptionCreate, request: Request, session: Session = Depends(deps.get_session)
@@ -340,22 +354,29 @@ def create_subscription(
     name = params.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="订阅源名称不能为空")
-    token = generate_subscription_token()
-    now = _now_iso()
-    record = ReaderSubscriptionRecord(
-        owner_username=_app().current_username(request),
-        name=name,
-        description=params.description.strip(),
-        filters_json=_json_dumps(_model_to_clean_dict(params.filters)),
-        delivery_policy_json=_json_dumps(normalize_delivery_policy(_model_dump(params.delivery_policy))),
-        token_hash=hash_subscription_token(token),
-        token_preview=subscription_token_preview(token),
-        is_active=params.is_active,
-        created_at=now,
-        updated_at=now,
-    )
-    session.add(record)
-    session.commit()
+    username = _app().current_username(request)
+    from services.user_sources import _WRITE_LOCK  # noqa: PLC0415
+
+    # 校验与提交同持用户源写锁(三轮收口):防「校验时配置还在→提交前被 purge」
+    # 竞态产生悬空引用(每日 GC 另有兜底)。
+    with _WRITE_LOCK:
+        _guard_filter_user_sources(session, username, _model_to_clean_dict(params.filters))
+        token = generate_subscription_token()
+        now = _now_iso()
+        record = ReaderSubscriptionRecord(
+            owner_username=username,
+            name=name,
+            description=params.description.strip(),
+            filters_json=_json_dumps(_model_to_clean_dict(params.filters)),
+            delivery_policy_json=_json_dumps(normalize_delivery_policy(_model_dump(params.delivery_policy))),
+            token_hash=hash_subscription_token(token),
+            token_preview=subscription_token_preview(token),
+            is_active=params.is_active,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(record)
+        session.commit()
     session.refresh(record)
     return serialize_subscription(record, token=token)
 
@@ -367,24 +388,27 @@ def update_subscription(
 ):
     record = _owned_subscription_or_404(session, subscription_id, _app().current_username(request))
     update_data = _model_dump(params, exclude_unset=True)
-    if "name" in update_data:
-        name = (update_data["name"] or "").strip()
-        if not name:
-            raise HTTPException(status_code=400, detail="订阅源名称不能为空")
-        record.name = name
-    if "description" in update_data:
-        record.description = (update_data["description"] or "").strip()
-    if "filters" in update_data and update_data["filters"] is not None:
-        record.filters_json = _json_dumps(
-            {key: value for key, value in update_data["filters"].items() if value not in (None, "")}
-        )
-    if "delivery_policy" in update_data and update_data["delivery_policy"] is not None:
-        record.delivery_policy_json = _json_dumps(normalize_delivery_policy(update_data["delivery_policy"]))
-    if "is_active" in update_data:
-        record.is_active = update_data["is_active"]
-    record.updated_at = _now_iso()
-    session.add(record)
-    session.commit()
+    from services.user_sources import _WRITE_LOCK  # noqa: PLC0415
+
+    with _WRITE_LOCK:  # 同 create:filters 校验与提交互斥于用户源 purge
+        if "name" in update_data:
+            name = (update_data["name"] or "").strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="订阅源名称不能为空")
+            record.name = name
+        if "description" in update_data:
+            record.description = (update_data["description"] or "").strip()
+        if "filters" in update_data and update_data["filters"] is not None:
+            clean_filters = {key: value for key, value in update_data["filters"].items() if value not in (None, "")}
+            _guard_filter_user_sources(session, record.owner_username, clean_filters)
+            record.filters_json = _json_dumps(clean_filters)
+        if "delivery_policy" in update_data and update_data["delivery_policy"] is not None:
+            record.delivery_policy_json = _json_dumps(normalize_delivery_policy(update_data["delivery_policy"]))
+        if "is_active" in update_data:
+            record.is_active = update_data["is_active"]
+        record.updated_at = _now_iso()
+        session.add(record)
+        session.commit()
     session.refresh(record)
     return serialize_subscription(record)
 
@@ -462,6 +486,13 @@ async def public_subscription_vector_search(
         )
         filters = _json_loads(subscription.filters_json, {})
         source_ids = subscription_source_ids(subscription)
+        if not source_ids:
+            # 空 filters 订阅=「全库」语义:与文章交付端点同口径,收敛为公共可见域
+            # (减隐藏源与全部用户源;codex 复检二轮:此前空列表被 FTS 解释为零结果,
+            # 与文章接口的「公共全库」形成两套契约)。
+            from api.feed_service import resolve_all_visible_source_ids
+
+            source_ids = resolve_all_visible_source_ids(session)
         sub_id, sub_name = subscription.id, subscription.name
 
     results = await _search_articles_impl(
@@ -469,7 +500,9 @@ async def public_subscription_vector_search(
         query=body.query,
         top_k=body.top_k,
         content_type=filters.get("content_type"),
-        source_ids=source_ids or None,
+        # 空范围保持空列表语义(=零订阅返回空,与 MCP 契约一致;检视返修 F1:
+        # 曾 `or None` 把空 filters 订阅放大成全库检索,连私有用户源一起搜)。
+        source_ids=source_ids,
     )
     return {
         "status": "success",

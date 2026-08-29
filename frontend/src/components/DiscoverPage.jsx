@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDownWideNarrow, ArrowLeft, ChevronRight, Loader2, Search } from 'lucide-react';
+import { ArrowDownWideNarrow, ArrowLeft, ChevronRight, Loader2, Plus, Search } from 'lucide-react';
 import LogoMark from './LogoMark';
+import AddCustomSourceModal from './AddCustomSourceModal';
 import { mediaProxyUrl } from '../api';
 import { SOURCE_ROLES, sourceRoleOf, platformLabelOf, resolveCompany } from '../sourceTaxonomy';
 import { highlightMatch } from '../utils/highlight';
@@ -115,8 +116,12 @@ export default function DiscoverPage({
   collectionPinningId = null,
   onSubscribeCollection,
   onUnsubscribeCollection,
+  // ── 用户自定源(v3.40):总闸开且传入添加动作时,头部出现「添加源」入口 ──
+  userSourcesEnabled = false,
+  onAddCustomSource = null,
 }) {
   const [tab, setTab] = useState('sources'); // sources | collections
+  const [addOpen, setAddOpen] = useState(false); // 添加自定源浮层
   const [shape, setShape] = useState('all');   // all | article | bulletin | social
   const [query, setQuery] = useState('');
   // 排序小开关:默认(收录量降序,原有秩序)⇄ 订阅降序(全站订阅人数,选源社会证明)
@@ -305,6 +310,17 @@ export default function DiscoverPage({
                 </label>
                 {tab === 'sources' && (
                   <>
+                    {userSourcesEnabled && onAddCustomSource && (
+                      <button
+                        type="button"
+                        className="reader-disc-add"
+                        title="贴入 RSS/Atom 地址,添加只有你可见的自定源"
+                        onClick={() => setAddOpen(true)}
+                      >
+                        <Plus className="h-[13px] w-[13px]" aria-hidden="true" />
+                        添加源
+                      </button>
+                    )}
                     <span className="reader-seg reader-disc-seg" role="group" aria-label="形态筛选">
                       {[['all', '全部'], ['article', '文章'], ['bulletin', '动态'], ['social', '社交']].map(([key, label]) => (
                         <button
@@ -428,6 +444,14 @@ export default function DiscoverPage({
           )}
         </div>
       </div>
+
+      {onAddCustomSource && (
+        <AddCustomSourceModal
+          open={addOpen}
+          onClose={() => setAddOpen(false)}
+          onAdd={onAddCustomSource}
+        />
+      )}
     </main>
   );
 }

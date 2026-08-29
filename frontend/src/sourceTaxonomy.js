@@ -14,6 +14,8 @@
  * 品牌标识组件见 components/LogoMark.jsx。
  */
 
+import { avatarHue, avatarInitial } from './utils/avatarColor';
+
 /* ──────────────────────────────────────────────────────────
  * 1. owner 归一化：把同义/同司的 source_owner 收敛为单一 company key
  * ────────────────────────────────────────────────────────── */
@@ -60,6 +62,19 @@ export const COMPANY_REGISTRY = {
  * 3. 解析单个 fetcher 的公司身份
  * ────────────────────────────────────────────────────────── */
 export function resolveCompany(fetcher) {
+  // 用户自定源(v3.40):无策展 owner,按源名派生个性标识——feed 站点 favicon 优先
+  // (domain 走 LogoMark 的 favicon 服务链),失败回退「首字母 + 名字稳定色相」
+  // (avatarHue 黄金角散列,同名恒同色;与账户默认字母头像 v3.22.3 同一套语义)。
+  if (fetcher?.user_source || String(fetcher?.source_id || '').startsWith('user_rss_')) {
+    const name = fetcher?.name || fetcher?.source_id || '?';
+    return {
+      key: fetcher?.source_id || 'user',
+      name,
+      accent: `hsl(${avatarHue(name)} 52% 46%)`,
+      domain: fetcher?.base_url || '',
+      monogram: avatarInitial(name),
+    };
+  }
   const key = normalizeOwner(fetcher?.source_owner);
   const base = COMPANY_REGISTRY[key];
   if (base) return { key, ...base };
@@ -195,6 +210,10 @@ export const SOURCE_ROLES = [
   { key: 'media', label: '媒体', tone: 'sky', accent: '#0284c7', blurb: '有编辑立场的第三方报道' },
   { key: 'personal', label: '个人', tone: 'violet', accent: '#7c3aed', blurb: '研究者与从业者的个人视角' },
   { key: 'leaderboard', label: '榜单', tone: 'amber', accent: '#d97706', blurb: '社区热度与基准评测的聚合排序' },
+  /* 自定源(v3.40):读者自助添加的私有 RSS 源——不属于策展角色轴,单列一组,
+     防止无策展元数据的用户源回落进「官方」稀释组语义;仅订阅者的目录里出现。
+     后端 source_role 无需镜像本档:用户源被日报机械排除,权威层吃不到。 */
+  { key: 'custom', label: '自定源', tone: 'slate', accent: '#64748b', blurb: '你自己添加的私有来源' },
 ];
 
 const ROLE_LABEL = Object.fromEntries(SOURCE_ROLES.map((r) => [r.key, r.label]));
@@ -215,8 +234,11 @@ const LEADERBOARD_SCOPES = new Set([
 ]);
 const MEDIA_SCOPES = new Set(['ai_media', 'tech_media']);
 
-/* 源 → 信息角色 key。仅看策展元数据(provenance_tier / source_scope),不看形态。 */
+/* 源 → 信息角色 key。仅看策展元数据(provenance_tier / source_scope),不看形态。
+   用户自定源(user_rss_ 前缀/user_source 标记)最先短路进「自定」组——它们没有策展
+   元数据,不判定会全部回落「官方」。 */
 export const sourceRoleOf = (source) => {
+  if (source?.user_source || String(source?.source_id || '').startsWith('user_rss_')) return 'custom';
   const scope = source?.source_scope || '';
   if (source?.provenance_tier === 'tier2_personal_social' || PERSONAL_SCOPES.has(scope)) return 'personal';
   if (LEADERBOARD_SCOPES.has(scope)) return 'leaderboard';

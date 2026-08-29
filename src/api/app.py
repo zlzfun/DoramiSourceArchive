@@ -162,6 +162,7 @@ from services import ai_usage as ai_usage_service
 from services import reader_activity as reader_activity_service
 from services import content_analytics as content_analytics_service
 from services import jobs as jobs_service
+from services import user_sources as user_sources_service
 from services.media_store import MediaStore
 from llm.client import LLMNotConfigured, LLMError, UsageMeta, ping as llm_ping
 from llm.client import set_usage_recorder as _set_llm_usage_recorder
@@ -249,7 +250,27 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "llm_configured": llm_configured,
         # 登录默认落地界面（admin 双界面切换用；无会话/异常时回落 console）。
         "default_surface": default_surface,
+        # 用户自定源总闸(v3.40):关闭时前端隐藏「添加源」入口(端点侧另有 403)。
+        "user_sources_enabled": _user_sources_capability(),
     }
+
+
+def _user_sources_capability() -> bool:
+    """用户自定源能力位(runtime 透出用):总闸 AND collector 运行角色。
+
+    reader split 部署不承担公网抓取,添加端点恒 403(检视返修 F10)——能力位同步
+    收敛,否则前端画出「添加源」入口、点击必失败(codex 复检二轮新发现4)。
+    无 DB/异常时按默认开。
+    """
+    if not runtime_collector_enabled():
+        return False
+    if db_sink is None:
+        return True
+    try:
+        with Session(db_sink.engine) as session:
+            return user_sources_service.feature_enabled(session)
+    except Exception:  # noqa: BLE001
+        return True
 
 
 def _ai_capabilities(session: Optional[Dict[str, Any]] = None) -> tuple[bool, bool, str]:
@@ -393,6 +414,8 @@ async def lifespan(app: FastAPI):
             add_cron_job("retention_cleanup", execute_retention_cleanup_job, "30 4 * * *", [])
             # 远程内容同步定时任务(启用且 cron 合法时注册,否则移除既有 job)。
             reload_remote_sync_schedule()
+            # 用户自定源定时刷新(v3.40:间隔 KV 可配,总闸关闭即不注册)。
+            reload_user_rss_schedule()
     else:
         print("⏸️ 当前 reader 运行角色不启动抓取调度引擎。")
 
@@ -461,9 +484,28 @@ _MEDIA_PREFETCH_TASKS: set = set()
 
 
 def schedule_media_prefetch(article_ids: List[str]) -> None:
-    """抓取入库钩子：异步预取新文章正文里的外链图片，绝不阻塞抓取主流程。"""
+    """抓取入库钩子：异步预取新文章正文里的外链图片，绝不阻塞抓取主流程。
+
+    用户自定源(v3.40)豁免预取——实测媒体是存储大头(258MB vs 主库 125MB),私有源
+    的图走 /api/media/proxy 首次打开按需缓存,没人看的文章零媒体成本。
+    """
     store = media_store
     if store is None or not article_ids:
+        return
+    try:
+        with Session(db_sink.engine) as session:
+            rows = session.exec(
+                select(ArticleRecord.id, ArticleRecord.source_id).where(
+                    ArticleRecord.id.in_(article_ids)
+                )
+            ).all()
+        article_ids = [
+            str(rid) for rid, rsrc in rows
+            if not user_sources_service.is_user_source(str(rsrc or ""))
+        ]
+    except Exception:  # noqa: BLE001 - 豁免判定失败时按原名单预取(宁多缓存不误阻断)
+        pass
+    if not article_ids:
         return
 
     async def _run() -> None:
@@ -1148,6 +1190,17 @@ async def execute_retention_cleanup_job():
         retention.run_retention_cleanup(db_sink.engine)
     except Exception as exc:  # noqa: BLE001 巡检失败不影响调度引擎
         _dorami_logger.error("明细表滚动窗清理失败: %s", exc)
+    # 用户自定源维护(codex 复检二轮 F8/新发现3):孤儿 GC 与日计数 KV 清理挂在
+    # 本 job——独立于用户源总闸与 user_rss_refresh(总闸关闭时那个 job 被移除,
+    # 若 GC 只挂在那里,关闸后孤儿源/脏数据将永远无人收)。
+    try:
+        with Session(db_sink.engine) as session:
+            orphans = user_sources_service.purge_orphan_user_sources(session)
+            stale = user_sources_service.cleanup_stale_daily_counters(session)
+        if orphans or stale:
+            _dorami_logger.info("用户自定源维护: 清理 %s, 过期计数 %d", orphans or "无", stale)
+    except Exception:  # noqa: BLE001
+        _dorami_logger.warning("用户自定源维护失败", exc_info=True)
 
 
 def reload_daily_brief_schedule():
@@ -1221,6 +1274,111 @@ def reload_remote_sync_schedule():
         add_cron_job("remote_sync", execute_remote_sync_job, cron_expr, [])
     elif scheduler.get_job("remote_sync"):
         scheduler.remove_job("remote_sync")
+
+
+async def execute_user_rss_refresh_job():
+    """定时回调:批量抓取活跃用户自定源(v3.40)。
+
+    每轮 = 组装 active 用户源 items → run_collection_items(与 fetch-active-rss 同构)
+    → 连续失败达阈值者自动停抓。总闸关闭/无活跃用户源时空跑返回;
+    max_instances=1(注册处)防上一轮未完时叠加。
+    """
+    from api.routers.source_configs import build_source_fetch_params, resolve_source_fetcher_id
+
+    with Session(db_sink.engine) as session:
+        if not user_sources_service.feature_enabled(session):
+            return
+        records = session.exec(
+            select(SourceConfigRecord)
+            .where(SourceConfigRecord.owner_username != "")
+            .where(SourceConfigRecord.is_active == True)  # noqa: E712
+            .where(SourceConfigRecord.source_type.in_(["rss", "atom"]))
+            .order_by(SourceConfigRecord.source_id)
+        ).all()
+        items = []
+        for record in records:
+            fetcher_id = resolve_source_fetcher_id(record)
+            if not fetcher_id:
+                continue
+            items.append({
+                "source_id": record.source_id,
+                "fetcher_id": fetcher_id,
+                "params": build_source_fetch_params(record, {}),
+            })
+    # SSRF 组装复检(方案 §4;generic_rss 执行层的 ssrf_guard 是主防线,此处双保险
+    # 且能在日志里点名跳过的源——域名在添加后改指内网时,该源本轮直接不进队列)。
+    if items:
+        from urllib.parse import urlsplit as _urlsplit
+
+        from services.media_store import SSRFError, ensure_public_host
+
+        checked = []
+        for item in items:
+            feed_url = str(item["params"].get("feed_url") or "")
+            try:
+                await ensure_public_host(_urlsplit(feed_url).hostname or "")
+                checked.append(item)
+            except SSRFError:
+                # 复检失败计入连续失败(codex 复检二轮新发现2):否则该源永远进不了
+                # 执行层、也永远达不到自动停用阈值,每轮重复解析+告警。
+                _dorami_logger.warning("用户自定源 SSRF 复检未通过,本轮跳过: %s", item["source_id"])
+                with Session(db_sink.engine) as session:
+                    state = session.get(SourceStateRecord, item["source_id"])
+                    if state is None:
+                        # 从未成功抓过的源也要累计(三轮收口:否则永远达不到停用阈值)
+                        state = SourceStateRecord(
+                            source_id=item["source_id"], fetcher_id="generic_rss",
+                            updated_at=datetime.datetime.now().isoformat(),
+                        )
+                    now_iso = datetime.datetime.now().isoformat()
+                    state.consecutive_failures += 1
+                    state.failed_runs += 1
+                    state.total_runs += 1
+                    state.status = "failing"
+                    state.last_failure_at = now_iso
+                    state.latest_error_type = "ssrf_guard"
+                    state.latest_error_message = "SSRF 复检未通过:feed 域名解析指向内网"
+                    state.updated_at = now_iso
+                    session.add(state)
+                    session.commit()
+            except Exception:  # noqa: BLE001 - 解析故障不拦(执行层守卫兜底)
+                checked.append(item)
+        items = checked
+    if items:
+        try:
+            await run_collection_items(
+                items, name="定时抓取: 用户自定源",
+                trigger_type="scheduled", run_scope="saved_job",
+            )
+        except Exception as exc:  # noqa: BLE001 - 单轮失败只记录,不影响调度引擎
+            _dorami_logger.warning("用户自定源定时抓取失败: %s", exc)
+    with Session(db_sink.engine) as session:
+        disabled = user_sources_service.auto_disable_failing(session)
+    if disabled:
+        _dorami_logger.warning("用户自定源连续失败达阈值,自动停抓: %s", ", ".join(disabled))
+    # 孤儿 GC(检视返修 F8):绕过专用移除端点的退订路径(REST 订阅更新/删除、
+    # 删号等)留下的无主用户源在此兜底清理,不再永久空转调度。
+    try:
+        with Session(db_sink.engine) as session:
+            orphans = user_sources_service.purge_orphan_user_sources(session)
+        if orphans:
+            _dorami_logger.info("用户自定源孤儿清理: %s", ", ".join(orphans))
+    except Exception:  # noqa: BLE001
+        _dorami_logger.warning("用户自定源孤儿清理失败", exc_info=True)
+
+
+def reload_user_rss_schedule():
+    """用户自定源刷新间隔变更后热生效(总闸关闭时移除 job)。"""
+    with Session(db_sink.engine) as session:
+        enabled = user_sources_service.feature_enabled(session)
+        minutes = user_sources_service.refresh_minutes(session)
+    if enabled:
+        scheduler.add_job(
+            execute_user_rss_refresh_job, "interval", minutes=minutes,
+            id="user_rss_refresh", replace_existing=True, max_instances=1,
+        )
+    elif scheduler.get_job("user_rss_refresh"):
+        scheduler.remove_job("user_rss_refresh")
 
 
 # ==================== 1. 数据台账与 CRUD ====================

@@ -178,6 +178,14 @@ def build_source_fetch_params(source_config: SourceConfigRecord, overrides: Opti
         })
     if overrides:
         params.update(overrides)
+    if source_config.owner_username:
+        # 用户自定源(v3.40 三轮收口):请求 overrides 不得改写身份/护栏——source_id
+        # 是 generic_rss 执行层「前缀即策略」的判定依据,被覆盖成非 user_rss_ 值
+        # 即绕过 SSRF/限量;feed_url 同理钉回配置行。
+        params["source_id"] = source_config.source_id
+        params["feed_url"] = source_config.url
+        params.pop("ssrf_guard", None)
+        params.pop("max_response_bytes", None)
     return params
 
 
@@ -304,6 +312,13 @@ def delete_source_config(source_id: str, session: Session = Depends(deps.get_ses
     record = session.get(SourceConfigRecord, source_id)
     if not record:
         raise HTTPException(status_code=404, detail="数据源配置不存在")
+    if record.owner_username:
+        # 用户自定源分流(v3.40 检视返修 F8):通用删除只删配置行会留下文章与订阅
+        # 孤儿——改走专用强删路径(级联清订阅/水位/文章/分享,与 admin 面同语义)。
+        from services import user_sources as user_sources_service
+
+        result = user_sources_service.admin_delete_user_source(session, source_id)
+        return {"status": "success", **result}
     session.delete(record)
     session.commit()
     return {"status": "success"}

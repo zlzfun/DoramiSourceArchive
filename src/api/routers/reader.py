@@ -57,6 +57,7 @@ from services import reader_search as reader_search_service
 from services import reader_state as reader_state_service
 from services import source_collections as source_collections_service
 from services import source_visibility as source_visibility_service
+from services import user_sources as user_sources_service
 from services import x_api_config as x_api_config_service
 
 router = APIRouter(prefix="/api/reader", tags=["reader"])
@@ -143,16 +144,31 @@ def subscribe_source(source_id: str, request: Request, session: Session = Depend
     if source_id in source_visibility_service.hidden_source_ids(session):
         # 管理面隐藏的源不接受新订阅（目录里也不可见；防旧页面状态/直连 API 绕过）。
         raise HTTPException(status_code=404, detail="该内容源暂不可用")
-    registry_meta = _registry_source_meta()
-    already = source_id in set(app.resolve_subscribed_source_ids(session, username))
-    if not already:
-        app._create_single_source_subscription(
-            session, username, source_id, _friendly_source_name(source_id, registry_meta)
-        )
-        # 订阅即初始化未读水位（backlog 语义：最近 K 篇成为未读积压，Folo 式;
-        # 再订阅也重新起算）。
-        reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
-        session.commit()
+    # 用户源分支整段持写锁(codex 终审:校验→提交窗口内源可能被 purge,提交出
+    # 指向已删配置的悬空订阅):归属校验、配置存在复核、建订阅同锁互斥于删除。
+    from contextlib import nullcontext
+
+    guard_lock = user_sources_service._WRITE_LOCK if \
+        user_sources_service.is_user_source(source_id) else nullcontext()  # noqa: SLF001
+    with guard_lock:
+        if user_sources_service.is_user_source(source_id):
+            if user_sources_service.unauthorized_user_source_ids(session, username, [source_id]):
+                # 用户源的准入凭证是 feed URL(custom-sources 通道),知道 source_id
+                # 不构成订阅资格(检视返修 F2:防 facets 泄露的 id 伪造成员资格)。
+                raise HTTPException(status_code=404, detail="该内容源暂不可用")
+            if user_sources_service.get_user_source(session, source_id) is None:
+                # 锁内复核配置仍在(并发 remove 已删则拒绝,不产悬空订阅)。
+                raise HTTPException(status_code=404, detail="该内容源暂不可用")
+        registry_meta = _registry_source_meta()
+        already = source_id in set(app.resolve_subscribed_source_ids(session, username))
+        if not already:
+            app._create_single_source_subscription(
+                session, username, source_id, _friendly_source_name(source_id, registry_meta)
+            )
+            # 订阅即初始化未读水位（backlog 语义：最近 K 篇成为未读积压，Folo 式;
+            # 再订阅也重新起算）。
+            reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
+            session.commit()
     subscribed_ids = sorted(set(
         # 目录口径:含被隐藏的已订阅源(源栏「暂不可用」条目依赖此集合渲染)。
         app.resolve_subscribed_source_ids(session, username, include_hidden=True)
@@ -173,6 +189,20 @@ def unsubscribe_source(source_id: str, request: Request, session: Session = Depe
     source_id = (source_id or "").strip()
     if not source_id:
         raise HTTPException(status_code=400, detail="source_id 不能为空")
+    if user_sources_service.is_user_source(source_id):
+        # 用户源的退订=移除语义(检视返修 F8:普通退订会留下无人订阅的孤儿源仍被
+        # 调度;前端已分流,此处是 API 直连的后端兜底,行为与专用移除端点一致)。
+        try:
+            result = user_sources_service.remove_user_source(session, username, source_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="该内容源暂不可用")
+        subscribed_ids = sorted(set(
+            app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+        ))
+        return {
+            "status": "success", "source_id": source_id, "subscribed": False,
+            "subscribed_source_ids": subscribed_ids, **result,
+        }
     records = session.exec(
         select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.owner_username == username)
     ).all()
@@ -321,6 +351,217 @@ def unsubscribe_collection(collection_id: str, request: Request, session: Sessio
         "removed": sorted(removed),
         "subscribed_source_ids": subscribed_ids,
     }
+
+
+# ==================== 用户自定源(v3.40) ====================
+# 读者自助添加私有 RSS 源;方案 docs/user-custom-rss-wave-plan.md。
+# 业务在 services/user_sources.py;此处只做门控/编排(订阅动作复用 app 既有助手)。
+
+
+class CustomSourceParams(BaseModel):
+    url: str
+    name: Optional[str] = None
+
+
+def _deny_unsubscribed_user_source_article(session: Session, username: str, article) -> None:
+    """用户源文章的动作级授权(检视返修 F3):分享签发/AI 翻译/问答/速读等**动作**
+    要求请求者是该源订阅者——按 id 直达的只读详情维持既有豁免(id 不可枚举)。"""
+    source_id = getattr(article, "source_id", "") or ""
+    if user_sources_service.is_user_source(source_id) and \
+            user_sources_service.unauthorized_user_source_ids(session, username, [source_id]):
+        raise HTTPException(status_code=404, detail="文章不存在")
+
+
+def _require_user_sources_enabled(session: Session) -> None:
+    """功能总闸(KV,默认开):关闭时添加/preview 403;列表/删除不挡(允许清理)。
+
+    分离部署(检视返修 F10):reader runtime 明确不承担公网抓取,而添加/preview
+    都要出网拉 feed——非 collector 运行角色一律 403(单机 all 形态不受影响)。
+    """
+    if not _app().runtime_collector_enabled():
+        raise HTTPException(status_code=403, detail="当前部署形态不支持自助添加来源")
+    if not user_sources_service.feature_enabled(session):
+        raise HTTPException(status_code=403, detail="自定源功能未开放")
+
+
+def _custom_source_conflict(session: Session, url: str) -> Optional[Dict[str, Any]]:
+    """撞库检测的端点半边:命中隐藏系统源直接 404;命中可见系统源/既有用户源返回引导载荷。"""
+    result = user_sources_service.prepare_check(session, url)
+    if result.get("blocked"):
+        # 与隐藏源既有口径一致的统一文案,不泄露「存在但被隐藏」这一事实。
+        raise HTTPException(status_code=404, detail="该来源暂不可用")
+    return result.get("existing") or None
+
+
+@router.post("/custom-sources/preview")
+async def preview_custom_source(
+        params: CustomSourceParams, request: Request, session: Session = Depends(deps.get_session)
+):
+    """贴 URL → 守门校验 + 条目样例预览(不落库)。撞中系统源/既有用户源时返回引导。"""
+    app = _app()
+    username = app.current_username(request)
+    _require_user_sources_enabled(session)
+    try:
+        existing = _custom_source_conflict(session, params.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if existing:
+        subscribed = existing["source_id"] in set(
+            app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+        )
+        return {"status": "exists", "existing": {**existing, "subscribed": subscribed}}
+    try:
+        preview = await user_sources_service.fetch_feed_preview(params.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:  # noqa: BLE001 - 网络失败归一为可读文案,不透传栈
+        raise HTTPException(status_code=400, detail="无法访问该地址,请检查 URL 或稍后再试")
+    quota_used = len(user_sources_service.subscribed_user_source_ids(session, username))
+    return {
+        "status": "ok",
+        **preview,
+        "quota": {"used": quota_used, "max": user_sources_service.MAX_SOURCES_PER_USER},
+    }
+
+
+@router.post("/custom-sources")
+async def create_custom_source(
+        params: CustomSourceParams, request: Request, session: Session = Depends(deps.get_session)
+):
+    """添加自定源:守门 → 撞库 → 建/复用配置行 → 订阅本人 → 提交首抓后台 job。"""
+    app = _app()
+    username = app.current_username(request)
+    _require_user_sources_enabled(session)
+    try:
+        existing = _custom_source_conflict(session, params.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if existing and existing.get("kind") == "system":
+        # 撞中可见系统源:不建用户源,前端引导走普通订阅(该来源已收录)。
+        return {"status": "exists", "existing": existing}
+    preview = {"feed_title": ""}
+    if not existing:
+        # 新 feed 才重跑守门(不能信任前端一定先走了 preview);顺带拿 feed_title 作默认名。
+        # 既有用户源(去重共享:第二人添加同 URL)跳过网络校验,直接进复用+订阅。
+        try:
+            preview = await user_sources_service.fetch_feed_preview(params.url)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail="无法访问该地址,请检查 URL 或稍后再试")
+    # 建行→订阅→commit 是 check-then-write 段,以 service 写锁串行化(检视返修 F7;
+    # 段内全同步无 await,锁窗口极短)。prepared 的 blocked(隐藏/admin 停用的既有
+    # 用户源)统一按「暂不可用」处理。
+    from sqlalchemy.exc import IntegrityError
+
+    with user_sources_service._WRITE_LOCK:  # noqa: SLF001 - 与 service 写路径同一把锁
+        try:
+            prepared = user_sources_service.prepare_user_source(
+                session, username, params.url, name=(params.name or preview["feed_title"] or "")
+            )
+        except user_sources_service.UserSourceQuotaError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        if prepared.get("blocked"):
+            raise HTTPException(status_code=404, detail="该来源暂不可用")
+        source_id = prepared["source_id"]
+        record = prepared["record"]
+        already = source_id in set(app.resolve_subscribed_source_ids(session, username, include_hidden=True))
+        if not already:
+            app._create_single_source_subscription(session, username, source_id, record.name)
+            reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
+        try:
+            session.commit()
+        except IntegrityError:
+            # 并发同 URL 建行撞主键(锁失效的多 worker 部署兜底):幂等重读——输家的
+            # 订阅随 rollback 消失,须在赢家建好的配置行上补建自己的订阅再返回
+            # (三轮收口:此前直接 already=True,输家拿到 success 却没订阅上)。
+            session.rollback()
+            record = session.get(SourceConfigRecord, source_id)
+            if record is None:
+                raise HTTPException(status_code=409, detail="添加冲突,请重试")
+            prepared = {"created": False}
+            already = source_id in set(
+                app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+            )
+            if not already:
+                app._create_single_source_subscription(session, username, source_id, record.name)
+                reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
+                session.commit()
+                already = True  # 订阅已补上;沿复用分支跳过首抓(赢家会抓)
+
+    if already and not prepared["created"]:
+        # 幂等重放(检视返修 F9):已订阅者重复 POST 相同 URL 不再触发抓取——
+        # 否则可被脚本化成无限外网请求/抓取运行的放大器。
+        return {
+            "status": "success", "source_id": source_id, "name": record.name,
+            "created": False, "first_fetch": "skipped", "saved_count": 0,
+        }
+
+    # 首抓同步等待(2026-08-28 返修:原后台 job 形态下,添加后立即点开该源列表为空,
+    # 像「没文章」,刷新才出现——单 feed 首抓仅数秒,同步等完再返回,modal 的 busy 态
+    # 自然覆盖,关闭浮层即一切就绪)。失败不阻断:源已建成,随定时调度重试。
+    from api.routers.source_configs import build_source_fetch_params
+
+    fetch_params = build_source_fetch_params(record, {})
+    first_fetch = "ok"
+    saved_count = 0
+    try:
+        fetch_result = await app.run_single_fetch_as_collection(
+            "generic_rss", fetch_params,
+            name=f"自定源首抓: {record.name}", trigger_type="manual", run_scope="ad_hoc",
+        )
+        saved_count = int(fetch_result.get("saved_count")
+                          or (fetch_result.get("results") or [{}])[0].get("saved_count", 0) or 0)
+    except Exception:  # noqa: BLE001 - 首抓失败不还原添加,健康面/调度接手
+        first_fetch = "failed"
+    # 首抓与并发删除的竞态复查(codex 复检二轮):首抓在锁外执行,期间源可能被
+    # remove/admin_delete 掉——配置行已不在则把刚写回的文章即刻收走(前缀隔离
+    # 保证泄露面为零,此处只是不留脏数据;每日维护 GC 另有兜底)。持锁复查:
+    # 防与「另一用户同 URL 重建」竞态误删刚建的新源(三轮收口)。
+    with user_sources_service._WRITE_LOCK:  # noqa: SLF001
+        with Session(deps.get_db_sink().engine) as check_session:
+            if user_sources_service.get_user_source(check_session, source_id) is None:
+                user_sources_service.purge_user_source(check_session, source_id)
+                check_session.commit()
+                raise HTTPException(status_code=404, detail="该来源已被移除")
+    return {
+        "status": "success",
+        "source_id": source_id,
+        "name": record.name,
+        "created": prepared["created"],
+        "first_fetch": first_fetch,
+        "saved_count": saved_count,
+    }
+
+
+@router.get("/custom-sources")
+def list_custom_sources(request: Request, session: Session = Depends(deps.get_session)):
+    """我的自定源(含健康摘要:暂停/失败态供前端细签)。"""
+    app = _app()
+    username = app.current_username(request)
+    items = user_sources_service.list_user_sources(session, username=username)
+    return {
+        "items": items,
+        "quota": {"used": len(items), "max": user_sources_service.MAX_SOURCES_PER_USER},
+        "enabled": user_sources_service.feature_enabled(session),
+    }
+
+
+@router.delete("/custom-sources/{source_id}")
+def remove_custom_source(source_id: str, request: Request, session: Session = Depends(deps.get_session)):
+    """移除自定源:退订本人;无其他活跃订阅者时物理删除(配置行+文章)。"""
+    app = _app()
+    username = app.current_username(request)
+    try:
+        result = user_sources_service.remove_user_source(session, username, source_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="自定源不存在")
+    subscribed_ids = sorted(set(
+        app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+    ))
+    return {"status": "success", **result, "subscribed_source_ids": subscribed_ids}
 
 
 # ==================== 阅读计量 ====================
@@ -483,6 +724,18 @@ def list_favorites(
             )
             base = base.where(hidden_cond)
             count_query = count_query.where(hidden_cond)
+        # 用户自定源(v3.40 检视返修 D1):include_content 会带正文,收藏列表也是
+        # 内容出口——退订后(或经泄露 id 收藏的)未订阅用户源文章一并剔除。
+        blocked_user = user_sources_service.unauthorized_user_source_ids(
+            session, username, sorted(user_sources_service.user_source_ids(session))
+        )
+        if blocked_user:
+            user_cond = or_(
+                ArticleRecord.source_id.is_(None),
+                ArticleRecord.source_id.notin_(blocked_user),
+            )
+            base = base.where(user_cond)
+            count_query = count_query.where(user_cond)
     if source_id:
         base = base.where(ArticleRecord.source_id == source_id)
         count_query = count_query.where(ArticleRecord.source_id == source_id)
@@ -591,6 +844,9 @@ def create_article_share(
     # 与「读者面隐藏 = 内容交付全量排除」同口径：暂不可用的源不能被摊开成公开链接。
     if article.source_id in source_visibility_service.hidden_source_ids(session):
         raise HTTPException(status_code=403, detail="该内容暂不可用，无法分享")
+    # 用户自定源(v3.40 检视返修 F3):非订阅者不得把私有源内容摊开成公开链接——
+    # 分享是把内容公开化的动作,授权门槛高于按 id 直达的只读详情。
+    _deny_unsubscribed_user_source_article(session, username, article)
 
     expires_in_days = params.expires_in_days
     if expires_in_days is not None:
@@ -802,14 +1058,19 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
     # 恢复(临时下架的常态结局是恢复,静默消失会像数据丢失)。内容交付(列表/未读/
     # feed/检索)仍全量排除,见 resolve_subscribed_source_ids。
     hidden_ids = source_visibility_service.hidden_source_ids(session)
+    # 用户自定源(v3.40 私有):仅订阅者可见——非订阅者的目录/发现页完全不出现
+    # (添加即订阅、移除即退订,故「我的自定源」恒在 subscribed_ids 内)。
+    all_user_source_ids = user_sources_service.user_source_ids(session)
     sources = sorted(
         (
             {
                 **{k: v for k, v in entry.items() if k != "_primary_count"},
                 "hidden": entry["source_id"] in hidden_ids,
+                "user_source": entry["source_id"] in all_user_source_ids,
             }
             for entry in by_source.values()
-            if entry["source_id"] not in hidden_ids or entry["source_id"] in subscribed_ids
+            if (entry["source_id"] not in hidden_ids or entry["source_id"] in subscribed_ids)
+            and (entry["source_id"] not in all_user_source_ids or entry["source_id"] in subscribed_ids)
         ),
         key=lambda s: (s["category"], -s["count"], s["name"]),
     )
@@ -932,6 +1193,10 @@ async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
     username, llm_config = _require_reader_ai(request)
     _enforce_ai_daily_quota(username, "translate")
     db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        _deny_unsubscribed_user_source_article(
+            session, username, session.get(ArticleRecord, params.article_id)
+        )
     try:
         result = await reader_ai_service.translate_article(
             db_sink, params.article_id, llm_config,
@@ -951,6 +1216,10 @@ async def reader_ai_summarize(params: ReaderTranslateParams, request: Request):
     """为指定文章生成中文要点摘要（结果缓存复用；入参形状与 translate 相同）。"""
     username, llm_config = _require_reader_ai(request)
     db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        _deny_unsubscribed_user_source_article(
+            session, username, session.get(ArticleRecord, params.article_id)
+        )
     try:
         result = await reader_ai_service.summarize_article(
             db_sink, params.article_id, llm_config,
@@ -995,6 +1264,17 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
     db_sink = deps.get_db_sink()
     scope = params.scope if params.scope in ("article", "articles", "subscription", "all") else "article"
     ask_id = _valid_ask_id(params.ask_id)
+
+    # 用户源文章的动作级授权(检视返修 F3):显式名单档把正文送入外部 LLM,
+    # 非订阅者的私有源文章按不存在处理(subscription/all 档的检索域天然不含)。
+    if scope in ("article", "articles"):
+        explicit_ids = [params.article_id] if scope == "article" else list(params.article_ids or [])
+        with Session(db_sink.engine) as session:
+            for aid in explicit_ids:
+                if aid:
+                    _deny_unsubscribed_user_source_article(
+                        session, username, session.get(ArticleRecord, aid)
+                    )
 
     # 上下文组装下沉到 reader_ai.assemble_reader_context；此处注入检索闭包
     # （承载鉴权作用域与 LLM 配置），使组装逻辑与 HTTP 请求解耦、可独立单测（D11）。

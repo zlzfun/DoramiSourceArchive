@@ -47,6 +47,7 @@ from api.textutils import _json_loads
 from models.db import ArticleRecord, SourceConfigRecord
 from services import reader_state as reader_state_service
 from services import source_visibility as source_visibility_service
+from services import user_sources as user_sources_service
 
 router = APIRouter(tags=["articles"])
 
@@ -182,6 +183,21 @@ def get_articles(
             )
             query = query.where(hidden_cond)
             count_query = count_query.where(hidden_cond)
+        # 用户自定源(v3.40 私有):非订阅者不可达——「我未订阅的用户源」文章从
+        # 跨源列表与按 source_id 直查里一并排除(轻门槛:防 source_id 泄露后翻库)。
+        # 按前缀判定(结构性兜底,孤儿文章同样隔离):前缀源 ∧ 不在我的订阅并集即挡。
+        viewer = str(auth_session.get("sub", "")) if auth_session else ""
+        my_user_ids = sorted(
+            sid for sid in resolve_subscribed_source_ids(session, viewer, include_hidden=True)
+            if user_sources_service.is_user_source(sid)
+        ) if viewer else []
+        user_cond = or_(
+            ArticleRecord.source_id.is_(None),
+            ~ArticleRecord.source_id.startswith(user_sources_service.USER_SOURCE_PREFIX, autoescape=True),
+            *( [ArticleRecord.source_id.in_(my_user_ids)] if my_user_ids else [] ),
+        )
+        query = query.where(user_cond)
+        count_query = count_query.where(user_cond)
     if scope == "only":
         # 仅当前用户已订阅的源；无订阅时显式返回空集。
         query = query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
@@ -235,6 +251,7 @@ def get_articles(
 
 @router.get("/api/articles/facets")
 def get_article_facets(
+        request: Request,
         exclude_source_ids: Optional[str] = None,
         session: Session = Depends(deps.get_session),
 ):
@@ -243,13 +260,26 @@ def get_article_facets(
     台账分面栏的单一数据源——选项必须来自全量归档而非当前页,
     点击当前页不存在的类别也能对全量筛选;计数即样页分面右侧的 `.n`。
     访问口径与 GET /api/articles 相同(路径共享 reader/collector 判定)。
+    用户自定源(v3.40 检视返修 F2):非 admin 会话的分面剔除全部用户源——
+    facets 曾把私有源 id 列给任意读者,是伪造订阅成员资格的入口。
     """
     excludes = [x.strip() for x in (exclude_source_ids or "").split(",") if x.strip()]
+    auth_session = _app().current_auth_session(request)
+    # 非 admin 剔除全部用户源(F2:防私有源 id 经分面泄露);按前缀判定而非配置表
+    # (三轮收口:孤儿用户源文章没有配置行,按表判定仍会短暂暴露 id 与计数)。
+    hide_user_sources = not (auth_session and auth_session.get("role") == "admin")
 
     def _facet(column):
         q = select(column, func.count(ArticleRecord.id)).group_by(column)
         if excludes:
             q = q.where(ArticleRecord.source_id.notin_(excludes))
+        if hide_user_sources:
+            q = q.where(or_(
+                ArticleRecord.source_id.is_(None),
+                ~ArticleRecord.source_id.startswith(
+                    user_sources_service.USER_SOURCE_PREFIX, autoescape=True
+                ),
+            ))
         rows = session.exec(q).all()
         return [
             {"value": value, "count": int(count)}
@@ -260,6 +290,13 @@ def get_article_facets(
     total_q = select(func.count(ArticleRecord.id))
     if excludes:
         total_q = total_q.where(ArticleRecord.source_id.notin_(excludes))
+    if hide_user_sources:
+        total_q = total_q.where(or_(
+            ArticleRecord.source_id.is_(None),
+            ~ArticleRecord.source_id.startswith(
+                user_sources_service.USER_SOURCE_PREFIX, autoescape=True
+            ),
+        ))
     return {
         "total": int(session.exec(total_q).one() or 0),
         "content_types": _facet(ArticleRecord.content_type),
@@ -279,6 +316,15 @@ async def get_article(article_id: str, request: Request):
                 if record.source_id in source_visibility_service.hidden_source_ids(session):
                     # 与列表口径一致：隐藏源的单条详情对读者会话按不存在处理。
                     raise HTTPException(status_code=404, detail="文章未找到")
+                # 用户自定源(v3.40 三轮收口):单篇详情同样要求订阅归属——初版
+                # 「id 不可枚举即豁免」的拍板在交叉检视中被推翻:facets/收藏等
+                # 历史泄露面可能已把 id 摊出去,读正文必须回到订阅域判定。
+                if user_sources_service.is_user_source(record.source_id):
+                    viewer = str(auth_session.get("sub", "")) if auth_session else ""
+                    if not viewer or user_sources_service.unauthorized_user_source_ids(
+                        session, viewer, [record.source_id]
+                    ):
+                        raise HTTPException(status_code=404, detail="文章未找到")
     return serialize_article_list_item(record, include_content=True)
 
 
@@ -418,6 +464,11 @@ def get_feed_articles(
         fetched_date_end=fetched_date_end,
         session=session,
     )
+    # 用户自定源隔离(v3.40 检视返修 F1):本端点无归属主体上下文(登录读者即可调),
+    # 私有源一律排除——显式指定的用户源 id 也不放行(无法证明请求者是订阅者)。
+    user_cond = user_sources_service.exclude_user_sources_condition(session)
+    if user_cond is not None:
+        query = query.where(user_cond)
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
     ).all()
@@ -474,6 +525,10 @@ def export_feed_articles_markdown(
         fetched_date_end=fetched_date_end,
         session=session,
     )
+    # 用户自定源隔离(F1):与 JSON 端点同口径,无主体上下文一律排除私有源。
+    user_cond = user_sources_service.exclude_user_sources_condition(session)
+    if user_cond is not None:
+        query = query.where(user_cond)
     records = session.exec(
         query.order_by(ArticleRecord.fetched_date.desc()).offset(skip).limit(safe_limit)
     ).all()

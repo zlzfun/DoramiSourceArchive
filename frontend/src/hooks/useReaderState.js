@@ -38,6 +38,8 @@ import {
   markArticleUnread,
   summarizeArticle,
   setSourceVisibility,
+  createCustomSource,
+  removeCustomSource,
 } from '../api';
 
 const PAGE_SIZE = 30;
@@ -602,6 +604,9 @@ export function useReaderState({
   };
 
   const handleUnsubscribe = async (source) => {
+    // 用户自定源的「退订」= 移除(退订+无人订阅即清理配置与文章);普通退订会留下
+    // 无人订阅的孤儿配置行,故两个入口(源栏减号/右键菜单)统一走移除路径。
+    if (source.user_source) return handleRemoveCustomSource(source);
     setPinningId(source.source_id);
     try {
       applyResult(await unsubscribeSource(source.source_id));
@@ -611,6 +616,52 @@ export function useReaderState({
       showToast(`已取消订阅 ${source.name}`, 'success');
     } catch (error) {
       showToast(error.message || '取消订阅失败', 'error');
+    } finally {
+      setPinningId(null);
+    }
+  };
+
+  // ── 用户自定源(v3.40):添加(建源+订阅+首抓)与移除(退订+无人订阅即清) ──
+  // 添加错误直接上抛:AddCustomSourceModal 就地渲染错误文案(比 toast 更贴近表单)。
+  const handleAddCustomSource = async (url, name) => {
+    const result = await createCustomSource(url, name);
+    if (result.status === 'exists') {
+      // 撞中已收录的系统源:转普通订阅引导(该来源已在目录里)
+      const existing = result.existing || {};
+      if (!subscribedIds.has(existing.source_id)) {
+        applyResult(await subscribeSource(existing.source_id));
+        loadUnreadCounts();
+        showToast(`该来源已收录,已订阅 ${existing.name || existing.source_id}`, 'success');
+      } else {
+        showToast(`该来源已收录且已订阅:${existing.name || existing.source_id}`, 'success');
+      }
+    } else {
+      // 首抓已同步完成(v3.40 返修:添加响应等首抓落库,关浮层即可读),toast 如实带篇数
+      showToast(
+        result.first_fetch === 'failed'
+          ? `已添加自定源 ${result.name},首次抓取失败,稍后自动重试`
+          : `已添加自定源 ${result.name},收录 ${result.saved_count ?? 0} 篇`,
+        'success',
+      );
+    }
+    loadSources();
+    refreshAggregateIfActive();
+    loadUnreadCounts();
+    return result;
+  };
+
+  const handleRemoveCustomSource = async (source) => {
+    setPinningId(source.source_id);
+    try {
+      const result = await removeCustomSource(source.source_id);
+      setSubscribedIds(new Set(result.subscribed_source_ids || []));
+      if (activeSourceId === source.source_id) setActiveSourceId(null);
+      else refreshAggregateIfActive();
+      loadSources();
+      loadUnreadCounts();
+      showToast(`已移除自定源 ${source.name || source.source_id}`, 'success');
+    } catch (error) {
+      showToast(error.message || '移除自定源失败', 'error');
     } finally {
       setPinningId(null);
     }
@@ -848,10 +899,16 @@ export function useReaderState({
       );
     }
     // 退订=破坏性末组红项;与源行悬停减号完全同行为,不加确认弹窗
-    // (同一动作两个入口不该有两种确认策略)
+    // (同一动作两个入口不该有两种确认策略)。用户自定源如实标「移除」——
+    // 无其他订阅者时会连带删除其收录内容,handleUnsubscribe 内部已分流。
     items.push(
       { type: 'sep' },
-      { key: 'unsub', label: '退订此源', icon: Trash2, danger: true, onClick: () => handleUnsubscribe(source) },
+      {
+        key: 'unsub',
+        label: source.user_source ? '移除自定源' : '退订此源',
+        icon: Trash2, danger: true,
+        onClick: () => handleUnsubscribe(source),
+      },
     );
     return items;
   };
@@ -1000,6 +1057,8 @@ export function useReaderState({
     sourceMap, sourceNameMap, shapeOfSource, sidebarGroups, hasNoSubscriptions,
     socialSources, platformCount, pinningId,
     handleSubscribe, handleUnsubscribe, handleToggleSourceHidden,
+    // 用户自定源
+    handleAddCustomSource, handleRemoveCustomSource,
     // 源合集
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,

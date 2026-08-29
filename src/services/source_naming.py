@@ -88,4 +88,27 @@ def friendly_source_name(source_id: str) -> str:
             return str(name)
     except Exception:  # noqa: BLE001 - 取名失败绝不阻断展示/检索主流程
         pass
-    return SOURCE_FRIENDLY_NAMES.get(source_id, source_id)
+    if source_id in SOURCE_FRIENDLY_NAMES:
+        return SOURCE_FRIENDLY_NAMES[source_id]
+    # 第三级兜底(v3.40):配置源(用户自定源/X config 源等)不在注册表与兜底表,
+    # 查 source_configs 行取展示名——否则问答上下文块头/引用出处显示裸 id。
+    name = _config_source_name(source_id)
+    return name or source_id
+
+
+def _config_source_name(source_id: str) -> str:
+    """SourceConfigRecord.name 兜底查询;任何失败(无 DB/无行)静默返回空串。"""
+    try:
+        from sqlmodel import Session
+
+        from api import deps
+        from models.db import SourceConfigRecord
+
+        sink = deps.get_db_sink()
+        if sink is None:
+            return ""
+        with Session(sink.engine) as session:
+            record = session.get(SourceConfigRecord, source_id)
+            return str(record.name) if record is not None and record.name else ""
+    except Exception:  # noqa: BLE001 - 同上,兜底取名绝不抛
+        return ""
