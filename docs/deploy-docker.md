@@ -66,7 +66,7 @@ version "2.4" 的 legacy compose 兼容方案,已弃用),故走裸机路径 `./d
 | `[nginx] enable_ssl` | 按需 `true` | `false` |
 | 镜像源 | 可选加速 | `UV_DEFAULT_INDEX` / `NPM_REGISTRY` 指向内网源 |
 
-同步节奏:main 更新后 `git checkout intranet && git merge main`,部署面文件冲突
+同步节奏:main 更新后 `git checkout master && git merge main`,部署面文件冲突
 **以 main 为准**(v3.39.0 反转);本分支不合回 main。
 
 ## ini 在容器内的语义差异

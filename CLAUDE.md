@@ -2,9 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> ## ⚠️ 本分支是 `intranet`(内网特殊适配分支)——开工前必读
+> ## ⚠️ 本分支是 `master`(内网特殊适配分支)——开工前必读
 >
-> 本块及下述适配**只存在于 intranet 分支**,main 上没有;若你在 main 上看不到这段属正常。
+> 本块及下述适配**只存在于 master 分支**,main 上没有;若你在 main 上看不到这段属正常。
+> (本分支曾名 `intranet`,2026-08 更名 `master`——内网代码托管平台的内部开源仓以
+> master 为默认主干名,同名对齐后,外网适配分支与内网主干一一对应,免去第三个分支名的来回同步。)
 >
 > **定位**:公网主线 main 的内网部署适配分支,长期存在、永不废弃合并。目标环境:
 > 出网被企业网关 MITM(自签证书链重签一切 TLS)、Docker 过旧不可用(18.x/无 compose)、
@@ -13,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > **三条铁律**:
 > 1. **一切内网适配只提交本分支,绝不合并/cherry-pick 回 main**——即使改动看似通用
 >    (先例:`disable_tls_verify` 曾按"通用能力"被提交到 main,后按用户要求回退)。
-> 2. **同步方向单一**:`git merge main`(main → intranet),反向永远禁止;也不要把
+> 2. **同步方向单一**:`git merge main`(main → master),反向永远禁止;也不要把
 >    本分支推成 PR。
 > 3. **每次开工前先核对与 origin/main 的差异**(SessionStart hook 会自动注入概况):
 >    落后较多时,先 merge main、解决冲突、验证后再做新工作,避免差异滚雪球。
