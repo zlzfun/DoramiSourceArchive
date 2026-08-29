@@ -6,7 +6,7 @@
 > [`deploy-docker.md`](./deploy-docker.md) 并列为两条官方路径之一。
 >
 > **内网专属的 `[network] disable_tls_verify`(出网跳过 TLS 校验)不在本路径内**,
-> 它仍只存在于 intranet 分支——公网部署既不需要也不该开。
+> 它仍只存在于内网适配分支 master(曾名 intranet)——公网部署既不需要也不该开。
 
 ## 选哪条路径
 
@@ -157,8 +157,8 @@ pm2 save && pm2 startup
 `pm2 start/reload --update-env` 会把当时的 shell 环境带进后端进程;也可以登录后在
 设置柜 → 凭据里填(KV 覆盖 env,见 CLAUDE.md 的*外部凭据统一保管层*)。
 
-## 与 intranet 分支的关系
+## 与内网适配分支(master)的关系
 
-intranet 分支自此不再自带 `deploy.sh`/`ecosystem.config.js`/ini 两节(改用 main 版本),
+内网适配分支(曾名 `intranet`,2026-08 更名 `master`——内网代码托管平台内部开源仓以 master 为默认主干名,同名对齐免去第三个分支名的来回同步)自此不再自带 `deploy.sh`/`ecosystem.config.js`/ini 两节(改用 main 版本),
 其独有面收敛为:`[network] disable_tls_verify` 开关及各 httpx client 的
 `verify=settings.network.tls_verify` 接线、分支须知块与 `.claude/` 钩子。
