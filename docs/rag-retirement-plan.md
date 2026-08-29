@@ -278,7 +278,7 @@ TEI/chroma compose `--profile rag` + `is_vectorized`/`index_status` 双状态机
   body 的 score_threshold/rerank 字段保留兼容旧调用方、忽略。
 - `content_analytics`/`/api/admin/content`:向量化聚合字段(vectorized_count/
   vectorized_rate)随列删除一并退役,运维内容板「向量化率」KPI 移除。
-- 保留未动:`NetworkConfig.hf_endpoint`(通用网络配置,且属 intranet 分支
+- 保留未动:`NetworkConfig.hf_endpoint`(通用网络配置,且属内网适配分支(现名 master)
   merge 冲突敏感面);`storage.chroma_path` 配置键删除但本地 `data/chroma_db/`
   目录(空)由使用者自行清理;Bug 2(rag/similar 越域)随端点删除自然消亡。
 - 验收:后端全套 529 passed;前端 eslint 零告警、vite build 通过。

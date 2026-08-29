@@ -146,7 +146,7 @@ def ensure_migrated(db_url: str) -> None:
         _align_legacy_to_baseline(db_url)
         if current is None:
             command.stamp(cfg, BASELINE_REVISION)
-    # 多头容忍(下游分叉仓形态):内网 intranet 类分叉仓自带迁移支线时,合入 main 的
+    # 多头容忍(下游分叉仓形态):内网 master(曾名 intranet)类分叉仓自带迁移支线时,合入 main 的
     # 新迁移后 DAG 出现两个 head——git 零冲突,但 upgrade("head") 会无条件报错
     # "Multiple head revisions",应用在启动路径上直接起不来。"heads" 并行全升是
     # Alembic 原生语义;main 自身迁移链恒为单链(漂移守卫使然),此分支在本仓
