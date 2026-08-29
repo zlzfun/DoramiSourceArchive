@@ -144,20 +144,31 @@ def subscribe_source(source_id: str, request: Request, session: Session = Depend
     if source_id in source_visibility_service.hidden_source_ids(session):
         # 管理面隐藏的源不接受新订阅（目录里也不可见；防旧页面状态/直连 API 绕过）。
         raise HTTPException(status_code=404, detail="该内容源暂不可用")
-    if user_sources_service.unauthorized_user_source_ids(session, username, [source_id]):
-        # 用户源的准入凭证是 feed URL(custom-sources 通道),知道 source_id 不构成
-        # 订阅资格(检视返修 F2:防 facets 泄露的 id 被用来伪造成员资格)。
-        raise HTTPException(status_code=404, detail="该内容源暂不可用")
-    registry_meta = _registry_source_meta()
-    already = source_id in set(app.resolve_subscribed_source_ids(session, username))
-    if not already:
-        app._create_single_source_subscription(
-            session, username, source_id, _friendly_source_name(source_id, registry_meta)
-        )
-        # 订阅即初始化未读水位（backlog 语义：最近 K 篇成为未读积压，Folo 式;
-        # 再订阅也重新起算）。
-        reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
-        session.commit()
+    # 用户源分支整段持写锁(codex 终审:校验→提交窗口内源可能被 purge,提交出
+    # 指向已删配置的悬空订阅):归属校验、配置存在复核、建订阅同锁互斥于删除。
+    from contextlib import nullcontext
+
+    guard_lock = user_sources_service._WRITE_LOCK if \
+        user_sources_service.is_user_source(source_id) else nullcontext()  # noqa: SLF001
+    with guard_lock:
+        if user_sources_service.is_user_source(source_id):
+            if user_sources_service.unauthorized_user_source_ids(session, username, [source_id]):
+                # 用户源的准入凭证是 feed URL(custom-sources 通道),知道 source_id
+                # 不构成订阅资格(检视返修 F2:防 facets 泄露的 id 伪造成员资格)。
+                raise HTTPException(status_code=404, detail="该内容源暂不可用")
+            if user_sources_service.get_user_source(session, source_id) is None:
+                # 锁内复核配置仍在(并发 remove 已删则拒绝,不产悬空订阅)。
+                raise HTTPException(status_code=404, detail="该内容源暂不可用")
+        registry_meta = _registry_source_meta()
+        already = source_id in set(app.resolve_subscribed_source_ids(session, username))
+        if not already:
+            app._create_single_source_subscription(
+                session, username, source_id, _friendly_source_name(source_id, registry_meta)
+            )
+            # 订阅即初始化未读水位（backlog 语义：最近 K 篇成为未读积压，Folo 式;
+            # 再订阅也重新起算）。
+            reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
+            session.commit()
     subscribed_ids = sorted(set(
         # 目录口径:含被隐藏的已订阅源(源栏「暂不可用」条目依赖此集合渲染)。
         app.resolve_subscribed_source_ids(session, username, include_hidden=True)
@@ -441,6 +452,8 @@ async def create_custom_source(
     # 建行→订阅→commit 是 check-then-write 段,以 service 写锁串行化(检视返修 F7;
     # 段内全同步无 await,锁窗口极短)。prepared 的 blocked(隐藏/admin 停用的既有
     # 用户源)统一按「暂不可用」处理。
+    from sqlalchemy.exc import IntegrityError
+
     with user_sources_service._WRITE_LOCK:  # noqa: SLF001 - 与 service 写路径同一把锁
         try:
             prepared = user_sources_service.prepare_user_source(
@@ -458,7 +471,25 @@ async def create_custom_source(
         if not already:
             app._create_single_source_subscription(session, username, source_id, record.name)
             reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError:
+            # 并发同 URL 建行撞主键(锁失效的多 worker 部署兜底):幂等重读——输家的
+            # 订阅随 rollback 消失,须在赢家建好的配置行上补建自己的订阅再返回
+            # (三轮收口:此前直接 already=True,输家拿到 success 却没订阅上)。
+            session.rollback()
+            record = session.get(SourceConfigRecord, source_id)
+            if record is None:
+                raise HTTPException(status_code=409, detail="添加冲突,请重试")
+            prepared = {"created": False}
+            already = source_id in set(
+                app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+            )
+            if not already:
+                app._create_single_source_subscription(session, username, source_id, record.name)
+                reader_state_service.init_cursor_with_backlog(session, username=username, source_id=source_id)
+                session.commit()
+                already = True  # 订阅已补上;沿复用分支跳过首抓(赢家会抓)
 
     if already and not prepared["created"]:
         # 幂等重放(检视返修 F9):已订阅者重复 POST 相同 URL 不再触发抓取——
@@ -485,6 +516,16 @@ async def create_custom_source(
                           or (fetch_result.get("results") or [{}])[0].get("saved_count", 0) or 0)
     except Exception:  # noqa: BLE001 - 首抓失败不还原添加,健康面/调度接手
         first_fetch = "failed"
+    # 首抓与并发删除的竞态复查(codex 复检二轮):首抓在锁外执行,期间源可能被
+    # remove/admin_delete 掉——配置行已不在则把刚写回的文章即刻收走(前缀隔离
+    # 保证泄露面为零,此处只是不留脏数据;每日维护 GC 另有兜底)。持锁复查:
+    # 防与「另一用户同 URL 重建」竞态误删刚建的新源(三轮收口)。
+    with user_sources_service._WRITE_LOCK:  # noqa: SLF001
+        with Session(deps.get_db_sink().engine) as check_session:
+            if user_sources_service.get_user_source(check_session, source_id) is None:
+                user_sources_service.purge_user_source(check_session, source_id)
+                check_session.commit()
+                raise HTTPException(status_code=404, detail="该来源已被移除")
     return {
         "status": "success",
         "source_id": source_id,

@@ -178,6 +178,14 @@ def build_source_fetch_params(source_config: SourceConfigRecord, overrides: Opti
         })
     if overrides:
         params.update(overrides)
+    if source_config.owner_username:
+        # 用户自定源(v3.40 三轮收口):请求 overrides 不得改写身份/护栏——source_id
+        # 是 generic_rss 执行层「前缀即策略」的判定依据,被覆盖成非 user_rss_ 值
+        # 即绕过 SSRF/限量;feed_url 同理钉回配置行。
+        params["source_id"] = source_config.source_id
+        params["feed_url"] = source_config.url
+        params.pop("ssrf_guard", None)
+        params.pop("max_response_bytes", None)
     return params
 
 

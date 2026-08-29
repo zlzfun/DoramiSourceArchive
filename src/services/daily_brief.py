@@ -319,7 +319,7 @@ def collect_candidates(
         .where(ArticleRecord.source_id != DAILY_BRIEF_SOURCE_ID)  # 防自我递归
         # 用户自定源机械排除(v3.40):日报名单是手工 allowlist 本就不会勾用户源,
         # 此处是「全部来源」档(名单未设)下的双保险——私有源绝不进公共日报。
-        .where(~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX))
+        .where(~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True))
         .order_by(ArticleRecord.fetched_date.desc())
     )
     if source_ids:

@@ -274,11 +274,19 @@ class GenericRssFetcher(BaseFetcher):
         # BaseFetcher 会在 yield 后统一写入 self.source_id，因此这里把实例身份切换到具体配置源。
         self.source_id = runtime_source_id
 
-        # 用户自定源网络护栏(v3.40 检视返修 D2/D3,经 params_json 承接——首抓/定时
-        # 调度/管理面手工抓取全通道自动生效):每次抓取前 SSRF 复检(域名解析可能在
-        # 添加后改指内网)+ 流式响应限量(不可信 feed 的巨大/无限 body 不入内存)。
-        ssrf_guard = self._bool_param(kwargs.get("ssrf_guard"), False)
+        # 用户自定源网络护栏(v3.40 检视返修 D2/D3):每次抓取前 SSRF 复检(域名解析
+        # 可能在添加后改指内网)+ 流式响应限量(不可信 feed 的巨大/无限 body 不入内存)。
+        # 按 user_rss_ 前缀**强制**开启(codex 复检二轮:params_json 是可变数据,
+        # 存量 v3.40.0 源没有护栏参数——身份即策略,不信任数据回填);params 仍可为
+        # 其它调用方显式开启。
+        is_user_source = runtime_source_id.startswith("user_rss_")
+        ssrf_guard = is_user_source or self._bool_param(kwargs.get("ssrf_guard"), False)
         max_response_bytes = self._positive_int_param(kwargs.get("max_response_bytes"), 0)
+        if is_user_source:
+            # 强制钳制(三轮收口:params 是可变数据,超大正数同样不可信)——用户源
+            # 上限恒 ≤5MiB,与 services.user_sources.FEED_MAX_BYTES 同值。
+            _user_cap = 5 * 1024 * 1024
+            max_response_bytes = min(max_response_bytes or _user_cap, _user_cap)
         if ssrf_guard:
             from urllib.parse import urlsplit as _urlsplit
 

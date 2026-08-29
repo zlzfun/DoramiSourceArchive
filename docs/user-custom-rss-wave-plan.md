@@ -257,6 +257,28 @@ URL 撞系统源做撞库检测转引导,名称不设唯一性,取名链补 conf
 
 全站正式抓取的统一响应上限(策展源共通)另记 backlog——全站级决策不随本波。
 
+**二轮复检闭环**(codex 逐项复检判定 F1/F4/F5/F7/F8 仍有缺口+4 新发现,再修):
+隔离条件改 `user_rss_` **前缀结构性判定**(不依赖配置表——删除×在途抓取竞态的
+孤儿文章同样被隔离;articles 直查门槛同改);FTS 空 filters 契约与文章接口统一为
+「公共可见域」(撤销零结果与全库两套语义);generic_rss 对前缀源**强制**开启
+ssrf_guard+5MiB 上限(身份即策略,不信任存量 params_json);purge 前统一剔除
+一切残余订阅引用(含 inactive 行,防翻活成悬空);孤儿 GC+孤儿文章清理+日计数
+KV 过期清理挂**每日 retention 维护 job**(独立于用户源总闸——关闸后 user_rss_refresh
+被移除,GC 不能只挂那里);调度 SSRF 复检失败计入 consecutive_failures(可达
+自动停用阈值,不再每轮空转告警);首抓(锁外)完成后复查配置仍存在,已删则即刻
+收走刚写回的文章;create 提交撞 IntegrityError 幂等重读(多 worker 兜底);
+runtime 能力位 = 总闸 AND collector 角色(reader split 不再画出恒 403 的入口)。
+
+**三轮复检闭环**:SQL `startswith` 前缀判定全部加 `autoescape=True`(`user_rss_`
+的下划线是 LIKE 通配符,未转义会把 `userXrssY` 形公共源误隔离——codex 抓出的
+真 bug);**单篇详情改要求订阅归属**(初版「id 不可枚举即豁免」拍板推翻:facets
+等历史泄露面可能已把 id 摊出去);facets/total 改前缀过滤(孤儿源 id 不再短暂
+暴露);`build_source_fetch_params` 对用户源钉回 source_id/feed_url 并剥离护栏
+overrides(手工 fetch 不得改写身份绕过前缀策略),generic_rss 端上限恒钳 ≤5MiB;
+IntegrityError 输家补建自己的订阅再返回;首抓后复查持写锁(防误删同 URL 重建的
+新源);REST 订阅 create/update 写段同持写锁;GC 增孤儿 SourceStateRecord 与
+悬空订阅引用清理;SSRF 复检对无 state 源建行累计(可达停用阈值)。
+
 **明确不做,留观察后二期**:用户源转正进策展档(admin 借 source_builder 生成
 CrawlProfile 后收编——「自助」反哺策展的漏斗);详情补抓/全文化;OPML 批量导入;
 用户源媒体缓存 GC。

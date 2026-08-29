@@ -256,7 +256,14 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
 
 
 def _user_sources_capability() -> bool:
-    """用户自定源总闸读数(runtime 透出用);无 DB/异常时按默认开。"""
+    """用户自定源能力位(runtime 透出用):总闸 AND collector 运行角色。
+
+    reader split 部署不承担公网抓取,添加端点恒 403(检视返修 F10)——能力位同步
+    收敛,否则前端画出「添加源」入口、点击必失败(codex 复检二轮新发现4)。
+    无 DB/异常时按默认开。
+    """
+    if not runtime_collector_enabled():
+        return False
     if db_sink is None:
         return True
     try:
@@ -1183,6 +1190,17 @@ async def execute_retention_cleanup_job():
         retention.run_retention_cleanup(db_sink.engine)
     except Exception as exc:  # noqa: BLE001 巡检失败不影响调度引擎
         _dorami_logger.error("明细表滚动窗清理失败: %s", exc)
+    # 用户自定源维护(codex 复检二轮 F8/新发现3):孤儿 GC 与日计数 KV 清理挂在
+    # 本 job——独立于用户源总闸与 user_rss_refresh(总闸关闭时那个 job 被移除,
+    # 若 GC 只挂在那里,关闸后孤儿源/脏数据将永远无人收)。
+    try:
+        with Session(db_sink.engine) as session:
+            orphans = user_sources_service.purge_orphan_user_sources(session)
+            stale = user_sources_service.cleanup_stale_daily_counters(session)
+        if orphans or stale:
+            _dorami_logger.info("用户自定源维护: 清理 %s, 过期计数 %d", orphans or "无", stale)
+    except Exception:  # noqa: BLE001
+        _dorami_logger.warning("用户自定源维护失败", exc_info=True)
 
 
 def reload_daily_brief_schedule():
@@ -1301,7 +1319,28 @@ async def execute_user_rss_refresh_job():
                 await ensure_public_host(_urlsplit(feed_url).hostname or "")
                 checked.append(item)
             except SSRFError:
+                # 复检失败计入连续失败(codex 复检二轮新发现2):否则该源永远进不了
+                # 执行层、也永远达不到自动停用阈值,每轮重复解析+告警。
                 _dorami_logger.warning("用户自定源 SSRF 复检未通过,本轮跳过: %s", item["source_id"])
+                with Session(db_sink.engine) as session:
+                    state = session.get(SourceStateRecord, item["source_id"])
+                    if state is None:
+                        # 从未成功抓过的源也要累计(三轮收口:否则永远达不到停用阈值)
+                        state = SourceStateRecord(
+                            source_id=item["source_id"], fetcher_id="generic_rss",
+                            updated_at=datetime.datetime.now().isoformat(),
+                        )
+                    now_iso = datetime.datetime.now().isoformat()
+                    state.consecutive_failures += 1
+                    state.failed_runs += 1
+                    state.total_runs += 1
+                    state.status = "failing"
+                    state.last_failure_at = now_iso
+                    state.latest_error_type = "ssrf_guard"
+                    state.latest_error_message = "SSRF 复检未通过:feed 域名解析指向内网"
+                    state.updated_at = now_iso
+                    session.add(state)
+                    session.commit()
             except Exception:  # noqa: BLE001 - 解析故障不拦(执行层守卫兜底)
                 checked.append(item)
         items = checked

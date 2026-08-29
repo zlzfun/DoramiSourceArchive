@@ -161,20 +161,19 @@ def user_source_ids(session: Session) -> Set[str]:
     return {str(value) for value in rows}
 
 
-def exclude_user_sources_condition(session: Session):
-    """「排除全部用户源」的 SQL 条件(无用户源时返回 None)。
+def exclude_user_sources_condition(session: Session = None):  # noqa: ARG001 - 签名兼容既有调用
+    """「排除全部用户源」的 SQL 条件(检视返修 F1 收口原语)。
 
-    检视返修 F1 的收口原语:凡**没有归属主体上下文**的交付查询(/api/feed、
-    空范围 dsub 订阅等)一律应用本条件——私有内容只经「订阅者本人」的域可达。
+    凡**没有归属主体上下文**的交付查询(/api/feed、空范围 dsub 订阅等)一律应用
+    本条件——私有内容只经「订阅者本人」的域可达。判定按 `user_rss_` 前缀而非查
+    配置表(codex 复检二轮):删除与在途抓取竞态产生的孤儿文章没有配置行,按表
+    判定会漏进公共交付;前缀是结构性兜底,孤儿同样被隔离。
     """
-    ids = user_source_ids(session)
-    if not ids:
-        return None
     from sqlalchemy import or_
 
     return or_(
         ArticleRecord.source_id.is_(None),
-        ArticleRecord.source_id.notin_(sorted(ids)),
+        ~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True),
     )
 
 
@@ -602,6 +601,10 @@ def purge_user_source(session: Session, source_id: str) -> Dict[str, int]:
     收藏/已读态的孤儿行沿既有「无害」口径不清(与 DELETE /api/articles 一致)。
     不 commit,由调用方统一提交。
     """
+    # 清一切残余订阅引用(codex 复检二轮 F7/F8:purge 只在无**活跃**订阅者时发生,
+    # 但 inactive 订阅行/REST 路径的引用若留存,之后 is_active 翻回 true 就成悬空
+    # 订阅——统一在物理删除前剔除,含所有用户)。
+    remove_source_from_subscriptions(session, source_id, username=None)
     article_ids = [
         str(row) for row in session.exec(
             select(ArticleRecord.id).where(ArticleRecord.source_id == source_id)
@@ -660,9 +663,59 @@ def purge_orphan_user_sources(session: Session) -> List[str]:
             if not active_subscriber_usernames(session, source_id):
                 purge_user_source(session, source_id)
                 purged.append(source_id)
+        # 孤儿数据清理(codex 复检二/三轮):删除与在途抓取竞态可能在配置行已删后
+        # 写回文章/重建 SourceStateRecord,REST 路径可能提交引用已删配置的订阅——
+        # 前缀隔离保证不泄露,此处把三类脏数据统一收走。
+        remaining_ids = user_source_ids(session)
+        orphan_rows = session.exec(
+            select(ArticleRecord.id, ArticleRecord.source_id)
+            .where(ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True))
+        ).all()
+        orphan_article_ids = [str(aid) for aid, sid in orphan_rows if str(sid) not in remaining_ids]
+        if orphan_article_ids:
+            session.exec(delete(ArticleRecord).where(ArticleRecord.id.in_(orphan_article_ids)))
+            session.exec(delete(ArticleShareRecord).where(
+                ArticleShareRecord.article_id.in_(orphan_article_ids)))
+            purged.append(f"(孤儿文章 ×{len(orphan_article_ids)})")
+        orphan_states = [
+            s for s in session.exec(
+                select(SourceStateRecord).where(
+                    SourceStateRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True))
+            ).all() if s.source_id not in remaining_ids
+        ]
+        for state in orphan_states:
+            session.delete(state)
+        if orphan_states:
+            purged.append(f"(孤儿状态 ×{len(orphan_states)})")
+        # 悬空订阅引用:filters 里指向已删用户源配置的 source_id 剔除
+        dangling_cleaned = 0
+        for sub in session.exec(select(ReaderSubscriptionRecord)).all():
+            ids = _subscription_source_ids(sub)
+            dangling = [sid for sid in ids if is_user_source(sid) and sid not in remaining_ids]
+            if dangling:
+                for sid in dangling:
+                    remove_source_from_subscriptions(session, sid, username=None)
+                dangling_cleaned += len(dangling)
+        if dangling_cleaned:
+            purged.append(f"(悬空订阅引用 ×{dangling_cleaned})")
         if purged:
             session.commit()
     return purged
+
+
+def cleanup_stale_daily_counters(session: Session) -> int:
+    """清理历史日期的日增计数 KV(codex 复检二轮新发现3:按 用户×日期 增长,
+    挂每日 retention 维护路径)。commit 由本函数负责,返回清理行数。"""
+    today = datetime.date.today().isoformat()
+    rows = session.exec(
+        select(AppSettingRecord).where(AppSettingRecord.key.startswith(DAILY_ADD_KEY_PREFIX, autoescape=True))
+    ).all()
+    stale = [r for r in rows if not r.key.endswith(f":{today}")]
+    for record in stale:
+        session.delete(record)
+    if stale:
+        session.commit()
+    return len(stale)
 
 
 # ==================== 调度治理 ====================

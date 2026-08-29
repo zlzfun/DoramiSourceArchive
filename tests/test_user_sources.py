@@ -521,7 +521,8 @@ def test_feed_endpoints_exclude_user_sources(monkeypatch, tmp_path):
 
 
 def test_empty_filter_subscription_excludes_user_sources(monkeypatch, tmp_path):
-    """F1:空 filters 的 dsub 订阅=全库语义,交付必须减用户源;FTS 端点空范围返回空。"""
+    """F1:空 filters 的 dsub 订阅=「公共全库」语义——文章交付与 FTS 检索两条契约
+    一致(codex 复检二轮),均减用户源、不放大到私有内容。"""
     app_module = _setup_app(monkeypatch, tmp_path)
     source_id = _add_as(app_module, "alice")
     _seed_article(app_module.db_sink.engine, "u1", source_id)
@@ -541,7 +542,9 @@ def test_empty_filter_subscription_excludes_user_sources(monkeypatch, tmp_path):
             json={"query": "文章"},
         )
         assert fts.status_code == 200
-        assert fts.json()["results"] == []  # 空范围=零订阅语义,不放大成全库
+        hit_ids = {r["id"] for r in fts.json()["results"]}
+        assert "u1" not in hit_ids  # 私有源绝不进公共域检索
+        assert "n1" in hit_ids      # 公共文章照常可检索(与文章接口同契约)
 
 
 def test_subscribe_endpoints_reject_foreign_user_source(monkeypatch, tmp_path):
@@ -687,6 +690,118 @@ def test_orphan_gc_and_generic_config_delete(monkeypatch, tmp_path):
         assert res.status_code == 200 and res.json()["articles_deleted"] == 1
     with Session(app_module.db_sink.engine) as session:
         assert session.get(SourceConfigRecord, source_id2) is None
+
+
+def test_orphan_articles_isolated_and_collected(monkeypatch, tmp_path):
+    """二轮收口:配置行已删的孤儿 user_rss_* 文章(删除×在途抓取竞态产物)——
+    前缀隔离保证不进公共交付,维护 GC 把脏数据收走。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from models.db import ArticleRecord
+    from services import user_sources
+
+    # 直接播种一篇无配置行的孤儿用户源文章(模拟竞态残留)
+    _seed_article(app_module.db_sink.engine, "orphan1", "user_rss_deadbeef0000")
+    _seed_article(app_module.db_sink.engine, "n1", "rss_normal_source")
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        # 前缀结构性兜底:孤儿文章不进 /api/feed 与文章列表
+        assert all(i["id"] != "orphan1" for i in client.get("/api/feed/articles").json()["items"])
+        assert all(a["id"] != "orphan1" for a in client.get("/api/articles").json())
+    with Session(app_module.db_sink.engine) as session:
+        purged = user_sources.purge_orphan_user_sources(session)
+        assert any("孤儿文章" in p for p in purged)
+        assert session.get(ArticleRecord, "orphan1") is None
+
+
+def test_purge_clears_inactive_subscription_references(monkeypatch, tmp_path):
+    """二轮收口 F7/F8:purge 前剔除一切残余订阅引用(含 inactive 行),
+    防止之后 is_active 翻回 true 复活成悬空订阅。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from models.db import ReaderSubscriptionRecord
+    from services import user_sources
+
+    source_id = _add_as(app_module, "alice")
+    # 播种一条含该源引用的 inactive 订阅行(REST 生命周期可产生)
+    with Session(app_module.db_sink.engine) as session:
+        session.add(ReaderSubscriptionRecord(
+            owner_username="bob", name="停用的", filters_json=f'{{"source_ids": "{source_id}"}}',
+            delivery_policy_json="{}", token_hash="x", token_preview="x",
+            is_active=False, created_at="2026-08-28", updated_at="2026-08-28",
+        ))
+        session.commit()
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        client.delete(f"/api/reader/custom-sources/{source_id}")
+    with Session(app_module.db_sink.engine) as session:
+        # inactive 行的引用同被剔除(行本身单源即删)
+        for sub in session.exec(select(ReaderSubscriptionRecord)).all():
+            assert source_id not in (sub.filters_json or "")
+
+
+def test_capability_off_in_reader_runtime(monkeypatch, tmp_path):
+    """二轮收口(新发现4):reader split 运行角色下能力位收敛,前端不画添加入口。"""
+    import api.app as app_module_ref
+    from config import RuntimeConfig
+    from dataclasses import replace as dc_replace
+
+    app_module = _setup_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        app_module, "settings",
+        dc_replace(app_module.settings, runtime=RuntimeConfig(role="reader")),
+    )
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        runtime = client.get("/api/runtime").json()
+        assert runtime["user_sources_enabled"] is False
+        assert client.post("/api/reader/custom-sources/preview",
+                           json={"url": "https://a.example.com/feed"}).status_code == 403
+
+
+def test_article_detail_requires_user_source_subscription(monkeypatch, tmp_path):
+    """三轮收口:单篇详情对非订阅者的用户源文章 404(初版 id 豁免拍板已推翻);
+    订阅者与 admin 照常可读。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    source_id = _add_as(app_module, "alice")
+    _seed_article(app_module.db_sink.engine, "u1", source_id)
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        assert client.get("/api/articles/u1").status_code == 404
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        assert client.get("/api/articles/u1").status_code == 200
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        assert client.get("/api/articles/u1").status_code == 200
+
+
+def test_like_escape_does_not_swallow_lookalike_sources(monkeypatch, tmp_path):
+    """三轮收口:前缀判定的 LIKE 下划线须转义——`userXrssY` 形公共源不得被误隔离。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    _seed_article(app_module.db_sink.engine, "look1", "userXrssYlookalike")
+    with TestClient(app_module.app) as client:
+        _login(client, "bob", "bob")
+        # 未转义时 'user_rss_%' 会匹配 userXrssY…,该公共文章将被误藏
+        assert any(i["id"] == "look1" for i in client.get("/api/feed/articles").json()["items"])
+        assert any(a["id"] == "look1" for a in client.get("/api/articles").json())
+
+
+def test_manual_fetch_overrides_cannot_rewrite_identity(monkeypatch, tmp_path):
+    """三轮收口:手工 fetch 的 overrides 不得改写用户源的 source_id/feed_url
+    (身份即 generic_rss 前缀策略的判定依据)。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from api.routers.source_configs import build_source_fetch_params
+    from models.db import SourceConfigRecord
+
+    source_id = _add_as(app_module, "alice")
+    with Session(app_module.db_sink.engine) as session:
+        record = session.get(SourceConfigRecord, source_id)
+        params = build_source_fetch_params(record, {
+            "source_id": "rss_innocent", "feed_url": "http://127.0.0.1/feed",
+            "ssrf_guard": False, "max_response_bytes": 10**12,
+        })
+    assert params["source_id"] == source_id
+    assert params["feed_url"] == record.url
+    assert "ssrf_guard" not in params and "max_response_bytes" not in params
 
 
 def test_admin_config_validates_before_write(monkeypatch, tmp_path):
