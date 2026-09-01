@@ -349,6 +349,16 @@ class AiUsageRecord(SQLModel, table=True):
     daily_brief_reduce / source_config / detail_profile。
     """
     __tablename__ = "ai_usage"
+    # 聚合键唯一索引（v3.43 审计 M21）：写路径是「不存在则插、存在则累加」，无约束时
+    # 并发请求可各判「无记录」双双插行（或互踩旧值丢增量）——约束落库后写侧改
+    # SQLite ON CONFLICT DO UPDATE 原子累加（见 ai_usage.record_usage）。
+    __table_args__ = (
+        Index(
+            "uq_ai_usage_day_user_purpose_model",
+            "day", "username", "purpose", "model",
+            unique=True,
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     day: str = Field(index=True, description="YYYY-MM-DD（本地日期）")
@@ -370,6 +380,15 @@ class ReaderReadRecord(SQLModel, table=True):
     阅读主流程（写入异常吞掉）。
     """
     __tablename__ = "reader_reads"
+    # 聚合键唯一索引（v3.43 审计 M21）：与 ai_usage 同因同修，写侧原子 upsert
+    # 见 reader_activity.record_read。
+    __table_args__ = (
+        Index(
+            "uq_reader_reads_day_user_source",
+            "day", "username", "source_id",
+            unique=True,
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     day: str = Field(index=True, description="YYYY-MM-DD（本地日期）")

@@ -366,9 +366,10 @@ def admin_account_activity(
             "role": record.role,
             "is_active": record.is_active,
             "ai_beta_enabled": record.ai_beta_enabled,
-            # 快照缺失时以事件流兜底(与账户列表同一口径)
+            # 快照缺失时以事件流兜底(单用户 MAX 标量查询,v3.43 M22——
+            # 此前误用全表 GROUP BY 的 last_login_by_user)
             "last_login_at": record.last_login_at
-            or accounts_service.last_login_by_user(session).get(username),
+            or accounts_service.last_login_for_user(session, username),
             "ai_last_used_at": record.ai_last_used_at,
             "created_at": record.created_at,
             "subscription_count": int(subscription_count),

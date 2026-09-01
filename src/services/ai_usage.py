@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import Session, func, select
 
 from models.db import AiUsageRecord
@@ -61,6 +62,10 @@ def record_usage(
 
     usage 取 OpenAI 兼容响应的 usage 段（prompt_tokens/completion_tokens/total_tokens）；
     缺失时按 0 计，仍累加 calls。
+
+    v3.43（审计 M21）：SQLite `INSERT … ON CONFLICT DO UPDATE` 原子累加——旧的
+    「先查→无则插/有则递增」两步在并发下会双插重复行或互踩旧值丢增量；聚合键
+    唯一索引 `uq_ai_usage_day_user_purpose_model` 由迁移 a7e2f95c1d40 保证。
     """
     if purpose not in VALID_PURPOSES:
         return
@@ -72,38 +77,44 @@ def record_usage(
     completion = _coerce_int(usage.get("completion_tokens"))
     total = _coerce_int(usage.get("total_tokens")) or (prompt + completion)
 
-    record = session.exec(
-        select(AiUsageRecord).where(
-            AiUsageRecord.day == day,
-            AiUsageRecord.username == owner,
-            AiUsageRecord.purpose == purpose,
-            AiUsageRecord.model == model,
-        )
-    ).first()
-    if record is None:
-        record = AiUsageRecord(
-            day=day,
-            username=owner,
-            purpose=purpose,
-            model=model,
-            calls=0,
-            prompt_tokens=0,
-            completion_tokens=0,
-            total_tokens=0,
-            updated_at=_now_iso(),
-        )
-    record.calls += 1
-    record.prompt_tokens += prompt
-    record.completion_tokens += completion
-    record.total_tokens += total
-    record.updated_at = _now_iso()
-    session.add(record)
+    table = AiUsageRecord.__table__
+    stmt = sqlite_insert(table).values(
+        day=day,
+        username=owner,
+        purpose=purpose,
+        model=model,
+        calls=1,
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=total,
+        updated_at=_now_iso(),
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["day", "username", "purpose", "model"],
+        set_={
+            "calls": table.c.calls + 1,
+            "prompt_tokens": table.c.prompt_tokens + prompt,
+            "completion_tokens": table.c.completion_tokens + completion,
+            "total_tokens": table.c.total_tokens + total,
+            "updated_at": _now_iso(),
+        },
+    )
+    session.execute(stmt)
     session.commit()
+
+
+# by_day_user 的服务端系列上限（v3.43 审计 M16）：与前端图表调色板 6 彩色槽 +
+# 中性「其它」槽对齐——窗口内用户数随规模增长时，日×用户明细载荷曾随之无界膨胀
+# 而前端只画得下 6 系；现由后端选 Top N（按窗口 total_tokens）并把其余按日聚成
+# 「其它」行，载荷有界且前端 pivotDaily 的「其它」中性槽语义无缝承接。
+BY_DAY_USER_TOP_N = 6
+OTHER_SERIES_LABEL = "其它"
 
 
 def summarize(session: Session, *, days: int = 30) -> Dict[str, Any]:
     """窗口内（近 days 天）用量聚合：totals + by_purpose + by_user + by_day +
-    by_day_purpose / by_day_user（日×维度明细，供前端多系列时间序列图）。"""
+    by_day_purpose / by_day_user（日×维度明细，供前端多系列时间序列图；
+    by_day_user 仅含 Top N 用户 + 按日聚合的「其它」行，见 BY_DAY_USER_TOP_N）。"""
     days = max(1, min(int(days or 30), 365))
     since = (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
     rows: List[AiUsageRecord] = list(
@@ -151,6 +162,24 @@ def summarize(session: Session, *, days: int = 30) -> Dict[str, Any]:
             for k, v in bucket.items()
         ]
         return sorted(items, key=lambda x: x["day"])
+
+    # by_day_user 服务端裁剪（M16）：Top N 用户按窗口 total_tokens 选定，
+    # 其余用户的量按日合并进「其它」行——总量守恒，只是系列有界。
+    top_users = {
+        name for name, _ in sorted(
+            by_user.items(), key=lambda kv: (-kv[1]["total_tokens"], kv[0])
+        )[:BY_DAY_USER_TOP_N]
+    }
+    if len(by_user) > len(top_users):
+        trimmed: Dict[tuple, Dict[str, int]] = {}
+        for (day_key, name), agg in by_day_user.items():
+            key = (day_key, name if name in top_users else OTHER_SERIES_LABEL)
+            slot = trimmed.setdefault(
+                key, {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            )
+            for field in slot:
+                slot[field] += agg[field]
+        by_day_user = trimmed
 
     return {
         "window_days": days,

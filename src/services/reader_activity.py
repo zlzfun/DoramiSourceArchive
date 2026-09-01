@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import Session, func, select
 
 from models.db import ReaderReadRecord
@@ -37,26 +38,25 @@ def record_read(
     source_id: str,
     day: Optional[str] = None,
 ) -> None:
-    """把一次阅读累加进当天该来源的聚合行（不存在则建）。空用户/来源静默跳过。"""
+    """把一次阅读累加进当天该来源的聚合行（不存在则建）。空用户/来源静默跳过。
+
+    v3.43（审计 M21）：SQLite `INSERT … ON CONFLICT DO UPDATE` 原子累加（与
+    ai_usage.record_usage 同因同修），聚合键唯一索引由迁移 a7e2f95c1d40 保证。
+    """
     username = (username or "").strip()
     source_id = (source_id or "").strip()
     if not username or not source_id:
         return
     day = day or _today()
-    record = session.exec(
-        select(ReaderReadRecord).where(
-            ReaderReadRecord.day == day,
-            ReaderReadRecord.username == username,
-            ReaderReadRecord.source_id == source_id,
-        )
-    ).first()
-    if record is None:
-        record = ReaderReadRecord(
-            day=day, username=username, source_id=source_id, reads=0, updated_at=_now_iso()
-        )
-    record.reads += 1
-    record.updated_at = _now_iso()
-    session.add(record)
+    table = ReaderReadRecord.__table__
+    stmt = sqlite_insert(table).values(
+        day=day, username=username, source_id=source_id, reads=1, updated_at=_now_iso()
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["day", "username", "source_id"],
+        set_={"reads": table.c.reads + 1, "updated_at": _now_iso()},
+    )
+    session.execute(stmt)
     session.commit()
 
 

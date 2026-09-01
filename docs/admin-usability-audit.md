@@ -44,7 +44,35 @@
   - M17:反馈收件箱加 `q`(正文/提交者)检索 + `category` 分类过滤(SQL 端,与状态/分页叠加);
     公告列表服务端分页 + total、dismiss_count 只对当前页聚合,前端历史公告分页(6/页)。
     刻意裁剪(记 backlog):反馈批量流转/负责人/优先级、导出(归 M18)。
-- 其余项(M10/M13–M16/M18/M20–M22/M24/M25)未动;M10 仍待确认内网机 `[runtime] role`。
+- **v3.43.0(2026-09-01)数据生命周期与可靠性波:M10/M12/M13/M14/M15/M16/M21/M22 已修**
+  (整改分层第三梯队收官 + 落网之鱼 M12;测试 tests/test_data_lifecycle.py 13 项)。
+  - M10:**负责人确认内外网两台均为 `[runtime] role = all`**——当前部署 retention 本就在跑,
+    条件性风险不成立;同时把隐患根除:留存清理注册从 collector 门控中解耦(app.py lifespan),
+    调度器任何角色都启动、`retention_cleanup` 恒注册,抓取类任务(load_tasks/远程同步/自定源
+    刷新)仍只在 collector 角色注册——将来真拆分部署 reader 库也不会再无限膨胀。
+  - M12:FetchTab 组头全选与单行同一口径——组头复选框的勾选集与全选态只看
+    `!f.user_source` 的组内成员(全自定源组直接禁用),`runChecked`/`saveCheckedAsJob`
+    消费端再过滤一层防御;自定源不再被塞进不认识它的 registry 批量接口。
+  - M13:`/api/source-health`(45s 轮询)的运行史回退只服务「无 SourceStateRecord 快照」的
+    节点——此前无条件把全部节点 180 天运行行载入内存,绝大多数节点有快照根本用不上。
+  - M14:留存扩面——`collection_job_runs` 180d(与 child fetch_runs 同窗);条件性清理三表:
+    `jobs` 终态(succeeded/failed/cancelled)90d(在途任务永不清,epoch 浮点单独换算截止)、
+    `feedbacks` 已了结(resolved/dismissed)365d(open/in_progress 永不清)、`article_shares`
+    已失效(撤销或过期)180d(存活链接含永久档永不清)。**刻意不清理** `announcement_dismissals`:
+    行数有界且承载「一次性通知」语义(公告下线复上不应再打扰关闭过的读者),清行会破坏语义。
+  - M15:刷新语义,零新 UI——AdminOpsTab 接 `active` prop,①子页间切换重取目标子页、
+    ②从其它 Tab 切回重取当前子页(消息子页经 wakeTick 换 key 强制重挂面板自取数);
+    长开的运维台不再静默过期。
+  - M16:`summarize` 的 `by_day_user` 服务端 Top-6(按窗口 total_tokens)+ 按日聚合「其它」行,
+    载荷有界、总量守恒;前端 pivotDaily 的「其它」中性槽语义无缝承接,by_user 全量榜不受影响。
+  - M21:计量聚合唯一约束——`ai_usage`(day×username×purpose×model)与 `reader_reads`
+    (day×username×source_id)建唯一索引(迁移 `a7e2f95c1d40`,先对存量重复行求和合并再建索引,
+    带收养回放守卫);写侧 `record_usage`/`record_read` 改 SQLite `INSERT … ON CONFLICT DO
+    UPDATE` 原子累加,「先查后插/递增」的并发双插与丢增量竞态从根上消灭。
+  - M22:单用户活动抽屉的最近登录兜底改 `last_login_for_user`(单人 MAX 标量查询),
+    不再为看一个人对登录事件表全表 GROUP BY。
+- 其余项(M18/M20/M24/M25)未动:均 P2 随量/P3 低频——M18 导出、M20 批量开户、
+  M24 移动管理(显式产品边界,视值班需求)、M25 FTS 大结果集(随语料量)。
 
 ## 协作与互补结论
 
@@ -133,6 +161,8 @@ FetchRunsTab 固定只拉最近 100 任务级 + 200 节点运行(FetchRunsTab.js
 这些表永不自动清理**。共享同库且 collector 常驻时可降 P2。
 - 证据:app.py:406,413,419 / retention.py:58。
 - 行动项:确认内网机的 `[runtime] role`——若 reader,此项对本部署即实打实 P1。
+- **裁决(2026-09-01)**:负责人确认内外网两台均为 `role = all`(内网也需要运营管控面),
+  当前部署无此风险;v3.43 顺势把 retention 注册从 collector 门控解耦,条件性风险永久消除。
 
 ### M11 审计覆盖与检索能力不足
 `AUDIT_PATH_PREFIXES` 漏 `/api/articles`、`/api/fetch`、`/api/archive`、`/api/mcp` 等管理写入口→

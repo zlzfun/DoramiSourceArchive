@@ -385,6 +385,16 @@ def last_login_by_user(session: Session) -> dict:
     return {username: at for username, at in rows}
 
 
+def last_login_for_user(session: Session, username: str) -> Optional[str]:
+    """事件流口径的单用户最近登录时间（v3.43 审计 M22）。
+
+    单用户抽屉的快照兜底此前误用 `last_login_by_user`——为看一个人的时间对
+    事件表做全表 GROUP BY；这里改成对该用户名的一次 MAX 标量查询。"""
+    return session.exec(
+        select(func.max(LoginEventRecord.at)).where(LoginEventRecord.username == username)
+    ).one()
+
+
 def logins_by_user(session: Session, *, days: int = 30) -> dict:
     """窗口内按用户聚合登录次数 `{username: count}`（供账户列表/活跃榜富化）。
 

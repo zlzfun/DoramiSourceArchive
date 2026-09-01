@@ -78,7 +78,7 @@ function Kpi({ num, label, sub, tone }) {
   );
 }
 
-export default function AdminOpsTab({ showToast, currentUsername = '', pendingFocus = null, onPendingFocusApplied, onOpenCredentials }) {
+export default function AdminOpsTab({ showToast, active = true, currentUsername = '', pendingFocus = null, onPendingFocusApplied, onOpenCredentials }) {
   const confirm = useConfirm();
   const [sub, setSub] = useState('user'); // 子页：user | content | ai
 
@@ -232,6 +232,33 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
   // 账户列表随时间窗口/页码/搜索词变化重载（窗口指标按 days 聚合）。
   useEffect(() => { reloadAccounts(); }, [reloadAccounts]);
   useEffect(() => { loadUsage(days); }, [loadUsage, days]);
+
+  // 刷新语义(v3.43 审计 M15):tab 常驻不重挂,长开时数据会静默过期。两个无 UI 的
+  // 重取时机——①从其它 Tab 切回运维管理(active 沿 false→true)重取当前子页;
+  // ②子页间切换重取目标子页。消息子页(engage)的面板是条件渲染、切子页天然重挂
+  // 自取数,故只需在「切回 Tab 且停在消息页」时经 wakeTick 换 key 强制重挂。
+  const [wakeTick, setWakeTick] = useState(0);
+  const wasActive = useRef(active);
+  useEffect(() => {
+    if (active && !wasActive.current) setWakeTick((t) => t + 1);
+    wasActive.current = active;
+  }, [active]);
+  const refreshSub = useCallback((target) => {
+    if (target === 'user') { reloadAccounts(); }
+    else if (target === 'content') { loadContent(); loadMedia(); loadX(); }
+    else if (target === 'ai') { loadGlobals(); loadUsage(days); loadLlm(); }
+    // engage:条件渲染重挂即取数,无需在此显式调用。
+  }, [reloadAccounts, loadContent, loadMedia, loadX, loadGlobals, loadUsage, loadLlm, days]);
+  useEffect(() => {
+    if (wakeTick > 0) refreshSub(sub);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只响应「切回 Tab」时机
+  }, [wakeTick]);
+  const subMountedOnce = useRef(false);
+  useEffect(() => {
+    if (!subMountedOnce.current) { subMountedOnce.current = true; return; }
+    refreshSub(sub);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只响应子页切换时机
+  }, [sub]);
 
   // 新建 / 详情 / 重置密码打开时锁定页面滚动。
   useEffect(() => {
@@ -562,8 +589,9 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
       {/* ══ 消息子页(v3.18 互通波:反馈收件箱 + 公告管理)════════════ */}
       {sub === 'engage' && (
         <div className="grid gap-4">
-          <FeedbackInboxPanel showToast={showToast} />
-          <AnnouncementsPanel showToast={showToast} />
+          {/* wakeTick 换 key:切回 Tab 时强制重挂取新数据(M15,面板挂载即自取数) */}
+          <FeedbackInboxPanel key={`fb-${wakeTick}`} showToast={showToast} />
+          <AnnouncementsPanel key={`ann-${wakeTick}`} showToast={showToast} />
         </div>
       )}
 

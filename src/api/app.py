@@ -410,21 +410,27 @@ async def lifespan(app: FastAPI):
         _mcp_gate._app = None
         _mcp_enabled = False
 
-    if runtime_collector_enabled():
+    # 留存清理是数据库自身的生命周期义务,与部署角色无关(v3.43 审计 M10):
+    # 登录/AI/阅读/审计埋点恰是 reader 面写入的,拆分部署下 reader 库同样会膨胀。
+    # 故调度器在任何角色下都启动,抓取类任务(load_tasks/远程同步/自定源刷新)
+    # 仍只在 collector 角色注册。
+    collector_on = runtime_collector_enabled()
+    if collector_on:
         reconcile_orphaned_runs()
         load_tasks_to_scheduler()
-        if scheduler.state == STATE_STOPPED:
-            scheduler.start()
-            print("⏰ APScheduler 定时调度引擎已启动！")
-            # 仅在调度器新鲜启动（绑定当前事件循环）时注册巡检，避免跨 loop add_job。
-            # 明细/埋点表滚动窗清理（每日 04:30）。
-            add_cron_job("retention_cleanup", execute_retention_cleanup_job, "30 4 * * *", [])
+    if scheduler.state == STATE_STOPPED:
+        scheduler.start()
+        print("⏰ APScheduler 定时调度引擎已启动！")
+        # 仅在调度器新鲜启动（绑定当前事件循环）时注册巡检，避免跨 loop add_job。
+        # 明细/埋点表滚动窗清理（每日 04:30）——所有运行角色均注册。
+        add_cron_job("retention_cleanup", execute_retention_cleanup_job, "30 4 * * *", [])
+        if collector_on:
             # 远程内容同步定时任务(启用且 cron 合法时注册,否则移除既有 job)。
             reload_remote_sync_schedule()
             # 用户自定源定时刷新(v3.40:间隔 KV 可配,总闸关闭即不注册)。
             reload_user_rss_schedule()
-    else:
-        print("⏸️ 当前 reader 运行角色不启动抓取调度引擎。")
+    if not collector_on:
+        print("⏸️ 当前 reader 运行角色不启动抓取调度（仅保留留存清理定时任务）。")
 
     if mcp is not None:
         async with mcp.session_manager.run():
