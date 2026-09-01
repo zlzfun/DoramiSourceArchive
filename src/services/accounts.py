@@ -634,6 +634,21 @@ def delete_user(session: Session, username: str) -> None:
     feed_token = session.get(ReaderFeedTokenRecord, username)
     if feed_token is not None:
         session.delete(feed_token)
+    # 用户名级 KV 标记(v3.43.2 codex 交叉检视 M03 补漏):不删则同名重建的新身份
+    # 会因旧播种标记拿不到默认订阅、并继承旧身份当日的自定源新增额度。key 格式
+    # 的权威定义在各自模块(api.app.DEFAULTS_SEEDED_KEY_PREFIX /
+    # feedback._FEEDBACK_SEEN_KEY_PREFIX / user_sources.DAILY_ADD_KEY_PREFIX),
+    # 此处字面量由 test_data_lifecycle 与三处常量比对钉住防漂移。
+    session.exec(delete(AppSettingRecord).where(AppSettingRecord.key.in_((
+        f"reader_defaults_seeded:{username}",
+        f"feedback_seen:{username}",
+    ))))
+    # LIKE 模式须转义用户名中的 %/_(用户名只禁冒号,下划线合法——不转义则
+    # 「a_b」删号会连带匹配「axb」的 key,误删他人数据)。
+    like_safe = username.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    session.exec(delete(AppSettingRecord).where(
+        AppSettingRecord.key.like(f"user_sources_added:{like_safe}:%", escape="\\")
+    ))
 
     # ③ 计量历史墓碑化。聚合两表须**合并式**改写(v3.43.1 codex 交叉检视·高):
     # v3.43 给聚合键上了唯一索引,若同名账号曾被删过一次,裸 UPDATE 会撞上既有

@@ -310,6 +310,137 @@ def test_metering_upsert_sql_shape(tmp_path):
         assert len(read_stmts) == 1 and "ON CONFLICT" in read_stmts[0] and read_stmts[0].lstrip().startswith("INSERT")
 
 
+# ══ 三波补充检视回归(v3.43.2 codex 交叉检视) ══════════════════════
+
+
+def test_delete_user_clears_username_level_kv(tmp_path):
+    """M03 补漏:删号须清用户名级 KV 标记——否则同名重建拿不到默认订阅播种、
+    并继承旧身份当日自定源新增额度。同时钉住三处 key 前缀常量与
+    delete_user 内字面量的一致性(防漂移)。"""
+    from api.app import DEFAULTS_SEEDED_KEY_PREFIX
+    from api.routers.feedback import _FEEDBACK_SEEN_KEY_PREFIX
+    from services.accounts import delete_user
+    from services.user_sources import DAILY_ADD_KEY_PREFIX
+    from models.db import AppSettingRecord
+
+    # delete_user 用字面量拼 key,此处以权威常量断言格式仍然吻合。
+    assert DEFAULTS_SEEDED_KEY_PREFIX == "reader_defaults_seeded"
+    assert _FEEDBACK_SEEN_KEY_PREFIX == "feedback_seen:"
+    assert DAILY_ADD_KEY_PREFIX == "user_sources_added:"
+
+    engine = _engine(tmp_path)
+    with Session(engine) as session:
+        create_user(session, "kvuser", "pw123456", "user")
+        create_user(session, "other", "pw123456", "user")
+        for key in (
+            "reader_defaults_seeded:kvuser",
+            "feedback_seen:kvuser",
+            "user_sources_added:kvuser:2026-09-01",
+            # 他人同前缀 key 不得被误删。
+            "reader_defaults_seeded:other",
+            "user_sources_added:other:2026-09-01",
+        ):
+            session.add(AppSettingRecord(key=key, value="x"))
+        session.commit()
+        delete_user(session, "kvuser")
+        remaining = {r.key for r in session.exec(select(AppSettingRecord)).all()}
+    assert "reader_defaults_seeded:kvuser" not in remaining
+    assert "feedback_seen:kvuser" not in remaining
+    assert "user_sources_added:kvuser:2026-09-01" not in remaining
+    assert {"reader_defaults_seeded:other", "user_sources_added:other:2026-09-01"} <= remaining
+
+
+def test_delete_user_kv_like_escapes_wildcards(tmp_path):
+    """终审返修:用户名允许下划线,LIKE 的 `_` 通配不转义时「a_b」删号会误删
+    「axb」的自定源日计数 KV。"""
+    from services.accounts import delete_user
+    from models.db import AppSettingRecord
+
+    engine = _engine(tmp_path)
+    with Session(engine) as session:
+        create_user(session, "a_b", "pw123456", "user")
+        create_user(session, "axb", "pw123456", "user")
+        session.add(AppSettingRecord(key="user_sources_added:a_b:2026-09-01", value="3"))
+        session.add(AppSettingRecord(key="user_sources_added:axb:2026-09-01", value="5"))
+        session.commit()
+        delete_user(session, "a_b")
+        remaining = {r.key for r in session.exec(select(AppSettingRecord)).all()}
+    assert "user_sources_added:a_b:2026-09-01" not in remaining
+    assert "user_sources_added:axb:2026-09-01" in remaining
+
+
+def test_cached_ai_paths_skip_cost_gates(tmp_path):
+    """M02:配额/预算是成本闸——缓存命中零成本,不得被 pre_llm_check 拦截;
+    缓存未命中(将发起真实 LLM 调用)时才执行成本闸。"""
+    import asyncio
+    import json as jsonlib
+
+    from services import reader_ai
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'ai.db'}")
+    from models.db import ArticleRecord
+
+    body = "正文" * 100
+    fp = reader_ai._body_fingerprint(body)
+    with Session(sink.engine) as session:
+        session.add(ArticleRecord(
+            id="art1", title="t", content_type="rss_article", source_id="s",
+            source_url="https://example.com/a", content=body, has_content=True,
+            extensions_json=jsonlib.dumps({
+                reader_ai.SUMMARY_KEY: "已缓存摘要", reader_ai.SUMMARY_FP_KEY: fp,
+            }),
+            publish_date="2026-09-01", fetched_date="2026-09-01",
+        ))
+        session.commit()
+
+    def _blocked():
+        raise RuntimeError("cost gate hit")
+
+    # 缓存命中:成本闸不执行,直接返回缓存。
+    result = asyncio.run(reader_ai.summarize_article(
+        sink, "art1", None, None, pre_llm_check=_blocked
+    ))
+    assert result == {"summary": "已缓存摘要", "cached": True}
+
+    # 缓存失配(正文指纹变化):成本闸在 LLM 调用前执行并中止。
+    with Session(sink.engine) as session:
+        record = session.get(ArticleRecord, "art1")
+        record.content = body + "更新"
+        session.add(record)
+        session.commit()
+    with pytest.raises(RuntimeError, match="cost gate hit"):
+        asyncio.run(reader_ai.summarize_article(
+            sink, "art1", None, None, pre_llm_check=_blocked
+        ))
+
+
+def test_audit_summary_edge_cases(tmp_path):
+    """M05/M11 审计摘要边界:批量账户人数按服务层规范化口径(strip/去空/去重)、
+    body 缺失记「数量未知」不伪造 0、/api/fetch/batch 走精确规则、
+    含斜杠的文章 ID({article_id:path} 路由)不退化为空摘要。"""
+    from services.admin_audit import record_audit
+
+    engine = _engine(tmp_path)
+
+    def _summary_of(method, path, body):
+        record_audit(engine, username="admin", method=method, path=path,
+                     status_code=200, body=body)
+        from models.db import AdminAuditRecord
+        with Session(engine) as session:
+            rows = session.exec(select(AdminAuditRecord)).all()
+            return rows[-1].summary
+
+    assert "1 个账户" in _summary_of(
+        "POST", "/api/accounts/batch",
+        {"usernames": ["alice", " alice ", "alice", ""], "ai_beta_enabled": True},
+    )
+    assert "数量未知" in _summary_of("POST", "/api/accounts/batch", None)
+    assert "数量未知" in _summary_of("POST", "/api/articles/batch-delete", None)
+    assert _summary_of("POST", "/api/fetch/batch", {"items": [{}, {}]}) == "批量触发采集 2 个节点"
+    assert _summary_of("DELETE", "/api/articles/abc/def", None) == "删除文章 abc/def"
+
+
 # ══ M16 by_day_user 服务端裁剪 ═════════════════════════════════════
 
 

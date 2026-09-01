@@ -96,8 +96,14 @@ def _reset_password(match: re.Match[str], _body: dict | None) -> RenderResult:
 
 
 def _batch_accounts(_: re.Match[str], body: dict | None) -> RenderResult:
-    payload = body or {}
-    names = [str(u) for u in (payload.get("usernames") or []) if u]
+    # body 缺失(超过采集上限等)时如实记「数量未知」,不伪造 0(v3.43.2 codex 检视)。
+    if body is None:
+        return "批量更新账户（数量未知，请求体未采集）", None
+    payload = body
+    # 人数统计与服务层 batch_update_users 同一规范化口径:strip→去空→去重
+    # (原始数组含重复/空白项时曾多计,与实际处理数不符)。
+    stripped = [str(u or "").strip() for u in (payload.get("usernames") or [])]
+    names = list(dict.fromkeys(u for u in stripped if u))
     parts: list[str] = []
     if payload.get("role") is not None:
         parts.append(f"角色改为{_role_label(payload['role'])}")
@@ -192,8 +198,10 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
     (
         "POST",
         re.compile(r"^/api/articles/batch-delete$"),
+        # body 缺失(超采集上限)时如实记「数量未知」,不伪造 0 篇(v3.43.2)。
         lambda _m, body: (
-            f"批量删除文章 {len((body or {}).get('ids') or (body or {}).get('article_ids') or [])} 篇",
+            "批量删除文章（数量未知，请求体未采集）" if body is None
+            else f"批量删除文章 {len(body.get('ids') or body.get('article_ids') or [])} 篇",
             None,
         ),
     ),
@@ -206,15 +214,28 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
             None,
         ),
     ),
+    # 文章路由是 {article_id:path}(手工录入 ID 可含斜杠),规则须吞完整剩余路径,
+    # 否则含 / 的合法 ID 退化为空摘要(v3.43.2 codex 检视)。
     (
         "PUT",
-        re.compile(r"^/api/articles/(?P<target>[^/]+)$"),
+        re.compile(r"^/api/articles/(?P<target>.+)$"),
         lambda match, body: _id_target(match, body, noun="文章", action="编辑"),
     ),
     (
         "DELETE",
-        re.compile(r"^/api/articles/(?P<target>[^/]+)$"),
+        re.compile(r"^/api/articles/(?P<target>.+)$"),
         lambda match, body: _id_target(match, body, noun="文章", action="删除"),
+    ),
+    # /api/fetch/batch 的精确规则必须先于下方的通用单节点规则,否则被记成
+    # 「手动触发采集节点 batch」(v3.43.2 codex 检视)。
+    (
+        "POST",
+        re.compile(r"^/api/fetch/batch$"),
+        lambda _m, body: (
+            "批量触发采集（节点数未知，请求体未采集）" if body is None
+            else f"批量触发采集 {len(body.get('items') or [])} 个节点",
+            None,
+        ),
     ),
     (
         "POST",

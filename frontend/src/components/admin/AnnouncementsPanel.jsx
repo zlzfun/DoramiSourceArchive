@@ -31,24 +31,27 @@ const ANN_PAGE_SIZE = 6;
 
 export default function AnnouncementsPanel({ showToast, refreshTick = 0 }) {
   const confirm = useConfirm();
-  const [items, setItems] = useState(null); // null = 加载中
+  const [items, setItems] = useState(null); // null = 加载中;当前页条目(服务端分页)
+  const [total, setTotal] = useState(0); // 服务端总条数
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [level, setLevel] = useState('info');
   const [publishing, setPublishing] = useState(false);
   const [busyId, setBusyId] = useState(null);
-  // 历史公告分页(v3.42 M17):不再全量平铺所有历史公告。
+  // 历史公告分页:v3.43.2 改真服务端分页(codex 检视——此前默认 limit=200 本地
+  // slice,第 201 条起永久不可见,后端「仅聚合当前页 dismiss_count」也未兑现)。
   const [page, setPage] = useState(1);
 
   // 请求代次守卫(v3.43.1):refreshTick 重取与操作后重取可能并发在途,
   // 旧响应后到即丢弃,不覆盖新数据、不弹旧错。
   const loadGenRef = useRef(0);
-  const load = useCallback(() => {
+  const load = useCallback((targetPage) => {
     const gen = ++loadGenRef.current;
-    fetchAdminAnnouncements()
+    fetchAdminAnnouncements({ skip: (targetPage - 1) * ANN_PAGE_SIZE, limit: ANN_PAGE_SIZE })
       .then((res) => {
         if (gen !== loadGenRef.current) return;
         setItems(Array.isArray(res?.items) ? res.items : []);
+        setTotal(Number(res?.total) || 0);
       })
       .catch((error) => {
         if (gen !== loadGenRef.current) return;
@@ -58,7 +61,13 @@ export default function AnnouncementsPanel({ showToast, refreshTick = 0 }) {
 
   // refreshTick(v3.43.1 M15):父级「切回 Tab」信号只重取列表,不重挂——
   // 标题/正文/级别草稿保留。
-  useEffect(() => { load(); }, [load, refreshTick]);
+  useEffect(() => { load(page); }, [load, page, refreshTick]);
+
+  const totalPages = Math.max(1, Math.ceil(total / ANN_PAGE_SIZE));
+  // 数据收缩(删掉末页最后一条等)后当前页越界时回落到末页,不卡空页。
+  useEffect(() => {
+    if (items !== null && page > totalPages) setPage(totalPages);
+  }, [items, page, totalPages]);
 
   const handlePublish = async (event) => {
     event.preventDefault();
@@ -70,7 +79,8 @@ export default function AnnouncementsPanel({ showToast, refreshTick = 0 }) {
       setTitle('');
       setContent('');
       setLevel('info');
-      load();
+      // 新公告在第一页:已在第一页则直接重取,否则归位(setPage 触发 effect 取数)。
+      if (page === 1) load(1); else setPage(1);
     } catch (error) {
       showToast(error.message, 'error');
     } finally {
@@ -83,7 +93,7 @@ export default function AnnouncementsPanel({ showToast, refreshTick = 0 }) {
     try {
       await toggleAnnouncement(item.id);
       showToast(item.is_active ? '已下线公告' : '已重新上线公告', 'success');
-      load();
+      load(page);
     } catch (error) {
       showToast(error.message, 'error');
     } finally {
@@ -98,7 +108,7 @@ export default function AnnouncementsPanel({ showToast, refreshTick = 0 }) {
     try {
       await deleteAnnouncement(item.id);
       showToast('已删除公告', 'success');
-      load();
+      load(page); // 末页删空时 total 收缩,越界回退 effect 会归位再取
     } catch (error) {
       showToast(error.message, 'error');
     } finally {
@@ -172,7 +182,7 @@ export default function AnnouncementsPanel({ showToast, refreshTick = 0 }) {
         ) : items.length === 0 ? (
           <p className="py-8 text-center tiny-meta">还没有公告,用上方表单发布第一条</p>
         ) : (
-          items.slice((page - 1) * ANN_PAGE_SIZE, page * ANN_PAGE_SIZE).map((item) => {
+          items.map((item) => {
             const summary = stripAnnouncementMarkup(item.content);
             const levelKey = LEVEL_ICONS[item.level] ? item.level : 'info';
             const LevelIcon = LEVEL_ICONS[levelKey];
@@ -221,14 +231,10 @@ export default function AnnouncementsPanel({ showToast, refreshTick = 0 }) {
             );
           })
         )}
-        {items !== null && items.length > ANN_PAGE_SIZE && (
+        {items !== null && total > ANN_PAGE_SIZE && (
           <div className="mt-1 flex flex-wrap items-center gap-2 border-t border-[var(--dorami-border)] pt-2.5">
-            <span className="tiny-meta">共 {items.length} 条</span>
-            <Pager
-              page={Math.min(page, Math.ceil(items.length / ANN_PAGE_SIZE))}
-              totalPages={Math.ceil(items.length / ANN_PAGE_SIZE)}
-              onPage={setPage}
-            />
+            <span className="tiny-meta">共 {total} 条</span>
+            <Pager page={page} totalPages={totalPages} onPage={setPage} />
           </div>
         )}
       </div>

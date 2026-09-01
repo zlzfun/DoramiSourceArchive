@@ -152,7 +152,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
   const detailPanelRef = useRef(null);
   useModalA11y(createModalOpen && createModal.mounted, () => setCreateModalOpen(false), createPanelRef);
   useModalA11y(Boolean(resetTarget) && resetModal.mounted, () => setResetTarget(null), resetPanelRef);
-  useModalA11y(Boolean(detailUser), () => setDetailUser(null), detailPanelRef);
+  // 详情抽屉的 useModalA11y 在 closeDetail 定义之后挂(见下方,Esc 关闭须作废在途请求)。
 
   // 每组 loader 的请求代次守卫(v3.43.1 codex 交叉检视):M15 加了多个刷新时机后,
   // 同组请求可能并发在途——旧响应后到会覆盖新快照。发起时领代次,异步返回后校验
@@ -372,10 +372,30 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
   };
 
   // 单账户操作若发生在详情抽屉打开的这个人身上,顺手刷新抽屉快照(M19 就地管理闭环)。
+  // 与 openDetail 共用 'detail' 代次(v3.43.2 codex 检视·高):快速点开 A→B 时,
+  // A 的迟到响应曾会挂到 B 的标题下,抽屉动作按 detailData.account 实际操作 A——
+  // 落状态前校验代次,关抽屉/换人即作废在途请求。
+  // detailUserRef(终审返修):本函数在单账户操作 handler 的 await 之后调用,读
+  // state 是发起时那次 render 的旧闭包——操作 A 在途时关 A 开 B,旧闭包仍判
+  // 「抽屉开着 A」,会 bump 代次作废 B 的在途请求并把 A 数据挂进 B 的抽屉;
+  // 改经 ref 读最新抽屉归属(openDetail/closeDetail 同步维护)。
+  const detailUserRef = useRef(null);
   const refreshDetailIfOpen = async (username) => {
-    if (detailUser !== username) return;
-    try { setDetailData(await fetchAccountActivity(username, days)); } catch { /* 详情刷新失败不打断主操作 */ }
+    if (detailUserRef.current !== username) return;
+    const fresh = claimGen('detail');
+    try {
+      const data = await fetchAccountActivity(username, days);
+      if (fresh() && detailUserRef.current === username) setDetailData(data);
+    } catch { /* 详情刷新失败不打断主操作 */ }
   };
+
+  // 关抽屉统一走此函数:bump 'detail' 代次,作废在途详情请求。
+  const closeDetail = () => {
+    claimGen('detail');
+    detailUserRef.current = null;
+    setDetailUser(null);
+  };
+  useModalA11y(Boolean(detailUser), closeDetail, detailPanelRef);
 
   // 角色变更(v3.19 多管理员):提升/降级都需确认;降级自己额外预警——生效后当前
   // 会话在下一次请求即被吊销(read_auth_token 回查),表现为被登出,不预警会像 bug。
@@ -449,7 +469,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     try {
       await deleteAccount(acc.username);
       showToast(`已删除 ${acc.username}`, 'success');
-      if (detailUser === acc.username) setDetailUser(null);
+      if (detailUser === acc.username) closeDetail();
       setSelectedAccounts((prev) => {
         if (!prev.has(acc.username)) return prev;
         const next = new Set(prev); next.delete(acc.username); return next;
@@ -584,17 +604,20 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     return (rows ?? []).map((r) => ({ name: r.username, value: r.value }));
   }, [acctSummary, topMetric]);
 
-  // ── 单用户详情：打开抽屉并拉取窗口活动 ──
+  // ── 单用户详情：打开抽屉并拉取窗口活动（'detail' 代次守卫,见 refreshDetailIfOpen 注释）──
   const openDetail = useCallback(async (username) => {
+    const fresh = claimGen('detail');
+    detailUserRef.current = username;
     setDetailUser(username);
     setDetailData(null);
     setLoginListOpen(false);
     try {
-      setDetailData(await fetchAccountActivity(username, days));
+      const data = await fetchAccountActivity(username, days);
+      if (fresh()) setDetailData(data);
     } catch (error) {
-      showToast(error.message || '获取用户详情失败', 'error');
+      if (fresh()) showToast(error.message || '获取用户详情失败', 'error');
     }
-  }, [days, showToast]);
+  }, [claimGen, days, showToast]);
 
   // 详情抽屉图表数据：每日 AI 用量（按用途堆叠，calls / tokens 两套）+ 各源阅读/收藏。
   const detailDayPurpose = useMemo(
@@ -1158,7 +1181,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       )}
 
       {/* ── 单用户活动详情抽屉（右缘滑入，ledger-drawer 语法） ── */}
-      <div className={`ledger-scrim ${detailUser ? 'is-open' : ''}`} onClick={() => setDetailUser(null)} aria-hidden="true" />
+      <div className={`ledger-scrim ${detailUser ? 'is-open' : ''}`} onClick={closeDetail} aria-hidden="true" />
       <aside
         ref={detailPanelRef}
         className={`ledger-drawer ${detailUser ? 'is-open' : ''}`}
@@ -1219,7 +1242,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
               <span className="ai-divider" />
             </span>
           )}
-          <button type="button" className="icon-button shrink-0" onClick={() => setDetailUser(null)} aria-label="关闭详情"><X className="h-5 w-5" /></button>
+          <button type="button" className="icon-button shrink-0" onClick={closeDetail} aria-label="关闭详情"><X className="h-5 w-5" /></button>
         </div>
         <div className="ledger-drawer-body">
           {!detailData ? (

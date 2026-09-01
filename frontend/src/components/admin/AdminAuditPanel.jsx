@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { fetchAdminAuditLog } from '../../api';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
@@ -30,21 +30,29 @@ export default function AdminAuditPanel({ days, showToast }) {
   const operator = useDebouncedValue(operatorInput, 300);
   const query = useDebouncedValue(queryInput, 300);
 
+  // 请求代次守卫(v3.43.2 codex 检视):非第一页改检索条件时,「新条件旧页」与
+  // 「归位第一页」两个请求并发在途,旧页后到会覆盖第一页结果——只允许最新代次
+  // 落 state/弹错/收 loading。
+  const loadGenRef = useRef(0);
   const load = useCallback(async (targetPage) => {
+    const gen = ++loadGenRef.current;
     setLoading(true);
     try {
-      setData(await fetchAdminAuditLog(days, {
+      const res = await fetchAdminAuditLog(days, {
         skip: (targetPage - 1) * AUDIT_PAGE_SIZE,
         limit: AUDIT_PAGE_SIZE,
         operator,
         q: query,
         status: statusScope,
-      }));
+      });
+      if (gen === loadGenRef.current) setData(res);
     } catch (error) {
-      showToast(error.message || '获取操作审计失败', 'error');
-      setData((prev) => prev ?? { items: [], total: 0 });
+      if (gen === loadGenRef.current) {
+        showToast(error.message || '获取操作审计失败', 'error');
+        setData((prev) => prev ?? { items: [], total: 0 });
+      }
     } finally {
-      setLoading(false);
+      if (gen === loadGenRef.current) setLoading(false);
     }
   }, [days, operator, query, statusScope, showToast]);
 
