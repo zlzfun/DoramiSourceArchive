@@ -1,9 +1,10 @@
 // 反馈收件箱(v3.18 互通波,运维管理 → 消息):静止态 = 干净的扫读列表
 // (用户/分类/时间/状态章/正文/已有回复);点「处理」就地展开处理区(状态点击即存 +
 // 回复输入),一次只展开一条——行内不常驻控件,合静默仪器纪律。
-import { useCallback, useEffect, useState } from 'react';
-import { Loader2, PenLine } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Loader2, PenLine, Search } from 'lucide-react';
 import { fetchAdminFeedback, updateFeedbackStatus } from '../../api';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { formatStamp } from './adminUtils';
 import { avatarInitial, avatarHue } from '../../utils/avatarColor';
 import Pager from './Pager';
@@ -24,8 +25,11 @@ const STATUS_LABELS = Object.fromEntries(STATUS_OPTIONS);
 const STATUS_STAMPS = { open: 'stamp-run', in_progress: 'stamp-warn', resolved: 'stamp-ok', dismissed: 'stamp-idle' };
 const CATEGORY_LABELS = { source_request: '想要新内容', bug: '问题反馈', suggestion: '功能建议', other: '其他' };
 
-export default function FeedbackInboxPanel({ showToast }) {
+export default function FeedbackInboxPanel({ showToast, refreshTick = 0 }) {
   const [filter, setFilter] = useState('all');
+  const [category, setCategory] = useState(''); // '' = 全部分类(v3.42 M17)
+  const [queryInput, setQueryInput] = useState('');
+  const query = useDebouncedValue(queryInput, 300); // 跨正文/提交者用户名,服务端检索
   const [items, setItems] = useState(null); // null = 加载中
   const [counts, setCounts] = useState(null);
   const [total, setTotal] = useState(0); // 当前过滤下总条数(服务端给)
@@ -34,22 +38,34 @@ export default function FeedbackInboxPanel({ showToast }) {
   const [draftNote, setDraftNote] = useState('');
   const [busyId, setBusyId] = useState(null);
 
+  // 请求代次守卫(v3.43.1):refreshTick/快速切换过滤会并发在途请求,
+  // 只允许最新一次落 state/弹错——旧响应后到即丢弃。
+  const loadGenRef = useRef(0);
   const load = useCallback((status, targetPage) => {
+    const gen = ++loadGenRef.current;
     fetchAdminFeedback(status === 'all' ? null : status, {
       skip: (targetPage - 1) * FEEDBACK_PAGE_SIZE,
       limit: FEEDBACK_PAGE_SIZE,
+      category,
+      q: query,
     })
       .then((data) => {
+        if (gen !== loadGenRef.current) return;
         setItems(Array.isArray(data?.items) ? data.items : []);
         setCounts(data?.counts || null);
         setTotal(Number(data?.total) || 0);
       })
-      .catch((error) => { setItems([]); showToast(error.message, 'error'); });
-  }, [showToast]);
+      .catch((error) => {
+        if (gen !== loadGenRef.current) return;
+        setItems([]); showToast(error.message, 'error');
+      });
+  }, [category, query, showToast]);
 
-  // 切过滤归位第一页;翻页/首载取对应页。
-  useEffect(() => { setPage(1); }, [filter]);
-  useEffect(() => { setItems(null); load(filter, page); }, [filter, page, load]);
+  // 切过滤/分类/检索归位第一页;翻页/首载取对应页。
+  // refreshTick(v3.43.1 M15):父级「切回 Tab」信号只驱动本加载 effect 重取,
+  // 面板不重挂——检索词/展开态/回复草稿全部保留。
+  useEffect(() => { setPage(1); }, [filter, category, query]);
+  useEffect(() => { setItems(null); load(filter, page); }, [filter, page, load, refreshTick]);
 
   const totalPages = Math.max(1, Math.ceil(total / FEEDBACK_PAGE_SIZE));
   // 数据收缩(处理完最后一页的条目等)后当前页越界时回落到末页。
@@ -96,12 +112,41 @@ export default function FeedbackInboxPanel({ showToast }) {
   return (
     <section className="surface-card card-pad">
       <div className="card-head">
-        <span className="card-title">反馈收件箱</span>
-        <div className="ml-auto flex flex-wrap items-center gap-2.5">
-          {counts ? (
-            <span className="tiny-meta whitespace-nowrap">待处理 {counts.open ?? 0} · 共 {counts.total ?? 0}</span>
-          ) : null}
-          <div className="mini-seg" role="group" aria-label="按状态筛选反馈">
+        {/* 左右各两行,高度平衡(目检返修):左=标题行(标题+计数)/其下搜索框;
+            右=分类/状态两轴 mini-seg 上下排列。 */}
+        <span className="flex flex-col items-start gap-1.5">
+          <span className="flex items-baseline gap-2.5">
+            <span className="card-title">反馈收件箱</span>
+            {counts ? (
+              <span className="tiny-meta whitespace-nowrap">待处理 {counts.open ?? 0} · 共 {counts.total ?? 0}</span>
+            ) : null}
+          </span>
+          <span className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+            <input
+              value={queryInput}
+              onChange={(e) => setQueryInput(e.target.value)}
+              placeholder="搜索反馈 / 用户"
+              className="form-input form-input-inline w-44 pl-8"
+              aria-label="搜索反馈"
+            />
+          </span>
+        </span>
+        <span className="ml-auto flex flex-col items-end gap-1.5">
+          <span className="mini-seg" role="group" aria-label="按分类筛选反馈">
+            {[['', '全部'], ...Object.entries(CATEGORY_LABELS)].map(([value, label]) => (
+              <button
+                key={value || 'cat-all'}
+                type="button"
+                className={`mini-seg-btn ${category === value ? 'is-on' : ''}`}
+                aria-pressed={category === value}
+                onClick={() => setCategory(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </span>
+          <span className="mini-seg" role="group" aria-label="按状态筛选反馈">
             {FILTERS.map(([value, label]) => (
               <button
                 key={value}
@@ -113,8 +158,8 @@ export default function FeedbackInboxPanel({ showToast }) {
                 {label}
               </button>
             ))}
-          </div>
-        </div>
+          </span>
+        </span>
       </div>
 
       <div className="mt-2">
@@ -124,7 +169,9 @@ export default function FeedbackInboxPanel({ showToast }) {
           </p>
         ) : items.length === 0 ? (
           <p className="py-8 text-center tiny-meta">
-            {filter === 'all' ? '还没有收到反馈,读者提交后会出现在这里' : `没有「${STATUS_LABELS[filter]}」状态的反馈`}
+            {(query || category)
+              ? '没有匹配当前检索条件的反馈'
+              : filter === 'all' ? '还没有收到反馈,读者提交后会出现在这里' : `没有「${STATUS_LABELS[filter]}」状态的反馈`}
           </p>
         ) : (
           items.map((item) => {

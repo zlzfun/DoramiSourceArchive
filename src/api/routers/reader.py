@@ -1149,10 +1149,6 @@ def _require_reader_ai(request: Request):
         record = accounts_service.get_user(session, username)
         if record is None or not record.ai_beta_enabled:
             raise HTTPException(status_code=403, detail="AI 功能尚未开启，请联系管理员")
-        # 全局日 token 预算(v3.34):与逐用户日调用限额互补,护全站总成本
-        # (多账户/IM bot 代答渠道的放大器)。0=不限;超限当日全员 429,次日自复。
-        if accounts_service.reader_ai_budget_exhausted(session):
-            raise HTTPException(status_code=429, detail="今日 AI 用量已达全站上限，请明日再试")
         llm_config = daily_brief_service.resolve_llm_config(session)
     if not llm_config.configured:
         raise HTTPException(status_code=403, detail="AI 服务暂未就绪")
@@ -1162,14 +1158,13 @@ def _require_reader_ai(request: Request):
 # 读者 AI 逐用户每日配额（常量，可调）：护住共享 LLM 预算不被单账户刷爆。
 # 计数复用 AiUsageRecord.calls，即底层 LLM 调用次数——translate 会按段并发多次调用，
 # 故该额度更接近「若干篇整文翻译」而非固定篇数；ask 通常一问一次调用。
-_AI_DAILY_CALL_LIMITS = {"translate": 50, "ask": 100}
+_AI_DAILY_CALL_LIMITS = {"translate": 50, "ask": 100, "summarize": 50}
 
 
 def _enforce_ai_daily_quota(username: str, purpose: str) -> None:
     """按当日 AiUsageRecord 聚合的 calls 判该账户此用途是否超额；超则 429。
 
     admin 不豁免：配额护的是共享 LLM 预算/成本，与账户角色无关，统一限最简单可预期。
-    请求前置校验（未产生 LLM 调用即拦），与 feedback「单日 10 条限额」同范式。
     """
     limit = _AI_DAILY_CALL_LIMITS.get(purpose)
     if not limit:
@@ -1187,11 +1182,27 @@ def _enforce_ai_daily_quota(username: str, purpose: str) -> None:
         raise HTTPException(status_code=429, detail="今日 AI 使用次数已达上限，请明日再试")
 
 
+def _enforce_ai_cost_gates(username: str, purpose: str) -> None:
+    """成本准入两闸(v3.43.2 codex 交叉检视 M02):全站日 token 预算 + 逐用户日配额。
+
+    与授权检查(_require_reader_ai)分离——授权在请求入口判,成本闸只在**即将发起
+    真实 LLM 调用**时判:translate/summarize 经 service 的 pre_llm_check 回调在
+    缓存未命中后执行(缓存命中零成本,不该被 429 拦),ask 无缓存、端点内直接调用。
+    注:check 与计量落库之间存在并发窗口,当前限额语义是**软上限**(恶意并发可
+    短暂超出;原子预留-核销的硬上限记 backlog,重构面大而内网收益低)。
+    """
+    with Session(deps.get_db_sink().engine) as session:
+        # 全局日 token 预算(v3.34):与逐用户日调用限额互补,护全站总成本
+        # (多账户/IM bot 代答渠道的放大器)。0=不限;超限当日全员 429,次日自复。
+        if accounts_service.reader_ai_budget_exhausted(session):
+            raise HTTPException(status_code=429, detail="今日 AI 用量已达全站上限，请明日再试")
+    _enforce_ai_daily_quota(username, purpose)
+
+
 @router.post("/ai/translate")
 async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
     """把指定文章正文译为简体中文（结果缓存复用）。"""
     username, llm_config = _require_reader_ai(request)
-    _enforce_ai_daily_quota(username, "translate")
     db_sink = deps.get_db_sink()
     with Session(db_sink.engine) as session:
         _deny_unsubscribed_user_source_article(
@@ -1201,6 +1212,7 @@ async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
         result = await reader_ai_service.translate_article(
             db_sink, params.article_id, llm_config,
             UsageMeta(purpose="translate", username=username),
+            pre_llm_check=lambda: _enforce_ai_cost_gates(username, "translate"),
         )
     except reader_ai_service.ReaderAIError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
@@ -1224,6 +1236,7 @@ async def reader_ai_summarize(params: ReaderTranslateParams, request: Request):
         result = await reader_ai_service.summarize_article(
             db_sink, params.article_id, llm_config,
             UsageMeta(purpose="summarize", username=username),
+            pre_llm_check=lambda: _enforce_ai_cost_gates(username, "summarize"),
         )
     except reader_ai_service.ReaderAIError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
@@ -1260,7 +1273,7 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
     """
     app = _app()
     username, llm_config = _require_reader_ai(request)
-    _enforce_ai_daily_quota(username, "ask")
+    _enforce_ai_cost_gates(username, "ask")  # ask 无缓存,成本闸在端点直接前置
     db_sink = deps.get_db_sink()
     scope = params.scope if params.scope in ("article", "articles", "subscription", "all") else "article"
     ask_id = _valid_ask_id(params.ask_id)

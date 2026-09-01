@@ -173,12 +173,24 @@ def admin_overview(session: Session = Depends(deps.get_session)):
     }
 
 
+# 账户列表可用的排序键（v3.41 账户管理 V2，审计 M06）：值 = (取值函数所需字段, 默认方向)。
+_ACCOUNT_SORT_KEYS = {
+    "username", "created_at", "last_login", "logins", "reads",
+    "ai_calls", "ai_tokens", "subscriptions",
+}
+
+
 @router.get("/accounts")
 def admin_list_accounts(
     days: int = 30,
     skip: int = 0,
     limit: int = 50,
     q: str | None = None,
+    role: str | None = None,
+    status: str | None = None,
+    ai: str | None = None,
+    sort: str = "username",
+    order: str | None = None,
     session: Session = Depends(deps.get_session),
 ):
     """账户列表（运维视图）：基础账户字段 + 订阅数 + **近 days 天窗口指标**。
@@ -187,13 +199,24 @@ def admin_list_accounts(
     last_login_at 派生）让列表反映「近况」而非生命周期累计。多管理员平权后，管理员
     账户同样计入列表（payload 带 role），供角色管理与末位保护裁决。
 
-    规模化：服务端分页（skip/limit）+ 用户名子串过滤（q）。`items` 为过滤后按
-    username 排序的分页切片；`total` 为过滤后的账户总数；`summary` 与 top 榜聚合
-    **全部账户**（不受 q/分页影响），直接在既有全表窗口 map 上求和/排序得到。
+    规模化（v3.41 账户管理 V2，审计 M06/M07）：
+    - 过滤：`q` 用户名子串（大小写不敏感）× `role`(admin|user) × `status`(active|disabled)
+      × `ai`(on|off)，服务端组合生效；
+    - 排序：`sort` ∈ username/created_at/last_login/logins/reads/ai_calls/ai_tokens/
+      subscriptions，`order` ∈ asc/desc（缺省：username 升序，指标类降序）；
+    - 分页：skip/limit 切过滤排序后的结果；`total` 为过滤后总数；
+    - 窗口指标由各表 SQL GROUP BY 聚合（usage_by_user/reads_by_user/logins_by_user），
+      不再整窗明细进内存；`summary` 与 top 榜恒聚合**全部账户**，不受过滤/分页影响。
     """
     days = max(1, min(int(days or 30), 365))
     skip = max(0, int(skip or 0))
     limit = max(1, min(int(limit or 50), 200))
+    role = role if role in ("admin", "user") else None
+    status = status if status in ("active", "disabled") else None
+    ai = ai if ai in ("on", "off") else None
+    sort = sort if sort in _ACCOUNT_SORT_KEYS else "username"
+    if order not in ("asc", "desc"):
+        order = "asc" if sort in ("username", "created_at") else "desc"
     since = (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
     rows = session.exec(
         select(
@@ -242,13 +265,41 @@ def admin_list_accounts(
         ][:8],
     }
 
-    # q 子串过滤(大小写不敏感),排序沿用 list_users 的 username 序。
+    # 组合过滤（q × 角色 × 状态 × AI，全部服务端生效）。
+    filtered = list(all_users)
     if q:
         needle = q.strip().lower()
-        filtered = [u for u in all_users if needle in u.username.lower()]
-    else:
-        filtered = list(all_users)
+        filtered = [u for u in filtered if needle in u.username.lower()]
+    if role is not None:
+        filtered = [u for u in filtered if u.role == role]
+    if status is not None:
+        want_active = status == "active"
+        filtered = [u for u in filtered if u.is_active == want_active]
+    if ai is not None:
+        want_ai = ai == "on"
+        filtered = [u for u in filtered if bool(u.ai_beta_enabled) == want_ai]
     total = len(filtered)
+
+    # 排序：指标键从窗口聚合 map 取值（缺省 0），时间键空值按空串参与（desc 时自然沉底）。
+    def _sort_key(u):
+        if sort == "username":
+            return u.username
+        if sort == "created_at":
+            return u.created_at or ""
+        if sort == "last_login":
+            return u.last_login_at or last_login_map.get(u.username) or ""
+        if sort == "logins":
+            return logins_map.get(u.username, 0)
+        if sort == "reads":
+            return reads_map.get(u.username, 0)
+        if sort == "ai_calls":
+            return usage_map.get(u.username, {}).get("calls", 0)
+        if sort == "ai_tokens":
+            return usage_map.get(u.username, {}).get("total_tokens", 0)
+        return sub_counts.get(u.username, 0)  # subscriptions
+
+    filtered.sort(key=lambda u: u.username)  # 稳定次序键：同值按用户名
+    filtered.sort(key=_sort_key, reverse=(order == "desc"))
 
     result = []
     for record in filtered[skip : skip + limit]:
@@ -312,11 +363,13 @@ def admin_account_activity(
         "favorites_total": sum(favorites_by_source.values()),
         "account": {
             "username": record.username,
+            "role": record.role,
             "is_active": record.is_active,
             "ai_beta_enabled": record.ai_beta_enabled,
-            # 快照缺失时以事件流兜底(与账户列表同一口径)
+            # 快照缺失时以事件流兜底(单用户 MAX 标量查询,v3.43 M22——
+            # 此前误用全表 GROUP BY 的 last_login_by_user)
             "last_login_at": record.last_login_at
-            or accounts_service.last_login_by_user(session).get(username),
+            or accounts_service.last_login_for_user(session, username),
             "ai_last_used_at": record.ai_last_used_at,
             "created_at": record.created_at,
             "subscription_count": int(subscription_count),
@@ -337,24 +390,45 @@ def admin_audit_log(
     days: int = 30,
     limit: int = 100,
     skip: int = 0,
+    operator: str | None = None,
+    q: str | None = None,
+    status: str | None = None,
     session: Session = Depends(deps.get_session),
 ):
-    """读取近 days 天管理操作审计；当前尚未实现留存期限与自动清理。"""
+    """读取近 days 天管理操作审计（留存清理由 retention 每日任务负责）。
+
+    检索(v3.42 M11)：`operator` 按操作者用户名子串、`q` 跨 摘要/目标/路径 子串、
+    `status` ∈ ok(2xx/3xx)|denied(4xx/5xx，被拒绝的尝试)；全部 SQL 端生效并与
+    时间窗/分页叠加，`total` = 当前过滤组合下的总数。
+    """
     safe_days = max(1, min(int(days), 365))
     safe_limit = max(1, min(int(limit), 500))
     safe_skip = max(0, int(skip or 0))
     window_start = (
         datetime.date.today() - datetime.timedelta(days=safe_days - 1)
     ).isoformat()
-    in_window = AdminAuditRecord.at >= window_start
+    conditions = [AdminAuditRecord.at >= window_start]
+    if operator and operator.strip():
+        conditions.append(AdminAuditRecord.username.contains(operator.strip(), autoescape=True))
+    if q and q.strip():
+        needle = q.strip()
+        conditions.append(
+            AdminAuditRecord.summary.contains(needle, autoescape=True)
+            | AdminAuditRecord.target.contains(needle, autoescape=True)
+            | AdminAuditRecord.path.contains(needle, autoescape=True)
+        )
+    if status == "ok":
+        conditions.append(AdminAuditRecord.status_code < 400)
+    elif status == "denied":
+        conditions.append(AdminAuditRecord.status_code >= 400)
     total = session.exec(
         select(func.count())
         .select_from(AdminAuditRecord)
-        .where(in_window)
+        .where(*conditions)
     ).one()
     records = session.exec(
         select(AdminAuditRecord)
-        .where(in_window)
+        .where(*conditions)
         .order_by(AdminAuditRecord.at.desc(), AdminAuditRecord.id.desc())
         .offset(safe_skip)
         .limit(safe_limit)

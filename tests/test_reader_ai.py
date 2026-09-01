@@ -558,3 +558,33 @@ def test_summarize_cache_invalidated_by_content_change(monkeypatch, tmp_path):
             session.commit()
         assert client.post("/api/reader/ai/summarize", json={"article_id": "a1"}).json()["cached"] is False
         assert len(calls) == 2
+
+
+def test_summarize_daily_quota_429(monkeypatch, tmp_path):
+    """v3.40.4 M02：summarize 纳入逐用户日调用限额——到顶 429，不再可无限触发。
+
+    历史缺口：summarize 端点不接 _enforce_ai_daily_quota，且计量用途白名单漏登记，
+    速读同时绕过逐用户限额/全站日预算/用量看板三层护栏。
+    """
+    import datetime as _dt
+
+    from api.routers import reader as reader_router
+    from models.db import AiUsageRecord
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "sum_quota.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_article(sink.engine, "a1", "rss_x", "Title", "Hello world body")
+    _patch_llm(monkeypatch)
+
+    limit = reader_router._AI_DAILY_CALL_LIMITS["summarize"]
+    today = _dt.date.today().isoformat()
+    with Session(sink.engine) as session:
+        session.add(AiUsageRecord(day=today, username="user", purpose="summarize",
+                                  model="m1", calls=limit, total_tokens=1, updated_at=today))
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        resp = client.post("/api/reader/ai/summarize", json={"article_id": "a1"})
+        assert resp.status_code == 429

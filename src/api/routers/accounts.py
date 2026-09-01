@@ -11,11 +11,10 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from api import deps
 from api.serializers import serialize_user
-from models.db import ReaderFeedTokenRecord, ReaderSubscriptionRecord
 from services import accounts as accounts_service
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
@@ -37,6 +36,13 @@ class AccountResetPasswordParams(BaseModel):
     new_password: str
 
 
+class AccountBatchParams(BaseModel):
+    usernames: list[str]
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+    ai_beta_enabled: Optional[bool] = None
+
+
 @router.get("")
 def list_accounts(session: Session = Depends(deps.get_session)):
     return [serialize_user(r) for r in accounts_service.list_users(session)]
@@ -51,6 +57,28 @@ def create_account(params: AccountCreateParams, session: Session = Depends(deps.
     except accounts_service.AccountError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return serialize_user(record)
+
+
+@router.post("/batch")
+def batch_update_accounts(
+    params: AccountBatchParams, session: Session = Depends(deps.get_session)
+):
+    """批量更新一组账户的角色/启停/AI 开关（v3.41 账户管理 V2，审计 M05）。
+
+    原子语义：任一账户不存在、或整批生效后活跃管理员归零 → 整批 400 回滚，
+    绝不留下半批已改的状态。语义细节见 accounts.batch_update_users。
+    """
+    try:
+        result = accounts_service.batch_update_users(
+            session,
+            params.usernames,
+            role=params.role,
+            is_active=params.is_active,
+            ai_beta_enabled=params.ai_beta_enabled,
+        )
+    except accounts_service.AccountError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, **result}
 
 
 @router.put("/{username}")
@@ -91,19 +119,10 @@ def reset_account_password(
 
 @router.delete("/{username}")
 def delete_account(username: str, session: Session = Depends(deps.get_session)):
+    # 级联收口（订阅/令牌/收藏/分享/读态/反馈/自定源退订 + 计量墓碑化）全部
+    # 在 delete_user 单事务内完成（v3.40.4 M03），router 不再分段二次提交。
     try:
         accounts_service.delete_user(session, username)
     except accounts_service.AccountError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    # 清理该用户的订阅与聚合令牌，避免孤儿数据。
-    for sub in session.exec(
-        select(ReaderSubscriptionRecord).where(
-            ReaderSubscriptionRecord.owner_username == username
-        )
-    ).all():
-        session.delete(sub)
-    feed_token = session.get(ReaderFeedTokenRecord, username)
-    if feed_token is not None:
-        session.delete(feed_token)
-    session.commit()
     return {"ok": True}

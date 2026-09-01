@@ -16,7 +16,7 @@ APScheduler 启动编排同源），经 _app() 延迟动态调用。序列化与
 """
 
 import importlib
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from apscheduler.triggers.cron import CronTrigger
@@ -257,21 +257,41 @@ def get_collection_job_runs(
         status: Optional[str] = None,
         trigger_type: Optional[str] = None,
         run_scope: Optional[str] = None,
+        days: int = 0,
         skip: int = 0,
         limit: int = 100,
         session: Session = Depends(deps.get_session),
 ):
-    query = select(CollectionJobRunRecord)
+    """任务级运行历史(v3.42 M09 改真分页):响应 {items, total},days>0 限定时间窗。"""
+    from sqlmodel import func
+
+    conditions = []
     if job_id is not None:
-        query = query.where(CollectionJobRunRecord.job_id == job_id)
+        conditions.append(CollectionJobRunRecord.job_id == job_id)
     if status:
-        query = query.where(CollectionJobRunRecord.status == status)
+        conditions.append(CollectionJobRunRecord.status == status)
     if trigger_type:
-        query = query.where(CollectionJobRunRecord.trigger_type == trigger_type)
+        conditions.append(CollectionJobRunRecord.trigger_type == trigger_type)
     if run_scope:
-        query = query.where(CollectionJobRunRecord.run_scope == run_scope)
-    query = query.order_by(CollectionJobRunRecord.started_at.desc()).offset(skip).limit(limit)
-    return [serialize_collection_job_run(record) for record in session.exec(query).all()]
+        conditions.append(CollectionJobRunRecord.run_scope == run_scope)
+    if days and days > 0:
+        safe_days = min(int(days), 365)
+        since = (date.today() - timedelta(days=safe_days - 1)).isoformat()
+        conditions.append(CollectionJobRunRecord.started_at >= since)
+    total = session.exec(
+        select(func.count()).select_from(CollectionJobRunRecord).where(*conditions)
+    ).one()
+    records = session.exec(
+        select(CollectionJobRunRecord)
+        .where(*conditions)
+        .order_by(CollectionJobRunRecord.started_at.desc())
+        .offset(max(0, int(skip or 0)))
+        .limit(max(1, min(int(limit or 100), 500)))
+    ).all()
+    return {
+        "items": [serialize_collection_job_run(record) for record in records],
+        "total": int(total),
+    }
 
 
 @router.get("/api/collection-job-runs/{job_run_id}")

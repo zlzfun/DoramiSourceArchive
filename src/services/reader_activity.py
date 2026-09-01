@@ -12,7 +12,8 @@ from __future__ import annotations
 import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlmodel import Session, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlmodel import Session, func, select
 
 from models.db import ReaderReadRecord
 
@@ -37,39 +38,44 @@ def record_read(
     source_id: str,
     day: Optional[str] = None,
 ) -> None:
-    """把一次阅读累加进当天该来源的聚合行（不存在则建）。空用户/来源静默跳过。"""
+    """把一次阅读累加进当天该来源的聚合行（不存在则建）。空用户/来源静默跳过。
+
+    v3.43（审计 M21）：SQLite `INSERT … ON CONFLICT DO UPDATE` 原子累加（与
+    ai_usage.record_usage 同因同修），聚合键唯一索引由迁移 a7e2f95c1d40 保证。
+    """
     username = (username or "").strip()
     source_id = (source_id or "").strip()
     if not username or not source_id:
         return
     day = day or _today()
-    record = session.exec(
-        select(ReaderReadRecord).where(
-            ReaderReadRecord.day == day,
-            ReaderReadRecord.username == username,
-            ReaderReadRecord.source_id == source_id,
-        )
-    ).first()
-    if record is None:
-        record = ReaderReadRecord(
-            day=day, username=username, source_id=source_id, reads=0, updated_at=_now_iso()
-        )
-    record.reads += 1
-    record.updated_at = _now_iso()
-    session.add(record)
+    table = ReaderReadRecord.__table__
+    stmt = sqlite_insert(table).values(
+        day=day, username=username, source_id=source_id, reads=1, updated_at=_now_iso()
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["day", "username", "source_id"],
+        set_={"reads": table.c.reads + 1, "updated_at": _now_iso()},
+    )
+    session.execute(stmt)
     session.commit()
 
 
 def reads_by_user(session: Session, *, days: int = 30) -> Dict[str, int]:
-    """窗口内按用户聚合 `{username: total_reads}`，供账户列表批量富化。"""
+    """窗口内按用户聚合 `{username: total_reads}`，供账户列表批量富化。
+
+    v3.41（审计 M07）：SQL 端 GROUP BY，不再整窗明细进内存；排除删号墓碑
+    （`deleted:*`——账户列表/活跃榜只看现存账户）。
+    """
     since = _since(days)
-    rows: List[ReaderReadRecord] = list(
-        session.exec(select(ReaderReadRecord).where(ReaderReadRecord.day >= since)).all()
-    )
-    out: Dict[str, int] = {}
-    for row in rows:
-        out[row.username] = out.get(row.username, 0) + row.reads
-    return out
+    rows = session.exec(
+        select(ReaderReadRecord.username, func.coalesce(func.sum(ReaderReadRecord.reads), 0))
+        .where(
+            ReaderReadRecord.day >= since,
+            ReaderReadRecord.username.not_like("deleted:%"),
+        )
+        .group_by(ReaderReadRecord.username)
+    ).all()
+    return {username: int(total or 0) for username, total in rows}
 
 
 def reads_by_source(session: Session, *, days: Optional[int] = None) -> Dict[str, int]:
@@ -78,14 +84,13 @@ def reads_by_source(session: Session, *, days: Optional[int] = None) -> Dict[str
     与收藏/订阅同口径——默认全量（`days=None`，不设时间窗口）；传入 `days` 时
     只统计窗口内。
     """
-    query = select(ReaderReadRecord)
+    query = select(
+        ReaderReadRecord.source_id, func.coalesce(func.sum(ReaderReadRecord.reads), 0)
+    ).group_by(ReaderReadRecord.source_id)
     if days is not None:
         query = query.where(ReaderReadRecord.day >= _since(days))
-    rows: List[ReaderReadRecord] = list(session.exec(query).all())
-    out: Dict[str, int] = {}
-    for row in rows:
-        out[row.source_id] = out.get(row.source_id, 0) + row.reads
-    return out
+    rows = session.exec(query).all()
+    return {source_id: int(total or 0) for source_id, total in rows}
 
 
 def summarize_user_reads(session: Session, username: str, *, days: int = 30) -> Dict[str, Any]:

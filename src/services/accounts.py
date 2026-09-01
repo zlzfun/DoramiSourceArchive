@@ -22,9 +22,23 @@ import hmac
 import secrets
 from typing import List, Optional
 
-from sqlmodel import Session, func, select
+from sqlmodel import Session, delete, func, select, update
 
-from models.db import AiUsageRecord, AppSettingRecord, LoginEventRecord, UserRecord
+from models.db import (
+    AiUsageRecord,
+    AnnouncementDismissRecord,
+    AppSettingRecord,
+    ArticleShareRecord,
+    FeedbackRecord,
+    LoginEventRecord,
+    ReaderArticleReadStateRecord,
+    ReaderFavoriteRecord,
+    ReaderFeedTokenRecord,
+    ReaderReadCursorRecord,
+    ReaderReadRecord,
+    ReaderSubscriptionRecord,
+    UserRecord,
+)
 
 VALID_ROLES = ("admin", "user")
 VALID_SURFACES = ("console", "reader")
@@ -55,6 +69,16 @@ class AccountError(ValueError):
 
 def _now_iso() -> str:
     return datetime.datetime.now().isoformat()
+
+
+def new_session_epoch() -> str:
+    """会话世代值（v3.40.4 M04）：建号/改密时轮换。
+
+    登录 token 携带签发时的世代，校验时须与 users 行一致——密码重置即吊销既有
+    Cookie；建号随机初始化使删号后同名重建不复活旧 Cookie。存量行为 ""，旧 token
+    无世代字段按 "" 对待（升级不强制重登，首次改密后收紧）。
+    """
+    return secrets.token_hex(8)
 
 
 # ==================== 末位活跃管理员保护 ====================
@@ -162,6 +186,7 @@ def create_user(session: Session, username: str, password: str, role: str) -> Us
         role=role,
         is_active=True,
         ai_beta_enabled=ai_beta_new_user_default(session),
+        session_epoch=new_session_epoch(),
         created_at=now,
         updated_at=now,
     )
@@ -176,6 +201,8 @@ def set_password(session: Session, username: str, new_password: str) -> UserReco
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
     record.password_hash = hash_password(new_password)
+    # 改密即轮换会话世代：该账户既有登录 Cookie 下一次请求即失效（M04）。
+    record.session_epoch = new_session_epoch()
     record.updated_at = _now_iso()
     session.add(record)
     session.commit()
@@ -243,6 +270,71 @@ def set_ai_beta_enabled(session: Session, username: str, enabled: bool) -> UserR
     return record
 
 
+# 批量操作上限：一次请求最多动这么多账户（150 人规模一页全选远在其下，防误提交巨批）。
+BATCH_UPDATE_MAX = 500
+
+
+def batch_update_users(
+    session: Session,
+    usernames: List[str],
+    *,
+    role: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    ai_beta_enabled: Optional[bool] = None,
+) -> dict:
+    """批量更新一组账户的角色/启停/AI 开关（v3.41 账户管理 V2，审计 M05）。
+
+    **原子语义（全成或全不成）**：任一账户不存在、或整批生效后活跃管理员数将归零，
+    整批拒绝（AccountError）并回滚——比逐个套用单账户守卫更严也更可预期：
+    「批量停用全部管理员」直接拒绝，而不是停到剩最后一个才报错、留下半批已停的状态。
+    末位保护以**整批后的终态**裁决，天然覆盖「两个 admin 各自被批量停用」类组合。
+    单事务一次 commit；幂等项（值未变）不计入 updated 也不 bump updated_at。
+    """
+    names = [str(u or "").strip() for u in usernames]
+    names = [u for u in names if u]
+    if not names:
+        raise AccountError("请至少选择一个账户")
+    if len(names) > BATCH_UPDATE_MAX:
+        raise AccountError(f"单次批量最多 {BATCH_UPDATE_MAX} 个账户")
+    if role is None and is_active is None and ai_beta_enabled is None:
+        raise AccountError("请指定要批量更新的字段")
+    if role is not None:
+        role = _normalize_role(role)
+
+    unique_names = list(dict.fromkeys(names))
+    records = [get_user(session, u) for u in unique_names]
+    missing = [u for u, r in zip(unique_names, records) if r is None]
+    if missing:
+        raise AccountError(f"账户不存在：{'、'.join(missing[:5])}{'…' if len(missing) > 5 else ''}")
+
+    now = _now_iso()
+    updated = 0
+    try:
+        for record in records:
+            changed = False
+            if role is not None and record.role != role:
+                record.role = role
+                changed = True
+            if is_active is not None and record.is_active != bool(is_active):
+                record.is_active = bool(is_active)
+                changed = True
+            if ai_beta_enabled is not None and record.ai_beta_enabled != bool(ai_beta_enabled):
+                record.ai_beta_enabled = bool(ai_beta_enabled)
+                changed = True
+            if changed:
+                record.updated_at = now
+                session.add(record)
+                updated += 1
+        # 末位保护按整批终态裁决（角色/启停都可能触及）。
+        if (role is not None or is_active is not None) and count_active_admins(session) < 1:
+            raise AccountError("系统至少需保留一名活跃管理员，该批量操作会移除全部活跃管理员")
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    return {"updated": updated, "unchanged": len(records) - updated, "total": len(records)}
+
+
 def set_default_surface(session: Session, username: str, surface: str) -> UserRecord:
     """设置账户登录默认落地界面（console 管理台 / reader 阅读器）。
 
@@ -293,16 +385,31 @@ def last_login_by_user(session: Session) -> dict:
     return {username: at for username, at in rows}
 
 
+def last_login_for_user(session: Session, username: str) -> Optional[str]:
+    """事件流口径的单用户最近登录时间（v3.43 审计 M22）。
+
+    单用户抽屉的快照兜底此前误用 `last_login_by_user`——为看一个人的时间对
+    事件表做全表 GROUP BY；这里改成对该用户名的一次 MAX 标量查询。"""
+    return session.exec(
+        select(func.max(LoginEventRecord.at)).where(LoginEventRecord.username == username)
+    ).one()
+
+
 def logins_by_user(session: Session, *, days: int = 30) -> dict:
-    """窗口内按用户聚合登录次数 `{username: count}`（供账户列表/活跃榜富化）。"""
+    """窗口内按用户聚合登录次数 `{username: count}`（供账户列表/活跃榜富化）。
+
+    v3.41（审计 M07）：SQL 端 GROUP BY；排除删号墓碑（`deleted:*`）。
+    """
     since = _since(days)
-    rows: List[LoginEventRecord] = list(
-        session.exec(select(LoginEventRecord).where(LoginEventRecord.at >= since)).all()
-    )
-    out: dict = {}
-    for row in rows:
-        out[row.username] = out.get(row.username, 0) + 1
-    return out
+    rows = session.exec(
+        select(LoginEventRecord.username, func.count())
+        .where(
+            LoginEventRecord.at >= since,
+            LoginEventRecord.username.not_like(f"{DELETED_USER_PREFIX}%"),
+        )
+        .group_by(LoginEventRecord.username)
+    ).all()
+    return {username: int(count or 0) for username, count in rows}
 
 
 def summarize_user_logins(
@@ -441,12 +548,132 @@ def reader_ai_budget_exhausted(session: Session) -> bool:
     return bool(budget) and reader_ai_tokens_today(session) >= budget
 
 
+# 删号计量墓碑前缀：用户名不允许含冒号（create_user 拒绝），墓碑名天然不与任何
+# 真实账户冲突，也无法登录（users 表无此行）。
+DELETED_USER_PREFIX = "deleted:"
+
+
+def _merge_into_tombstone(
+    session: Session,
+    model,
+    *,
+    key_cols: tuple,
+    sum_cols: tuple,
+    username: str,
+    tombstone: str,
+) -> None:
+    """把某用户的计量聚合行合并式改写成墓碑行(不提交,由调用方事务收口)。
+
+    逐行 `INSERT … ON CONFLICT DO UPDATE`:墓碑键行不存在则插、存在则计数累加
+    (`updated_at` 取较新值),随后删除原用户名行——同名账号「删→重建→再删」不再
+    撞聚合键唯一索引,且成本历史守恒。行数上界 = 天数×维度组合,单用户量极小。
+    """
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    table = model.__table__
+    rows = session.exec(select(model).where(model.username == username)).all()
+    for row in rows:
+        values = {
+            "username": tombstone,
+            "updated_at": row.updated_at,
+            **{col: getattr(row, col) for col in key_cols},
+            **{col: getattr(row, col) for col in sum_cols},
+        }
+        stmt = sqlite_insert(table).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["day", "username", *[c for c in key_cols if c != "day"]],
+            set_={
+                **{col: getattr(table.c, col) + getattr(row, col) for col in sum_cols},
+                "updated_at": func.max(table.c.updated_at, row.updated_at),
+            },
+        )
+        session.execute(stmt)
+        session.delete(row)
+
+
 def delete_user(session: Session, username: str) -> None:
+    """删除账户并收口其全部身份数据（v3.40.4 审计 M03，单事务原子提交）。
+
+    语义（2026-09-01 拍板）：
+    - **个人资产物理删除并即时失效**：订阅行与聚合令牌、收藏、公开分享链接
+      （行删即 404）、逐篇读态与按源水位、反馈、公告 dismiss；该用户订阅的
+      自定源随退订走既有「无人订阅即物理删」语义。
+    - **计量历史墓碑化**：AI 用量/阅读计量/登录事件改写为 ``deleted:<原名>``——
+      运维看板与成本历史保持完整真实，同名重建不继承任何历史。
+    - **保留原名**：管理审计日志（操作历史即历史）与 JobRecord.created_by。
+    此前版本只删账户行+订阅+令牌且分两次提交——收藏/分享/计量等残留可被同名
+    重建继承，后段失败还会部分删除；现全部改在一个事务内，末尾一次 commit。
+    """
+    # 函数级导入：user_sources 依赖 feedparser/httpx，避免账户服务的轻量消费方
+    # 背上抓取栈依赖（models → services 单向，无环）。
+    from services import user_sources as user_sources_service
+
     record = get_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
     # 删除最后一个活跃管理员前守卫（非活跃 admin 不计入活跃数，可删）。
     _guard_last_active_admin(session, record, "删除")
+
+    tombstone = f"{DELETED_USER_PREFIX}{username}"
+
+    # ① 自定源级联（须先于订阅行整批删除——退订语义要读订阅行判断剩余订阅者）。
+    user_sources_service.purge_account_user_sources(session, username)
+    user_sources_service.tombstone_owner_username(session, username, tombstone)
+
+    # ② 个人资产物理删除。
+    for model, owner_col in (
+        (ReaderSubscriptionRecord, ReaderSubscriptionRecord.owner_username),
+        (ReaderFavoriteRecord, ReaderFavoriteRecord.owner_username),
+        (ArticleShareRecord, ArticleShareRecord.owner_username),
+        (ReaderArticleReadStateRecord, ReaderArticleReadStateRecord.owner_username),
+        (ReaderReadCursorRecord, ReaderReadCursorRecord.owner_username),
+        (FeedbackRecord, FeedbackRecord.owner_username),
+        (AnnouncementDismissRecord, AnnouncementDismissRecord.owner_username),
+    ):
+        session.exec(delete(model).where(owner_col == username))
+    feed_token = session.get(ReaderFeedTokenRecord, username)
+    if feed_token is not None:
+        session.delete(feed_token)
+    # 用户名级 KV 标记(v3.43.2 codex 交叉检视 M03 补漏):不删则同名重建的新身份
+    # 会因旧播种标记拿不到默认订阅、并继承旧身份当日的自定源新增额度。key 格式
+    # 的权威定义在各自模块(api.app.DEFAULTS_SEEDED_KEY_PREFIX /
+    # feedback._FEEDBACK_SEEN_KEY_PREFIX / user_sources.DAILY_ADD_KEY_PREFIX),
+    # 此处字面量由 test_data_lifecycle 与三处常量比对钉住防漂移。
+    session.exec(delete(AppSettingRecord).where(AppSettingRecord.key.in_((
+        f"reader_defaults_seeded:{username}",
+        f"feedback_seen:{username}",
+    ))))
+    # LIKE 模式须转义用户名中的 %/_(用户名只禁冒号,下划线合法——不转义则
+    # 「a_b」删号会连带匹配「axb」的 key,误删他人数据)。
+    like_safe = username.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    session.exec(delete(AppSettingRecord).where(
+        AppSettingRecord.key.like(f"user_sources_added:{like_safe}:%", escape="\\")
+    ))
+
+    # ③ 计量历史墓碑化。聚合两表须**合并式**改写(v3.43.1 codex 交叉检视·高):
+    # v3.43 给聚合键上了唯一索引,若同名账号曾被删过一次,裸 UPDATE 会撞上既有
+    # 墓碑行(day×deleted:<名>×维度)抛 IntegrityError、整个删号事务回滚——
+    # 逐行 upsert 累加进墓碑键再删原行,计数守恒;updated_at 取两者较新值。
+    _merge_into_tombstone(
+        session, AiUsageRecord,
+        key_cols=("day", "purpose", "model"),
+        sum_cols=("calls", "prompt_tokens", "completion_tokens", "total_tokens"),
+        username=username, tombstone=tombstone,
+    )
+    _merge_into_tombstone(
+        session, ReaderReadRecord,
+        key_cols=("day", "source_id"),
+        sum_cols=("reads",),
+        username=username, tombstone=tombstone,
+    )
+    # 登录事件是明细流、无唯一键,裸改写安全。
+    session.exec(
+        update(LoginEventRecord)
+        .where(LoginEventRecord.username == username)
+        .values(username=tombstone)
+    )
+
+    # ④ 账户行本体；一次 commit 原子落地（任一步失败即整体回滚，无部分删除）。
     session.delete(record)
     session.commit()
 
@@ -468,6 +695,7 @@ def seed_root_admin_if_empty(engine) -> bool:
             role="admin",
             is_active=True,
             ai_beta_enabled=ai_beta_new_user_default(session),
+            session_epoch=new_session_epoch(),
             created_at=now,
             updated_at=now,
         ))

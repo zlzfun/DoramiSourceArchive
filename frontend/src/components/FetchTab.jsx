@@ -348,7 +348,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     let cancelled = false;
     setInspectorRunsLoading(true);
     fetchFetchRuns({ fetcher_id: selectedNodeId }, 5)
-      .then(rows => { if (!cancelled) setInspectorRuns(Array.isArray(rows) ? rows : []); })
+      .then(body => { if (!cancelled) setInspectorRuns(Array.isArray(body?.items) ? body.items : []); })
       .catch(() => { if (!cancelled) setInspectorRuns([]); })
       .finally(() => { if (!cancelled) setInspectorRunsLoading(false); });
     return () => { cancelled = true; };
@@ -518,12 +518,13 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   };
 
   // 勾选集批量运行 / 存为采集任务(按可见顺序,参数差量随行携带)。
+  // 消费端同样过滤自定源(M12 防御层:即便勾选集里混入,也不发给 registry 批量接口)。
   const runChecked = () => {
-    const ids = visibleFetchers.filter(f => checkedIds.has(f.id)).map(f => f.id);
+    const ids = batchableFetchers.filter(f => checkedIds.has(f.id)).map(f => f.id);
     if (ids.length) runFetchers(ids);
   };
   const saveCheckedAsJob = () => {
-    const ids = visibleFetchers.filter(f => checkedIds.has(f.id)).map(f => f.id);
+    const ids = batchableFetchers.filter(f => checkedIds.has(f.id)).map(f => f.id);
     if (!ids.length) return;
     const per = {};
     ids.forEach(id => {
@@ -1167,26 +1168,32 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               groupedBoard.map(section => (
                 <div key={section.id} className="board-group">
                   <div className="board-group-head">
-                    {selectMode && (
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 cursor-pointer rounded"
-                        checked={section.fetchers.every(f => checkedIds.has(f.id))}
-                        ref={el => {
-                          if (!el) return;
-                          const all = section.fetchers.every(f => checkedIds.has(f.id));
-                          const some = section.fetchers.some(f => checkedIds.has(f.id));
-                          el.indeterminate = some && !all;
-                        }}
-                        onChange={() => setCheckedIds(prev => {
-                          const next = new Set(prev);
-                          const all = section.fetchers.every(f => next.has(f.id));
-                          section.fetchers.forEach(f => { if (all) next.delete(f.id); else next.add(f.id); });
-                          return next;
-                        })}
-                        aria-label={`选择整组：${section.label}`}
-                      />
-                    )}
+                    {selectMode && (() => {
+                      // 组头全选与单行同一口径:用户自定源不参与批量(v3.43 审计 M12,
+                      // 此前组头 onChange 全量入选把自定源塞给不认识它的 registry 批量接口)。
+                      const groupBatchable = section.fetchers.filter(f => !f.user_source);
+                      return (
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 cursor-pointer rounded"
+                          disabled={groupBatchable.length === 0}
+                          checked={groupBatchable.length > 0 && groupBatchable.every(f => checkedIds.has(f.id))}
+                          ref={el => {
+                            if (!el) return;
+                            const all = groupBatchable.length > 0 && groupBatchable.every(f => checkedIds.has(f.id));
+                            const some = groupBatchable.some(f => checkedIds.has(f.id));
+                            el.indeterminate = some && !all;
+                          }}
+                          onChange={() => setCheckedIds(prev => {
+                            const next = new Set(prev);
+                            const all = groupBatchable.every(f => next.has(f.id));
+                            groupBatchable.forEach(f => { if (all) next.delete(f.id); else next.add(f.id); });
+                            return next;
+                          })}
+                          aria-label={`选择整组：${section.label}`}
+                        />
+                      );
+                    })()}
                     <span className="board-group-marker" style={{ '--group-accent': section.accent }} />
                     <span className="board-group-name" title={section.blurb}>{section.label}</span>
                     <span className="board-group-count">{section.fetchers.length} 个节点</span>

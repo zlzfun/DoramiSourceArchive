@@ -349,6 +349,16 @@ class AiUsageRecord(SQLModel, table=True):
     daily_brief_reduce / source_config / detail_profile。
     """
     __tablename__ = "ai_usage"
+    # 聚合键唯一索引（v3.43 审计 M21）：写路径是「不存在则插、存在则累加」，无约束时
+    # 并发请求可各判「无记录」双双插行（或互踩旧值丢增量）——约束落库后写侧改
+    # SQLite ON CONFLICT DO UPDATE 原子累加（见 ai_usage.record_usage）。
+    __table_args__ = (
+        Index(
+            "uq_ai_usage_day_user_purpose_model",
+            "day", "username", "purpose", "model",
+            unique=True,
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     day: str = Field(index=True, description="YYYY-MM-DD（本地日期）")
@@ -370,6 +380,15 @@ class ReaderReadRecord(SQLModel, table=True):
     阅读主流程（写入异常吞掉）。
     """
     __tablename__ = "reader_reads"
+    # 聚合键唯一索引（v3.43 审计 M21）：与 ai_usage 同因同修，写侧原子 upsert
+    # 见 reader_activity.record_read。
+    __table_args__ = (
+        Index(
+            "uq_reader_reads_day_user_source",
+            "day", "username", "source_id",
+            unique=True,
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     day: str = Field(index=True, description="YYYY-MM-DD（本地日期）")
@@ -475,6 +494,11 @@ class UserRecord(SQLModel, table=True):
 
     username: str = Field(primary_key=True, description="登录账号，全局唯一身份")
     password_hash: str = Field(description="PBKDF2 编码串 pbkdf2_sha256$iters$salt$hash")
+    # 会话世代（v3.40.4 审计 M04）：登录 token 携带签发时的世代值，校验时必须与本列
+    # 一致。密码重置/自助改密时轮换 → 既有 Cookie 立即吊销；建号时随机初始化 →
+    # 删号后同名重建不复活旧 Cookie。存量行迁移默认 ""（旧 token 无世代字段按 ""
+    # 对待，升级不强制全员重登，首次改密后收紧）。
+    session_epoch: str = Field(default="", description="会话世代：改密/建号轮换，吊销既有登录态")
     avatar: Optional[str] = Field(default=None, description="头像，存为 data:image/* base64 URL；空表示用首字母占位")
     role: str = Field(default="user", index=True, description="账户角色：admin | user")
     is_active: bool = Field(default=True, index=True, description="是否启用该账户")

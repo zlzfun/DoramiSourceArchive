@@ -937,6 +937,7 @@ export default function App() {
               <TabBoundary>
                 <AdminOpsTab
                   showToast={showToast}
+                  active={activeTab === 'admin' && !readerView}
                   currentUsername={authState.user?.username}
                   pendingFocus={pendingFocus?.tab === 'admin' ? pendingFocus.payload : null}
                   onPendingFocusApplied={clearPendingFocus}

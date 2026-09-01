@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { fetchAdminAuditLog } from '../../api';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { formatStamp } from './adminUtils';
 import { avatarInitial, avatarHue } from '../../utils/avatarColor';
 import Pager from './Pager';
+import { ThFilter, ThSearch } from './TableTh';
 
 // 操作审计(v3.19 多管理员波):中间件对命中管理面前缀的非 GET 请求逐条落行,
 // 多管理员之间互相可查。summary 为空的行退化显示「METHOD /path」等宽原文;
@@ -21,24 +23,41 @@ export default function AdminAuditPanel({ days, showToast }) {
   const [data, setData] = useState(null); // {items, total} | null = 加载中
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
+  // 检索(v3.42 M11):操作者/关键词(防抖 300ms)+ 结果档,全部服务端生效。
+  const [operatorInput, setOperatorInput] = useState('');
+  const [queryInput, setQueryInput] = useState('');
+  const [statusScope, setStatusScope] = useState(''); // '' | 'ok' | 'denied'
+  const operator = useDebouncedValue(operatorInput, 300);
+  const query = useDebouncedValue(queryInput, 300);
 
+  // 请求代次守卫(v3.43.2 codex 检视):非第一页改检索条件时,「新条件旧页」与
+  // 「归位第一页」两个请求并发在途,旧页后到会覆盖第一页结果——只允许最新代次
+  // 落 state/弹错/收 loading。
+  const loadGenRef = useRef(0);
   const load = useCallback(async (targetPage) => {
+    const gen = ++loadGenRef.current;
     setLoading(true);
     try {
-      setData(await fetchAdminAuditLog(days, {
+      const res = await fetchAdminAuditLog(days, {
         skip: (targetPage - 1) * AUDIT_PAGE_SIZE,
         limit: AUDIT_PAGE_SIZE,
-      }));
+        operator,
+        q: query,
+        status: statusScope,
+      });
+      if (gen === loadGenRef.current) setData(res);
     } catch (error) {
-      showToast(error.message || '获取操作审计失败', 'error');
-      setData((prev) => prev ?? { items: [], total: 0 });
+      if (gen === loadGenRef.current) {
+        showToast(error.message || '获取操作审计失败', 'error');
+        setData((prev) => prev ?? { items: [], total: 0 });
+      }
     } finally {
-      setLoading(false);
+      if (gen === loadGenRef.current) setLoading(false);
     }
-  }, [days, showToast]);
+  }, [days, operator, query, statusScope, showToast]);
 
-  // 时间窗变化归位第一页;翻页/首载取对应页。
-  useEffect(() => { setPage(1); }, [days]);
+  // 时间窗/检索条件变化归位第一页;翻页/首载取对应页。
+  useEffect(() => { setPage(1); }, [days, operator, query, statusScope]);
   useEffect(() => { load(page); }, [load, page]);
 
   const items = data?.items ?? [];
@@ -54,7 +73,6 @@ export default function AdminAuditPanel({ days, showToast }) {
     <>
       <div className="zone-head">
         <span className="zone-title">操作审计</span>
-        <span className="zone-hint">近 {days} 天的管理写操作;被拒绝的尝试(4xx)同样记录</span>
         <span className="zone-acts">
           <button
             type="button"
@@ -71,22 +89,35 @@ export default function AdminAuditPanel({ days, showToast }) {
         {data === null ? (
           <p className="p-6 tiny-meta">加载中…</p>
         ) : total === 0 ? (
-          <p className="p-6 text-center tiny-meta">近 {days} 天没有管理写操作记录。</p>
+          <p className="p-6 text-center tiny-meta">
+            {(operator || query || statusScope) ? (
+              <>
+                没有匹配当前检索条件的审计记录。
+                <button
+                  type="button"
+                  className="kpi-sub-link"
+                  onClick={() => { setOperatorInput(''); setQueryInput(''); setStatusScope(''); }}
+                >
+                  清除检索
+                </button>
+              </>
+            ) : `近 ${days} 天没有管理写操作记录。`}
+          </p>
         ) : (
           <>
             <div className="acct-scroll">
-              <table className="acct-table">
+              <table className="acct-table is-fixed">
                 <thead>
                   <tr>
                     <th className="acct-th" style={{ width: 150 }}>时间</th>
-                    <th className="acct-th" style={{ width: 140 }}>操作者</th>
-                    <th className="acct-th">操作</th>
-                    <th className="acct-th" style={{ width: 80 }}>结果</th>
+                    <ThSearch label="操作者" value={operatorInput} onChange={setOperatorInput} placeholder="搜索操作者" active={Boolean(operator)} width={160} />
+                    <ThSearch label="操作" value={queryInput} onChange={setQueryInput} placeholder="搜索操作 / 目标 / 路径" active={Boolean(query)} inputWidth={196} />
+                    <ThFilter label="结果" value={statusScope} onChange={setStatusScope} options={[['', '全部'], ['ok', '成功'], ['denied', '被拒']]} width={90} />
                   </tr>
                 </thead>
                 <tbody>
                   {items.map((it) => (
-                    <tr key={it.id} className="acct-row">
+                    <tr key={it.id} className="acct-row is-static">
                       <td><span className="acct-mono">{formatStamp(it.at)}</span></td>
                       <td>
                         <span className="acct-user">

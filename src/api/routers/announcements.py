@@ -96,24 +96,43 @@ class AnnouncementUpdate(BaseModel):
 
 
 @router.get("/api/admin/announcements")
-def list_announcements(session: Session = Depends(deps.get_session)):
-    """全量倒序(created_at desc),每条附 dismiss_count(该公告的 dismissal 行数)。"""
+def list_announcements(
+    skip: int = 0,
+    limit: int = 200,
+    session: Session = Depends(deps.get_session),
+):
+    """倒序(created_at desc)分页,每条附 dismiss_count(该公告的 dismissal 行数)。
+
+    v3.42(M17):skip/limit 服务端分页 + `total`;默认 limit 取大值向后兼容
+    (存量前端不传参仍取全量语义),dismiss_count 只对当前页公告聚合。
+    """
+    safe_limit = min(max(int(limit or 200), 1), 500)
+    safe_skip = max(0, int(skip or 0))
+    total = int(session.exec(select(func.count()).select_from(AnnouncementRecord)).one())
     records = session.exec(
-        select(AnnouncementRecord).order_by(AnnouncementRecord.created_at.desc())
+        select(AnnouncementRecord)
+        .order_by(AnnouncementRecord.created_at.desc())
+        .offset(safe_skip)
+        .limit(safe_limit)
     ).all()
-    counts = dict(
-        session.exec(
-            select(
-                AnnouncementDismissRecord.announcement_id,
-                func.count(),
-            ).group_by(AnnouncementDismissRecord.announcement_id)
-        ).all()
-    )
+    page_ids = [r.id for r in records]
+    counts = {}
+    if page_ids:
+        counts = dict(
+            session.exec(
+                select(
+                    AnnouncementDismissRecord.announcement_id,
+                    func.count(),
+                )
+                .where(AnnouncementDismissRecord.announcement_id.in_(page_ids))
+                .group_by(AnnouncementDismissRecord.announcement_id)
+            ).all()
+        )
     items = [
         _serialize(record, dismiss_count=int(counts.get(record.id, 0)))
         for record in records
     ]
-    return {"items": items}
+    return {"items": items, "total": total}
 
 
 @router.post("/api/admin/announcements")

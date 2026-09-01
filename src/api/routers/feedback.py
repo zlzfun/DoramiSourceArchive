@@ -229,34 +229,49 @@ def withdraw_feedback(
 @router.get("/api/admin/feedback")
 def list_admin_feedback(
     status: Optional[str] = None,
+    category: Optional[str] = None,
+    q: Optional[str] = None,
     limit: int = 100,
     skip: int = 0,
     session: Session = Depends(deps.get_session),
 ):
-    """全量反馈列表;counts 始终聚合完整数据集,不受 status 过滤影响。
+    """反馈收件箱列表;counts 始终聚合完整数据集,不受过滤影响。
 
-    规模化:服务端分页(skip/limit);`total` = 当前 status 过滤下的总条数
-    (无过滤即全部),counts 语义不变(仍全量按状态聚合)。
+    规模化:服务端分页(skip/limit),`total` = 当前过滤组合下的总条数;
+    v3.42(M17)增 `category` 分类过滤与 `q` 检索(跨 正文/提交者用户名 子串),
+    与 status 叠加、全部 SQL 端生效。
     """
     normalized_status = None
     if status is not None:
         normalized_status = _validate_status(status)
+    normalized_category = None
+    if category is not None and str(category).strip():
+        normalized_category = _validate_category(category)
     safe_limit = min(max(int(limit), 1), 500)
     safe_skip = max(0, int(skip or 0))
 
-    query = select(FeedbackRecord)
+    conditions = []
     if normalized_status is not None:
-        query = query.where(FeedbackRecord.status == normalized_status)
+        conditions.append(FeedbackRecord.status == normalized_status)
+    if normalized_category is not None:
+        conditions.append(FeedbackRecord.category == normalized_category)
+    if q and q.strip():
+        needle = q.strip()
+        conditions.append(
+            FeedbackRecord.content.contains(needle, autoescape=True)
+            | FeedbackRecord.owner_username.contains(needle, autoescape=True)
+        )
     records = session.exec(
-        query.order_by(FeedbackRecord.created_at.desc())
+        select(FeedbackRecord)
+        .where(*conditions)
+        .order_by(FeedbackRecord.created_at.desc())
         .offset(safe_skip)
         .limit(safe_limit)
     ).all()
 
-    total_query = select(func.count()).select_from(FeedbackRecord)
-    if normalized_status is not None:
-        total_query = total_query.where(FeedbackRecord.status == normalized_status)
-    total = int(session.exec(total_query).one())
+    total = int(session.exec(
+        select(func.count()).select_from(FeedbackRecord).where(*conditions)
+    ).one())
 
     counts = {item_status: 0 for item_status in sorted(FEEDBACK_STATUSES)}
     status_rows = session.exec(

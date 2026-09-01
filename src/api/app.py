@@ -372,8 +372,15 @@ def archive_import_requires_admin(path: str, method: str) -> bool:
 
 
 def account_admin_required(path: str) -> bool:
-    """账户/运维/X API 机密与计费管理一律仅限 admin，独立于 runtime 采集轴。"""
-    return _path_matches(path, ("/api/accounts", "/api/admin", "/api/x-api"))
+    """账户/运维/X API 机密与计费管理一律仅限 admin，独立于 runtime 采集轴。
+
+    /api/mcp/toggle 是全站 MCP 总闸（服务级熔断），必须单列：/api/mcp 整体在
+    READER_API_PREFIXES 里（读者要看 status/工具清单），仅按 reader 面裁决会让
+    受限读者也能关停全站 MCP（v3.40.4 审计 M01 修复）。
+    """
+    return _path_matches(
+        path, ("/api/accounts", "/api/admin", "/api/x-api", "/api/mcp/toggle")
+    )
 
 
 @asynccontextmanager
@@ -403,21 +410,27 @@ async def lifespan(app: FastAPI):
         _mcp_gate._app = None
         _mcp_enabled = False
 
-    if runtime_collector_enabled():
+    # 留存清理是数据库自身的生命周期义务,与部署角色无关(v3.43 审计 M10):
+    # 登录/AI/阅读/审计埋点恰是 reader 面写入的,拆分部署下 reader 库同样会膨胀。
+    # 故调度器在任何角色下都启动,抓取类任务(load_tasks/远程同步/自定源刷新)
+    # 仍只在 collector 角色注册。
+    collector_on = runtime_collector_enabled()
+    if collector_on:
         reconcile_orphaned_runs()
         load_tasks_to_scheduler()
-        if scheduler.state == STATE_STOPPED:
-            scheduler.start()
-            print("⏰ APScheduler 定时调度引擎已启动！")
-            # 仅在调度器新鲜启动（绑定当前事件循环）时注册巡检，避免跨 loop add_job。
-            # 明细/埋点表滚动窗清理（每日 04:30）。
-            add_cron_job("retention_cleanup", execute_retention_cleanup_job, "30 4 * * *", [])
+    if scheduler.state == STATE_STOPPED:
+        scheduler.start()
+        print("⏰ APScheduler 定时调度引擎已启动！")
+        # 仅在调度器新鲜启动（绑定当前事件循环）时注册巡检，避免跨 loop add_job。
+        # 明细/埋点表滚动窗清理（每日 04:30）——所有运行角色均注册。
+        add_cron_job("retention_cleanup", execute_retention_cleanup_job, "30 4 * * *", [])
+        if collector_on:
             # 远程内容同步定时任务(启用且 cron 合法时注册,否则移除既有 job)。
             reload_remote_sync_schedule()
             # 用户自定源定时刷新(v3.40:间隔 KV 可配,总闸关闭即不注册)。
             reload_user_rss_schedule()
-    else:
-        print("⏸️ 当前 reader 运行角色不启动抓取调度引擎。")
+    if not collector_on:
+        print("⏸️ 当前 reader 运行角色不启动抓取调度（仅保留留存清理定时任务）。")
 
     if mcp is not None:
         async with mcp.session_manager.run():
@@ -600,10 +613,12 @@ def _sign_auth_payload(payload: str) -> str:
     return hmac.new(AUTH_SECRET.encode("utf-8"), payload.encode("ascii"), hashlib.sha256).hexdigest()
 
 
-def create_auth_token(username: str, role: str) -> str:
+def create_auth_token(username: str, role: str, epoch: str = "") -> str:
     payload = _b64encode_json({
         "sub": username,
         "role": role,
+        # 会话世代（M04）：与 users.session_epoch 绑定，改密/删号重建即吊销。
+        "gen": epoch,
         "exp": int(time.time()) + AUTH_SESSION_SECONDS,
     })
     return f"{payload}.{_sign_auth_payload(payload)}"
@@ -623,9 +638,14 @@ def read_auth_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
         return None
     # 账户必须仍存在、处于启用状态，且角色与 token 内一致；否则会话立即失效
     # （管理员停用/删除/改角色后，对应 cookie 在下一次请求即被吊销）。
+    # 会话世代（M04）：token 内 gen 必须等于 users.session_epoch——密码重置后旧
+    # Cookie 立即失效；删号后同名重建的新行世代随机，旧 Cookie 不复活。存量行
+    # 世代为 ""、历史 token 无 gen 字段，二者按 "" 对齐（升级不强制全员重登）。
     with Session(db_sink.engine) as session:
         record = accounts_service.get_active_user(session, data.get("sub"))
         if record is None or data.get("role") != record.role:
+            return None
+        if str(data.get("gen") or "") != (record.session_epoch or ""):
             return None
     return data
 
@@ -643,10 +663,10 @@ def current_username(request: Request) -> str:
     return str(session.get("sub")) if session else ""
 
 
-def set_auth_cookie(response: Response, username: str, role: str) -> None:
+def set_auth_cookie(response: Response, username: str, role: str, epoch: str = "") -> None:
     response.set_cookie(
         key=AUTH_COOKIE_NAME,
-        value=create_auth_token(username, role),
+        value=create_auth_token(username, role, epoch),
         max_age=AUTH_SESSION_SECONDS,
         httponly=True,
         secure=_auth_cookie_secure(),
@@ -732,6 +752,10 @@ async def require_admin_session(request: Request, call_next):
     )
     audit_rule_needs_body = (
         (normalized_method == "POST" and path == "/api/accounts")
+        or (normalized_method == "POST" and path == "/api/accounts/batch")
+        or (normalized_method == "POST" and path == "/api/articles")
+        or (normalized_method == "POST" and path == "/api/articles/batch-delete")
+        or (normalized_method == "POST" and path == "/api/fetch/batch")
         or (normalized_method == "PUT" and account_update_path)
         or (
             normalized_method == "POST"
@@ -787,6 +811,7 @@ def login_admin(params: AuthLoginParams, response: Response):
             raise HTTPException(status_code=401, detail="账号或密码错误")
         role = record.role
         avatar = record.avatar
+        epoch = record.session_epoch or ""
         accounts_service.touch_login(session, username)
     # 预置订阅在登录点播种（而非仅首个 reader 请求）：登录响应先于前端阅读器挂载，
     # 消除新账号首屏的竞态——此前播种只挂在 GET /api/reader/sources，与它并行的
@@ -798,7 +823,7 @@ def login_admin(params: AuthLoginParams, response: Response):
             ensure_default_subscriptions(username)
         except Exception:
             _dorami_logger.warning("登录点播种默认订阅失败，等待 reader 端点兜底", exc_info=True)
-    set_auth_cookie(response, username, role)
+    set_auth_cookie(response, username, role, epoch)
     return {"authenticated": True, "user": _auth_user_payload(username, role, avatar)}
 
 
@@ -825,7 +850,7 @@ def logout_admin(response: Response):
 
 
 @app.post("/api/auth/change-password")
-def change_own_password(params: ChangePasswordParams, request: Request):
+def change_own_password(params: ChangePasswordParams, request: Request, response: Response):
     """任意已登录账户修改自己的登录密码（需校验旧密码）。"""
     username = current_username(request)
     if not username:
@@ -838,7 +863,10 @@ def change_own_password(params: ChangePasswordParams, request: Request):
             raise HTTPException(status_code=401, detail="账户不存在或已停用")
         if not accounts_service.verify_password(params.current_password, record.password_hash):
             raise HTTPException(status_code=400, detail="当前密码错误")
-        accounts_service.set_password(session, username, params.new_password)
+        updated = accounts_service.set_password(session, username, params.new_password)
+        # 改密轮换会话世代（M04）会吊销一切旧 Cookie——含本人当前这只；就地续签
+        # 新世代 Cookie，自助改密不打断本人会话（他处登录态照旧全部失效）。
+        set_auth_cookie(response, username, updated.role, updated.session_epoch or "")
     return {"ok": True}
 
 
@@ -1186,17 +1214,30 @@ async def execute_retention_cleanup_job():
     明细，业务实体（归档正文/账户/订阅）不在其列。
     """
     from services import retention
+
+    # 同步 SQLite 清理放线程池执行(v3.43.1 codex 交叉检视):本回调是协程,
+    # APScheduler 会把它放到事件循环上跑,直接同步删表会阻塞在途请求。
     try:
-        retention.run_retention_cleanup(db_sink.engine)
+        await asyncio.to_thread(retention.run_retention_cleanup, db_sink.engine)
     except Exception as exc:  # noqa: BLE001 巡检失败不影响调度引擎
         _dorami_logger.error("明细表滚动窗清理失败: %s", exc)
     # 用户自定源维护(codex 复检二轮 F8/新发现3):孤儿 GC 与日计数 KV 清理挂在
     # 本 job——独立于用户源总闸与 user_rss_refresh(总闸关闭时那个 job 被移除,
-    # 若 GC 只挂在那里,关闸后孤儿源/脏数据将永远无人收)。
-    try:
+    # 若 GC 只挂在那里,关闸后孤儿源/脏数据将永远无人收)。**但只在 collector
+    # 角色执行**(v3.43.1):自定源 GC 属抓取栈侧维护,M10 把 retention 注册解耦
+    # 到全角色后,不能让 reader 角色顺带背上会物理删配置/文章的 collector 维护
+    # (拆分部署下的自定源故事本就未定义,记 backlog)。
+    if not runtime_collector_enabled():
+        return
+
+    def _user_sources_maintenance():
         with Session(db_sink.engine) as session:
             orphans = user_sources_service.purge_orphan_user_sources(session)
             stale = user_sources_service.cleanup_stale_daily_counters(session)
+        return orphans, stale
+
+    try:
+        orphans, stale = await asyncio.to_thread(_user_sources_maintenance)
         if orphans or stale:
             _dorami_logger.info("用户自定源维护: 清理 %s, 过期计数 %d", orphans or "无", stale)
     except Exception:  # noqa: BLE001

@@ -24,6 +24,13 @@ AUDIT_PATH_PREFIXES = (
     "/api/collection-jobs",
     "/api/llm",
     "/api/daily-brief",
+    # 全站 MCP 总闸（admin-only 服务级熔断，v3.40.4 审计 M01 补审计）。
+    "/api/mcp/toggle",
+    # v3.42 审计 M11 补覆盖：文章 CRUD/批量删除、手动触发采集、归档导入
+    # 都是改写全站归档的管理动作（只审计非只读方法，GET 浏览不入）。
+    "/api/articles",
+    "/api/fetch",
+    "/api/archive/import",
 )
 # /api/reader/* 与 /api/auth/* 刻意豁免：管理员自己的阅读、订阅与自助改密
 # 属于个人操作，不是需要管理员互相审阅的“管理操作”。
@@ -88,6 +95,27 @@ def _reset_password(match: re.Match[str], _body: dict | None) -> RenderResult:
     return f"重置 {username} 的密码", username
 
 
+def _batch_accounts(_: re.Match[str], body: dict | None) -> RenderResult:
+    # body 缺失(超过采集上限等)时如实记「数量未知」,不伪造 0(v3.43.2 codex 检视)。
+    if body is None:
+        return "批量更新账户（数量未知，请求体未采集）", None
+    payload = body
+    # 人数统计与服务层 batch_update_users 同一规范化口径:strip→去空→去重
+    # (原始数组含重复/空白项时曾多计,与实际处理数不符)。
+    stripped = [str(u or "").strip() for u in (payload.get("usernames") or [])]
+    names = list(dict.fromkeys(u for u in stripped if u))
+    parts: list[str] = []
+    if payload.get("role") is not None:
+        parts.append(f"角色改为{_role_label(payload['role'])}")
+    if payload.get("is_active") is not None:
+        parts.append("启用" if payload["is_active"] else "停用")
+    if payload.get("ai_beta_enabled") is not None:
+        parts.append("开启 AI" if payload["ai_beta_enabled"] else "关闭 AI")
+    action = "、".join(parts) or "更新"
+    preview = "、".join(names[:3]) + ("…" if len(names) > 3 else "")
+    return f"批量{action} {len(names)} 个账户（{preview}）", None
+
+
 def _global_ai_beta(_: re.Match[str], body: dict | None) -> RenderResult:
     if not body or body.get("enabled") is None:
         return "更新全局 AI Beta 开关", None
@@ -105,6 +133,7 @@ def _id_target(
 # 语义摘要注册表：顺序即优先级，首个 (method, path regex) 命中即停止。
 AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
     ("POST", re.compile(r"^/api/accounts$"), _create_account),
+    ("POST", re.compile(r"^/api/accounts/batch$"), _batch_accounts),
     (
         "PUT",
         re.compile(r"^/api/accounts/(?P<username>[^/]+)$"),
@@ -164,6 +193,60 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
         ),
     ),
     ("POST", re.compile(r"^/api/llm/config$"), lambda _m, _b: ("更新 LLM 配置", None)),
+    ("POST", re.compile(r"^/api/mcp/toggle$"), lambda _m, _b: ("切换全站 MCP 总闸", None)),
+    # ── 归档写入口(v3.42 M11)──
+    (
+        "POST",
+        re.compile(r"^/api/articles/batch-delete$"),
+        # body 缺失(超采集上限)时如实记「数量未知」,不伪造 0 篇(v3.43.2)。
+        lambda _m, body: (
+            "批量删除文章（数量未知，请求体未采集）" if body is None
+            else f"批量删除文章 {len(body.get('ids') or body.get('article_ids') or [])} 篇",
+            None,
+        ),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/articles$"),
+        # 正文可能超 body 采集上限(body=None),标题尽力而为。
+        lambda _m, body: (
+            f"手工录入文章 {str((body or {}).get('title') or '')[:30]}".rstrip(),
+            None,
+        ),
+    ),
+    # 文章路由是 {article_id:path}(手工录入 ID 可含斜杠),规则须吞完整剩余路径,
+    # 否则含 / 的合法 ID 退化为空摘要(v3.43.2 codex 检视)。
+    (
+        "PUT",
+        re.compile(r"^/api/articles/(?P<target>.+)$"),
+        lambda match, body: _id_target(match, body, noun="文章", action="编辑"),
+    ),
+    (
+        "DELETE",
+        re.compile(r"^/api/articles/(?P<target>.+)$"),
+        lambda match, body: _id_target(match, body, noun="文章", action="删除"),
+    ),
+    # /api/fetch/batch 的精确规则必须先于下方的通用单节点规则,否则被记成
+    # 「手动触发采集节点 batch」(v3.43.2 codex 检视)。
+    (
+        "POST",
+        re.compile(r"^/api/fetch/batch$"),
+        lambda _m, body: (
+            "批量触发采集（节点数未知，请求体未采集）" if body is None
+            else f"批量触发采集 {len(body.get('items') or [])} 个节点",
+            None,
+        ),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/fetch/(?P<target>[^/]+)$"),
+        lambda match, body: _id_target(match, body, noun="采集节点", action="手动触发"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/archive/import/"),
+        lambda _m, _b: ("归档导入（archive sync）", None),
+    ),
     (
         "POST",
         re.compile(r"^/api/admin/remote-sync/schedule$"),

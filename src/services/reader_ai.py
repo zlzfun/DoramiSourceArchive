@@ -18,7 +18,7 @@ import asyncio
 import hashlib
 import json
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from config import LLMConfig
 from llm import prompts
@@ -110,11 +110,15 @@ async def _translate_segment(
 
 
 async def translate_article(
-    db_sink, article_id: str, llm_config: LLMConfig, usage_meta: Optional[UsageMeta] = None
+    db_sink, article_id: str, llm_config: LLMConfig, usage_meta: Optional[UsageMeta] = None,
+    pre_llm_check: Optional[Callable[[], None]] = None,
 ) -> dict:
     """翻译指定文章正文为中文；命中缓存直接返回，否则翻译后写回 extensions_json。
 
     返回 {"translation": str, "cached": bool}。
+    `pre_llm_check`(v3.43.2 codex 交叉检视 M02):成本准入回调,仅在缓存未命中、
+    即将发起真实 LLM 调用前执行(抛异常即中止)——配额/预算是成本闸,缓存命中
+    零成本不应被 429 拦截。
     """
     record = await db_sink.get(article_id)
     if record is None:
@@ -133,6 +137,8 @@ async def translate_article(
     fingerprint = _body_fingerprint(body)
     if _cache_valid(ext, TRANSLATION_KEY, TRANSLATION_FP_KEY, fingerprint):
         return {"translation": ext[TRANSLATION_KEY], "cached": True}
+    if pre_llm_check is not None:
+        pre_llm_check()
 
     segments = _split_for_translation(body)
     if len(segments) == 1:
@@ -172,11 +178,13 @@ def _load_extensions(record) -> dict:
 
 
 async def summarize_article(
-    db_sink, article_id: str, llm_config: LLMConfig, usage_meta: Optional[UsageMeta] = None
+    db_sink, article_id: str, llm_config: LLMConfig, usage_meta: Optional[UsageMeta] = None,
+    pre_llm_check: Optional[Callable[[], None]] = None,
 ) -> dict:
     """为指定文章生成中文要点摘要；命中缓存直接返回，否则生成后写回 extensions_json。
 
-    返回 {"summary": str, "cached": bool}。缓存/写回约定与 translate_article 一致。
+    返回 {"summary": str, "cached": bool}。缓存/写回与 pre_llm_check 约定均与
+    translate_article 一致(成本闸只拦真实 LLM 调用,缓存命中零成本直过)。
     """
     record = await db_sink.get(article_id)
     if record is None:
@@ -189,6 +197,8 @@ async def summarize_article(
     fingerprint = _body_fingerprint(body)
     if _cache_valid(ext, SUMMARY_KEY, SUMMARY_FP_KEY, fingerprint):
         return {"summary": ext[SUMMARY_KEY], "cached": True}
+    if pre_llm_check is not None:
+        pre_llm_check()
 
     if len(body) > _SUMMARIZE_BODY_CHARS:
         body = body[:_SUMMARIZE_BODY_CHARS] + "\n...(正文已截断)"

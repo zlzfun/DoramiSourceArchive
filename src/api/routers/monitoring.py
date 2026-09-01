@@ -11,6 +11,7 @@
 经 app.py re-export 保持 api.app.X 兼容。数据访问经 deps.get_session()。
 """
 
+import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -137,7 +138,6 @@ def get_source_health(session: Session = Depends(deps.get_session)):
 
     fetcher_ids = [fetcher["id"] for fetcher in fetchers]
 
-    runs = session.exec(select(FetchRunRecord).where(FetchRunRecord.fetcher_id.in_(fetcher_ids))).all()
     states = session.exec(select(SourceStateRecord).where(SourceStateRecord.source_id.in_(fetcher_ids))).all()
     article_counts = session.exec(
         select(ArticleRecord.source_id, func.count(ArticleRecord.id))
@@ -147,6 +147,20 @@ def get_source_health(session: Session = Depends(deps.get_session)):
 
     article_count_by_source = {source_id: count for source_id, count in article_counts}
     states_by_source = {state.source_id: state for state in states}
+    # 运行史回退只服务「无 SourceStateRecord 快照」的节点(v3.43 审计 M13):
+    # 本端点被前端 45s 轮询,此前无条件把全部节点的整个保留窗(180 天)运行行
+    # 载入内存,而绝大多数节点有 state 快照根本用不上。用户自定源同样不回退
+    # (其 FetchRunRecord.fetcher_id 是 generic_rss 而非 source_id)。
+    fallback_ids = [
+        fetcher["id"]
+        for fetcher in fetchers
+        if fetcher["id"] not in states_by_source and not fetcher.get("user_source")
+    ]
+    runs = (
+        session.exec(select(FetchRunRecord).where(FetchRunRecord.fetcher_id.in_(fallback_ids))).all()
+        if fallback_ids
+        else []
+    )
     runs_by_fetcher: Dict[str, List[FetchRunRecord]] = {fetcher_id: [] for fetcher_id in fetcher_ids}
     for run in runs:
         runs_by_fetcher.setdefault(run.fetcher_id, []).append(run)
@@ -202,25 +216,45 @@ def get_fetch_runs(
         run_scope: Optional[str] = None,
         status: Optional[str] = None,
         trigger_type: Optional[str] = None,
+        days: int = 0,
         skip: int = 0,
         limit: int = 100,
         session: Session = Depends(deps.get_session),
 ):
-    query = select(FetchRunRecord)
+    """节点级运行历史(v3.42 M09 改真分页):响应 {items, total}。
+
+    total = 当前过滤组合下的总数——前端据此渲染完整分页,不再「固定拉 N 条本地
+    过滤却按完整窗口展示」;days>0 时限定 started_at 时间窗,与状态/触发方式等
+    过滤同为 SQL 端生效。
+    """
+    conditions = []
     if fetcher_id:
-        query = query.where(FetchRunRecord.fetcher_id == fetcher_id)
+        conditions.append(FetchRunRecord.fetcher_id == fetcher_id)
     if job_id is not None:
-        query = query.where(FetchRunRecord.job_id == job_id)
+        conditions.append(FetchRunRecord.job_id == job_id)
     if job_run_id is not None:
-        query = query.where(FetchRunRecord.job_run_id == job_run_id)
+        conditions.append(FetchRunRecord.job_run_id == job_run_id)
     if run_scope:
-        query = query.where(FetchRunRecord.run_scope == run_scope)
+        conditions.append(FetchRunRecord.run_scope == run_scope)
     if status:
-        query = query.where(FetchRunRecord.status == status)
+        conditions.append(FetchRunRecord.status == status)
     if trigger_type:
-        query = query.where(FetchRunRecord.trigger_type == trigger_type)
-    query = query.order_by(FetchRunRecord.started_at.desc()).offset(skip).limit(limit)
-    return session.exec(query).all()
+        conditions.append(FetchRunRecord.trigger_type == trigger_type)
+    if days and days > 0:
+        safe_days = min(int(days), 365)
+        since = (datetime.date.today() - datetime.timedelta(days=safe_days - 1)).isoformat()
+        conditions.append(FetchRunRecord.started_at >= since)
+    total = session.exec(
+        select(func.count()).select_from(FetchRunRecord).where(*conditions)
+    ).one()
+    items = session.exec(
+        select(FetchRunRecord)
+        .where(*conditions)
+        .order_by(FetchRunRecord.started_at.desc())
+        .offset(max(0, int(skip or 0)))
+        .limit(max(1, min(int(limit or 100), 500)))
+    ).all()
+    return {"items": items, "total": int(total)}
 
 
 @router.get("/api/fetch-runs/{run_id}")

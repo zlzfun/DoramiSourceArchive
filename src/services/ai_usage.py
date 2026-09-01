@@ -11,14 +11,19 @@ from __future__ import annotations
 import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlmodel import Session, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlmodel import Session, func, select
 
 from models.db import AiUsageRecord
 
 # 计入看板的用途标签（白名单，避免脏数据）。
+# 注意：读者面新增 AI 用途必须同步登记此处 + reader.py _AI_DAILY_CALL_LIMITS +
+# accounts.READER_AI_BUDGET_PURPOSES 三处——v3.40.4 前 summarize 漏登记本表，
+# record_usage 静默丢行导致逐用户限额/全站日预算/用量看板三层护栏全部失效。
 VALID_PURPOSES = (
     "translate",
     "ask",
+    "summarize",
     "daily_brief_map",
     "daily_brief_dedup",
     "daily_brief_reduce",
@@ -57,6 +62,10 @@ def record_usage(
 
     usage 取 OpenAI 兼容响应的 usage 段（prompt_tokens/completion_tokens/total_tokens）；
     缺失时按 0 计，仍累加 calls。
+
+    v3.43（审计 M21）：SQLite `INSERT … ON CONFLICT DO UPDATE` 原子累加——旧的
+    「先查→无则插/有则递增」两步在并发下会双插重复行或互踩旧值丢增量；聚合键
+    唯一索引 `uq_ai_usage_day_user_purpose_model` 由迁移 a7e2f95c1d40 保证。
     """
     if purpose not in VALID_PURPOSES:
         return
@@ -68,38 +77,47 @@ def record_usage(
     completion = _coerce_int(usage.get("completion_tokens"))
     total = _coerce_int(usage.get("total_tokens")) or (prompt + completion)
 
-    record = session.exec(
-        select(AiUsageRecord).where(
-            AiUsageRecord.day == day,
-            AiUsageRecord.username == owner,
-            AiUsageRecord.purpose == purpose,
-            AiUsageRecord.model == model,
-        )
-    ).first()
-    if record is None:
-        record = AiUsageRecord(
-            day=day,
-            username=owner,
-            purpose=purpose,
-            model=model,
-            calls=0,
-            prompt_tokens=0,
-            completion_tokens=0,
-            total_tokens=0,
-            updated_at=_now_iso(),
-        )
-    record.calls += 1
-    record.prompt_tokens += prompt
-    record.completion_tokens += completion
-    record.total_tokens += total
-    record.updated_at = _now_iso()
-    session.add(record)
+    table = AiUsageRecord.__table__
+    stmt = sqlite_insert(table).values(
+        day=day,
+        username=owner,
+        purpose=purpose,
+        model=model,
+        calls=1,
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=total,
+        updated_at=_now_iso(),
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["day", "username", "purpose", "model"],
+        set_={
+            "calls": table.c.calls + 1,
+            "prompt_tokens": table.c.prompt_tokens + prompt,
+            "completion_tokens": table.c.completion_tokens + completion,
+            "total_tokens": table.c.total_tokens + total,
+            "updated_at": _now_iso(),
+        },
+    )
+    session.execute(stmt)
     session.commit()
+
+
+# by_day_user 的服务端系列上限（v3.43 审计 M16）：与前端图表调色板 6 彩色槽 +
+# 中性「其它」槽对齐——窗口内用户数随规模增长时，日×用户明细载荷曾随之无界膨胀
+# 而前端只画得下 6 系；现由后端选 Top N（按窗口 total_tokens）并把其余按日聚成
+# 「其它」行，载荷有界且前端 pivotDaily 的「其它」中性槽语义无缝承接。
+BY_DAY_USER_TOP_N = 6
+# 聚合桶的系列键带冒号(用户名禁冒号,见 accounts.create_user)——不能用展示文案
+# 「其它」当聚合身份:它是合法用户名,真有此名用户进 Top 时尾部用户会被并进同名
+# 桶污染其系列(codex 交叉检视实证)。前端在渲染层把 sentinel 映射回「其它」。
+OTHER_SERIES_LABEL = "other:"
 
 
 def summarize(session: Session, *, days: int = 30) -> Dict[str, Any]:
     """窗口内（近 days 天）用量聚合：totals + by_purpose + by_user + by_day +
-    by_day_purpose / by_day_user（日×维度明细，供前端多系列时间序列图）。"""
+    by_day_purpose / by_day_user（日×维度明细，供前端多系列时间序列图；
+    by_day_user 仅含 Top N 用户 + 按日聚合的「其它」行，见 BY_DAY_USER_TOP_N）。"""
     days = max(1, min(int(days or 30), 365))
     since = (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
     rows: List[AiUsageRecord] = list(
@@ -148,6 +166,24 @@ def summarize(session: Session, *, days: int = 30) -> Dict[str, Any]:
         ]
         return sorted(items, key=lambda x: x["day"])
 
+    # by_day_user 服务端裁剪（M16）：Top N 用户按窗口 total_tokens 选定，
+    # 其余用户的量按日合并进「其它」行——总量守恒，只是系列有界。
+    top_users = {
+        name for name, _ in sorted(
+            by_user.items(), key=lambda kv: (-kv[1]["total_tokens"], kv[0])
+        )[:BY_DAY_USER_TOP_N]
+    }
+    if len(by_user) > len(top_users):
+        trimmed: Dict[tuple, Dict[str, int]] = {}
+        for (day_key, name), agg in by_day_user.items():
+            key = (day_key, name if name in top_users else OTHER_SERIES_LABEL)
+            slot = trimmed.setdefault(
+                key, {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            )
+            for field in slot:
+                slot[field] += agg[field]
+        by_day_user = trimmed
+
     return {
         "window_days": days,
         "totals": totals,
@@ -160,26 +196,32 @@ def summarize(session: Session, *, days: int = 30) -> Dict[str, Any]:
 
 
 def usage_by_user(session: Session, *, days: int = 30) -> Dict[str, Dict[str, int]]:
-    """窗口内按用户聚合 `{username: {calls, total_tokens}}`，排除系统任务（system）。
+    """窗口内按用户聚合 `{username: {calls, total_tokens}}`，排除系统任务（system）
+    与删号墓碑（`deleted:*`，见 accounts.DELETED_USER_PREFIX——账户列表/活跃榜只看
+    现存账户；墓碑消耗仍进 `summarize` 的成本看板口径）。
 
-    供运维账户列表批量富化每账户的近 N 天 AI 活跃度（一次查询、内存聚合）。
+    v3.41 账户管理 V2（审计 M07）：SQL 端 GROUP BY 聚合，不再把窗口明细行整批载入
+    内存 Python 累加。
     """
     days = max(1, min(int(days or 30), 365))
     since = (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
-    rows: List[AiUsageRecord] = list(
-        session.exec(
-            select(AiUsageRecord).where(
-                AiUsageRecord.day >= since,
-                AiUsageRecord.username != SYSTEM_USERNAME,
-            )
-        ).all()
-    )
-    out: Dict[str, Dict[str, int]] = {}
-    for row in rows:
-        agg = out.setdefault(row.username, {"calls": 0, "total_tokens": 0})
-        agg["calls"] += row.calls
-        agg["total_tokens"] += row.total_tokens
-    return out
+    rows = session.exec(
+        select(
+            AiUsageRecord.username,
+            func.coalesce(func.sum(AiUsageRecord.calls), 0),
+            func.coalesce(func.sum(AiUsageRecord.total_tokens), 0),
+        )
+        .where(
+            AiUsageRecord.day >= since,
+            AiUsageRecord.username != SYSTEM_USERNAME,
+            AiUsageRecord.username.not_like("deleted:%"),
+        )
+        .group_by(AiUsageRecord.username)
+    ).all()
+    return {
+        username: {"calls": int(calls or 0), "total_tokens": int(tokens or 0)}
+        for username, calls, tokens in rows
+    }
 
 
 def summarize_user(session: Session, username: str, *, days: int = 30) -> Dict[str, Any]:

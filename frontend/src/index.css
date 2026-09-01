@@ -4112,52 +4112,10 @@ input[type="radio"] {
   .admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; }
 
   /* ── KPI 总账条(被动读数,数字全 ink;语义色只留异常) ── */
-  /* ── 用户自定源治理区(v3.40,运维管理 → 内容)── */
+  /* ── 用户自定源治理区(v3.40,运维管理 → 内容;v3.42 列表已表格化为
+     acct-table is-fixed + TableTh 列头三件套,卡行类族退役) ── */
   .usrc-minutes { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
   .usrc-minutes-input { width: 64px; text-align: center; }
-  .usrc-list { display: flex; flex-direction: column; }
-  .usrc-row {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 10px 2px;
-  }
-  .usrc-row + .usrc-row { border-top: 1px solid var(--dorami-border); }
-  .usrc-main { flex: 1; min-width: 0; }
-  .usrc-name-row { display: flex; align-items: center; gap: 8px; }
-  .usrc-name { font-size: 13px; font-weight: 700; color: var(--dorami-ink); }
-  .usrc-meta {
-    margin-top: 2px;
-    font-size: 11.5px;
-    font-weight: 500;
-    color: var(--dorami-faint);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .usrc-url { color: var(--dorami-faint); text-decoration: none; }
-  .usrc-url:hover { color: var(--dorami-ink-2); text-decoration: underline; }
-  /* 行动作:S 档文字微钮(字号写在容器上继承穿透,避 button{font:inherit} 未分层陷阱) */
-  .usrc-acts { display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 11px; font-weight: 600; }
-  .usrc-act-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    min-height: 26px;
-    padding: 0 9px;
-    border: 1px solid var(--dorami-border);
-    border-radius: var(--r-sm);
-    background: transparent;
-    color: var(--dorami-muted);
-    cursor: pointer;
-    transition: background-color var(--motion-fast) var(--motion-ease),
-      color var(--motion-fast) var(--motion-ease);
-  }
-  .usrc-act-btn:hover { background: var(--dorami-soft); color: var(--dorami-ink); }
-  .usrc-act-btn:disabled { opacity: 0.55; cursor: default; }
-  .usrc-act-btn.is-danger:hover { color: var(--state-bad); background: var(--state-bad-bg); }
-  .usrc-act-btn.is-confirm { color: var(--state-bad); background: var(--state-bad-bg); border-color: transparent; }
 
   .kpi-strip { display: flex; align-items: stretch; flex-wrap: wrap; border-radius: var(--r-card); overflow: hidden; }
   .kpi { flex: 1; min-width: 130px; padding: 14px 18px 12px; }
@@ -4177,6 +4135,22 @@ input[type="radio"] {
   /* ── 账户表(ledger-table 语法:46px 行 / hover soft / 选中竖条 / 动作收 hover) ── */
   .acct-scroll { overflow-x: auto; }
   .acct-table { width: 100%; border-collapse: collapse; }
+  /* 账户表定宽布局(v3.41 返修):列宽由表头一次定死——auto layout 下筛选换行集/
+     列头换档位都会全表重排、内容左右漂移;fixed 后彻底零跳动(用户列吃剩余弹性)。
+     审计面板共用 .acct-table 但内容为流水文本,保持 auto,不挂本类。 */
+  .acct-table.is-fixed { table-layout: fixed; min-width: 900px; }
+  .acct-table.is-fixed .acct-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 表头行定高垂直居中(目检返修):①列头按钮三种形态(inline-flex 排序/inline-grid
+     筛选占位/就地搜索输入)的合成 baseline 各不相同,默认 baseline 对齐导致列名
+     纵向参差——统一改 cell 定高 + middle,行盒居中后参差消失;②36px 定高把 24px
+     搜索输入框整个吸收,展开/收起表头行高零变化。 */
+  .acct-table.is-fixed .acct-th {
+    height: 36px; padding-top: 0; padding-bottom: 0; vertical-align: middle;
+  }
+  .acct-table.is-fixed .acct-th > * { vertical-align: middle; }
+  /* 静态行(审计/自定源):复用 acct-row 的 hover 底与 rowacts 浮现,但行本身
+     不可点——去 pointer 免误导(账户行点击开抽屉,pointer 是它的语义)。 */
+  .acct-row.is-static { cursor: default; }
   .acct-th {
     font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; color: var(--dorami-faint);
     text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--dorami-border); white-space: nowrap;
@@ -4184,6 +4158,54 @@ input[type="radio"] {
   .acct-th.is-num { text-align: right; }
   .acct-th:first-child { padding-left: 18px; }
   .acct-th:last-child { padding-right: 14px; }
+  /* 排序/筛选表头(v3.41 账户管理 V2):th 内按钮继承表头字形;激活列 accent-ink。
+     排序列带方向箭头;枚举列(角色/状态/AI)点击轮换筛选档,列头文字即当前档——
+     两类列头共用同一套「点列头」操作语言与同一个激活色。
+     字号靠 font:inherit 全局规则从 th 继承(§3 未分层陷阱:类上写 font-size 无效,也无需)。 */
+  .acct-sortbtn {
+    display: inline-flex; align-items: center; gap: 3px;
+    background: none; border: none; padding: 0; margin: 0;
+    letter-spacing: inherit; color: inherit; cursor: pointer;
+  }
+  .acct-th.is-num .acct-sortbtn { flex-direction: row-reverse; }
+  .acct-th.is-sorted .acct-sortbtn,
+  .acct-th.is-filtered .acct-sortbtn { color: var(--dorami-accent-ink); }
+  .acct-sort-arrow { font-size: 8px; line-height: 1; min-width: 8px; }
+  /* 筛选列头零跳动:隐形 ::after 以最长档位文字占位,轮换档位时列宽恒定 */
+  .acct-sortbtn[data-widest] { display: inline-grid; justify-items: start; }
+  .acct-sortbtn[data-widest]::after { content: attr(data-widest); visibility: hidden; height: 0; overflow: hidden; }
+  /* 用户列头就地搜索(目检返修):静止态=列名+搜索小图标,点击展开输入框顶替列名
+     (§4.1.2 就地展开范式);well 底小输入,24px 贴表头行高,字号在未分层区(§3 陷阱)。 */
+  .acct-th-search {
+    width: 132px; height: 22px; padding: 0 8px 0 22px;
+    border: none; border-radius: var(--r-sm);
+    background: var(--dorami-well); box-shadow: var(--dorami-inset-input);
+    color: var(--dorami-ink); font-weight: 500; letter-spacing: normal;
+  }
+  .acct-th-search::placeholder { color: var(--dorami-faint); }
+  /* 聚焦态安静化(目检返修):3px 光晕环在表头语境过于突兀,收敛为 1px accent
+     内描边——仍是可见焦点指示(a11y §2),视觉量级与表头相称。 */
+  .acct-th-search:focus { outline: none; box-shadow: inset 0 0 0 1px var(--dorami-accent); }
+  /* AI 启用状态列:形状(Zap/ZapOff)+ 色两通道,不靠纯色传达 */
+  .acct-ai-flag { display: inline-grid; place-items: center; color: var(--dorami-faint); opacity: 0.55; }
+  .acct-ai-flag.is-on { color: var(--dorami-accent-ink); opacity: 1; }
+  .acct-ai-flag svg { width: 13px; height: 13px; }
+  /* 批量条/抽屉头的动作图标组(rowact-btn 常显形态;组内分隔复用 ai-divider) */
+  .batch-acts, .drawer-acts { display: flex; align-items: center; gap: 2px; }
+  .drawer-acts .ai-divider { height: 18px; margin-left: 6px; }
+  /* 账户详情抽屉头:单行标题场景改垂直居中(基类 flex-start 服务多行标题抽屉,不动) */
+  .acct-drawer-head { align-items: center; }
+  .rowact-btn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
+  .rowact-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .rowact-btn:disabled:hover { background: none; color: var(--dorami-faint); }
+  /* KPI 下钻链接(账户 KPI 的「管理员/停用」小字可点即筛) */
+  .kpi-sub-link {
+    background: none; border: none; padding: 0; margin: 0;
+    color: inherit; cursor: pointer; text-decoration: underline dotted transparent;
+    text-underline-offset: 2px; transition: color var(--motion-fast) var(--motion-ease);
+  }
+  .kpi-sub-link:hover { color: var(--dorami-muted); text-decoration-color: currentColor; }
+  .kpi-sub-link.is-on { color: var(--dorami-accent-ink); text-decoration-color: currentColor; }
   .acct-row { cursor: pointer; transition: background var(--motion-fast) var(--motion-ease); }
   .acct-row td { height: 46px; vertical-align: middle; padding: 0 10px; border-top: 1px solid var(--dorami-border); }
   .acct-row td:first-child { padding-left: 18px; }
@@ -10494,10 +10516,19 @@ input[type="radio"] {
 .sett-nav-btn.is-on { font-weight: 700; }
 .sett-seg-btn.is-on { font-weight: 700; }
 
+/* ── 账户表用户列头就地搜索(v3.42 目检返修):input{font:inherit}(未分层)会让
+   表头内输入框继承 th 的 10.5px——搜索词可读性不够,在此未分层区钉回 12px。 ── */
+.acct-th-search { font-size: 12px; }
+
 /* ── AI 问答输入框聚焦外环(v3.32 二轮返修):全局 textarea:focus-visible 的矩形
    外环是未分层规则,@layer 内写 outline:none 压不过(未分层恒胜层内)——在此钉住。
    聚焦态由 .reader-ai-composer:focus-within 的容器 accent 圆角描边统一表达。 ── */
 .reader-ai-input:focus-visible { outline: none; }
+
+/* ── 账户表列头搜索框聚焦外环(v3.42 目检返修):同上陷阱——全局 input:focus-visible
+   的 2px+offset 外环溢出表头行界,视觉上像行高变了(几何 36px 恒定);在此钉掉,
+   聚焦指示由 .acct-th-search:focus 的 1px accent 内描边承担。 ── */
+.acct-th-search:focus-visible { outline: none; }
 
 /* ── 运行浮窗(坞内双形态)= accent 实底 ──
    它是「运行中」活动态的全站唯一持续运动元素,主题色实底作醒目标识

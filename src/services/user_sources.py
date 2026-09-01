@@ -191,8 +191,9 @@ def _subscription_source_ids(subscription: ReaderSubscriptionRecord) -> List[str
 
 
 def active_subscriber_usernames(session: Session, source_id: str) -> List[str]:
-    """当前活跃订阅了该源的用户名(去重;账户须仍存在——删号路径的订阅级联在
-    router 层,此处以 users 表存在性兜底,防僵尸订阅把孤儿 GC 判成有主)。"""
+    """当前活跃订阅了该源的用户名(去重;账户须仍存在——删号级联已入
+    accounts.delete_user 单事务,此处以 users 表存在性兜底,防僵尸订阅把孤儿 GC
+    判成有主)。"""
     owners: Set[str] = set()
     for record in session.exec(
         select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.is_active == True)  # noqa: E712
@@ -208,6 +209,41 @@ def active_subscriber_usernames(session: Session, source_id: str) -> List[str]:
         ).all()
     }
     return sorted(owners & existing)
+
+
+def active_subscribers_by_source(
+    session: Session, source_ids: List[str]
+) -> Dict[str, List[str]]:
+    """一次扫描构建 `{source_id: [username, ...]}`(活跃订阅 × 账户存在性)。
+
+    v3.42(审计 M08):admin_overview 此前对每个源逐一调 active_subscriber_usernames,
+    形态 = 源数 × 全订阅扫描 + 每源一次用户查询;本函数把全部源的订阅者归属压成
+    「一次订阅表扫描 + 一次用户存在性查询」,查询数与源数解耦。
+    单源判定语义与 active_subscriber_usernames 逐字一致。
+    """
+    wanted = set(source_ids)
+    if not wanted:
+        return {}
+    owners_by_source: Dict[str, Set[str]] = {sid: set() for sid in wanted}
+    all_owners: Set[str] = set()
+    for record in session.exec(
+        select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.is_active == True)  # noqa: E712
+    ).all():
+        owner = record.owner_username or ""
+        if not owner:
+            continue
+        for sid in _subscription_source_ids(record):
+            if sid in wanted:
+                owners_by_source[sid].add(owner)
+                all_owners.add(owner)
+    if not all_owners:
+        return {sid: [] for sid in wanted}
+    existing = {
+        str(u) for u in session.exec(
+            select(UserRecord.username).where(UserRecord.username.in_(sorted(all_owners)))
+        ).all()
+    }
+    return {sid: sorted(owners & existing) for sid, owners in owners_by_source.items()}
 
 
 def subscribed_user_source_ids(session: Session, username: str) -> Set[str]:
@@ -651,6 +687,47 @@ def admin_delete_user_source(session: Session, source_id: str) -> Dict[str, Any]
     return {"source_id": source_id, "affected_subscribers": affected, **purged}
 
 
+def purge_account_user_sources(session: Session, username: str) -> List[str]:
+    """账户删除级联（v3.40.4 审计 M03）：退订该用户的全部自定源引用，退订后无剩余
+    活跃订阅者的自定源按既有「无人订阅即物理删」语义整体清除，返回被清源清单。
+
+    **不 commit**——运行在调用方（accounts.delete_user）的单事务里，与账户行删除
+    一并原子提交。候选集扫该用户全部订阅行（含 inactive，防僵尸行漏源）；持
+    _WRITE_LOCK 与其它自定源写路径互斥。
+    """
+    with _WRITE_LOCK:
+        candidate_ids: Set[str] = set()
+        for record in session.exec(
+            select(ReaderSubscriptionRecord).where(
+                ReaderSubscriptionRecord.owner_username == username
+            )
+        ).all():
+            candidate_ids.update(
+                sid for sid in _subscription_source_ids(record) if is_user_source(sid)
+            )
+        purged: List[str] = []
+        for source_id in sorted(candidate_ids):
+            remove_source_from_subscriptions(session, source_id, username=username)
+            if not active_subscriber_usernames(session, source_id):
+                purge_user_source(session, source_id)
+                purged.append(source_id)
+        return purged
+
+
+def tombstone_owner_username(session: Session, username: str, tombstone: str) -> int:
+    """把幸存共享自定源上的 owner_username 溯源字段改写为墓碑名（不 commit）。
+
+    owner 仅溯源、不承担权限；改写防同名重建后被误认成新人首建。"""
+    changed = 0
+    for record in session.exec(
+        select(SourceConfigRecord).where(SourceConfigRecord.owner_username == username)
+    ).all():
+        record.owner_username = tombstone
+        session.add(record)
+        changed += 1
+    return changed
+
+
 def purge_orphan_user_sources(session: Session) -> List[str]:
     """孤儿 GC(检视返修 F8):无任何活跃订阅者的用户源整体物理删除,返回清单。
 
@@ -764,9 +841,11 @@ def admin_overview(session: Session) -> Dict[str, Any]:
             .group_by(ArticleRecord.source_id)
         ).all()
         article_counts = {str(sid): int(count) for sid, count in rows}
+    # 订阅者归属一次扫描构建(v3.42 M08:此前逐源 N+1,上界 ≈ 2×源数+3 次查询)。
+    subscribers_map = active_subscribers_by_source(session, ids)
     covered_users: Set[str] = set()
     for item in items:
-        subscribers = active_subscriber_usernames(session, item["source_id"])
+        subscribers = subscribers_map.get(item["source_id"], [])
         item["subscriber_count"] = len(subscribers)
         item["article_count"] = article_counts.get(item["source_id"], 0)
         covered_users.update(subscribers)

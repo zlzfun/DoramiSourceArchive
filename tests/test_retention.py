@@ -38,7 +38,9 @@ def _iso(offset_days: int) -> str:
 
 
 def _labels():
-    return {t.label for t in retention._TABLES}
+    # 纯时间窗表 + 条件性清理表（v3.43 M14 扩面：jobs/feedbacks/article_shares）。
+    conditional = {label for label, _ in retention._conditional_cleanups(datetime.date.today())}
+    return {t.label for t in retention._TABLES} | conditional
 
 
 def test_returns_summary_structure_on_empty_db(tmp_path):

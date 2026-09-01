@@ -1,7 +1,7 @@
 // 公告管理(v3.18 互通波,运维管理 → 消息):撰写 → 满宽真实预览 → 发布;
 // 已发列表 hairline 行(渲染后摘要,不显 markdown 源码)+ 启停/删除 + 触达计数。
 // 预览复用读者横幅的 AnnouncementCard,所见即读者所得。
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Info, Loader2, Megaphone, Power, Send, Trash2 } from 'lucide-react';
 import {
   fetchAdminAnnouncements,
@@ -13,6 +13,7 @@ import { useConfirm } from '../../hooks/useConfirm';
 import { AnnouncementCard } from '../AnnouncementBanner';
 import { stripAnnouncementMarkup } from '../../utils/announcementText';
 import { formatStamp } from './adminUtils';
+import Pager from './Pager';
 
 const CONTENT_MAX = 2000;
 const TITLE_MAX = 200;
@@ -25,22 +26,48 @@ const LEVELS = [
 
 const LEVEL_ICONS = { info: Info, accent: Megaphone, warning: AlertTriangle };
 
-export default function AnnouncementsPanel({ showToast }) {
+// 历史公告分页大小(v3.42 M17):默认只铺最近一页,不再全量渲染所有历史公告。
+const ANN_PAGE_SIZE = 6;
+
+export default function AnnouncementsPanel({ showToast, refreshTick = 0 }) {
   const confirm = useConfirm();
-  const [items, setItems] = useState(null); // null = 加载中
+  const [items, setItems] = useState(null); // null = 加载中;当前页条目(服务端分页)
+  const [total, setTotal] = useState(0); // 服务端总条数
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [level, setLevel] = useState('info');
   const [publishing, setPublishing] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  // 历史公告分页:v3.43.2 改真服务端分页(codex 检视——此前默认 limit=200 本地
+  // slice,第 201 条起永久不可见,后端「仅聚合当前页 dismiss_count」也未兑现)。
+  const [page, setPage] = useState(1);
 
-  const load = useCallback(() => {
-    fetchAdminAnnouncements()
-      .then((res) => setItems(Array.isArray(res?.items) ? res.items : []))
-      .catch((error) => { setItems([]); showToast(error.message, 'error'); });
+  // 请求代次守卫(v3.43.1):refreshTick 重取与操作后重取可能并发在途,
+  // 旧响应后到即丢弃,不覆盖新数据、不弹旧错。
+  const loadGenRef = useRef(0);
+  const load = useCallback((targetPage) => {
+    const gen = ++loadGenRef.current;
+    fetchAdminAnnouncements({ skip: (targetPage - 1) * ANN_PAGE_SIZE, limit: ANN_PAGE_SIZE })
+      .then((res) => {
+        if (gen !== loadGenRef.current) return;
+        setItems(Array.isArray(res?.items) ? res.items : []);
+        setTotal(Number(res?.total) || 0);
+      })
+      .catch((error) => {
+        if (gen !== loadGenRef.current) return;
+        setItems([]); showToast(error.message, 'error');
+      });
   }, [showToast]);
 
-  useEffect(() => { load(); }, [load]);
+  // refreshTick(v3.43.1 M15):父级「切回 Tab」信号只重取列表,不重挂——
+  // 标题/正文/级别草稿保留。
+  useEffect(() => { load(page); }, [load, page, refreshTick]);
+
+  const totalPages = Math.max(1, Math.ceil(total / ANN_PAGE_SIZE));
+  // 数据收缩(删掉末页最后一条等)后当前页越界时回落到末页,不卡空页。
+  useEffect(() => {
+    if (items !== null && page > totalPages) setPage(totalPages);
+  }, [items, page, totalPages]);
 
   const handlePublish = async (event) => {
     event.preventDefault();
@@ -52,7 +79,8 @@ export default function AnnouncementsPanel({ showToast }) {
       setTitle('');
       setContent('');
       setLevel('info');
-      load();
+      // 新公告在第一页:已在第一页则直接重取,否则归位(setPage 触发 effect 取数)。
+      if (page === 1) load(1); else setPage(1);
     } catch (error) {
       showToast(error.message, 'error');
     } finally {
@@ -65,7 +93,7 @@ export default function AnnouncementsPanel({ showToast }) {
     try {
       await toggleAnnouncement(item.id);
       showToast(item.is_active ? '已下线公告' : '已重新上线公告', 'success');
-      load();
+      load(page);
     } catch (error) {
       showToast(error.message, 'error');
     } finally {
@@ -80,7 +108,7 @@ export default function AnnouncementsPanel({ showToast }) {
     try {
       await deleteAnnouncement(item.id);
       showToast('已删除公告', 'success');
-      load();
+      load(page); // 末页删空时 total 收缩,越界回退 effect 会归位再取
     } catch (error) {
       showToast(error.message, 'error');
     } finally {
@@ -202,6 +230,12 @@ export default function AnnouncementsPanel({ showToast }) {
               </div>
             );
           })
+        )}
+        {items !== null && total > ANN_PAGE_SIZE && (
+          <div className="mt-1 flex flex-wrap items-center gap-2 border-t border-[var(--dorami-border)] pt-2.5">
+            <span className="tiny-meta">共 {total} 条</span>
+            <Pager page={page} totalPages={totalPages} onPage={setPage} />
+          </div>
         )}
       </div>
     </section>
