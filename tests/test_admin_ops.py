@@ -551,3 +551,25 @@ def test_admin_credentials_overview(monkeypatch, tmp_path):
     with TestClient(app_module.app) as client:
         _login(client, "user", "user")
         assert client.get("/api/admin/credentials").status_code == 403
+
+
+def test_record_usage_accepts_summarize_and_counts_into_budget(tmp_path):
+    """v3.40.4 M02：summarize 是合法计量用途——落行进看板，并计入全站日预算。
+
+    历史假绿灯：VALID_PURPOSES 曾漏 summarize，record_usage 静默丢行——速读 token
+    既不进看板也不占日预算（READER_AI_BUDGET_PURPOSES 早已含它却永远读到 0）。
+    """
+    from services import accounts as accounts_service
+    from services import ai_usage
+    from storage.impl.db_storage import DatabaseStorage
+
+    engine = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'usage_summarize.db'}").engine
+    today = ai_usage._today()
+    with Session(engine) as session:
+        ai_usage.record_usage(session, username="alice", purpose="summarize", model="m1",
+                              usage={"prompt_tokens": 40, "completion_tokens": 60, "total_tokens": 100}, day=today)
+        from models.db import AiUsageRecord
+        row = session.exec(__import__("sqlmodel").select(AiUsageRecord)).one()
+        assert row.purpose == "summarize" and row.total_tokens == 100 and row.calls == 1
+        # 全站日预算统计吃到 summarize 消耗（三层护栏之全站层）。
+        assert accounts_service.reader_ai_tokens_today(session) == 100

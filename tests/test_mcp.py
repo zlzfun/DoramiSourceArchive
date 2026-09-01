@@ -337,16 +337,36 @@ def test_daily_brief_skill_download_embeds_live_prompt(monkeypatch, tmp_path):
         assert "{DAILY_BRIEF_STYLE_GUIDE}" not in skill_text
 
 
-def test_mcp_toggle_flips_state(monkeypatch, tmp_path):
+def test_mcp_toggle_admin_only_and_flips_state(monkeypatch, tmp_path):
+    """总闸切换是 admin-only 服务级熔断(v3.40.4 M01):读者 403,admin 生效且入审计。
+
+    历史假绿灯:本用例曾以读者身份断言切换成功——当时端点确实不设防,测试把
+    越权固化成了预期行为。
+    """
+    from models.db import AdminAuditRecord
+    from sqlmodel import select as sql_select
+
     app_module = __import__('api.app', fromlist=['app'])
     monkeypatch.setattr(app_module, "db_sink", DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'mcp_toggle.db'}"))
     set_test_auth_accounts(monkeypatch, app_module)
     with TestClient(app_module.app) as client:
+        # 受限读者:可读 status,不可动总闸。
         login_test_user(client)
         initial = client.get("/api/mcp/status").json()["enabled"]
+        assert client.post("/api/mcp/toggle").status_code == 403
+        assert client.get("/api/mcp/status").json()["enabled"] == initial
+        # admin:切换生效,并落一条管理审计。
+        resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+        assert resp.status_code == 200
         resp = client.post("/api/mcp/toggle")
         assert resp.status_code == 200
         assert resp.json()["enabled"] != initial
         # Restore
         client.post("/api/mcp/toggle")
         assert client.get("/api/mcp/status").json()["enabled"] == initial
+        with Session(app_module.db_sink.engine) as session:
+            rows = session.exec(
+                sql_select(AdminAuditRecord).where(AdminAuditRecord.path == "/api/mcp/toggle")
+            ).all()
+        assert len(rows) == 2
+        assert all(r.username == "admin" and r.summary == "切换全站 MCP 总闸" for r in rows)

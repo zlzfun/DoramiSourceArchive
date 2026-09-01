@@ -1162,7 +1162,7 @@ def _require_reader_ai(request: Request):
 # 读者 AI 逐用户每日配额（常量，可调）：护住共享 LLM 预算不被单账户刷爆。
 # 计数复用 AiUsageRecord.calls，即底层 LLM 调用次数——translate 会按段并发多次调用，
 # 故该额度更接近「若干篇整文翻译」而非固定篇数；ask 通常一问一次调用。
-_AI_DAILY_CALL_LIMITS = {"translate": 50, "ask": 100}
+_AI_DAILY_CALL_LIMITS = {"translate": 50, "ask": 100, "summarize": 50}
 
 
 def _enforce_ai_daily_quota(username: str, purpose: str) -> None:
@@ -1215,6 +1215,7 @@ async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
 async def reader_ai_summarize(params: ReaderTranslateParams, request: Request):
     """为指定文章生成中文要点摘要（结果缓存复用；入参形状与 translate 相同）。"""
     username, llm_config = _require_reader_ai(request)
+    _enforce_ai_daily_quota(username, "summarize")
     db_sink = deps.get_db_sink()
     with Session(db_sink.engine) as session:
         _deny_unsubscribed_user_source_article(

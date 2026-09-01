@@ -16,9 +16,13 @@ from sqlmodel import Session, select
 from models.db import AiUsageRecord
 
 # 计入看板的用途标签（白名单，避免脏数据）。
+# 注意：读者面新增 AI 用途必须同步登记此处 + reader.py _AI_DAILY_CALL_LIMITS +
+# accounts.READER_AI_BUDGET_PURPOSES 三处——v3.40.4 前 summarize 漏登记本表，
+# record_usage 静默丢行导致逐用户限额/全站日预算/用量看板三层护栏全部失效。
 VALID_PURPOSES = (
     "translate",
     "ask",
+    "summarize",
     "daily_brief_map",
     "daily_brief_dedup",
     "daily_brief_reduce",

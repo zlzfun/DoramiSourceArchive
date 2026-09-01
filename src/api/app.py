@@ -372,8 +372,15 @@ def archive_import_requires_admin(path: str, method: str) -> bool:
 
 
 def account_admin_required(path: str) -> bool:
-    """账户/运维/X API 机密与计费管理一律仅限 admin，独立于 runtime 采集轴。"""
-    return _path_matches(path, ("/api/accounts", "/api/admin", "/api/x-api"))
+    """账户/运维/X API 机密与计费管理一律仅限 admin，独立于 runtime 采集轴。
+
+    /api/mcp/toggle 是全站 MCP 总闸（服务级熔断），必须单列：/api/mcp 整体在
+    READER_API_PREFIXES 里（读者要看 status/工具清单），仅按 reader 面裁决会让
+    受限读者也能关停全站 MCP（v3.40.4 审计 M01 修复）。
+    """
+    return _path_matches(
+        path, ("/api/accounts", "/api/admin", "/api/x-api", "/api/mcp/toggle")
+    )
 
 
 @asynccontextmanager
@@ -600,10 +607,12 @@ def _sign_auth_payload(payload: str) -> str:
     return hmac.new(AUTH_SECRET.encode("utf-8"), payload.encode("ascii"), hashlib.sha256).hexdigest()
 
 
-def create_auth_token(username: str, role: str) -> str:
+def create_auth_token(username: str, role: str, epoch: str = "") -> str:
     payload = _b64encode_json({
         "sub": username,
         "role": role,
+        # 会话世代（M04）：与 users.session_epoch 绑定，改密/删号重建即吊销。
+        "gen": epoch,
         "exp": int(time.time()) + AUTH_SESSION_SECONDS,
     })
     return f"{payload}.{_sign_auth_payload(payload)}"
@@ -623,9 +632,14 @@ def read_auth_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
         return None
     # 账户必须仍存在、处于启用状态，且角色与 token 内一致；否则会话立即失效
     # （管理员停用/删除/改角色后，对应 cookie 在下一次请求即被吊销）。
+    # 会话世代（M04）：token 内 gen 必须等于 users.session_epoch——密码重置后旧
+    # Cookie 立即失效；删号后同名重建的新行世代随机，旧 Cookie 不复活。存量行
+    # 世代为 ""、历史 token 无 gen 字段，二者按 "" 对齐（升级不强制全员重登）。
     with Session(db_sink.engine) as session:
         record = accounts_service.get_active_user(session, data.get("sub"))
         if record is None or data.get("role") != record.role:
+            return None
+        if str(data.get("gen") or "") != (record.session_epoch or ""):
             return None
     return data
 
@@ -643,10 +657,10 @@ def current_username(request: Request) -> str:
     return str(session.get("sub")) if session else ""
 
 
-def set_auth_cookie(response: Response, username: str, role: str) -> None:
+def set_auth_cookie(response: Response, username: str, role: str, epoch: str = "") -> None:
     response.set_cookie(
         key=AUTH_COOKIE_NAME,
-        value=create_auth_token(username, role),
+        value=create_auth_token(username, role, epoch),
         max_age=AUTH_SESSION_SECONDS,
         httponly=True,
         secure=_auth_cookie_secure(),
@@ -787,6 +801,7 @@ def login_admin(params: AuthLoginParams, response: Response):
             raise HTTPException(status_code=401, detail="账号或密码错误")
         role = record.role
         avatar = record.avatar
+        epoch = record.session_epoch or ""
         accounts_service.touch_login(session, username)
     # 预置订阅在登录点播种（而非仅首个 reader 请求）：登录响应先于前端阅读器挂载，
     # 消除新账号首屏的竞态——此前播种只挂在 GET /api/reader/sources，与它并行的
@@ -798,7 +813,7 @@ def login_admin(params: AuthLoginParams, response: Response):
             ensure_default_subscriptions(username)
         except Exception:
             _dorami_logger.warning("登录点播种默认订阅失败，等待 reader 端点兜底", exc_info=True)
-    set_auth_cookie(response, username, role)
+    set_auth_cookie(response, username, role, epoch)
     return {"authenticated": True, "user": _auth_user_payload(username, role, avatar)}
 
 
@@ -825,7 +840,7 @@ def logout_admin(response: Response):
 
 
 @app.post("/api/auth/change-password")
-def change_own_password(params: ChangePasswordParams, request: Request):
+def change_own_password(params: ChangePasswordParams, request: Request, response: Response):
     """任意已登录账户修改自己的登录密码（需校验旧密码）。"""
     username = current_username(request)
     if not username:
@@ -838,7 +853,10 @@ def change_own_password(params: ChangePasswordParams, request: Request):
             raise HTTPException(status_code=401, detail="账户不存在或已停用")
         if not accounts_service.verify_password(params.current_password, record.password_hash):
             raise HTTPException(status_code=400, detail="当前密码错误")
-        accounts_service.set_password(session, username, params.new_password)
+        updated = accounts_service.set_password(session, username, params.new_password)
+        # 改密轮换会话世代（M04）会吊销一切旧 Cookie——含本人当前这只；就地续签
+        # 新世代 Cookie，自助改密不打断本人会话（他处登录态照旧全部失效）。
+        set_auth_cookie(response, username, updated.role, updated.session_epoch or "")
     return {"ok": True}
 
 

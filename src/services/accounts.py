@@ -22,9 +22,23 @@ import hmac
 import secrets
 from typing import List, Optional
 
-from sqlmodel import Session, func, select
+from sqlmodel import Session, delete, func, select, update
 
-from models.db import AiUsageRecord, AppSettingRecord, LoginEventRecord, UserRecord
+from models.db import (
+    AiUsageRecord,
+    AnnouncementDismissRecord,
+    AppSettingRecord,
+    ArticleShareRecord,
+    FeedbackRecord,
+    LoginEventRecord,
+    ReaderArticleReadStateRecord,
+    ReaderFavoriteRecord,
+    ReaderFeedTokenRecord,
+    ReaderReadCursorRecord,
+    ReaderReadRecord,
+    ReaderSubscriptionRecord,
+    UserRecord,
+)
 
 VALID_ROLES = ("admin", "user")
 VALID_SURFACES = ("console", "reader")
@@ -55,6 +69,16 @@ class AccountError(ValueError):
 
 def _now_iso() -> str:
     return datetime.datetime.now().isoformat()
+
+
+def new_session_epoch() -> str:
+    """会话世代值（v3.40.4 M04）：建号/改密时轮换。
+
+    登录 token 携带签发时的世代，校验时须与 users 行一致——密码重置即吊销既有
+    Cookie；建号随机初始化使删号后同名重建不复活旧 Cookie。存量行为 ""，旧 token
+    无世代字段按 "" 对待（升级不强制重登，首次改密后收紧）。
+    """
+    return secrets.token_hex(8)
 
 
 # ==================== 末位活跃管理员保护 ====================
@@ -162,6 +186,7 @@ def create_user(session: Session, username: str, password: str, role: str) -> Us
         role=role,
         is_active=True,
         ai_beta_enabled=ai_beta_new_user_default(session),
+        session_epoch=new_session_epoch(),
         created_at=now,
         updated_at=now,
     )
@@ -176,6 +201,8 @@ def set_password(session: Session, username: str, new_password: str) -> UserReco
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
     record.password_hash = hash_password(new_password)
+    # 改密即轮换会话世代：该账户既有登录 Cookie 下一次请求即失效（M04）。
+    record.session_epoch = new_session_epoch()
     record.updated_at = _now_iso()
     session.add(record)
     session.commit()
@@ -441,12 +468,64 @@ def reader_ai_budget_exhausted(session: Session) -> bool:
     return bool(budget) and reader_ai_tokens_today(session) >= budget
 
 
+# 删号计量墓碑前缀：用户名不允许含冒号（create_user 拒绝），墓碑名天然不与任何
+# 真实账户冲突，也无法登录（users 表无此行）。
+DELETED_USER_PREFIX = "deleted:"
+
+
 def delete_user(session: Session, username: str) -> None:
+    """删除账户并收口其全部身份数据（v3.40.4 审计 M03，单事务原子提交）。
+
+    语义（2026-09-01 拍板）：
+    - **个人资产物理删除并即时失效**：订阅行与聚合令牌、收藏、公开分享链接
+      （行删即 404）、逐篇读态与按源水位、反馈、公告 dismiss；该用户订阅的
+      自定源随退订走既有「无人订阅即物理删」语义。
+    - **计量历史墓碑化**：AI 用量/阅读计量/登录事件改写为 ``deleted:<原名>``——
+      运维看板与成本历史保持完整真实，同名重建不继承任何历史。
+    - **保留原名**：管理审计日志（操作历史即历史）与 JobRecord.created_by。
+    此前版本只删账户行+订阅+令牌且分两次提交——收藏/分享/计量等残留可被同名
+    重建继承，后段失败还会部分删除；现全部改在一个事务内，末尾一次 commit。
+    """
+    # 函数级导入：user_sources 依赖 feedparser/httpx，避免账户服务的轻量消费方
+    # 背上抓取栈依赖（models → services 单向，无环）。
+    from services import user_sources as user_sources_service
+
     record = get_user(session, username)
     if record is None:
         raise AccountError(f"账户 '{username}' 不存在")
     # 删除最后一个活跃管理员前守卫（非活跃 admin 不计入活跃数，可删）。
     _guard_last_active_admin(session, record, "删除")
+
+    tombstone = f"{DELETED_USER_PREFIX}{username}"
+
+    # ① 自定源级联（须先于订阅行整批删除——退订语义要读订阅行判断剩余订阅者）。
+    user_sources_service.purge_account_user_sources(session, username)
+    user_sources_service.tombstone_owner_username(session, username, tombstone)
+
+    # ② 个人资产物理删除。
+    for model, owner_col in (
+        (ReaderSubscriptionRecord, ReaderSubscriptionRecord.owner_username),
+        (ReaderFavoriteRecord, ReaderFavoriteRecord.owner_username),
+        (ArticleShareRecord, ArticleShareRecord.owner_username),
+        (ReaderArticleReadStateRecord, ReaderArticleReadStateRecord.owner_username),
+        (ReaderReadCursorRecord, ReaderReadCursorRecord.owner_username),
+        (FeedbackRecord, FeedbackRecord.owner_username),
+        (AnnouncementDismissRecord, AnnouncementDismissRecord.owner_username),
+    ):
+        session.exec(delete(model).where(owner_col == username))
+    feed_token = session.get(ReaderFeedTokenRecord, username)
+    if feed_token is not None:
+        session.delete(feed_token)
+
+    # ③ 计量历史墓碑化。
+    for model, user_col in (
+        (AiUsageRecord, AiUsageRecord.username),
+        (ReaderReadRecord, ReaderReadRecord.username),
+        (LoginEventRecord, LoginEventRecord.username),
+    ):
+        session.exec(update(model).where(user_col == username).values(username=tombstone))
+
+    # ④ 账户行本体；一次 commit 原子落地（任一步失败即整体回滚，无部分删除）。
     session.delete(record)
     session.commit()
 
@@ -468,6 +547,7 @@ def seed_root_admin_if_empty(engine) -> bool:
             role="admin",
             is_active=True,
             ai_beta_enabled=ai_beta_new_user_default(session),
+            session_epoch=new_session_epoch(),
             created_at=now,
             updated_at=now,
         ))

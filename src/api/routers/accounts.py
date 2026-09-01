@@ -11,11 +11,10 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from api import deps
 from api.serializers import serialize_user
-from models.db import ReaderFeedTokenRecord, ReaderSubscriptionRecord
 from services import accounts as accounts_service
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
@@ -91,19 +90,10 @@ def reset_account_password(
 
 @router.delete("/{username}")
 def delete_account(username: str, session: Session = Depends(deps.get_session)):
+    # 级联收口（订阅/令牌/收藏/分享/读态/反馈/自定源退订 + 计量墓碑化）全部
+    # 在 delete_user 单事务内完成（v3.40.4 M03），router 不再分段二次提交。
     try:
         accounts_service.delete_user(session, username)
     except accounts_service.AccountError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    # 清理该用户的订阅与聚合令牌，避免孤儿数据。
-    for sub in session.exec(
-        select(ReaderSubscriptionRecord).where(
-            ReaderSubscriptionRecord.owner_username == username
-        )
-    ).all():
-        session.delete(sub)
-    feed_token = session.get(ReaderFeedTokenRecord, username)
-    if feed_token is not None:
-        session.delete(feed_token)
-    session.commit()
     return {"ok": True}

@@ -309,3 +309,162 @@ def test_non_admin_cannot_manage_accounts(monkeypatch, tmp_path):
         _login(client, "user", "user")
         assert client.get("/api/accounts").status_code == 403
         assert client.post("/api/accounts", json={"username": "x", "password": "ppppp1", "role": "user"}).status_code == 403
+
+
+# ==================== v3.40.4 P0 安全收口（审计 M03/M04） ====================
+def test_password_reset_revokes_existing_sessions(monkeypatch, tmp_path):
+    """M04：管理员重置密码轮换会话世代，目标账户既有 Cookie 下一请求即失效。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as user_client, TestClient(app_module.app) as admin_client:
+        _login(user_client, "user", "user")
+        assert user_client.get("/api/runtime").status_code == 200
+        _login(admin_client, "admin", "admin")
+        assert admin_client.post(
+            "/api/accounts/user/reset-password", json={"new_password": "npw12345"}
+        ).status_code == 200
+        # 旧 Cookie 世代不符 → 吊销；新密码重新登录后恢复。
+        assert user_client.get("/api/runtime").status_code == 401
+        assert _login(user_client, "user", "npw12345").status_code == 200
+        assert user_client.get("/api/runtime").status_code == 200
+
+
+def test_self_change_password_keeps_own_session_kills_others(monkeypatch, tmp_path):
+    """M04：自助改密就地续签本人 Cookie 不断线；他处旧会话全部吊销。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as here, TestClient(app_module.app) as elsewhere:
+        _login(here, "user", "user")
+        _login(elsewhere, "user", "user")
+        assert here.post(
+            "/api/auth/change-password",
+            json={"current_password": "user", "new_password": "npw12345"},
+        ).status_code == 200
+        assert here.get("/api/runtime").status_code == 200
+        assert elsewhere.get("/api/runtime").status_code == 401
+
+
+def test_recreated_same_name_account_does_not_revive_old_cookie(monkeypatch, tmp_path):
+    """M04：删号后同名同角色重建，旧 Cookie 不复活（会话世代随机重生）。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as user_client, TestClient(app_module.app) as admin_client:
+        _login(user_client, "user", "user")
+        _login(admin_client, "admin", "admin")
+        assert admin_client.delete("/api/accounts/user").status_code == 200
+        assert user_client.get("/api/runtime").status_code == 401
+        assert admin_client.post(
+            "/api/accounts", json={"username": "user", "password": "user", "role": "user"}
+        ).status_code == 200
+        # 同名同角色重建后，旧 Cookie 仍然无效。
+        assert user_client.get("/api/runtime").status_code == 401
+
+
+def test_delete_account_purges_assets_and_tombstones_metering(tmp_path):
+    """M03：删号单事务收口——个人资产物理删除、计量墓碑化、自定源随退订清理，
+    同名重建不继承任何历史。"""
+    from models.db import (
+        AiUsageRecord,
+        AnnouncementDismissRecord,
+        ArticleShareRecord,
+        FeedbackRecord,
+        LoginEventRecord,
+        ReaderArticleReadStateRecord,
+        ReaderFavoriteRecord,
+        ReaderFeedTokenRecord,
+        ReaderReadCursorRecord,
+        ReaderReadRecord,
+        ReaderSubscriptionRecord,
+        SourceConfigRecord,
+        SourceStateRecord,
+    )
+    from sqlmodel import select
+    from services import accounts as accounts_service
+
+    engine = _make_engine(tmp_path, name="delete_cascade.db")
+    seed_default_accounts(engine)
+    t = "2026-09-01T08:00:00"
+    custom_sid = "user_rss_0123456789ab"
+    with Session(engine) as session:
+        # 个人资产（全部应物理删除）
+        session.add(ReaderSubscriptionRecord(
+            owner_username="user", name="平台源订阅", token_hash="th1",
+            filters_json='{"source_id": "rss_x"}', created_at=t, updated_at=t))
+        session.add(ReaderSubscriptionRecord(
+            owner_username="user", name="自定源订阅", token_hash="th2",
+            filters_json=f'{{"source_id": "{custom_sid}"}}', created_at=t, updated_at=t))
+        session.add(ReaderFeedTokenRecord(owner_username="user", token_hash="fh", created_at=t, updated_at=t))
+        session.add(ReaderFavoriteRecord(owner_username="user", article_id="a1", created_at=t))
+        session.add(ArticleShareRecord(token="dshr_test", article_id="a1", owner_username="user", created_at=t))
+        session.add(ReaderArticleReadStateRecord(owner_username="user", article_id="a1", read_at=t))
+        session.add(ReaderReadCursorRecord(owner_username="user", source_id="rss_x", updated_at=t))
+        session.add(FeedbackRecord(owner_username="user", category="bug", content="x", created_at=t, updated_at=t))
+        session.add(AnnouncementDismissRecord(owner_username="user", announcement_id=1, dismissed_at=t))
+        # 仅该用户订阅的自定源（应随退订「无人订阅即物理删」）
+        session.add(SourceConfigRecord(
+            source_id=custom_sid, name="私有源", source_type="rss",
+            owner_username="user", created_at=t, updated_at=t))
+        session.add(SourceStateRecord(source_id=custom_sid, fetcher_id="generic_rss", updated_at=t))
+        # 计量历史（应墓碑化保留）
+        session.add(AiUsageRecord(day="2026-09-01", username="user", purpose="ask",
+                                  model="m", calls=3, total_tokens=120, updated_at=t))
+        session.add(ReaderReadRecord(day="2026-09-01", username="user", source_id="rss_x", reads=2, updated_at=t))
+        session.add(LoginEventRecord(username="user", at=t))
+        session.commit()
+
+    with Session(engine) as session:
+        accounts_service.delete_user(session, "user")
+
+    with Session(engine) as session:
+        assert accounts_service.get_user(session, "user") is None
+        # 个人资产全部清空
+        for model, col in (
+            (ReaderSubscriptionRecord, ReaderSubscriptionRecord.owner_username),
+            (ReaderFavoriteRecord, ReaderFavoriteRecord.owner_username),
+            (ArticleShareRecord, ArticleShareRecord.owner_username),
+            (ReaderArticleReadStateRecord, ReaderArticleReadStateRecord.owner_username),
+            (ReaderReadCursorRecord, ReaderReadCursorRecord.owner_username),
+            (FeedbackRecord, FeedbackRecord.owner_username),
+            (AnnouncementDismissRecord, AnnouncementDismissRecord.owner_username),
+        ):
+            assert session.exec(select(model).where(col == "user")).all() == []
+        assert session.get(ReaderFeedTokenRecord, "user") is None
+        # 自定源无人订阅 → 配置与抓取状态物理删除
+        assert session.get(SourceConfigRecord, custom_sid) is None
+        assert session.get(SourceStateRecord, custom_sid) is None
+        # 计量墓碑化：原名无行，deleted:user 保全值
+        assert session.exec(select(AiUsageRecord).where(AiUsageRecord.username == "user")).all() == []
+        tomb = session.exec(select(AiUsageRecord).where(AiUsageRecord.username == "deleted:user")).one()
+        assert tomb.calls == 3 and tomb.total_tokens == 120
+        assert session.exec(select(ReaderReadRecord).where(ReaderReadRecord.username == "deleted:user")).one().reads == 2
+        assert session.exec(select(LoginEventRecord).where(LoginEventRecord.username == "deleted:user")).one().at == t
+
+        # 同名重建：零资产、零计量继承
+        accounts_service.create_user(session, "user", "pw123456", "user")
+        assert session.exec(select(ReaderFavoriteRecord).where(ReaderFavoriteRecord.owner_username == "user")).all() == []
+        assert session.exec(select(AiUsageRecord).where(AiUsageRecord.username == "user")).all() == []
+
+
+def test_delete_account_keeps_shared_custom_source_with_tombstoned_owner(tmp_path):
+    """M03：他人仍订阅的共享自定源存活，owner_username 溯源字段改写墓碑。"""
+    from models.db import ReaderSubscriptionRecord, SourceConfigRecord
+    from services import accounts as accounts_service
+
+    engine = _make_engine(tmp_path, name="delete_shared.db")
+    seed_default_accounts(engine, (("admin", "admin", "admin"), ("user", "user", "user"), ("bob", "bobpw123", "user")))
+    t = "2026-09-01T08:00:00"
+    shared_sid = "user_rss_ba9876543210"
+    with Session(engine) as session:
+        session.add(SourceConfigRecord(
+            source_id=shared_sid, name="共享私有源", source_type="rss",
+            owner_username="user", created_at=t, updated_at=t))
+        for owner in ("user", "bob"):
+            session.add(ReaderSubscriptionRecord(
+                owner_username=owner, name="订阅", token_hash=f"th_{owner}",
+                filters_json=f'{{"source_id": "{shared_sid}"}}', created_at=t, updated_at=t))
+        session.commit()
+
+    with Session(engine) as session:
+        accounts_service.delete_user(session, "user")
+
+    with Session(engine) as session:
+        record = session.get(SourceConfigRecord, shared_sid)
+        assert record is not None
+        assert record.owner_username == "deleted:user"

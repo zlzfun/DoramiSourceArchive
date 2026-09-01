@@ -24,6 +24,8 @@ AUDIT_PATH_PREFIXES = (
     "/api/collection-jobs",
     "/api/llm",
     "/api/daily-brief",
+    # 全站 MCP 总闸（admin-only 服务级熔断，v3.40.4 审计 M01 补审计）。
+    "/api/mcp/toggle",
 )
 # /api/reader/* 与 /api/auth/* 刻意豁免：管理员自己的阅读、订阅与自助改密
 # 属于个人操作，不是需要管理员互相审阅的“管理操作”。
@@ -164,6 +166,7 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
         ),
     ),
     ("POST", re.compile(r"^/api/llm/config$"), lambda _m, _b: ("更新 LLM 配置", None)),
+    ("POST", re.compile(r"^/api/mcp/toggle$"), lambda _m, _b: ("切换全站 MCP 总闸", None)),
     (
         "POST",
         re.compile(r"^/api/admin/remote-sync/schedule$"),

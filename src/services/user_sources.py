@@ -191,8 +191,9 @@ def _subscription_source_ids(subscription: ReaderSubscriptionRecord) -> List[str
 
 
 def active_subscriber_usernames(session: Session, source_id: str) -> List[str]:
-    """当前活跃订阅了该源的用户名(去重;账户须仍存在——删号路径的订阅级联在
-    router 层,此处以 users 表存在性兜底,防僵尸订阅把孤儿 GC 判成有主)。"""
+    """当前活跃订阅了该源的用户名(去重;账户须仍存在——删号级联已入
+    accounts.delete_user 单事务,此处以 users 表存在性兜底,防僵尸订阅把孤儿 GC
+    判成有主)。"""
     owners: Set[str] = set()
     for record in session.exec(
         select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.is_active == True)  # noqa: E712
@@ -649,6 +650,47 @@ def admin_delete_user_source(session: Session, source_id: str) -> Dict[str, Any]
         purged = purge_user_source(session, source_id)
         session.commit()
     return {"source_id": source_id, "affected_subscribers": affected, **purged}
+
+
+def purge_account_user_sources(session: Session, username: str) -> List[str]:
+    """账户删除级联（v3.40.4 审计 M03）：退订该用户的全部自定源引用，退订后无剩余
+    活跃订阅者的自定源按既有「无人订阅即物理删」语义整体清除，返回被清源清单。
+
+    **不 commit**——运行在调用方（accounts.delete_user）的单事务里，与账户行删除
+    一并原子提交。候选集扫该用户全部订阅行（含 inactive，防僵尸行漏源）；持
+    _WRITE_LOCK 与其它自定源写路径互斥。
+    """
+    with _WRITE_LOCK:
+        candidate_ids: Set[str] = set()
+        for record in session.exec(
+            select(ReaderSubscriptionRecord).where(
+                ReaderSubscriptionRecord.owner_username == username
+            )
+        ).all():
+            candidate_ids.update(
+                sid for sid in _subscription_source_ids(record) if is_user_source(sid)
+            )
+        purged: List[str] = []
+        for source_id in sorted(candidate_ids):
+            remove_source_from_subscriptions(session, source_id, username=username)
+            if not active_subscriber_usernames(session, source_id):
+                purge_user_source(session, source_id)
+                purged.append(source_id)
+        return purged
+
+
+def tombstone_owner_username(session: Session, username: str, tombstone: str) -> int:
+    """把幸存共享自定源上的 owner_username 溯源字段改写为墓碑名（不 commit）。
+
+    owner 仅溯源、不承担权限；改写防同名重建后被误认成新人首建。"""
+    changed = 0
+    for record in session.exec(
+        select(SourceConfigRecord).where(SourceConfigRecord.owner_username == username)
+    ).all():
+        record.owner_username = tombstone
+        session.add(record)
+        changed += 1
+    return changed
 
 
 def purge_orphan_user_sources(session: Session) -> List[str]:
