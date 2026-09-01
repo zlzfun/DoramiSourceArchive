@@ -239,6 +239,20 @@ export default function App() {
   const [hadDeepLink] = useState(() => Boolean(deepLinkArticle));
   const clearDeepLink = useCallback(() => setDeepLinkArticle(''), []);
 
+  // 登录门阶段的运行时深链:停在登录页的 tab 被同源 hash 导航带入深链(IM/微信内嵌
+  // webview 复用已开 tab、或往地址栏粘链接)时不 remount,mount 的一次性取值接不住,
+  // 而 authenticated 后才注册的 popstate 监听此刻尚不存在——登录后 commitNav 重播
+  // 会把 hash 覆写成 #/{tab},id 就永久丢了。这里补一个登录门专属的 hashchange 承接:
+  // 见深链即取值存入 state,登录后由既有链路(admin 界面切换 + initialArticleId 消费)接管。
+  // 与 onPop 不同,这里非深链 hash 会清空 pending——登录前不存在「在途消费」,
+  // 捕获深链后用户又退回普通页再登录时,不该把陈旧的那篇开出来(codex 检视抓出)。
+  useEffect(() => {
+    if (authState.status === 'authenticated') return undefined;
+    const onHash = () => setDeepLinkArticle(deepLinkArticleId(window.location.hash));
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [authState.status]);
+
   // 带文章深链进来的 admin 一律落到阅读器:深链的意图明确到具体一篇,压过
   // 默认落地偏好、也压过本 tab 会话里「上次停在管理台」的记忆——否则同事发来的
   // 链接会开在看不见的隐藏阅读器里,用户只看到管理台,以为链接坏了。
@@ -250,11 +264,15 @@ export default function App() {
   }, [runtimeLoaded, isAdminRole, hadDeepLink, deepLinkArticle, enterReader]);
 
   // 登录默认落地界面:本会话尚无切换记录(sessionStorage 空)时,按账户偏好落地。
+  // deepLinkArticle 也在判定里:登录门 hashchange 承接的深链不更新 hadDeepLink,
+  // 而本 effect 与上面的深链 enterReader effect 同一 commit 内先后执行、读的是
+  // 同轮闭包里的 surfaceMode===null——若只看 hadDeepLink,default_surface=console
+  // 会把刚设的 'reader' 覆写回 'console',文章在隐藏阅读器里被消费(codex 检视抓出)。
   useEffect(() => {
     if (!runtimeLoaded || !isAdminRole || surfaceMode !== null) return;
-    if (hadDeepLink || runtimeInfo.default_surface === 'reader') enterReader();
+    if (hadDeepLink || deepLinkArticle || runtimeInfo.default_surface === 'reader') enterReader();
     else setSurfaceMode('console');
-  }, [runtimeLoaded, isAdminRole, surfaceMode, runtimeInfo.default_surface, enterReader, hadDeepLink]);
+  }, [runtimeLoaded, isAdminRole, surfaceMode, runtimeInfo.default_surface, enterReader, hadDeepLink, deepLinkArticle]);
 
   // history.state 回放时重新点燃这一次性聚焦，让目标页重新定位/筛选。
   const applyFocus = useCallback((focus) => {
