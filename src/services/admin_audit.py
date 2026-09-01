@@ -90,6 +90,21 @@ def _reset_password(match: re.Match[str], _body: dict | None) -> RenderResult:
     return f"重置 {username} 的密码", username
 
 
+def _batch_accounts(_: re.Match[str], body: dict | None) -> RenderResult:
+    payload = body or {}
+    names = [str(u) for u in (payload.get("usernames") or []) if u]
+    parts: list[str] = []
+    if payload.get("role") is not None:
+        parts.append(f"角色改为{_role_label(payload['role'])}")
+    if payload.get("is_active") is not None:
+        parts.append("启用" if payload["is_active"] else "停用")
+    if payload.get("ai_beta_enabled") is not None:
+        parts.append("开启 AI" if payload["ai_beta_enabled"] else "关闭 AI")
+    action = "、".join(parts) or "更新"
+    preview = "、".join(names[:3]) + ("…" if len(names) > 3 else "")
+    return f"批量{action} {len(names)} 个账户（{preview}）", None
+
+
 def _global_ai_beta(_: re.Match[str], body: dict | None) -> RenderResult:
     if not body or body.get("enabled") is None:
         return "更新全局 AI Beta 开关", None
@@ -107,6 +122,7 @@ def _id_target(
 # 语义摘要注册表：顺序即优先级，首个 (method, path regex) 命中即停止。
 AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
     ("POST", re.compile(r"^/api/accounts$"), _create_account),
+    ("POST", re.compile(r"^/api/accounts/batch$"), _batch_accounts),
     (
         "PUT",
         re.compile(r"^/api/accounts/(?P<username>[^/]+)$"),

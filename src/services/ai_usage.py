@@ -11,7 +11,7 @@ from __future__ import annotations
 import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from models.db import AiUsageRecord
 
@@ -164,26 +164,32 @@ def summarize(session: Session, *, days: int = 30) -> Dict[str, Any]:
 
 
 def usage_by_user(session: Session, *, days: int = 30) -> Dict[str, Dict[str, int]]:
-    """窗口内按用户聚合 `{username: {calls, total_tokens}}`，排除系统任务（system）。
+    """窗口内按用户聚合 `{username: {calls, total_tokens}}`，排除系统任务（system）
+    与删号墓碑（`deleted:*`，见 accounts.DELETED_USER_PREFIX——账户列表/活跃榜只看
+    现存账户；墓碑消耗仍进 `summarize` 的成本看板口径）。
 
-    供运维账户列表批量富化每账户的近 N 天 AI 活跃度（一次查询、内存聚合）。
+    v3.41 账户管理 V2（审计 M07）：SQL 端 GROUP BY 聚合，不再把窗口明细行整批载入
+    内存 Python 累加。
     """
     days = max(1, min(int(days or 30), 365))
     since = (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
-    rows: List[AiUsageRecord] = list(
-        session.exec(
-            select(AiUsageRecord).where(
-                AiUsageRecord.day >= since,
-                AiUsageRecord.username != SYSTEM_USERNAME,
-            )
-        ).all()
-    )
-    out: Dict[str, Dict[str, int]] = {}
-    for row in rows:
-        agg = out.setdefault(row.username, {"calls": 0, "total_tokens": 0})
-        agg["calls"] += row.calls
-        agg["total_tokens"] += row.total_tokens
-    return out
+    rows = session.exec(
+        select(
+            AiUsageRecord.username,
+            func.coalesce(func.sum(AiUsageRecord.calls), 0),
+            func.coalesce(func.sum(AiUsageRecord.total_tokens), 0),
+        )
+        .where(
+            AiUsageRecord.day >= since,
+            AiUsageRecord.username != SYSTEM_USERNAME,
+            AiUsageRecord.username.not_like("deleted:%"),
+        )
+        .group_by(AiUsageRecord.username)
+    ).all()
+    return {
+        username: {"calls": int(calls or 0), "total_tokens": int(tokens or 0)}
+        for username, calls, tokens in rows
+    }
 
 
 def summarize_user(session: Session, username: str, *, days: int = 30) -> Dict[str, Any]:

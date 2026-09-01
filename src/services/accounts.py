@@ -270,6 +270,71 @@ def set_ai_beta_enabled(session: Session, username: str, enabled: bool) -> UserR
     return record
 
 
+# 批量操作上限：一次请求最多动这么多账户（150 人规模一页全选远在其下，防误提交巨批）。
+BATCH_UPDATE_MAX = 500
+
+
+def batch_update_users(
+    session: Session,
+    usernames: List[str],
+    *,
+    role: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    ai_beta_enabled: Optional[bool] = None,
+) -> dict:
+    """批量更新一组账户的角色/启停/AI 开关（v3.41 账户管理 V2，审计 M05）。
+
+    **原子语义（全成或全不成）**：任一账户不存在、或整批生效后活跃管理员数将归零，
+    整批拒绝（AccountError）并回滚——比逐个套用单账户守卫更严也更可预期：
+    「批量停用全部管理员」直接拒绝，而不是停到剩最后一个才报错、留下半批已停的状态。
+    末位保护以**整批后的终态**裁决，天然覆盖「两个 admin 各自被批量停用」类组合。
+    单事务一次 commit；幂等项（值未变）不计入 updated 也不 bump updated_at。
+    """
+    names = [str(u or "").strip() for u in usernames]
+    names = [u for u in names if u]
+    if not names:
+        raise AccountError("请至少选择一个账户")
+    if len(names) > BATCH_UPDATE_MAX:
+        raise AccountError(f"单次批量最多 {BATCH_UPDATE_MAX} 个账户")
+    if role is None and is_active is None and ai_beta_enabled is None:
+        raise AccountError("请指定要批量更新的字段")
+    if role is not None:
+        role = _normalize_role(role)
+
+    unique_names = list(dict.fromkeys(names))
+    records = [get_user(session, u) for u in unique_names]
+    missing = [u for u, r in zip(unique_names, records) if r is None]
+    if missing:
+        raise AccountError(f"账户不存在：{'、'.join(missing[:5])}{'…' if len(missing) > 5 else ''}")
+
+    now = _now_iso()
+    updated = 0
+    try:
+        for record in records:
+            changed = False
+            if role is not None and record.role != role:
+                record.role = role
+                changed = True
+            if is_active is not None and record.is_active != bool(is_active):
+                record.is_active = bool(is_active)
+                changed = True
+            if ai_beta_enabled is not None and record.ai_beta_enabled != bool(ai_beta_enabled):
+                record.ai_beta_enabled = bool(ai_beta_enabled)
+                changed = True
+            if changed:
+                record.updated_at = now
+                session.add(record)
+                updated += 1
+        # 末位保护按整批终态裁决（角色/启停都可能触及）。
+        if (role is not None or is_active is not None) and count_active_admins(session) < 1:
+            raise AccountError("系统至少需保留一名活跃管理员，该批量操作会移除全部活跃管理员")
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    return {"updated": updated, "unchanged": len(records) - updated, "total": len(records)}
+
+
 def set_default_surface(session: Session, username: str, surface: str) -> UserRecord:
     """设置账户登录默认落地界面（console 管理台 / reader 阅读器）。
 
@@ -321,15 +386,20 @@ def last_login_by_user(session: Session) -> dict:
 
 
 def logins_by_user(session: Session, *, days: int = 30) -> dict:
-    """窗口内按用户聚合登录次数 `{username: count}`（供账户列表/活跃榜富化）。"""
+    """窗口内按用户聚合登录次数 `{username: count}`（供账户列表/活跃榜富化）。
+
+    v3.41（审计 M07）：SQL 端 GROUP BY；排除删号墓碑（`deleted:*`）。
+    """
     since = _since(days)
-    rows: List[LoginEventRecord] = list(
-        session.exec(select(LoginEventRecord).where(LoginEventRecord.at >= since)).all()
-    )
-    out: dict = {}
-    for row in rows:
-        out[row.username] = out.get(row.username, 0) + 1
-    return out
+    rows = session.exec(
+        select(LoginEventRecord.username, func.count())
+        .where(
+            LoginEventRecord.at >= since,
+            LoginEventRecord.username.not_like(f"{DELETED_USER_PREFIX}%"),
+        )
+        .group_by(LoginEventRecord.username)
+    ).all()
+    return {username: int(count or 0) for username, count in rows}
 
 
 def summarize_user_logins(

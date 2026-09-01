@@ -573,3 +573,122 @@ def test_record_usage_accepts_summarize_and_counts_into_budget(tmp_path):
         assert row.purpose == "summarize" and row.total_tokens == 100 and row.calls == 1
         # 全站日预算统计吃到 summarize 消耗（三层护栏之全站层）。
         assert accounts_service.reader_ai_tokens_today(session) == 100
+
+
+# ==================== v3.41 账户管理 V2（审计 M05/M06/M07） ====================
+def test_admin_accounts_filters_and_sort(monkeypatch, tmp_path):
+    """M06：角色/状态/AI 组合过滤 + 指标排序全部服务端生效；summary 恒全量。"""
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from services import accounts as accounts_service, ai_usage, reader_activity
+
+    today = ai_usage._today()
+    with Session(app_module.db_sink.engine) as session:
+        accounts_service.create_user(session, "carol", "pw123456", "user")
+        accounts_service.create_user(session, "dave", "pw123456", "user")
+        accounts_service.create_user(session, "erin", "pw123456", "admin")
+        accounts_service.set_active(session, "carol", False)
+        accounts_service.set_ai_beta_enabled(session, "carol", True)
+        accounts_service.set_ai_beta_enabled(session, "dave", False)
+        for _ in range(3):
+            reader_activity.record_read(session, username="dave", source_id="src_a", day=today)
+        reader_activity.record_read(session, username="user", source_id="src_a", day=today)
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        # 角色过滤：只剩管理员。
+        body = client.get("/api/admin/accounts?role=admin").json()
+        assert {a["username"] for a in body["items"]} == {"admin", "erin"}
+        assert body["total"] == 2
+        # summary 不随过滤收窄（恒聚合全部账户）。
+        assert body["summary"]["accounts"] == 5
+        # 状态过滤：停用账户。
+        body = client.get("/api/admin/accounts?status=disabled").json()
+        assert {a["username"] for a in body["items"]} == {"carol"}
+        # AI 过滤：仅显式关闭的 dave（其余按新账号默认开）。
+        body = client.get("/api/admin/accounts?ai=off").json()
+        assert {a["username"] for a in body["items"]} == {"dave"}
+        # 组合过滤：读者 × 启用。
+        body = client.get("/api/admin/accounts?role=user&status=active").json()
+        assert {a["username"] for a in body["items"]} == {"user", "dave"}
+        # 指标排序：按阅读降序，dave(3) 在 user(1) 前，无阅读者沉底。
+        items = client.get("/api/admin/accounts?sort=reads&order=desc").json()["items"]
+        assert [a["username"] for a in items[:2]] == ["dave", "user"]
+        # 默认排序仍是用户名升序。
+        items = client.get("/api/admin/accounts").json()["items"]
+        assert [a["username"] for a in items] == sorted(a["username"] for a in items)
+        # 非法排序键回落 username，不 5xx。
+        assert client.get("/api/admin/accounts?sort=bogus").status_code == 200
+
+
+def test_batch_accounts_update_and_atomicity(monkeypatch, tmp_path):
+    """M05：批量端点——生效计数/幂等/未知账户整批拒绝/末位保护按整批终态/门控/入审计。"""
+    from models.db import AdminAuditRecord
+    from sqlmodel import select as sql_select
+
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from services import accounts as accounts_service
+
+    with Session(app_module.db_sink.engine) as session:
+        accounts_service.create_user(session, "u1", "pw123456", "user")
+        accounts_service.create_user(session, "u2", "pw123456", "user")
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        # 批量关 AI：两行都改。
+        resp = client.post("/api/accounts/batch", json={"usernames": ["u1", "u2"], "ai_beta_enabled": False})
+        assert resp.status_code == 200 and resp.json()["updated"] == 2
+        listed = {a["username"]: a for a in client.get("/api/accounts").json()}
+        assert listed["u1"]["ai_beta_enabled"] is False and listed["u2"]["ai_beta_enabled"] is False
+        # 幂等：值未变 updated=0。
+        resp = client.post("/api/accounts/batch", json={"usernames": ["u1", "u2"], "ai_beta_enabled": False})
+        assert resp.json()["updated"] == 0
+        # 未知账户 → 整批 400 回滚，u1 不被半改。
+        resp = client.post("/api/accounts/batch", json={"usernames": ["u1", "ghost"], "ai_beta_enabled": True})
+        assert resp.status_code == 400
+        assert {a["username"]: a for a in client.get("/api/accounts").json()}["u1"]["ai_beta_enabled"] is False
+        # 末位保护：批量停用唯一活跃 admin 拒绝。
+        assert client.post("/api/accounts/batch", json={"usernames": ["admin"], "is_active": False}).status_code == 400
+        # 按整批终态裁决：两个活跃 admin 一起停用同样拒绝（逐个套用会漏这组合）。
+        client.post("/api/accounts", json={"username": "adm2", "password": "pw123456", "role": "admin"})
+        assert client.post(
+            "/api/accounts/batch", json={"usernames": ["admin", "adm2"], "is_active": False}
+        ).status_code == 400
+        # 只停其一可以。
+        assert client.post("/api/accounts/batch", json={"usernames": ["adm2"], "is_active": False}).status_code == 200
+        # 批量角色变更。
+        assert client.post("/api/accounts/batch", json={"usernames": ["u1", "u2"], "role": "admin"}).json()["updated"] == 2
+        # 无更新字段 / 空名单 400。
+        assert client.post("/api/accounts/batch", json={"usernames": ["u1"]}).status_code == 400
+        assert client.post("/api/accounts/batch", json={"usernames": [], "is_active": True}).status_code == 400
+        # 入审计：批量操作有语义摘要。
+        with Session(app_module.db_sink.engine) as session:
+            rows = session.exec(
+                sql_select(AdminAuditRecord).where(AdminAuditRecord.path == "/api/accounts/batch")
+            ).all()
+        assert any("批量关闭 AI 2 个账户" in r.summary for r in rows)
+
+    # 非 admin 不可批量。
+    with TestClient(app_module.app) as client:
+        _login(client, "user", "user")
+        assert client.post(
+            "/api/accounts/batch", json={"usernames": ["u1"], "ai_beta_enabled": True}
+        ).status_code == 403
+
+
+def test_windowed_maps_exclude_tombstones(tmp_path):
+    """M07 配套：账户列表用的窗口聚合排除删号墓碑（deleted:*），成本口径 summarize 保留。"""
+    from services import accounts as accounts_service, ai_usage, reader_activity
+    from storage.impl.db_storage import DatabaseStorage
+
+    engine = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'tombstone_maps.db'}").engine
+    today = ai_usage._today()
+    with Session(engine) as session:
+        ai_usage.record_usage(session, username="alice", purpose="ask", model="m",
+                              usage={"total_tokens": 10}, day=today)
+        ai_usage.record_usage(session, username="deleted:bob", purpose="ask", model="m",
+                              usage={"total_tokens": 90}, day=today)
+        reader_activity.record_read(session, username="deleted:bob", source_id="s", day=today)
+        assert set(ai_usage.usage_by_user(session, days=7)) == {"alice"}
+        assert set(reader_activity.reads_by_user(session, days=7)) == set()
+        # 成本看板口径（summarize）保留墓碑消耗——历史成本不消失。
+        assert ai_usage.summarize(session, days=7)["totals"]["total_tokens"] == 100

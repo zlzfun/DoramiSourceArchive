@@ -746,6 +746,7 @@ async def require_admin_session(request: Request, call_next):
     )
     audit_rule_needs_body = (
         (normalized_method == "POST" and path == "/api/accounts")
+        or (normalized_method == "POST" and path == "/api/accounts/batch")
         or (normalized_method == "PUT" and account_update_path)
         or (
             normalized_method == "POST"

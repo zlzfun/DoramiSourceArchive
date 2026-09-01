@@ -10,6 +10,7 @@ import {
   Power,
   Ban,
   Zap,
+  ZapOff,
   Search,
   X,
   Loader2,
@@ -36,6 +37,7 @@ import {
   updateAccount,
   resetAccountPassword,
   deleteAccount,
+  batchUpdateAccounts,
 } from '../api';
 import { useConfirm } from '../hooks/useConfirm';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
@@ -100,6 +102,14 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
   const [accountQuery, setAccountQuery] = useState(''); // 输入框即时值
   const [acctQ, setAcctQ] = useState(''); // 防抖后生效的搜索词(300ms)
   const [accountPage, setAccountPage] = useState(1);
+  // 账户管理 V2(v3.41,审计 M05/M06):服务端组合过滤 × 排序 + 勾选批量。
+  const [acctRole, setAcctRole] = useState('');       // '' | 'admin' | 'user'
+  const [acctStatus, setAcctStatus] = useState('');   // '' | 'active' | 'disabled'
+  const [acctAi, setAcctAi] = useState('');           // '' | 'on' | 'off'
+  const [acctSort, setAcctSort] = useState('username');
+  const [acctOrder, setAcctOrder] = useState('asc');
+  const [selectedAccounts, setSelectedAccounts] = useState(() => new Set());
+  const [batchBusy, setBatchBusy] = useState(false);
   // 单一时间窗（近 N 天）：页头统一驱动用户子页窗口指标 + AI 用量子页（内容子页为累计口径，不受影响）。
   const [days, setDays] = useState(30);
   // 活跃用户 Top 维度：阅读 | 登录。
@@ -200,12 +210,23 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
         skip: (accountPage - 1) * ACCOUNTS_PAGE_SIZE,
         limit: ACCOUNTS_PAGE_SIZE,
         q: acctQ,
+        role: acctRole,
+        status: acctStatus,
+        ai: acctAi,
+        sort: acctSort,
+        order: acctOrder,
       }));
     } catch (error) {
       showToast(error.message || '加载账户失败', 'error');
       setAcctData((prev) => prev ?? { items: [], total: 0, summary: null });
     }
-  }, [days, accountPage, acctQ, showToast]);
+  }, [days, accountPage, acctQ, acctRole, acctStatus, acctAi, acctSort, acctOrder, showToast]);
+
+  // 过滤/排序/搜索/时间窗变化:归位第一页并清空勾选(勾选集是当前结果集语境的)。
+  useEffect(() => {
+    setAccountPage(1);
+    setSelectedAccounts(new Set());
+  }, [acctRole, acctStatus, acctAi, acctSort, acctOrder, acctQ, days]);
 
   useEffect(() => { loadGlobals(); loadLlm(); loadContent(); loadMedia(); loadX(); }, [loadGlobals, loadLlm, loadContent, loadMedia, loadX]);
   // 账户列表随时间窗口/页码/搜索词变化重载（窗口指标按 days 聚合）。
@@ -288,6 +309,12 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
     }
   };
 
+  // 单账户操作若发生在详情抽屉打开的这个人身上,顺手刷新抽屉快照(M19 就地管理闭环)。
+  const refreshDetailIfOpen = async (username) => {
+    if (detailUser !== username) return;
+    try { setDetailData(await fetchAccountActivity(username, days)); } catch { /* 详情刷新失败不打断主操作 */ }
+  };
+
   // 角色变更(v3.19 多管理员):提升/降级都需确认;降级自己额外预警——生效后当前
   // 会话在下一次请求即被吊销(read_auth_token 回查),表现为被登出,不预警会像 bug。
   const handleToggleRole = async (acc) => {
@@ -303,6 +330,7 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
       await updateAccount(acc.username, { role: toAdmin ? 'admin' : 'user' });
       showToast(toAdmin ? `已将 ${acc.username} 设为管理员` : `已取消 ${acc.username} 的管理员身份`, 'success');
       await reloadAccounts();
+      await refreshDetailIfOpen(acc.username);
     } catch (error) {
       // 末位管理员保护等后端裁决文案直接透传
       showToast(error.message || '更新失败', 'error');
@@ -314,6 +342,7 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
       await updateAccount(acc.username, { is_active: !acc.is_active });
       showToast(acc.is_active ? `已停用 ${acc.username}` : `已启用 ${acc.username}`, 'success');
       await reloadAccounts();
+      await refreshDetailIfOpen(acc.username);
     } catch (error) {
       showToast(error.message || '更新失败', 'error');
     }
@@ -324,6 +353,7 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
       await updateAccount(acc.username, { ai_beta_enabled: !acc.ai_beta_enabled });
       showToast(acc.ai_beta_enabled ? `已为 ${acc.username} 关闭 AI` : `已为 ${acc.username} 开启 AI`, 'success');
       await reloadAccounts();
+      await refreshDetailIfOpen(acc.username);
     } catch (error) {
       showToast(error.message || '更新失败', 'error');
     }
@@ -353,13 +383,58 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
   };
 
   const handleDelete = async (acc) => {
-    if (!(await confirm(`确认删除账户「${acc.username}」？其订阅与个人接口令牌会一并清除，且不可恢复。`))) return;
+    if (!(await confirm(`确认删除账户「${acc.username}」？其订阅、收藏、分享链接与个人接口令牌会一并清除，且不可恢复。`))) return;
     try {
       await deleteAccount(acc.username);
       showToast(`已删除 ${acc.username}`, 'success');
+      if (detailUser === acc.username) setDetailUser(null);
+      setSelectedAccounts((prev) => {
+        if (!prev.has(acc.username)) return prev;
+        const next = new Set(prev); next.delete(acc.username); return next;
+      });
       await reloadAccounts();
     } catch (error) {
       showToast(error.message || '删除账户失败', 'error');
+    }
+  };
+
+  // ── 排序表头(v3.41 M06):点击同列翻转方向,换列取该列的惯用初始方向 ──
+  const handleSort = (key) => {
+    if (acctSort === key) {
+      setAcctOrder((o) => (o === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setAcctSort(key);
+      setAcctOrder(key === 'username' ? 'asc' : 'desc');
+    }
+  };
+
+  // ── 勾选与批量(v3.41 M05):页级全选,批量走原子端点 ──
+  const toggleAccountSelection = (username) => {
+    setSelectedAccounts((prev) => {
+      const next = new Set(prev);
+      if (next.has(username)) next.delete(username); else next.add(username);
+      return next;
+    });
+  };
+
+  const handleBatch = async (updates, { confirmMsg, done } = {}) => {
+    const names = Array.from(selectedAccounts);
+    if (!names.length) return;
+    if (confirmMsg && !(await confirm(confirmMsg))) return;
+    setBatchBusy(true);
+    try {
+      const res = await batchUpdateAccounts(names, updates);
+      showToast(
+        `${done(res.updated)}${res.unchanged ? `（${res.unchanged} 个本已如此）` : ''}`,
+        'success',
+      );
+      setSelectedAccounts(new Set());
+      await reloadAccounts();
+    } catch (error) {
+      // 原子语义:任一账户不存在/末位管理员保护 → 整批未生效,后端文案直接透传。
+      showToast(error.message || '批量更新失败', 'error');
+    } finally {
+      setBatchBusy(false);
     }
   };
 
@@ -400,6 +475,59 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
   const acctTotal = acctData?.total ?? 0;
   const acctSummary = acctData?.summary || null;
   const accountTotalPages = Math.max(1, Math.ceil(acctTotal / ACCOUNTS_PAGE_SIZE));
+  const acctFiltersActive = Boolean(acctQ || acctRole || acctStatus || acctAi);
+  // 页级全选(150 人规模在 15/页 下最多十页;勾选集跨页累积,过滤变化即清)。
+  const pageUsernames = pagedAccounts.map((a) => a.username);
+  const allPageSelected = pageUsernames.length > 0 && pageUsernames.every((n) => selectedAccounts.has(n));
+  const toggleAllPage = () => {
+    setSelectedAccounts((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) pageUsernames.forEach((n) => next.delete(n));
+      else pageUsernames.forEach((n) => next.add(n));
+      return next;
+    });
+  };
+  // 筛选表头(v3.41 返修:筛选并入列名,与排序同一套「点列头」操作语言)。
+  // 点击轮换档位,列头文字即当前档(未筛选=列名);激活列 accent-ink,与排序列同语。
+  // width 配合表格 table-layout: fixed——列宽由表头定死,筛选换行集/换档位零跳动。
+  const filterTh = (label, value, setValue, options, width = 0) => {
+    const idx = Math.max(0, options.findIndex(([v]) => v === value));
+    const next = options[(idx + 1) % options.length][0];
+    const cycle = [label, ...options.slice(1).map(([, lbl]) => lbl)].join(' → ');
+    // data-widest:隐形占位撑到最长档位宽度,按钮点击区恒覆盖最长文字。
+    const widest = [label, ...options.slice(1).map(([, lbl]) => lbl)]
+      .reduce((a, b) => (b.length > a.length ? b : a));
+    return (
+      <th className={`acct-th ${value ? 'is-filtered' : ''}`} style={width ? { width } : undefined}>
+        <button
+          type="button"
+          className="acct-sortbtn"
+          data-widest={widest}
+          onClick={() => setValue(next)}
+          title={`点击轮换筛选：${cycle}`}
+        >
+          {value ? options[idx][1] : label}
+        </button>
+      </th>
+    );
+  };
+
+  // 排序表头(JSX 助手,非组件——组件会随每次渲染重挂载丢焦点)。
+  const sortTh = (key, label, num = false, width = 0) => {
+    const active = acctSort === key;
+    return (
+      <th
+        className={`acct-th ${num ? 'is-num' : ''} ${active ? 'is-sorted' : ''}`}
+        style={width ? { width } : undefined}
+        aria-sort={active ? (acctOrder === 'asc' ? 'ascending' : 'descending') : undefined}
+      >
+        <button type="button" className="acct-sortbtn" onClick={() => handleSort(key)} title={`按${label}排序`}>
+          {label}
+          <span className="acct-sort-arrow" aria-hidden="true">{active ? (acctOrder === 'asc' ? '▲' : '▼') : ''}</span>
+        </button>
+      </th>
+    );
+  };
   // 数据收缩(删号/改窗)后当前页越界时回落到末页。
   useEffect(() => {
     if (acctData && accountPage > accountTotalPages) setAccountPage(accountTotalPages);
@@ -482,7 +610,35 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
       {sub === 'user' && (
         <div>
           <section className="surface-card kpi-strip" aria-label="窗口活跃概览">
-            <Kpi num={fmtNum(userKpis.accounts)} label="账户" sub={`管理员 ${userKpis.admins}${userKpis.disabled ? ` · 停用 ${userKpis.disabled}` : ''}`} />
+            <Kpi
+              num={fmtNum(userKpis.accounts)}
+              label="账户"
+              sub={(
+                <>
+                  <button
+                    type="button"
+                    className={`kpi-sub-link ${acctRole === 'admin' ? 'is-on' : ''}`}
+                    title={acctRole === 'admin' ? '取消管理员筛选' : '筛选管理员账户'}
+                    onClick={() => setAcctRole((r) => (r === 'admin' ? '' : 'admin'))}
+                  >
+                    管理员 {userKpis.admins}
+                  </button>
+                  {userKpis.disabled > 0 && (
+                    <>
+                      {' · '}
+                      <button
+                        type="button"
+                        className={`kpi-sub-link ${acctStatus === 'disabled' ? 'is-on' : ''}`}
+                        title={acctStatus === 'disabled' ? '取消停用筛选' : '筛选停用账户'}
+                        onClick={() => setAcctStatus((s) => (s === 'disabled' ? '' : 'disabled'))}
+                      >
+                        停用 {userKpis.disabled}
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+            />
             <Kpi num={fmtNum(userKpis.loggedIn)} label={`近 ${days} 天活跃`} sub="登录过 ≥1 次" />
             <Kpi num={fmtNum(userKpis.logins)} label="登录次数" sub={`日均 ${perDay(userKpis.logins)}`} />
             <Kpi num={fmtNum(userKpis.reads)} label="阅读次数" sub={`日均 ${perDay(userKpis.reads)}`} />
@@ -516,7 +672,6 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
 
           <div className="zone-head">
             <span className="zone-title">账户管理</span>
-            <span className="zone-hint">停用 / 删除会立即让对应账户的会话失效；点行查看活动详情</span>
             <span className="zone-acts flex items-center gap-2">
               {acctData !== null && (acctTotal > 0 || accountQuery.trim() !== '') && (
                 <span className="relative">
@@ -538,25 +693,47 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
           <section className="surface-card rounded-[var(--r-card)] overflow-hidden">
             {acctData === null ? (
               <p className="p-6 tiny-meta">加载中…</p>
-            ) : acctTotal === 0 && acctQ === '' ? (
-              <p className="p-6 text-center tiny-meta">还没有账户，用右上角「新建账户」创建第一个。</p>
-            ) : acctTotal === 0 ? (
-              <p className="p-6 text-center tiny-meta">没有匹配「{acctQ}」的账户。</p>
             ) : (
               <>
+                {acctTotal === 0 ? (
+                  <p className="p-6 text-center tiny-meta">
+                    {acctFiltersActive ? (
+                      <>
+                        没有匹配当前筛选的账户。
+                        <button
+                          type="button"
+                          className="kpi-sub-link"
+                          onClick={() => { setAcctRole(''); setAcctStatus(''); setAcctAi(''); setAccountQuery(''); }}
+                        >
+                          清除筛选
+                        </button>
+                      </>
+                    ) : '还没有账户，用右上角「新建账户」创建第一个。'}
+                  </p>
+                ) : (
+                  <>
                 <div className="acct-scroll">
-                  <table className="acct-table">
+                  <table className="acct-table is-fixed">
                     <thead>
                       <tr>
-                        <th className="acct-th">用户</th>
-                        <th className="acct-th">角色</th>
-                        <th className="acct-th">状态</th>
-                        <th className="acct-th">最近登录</th>
-                        <th className="acct-th is-num">登录</th>
-                        <th className="acct-th is-num">阅读</th>
-                        <th className="acct-th is-num">AI 调用</th>
-                        <th className="acct-th is-num">订阅</th>
-                        <th className="acct-th" aria-label="操作" style={{ width: 156 }} />
+                        <th className="acct-th" style={{ width: 40 }}>
+                          <input
+                            type="checkbox"
+                            aria-label="全选本页账户"
+                            checked={allPageSelected}
+                            onChange={toggleAllPage}
+                            className="h-4 w-4 cursor-pointer rounded align-middle"
+                          />
+                        </th>
+                        {sortTh('username', '用户')}
+                        {filterTh('角色', acctRole, setAcctRole, [['', '全部'], ['admin', '管理员'], ['user', '读者']], 96)}
+                        {filterTh('状态', acctStatus, setAcctStatus, [['', '全部'], ['active', '启用'], ['disabled', '停用']], 80)}
+                        {filterTh('AI', acctAi, setAcctAi, [['', '全部'], ['on', 'AI 已开'], ['off', 'AI 未开']], 88)}
+                        {sortTh('last_login', '最近登录', false, 124)}
+                        {sortTh('logins', '登录', true, 76)}
+                        {sortTh('reads', '阅读', true, 76)}
+                        {sortTh('ai_calls', 'AI 调用', true, 96)}
+                        {sortTh('subscriptions', '订阅', true, 76)}
                       </tr>
                     </thead>
                     <tbody>
@@ -570,6 +747,15 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
                           onClick={() => openDetail(account.username)}
                           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(account.username); } }}
                         >
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              aria-label={`选择账户 ${account.username}`}
+                              checked={selectedAccounts.has(account.username)}
+                              onChange={() => toggleAccountSelection(account.username)}
+                              className="h-4 w-4 cursor-pointer rounded align-middle"
+                            />
+                          </td>
                           <td>
                             <span className="acct-user">
                               <span className="acct-avatar avatar-letter" style={{ '--avatar-h': avatarHue(account.username) }}>{avatarInitial(account.username)}</span>
@@ -582,43 +768,114 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
                               : <span className="sett-role-chip">读者</span>}
                           </td>
                           <td>{account.is_active ? <span className="stamp stamp-ok">启用</span> : <span className="stamp stamp-idle">停用</span>}</td>
+                          <td>
+                            {account.ai_beta_enabled
+                              ? <span className="acct-ai-flag is-on" title="AI 已开启"><Zap /></span>
+                              : <span className="acct-ai-flag" title="AI 未开启"><ZapOff /></span>}
+                          </td>
                           <td><span className="acct-mono">{formatStamp(account.last_login_at)}</span></td>
                           <td className={`acct-n ${(account.logins || 0) ? '' : 'is-zero'}`}>{account.logins || '–'}</td>
                           <td className={`acct-n is-main ${(account.reads || 0) ? '' : 'is-zero'}`}>{account.reads || '–'}</td>
                           <td className={`acct-n ${(account.ai_calls || 0) ? '' : 'is-zero'}`}>{account.ai_calls || '–'}</td>
                           <td className="acct-n">{account.subscription_count ?? 0}</td>
-                          <td>
-                            <span className="rowacts" onClick={(e) => e.stopPropagation()}>
-                              {globalAi === false ? (
-                                <span className="rowact-btn" title="AI 功能总闸已关闭（AI 子页），单账户开关暂不可用" aria-disabled="true"><Ban /></span>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className={`rowact-btn ${account.ai_beta_enabled ? 'is-on' : ''}`}
-                                  title={account.ai_beta_enabled ? `关闭 ${account.username} 的 AI` : `开启 ${account.username} 的 AI`}
-                                  onClick={() => handleToggleAiBeta(account)}
-                                >
-                                  <Zap />
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                className={`rowact-btn ${account.role === 'admin' ? 'is-on' : ''}`}
-                                title={account.role === 'admin' ? `取消 ${account.username} 的管理员身份` : `将 ${account.username} 设为管理员`}
-                                onClick={() => handleToggleRole(account)}
-                              >
-                                {account.role === 'admin' ? <ShieldOff /> : <ShieldCheck />}
-                              </button>
-                              <button type="button" className="rowact-btn" title="重置密码" onClick={() => handleResetPassword(account)}><KeyRound /></button>
-                              <button type="button" className="rowact-btn" title={account.is_active ? '停用账户' : '启用账户'} onClick={() => handleToggleActive(account)}><Power /></button>
-                              <button type="button" className="rowact-btn is-danger" title="删除账户" onClick={() => handleDelete(account)}><Trash2 /></button>
-                            </span>
-                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
+                {/* 批量操作条(v3.41 M05,返修改小图标组):勾选即现,动作走原子批量端点;
+                    语义全靠图标 + title,与详情抽屉的动作图标同一套词汇。 */}
+                {selectedAccounts.size > 0 && (
+                  <div className="ledger-batchbar">
+                    <span className="ledger-batch-n">{selectedAccounts.size} 个已选</span>
+                    <span className="batch-acts">
+                      <button
+                        type="button"
+                        className="rowact-btn"
+                        disabled={batchBusy || globalAi === false}
+                        title={globalAi === false ? 'AI 功能总闸已关闭（AI 子页）' : '为已选账户开启 AI'}
+                        onClick={() => handleBatch({ ai_beta_enabled: true }, { done: (n) => `已为 ${n} 个账户开启 AI` })}
+                      >
+                        <Zap />
+                      </button>
+                      <button
+                        type="button"
+                        className="rowact-btn"
+                        disabled={batchBusy || globalAi === false}
+                        title={globalAi === false ? 'AI 功能总闸已关闭（AI 子页）' : '为已选账户关闭 AI'}
+                        onClick={() => handleBatch({ ai_beta_enabled: false }, { done: (n) => `已为 ${n} 个账户关闭 AI` })}
+                      >
+                        <ZapOff />
+                      </button>
+                      <span className="ai-divider" />
+                      <button
+                        type="button"
+                        className="rowact-btn"
+                        disabled={batchBusy}
+                        title="启用已选账户"
+                        onClick={() => handleBatch({ is_active: true }, { done: (n) => `已启用 ${n} 个账户` })}
+                      >
+                        <Power />
+                      </button>
+                      <button
+                        type="button"
+                        className="rowact-btn"
+                        disabled={batchBusy}
+                        title="停用已选账户"
+                        onClick={() => handleBatch(
+                          { is_active: false },
+                          {
+                            confirmMsg: `确认停用选中的 ${selectedAccounts.size} 个账户？其登录会话将立即失效。`,
+                            done: (n) => `已停用 ${n} 个账户`,
+                          },
+                        )}
+                      >
+                        <Ban />
+                      </button>
+                      <span className="ai-divider" />
+                      <button
+                        type="button"
+                        className="rowact-btn"
+                        disabled={batchBusy}
+                        title="将已选账户设为管理员"
+                        onClick={() => handleBatch(
+                          { role: 'admin' },
+                          {
+                            confirmMsg: `确认将选中的 ${selectedAccounts.size} 个账户设为管理员？管理员拥有采集、归档、账户与系统配置的全部权限。`,
+                            done: (n) => `已将 ${n} 个账户设为管理员`,
+                          },
+                        )}
+                      >
+                        <ShieldCheck />
+                      </button>
+                      <button
+                        type="button"
+                        className="rowact-btn"
+                        disabled={batchBusy}
+                        title="将已选账户设为读者"
+                        onClick={() => handleBatch(
+                          { role: 'user' },
+                          {
+                            confirmMsg: `确认将选中的 ${selectedAccounts.size} 个账户设为读者？${selectedAccounts.has(currentUsername) ? '选中包含你自己，生效后你将立即被登出管理台。' : ''}`,
+                            done: (n) => `已将 ${n} 个账户设为读者`,
+                          },
+                        )}
+                      >
+                        <ShieldOff />
+                      </button>
+                    </span>
+                    <span className="flex-1" />
+                    <button
+                      type="button"
+                      className="rowact-btn"
+                      title="取消选择"
+                      aria-label="取消选择"
+                      onClick={() => setSelectedAccounts(new Set())}
+                    >
+                      <X />
+                    </button>
+                  </div>
+                )}
                 {accountTotalPages > 1 && (
                   <div className="flex flex-wrap items-center gap-2 border-t border-[var(--dorami-border)] px-4 py-2.5">
                     <span className="tiny-meta">
@@ -626,6 +883,8 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
                     </span>
                     <Pager page={accountPage} totalPages={accountTotalPages} onPage={setAccountPage} />
                   </div>
+                )}
+                  </>
                 )}
               </>
             )}
@@ -885,10 +1144,58 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
         aria-label={detailUser ? `${detailUser} · 活动详情` : '用户活动详情'}
         aria-hidden={!detailUser}
       >
-        <div className="ledger-drawer-head">
+        <div className="ledger-drawer-head acct-drawer-head">
           <span className="acct-avatar avatar-letter" style={{ '--avatar-h': avatarHue(detailUser) }}>{detailUser ? avatarInitial(detailUser) : ''}</span>
           <span className="ledger-drawer-title">{detailUser}</span>
           {detailData && (detailData.account.is_active ? <span className="stamp stamp-ok">启用</span> : <span className="stamp stamp-idle">停用</span>)}
+          {/* 就地管理动作(v3.41 M19,小图标形态):与批量条同一套图标词汇,语义挂 title */}
+          {detailData && (
+            <span className="drawer-acts">
+              {globalAi !== false && (
+                <button
+                  type="button"
+                  className={`rowact-btn ${detailData.account.ai_beta_enabled ? 'is-on' : ''}`}
+                  title={detailData.account.ai_beta_enabled ? `关闭 ${detailUser} 的 AI` : `开启 ${detailUser} 的 AI`}
+                  onClick={() => handleToggleAiBeta(detailData.account)}
+                >
+                  {detailData.account.ai_beta_enabled ? <Zap /> : <ZapOff />}
+                </button>
+              )}
+              <button
+                type="button"
+                className={`rowact-btn ${detailData.account.role === 'admin' ? 'is-on' : ''}`}
+                title={detailData.account.role === 'admin' ? `取消 ${detailUser} 的管理员身份` : `将 ${detailUser} 设为管理员`}
+                onClick={() => handleToggleRole(detailData.account)}
+              >
+                {detailData.account.role === 'admin' ? <ShieldOff /> : <ShieldCheck />}
+              </button>
+              <button
+                type="button"
+                className="rowact-btn"
+                title="重置密码"
+                onClick={() => handleResetPassword(detailData.account)}
+              >
+                <KeyRound />
+              </button>
+              <button
+                type="button"
+                className="rowact-btn"
+                title={detailData.account.is_active ? '停用账户' : '启用账户'}
+                onClick={() => handleToggleActive(detailData.account)}
+              >
+                {detailData.account.is_active ? <Ban /> : <Power />}
+              </button>
+              <button
+                type="button"
+                className="rowact-btn is-danger"
+                title="删除账户"
+                onClick={() => handleDelete(detailData.account)}
+              >
+                <Trash2 />
+              </button>
+              <span className="ai-divider" />
+            </span>
+          )}
           <button type="button" className="icon-button shrink-0" onClick={() => setDetailUser(null)} aria-label="关闭详情"><X className="h-5 w-5" /></button>
         </div>
         <div className="ledger-drawer-body">

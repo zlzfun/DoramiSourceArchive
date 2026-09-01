@@ -21,7 +21,17 @@
   - M04:`users.session_epoch` 会话世代列(迁移 `b4a1c7e5d2f8`)——登录 token 带 `gen`,校验须与列值一致;
     改密/重置轮换世代即吊销既有 Cookie,建号随机初始化令同名重建不复活旧 Cookie;自助改密就地续签本人
     Cookie 不断线。存量行/旧 token 按 "" 对齐,升级不强制全员重登。
-- 其余项(M05 起)未动;M10 仍待确认内网机 `[runtime] role`。
+- **v3.41.0(2026-09-01)账户管理 V2 波:M05/M06/M07/M19 已修**(整改分层第二梯队,两个点名痛点收口)。
+  - M05:`POST /api/accounts/batch`(原子语义全成或全不成,末位保护按整批终态裁决,批量入审计)
+    + 前端复选列/页级全选/批量条(开关 AI、启停、改角色,破坏性动作过 confirm)。
+  - M06:`GET /api/admin/accounts` 加 `role/status/ai` 组合过滤 + `sort/order` 八键服务端排序;
+    前端筛选条(三组 mini-seg)+ 可点排序表头(aria-sort)+ 账户 KPI「管理员/停用」下钻即筛;
+    summary 与 Top 榜恒聚合全量。
+  - M07:`usage_by_user`/`reads_by_user`/`logins_by_user`/`reads_by_source` 改 SQL GROUP BY,
+    不再整窗明细进内存;账户面聚合排除 `deleted:*` 墓碑(成本看板 `summarize` 口径保留)。
+  - M19:活动详情抽屉加就地管理动作行(AI/角色/启停/重置密码/删除,操作后抽屉快照同步刷新;
+    activity 端点 account 载荷补 `role`)。待负责人决策第 3 项的「全站均值基线」未做(产品分析增强,另议)。
+- 其余项(M08 起)未动;M10 仍待确认内网机 `[runtime] role`。
 
 ## 协作与互补结论
 

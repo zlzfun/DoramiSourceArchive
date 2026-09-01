@@ -4177,6 +4177,11 @@ input[type="radio"] {
   /* ── 账户表(ledger-table 语法:46px 行 / hover soft / 选中竖条 / 动作收 hover) ── */
   .acct-scroll { overflow-x: auto; }
   .acct-table { width: 100%; border-collapse: collapse; }
+  /* 账户表定宽布局(v3.41 返修):列宽由表头一次定死——auto layout 下筛选换行集/
+     列头换档位都会全表重排、内容左右漂移;fixed 后彻底零跳动(用户列吃剩余弹性)。
+     审计面板共用 .acct-table 但内容为流水文本,保持 auto,不挂本类。 */
+  .acct-table.is-fixed { table-layout: fixed; min-width: 900px; }
+  .acct-table.is-fixed .acct-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .acct-th {
     font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; color: var(--dorami-faint);
     text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--dorami-border); white-space: nowrap;
@@ -4184,6 +4189,42 @@ input[type="radio"] {
   .acct-th.is-num { text-align: right; }
   .acct-th:first-child { padding-left: 18px; }
   .acct-th:last-child { padding-right: 14px; }
+  /* 排序/筛选表头(v3.41 账户管理 V2):th 内按钮继承表头字形;激活列 accent-ink。
+     排序列带方向箭头;枚举列(角色/状态/AI)点击轮换筛选档,列头文字即当前档——
+     两类列头共用同一套「点列头」操作语言与同一个激活色。
+     字号靠 font:inherit 全局规则从 th 继承(§3 未分层陷阱:类上写 font-size 无效,也无需)。 */
+  .acct-sortbtn {
+    display: inline-flex; align-items: center; gap: 3px;
+    background: none; border: none; padding: 0; margin: 0;
+    letter-spacing: inherit; color: inherit; cursor: pointer;
+  }
+  .acct-th.is-num .acct-sortbtn { flex-direction: row-reverse; }
+  .acct-th.is-sorted .acct-sortbtn,
+  .acct-th.is-filtered .acct-sortbtn { color: var(--dorami-accent-ink); }
+  .acct-sort-arrow { font-size: 8px; line-height: 1; min-width: 8px; }
+  /* 筛选列头零跳动:隐形 ::after 以最长档位文字占位,轮换档位时列宽恒定 */
+  .acct-sortbtn[data-widest] { display: inline-grid; justify-items: start; }
+  .acct-sortbtn[data-widest]::after { content: attr(data-widest); visibility: hidden; height: 0; overflow: hidden; }
+  /* AI 启用状态列:形状(Zap/ZapOff)+ 色两通道,不靠纯色传达 */
+  .acct-ai-flag { display: inline-grid; place-items: center; color: var(--dorami-faint); opacity: 0.55; }
+  .acct-ai-flag.is-on { color: var(--dorami-accent-ink); opacity: 1; }
+  .acct-ai-flag svg { width: 13px; height: 13px; }
+  /* 批量条/抽屉头的动作图标组(rowact-btn 常显形态;组内分隔复用 ai-divider) */
+  .batch-acts, .drawer-acts { display: flex; align-items: center; gap: 2px; }
+  .drawer-acts .ai-divider { height: 18px; margin-left: 6px; }
+  /* 账户详情抽屉头:单行标题场景改垂直居中(基类 flex-start 服务多行标题抽屉,不动) */
+  .acct-drawer-head { align-items: center; }
+  .rowact-btn.is-danger:hover { background: var(--state-bad-bg); color: var(--state-bad); }
+  .rowact-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .rowact-btn:disabled:hover { background: none; color: var(--dorami-faint); }
+  /* KPI 下钻链接(账户 KPI 的「管理员/停用」小字可点即筛) */
+  .kpi-sub-link {
+    background: none; border: none; padding: 0; margin: 0;
+    color: inherit; cursor: pointer; text-decoration: underline dotted transparent;
+    text-underline-offset: 2px; transition: color var(--motion-fast) var(--motion-ease);
+  }
+  .kpi-sub-link:hover { color: var(--dorami-muted); text-decoration-color: currentColor; }
+  .kpi-sub-link.is-on { color: var(--dorami-accent-ink); text-decoration-color: currentColor; }
   .acct-row { cursor: pointer; transition: background var(--motion-fast) var(--motion-ease); }
   .acct-row td { height: 46px; vertical-align: middle; padding: 0 10px; border-top: 1px solid var(--dorami-border); }
   .acct-row td:first-child { padding-left: 18px; }

@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from models.db import ReaderReadRecord
 
@@ -61,15 +61,21 @@ def record_read(
 
 
 def reads_by_user(session: Session, *, days: int = 30) -> Dict[str, int]:
-    """窗口内按用户聚合 `{username: total_reads}`，供账户列表批量富化。"""
+    """窗口内按用户聚合 `{username: total_reads}`，供账户列表批量富化。
+
+    v3.41（审计 M07）：SQL 端 GROUP BY，不再整窗明细进内存；排除删号墓碑
+    （`deleted:*`——账户列表/活跃榜只看现存账户）。
+    """
     since = _since(days)
-    rows: List[ReaderReadRecord] = list(
-        session.exec(select(ReaderReadRecord).where(ReaderReadRecord.day >= since)).all()
-    )
-    out: Dict[str, int] = {}
-    for row in rows:
-        out[row.username] = out.get(row.username, 0) + row.reads
-    return out
+    rows = session.exec(
+        select(ReaderReadRecord.username, func.coalesce(func.sum(ReaderReadRecord.reads), 0))
+        .where(
+            ReaderReadRecord.day >= since,
+            ReaderReadRecord.username.not_like("deleted:%"),
+        )
+        .group_by(ReaderReadRecord.username)
+    ).all()
+    return {username: int(total or 0) for username, total in rows}
 
 
 def reads_by_source(session: Session, *, days: Optional[int] = None) -> Dict[str, int]:
@@ -78,14 +84,13 @@ def reads_by_source(session: Session, *, days: Optional[int] = None) -> Dict[str
     与收藏/订阅同口径——默认全量（`days=None`，不设时间窗口）；传入 `days` 时
     只统计窗口内。
     """
-    query = select(ReaderReadRecord)
+    query = select(
+        ReaderReadRecord.source_id, func.coalesce(func.sum(ReaderReadRecord.reads), 0)
+    ).group_by(ReaderReadRecord.source_id)
     if days is not None:
         query = query.where(ReaderReadRecord.day >= _since(days))
-    rows: List[ReaderReadRecord] = list(session.exec(query).all())
-    out: Dict[str, int] = {}
-    for row in rows:
-        out[row.source_id] = out.get(row.source_id, 0) + row.reads
-    return out
+    rows = session.exec(query).all()
+    return {source_id: int(total or 0) for source_id, total in rows}
 
 
 def summarize_user_reads(session: Session, username: str, *, days: int = 30) -> Dict[str, Any]:

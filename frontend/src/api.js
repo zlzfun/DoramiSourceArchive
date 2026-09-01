@@ -111,14 +111,30 @@ export function deleteAccount(username) {
   return request(`/accounts/${enc(username)}`, { method: 'DELETE', errorMsg: '删除账户失败' });
 }
 
+// 批量账户操作(v3.41 账户管理 V2):updates = { role? | is_active? | ai_beta_enabled? }。
+// 后端原子语义:任一账户不存在或整批后活跃管理员归零 → 整批 400 回滚。
+export function batchUpdateAccounts(usernames, updates) {
+  return request('/accounts/batch', {
+    method: 'POST',
+    body: { usernames, ...updates },
+    errorMsg: '批量更新账户失败',
+  });
+}
+
 // ==================== 运维管理（仅管理员） ====================
 export function fetchAdminOverview() {
   return request('/admin/overview', { errorMsg: '获取运维概览失败' });
 }
 
 // 规模化波:服务端分页 + 用户名搜索;响应 {items, total, summary}(summary 聚合全量,不受分页/搜索影响)。
-export function fetchAdminAccounts(days = 30, { skip = 0, limit = 15, q = '' } = {}) {
-  const params = withFilters(new URLSearchParams({ days, skip, limit }), { q: q.trim() });
+export function fetchAdminAccounts(
+  days = 30,
+  { skip = 0, limit = 15, q = '', role = '', status = '', ai = '', sort = '', order = '' } = {},
+) {
+  // role/status/ai 组合过滤与 sort/order 服务端生效(v3.41 账户管理 V2);空值不入参。
+  const params = withFilters(new URLSearchParams({ days, skip, limit }), {
+    q: q.trim(), role, status, ai, sort, order,
+  });
   return request(`/admin/accounts?${params.toString()}`, { errorMsg: '获取账户列表失败' });
 }
 
