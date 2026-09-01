@@ -239,6 +239,22 @@ export default function App() {
   const [hadDeepLink] = useState(() => Boolean(deepLinkArticle));
   const clearDeepLink = useCallback(() => setDeepLinkArticle(''), []);
 
+  // 登录门阶段的运行时深链:停在登录页的 tab 被同源 hash 导航带入深链(IM/微信内嵌
+  // webview 复用已开 tab、或往地址栏粘链接)时不 remount,mount 的一次性取值接不住,
+  // 而 authenticated 后才注册的 popstate 监听此刻尚不存在——登录后 commitNav 重播
+  // 会把 hash 覆写成 #/{tab},id 就永久丢了。这里补一个登录门专属的 hashchange 承接:
+  // 见深链即取值存入 state,登录后由既有链路(admin 界面切换 + initialArticleId 消费)接管。
+  // 非深链 hash 变化不动 deepLinkArticle,与 onPop 同口径。
+  useEffect(() => {
+    if (authState.status === 'authenticated') return undefined;
+    const onHash = () => {
+      const id = deepLinkArticleId(window.location.hash);
+      if (id) setDeepLinkArticle(id);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [authState.status]);
+
   // 带文章深链进来的 admin 一律落到阅读器:深链的意图明确到具体一篇,压过
   // 默认落地偏好、也压过本 tab 会话里「上次停在管理台」的记忆——否则同事发来的
   // 链接会开在看不见的隐藏阅读器里,用户只看到管理台,以为链接坏了。
