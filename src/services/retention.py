@@ -45,7 +45,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
-from sqlalchemy import and_, delete, func, or_
+from sqlalchemy import delete, func, or_
 from sqlalchemy.engine import Engine
 from sqlmodel import Session
 
@@ -120,15 +120,14 @@ def _conditional_cleanups(today: datetime.date) -> List[tuple]:
             ),
         ),
         (
+            # 撤销或过期任一失效时刻早于窗口即清(v3.43.1 codex 交叉检视:原版
+            # 过期分支要求「未撤销」,过期已久又被补撤销的链接会再多留一窗;
+            # NULL 与 cutoff 比较自然为假,存活/永久链接天然不命中)。
             "article_shares",
             delete(ArticleShareRecord).where(
                 or_(
                     ArticleShareRecord.revoked_at < shares_cutoff,
-                    and_(
-                        ArticleShareRecord.revoked_at.is_(None),
-                        ArticleShareRecord.expires_at.isnot(None),
-                        ArticleShareRecord.expires_at < shares_cutoff,
-                    ),
+                    ArticleShareRecord.expires_at < shares_cutoff,
                 )
             ),
         ),

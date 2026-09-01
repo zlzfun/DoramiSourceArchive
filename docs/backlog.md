@@ -10,12 +10,17 @@
 
 ## 排队中(用户拍板、未动工)
 
-- ☐ **管理面审计余项**(docs/admin-usability-audit.md,P0/账户 V2/列表规模化三波已收口):
-  M10(reader-only retention,待确认内网 `[runtime] role`)、M13–M16/M21(运维可靠性)、
-  M18(核心运维数据导出)、M20(批量开户/邀请流)、M22/M24/M25;
+- ☐ **管理面审计余项**(docs/admin-usability-audit.md,P0/账户 V2/列表规模化/数据生命周期
+  四波已收口,负责人拍板余项暂缓):M18(核心运维数据导出)、M20(批量开户/邀请流)、
+  M24(移动管理,显式产品边界)、M25(FTS 大结果集,随语料量);
   另 v3.42 列表规模化波的刻意裁剪:反馈批量流转/负责人/优先级、FetchRunsTab 完全服务端分页
   (现为「过滤/时间窗下沉 SQL + 500 上限 + total 诚实提示」折中——父子聚合展开模型下
-  完全分页需子运行 lazy 化,规模再涨时做)、FetchTab 节点板文本搜索。
+  完全分页需子运行 lazy 化,规模再涨时做)、FetchTab 节点板文本搜索;
+  v3.43.1 交叉检视残余:AI 用量按用户图的「其它」桶已改冒号 sentinel + 前端渲染层映射,
+  真实用户名恰为「其它（用户）」的 identity 碰撞概率近零——彻底解法是图表层
+  identity/display 分离(MultiSeriesArea 加 displayName formatter),需要时做;
+  拆分部署(role≠all)下用户自定源的归属故事未定义(GC/抓取均已 collector 门控,
+  真拆分时需先拍自定源属于哪一侧)。
 
 - ☐ **问答流式输出(SSE)**(阅读面 AI 打磨波 v3.32 遗留,拍板挂起):
   `chat_completion` 增流式通道 + ask 端点 SSE 化,现代对话手感的最大增量;

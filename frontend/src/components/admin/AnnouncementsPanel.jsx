@@ -1,7 +1,7 @@
 // 公告管理(v3.18 互通波,运维管理 → 消息):撰写 → 满宽真实预览 → 发布;
 // 已发列表 hairline 行(渲染后摘要,不显 markdown 源码)+ 启停/删除 + 触达计数。
 // 预览复用读者横幅的 AnnouncementCard,所见即读者所得。
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Info, Loader2, Megaphone, Power, Send, Trash2 } from 'lucide-react';
 import {
   fetchAdminAnnouncements,
@@ -29,7 +29,7 @@ const LEVEL_ICONS = { info: Info, accent: Megaphone, warning: AlertTriangle };
 // 历史公告分页大小(v3.42 M17):默认只铺最近一页,不再全量渲染所有历史公告。
 const ANN_PAGE_SIZE = 6;
 
-export default function AnnouncementsPanel({ showToast }) {
+export default function AnnouncementsPanel({ showToast, refreshTick = 0 }) {
   const confirm = useConfirm();
   const [items, setItems] = useState(null); // null = 加载中
   const [title, setTitle] = useState('');
@@ -40,13 +40,25 @@ export default function AnnouncementsPanel({ showToast }) {
   // 历史公告分页(v3.42 M17):不再全量平铺所有历史公告。
   const [page, setPage] = useState(1);
 
+  // 请求代次守卫(v3.43.1):refreshTick 重取与操作后重取可能并发在途,
+  // 旧响应后到即丢弃,不覆盖新数据、不弹旧错。
+  const loadGenRef = useRef(0);
   const load = useCallback(() => {
+    const gen = ++loadGenRef.current;
     fetchAdminAnnouncements()
-      .then((res) => setItems(Array.isArray(res?.items) ? res.items : []))
-      .catch((error) => { setItems([]); showToast(error.message, 'error'); });
+      .then((res) => {
+        if (gen !== loadGenRef.current) return;
+        setItems(Array.isArray(res?.items) ? res.items : []);
+      })
+      .catch((error) => {
+        if (gen !== loadGenRef.current) return;
+        setItems([]); showToast(error.message, 'error');
+      });
   }, [showToast]);
 
-  useEffect(() => { load(); }, [load]);
+  // refreshTick(v3.43.1 M15):父级「切回 Tab」信号只重取列表,不重挂——
+  // 标题/正文/级别草稿保留。
+  useEffect(() => { load(); }, [load, refreshTick]);
 
   const handlePublish = async (event) => {
     event.preventDefault();

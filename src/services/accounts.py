@@ -553,6 +553,44 @@ def reader_ai_budget_exhausted(session: Session) -> bool:
 DELETED_USER_PREFIX = "deleted:"
 
 
+def _merge_into_tombstone(
+    session: Session,
+    model,
+    *,
+    key_cols: tuple,
+    sum_cols: tuple,
+    username: str,
+    tombstone: str,
+) -> None:
+    """把某用户的计量聚合行合并式改写成墓碑行(不提交,由调用方事务收口)。
+
+    逐行 `INSERT … ON CONFLICT DO UPDATE`:墓碑键行不存在则插、存在则计数累加
+    (`updated_at` 取较新值),随后删除原用户名行——同名账号「删→重建→再删」不再
+    撞聚合键唯一索引,且成本历史守恒。行数上界 = 天数×维度组合,单用户量极小。
+    """
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    table = model.__table__
+    rows = session.exec(select(model).where(model.username == username)).all()
+    for row in rows:
+        values = {
+            "username": tombstone,
+            "updated_at": row.updated_at,
+            **{col: getattr(row, col) for col in key_cols},
+            **{col: getattr(row, col) for col in sum_cols},
+        }
+        stmt = sqlite_insert(table).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["day", "username", *[c for c in key_cols if c != "day"]],
+            set_={
+                **{col: getattr(table.c, col) + getattr(row, col) for col in sum_cols},
+                "updated_at": func.max(table.c.updated_at, row.updated_at),
+            },
+        )
+        session.execute(stmt)
+        session.delete(row)
+
+
 def delete_user(session: Session, username: str) -> None:
     """删除账户并收口其全部身份数据（v3.40.4 审计 M03，单事务原子提交）。
 
@@ -597,13 +635,28 @@ def delete_user(session: Session, username: str) -> None:
     if feed_token is not None:
         session.delete(feed_token)
 
-    # ③ 计量历史墓碑化。
-    for model, user_col in (
-        (AiUsageRecord, AiUsageRecord.username),
-        (ReaderReadRecord, ReaderReadRecord.username),
-        (LoginEventRecord, LoginEventRecord.username),
-    ):
-        session.exec(update(model).where(user_col == username).values(username=tombstone))
+    # ③ 计量历史墓碑化。聚合两表须**合并式**改写(v3.43.1 codex 交叉检视·高):
+    # v3.43 给聚合键上了唯一索引,若同名账号曾被删过一次,裸 UPDATE 会撞上既有
+    # 墓碑行(day×deleted:<名>×维度)抛 IntegrityError、整个删号事务回滚——
+    # 逐行 upsert 累加进墓碑键再删原行,计数守恒;updated_at 取两者较新值。
+    _merge_into_tombstone(
+        session, AiUsageRecord,
+        key_cols=("day", "purpose", "model"),
+        sum_cols=("calls", "prompt_tokens", "completion_tokens", "total_tokens"),
+        username=username, tombstone=tombstone,
+    )
+    _merge_into_tombstone(
+        session, ReaderReadRecord,
+        key_cols=("day", "source_id"),
+        sum_cols=("reads",),
+        username=username, tombstone=tombstone,
+    )
+    # 登录事件是明细流、无唯一键,裸改写安全。
+    session.exec(
+        update(LoginEventRecord)
+        .where(LoginEventRecord.username == username)
+        .values(username=tombstone)
+    )
 
     # ④ 账户行本体；一次 commit 原子落地（任一步失败即整体回滚，无部分删除）。
     session.delete(record)

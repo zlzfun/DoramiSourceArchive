@@ -108,7 +108,10 @@ def record_usage(
 # 而前端只画得下 6 系；现由后端选 Top N（按窗口 total_tokens）并把其余按日聚成
 # 「其它」行，载荷有界且前端 pivotDaily 的「其它」中性槽语义无缝承接。
 BY_DAY_USER_TOP_N = 6
-OTHER_SERIES_LABEL = "其它"
+# 聚合桶的系列键带冒号(用户名禁冒号,见 accounts.create_user)——不能用展示文案
+# 「其它」当聚合身份:它是合法用户名,真有此名用户进 Top 时尾部用户会被并进同名
+# 桶污染其系列(codex 交叉检视实证)。前端在渲染层把 sentinel 映射回「其它」。
+OTHER_SERIES_LABEL = "other:"
 
 
 def summarize(session: Session, *, days: int = 30) -> Dict[str, Any]:

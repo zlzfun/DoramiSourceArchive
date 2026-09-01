@@ -154,34 +154,64 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
   useModalA11y(Boolean(resetTarget) && resetModal.mounted, () => setResetTarget(null), resetPanelRef);
   useModalA11y(Boolean(detailUser), () => setDetailUser(null), detailPanelRef);
 
-  const loadLlm = useCallback(() => getLLMConfig().then(setLlmStatus).catch(() => {}), []);
+  // 每组 loader 的请求代次守卫(v3.43.1 codex 交叉检视):M15 加了多个刷新时机后,
+  // 同组请求可能并发在途——旧响应后到会覆盖新快照。发起时领代次,异步返回后校验
+  // 自己仍是该组最新才落 state/弹 Toast(不真正 abort,只丢弃旧响应);keyed map
+  // 让不同 loader 互不作废,实例级 useRef 不跨实例共享。
+  const loadGen = useRef({});
+  const claimGen = useCallback((key) => {
+    const gen = (loadGen.current[key] || 0) + 1;
+    loadGen.current[key] = gen;
+    return () => loadGen.current[key] === gen;
+  }, []);
 
-  const loadUsage = useCallback((d) => fetchAiUsage(d).then(setUsage).catch(() => {}), []);
+  const loadLlm = useCallback(() => {
+    const fresh = claimGen('llm');
+    return getLLMConfig().then((v) => { if (fresh()) setLlmStatus(v); }).catch(() => {});
+  }, [claimGen]);
 
-  const loadContent = useCallback(() => fetchAdminContent().then(setContent).catch(() => {}), []);
+  const loadUsage = useCallback((d) => {
+    const fresh = claimGen('usage');
+    return fetchAiUsage(d).then((v) => { if (fresh()) setUsage(v); }).catch(() => {});
+  }, [claimGen]);
 
-  const loadMedia = useCallback(() => fetchMediaStats().then(setMedia).catch(() => {}), []);
+  const loadContent = useCallback(() => {
+    const fresh = claimGen('content');
+    return fetchAdminContent().then((v) => { if (fresh()) setContent(v); }).catch(() => {});
+  }, [claimGen]);
 
-  const loadX = useCallback(() => Promise.all([
-    getXApiConfig().then(setXStatus).catch(() => {}),
-    getXApiQuota().then(setXQuota).catch(() => {}),
-  ]), []);
+  const loadMedia = useCallback(() => {
+    const fresh = claimGen('media');
+    return fetchMediaStats().then((v) => { if (fresh()) setMedia(v); }).catch(() => {});
+  }, [claimGen]);
+
+  const loadX = useCallback(() => {
+    const fresh = claimGen('x');
+    return Promise.all([
+      getXApiConfig().then((v) => { if (fresh()) setXStatus(v); }).catch(() => {}),
+      getXApiQuota().then((v) => { if (fresh()) setXQuota(v); }).catch(() => {}),
+    ]);
+  }, [claimGen]);
 
   const loadGlobals = useCallback(async () => {
+    const fresh = claimGen('globals');
     try {
       const g = await getAiBetaGlobal();
-      setGlobalAi(g.enabled);
-      setAiBudget({ daily_token_budget: g.daily_token_budget ?? 0, tokens_used_today: g.tokens_used_today ?? 0 });
-      setBudgetDraft(String(g.daily_token_budget ?? 0));
-      setNewUserAiDefault(g.new_user_default ?? true);
+      if (fresh()) {
+        setGlobalAi(g.enabled);
+        setAiBudget({ daily_token_budget: g.daily_token_budget ?? 0, tokens_used_today: g.tokens_used_today ?? 0 });
+        setBudgetDraft(String(g.daily_token_budget ?? 0));
+        setNewUserAiDefault(g.new_user_default ?? true);
+      }
     } catch (error) {
-      showToast(error.message || '加载运维数据失败', 'error');
+      if (fresh()) showToast(error.message || '加载运维数据失败', 'error');
     }
     // 分享总闸单独 try:它读不到不该连带把 AI 总闸的错误提示也吞掉/重复弹。
     try {
-      setPublicShare(await fetchPublicShareGlobal());
+      const share = await fetchPublicShareGlobal();
+      if (fresh()) setPublicShare(share);
     } catch { /* 读不到就保持 null,卡片显示「正在读取…」且开关禁用 */ }
-  }, [showToast]);
+  }, [claimGen, showToast]);
 
   const handleTogglePublicShare = async () => {
     const next = !publicShare?.enabled;
@@ -205,8 +235,9 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
   }, [debouncedAccountQuery]);
 
   const reloadAccounts = useCallback(async () => {
+    const fresh = claimGen('accounts');
     try {
-      setAcctData(await fetchAdminAccounts(days, {
+      const data = await fetchAdminAccounts(days, {
         skip: (accountPage - 1) * ACCOUNTS_PAGE_SIZE,
         limit: ACCOUNTS_PAGE_SIZE,
         q: acctQ,
@@ -215,12 +246,14 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
         ai: acctAi,
         sort: acctSort,
         order: acctOrder,
-      }));
+      });
+      if (fresh()) setAcctData(data);
     } catch (error) {
+      if (!fresh()) return;
       showToast(error.message || '加载账户失败', 'error');
       setAcctData((prev) => prev ?? { items: [], total: 0, summary: null });
     }
-  }, [days, accountPage, acctQ, acctRole, acctStatus, acctAi, acctSort, acctOrder, showToast]);
+  }, [claimGen, days, accountPage, acctQ, acctRole, acctStatus, acctAi, acctSort, acctOrder, showToast]);
 
   // 过滤/排序/搜索/时间窗变化:归位第一页并清空勾选(勾选集是当前结果集语境的)。
   useEffect(() => {
@@ -236,23 +269,25 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
   // 刷新语义(v3.43 审计 M15):tab 常驻不重挂,长开时数据会静默过期。两个无 UI 的
   // 重取时机——①从其它 Tab 切回运维管理(active 沿 false→true)重取当前子页;
   // ②子页间切换重取目标子页。消息子页(engage)的面板是条件渲染、切子页天然重挂
-  // 自取数,故只需在「切回 Tab 且停在消息页」时经 wakeTick 换 key 强制重挂。
-  const [wakeTick, setWakeTick] = useState(0);
+  // 自取数;「切回 Tab 且停在消息页」经 refreshTick **prop** 驱动面板重取——
+  // 不换 key 强制重挂(v3.43.1 codex 交叉检视:重挂会把管理员写了一半的公告/
+  // 回复草稿连 UI 状态一起销毁)。
+  const [refreshTick, setRefreshTick] = useState(0);
   const wasActive = useRef(active);
   useEffect(() => {
-    if (active && !wasActive.current) setWakeTick((t) => t + 1);
+    if (active && !wasActive.current) setRefreshTick((t) => t + 1);
     wasActive.current = active;
   }, [active]);
   const refreshSub = useCallback((target) => {
     if (target === 'user') { reloadAccounts(); }
     else if (target === 'content') { loadContent(); loadMedia(); loadX(); }
     else if (target === 'ai') { loadGlobals(); loadUsage(days); loadLlm(); }
-    // engage:条件渲染重挂即取数,无需在此显式调用。
+    // engage:面板经 refreshTick prop 自行重取,无需在此显式调用。
   }, [reloadAccounts, loadContent, loadMedia, loadX, loadGlobals, loadUsage, loadLlm, days]);
   useEffect(() => {
-    if (wakeTick > 0) refreshSub(sub);
+    if (refreshTick > 0) refreshSub(sub);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只响应「切回 Tab」时机
-  }, [wakeTick]);
+  }, [refreshTick]);
   const subMountedOnce = useRef(false);
   useEffect(() => {
     if (!subMountedOnce.current) { subMountedOnce.current = true; return; }
@@ -470,14 +505,24 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
     () => (usage?.by_day_purpose ?? []).map((r) => ({ ...r, purpose: PURPOSE_LABELS[r.purpose] || r.purpose })),
     [usage],
   );
-  const dayUser = useMemo(() => usage?.by_day_user ?? [], [usage]);
+  // 后端聚合桶用带冒号 sentinel('other:',用户名禁冒号故不可撞),渲染层映射回
+  // 「其它」;真实用户名恰为「其它」时改显「其它（用户）」——两者永不合并,
+  // colorForEntity 的中性槽判定只认映射后的「其它」。
+  const dayUser = useMemo(() => (usage?.by_day_user ?? []).map((r) => ({
+    ...r,
+    username: r.username === 'other:' ? '其它' : (r.username === '其它' ? '其它（用户）' : r.username),
+  })), [usage]);
+  // 用户维度已由后端裁到 Top-6+「其它」共 ≤7 系,前端 pivot 不再二次裁剪
+  // (topN=Infinity;否则按 calls 重排可能再挤掉一个真实用户并回「其它」,
+  // 甚至产出重复的「其它」key——codex 交叉检视终审指出)。用途维度枚举有界,
+  // 保持默认裁剪。
   const callsDatasets = useMemo(() => ({
     purpose: pivotDaily(dayPurpose, days, 'purpose', 'calls'),
-    user: pivotDaily(dayUser, days, 'username', 'calls'),
+    user: pivotDaily(dayUser, days, 'username', 'calls', Infinity),
   }), [dayPurpose, dayUser, days]);
   const tokensDatasets = useMemo(() => ({
     purpose: pivotDaily(dayPurpose, days, 'purpose', 'total_tokens'),
-    user: pivotDaily(dayUser, days, 'username', 'total_tokens'),
+    user: pivotDaily(dayUser, days, 'username', 'total_tokens', Infinity),
   }), [dayPurpose, dayUser, days]);
 
   // ── 内容看板图表数据 ──
@@ -589,9 +634,9 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
       {/* ══ 消息子页(v3.18 互通波:反馈收件箱 + 公告管理)════════════ */}
       {sub === 'engage' && (
         <div className="grid gap-4">
-          {/* wakeTick 换 key:切回 Tab 时强制重挂取新数据(M15,面板挂载即自取数) */}
-          <FeedbackInboxPanel key={`fb-${wakeTick}`} showToast={showToast} />
-          <AnnouncementsPanel key={`ann-${wakeTick}`} showToast={showToast} />
+          {/* refreshTick prop:切回 Tab 时面板只重取数据,不重挂、不丢草稿(M15) */}
+          <FeedbackInboxPanel showToast={showToast} refreshTick={refreshTick} />
+          <AnnouncementsPanel showToast={showToast} refreshTick={refreshTick} />
         </div>
       )}
 

@@ -1,7 +1,7 @@
 // 反馈收件箱(v3.18 互通波,运维管理 → 消息):静止态 = 干净的扫读列表
 // (用户/分类/时间/状态章/正文/已有回复);点「处理」就地展开处理区(状态点击即存 +
 // 回复输入),一次只展开一条——行内不常驻控件,合静默仪器纪律。
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, PenLine, Search } from 'lucide-react';
 import { fetchAdminFeedback, updateFeedbackStatus } from '../../api';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
@@ -25,7 +25,7 @@ const STATUS_LABELS = Object.fromEntries(STATUS_OPTIONS);
 const STATUS_STAMPS = { open: 'stamp-run', in_progress: 'stamp-warn', resolved: 'stamp-ok', dismissed: 'stamp-idle' };
 const CATEGORY_LABELS = { source_request: '想要新内容', bug: '问题反馈', suggestion: '功能建议', other: '其他' };
 
-export default function FeedbackInboxPanel({ showToast }) {
+export default function FeedbackInboxPanel({ showToast, refreshTick = 0 }) {
   const [filter, setFilter] = useState('all');
   const [category, setCategory] = useState(''); // '' = 全部分类(v3.42 M17)
   const [queryInput, setQueryInput] = useState('');
@@ -38,7 +38,11 @@ export default function FeedbackInboxPanel({ showToast }) {
   const [draftNote, setDraftNote] = useState('');
   const [busyId, setBusyId] = useState(null);
 
+  // 请求代次守卫(v3.43.1):refreshTick/快速切换过滤会并发在途请求,
+  // 只允许最新一次落 state/弹错——旧响应后到即丢弃。
+  const loadGenRef = useRef(0);
   const load = useCallback((status, targetPage) => {
+    const gen = ++loadGenRef.current;
     fetchAdminFeedback(status === 'all' ? null : status, {
       skip: (targetPage - 1) * FEEDBACK_PAGE_SIZE,
       limit: FEEDBACK_PAGE_SIZE,
@@ -46,16 +50,22 @@ export default function FeedbackInboxPanel({ showToast }) {
       q: query,
     })
       .then((data) => {
+        if (gen !== loadGenRef.current) return;
         setItems(Array.isArray(data?.items) ? data.items : []);
         setCounts(data?.counts || null);
         setTotal(Number(data?.total) || 0);
       })
-      .catch((error) => { setItems([]); showToast(error.message, 'error'); });
+      .catch((error) => {
+        if (gen !== loadGenRef.current) return;
+        setItems([]); showToast(error.message, 'error');
+      });
   }, [category, query, showToast]);
 
   // 切过滤/分类/检索归位第一页;翻页/首载取对应页。
+  // refreshTick(v3.43.1 M15):父级「切回 Tab」信号只驱动本加载 effect 重取,
+  // 面板不重挂——检索词/展开态/回复草稿全部保留。
   useEffect(() => { setPage(1); }, [filter, category, query]);
-  useEffect(() => { setItems(null); load(filter, page); }, [filter, page, load]);
+  useEffect(() => { setItems(null); load(filter, page); }, [filter, page, load, refreshTick]);
 
   const totalPages = Math.max(1, Math.ceil(total / FEEDBACK_PAGE_SIZE));
   // 数据收缩(处理完最后一页的条目等)后当前页越界时回落到末页。

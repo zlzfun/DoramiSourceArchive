@@ -1213,17 +1213,30 @@ async def execute_retention_cleanup_job():
     明细，业务实体（归档正文/账户/订阅）不在其列。
     """
     from services import retention
+
+    # 同步 SQLite 清理放线程池执行(v3.43.1 codex 交叉检视):本回调是协程,
+    # APScheduler 会把它放到事件循环上跑,直接同步删表会阻塞在途请求。
     try:
-        retention.run_retention_cleanup(db_sink.engine)
+        await asyncio.to_thread(retention.run_retention_cleanup, db_sink.engine)
     except Exception as exc:  # noqa: BLE001 巡检失败不影响调度引擎
         _dorami_logger.error("明细表滚动窗清理失败: %s", exc)
     # 用户自定源维护(codex 复检二轮 F8/新发现3):孤儿 GC 与日计数 KV 清理挂在
     # 本 job——独立于用户源总闸与 user_rss_refresh(总闸关闭时那个 job 被移除,
-    # 若 GC 只挂在那里,关闸后孤儿源/脏数据将永远无人收)。
-    try:
+    # 若 GC 只挂在那里,关闸后孤儿源/脏数据将永远无人收)。**但只在 collector
+    # 角色执行**(v3.43.1):自定源 GC 属抓取栈侧维护,M10 把 retention 注册解耦
+    # 到全角色后,不能让 reader 角色顺带背上会物理删配置/文章的 collector 维护
+    # (拆分部署下的自定源故事本就未定义,记 backlog)。
+    if not runtime_collector_enabled():
+        return
+
+    def _user_sources_maintenance():
         with Session(db_sink.engine) as session:
             orphans = user_sources_service.purge_orphan_user_sources(session)
             stale = user_sources_service.cleanup_stale_daily_counters(session)
+        return orphans, stale
+
+    try:
+        orphans, stale = await asyncio.to_thread(_user_sources_maintenance)
         if orphans or stale:
             _dorami_logger.info("用户自定源维护: 清理 %s, 过期计数 %d", orphans or "无", stale)
     except Exception:  # noqa: BLE001

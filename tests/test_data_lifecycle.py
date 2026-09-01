@@ -127,6 +127,26 @@ def test_retention_shares_only_dead_and_old(tmp_path):
         assert kept == {"dshr_live", "dshr_fresh_dead"}
 
 
+def test_retention_shares_dual_timestamp_dead(tmp_path):
+    """v3.43.1 codex 交叉检视:过期已久又被补撤销的链接不应再多留一窗——
+    撤销/过期任一失效时刻早于窗口即清。"""
+    engine = _engine(tmp_path)
+    old, recent = _iso_days_ago(200), _iso_days_ago(5)
+    with Session(engine) as session:
+        # 200 天前过期、5 天前又被撤销:已失效 200 天,必须清。
+        session.add(ArticleShareRecord(token="dshr_both", article_id="a1", owner_username="u",
+                                       created_at=old, expires_at=old, revoked_at=recent))
+        # 刚过期 + 老撤销时间不存在的存活行:保留。
+        session.add(ArticleShareRecord(token="dshr_fresh_exp", article_id="a2", owner_username="u",
+                                       created_at=old, expires_at=recent))
+        session.commit()
+    deleted = retention.run_retention_cleanup(engine)
+    assert deleted["article_shares"] == 1
+    with Session(engine) as session:
+        kept = {s.token for s in session.exec(select(ArticleShareRecord)).all()}
+        assert kept == {"dshr_fresh_exp"}
+
+
 def test_retention_still_covers_fetch_runs(tmp_path):
     """扩面不回归：原有纯时间窗表照常清理。"""
     engine = _engine(tmp_path)
@@ -233,6 +253,63 @@ def test_migration_dedups_existing_duplicate_rows(tmp_path):
         engine.dispose()
 
 
+def test_delete_recreate_delete_merges_tombstone(tmp_path):
+    """v3.43.1 codex 交叉检视·高:同名账号「删→重建→同维度计量→再删」——
+    裸 UPDATE 墓碑化会撞 v3.43 新唯一索引抛 IntegrityError 令删号 500;
+    合并式墓碑化应成功且计数守恒。"""
+    from services.accounts import delete_user
+
+    engine = _engine(tmp_path)
+    day = "2026-09-01"
+    with Session(engine) as session:
+        create_user(session, "repeat", "pw123456", "user")
+        ai_usage.record_usage(session, username="repeat", purpose="ask", model="m",
+                              usage={"total_tokens": 10}, day=day)
+        reader_activity.record_read(session, username="repeat", source_id="s1", day=day)
+        delete_user(session, "repeat")
+
+        create_user(session, "repeat", "pw123456", "user")
+        ai_usage.record_usage(session, username="repeat", purpose="ask", model="m",
+                              usage={"total_tokens": 25}, day=day)
+        reader_activity.record_read(session, username="repeat", source_id="s1", day=day)
+        reader_activity.record_read(session, username="repeat", source_id="s1", day=day)
+        delete_user(session, "repeat")  # 曾在此抛 UNIQUE constraint failed
+
+        rows = session.exec(select(AiUsageRecord)).all()
+        assert len(rows) == 1
+        assert rows[0].username == "deleted:repeat"
+        assert rows[0].calls == 2 and rows[0].total_tokens == 35
+        reads = session.exec(select(ReaderReadRecord)).all()
+        assert len(reads) == 1
+        assert reads[0].username == "deleted:repeat" and reads[0].reads == 3
+
+
+def test_metering_upsert_sql_shape(tmp_path):
+    """结构性守卫(替代 flaky 的多线程并发测试):record_usage/record_read 必须是
+    单条带 ON CONFLICT 的 INSERT,写前不得对本表 SELECT——防止将来悄悄改回
+    「先查后插/递增」的竞态形态。"""
+    from sqlalchemy import event
+
+    engine = _engine(tmp_path)
+    statements = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    with Session(engine) as session:
+        statements.clear()
+        ai_usage.record_usage(session, username="a", purpose="ask", model="m",
+                              usage={"total_tokens": 1}, day="2026-09-01")
+        ai_stmts = [s for s in statements if "ai_usage" in s]
+        assert len(ai_stmts) == 1 and "ON CONFLICT" in ai_stmts[0] and ai_stmts[0].lstrip().startswith("INSERT")
+
+        statements.clear()
+        reader_activity.record_read(session, username="a", source_id="s", day="2026-09-01")
+        read_stmts = [s for s in statements if "reader_reads" in s]
+        assert len(read_stmts) == 1 and "ON CONFLICT" in read_stmts[0] and read_stmts[0].lstrip().startswith("INSERT")
+
+
 # ══ M16 by_day_user 服务端裁剪 ═════════════════════════════════════
 
 
@@ -255,6 +332,27 @@ def test_summarize_caps_by_day_user_series(tmp_path):
     )
     # by_user 全量榜不受裁剪影响。
     assert len(summary["by_user"]) == 9
+
+
+def test_summarize_other_username_not_merged_into_bucket(tmp_path):
+    """v3.43.1 codex 交叉检视:「其它」是合法用户名——聚合桶键改带冒号 sentinel
+    (用户名禁冒号),真实用户「其它」进 Top 时不得与尾部用户合并桶混淆。"""
+    engine = _engine(tmp_path)
+    today = ai_usage._today()
+    with Session(engine) as session:
+        # 「其它」是最大用户(必进 Top),另造 7 个用户挤出 1 个进合并桶。
+        ai_usage.record_usage(session, username="其它", purpose="ask", model="m",
+                              usage={"total_tokens": 100}, day=today)
+        for i in range(7):
+            ai_usage.record_usage(session, username=f"u{i}", purpose="ask", model="m",
+                                  usage={"total_tokens": (i + 1) * 10}, day=today)
+        summary = ai_usage.summarize(session, days=7)
+    by_name = {r["username"]: r for r in summary["by_day_user"]}
+    assert by_name["其它"]["total_tokens"] == 100          # 真实用户系列不被污染
+    assert ai_usage.OTHER_SERIES_LABEL in by_name          # 合并桶走 sentinel 键
+    assert ":" in ai_usage.OTHER_SERIES_LABEL              # sentinel 永不撞合法用户名
+    # 合并桶只含被挤出的尾部用户量(u0+u1 = 10+20)。
+    assert by_name[ai_usage.OTHER_SERIES_LABEL]["total_tokens"] == 30
 
 
 def test_summarize_small_userbase_untrimmed(tmp_path):
@@ -292,10 +390,20 @@ def test_last_login_for_user(tmp_path):
 
 
 def test_source_health_state_path_and_fallback(tmp_path, monkeypatch):
-    """有 state 快照的节点走快照；无快照的节点回退运行史聚合（语义不回归）。"""
+    """有 state 快照的节点走快照；无快照的节点回退运行史聚合（语义不回归）。
+    并以 SQL 参数监听钉住收窄本身:fetch_runs 查询参数不得包含有快照的节点
+    (否则退回「全量载入」也能通过功能断言,即假绿灯)。"""
+    from sqlalchemy import event
+
     from api.routers import monitoring
 
     engine = _engine(tmp_path)
+    captured = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _capture(conn, cursor, statement, parameters, context, executemany):
+        if "fetch_runs" in statement and statement.lstrip().startswith("SELECT"):
+            captured.append((statement, parameters))
     fetchers = [
         {"id": "with_state", "name": "A", "icon": "", "desc": "", "category": "c", "content_type": "t"},
         {"id": "no_state", "name": "B", "icon": "", "desc": "", "category": "c", "content_type": "t"},
@@ -317,3 +425,10 @@ def test_source_health_state_path_and_fallback(tmp_path, monkeypatch):
     assert by_id["with_state"]["total_runs"] == 5
     assert by_id["no_state"]["health_status"] == "failing"
     assert by_id["no_state"]["total_runs"] == 1
+    # 收窄守卫:运行史查询只应带无快照节点的 id。
+    run_queries = [(s, p) for s, p in captured if "fetcher_id IN" in s]
+    assert run_queries, "应存在针对无快照节点的运行史回退查询"
+    for _, params in run_queries:
+        flat = params if isinstance(params, (list, tuple)) else [params]
+        assert "with_state" not in [str(v) for v in flat], "有快照的节点不应进入运行史查询参数"
+        assert "no_state" in [str(v) for v in flat]
