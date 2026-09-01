@@ -151,8 +151,13 @@ export function fetchAdminContent(top = 12) {
 }
 
 // 管理操作审计(v3.19 多管理员波):中间件对管理面写操作逐条落行,按时间倒序;服务端分页。
-export function fetchAdminAuditLog(days = 30, { skip = 0, limit = 15 } = {}) {
-  return request(`/admin/audit-log?days=${enc(days)}&skip=${enc(skip)}&limit=${enc(limit)}`, { errorMsg: '获取操作审计失败' });
+// v3.42(M11):operator 操作者子串 / q 跨摘要·目标·路径子串 / status ∈ ok|denied,
+// 全部服务端生效并与时间窗/分页叠加。
+export function fetchAdminAuditLog(days = 30, { skip = 0, limit = 15, operator = '', q = '', status = '' } = {}) {
+  const params = withFilters(new URLSearchParams({ days, skip, limit }), {
+    operator: operator.trim(), q: q.trim(), status,
+  });
+  return request(`/admin/audit-log?${params}`, { errorMsg: '获取操作审计失败' });
 }
 
 // ── 媒体库（图床） ──
@@ -316,6 +321,8 @@ export async function fetchRunningProgress() {
   return res.json();
 }
 
+// v3.42(M09):响应改 { items, total }——total = 当前过滤组合下总数,消费方据此
+// 诚实呈现截断;filters 支持 days(时间窗)/status/trigger_type 等 SQL 端过滤。
 export function fetchFetchRuns(filters = {}, limit = 100) {
   const params = withFilters(new URLSearchParams({ limit }), filters);
   return request(`/fetch-runs?${params}`, { errorMsg: '获取抓取运行历史失败' });
@@ -707,10 +714,12 @@ export function markFeedbackSeen() {
     .catch(() => {});
 }
 
-// 规模化波:服务端分页;响应 {items, total, counts}(total = 当前 status 过滤下总数)。
-export function fetchAdminFeedback(status = null, { skip = 0, limit = 10 } = {}) {
-  const params = new URLSearchParams({ skip, limit });
-  if (status) params.append('status', status);
+// 规模化波:服务端分页;响应 {items, total, counts}(total = 当前过滤组合下总数)。
+// v3.42(M17)增 category 分类过滤与 q 检索(跨正文/提交者用户名),SQL 端生效。
+export function fetchAdminFeedback(status = null, { skip = 0, limit = 10, category = '', q = '' } = {}) {
+  const params = withFilters(new URLSearchParams({ skip, limit }), {
+    status: status || '', category, q: q.trim(),
+  });
   return request(`/admin/feedback?${params}`, { errorMsg: '获取反馈收件箱失败' });
 }
 
@@ -731,8 +740,9 @@ export function dismissAnnouncement(id) {
     .catch(() => {});
 }
 
-export function fetchAdminAnnouncements() {
-  return request('/admin/announcements', { errorMsg: '获取公告列表失败' });
+// v3.42(M17):skip/limit 服务端分页,响应带 total;默认参数保持全量语义。
+export function fetchAdminAnnouncements({ skip = 0, limit = 200 } = {}) {
+  return request(`/admin/announcements?skip=${enc(skip)}&limit=${enc(limit)}`, { errorMsg: '获取公告列表失败' });
 }
 
 export function createAnnouncement(payload) {

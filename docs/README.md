@@ -14,7 +14,8 @@
 - ◉ [admin-usability-audit.md](./admin-usability-audit.md) — **管理面/运维面可用性审计与共识清单(v3.40.3,
   150 人上量场景)**:Claude+codex 双独立审计交叉核验的 M01–M25 分层清单(P0 安全/成本护栏/身份 →
   P1 账户治理规模化[批量+过滤排序两点名痛点] → P2 运维可靠性 → P3 优化/文档),含三项待负责人决策与整改分层。
-  **P0 四项(M01–M04)已随 v3.40.4 修复,账户管理 V2(M05/M06/M07/M19)已随 v3.41.0 落地**,整改记录见文首。
+  **P0(M01–M04)v3.40.4、账户管理 V2(M05/M06/M07/M19)v3.41.0、运维列表规模化(M08/M09/M11/M17)
+  v3.42.0 已落地**,整改记录见文首;余项与裁剪注记见 backlog。
 - ◉ [configuration.md](./configuration.md) — `config/*.ini` 配置项逐节说明(runtime 角色/auth/RAG/LLM/
   网络代理),含生产 production.ini 与环境变量覆盖。
 - ◉ [deploy-docker.md](./deploy-docker.md) — **Docker 部署(推荐路径)**:compose 双容器形态/

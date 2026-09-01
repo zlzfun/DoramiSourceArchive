@@ -348,7 +348,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     let cancelled = false;
     setInspectorRunsLoading(true);
     fetchFetchRuns({ fetcher_id: selectedNodeId }, 5)
-      .then(rows => { if (!cancelled) setInspectorRuns(Array.isArray(rows) ? rows : []); })
+      .then(body => { if (!cancelled) setInspectorRuns(Array.isArray(body?.items) ? body.items : []); })
       .catch(() => { if (!cancelled) setInspectorRuns([]); })
       .finally(() => { if (!cancelled) setInspectorRunsLoading(false); });
     return () => { cancelled = true; };

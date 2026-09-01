@@ -389,24 +389,45 @@ def admin_audit_log(
     days: int = 30,
     limit: int = 100,
     skip: int = 0,
+    operator: str | None = None,
+    q: str | None = None,
+    status: str | None = None,
     session: Session = Depends(deps.get_session),
 ):
-    """读取近 days 天管理操作审计；当前尚未实现留存期限与自动清理。"""
+    """读取近 days 天管理操作审计（留存清理由 retention 每日任务负责）。
+
+    检索(v3.42 M11)：`operator` 按操作者用户名子串、`q` 跨 摘要/目标/路径 子串、
+    `status` ∈ ok(2xx/3xx)|denied(4xx/5xx，被拒绝的尝试)；全部 SQL 端生效并与
+    时间窗/分页叠加，`total` = 当前过滤组合下的总数。
+    """
     safe_days = max(1, min(int(days), 365))
     safe_limit = max(1, min(int(limit), 500))
     safe_skip = max(0, int(skip or 0))
     window_start = (
         datetime.date.today() - datetime.timedelta(days=safe_days - 1)
     ).isoformat()
-    in_window = AdminAuditRecord.at >= window_start
+    conditions = [AdminAuditRecord.at >= window_start]
+    if operator and operator.strip():
+        conditions.append(AdminAuditRecord.username.contains(operator.strip(), autoescape=True))
+    if q and q.strip():
+        needle = q.strip()
+        conditions.append(
+            AdminAuditRecord.summary.contains(needle, autoescape=True)
+            | AdminAuditRecord.target.contains(needle, autoescape=True)
+            | AdminAuditRecord.path.contains(needle, autoescape=True)
+        )
+    if status == "ok":
+        conditions.append(AdminAuditRecord.status_code < 400)
+    elif status == "denied":
+        conditions.append(AdminAuditRecord.status_code >= 400)
     total = session.exec(
         select(func.count())
         .select_from(AdminAuditRecord)
-        .where(in_window)
+        .where(*conditions)
     ).one()
     records = session.exec(
         select(AdminAuditRecord)
-        .where(in_window)
+        .where(*conditions)
         .order_by(AdminAuditRecord.at.desc(), AdminAuditRecord.id.desc())
         .offset(safe_skip)
         .limit(safe_limit)

@@ -1,13 +1,26 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Ban, Loader2, Power, Trash2 } from 'lucide-react';
 import {
   fetchAdminUserSources,
   setAdminUserSourcesConfig,
   toggleAdminUserSource,
   deleteAdminUserSource,
 } from '../../api';
+import { useConfirm } from '../../hooks/useConfirm';
+import Pager from './Pager';
+import { ThFilter, ThSearch, ThSort } from './TableTh';
 
 const fmtNum = (n) => Number(n || 0).toLocaleString();
+
+// 自定源列表分页(v3.42 M08):行数随读者数×人均源数增长,不再全量平铺。
+const SRC_PAGE_SIZE = 20;
+
+// 治理状态三态:停用(is_active=false) / 失败中 / 正常。
+function sourceState(item) {
+  if (!item.is_active) return 'disabled';
+  if (item.status === 'failing' || (item.consecutive_failures || 0) > 0) return 'failing';
+  return 'ok';
+}
 
 /**
  * 用户自定源治理区(v3.40,运维管理 → 内容)。
@@ -18,13 +31,11 @@ const fmtNum = (n) => Number(n || 0).toLocaleString();
  * 此处不重复入口。
  */
 export default function UserSourcesPanel({ showToast }) {
+  const confirm = useConfirm();
   const [data, setData] = useState(null);      // admin_overview 载荷
   const [minutesInput, setMinutesInput] = useState('');
   const [savingConfig, setSavingConfig] = useState(false);
   const [busyId, setBusyId] = useState(null);
-  const [confirmingId, setConfirmingId] = useState(null); // 删除两击确认(4s 回落)
-  const confirmTimerRef = useRef(null);
-  useEffect(() => () => clearTimeout(confirmTimerRef.current), []);
 
   const load = useCallback(async () => {
     try {
@@ -86,14 +97,9 @@ export default function UserSourcesPanel({ showToast }) {
   };
 
   const handleDelete = async (item) => {
-    if (confirmingId !== item.source_id) {
-      clearTimeout(confirmTimerRef.current);
-      setConfirmingId(item.source_id);
-      confirmTimerRef.current = setTimeout(() => setConfirmingId(null), 4000);
-      return;
-    }
-    clearTimeout(confirmTimerRef.current);
-    setConfirmingId(null);
+    if (!(await confirm(
+      `确认删除自定源「${item.name}」？将级联清除 ${fmtNum(item.subscriber_count)} 人的订阅与 ${fmtNum(item.article_count)} 篇文章，且不可恢复。`,
+    ))) return;
     setBusyId(item.source_id);
     try {
       const res = await deleteAdminUserSource(item.source_id);
@@ -106,15 +112,54 @@ export default function UserSourcesPanel({ showToast }) {
     }
   };
 
-  const items = data?.items ?? [];
+  const items = useMemo(() => data?.items ?? [], [data]);
   const kpi = data?.kpi ?? {};
   const enabled = Boolean(data?.config?.enabled);
+
+  // 检索 × 状态过滤 × 排序 × 分页(v3.42 M08,本地——admin_overview 已一次拿全量
+  // 轻载荷);检索/筛选/排序全部集成在列头(TableTh 三件套,与账户/审计表同语言)。
+  const [srcQuery, setSrcQuery] = useState('');       // 源列:名称/地址
+  const [srcOwnerQuery, setSrcOwnerQuery] = useState(''); // 创建者列
+  const [srcStatus, setSrcStatus] = useState(''); // '' | 'ok' | 'failing' | 'disabled'
+  const [srcSort, setSrcSort] = useState('');     // '' = 后端序(创建序)
+  const [srcOrder, setSrcOrder] = useState('desc');
+  const [srcPage, setSrcPage] = useState(1);
+  useEffect(() => { setSrcPage(1); }, [srcQuery, srcOwnerQuery, srcStatus, srcSort, srcOrder]);
+  const handleSrcSort = (k) => {
+    if (srcSort === k) setSrcOrder((o) => (o === 'asc' ? 'desc' : 'asc'));
+    else { setSrcSort(k); setSrcOrder('desc'); }
+  };
+  const filteredItems = useMemo(() => {
+    const needle = srcQuery.trim().toLowerCase();
+    const ownerNeedle = srcOwnerQuery.trim().toLowerCase();
+    const filtered = items.filter((item) => {
+      if (srcStatus && sourceState(item) !== srcStatus) return false;
+      if (ownerNeedle && !String(item.owner_username || '').toLowerCase().includes(ownerNeedle)) return false;
+      if (!needle) return true;
+      return [item.name, item.feed_url]
+        .filter(Boolean).join(' ').toLowerCase().includes(needle);
+    });
+    if (!srcSort) return filtered;
+    const keyOf = (it) => (
+      srcSort === 'subscribers' ? (it.subscriber_count || 0)
+        : srcSort === 'articles' ? (it.article_count || 0)
+          : String(it.last_success_at || '')
+    );
+    return [...filtered].sort((a, b) => {
+      const ka = keyOf(a); const kb = keyOf(b);
+      const cmp = ka < kb ? -1 : ka > kb ? 1 : 0;
+      return srcOrder === 'asc' ? cmp : -cmp;
+    });
+  }, [items, srcQuery, srcOwnerQuery, srcStatus, srcSort, srcOrder]);
+  const srcTotalPages = Math.max(1, Math.ceil(filteredItems.length / SRC_PAGE_SIZE));
+  const srcSafePage = Math.min(srcPage, srcTotalPages);
+  const pagedItems = filteredItems.slice((srcSafePage - 1) * SRC_PAGE_SIZE, srcSafePage * SRC_PAGE_SIZE);
+  const srcFiltersActive = Boolean(srcQuery.trim() || srcOwnerQuery.trim() || srcStatus);
 
   return (
     <>
       <div className="zone-head" style={{ marginTop: 18 }}>
         <span className="zone-title">用户自定源</span>
-        <span className="zone-hint">读者自助添加的私有 RSS 源：仅添加者可见，不进日报与公共目录</span>
       </div>
 
       {/* 总闸 + 刷新间隔（与公开分享总闸同形制） */}
@@ -172,53 +217,107 @@ export default function UserSourcesPanel({ showToast }) {
             <div className="kpi"><span className="kpi-num">{fmtNum(kpi.article_count)}</span><span className="kpi-lbl">收录文章</span></div>
             <div className="kpi"><span className={`kpi-num${kpi.failing_count > 0 ? ' is-warn' : ''}`}>{fmtNum(kpi.failing_count)}</span><span className="kpi-lbl">失败中</span></div>
           </section>
-          <section className="surface-card card-pad rounded-[var(--r-card)]" style={{ marginTop: 12 }}>
-            <div className="usrc-list">
-              {items.map((item) => (
-                <div key={item.source_id} className="usrc-row">
-                  <div className="usrc-main">
-                    <div className="usrc-name-row">
-                      <span className="usrc-name">{item.name}</span>
-                      {!item.is_active && <span className="stamp stamp-idle">已停用</span>}
-                      {item.is_active && item.status === 'failing' && (
-                        <span className="stamp stamp-warn">连续失败 {item.consecutive_failures}</span>
-                      )}
-                    </div>
-                    <div className="usrc-meta tabular-nums">
-                      <a href={item.feed_url} target="_blank" rel="noreferrer" className="usrc-url" title={item.feed_url}>
-                        {item.feed_url}
-                      </a>
-                      {' · '}创建者 {item.owner_username}
-                      {' · '}{fmtNum(item.subscriber_count)} 人订阅 · {fmtNum(item.article_count)} 篇
-                      {item.last_success_at ? ` · 最近成功 ${String(item.last_success_at).slice(0, 16).replace('T', ' ')}` : ''}
-                    </div>
-                  </div>
-                  <div className="usrc-acts">
-                    <button
-                      type="button"
-                      className="usrc-act-btn"
-                      disabled={busyId === item.source_id}
-                      onClick={() => handleToggleActive(item)}
-                    >
-                      {item.is_active ? '停用' : '启用'}
-                    </button>
-                    <button
-                      type="button"
-                      className={`usrc-act-btn is-danger ${confirmingId === item.source_id ? 'is-confirm' : ''}`}
-                      disabled={busyId === item.source_id}
-                      title={`删除将级联清除 ${fmtNum(item.subscriber_count)} 人的订阅与 ${fmtNum(item.article_count)} 篇文章`}
-                      onClick={() => handleDelete(item)}
-                    >
-                      {busyId === item.source_id
-                        ? <Loader2 className="h-3 w-3 animate-spin" />
-                        : confirmingId === item.source_id
-                          ? '确认删除?'
-                          : <Trash2 className="h-3 w-3" />}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+          <section className="surface-card rounded-[var(--r-card)] overflow-hidden" style={{ marginTop: 12 }}>
+            {filteredItems.length === 0 ? (
+              <p className="p-6 text-center tiny-meta">
+                没有匹配当前检索条件的自定源。
+                <button
+                  type="button"
+                  className="kpi-sub-link"
+                  onClick={() => { setSrcQuery(''); setSrcOwnerQuery(''); setSrcStatus(''); }}
+                >
+                  清除筛选
+                </button>
+              </p>
+            ) : (
+              <div className="acct-scroll">
+                <table className="acct-table is-fixed usrc-table">
+                  <thead>
+                    <tr>
+                      {/* 列宽:源定宽(名称短)、地址吃弹性(URL 长易截断)。 */}
+                      <ThSearch label="源" value={srcQuery} onChange={setSrcQuery} placeholder="搜索源 / 地址" active={Boolean(srcQuery.trim())} width={200} inputWidth={176} />
+                      <th className="acct-th">地址</th>
+                      <ThSearch label="创建者" value={srcOwnerQuery} onChange={setSrcOwnerQuery} placeholder="搜索创建者" active={Boolean(srcOwnerQuery.trim())} width={120} inputWidth={104} />
+                      <ThFilter label="状态" value={srcStatus} onChange={setSrcStatus} options={[['', '全部'], ['ok', '正常'], ['failing', '失败中'], ['disabled', '已停用']]} width={96} />
+                      <ThSort label="订阅" k="subscribers" sort={srcSort} order={srcOrder} onSort={handleSrcSort} num width={72} />
+                      <ThSort label="文章" k="articles" sort={srcSort} order={srcOrder} onSort={handleSrcSort} num width={72} />
+                      <ThSort label="最近成功" k="last_success" sort={srcSort} order={srcOrder} onSort={handleSrcSort} width={130} />
+                      <th className="acct-th" aria-label="操作" style={{ width: 80 }} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedItems.map((item) => {
+                      const state = sourceState(item);
+                      return (
+                        <tr key={item.source_id} className="acct-row is-static">
+                          <td><span className="acct-name" title={item.name}>{item.name}</span></td>
+                          <td>
+                            <a
+                              href={item.feed_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="acct-mono block truncate hover:underline"
+                              title={item.feed_url}
+                            >
+                              {item.feed_url}
+                            </a>
+                          </td>
+                          <td><span className="tiny-meta">{item.owner_username || '—'}</span></td>
+                          <td>
+                            {state === 'disabled'
+                              ? <span className="stamp stamp-idle">已停用</span>
+                              : state === 'failing'
+                                ? <span className="stamp stamp-warn">失败 ×{item.consecutive_failures || 1}</span>
+                                : <span className="stamp stamp-ok">正常</span>}
+                          </td>
+                          <td className="acct-n">{fmtNum(item.subscriber_count)}</td>
+                          <td className="acct-n">{fmtNum(item.article_count)}</td>
+                          <td>
+                            <span className="acct-mono">
+                              {item.last_success_at ? String(item.last_success_at).slice(0, 16).replace('T', ' ') : '–'}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="rowacts">
+                              {busyId === item.source_id ? (
+                                <span className="rowact-btn" aria-hidden="true"><Loader2 className="animate-spin" /></span>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="rowact-btn"
+                                    title={item.is_active ? `停用 ${item.name}` : `启用 ${item.name}`}
+                                    onClick={() => handleToggleActive(item)}
+                                  >
+                                    {item.is_active ? <Ban /> : <Power />}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="rowact-btn is-danger"
+                                    title={`删除 ${item.name}（级联清除订阅与文章）`}
+                                    onClick={() => handleDelete(item)}
+                                  >
+                                    <Trash2 />
+                                  </button>
+                                </>
+                              )}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {srcTotalPages > 1 && (
+              <div className="flex flex-wrap items-center gap-2 border-t border-[var(--dorami-border)] px-4 py-2.5">
+                <span className="tiny-meta">
+                  {srcFiltersActive ? `匹配 ${filteredItems.length} 个 · ` : ''}共 {items.length} 个
+                </span>
+                <Pager page={srcSafePage} totalPages={srcTotalPages} onPage={setSrcPage} />
+              </div>
+            )}
           </section>
         </>
       )}

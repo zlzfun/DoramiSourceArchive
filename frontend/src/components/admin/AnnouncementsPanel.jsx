@@ -13,6 +13,7 @@ import { useConfirm } from '../../hooks/useConfirm';
 import { AnnouncementCard } from '../AnnouncementBanner';
 import { stripAnnouncementMarkup } from '../../utils/announcementText';
 import { formatStamp } from './adminUtils';
+import Pager from './Pager';
 
 const CONTENT_MAX = 2000;
 const TITLE_MAX = 200;
@@ -25,6 +26,9 @@ const LEVELS = [
 
 const LEVEL_ICONS = { info: Info, accent: Megaphone, warning: AlertTriangle };
 
+// 历史公告分页大小(v3.42 M17):默认只铺最近一页,不再全量渲染所有历史公告。
+const ANN_PAGE_SIZE = 6;
+
 export default function AnnouncementsPanel({ showToast }) {
   const confirm = useConfirm();
   const [items, setItems] = useState(null); // null = 加载中
@@ -33,6 +37,8 @@ export default function AnnouncementsPanel({ showToast }) {
   const [level, setLevel] = useState('info');
   const [publishing, setPublishing] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  // 历史公告分页(v3.42 M17):不再全量平铺所有历史公告。
+  const [page, setPage] = useState(1);
 
   const load = useCallback(() => {
     fetchAdminAnnouncements()
@@ -154,7 +160,7 @@ export default function AnnouncementsPanel({ showToast }) {
         ) : items.length === 0 ? (
           <p className="py-8 text-center tiny-meta">还没有公告,用上方表单发布第一条</p>
         ) : (
-          items.map((item) => {
+          items.slice((page - 1) * ANN_PAGE_SIZE, page * ANN_PAGE_SIZE).map((item) => {
             const summary = stripAnnouncementMarkup(item.content);
             const levelKey = LEVEL_ICONS[item.level] ? item.level : 'info';
             const LevelIcon = LEVEL_ICONS[levelKey];
@@ -202,6 +208,16 @@ export default function AnnouncementsPanel({ showToast }) {
               </div>
             );
           })
+        )}
+        {items !== null && items.length > ANN_PAGE_SIZE && (
+          <div className="mt-1 flex flex-wrap items-center gap-2 border-t border-[var(--dorami-border)] pt-2.5">
+            <span className="tiny-meta">共 {items.length} 条</span>
+            <Pager
+              page={Math.min(page, Math.ceil(items.length / ANN_PAGE_SIZE))}
+              totalPages={Math.ceil(items.length / ANN_PAGE_SIZE)}
+              onPage={setPage}
+            />
+          </div>
         )}
       </div>
     </section>

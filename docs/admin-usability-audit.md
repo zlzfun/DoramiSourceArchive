@@ -31,7 +31,20 @@
     不再整窗明细进内存;账户面聚合排除 `deleted:*` 墓碑(成本看板 `summarize` 口径保留)。
   - M19:活动详情抽屉加就地管理动作行(AI/角色/启停/重置密码/删除,操作后抽屉快照同步刷新;
     activity 端点 account 载荷补 `role`)。待负责人决策第 3 项的「全站均值基线」未做(产品分析增强,另议)。
-- 其余项(M08 起)未动;M10 仍待确认内网机 `[runtime] role`。
+- **v3.42.0(2026-09-01)运维列表规模化波:M08/M09/M11/M17 已修**(M23 文档债顺手清)。
+  - M08:`admin_overview` N+1 消除——`active_subscribers_by_source` 一次订阅表扫描 + 一次用户
+    存在性查询,查询数与源数解耦(判定语义与逐源版逐字一致,测试守卫);UserSourcesPanel 加
+    搜索(名称/地址/创建者)× 治理状态过滤(正常/失败中/已停用)× 分页。
+  - M09:`/api/fetch-runs` 与 `/api/collection-job-runs` 响应改 `{items,total}` + `days` 时间窗
+    SQL 过滤;FetchRunsTab 拉取上限提至 500 并按 total **诚实提示截断**(不再静默消失)。
+    完全服务端分页未做(父子聚合展开模型需子运行 lazy 化)——折中理由与触发条件记 backlog。
+  - M11:审计覆盖补 `/api/articles`(录入/编辑/删除/批量删除)、`/api/fetch`(手动触发采集)、
+    `/api/archive/import`(归档导入),各配语义摘要;audit-log 端点加 `operator`/`q`(跨摘要·
+    目标·路径)/`status`(ok|denied)检索,前端审计面板配操作者输入+搜索框+结果档。
+  - M17:反馈收件箱加 `q`(正文/提交者)检索 + `category` 分类过滤(SQL 端,与状态/分页叠加);
+    公告列表服务端分页 + total、dismiss_count 只对当前页聚合,前端历史公告分页(6/页)。
+    刻意裁剪(记 backlog):反馈批量流转/负责人/优先级、导出(归 M18)。
+- 其余项(M10/M13–M16/M18/M20–M22/M24/M25)未动;M10 仍待确认内网机 `[runtime] role`。
 
 ## 协作与互补结论
 

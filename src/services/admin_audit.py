@@ -26,6 +26,11 @@ AUDIT_PATH_PREFIXES = (
     "/api/daily-brief",
     # 全站 MCP 总闸（admin-only 服务级熔断，v3.40.4 审计 M01 补审计）。
     "/api/mcp/toggle",
+    # v3.42 审计 M11 补覆盖：文章 CRUD/批量删除、手动触发采集、归档导入
+    # 都是改写全站归档的管理动作（只审计非只读方法，GET 浏览不入）。
+    "/api/articles",
+    "/api/fetch",
+    "/api/archive/import",
 )
 # /api/reader/* 与 /api/auth/* 刻意豁免：管理员自己的阅读、订阅与自助改密
 # 属于个人操作，不是需要管理员互相审阅的“管理操作”。
@@ -183,6 +188,44 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
     ),
     ("POST", re.compile(r"^/api/llm/config$"), lambda _m, _b: ("更新 LLM 配置", None)),
     ("POST", re.compile(r"^/api/mcp/toggle$"), lambda _m, _b: ("切换全站 MCP 总闸", None)),
+    # ── 归档写入口(v3.42 M11)──
+    (
+        "POST",
+        re.compile(r"^/api/articles/batch-delete$"),
+        lambda _m, body: (
+            f"批量删除文章 {len((body or {}).get('ids') or (body or {}).get('article_ids') or [])} 篇",
+            None,
+        ),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/articles$"),
+        # 正文可能超 body 采集上限(body=None),标题尽力而为。
+        lambda _m, body: (
+            f"手工录入文章 {str((body or {}).get('title') or '')[:30]}".rstrip(),
+            None,
+        ),
+    ),
+    (
+        "PUT",
+        re.compile(r"^/api/articles/(?P<target>[^/]+)$"),
+        lambda match, body: _id_target(match, body, noun="文章", action="编辑"),
+    ),
+    (
+        "DELETE",
+        re.compile(r"^/api/articles/(?P<target>[^/]+)$"),
+        lambda match, body: _id_target(match, body, noun="文章", action="删除"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/fetch/(?P<target>[^/]+)$"),
+        lambda match, body: _id_target(match, body, noun="采集节点", action="手动触发"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/archive/import/"),
+        lambda _m, _b: ("归档导入（archive sync）", None),
+    ),
     (
         "POST",
         re.compile(r"^/api/admin/remote-sync/schedule$"),

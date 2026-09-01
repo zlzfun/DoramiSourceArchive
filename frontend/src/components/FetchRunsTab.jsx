@@ -305,6 +305,9 @@ export default function FetchRunsTab({
   const [collectionJobs, setCollectionJobs] = useState([]);
   const [collectionRuns, setCollectionRuns] = useState([]);
   const [fetchRuns, setFetchRuns] = useState([]);
+  // v3.42(M09):服务端 total——载入集小于窗口总量时页脚诚实提示截断,不再静默。
+  const [collectionRunsTotal, setCollectionRunsTotal] = useState(0);
+  const [fetchRunsTotal, setFetchRunsTotal] = useState(0);
   const [daily, setDaily] = useState(null); // GET /api/stats/daily(精确聚合;null=回退窗口口径)
   const [windowDays, setWindowDays] = useState(30); // 时间窗(近 N 天,总账条+流水行集统一口径)
   const [loading, setLoading] = useState(false);
@@ -398,16 +401,20 @@ export default function FetchRunsTab({
     try {
       // 拉取不带 status/trigger 服务端参数(总账条计数不随本地筛选塌缩);仅 fetcher_id 保留。
       // stats 为精确聚合口径(点阵/总账条),拉取失败降级 null → 各消费点回退窗口口径。
-      const [jobs, jobRuns, nodeRuns, stats] = await Promise.all([
+      // v3.42(M09):days 时间窗下沉 SQL + 上限提至 500,响应带 total——窗口内超出
+      // 载入上限时不再静默截断,页脚据 total 诚实提示(见 runsTruncated)。
+      const [jobs, jobRunsBody, nodeRunsBody, stats] = await Promise.all([
         fetchCollectionJobs(),
-        fetchCollectionJobRuns({}, 100),
-        fetchFetchRuns({ fetcher_id: serverFetcherId }, 200),
+        fetchCollectionJobRuns({ days: windowDays }, 500),
+        fetchFetchRuns({ fetcher_id: serverFetcherId, days: windowDays }, 500),
         fetchDailyStats(windowDays).catch(() => null),
       ]);
       if (reqId !== loadRequestRef.current) return;
       setCollectionJobs(jobs);
-      setCollectionRuns(jobRuns);
-      setFetchRuns(nodeRuns);
+      setCollectionRuns(jobRunsBody.items ?? []);
+      setCollectionRunsTotal(jobRunsBody.total ?? 0);
+      setFetchRuns(nodeRunsBody.items ?? []);
+      setFetchRunsTotal(nodeRunsBody.total ?? 0);
       setDaily(stats);
       setLoadError('');
     } catch (e) {
@@ -1180,6 +1187,11 @@ export default function FetchRunsTab({
             <div className="flow-foot">
               <span className="flow-foot-info">
                 {tableRuns.length} 次运行 · 近 {windowDays} 天
+                {(collectionRunsTotal > collectionRuns.length || fetchRunsTotal > fetchRuns.length) && (
+                  <span className="micro-label" style={{ color: 'var(--state-warn)' }} title="窗口内运行数超过单次载入上限(各 500),更早的记录未载入">
+                    {' '}· 窗口超载入上限,仅显示最近部分,收窄时间窗查看完整
+                  </span>
+                )}
                 {selectedJob && (
                   <>
                     {` · 已按「${selectedJob.name}」过滤`}

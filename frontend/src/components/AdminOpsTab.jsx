@@ -11,7 +11,6 @@ import {
   Ban,
   Zap,
   ZapOff,
-  Search,
   X,
   Loader2,
   MessageSquare,
@@ -40,6 +39,7 @@ import {
   batchUpdateAccounts,
 } from '../api';
 import { useConfirm } from '../hooks/useConfirm';
+import { ThFilter, ThSearch, ThSort } from './admin/TableTh';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useModalTransition } from '../hooks/useModalTransition';
 import { useModalA11y } from '../hooks/useModalA11y';
@@ -99,7 +99,7 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState('user'); // 新建账户角色(v3.19 多管理员:可直建管理员,默认读者防误触)
-  const [accountQuery, setAccountQuery] = useState(''); // 输入框即时值
+  const [accountQuery, setAccountQuery] = useState(''); // 输入框即时值(「用户」列头就地搜索)
   const [acctQ, setAcctQ] = useState(''); // 防抖后生效的搜索词(300ms)
   const [accountPage, setAccountPage] = useState(1);
   // 账户管理 V2(v3.41,审计 M05/M06):服务端组合过滤 × 排序 + 勾选批量。
@@ -487,47 +487,8 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
       return next;
     });
   };
-  // 筛选表头(v3.41 返修:筛选并入列名,与排序同一套「点列头」操作语言)。
-  // 点击轮换档位,列头文字即当前档(未筛选=列名);激活列 accent-ink,与排序列同语。
-  // width 配合表格 table-layout: fixed——列宽由表头定死,筛选换行集/换档位零跳动。
-  const filterTh = (label, value, setValue, options, width = 0) => {
-    const idx = Math.max(0, options.findIndex(([v]) => v === value));
-    const next = options[(idx + 1) % options.length][0];
-    const cycle = [label, ...options.slice(1).map(([, lbl]) => lbl)].join(' → ');
-    // data-widest:隐形占位撑到最长档位宽度,按钮点击区恒覆盖最长文字。
-    const widest = [label, ...options.slice(1).map(([, lbl]) => lbl)]
-      .reduce((a, b) => (b.length > a.length ? b : a));
-    return (
-      <th className={`acct-th ${value ? 'is-filtered' : ''}`} style={width ? { width } : undefined}>
-        <button
-          type="button"
-          className="acct-sortbtn"
-          data-widest={widest}
-          onClick={() => setValue(next)}
-          title={`点击轮换筛选：${cycle}`}
-        >
-          {value ? options[idx][1] : label}
-        </button>
-      </th>
-    );
-  };
-
-  // 排序表头(JSX 助手,非组件——组件会随每次渲染重挂载丢焦点)。
-  const sortTh = (key, label, num = false, width = 0) => {
-    const active = acctSort === key;
-    return (
-      <th
-        className={`acct-th ${num ? 'is-num' : ''} ${active ? 'is-sorted' : ''}`}
-        style={width ? { width } : undefined}
-        aria-sort={active ? (acctOrder === 'asc' ? 'ascending' : 'descending') : undefined}
-      >
-        <button type="button" className="acct-sortbtn" onClick={() => handleSort(key)} title={`按${label}排序`}>
-          {label}
-          <span className="acct-sort-arrow" aria-hidden="true">{active ? (acctOrder === 'asc' ? '▲' : '▼') : ''}</span>
-        </button>
-      </th>
-    );
-  };
+  // 列头即操作:排序/筛选/搜索三种列头统一走共享组件(components/admin/TableTh,
+  // 账户/审计/自定源三表同一套操作语言与样式)。
   // 数据收缩(删号/改窗)后当前页越界时回落到末页。
   useEffect(() => {
     if (acctData && accountPage > accountTotalPages) setAccountPage(accountTotalPages);
@@ -672,18 +633,7 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
 
           <div className="zone-head">
             <span className="zone-title">账户管理</span>
-            <span className="zone-acts flex items-center gap-2">
-              {acctData !== null && (acctTotal > 0 || accountQuery.trim() !== '') && (
-                <span className="relative">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-                  <input
-                    value={accountQuery}
-                    onChange={(e) => setAccountQuery(e.target.value)}
-                    placeholder="搜索用户名"
-                    className="form-input form-input-inline w-44 pl-8"
-                  />
-                </span>
-              )}
+            <span className="zone-acts">
               <button onClick={() => setCreateModalOpen(true)} className="action-button action-button-secondary min-h-[32px] px-3 text-xs">
                 <UserPlus className="h-4 w-4" /> 新建账户
               </button>
@@ -725,15 +675,15 @@ export default function AdminOpsTab({ showToast, currentUsername = '', pendingFo
                             className="h-4 w-4 cursor-pointer rounded align-middle"
                           />
                         </th>
-                        {sortTh('username', '用户')}
-                        {filterTh('角色', acctRole, setAcctRole, [['', '全部'], ['admin', '管理员'], ['user', '读者']], 96)}
-                        {filterTh('状态', acctStatus, setAcctStatus, [['', '全部'], ['active', '启用'], ['disabled', '停用']], 80)}
-                        {filterTh('AI', acctAi, setAcctAi, [['', '全部'], ['on', 'AI 已开'], ['off', 'AI 未开']], 88)}
-                        {sortTh('last_login', '最近登录', false, 124)}
-                        {sortTh('logins', '登录', true, 76)}
-                        {sortTh('reads', '阅读', true, 76)}
-                        {sortTh('ai_calls', 'AI 调用', true, 96)}
-                        {sortTh('subscriptions', '订阅', true, 76)}
+                        <ThSearch label="用户" value={accountQuery} onChange={setAccountQuery} placeholder="搜索用户名" active={Boolean(acctQ)} />
+                        <ThFilter label="角色" value={acctRole} onChange={setAcctRole} options={[['', '全部'], ['admin', '管理员'], ['user', '读者']]} width={96} />
+                        <ThFilter label="状态" value={acctStatus} onChange={setAcctStatus} options={[['', '全部'], ['active', '启用'], ['disabled', '停用']]} width={80} />
+                        <ThFilter label="AI" value={acctAi} onChange={setAcctAi} options={[['', '全部'], ['on', 'AI 已开'], ['off', 'AI 未开']]} width={88} />
+                        <ThSort label="最近登录" k="last_login" sort={acctSort} order={acctOrder} onSort={handleSort} width={124} />
+                        <ThSort label="登录" k="logins" sort={acctSort} order={acctOrder} onSort={handleSort} num width={76} />
+                        <ThSort label="阅读" k="reads" sort={acctSort} order={acctOrder} onSort={handleSort} num width={76} />
+                        <ThSort label="AI 调用" k="ai_calls" sort={acctSort} order={acctOrder} onSort={handleSort} num width={96} />
+                        <ThSort label="订阅" k="subscriptions" sort={acctSort} order={acctOrder} onSort={handleSort} num width={76} />
                       </tr>
                     </thead>
                     <tbody>

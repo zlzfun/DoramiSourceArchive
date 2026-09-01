@@ -211,6 +211,41 @@ def active_subscriber_usernames(session: Session, source_id: str) -> List[str]:
     return sorted(owners & existing)
 
 
+def active_subscribers_by_source(
+    session: Session, source_ids: List[str]
+) -> Dict[str, List[str]]:
+    """一次扫描构建 `{source_id: [username, ...]}`(活跃订阅 × 账户存在性)。
+
+    v3.42(审计 M08):admin_overview 此前对每个源逐一调 active_subscriber_usernames,
+    形态 = 源数 × 全订阅扫描 + 每源一次用户查询;本函数把全部源的订阅者归属压成
+    「一次订阅表扫描 + 一次用户存在性查询」,查询数与源数解耦。
+    单源判定语义与 active_subscriber_usernames 逐字一致。
+    """
+    wanted = set(source_ids)
+    if not wanted:
+        return {}
+    owners_by_source: Dict[str, Set[str]] = {sid: set() for sid in wanted}
+    all_owners: Set[str] = set()
+    for record in session.exec(
+        select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.is_active == True)  # noqa: E712
+    ).all():
+        owner = record.owner_username or ""
+        if not owner:
+            continue
+        for sid in _subscription_source_ids(record):
+            if sid in wanted:
+                owners_by_source[sid].add(owner)
+                all_owners.add(owner)
+    if not all_owners:
+        return {sid: [] for sid in wanted}
+    existing = {
+        str(u) for u in session.exec(
+            select(UserRecord.username).where(UserRecord.username.in_(sorted(all_owners)))
+        ).all()
+    }
+    return {sid: sorted(owners & existing) for sid, owners in owners_by_source.items()}
+
+
 def subscribed_user_source_ids(session: Session, username: str) -> Set[str]:
     """该用户订阅中的用户源集合(配额分母:去重共享下订阅他人首建的源同样计入)。"""
     all_user = user_source_ids(session)
@@ -806,9 +841,11 @@ def admin_overview(session: Session) -> Dict[str, Any]:
             .group_by(ArticleRecord.source_id)
         ).all()
         article_counts = {str(sid): int(count) for sid, count in rows}
+    # 订阅者归属一次扫描构建(v3.42 M08:此前逐源 N+1,上界 ≈ 2×源数+3 次查询)。
+    subscribers_map = active_subscribers_by_source(session, ids)
     covered_users: Set[str] = set()
     for item in items:
-        subscribers = active_subscriber_usernames(session, item["source_id"])
+        subscribers = subscribers_map.get(item["source_id"], [])
         item["subscriber_count"] = len(subscribers)
         item["article_count"] = article_counts.get(item["source_id"], 0)
         covered_users.update(subscribers)
