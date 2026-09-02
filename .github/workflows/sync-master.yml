@@ -1,0 +1,75 @@
+# main → master 自动同步(单向)
+#
+# 触发:main 有新提交(PR 合入或直推)即把 main 合并进 master 并推送。
+# master 是内网适配分支,只接收 main 的合并、永不合回 main。
+#
+# 冲突处理:自动合并只在干净的情况下推送;出现冲突时任务失败并在
+# Job Summary 里列出冲突文件,由人工在本地按老流程处理:
+#   git checkout master && git pull && git merge main   # 解决冲突后 push
+#
+# 注意:仓库 Actions 默认 GITHUB_TOKEN 权限为只读,故此处显式申请 contents: write。
+name: Sync main → master
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-main-to-master
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout master (full history)
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Merge main into master
+        id: merge
+        env:
+          MAIN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin main
+          if git merge-base --is-ancestor "$MAIN_SHA" HEAD; then
+            echo "master 已包含 main@${MAIN_SHA:0:7},无需合并。" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          subject="$(git log -1 --format=%s "$MAIN_SHA")"
+          if git merge --no-ff --no-edit -m "merge main → master(auto-sync): ${subject}" "$MAIN_SHA"; then
+            git push origin HEAD:master
+            {
+              echo "### ✅ 已同步 main → master"
+              echo
+              echo "- main: \`${MAIN_SHA:0:7}\` ${subject}"
+              echo "- master: \`$(git rev-parse --short HEAD)\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          else
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            git merge --abort || true
+            {
+              echo "### ❌ main → master 合并冲突,未推送"
+              echo
+              echo "冲突文件:"
+              echo
+              echo "$conflicts" | sed 's/^/- `/; s/$/`/'
+              echo
+              echo '请本地处理:`git checkout master && git pull && git merge main`,解决后 push。'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::main → master 合并冲突: $(echo "$conflicts" | tr '\n' ' ')"
+            exit 1
+          fi
