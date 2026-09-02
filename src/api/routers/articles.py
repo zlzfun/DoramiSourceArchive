@@ -19,7 +19,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
-from sqlalchemy import and_, case, false, func, or_
+from sqlalchemy import and_, case, exists, false, func, or_
 from sqlmodel import Session, select
 
 from api import deps
@@ -44,7 +44,15 @@ from api.sources import (
     registry_source_ids_for_shape,
 )
 from api.textutils import _json_loads
-from models.db import ArticleRecord, SourceConfigRecord
+from models.db import (
+    ArticleAnalysisRecord,
+    ArticleRecord,
+    ArticleTagAssignmentRecord,
+    CmsTagRecord,
+    SourceConfigRecord,
+)
+from services import article_analysis as article_analysis_service
+from services.article_display_tags import article_ids_for_flexible_label, load_display_tags
 from services import reader_state as reader_state_service
 from services import source_visibility as source_visibility_service
 from services import user_sources as user_sources_service
@@ -55,6 +63,48 @@ router = APIRouter(tags=["articles"])
 def _app():
     """延迟取 api.app（避免导入环；动态调用其留守的 current_username）。"""
     return importlib.import_module("api.app")
+
+
+def _analysis_assets(
+    session: Session, article_ids: list[str]
+) -> tuple[dict[str, ArticleAnalysisRecord], dict[str, list[dict]]]:
+    """Batch-load analysis and tags for a page; never serialize with N+1 reads."""
+
+    if not article_ids:
+        return {}, {}
+    analyses = {
+        row.article_id: row
+        for row in session.exec(
+            select(ArticleAnalysisRecord).where(
+                ArticleAnalysisRecord.article_id.in_(article_ids)
+            )
+        ).all()
+    }
+    tags: dict[str, list[dict]] = {article_id: [] for article_id in article_ids}
+    rows = session.exec(
+        select(ArticleTagAssignmentRecord, CmsTagRecord)
+        .join(CmsTagRecord, CmsTagRecord.id == ArticleTagAssignmentRecord.tag_id)
+        .where(ArticleTagAssignmentRecord.article_id.in_(article_ids))
+        .order_by(
+            ArticleTagAssignmentRecord.article_id,
+            ArticleTagAssignmentRecord.is_primary.desc(),
+            ArticleTagAssignmentRecord.relevance.desc(),
+            CmsTagRecord.code,
+        )
+    ).all()
+    for assignment, tag in rows:
+        tags.setdefault(assignment.article_id, []).append(
+            {
+                "id": tag.id,
+                "code": tag.code,
+                "kind": tag.kind,
+                "name_zh": tag.name_zh,
+                "name_en": tag.name_en,
+                "is_primary": assignment.is_primary,
+                "relevance": assignment.relevance,
+            }
+        )
+    return analyses, tags
 
 
 def _source_ids_by_shape(session: Optional[Session] = None) -> dict[str, set[str]]:
@@ -138,6 +188,11 @@ def get_articles(
         include_total: bool = False,
         include_content: bool = True,
         include_extensions: bool = False,  # 不带正文时仍需 extensions_json 的轻取数场景(如日报列表 meta)
+        min_score: Optional[float] = None,
+        content_genre: Optional[str] = None,
+        tag_ids: Optional[str] = None,
+        display_tag: Optional[str] = None,
+        sort: str = "newest",
         session: Session = Depends(deps.get_session),
 ):
     scope = (subscribed_scope or "off").strip().lower()
@@ -172,6 +227,40 @@ def get_articles(
     }
     query = apply_article_query_filters(select(ArticleRecord), session=session, **filter_kwargs)
     count_query = apply_article_query_filters(select(func.count(ArticleRecord.id)), session=session, **filter_kwargs)
+    analysis_conditions = [
+        ArticleAnalysisRecord.article_id == ArticleRecord.id,
+        ArticleAnalysisRecord.status == "succeeded",
+    ]
+    if min_score is not None:
+        if not 1.0 <= float(min_score) <= 10.0:
+            raise HTTPException(status_code=400, detail="min_score 必须在 1～10 之间")
+        analysis_conditions.append(ArticleAnalysisRecord.quality_score >= float(min_score))
+    if content_genre:
+        analysis_conditions.append(ArticleAnalysisRecord.content_genre == content_genre)
+    if min_score is not None or content_genre:
+        analysis_filter = exists(select(1).where(*analysis_conditions))
+        query = query.where(analysis_filter)
+        count_query = count_query.where(analysis_filter)
+    parsed_tag_ids: list[int] = []
+    if tag_ids:
+        try:
+            parsed_tag_ids = sorted({int(value) for value in tag_ids.split(",") if value.strip()})
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="tag_ids 必须为逗号分隔整数") from exc
+        if parsed_tag_ids:
+            tag_filter = exists(
+                select(1).where(
+                    ArticleTagAssignmentRecord.article_id == ArticleRecord.id,
+                    ArticleTagAssignmentRecord.tag_id.in_(parsed_tag_ids),
+                )
+            )
+            query = query.where(tag_filter)
+            count_query = count_query.where(tag_filter)
+    if display_tag:
+        flexible_article_ids = article_ids_for_flexible_label(session, display_tag)
+        display_tag_condition = ArticleRecord.id.in_(flexible_article_ids or ["__none__"])
+        query = query.where(display_tag_condition)
+        count_query = count_query.where(display_tag_condition)
     if not is_admin:
         # 管理面隐藏的源对读者会话整体不可见：不止订阅范围，「全部XX」跨源列表与
         # 直连按 source_id 查询同样排除（admin 会话不受影响，知识台账仍见全档）。
@@ -218,16 +307,36 @@ def get_articles(
         else:
             query = query.where(unread_cond)
             count_query = count_query.where(unread_cond)
+    sort_value = (sort or "newest").strip().lower()
+    if sort_value not in {"newest", "score", "quality"}:
+        raise HTTPException(status_code=400, detail="sort 仅支持 newest/score/quality")
+    score_order = (
+        select(ArticleAnalysisRecord.quality_score)
+        .where(ArticleAnalysisRecord.article_id == ArticleRecord.id)
+        .scalar_subquery()
+        .desc()
+    )
     if scope == "prioritize" and subscribed_ids:
         subscribed_first = case((ArticleRecord.source_id.in_(subscribed_ids), 0), else_=1)
-        query = query.order_by(*article_recency_order(subscribed_first))
+        prefix = (subscribed_first, score_order) if sort_value in {"score", "quality"} else (subscribed_first,)
+        query = query.order_by(*article_recency_order(*prefix))
     else:
-        query = query.order_by(*article_recency_order())
+        prefix = (score_order,) if sort_value in {"score", "quality"} else ()
+        query = query.order_by(*article_recency_order(*prefix))
     total = int(session.exec(count_query).one() or 0) if include_total else None
     records = session.exec(query.offset(safe_skip).limit(safe_limit)).all()
+    analyses, tags = _analysis_assets(session, [record.id for record in records])
+    display_tags = load_display_tags(
+        session,
+        [record.id for record in records],
+        analyses=analyses,
+        canonical_tags=tags,
+    )
     items = [
         serialize_article_list_item(
             record, include_content=include_content, include_extensions=include_extensions,
+            analysis=analyses.get(record.id), tags=tags.get(record.id, []),
+            display_tags=display_tags.get(record.id, []),
         )
         for record in records
     ]
@@ -304,6 +413,57 @@ def get_article_facets(
     }
 
 
+@router.get("/api/articles/{article_id:path}/analysis")
+async def get_article_analysis(article_id: str, request: Request):
+    record = await deps.get_db_sink().get(article_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="文章未找到")
+    auth_session = _app().current_auth_session(request)
+    with Session(deps.get_db_sink().engine) as session:
+        if record.source_id and not (auth_session and auth_session.get("role") == "admin"):
+            if record.source_id in source_visibility_service.hidden_source_ids(session):
+                raise HTTPException(status_code=404, detail="文章未找到")
+            if user_sources_service.is_user_source(record.source_id):
+                viewer = str(auth_session.get("sub", "")) if auth_session else ""
+                if not viewer or user_sources_service.unauthorized_user_source_ids(
+                    session, viewer, [record.source_id]
+                ):
+                    raise HTTPException(status_code=404, detail="文章未找到")
+        analysis = session.get(ArticleAnalysisRecord, article_id)
+        _analyses, tags = _analysis_assets(session, [article_id])
+        display_tags = load_display_tags(
+            session,
+            [article_id],
+            analyses={article_id: analysis} if analysis is not None else {},
+            canonical_tags=tags,
+        )
+        if analysis is None:
+            return {
+                "article_id": article_id,
+                "status": "not_started",
+                "tags": [],
+                "display_tags": [],
+            }
+        return {
+            "article_id": article_id,
+            "status": analysis.status,
+            "tagging_status": analysis.tagging_status,
+            "quality_score": analysis.quality_score,
+            "score_reason": analysis.score_reason,
+            "one_sentence_summary": analysis.one_sentence_summary,
+            "summary": analysis.summary,
+            "content_genre": analysis.content_genre,
+            "content_features": _json_loads(analysis.content_features_json, []),
+            "entities": _json_loads(analysis.entities_json, []),
+            "prompt_version": analysis.prompt_version,
+            "scoring_version": analysis.scoring_version,
+            "taxonomy_version": analysis.taxonomy_version,
+            "analyzed_at": analysis.analyzed_at,
+            "tags": tags.get(article_id, []),
+            "display_tags": display_tags.get(article_id, []),
+        }
+
+
 @router.get("/api/articles/{article_id:path}")
 async def get_article(article_id: str, request: Request):
     record = await deps.get_db_sink().get(article_id)
@@ -325,7 +485,21 @@ async def get_article(article_id: str, request: Request):
                         session, viewer, [record.source_id]
                     ):
                         raise HTTPException(status_code=404, detail="文章未找到")
-    return serialize_article_list_item(record, include_content=True)
+    with Session(deps.get_db_sink().engine) as session:
+        analyses, tags = _analysis_assets(session, [record.id])
+        display_tags = load_display_tags(
+            session,
+            [record.id],
+            analyses=analyses,
+            canonical_tags=tags,
+        )
+        return serialize_article_list_item(
+            record,
+            include_content=True,
+            analysis=analyses.get(record.id),
+            tags=tags.get(record.id, []),
+            display_tags=display_tags.get(record.id, []),
+        )
 
 
 @router.post("/api/articles")
@@ -355,6 +529,7 @@ async def create_article_manual(params: dict = Body(...)):
     if not success:
         raise HTTPException(status_code=400, detail="该条目 ID 已存在，请避免重复录入")
 
+    _app().queue_article_analysis_after_commit([content_obj.id])
     return {"status": "success"}
 
 
@@ -414,6 +589,7 @@ async def update_article(article_id: str, params: ArticleUpdateParams):
     success = await db_sink.update(article_id, update_data)
     if not success:
         raise HTTPException(status_code=404, detail="更新失败")
+    _app().queue_article_analysis_after_commit([article_id])
     return {"status": "success"}
 
 

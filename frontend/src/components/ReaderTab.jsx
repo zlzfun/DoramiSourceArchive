@@ -24,6 +24,8 @@ import {
   MessageSquare,
   CloudOff,
   Share2,
+  Newspaper,
+  Tags,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
@@ -38,11 +40,15 @@ import { resolveCompany } from '../sourceTaxonomy';
 import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
 import AnnouncementBanner from './AnnouncementBanner';
+import PersonalBriefTab from './PersonalBriefTab';
+import InterestManager from './InterestManager';
+import AnalysisTagChip from './AnalysisTagChip';
 import { excerptOf } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
 import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { contentTypeLabel } from '../utils/contentType';
+import { displayAnalysisTags, primaryAnalysisLabel, qualityScoreText } from '../utils/analysis';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
 
@@ -123,6 +129,8 @@ export const ArticleRow = memo(function ArticleRow({
   const excerpt = entryBulletin
     ? ''
     : excerptOf(article.summary_zh || article.content_preview || article.content);
+  const analysisLabel = primaryAnalysisLabel(article);
+  const score = qualityScoreText(article.quality_score);
   return (
     <>
       {showLabel && <div className="reader-date-label">{dayLabelOf(dayKey)}</div>}
@@ -148,6 +156,12 @@ export const ArticleRow = memo(function ArticleRow({
             {formatRelativeTime(article.publish_date || article.fetched_date, '')}
           </span>
         </span>
+        {(score || analysisLabel) && (
+          <span className="reader-entry-analysis">
+            {score && <span className="reader-score-chip" title="AI 内容价值评估，不代表事实保证或用户评分">{score}</span>}
+            {analysisLabel && <span className="reader-tag-chip">{analysisLabel}</span>}
+          </span>
+        )}
         {/* 标题行:标题占位 + 右缘收藏星标(Folo 式)。星内联于标题行,
             正文/摘要照旧铺满整宽,只标题让出星位——不再整卡右缩(修右侧留白)。
             卡本身是 <button>,故收藏钮用 role=button 的 span,避免按钮嵌套;
@@ -187,9 +201,11 @@ export default function ReaderTab({
   showToast,
   aiEnabled = false,
   userSourcesEnabled = false,
+  personalDigestEnabled = false,
   // ── standalone(读者账号):应用导轨已隐藏,视图轨独占——轨底并入用户菜单 ──
   standalone = false,
   account = null,
+  onUserUpdated,
   themeDark = false,
   onToggleTheme,
   onOpenSettings,
@@ -203,6 +219,16 @@ export default function ReaderTab({
   onDeepLinkConsumed,
 }) {
   const [brandFailed, setBrandFailed] = useState(false); // 品牌 logo 加载失败 → 回退铃铛
+  const [briefOpen, setBriefOpen] = useState(false);
+  const [interestOpen, setInterestOpen] = useState(false);
+  const [interestVersion, setInterestVersion] = useState(0);
+  const onboardingRequired = personalDigestEnabled
+    && account?.role === 'user'
+    && account?.interest_onboarding_completed === false;
+
+  useEffect(() => {
+    if (!personalDigestEnabled) setBriefOpen(false);
+  }, [personalDigestEnabled]);
 
   const {
     // 源目录 / 订阅
@@ -217,7 +243,7 @@ export default function ReaderTab({
     goView, goSource, goContainerAll, goFavorites,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
-    searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch,
+    searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch, searchForLabel,
     // 未读体系
     unreadBySource, unreadOnly, setUnreadOnly, scopeUnread,
     isArticleUnread, handleTogglePaneRead, handleToggleSocialRead,
@@ -248,7 +274,7 @@ export default function ReaderTab({
   const resyncListScrollbar = useOverlayScrollbar(
     listRef,
     listThumbRef,
-    !discover && mode !== 'social',
+    !briefOpen && !discover && mode !== 'social',
   );
 
   // 列表内容高度变化(切源/追加/加载态)后重算浮层滚动条滑块
@@ -313,6 +339,21 @@ export default function ReaderTab({
             </svg>
           </div>
         )}
+        {personalDigestEnabled && (
+          <>
+            <button
+              type="button"
+              aria-label="我的早报"
+              aria-pressed={briefOpen}
+              onClick={() => { setDiscover(false); setBriefOpen(true); }}
+              className={`reader-vrail-btn ${briefOpen ? 'is-on' : ''}`}
+            >
+              <Newspaper className="h-[18px] w-[18px]" />
+              <span className="reader-vrail-tip">我的早报</span>
+            </button>
+            <span className="reader-vrail-divider" aria-hidden="true" />
+          </>
+        )}
         {/* 四个容器:今日(混合时间线) / 文章 / 动态 / 社交媒体。收藏降为容器内过滤器(条目列头星标)。
             社交独立成容器(v3.12):动态装的是 changelog/release notes/GitHub 趋势——短条目扫读形态,
             推文是卡片流直读形态,渲染差异大到要在容器内再分叉,就说明本不该是同一个容器。 */}
@@ -325,9 +366,9 @@ export default function ReaderTab({
             key={view}
             type="button"
             aria-label={label}
-            aria-pressed={railActive === view}
-            onClick={() => goView(view)}
-            className={`reader-vrail-btn ${railActive === view ? 'is-on' : ''}`}
+            aria-pressed={!briefOpen && railActive === view}
+            onClick={() => { setBriefOpen(false); goView(view); }}
+            className={`reader-vrail-btn ${!briefOpen && railActive === view ? 'is-on' : ''}`}
           >
             <Icon className="h-[18px] w-[18px]" />
             <span className="reader-vrail-tip">{label}</span>
@@ -339,13 +380,25 @@ export default function ReaderTab({
         <button
           type="button"
           aria-label="发现"
-          aria-pressed={discover}
-          onClick={() => setDiscover(true)}
-          className={`reader-vrail-btn ${discover ? 'is-on' : ''}`}
+          aria-pressed={!briefOpen && discover}
+          onClick={() => { setBriefOpen(false); setDiscover(true); }}
+          className={`reader-vrail-btn ${!briefOpen && discover ? 'is-on' : ''}`}
         >
           <Compass className="h-[18px] w-[18px]" />
           <span className="reader-vrail-tip">发现</span>
         </button>
+        {personalDigestEnabled && (
+          <button
+            type="button"
+            aria-label="管理个人兴趣"
+            aria-expanded={interestOpen || onboardingRequired}
+            onClick={() => setInterestOpen(true)}
+            className="reader-vrail-btn"
+          >
+            <Tags className="h-[18px] w-[18px]" />
+            <span className="reader-vrail-tip">我的兴趣</span>
+          </button>
+        )}
 
         {/* 轨底(standalone):用户滑出菜单(2026-07-24 拍板)——常态只见头像,
             hover 滑出 返回管理台(仅 admin)/主题/设置,头像同帧变关机退出钮点击即退。 */}
@@ -409,7 +462,7 @@ export default function ReaderTab({
       </nav>
 
       {/* ── 源栏 · 我的订阅 ── */}
-      <aside className="reader-col reader-col-sources">
+      {!briefOpen && <aside className="reader-col reader-col-sources">
         <div className="reader-sources-inner">
         <div className="reader-src-head">
           <span className="reader-src-title">我的订阅</span>
@@ -532,10 +585,22 @@ export default function ReaderTab({
           )}
         </div>
         </div>
-      </aside>
+      </aside>}
+
+      {briefOpen && (
+        <PersonalBriefTab
+          showToast={showToast}
+          interestVersion={interestVersion}
+          onManageSubscriptions={() => { setBriefOpen(false); setDiscover(true); }}
+          onOpenArticle={async (articleId) => {
+            const opened = await openArticleById(articleId);
+            if (opened) setBriefOpen(false);
+          }}
+        />
+      )}
 
       {/* ── 发现页:占据 条目列+阅读窗 的整片区域(源栏保持在场,订阅结果即时可见) ── */}
-      {discover && (
+      {!briefOpen && discover && (
         <DiscoverPage
           sources={discoverSources}
           subscribedIds={subscribedIds}
@@ -557,7 +622,7 @@ export default function ReaderTab({
       )}
 
       {/* ── 社交媒体流(第三容器):占「条目列 + 阅读窗」整幅,取代四带式 ── */}
-      {!discover && socialView && (
+      {!briefOpen && !discover && socialView && (
         <SocialFlow
           articles={articles}
           sourceMap={sourceMap}
@@ -596,7 +661,7 @@ export default function ReaderTab({
       )}
 
       {/* ── 条目列 ── */}
-      {!discover && !socialView && (
+      {!briefOpen && !discover && !socialView && (
       <section className="reader-col reader-col-list">
         <div className="reader-list-inner">
         <div className="reader-list-head">
@@ -758,7 +823,7 @@ export default function ReaderTab({
       )}
 
       {/* ── 阅读窗 ── */}
-      {!discover && !socialView && (
+      {!briefOpen && !discover && !socialView && (
       <section className="reader-col reader-col-read">
         {activeArticle ? (
           <>
@@ -875,6 +940,29 @@ export default function ReaderTab({
                   <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
                 )}
               </div>
+              {(activeArticle.quality_score != null || displayAnalysisTags(activeArticle).length > 0) && (
+                <div className="reader-analysis-summary">
+                  <div className="reader-analysis-top">
+                    {activeArticle.quality_score != null && (
+                      <span className="reader-analysis-score">
+                        <strong>{qualityScoreText(activeArticle.quality_score)}</strong>
+                        <small>内容价值分</small>
+                      </span>
+                    )}
+                    <span className="reader-analysis-tags">
+                      {displayAnalysisTags(activeArticle).map((tag, index) => (
+                        <AnalysisTagChip
+                          key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
+                          tag={tag}
+                          onTemporarySearch={searchForLabel}
+                        />
+                      ))}
+                    </span>
+                  </div>
+                  {activeArticle.score_reason && <p>{activeArticle.score_reason}</p>}
+                  <small>AI 内容价值评估，用于辅助筛选，不代表事实保证或你的个人评分</small>
+                </div>
+              )}
             </header>
             <div className="reader-pane-body markdown-body">
               {/* 哆啦美速读:有缓存直接展示;无缓存给低调的生成入口(MVP 不自动生成,控成本) */}
@@ -958,7 +1046,7 @@ export default function ReaderTab({
       </section>
       )}
 
-      {!discover && (
+      {!briefOpen && !discover && (
         <ReaderAiPanel
           aiEnabled={aiEnabled}
           activeArticle={activeArticle}
@@ -971,6 +1059,17 @@ export default function ReaderTab({
       {ctxMenu && (
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={closeCtxMenu} />
       )}
+      <InterestManager
+        open={interestOpen || onboardingRequired}
+        onboarding={onboardingRequired}
+        onClose={() => setInterestOpen(false)}
+        onSaved={({ onboardingCompleted } = {}) => {
+          setInterestVersion((value) => value + 1);
+          setInterestOpen(false);
+          if (onboardingCompleted) onUserUpdated?.({ interest_onboarding_completed: true });
+        }}
+        showToast={showToast}
+      />
     </div>
   );
 }

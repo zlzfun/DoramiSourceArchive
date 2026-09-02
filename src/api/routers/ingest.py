@@ -12,6 +12,7 @@ deps.get_db_sink()；current_username 经 _app() 延迟动态调用（避免导�
 
 import datetime
 import importlib
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -22,6 +23,7 @@ from api import deps
 from fetchers.registry import fetcher_registry
 from models.content import SocialPostContent
 from models.db import SourceConfigRecord
+from services import article_analysis as article_analysis_service
 from services.media_store import SSRFError
 
 router = APIRouter(tags=["ingest"])
@@ -186,12 +188,14 @@ async def import_social_posts(params: SocialPostImportParams):
     saved_count = 0
     skipped_count = 0
     errors = []
+    saved_ids: list[str] = []
 
     for index, post in enumerate(params.posts):
         try:
             content = build_social_post_content(post, params.source_id)
             if await db_sink.save(content):
                 saved_count += 1
+                saved_ids.append(content.id)
             else:
                 skipped_count += 1
         except Exception as e:  # noqa: BLE001 - 单条失败不阻断整批，收集进 errors
@@ -200,6 +204,23 @@ async def import_social_posts(params: SocialPostImportParams):
                 "post_id": post.post_id,
                 "error": str(e),
             })
+
+    if saved_ids:
+        try:
+            with Session(db_sink.engine) as session:
+                if article_analysis_service.read_feature_flag(
+                    session,
+                    article_analysis_service.ARTICLE_ANALYSIS_ENABLED_KEY,
+                    default=False,
+                ):
+                    for article_id in saved_ids:
+                        article_analysis_service.queue_article_analysis(session, article_id)
+                    session.commit()
+        except Exception as exc:  # noqa: BLE001 - imported posts are already committed
+            logging.getLogger("dorami.article_analysis").warning(
+                "社交导入后的分析入队失败，将由补偿扫描恢复: %s",
+                article_analysis_service.sanitize_error(exc),
+            )
 
     return {
         "status": "partial_success" if errors else "success",

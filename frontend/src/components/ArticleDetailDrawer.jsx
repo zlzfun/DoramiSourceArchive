@@ -1,6 +1,8 @@
 import { X, Edit2, Trash2, ExternalLink } from 'lucide-react';
 import { contentTypeLabel } from '../utils/contentType';
 import { excerptOf } from '../utils/readerText';
+import { contentGenreLabel, displayAnalysisTags, qualityScoreText } from '../utils/analysis';
+import AnalysisTagChip from './AnalysisTagChip';
 
 const fmtTime = (value) => (value ? value.replace('T', ' ').substring(0, 16) : '—');
 
@@ -27,6 +29,7 @@ export default function ArticleDetailDrawer({
   onClose,
   onEdit,
   onDelete,
+  onTemporaryTagSearch,
 }) {
   const content = article ? (article.content ?? article.content_preview ?? '') : '';
   const chars = content ? content.replace(/\s+/g, '').length : 0;
@@ -78,6 +81,28 @@ export default function ArticleDetailDrawer({
                 <dt>正文字数</dt>
                 <dd className="ledger-kv-mono">{loading ? '统计中…' : (chars ? `${chars.toLocaleString()} 字` : '无正文')}</dd>
               </dl>
+
+              <section>
+                <h3 className="micro-label mb-2">智能分析</h3>
+                {article.analysis_status === 'succeeded' ? (
+                  <div className="reader-analysis-summary">
+                    <div className="reader-analysis-top">
+                      <span className="reader-analysis-score"><strong>{qualityScoreText(article.quality_score)}</strong><small>内容价值分</small></span>
+                      <span className="reader-analysis-tags">
+                        {displayAnalysisTags(article).map((tag, index) => (
+                          <AnalysisTagChip key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`} tag={tag} onTemporarySearch={onTemporaryTagSearch} />
+                        ))}
+                        {displayAnalysisTags(article).length === 0 && article.content_genre && <span className="reader-tag-chip">{contentGenreLabel(article.content_genre)}</span>}
+                      </span>
+                    </div>
+                    {article.score_reason && <p>{article.score_reason}</p>}
+                    {article.summary_zh && <p className="tiny-meta">{article.summary_zh}</p>}
+                    <small>AI 评估用于辅助筛选，不代表事实保证或用户评分</small>
+                  </div>
+                ) : (
+                  <p className="ledger-excerpt">{article.analysis_status ? `分析状态：${article.analysis_status}` : '该文章尚无智能分析结果'}</p>
+                )}
+              </section>
 
               <section>
                 <h3 className="micro-label mb-2">正文摘录</h3>

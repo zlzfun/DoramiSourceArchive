@@ -134,6 +134,14 @@ def resolve_subscribed_source_ids(
     return sorted(collected)
 
 
+def resolve_personal_digest_source_ids(session: Session, username: str) -> List[str]:
+    """Strict personal-digest scope (no global-filter or admin broadening)."""
+
+    from services.personal_digest import resolve_personal_digest_source_ids as _resolve
+
+    return _resolve(session, username)
+
+
 def resolve_all_visible_source_ids(session: Session) -> List[str]:
     """全库可见检索域(v3.32 scope=all):归档里实际存在的 source_id 全集减隐藏源。
 

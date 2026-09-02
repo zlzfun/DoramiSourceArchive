@@ -27,11 +27,12 @@ v3.35 权威机械层(生产实录:近 10 期日报头部名次官方源仅 1/30
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -52,7 +53,13 @@ USAGE_SYSTEM = "system"
 def _usage_meta(purpose: str, username: Optional[str]) -> UsageMeta:
     return UsageMeta(purpose=purpose, username=(username or USAGE_SYSTEM))
 from models.content import DailyBriefContent
-from models.db import AppSettingRecord, ArticleRecord
+from models.db import (
+    AppSettingRecord,
+    ArticleAnalysisRecord,
+    ArticleRecord,
+    ArticleTagAssignmentRecord,
+    CmsTagRecord,
+)
 from services import credentials
 from services.source_naming import source_role
 
@@ -91,6 +98,10 @@ KEY_CRON = "daily_brief_cron"
 KEY_TOP_N = "daily_brief_top_n"
 KEY_SOURCE_IDS = "daily_brief_source_ids"
 KEY_LAST_RUN = "daily_brief_last_run"
+# 公共日报读取文章级分析的独立发布开关。默认关闭；关闭时 MAP、门槛、渲染和
+# extensions.items 均继续走 legacy 路径。shadow 对比写入另一个内部 KV，不参与输出。
+KEY_ANALYSIS_ADAPTER_ENABLED = "public_digest_analysis_adapter_enabled"
+KEY_ANALYSIS_SHADOW_METRICS = "daily_brief_analysis_shadow_metrics"
 # LLM 配置的 KV key 沿用 services/credentials 注册表(与历史存量一致,零迁移)。
 KEY_LLM_BASE_URL = credentials.LLM_NAMESPACE.field_by_name("base_url").kv_key
 KEY_LLM_MODEL = credentials.LLM_NAMESPACE.field_by_name("model").kv_key
@@ -181,6 +192,190 @@ class ScoredItem:
             "extra_sources": self.extra_sources,
             "followup_note": self.followup_note,
         }
+
+
+@dataclass(frozen=True)
+class PersistedAnalysisCompat:
+    """一篇文章可供公共日报兼容 adapter 消费的只读投影。"""
+
+    article_id: str
+    quality_score: float
+    summary: str
+    one_sentence_summary: str
+    content_genre: str
+    canonical_tags: Tuple[str, ...] = ()
+
+
+# 新 analysis 的 content_genre → legacy 公共日报 classification。映射只改变字段
+# 形状，不改变公共日报的候选范围、择优配额或门槛（公共日报目前没有 7 分硬门槛）。
+CONTENT_GENRE_TO_LEGACY_CLASSIFICATION: Dict[str, str] = {
+    "model_release": "模型发布",
+    "product_update": "行业资讯",
+    "open_source_update": "开源动态",
+    "research_paper": "学术论文",
+    "tutorial": "行业资讯",
+    "opinion": "行业资讯",
+    "industry_news": "行业资讯",
+    "conference": "技术大会",
+    "social_discussion": "社交动态",
+    "aggregation": "资讯聚合",
+    "security_incident": "行业资讯",
+    "regulation": "行业资讯",
+    "other": "资讯聚合",
+}
+
+
+def content_genre_to_legacy_classification(content_genre: str) -> str:
+    """确定性映射新 genre；未知/空值返回空串，让调用方保留 legacy 分类。"""
+
+    return CONTENT_GENRE_TO_LEGACY_CLASSIFICATION.get((content_genre or "").strip(), "")
+
+
+def _analysis_summary_lines(summary: str, one_sentence_summary: str) -> List[str]:
+    """把文章级纯文本摘要收敛为 legacy ``summary: list[str]`` 形状。"""
+
+    raw = (summary or "").strip() or (one_sentence_summary or "").strip()
+    if not raw:
+        return []
+    lines = []
+    for line in raw.splitlines():
+        cleaned = re.sub(r"^\s*(?:[-*+]|\d+[.)]|[•·])\s*", "", line).strip()
+        if cleaned:
+            lines.append(cleaned)
+    return lines or [raw]
+
+
+def load_persisted_analysis_compat(
+    session: Session, article_ids: List[str]
+) -> Dict[str, PersistedAnalysisCompat]:
+    """批量读取成功 analysis 与 active canonical tags，避免公共日报 N+1。"""
+
+    ids = list(dict.fromkeys(str(i) for i in article_ids if i))
+    if not ids:
+        return {}
+    analyses = session.exec(
+        select(ArticleAnalysisRecord)
+        .where(ArticleAnalysisRecord.article_id.in_(ids))
+        .where(ArticleAnalysisRecord.status == "succeeded")
+        .where(ArticleAnalysisRecord.quality_score.is_not(None))
+    ).all()
+    if not analyses:
+        return {}
+
+    analysis_ids = [row.article_id for row in analyses]
+    tag_rows = session.exec(
+        select(ArticleTagAssignmentRecord, CmsTagRecord)
+        .join(CmsTagRecord, CmsTagRecord.id == ArticleTagAssignmentRecord.tag_id)
+        .where(ArticleTagAssignmentRecord.article_id.in_(analysis_ids))
+        .where(CmsTagRecord.status == "active")
+        .order_by(
+            ArticleTagAssignmentRecord.article_id,
+            ArticleTagAssignmentRecord.is_primary.desc(),
+            ArticleTagAssignmentRecord.relevance.desc(),
+            CmsTagRecord.id,
+        )
+    ).all()
+    tags_by_article: Dict[str, List[str]] = {}
+    for assignment, tag in tag_rows:
+        display = (tag.name_zh or tag.name_en or tag.code or "").strip()
+        if display and display not in tags_by_article.setdefault(assignment.article_id, []):
+            tags_by_article[assignment.article_id].append(display)
+
+    return {
+        row.article_id: PersistedAnalysisCompat(
+            article_id=row.article_id,
+            quality_score=float(row.quality_score),
+            summary=row.summary or "",
+            one_sentence_summary=row.one_sentence_summary or "",
+            content_genre=row.content_genre or "",
+            canonical_tags=tuple(tags_by_article.get(row.article_id, [])),
+        )
+        for row in analyses
+    }
+
+
+def build_analysis_shadow_metrics(
+    legacy_items: List[ScoredItem],
+    persisted: Dict[str, PersistedAnalysisCompat],
+) -> Dict[str, Any]:
+    """汇总同批新旧评分、摘要和分类差异；不改变任何条目。"""
+
+    comparable = [it for it in legacy_items if it.candidate.id in persisted]
+    score_deltas = [
+        abs(it.score - persisted[it.candidate.id].quality_score)
+        for it in comparable
+    ]
+    classification_matches = 0
+    summary_matches = 0
+    summary_similarities: List[float] = []
+    for item in comparable:
+        new = persisted[item.candidate.id]
+        mapped = content_genre_to_legacy_classification(new.content_genre)
+        if mapped and mapped == (item.classification or "").strip():
+            classification_matches += 1
+        legacy_summary = " ".join(item.summary).strip()
+        analysis_summary = " ".join(
+            _analysis_summary_lines(new.summary, new.one_sentence_summary)
+        ).strip()
+        if legacy_summary and analysis_summary and legacy_summary == analysis_summary:
+            summary_matches += 1
+        if legacy_summary and analysis_summary:
+            summary_similarities.append(
+                difflib.SequenceMatcher(None, legacy_summary, analysis_summary).ratio()
+            )
+    count = len(comparable)
+    return {
+        "legacy_count": len(legacy_items),
+        "persisted_count": len(persisted),
+        "comparable_count": count,
+        "score_mean_abs_delta": (
+            round(sum(score_deltas) / count, 4) if count else None
+        ),
+        "score_max_abs_delta": round(max(score_deltas), 4) if score_deltas else None,
+        "score_within_1_count": sum(delta <= 1.0 for delta in score_deltas),
+        "classification_match_count": classification_matches,
+        "summary_exact_match_count": summary_matches,
+        "summary_mean_similarity": (
+            round(sum(summary_similarities) / len(summary_similarities), 4)
+            if summary_similarities else None
+        ),
+    }
+
+
+def apply_persisted_analysis_adapter(
+    legacy_items: List[ScoredItem],
+    persisted: Dict[str, PersistedAnalysisCompat],
+) -> List[ScoredItem]:
+    """覆盖可复用字段，同时保留 legacy title/source/company/realm/comment。
+
+    ``score_reason`` 不在投影中，因而绝不可能被误当成公共日报 ``comment``。
+    没有成功 analysis 的文章逐对象原样返回，允许渐进覆盖。
+    """
+
+    adapted: List[ScoredItem] = []
+    for item in legacy_items:
+        analysis = persisted.get(item.candidate.id)
+        if analysis is None:
+            adapted.append(item)
+            continue
+        summary = _analysis_summary_lines(
+            analysis.summary, analysis.one_sentence_summary
+        ) or item.summary
+        classification = (
+            content_genre_to_legacy_classification(analysis.content_genre)
+            or item.classification
+        )
+        adapted.append(
+            replace(
+                item,
+                classification=classification,
+                summary=summary,
+                tags=list(analysis.canonical_tags) or item.tags,
+                score=analysis.quality_score,
+                map_ok=True,
+            )
+        )
+    return adapted
 
 
 # ==========================================
@@ -1001,6 +1196,44 @@ async def generate_daily_brief(
 
     scored = await map_summarize(candidates, cfg, on_item_done=_on_map_done, usage_username=triggered_by)
 
+    # 文章级分析先 shadow 对比、再由独立开关决定是否覆盖兼容字段。legacy MAP 始终
+    # 保留：它继续提供 title_cn/source/company/realm/comment，尤其不能拿 score_reason
+    # 冒充既有点评文案。任何读取/映射异常都降级回完整 legacy 路径。
+    analysis_adapter_enabled = False
+    shadow_metrics: Dict[str, Any] = {}
+    try:
+        with Session(engine) as session:
+            analysis_adapter_enabled = (
+                get_setting(session, KEY_ANALYSIS_ADAPTER_ENABLED, "false").strip().casefold()
+                in {"1", "true", "yes", "on"}
+            )
+            persisted_analysis = load_persisted_analysis_compat(
+                session, [it.candidate.id for it in scored]
+            )
+        shadow_metrics = build_analysis_shadow_metrics(scored, persisted_analysis)
+        shadow_metrics.update({
+            "report_date": report_date,
+            "adapter_enabled": analysis_adapter_enabled,
+            "measured_at": datetime.now().isoformat(),
+        })
+        if analysis_adapter_enabled:
+            scored = apply_persisted_analysis_adapter(scored, persisted_analysis)
+        logger.info(
+            "日报[%s]：analysis shadow 可比 %d/%d，adapter=%s",
+            report_date,
+            shadow_metrics["comparable_count"],
+            shadow_metrics["legacy_count"],
+            analysis_adapter_enabled,
+        )
+    except Exception as exc:  # noqa: BLE001 adapter 失败不能阻断公共日报
+        logger.warning("日报 analysis shadow/adapter 读取失败，回退 legacy: %s", exc)
+        shadow_metrics = {
+            "report_date": report_date,
+            "adapter_enabled": analysis_adapter_enabled,
+            "error": type(exc).__name__,
+            "measured_at": datetime.now().isoformat(),
+        }
+
     set_progress("selecting", "同事件去重与择优排序…")
     deduped = await dedup_clusters(scored, cfg, usage_username=triggered_by)
     logger.info("日报[%s]：去重后 %d 条（map 前 %d）", report_date, len(deduped), len(scored))
@@ -1091,6 +1324,14 @@ async def generate_daily_brief(
             # 被裁条目随游标永久跳过——涨不涨上限看这两个数。
             "candidates_scanned": scanned_total, "candidates_used": len(candidates),
         })
+
+    # shadow 是旁路观测，写指标失败绝不能把已成功发布的公共日报翻成失败。
+    if shadow_metrics:
+        try:
+            with Session(engine) as session:
+                set_json_setting(session, KEY_ANALYSIS_SHADOW_METRICS, shadow_metrics)
+        except Exception as exc:  # noqa: BLE001 观测失败不阻断主流程
+            logger.warning("日报 analysis shadow 指标写入失败，忽略: %s", exc)
 
     logger.info("日报[%s]：生成完成，收录 %d 条", report_date, content_obj.articles_count)
     set_progress("done", f"完成 · 收录 {content_obj.articles_count} 条")

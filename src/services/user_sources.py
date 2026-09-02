@@ -581,12 +581,30 @@ def list_user_sources(session: Session, username: Optional[str] = None) -> List[
             "feed_url": record.url,
             "owner_username": record.owner_username,
             "is_active": record.is_active,
+            "ai_analysis_enabled": record.ai_analysis_enabled,
             "created_at": record.created_at,
             "status": state.status if state else "never_run",
             "consecutive_failures": state.consecutive_failures if state else 0,
             "last_success_at": (state.last_success_at or "") if state else "",
         })
     return items
+
+
+def set_user_source_ai_analysis(
+    session: Session, username: str, source_id: str, enabled: bool
+) -> SourceConfigRecord:
+    """Let the source creator control future third-party LLM analysis."""
+
+    with _WRITE_LOCK:
+        record = get_user_source(session, source_id)
+        if record is None or record.owner_username != username:
+            raise LookupError("自定源不存在")
+        record.ai_analysis_enabled = bool(enabled)
+        record.updated_at = _now_iso()
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return record
 
 
 # ==================== 删除(退订 + 无人订阅即清) ====================

@@ -42,6 +42,24 @@ DAILY_BRIEF_SOURCE_ID = "dorami_daily_brief"
 # 仅当条目分类为空（极端兜底）时回落到 dorami 自己的 catch-all「资讯聚合」。
 FALLBACK_CLASSIFICATION = "资讯聚合"
 
+# 兼容早期 adapter 试运行或外部构造的 items：正式 Dorami 快照仍总会写 legacy
+# classification；若只有 content_genre，则在导出边界做同一份确定性降级映射。
+CONTENT_GENRE_TO_LEGACY_CLASSIFICATION = {
+    "model_release": "模型发布",
+    "product_update": "行业资讯",
+    "open_source_update": "开源动态",
+    "research_paper": "学术论文",
+    "tutorial": "行业资讯",
+    "opinion": "行业资讯",
+    "industry_news": "行业资讯",
+    "conference": "技术大会",
+    "social_discussion": "社交动态",
+    "aggregation": "资讯聚合",
+    "security_incident": "行业资讯",
+    "regulation": "行业资讯",
+    "other": "资讯聚合",
+}
+
 # ========================
 # 本地默认配置
 # ========================
@@ -114,7 +132,13 @@ def items_to_shendeng_batch(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]
         summary_lines = [str(s) for s in (it.get("summary") or []) if s]
         content_text = "\n".join(f"• {line}" for line in summary_lines) if summary_lines else "暂无详情"
         # 原样透传日报原始分类（shendeng 已兼容多分类）；空值兜底「资讯聚合」
-        classification = (it.get("classification") or "").strip() or FALLBACK_CLASSIFICATION
+        classification = (
+            (it.get("classification") or "").strip()
+            or CONTENT_GENRE_TO_LEGACY_CLASSIFICATION.get(
+                (it.get("content_genre") or "").strip(), ""
+            )
+            or FALLBACK_CLASSIFICATION
+        )
         time_val = (str(it.get("publish_date") or "")[:10]) or _today()
 
         entry: Dict[str, Any] = {
@@ -126,6 +150,7 @@ def items_to_shendeng_batch(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]
             "summary": "",
             "link": it.get("source_url") or "",
             "content": content_text,
+            # 公共点评是 legacy 产品文案；不能用文章分析 score_reason 偷换。
             "comment": it.get("comment") or "",
             "sort": idx,
             "time": time_val,

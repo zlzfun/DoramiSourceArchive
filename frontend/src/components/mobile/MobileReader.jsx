@@ -16,6 +16,7 @@ import {
   UserRound,
   X,
   Zap,
+  Newspaper,
 } from 'lucide-react';
 import { useReaderState } from '../../hooks/useReaderState';
 import { useLongPress } from '../../hooks/useLongPress';
@@ -29,6 +30,8 @@ import MobileArticlePage from './MobileArticlePage';
 import MobileSourceDrawer from './MobileSourceDrawer';
 import MobileMePage from './MobileMePage';
 import ActionSheet from './ActionSheet';
+import PersonalBriefTab from '../PersonalBriefTab';
+import InterestManager from '../InterestManager';
 import { dayKeyOf } from '../../utils/readerTime';
 
 // 静态 noop:ArticleRow 的 onContextMenu 契约位——移动端 contextmenu 由外层
@@ -51,7 +54,9 @@ export default function MobileReader({
   showToast,
   aiEnabled = false,
   userSourcesEnabled = false,
+  personalDigestEnabled = false,
   account = null,
+  onUserUpdated,
   themePref = 'system',
   onSetTheme,
   onOpenSettings,
@@ -84,7 +89,7 @@ export default function MobileReader({
     articles, articlesLoading, loadingMore, hasMore, handleLoadMore,
     listRef, sentinelRef,
     // 选中文章
-    activeArticle, selectArticle, schedulePrefetch, cancelPrefetch,
+    activeArticle, selectArticle, openArticleById, schedulePrefetch, cancelPrefetch,
     // 收藏
     favoriteIds, favTogglingId, handleToggleFavorite,
     // 动作单 items(桌面右键三份构建器同源)
@@ -97,14 +102,23 @@ export default function MobileReader({
   const [tab, setTab] = useState('article');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sheet, setSheet] = useState(null); // { title, items, anchorKey }
+  const [interestOpen, setInterestOpen] = useState(false);
+  const [interestVersion, setInterestVersion] = useState(0);
+  const onboardingRequired = personalDigestEnabled
+    && account?.role === 'user'
+    && account?.interest_onboarding_completed === false;
 
   // mode 被深链/点源/发现页预览改变时,内容 Tab 跟随所属容器(停在「我的」则不动)
   useEffect(() => {
-    setTab((cur) => (cur === 'me' || cur === mode ? cur : mode));
+    setTab((cur) => (cur === 'me' || cur === 'brief' || cur === mode ? cur : mode));
   }, [mode]);
 
+  useEffect(() => {
+    if (!personalDigestEnabled) setTab((current) => (current === 'brief' ? mode : current));
+  }, [mode, personalDigestEnabled]);
+
   const goTab = (t) => {
-    if (t === 'me') { setTab('me'); return; }
+    if (t === 'me' || t === 'brief') { setTab(t); return; }
     setTab(t);
     // 与桌面视图轨同语义:点容器钮=回到该容器聚合(清源/收藏/搜索过滤)
     goView(t);
@@ -140,7 +154,7 @@ export default function MobileReader({
 
   const pressBind = useLongPress(openArticleSheet);
 
-  const listView = tab !== 'me' && !socialView;
+  const listView = !['me', 'brief'].includes(tab) && !socialView;
   // 正文页(push 全屏):文章/动态容器里选中了一篇即入栈;社交流直读不进正文页
   const readOpen = listView && !discover && Boolean(activeArticle);
 
@@ -158,8 +172,8 @@ export default function MobileReader({
 
       {/* ── 顶栏(三个内容容器共用:抽屉入口 + 标题/搜索 + seg + 标读 + 搜索开关;
              社交流 headless 化后其控件行由此承担——Wave3 收口,两层头部合一) ── */}
-      {tab === 'me' ? (
-        <div className="m-topbar"><span className="m-title m-title-solo">我的</span></div>
+      {tab === 'me' || tab === 'brief' ? (
+        <div className="m-topbar"><span className="m-title m-title-solo">{tab === 'brief' ? '我的早报' : '我的'}</span></div>
       ) : (
         <div className="m-topbar">
           <button type="button" className="m-iconbtn" onClick={() => setDrawerOpen(true)} aria-label="订阅源">
@@ -222,7 +236,18 @@ export default function MobileReader({
 
       {/* ── 内容区 ── */}
       <div className="m-content">
-        {tab === 'me' ? (
+        {tab === 'brief' ? (
+          <PersonalBriefTab
+            mobile
+            showToast={showToast}
+            interestVersion={interestVersion}
+            onManageSubscriptions={() => setDiscover(true)}
+            onOpenArticle={async (articleId) => {
+              const opened = await openArticleById(articleId);
+              if (opened) setTab(mode);
+            }}
+          />
+        ) : tab === 'me' ? (
           <MobileMePage
             account={account}
             subscribedCount={subscribedSources.length}
@@ -232,6 +257,7 @@ export default function MobileReader({
             onSetTheme={onSetTheme}
             onShowFavorites={() => { goFavorites(); setTab(mode); }}
             onOpenDiscover={() => setDiscover(true)}
+            onManageInterests={personalDigestEnabled ? () => setInterestOpen(true) : undefined}
             onOpenSettings={onOpenSettings}
             onLogout={onLogout}
           />
@@ -367,6 +393,7 @@ export default function MobileReader({
       {/* ── 底部 TabBar(轨语言横向翻译:wash 块 + accent-ink + 文字标签) ── */}
       <nav className="m-tabbar" aria-label="阅读视图">
         {[
+          ...(personalDigestEnabled ? [['brief', '早报', Newspaper]] : []),
           ['article', '文章', FileText],
           ['bulletin', '动态', Zap],
           ['social', '社交', AtSign],
@@ -461,6 +488,17 @@ export default function MobileReader({
         title={sheet?.title || ''}
         items={sheet?.items || []}
         onClose={() => setSheet(null)}
+      />
+      <InterestManager
+        open={interestOpen || onboardingRequired}
+        onboarding={onboardingRequired}
+        onClose={() => setInterestOpen(false)}
+        onSaved={({ onboardingCompleted } = {}) => {
+          setInterestVersion((value) => value + 1);
+          setInterestOpen(false);
+          if (onboardingCompleted) onUserUpdated?.({ interest_onboarding_completed: true });
+        }}
+        showToast={showToast}
       />
     </div>
   );

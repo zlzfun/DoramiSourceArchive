@@ -136,6 +136,9 @@ def serialize_article_list_item(
     record: ArticleRecord,
     include_content: bool = True,
     include_extensions: bool = False,
+    analysis: Any = None,
+    tags: Optional[list[Dict[str, Any]]] = None,
+    display_tags: Optional[list[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     content = record.content or ""
     # AI 要点摘要(extensions_json.summary_zh)作为轻字段随条目透出:
@@ -149,6 +152,10 @@ def serialize_article_list_item(
                 summary = value
     except (ValueError, TypeError):
         pass
+    if analysis is not None and getattr(analysis, "status", None) == "succeeded":
+        unified_summary = str(getattr(analysis, "summary", "") or "").strip()
+        if unified_summary:
+            summary = unified_summary
     item = {
         "id": record.id,
         "title": record.title,
@@ -166,6 +173,18 @@ def serialize_article_list_item(
         "content_preview": content[:280],
         "summary_zh": summary,
         "read_count": record.read_count or 0,
+        "analysis_status": getattr(analysis, "status", None),
+        "tagging_status": getattr(analysis, "tagging_status", None),
+        "quality_score": getattr(analysis, "quality_score", None),
+        "score_reason": getattr(analysis, "score_reason", None) or None,
+        "one_sentence_summary": getattr(analysis, "one_sentence_summary", None) or None,
+        "content_genre": getattr(analysis, "content_genre", None),
+        "primary_tag": next((tag for tag in (tags or []) if tag.get("is_primary")), None),
+        "tags": tags or [],
+        # Reader-facing projection: canonical + flexible AI-extracted labels,
+        # independently bounded by the display-tag service.  ``tags`` remains
+        # canonical-only for filtering, interests and digest selection.
+        "display_tags": display_tags if display_tags is not None else (tags or []),
     }
     if include_content:
         item["content"] = content
