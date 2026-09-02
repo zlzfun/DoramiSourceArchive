@@ -2,6 +2,8 @@
 
 一个 **AI 内容聚合 CMS**：从多源抓取内容 → 存入 SQLite（内建 FTS5 全文索引），按用户订阅做分发（Feed / MCP / 每日日报），并提供「LLM 计划检索 + FTS5」的问答助手。系统分为**采集/归档**（collector）与**阅读/分发**（reader）两层，由运行时角色与登录账号角色共同门控。
 
+v3.44 起，资讯落盘后可异步完成质量评分、摘要、受治理的 `Topic / Industry / Entity` 标签与最多 6 个灵活展示标签；读者首次登录或从左侧工具栏管理“关注 / 屏蔽”兴趣，并在严格订阅范围内生成个人早报。规范标签、审核回执、历史 `full_analysis` 回填和公共日报 adapter 均有独立的发布与回滚边界。
+
 > 本文件是**全仓导航地图**（鸟瞰 + 路径索引）。需要深入时按「渐进式披露」逐层下钻 ↓
 
 ## 文档分层（按需下钻）
@@ -45,6 +47,9 @@ cd frontend && npm install && npm run dev
 | `api/skill_router.py` | `GET /api/skill/daily-brief`：实时打包可下载的 Claude skill zip |
 | `llm/` | OpenAI 兼容 LLM 客户端（`client.py`，绝不记录 api_key）+ 日报 map/reduce 提示词（`prompts.py`） |
 | `services/daily_brief.py` | 每日 AI 资讯日报：对归档做 LLM map-reduce + 游标去重 + 内存进度 |
+| `services/article_analysis.py` · `services/article_display_tags.py` | 文章分析租约、模型结果落库、规范/灵活展示标签与 Candidate evidence |
+| `services/taxonomy.py` · `services/taxonomy_bootstrap.py` | Taxonomy 版本、Alias/层级、候选治理、发布与重标任务 |
+| `services/personal_digest.py` · `services/digest_selection.py` | 个人早报 revision、订阅范围冻结、兴趣最多 50% 与质量补齐 |
 | `models/content.py` · `models/db.py` | 内容数据类（`BaseContent` 及子类）/ SQLModel ORM 表 |
 | `fetchers/` | 插件式抓取器：`registry.py` 启动时自动扫描 `impl/`；基类见 `base.py`、`webpage_fetcher.py`、`github_release_fetcher.py` |
 | `fetchers/impl/` | 各来源实现（RSS / GitHub Releases / repo+model / 网页列表 / curated / Playwright 渲染等） |
@@ -60,7 +65,7 @@ cd frontend && npm install && npm run dev
 |---|---|
 | `api.js` | 所有后端 `fetch()` 的唯一出口 |
 | `App.jsx` | 根：登录门控 + tab 路由（按运行时能力与账号角色过滤） |
-| `components/` | 各 tab 与弹窗：`ReaderTab`（阅读器，user 唯一主界面）+`DiscoverPage`（发现页）、`DataTab`（知识台账）、`FetchTab`/`FetchRunsTab`（采集）、`DailyBriefTab`（AI 日报）、`SettingsModal`（设置柜，含接入集成分区）、`AdminOpsTab`（运维管理）等 |
+| `components/` | 各 tab 与弹窗：`ReaderTab`（阅读器，user 唯一主界面）+`DiscoverPage`（发现页）、`InterestManager`（个人兴趣）、`PersonalBriefTab`（个人早报）、`DataTab`（知识台账）、`FetchTab`/`FetchRunsTab`（采集）、`DailyBriefTab`（公共日报）、`AdminOpsTab`（含 Taxonomy/回填管理）等 |
 | `hooks/` · `utils/` · `config.js` · `sourceTaxonomy.js` | 复用 hook、工具函数、单点配置、来源分类表 |
 
 ### 文档 `docs/` — 见 [`docs/README.md`](./docs/README.md)
@@ -70,11 +75,11 @@ cd frontend && npm install && npm run dev
 | `contracts/` | 下游集成契约：`feed_delivery` / `archive_sync` / `reader_subscription` |
 | `sources/` | 来源治理：分类标准、收录策略、准入流程、节点审计 playbook、节点目录与风险、`candidates/` 各厂商候选源 |
 | `backlog.md` | 跨波次待办总账（进行中/排队/展望） |
-| `archive/` | 已完结方案与执行记录（按故事分组，见其 README） |
 | `archive/` | 历史/已落地的计划文档（如 `frontend-optimization-plan.md`） |
+| `taxonomy-v1-deployment.md` · `full-analysis-backfill.md` | Taxonomy 上线与历史文章分析回填手册 |
 
 ### 脚本 `scripts/` — 见 [`scripts/README.md`](./scripts/README.md)
-独立于后端运行时的运维/导出脚本（每日采集 job 幂等创建、shendeng 日报导出）。
+独立于后端运行时的运维/导出脚本；其中 Taxonomy v1 的发现、审核、安装工具按阶段分组并标注生产写入边界。
 
 ### 测试 `tests/`
 单测直接放在 `tests/test_*.py`（每个文件自举 `sys.path` 到 `src/`）。
@@ -85,4 +90,5 @@ cd frontend && npm install && npm run dev
 | `CLAUDE.md` | 架构详解 + 开发命令（最权威） |
 | `pyproject.toml` · `uv.lock` | Python 依赖(单一事实来源) |
 | `config/*.example.ini` | 配置模板（真实 `backend.ini`/`production.ini` 不入库） |
+| `config/taxonomy-v1-approved-catalog.json` | Taxonomy v1 冷启动所需的已批准产品目录 |
 | `deploy-docker.sh` · `docker-compose.yml` · `docker/` | 一键生产部署(Docker 双容器) |

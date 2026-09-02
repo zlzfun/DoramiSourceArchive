@@ -1,8 +1,10 @@
 import { FileText, Link as LinkIcon, Calendar, Database, Box, ExternalLink, Edit2, Save, X, AlertCircle } from 'lucide-react';
 import Modal from './Modal';
 import { contentTypeLabel } from '../utils/contentType';
+import { contentGenreLabel, displayAnalysisTags, qualityScoreText } from '../utils/analysis';
+import AnalysisTagChip from './AnalysisTagChip';
 
-export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading = false, getFetcherName, canEdit = true, onClose, onToggleEdit, onSave }) {
+export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading = false, getFetcherName, canEdit = true, onClose, onToggleEdit, onSave, onTemporaryTagSearch }) {
   if (!data) return null;
 
   const hasFullDetail = Object.prototype.hasOwnProperty.call(data, 'content') && data.extensions_json !== undefined;
@@ -70,6 +72,32 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
               <textarea defaultValue={data.content} id="edit-content" rows="8" className="form-input leading-relaxed" />
             ) : <div className="text-sm bg-[var(--dorami-soft)] p-4 rounded-[var(--r-card)] border border-[var(--dorami-border)] whitespace-pre-wrap leading-relaxed text-slate-700 shadow-inner max-h-64 overflow-y-auto">{isLoading ? '正在加载全文…' : (data.content || '无正文内容')}</div>}
           </div>
+
+          {!isEditing && (
+            <div>
+              <label className="form-label flex items-center">智能分析</label>
+              {data.analysis_status === 'succeeded' ? (
+                <div className="reader-analysis-summary">
+                  <div className="reader-analysis-top">
+                    <span className="reader-analysis-score"><strong>{qualityScoreText(data.quality_score)}</strong><small>内容价值分</small></span>
+                    <span className="reader-analysis-tags">
+                      {displayAnalysisTags(data).map((tag, index) => (
+                        <AnalysisTagChip key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`} tag={tag} onTemporarySearch={onTemporaryTagSearch} />
+                      ))}
+                      {displayAnalysisTags(data).length === 0 && data.content_genre && <span className="reader-tag-chip">{contentGenreLabel(data.content_genre)}</span>}
+                    </span>
+                  </div>
+                  {data.score_reason && <p>{data.score_reason}</p>}
+                  {data.summary_zh && <p className="tiny-meta">{data.summary_zh}</p>}
+                  <small>AI 内容价值评估，用于辅助筛选，不代表事实保证或用户评分</small>
+                </div>
+              ) : (
+                <div className="rounded-[var(--r-card)] bg-[var(--dorami-soft)] p-4 tiny-meta">
+                  {data.analysis_status ? `分析状态：${data.analysis_status}` : '该文章尚无智能分析结果'}
+                </div>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="form-label flex items-center"><Box className="w-3.5 h-3.5 mr-1" /> 扩展元数据 (Extensions JSON)</label>

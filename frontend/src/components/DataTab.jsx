@@ -18,6 +18,7 @@ import Sparkline from './charts/Sparkline';
 import { runAction } from '../utils/runAction';
 import { excerptOf } from '../utils/readerText';
 import { contentTypeLabel, CONTENT_TYPE_GROUPS } from '../utils/contentType';
+import { primaryAnalysisLabel, qualityScoreText } from '../utils/analysis';
 import { useConfirm } from '../hooks/useConfirm';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
 
@@ -92,6 +93,8 @@ export default function DataTab({
     fetched_date_start: '',
     fetched_date_end: '',
     subscribed_scope: 'off', // off | prioritize | only（相对当前用户订阅的源）
+    min_score: '',
+    sort: 'newest',
   });
 
   const fetchersById = useMemo(
@@ -272,7 +275,20 @@ export default function DataTab({
     loadWeekTrend();
   };
 
-  const handleSearchSubmit = () => setAppliedSearch(searchInput.trim());
+  const handleSearchSubmit = () => {
+    setFilters((prev) => ({ ...prev, display_tag: '' }));
+    setAppliedSearch(searchInput.trim());
+  };
+
+  const handleTemporaryTagSearch = (label) => {
+    const value = String(label || '').trim();
+    if (!value) return;
+    setSearchInput(value);
+    setAppliedSearch('');
+    setFilters((prev) => ({ ...prev, display_tag: value }));
+    closeDrawer();
+    closeEditModal();
+  };
 
   const setFetchedQuick = (key) => {
     if (key === 'all') {
@@ -320,6 +336,8 @@ export default function DataTab({
       publish_date_end: '',
       fetched_date_start: '',
       fetched_date_end: '',
+      min_score: '',
+      sort: 'newest',
     }));
     onPendingFilterApplied?.();
   }, [pendingFilter, onPendingFilterApplied]);
@@ -527,6 +545,33 @@ export default function DataTab({
           </div>
 
           <div className="ledger-facet">
+            <h3 className="micro-label ledger-facet-title">内容价值分</h3>
+            <div className="ledger-facet-list">
+              {[
+                ['', '全部分数'],
+                ['7', '7+ 值得阅读'],
+                ['8', '8+ 优质内容'],
+                ['9', '9+ 稀有内容'],
+              ].map(([value, label]) => (
+                <button
+                  key={value || 'all'}
+                  type="button"
+                  onClick={() => setFilters((prev) => ({ ...prev, min_score: value }))}
+                  className={`ledger-facet-item ${filters.min_score === value ? 'is-on' : ''}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="mini-seg mt-2" role="group" aria-label="文章排序">
+              {[["newest", "按最新"], ["score", "按评分"]].map(([value, label]) => (
+                <button key={value} type="button" className={`mini-seg-btn ${filters.sort === value ? 'is-on' : ''}`} onClick={() => setFilters((prev) => ({ ...prev, sort: value }))}>{label}</button>
+              ))}
+            </div>
+            <p className="tiny-meta mt-2">AI 内容价值评估，用于辅助筛选，不代表事实保证。</p>
+          </div>
+
+          <div className="ledger-facet">
             <h3 className="micro-label ledger-facet-title">收录时间</h3>
             <div className="ledger-facet-list">
               {[
@@ -667,6 +712,12 @@ export default function DataTab({
                       )}
                       <td className="ledger-td-title px-4">
                         <div className="ledger-tt">{article.title}</div>
+                        {(article.quality_score != null || primaryAnalysisLabel(article)) && (
+                          <div className="ledger-analysis-meta">
+                            {article.quality_score != null && <span className="reader-score-chip">{qualityScoreText(article.quality_score)}</span>}
+                            {primaryAnalysisLabel(article) && <span className="reader-tag-chip">{primaryAnalysisLabel(article)}</span>}
+                          </div>
+                        )}
                         <div className="ledger-ex">{excerptOf(article.content_preview || article.content) || '暂无摘要内容'}</div>
                       </td>
                       <td className="px-3" onClick={e => e.stopPropagation()}>
@@ -773,6 +824,7 @@ export default function DataTab({
         onClose={closeDrawer}
         onEdit={openEditModal}
         onDelete={handleDeleteSingle}
+        onTemporaryTagSearch={handleTemporaryTagSearch}
       />
 
       <ArticleDetailModal
@@ -785,6 +837,7 @@ export default function DataTab({
         onClose={closeEditModal}
         onToggleEdit={() => setModalState(prev => ({ ...prev, isEditing: !prev.isEditing }))}
         onSave={handleUpdateArticle}
+        onTemporaryTagSearch={handleTemporaryTagSearch}
       />
 
       <ManualAddModal

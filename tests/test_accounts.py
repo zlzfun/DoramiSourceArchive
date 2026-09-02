@@ -170,7 +170,9 @@ def _login(client, username, password):
 def test_db_login_success_failure_and_disabled(monkeypatch, tmp_path):
     app_module = _setup_app(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
-        assert _login(client, "admin", "admin").status_code == 200
+        admin_login = _login(client, "admin", "admin")
+        assert admin_login.status_code == 200
+        assert admin_login.json()["user"]["interest_onboarding_completed"] is True
         assert _login(client, "admin", "wrong").status_code == 401
         assert _login(client, "ghost", "whatever").status_code == 401
 
@@ -181,6 +183,26 @@ def test_db_login_success_failure_and_disabled(monkeypatch, tmp_path):
     with TestClient(app_module.app) as client:
         assert _login(client, "user", "user").status_code == 401
 
+
+def test_new_reader_interest_onboarding_is_persisted(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from models.db import AppSettingRecord
+    with Session(app_module.db_sink.engine) as session:
+        session.add(AppSettingRecord(key="personal_digest_enabled", value="true"))
+        session.commit()
+    with TestClient(app_module.app) as client:
+        login = _login(client, "user", "user")
+        assert login.json()["user"]["interest_onboarding_completed"] is False
+
+        # 空选择也允许完成引导：不关注是中性质量日报，不等价于屏蔽。
+        completed = client.put(
+            "/api/reader/interests",
+            json={"items": [], "complete_onboarding": True},
+        )
+        assert completed.status_code == 200
+        assert completed.json()["onboarding_completed"] is True
+        session = client.get("/api/auth/session").json()
+        assert session["user"]["interest_onboarding_completed"] is True
 
 def test_admin_account_crud(monkeypatch, tmp_path):
     app_module = _setup_app(monkeypatch, tmp_path)

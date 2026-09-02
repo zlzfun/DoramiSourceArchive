@@ -82,6 +82,7 @@ const INITIAL_RUNTIME = {
   reader_enabled: false,
   ai_beta_enabled: false,
   llm_configured: false,
+  personal_digest_enabled: false,
   default_surface: 'console',
 };
 
@@ -425,6 +426,17 @@ export default function App() {
     }
   }, [showToast]);
 
+  useEffect(() => {
+    const applyAnalysisConfig = (event) => {
+      const enabled = event.detail?.personal_digest_enabled;
+      if (typeof enabled === 'boolean') {
+        setRuntimeInfo((current) => ({ ...current, personal_digest_enabled: enabled }));
+      }
+    };
+    window.addEventListener('dorami-analysis-config-changed', applyAnalysisConfig);
+    return () => window.removeEventListener('dorami-analysis-config-changed', applyAnalysisConfig);
+  }, []);
+
   // 失败自愈(v3.32):runtime 拉取失败时能力位以全 false 落地(FAB/管理页签随之消失),
   // 而重拉闸门 runtimeLoaded 已置真、不会再试——dev 后端重启/热重载的窗口期一旦撞上,
   // 就会卡死在「什么都没启用」的假象里,看起来像"配置丢了"(DB 其实原样)。
@@ -659,7 +671,9 @@ export default function App() {
             showToast={showToast}
             aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured}
             userSourcesEnabled={runtimeInfo.user_sources_enabled !== false}
+            personalDigestEnabled={runtimeInfo.personal_digest_enabled === true}
             account={authState.user}
+            onUserUpdated={handleUserUpdated}
             themePref={theme}
             onSetTheme={setTheme}
             onOpenSettings={(section) => openSettings(section)}
@@ -779,6 +793,17 @@ export default function App() {
         </nav>
 
         <div className="flex shrink-0 items-center gap-2">
+          {isAdminRole && !readerView && (
+            <button
+              type="button"
+              onClick={enterReader}
+              className="icon-button"
+              title="进入阅读器"
+              aria-label="进入阅读器"
+            >
+              <BookOpen className="h-4.5 w-4.5" />
+            </button>
+          )}
           <button
             type="button"
             onClick={toggleTheme}
@@ -867,8 +892,10 @@ export default function App() {
                   showToast={showToast}
                   aiEnabled={runtimeInfo.ai_beta_enabled && runtimeInfo.llm_configured}
                   userSourcesEnabled={runtimeInfo.user_sources_enabled !== false}
+                  personalDigestEnabled={runtimeInfo.personal_digest_enabled === true}
                   standalone
                   account={authState.user}
+                  onUserUpdated={handleUserUpdated}
                           themeDark={effective === 'dark'}
                   onToggleTheme={toggleTheme}
                   onOpenSettings={(section) => openSettings(section)}

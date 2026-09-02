@@ -54,6 +54,16 @@ def test_dorami_classification_passthrough_in_batch():
         assert entry["type"] == c
 
 
+def test_adapter_genre_fallback_and_legacy_comment_contract():
+    [entry] = items_to_shendeng_batch([_item(
+        classification="", content_genre="open_source_update", comment="",
+        score_reason="文章级理由不能冒充公共点评",
+    )])
+    assert entry["classification"] == "开源动态"
+    assert entry["type"] == "开源动态"
+    assert entry["comment"] == ""
+
+
 def test_company_omitted_when_empty():
     [entry] = items_to_shendeng_batch([_item(company="")])
     assert "company" not in entry  # 非空才加键

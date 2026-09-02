@@ -37,8 +37,11 @@ class DatabaseStorage(BaseStorage):
         # 并在每个新连接上启用 WAL（读不阻塞写）+ busy_timeout（写竞争时自动等待而非立即报错）。
         connect_args = {"check_same_thread": False} if is_sqlite else {}
         self.engine = create_engine(db_url, echo=False, connect_args=connect_args)
-        if is_sqlite and db_url != "sqlite:///:memory:":
-            self._enable_sqlite_concurrency(self.engine)
+        if is_sqlite:
+            self._enable_sqlite_pragmas(
+                self.engine,
+                enable_wal=db_url != "sqlite:///:memory:",
+            )
         SQLModel.metadata.create_all(self.engine)
         self._ensure_compatible_schema()
         if is_sqlite:
@@ -49,18 +52,22 @@ class DatabaseStorage(BaseStorage):
         self.logger.info(f"🗄️ 关系型数据库已连接: {db_url}")
 
     @staticmethod
-    def _enable_sqlite_concurrency(engine) -> None:
-        """在每个新建的 SQLite 连接上启用 WAL 与 busy_timeout。
+    def _enable_sqlite_pragmas(engine, *, enable_wal: bool) -> None:
+        """在每个新建的 SQLite 连接上启用外键、WAL 与 busy_timeout。
 
         WAL 让读写并发互不阻塞（默认 rollback journal 下读写互斥，并发写极易报
         "database is locked"）；busy_timeout 让写竞争时自动等待 5s 再放弃。
-        逐连接生效，故挂在 SQLAlchemy 的 connect 事件上。
+        foreign_keys 默认在 SQLite 每条连接上关闭，必须逐连接开启，才能落实分析、
+        taxonomy 和个人日报表声明的 CASCADE/SET NULL 删除语义。内存库同样开启外键，
+        只跳过无意义的 WAL。
         """
         @event.listens_for(engine, "connect")
         def _set_sqlite_pragma(dbapi_connection, _connection_record):  # noqa: ANN001
             cursor = dbapi_connection.cursor()
             try:
-                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA foreign_keys=ON")
+                if enable_wal:
+                    cursor.execute("PRAGMA journal_mode=WAL")
                 cursor.execute("PRAGMA busy_timeout=5000")
             finally:
                 cursor.close()
@@ -267,4 +274,3 @@ class DatabaseStorage(BaseStorage):
             session.delete(record)
             session.commit()
             return True
-

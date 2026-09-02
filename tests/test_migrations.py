@@ -62,6 +62,29 @@ def test_upgrade_head_has_no_drift_from_metadata(tmp_path):
     assert diffs == [], f"迁移链与模型 metadata 出现漂移（改了 model 却漏写迁移？）：{diffs}"
 
 
+def test_parallel_release_heads_converge_without_replay(tmp_path):
+    """v3.44 合并节点须同时兼容已跑功能支线与已跑主干支线的库。"""
+    for parent in ("a7d4e9f2c1b6", "a7e2f95c1d40"):
+        db_url = f"sqlite:///{tmp_path / f'{parent}.db'}"
+        cfg = make_alembic_config(db_url)
+        command.upgrade(cfg, parent)
+        command.upgrade(cfg, "head")
+
+        engine = create_engine(db_url)
+        try:
+            with engine.connect() as conn:
+                current = MigrationContext.configure(conn).get_current_revision()
+            assert current == "d2c4f6a8b0e1"
+            tables = set(inspect(engine).get_table_names())
+            assert "article_analyses" in tables
+            assert "personal_digest_editions" in tables
+            user_columns = {column["name"] for column in inspect(engine).get_columns("users")}
+            assert "session_epoch" in user_columns
+            assert "interest_onboarding_completed_at" in user_columns
+        finally:
+            engine.dispose()
+
+
 def test_ensure_migrated_adopts_legacy_db(tmp_path):
     # 模拟老库：仅用 create_all 建表，无 alembic_version。
     db_url = f"sqlite:///{tmp_path / 'legacy.db'}"
@@ -456,6 +479,72 @@ def test_reader_read_states_migration_adds_missing_is_read(tmp_path):
             )).scalar()
         assert row == 1  # 存量行回填为显式已读
         assert "reader_read_cursors" in inspect(engine).get_table_names()  # 另一表照常创建
+    finally:
+        engine.dispose()
+
+
+def test_analysis_migrations_upgrade_existing_source_configs_with_default_on(tmp_path):
+    """Migration A/B 从上一 head 升级：存量来源默认开启分析且新表无 FK 漂移。"""
+    import sqlalchemy as sa
+    from alembic import command as alembic_command
+    from sqlalchemy import text
+
+    db_url = f"sqlite:///{tmp_path / 'analysis-upgrade.db'}"
+    cfg = make_alembic_config(db_url)
+    alembic_command.upgrade(cfg, "d9de7994582c")
+
+    engine = create_engine(db_url)
+    try:
+        metadata = sa.MetaData()
+        source_configs = sa.Table("source_configs", metadata, autoload_with=engine)
+        values = {}
+        for column in source_configs.columns:
+            if column.nullable or column.server_default is not None:
+                continue
+            if isinstance(column.type, sa.Boolean):
+                values[column.name] = True
+            elif isinstance(column.type, sa.Integer):
+                values[column.name] = 0
+            else:
+                values[column.name] = ""
+        values.update(
+            source_id="legacy-rss",
+            name="Legacy RSS",
+            source_type="rss",
+            url="https://example.com/feed.xml",
+            created_at="2026-08-31T00:00:00+08:00",
+            updated_at="2026-08-31T00:00:00+08:00",
+        )
+        with engine.begin() as conn:
+            conn.execute(source_configs.insert().values(**values))
+    finally:
+        engine.dispose()
+
+    alembic_command.upgrade(cfg, "head")
+
+    engine = create_engine(db_url)
+    try:
+        insp = inspect(engine)
+        expected_tables = {
+            "article_analyses",
+            "cms_tags",
+            "cms_tag_candidate_evidence",
+            "taxonomy_versions",
+            "tag_retag_jobs",
+            "user_interest_tags",
+            "personal_digest_editions",
+            "personal_digest_items",
+        }
+        assert expected_tables.issubset(set(insp.get_table_names()))
+        with engine.connect() as conn:
+            enabled = conn.execute(
+                text(
+                    "SELECT ai_analysis_enabled FROM source_configs "
+                    "WHERE source_id='legacy-rss'"
+                )
+            ).scalar_one()
+            assert bool(enabled) is True
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
     finally:
         engine.dispose()
 

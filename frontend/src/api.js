@@ -269,6 +269,10 @@ export function fetchArticle(id, options = {}) {
   return request(`/articles/${enc(id)}`, { ...options, errorMsg: '获取文章详情失败' });
 }
 
+export function fetchArticleAnalysis(id, options = {}) {
+  return request(`/articles/${enc(id)}/analysis`, { ...options, errorMsg: '获取文章分析失败' });
+}
+
 // 分面目录：content_type / source_id 的全量 group-by 计数（{total, content_types, source_ids}，计数降序）。
 // 台账分面栏的单一数据源——选项来自全量归档而非当前页。
 export function fetchArticleFacets(filters = {}) {
@@ -623,6 +627,193 @@ export function fetchCustomSources() {
 
 export function removeCustomSource(sourceId) {
   return request(`/reader/custom-sources/${enc(sourceId)}`, { method: 'DELETE', errorMsg: '移除自定源失败' });
+}
+
+// ==================== 我的早报 / 显式兴趣 ====================
+export function fetchInterestCatalog(options = {}) {
+  return request('/reader/interests/catalog', { ...options, errorMsg: '获取兴趣目录失败' });
+}
+
+export function fetchInterests(options = {}) {
+  return request('/reader/interests', { ...options, errorMsg: '获取我的兴趣失败' });
+}
+
+export function saveInterests(items, { completeOnboarding = false } = {}) {
+  return request('/reader/interests', {
+    method: 'PUT', body: { items, complete_onboarding: completeOnboarding }, errorMsg: '保存兴趣设置失败',
+  });
+}
+
+export function ensurePersonalBrief() {
+  return request('/reader/briefs/today/ensure', { method: 'POST', errorMsg: '准备今日早报失败' });
+}
+
+export function rebuildPersonalBrief() {
+  return request('/reader/briefs/today/rebuild', { method: 'POST', errorMsg: '重新编排今日早报失败' });
+}
+
+export function fetchTodayPersonalBrief(options = {}) {
+  return request('/reader/briefs/today', { ...options, errorMsg: '获取今日早报失败' });
+}
+
+export function fetchPersonalBrief(reportDate, revision = null, options = {}) {
+  const query = revision == null ? '' : `?revision=${enc(revision)}`;
+  return request(`/reader/briefs/${enc(reportDate)}${query}`, { ...options, errorMsg: '获取历史早报失败' });
+}
+
+export function fetchPersonalBriefs(limit = 30, options = {}) {
+  return request(`/reader/briefs?limit=${enc(limit)}`, { ...options, errorMsg: '获取历史早报失败' });
+}
+
+// ==================== CMS taxonomy 治理（仅管理员） ====================
+export function fetchCmsTags(filters = {}, options = {}) {
+  const query = withFilters(new URLSearchParams(), filters).toString();
+  return request(`/admin/cms-tags${query ? `?${query}` : ''}`, { ...options, errorMsg: '获取 CMS 标签失败' });
+}
+
+export function createCmsTag(payload) {
+  return request('/admin/cms-tags', { method: 'POST', body: payload, errorMsg: '创建 CMS 标签失败' });
+}
+
+export function updateCmsTag(tagId, payload) {
+  return request(`/admin/cms-tags/${enc(tagId)}`, { method: 'PATCH', body: payload, errorMsg: '更新 CMS 标签失败' });
+}
+
+export function addCmsTagAlias(tagId, payload) {
+  return request(`/admin/cms-tags/${enc(tagId)}/aliases`, {
+    method: 'POST', body: payload, errorMsg: '新增标签 Alias 失败',
+  });
+}
+
+export function deleteCmsTagAlias(tagId, aliasId, reason = '') {
+  return request(`/admin/cms-tags/${enc(tagId)}/aliases/${enc(aliasId)}?reason=${enc(reason)}`, {
+    method: 'DELETE', errorMsg: '删除标签 Alias 失败',
+  });
+}
+
+export function fetchCmsTagCandidates(filters = {}, options = {}) {
+  const query = withFilters(new URLSearchParams(), filters).toString();
+  return request(`/admin/cms-tag-candidates${query ? `?${query}` : ''}`, { ...options, errorMsg: '获取标签候选失败' });
+}
+
+export function deleteCmsTagCandidate(candidateId, reason) {
+  return request(`/admin/cms-tag-candidates/${enc(candidateId)}?reason=${enc(reason)}`, {
+    method: 'DELETE', errorMsg: '删除标签候选失败',
+  });
+}
+
+export function activateCmsTagCandidate(candidateId, payload) {
+  return request(`/admin/cms-tag-candidates/${enc(candidateId)}/activate`, {
+    method: 'POST', body: payload, errorMsg: '激活标签候选失败',
+  });
+}
+
+export function reclassifyCmsTagCandidate(candidateId, kind, reason) {
+  return request(`/admin/cms-tag-candidates/${enc(candidateId)}`, {
+    method: 'PATCH', body: { kind, reason }, errorMsg: '纠正 Candidate 分面失败',
+  });
+}
+
+export function resolveCmsTagCandidate(candidateId, targetTagId, reason) {
+  return request(`/admin/cms-tag-candidates/${enc(candidateId)}/resolve`, {
+    method: 'POST', body: { target_tag_id: targetTagId, reason }, errorMsg: '归并 Candidate 失败',
+  });
+}
+
+export function fetchTaxonomyState(options = {}) {
+  return request('/admin/taxonomy/state', { ...options, errorMsg: '获取 taxonomy 发布状态失败' });
+}
+
+export function fetchInterestCatalogPolicy(options = {}) {
+  return request('/admin/taxonomy/interest-catalog-policy', { ...options, errorMsg: '获取兴趣目录策略失败' });
+}
+
+export function updateInterestCatalogPolicy(payload) {
+  return request('/admin/taxonomy/interest-catalog-policy', {
+    method: 'PATCH', body: payload, errorMsg: '更新兴趣目录策略失败',
+  });
+}
+
+export function backfillCmsTagAliases(reason) {
+  return request('/admin/taxonomy/aliases/backfill', {
+    method: 'POST', body: { reason }, errorMsg: '同步规范名 Alias 失败',
+  });
+}
+
+export function publishTaxonomyV1(changeSummary) {
+  return request('/admin/taxonomy/v1/publish', {
+    method: 'POST',
+    body: { confirmation: 'PUBLISH TAXONOMY V1', change_summary: changeSummary },
+    errorMsg: '发布 taxonomy v1 失败',
+  });
+}
+
+export function rejectCmsTagCandidate(candidateId, reason) {
+  return request(`/admin/cms-tag-candidates/${enc(candidateId)}/reject`, {
+    method: 'POST', body: { reason }, errorMsg: '拒绝标签候选失败',
+  });
+}
+
+export function mergeCmsTag(tagId, targetTagId, reason) {
+  return request(`/admin/cms-tags/${enc(tagId)}/merge`, {
+    method: 'POST', body: { target_tag_id: targetTagId, reason }, errorMsg: '合并 CMS 标签失败',
+  });
+}
+
+export function deprecateCmsTag(tagId, replacementId, reason) {
+  return request(`/admin/cms-tags/${enc(tagId)}/deprecate`, {
+    method: 'POST', body: { replacement_id: replacementId || null, reason }, errorMsg: '废弃 CMS 标签失败',
+  });
+}
+
+export function retagCmsTag(tagId, days = 7) {
+  return request(`/admin/cms-tags/${enc(tagId)}/retag`, {
+    method: 'POST', body: { days, article_ids: [] }, errorMsg: '创建重标任务失败',
+  });
+}
+
+export function fetchAnalysisConfig(options = {}) {
+  return request('/admin/analysis/config', { ...options, errorMsg: '获取分析功能配置失败' });
+}
+
+export function updateAnalysisConfig(payload) {
+  return request('/admin/analysis/config', { method: 'PUT', body: payload, errorMsg: '更新分析功能配置失败' });
+}
+
+export function fetchAnalysisMetrics(days = 7, options = {}) {
+  return request(`/admin/analysis/metrics?days=${enc(days)}`, { ...options, errorMsg: '获取分析观测指标失败' });
+}
+
+export function estimateFullAnalysisBackfill(payload, options = {}) {
+  return request('/admin/analysis/backfills/estimate', {
+    ...options, method: 'POST', body: payload, errorMsg: '估算历史分析范围失败',
+  });
+}
+
+export function createFullAnalysisBackfill(payload) {
+  return request('/admin/analysis/backfills', {
+    method: 'POST', body: { ...payload, confirmation: 'RUN FULL ANALYSIS' }, errorMsg: '创建历史分析回填失败',
+  });
+}
+
+export function fetchFullAnalysisBackfills(options = {}) {
+  return request('/admin/analysis/backfills', { ...options, errorMsg: '获取历史分析任务失败' });
+}
+
+export function pauseFullAnalysisBackfill(jobId) {
+  return request(`/admin/analysis/backfills/${enc(jobId)}/pause`, { method: 'POST', errorMsg: '暂停历史分析失败' });
+}
+
+export function resumeFullAnalysisBackfill(jobId) {
+  return request(`/admin/analysis/backfills/${enc(jobId)}/resume`, { method: 'POST', errorMsg: '继续历史分析失败' });
+}
+
+export function cancelFullAnalysisBackfill(jobId) {
+  return request(`/admin/analysis/backfills/${enc(jobId)}/cancel`, { method: 'POST', errorMsg: '取消历史分析失败' });
+}
+
+export function retryFullAnalysisBackfill(jobId) {
+  return request(`/admin/analysis/backfills/${enc(jobId)}/retry-failed`, { method: 'POST', errorMsg: '重试失败文章失败' });
 }
 
 export function fetchAdminUserSources() {

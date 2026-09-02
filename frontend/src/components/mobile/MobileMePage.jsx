@@ -6,6 +6,7 @@ import {
   Settings,
   Star,
   SunMoon,
+  Tags,
 } from 'lucide-react';
 import { avatarInitial, avatarHue } from '../../utils/avatarColor';
 import { useConfirm } from '../../hooks/useConfirm';
@@ -22,6 +23,7 @@ export default function MobileMePage({
   onSetTheme,
   onShowFavorites,
   onOpenDiscover,
+  onManageInterests,
   onOpenSettings,
   onLogout,
 }) {
@@ -60,6 +62,13 @@ export default function MobileMePage({
           <span className="m-row-label">发现更多来源</span>
           <span className="m-row-chev" aria-hidden="true"><ChevronRight /></span>
         </button>
+        {onManageInterests && (
+          <button type="button" className="m-row" onClick={onManageInterests}>
+            <Tags aria-hidden="true" />
+            <span className="m-row-label">管理个人兴趣</span>
+            <span className="m-row-chev" aria-hidden="true"><ChevronRight /></span>
+          </button>
+        )}
       </div>
 
       <div className="m-group">

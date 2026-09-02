@@ -10,9 +10,11 @@ import {
 } from 'lucide-react';
 import ReaderMarkdown from '../ReaderMarkdown';
 import ShareMenu from '../ShareMenu';
+import AnalysisTagChip from '../AnalysisTagChip';
 import { PaneBodySkeleton } from '../ReaderTab';
 import { formatRelativeTime, formatDateTime } from '../../utils/datetime';
 import { contentTypeLabel } from '../../utils/contentType';
+import { displayAnalysisTags, qualityScoreText } from '../../utils/analysis';
 
 // 正文页(移动波 Wave2,样页画面②):push 全屏页——无底部 Tab,返回即出栈。
 // 衬线标题/kicker/meta/速读卡/进度线/上一下一篇 全部复用阅读窗语法类
@@ -32,7 +34,7 @@ export default function MobileArticlePage({
     shareOpen, setShareOpen,
     showTranslation, translating, translatedBody, handleTranslate,
     activeSummary, summarizing, handleSummarize,
-    prevArticle, nextArticle, activeIndex, selectArticle,
+    prevArticle, nextArticle, activeIndex, selectArticle, searchForLabel,
   } = rs;
 
   // 换篇即回顶(push 页语义:每篇都是新页)
@@ -135,6 +137,29 @@ export default function MobileArticlePage({
               <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
             )}
           </div>
+          {(activeArticle.quality_score != null || displayAnalysisTags(activeArticle).length > 0) && (
+            <div className="reader-analysis-summary">
+              <div className="reader-analysis-top">
+                {activeArticle.quality_score != null && (
+                  <span className="reader-analysis-score"><strong>{qualityScoreText(activeArticle.quality_score)}</strong><small>内容价值分</small></span>
+                )}
+                <span className="reader-analysis-tags">
+                  {displayAnalysisTags(activeArticle).map((tag, index) => (
+                    <AnalysisTagChip
+                      key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
+                      tag={tag}
+                      onTemporarySearch={(label) => {
+                        searchForLabel(label);
+                        onBack();
+                      }}
+                    />
+                  ))}
+                </span>
+              </div>
+              {activeArticle.score_reason && <p>{activeArticle.score_reason}</p>}
+              <small>AI 内容价值评估，用于辅助筛选，不代表事实保证或你的个人评分</small>
+            </div>
+          )}
         </header>
         <div className="m-read-body markdown-body">
           {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
