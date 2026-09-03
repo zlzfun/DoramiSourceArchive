@@ -380,7 +380,7 @@ def test_source_ai_switch_skips_new_work_but_preserves_success(storage):
         assert session.get(ArticleAnalysisRecord, article.id).summary == "existing asset"
 
 
-def test_force_queue_invalidates_current_asset_but_never_interrupts_running_lease(storage):
+def test_force_queue_preserves_current_asset_and_never_interrupts_running_lease(storage):
     article = _article("forced")
     with Session(storage.engine) as session:
         session.add(article)
@@ -397,8 +397,9 @@ def test_force_queue_invalidates_current_asset_but_never_interrupts_running_leas
         assert queue_article_analysis(session, article.id, force=True, now=NOW) == "invalidated"
         session.commit()
         assert record.status == "pending"
-        assert record.quality_score is None
-        assert record.summary == ""
+        assert record.quality_score == 8.2
+        assert record.summary == "current asset"
+        assert get_article_analysis(session, article.id)["summary"] == "current asset"
 
         record.status = "running"
         record.lease_owner = "another-worker"
@@ -478,21 +479,11 @@ def test_success_persists_base_tags_attempt_and_candidate_evidence(storage):
 def test_private_candidate_never_enters_public_candidate_pool(storage):
     with Session(storage.engine) as session:
         session.add_all([_tag(), _source("user_rss_private", private=True)])
+        article = _article("private", source_id="user_rss_private")
+        session.add(article)
         session.commit()
-    task = _seed_and_claim(storage, _article("private", source_id="user_rss_private"))
-
-    result = asyncio.run(
-        process_claimed_analysis(
-            storage.engine,
-            task,
-            llm_config=LLM_CONFIG,
-            analyzer=lambda *_args: _payload(candidate=True),
-            candidate_enabled=True,
-            now_fn=lambda: NOW,
-        )
-    )
-    assert result.status == "succeeded"
-    with Session(storage.engine) as session:
+        assert queue_article_analysis(session, article.id, now=NOW) == "skipped"
+        session.commit()
         assert session.exec(select(CmsTagCandidateRecord)).all() == []
         assert session.exec(select(CmsTagCandidateEvidenceRecord)).all() == []
 
@@ -570,6 +561,51 @@ def test_timeout_and_restart_lease_recovery_schedule_bounded_retry(storage):
             )
         ).one()
         assert attempt.status == "timeout"
+
+
+def test_same_worker_id_cannot_commit_with_an_expired_lease_token(storage):
+    first = _seed_and_claim(storage, _article("lease-aba"), worker="runtime-all")
+    with Session(storage.engine) as session:
+        assert recover_expired_leases(
+            session, now=NOW + dt.timedelta(minutes=6)
+        ) == 1
+        [second] = claim_analysis_tasks(
+            session,
+            worker_id="runtime-all",
+            now=NOW + dt.timedelta(minutes=8),
+        )
+    assert second.lease_token != first.lease_token
+
+    stale = asyncio.run(
+        process_claimed_analysis(
+            storage.engine,
+            first,
+            llm_config=LLM_CONFIG,
+            analyzer=lambda *_args: _payload(),
+            now_fn=lambda: NOW + dt.timedelta(minutes=8),
+        )
+    )
+    assert stale.status == "superseded"
+    current = asyncio.run(
+        process_claimed_analysis(
+            storage.engine,
+            second,
+            llm_config=LLM_CONFIG,
+            analyzer=lambda *_args: _payload(),
+            now_fn=lambda: NOW + dt.timedelta(minutes=8, seconds=1),
+        )
+    )
+    assert current.status == "succeeded"
+    with Session(storage.engine) as session:
+        attempts = session.exec(
+            select(ArticleAnalysisAttemptRecord)
+            .where(ArticleAnalysisAttemptRecord.article_id == "lease-aba")
+            .order_by(ArticleAnalysisAttemptRecord.attempt_no)
+        ).all()
+        assert [(row.attempt_no, row.status) for row in attempts] == [
+            (1, "timeout"),
+            (2, "succeeded"),
+        ]
 
 
 def test_retry_waits_for_backoff_and_uses_a_new_attempt_number(storage):
@@ -708,32 +744,19 @@ def test_prompt_and_logs_do_not_expose_private_url_or_body(storage, caplog):
     assert "<untrusted_article>" in prompt
     assert "source_url" not in prompt
 
-    task = _seed_and_claim(storage, _article("privacy", source_id="user_rss_private"))
-
-    async def fails(*_args):
-        raise RuntimeError(
-            "bad https://private.example/feed?token=secret password=hunter2 secret private body"
-        )
-
     caplog.set_level(logging.WARNING)
-    result = asyncio.run(
-        process_claimed_analysis(
-            storage.engine,
-            task,
-            llm_config=LLM_CONFIG,
-            analyzer=fails,
-            now_fn=lambda: NOW,
-        )
-    )
-    assert result.status == "failed"
+    with Session(storage.engine) as session:
+        article = _article("privacy", source_id="user_rss_private")
+        session.add(article)
+        session.commit()
+        assert queue_article_analysis(session, article.id, now=NOW) == "skipped"
+        session.commit()
     assert "private.example" not in caplog.text
     assert "private body" not in caplog.text
     assert "hunter2" not in caplog.text
     with Session(storage.engine) as session:
         record = session.get(ArticleAnalysisRecord, "privacy")
-        assert "private.example" not in record.last_error
-        assert "hunter2" not in record.last_error
-        assert "private body" not in record.last_error
+        assert record.last_error == "source_ai_analysis_disabled"
 
 
 def test_validation_limits_score_genre_and_active_tag_codes():

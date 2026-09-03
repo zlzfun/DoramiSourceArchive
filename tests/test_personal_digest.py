@@ -28,6 +28,7 @@ from models.db import (  # noqa: E402
 from services.digest_selection import DigestSelectionPolicy  # noqa: E402
 from services.personal_digest import (  # noqa: E402
     calculate_due_source_ids,
+    claim_personal_digest_generation,
     freeze_personal_digest_scope,
     generate_personal_digest,
     resolve_personal_digest_source_ids,
@@ -266,6 +267,34 @@ def test_last_unsubscribe_supersedes_pending_and_first_open_stays_empty(storage)
         assert session.get(PersonalDigestEditionRecord, pending_id).status == "superseded"
 
 
+def test_last_unsubscribe_also_supersedes_a_ready_today_edition(storage):
+    with Session(storage.engine) as session:
+        session.add(_user())
+        subscription = _subscribe("alice", "rss_a")
+        session.add(subscription)
+        _seed_article(session, 1, score=8.5)
+        session.commit()
+        ready = generate_personal_digest(
+            session,
+            "alice",
+            now=NOW,
+            policy=DigestSelectionPolicy(target_items=1),
+        )
+        ready_id = int(ready.edition.id)
+
+        session.delete(subscription)
+        session.commit()
+        changed = start_personal_digest_edition(
+            session,
+            "alice",
+            now=NOW + dt.timedelta(minutes=1),
+            generation_reason=DigestGenerationReason.SUBSCRIPTION_CHANGED,
+        )
+
+        assert changed.status == "empty_subscriptions"
+        assert session.get(PersonalDigestEditionRecord, ready_id).status == "superseded"
+
+
 def test_quality_only_generation_expands_36_to_72_hours_and_is_idempotent(storage):
     with Session(storage.engine) as session:
         session.add(_user())
@@ -292,6 +321,43 @@ def test_quality_only_generation_expands_36_to_72_hours_and_is_idempotent(storag
         assert first.edition.id == second.edition.id
         assert json.loads(first.edition.expected_source_ids_json) == ["rss_a", "rss_b"]
         assert session.exec(select(PersonalDigestEditionRecord)).all() == [first.edition]
+
+
+def test_candidate_window_normalizes_utc_naive_and_excludes_future_times(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        utc_within = _seed_article(
+            session,
+            20,
+            score=9.0,
+            published_at=NOW.astimezone(dt.timezone.utc) - dt.timedelta(hours=30),
+        )
+        naive_within = _seed_article(
+            session,
+            21,
+            score=8.5,
+            published_at=(NOW - dt.timedelta(hours=4)).replace(tzinfo=None),
+        )
+        future = _seed_article(
+            session,
+            22,
+            score=10.0,
+            published_at=NOW.astimezone(dt.timezone.utc) + dt.timedelta(hours=4),
+        )
+        session.commit()
+
+        result = generate_personal_digest(
+            session,
+            "alice",
+            now=NOW,
+            policy=DigestSelectionPolicy(target_items=3),
+        )
+
+        assert {item.article_id for item in result.items} == {
+            utc_within.id,
+            naive_within.id,
+        }
+        assert future.id not in {item.article_id for item in result.items}
 
 
 def test_no_qualified_content_is_honest_degraded_latest_five(storage):
@@ -406,6 +472,109 @@ def test_new_revision_supersedes_older_pending_lifecycle(storage):
         assert first.edition.status == "superseded"
         assert second.edition.status == "pending"
         assert second.edition.revision == first.edition.revision + 1
+
+
+def test_pending_edition_freezes_interests_before_later_preference_changes(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a"), _tag("agents")])
+        session.flush()
+        tag = session.exec(select(CmsTagRecord)).one()
+        interested = _seed_article(session, 1, score=9.0)
+        quality = _seed_article(session, 2, score=8.5)
+        session.flush()
+        interest = UserInterestTagRecord(
+            owner_username="alice",
+            tag_id=tag.id,
+            stance="follow",
+            priority="normal",
+            created_at=NOW_ISO,
+            updated_at=NOW_ISO,
+        )
+        session.add_all([
+            interest,
+            ArticleTagAssignmentRecord(
+                article_id=interested.id,
+                tag_id=tag.id,
+                tag_kind="topic",
+                relevance=0.95,
+                created_at=NOW_ISO,
+                updated_at=NOW_ISO,
+            ),
+        ])
+        session.commit()
+
+        pending = start_personal_digest_edition(
+            session,
+            "alice",
+            now=NOW,
+            generation_reason=DigestGenerationReason.FIRST_OPEN,
+            first_open_at=NOW,
+        )
+        frozen = json.loads(pending.edition.interest_snapshot_json)
+        assert frozen == [{"tag_code": "agents", "stance": "follow", "priority": "normal"}]
+
+        interest.stance = "mute"
+        interest.updated_at = (NOW + dt.timedelta(minutes=1)).isoformat()
+        session.add(interest)
+        session.commit()
+        result = generate_personal_digest(
+            session,
+            "alice",
+            now=NOW + dt.timedelta(minutes=1),
+            pending_edition_id=pending.edition.id,
+            policy=DigestSelectionPolicy(target_items=2),
+        )
+
+        assert result.status == "ready"
+        by_id = {item.article_id: item for item in result.items}
+        assert by_id[interested.id].selection_lane == "interest"
+        assert by_id[quality.id].selection_lane == "quality"
+
+
+def test_expired_digest_lease_reclaim_rejects_stale_generation_token(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        _seed_article(session, 1, score=8.5)
+        session.commit()
+        pending = start_personal_digest_edition(
+            session,
+            "alice",
+            now=NOW,
+            generation_reason=DigestGenerationReason.FIRST_OPEN,
+            first_open_at=NOW,
+        )
+        edition_id = int(pending.edition.id)
+        _edition, stale_token = claim_personal_digest_generation(
+            session, edition_id, now=NOW
+        )
+        assert stale_token
+        session.get(PersonalDigestEditionRecord, edition_id).generation_lease_expires_at = (
+            NOW - dt.timedelta(seconds=1)
+        ).isoformat()
+        session.commit()
+        _edition, fresh_token = claim_personal_digest_generation(
+            session, edition_id, now=NOW + dt.timedelta(minutes=1)
+        )
+        assert fresh_token and fresh_token != stale_token
+
+        stale = generate_personal_digest(
+            session,
+            "alice",
+            now=NOW + dt.timedelta(minutes=1),
+            pending_edition_id=edition_id,
+            generation_token=stale_token,
+        )
+        assert stale.status == "generating"
+        assert stale.items == ()
+
+        fresh = generate_personal_digest(
+            session,
+            "alice",
+            now=NOW + dt.timedelta(minutes=1),
+            pending_edition_id=edition_id,
+            generation_token=fresh_token,
+        )
+        assert fresh.status == "ready"
 
 
 def test_generating_edition_recovery_replaces_partial_snapshot_rows(storage):
@@ -532,4 +701,5 @@ def test_item_keeps_full_snapshot_after_article_is_physically_deleted(storage):
         item = session.get(PersonalDigestItemRecord, item_id)
         assert item.article_id is None
         assert json.loads(item.snapshot_json) == snapshot_before
-        assert snapshot_before["content"] == "full body 1"
+        assert "content" not in snapshot_before
+        assert snapshot_before["title"] == "Article 1"

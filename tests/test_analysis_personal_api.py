@@ -16,6 +16,7 @@ from models.db import (
     CmsTagCandidateRecord,
     CmsTagEventRecord,
     ReaderSubscriptionRecord,
+    SourceConfigRecord,
     SourceStateRecord,
     UserRecord,
 )
@@ -193,7 +194,9 @@ def test_interest_and_personal_brief_api_are_subscription_strict(monkeypatch, tm
         ensured = client.post("/api/reader/briefs/today/ensure")
         assert ensured.status_code == 200, ensured.text
         edition = ensured.json()["edition"]
-        assert edition["status"] == "ready", edition.get("error")
+        # With only one followed-interest article and no quality-lane peer, the
+        # hard 50% actual-output ceiling correctly uses latest-update fallback.
+        assert edition["status"] == "degraded", edition.get("error")
         assert edition["expected_source_ids"] == ["source-a"]
         assert [item["article_id"] for item in edition["items"]] == ["article-a"]
         assert edition["items"][0]["snapshot"]["summary"] == "unified summary"
@@ -205,7 +208,7 @@ def test_interest_and_personal_brief_api_are_subscription_strict(monkeypatch, tm
         repeated = client.post("/api/reader/briefs/today/ensure").json()["edition"]
         assert repeated["id"] == edition["id"]
         assert repeated["revision"] == edition["revision"]
-        assert repeated["status"] == "ready"
+        assert repeated["status"] == "degraded"
 
         rebuilt = client.post("/api/reader/briefs/today/rebuild").json()["edition"]
         assert rebuilt["revision"] == edition["revision"] + 1
@@ -473,6 +476,58 @@ def test_first_open_waits_then_degrades_in_place_after_deadline(monkeypatch, tmp
         assert completed["status"] == "degraded"
         assert completed["degraded_reason"] == "no_qualified_content"
         assert all(item["article_id"] != "article-b" for item in completed["items"])
+
+
+def test_private_rss_does_not_block_digest_analysis_readiness(monkeypatch, tmp_path):
+    """V1 private RSS is never sent to the LLM, so readiness must ignore it."""
+
+    _app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
+    from api.routers import personal_briefs
+    from models.db import PersonalDigestEditionRecord
+
+    now = dt.datetime.now(dt.timezone.utc)
+    source_id = "user_rss_private"
+    with Session(sink.engine) as session:
+        session.add(
+            SourceConfigRecord(
+                source_id=source_id,
+                name="Private RSS",
+                source_type="rss",
+                owner_username="alice",
+                ai_analysis_enabled=True,
+                created_at=now.isoformat(),
+                updated_at=now.isoformat(),
+            )
+        )
+        session.add(
+            ArticleRecord(
+                id="private-rss-article",
+                title="Private article",
+                content_type="web_article",
+                source_id=source_id,
+                source_url="https://example.com/private",
+                publish_date=now.isoformat(),
+                fetched_date=now.isoformat(),
+                has_content=True,
+                content="private body",
+            )
+        )
+        session.commit()
+
+        edition = PersonalDigestEditionRecord(
+            owner_username="alice",
+            report_date=now.date().isoformat(),
+            timezone="UTC",
+            revision=1,
+            generation_reason="scheduled",
+            expected_source_ids_json=json.dumps([source_id]),
+            due_source_ids_json=json.dumps([source_id]),
+            interest_snapshot_json="[]",
+            status="pending",
+            created_at=now.isoformat(),
+            updated_at=now.isoformat(),
+        )
+        assert personal_briefs._analysis_ready(session, edition, now) is True
 
 
 def test_runtime_taxonomy_retag_worker_consumes_published_job(monkeypatch, tmp_path):

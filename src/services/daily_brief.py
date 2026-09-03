@@ -37,6 +37,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 import config
@@ -256,7 +257,12 @@ def load_persisted_analysis_compat(
     analyses = session.exec(
         select(ArticleAnalysisRecord)
         .where(ArticleAnalysisRecord.article_id.in_(ids))
-        .where(ArticleAnalysisRecord.status == "succeeded")
+        .where(
+            or_(
+                ArticleAnalysisRecord.status == "succeeded",
+                ArticleAnalysisRecord.analyzed_at.is_not(None),
+            )
+        )
         .where(ArticleAnalysisRecord.quality_score.is_not(None))
     ).all()
     if not analyses:
@@ -372,7 +378,6 @@ def apply_persisted_analysis_adapter(
                 summary=summary,
                 tags=list(analysis.canonical_tags) or item.tags,
                 score=analysis.quality_score,
-                map_ok=True,
             )
         )
     return adapted

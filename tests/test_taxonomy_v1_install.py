@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import sys
 from pathlib import Path
 
+import pytest
 from sqlmodel import Session, select
 
 
@@ -60,75 +62,44 @@ def test_fresh_install_reaches_publish_gate_without_publishing():
         storage.engine.dispose()
 
 
-def test_active_v1_dev_sync_preserves_candidates_and_cleans_known_bad_rows():
+def test_installer_refuses_to_mutate_an_active_v1():
     storage = DatabaseStorage(db_url="sqlite:///:memory:")
     try:
         catalog = installer.load_catalog(installer.DEFAULT_CATALOG)
-        report = installer.portable_review(catalog)
-        review_apply.validate_complete_review(report)
         with Session(storage.engine) as session:
-            taxonomy.create_tag(
-                session,
-                code="topic.ai",
-                kind="industry",
-                name_zh="人工智能",
-                name_en="artificial intelligence",
-                status="active",
-                user_selectable=True,
-            )
-            taxonomy.create_tag(
-                session,
-                code="topic.ai.vendor",
-                kind="industry",
-                name_zh="人工智能应用服务商",
-                name_en="AI vendor",
-                status="active",
-                user_selectable=True,
-            )
-            session.commit()
+            report = review_prepare.prepare_review(session, catalog)
+            installer.apply_fresh(session, report, actor_id="release-test")
             version = taxonomy.create_taxonomy_version(
                 session,
-                change_summary="old development v1",
+                change_summary="published v1",
                 now=NOW,
             )
             taxonomy.activate_taxonomy_version(session, version.version, actor_id="test", now=NOW)
-            session.add(CmsTagCandidateRecord(
-                label="保留的灵活标签",
-                normalized_label="保留的灵活标签",
-                proposed_kind="topic",
-                status="candidate",
-                created_at=NOW.isoformat(),
-                updated_at=NOW.isoformat(),
-                first_seen_at=NOW.isoformat(),
-                last_seen_at=NOW.isoformat(),
-            ))
-            session.add(CmsTagCandidateRecord(
-                label="具身智能",
-                normalized_label="具身智能",
-                proposed_kind="topic",
-                status="candidate",
-                created_at=NOW.isoformat(),
-                updated_at=NOW.isoformat(),
-                first_seen_at=NOW.isoformat(),
-                last_seen_at=NOW.isoformat(),
-            ))
-            session.commit()
+            with pytest.raises(ValueError, match="active taxonomy version 0"):
+                installer.apply_fresh(session, report, actor_id="release-test")
+    finally:
+        storage.engine.dispose()
 
-            counts = installer.sync_active_v1(
-                session,
-                catalog,
-                report,
-                actor_id="release-test",
-            )
-            active = list(
-                session.exec(select(CmsTagRecord).where(CmsTagRecord.status == "active")).all()
-            )
-            assert counts["deprecated"] == 2
-            assert counts["candidates_resolved"] == 0
-            assert len(active) == 96
-            assert {
-                row.status for row in session.exec(select(CmsTagCandidateRecord)).all()
-            } == {"candidate"}
-            assert taxonomy.current_taxonomy_version(session) == 1
+
+def test_catalog_manifest_detects_content_tampering(tmp_path):
+    catalog = json.loads(installer.DEFAULT_CATALOG.read_text(encoding="utf-8"))
+    catalog["entries"][0]["name_zh"] = "被篡改"
+    path = tmp_path / "tampered.json"
+    path.write_text(json.dumps(catalog, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="manifest_sha256"):
+        installer.load_catalog(path)
+
+
+def test_apply_review_rejects_content_tampering_even_with_original_manifest():
+    catalog = installer.load_catalog(installer.DEFAULT_CATALOG)
+    storage = DatabaseStorage(db_url="sqlite:///:memory:")
+    try:
+        with Session(storage.engine) as session:
+            report = review_prepare.prepare_review(session, catalog)
+        review_apply.validate_review_catalog_binding(report, catalog)
+        report["entries"][0]["name_zh"] = "被篡改"
+        with pytest.raises(ValueError, match="do not match"):
+            review_apply.validate_review_catalog_binding(report, catalog)
     finally:
         storage.engine.dispose()

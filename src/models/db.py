@@ -400,6 +400,14 @@ class TagRetagJobRecord(SQLModel, table=True):
     __tablename__ = "tag_retag_jobs"
     __table_args__ = (
         Index("ix_tag_retag_jobs_claim", "status", "lease_expires_at"),
+        Index(
+            "uq_tag_retag_jobs_one_active_full_analysis",
+            "operation",
+            unique=True,
+            sqlite_where=text(
+                "operation = 'full_analysis' AND status IN ('queued','running','paused')"
+            ),
+        ),
         CheckConstraint("operation IN ('full_analysis','retag_only')", name="ck_tag_retag_jobs_operation"),
         CheckConstraint(
             "status IN ('queued','running','paused','succeeded','partial_failed','failed','cancelled')",
@@ -437,6 +445,7 @@ class TagRetagJobItemRecord(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint("job_id", "article_id_snapshot", name="uq_tag_retag_job_items_job_article"),
         Index("ix_tag_retag_job_items_job_status_id", "job_id", "status", "id"),
+        Index("ix_tag_retag_job_items_article_id", "article_id"),
         CheckConstraint(
             "status IN ('pending','queued','succeeded','failed','skipped')",
             name="ck_tag_retag_job_items_status",
@@ -463,7 +472,10 @@ class TagRetagJobItemRecord(SQLModel, table=True):
 class DuplicateGroupRecord(SQLModel, table=True):
     """可被公共和个人日报复用的轻量同事件/重复组。"""
     __tablename__ = "duplicate_groups"
-    __table_args__ = (UniqueConstraint("fingerprint", name="uq_duplicate_groups_fingerprint"),)
+    __table_args__ = (
+        UniqueConstraint("fingerprint", name="uq_duplicate_groups_fingerprint"),
+        Index("ix_duplicate_groups_representative_article_id", "representative_article_id"),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     fingerprint: str = Field(description="规范 URL/标题相似等确定性指纹")
@@ -636,8 +648,8 @@ class SourceConfigRecord(SQLModel, table=True):
     # 仅作身份标记与溯源,不承担权限差异(删除语义="退订+无人订阅才物理删",与 owner 无关)。
     owner_username: str = Field(default="", index=True, description="用户自定源创建者;空=平台源")
 
-    # 私有 RSS 默认允许发送到当前配置的第三方 LLM；显式关闭只阻止后续分析，
-    # 不删除既有分析、标签或历史日报快照。迁移必须保留 server default=1。
+    # 平台源的分析开关。私有 RSS 在 V1 服务层硬性禁用，直到具备逐订阅用户授权；
+    # 此字段不能被解释为源创建者可代表其他订阅者授权。
     ai_analysis_enabled: bool = Field(
         default=True,
         sa_column_kwargs={"server_default": text("1")},
@@ -726,6 +738,9 @@ class PersonalDigestEditionRecord(SQLModel, table=True):
     policy_version: str = Field(default="personal-digest-v1")
     taxonomy_version: int = Field(default=0)
     interest_version: int = Field(default=0)
+    interest_snapshot_json: str = Field(default="[]", description="本 revision 冻结的兴趣集合")
+    generation_token: Optional[str] = Field(default=None, index=True)
+    generation_lease_expires_at: Optional[str] = Field(default=None)
     generation_reason: str = Field(default="scheduled")
     degraded_reason: Optional[str] = Field(default=None)
     error: Optional[str] = Field(default=None)
@@ -734,7 +749,7 @@ class PersonalDigestEditionRecord(SQLModel, table=True):
 
 
 class PersonalDigestItemRecord(SQLModel, table=True):
-    """个人日报条目及完整历史快照。"""
+    """个人日报条目及最小化历史快照（不复制文章正文）。"""
     __tablename__ = "personal_digest_items"
     __table_args__ = (
         UniqueConstraint("edition_id", "position", name="uq_personal_digest_items_edition_position"),
@@ -760,7 +775,7 @@ class PersonalDigestItemRecord(SQLModel, table=True):
         default=None,
         foreign_key="articles.id",
         ondelete="SET NULL",
-        description="原文删除后置空，snapshot 仍可读",
+        description="原文删除后置空；最小化展示快照仍可读",
     )
     position: int = Field(ge=0)
     section: str = Field(default="")

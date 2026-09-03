@@ -8,7 +8,6 @@ selector never invents candidates or relaxes the quality/mute/event boundaries.
 
 from __future__ import annotations
 
-import datetime as dt
 import math
 import re
 from dataclasses import dataclass
@@ -25,6 +24,7 @@ from models.analysis_contracts import (
     SelectionLane,
     UserInterestDTO,
 )
+from services.article_time import parse_article_time
 
 
 _TRACKING_QUERY_KEYS = frozenset({
@@ -86,21 +86,8 @@ def section_for_genre(content_genre: object) -> str:
 
 
 def _published_timestamp(value: str) -> float:
-    raw = (value or "").strip()
-    if not raw:
-        return 0.0
-    try:
-        parsed = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=dt.timezone.utc)
-        return parsed.timestamp()
-    except ValueError:
-        try:
-            return dt.datetime.strptime(raw[:10], "%Y-%m-%d").replace(
-                tzinfo=dt.timezone.utc
-            ).timestamp()
-        except ValueError:
-            return 0.0
+    parsed = parse_article_time(value)
+    return parsed.timestamp() if parsed else 0.0
 
 
 def _canonical_url(value: str) -> str:
@@ -331,12 +318,29 @@ def select_digest_articles(
     selected: list[tuple[_RankedCandidate, str]] = []
     used_cap = policy.per_source_max
     for source_cap in range(policy.per_source_max, maximum_cap + 1):
-        attempt = _choose_at_cap(
-            interest_rows,
-            quality_rows,
-            target=policy.target_items,
-            interest_limit=interest_limit,
-            source_cap=source_cap,
+        valid_attempts: list[list[tuple[_RankedCandidate, str]]] = []
+        for actual_interest_limit in range(interest_limit, -1, -1):
+            candidate_attempt = _choose_at_cap(
+                interest_rows,
+                quality_rows,
+                target=policy.target_items,
+                interest_limit=actual_interest_limit,
+                source_cap=source_cap,
+            )
+            interest_count = sum(
+                lane == SelectionLane.INTEREST.value for _row, lane in candidate_attempt
+            )
+            if interest_count <= math.floor(
+                len(candidate_attempt) * policy.interest_max_ratio + 1e-9
+            ):
+                valid_attempts.append(candidate_attempt)
+        attempt = max(
+            valid_attempts,
+            key=lambda value: (
+                len(value),
+                sum(lane == SelectionLane.INTEREST.value for _row, lane in value),
+            ),
+            default=[],
         )
         selected = attempt
         used_cap = source_cap

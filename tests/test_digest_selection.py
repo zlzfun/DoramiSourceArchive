@@ -60,6 +60,22 @@ def test_interest_is_capped_at_half_and_quality_fills_the_rest():
     assert "匹配你关注的" in selected[0].selection_reason
 
 
+def test_interest_ceiling_applies_to_actual_sparse_output():
+    candidates = [
+        *[_candidate(i, score=9.5 - i * 0.05, tags=("agent",)) for i in range(5)],
+        _candidate(9, score=8.0, tags=("other",)),
+    ]
+
+    selected = select_digest_articles(
+        candidates,
+        [UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW)],
+    )
+
+    assert len(selected) == 2
+    assert sum(item.lane == "interest" for item in selected) == 1
+    assert sum(item.lane == "quality" for item in selected) == 1
+
+
 def test_mute_and_quality_threshold_are_hard_boundaries():
     candidates = [
         _candidate(1, score=9.8, tags=("muted",)),

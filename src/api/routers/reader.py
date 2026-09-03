@@ -568,6 +568,8 @@ def update_custom_source_ai_analysis(
         )
     except LookupError:
         raise HTTPException(status_code=404, detail="自定源不存在")
+    except user_sources_service.UserSourceQuotaError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return {
         "status": "success",
         "source_id": record.source_id,

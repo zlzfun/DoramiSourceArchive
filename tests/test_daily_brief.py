@@ -883,6 +883,21 @@ def test_analysis_adapter_batch_loads_canonical_tags_and_preserves_comment(tmp_p
     assert legacy.score == 8 and legacy.summary == ["旧摘要"]  # shadow 输入未被原地改写
 
 
+def test_analysis_adapter_never_promotes_a_failed_legacy_map_item(tmp_path):
+    sink = _make_sink(tmp_path, "adapter_failed_map.db")
+    _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
+    _seed_persisted_analysis(sink.engine, "a1")
+    failed = _scored_full(1, item_id="a1", classification="资讯聚合", summary=[])
+    failed.map_ok = False
+
+    with Session(sink.engine) as session:
+        persisted = db.load_persisted_analysis_compat(session, ["a1"])
+    [adapted] = db.apply_persisted_analysis_adapter([failed], persisted)
+
+    assert adapted.map_ok is False
+    assert adapted.score == 4.5
+
+
 def test_adapter_flag_off_is_byte_compatible_and_records_shadow(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
 

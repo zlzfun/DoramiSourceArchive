@@ -16,10 +16,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+import pytest
 from alembic import command  # noqa: E402
 from alembic.autogenerate import compare_metadata  # noqa: E402
 from alembic.runtime.migration import MigrationContext  # noqa: E402
-from sqlalchemy import create_engine, inspect  # noqa: E402
+from sqlalchemy import create_engine, event, inspect  # noqa: E402
+from sqlalchemy.engine import Engine  # noqa: E402
 
 from models.db import SQLModel  # noqa: E402
 from storage.fts import fts_include_object  # noqa: E402
@@ -74,7 +76,7 @@ def test_parallel_release_heads_converge_without_replay(tmp_path):
         try:
             with engine.connect() as conn:
                 current = MigrationContext.configure(conn).get_current_revision()
-            assert current == "d2c4f6a8b0e1"
+            assert current == _head_revision()
             tables = set(inspect(engine).get_table_names())
             assert "article_analyses" in tables
             assert "personal_digest_editions" in tables
@@ -83,6 +85,42 @@ def test_parallel_release_heads_converge_without_replay(tmp_path):
             assert "interest_onboarding_completed_at" in user_columns
         finally:
             engine.dispose()
+
+
+def test_sqlite_revision_rolls_back_all_ddl_on_interruption(tmp_path):
+    """A failed revision must not leave columns/indexes ahead of its version row."""
+
+    db_url = f"sqlite:///{tmp_path / 'interrupted.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "d2c4f6a8b0e1")
+
+    def fail_mid_revision(_conn, _cursor, statement, _params, _context, _many):
+        if "ix_tag_retag_job_items_article_id" in statement and "CREATE" in statement.upper():
+            raise RuntimeError("simulated migration interruption")
+
+    event.listen(Engine, "before_cursor_execute", fail_mid_revision)
+    try:
+        with pytest.raises(RuntimeError, match="simulated migration interruption"):
+            command.upgrade(cfg, "head")
+    finally:
+        event.remove(Engine, "before_cursor_execute", fail_mid_revision)
+
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            assert MigrationContext.configure(conn).get_current_revision() == "d2c4f6a8b0e1"
+            columns = {
+                column["name"]
+                for column in inspect(conn).get_columns("personal_digest_editions")
+            }
+            assert "interest_snapshot_json" not in columns
+            indexes = {
+                index["name"]
+                for index in inspect(conn).get_indexes("tag_retag_job_items")
+            }
+            assert "ix_tag_retag_job_items_article_id" not in indexes
+    finally:
+        engine.dispose()
 
 
 def test_ensure_migrated_adopts_legacy_db(tmp_path):
@@ -517,6 +555,14 @@ def test_analysis_migrations_upgrade_existing_source_configs_with_default_on(tmp
         )
         with engine.begin() as conn:
             conn.execute(source_configs.insert().values(**values))
+            private_values = dict(values)
+            private_values.update(
+                source_id="private-rss",
+                name="Private RSS",
+                url="https://private.example.com/feed.xml",
+                owner_username="alice",
+            )
+            conn.execute(source_configs.insert().values(**private_values))
     finally:
         engine.dispose()
 
@@ -544,6 +590,13 @@ def test_analysis_migrations_upgrade_existing_source_configs_with_default_on(tmp
                 )
             ).scalar_one()
             assert bool(enabled) is True
+            private_enabled = conn.execute(
+                text(
+                    "SELECT ai_analysis_enabled FROM source_configs "
+                    "WHERE source_id='private-rss'"
+                )
+            ).scalar_one()
+            assert bool(private_enabled) is False
             assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
     finally:
         engine.dispose()

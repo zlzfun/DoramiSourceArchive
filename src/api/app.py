@@ -522,6 +522,21 @@ media_store: Optional[MediaStore] = (
 
 # 抓取后媒体预取的 fire-and-forget 任务强引用（asyncio 只保弱引用）。
 _MEDIA_PREFETCH_TASKS: set = set()
+_PERSONAL_DIGEST_TRIGGER_TASKS: set = set()
+
+
+def schedule_personal_digest_trigger(callback, *args) -> None:
+    """Run synchronous SQLite fan-out away from the async HTTP middleware."""
+
+    async def _run() -> None:
+        try:
+            await asyncio.to_thread(callback, *args)
+        except Exception:  # noqa: BLE001 - periodic lifecycle scan is the backstop
+            _dorami_logger.warning("个人早报当日 revision 触发失败", exc_info=True)
+
+    task = asyncio.create_task(_run())
+    _PERSONAL_DIGEST_TRIGGER_TASKS.add(task)
+    task.add_done_callback(_PERSONAL_DIGEST_TRIGGER_TASKS.discard)
 
 
 def queue_article_analysis_after_commit(article_ids: List[str]) -> None:
@@ -808,6 +823,16 @@ async def require_admin_session(request: Request, call_next):
         or (normalized_method == "POST" and path == "/api/articles")
         or (normalized_method == "POST" and path == "/api/articles/batch-delete")
         or (normalized_method == "POST" and path == "/api/fetch/batch")
+        or (normalized_method == "PUT" and path == "/api/admin/analysis/config")
+        or (normalized_method == "POST" and path == "/api/admin/analysis/backfills")
+        or (
+            normalized_method in {"POST", "PATCH", "DELETE"}
+            and (
+                path.startswith("/api/admin/cms-tags")
+                or path.startswith("/api/admin/cms-tag-candidates")
+                or path.startswith("/api/admin/taxonomy/")
+            )
+        )
         or (normalized_method == "PUT" and account_update_path)
         or (
             normalized_method == "POST"
@@ -869,7 +894,8 @@ async def require_admin_session(request: Request, call_next):
                 )
             )
             if subscription_changed:
-                personal_briefs_router.trigger_today_revision(
+                schedule_personal_digest_trigger(
+                    personal_briefs_router.trigger_today_revision,
                     db_sink.engine,
                     str(auth_session.get("sub") or ""),
                     "subscription_changed",
@@ -878,7 +904,8 @@ async def require_admin_session(request: Request, call_next):
                 normalized_method == "POST"
                 and path.startswith("/api/admin/source-visibility/")
             ):
-                personal_briefs_router.trigger_all_today_revisions(
+                schedule_personal_digest_trigger(
+                    personal_briefs_router.trigger_all_today_revisions,
                     db_sink.engine, "subscription_changed"
                 )
         except Exception:  # noqa: BLE001 - mutation already committed; tick can recover
@@ -931,7 +958,6 @@ def login_admin(params: AuthLoginParams, response: Response):
             ensure_default_subscriptions(username)
         except Exception:
             _dorami_logger.warning("登录点播种默认订阅失败，等待 reader 端点兜底", exc_info=True)
-    set_auth_cookie(response, username, role, epoch)
     set_auth_cookie(response, username, role, epoch)
     return {
         "authenticated": True,

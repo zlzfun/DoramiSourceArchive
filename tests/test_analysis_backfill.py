@@ -400,6 +400,63 @@ def test_pause_resume_cancel_and_failed_item_retry(storage):
     assert retried["counts"]["failed"] == 0
 
 
+def test_cancel_revokes_dispatched_analysis_and_preserves_old_asset(storage):
+    with Session(storage.engine) as session:
+        _seed_taxonomy(session)
+        old = _article("cancel-preserves", age_days=30)
+        session.add(old)
+        session.flush()
+        _seed_current_analysis(session, old)
+        session.commit()
+        job = create_full_analysis_backfill(
+            session,
+            days=None,
+            selection="all",
+            actor_id="admin",
+            confirmation=FULL_ANALYSIS_CONFIRMATION,
+            now=NOW,
+        )
+        claimed = claim_full_analysis_backfill(
+            session, lease_owner="admin-worker", now=NOW
+        )
+        assert dispatch_full_analysis_backfill(
+            session,
+            claimed,
+            lease_owner="admin-worker",
+            limit=1,
+            now=NOW,
+        ) == 1
+        queued = session.get(ArticleAnalysisRecord, old.id)
+        assert queued.status == "pending"
+        assert queued.quality_score == 7.5
+        assert queued.summary == "old summary"
+
+        cancel_full_analysis_backfill(session, claimed, now=NOW)
+        session.refresh(queued)
+        assert queued.status == "succeeded"
+        assert queued.quality_score == 7.5
+        assert queued.summary == "old summary"
+
+    calls = []
+
+    async def analyzer(*_args):
+        calls.append("called")
+        return _payload()
+
+    assert asyncio.run(
+        run_analysis_cycle(
+            storage.engine,
+            worker_id="runtime-all",
+            llm_config=LLM_CONFIG,
+            analyzer=analyzer,
+            enabled=True,
+            candidate_enabled=False,
+            now_fn=lambda: NOW + dt.timedelta(minutes=1),
+        )
+    ) == []
+    assert calls == []
+
+
 def test_admin_backfill_api_estimate_create_and_lifecycle(monkeypatch, tmp_path):
     import api.app as app_module
     from api.routers import analysis_ops

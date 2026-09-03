@@ -229,7 +229,11 @@ def get_articles(
     count_query = apply_article_query_filters(select(func.count(ArticleRecord.id)), session=session, **filter_kwargs)
     analysis_conditions = [
         ArticleAnalysisRecord.article_id == ArticleRecord.id,
-        ArticleAnalysisRecord.status == "succeeded",
+        or_(
+            ArticleAnalysisRecord.status == "succeeded",
+            ArticleAnalysisRecord.analyzed_at.is_not(None),
+        ),
+        ArticleAnalysisRecord.quality_score.is_not(None),
     ]
     if min_score is not None:
         if not 1.0 <= float(min_score) <= 10.0:
