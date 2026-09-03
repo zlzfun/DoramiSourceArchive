@@ -275,7 +275,12 @@ def update_source_config(source_id: str, params: SourceConfigUpdate, session: Se
     if not record:
         raise HTTPException(status_code=404, detail="数据源配置不存在")
 
-    update_data = params.dict(exclude_unset=True)
+    update_data = params.model_dump(exclude_unset=True)
+    if record.owner_username and update_data.get("ai_analysis_enabled") is True:
+        raise HTTPException(
+            status_code=400,
+            detail="V1 不允许把用户私有源发送给文章分析模型",
+        )
     for key, value in update_data.items():
         if key == "params":
             record.params_json = _json_dumps(value)

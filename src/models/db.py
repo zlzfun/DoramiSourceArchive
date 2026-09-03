@@ -713,7 +713,7 @@ class PersonalDigestEditionRecord(SQLModel, table=True):
         CheckConstraint(
             "generation_reason IN ("
             "'scheduled','first_open','interest_changed','subscription_changed',"
-            "'manual_rebuild','recovery')",
+            "'manual_rebuild','daily_brief_ready','recovery')",
             name="ck_personal_digest_editions_generation_reason",
         ),
     )

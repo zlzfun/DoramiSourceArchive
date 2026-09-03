@@ -400,13 +400,17 @@ def test_pause_resume_cancel_and_failed_item_retry(storage):
     assert retried["counts"]["failed"] == 0
 
 
-def test_cancel_revokes_dispatched_analysis_and_preserves_old_asset(storage):
+def test_cancel_revokes_outdated_dispatched_analysis_and_preserves_old_asset(storage):
     with Session(storage.engine) as session:
         _seed_taxonomy(session)
         old = _article("cancel-preserves", age_days=30)
         session.add(old)
         session.flush()
         _seed_current_analysis(session, old)
+        seeded = session.get(ArticleAnalysisRecord, old.id)
+        seeded.prompt_version = "article-analysis-v0"
+        seeded.scoring_version = "quality-score-v0"
+        session.add(seeded)
         session.commit()
         job = create_full_analysis_backfill(
             session,
@@ -430,12 +434,16 @@ def test_cancel_revokes_dispatched_analysis_and_preserves_old_asset(storage):
         assert queued.status == "pending"
         assert queued.quality_score == 7.5
         assert queued.summary == "old summary"
+        assert queued.prompt_version == "article-analysis-v0"
+        assert queued.scoring_version == "quality-score-v0"
 
         cancel_full_analysis_backfill(session, claimed, now=NOW)
         session.refresh(queued)
         assert queued.status == "succeeded"
         assert queued.quality_score == 7.5
         assert queued.summary == "old summary"
+        assert queued.prompt_version == "article-analysis-v0"
+        assert queued.scoring_version == "quality-score-v0"
 
     calls = []
 

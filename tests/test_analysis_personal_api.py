@@ -478,10 +478,141 @@ def test_first_open_waits_then_degrades_in_place_after_deadline(monkeypatch, tmp
         assert all(item["article_id"] != "article-b" for item in completed["items"])
 
 
+def test_first_open_before_check_after_waits_even_if_deadline_looks_expired(monkeypatch, tmp_path):
+    _app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
+    from api.routers import personal_briefs
+    from models.analysis_contracts import DigestGenerationReason
+    from services import personal_digest
+
+    report_day = dt.datetime.now(personal_digest.SHANGHAI).date()
+    early = dt.datetime.combine(report_day, dt.time(7, 0), personal_digest.SHANGHAI)
+    with Session(sink.engine) as session:
+        pending = personal_digest.start_personal_digest_edition(
+            session,
+            "alice",
+            now=early,
+            generation_reason=DigestGenerationReason.FIRST_OPEN,
+            first_open_at=early,
+        ).edition
+        assert pending is not None
+        assert dt.datetime.fromisoformat(pending.deadline_at).time() == dt.time(8, 45)
+        pending.deadline_at = (early - dt.timedelta(minutes=1)).isoformat()
+        session.add(pending)
+        session.commit()
+
+        unchanged = personal_briefs.process_pending_edition(
+            session,
+            pending,
+            now=early + dt.timedelta(minutes=30),
+        )
+
+        assert unchanged.status == "pending"
+
+
+def test_public_daily_brief_due_waits_for_todays_article_not_yesterdays(monkeypatch, tmp_path):
+    _app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
+    from api.routers import personal_briefs
+    from models.analysis_contracts import DigestGenerationReason
+    from services import personal_digest
+
+    current = dt.datetime.combine(
+        dt.datetime.now(personal_digest.SHANGHAI).date(),
+        dt.time(8, 31),
+        personal_digest.SHANGHAI,
+    )
+    with Session(sink.engine) as session:
+        session.add(AppSettingRecord(key="daily_brief_enabled", value="true"))
+        session.add(ReaderSubscriptionRecord(
+            owner_username="alice",
+            name="Public brief",
+            filters_json='{"source_ids":"dorami_daily_brief"}',
+            delivery_policy_json="{}",
+            token_hash="hash-daily",
+            token_preview="hash-daily",
+            is_active=True,
+            created_at=current.isoformat(),
+            updated_at=current.isoformat(),
+        ))
+        old = ArticleRecord(
+            id="daily_brief_yesterday",
+            title="Yesterday",
+            content_type="daily_brief",
+            source_id="dorami_daily_brief",
+            source_url="",
+            publish_date=(current.date() - dt.timedelta(days=1)).isoformat(),
+            fetched_date=(current - dt.timedelta(hours=12)).isoformat(),
+            has_content=True,
+            content="old brief",
+        )
+        session.add(old)
+        session.flush()
+        session.add(ArticleAnalysisRecord(
+            article_id=old.id,
+            status="succeeded",
+            tagging_status="succeeded",
+            quality_score=8.0,
+            created_at=current.isoformat(),
+            updated_at=current.isoformat(),
+        ))
+        session.commit()
+        pending = personal_digest.start_personal_digest_edition(
+            session,
+            "alice",
+            now=current,
+            generation_reason=DigestGenerationReason.FIRST_OPEN,
+            first_open_at=current,
+        ).edition
+        assert pending is not None
+        assert "dorami_daily_brief" in json.loads(pending.due_source_ids_json)
+
+        unchanged = personal_briefs.process_pending_edition(session, pending, now=current)
+
+        assert unchanged.status == "pending"
+
+
+def test_generation_exception_after_terminal_cas_rolls_back_before_marking_failed(monkeypatch, tmp_path):
+    _app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
+    from api.routers import personal_briefs
+    from models.analysis_contracts import DigestGenerationReason
+    from models.db import PersonalDigestEditionRecord, PersonalDigestItemRecord
+    from services import personal_digest
+
+    current = dt.datetime.combine(
+        dt.datetime.now(personal_digest.SHANGHAI).date(),
+        dt.time(9, 0),
+        personal_digest.SHANGHAI,
+    )
+    with Session(sink.engine) as session:
+        pending = personal_digest.start_personal_digest_edition(
+            session,
+            "alice",
+            now=current,
+            generation_reason=DigestGenerationReason.FIRST_OPEN,
+            first_open_at=current,
+        ).edition
+        assert pending is not None
+
+        def fail_snapshot(*_args, **_kwargs):
+            raise RuntimeError("snapshot failed after terminal CAS")
+
+        monkeypatch.setattr(personal_digest, "_snapshot", fail_snapshot)
+        failed = personal_briefs.process_pending_edition(session, pending, now=current)
+        edition_id = int(failed.id)
+
+    with Session(sink.engine) as session:
+        persisted = session.get(PersonalDigestEditionRecord, edition_id)
+        items = list(session.exec(
+            select(PersonalDigestItemRecord).where(PersonalDigestItemRecord.edition_id == edition_id)
+        ).all())
+        assert persisted.status == "failed"
+        assert "snapshot failed" in persisted.error
+        assert items == []
+
+
 def test_private_rss_does_not_block_digest_analysis_readiness(monkeypatch, tmp_path):
     """V1 private RSS is never sent to the LLM, so readiness must ignore it."""
 
-    _app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
+    app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
     from api.routers import personal_briefs
     from models.db import PersonalDigestEditionRecord
 
@@ -528,6 +659,15 @@ def test_private_rss_does_not_block_digest_analysis_readiness(monkeypatch, tmp_p
             updated_at=now.isoformat(),
         )
         assert personal_briefs._analysis_ready(session, edition, now) is True
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin")
+        response = client.put(
+            f"/api/source-configs/{source_id}",
+            json={"ai_analysis_enabled": True},
+        )
+        assert response.status_code == 400
+        assert "私有源" in response.json()["detail"]
 
 
 def test_runtime_taxonomy_retag_worker_consumes_published_job(monkeypatch, tmp_path):

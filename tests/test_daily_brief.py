@@ -322,6 +322,14 @@ def test_generate_attributes_usage_to_triggering_admin(tmp_path, monkeypatch):
 
 def test_generate_success_writes_and_advances_cursor(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
+    from services import personal_digest
+
+    notified = []
+    monkeypatch.setattr(
+        personal_digest,
+        "notify_public_daily_brief_ready",
+        lambda engine, *, report_date: notified.append((engine, report_date)),
+    )
     sink = _make_sink(tmp_path)
     _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
     _seed(sink.engine, "a2", "src_b", "2026-06-05T11:00:00")
@@ -331,6 +339,7 @@ def test_generate_success_writes_and_advances_cursor(tmp_path, monkeypatch):
     result = asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
     assert result["status"] == "success"
     assert result["article_id"] == "daily_brief_2026-06-06"
+    assert notified == [(sink.engine, "2026-06-06")]
 
     record = asyncio.run(sink.get("daily_brief_2026-06-06"))
     assert record is not None

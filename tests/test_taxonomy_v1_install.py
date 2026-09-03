@@ -103,3 +103,16 @@ def test_apply_review_rejects_content_tampering_even_with_original_manifest():
             review_apply.validate_review_catalog_binding(report, catalog)
     finally:
         storage.engine.dispose()
+
+
+def test_apply_review_rejects_injected_target_derived_aliases():
+    catalog = installer.load_catalog(installer.DEFAULT_CATALOG)
+    storage = DatabaseStorage(db_url="sqlite:///:memory:")
+    try:
+        with Session(storage.engine) as session:
+            report = review_prepare.prepare_review(session, catalog)
+        report["entries"][0]["source_labels"] = ["Injected Alias"]
+        with pytest.raises(ValueError, match="source_labels"):
+            review_apply.validate_review_catalog_binding(report, catalog)
+    finally:
+        storage.engine.dispose()

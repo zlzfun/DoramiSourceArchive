@@ -79,6 +79,49 @@ def validate_review_catalog_binding(
     if not expected or actual != expected:
         raise ValueError("review entries do not match the approved catalog content")
 
+    catalog_by_code = {
+        str(entry.get("code") or ""): entry
+        for entry in catalog.get("entries") or []
+        if isinstance(entry, dict)
+    }
+    for entry in report.get("entries") or []:
+        if not isinstance(entry, dict):
+            continue
+        code = str(entry.get("code") or "")
+        approved = catalog_by_code.get(code) or {}
+        allowed_candidates = {
+            (str(group.get("kind") or ""), taxonomy.normalize_label(label))
+            for group in approved.get("candidate_matches") or []
+            if isinstance(group, dict)
+            for label in group.get("labels") or []
+        }
+        source_candidates = entry.get("source_candidates") or []
+        if not isinstance(source_candidates, list):
+            raise ValueError(f"review source_candidates are invalid for {code}")
+        normalized_candidates: list[tuple[int, str, str, str]] = []
+        for candidate in source_candidates:
+            if not isinstance(candidate, dict):
+                raise ValueError(f"review source_candidates are invalid for {code}")
+            label = str(candidate.get("label") or "")
+            kind = str(candidate.get("kind") or "")
+            normalized = str(candidate.get("normalized_label") or "")
+            try:
+                candidate_id = int(candidate.get("candidate_id"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"review source candidate id is invalid for {code}") from exc
+            if candidate_id < 1 or normalized != taxonomy.normalize_label(label):
+                raise ValueError(f"review source candidate content is invalid for {code}")
+            if (kind, normalized) not in allowed_candidates:
+                raise ValueError(f"review source candidate is not approved for {code}")
+            normalized_candidates.append((candidate_id, kind, label, normalized))
+
+        expected_ids = [item[0] for item in normalized_candidates]
+        expected_labels = [item[2] for item in normalized_candidates]
+        if entry.get("source_candidate_ids") != expected_ids:
+            raise ValueError(f"review source_candidate_ids do not match source_candidates for {code}")
+        if entry.get("source_labels") != expected_labels:
+            raise ValueError(f"review source_labels do not match source_candidates for {code}")
+
 
 def approved_entries(report: dict[str, Any]) -> list[dict[str, Any]]:
     if report.get("status") != "human_review_required":

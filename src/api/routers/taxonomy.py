@@ -624,7 +624,10 @@ def queue_retag(
         taxonomy_service.queue_retag_job,
         session,
         taxonomy_version=version,
-        scope={"since": since, "tag_ids": [tag_id], "article_ids": body.article_ids},
+        # Closed-set retagging evaluates each article against the complete active
+        # taxonomy.  A per-tag filter would be misleading and is not supported by
+        # the worker contract; the path tag only identifies the admin action.
+        scope={"since": since, "article_ids": body.article_ids},
     )
     return {
         "id": job.id,
