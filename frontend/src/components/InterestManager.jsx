@@ -198,7 +198,7 @@ export default function InterestManager({ open, onboarding = false, onClose, onS
         <div className="form-sheet-foot">
           <span className="tiny-meta mr-auto">已关注 {followedCount} 个 · 已屏蔽 {mutedCount} 个</span>
           {onboarding ? (
-            <button type="button" disabled={!catalog || saving} className="action-button action-button-quiet min-h-[32px] px-3 text-xs" onClick={() => handleSave({ skip: true })}>暂不关注，直接开始</button>
+            <button type="button" disabled={saving} className="action-button action-button-quiet min-h-[32px] px-3 text-xs" onClick={() => handleSave({ skip: true })}>暂不关注，直接开始</button>
           ) : (
             <button type="button" className="action-button action-button-quiet min-h-[32px] px-3 text-xs" onClick={onClose}>取消</button>
           )}
