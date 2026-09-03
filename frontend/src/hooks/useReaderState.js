@@ -481,7 +481,10 @@ export function useReaderState({
     if (!id) return;
     if (showTranslation) { setShowTranslation(false); return; }
     const cached = translationCacheRef.current.get(id);
-    if (cached) { setTranslatedBody(cached.body); setTranslatedTitle(cached.title); setShowTranslation(true); return; }
+    // 译名缺失(上次标题翻译失败,服务端 title=null 且未缓存)→ 不定格回退值,再调一次:
+    // 正文在服务端命中缓存,只补译标题(codex 检视:此前把回退当译名缓存,整会话不再重试)
+    if (cached && cached.title) { setTranslatedBody(cached.body); setTranslatedTitle(cached.title); setShowTranslation(true); return; }
+    if (cached) { setTranslatedBody(cached.body); setTranslatedTitle(null); setShowTranslation(true); }
     setTranslating(true);
     try {
       const data = await translateArticle(id);

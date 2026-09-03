@@ -156,8 +156,9 @@ async def translate_article(
 ) -> dict:
     """翻译指定文章正文(及标题)为中文；命中缓存直接返回，否则翻译后写回 extensions_json。
 
-    返回 {"translation": str, "title": str, "cached": bool}。`title` 是中文标题:标题本已是
-    中文则原样返回不调 LLM;标题翻译失败不拖垮正文——回退原标题,下次调用再补。
+    返回 {"translation": str, "title": str | None, "cached": bool}。`title` 是中文标题:标题本已是
+    中文则原样返回不调 LLM;标题翻译失败不拖垮正文——响应 `title=None` 且不写缓存,
+    前端见 None 下次切译文时再调一次(正文命中缓存,只补标题)。
     `cached` 表示正文与标题均命中缓存(零 LLM 调用)。
     `pre_llm_check`(v3.43.2 codex 交叉检视 M02):成本准入回调,仅在缓存未命中、
     即将发起真实 LLM 调用前执行(抛异常即中止)——配额/预算是成本闸,缓存命中
@@ -200,11 +201,13 @@ async def translate_article(
     segments = _split_for_translation(body) if not body_cached else []
 
     async def _title_safely(http_client) -> str:
-        # 标题翻译失败不拖垮正文:回退原标题(不写缓存),下次调用再补
+        # 标题翻译失败不拖垮正文:不写缓存、响应 title=None,前端据此下次再补;
+        # 与正文分段同过并发信号量(codex 检视:map_concurrency=1 时曾并发两请求)
         try:
-            return await _translate_title(title, llm_config, usage_meta, http_client)
+            async with semaphore:
+                return await _translate_title(title, llm_config, usage_meta, http_client)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("标题翻译失败,回退原标题 article=%s: %s", article_id, exc)
+            logger.warning("标题翻译失败 article=%s: %s", article_id, exc)
             return ""
 
     # 正文分段与标题并发共享一个连接池,避免逐段重建连接/TLS 握手。
@@ -235,7 +238,8 @@ async def translate_article(
     await db_sink.update(article_id, {"extensions_json": json.dumps(ext, ensure_ascii=False)})
 
     if title_needed:
-        resolved_title = translated_title or (ext.get(TRANSLATION_TITLE_KEY) if title_cached else "") or title
+        # 译名不可得(本次失败)→ None:明确告诉前端「没有译名」,勿把原标题当译名缓存
+        resolved_title = translated_title or (ext.get(TRANSLATION_TITLE_KEY) if title_cached else "") or None
     else:
         resolved_title = title
     return {"translation": translated, "title": resolved_title, "cached": False}
