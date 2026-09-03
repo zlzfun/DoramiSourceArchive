@@ -6984,8 +6984,9 @@ input[type="radio"] {
   /* ── 视图轨:阅读器自己的一级视图导航(早报/文章/动态/社交/发现/兴趣) ──
      内容形态轴从中栏分段控件升格为一级视图;与应用导轨并列(Folo 的 dock+视图结构)。
      数值对齐样页(docs/design/dorami-onboarding-quiet.html):64px 带宽 / 品牌 32px /
-     钮 52×46 竖排「图标 + 11px 微标签」/ 自绘右侧 tooltip 只在全名长于标签时补充。
-     可发现性波 v3.45:icon-only(56px/38px 钮)对新用户读不出页面组织,改标签常显。 */
+     钮 52×46「图标 + 10px 微标签」/ 自绘右侧 tooltip 只在全名长于标签时补充。
+     可发现性波 v3.45:icon-only(56px/38px 钮)对新用户读不出页面组织,加微标签;
+     样页拍板常显,目检后改「轨面悬停整体揭示」(见 .reader-vrail-label 一节)。 */
   .reader-vrail {
     display: flex;
     flex-direction: column;
@@ -7014,10 +7015,8 @@ input[type="radio"] {
   .reader-vrail-btn {
     position: relative;
     display: inline-flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 3px;
     width: 52px;
     height: 46px;
     border: none;
@@ -7031,16 +7030,71 @@ input[type="radio"] {
   }
 
   .reader-vrail-btn svg { width: 18px; height: 18px; flex: none; }
+  /* 轨面悬停整体揭示(v3.45 方案二):常态只见居中图标(与旧 icon-only 轨同观感),
+     指针进入整条轨 / 键盘焦点落入轨内时,全部标签一起淡入上浮、图标同步上移 7px 让位;
+     离开后标签**挂起一段时间**再一起缓缓淡出。触屏无 hover → 标签常显。
+     节奏刻意慢于工作区 motion token(用户拍板「太仓促」):揭示是氛围不是反馈——
+     进 720ms、退 1400ms、离开后挂起 2400ms,三值集中在下面三个变量。 */
+  .reader-vrail,
+  .app-rail {
+    --rail-reveal-in: 720ms;
+    --rail-reveal-out: 1400ms;
+    --rail-reveal-linger: 2400ms;
+  }
+  .reader-vrail-btn > svg,
+  .reader-vrail-btn .vrail-btn-dot {
+    transition: transform var(--rail-reveal-out) var(--motion-ease) var(--rail-reveal-linger);
+  }
+  .reader-vrail:hover .reader-vrail-btn > svg,
+  .reader-vrail:focus-within .reader-vrail-btn > svg,
+  .app-rail:hover .reader-vrail-btn > svg,
+  .app-rail:focus-within .reader-vrail-btn > svg,
+  .reader-vrail:hover .reader-vrail-btn .vrail-btn-dot,
+  .reader-vrail:focus-within .reader-vrail-btn .vrail-btn-dot,
+  .app-rail:hover .reader-vrail-btn .vrail-btn-dot,
+  .app-rail:focus-within .reader-vrail-btn .vrail-btn-dot {
+    transform: translateY(-7px);
+    transition-duration: var(--rail-reveal-in);
+    transition-delay: 0s;
+  }
+  .reader-vrail:hover .reader-vrail-label,
+  .reader-vrail:focus-within .reader-vrail-label,
+  .app-rail:hover .reader-vrail-label,
+  .app-rail:focus-within .reader-vrail-label {
+    opacity: 1;
+    transform: none;
+    transition-duration: var(--rail-reveal-in);
+    transition-delay: 0s;
+  }
+  @media (hover: none) {
+    .reader-vrail-btn > svg, .reader-vrail-btn .vrail-btn-dot { transform: translateY(-7px); }
+    .reader-vrail-label { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .reader-vrail-btn > svg, .reader-vrail-btn .vrail-btn-dot, .reader-vrail-label { transition: none; }
+  }
 
-  /* 微标签(v3.45):11px/600——它是名字不是徽标,故不取 .micro-label 的 700;
-     两字短名(早报/文章/动态/社交/发现/兴趣/主题/反馈/设置,管理台三字是唯一例外)。
-     字号写在 span 上不受 button{font:inherit} 未分层陷阱影响(陷阱只压钮自身的 font)。 */
+  /* 微标签(v3.45):10px/500——它是图标的注脚,不是名字更不是徽标:目检 11px/600 与源栏
+     组头(10.5px/700 加字距)几乎同一分量,像同层级文字;降到 10/500 才退到图标之下、
+     与组头拉开一档(五档并排目检拍板)。两字短名(早报/文章/动态/社交/发现/兴趣/主题/
+     反馈/设置,管理台三字是唯一例外)。字号写在 span 上不受 button{font:inherit}
+     未分层陷阱影响(陷阱只压钮自身的 font)。 */
   .reader-vrail-label {
-    font-size: 11px;
-    font-weight: 600;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 6px;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 500;
     line-height: 1;
-    letter-spacing: 0.01em;
+    letter-spacing: 0.08em;
     white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(3px);
+    transition: opacity var(--rail-reveal-out) var(--motion-ease) var(--rail-reveal-linger),
+                transform var(--rail-reveal-out) var(--motion-ease) var(--rail-reveal-linger);
   }
 
   .reader-vrail-btn:hover {
@@ -7132,7 +7186,7 @@ input[type="radio"] {
   /* 轨钮通知点(反馈有新回复):挂钮本体右上、贴图标角;描边用轨底色把点「抠」出来 */
   .vrail-btn-dot {
     position: absolute;
-    top: 5px;
+    top: 12px;
     right: 11px;
     width: 7px;
     height: 7px;
