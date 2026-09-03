@@ -13,6 +13,7 @@ deps.get_db_sink()。
 import hashlib
 import hmac
 import json
+import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -23,6 +24,7 @@ from api import deps
 from api.articles_view import apply_article_query_filters
 from api.textutils import _coerce_bool, _json_loads, _now_iso
 from models.db import ArticleRecord
+from services import article_analysis as article_analysis_service
 
 router = APIRouter(tags=["archive-sync"])
 
@@ -121,6 +123,7 @@ def import_archive_sync_jsonl(raw_text: str) -> Dict[str, Any]:
     error_count = 0
     manifest: Optional[Dict[str, Any]] = None
     errors = []
+    changed_article_ids: list[str] = []
 
     with Session(deps.get_db_sink().engine) as session:
         for line_number, raw_line in enumerate(raw_text.splitlines(), start=1):
@@ -153,6 +156,7 @@ def import_archive_sync_jsonl(raw_text: str) -> Dict[str, Any]:
                 if not existing:
                     session.add(incoming)
                     imported_count += 1
+                    changed_article_ids.append(incoming.id)
                     continue
                 if not existing.has_content and incoming.has_content and incoming.content:
                     existing.title = incoming.title
@@ -171,12 +175,28 @@ def import_archive_sync_jsonl(raw_text: str) -> Dict[str, Any]:
                     existing.extensions_json = incoming.extensions_json
                     session.add(existing)
                     updated_count += 1
+                    changed_article_ids.append(existing.id)
                 else:
                     skipped_count += 1
             except Exception as exc:
                 error_count += 1
                 errors.append({"line": line_number, "error": str(exc)})
         session.commit()
+        try:
+            if article_analysis_service.read_feature_flag(
+                session,
+                article_analysis_service.ARTICLE_ANALYSIS_ENABLED_KEY,
+                default=False,
+            ):
+                for article_id in dict.fromkeys(changed_article_ids):
+                    article_analysis_service.queue_article_analysis(session, article_id)
+                session.commit()
+        except Exception as exc:  # noqa: BLE001 - imported articles are already committed
+            session.rollback()
+            logging.getLogger("dorami.article_analysis").warning(
+                "归档导入后的分析入队失败，将由补偿扫描恢复: %s",
+                article_analysis_service.sanitize_error(exc),
+            )
 
     return {
         "status": "partial_success" if error_count else "success",

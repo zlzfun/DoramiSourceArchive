@@ -24,6 +24,8 @@ EXPECTED_AUTHENTICATED_ANY = {
     # 视图,暴露面不超过列表本身(台账优化波新增时漏登记,此处补记)。
     ("GET", "/api/articles/facets"),
     ("GET", "/api/articles/{article_id:path}"),
+    # 与文章详情完全同一可见性边界；私有源和隐藏源在 handler 内再次按不存在处理。
+    ("GET", "/api/articles/{article_id:path}/analysis"),
     ("GET", "/api/runtime"),
     ("POST", "/api/auth/avatar"),
     ("POST", "/api/auth/change-password"),

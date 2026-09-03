@@ -42,6 +42,45 @@ def _seed(engine, article_id, source_id, fetched_date, *, content="正文内容"
         session.commit()
 
 
+def _seed_persisted_analysis(engine, article_id, *, score=4.5, genre="research_paper"):
+    from models.db import (
+        ArticleAnalysisRecord,
+        ArticleTagAssignmentRecord,
+        CmsTagRecord,
+    )
+
+    now = "2026-06-05T12:00:00+00:00"
+    with Session(engine) as session:
+        topic = CmsTagRecord(
+            code=f"topic-{article_id}", kind="topic", name_zh="智能体", name_en="Agent",
+            normalized_name=f"agent-{article_id}", status="active", created_at=now, updated_at=now,
+        )
+        entity = CmsTagRecord(
+            code=f"entity-{article_id}", kind="entity", name_zh="", name_en="OpenAI",
+            normalized_name=f"openai-{article_id}", status="active", created_at=now, updated_at=now,
+        )
+        session.add(topic)
+        session.add(entity)
+        session.flush()
+        session.add(ArticleAnalysisRecord(
+            article_id=article_id, status="succeeded", tagging_status="succeeded",
+            quality_score=score, score_reason="这是文章级评分理由，不能变成公共点评",
+            one_sentence_summary="新一句话摘要", summary="- 新摘要第一点\n- 新摘要第二点",
+            content_genre=genre, content_hash="hash", model_name="analysis-model",
+            prompt_version="article-analysis-v1", scoring_version="content-value-v1",
+            analyzed_at=now, tagged_at=now, created_at=now, updated_at=now,
+        ))
+        session.add(ArticleTagAssignmentRecord(
+            article_id=article_id, tag_id=topic.id, tag_kind="topic", is_primary=True,
+            relevance=0.9, assignment_source="llm", created_at=now, updated_at=now,
+        ))
+        session.add(ArticleTagAssignmentRecord(
+            article_id=article_id, tag_id=entity.id, tag_kind="entity", is_primary=False,
+            relevance=0.99, assignment_source="llm", created_at=now, updated_at=now,
+        ))
+        session.commit()
+
+
 async def _fake_chat_completion(*, messages, config, **kwargs):
     system = messages[0].content
     if "title_cn" in system and "score" in system:  # MAP
@@ -283,6 +322,14 @@ def test_generate_attributes_usage_to_triggering_admin(tmp_path, monkeypatch):
 
 def test_generate_success_writes_and_advances_cursor(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
+    from services import personal_digest
+
+    notified = []
+    monkeypatch.setattr(
+        personal_digest,
+        "notify_public_daily_brief_ready",
+        lambda engine, *, report_date: notified.append((engine, report_date)),
+    )
     sink = _make_sink(tmp_path)
     _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
     _seed(sink.engine, "a2", "src_b", "2026-06-05T11:00:00")
@@ -292,6 +339,7 @@ def test_generate_success_writes_and_advances_cursor(tmp_path, monkeypatch):
     result = asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
     assert result["status"] == "success"
     assert result["article_id"] == "daily_brief_2026-06-06"
+    assert notified == [(sink.engine, "2026-06-06")]
 
     record = asyncio.run(sink.get("daily_brief_2026-06-06"))
     assert record is not None
@@ -801,3 +849,117 @@ def test_map_summarize_retries_transient_failure(monkeypatch):
     results = asyncio.run(map_summarize([cand], CONFIGURED))
     assert calls["n"] == 2
     assert results[0].map_ok is True  # 重试救回,不再定格失败
+
+
+# ---------------- 公共日报 analysis shadow / adapter (WP-5) ----------------
+
+def test_content_genre_mapping_covers_controlled_enum():
+    expected = {
+        "model_release": "模型发布", "product_update": "行业资讯",
+        "open_source_update": "开源动态", "research_paper": "学术论文",
+        "tutorial": "行业资讯", "opinion": "行业资讯",
+        "industry_news": "行业资讯", "conference": "技术大会",
+        "social_discussion": "社交动态", "aggregation": "资讯聚合",
+        "security_incident": "行业资讯", "regulation": "行业资讯",
+        "other": "资讯聚合",
+    }
+    assert {
+        genre: db.content_genre_to_legacy_classification(genre)
+        for genre in expected
+    } == expected
+    assert db.content_genre_to_legacy_classification("") == ""
+    assert db.content_genre_to_legacy_classification("future_genre") == ""
+
+
+def test_analysis_adapter_batch_loads_canonical_tags_and_preserves_comment(tmp_path):
+    sink = _make_sink(tmp_path, "adapter_unit.db")
+    _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
+    _seed_persisted_analysis(sink.engine, "a1")
+    legacy = _scored_full(8, item_id="a1", classification="行业资讯", summary=["旧摘要"])
+    legacy.comment = "旧公共点评"
+    legacy.tags = ["旧自由标签"]
+
+    with Session(sink.engine) as session:
+        persisted = db.load_persisted_analysis_compat(session, ["a1"])
+    assert persisted["a1"].canonical_tags == ("智能体", "OpenAI")
+
+    [adapted] = db.apply_persisted_analysis_adapter([legacy], persisted)
+    assert adapted.score == 4.5
+    assert adapted.classification == "学术论文"
+    assert adapted.summary == ["新摘要第一点", "新摘要第二点"]
+    assert adapted.tags == ["智能体", "OpenAI"]
+    assert adapted.comment == "旧公共点评"  # 绝不替换为 score_reason
+    assert legacy.score == 8 and legacy.summary == ["旧摘要"]  # shadow 输入未被原地改写
+
+
+def test_analysis_adapter_never_promotes_a_failed_legacy_map_item(tmp_path):
+    sink = _make_sink(tmp_path, "adapter_failed_map.db")
+    _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
+    _seed_persisted_analysis(sink.engine, "a1")
+    failed = _scored_full(1, item_id="a1", classification="资讯聚合", summary=[])
+    failed.map_ok = False
+
+    with Session(sink.engine) as session:
+        persisted = db.load_persisted_analysis_compat(session, ["a1"])
+    [adapted] = db.apply_persisted_analysis_adapter([failed], persisted)
+
+    assert adapted.map_ok is False
+    assert adapted.score == 4.5
+
+
+def test_adapter_flag_off_is_byte_compatible_and_records_shadow(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
+
+    def _run(name, explicit_false):
+        sink = _make_sink(tmp_path, name)
+        _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
+        _seed_persisted_analysis(sink.engine, "a1")
+        with Session(sink.engine) as session:
+            db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+            if explicit_false:
+                db.set_setting(session, db.KEY_ANALYSIS_ADAPTER_ENABLED, "false")
+        asyncio.run(generate_daily_brief(
+            storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"
+        ))
+        record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+        with Session(sink.engine) as session:
+            metrics = db.get_json_setting(session, db.KEY_ANALYSIS_SHADOW_METRICS, {})
+        return record.content, json.loads(record.extensions_json)["items"], metrics
+
+    implicit = _run("adapter_default_off.db", False)
+    explicit = _run("adapter_explicit_off.db", True)
+    assert implicit[:2] == explicit[:2]  # 正文与结构化输出逐值一致
+    content, [item], metrics = implicit
+    assert "## 🌐 资讯聚合" in content  # legacy 的未知「产业资讯」照旧回落
+    assert item["score"] == 8
+    assert item["classification"] == "产业资讯"
+    assert item["summary"] == ["**X**：细节"]
+    assert item["tags"] == ["标签"]
+    assert item["comment"] == "点评"
+    assert metrics["adapter_enabled"] is False
+    assert metrics["comparable_count"] == 1
+    assert metrics["score_mean_abs_delta"] == 3.5
+
+
+def test_adapter_flag_on_reads_analysis_without_adding_seven_point_gate(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
+    sink = _make_sink(tmp_path, "adapter_on.db")
+    _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
+    _seed_persisted_analysis(sink.engine, "a1", score=4.5, genre="research_paper")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+        db.set_setting(session, db.KEY_ANALYSIS_ADAPTER_ENABLED, "true")
+
+    result = asyncio.run(generate_daily_brief(
+        storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"
+    ))
+    assert result["articles_count"] == 1  # 4.5 分仍入选：未擅自启用个人日报 7 分门槛
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    [item] = json.loads(record.extensions_json)["items"]
+    assert item["score"] == 4.5
+    assert item["classification"] == "学术论文"
+    assert item["summary"] == ["新摘要第一点", "新摘要第二点"]
+    assert item["tags"] == ["智能体", "OpenAI"]
+    assert item["comment"] == "点评"
+    assert "score_reason" not in item
+    assert "## 📄 学术论文（1 篇）" in record.content

@@ -74,6 +74,7 @@ export function useReaderState({
   // ── 站内分享深链(#/reader/a/{id}):带 id 进来时直接开这篇,消费后回调清空 ──
   initialArticleId = '',
   onDeepLinkConsumed,
+  onBeforeOpenArticle,
 }) {
   const [sources, setSources] = useState([]);
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
@@ -93,9 +94,23 @@ export function useReaderState({
   const [discoverCollectionId, setDiscoverCollectionId] = useState(null);
   const [collectionPinningId, setCollectionPinningId] = useState(null);
 
-  const [searchInput, setSearchInput] = useState('');
+  const [searchInput, setSearchInputState] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [displayTagQuery, setDisplayTagQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false); // 「搜索」开合中栏搜索行
+
+  const setSearchInput = useCallback((value) => {
+    setSearchInputState(value);
+    setDisplayTagQuery('');
+  }, []);
+  const searchForLabel = useCallback((label) => {
+    const value = String(label || '').trim();
+    if (!value) return;
+    setSearchOpen(true);
+    setSearchInputState(value);
+    setSearchQuery(value);
+    setDisplayTagQuery(value);
+  }, []);
 
   // ── 容器模型(Folo 语义):文章/动态/社交是三个内容宇宙,各自渲染形态不同 ──
   // 'article'(默认) | 'bulletin' | 'social'。选中源=在容器内收窄(mode 与 activeSourceId
@@ -472,7 +487,8 @@ export function useReaderState({
           const filters = {};
           if (activeSourceId) filters.source_id = activeSourceId;
           else filters.shape = mode;
-          if (searchQuery) filters.search = searchQuery;
+          if (displayTagQuery) filters.display_tag = displayTagQuery;
+          else if (searchQuery) filters.search = searchQuery;
           // 社交收藏也走卡片流,需要 extensions(引用推/转推/头像)——与非收藏分支一致
           return fetchFavorites(filters, PAGE_SIZE, skip, { signal, includeContent: mode === 'social' });
         }
@@ -482,7 +498,8 @@ export function useReaderState({
           filters.subscribed_scope = 'only'; // 聚合视图：后端硬过滤到已订阅源
           filters.shape = mode; // 容器分流(文章/动态/社交各取自己那类)
         }
-        if (searchQuery) filters.search = searchQuery;
+        if (displayTagQuery) filters.display_tag = displayTagQuery;
+        else if (searchQuery) filters.search = searchQuery;
         filters.with_unread = 'true';           // 条目附页级未读标记（水位由 unread-counts 校准）
         if (unreadOnly) filters.unread_only = 'true';
         // 社交流全文直出(推文正文 2~4 行,取回零负担),且卡片要 extensions
@@ -503,7 +520,7 @@ export function useReaderState({
     // 等用户主动点选一篇才加载正文并计一次阅读（见 selectArticle）。
     if (!append) setFreshCount(0); // 列表已刷新,新内容提示归零
     if (append) setLoadingMore(false); else setArticlesLoading(false);
-  }, [activeSourceId, activeSourceHidden, searchQuery, favOnly, unreadOnly, mode, showToast, runList]);
+  }, [activeSourceId, activeSourceHidden, searchQuery, displayTagQuery, favOnly, unreadOnly, mode, showToast, runList]);
 
   // 切换来源/搜索 → 重置列表、回顶、清空右栏
   // 用 useLayoutEffect：在绘制前同步进入加载态，避免「切源瞬间旧列表被画出一帧」的陈旧帧闪现
@@ -965,6 +982,7 @@ export function useReaderState({
       const article = await fetchArticle(articleId);
       if (!article?.id) throw new Error('empty');
       const ctx = deepLinkCtxRef.current;
+      onBeforeOpenArticle?.();
       deepLinkKeepRef.current = true; // 通知作用域清场 effect:这次切换保留右栏(见 useLayoutEffect)
       setDiscover(false);
       setFavOnly(false);
@@ -976,7 +994,7 @@ export function useReaderState({
       if (!silent) showToast('这篇文章已不在库中', 'error');
       return false;
     }
-  }, [showToast]);
+  }, [onBeforeOpenArticle, showToast]);
   // doneRef 存「已启动消费的 id」而非布尔:同一 id 在消费在途时 deps 重建重跑 effect
   // 不会双跳;消费完成后 App 清空 initialArticleId,这里同步清 doneRef——运行时深链
   // (粘进已开 tab,经 App 的 onPop 再次设值,含同一篇重复粘贴)才能再次落地。
@@ -1068,7 +1086,7 @@ export function useReaderState({
     goView, goSource, goContainerAll, goFavorites,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
-    searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch,
+    searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch, searchForLabel,
     // 未读体系
     unreadBySource, unreadOnly, setUnreadOnly, scopeUnread, unreadByShape,
     isArticleUnread, toggleArticleRead, handleTogglePaneRead, handleToggleSocialRead,

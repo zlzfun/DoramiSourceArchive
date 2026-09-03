@@ -183,6 +183,7 @@ def test_add_custom_source_end_to_end(monkeypatch, tmp_path):
             record = session.get(SourceConfigRecord, source_id)
             assert record is not None and record.owner_username == "alice"
             assert record.source_type == "rss" and record.category == "user"
+            assert record.ai_analysis_enabled is False
             params = jsonlib.loads(record.params_json)
             # 最简正文拍板:feed 给什么存什么,永不触发详情补抓
             assert params["fetch_detail_if_missing"] is False
@@ -196,6 +197,13 @@ def test_add_custom_source_end_to_end(monkeypatch, tmp_path):
         listing = client.get("/api/reader/custom-sources").json()
         assert [i["source_id"] for i in listing["items"]] == [source_id]
         assert listing["quota"]["used"] == 1
+
+        denied = client.put(
+            f"/api/reader/custom-sources/{source_id}/ai-analysis",
+            json={"enabled": True},
+        )
+        assert denied.status_code == 409
+        assert "逐订阅用户授权" in denied.json()["detail"]
 
 
 def test_preview_endpoint_returns_entries_and_quota(monkeypatch, tmp_path):

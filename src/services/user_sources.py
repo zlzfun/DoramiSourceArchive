@@ -538,6 +538,9 @@ def prepare_user_source(
         fetcher_id="",  # resolve_source_fetcher_id 按 source_type 路由 generic_rss
         description="",
         owner_username=username,
+        # V1 has no per-subscriber consent/cost attribution for shared custom
+        # feeds, so private content must never be sent to a third-party model.
+        ai_analysis_enabled=False,
         is_active=True,
         # 最简正文拍板:feed 给什么存什么,不触发详情页补抓。ssrf_guard 与响应上限
         # 由 generic_rss 执行层承接(检视返修 D2/D3:首抓/调度/手工抓取全通道生效)。
@@ -581,12 +584,35 @@ def list_user_sources(session: Session, username: Optional[str] = None) -> List[
             "feed_url": record.url,
             "owner_username": record.owner_username,
             "is_active": record.is_active,
+            "ai_analysis_enabled": record.ai_analysis_enabled,
             "created_at": record.created_at,
             "status": state.status if state else "never_run",
             "consecutive_failures": state.consecutive_failures if state else 0,
             "last_success_at": (state.last_success_at or "") if state else "",
         })
     return items
+
+
+def set_user_source_ai_analysis(
+    session: Session, username: str, source_id: str, enabled: bool
+) -> SourceConfigRecord:
+    """Keep private-feed analysis disabled until per-subscriber consent exists."""
+
+    with _WRITE_LOCK:
+        record = get_user_source(session, source_id)
+        if record is None or record.owner_username != username:
+            raise LookupError("自定源不存在")
+        if enabled:
+            raise UserSourceQuotaError(
+                "自定源 AI 分析暂未开放：需先实现逐订阅用户授权",
+                status_code=409,
+            )
+        record.ai_analysis_enabled = False
+        record.updated_at = _now_iso()
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return record
 
 
 # ==================== 删除(退订 + 无人订阅即清) ====================

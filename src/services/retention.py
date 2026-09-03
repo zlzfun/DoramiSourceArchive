@@ -3,13 +3,16 @@
 若干「只增不删」的埋点/明细表会随运行时长单调膨胀。本服务对它们做滚动窗
 清理：超出各自保留窗口的历史行按时间字段删除，窗口内的行原样保留。
 
-覆盖两类表，故窗口分档：
+覆盖三类数据，故窗口分档：
 - **明细事件表**（每条操作/登录/抓取各一行，增速快）——窗口较短：
   `fetch_runs`（抓取运行历史）与 `collection_job_runs`（任务级运行，与其
   child fetch_runs 同窗对齐）各 180 天、`login_events`（登录事件）365 天、
   `admin_audit_logs`（管理操作审计）365 天。
 - **按天聚合表**（一天一用户一维度才一行，增速慢）——窗口更长：
   `ai_usage`（AI 用量）、`reader_reads`（阅读计量）各 730 天。
+- **分析与个人日报派生历史**：文章分析 attempt 保留 180 天；终态
+  `tag_retag_jobs` 保留 180 天；终态个人日报 edition 保留 365 天，条目随 edition
+  级联删除。文章本体、当前分析结果和活跃任务不在清理范围。
 
 条件性清理（v3.43 审计 M14，谓词不止时间窗，见 `_conditional_cleanups`）：
 - `jobs`（后台任务状态机）：**终态**（succeeded/failed/cancelled）满 90 天删除，
@@ -52,13 +55,16 @@ from sqlmodel import Session
 from models.db import (
     AdminAuditRecord,
     AiUsageRecord,
+    ArticleAnalysisAttemptRecord,
     ArticleShareRecord,
     CollectionJobRunRecord,
     FeedbackRecord,
     FetchRunRecord,
     JobRecord,
     LoginEventRecord,
+    PersonalDigestEditionRecord,
     ReaderReadRecord,
+    TagRetagJobRecord,
 )
 
 logger = logging.getLogger("dorami.retention")
@@ -80,6 +86,12 @@ _TABLES: List[_TableRetention] = [
     _TableRetention(AdminAuditRecord, AdminAuditRecord.at, 365, "admin_audit_logs"),
     _TableRetention(AiUsageRecord, AiUsageRecord.day, 730, "ai_usage"),
     _TableRetention(ReaderReadRecord, ReaderReadRecord.day, 730, "reader_reads"),
+    _TableRetention(
+        ArticleAnalysisAttemptRecord,
+        ArticleAnalysisAttemptRecord.created_at,
+        180,
+        "article_analysis_attempts",
+    ),
 ]
 
 # 后台任务终态集合（与 services/jobs.py 的状态机一致）：只有终态行才可清理。
@@ -88,6 +100,8 @@ _JOBS_RETENTION_DAYS = 90
 _FEEDBACK_CLOSED_STATUSES = ("resolved", "dismissed")
 _FEEDBACK_RETENTION_DAYS = 365
 _SHARES_RETENTION_DAYS = 180
+_ANALYSIS_JOB_RETENTION_DAYS = 180
+_PERSONAL_DIGEST_RETENTION_DAYS = 365
 
 
 def _conditional_cleanups(today: datetime.date) -> List[tuple]:
@@ -104,6 +118,8 @@ def _conditional_cleanups(today: datetime.date) -> List[tuple]:
     )
     feedback_cutoff = _cutoff(_FEEDBACK_RETENTION_DAYS, today=today)
     shares_cutoff = _cutoff(_SHARES_RETENTION_DAYS, today=today)
+    analysis_job_cutoff = _cutoff(_ANALYSIS_JOB_RETENTION_DAYS, today=today)
+    personal_digest_cutoff = _cutoff(_PERSONAL_DIGEST_RETENTION_DAYS, today=today)
     return [
         (
             "jobs",
@@ -129,6 +145,24 @@ def _conditional_cleanups(today: datetime.date) -> List[tuple]:
                     ArticleShareRecord.revoked_at < shares_cutoff,
                     ArticleShareRecord.expires_at < shares_cutoff,
                 )
+            ),
+        ),
+        (
+            "tag_retag_jobs",
+            delete(TagRetagJobRecord).where(
+                TagRetagJobRecord.status.in_((
+                    "succeeded", "partial_failed", "failed", "cancelled",
+                )),
+                TagRetagJobRecord.updated_at < analysis_job_cutoff,
+            ),
+        ),
+        (
+            "personal_digest_editions",
+            delete(PersonalDigestEditionRecord).where(
+                PersonalDigestEditionRecord.status.in_((
+                    "ready", "degraded", "failed", "superseded",
+                )),
+                PersonalDigestEditionRecord.updated_at < personal_digest_cutoff,
             ),
         ),
     ]

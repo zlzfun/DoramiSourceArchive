@@ -24,13 +24,20 @@ from sqlmodel import Session, select  # noqa: E402
 
 from models.db import (  # noqa: E402
     AiUsageRecord,
+    ArticleAnalysisAttemptRecord,
+    ArticleRecord,
     ArticleShareRecord,
     CollectionJobRunRecord,
     FeedbackRecord,
     FetchRunRecord,
     JobRecord,
+    PersonalDigestEditionRecord,
+    PersonalDigestItemRecord,
     ReaderReadRecord,
     SourceStateRecord,
+    TagRetagJobRecord,
+    TaxonomyVersionRecord,
+    UserRecord,
 )
 from services import ai_usage, reader_activity, retention  # noqa: E402
 from services.accounts import create_user, last_login_for_user, touch_login  # noqa: E402
@@ -156,6 +163,115 @@ def test_retention_still_covers_fetch_runs(tmp_path):
         session.commit()
     deleted = retention.run_retention_cleanup(engine)
     assert deleted["fetch_runs"] == 1
+
+
+def test_retention_covers_analysis_history_and_terminal_digest_snapshots(tmp_path):
+    engine = _engine(tmp_path)
+    old_attempt = _iso_days_ago(200)
+    old_digest = _iso_days_ago(400)
+    recent = _iso_days_ago(5)
+    with Session(engine) as session:
+        article = ArticleRecord(
+            id="retention-article",
+            title="Retention",
+            content_type="article",
+            source_id="public",
+            source_url="https://example.invalid/retention",
+            publish_date=recent,
+            fetched_date=recent,
+            has_content=True,
+            content="body",
+        )
+        session.add_all([
+            article,
+            UserRecord(
+                username="reader",
+                password_hash="hash",
+                role="user",
+                created_at=old_digest,
+                updated_at=recent,
+            ),
+            TaxonomyVersionRecord(
+                version=1,
+                status="active",
+                created_at=old_attempt,
+            ),
+        ])
+        session.flush()
+        session.add_all([
+            ArticleAnalysisAttemptRecord(
+                article_id=article.id,
+                attempt_no=1,
+                status="succeeded",
+                started_at=old_attempt,
+                ended_at=old_attempt,
+                created_at=old_attempt,
+            ),
+            ArticleAnalysisAttemptRecord(
+                article_id=article.id,
+                attempt_no=2,
+                status="succeeded",
+                started_at=recent,
+                ended_at=recent,
+                created_at=recent,
+            ),
+            TagRetagJobRecord(
+                taxonomy_version=1,
+                operation="retag_only",
+                status="succeeded",
+                created_at=old_attempt,
+                updated_at=old_attempt,
+            ),
+            TagRetagJobRecord(
+                taxonomy_version=1,
+                operation="retag_only",
+                status="running",
+                created_at=old_attempt,
+                updated_at=old_attempt,
+            ),
+        ])
+        ready = PersonalDigestEditionRecord(
+            owner_username="reader",
+            report_date="2025-01-01",
+            revision=1,
+            status="ready",
+            check_after=old_digest,
+            cutoff_at=old_digest,
+            created_at=old_digest,
+            updated_at=old_digest,
+        )
+        generating = PersonalDigestEditionRecord(
+            owner_username="reader",
+            report_date="2025-01-02",
+            revision=1,
+            status="generating",
+            check_after=old_digest,
+            cutoff_at=old_digest,
+            created_at=old_digest,
+            updated_at=old_digest,
+        )
+        session.add_all([ready, generating])
+        session.flush()
+        session.add(PersonalDigestItemRecord(
+            edition_id=ready.id,
+            article_id=article.id,
+            position=0,
+            section="资讯",
+            selection_lane="quality",
+            snapshot_json="{}",
+            created_at=old_digest,
+        ))
+        session.commit()
+
+    deleted = retention.run_retention_cleanup(engine)
+    assert deleted["article_analysis_attempts"] == 1
+    assert deleted["tag_retag_jobs"] == 1
+    assert deleted["personal_digest_editions"] == 1
+    with Session(engine) as session:
+        assert [row.attempt_no for row in session.exec(select(ArticleAnalysisAttemptRecord)).all()] == [2]
+        assert [row.status for row in session.exec(select(TagRetagJobRecord)).all()] == ["running"]
+        assert [row.status for row in session.exec(select(PersonalDigestEditionRecord)).all()] == ["generating"]
+        assert session.exec(select(PersonalDigestItemRecord)).all() == []
 
 
 # ══ M21 计量唯一约束与原子累加 ═════════════════════════════════════

@@ -56,6 +56,7 @@ class SourceConfigCreate(BaseModel):
     signal_strength: str = ""
     noise_risk: str = ""
     fetch_reliability: str = ""
+    ai_analysis_enabled: bool = True
     is_active: bool = True
     fetch_interval_minutes: Optional[int] = None
     cron_expr: str = ""
@@ -79,6 +80,7 @@ class SourceConfigUpdate(BaseModel):
     signal_strength: Optional[str] = None
     noise_risk: Optional[str] = None
     fetch_reliability: Optional[str] = None
+    ai_analysis_enabled: Optional[bool] = None
     is_active: Optional[bool] = None
     fetch_interval_minutes: Optional[int] = None
     cron_expr: Optional[str] = None
@@ -252,6 +254,7 @@ def create_source_config(params: SourceConfigCreate, session: Session = Depends(
         signal_strength=params.signal_strength.strip(),
         noise_risk=params.noise_risk.strip(),
         fetch_reliability=params.fetch_reliability.strip(),
+        ai_analysis_enabled=params.ai_analysis_enabled,
         is_active=params.is_active,
         fetch_interval_minutes=params.fetch_interval_minutes,
         cron_expr=params.cron_expr.strip(),
@@ -272,7 +275,12 @@ def update_source_config(source_id: str, params: SourceConfigUpdate, session: Se
     if not record:
         raise HTTPException(status_code=404, detail="数据源配置不存在")
 
-    update_data = params.dict(exclude_unset=True)
+    update_data = params.model_dump(exclude_unset=True)
+    if record.owner_username and update_data.get("ai_analysis_enabled") is True:
+        raise HTTPException(
+            status_code=400,
+            detail="V1 不允许把用户私有源发送给文章分析模型",
+        )
     for key, value in update_data.items():
         if key == "params":
             record.params_json = _json_dumps(value)

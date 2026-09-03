@@ -50,6 +50,7 @@ from models.db import (
 )
 from services import accounts as accounts_service
 from services import article_share as article_share_service
+from services.article_display_tags import article_ids_for_flexible_label
 from services import daily_brief as daily_brief_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
@@ -363,6 +364,10 @@ class CustomSourceParams(BaseModel):
     name: Optional[str] = None
 
 
+class CustomSourceAiAnalysisParams(BaseModel):
+    enabled: bool
+
+
 def _deny_unsubscribed_user_source_article(session: Session, username: str, article) -> None:
     """用户源文章的动作级授权(检视返修 F3):分享签发/AI 翻译/问答/速读等**动作**
     要求请求者是该源订阅者——按 id 直达的只读详情维持既有豁免(id 不可枚举)。"""
@@ -549,6 +554,29 @@ def list_custom_sources(request: Request, session: Session = Depends(deps.get_se
     }
 
 
+@router.put("/custom-sources/{source_id}/ai-analysis")
+def update_custom_source_ai_analysis(
+    source_id: str,
+    params: CustomSourceAiAnalysisParams,
+    request: Request,
+    session: Session = Depends(deps.get_session),
+):
+    username = _app().current_username(request)
+    try:
+        record = user_sources_service.set_user_source_ai_analysis(
+            session, username, source_id, params.enabled
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="自定源不存在")
+    except user_sources_service.UserSourceQuotaError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    return {
+        "status": "success",
+        "source_id": record.source_id,
+        "ai_analysis_enabled": record.ai_analysis_enabled,
+    }
+
+
 @router.delete("/custom-sources/{source_id}")
 def remove_custom_source(source_id: str, request: Request, session: Session = Depends(deps.get_session)):
     """移除自定源:退订本人;无其他活跃订阅者时物理删除(配置行+文章)。"""
@@ -685,6 +713,7 @@ def mark_source_all_read(source_id: str, request: Request, session: Session = De
 def list_favorites(
     request: Request,
     search: Optional[str] = None,
+    display_tag: Optional[str] = None,
     source_id: Optional[str] = None,
     shape: Optional[str] = None,
     skip: int = 0,
@@ -751,6 +780,11 @@ def list_favorites(
             cond = literal_column("articles.rowid").in_(fts_ids)
         else:
             cond = ArticleRecord.title.contains(search)
+        base = base.where(cond)
+        count_query = count_query.where(cond)
+    if display_tag:
+        flexible_article_ids = article_ids_for_flexible_label(session, display_tag)
+        cond = ArticleRecord.id.in_(flexible_article_ids or ["__none__"])
         base = base.where(cond)
         count_query = count_query.where(cond)
     base = base.order_by(ReaderFavoriteRecord.created_at.desc(), ArticleRecord.id.desc())

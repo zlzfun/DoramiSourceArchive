@@ -1,6 +1,6 @@
 from typing import Optional
 from sqlmodel import SQLModel, Field
-from sqlalchemy import Index
+from sqlalchemy import CheckConstraint, Index, UniqueConstraint, text
 
 
 class ArticleRecord(SQLModel, table=True):
@@ -37,6 +37,482 @@ class ArticleRecord(SQLModel, table=True):
     # 计量一并 +1。与 ReaderReadRecord（日×用户×来源聚合，运维口径）互补——
     # 本列是文章粒度的轻量计数器，供阅读窗标题下直接展示，免去逐请求聚合。
     read_count: int = Field(default=0, description="全站累计阅读次数")
+
+
+class CmsTagRecord(SQLModel, table=True):
+    """受控 taxonomy 中稳定、不可复用的规范概念。"""
+    __tablename__ = "cms_tags"
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_cms_tags_code"),
+        UniqueConstraint("kind", "normalized_name", name="uq_cms_tags_kind_normalized_name"),
+        Index("ix_cms_tags_kind_status_user_selectable", "kind", "status", "user_selectable"),
+        Index(
+            "uq_cms_tags_entity_external_key",
+            "external_key",
+            unique=True,
+            sqlite_where=text("kind = 'entity' AND external_key IS NOT NULL"),
+        ),
+        CheckConstraint("kind IN ('topic','industry','entity')", name="ck_cms_tags_kind"),
+        CheckConstraint(
+            "status IN ('draft','active','deprecated','merged')",
+            name="ck_cms_tags_status",
+        ),
+        CheckConstraint(
+            "activation_mode IN ('manual','automatic')",
+            name="ck_cms_tags_activation_mode",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    code: str = Field(description="稳定规范代码，创建后不可复用")
+    kind: str = Field(description="topic/industry/entity")
+    name_zh: str = Field(default="", description="中文展示名")
+    name_en: str = Field(default="", description="英文展示名")
+    normalized_name: str = Field(description="同分面内用于精确匹配的归一名称")
+    description: str = Field(default="", description="面向 CMS 的概念说明")
+    prompt_description: str = Field(default="", description="提供给打标 Prompt 的边界说明")
+    status: str = Field(default="draft", description="draft/active/deprecated/merged")
+    replacement_id: Optional[int] = Field(
+        default=None,
+        foreign_key="cms_tags.id",
+        ondelete="SET NULL",
+        description="合并或废弃后的规范替代项",
+    )
+    parent_id: Optional[int] = Field(
+        default=None,
+        foreign_key="cms_tags.id",
+        ondelete="SET NULL",
+        description="可选简单父级",
+    )
+    entity_type: str = Field(default="", description="仅 entity 使用的实体类型")
+    external_key: Optional[str] = Field(default=None, description="实体稳定外部标识")
+    user_selectable: bool = Field(default=False, description="是否进入用户兴趣目录")
+    filterable: bool = Field(default=True, description="是否允许结构化筛选")
+    recommendable: bool = Field(default=True, description="是否允许推荐策略消费")
+    activation_mode: str = Field(default="manual", description="manual/automatic")
+    taxonomy_version: int = Field(default=0, description="最近变更所属 taxonomy 版本快照")
+    created_at: str = Field(description="创建时间")
+    updated_at: str = Field(description="更新时间")
+
+
+class TaxonomyVersionRecord(SQLModel, table=True):
+    """全局 taxonomy 单调版本；当前版本不能从标签行反推。"""
+    __tablename__ = "taxonomy_versions"
+    __table_args__ = (
+        Index(
+            "uq_taxonomy_versions_one_active",
+            "status",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+        ),
+        CheckConstraint("status IN ('draft','active','retired')", name="ck_taxonomy_versions_status"),
+    )
+
+    version: int = Field(primary_key=True, description="单调递增版本号")
+    status: str = Field(default="draft", description="draft/active/retired")
+    change_summary: str = Field(default="", description="版本变更摘要")
+    activated_by: Optional[str] = Field(default=None, description="激活操作者")
+    activated_at: Optional[str] = Field(default=None, description="激活时间")
+    created_at: str = Field(description="创建时间")
+
+
+class ArticleAnalysisRecord(SQLModel, table=True):
+    """每篇文章当前权威的用户无关分析结果与可恢复任务状态。"""
+    __tablename__ = "article_analyses"
+    __table_args__ = (
+        Index(
+            "ix_article_analyses_scan",
+            "status",
+            "next_attempt_at",
+            "lease_expires_at",
+        ),
+        Index("ix_article_analyses_content_hash", "content_hash"),
+        CheckConstraint(
+            "status IN ('pending','running','succeeded','failed','skipped','timeout')",
+            name="ck_article_analyses_status",
+        ),
+        CheckConstraint(
+            "tagging_status IN ('pending','succeeded','partial','failed')",
+            name="ck_article_analyses_tagging_status",
+        ),
+        CheckConstraint(
+            "quality_score IS NULL OR (quality_score >= 1.0 AND quality_score <= 10.0)",
+            name="ck_article_analyses_quality_score",
+        ),
+        CheckConstraint(
+            "content_genre IS NULL OR content_genre IN ("
+            "'model_release','product_update','open_source_update','research_paper',"
+            "'tutorial','opinion','industry_news','conference','social_discussion',"
+            "'aggregation','security_incident','regulation','other')",
+            name="ck_article_analyses_content_genre",
+        ),
+    )
+
+    article_id: str = Field(
+        primary_key=True,
+        foreign_key="articles.id",
+        ondelete="CASCADE",
+        description="文章主键；一篇文章一份当前权威分析",
+    )
+    status: str = Field(default="pending", description="基础评分与摘要状态")
+    tagging_status: str = Field(default="pending", description="正式标签关联的独立状态")
+    quality_score: Optional[float] = Field(default=None, ge=1.0, le=10.0)
+    dimension_scores_json: str = Field(default="{}", description="内部版本化评分维度，不对外展示")
+    score_reason: str = Field(default="", description="面向用户的一段评分理由")
+    one_sentence_summary: str = Field(default="", description="一句话摘要")
+    summary: str = Field(default="", description="详细摘要")
+    content_genre: Optional[str] = Field(default=None, description="独立受控内容性质")
+    content_features_json: str = Field(default="[]", description="附加内容特征 JSON")
+    entities_json: str = Field(default="[]", description="LLM 原始实体与未归一候选 JSON")
+    display_tags_json: str = Field(
+        default="[]",
+        description="文章级自由展示标签快照；不参与兴趣、筛选或规范标签关系",
+    )
+    primary_tag_id: Optional[int] = Field(
+        default=None,
+        foreign_key="cms_tags.id",
+        ondelete="SET NULL",
+        description="列表查询缓存；真实关系以 assignment 为准",
+    )
+    content_hash: str = Field(default="", description="参与分析的标题与正文哈希")
+    model_name: str = Field(default="")
+    prompt_version: str = Field(default="")
+    scoring_version: str = Field(default="")
+    taxonomy_version: int = Field(default=0)
+    attempt_count: int = Field(default=0, ge=0)
+    started_at: Optional[str] = Field(default=None)
+    next_attempt_at: Optional[str] = Field(default=None)
+    lease_owner: Optional[str] = Field(default=None)
+    lease_expires_at: Optional[str] = Field(default=None)
+    last_error: Optional[str] = Field(default=None, description="截断且脱敏的错误摘要")
+    analyzed_at: Optional[str] = Field(default=None)
+    tagged_at: Optional[str] = Field(default=None)
+    created_at: str = Field(description="创建时间")
+    updated_at: str = Field(description="更新时间")
+
+
+class ArticleAnalysisAttemptRecord(SQLModel, table=True):
+    """文章分析/重标的逐次调用记录，只保存脱敏结果摘要。"""
+    __tablename__ = "article_analysis_attempts"
+    __table_args__ = (
+        UniqueConstraint("article_id", "attempt_no", name="uq_article_analysis_attempt_number"),
+        Index("ix_article_analysis_attempts_article_created", "article_id", "created_at"),
+        CheckConstraint(
+            "operation IN ('full_analysis','retag_only')",
+            name="ck_article_analysis_attempts_operation",
+        ),
+        CheckConstraint(
+            "status IN ('running','succeeded','failed','skipped','timeout')",
+            name="ck_article_analysis_attempts_status",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    article_id: str = Field(foreign_key="articles.id", ondelete="CASCADE")
+    attempt_no: int = Field(ge=1)
+    operation: str = Field(default="full_analysis", description="full_analysis/retag_only")
+    status: str = Field(default="running")
+    content_hash: str = Field(default="")
+    model_name: str = Field(default="")
+    prompt_version: str = Field(default="")
+    scoring_version: str = Field(default="")
+    taxonomy_version: int = Field(default=0)
+    started_at: str
+    ended_at: Optional[str] = Field(default=None)
+    duration_ms: Optional[int] = Field(default=None, ge=0)
+    error: Optional[str] = Field(default=None, description="截断且脱敏的错误摘要")
+    result_summary_json: str = Field(default="{}", description="不含私有正文和敏感 URL")
+    created_at: str
+
+
+class CmsTagAliasRecord(SQLModel, table=True):
+    """规范概念 Alias；归一后在同一分面内全局唯一。"""
+    __tablename__ = "cms_tag_aliases"
+    __table_args__ = (
+        UniqueConstraint("kind", "normalized_alias", name="uq_cms_tag_aliases_kind_normalized"),
+        Index("ix_cms_tag_aliases_tag_id", "tag_id"),
+        CheckConstraint("kind IN ('topic','industry','entity')", name="ck_cms_tag_aliases_kind"),
+        CheckConstraint(
+            "alias_type IN ('synonym','abbreviation','former_name','translation','misspelling')",
+            name="ck_cms_tag_aliases_type",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tag_id: int = Field(foreign_key="cms_tags.id", ondelete="CASCADE")
+    kind: str = Field(description="冗余分面，用于同分面 Alias 唯一约束")
+    locale: str = Field(default="")
+    alias: str
+    normalized_alias: str
+    alias_type: str = Field(default="synonym")
+    created_at: str
+    updated_at: str
+
+
+class ArticleTagAssignmentRecord(SQLModel, table=True):
+    """文章与 active 规范概念的关系及标注来源。"""
+    __tablename__ = "article_tag_assignments"
+    __table_args__ = (
+        UniqueConstraint("article_id", "tag_id", name="uq_article_tag_assignments_article_tag"),
+        Index("ix_article_tag_assignments_tag_article", "tag_id", "article_id"),
+        Index(
+            "uq_article_tag_assignments_primary_facet",
+            "article_id",
+            "tag_kind",
+            unique=True,
+            sqlite_where=text("is_primary = 1"),
+        ),
+        CheckConstraint("tag_kind IN ('topic','industry','entity')", name="ck_article_tag_assignments_kind"),
+        CheckConstraint(
+            "assignment_source IN ('llm','manual','rule','migration')",
+            name="ck_article_tag_assignments_source",
+        ),
+        CheckConstraint("relevance >= 0.0 AND relevance <= 1.0", name="ck_article_tag_assignments_relevance"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    article_id: str = Field(foreign_key="articles.id", ondelete="CASCADE")
+    tag_id: int = Field(foreign_key="cms_tags.id", ondelete="CASCADE")
+    tag_kind: str = Field(description="分面快照；服务层写入时必须与 cms_tags.kind 一致")
+    is_primary: bool = Field(default=False)
+    relevance: float = Field(default=0.0, ge=0.0, le=1.0)
+    assignment_source: str = Field(default="llm")
+    prompt_version: str = Field(default="")
+    taxonomy_version: int = Field(default=0)
+    created_at: str
+    updated_at: str
+
+
+class CmsTagCandidateRecord(SQLModel, table=True):
+    """未知词候选的幂等聚合行；计数必须从 evidence 聚合得出。"""
+    __tablename__ = "cms_tag_candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "proposed_kind",
+            "normalized_label",
+            name="uq_cms_tag_candidates_kind_normalized",
+        ),
+        Index("ix_cms_tag_candidates_status_last_seen", "status", "last_seen_at"),
+        Index("ix_cms_tag_candidates_kind_status", "proposed_kind", "status"),
+        CheckConstraint(
+            "proposed_kind IN ('topic','industry','entity')",
+            name="ck_cms_tag_candidates_kind",
+        ),
+        CheckConstraint(
+            "status IN ('candidate','reviewing','activated','merged','rejected')",
+            name="ck_cms_tag_candidates_status",
+        ),
+        CheckConstraint(
+            "mean_confidence >= 0.0 AND mean_confidence <= 1.0",
+            name="ck_cms_tag_candidates_mean_confidence",
+        ),
+        CheckConstraint(
+            "nearest_similarity IS NULL OR (nearest_similarity >= 0.0 AND nearest_similarity <= 1.0)",
+            name="ck_cms_tag_candidates_nearest_similarity",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    label: str = Field(description="CMS 展示用首选原始名称")
+    normalized_label: str
+    proposed_kind: str
+    status: str = Field(default="candidate")
+    support_article_count_7d: int = Field(default=0, ge=0)
+    support_article_count_30d: int = Field(default=0, ge=0)
+    distinct_source_count_7d: int = Field(default=0, ge=0)
+    distinct_source_count_30d: int = Field(default=0, ge=0)
+    distinct_day_count_7d: int = Field(default=0, ge=0)
+    distinct_day_count_30d: int = Field(default=0, ge=0)
+    mean_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    nearest_tag_id: Optional[int] = Field(
+        default=None,
+        foreign_key="cms_tags.id",
+        ondelete="SET NULL",
+    )
+    nearest_similarity: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    resolution_tag_id: Optional[int] = Field(
+        default=None,
+        foreign_key="cms_tags.id",
+        ondelete="SET NULL",
+        description="activated/merged 后解析到的规范标签",
+    )
+    sample_article_ids_json: str = Field(default="[]")
+    risk_flags_json: str = Field(default="[]")
+    first_seen_at: str
+    last_seen_at: str
+    created_at: str
+    updated_at: str
+
+
+class CmsTagCandidateEvidenceRecord(SQLModel, table=True):
+    """Candidate 与文章的唯一证据，防分析重试虚增频次。"""
+    __tablename__ = "cms_tag_candidate_evidence"
+    __table_args__ = (
+        Index("ix_cms_tag_candidate_evidence_article_id", "article_id"),
+        CheckConstraint("confidence >= 0.0 AND confidence <= 1.0", name="ck_candidate_evidence_confidence"),
+    )
+
+    candidate_id: int = Field(
+        primary_key=True,
+        foreign_key="cms_tag_candidates.id",
+        ondelete="CASCADE",
+    )
+    article_id: str = Field(
+        primary_key=True,
+        foreign_key="articles.id",
+        ondelete="CASCADE",
+    )
+    source_id: str
+    source_owner_or_domain: str = Field(default="")
+    published_date: str = Field(default="")
+    confidence: float = Field(ge=0.0, le=1.0)
+    raw_label: str
+    context_excerpt: str = Field(default="", description="最小必要且不得包含私有 RSS 正文")
+    prompt_version: str = Field(default="")
+    created_at: str
+
+
+class CmsTagEventRecord(SQLModel, table=True):
+    """Taxonomy 治理审计事件。"""
+    __tablename__ = "cms_tag_events"
+    __table_args__ = (
+        Index("ix_cms_tag_events_created_at", "created_at"),
+        CheckConstraint(
+            "action IN ('activate','rename','merge','deprecate','reject','change_flags','delete_candidate')",
+            name="ck_cms_tag_events_action",
+        ),
+        CheckConstraint("actor_type IN ('user','system')", name="ck_cms_tag_events_actor_type"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    action: str
+    source_tag_id: Optional[int] = Field(default=None, foreign_key="cms_tags.id", ondelete="SET NULL")
+    target_tag_id: Optional[int] = Field(default=None, foreign_key="cms_tags.id", ondelete="SET NULL")
+    actor_type: str = Field(default="user")
+    actor_id: str = Field(default="")
+    reason: str = Field(default="")
+    payload_json: str = Field(default="{}")
+    created_at: str
+
+
+class TagRetagJobRecord(SQLModel, table=True):
+    """小批量、带游标和租约的 taxonomy 重标任务。"""
+    __tablename__ = "tag_retag_jobs"
+    __table_args__ = (
+        Index("ix_tag_retag_jobs_claim", "status", "lease_expires_at"),
+        Index(
+            "uq_tag_retag_jobs_one_active_full_analysis",
+            "operation",
+            unique=True,
+            sqlite_where=text(
+                "operation = 'full_analysis' AND status IN ('queued','running','paused')"
+            ),
+        ),
+        CheckConstraint("operation IN ('full_analysis','retag_only')", name="ck_tag_retag_jobs_operation"),
+        CheckConstraint(
+            "status IN ('queued','running','paused','succeeded','partial_failed','failed','cancelled')",
+            name="ck_tag_retag_jobs_status",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    event_id: Optional[int] = Field(default=None, foreign_key="cms_tag_events.id", ondelete="SET NULL")
+    taxonomy_version: int = Field(foreign_key="taxonomy_versions.version", ondelete="RESTRICT")
+    operation: str = Field(default="retag_only")
+    scope_json: str = Field(default="{}")
+    status: str = Field(default="queued")
+    cursor: str = Field(default="")
+    affected_count: int = Field(default=0, ge=0)
+    succeeded_count: int = Field(default=0, ge=0)
+    failed_count: int = Field(default=0, ge=0)
+    lease_owner: Optional[str] = Field(default=None)
+    lease_expires_at: Optional[str] = Field(default=None)
+    last_error: Optional[str] = Field(default=None)
+    created_at: str
+    updated_at: str
+
+
+class TagRetagJobItemRecord(SQLModel, table=True):
+    """Per-article snapshot for resumable ``full_analysis`` backfills.
+
+    ``article_id_snapshot`` remains after an article is deleted so the job can
+    settle that target as skipped without retaining article content or URLs.
+    Retag-only jobs keep their lighter cursor implementation and do not create
+    item rows.
+    """
+
+    __tablename__ = "tag_retag_job_items"
+    __table_args__ = (
+        UniqueConstraint("job_id", "article_id_snapshot", name="uq_tag_retag_job_items_job_article"),
+        Index("ix_tag_retag_job_items_job_status_id", "job_id", "status", "id"),
+        Index("ix_tag_retag_job_items_article_id", "article_id"),
+        CheckConstraint(
+            "status IN ('pending','queued','succeeded','failed','skipped')",
+            name="ck_tag_retag_job_items_status",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    job_id: int = Field(foreign_key="tag_retag_jobs.id", ondelete="CASCADE")
+    article_id: Optional[str] = Field(
+        default=None,
+        foreign_key="articles.id",
+        ondelete="SET NULL",
+    )
+    article_id_snapshot: str
+    status: str = Field(default="pending")
+    target_content_hash: str = Field(default="")
+    last_error: Optional[str] = Field(default=None)
+    queued_at: Optional[str] = Field(default=None)
+    completed_at: Optional[str] = Field(default=None)
+    created_at: str
+    updated_at: str
+
+
+class DuplicateGroupRecord(SQLModel, table=True):
+    """可被公共和个人日报复用的轻量同事件/重复组。"""
+    __tablename__ = "duplicate_groups"
+    __table_args__ = (
+        UniqueConstraint("fingerprint", name="uq_duplicate_groups_fingerprint"),
+        Index("ix_duplicate_groups_representative_article_id", "representative_article_id"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fingerprint: str = Field(description="规范 URL/标题相似等确定性指纹")
+    strategy: str = Field(default="deterministic_v1")
+    representative_article_id: Optional[str] = Field(
+        default=None,
+        foreign_key="articles.id",
+        ondelete="SET NULL",
+    )
+    created_at: str
+    updated_at: str
+
+
+class DuplicateGroupMemberRecord(SQLModel, table=True):
+    """一篇文章最多属于一个重复组。"""
+    __tablename__ = "duplicate_group_members"
+    __table_args__ = (
+        UniqueConstraint("article_id", name="uq_duplicate_group_members_article"),
+        CheckConstraint(
+            "similarity IS NULL OR (similarity >= 0.0 AND similarity <= 1.0)",
+            name="ck_duplicate_group_members_similarity",
+        ),
+    )
+
+    group_id: int = Field(
+        primary_key=True,
+        foreign_key="duplicate_groups.id",
+        ondelete="CASCADE",
+    )
+    article_id: str = Field(
+        primary_key=True,
+        foreign_key="articles.id",
+        ondelete="CASCADE",
+    )
+    similarity: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    is_representative: bool = Field(default=False)
+    created_at: str
 
 
 # （实体简化阶段 2）FetchTaskRecord（旧版单节点定时任务）与 NodeGroupRecord（采集范围/
@@ -172,6 +648,14 @@ class SourceConfigRecord(SQLModel, table=True):
     # 仅作身份标记与溯源,不承担权限差异(删除语义="退订+无人订阅才物理删",与 owner 无关)。
     owner_username: str = Field(default="", index=True, description="用户自定源创建者;空=平台源")
 
+    # 平台源的分析开关。私有 RSS 在 V1 服务层硬性禁用，直到具备逐订阅用户授权；
+    # 此字段不能被解释为源创建者可代表其他订阅者授权。
+    ai_analysis_enabled: bool = Field(
+        default=True,
+        sa_column_kwargs={"server_default": text("1")},
+        description="是否允许后续文章 AI 分析",
+    )
+
     is_active: bool = Field(default=True, index=True, description="是否启用该数据源")
     fetch_interval_minutes: Optional[int] = Field(default=None, description="建议抓取间隔，分钟")
     cron_expr: str = Field(default="", description="建议 Cron 表达式，可用于生成 FetchTaskRecord")
@@ -179,6 +663,130 @@ class SourceConfigRecord(SQLModel, table=True):
 
     created_at: str = Field(description="创建时间")
     updated_at: str = Field(description="更新时间")
+
+
+class UserInterestTagRecord(SQLModel, table=True):
+    """用户对规范标签的显式关注/屏蔽。priority 仅保留为旧库兼容字段。"""
+    __tablename__ = "user_interest_tags"
+    __table_args__ = (
+        Index("ix_user_interest_tags_owner_stance", "owner_username", "stance"),
+        Index("ix_user_interest_tags_tag_id", "tag_id"),
+        CheckConstraint("stance IN ('follow','mute')", name="ck_user_interest_tags_stance"),
+        CheckConstraint("priority IN ('normal','high')", name="ck_user_interest_tags_priority"),
+        CheckConstraint("source = 'explicit'", name="ck_user_interest_tags_source"),
+    )
+
+    owner_username: str = Field(
+        primary_key=True,
+        foreign_key="users.username",
+        ondelete="CASCADE",
+    )
+    tag_id: int = Field(
+        primary_key=True,
+        foreign_key="cms_tags.id",
+        ondelete="CASCADE",
+    )
+    stance: str = Field(default="follow", description="follow/mute")
+    priority: str = Field(default="normal", description="兼容旧数据；新写入固定 normal")
+    source: str = Field(default="explicit", description="V1 固定 explicit")
+    created_at: str
+    updated_at: str
+
+
+class PersonalDigestEditionRecord(SQLModel, table=True):
+    """某用户某日某 revision 的个人日报不可变版本。"""
+    __tablename__ = "personal_digest_editions"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_username",
+            "report_date",
+            "revision",
+            name="uq_personal_digest_editions_owner_date_revision",
+        ),
+        Index("ix_personal_digest_editions_owner_date", "owner_username", "report_date"),
+        Index("ix_personal_digest_editions_ready_scan", "status", "check_after"),
+        CheckConstraint("revision >= 1", name="ck_personal_digest_editions_revision"),
+        CheckConstraint(
+            "status IN ('pending','generating','ready','degraded','failed','superseded')",
+            name="ck_personal_digest_editions_status",
+        ),
+        CheckConstraint(
+            "generation_reason IN ("
+            "'scheduled','first_open','interest_changed','subscription_changed',"
+            "'manual_rebuild','daily_brief_ready','recovery')",
+            name="ck_personal_digest_editions_generation_reason",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    owner_username: str = Field(
+        foreign_key="users.username",
+        ondelete="CASCADE",
+        description="个人隐私数据随账户删除级联清理",
+    )
+    report_date: str = Field(description="Asia/Shanghai 下的 YYYY-MM-DD")
+    revision: int = Field(default=1, ge=1)
+    status: str = Field(default="pending")
+    first_open_at: Optional[str] = Field(default=None)
+    check_after: str
+    cutoff_at: str
+    deadline_at: Optional[str] = Field(default=None)
+    generated_at: Optional[str] = Field(default=None)
+    expected_source_ids_json: str = Field(default="[]", description="冻结的候选权限边界")
+    due_source_ids_json: str = Field(default="[]", description="本版需要等待终态的来源集合")
+    source_state_snapshot_json: str = Field(default="{}", description="来源终态与 run/freshness 快照")
+    policy_version: str = Field(default="personal-digest-v1")
+    taxonomy_version: int = Field(default=0)
+    interest_version: int = Field(default=0)
+    interest_snapshot_json: str = Field(default="[]", description="本 revision 冻结的兴趣集合")
+    generation_token: Optional[str] = Field(default=None, index=True)
+    generation_lease_expires_at: Optional[str] = Field(default=None)
+    generation_reason: str = Field(default="scheduled")
+    degraded_reason: Optional[str] = Field(default=None)
+    error: Optional[str] = Field(default=None)
+    created_at: str
+    updated_at: str
+
+
+class PersonalDigestItemRecord(SQLModel, table=True):
+    """个人日报条目及最小化历史快照（不复制文章正文）。"""
+    __tablename__ = "personal_digest_items"
+    __table_args__ = (
+        UniqueConstraint("edition_id", "position", name="uq_personal_digest_items_edition_position"),
+        Index("ix_personal_digest_items_article_id", "article_id"),
+        CheckConstraint("position >= 0", name="ck_personal_digest_items_position"),
+        CheckConstraint(
+            "selection_lane IN ('interest','quality')",
+            name="ck_personal_digest_items_selection_lane",
+        ),
+        CheckConstraint(
+            "quality_score_snapshot IS NULL OR "
+            "(quality_score_snapshot >= 1.0 AND quality_score_snapshot <= 10.0)",
+            name="ck_personal_digest_items_quality_score",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    edition_id: int = Field(
+        foreign_key="personal_digest_editions.id",
+        ondelete="CASCADE",
+    )
+    article_id: Optional[str] = Field(
+        default=None,
+        foreign_key="articles.id",
+        ondelete="SET NULL",
+        description="原文删除后置空；最小化展示快照仍可读",
+    )
+    position: int = Field(ge=0)
+    section: str = Field(default="")
+    selection_lane: str = Field(description="interest/quality")
+    quality_score_snapshot: Optional[float] = Field(default=None, ge=1.0, le=10.0)
+    matched_interest_codes_json: str = Field(default="[]")
+    ranking_features_json: str = Field(default="{}", description="内部排障特征，不是对外个人评分")
+    coverage_adjustments_json: str = Field(default="[]")
+    selection_reason: str = Field(default="")
+    snapshot_json: str = Field(description="标题、来源、摘要、评分理由、标签和原文 URL 快照")
+    created_at: str
 
 
 class ReaderSubscriptionRecord(SQLModel, table=True):
@@ -506,6 +1114,10 @@ class UserRecord(SQLModel, table=True):
     # user 恒为读者、该字段不生效。server_default 由迁移补，兼容存量行。
     default_surface: str = Field(default="console", description="登录默认落地界面：console | reader")
     ai_beta_enabled: bool = Field(default=False, index=True, description="是否为该用户开启 AI Beta 功能（阅读器内翻译/问答）")
+    interest_onboarding_completed_at: Optional[str] = Field(
+        default=None,
+        description="首次兴趣选择完成时间；空表示普通用户登录后仍需引导",
+    )
     # 轻量运维埋点：仅在成功登录/成功调用 AI 时写入，供管理员运维面板统计活跃度与用量。
     last_login_at: Optional[str] = Field(default=None, description="最近一次成功登录时间")
     ai_translate_count: int = Field(default=0, description="累计成功翻译次数")

@@ -27,6 +27,7 @@ VALID_PURPOSES = (
     "daily_brief_map",
     "daily_brief_dedup",
     "daily_brief_reduce",
+    "article_analysis",
     "source_config",
     "detail_profile",
 )

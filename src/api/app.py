@@ -33,6 +33,7 @@ from models.db import (
     ReaderReadRecord,
     SourceConfigRecord,
     SourceStateRecord,
+    TagRetagJobRecord,
     AppSettingRecord,
     UserRecord,
 )
@@ -90,6 +91,10 @@ from api.routers import daily_brief as daily_brief_router
 from api.routers import reader as reader_router
 from api.routers import ingest as ingest_router
 from api.routers import subscriptions as subscriptions_router
+from api.routers import interests as interests_router
+from api.routers import personal_briefs as personal_briefs_router
+from api.routers import taxonomy as taxonomy_router
+from api.routers import analysis_ops as analysis_ops_router
 from api.routers.subscriptions import (
     SubscriptionCreate,
     SubscriptionUpdate,
@@ -163,6 +168,8 @@ from services import reader_activity as reader_activity_service
 from services import content_analytics as content_analytics_service
 from services import jobs as jobs_service
 from services import user_sources as user_sources_service
+from services import article_analysis as article_analysis_service
+from services import taxonomy as taxonomy_service
 from services.media_store import MediaStore
 from llm.client import LLMNotConfigured, LLMError, UsageMeta, ping as llm_ping
 from llm.client import set_usage_recorder as _set_llm_usage_recorder
@@ -252,6 +259,8 @@ def runtime_capabilities(session: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "default_surface": default_surface,
         # 用户自定源总闸(v3.40):关闭时前端隐藏「添加源」入口(端点侧另有 403)。
         "user_sources_enabled": _user_sources_capability(),
+        # 个人早报发布闸：关闭时读者端隐藏页面入口，端点侧继续以 404 防守。
+        "personal_digest_enabled": _personal_digest_capability(),
     }
 
 
@@ -271,6 +280,18 @@ def _user_sources_capability() -> bool:
             return user_sources_service.feature_enabled(session)
     except Exception:  # noqa: BLE001
         return True
+
+
+def _personal_digest_capability() -> bool:
+    """Expose the guarded reader entry without leaking admin-only config state."""
+
+    if db_sink is None:
+        return False
+    try:
+        with Session(db_sink.engine) as session:
+            return personal_briefs_router.personal_digest_enabled(session)
+    except Exception:  # noqa: BLE001 - runtime probing must remain non-blocking
+        return False
 
 
 def _ai_capabilities(session: Optional[Dict[str, Any]] = None) -> tuple[bool, bool, str]:
@@ -432,12 +453,19 @@ async def lifespan(app: FastAPI):
     if not collector_on:
         print("⏸️ 当前 reader 运行角色不启动抓取调度（仅保留留存清理定时任务）。")
 
-    if mcp is not None:
-        async with mcp.session_manager.run():
+    try:
+        if mcp is not None:
+            async with mcp.session_manager.run():
+                yield
+        else:
             yield
-    else:
-        yield
-    _mcp_gate._app = None
+    finally:
+        _mcp_gate._app = None
+        # AsyncIOScheduler binds to the current event loop. TestClient and clean
+        # service restarts create a new loop, so never retain a running scheduler
+        # whose loop has already closed.
+        if scheduler.state != STATE_STOPPED:
+            scheduler.shutdown(wait=False)
 
 
 app = FastAPI(title="Dorami 数据归档中枢 API", lifespan=lifespan)
@@ -494,6 +522,41 @@ media_store: Optional[MediaStore] = (
 
 # 抓取后媒体预取的 fire-and-forget 任务强引用（asyncio 只保弱引用）。
 _MEDIA_PREFETCH_TASKS: set = set()
+_PERSONAL_DIGEST_TRIGGER_TASKS: set = set()
+
+
+def schedule_personal_digest_trigger(callback, *args) -> None:
+    """Run synchronous SQLite fan-out away from the async HTTP middleware."""
+
+    async def _run() -> None:
+        try:
+            await asyncio.to_thread(callback, *args)
+        except Exception:  # noqa: BLE001 - periodic lifecycle scan is the backstop
+            _dorami_logger.warning("个人早报当日 revision 触发失败", exc_info=True)
+
+    task = asyncio.create_task(_run())
+    _PERSONAL_DIGEST_TRIGGER_TASKS.add(task)
+    task.add_done_callback(_PERSONAL_DIGEST_TRIGGER_TASKS.discard)
+
+
+def queue_article_analysis_after_commit(article_ids: List[str]) -> None:
+    """Best-effort post-commit hook; the periodic seven-day scan is the backstop."""
+
+    if not article_ids:
+        return
+    try:
+        with Session(db_sink.engine) as session:
+            if not article_analysis_service.read_feature_flag(
+                session,
+                article_analysis_service.ARTICLE_ANALYSIS_ENABLED_KEY,
+                default=False,
+            ):
+                return
+            for article_id in dict.fromkeys(article_ids):
+                article_analysis_service.queue_article_analysis(session, article_id)
+            session.commit()
+    except Exception as exc:  # noqa: BLE001 - analysis never rolls back an article write
+        _dorami_logger.warning("文章分析入队失败，将由补偿扫描恢复: %s", exc)
 
 
 def schedule_media_prefetch(article_ids: List[str]) -> None:
@@ -548,6 +611,10 @@ app.include_router(daily_brief_router.router)
 app.include_router(reader_router.router)
 app.include_router(ingest_router.router)
 app.include_router(subscriptions_router.router)
+app.include_router(interests_router.router)
+app.include_router(personal_briefs_router.router)
+app.include_router(taxonomy_router.router)
+app.include_router(analysis_ops_router.router)
 app.include_router(articles_router.router)
 app.include_router(monitoring_router.router)
 app.include_router(x_api_router.router)
@@ -562,7 +629,7 @@ app.include_router(announcements_router.router)
 app.include_router(remote_sync_router.router)
 app.include_router(share_router.router)
 
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 COLLECTION_FETCH_CONCURRENCY = 4
 
 
@@ -756,6 +823,16 @@ async def require_admin_session(request: Request, call_next):
         or (normalized_method == "POST" and path == "/api/articles")
         or (normalized_method == "POST" and path == "/api/articles/batch-delete")
         or (normalized_method == "POST" and path == "/api/fetch/batch")
+        or (normalized_method == "PUT" and path == "/api/admin/analysis/config")
+        or (normalized_method == "POST" and path == "/api/admin/analysis/backfills")
+        or (
+            normalized_method in {"POST", "PATCH", "DELETE"}
+            and (
+                path.startswith("/api/admin/cms-tags")
+                or path.startswith("/api/admin/cms-tag-candidates")
+                or path.startswith("/api/admin/taxonomy/")
+            )
+        )
         or (normalized_method == "PUT" and account_update_path)
         or (
             normalized_method == "POST"
@@ -790,12 +867,69 @@ async def require_admin_session(request: Request, call_next):
             status_code=response.status_code,
             body=audit_body,
         )
+    if response.status_code < 400 and auth_session is not None:
+        # Subscription/private-source/visibility mutations affect only today's
+        # current revision. Historical editions remain immutable snapshots.
+        try:
+            subscription_changed = (
+                normalized_method in {"POST", "PUT", "DELETE"}
+                and (
+                    (
+                        _path_matches(path, ("/api/subscriptions",))
+                        and not path.endswith("/rotate-token")
+                    )
+                    or (
+                        path.startswith("/api/reader/sources/")
+                        and path.endswith("/subscribe")
+                    )
+                    or (
+                        path.startswith("/api/reader/collections/")
+                        and path.endswith("/subscribe")
+                    )
+                    or path == "/api/reader/custom-sources"
+                    or (
+                        normalized_method == "DELETE"
+                        and path.startswith("/api/reader/custom-sources/")
+                    )
+                )
+            )
+            if subscription_changed:
+                schedule_personal_digest_trigger(
+                    personal_briefs_router.trigger_today_revision,
+                    db_sink.engine,
+                    str(auth_session.get("sub") or ""),
+                    "subscription_changed",
+                )
+            if (
+                normalized_method == "POST"
+                and path.startswith("/api/admin/source-visibility/")
+            ):
+                schedule_personal_digest_trigger(
+                    personal_briefs_router.trigger_all_today_revisions,
+                    db_sink.engine, "subscription_changed"
+                )
+        except Exception:  # noqa: BLE001 - mutation already committed; tick can recover
+            _dorami_logger.warning("个人早报当日 revision 触发失败", exc_info=True)
     return response
 
 
-def _auth_user_payload(username: str, role: str, avatar: Optional[str] = None) -> Dict[str, Any]:
+def _auth_user_payload(
+    username: str,
+    role: str,
+    avatar: Optional[str] = None,
+    *,
+    interest_onboarding_completed_at: Optional[str] = None,
+) -> Dict[str, Any]:
     """登录态对外暴露的账户视图：含头像，供前端头像展示。"""
-    return {"username": username, "role": role, "avatar": avatar or None}
+    return {
+        "username": username,
+        "role": role,
+        "avatar": avatar or None,
+        # 管理员进入阅读器时不打断其运维会话；首次引导只面向普通读者。
+        "interest_onboarding_completed": (
+            role == "admin" or bool(interest_onboarding_completed_at)
+        ),
+    }
 
 
 @app.post("/api/auth/login")
@@ -812,6 +946,7 @@ def login_admin(params: AuthLoginParams, response: Response):
         role = record.role
         avatar = record.avatar
         epoch = record.session_epoch or ""
+        interest_onboarding_completed_at = record.interest_onboarding_completed_at
         accounts_service.touch_login(session, username)
     # 预置订阅在登录点播种（而非仅首个 reader 请求）：登录响应先于前端阅读器挂载，
     # 消除新账号首屏的竞态——此前播种只挂在 GET /api/reader/sources，与它并行的
@@ -824,7 +959,15 @@ def login_admin(params: AuthLoginParams, response: Response):
         except Exception:
             _dorami_logger.warning("登录点播种默认订阅失败，等待 reader 端点兜底", exc_info=True)
     set_auth_cookie(response, username, role, epoch)
-    return {"authenticated": True, "user": _auth_user_payload(username, role, avatar)}
+    return {
+        "authenticated": True,
+        "user": _auth_user_payload(
+            username,
+            role,
+            avatar,
+            interest_onboarding_completed_at=interest_onboarding_completed_at,
+        ),
+    }
 
 
 @app.get("/api/auth/session")
@@ -835,7 +978,18 @@ def get_auth_session(request: Request):
     with Session(db_sink.engine) as db_session:
         record = accounts_service.get_user(db_session, session["sub"])
         avatar = record.avatar if record else None
-    return {"authenticated": True, "user": _auth_user_payload(session["sub"], session["role"], avatar)}
+        interest_onboarding_completed_at = (
+            record.interest_onboarding_completed_at if record else None
+        )
+    return {
+        "authenticated": True,
+        "user": _auth_user_payload(
+            session["sub"],
+            session["role"],
+            avatar,
+            interest_onboarding_completed_at=interest_onboarding_completed_at,
+        ),
+    }
 
 
 @app.get("/api/runtime")
@@ -891,7 +1045,12 @@ def update_own_avatar(params: AvatarUpdateParams, request: Request):
         if record is None:
             raise HTTPException(status_code=401, detail="账户不存在或已停用")
         record = accounts_service.set_avatar(session, username, avatar or None)
-        result = _auth_user_payload(record.username, record.role, record.avatar)
+        result = _auth_user_payload(
+            record.username,
+            record.role,
+            record.avatar,
+            interest_onboarding_completed_at=record.interest_onboarding_completed_at,
+        )
     return {"ok": True, "user": result}
 
 
@@ -1186,6 +1345,117 @@ def load_tasks_to_scheduler():
                 daily_brief_service.daily_brief_cron(session),
                 [],
             )
+    # V1 部署为 runtime.role=all：文章分析与个人早报和采集共用同一调度器。
+    # 两个 worker 都在执行时读取数据库 feature flag，默认关闭且支持热切换。
+    scheduler.add_job(
+        execute_article_analysis_job,
+        "interval",
+        minutes=1,
+        id="article_analysis",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        execute_taxonomy_retag_job,
+        "interval",
+        minutes=1,
+        id="taxonomy_retag",
+        replace_existing=True,
+        max_instances=1,
+    )
+    add_cron_job(
+        "personal_digest_schedule",
+        execute_personal_digest_schedule_job,
+        "30 8 * * *",
+        [],
+    )
+    scheduler.add_job(
+        execute_personal_digest_pending_job,
+        "interval",
+        minutes=1,
+        id="personal_digest_pending",
+        replace_existing=True,
+        max_instances=1,
+    )
+
+
+async def execute_article_analysis_job():
+    """Recover/scan/claim article analysis without coupling it to ingestion."""
+
+    try:
+        with Session(db_sink.engine) as session:
+            llm_config = daily_brief_service.resolve_llm_config(session)
+        if not llm_config.configured:
+            return
+        await article_analysis_service.run_analysis_cycle(
+            db_sink.engine,
+            worker_id="runtime-all",
+            llm_config=llm_config,
+        )
+        # Candidate aggregation commits with each article.  Automatic promotion
+        # runs only afterwards, outside those transactions, and remains inert
+        # unless the explicit governance switch is enabled.
+        with Session(db_sink.engine) as session:
+            taxonomy_service.run_auto_activation_cycle(session)
+    except Exception as exc:  # noqa: BLE001 - scheduler jobs never stop collection
+        _dorami_logger.warning("文章分析调度失败: %s", exc)
+
+
+def execute_taxonomy_retag_job():
+    """Consume a bounded number of closed-set retag batches with a lease."""
+
+    worker_id = "runtime-all-retag"
+    job = None
+    try:
+        with Session(db_sink.engine) as session:
+            job = taxonomy_service.claim_retag_job(
+                session,
+                lease_owner=worker_id,
+            )
+            batches = 0
+            while job is not None and job.status == "running" and batches < 8:
+                job = taxonomy_service.process_retag_batch(
+                    session,
+                    job,
+                    taxonomy_service.retag_article_from_evidence,
+                    lease_owner=worker_id,
+                    batch_size=50,
+                )
+                batches += 1
+    except Exception as exc:  # noqa: BLE001 - scheduler must keep serving other jobs
+        _dorami_logger.warning("taxonomy 重标调度失败: %s", exc)
+        if job is not None:
+            try:
+                with Session(db_sink.engine) as session:
+                    current = session.get(TagRetagJobRecord, job.id)
+                    if current is not None:
+                        taxonomy_service.fail_retag_job(
+                            session,
+                            current,
+                            exc,
+                            retryable=True,
+                        )
+            except Exception:  # noqa: BLE001 - original error is already logged
+                pass
+
+
+def execute_personal_digest_schedule_job():
+    """At 08:30 freeze each active user's subscription/readiness boundary."""
+
+    try:
+        personal_briefs_router.start_scheduled_editions(db_sink.engine)
+        personal_briefs_router.process_pending_editions(db_sink.engine)
+    except Exception as exc:  # noqa: BLE001
+        _dorami_logger.warning("个人早报 08:30 编排失败: %s", exc)
+
+
+def execute_personal_digest_pending_job():
+    """Complete ready editions; first-open deadlines force available-content output."""
+
+    try:
+        personal_briefs_router.process_pending_editions(db_sink.engine)
+    except Exception as exc:  # noqa: BLE001
+        _dorami_logger.warning("个人早报就绪巡检失败: %s", exc)
 
 
 async def execute_daily_brief_job():
@@ -1597,6 +1867,7 @@ async def run_fetcher_with_tracking(
         )
         finish_fetch_run(run_id, status="success", result=result)
         mark_source_state_finished(fetcher_id, params, run_id, status="success", result=result)
+        queue_article_analysis_after_commit(result.saved_content_ids)
         schedule_media_prefetch(result.saved_content_ids)
         return {
             "status": "success",

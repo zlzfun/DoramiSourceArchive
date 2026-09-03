@@ -369,6 +369,19 @@ def touch_login(session: Session, username: str) -> None:
     session.commit()
 
 
+def complete_interest_onboarding(session: Session, username: str) -> UserRecord:
+    """幂等标记首次兴趣选择已完成。"""
+    record = get_user(session, username)
+    if record is None:
+        raise AccountError(f"账户 '{username}' 不存在")
+    if not record.interest_onboarding_completed_at:
+        now = _now_iso()
+        record.interest_onboarding_completed_at = now
+        record.updated_at = now
+        session.add(record)
+    return record
+
+
 def _since(days: int) -> str:
     days = max(1, min(int(days or 30), 365))
     return (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()

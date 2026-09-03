@@ -16,10 +16,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+import pytest
 from alembic import command  # noqa: E402
 from alembic.autogenerate import compare_metadata  # noqa: E402
 from alembic.runtime.migration import MigrationContext  # noqa: E402
-from sqlalchemy import create_engine, inspect  # noqa: E402
+from sqlalchemy import create_engine, event, inspect  # noqa: E402
+from sqlalchemy.engine import Engine  # noqa: E402
 
 from models.db import SQLModel  # noqa: E402
 from storage.fts import fts_include_object  # noqa: E402
@@ -60,6 +62,281 @@ def test_upgrade_head_has_no_drift_from_metadata(tmp_path):
         engine.dispose()
 
     assert diffs == [], f"迁移链与模型 metadata 出现漂移（改了 model 却漏写迁移？）：{diffs}"
+
+
+def test_parallel_release_heads_converge_without_replay(tmp_path):
+    """v3.44 合并节点须同时兼容已跑功能支线与已跑主干支线的库。"""
+    for parent in ("a7d4e9f2c1b6", "a7e2f95c1d40"):
+        db_url = f"sqlite:///{tmp_path / f'{parent}.db'}"
+        cfg = make_alembic_config(db_url)
+        command.upgrade(cfg, parent)
+        command.upgrade(cfg, "head")
+
+        engine = create_engine(db_url)
+        try:
+            with engine.connect() as conn:
+                current = MigrationContext.configure(conn).get_current_revision()
+            assert current == _head_revision()
+            tables = set(inspect(engine).get_table_names())
+            assert "article_analyses" in tables
+            assert "personal_digest_editions" in tables
+            user_columns = {column["name"] for column in inspect(engine).get_columns("users")}
+            assert "session_epoch" in user_columns
+            assert "interest_onboarding_completed_at" in user_columns
+        finally:
+            engine.dispose()
+
+
+def test_sqlite_revision_rolls_back_all_ddl_on_interruption(tmp_path):
+    """A failed revision must not leave columns/indexes ahead of its version row."""
+
+    db_url = f"sqlite:///{tmp_path / 'interrupted.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "d2c4f6a8b0e1")
+
+    def fail_mid_revision(_conn, _cursor, statement, _params, _context, _many):
+        if "ix_tag_retag_job_items_article_id" in statement and "CREATE" in statement.upper():
+            raise RuntimeError("simulated migration interruption")
+
+    event.listen(Engine, "before_cursor_execute", fail_mid_revision)
+    try:
+        with pytest.raises(RuntimeError, match="simulated migration interruption"):
+            command.upgrade(cfg, "head")
+    finally:
+        event.remove(Engine, "before_cursor_execute", fail_mid_revision)
+
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            assert MigrationContext.configure(conn).get_current_revision() == "d2c4f6a8b0e1"
+            columns = {
+                column["name"]
+                for column in inspect(conn).get_columns("personal_digest_editions")
+            }
+            assert "interest_snapshot_json" not in columns
+            indexes = {
+                index["name"]
+                for index in inspect(conn).get_indexes("tag_retag_job_items")
+            }
+            assert "ix_tag_retag_job_items_article_id" not in indexes
+    finally:
+        engine.dispose()
+
+
+def test_intermediate_pr_data_cleanup_is_scoped_and_privacy_minimizing(tmp_path):
+    import json
+
+    from sqlmodel import Session
+
+    from models.db import (
+        ArticleAnalysisAttemptRecord,
+        ArticleAnalysisRecord,
+        ArticleRecord,
+        PersonalDigestEditionRecord,
+        PersonalDigestItemRecord,
+        TagRetagJobItemRecord,
+        TagRetagJobRecord,
+        TaxonomyVersionRecord,
+        UserRecord,
+    )
+
+    db_url = f"sqlite:///{tmp_path / 'intermediate-pr.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "a4b9d2e6f1c3")
+    stamp = "2026-09-03T00:00:00+00:00"
+
+    engine = create_engine(db_url)
+    try:
+        with Session(engine) as session:
+            session.add(UserRecord(
+                username="alice",
+                password_hash="test",
+                created_at=stamp,
+                updated_at=stamp,
+            ))
+            session.add(TaxonomyVersionRecord(
+                version=1,
+                status="active",
+                created_at=stamp,
+            ))
+            for article_id in ("stale-only", "shared-live"):
+                session.add(ArticleRecord(
+                    id=article_id,
+                    title=article_id,
+                    content_type="article",
+                    source_id="source-a",
+                    source_url="https://example.test/article",
+                    publish_date=stamp,
+                    fetched_date=stamp,
+                    content="body",
+                ))
+            session.flush()
+            session.add(ArticleAnalysisRecord(
+                article_id="stale-only",
+                status="running",
+                tagging_status="succeeded",
+                quality_score=8.0,
+                content_hash="hash-stale",
+                analyzed_at=stamp,
+                lease_owner="old-worker",
+                lease_expires_at="2099-01-01T00:00:00+00:00",
+                created_at=stamp,
+                updated_at=stamp,
+            ))
+            session.add(ArticleAnalysisRecord(
+                article_id="shared-live",
+                status="pending",
+                tagging_status="pending",
+                content_hash="hash-shared",
+                created_at=stamp,
+                updated_at=stamp,
+            ))
+            session.add(ArticleAnalysisAttemptRecord(
+                article_id="stale-only",
+                attempt_no=1,
+                operation="full_analysis",
+                status="running",
+                content_hash="hash-stale",
+                started_at=stamp,
+                created_at=stamp,
+            ))
+            stale_job = TagRetagJobRecord(
+                taxonomy_version=1,
+                operation="full_analysis",
+                status="cancelled",
+                last_error="superseded while enforcing one active full-analysis job",
+                created_at=stamp,
+                updated_at=stamp,
+            )
+            live_job = TagRetagJobRecord(
+                taxonomy_version=1,
+                operation="full_analysis",
+                status="queued",
+                created_at=stamp,
+                updated_at=stamp,
+            )
+            session.add(stale_job)
+            session.add(live_job)
+            session.flush()
+            session.add(TagRetagJobItemRecord(
+                job_id=stale_job.id,
+                article_id="stale-only",
+                article_id_snapshot="stale-only",
+                status="queued",
+                target_content_hash="hash-stale",
+                created_at=stamp,
+                updated_at=stamp,
+            ))
+            session.add(TagRetagJobItemRecord(
+                job_id=stale_job.id,
+                article_id="shared-live",
+                article_id_snapshot="shared-live",
+                status="queued",
+                target_content_hash="hash-shared",
+                created_at=stamp,
+                updated_at=stamp,
+            ))
+            session.add(TagRetagJobItemRecord(
+                job_id=live_job.id,
+                article_id="shared-live",
+                article_id_snapshot="shared-live",
+                status="pending",
+                target_content_hash="hash-shared",
+                created_at=stamp,
+                updated_at=stamp,
+            ))
+            pending = PersonalDigestEditionRecord(
+                owner_username="alice",
+                report_date="2026-09-03",
+                revision=1,
+                status="generating",
+                check_after=stamp,
+                cutoff_at=stamp,
+                interest_snapshot_json="[]",
+                generation_token="old-token",
+                generation_lease_expires_at="2099-01-01T00:00:00+00:00",
+                generation_reason="first_open",
+                created_at=stamp,
+                updated_at=stamp,
+            )
+            ready = PersonalDigestEditionRecord(
+                owner_username="alice",
+                report_date="2026-09-02",
+                revision=1,
+                status="ready",
+                check_after=stamp,
+                cutoff_at=stamp,
+                interest_snapshot_json="[]",
+                generation_reason="scheduled",
+                created_at=stamp,
+                updated_at=stamp,
+            )
+            session.add(pending)
+            session.add(ready)
+            session.flush()
+            for edition_id, position in ((pending.id, 0), (ready.id, 0)):
+                session.add(PersonalDigestItemRecord(
+                    edition_id=edition_id,
+                    article_id="stale-only",
+                    position=position,
+                    section="test",
+                    selection_lane="quality",
+                    snapshot_json=json.dumps({"title": "kept", "content": "remove me"}),
+                    created_at=stamp,
+                ))
+            session.commit()
+            stale_job_id = int(stale_job.id)
+            live_job_id = int(live_job.id)
+            pending_id = int(pending.id)
+            ready_id = int(ready.id)
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "head")
+
+    engine = create_engine(db_url)
+    try:
+        with Session(engine) as session:
+            stale_items = session.exec(
+                TagRetagJobItemRecord.__table__.select().where(
+                    TagRetagJobItemRecord.job_id == stale_job_id
+                )
+            ).mappings().all()
+            live_item = session.exec(
+                TagRetagJobItemRecord.__table__.select().where(
+                    TagRetagJobItemRecord.job_id == live_job_id
+                )
+            ).mappings().one()
+            assert {row["status"] for row in stale_items} == {"skipped"}
+            assert {row["last_error"] for row in stale_items} == {
+                "job_superseded_during_migration"
+            }
+            assert live_item["status"] == "pending"
+
+            stale_analysis = session.get(ArticleAnalysisRecord, "stale-only")
+            shared_analysis = session.get(ArticleAnalysisRecord, "shared-live")
+            assert stale_analysis.status == "succeeded"
+            assert stale_analysis.lease_owner is None
+            assert shared_analysis.status == "pending"
+            attempt = session.exec(
+                ArticleAnalysisAttemptRecord.__table__.select().where(
+                    ArticleAnalysisAttemptRecord.article_id == "stale-only"
+                )
+            ).mappings().one()
+            assert attempt["status"] == "skipped"
+
+            assert session.get(PersonalDigestEditionRecord, pending_id).status == "superseded"
+            assert session.get(PersonalDigestEditionRecord, pending_id).generation_token is None
+            assert session.get(PersonalDigestEditionRecord, ready_id).status == "ready"
+            snapshots = session.exec(
+                PersonalDigestItemRecord.__table__.select()
+            ).mappings().all()
+            assert [json.loads(row["snapshot_json"]) for row in snapshots] == [
+                {"title": "kept"},
+                {"title": "kept"},
+            ]
+    finally:
+        engine.dispose()
 
 
 def test_ensure_migrated_adopts_legacy_db(tmp_path):
@@ -456,6 +733,87 @@ def test_reader_read_states_migration_adds_missing_is_read(tmp_path):
             )).scalar()
         assert row == 1  # 存量行回填为显式已读
         assert "reader_read_cursors" in inspect(engine).get_table_names()  # 另一表照常创建
+    finally:
+        engine.dispose()
+
+
+def test_analysis_migrations_upgrade_existing_source_configs_with_default_on(tmp_path):
+    """Migration A/B 从上一 head 升级：存量来源默认开启分析且新表无 FK 漂移。"""
+    import sqlalchemy as sa
+    from alembic import command as alembic_command
+    from sqlalchemy import text
+
+    db_url = f"sqlite:///{tmp_path / 'analysis-upgrade.db'}"
+    cfg = make_alembic_config(db_url)
+    alembic_command.upgrade(cfg, "d9de7994582c")
+
+    engine = create_engine(db_url)
+    try:
+        metadata = sa.MetaData()
+        source_configs = sa.Table("source_configs", metadata, autoload_with=engine)
+        values = {}
+        for column in source_configs.columns:
+            if column.nullable or column.server_default is not None:
+                continue
+            if isinstance(column.type, sa.Boolean):
+                values[column.name] = True
+            elif isinstance(column.type, sa.Integer):
+                values[column.name] = 0
+            else:
+                values[column.name] = ""
+        values.update(
+            source_id="legacy-rss",
+            name="Legacy RSS",
+            source_type="rss",
+            url="https://example.com/feed.xml",
+            created_at="2026-08-31T00:00:00+08:00",
+            updated_at="2026-08-31T00:00:00+08:00",
+        )
+        with engine.begin() as conn:
+            conn.execute(source_configs.insert().values(**values))
+            private_values = dict(values)
+            private_values.update(
+                source_id="private-rss",
+                name="Private RSS",
+                url="https://private.example.com/feed.xml",
+                owner_username="alice",
+            )
+            conn.execute(source_configs.insert().values(**private_values))
+    finally:
+        engine.dispose()
+
+    alembic_command.upgrade(cfg, "head")
+
+    engine = create_engine(db_url)
+    try:
+        insp = inspect(engine)
+        expected_tables = {
+            "article_analyses",
+            "cms_tags",
+            "cms_tag_candidate_evidence",
+            "taxonomy_versions",
+            "tag_retag_jobs",
+            "user_interest_tags",
+            "personal_digest_editions",
+            "personal_digest_items",
+        }
+        assert expected_tables.issubset(set(insp.get_table_names()))
+        with engine.connect() as conn:
+            enabled = conn.execute(
+                text(
+                    "SELECT ai_analysis_enabled FROM source_configs "
+                    "WHERE source_id='legacy-rss'"
+                )
+            ).scalar_one()
+            assert bool(enabled) is True
+            private_enabled = conn.execute(
+                text(
+                    "SELECT ai_analysis_enabled FROM source_configs "
+                    "WHERE source_id='private-rss'"
+                )
+            ).scalar_one()
+            assert bool(private_enabled) is False
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
     finally:
         engine.dispose()
 

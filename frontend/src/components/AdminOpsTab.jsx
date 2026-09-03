@@ -16,6 +16,7 @@ import {
   MessageSquare,
   ShieldCheck,
   ShieldOff,
+  Tags,
 } from 'lucide-react';
 import {
   fetchAdminAccounts,
@@ -50,6 +51,7 @@ import FeedbackInboxPanel from './admin/FeedbackInboxPanel';
 import AnnouncementsPanel from './admin/AnnouncementsPanel';
 import AdminAuditPanel from './admin/AdminAuditPanel';
 import Pager from './admin/Pager';
+import AdminTaxonomyPanel from './admin/AdminTaxonomyPanel';
 import { pivotDaily, C_READ, C_FAVORITE, C_SUBSCRIBE } from './charts/chartUtils';
 import { PURPOSE_LABELS, formatStamp, fmtNum, truncLabel } from './admin/adminUtils';
 import { avatarInitial, avatarHue } from '../utils/avatarColor';
@@ -80,7 +82,7 @@ function Kpi({ num, label, sub, tone }) {
 
 export default function AdminOpsTab({ showToast, active = true, currentUsername = '', pendingFocus = null, onPendingFocusApplied, onOpenCredentials }) {
   const confirm = useConfirm();
-  const [sub, setSub] = useState('user'); // 子页：user | content | ai
+  const [sub, setSub] = useState('user'); // 子页：user | content | ai | engage | taxonomy
 
   // 跨页聚焦(pendingFocus 单通道):目前只解释 { sub } —— 集成页模型 chip 跳到 AI 子页。
   useEffect(() => {
@@ -649,6 +651,7 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
             <button onClick={() => setSub('user')} className={`segmented-option ${sub === 'user' ? 'segmented-option-active' : ''}`}><Users /> 用户</button>
             <button onClick={() => setSub('content')} className={`segmented-option ${sub === 'content' ? 'segmented-option-active' : ''}`}><Database /> 内容</button>
             <button onClick={() => setSub('ai')} className={`segmented-option ${sub === 'ai' ? 'segmented-option-active' : ''}`}><Brain /> AI</button>
+            <button onClick={() => setSub('taxonomy')} className={`segmented-option ${sub === 'taxonomy' ? 'segmented-option-active' : ''}`}><Tags /> 标签</button>
             <button onClick={() => setSub('engage')} className={`segmented-option ${sub === 'engage' ? 'segmented-option-active' : ''}`}><MessageSquare /> 消息</button>
           </div>
         </div>
@@ -662,6 +665,8 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
           <AnnouncementsPanel showToast={showToast} refreshTick={refreshTick} />
         </div>
       )}
+
+      {sub === 'taxonomy' && <AdminTaxonomyPanel showToast={showToast} days={days} />}
 
       {/* ══ 用户子页 ══════════════════════════════════════════════ */}
       {sub === 'user' && (

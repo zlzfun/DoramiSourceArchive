@@ -33,6 +33,10 @@
   已实现):读者贴 URL 自助添加私有 RSS 源(参照 Folo);方案 B 自助+隔离(不进公共目录/
   all 检索域/日报/archive sync),最简正文(feed 给什么存什么,preview 仅守门不分型),
   入库存储+媒体不预取+删源即清;技术底座复用 generic_rss + SourceConfigRecord(加 owner 列)。
+- ◉ [taxonomy-v1-deployment.md](./taxonomy-v1-deployment.md) — 已批准 Taxonomy v1 的发布资产与上线手册：
+  全新库 migration → validation-only → 导入回执 → 人工发布 → 开分析，以及已发布开发库的安全同步路径。
+- ◉ [full-analysis-backfill.md](./full-analysis-backfill.md) — 历史文章语义回填：
+  `full_analysis` 与 `retag_only` 边界、管理面操作、低优先级调度、恢复语义及上线顺序。
 - ◇ [reader-search-architecture.md](./reader-search-architecture.md) — 检索问答(类 RAG)模块
   技术栈与原理报告(快照 v3.36.0,含 mermaid 架构图):FTS5 索引层/四阶段管线/降级链与
   机械化诚实层/消费方范围/关键参数;权威事实来源仍是 reader_search.py 等代码。

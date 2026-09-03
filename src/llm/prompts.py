@@ -1,8 +1,12 @@
-"""日报生成提示词 (src/llm/prompts.py)
+"""公共日报 legacy 生成提示词 (src/llm/prompts.py)。
 
 - MAP 阶段：对单篇文章概括 + 打重要性分（沿用原 Dify 概括 schema，新增 score）。
 - REDUCE 阶段：把择优后的条目汇总成与 dorami-daily-brief Skill 风格一致的 Markdown，
   并注入近期日报上下文做语义/事件级去重。
+
+本模块是公共日报兼容契约，不是文章级分析 Prompt。article-analysis-v1 位于
+``llm/article_analysis_prompt.py``；shadow/adapter 阶段不得用它覆盖这里的字符串，
+否则即使 adapter 开关关闭也会改变线上公共日报结果。
 """
 
 from __future__ import annotations
@@ -64,6 +68,8 @@ def section_label_order() -> List[str]:
     return list(dict.fromkeys(ordered))
 
 
+# Legacy public-digest MAP contract. Keep byte-stable while the persisted-analysis
+# adapter is disabled; compatibility is implemented in services.daily_brief.
 MAP_SYSTEM_PROMPT = """你是一位极具洞察力的前沿 AI 架构师与行业分析师，为一份面向 AI 从业者读者的资讯日报供稿。读者最关心的是：新模型/新能力发布、重要 AI 应用与产品更新、大厂与业界重大新闻、有明确新意的研究。请仔细阅读下方单篇资讯，严格基于正文事实提炼高质量中文简报。只依据正文事实，绝不臆造原文未出现的数字、结论或参数；正文信息不足时宁可少写也不要编造。
 
 【核心任务要求】
