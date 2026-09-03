@@ -229,6 +229,7 @@ export default function ReaderTab({
   useEffect(() => {
     if (!personalDigestEnabled) setBriefOpen(false);
   }, [personalDigestEnabled]);
+  const closeBriefBeforeArticleOpen = useCallback(() => setBriefOpen(false), []);
 
   const {
     // 源目录 / 订阅
@@ -266,7 +267,13 @@ export default function ReaderTab({
     activeSummary, summarizing, handleSummarize,
     // 上下文菜单 items(桌面右键在此装配弹层)
     buildArticleMenuItems, buildSourceMenuItems, buildSocialMenuItems,
-  } = useReaderState({ showToast, account, initialArticleId, onDeepLinkConsumed });
+  } = useReaderState({
+    showToast,
+    account,
+    initialArticleId,
+    onDeepLinkConsumed,
+    onBeforeOpenArticle: closeBriefBeforeArticleOpen,
+  });
 
   const listThumbRef = useRef(null); // 浮层滚动条滑块(压在卡片上,内容满宽)
   // 文章/动态中栏会被发现页与社交流整段卸载；active 让自绘滚动条在 DOM 重建后

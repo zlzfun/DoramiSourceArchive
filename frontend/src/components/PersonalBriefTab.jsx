@@ -57,7 +57,7 @@ function SnapshotDialog({ item, onClose, onOpenArticle }) {
         </div>
         <div className="form-sheet-body min-h-0 overflow-y-auto">
           <div className="flex flex-wrap items-center gap-2 tiny-meta">
-            <span>{snapshot.source_id || '未知来源'}</span>
+            <span>{snapshot.source_name || snapshot.source_id || '未知来源'}</span>
             {snapshot.publish_date && <span>· {formatDateTime(snapshot.publish_date)}</span>}
             {snapshot.quality_score != null && <span className="brief-score">内容价值分 {scoreText(snapshot.quality_score)}</span>}
           </div>
@@ -73,9 +73,11 @@ function SnapshotDialog({ item, onClose, onOpenArticle }) {
             </section>
           )}
           {snapshot.summary && <p className="body-text mt-4">{snapshot.summary}</p>}
-          <div className="markdown-body mt-5">
-            {snapshot.content ? <ReaderMarkdown>{snapshot.content}</ReaderMarkdown> : '该条目快照没有保存正文内容。'}
-          </div>
+          {snapshot.content ? (
+            <div className="markdown-body mt-5"><ReaderMarkdown>{snapshot.content}</ReaderMarkdown></div>
+          ) : (
+            <p className="tiny-meta mt-5">历史快照仅保留摘要和标签；完整正文请在阅读器或原文中查看。</p>
+          )}
         </div>
         <div className="form-sheet-foot">
           {snapshot.source_url && (
@@ -103,7 +105,7 @@ function BriefItem({ item, degraded, onOpen }) {
       <span className="brief-item-main">
         <span className="brief-item-meta">
           {primary && <span className="brief-tag">{tagName(primary)}</span>}
-          <span>{snapshot.source_id || '未知来源'}</span>
+          <span>{snapshot.source_name || snapshot.source_id || '未知来源'}</span>
           {snapshot.publish_date && <span>· {formatDateTime(snapshot.publish_date)}</span>}
         </span>
         <span className="brief-item-title">{snapshot.title || '（无标题）'}</span>
@@ -152,6 +154,8 @@ export default function PersonalBriefTab({
       setPayload(data);
       setViewingDate('');
       setViewingRevision(null);
+      const nextStatus = data?.status || data?.edition?.status;
+      if (TERMINAL.has(nextStatus)) loadSidebar();
       return data;
     } catch (err) {
       setError(err.message || '加载今日早报失败，请重试');
@@ -159,7 +163,7 @@ export default function PersonalBriefTab({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadSidebar]);
 
   useEffect(() => {
     setLoading(true);
@@ -170,8 +174,8 @@ export default function PersonalBriefTab({
   const status = payload?.status || payload?.edition?.status;
   useEffect(() => {
     if (!status || TERMINAL.has(status) || status === 'empty_subscriptions' || viewingDate) return undefined;
-    const timer = window.setTimeout(() => loadToday(), 8000);
-    return () => window.clearTimeout(timer);
+    const timer = window.setInterval(() => loadToday(), 8000);
+    return () => window.clearInterval(timer);
   }, [loadToday, status, viewingDate]);
 
   const edition = payload?.edition || (payload?.id ? payload : null);
@@ -226,7 +230,7 @@ export default function PersonalBriefTab({
         <header className="brief-head">
           <div>
             <div className="micro-label">{viewingDate ? '历史早报' : '每日 · 我的订阅'}</div>
-            <h1 className="page-title mt-1">{viewingDate || edition?.report_date || '今日早报'}{viewingRevision ? ` · revision ${viewingRevision}` : ''}</h1>
+            <h1 className="page-title mt-1">{viewingDate || edition?.report_date || '今日早报'}{viewingRevision ? ` · 第 ${viewingRevision} 版` : ''}</h1>
             <p className="tiny-meta mt-1">
               {noInterest ? '根据你的订阅源精选' : '在你的订阅范围内，兴趣匹配最多占 50%，其余由高质量内容补齐'}
             </p>
@@ -256,7 +260,7 @@ export default function PersonalBriefTab({
           <div className="brief-state">
             <CalendarDays className="h-7 w-7 text-slate-500" />
             <h2 className="card-title">订阅后，哆啦美才能为你准备早报</h2>
-            <p className="tiny-meta">我的早报不会从公共内容池补齐，只使用你当前的有效订阅。</p>
+            <p className="tiny-meta">我的早报不会从未订阅内容补齐，只使用你当前的有效订阅。</p>
             <button type="button" className="action-button action-button-primary" onClick={onManageSubscriptions}>去发现来源</button>
           </div>
         ) : ['pending', 'generating', 'not_started'].includes(status) ? (
@@ -278,7 +282,7 @@ export default function PersonalBriefTab({
           <>
             <div className="brief-edition-meta">
               <span className={`stamp ${meta.cls}`}>{meta.label}</span>
-              <span>revision {edition?.revision || 1}</span>
+              <span>第 {edition?.revision || 1} 版</span>
               {edition?.generated_at && <span>· {formatDateTime(edition.generated_at)}</span>}
             </div>
             {edition?.status === 'degraded' && (
@@ -312,7 +316,7 @@ export default function PersonalBriefTab({
             className={`brief-history-row ${viewingDate === entry.report_date && viewingRevision === entry.revision ? 'is-on' : ''}`}
             onClick={() => openHistory(entry.report_date, entry.revision)}
           >
-            <span><strong>{entry.report_date}</strong><small>revision {entry.revision}</small></span>
+            <span><strong>{entry.report_date}</strong><small>第 {entry.revision} 版</small></span>
             <span className={`stamp ${STATUS_META[entry.status]?.cls || 'stamp-idle'}`}>{STATUS_META[entry.status]?.label || entry.status}</span>
           </button>
         ))}

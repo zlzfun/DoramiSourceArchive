@@ -74,6 +74,7 @@ export function useReaderState({
   // ── 站内分享深链(#/reader/a/{id}):带 id 进来时直接开这篇,消费后回调清空 ──
   initialArticleId = '',
   onDeepLinkConsumed,
+  onBeforeOpenArticle,
 }) {
   const [sources, setSources] = useState([]);
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
@@ -981,6 +982,7 @@ export function useReaderState({
       const article = await fetchArticle(articleId);
       if (!article?.id) throw new Error('empty');
       const ctx = deepLinkCtxRef.current;
+      onBeforeOpenArticle?.();
       deepLinkKeepRef.current = true; // 通知作用域清场 effect:这次切换保留右栏(见 useLayoutEffect)
       setDiscover(false);
       setFavOnly(false);
@@ -992,7 +994,7 @@ export function useReaderState({
       if (!silent) showToast('这篇文章已不在库中', 'error');
       return false;
     }
-  }, [showToast]);
+  }, [onBeforeOpenArticle, showToast]);
   // doneRef 存「已启动消费的 id」而非布尔:同一 id 在消费在途时 deps 重建重跑 effect
   // 不会双跳;消费完成后 App 清空 initialArticleId,这里同步清 doneRef——运行时深链
   // (粘进已开 tab,经 App 的 onPop 再次设值,含同一篇重复粘贴)才能再次落地。
