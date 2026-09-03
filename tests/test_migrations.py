@@ -126,12 +126,12 @@ def test_sqlite_revision_rolls_back_all_ddl_on_interruption(tmp_path):
 def test_intermediate_pr_data_cleanup_is_scoped_and_privacy_minimizing(tmp_path):
     import json
 
+    from sqlalchemy import text
     from sqlmodel import Session
 
     from models.db import (
         ArticleAnalysisAttemptRecord,
         ArticleAnalysisRecord,
-        ArticleRecord,
         PersonalDigestEditionRecord,
         PersonalDigestItemRecord,
         TagRetagJobItemRecord,
@@ -160,16 +160,23 @@ def test_intermediate_pr_data_cleanup_is_scoped_and_privacy_minimizing(tmp_path)
                 created_at=stamp,
             ))
             for article_id in ("stale-only", "shared-live"):
-                session.add(ArticleRecord(
-                    id=article_id,
-                    title=article_id,
-                    content_type="article",
-                    source_id="source-a",
-                    source_url="https://example.test/article",
-                    publish_date=stamp,
-                    fetched_date=stamp,
-                    content="body",
-                ))
+                # This fixture intentionally stops at an older revision.  Insert
+                # through that revision's physical schema instead of the current
+                # ORM, which may declare columns added by later migrations.
+                session.execute(
+                    text(
+                        "INSERT INTO articles "
+                        "(id,title,content_type,source_id,source_url,publish_date,"
+                        "fetched_date,run_scope,has_content,content,extensions_json,read_count) "
+                        "VALUES (:id,:id,'article','source-a',:url,:stamp,:stamp,"
+                        "'ad_hoc',1,'body','{}',0)"
+                    ),
+                    {
+                        "id": article_id,
+                        "url": "https://example.test/article",
+                        "stamp": stamp,
+                    },
+                )
             session.flush()
             session.add(ArticleAnalysisRecord(
                 article_id="stale-only",

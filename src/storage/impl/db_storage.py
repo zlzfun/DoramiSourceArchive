@@ -9,6 +9,7 @@ from models.db import (
     ArticleRecord,
     SQLModel,
 )
+from services.podcast_metadata import merge_podcast_publisher_metadata
 
 
 _PLACEHOLDER_ARTICLE_TITLES = {
@@ -18,7 +19,6 @@ _PLACEHOLDER_ARTICLE_TITLES = {
     "learn more",
     "más información",
 }
-
 
 def _is_placeholder_article_title(value: str) -> bool:
     return (value or "").strip().casefold() in _PLACEHOLDER_ARTICLE_TITLES
@@ -96,6 +96,7 @@ class DatabaseStorage(BaseStorage):
 
         article_columns = {column["name"] for column in inspector.get_columns("articles")}
         article_additive_columns = {
+            "archive_updated_at": "VARCHAR NOT NULL DEFAULT ''",
             "fetch_run_id": "INTEGER",
             "job_id": "INTEGER",
             "job_run_id": "INTEGER",
@@ -106,6 +107,14 @@ class DatabaseStorage(BaseStorage):
             for column_name, column_sql in article_additive_columns.items():
                 if column_name not in article_columns:
                     conn.execute(text(f"ALTER TABLE articles ADD COLUMN {column_name} {column_sql}"))
+            conn.execute(text(
+                "UPDATE articles SET archive_updated_at = fetched_date "
+                "WHERE archive_updated_at IS NULL OR archive_updated_at = ''"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_articles_archive_updated_at "
+                "ON articles (archive_updated_at)"
+            ))
 
         # node_groups 的遗留 additive 迁移已随节点组退役移除（实体简化阶段 2）；
         # 存量表由 Alembic 迁移内联进采集任务后 DROP。
@@ -158,12 +167,30 @@ class DatabaseStorage(BaseStorage):
         with Session(self.engine) as session:
             existing = session.get(ArticleRecord, item.id)
             if existing:
+                if (
+                    existing.content_type == "podcast_episode"
+                    and getattr(item, "content_type", "") == "podcast_episode"
+                ):
+                    raw_metadata = serialize_to_metadata(item)
+                    if not merge_podcast_publisher_metadata(
+                        existing,
+                        item,
+                        raw_metadata.get("extensions", {}),
+                    ):
+                        return False
+                    existing.archive_updated_at = item.fetched_date or existing.archive_updated_at
+                    session.add(existing)
+                    session.commit()
+                    # ``save`` is the pipeline's insertion signal.  The refresh was
+                    # persisted, but must not inflate saved_count/saved_content_ids.
+                    return False
                 if not existing.has_content and item.has_content and item.content:
                     raw_metadata = serialize_to_metadata(item)
                     existing.title = item.title
                     existing.source_url = item.source_url
                     existing.publish_date = item.publish_date
                     existing.fetched_date = item.fetched_date
+                    existing.archive_updated_at = item.fetched_date
                     existing.has_content = True
                     existing.content = item.content
                     existing.extensions_json = json.dumps(raw_metadata.get("extensions", {}), ensure_ascii=False)
@@ -217,6 +244,7 @@ class DatabaseStorage(BaseStorage):
                 source_url=item.source_url,
                 publish_date=item.publish_date,
                 fetched_date=item.fetched_date,
+                archive_updated_at=item.fetched_date,
                 fetch_run_id=getattr(item, "fetch_run_id", None),
                 job_id=getattr(item, "job_id", None),
                 job_run_id=getattr(item, "job_run_id", None),

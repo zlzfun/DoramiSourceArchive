@@ -1,7 +1,8 @@
 """数据源配置 Router（collector）：用户自定义来源的 CRUD + 触发抓取。
 
 阶段1 从 app.py 迁出的 /api/source-configs* 端点（路径不变，collector 网关仍由中间件
-统一强制）：列表/详情/创建/更新/启停/删除 + 单源触发 + 批量触发活跃 RSS/Web 源。
+统一强制）：列表/详情/创建/更新/启停/删除 + 单源触发 + 批量触发活跃 RSS/Web 源；
+Podcast wave 增加精选目录查询与安全幂等导入。
 
 配置序列化与 source_type→fetcher 路由 helper（serialize_source_config /
 normalize_source_id / parse_json_object / resolve_source_fetcher_id /
@@ -23,10 +24,16 @@ from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session, select
 
 from api import deps
-from api.sources import X_SOURCE_TYPES, configured_source_platform, configured_source_shape
+from api.sources import (
+    PODCAST_SOURCE_TYPES,
+    X_SOURCE_TYPES,
+    configured_source_platform,
+    configured_source_shape,
+)
 from api.textutils import _json_dumps, _now_iso
 from models.db import SourceConfigRecord
 from services import jobs
+from services import podcast_catalog as podcast_catalog_service
 
 router = APIRouter(tags=["source-configs"])
 
@@ -91,6 +98,13 @@ class SourceFetchParams(BaseModel):
     params: Dict[str, Any] = PydanticField(default_factory=dict)
 
 
+class PodcastCatalogImportParams(BaseModel):
+    source_ids: List[str] = PydanticField(default_factory=list)
+    activate: bool = False
+    update_existing: bool = False
+    include_blocked: bool = False
+
+
 # ==================== 序列化 / 路由 helper ====================
 
 def serialize_source_config(record: SourceConfigRecord) -> Dict[str, Any]:
@@ -129,6 +143,8 @@ def resolve_source_fetcher_id(source_config: SourceConfigRecord) -> str:
     if source_config.fetcher_id:
         return source_config.fetcher_id
     source_type = (source_config.source_type or "").strip().lower()
+    if source_type in PODCAST_SOURCE_TYPES:
+        return "generic_podcast_rss"
     if source_type in {"rss", "atom"}:
         return "generic_rss"
     if source_type in {"web", "webpage"}:
@@ -173,7 +189,7 @@ def build_source_fetch_params(source_config: SourceConfigRecord, overrides: Opti
         if handle:
             params["handle"] = handle
     else:
-        # RSS/Atom 等：维持既有 feed_url/feed_name 语义不变。
+        # RSS/Atom/Podcast：维持统一的 feed_url/feed_name 语义。
         params.update({
             "feed_url": source_config.url,
             "feed_name": source_config.name,
@@ -214,6 +230,30 @@ def get_source_configs(
         query = query.where(SourceConfigRecord.name.contains(search))
     query = query.order_by(SourceConfigRecord.source_type, SourceConfigRecord.name).offset(skip).limit(limit)
     return [serialize_source_config(record) for record in session.exec(query).all()]
+
+
+@router.get("/api/source-configs/podcast-catalog")
+def get_podcast_catalog(session: Session = Depends(deps.get_session)):
+    """Return the reviewed podcast catalog with current install/active state."""
+    return podcast_catalog_service.list_podcast_catalog(session)
+
+
+@router.post("/api/source-configs/podcast-catalog/import")
+def import_podcast_catalog(
+        params: PodcastCatalogImportParams,
+        session: Session = Depends(deps.get_session),
+):
+    """Import ready catalog sources; safe defaults neither activate nor overwrite."""
+    try:
+        return podcast_catalog_service.import_podcast_catalog(
+            session,
+            source_ids=params.source_ids,
+            activate=params.activate,
+            update_existing=params.update_existing,
+            include_blocked=params.include_blocked,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/api/source-configs/{source_id}")
@@ -370,7 +410,7 @@ async def fetch_active_rss_sources(
     records = session.exec(
         select(SourceConfigRecord)
         .where(SourceConfigRecord.is_active == True)  # noqa: E712
-        .where(SourceConfigRecord.source_type.in_(["rss", "atom"]))
+        .where(SourceConfigRecord.source_type.in_(["rss", "atom", "podcast"]))
         .order_by(SourceConfigRecord.name)
     ).all()
 

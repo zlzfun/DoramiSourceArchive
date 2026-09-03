@@ -17,6 +17,7 @@ from services.source_naming import friendly_source_name
 # content_type -> 中文分类名（内容源目录/看板展示用）。
 CONTENT_TYPE_CATEGORY = {
     "rss_article": "RSS 资讯",
+    "podcast_episode": "播客单集",
     "web_article": "网页文章",
     "wechat_article": "微信公众号",
     "arxiv": "arXiv 论文",
@@ -69,18 +70,21 @@ def _source_category(content_type: Optional[str]) -> str:
 # ==================== 内容形态（阅读器分流轴，迭代 3）====================
 # 形态是**源级标记**（fetcher.content_shape），registry 是第一事实源;
 # 对注册表之外的历史归档源（已下线节点、导入源），按 content_type 兜底:
-# 结构化监控产物属于 bulletin，社交帖属于 social。
-VALID_CONTENT_SHAPES = frozenset({"article", "bulletin", "social"})
+# 结构化监控产物属于 bulletin，社交帖属于 social，播客单集属于 podcast。
+VALID_CONTENT_SHAPES = frozenset({"article", "bulletin", "social", "podcast"})
 BULLETIN_CONTENT_TYPES = frozenset({
     "github_release", "github_repository", "hf_model", "huggingface_model",
     "github_trending",
 })
 SOCIAL_CONTENT_TYPES = frozenset({"social_post"})
+PODCAST_CONTENT_TYPES = frozenset({"podcast_episode"})
 CONTENT_TYPES_BY_SHAPE = {
     "bulletin": BULLETIN_CONTENT_TYPES,
     "social": SOCIAL_CONTENT_TYPES,
+    "podcast": PODCAST_CONTENT_TYPES,
 }
 X_SOURCE_TYPES = frozenset({"x", "x_timeline"})
+PODCAST_SOURCE_TYPES = frozenset({"podcast"})
 
 
 def source_shape(
@@ -88,7 +92,7 @@ def source_shape(
     content_type: Optional[str],
     registry_meta: Dict[str, Dict[str, Any]],
 ) -> str:
-    """解析某源的内容形态：article | bulletin | social。"""
+    """解析某源的内容形态：article | bulletin | social | podcast。"""
     meta = registry_meta.get(source_id or "")
     if meta is not None:
         shape = str(meta.get("shape") or "article").strip().lower()
@@ -97,6 +101,8 @@ def source_shape(
         return "bulletin"
     if (content_type or "") in SOCIAL_CONTENT_TYPES:
         return "social"
+    if (content_type or "") in PODCAST_CONTENT_TYPES:
+        return "podcast"
     return "article"
 
 
@@ -113,6 +119,8 @@ def configured_source_shape(source_type: str, fetcher_id: str = "") -> str:
                 return shape
     if (source_type or "").strip().lower() in X_SOURCE_TYPES:
         return "social"
+    if (source_type or "").strip().lower() in PODCAST_SOURCE_TYPES:
+        return "podcast"
     return "article"
 
 
@@ -125,6 +133,8 @@ def configured_source_content_type(source_type: str, fetcher_id: str = "") -> st
     source_type_value = (source_type or "").strip().lower()
     if source_type_value in X_SOURCE_TYPES:
         return "social_post"
+    if source_type_value in PODCAST_SOURCE_TYPES:
+        return "podcast_episode"
     if source_type_value in {"rss", "atom"}:
         return "rss_article"
     if source_type_value in {"web", "webpage"}:

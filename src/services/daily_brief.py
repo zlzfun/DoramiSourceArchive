@@ -60,6 +60,7 @@ from models.db import (
     ArticleRecord,
     ArticleTagAssignmentRecord,
     CmsTagRecord,
+    SourceConfigRecord,
 )
 from services import credentials
 from services.source_naming import source_role
@@ -549,10 +550,22 @@ def collect_candidates(
             select(ArticleRecord).where(ArticleRecord.id.in_(chosen_ids))
         ).all()
         by_id = {row.id: row for row in full_rows}
+        chosen_source_ids = {row.source_id for row in full_rows if row.source_id}
+        source_metadata = {
+            source_id: (source_scope, provenance_tier)
+            for source_id, source_scope, provenance_tier in session.exec(
+                select(
+                    SourceConfigRecord.source_id,
+                    SourceConfigRecord.source_scope,
+                    SourceConfigRecord.provenance_tier,
+                ).where(SourceConfigRecord.source_id.in_(chosen_source_ids))
+            ).all()
+        }
         for rid in chosen_ids:
             row = by_id.get(rid)
             if row is None:
                 continue
+            role_metadata = source_metadata.get(row.source_id)
             candidates.append(
                 BriefCandidate(
                     id=row.id,
@@ -564,7 +577,15 @@ def collect_candidates(
                     fetched_date=row.fetched_date or "",
                     has_content=bool(row.has_content and row.content),
                     body=row.content or "",
-                    source_role=source_role(row.source_id or ""),
+                    source_role=(
+                        source_role(
+                            row.source_id or "",
+                            source_scope=role_metadata[0],
+                            provenance_tier=role_metadata[1],
+                        )
+                        if role_metadata is not None
+                        else source_role(row.source_id or "")
+                    ),
                 )
             )
 

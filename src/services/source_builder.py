@@ -508,6 +508,12 @@ async def preview_config(payload: Dict[str, Any], *, max_entries: int = 5) -> Di
         params["feed_url"] = payload.get("url") or params.get("feed_url") or ""
         params["feed_name"] = payload.get("name") or params.get("feed_name") or ""
         fetcher = GenericRssFetcher()
+    elif source_type == "podcast":
+        from fetchers.impl.podcast_rss_fetcher import GenericPodcastRssFetcher
+
+        params["feed_url"] = payload.get("url") or params.get("feed_url") or ""
+        params["feed_name"] = payload.get("name") or params.get("feed_name") or ""
+        fetcher = GenericPodcastRssFetcher()
     else:
         return {"ok": False, "error": f"不支持的 source_type：{source_type}"}
 

@@ -2095,7 +2095,7 @@ def ensure_default_subscriptions(username: str) -> None:
 
 
 # ==================== 0. 数据源配置 ====================
-# /api/source-configs* 的 9 个端点（CRUD/toggle/fetch + fetch-active-rss/web）
+# /api/source-configs* 端点（CRUD/toggle/fetch + fetch-active-rss/web + podcast catalog）
 # 已迁出至 api/routers/source_configs.py（含 SourceConfigCreate/Update/SourceFetchParams
 # 与 serialize_source_config/normalize_source_id/parse_json_object/resolve_source_fetcher_id/
 # build_source_fetch_params；见 app.include_router）。

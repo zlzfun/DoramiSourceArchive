@@ -144,6 +144,10 @@ export const SOURCE_SCOPE_LABELS = {
   research_lab: '研究团队',
   ai_media: 'AI 媒体',
   tech_media: '科技媒体',
+  personal_commentary: '个人评论',
+  expert_commentary: '专家评论',
+  executive_commentary: '高管评论',
+  expert_newsletter: '专家通讯',
   developer_community: '开发者社区',
   research_community: '研究社区',
 };

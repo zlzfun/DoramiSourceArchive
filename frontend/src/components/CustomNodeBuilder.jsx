@@ -56,7 +56,9 @@ function toPayload(f) {
         wait_for: f.wait_for,
         ...(f.listing_css ? { listing_css: f.listing_css } : {}),
       }
-    : { limit: Number(f.limit) || 12, fetch_detail_if_missing: true };
+    : f.source_type === 'podcast'
+      ? { limit: Number(f.limit) || 12 }
+      : { limit: Number(f.limit) || 12, fetch_detail_if_missing: true };
   return {
     source_id: f.source_id,
     name: f.name,
@@ -103,7 +105,7 @@ export default function CustomNodeBuilder({ showToast }) {
   const loadSaved = useCallback(async () => {
     try {
       const rows = await fetchSourceConfigs({}, 200);
-      setSaved(rows.filter(r => ['web', 'webpage', 'rss', 'atom'].includes((r.source_type || '').toLowerCase())));
+      setSaved(rows.filter(r => ['web', 'webpage', 'rss', 'atom', 'podcast'].includes((r.source_type || '').toLowerCase())));
     } catch (e) {
       showToast?.(e.message || '加载已存源失败', 'error');
     }
@@ -190,7 +192,7 @@ export default function CustomNodeBuilder({ showToast }) {
           <div className="flex h-9 w-9 items-center justify-center rounded-[var(--r-control)] bg-violet-50 text-violet-600"><Wand2 className="h-5 w-5" /></div>
           <div>
             <div className="font-semibold text-slate-800">AI 自定义节点</div>
-            <div className="text-xs text-slate-500">输入一个文章列表页 URL，自动判断类型、分析结构并生成可抓取的节点配置。</div>
+            <div className="text-xs text-slate-500">输入一个内容源 URL，自动判断类型、分析结构并生成可抓取的节点配置。</div>
           </div>
         </div>
         <div className="flex gap-2">
@@ -228,6 +230,7 @@ export default function CustomNodeBuilder({ showToast }) {
               <select className={inputCls} value={form.source_type} onChange={e => set('source_type', e.target.value)}>
                 <option value="web">网页列表 (web)</option>
                 <option value="rss">RSS/Atom</option>
+                <option value="podcast">播客 RSS (podcast)</option>
               </select>
             </Field>
             <Field label="入口 URL"><input className={inputCls} value={form.url} onChange={e => set('url', e.target.value)} /></Field>

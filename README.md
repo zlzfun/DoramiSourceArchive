@@ -4,6 +4,8 @@
 
 v3.44 起，资讯落盘后可异步完成质量评分、摘要、受治理的 `Topic / Industry / Entity` 标签与最多 6 个灵活展示标签；读者首次登录或从左侧工具栏管理“关注 / 屏蔽”兴趣，并在严格订阅范围内生成个人早报。规范标签、审核回执、历史 `full_analysis` 回填和公共日报 adapter 均有独立的发布与回滚边界。
 
+Podcast RSS 现作为文章、动态、社交之外的第四种内容形态：采集 enclosure、时长、节目/单集元数据与 Podcasting 2.0 transcript/chapters 定位信息，桌面端和移动端均可在独立 Podcast 容器中播放原音频。长播客转录、精华博客和 `≤15min` 合成音频仍是后续受权利与预算门控的异步流水线，完整设计见 [`docs/podcast-wave-plan.md`](docs/podcast-wave-plan.md)。
+
 > 本文件是**全仓导航地图**（鸟瞰 + 路径索引）。需要深入时按「渐进式披露」逐层下钻 ↓
 
 ## 文档分层（按需下钻）
