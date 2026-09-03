@@ -190,6 +190,10 @@
 .m-page-scroll .reader-disc { min-height: 100%; }
 .m-page-scroll .reader-disc-head-inner,
 .m-page-scroll .reader-disc-body { padding-left: 16px; padding-right: 16px; }
+.m-page-scroll .reader-disc-tools { flex-wrap: wrap; }
+.m-page-scroll .reader-disc-search { flex: 1 0 100%; max-width: none; }
+.m-page-scroll .reader-disc-seg { flex: 1; margin-left: 0; }
+.m-page-scroll .reader-disc-seg .reader-seg-btn { flex: 1; }
 
 /* ── 正文页(push 全屏,无 TabBar) ── */
 .m-read {
@@ -215,6 +219,7 @@
 .m-read-scroll .reader-pane-title { font-size: 23px; }
 .m-read-scroll .reader-pane-head { max-width: none; }
 .m-read-body { padding-top: 16px; }
+.m-read-body .podcast-player-panel { margin-bottom: 20px; padding: 12px; }
 /* 阅读进度线(scroll-timeline 渐进增强,与阅读窗同法同 keyframes;不支持则隐形) */
 @supports (animation-timeline: scroll()) {
   .m-read { timeline-scope: --m-read-scroll; }
@@ -537,6 +542,8 @@
 /* ── 条目卡窄屏微调:时间/星标不再为桌面浮层滚动条让位 ── */
 .m-list .reader-entry-time { margin-right: 0; }
 .m-list .reader-entry-fav { right: 2px; }
+.m-list .reader-podcast-cover { width: 64px; height: 64px; }
+.m-list .reader-podcast-copy .reader-entry-time { margin-right: 0; }
 
 /* ── 公告横幅:悬浮带避开刘海(桌面 .reader-ann-band 语法原样复用) ── */
 .m-shell .reader-ann-band { top: calc(10px + env(safe-area-inset-top)); }

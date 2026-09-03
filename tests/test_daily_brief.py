@@ -699,6 +699,13 @@ def test_source_role_backend_mirror():
     assert source_role("x_karpathy") == "personal"       # scope 判个人,压过基类 tier0
     assert source_role("web_qbitai") == "media"
     assert source_role("docs_arena_leaderboard_changelog") == "leaderboard"
+    assert source_role("podcast_nvidia_ai") == "official"
+    assert source_role("podcast_dwarkesh") == "personal"
+    assert source_role(
+        "runtime_config_source",
+        source_scope="research_lab",
+        provenance_tier="tier0_primary",
+    ) == "official"
     assert source_role("some_config_source_not_in_registry") == "media"
     assert source_role("") == "media"
 
@@ -754,6 +761,30 @@ def test_collect_candidates_fills_source_role(tmp_path):
     with Session(sink.engine) as session:
         candidates, _, _ = collect_candidates(session, cursor="2026-06-01T00:00:00")
     assert candidates[0].source_role == "media"  # 注册表查不到 → media,无官方待遇
+
+
+def test_collect_candidates_honors_runtime_source_config_role(tmp_path):
+    from models.db import SourceConfigRecord
+
+    sink = _make_sink(tmp_path)
+    _seed(sink.engine, "podcast-1", "podcast_runtime", "2026-06-05T00:00:00")
+    with Session(sink.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id="podcast_runtime",
+            name="Runtime Podcast",
+            source_type="podcast",
+            source_scope="expert_commentary",
+            provenance_tier="tier2_commentary",
+            created_at="2026-06-01T00:00:00",
+            updated_at="2026-06-01T00:00:00",
+        ))
+        session.commit()
+        candidates, _, _ = collect_candidates(
+            session,
+            cursor="2026-06-01T00:00:00",
+        )
+
+    assert candidates[0].source_role == "personal"
 
 
 # ---------------- 同日重跑合并 / 查重回补 / map 重试(v3.35) ----------------

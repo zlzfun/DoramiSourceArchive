@@ -10,10 +10,12 @@ import {
 } from 'lucide-react';
 import ReaderMarkdown from '../ReaderMarkdown';
 import ShareMenu from '../ShareMenu';
+import PodcastAudioPanel from '../PodcastAudioPanel';
 import AnalysisTagChip from '../AnalysisTagChip';
 import { PaneBodySkeleton } from '../ReaderTab';
 import { formatRelativeTime, formatDateTime } from '../../utils/datetime';
 import { contentTypeLabel } from '../../utils/contentType';
+import { formatPodcastDuration } from '../../utils/podcast';
 import { displayAnalysisTags, qualityScoreText } from '../../utils/analysis';
 import { hostOf } from '../../utils/readerText';
 
@@ -30,7 +32,7 @@ export default function MobileArticlePage({
 }) {
   const {
     activeArticle, activeBody, activeBodyLoading,
-    sourceNameMap, displayBody, displayTranslatedBody, bodyStats,
+    sourceNameMap, displayBody, displayTranslatedBody, bodyStats, podcastView,
     favoriteIds, favTogglingId, handleToggleFavorite,
     shareOpen, setShareOpen,
     showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
@@ -139,6 +141,9 @@ export default function MobileArticlePage({
               </span>
             )}
             {bodyStats && <span>阅读时长 {bodyStats.minutes} 分钟</span>}
+            {podcastView && formatPodcastDuration(activeArticle.podcast?.duration_seconds) && (
+              <span>原版 {formatPodcastDuration(activeArticle.podcast.duration_seconds)}</span>
+            )}
             {typeof activeArticle.read_count === 'number' && activeArticle.read_count > 0 && (
               <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
             )}
@@ -168,6 +173,7 @@ export default function MobileArticlePage({
           )}
         </header>
         <div className="m-read-body markdown-body">
+          {podcastView && <PodcastAudioPanel article={activeArticle} />}
           {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
             <div className="reader-ai-summary">
               <div className="reader-ai-summary-head">
@@ -197,7 +203,9 @@ export default function MobileArticlePage({
           ) : activeBody ? (
             <ReaderMarkdown>{displayBody}</ReaderMarkdown>
           ) : (
-            '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
+            podcastView
+              ? '该播客暂无文字内容，可收听上方原版音频。'
+              : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
           )}
           {/* 正文尾部原文行(v3.45 推全站,与桌面阅读窗同口径):无 source_url 不画 */}
           {!activeBodyLoading && activeArticle.source_url && (

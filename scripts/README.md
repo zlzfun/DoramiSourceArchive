@@ -7,6 +7,7 @@
 | 脚本 | 用途 | 数据边界 |
 |---|---|---|
 | [`ensure_daily_collection_job.py`](./ensure_daily_collection_job.py) | 幂等创建/更新“每日全量采集”任务。 | 写当前配置库；可重复执行。 |
+| [`import_podcast_catalog.py`](./import_podcast_catalog.py) | 预览或幂等导入精选播客目录；默认 dry-run，`--apply` 才写，`--activate` 才启用。 | 可选写当前或显式数据库；阻断源默认跳过。 |
 | [`export_shendeng_daily_news.py`](./export_shendeng_daily_news.py) | 导出公共日报的结构化条目和可选 Markdown，不调用 LLM；兼容 adapter off/on 的持久化条目。 | API 只读，文件写到指定输出路径。 |
 | [`compare_web_backends.py`](./compare_web_backends.py) | 比较 legacy 与 crawl4ai 网页正文提取结果。 | 只访问目标网页并写对比产物，不写业务库。 |
 

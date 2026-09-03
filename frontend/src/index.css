@@ -8127,6 +8127,73 @@ input[type="radio"] {
     mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
   }
 
+  /* ── 播客条目:封面 + 节目名/单集标题/时长/精简处理状态 ── */
+  .reader-entry.is-podcast {
+    padding: 10px 6px 10px 12px;
+    contain-intrinsic-size: auto 96px;
+  }
+
+  .reader-podcast-layout {
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+  }
+
+  .reader-podcast-cover {
+    flex: none;
+    width: 68px;
+    height: 68px;
+    border-radius: var(--r-control);
+    background: var(--dorami-well);
+    color: var(--dorami-faint);
+    object-fit: cover;
+  }
+
+  .podcast-cover-fallback {
+    display: grid;
+    place-items: center;
+  }
+
+  .podcast-cover-fallback svg { width: 24px; height: 24px; }
+
+  .reader-podcast-copy {
+    display: block;
+    min-width: 0;
+    flex: 1;
+    padding-top: 1px;
+  }
+
+  .reader-podcast-copy .reader-entry-time { margin-right: 8px; }
+  .reader-podcast-copy .reader-entry-title { -webkit-line-clamp: 2; }
+
+  .reader-podcast-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px 8px;
+    margin-top: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .podcast-status {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    padding: 2px 7px;
+    border-radius: var(--r-pill);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+
+  .podcast-status.is-ok { color: var(--state-ok); background: var(--state-ok-bg); }
+  .podcast-status.is-run { color: var(--state-run); background: var(--state-run-bg); }
+  .podcast-status.is-bad { color: var(--state-bad); background: var(--state-bad-bg); }
+  .podcast-status.is-idle { color: var(--state-idle); background: var(--state-idle-bg); }
+
   .reader-load-more {
     display: flex;
     align-items: center;
@@ -8630,6 +8697,94 @@ input[type="radio"] {
   .reader-tr-seg-btn.is-on { background: color-mix(in srgb, var(--dorami-ink) 7%, transparent); color: var(--dorami-ink); }
   .reader-tr-seg-btn.is-on.is-ai { background: var(--grad-ai-wash); }
   .reader-tr-seg-btn.is-on.is-ai svg { stroke: url(#ai-grad) var(--dorami-accent); }
+
+  /* 播客详情顶部播放器:原版永远在首位且明示；精简版存在时作为第二轨展示。 */
+  .podcast-player-panel {
+    max-width: 720px;
+    margin: 0 auto 26px;
+    padding: 14px;
+    border-radius: var(--r-card);
+    background: var(--dorami-soft);
+  }
+
+  .podcast-player-summary {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 13px;
+  }
+
+  .podcast-player-cover {
+    flex: none;
+    width: 58px;
+    height: 58px;
+    border-radius: var(--r-control);
+    background: var(--dorami-well);
+    color: var(--dorami-faint);
+    object-fit: cover;
+  }
+
+  .podcast-player-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+  }
+
+  .podcast-player-kicker {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--dorami-faint);
+  }
+
+  .podcast-player-copy strong {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--dorami-ink);
+  }
+
+  .podcast-audio-track {
+    padding-top: 11px;
+    border-top: 1px solid var(--dorami-border);
+  }
+
+  .podcast-audio-track + .podcast-audio-track { margin-top: 12px; }
+
+  .podcast-audio-track-head {
+    display: flex;
+    align-items: center;
+    gap: 6px 10px;
+    margin-bottom: 7px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--dorami-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .podcast-audio-label {
+    font-weight: 700;
+    color: var(--dorami-ink-2);
+  }
+
+  .podcast-audio-track audio {
+    display: block;
+    width: 100%;
+    height: 40px;
+    color-scheme: light dark;
+  }
+
+  .podcast-audio-unavailable {
+    margin: 0;
+    padding-top: 11px;
+    border-top: 1px solid var(--dorami-border);
+    font-size: 12px;
+    color: var(--dorami-faint);
+  }
 
   /* 上一篇/下一篇:沿当前列表序的真实翻页 */
   .reader-pager {

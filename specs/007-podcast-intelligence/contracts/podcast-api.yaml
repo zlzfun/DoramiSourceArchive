@@ -1,0 +1,897 @@
+openapi: 3.1.0
+info:
+  title: Dorami Podcast Intelligence API
+  version: 0.1.0
+  description: >-
+    Proposed additive contract for Issue #7. Existing /api/articles responses retain
+    their current podcast projection; this contract defines source admission,
+    Podcast domain reads, processing and artifact publication.
+servers:
+  - url: /
+security:
+  - sessionCookie: []
+tags:
+  - name: Podcast source admission
+  - name: Podcasts
+  - name: Podcast processing
+
+paths:
+  /api/admin/podcast-sources/admission-preview:
+    post:
+      tags: [Podcast source admission]
+      operationId: previewPodcastAdmission
+      summary: Safely inspect a Podcast feed without downloading enclosure audio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PodcastAdmissionPreviewRequest'
+      responses:
+        '200':
+          description: Admission proposal and signed import token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastAdmissionPreview'
+        '422':
+          $ref: '#/components/responses/PodcastError'
+
+  /api/admin/podcast-sources/import:
+    post:
+      tags: [Podcast source admission]
+      operationId: importPodcastSource
+      summary: Idempotently import a previously previewed Podcast source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [preview_token]
+              properties:
+                preview_token:
+                  type: string
+                trust_tier:
+                  type: string
+                  enum: [internal_curated, official, community, unknown]
+                  default: unknown
+                activate_when_approved:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Existing or newly imported source
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastSourceProfile'
+        '409':
+          $ref: '#/components/responses/PodcastError'
+
+  /api/admin/podcast-sources:
+    get:
+      tags: [Podcast source admission]
+      operationId: listPodcastSourceProfiles
+      parameters:
+        - in: query
+          name: admission_status
+          schema:
+            $ref: '#/components/schemas/AdmissionStatus'
+        - in: query
+          name: review_due
+          schema:
+            type: boolean
+        - in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated source profiles
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PodcastSourceProfile'
+                  next_cursor:
+                    type: [string, 'null']
+
+  /api/admin/podcast-sources/{source_id}/admission:
+    get:
+      tags: [Podcast source admission]
+      operationId: getPodcastAdmission
+      parameters:
+        - $ref: '#/components/parameters/SourceId'
+      responses:
+        '200':
+          description: Effective profile and recent review evidence
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile, reviews]
+                properties:
+                  profile:
+                    $ref: '#/components/schemas/PodcastSourceProfile'
+                  reviews:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PodcastSourceReview'
+    patch:
+      tags: [Podcast source admission]
+      operationId: decidePodcastAdmission
+      summary: Apply or remove an audited manual decision
+      parameters:
+        - $ref: '#/components/parameters/SourceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, reason, expected_version]
+              properties:
+                decision:
+                  type: string
+                  enum: [approved, rejected_scope, blocked, clear_override]
+                policy:
+                  type: string
+                  enum: [ai_core, tech_core, mixed, manual]
+                reason:
+                  type: string
+                  minLength: 3
+                  maxLength: 1000
+                expires_at:
+                  type: [string, 'null']
+                  format: date-time
+                expected_version:
+                  type: integer
+                  minimum: 0
+      responses:
+        '200':
+          description: Updated effective profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastSourceProfile'
+        '409':
+          $ref: '#/components/responses/PodcastError'
+
+  /api/admin/podcast-sources/{source_id}/admission-reviews:
+    post:
+      tags: [Podcast source admission]
+      operationId: recheckPodcastAdmission
+      parameters:
+        - $ref: '#/components/parameters/SourceId'
+      responses:
+        '202':
+          description: Review scheduled or existing identical review reused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastSourceReview'
+
+  /api/podcasts/shows:
+    get:
+      tags: [Podcasts]
+      operationId: listPodcastShows
+      parameters:
+        - in: query
+          name: subscribed
+          schema:
+            type: boolean
+        - in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Approved, visible Podcast shows only
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PodcastShow'
+                  next_cursor:
+                    type: [string, 'null']
+
+  /api/podcasts/shows/{source_id}:
+    get:
+      tags: [Podcasts]
+      operationId: getPodcastShow
+      parameters:
+        - $ref: '#/components/parameters/SourceId'
+      responses:
+        '200':
+          description: Podcast show details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastShow'
+
+  /api/podcasts/shows/{source_id}/episodes:
+    get:
+      tags: [Podcasts]
+      operationId: listPodcastEpisodes
+      parameters:
+        - $ref: '#/components/parameters/SourceId'
+        - in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        '200':
+          description: In-scope visible episodes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PodcastEpisode'
+                  next_cursor:
+                    type: [string, 'null']
+
+  /api/podcasts/episodes/{episode_id}:
+    get:
+      tags: [Podcasts]
+      operationId: getPodcastEpisode
+      parameters:
+        - $ref: '#/components/parameters/EpisodeId'
+      responses:
+        '200':
+          description: Episode details and available artifacts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastEpisode'
+
+  /api/podcasts/episodes/{episode_id}/transcript:
+    get:
+      tags: [Podcasts]
+      operationId: getPodcastTranscript
+      parameters:
+        - $ref: '#/components/parameters/EpisodeId'
+        - in: query
+          name: variant
+          schema:
+            type: string
+            enum: [source, normalized, zh]
+            default: zh
+        - in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated time-linked transcript segments
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [variant, language, items]
+                properties:
+                  variant:
+                    type: string
+                    enum: [source, normalized, zh]
+                  language:
+                    type: string
+                  source_language:
+                    type: [string, 'null']
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TranscriptSegment'
+                  next_cursor:
+                    type: [string, 'null']
+        '404':
+          $ref: '#/components/responses/PodcastError'
+
+  /api/podcasts/episodes/{episode_id}/playback-state:
+    post:
+      tags: [Podcasts]
+      operationId: savePodcastPlaybackState
+      parameters:
+        - $ref: '#/components/parameters/EpisodeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [variant, position_ms, duration_ms]
+              properties:
+                variant:
+                  type: string
+                  enum: [original, digest]
+                position_ms:
+                  type: integer
+                  minimum: 0
+                duration_ms:
+                  type: integer
+                  minimum: 0
+                completed:
+                  type: boolean
+                  default: false
+      responses:
+        '204':
+          description: Saved
+
+  /api/podcasts/episodes/{episode_id}/audio:
+    get:
+      tags: [Podcasts]
+      operationId: getPodcastAudio
+      parameters:
+        - $ref: '#/components/parameters/EpisodeId'
+        - in: query
+          name: variant
+          required: true
+          schema:
+            type: string
+            enum: [original, digest]
+      responses:
+        '302':
+          description: Redirect to validated original or short-lived derived asset URL
+        '404':
+          $ref: '#/components/responses/PodcastError'
+
+  /api/admin/podcast-sources/{source_id}/rights:
+    patch:
+      tags: [Podcast processing]
+      operationId: updatePodcastSourceRights
+      parameters:
+        - $ref: '#/components/parameters/SourceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RightsDecision'
+      responses:
+        '200':
+          description: Effective rights policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RightsDecision'
+
+  /api/admin/podcast-episodes/{episode_id}/process:
+    post:
+      tags: [Podcast processing]
+      operationId: processPodcastEpisode
+      parameters:
+        - $ref: '#/components/parameters/EpisodeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target]
+              properties:
+                target:
+                  type: string
+                  enum: [transcript, digest_blog, digest_audio]
+                force:
+                  type: boolean
+                  default: false
+                approved_budget_usd:
+                  type: [number, 'null']
+                  minimum: 0
+      responses:
+        '202':
+          description: Existing idempotent run or newly queued run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastProcessing'
+        '409':
+          $ref: '#/components/responses/PodcastError'
+
+  /api/admin/podcast-processings/{processing_id}:
+    get:
+      tags: [Podcast processing]
+      operationId: getPodcastProcessing
+      parameters:
+        - in: path
+          name: processing_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Processing state and redacted error/cost data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastProcessing'
+
+  /api/admin/podcast-processings/{processing_id}/retry:
+    post:
+      tags: [Podcast processing]
+      operationId: retryPodcastProcessing
+      parameters:
+        - in: path
+          name: processing_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Retry scheduled idempotently
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastProcessing'
+
+  /api/admin/podcast-artifacts/{artifact_id}/publish:
+    post:
+      tags: [Podcast processing]
+      operationId: publishPodcastArtifact
+      parameters:
+        - in: path
+          name: artifact_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expected_artifact_version]
+              properties:
+                expected_artifact_version:
+                  type: integer
+                  minimum: 1
+      responses:
+        '200':
+          description: Published artifact
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastArtifact'
+        '409':
+          $ref: '#/components/responses/PodcastError'
+
+  /api/admin/podcast-artifacts/{artifact_id}/unpublish:
+    post:
+      tags: [Podcast processing]
+      operationId: unpublishPodcastArtifact
+      parameters:
+        - in: path
+          name: artifact_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Unpublished artifact and revoked served URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastArtifact'
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: dorami_session
+
+  parameters:
+    SourceId:
+      in: path
+      name: source_id
+      required: true
+      schema:
+        type: string
+    EpisodeId:
+      in: path
+      name: episode_id
+      required: true
+      schema:
+        type: string
+
+  responses:
+    PodcastError:
+      description: Stable Podcast domain error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PodcastError'
+
+  schemas:
+    AdmissionStatus:
+      type: string
+      enum: [pending, sampling, review_required, approved, rejected_scope, blocked, failed]
+
+    PodcastAdmissionPreviewRequest:
+      type: object
+      required: [feed_url]
+      properties:
+        feed_url:
+          type: string
+          format: uri
+        sample_size:
+          type: integer
+          minimum: 5
+          maximum: 20
+          default: 12
+
+    PodcastAdmissionPreview:
+      type: object
+      required:
+        - canonical_feed_url
+        - show_title
+        - sampled_episode_count
+        - proposed_status
+        - confidence
+        - samples
+        - preview_token
+        - expires_at
+      properties:
+        canonical_feed_url:
+          type: string
+          format: uri
+        show_title:
+          type: string
+        podcast_guid:
+          type: [string, 'null']
+        valid_episode_count:
+          type: integer
+        sampled_episode_count:
+          type: integer
+        ai_episode_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+        in_scope_episode_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        proposed_status:
+          $ref: '#/components/schemas/AdmissionStatus'
+        proposed_policy:
+          type: string
+          enum: [ai_core, tech_core, mixed, manual]
+        hard_reject_reasons:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+        samples:
+          type: array
+          items:
+            $ref: '#/components/schemas/PodcastAdmissionSample'
+        preview_token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    PodcastAdmissionSample:
+      type: object
+      required: [guid, title, label, confidence, evidence]
+      properties:
+        guid:
+          type: string
+        title:
+          type: string
+        published_at:
+          type: [string, 'null']
+          format: date-time
+        label:
+          type: string
+          enum: [ai_core, tech_adjacent, non_tech, unknown]
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        topics:
+          type: array
+          items:
+            type: string
+        evidence:
+          type: string
+
+    PodcastSourceProfile:
+      type: object
+      required: [source_id, admission_status, source_scope_class, row_version]
+      properties:
+        source_id:
+          type: string
+        canonical_feed_url:
+          type: string
+          format: uri
+        admission_status:
+          $ref: '#/components/schemas/AdmissionStatus'
+        admission_policy:
+          type: string
+          enum: [ai_core, tech_core, mixed, manual]
+        source_scope_class:
+          type: string
+          enum: [ai_core, tech_adjacent, mixed, off_topic, unknown]
+        ai_episode_ratio:
+          type: number
+        in_scope_episode_ratio:
+          type: number
+        scope_confidence:
+          type: number
+        sample_size:
+          type: integer
+        next_review_at:
+          type: [string, 'null']
+          format: date-time
+        row_version:
+          type: integer
+
+    PodcastSourceReview:
+      type: object
+      required: [id, source_id, trigger, status]
+      properties:
+        id:
+          type: string
+        source_id:
+          type: string
+        trigger:
+          type: string
+          enum: [initial, scheduled, drift, manual, migration]
+        status:
+          type: string
+          enum: [running, succeeded, failed, cancelled]
+        proposed_decision:
+          $ref: '#/components/schemas/AdmissionStatus'
+        final_decision:
+          oneOf:
+            - $ref: '#/components/schemas/AdmissionStatus'
+            - type: 'null'
+        confidence:
+          type: number
+        rationale:
+          type: [string, 'null']
+
+    PodcastShow:
+      type: object
+      required: [source_id, title, admission_policy, subscribed]
+      properties:
+        source_id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        image_url:
+          type: [string, 'null']
+          format: uri
+        language:
+          type: [string, 'null']
+        admission_policy:
+          type: string
+          enum: [ai_core, tech_core, mixed, manual]
+        subscribed:
+          type: boolean
+
+    PodcastEpisode:
+      type: object
+      required: [id, source_id, title, duration_seconds, available_variants]
+      properties:
+        id:
+          type: string
+        source_id:
+          type: string
+        title:
+          type: string
+        title_zh:
+          type: [string, 'null']
+        show_title:
+          type: string
+        description:
+          type: string
+        description_zh:
+          type: [string, 'null']
+        duration_seconds:
+          type: integer
+          minimum: 0
+        published_at:
+          type: [string, 'null']
+          format: date-time
+        language:
+          type: [string, 'null']
+        explicit:
+          type: boolean
+        image_url:
+          type: [string, 'null']
+          format: uri
+        source_url:
+          type: [string, 'null']
+          format: uri
+        relevance_score:
+          type: [number, 'null']
+        quality_score:
+          type: [number, 'null']
+        analysis_basis:
+          type: string
+          enum: [none, metadata, transcript]
+        available_variants:
+          type: array
+          items:
+            type: string
+            enum: [original, transcript, transcript_zh, digest_blog_zh, digest_audio_zh]
+        ai_disclosure:
+          type: [string, 'null']
+
+    TranscriptSegment:
+      type: object
+      required: [id, ordinal, start_ms, end_ms, speaker_label, text, is_translated]
+      properties:
+        id:
+          type: string
+        ordinal:
+          type: integer
+        start_ms:
+          type: integer
+        end_ms:
+          type: integer
+        speaker_label:
+          type: [string, 'null']
+        speaker_name:
+          type: [string, 'null']
+        text:
+          type: string
+        language:
+          type: [string, 'null']
+        confidence:
+          type: [number, 'null']
+        source_segment_id:
+          type: [string, 'null']
+        is_translated:
+          type: boolean
+
+    RightsDecision:
+      type: object
+      required:
+        - policy
+        - transcript_allowed
+        - derivative_text_allowed
+        - derivative_audio_allowed
+        - public_distribution_allowed
+        - reason
+      properties:
+        policy:
+          type: string
+          enum: [link_only, transcribe_private, derivative_text, derivative_audio, blocked, review_required]
+        transcript_allowed:
+          type: boolean
+        derivative_text_allowed:
+          type: boolean
+        derivative_audio_allowed:
+          type: boolean
+        public_distribution_allowed:
+          type: boolean
+        license_url:
+          type: [string, 'null']
+          format: uri
+        reason:
+          type: string
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+
+    PodcastProcessing:
+      type: object
+      required: [id, episode_id, target, eligibility_status, status, stage]
+      properties:
+        id:
+          type: string
+        episode_id:
+          type: string
+        target:
+          type: string
+          enum: [transcript, digest_blog, digest_audio]
+        eligibility_status:
+          type: string
+          enum:
+            - unknown
+            - not_required_short
+            - blocked_source
+            - blocked_rights
+            - rejected_relevance
+            - rejected_value
+            - invalid_input
+            - over_budget
+            - eligible
+        status:
+          type: string
+          enum: [not_required, queued, running, retry_wait, awaiting_review, ready, failed, cancelled, superseded]
+        stage:
+          type: string
+        estimated_cost_usd:
+          type: [number, 'null']
+        actual_cost_usd:
+          type: [number, 'null']
+        error_code:
+          type: [string, 'null']
+        error_message:
+          type: [string, 'null']
+        updated_at:
+          type: [string, 'null']
+          format: date-time
+
+    PodcastArtifact:
+      type: object
+      required: [id, episode_id, kind, language, status, version]
+      properties:
+        id:
+          type: string
+        episode_id:
+          type: string
+        kind:
+          type: string
+          enum:
+            - publisher_transcript
+            - normalized_transcript
+            - transcript_zh
+            - source_chapters
+            - digest_blog_zh
+            - narration_script_zh
+            - digest_audio_zh
+            - digest_chapters
+        language:
+          type: string
+        status:
+          type: string
+          enum: [draft, qa_failed, awaiting_review, ready, published, unpublished, deleted, superseded]
+        version:
+          type: integer
+        duration_seconds:
+          type: [integer, 'null']
+        content_hash:
+          type: [string, 'null']
+        voice_id:
+          type: [string, 'null']
+        published_at:
+          type: [string, 'null']
+          format: date-time
+
+    PodcastError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum:
+            - podcast_source_blocked
+            - podcast_source_review_required
+            - podcast_preview_expired
+            - podcast_rights_blocked
+            - podcast_duration_not_eligible
+            - podcast_budget_exceeded
+            - podcast_processing_conflict
+            - podcast_artifact_not_ready
+            - podcast_provider_unavailable
+            - podcast_input_changed
+        message:
+          type: string

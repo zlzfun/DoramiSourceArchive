@@ -21,7 +21,7 @@ function lastLabel(lastFetched) {
 }
 
 // 单源卡(源视图分组网格 与 合集详情成员网格 共用同一渲染)。
-// showArticleChip:文章源是否也挂「文章」形态标——三形态混排的上下文(全部视图/
+// showArticleChip:文章源是否也挂「文章」形态标——多形态混排的上下文(全部视图/
 // 合集详情)才标,已按形态过滤时不标(每卡同词是纯噪声)。
 function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscribe, onUnsubscribe, onPreview }) {
   const q = (query || '').trim();
@@ -44,6 +44,9 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
             )}
             {(source.shape || 'article') === 'social' && (
               <span className="reader-shape-chip">{platformLabelOf(source.platform)}</span>
+            )}
+            {(source.shape || 'article') === 'podcast' && (
+              <span className="reader-shape-chip">播客</span>
             )}
           </div>
           {source.description && (
@@ -102,6 +105,8 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
  * join 不到的成员自然不渲染,与后端批量端点的 unavailable 口径一致)。
  */
 export default function DiscoverPage({
+  // 从特定容器进入添加来源时锁定形态；当前 Podcast 使用此入口隔离其它来源。
+  shapeScope = null,
   sources,
   subscribedIds,
   loading = false,
@@ -120,9 +125,14 @@ export default function DiscoverPage({
   userSourcesEnabled = false,
   onAddCustomSource = null,
 }) {
+  const scopedShape = ['article', 'bulletin', 'social', 'podcast'].includes(shapeScope)
+    ? shapeScope
+    : null;
   const [tab, setTab] = useState('sources'); // sources | collections
   const [addOpen, setAddOpen] = useState(false); // 添加自定源浮层
-  const [shape, setShape] = useState('all');   // all | article | bulletin | social
+  const [shape, setShape] = useState('all');   // all | article | bulletin | social | podcast
+  const activeTab = scopedShape ? 'sources' : tab;
+  const activeShape = scopedShape || shape;
   const [query, setQuery] = useState('');
   // 排序小开关:默认(收录量降序,原有秩序)⇄ 订阅降序(全站订阅人数,选源社会证明)
   const [sortBySubs, setSortBySubs] = useState(false);
@@ -131,13 +141,13 @@ export default function DiscoverPage({
   const confirmTimerRef = useRef(null);
   useEffect(() => () => clearTimeout(confirmTimerRef.current), []);
 
-  // 分组统一「信息角色」单轴;形态(文章/动态/社交)交给上方过滤条,不作分组维度。
+  // 分组统一「信息角色」单轴;内容形态交给上方过滤条,不作分组维度。
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
     const buckets = {};
     for (const s of sources) {
       const sShape = s.shape || 'article';
-      if (shape !== 'all' && sShape !== shape) continue;
+      if (activeShape !== 'all' && sShape !== activeShape) continue;
       if (q && !`${s.name || ''} ${s.description || ''} ${s.source_id}`.toLowerCase().includes(q)) continue;
       (buckets[sourceRoleOf(s)] ||= []).push(s);
     }
@@ -149,7 +159,7 @@ export default function DiscoverPage({
     return SOURCE_ROLES
       .map((r) => ({ ...r, list: buckets[r.key] || [] }))
       .filter((g) => g.list.length > 0);
-  }, [sources, shape, query, sortBySubs]);
+  }, [sources, activeShape, query, sortBySubs]);
 
   // 合集视图模型:成员与订阅计数由 sources 目录 join(隐藏源上游已滤,join 不到即不渲染)
   const sourceById = useMemo(() => {
@@ -243,10 +253,10 @@ export default function DiscoverPage({
     </div>
   );
 
-  const inDetail = Boolean(activeCollection);
+  const inDetail = !scopedShape && Boolean(activeCollection);
 
   return (
-    <main className="reader-disc" aria-label="发现">
+    <main className="reader-disc" aria-label={scopedShape === 'podcast' ? '添加播客' : '发现'}>
       <div className="reader-disc-head">
         <div className="reader-disc-head-inner">
           {inDetail ? (
@@ -279,38 +289,44 @@ export default function DiscoverPage({
           ) : (
             <>
               <div className="reader-disc-title-row">
-                <span className="reader-disc-title">发现</span>
+                <span className="reader-disc-title">{scopedShape === 'podcast' ? '添加播客' : '发现'}</span>
                 <span className="reader-disc-hint">
-                  {tab === 'collections' ? '按主题策展的来源合集,一键整组订阅' : '浏览全站收录的来源,一键订阅到你的阅读器'}
+                  {scopedShape === 'podcast'
+                    ? '仅显示可订阅的播客来源'
+                    : activeTab === 'collections'
+                      ? '按主题策展的来源合集,一键整组订阅'
+                      : '浏览全站收录的来源,一键订阅到你的阅读器'}
                 </span>
               </div>
               <div className="reader-disc-tools">
                 {/* 目录视图切换:平铺源目录 ⇄ 策展合集 */}
-                <span className="reader-seg reader-disc-viewseg" role="group" aria-label="目录视图">
-                  {[['sources', '源'], ['collections', '合集']].map(([key, label]) => (
-                    <button
-                      key={key}
-                      type="button"
-                      className={`reader-seg-btn ${tab === key ? 'is-on' : ''}`}
-                      onClick={() => { setTab(key); disarmConfirm(); }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </span>
+                {!scopedShape && (
+                  <span className="reader-seg reader-disc-viewseg" role="group" aria-label="目录视图">
+                    {[['sources', '源'], ['collections', '合集']].map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        className={`reader-seg-btn ${activeTab === key ? 'is-on' : ''}`}
+                        onClick={() => { setTab(key); disarmConfirm(); }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </span>
+                )}
                 <label className="reader-disc-search">
                   <Search className="h-[13px] w-[13px]" aria-hidden="true" />
                   <input
                     type="search"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder={tab === 'collections' ? '筛选合集…' : '筛选来源名称或简介…'}
-                    aria-label={tab === 'collections' ? '筛选合集' : '筛选来源'}
+                    placeholder={activeTab === 'collections' ? '筛选合集…' : scopedShape === 'podcast' ? '筛选播客名称或简介…' : '筛选来源名称或简介…'}
+                    aria-label={activeTab === 'collections' ? '筛选合集' : scopedShape === 'podcast' ? '筛选播客' : '筛选来源'}
                   />
                 </label>
-                {tab === 'sources' && (
+                {activeTab === 'sources' && (
                   <>
-                    {userSourcesEnabled && onAddCustomSource && (
+                    {!scopedShape && userSourcesEnabled && onAddCustomSource && (
                       <button
                         type="button"
                         className="reader-disc-add"
@@ -321,18 +337,20 @@ export default function DiscoverPage({
                         添加源
                       </button>
                     )}
-                    <span className="reader-seg reader-disc-seg" role="group" aria-label="形态筛选">
-                      {[['all', '全部'], ['article', '文章'], ['bulletin', '动态'], ['social', '社交']].map(([key, label]) => (
-                        <button
-                          key={key}
-                          type="button"
-                          className={`reader-seg-btn ${shape === key ? 'is-on' : ''}`}
-                          onClick={() => setShape(key)}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </span>
+                    {!scopedShape && (
+                      <span className="reader-seg reader-disc-seg" role="group" aria-label="形态筛选">
+                        {[['all', '全部'], ['article', '文章'], ['bulletin', '动态'], ['social', '社交'], ['podcast', '播客']].map(([key, label]) => (
+                          <button
+                            key={key}
+                            type="button"
+                            className={`reader-seg-btn ${shape === key ? 'is-on' : ''}`}
+                            onClick={() => setShape(key)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </span>
+                    )}
                     {/* 排序小开关(icon-only ghost):点击在「默认排序 ⇄ 订阅降序」间切换
                         (组内排序,不打散角色分组);状态靠点亮态 + tooltip 表达 */}
                     <button
@@ -378,7 +396,7 @@ export default function DiscoverPage({
                 ))}
               </div>
             )
-          ) : tab === 'collections' ? (
+          ) : activeTab === 'collections' ? (
             /* ── 合集列表:策展卡(整卡可点进详情;按钮区 stopPropagation) ── */
             filteredCollections.length === 0 ? (
               <div className="reader-disc-empty">{collections.length === 0 ? '暂无合集' : '没有匹配的合集'}</div>
@@ -432,7 +450,7 @@ export default function DiscoverPage({
                       subbed={subscribedIds.has(source.source_id)}
                       pinning={pinningId === source.source_id}
                       query={query}
-                      showArticleChip={shape === 'all'}
+                      showArticleChip={activeShape === 'all'}
                       onSubscribe={onSubscribe}
                       onUnsubscribe={onUnsubscribe}
                       onPreview={onPreview}

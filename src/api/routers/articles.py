@@ -38,6 +38,7 @@ from api.sources import (
     BULLETIN_CONTENT_TYPES,
     CONTENT_TYPES_BY_SHAPE,
     DAILY_BRIEF_SOURCE_ID,
+    PODCAST_CONTENT_TYPES,
     SOCIAL_CONTENT_TYPES,
     VALID_CONTENT_SHAPES,
     configured_source_shape,
@@ -126,7 +127,7 @@ def _source_ids_by_shape(session: Optional[Session] = None) -> dict[str, set[str
 
 
 def content_shape_condition(shape: str, session: Optional[Session] = None):
-    """按三态形态构造 SQL 条件，严格遵循「源级标记优先」。
+    """按内容形态构造 SQL 条件，严格遵循「源级标记优先」。
 
     content_type 只对注册表/SourceConfig 之外的历史归档源兜底，
     因此 article 不再是简单的 NOT bulletin，不会把 social 误收进来。
@@ -144,7 +145,9 @@ def content_shape_condition(shape: str, session: Optional[Session] = None):
     if exact_source_ids:
         conditions.append(ArticleRecord.source_id.in_(exact_source_ids))
     if shape_value == "article":
-        non_article_types = sorted(BULLETIN_CONTENT_TYPES | SOCIAL_CONTENT_TYPES)
+        non_article_types = sorted(
+            BULLETIN_CONTENT_TYPES | SOCIAL_CONTENT_TYPES | PODCAST_CONTENT_TYPES
+        )
         conditions.append(and_(unknown_source, ArticleRecord.content_type.notin_(non_article_types)))
     else:
         fallback_types = sorted(CONTENT_TYPES_BY_SHAPE[shape_value])
@@ -180,7 +183,7 @@ def get_articles(
         fetched_date_start: Optional[str] = None,
         fetched_date_end: Optional[str] = None,
         subscribed_scope: str = "off",  # off | only | prioritize：相对当前用户订阅的源
-        shape: Optional[str] = None,  # article | bulletin | social：阅读器内容形态分流
+        shape: Optional[str] = None,  # article | bulletin | social | podcast：阅读器内容形态分流
         unread_only: bool = False,  # 只看未读（按当前用户订阅源的水位+逐篇已读判定）
         with_unread: bool = False,  # 给返回条目附 unread 标记（页级，reader 列表用）
         skip: int = 0,
