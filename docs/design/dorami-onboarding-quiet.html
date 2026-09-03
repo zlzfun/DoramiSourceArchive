@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>阅读器可发现性 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   阅读器可发现性(新用户引导波,issue #9)· 静默仪器样页
+   背景:上量后的新用户反馈——视图轨 icon-only 读不出页面组织、阅读窗右上角
+   图标被当成「没有跳原文/翻译」、轨底反馈/设置常态不可见。三处同一根因:
+   信息密度纪律把「可发现性」一并压掉了。修法是结构性的(常态可见),不是
+   教学性的(导览层),本波不做导览。
+
+   三处提案(讨论已达成的方向,本页给眼睛拍板):
+   ① **视图轨微标签**:图标下常显 11px/600 短标签(Slack 式),轨宽 56 → 64。
+      永久而非「新账号前几次会话展开」——收起时机是启发式、收起是一次布局
+      跳变、老用户对 v3.44 新钮(早报/兴趣)同样陌生;移动壳底部 Tab 早有文字
+      标签,桌面补齐是口径一致。画面 A(现状 56)/ B(64 微标签)/ C(B + 轨底改制)
+      并排,B 与 C 的差异只在轨底。
+   ② **轨底去 hover 滑出**:hover 触发对触控板外接屏/触屏本/键盘用户都是坏的,
+      本身就是稳定性问题。反馈/设置/主题/返回管理台(admin)提为常态可见轨钮,
+      与其他轨钮同形制带标签;头像**点击**翻成退出钮进 4 秒待确认态、再点即退
+      (v3.22 两击防呆原样,只是去掉 hover 前置)。主题钮保留在轨底(用户拍板)。
+   ③ **原文/翻译下沉到标题下方**:关于这篇正文本身的两个动作放在标题与正文之间
+      (眼睛落下去的路径),文字化;翻译做成「原文 | 中文」二段,状态一眼可见。
+      收藏/标读/分享是读完后的元动作,留在常驻不滚走的顶部工具条。正文末尾统一
+      加一行「查看原文 ↗」(自定源已有,推全站)。
+
+   附带:管理台应用导轨与阅读器共用 .reader-vrail-* 类族,标签两边同上
+   (画面 D),管理员对 v3.44 新页签同样是新用户。
+
+   纪律:标签用 .micro-label 规格降一档(11px/600,非 700——它是名字不是徽标);
+   选中态照旧 wash 底 + accent-ink;tooltip 保留但只承担「长名/快捷键」补充,
+   不再是唯一文字锚点;标题下动作行走 .reader-pane-meta 的等宽字系,
+   不引第二字阶;翻译二段激活态沿 AI 渐变身份色(v3.33);全部动效沿
+   --motion-fast/medium,尊重 prefers-reduced-motion。
+
+   【实现后记(2026-09-03 目检)】① 标签定稿 10px/500/字距 0.08em(本页 11px/600 与源栏
+   组头同分量,目检嫌重);呈现由「永久常显」改为「轨面悬停整体揭示」——常态只见居中图标,
+   指针进轨面全部标签一起淡入(720ms)、离开挂起 2.4s 后 1.4s 淡出,触屏常显。本页画面 B/C/D
+   仍是常显态,作为揭示后的目标形态看。② ③ 按本页落地;另补标题同译与中文源不画二段。
+
+   令牌与刻度 1:1 取自 frontend/src/index.css;文章/源名为设计占位示意。
+   **本页可点**:画面 C 与 D 的头像点击翻成退出钮(4s 回落),翻译二段可切,
+   轨钮可点切选中态。右上角月亮切亮暗。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif;
+
+  --dorami-blue: #5b54e8; --dorami-blue-2: #7b6cf0;
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-card: rgba(255, 255, 255, 0.96); --dorami-wash: rgba(91, 84, 232, 0.08);
+  --dorami-well: #f1f5f9;
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-strong: rgba(11, 18, 32, 0.15);
+  --dorami-border-soft: rgba(11, 18, 32, 0.06);
+  --dorami-card-bd: transparent;
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-overlay: 16px; --r-pill: 9999px;
+  --state-ok: #059669; --state-warn: #b45309; --state-bad: #e11d48; --state-bad-bg: #fff1f2;
+  --motion-fast: 150ms; --motion-medium: 240ms; --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ai-g1: #3f7bf6; --ai-g2: #8b52f4;
+  --grad-ai: linear-gradient(118deg, var(--ai-g1), var(--ai-g2));
+  --grad-ai-wash: linear-gradient(118deg, rgba(63, 123, 246, 0.09), rgba(139, 82, 244, 0.10));
+  --amber: #f59e0b;
+  --rd-list-bg: var(--dorami-soft); --rd-pane-bg: var(--dorami-surface);
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-card: rgba(32, 37, 47, 0.96);
+  --dorami-wash: rgba(124, 112, 235, 0.13);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-strong: rgba(255, 255, 255, 0.16);
+  --dorami-border-soft: rgba(255, 255, 255, 0.07);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08);
+  --state-ok: #34d399; --state-warn: #fbbf24; --state-bad: #fb7185; --state-bad-bg: #2a151a;
+  --dorami-blue: #4d45b5; --dorami-blue-2: #5f57c8;
+  --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --ai-g1: #6ea3ff; --ai-g2: #ab86ff;
+  --grad-ai-wash: linear-gradient(118deg, rgba(110, 163, 255, 0.13), rgba(171, 134, 255, 0.15));
+  --rd-list-bg: var(--dorami-well); --rd-pane-bg: var(--dorami-soft);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink);
+  font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+[data-theme="dark"] body {
+  background:
+    radial-gradient(ellipse 70% 50% at 12% -8%, rgba(124, 112, 235, 0.10), transparent 58%),
+    linear-gradient(180deg, #11131a 0%, var(--dorami-canvas) 55%);
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+svg { flex: none; }
+
+/* ── 页面骨架 ── */
+.page { padding: 26px 36px 56px; max-width: 1440px; margin: 0 auto; }
+.page-head { display: flex; align-items: center; gap: 14px; min-height: 48px; margin-bottom: 8px; }
+.page-title { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; }
+.page-sub { font-size: 12.5px; color: var(--dorami-muted); max-width: 900px; line-height: 1.7; margin-bottom: 26px; }
+.head-tool { margin-left: auto; width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: var(--r-control); color: var(--dorami-faint); border: 1px solid var(--dorami-border); background: var(--dorami-surface); }
+.head-tool:hover { color: var(--dorami-ink); }
+.head-tool svg { width: 17px; height: 17px; }
+
+.zone-head { display: flex; align-items: baseline; gap: 10px; margin: 34px 2px 12px; }
+.zone-title { font-size: 14px; font-weight: 700; }
+.zone-sub { font-size: 12px; color: var(--dorami-muted); }
+.zone-cap { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--dorami-faint); }
+
+.row { display: grid; gap: 22px; align-items: start; }
+.row.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.row.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.shell-state { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.shell-cap { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--dorami-faint); display: flex; align-items: center; gap: 8px; }
+.shell-cap .tag { font-weight: 600; letter-spacing: 0; padding: 1px 7px; border-radius: var(--r-pill);
+  background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+.shell-cap .tag.now { background: color-mix(in srgb, var(--dorami-ink) 7%, transparent); color: var(--dorami-muted); }
+.shell-note { font-size: 11.5px; font-weight: 500; line-height: 1.65; color: var(--dorami-faint); }
+
+/* ── 阅读器缩微壳:四带 ── */
+.frame { border-radius: var(--r-card); overflow: hidden; border: 1px solid var(--dorami-border);
+  box-shadow: var(--sh-2); background: var(--rd-pane-bg); }
+.rshell { --vrail: 56px; --col-l: 138px; --col-m: 210px;
+  display: grid; grid-template-columns: var(--vrail) var(--col-l) var(--col-m) minmax(0, 1fr);
+  height: 700px; overflow: hidden; grid-template-rows: minmax(0, 1fr); }
+.rshell.w64 { --vrail: 64px; }
+.rshell.two { grid-template-columns: var(--vrail) var(--col-l) minmax(0, 1fr); }
+.rcol { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--dorami-border-soft); }
+
+/* 视图轨(1:1 index.css) */
+.vrail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 0 16px;
+  background: var(--dorami-canvas); border-right: 1px solid var(--dorami-border-soft); }
+.vrail-brand { width: 32px; height: 32px; border-radius: 10px; flex: none; margin-bottom: 16px;
+  background: linear-gradient(145deg, var(--dorami-blue-2), var(--dorami-blue)); color: #fff;
+  display: grid; place-items: center; box-shadow: inset 0 1px 0 rgba(255,255,255,.4), var(--sh-1); }
+.vrail-brand svg { width: 17px; height: 17px; }
+.vbtn { position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; border-radius: 10px; color: var(--dorami-faint);
+  transition: background 140ms var(--motion-ease), color 140ms var(--motion-ease), transform 140ms var(--motion-ease); }
+.vbtn svg { width: 18px; height: 18px; }
+.vbtn:hover { background: color-mix(in srgb, var(--dorami-ink) 6%, transparent); color: var(--dorami-ink-2); }
+.vbtn:active { transform: scale(0.94); }
+.vbtn.is-on { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+.vtip { position: absolute; left: 48px; top: 50%; translate: 0 -50%; background: var(--dorami-ink);
+  color: var(--dorami-canvas); font-size: 11.5px; line-height: 1; padding: 6px 9px; border-radius: var(--r-sm);
+  white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 120ms var(--motion-ease); z-index: 30; }
+.vbtn:hover .vtip { opacity: 1; transition-delay: 120ms; }
+.vdiv { width: 22px; height: 1px; flex: none; background: var(--dorami-border); margin: 5px 0; }
+.vspring { flex: 1; }
+.vdot { position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; border-radius: 9999px;
+  background: var(--dorami-accent); box-shadow: 0 0 0 2px var(--dorami-canvas); }
+.vavatar { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
+  background: var(--dorami-surface); border: 1px solid var(--dorami-border); color: var(--dorami-muted);
+  font-family: var(--mono); font-size: 11px; transition: border-color 130ms var(--motion-ease); }
+.vavatar:hover { border-color: var(--dorami-border-strong); }
+
+/* 提案 ①:微标签态——钮变竖排图标+短标签,宽 52 高 46,标签 11px/600 */
+.vrail.labeled .vbtn { width: 52px; height: 46px; flex-direction: column; gap: 3px; border-radius: 10px; }
+.vrail.labeled .vbtn svg { width: 18px; height: 18px; }
+.vlab { font-size: 11px; font-weight: 600; line-height: 1; letter-spacing: 0.01em; }
+.vrail.labeled .vtip { left: 60px; }
+.vrail.labeled .vdot { top: 5px; right: 9px; }
+.vrail.labeled .vdiv { margin: 3px 0; }
+/* 标签态下 tooltip 只在长名场景补充,默认不再弹——样页里演示为关闭 */
+.vrail.labeled .vbtn .vtip { display: none; }
+
+/* 现状轨底:hover 滑出(缩微复刻) */
+.flyout { position: relative; display: flex; flex-direction: column; align-items: center; }
+.flyout-items { position: absolute; bottom: 100%; left: 50%; transform: translate(-50%, 10px);
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding-bottom: 8px;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity 280ms var(--motion-ease) 600ms, transform 320ms var(--motion-ease) 600ms, visibility 0s linear 920ms; }
+.flyout:hover .flyout-items, .flyout:focus-within .flyout-items { opacity: 1; visibility: visible; pointer-events: auto;
+  transform: translate(-50%, 0); transition-delay: 0s; }
+.flyout:hover .vavatar { color: var(--state-bad); border-color: color-mix(in srgb, var(--state-bad) 45%, transparent); }
+.flyout .vavatar .pw { display: none; } .flyout:hover .vavatar .pw { display: block; }
+.flyout:hover .vavatar .ini { display: none; }
+.hover-hint { position: absolute; left: 56px; bottom: 6px; font-size: 10.5px; color: var(--dorami-faint); white-space: nowrap;
+  font-family: var(--mono); }
+
+/* 提案 ②:点击式两击退出——头像点击翻成退出钮(红圈脉动),再点即退,4s 回落 */
+.vavatar.armable { cursor: pointer; }
+.vavatar.armable .pw { display: none; }
+.vavatar.armable.is-armed { color: var(--state-bad); border-color: var(--state-bad); background: var(--state-bad-bg);
+  animation: arm-pulse 1.2s ease-in-out infinite; }
+.vavatar.armable.is-armed .ini { display: none; } .vavatar.armable.is-armed .pw { display: block; }
+@keyframes arm-pulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--state-bad) 35%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--state-bad) 0%, transparent); } }
+.vrail.labeled .vavatar { margin-top: 4px; }
+
+/* 源栏 */
+.srcbar { background: var(--dorami-canvas); overflow: hidden; }
+.src-head { display: flex; align-items: baseline; justify-content: space-between; padding: 18px 12px 10px; }
+.src-title { font-size: 13px; font-weight: 600; letter-spacing: .02em; }
+.src-agg { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12.5px; color: var(--dorami-ink-2); }
+.src-agg svg { width: 14px; height: 14px; color: var(--dorami-faint); }
+.src-agg.is-on { font-weight: 600; color: var(--dorami-ink); }
+.src-agg.is-on svg { color: var(--dorami-accent); }
+.src-agg.fav.is-on svg { color: var(--amber); }
+.src-group { padding: 12px 12px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; color: var(--dorami-faint); }
+.src-row { display: flex; align-items: center; gap: 8px; padding: 5px 12px; white-space: nowrap; font-size: 12.5px; color: var(--dorami-ink-2); }
+.src-row .lm { width: 17px; height: 17px; border-radius: 5px; flex: none; display: grid; place-items: center;
+  font-size: 9px; font-weight: 800; color: #fff; }
+.src-row.is-on { background: var(--dorami-wash); color: var(--dorami-ink); font-weight: 600; }
+
+/* 条目列 */
+.listcol { background: var(--rd-list-bg); overflow: hidden; }
+.list-head { display: flex; align-items: center; gap: 8px; padding: 14px 6px 10px 14px; border-bottom: 1px solid var(--dorami-border-soft); }
+.list-title { font-size: 13px; font-weight: 600; flex: 1; }
+.seg { display: inline-flex; padding: 2px; border-radius: 8px; background: color-mix(in srgb, var(--dorami-ink) 6%, transparent); }
+.seg span { padding: 3px 8px; font-size: 11px; font-weight: 600; color: var(--dorami-faint); border-radius: 6px; }
+.seg span.on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+.ico { width: 26px; height: 26px; display: grid; place-items: center; color: var(--dorami-faint); border-radius: 7px; }
+.ico svg { width: 14px; height: 14px; }
+.day { padding: 10px 14px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; color: var(--dorami-faint); }
+.item { position: relative; padding: 9px 14px 9px 22px; border-bottom: 1px solid var(--dorami-border-soft); }
+.item.is-on { background: var(--dorami-wash); }
+.item .t { font-size: 12.5px; font-weight: 600; line-height: 1.4; color: var(--dorami-ink); }
+.item .s { font-size: 11.5px; color: var(--dorami-muted); margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.item .m { font-size: 10.5px; font-family: var(--mono); color: var(--dorami-faint); margin-top: 4px; }
+.item.unread::before { content: ""; position: absolute; left: 10px; top: 15px; width: 6px; height: 6px; border-radius: 50%; background: var(--dorami-accent); }
+
+/* 阅读窗 */
+.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--rd-pane-bg); }
+.pane-bar { display: flex; align-items: center; gap: 4px; padding: 10px 16px; border-bottom: 1px solid var(--dorami-border-soft); }
+.crumb { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dorami-muted); white-space: nowrap; overflow: hidden; }
+.crumb span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.crumb .lm { flex: none; }
+.pbtn { flex: none; }
+.crumb .lm { width: 17px; height: 17px; border-radius: 5px; display: grid; place-items: center; font-size: 9px; font-weight: 800; color: #fff; }
+.pbtn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px;
+  border: 1px solid transparent; color: var(--dorami-faint); transition: color 130ms var(--motion-ease), background 130ms var(--motion-ease); }
+.pbtn svg { width: 16px; height: 16px; }
+.pbtn:hover { background: color-mix(in srgb, var(--dorami-ink) 6%, transparent); color: var(--dorami-ink-2); }
+.pbtn.is-amber { color: var(--amber); }
+.pbtn.is-blue { color: var(--dorami-blue); }
+.pbtn .tr { font-size: 13px; font-weight: 700; font-family: var(--font-serif); }
+.pane-scroll { flex: 1; overflow: hidden; padding: 22px 26px 0; }
+.pane-head { max-width: 560px; margin: 0 auto; padding-bottom: 14px; border-bottom: 1px solid var(--dorami-border); }
+.kicker { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; color: var(--dorami-accent-ink); margin-bottom: 8px; }
+.ptitle { font-family: var(--font-serif); font-size: 20px; line-height: 1.35; font-weight: 700; letter-spacing: .01em; margin-bottom: 8px; text-wrap: balance; }
+.pmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-family: var(--mono); font-size: 11.5px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.pbody { max-width: 560px; margin: 16px auto 0; font-size: 13.5px; line-height: 1.8; color: var(--dorami-ink-2); }
+.pbody p { margin-bottom: 12px; }
+.pbody .tail { margin-top: 18px; padding-top: 12px; border-top: 1px dashed var(--dorami-border); font-family: var(--mono); font-size: 11.5px; }
+.pbody .tail a { color: var(--dorami-accent-ink); text-decoration: none; }
+
+/* 提案 ③:标题下动作行——与 meta 同字系,文字钮;翻译二段 */
+.pacts { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.act { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: var(--r-pill);
+  border: 1px solid var(--dorami-border); background: var(--dorami-surface); font-size: 11.5px; font-weight: 600; color: var(--dorami-ink-2);
+  text-decoration: none; transition: border-color 130ms var(--motion-ease), background 130ms var(--motion-ease); }
+.act svg { width: 13px; height: 13px; color: var(--dorami-faint); }
+.act:hover { border-color: var(--dorami-border-strong); background: var(--dorami-soft); }
+.trseg { display: inline-flex; height: 26px; padding: 2px; border-radius: var(--r-pill); border: 1px solid var(--dorami-border); background: var(--dorami-surface); }
+.trseg button { height: 20px; padding: 0 9px; border-radius: var(--r-pill); font-size: 11.5px; font-weight: 600; color: var(--dorami-faint); display: inline-flex; align-items: center; gap: 4px; }
+.trseg button.on { background: color-mix(in srgb, var(--dorami-ink) 7%, transparent); color: var(--dorami-ink); }
+.trseg button.on.ai { background: var(--grad-ai-wash); }
+.trseg button.on.ai span { background: var(--grad-ai); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.trseg .star { width: 11px; height: 11px; }
+.trseg button.on.ai .star { stroke: url(#ai-grad); }
+.pacts .sep { width: 1px; height: 14px; background: var(--dorami-border); }
+.pacts .hint { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); }
+
+/* 管理台应用导轨(画面 D):与视图轨共用轨语言 */
+.arail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 0 16px; width: 56px;
+  background: var(--dorami-surface); border-right: 1px solid var(--dorami-card-bd); box-shadow: var(--sh-1); height: 480px; }
+.arail.labeled { width: 64px; }
+.arail-wrap { display: flex; border-radius: var(--r-card); overflow: hidden; border: 1px solid var(--dorami-border); background: var(--dorami-canvas); box-shadow: var(--sh-2); height: 480px; }
+.arail-wrap .fake { flex: 1; padding: 22px 24px; }
+.fake .bar { height: 10px; border-radius: 5px; background: color-mix(in srgb, var(--dorami-ink) 8%, transparent); margin-bottom: 12px; }
+.fake .bar.w1 { width: 42%; height: 18px; } .fake .bar.w2 { width: 70%; } .fake .bar.w3 { width: 55%; }
+.fake .card { height: 120px; border-radius: var(--r-card); background: var(--dorami-surface); border: 1px solid var(--dorami-border-soft); margin-top: 20px; }
+
+/* 说明区 */
+.notes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 14px; }
+.note { border: 1px solid var(--dorami-border); border-radius: var(--r-card); padding: 14px 16px; background: var(--dorami-surface); box-shadow: var(--sh-1); }
+.note h4 { font-size: 12.5px; font-weight: 700; margin-bottom: 6px; }
+.note p, .note li { font-size: 11.5px; line-height: 1.65; color: var(--dorami-muted); }
+.note ul { padding-left: 16px; }
+.note b { color: var(--dorami-ink-2); font-weight: 600; }
+footer { margin-top: 44px; font-size: 11px; color: var(--dorami-faint); }
+@media (prefers-reduced-motion: reduce) { .vavatar.armable.is-armed { animation: none; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="ai-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="var(--ai-g1)"/><stop offset="1" stop-color="var(--ai-g2)"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<main class="page">
+  <div class="page-head">
+    <h1 class="page-title">阅读器可发现性 · 三处提案</h1>
+    <button class="head-tool" id="theme-toggle" title="切换亮暗"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg></button>
+  </div>
+  <p class="page-sub">新用户反馈的三处「找不到」——视图轨只有图标、阅读窗右上角图标被当成没有跳原文/翻译、轨底反馈/设置常态不可见。修法是结构性的:常态可见。画面 A 是现状,B 只改轨面标签,C 在 B 上加轨底改制与标题下动作行,D 是共用同一套轨语言的管理台导轨。B 与 C 之间的差异刻意只在轨底,便于分开拍板。</p>
+
+  <!-- ═══ 第一排:A 现状 / B 微标签 / C 完整态 ═══ -->
+  <div class="zone-head"><span class="zone-title">视图轨 × 轨底 × 阅读窗</span><span class="zone-sub">三画面同一篇文章,同一读者(读者账号,AI 已开)</span></div>
+  <div class="row cols-3">
+
+    <!-- ── A 现状 ── -->
+    <div class="shell-state">
+      <span class="shell-cap">A <span class="tag now">现状</span> 56px 图标 · 轨底 hover 滑出 · 右上角图标组</span>
+      <div class="frame"><div class="rshell two">
+        <nav class="rcol vrail">
+          <div class="vrail-brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6Z"/></svg><span class="vtip">我的早报</span></button>
+          <div class="vdiv"></div>
+          <button class="vbtn is-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span class="vtip">文章</span></button>
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span class="vtip">动态</span></button>
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg><span class="vtip">社交</span></button>
+          <div class="vdiv"></div>
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg><span class="vtip">发现</span></button>
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span class="vtip">我的兴趣</span></button>
+          <div class="vspring"></div>
+          <div class="flyout">
+            <div class="flyout-items">
+              <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg></button>
+              <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="vdot"></span></button>
+              <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+            </div>
+            <div class="vavatar"><span class="ini">Z</span><svg class="pw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></div>
+            <span class="hover-hint">← 悬停头像才见</span>
+          </div>
+        </nav>
+        <aside class="rcol srcbar">
+          <div class="src-head"><span class="src-title">我的订阅</span></div>
+          <div class="src-agg is-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>全部文章</div>
+          <div class="src-agg fav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>只看收藏</div>
+          <div class="src-group">官方</div>
+          <div class="src-row"><span class="lm" style="background:#0b1220">A</span>Anthropic</div>
+          <div class="src-row"><span class="lm" style="background:#10a37f">O</span>OpenAI</div>
+          <div class="src-group">媒体</div>
+          <div class="src-row"><span class="lm" style="background:#e11d48">量</span>量子位</div>
+          <div class="src-row"><span class="lm" style="background:#dc2626">IT</span>IT之家 · AI</div>
+        </aside>
+        <section class="pane">
+          <div class="pane-bar">
+            <div class="crumb"><span class="lm" style="background:#0b1220">A</span><span>Anthropic</span></div>
+            <a class="pbtn" title="查看来源"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+            <button class="pbtn" title="收藏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg></button>
+            <button class="pbtn" title="标为已读"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="9 12 12 15 16 10"/></svg></button>
+            <button class="pbtn" title="分享"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></button>
+            <button class="pbtn" title="译为中文"><span class="tr">译</span></button>
+          </div>
+          <div class="pane-scroll">
+            <header class="pane-head">
+              <div class="kicker">ANTHROPIC · 官方博客</div>
+              <h1 class="ptitle">Claude in Chrome is generally available</h1>
+              <div class="pmeta"><span>2026-08-27 22:10</span><span>阅读时长 4 分钟</span><span>阅读量 128</span></div>
+            </header>
+            <div class="pbody">
+              <p>Today we're making Claude in Chrome generally available to all paid plans. The browser extension lets Claude navigate sites, fill forms, and complete multi-step tasks while you keep control of every action.</p>
+              <p>Since the research preview in August, we've reduced prompt-injection attack success rates and added site-level permissions, so you decide where Claude can act.</p>
+            </div>
+          </div>
+        </section>
+      </div></div>
+      <span class="shell-note">用户反馈的三处原样:轨面无字、右上角五个灰图标一字排开(「译」是唯一带字的)、轨底常态只见头像。</span>
+    </div>
+
+    <!-- ── B 微标签 ── -->
+    <div class="shell-state">
+      <span class="shell-cap">B <span class="tag">提案①</span> 64px 图标 + 11px 微标签 · 轨底与阅读窗同 A</span>
+      <div class="frame"><div class="rshell two w64">
+        <nav class="rcol vrail labeled" data-rail>
+          <div class="vrail-brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
+          <button class="vbtn" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6Z"/></svg><span class="vlab">早报</span></button>
+          <div class="vdiv"></div>
+          <button class="vbtn is-on" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span class="vlab">文章</span></button>
+          <button class="vbtn" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span class="vlab">动态</span></button>
+          <button class="vbtn" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg><span class="vlab">社交</span></button>
+          <div class="vdiv"></div>
+          <button class="vbtn" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg><span class="vlab">发现</span></button>
+          <button class="vbtn" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span class="vlab">兴趣</span></button>
+          <div class="vspring"></div>
+          <div class="flyout">
+            <div class="flyout-items">
+              <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg><span class="vlab">主题</span></button>
+              <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="vdot"></span><span class="vlab">反馈</span></button>
+              <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="vlab">设置</span></button>
+            </div>
+            <div class="vavatar"><span class="ini">Z</span><svg class="pw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></div>
+            <span class="hover-hint">← 仍需悬停</span>
+          </div>
+        </nav>
+        <aside class="rcol srcbar">
+          <div class="src-head"><span class="src-title">我的订阅</span></div>
+          <div class="src-agg is-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>全部文章</div>
+          <div class="src-agg fav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>只看收藏</div>
+          <div class="src-group">官方</div>
+          <div class="src-row"><span class="lm" style="background:#0b1220">A</span>Anthropic</div>
+          <div class="src-row"><span class="lm" style="background:#10a37f">O</span>OpenAI</div>
+          <div class="src-group">媒体</div>
+          <div class="src-row"><span class="lm" style="background:#e11d48">量</span>量子位</div>
+          <div class="src-row"><span class="lm" style="background:#dc2626">IT</span>IT之家 · AI</div>
+        </aside>
+        <section class="pane">
+          <div class="pane-bar">
+            <div class="crumb"><span class="lm" style="background:#0b1220">A</span><span>Anthropic</span></div>
+            <a class="pbtn" title="查看来源"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+            <button class="pbtn" title="收藏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg></button>
+            <button class="pbtn" title="标为已读"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="9 12 12 15 16 10"/></svg></button>
+            <button class="pbtn" title="分享"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></button>
+            <button class="pbtn" title="译为中文"><span class="tr">译</span></button>
+          </div>
+          <div class="pane-scroll">
+            <header class="pane-head">
+              <div class="kicker">ANTHROPIC · 官方博客</div>
+              <h1 class="ptitle">Claude in Chrome is generally available</h1>
+              <div class="pmeta"><span>2026-08-27 22:10</span><span>阅读时长 4 分钟</span><span>阅读量 128</span></div>
+            </header>
+            <div class="pbody">
+              <p>Today we're making Claude in Chrome generally available to all paid plans. The browser extension lets Claude navigate sites, fill forms, and complete multi-step tasks while you keep control of every action.</p>
+              <p>Since the research preview in August, we've reduced prompt-injection attack success rates and added site-level permissions, so you decide where Claude can act.</p>
+            </div>
+          </div>
+        </section>
+      </div></div>
+      <span class="shell-note">只改轨面:钮 38×38 → 52×46 竖排,标签「早报/文章/动态/社交/发现/兴趣」两字对齐;选中态 wash 底不变,tooltip 退居长名补充。轨钮可点切选中。</span>
+    </div>
+
+    <!-- ── C 完整态 ── -->
+    <div class="shell-state">
+      <span class="shell-cap">C <span class="tag">提案①②③</span> B + 轨底常态可见 + 原文/翻译下沉标题下</span>
+      <div class="frame"><div class="rshell two w64">
+        <nav class="rcol vrail labeled" data-rail>
+          <div class="vrail-brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
+          <button class="vbtn" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6Z"/></svg><span class="vlab">早报</span></button>
+          <div class="vdiv"></div>
+          <button class="vbtn is-on" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span class="vlab">文章</span></button>
+          <button class="vbtn" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span class="vlab">动态</span></button>
+          <button class="vbtn" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg><span class="vlab">社交</span></button>
+          <div class="vdiv"></div>
+          <button class="vbtn" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg><span class="vlab">发现</span></button>
+          <button class="vbtn" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span class="vlab">兴趣</span></button>
+          <div class="vspring"></div>
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg><span class="vlab">主题</span></button>
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="vdot"></span><span class="vlab">反馈</span></button>
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="vlab">设置</span></button>
+          <button class="vavatar armable" data-arm title="点击后再点一次退出登录"><span class="ini">Z</span><svg class="pw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
+        </nav>
+        <aside class="rcol srcbar">
+          <div class="src-head"><span class="src-title">我的订阅</span></div>
+          <div class="src-agg is-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>全部文章</div>
+          <div class="src-agg fav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>只看收藏</div>
+          <div class="src-group">官方</div>
+          <div class="src-row"><span class="lm" style="background:#0b1220">A</span>Anthropic</div>
+          <div class="src-row"><span class="lm" style="background:#10a37f">O</span>OpenAI</div>
+          <div class="src-group">媒体</div>
+          <div class="src-row"><span class="lm" style="background:#e11d48">量</span>量子位</div>
+          <div class="src-row"><span class="lm" style="background:#dc2626">IT</span>IT之家 · AI</div>
+        </aside>
+        <section class="pane">
+          <div class="pane-bar">
+            <div class="crumb"><span class="lm" style="background:#0b1220">A</span><span>Anthropic</span></div>
+            <button class="pbtn" title="收藏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg></button>
+            <button class="pbtn" title="标为已读"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="9 12 12 15 16 10"/></svg></button>
+            <button class="pbtn" title="分享"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></button>
+          </div>
+          <div class="pane-scroll">
+            <header class="pane-head">
+              <div class="kicker">ANTHROPIC · 官方博客</div>
+              <h1 class="ptitle">Claude in Chrome is generally available</h1>
+              <div class="pmeta"><span>2026-08-27 22:10</span><span>阅读时长 4 分钟</span><span>阅读量 128</span></div>
+              <div class="pacts">
+                <a class="act" href="#" onclick="return false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>查看原文</a>
+                <div class="trseg" data-trseg>
+                  <button class="on" data-tr="src">原文</button>
+                  <button class="ai" data-tr="zh"><svg class="star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3l1.9 5.6L19.5 10.5l-5.6 1.9L12 18l-1.9-5.6L4.5 10.5l5.6-1.9z"/></svg><span>译为中文</span></button>
+                </div>
+              </div>
+            </header>
+            <div class="pbody">
+              <p>Today we're making Claude in Chrome generally available to all paid plans. The browser extension lets Claude navigate sites, fill forms, and complete multi-step tasks while you keep control of every action.</p>
+              <p>Since the research preview in August, we've reduced prompt-injection attack success rates and added site-level permissions, so you decide where Claude can act.</p>
+              <div class="tail"><a href="#" onclick="return false">查看原文 ↗</a> · anthropic.com</div>
+            </div>
+          </div>
+        </section>
+      </div></div>
+      <span class="shell-note">轨底四钮常态可见(主题/反馈/设置 + 头像),hover 滑出取消;<b>头像可点</b>:翻成退出钮 4s 待确认再点即退。标题下「查看原文」+「原文 | 译为中文」二段(可切,激活为 AI 渐变);顶部条只剩收藏/标读/分享;正文末尾「查看原文 ↗」。</span>
+    </div>
+  </div>
+
+  <!-- ═══ 第二排:轨底细节 × 阅读窗动作行放大 ═══ -->
+  <div class="zone-head"><span class="zone-title">细节放大</span><span class="zone-sub">轨底两击退出的三态 · 标题下动作行两态 · 管理员轨底</span></div>
+  <div class="row cols-3">
+    <div class="shell-state">
+      <span class="shell-cap">轨底 · 读者 / 待确认 / 管理员</span>
+      <div class="frame" style="display:flex;gap:0;height:290px;background:var(--dorami-canvas)">
+        <nav class="vrail labeled" style="width:64px;justify-content:flex-end;border-right:1px solid var(--dorami-border-soft)">
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg><span class="vlab">主题</span></button>
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="vdot"></span><span class="vlab">反馈</span></button>
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="vlab">设置</span></button>
+          <button class="vavatar armable" data-arm><span class="ini">Z</span><svg class="pw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
+        </nav>
+        <nav class="vrail labeled" style="width:64px;justify-content:flex-end;border-right:1px solid var(--dorami-border-soft)">
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg><span class="vlab">主题</span></button>
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="vlab">反馈</span></button>
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="vlab">设置</span></button>
+          <button class="vavatar armable is-armed"><span class="ini">Z</span><svg class="pw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
+        </nav>
+        <nav class="vrail labeled" style="width:64px;justify-content:flex-end;border-right:1px solid var(--dorami-border-soft)">
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg><span class="vlab">管理台</span></button>
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg><span class="vlab">主题</span></button>
+          <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="vlab">设置</span></button>
+          <button class="vavatar armable" data-arm><span class="ini">A</span><svg class="pw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
+        </nav>
+        <div style="flex:1;padding:16px 18px;font-size:11.5px;line-height:1.7;color:var(--dorami-faint)">
+          <div class="zone-cap" style="margin-bottom:6px">三列自左向右</div>
+          读者常态 → 头像点击后的待确认态(红圈脉动 + Toast「再次点击以退出登录」,4s 或 Esc 回落)→ 管理员轨底(多「管理台」返回钮,少「反馈」——admin 设置柜无反馈分区)。<br><br>
+          纵向预算:标签态每钮 46 + 4 间距;顶 7 项(品牌+6)+ 底 4 项 ≈ 品牌 48 + 10×50 + 两分隔 ≈ 580px,720px 高的笔记本仍有余量。
+        </div>
+      </div>
+    </div>
+
+    <div class="shell-state">
+      <span class="shell-cap">标题下动作行 · 原文态 / 译文态</span>
+      <div class="frame" style="padding:20px 22px 18px">
+        <div class="kicker">量子位 · 媒体</div>
+        <div class="ptitle" style="font-size:19px">Claude in Chrome 正式开放,浏览器智能体进入 GA</div>
+        <div class="pmeta"><span>2026-08-28 09:32</span><span>阅读时长 3 分钟</span></div>
+        <div class="pacts">
+          <a class="act" href="#" onclick="return false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>查看原文</a>
+          <span class="hint">中文源:不画翻译二段</span>
+        </div>
+        <div class="pbody" style="margin-top:8px"><div class="tail" style="margin-top:0;padding-top:8px"><a href="#" onclick="return false">查看原文 ↗</a> · qbitai.com <span class="hint" style="margin-left:10px">← 正文末尾统一一行</span></div></div>
+        <div style="height:1px;background:var(--dorami-border);margin:14px 0 12px"></div>
+        <div class="kicker">OPENAI · 官方博客</div>
+        <div class="ptitle" style="font-size:19px">Introducing GPT-5.6 for developers</div>
+        <div class="pmeta"><span>2026-08-30 01:00</span><span>阅读时长 6 分钟</span></div>
+        <div class="pacts">
+          <a class="act" href="#" onclick="return false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>查看原文</a>
+          <div class="trseg" data-trseg>
+            <button data-tr="src">原文</button>
+            <button class="on ai" data-tr="zh"><svg class="star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3l1.9 5.6L19.5 10.5l-5.6 1.9L12 18l-1.9-5.6L4.5 10.5l5.6-1.9z"/></svg><span>中文</span></button>
+          </div>
+          <span class="hint">译文态:标签缩为「中文」,渐变身份</span>
+        </div>
+      </div>
+      <span class="shell-note">动作行沿 meta 的等宽字系与 11.5px 字阶,胶囊 26px 高、hairline 描边、surface 底。翻译二段未激活写「译为中文」(动词,告诉用户这是能做的事),激活后写「中文」(状态)。AI 未开启的读者不画二段,行内只余「查看原文」。</span>
+    </div>
+
+    <div class="shell-state">
+      <span class="shell-cap">D <span class="tag">附带</span> 管理台应用导轨 · 同上标签</span>
+      <div class="arail-wrap" style="height:290px">
+        <nav class="arail vrail labeled" style="height:auto;width:64px">
+          <div class="vrail-brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
+          <button class="vbtn is-on" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg><span class="vlab">台账</span></button>
+          <button class="vbtn" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14.9A7 7 0 1 1 15.7 8h1.8a4.5 4.5 0 0 1 0 9H8"/><polyline points="12 13 12 21"/><polyline points="8 17 12 21 16 17"/></svg><span class="vlab">节点</span></button>
+          <button class="vbtn" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg><span class="vlab">运行</span></button>
+          <button class="vbtn" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6Z"/></svg><span class="vlab">日报</span></button>
+          <button class="vbtn" data-v><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg><span class="vlab">运维</span></button>
+        </nav>
+        <div class="fake"><div class="bar w1"></div><div class="bar w2"></div><div class="bar w3"></div><div class="card"></div></div>
+      </div>
+      <span class="shell-note">应用导轨与视图轨共用 .reader-vrail-* 类族,标签两边同上一处改 CSS 即生效;页签名取两字短名(台账/节点/运行/日报/运维),全名留 tooltip 与页头。</span>
+    </div>
+  </div>
+
+  <!-- ═══ 说明 ═══ -->
+  <div class="zone-head"><span class="zone-title">决策清单</span><span class="zone-sub">拍板时逐条勾</span></div>
+  <div class="notes">
+    <div class="note">
+      <h4>① 视图轨微标签</h4>
+      <ul>
+        <li><b>宽 56 → 64</b>,钮 38×38 → 52×46,标签 11px/600(非 .micro-label 的 700——名字不是徽标)。</li>
+        <li>标签<b>两字</b>:早报/文章/动态/社交/发现/兴趣;轨底 主题/反馈/设置/管理台(三字,唯一例外)。</li>
+        <li>永久常显,<b>不做</b>「新账号前 N 次会话展开后收起」。</li>
+        <li>tooltip 保留但标签态下默认不弹(只在长名/快捷键时补充)——样页 B/C 里已关。</li>
+        <li>四带宽度:源栏/条目列不变,阅读窗少 8px。</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h4>② 轨底改制</h4>
+      <ul>
+        <li><b>hover 滑出取消</b>,RailUserFlyout 退役;主题/反馈/设置(admin:管理台/主题/设置)提为常态轨钮。</li>
+        <li>头像 = 退出钮:<b>点击</b>翻面进 4s 待确认态(红圈脉动 + Toast「再次点击以退出登录」),再点即退;Esc/超时/点别处回落。v3.22 两击防呆机制原样,只去 hover 前置。</li>
+        <li>反馈有新回复的通知点从头像回到反馈钮本体(它现在常态可见了)。</li>
+        <li>移动壳「我的」页不动(已是确认框)。</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h4>③ 原文/翻译下沉</h4>
+      <ul>
+        <li>标题下动作行:「查看原文」胶囊 + 「原文 | 译为中文」二段;AI 未开启只余原文;中文源不画二段(现状同)。</li>
+        <li>顶部工具条只留收藏/标读/分享(常驻不随正文滚走,读完顺手点)。</li>
+        <li>正文末尾统一「查看原文 ↗ · 域名」行(自定源已有,推全站;无 source_url 不画)。</li>
+        <li>翻译激活态沿 AI 渐变身份(v3.33 纪律:渐变只上身份标记,胶囊本体 solid)。</li>
+        <li>移动壳正文页顶栏的译钮同步下沉?——<b>待议</b>,本波建议桌面先行。</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>阅读器可发现性样页 · issue #9 · 亮暗双态(右上月亮切换)· 画面 B/C/D 轨钮可点切选中、C 与细节图头像可点试两击退出、翻译二段可切</footer>
+</main>
+
+<script>
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    const root = document.documentElement;
+    root.dataset.theme = root.dataset.theme === 'dark' ? '' : 'dark';
+  });
+  /* 轨钮切选中(同一轨内互斥) */
+  document.querySelectorAll('[data-rail], .arail').forEach((rail) => {
+    rail.querySelectorAll('[data-v]').forEach((b) => b.addEventListener('click', () => {
+      rail.querySelectorAll('[data-v]').forEach((x) => x.classList.remove('is-on'));
+      b.classList.add('is-on');
+    }));
+  });
+  /* 两击退出:点击翻面,4s 回落,再点即「退出」(样页仅回落) */
+  document.querySelectorAll('[data-arm]').forEach((av) => {
+    let t = null;
+    av.addEventListener('click', () => {
+      if (av.classList.contains('is-armed')) { clearTimeout(t); av.classList.remove('is-armed'); av.blur(); return; }
+      av.classList.add('is-armed');
+      t = setTimeout(() => av.classList.remove('is-armed'), 4000);
+    });
+    av.addEventListener('keydown', (e) => { if (e.key === 'Escape') { clearTimeout(t); av.classList.remove('is-armed'); } });
+  });
+  /* 翻译二段 */
+  document.querySelectorAll('[data-trseg]').forEach((seg) => {
+    const [src, zh] = seg.querySelectorAll('button');
+    const label = zh.querySelector('span');
+    const apply = (isZh) => {
+      src.classList.toggle('on', !isZh); zh.classList.toggle('on', isZh);
+      label.textContent = isZh ? '中文' : '译为中文';
+    };
+    src.addEventListener('click', () => apply(false));
+    zh.addEventListener('click', () => apply(true));
+  });
+</script>
+</body>
+</html>

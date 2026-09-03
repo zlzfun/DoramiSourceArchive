@@ -98,6 +98,8 @@
 
 静默仪器各工作区改造时的 HTML 设计样页(`dorami-*-quiet.html`),`index.css` 注释以
 「刻度 1:1 取自」引用之;阅读器/设置柜/发现页的后续样页在 Claude Artifact(见各波记录)。
+`dorami-onboarding-quiet.html`(v3.45 阅读器可发现性波,issue #9):视图轨微标签 / 轨底改制 /
+标题下动作行三提案并排(A 现状 / B 微标签 / C 完整态 / D 管理台导轨),可点试两击退出与译文二段。
 
 ## archive/ —— 已完结方案与执行记录(⊘ 归档)
 
