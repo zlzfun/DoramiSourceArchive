@@ -96,6 +96,92 @@ def test_archive_sync_import_backfills_empty_existing_record(monkeypatch):
         assert json.loads(record.extensions_json) == {"full": True}
 
 
+def test_archive_sync_merges_newer_podcast_metadata_and_preserves_derived_fields(monkeypatch):
+    from api.app import archive_sync_line, import_archive_sync_jsonl
+    from models.db import ArticleRecord
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url="sqlite:///:memory:")
+    monkeypatch.setattr("api.app.db_sink", sink)
+    old_extensions = {
+        "audio_url": "https://cdn.example.test/old.mp3",
+        "duration_seconds": 1200,
+        "summary_zh": "读者侧生成的中文摘要",
+        "processing_status": "audio_ready",
+        "condensed_audio_url": "https://media.example.test/short.mp3",
+    }
+    existing = _article_record(
+        id="podcast_sync_1",
+        content_type="podcast_episode",
+        source_id="podcast_demo",
+        fetched_date="2026-09-01T01:00:00",
+        archive_updated_at="2026-09-01T01:00:00",
+        extensions_json=json.dumps(old_extensions, ensure_ascii=False),
+    )
+    with Session(sink.engine) as session:
+        session.add(existing)
+        session.commit()
+
+    incoming_extensions = {
+        "audio_url": "https://cdn.example.test/new.mp3",
+        "duration_seconds": 2400,
+        "transcripts": [{"url": "https://cdn.example.test/episode.vtt", "type": "text/vtt"}],
+    }
+    incoming = _article_record(
+        id="podcast_sync_1",
+        title="Corrected episode title",
+        content_type="podcast_episode",
+        source_id="podcast_demo",
+        fetched_date="2026-09-01T01:00:00",
+        archive_updated_at="2026-09-03T01:00:00",
+        extensions_json=json.dumps(incoming_extensions, ensure_ascii=False),
+    )
+    result = import_archive_sync_jsonl(_jsonl(archive_sync_line(incoming)))
+
+    assert result["updated_count"] == 1
+    assert result["skipped_count"] == 0
+    with Session(sink.engine) as session:
+        record = session.get(ArticleRecord, incoming.id)
+        extensions = json.loads(record.extensions_json)
+        assert record.title == "Corrected episode title"
+        assert record.fetched_date == "2026-09-01T01:00:00"
+        assert record.archive_updated_at == "2026-09-03T01:00:00"
+        assert extensions["audio_url"].endswith("/new.mp3")
+        assert extensions["duration_seconds"] == 2400
+        assert extensions["summary_zh"] == "读者侧生成的中文摘要"
+        assert extensions["processing_status"] == "audio_ready"
+        assert extensions["condensed_audio_url"].endswith("/short.mp3")
+
+    # Replaying the boundary row is idempotent, as required by the >= cursor.
+    repeated = import_archive_sync_jsonl(_jsonl(archive_sync_line(incoming)))
+    assert repeated["updated_count"] == 0
+    assert repeated["skipped_count"] == 1
+
+
+def test_archive_export_incremental_cursor_includes_metadata_refresh(monkeypatch):
+    from api.routers.archive_sync import export_archive_articles_jsonl
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url="sqlite:///:memory:")
+    monkeypatch.setattr("api.app.db_sink", sink)
+    with Session(sink.engine) as session:
+        session.add(_article_record(
+            id="podcast_cursor_1",
+            content_type="podcast_episode",
+            fetched_date="2026-09-01T01:00:00",
+            archive_updated_at="2026-09-03T01:00:00",
+        ))
+        session.commit()
+
+    response = export_archive_articles_jsonl(
+        fetched_date_start="2026-09-02T00:00:00",
+    )
+    lines = [json.loads(line) for line in response.body.decode("utf-8").splitlines()]
+    assert lines[0]["count"] == 1
+    assert lines[1]["article"]["id"] == "podcast_cursor_1"
+    assert lines[1]["article"]["archive_updated_at"] == "2026-09-03T01:00:00"
+
+
 def test_archive_sync_rejects_checksum_mismatch(monkeypatch):
     from api.app import archive_sync_line, import_archive_sync_jsonl
     from storage.impl.db_storage import DatabaseStorage

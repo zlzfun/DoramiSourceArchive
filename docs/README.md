@@ -33,6 +33,13 @@
   已实现):读者贴 URL 自助添加私有 RSS 源(参照 Folo);方案 B 自助+隔离(不进公共目录/
   all 检索域/日报/archive sync),最简正文(feed 给什么存什么,preview 仅守门不分型),
   入库存储+媒体不预取+删源即清;技术底座复用 generic_rss + SourceConfigRecord(加 owner 列)。
+- ◉ [podcast-wave-plan.md](./podcast-wave-plan.md) — Podcast 专栏与长播客精华设计:博客/播客 RSS
+  分轨治理、竞品与 Podcasting 2.0 调研、`>30min` 权利/质量/预算门控、带时间戳证据的中文博客、
+  `≤15min` AI 精华音频、数据/API/状态机/成本/安全以及分期与端到端验收。
+- ◉ [Issue #7 可执行规格](../specs/007-podcast-intelligence/spec.md) — Podcast Intelligence 的
+  用户故事、成功指标、研究决策、数据模型、OpenAPI 契约、多 Agent 任务和主会话验收入口。
+- ◉ [sources/podcast_catalog.md](./sources/podcast_catalog.md) — 内部「欧研观澜」36 个节目样本的
+  RSS 可接入性验证、精选目录、幂等导入命令/API、观察期与权利边界。
 - ◉ [taxonomy-v1-deployment.md](./taxonomy-v1-deployment.md) — 已批准 Taxonomy v1 的发布资产与上线手册：
   全新库 migration → validation-only → 导入回执 → 人工发布 → 开分析，以及已发布开发库的安全同步路径。
 - ◉ [full-analysis-backfill.md](./full-analysis-backfill.md) — 历史文章语义回填：

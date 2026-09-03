@@ -40,7 +40,7 @@ delivery where possible:
 | `job_id` / `job_run_id` / `fetch_run_id` | Preserve and filter by collector lineage. |
 | `run_scope` | `ad_hoc`, `saved_job`, or `legacy_task`. |
 | `publish_date_start` / `publish_date_end` | Source publish-time window. |
-| `fetched_date_start` / `fetched_date_end` | Collector ingest-time window. Use this for incremental sync cursors. |
+| `fetched_date_start` / `fetched_date_end` | Archive change window: `archive_updated_at`, falling back to first-ingest `fetched_date` for older records. The parameter name is retained for compatibility. Use this for incremental sync cursors. |
 | `search` | Title substring filter. |
 | `has_content` | Optional content-bearing filter. |
 | `skip` / `limit` | Offset pagination. `limit` is capped at 5000. |
@@ -56,7 +56,7 @@ The first line is a manifest:
 Each later line is one article:
 
 ```json
-{"kind":"article","schema_version":"articles-jsonl-v1","checksum":"sha256...","article":{"id":"article_id","title":"Article title","content_type":"rss_article","source_id":"rss_openai_news","source_url":"https://example.test/article","publish_date":"2026-05-25T00:00:00","fetched_date":"2026-05-25T01:00:00","fetch_run_id":1,"job_id":2,"job_run_id":3,"source_group_id":4,"run_scope":"saved_job","has_content":true,"content":"Article body","extensions":{}}}
+{"kind":"article","schema_version":"articles-jsonl-v1","checksum":"sha256...","article":{"id":"article_id","title":"Article title","content_type":"rss_article","source_id":"rss_openai_news","source_url":"https://example.test/article","publish_date":"2026-05-25T00:00:00","fetched_date":"2026-05-25T01:00:00","archive_updated_at":"2026-05-25T01:00:00","fetch_run_id":1,"job_id":2,"job_run_id":3,"source_group_id":4,"run_scope":"saved_job","has_content":true,"content":"Article body","extensions":{}}}
 ```
 
 The checksum is a SHA-256 hash of the canonical JSON representation of the `article`
@@ -93,6 +93,15 @@ Import is idempotent by `article.id`.
 - If the article ID already exists, reader skips it.
 - If the existing reader record has no content and the incoming record has content,
   reader backfills the content.
+- Existing Podcast episodes merge a strict publisher-owned metadata allowlist when
+  the incoming `archive_updated_at` is not older. Reader-derived fields such as
+  Chinese summaries, processing state, and condensed-audio URLs are preserved.
+
+`fetched_date` remains the immutable first-ingest time used by reader ordering,
+unread watermarks, and Daily Brief collection. `archive_updated_at` changes when a
+faithful archive record is refreshed and is the effective incremental-sync cursor.
+Older v1 payloads without the additive field remain valid and fall back to
+`fetched_date`.
 
 Derived indexes (the reader-side FTS5 full-text index) are rebuilt locally by
 triggers on insert/update and are intentionally not part of the sync payload.
@@ -110,6 +119,7 @@ The sync payload preserves:
 - `source_url`
 - `publish_date`
 - `fetched_date`
+- `archive_updated_at` (additive v1 field; optional for older producers)
 - `fetch_run_id`
 - `job_id`
 - `job_run_id`

@@ -16,6 +16,7 @@ import {
   UserRound,
   X,
   Zap,
+  Podcast,
   Newspaper,
 } from 'lucide-react';
 import { useReaderState } from '../../hooks/useReaderState';
@@ -43,7 +44,7 @@ const noopContextMenu = () => {};
  * 移动壳(移动波 Wave2,样页 docs/design/dorami-mobile-quiet.html)。
  *
  * 桌面四带布局不下放——移动端是「页面栈 + 底部 TabBar」的原生形态翻译:
- * 底部 4-Tab(文章/动态/社交/我的)= 视图轨的移动翻译,三容器模型原样保留;
+ * 底部内容 Tab(文章/动态/社交/播客)+我的 = 视图轨的移动翻译,四容器模型原样保留;
  * 源栏 → 过滤抽屉(§4.1.2 选源是过滤器不是目的地);正文页 = push 全屏页;
  * 桌面右键菜单 → 长按底部动作单(items 与 useReaderState 三份构建器同源,
  * 跨端肌肉记忆);「发现」是低频目的地,从 我的/抽屉 进入、不占 Tab。
@@ -90,8 +91,8 @@ export default function MobileReader({
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
-    mode, activeSourceId, favOnly, discover, setDiscover,
-    bulletinView, socialView, listTitle,
+    mode, activeSourceId, favOnly, discover, discoverShapeScope, openDiscover, closeDiscover,
+    bulletinView, socialView, podcastView, listTitle,
     goView, goSource, goContainerAll, goFavorites,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
@@ -114,7 +115,7 @@ export default function MobileReader({
     subscribedSources,
   } = rs;
 
-  // 底部 Tab:article|bulletin|social 与容器 mode 一一对应,me 是移动端独有落点
+  // 底部 Tab:article|podcast|bulletin|social 与容器 mode 一一对应,me 是移动端独有落点
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;
@@ -171,7 +172,7 @@ export default function MobileReader({
 
   // ── 返回键握手(Wave3):层开着时按返回=关层,不是退出站点(微信内浏览器的肌肉记忆)──
   useLayerHistory(readOpen, () => selectArticle(null));
-  useLayerHistory(discover, () => setDiscover(false));
+  useLayerHistory(discover, closeDiscover);
   // 合集详情是发现页之上的一层:返回先退详情、再退发现页(注册序在 discover 之后)
   useLayerHistory(Boolean(discoverCollectionId), () => setDiscoverCollectionId(null));
   useLayerHistory(drawerOpen, () => setDrawerOpen(false));
@@ -181,7 +182,7 @@ export default function MobileReader({
     <div className="m-shell font-sans">
       <AnnouncementBanner />
 
-      {/* ── 顶栏(三个内容容器共用:抽屉入口 + 标题/搜索 + seg + 标读 + 搜索开关;
+      {/* ── 顶栏(四个内容容器共用:抽屉入口 + 标题/搜索 + seg + 标读 + 搜索开关;
              社交流 headless 化后其控件行由此承担——Wave3 收口,两层头部合一) ── */}
       {tab === 'me' || tab === 'brief' ? (
         <div className="m-topbar"><span className="m-title m-title-solo">{tab === 'brief' ? '我的早报' : '我的'}</span></div>
@@ -252,7 +253,7 @@ export default function MobileReader({
             mobile
             showToast={showToast}
             interestVersion={interestVersion}
-            onManageSubscriptions={() => setDiscover(true)}
+            onManageSubscriptions={() => openDiscover()}
             onOpenArticle={async (articleId) => {
               const opened = await openArticleById(articleId);
               if (opened) setTab(mode);
@@ -267,7 +268,7 @@ export default function MobileReader({
             themePref={themePref}
             onSetTheme={onSetTheme}
             onShowFavorites={() => { goFavorites(); setTab(mode); }}
-            onOpenDiscover={() => setDiscover(true)}
+            onOpenDiscover={() => openDiscover()}
             onManageInterests={personalDigestEnabled ? () => setInterestOpen(true) : undefined}
             onOpenSettings={onOpenSettings}
             onLogout={onLogout}
@@ -330,7 +331,7 @@ export default function MobileReader({
             {!favOnly && !articlesLoading && freshCount > 0 && (
               <button type="button" className="reader-fresh-pill" onClick={handleRefreshFresh}>
                 <RefreshCw className="h-3 w-3" />
-                载入 {freshCount} 篇新文章
+                {podcastView ? `载入 ${freshCount} 期新播客` : `载入 ${freshCount} 篇新文章`}
               </button>
             )}
             {articlesLoading ? (
@@ -339,8 +340,8 @@ export default function MobileReader({
               <div className="reader-empty reader-empty-tall">
                 <Compass className="h-7 w-7 text-slate-300" />
                 <span>你还没有订阅任何来源</span>
-                <button type="button" className="action-button action-button-primary" onClick={() => setDiscover(true)}>
-                  去发现来源
+                <button type="button" className="action-button action-button-primary" onClick={() => openDiscover(podcastView ? 'podcast' : null)}>
+                  {podcastView ? '添加播客来源' : '去发现来源'}
                 </button>
               </div>
             ) : activeSourceHidden ? (
@@ -353,14 +354,14 @@ export default function MobileReader({
                 {favOnly ? <Star className="h-6 w-6 text-slate-300" /> : <Inbox className="h-6 w-6 text-slate-300" />}
                 <span>
                   {searchQuery
-                    ? '没有匹配的文章'
+                    ? (podcastView ? '没有匹配的播客' : '没有匹配的文章')
                     : favOnly
                       ? '当前范围还没有收藏，阅读时点星标即可收藏'
                       : unreadOnly
                         ? '没有未读内容，都看完啦'
                         : activeSourceId
                           ? '该来源暂无内容'
-                          : (mode === 'bulletin' ? '暂无动态' : '暂无文章')}
+                          : (mode === 'bulletin' ? '暂无动态' : mode === 'podcast' ? '暂无播客' : '暂无文章')}
                 </span>
               </div>
             ) : (
@@ -375,6 +376,7 @@ export default function MobileReader({
                         isUnread={isArticleUnread(article)}
                         isFav={favoriteIds.has(article.id)}
                         entryBulletin={bulletinView}
+                        entryPodcast={podcastView}
                         showLabel={grouping && (index === 0 || key !== dayKeyOf(articles[index - 1]))}
                         dayKey={key}
                         searchQuery={searchQuery}
@@ -406,6 +408,7 @@ export default function MobileReader({
         {[
           ...(personalDigestEnabled ? [['brief', '早报', Newspaper]] : []),
           ['article', '文章', FileText],
+          ['podcast', '播客', Podcast],
           ['bulletin', '动态', Zap],
           ['social', '社交', AtSign],
           ['me', '我的', UserRound],
@@ -431,15 +434,16 @@ export default function MobileReader({
             <button
               type="button"
               className="m-iconbtn"
-              onClick={() => setDiscover(false)}
+              onClick={closeDiscover}
               aria-label="返回"
             >
               <ChevronLeft />
             </button>
-            <span className="m-title">发现</span>
+            <span className="m-title">{discoverShapeScope === 'podcast' ? '添加播客' : '发现'}</span>
           </div>
           <div className="m-page-scroll">
             <DiscoverPage
+              shapeScope={discoverShapeScope}
               sources={discoverSources}
               subscribedIds={subscribedIds}
               loading={sourcesLoading}
@@ -489,7 +493,7 @@ export default function MobileReader({
         goContainerAll={goContainerAll}
         goFavorites={goFavorites}
         goSource={goSource}
-        onOpenDiscover={() => setDiscover(true)}
+        onOpenDiscover={() => openDiscover(mode === 'podcast' ? 'podcast' : null)}
         onSourcePress={openSourceSheet}
       />
 

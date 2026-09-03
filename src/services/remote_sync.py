@@ -14,9 +14,10 @@
   `cookie_secure`(HTTPS 生产姿态)而接收方经 http 访问,httpx 的 cookiejar 会因
   Secure 属性拒发导致一律 401,显式头绕开该坑(生产实操验证过的行为)。
 
-增量游标:每次成功同步把本次所见最大 `fetched_date` 记入 KV
+增量游标:每次成功同步把本次所见最大 `archive_updated_at`（旧端点缺失时回退
+`fetched_date`）记入 KV
 (`remote_sync:state`,按 base_url 分目标),下次以 `fetched_date_start` 透传给
-远端导出实现增量;重复区间由导入端幂等跳过,天然安全。
+远端导出实现增量。参数名为兼容既有契约保留；重复区间由导入端幂等跳过。
 
 定时任务的凭据存储(有意的契约变更):v3.18 的「凭据绝不落库」是针对一次性
 **手动**同步(`probe`/`start` 端点的凭据只进单次请求/任务内存,至今不落库)。
@@ -123,7 +124,7 @@ async def _login(client: httpx.AsyncClient, base_url: str, username: str, passwo
 
 
 def _parse_export_page(raw_text: str) -> Dict[str, Any]:
-    """轻量解析一页 NDJSON:取 manifest、article 行数与本页最大 fetched_date。"""
+    """轻量解析一页 NDJSON:取 manifest、article 行数与本页最大同步游标。"""
     manifest: Optional[Dict[str, Any]] = None
     article_count = 0
     max_fetched_date = ""
@@ -139,9 +140,12 @@ def _parse_export_page(raw_text: str) -> Dict[str, Any]:
             manifest = item
         elif item.get("kind") == "article":
             article_count += 1
-            fetched = str((item.get("article") or {}).get("fetched_date") or "")
-            if fetched > max_fetched_date:
-                max_fetched_date = fetched
+            article = item.get("article") or {}
+            cursor_value = str(
+                article.get("archive_updated_at") or article.get("fetched_date") or ""
+            )
+            if cursor_value > max_fetched_date:
+                max_fetched_date = cursor_value
     return {"manifest": manifest, "article_count": article_count, "max_fetched_date": max_fetched_date}
 
 

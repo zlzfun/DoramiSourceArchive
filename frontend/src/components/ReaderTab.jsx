@@ -24,6 +24,7 @@ import {
   MessageSquare,
   CloudOff,
   Share2,
+  Podcast,
   Newspaper,
   Tags,
 } from 'lucide-react';
@@ -40,6 +41,7 @@ import { resolveCompany } from '../sourceTaxonomy';
 import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
 import AnnouncementBanner from './AnnouncementBanner';
+import PodcastAudioPanel, { PodcastCover } from './PodcastAudioPanel';
 import PersonalBriefTab from './PersonalBriefTab';
 import InterestManager from './InterestManager';
 import AnalysisTagChip from './AnalysisTagChip';
@@ -48,6 +50,7 @@ import { highlightMatch } from '../utils/highlight';
 import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { contentTypeLabel } from '../utils/contentType';
+import { formatPodcastDuration, podcastOf, podcastProcessingMeta } from '../utils/podcast';
 import { displayAnalysisTags, primaryAnalysisLabel, qualityScoreText } from '../utils/analysis';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
@@ -122,15 +125,39 @@ export function PaneBodySkeleton() {
 // article/source 对象引用在增量追加下保持不变,memo 浅比较即可生效。
 // (export 供移动壳复用同一张条目卡——语法/收藏星/未读点单一事实来源。)
 export const ArticleRow = memo(function ArticleRow({
-  article, active, isUnread, isFav, entryBulletin, showLabel, dayKey, searchQuery,
+  article, active, isUnread, isFav, entryBulletin, entryPodcast, showLabel, dayKey, searchQuery,
   source, sourceName, onSelect, onPrefetchEnter, onPrefetchLeave, onToggleFavorite,
   onContextMenu, ctxAnchor,
 }) {
   const excerpt = entryBulletin
     ? ''
     : excerptOf(article.summary_zh || article.content_preview || article.content);
+  const podcast = entryPodcast ? podcastOf(article) : null;
+  const podcastStatus = podcastProcessingMeta(
+    podcast?.processing_status,
+    Boolean(podcast?.condensed_audio_url),
+  );
   const analysisLabel = primaryAnalysisLabel(article);
   const score = qualityScoreText(article.quality_score);
+  const favoriteControl = (
+    <span
+      role="button"
+      tabIndex={0}
+      aria-label={isFav ? '取消收藏' : '收藏'}
+      title={isFav ? '取消收藏' : '收藏'}
+      onClick={(e) => { e.stopPropagation(); onToggleFavorite(article, e); }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          onToggleFavorite(article, e);
+        }
+      }}
+      className={`reader-entry-fav ${isFav ? 'is-on' : ''}`}
+    >
+      <Star className="h-[15px] w-[15px]" fill={isFav ? 'currentColor' : 'none'} />
+    </span>
+  );
   return (
     <>
       {showLabel && <div className="reader-date-label">{dayLabelOf(dayKey)}</div>}
@@ -140,58 +167,66 @@ export const ArticleRow = memo(function ArticleRow({
         onMouseEnter={() => onPrefetchEnter(article)}
         onMouseLeave={onPrefetchLeave}
         onContextMenu={(e) => onContextMenu(e, article, 'article')}
-        className={`reader-entry ${entryBulletin ? 'is-bulletin' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}`}
+        className={`reader-entry ${entryBulletin ? 'is-bulletin' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}`}
       >
-        <span className="reader-entry-top">
-          {source && (
-            <span className="reader-entry-logo" aria-hidden="true">
-              <LogoMark company={resolveCompany(source)} size="s15" emoji={source.icon} />
+        {entryPodcast ? (
+          <span className="reader-podcast-layout">
+            <PodcastCover src={podcast?.image_url} className="reader-podcast-cover" />
+            <span className="reader-podcast-copy">
+              <span className="reader-entry-top">
+                <span className="reader-entry-src">{podcast?.show_title || sourceName}</span>
+                <span
+                  className="reader-entry-time"
+                  title={formatDateTime(article.publish_date || article.fetched_date)}
+                >
+                  {formatRelativeTime(article.publish_date || article.fetched_date, '')}
+                </span>
+              </span>
+              <span className="reader-entry-titlerow">
+                <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
+                <span className="reader-entry-title">{searchQuery ? highlightMatch(article.title || '（无标题）', searchQuery) : (article.title || '（无标题）')}</span>
+                {favoriteControl}
+              </span>
+              <span className="reader-podcast-meta">
+                {formatPodcastDuration(podcast?.duration_seconds) && (
+                  <span>{formatPodcastDuration(podcast.duration_seconds)}</span>
+                )}
+                <span className={`podcast-status is-${podcastStatus.tone}`}>{podcastStatus.label}</span>
+              </span>
             </span>
-          )}
-          <span className="reader-entry-src">{sourceName}</span>
-          <span
-            className="reader-entry-time"
-            title={formatDateTime(article.publish_date || article.fetched_date)}
-          >
-            {formatRelativeTime(article.publish_date || article.fetched_date, '')}
           </span>
-        </span>
-        {(score || analysisLabel) && (
-          <span className="reader-entry-analysis">
-            {score && <span className="reader-score-chip" title="AI 内容价值评估，不代表事实保证或用户评分">{score}</span>}
-            {analysisLabel && <span className="reader-tag-chip">{analysisLabel}</span>}
-          </span>
+        ) : (
+          <>
+            <span className="reader-entry-top">
+              {source && (
+                <span className="reader-entry-logo" aria-hidden="true">
+                  <LogoMark company={resolveCompany(source)} size="s15" emoji={source.icon} />
+                </span>
+              )}
+              <span className="reader-entry-src">{sourceName}</span>
+              <span
+                className="reader-entry-time"
+                title={formatDateTime(article.publish_date || article.fetched_date)}
+              >
+                {formatRelativeTime(article.publish_date || article.fetched_date, '')}
+              </span>
+            </span>
+            {(score || analysisLabel) && (
+              <span className="reader-entry-analysis">
+                {score && <span className="reader-score-chip" title="AI 内容价值评估，不代表事实保证或用户评分">{score}</span>}
+                {analysisLabel && <span className="reader-tag-chip">{analysisLabel}</span>}
+              </span>
+            )}
+            {/* 标题行内收藏控件复用 span role=button，避免 button 嵌套。 */}
+            <span className="reader-entry-titlerow">
+              <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
+              <span className="reader-entry-title">{searchQuery ? highlightMatch(article.title || '（无标题）', searchQuery) : (article.title || '（无标题）')}</span>
+              {favoriteControl}
+            </span>
+            {/* 摘要行:AI 要点摘要(summary_zh)优先——正文截断对英文长文几乎无信息量 */}
+            {excerpt && <span className="reader-entry-excerpt">{searchQuery ? highlightMatch(excerpt, searchQuery) : excerpt}</span>}
+          </>
         )}
-        {/* 标题行:标题占位 + 右缘收藏星标(Folo 式)。星内联于标题行,
-            正文/摘要照旧铺满整宽,只标题让出星位——不再整卡右缩(修右侧留白)。
-            卡本身是 <button>,故收藏钮用 role=button 的 span,避免按钮嵌套;
-            已收藏常显琥珀实星,未收藏悬停浮出空心星、点击切换。
-            键盘可达:tabIndex=0 + 回车/空格触发(不动 stopPropagation 语义)。 */}
-        <span className="reader-entry-titlerow">
-          {/* 未读小蓝点移到标题左侧栏(与右缘收藏星标错开——两者同现时不再挤在右侧);
-              绝对定位于左槽,不挤占标题宽度,已读缩零淡出 */}
-          <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
-          <span className="reader-entry-title">{searchQuery ? highlightMatch(article.title || '（无标题）', searchQuery) : (article.title || '（无标题）')}</span>
-          <span
-            role="button"
-            tabIndex={0}
-            aria-label={isFav ? '取消收藏' : '收藏'}
-            title={isFav ? '取消收藏' : '收藏'}
-            onClick={(e) => { e.stopPropagation(); onToggleFavorite(article, e); }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                e.stopPropagation();
-                onToggleFavorite(article, e);
-              }
-            }}
-            className={`reader-entry-fav ${isFav ? 'is-on' : ''}`}
-          >
-            <Star className="h-[15px] w-[15px]" fill={isFav ? 'currentColor' : 'none'} />
-          </span>
-        </span>
-        {/* 摘要行:AI 要点摘要(summary_zh)优先——正文截断对英文长文几乎无信息量 */}
-        {excerpt && <span className="reader-entry-excerpt">{searchQuery ? highlightMatch(excerpt, searchQuery) : excerpt}</span>}
       </button>
     </>
   );
@@ -239,8 +274,8 @@ export default function ReaderTab({
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
-    mode, activeSourceId, favOnly, discover, setDiscover,
-    bulletinView, socialView, railActive, listTitle,
+    mode, activeSourceId, favOnly, discover, discoverShapeScope, openDiscover, closeDiscover,
+    bulletinView, socialView, podcastView, railActive, listTitle,
     goView, goSource, goContainerAll, goFavorites,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
@@ -352,7 +387,7 @@ export default function ReaderTab({
               type="button"
               aria-label="我的早报"
               aria-pressed={briefOpen}
-              onClick={() => { setDiscover(false); setBriefOpen(true); }}
+              onClick={() => { closeDiscover(); setBriefOpen(true); }}
               className={`reader-vrail-btn ${briefOpen ? 'is-on' : ''}`}
             >
               <Newspaper className="h-[18px] w-[18px]" />
@@ -361,11 +396,12 @@ export default function ReaderTab({
             <span className="reader-vrail-divider" aria-hidden="true" />
           </>
         )}
-        {/* 四个容器:今日(混合时间线) / 文章 / 动态 / 社交媒体。收藏降为容器内过滤器(条目列头星标)。
+        {/* 四个内容容器:文章 / 播客 / 动态 / 社交媒体。收藏降为容器内过滤器(条目列头星标)。
             社交独立成容器(v3.12):动态装的是 changelog/release notes/GitHub 趋势——短条目扫读形态,
             推文是卡片流直读形态,渲染差异大到要在容器内再分叉,就说明本不该是同一个容器。 */}
         {[
           ['article', '文章', FileText],
+          ['podcast', '播客', Podcast],
           ['bulletin', '动态', Zap],
           ['social', '社交媒体', AtSign],
         ].map(([view, label, Icon]) => (
@@ -388,7 +424,7 @@ export default function ReaderTab({
           type="button"
           aria-label="发现"
           aria-pressed={!briefOpen && discover}
-          onClick={() => { setBriefOpen(false); setDiscover(true); }}
+          onClick={() => { setBriefOpen(false); openDiscover(); }}
           className={`reader-vrail-btn ${!briefOpen && discover ? 'is-on' : ''}`}
         >
           <Compass className="h-[18px] w-[18px]" />
@@ -503,10 +539,11 @@ export default function ReaderTab({
                   <span className="reader-src-allicon" aria-hidden="true">
                     {mode === 'bulletin' ? <Zap className="h-3.5 w-3.5" />
                       : socialView ? <AtSign className="h-3.5 w-3.5" />
-                        : <FileText className="h-3.5 w-3.5" />}
+                        : podcastView ? <Podcast className="h-3.5 w-3.5" />
+                          : <FileText className="h-3.5 w-3.5" />}
                   </span>
                   <p className="reader-source-name min-w-0 flex-1">
-                    {mode === 'bulletin' ? '全部动态' : socialView ? '全部社媒' : '全部文章'}
+                    {mode === 'bulletin' ? '全部动态' : socialView ? '全部社媒' : podcastView ? '全部播客' : '全部文章'}
                   </p>
                 </div>
                 <div
@@ -581,11 +618,11 @@ export default function ReaderTab({
               {!hasNoSubscriptions && (
                 <button
                   type="button"
-                  onClick={() => setDiscover(true)}
+                  onClick={() => openDiscover(podcastView ? 'podcast' : null)}
                   className="reader-src-more"
                 >
                   <Compass className="h-3.5 w-3.5" />
-                  <span>发现更多来源</span>
+                  <span>{podcastView ? '添加播客' : '发现更多来源'}</span>
                 </button>
               )}
             </>
@@ -598,7 +635,7 @@ export default function ReaderTab({
         <PersonalBriefTab
           showToast={showToast}
           interestVersion={interestVersion}
-          onManageSubscriptions={() => { setBriefOpen(false); setDiscover(true); }}
+          onManageSubscriptions={() => { setBriefOpen(false); openDiscover(); }}
           onOpenArticle={async (articleId) => {
             const opened = await openArticleById(articleId);
             if (opened) setBriefOpen(false);
@@ -609,6 +646,7 @@ export default function ReaderTab({
       {/* ── 发现页:占据 条目列+阅读窗 的整片区域(源栏保持在场,订阅结果即时可见) ── */}
       {!briefOpen && discover && (
         <DiscoverPage
+          shapeScope={discoverShapeScope}
           sources={discoverSources}
           subscribedIds={subscribedIds}
           loading={sourcesLoading}
@@ -752,7 +790,7 @@ export default function ReaderTab({
           {!favOnly && !articlesLoading && freshCount > 0 && (
             <button type="button" className="reader-fresh-pill" onClick={handleRefreshFresh}>
               <RefreshCw className="h-3 w-3" />
-              载入 {freshCount} 篇新文章
+              {podcastView ? `载入 ${freshCount} 期新播客` : `载入 ${freshCount} 篇新文章`}
             </button>
           )}
           {articlesLoading ? (
@@ -761,8 +799,8 @@ export default function ReaderTab({
             <div className="reader-empty reader-empty-tall">
               <Compass className="h-7 w-7 text-slate-300" />
               <span>你还没有订阅任何来源</span>
-              <button type="button" className="action-button action-button-primary" onClick={() => setDiscover(true)}>
-                去发现来源
+              <button type="button" className="action-button action-button-primary" onClick={() => openDiscover(podcastView ? 'podcast' : null)}>
+                {podcastView ? '添加播客来源' : '去发现来源'}
               </button>
             </div>
           ) : activeSourceHidden ? (
@@ -775,14 +813,14 @@ export default function ReaderTab({
               {favOnly ? <Star className="h-6 w-6 text-slate-300" /> : <Inbox className="h-6 w-6 text-slate-300" />}
               <span>
                 {searchQuery
-                  ? '没有匹配的文章'
+                  ? (podcastView ? '没有匹配的播客' : '没有匹配的文章')
                   : favOnly
                     ? '当前范围还没有收藏，阅读时点右上角星标即可收藏'
                     : unreadOnly
                       ? '没有未读内容，都看完啦'
                       : activeSourceId
                         ? '该来源暂无内容'
-                        : (mode === 'bulletin' ? '暂无动态' : mode === 'article' ? '暂无文章' : '暂无内容')}
+                        : (mode === 'bulletin' ? '暂无动态' : mode === 'podcast' ? '暂无播客' : mode === 'article' ? '暂无文章' : '暂无内容')}
               </span>
             </div>
           ) : (
@@ -800,6 +838,7 @@ export default function ReaderTab({
                     /* 条目列只在文章/动态容器渲染(社交走 SocialFlow),容器内形态同质:
                        动态容器整条呈紧凑形(无独立标题,不挂摘要),不再需要逐条形态 chip。 */
                     entryBulletin={bulletinView}
+                    entryPodcast={podcastView}
                     showLabel={grouping && (index === 0 || key !== dayKeyOf(articles[index - 1]))}
                     dayKey={key}
                     searchQuery={searchQuery}
@@ -943,6 +982,9 @@ export default function ReaderTab({
                 {/* 字数与时长信息冗余(时长即由字数换算),只留时长;
                     阅读量 = 全站累计阅读次数(跨读者;含本次打开,由 /read 响应回填) */}
                 {bodyStats && <span>阅读时长 {bodyStats.minutes} 分钟</span>}
+                {podcastView && formatPodcastDuration(activeArticle.podcast?.duration_seconds) && (
+                  <span>原版 {formatPodcastDuration(activeArticle.podcast.duration_seconds)}</span>
+                )}
                 {typeof activeArticle.read_count === 'number' && activeArticle.read_count > 0 && (
                   <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
                 )}
@@ -972,6 +1014,7 @@ export default function ReaderTab({
               )}
             </header>
             <div className="reader-pane-body markdown-body">
+              {podcastView && <PodcastAudioPanel article={activeArticle} />}
               {/* 哆啦美速读:有缓存直接展示;无缓存给低调的生成入口(MVP 不自动生成,控成本) */}
               {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
                 <div className="reader-ai-summary">
@@ -1002,7 +1045,9 @@ export default function ReaderTab({
               ) : activeBody ? (
                 <ReaderMarkdown>{displayBody}</ReaderMarkdown>
               ) : (
-                '该文章暂无正文内容，点击「查看来源」阅读完整内容。'
+                podcastView
+                  ? '该播客暂无文字内容，可收听上方原版音频。'
+                  : '该文章暂无正文内容，点击「查看来源」阅读完整内容。'
               )}
               {/* 用户自定源(v3.40):正文尾部一律附原文链接——feed 给什么存什么的
                   最简正文口径下,摘要型源读完即达原文;全文源多一个出口也无碍 */}
@@ -1043,10 +1088,10 @@ export default function ReaderTab({
         ) : (
           <div className="reader-empty reader-empty-read">
             <BookOpenText className="h-8 w-8 text-slate-300" />
-            <span>{bulletinView ? '选择一条动态以开始阅读' : '选择一篇文章以开始阅读'}</span>
+            <span>{bulletinView ? '选择一条动态以开始阅读' : podcastView ? '选择一期播客以开始收听' : '选择一篇文章以开始阅读'}</span>
             {/* 新老用户通用的轻引导:空态下一行小字直达发现页(欢迎卡方案已否决——太啰嗦) */}
-            <button type="button" className="reader-empty-link" onClick={() => setDiscover(true)}>
-              去「发现」添加订阅
+            <button type="button" className="reader-empty-link" onClick={() => openDiscover(podcastView ? 'podcast' : null)}>
+              {podcastView ? '添加播客来源' : '去「发现」添加订阅'}
             </button>
           </div>
         )}

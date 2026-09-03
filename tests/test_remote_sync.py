@@ -29,7 +29,7 @@ from services.remote_sync import RemoteSyncError  # noqa: E402
 _SESSION_COOKIE = "dorami_session=remote-secret-token"
 
 
-def _article(i, fetched_date, source_id="rss_demo"):
+def _article(i, fetched_date, source_id="rss_demo", archive_updated_at=None):
     return {
         "id": f"art_{i}",
         "title": f"文章 {i}",
@@ -38,6 +38,7 @@ def _article(i, fetched_date, source_id="rss_demo"):
         "source_url": f"https://example.test/{i}",
         "publish_date": fetched_date,
         "fetched_date": fetched_date,
+        "archive_updated_at": archive_updated_at or fetched_date,
         "fetch_run_id": None,
         "job_id": None,
         "job_run_id": None,
@@ -102,10 +103,13 @@ class FakeRemote:
         start = params.get("fetched_date_start")
         source_ids = set((params.get("source_ids") or "").split(",")) - {""}
 
-        selected = [a for a in self.articles if not start or a["fetched_date"] >= start]
+        selected = [
+            a for a in self.articles
+            if not start or (a.get("archive_updated_at") or a["fetched_date"]) >= start
+        ]
         if source_ids:
             selected = [a for a in selected if a["source_id"] in source_ids]
-        selected.sort(key=lambda a: (a["fetched_date"], a["id"]))
+        selected.sort(key=lambda a: (a.get("archive_updated_at") or a["fetched_date"], a["id"]))
         page = selected[skip:skip + limit]
 
         lines = [json.dumps({
@@ -246,6 +250,30 @@ def test_run_pull_counts_checksum_errors(monkeypatch, tmp_path):
     assert result["imported"] == 1
     assert result["errors"] == 1
     assert result["error_samples"] and "checksum" in result["error_samples"][0]["error"]
+
+
+def test_run_pull_advances_with_archive_update_cursor(monkeypatch, tmp_path):
+    from api.routers.archive_sync import import_archive_sync_jsonl
+
+    _make_local_sink(tmp_path, monkeypatch, "archive_update_cursor.db")
+    remote = FakeRemote([
+        _article(
+            1,
+            "2026-07-01T10:00:00",
+            archive_updated_at="2026-07-08T10:00:00",
+        )
+    ])
+    result = asyncio.run(remote_sync_service.run_pull(
+        base_url="http://remote.test",
+        username="admin",
+        password="secret",
+        fetched_date_start="2026-07-07T00:00:00",
+        import_fn=import_archive_sync_jsonl,
+        transport=remote.transport(),
+    ))
+
+    assert result["pulled"] == 1
+    assert result["max_fetched_date"] == "2026-07-08T10:00:00"
 
 
 def test_source_ids_filter_passthrough(monkeypatch, tmp_path):

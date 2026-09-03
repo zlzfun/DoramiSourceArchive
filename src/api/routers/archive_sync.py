@@ -17,14 +17,16 @@ import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from sqlalchemy import func
 from sqlmodel import Session, select
 from starlette.responses import JSONResponse as StarletteJSONResponse
 
 from api import deps
 from api.articles_view import apply_article_query_filters
-from api.textutils import _coerce_bool, _json_loads, _now_iso
+from api.textutils import _coerce_bool, _date_end_value, _json_loads, _now_iso
 from models.db import ArticleRecord
 from services import article_analysis as article_analysis_service
+from services.podcast_metadata import json_object, merge_podcast_publisher_metadata
 
 router = APIRouter(tags=["archive-sync"])
 
@@ -44,6 +46,7 @@ def archive_article_payload(record: ArticleRecord) -> Dict[str, Any]:
         "source_url": record.source_url,
         "publish_date": record.publish_date,
         "fetched_date": record.fetched_date,
+        "archive_updated_at": record.archive_updated_at or record.fetched_date,
         "fetch_run_id": record.fetch_run_id,
         "job_id": record.job_id,
         "job_run_id": record.job_run_id,
@@ -105,6 +108,7 @@ def build_import_article_record(article: Dict[str, Any]) -> ArticleRecord:
         source_url=str(article.get("source_url") or ""),
         publish_date=str(article["publish_date"]),
         fetched_date=str(article["fetched_date"]),
+        archive_updated_at=str(article.get("archive_updated_at") or article["fetched_date"]),
         fetch_run_id=_coerce_optional_int(article.get("fetch_run_id")),
         job_id=_coerce_optional_int(article.get("job_id")),
         job_run_id=_coerce_optional_int(article.get("job_run_id")),
@@ -158,6 +162,33 @@ def import_archive_sync_jsonl(raw_text: str) -> Dict[str, Any]:
                     imported_count += 1
                     changed_article_ids.append(incoming.id)
                     continue
+                if (
+                    existing.content_type == "podcast_episode"
+                    and incoming.content_type == "podcast_episode"
+                ):
+                    existing_revision = existing.archive_updated_at or existing.fetched_date
+                    incoming_revision = incoming.archive_updated_at or incoming.fetched_date
+                    if existing_revision and incoming_revision < existing_revision:
+                        skipped_count += 1
+                        continue
+                    content_backfilled = bool(
+                        not existing.has_content
+                        and incoming.has_content
+                        and incoming.content
+                    )
+                    if merge_podcast_publisher_metadata(
+                        existing,
+                        incoming,
+                        json_object(incoming.extensions_json),
+                    ):
+                        existing.archive_updated_at = incoming_revision
+                        session.add(existing)
+                        updated_count += 1
+                        if content_backfilled:
+                            changed_article_ids.append(existing.id)
+                    else:
+                        skipped_count += 1
+                    continue
                 if not existing.has_content and incoming.has_content and incoming.content:
                     existing.title = incoming.title
                     existing.content_type = incoming.content_type
@@ -165,6 +196,7 @@ def import_archive_sync_jsonl(raw_text: str) -> Dict[str, Any]:
                     existing.source_url = incoming.source_url
                     existing.publish_date = incoming.publish_date
                     existing.fetched_date = incoming.fetched_date
+                    existing.archive_updated_at = incoming.archive_updated_at
                     existing.fetch_run_id = incoming.fetch_run_id
                     existing.job_id = incoming.job_id
                     existing.job_run_id = incoming.job_run_id
@@ -265,16 +297,27 @@ def export_archive_articles_jsonl(
             search=search,
             publish_date_start=publish_date_start,
             publish_date_end=publish_date_end,
-            fetched_date_start=fetched_date_start,
-            fetched_date_end=fetched_date_end,
+            # Archive Sync extends the historical fetched_date cursor with an
+            # independent record-update timestamp below. Other article APIs keep
+            # their original first-ingest semantics.
+            fetched_date_start=None,
+            fetched_date_end=None,
             session=session,
         )
+        sync_cursor = func.coalesce(
+            func.nullif(ArticleRecord.archive_updated_at, ""),
+            ArticleRecord.fetched_date,
+        )
+        if fetched_date_start:
+            query = query.where(sync_cursor >= fetched_date_start)
+        if fetched_date_end:
+            query = query.where(sync_cursor <= _date_end_value(fetched_date_end))
         # 用户自定源(v3.40 私有订阅资产)不随归档同步外发:内网 reader/下游仓不吃私有内容。
         from services.user_sources import USER_SOURCE_PREFIX
 
         query = query.where(~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True))
         records = session.exec(
-            query.order_by(ArticleRecord.fetched_date.asc(), ArticleRecord.id.asc()).offset(skip).limit(safe_limit)
+            query.order_by(sync_cursor.asc(), ArticleRecord.id.asc()).offset(skip).limit(safe_limit)
         ).all()
 
     lines = [archive_manifest_line(len(records), filters)]

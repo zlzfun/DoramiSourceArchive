@@ -1,4 +1,4 @@
-import { FileText, Zap, AtSign, Star, Compass } from 'lucide-react';
+import { FileText, Zap, AtSign, Podcast, Star, Compass } from 'lucide-react';
 import LogoMark from '../LogoMark';
 import { resolveCompany } from '../../sourceTaxonomy';
 import { mediaProxyUrl } from '../../api';
@@ -31,8 +31,8 @@ export default function MobileSourceDrawer({
 
   if (!open) return null;
 
-  const allLabel = mode === 'bulletin' ? '全部动态' : socialView ? '全部社媒' : '全部文章';
-  const AllIcon = mode === 'bulletin' ? Zap : socialView ? AtSign : FileText;
+  const allLabel = mode === 'bulletin' ? '全部动态' : socialView ? '全部社媒' : mode === 'podcast' ? '全部播客' : '全部文章';
+  const AllIcon = mode === 'bulletin' ? Zap : socialView ? AtSign : mode === 'podcast' ? Podcast : FileText;
   const pick = (fn) => (...args) => { fn(...args); onClose?.(); };
 
   return (
@@ -119,7 +119,7 @@ export default function MobileSourceDrawer({
         <div className="m-drawer-foot">
           <button type="button" className="m-drawer-disc" onClick={pick(onOpenDiscover)}>
             <Compass aria-hidden="true" />
-            <span>发现更多来源</span>
+            <span>{mode === 'podcast' ? '添加播客' : '发现更多来源'}</span>
           </button>
         </div>
       </aside>

@@ -198,6 +198,41 @@ class RssArticleContent(BaseContent):
 
 
 @dataclass
+class PodcastEpisodeContent(BaseContent):
+    """Podcast RSS 单集内容类。
+
+    只归档节目单与音频定位元数据，不在抓取阶段下载音频或执行转录。Podcasting
+    2.0 transcript/chapters 保留为结构化扩展，供后续异步处理流水线消费。
+    """
+    content_type: ClassVar[str] = "podcast_episode"
+
+    show_title: str = field(default="", metadata={"description": "播客节目名称"})
+    author: str = field(default="", metadata={"description": "单集或节目作者"})
+    tags: List[str] = field(default_factory=list, metadata={"description": "单集标签与分类"})
+    guid: str = field(default="", metadata={"description": "RSS 单集全局唯一标识(GUID)"})
+    summary: str = field(default="", metadata={"description": "单集简介/Show Notes 摘要"})
+    updated_date: str = field(default="", metadata={"description": "单集更新时间"})
+    audio_url: str = field(default="", metadata={"description": "enclosure 音频 URL"})
+    audio_mime: str = field(default="", metadata={"description": "enclosure MIME 类型"})
+    audio_bytes: Optional[int] = field(default=None, metadata={"description": "enclosure 音频字节数"})
+    duration_seconds: Optional[int] = field(default=None, metadata={"description": "单集时长（秒）"})
+    episode: Optional[int] = field(default=None, metadata={"description": "单集序号"})
+    season: Optional[int] = field(default=None, metadata={"description": "季序号"})
+    explicit: Optional[bool] = field(default=None, metadata={"description": "是否含显式内容"})
+    image_url: str = field(default="", metadata={"description": "单集或节目封面 URL"})
+    transcripts: List[Dict[str, str]] = field(
+        default_factory=list,
+        metadata={"description": "Podcasting 2.0 transcript 资源列表"},
+    )
+    chapters_url: str = field(default="", metadata={"description": "Podcasting 2.0 chapters URL"})
+    chapters_mime: str = field(default="", metadata={"description": "Podcasting 2.0 chapters MIME 类型"})
+    raw_data: Optional[Dict[str, Any]] = field(
+        default_factory=dict,
+        metadata={"description": "原始 feed 条目精简元数据"},
+    )
+
+
+@dataclass
 class WebPageArticleContent(BaseContent):
     """官网/博客/新闻网页列表文章内容类"""
     content_type: ClassVar[str] = "web_article"

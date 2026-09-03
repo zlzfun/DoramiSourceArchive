@@ -51,6 +51,18 @@ RSS_XML = """<?xml version="1.0"?><rss version="2.0"><channel>
   <item><title>Alpha</title><link>https://demo.test/news/alpha</link></item>
 </channel></rss>"""
 
+PODCAST_XML = """<?xml version="1.0"?><rss version="2.0"
+  xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel>
+  <title>Demo AI Podcast</title><link>https://demo.test/podcast</link>
+  <item>
+    <guid>demo-episode-1</guid><title>AI Agents in Production</title>
+    <link>https://demo.test/podcast/1</link>
+    <description>How production agents are evaluated and monitored.</description>
+    <itunes:duration>42:15</itunes:duration>
+    <enclosure url="https://cdn.demo.test/audio/1.mp3" type="audio/mpeg" length="2048" />
+  </item>
+</channel></rss>"""
+
 
 # ---------- 纯函数 ----------
 
@@ -212,6 +224,34 @@ def test_preview_config_web(monkeypatch):
     assert result["count"] >= 3
     urls = {e["url"] for e in result["entries"]}
     assert any("/news/alpha-launch-2026" in u for u in urls)
+
+
+def test_preview_config_podcast_routes_to_podcast_fetcher(monkeypatch):
+    from fetchers.impl.podcast_rss_fetcher import GenericPodcastRssFetcher
+
+    class _Resp:
+        def __init__(self, text, url):
+            self.content = text.encode()
+            self.url = url
+
+    async def fake_safe_get(self, client, url, **kwargs):
+        return _Resp(PODCAST_XML, url)
+
+    monkeypatch.setattr(GenericPodcastRssFetcher, "_safe_get", fake_safe_get)
+
+    result = _run(source_builder.preview_config({
+        "source_id": "podcast_demo_preview",
+        "name": "Demo AI Podcast",
+        "source_type": "podcast",
+        "url": "https://demo.test/podcast.xml",
+        "params": {"limit": 5},
+    }))
+
+    assert result["ok"] is True
+    assert result["count"] == 1
+    assert result["has_content_count"] == 1
+    assert result["entries"][0]["title"] == "AI Agents in Production"
+    assert result["entries"][0]["url"] == "https://demo.test/podcast/1"
 
 
 def test_preview_config_rejects_unknown_type():
