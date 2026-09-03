@@ -31,6 +31,7 @@ from services.personal_digest import (  # noqa: E402
     claim_personal_digest_generation,
     freeze_personal_digest_scope,
     generate_personal_digest,
+    notify_public_daily_brief_ready,
     resolve_personal_digest_source_ids,
     start_personal_digest_edition,
 )
@@ -216,6 +217,21 @@ def test_expected_and_due_are_frozen_separately_with_private_freshness(storage):
     assert frozen.source_state_snapshot[fresh_private]["due"] is False
 
 
+def test_enabled_public_daily_brief_is_due_without_a_collection_job(storage):
+    with Session(storage.engine) as session:
+        session.add(AppSettingRecord(key="daily_brief_enabled", value="true"))
+        session.commit()
+
+        due = calculate_due_source_ids(
+            session,
+            ["dorami_daily_brief"],
+            as_of=NOW,
+            scheduled_source_ids=[],
+        )
+
+    assert due == ["dorami_daily_brief"]
+
+
 def test_no_subscriptions_returns_recognizable_state_without_creating_edition(storage):
     with Session(storage.engine) as session:
         session.add(_user())
@@ -374,8 +390,44 @@ def test_no_qualified_content_is_honest_degraded_latest_five(storage):
         assert result.edition.degraded_reason == "no_qualified_content"
         assert len(result.items) == 5
         assert all(item.section == "订阅源最新更新" for item in result.items)
-        assert all(item.selection_reason == "" for item in result.items)
+        assert all(item.selection_reason == "订阅源最新更新，不计入正式精选。" for item in result.items)
         assert all(json.loads(item.snapshot_json)["is_latest_update"] for item in result.items)
+
+
+def test_interest_only_pool_reports_unfillable_ratio_and_keeps_fallback_lanes_honest(storage):
+    with Session(storage.engine) as session:
+        tag = _tag("agents")
+        session.add_all([_user(), _subscribe("alice", "rss_a"), tag])
+        session.flush()
+        for number in range(1, 10):
+            article = _seed_article(session, number, score=9.0 - number / 10)
+            session.flush()
+            session.add(ArticleTagAssignmentRecord(
+                article_id=article.id,
+                tag_id=tag.id,
+                tag_kind="topic",
+                relevance=0.9,
+                created_at=NOW_ISO,
+                updated_at=NOW_ISO,
+            ))
+        session.add(UserInterestTagRecord(
+            owner_username="alice",
+            tag_id=tag.id,
+            stance="follow",
+            priority="normal",
+            created_at=NOW_ISO,
+            updated_at=NOW_ISO,
+        ))
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "degraded"
+        assert result.edition.degraded_reason == "insufficient_non_interest_content"
+        assert len(result.items) == 5
+        assert {item.selection_lane for item in result.items} == {"interest"}
+        assert all(json.loads(item.matched_interest_codes_json) == ["agents"] for item in result.items)
+        assert all("不计入正式精选" in item.selection_reason for item in result.items)
 
 
 def test_mute_excludes_matches_and_unfinished_tagging_from_degraded_area(storage):
@@ -472,6 +524,83 @@ def test_new_revision_supersedes_older_pending_lifecycle(storage):
         assert first.edition.status == "superseded"
         assert second.edition.status == "pending"
         assert second.edition.revision == first.edition.revision + 1
+
+
+def test_unrelated_visibility_fanout_reuses_same_frozen_subscription_scope(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        _seed_article(session, 1, score=8.5)
+        session.commit()
+        ready = generate_personal_digest(
+            session,
+            "alice",
+            now=NOW,
+            policy=DigestSelectionPolicy(target_items=1),
+        )
+
+        unchanged = start_personal_digest_edition(
+            session,
+            "alice",
+            now=NOW + dt.timedelta(minutes=1),
+            generation_reason=DigestGenerationReason.SUBSCRIPTION_CHANGED,
+        )
+
+        assert unchanged.edition.id == ready.edition.id
+        assert unchanged.edition.revision == ready.edition.revision
+
+
+def test_public_daily_brief_persistence_creates_one_revision_for_subscribers(storage):
+    with Session(storage.engine) as session:
+        session.add_all([
+            _user(),
+            _subscribe("alice", "dorami_daily_brief"),
+            AppSettingRecord(key="daily_brief_enabled", value="true"),
+            AppSettingRecord(key="personal_digest_enabled", value="true"),
+        ])
+        _seed_article(
+            session,
+            30,
+            source="dorami_daily_brief",
+            score=8.0,
+            published_at=NOW - dt.timedelta(hours=24),
+        )
+        session.commit()
+        first = generate_personal_digest(
+            session,
+            "alice",
+            now=NOW,
+            policy=DigestSelectionPolicy(target_items=1),
+        )
+        assert first.status == "ready"
+
+        _seed_article(
+            session,
+            31,
+            source="dorami_daily_brief",
+            score=8.5,
+            published_at=NOW + dt.timedelta(minutes=5),
+        )
+        session.commit()
+
+    assert notify_public_daily_brief_ready(
+        storage.engine,
+        report_date=NOW.date().isoformat(),
+        now=NOW + dt.timedelta(minutes=5),
+    ) == 1
+    assert notify_public_daily_brief_ready(
+        storage.engine,
+        report_date=NOW.date().isoformat(),
+        now=NOW + dt.timedelta(minutes=6),
+    ) == 0
+    with Session(storage.engine) as session:
+        editions = list(session.exec(
+            select(PersonalDigestEditionRecord).order_by(PersonalDigestEditionRecord.revision)
+        ).all())
+        assert [(row.revision, row.status) for row in editions] == [
+            (1, "ready"),
+            (2, "pending"),
+        ]
+        assert json.loads(editions[1].due_source_ids_json) == ["dorami_daily_brief"]
 
 
 def test_pending_edition_freezes_interests_before_later_preference_changes(storage):

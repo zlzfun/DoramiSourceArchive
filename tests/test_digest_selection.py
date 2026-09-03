@@ -76,6 +76,22 @@ def test_interest_ceiling_applies_to_actual_sparse_output():
     assert sum(item.lane == "quality" for item in selected) == 1
 
 
+def test_cross_lane_event_conflict_does_not_hide_a_larger_legal_set():
+    candidates = [
+        _candidate(1, score=9.5, tags=("agent",), group=7),
+        _candidate(2, score=9.0, tags=("agent",)),
+        _candidate(3, score=8.5, tags=("other",), group=7),
+    ]
+
+    selected = select_digest_articles(
+        candidates,
+        [UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW)],
+    )
+
+    assert [item.article_id for item in selected] == ["a03", "a02"]
+    assert [item.lane for item in selected] == ["quality", "interest"]
+
+
 def test_mute_and_quality_threshold_are_hard_boundaries():
     candidates = [
         _candidate(1, score=9.8, tags=("muted",)),

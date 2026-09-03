@@ -157,6 +157,7 @@ class DigestGenerationReason(StringEnum):
     INTEREST_CHANGED = "interest_changed"
     SUBSCRIPTION_CHANGED = "subscription_changed"
     MANUAL_REBUILD = "manual_rebuild"
+    DAILY_BRIEF_READY = "daily_brief_ready"
     RECOVERY = "recovery"
 
 

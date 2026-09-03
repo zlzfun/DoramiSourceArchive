@@ -1330,6 +1330,20 @@ async def generate_daily_brief(
             "candidates_scanned": scanned_total, "candidates_used": len(candidates),
         })
 
+    # The synthetic brief is not produced by a collection job, so its successful
+    # persistence is the readiness signal.  Wake only users who subscribe to it;
+    # failures here must never roll back an already-published public brief.
+    try:
+        from services.personal_digest import notify_public_daily_brief_ready
+
+        await asyncio.to_thread(
+            notify_public_daily_brief_ready,
+            engine,
+            report_date=report_date,
+        )
+    except Exception as exc:  # noqa: BLE001 - personal fan-out is independent
+        logger.warning("日报[%s]：触发个人早报 revision 失败，等待巡检恢复: %s", report_date, exc)
+
     # shadow 是旁路观测，写指标失败绝不能把已成功发布的公共日报翻成失败。
     if shadow_metrics:
         try:

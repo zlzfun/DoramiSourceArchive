@@ -239,7 +239,7 @@ function TagRow({ tag, tags, onChanged, showToast }) {
             <button type="button" role="switch" aria-checked={!!tag.user_selectable} className={`action-button action-button-quiet min-h-[32px] px-3 text-xs ${tag.user_selectable ? 'is-on' : ''}`} disabled={busy} onClick={() => act(() => updateCmsTag(tag.id, { user_selectable: !tag.user_selectable, reason: '管理台调整用户可选状态' }), `已${tag.user_selectable ? '关闭' : '开启'}用户可选`)}>
               <Check className="h-3.5 w-3.5" /> 用户可选
             </button>
-            <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" disabled={busy} onClick={() => act(() => retagCmsTag(tag.id, 7), '已创建最近 7 天重标任务')}><RotateCcw className="h-3.5 w-3.5" /> 重标 7 天</button>
+            <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" disabled={busy} onClick={() => act(() => retagCmsTag(tag.id, 7), '已创建全部近 7 天文章的闭集重标任务')} title="使用完整 active Taxonomy 重新匹配全部近 7 天文章"><RotateCcw className="h-3.5 w-3.5" /> 重标近 7 天文章</button>
           </div>
           <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
             <select className="form-input form-input-inline" value={parent} onChange={(e) => setParent(e.target.value)} aria-label="上位标签"><option value="">无上位标签</option>{tags.filter((item) => item.id !== tag.id && item.kind === tag.kind && item.status === 'active').map((item) => <option key={item.id} value={item.id}>{displayName(item)} · {item.code}</option>)}</select>

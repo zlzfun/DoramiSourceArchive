@@ -113,7 +113,9 @@ function BriefItem({ item, degraded, onOpen }) {
           <span className="brief-item-summary">{snapshot.one_sentence_summary || snapshot.summary}</span>
         )}
         <span className={`brief-item-reason ${degraded ? 'is-latest' : ''}`}>
-          {degraded ? '订阅源最新更新' : (item.selection_reason || snapshot.selection_reason || '来自你的订阅范围')}
+          {degraded
+            ? (item.selection_reason || snapshot.selection_reason || '订阅源最新更新，不计入正式精选。')
+            : (item.selection_reason || snapshot.selection_reason || '来自你的订阅范围')}
         </span>
       </span>
       <BookOpenText className="h-4 w-4 shrink-0 text-slate-500" aria-hidden="true" />
@@ -223,6 +225,7 @@ export default function PersonalBriefTab({
 
   const noInterest = interestCount === 0;
   const meta = STATUS_META[edition?.status || status] || STATUS_META.pending;
+  const ratioUnfillable = edition?.degraded_reason === 'insufficient_non_interest_content';
 
   return (
     <section className={`personal-brief ${mobile ? 'is-mobile' : ''}`} aria-label="我的早报">
@@ -268,7 +271,7 @@ export default function PersonalBriefTab({
             <Clock3 className="h-7 w-7 text-[var(--dorami-accent)]" />
             <span className={`stamp ${meta.cls}`}>{meta.label}</span>
             <h2 className="card-title">正在等待订阅源和文章分析就绪</h2>
-            <p className="tiny-meta">准备好后会自动显示。首次打开后 15 分钟仍未就绪时，将按已完成内容降级生成。</p>
+            <p className="tiny-meta">08:30 前只等待；08:30 后开始检查，最晚检查时间到达仍未就绪时，将按已完成内容降级生成。</p>
             {edition?.deadline_at && <span className="tiny-meta">最晚检查 {formatDateTime(edition.deadline_at)}</span>}
           </div>
         ) : status === 'failed' ? (
@@ -288,7 +291,11 @@ export default function PersonalBriefTab({
             {edition?.status === 'degraded' && (
               <div className="brief-notice">
                 <Sparkles className="h-4 w-4" />
-                <div><strong>今天暂时没有达到早报入选标准的内容</strong><p>下方是你当前订阅源的最新更新，不作为精选推荐。</p></div>
+                {ratioUnfillable ? (
+                  <div><strong>今天缺少用于补齐的非兴趣内容</strong><p>为避免假装满足 50% 上限，下方只如实展示订阅源最新更新；兴趣占比可能超过 50%，这些条目不计入正式精选。</p></div>
+                ) : (
+                  <div><strong>今天暂时没有达到早报入选标准的内容</strong><p>下方是你当前订阅源的最新更新，不作为精选推荐。</p></div>
+                )}
               </div>
             )}
             {grouped.length === 0 ? (

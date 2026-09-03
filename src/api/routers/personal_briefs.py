@@ -275,6 +275,9 @@ def process_pending_edition(
         lease_expires = _parse_time(edition.generation_lease_expires_at)
         if lease_expires is not None and lease_expires > current:
             return edition
+    check_after = _parse_time(edition.check_after)
+    if check_after is not None and current < check_after:
+        return edition
     deadline = _parse_time(edition.deadline_at)
     forced = deadline is not None and current >= deadline
     if not forced and (not _sources_ready(session, edition, current) or not _analysis_ready(session, edition, current)):
@@ -294,6 +297,7 @@ def process_pending_edition(
             generation_token=generation_token,
         )
     except Exception as exc:  # noqa: BLE001 - persist lifecycle failure without content
+        session.rollback()
         return digest_service.mark_personal_digest_failed(
             session,
             edition.id,

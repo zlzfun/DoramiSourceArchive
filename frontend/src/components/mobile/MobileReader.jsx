@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   AtSign,
   CheckCheck,
@@ -65,7 +65,23 @@ export default function MobileReader({
   initialArticleId = '',
   onDeepLinkConsumed,
 }) {
-  const rs = useReaderState({ showToast, account, initialArticleId, onDeepLinkConsumed });
+  // Bottom-tab state must exist before the shared reader hook: deep links and
+  // other programmatic article opens need to close the personal-brief surface.
+  const [tab, setTab] = useState('article');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sheet, setSheet] = useState(null); // { title, items, anchorKey }
+  const [interestOpen, setInterestOpen] = useState(false);
+  const [interestVersion, setInterestVersion] = useState(0);
+  const closeBriefBeforeArticleOpen = useCallback(() => {
+    setTab((current) => (current === 'brief' ? 'article' : current));
+  }, []);
+  const rs = useReaderState({
+    showToast,
+    account,
+    initialArticleId,
+    onDeepLinkConsumed,
+    onBeforeOpenArticle: closeBriefBeforeArticleOpen,
+  });
   const {
     // 源目录 / 订阅
     sourcesLoading, discoverSources, subscribedIds, sourceMap, sourceNameMap,
@@ -99,11 +115,6 @@ export default function MobileReader({
   } = rs;
 
   // 底部 Tab:article|bulletin|social 与容器 mode 一一对应,me 是移动端独有落点
-  const [tab, setTab] = useState('article');
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [sheet, setSheet] = useState(null); // { title, items, anchorKey }
-  const [interestOpen, setInterestOpen] = useState(false);
-  const [interestVersion, setInterestVersion] = useState(0);
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;

@@ -226,6 +226,7 @@ def _choose_at_cap(
     target: int,
     interest_limit: int,
     source_cap: int,
+    quality_first: bool = False,
 ) -> list[tuple[_RankedCandidate, str]]:
     selected: list[tuple[_RankedCandidate, str]] = []
     event_keys: set[str] = set()
@@ -246,8 +247,16 @@ def _choose_at_cap(
             source_counts[candidate.source_id] = source_counts.get(candidate.source_id, 0) + 1
             limit -= 1
 
-    take(interest_rows, SelectionLane.INTEREST.value, interest_limit)
-    take(quality_rows, SelectionLane.QUALITY.value, target - len(selected))
+    if quality_first:
+        # Reserve the requested interest allocation, then fill any unused slots
+        # from quality.  Trying both lane orders prevents one high-ranked
+        # cross-lane duplicate from hiding an otherwise legal larger set.
+        take(quality_rows, SelectionLane.QUALITY.value, max(0, target - interest_limit))
+        take(interest_rows, SelectionLane.INTEREST.value, interest_limit)
+        take(quality_rows, SelectionLane.QUALITY.value, target - len(selected))
+    else:
+        take(interest_rows, SelectionLane.INTEREST.value, interest_limit)
+        take(quality_rows, SelectionLane.QUALITY.value, target - len(selected))
     return selected
 
 
@@ -320,20 +329,22 @@ def select_digest_articles(
     for source_cap in range(policy.per_source_max, maximum_cap + 1):
         valid_attempts: list[list[tuple[_RankedCandidate, str]]] = []
         for actual_interest_limit in range(interest_limit, -1, -1):
-            candidate_attempt = _choose_at_cap(
-                interest_rows,
-                quality_rows,
-                target=policy.target_items,
-                interest_limit=actual_interest_limit,
-                source_cap=source_cap,
-            )
-            interest_count = sum(
-                lane == SelectionLane.INTEREST.value for _row, lane in candidate_attempt
-            )
-            if interest_count <= math.floor(
-                len(candidate_attempt) * policy.interest_max_ratio + 1e-9
-            ):
-                valid_attempts.append(candidate_attempt)
+            for quality_first in (False, True):
+                candidate_attempt = _choose_at_cap(
+                    interest_rows,
+                    quality_rows,
+                    target=policy.target_items,
+                    interest_limit=actual_interest_limit,
+                    source_cap=source_cap,
+                    quality_first=quality_first,
+                )
+                interest_count = sum(
+                    lane == SelectionLane.INTEREST.value for _row, lane in candidate_attempt
+                )
+                if interest_count <= math.floor(
+                    len(candidate_attempt) * policy.interest_max_ratio + 1e-9
+                ):
+                    valid_attempts.append(candidate_attempt)
         attempt = max(
             valid_attempts,
             key=lambda value: (

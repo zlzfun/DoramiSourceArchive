@@ -453,9 +453,9 @@ def queue_article_analysis(
         session.add(record)
         return "skipped"
 
+    same_content = bool(record is not None and record.content_hash == content_hash)
     is_current = bool(
-        record is not None
-        and record.content_hash == content_hash
+        same_content
         and record.prompt_version == ARTICLE_ANALYSIS_PROMPT_VERSION
         and record.scoring_version == ARTICLE_ANALYSIS_SCORING_VERSION
     )
@@ -477,10 +477,11 @@ def queue_article_analysis(
         )
         return "created"
 
-    # Forced refresh of the same content/version is a two-version handoff:
+    # Forced refresh of the same content is a two-version handoff, including
+    # the normal full-analysis case where only prompt/scoring versions are old:
     # readers keep the prior authority until replacement succeeds. Actual
-    # content/version changes still invalidate immediately.
-    preserve_authority = bool(force and is_current and has_authoritative_analysis(record))
+    # article-content changes still invalidate immediately.
+    preserve_authority = bool(force and same_content and has_authoritative_analysis(record))
     if not preserve_authority:
         _clear_authoritative_result(record)
         _delete_stale_machine_tags(session, article.id)
@@ -501,8 +502,9 @@ def queue_article_analysis(
     record.content_hash = content_hash
     if not preserve_authority:
         record.model_name = ""
-    record.prompt_version = ARTICLE_ANALYSIS_PROMPT_VERSION
-    record.scoring_version = ARTICLE_ANALYSIS_SCORING_VERSION
+    if not preserve_authority:
+        record.prompt_version = ARTICLE_ANALYSIS_PROMPT_VERSION
+        record.scoring_version = ARTICLE_ANALYSIS_SCORING_VERSION
     record.attempt_count = 0
     record.started_at = None
     record.next_attempt_at = None
@@ -720,8 +722,10 @@ def claim_analysis_tasks(
                 operation=AnalysisOperation.FULL_ANALYSIS.value,
                 status=AnalysisAttemptStatus.RUNNING.value,
                 content_hash=record.content_hash,
-                prompt_version=record.prompt_version,
-                scoring_version=record.scoring_version,
+                # A preserved V_old keeps its own version fields readable while
+                # refresh is pending; this attempt always runs the current contract.
+                prompt_version=ARTICLE_ANALYSIS_PROMPT_VERSION,
+                scoring_version=ARTICLE_ANALYSIS_SCORING_VERSION,
                 taxonomy_version=record.taxonomy_version,
                 started_at=now_iso,
                 created_at=now_iso,
