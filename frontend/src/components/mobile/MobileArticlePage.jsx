@@ -33,7 +33,7 @@ export default function MobileArticlePage({
     sourceNameMap, displayBody, displayTranslatedBody, bodyStats,
     favoriteIds, favTogglingId, handleToggleFavorite,
     shareOpen, setShareOpen,
-    showTranslation, translating, translatedBody, handleTranslate,
+    showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
     activeSummary, summarizing, handleSummarize,
     prevArticle, nextArticle, activeIndex, selectArticle, searchForLabel,
   } = rs;
@@ -97,7 +97,7 @@ export default function MobileArticlePage({
             />
           )}
         </div>
-        {aiEnabled && (
+        {aiEnabled && !activeIsChinese && (
           <button
             type="button"
             className={`m-iconbtn ${showTranslation ? 'is-ai' : ''}`}
@@ -126,7 +126,12 @@ export default function MobileArticlePage({
               ? ` · ${contentTypeLabel(activeArticle.content_type, activeArticle.content_type)}`
               : ''}
           </div>
-          <h1 className="reader-pane-title">{activeArticle.title || '（无标题）'}</h1>
+          <h1 className="reader-pane-title">
+            {(showTranslation && translatedTitle) ? translatedTitle : (activeArticle.title || '（无标题）')}
+          </h1>
+          {showTranslation && translatedTitle && activeArticle.title && translatedTitle !== activeArticle.title && (
+            <div className="reader-pane-title-orig">{activeArticle.title}</div>
+          )}
           <div className="reader-pane-meta">
             {activeArticle.publish_date && (
               <span title={formatRelativeTime(activeArticle.publish_date)}>

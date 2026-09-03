@@ -154,14 +154,51 @@ def test_translate_caches_result(monkeypatch, tmp_path):
         first = client.post("/api/reader/ai/translate", json={"article_id": "a1"})
         assert first.status_code == 200
         assert first.json()["translation"] == "AI-MOCK-OUTPUT"
+        assert first.json()["title"] == "AI-MOCK-OUTPUT"   # v3.45:标题同译
         assert first.json()["cached"] is False
-        assert len(calls) == 1
+        assert len(calls) == 2   # 正文一段 + 标题一次
 
         second = client.post("/api/reader/ai/translate", json={"article_id": "a1"})
         assert second.status_code == 200
         assert second.json()["cached"] is True
+        assert second.json()["title"] == "AI-MOCK-OUTPUT"
         # 命中缓存，不再二次调用 LLM
-        assert len(calls) == 1
+        assert len(calls) == 2
+
+
+def test_translate_skips_chinese_title_and_backfills_legacy_cache(monkeypatch, tmp_path):
+    """v3.45 标题翻译:中文标题不调 LLM 原样返回;存量只有正文译文的缓存命中时只补译标题。"""
+    import json as _json
+    from models.db import ArticleRecord
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "translate_title.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_article(sink.engine, "zh", "rss_x", "量子位：GPT-5 发布", "Hello world body")
+    _seed_article(sink.engine, "en", "rss_x", "Hello Title", "Hello world body")
+    calls = _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        resp = client.post("/api/reader/ai/translate", json={"article_id": "zh"})
+        assert resp.json()["title"] == "量子位：GPT-5 发布"
+        assert len(calls) == 1   # 只译正文
+
+        # 存量缓存:只有正文译文(升级前写入)→ 正文命中、标题补译一次
+        with Session(sink.engine) as session:
+            rec = session.get(ArticleRecord, "en")
+            rec.extensions_json = _json.dumps({"translation_zh": "旧译文"})
+            session.add(rec)
+            session.commit()
+        resp = client.post("/api/reader/ai/translate", json={"article_id": "en"})
+        assert resp.json()["translation"] == "旧译文"
+        assert resp.json()["title"] == "AI-MOCK-OUTPUT"
+        assert resp.json()["cached"] is False
+        assert len(calls) == 2
+        # 标题已入缓存:再次调用零 LLM
+        resp = client.post("/api/reader/ai/translate", json={"article_id": "en"})
+        assert resp.json()["cached"] is True
+        assert len(calls) == 2
 
 
 def test_ask_article_scope_uses_article_body(monkeypatch, tmp_path):
@@ -514,9 +551,9 @@ def test_translate_cache_invalidated_by_content_change(monkeypatch, tmp_path):
     with TestClient(app_module.app) as client:
         _login(client)
         assert client.post("/api/reader/ai/translate", json={"article_id": "a1"}).json()["cached"] is False
-        assert len(calls) == 1
+        assert len(calls) == 2   # 正文 + 标题(v3.45)
 
-        # 正文更新 → 指纹失配 → 重新翻译
+        # 正文更新 → 指纹失配 → 重新翻译(标题未变,缓存沿用,只多一次调用)
         with Session(sink.engine) as session:
             rec = session.get(ArticleRecord, "a1")
             rec.content = "totally new body after refetch"
@@ -524,7 +561,7 @@ def test_translate_cache_invalidated_by_content_change(monkeypatch, tmp_path):
             session.commit()
         resp = client.post("/api/reader/ai/translate", json={"article_id": "a1"})
         assert resp.json()["cached"] is False
-        assert len(calls) == 2
+        assert len(calls) == 3
 
         # 存量缓存无指纹(升级前写入)视为有效,不返工重译
         with Session(sink.engine) as session:
@@ -536,7 +573,7 @@ def test_translate_cache_invalidated_by_content_change(monkeypatch, tmp_path):
             session.commit()
         resp2 = client.post("/api/reader/ai/translate", json={"article_id": "a1"})
         assert resp2.json()["cached"] is True
-        assert len(calls) == 2
+        assert len(calls) == 3
 
 
 def test_summarize_cache_invalidated_by_content_change(monkeypatch, tmp_path):

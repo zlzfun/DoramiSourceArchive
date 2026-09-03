@@ -263,7 +263,7 @@ export default function ReaderTab({
     // 分享
     shareOpen, setShareOpen,
     // AI(翻译 / 速读)
-    showTranslation, translating, translatedBody, handleTranslate,
+    showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
     activeSummary, summarizing, handleSummarize,
     // 上下文菜单 items(桌面右键在此装配弹层)
     buildArticleMenuItems, buildSourceMenuItems, buildSocialMenuItems,
@@ -917,7 +917,13 @@ export default function ReaderTab({
                   ? ` · ${contentTypeLabel(activeArticle.content_type, activeArticle.content_type)}`
                   : ''}
               </div>
-              <h1 className="reader-pane-title">{activeArticle.title || '（无标题）'}</h1>
+              {/* 译文态(v3.45):大标题换中文译名,原标题降为其下一行小字 */}
+              <h1 className="reader-pane-title">
+                {(showTranslation && translatedTitle) ? translatedTitle : (activeArticle.title || '（无标题）')}
+              </h1>
+              {showTranslation && translatedTitle && activeArticle.title && translatedTitle !== activeArticle.title && (
+                <div className="reader-pane-title-orig">{activeArticle.title}</div>
+              )}
               <div className="reader-pane-meta">
                 {activeArticle.publish_date && (
                   <span title={formatRelativeTime(activeArticle.publish_date)}>
@@ -933,7 +939,7 @@ export default function ReaderTab({
               </div>
               {/* 标题下动作行(v3.45):查看原文 + 「原文 | 译为中文」二段——眼睛自标题落到正文的
                   路径上,文字化;译文二段激活态沿 AI 渐变身份(v3.33),AI 未开启只余原文。 */}
-              {(activeArticle.source_url || aiEnabled) && (
+              {(activeArticle.source_url || (aiEnabled && !activeIsChinese)) && (
                 <div className="reader-pane-actions">
                   {activeArticle.source_url && (
                     <a
@@ -946,7 +952,7 @@ export default function ReaderTab({
                       查看原文
                     </a>
                   )}
-                  {aiEnabled && (
+                  {aiEnabled && !activeIsChinese && (
                     <div className="reader-tr-seg" role="group" aria-label="正文语言">
                       <button
                         type="button"

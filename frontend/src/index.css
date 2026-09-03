@@ -8500,6 +8500,15 @@ input[type="radio"] {
     text-wrap: balance;
   }
 
+  /* 译文态原标题(v3.45):大标题换中文译名后,原标题降一档挂在其下——保留来源身份 */
+  .reader-pane-title-orig {
+    margin: -4px 0 10px;
+    font-family: var(--font-serif);
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--dorami-muted);
+  }
+
   .reader-pane-meta {
     display: flex;
     flex-wrap: wrap;

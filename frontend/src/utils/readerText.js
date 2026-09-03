@@ -21,6 +21,15 @@ export function stripMarkdown(text) {
     .trim();
 }
 
+// 粗判文本是否以中文为主(v3.45):CJK 字符数 > 拉丁字母数 × 0.2——后端
+// services/reader_ai.looks_chinese 的镜像,两侧阈值须一致。中文源不画「译为中文」二段。
+export function looksChinese(text) {
+  const sample = String(text || '').slice(0, 2000);
+  const cjk = (sample.match(/[\u3400-\u9fff]/g) || []).length;
+  const latin = (sample.match(/[A-Za-z]/g) || []).length;
+  return cjk > latin * 0.2;
+}
+
 // 链接的展示用域名(v3.45 正文尾部「查看原文 ↗ · 域名」):剥 www.,解析失败返回 ''。
 export function hostOf(url) {
   try {

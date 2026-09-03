@@ -415,6 +415,21 @@ TRANSLATE_SYSTEM_PROMPT = """你是一位专业的科技内容译者，服务于
 - 若正文本身已是中文，直接原样返回。"""
 
 
+# 标题翻译(v3.45):正文译文旁配中文标题——此前只译正文,阅读窗切到「中文」后
+# 大标题仍是英文。单独一次小调用,与正文分段并发;输出只有一行标题。
+TRANSLATE_TITLE_SYSTEM_PROMPT = """你是一位专业的科技内容译者。请把给定的文章标题翻译成简体中文标题。
+
+要求：
+- 只输出翻译后的标题本身，一行，不加引号、句号、前言或说明。
+- 准确、简洁，符合中文科技媒体标题习惯，不要逐词硬译。
+- 专有名词、产品名、公司名、模型名按业界惯例处理：广为人知的保留英文（如 GPT-5、Claude、Hugging Face）。
+- 若标题本身已是中文，直接原样返回。"""
+
+
+def build_translate_title_user_prompt(title: str) -> str:
+    return f"【文章标题】{title}"
+
+
 def build_translate_user_prompt(title: str, body: str) -> str:
     parts = []
     if title:
