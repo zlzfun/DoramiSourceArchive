@@ -28,3 +28,15 @@
 高频直达:待办总账 [`docs/backlog.md`](./docs/backlog.md) · 前端纪律
 [`docs/frontend/conventions.md`](./docs/frontend/conventions.md) · 对外契约 `docs/contracts/*` ·
 源策展 `docs/sources/*` · 配置 [`docs/configuration.md`](./docs/configuration.md)。
+
+## Code Review Rules
+
+- **数据与迁移**:重点检查模型/Schema 改动是否缺少配套 Alembic 迁移、迁移是否可能无保护地
+  丢失存量数据,以及 SQLite batch migration 是否破坏外键完整性。安全路径应保持 SQLModel metadata
+  与 `alembic upgrade head` 一致,并在迁移后通过 `PRAGMA foreign_key_check`。
+- **权限与数据边界**:重点检查路由、查询和序列化改动是否可能跨用户或角色暴露 admin-only、隐藏源、
+  未订阅源或私有 RSS 数据。安全路径是在服务端加载/序列化前完成权限过滤;未经用户明确同意,
+  私有 RSS 内容不得进入共享 LLM 分析。
+- **任务生命周期与兼容性**:重点检查后台任务/日报改动是否会在事务持久化前返回成功、重启后丢失
+  可恢复工作,或改变 feature flag 关闭时的既有行为。安全路径应采用 token/lease/CAS 状态转换,
+  失败处理前先回滚事务,并保持开关关闭时与旧流程兼容。
