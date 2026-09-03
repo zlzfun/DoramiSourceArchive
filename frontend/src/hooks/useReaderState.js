@@ -86,6 +86,17 @@ export function useReaderState({
   const [favTogglingId, setFavTogglingId] = useState(null);
   // 发现页(整页视图,取代源栏内联「发现更多来源」):true 时 条目列+阅读窗 被发现页取代
   const [discover, setDiscover] = useState(false);
+  // 发现页的形态范围属于「从哪里进入」的导航意图，而不是当前内容容器的派生状态：
+  // 全局发现始终展示完整目录，只有播客容器里的「添加播客」入口才锁定 podcast。
+  const [discoverShapeScope, setDiscoverShapeScope] = useState(null);
+  const openDiscover = useCallback((shapeScope = null) => {
+    setDiscoverShapeScope(shapeScope === 'podcast' ? 'podcast' : null);
+    setDiscover(true);
+  }, []);
+  const closeDiscover = useCallback(() => {
+    setDiscover(false);
+    setDiscoverShapeScope(null);
+  }, []);
   // ── 源合集(策展合集):发现页「源 ⇄ 合集」视图的合集半边 ──
   // 目录来自 GET /api/reader/collections(轻载荷,成员卡数据由前端与 sources join);
   // discoverCollectionId 提升到本 hook(而非 DiscoverPage 局部态)是为移动端返回键:
@@ -112,8 +123,8 @@ export function useReaderState({
     setDisplayTagQuery(value);
   }, []);
 
-  // ── 容器模型(Folo 语义):文章/动态/社交是三个内容宇宙,各自渲染形态不同 ──
-  // 'article'(默认) | 'bulletin' | 'social'。选中源=在容器内收窄(mode 与 activeSourceId
+  // ── 容器模型(Folo 语义):文章/播客/动态/社交是四个内容宇宙,各自渲染形态不同 ──
+  // 'article'(默认) | 'podcast' | 'bulletin' | 'social'。选中源=在容器内收窄(mode 与 activeSourceId
   // 共存,轨钮保持点亮);点源自动跳入该源所属容器。
   // (「今日」跨宇宙混合流已取缔:它用文章形态渲染推文,违反容器模型的前提——
   //  三个宇宙渲染形态不同才需要分容器;各容器默认倒序 + 未读体系已能回答「最近/未看」。)
@@ -196,7 +207,12 @@ export function useReaderState({
   }, []);
 
   // 离开发现页即退出合集详情(下次进入回到发现页默认视图)
-  useEffect(() => { if (!discover) setDiscoverCollectionId(null); }, [discover]);
+  useEffect(() => {
+    if (!discover) {
+      setDiscoverCollectionId(null);
+      setDiscoverShapeScope(null);
+    }
+  }, [discover]);
 
   // 进入阅读器先取一次收藏 ID 集合，让订阅/来源视图的文章卡也能显示收藏态。
   const loadFavoriteIds = useCallback(async () => {
@@ -208,7 +224,7 @@ export function useReaderState({
 
   useEffect(() => { loadFavoriteIds(); }, [loadFavoriteIds]);
 
-  // source_id → 形态('article'|'bulletin'|'social'),目录未含的源按文章形兜底
+  // source_id → 形态('article'|'bulletin'|'social'|'podcast'),目录未含的源按文章形兜底
   // (声明在未读逻辑之前:applyUnreadCounts 的视图口径依赖它)
   // 三态自 v3.12 社交波起:social 是与文章/动态并列的第三容器,不可再按
   // 「非 bulletin 即 article」二分——那会把社交源误归文章容器。
@@ -221,7 +237,7 @@ export function useReaderState({
   const shapeOfSource = useCallback(
     (sid) => {
       const shape = sourceShapeMap[sid];
-      return shape === 'bulletin' || shape === 'social' ? shape : 'article';
+      return ['bulletin', 'social', 'podcast'].includes(shape) ? shape : 'article';
     },
     [sourceShapeMap],
   );
@@ -303,7 +319,7 @@ export function useReaderState({
 
   // 未读按形态拆分:驱动视图轨口径与源栏头的未读总数
   const unreadByShape = useMemo(() => {
-    const totals = { article: 0, bulletin: 0, social: 0 };
+    const totals = { article: 0, bulletin: 0, social: 0, podcast: 0 };
     for (const [sid, n] of Object.entries(unreadBySource)) totals[shapeOfSource(sid)] += n;
     return totals;
   }, [unreadBySource, shapeOfSource]);
@@ -319,6 +335,8 @@ export function useReaderState({
   const bulletinView = mode === 'bulletin';
   // 社交容器:整幅卡片流(SocialFlow),不走条目列+阅读窗的四带式
   const socialView = mode === 'social';
+  // 播客容器仍采用「条目列 + 详情窗」，但条目和详情顶部使用音频专属呈现。
+  const podcastView = mode === 'podcast';
 
   // 源栏分组(全站统一「信息角色」单轴):当前容器(shape=mode)的源按角色分组,空组不渲染。
   // 形态已由左侧视图轨容器承担,组头只表角色——文章=官方/媒体/个人/榜单,
@@ -339,8 +357,8 @@ export function useReaderState({
 
   // 零订阅时自动进入发现页,引导用户添加第一个订阅
   useEffect(() => {
-    if (hasNoSubscriptions) setDiscover(true);
-  }, [hasNoSubscriptions]);
+    if (hasNoSubscriptions) openDiscover();
+  }, [hasNoSubscriptions, openDiscover]);
 
   // ── hover 预取正文(A4):150ms 去抖;命中缓存/进行中/无 id 都不发 ──
   const cancelPrefetch = useCallback(() => {
@@ -415,7 +433,14 @@ export function useReaderState({
       .then((data) => {
         const body = data?.content || '';
         bodyCacheRef.current.set(id, body);
-        if (activeIdRef.current === id) { setActiveBody(body); setActiveBodyLoading(false); }
+        if (activeIdRef.current === id) {
+          // 播客媒体字段可能只在详情响应完整返回；列表项已有的乐观 read_count 等优先保留。
+          if (data?.podcast) {
+            setActiveArticle((prev) => (prev?.id === id ? { ...prev, podcast: data.podcast } : prev));
+          }
+          setActiveBody(body);
+          setActiveBodyLoading(false);
+        }
       })
       .catch((error) => {
         if (activeIdRef.current === id) {
@@ -891,13 +916,14 @@ export function useReaderState({
   const buildArticleMenuItems = (article) => {
     const unread = isArticleUnread(article);
     const fav = favoriteIds.has(article.id);
+    const isPodcast = Boolean(article?.podcast);
     return [
       { key: 'read', label: unread ? '标为已读' : '标为未读', icon: unread ? Check : Undo2, onClick: () => toggleArticleRead(article) },
-      { key: 'fav', label: fav ? '取消收藏' : '收藏文章', icon: fav ? StarOff : Star, onClick: () => handleToggleFavorite(article) },
+      { key: 'fav', label: fav ? '取消收藏' : isPodcast ? '收藏播客' : '收藏文章', icon: fav ? StarOff : Star, onClick: () => handleToggleFavorite(article) },
       { type: 'sep' },
       { key: 'copy', label: '复制站内链接', icon: Link, onClick: () => copyWithToast(articleDeepLink(article.id), '已复制站内链接') },
       // disabled 不隐藏:菜单结构稳定,无 source_url 时降透明(§2 状态不靠颜色单独传达)
-      { key: 'open', label: '打开原文', icon: ExternalLink, disabled: !article.source_url, onClick: () => window.open(article.source_url, '_blank', 'noopener') },
+      { key: 'open', label: isPodcast ? '打开节目页面' : '打开原文', icon: ExternalLink, disabled: !article.source_url, onClick: () => window.open(article.source_url, '_blank', 'noopener') },
       { type: 'sep' },
       { key: 'markall', label: '标记该源全部已读', icon: CheckCheck, onClick: () => markSourceAllRead(article.source_id) },
     ];
@@ -991,7 +1017,7 @@ export function useReaderState({
       ctx.selectArticle(article);
       return true;
     } catch {
-      if (!silent) showToast('这篇文章已不在库中', 'error');
+      if (!silent) showToast('这条内容已不在库中', 'error');
       return false;
     }
   }, [onBeforeOpenArticle, showToast]);
@@ -1024,7 +1050,7 @@ export function useReaderState({
     ? '收藏'
     : activeSourceId
       ? (sourceNameMap[activeSourceId] || activeSourceId)
-      : mode === 'article' ? '文章' : mode === 'social' ? '社交媒体' : '动态';
+      : mode === 'article' ? '文章' : mode === 'social' ? '社交媒体' : mode === 'podcast' ? '播客' : '动态';
 
   // ── 翻页(上一篇/下一篇):沿当前列表序 ──
   const activeIndex = useMemo(
@@ -1081,8 +1107,8 @@ export function useReaderState({
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
-    mode, activeSourceId, favOnly, discover, setDiscover,
-    bulletinView, socialView, railActive, listTitle,
+    mode, activeSourceId, favOnly, discover, discoverShapeScope, openDiscover, closeDiscover,
+    bulletinView, socialView, podcastView, railActive, listTitle,
     goView, goSource, goContainerAll, goFavorites,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索

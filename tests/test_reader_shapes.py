@@ -1,4 +1,4 @@
-"""内容形态分流测试(迭代 3):article | bulletin | social 三容器。
+"""内容形态分流测试(迭代 3):article | bulletin | social | podcast 四容器。
 
 形态是**源级标记**(fetcher.content_shape),content_type 只作注册表之外历史
 归档源的兜底(github_release/github_repository/hf_model/huggingface_model
@@ -55,6 +55,10 @@ EXPECTED_SOCIAL_SOURCE_IDS = {
     "x_sama",
     "x_openai",
     "x_zai_org",
+}
+
+EXPECTED_PODCAST_SOURCE_IDS = {
+    "generic_podcast_rss",
 }
 
 
@@ -127,15 +131,19 @@ def test_builtin_fetcher_shape_snapshot():
     """每个内置节点的 content_shape 与快照一致——形态归类是显式决策,不许漂移。"""
     actual_bulletin = set()
     actual_social = set()
+    actual_podcast = set()
     for meta in fetcher_registry.get_all_metadata():
         shape = meta.get("shape")
-        assert shape in ("article", "bulletin", "social"), f"{meta['id']} 非法形态: {shape!r}"
+        assert shape in ("article", "bulletin", "social", "podcast"), f"{meta['id']} 非法形态: {shape!r}"
         if shape == "bulletin":
             actual_bulletin.add(meta["id"])
         elif shape == "social":
             actual_social.add(meta["id"])
+        elif shape == "podcast":
+            actual_podcast.add(meta["id"])
     assert actual_bulletin == EXPECTED_BULLETIN_SOURCE_IDS
     assert actual_social == EXPECTED_SOCIAL_SOURCE_IDS
+    assert actual_podcast == EXPECTED_PODCAST_SOURCE_IDS
 
 
 def test_source_shape_fallback_by_content_type():
@@ -151,6 +159,8 @@ def test_source_shape_fallback_by_content_type():
     assert source_shape("legacy_gone", "github_release", meta) == "bulletin"
     assert source_shape("legacy_gone", "huggingface_model", meta) == "bulletin"
     assert source_shape("legacy_social", "social_post", meta) == "social"
+    assert source_shape("legacy_podcast", "podcast_episode", meta) == "podcast"
+    assert source_shape("generic_podcast_rss", "podcast_episode", meta) == "podcast"
     assert source_shape("x_openai", "social_post", meta) == "social"
     assert source_shape("wechat_jiqizhixin", "wechat_article", meta) == "article"
 
@@ -172,6 +182,14 @@ def test_reader_sources_payload_carries_shape(monkeypatch, tmp_path):
             name="Configured X",
             source_type="x",
             params_json='{"handle":"configured_ai"}',
+            created_at="2026-07-20T00:00:00",
+            updated_at="2026-07-20T00:00:00",
+        ))
+        session.add(SourceConfigRecord(
+            source_id="podcast_configured_zero",
+            name="Configured Podcast",
+            source_type="podcast",
+            url="https://example.test/podcast.xml",
             created_at="2026-07-20T00:00:00",
             updated_at="2026-07-20T00:00:00",
         ))
@@ -203,6 +221,7 @@ def test_reader_sources_payload_carries_shape(monkeypatch, tmp_path):
         assert shapes["x_openai"] == "social"             # 注册源标记
         assert shapes["legacy_social"] == "social"        # social_post 兜底
         assert shapes["x_configured_zero"] == "social"    # 零产出 SourceConfig
+        assert shapes["podcast_configured_zero"] == "podcast"  # 零产出 SourceConfig
         assert shapes["wechat_jiqizhixin"] == "article"
         assert platforms["x_openai"] == "x"              # fetcher 类属性
         assert platforms["x_configured_zero"] == "x"     # SourceConfig source_type 兜底
@@ -222,19 +241,30 @@ def test_articles_shape_filter(monkeypatch, tmp_path):
     from models.db import SourceConfigRecord
 
     app_module, sink = _make_app(monkeypatch, tmp_path, "filter.db")
-    # 五类代表:注册/兜底 bulletin，兜底/配置 social，普通 article。
+    # 七类代表:注册/兜底 bulletin，兜底/配置 social，兜底/配置 podcast，普通 article。
     _seed_article(sink.engine, "c1", "docs_claude_code_changelog", content_type="web_article")
     _seed_article(sink.engine, "r1", "legacy_releases", content_type="github_release")
     _seed_article(sink.engine, "a1", "web_anthropic_news", content_type="web_article")
     _seed_article(sink.engine, "s1", "legacy_social", content_type="social_post")
     # 即使存量 content_type 异常，配置源的 source_type=x 仍是第一事实源。
     _seed_article(sink.engine, "s2", "x_configured_filter", content_type="rss_article")
+    _seed_article(sink.engine, "p1", "legacy_podcast", content_type="podcast_episode")
+    # 即使存量 content_type 异常，配置源的 source_type=podcast 仍是第一事实源。
+    _seed_article(sink.engine, "p2", "podcast_configured_filter", content_type="rss_article")
     with Session(sink.engine) as session:
         session.add(SourceConfigRecord(
             source_id="x_configured_filter",
             name="Configured Filter X",
             source_type="x_timeline",
             params_json='{"handle":"configured_filter"}',
+            created_at="2026-07-20T00:00:00",
+            updated_at="2026-07-20T00:00:00",
+        ))
+        session.add(SourceConfigRecord(
+            source_id="podcast_configured_filter",
+            name="Configured Filter Podcast",
+            source_type="podcast",
+            url="https://example.test/podcast.xml",
             created_at="2026-07-20T00:00:00",
             updated_at="2026-07-20T00:00:00",
         ))
@@ -249,11 +279,12 @@ def test_articles_shape_filter(monkeypatch, tmp_path):
                 params["shape"] = shape
             return {item["id"] for item in client.get("/api/articles", params=params).json()["items"]}
 
-        assert ids() == {"c1", "r1", "a1", "s1", "s2"}  # 不传 shape:不过滤
+        assert ids() == {"c1", "r1", "a1", "s1", "s2", "p1", "p2"}  # 不传 shape:不过滤
         assert ids("bulletin") == {"c1", "r1"}          # 源级标记 ∪ content_type 兜底
         assert ids("social") == {"s1", "s2"}             # social_post 兜底 ∪ 配置源标记
-        assert ids("article") == {"a1"}                  # 不误收 bulletin / social
-        assert ids("bogus") == {"c1", "r1", "a1", "s1", "s2"} # 非法值忽略
+        assert ids("podcast") == {"p1", "p2"}            # podcast_episode 兜底 ∪ 配置源标记
+        assert ids("article") == {"a1"}                  # 不误收 bulletin / social / podcast
+        assert ids("bogus") == {"c1", "r1", "a1", "s1", "s2", "p1", "p2"} # 非法值忽略
 
 
 def test_articles_shape_composes_with_subscribed_scope(monkeypatch, tmp_path):

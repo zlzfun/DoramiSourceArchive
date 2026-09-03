@@ -45,7 +45,8 @@ class BaseFetcher(abc.ABC):
     category: str = "general"
 
     # 内容形态（阅读器分流轴，迭代 3）：article 文章形｜bulletin 短条目扫读形
-    # （changelog/Release/仓库/模型监控）｜social 社交卡片流直读形。必须是源级标记：
+    # （changelog/Release/仓库/模型监控）｜social 社交卡片流直读形｜podcast
+    # 播客单集形。必须是源级标记：
     # docs_* changelog 的 content_type 也是 web_article，靠 content_type 分不开。
     content_shape: str = "article"
 

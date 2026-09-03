@@ -1,6 +1,6 @@
 from typing import Optional
 from sqlmodel import SQLModel, Field
-from sqlalchemy import CheckConstraint, Index, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, Column, Index, String, UniqueConstraint, text
 
 
 class ArticleRecord(SQLModel, table=True):
@@ -23,6 +23,16 @@ class ArticleRecord(SQLModel, table=True):
     source_url: str
     publish_date: str = Field(index=True, description="发布日期")
     fetched_date: str = Field(index=True, description="抓取入库的系统时间")
+    archive_updated_at: Optional[str] = Field(
+        default=None,
+        sa_column=Column(
+            String,
+            nullable=False,
+            server_default=text("''"),
+            index=True,
+            comment="忠实归档记录最近变更时间，仅用于 Archive Sync 增量游标",
+        ),
+    )
     fetch_run_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的节点级运行 ID")
     job_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的采集任务 ID")
     job_run_id: Optional[int] = Field(default=None, index=True, description="首次入库关联的采集任务级运行 ID")

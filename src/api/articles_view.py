@@ -23,6 +23,67 @@ class GenericContent(BaseContent):
     source_id = "database_restore"
 
 
+def _podcast_optional_int(value: Any) -> Optional[int]:
+    if value in (None, "") or isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _podcast_projection(extensions: Dict[str, Any]) -> Dict[str, Any]:
+    """生成列表/详情共用的轻量播客对象，不透出 raw_data。"""
+    duration_seconds = _podcast_optional_int(extensions.get("duration_seconds"))
+    raw_transcripts = extensions.get("transcripts") or []
+    if isinstance(raw_transcripts, dict):
+        raw_transcripts = [raw_transcripts]
+    transcripts = []
+    if isinstance(raw_transcripts, list):
+        for value in raw_transcripts:
+            if not isinstance(value, dict):
+                continue
+            transcript = {
+                key: str(value.get(key) or "").strip()
+                for key in ("url", "type", "language", "rel")
+            }
+            if transcript["url"]:
+                transcripts.append(transcript)
+
+    explicit_value = extensions.get("explicit")
+    if not isinstance(explicit_value, bool):
+        normalized = str(explicit_value or "").strip().lower()
+        if normalized in {"yes", "true", "explicit", "1"}:
+            explicit_value = True
+        elif normalized in {"no", "false", "clean", "0"}:
+            explicit_value = False
+        else:
+            explicit_value = None
+
+    return {
+        "show_title": str(extensions.get("show_title") or ""),
+        "audio_url": str(extensions.get("audio_url") or ""),
+        "audio_mime": str(extensions.get("audio_mime") or ""),
+        "audio_bytes": _podcast_optional_int(extensions.get("audio_bytes")),
+        "duration_seconds": duration_seconds,
+        "episode": _podcast_optional_int(extensions.get("episode")),
+        "season": _podcast_optional_int(extensions.get("season")),
+        "explicit": explicit_value,
+        "image_url": str(extensions.get("image_url") or ""),
+        "transcripts": transcripts,
+        "chapters_url": str(extensions.get("chapters_url") or ""),
+        "chapters_mime": str(extensions.get("chapters_mime") or ""),
+        "processing_eligible": duration_seconds is not None and duration_seconds > 1800,
+        "transcript_available": any(transcript["url"] for transcript in transcripts),
+        "processing_status": str(extensions.get("processing_status") or ""),
+        "condensed_audio_url": str(extensions.get("condensed_audio_url") or ""),
+        "condensed_duration_seconds": _podcast_optional_int(
+            extensions.get("condensed_duration_seconds")
+        ),
+    }
+
+
 def _record_to_content(record: ArticleRecord) -> GenericContent:
     """将 ArticleRecord 还原为 GenericContent 内容对象。"""
     obj = GenericContent(
@@ -144,10 +205,12 @@ def serialize_article_list_item(
     # AI 要点摘要(extensions_json.summary_zh)作为轻字段随条目透出:
     # 列表卡摘要优先用它替代正文截断(content_preview 对英文长文几乎无信息量)。
     summary = None
+    ext: Dict[str, Any] = {}
     try:
-        ext = json.loads(record.extensions_json or "{}")
-        if isinstance(ext, dict):
-            value = ext.get("summary_zh")
+        parsed_extensions = json.loads(record.extensions_json or "{}")
+        if isinstance(parsed_extensions, dict):
+            ext = parsed_extensions
+            value = parsed_extensions.get("summary_zh")
             if isinstance(value, str) and value.strip():
                 summary = value
     except (ValueError, TypeError):
@@ -191,6 +254,8 @@ def serialize_article_list_item(
     }
     if include_content:
         item["content"] = content
+    if record.content_type == "podcast_episode":
+        item["podcast"] = _podcast_projection(ext)
     if include_content or include_extensions:
         item["extensions_json"] = record.extensions_json or "{}"
     return item
