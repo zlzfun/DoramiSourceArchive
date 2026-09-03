@@ -228,6 +228,11 @@
   保留白名单：modal/toast/popover 开合、`selection-bar` 上下文条、进度条/进度线、骨架屏 shimmer、
   开关/拇指滑动、运行中 pulse、hover 即时变底、瞬态定位高亮（`source-row-focus`）。
   时长引用 motion token：`--motion-fast`(150) / `--motion-medium`(240) / `--motion-slow`(300) + `--motion-ease`。
+  **具名例外·轨面标签揭示（v3.45，用户三轮拍板）**：视图轨/应用导轨的微标签常态隐藏，指针进入
+  整条轨或键盘焦点落入时全部标签一起淡入、离开后挂起再缓缓淡出（`--rail-reveal-in/out/linger`
+  = 720/1400/2400ms，集中在 `.reader-vrail`/`.app-rail` 上）。它是对「进入轨面」这一意图的反馈
+  而非切页/列表的仪式性入场，节奏刻意慢于 token——揭示是氛围不是通知，快了显仓促。
+  不作为新增动效的先例：其它工作区动效仍按上表 token 与白名单执行。
 - **品牌/登录页**：电影感动画（秒级、硬编码）保留，不引用上述 token，不收敛。
 - 所有动画都要在 `@media (prefers-reduced-motion: reduce)` 下降级（已有兜底，新增动画须遵守）。
 

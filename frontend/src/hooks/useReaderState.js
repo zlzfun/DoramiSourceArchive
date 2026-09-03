@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { looksChinese } from '../utils/readerText';
 import {
   Check,
   CheckCheck,
@@ -161,7 +162,8 @@ export function useReaderState({
   const [showTranslation, setShowTranslation] = useState(false);  // 右栏是否展示译文
   const [translating, setTranslating] = useState(false);
   const [translatedBody, setTranslatedBody] = useState(null);
-  const translationCacheRef = useRef(new Map());                  // id → 译文
+  const [translatedTitle, setTranslatedTitle] = useState(null);  // v3.45:中文标题随译文一起
+  const translationCacheRef = useRef(new Map());                  // id → { body, title }
 
   // ── 用户面 AI · 要点摘要(正文顶部「哆啦美速读」卡;缓存 id → 摘要)──
   const [activeSummary, setActiveSummary] = useState(null);
@@ -418,7 +420,11 @@ export function useReaderState({
     // 切文章即回到原文视图；译文若已缓存则备好，等用户主动点「译为中文」再显示。
     setShowTranslation(false);
     setTranslating(false);
-    setTranslatedBody(id ? (translationCacheRef.current.get(id) ?? null) : null);
+    {
+      const cachedTr = id ? translationCacheRef.current.get(id) : null;
+      setTranslatedBody(cachedTr?.body ?? null);
+      setTranslatedTitle(cachedTr?.title ?? null);
+    }
     // 摘要:会话缓存 → 列表条目自带的 summary_zh(服务端缓存)→ 空(显示生成入口)
     setSummarizing(false);
     setActiveSummary(id ? (summaryCacheRef.current.get(id) ?? article.summary_zh ?? null) : null);
@@ -475,12 +481,20 @@ export function useReaderState({
     if (!id) return;
     if (showTranslation) { setShowTranslation(false); return; }
     const cached = translationCacheRef.current.get(id);
-    if (cached) { setTranslatedBody(cached); setShowTranslation(true); return; }
+    // 译名缺失(上次标题翻译失败,服务端 title=null 且未缓存)→ 不定格回退值,再调一次:
+    // 正文在服务端命中缓存,只补译标题(codex 检视:此前把回退当译名缓存,整会话不再重试)
+    if (cached && cached.title) { setTranslatedBody(cached.body); setTranslatedTitle(cached.title); setShowTranslation(true); return; }
+    if (cached) { setTranslatedBody(cached.body); setTranslatedTitle(null); setShowTranslation(true); }
     setTranslating(true);
     try {
       const data = await translateArticle(id);
-      translationCacheRef.current.set(id, data.translation);
-      if (activeIdRef.current === id) { setTranslatedBody(data.translation); setShowTranslation(true); }
+      const entry = { body: data.translation, title: data.title || null };
+      translationCacheRef.current.set(id, entry);
+      if (activeIdRef.current === id) {
+        setTranslatedBody(entry.body);
+        setTranslatedTitle(entry.title);
+        setShowTranslation(true);
+      }
     } catch (error) {
       showToast(error.message || '翻译失败，请稍后重试', 'error');
     } finally {
@@ -1073,9 +1087,18 @@ export function useReaderState({
     () => stripDuplicateLeadingHeading(activeBody, activeArticle?.title),
     [activeBody, activeArticle?.title],
   );
+  // 译文首行若是标题(原文或译名)同样剥离
   const displayTranslatedBody = useMemo(
-    () => stripDuplicateLeadingHeading(translatedBody, activeArticle?.title),
-    [translatedBody, activeArticle?.title],
+    () => stripDuplicateLeadingHeading(
+      stripDuplicateLeadingHeading(translatedBody, activeArticle?.title),
+      translatedTitle,
+    ),
+    [translatedBody, activeArticle?.title, translatedTitle],
+  );
+  // 中文源判定(v3.45):标题+正文开头以中文为主 → 不画「译为中文」二段(正文未到位时只看标题)
+  const activeIsChinese = useMemo(
+    () => looksChinese(`${activeArticle?.title || ''}\n${activeBody || ''}`),
+    [activeArticle?.title, activeBody],
   );
 
   // 样页 meta:约 N 字 · 阅读 X 分钟(正文到位后计算;中文阅读速率取 ~400 字/分)
@@ -1131,7 +1154,7 @@ export function useReaderState({
     // 分享
     shareOpen, setShareOpen,
     // AI(翻译 / 速读)
-    showTranslation, translating, translatedBody, handleTranslate,
+    showTranslation, translating, translatedBody, translatedTitle, activeIsChinese, handleTranslate,
     activeSummary, summarizing, handleSummarize,
     // 上下文菜单 items(桌面右键 / 移动长按共用)
     isAdminSession, buildArticleMenuItems, buildSourceMenuItems, buildSocialMenuItems,
