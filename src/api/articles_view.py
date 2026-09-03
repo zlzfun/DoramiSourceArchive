@@ -152,7 +152,10 @@ def serialize_article_list_item(
                 summary = value
     except (ValueError, TypeError):
         pass
-    if analysis is not None and getattr(analysis, "status", None) == "succeeded":
+    if analysis is not None and (
+        getattr(analysis, "status", None) == "succeeded"
+        or getattr(analysis, "analyzed_at", None)
+    ):
         unified_summary = str(getattr(analysis, "summary", "") or "").strip()
         if unified_summary:
             summary = unified_summary

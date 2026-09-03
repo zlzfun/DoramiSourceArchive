@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, or_
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -23,6 +24,8 @@ from models.db import (
     UserRecord,
 )
 from services import personal_digest as digest_service
+from services.article_analysis import source_allows_analysis
+from services.article_time import in_time_window
 
 
 router = APIRouter(
@@ -135,6 +138,7 @@ def _latest_edition(session: Session, username: str, report_date: str) -> Person
         .where(
             PersonalDigestEditionRecord.owner_username == username,
             PersonalDigestEditionRecord.report_date == report_date,
+            PersonalDigestEditionRecord.status != PersonalDigestStatus.SUPERSEDED.value,
         )
         .order_by(PersonalDigestEditionRecord.revision.desc())
     ).first()
@@ -205,30 +209,51 @@ def _analysis_ready(
     now: dt.datetime,
 ) -> bool:
     if not _enabled(session, ARTICLE_ANALYSIS_ENABLED_KEY):
-        return False
-    source_ids = [str(value) for value in _parse_json(edition.expected_source_ids_json, []) if value]
+        return True
+    source_ids = [
+        str(value)
+        for value in _parse_json(edition.expected_source_ids_json, [])
+        if value and source_allows_analysis(session, str(value))
+    ]
     if not source_ids:
         return True
-    since = (now - dt.timedelta(hours=72)).isoformat()
-    article_ids = list(
+    since = now - dt.timedelta(hours=72)
+    coarse_start = (since - dt.timedelta(days=1)).date().isoformat()
+    coarse_end = (now + dt.timedelta(days=1)).date().isoformat()
+    article_rows = list(
         session.exec(
-            select(ArticleRecord.id).where(
+            select(ArticleRecord.id, ArticleRecord.fetched_date).where(
                 ArticleRecord.source_id.in_(source_ids),
                 ArticleRecord.has_content.is_(True),
-                ArticleRecord.fetched_date >= since,
+                func.substr(ArticleRecord.fetched_date, 1, 10) >= coarse_start,
+                func.substr(ArticleRecord.fetched_date, 1, 10) <= coarse_end,
             )
         ).all()
     )
+    article_ids = [
+        article_id for article_id, fetched_date in article_rows
+        if in_time_window(fetched_date, start=since, end=now)
+    ]
     if not article_ids:
         return True
-    finished = set(
-        session.exec(
-            select(ArticleAnalysisRecord.article_id).where(
+    finished = {
+        row.article_id for row in session.exec(
+            select(ArticleAnalysisRecord).where(
                 ArticleAnalysisRecord.article_id.in_(article_ids),
-                ArticleAnalysisRecord.status.in_(["succeeded", "skipped"]),
+                or_(
+                    ArticleAnalysisRecord.status.in_(["succeeded", "skipped"]),
+                    (
+                        ArticleAnalysisRecord.status.in_(["failed", "timeout"])
+                        & ArticleAnalysisRecord.next_attempt_at.is_(None)
+                    ),
+                    (
+                        ArticleAnalysisRecord.analyzed_at.is_not(None)
+                        & ArticleAnalysisRecord.quality_score.is_not(None)
+                    ),
+                ),
             )
         ).all()
-    )
+    }
     return len(finished) == len(set(article_ids))
 
 
@@ -246,14 +271,19 @@ def process_pending_edition(
     current = (now or dt.datetime.now(digest_service.SHANGHAI)).astimezone(
         digest_service.SHANGHAI
     )
+    if edition.status == PersonalDigestStatus.GENERATING.value:
+        lease_expires = _parse_time(edition.generation_lease_expires_at)
+        if lease_expires is not None and lease_expires > current:
+            return edition
     deadline = _parse_time(edition.deadline_at)
     forced = deadline is not None and current >= deadline
     if not forced and (not _sources_ready(session, edition, current) or not _analysis_ready(session, edition, current)):
         return edition
-    edition.status = PersonalDigestStatus.GENERATING.value
-    edition.updated_at = current.isoformat()
-    session.add(edition)
-    session.commit()
+    edition, generation_token = digest_service.claim_personal_digest_generation(
+        session, edition.id, now=current
+    )
+    if generation_token is None:
+        return edition
     try:
         result = digest_service.generate_personal_digest(
             session,
@@ -261,9 +291,15 @@ def process_pending_edition(
             report_date=edition.report_date,
             now=current,
             pending_edition_id=edition.id,
+            generation_token=generation_token,
         )
     except Exception as exc:  # noqa: BLE001 - persist lifecycle failure without content
-        return digest_service.mark_personal_digest_failed(session, edition.id, str(exc))
+        return digest_service.mark_personal_digest_failed(
+            session,
+            edition.id,
+            str(exc),
+            generation_token=generation_token,
+        )
     assert result.edition is not None
     return result.edition
 
@@ -418,7 +454,10 @@ def list_editions(
     _require_enabled(session)
     rows = session.exec(
         select(PersonalDigestEditionRecord)
-        .where(PersonalDigestEditionRecord.owner_username == _username(auth))
+        .where(
+            PersonalDigestEditionRecord.owner_username == _username(auth),
+            PersonalDigestEditionRecord.status != PersonalDigestStatus.SUPERSEDED.value,
+        )
         .order_by(
             PersonalDigestEditionRecord.report_date.desc(),
             PersonalDigestEditionRecord.revision.desc(),

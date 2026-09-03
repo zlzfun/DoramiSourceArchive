@@ -49,6 +49,7 @@ from models.db import (
     TaxonomyVersionRecord,
     UserInterestTagRecord,
 )
+from services.article_time import in_time_window, parse_article_time
 
 
 AUTO_ACTIVATION_SETTING_KEY = "taxonomy_auto_activation_enabled"
@@ -929,22 +930,29 @@ def ranked_interest_catalog(
     )
     eligible_ids = [int(tag.id) for tag in eligible if tag.id is not None]
     current = now or dt.datetime.now(dt.timezone.utc)
-    since = (current - dt.timedelta(days=INTEREST_CATALOG_WINDOW_DAYS)).isoformat()
+    current_utc = parse_article_time(current.isoformat())
+    assert current_utc is not None
+    since_time = current_utc - dt.timedelta(days=INTEREST_CATALOG_WINDOW_DAYS)
     heat: dict[int, int] = {}
     if eligible_ids:
+        coarse_start = (since_time - dt.timedelta(days=1)).date().isoformat()
         heat_rows = session.exec(
             select(
                 ArticleTagAssignmentRecord.tag_id,
-                func.count(func.distinct(ArticleTagAssignmentRecord.article_id)),
+                ArticleTagAssignmentRecord.article_id,
+                ArticleRecord.fetched_date,
             )
             .join(ArticleRecord, ArticleRecord.id == ArticleTagAssignmentRecord.article_id)
             .where(
                 ArticleTagAssignmentRecord.tag_id.in_(eligible_ids),
-                ArticleRecord.fetched_date >= since,
+                func.substr(ArticleRecord.fetched_date, 1, 10) >= coarse_start,
             )
-            .group_by(ArticleTagAssignmentRecord.tag_id)
         ).all()
-        heat = {int(tag_id): int(count) for tag_id, count in heat_rows}
+        article_ids_by_tag: dict[int, set[str]] = {}
+        for tag_id, article_id, fetched_date in heat_rows:
+            if in_time_window(fetched_date, start=since_time, end=current_utc):
+                article_ids_by_tag.setdefault(int(tag_id), set()).add(str(article_id))
+        heat = {tag_id: len(article_ids) for tag_id, article_ids in article_ids_by_tag.items()}
     selected_ids: set[int] = set()
     if owner_username:
         selected_ids = {
@@ -1292,6 +1300,13 @@ def reject_candidate(
     candidate = session.get(CmsTagCandidateRecord, candidate_id)
     if candidate is None:
         raise TaxonomyError("candidate does not exist")
+    if candidate.status == TagCandidateStatus.REJECTED.value:
+        return candidate
+    if candidate.status not in {
+        TagCandidateStatus.CANDIDATE.value,
+        TagCandidateStatus.REVIEWING.value,
+    }:
+        raise TaxonomyError(f"resolved candidate cannot be rejected from {candidate.status}")
     candidate.status = "rejected"
     candidate.updated_at = now_iso(now)
     session.add(candidate)
@@ -1622,8 +1637,23 @@ def deprecate_tag(
     replacement = session.get(CmsTagRecord, replacement_id) if replacement_id else None
     if tag is None:
         raise TaxonomyError("tag does not exist")
-    if replacement_id and (replacement is None or replacement.id == tag.id or replacement.kind != tag.kind):
+    if replacement_id and (
+        replacement is None
+        or replacement.id == tag.id
+        or replacement.kind != tag.kind
+        or replacement.status != TagStatus.ACTIVE.value
+    ):
         raise TaxonomyError("replacement must be a different tag in the same facet")
+    cursor = replacement
+    visited: set[int] = set()
+    while cursor is not None:
+        cursor_id = int(cursor.id or 0)
+        if cursor_id == tag_id:
+            raise TaxonomyError("replacement chain must not create a cycle")
+        if cursor_id in visited:
+            raise TaxonomyError("replacement chain already contains a cycle")
+        visited.add(cursor_id)
+        cursor = session.get(CmsTagRecord, cursor.replacement_id) if cursor.replacement_id else None
     tag.status = "deprecated"
     tag.replacement_id = replacement_id
     tag.user_selectable = False
@@ -2037,17 +2067,41 @@ def process_retag_batch(
         scope = json.loads(job.scope_json or "{}")
     except ValueError as exc:
         raise TaxonomyError("retag scope is invalid JSON") from exc
-    query = select(ArticleRecord)
-    if job.cursor:
-        query = query.where(ArticleRecord.id > job.cursor)
     article_ids = [str(item) for item in scope.get("article_ids", []) if str(item)]
-    if article_ids:
-        query = query.where(ArticleRecord.id.in_(article_ids))
     since = str(scope.get("since") or "")
-    if since:
-        query = query.where(ArticleRecord.fetched_date >= since)
-    rows = list(session.exec(query.order_by(ArticleRecord.id).limit(batch_size + 1)).all())
-    batch, has_more = rows[:batch_size], len(rows) > batch_size
+    since_time = parse_article_time(since) if since else None
+    if since and since_time is None:
+        raise TaxonomyError("retag scope since time is invalid")
+    # Historical rows mix UTC offsets and naive Shanghai wall-clock strings.
+    # Page by stable article id, then apply the lower bound to parsed instants;
+    # lexical timestamp predicates would silently miss part of the seven-day set.
+    page_cursor = job.cursor
+    page_size = max(100, max(1, int(batch_size)) * 4)
+    batch: list[ArticleRecord] = []
+    has_more = False
+    while not has_more:
+        query = select(ArticleRecord)
+        if page_cursor:
+            query = query.where(ArticleRecord.id > page_cursor)
+        if article_ids:
+            query = query.where(ArticleRecord.id.in_(article_ids))
+        page = list(
+            session.exec(query.order_by(ArticleRecord.id).limit(page_size)).all()
+        )
+        if not page:
+            break
+        for article in page:
+            page_cursor = article.id
+            if since_time is not None:
+                fetched = parse_article_time(article.fetched_date)
+                if fetched is None or fetched < since_time:
+                    continue
+            if len(batch) >= max(1, int(batch_size)):
+                has_more = True
+                break
+            batch.append(article)
+        if has_more or len(page) < page_size:
+            break
     stamp = now_iso(now)
     failed_ids = [str(item) for item in scope.get("failed_article_ids", []) if str(item)]
     for article in batch:
@@ -2128,16 +2182,30 @@ def taxonomy_coverage_metrics(
     session: Session,
     *,
     since: str,
+    until: Optional[dt.datetime] = None,
 ) -> dict[str, Any]:
     """Coverage snapshot used after the closed-set seven-day retag pass."""
 
-    analyses = list(
-        session.exec(
-            select(ArticleAnalysisRecord)
-            .join(ArticleRecord, ArticleRecord.id == ArticleAnalysisRecord.article_id)
-            .where(ArticleRecord.fetched_date >= since, ArticleAnalysisRecord.status == "succeeded")
-        ).all()
-    )
+    since_time = parse_article_time(since)
+    if since_time is None:
+        raise TaxonomyError("coverage since time is invalid")
+    end_time = until or dt.datetime.now(dt.timezone.utc)
+    end_utc = parse_article_time(end_time.isoformat())
+    assert end_utc is not None
+    coarse_start = (since_time - dt.timedelta(days=1)).date().isoformat()
+    rows = session.exec(
+        select(ArticleAnalysisRecord, ArticleRecord.fetched_date)
+        .join(ArticleRecord, ArticleRecord.id == ArticleAnalysisRecord.article_id)
+        .where(
+            func.substr(ArticleRecord.fetched_date, 1, 10) >= coarse_start,
+            ArticleAnalysisRecord.status == "succeeded",
+        )
+    ).all()
+    analyses = [
+        analysis
+        for analysis, fetched_date in rows
+        if in_time_window(fetched_date, start=since_time, end=end_utc)
+    ]
     article_ids = [row.article_id for row in analyses]
     assignments = (
         list(
@@ -2292,7 +2360,7 @@ def taxonomy_governance_state(
         "review_receipt_valid": review_receipt_valid,
         "canonical_alias_gap_count": alias_gaps,
         "auto_activation_enabled": auto_activation_enabled(session),
-        "coverage_7d": taxonomy_coverage_metrics(session, since=since),
+        "coverage_7d": taxonomy_coverage_metrics(session, since=since, until=current),
         "publish_ready": not blockers,
         "publish_blockers": blockers,
     }

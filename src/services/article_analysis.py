@@ -15,8 +15,8 @@ making analysis part of the article transaction:
     A scheduler-friendly composition of recovery, scan, claim, and processing.
 
 No function logs article titles, bodies, source URLs, prompt payloads, or model
-output.  This is required because user RSS is sent to the configured third-party
-LLM by default while remaining private to its subscribers.
+output. Private user RSS is not eligible for third-party analysis in V1; future
+support requires explicit per-subscriber consent and cost attribution.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ import json
 import logging
 import re
 import unicodedata
+import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -75,6 +76,7 @@ from models.db import (
     TaxonomyVersionRecord,
 )
 from services.article_display_tags import extracted_tag_snapshot
+from services.article_time import in_time_window, parse_article_time
 
 
 logger = logging.getLogger("dorami.article_analysis")
@@ -160,6 +162,7 @@ class AnalysisInput:
 class ClaimedAnalysisTask:
     article_id: str
     worker_id: str
+    lease_token: str
     attempt_no: int
     content_hash: str
 
@@ -262,7 +265,22 @@ def source_allows_analysis(session: Session, source_id: str) -> bool:
     """Platform sources without a config row retain the default-on behavior."""
 
     source = session.get(SourceConfigRecord, source_id)
+    if source_id.startswith(USER_SOURCE_PREFIX) or bool(source and source.owner_username):
+        return False
     return source is None or bool(source.ai_analysis_enabled)
+
+
+def has_authoritative_analysis(record: ArticleAnalysisRecord | None) -> bool:
+    """A successful prior result remains readable while a forced refresh runs."""
+
+    return bool(
+        record is not None
+        and record.quality_score is not None
+        and (
+            record.status == AnalysisStatus.SUCCEEDED.value
+            or record.analyzed_at
+        )
+    )
 
 
 def _clear_authoritative_result(record: ArticleAnalysisRecord) -> None:
@@ -323,6 +341,38 @@ def _close_running_attempts(
         session.add(attempt)
 
 
+def revoke_queued_analysis(
+    session: Session,
+    article_id: str,
+    *,
+    reason: str,
+    now: Optional[dt.datetime] = None,
+) -> bool:
+    """Revoke pending/running execution while preserving any prior authority."""
+
+    record = session.get(ArticleAnalysisRecord, article_id)
+    if record is None or record.status not in {
+        AnalysisStatus.PENDING.value,
+        AnalysisStatus.RUNNING.value,
+    }:
+        return False
+    current = _as_utc(now)
+    _close_running_attempts(session, article_id, now=current, reason=reason)
+    record.status = (
+        AnalysisStatus.SUCCEEDED.value
+        if has_authoritative_analysis(record)
+        else AnalysisStatus.SKIPPED.value
+    )
+    record.started_at = None
+    record.next_attempt_at = None
+    record.lease_owner = None
+    record.lease_expires_at = None
+    record.last_error = reason
+    record.updated_at = _iso(current)
+    session.add(record)
+    return True
+
+
 def queue_article_analysis(
     session: Session,
     article_id: str,
@@ -350,7 +400,9 @@ def queue_article_analysis(
     now_iso = _iso(now)
     content_hash = compute_content_hash(article)
     source = session.get(SourceConfigRecord, article.source_id)
-    allowed = source is None or bool(source.ai_analysis_enabled)
+    allowed = not _is_private_source(article, source) and (
+        source is None or bool(source.ai_analysis_enabled)
+    )
     record = session.get(ArticleAnalysisRecord, article.id)
 
     if force and record is not None and record.status == AnalysisStatus.RUNNING.value:
@@ -425,11 +477,18 @@ def queue_article_analysis(
         )
         return "created"
 
-    # A body/title/version change invalidates the current authority.  A source
-    # re-enabled after a skip follows the same deterministic reset path.
-    _clear_authoritative_result(record)
-    _delete_stale_machine_tags(session, article.id)
-    _delete_candidate_evidence(session, article.id, now=_as_utc(now))
+    # Forced refresh of the same content/version is a two-version handoff:
+    # readers keep the prior authority until replacement succeeds. Actual
+    # content/version changes still invalidate immediately.
+    preserve_authority = bool(force and is_current and has_authoritative_analysis(record))
+    if not preserve_authority:
+        _clear_authoritative_result(record)
+        _delete_stale_machine_tags(session, article.id)
+        _delete_candidate_evidence(session, article.id, now=_as_utc(now))
+    elif not record.analyzed_at:
+        # Legacy successful rows may predate the explicit authority timestamp.
+        # Stamp it before status becomes pending so readers can identify V_old.
+        record.analyzed_at = record.updated_at or now_iso
     _close_running_attempts(
         session,
         article.id,
@@ -437,9 +496,11 @@ def queue_article_analysis(
         reason="analysis superseded by content or version change",
     )
     record.status = AnalysisStatus.PENDING.value
-    record.tagging_status = TaggingStatus.PENDING.value
+    if not preserve_authority:
+        record.tagging_status = TaggingStatus.PENDING.value
     record.content_hash = content_hash
-    record.model_name = ""
+    if not preserve_authority:
+        record.model_name = ""
     record.prompt_version = ARTICLE_ANALYSIS_PROMPT_VERSION
     record.scoring_version = ARTICLE_ANALYSIS_SCORING_VERSION
     record.attempt_count = 0
@@ -466,17 +527,31 @@ def scan_analysis_backfill(
     if not enabled:
         return ReconcileStats()
     now_utc = _as_utc(now)
-    since = _iso(now_utc - dt.timedelta(days=max(1, lookback_days)))
-    rows = list(
+    since_time = now_utc - dt.timedelta(days=max(1, lookback_days))
+    coarse_start = (since_time - dt.timedelta(days=1)).date().isoformat()
+    coarse_end = (now_utc + dt.timedelta(days=1)).date().isoformat()
+    candidates = list(
         session.exec(
             select(ArticleRecord)
             .where(
                 ArticleRecord.has_content.is_(True),
                 ArticleRecord.content.is_not(None),
-                ArticleRecord.fetched_date >= since,
+                func.substr(ArticleRecord.fetched_date, 1, 10) >= coarse_start,
+                func.substr(ArticleRecord.fetched_date, 1, 10) <= coarse_end,
             )
-            .order_by(ArticleRecord.fetched_date.desc(), ArticleRecord.id.desc())
         ).all()
+    )
+    rows = sorted(
+        (
+            row for row in candidates
+            if in_time_window(row.fetched_date, start=since_time, end=now_utc)
+        ),
+        key=lambda row: (
+            parse_article_time(row.fetched_date)
+            or dt.datetime.min.replace(tzinfo=dt.timezone.utc),
+            row.id,
+        ),
+        reverse=True,
     )
     counts: Counter[str] = Counter()
     scanned = 0
@@ -617,6 +692,7 @@ def claim_analysis_tasks(
     for article_id in candidate_ids:
         if len(claimed) >= max(1, limit):
             break
+        lease_token = f"{worker}:{uuid.uuid4().hex}"
         result = session.exec(
             update(ArticleAnalysisRecord)
             .where(ArticleAnalysisRecord.article_id == article_id, eligible)
@@ -625,7 +701,7 @@ def claim_analysis_tasks(
                 attempt_count=ArticleAnalysisRecord.attempt_count + 1,
                 started_at=now_iso,
                 next_attempt_at=None,
-                lease_owner=worker,
+                lease_owner=lease_token,
                 lease_expires_at=lease_expires,
                 last_error=None,
                 updated_at=now_iso,
@@ -656,6 +732,7 @@ def claim_analysis_tasks(
             ClaimedAnalysisTask(
                 article_id=article_id,
                 worker_id=worker,
+                lease_token=lease_token,
                 attempt_no=attempt_no,
                 content_hash=record.content_hash,
             )
@@ -1206,6 +1283,8 @@ def _persist_tags(
             prompt_version=prompt_version,
             now=now,
         )
+    else:
+        _delete_candidate_evidence(session, article.article_id, now=now)
     return (
         TaggingStatus.SUCCEEDED.value,
         primary_id,
@@ -1225,7 +1304,7 @@ def _mark_failure(
     with Session(engine) as session:
         record = session.get(ArticleAnalysisRecord, task.article_id)
         attempt = _attempt_for(session, task)
-        if record is None or record.lease_owner != task.worker_id:
+        if record is None or record.lease_owner != task.lease_token:
             return ProcessResult(task.article_id, "superseded", TaggingStatus.PENDING.value)
         article = session.get(ArticleRecord, task.article_id)
         source = session.get(SourceConfigRecord, article.source_id) if article else None
@@ -1276,7 +1355,7 @@ async def process_claimed_analysis(
         if (
             record is None
             or record.status != AnalysisStatus.RUNNING.value
-            or record.lease_owner != task.worker_id
+            or record.lease_owner != task.lease_token
             or record.content_hash != task.content_hash
         ):
             return ProcessResult(task.article_id, "superseded", TaggingStatus.PENDING.value)
@@ -1359,7 +1438,7 @@ async def process_claimed_analysis(
             record is None
             or article is None
             or record.status != AnalysisStatus.RUNNING.value
-            or record.lease_owner != task.worker_id
+            or record.lease_owner != task.lease_token
             or record.content_hash != task.content_hash
             or compute_content_hash(article) != task.content_hash
         ):
@@ -1503,8 +1582,9 @@ async def run_analysis_cycle(
                 now=now,
             )
             backfill_job_id = int(backfill_job.id)
-        tasks = claim_analysis_tasks(session, worker_id=worker_id, limit=batch_size, now=now)
-        remaining = max(0, batch_size - len(tasks))
+        concurrency = max(1, min(batch_size, llm_config.map_concurrency))
+        tasks = claim_analysis_tasks(session, worker_id=worker_id, limit=concurrency, now=now)
+        remaining = max(0, concurrency - len(tasks))
         if backfill_job is not None and backfill_job.status == "running" and remaining:
             dispatched = backfill_service.dispatch_full_analysis_backfill(
                 session,
@@ -1539,7 +1619,25 @@ async def run_analysis_cycle(
                 now_fn=now_fn,
             )
 
-    results = list(await asyncio.gather(*(_guarded(task) for task in tasks)))
+    gathered = await asyncio.gather(
+        *(_guarded(task) for task in tasks),
+        return_exceptions=True,
+    )
+    results: list[ProcessResult] = []
+    for task, outcome in zip(tasks, gathered):
+        if isinstance(outcome, BaseException):
+            # One unexpected worker failure must not cancel siblings or strand
+            # its lease. Reuse the ordinary retry/terminal-state transition.
+            results.append(_mark_failure(
+                engine,
+                task,
+                status=AnalysisStatus.FAILED.value,
+                error=outcome,
+                now=_as_utc(now_fn()),
+                max_attempts=DEFAULT_MAX_ATTEMPTS,
+            ))
+        else:
+            results.append(outcome)
     if backfill_job_id is not None:
         try:
             with Session(engine) as session:
@@ -1564,7 +1662,7 @@ def get_article_analysis(session: Session, article_id: str) -> Optional[dict[str
     """Read the current successful asset in a router/reader-AI friendly shape."""
 
     record = session.get(ArticleAnalysisRecord, article_id)
-    if record is None or record.status != AnalysisStatus.SUCCEEDED.value:
+    if not has_authoritative_analysis(record):
         return None
     return {
         "article_id": record.article_id,

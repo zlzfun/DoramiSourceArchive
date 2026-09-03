@@ -14,9 +14,9 @@ import json
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Optional, Sequence
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from llm.article_analysis_prompt import (
@@ -28,7 +28,6 @@ from models.analysis_contracts import AnalysisOperation, AnalysisStatus, Tagging
 from models.db import (
     ArticleAnalysisRecord,
     ArticleRecord,
-    SourceConfigRecord,
     TagRetagJobItemRecord,
     TagRetagJobRecord,
 )
@@ -36,8 +35,11 @@ from services.article_analysis import (
     DEFAULT_MAX_ATTEMPTS,
     compute_content_hash,
     queue_article_analysis,
+    revoke_queued_analysis,
     sanitize_error,
+    source_allows_analysis,
 )
+from services.article_time import parse_article_time
 from services.taxonomy import current_taxonomy_version, now_iso
 
 
@@ -46,7 +48,6 @@ FULL_ANALYSIS_ACTIVE_STATUSES = ("queued", "running", "paused")
 FULL_ANALYSIS_SELECTIONS = ("all", "missing_or_outdated")
 DEFAULT_DISPATCH_LIMIT = 8
 LEASE_SECONDS = 300
-SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 class AnalysisBackfillError(ValueError):
@@ -77,17 +78,7 @@ def _scope_bounds(
 
 
 def _article_time(value: str) -> Optional[dt.datetime]:
-    try:
-        parsed = dt.datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    # Article ingestion historically stores local wall-clock timestamps without
-    # an offset, while newer paths may preserve an explicit offset. Normalize
-    # both before applying a backfill window; lexical SQL comparison would drop
-    # same-day local rows when the coordinator uses UTC.
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=SHANGHAI)
-    return parsed.astimezone(dt.timezone.utc)
+    return parse_article_time(value)
 
 
 def _eligible_rows(
@@ -113,18 +104,10 @@ def _eligible_rows(
             ArticleAnalysisRecord,
             ArticleAnalysisRecord.article_id == ArticleRecord.id,
         )
-        .outerjoin(
-            SourceConfigRecord,
-            SourceConfigRecord.source_id == ArticleRecord.source_id,
-        )
         .where(
             ArticleRecord.has_content.is_(True),
             ArticleRecord.content.is_not(None),
             ArticleRecord.content != "",
-            or_(
-                SourceConfigRecord.source_id.is_(None),
-                SourceConfigRecord.ai_analysis_enabled.is_(True),
-            ),
         )
         .order_by(ArticleRecord.fetched_date.desc(), ArticleRecord.id.desc())
     )
@@ -134,6 +117,8 @@ def _eligible_rows(
 
     targets: list[BackfillTarget] = []
     for article, analysis in session.exec(statement).all():
+        if not source_allows_analysis(session, article.source_id):
+            continue
         fetched_at = _article_time(article.fetched_date)
         if fetched_at is None or fetched_at > current or (since_time and fetched_at < since_time):
             continue
@@ -266,7 +251,11 @@ def create_full_analysis_backfill(
         updated_at=stamp,
     )
     session.add(job)
-    session.flush()
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        raise AnalysisBackfillError("another full-analysis backfill is unfinished") from exc
     session.add_all(
         [
             TagRetagJobItemRecord(
@@ -541,6 +530,13 @@ def _set_nonterminal_items_skipped(
             TagRetagJobItemRecord.status.in_(("pending", "queued")),
         )
     ).all():
+        if item.status == "queued" and item.article_id:
+            revoke_queued_analysis(
+                session,
+                item.article_id,
+                reason=reason,
+                now=_utc(now),
+            )
         item.status = "skipped"
         item.last_error = reason
         item.completed_at = stamp
@@ -556,10 +552,29 @@ def pause_full_analysis_backfill(
 ) -> TagRetagJobRecord:
     if job.operation != AnalysisOperation.FULL_ANALYSIS.value or job.status not in {"queued", "running"}:
         raise AnalysisBackfillError("only an active full-analysis backfill can be paused")
+    stamp = now_iso(_utc(now))
+    for item in session.exec(
+        select(TagRetagJobItemRecord).where(
+            TagRetagJobItemRecord.job_id == job.id,
+            TagRetagJobItemRecord.status == "queued",
+        )
+    ).all():
+        if item.article_id:
+            revoke_queued_analysis(
+                session,
+                item.article_id,
+                reason="job_paused",
+                now=_utc(now),
+            )
+        item.status = "pending"
+        item.queued_at = None
+        item.last_error = None
+        item.updated_at = stamp
+        session.add(item)
     job.status = "paused"
     job.lease_owner = None
     job.lease_expires_at = None
-    job.updated_at = now_iso(_utc(now))
+    job.updated_at = stamp
     session.add(job)
     session.commit()
     session.refresh(job)

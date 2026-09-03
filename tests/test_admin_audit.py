@@ -87,6 +87,34 @@ def test_get_requests_are_never_audited(monkeypatch, tmp_path):
     assert _audit_rows(app_module.db_sink.engine) == []
 
 
+def test_new_analysis_and_taxonomy_writes_have_semantic_audit_summaries(tmp_path):
+    from services.admin_audit import record_audit, should_audit
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'new-audit-rules.db'}")
+    writes = [
+        ("PUT", "/api/admin/analysis/config", {"article_analysis_enabled": False}),
+        ("POST", "/api/admin/analysis/backfills", {"days": 30, "selection": "all"}),
+        ("PATCH", "/api/admin/cms-tags/42", {"name_zh": "安全"}),
+        ("POST", "/api/admin/cms-tag-candidates/7/reject", {"reason": "noise"}),
+        ("POST", "/api/admin/taxonomy/v1/publish", {"confirmation": "publish"}),
+    ]
+    for method, path, body in writes:
+        assert should_audit(path, method) is True
+        record_audit(
+            sink.engine,
+            username="admin",
+            method=method,
+            path=path,
+            status_code=200,
+            body=body,
+        )
+    rows = _audit_rows(sink.engine)
+    assert len(rows) == len(writes)
+    assert all(row.summary for row in rows)
+    assert should_audit("/api/admin/analysis/backfills/estimate", "POST") is False
+
+
 def test_reader_surface_write_is_exempt(monkeypatch, tmp_path):
     app_module = _setup_app(monkeypatch, tmp_path)
 

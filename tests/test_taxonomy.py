@@ -833,6 +833,57 @@ def test_manual_governance_changes_are_audited_and_old_name_still_resolves(stora
         assert json.loads(description_event.payload_json)["operation"] == "change_descriptions"
 
 
+def test_resolved_candidate_cannot_be_rejected(storage):
+    with Session(storage.engine) as session:
+        session.add(article("resolved-candidate"))
+        candidate = record_candidate_evidence(
+            session,
+            CandidateEvidenceInput(
+                article_id="resolved-candidate",
+                source_id="public-1",
+                label="Resolved Candidate",
+                proposed_kind="topic",
+                confidence=0.9,
+                published_date=NOW_ISO,
+            ),
+            now=NOW,
+        )
+        candidate.status = "activated"
+        session.add(candidate)
+        session.commit()
+
+        with pytest.raises(TaxonomyError, match="resolved candidate"):
+            reject_candidate(
+                session,
+                candidate.id,
+                actor_id="admin",
+                reason="must not destroy resolved evidence",
+                now=NOW,
+            )
+
+
+def test_deprecate_rejects_a_replacement_chain_cycle(storage):
+    with Session(storage.engine) as session:
+        first = active_tag(session, "first", "topic", "First")
+        second = active_tag(session, "second", "topic", "Second")
+        session.commit()
+        # Simulate a legacy/corrupt chain whose active head already points back
+        # to the tag being deprecated. The service must not extend it into a cycle.
+        first.replacement_id = second.id
+        session.add(first)
+        session.commit()
+
+        with pytest.raises(TaxonomyError, match="cycle"):
+            deprecate_tag(
+                session,
+                second.id,
+                replacement_id=first.id,
+                actor_id="admin",
+                reason="cycle guard",
+                now=NOW,
+            )
+
+
 def test_bilingual_rename_retypes_changed_translation_and_skips_noop_event(storage):
     with Session(storage.engine) as session:
         tag = create_tag(

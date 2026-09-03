@@ -15,7 +15,7 @@ import sys
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, event, pool
 
 # 让 alembic 能 import 到 src/ 下的模型与配置（与 tests 的 sys.path 自举一致）。
 _SRC = os.path.join(os.path.dirname(__file__), "..", "src")
@@ -64,6 +64,24 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+    if _is_sqlite(str(connectable.url)):
+        # Runtime connections intentionally enforce FK cascades. Migration
+        # connections deliberately disable FK checks so SQLite batch-table
+        # replacement can run, but make that separate policy explicit. pysqlite
+        # legacy mode auto-commits DDL; disabling its implicit BEGIN and issuing
+        # our own transaction makes each revision rollback as one unit.
+        @event.listens_for(connectable, "connect")
+        def _configure_sqlite_migration(dbapi_connection, _connection_record) -> None:
+            dbapi_connection.isolation_level = None
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=OFF")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.close()
+
+        @event.listens_for(connectable, "begin")
+        def _begin_sqlite_migration(connection) -> None:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+
     with connectable.connect() as connection:
         context.configure(
             connection=connection,
@@ -71,6 +89,8 @@ def run_migrations_online() -> None:
             render_as_batch=_is_sqlite(str(connectable.url)),
             compare_type=True,
             include_object=fts_include_object,
+            transactional_ddl=_is_sqlite(str(connectable.url)),
+            transaction_per_migration=True,
         )
         with context.begin_transaction():
             context.run_migrations()

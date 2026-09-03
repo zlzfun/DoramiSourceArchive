@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import uuid
 import zlib
 from dataclasses import dataclass
 from typing import Iterable, Literal, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, exists, func
+from sqlalchemy import delete, exists, func, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
@@ -38,6 +39,7 @@ from models.db import (
     ArticleRecord,
     ArticleTagAssignmentRecord,
     CmsTagRecord,
+    CollectionJobRecord,
     DuplicateGroupMemberRecord,
     PersonalDigestEditionRecord,
     PersonalDigestItemRecord,
@@ -49,6 +51,7 @@ from models.db import (
 )
 from services import source_visibility
 from services.article_display_tags import load_display_tags
+from services.article_time import in_time_window
 from services.digest_selection import (
     DigestSelectionPolicy,
     section_for_genre,
@@ -61,6 +64,7 @@ SHANGHAI = ZoneInfo("Asia/Shanghai")
 POLICY_VERSION = "personal-digest-v1"
 PRIVATE_SOURCE_PREFIX = "user_rss_"
 DEFAULT_PRIVATE_FRESHNESS_MINUTES = 60
+GENERATION_LEASE_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -178,6 +182,8 @@ def resolve_personal_digest_source_ids(session: Session, username: str) -> list[
     allowed: list[str] = []
     for source_id in sorted(explicit):
         config = configs.get(source_id)
+        if config is not None and not config.is_active:
+            continue
         is_private = source_id.startswith(PRIVATE_SOURCE_PREFIX) or bool(
             config and config.owner_username
         )
@@ -211,9 +217,21 @@ def calculate_due_source_ids(
     if not expected:
         return []
     now = _as_shanghai(as_of)
-    scheduled = None if scheduled_source_ids is None else {
-        str(value).strip() for value in scheduled_source_ids if str(value).strip()
-    }
+    if scheduled_source_ids is None:
+        scheduled: set[str] = set()
+        for job in session.exec(
+            select(CollectionJobRecord).where(CollectionJobRecord.is_active.is_(True))
+        ).all():
+            try:
+                values = json.loads(job.fetcher_ids_json or "[]")
+            except (TypeError, json.JSONDecodeError):
+                values = []
+            if isinstance(values, list):
+                scheduled.update(str(value).strip() for value in values if str(value).strip())
+    else:
+        scheduled = {
+            str(value).strip() for value in scheduled_source_ids if str(value).strip()
+        }
     configs = {
         row.source_id: row for row in session.exec(
             select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(expected))
@@ -227,6 +245,8 @@ def calculate_due_source_ids(
     due: list[str] = []
     for source_id in expected:
         config = configs.get(source_id)
+        if config is not None and not config.is_active:
+            continue
         is_private = source_id.startswith(PRIVATE_SOURCE_PREFIX) or bool(
             config and config.owner_username
         )
@@ -241,7 +261,7 @@ def calculate_due_source_ids(
             if last_success is None or last_success < now - dt.timedelta(minutes=interval):
                 due.append(source_id)
             continue
-        if scheduled is None or source_id in scheduled:
+        if source_id in scheduled:
             due.append(source_id)
     return due
 
@@ -305,6 +325,77 @@ def _load_interests(session: Session, username: str) -> list[UserInterestDTO]:
         )
         for interest, tag in rows
     ]
+
+
+def _serialize_interests(interests: Sequence[UserInterestDTO]) -> str:
+    return _json([
+        {
+            "tag_code": item.tag_code,
+            "stance": str(getattr(item.stance, "value", item.stance)),
+            "priority": str(getattr(item.priority, "value", item.priority)),
+        }
+        for item in interests
+    ])
+
+
+def _deserialize_interests(raw: str) -> list[UserInterestDTO]:
+    try:
+        values = json.loads(raw or "[]")
+    except (TypeError, json.JSONDecodeError):
+        values = []
+    if not isinstance(values, list):
+        return []
+    result: list[UserInterestDTO] = []
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        try:
+            result.append(UserInterestDTO.model_validate(value))
+        except ValueError:
+            continue
+    return result
+
+
+def claim_personal_digest_generation(
+    session: Session,
+    edition_id: int,
+    *,
+    now: dt.datetime | None = None,
+) -> tuple[PersonalDigestEditionRecord, str | None]:
+    """Atomically claim pending work or recover an expired generation lease."""
+
+    current = _as_shanghai(now)
+    token = uuid.uuid4().hex
+    result = session.exec(
+        update(PersonalDigestEditionRecord)
+        .where(
+            PersonalDigestEditionRecord.id == edition_id,
+            or_(
+                PersonalDigestEditionRecord.status == PersonalDigestStatus.PENDING.value,
+                (
+                    (PersonalDigestEditionRecord.status == PersonalDigestStatus.GENERATING.value)
+                    & or_(
+                        PersonalDigestEditionRecord.generation_lease_expires_at.is_(None),
+                        PersonalDigestEditionRecord.generation_lease_expires_at <= current.isoformat(),
+                    )
+                ),
+            ),
+        )
+        .values(
+            status=PersonalDigestStatus.GENERATING.value,
+            generation_token=token,
+            generation_lease_expires_at=(
+                current + dt.timedelta(seconds=GENERATION_LEASE_SECONDS)
+            ).isoformat(),
+            updated_at=current.isoformat(),
+        )
+    )
+    claimed = result.rowcount == 1
+    session.commit()
+    edition = session.get(PersonalDigestEditionRecord, edition_id)
+    if edition is None:
+        raise ValueError("个人早报版本不存在")
+    return edition, token if claimed else None
 
 
 def _interest_version(session: Session, username: str) -> int:
@@ -436,15 +527,22 @@ def load_digest_candidates(
     if not source_ids:
         return []
     cutoff = _as_shanghai(cutoff_at)
-    since = (cutoff - dt.timedelta(hours=window_hours)).isoformat()
+    since = cutoff - dt.timedelta(hours=window_hours)
+    # Coarse padded date guard keeps the query bounded without trusting mixed
+    # timestamp strings for the final instant comparison.
+    coarse_start = (since - dt.timedelta(days=1)).date().isoformat()
+    coarse_end = (cutoff + dt.timedelta(days=1)).date().isoformat()
     query = (
         select(ArticleRecord, ArticleAnalysisRecord)
         .join(ArticleAnalysisRecord, ArticleAnalysisRecord.article_id == ArticleRecord.id)
         .where(
             ArticleRecord.source_id.in_(source_ids),
-            ArticleRecord.publish_date >= since,
-            ArticleRecord.publish_date <= cutoff.isoformat(),
-            ArticleAnalysisRecord.status == AnalysisStatus.SUCCEEDED.value,
+            func.substr(ArticleRecord.publish_date, 1, 10) >= coarse_start,
+            func.substr(ArticleRecord.publish_date, 1, 10) <= coarse_end,
+            or_(
+                ArticleAnalysisRecord.status == AnalysisStatus.SUCCEEDED.value,
+                ArticleAnalysisRecord.analyzed_at.is_not(None),
+            ),
             ArticleAnalysisRecord.quality_score.is_not(None),
         )
     )
@@ -455,7 +553,10 @@ def load_digest_candidates(
                 TaggingStatus.PARTIAL.value,
             ))
         )
-    rows = session.exec(query).all()
+    rows = [
+        row for row in session.exec(query).all()
+        if in_time_window(row[0].publish_date, start=since, end=cutoff)
+    ]
     article_ids = [article.id for article, _analysis in rows]
     tag_codes, _tag_snapshots = _tag_maps(session, article_ids)
     primary_ids = {
@@ -535,6 +636,7 @@ def _latest_edition(
         .where(
             PersonalDigestEditionRecord.owner_username == username,
             PersonalDigestEditionRecord.report_date == report_date,
+            PersonalDigestEditionRecord.status != PersonalDigestStatus.SUPERSEDED.value,
         )
         .order_by(PersonalDigestEditionRecord.revision.desc())
     ).first()
@@ -573,6 +675,7 @@ def _snapshot(
     analysis: ArticleAnalysisRecord | None,
     tags: Sequence[dict[str, object]],
     *,
+    source_name: str,
     display_tags: Sequence[dict[str, object]] | None = None,
     selection_reason: str,
     degraded: bool,
@@ -582,12 +685,10 @@ def _snapshot(
         "title": article.title,
         "content_type": article.content_type,
         "source_id": article.source_id,
+        "source_name": source_name,
         "source_url": article.source_url,
         "publish_date": article.publish_date,
         "fetched_date": article.fetched_date,
-        # Keeping the archived body is what makes a deleted private-RSS article
-        # genuinely readable rather than merely listable from history.
-        "content": article.content,
         "one_sentence_summary": analysis.one_sentence_summary if analysis else "",
         "summary": analysis.summary if analysis else "",
         "quality_score": analysis.quality_score if analysis else None,
@@ -719,20 +820,22 @@ def start_personal_digest_edition(
         scheduled_source_ids=scheduled_source_ids,
     )
     if not scope.expected_source_ids:
-        stale_pending = list(
+        stale_editions = list(
             session.exec(
                 select(PersonalDigestEditionRecord).where(
                     PersonalDigestEditionRecord.owner_username == username,
                     PersonalDigestEditionRecord.report_date == report_date,
-                    PersonalDigestEditionRecord.status == PersonalDigestStatus.PENDING.value,
+                    PersonalDigestEditionRecord.status != PersonalDigestStatus.SUPERSEDED.value,
                 )
             ).all()
         )
-        for previous in stale_pending:
+        for previous in stale_editions:
             previous.status = PersonalDigestStatus.SUPERSEDED.value
+            previous.generation_token = None
+            previous.generation_lease_expires_at = None
             previous.updated_at = current.isoformat()
             session.add(previous)
-        if stale_pending:
+        if stale_editions:
             session.commit()
         return PersonalDigestGenerationResult(status="empty_subscriptions", edition=None)
 
@@ -754,21 +857,27 @@ def start_personal_digest_edition(
 
     first_open = _as_shanghai(first_open_at) if first_open_at else None
     report_day = dt.date.fromisoformat(report_date)
+    check_after = dt.datetime.combine(report_day, dt.time(8, 30), SHANGHAI)
+    interests = _load_interests(session, username)
     edition = PersonalDigestEditionRecord(
         owner_username=username,
         report_date=report_date,
         revision=_latest_revision(session, username, report_date) + 1,
         status=PersonalDigestStatus.PENDING.value,
         first_open_at=first_open.isoformat() if first_open else None,
-        check_after=dt.datetime.combine(report_day, dt.time(8, 30), SHANGHAI).isoformat(),
+        check_after=check_after.isoformat(),
         cutoff_at=current.isoformat(),
-        deadline_at=(first_open + dt.timedelta(minutes=15)).isoformat() if first_open else None,
+        deadline_at=(
+            (first_open + dt.timedelta(minutes=15)) if first_open
+            else (check_after + dt.timedelta(minutes=15))
+        ).isoformat(),
         expected_source_ids_json=_json(list(scope.expected_source_ids)),
         due_source_ids_json=_json(list(scope.due_source_ids)),
         source_state_snapshot_json=_json(dict(scope.source_state_snapshot)),
         policy_version=POLICY_VERSION,
         taxonomy_version=_taxonomy_version(session),
         interest_version=_interest_version(session, username),
+        interest_snapshot_json=_serialize_interests(interests),
         generation_reason=reason,
         created_at=current.isoformat(),
         updated_at=current.isoformat(),
@@ -797,12 +906,17 @@ def start_personal_digest_edition(
                 PersonalDigestEditionRecord.owner_username == username,
                 PersonalDigestEditionRecord.report_date == report_date,
                 PersonalDigestEditionRecord.revision < edition.revision,
-                PersonalDigestEditionRecord.status == PersonalDigestStatus.PENDING.value,
+                PersonalDigestEditionRecord.status.in_([
+                    PersonalDigestStatus.PENDING.value,
+                    PersonalDigestStatus.GENERATING.value,
+                ]),
             )
         ).all()
     )
     for previous in older_pending:
         previous.status = PersonalDigestStatus.SUPERSEDED.value
+        previous.generation_token = None
+        previous.generation_lease_expires_at = None
         previous.updated_at = current.isoformat()
         session.add(previous)
     if older_pending:
@@ -811,17 +925,29 @@ def start_personal_digest_edition(
 
 
 def mark_personal_digest_failed(
-    session: Session, edition_id: int, error: str
+    session: Session,
+    edition_id: int,
+    error: str,
+    *,
+    generation_token: str | None = None,
 ) -> PersonalDigestEditionRecord:
     """Move a non-terminal lifecycle row to failed with a bounded error summary."""
 
     edition = session.get(PersonalDigestEditionRecord, edition_id)
     if edition is None:
         raise ValueError("个人早报版本不存在")
-    if edition.status in {PersonalDigestStatus.READY.value, PersonalDigestStatus.DEGRADED.value}:
+    if edition.status in {
+        PersonalDigestStatus.READY.value,
+        PersonalDigestStatus.DEGRADED.value,
+        PersonalDigestStatus.SUPERSEDED.value,
+    }:
+        return edition
+    if generation_token is not None and edition.generation_token != generation_token:
         return edition
     edition.status = PersonalDigestStatus.FAILED.value
     edition.error = (error or "generation failed").strip()[:1000]
+    edition.generation_token = None
+    edition.generation_lease_expires_at = None
     edition.updated_at = dt.datetime.now(SHANGHAI).isoformat()
     session.add(edition)
     session.commit()
@@ -842,6 +968,7 @@ def generate_personal_digest(
     frozen_scope: FrozenDigestScope | None = None,
     force_new_revision: bool = False,
     pending_edition_id: int | None = None,
+    generation_token: str | None = None,
     policy: DigestSelectionPolicy | None = None,
 ) -> PersonalDigestGenerationResult:
     """Generate and persist one immutable personal-digest edition.
@@ -879,10 +1006,20 @@ def generate_personal_digest(
             raise ValueError("个人早报待生成版本不存在")
         if pending_edition.report_date != report_date:
             raise ValueError("个人早报待生成版本日期不匹配")
-        if pending_edition.status not in {
-            PersonalDigestStatus.PENDING.value,
-            PersonalDigestStatus.GENERATING.value,
-        }:
+        if pending_edition.status == PersonalDigestStatus.PENDING.value or (
+            pending_edition.status == PersonalDigestStatus.GENERATING.value
+            and generation_token is None
+        ):
+            pending_edition, generation_token = claim_personal_digest_generation(
+                session, pending_edition_id, now=current
+            )
+        if pending_edition.status != PersonalDigestStatus.GENERATING.value:
+            return PersonalDigestGenerationResult(
+                status=pending_edition.status,  # type: ignore[arg-type]
+                edition=pending_edition,
+                items=_items_for_edition(session, pending_edition.id),
+            )
+        if not generation_token or pending_edition.generation_token != generation_token:
             return PersonalDigestGenerationResult(
                 status=pending_edition.status,  # type: ignore[arg-type]
                 edition=pending_edition,
@@ -909,7 +1046,11 @@ def generate_personal_digest(
                 items=_items_for_edition(session, existing.id),
             )
 
-    interests = _load_interests(session, username)
+    interests = (
+        _deserialize_interests(pending_edition.interest_snapshot_json)
+        if pending_edition is not None
+        else _load_interests(session, username)
+    )
     tag_display_names = _interest_display_names(session, interests)
     source_display_names = _source_display_names(session, scope.expected_source_ids)
     previous_article_ids = _previous_edition_article_ids(session, username, report_date)
@@ -976,36 +1117,72 @@ def generate_personal_digest(
         if pending_edition is not None
         else _latest_revision(session, username, report_date) + 1
     )
-    edition = pending_edition or PersonalDigestEditionRecord(
-        owner_username=username,
-        report_date=report_date,
-        revision=revision,
-        check_after=check_after.isoformat(),
-        cutoff_at=current.isoformat(),
-        created_at=generated_at,
-        updated_at=generated_at,
-    )
-    edition.status = (
+    final_status = (
         PersonalDigestStatus.DEGRADED.value if degraded else PersonalDigestStatus.READY.value
     )
-    if first_open is not None:
-        edition.first_open_at = edition.first_open_at or first_open.isoformat()
-        edition.deadline_at = edition.deadline_at or (
-            first_open + dt.timedelta(minutes=15)
-        ).isoformat()
-    edition.generated_at = generated_at
-    edition.expected_source_ids_json = _json(list(scope.expected_source_ids))
-    edition.due_source_ids_json = _json(list(scope.due_source_ids))
-    edition.source_state_snapshot_json = _json(source_snapshot)
-    edition.policy_version = POLICY_VERSION
-    edition.taxonomy_version = _taxonomy_version(session)
-    edition.interest_version = _interest_version(session, username)
-    edition.generation_reason = reason
-    edition.degraded_reason = "no_qualified_content" if degraded else None
-    edition.error = None
-    edition.updated_at = generated_at
-    session.add(edition)
-    session.flush()
+    final_values = {
+        "status": final_status,
+        "generated_at": generated_at,
+        "expected_source_ids_json": _json(list(scope.expected_source_ids)),
+        "due_source_ids_json": _json(list(scope.due_source_ids)),
+        "source_state_snapshot_json": _json(source_snapshot),
+        "policy_version": POLICY_VERSION,
+        "generation_reason": reason,
+        "degraded_reason": "no_qualified_content" if degraded else None,
+        "error": None,
+        "updated_at": generated_at,
+        "generation_token": None,
+        "generation_lease_expires_at": None,
+    }
+    if pending_edition is not None:
+        assert pending_edition.id is not None and generation_token is not None
+        if first_open is not None:
+            final_values["first_open_at"] = (
+                pending_edition.first_open_at or first_open.isoformat()
+            )
+            final_values["deadline_at"] = pending_edition.deadline_at or (
+                first_open + dt.timedelta(minutes=15)
+            ).isoformat()
+        claimed = session.exec(
+            update(PersonalDigestEditionRecord)
+            .where(
+                PersonalDigestEditionRecord.id == pending_edition.id,
+                PersonalDigestEditionRecord.status == PersonalDigestStatus.GENERATING.value,
+                PersonalDigestEditionRecord.generation_token == generation_token,
+            )
+            .values(**final_values)
+        )
+        if claimed.rowcount != 1:
+            session.rollback()
+            current_edition = session.get(PersonalDigestEditionRecord, pending_edition.id)
+            if current_edition is None:
+                raise ValueError("个人早报版本不存在")
+            return PersonalDigestGenerationResult(
+                status=current_edition.status,  # type: ignore[arg-type]
+                edition=current_edition,
+                items=_items_for_edition(session, current_edition.id),
+            )
+        session.expire_all()
+        edition = session.get(PersonalDigestEditionRecord, pending_edition.id)
+        assert edition is not None
+    else:
+        interests_json = _serialize_interests(interests)
+        edition = PersonalDigestEditionRecord(
+            owner_username=username,
+            report_date=report_date,
+            revision=revision,
+            check_after=check_after.isoformat(),
+            cutoff_at=current.isoformat(),
+            first_open_at=first_open.isoformat() if first_open else None,
+            deadline_at=(first_open + dt.timedelta(minutes=15)).isoformat() if first_open else None,
+            taxonomy_version=_taxonomy_version(session),
+            interest_version=_interest_version(session, username),
+            interest_snapshot_json=interests_json,
+            created_at=generated_at,
+            **final_values,
+        )
+        session.add(edition)
+        session.flush()
     assert edition.id is not None
 
     # A generating edition is deliberately recoverable after a process restart.
@@ -1069,6 +1246,7 @@ def generate_personal_digest(
                     article,
                     analysis,
                     tag_snapshots.get(article.id, []),
+                    source_name=source_display_names.get(article.source_id, article.source_id),
                     display_tags=display_tags.get(article.id, []),
                     selection_reason=selection.selection_reason,
                     degraded=False,
@@ -1101,6 +1279,7 @@ def generate_personal_digest(
                     article,
                     analysis,
                     tags,
+                    source_name=source_display_names.get(article.source_id, article.source_id),
                     display_tags=display_tags,
                     selection_reason="",
                     degraded=True,

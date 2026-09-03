@@ -28,15 +28,56 @@ from sqlmodel import Session, select  # noqa: E402
 from config import settings  # noqa: E402
 from models.db import AppSettingRecord, CmsTagAliasRecord, CmsTagCandidateRecord, CmsTagRecord  # noqa: E402
 from services import taxonomy  # noqa: E402
+from taxonomy_catalog import validate_manifest  # noqa: E402
+
+
+DEFAULT_CATALOG = PROJECT_ROOT / "config" / "taxonomy-v1-approved-catalog.json"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Apply an approved taxonomy-v1 review artifact.")
     parser.add_argument("--database-url", default=settings.storage.database_url)
     parser.add_argument("--review", type=Path, required=True)
+    parser.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
     parser.add_argument("--actor", required=True)
     parser.add_argument("--apply", action="store_true", help="Persist validated decisions")
     return parser.parse_args(argv)
+
+
+def validate_review_catalog_binding(
+    report: dict[str, Any],
+    catalog: dict[str, Any],
+) -> None:
+    """Prove that the DB-bound review still represents the approved catalog."""
+
+    validate_manifest(catalog)
+    if catalog.get("status") != "product_approved":
+        raise ValueError("catalog must have status=product_approved")
+    if report.get("manifest_sha256") != catalog.get("manifest_sha256"):
+        raise ValueError("review manifest_sha256 does not match the approved catalog")
+
+    ignored_catalog_keys = {"candidate_matches", "merge_only_candidates"}
+    bound_review_keys = {"source_candidates", "source_candidate_ids", "source_labels"}
+    expected = {
+        str(entry.get("code") or ""): {
+            key: value
+            for key, value in entry.items()
+            if key not in ignored_catalog_keys
+        }
+        for entry in catalog.get("entries") or []
+        if isinstance(entry, dict)
+    }
+    actual = {
+        str(entry.get("code") or ""): {
+            key: value
+            for key, value in entry.items()
+            if key not in bound_review_keys
+        }
+        for entry in report.get("entries") or []
+        if isinstance(entry, dict)
+    }
+    if not expected or actual != expected:
+        raise ValueError("review entries do not match the approved catalog content")
 
 
 def approved_entries(report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -176,14 +217,11 @@ def apply_review(
     entries: list[dict[str, Any]],
     *,
     actor_id: str,
-    allow_active_v1_sync: bool = False,
     resolve_candidates: bool = True,
 ) -> dict[str, int]:
     current_version = taxonomy.current_taxonomy_version(session)
-    if current_version > 0 and not allow_active_v1_sync:
+    if current_version > 0:
         raise ValueError("taxonomy v1 is already published; use normal governance operations")
-    if allow_active_v1_sync and current_version != 1:
-        raise ValueError("active-v1 synchronization requires taxonomy version 1")
     counts = {
         "created": 0,
         "updated": 0,
@@ -484,6 +522,8 @@ def save_review_receipt(
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     report = json.loads(args.review.read_text(encoding="utf-8"))
+    catalog = json.loads(args.catalog.read_text(encoding="utf-8"))
+    validate_review_catalog_binding(report, catalog)
     entries = approved_entries(report)
     validate_complete_review(report)
     if not args.apply:

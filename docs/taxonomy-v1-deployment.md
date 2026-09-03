@@ -20,7 +20,10 @@
    .venv/bin/alembic upgrade head
    ```
 
-   本次发布的单一 head 为 `d2c4f6a8b0e1`。它是无数据操作的双父节点合并迁移：已在 v3.43 主干的生产库会执行 Taxonomy 功能支线；曾运行早期 Taxonomy 验收的测试库会补执行主干的账号会话与计量迁移；全新库会执行两条链后收敛到同一 head。
+   本次发布的单一 head 为 `f3a8c1d9e2b4`。其中 `d2c4f6a8b0e1` 先把
+   Taxonomy 功能支线与 v3.43 主干收敛，随后本迁移补齐分析/日报租约、FK 索引和
+   `full_analysis` 单活约束。SQLite 的整个 revision 使用显式事务；中途失败不会
+   留下 schema 已变化但版本号未推进的半迁移状态。
 
 2. 用仓库批准目录生成目标库 review，并做 validation-only：
 
@@ -51,21 +54,12 @@
 
 5. 发布成功、最近 7 天重标任务创建后，再开启文章分析。需要给全部历史文章补充灵活标签时，另行启动 `full_analysis`；仅 `retag_only` 不会重新调用模型抽取灵活标签。
 
-## 已发布 v1 的开发/测试库
+## 已经发布 Taxonomy 的数据库
 
-早期测试库可能已经发布过旧的 v1，不能再走“version 0 → 手工发布”路径。仅在开发/测试环境使用：
-
-```bash
-.venv/bin/python scripts/install_taxonomy_v1.py \
-  --database-url sqlite:////absolute/path/to/cms_data.db \
-  --review-out /absolute/path/to/taxonomy-v1-active-sync.json \
-  --backup /absolute/path/to/cms_data.before-label-taxonomy-v1.db \
-  --actor local-maintenance \
-  --sync-active-v1 \
-  --apply
-```
-
-该模式只允许当前版本恰好为 v1：原位新增/更新批准的 96 项、废弃已知错误 `topic.ai` 和 `topic.ai.vendor`、移除 Industry Robotics 的歧义 Alias“机器人”，并保留现有 Candidate 状态和文章关系。它不是生产升级捷径，也不会创建 v2。
+安装器只接受 active taxonomy version 为 0 的新环境。任何已经发布 v1 的数据库都
+不得用冷启动目录原位覆盖：开发验收库应恢复备份或重建；生产目录若需要语义变更，
+必须形成 v2 变更集并重新走治理和发布流程。这样可以避免复活已合并/废弃标签、覆盖
+人工配置，或在 Alias 冲突时留下半套状态。
 
 ## 上线验收点
 
@@ -75,5 +69,13 @@
 - `industry.cybersecurity` 中文为“网络安全产业”；`industry.robotics` 没有无条件 Alias“机器人”。
 - `review_basis=label_set_only`、`coverage_decision=not_applicable`；不得伪造文章或来源覆盖数字。
 - 发布前 active taxonomy version 为 0，发布后为 1；文章分析只能在发布成功后开启。
+- 私有自定 RSS 在首版硬禁用第三方 AI 分析；将来必须先具备逐订阅者授权与费用归属，
+  才能另行开放。
 
 如批准目录本身发生任何语义变更，必须更新 manifest 并重新走产品审核；把同一 manifest 导入另一套全新数据库不属于重新审核。
+
+## 回滚
+
+SQLite 发布回滚使用第 3 步生成的完整数据库备份，不执行 `alembic downgrade`。
+本版本包含分支合并迁移和多张有关联的数据表，按单个 revision 向下回退既不能表达
+产品状态回滚，也可能选择错误分支；恢复备份后再按当时版本重新启动服务。

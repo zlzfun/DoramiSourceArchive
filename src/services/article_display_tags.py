@@ -11,6 +11,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from models.db import (
@@ -258,7 +259,12 @@ def article_ids_for_flexible_label(session: Session, label: str) -> list[str]:
 
     candidate_ids: set[str] = set()
     analysis_rows = session.exec(
-        select(ArticleAnalysisRecord).where(ArticleAnalysisRecord.status == "succeeded")
+        select(ArticleAnalysisRecord).where(
+            or_(
+                ArticleAnalysisRecord.status == "succeeded",
+                ArticleAnalysisRecord.analyzed_at.is_not(None),
+            )
+        )
     ).all()
     analysis_map = {row.article_id: row for row in analysis_rows}
     for row in analysis_rows:

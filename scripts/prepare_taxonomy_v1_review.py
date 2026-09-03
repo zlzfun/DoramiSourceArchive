@@ -28,6 +28,7 @@ from sqlmodel import Session, select  # noqa: E402
 from config import settings  # noqa: E402
 from models.db import CmsTagCandidateRecord  # noqa: E402
 from services.taxonomy import normalize_label  # noqa: E402
+from taxonomy_catalog import validate_manifest  # noqa: E402
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -158,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.json_out.exists() and not args.overwrite:
         raise FileExistsError(f"refusing to overwrite {args.json_out}")
     catalog = json.loads(args.catalog.read_text(encoding="utf-8"))
+    validate_manifest(catalog)
     engine = create_engine(args.database_url)
     try:
         with Session(engine) as session:

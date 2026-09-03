@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import hashlib
 import json
 import sqlite3
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
+
+from taxonomy_catalog import compute_manifest_sha256
 
 
 def tag(
@@ -676,9 +677,7 @@ def build_approved_catalog(payload: dict[str, Any]) -> dict[str, Any]:
         "product_decisions": payload["product_decisions"],
         "entries": entries,
     }
-    manifest_sha256 = hashlib.sha256(
-        json.dumps(approved_core, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    manifest_sha256 = compute_manifest_sha256(approved_core)
     return {
         **approved_core,
         "manifest_sha256": manifest_sha256,

@@ -46,6 +46,8 @@ def should_audit(path: str, method: str) -> bool:
     """仅审计管理前缀下的非只读请求，且前缀匹配必须落在路径段边界。"""
     if method.upper() in _READ_ONLY_METHODS:
         return False
+    if method.upper() == "POST" and path == "/api/admin/analysis/backfills/estimate":
+        return False
     return any(
         path == prefix or path.startswith(f"{prefix}/")
         for prefix in AUDIT_PATH_PREFIXES
@@ -154,6 +156,93 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
     ("POST", re.compile(r"^/api/x-api/config/test$"), lambda _m, _b: ("测试 X API 连通", None)),
     ("POST", re.compile(r"^/api/x-api/config$"), lambda _m, _b: ("更新 X API 配置", None)),
     ("POST", re.compile(r"^/api/admin/ai-beta/global$"), _global_ai_beta),
+    (
+        "PUT",
+        re.compile(r"^/api/admin/analysis/config$"),
+        lambda _m, body: (
+            "更新分析功能开关：" + "、".join(
+                f"{key}={'开' if value else '关'}"
+                for key, value in sorted((body or {}).items())
+                if value is not None
+            ),
+            None,
+        ),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/analysis/backfills$"),
+        lambda _m, body: (
+            f"创建 full_analysis 回填（范围={(body or {}).get('days', '未知')} 天，"
+            f"策略={(body or {}).get('selection', '未知')}）",
+            None,
+        ),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/analysis/backfills/(?P<target>[^/]+)/(?P<action>[^/]+)$"),
+        lambda match, _body: (
+            f"{match.group('action')} full_analysis 回填 {match.group('target')}",
+            match.group("target"),
+        ),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/cms-tags$"),
+        lambda _m, body: (
+            f"创建规范标签 {(body or {}).get('code') or (body or {}).get('name_zh') or ''}".rstrip(),
+            str((body or {}).get("code") or "") or None,
+        ),
+    ),
+    (
+        "PATCH",
+        re.compile(r"^/api/admin/cms-tags/(?P<target>[^/]+)$"),
+        lambda match, _body: _id_target(match, None, noun="规范标签", action="更新"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/cms-tags/(?P<target>[^/]+)/(?:merge|deprecate|retag)$"),
+        lambda match, _body: _id_target(match, None, noun="规范标签", action="治理"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/cms-tags/(?P<target>[^/]+)/aliases$"),
+        lambda match, _body: _id_target(match, None, noun="规范标签同义词", action="新增"),
+    ),
+    (
+        "DELETE",
+        re.compile(r"^/api/admin/cms-tags/(?P<target>[^/]+)/aliases/[^/]+$"),
+        lambda match, _body: _id_target(match, None, noun="规范标签同义词", action="删除"),
+    ),
+    (
+        "PATCH",
+        re.compile(r"^/api/admin/cms-tag-candidates/(?P<target>[^/]+)$"),
+        lambda match, _body: _id_target(match, None, noun="候选标签", action="更新"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/cms-tag-candidates/(?P<target>[^/]+)/(?:resolve|activate|reject)$"),
+        lambda match, _body: _id_target(match, None, noun="候选标签", action="治理"),
+    ),
+    (
+        "DELETE",
+        re.compile(r"^/api/admin/cms-tag-candidates/(?P<target>[^/]+)$"),
+        lambda match, _body: _id_target(match, None, noun="候选标签", action="删除"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/taxonomy/v1/publish$"),
+        lambda _m, _body: ("发布 Taxonomy v1", "v1"),
+    ),
+    (
+        "PATCH",
+        re.compile(r"^/api/admin/taxonomy/interest-catalog-policy$"),
+        lambda _m, _body: ("更新用户兴趣目录策略", None),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/taxonomy/aliases/backfill$"),
+        lambda _m, _body: ("补齐规范标签当前名称同义词", None),
+    ),
     ("POST", re.compile(r"^/api/admin/announcements$"), lambda _m, _b: ("发布公告", None)),
     (
         "PUT",
