@@ -15,6 +15,7 @@ import { PaneBodySkeleton } from '../ReaderTab';
 import { formatRelativeTime, formatDateTime } from '../../utils/datetime';
 import { contentTypeLabel } from '../../utils/contentType';
 import { displayAnalysisTags, qualityScoreText } from '../../utils/analysis';
+import { hostOf } from '../../utils/readerText';
 
 // 正文页(移动波 Wave2,样页画面②):push 全屏页——无底部 Tab,返回即出栈。
 // 衬线标题/kicker/meta/速读卡/进度线/上一下一篇 全部复用阅读窗语法类
@@ -191,15 +192,17 @@ export default function MobileArticlePage({
           ) : activeBody ? (
             <ReaderMarkdown>{displayBody}</ReaderMarkdown>
           ) : (
-            '该文章暂无正文内容，点击「查看来源」阅读完整内容。'
+            '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
           )}
-          {/* 用户自定源(v3.40):正文尾部一律附原文链接(与桌面阅读窗同口径) */}
-          {!activeBodyLoading && String(activeArticle.source_id || '').startsWith('user_rss_')
-            && activeArticle.source_url && (
+          {/* 正文尾部原文行(v3.45 推全站,与桌面阅读窗同口径):无 source_url 不画 */}
+          {!activeBodyLoading && activeArticle.source_url && (
             <p className="reader-pane-origin">
               <a href={activeArticle.source_url} target="_blank" rel="noreferrer">
-                阅读原文 ↗
+                查看原文 ↗
               </a>
+              {hostOf(activeArticle.source_url) && (
+                <span className="reader-pane-origin-host"> · {hostOf(activeArticle.source_url)}</span>
+              )}
             </p>
           )}
         </div>

@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
-import RailUserFlyout from './RailUserFlyout';
+import RailLogoutAvatar from './RailLogoutAvatar';
 import ReaderMarkdown from './ReaderMarkdown';
 import ReaderAiPanel from './ReaderAiPanel';
 import ShareMenu from './ShareMenu';
@@ -43,7 +43,7 @@ import AnnouncementBanner from './AnnouncementBanner';
 import PersonalBriefTab from './PersonalBriefTab';
 import InterestManager from './InterestManager';
 import AnalysisTagChip from './AnalysisTagChip';
-import { excerptOf } from '../utils/readerText';
+import { excerptOf, hostOf } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
 import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
@@ -329,7 +329,10 @@ export default function ReaderTab({
     <div className="reader-shell">
       {/* ── 管理员公告横幅(v3.18):无公告时渲染 null,:has 不命中,四带布局逐像素不变 ── */}
       <AnnouncementBanner />
-      {/* ── 视图轨 · 一级视图导航(样页:品牌标 + 自绘右侧 tooltip + 轨底头像) ── */}
+      {/* ── 视图轨 · 一级视图导航(样页:品牌标 + 图标下常显微标签 + 轨底头像)。
+          可发现性波 v3.45:icon-only + 悬停 tooltip 对新用户读不出页面组织(上量后实证),
+          改图标下 11px 微标签常显(Slack 式,永久而非「新账号前几次会话展开」——收起时机是
+          启发式、收起是一次布局跳变);tooltip 只在全名长于标签时补充。 ── */}
       <nav className="reader-vrail" aria-label="阅读视图">
         {!brandFailed ? (
           <BrandLogoImage
@@ -356,6 +359,7 @@ export default function ReaderTab({
               className={`reader-vrail-btn ${briefOpen ? 'is-on' : ''}`}
             >
               <Newspaper className="h-[18px] w-[18px]" />
+              <span className="reader-vrail-label">早报</span>
               <span className="reader-vrail-tip">我的早报</span>
             </button>
             <span className="reader-vrail-divider" aria-hidden="true" />
@@ -365,10 +369,10 @@ export default function ReaderTab({
             社交独立成容器(v3.12):动态装的是 changelog/release notes/GitHub 趋势——短条目扫读形态,
             推文是卡片流直读形态,渲染差异大到要在容器内再分叉,就说明本不该是同一个容器。 */}
         {[
-          ['article', '文章', FileText],
-          ['bulletin', '动态', Zap],
-          ['social', '社交媒体', AtSign],
-        ].map(([view, label, Icon]) => (
+          ['article', '文章', FileText, '文章'],
+          ['bulletin', '动态', Zap, '动态'],
+          ['social', '社交媒体', AtSign, '社交'],
+        ].map(([view, label, Icon, short]) => (
           <button
             key={view}
             type="button"
@@ -378,7 +382,8 @@ export default function ReaderTab({
             className={`reader-vrail-btn ${!briefOpen && railActive === view ? 'is-on' : ''}`}
           >
             <Icon className="h-[18px] w-[18px]" />
-            <span className="reader-vrail-tip">{label}</span>
+            <span className="reader-vrail-label">{short}</span>
+            {short !== label && <span className="reader-vrail-tip">{label}</span>}
           </button>
         ))}
         {/* 发现:整页源目录(取代源栏内联「发现更多来源」)。与上方三个内容容器
@@ -392,7 +397,7 @@ export default function ReaderTab({
           className={`reader-vrail-btn ${!briefOpen && discover ? 'is-on' : ''}`}
         >
           <Compass className="h-[18px] w-[18px]" />
-          <span className="reader-vrail-tip">发现</span>
+          <span className="reader-vrail-label">发现</span>
         </button>
         {personalDigestEnabled && (
           <button
@@ -403,67 +408,70 @@ export default function ReaderTab({
             className="reader-vrail-btn"
           >
             <Tags className="h-[18px] w-[18px]" />
+            <span className="reader-vrail-label">兴趣</span>
             <span className="reader-vrail-tip">我的兴趣</span>
           </button>
         )}
 
-        {/* 轨底(standalone):用户滑出菜单(2026-07-24 拍板)——常态只见头像,
-            hover 滑出 返回管理台(仅 admin)/主题/设置,头像同帧变关机退出钮点击即退。 */}
+        {/* 轨底(standalone,可发现性波 v3.45):工具钮常态可见——hover 滑出菜单
+            (2026-07-24 拍板)退役,上量后实证「常态只见头像」让新用户找不到反馈/设置,
+            且 hover 触发对触控板外接屏/触屏本/键盘用户都是坏的;头像只剩退出(两击防呆)。 */}
         {standalone && (
           <>
             <div className="reader-vrail-spring" />
-            <RailUserFlyout
+            {/* 返回管理台(v3.19):与应用导轨轨底「进入阅读器」对称的隐藏切换钮,仅 admin 有 */}
+            {onExitReader && (
+              <button
+                type="button"
+                onClick={onExitReader}
+                className="reader-vrail-btn"
+                aria-label="返回管理台"
+              >
+                <LayoutDashboard className="h-[18px] w-[18px]" />
+                <span className="reader-vrail-label">管理台</span>
+                <span className="reader-vrail-tip">返回管理台</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onToggleTheme?.()}
+              className="reader-vrail-btn"
+              aria-label={themeDark ? '切换到亮色' : '切换到暗色'}
+            >
+              {themeDark ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
+              <span className="reader-vrail-label">主题</span>
+              <span className="reader-vrail-tip">{themeDark ? '切换亮色' : '切换暗色'}</span>
+            </button>
+            {/* 反馈与建议(仅读者账号;admin 的设置柜没有反馈分区):v3.20 自设置柜二级分区
+                提为轨底一级钮,深链直达该分区;新回复的通知点挂钮本体(钮已常态可见)。 */}
+            {!onExitReader && (
+              <button
+                type="button"
+                onClick={() => onOpenSettings?.('feedback')}
+                className="reader-vrail-btn"
+                aria-label={feedbackUnread > 0 ? '反馈与建议(有新回复)' : '反馈与建议'}
+              >
+                <MessageSquare className="h-[18px] w-[18px]" />
+                {feedbackUnread > 0 && <span className="vrail-btn-dot" aria-hidden="true" />}
+                <span className="reader-vrail-label">反馈</span>
+                <span className="reader-vrail-tip">{feedbackUnread > 0 ? '反馈与建议 · 有新回复' : '反馈与建议'}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onOpenSettings?.()}
+              className="reader-vrail-btn"
+              aria-label="设置"
+            >
+              <Settings className="h-[18px] w-[18px]" />
+              <span className="reader-vrail-label">设置</span>
+            </button>
+            <RailLogoutAvatar
               avatar={account?.avatar}
               username={account?.username}
               onLogout={onLogout}
               onLogoutHint={() => showToast('再次点击以退出登录', 'info')}
-              notify={feedbackUnread > 0}
-            >
-              {/* 返回管理台(v3.19):与应用导轨轨底「进入阅读器」对称的隐藏切换钮,仅 admin 有 */}
-              {onExitReader && (
-                <button
-                  type="button"
-                  onClick={onExitReader}
-                  className="reader-vrail-btn"
-                  aria-label="返回管理台"
-                >
-                  <LayoutDashboard className="h-[18px] w-[18px]" />
-                  <span className="reader-vrail-tip">返回管理台</span>
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => onToggleTheme?.()}
-                className="reader-vrail-btn"
-                aria-label={themeDark ? '切换到亮色' : '切换到暗色'}
-              >
-                {themeDark ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
-                <span className="reader-vrail-tip">{themeDark ? '切换亮色' : '切换暗色'}</span>
-              </button>
-              {/* 反馈与建议(仅读者账号;admin 的设置柜没有反馈分区):原先只藏在
-                  设置柜二级分区里入口太深,提为轨底一级钮,深链直达该分区。 */}
-              {!onExitReader && (
-                <button
-                  type="button"
-                  onClick={() => onOpenSettings?.('feedback')}
-                  className="reader-vrail-btn"
-                  aria-label={feedbackUnread > 0 ? '反馈与建议(有新回复)' : '反馈与建议'}
-                >
-                  <MessageSquare className="h-[18px] w-[18px]" />
-                  {feedbackUnread > 0 && <span className="vrail-btn-dot" aria-hidden="true" />}
-                  <span className="reader-vrail-tip">{feedbackUnread > 0 ? '反馈与建议 · 有新回复' : '反馈与建议'}</span>
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => onOpenSettings?.()}
-                className="reader-vrail-btn"
-                aria-label="设置"
-              >
-                <Settings className="h-[18px] w-[18px]" />
-                <span className="reader-vrail-tip">设置</span>
-              </button>
-            </RailUserFlyout>
+            />
           </>
         )}
       </nav>
@@ -840,7 +848,10 @@ export default function ReaderTab({
               <div className="reader-progress" aria-hidden="true" />
             ) : null}
 
-            {/* 顶部工具条:crumb + 动作图标组(常驻,不随正文滚走) */}
+            {/* 顶部工具条:crumb + 读后元动作(收藏/标读/分享;常驻,不随正文滚走)。
+                可发现性波 v3.45:「查看原文」与「译为中文」是关于这篇正文本身的动作,
+                下沉到标题下方的动作行文字化——右上角一排灰图标曾被新用户当成「没有
+                跳原文/翻译功能」;收藏/标读/分享是读完后的元动作,留在常驻条读完顺手点。 */}
             <div className="reader-pane-bar">
               <div className="reader-crumb">
                 {crumbSource ? (
@@ -848,18 +859,6 @@ export default function ReaderTab({
                 ) : null}
                 <span className="reader-crumb-name">{crumbName}</span>
               </div>
-              {activeArticle.source_url && (
-                <a
-                  href={activeArticle.source_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  title="查看来源"
-                  aria-label="查看来源"
-                  className="reader-pane-iconbtn"
-                >
-                  <ExternalLink className="h-4 w-4" />
-                </a>
-              )}
               <button
                 type="button"
                 onClick={(e) => handleToggleFavorite(activeArticle, e)}
@@ -907,21 +906,6 @@ export default function ReaderTab({
                   />
                 )}
               </div>
-              {aiEnabled && (
-                <button
-                  type="button"
-                  onClick={handleTranslate}
-                  disabled={translating || activeBodyLoading || !activeBody}
-                  title={showTranslation ? '当前显示中文译文，点击切回原文' : '将正文译为中文'}
-                  aria-label={showTranslation ? '显示原文' : '译为中文'}
-                  aria-pressed={showTranslation}
-                  className={`reader-pane-iconbtn ${showTranslation ? 'is-ai' : ''}`}
-                >
-                  {translating
-                    ? <Loader2 className="h-4 w-4 animate-spin" />
-                    : <span className="reader-tr-glyph" aria-hidden="true">译</span>}
-                </button>
-              )}
             </div>
 
           {/* key 按文章 id 重挂载,触发 reader-enter 淡入+轻上移(体验二波 A1) */}
@@ -947,6 +931,50 @@ export default function ReaderTab({
                   <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
                 )}
               </div>
+              {/* 标题下动作行(v3.45):查看原文 + 「原文 | 译为中文」二段——眼睛自标题落到正文的
+                  路径上,文字化;译文二段激活态沿 AI 渐变身份(v3.33),AI 未开启只余原文。 */}
+              {(activeArticle.source_url || aiEnabled) && (
+                <div className="reader-pane-actions">
+                  {activeArticle.source_url && (
+                    <a
+                      href={activeArticle.source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="reader-pane-act"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                      查看原文
+                    </a>
+                  )}
+                  {aiEnabled && (
+                    <div className="reader-tr-seg" role="group" aria-label="正文语言">
+                      <button
+                        type="button"
+                        className={`reader-tr-seg-btn ${showTranslation ? '' : 'is-on'}`}
+                        aria-pressed={!showTranslation}
+                        onClick={() => { if (showTranslation) handleTranslate(); }}
+                      >
+                        原文
+                      </button>
+                      <button
+                        type="button"
+                        className={`reader-tr-seg-btn ${showTranslation ? 'is-on is-ai' : ''}`}
+                        aria-pressed={showTranslation}
+                        disabled={translating || activeBodyLoading || !activeBody}
+                        title={showTranslation ? '当前显示中文译文' : '将正文译为中文'}
+                        onClick={() => { if (!showTranslation) handleTranslate(); }}
+                      >
+                        {translating
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                          : <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}
+                        <span className={showTranslation ? 'ai-grad-text' : ''}>
+                          {translating ? '翻译中…' : showTranslation ? '中文' : '译为中文'}
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
               {(activeArticle.quality_score != null || displayAnalysisTags(activeArticle).length > 0) && (
                 <div className="reader-analysis-summary">
                   <div className="reader-analysis-top">
@@ -1002,16 +1030,18 @@ export default function ReaderTab({
               ) : activeBody ? (
                 <ReaderMarkdown>{displayBody}</ReaderMarkdown>
               ) : (
-                '该文章暂无正文内容，点击「查看来源」阅读完整内容。'
+                '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
               )}
-              {/* 用户自定源(v3.40):正文尾部一律附原文链接——feed 给什么存什么的
-                  最简正文口径下,摘要型源读完即达原文;全文源多一个出口也无碍 */}
-              {!activeBodyLoading && String(activeArticle.source_id || '').startsWith('user_rss_')
-                && activeArticle.source_url && (
+              {/* 正文尾部原文行(v3.40 自定源首创,v3.45 推全站):读完想看原文正是最自然的
+                  时刻;摘要型源读完即达原文,全文源多一个出口也无碍。无 source_url 不画。 */}
+              {!activeBodyLoading && activeArticle.source_url && (
                 <p className="reader-pane-origin">
                   <a href={activeArticle.source_url} target="_blank" rel="noreferrer">
-                    阅读原文 ↗
+                    查看原文 ↗
                   </a>
+                  {hostOf(activeArticle.source_url) && (
+                    <span className="reader-pane-origin-host"> · {hostOf(activeArticle.source_url)}</span>
+                  )}
                 </p>
               )}
             </div>

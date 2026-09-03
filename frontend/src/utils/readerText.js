@@ -21,6 +21,15 @@ export function stripMarkdown(text) {
     .trim();
 }
 
+// 链接的展示用域名(v3.45 正文尾部「查看原文 ↗ · 域名」):剥 www.,解析失败返回 ''。
+export function hostOf(url) {
+  try {
+    return new URL(String(url || '')).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
 // 卡片摘要：剥离 markdown 后截断到指定长度（默认 140 字）。
 export function excerptOf(content, maxLen = 140) {
   return stripMarkdown(content).slice(0, maxLen);

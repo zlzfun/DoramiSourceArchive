@@ -17,7 +17,7 @@ import Toast from './components/Toast';
 import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
 import BrandLogoImage from './components/BrandLogoImage';
-import RailUserFlyout from './components/RailUserFlyout';
+import RailLogoutAvatar from './components/RailLogoutAvatar';
 import TabErrorBoundary from './components/TabErrorBoundary';
 import AiGradientDefs from './components/AiGradientDefs';
 import { useTheme } from './theme';
@@ -567,14 +567,15 @@ export default function App() {
   // readerView:布局分叉(导轨隐藏/阅读器整页)。读者角色恒为阅读器;admin 由 surfaceMode 决定。
   const readerView = isReaderRole || (isAdminRole && surfaceMode === 'reader');
   const tabs = useMemo(() => [
-    { id: 'reader', icon: BookOpen, label: '阅读器', onlyReader: true },
-    { id: 'data', icon: Database, label: '知识台账', hideForReader: true },
-    { id: 'fetch', icon: CloudDownload, label: '节点管理', surface: 'collector' },
-    { id: 'runs', icon: History, label: '任务与运行', surface: 'collector' },
+    // short = 导轨图标下的常显微标签(可发现性波 v3.45,两字短名);label 全名留 tooltip 与页头
+    { id: 'reader', icon: BookOpen, label: '阅读器', short: '阅读', onlyReader: true },
+    { id: 'data', icon: Database, label: '知识台账', short: '台账', hideForReader: true },
+    { id: 'fetch', icon: CloudDownload, label: '节点管理', short: '节点', surface: 'collector' },
+    { id: 'runs', icon: History, label: '任务与运行', short: '运行', surface: 'collector' },
     // 「接入集成」页签已并入设置柜(交付通道三卡→设置·接入集成组);页签瘦身改名「AI 日报」
     // (只剩日报运营面),id 改为 'brief'(历史 hash #/mcp 由 hashToRoute 归一兼容)。
-    { id: 'brief', icon: Newspaper, label: 'AI 日报', surface: 'collector' },
-    { id: 'admin', icon: ShieldCheck, label: '运维管理', adminOnly: true },
+    { id: 'brief', icon: Newspaper, label: 'AI 日报', short: '日报', surface: 'collector' },
+    { id: 'admin', icon: ShieldCheck, label: '运维管理', short: '运维', adminOnly: true },
   ].filter(tab => {
     if (tab.onlyReader && !isReaderRole) return false;
     if (tab.hideForReader && isReaderRole) return false;
@@ -708,8 +709,8 @@ export default function App() {
       <AiGradientDefs />
       {arrivalOverlay}
       {/* ── lg+:左侧固定导轨(管理面),形制向阅读器视图轨靠拢:
-             56px 带宽 / 32px 品牌位 / 38px icon-only 钮 + 右侧墨底 tooltip /
-             轨底单一头像菜单(设置·主题·退出)。复用 reader-vrail-* 类族(已是全站轨语言)。 ── */}
+             64px 带宽 / 32px 品牌位 / 图标+微标签钮(可发现性波 v3.45,全名留 tooltip)/
+             轨底 = 阅读器·主题·设置 常态可见 + 头像退出钮。复用 reader-vrail-* 类族(已是全站轨语言)。 ── */}
       {!readerView && (
       <aside className="app-rail hidden lg:flex" aria-label="主导航">
         <div className="rail-brand" title={`${brandTitle} · ${brandSubtitle}`}>
@@ -726,51 +727,51 @@ export default function App() {
               aria-label={tab.label}
             >
               <tab.icon className="h-[18px] w-[18px]" />
-              <span className="reader-vrail-tip">{tab.label}</span>
+              <span className="reader-vrail-label">{tab.short || tab.label}</span>
+              {tab.short && tab.short !== tab.label && <span className="reader-vrail-tip">{tab.label}</span>}
             </button>
           ))}
         </nav>
-        {/* 轨底:用户滑出菜单(2026-07-24 拍板)——常态只见头像,hover 滑出
-            进入阅读器/主题/设置,头像同帧变关机退出钮点击即退;
-            原「头像点击进设置」与设置钮功能重复,就此收敛。 */}
+        {/* 轨底(可发现性波 v3.45):工具钮常态可见——hover 滑出菜单(2026-07-24 拍板)退役,
+            上量后实证「常态只见头像」让新用户找不到设置;头像只剩退出一件事(两击防呆)。 */}
         <div className="reader-vrail-spring" />
-        <RailUserFlyout
+        {/* 隐藏切换钮(v3.19):管理员也是读者——进入阅读器 standalone 整页形态,
+            阅读器轨底有对称的「返回管理台」钮。 */}
+        <button
+          type="button"
+          onClick={enterReader}
+          className="reader-vrail-btn"
+          aria-label="进入阅读器"
+        >
+          <BookOpen className="h-[18px] w-[18px]" />
+          <span className="reader-vrail-label">阅读器</span>
+        </button>
+        <button
+          type="button"
+          onClick={toggleTheme}
+          className="reader-vrail-btn"
+          aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
+        >
+          {effective === 'dark' ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
+          <span className="reader-vrail-label">主题</span>
+          <span className="reader-vrail-tip">{effective === 'dark' ? '切换亮色' : '切换暗色'}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => openSettings()}
+          className="reader-vrail-btn"
+          aria-label="设置"
+        >
+          <Settings className="h-[18px] w-[18px]" />
+          <span className="reader-vrail-label">设置</span>
+        </button>
+        <RailLogoutAvatar
           avatar={authState.user?.avatar}
           username={authState.user?.username}
           roleLabel={roleLabel}
           onLogout={handleLogout}
           onLogoutHint={() => showToast('再次点击以退出登录', 'info')}
-        >
-          {/* 隐藏切换钮(v3.19):管理员也是读者——进入阅读器 standalone 整页形态,
-              阅读器轨底有对称的「返回管理台」钮。 */}
-          <button
-            type="button"
-            onClick={enterReader}
-            className="reader-vrail-btn"
-            aria-label="进入阅读器"
-          >
-            <BookOpen className="h-[18px] w-[18px]" />
-            <span className="reader-vrail-tip">进入阅读器</span>
-          </button>
-          <button
-            type="button"
-            onClick={toggleTheme}
-            className="reader-vrail-btn"
-            aria-label={effective === 'dark' ? '切换到亮色' : '切换到暗色'}
-          >
-            {effective === 'dark' ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
-            <span className="reader-vrail-tip">{effective === 'dark' ? '切换亮色' : '切换暗色'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => openSettings()}
-            className="reader-vrail-btn"
-            aria-label="设置"
-          >
-            <Settings className="h-[18px] w-[18px]" />
-            <span className="reader-vrail-tip">设置</span>
-          </button>
-        </RailUserFlyout>
+        />
       </aside>
       )}
 
