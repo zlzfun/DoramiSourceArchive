@@ -62,6 +62,13 @@
 
 ## 展望(用户表态、未立项)
 
+- ◇ **个人早报 API 测试的时段依赖**(2026-09-05 凌晨跑 v3.45.1 全套时暴露,main 同时段复现):
+  `tests/test_analysis_personal_api.py` 三例(subscription_strict / accepts_persisted_public_brief /
+  first_open_waits_then_degrades)用真实墙钟调 `/api/reader/briefs/today/ensure`,而首开边缘的
+  就绪/降级门槛是当日 08:30(+15 分钟期限),**每天 00:00–08:44 必挂**。修法=路由
+  (`personal_briefs.py` 三处 `dt.datetime.now(SHANGHAI)`)与服务层抽 `_now()` 注入点,
+  测试 monkeypatch 到当日 10:00;`scripts/smoke_analysis_release.py` 的同类问题已在
+  v3.45.1 就地修(按 edition 自身 `deadline_at` 推进,不依赖墙钟)。
 - ◇ **文章分析拆两次调用「先打分再理解」**(v3.45.1 issue #13 评估后不做):打分也要读全文,
   两次调用 prompt 翻倍(dev 实测 prompt 均 2869 tokens 占大头),低分短路能省的 completion
   与覆盖面(<5 分仅 4%)远抵不过;真收益只有「只改评分规则时只重打分」,但 `scoring_version`
