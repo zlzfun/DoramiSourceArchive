@@ -45,6 +45,7 @@ from services.article_analysis import (  # noqa: E402
     queue_article_analysis,
     recover_expired_leases,
     resolve_summary_with_legacy_fallback,
+    run_analysis_cycle,
     sanitize_error,
     scan_analysis_backfill,
     validate_analysis_payload,
@@ -443,6 +444,33 @@ def test_force_queue_preserves_current_asset_and_never_interrupts_running_lease(
         assert record.lease_owner == "another-worker"
 
 
+def test_version_refresh_preserves_old_asset_across_compensation_scans(storage):
+    article = _article("version-refresh")
+    with Session(storage.engine) as session:
+        session.add(article)
+        session.commit()
+        assert queue_article_analysis(session, article.id, now=NOW) == "created"
+        session.commit()
+        record = session.get(ArticleAnalysisRecord, article.id)
+        record.status = "succeeded"
+        record.quality_score = 7.8
+        record.summary = "old result remains readable"
+        record.analyzed_at = NOW_ISO
+        record.prompt_version = "article-analysis-v0"
+        session.add(record)
+        session.commit()
+
+        assert queue_article_analysis(session, article.id, now=NOW) == "invalidated"
+        session.commit()
+        session.refresh(record)
+        assert record.status == "pending"
+        assert record.quality_score == 7.8
+        assert record.summary == "old result remains readable"
+        assert queue_article_analysis(session, article.id, now=NOW) == "unchanged"
+        session.refresh(record)
+        assert record.quality_score == 7.8
+
+
 def test_backfill_is_seven_days_only_and_claims_newest_first(storage):
     with Session(storage.engine) as session:
         session.add_all(
@@ -788,6 +816,81 @@ def test_prompt_and_logs_do_not_expose_private_url_or_body(storage, caplog):
     with Session(storage.engine) as session:
         record = session.get(ArticleAnalysisRecord, "privacy")
         assert record.last_error == "source_ai_analysis_disabled"
+
+
+def test_analysis_cycle_drains_eight_map_sized_batches_with_bounded_concurrency(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_article(f"drain-{index:02d}") for index in range(40)])
+        session.commit()
+
+    active = 0
+    peak = 0
+
+    async def measured_analyzer(*_args):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return _payload()
+
+    results = asyncio.run(
+        run_analysis_cycle(
+            storage.engine,
+            worker_id="drain-worker",
+            llm_config=LLM_CONFIG,
+            analyzer=measured_analyzer,
+            enabled=True,
+            candidate_enabled=False,
+            batch_size=8,
+            max_batches=8,
+            now_fn=lambda: NOW,
+        )
+    )
+
+    assert len(results) == 32
+    assert all(item.status == "succeeded" for item in results)
+    assert peak == 4
+    with Session(storage.engine) as session:
+        records = session.exec(select(ArticleAnalysisRecord)).all()
+        assert sum(item.status == "succeeded" for item in records) == 32
+        assert sum(item.status == "pending" for item in records) == 8
+
+    active = 0
+    peak = 0
+    high_concurrency = LLMConfig(
+        base_url="https://llm.invalid/v1",
+        api_key="test",
+        model="fake",
+        map_concurrency=20,
+    )
+    capped = asyncio.run(
+        run_analysis_cycle(
+            storage.engine,
+            worker_id="capped-worker",
+            llm_config=high_concurrency,
+            analyzer=measured_analyzer,
+            enabled=True,
+            candidate_enabled=False,
+            batch_size=8,
+            max_batches=1,
+            now_fn=lambda: NOW,
+        )
+    )
+    assert len(capped) == 4
+    assert peak == 4
+    assert asyncio.run(
+        run_analysis_cycle(
+            storage.engine,
+            worker_id="zero-worker",
+            llm_config=high_concurrency,
+            analyzer=measured_analyzer,
+            enabled=True,
+            candidate_enabled=False,
+            max_batches=0,
+            now_fn=lambda: NOW,
+        )
+    ) == []
 
 
 def test_validation_limits_score_genre_and_active_tag_codes():

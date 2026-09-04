@@ -87,6 +87,9 @@ USER_SOURCE_PREFIX = "user_rss_"
 DEFAULT_BACKFILL_DAYS = 7
 DEFAULT_MAX_ATTEMPTS = 4
 DEFAULT_BATCH_SIZE = 8
+DEFAULT_MAX_BATCHES_PER_CYCLE = 8
+CLAIM_SCAN_PAGE_SIZE = 64
+MAX_ANALYSIS_CONCURRENCY = 4
 DEFAULT_SCAN_LIMIT = 500
 # score_reason 解析上限：提示词要求 ≤40 汉字，此处留余量；超出即截断而非拒收。
 _SCORE_REASON_MAX_CHARS = 120
@@ -462,6 +465,20 @@ def queue_article_analysis(
     )
     if not force and is_current and record.status != AnalysisStatus.SKIPPED.value:
         return "unchanged"
+    if (
+        not force
+        and same_content
+        and record.status in {
+            AnalysisStatus.PENDING.value,
+            AnalysisStatus.RUNNING.value,
+            AnalysisStatus.FAILED.value,
+            AnalysisStatus.TIMEOUT.value,
+        }
+    ):
+        # Do not let the periodic compensation scan invalidate an already queued
+        # version refresh or reset its retry budget merely because V_old still
+        # carries the previous prompt/scoring version.
+        return "unchanged"
 
     if record is None:
         session.add(
@@ -482,7 +499,7 @@ def queue_article_analysis(
     # the normal full-analysis case where only prompt/scoring versions are old:
     # readers keep the prior authority until replacement succeeds. Actual
     # article-content changes still invalidate immediately.
-    preserve_authority = bool(force and same_content and has_authoritative_analysis(record))
+    preserve_authority = bool(same_content and has_authoritative_analysis(record))
     if not preserve_authority:
         _clear_authoritative_result(record)
         _delete_stale_machine_tags(session, article.id)
@@ -1541,6 +1558,7 @@ async def run_analysis_cycle(
     enabled: Optional[bool] = None,
     candidate_enabled: Optional[bool] = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    max_batches: int = DEFAULT_MAX_BATCHES_PER_CYCLE,
     scan_limit: int = DEFAULT_SCAN_LIMIT,
     now_fn: Callable[[], dt.datetime] = _utc_now,
 ) -> list[ProcessResult]:
@@ -1548,7 +1566,10 @@ async def run_analysis_cycle(
 
     Live/missing work is claimed first. Historical full-analysis items are only
     dispatched into remaining batch capacity, after which the same newest-first
-    claim path and lease/retry machinery processes them.
+    claim path and lease/retry machinery processes them.  A scheduler tick drains
+    up to ``max_batches`` immediately instead of sleeping a minute after every
+    map-sized claim; each batch remains bounded by ``map_concurrency`` so all
+    leases start promptly.
     """
 
     now = _as_utc(now_fn())
@@ -1561,6 +1582,8 @@ async def run_analysis_cycle(
             else enabled
         )
         if not effective_enabled:
+            return []
+        if max_batches <= 0:
             return []
         effective_candidates = (
             read_feature_flag(session, TAXONOMY_CANDIDATE_ENABLED_KEY, default=False)
@@ -1586,31 +1609,14 @@ async def run_analysis_cycle(
                 now=now,
             )
             backfill_job_id = int(backfill_job.id)
-        concurrency = max(1, min(batch_size, llm_config.map_concurrency))
-        tasks = claim_analysis_tasks(session, worker_id=worker_id, limit=concurrency, now=now)
-        remaining = max(0, concurrency - len(tasks))
-        if backfill_job is not None and backfill_job.status == "running" and remaining:
-            dispatched = backfill_service.dispatch_full_analysis_backfill(
-                session,
-                backfill_job,
-                lease_owner=backfill_owner,
-                limit=remaining,
-                now=now,
-            )
-            if dispatched:
-                tasks.extend(
-                    claim_analysis_tasks(
-                        session,
-                        worker_id=worker_id,
-                        limit=remaining,
-                        now=now,
-                    )
-                )
-
     # Every leased task starts promptly; otherwise a sequential batch could let
     # later leases expire while the first LLM call consumes its five minutes.
-    # Only the short read/finalize sections touch SQLite.
-    semaphore = asyncio.Semaphore(max(1, min(batch_size, llm_config.map_concurrency)))
+    # Only the short claim/finalize sections touch SQLite.
+    concurrency = max(
+        1,
+        min(batch_size, llm_config.map_concurrency, MAX_ANALYSIS_CONCURRENCY),
+    )
+    semaphore = asyncio.Semaphore(concurrency)
 
     async def _guarded(task: ClaimedAnalysisTask) -> ProcessResult:
         async with semaphore:
@@ -1623,25 +1629,77 @@ async def run_analysis_cycle(
                 now_fn=now_fn,
             )
 
-    gathered = await asyncio.gather(
-        *(_guarded(task) for task in tasks),
-        return_exceptions=True,
-    )
     results: list[ProcessResult] = []
-    for task, outcome in zip(tasks, gathered):
-        if isinstance(outcome, BaseException):
-            # One unexpected worker failure must not cancel siblings or strand
-            # its lease. Reuse the ordinary retry/terminal-state transition.
-            results.append(_mark_failure(
-                engine,
-                task,
-                status=AnalysisStatus.FAILED.value,
-                error=outcome,
-                now=_as_utc(now_fn()),
-                max_attempts=DEFAULT_MAX_ATTEMPTS,
-            ))
-        else:
-            results.append(outcome)
+    for _batch_number in range(max_batches):
+        batch_now = _as_utc(now_fn())
+        with Session(engine) as session:
+            current_backfill = (
+                session.get(TagRetagJobRecord, backfill_job_id)
+                if backfill_job_id is not None
+                else None
+            )
+            if (
+                current_backfill is not None
+                and current_backfill.status == "running"
+                and current_backfill.lease_owner == backfill_owner
+            ):
+                current_backfill = backfill_service.reconcile_full_analysis_backfill(
+                    session,
+                    current_backfill,
+                    lease_owner=backfill_owner,
+                    now=batch_now,
+                )
+
+            tasks = claim_analysis_tasks(
+                session,
+                worker_id=worker_id,
+                limit=concurrency,
+                now=batch_now,
+            )
+            remaining = max(0, concurrency - len(tasks))
+            if (
+                current_backfill is not None
+                and current_backfill.status == "running"
+                and remaining
+            ):
+                dispatched = backfill_service.dispatch_full_analysis_backfill(
+                    session,
+                    current_backfill,
+                    lease_owner=backfill_owner,
+                    limit=remaining,
+                    now=batch_now,
+                )
+                if dispatched:
+                    tasks.extend(
+                        claim_analysis_tasks(
+                            session,
+                            worker_id=worker_id,
+                            limit=remaining,
+                            now=batch_now,
+                        )
+                    )
+
+        if not tasks:
+            break
+        gathered = await asyncio.gather(
+            *(_guarded(task) for task in tasks),
+            return_exceptions=True,
+        )
+        for task, outcome in zip(tasks, gathered):
+            if isinstance(outcome, BaseException):
+                # One unexpected worker failure must not cancel siblings or
+                # strand its lease. Reuse the normal retry transition.
+                results.append(_mark_failure(
+                    engine,
+                    task,
+                    status=AnalysisStatus.FAILED.value,
+                    error=outcome,
+                    now=_as_utc(now_fn()),
+                    max_attempts=DEFAULT_MAX_ATTEMPTS,
+                ))
+            else:
+                results.append(outcome)
+
     if backfill_job_id is not None:
         try:
             with Session(engine) as session:

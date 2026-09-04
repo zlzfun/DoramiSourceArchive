@@ -479,7 +479,8 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       .then((result) => {
         const saved = result?.saved_count ?? 0;
         const failed = result?.failed_count ?? 0;
-        showToast(`「${fetcher.name}」抓取完成：新增 ${saved} 条${failed ? `，失败 ${failed}` : ''}`, failed > 0 ? 'info' : 'success');
+        const analysisQueued = result?.analysis_queued_count ?? 0;
+        showToast(`「${fetcher.name}」抓取完成：新增 ${saved} 条${analysisQueued ? `，已入队分析 ${analysisQueued} 篇` : ''}${failed ? `，失败 ${failed}` : ''}`, failed > 0 ? 'info' : 'success');
         loadSourceHealth();
         onArticlesChanged?.();
         onRunsChanged?.();
@@ -503,7 +504,8 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     fetchSourceConfigNow(fetcher.id)
       .then((result) => {
         const saved = result?.saved_count ?? result?.results?.[0]?.saved_count ?? 0;
-        showToast(`「${fetcher.name}」抓取完成：新增 ${saved} 条`, 'success');
+        const analysisQueued = result?.analysis_queued_count ?? result?.results?.[0]?.analysis_queued_count ?? 0;
+        showToast(`「${fetcher.name}」抓取完成：新增 ${saved} 条${analysisQueued ? `，已入队分析 ${analysisQueued} 篇` : ''}`, 'success');
         loadSourceHealth();
         onArticlesChanged?.();
         onRunsChanged?.();
