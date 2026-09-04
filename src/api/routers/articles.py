@@ -471,8 +471,12 @@ async def get_article_analysis(article_id: str, request: Request):
         }
 
 
-@router.get("/api/articles/{article_id:path}")
-async def get_article(article_id: str, request: Request):
+async def load_reader_visible_article(article_id: str, request: Request):
+    """按当前会话取一篇可见文章,不可见一律 404(与列表口径一致)。
+
+    单条详情的可见性三判:文章存在 → 非 admin 会话下源未被隐藏 → 用户自定源须订阅归属。
+    抽成函数供小程序渲染端点(routers/article_render.py)复用,两处判定不会漂移。
+    """
     record = await deps.get_db_sink().get(article_id)
     if not record:
         raise HTTPException(status_code=404, detail="文章未找到")
@@ -492,6 +496,12 @@ async def get_article(article_id: str, request: Request):
                         session, viewer, [record.source_id]
                     ):
                         raise HTTPException(status_code=404, detail="文章未找到")
+    return record
+
+
+@router.get("/api/articles/{article_id:path}")
+async def get_article(article_id: str, request: Request):
+    record = await load_reader_visible_article(article_id, request)
     with Session(deps.get_db_sink().engine) as session:
         analyses, tags = _analysis_assets(session, [record.id])
         display_tags = load_display_tags(

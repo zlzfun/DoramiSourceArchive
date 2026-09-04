@@ -6,7 +6,9 @@
 
 ## 进行中
 
-- (暂无)
+- ☐ **微信小程序端阅读器**(Issue #17,分支 `feat/issue-17-wechat-miniprogram`):P0 方案
+  [`wechat-miniprogram-wave-plan.md`](./wechat-miniprogram-wave-plan.md) 已起草,待拍板 §3(框架/鉴权/正文/图片/导航)
+  与 §8 前置确认(公网 HTTPS+备案、主体与类目);P1 动工前须过 §7 实测清单。
 
 ## 排队中(用户拍板、未动工)
 

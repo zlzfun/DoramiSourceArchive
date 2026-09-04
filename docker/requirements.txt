@@ -66,10 +66,14 @@ lxml==5.4.0
     # via doramisourcearchive
 mako==1.3.12
     # via alembic
+markdown-it-py==4.2.0
+    # via doramisourcearchive
 markupsafe==3.0.3
     # via mako
 mcp==1.27.1
     # via doramisourcearchive
+mdurl==0.1.2
+    # via markdown-it-py
 playwright==1.59.0
     # via doramisourcearchive
 pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'

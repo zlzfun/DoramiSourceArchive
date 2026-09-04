@@ -156,6 +156,7 @@ from api.routers import feedback as feedback_router
 from api.routers import announcements as announcements_router
 from api.routers import remote_sync as remote_sync_router
 from api.routers import share as share_router
+from api.routers import article_render as article_render_router
 from api.routers.fetchers import FetchBatchItem, FetchBatchParams
 from services import daily_brief as daily_brief_service
 from services import remote_sync as remote_sync_service
@@ -628,6 +629,7 @@ app.include_router(feedback_router.router)
 app.include_router(announcements_router.router)
 app.include_router(remote_sync_router.router)
 app.include_router(share_router.router)
+app.include_router(article_render_router.router)
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 COLLECTION_FETCH_CONCURRENCY = 4
@@ -644,6 +646,8 @@ AUTH_SESSION_SECONDS = settings.auth.session_seconds
 class AuthLoginParams(BaseModel):
     username: str
     password: str
+    # 非浏览器客户端(小程序)要求响应体回 session_token;与 X-Dorami-Client 头等价。
+    return_token: bool = False
 
 
 class ChangePasswordParams(BaseModel):
@@ -717,8 +721,37 @@ def read_auth_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
     return data
 
 
+# 小程序等非浏览器客户端标识头(Issue #17):登录时带此头(值 miniprogram)则响应体附
+# session_token,供客户端以 Authorization: Bearer 回传——wx.request 不维护 Cookie jar。
+CLIENT_HEADER = "x-dorami-client"
+MINIPROGRAM_CLIENT = "miniprogram"
+
+
+def _bearer_session_token(request: Request) -> Optional[str]:
+    """从 Authorization: Bearer 取会话 token(小程序载体)。
+
+    只认形如 `<payload>.<sig>` 的会话 token;订阅/聚合令牌(dsub_/dfeed_,无点号)与
+    MCP 客户端头里的其它值一律不当会话——read_auth_token 对无点号值直接返回 None,
+    此处提前短路是省一次判断、也避免误读。
+    """
+    header = request.headers.get("authorization", "")
+    if not header.lower().startswith("bearer "):
+        return None
+    token = header[7:].strip()
+    return token if token and "." in token else None
+
+
 def current_auth_session(request: Request) -> Optional[Dict[str, Any]]:
-    return read_auth_token(request.cookies.get(AUTH_COOKIE_NAME))
+    """当前登录会话:Cookie 优先,缺失时回退 Authorization: Bearer 同一 token。
+
+    两种载体承载的是**同一个**会话 token(create_auth_token),签名/过期/账户状态/
+    会话世代(session_epoch)吊销全部由 read_auth_token 一处裁决——改密、停用、删号对
+    小程序会话的失效语义与浏览器 Cookie 完全一致。
+    """
+    cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
+    if cookie_token:
+        return read_auth_token(cookie_token)
+    return read_auth_token(_bearer_session_token(request))
 
 
 def current_admin_session(request: Request) -> Optional[Dict[str, Any]]:
@@ -933,7 +966,7 @@ def _auth_user_payload(
 
 
 @app.post("/api/auth/login")
-def login_admin(params: AuthLoginParams, response: Response):
+def login_admin(params: AuthLoginParams, request: Request, response: Response):
     username = params.username.strip()
     with Session(db_sink.engine) as session:
         record = accounts_service.get_user(session, username)
@@ -959,7 +992,7 @@ def login_admin(params: AuthLoginParams, response: Response):
         except Exception:
             _dorami_logger.warning("登录点播种默认订阅失败，等待 reader 端点兜底", exc_info=True)
     set_auth_cookie(response, username, role, epoch)
-    return {
+    payload: Dict[str, Any] = {
         "authenticated": True,
         "user": _auth_user_payload(
             username,
@@ -968,6 +1001,12 @@ def login_admin(params: AuthLoginParams, response: Response):
             interest_onboarding_completed_at=interest_onboarding_completed_at,
         ),
     }
+    # 小程序载体:显式索取时才把 token 放进响应体(浏览器路径响应形状不变)。
+    # token 与 Cookie 里的是同一个值,过期/吊销语义同源。
+    if params.return_token or request.headers.get(CLIENT_HEADER, "").lower() == MINIPROGRAM_CLIENT:
+        payload["session_token"] = create_auth_token(username, role, epoch)
+        payload["session_expires_in"] = AUTH_SESSION_SECONDS
+    return payload
 
 
 @app.get("/api/auth/session")

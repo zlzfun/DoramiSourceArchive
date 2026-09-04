@@ -25,6 +25,7 @@ from sqlmodel import Session, func, select
 
 from models.db import ArticleRecord
 from services import jobs as jobs_service
+from api.media_signing import verify_media_signature
 from services.media_store import extract_image_urls
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -44,11 +45,8 @@ def _redirect_to_origin(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store"})
 
 
-@router.get("/api/media/proxy")
-async def media_proxy(url: str = Query(..., description="原始图片 URL")):
-    target = (url or "").strip()
-    if not target.lower().startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="仅支持 http/https 图片 URL")
+async def _serve_media(target: str):
+    """图床供给主体:命中/即时下载后回文件,失败或停用 302 回源(proxy 与签名公开链共用)。"""
     store = _app().media_store
     if store is None:
         return _redirect_to_origin(target)
@@ -64,6 +62,33 @@ async def media_proxy(url: str = Query(..., description="原始图片 URL")):
         media_type=record.mime or "application/octet-stream",
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
+
+
+@router.get("/api/media/proxy")
+async def media_proxy(url: str = Query(..., description="原始图片 URL")):
+    target = (url or "").strip()
+    if not target.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="仅支持 http/https 图片 URL")
+    return await _serve_media(target)
+
+
+@router.get("/api/public/media")
+async def public_signed_media(
+    u: Optional[str] = Query(None, description="原始图片 URL"),
+    exp: Optional[str] = Query(None, description="签名到期 unix 秒"),
+    sig: Optional[str] = Query(None, description="HMAC 签名"),
+):
+    """签名公开图链(Issue #17 小程序端):免登录,但只放行服务端渲染正文时签发过的 URL。
+
+    小程序 rich-text 的 <img> 不带鉴权头,/api/media/proxy 不可达;本端点走 /api/public/*
+    既有免登录豁免(零中间件改动),签名由 api.media_signing 用 AUTH_SECRET 签发——客户端
+    拿不到密钥,伸不成开放代理。校验失败/过期/缺参一律 404 不区分原因。
+    供给主体与 proxy 完全相同(SSRF/魔数/大小上限/负缓存全部沿用,失败 302 回源)。
+    """
+    target = (u or "").strip()
+    if not verify_media_signature(target, exp, sig):
+        raise HTTPException(status_code=404, detail="图片链接无效或已失效")
+    return await _serve_media(target)
 
 
 @router.get("/api/admin/media/stats")

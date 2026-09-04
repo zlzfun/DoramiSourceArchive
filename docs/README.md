@@ -36,6 +36,10 @@
 - ◉ [podcast-wave-plan.md](./podcast-wave-plan.md) — Podcast 专栏与长播客精华设计:博客/播客 RSS
   分轨治理、竞品与 Podcasting 2.0 调研、`>30min` 权利/质量/预算门控、带时间戳证据的中文博客、
   `≤15min` AI 精华音频、数据/API/状态机/成本/安全以及分期与端到端验收。
+- ◉ [wechat-miniprogram-wave-plan.md](./wechat-miniprogram-wave-plan.md) — **微信小程序端阅读器 P0 方案(Issue #17,
+  Proposed)**:H5 移动壳二期,同后端同账号;四项拍板建议(Taro 4 独立目录 `miniprogram/`、会话 token 增 Bearer
+  载体、服务端 markdown→净化 HTML 供 rich-text、签名公开图链 `/api/public/media`),后端三切口不动中间件;
+  转发卡片=站内深链的小程序翻译,订阅消息推送后置 P3;硬前置=公网 HTTPS+备案域名与主体/类目。
 - ◉ [Issue #7 可执行规格](../specs/007-podcast-intelligence/spec.md) — Podcast Intelligence 的
   用户故事、成功指标、研究决策、数据模型、OpenAPI 契约、多 Agent 任务和主会话验收入口。
 - ◉ [sources/podcast_catalog.md](./sources/podcast_catalog.md) — 内部「欧研观澜」36 个节目样本的
