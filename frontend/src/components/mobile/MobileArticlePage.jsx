@@ -140,9 +140,11 @@ export default function MobileArticlePage({
                 {formatDateTime(activeArticle.publish_date)}
               </span>
             )}
-            {bodyStats && <span>阅读时长 {bodyStats.minutes} 分钟</span>}
+            {bodyStats && (
+              <span>{podcastView ? '简介阅读约' : '阅读时长'} {bodyStats.minutes} 分钟</span>
+            )}
             {podcastView && formatPodcastDuration(activeArticle.podcast?.duration_seconds) && (
-              <span>原版 {formatPodcastDuration(activeArticle.podcast.duration_seconds)}</span>
+              <span>原节目 {formatPodcastDuration(activeArticle.podcast.duration_seconds)}</span>
             )}
             {typeof activeArticle.read_count === 'number' && activeArticle.read_count > 0 && (
               <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
@@ -150,9 +152,15 @@ export default function MobileArticlePage({
           </div>
           {(activeArticle.quality_score != null || displayAnalysisTags(activeArticle).length > 0) && (
             <div className="reader-analysis-summary">
+              {podcastView && (
+                <div className="reader-analysis-basis">
+                  <strong>简介初评</strong>
+                  <span>基于节目简介，尚未分析完整音频</span>
+                </div>
+              )}
               <div className="reader-analysis-top">
                 {activeArticle.quality_score != null && (
-                  <span className="reader-analysis-score"><strong>{qualityScoreText(activeArticle.quality_score)}</strong><small>内容价值分</small></span>
+                  <span className="reader-analysis-score"><strong>{qualityScoreText(activeArticle.quality_score)}</strong><small>{podcastView ? '简介价值分' : '内容价值分'}</small></span>
                 )}
                 <span className="reader-analysis-tags">
                   {displayAnalysisTags(activeArticle).map((tag, index) => (
@@ -168,7 +176,11 @@ export default function MobileArticlePage({
                 </span>
               </div>
               {activeArticle.score_reason && <p>{activeArticle.score_reason}</p>}
-              <small>AI 内容价值评估，用于辅助筛选，不代表事实保证或你的个人评分</small>
+              <small>
+                {podcastView
+                  ? 'AI 基于节目简介的初步评估，仅用于辅助筛选；完整音频分析将在精品处理后提供'
+                  : 'AI 内容价值评估，用于辅助筛选，不代表事实保证或你的个人评分'}
+              </small>
             </div>
           )}
         </header>
@@ -177,7 +189,8 @@ export default function MobileArticlePage({
           {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
             <div className="reader-ai-summary">
               <div className="reader-ai-summary-head">
-                <Sparkles className="h-3.5 w-3.5" /> <span className="ai-grad-text">哆啦美速读</span>
+                <Sparkles className="h-3.5 w-3.5" />
+                <span className="ai-grad-text">{podcastView ? '节目简介导读' : '哆啦美速读'}</span>
               </div>
               {activeSummary ? (
                 <p className="reader-ai-summary-text">{activeSummary}</p>
@@ -191,9 +204,16 @@ export default function MobileArticlePage({
                   onClick={handleSummarize}
                   className="reader-ai-summary-generate"
                 >
-                  生成本文要点速读
+                  {podcastView ? '生成节目简介导读' : '生成本文要点速读'}
                 </button>
               )}
+              {podcastView && <small className="reader-ai-summary-basis">基于节目简介，不是音频全文摘要</small>}
+            </div>
+          )}
+          {podcastView && !activeBodyLoading && activeBody && (
+            <div className="podcast-show-notes-head">
+              <h2 className="section-title">节目简介</h2>
+              <span>来源方提供</span>
             </div>
           )}
           {activeBodyLoading ? (
@@ -204,7 +224,7 @@ export default function MobileArticlePage({
             <ReaderMarkdown>{displayBody}</ReaderMarkdown>
           ) : (
             podcastView
-              ? '该播客暂无文字内容，可收听上方原版音频。'
+              ? '该播客暂无文字内容，可收听上方原节目音频。'
               : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
           )}
           {/* 正文尾部原文行(v3.45 推全站,与桌面阅读窗同口径):无 source_url 不画 */}

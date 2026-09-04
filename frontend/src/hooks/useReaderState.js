@@ -87,16 +87,10 @@ export function useReaderState({
   const [favTogglingId, setFavTogglingId] = useState(null);
   // 发现页(整页视图,取代源栏内联「发现更多来源」):true 时 条目列+阅读窗 被发现页取代
   const [discover, setDiscover] = useState(false);
-  // 发现页的形态范围属于「从哪里进入」的导航意图，而不是当前内容容器的派生状态：
-  // 全局发现始终展示完整目录，只有播客容器里的「添加播客」入口才锁定 podcast。
-  const [discoverShapeScope, setDiscoverShapeScope] = useState(null);
-  const openDiscover = useCallback((shapeScope = null) => {
-    setDiscoverShapeScope(shapeScope === 'podcast' ? 'podcast' : null);
-    setDiscover(true);
-  }, []);
+  // 无论从哪个内容容器进入，发现页都展示完整来源目录；内容形态由页内筛选切换。
+  const openDiscover = useCallback(() => setDiscover(true), []);
   const closeDiscover = useCallback(() => {
     setDiscover(false);
-    setDiscoverShapeScope(null);
   }, []);
   // ── 源合集(策展合集):发现页「源 ⇄ 合集」视图的合集半边 ──
   // 目录来自 GET /api/reader/collections(轻载荷,成员卡数据由前端与 sources join);
@@ -212,7 +206,6 @@ export function useReaderState({
   useEffect(() => {
     if (!discover) {
       setDiscoverCollectionId(null);
-      setDiscoverShapeScope(null);
     }
   }, [discover]);
 
@@ -1130,7 +1123,7 @@ export function useReaderState({
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
-    mode, activeSourceId, favOnly, discover, discoverShapeScope, openDiscover, closeDiscover,
+    mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover,
     bulletinView, socialView, podcastView, railActive, listTitle,
     goView, goSource, goContainerAll, goFavorites,
     activeSourceHidden, activeUnsubscribed, grouping,

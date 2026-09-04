@@ -1,216 +1,135 @@
-# Tasks: AI/科技播客专栏与中文导读
+# Tasks: AI/科技播客专栏与中文精华
 
-**Branch**: `feat/issue-7-podcast-intelligence`
-**Strategy**: P0 baseline → P1 source admission → P2 domain/summary → P3 ASR/digest → P4 TTS
-**Testing**: Required at unit, contract, migration and main-session browser E2E levels.
+**Accepted Baseline**: `main@b5864d3`
+**Design review**: [design-review-2026-09-03.md](../../artifacts/issue-7/design-review-2026-09-03.md)
+**Strategy**: P0 → P0.5 stabilization → P1 admission/domain → P2 Bundle v2 → P3A publisher transcript → P3B ASR → P4 TTS
+**Testing**: unit, API contract, migration, sync failure drills and main-session desktop/mobile browser E2E are required.
 
-## Phase 1 — Setup and P0 Baseline
+The previous 100-item draft mixed optional future work with critical-path work and treated Archive Sync v2 as rollout polish. This revision groups work into six independently testable packages. Each package receives one migration owner; implementation starts only after the open deployment/rights decisions in `decisions.md` are resolved for that package.
 
-Goal: freeze the existing Podcast MVP in the dedicated branch and create shared evaluation fixtures.
+## P0 — Accepted baseline
 
-- [ ] T001 Record the clean Issue #7 baseline commit range and excluded unrelated commits in `specs/007-podcast-intelligence/plan.md`
-- [ ] T002 Run and record Podcast backend baseline tests in `artifacts/issue-7/p0-test-report.md`
-- [ ] T003 [P] Run and record frontend lint/build results in `artifacts/issue-7/p0-frontend-report.md`
-- [ ] T004 [P] Audit current Podcast desktop/mobile UX against repository conventions in `artifacts/issue-7/p0-ui-audit.md`
-- [ ] T005 [P] Create license-safe feed admission fixtures and expected labels in `tests/fixtures/podcast_admission/`
-- [ ] T006 [P] Create bilingual multi-speaker transcript/value/single-narrator-TTS golden fixture manifests in `tests/fixtures/podcast_processing/README.md`
+- [x] T001 Record `main@b5864d3` as the accepted Podcast RSS/catalog/player baseline.
+- [x] T002 Record focused backend tests in `artifacts/issue-7/p0-test-report.md`.
+- [x] T003 Record frontend lint/build in `artifacts/issue-7/p0-frontend-report.md`.
+- [x] T004 Record product, architecture, UI and cost findings in `artifacts/issue-7/design-review-2026-09-03.md`.
+- [x] T004A Restore every Reader discovery entry, including the Podcast page entry, to the shared full source catalog; keep Podcast as a user-selectable shape filter rather than a forced scope.
+- [x] T004B Expose shared Podcast `SourceConfigRecord` rows in the existing Node Management board with health, item count, feed/schedule metadata, enable/disable, manual fetch and reader visibility. Show every node's content shape explicitly (`article`/`bulletin`/`social`/`podcast`) and provide a shape filter; keep episode-level premium administration in T025A/T025B.
+- [x] T004C Correct the current Reader vocabulary to “原节目 / 中文精华”, label show-notes-derived detail analysis as “简介初评”, and use the same presentation on desktop and mobile without claiming full-audio analysis.
 
-## Phase 2 — Foundational Contracts and Ownership
+## P0.5 — Fact and sync stabilization
 
-Goal: freeze shared enums, API shapes, feature flags, remote-input policy and migration ownership before parallel implementation.
+Goal: stop presenting show-notes analysis as full-audio truth and make the current split deployment safe enough to extend.
 
-- [ ] T007 Define Podcast admission/rights/processing/artifact enums in `src/models/podcast_contracts.py`
-- [ ] T008 Define configurable admission, value, duration and budget thresholds in `src/services/podcast_policy.py`
-- [ ] T009 [P] Add Podcast feature flags and safe defaults to `src/config.py` and `config/config.example.ini`
-- [ ] T010 [P] Extend stable Podcast error codes and redaction rules in `src/api/podcast_errors.py`
-- [ ] T011 Reconcile the proposed OpenAPI contract with runtime router conventions in `specs/007-podcast-intelligence/contracts/podcast-api.yaml`
-- [ ] T012 Assign the single model/Alembic owner and record phase-specific migration heads in `specs/007-podcast-intelligence/migration-ledger.md`
+- [ ] T005 Add `analysis_basis=show_notes` to current Podcast projection and display “简介初评 / 基于节目简介” on list/detail/mobile.
+- [ ] T006 Retire the misleading compatibility field `processing_eligible`; expose descriptive `is_long_form` only where useful and keep it out of premium eligibility decisions.
+- [x] T007 Hide or rename Podcast “阅读时长” as “简介阅读约 N 分钟”; keep original audio duration primary.
+- [x] T008 Prevent currency strings such as `$350M ... $1B` from being parsed as display math in Podcast show notes.
+- [ ] T009 Set a dark-theme root/body inherited text color, add a dark `::selection`, remove hard-coded dark text dependencies and add Chromium/WebKit/Firefox visual cases.
+- [ ] T010 Make remote-sync scheduling and job status available in a real `reader` role without enabling collection/provider routes.
+- [ ] T011 Replace offset progress with stable keyset progress and make any line/checksum/import error preserve the old checkpoint.
+- [ ] T012 Require payload checksums, remove the production HTTP Secure-cookie bypass and move sync credentials to a service-token secret boundary.
+- [ ] T013 Recover or terminally mark stale `queued/running` process-memory jobs after restart so they cannot block future sync forever.
+- [ ] T014 Decide and test the internal original-audio policy: browser egress allowlist, licensed mirroring, or Chinese-digest-only.
+- [ ] T015 Run P0.5 API/browser/failure-drill regression and save `artifacts/issue-7/p0-5-report.md`.
 
-## Phase 3 — User Story 1: Source and Episode Admission (P1)
+Exit gate: episodes from all 35 current Podcast sources show their correct analysis basis; the reported 20VC page has readable dark text and correct currency rendering; a corrupt sync item cannot be skipped permanently.
 
-Story goal: off-scope Podcast sources never become subscribable/fetchable; mixed sources admit only in-scope episodes.
+## P1 — Source admission and Podcast domain
 
-Independent test: AI core, technology core, mixed, off-topic, insufficient-sample and hostile fixtures produce the expected audited decision without downloading enclosure audio.
+Goal: separate source trust, episode relevance, processing authorization and final premium state before spending on audio.
 
-- [ ] T013 [US1] Add `PodcastSourceProfileRecord` and `PodcastSourceReviewRecord` to `src/models/db.py`
-- [ ] T014 [US1] Add the P1 admission schema migration with indexes and legacy backfill in `alembic/versions/`
-- [ ] T015 [P] [US1] Add model and migration drift tests for P1 records in `tests/test_podcast_admission_schema.py`
-- [ ] T016 [P] [US1] Implement canonical feed identity, duplicate detection and bounded sample selection in `src/services/podcast_admission.py`
-- [ ] T017 [P] [US1] Implement Podcast preview SSRF, redirect, response-size, XML and enclosure checks in `src/services/podcast_preview.py`
-- [ ] T018 [US1] Implement structured sample classification and deterministic ratio/confidence decisions in `src/services/podcast_admission.py`
-- [ ] T019 [US1] Implement append-only reviews, manual override, expiry and optimistic concurrency in `src/services/podcast_admission.py`
-- [ ] T020 [US1] Implement signed preview-token and idempotent import flows in `src/api/routers/admin_podcasts.py`
-- [ ] T021 [US1] Add admission preview/list/review/decision endpoints in `src/api/routers/admin_podcasts.py`
-- [ ] T022 [US1] Enforce `is_active && admission_status=approved` at the common fetch execution boundary in `src/api/app.py`
-- [ ] T023 [US1] Route custom Podcast source creation through admission before activation/subscription/first fetch in `src/api/routers/reader.py`
-- [ ] T024 [US1] Route administrator Podcast source creation through admission in `src/api/routers/source_configs.py`
-- [ ] T025 [P] [US1] Implement review-due and topic-drift scheduling in `src/services/podcast_admission_scheduler.py`
-- [ ] T026 [P] [US1] Implement cheap per-episode metadata relevance filtering for approved mixed feeds in `src/services/podcast_episode_relevance.py`
-- [ ] T027 [US1] Exclude pending/rejected/blocked sources and rejected episodes from Reader catalogs and delivery queries in `src/api/feed_service.py`
-- [ ] T028 [P] [US1] Add admin admission preview/evidence/decision API calls in `frontend/src/api.js`
-- [ ] T029 [US1] Add admin Podcast admission preview and decision UI in `frontend/src/components/PodcastSourceAdmissionPanel.jsx`
-- [ ] T030 [US1] Integrate Podcast admission state into source creation/catalog UI in `frontend/src/components/CustomNodeBuilder.jsx` and `frontend/src/components/DiscoverPage.jsx`
-- [ ] T031 [P] [US1] Add sampler/classifier/override/drift unit tests in `tests/test_podcast_admission.py`
-- [ ] T032 [P] [US1] Add preview/import/fetch-guard contract and permission tests in `tests/test_podcast_admission_api.py`
-- [ ] T033 [US1] Add main-session desktop/mobile admission browser scenarios in `tests/e2e/podcast_admission.spec.js`
+- [ ] T016 Define stable enums/contracts for source admission, episode state, analysis basis, rights dimensions and errors.
+- [ ] T017 Add `PodcastSourceProfileRecord` plus append-only source decision/audit records with Alembic migration.
+- [ ] T018 Implement safe feed preview, canonical identity, bounded sample selection, duplicate detection and SSRF/redirect/size checks.
+- [ ] T019 Implement deterministic source decisions, manual override/expiry and drift review; shadow-review existing 35 sources before enforcement.
+- [ ] T020 Enforce approved admission at every activation, subscription and fetch boundary; mixed feeds get per-episode relevance filtering.
+- [ ] T021 Add normalized `PodcastEpisodeRecord`, dimensioned `PodcastRightsRecord` and `PodcastPlaybackStateRecord` with resumable backfill.
+- [ ] T022 Parse publisher transcript/chapters/license documents with bounded reads; never download enclosure audio during admission.
+- [ ] T023 Implement `premium_candidate → processing_authorized → premium_ready`; metadata cannot directly assign `premium_ready`.
+- [ ] T024 Reuse `ArticleAnalysisRecord` as the current Reader projection while storing basis, confidence, input hash and immutable analysis history separately.
+- [ ] T025 Add admin source review/rights/budget UI and basis-aware desktop/mobile Reader states.
+- [ ] T025A Add a dedicated Podcast collection-management page for source enablement, schedule, health, manual fetch, recent episodes and processing visibility.
+- [ ] T025B Add an audited per-episode “生成精品播客” action that overrides AI selection only, while rights, input-safety and budget checks remain mandatory; expose a separate privileged budget override if later required.
+- [ ] T026 Add gold fixtures and unit/API/migration/browser tests for core, mixed, off-scope, hostile and insufficient-sample feeds.
 
-## Phase 4 — User Story 2: Podcast Catalog, Domain and Playback (P2A)
+Exit gate: source trust never bypasses topic/rights checks, off-scope feeds are not fetchable, and metadata analysis is clearly distinct from transcript analysis.
 
-Story goal: readers browse only admitted Podcast shows, inspect normalized episode facts and play original audio consistently on desktop/mobile.
+## P2 — Artifact Store and Archive Bundle v2
 
-Independent test: a source/episode fixture is idempotently normalized, remains compatible with `/api/articles`, and supports original audio/player state without derivative rights.
+Goal: establish the external-compute/internal-consume boundary before generating large or paid artifacts.
 
-- [ ] T034 [US2] Add `PodcastEpisodeRecord`, `PodcastRightsRecord` and `PodcastPlaybackStateRecord` to `src/models/db.py`
-- [ ] T035 [US2] Add the P2 domain schema migration and resumable Podcast extensions backfill in `alembic/versions/`
-- [ ] T036 [P] [US2] Implement Podcast episode identity and normalized upsert service in `src/services/podcast_episodes.py`
-- [ ] T037 [P] [US2] Implement Podcasting 2.0 transcript/chapters/license parsing with bounded remote reads in `src/services/podcast_publisher_assets.py`
-- [ ] T038 [US2] Implement source/episode rights precedence, expiry and audit in `src/services/podcast_rights.py`
-- [ ] T039 [US2] Add show/episode/transcript/audio/playback endpoints in `src/api/routers/podcasts.py`
-- [ ] T040 [US2] Preserve the existing additive `/api/articles` Podcast projection using normalized-domain fallback in `src/api/articles_view.py`
-- [ ] T041 [P] [US2] Add Podcast show/episode/playback API calls in `frontend/src/api.js`
-- [ ] T042 [US2] Add show/episode, original/translated metadata and rights state to `frontend/src/components/PodcastAudioPanel.jsx`
-- [ ] T043 [US2] Add original/digest-safe playback progress state to `frontend/src/hooks/useReaderState.js`
-- [ ] T044 [US2] Align desktop and mobile Podcast details in `frontend/src/components/ReaderTab.jsx` and `frontend/src/components/mobile/MobileArticlePage.jsx`
-- [ ] T045 [P] [US2] Add identity/backfill/rights/publisher-asset tests in `tests/test_podcast_domain.py`
-- [ ] T046 [P] [US2] Add Range/seek/transcript-pagination/permission API tests in `tests/test_podcast_api.py`
-- [ ] T047 [US2] Add main-session desktop/mobile playback and translation scenarios in `tests/e2e/podcast_playback.spec.js`
+- [ ] T027 Add `PodcastProcessingRecord` with renewable lease, heartbeat and fencing plus `PodcastStageAttemptRecord` with provider task/cost state.
+- [ ] T028 Add immutable `PodcastArtifactRecord`, `ArchiveChangeRecord` and internal `ArchiveSyncReceiptRecord` with Alembic migration.
+- [ ] T029 Implement local and S3-compatible content-addressed storage with staging, hash/size/MIME validation and atomic publish pointers.
+- [ ] T030 Write publish/unpublish/takedown and tombstone changes to the outbox in the same database transaction as publication.
+- [ ] T031 Define and sign `archive-bundle-v2` manifests using monotonic `change_seq`; exclude credentials, leases, drafts and provider URLs.
+- [ ] T032 Implement blob export/Range serving and internal download-to-staging with signature/hash/bytes/MIME verification.
+- [ ] T033 Materialize source, episode, current analysis/tag projection, publication and tombstone in one internal transaction; advance checkpoint only after success.
+- [ ] T034 Resolve derived media to a stable internal API and local CAS; never persist an external storage URI in the Reader projection.
+- [ ] T035 Support HTTP pull and reviewed offline bundle import through the same verifier/importer.
+- [ ] T036 Add reader-only deployment tests, corrupted/missing/reordered bundle drills, retry idempotency and takedown priority tests.
 
-## Phase 5 — User Story 3: Summary, Value and Tags (P2B)
+Exit gate: P3 is blocked until a complete external bundle can reach a reader-only environment atomically and a failed bundle leaves the old version/checkpoint intact.
 
-Story goal: readers can judge relevance/value quickly; editors can audit basis, confidence, dimensions and evidence.
+## P3A — Publisher-transcript text vertical slice
 
-Independent test: metadata-only and transcript-backed fixtures render different analysis-basis labels, separate relevance/value, controlled tags and timestamp-grounded chapters.
+Goal: validate the complete product and sync chain with the four current publisher transcript URLs and zero ASR cost.
 
-- [ ] T048 [P] [US3] Define Podcast analysis JSON schemas and prompt/scoring versions in `src/models/podcast_analysis_contracts.py`
-- [ ] T049 [P] [US3] Define controlled Podcast format/audience/depth/value labels in `config/podcast-taxonomy-v1.json`
-- [ ] T050 [US3] Implement metadata preliminary relevance/value/summary analysis in `src/services/podcast_analysis.py`
-- [ ] T051 [US3] Implement transcript-backed value dimensions, tag evidence and confidence in `src/services/podcast_analysis.py`
-- [ ] T052 [US3] Store model result, effective manual override and versioned evidence in `src/services/podcast_analysis.py`
-- [ ] T053 [US3] Add card summary, takeaways, chapters, score basis and tags to `src/api/routers/podcasts.py`
-- [ ] T054 [P] [US3] Add analysis presentation utilities in `frontend/src/utils/podcastAnalysis.js`
-- [ ] T055 [US3] Add separate relevance/value, why-listen, takeaways and basis UI in `frontend/src/components/PodcastAudioPanel.jsx`
-- [ ] T056 [P] [US3] Add scoring, tag-limit, evidence and manual-override unit tests in `tests/test_podcast_analysis.py`
-- [ ] T057 [US3] Add gold-set Precision@K and entity/number evaluation in `scripts/evaluate_podcast_analysis.py`
-- [ ] T058 [US3] Add main-session summary/value/tag scenarios in `tests/e2e/podcast_analysis.spec.js`
+- [ ] T037 Define source transcript, aligned Chinese transcript, evidence fact pack, digest article and narration-script JSON Schemas.
+- [ ] T038 Fetch/normalize publisher transcripts; preserve source segment ID, time range, language and stable speaker labels.
+- [ ] T039 Produce full Chinese transcripts: Chinese normalization is a no-op translation; English/mixed content is translated per aligned segment.
+- [ ] T040 Add transcript QA for coverage, monotonic time, gaps, repetition, speaker mapping, entities, numbers and glossary terms.
+- [ ] T041 Generate transcript-backed summary, tags, chapters, why-listen and final value dimensions; set `premium_ready` only after QA/thresholds pass.
+- [ ] T042 Generate an evidence fact pack, Reader digest and separate structured narration script; verify every material claim against source segments.
+- [ ] T043 Publish artifacts through Bundle v2 and materialize the current `ArticleAnalysisRecord`/tag projection internally.
+- [ ] T044 Replace stacked audio with one player and page-level `原节目 / 中文精华` mode; preserve independent progress.
+- [ ] T045 Implement chapter/cursor transcript loading, search, speaker/language filters, timestamp seek and shareable `mode/tab/t` URLs.
+- [ ] T046 Add admin evidence review, publish/unpublish/takedown and version/provenance inspection.
+- [ ] T047 Run the four-episode external-to-internal E2E; assert zero ASR calls and save `artifacts/issue-7/p3a-report.md`.
 
-## Phase 6 — User Story 4: ASR, Full Chinese Transcript and Evidence-Grounded Digest (P3)
+Exit gate: every published premium slice has a complete Chinese transcript and timestamp evidence, and an internal Reader can consume it without external provider access.
 
-Story goal: eligible high-value long episodes produce a speaker-aligned full Chinese transcript and reviewable Chinese digest with claim-level original evidence.
+## P3B — ASR fallback and budget funnel
 
-Independent test: publisher-transcript and ASR paths converge on the same source segment contract, then produce a complete Chinese segment set preserving timestamps/speakers; invalid evidence/translation cannot be published and retries create no duplicate artifacts/cost.
+Goal: add paid transcription only for authorized candidates and reconcile every provider call safely.
 
-- [ ] T059 [US4] Add `PodcastProcessingRecord`, `PodcastArtifactRecord`, `PodcastTranscriptSegmentRecord`, `PodcastNarrationSegmentRecord` and `PodcastClaimRecord` to `src/models/db.py`
-- [ ] T060 [US4] Add the P3 processing/artifact/segment/claim migration in `alembic/versions/`
-- [ ] T061 [P] [US4] Implement content-addressed Podcast artifact storage in `src/services/podcast_artifacts.py`
-- [ ] T062 [P] [US4] Define provider-neutral ASR/LLM interfaces and revision metadata in `src/services/podcast_providers.py`
-- [ ] T063 [US4] Implement persistent eligibility, lease, retry, idempotency and cost accounting in `src/services/podcast_processing.py`
-- [ ] T064 [US4] Implement publisher-transcript-first routing and managed source-language ASR/diarization fallback in `src/services/podcast_transcription.py`
-- [ ] T065 [P] [US4] Add feature-flagged faster-whisper + WhisperX benchmark adapter in `src/services/podcast_asr/faster_whisper_adapter.py`
-- [ ] T066 [P] [US4] Add feature-flagged SenseVoice/FunASR benchmark adapter with license warning in `src/services/podcast_asr/sensevoice_adapter.py`
-- [ ] T067 [US4] Implement timestamp/language/coverage/repetition/gap, diarization and speaker-identity QA in `src/services/podcast_transcript_qa.py`, plus segment-aligned complete Chinese translation, glossary/entity preservation and translation QA in `src/services/podcast_translation.py`
-- [ ] T068 [US4] Implement chapter-aware map/reduce with claim, number, entity and evidence outputs in `src/services/podcast_digest.py`
-- [ ] T069 [US4] Implement atomic claim verification and publish blocking in `src/services/podcast_claim_verifier.py`
-- [ ] T070 [US4] Generate separate full Chinese transcript, Chinese digest blog and structured single-narrator script artifacts in `src/services/podcast_digest.py`
-- [ ] T071 [US4] Add process/status/retry/publish/unpublish/takedown endpoints in `src/api/routers/admin_podcasts.py`
-- [ ] T072 [P] [US4] Add processing/cost/review API calls in `frontend/src/api.js`
-- [ ] T073 [US4] Add admin pipeline, evidence review and publish UI in `frontend/src/components/PodcastProcessingPanel.jsx`
-- [ ] T074 [P] [US4] Add eligibility/lease/retry/idempotency/provider tests in `tests/test_podcast_processing.py`
-- [ ] T075 [P] [US4] Add transcript/translation/diarization QA, map-reduce and fabricated-evidence tests in `tests/test_podcast_digest.py`
-- [ ] T076 [US4] Add isolated real-provider smoke with explicit budget cap in `scripts/smoke_podcast_processing.py`
-- [ ] T077 [US4] Add main-session long-podcast processing and takedown scenarios in `tests/e2e/podcast_digest.spec.js`
+- [ ] T048 Define provider-neutral async ASR interfaces, reconciliation rules, actual/estimated cost units and budget reservations.
+- [ ] T049 Implement opening/middle/end sample extraction and 6–10 minute sample ASR for uncertain candidates; label it as candidate evidence only.
+- [ ] T050 Implement Alibaba Paraformer-v2 batch ASR as the initial cost route and Tencent large-model ASR 2.0 as a low-confidence upgrade route.
+- [ ] T051 Benchmark FunASR/SenseVoice for Chinese and faster-whisper/WhisperX for English against the bilingual gold set and documented licenses.
+- [ ] T052 Add diarization/alignment, language routing, transcript normalization and the same P3A QA contract.
+- [ ] T053 Handle request-sent/response-unknown provider states by querying provider task ID before retry; never blindly double-submit.
+- [ ] T054 Enforce configurable monthly, source and episode budgets before reservation and before final provider submission; trial defaults are 1,500 CNY warning / 2,000 CNY hard cap, and ordinary page views cannot enqueue work.
+- [ ] T055 Add throughput/backpressure metrics and size the queue/worker controls for elastic 100–500 hours/day input; paid processing volume follows the current budget and can expand without schema changes.
+- [ ] T056 Run cost, 429/timeout/restart/fencing, duplicate delivery and budget-exhaustion drills; save `artifacts/issue-7/p3b-report.md`.
 
-## Phase 7 — User Story 5: <=15-Minute Chinese AI Audio (P4)
+Exit gate: actual charges reconcile to attempts, no retry duplicates a paid task, and the monthly hard cap stops new processing without breaking previously published content.
 
-Story goal: approved condensed narration scripts become clearly disclosed, licensed single-narrator Chinese audio with a measured 900-second hard limit.
+## P4 — Precomputed Chinese digest audio
 
-Independent test: golden scripts exercise success, controlled rewrite, terminal review, bad-audio rejection, separate playback progress and rights revocation.
+Goal: turn reviewed narration scripts into one clearly disclosed, licensed, cached Chinese audio artifact.
 
-- [ ] T078 [P] [US5] Define the licensed fixed narrator registry, disclosure and provenance fields in `config/podcast-voices.json`
-- [ ] T079 [P] [US5] Define provider-neutral TTS and audio QA interfaces in `src/services/podcast_tts/providers.py`
-- [ ] T080 [US5] Implement managed single-voice semantic-segment synthesis, retry-safe chunking and deterministic pause/concatenation in `src/services/podcast_tts/cloud.py`
-- [ ] T081 [US5] Implement FFmpeg normalization, silence/truncation checks and ffprobe duration measurement in `src/services/podcast_audio_qa.py`
-- [ ] T082 [US5] Implement 901–960 reduction, >960 regeneration and two-attempt review fallback in `src/services/podcast_tts_pipeline.py`
-- [ ] T083 [P] [US5] Add Azure, Alibaba, Tencent and licensed self-hosted single-voice candidates to the blind listening/cost benchmark in `scripts/benchmark_podcast_tts.py`
-- [ ] T084 [US5] Implement short-lived digest audio serving, Range support and rights revocation in `src/api/routers/podcasts.py`
-- [ ] T085 [P] [US5] Add AI disclosure and original/digest variant contracts to `frontend/src/utils/podcast.js`
-- [ ] T086 [US5] Add original/digest selector and independent playback progress to `frontend/src/components/PodcastAudioPanel.jsx`
-- [ ] T087 [P] [US5] Add fixed-voice mapping, segment order, TTS rewrite/duration/audio-QA/revocation tests in `tests/test_podcast_tts.py`
-- [ ] T088 [US5] Add main-session desktop/mobile digest-audio scenarios in `tests/e2e/podcast_tts.spec.js`
+- [ ] T057 Obtain written contract answers for caching, repeated playback, target-audience distribution, AI marking, provider retention and voice rights.
+- [ ] T058 Blind-test Tencent premium/large-model fixed voices and Alibaba CosyVoice candidates on identical scripts; select one licensed platform narrator.
+- [ ] T059 Define provider-neutral TTS, voice registry and deterministic `script_hash + voice_id + model_version + settings` key.
+- [ ] T060 Implement semantic-segment synthesis, affected-segment retry, pauses, concatenation, loudness normalization and artifact caching.
+- [ ] T061 Enforce 12–13.5 minute target and 900-second hard limit with controlled script rewrite, at most two automatic attempts and human-review fallback.
+- [ ] T062 Publish/cache audio once externally and synchronize it through Bundle v2; user playback never calls TTS.
+- [ ] T063 Enable the Chinese-digest player in the existing page mode, with AI/original attribution, audio transcript and independent progress.
+- [ ] T064 Add Range/seek, truncation/silence/loudness, voice misuse, commercial-rights, budget and revocation tests.
+- [ ] T065 Measure text-mode adoption and evidence click-through before expanding TTS coverage; keep TTS independently disableable.
+- [ ] T066 Save final costs, sample audio, ffprobe/QA, rights and E2E evidence in `artifacts/issue-7/sign-off.md`.
 
-## Phase 8 — Polish, Rollout and Final Integration
+Exit gate: every published audio is licensed, cached, attributable, <=900 seconds and removable; TTS remains optional to the text product.
 
-Goal: complete performance, accessibility, migration, security, cost and release validation in the Issue #7 main session.
-
-- [ ] T089 [P] Run full backend Podcast, migration, permission, feed and reader-shape regression suites and record them in `artifacts/issue-7/final-backend-report.md`
-- [ ] T090 [P] Run frontend lint/build/accessibility checks and record them in `artifacts/issue-7/final-frontend-report.md`
-- [ ] T091 Run legacy and fresh database migration rehearsals and record schema/hash evidence in `artifacts/issue-7/migration-report.md`
-- [ ] T092 Run main-session desktop and mobile browser E2E on isolated ports and save screenshots in `artifacts/issue-7/e2e/`
-- [ ] T093 Run approved real-RSS smoke without production database mutation and save request/cost evidence in `artifacts/issue-7/rss-smoke-report.md`
-- [ ] T094 Run rights-deny, budget-deny, provider-failure, input-change and takedown drills in `artifacts/issue-7/failure-drill-report.md`
-- [ ] T095 Audit logs/API responses/artifacts for provider secrets, private storage URIs and transcript leakage in `artifacts/issue-7/security-review.md`
-- [ ] T096 Rebase the Issue #7 integration branch onto the final target branch and resolve only reviewed Podcast conflicts in `specs/007-podcast-intelligence/integration-log.md`
-- [ ] T097 Update active documentation and remove superseded Issue #7 design claims in `docs/README.md` and `docs/podcast-wave-plan.md`
-- [ ] T098 Update `src/version.py`, `pyproject.toml`, controlled lock/export files and release notes only after final acceptance in `src/version.py`
-- [ ] T099 Obtain product confirmation for derivative visibility and on-demand TTS; record the confirmed full-Chinese/single-narrator decisions in `specs/007-podcast-intelligence/decisions.md`
-- [ ] T100 Complete main-session sign-off with commit range, tests, screenshots, sample audio, ffprobe report and residual risks in `artifacts/issue-7/sign-off.md`
-
-## Dependencies
+## Dependency graph
 
 ```text
-Setup → Foundational
-Foundational → US1
-US1 → US2
-US2 → US3
-US2 + US3 → US4
-US4 → US5
-US1..US5 → Final Integration
+P0 → P0.5 → P1 → P2 → P3A → P3B → P4
 ```
 
-- US2 domain work may start after P1 contracts/schema are stable, but reader visibility cannot ship before US1 enforcement.
-- US3 metadata analysis can prototype beside US2, but transcript-based scoring depends on normalized transcript segments.
-- US4 processing does not start until rights, source and episode eligibility contracts are integrated.
-- US5 consumes only the reviewed `narration_script_zh` artifact from US4; it never summarizes the transcript independently.
-
-## Worktree Allocation
-
-| Work package | Branch/worktree | Owns | Must not own |
-|---|---|---|---|
-| Contract | `wp/issue-7-contract` | enums, OpenAPI, errors | migrations, UI |
-| Schema | `wp/issue-7-schema` | `src/models/db.py`, Alembic | business UI |
-| P1 backend | `wp/issue-7-admission` | preview/admission/relevance/API | global CSS, migrations after handoff |
-| P1 frontend | `wp/issue-7-admission-ui` | admission UI/API client | backend policy |
-| P2 backend | `wp/issue-7-domain` | episode/rights/publisher assets/API | TTS |
-| P2 frontend | `wp/issue-7-podcast-ui` | show/episode/player/translation | schema |
-| P3 pipeline | `wp/issue-7-digest` | jobs/ASR/QA/digest/evidence | TTS voice selection |
-| P3 admin UI | `wp/issue-7-processing-ui` | processing review/cost UI | pipeline semantics |
-| P4 TTS | `wp/issue-7-tts` | TTS/audio QA/artifacts | transcript summarization |
-| E2E | `wp/issue-7-e2e` | fixtures/scenarios/reports | business fixes |
-
-## Parallel Execution Examples
-
-### US1
-
-- After T013–T014 integrate, T016, T017, T025, T026, T028 and T031 can run in parallel.
-- T018–T024 depend on the policy/contracts and converge before T027/T030/T033.
-
-### US2/US3
-
-- Publisher asset parsing, episode identity and frontend API scaffolding can run in parallel after the P2 schema.
-- Metadata summary/taxonomy work can run beside playback UI, but transcript-backed analysis waits for normalized transcript segments.
-
-### US4/US5
-
-- Artifact storage, provider interfaces and benchmark adapters can run in parallel after the P3 schema.
-- Claim verification follows normalized transcripts and map output.
-- TTS provider/voice benchmarks can begin before P4 integration, but production TTS waits for the reviewed narration artifact contract.
-
-## Suggested MVP
-
-The first independently releasable increment is P0 + US1:
-
-- Dedicated Podcast catalog and original playback baseline.
-- Source admission before activation/subscription/fetch.
-- Mixed-source episode filtering.
-- Manual review/override and drift reassessment.
-
-ASR, Chinese digest and TTS remain disabled until their later acceptance gates pass.
+- P1 contract and non-schema UI fixtures may be prepared beside P0.5, but enforcement waits for P0.5 sync correctness.
+- P3A must precede P3B so product/schema/sync bugs are not debugged while paying ASR costs.
+- TTS voice/legal benchmarking may begin early, but no production TTS integration precedes reviewed narration artifacts and Bundle v2.
+- Version bumps and release notes occur only after final integration acceptance.

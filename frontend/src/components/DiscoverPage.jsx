@@ -105,8 +105,6 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
  * join 不到的成员自然不渲染,与后端批量端点的 unavailable 口径一致)。
  */
 export default function DiscoverPage({
-  // 从特定容器进入添加来源时锁定形态；当前 Podcast 使用此入口隔离其它来源。
-  shapeScope = null,
   sources,
   subscribedIds,
   loading = false,
@@ -125,14 +123,11 @@ export default function DiscoverPage({
   userSourcesEnabled = false,
   onAddCustomSource = null,
 }) {
-  const scopedShape = ['article', 'bulletin', 'social', 'podcast'].includes(shapeScope)
-    ? shapeScope
-    : null;
   const [tab, setTab] = useState('sources'); // sources | collections
   const [addOpen, setAddOpen] = useState(false); // 添加自定源浮层
   const [shape, setShape] = useState('all');   // all | article | bulletin | social | podcast
-  const activeTab = scopedShape ? 'sources' : tab;
-  const activeShape = scopedShape || shape;
+  const activeTab = tab;
+  const activeShape = shape;
   const [query, setQuery] = useState('');
   // 排序小开关:默认(收录量降序,原有秩序)⇄ 订阅降序(全站订阅人数,选源社会证明)
   const [sortBySubs, setSortBySubs] = useState(false);
@@ -253,10 +248,10 @@ export default function DiscoverPage({
     </div>
   );
 
-  const inDetail = !scopedShape && Boolean(activeCollection);
+  const inDetail = Boolean(activeCollection);
 
   return (
-    <main className="reader-disc" aria-label={scopedShape === 'podcast' ? '添加播客' : '发现'}>
+    <main className="reader-disc" aria-label="发现">
       <div className="reader-disc-head">
         <div className="reader-disc-head-inner">
           {inDetail ? (
@@ -289,44 +284,40 @@ export default function DiscoverPage({
           ) : (
             <>
               <div className="reader-disc-title-row">
-                <span className="reader-disc-title">{scopedShape === 'podcast' ? '添加播客' : '发现'}</span>
+                <span className="reader-disc-title">发现</span>
                 <span className="reader-disc-hint">
-                  {scopedShape === 'podcast'
-                    ? '仅显示可订阅的播客来源'
-                    : activeTab === 'collections'
-                      ? '按主题策展的来源合集,一键整组订阅'
-                      : '浏览全站收录的来源,一键订阅到你的阅读器'}
+                  {activeTab === 'collections'
+                    ? '按主题策展的来源合集,一键整组订阅'
+                    : '浏览全站收录的来源,一键订阅到你的阅读器'}
                 </span>
               </div>
               <div className="reader-disc-tools">
                 {/* 目录视图切换:平铺源目录 ⇄ 策展合集 */}
-                {!scopedShape && (
-                  <span className="reader-seg reader-disc-viewseg" role="group" aria-label="目录视图">
-                    {[['sources', '源'], ['collections', '合集']].map(([key, label]) => (
-                      <button
-                        key={key}
-                        type="button"
-                        className={`reader-seg-btn ${activeTab === key ? 'is-on' : ''}`}
-                        onClick={() => { setTab(key); disarmConfirm(); }}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </span>
-                )}
+                <span className="reader-seg reader-disc-viewseg" role="group" aria-label="目录视图">
+                  {[['sources', '源'], ['collections', '合集']].map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`reader-seg-btn ${activeTab === key ? 'is-on' : ''}`}
+                      onClick={() => { setTab(key); disarmConfirm(); }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </span>
                 <label className="reader-disc-search">
                   <Search className="h-[13px] w-[13px]" aria-hidden="true" />
                   <input
                     type="search"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder={activeTab === 'collections' ? '筛选合集…' : scopedShape === 'podcast' ? '筛选播客名称或简介…' : '筛选来源名称或简介…'}
-                    aria-label={activeTab === 'collections' ? '筛选合集' : scopedShape === 'podcast' ? '筛选播客' : '筛选来源'}
+                    placeholder={activeTab === 'collections' ? '筛选合集…' : '筛选来源名称或简介…'}
+                    aria-label={activeTab === 'collections' ? '筛选合集' : '筛选来源'}
                   />
                 </label>
                 {activeTab === 'sources' && (
                   <>
-                    {!scopedShape && userSourcesEnabled && onAddCustomSource && (
+                    {userSourcesEnabled && onAddCustomSource && (
                       <button
                         type="button"
                         className="reader-disc-add"
@@ -337,20 +328,18 @@ export default function DiscoverPage({
                         添加源
                       </button>
                     )}
-                    {!scopedShape && (
-                      <span className="reader-seg reader-disc-seg" role="group" aria-label="形态筛选">
-                        {[['all', '全部'], ['article', '文章'], ['bulletin', '动态'], ['social', '社交'], ['podcast', '播客']].map(([key, label]) => (
-                          <button
-                            key={key}
-                            type="button"
-                            className={`reader-seg-btn ${shape === key ? 'is-on' : ''}`}
-                            onClick={() => setShape(key)}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </span>
-                    )}
+                    <span className="reader-seg reader-disc-seg" role="group" aria-label="形态筛选">
+                      {[['all', '全部'], ['article', '文章'], ['bulletin', '动态'], ['social', '社交'], ['podcast', '播客']].map(([key, label]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          className={`reader-seg-btn ${shape === key ? 'is-on' : ''}`}
+                          onClick={() => setShape(key)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </span>
                     {/* 排序小开关(icon-only ghost):点击在「默认排序 ⇄ 订阅降序」间切换
                         (组内排序,不打散角色分组);状态靠点亮态 + tooltip 表达 */}
                     <button

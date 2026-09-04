@@ -145,9 +145,9 @@ One immutable-versioned run for one episode/input/pipeline.
 
 | Group | Fields |
 |---|---|
-| Identity | `id`, `episode_id`, optional `job_id`, `input_fingerprint`, `pipeline_version`, `policy_version` |
+| Identity | `id`, `episode_id`, optional `job_id`, `input_fingerprint`, `pipeline_version`, `policy_version`, `requested_target`, `selection_source=policy|editor`, optional `requested_by`, required-on-editor `request_reason`, `idempotency_key` |
 | Eligibility | `eligibility_status`, `eligibility_reasons_json` |
-| Runtime | `processing_status`, `stage`, `attempt_count`, `lease_owner`, `lease_expires_at`, `next_retry_at` |
+| Runtime | `processing_status`, `stage`, `attempt_count`, `lease_owner`, `lease_expires_at`, `heartbeat_at`, monotonic `fencing_token`, `next_retry_at` |
 | Providers | ASR/LLM/TTS provider, model and revision fields |
 | Metering | audio minutes, input/output tokens, TTS chars/audio tokens, stage cost JSON, estimated and actual total cost |
 | Error | stable `error_code`, redacted `error_message` |
@@ -156,7 +156,6 @@ One immutable-versioned run for one episode/input/pipeline.
 Eligibility enum:
 
 - `unknown`
-- `not_required_short`
 - `blocked_source`
 - `blocked_rights`
 - `rejected_relevance`
@@ -177,7 +176,13 @@ Processing enum:
 - `cancelled`
 - `superseded`
 
-Unique `(episode_id, input_fingerprint, pipeline_version, requested_target)`. `force=true` creates a new version/target request, never an in-place reset.
+Unique `(episode_id, input_fingerprint, pipeline_version, requested_target)` for an effective run; repeated API submissions reuse it through `idempotency_key`. An editor request changes only the candidate-selection source. It still evaluates source, rights, input-safety, budget and resource gates before queueing. An intentional rerun creates a new request/pipeline version, never an in-place reset.
+
+`JobRecord` is only a user-visible batch/progress shell. Workers claim `PodcastProcessingRecord` rows directly; no API-process closure or `asyncio.create_task` is part of the correctness boundary.
+
+### PodcastStageAttemptRecord
+
+Each provider or deterministic stage attempt records `processing_id`, `stage`, `attempt_no`, `fencing_token`, input/output hashes, provider/model/task ID, submission/reconciliation state, usage, estimated/actual cost, timestamps and a redacted error. A request whose submission outcome is unknown must reconcile by provider task ID before a retry can submit again.
 
 ### PodcastArtifactRecord
 
@@ -191,7 +196,7 @@ Unique `(episode_id, input_fingerprint, pipeline_version, requested_target)`. `f
 | `content_hash` | content-addressed identity |
 | content | bounded `inline_text` or `storage_uri`, never both required |
 | media | MIME, bytes, duration, character count |
-| publication | `is_public`, `published_at`, `expires_at` |
+| publication | `audience`, `publication_status`, `published_at`, `expires_at`, `rights_version` |
 | audit | `provenance_json`, `qa_json`, timestamps |
 
 Unique `(episode_id, kind, version)` and `(processing_id, kind, content_hash)`.
@@ -216,6 +221,8 @@ For `transcript_zh`, `language` is `zh-CN`, `source_segment_id` is mandatory and
 
 ### PodcastNarrationSegmentRecord
 
+This is the logical narration-segment schema. P3A may store it inside a validated immutable `narration_script_zh` artifact; create a query table only when administration requires cross-episode SQL access.
+
 | Field | Meaning |
 |---|---|
 | `artifact_id`, `ordinal` | Ordered narration-script segment |
@@ -230,6 +237,8 @@ Unique `(artifact_id, ordinal)`. The narrator never maps to, imitates or claims 
 
 ### PodcastClaimRecord
 
+This is the logical evidence schema. P3A may store it inside a validated immutable evidence-fact-pack artifact; create a query table only when product queries justify the additional fact source.
+
 | Field | Meaning |
 |---|---|
 | `artifact_id`, `ordinal` | Digest claim identity |
@@ -242,6 +251,13 @@ Unique `(artifact_id, ordinal)`. The narrator never maps to, imitates or claims 
 
 Published digest claims may only be `supported` or `attributed_opinion`.
 
+### ArchiveChangeRecord / ArchiveSyncReceiptRecord
+
+- External `ArchiveChangeRecord`: monotonic `seq`, entity kind/id/version/action, payload hash, audience and creation time. It is written in the same transaction as publish, unpublish or takedown.
+- Internal `ArchiveSyncReceiptRecord`: producer, last fully committed sequence, bundle/signature hash, import statistics and committed time.
+- A bundle containing any invalid entity or blob never advances the receipt. Offset pagination is not a valid synchronization cursor.
+- Blob truth is the content-addressed artifact; an internal Reader projection only stores a stable local artifact API identifier.
+
 ## 6. Scoring Records
 
 Podcast analysis may reuse the broader analysis subsystem after it is merged, but its contract must expose:
@@ -252,7 +268,8 @@ Podcast analysis may reuse the broader analysis subsystem after it is merged, bu
 - `score_dimensions_json`
 - `value_labels_json`
 - `score_confidence`
-- `analysis_basis` = `metadata` or `transcript`
+- `analysis_basis` = `show_notes`, `publisher_transcript` or `asr_transcript`
+- `input_artifact_hash` and `supersedes_analysis_version`
 - `evidence_segment_ids_json`
 - provider/model/prompt/scoring versions
 - model result and optional effective manual override
@@ -275,20 +292,22 @@ approved + review due → sampling (old decision remains stale, not silently tru
 ### Episode processing
 
 ```text
-discovered → metadata_ready → eligibility_check
-  ├─ <=1800s                 → not_required_short
+discovered → show_notes_preanalysis → premium_candidate
   ├─ source/rights failure   → blocked_*
-  ├─ relevance/value failure → rejected_*
+  ├─ relevance/prevalue fail → not_selected | editor approval
   ├─ budget failure          → over_budget
-  └─ pass                    → eligible → queued
+  ├─ uncertain/no transcript → sample_asr → authorize | rejected_*
+  └─ pass/editor approval    → processing_authorized → queued
 
 queued → publisher_transcript_fetch
   ├─ usable transcript → transcript_qa
   └─ none              → download → probe/normalize → ASR → transcript_qa
 
-transcript_qa → value_score
+transcript_qa → transcript_value_score
   ├─ low value → rejected_value
-  └─ pass      → summarize_map → summarize_reduce → claim_verify
+  └─ pass      → premium_ready → summarize_map → summarize_reduce → claim_verify
+
+Duration is recorded for cost estimation, scheduling, resource caps and digest-length planning only. It may improve candidate recall (for example, `is_long_form = duration_seconds > 1800`) but never creates an eligibility transition or blocks a shorter high-value episode. Editor approval can override model selection, not rights, input-safety or budget audit.
                → script_generate → awaiting_review → publish_text
                → TTS → audio_package → audio_qa → publish_audio
 ```
@@ -323,12 +342,13 @@ Queue delivery is at least once; writes use lease ownership plus idempotent upse
 
 ## 9. Migration Sequence
 
-1. P1 migration: source profile and append-only source review.
-2. Backfill all existing Podcast sources to `review_required`; curated-source provenance is retained but does not auto-pass scope.
-3. P2 migration: episode, rights and playback state.
-4. Resumable idempotent backfill from existing Podcast `extensions_json`.
-5. Switch reads to normalized records with legacy fallback; keep API projection stable.
-6. P3 migration: processing, artifact, segment and claim evidence.
-7. Only after verification, stop writing large processing facts to `extensions_json`.
+1. P1 migration: source profile/decision, episode, dimensioned rights and playback state.
+2. Shadow-review existing Podcast sources; curated provenance does not auto-pass scope.
+3. Resumable idempotent backfill from existing Podcast `extensions_json`; switch reads with legacy fallback.
+4. P2 migration: processing/attempt, immutable artifact, archive change and sync receipt.
+5. Ship Bundle v2 and internal materialization before any P3 provider integration.
+6. Add transcript segment indexes only for Reader query performance; keep immutable transcript artifacts as the cross-environment truth.
+7. Add narration/claim query tables later only if validated artifact data is insufficient for real queries.
+8. Only after verification, stop writing large processing facts to `extensions_json`.
 
 One agent owns `src/models/db.py` and Alembic migrations for each integration window.

@@ -61,13 +61,13 @@ export default function PodcastAudioPanel({ article }) {
         </div>
       </div>
       {podcast.audio_url ? (
-        <AudioTrack label="原版" duration={originalDuration} src={podcast.audio_url} />
+        <AudioTrack label="原节目" duration={originalDuration} src={podcast.audio_url} />
       ) : (
-        <p className="podcast-audio-unavailable">原版音频暂不可播放</p>
+        <p className="podcast-audio-unavailable">原节目音频暂不可播放</p>
       )}
       {podcast.condensed_audio_url && (
         <AudioTrack
-          label="精简版"
+          label="中文精华"
           duration={condensedDuration}
           src={podcast.condensed_audio_url}
           generated

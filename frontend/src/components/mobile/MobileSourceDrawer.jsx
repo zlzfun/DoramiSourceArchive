@@ -119,7 +119,7 @@ export default function MobileSourceDrawer({
         <div className="m-drawer-foot">
           <button type="button" className="m-drawer-disc" onClick={pick(onOpenDiscover)}>
             <Compass aria-hidden="true" />
-            <span>{mode === 'podcast' ? '添加播客' : '发现更多来源'}</span>
+            <span>发现更多来源</span>
           </button>
         </div>
       </aside>

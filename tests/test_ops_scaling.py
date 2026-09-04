@@ -118,6 +118,31 @@ def test_fetch_runs_items_total_days(monkeypatch, tmp_path):
         assert body["total"] == 3
 
 
+def test_fetch_runs_filter_matches_source_config_logical_id(monkeypatch, tmp_path):
+    app_module = _setup(monkeypatch, tmp_path, "m09-source-config.db")
+    with Session(app_module.db_sink.engine) as session:
+        session.add(FetchRunRecord(
+            fetcher_id="generic_podcast_rss",
+            params_json='{"source_id":"podcast_20vc","feed_url":"https://example.com/feed"}',
+            status="failed",
+            started_at=f"{_day(0)}T08:00:00",
+        ))
+        # 历史坏 JSON 不得让逻辑 source_id 过滤整页 500。
+        session.add(FetchRunRecord(
+            fetcher_id="other_fetcher",
+            params_json="not-json",
+            status="failed",
+            started_at=f"{_day(0)}T09:00:00",
+        ))
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        body = client.get("/api/fetch-runs?fetcher_id=podcast_20vc").json()
+        assert body["total"] == 1
+        assert body["items"][0]["fetcher_id"] == "generic_podcast_rss"
+
+
 def test_collection_job_runs_items_total_days(monkeypatch, tmp_path):
     app_module = _setup(monkeypatch, tmp_path, "m09b.db")
     with Session(app_module.db_sink.engine) as session:

@@ -1,10 +1,11 @@
 # Implementation Plan: AI/科技播客专栏与中文导读
 
-**Branch**: `feat/issue-7-podcast-intelligence`
+**Accepted Baseline**: `main@b5864d3`
 **Spec**: [spec.md](./spec.md)
 **Voice stack decision**: [voice-stack-decision.md](./voice-stack-decision.md)
+**Design review**: [design-review-2026-09-03.md](../../artifacts/issue-7/design-review-2026-09-03.md)
 **Issue**: [#7](https://github.com/zlzfun/DoramiSourceArchive/issues/7)
-**Integration Worktree**: `/Users/frankzhang/workspace/dorami/.worktrees/dorami-issue-7`
+**Next Worktree**: 产品与架构复核完成后，从届时最新 `main` 新建；不复用旧集成 worktree 假设
 
 ## 1. Delivery Outcome
 
@@ -14,17 +15,23 @@ Issue #7 交付一条逐级增量的 Podcast 产品线：
 P0 已迁移基线
 Podcast RSS metadata + 专用目录 + 桌面/移动原音频播放器
         ↓
-P1 源/单集准入
+P0.5 事实与同步止血
+简介初评标识 + Reader sync 修复 + 暗色/Markdown 校正
+        ↓
+P1 源/单集准入与领域模型
 AI/科技范围、SSRF/访问、重复、漂移、人工审核
         ↓
-P2 播客领域化
-节目/单集/权利/播放状态 + 官方 transcript/chapters + 摘要/评分/标签
+P2 外网产物与内网同步底座
+Artifact Store + Archive Bundle v2 + 内网 materialize
         ↓
-P3 高价值长播客
-源语言 ASR/说话人分离 + 完整中文转录 + 证据化中文精华博客
+P3A 零 ASR 文字闭环
+发布者逐字稿 + 完整中文转录 + 深评/精华 + 内网双模式
+        ↓
+P3B ASR 回退
+抽样筛选 + 批量 ASR/说话人 + QA/成本闸
         ↓
 P4 中文音频导读
-固定单声线 TTS + <=900s QA + 双播放器/撤权
+固定单声线 TTS + <=900s QA + 预生成同步/撤权
 ```
 
 ## 2. Technical Context
@@ -36,7 +43,7 @@ P4 中文音频导读
 | Feed parsing | Reuse `feedparser` and the existing `generic_podcast_rss` fetcher |
 | Source identity | `SourceConfigRecord` remains source configuration truth; Podcast profile/reviews are side tables |
 | Episode compatibility | Existing `ArticleRecord(content_type=podcast_episode)` remains delivery-compatible; domain facts move to dedicated tables in P2 |
-| Background work | Persisted jobs with lease, retry and idempotency; no process-memory-only correctness |
+| Background work | Current `JobRecord` is only a UI shell around process-memory tasks; Podcast workers add DB claim, renewable lease, heartbeat, fencing, provider task ID and stage attempts |
 | LLM | Reuse OpenAI-compatible client behind provider-neutral adapters; structured JSON and prompt versioning |
 | ASR | Publisher transcript first; managed diarization benchmark first, with `faster-whisper` + WhisperX/FunASR as self-hosted candidates |
 | Translation | Source transcript and full Chinese transcript are separate evidence-linked artifacts; glossary/entity QA is mandatory |
@@ -45,21 +52,21 @@ P4 中文音频导读
 | Rights | Default `link_only`; text/audio derivative permissions are independent and mandatory before publication |
 | Observability | Per-stage latency, retry, tokens/minutes/chars, provider and actual/estimated cost |
 | API compatibility | `/api/articles*` keeps the current additive top-level `podcast` projection |
+| Deployment split | External collector performs all provider calls and publishes immutable bundles; internal sync/reader only validates, stores and serves local artifacts |
 
-No unresolved technical clarification blocks P1/P2. P3/P4 product decisions are documented in `spec.md` with safe defaults.
+The processing order and trial budget are settled. The internal original-audio network policy and derivative-distribution rights remain explicit package gates in `decisions.md`; no implementation should silently choose them.
 
 ## 3. Repository and Branch Baseline
 
-The dedicated branch was created from `origin/main` at `a263326` so it does not inherit the article-analysis/personal-brief feature branch.
+2026-09-03 重新核对后的事实基线：
 
-The following Podcast-only work was migrated in dependency order:
+1. Podcast P0 已作为 squash commit `b5864d3` 合入并推送到 `main` / `origin/main`，不再存在“待迁入独立 Issue #7 分支”的前置步骤。
+2. P0 包含 Podcast RSS metadata、兼容文章投影、桌面/移动 Reader、Podcast-only 发现目录及 36 个策展条目（35 ready、1 blocked）。
+3. 文章分析与个人早报已经先于 P0 合入 main；Podcast show notes 当前会进入通用 `ArticleAnalysisRecord`，所以后续元数据初评必须复用现有摘要/质量/标签能力，不再假设该系统缺席。
+4. 本地验收数据中已有 35 个启用 Podcast 来源与 35 个单集；35 个均有原音频，30 个超过 30 分钟，4 个携带发布者 transcript 定位信息。
+5. 版本升级仍推迟到最终发布集成；后续里程碑从届时最新 `main` 创建新工作分支和隔离 worktree。
 
-1. Podcast RSS backend MVP (`9c93ca4`, equivalent to work-package commit `8fe4b94`; only one copy retained).
-2. Podcast reader MVP and original design (`9460201`), manually separated from article-analysis UI context.
-3. Podcast-only discovery scoping (`bcd92e9`).
-4. Curated Podcast catalog (`040a5fa`).
-
-Premature `3.45/3.46` version bumps and unrelated taxonomy/personal-brief files were deliberately excluded. Versioning is deferred until final integration with the then-current `main`.
+P0 基线报告见 `artifacts/issue-7/p0-test-report.md` 与 `artifacts/issue-7/p0-frontend-report.md`。
 
 ## 4. Architecture Decisions
 
@@ -70,16 +77,17 @@ Every stage must be cheaper than the stage to its right:
 ```text
 feed preview
 → source scope
-→ episode metadata relevance
-→ duration/rights/budget
+→ episode metadata relevance/preliminary value
+→ duplicate/rights/input/budget/editor authorization
 → publisher transcript
-→ ASR
+→ sample ASR when uncertain
+→ full ASR when authorized
 → deep value score
 → digest blog
 → TTS
 ```
 
-An item rejected on the left must not allocate work on the right. `duration > 1800` is only a candidate flag.
+An item rejected on the left must not allocate work on the right. Duration is a cost/scheduling feature and optional recall signal; it never decides premium eligibility. `duration > 1800` may label an item as long-form, but shorter episodes can still be selected by value or an editor.
 
 ### 4.2 Keep four concepts independent
 
@@ -107,6 +115,16 @@ Source and episode rights are stored separately; episode deny overrides source a
 ### 4.6 Provider-neutral, revision-locked processing
 
 Transcript, digest and TTS keys incorporate input hash, provider/model revision, prompt/policy version and processing settings. Reprocessing creates a new version and supersedes the old one; it does not overwrite evidence in place.
+
+### 4.7 Precompute outside, consume inside
+
+RSS collection, admission, ASR, translation, deep analysis, digest and TTS run only in the external collector environment. A publish transaction writes immutable artifacts plus an `ArchiveChangeRecord`. The internal sync agent pulls signed Bundle v2 manifests by monotonic `change_seq`, downloads blobs into staging, verifies signature/hash/bytes/MIME, atomically materializes the new local version and only then advances its checkpoint.
+
+Archive Sync v1 is not sufficient: it only transports Article JSONL, does not transport analysis/tags/media, and offset/partial-import behavior cannot guarantee a lossless Podcast pipeline. Bundle v2, local CAS, tombstones and receipt/checkpoint records are prerequisites for P3, not rollout polish.
+
+### 4.8 One page-level Podcast mode
+
+The episode page has `original` and `chinese_digest` as its primary state. Switching mode changes the single player, default content and timeline together while preserving independent playback positions. Transcript/search/language/chapters are secondary controls. Long transcripts load by chapter and segment cursor; evidence links always resolve back to the source-language segment and original timeline.
 
 ## 5. Source Admission Policy
 
@@ -142,11 +160,19 @@ Technical/security failures use `blocked`, never `rejected_scope`.
 
 ### Episode metadata pass
 
-Use title, show notes, categories, source profile and existing controlled taxonomy to estimate relevance and preliminary value. This pass may hide obvious off-topic episodes, but cannot claim a deep content summary.
+Use title, show notes, categories, source profile and existing controlled taxonomy to estimate relevance and preliminary value. Existing Podcast analysis is exactly this path and must be presented as `analysis_basis=show_notes` / “简介初评”. This pass may hide obvious off-topic episodes, but cannot claim a deep content summary or a final premium decision.
+
+Episode state is deliberately staged:
+
+- `premium_candidate`: cheap metadata result only.
+- `processing_authorized`: rights/input/budget plus high-confidence metadata or editor approval allow full processing.
+- `premium_ready`: complete transcript QA and transcript-backed value analysis pass; only this state is presented as 精品.
 
 ### Transcript pass
 
 Prefer Podcasting 2.0 publisher transcript. Otherwise ASR runs only if duration, rights, metadata relevance/value, resource and budget gates pass.
+
+When a metadata-only candidate is uncertain and has no publisher transcript, transcribe 6–10 minutes sampled across opening/middle/end before authorizing full ASR. Sample analysis remains a candidate signal and is never displayed as a full summary.
 
 Transcript QA validates monotonic timestamps, language confidence, speech coverage, abnormal repetition, unexplained gaps and empty text. Diarization and identity attribution are separate: speaker labels remain stable anonymous A/B/C unless publisher metadata or an editor provides reliable identity evidence.
 
@@ -182,35 +208,45 @@ The source transcript is split on chapter/sentence/speaker boundaries into bound
 
 ## 7. Delivery Phases
 
-### P0 — Migrated baseline
+### P0 — Accepted baseline
 
-Current branch already contains Podcast RSS metadata parsing, additive article projection, dedicated desktop/mobile Podcast container, original-audio player, source-only discovery mode and a curated source catalog.
+Podcast RSS metadata parsing, additive article projection, dedicated desktop/mobile container and original-audio player are already on `main@b5864d3`. That baseline also introduced a Podcast-only discovery branch; P0.5 restores every discovery entry to the shared full source catalog.
 
-Exit gate: existing tests, frontend build/lint and main-session browser E2E pass on the dedicated worktree.
+### P0.5 — Fact and sync stabilization
 
-### P1 — Source admission and episode relevance
+Label every current Podcast result as show-notes preliminary analysis; retire `processing_eligible` in favor of descriptive `is_long_form` without implying eligibility; restore the shared full “发现更多来源” catalog; correct the misleading show-notes reading time, Podcast dollar/math rendering and dark-theme inheritance. Fix real reader-role remote-sync scheduling/status access, make partial failures preserve the checkpoint, move to stable keyset cursors and recover stale in-memory jobs. Decide how an internal terminal reaches original enclosure audio.
 
-Deliver profile/review schema, safe sampler, deterministic decision service, preview/import tokens, manual decisions, drift review, central fetch guard, catalog visibility and metadata episode filtering.
+Exit gate: current 35 episodes never present show-notes analysis as full-audio truth; Chromium/WebKit/Firefox dark snapshots pass; a failed sync line cannot advance the cursor; a reader-only deployment can operate and inspect sync.
 
-Exit gate: core/mixed/rejected/blocked/insufficient-sample cases pass API, migration and browser E2E; preview downloads zero audio; imported off-scope feeds cannot be subscribed or fetched.
+### P1 — Admission and Podcast domain
 
-### P2 — Podcast domain and summary experience
+Deliver source profile/decisions, safe preview, central fetch guard, shadow review of the existing 35 sources, normalized episode/rights/playback records, candidate/authorized state, Podcasting 2.0 transcript/chapters/license ingestion and basis-aware current analysis projection. Add a dedicated Podcast collection-management surface with source health/scheduling/manual fetch, episode processing state and an audited per-episode “生成精品播客” action.
 
-Deliver episode/rights/playback records, Podcasting 2.0 transcript/chapters/license ingestion, show/episode APIs, original/translated view, structured metadata summaries, preliminary/deep analysis labels and admin rights management.
+Exit gate: off-scope feeds cannot be subscribed/fetched; existing approved sources are not abruptly removed; source trust cannot bypass topic/rights gates; show-notes and transcript analyses render different basis labels.
 
-Exit gate: publisher transcript path is evidence-linked and causes zero ASR calls; link-only items expose no derivative generation/publish action.
+### P2 — Artifact Store and Archive Bundle v2
 
-### P3 — ASR, full Chinese transcript and digest
+Deliver local/S3-compatible CAS, immutable artifact and stage-attempt records, publish outbox/change sequence, signed manifests, blob/tombstone export, internal staging/import/materialization, local media serving and offline-package parity.
 
-Deliver processing/artifact/segment schema, lease/retry/idempotency/cost accounting, publisher-transcript-first source normalization, managed ASR/diarization, optional self-hosted benchmark adapters, full evidence-linked Chinese transcript, transcript/translation QA, final value scoring, map/reduce/verifier, Chinese digest blog and review/publish/takedown.
+Exit gate: a complete bundle switches versions atomically; any corrupt/missing entity or blob leaves the previous version and checkpoint intact; revoked artifacts disappear without exposing external storage/provider URIs.
 
-Exit gate: 1800/1801 boundary, publisher-transcript bypass, retries, rights/budget failure, bad transcript/translation and fabricated evidence all pass; every published premium result has a full Chinese transcript and every key claim has a valid source segment/time span.
+### P3A — Publisher-transcript vertical slice
 
-### P4 — <=15-minute AI audio
+Use the four currently discovered publisher transcript URLs to produce normalized source transcripts, complete aligned Chinese transcripts, transcript-backed score/tags/summary, evidence fact packs, digest reading copy and narration scripts. Sync the published text artifacts through Bundle v2 and ship the page-level original/Chinese-digest experience plus chapter/cursor transcript reading.
 
-Deliver a fixed-narrator voice registry, provider-neutral TTS adapter, semantic-segment synthesis, audio concatenation/normalization, ffprobe QA, controlled rewrite loop, digest audio serving, dual progress and rights revocation.
+Exit gate: the vertical slice makes zero ASR calls; every published premium item has full Chinese coverage and evidence timecodes; an internal reader can search, deep-link, switch modes and receive takedowns without internet provider access.
 
-Exit gate: all golden outputs <=900s; narrator voice is stable; AI disclosure visible; no cloned/impersonated voice; range/seek/desktop/mobile and revocation tests pass.
+### P3B — ASR fallback and budget funnel
+
+Add sampled candidate ASR, full batch ASR routing, diarization/alignment QA, renewable leases, heartbeat/fencing, provider-state reconciliation, actual cost ledger and managed/self-hosted benchmark adapters. Start with Alibaba Paraformer-v2, Tencent large-model ASR as an upgrade route, and FunASR/SenseVoice/faster-whisper as PoCs.
+
+Exit gate: rights/budget failure creates no provider call; ambiguous calls do not double-charge; the configured monthly cap (trial: 1,500 CNY warning / 2,000 CNY hard stop) controls paid work without constraining future scale; `premium_ready` is assigned only after complete transcript deep analysis.
+
+### P4 — Precomputed <=15-minute Chinese audio
+
+Blind-test Tencent licensed fixed voices and Alibaba CosyVoice candidates, then deliver one approved narrator, semantic-segment synthesis, deterministic cache keys, audio concatenation/normalization, ffprobe QA, Bundle v2 media sync, single-player switching and revocation. Ordinary reader visits never initiate TTS.
+
+Exit gate: all golden outputs <=900s; narrator voice and commercial rights are documented; AI disclosure is visible; range/seek/desktop/mobile and revocation tests pass; the monthly budget remains enforced.
 
 ## 8. Constitution and Repository Checks
 
