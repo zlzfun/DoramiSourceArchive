@@ -33,6 +33,9 @@
   已实现):读者贴 URL 自助添加私有 RSS 源(参照 Folo);方案 B 自助+隔离(不进公共目录/
   all 检索域/日报/archive sync),最简正文(feed 给什么存什么,preview 仅守门不分型),
   入库存储+媒体不预取+删源即清;技术底座复用 generic_rss + SourceConfigRecord(加 owner 列)。
+- ◉ [unified-news-scoring-plan.md](./unified-news-scoring-plan.md) — **统一新闻价值评分波(讨论定向,未动工,2026-09-05)**:
+  平台定位新闻价值为主,文章级评分只保留「重要性」一把尺子;公共日报 map 逐篇打分退役、改读入库分析,
+  来不及分析的候选由日报就地无上限补评;保留讨论脉络与被推翻的双轴/杠杆方案作决策依据。
 - ◉ [podcast-wave-plan.md](./podcast-wave-plan.md) — Podcast 专栏与长播客精华设计:博客/播客 RSS
   分轨治理、竞品与 Podcasting 2.0 调研、`>30min` 权利/质量/预算门控、带时间戳证据的中文博客、
   `≤15min` AI 精华音频、数据/API/状态机/成本/安全以及分期与端到端验收。
