@@ -25,6 +25,9 @@ from typing import Any, Callable, List, Optional
 from config import LLMConfig
 from llm import prompts
 from llm.client import ChatMessage, UsageMeta, chat_completion, client_session
+from sqlmodel import Session
+
+from services import user_sources as user_sources_service
 
 # 译文/摘要缓存在 ArticleRecord.extensions_json 下的键；只新增键，不触碰正文。
 TRANSLATION_KEY = "translation_zh"
@@ -86,6 +89,21 @@ class ReaderAIError(Exception):
     def __init__(self, message: str, status_code: int = 400):
         super().__init__(message)
         self.status_code = status_code
+
+
+def _ensure_articles_exportable(db_sink: Any, records: List[Any]) -> None:
+    """Final service-layer guard for content-bearing reader AI operations."""
+
+    engine = getattr(db_sink, "engine", None)
+    if engine is None:
+        # Pure callers may inject dict/SimpleNamespace records without storage;
+        # HTTP and production DB-backed paths always provide an engine.
+        return
+    source_ids = [str(_art_field(record, "source_id") or "") for record in records]
+    with Session(engine) as session:
+        allowed = set(user_sources_service.external_ai_allowed_source_ids(session, source_ids))
+    if any(source_id not in allowed for source_id in source_ids):
+        raise ReaderAIError("该来源含访问凭证，不能发送到 AI 服务", status_code=403)
 
 
 # ==================== 全文翻译 ====================
@@ -167,6 +185,7 @@ async def translate_article(
     record = await db_sink.get(article_id)
     if record is None:
         raise ReaderAIError("文章不存在", status_code=404)
+    _ensure_articles_exportable(db_sink, [record])
     body = (record.content or "").strip()
     if not body:
         raise ReaderAIError("该文章暂无可翻译的正文", status_code=400)
@@ -284,6 +303,7 @@ async def summarize_article(
     record = await db_sink.get(article_id)
     if record is None:
         raise ReaderAIError("文章不存在", status_code=404)
+    _ensure_articles_exportable(db_sink, [record])
     body = (record.content or "").strip()
     if not body:
         raise ReaderAIError("该文章暂无可总结的正文", status_code=400)
@@ -445,6 +465,7 @@ async def assemble_reader_context(
         record = await db_sink.get(article_id)
         if record is None:
             raise ReaderAIError("文章不存在", status_code=404)
+        _ensure_articles_exportable(db_sink, [record])
         return assemble_articles_context([record])
 
     if scope == "articles":
@@ -462,6 +483,7 @@ async def assemble_reader_context(
                 records.append(record)
         if not records:
             raise ReaderAIError("文章不存在", status_code=404)
+        _ensure_articles_exportable(db_sink, records)
         return assemble_articles_context(records)
 
     return await search_fetch(question, username)

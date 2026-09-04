@@ -58,7 +58,6 @@ const ANALYSIS_PROJECTION_KEYS = [
   'analysis_next_attempt_at',
   'quality_score',
   'score_reason',
-  'one_sentence_summary',
   'summary_zh',
   'content_genre',
   'primary_tag',

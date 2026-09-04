@@ -2,6 +2,7 @@
 
 import datetime as dt
 import json
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
@@ -346,6 +347,168 @@ def test_admin_can_configure_interest_top_n_and_must_classify_entities(monkeypat
         assert any(alias["alias"] == "MCP" for alias in payload["aliases"])
 
 
+def test_synced_taxonomy_is_read_only_on_internal_node(monkeypatch, tmp_path):
+    app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
+    with Session(sink.engine) as session:
+        session.add(AppSettingRecord(key="taxonomy:authority_id", value="external-node"))
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin")
+        assert client.get("/api/admin/cms-tags").status_code == 200
+        response = client.patch(
+            "/api/admin/taxonomy/interest-catalog-policy",
+            json={"topic": 1, "industry": 1, "entity": 1, "reason": "should fail"},
+        )
+        assert response.status_code == 409
+        assert "远端权威节点" in response.json()["detail"]
+
+
+def test_v2_consumer_fence_makes_taxonomy_read_only_before_first_sync(
+    monkeypatch,
+    tmp_path,
+):
+    from services import sync_consumer_policy
+
+    app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
+    with Session(sink.engine) as session:
+        sync_consumer_policy.activate_v2_consumer_mode(session, reason="manual_v2")
+        assert session.get(AppSettingRecord, "taxonomy:authority_id") is None
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin")
+        assert client.get("/api/admin/cms-tags").status_code == 200
+        legacy_import = client.post(
+            "/api/archive/import/articles.jsonl",
+            content=b"",
+            headers={"content-type": "application/x-ndjson"},
+        )
+        assert legacy_import.status_code == 409
+        assert "禁止 legacy v1" in legacy_import.json()["detail"]
+        response = client.post(
+            "/api/admin/cms-tags",
+            json={
+                "code": "blocked-before-first-sync",
+                "kind": "topic",
+                "name_en": "Blocked",
+            },
+        )
+        assert response.status_code == 409
+        assert "远端权威节点" in response.json()["detail"]
+
+
+def test_replica_deployment_makes_taxonomy_read_only_before_first_sync(
+    monkeypatch,
+    tmp_path,
+):
+    from api.routers import taxonomy as taxonomy_router
+
+    app_module, _sink, _tag_id = _setup(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        taxonomy_router,
+        "settings",
+        SimpleNamespace(taxonomy=SimpleNamespace(mode="replica")),
+    )
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin")
+        assert client.get("/api/admin/cms-tags").status_code == 200
+        response = client.post(
+            "/api/admin/cms-tags",
+            json={
+                "code": "blocked-replica-before-first-sync",
+                "kind": "topic",
+                "name_en": "Blocked Replica",
+            },
+        )
+        assert response.status_code == 409
+        assert "远端权威节点" in response.json()["detail"]
+
+
+def test_v2_consumer_fence_blocks_public_source_and_article_crud_before_first_sync(
+    monkeypatch,
+    tmp_path,
+):
+    from services import sync_consumer_policy
+
+    app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    with Session(sink.engine) as session:
+        session.add_all([
+            SourceConfigRecord(
+                source_id="platform",
+                name="Platform",
+                source_type="rss",
+                url="https://example.test/feed",
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            ),
+            SourceConfigRecord(
+                source_id="legacy-custom",
+                name="Legacy custom",
+                source_type="rss",
+                url="https://example.test/custom",
+                owner_username="alice",
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            ),
+            ArticleRecord(
+                id="custom-article",
+                title="Custom",
+                content_type="rss_article",
+                source_id="legacy-custom",
+                source_url="https://example.test/custom/1",
+                publish_date=now,
+                fetched_date=now,
+                has_content=True,
+                content="body",
+            ),
+        ])
+        session.commit()
+        sync_consumer_policy.activate_v2_consumer_mode(session, reason="manual_v2")
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin")
+        assert client.post("/api/source-configs", json={
+            "source_id": "new-platform",
+            "name": "New platform",
+        }).status_code == 409
+        assert client.put(
+            "/api/source-configs/platform", json={"name": "Changed"}
+        ).status_code == 409
+        assert client.post(
+            "/api/source-configs/platform/toggle", json={"is_active": False}
+        ).status_code == 409
+        assert client.post("/api/source-configs/platform/fetch").status_code == 409
+        assert client.delete("/api/source-configs/platform").status_code == 409
+
+        custom_update = client.put(
+            "/api/source-configs/legacy-custom", json={"name": "Still local"}
+        )
+        assert custom_update.status_code == 200
+
+        assert client.post("/api/articles", json={
+            "id": "manual-public",
+            "title": "Manual public",
+            "source_id": "manual",
+            "content": "body",
+        }).status_code == 409
+        assert client.put(
+            "/api/articles/article-a", json={"title": "Changed"}
+        ).status_code == 409
+        assert client.delete("/api/articles/article-a").status_code == 409
+        assert client.post(
+            "/api/articles/batch-delete", json={"ids": ["article-a"]}
+        ).status_code == 409
+
+        assert client.put(
+            "/api/articles/custom-article", json={"title": "Changed locally"}
+        ).status_code == 200
+        assert client.delete("/api/articles/custom-article").status_code == 200
+
+
 def test_empty_subscription_never_broadens_and_article_analysis_filters_work(monkeypatch, tmp_path):
     app_module, _sink, tag_id = _setup(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
@@ -675,10 +838,10 @@ def test_generation_exception_after_terminal_cas_rolls_back_before_marking_faile
         assert items == []
 
 
-def test_private_rss_does_not_block_digest_analysis_readiness(monkeypatch, tmp_path):
-    """V1 private RSS is never sent to the LLM, so readiness must ignore it."""
+def test_custom_rss_participates_in_digest_analysis_readiness(monkeypatch, tmp_path):
+    """An enabled custom RSS is analyzed locally and must be ready before selection."""
 
-    app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
+    _app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
     from api.routers import personal_briefs
     from models.db import PersonalDigestEditionRecord
 
@@ -724,16 +887,20 @@ def test_private_rss_does_not_block_digest_analysis_readiness(monkeypatch, tmp_p
             created_at=now.isoformat(),
             updated_at=now.isoformat(),
         )
-        assert personal_briefs._analysis_ready(session, edition, now) is True
-
-    with TestClient(app_module.app) as client:
-        _login(client, "admin")
-        response = client.put(
-            f"/api/source-configs/{source_id}",
-            json={"ai_analysis_enabled": True},
+        assert personal_briefs._analysis_ready(session, edition, now) is False
+        session.add(
+            ArticleAnalysisRecord(
+                article_id="private-rss-article",
+                status="succeeded",
+                tagging_status="succeeded",
+                quality_score=8.0,
+                analyzed_at=now.isoformat(),
+                created_at=now.isoformat(),
+                updated_at=now.isoformat(),
+            )
         )
-        assert response.status_code == 400
-        assert "私有源" in response.json()["detail"]
+        session.commit()
+        assert personal_briefs._analysis_ready(session, edition, now) is True
 
 
 def test_runtime_taxonomy_retag_worker_consumes_published_job(monkeypatch, tmp_path):

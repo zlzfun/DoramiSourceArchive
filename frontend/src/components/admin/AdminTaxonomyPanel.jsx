@@ -295,6 +295,17 @@ function CandidateRow({ candidate, tags, onChanged, showToast, confirm }) {
               </div>
             ))}</div> : <p className="tiny-meta">还没有可展示的证据样本</p>}
           </div>
+          {candidate.remote_evidence?.length > 0 && (
+            <div>
+              <h4 className="micro-label mb-2">自定源远端证据</h4>
+              <div className="grid gap-2">{candidate.remote_evidence.map((row, index) => (
+                <div key={`${row.authority_id}-${row.created_at}-${index}`} className="rounded-[var(--r-control)] border border-[var(--dorami-border)] p-2 tiny-meta">
+                  <span className="font-mono">{row.authority_id}</span> · {row.source_provenance || '来源未标注'} · 置信 {Math.round(Number(row.confidence || 0) * 100)}%
+                  <p className="mt-1">{row.label}{row.prompt_version ? ` · ${row.prompt_version}` : ''}</p>
+                </div>
+              ))}</div>
+            </div>
+          )}
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <input className="form-input form-input-inline" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="规范 code（可自动生成）" />
             <select className="form-input form-input-inline" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value, entity_type: '', external_key: '' })} aria-label="纠正 Candidate 分面">{Object.entries(KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>

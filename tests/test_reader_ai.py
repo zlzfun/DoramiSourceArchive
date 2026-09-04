@@ -63,6 +63,22 @@ def _seed_article(engine, article_id, source_id, title, content="正文内容"):
         session.commit()
 
 
+def _seed_credentialed_source(engine, source_id="rss_credentialed"):
+    from models.db import SourceConfigRecord
+
+    with Session(engine) as session:
+        session.add(SourceConfigRecord(
+            source_id=source_id,
+            name="Credentialed RSS",
+            source_type="rss",
+            url="https://feeds.example.test/rss?subscriber=Abc123Def456Ghi789Jkl012",
+            params_json='{"credentialed_private": true}',
+            created_at="2026-05-20T00:00:00",
+            updated_at="2026-05-20T00:00:00",
+        ))
+        session.commit()
+
+
 def _configure_llm(engine):
     from services import daily_brief as db
 
@@ -219,6 +235,73 @@ def test_ask_article_scope_uses_article_body(monkeypatch, tmp_path):
         # 上下文应包含该文标题/正文
         user_prompt = calls[-1][-1]
         assert "独特正文片段" in user_prompt
+
+
+def test_reader_ai_explicit_scopes_reject_credentialed_source_before_llm(monkeypatch, tmp_path):
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "ai_credentialed_explicit.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_credentialed_source(sink.engine)
+    _seed_article(
+        sink.engine,
+        "secret",
+        "rss_credentialed",
+        "Secret title",
+        "SECRET-BODY-MUST-NOT-LEAVE",
+    )
+    calls = _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        for path, payload in (
+            ("/api/reader/ai/translate", {"article_id": "secret"}),
+            ("/api/reader/ai/summarize", {"article_id": "secret"}),
+            ("/api/reader/ai/ask", {
+                "question": "讲了什么？", "scope": "article", "article_id": "secret",
+            }),
+            ("/api/reader/ai/ask", {
+                "question": "讲了什么？", "scope": "articles", "article_ids": ["secret"],
+            }),
+        ):
+            response = client.post(path, json=payload)
+            assert response.status_code == 403
+            assert "访问凭证" in response.json()["detail"]
+    assert calls == []
+
+
+def test_reader_ai_search_scopes_exclude_credentialed_corpus(monkeypatch, tmp_path):
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "ai_credentialed_search.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_credentialed_source(sink.engine)
+    _seed_article(sink.engine, "safe", "rss_safe", "公开文章", "PUBLIC-CONTEXT")
+    _seed_article(
+        sink.engine,
+        "secret",
+        "rss_credentialed",
+        "私密文章",
+        "SECRET-BODY-MUST-NOT-LEAVE",
+    )
+    calls = _patch_llm(monkeypatch)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        assert client.post("/api/reader/sources/rss_safe/subscribe").status_code == 200
+        assert client.post("/api/reader/sources/rss_credentialed/subscribe").status_code == 200
+        for scope in ("subscription", "all"):
+            response = client.post(
+                "/api/reader/ai/ask",
+                json={"question": "最近有什么？", "scope": scope},
+            )
+            assert response.status_code == 200
+            assert all(
+                item["source_id"] != "rss_credentialed"
+                for item in response.json()["sources"]
+            )
+
+    sent = "\n".join(content for call in calls for content in call)
+    assert "SECRET-BODY-MUST-NOT-LEAVE" not in sent
+    assert "PUBLIC-CONTEXT" in sent
 
 
 def test_ask_subscription_degrades_to_recent_window(monkeypatch, tmp_path):

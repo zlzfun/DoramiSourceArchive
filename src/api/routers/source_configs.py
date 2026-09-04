@@ -33,7 +33,10 @@ from api.sources import (
 from api.textutils import _json_dumps, _now_iso
 from models.db import SourceConfigRecord
 from services import jobs
+from services import article_analysis as article_analysis_service
 from services import podcast_catalog as podcast_catalog_service
+from services import user_sources as user_sources_service
+from services import sync_consumer_policy
 
 router = APIRouter(tags=["source-configs"])
 
@@ -50,6 +53,30 @@ def _is_shared_podcast(record: SourceConfigRecord) -> bool:
 def _reload_podcast_schedules_if_needed(*, before: bool = False, after: bool = False) -> None:
     if before or after:
         _app().reload_podcast_source_schedules()
+
+
+def _require_local_source_governance(
+    session: Session,
+    record: SourceConfigRecord | None = None,
+) -> None:
+    """Block public-source mutations as soon as this node becomes a v2 receiver."""
+
+    if record is None:
+        if sync_consumer_policy.v2_consumer_mode_active(session):
+            raise HTTPException(
+                status_code=409,
+                detail="v2 接收端不能创建本地公共数据源；请使用用户自定义 RSS",
+            )
+        return
+    if not sync_consumer_policy.local_source_operation_allowed(
+        session,
+        record.source_id,
+        operation="governance",
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="数据源由远端权威节点管理，本机不能修改、删除或抓取",
+        )
 
 
 # ==================== 请求模型 ====================
@@ -253,6 +280,7 @@ def import_podcast_catalog(
         session: Session = Depends(deps.get_session),
 ):
     """Import ready catalog sources; safe defaults neither activate nor overwrite."""
+    _require_local_source_governance(session)
     try:
         result = podcast_catalog_service.import_podcast_catalog(
             session,
@@ -279,6 +307,7 @@ def get_source_config(source_id: str, session: Session = Depends(deps.get_sessio
 
 @router.post("/api/source-configs")
 def create_source_config(params: SourceConfigCreate, session: Session = Depends(deps.get_session)):
+    _require_local_source_governance(session)
     source_id = normalize_source_id(params.source_id)
     if not source_id:
         raise HTTPException(status_code=400, detail="source_id 不能为空")
@@ -327,13 +356,18 @@ def update_source_config(source_id: str, params: SourceConfigUpdate, session: Se
     record = session.get(SourceConfigRecord, source_id)
     if not record:
         raise HTTPException(status_code=404, detail="数据源配置不存在")
+    _require_local_source_governance(session, record)
     was_shared_podcast = _is_shared_podcast(record)
 
     update_data = params.model_dump(exclude_unset=True)
-    if record.owner_username and update_data.get("ai_analysis_enabled") is True:
+    if (
+        record.owner_username
+        and update_data.get("ai_analysis_enabled") is True
+        and user_sources_service.source_is_credentialed(record)
+    ):
         raise HTTPException(
             status_code=400,
-            detail="V1 不允许把用户私有源发送给文章分析模型",
+            detail="含凭证的自定源默认不发送到 MaaS",
         )
     for key, value in update_data.items():
         if key == "params":
@@ -344,6 +378,16 @@ def update_source_config(source_id: str, params: SourceConfigUpdate, session: Se
             setattr(record, key, value.strip())
         else:
             setattr(record, key, value)
+
+    if user_sources_service.source_is_credentialed(record):
+        # Classification changes are a privacy boundary, not just a future-run
+        # switch: stop analysis and retract any previously public Candidate
+        # evidence in the same transaction.
+        record.ai_analysis_enabled = False
+        article_analysis_service.purge_source_candidate_evidence(
+            session,
+            record.source_id,
+        )
 
     record.updated_at = _now_iso()
     session.add(record)
@@ -364,6 +408,7 @@ def toggle_source_config(
     record = session.get(SourceConfigRecord, source_id)
     if not record:
         raise HTTPException(status_code=404, detail="数据源配置不存在")
+    _require_local_source_governance(session, record)
     record.is_active = is_active
     record.updated_at = _now_iso()
     session.add(record)
@@ -379,6 +424,7 @@ def delete_source_config(source_id: str, session: Session = Depends(deps.get_ses
     record = session.get(SourceConfigRecord, source_id)
     if not record:
         raise HTTPException(status_code=404, detail="数据源配置不存在")
+    _require_local_source_governance(session, record)
     if record.owner_username:
         # 用户自定源分流(v3.40 检视返修 F8):通用删除只删配置行会留下文章与订阅
         # 孤儿——改走专用强删路径(级联清订阅/水位/文章/分享,与 admin 面同语义)。
@@ -387,6 +433,9 @@ def delete_source_config(source_id: str, session: Session = Depends(deps.get_ses
         result = user_sources_service.admin_delete_user_source(session, source_id)
         return {"status": "success", **result}
     was_shared_podcast = _is_shared_podcast(record)
+    # Preserve the established product distinction: toggle is a reversible
+    # soft stop, while DELETE physically removes the source configuration.
+    # Archive Sync emits a source tombstone from this transaction.
     session.delete(record)
     session.commit()
     _reload_podcast_schedules_if_needed(before=was_shared_podcast)
@@ -405,6 +454,13 @@ async def fetch_source_config(
         raise HTTPException(status_code=404, detail="数据源配置不存在")
     if not record.is_active:
         raise HTTPException(status_code=400, detail="数据源已停用，无法触发抓取")
+    if not sync_consumer_policy.local_source_operation_allowed(
+        session, record.source_id, operation="collection"
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="该数据源由远端权威节点采集，本机仅同步使用",
+        )
 
     fetcher_id = resolve_source_fetcher_id(record)
     if not fetcher_id:
@@ -431,6 +487,7 @@ async def fetch_active_rss_sources(
     records = session.exec(
         select(SourceConfigRecord)
         .where(SourceConfigRecord.is_active == True)  # noqa: E712
+        .where(SourceConfigRecord.collection_authority_id == "")
         .where(SourceConfigRecord.source_type.in_(["rss", "atom", "podcast"]))
         .order_by(SourceConfigRecord.name)
     ).all()
@@ -438,6 +495,10 @@ async def fetch_active_rss_sources(
     items = []
     skipped_results = []
     for record in records:
+        if not sync_consumer_policy.local_source_operation_allowed(
+            session, record.source_id, operation="collection"
+        ):
+            continue
         fetcher_id = resolve_source_fetcher_id(record)
         if not fetcher_id:
             skipped_results.append({"source_id": record.source_id, "status": "skipped", "error": "未绑定可用抓取器"})
@@ -472,6 +533,7 @@ async def fetch_active_web_sources(
     records = session.exec(
         select(SourceConfigRecord)
         .where(SourceConfigRecord.is_active == True)  # noqa: E712
+        .where(SourceConfigRecord.collection_authority_id == "")
         .where(SourceConfigRecord.source_type.in_(["web", "webpage"]))
         .order_by(SourceConfigRecord.name)
     ).all()
@@ -479,6 +541,10 @@ async def fetch_active_web_sources(
     items = []
     skipped_results = []
     for record in records:
+        if not sync_consumer_policy.local_source_operation_allowed(
+            session, record.source_id, operation="collection"
+        ):
+            continue
         fetcher_id = resolve_source_fetcher_id(record)
         if not fetcher_id:
             skipped_results.append({"source_id": record.source_id, "status": "skipped", "error": "未绑定可用抓取器"})

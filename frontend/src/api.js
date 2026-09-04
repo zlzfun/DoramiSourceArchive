@@ -953,10 +953,10 @@ export function deleteAnnouncement(id) {
 }
 
 // ==================== 远程内容同步（v3.18 互通波，admin） ====================
-export function testRemoteSync(baseUrl, username, password) {
+export function testRemoteSync(baseUrl, username, password, protocol = 'v2') {
   return request('/admin/remote-sync/test', {
     method: 'POST',
-    body: { base_url: baseUrl, username, password },
+    body: { base_url: baseUrl, username, password, protocol },
     errorMsg: '远端连接测试失败',
   });
 }
@@ -964,8 +964,8 @@ export function testRemoteSync(baseUrl, username, password) {
 // 提交后台拉取任务，返回 { job_id }；调用方用 fetchBackgroundJob 轮询进度
 // （processed/total 逐条推进），不在这里 pollJob 到终态。
 export function startRemoteSync(baseUrl, username, password, options = {}) {
-  const { fetchedDateStart, sourceIds } = options;
-  const body = { base_url: baseUrl, username, password };
+  const { fetchedDateStart, sourceIds, protocol = 'v2' } = options;
+  const body = { base_url: baseUrl, username, password, protocol };
   if (fetchedDateStart) body.fetched_date_start = fetchedDateStart;
   if (sourceIds && sourceIds.length) body.source_ids = sourceIds;
   return request('/admin/remote-sync/start', { method: 'POST', body, errorMsg: '启动远程同步失败' });

@@ -348,6 +348,7 @@ def test_existing_podcast_refreshes_feed_metadata_without_erasing_derived_fields
         record.extensions_json = json.dumps(extensions, ensure_ascii=False)
         session.add(record)
         session.commit()
+        revision_before_refresh = record.archive_updated_at
 
     refreshed = PodcastEpisodeContent(
         **common,
@@ -372,7 +373,7 @@ def test_existing_podcast_refreshes_feed_metadata_without_erasing_derived_fields
         assert record.title == "Corrected title"
         assert record.content == "Original show notes"
         assert record.fetched_date == "2026-09-02T01:00:00+00:00"
-        assert record.archive_updated_at == "2026-09-03T01:00:00+00:00"
+        assert record.archive_updated_at > revision_before_refresh
         assert extensions["audio_url"] == "https://cdn.example.test/1.mp3?token=new"
         assert extensions["duration_seconds"] == 1900
         assert extensions["explicit"] is False

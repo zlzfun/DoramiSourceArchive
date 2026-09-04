@@ -233,6 +233,41 @@ def test_enabled_public_daily_brief_is_due_without_a_collection_job(storage):
     assert due == ["dorami_daily_brief"]
 
 
+def test_remote_authority_public_source_is_due_without_local_collection_job(storage):
+    with Session(storage.engine) as session:
+        session.add_all([
+            SourceConfigRecord(
+                source_id="remote-by-config",
+                name="Remote Config",
+                collection_authority_id="producer-a",
+                created_at=NOW_ISO,
+                updated_at=NOW_ISO,
+            ),
+            SourceConfigRecord(
+                source_id="remote-by-state",
+                name="Remote State",
+                created_at=NOW_ISO,
+                updated_at=NOW_ISO,
+            ),
+            SourceStateRecord(
+                source_id="remote-by-state",
+                fetcher_id="generic_rss",
+                authority_id="producer-a",
+                updated_at=NOW_ISO,
+            ),
+        ])
+        session.commit()
+
+        due = calculate_due_source_ids(
+            session,
+            ["remote-by-config", "remote-by-state"],
+            as_of=NOW,
+            scheduled_source_ids=[],
+        )
+
+    assert due == ["remote-by-config", "remote-by-state"]
+
+
 def test_no_subscriptions_returns_recognizable_state_without_creating_edition(storage):
     with Session(storage.engine) as session:
         session.add(_user())

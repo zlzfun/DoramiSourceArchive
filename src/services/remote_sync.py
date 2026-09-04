@@ -36,10 +36,17 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
 import httpx
-from sqlmodel import Session
+from sqlalchemy import delete
+from sqlmodel import Session, select
 
-from models.db import AppSettingRecord
+from models.db import (
+    AppSettingRecord,
+    ArchiveSyncEntityStateRecord,
+    SourceConfigRecord,
+    SourceStateRecord,
+)
 from services import credentials
+from services import archive_sync_v2
 
 _logger = logging.getLogger("dorami.remote_sync")
 
@@ -55,6 +62,9 @@ DEFAULT_PAGE_SIZE = 1000
 # 安全阀:单次任务最多翻页数(1000 页 × 1000 条 = 百万条,远超当前归档规模;
 # 防远端异常返回导致无限翻页)。
 MAX_PAGES = 1000
+# source_states is the readiness fence: publish producer terminal states only
+# after the matching article/analysis/media snapshot has reached the reader.
+V2_STREAM_ORDER = ("sources", "taxonomy", "articles", "analyses", "media", "source_states")
 
 _REQUEST_TIMEOUT = httpx.Timeout(20.0, read=120.0)
 _MAX_RETRIES = 3
@@ -64,11 +74,116 @@ class RemoteSyncError(Exception):
     """远端不可达 / 登录失败 / 契约不符等,消息面向管理员界面直接展示。"""
 
 
+def _decode_sync_state_record(record: AppSettingRecord | None) -> Dict[str, Any]:
+    if record is None or not record.value:
+        return {"targets": {}}
+    try:
+        state = json.loads(record.value)
+    except json.JSONDecodeError:
+        return {"targets": {}}
+    if not isinstance(state, dict) or not isinstance(state.get("targets"), dict):
+        return {"targets": {}}
+    return state
+
+
+def prepare_transaction_revision_consumer(
+    session: Session,
+    *,
+    base_url: str,
+    username: str,
+    authority_id: str,
+    schema_version: str,
+    prepared_at: str,
+) -> bool:
+    """Prepare one target for the transaction-revision protocol exactly once."""
+
+    if schema_version != archive_sync_v2.SCHEMA_VERSION:
+        raise RemoteSyncError(
+            f"远端 schema_version={schema_version or '<empty>'} 与本机 "
+            f"{archive_sync_v2.SCHEMA_VERSION} 不兼容"
+        )
+    authority_id = str(authority_id or "").strip()
+    if not authority_id:
+        raise RemoteSyncError("远端 transaction-revision manifest 缺少 authority_id")
+
+    record = session.get(AppSettingRecord, REMOTE_SYNC_STATE_KEY)
+    state = _decode_sync_state_record(record)
+    targets = dict(state["targets"])
+    target = dict(targets.get(base_url) or {})
+    current_schema = str(target.get("v2_schema_version") or "")
+    current_authority = str(target.get("v2_authority_id") or "")
+    if current_schema == schema_version:
+        if current_authority and current_authority != authority_id:
+            raise RemoteSyncError(
+                "远端 authority_id 已变化；需人工确认 producer 身份并执行新的 rebase"
+            )
+        if current_authority == authority_id:
+            return False
+    legacy_authorities = {
+        str(checkpoint.get("authority_id") or "")
+        for checkpoint in (target.get("v2_streams") or {}).values()
+        if isinstance(checkpoint, dict) and checkpoint.get("authority_id")
+    }
+    if legacy_authorities and legacy_authorities != {authority_id}:
+        raise RemoteSyncError(
+            "旧 checkpoint 的 authority_id 与当前 producer 不一致，拒绝自动 rebase"
+        )
+
+    # Timestamp checkpoints cannot be compared to integer revisions. Preserve
+    # Articles/Analyses so read counters and local manual overlays survive a
+    # failed first pull; authoritative upserts and presence-confirmed absence
+    # reconcile them. Source metadata becomes inactive until its full upsert,
+    # readiness is cleared, and Media remains for reference-based local GC.
+    eligible_sources = session.exec(
+        select(SourceConfigRecord).where(
+            ~SourceConfigRecord.source_id.startswith("user_rss_", autoescape=True),
+            SourceConfigRecord.owner_username == "",
+            SourceConfigRecord.collection_authority_id.in_(("", authority_id)),
+        )
+    ).all()
+    for source in eligible_sources:
+        source.is_active = False
+        session.add(source)
+    eligible_source_ids = {source.source_id for source in eligible_sources}
+    for state_row in session.exec(select(SourceStateRecord).where(
+        ~SourceStateRecord.source_id.startswith("user_rss_", autoescape=True),
+        SourceStateRecord.authority_id.in_(("", authority_id)),
+    )).all():
+        source = session.get(SourceConfigRecord, state_row.source_id)
+        if source is None or state_row.source_id in eligible_source_ids:
+            session.delete(state_row)
+    session.exec(delete(ArchiveSyncEntityStateRecord).where(
+        ArchiveSyncEntityStateRecord.authority_id == authority_id
+    ))
+
+    target.update({
+        "username": username,
+        "v2_schema_version": schema_version,
+        "v2_authority_id": authority_id,
+        "v2_rebased_at": prepared_at,
+        "v2_streams": {},
+    })
+    targets[base_url] = target
+    state["targets"] = targets
+    value = json.dumps(state, ensure_ascii=False)
+    if record is None:
+        record = AppSettingRecord(key=REMOTE_SYNC_STATE_KEY, value=value)
+    else:
+        record.value = value
+    session.add(record)
+    session.flush()
+    return True
+
+
 def normalize_base_url(raw: str) -> str:
     base = (raw or "").strip().rstrip("/")
     parsed = urlparse(base)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise RemoteSyncError("远端地址必须是 http(s)://主机[:端口] 形式")
+    if parsed.username is not None or parsed.password is not None:
+        raise RemoteSyncError("远端地址禁止内嵌用户名或密码")
+    if parsed.query or parsed.fragment:
+        raise RemoteSyncError("远端地址禁止携带 query 或 fragment")
     return base
 
 
@@ -177,6 +292,124 @@ async def _fetch_export_page(
     return response.text
 
 
+async def _fetch_v2_page(
+    client: httpx.AsyncClient,
+    base_url: str,
+    cookie_header: str,
+    *,
+    stream: str,
+    snapshot: str,
+    since: str,
+    after: str,
+    limit: int,
+) -> str:
+    params: Dict[str, Any] = {"limit": limit}
+    if snapshot:
+        params["snapshot"] = snapshot
+    if since:
+        params["since"] = since
+    if after:
+        params["after"] = after
+    response = await _request_with_retry(
+        client,
+        "GET",
+        f"{base_url}/api/archive/v2/export/{stream}.jsonl",
+        params=params,
+        headers={"Cookie": cookie_header},
+    )
+    if response.status_code in {401, 403}:
+        raise RemoteSyncError(f"远端拒绝 v2 {stream} 导出(HTTP {response.status_code})")
+    if response.status_code != 200:
+        raise RemoteSyncError(f"远端 v2 {stream} 导出异常:HTTP {response.status_code}")
+    return response.text
+
+
+async def _fetch_v2_presence(
+    client: httpx.AsyncClient,
+    base_url: str,
+    cookie_header: str,
+    *,
+    stream: str,
+    identities: list[str],
+    authority_id: str,
+) -> set[str]:
+    """Confirm one bounded candidate batch before any receiver-side prune."""
+
+    response = await _request_with_retry(
+        client,
+        "POST",
+        f"{base_url}/api/archive/v2/presence",
+        headers={"Cookie": cookie_header},
+        json={"stream": stream, "identities": identities},
+    )
+    if response.status_code in {401, 403}:
+        raise RemoteSyncError(f"远端拒绝 v2 {stream} presence 查询(HTTP {response.status_code})")
+    if response.status_code != 200:
+        raise RemoteSyncError(f"远端 v2 {stream} presence 查询异常:HTTP {response.status_code}")
+    try:
+        payload = response.json()
+    except json.JSONDecodeError as exc:
+        raise RemoteSyncError(f"远端 v2 {stream} presence 响应不是 JSON") from exc
+    if (
+        payload.get("schema_version") != archive_sync_v2.SCHEMA_VERSION
+        or payload.get("capability") != archive_sync_v2.AUTHORITATIVE_PRESENCE_CAPABILITY
+        or payload.get("authority_id") != authority_id
+        or payload.get("stream") != stream
+        or payload.get("requested") != identities
+        or not isinstance(payload.get("present"), list)
+    ):
+        raise RemoteSyncError(f"远端 v2 {stream} presence 响应契约不匹配")
+    present = payload["present"]
+    if any(not isinstance(value, str) for value in present) or not set(present) <= set(identities):
+        raise RemoteSyncError(f"远端 v2 {stream} presence 返回了未请求的 identity")
+    return set(present)
+
+
+async def _fetch_v2_media_bytes(
+    client: httpx.AsyncClient,
+    base_url: str,
+    cookie_header: str,
+    url_hash: str,
+    *,
+    expected_size: int,
+    max_bytes: int,
+) -> bytes:
+    if expected_size <= 0 or expected_size > max_bytes:
+        raise RemoteSyncError(f"远端媒体 {url_hash} 声明大小超出限制")
+    last_error: Optional[Exception] = None
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            async with client.stream(
+                "GET",
+                f"{base_url}/api/archive/v2/media/{url_hash}",
+                headers={"Cookie": cookie_header},
+            ) as response:
+                if response.status_code >= 500:
+                    raise RemoteSyncError(f"远端服务错误 HTTP {response.status_code}")
+                if response.status_code != 200:
+                    raise RemoteSyncError(
+                        f"远端媒体 {url_hash} 下载失败:HTTP {response.status_code}"
+                    )
+                declared = response.headers.get("content-length", "")
+                if declared.isdigit() and int(declared) != expected_size:
+                    raise RemoteSyncError(f"远端媒体 {url_hash} Content-Length 不一致")
+                chunks: list[bytes] = []
+                received = 0
+                async for chunk in response.aiter_bytes():
+                    received += len(chunk)
+                    if received > expected_size or received > max_bytes:
+                        raise RemoteSyncError(f"远端媒体 {url_hash} 响应超过声明大小")
+                    chunks.append(chunk)
+                if received != expected_size:
+                    raise RemoteSyncError(f"远端媒体 {url_hash} 响应大小不一致")
+                return b"".join(chunks)
+        except (httpx.HTTPError, RemoteSyncError) as exc:
+            last_error = exc
+            if attempt < _MAX_RETRIES:
+                await asyncio.sleep(min(2 ** attempt, 8))
+    raise RemoteSyncError(f"远端媒体 {url_hash} 下载失败: {last_error}")
+
+
 def _make_client(transport: Optional[httpx.AsyncBaseTransport] = None) -> httpx.AsyncClient:
     """transport 可注入(测试用 httpx.MockTransport 假远端,不打真网——仓内约定)。"""
     return httpx.AsyncClient(timeout=_REQUEST_TIMEOUT, follow_redirects=True, transport=transport)
@@ -184,7 +417,7 @@ def _make_client(transport: Optional[httpx.AsyncBaseTransport] = None) -> httpx.
 
 async def probe(
     base_url: str, username: str, password: str,
-    *, transport: Optional[httpx.AsyncBaseTransport] = None,
+    *, protocol: str = "v2", transport: Optional[httpx.AsyncBaseTransport] = None,
 ) -> Dict[str, Any]:
     """「测试连接」探针:登录 → 版本 → 契约可用性 → 总量(尽力而为)。"""
     base = normalize_base_url(base_url)
@@ -201,12 +434,60 @@ async def probe(
         except (RemoteSyncError, json.JSONDecodeError):
             pass  # 版本只是展示信息,拿不到不阻断
 
-        sample_text = await _fetch_export_page(client, base, cookie_header, skip=0, limit=1)
-        sample = _parse_export_page(sample_text)
-        manifest = sample["manifest"] or {}
-        schema_version = str(manifest.get("schema_version") or "")
-        if not schema_version:
-            raise RemoteSyncError("远端导出响应缺少 manifest——契约不符,可能是版本过旧的后端")
+        protocol = (protocol or "v2").strip().lower()
+        if protocol == "v2":
+            sample_text = await _fetch_v2_page(
+                client, base, cookie_header, stream="sources",
+                snapshot="", since="", after="", limit=1,
+            )
+            try:
+                manifest, rows = archive_sync_v2.parse_page(
+                    sample_text, expected_stream="sources",
+                    requested_snapshot="", requested_since="", requested_after="",
+                )
+                archive_sync_v2.require_transaction_revision_capability(manifest)
+            except archive_sync_v2.SyncV2Error as exc:
+                raise RemoteSyncError(f"远端 v2 契约校验失败:{exc}") from exc
+            schema_version = str(manifest["schema_version"])
+            capabilities = list(manifest.get("capabilities") or [])
+            sample_count = len(rows)
+            authority_id = str(manifest["authority_id"])
+            taxonomy_text = await _fetch_v2_page(
+                client, base, cookie_header, stream="taxonomy",
+                snapshot="", since="", after="", limit=5000,
+            )
+            try:
+                taxonomy_manifest, _taxonomy_rows = archive_sync_v2.parse_page(
+                    taxonomy_text, expected_stream="taxonomy",
+                    requested_snapshot="", requested_since="", requested_after="",
+                )
+                archive_sync_v2.require_transaction_revision_capability(taxonomy_manifest)
+            except archive_sync_v2.SyncV2Error as exc:
+                if "published taxonomy_version" in str(exc):
+                    raise RemoteSyncError(
+                        "远端 Taxonomy catalog 尚未人工发布，拒绝启动 v2 同步"
+                    ) from exc
+                raise RemoteSyncError(f"远端 taxonomy v2 契约校验失败:{exc}") from exc
+            if str(taxonomy_manifest["authority_id"]) != authority_id:
+                raise RemoteSyncError("远端 sources/taxonomy authority_id 不一致")
+            taxonomy_version = int(taxonomy_manifest.get("taxonomy_version") or 0)
+            if taxonomy_version <= 0:
+                raise RemoteSyncError("远端 Taxonomy catalog 尚未人工发布，拒绝启动 v2 同步")
+            taxonomy_ready = True
+        elif protocol == "v1":
+            sample_text = await _fetch_export_page(client, base, cookie_header, skip=0, limit=1)
+            sample = _parse_export_page(sample_text)
+            manifest = sample["manifest"] or {}
+            schema_version = str(manifest.get("schema_version") or "")
+            if not schema_version:
+                raise RemoteSyncError("远端导出响应缺少 manifest——契约不符,可能是版本过旧的后端")
+            sample_count = sample["article_count"]
+            authority_id = ""
+            capabilities = []
+            taxonomy_version = 0
+            taxonomy_ready = False
+        else:
+            raise RemoteSyncError("protocol 仅支持 v1/v2")
 
         article_total: Optional[int] = None
         try:
@@ -227,8 +508,13 @@ async def probe(
         "base_url": base,
         "version": version,
         "schema_version": schema_version,
+        "capabilities": capabilities,
+        "protocol": protocol,
+        "authority_id": authority_id,
+        "taxonomy_version": taxonomy_version,
+        "taxonomy_ready": taxonomy_ready,
         "article_total": article_total,
-        "sample_count": sample["article_count"],
+        "sample_count": sample_count,
     }
 
 
@@ -321,20 +607,238 @@ async def run_pull(
     }
 
 
+async def run_pull_v2(
+    *,
+    engine,
+    base_url: str,
+    username: str,
+    password: str,
+    media_root=None,
+    media_max_bytes: int = 20 * 1024 * 1024,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    checkpoints: Optional[Dict[str, Dict[str, str]]] = None,
+    on_advance: Optional[Callable[[int], None]] = None,
+    on_stream_complete: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+    transport: Optional[httpx.AsyncBaseTransport] = None,
+    push_candidate_evidence: bool = True,
+    expected_authority_id: str = "",
+) -> Dict[str, Any]:
+    """Pull every v2 stream with independently checkpointed keyset pages.
+
+    A page is validated and committed atomically by ``archive_sync_v2``.  A
+    stream checkpoint is published only after its terminal page (and, for media,
+    all declared binaries) has succeeded.  Replaying committed pages after a
+    later failure is intentional and idempotent. All non-Taxonomy streams share
+    one transaction-revision snapshot; ``source_states`` is applied last as the
+    readiness fence.
+    """
+
+    base = normalize_base_url(base_url)
+    page_size = min(max(int(page_size), 1), 5000)
+    checkpoints = checkpoints or {}
+    result: Dict[str, Any] = {
+        "base_url": base,
+        "username": username,
+        "schema_version": archive_sync_v2.SCHEMA_VERSION,
+        "streams": {},
+    }
+    expected_authority = str(expected_authority_id or "").strip()
+    # Sources is the first transaction-revision stream and pins one committed
+    # generation for every dependent stream. Taxonomy keeps its own governed
+    # version counter and is the only exception.
+    generation_snapshot = ""
+    async with _make_client(transport) as client:
+        cookie_header = await _login(client, base, username, password)
+        for stream in V2_STREAM_ORDER:
+            previous = checkpoints.get(stream) or {}
+            # A completed prior snapshot is the exclusive lower watermark for
+            # the next run. `after` is only for pages within the new snapshot.
+            since = str(previous.get("snapshot") or "")
+            snapshot = "" if stream == "taxonomy" else generation_snapshot
+            after = ""
+            stats = {
+                "pages": 0,
+                "count": 0,
+                "inserted": 0,
+                "updated": 0,
+                "deleted": 0,
+                "pruned": 0,
+                "media_downloaded": 0,
+            }
+            for _ in range(MAX_PAGES):
+                raw_text = await _fetch_v2_page(
+                    client,
+                    base,
+                    cookie_header,
+                    stream=stream,
+                    snapshot=snapshot,
+                    since=since,
+                    after=after,
+                    limit=page_size,
+                )
+                try:
+                    manifest, rows = archive_sync_v2.parse_page(
+                        raw_text,
+                        expected_stream=stream,
+                        requested_snapshot=snapshot,
+                        requested_since=since,
+                        requested_after=after,
+                    )
+                    archive_sync_v2.require_transaction_revision_capability(manifest)
+                except archive_sync_v2.SyncV2Error as exc:
+                    raise RemoteSyncError(f"v2 {stream} 契约校验失败:{exc}") from exc
+                authority = str(manifest["authority_id"])
+                if expected_authority and authority != expected_authority:
+                    raise RemoteSyncError(
+                        "v2 页面 authority_id 与连接预检不一致，拒绝写入"
+                    )
+                previous_authority = str(previous.get("authority_id") or "")
+                if previous_authority and authority != previous_authority:
+                    raise RemoteSyncError(
+                        f"v2 {stream} authority_id 已变化，需人工重置 checkpoint"
+                    )
+                expected_authority = authority
+                if snapshot and manifest.get("snapshot") != snapshot:
+                    raise RemoteSyncError(f"v2 {stream} snapshot 在翻页中发生变化")
+                snapshot = str(manifest.get("snapshot") or "")
+                if stream == "sources":
+                    generation_snapshot = snapshot
+                try:
+                    applied = await asyncio.to_thread(
+                        archive_sync_v2.import_page,
+                        engine,
+                        raw_text,
+                        expected_stream=stream,
+                    )
+                except archive_sync_v2.SyncV2Error as exc:
+                    raise RemoteSyncError(f"v2 {stream} 导入失败:{exc}") from exc
+                stats["pages"] += 1
+                stats["count"] += int(applied["count"])
+                stats["inserted"] += int(applied["inserted"])
+                stats["updated"] += int(applied["updated"])
+                stats["deleted"] += int(applied.get("deleted") or 0)
+
+                if stream == "media" and rows:
+                    if media_root is None:
+                        raise RemoteSyncError("本地媒体库未配置，不能完成 v2 media stream")
+                    for item in rows:
+                        key = str(item["payload"]["url_hash"])
+                        expected_size = int(item["payload"].get("size_bytes") or 0)
+                        body = await _fetch_v2_media_bytes(
+                            client,
+                            base,
+                            cookie_header,
+                            key,
+                            expected_size=expected_size,
+                            max_bytes=media_max_bytes,
+                        )
+                        await asyncio.to_thread(
+                            archive_sync_v2.install_media_bytes,
+                            engine,
+                            media_root,
+                            key,
+                            body,
+                            max_bytes=media_max_bytes,
+                        )
+                        stats["media_downloaded"] += 1
+                if on_advance is not None:
+                    on_advance(int(applied["count"]))
+                after = str(manifest.get("next_cursor") or after)
+                if bool(manifest.get("complete")):
+                    if not since and stream in {"articles", "analyses"}:
+                        candidates = await asyncio.to_thread(
+                            archive_sync_v2.full_authority_stale_identities,
+                            engine,
+                            stream,
+                            authority,
+                        )
+                        present: set[str] = set()
+                        for start in range(0, len(candidates), 1000):
+                            present.update(await _fetch_v2_presence(
+                                client,
+                                base,
+                                cookie_header,
+                                stream=stream,
+                                identities=candidates[start:start + 1000],
+                                authority_id=authority,
+                            ))
+                        confirmed_absent = [
+                            identity for identity in candidates if identity not in present
+                        ]
+                        stats["pruned"] += await asyncio.to_thread(
+                            archive_sync_v2.finalize_full_authority_stream,
+                            engine,
+                            stream,
+                            authority,
+                            absent_identities=confirmed_absent,
+                        )
+                    checkpoint = {
+                        "authority_id": authority,
+                        "snapshot": snapshot,
+                        "cursor": after,
+                        "completed_at": "",  # caller stamps its local clock
+                        **stats,
+                    }
+                    result["streams"][stream] = checkpoint
+                    if on_stream_complete is not None:
+                        on_stream_complete(stream, checkpoint)
+                    break
+            else:
+                raise RemoteSyncError(f"v2 {stream} 翻页超过安全上限 {MAX_PAGES}")
+        if push_candidate_evidence:
+            evidence_result = {"status": "success", "pages": 0, "inserted": 0, "skipped": 0}
+            try:
+                after = ""
+                evidence_snapshot = ""
+                for _ in range(MAX_PAGES):
+                    evidence_page = await asyncio.to_thread(
+                        archive_sync_v2.export_custom_candidate_evidence_page,
+                        engine,
+                        snapshot=evidence_snapshot,
+                        after=after,
+                    )
+                    evidence_manifest, _ = archive_sync_v2.parse_candidate_evidence_page(evidence_page)
+                    if evidence_snapshot and evidence_manifest["snapshot"] != evidence_snapshot:
+                        raise RemoteSyncError("Candidate 证据快照在翻页中发生变化")
+                    evidence_snapshot = evidence_manifest["snapshot"]
+                    response = await _request_with_retry(
+                        client,
+                        "POST",
+                        f"{base}/api/archive/v2/candidate-evidence.jsonl",
+                        headers={
+                            "Cookie": cookie_header,
+                            "Content-Type": "application/x-ndjson",
+                        },
+                        content=evidence_page.encode("utf-8"),
+                    )
+                    if response.status_code != 200:
+                        raise RemoteSyncError(
+                            f"自定 RSS Candidate 证据上传失败:HTTP {response.status_code}"
+                        )
+                    payload = response.json()
+                    evidence_result["pages"] += 1
+                    evidence_result["inserted"] += int(payload.get("inserted") or 0)
+                    evidence_result["skipped"] += int(payload.get("skipped") or 0)
+                    after = str(evidence_manifest.get("next_cursor") or "")
+                    if evidence_manifest.get("complete") is True:
+                        break
+                else:
+                    raise RemoteSyncError("Candidate 证据分页超过安全上限")
+            except Exception as exc:  # Candidate is an auxiliary reverse channel.
+                evidence_result = {"status": "failed", "error": str(exc)[:500]}
+                _logger.warning("Candidate evidence upload failed after main v2 streams: %s", exc)
+            result["candidate_evidence"] = evidence_result
+    result["authority_id"] = expected_authority
+    return result
+
+
 # ── KV 游标(按 base_url 分目标)────────────────────────────────────────────────
 
 def load_sync_state(engine) -> Dict[str, Any]:
     with Session(engine) as session:
-        record = session.get(AppSettingRecord, REMOTE_SYNC_STATE_KEY)
-        if record is None or not record.value:
-            return {"targets": {}}
-        try:
-            state = json.loads(record.value)
-        except json.JSONDecodeError:
-            return {"targets": {}}
-        if not isinstance(state, dict) or not isinstance(state.get("targets"), dict):
-            return {"targets": {}}
-        return state
+        return _decode_sync_state_record(
+            session.get(AppSettingRecord, REMOTE_SYNC_STATE_KEY)
+        )
 
 
 def record_sync_success(engine, result: Dict[str, Any], *, synced_at: str) -> None:
@@ -364,6 +868,51 @@ def record_sync_success(engine, result: Dict[str, Any], *, synced_at: str) -> No
         session.commit()
 
 
+def record_v2_stream_success(
+    engine,
+    *,
+    base_url: str,
+    username: str,
+    stream: str,
+    checkpoint: Dict[str, Any],
+    synced_at: str,
+) -> None:
+    """原子推进一个 v2 stream checkpoint，不影响其他 stream。"""
+    if stream not in V2_STREAM_ORDER:
+        raise ValueError(f"unsupported v2 stream: {stream}")
+    state = load_sync_state(engine)
+    target = dict(state["targets"].get(base_url) or {})
+    target_schema = str(target.get("v2_schema_version") or "")
+    target_authority = str(target.get("v2_authority_id") or "")
+    if target_schema != archive_sync_v2.SCHEMA_VERSION:
+        raise RemoteSyncError("transaction-revision consumer 尚未完成协议 rebase")
+    streams = dict(target.get("v2_streams") or {})
+    previous = streams.get(stream) or {}
+    incoming_authority = str(checkpoint.get("authority_id") or "")
+    if target_authority != incoming_authority:
+        raise RemoteSyncError("checkpoint authority_id 与已确认的 consumer epoch 不一致")
+    if previous.get("authority_id") and previous["authority_id"] != incoming_authority:
+        raise RemoteSyncError(
+            f"{stream} authority_id 从 {previous['authority_id']} 变为 {incoming_authority}，"
+            "需人工确认 producer 身份后重置 checkpoint"
+        )
+    streams[stream] = {
+        **checkpoint,
+        "completed_at": synced_at,
+    }
+    target.update({"username": username, "last_synced_at": synced_at, "v2_streams": streams})
+    state["targets"][base_url] = target
+    with Session(engine) as session:
+        row = session.get(AppSettingRecord, REMOTE_SYNC_STATE_KEY)
+        value = json.dumps(state, ensure_ascii=False)
+        if row is None:
+            row = AppSettingRecord(key=REMOTE_SYNC_STATE_KEY, value=value)
+        else:
+            row.value = value
+        session.add(row)
+        session.commit()
+
+
 # ── 定时同步配置(KV,凭据只写不回显)──────────────────────────────────────────
 
 def _load_schedule_raw(engine) -> Dict[str, Any]:
@@ -387,12 +936,33 @@ def load_schedule(engine, *, include_secret: bool = False) -> Dict[str, Any]:
     """
     raw = _load_schedule_raw(engine)
     password = str(raw.get("password") or "")
+    legacy_source_ids = list(raw.get("source_ids") or [])
+    # A pre-v2 filtered schedule is ambiguous: retaining v1 silently keeps the
+    # double-writer rollout hazard, while upgrading to v2 broadens its scope.
+    # Preserve the raw JSON, but make the effective schedule safe-disabled until
+    # an administrator explicitly saves either protocol.
+    migration_required = bool("protocol" not in raw and legacy_source_ids)
+    protocol = str(raw.get("protocol") or ("" if migration_required else "v2"))
+    from services import sync_consumer_policy
+
+    with Session(engine) as session:
+        protocol_downgrade_blocked = bool(
+            protocol == "v1"
+            and sync_consumer_policy.v2_receiver_state_present(session)
+        )
     result: Dict[str, Any] = {
-        "enabled": bool(raw.get("enabled", False)),
+        "enabled": (
+            bool(raw.get("enabled", False))
+            and not migration_required
+            and not protocol_downgrade_blocked
+        ),
         "cron": str(raw.get("cron") or _SCHEDULE_DEFAULT_CRON),
         "base_url": str(raw.get("base_url") or ""),
         "username": str(raw.get("username") or ""),
-        "source_ids": list(raw.get("source_ids") or []),
+        "source_ids": legacy_source_ids,
+        "protocol": protocol,
+        "migration_required": migration_required,
+        "protocol_downgrade_blocked": protocol_downgrade_blocked,
         "updated_at": str(raw.get("updated_at") or ""),
         "password_set": bool(password),
     }
@@ -408,8 +978,16 @@ def save_schedule(engine, updates: Dict[str, Any], *, updated_at: str) -> Dict[s
     契约的写入半边,见 `services/credentials`;本 blob 是该契约下的 JSON blob
     历史形态);服务层不依赖 FastAPI,`updated_at` 由调用方传入。
     """
-    merged = dict(_load_schedule_raw(engine))
-    for key in ("enabled", "cron", "base_url", "username", "source_ids"):
+    raw = _load_schedule_raw(engine)
+    legacy_protocol_choice_required = bool(
+        "protocol" not in raw and list(raw.get("source_ids") or [])
+    )
+    if legacy_protocol_choice_required and "protocol" not in updates:
+        raise RemoteSyncError(
+            "旧版局部同步配置需要管理员显式选择并保存 v1 或 v2 协议"
+        )
+    merged = dict(raw)
+    for key in ("enabled", "cron", "base_url", "username", "source_ids", "protocol"):
         if key in updates:
             merged[key] = updates[key]
     # 空/缺失 password 时保留 merged 里已存的密码。
@@ -419,9 +997,22 @@ def save_schedule(engine, updates: Dict[str, Any], *, updated_at: str) -> Dict[s
     merged["base_url"] = str(merged.get("base_url") or "")
     merged["username"] = str(merged.get("username") or "")
     merged["source_ids"] = list(merged.get("source_ids") or [])
+    merged["protocol"] = str(merged.get("protocol") or "v2").strip().lower()
+    if merged["protocol"] not in {"v1", "v2"}:
+        raise RemoteSyncError("protocol 仅支持 v1/v2")
+    if merged["protocol"] == "v2" and merged["source_ids"]:
+        raise RemoteSyncError("v2 是一致性全流同步，不支持 source_ids 局部过滤")
     merged["updated_at"] = updated_at
 
     with Session(engine) as session:
+        if merged["enabled"] and merged["protocol"] == "v1":
+            from services import sync_consumer_policy
+
+            if sync_consumer_policy.v2_receiver_state_present(session):
+                raise RemoteSyncError(
+                    "本机已进入 v2 consumer 模式，不能降级为 v1；"
+                    "如需回退请先停止 worker 并恢复升级前备份"
+                )
         record = session.get(AppSettingRecord, REMOTE_SYNC_SCHEDULE_KEY)
         value = json.dumps(merged, ensure_ascii=False)
         if record is None:
@@ -429,5 +1020,31 @@ def save_schedule(engine, updates: Dict[str, Any], *, updated_at: str) -> Dict[s
         else:
             record.value = value
         session.add(record)
+        if merged["enabled"] and merged["protocol"] == "v2":
+            from services import sync_consumer_policy
+
+            # Schedule intent and receiver fence share one transaction, so no
+            # public writer can slip between two commits.
+            sync_consumer_policy.activate_v2_consumer_mode(
+                session,
+                reason="v2_schedule",
+                activated_at=updated_at,
+                commit=False,
+            )
         session.commit()
     return load_schedule(engine, include_secret=False)
+
+
+def activate_consumer_for_enabled_v2_schedule(engine, *, reason: str) -> bool:
+    """Restore the v2 receiver fence before registering collector schedules."""
+
+    schedule = load_schedule(engine)
+    if not (schedule.get("enabled") and schedule.get("protocol") == "v2"):
+        return False
+    from services import sync_consumer_policy
+
+    with Session(engine) as session:
+        return sync_consumer_policy.activate_v2_consumer_mode(
+            session,
+            reason=reason,
+        )

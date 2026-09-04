@@ -992,6 +992,43 @@ def test_personal_feed_atom_filters_narrow_entries(monkeypatch, tmp_path):
         }
 
 
+def test_admin_personal_feed_token_never_exposes_custom_rss(monkeypatch, tmp_path):
+    import api.app as app_module
+    from models.db import SourceConfigRecord
+
+    sink = _make_sink(tmp_path, "admin_feed_custom_scope.db")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    _set_auth_accounts(monkeypatch, app_module)
+    _set_runtime_role(monkeypatch, app_module, "reader")
+    _seed_article(sink.engine, "public", "rss_public", "Public article")
+    _seed_article(sink.engine, "custom", "user_rss_secret", "Custom article")
+    with Session(sink.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id="user_rss_secret",
+            name="Custom",
+            source_type="rss",
+            url="https://feeds.example.test/private.xml",
+            owner_username="user",
+            ai_analysis_enabled=True,
+            created_at="2026-05-20T00:00:00",
+            updated_at="2026-05-20T00:00:00",
+        ))
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        token = client.post("/api/reader/feed-token/rotate").json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        response = client.get("/api/public/feed/articles", headers=headers)
+        assert response.status_code == 200
+        assert [item["id"] for item in response.json()["items"]] == ["public"]
+        explicit = client.get(
+            "/api/public/feed/articles?source_ids=user_rss_secret", headers=headers
+        )
+        assert explicit.status_code == 200
+        assert explicit.json()["items"] == []
+
+
 def test_personal_feed_atom_invalid_token_matches_markdown(monkeypatch, tmp_path):
     import api.app as app_module
 

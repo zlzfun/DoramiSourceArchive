@@ -860,7 +860,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     const isRunning = runningFetcherIds.has(fetcher.id);
 
     // SourceConfig 简化检视器：无 registry 参数/试抓语义。Podcast 配置可在这里
-    // 启停和立即抓取；用户私有源继续把删除等治理留在运维管理。
+    // 启停和立即抓取；用户自定源继续把删除等治理留在运维管理。
     if (fetcher.user_source || fetcher.source_config_node) {
       const isPodcastConfig = Boolean(fetcher.source_config_node && fetcher.source_type === 'podcast');
       const totalSourceItems = health?.total_articles ?? 0;
@@ -888,7 +888,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             <p className="inspector-desc">
               {isPodcastConfig
                 ? (fetcher.desc || '共享 Podcast RSS 采集源')
-                : `读者自助添加的私有 RSS 源 · 创建者 ${fetcher.owner_username || '未知'}`}
+                : `读者自助添加、目录未收录的 RSS 源 · 创建者 ${fetcher.owner_username || '未知'}`}
               {fetcher.is_active === false ? ' · 已停用（定时抓取跳过）' : ''}
             </p>
 

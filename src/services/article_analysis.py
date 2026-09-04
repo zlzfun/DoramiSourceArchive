@@ -15,8 +15,8 @@ making analysis part of the article transaction:
     A scheduler-friendly composition of recovery, scan, claim, and processing.
 
 No function logs article titles, bodies, source URLs, prompt payloads, or model
-output. Private user RSS is not eligible for third-party analysis in V1; future
-support requires explicit per-subscriber consent and cost attribution.
+output. User-added RSS follows its explicit source switch just like a platform
+source; credential-bearing feeds remain ineligible for third-party analysis.
 """
 
 from __future__ import annotations
@@ -77,13 +77,13 @@ from models.db import (
 )
 from services.article_display_tags import extracted_tag_snapshot
 from services.article_time import in_time_window, parse_article_time
+from services import sync_consumer_policy
 
 
 logger = logging.getLogger("dorami.article_analysis")
 
 ARTICLE_ANALYSIS_ENABLED_KEY = "article_analysis_enabled"
 TAXONOMY_CANDIDATE_ENABLED_KEY = "taxonomy_candidate_enabled"
-USER_SOURCE_PREFIX = "user_rss_"
 DEFAULT_BACKFILL_DAYS = 7
 DEFAULT_MAX_ATTEMPTS = 4
 DEFAULT_BATCH_SIZE = 8
@@ -159,7 +159,7 @@ class AnalysisInput:
     source_id: str
     publish_date: str
     fetched_date: str
-    private_source: bool
+    credentialed_source: bool
     source_owner_or_domain: str
 
 
@@ -212,7 +212,12 @@ def _as_utc(value: Optional[dt.datetime] = None) -> dt.datetime:
 
 
 def _iso(value: Optional[dt.datetime] = None) -> str:
-    return _as_utc(value).isoformat(timespec="seconds")
+    # Analysis rows are an Archive Sync v2 keyset stream.  Its snapshot carries
+    # microseconds, so truncating a mutation to whole seconds can place a write
+    # that happened *after* the snapshot lexically before it and hide that state
+    # forever from an incremental consumer.  Keep one canonical precision for
+    # lifecycle, lease and revision timestamps.
+    return _as_utc(value).isoformat(timespec="microseconds")
 
 
 def _parse_datetime(value: str | None) -> Optional[dt.datetime]:
@@ -259,20 +264,46 @@ def sanitize_error(error: BaseException | str) -> str:
     return raw[:MAX_ERROR_CHARS]
 
 
-def _is_private_source(article: ArticleRecord, source: SourceConfigRecord | None) -> bool:
-    return bool(
-        article.source_id.startswith(USER_SOURCE_PREFIX)
-        or (source is not None and (source.owner_username or "").strip())
-    )
+def _source_params(source: SourceConfigRecord | None) -> dict[str, Any]:
+    if source is None:
+        return {}
+    try:
+        value = json.loads(source.params_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _is_credentialed_source(source: SourceConfigRecord | None) -> bool:
+    """Whether sending this source's body to a third-party model is forbidden."""
+
+    # Keep the URL-inference fallback in one place so signed feeds created by an
+    # older release stay protected even before their params_json is backfilled.
+    from services.user_sources import source_is_credentialed
+
+    return source_is_credentialed(source)
+
+
+def _source_allows_analysis(
+    source: SourceConfigRecord | None,
+    *,
+    source_id: str = "",
+) -> bool:
+    # Registry-backed platform sources have no config row and retain default-on.
+    # A user RSS without its policy row is an orphan, not a registry source: fail
+    # closed because its credential classification can no longer be established.
+    from services.user_sources import is_user_source
+
+    if source is None:
+        return not is_user_source(source_id)
+    return bool(source.ai_analysis_enabled and not _is_credentialed_source(source))
 
 
 def source_allows_analysis(session: Session, source_id: str) -> bool:
-    """Platform sources without a config row retain the default-on behavior."""
+    """Honor the source switch while never exporting credentialed feed bodies."""
 
     source = session.get(SourceConfigRecord, source_id)
-    if source_id.startswith(USER_SOURCE_PREFIX) or bool(source and source.owner_username):
-        return False
-    return source is None or bool(source.ai_analysis_enabled)
+    return _source_allows_analysis(source, source_id=source_id)
 
 
 def has_authoritative_analysis(record: ArticleAnalysisRecord | None) -> bool:
@@ -387,8 +418,8 @@ def queue_article_analysis(
 ) -> str:
     """Create or invalidate one analysis row after the article already exists.
 
-    Returns ``created``, ``invalidated``, ``busy``, ``skipped``, ``unchanged``
-    or ``ineligible``. ``force`` invalidates an otherwise current successful
+    Returns ``created``, ``invalidated``, ``busy``, ``skipped``, ``unchanged``,
+    ``remote_authority`` or ``ineligible``. ``force`` invalidates an otherwise current successful
     asset for a governed full-analysis backfill, but never interrupts a leased
     running attempt. The caller controls the transaction so an integration hook
     can batch this with other *analysis* work, but it must be called only after
@@ -400,19 +431,38 @@ def queue_article_analysis(
     article = session.get(ArticleRecord, article_id)
     if article is None or not article.has_content or not (article.content or "").strip():
         return "ineligible"
+    # Archive Sync v2 把平台源的分析权威铆在 producer；即使两端
+    # 都是 role=all，接收端的入队、补偿扫描和手动 force 也不得重算。
+    if (article.analysis_authority_id or "").strip():
+        return "remote_authority"
 
     now_iso = _iso(now)
     content_hash = compute_content_hash(article)
     source = session.get(SourceConfigRecord, article.source_id)
-    allowed = not _is_private_source(article, source) and (
-        source is None or bool(source.ai_analysis_enabled)
-    )
     record = session.get(ArticleAnalysisRecord, article.id)
+    if not sync_consumer_policy.local_source_operation_allowed(
+        session, article.source_id, operation="analysis"
+    ):
+        if record is not None:
+            revoke_queued_analysis(
+                session,
+                article.id,
+                reason="v2_consumer_quiesced",
+                now=now,
+            )
+        return "consumer_quiesced"
+    allowed = _source_allows_analysis(source, source_id=article.source_id)
 
     if force and record is not None and record.status == AnalysisStatus.RUNNING.value:
         return "busy"
 
     if not allowed:
+        if _is_credentialed_source(source):
+            purge_source_candidate_evidence(
+                session,
+                article.source_id,
+                now=_as_utc(now),
+            )
         # Closing the source switch does not delete or mutate an already
         # successful result.  It only prevents a new/current task from running.
         if record is not None and record.status == AnalysisStatus.SUCCEEDED.value:
@@ -694,72 +744,113 @@ def claim_analysis_tasks(
             & (ArticleAnalysisRecord.next_attempt_at <= now_iso)
         ),
     )
-    candidate_ids = list(
-        session.exec(
-            select(ArticleAnalysisRecord.article_id)
-            .join(ArticleRecord, ArticleRecord.id == ArticleAnalysisRecord.article_id)
-            .where(eligible)
-            .order_by(ArticleRecord.fetched_date.desc(), ArticleRecord.id.desc())
-            .limit(max(1, limit * 3))
-        ).all()
-    )
     claimed: list[ClaimedAnalysisTask] = []
+    revoked = False
+    effective_limit = max(1, limit)
+    scan_page_size = max(CLAIM_SCAN_PAGE_SIZE, effective_limit * 4)
     effective_lease_seconds = min(
         ANALYSIS_LEASE_SECONDS,
         max(1, lease_seconds),
     )
     lease_expires = _iso(now_utc + dt.timedelta(seconds=effective_lease_seconds))
-    for article_id in candidate_ids:
-        if len(claimed) >= max(1, limit):
+    cursor_fetched_date = ""
+    cursor_article_id = ""
+    cursor_initialized = False
+    while len(claimed) < effective_limit:
+        query = (
+            select(ArticleAnalysisRecord.article_id, ArticleRecord.fetched_date)
+            .join(ArticleRecord, ArticleRecord.id == ArticleAnalysisRecord.article_id)
+            .where(eligible, ArticleRecord.analysis_authority_id == "")
+        )
+        if cursor_initialized:
+            query = query.where(
+                or_(
+                    ArticleRecord.fetched_date < cursor_fetched_date,
+                    (ArticleRecord.fetched_date == cursor_fetched_date)
+                    & (ArticleRecord.id < cursor_article_id),
+                )
+            )
+        candidates = list(
+            session.exec(
+                query.order_by(
+                    ArticleRecord.fetched_date.desc(), ArticleRecord.id.desc()
+                ).limit(scan_page_size)
+            ).all()
+        )
+        if not candidates:
             break
-        lease_token = f"{worker}:{uuid.uuid4().hex}"
-        result = session.exec(
-            update(ArticleAnalysisRecord)
-            .where(ArticleAnalysisRecord.article_id == article_id, eligible)
-            .values(
-                status=AnalysisStatus.RUNNING.value,
-                attempt_count=ArticleAnalysisRecord.attempt_count + 1,
-                started_at=now_iso,
-                next_attempt_at=None,
-                lease_owner=lease_token,
-                lease_expires_at=lease_expires,
-                last_error=None,
-                updated_at=now_iso,
+        # Advance from the page's immutable ordering key, irrespective of
+        # whether policy revocation changes a row. Failed/timeout public rows
+        # are eligible for retry but are not revocable by revoke_queued_analysis;
+        # relying on mutation for progress would repeatedly scan the same page
+        # and starve an older local custom-RSS task forever.
+        cursor_article_id, cursor_fetched_date = candidates[-1]
+        cursor_initialized = True
+        for article_id, _fetched_date in candidates:
+            if len(claimed) >= effective_limit:
+                break
+            article = session.get(ArticleRecord, article_id)
+            if article is None or not sync_consumer_policy.local_source_operation_allowed(
+                session, article.source_id, operation="analysis"
+            ):
+                item_revoked = revoke_queued_analysis(
+                    session,
+                    article_id,
+                    reason="v2_consumer_quiesced",
+                    now=now_utc,
+                )
+                revoked = item_revoked or revoked
+                continue
+            lease_token = f"{worker}:{uuid.uuid4().hex}"
+            result = session.exec(
+                update(ArticleAnalysisRecord)
+                .where(ArticleAnalysisRecord.article_id == article_id, eligible)
+                .values(
+                    status=AnalysisStatus.RUNNING.value,
+                    attempt_count=ArticleAnalysisRecord.attempt_count + 1,
+                    started_at=now_iso,
+                    next_attempt_at=None,
+                    lease_owner=lease_token,
+                    lease_expires_at=lease_expires,
+                    last_error=None,
+                    updated_at=now_iso,
+                )
             )
-        )
-        if result.rowcount != 1:
-            continue
-        record = session.get(ArticleAnalysisRecord, article_id)
-        if record is None:
-            continue
-        attempt_no = _next_attempt_number(session, article_id)
-        session.add(
-            ArticleAnalysisAttemptRecord(
-                article_id=article_id,
-                attempt_no=attempt_no,
-                operation=AnalysisOperation.FULL_ANALYSIS.value,
-                status=AnalysisAttemptStatus.RUNNING.value,
-                content_hash=record.content_hash,
-                # A preserved V_old keeps its own version fields readable while
-                # refresh is pending; this attempt always runs the current contract.
-                prompt_version=ARTICLE_ANALYSIS_PROMPT_VERSION,
-                scoring_version=ARTICLE_ANALYSIS_SCORING_VERSION,
-                taxonomy_version=record.taxonomy_version,
-                started_at=now_iso,
-                created_at=now_iso,
+            if result.rowcount != 1:
+                continue
+            record = session.get(ArticleAnalysisRecord, article_id)
+            if record is None:
+                continue
+            attempt_no = _next_attempt_number(session, article_id)
+            session.add(
+                ArticleAnalysisAttemptRecord(
+                    article_id=article_id,
+                    attempt_no=attempt_no,
+                    operation=AnalysisOperation.FULL_ANALYSIS.value,
+                    status=AnalysisAttemptStatus.RUNNING.value,
+                    content_hash=record.content_hash,
+                    # A preserved V_old keeps its own version fields readable while
+                    # refresh is pending; this attempt always runs the current contract.
+                    prompt_version=ARTICLE_ANALYSIS_PROMPT_VERSION,
+                    scoring_version=ARTICLE_ANALYSIS_SCORING_VERSION,
+                    taxonomy_version=record.taxonomy_version,
+                    started_at=now_iso,
+                    created_at=now_iso,
+                )
             )
-        )
-        session.flush()
-        claimed.append(
-            ClaimedAnalysisTask(
-                article_id=article_id,
-                worker_id=worker,
-                lease_token=lease_token,
-                attempt_no=attempt_no,
-                content_hash=record.content_hash,
+            session.flush()
+            claimed.append(
+                ClaimedAnalysisTask(
+                    article_id=article_id,
+                    worker_id=worker,
+                    lease_token=lease_token,
+                    attempt_no=attempt_no,
+                    content_hash=record.content_hash,
+                )
             )
-        )
-    if claimed:
+        if len(candidates) < scan_page_size:
+            break
+    if claimed or revoked:
         session.commit()
     return claimed
 
@@ -1089,7 +1180,7 @@ def _input_for(session: Session, article_id: str) -> tuple[AnalysisInput, list[T
             source_id=article.source_id or "",
             publish_date=article.publish_date or "",
             fetched_date=article.fetched_date or "",
-            private_source=_is_private_source(article, source),
+            credentialed_source=_is_credentialed_source(source),
             source_owner_or_domain=owner,
         ),
         load_relevant_active_tags(session, article),
@@ -1180,6 +1271,38 @@ def _delete_candidate_evidence(
     return candidates
 
 
+def purge_source_candidate_evidence(
+    session: Session,
+    source_id: str,
+    *,
+    now: Optional[dt.datetime] = None,
+) -> int:
+    """Retract global Candidate evidence when a source becomes credentialed."""
+
+    current = _as_utc(now)
+    evidence = list(
+        session.exec(
+            select(CmsTagCandidateEvidenceRecord).where(
+                CmsTagCandidateEvidenceRecord.source_id == source_id
+            )
+        ).all()
+    )
+    if not evidence:
+        return 0
+    candidate_ids = {int(item.candidate_id) for item in evidence}
+    session.exec(
+        delete(CmsTagCandidateEvidenceRecord).where(
+            CmsTagCandidateEvidenceRecord.source_id == source_id
+        )
+    )
+    session.flush()
+    for candidate_id in candidate_ids:
+        candidate = session.get(CmsTagCandidateRecord, candidate_id)
+        if candidate is not None:
+            _refresh_candidate_stats(session, candidate, current)
+    return len(evidence)
+
+
 def _persist_candidates(
     session: Session,
     *,
@@ -1188,7 +1311,7 @@ def _persist_candidates(
     prompt_version: str,
     now: dt.datetime,
 ) -> dict[tuple[str, str], int]:
-    if article.private_source:
+    if article.credentialed_source:
         return {}
     touched: list[CmsTagCandidateRecord] = _delete_candidate_evidence(
         session, article.article_id, now=now
@@ -1330,7 +1453,22 @@ def _mark_failure(
             return ProcessResult(task.article_id, "superseded", TaggingStatus.PENDING.value)
         article = session.get(ArticleRecord, task.article_id)
         source = session.get(SourceConfigRecord, article.source_id) if article else None
-        if article is not None and _is_private_source(article, source):
+        if article is not None and not sync_consumer_policy.local_source_operation_allowed(
+            session, article.source_id, operation="analysis"
+        ):
+            revoke_queued_analysis(
+                session,
+                task.article_id,
+                reason="v2_consumer_quiesced",
+                now=now,
+            )
+            session.commit()
+            return ProcessResult(
+                task.article_id,
+                "superseded",
+                record.tagging_status,
+            )
+        if article is not None and _is_credentialed_source(source):
             error_type = type(error).__name__ if isinstance(error, BaseException) else "AnalysisError"
             safe_error = f"{error_type}: private source analysis {status}"
         else:
@@ -1381,6 +1519,23 @@ async def process_claimed_analysis(
             or record.content_hash != task.content_hash
         ):
             return ProcessResult(task.article_id, "superseded", TaggingStatus.PENDING.value)
+        article_record = session.get(ArticleRecord, task.article_id)
+        if (
+            article_record is None
+            or (article_record.analysis_authority_id or "").strip()
+            or not sync_consumer_policy.local_source_operation_allowed(
+                session, article_record.source_id, operation="analysis"
+            )
+        ):
+            if article_record is not None:
+                revoke_queued_analysis(
+                    session,
+                    task.article_id,
+                    reason="v2_consumer_quiesced",
+                    now=_as_utc(now_fn()),
+                )
+                session.commit()
+            return ProcessResult(task.article_id, "superseded", TaggingStatus.PENDING.value)
         try:
             article_input, active_tags = _input_for(session, task.article_id)
         except LookupError as exc:
@@ -1404,21 +1559,21 @@ async def process_claimed_analysis(
         session.add(record)
         session.commit()
         if not source_allows_analysis(session, article_input.source_id):
-            record.status = AnalysisStatus.SKIPPED.value
-            record.next_attempt_at = None
-            record.started_at = None
-            record.lease_owner = None
-            record.lease_expires_at = None
-            record.last_error = "source_ai_analysis_disabled"
-            record.updated_at = _iso(now_fn())
-            attempt = _attempt_for(session, task)
-            if attempt is not None:
-                attempt.status = AnalysisAttemptStatus.SKIPPED.value
-                attempt.ended_at = record.updated_at
-                attempt.error = "source_ai_analysis_disabled"
-                session.add(attempt)
-            session.add(record)
+            source = session.get(SourceConfigRecord, article_input.source_id)
+            if _is_credentialed_source(source):
+                purge_source_candidate_evidence(
+                    session,
+                    article_input.source_id,
+                    now=_as_utc(now_fn()),
+                )
+            revoke_queued_analysis(
+                session,
+                task.article_id,
+                reason="source_ai_analysis_disabled",
+                now=_as_utc(now_fn()),
+            )
             session.commit()
+            session.refresh(record)
             return ProcessResult(task.article_id, record.status, record.tagging_status)
 
     effective_timeout = min(
@@ -1456,6 +1611,12 @@ async def process_claimed_analysis(
         record = session.get(ArticleAnalysisRecord, task.article_id)
         article = session.get(ArticleRecord, task.article_id)
         attempt = _attempt_for(session, task)
+        local_analysis_allowed = bool(
+            article is not None
+            and sync_consumer_policy.local_source_operation_allowed(
+                session, article.source_id, operation="analysis"
+            )
+        )
         if (
             record is None
             or article is None
@@ -1463,8 +1624,39 @@ async def process_claimed_analysis(
             or record.lease_owner != task.lease_token
             or record.content_hash != task.content_hash
             or compute_content_hash(article) != task.content_hash
+            or (article.analysis_authority_id or "").strip()
+            or not local_analysis_allowed
         ):
+            if (
+                article is not None
+                and not (article.analysis_authority_id or "").strip()
+                and not local_analysis_allowed
+            ):
+                revoke_queued_analysis(
+                    session,
+                    task.article_id,
+                    reason="v2_consumer_quiesced",
+                    now=ended,
+                )
+                session.commit()
             return ProcessResult(task.article_id, "superseded", TaggingStatus.PENDING.value)
+        if not source_allows_analysis(session, article.source_id):
+            source = session.get(SourceConfigRecord, article.source_id)
+            if _is_credentialed_source(source):
+                purge_source_candidate_evidence(
+                    session,
+                    article.source_id,
+                    now=ended,
+                )
+            revoke_queued_analysis(
+                session,
+                task.article_id,
+                reason="source_ai_analysis_disabled",
+                now=ended,
+            )
+            session.commit()
+            session.refresh(record)
+            return ProcessResult(task.article_id, record.status, record.tagging_status)
 
         result = validated.result
         record.status = AnalysisStatus.SUCCEEDED.value
@@ -1534,7 +1726,7 @@ async def process_claimed_analysis(
                     "content_genre": str(result.content_genre),
                     "tagging_status": tag_status,
                     "tag_count": len(result.tag_assignments),
-                    "candidate_count": 0 if article_input.private_source else len(result.tag_candidates),
+                    "candidate_count": 0 if article_input.credentialed_source else len(result.tag_candidates),
                     "validation_warnings": list(validated.warnings),
                 },
                 ensure_ascii=False,

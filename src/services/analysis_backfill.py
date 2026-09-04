@@ -108,6 +108,7 @@ def _eligible_rows(
             ArticleRecord.has_content.is_(True),
             ArticleRecord.content.is_not(None),
             ArticleRecord.content != "",
+            ArticleRecord.analysis_authority_id == "",
         )
         .order_by(ArticleRecord.fetched_date.desc(), ArticleRecord.id.desc())
     )
@@ -498,7 +499,7 @@ def dispatch_full_analysis_backfill(
         )
         if outcome == "busy":
             continue
-        if outcome in {"ineligible", "skipped", "unchanged"}:
+        if outcome in {"ineligible", "remote_authority", "skipped", "unchanged"}:
             item.status = "skipped"
             item.last_error = f"queue_{outcome}"
             item.completed_at = stamp

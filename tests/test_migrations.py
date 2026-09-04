@@ -13,6 +13,7 @@
 
 import os
 import sys
+import json
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -121,7 +122,6 @@ def test_sqlite_revision_rolls_back_all_ddl_on_interruption(tmp_path):
             assert "ix_tag_retag_job_items_article_id" not in indexes
     finally:
         engine.dispose()
-
 
 def test_intermediate_pr_data_cleanup_is_scoped_and_privacy_minimizing(tmp_path):
     import json
@@ -860,7 +860,7 @@ def test_reader_read_states_migration_adds_missing_is_read(tmp_path):
 
 
 def test_analysis_migrations_upgrade_existing_source_configs_with_default_on(tmp_path):
-    """Migration A/B 从上一 head 升级：存量来源默认开启分析且新表无 FK 漂移。"""
+    """公开自定源默认分析，签名源保持关闭，且新表无 FK 漂移。"""
     import sqlalchemy as sa
     from alembic import command as alembic_command
     from sqlalchemy import text
@@ -896,11 +896,74 @@ def test_analysis_migrations_upgrade_existing_source_configs_with_default_on(tmp
             private_values = dict(values)
             private_values.update(
                 source_id="private-rss",
-                name="Private RSS",
+                name="Unlisted public RSS",
                 url="https://private.example.com/feed.xml",
                 owner_username="alice",
             )
             conn.execute(source_configs.insert().values(**private_values))
+            signed_values = dict(values)
+            signed_values.update(
+                source_id="signed-rss",
+                name="Signed RSS",
+                url="https://private.example.com/feed.xml?token=secret",
+                owner_username="alice",
+            )
+            conn.execute(source_configs.insert().values(**signed_values))
+            string_private_values = dict(values)
+            string_private_values.update(
+                source_id="string-private-rss",
+                name="String Classified RSS",
+                url="https://private.example.com/feed.xml",
+                owner_username="alice",
+                params_json=json.dumps({"credentialed_private": "true"}),
+            )
+            conn.execute(source_configs.insert().values(**string_private_values))
+            path_signed_values = dict(values)
+            path_signed_values.update(
+                source_id="path-signed-rss",
+                name="Path Signed RSS",
+                url="https://private.example.com/feeds/a81f9c4d38bb479ca09372fe/token.xml",
+                owner_username="alice",
+            )
+            conn.execute(source_configs.insert().values(**path_signed_values))
+            unknown_query_signed_values = dict(values)
+            unknown_query_signed_values.update(
+                source_id="unknown-query-signed-rss",
+                name="Unknown Query Signed RSS",
+                url="https://private.example.com/feed.xml?subscriber=Abc123Def456Ghi789Jkl012",
+                owner_username="alice",
+            )
+            conn.execute(source_configs.insert().values(**unknown_query_signed_values))
+            public_query_values = dict(values)
+            public_query_values.update(
+                source_id="public-query-rss",
+                name="Public Channel RSS",
+                url="https://www.youtube.com/feeds/videos.xml?channel_id=UC_x5XG1OV2P6uZZ5FSM9Ttw",
+                owner_username="alice",
+            )
+            conn.execute(source_configs.insert().values(**public_query_values))
+            for source_id, url in (
+                ("authkey-rss", "https://private.example.com/feed.xml?authkey=shortsecret"),
+                ("letter-session-rss", "https://private.example.com/feed.xml?session=abcdefghijklmnopqrstuvwxyzabcdef"),
+                ("letter-path-rss", "https://private.example.com/abcdefghijklmnopqrstuvwxyzabcdef"),
+            ):
+                credential_values = dict(values)
+                credential_values.update(
+                    source_id=source_id,
+                    name=source_id,
+                    url=url,
+                    owner_username="alice",
+                )
+                conn.execute(source_configs.insert().values(**credential_values))
+            malformed_values = dict(values)
+            malformed_values.update(
+                source_id="malformed-params-rss",
+                name="Malformed params RSS",
+                url="https://feeds.example.com/public.xml",
+                owner_username="alice",
+                params_json="{legacy-secret-not-json",
+            )
+            conn.execute(source_configs.insert().values(**malformed_values))
     finally:
         engine.dispose()
 
@@ -928,13 +991,54 @@ def test_analysis_migrations_upgrade_existing_source_configs_with_default_on(tmp
                 )
             ).scalar_one()
             assert bool(enabled) is True
-            private_enabled = conn.execute(
+            custom_enabled = conn.execute(
                 text(
                     "SELECT ai_analysis_enabled FROM source_configs "
                     "WHERE source_id='private-rss'"
                 )
             ).scalar_one()
-            assert bool(private_enabled) is False
+            assert bool(custom_enabled) is True
+            signed_enabled, signed_params = conn.execute(
+                text(
+                    "SELECT ai_analysis_enabled, params_json FROM source_configs "
+                    "WHERE source_id='signed-rss'"
+                )
+            ).one()
+            assert bool(signed_enabled) is False
+            assert json.loads(signed_params)["credentialed_private"] is True
+            for source_id in (
+                "string-private-rss",
+                "path-signed-rss",
+                "unknown-query-signed-rss",
+                "authkey-rss",
+                "letter-session-rss",
+                "letter-path-rss",
+            ):
+                row_enabled, row_params = conn.execute(
+                    text(
+                        "SELECT ai_analysis_enabled, params_json FROM source_configs "
+                        "WHERE source_id=:source_id"
+                    ),
+                    {"source_id": source_id},
+                ).one()
+                assert bool(row_enabled) is False
+                assert json.loads(row_params)["credentialed_private"] is True
+            public_enabled, public_params = conn.execute(
+                text(
+                    "SELECT ai_analysis_enabled, params_json FROM source_configs "
+                    "WHERE source_id='public-query-rss'"
+                )
+            ).one()
+            assert bool(public_enabled) is True
+            assert json.loads(public_params)["credentialed_private"] is False
+            malformed_enabled, malformed_params = conn.execute(
+                text(
+                    "SELECT ai_analysis_enabled, params_json FROM source_configs "
+                    "WHERE source_id='malformed-params-rss'"
+                )
+            ).one()
+            assert bool(malformed_enabled) is False
+            assert malformed_params == "{legacy-secret-not-json"
             assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
     finally:
         engine.dispose()
@@ -988,5 +1092,185 @@ def test_ensure_migrated_tolerates_forked_heads(tmp_path, monkeypatch):
         with engine.connect() as conn:
             heads = set(MigrationContext.configure(conn).get_current_heads())
         assert heads == {"aaaafork0001", main_head}
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("schedule", "expected_marker"),
+    [
+        ({"enabled": True, "protocol": "v2", "source_ids": []}, True),
+        ({"enabled": True, "source_ids": []}, True),
+        ({"enabled": True, "source_ids": ["rss_platform"]}, False),
+        ({"enabled": True, "protocol": "v1", "source_ids": ["rss_platform"]}, False),
+    ],
+)
+def test_archive_sync_v2_migration_fences_only_explicit_v2_schedule(
+    tmp_path,
+    schedule,
+    expected_marker,
+):
+    """Upgrade closes the startup window without guessing legacy protocol intent."""
+
+    from sqlalchemy import text
+
+    suffix = "-".join(sorted(schedule)) + str(schedule.get("protocol") or "legacy")
+    db_url = f"sqlite:///{tmp_path / f'consumer-{suffix}.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "d8b3f1a6c9e2")
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("INSERT INTO app_settings (key, value) VALUES (:key, :value)"),
+                {
+                    "key": "remote_sync:schedule",
+                    "value": json.dumps(schedule),
+                },
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            marker = conn.execute(
+                text(
+                    "SELECT value FROM app_settings "
+                    "WHERE key='remote_sync:v2_consumer_mode'"
+                )
+            ).scalar_one_or_none()
+            stored_schedule = conn.execute(
+                text("SELECT value FROM app_settings WHERE key='remote_sync:schedule'")
+            ).scalar_one()
+        assert (marker is not None) is expected_marker
+        assert json.loads(stored_schedule) == schedule
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "blocker",
+    [
+        "consumer_marker",
+        "source_authority",
+        "analysis_authority",
+        "remote_candidate",
+        "digest_intent",
+        "enabled_v2_schedule",
+    ],
+)
+def test_archive_sync_v2_downgrade_refuses_to_reopen_live_writers(tmp_path, blocker):
+    from sqlalchemy import text
+    from sqlmodel import Session
+    from models.db import (
+        ArticleAnalysisRecord,
+        ArticleRecord,
+        CmsTagCandidateRecord,
+        PersonalDigestEditionRecord,
+        RemoteCandidateEvidenceRecord,
+        SourceConfigRecord,
+    )
+
+    db_url = f"sqlite:///{tmp_path / f'downgrade-{blocker}.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            if blocker == "consumer_marker":
+                conn.execute(
+                    text("INSERT INTO app_settings (key, value) VALUES (:key, :value)"),
+                    {
+                        "key": "remote_sync:v2_consumer_mode",
+                        "value": '{"active":true}',
+                    },
+                )
+            elif blocker == "remote_candidate":
+                pass
+            elif blocker == "digest_intent":
+                pass
+            elif blocker == "enabled_v2_schedule":
+                conn.execute(
+                    text("INSERT INTO app_settings (key, value) VALUES (:key, :value)"),
+                    {
+                        "key": "remote_sync:schedule",
+                        "value": '{"enabled":true,"protocol":"v2"}',
+                    },
+                )
+        if blocker == "source_authority":
+            with Session(engine) as session:
+                session.add(SourceConfigRecord(
+                    source_id="remote",
+                    name="Remote",
+                    collection_authority_id="producer-a",
+                    created_at="2026-09-04",
+                    updated_at="2026-09-04",
+                ))
+                session.commit()
+        elif blocker == "analysis_authority":
+            with Session(engine) as session:
+                session.add(ArticleRecord(
+                    id="remote-analysis", title="Remote", content_type="article",
+                    source_id="remote", source_url="", publish_date="now",
+                    fetched_date="now", has_content=True, content="body",
+                ))
+                session.add(ArticleAnalysisRecord(
+                    article_id="remote-analysis", status="succeeded",
+                    tagging_status="succeeded", content_hash="hash",
+                    authority_id="producer-a", authority_revision="rev-1",
+                    created_at="now", updated_at="now",
+                ))
+                session.commit()
+        elif blocker == "remote_candidate":
+            with Session(engine) as session:
+                candidate = CmsTagCandidateRecord(
+                    label="Agents", normalized_label="agents", proposed_kind="topic",
+                    first_seen_at="now", last_seen_at="now", created_at="now", updated_at="now",
+                )
+                session.add(candidate)
+                session.flush()
+                session.add(RemoteCandidateEvidenceRecord(
+                    candidate_id=candidate.id, authority_id="producer-a",
+                    article_fingerprint="fingerprint", source_provenance="rss",
+                    label="Agents", normalized_label="agents", proposed_kind="topic",
+                    confidence=0.9, prompt_version="v1", sync_snapshot="snap",
+                    created_at="now",
+                ))
+                session.commit()
+        elif blocker == "digest_intent":
+            with Session(engine) as session:
+                session.add(PersonalDigestEditionRecord(
+                    owner_username="alice", report_date="2026-09-04", revision=1,
+                    status="pending", check_after="2026-09-04", cutoff_at="2026-09-04",
+                    desired_generation_reason="manual_rebuild",
+                    desired_requested_at="2026-09-04", created_at="now", updated_at="now",
+                ))
+                session.commit()
+    finally:
+        engine.dispose()
+
+
+    with pytest.raises(RuntimeError, match="恢复升级前备份"):
+        command.downgrade(cfg, "d8b3f1a6c9e2")
+
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            assert MigrationContext.configure(conn).get_current_revision() == _head_revision()
+    finally:
+        engine.dispose()
+
+
+def test_archive_sync_v2_downgrade_allows_empty_non_consumer_database(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'downgrade-clean.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, "d8b3f1a6c9e2")
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            assert MigrationContext.configure(conn).get_current_revision() == "d8b3f1a6c9e2"
     finally:
         engine.dispose()
