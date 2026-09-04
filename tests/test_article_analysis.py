@@ -302,7 +302,6 @@ def _payload(*, candidate: bool = False) -> dict:
     return {
         "quality_score": 8.6,
         "score_reason": "原创信息充分，并有明确实践价值。",
-        "one_sentence_summary": "文章发布了一项 Agent 能力。",
         "summary": "文章解释了能力边界、实现方式与实际影响。",
         "content_genre": "product_update",
         "primary_tag_code": "agents",
@@ -765,6 +764,23 @@ def test_validation_limits_score_genre_and_active_tag_codes():
     assert "hunter2" not in sanitize_error("password=hunter2")
 
 
+def test_prompt_and_validator_keep_score_reason_a_footnote():
+    """issue #13:score_reason 是分数注脚——提示词要求 ≤40 字且先于分数输出、
+    不复述内容;解析层不再给它 1200 字空间,超写即截断;one_sentence_summary 已取缔。"""
+    from llm.article_analysis_prompt import ARTICLE_ANALYSIS_SYSTEM_PROMPT
+
+    assert "one_sentence_summary" not in ARTICLE_ANALYSIS_SYSTEM_PROMPT
+    assert "不复述文章内容" in ARTICLE_ANALYSIS_SYSTEM_PROMPT
+    assert ARTICLE_ANALYSIS_SYSTEM_PROMPT.index("score_reason、quality_score") > 0
+
+    long_reason = "理由" * 400
+    validated = validate_analysis_payload({**_payload(), "score_reason": long_reason}, active_tags=[])
+    assert 0 < len(validated.result.score_reason) < len(long_reason)
+    assert len(validated.result.score_reason) <= 120
+    with pytest.raises(ValueError):
+        validate_analysis_payload({**_payload(), "score_reason": ""}, active_tags=[])
+
+
 def test_reader_summary_prefers_unified_asset_then_legacy(storage):
     article = _article("summary")
     with Session(storage.engine) as session:
@@ -778,7 +794,6 @@ def test_reader_summary_prefers_unified_asset_then_legacy(storage):
                 tagging_status="succeeded",
                 quality_score=8.0,
                 score_reason="reason",
-                one_sentence_summary="one",
                 summary="unified summary",
                 content_genre="opinion",
                 content_hash=compute_content_hash(article),

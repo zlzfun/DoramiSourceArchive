@@ -508,6 +508,60 @@ def test_summarize_caches_and_surfaces_in_list(monkeypatch, tmp_path):
         assert items[0]["summary_zh"] == "两句话的要点摘要。"
 
 
+def test_summarize_short_circuits_on_analysis_summary(monkeypatch, tmp_path):
+    """issue #13 复用:文章分析已产出 summary 时,速读端点直接返回它——不调 LLM、
+    不进成本闸、不计用量,也不往 extensions_json 写第二份摘要。"""
+    import json as _json
+
+    import services.reader_ai as rai
+    from api.routers import reader as reader_router
+    from models.db import ArticleAnalysisRecord, ArticleRecord
+
+    app_module, sink = _base_setup(monkeypatch, tmp_path, "sum_analysis.db")
+    _configure_llm(sink.engine)
+    _enable_ai_beta(sink.engine)
+    _seed_article(sink.engine, "a1", "rss_x", "Title", "Hello world body")
+    with Session(sink.engine) as session:
+        session.add(ArticleAnalysisRecord(
+            article_id="a1",
+            status="succeeded",
+            tagging_status="succeeded",
+            quality_score=8.0,
+            score_reason="原创信息充分。",
+            summary="分析产出的唯一摘要。",
+            content_genre="opinion",
+            content_hash="hash-a1",
+            created_at="2026-09-04T00:00:00+00:00",
+            updated_at="2026-09-04T00:00:00+00:00",
+        ))
+        session.commit()
+
+    calls = []
+
+    async def fake_chat_completion(*, messages, config, **kwargs):
+        calls.append(1)
+        return "不该被调用的摘要"
+
+    gates = []
+    monkeypatch.setattr(rai, "chat_completion", fake_chat_completion)
+    monkeypatch.setattr(
+        reader_router, "_enforce_ai_cost_gates", lambda *a, **k: gates.append(a),
+    )
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        resp = client.post("/api/reader/ai/summarize", json={"article_id": "a1"})
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "status": "success", "summary": "分析产出的唯一摘要。",
+            "cached": True, "source": "analysis",
+        }
+        assert calls == [] and gates == []
+        with Session(sink.engine) as session:
+            record = session.get(ArticleRecord, "a1")
+            assert "summary_zh" not in _json.loads(record.extensions_json or "{}")
+
+
 def test_summarize_400_when_no_content(monkeypatch, tmp_path):
     app_module, sink = _base_setup(monkeypatch, tmp_path, "sum_empty.db")
     _configure_llm(sink.engine)

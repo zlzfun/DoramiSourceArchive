@@ -65,7 +65,7 @@ def _seed_persisted_analysis(engine, article_id, *, score=4.5, genre="research_p
         session.add(ArticleAnalysisRecord(
             article_id=article_id, status="succeeded", tagging_status="succeeded",
             quality_score=score, score_reason="这是文章级评分理由，不能变成公共点评",
-            one_sentence_summary="新一句话摘要", summary="- 新摘要第一点\n- 新摘要第二点",
+            summary="- 新摘要第一点\n- 新摘要第二点",
             content_genre=genre, content_hash="hash", model_name="analysis-model",
             prompt_version="article-analysis-v1", scoring_version="content-value-v1",
             analyzed_at=now, tagged_at=now, created_at=now, updated_at=now,

@@ -34,7 +34,6 @@ def _candidate(
         fetched_date="2026-09-01T08:30:00+08:00",
         quality_score=score,
         score_reason="reason",
-        one_sentence_summary="summary",
         content_genre=genre,
         tag_codes=tags,
         duplicate_group_id=group,

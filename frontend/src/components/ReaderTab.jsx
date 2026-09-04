@@ -52,6 +52,7 @@ import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { contentTypeLabel } from '../utils/contentType';
 import { formatPodcastDuration, podcastOf, podcastProcessingMeta } from '../utils/podcast';
 import { displayAnalysisTags, primaryAnalysisLabel, qualityScoreText } from '../utils/analysis';
+import AiReadingCard from './AiReadingCard';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
 
@@ -138,7 +139,7 @@ export const ArticleRow = memo(function ArticleRow({
     Boolean(podcast?.condensed_audio_url),
   );
   const analysisLabel = primaryAnalysisLabel(article);
-  const score = qualityScoreText(article.quality_score);
+  const score = article.quality_score != null ? qualityScoreText(article.quality_score) : '';
   const favoriteControl = (
     <span
       role="button"
@@ -984,17 +985,6 @@ export default function ReaderTab({
                   路径上,文字化;译文二段激活态沿 AI 渐变身份(v3.33),AI 未开启只余原文。 */}
               {(activeArticle.source_url || (aiEnabled && !activeIsChinese)) && (
                 <div className="reader-pane-actions">
-                  {activeArticle.source_url && (
-                    <a
-                      href={activeArticle.source_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="reader-pane-act"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                      查看原文
-                    </a>
-                  )}
                   {aiEnabled && !activeIsChinese && (
                     <div className="reader-tr-seg" role="group" aria-label="正文语言">
                       <button
@@ -1003,7 +993,7 @@ export default function ReaderTab({
                         aria-pressed={!showTranslation}
                         onClick={() => { if (showTranslation) handleTranslate(); }}
                       >
-                        原文
+                        原语言
                       </button>
                       <button
                         type="button"
@@ -1022,68 +1012,46 @@ export default function ReaderTab({
                       </button>
                     </div>
                   )}
+                  {/* 顺序:语言二段在前、跳原网页在后(目检拍板);「原语言」与「查看原文」用词分家——
+                      前者是本页正文的语言档位,后者是跳出站外 */}
+                  {activeArticle.source_url && (
+                    <a
+                      href={activeArticle.source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="reader-pane-act"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                      查看原文
+                    </a>
+                  )}
                 </div>
               )}
-              {(activeArticle.quality_score != null || displayAnalysisTags(activeArticle).length > 0) && (
-                <div className="reader-analysis-summary">
-                  {podcastView && (
-                    <div className="reader-analysis-basis">
-                      <strong>简介初评</strong>
-                      <span>基于节目简介，尚未分析完整音频</span>
-                    </div>
-                  )}
-                  <div className="reader-analysis-top">
-                    {activeArticle.quality_score != null && (
-                      <span className="reader-analysis-score">
-                        <strong>{qualityScoreText(activeArticle.quality_score)}</strong>
-                        <small>{podcastView ? '简介价值分' : '内容价值分'}</small>
-                      </span>
-                    )}
-                    <span className="reader-analysis-tags">
-                      {displayAnalysisTags(activeArticle).map((tag, index) => (
-                        <AnalysisTagChip
-                          key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
-                          tag={tag}
-                          onTemporarySearch={searchForLabel}
-                        />
-                      ))}
-                    </span>
-                  </div>
-                  {activeArticle.score_reason && <p>{activeArticle.score_reason}</p>}
-                  <small>
-                    {podcastView
-                      ? 'AI 基于节目简介的初步评估，仅用于辅助筛选；完整音频分析将在精品处理后提供'
-                      : 'AI 内容价值评估，用于辅助筛选，不代表事实保证或你的个人评分'}
-                  </small>
+              {/* issue #13 二轮:分数并入下方「哆啦美速读」卡头,标题区只余标签行(无框) */}
+              {displayAnalysisTags(activeArticle).length > 0 && (
+                <div className="reader-pane-tags">
+                  {displayAnalysisTags(activeArticle).map((tag, index) => (
+                    <AnalysisTagChip
+                      key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
+                      tag={tag}
+                      onTemporarySearch={searchForLabel}
+                    />
+                  ))}
                 </div>
               )}
             </header>
             <div className="reader-pane-body markdown-body">
               {podcastView && <PodcastAudioPanel article={activeArticle} />}
-              {/* 当前播客摘要只基于 RSS 节目简介；完整音频摘要留给精品处理链路。 */}
+              {/* 哆啦美速读卡(AI 开启时才有):左栏 星+内容价值分,右栏摘要;无缓存给生成入口(不自动生成,控成本) */}
               {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
-                <div className="reader-ai-summary">
-                  <div className="reader-ai-summary-head">
-                    <Sparkles className="h-3.5 w-3.5" />
-                    <span className="ai-grad-text">{podcastView ? '节目简介导读' : '哆啦美速读'}</span>
-                  </div>
-                  {activeSummary ? (
-                    <p className="reader-ai-summary-text">{activeSummary}</p>
-                  ) : summarizing ? (
-                    <div className="reader-ai-summary-skel" role="status" aria-label="正在生成速读">
-                      <span className="skeleton" /><span className="skeleton" /><span className="skeleton" />
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleSummarize}
-                      className="reader-ai-summary-generate"
-                    >
-                      {podcastView ? '生成节目简介导读' : '生成本文要点速读'}
-                    </button>
-                  )}
-                  {podcastView && <small className="reader-ai-summary-basis">基于节目简介，不是音频全文摘要</small>}
-                </div>
+                <AiReadingCard
+                  article={activeArticle}
+                  summary={activeSummary}
+                  summarizing={summarizing}
+                  canGenerate={Boolean(activeBody)}
+                  onGenerate={handleSummarize}
+                  podcast={podcastView}
+                />
               )}
               {podcastView && !activeBodyLoading && activeBody && (
                 <div className="podcast-show-notes-head">

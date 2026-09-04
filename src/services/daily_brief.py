@@ -203,7 +203,6 @@ class PersistedAnalysisCompat:
     article_id: str
     quality_score: float
     summary: str
-    one_sentence_summary: str
     content_genre: str
     canonical_tags: Tuple[str, ...] = ()
 
@@ -233,10 +232,10 @@ def content_genre_to_legacy_classification(content_genre: str) -> str:
     return CONTENT_GENRE_TO_LEGACY_CLASSIFICATION.get((content_genre or "").strip(), "")
 
 
-def _analysis_summary_lines(summary: str, one_sentence_summary: str) -> List[str]:
+def _analysis_summary_lines(summary: str) -> List[str]:
     """把文章级纯文本摘要收敛为 legacy ``summary: list[str]`` 形状。"""
 
-    raw = (summary or "").strip() or (one_sentence_summary or "").strip()
+    raw = (summary or "").strip()
     if not raw:
         return []
     lines = []
@@ -293,7 +292,6 @@ def load_persisted_analysis_compat(
             article_id=row.article_id,
             quality_score=float(row.quality_score),
             summary=row.summary or "",
-            one_sentence_summary=row.one_sentence_summary or "",
             content_genre=row.content_genre or "",
             canonical_tags=tuple(tags_by_article.get(row.article_id, [])),
         )
@@ -321,9 +319,7 @@ def build_analysis_shadow_metrics(
         if mapped and mapped == (item.classification or "").strip():
             classification_matches += 1
         legacy_summary = " ".join(item.summary).strip()
-        analysis_summary = " ".join(
-            _analysis_summary_lines(new.summary, new.one_sentence_summary)
-        ).strip()
+        analysis_summary = " ".join(_analysis_summary_lines(new.summary)).strip()
         if legacy_summary and analysis_summary and legacy_summary == analysis_summary:
             summary_matches += 1
         if legacy_summary and analysis_summary:
@@ -365,9 +361,7 @@ def apply_persisted_analysis_adapter(
         if analysis is None:
             adapted.append(item)
             continue
-        summary = _analysis_summary_lines(
-            analysis.summary, analysis.one_sentence_summary
-        ) or item.summary
+        summary = _analysis_summary_lines(analysis.summary) or item.summary
         classification = (
             content_genre_to_legacy_classification(analysis.content_genre)
             or item.classification

@@ -5,7 +5,6 @@ import {
   Loader2,
   MoreHorizontal,
   Share2,
-  Sparkles,
   Star,
 } from 'lucide-react';
 import ReaderMarkdown from '../ReaderMarkdown';
@@ -16,7 +15,8 @@ import { PaneBodySkeleton } from '../ReaderTab';
 import { formatRelativeTime, formatDateTime } from '../../utils/datetime';
 import { contentTypeLabel } from '../../utils/contentType';
 import { formatPodcastDuration } from '../../utils/podcast';
-import { displayAnalysisTags, qualityScoreText } from '../../utils/analysis';
+import { displayAnalysisTags } from '../../utils/analysis';
+import AiReadingCard from '../AiReadingCard';
 import { hostOf } from '../../utils/readerText';
 
 // 正文页(移动波 Wave2,样页画面②):push 全屏页——无底部 Tab,返回即出栈。
@@ -150,65 +150,33 @@ export default function MobileArticlePage({
               <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
             )}
           </div>
-          {(activeArticle.quality_score != null || displayAnalysisTags(activeArticle).length > 0) && (
-            <div className="reader-analysis-summary">
-              {podcastView && (
-                <div className="reader-analysis-basis">
-                  <strong>简介初评</strong>
-                  <span>基于节目简介，尚未分析完整音频</span>
-                </div>
-              )}
-              <div className="reader-analysis-top">
-                {activeArticle.quality_score != null && (
-                  <span className="reader-analysis-score"><strong>{qualityScoreText(activeArticle.quality_score)}</strong><small>{podcastView ? '简介价值分' : '内容价值分'}</small></span>
-                )}
-                <span className="reader-analysis-tags">
-                  {displayAnalysisTags(activeArticle).map((tag, index) => (
-                    <AnalysisTagChip
-                      key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
-                      tag={tag}
-                      onTemporarySearch={(label) => {
-                        searchForLabel(label);
-                        onBack();
-                      }}
-                    />
-                  ))}
-                </span>
-              </div>
-              {activeArticle.score_reason && <p>{activeArticle.score_reason}</p>}
-              <small>
-                {podcastView
-                  ? 'AI 基于节目简介的初步评估，仅用于辅助筛选；完整音频分析将在精品处理后提供'
-                  : 'AI 内容价值评估，用于辅助筛选，不代表事实保证或你的个人评分'}
-              </small>
+          {/* issue #13 二轮:分数并入速读卡头,标题区只余标签行 */}
+          {displayAnalysisTags(activeArticle).length > 0 && (
+            <div className="reader-pane-tags">
+              {displayAnalysisTags(activeArticle).map((tag, index) => (
+                <AnalysisTagChip
+                  key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
+                  tag={tag}
+                  onTemporarySearch={(label) => {
+                    searchForLabel(label);
+                    onBack();
+                  }}
+                />
+              ))}
             </div>
           )}
         </header>
         <div className="m-read-body markdown-body">
           {podcastView && <PodcastAudioPanel article={activeArticle} />}
           {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
-            <div className="reader-ai-summary">
-              <div className="reader-ai-summary-head">
-                <Sparkles className="h-3.5 w-3.5" />
-                <span className="ai-grad-text">{podcastView ? '节目简介导读' : '哆啦美速读'}</span>
-              </div>
-              {activeSummary ? (
-                <p className="reader-ai-summary-text">{activeSummary}</p>
-              ) : summarizing ? (
-                <div className="reader-ai-summary-skel" role="status" aria-label="正在生成速读">
-                  <span className="skeleton" /><span className="skeleton" /><span className="skeleton" />
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleSummarize}
-                  className="reader-ai-summary-generate"
-                >
-                  {podcastView ? '生成节目简介导读' : '生成本文要点速读'}
-                </button>
-              )}
-              {podcastView && <small className="reader-ai-summary-basis">基于节目简介，不是音频全文摘要</small>}
-            </div>
+            <AiReadingCard
+              article={activeArticle}
+              summary={activeSummary}
+              summarizing={summarizing}
+              canGenerate={Boolean(activeBody)}
+              onGenerate={handleSummarize}
+              podcast={podcastView}
+            />
           )}
           {podcastView && !activeBodyLoading && activeBody && (
             <div className="podcast-show-notes-head">

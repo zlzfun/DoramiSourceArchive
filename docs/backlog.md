@@ -62,6 +62,22 @@
 
 ## 展望(用户表态、未立项)
 
+- ◇ **个人早报 API 测试的时段依赖**(2026-09-05 凌晨跑 v3.45.1 全套时暴露,main 同时段复现):
+  `tests/test_analysis_personal_api.py` 三例(subscription_strict / accepts_persisted_public_brief /
+  first_open_waits_then_degrades)用真实墙钟调 `/api/reader/briefs/today/ensure`,而首开边缘的
+  就绪/降级门槛是当日 08:30(+15 分钟期限),**每天 00:00–08:44 必挂**。修法=路由
+  (`personal_briefs.py` 三处 `dt.datetime.now(SHANGHAI)`)与服务层抽 `_now()` 注入点,
+  测试 monkeypatch 到当日 10:00;`scripts/smoke_analysis_release.py` 的同类问题已在
+  v3.45.1 就地修(按 edition 自身 `deadline_at` 推进,不依赖墙钟)。
+- ◇ **文章分析拆两次调用「先打分再理解」**(v3.45.1 issue #13 评估后不做):打分也要读全文,
+  两次调用 prompt 翻倍(dev 实测 prompt 均 2869 tokens 占大头),低分短路能省的 completion
+  与覆盖面(<5 分仅 4%)远抵不过;真收益只有「只改评分规则时只重打分」,但 `scoring_version`
+  至今未变过——需要把一行结果拆成「评分组 / 内容理解组」两组版本键与状态机,租约/重试/
+  `full_analysis` 回填都要分叉。等真出现频繁只改评分规则的需求再做。
+- ◇ **公共日报迁移到文章分析结果**(v3.44 adapter 默认关闭,v3.45.1 拍板不并入 #13):
+  adapter 只是事后覆盖 summary/score/classification/tags,legacy map 照跑没有省调用;
+  公共日报的摘要契约是 1–3 条加粗要点 + 100–150 字点评 + 中文标题 + 公司/领域,
+  全部来自 map。真要迁移得先决定这些产出从哪来(分析结果扩字段 vs 保留一次轻 map)。
 - ◇ **用户自定源安全纵深二期**(v3.40 codex 检视遗留,方案 §9.1):①redirect hop
   级 SSRF 校验/连接 peer 固定(现与 source_builder 同水位,拍板不加深);②全站
   正式抓取统一响应大小上限(用户源已限 5MiB,策展源 55+ 无上限是全站级决策);
