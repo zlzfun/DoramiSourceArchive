@@ -8,12 +8,14 @@ import json
 import logging
 import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 from sqlmodel import Session, select
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+from api.articles_view import serialize_article_list_item  # noqa: E402
 from config import LLMConfig  # noqa: E402
 from llm.article_analysis_prompt import (  # noqa: E402
     ARTICLE_ANALYSIS_SYSTEM_PROMPT,
@@ -113,6 +115,36 @@ def _tag(
         created_at=NOW_ISO,
         updated_at=NOW_ISO,
     )
+
+
+def test_analysis_has_result_accepts_genre_or_machine_tags_but_not_manual_tags():
+    article = _article("historical-projection")
+    genre_only = SimpleNamespace(
+        status="succeeded",
+        tagging_status="succeeded",
+        quality_score=None,
+        content_genre="opinion",
+    )
+    no_fields = SimpleNamespace(
+        status="succeeded",
+        tagging_status="succeeded",
+        quality_score=None,
+        content_genre=None,
+    )
+    assert serialize_article_list_item(
+        article, analysis=genre_only, tags=[], display_tags=[]
+    )["analysis_has_result"] is True
+    assert serialize_article_list_item(
+        article,
+        analysis=no_fields,
+        tags=[],
+        display_tags=[{"label": "Agent Memory", "kind": "topic", "type": "extracted"}],
+    )["analysis_has_result"] is True
+    assert serialize_article_list_item(
+        article,
+        analysis=no_fields,
+        tags=[{"code": "manual", "kind": "topic", "assignment_source": "manual"}],
+    )["analysis_has_result"] is False
 
 
 def test_relevant_tag_prompt_boundary_survives_the_dto_contract(storage):
