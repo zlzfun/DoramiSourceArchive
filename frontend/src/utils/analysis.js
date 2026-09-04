@@ -42,7 +42,17 @@ export function primaryAnalysisLabel(article) {
 }
 
 export function qualityScoreText(value) {
+  // issue #12:Number(null) === 0 会把「未分析」画成 0 分;分数只可能是 null 或 [1,10]。
+  if (value == null || value === '') return '';
   const number = Number(value);
   if (!Number.isFinite(number)) return '';
   return number.toFixed(number % 1 ? 1 : 0);
+}
+
+export const SCORE_DISCLAIMER = 'AI 内容价值评估，用于辅助筛选，不代表事实保证或你的个人评分';
+
+/** 分数的悬停提示:一句短理由(issue #13 起 score_reason 是分数注脚,不再独立成段)+ 免责说明。 */
+export function scoreReasonTitle(article) {
+  const reason = (article?.score_reason || '').trim();
+  return reason ? `${reason}\n${SCORE_DISCLAIMER}` : SCORE_DISCLAIMER;
 }

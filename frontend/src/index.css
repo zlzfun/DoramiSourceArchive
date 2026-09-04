@@ -11063,8 +11063,13 @@ input[type="radio"] {
 .reader-analysis-score small,
 .reader-analysis-summary > small { color: var(--dorami-faint); font-size: 11px; font-weight: 600; }
 .reader-analysis-tags { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; }
+/* p 段仅管理面抽屉/弹窗仍画 score_reason;阅读窗自 issue #13 起理由只作分数悬停提示 */
 .reader-analysis-summary p { margin-top: 8px; font-size: 13px; font-weight: 600; line-height: 1.65; }
 .reader-analysis-summary > small { display: block; margin-top: 8px; line-height: 1.5; }
+.reader-analysis-score[title] { cursor: help; }
+/* 移动壳:触屏无悬停,分数是按钮,点一下把短理由换进下方注脚行 */
+.reader-analysis-score.is-tappable { background: transparent; border: none; padding: 0; color: inherit; font: inherit; cursor: pointer; }
+.reader-analysis-score.is-tappable.is-open small { color: var(--dorami-accent-ink); }
 
 /* ── 我的早报：视图轨后的整幅工作区 ── */
 .personal-brief {
@@ -11142,7 +11147,8 @@ input[type="radio"] {
 .brief-item-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
 .brief-item-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; color: var(--dorami-faint); font-size: 11px; font-weight: 600; }
 .brief-item-title { font-size: 15px; font-weight: 700; line-height: 1.45; }
-.brief-item-summary { color: var(--dorami-ink-2); font-size: 13px; font-weight: 600; line-height: 1.55; }
+/* one_sentence_summary 取缔后(issue #13)条目行直接吃 summary,两行截断 */
+.brief-item-summary { color: var(--dorami-ink-2); font-size: 13px; font-weight: 600; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .brief-item-reason { color: var(--dorami-accent-ink); font-size: 12px; font-weight: 600; }
 .brief-item-reason.is-latest { color: var(--dorami-muted); }
 .brief-interest-hint {

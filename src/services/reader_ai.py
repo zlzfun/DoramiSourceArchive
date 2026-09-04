@@ -246,6 +246,24 @@ async def translate_article(
 
 
 # ==================== 要点摘要 ====================
+def _analysis_summary_for(db_sink, article_id: str) -> str:
+    """读文章分析的权威 summary(status=succeeded 且非空),否则空串。
+
+    db_sink 无 engine(测试替身)时视为无分析结果,保持既有 LLM 路径可测。"""
+    engine = getattr(db_sink, "engine", None)
+    if engine is None:
+        return ""
+    from sqlmodel import Session
+
+    from services import article_analysis as article_analysis_service
+
+    with Session(engine) as session:
+        analysis = article_analysis_service.get_article_analysis(session, article_id)
+    if analysis and analysis.get("summary"):
+        return str(analysis["summary"]).strip()
+    return ""
+
+
 def _load_extensions(record) -> dict:
     try:
         ext = json.loads(record.extensions_json or "{}")
@@ -269,6 +287,14 @@ async def summarize_article(
     body = (record.content or "").strip()
     if not body:
         raise ReaderAIError("该文章暂无可总结的正文", status_code=400)
+
+    # issue #13 复用:文章分析(v3.44)已产出的 summary 是全站唯一摘要——列表投影
+    # 把它覆盖进 summary_zh,速读卡通常直接命中。读者仍点到本端点的情形只剩
+    # 「分析尚未成功 / 源关闭分析 / 私有自定源」,故先查分析表,有即零成本返回,
+    # 不进成本闸也不计费;只有真的没有分析结果才走本端点自己的轻提示词。
+    analysis_summary = _analysis_summary_for(db_sink, article_id)
+    if analysis_summary:
+        return {"summary": analysis_summary, "cached": True, "source": "analysis"}
 
     ext = _load_extensions(record)
     fingerprint = _body_fingerprint(body)

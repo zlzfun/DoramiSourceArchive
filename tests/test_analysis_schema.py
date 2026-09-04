@@ -104,7 +104,6 @@ def test_contracts_keep_genre_separate_and_validate_score():
     result = ArticleAnalysisResultDTO(
         quality_score=8.6,
         score_reason="Original and actionable.",
-        one_sentence_summary="A concise summary.",
         summary="A detailed summary.",
         content_genre=ContentGenre.TUTORIAL,
     )
@@ -115,7 +114,6 @@ def test_contracts_keep_genre_separate_and_validate_score():
         ArticleAnalysisResultDTO(
             quality_score=10.1,
             score_reason="Out of range.",
-            one_sentence_summary="Summary.",
             summary="Summary.",
             content_genre=ContentGenre.OPINION,
         )
@@ -483,10 +481,10 @@ def test_database_check_constraints_reject_invalid_quality_score():
                     text(
                         "INSERT INTO article_analyses "
                         "(article_id,status,tagging_status,quality_score,dimension_scores_json,"
-                        "score_reason,one_sentence_summary,summary,content_features_json,entities_json,"
+                        "score_reason,summary,content_features_json,entities_json,"
                         "content_hash,model_name,prompt_version,scoring_version,taxonomy_version,"
                         "attempt_count,created_at,updated_at) "
-                        "VALUES ('bad','succeeded','succeeded',11,'{}','','','','[]','[]','',"
+                        "VALUES ('bad','succeeded','succeeded',11,'{}','','','[]','[]','',"
                         "'','','',0,0,:now,:now)"
                     ),
                     {"now": NOW},

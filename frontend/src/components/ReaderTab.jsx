@@ -51,7 +51,7 @@ import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { contentTypeLabel } from '../utils/contentType';
 import { formatPodcastDuration, podcastOf, podcastProcessingMeta } from '../utils/podcast';
-import { displayAnalysisTags, primaryAnalysisLabel, qualityScoreText } from '../utils/analysis';
+import { displayAnalysisTags, primaryAnalysisLabel, qualityScoreText, scoreReasonTitle, SCORE_DISCLAIMER } from '../utils/analysis';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
 
@@ -138,7 +138,7 @@ export const ArticleRow = memo(function ArticleRow({
     Boolean(podcast?.condensed_audio_url),
   );
   const analysisLabel = primaryAnalysisLabel(article);
-  const score = qualityScoreText(article.quality_score);
+  const score = article.quality_score != null ? qualityScoreText(article.quality_score) : '';
   const favoriteControl = (
     <span
       role="button"
@@ -1027,7 +1027,7 @@ export default function ReaderTab({
                 <div className="reader-analysis-summary">
                   <div className="reader-analysis-top">
                     {activeArticle.quality_score != null && (
-                      <span className="reader-analysis-score">
+                      <span className="reader-analysis-score" title={scoreReasonTitle(activeArticle)}>
                         <strong>{qualityScoreText(activeArticle.quality_score)}</strong>
                         <small>内容价值分</small>
                       </span>
@@ -1042,8 +1042,8 @@ export default function ReaderTab({
                       ))}
                     </span>
                   </div>
-                  {activeArticle.score_reason && <p>{activeArticle.score_reason}</p>}
-                  <small>AI 内容价值评估，用于辅助筛选，不代表事实保证或你的个人评分</small>
+                  {/* issue #13:理由降为分数悬停提示,摘要由下方「哆啦美速读」卡承载,不再上下两段 */}
+                  <small>{SCORE_DISCLAIMER}</small>
                 </div>
               )}
             </header>

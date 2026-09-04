@@ -243,7 +243,6 @@ def serialize_article_list_item(
         "tagging_status": getattr(analysis, "tagging_status", None),
         "quality_score": getattr(analysis, "quality_score", None),
         "score_reason": getattr(analysis, "score_reason", None) or None,
-        "one_sentence_summary": getattr(analysis, "one_sentence_summary", None) or None,
         "content_genre": getattr(analysis, "content_genre", None),
         "primary_tag": next((tag for tag in (tags or []) if tag.get("is_primary")), None),
         "tags": tags or [],

@@ -178,26 +178,29 @@ def test_intermediate_pr_data_cleanup_is_scoped_and_privacy_minimizing(tmp_path)
                     },
                 )
             session.flush()
-            session.add(ArticleAnalysisRecord(
-                article_id="stale-only",
-                status="running",
-                tagging_status="succeeded",
-                quality_score=8.0,
-                content_hash="hash-stale",
-                analyzed_at=stamp,
-                lease_owner="old-worker",
-                lease_expires_at="2099-01-01T00:00:00+00:00",
-                created_at=stamp,
-                updated_at=stamp,
-            ))
-            session.add(ArticleAnalysisRecord(
-                article_id="shared-live",
-                status="pending",
-                tagging_status="pending",
-                content_hash="hash-shared",
-                created_at=stamp,
-                updated_at=stamp,
-            ))
+            # 同理走物理 schema:该旧版本仍有 NOT NULL 的 one_sentence_summary 列
+            # (d8b3f1a6c9e2 删除),当前 ORM 已不声明它。
+            analysis_sql = text(
+                "INSERT INTO article_analyses "
+                "(article_id,status,tagging_status,quality_score,dimension_scores_json,"
+                "score_reason,one_sentence_summary,summary,content_features_json,"
+                "entities_json,display_tags_json,content_hash,model_name,prompt_version,"
+                "scoring_version,taxonomy_version,attempt_count,lease_owner,"
+                "lease_expires_at,analyzed_at,created_at,updated_at) "
+                "VALUES (:id,:status,:tagging,:score,'{}','','','','[]','[]','[]',"
+                ":hash,'','','',0,0,:lease_owner,:lease_expires,:analyzed_at,:stamp,:stamp)"
+            )
+            session.execute(analysis_sql, {
+                "id": "stale-only", "status": "running", "tagging": "succeeded",
+                "score": 8.0, "hash": "hash-stale", "lease_owner": "old-worker",
+                "lease_expires": "2099-01-01T00:00:00+00:00", "analyzed_at": stamp,
+                "stamp": stamp,
+            })
+            session.execute(analysis_sql, {
+                "id": "shared-live", "status": "pending", "tagging": "pending",
+                "score": None, "hash": "hash-shared", "lease_owner": None,
+                "lease_expires": None, "analyzed_at": None, "stamp": stamp,
+            })
             session.add(ArticleAnalysisAttemptRecord(
                 article_id="stale-only",
                 attempt_no=1,

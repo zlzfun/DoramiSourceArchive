@@ -106,7 +106,6 @@ def _article(
         tagging_status=tagging_status,
         quality_score=score,
         score_reason=f"reason {number}",
-        one_sentence_summary=f"one sentence {number}",
         summary=f"summary {number}",
         content_genre="industry_news",
         created_at=NOW_ISO,

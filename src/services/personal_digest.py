@@ -624,7 +624,6 @@ def load_digest_candidates(
             fetched_date=article.fetched_date,
             quality_score=float(analysis.quality_score),
             score_reason=analysis.score_reason,
-            one_sentence_summary=analysis.one_sentence_summary,
             content_genre=genre,
             tag_codes=tag_codes.get(article.id, ()),
             primary_tag_code=primary_code,
@@ -758,7 +757,8 @@ def _snapshot(
         "source_url": article.source_url,
         "publish_date": article.publish_date,
         "fetched_date": article.fetched_date,
-        "one_sentence_summary": analysis.one_sentence_summary if analysis else "",
+        # v3.45.1(issue #13):one_sentence_summary 取缔,summary 是唯一摘要;历史 edition
+        # 快照里仍可能带该键,前端保留回退读取。
         "summary": analysis.summary if analysis else "",
         "quality_score": analysis.quality_score if analysis else None,
         "score_reason": analysis.score_reason if analysis else "",

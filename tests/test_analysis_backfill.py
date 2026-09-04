@@ -113,7 +113,6 @@ def _payload() -> dict:
     return {
         "quality_score": 8.6,
         "score_reason": "信息完整且有明确实践价值。",
-        "one_sentence_summary": "文章介绍了新的智能体能力。",
         "summary": "文章解释了智能体规划、工具调用和落地边界。",
         "content_genre": "product_update",
         "primary_tag_code": "topic.ai-agents",

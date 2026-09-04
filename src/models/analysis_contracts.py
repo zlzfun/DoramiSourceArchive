@@ -214,7 +214,6 @@ class ArticleTagCandidateDTO(ContractModel):
 class ArticleAnalysisResultDTO(ContractModel):
     quality_score: float = Field(ge=1.0, le=10.0)
     score_reason: str = Field(min_length=1)
-    one_sentence_summary: str = Field(min_length=1)
     summary: str = Field(min_length=1)
     content_genre: ContentGenre
     primary_tag_code: Optional[str] = None
@@ -235,7 +234,6 @@ class DigestArticleCandidateDTO(ContractModel):
     fetched_date: str
     quality_score: float = Field(ge=1.0, le=10.0)
     score_reason: str
-    one_sentence_summary: str
     content_genre: ContentGenre
     tag_codes: tuple[str, ...] = Field(default_factory=tuple)
     primary_tag_code: Optional[str] = None
