@@ -1,9 +1,10 @@
-# Podcast 专栏与「长播客精华」Wave 设计
+# Podcast 专栏与「精品播客」Wave 设计
 
 > 对应需求：[Issue #7](https://github.com/zlzfun/DoramiSourceArchive/issues/7)
 > 文档状态：Proposed，待产品与版权策略确认
 > 调研日期：2026-09-02（Asia/Shanghai）
 > 适用仓库：DoramiSourceArchive（FastAPI + SQLModel + Alembic + React/Vite）
+> 2026-09-03 复核：当前实现/国内成本/外网计算—内网同步的最新结论见 [`artifacts/issue-7/design-review-2026-09-03.md`](../artifacts/issue-7/design-review-2026-09-03.md)。本文中的旧美元成本、按需 TTS 和“Archive Sync v2 可选”结论已由该复核取代。
 
 > 2026-09-03 更新：Issue #7 的可执行规格、技术计划、数据模型、API 契约、多 Agent 任务和
 > 主会话验收手册已收敛到 [`specs/007-podcast-intelligence/`](../specs/007-podcast-intelligence/)。
@@ -17,13 +18,12 @@
 建议把这项能力拆成两个相互关联、但边界清晰的产品：
 
 1. **Podcast 专栏**：订阅与发现优质播客，保留原节目、原音频、原 show notes、章节和官方逐字稿，提供连续播放和时间戳导航。
-2. **长播客精华**：仅对 `duration > 30 分钟`、质量合格且拥有衍生使用权限的单集，产出保留源说话人/时间码映射的完整中文转录和带原文引用的中文精华博客，再用一个固定中文旁白合成目标 12–14 分钟、硬上限 15 分钟的精华音频。
+2. **精品播客**：对内容价值合格且拥有衍生使用权限的单集，产出保留源说话人/时间码映射的完整中文转录和带原文引用的中文精华博客，再用一个固定中文旁白合成目标 12–14 分钟、硬上限 15 分钟的精华音频。原节目时长只影响召回、成本、调度和精华长度规划，不决定是否精品。
 
-首版不应把“超过 30 分钟”直接等同于“自动转制”。真正的门控条件应是：
+`>30 分钟`可以提高候选召回优先级，但既非必要条件也非充分条件。真正的门控条件应是：
 
 ```text
-超过 30 分钟
-  ∧ 质量/相关性达标
+质量/相关性达标或编辑主动选择
   ∧ 来源与音频可稳定访问
   ∧ 权利策略允许转录
   ∧ 权利策略允许生成并展示衍生文字
@@ -43,7 +43,7 @@
 
 ## 2. 背景、范围与术语
 
-Issue #7 的标题要求“新增播客专栏，收录优质播客；将外部优质播客转入为内部播客，精简成文字博客，同时提供精简版中文博客”。本轮进一步明确：超过 30 分钟的播客期望转录、提炼为博客，再生成不超过 15 分钟的音频。
+Issue #7 的标题要求“新增播客专栏，收录优质播客；将外部优质播客转入为内部播客，精简成文字博客，同时提供精简版中文博客”。本轮进一步明确：有价值且授权允许的播客可转录、提炼为博客，再生成不超过 15 分钟的音频；时长不作为精品门槛。
 
 为避免“内部播客”被误解为取得内容所有权，本文使用以下术语：
 
@@ -81,18 +81,19 @@ Issue #7 的标题要求“新增播客专栏，收录优质播客；将外部�
 - 新增 `PodcastEpisodeContent(content_type="podcast_episode")`，抓取 RSS/Atom 的 show title、作者、标签、GUID、show notes、enclosure URL/MIME/字节数、iTunes duration/episode/season/explicit、封面，以及 Podcasting 2.0 transcript 资源列表和 chapters URL/MIME。
 - 抓取阶段**只保存节目单与音频定位元数据**，不下载音频、不读取逐字稿正文、不运行 ASR/LLM/TTS。
 - 单集仍写入现有 `ArticleRecord`；Podcast 字段通过 `extensions_json` 持久化。文章列表和详情 API 投影同一个轻量 `podcast` 对象，不向客户端透出 `raw_data`。
-- 轻量投影提供 `processing_eligible = duration_seconds > 1800` 和 `transcript_available`。前者目前只是时长提示，不是本文 §10 所述包含权利、质量、预算的完整资格判定。
+- 轻量投影遗留字段 `processing_eligible = duration_seconds > 1800` 和 `transcript_available`。前者命名错误，只是时长描述，不是资格判定；后续应退役并在确有展示需要时改为 `is_long_form`。
 - 后端 source shape 已扩展为 `article | bulletin | social | podcast`，支持 Podcast 容器过滤与按容器全部标读；`podcast_episode` 也进入内容类型标签。
-- 桌面端与移动端 Reader 增加 Podcast 入口、源过滤、封面/节目名/时长/状态卡片和详情音频区；使用浏览器原生 `<audio controls preload="metadata">` 播放原 enclosure。若现有扩展数据已人工提供 `condensed_audio_url`，同一区域可以显示带“AI 生成”标识的精简版，但系统不会生成它。
+- 桌面端与移动端 Reader 增加 Podcast 入口、源过滤、封面/节目名/时长/状态卡片和详情音频区；使用浏览器原生 `<audio controls preload="metadata">` 播放原 enclosure。若现有扩展数据已人工提供 `condensed_audio_url`，同一区域可以显示带“AI 生成”标识的“中文精华”，但系统不会生成它。
+- 应用启动时会幂等安装 35 个共享 Podcast `SourceConfigRecord`（默认停用、不替用户订阅），使全新部署的“节点管理”直接具备播客目录；节点展示健康、累计单集、Feed/采集间隔，并支持启停、立即抓取和读者面隐藏。启用后按单源 `fetch_interval_minutes` 注册独立 APScheduler interval job，以稳定 source-id 散列错开首轮执行；启停/改间隔/删除即时热更新且执行前复核状态。节点运行史支持按逻辑播客源 ID 查询，即使底层共用 `generic_podcast_rss` 也能正确回溯；该任务只更新 RSS 元数据，不触发 ASR/TTS。隐藏的 `generic_podcast_rss` 仍只作为执行模板，不伪装成一个节目。
 - 已有后端测试覆盖 RSS 元数据解析、duration 边界、source 路由/shape、轻量投影、列表/详情一致性和 `1800/1801` 秒边界。
 
 明确未实现：
 
 - 本文 §8.3 的 `PodcastEpisodeRecord`、rights、processing、artifact、segment、playback state 等新表与迁移。
-- 专用 `/api/podcasts/*`、节目页/单集页、Podcast Index/Listen Notes 搜索、Podcast OPML 和专用导入/审核后台。
+- 专用 `/api/podcasts/*`、节目页/单集页、Podcast Index/Listen Notes 搜索、Podcast OPML，以及包含准入/权利/单集处理与“生成精品播客”的专用审核后台。
 - 官方 transcript/chapters 文件的下载、解析、分页、时间轴联动；当前仅保留 URL 和 MIME 元数据。
 - 音频探测、持久缓存/对象存储、Range 代理、签名 URL、跨页面 mini-player、服务端播放进度与双时间轴。
-- `>30min` 的 rights/质量/预算门控、持久状态机、Job、ASR、摘要/精华博客、播音稿、TTS、15 分钟 QA、发布/下架和成本计量。
+- rights/质量/预算门控、人工送入处理、持久状态机、Job、ASR、摘要/精华博客、播音稿、TTS、15 分钟 QA、发布/下架和成本计量。
 - 当前播放器读取上游原音频 URL；尚未完成本文 §13 的所有媒体代理、授权与衍生发布控制。因此只能作为受信任源的 MVP，不代表公开转制能力已经具备。
 
 后续 Phase 1 新表是把已验证的兼容投影升级为可审计的领域事实源；迁移完成前，`extensions_json` 中的 `processing_status`、`condensed_audio_url`、`condensed_duration_seconds` 只是前向兼容展示字段，不能被当作真实处理系统。
@@ -341,20 +342,21 @@ Podcast
 ┌──────────────────────────────────────────────────────────┐
 │ 标题 / 节目 / 来源 / AI 与授权标识 / 分享                 │
 ├───────────────────────────┬──────────────────────────────┤
-│ 固定播放器                │ 章节                         │
-│ [原节目 | AI 中文精华]    │ 00:00 ...                    │
+│ 页面级模式                │ 章节                         │
+│ [原节目 | 中文精华 · AI]  │ 00:00 ...                    │
+│ 单一播放器                │                              │
 │ 进度 / 倍速 / 30s 跳转    │ 点击联动播放器与正文         │
 ├───────────────────────────┴──────────────────────────────┤
-│ [精华博客] [逐字稿] [Show notes] [产物信息]              │
+│ 模式内二级页签：[逐字稿] [章节] [Show notes/精华正文]     │
 │ 标题、要点、正文、[12:34] 时间戳证据、免责声明           │
 └──────────────────────────────────────────────────────────┘
 ```
 
 要求：
 
-- 切换原节目/精华音频时各自保存播放位置；切换不应把时间戳互相套用。
+- 页面始终只有一个实际播放器；切换原节目/中文精华时同时切换播放器、正文默认内容和时间轴，并分别保存播放位置。
 - 原文时间戳链接始终跳到原节目；精华章节跳到精华音频。
-- 逐字稿采用虚拟列表/分段分页，不能一次把数万字渲染进 DOM。
+- 逐字稿以章节导航、segment cursor 渐进加载；首版优先保证浏览器查找/复制/锚点/无障碍，再按实测决定是否叠加虚拟列表。
 - 移动端播放器吸底；章节和正文上下排列；正文滚动不能被“自动跟随字幕”劫持。
 - 播放器支持键盘、屏幕阅读器标签、焦点态、速度 0.75–2x、前后 15/30 秒。
 - 生成中展示阶段与合理 ETA，不显示虚假的百分比；失败展示“继续听原节目”，管理员可看错误码。
@@ -457,12 +459,12 @@ Episode 元数据入库 ──► ArticleRecord(podcast_episode) + PodcastEpisod
 - `username`, `episode_id`, `variant = original | digest`, `position_ms`, `duration_ms`, `completed`, `updated_at`
 - 唯一 `(username, episode_id, variant)`；客户端 10–15 秒节流写入，页面卸载时 best-effort flush。
 
-### 8.4 对象存储与 Archive Sync
+### 8.4 对象存储与 Archive Sync（2026-09-03 修订：P3 前置）
 
 - 开发环境：本地 artifact store；生产：S3-compatible/MinIO provider 接口，数据库只存 URI、哈希、字节数和 MIME。
 - 原音频临时文件在 ASR 完成后按策略删除，默认 24 小时，失败排障最多 72 小时且仅管理员可访问。
 - 生成音频、VTT、章节 JSON 可长期保存，但支持权利撤销后的级联下架与物理删除任务。
-- Archive Sync v1 是 Article JSONL，不搬运二进制。M1 可只同步 `podcast_episode` 的公开元数据/精华文字投影；若 Reader 要离线播放，必须设计 v2 `asset` manifest（URI、hash、bytes、mime、audience、expiry）或让目标环境从对象存储读取，不能假设 `extensions` 已经带走音频。
+- Archive Sync v1 只有 Article JSONL，既不搬运分析/标签，也不搬运逐字稿和音频，无法支撑“外网预计算、内网消费”。Archive Bundle v2 是进入全文处理前的硬前置：单调 `change_seq`、签名 manifest、内容寻址 blob、tombstone、失败不推进 checkpoint、内网原子 materialize 和本地稳定媒体 API；不能把外网 storage URI 填进 `extensions` 后交给内网。
 
 ## 9. API 草案
 
@@ -528,21 +530,21 @@ GET  /api/admin/podcast-pipeline?stage=&status=&provider=&error_code=
 - publish 使用乐观锁/expected artifact version，避免旧审核覆盖新产物。
 - 所有 rights、publish、unpublish、takedown 写审计日志。
 
-## 10. `>30 分钟` 门控与处理状态机
+## 10. 精品选择、处理门控与状态机
 
 ### 10.1 资格门控
 
 按以下顺序执行，越早越便宜：
 
 1. **结构门控**：有效节目与单集身份；可用 audio enclosure 或官方逐字稿。
-2. **时长门控**：权威 `duration_seconds > 1800`。RSS 缺失或明显异常时只做轻量 HEAD/range/ffprobe；无法确认则 `needs_duration_probe`，不自动下昂贵任务。
+2. **候选召回**：相关性、初评价值、嘉宾/主题、历史表现、编辑选择和时长等信号共同召回；任一时长都可成为候选，`>30 分钟`仅可作为长节目标签和附加召回信号。
 3. **重复门控**：同一 `input_fingerprint + pipeline_version` 已有 ready/running 则复用。
 4. **权利门控**：根据目标产物分别检查 transcript/text/audio 权限，不能以“RSS 公开”为充分条件。
 5. **内容门控**：显式内容、音乐占比过高、语言不支持、纯广告/预告、低质量或与产品主题无关则跳过或人工审查。
 6. **预算门控**：单集预计费用、来源日/月额度、全局日/月额度均有余量。
 7. **资源门控**：供应商并发与队列水位可接受。
 
-边界规则：正好 `1800` 秒不触发；管理员可以针对重要单集 override，但必须记录理由。建议设置 `max_duration = 180 分钟`、`max_download_bytes = 500 MB` 的自动处理上限，超过转人工。
+时长规则：不设 30 分钟资格边界。准确时长用于估价、队列排序、下载保护和精华目标长度；缺失或异常时可做轻量 HEAD/range/ffprobe，但不因未知或偏短直接否决内容。建议设置 `max_duration = 180 分钟`、`max_download_bytes = 500 MB` 的自动资源保护上限，超过转人工。管理员“生成精品播客”可覆盖 AI 漏选，但不得绕过权利、输入安全和预算审计。
 
 ### 10.2 状态机
 
@@ -551,7 +553,8 @@ GET  /api/admin/podcast-pipeline?stage=&status=&provider=&error_code=
 ```text
 discovered
   → metadata_ready
-  → eligible | skipped_short | blocked_rights | rejected_content | over_budget
+  → candidate | not_selected | blocked_rights | rejected_content | over_budget
+  → processing_authorized
   → queued
   → running
   → awaiting_review | ready
@@ -695,13 +698,13 @@ break_even_minutes = monthly_fixed_gpu_and_ops_cost / managed_asr_price_per_minu
 
 以 3,200 个中文字符、`$0.015/1k chars` 的公开字符价仅作演算，TTS 约 `$0.048`。加上 60 分钟 `gpt-4o-mini-transcribe` `$0.18` 和上述一次核心 LLM `$0.0036`，理想路径约 `$0.232/集`，不含 map/rewrite、存储、出网、供应商最低计费和失败重试。建议给单集默认软预算 `$0.35`、硬预算 `$0.60`，上线前用真实中文供应商报价重算。
 
-### 11.5 推荐的成本阶梯
+### 11.5 推荐的成本阶梯（国内公开价复核）
 
 - **Tier 0**：已有官方逐字稿，只生成精华博客；最优先、最低成本。
 - **Tier 1**：无逐字稿但高质量，低价 ASR（首测 `gpt-4o-mini-transcribe` 与 AssemblyAI Universal）+ 小模型博客；默认长播客路径。
-- **Tier 2**：用户点击“想听精华”或编辑精选后才 TTS；避免为无人播放的单集预生成。
+- **Tier 2**：只有完整逐字稿深评通过、文字审核通过且满足权利/预算的精品，才由外网后台预生成 TTS 并缓存；用户访问不触发生成。
 - **Tier 3**：置信度/抽检失败才升级 ASR/LLM 或人工修订。
-- 每个 source 设每月分钟数和美元额度；超额仍可展示原节目，不影响订阅基本功能。
+- 每个 source 设每月分钟数和人民币额度；试运行期 1,500 元软预警、2,000 元硬上限，后续可配置提高。每日 100–500 小时按弹性输入/峰值容量设计，当前实际付费分钟数由候选漏斗控制。
 
 ## 12. 可复用的开源能力
 
@@ -795,67 +798,54 @@ break_even_minutes = monthly_fixed_gpu_and_ops_cost / managed_asr_price_per_minu
 - Podcast 订阅转化、7/30 日留存、继续听完成率。
 - 原节目播放与精华播放的选择比例、精华播放完成率、从精华跳回原时间戳率。
 - 精华博客阅读完成/收藏/纠错率。
-- `requested_digest / eligible_long_episode`，用于判断 TTS 是按需还是预生成。
+- `digest_text_open / premium_ready`、`evidence_seek / digest_text_open` 和 `digest_audio_play / digest_text_open`，用于决定预生成 TTS 的覆盖比例，而不是改变“访问不触发生成”的架构。
 - 每个“完整收听等价节省分钟”的成本：`processing_cost / max(original_duration - digest_duration, 0)`。
 - 来源多样性和单一节目占比，防止推荐被高频节目淹没。
 
 ## 16. 分期开发计划
 
-以下计划以 §2.3 的“metadata + 播放器 MVP”作为已完成基线；凡涉及新表、权限、处理和生成的条目均为后续工作。
+完整任务与验收项以 [`specs/007-podcast-intelligence/tasks.md`](../specs/007-podcast-intelligence/tasks.md) 为准。主链只有以下六个后续包：
 
-### Baseline：Podcast metadata + 播放器 MVP（本次已实现，无迁移）
+### Baseline：Podcast metadata + 播放器 MVP（已完成）
 
-- 已用 `PodcastEpisodeContent → ArticleRecord.extensions_json` 验证现有文章存储可承载轻量 Podcast 元数据。
-- 已接入 `generic_podcast_rss`、第四种 source shape、列表/详情 `podcast` 投影，以及桌面/移动原音频播放器。
-- 已完成后端解析、路由、shape、序列化和 30 分钟边界测试；当前 `processing_eligible` 只是 UI/未来流水线提示。
+`main@b5864d3` 已包含 RSS metadata、Podcast 容器、文章兼容投影和桌面/移动原音频播放器。该基线曾让播客入口强制进入 Podcast-only 发现目录，现已恢复为全形态“发现更多来源”。当前 `processing_eligible` 只代表 `duration > 1800`，命名具有误导性；当前摘要/标签只来自 show notes。
 
-验收边界：能配置可信 Podcast RSS、抓到单集、在 Reader 的 Podcast 容器播放原音频；不把“精简版状态/URL 可展示”误报为已经具备生成能力。
+### P0.5：事实与同步止血
 
-### Phase 0：决策与 Spike（3–5 天）
+- 将现有 Podcast 分析统一标成“简介初评”，退役 `processing_eligible`，确需展示时只使用描述性的 `is_long_form`。
+- 所有“发现更多来源”入口统一打开完整来源目录，Podcast 只是可选内容形态筛选。
+- 修复 20VC 暗色继承、美元金额误解析与“简介阅读时长”文案。
+- 修复真实 reader role 同步、partial import 游标、keyset/checksum/凭据和重启遗留 Job。
+- 明确内网原节目音频策略。
 
-- 确认首批 10–20 个播客 RSS、受众、权利策略和是否允许衍生文字/音频。
-- 选 10 集基准，验证 RSS/iTunes/Podcasting 2.0 解析、duration、enclosure Range。
-- 对 3 集中文/中英混合长播客跑 AssemblyAI Universal、`gpt-4o-mini-transcribe` 与 SenseVoice/faster-whisper；人工记录 CER/专名/时间戳/耗时/成本。
-- 用现有 LLM 生成结构化摘要、博客和播音稿；只生成内部测试音频，不发布。
-- 输出 go/no-go：默认 provider、单集预算、质量阈值、数据保留和法务边界。
+### P1：准入与 Podcast 领域
 
-验收：一条命令/管理动作可对固定样本产生可复现 artifacts、成本明细和 QA 报告；删除样本后无残留公开 URL。
+- 现有 35 源先 shadow review，新源执行准入和混合源单集过滤。
+- 建立 Episode、分维度 Rights、Playback 与 `candidate → authorized → ready` 状态。
+- 建立 Podcast 采集管理面：来源启停/调度/健康/手动抓取、最近单集/处理状态，以及单集级“生成精品播客”人工兜底。
+- 读取发布者 transcript/chapters/license，并给当前分析投影补 basis/confidence/input hash。
 
-### Phase 1：Podcast 领域化与完整专栏（未来，1–2 周）
+### P2：Artifact Store + Archive Bundle v2
 
-- Alembic 新增 `PodcastEpisodeRecord`、`PodcastRightsRecord`、`PodcastPlaybackStateRecord`；把兼容投影迁移为领域事实源，保留旧 `extensions_json` 读取过渡期。
-- 增加 RSS preview/import、canonical 去重、节目/单集专用 API 与节目层级；复用既有 SourceState 健康度。
-- 在已有 Reader 播放器之上增加 Podcast 首页、节目页、单集页、跨页播放、服务端播放进度与原/精华双时间轴基础。
-- 下载并解析官方 transcript/chapters/person/license，提供分段分页与时间轴跳转；仍不自动执行 ASR/TTS。
-- 统一搜索继续使用已加入的 `podcast_episode` 类型，并补节目维度搜索与权限过滤。
+- 内容寻址 artifact、stage attempt/cost、publish outbox、签名 manifest、blob/tombstone。
+- 内网 staging/校验/原子 materialize、本地媒体 Range API；HTTP pull 与离线包共用 importer。
+- 任一实体/blob 失败都不推进 checkpoint；P3 在本阶段验收前保持关闭。
 
-验收：导入 10 个源，重复导入幂等；migration 前后的元数据无损；新增单集自动出现；桌面/移动连续播放和恢复进度；恶意/内网 URL 被拒；link-only 源没有生成入口。
+### P3A：发布者逐字稿文字闭环
 
-### Phase 2：长播客文字精华（1–2 周）
+先用当前 4 个 transcript 定位完成源语言稿、完整中文稿、深评、证据精华、Bundle v2 同步和 Reader“原节目 / 中文精华”双模式，ASR 调用必须为 0。
 
-- `PodcastProcessingRecord`、artifact、segment、状态机和 Job 集成。
-- `>30min`、rights、质量、预算门控；官方 transcript 优先、托管 ASR fallback。
-- 分层摘要、证据验证、精华博客渲染、管理员 review/publish/unpublish。
-- 运行/成本 dashboard、重试/断点续跑、撤权下架。
+### P3B：ASR 回退
 
-验收：短于等于 30 分钟绝不自动 ASR；官方逐字稿不重复计费；断网/429 后可恢复且不产生重复 artifact；每个事实段落能跳转原音频；未授权内容不可发布。
+只对 `processing_authorized` 做 6–10 分钟抽样或完整批量 ASR；实现 provider task reconciliation、lease/heartbeat/fencing、预算预占、质量升级路由和开源 PoC。每日 100–500 小时按弹性输入/峰值设计，试运行期以 1,500 元预警、2,000 元硬上限控制实际处理量。
 
-### Phase 3：≤15 分钟精华音频（约 1 周）
+### P4：≤15 分钟中文精华音频
 
-- TTS adapter、固定音色、脚本规范化、ffmpeg packaging、duration/响度 QA。
-- 原节目/精华双时间轴、持久播放器、按需生成按钮和预算额度。
-- 对授权 source allowlist 开放站内发布；可选鉴权 RSS。
+固定授权声线、独立结构化播音稿、分段 TTS、ffmpeg/ffprobe QA、Bundle v2 同步和单一播放器模式切换。普通用户没有“现在生成”按钮，访问页面不调用 TTS。
 
-验收：全部测试音频 `<=900s`；播放器明确 AI 标识且不冒充主持人；Range/seek/倍速可用；超长脚本最多重试 2 次；撤权后签名 URL 立即失效。
+### Later：发现、导入与规模化
 
-### Phase 4：发现、导入与规模化（1–2 周）
-
-- Podcast Index 搜索、外部平台 URL → canonical RSS 辅助解析。
-- 内网博客 RSS 的 OPML/CSV/JSON 批量 preview/confirm，与 Podcast 导入分轨。
-- 推荐配额、精华需求信号、source 月预算、provider 路由与自托管评估。
-- Archive Sync v2 asset 方案只在确有跨环境音频需求时实施。
-
-验收：目录不可用时已订阅 RSS 仍正常更新；内部博客批量导入不会触发 Podcast 管线；预算耗尽优雅降级为原节目；成本和使用率能回答是否值得预生成 TTS。
+Podcast Index、外部 URL → RSS、内网博客批量导入和更大 provider/自建路由在主链验证后再做；Bundle v2 不再推迟到这一阶段。
 
 ## 17. 端到端验收清单
 
@@ -865,14 +855,14 @@ break_even_minutes = monthly_fixed_gpu_and_ops_cost / managed_asr_price_per_minu
 2. 确认导入后节目与单集入库，重复确认不增加记录。
 3. rights 设为允许内部衍生文字/音频，触发 processing。
 4. 流水线跳过 ASR，规范化官方逐字稿，产出带证据的中文博客。
-5. 按需生成精华音频，ffprobe 结果 ≤900 秒，发布到 authenticated audience。
+5. 外网后台按精选/预算策略预生成精华音频，ffprobe 结果 ≤900 秒，再随 Bundle v2 发布到 authenticated audience。
 6. 普通用户订阅节目、播放原节目、从博客 `[12:34]` 跳转、切换精华并恢复各自进度。
 7. 管理员 unpublish，旧签名 URL 立即不可用；审计日志完整。
 
 ### 17.2 Fallback Path
 
 - 无官方逐字稿的 61 分钟单集：只在 rights + budget 通过后下载，ASR 成功后删除临时原音频。
-- 29:59、30:00：不自动生成；30:01：进入后续门控。
+- 10、20、30、60 分钟样例都可因价值或编辑选择进入后续门控；改变时长只应改变成本估算/调度，不应改变精品资格。
 - duration 缺失：probe 后再判断；probe 失败不盲目下载全文件。
 - enclosure 302 到私网/超大文件/错误 MIME：拒绝并记录稳定错误码。
 - ASR 429/超时：退避恢复；重复投递只产生一次实际账单调用或被幂等保护。
@@ -909,7 +899,7 @@ podcast_self_hosted_tts_enabled
 1. “内部播客”的目标受众是内网、登录用户，还是公开互联网？三者不能共用默认授权。
 2. 首批播客是否有明确的转录、翻译、改编与音频分发授权？若没有，MVP 只能做 link-only + 官方 transcript。
 3. 精华音频采用全合成平台声，还是原声剪辑？本文强烈建议首版全合成平台声；原声剪辑需单独授权。
-4. TTS 是编辑精选/用户请求后生成，还是所有 eligible 单集预生成？建议先按需，数据证明需求后再预生成。
+4. 已确认：TTS 只对全文深评与文字审核通过的精品在外网后台预生成；普通用户访问永不触发生成。
 5. 精华博客是否进入公共搜索、Daily Brief 和 Archive Sync？建议按 artifact audience 显式控制，不能随 ArticleRecord 自动泄露。
 
 ## 19. 推荐最终方案
@@ -917,10 +907,10 @@ podcast_self_hosted_tts_enabled
 如果只选择一条最稳、性价比最高的路线：
 
 1. 先上线 Podcast RSS 专栏和原音频播放，Podcast Index 只负责发现。
-2. 首批只处理团队精选且有授权的节目；`>30min` 后再经过质量/预算门控。
+2. 首批只处理团队精选且有授权的节目；时长只参与召回、成本与调度，所有候选仍经过质量/权利/预算门控。
 3. 优先用官方逐字稿，否则在 AssemblyAI Universal（公开价低至 `$0.15/hour`）与 `gpt-4o-mini-transcribe`（公开估算 `$0.003/min`）中以中文实测选默认；不要与 `$0.0045/min` 的 `gpt-transcribe` 混写，质量不足的片段再升级或转 SenseVoice PoC。
 4. 用现有 OpenAI-compatible LLM 做“分段 map → 带证据 reduce → 播音稿 rewrite”，每个结论绑定原节目 segment/timecode。
-5. 文字精华先发布；只有编辑精选或用户明确请求时 TTS。
+5. 文字精华先发布；只有编辑精选的精品在后台预生成 TTS，普通用户访问不触发生成。
 6. TTS 使用固定、获授权的中性中文声音，目标 12–14 分钟，实际时长 >15 分钟必须重写。
 7. 所有处理均可幂等、可重跑、可审计、可撤权；原音频不永久镜像，生成资产存私有对象存储。
 

@@ -1,9 +1,10 @@
-"""Curated podcast source catalog and safe SourceConfig importer.
+"""Curated podcast source catalog and safe SourceConfig bootstrap/importer.
 
 The catalog is deliberately separate from the fetcher registry: every show uses the
 same ``generic_podcast_rss`` execution path, while its stable identity and curation
-metadata live here. Import is opt-in and creates sources inactive by default so a
-catalog update cannot unexpectedly fan out network traffic.
+metadata live here. Ready catalog entries are installed inactive at application
+bootstrap so a fresh deployment has podcast nodes without unexpectedly starting
+network collection; the import API remains available for selective operator actions.
 """
 
 from __future__ import annotations
@@ -252,3 +253,19 @@ def import_podcast_catalog(
         "activate": activate,
         "update_existing": update_existing,
     }
+
+
+def ensure_default_podcast_sources(engine: Any) -> dict[str, Any]:
+    """Install all ready catalog entries once, inactive and without overwrites.
+
+    This intentionally delegates to the same idempotent importer exposed to admins:
+    new catalog additions appear after a later restart, while local edits, activation
+    choices, and the explicitly blocked catalog entry remain untouched.
+    """
+    with Session(engine) as session:
+        return import_podcast_catalog(
+            session,
+            activate=False,
+            update_existing=False,
+            include_blocked=False,
+        )

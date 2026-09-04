@@ -170,6 +170,7 @@ from services import jobs as jobs_service
 from services import user_sources as user_sources_service
 from services import article_analysis as article_analysis_service
 from services import taxonomy as taxonomy_service
+from services import podcast_catalog as podcast_catalog_service
 from services.media_store import MediaStore
 from llm.client import LLMNotConfigured, LLMError, UsageMeta, ping as llm_ping
 from llm.client import set_usage_recorder as _set_llm_usage_recorder
@@ -506,6 +507,15 @@ _set_llm_usage_recorder(_record_llm_usage)
 # 首次启动（users 表为空）时自动种一个根管理员 admin/admin；表非空一动不动。
 if accounts_service.seed_root_admin_if_empty(db_sink.engine):
     logging.getLogger("dorami.auth").info("👤 已自动生成根管理员 admin/admin，请登录后立即修改密码")
+
+# 默认播客目录是平台节点基线：新部署自动安装可用项，但保持停用、不给用户订阅，
+# 因而不会在无人确认时触发 RSS 抓取，更不会触发后续 ASR/TTS 成本。
+_podcast_bootstrap = podcast_catalog_service.ensure_default_podcast_sources(db_sink.engine)
+if _podcast_bootstrap["created"]:
+    logging.getLogger("dorami.sources").info(
+        "🎙️ 已安装 %d 个默认播客源（保持停用）",
+        len(_podcast_bootstrap["created"]),
+    )
 pipeline = DataPipeline(storages=[db_sink])
 
 # 媒体库（图床）：[media] enabled = false 时为 None，代理端点 302 回源、抓取后不预取，
@@ -1377,6 +1387,9 @@ def load_tasks_to_scheduler():
         replace_existing=True,
         max_instances=1,
     )
+    # 共享 Podcast SourceConfig 以各自的 fetch_interval_minutes 独立调度；
+    # 默认目录全部停用，因此只有管理员显式启用的节目才会注册任务。
+    reload_podcast_source_schedules()
 
 
 async def execute_article_analysis_job():
@@ -1690,6 +1703,107 @@ def reload_user_rss_schedule():
         )
     elif scheduler.get_job("user_rss_refresh"):
         scheduler.remove_job("user_rss_refresh")
+
+
+PODCAST_SCHEDULE_JOB_PREFIX = "podcast_source_"
+DEFAULT_PODCAST_REFRESH_MINUTES = 360
+
+
+async def execute_podcast_source_refresh_job(source_id: str):
+    """按单源间隔抓取一个已启用的共享 Podcast；执行前再次核对启停状态。"""
+    from api.routers.source_configs import build_source_fetch_params, resolve_source_fetcher_id
+
+    with Session(db_sink.engine) as session:
+        record = session.get(SourceConfigRecord, source_id)
+        if (
+            record is None
+            or not record.is_active
+            or bool(record.owner_username)
+            or record.source_type != "podcast"
+        ):
+            return
+        fetcher_id = resolve_source_fetcher_id(record)
+        if not fetcher_id:
+            _dorami_logger.warning("共享播客源未绑定可用抓取器，跳过定时抓取: %s", source_id)
+            return
+        source_name = record.name
+        item = {
+            "source_id": record.source_id,
+            "fetcher_id": fetcher_id,
+            "params": build_source_fetch_params(record, {}),
+        }
+
+    try:
+        await run_collection_items(
+            [item],
+            name=f"定时抓取: {source_name}",
+            trigger_type="scheduled",
+            run_scope="saved_job",
+            max_concurrency=1,
+        )
+    except Exception as exc:  # noqa: BLE001 - 单源故障不影响其它调度任务
+        _dorami_logger.warning("共享播客源定时抓取失败 %s: %s", source_id, exc)
+
+
+def reload_podcast_source_schedules():
+    """让活跃共享 Podcast 的逐源 interval job 与 SourceConfig 即时一致。
+
+    新注册任务用 source_id 的稳定散列错开首轮时间，避免同为 360 分钟的目录源
+    在重启或批量启用后同时出发；已存在且间隔未变的任务不重置 next_run_time。
+    """
+    with Session(db_sink.engine) as session:
+        records = session.exec(
+            select(SourceConfigRecord)
+            .where(SourceConfigRecord.owner_username == "")
+            .where(SourceConfigRecord.is_active == True)  # noqa: E712
+            .where(SourceConfigRecord.source_type == "podcast")
+            .order_by(SourceConfigRecord.source_id)
+        ).all()
+
+    scheduled_records = []
+    for record in records:
+        try:
+            minutes = int(record.fetch_interval_minutes or DEFAULT_PODCAST_REFRESH_MINUTES)
+        except (TypeError, ValueError):
+            minutes = 0
+        if minutes <= 0:
+            _dorami_logger.warning("共享播客源抓取间隔无效，未注册定时任务: %s", record.source_id)
+            continue
+        scheduled_records.append((record, minutes))
+
+    desired_job_ids = {
+        f"{PODCAST_SCHEDULE_JOB_PREFIX}{record.source_id}"
+        for record, _minutes in scheduled_records
+    }
+    existing_jobs = {job.id: job for job in scheduler.get_jobs()}
+    for job in existing_jobs.values():
+        if job.id.startswith(PODCAST_SCHEDULE_JOB_PREFIX) and job.id not in desired_job_ids:
+            scheduler.remove_job(job.id)
+
+    base_next_run = datetime.datetime.now().astimezone()
+    for record, minutes in scheduled_records:
+        job_id = f"{PODCAST_SCHEDULE_JOB_PREFIX}{record.source_id}"
+        interval_seconds = minutes * 60
+        existing = existing_jobs.get(job_id)
+        existing_interval = getattr(getattr(existing, "trigger", None), "interval", None)
+        if existing_interval is not None and int(existing_interval.total_seconds()) == interval_seconds:
+            continue
+        stagger_window = min(30 * 60, max(60, interval_seconds // 12))
+        stagger_seconds = int(
+            hashlib.sha256(record.source_id.encode("utf-8")).hexdigest()[:8], 16
+        ) % stagger_window
+        scheduler.add_job(
+            execute_podcast_source_refresh_job,
+            "interval",
+            minutes=minutes,
+            args=[record.source_id],
+            id=job_id,
+            replace_existing=True,
+            max_instances=1,
+            next_run_time=base_next_run + datetime.timedelta(
+                seconds=interval_seconds + stagger_seconds,
+            ),
+        )
 
 
 # ==================== 1. 数据台账与 CRUD ====================
