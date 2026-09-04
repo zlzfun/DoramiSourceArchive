@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import {
   ChevronLeft,
   ExternalLink,
@@ -16,7 +16,8 @@ import { PaneBodySkeleton } from '../ReaderTab';
 import { formatRelativeTime, formatDateTime } from '../../utils/datetime';
 import { contentTypeLabel } from '../../utils/contentType';
 import { formatPodcastDuration } from '../../utils/podcast';
-import { displayAnalysisTags, qualityScoreText, scoreReasonTitle, SCORE_DISCLAIMER } from '../../utils/analysis';
+import { displayAnalysisTags } from '../../utils/analysis';
+import AiScoreBadge from '../AiScoreBadge';
 import { hostOf } from '../../utils/readerText';
 
 // 正文页(移动波 Wave2,样页画面②):push 全屏页——无底部 Tab,返回即出栈。
@@ -40,12 +41,10 @@ export default function MobileArticlePage({
     prevArticle, nextArticle, activeIndex, selectArticle, searchForLabel,
   } = rs;
 
-  // 换篇即回顶(push 页语义:每篇都是新页);分数理由展开态随篇重置
+  // 换篇即回顶(push 页语义:每篇都是新页)
   const scrollRef = useRef(null);
-  const [showScoreReason, setShowScoreReason] = useState(false);
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
-    setShowScoreReason(false);
   }, [activeArticle?.id]);
 
   if (!activeArticle) return null;
@@ -150,44 +149,29 @@ export default function MobileArticlePage({
               <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
             )}
           </div>
-          {(activeArticle.quality_score != null || displayAnalysisTags(activeArticle).length > 0) && (
-            <div className="reader-analysis-summary">
-              <div className="reader-analysis-top">
-                {activeArticle.quality_score != null && (
-                  <button
-                    type="button"
-                    className={`reader-analysis-score is-tappable ${showScoreReason ? 'is-open' : ''}`}
-                    title={scoreReasonTitle(activeArticle)}
-                    aria-expanded={showScoreReason}
-                    onClick={() => setShowScoreReason((v) => !v)}
-                  >
-                    <strong>{qualityScoreText(activeArticle.quality_score)}</strong><small>内容价值分</small>
-                  </button>
-                )}
-                <span className="reader-analysis-tags">
-                  {displayAnalysisTags(activeArticle).map((tag, index) => (
-                    <AnalysisTagChip
-                      key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
-                      tag={tag}
-                      onTemporarySearch={(label) => {
-                        searchForLabel(label);
-                        onBack();
-                      }}
-                    />
-                  ))}
-                </span>
-              </div>
-              {/* issue #13:触屏无悬停,点分数展开一句短理由;摘要由速读卡承载 */}
-              <small>{showScoreReason && activeArticle.score_reason ? activeArticle.score_reason : SCORE_DISCLAIMER}</small>
+          {/* issue #13 二轮:分数并入速读卡头,标题区只余标签行 */}
+          {displayAnalysisTags(activeArticle).length > 0 && (
+            <div className="reader-pane-tags">
+              {displayAnalysisTags(activeArticle).map((tag, index) => (
+                <AnalysisTagChip
+                  key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
+                  tag={tag}
+                  onTemporarySearch={(label) => {
+                    searchForLabel(label);
+                    onBack();
+                  }}
+                />
+              ))}
             </div>
           )}
         </header>
         <div className="m-read-body markdown-body">
           {podcastView && <PodcastAudioPanel article={activeArticle} />}
-          {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
+          {!activeBodyLoading && (activeSummary || activeArticle.quality_score != null || (aiEnabled && activeBody)) && (
             <div className="reader-ai-summary">
               <div className="reader-ai-summary-head">
                 <Sparkles className="h-3.5 w-3.5" /> <span className="ai-grad-text">哆啦美速读</span>
+                <AiScoreBadge key={activeArticle.id} article={activeArticle} />
               </div>
               {activeSummary ? (
                 <p className="reader-ai-summary-text">{activeSummary}</p>
@@ -195,7 +179,7 @@ export default function MobileArticlePage({
                 <div className="reader-ai-summary-skel" role="status" aria-label="正在生成速读">
                   <span className="skeleton" /><span className="skeleton" /><span className="skeleton" />
                 </div>
-              ) : (
+              ) : (aiEnabled && activeBody) ? (
                 <button
                   type="button"
                   onClick={handleSummarize}
@@ -203,7 +187,7 @@ export default function MobileArticlePage({
                 >
                   生成本文要点速读
                 </button>
-              )}
+              ) : null}
             </div>
           )}
           {activeBodyLoading ? (

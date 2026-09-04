@@ -50,9 +50,3 @@ export function qualityScoreText(value) {
 }
 
 export const SCORE_DISCLAIMER = 'AI 内容价值评估，用于辅助筛选，不代表事实保证或你的个人评分';
-
-/** 分数的悬停提示:一句短理由(issue #13 起 score_reason 是分数注脚,不再独立成段)+ 免责说明。 */
-export function scoreReasonTitle(article) {
-  const reason = (article?.score_reason || '').trim();
-  return reason ? `${reason}\n${SCORE_DISCLAIMER}` : SCORE_DISCLAIMER;
-}

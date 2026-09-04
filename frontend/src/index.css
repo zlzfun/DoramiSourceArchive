@@ -11066,10 +11066,38 @@ input[type="radio"] {
 /* p 段仅管理面抽屉/弹窗仍画 score_reason;阅读窗自 issue #13 起理由只作分数悬停提示 */
 .reader-analysis-summary p { margin-top: 8px; font-size: 13px; font-weight: 600; line-height: 1.65; }
 .reader-analysis-summary > small { display: block; margin-top: 8px; line-height: 1.5; }
-.reader-analysis-score[title] { cursor: help; }
-/* 移动壳:触屏无悬停,分数是按钮,点一下把短理由换进下方注脚行 */
-.reader-analysis-score.is-tappable { background: transparent; border: none; padding: 0; color: inherit; font: inherit; cursor: pointer; }
-.reader-analysis-score.is-tappable.is-open small { color: var(--dorami-accent-ink); }
+/* 阅读窗标题区标签行(issue #13 二轮:分数并入速读卡后,标签自成一行、不再套框) */
+.reader-pane-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+
+/* ── 内容价值分徽记:住速读卡头右缘,常态只见分数;「内容价值分」字样/理由/免责
+   全部收进悬浮说明(桌面 hover/聚焦即现,触屏点一下切换 .is-open)。 ── */
+.reader-ai-score { position: relative; margin-left: auto; display: inline-flex; }
+.reader-ai-score-btn {
+  background: transparent; border: none; padding: 0 2px; cursor: default;
+  color: var(--dorami-accent-ink);
+  font-size: 15px; font-weight: 700; line-height: 1; letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.reader-ai-score-pop {
+  position: absolute; top: calc(100% + 8px); right: -4px; z-index: 40;
+  width: min(280px, 78vw); padding: 10px 12px;
+  display: none; flex-direction: column; gap: 5px; text-align: left;
+  border-radius: var(--r-overlay);
+  background: var(--dorami-surface);
+  border: 1px solid var(--dorami-border);
+  box-shadow: var(--sh-3);
+  color: var(--dorami-ink-2);
+  font-size: 12.5px; font-weight: 500; line-height: 1.55; letter-spacing: 0;
+  animation: share-menu-in var(--motion-fast) var(--motion-ease);
+}
+.reader-ai-score-pop-kicker { color: var(--dorami-accent-ink); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
+.reader-ai-score-pop-reason { color: var(--dorami-ink); font-weight: 600; }
+.reader-ai-score-pop-note { color: var(--dorami-faint); font-size: 11px; font-weight: 500; }
+.reader-ai-score.is-open .reader-ai-score-pop { display: flex; }
+@media (hover: hover) {
+  .reader-ai-score:hover .reader-ai-score-pop,
+  .reader-ai-score:focus-within .reader-ai-score-pop { display: flex; }
+}
 
 /* ── 我的早报：视图轨后的整幅工作区 ── */
 .personal-brief {

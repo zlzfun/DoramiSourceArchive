@@ -51,7 +51,8 @@ import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { contentTypeLabel } from '../utils/contentType';
 import { formatPodcastDuration, podcastOf, podcastProcessingMeta } from '../utils/podcast';
-import { displayAnalysisTags, primaryAnalysisLabel, qualityScoreText, scoreReasonTitle, SCORE_DISCLAIMER } from '../utils/analysis';
+import { displayAnalysisTags, primaryAnalysisLabel, qualityScoreText } from '../utils/analysis';
+import AiScoreBadge from './AiScoreBadge';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
 
@@ -1023,37 +1024,28 @@ export default function ReaderTab({
                   )}
                 </div>
               )}
-              {(activeArticle.quality_score != null || displayAnalysisTags(activeArticle).length > 0) && (
-                <div className="reader-analysis-summary">
-                  <div className="reader-analysis-top">
-                    {activeArticle.quality_score != null && (
-                      <span className="reader-analysis-score" title={scoreReasonTitle(activeArticle)}>
-                        <strong>{qualityScoreText(activeArticle.quality_score)}</strong>
-                        <small>内容价值分</small>
-                      </span>
-                    )}
-                    <span className="reader-analysis-tags">
-                      {displayAnalysisTags(activeArticle).map((tag, index) => (
-                        <AnalysisTagChip
-                          key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
-                          tag={tag}
-                          onTemporarySearch={searchForLabel}
-                        />
-                      ))}
-                    </span>
-                  </div>
-                  {/* issue #13:理由降为分数悬停提示,摘要由下方「哆啦美速读」卡承载,不再上下两段 */}
-                  <small>{SCORE_DISCLAIMER}</small>
+              {/* issue #13 二轮:分数并入下方「哆啦美速读」卡头,标题区只余标签行(无框) */}
+              {displayAnalysisTags(activeArticle).length > 0 && (
+                <div className="reader-pane-tags">
+                  {displayAnalysisTags(activeArticle).map((tag, index) => (
+                    <AnalysisTagChip
+                      key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
+                      tag={tag}
+                      onTemporarySearch={searchForLabel}
+                    />
+                  ))}
                 </div>
               )}
             </header>
             <div className="reader-pane-body markdown-body">
               {podcastView && <PodcastAudioPanel article={activeArticle} />}
-              {/* 哆啦美速读:有缓存直接展示;无缓存给低调的生成入口(MVP 不自动生成,控成本) */}
-              {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
+              {/* 哆啦美速读:分析 summary / 缓存直接展示,分数徽记住卡头右缘(issue #13 二轮);
+                  无缓存且 AI 已开启时给低调的生成入口(MVP 不自动生成,控成本) */}
+              {!activeBodyLoading && (activeSummary || activeArticle.quality_score != null || (aiEnabled && activeBody)) && (
                 <div className="reader-ai-summary">
                   <div className="reader-ai-summary-head">
                     <Sparkles className="h-3.5 w-3.5" /> <span className="ai-grad-text">哆啦美速读</span>
+                    <AiScoreBadge key={activeArticle.id} article={activeArticle} />
                   </div>
                   {activeSummary ? (
                     <p className="reader-ai-summary-text">{activeSummary}</p>
@@ -1061,7 +1053,7 @@ export default function ReaderTab({
                     <div className="reader-ai-summary-skel" role="status" aria-label="正在生成速读">
                       <span className="skeleton" /><span className="skeleton" /><span className="skeleton" />
                     </div>
-                  ) : (
+                  ) : (aiEnabled && activeBody) ? (
                     <button
                       type="button"
                       onClick={handleSummarize}
@@ -1069,7 +1061,7 @@ export default function ReaderTab({
                     >
                       生成本文要点速读
                     </button>
-                  )}
+                  ) : null}
                 </div>
               )}
               {activeBodyLoading ? (
