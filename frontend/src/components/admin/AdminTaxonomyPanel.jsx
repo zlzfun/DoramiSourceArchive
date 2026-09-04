@@ -417,6 +417,7 @@ export default function AdminTaxonomyPanel({ showToast, days = 7 }) {
   }, [candidates, kind, query, tags, view]);
 
   const analysis = metrics?.article_analysis;
+  const analysisPending = (analysis?.status_counts?.pending || 0) + (analysis?.status_counts?.running || 0);
   const taxonomy = metrics?.taxonomy;
   return (
     <div className="grid gap-4">
@@ -427,7 +428,7 @@ export default function AdminTaxonomyPanel({ showToast, days = 7 }) {
 
       {metrics && (
         <section className="surface-card kpi-strip" aria-label="分析与 taxonomy 概览">
-          <Metric value={pct(analysis?.success_rate)} label="分析成功率" sub={`近 ${metrics.window_days} 天`} />
+          <Metric value={pct(analysis?.success_rate)} label="分析成功率" sub={`近 ${metrics.window_days} 天待处理 ${analysisPending.toLocaleString()} 篇`} />
           <Metric value={analysis?.score_p50 ?? '—'} label="评分 P50" sub={`P90 ${analysis?.score_p90 ?? '—'}`} />
           <Metric value={pct(analysis?.score_threshold_rates?.['7.0'])} label="7+ 占比" sub={`9+ ${pct(analysis?.score_threshold_rates?.['9.0'])}`} />
           <Metric value={pct(taxonomy?.tagged_article_rate)} label="标签覆盖" sub={`缺主标签 ${pct(taxonomy?.primary_missing_rate)}`} />

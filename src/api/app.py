@@ -549,11 +549,16 @@ def schedule_personal_digest_trigger(callback, *args) -> None:
     task.add_done_callback(_PERSONAL_DIGEST_TRIGGER_TASKS.discard)
 
 
-def queue_article_analysis_after_commit(article_ids: List[str]) -> None:
-    """Best-effort post-commit hook; the periodic seven-day scan is the backstop."""
+def queue_article_analysis_after_commit(article_ids: List[str]) -> int:
+    """Queue newly eligible analyses and return how many were actually enqueued.
+
+    This is a best-effort post-commit hook; the periodic seven-day scan remains
+    the backstop.  Existing/current, ineligible and remote-authority rows are not
+    counted, so collection feedback never claims work that was not queued.
+    """
 
     if not article_ids:
-        return
+        return 0
     try:
         with Session(db_sink.engine) as session:
             if not article_analysis_service.read_feature_flag(
@@ -561,12 +566,17 @@ def queue_article_analysis_after_commit(article_ids: List[str]) -> None:
                 article_analysis_service.ARTICLE_ANALYSIS_ENABLED_KEY,
                 default=False,
             ):
-                return
+                return 0
+            queued_count = 0
             for article_id in dict.fromkeys(article_ids):
-                article_analysis_service.queue_article_analysis(session, article_id)
+                outcome = article_analysis_service.queue_article_analysis(session, article_id)
+                if outcome in {"created", "invalidated"}:
+                    queued_count += 1
             session.commit()
+            return queued_count
     except Exception as exc:  # noqa: BLE001 - analysis never rolls back an article write
         _dorami_logger.warning("文章分析入队失败，将由补偿扫描恢复: %s", exc)
+        return 0
 
 
 def schedule_media_prefetch(article_ids: List[str]) -> None:
@@ -1981,7 +1991,7 @@ async def run_fetcher_with_tracking(
         )
         finish_fetch_run(run_id, status="success", result=result)
         mark_source_state_finished(fetcher_id, params, run_id, status="success", result=result)
-        queue_article_analysis_after_commit(result.saved_content_ids)
+        analysis_queued_count = queue_article_analysis_after_commit(result.saved_content_ids)
         schedule_media_prefetch(result.saved_content_ids)
         return {
             "status": "success",
@@ -1993,6 +2003,7 @@ async def run_fetcher_with_tracking(
             "saved_count": result.saved_count,
             "skipped_count": result.skipped_count,
             "saved_content_ids": result.saved_content_ids,
+            "analysis_queued_count": analysis_queued_count,
         }
     except Exception as e:
         finish_fetch_run(run_id, status="failed", error_message=str(e))
@@ -2079,6 +2090,7 @@ async def run_collection_items(
     fetched_count = sum(result.get("fetched_count", 0) for result in results)
     saved_count = sum(result.get("saved_count", 0) for result in results)
     skipped_count = sum(result.get("skipped_count", 0) for result in results)
+    analysis_queued_count = sum(result.get("analysis_queued_count", 0) for result in results)
     failed_count = sum(1 for result in results if result.get("status") == "failed")
     errors = [
         f"{result.get('fetcher_id', '')}: {result.get('error')}"
@@ -2115,6 +2127,7 @@ async def run_collection_items(
         "fetched_count": fetched_count,
         "saved_count": saved_count,
         "skipped_count": skipped_count,
+        "analysis_queued_count": analysis_queued_count,
         "failed_count": failed_count,
         "error_message": "; ".join(errors[:3]) if errors else None,
         "saved_content_ids": saved_content_ids,

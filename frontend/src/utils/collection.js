@@ -14,9 +14,11 @@ export function normalizeIds(ids) {
 export function collectionRunMessage(prefix, result, successCount = null) {
   const failed = result?.failed_count || 0;
   const saved = result?.saved_count || 0;
+  const analysisQueued = result?.analysis_queued_count || 0;
   const okText = successCount === null ? '' : `完成 ${successCount} 个节点，`;
+  const analysisText = analysisQueued ? `，已入队分析 ${analysisQueued} 篇` : '';
   const failureText = failed ? `，失败 ${failed} 个${result.error_message ? `：${result.error_message}` : ''}` : '';
-  return `${prefix}：${okText}新增 ${saved} 条${failureText}`;
+  return `${prefix}：${okText}新增 ${saved} 条${analysisText}${failureText}`;
 }
 
 // 把一个参数覆盖对象翻译成可读 chips：`[{ key, label, value }]`。
