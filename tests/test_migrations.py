@@ -126,6 +126,7 @@ def test_sqlite_revision_rolls_back_all_ddl_on_interruption(tmp_path):
 def test_intermediate_pr_data_cleanup_is_scoped_and_privacy_minimizing(tmp_path):
     import json
 
+    import sqlalchemy as sa
     from sqlalchemy import text
     from sqlmodel import Session
 
@@ -148,6 +149,23 @@ def test_intermediate_pr_data_cleanup_is_scoped_and_privacy_minimizing(tmp_path)
     engine = create_engine(db_url)
     try:
         with Session(engine) as session:
+            def insert_against_physical_schema(model):
+                """Insert a current model into the intentionally older schema."""
+
+                table = sa.Table(
+                    model.__tablename__,
+                    sa.MetaData(),
+                    autoload_with=session.connection(),
+                )
+                values = {
+                    column.name: getattr(model, column.name)
+                    for column in table.columns
+                    if not (column.primary_key and getattr(model, column.name) is None)
+                }
+                result = session.execute(table.insert().values(**values))
+                if "id" in table.c and getattr(model, "id", None) is None:
+                    model.id = result.inserted_primary_key[0]
+
             session.add(UserRecord(
                 username="alice",
                 password_hash="test",
@@ -281,9 +299,8 @@ def test_intermediate_pr_data_cleanup_is_scoped_and_privacy_minimizing(tmp_path)
                 created_at=stamp,
                 updated_at=stamp,
             )
-            session.add(pending)
-            session.add(ready)
-            session.flush()
+            insert_against_physical_schema(pending)
+            insert_against_physical_schema(ready)
             for edition_id, position in ((pending.id, 0), (ready.id, 0)):
                 session.add(PersonalDigestItemRecord(
                     edition_id=edition_id,
@@ -370,6 +387,101 @@ def test_ensure_migrated_adopts_legacy_db(tmp_path):
         assert "articles" in inspect(engine).get_table_names()
     finally:
         engine.dispose()
+
+
+def test_digest_intent_migration_coalesces_legacy_active_revisions(tmp_path):
+    import sqlalchemy as sa
+    from models.db import PersonalDigestEditionRecord, UserRecord
+
+    db_url = f"sqlite:///{tmp_path / 'legacy-digest-active.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "d8b3f1a6c9e2")
+    stamp = "2026-09-04T08:30:00+08:00"
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            metadata = sa.MetaData()
+            users = sa.Table("users", metadata, autoload_with=conn)
+            editions = sa.Table("personal_digest_editions", metadata, autoload_with=conn)
+
+            user = UserRecord(
+                username="alice",
+                password_hash="hash",
+                created_at=stamp,
+                updated_at=stamp,
+            )
+            conn.execute(users.insert().values(**{
+                column.name: getattr(user, column.name)
+                for column in users.columns
+                if not (column.primary_key and getattr(user, column.name, None) is None)
+            }))
+            fixtures = (
+                ("2026-09-04", 1, "pending"),
+                ("2026-09-04", 2, "generating"),
+                ("2026-09-04", 3, "ready"),
+                ("2026-09-05", 1, "pending"),
+                ("2026-09-05", 2, "generating"),
+            )
+            for report_date, revision, status in fixtures:
+                edition = PersonalDigestEditionRecord(
+                    owner_username="alice",
+                    report_date=report_date,
+                    revision=revision,
+                    status=status,
+                    check_after=stamp,
+                    cutoff_at=stamp,
+                    generation_token=f"token-{revision}" if status == "generating" else None,
+                    generation_lease_expires_at=(
+                        "2099-01-01T00:00:00+08:00" if status == "generating" else None
+                    ),
+                    generation_reason="manual_rebuild",
+                    generated_at=stamp if status == "ready" else None,
+                    created_at=stamp,
+                    updated_at=stamp,
+                )
+                conn.execute(editions.insert().values(**{
+                    column.name: getattr(edition, column.name)
+                    for column in editions.columns
+                    if not (column.primary_key and getattr(edition, column.name, None) is None)
+                }))
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "head")
+
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(sa.text(
+                "SELECT report_date, revision, status, generation_token, generation_lease_expires_at, "
+                "desired_requested_at, sync_stale, analysis_incomplete "
+                "FROM personal_digest_editions ORDER BY report_date, revision"
+            )).mappings().all()
+            cleanup_marker = conn.execute(sa.text(
+                "SELECT value FROM app_settings "
+                "WHERE key='migration:a7d4e2f9c1b8:digest_cleanup'"
+            )).scalar_one_or_none()
+        assert [
+            (row["report_date"], row["revision"], row["status"]) for row in rows
+        ] == [
+            ("2026-09-04", 1, "superseded"),
+            ("2026-09-04", 2, "superseded"),
+            ("2026-09-04", 3, "ready"),
+            ("2026-09-05", 1, "superseded"),
+            ("2026-09-05", 2, "generating"),
+        ]
+        for row in (rows[0], rows[1], rows[3]):
+            assert row["generation_token"] is None
+            assert row["generation_lease_expires_at"] is None
+            assert row["desired_requested_at"] is None
+        assert all(not bool(row["sync_stale"]) for row in rows)
+        assert all(not bool(row["analysis_incomplete"]) for row in rows)
+        assert cleanup_marker is not None
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="恢复升级前备份"):
+        command.downgrade(cfg, "d8b3f1a6c9e2")
 
 
 def _make_pre_baseline_legacy_db(tmp_path, name):

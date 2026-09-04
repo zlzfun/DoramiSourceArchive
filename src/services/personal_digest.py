@@ -70,6 +70,12 @@ GENERATION_LEASE_SECONDS = 300
 PUBLIC_DAILY_BRIEF_SOURCE_ID = "dorami_daily_brief"
 DAILY_BRIEF_ENABLED_KEY = "daily_brief_enabled"
 PERSONAL_DIGEST_ENABLED_KEY = "personal_digest_enabled"
+REBUILD_REASON_VALUES = frozenset({
+    DigestGenerationReason.INTEREST_CHANGED.value,
+    DigestGenerationReason.SUBSCRIPTION_CHANGED.value,
+    DigestGenerationReason.MANUAL_REBUILD.value,
+    DigestGenerationReason.DAILY_BRIEF_READY.value,
+})
 
 
 def _first_open_deadline(
@@ -480,6 +486,113 @@ def _taxonomy_version(session: Session) -> int:
     return int(value or 0)
 
 
+def _coalesce_generating_intent(
+    session: Session,
+    edition: PersonalDigestEditionRecord,
+    *,
+    reason: str,
+    current: dt.datetime,
+    first_open_at: dt.datetime | None,
+) -> tuple[PersonalDigestEditionRecord, bool]:
+    """Persist the latest desired state without disturbing an active lease.
+
+    The timestamp is the outbox marker.  A consumer clears it conditionally, so
+    a trigger racing with materialization is retained for the following scan.
+    The payload itself can stay tiny because scope/interests are resolved from
+    the database only when the next pending revision is materialized.
+    """
+
+    assert edition.id is not None
+    requested_at = current.isoformat()
+    values: dict[str, object] = {
+        "desired_generation_reason": reason,
+        "desired_requested_at": requested_at,
+        "updated_at": requested_at,
+    }
+    if first_open_at is not None:
+        values["desired_first_open_at"] = _as_shanghai(first_open_at).isoformat()
+    written = session.exec(
+        update(PersonalDigestEditionRecord)
+        .where(
+            PersonalDigestEditionRecord.id == edition.id,
+            PersonalDigestEditionRecord.status == PersonalDigestStatus.GENERATING.value,
+            or_(
+                PersonalDigestEditionRecord.desired_requested_at.is_(None),
+                PersonalDigestEditionRecord.desired_requested_at <= requested_at,
+            ),
+        )
+        .values(**values)
+    )
+    session.commit()
+    session.expire_all()
+    refreshed = session.get(PersonalDigestEditionRecord, edition.id) or edition
+    # A newer intent already present is also a successful coalesce.  False only
+    # means the lifecycle changed out from under this trigger and it must retry
+    # against the new active row instead of silently dropping the request.
+    stored = written.rowcount == 1 or (
+        refreshed.status == PersonalDigestStatus.GENERATING.value
+        and refreshed.desired_requested_at is not None
+    )
+    return refreshed, stored
+
+
+def _refresh_pending_edition(
+    session: Session,
+    edition: PersonalDigestEditionRecord,
+    *,
+    scope: FrozenDigestScope,
+    reason: str,
+    current: dt.datetime,
+    first_open_at: dt.datetime | None,
+) -> tuple[PersonalDigestEditionRecord, bool]:
+    """Coalesce current desired state into a content-free pending revision."""
+
+    first_open = _as_shanghai(first_open_at) if first_open_at else None
+    first_open_value = edition.first_open_at
+    deadline_value = edition.deadline_at
+    if first_open is not None and first_open_value is None:
+        check_after = _parse_datetime(edition.check_after) or dt.datetime.combine(
+            dt.date.fromisoformat(edition.report_date), dt.time(8, 30), SHANGHAI
+        )
+        first_open_value = first_open.isoformat()
+        deadline_value = _first_open_deadline(first_open, check_after).isoformat()
+    interests = _load_interests(session, edition.owner_username)
+    marker = current.isoformat()
+    assert edition.id is not None
+    written = session.exec(
+        update(PersonalDigestEditionRecord)
+        .where(
+            PersonalDigestEditionRecord.id == edition.id,
+            PersonalDigestEditionRecord.status == PersonalDigestStatus.PENDING.value,
+            PersonalDigestEditionRecord.cutoff_at <= marker,
+        )
+        .values(
+            cutoff_at=marker,
+            first_open_at=first_open_value,
+            deadline_at=deadline_value,
+            expected_source_ids_json=_json(list(scope.expected_source_ids)),
+            due_source_ids_json=_json(list(scope.due_source_ids)),
+            source_state_snapshot_json=_json(dict(scope.source_state_snapshot)),
+            taxonomy_version=_taxonomy_version(session),
+            interest_version=_interest_version(session, edition.owner_username),
+            interest_snapshot_json=_serialize_interests(interests),
+            generation_reason=reason,
+            desired_generation_reason=None,
+            desired_requested_at=None,
+            desired_first_open_at=None,
+            updated_at=marker,
+        )
+    )
+    session.commit()
+    session.expire_all()
+    refreshed = session.get(PersonalDigestEditionRecord, edition.id) or edition
+    # A later trigger may already have refreshed this pending row; that is a
+    # valid coalesced winner.  A transition to generating requires a retry so
+    # this request is persisted as desired intent instead of mutating scope.
+    merged = written.rowcount == 1 or refreshed.status == PersonalDigestStatus.PENDING.value
+    return refreshed, merged
+
+
 def _tag_maps(
     session: Session, article_ids: Sequence[str]
 ) -> tuple[dict[str, tuple[str, ...]], dict[str, list[dict[str, object]]]]:
@@ -881,12 +994,6 @@ def start_personal_digest_edition(
             )
         raise ValueError("个人早报只生成当天版本，历史日期保持不变")
 
-    rebuild_reasons = {
-        DigestGenerationReason.INTEREST_CHANGED.value,
-        DigestGenerationReason.SUBSCRIPTION_CHANGED.value,
-        DigestGenerationReason.MANUAL_REBUILD.value,
-        DigestGenerationReason.DAILY_BRIEF_READY.value,
-    }
     # Resolve the current permission boundary before reusing today's lifecycle
     # row.  In particular, removing the last subscription must not leave an
     # older pending/ready revision looking current simply because it was frozen
@@ -911,6 +1018,9 @@ def start_personal_digest_edition(
             previous.status = PersonalDigestStatus.SUPERSEDED.value
             previous.generation_token = None
             previous.generation_lease_expires_at = None
+            previous.desired_generation_reason = None
+            previous.desired_requested_at = None
+            previous.desired_first_open_at = None
             previous.updated_at = current.isoformat()
             session.add(previous)
         if stale_editions:
@@ -946,7 +1056,52 @@ def start_personal_digest_edition(
                 current=current,
             )
 
-    if reason not in rebuild_reasons:
+    if reason in REBUILD_REASON_VALUES and existing is not None:
+        if existing.status == PersonalDigestStatus.GENERATING.value:
+            edition, merged = _coalesce_generating_intent(
+                session,
+                existing,
+                reason=reason,
+                current=current,
+                first_open_at=first_open_at,
+            )
+            if not merged:
+                return start_personal_digest_edition(
+                    session,
+                    username,
+                    report_date=report_date,
+                    now=current,
+                    generation_reason=reason,
+                    first_open_at=first_open_at,
+                    scheduled_source_ids=scheduled_source_ids,
+                )
+            return PersonalDigestGenerationResult(
+                status=edition.status,  # type: ignore[arg-type]
+                edition=edition,
+                items=_items_for_edition(session, edition.id),
+            )
+        if existing.status == PersonalDigestStatus.PENDING.value:
+            edition, merged = _refresh_pending_edition(
+                session,
+                existing,
+                scope=scope,
+                reason=reason,
+                current=current,
+                first_open_at=first_open_at,
+            )
+            if not merged:
+                return start_personal_digest_edition(
+                    session,
+                    username,
+                    report_date=report_date,
+                    now=current,
+                    generation_reason=reason,
+                    first_open_at=first_open_at,
+                    scheduled_source_ids=scheduled_source_ids,
+                )
+            return PersonalDigestGenerationResult(status="pending", edition=edition)
+
+    if reason not in REBUILD_REASON_VALUES:
         if existing is not None:
             return _reuse_edition(
                 session,
@@ -987,19 +1142,23 @@ def start_personal_digest_edition(
         session.commit()
     except IntegrityError:
         session.rollback()
-        winner = _latest_edition(session, username, report_date)
-        if winner is None:
-            raise
-        return PersonalDigestGenerationResult(
-            status=winner.status,  # type: ignore[arg-type]
-            edition=winner,
-            items=_items_for_edition(session, winner.id),
+        # Another process created the same revision after our read. Re-enter
+        # against that winner so this request's newer reason/scope is merged
+        # into pending work or persisted as a generating desired intent.
+        return start_personal_digest_edition(
+            session,
+            username,
+            report_date=report_date,
+            now=current,
+            generation_reason=reason,
+            first_open_at=first_open_at,
+            scheduled_source_ids=scheduled_source_ids,
         )
     session.refresh(edition)
-    # A rebuild freezes a new subscription/interest boundary.  Older pending
-    # rows have no immutable content yet and must never be generated later
-    # using the newly changed interests.  Keep the lifecycle row for audit,
-    # but make it terminal and visibly superseded by this revision.
+    # Rows from old deployments or a cross-process race can still leave an
+    # older unfinished revision behind.  Fence it after the new revision is
+    # durable; normal same-day triggers now coalesce pending work in place and
+    # use the desired-intent fields while a revision is generating.
     older_pending = list(
         session.exec(
             select(PersonalDigestEditionRecord).where(
@@ -1017,11 +1176,107 @@ def start_personal_digest_edition(
         previous.status = PersonalDigestStatus.SUPERSEDED.value
         previous.generation_token = None
         previous.generation_lease_expires_at = None
+        previous.desired_generation_reason = None
+        previous.desired_requested_at = None
+        previous.desired_first_open_at = None
         previous.updated_at = current.isoformat()
         session.add(previous)
     if older_pending:
         session.commit()
     return PersonalDigestGenerationResult(status="pending", edition=edition)
+
+
+def materialize_desired_personal_digest_revision(
+    session: Session,
+    edition: PersonalDigestEditionRecord,
+    *,
+    now: dt.datetime | None = None,
+) -> PersonalDigestGenerationResult | None:
+    """Consume one persisted desired intent after its carrier is terminal.
+
+    Creating/refreshing the next pending revision happens before the intent is
+    cleared.  If the process stops between those commits, retrying only
+    refreshes that pending row.  The conditional clear protects a newer trigger
+    that races with this consumer.
+    """
+
+    if edition.status in {
+        PersonalDigestStatus.PENDING.value,
+        PersonalDigestStatus.GENERATING.value,
+    }:
+        return None
+    marker = edition.desired_requested_at
+    reason = edition.desired_generation_reason
+    if not marker or not reason:
+        return None
+    current = _as_shanghai(now)
+    newer = session.exec(
+        select(PersonalDigestEditionRecord.id).where(
+            PersonalDigestEditionRecord.owner_username == edition.owner_username,
+            PersonalDigestEditionRecord.report_date == edition.report_date,
+            PersonalDigestEditionRecord.revision > edition.revision,
+        ).limit(1)
+    ).first()
+    if newer is not None:
+        # A successor already proves the carrier was consumed (or superseded by
+        # an even newer trigger). Never replay an older marker with a new clock.
+        assert edition.id is not None
+        session.exec(
+            update(PersonalDigestEditionRecord)
+            .where(
+                PersonalDigestEditionRecord.id == edition.id,
+                PersonalDigestEditionRecord.desired_requested_at == marker,
+            )
+            .values(
+                desired_generation_reason=None,
+                desired_requested_at=None,
+                desired_first_open_at=None,
+            )
+        )
+        session.commit()
+        return None
+    if edition.report_date != current.date().isoformat():
+        # Desired state is only meaningful for "today"; never mutate history
+        # after a restart crosses the local date boundary.
+        assert edition.id is not None
+        session.exec(
+            update(PersonalDigestEditionRecord)
+            .where(
+                PersonalDigestEditionRecord.id == edition.id,
+                PersonalDigestEditionRecord.desired_requested_at == marker,
+            )
+            .values(
+                desired_generation_reason=None,
+                desired_requested_at=None,
+                desired_first_open_at=None,
+            )
+        )
+        session.commit()
+        return None
+    first_open = _parse_datetime(edition.desired_first_open_at)
+    result = start_personal_digest_edition(
+        session,
+        edition.owner_username,
+        report_date=edition.report_date,
+        now=current,
+        generation_reason=reason,
+        first_open_at=first_open,
+    )
+    assert edition.id is not None
+    session.exec(
+        update(PersonalDigestEditionRecord)
+        .where(
+            PersonalDigestEditionRecord.id == edition.id,
+            PersonalDigestEditionRecord.desired_requested_at == marker,
+        )
+        .values(
+            desired_generation_reason=None,
+            desired_requested_at=None,
+            desired_first_open_at=None,
+        )
+    )
+    session.commit()
+    return result
 
 
 def notify_public_daily_brief_ready(
@@ -1138,6 +1393,8 @@ def generate_personal_digest(
     force_new_revision: bool = False,
     pending_edition_id: int | None = None,
     generation_token: str | None = None,
+    sync_stale: bool = False,
+    analysis_incomplete: bool = False,
     policy: DigestSelectionPolicy | None = None,
 ) -> PersonalDigestGenerationResult:
     """Generate and persist one immutable personal-digest edition.
@@ -1152,12 +1409,6 @@ def generate_personal_digest(
     report_date = report_date or current.date().isoformat()
     reason = str(getattr(generation_reason, "value", generation_reason))
     reason = DigestGenerationReason(reason).value
-    rebuild_reasons = {
-        DigestGenerationReason.INTEREST_CHANGED.value,
-        DigestGenerationReason.SUBSCRIPTION_CHANGED.value,
-        DigestGenerationReason.MANUAL_REBUILD.value,
-        DigestGenerationReason.DAILY_BRIEF_READY.value,
-    }
     if reason == DigestGenerationReason.INTEREST_CHANGED.value and report_date != current.date().isoformat():
         raise ValueError("兴趣变化只允许重编排当天早报，历史日期保持不变")
     if report_date != current.date().isoformat():
@@ -1207,7 +1458,7 @@ def generate_personal_digest(
         )
     if not scope.expected_source_ids:
         return PersonalDigestGenerationResult(status="empty_subscriptions", edition=None)
-    if pending_edition is None and not force_new_revision and reason not in rebuild_reasons:
+    if pending_edition is None and not force_new_revision and reason not in REBUILD_REASON_VALUES:
         existing = _latest_completed_edition(session, username, report_date)
         if existing is not None:
             return PersonalDigestGenerationResult(
@@ -1281,9 +1532,9 @@ def generate_personal_digest(
         source_id: raw_source_snapshot.get(source_id, {})
         for source_id in scope.expected_source_ids
     }
-    degraded = not selections
+    selection_degraded = not selections
     degraded_reason: str | None = None
-    if degraded:
+    if selection_degraded:
         followed_codes = {
             item.tag_code for item in interests
             if getattr(item.stance, "value", item.stance) == InterestStance.FOLLOW.value
@@ -1308,9 +1559,8 @@ def generate_personal_digest(
         if pending_edition is not None
         else _latest_revision(session, username, report_date) + 1
     )
-    final_status = (
-        PersonalDigestStatus.DEGRADED.value if degraded else PersonalDigestStatus.READY.value
-    )
+    degraded = selection_degraded or sync_stale or analysis_incomplete
+    final_status = PersonalDigestStatus.DEGRADED.value if degraded else PersonalDigestStatus.READY.value
     final_values = {
         "status": final_status,
         "generated_at": generated_at,
@@ -1319,6 +1569,8 @@ def generate_personal_digest(
         "source_state_snapshot_json": _json(source_snapshot),
         "policy_version": POLICY_VERSION,
         "generation_reason": reason,
+        "sync_stale": bool(sync_stale),
+        "analysis_incomplete": bool(analysis_incomplete),
         "degraded_reason": degraded_reason,
         "error": None,
         "updated_at": generated_at,
@@ -1537,6 +1789,7 @@ __all__ = [
     "calculate_due_source_ids",
     "freeze_personal_digest_scope",
     "generate_personal_digest",
+    "materialize_desired_personal_digest_revision",
     "start_personal_digest_edition",
     "load_digest_candidates",
     "resolve_personal_digest_source_ids",

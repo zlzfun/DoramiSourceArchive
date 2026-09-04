@@ -15,6 +15,8 @@ from models.db import (
     CmsTagCandidateEvidenceRecord,
     CmsTagCandidateRecord,
     CmsTagEventRecord,
+    CollectionJobRecord,
+    PersonalDigestItemRecord,
     ReaderSubscriptionRecord,
     SourceConfigRecord,
     SourceStateRecord,
@@ -458,6 +460,23 @@ def test_first_open_waits_then_degrades_in_place_after_deadline(monkeypatch, tmp
         pending = client.post("/api/reader/briefs/today/ensure").json()["edition"]
         assert pending["status"] == "pending"
         assert pending["first_open_at"] is not None
+        assert pending["readiness"]["sources"] == {
+            "total": 0,
+            "completed": 0,
+            "pending": 0,
+            "pending_sources": [],
+        }
+        assert pending["readiness"]["analysis"] == {
+            "total": 1,
+            "completed": 0,
+            "pending": 1,
+        }
+        first_rebuild = client.post("/api/reader/briefs/today/rebuild").json()["edition"]
+        repeated_rebuild = client.post("/api/reader/briefs/today/rebuild").json()["edition"]
+        assert first_rebuild["id"] == pending["id"]
+        assert repeated_rebuild["id"] == pending["id"]
+        assert repeated_rebuild["revision"] == pending["revision"]
+        assert repeated_rebuild["generation_reason"] == "manual_rebuild"
 
         with Session(sink.engine) as session:
             edition = session.get(PersonalDigestEditionRecord, pending["id"])
@@ -473,6 +492,9 @@ def test_first_open_waits_then_degrades_in_place_after_deadline(monkeypatch, tmp
         assert completed["revision"] == pending["revision"]
         assert completed["status"] == "degraded"
         assert completed["degraded_reason"] == "no_qualified_content"
+        assert completed["sync_stale"] is False
+        assert completed["analysis_incomplete"] is True
+        assert completed["readiness"] is None
         assert all(item["article_id"] != "article-b" for item in completed["items"])
 
 
@@ -505,6 +527,52 @@ def test_first_open_before_check_after_waits_even_if_deadline_looks_expired(monk
         )
 
         assert unchanged.status == "pending"
+
+
+def test_deadline_source_staleness_is_separate_from_content_fallback(monkeypatch, tmp_path):
+    _app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
+    from api.routers import personal_briefs
+    from models.analysis_contracts import DigestGenerationReason
+    from services import personal_digest
+
+    current = dt.datetime.now(personal_digest.SHANGHAI)
+    with Session(sink.engine) as session:
+        state = session.get(SourceStateRecord, "source-a")
+        state.last_completed_at = (current - dt.timedelta(days=1)).isoformat()
+        state.last_success_at = state.last_completed_at
+        session.add(state)
+        session.add(CollectionJobRecord(
+            name="source-a schedule",
+            fetcher_ids_json='["source-a"]',
+            is_active=True,
+            created_at=current.isoformat(),
+            updated_at=current.isoformat(),
+        ))
+        session.commit()
+
+        pending = personal_digest.start_personal_digest_edition(
+            session,
+            "alice",
+            now=current,
+            generation_reason=DigestGenerationReason.FIRST_OPEN,
+            first_open_at=current,
+        ).edition
+        assert pending is not None
+        assert personal_briefs.readiness_progress(session, pending, now=current)["sources"]["pending"] == 1
+        pending.deadline_at = (current - dt.timedelta(seconds=1)).isoformat()
+        session.add(pending)
+        session.commit()
+
+        completed = personal_briefs.process_pending_edition(session, pending, now=current)
+        assert completed.status == "degraded"
+        assert completed.sync_stale is True
+        assert completed.analysis_incomplete is False
+        assert completed.degraded_reason is None
+        assert session.exec(
+            select(ArticleRecord.id)
+            .join(PersonalDigestItemRecord, PersonalDigestItemRecord.article_id == ArticleRecord.id)
+            .where(PersonalDigestItemRecord.edition_id == completed.id)
+        ).all() == ["article-a"]
 
 
 def test_public_daily_brief_due_waits_for_todays_article_not_yesterdays(monkeypatch, tmp_path):
