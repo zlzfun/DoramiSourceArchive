@@ -6,6 +6,7 @@ import os
 import sys
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -31,6 +32,7 @@ from services.personal_digest import (  # noqa: E402
     claim_personal_digest_generation,
     freeze_personal_digest_scope,
     generate_personal_digest,
+    materialize_desired_personal_digest_revision,
     notify_public_daily_brief_ready,
     resolve_personal_digest_source_ids,
     start_personal_digest_edition,
@@ -499,7 +501,7 @@ def test_interest_changed_creates_today_revision_and_history_is_immutable(storag
             )
 
 
-def test_new_revision_supersedes_older_pending_lifecycle(storage):
+def test_new_trigger_refreshes_existing_pending_lifecycle_in_place(storage):
     with Session(storage.engine) as session:
         session.add(_user())
         session.add(_subscribe("alice", "rss_a"))
@@ -520,9 +522,183 @@ def test_new_revision_supersedes_older_pending_lifecycle(storage):
         )
 
         session.refresh(first.edition)
-        assert first.edition.status == "superseded"
+        assert first.edition.status == "pending"
+        assert second.edition.id == first.edition.id
         assert second.edition.status == "pending"
-        assert second.edition.revision == first.edition.revision + 1
+        assert second.edition.revision == first.edition.revision
+        assert second.edition.generation_reason == "interest_changed"
+        assert len(session.exec(select(PersonalDigestEditionRecord)).all()) == 1
+
+
+def test_generating_triggers_persist_and_materialize_one_coalesced_successor(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        _seed_article(session, 1, score=8.5)
+        session.commit()
+        pending = start_personal_digest_edition(
+            session,
+            "alice",
+            now=NOW,
+            generation_reason=DigestGenerationReason.FIRST_OPEN,
+            first_open_at=NOW,
+        )
+        edition_id = int(pending.edition.id)
+        _edition, generation_token = claim_personal_digest_generation(
+            session, edition_id, now=NOW
+        )
+        assert generation_token
+
+        first_trigger = start_personal_digest_edition(
+            session,
+            "alice",
+            now=NOW + dt.timedelta(seconds=1),
+            generation_reason=DigestGenerationReason.MANUAL_REBUILD,
+        )
+        latest_trigger = start_personal_digest_edition(
+            session,
+            "alice",
+            now=NOW + dt.timedelta(seconds=2),
+            generation_reason=DigestGenerationReason.INTEREST_CHANGED,
+        )
+        assert first_trigger.edition.id == edition_id
+        assert latest_trigger.edition.id == edition_id
+        assert latest_trigger.edition.desired_generation_reason == "interest_changed"
+        assert latest_trigger.edition.desired_requested_at is not None
+
+        completed = generate_personal_digest(
+            session,
+            "alice",
+            now=NOW + dt.timedelta(seconds=3),
+            pending_edition_id=edition_id,
+            generation_token=generation_token,
+            policy=DigestSelectionPolicy(target_items=1),
+        )
+        assert completed.status == "ready"
+        session.expunge_all()  # the desired intent must survive worker restart
+        carrier = session.get(PersonalDigestEditionRecord, edition_id)
+        successor = materialize_desired_personal_digest_revision(
+            session,
+            carrier,
+            now=NOW + dt.timedelta(seconds=4),
+        )
+        assert successor is not None
+        assert successor.edition.revision == completed.edition.revision + 1
+        assert successor.edition.status == "pending"
+        assert successor.edition.generation_reason == "interest_changed"
+        assert materialize_desired_personal_digest_revision(
+            session,
+            session.get(PersonalDigestEditionRecord, edition_id),
+            now=NOW + dt.timedelta(seconds=5),
+        ) is None
+        editions = session.exec(
+            select(PersonalDigestEditionRecord).order_by(PersonalDigestEditionRecord.revision)
+        ).all()
+        assert len(editions) == 2
+        assert editions[0].desired_requested_at is None
+
+
+def test_revision_insert_race_reenters_and_merges_losing_request(storage, monkeypatch):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        _seed_article(session, 1, score=8.5)
+        session.commit()
+        generate_personal_digest(
+            session,
+            "alice",
+            now=NOW,
+            policy=DigestSelectionPolicy(target_items=1),
+        )
+
+        original_commit = session.commit
+        injected = False
+
+        def commit_with_competing_winner():
+            nonlocal injected
+            pending = next(
+                (
+                    row for row in session.new
+                    if isinstance(row, PersonalDigestEditionRecord) and row.revision == 2
+                ),
+                None,
+            )
+            if injected or pending is None:
+                return original_commit()
+            injected = True
+            values = {
+                column.name: getattr(pending, column.name)
+                for column in PersonalDigestEditionRecord.__table__.columns
+                if column.name != "id"
+            }
+            values["generation_reason"] = DigestGenerationReason.MANUAL_REBUILD.value
+            session.rollback()
+            session.add(PersonalDigestEditionRecord(**values))
+            original_commit()
+            raise IntegrityError("simulated revision race", {}, RuntimeError("duplicate"))
+
+        monkeypatch.setattr(session, "commit", commit_with_competing_winner)
+        result = start_personal_digest_edition(
+            session,
+            "alice",
+            now=NOW + dt.timedelta(minutes=1),
+            generation_reason=DigestGenerationReason.INTEREST_CHANGED,
+        )
+
+        assert injected is True
+        assert result.edition.revision == 2
+        assert result.edition.status == "pending"
+        assert result.edition.generation_reason == "interest_changed"
+        assert len(session.exec(select(PersonalDigestEditionRecord)).all()) == 2
+
+
+def test_stale_carrier_intent_does_not_overwrite_newer_revision(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        _seed_article(session, 1, score=8.5)
+        session.commit()
+        pending = start_personal_digest_edition(
+            session,
+            "alice",
+            now=NOW,
+            generation_reason=DigestGenerationReason.FIRST_OPEN,
+        )
+        carrier_id = int(pending.edition.id)
+        _edition, token = claim_personal_digest_generation(session, carrier_id, now=NOW)
+        assert token is not None
+        start_personal_digest_edition(
+            session,
+            "alice",
+            now=NOW + dt.timedelta(seconds=1),
+            generation_reason=DigestGenerationReason.MANUAL_REBUILD,
+        )
+        generate_personal_digest(
+            session,
+            "alice",
+            now=NOW + dt.timedelta(seconds=2),
+            pending_edition_id=carrier_id,
+            generation_token=token,
+            policy=DigestSelectionPolicy(target_items=1),
+        )
+        newer = start_personal_digest_edition(
+            session,
+            "alice",
+            now=NOW + dt.timedelta(seconds=3),
+            generation_reason=DigestGenerationReason.INTEREST_CHANGED,
+        ).edition
+        newer_id = int(newer.id)
+        assert newer.revision == 2
+        assert newer.generation_reason == "interest_changed"
+
+        session.expunge_all()
+        carrier = session.get(PersonalDigestEditionRecord, carrier_id)
+        assert materialize_desired_personal_digest_revision(
+            session,
+            carrier,
+            now=NOW + dt.timedelta(seconds=4),
+        ) is None
+        refreshed_newer = session.get(PersonalDigestEditionRecord, newer_id)
+        assert refreshed_newer.status == "pending"
+        assert refreshed_newer.generation_reason == "interest_changed"
+        assert session.get(PersonalDigestEditionRecord, carrier_id).desired_requested_at is None
 
 
 def test_unrelated_visibility_fanout_reuses_same_frozen_subscription_scope(storage):

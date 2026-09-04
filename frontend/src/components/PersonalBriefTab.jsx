@@ -20,6 +20,7 @@ import {
 } from '../api';
 import ReaderMarkdown from './ReaderMarkdown';
 import { formatDateTime } from '../utils/datetime';
+import { qualityScoreText } from '../utils/analysis';
 import { useModalA11y } from '../hooks/useModalA11y';
 
 const TERMINAL = new Set(['ready', 'degraded', 'failed', 'superseded']);
@@ -33,11 +34,6 @@ const STATUS_META = {
 };
 
 const tagName = (tag) => tag?.name_zh || tag?.name_en || tag?.label || tag?.code || '';
-
-function scoreText(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number.toFixed(number % 1 ? 1 : 0) : '—';
-}
 
 function SnapshotDialog({ item, onClose, onOpenArticle }) {
   const panelRef = useRef(null);
@@ -59,7 +55,7 @@ function SnapshotDialog({ item, onClose, onOpenArticle }) {
           <div className="flex flex-wrap items-center gap-2 tiny-meta">
             <span>{snapshot.source_name || snapshot.source_id || '未知来源'}</span>
             {snapshot.publish_date && <span>· {formatDateTime(snapshot.publish_date)}</span>}
-            {snapshot.quality_score != null && <span className="brief-score">内容价值分 {scoreText(snapshot.quality_score)}</span>}
+            {qualityScoreText(snapshot.quality_score) && <span className="brief-score">内容价值分 {qualityScoreText(snapshot.quality_score)}</span>}
           </div>
           {tags.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1.5">
@@ -99,9 +95,10 @@ function SnapshotDialog({ item, onClose, onOpenArticle }) {
 function BriefItem({ item, degraded, onOpen }) {
   const snapshot = item.snapshot || {};
   const primary = (snapshot.tags || []).find((tag) => tag.is_primary) || (snapshot.tags || [])[0];
+  const score = qualityScoreText(item.quality_score ?? snapshot.quality_score);
   return (
     <button type="button" className="brief-item" onClick={() => onOpen(item)}>
-      <span className="brief-item-score" aria-label={`内容价值分 ${scoreText(item.quality_score)}`}>{scoreText(item.quality_score)}</span>
+      {score && <span className="brief-item-score" aria-label={`内容价值分 ${score}`}>{score}</span>}
       <span className="brief-item-main">
         <span className="brief-item-meta">
           {primary && <span className="brief-tag">{tagName(primary)}</span>}
@@ -227,6 +224,20 @@ export default function PersonalBriefTab({
   const noInterest = interestCount === 0;
   const meta = STATUS_META[edition?.status || status] || STATUS_META.pending;
   const ratioUnfillable = edition?.degraded_reason === 'insufficient_non_interest_content';
+  const lifecycleActive = ['pending', 'generating', 'not_started'].includes(status);
+  const readiness = edition?.readiness || {};
+  const sourceReadiness = readiness.sources || {};
+  const analysisReadiness = readiness.analysis || {};
+  const pendingSourceNames = (sourceReadiness.pending_sources || []).map((source) => source.name).filter(Boolean);
+  const readinessSummary = [
+    sourceReadiness.total > 0
+      ? `来源更新 ${sourceReadiness.completed || 0}/${sourceReadiness.total}`
+      : null,
+    analysisReadiness.total > 0
+      ? `文章分析 ${analysisReadiness.completed || 0}/${analysisReadiness.total}`
+      : null,
+  ].filter(Boolean);
+  const deadlineIncomplete = edition?.sync_stale || edition?.analysis_incomplete;
 
   return (
     <section className={`personal-brief ${mobile ? 'is-mobile' : ''}`} aria-label="我的早报">
@@ -246,8 +257,8 @@ export default function PersonalBriefTab({
               </button>
             )}
             {!viewingDate && (
-              <button type="button" className="icon-button" onClick={handleRebuild} disabled={working || loading} title="重新编排今日早报" aria-label="重新编排今日早报">
-                <RefreshCw className={`h-4 w-4 ${working ? 'animate-spin' : ''}`} />
+              <button type="button" className="icon-button" onClick={handleRebuild} disabled={working || loading || lifecycleActive} title={lifecycleActive ? '今日早报正在准备' : '重新编排今日早报'} aria-label={lifecycleActive ? '今日早报正在准备' : '重新编排今日早报'}>
+                <RefreshCw className={`h-4 w-4 ${working || lifecycleActive ? 'animate-spin' : ''}`} />
               </button>
             )}
           </div>
@@ -267,13 +278,16 @@ export default function PersonalBriefTab({
             <p className="tiny-meta">我的早报不会从未订阅内容补齐，只使用你当前的有效订阅。</p>
             <button type="button" className="action-button action-button-primary" onClick={onManageSubscriptions}>去发现来源</button>
           </div>
-        ) : ['pending', 'generating', 'not_started'].includes(status) ? (
-          <div className="brief-state">
+        ) : lifecycleActive ? (
+          <div className="brief-state" role="status" aria-live="polite">
             <Clock3 className="h-7 w-7 text-[var(--dorami-accent)]" />
             <span className={`stamp ${meta.cls}`}>{meta.label}</span>
-            <h2 className="card-title">正在等待订阅源和文章分析就绪</h2>
-            <p className="tiny-meta">08:30 前只等待；08:30 后开始检查，最晚检查时间到达仍未就绪时，将按已完成内容降级生成。</p>
+            <h2 className="card-title">{status === 'generating' ? '正在编排今日早报…' : '正在等待订阅源和文章分析就绪'}</h2>
+            {readinessSummary.length > 0 && <p className="body-text">{readinessSummary.join(' · ')}</p>}
+            {pendingSourceNames.length > 0 && <p className="tiny-meta">仍在等待：{pendingSourceNames.slice(0, 3).join('、')}{pendingSourceNames.length > 3 ? `等 ${pendingSourceNames.length} 个来源` : ''}</p>}
+            <p className="tiny-meta">{readiness.check_started === false ? '08:30 后开始检查就绪状态。' : '达到最晚检查时间仍未全部就绪时，将使用已经完成的内容生成。'}</p>
             {edition?.deadline_at && <span className="tiny-meta">最晚检查 {formatDateTime(edition.deadline_at)}</span>}
+            {edition?.rebuild_queued && <span className="tiny-meta">期间发生的新变更已合并，将在本版完成后再编排一次。</span>}
           </div>
         ) : status === 'failed' ? (
           <div className="brief-state is-error">
@@ -289,7 +303,22 @@ export default function PersonalBriefTab({
               <span>第 {edition?.revision || 1} 版</span>
               {edition?.generated_at && <span>· {formatDateTime(edition.generated_at)}</span>}
             </div>
-            {edition?.status === 'degraded' && (
+            {deadlineIncomplete && (
+              <div className="brief-notice">
+                <Clock3 className="h-4 w-4" />
+                <div>
+                  <strong>{edition.sync_stale && edition.analysis_incomplete ? '部分来源更新和文章分析尚未完成' : edition.sync_stale ? '部分来源更新尚未完成' : '部分文章分析尚未完成'}</strong>
+                  <p>本版已按截止时间使用就绪内容生成；稍后可以重新编排，纳入后续完成的内容。</p>
+                </div>
+              </div>
+            )}
+            {edition?.rebuild_queued && (
+              <div className="brief-notice">
+                <RefreshCw className="h-4 w-4" />
+                <div><strong>新的编排请求已记录</strong><p>本版完成后会继续生成合并后的下一版。</p></div>
+              </div>
+            )}
+            {edition?.degraded_reason && (
               <div className="brief-notice">
                 <Sparkles className="h-4 w-4" />
                 {ratioUnfillable ? (

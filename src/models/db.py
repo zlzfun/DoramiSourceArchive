@@ -751,6 +751,17 @@ class PersonalDigestEditionRecord(SQLModel, table=True):
     generation_token: Optional[str] = Field(default=None, index=True)
     generation_lease_expires_at: Optional[str] = Field(default=None)
     generation_reason: str = Field(default="scheduled")
+    # A trigger that arrives while this immutable revision is generating cannot
+    # mutate its frozen scope.  Persist the coalesced desired intent on the
+    # active row; the readiness worker materializes at most one next revision.
+    desired_generation_reason: Optional[str] = Field(default=None)
+    desired_requested_at: Optional[str] = Field(default=None, index=True)
+    desired_first_open_at: Optional[str] = Field(default=None)
+    # Deadline-forced publication is orthogonal to content-selection fallback.
+    # Keep the two readiness gates explicit instead of overloading
+    # ``degraded_reason`` (which describes only selection quality/coverage).
+    sync_stale: bool = Field(default=False, sa_column_kwargs={"server_default": text("0")})
+    analysis_incomplete: bool = Field(default=False, sa_column_kwargs={"server_default": text("0")})
     degraded_reason: Optional[str] = Field(default=None)
     error: Optional[str] = Field(default=None)
     created_at: str
