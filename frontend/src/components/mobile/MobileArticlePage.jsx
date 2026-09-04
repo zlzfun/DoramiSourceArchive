@@ -5,7 +5,6 @@ import {
   Loader2,
   MoreHorizontal,
   Share2,
-  Sparkles,
   Star,
 } from 'lucide-react';
 import ReaderMarkdown from '../ReaderMarkdown';
@@ -17,7 +16,7 @@ import { formatRelativeTime, formatDateTime } from '../../utils/datetime';
 import { contentTypeLabel } from '../../utils/contentType';
 import { formatPodcastDuration } from '../../utils/podcast';
 import { displayAnalysisTags } from '../../utils/analysis';
-import AiScoreBadge from '../AiScoreBadge';
+import AiReadingCard from '../AiReadingCard';
 import { hostOf } from '../../utils/readerText';
 
 // 正文页(移动波 Wave2,样页画面②):push 全屏页——无底部 Tab,返回即出栈。
@@ -167,28 +166,14 @@ export default function MobileArticlePage({
         </header>
         <div className="m-read-body markdown-body">
           {podcastView && <PodcastAudioPanel article={activeArticle} />}
-          {!activeBodyLoading && (activeSummary || activeArticle.quality_score != null || (aiEnabled && activeBody)) && (
-            <div className="reader-ai-summary">
-              <div className="reader-ai-summary-head">
-                <Sparkles className="h-3.5 w-3.5" /> <span className="ai-grad-text">哆啦美速读</span>
-                <AiScoreBadge key={activeArticle.id} article={activeArticle} />
-              </div>
-              {activeSummary ? (
-                <p className="reader-ai-summary-text">{activeSummary}</p>
-              ) : summarizing ? (
-                <div className="reader-ai-summary-skel" role="status" aria-label="正在生成速读">
-                  <span className="skeleton" /><span className="skeleton" /><span className="skeleton" />
-                </div>
-              ) : (aiEnabled && activeBody) ? (
-                <button
-                  type="button"
-                  onClick={handleSummarize}
-                  className="reader-ai-summary-generate"
-                >
-                  生成本文要点速读
-                </button>
-              ) : null}
-            </div>
+          {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
+            <AiReadingCard
+              article={activeArticle}
+              summary={activeSummary}
+              summarizing={summarizing}
+              canGenerate={Boolean(activeBody)}
+              onGenerate={handleSummarize}
+            />
           )}
           {activeBodyLoading ? (
             <PaneBodySkeleton />

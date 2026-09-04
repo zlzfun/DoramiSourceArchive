@@ -52,7 +52,7 @@ import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { contentTypeLabel } from '../utils/contentType';
 import { formatPodcastDuration, podcastOf, podcastProcessingMeta } from '../utils/podcast';
 import { displayAnalysisTags, primaryAnalysisLabel, qualityScoreText } from '../utils/analysis';
-import AiScoreBadge from './AiScoreBadge';
+import AiReadingCard from './AiReadingCard';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
 
@@ -1039,30 +1039,15 @@ export default function ReaderTab({
             </header>
             <div className="reader-pane-body markdown-body">
               {podcastView && <PodcastAudioPanel article={activeArticle} />}
-              {/* 哆啦美速读:分析 summary / 缓存直接展示,分数徽记住卡头右缘(issue #13 二轮);
-                  无缓存且 AI 已开启时给低调的生成入口(MVP 不自动生成,控成本) */}
-              {!activeBodyLoading && (activeSummary || activeArticle.quality_score != null || (aiEnabled && activeBody)) && (
-                <div className="reader-ai-summary">
-                  <div className="reader-ai-summary-head">
-                    <Sparkles className="h-3.5 w-3.5" /> <span className="ai-grad-text">哆啦美速读</span>
-                    <AiScoreBadge key={activeArticle.id} article={activeArticle} />
-                  </div>
-                  {activeSummary ? (
-                    <p className="reader-ai-summary-text">{activeSummary}</p>
-                  ) : summarizing ? (
-                    <div className="reader-ai-summary-skel" role="status" aria-label="正在生成速读">
-                      <span className="skeleton" /><span className="skeleton" /><span className="skeleton" />
-                    </div>
-                  ) : (aiEnabled && activeBody) ? (
-                    <button
-                      type="button"
-                      onClick={handleSummarize}
-                      className="reader-ai-summary-generate"
-                    >
-                      生成本文要点速读
-                    </button>
-                  ) : null}
-                </div>
+              {/* 哆啦美速读卡(AI 开启时才有):左栏 星+内容价值分,右栏摘要;无缓存给生成入口(不自动生成,控成本) */}
+              {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
+                <AiReadingCard
+                  article={activeArticle}
+                  summary={activeSummary}
+                  summarizing={summarizing}
+                  canGenerate={Boolean(activeBody)}
+                  onGenerate={handleSummarize}
+                />
               )}
               {activeBodyLoading ? (
                 <PaneBodySkeleton />
