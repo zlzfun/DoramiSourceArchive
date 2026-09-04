@@ -275,7 +275,7 @@ export default function ReaderTab({
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
-    mode, activeSourceId, favOnly, discover, discoverShapeScope, openDiscover, closeDiscover,
+    mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover,
     bulletinView, socialView, podcastView, railActive, listTitle,
     goView, goSource, goContainerAll, goFavorites,
     activeSourceHidden, activeUnsubscribed, grouping,
@@ -627,11 +627,11 @@ export default function ReaderTab({
               {!hasNoSubscriptions && (
                 <button
                   type="button"
-                  onClick={() => openDiscover(podcastView ? 'podcast' : null)}
+                  onClick={openDiscover}
                   className="reader-src-more"
                 >
                   <Compass className="h-3.5 w-3.5" />
-                  <span>{podcastView ? '添加播客' : '发现更多来源'}</span>
+                  <span>发现更多来源</span>
                 </button>
               )}
             </>
@@ -655,7 +655,6 @@ export default function ReaderTab({
       {/* ── 发现页:占据 条目列+阅读窗 的整片区域(源栏保持在场,订阅结果即时可见) ── */}
       {!briefOpen && discover && (
         <DiscoverPage
-          shapeScope={discoverShapeScope}
           sources={discoverSources}
           subscribedIds={subscribedIds}
           loading={sourcesLoading}
@@ -808,8 +807,8 @@ export default function ReaderTab({
             <div className="reader-empty reader-empty-tall">
               <Compass className="h-7 w-7 text-slate-300" />
               <span>你还没有订阅任何来源</span>
-              <button type="button" className="action-button action-button-primary" onClick={() => openDiscover(podcastView ? 'podcast' : null)}>
-                {podcastView ? '添加播客来源' : '去发现来源'}
+              <button type="button" className="action-button action-button-primary" onClick={openDiscover}>
+                去发现来源
               </button>
             </div>
           ) : activeSourceHidden ? (
@@ -972,9 +971,11 @@ export default function ReaderTab({
                 )}
                 {/* 字数与时长信息冗余(时长即由字数换算),只留时长;
                     阅读量 = 全站累计阅读次数(跨读者;含本次打开,由 /read 响应回填) */}
-                {bodyStats && <span>阅读时长 {bodyStats.minutes} 分钟</span>}
+                {bodyStats && (
+                  <span>{podcastView ? '简介阅读约' : '阅读时长'} {bodyStats.minutes} 分钟</span>
+                )}
                 {podcastView && formatPodcastDuration(activeArticle.podcast?.duration_seconds) && (
-                  <span>原版 {formatPodcastDuration(activeArticle.podcast.duration_seconds)}</span>
+                  <span>原节目 {formatPodcastDuration(activeArticle.podcast.duration_seconds)}</span>
                 )}
                 {typeof activeArticle.read_count === 'number' && activeArticle.read_count > 0 && (
                   <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
@@ -1049,7 +1050,14 @@ export default function ReaderTab({
                   summarizing={summarizing}
                   canGenerate={Boolean(activeBody)}
                   onGenerate={handleSummarize}
+                  podcast={podcastView}
                 />
+              )}
+              {podcastView && !activeBodyLoading && activeBody && (
+                <div className="podcast-show-notes-head">
+                  <h2 className="section-title">节目简介</h2>
+                  <span>来源方提供</span>
+                </div>
               )}
               {activeBodyLoading ? (
                 <PaneBodySkeleton />
@@ -1059,7 +1067,7 @@ export default function ReaderTab({
                 <ReaderMarkdown>{displayBody}</ReaderMarkdown>
               ) : (
                 podcastView
-                  ? '该播客暂无文字内容，可收听上方原版音频。'
+                  ? '该播客暂无文字内容，可收听上方原节目音频。'
                   : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
               )}
               {/* 正文尾部原文行(v3.40 自定源首创,v3.45 推全站):读完想看原文正是最自然的
@@ -1105,8 +1113,8 @@ export default function ReaderTab({
             <BookOpenText className="h-8 w-8 text-slate-300" />
             <span>{bulletinView ? '选择一条动态以开始阅读' : podcastView ? '选择一期播客以开始收听' : '选择一篇文章以开始阅读'}</span>
             {/* 新老用户通用的轻引导:空态下一行小字直达发现页(欢迎卡方案已否决——太啰嗦) */}
-            <button type="button" className="reader-empty-link" onClick={() => openDiscover(podcastView ? 'podcast' : null)}>
-              {podcastView ? '添加播客来源' : '去「发现」添加订阅'}
+            <button type="button" className="reader-empty-link" onClick={openDiscover}>
+              去「发现」添加订阅
             </button>
           </div>
         )}

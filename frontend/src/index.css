@@ -5827,6 +5827,12 @@ input[type="radio"] {
     background: var(--group-accent, var(--dorami-blue));
   }
 
+  .signal-shape-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
   .signal-strip-tools {
     margin-left: auto;
     display: inline-flex;
@@ -8735,7 +8741,7 @@ input[type="radio"] {
   .reader-tr-seg-btn.is-on.is-ai { background: var(--grad-ai-wash); }
   .reader-tr-seg-btn.is-on.is-ai svg { stroke: url(#ai-grad) var(--dorami-accent); }
 
-  /* 播客详情顶部播放器:原版永远在首位且明示；精简版存在时作为第二轨展示。 */
+  /* 播客详情顶部播放器:原节目永远在首位且明示；中文精华存在时作为第二轨展示。 */
   .podcast-player-panel {
     max-width: 720px;
     margin: 0 auto 26px;
@@ -8791,6 +8797,22 @@ input[type="radio"] {
   }
 
   .podcast-audio-track + .podcast-audio-track { margin-top: 12px; }
+
+  .podcast-show-notes-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 2px 0 14px;
+    color: var(--dorami-ink);
+  }
+  .podcast-show-notes-head .section-title {
+    font-family: var(--font-serif);
+  }
+  .podcast-show-notes-head span {
+    color: var(--dorami-faint);
+    font-size: 11px;
+    font-weight: 600;
+  }
 
   .podcast-audio-track-head {
     display: flex;
@@ -11107,6 +11129,8 @@ input[type="radio"] {
   background: var(--dorami-soft);
   color: var(--dorami-ink-2);
 }
+/* (合流 issue-7 播客打磨:「简介初评」提示行随阅读窗分析框一起退役,语义并入 AiReadingCard
+   的 podcast 变体——摘要层「简介导读」+ 依据层「简介初评」;.reader-analysis-basis 类删除) */
 .reader-analysis-top { display: flex; align-items: center; gap: 12px; }
 .reader-analysis-score { display: inline-flex; flex: none; align-items: baseline; gap: 6px; }
 .reader-analysis-score strong { color: var(--dorami-accent-ink); font-size: 22px; line-height: 1; font-variant-numeric: tabular-nums; }

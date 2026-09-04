@@ -43,6 +43,15 @@ def _app():
     return importlib.import_module("api.app")
 
 
+def _is_shared_podcast(record: SourceConfigRecord) -> bool:
+    return not record.owner_username and record.source_type == "podcast"
+
+
+def _reload_podcast_schedules_if_needed(*, before: bool = False, after: bool = False) -> None:
+    if before or after:
+        _app().reload_podcast_source_schedules()
+
+
 # ==================== 请求模型 ====================
 
 class SourceConfigCreate(BaseModel):
@@ -245,13 +254,16 @@ def import_podcast_catalog(
 ):
     """Import ready catalog sources; safe defaults neither activate nor overwrite."""
     try:
-        return podcast_catalog_service.import_podcast_catalog(
+        result = podcast_catalog_service.import_podcast_catalog(
             session,
             source_ids=params.source_ids,
             activate=params.activate,
             update_existing=params.update_existing,
             include_blocked=params.include_blocked,
         )
+        if result["created"] or result["updated"]:
+            _app().reload_podcast_source_schedules()
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -305,6 +317,7 @@ def create_source_config(params: SourceConfigCreate, session: Session = Depends(
     session.add(record)
     session.commit()
     session.refresh(record)
+    _reload_podcast_schedules_if_needed(after=_is_shared_podcast(record))
     return serialize_source_config(record)
 
 
@@ -314,6 +327,7 @@ def update_source_config(source_id: str, params: SourceConfigUpdate, session: Se
     record = session.get(SourceConfigRecord, source_id)
     if not record:
         raise HTTPException(status_code=404, detail="数据源配置不存在")
+    was_shared_podcast = _is_shared_podcast(record)
 
     update_data = params.model_dump(exclude_unset=True)
     if record.owner_username and update_data.get("ai_analysis_enabled") is True:
@@ -335,6 +349,10 @@ def update_source_config(source_id: str, params: SourceConfigUpdate, session: Se
     session.add(record)
     session.commit()
     session.refresh(record)
+    _reload_podcast_schedules_if_needed(
+        before=was_shared_podcast,
+        after=_is_shared_podcast(record),
+    )
     return serialize_source_config(record)
 
 
@@ -351,6 +369,7 @@ def toggle_source_config(
     session.add(record)
     session.commit()
     session.refresh(record)
+    _reload_podcast_schedules_if_needed(after=_is_shared_podcast(record))
     return serialize_source_config(record)
 
 
@@ -367,8 +386,10 @@ def delete_source_config(source_id: str, session: Session = Depends(deps.get_ses
 
         result = user_sources_service.admin_delete_user_source(session, source_id)
         return {"status": "success", **result}
+    was_shared_podcast = _is_shared_podcast(record)
     session.delete(record)
     session.commit()
+    _reload_podcast_schedules_if_needed(before=was_shared_podcast)
     return {"status": "success"}
 
 

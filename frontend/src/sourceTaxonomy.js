@@ -171,6 +171,7 @@ export const SOURCE_CHANNEL_LABELS = {
   research_index: '研究目录',
   paper_ranking: '论文榜单',
   search_rss: '搜索 RSS',
+  podcast_rss: 'Podcast RSS',
   website: '网站',
   website_or_feed: '网站/Feed',
   docs_console: '开放平台',

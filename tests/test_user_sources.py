@@ -403,6 +403,7 @@ def test_source_health_includes_user_sources(monkeypatch, tmp_path):
         assert row["user_source"] is True
         assert row["owner_username"] == "alice"
         assert row["category"] == "user"
+        assert row["shape"] == "article"
         assert row["feed_url"].startswith("https://")
         # registry 节点行不带 user_source 标记
         assert all("user_source" not in i for i in items if i["fetcher_id"] != source_id)

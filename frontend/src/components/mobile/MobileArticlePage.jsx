@@ -140,9 +140,11 @@ export default function MobileArticlePage({
                 {formatDateTime(activeArticle.publish_date)}
               </span>
             )}
-            {bodyStats && <span>阅读时长 {bodyStats.minutes} 分钟</span>}
+            {bodyStats && (
+              <span>{podcastView ? '简介阅读约' : '阅读时长'} {bodyStats.minutes} 分钟</span>
+            )}
             {podcastView && formatPodcastDuration(activeArticle.podcast?.duration_seconds) && (
-              <span>原版 {formatPodcastDuration(activeArticle.podcast.duration_seconds)}</span>
+              <span>原节目 {formatPodcastDuration(activeArticle.podcast.duration_seconds)}</span>
             )}
             {typeof activeArticle.read_count === 'number' && activeArticle.read_count > 0 && (
               <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
@@ -173,7 +175,14 @@ export default function MobileArticlePage({
               summarizing={summarizing}
               canGenerate={Boolean(activeBody)}
               onGenerate={handleSummarize}
+              podcast={podcastView}
             />
+          )}
+          {podcastView && !activeBodyLoading && activeBody && (
+            <div className="podcast-show-notes-head">
+              <h2 className="section-title">节目简介</h2>
+              <span>来源方提供</span>
+            </div>
           )}
           {activeBodyLoading ? (
             <PaneBodySkeleton />
@@ -183,7 +192,7 @@ export default function MobileArticlePage({
             <ReaderMarkdown>{displayBody}</ReaderMarkdown>
           ) : (
             podcastView
-              ? '该播客暂无文字内容，可收听上方原版音频。'
+              ? '该播客暂无文字内容，可收听上方原节目音频。'
               : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
           )}
           {/* 正文尾部原文行(v3.45 推全站,与桌面阅读窗同口径):无 source_url 不画 */}

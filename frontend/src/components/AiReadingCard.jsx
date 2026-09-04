@@ -18,7 +18,8 @@ import { qualityScoreText, SCORE_DISCLAIMER } from '../utils/analysis';
  * 层(一句理由 + 免责小字)。点数字在两层间慢速淡切,卡高由较高者撑住不跳;
  * 再点/Esc/换篇回摘要。无分数时右栏承接骨架与生成入口。桌面与移动壳共用。
  */
-export default function AiReadingCard({ article, summary, summarizing, canGenerate, onGenerate }) {
+export default function AiReadingCard({ article, summary, summarizing, canGenerate, onGenerate, podcast = false }) {
+  // 播客(issue #7 合流):当前摘要/评分只基于 RSS 节目简介,不是音频全文——标题与说明如实标注。
   const score = article?.quality_score != null ? qualityScoreText(article.quality_score) : '';
   const reason = (article?.score_reason || '').trim();
   const [showReason, setShowReason] = useState(false);
@@ -48,8 +49,9 @@ export default function AiReadingCard({ article, summary, summarizing, canGenera
       <div className="reader-ai-summary-main">
         {summary ? (
           <div className="reader-ai-layer reader-ai-layer-summary" aria-hidden={showReason}>
-            <span className="reader-ai-layer-title">AI 速读</span>
+            <span className="reader-ai-layer-title">{podcast ? '简介导读' : 'AI 速读'}</span>
             <p className="reader-ai-layer-text">{summary}</p>
+            {podcast && <span className="reader-ai-layer-note">基于节目简介，不是音频全文摘要</span>}
           </div>
         ) : summarizing ? (
           <div className="reader-ai-summary-skel" role="status" aria-label="正在生成速读">
@@ -57,14 +59,18 @@ export default function AiReadingCard({ article, summary, summarizing, canGenera
           </div>
         ) : canGenerate ? (
           <button type="button" onClick={onGenerate} className="reader-ai-summary-generate">
-            生成本文要点速读
+            {podcast ? '生成节目简介导读' : '生成本文要点速读'}
           </button>
         ) : null}
         {canFlip && (
           <div className="reader-ai-layer reader-ai-layer-reason" aria-hidden={!showReason}>
-            <span className="reader-ai-layer-title">评分依据</span>
+            <span className="reader-ai-layer-title">{podcast ? '简介初评' : '评分依据'}</span>
             {reason && <p className="reader-ai-layer-text">{reason}</p>}
-            <span className="reader-ai-layer-note">{SCORE_DISCLAIMER}</span>
+            <span className="reader-ai-layer-note">
+              {podcast
+                ? 'AI 基于节目简介的初步评估，尚未分析完整音频，仅用于辅助筛选；完整音频分析将在精品处理后提供'
+                : SCORE_DISCLAIMER}
+            </span>
           </div>
         )}
       </div>

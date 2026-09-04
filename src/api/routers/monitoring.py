@@ -12,10 +12,11 @@
 """
 
 import datetime
+import json
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from sqlalchemy import case, func, or_
 from sqlmodel import Session, select
 
 from api import deps
@@ -63,6 +64,7 @@ def build_fetcher_health(fetcher_metadata: Dict[str, Any], runs: List[FetchRunRe
         "name": fetcher_metadata["name"],
         "category": fetcher_metadata.get("category", "general"),
         "content_type": fetcher_metadata.get("content_type", ""),
+        "shape": fetcher_metadata.get("shape", "article"),
         "health_status": derive_health_status(latest_run, consecutive_failures),
         "latest_run_status": latest_run.status if latest_run else None,
         "latest_run_at": latest_run.started_at if latest_run else None,
@@ -87,6 +89,7 @@ def build_fetcher_health_from_state(fetcher_metadata: Dict[str, Any], state: Sou
         "name": fetcher_metadata["name"],
         "category": fetcher_metadata.get("category", "general"),
         "content_type": state.content_type or fetcher_metadata.get("content_type", ""),
+        "shape": fetcher_metadata.get("shape", "article"),
         "health_status": state.status,
         "latest_run_status": "success" if state.status == "healthy" else "failed" if state.status == "failing" else state.status,
         "latest_run_at": state.last_started_at,
@@ -131,10 +134,57 @@ def get_source_health(session: Session = Depends(deps.get_session)):
             "desc": record.url,
             "category": "user",
             "content_type": "rss_article",
+            "shape": "article",
             "user_source": True,
             "owner_username": record.owner_username,
             "is_active": record.is_active,
         })
+
+    # 共享 Podcast 源同样由 SourceConfigRecord 驱动，而 generic_podcast_rss 只是隐藏的
+    # 执行模板。若只展示 registry，节点管理只能看到模板之外的固化抓取器，已导入的
+    # Podcast 节目会整批消失。这里把每个 Podcast 配置投影成独立可管理节点；运行仍走
+    # /api/source-configs/{source_id}/fetch，健康事实仍由 source_id 对应的 state 提供。
+    podcast_configs = session.exec(
+        select(SourceConfigRecord).where(
+            SourceConfigRecord.owner_username == "",
+            SourceConfigRecord.source_type == "podcast",
+        )
+    ).all()
+    existing_ids = {fetcher["id"] for fetcher in fetchers}
+    for record in podcast_configs:
+        if record.source_id in existing_ids:
+            continue
+        try:
+            content_tags = json.loads(record.content_tags_json or "[]")
+        except (TypeError, ValueError):
+            content_tags = []
+        fetchers.append({
+            "id": record.source_id,
+            "name": record.name,
+            "icon": "",
+            "desc": record.description or record.url,
+            "category": record.category or "podcast",
+            "content_type": "podcast_episode",
+            "shape": "podcast",
+            "source_config_node": True,
+            "source_type": "podcast",
+            "source_owner": record.source_owner,
+            "source_brand": record.source_brand,
+            "source_scope": record.source_scope,
+            "source_channel": record.source_channel or "podcast_rss",
+            "base_url": record.base_url or record.url,
+            "provenance_tier": record.provenance_tier,
+            "content_tags": content_tags if isinstance(content_tags, list) else [],
+            "signal_strength": record.signal_strength,
+            "noise_risk": record.noise_risk,
+            "fetch_reliability": record.fetch_reliability,
+            "ai_analysis_enabled": record.ai_analysis_enabled,
+            "is_active": record.is_active,
+            "feed_url": record.url,
+            "fetch_interval_minutes": record.fetch_interval_minutes,
+            "cron_expr": record.cron_expr,
+        })
+        existing_ids.add(record.source_id)
 
     fetcher_ids = [fetcher["id"] for fetcher in fetchers]
 
@@ -154,7 +204,9 @@ def get_source_health(session: Session = Depends(deps.get_session)):
     fallback_ids = [
         fetcher["id"]
         for fetcher in fetchers
-        if fetcher["id"] not in states_by_source and not fetcher.get("user_source")
+        if fetcher["id"] not in states_by_source
+        and not fetcher.get("user_source")
+        and not fetcher.get("source_config_node")
     ]
     runs = (
         session.exec(select(FetchRunRecord).where(FetchRunRecord.fetcher_id.in_(fallback_ids))).all()
@@ -172,7 +224,8 @@ def get_source_health(session: Session = Depends(deps.get_session)):
             if fetcher["id"] in states_by_source
             else build_fetcher_health(
                 fetcher,
-                [] if fetcher.get("user_source") else runs_by_fetcher.get(fetcher["id"], []),
+                [] if fetcher.get("user_source") or fetcher.get("source_config_node")
+                else runs_by_fetcher.get(fetcher["id"], []),
             )
         )
         item["total_articles"] = article_count_by_source.get(fetcher["id"], 0)
@@ -182,6 +235,17 @@ def get_source_health(session: Session = Depends(deps.get_session)):
             item["owner_username"] = fetcher["owner_username"]
             item["is_active"] = fetcher["is_active"]
             item["feed_url"] = fetcher["desc"]
+        if fetcher.get("source_config_node"):
+            # 节点目录所需的策展与运维字段在健康汇总中一并透传；前端无需再并发拉取
+            # source-configs，且不会把隐藏的 generic_podcast_rss 模板误当成一个节目。
+            for key in (
+                "source_config_node", "source_type", "source_owner", "source_brand",
+                "source_scope", "source_channel", "base_url", "provenance_tier",
+                "content_tags", "signal_strength", "noise_risk", "fetch_reliability",
+                "ai_analysis_enabled", "is_active", "feed_url", "fetch_interval_minutes",
+                "cron_expr", "desc",
+            ):
+                item[key] = fetcher.get(key)
         health_items.append(item)
     return sorted(health_items, key=lambda item: (item["category"], item["name"]))
 
@@ -229,7 +293,20 @@ def get_fetch_runs(
     """
     conditions = []
     if fetcher_id:
-        conditions.append(FetchRunRecord.fetcher_id == fetcher_id)
+        # SourceConfig 节点共用 generic_* 执行器，逻辑 source_id 保存在 params_json；
+        # 节点页仍以自身 ID 跳转运行史，因此同时匹配执行器 ID 与逻辑源 ID。
+        # CASE 先守 json_valid，避免历史坏 JSON 让整个列表查询报 malformed JSON。
+        logical_source_id = case(
+            (
+                func.json_valid(FetchRunRecord.params_json) == 1,
+                func.json_extract(FetchRunRecord.params_json, "$.source_id"),
+            ),
+            else_=None,
+        )
+        conditions.append(or_(
+            FetchRunRecord.fetcher_id == fetcher_id,
+            logical_source_id == fetcher_id,
+        ))
     if job_id is not None:
         conditions.append(FetchRunRecord.job_id == job_id)
     if job_run_id is not None:

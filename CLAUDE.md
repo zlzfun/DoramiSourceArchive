@@ -71,7 +71,7 @@ Data is stored in the `data/` directory (SQLite `cms_data.db`,含 FTS5 全文索
 
 **Issue #7 P0.1 Podcast 导航收口**：桌面视图轨与移动 TabBar 均将 Podcast 紧邻文章；从 Podcast 容器进入“发现更多来源”时切换为专用“添加播客”目录，强制只展示 `shape=podcast` 的来源并隐藏跨类型合集、形态切换和普通用户文章 RSS 添加入口。全局其它容器的发现目录保持原行为。
 
-**Issue #7 P0.2 精选播客目录**：内部「欧研观澜」样本的 36 个节目收敛为 `services.podcast_catalog` 策展目录，2026-09-03 逐源验证 RSS/XML/enclosure 后 35 个可直接复用 `generic_podcast_rss`，`Voices from DARPA` 因当前 Blubrry TLS EOF 显式阻断；新增管理员 catalog 查询/幂等导入 API 与默认 dry-run 的 `scripts/import_podcast_catalog.py`，安全默认不启用、不覆盖、不导入阻断源。新建配置统一进 `incubating` 观察期，feed 响应封顶 20 MiB、单轮 20 集；博客 RSS 与 Podcast RSS 继续以 source type/content type 分轨治理。
+**Issue #7 P0.2 精选播客目录**：内部「欧研观澜」样本的 36 个节目收敛为 `services.podcast_catalog` 策展目录，2026-09-03 逐源验证 RSS/XML/enclosure 后 35 个可直接复用 `generic_podcast_rss`，`Voices from DARPA` 因当前 Blubrry TLS EOF 显式阻断；应用启动时幂等安装这 35 个可用节点，安全默认不启用、不覆盖管理员本地改动、不替用户订阅，因而不会自行触发抓取/ASR/TTS。管理员启用某节目后，APScheduler 按该 `SourceConfigRecord.fetch_interval_minutes` 注册独立 interval job，并按稳定 source-id 散列错开首轮执行；启停/改间隔/删除即时热更新且执行前复核状态。节点运行史既可按共用执行器 ID，也可按逻辑播客源 ID 查询；抓取只涉及公开 RSS 元数据，仍不进入 ASR/TTS。另提供管理员 catalog 查询/幂等导入 API 与默认 dry-run 的 `scripts/import_podcast_catalog.py` 做选择性运维。新建配置统一进 `incubating` 观察期，feed 响应封顶 20 MiB、单轮 20 集；博客 RSS 与 Podcast RSS 继续以 source type/content type 分轨治理。
 
 **v3.44 资讯分析与个人早报波**：文章可靠落盘后由租约 worker 异步生成评分、摘要、内容类型、规范标签、Candidate evidence 和最多 6 个灵活展示标签；受版本控制的 96 项 Taxonomy v1 目录覆盖 Topic/Industry/Entity、Alias、层级、Entity 类型和用户可选资格，必须经目标库审核回执和人工发布。读者兴趣简化为“关注 / 屏蔽”，首次登录引导与左侧工具栏共用目录；个人早报严格冻结订阅范围，兴趣最多 50%，不足由质量补齐，无订阅不从公共池补。历史重跑走可暂停/恢复的 `full_analysis` 作业；公共日报 adapter 保留 off/on 兼容开关且默认 off。上线与历史兼容见 `docs/taxonomy-v1-deployment.md` 和 `docs/full-analysis-backfill.md`。
 

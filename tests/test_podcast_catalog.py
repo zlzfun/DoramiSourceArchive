@@ -1,6 +1,8 @@
 """Curated podcast catalog validation and import contract."""
 
 from dataclasses import replace
+from types import SimpleNamespace
+import asyncio
 import json
 
 from fastapi.testclient import TestClient
@@ -12,6 +14,7 @@ from services.podcast_catalog import (
     DEFAULT_MAX_RESPONSE_BYTES,
     PODCAST_CATALOG,
     catalog_by_id,
+    ensure_default_podcast_sources,
     import_podcast_catalog,
     list_podcast_catalog,
 )
@@ -82,6 +85,127 @@ def test_default_import_creates_only_ready_sources_inactive_and_is_idempotent(tm
         assert catalog["ready"] == 35
         assert catalog["installed"] == 35
         assert catalog["active"] == 0
+
+
+def test_application_bootstrap_installs_ready_sources_without_overwriting_local_state(tmp_path):
+    db = DatabaseStorage(f"sqlite:///{tmp_path / 'bootstrap.db'}")
+
+    first = ensure_default_podcast_sources(db.engine)
+    assert len(first["created"]) == 35
+    assert first["skipped_blocked"][0]["source_id"] == "podcast_voices_from_darpa"
+
+    with Session(db.engine) as session:
+        latent = session.get(SourceConfigRecord, "podcast_latent_space")
+        assert latent is not None
+        assert latent.is_active is False
+        latent.name = "本地维护的名称"
+        latent.is_active = True
+        session.add(latent)
+        session.commit()
+
+    second = ensure_default_podcast_sources(db.engine)
+    assert second["created"] == []
+    assert len(second["skipped_existing"]) == 35
+
+    with Session(db.engine) as session:
+        latent = session.get(SourceConfigRecord, "podcast_latent_space")
+        assert latent.name == "本地维护的名称"
+        assert latent.is_active is True
+        catalog = list_podcast_catalog(session)
+        assert catalog["installed"] == 35
+        assert catalog["active"] == 1
+
+
+class _PodcastScheduler:
+    def __init__(self):
+        self.jobs = {}
+
+    def add_job(self, callback, trigger, **kwargs):
+        self.jobs[kwargs["id"]] = SimpleNamespace(
+            id=kwargs["id"], callback=callback, trigger=trigger, kwargs=kwargs,
+        )
+
+    def get_jobs(self):
+        return list(self.jobs.values())
+
+    def remove_job(self, job_id):
+        self.jobs.pop(job_id, None)
+
+
+def test_active_shared_podcasts_get_independent_interval_schedules(monkeypatch, tmp_path):
+    import api.app as app_module
+
+    db = DatabaseStorage(f"sqlite:///{tmp_path / 'schedules.db'}")
+    ensure_default_podcast_sources(db.engine)
+    with Session(db.engine) as session:
+        latent = session.get(SourceConfigRecord, "podcast_latent_space")
+        latent.is_active = True
+        latent.fetch_interval_minutes = 90
+        session.add(latent)
+        second = session.get(SourceConfigRecord, "podcast_20vc")
+        second.is_active = True
+        second.fetch_interval_minutes = 90
+        session.add(second)
+        session.commit()
+
+    fake = _PodcastScheduler()
+    monkeypatch.setattr(app_module, "db_sink", db)
+    monkeypatch.setattr(app_module, "scheduler", fake)
+    app_module.reload_podcast_source_schedules()
+
+    job_id = f"{app_module.PODCAST_SCHEDULE_JOB_PREFIX}podcast_latent_space"
+    second_job_id = f"{app_module.PODCAST_SCHEDULE_JOB_PREFIX}podcast_20vc"
+    assert set(fake.jobs) == {job_id, second_job_id}
+    assert fake.jobs[job_id].kwargs["minutes"] == 90
+    assert fake.jobs[job_id].kwargs["args"] == ["podcast_latent_space"]
+    assert fake.jobs[job_id].kwargs["next_run_time"] != fake.jobs[second_job_id].kwargs["next_run_time"]
+
+    with Session(db.engine) as session:
+        latent = session.get(SourceConfigRecord, "podcast_latent_space")
+        latent.fetch_interval_minutes = -1
+        session.add(latent)
+        second = session.get(SourceConfigRecord, "podcast_20vc")
+        second.is_active = False
+        session.add(second)
+        session.commit()
+    app_module.reload_podcast_source_schedules()
+    assert fake.jobs == {}
+
+
+def test_scheduled_podcast_job_fetches_active_source_and_rechecks_toggle(monkeypatch, tmp_path):
+    import api.app as app_module
+
+    db = DatabaseStorage(f"sqlite:///{tmp_path / 'scheduled-fetch.db'}")
+    ensure_default_podcast_sources(db.engine)
+    with Session(db.engine) as session:
+        source = session.get(SourceConfigRecord, "podcast_latent_space")
+        source.is_active = True
+        session.add(source)
+        session.commit()
+
+    calls = []
+
+    async def _fake_run(items, **kwargs):
+        calls.append((items, kwargs))
+        return {"status": "success", "results": []}
+
+    monkeypatch.setattr(app_module, "db_sink", db)
+    monkeypatch.setattr(app_module, "run_collection_items", _fake_run)
+    asyncio.run(app_module.execute_podcast_source_refresh_job("podcast_latent_space"))
+
+    assert len(calls) == 1
+    items, kwargs = calls[0]
+    assert items[0]["fetcher_id"] == "generic_podcast_rss"
+    assert items[0]["params"]["feed_url"].startswith("https://")
+    assert kwargs["trigger_type"] == "scheduled"
+
+    with Session(db.engine) as session:
+        source = session.get(SourceConfigRecord, "podcast_latent_space")
+        source.is_active = False
+        session.add(source)
+        session.commit()
+    asyncio.run(app_module.execute_podcast_source_refresh_job("podcast_latent_space"))
+    assert len(calls) == 1
 
 
 def test_selective_update_preserves_active_and_blocked_requires_opt_in(tmp_path):
@@ -161,3 +285,17 @@ def test_catalog_api_is_not_shadowed_by_dynamic_source_route(monkeypatch, tmp_pa
         assert source.status_code == 200
         assert source.json()["shape"] == "podcast"
         assert source.json()["is_active"] is True
+
+        health = client.get("/api/source-health")
+        assert health.status_code == 200
+        node = next(
+            item for item in health.json()
+            if item["source_id"] == "podcast_semianalysis_weekly"
+        )
+        assert node["source_config_node"] is True
+        assert node["source_type"] == "podcast"
+        assert node["content_type"] == "podcast_episode"
+        assert node["shape"] == "podcast"
+        assert node["is_active"] is True
+        assert node["feed_url"].startswith("https://")
+        assert node["source_scope"] == "ai_media"
