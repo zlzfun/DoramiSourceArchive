@@ -1,0 +1,36 @@
+{
+  "name": "dorami-miniprogram",
+  "version": "0.1.0",
+  "private": true,
+  "description": "哆啦美阅读器 · 微信小程序端(基础版,Issue #17)",
+  "templateInfo": { "name": "default", "typescript": false, "css": "Sass", "framework": "React" },
+  "scripts": {
+    "build:weapp": "taro build --type weapp",
+    "dev:weapp": "npm run build:weapp -- --watch"
+  },
+  "browserslist": ["last 3 versions", "Android >= 4.1", "ios >= 8"],
+  "dependencies": {
+    "@babel/runtime": "^7.24.4",
+    "@tarojs/components": "4.2.1",
+    "@tarojs/helper": "4.2.1",
+    "@tarojs/plugin-framework-react": "4.2.1",
+    "@tarojs/plugin-platform-weapp": "4.2.1",
+    "@tarojs/react": "4.2.1",
+    "@tarojs/runtime": "4.2.1",
+    "@tarojs/shared": "4.2.1",
+    "@tarojs/taro": "4.2.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.4",
+    "@babel/preset-react": "^7.24.1",
+    "@tarojs/cli": "4.2.1",
+    "@tarojs/taro-loader": "4.2.1",
+    "@tarojs/webpack5-runner": "4.2.1",
+    "babel-preset-taro": "4.2.1",
+    "postcss": "^8.4.38",
+    "sass": "^1.75.0",
+    "webpack": "^5.91.0"
+  }
+}

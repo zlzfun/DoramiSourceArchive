@@ -1,0 +1,304 @@
+/* 设计令牌:自 frontend/src/index.css 的 --dorami-* 语义令牌移植(亮暗成对),
+   命名保持一致以便对照;移动壳 mobile.css 的 --rd-list-bg/--rd-pane-bg 一并沿用。
+   小程序里 page 是根节点(:root 不生效),故挂在 page 上;暗色随系统(app.config darkmode)。 */
+page {
+  --dorami-accent: #5b54e8;
+  --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220;
+  --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678;
+  --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6;
+  --dorami-surface: #ffffff;
+  --dorami-soft: #f8fafc;
+  --dorami-well: #f1f5f9;
+  --dorami-wash: rgba(91, 84, 232, 0.08);
+  --dorami-border: rgba(11, 18, 32, 0.09);
+  --dorami-border-soft: rgba(11, 18, 32, 0.06);
+  --dorami-border-strong: rgba(11, 18, 32, 0.15);
+  --amber: #f59e0b;
+  --ai-g1: #3f7bf6;
+  --ai-g2: #8b52f4;
+  --grad-ai: linear-gradient(118deg, var(--ai-g1), var(--ai-g2));
+  --grad-ai-wash: linear-gradient(118deg, rgba(63, 123, 246, 0.09), rgba(139, 82, 244, 0.10));
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --rd-list-bg: var(--dorami-soft);
+  --rd-pane-bg: var(--dorami-surface);
+  --r-sm: 6px;
+  --r-control: 10px;
+  --r-card: 14px;
+  --r-pill: 9999px;
+  --font-serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif;
+
+  background: var(--rd-list-bg);
+  color: var(--dorami-ink);
+  font-family: "PingFang SC", "SF Pro Text", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  page {
+    --dorami-accent: #8b84f0;
+    --dorami-accent-ink: #aaa4f6;
+    --dorami-ink: #f2f4f7;
+    --dorami-ink-2: #d2d7df;
+    --dorami-muted: #99a1ad;
+    --dorami-faint: #828b97;
+    --dorami-canvas: #0c0e13;
+    --dorami-surface: #20252f;
+    --dorami-soft: #1a1e26;
+    --dorami-well: #15181f;
+    --dorami-wash: rgba(124, 112, 235, 0.13);
+    --dorami-border: rgba(255, 255, 255, 0.10);
+    --dorami-border-soft: rgba(255, 255, 255, 0.06);
+    --dorami-border-strong: rgba(255, 255, 255, 0.16);
+    --ai-g1: #6ea3ff;
+    --ai-g2: #ab86ff;
+    --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+    --rd-list-bg: var(--dorami-well);
+    --rd-pane-bg: var(--dorami-soft);
+  }
+}
+
+/* ── 通用原语 ── */
+.skeleton {
+  background: linear-gradient(90deg, var(--dorami-well) 25%, var(--dorami-surface) 50%, var(--dorami-well) 75%);
+  background-size: 200% 100%;
+  animation: skel 1.4s ease-in-out infinite;
+  border-radius: var(--r-sm);
+}
+@keyframes skel { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+.empty {
+  padding: 64px 24px;
+  text-align: center;
+  color: var(--dorami-faint);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.empty-link { color: var(--dorami-accent-ink); font-weight: 600; margin-top: 6px; display: block; }
+
+/* 微标签家族:小字号宽字距 faint(组头/kicker) */
+.micro-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--dorami-faint);
+  text-transform: uppercase;
+}
+
+/* 顶栏(与 mobile.css .m-topbar 同尺度) */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 48px;
+  padding: 0 10px;
+  background: var(--rd-list-bg);
+}
+.topbar-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--dorami-ink);
+}
+.iconbtn {
+  flex: none;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-control);
+  color: var(--dorami-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.iconbtn:active { background: var(--dorami-soft); }
+.iconbtn.is-on { color: var(--dorami-accent-ink); background: var(--dorami-wash); }
+.iconbtn.is-amber { color: var(--amber); }
+.iconbtn.is-disabled { opacity: 0.45; }
+
+/* 二段 seg(全部/未读) */
+.mini-seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--r-control);
+  background: var(--dorami-well);
+}
+.mini-seg-btn {
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dorami-muted);
+}
+.mini-seg-btn.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-2); }
+
+.search-inline {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--r-control);
+  background: var(--dorami-well);
+  color: var(--dorami-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* 列表与日期组头 */
+.list { padding: 0 6px 12px; }
+.date-label {
+  padding: 14px 12px 6px;
+  @extend .micro-label;
+}
+
+/* 条目卡(reader-entry 的移动翻译) */
+.entry {
+  position: relative;
+  display: block;
+  padding: 10px 12px 11px 22px;
+  border-radius: var(--r-card);
+  background: transparent;
+}
+.entry:active { background: var(--dorami-wash); }
+.entry-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--dorami-faint);
+}
+.entry-src { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--dorami-muted); }
+.entry-time { flex: none; margin-left: auto; font-variant-numeric: tabular-nums; }
+.entry-titlerow { display: flex; align-items: flex-start; gap: 8px; margin-top: 4px; }
+.entry-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: var(--dorami-ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.entry.is-bulletin .entry-title { font-weight: 500; font-size: 14px; }
+.entry-excerpt {
+  margin-top: 4px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--dorami-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.entry-meta { display: flex; gap: 8px; margin-top: 5px; font-size: 11px; color: var(--dorami-faint); }
+.score-chip { color: var(--dorami-accent-ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+/* 未读小蓝点:标题左侧 gutter */
+.unread-dot {
+  position: absolute;
+  left: 9px;
+  top: 34px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dorami-accent);
+}
+.fav-star { flex: none; padding: 0 2px; font-size: 15px; line-height: 1.45; color: var(--dorami-faint); }
+.fav-star.is-on { color: var(--amber); }
+.entry-cover {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-sm);
+  background: var(--dorami-well);
+}
+.podcast-layout { display: flex; gap: 10px; align-items: flex-start; }
+.podcast-copy { flex: 1; min-width: 0; }
+
+/* 社交卡 */
+.social-card {
+  margin: 6px 6px 0;
+  padding: 12px 14px;
+  border-radius: var(--r-card);
+  background: var(--rd-pane-bg);
+  box-shadow: var(--sh-2);
+}
+.social-head { display: flex; align-items: center; gap: 8px; }
+.social-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--dorami-well); flex: none; }
+.social-avatar-fallback { display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 14px; }
+.social-name { font-weight: 700; font-size: 14px; color: var(--dorami-ink); }
+.social-handle { font-size: 12px; color: var(--dorami-faint); }
+.social-time { margin-left: auto; font-size: 11.5px; color: var(--dorami-faint); }
+.social-repost { font-size: 11.5px; color: var(--dorami-faint); margin-bottom: 4px; }
+.social-text { margin-top: 8px; font-size: 14.5px; line-height: 1.65; color: var(--dorami-ink-2); white-space: pre-wrap; word-break: break-word; }
+.social-quote { margin-top: 8px; padding: 8px 10px; border-radius: var(--r-sm); background: var(--dorami-soft); border: 1px solid var(--dorami-border-soft); }
+.social-quote-author { font-size: 12px; font-weight: 600; color: var(--dorami-muted); }
+.social-quote-text { font-size: 13px; line-height: 1.55; color: var(--dorami-ink-2); margin-top: 2px; white-space: pre-wrap; }
+.social-media { margin-top: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.social-media.is-single { grid-template-columns: 1fr; }
+.social-media image { width: 100%; height: 150px; border-radius: var(--r-sm); background: var(--dorami-well); }
+.social-media.is-single image { height: 220px; }
+.social-actions { display: flex; gap: 14px; margin-top: 8px; font-size: 12px; color: var(--dorami-faint); }
+.social-actions .is-on { color: var(--amber); }
+
+/* 通用行(我的页 / 源列表) */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--rd-pane-bg);
+  font-size: 14.5px;
+  color: var(--dorami-ink);
+}
+.row + .row { border-top: 1px solid var(--dorami-border-soft); }
+.row:active { background: var(--dorami-soft); }
+.row-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-meta { flex: none; font-size: 12px; color: var(--dorami-faint); }
+.row-chev { flex: none; color: var(--dorami-faint); font-size: 16px; }
+.row.is-danger { color: #dc2626; }
+.row.is-on .row-label { font-weight: 700; }
+.row.is-on { color: var(--dorami-accent-ink); }
+.row.is-fav.is-on { color: var(--amber); }
+.row.is-unavailable { opacity: 0.55; }
+.card-group { margin: 12px 12px 0; border-radius: var(--r-card); overflow: hidden; box-shadow: var(--sh-2); }
+.group-head { padding: 16px 14px 6px; @extend .micro-label; }
+.row-avatar { width: 22px; height: 22px; border-radius: var(--r-sm); background: var(--dorami-well); flex: none; }
+.row-avatar-fallback { display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; }
+
+.badge { flex: none; padding: 1px 6px; border-radius: var(--r-pill); font-size: 10.5px; font-weight: 700; background: var(--dorami-well); color: var(--dorami-faint); }
+.badge.is-accent { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+
+/* 按钮 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: var(--r-control);
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--dorami-well);
+  color: var(--dorami-ink);
+}
+.btn::after { border: none; }
+.btn.is-primary { background: var(--dorami-accent); color: #fff; }
+.btn.is-ghost { background: transparent; color: var(--dorami-accent-ink); }
+.btn.is-pill { height: 28px; padding: 0 12px; border-radius: var(--r-pill); font-size: 12.5px; }
+.btn.is-disabled { opacity: 0.5; }
+.btn.is-block { display: flex; width: 100%; height: 44px; font-size: 15px; }
+
+.toast-inline { padding: 8px 14px; font-size: 12.5px; color: var(--dorami-faint); text-align: center; }

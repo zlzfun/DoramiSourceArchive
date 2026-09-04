@@ -1,0 +1,25 @@
+{
+  "miniprogramRoot": "dist/",
+  "projectname": "dorami-reader",
+  "description": "哆啦美阅读器 · 微信小程序端(基础版)",
+  "appid": "touristappid",
+  "setting": {
+    "urlCheck": true,
+    "es6": false,
+    "enhance": false,
+    "postcss": false,
+    "preloadBackgroundData": false,
+    "minified": false,
+    "newFeature": true,
+    "autoAudits": false,
+    "coverView": true,
+    "showShadowRootInWxmlPanel": true,
+    "scopeDataCheck": false,
+    "useCompilerPlugins": false
+  },
+  "compileType": "miniprogram",
+  "libVersion": "3.8.0",
+  "srcMiniprogramRoot": "dist/",
+  "packOptions": { "ignore": [], "include": [] },
+  "condition": {}
+}

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.swc/
+.temp/
+# AppID 等私有工程配置不入库
+project.private.config.json
+.env.local
+.env.*.local

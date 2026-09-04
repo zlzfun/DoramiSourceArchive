@@ -1,0 +1,6 @@
+// 编译期 scss 变量(少量);运行期色值一律走 app.scss 的 CSS 变量(亮暗自动翻转)。
+$r-sm: 6px;
+$r-control: 10px;
+$r-card: 14px;
+$r-overlay: 16px;
+$r-pill: 9999px;
