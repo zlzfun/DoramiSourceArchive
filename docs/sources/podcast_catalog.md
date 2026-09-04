@@ -19,7 +19,11 @@ Megaphone、小宇宙分发源等平台各写一个抓取器。2026-09-03 的真
 
 ## 导入与上线
 
-默认命令只预览，不写库：
+应用启动时会幂等安装 35 个验证通过的条目，使全新部署的节点管理不再缺少 Podcast；
+这些节点保持停用，不会自动订阅给任何用户，也不会触发 RSS 抓取、ASR 或 TTS。重复启动只补充
+目录新增项，不覆盖管理员对已有节点的名称、配置和启停选择；阻断项仍不安装。
+
+命令行工具用于预览目录或执行选择性运维。默认命令只预览，不写库：
 
 ```bash
 PYTHONPATH=src uv run python scripts/import_podcast_catalog.py
@@ -34,7 +38,7 @@ PYTHONPATH=src uv run python scripts/import_podcast_catalog.py \
   --source podcast_semianalysis_weekly
 ```
 
-导入所有验证通过的条目但暂不启用：
+手动补齐所有验证通过的条目但暂不启用：
 
 ```bash
 PYTHONPATH=src uv run python scripts/import_podcast_catalog.py --apply
@@ -45,9 +49,14 @@ PYTHONPATH=src uv run python scripts/import_podcast_catalog.py --apply
 - `GET /api/source-configs/podcast-catalog`：目录、验证与当前安装状态；
 - `POST /api/source-configs/podcast-catalog/import`：按 ID 幂等导入。
 
-安全默认值是 `activate=false`、`update_existing=false`、`include_blocked=false`。更新已有条目
-不会把已启用源悄悄停用。所有新源标记为 `incubating`，需按源策展策略手工抓取、检查标题、
-日期、show notes、封面、时长与重复率后再扩大采集。
+自动安装和手动导入的安全默认值都是 `activate=false`、`update_existing=false`、
+`include_blocked=false`。更新已有条目不会把已启用源悄悄停用。所有新源标记为
+`incubating`，需按源策展策略手工启用并抓取，检查标题、日期、show notes、封面、时长与
+重复率后再扩大采集。启用共享 Podcast 后，服务会按该源的 `fetch_interval_minutes` 注册
+独立定时任务，并按稳定的 source-id 散列错开首轮执行，避免批量启用或重启时集中请求；
+启停、修改间隔或删除会即时刷新调度，任务真正执行前还会再次核对启用状态。节点运行史
+可直接用逻辑播客源 ID 查询，即使底层多个节目共用 `generic_podcast_rss` 执行器也不会显示为空。
+该定时任务只更新 feed/单集元数据，不调用 ASR 或 TTS。
 
 ## 与内部博客 RSS 的边界
 

@@ -91,7 +91,7 @@ export default function MobileReader({
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
-    mode, activeSourceId, favOnly, discover, discoverShapeScope, openDiscover, closeDiscover,
+    mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover,
     bulletinView, socialView, podcastView, listTitle,
     goView, goSource, goContainerAll, goFavorites,
     activeSourceHidden, activeUnsubscribed, grouping,
@@ -340,8 +340,8 @@ export default function MobileReader({
               <div className="reader-empty reader-empty-tall">
                 <Compass className="h-7 w-7 text-slate-300" />
                 <span>你还没有订阅任何来源</span>
-                <button type="button" className="action-button action-button-primary" onClick={() => openDiscover(podcastView ? 'podcast' : null)}>
-                  {podcastView ? '添加播客来源' : '去发现来源'}
+                <button type="button" className="action-button action-button-primary" onClick={openDiscover}>
+                  去发现来源
                 </button>
               </div>
             ) : activeSourceHidden ? (
@@ -439,11 +439,10 @@ export default function MobileReader({
             >
               <ChevronLeft />
             </button>
-            <span className="m-title">{discoverShapeScope === 'podcast' ? '添加播客' : '发现'}</span>
+            <span className="m-title">发现</span>
           </div>
           <div className="m-page-scroll">
             <DiscoverPage
-              shapeScope={discoverShapeScope}
               sources={discoverSources}
               subscribedIds={subscribedIds}
               loading={sourcesLoading}
@@ -493,7 +492,7 @@ export default function MobileReader({
         goContainerAll={goContainerAll}
         goFavorites={goFavorites}
         goSource={goSource}
-        onOpenDiscover={() => openDiscover(mode === 'podcast' ? 'podcast' : null)}
+        onOpenDiscover={openDiscover}
         onSourcePress={openSourceSheet}
       />
 

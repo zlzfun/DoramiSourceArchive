@@ -2,29 +2,19 @@
 
 ## 1. Integration Rule
 
-All Issue #7 development branches are short-lived work packages. The only integration and acceptance branch is:
+Podcast P0 已通过 `b5864d3` 合入 `main`。P1 及后续工作开始时，必须从届时最新、已复核的 `main` 创建新的 Issue #7 集成分支和隔离 worktree；在产品、成本和外网/内网架构重新确认前，不预先锁定旧分支或旧 worktree 路径，也不直接在 `main` 开发。
 
-```text
-feat/issue-7-podcast-intelligence
-```
-
-Integration worktree:
-
-```text
-/Users/frankzhang/workspace/dorami/.worktrees/dorami-issue-7
-```
-
-Agents must not develop directly in this worktree. The main session owns cherry-pick/merge conflict resolution, integration tests, browser acceptance and final sign-off.
+新集成分支创建后，主会话负责 cherry-pick/merge 冲突、集成测试、浏览器验收与最终签收；各工作包仍不得共用集成 worktree。
 
 ## 2. Worktree Convention
 
-Create each work package from the current reviewed Issue #7 integration commit:
+集成分支确认后，从其当前已复核 commit 创建每个工作包：
 
 ```bash
 git -C /Users/frankzhang/workspace/dorami/DoramiSourceArchive \
   worktree add -b wp/issue-7-<scope> \
   /Users/frankzhang/workspace/dorami/.worktrees/dorami-issue-7-<scope> \
-  feat/issue-7-podcast-intelligence
+  <current-issue-7-integration-branch>
 ```
 
 Rules:
@@ -50,10 +40,10 @@ Use isolated test databases and media directories. Never point automated tests a
 
 ## 4. Baseline Verification
 
-From the Issue #7 integration worktree:
+从当前 Issue #7 集成 worktree（P1 尚未创建；P0 基线为 `main@b5864d3`）：
 
 ```bash
-cd /Users/frankzhang/workspace/dorami/.worktrees/dorami-issue-7
+cd <current-issue-7-integration-worktree>
 uv sync
 uv run pytest tests/test_podcast_rss_fetcher.py tests/test_podcast_catalog.py tests/test_reader_shapes.py
 cd frontend
@@ -127,7 +117,7 @@ Release gate:
 
 ## 8. P3 Acceptance — ASR and Chinese Digest
 
-1. Verify `duration_seconds=1800` performs zero ASR; `1801` continues to the remaining gates.
+1. Verify 10-, 20-, 30- and 60-minute episodes can all enter processing when selected and authorized; duration changes estimated cost/scheduling only and never directly accepts or rejects premium status.
 2. Verify source, rights, relevance, preliminary value, budget and resource failures stop before ASR.
 3. Force a retryable provider failure and verify lease/retry recovery without duplicate artifacts or cost rows.
 4. Submit empty, repeating, wrong-language and invalid-timestamp transcripts and verify QA rejection.

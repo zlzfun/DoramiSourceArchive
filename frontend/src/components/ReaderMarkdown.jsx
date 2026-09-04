@@ -9,11 +9,40 @@ import 'katex/dist/katex.min.css';
 import { mediaProxyUrl } from '../api';
 
 // react-markdown 默认不渲染原始 HTML（无 rehype-raw），无 XSS 风险
-// remark-math + KaTeX:渲染正文里的 $...$/$$...$$ LaTeX(学术型源如 Lil'Log 公式密集;
-// 提取侧忠实保留 TeX 源码,渲染在此收口)。单 $ 行内数学有内建启发式
-// (开 $ 后与闭 $ 前不允许空格),金额串「$100M and $2B」不会误判;
-// 若未来仍现误判,收紧口子是给 remarkMath 传 { singleDollarTextMath: false }。
-const MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks, remarkMath];
+// remark-math + KaTeX:渲染正文里的 $...$ / $$...$$ LaTeX(学术型源如 Lil'Log
+// 公式密集，提取侧忠实保留 TeX 源码,渲染在此收口)。商业文章里的金额区间
+// 「$350M ... $1B」会被 remark-math 把两个货币符号误配成一段行内公式；在 AST
+// 里只把“带 M/B/亿等货币量级开头、闭合 $ 后紧跟第二个数字金额”的误配还原
+// 为文本，正常的 $E=mc^2$、$2 + 2 = 4$ 与块级公式继续交给 KaTeX；要求明确
+// 量级也避免把 `$2 + 2 = 4$ 2026` 这种数字公式 + 年份误判为金额区间。
+function remarkCurrencyRangeGuard() {
+  const currencyStart = /^\$\s*\d[\d,.]*\s?(?:[KMBT]\b|million\b|billion\b|trillion\b|万|亿)/i;
+  const secondAmount = /^\s*\d[\d,.]*(?:\s?(?:K|M|B|T|million|billion|trillion|万|亿))?\b/i;
+
+  return (tree, file) => {
+    const source = String(file.value || '');
+    const visit = (node) => {
+      if (!Array.isArray(node?.children)) return;
+      node.children = node.children.map((child) => {
+        if (child.type === 'inlineMath') {
+          const start = child.position?.start?.offset;
+          const end = child.position?.end?.offset;
+          if (Number.isInteger(start) && Number.isInteger(end)) {
+            const raw = source.slice(start, end);
+            if (currencyStart.test(raw) && secondAmount.test(source.slice(end))) {
+              return { type: 'text', value: raw };
+            }
+          }
+        }
+        visit(child);
+        return child;
+      });
+    };
+    visit(tree);
+  };
+}
+
+const MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks, remarkMath, remarkCurrencyRangeGuard];
 const REHYPE_PLUGINS = [rehypeKatex];
 
 // 灯箱开关注入：img 组件是模块级常量（避免 react-markdown 每次渲染重解析），
