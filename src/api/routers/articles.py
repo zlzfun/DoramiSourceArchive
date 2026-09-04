@@ -457,7 +457,6 @@ async def get_article_analysis(article_id: str, request: Request):
             "tagging_status": analysis.tagging_status,
             "quality_score": analysis.quality_score,
             "score_reason": analysis.score_reason,
-            "one_sentence_summary": analysis.one_sentence_summary,
             "summary": analysis.summary,
             "content_genre": analysis.content_genre,
             "content_features": _json_loads(analysis.content_features_json, []),

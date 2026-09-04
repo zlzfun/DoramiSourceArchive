@@ -42,7 +42,11 @@ export function primaryAnalysisLabel(article) {
 }
 
 export function qualityScoreText(value) {
+  // issue #12:Number(null) === 0 会把「未分析」画成 0 分;分数只可能是 null 或 [1,10]。
+  if (value == null || value === '') return '';
   const number = Number(value);
   if (!Number.isFinite(number)) return '';
   return number.toFixed(number % 1 ? 1 : 0);
 }
+
+export const SCORE_DISCLAIMER = 'AI 内容价值评估，用于辅助筛选，不代表事实保证或你的个人评分';

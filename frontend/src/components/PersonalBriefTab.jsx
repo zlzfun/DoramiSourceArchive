@@ -109,6 +109,7 @@ function BriefItem({ item, degraded, onOpen }) {
           {snapshot.publish_date && <span>· {formatDateTime(snapshot.publish_date)}</span>}
         </span>
         <span className="brief-item-title">{snapshot.title || '（无标题）'}</span>
+        {/* one_sentence_summary 自 v3.45.1 取缔;历史 edition 快照仍带该键,保留回退读取 */}
         {(snapshot.one_sentence_summary || snapshot.summary) && (
           <span className="brief-item-summary">{snapshot.one_sentence_summary || snapshot.summary}</span>
         )}

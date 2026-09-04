@@ -7895,66 +7895,94 @@ input[type="radio"] {
     .markdown-img-button img { opacity: 1; }
   }
 
-  /* ── AI 总结卡(迭代 3):正文顶部的要点摘要——样页「哆啦美速读」形态:
-     accent 洗地、无描边;未生成时是一行低调的「生成总结」入口。 ── */
+  /* ── 哆啦美速读卡(issue #13 三轮,从零设计):AI 渐变 wash 底是唯一身份标记,不写字样。
+     两栏:左「统计位」= 小星 + 衬线大数字(内容价值分,与阅读窗大标题同字系,数字才是
+     卡头);右 = 摘要正文。数字常态无说明,悬停/点按弹三行浮层。 ── */
   .reader-ai-summary {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 18px;
+    align-items: start;
     margin-bottom: 26px;
-    padding: 13px 16px 12px;
+    padding: 15px 18px 15px 16px;
     border-radius: var(--r-control);
-    /* v3.33:卡底换 AI 渐变 wash(蓝 9%→紫 10%,与原 accent wash 同级安静) */
     background: var(--grad-ai-wash);
     border: none;
   }
 
-  .reader-ai-summary-head {
+  /* 左栏只有一个数字;上下居中对齐右栏内容 */
+  .reader-ai-summary-side {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    color: var(--dorami-accent-ink);
+    align-self: center;
+    min-width: 52px;
   }
-  .reader-ai-summary-head svg { stroke: url(#ai-grad) var(--dorami-accent); }
 
-  /* 生成中骨架(v3.33 拍板):三行 shimmer 取代「⟳ 正在总结…」转圈字;
-     行宽错落模拟摘要典型体量。复用全局 .skeleton(含暗色与 reduced-motion 降级)。 */
-  .reader-ai-summary-skel { margin-top: 9px; display: grid; gap: 8px; }
+  /* 大数字:衬线渐变(这张卡的身份标记就是它——星已撤)。它是按钮(切换评分依据),
+     但视觉上是个数字——去掉一切按钮痕迹;可点时悬停微浮。字体/字号见文件尾未分层区。 */
+  .reader-ai-score-btn {
+    background: transparent; border: none; padding: 2px 4px; margin: 0; cursor: default;
+    display: inline-flex;
+    transition: transform var(--motion-medium) var(--motion-ease), filter var(--motion-medium) var(--motion-ease);
+  }
+  .reader-ai-score-btn.is-interactive { cursor: pointer; }
+  .reader-ai-score-btn.is-interactive:hover { transform: translateY(-1px); filter: saturate(1.15) brightness(1.05); }
+  .reader-ai-score-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-offset: 4px; border-radius: 6px; }
+
+  /* 里程表:每位数字定宽格(Georgia 老式数字是比例宽,定宽才不牵动右栏折行),
+     格内 0–9 竖条以 transform 滑到目标位——无逐帧重渲染、无布局变化。
+     格高 1.2em 给老式数字的降部留位;strip 一位一格同高。 */
+  .reader-ai-odo { display: inline-flex; align-items: baseline; }
+  .reader-ai-odo-cell {
+    display: inline-block; width: 0.64em; height: 1.2em; overflow: hidden;
+    text-align: center; vertical-align: top;
+  }
+  .reader-ai-odo-dot { display: inline-block; width: 0.3em; height: 1.2em; line-height: 1.2em; text-align: center; }
+  /* 渐变落在每个数字元素自身(.ai-grad-text):挂在外层时 background-clip:text 画不进
+     overflow:hidden 格子里的子元素——实测数字整个消失只剩小数点。 */
+  .reader-ai-odo-strip {
+    display: block; will-change: transform;
+    transition: transform 2200ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .reader-ai-odo-digit { display: block; height: 1.2em; line-height: 1.2em; }
+
+  /* 右栏:摘要层与评分依据层叠在同一格,卡高由较高者撑住;两层格式同构(小标 + 正文),
+     切换=慢速淡切+轻位移 */
+  .reader-ai-summary-main { min-width: 0; align-self: center; display: grid; }
+  .reader-ai-layer {
+    grid-area: 1 / 1;
+    align-self: center;
+    display: flex; flex-direction: column; gap: 5px;
+    transition: opacity 480ms var(--motion-ease), transform 480ms var(--motion-ease);
+  }
+  .reader-ai-layer-reason { opacity: 0; transform: translateY(8px); pointer-events: none; }
+  .reader-ai-summary.is-reason .reader-ai-layer-summary { opacity: 0; transform: translateY(-8px); pointer-events: none; }
+  .reader-ai-summary.is-reason .reader-ai-layer-reason { opacity: 1; transform: none; pointer-events: auto; }
+  .reader-ai-layer-title { color: var(--dorami-accent-ink); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; }
+  /* 双类选择器压过 .markdown-body p 的段落外边距(卡住在阅读窗正文容器里) */
+  .reader-ai-summary .reader-ai-layer-text { margin: 0; }
+  .reader-ai-layer-text { color: var(--dorami-ink-2); font-size: 13.5px; font-weight: 500; line-height: 1.8; }
+  .reader-ai-layer-note { color: var(--dorami-faint); font-size: 11.5px; font-weight: 500; line-height: 1.5; }
+
+  /* 生成中骨架:三行 shimmer,行宽错落模拟摘要典型体量。复用全局 .skeleton。 */
+  .reader-ai-summary-skel { display: grid; gap: 9px; padding: 4px 0; }
   .reader-ai-summary-skel .skeleton { height: 10px; border-radius: 5px; }
   .reader-ai-summary-skel .skeleton:nth-child(1) { width: 92%; }
   .reader-ai-summary-skel .skeleton:nth-child(2) { width: 78%; }
   .reader-ai-summary-skel .skeleton:nth-child(3) { width: 85%; }
 
-  .reader-ai-summary-text {
-    margin-top: 6px;
-    font-size: 13.5px;
-    line-height: 1.8;
-    color: var(--dorami-muted);
-  }
-
-  .reader-ai-summary-basis {
-    display: block;
-    margin-top: 7px;
-    color: var(--dorami-faint);
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 1.5;
-  }
-
-  /* 未生成时的引导入口:低调文字链(样页原样)。字号钉在未分层区——否则被全局
-     button{font:inherit} 压回正文 markdown 字号,那才是「老前端」观感的根因(唯一要改的点)。 */
+  /* 未生成时的入口:低调文字链。字号钉在未分层区——否则被全局 button{font:inherit}
+     压回正文 markdown 字号。 */
   .reader-ai-summary-generate {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    margin-top: 7px;
     color: var(--dorami-muted);
     cursor: pointer;
     background: transparent;
     border: none;
     padding: 0;
   }
-
   .reader-ai-summary-generate:hover:not(:disabled) { color: var(--dorami-blue); }
   .reader-ai-summary-generate:disabled { cursor: default; opacity: 0.7; }
 
@@ -10706,6 +10734,19 @@ input[type="radio"] {
 .reader-src-more { font-size: 12.5px; font-weight: 400; }
 .reader-load-more { font-size: 12px; font-weight: 500; }
 .reader-ai-summary-generate { font-size: 12px; font-weight: 600; }
+/* 速读卡大数字的排印同样钉在未分层区(全局 button{font:inherit} 未分层,@layer 内恒败) */
+.reader-ai-score-btn {
+  /* 数字专用衬线栈:要齐线数字——Georgia 只有老式数字,7/5 带降部让小数点看着像居中点
+     (「7·5」);Charter(macOS)/Cambria(Windows)/Baskerville 均为齐线,Georgia 兜底。 */
+  font-family: Charter, Cambria, Baskerville, var(--font-serif);
+  font-size: 38px; font-weight: 700; line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+@media (max-width: 767px) {
+  .reader-ai-score-btn { font-size: 32px; }
+  .reader-ai-summary { column-gap: 14px; }
+}
 .social-more { font-size: 12.5px; font-weight: 600; }
 .reader-disc-sub { font-size: 11.5px; font-weight: 500; }
 .reader-disc-sub.is-subbed { font-weight: 400; }
@@ -11088,32 +11129,20 @@ input[type="radio"] {
   background: var(--dorami-soft);
   color: var(--dorami-ink-2);
 }
-.reader-analysis-basis {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 5px 8px;
-  margin-bottom: 10px;
-}
-.reader-analysis-basis strong {
-  color: var(--dorami-accent-ink);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-}
-.reader-analysis-basis span {
-  color: var(--dorami-faint);
-  font-size: 11px;
-  font-weight: 600;
-}
+/* (合流 issue-7 播客打磨:「简介初评」提示行随阅读窗分析框一起退役,语义并入 AiReadingCard
+   的 podcast 变体——摘要层「简介导读」+ 依据层「简介初评」;.reader-analysis-basis 类删除) */
 .reader-analysis-top { display: flex; align-items: center; gap: 12px; }
 .reader-analysis-score { display: inline-flex; flex: none; align-items: baseline; gap: 6px; }
 .reader-analysis-score strong { color: var(--dorami-accent-ink); font-size: 22px; line-height: 1; font-variant-numeric: tabular-nums; }
 .reader-analysis-score small,
 .reader-analysis-summary > small { color: var(--dorami-faint); font-size: 11px; font-weight: 600; }
 .reader-analysis-tags { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; }
+/* p 段仅管理面抽屉/弹窗仍画 score_reason;阅读窗自 issue #13 起理由住速读卡的「评分依据」层(AiReadingCard) */
 .reader-analysis-summary p { margin-top: 8px; font-size: 13px; font-weight: 600; line-height: 1.65; }
 .reader-analysis-summary > small { display: block; margin-top: 8px; line-height: 1.5; }
+/* 阅读窗标题区标签行(issue #13 二轮:分数并入速读卡后,标签自成一行、不再套框) */
+.reader-pane-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+
 
 /* ── 我的早报：视图轨后的整幅工作区 ── */
 .personal-brief {
@@ -11191,7 +11220,8 @@ input[type="radio"] {
 .brief-item-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
 .brief-item-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; color: var(--dorami-faint); font-size: 11px; font-weight: 600; }
 .brief-item-title { font-size: 15px; font-weight: 700; line-height: 1.45; }
-.brief-item-summary { color: var(--dorami-ink-2); font-size: 13px; font-weight: 600; line-height: 1.55; }
+/* one_sentence_summary 取缔后(issue #13)条目行直接吃 summary,两行截断 */
+.brief-item-summary { color: var(--dorami-ink-2); font-size: 13px; font-weight: 600; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .brief-item-reason { color: var(--dorami-accent-ink); font-size: 12px; font-weight: 600; }
 .brief-item-reason.is-latest { color: var(--dorami-muted); }
 .brief-interest-hint {

@@ -1037,7 +1037,6 @@ def test_closed_set_retag_reuses_resolved_evidence_without_rescoring(storage):
                 tagging_status="pending",
                 quality_score=8.4,
                 score_reason="keep this score reason",
-                one_sentence_summary="keep this one-line summary",
                 summary="keep this full summary",
                 prompt_version="article-analysis-v2",
                 scoring_version="article-value-v1",

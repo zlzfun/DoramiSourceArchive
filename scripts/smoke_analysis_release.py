@@ -418,8 +418,14 @@ def _deadline_degrade_check(database_url: str) -> dict[str, Any]:
                 raise RuntimeError("deadline edition was not created")
             edition_id = started.edition.id
             before_status = started.edition.status
+            # 期限 = max(首开+15min, 当日 08:30+15min):凌晨跑时「now+16min」够不到
+            # 08:45,边缘永远 pending——按 edition 自己记的 deadline_at 之后 1 分钟推进,
+            # 任何时段跑都是「越过期限」这一个语义。
+            deadline_at = dt.datetime.fromisoformat(started.edition.deadline_at)
             completed = process_pending_edition(
-                session, started.edition, now=now + dt.timedelta(minutes=16)
+                session,
+                started.edition,
+                now=max(now, deadline_at) + dt.timedelta(minutes=1),
             )
             items = session.exec(
                 select(PersonalDigestItemRecord)

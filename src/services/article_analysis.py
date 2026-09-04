@@ -88,6 +88,8 @@ DEFAULT_BACKFILL_DAYS = 7
 DEFAULT_MAX_ATTEMPTS = 4
 DEFAULT_BATCH_SIZE = 8
 DEFAULT_SCAN_LIMIT = 500
+# score_reason 解析上限：提示词要求 ≤40 汉字，此处留余量；超出即截断而非拒收。
+_SCORE_REASON_MAX_CHARS = 120
 MAX_ERROR_CHARS = 800
 
 _TAG_LIMITS = {"topic": 5, "industry": 2, "entity": 3}
@@ -287,7 +289,6 @@ def _clear_authoritative_result(record: ArticleAnalysisRecord) -> None:
     record.quality_score = None
     record.dimension_scores_json = "{}"
     record.score_reason = ""
-    record.one_sentence_summary = ""
     record.summary = ""
     record.content_genre = None
     record.content_features_json = "[]"
@@ -813,11 +814,12 @@ def validate_analysis_payload(
         genre = ContentGenre(str(payload["content_genre"]))
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("analysis base fields are invalid") from exc
-    reason = _clean_text(payload.get("score_reason"), max_chars=1_200)
-    one_sentence = _clean_text(payload.get("one_sentence_summary"), max_chars=600)
+    # score_reason 是分数注脚（提示词要求 ≤40 字）：上限留 3 倍余量容忍模型超写，
+    # 但不再给它 1200 字——那正是它长成第二段摘要的空间（issue #13）。
+    reason = _clean_text(payload.get("score_reason"), max_chars=_SCORE_REASON_MAX_CHARS)
     summary = _clean_text(payload.get("summary"), max_chars=6_000)
-    if not reason or not one_sentence or not summary:
-        raise ValueError("analysis summaries and score_reason must be non-empty")
+    if not reason or not summary:
+        raise ValueError("analysis summary and score_reason must be non-empty")
 
     tag_map = {tag.code: tag for tag in active_tags if tag.status == "active"}
     warnings: list[str] = []
@@ -932,7 +934,6 @@ def validate_analysis_payload(
         result = ArticleAnalysisResultDTO(
             quality_score=score,
             score_reason=reason,
-            one_sentence_summary=one_sentence,
             summary=summary,
             content_genre=genre,
             primary_tag_code=selected_primary,
@@ -1452,7 +1453,6 @@ async def process_claimed_analysis(
         record.status = AnalysisStatus.SUCCEEDED.value
         record.quality_score = result.quality_score
         record.score_reason = result.score_reason
-        record.one_sentence_summary = result.one_sentence_summary
         record.summary = result.summary
         record.content_genre = str(result.content_genre)
         record.content_features_json = json.dumps(result.content_features, ensure_ascii=False)
@@ -1672,7 +1672,6 @@ def get_article_analysis(session: Session, article_id: str) -> Optional[dict[str
         "article_id": record.article_id,
         "quality_score": record.quality_score,
         "score_reason": record.score_reason,
-        "one_sentence_summary": record.one_sentence_summary,
         "summary": record.summary,
         "content_genre": record.content_genre,
         "primary_tag_id": record.primary_tag_id,
