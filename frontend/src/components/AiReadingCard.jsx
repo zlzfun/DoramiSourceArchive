@@ -109,7 +109,7 @@ function ScoreFigure({ score, interactive, pressed, onToggle }) {
             <span key={i} className="reader-ai-odo-cell">
               <span
                 className="reader-ai-odo-strip"
-                style={{ transform: `translateY(${-target * 1.2}em)`, transitionDelay: `${order * 140}ms` }}
+                style={{ transform: `translateY(${-target * 1.2}em)`, transitionDelay: `${order * 220}ms` }}
               >
                 {DIGITS.map((d) => <span key={d} className="reader-ai-odo-digit ai-grad-text">{d}</span>)}
               </span>

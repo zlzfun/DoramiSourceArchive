@@ -984,17 +984,6 @@ export default function ReaderTab({
                   路径上,文字化;译文二段激活态沿 AI 渐变身份(v3.33),AI 未开启只余原文。 */}
               {(activeArticle.source_url || (aiEnabled && !activeIsChinese)) && (
                 <div className="reader-pane-actions">
-                  {activeArticle.source_url && (
-                    <a
-                      href={activeArticle.source_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="reader-pane-act"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                      查看原文
-                    </a>
-                  )}
                   {aiEnabled && !activeIsChinese && (
                     <div className="reader-tr-seg" role="group" aria-label="正文语言">
                       <button
@@ -1003,7 +992,7 @@ export default function ReaderTab({
                         aria-pressed={!showTranslation}
                         onClick={() => { if (showTranslation) handleTranslate(); }}
                       >
-                        原文
+                        原语言
                       </button>
                       <button
                         type="button"
@@ -1021,6 +1010,19 @@ export default function ReaderTab({
                         </span>
                       </button>
                     </div>
+                  )}
+                  {/* 顺序:语言二段在前、跳原网页在后(目检拍板);「原语言」与「查看原文」用词分家——
+                      前者是本页正文的语言档位,后者是跳出站外 */}
+                  {activeArticle.source_url && (
+                    <a
+                      href={activeArticle.source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="reader-pane-act"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                      查看原文
+                    </a>
                   )}
                 </div>
               )}

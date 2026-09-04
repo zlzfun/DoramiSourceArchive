@@ -7922,7 +7922,6 @@ input[type="radio"] {
   .reader-ai-score-btn.is-interactive { cursor: pointer; }
   .reader-ai-score-btn.is-interactive:hover { transform: translateY(-1px); filter: saturate(1.15) brightness(1.05); }
   .reader-ai-score-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-offset: 4px; border-radius: 6px; }
-  .reader-ai-summary.is-reason .reader-ai-score-btn { transform: scale(0.96); }
 
   /* 里程表:每位数字定宽格(Georgia 老式数字是比例宽,定宽才不牵动右栏折行),
      格内 0–9 竖条以 transform 滑到目标位——无逐帧重渲染、无布局变化。
@@ -7937,7 +7936,7 @@ input[type="radio"] {
      overflow:hidden 格子里的子元素——实测数字整个消失只剩小数点。 */
   .reader-ai-odo-strip {
     display: block; will-change: transform;
-    transition: transform 1400ms cubic-bezier(0.16, 1, 0.3, 1);
+    transition: transform 2200ms cubic-bezier(0.16, 1, 0.3, 1);
   }
   .reader-ai-odo-digit { display: block; height: 1.2em; line-height: 1.2em; }
 
