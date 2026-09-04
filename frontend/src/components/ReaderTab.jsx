@@ -51,7 +51,12 @@ import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { contentTypeLabel } from '../utils/contentType';
 import { formatPodcastDuration, podcastOf, podcastProcessingMeta } from '../utils/podcast';
-import { displayAnalysisTags, primaryAnalysisLabel, qualityScoreText } from '../utils/analysis';
+import {
+  analysisStatusMeta,
+  displayAnalysisTags,
+  primaryAnalysisLabel,
+  qualityScoreText,
+} from '../utils/analysis';
 import AiReadingCard from './AiReadingCard';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
@@ -139,7 +144,8 @@ export const ArticleRow = memo(function ArticleRow({
     Boolean(podcast?.condensed_audio_url),
   );
   const analysisLabel = primaryAnalysisLabel(article);
-  const score = article.quality_score != null ? qualityScoreText(article.quality_score) : '';
+  const score = qualityScoreText(article.quality_score);
+  const analysisStatus = analysisStatusMeta(article, { podcast: entryPodcast });
   const favoriteControl = (
     <span
       role="button"
@@ -193,6 +199,7 @@ export const ArticleRow = memo(function ArticleRow({
                   <span>{formatPodcastDuration(podcast.duration_seconds)}</span>
                 )}
                 <span className={`podcast-status is-${podcastStatus.tone}`}>{podcastStatus.label}</span>
+                {analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
               </span>
             </span>
           </span>
@@ -212,10 +219,11 @@ export const ArticleRow = memo(function ArticleRow({
                 {formatRelativeTime(article.publish_date || article.fetched_date, '')}
               </span>
             </span>
-            {(score || analysisLabel) && (
+            {(score || analysisLabel || (!entryPodcast && analysisStatus)) && (
               <span className="reader-entry-analysis">
                 {score && <span className="reader-score-chip" title="AI 内容价值评估，不代表事实保证或用户评分">{score}</span>}
                 {analysisLabel && <span className="reader-tag-chip">{analysisLabel}</span>}
+                {!entryPodcast && analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
               </span>
             )}
             {/* 标题行内收藏控件复用 span role=button，避免 button 嵌套。 */}
@@ -322,6 +330,8 @@ export default function ReaderTab({
 
   // 列表内容高度变化(切源/追加/加载态)后重算浮层滚动条滑块
   useEffect(() => { resyncListScrollbar(); }, [articles, articlesLoading, activeArticle, resyncListScrollbar]);
+
+  const activeAnalysisStatus = analysisStatusMeta(activeArticle, { podcast: podcastView });
 
   // ── 右键上下文菜单(v3.28,样页 dorami-context-menu-quiet) ──
   // items 构建在 useReaderState(桌面右键/移动长按共用);弹出定位与开合是桌面视图胶水。
@@ -1027,8 +1037,9 @@ export default function ReaderTab({
                   )}
                 </div>
               )}
-              {/* issue #13 二轮:分数并入下方「哆啦美速读」卡头,标题区只余标签行(无框) */}
-              {displayAnalysisTags(activeArticle).length > 0 && (
+              {/* issue #13: score/reason live in the shared reading card; the
+                  title area keeps only tags plus the honest analysis lifecycle. */}
+              {(displayAnalysisTags(activeArticle).length > 0 || activeAnalysisStatus) && (
                 <div className="reader-pane-tags">
                   {displayAnalysisTags(activeArticle).map((tag, index) => (
                     <AnalysisTagChip
@@ -1037,6 +1048,11 @@ export default function ReaderTab({
                       onTemporarySearch={searchForLabel}
                     />
                   ))}
+                  {activeAnalysisStatus && (
+                    <span className={`stamp ${activeAnalysisStatus.cls}`} role="status">
+                      {activeAnalysisStatus.label}
+                    </span>
+                  )}
                 </div>
               )}
             </header>

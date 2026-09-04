@@ -15,6 +15,11 @@ import {
 import { copyText } from '../utils/clipboard';
 import { articleDeepLink } from '../utils/shareLink';
 import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
+import {
+  analysisItemsFromResponse,
+  analysisNeedsPolling,
+  preferredAnalysisSummary,
+} from '../utils/analysis';
 import { SOURCE_ROLES, sourceRoleOf } from '../sourceTaxonomy';
 import { usePolling } from './usePolling';
 import { useDebouncedValue } from './useDebouncedValue';
@@ -45,6 +50,28 @@ import {
 
 const PAGE_SIZE = 30;
 const UNREAD_POLL_MS = 60000; // 未读轻轮询间隔（标签页可见时才真正请求）
+const ANALYSIS_POLL_MS = 30000;
+const ANALYSIS_PROJECTION_KEYS = [
+  'analysis_status',
+  'tagging_status',
+  'analysis_has_result',
+  'analysis_next_attempt_at',
+  'quality_score',
+  'score_reason',
+  'one_sentence_summary',
+  'summary_zh',
+  'content_genre',
+  'primary_tag',
+  'tags',
+  'display_tags',
+];
+
+function withFreshAnalysis(article, incoming) {
+  if (!article || !incoming) return article;
+  const next = { ...article };
+  for (const key of ANALYSIS_PROJECTION_KEYS) next[key] = incoming[key];
+  return next;
+}
 
 // crumb 的「源名 · 域名」域名段(样页:Simon Willison · simonwillison.net)
 const hostOf = (url) => {
@@ -175,6 +202,7 @@ export function useReaderState({
   // 列表加载的竞态安全器：切源/搜索时慢的旧请求若晚返回会「后发先至」覆盖当前源列表，
   // runList 发新请求前 abort 掉旧的（与 DataTab 同一约定）。
   const runList = useAbortableLoad();
+  const analysisPollContextRef = useRef(null);
 
   // ── 源目录 ──
   const loadSources = useCallback(async () => {
@@ -420,7 +448,10 @@ export function useReaderState({
     }
     // 摘要:会话缓存 → 列表条目自带的 summary_zh(服务端缓存)→ 空(显示生成入口)
     setSummarizing(false);
-    setActiveSummary(id ? (summaryCacheRef.current.get(id) ?? article.summary_zh ?? null) : null);
+    setActiveSummary(id ? preferredAnalysisSummary(
+      summaryCacheRef.current.get(id),
+      article.summary_zh,
+    ) : null);
     if (!id) { setActiveBody(null); setActiveBodyLoading(false); return; }
     // 兜底：若列表项偶然已带正文（如详情接口回填），直接用
     if (article.content != null) { setActiveBody(article.content); setActiveBodyLoading(false); return; }
@@ -433,10 +464,20 @@ export function useReaderState({
         const body = data?.content || '';
         bodyCacheRef.current.set(id, body);
         if (activeIdRef.current === id) {
-          // 播客媒体字段可能只在详情响应完整返回；列表项已有的乐观 read_count 等优先保留。
-          if (data?.podcast) {
-            setActiveArticle((prev) => (prev?.id === id ? { ...prev, podcast: data.podcast } : prev));
-          }
+          // 详情响应同时补齐收藏列表未必具备的媒体/分析投影；列表项已有的
+          // 乐观 read_count 等字段仍由浅合并保留。
+          setActiveArticle((prev) => (
+            prev?.id === id
+              ? withFreshAnalysis({ ...prev, ...(data?.podcast ? { podcast: data.podcast } : {}) }, data)
+              : prev
+          ));
+          setArticles((prev) => prev.map((item) => (
+            item.id === id ? withFreshAnalysis(item, data) : item
+          )));
+          setActiveSummary(preferredAnalysisSummary(
+            summaryCacheRef.current.get(id),
+            data?.summary_zh,
+          ));
           setActiveBody(body);
           setActiveBodyLoading(false);
         }
@@ -553,6 +594,124 @@ export function useReaderState({
     if (!append) setFreshCount(0); // 列表已刷新,新内容提示归零
     if (append) setLoadingMore(false); else setArticlesLoading(false);
   }, [activeSourceId, activeSourceHidden, searchQuery, displayTagQuery, favOnly, unreadOnly, mode, showToast, runList]);
+
+  // 分析任务与采集解耦：列表首拉可能拿到 pending/running。只在确有在途项时
+  // 每 30 秒静默重取当前已加载窗口，既不闪骨架屏也不弹失败 toast；响应回写前
+  // 校验 scopeKey，避免切源/搜索后旧轮询污染新列表。
+  const analysisScopeKey = JSON.stringify([
+    activeSourceId,
+    activeSourceHidden,
+    searchQuery,
+    displayTagQuery,
+    favOnly,
+    unreadOnly,
+    mode,
+  ]);
+  const analysisPollingEnabled = !discover && !activeSourceHidden && (
+    articles.some(analysisNeedsPolling)
+    || analysisNeedsPolling(activeArticle)
+  );
+  useEffect(() => {
+    analysisPollContextRef.current = {
+      activeArticle,
+      activeSourceId,
+      articles,
+      displayTagQuery,
+      favOnly,
+      mode,
+      scopeKey: analysisScopeKey,
+      searchQuery,
+      unreadOnly,
+    };
+  }, [
+    activeArticle,
+    activeSourceId,
+    analysisScopeKey,
+    articles,
+    displayTagQuery,
+    favOnly,
+    mode,
+    searchQuery,
+    unreadOnly,
+  ]);
+  const refreshAnalysisStates = useCallback(async () => {
+    const context = analysisPollContextRef.current;
+    if (!context) return;
+    const activeIds = new Set(
+      context.articles
+        .filter(analysisNeedsPolling)
+        .map((article) => article.id),
+    );
+    const selectedNeedsRefresh = analysisNeedsPolling(context.activeArticle)
+      && !activeIds.has(context.activeArticle.id);
+    if (activeIds.size === 0 && !selectedNeedsRefresh) return;
+
+    const filters = {};
+    if (context.activeSourceId) filters.source_id = context.activeSourceId;
+    else if (!context.favOnly) {
+      filters.subscribed_scope = 'only';
+      filters.shape = context.mode;
+    } else {
+      filters.shape = context.mode;
+    }
+    if (context.displayTagQuery) filters.display_tag = context.displayTagQuery;
+    else if (context.searchQuery) filters.search = context.searchQuery;
+    if (!context.favOnly) {
+      filters.with_unread = 'true';
+      if (context.unreadOnly) filters.unread_only = 'true';
+    }
+
+    try {
+      const listRequest = context.favOnly
+        ? fetchFavorites(
+            filters,
+            Math.max(PAGE_SIZE, context.articles.length),
+            0,
+            { includeContent: false },
+          )
+        : fetchArticles(
+            filters,
+            Math.max(PAGE_SIZE, context.articles.length),
+            0,
+            false,
+            { includeContent: false },
+          );
+      const [data, selected] = await Promise.all([
+        listRequest,
+        selectedNeedsRefresh ? fetchArticle(context.activeArticle.id) : Promise.resolve(null),
+      ]);
+      if (analysisPollContextRef.current?.scopeKey !== context.scopeKey) return;
+      const updates = new Map(
+        analysisItemsFromResponse(data).map((article) => [article.id, article]),
+      );
+      if (selected?.id) updates.set(selected.id, selected);
+      setArticles((current) => current
+        .filter((article) => (
+          !context.displayTagQuery || !activeIds.has(article.id) || updates.has(article.id)
+        ))
+        .map((article) => (
+          updates.has(article.id) ? withFreshAnalysis(article, updates.get(article.id)) : article
+        )));
+      setActiveArticle((current) => (
+        current?.id && updates.has(current.id)
+          ? withFreshAnalysis(current, updates.get(current.id))
+          : current
+      ));
+      const selectedId = activeIdRef.current;
+      if (selectedId && updates.has(selectedId)) {
+        setActiveSummary(preferredAnalysisSummary(
+          summaryCacheRef.current.get(selectedId),
+          updates.get(selectedId)?.summary_zh,
+        ));
+      }
+    } catch {
+      // 状态轮询是增强路径；失败保留当前可读结果，等下一周期。
+    }
+  }, []);
+  usePolling(refreshAnalysisStates, ANALYSIS_POLL_MS, {
+    immediate: false,
+    enabled: analysisPollingEnabled,
+  });
 
   // 切换来源/搜索 → 重置列表、回顶、清空右栏
   // 用 useLayoutEffect：在绘制前同步进入加载态，避免「切源瞬间旧列表被画出一帧」的陈旧帧闪现

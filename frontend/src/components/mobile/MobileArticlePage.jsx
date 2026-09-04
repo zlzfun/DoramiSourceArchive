@@ -15,7 +15,10 @@ import { PaneBodySkeleton } from '../ReaderTab';
 import { formatRelativeTime, formatDateTime } from '../../utils/datetime';
 import { contentTypeLabel } from '../../utils/contentType';
 import { formatPodcastDuration } from '../../utils/podcast';
-import { displayAnalysisTags } from '../../utils/analysis';
+import {
+  analysisStatusMeta,
+  displayAnalysisTags,
+} from '../../utils/analysis';
 import AiReadingCard from '../AiReadingCard';
 import { hostOf } from '../../utils/readerText';
 
@@ -48,6 +51,7 @@ export default function MobileArticlePage({
 
   if (!activeArticle) return null;
   const isFav = favoriteIds.has(activeArticle.id);
+  const analysisStatus = analysisStatusMeta(activeArticle, { podcast: podcastView });
 
   return (
     <div className="m-read" role="region" aria-label="正文">
@@ -150,8 +154,8 @@ export default function MobileArticlePage({
               <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
             )}
           </div>
-          {/* issue #13 二轮:分数并入速读卡头,标题区只余标签行 */}
-          {displayAnalysisTags(activeArticle).length > 0 && (
+          {/* Score/reason stay in AiReadingCard; keep tags and lifecycle here. */}
+          {(displayAnalysisTags(activeArticle).length > 0 || analysisStatus) && (
             <div className="reader-pane-tags">
               {displayAnalysisTags(activeArticle).map((tag, index) => (
                 <AnalysisTagChip
@@ -163,6 +167,11 @@ export default function MobileArticlePage({
                   }}
                 />
               ))}
+              {analysisStatus && (
+                <span className={`stamp ${analysisStatus.cls}`} role="status">
+                  {analysisStatus.label}
+                </span>
+              )}
             </div>
           )}
         </header>

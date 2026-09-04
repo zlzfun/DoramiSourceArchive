@@ -1,7 +1,13 @@
 import { FileText, Link as LinkIcon, Calendar, Database, Box, ExternalLink, Edit2, Save, X, AlertCircle } from 'lucide-react';
 import Modal from './Modal';
 import { contentTypeLabel } from '../utils/contentType';
-import { contentGenreLabel, displayAnalysisTags, qualityScoreText } from '../utils/analysis';
+import {
+  analysisStatusMeta,
+  contentGenreLabel,
+  displayAnalysisTags,
+  hasReadableAnalysis,
+  qualityScoreText,
+} from '../utils/analysis';
 import AnalysisTagChip from './AnalysisTagChip';
 
 export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading = false, getFetcherName, canEdit = true, onClose, onToggleEdit, onSave, onTemporaryTagSearch }) {
@@ -9,6 +15,10 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
 
   const hasFullDetail = Object.prototype.hasOwnProperty.call(data, 'content') && data.extensions_json !== undefined;
   const canToggleEdit = canEdit && hasFullDetail && !isLoading;
+  const hasAnalysis = hasReadableAnalysis(data);
+  const analysisStatus = analysisStatusMeta(data, { includeTerminal: true });
+  const score = qualityScoreText(data.quality_score);
+  const analysisTags = displayAnalysisTags(data);
 
   const handleSave = () => {
     onSave(data.id, {
@@ -76,16 +86,17 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
           {!isEditing && (
             <div>
               <label className="form-label flex items-center">智能分析</label>
-              {data.analysis_status === 'succeeded' ? (
+              {hasAnalysis ? (
                 <div className="reader-analysis-summary">
                   <div className="reader-analysis-top">
-                    <span className="reader-analysis-score"><strong>{qualityScoreText(data.quality_score)}</strong><small>内容价值分</small></span>
-                    <span className="reader-analysis-tags">
-                      {displayAnalysisTags(data).map((tag, index) => (
+                    {score && <span className="reader-analysis-score"><strong>{score}</strong><small>内容价值分</small></span>}
+                    {(analysisTags.length > 0 || data.content_genre) && <span className="reader-analysis-tags">
+                      {analysisTags.map((tag, index) => (
                         <AnalysisTagChip key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`} tag={tag} onTemporarySearch={onTemporaryTagSearch} />
                       ))}
-                      {displayAnalysisTags(data).length === 0 && data.content_genre && <span className="reader-tag-chip">{contentGenreLabel(data.content_genre)}</span>}
-                    </span>
+                      {analysisTags.length === 0 && data.content_genre && <span className="reader-tag-chip">{contentGenreLabel(data.content_genre)}</span>}
+                    </span>}
+                    {analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
                   </div>
                   {data.score_reason && <p>{data.score_reason}</p>}
                   {data.summary_zh && <p className="tiny-meta">{data.summary_zh}</p>}
@@ -93,7 +104,9 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
                 </div>
               ) : (
                 <div className="rounded-[var(--r-card)] bg-[var(--dorami-soft)] p-4 tiny-meta">
-                  {data.analysis_status ? `分析状态：${data.analysis_status}` : '该文章尚无智能分析结果'}
+                  {analysisStatus
+                    ? <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>
+                    : '暂无可展示的智能分析结果'}
                 </div>
               )}
             </div>
