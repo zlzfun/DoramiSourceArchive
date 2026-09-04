@@ -7912,50 +7912,52 @@ input[type="radio"] {
     min-width: 52px;
   }
 
-  /* 大数字:衬线渐变(这张卡的身份标记就是它——星已撤),入场从 0 滚到分值。
-     它是按钮(切换评分依据),但视觉上是个数字——去掉一切按钮痕迹;可点时悬停微浮。
-     字体/字号见文件尾未分层区。 */
+  /* 大数字:衬线渐变(这张卡的身份标记就是它——星已撤)。它是按钮(切换评分依据),
+     但视觉上是个数字——去掉一切按钮痕迹;可点时悬停微浮。字体/字号见文件尾未分层区。 */
   .reader-ai-score-btn {
     background: transparent; border: none; padding: 2px 4px; margin: 0; cursor: default;
     display: inline-flex;
     transition: transform var(--motion-medium) var(--motion-ease), filter var(--motion-medium) var(--motion-ease);
-    animation: reader-ai-score-in 900ms var(--motion-ease) both;
   }
   .reader-ai-score-btn.is-interactive { cursor: pointer; }
   .reader-ai-score-btn.is-interactive:hover { transform: translateY(-1px); filter: saturate(1.15) brightness(1.05); }
   .reader-ai-score-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-offset: 4px; border-radius: 6px; }
   .reader-ai-summary.is-reason .reader-ai-score-btn { transform: scale(0.96); }
-  @keyframes reader-ai-score-in {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: none; }
-  }
 
-  /* 右栏:摘要层与评分依据层叠在同一格,卡高由较高者撑住;切换=慢速淡切+轻位移 */
+  /* 里程表:每位数字定宽格(Georgia 老式数字是比例宽,定宽才不牵动右栏折行),
+     格内 0–9 竖条以 transform 滑到目标位——无逐帧重渲染、无布局变化。
+     格高 1.2em 给老式数字的降部留位;strip 一位一格同高。 */
+  .reader-ai-odo { display: inline-flex; align-items: baseline; }
+  .reader-ai-odo-cell {
+    display: inline-block; width: 0.64em; height: 1.2em; overflow: hidden;
+    text-align: center; vertical-align: top;
+  }
+  .reader-ai-odo-dot { display: inline-block; width: 0.3em; height: 1.2em; line-height: 1.2em; text-align: center; }
+  /* 渐变落在每个数字元素自身(.ai-grad-text):挂在外层时 background-clip:text 画不进
+     overflow:hidden 格子里的子元素——实测数字整个消失只剩小数点。 */
+  .reader-ai-odo-strip {
+    display: block; will-change: transform;
+    transition: transform 1400ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .reader-ai-odo-digit { display: block; height: 1.2em; line-height: 1.2em; }
+
+  /* 右栏:摘要层与评分依据层叠在同一格,卡高由较高者撑住;两层格式同构(小标 + 正文),
+     切换=慢速淡切+轻位移 */
   .reader-ai-summary-main { min-width: 0; align-self: center; display: grid; }
   .reader-ai-layer {
     grid-area: 1 / 1;
     align-self: center;
+    display: flex; flex-direction: column; gap: 5px;
     transition: opacity 480ms var(--motion-ease), transform 480ms var(--motion-ease);
   }
-  .reader-ai-layer-reason {
-    display: flex; flex-direction: column; gap: 6px;
-    opacity: 0; transform: translateY(8px); pointer-events: none;
-  }
+  .reader-ai-layer-reason { opacity: 0; transform: translateY(8px); pointer-events: none; }
   .reader-ai-summary.is-reason .reader-ai-layer-summary { opacity: 0; transform: translateY(-8px); pointer-events: none; }
   .reader-ai-summary.is-reason .reader-ai-layer-reason { opacity: 1; transform: none; pointer-events: auto; }
-  .reader-ai-reason-kicker { color: var(--dorami-accent-ink); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; }
+  .reader-ai-layer-title { color: var(--dorami-accent-ink); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; }
   /* 双类选择器压过 .markdown-body p 的段落外边距(卡住在阅读窗正文容器里) */
-  .reader-ai-summary .reader-ai-reason-text,
-  .reader-ai-summary .reader-ai-summary-text { margin: 0; }
-  .reader-ai-reason-text { color: var(--dorami-ink); font-size: 14.5px; font-weight: 600; line-height: 1.7; }
-  .reader-ai-reason-note { color: var(--dorami-faint); font-size: 11.5px; font-weight: 500; line-height: 1.5; }
-
-  .reader-ai-summary-text {
-    margin: 0;
-    font-size: 13.5px;
-    line-height: 1.8;
-    color: var(--dorami-ink-2);
-  }
+  .reader-ai-summary .reader-ai-layer-text { margin: 0; }
+  .reader-ai-layer-text { color: var(--dorami-ink-2); font-size: 13.5px; font-weight: 500; line-height: 1.8; }
+  .reader-ai-layer-note { color: var(--dorami-faint); font-size: 11.5px; font-weight: 500; line-height: 1.5; }
 
   /* 生成中骨架:三行 shimmer,行宽错落模拟摘要典型体量。复用全局 .skeleton。 */
   .reader-ai-summary-skel { display: grid; gap: 9px; padding: 4px 0; }
@@ -10713,7 +10715,9 @@ input[type="radio"] {
 .reader-ai-summary-generate { font-size: 12px; font-weight: 600; }
 /* 速读卡大数字的排印同样钉在未分层区(全局 button{font:inherit} 未分层,@layer 内恒败) */
 .reader-ai-score-btn {
-  font-family: var(--font-serif);
+  /* 数字专用衬线栈:要齐线数字——Georgia 只有老式数字,7/5 带降部让小数点看着像居中点
+     (「7·5」);Charter(macOS)/Cambria(Windows)/Baskerville 均为齐线,Georgia 兜底。 */
+  font-family: Charter, Cambria, Baskerville, var(--font-serif);
   font-size: 38px; font-weight: 700; line-height: 1;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums lining-nums;
