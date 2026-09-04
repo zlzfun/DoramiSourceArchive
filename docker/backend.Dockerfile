@@ -31,6 +31,7 @@ RUN playwright install --with-deps chromium \
 COPY src ./src
 COPY alembic ./alembic
 COPY alembic.ini ./
+COPY config/taxonomy-v1-approved-catalog.json ./config/taxonomy-v1-approved-catalog.json
 COPY docker/entrypoint.py ./docker/entrypoint.py
 
 # PYTHONPATH 与 ecosystem.config.js 同语义;WORKDIR=/app 使 ini 里的相对路径

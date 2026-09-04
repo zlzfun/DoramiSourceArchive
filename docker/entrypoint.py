@@ -6,7 +6,8 @@ nginx 容器访问,对外端口由 compose 的端口映射决定;[nginx] 节同�
 照常读 DORAMI_CONFIG_FILE 指向的 ini。
 
 与 main.py 一致的启动序:屏蔽网络警告 → 应用代理/镜像环境 → 数据库迁移
-(ensure_migrated,失败即退出,不带漂移 schema 起服务)→ uvicorn(无 reload)。
+(ensure_migrated,失败即退出)→ 显式 Taxonomy 姿态 reconcile(冲突即退出)→
+uvicorn(无 reload)。
 """
 import warnings
 
@@ -27,6 +28,14 @@ from storage.migrations import ensure_migrated  # noqa: E402
 
 print("🗂  正在核对数据库迁移(alembic upgrade head)...")
 ensure_migrated(settings.storage.database_url)
+
+from services.taxonomy_deployment import run_taxonomy_deployment  # noqa: E402
+
+taxonomy_result = run_taxonomy_deployment(
+    settings.storage.database_url,
+    settings.taxonomy,
+)
+print(f"🏷️  Taxonomy deployment: {taxonomy_result['status']}")
 
 import uvicorn  # noqa: E402
 
