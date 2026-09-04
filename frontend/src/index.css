@@ -11113,7 +11113,7 @@ input[type="radio"] {
 .reader-analysis-score small,
 .reader-analysis-summary > small { color: var(--dorami-faint); font-size: 11px; font-weight: 600; }
 .reader-analysis-tags { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; }
-/* p 段仅管理面抽屉/弹窗仍画 score_reason;阅读窗自 issue #13 起理由只作分数悬停提示 */
+/* p 段仅管理面抽屉/弹窗仍画 score_reason;阅读窗自 issue #13 起理由住速读卡的「评分依据」层(AiReadingCard) */
 .reader-analysis-summary p { margin-top: 8px; font-size: 13px; font-weight: 600; line-height: 1.65; }
 .reader-analysis-summary > small { display: block; margin-top: 8px; line-height: 1.5; }
 /* 阅读窗标题区标签行(issue #13 二轮:分数并入速读卡后,标签自成一行、不再套框) */
