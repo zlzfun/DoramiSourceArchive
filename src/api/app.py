@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field as PydanticField
 from typing import Optional, List, Dict, Any
 from sqlmodel import Session, select
-from sqlalchemy import func, case
+from sqlalchemy import func, case, delete
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.schedulers.base import STATE_STOPPED
 from apscheduler.triggers.cron import CronTrigger
@@ -27,6 +27,7 @@ from models.db import (
     CollectionJobRecord,
     CollectionJobRunRecord,
     FetchRunRecord,
+    JobRecord,
     ReaderSubscriptionRecord,
     ReaderFeedTokenRecord,
     ReaderFavoriteRecord,
@@ -159,6 +160,7 @@ from api.routers import share as share_router
 from api.routers.fetchers import FetchBatchItem, FetchBatchParams
 from services import daily_brief as daily_brief_service
 from services import remote_sync as remote_sync_service
+from services import sync_consumer_policy
 from services import accounts as accounts_service
 from services import admin_audit as admin_audit_service
 from services import reader_ai as reader_ai_service
@@ -332,6 +334,9 @@ COLLECTOR_API_PREFIXES = (
     # 覆盖 /api/fetch/* 子路径，又不会误伤 /api/fetchers、/api/fetch-runs（它们各有独立条目）。
     "/api/fetch",
     "/api/archive/export",
+    "/api/archive/v2/export",
+    "/api/archive/v2/media",
+    "/api/archive/v2/candidate-evidence.jsonl",
     "/api/source-configs",
     "/api/source-builder",
     "/api/import/social-posts",
@@ -347,6 +352,7 @@ COLLECTOR_API_PREFIXES = (
 
 READER_API_PREFIXES = (
     "/api/archive/import",
+    "/api/archive/v2/import",
     "/api/feed",
     "/api/mcp",
     "/api/reader",
@@ -390,7 +396,15 @@ def article_write_requires_collector(path: str, method: str) -> bool:
 
 
 def archive_import_requires_admin(path: str, method: str) -> bool:
-    return method.upper() == "POST" and _path_matches(path, ("/api/archive/import",))
+    return method.upper() == "POST" and _path_matches(
+        path,
+        (
+            "/api/archive/import",
+            "/api/archive/v2/import",
+            "/api/archive/v2/candidate-evidence.jsonl",
+            "/api/archive/v2/presence",
+        ),
+    )
 
 
 def account_admin_required(path: str) -> bool:
@@ -438,7 +452,15 @@ async def lifespan(app: FastAPI):
     # 仍只在 collector 角色注册。
     collector_on = runtime_collector_enabled()
     if collector_on:
-        reconcile_orphaned_runs()
+        # Upgrade fence must be restored before saved collector jobs are loaded:
+        # an explicitly enabled v2 schedule makes this node a receiver even if
+        # its first authority snapshot has not completed yet.
+        remote_sync_service.activate_consumer_for_enabled_v2_schedule(
+            db_sink.engine,
+            reason="v2_schedule_startup",
+        )
+    reconcile_orphaned_runs()
+    if collector_on:
         load_tasks_to_scheduler()
     if scheduler.state == STATE_STOPPED:
         scheduler.start()
@@ -582,7 +604,7 @@ def queue_article_analysis_after_commit(article_ids: List[str]) -> int:
 def schedule_media_prefetch(article_ids: List[str]) -> None:
     """抓取入库钩子：异步预取新文章正文里的外链图片，绝不阻塞抓取主流程。
 
-    用户自定源(v3.40)豁免预取——实测媒体是存储大头(258MB vs 主库 125MB),私有源
+    用户自定源(v3.40)豁免预取——实测媒体是存储大头(258MB vs 主库 125MB),自定源
     的图走 /api/media/proxy 首次打开按需缓存,没人看的文章零媒体成本。
     """
     store = media_store
@@ -1115,7 +1137,7 @@ def reconcile_orphaned_runs() -> Dict[str, int]:
     源状态从 ``running`` 降级为 ``unknown``（结果未知）。幂等：无残留时不做任何写入。
     """
     now = _now_iso()
-    counts = {"fetch_runs": 0, "job_runs": 0, "source_states": 0}
+    counts = {"fetch_runs": 0, "job_runs": 0, "source_states": 0, "remote_sync_jobs": 0}
     note = "后端重启，运行被中断（启动自愈标记）"
 
     def _dur(started_at: Optional[str]) -> Optional[int]:
@@ -1147,12 +1169,22 @@ def reconcile_orphaned_runs() -> Dict[str, int]:
             state.updated_at = now
             session.add(state)
             counts["source_states"] += 1
+        for job in session.exec(select(JobRecord).where(
+            JobRecord.type == remote_sync_service.REMOTE_SYNC_JOB_TYPE,
+            JobRecord.status.in_(("queued", "running")),
+        )).all():
+            job.status = "failed"
+            job.error = note
+            job.ended_at = time.time()
+            session.add(job)
+            counts["remote_sync_jobs"] += 1
         session.commit()
 
     if any(counts.values()):
         print(
             f"🧹 启动自愈：清理 {counts['fetch_runs']} 条中断抓取运行、"
             f"{counts['job_runs']} 条采集任务运行、{counts['source_states']} 条源状态。"
+            f"{counts['remote_sync_jobs']} 条远程同步任务。"
         )
     return counts
 
@@ -1365,7 +1397,8 @@ def load_tasks_to_scheduler():
                 daily_brief_service.daily_brief_cron(session),
                 [],
             )
-    # V1 部署为 runtime.role=all：文章分析与个人早报和采集共用同一调度器。
+    # 当前双节点部署均为 runtime.role=all：文章分析与个人早报和采集共用调度器；
+    # 远端权威文章另由持久化 authority 围栏排除本地分析。
     # 两个 worker 都在执行时读取数据库 feature flag，默认关闭且支持热切换。
     scheduler.add_job(
         execute_article_analysis_job,
@@ -1419,7 +1452,8 @@ async def execute_article_analysis_job():
         # runs only afterwards, outside those transactions, and remains inert
         # unless the explicit governance switch is enabled.
         with Session(db_sink.engine) as session:
-            taxonomy_service.run_auto_activation_cycle(session)
+            if not sync_consumer_policy.v2_consumer_mode_active(session):
+                taxonomy_service.run_auto_activation_cycle(session)
     except Exception as exc:  # noqa: BLE001 - scheduler jobs never stop collection
         _dorami_logger.warning("文章分析调度失败: %s", exc)
 
@@ -1514,6 +1548,13 @@ async def execute_retention_cleanup_job():
         await asyncio.to_thread(retention.run_retention_cleanup, db_sink.engine)
     except Exception as exc:  # noqa: BLE001 巡检失败不影响调度引擎
         _dorami_logger.error("明细表滚动窗清理失败: %s", exc)
+    if media_store is not None:
+        try:
+            media_gc = await asyncio.to_thread(media_store.gc_remote_unreferenced)
+            if media_gc["records_deleted"]:
+                _dorami_logger.info("同步媒体本地 GC: %s", media_gc)
+        except Exception:  # noqa: BLE001 媒体维护失败不影响其他留存清理
+            _dorami_logger.warning("同步媒体本地 GC 失败", exc_info=True)
     # 用户自定源维护(codex 复检二轮 F8/新发现3):孤儿 GC 与日计数 KV 清理挂在
     # 本 job——独立于用户源总闸与 user_rss_refresh(总闸关闭时那个 job 被移除,
     # 若 GC 只挂在那里,关闸后孤儿源/脏数据将永远无人收)。**但只在 collector
@@ -1586,6 +1627,15 @@ async def execute_remote_sync_job():
     source_ids = schedule.get("source_ids") or None
 
     try:
+        protocol = schedule.get("protocol") or "v2"
+        v2_probe = None
+        if protocol == "v2":
+            v2_probe = await remote_sync_service.probe(
+                schedule["base_url"],
+                schedule["username"],
+                schedule["password"],
+                protocol="v2",
+            )
         remote_sync_router.launch_remote_sync_job(
             engine,
             base_url=schedule["base_url"],
@@ -1594,6 +1644,8 @@ async def execute_remote_sync_job():
             fetched_date_start=fetched_date_start,
             source_ids=source_ids,
             created_by="system",
+            protocol=protocol,
+            v2_probe=v2_probe,
         )
         _dorami_logger.info("⏰ 定时远程同步已启动（目标 %s）", normalized_base)
     except Exception as exc:  # noqa: BLE001 启动失败不影响调度引擎
@@ -1729,6 +1781,7 @@ async def execute_podcast_source_refresh_job(source_id: str):
             record is None
             or not record.is_active
             or bool(record.owner_username)
+            or bool(record.collection_authority_id)
             or record.source_type != "podcast"
         ):
             return
@@ -1765,6 +1818,7 @@ def reload_podcast_source_schedules():
         records = session.exec(
             select(SourceConfigRecord)
             .where(SourceConfigRecord.owner_username == "")
+            .where(SourceConfigRecord.collection_authority_id == "")
             .where(SourceConfigRecord.is_active == True)  # noqa: E712
             .where(SourceConfigRecord.source_type == "podcast")
             .order_by(SourceConfigRecord.source_id)
@@ -1870,6 +1924,10 @@ def mark_source_state_started(fetcher_id: str, params: Dict[str, Any], run_id: i
     source_id = resolve_state_source_id(fetcher_id, params)
     now = _now_iso()
     with Session(db_sink.engine) as session:
+        if not sync_consumer_policy.local_source_operation_allowed(
+            session, source_id, operation="collection"
+        ):
+            return
         state = session.get(SourceStateRecord, source_id)
         if not state:
             state = SourceStateRecord(
@@ -1901,6 +1959,10 @@ def mark_source_state_finished(
     source_id = resolve_state_source_id(fetcher_id, params, result)
     now = _now_iso()
     with Session(db_sink.engine) as session:
+        if not sync_consumer_policy.local_source_operation_allowed(
+            session, source_id, operation="collection"
+        ):
+            return
         state = session.get(SourceStateRecord, source_id)
         if not state:
             state = SourceStateRecord(
@@ -1961,6 +2023,20 @@ async def run_fetcher_with_tracking(
         job_run_id: Optional[int] = None,
         run_scope: str = "ad_hoc",
 ) -> Dict[str, Any]:
+    source_id = resolve_state_source_id(fetcher_id, params)
+    with Session(db_sink.engine) as authority_session:
+        source = authority_session.get(SourceConfigRecord, source_id)
+        if not sync_consumer_policy.local_source_operation_allowed(
+            authority_session, source_id, operation="collection"
+        ):
+            reason = (
+                "由远端权威节点采集"
+                if source is not None and (source.collection_authority_id or "").strip()
+                else "已进入 v2 接收端采集围栏"
+            )
+            raise ValueError(
+                f"数据源 {source_id} {reason}，本机 role=all 也不得重复抓取"
+            )
     run_id = create_fetch_run(
         fetcher_id,
         params,
@@ -1989,6 +2065,21 @@ async def run_fetcher_with_tracking(
             },
             **params,
         )
+        with Session(db_sink.engine) as authority_session:
+            authority_taken = not sync_consumer_policy.local_source_operation_allowed(
+                authority_session, source_id, operation="collection"
+            )
+        if authority_taken:
+            # The run began locally but lost authority while network work was in
+            # flight. DatabaseStorage fenced every late article commit; do not
+            # recreate local readiness or enqueue analysis after handoff.
+            with Session(db_sink.engine) as cleanup_session:
+                cleanup_session.exec(delete(ArticleRecord).where(
+                    ArticleRecord.fetch_run_id == run_id,
+                    ArticleRecord.analysis_authority_id == "",
+                ))
+                cleanup_session.commit()
+            raise RuntimeError(f"数据源 {source_id} 已由远端权威接管，本次本地采集作废")
         finish_fetch_run(run_id, status="success", result=result)
         mark_source_state_finished(fetcher_id, params, run_id, status="success", result=result)
         analysis_queued_count = queue_article_analysis_after_commit(result.saved_content_ids)
@@ -2006,6 +2097,15 @@ async def run_fetcher_with_tracking(
             "analysis_queued_count": analysis_queued_count,
         }
     except Exception as e:
+        with Session(db_sink.engine) as cleanup_session:
+            if not sync_consumer_policy.local_source_operation_allowed(
+                cleanup_session, source_id, operation="collection"
+            ):
+                cleanup_session.exec(delete(ArticleRecord).where(
+                    ArticleRecord.fetch_run_id == run_id,
+                    ArticleRecord.analysis_authority_id == "",
+                ))
+                cleanup_session.commit()
         finish_fetch_run(run_id, status="failed", error_message=str(e))
         mark_source_state_finished(fetcher_id, params, run_id, status="failed", error=e)
         raise

@@ -1,6 +1,7 @@
+import datetime as dt
 from typing import Optional
 from sqlmodel import SQLModel, Field
-from sqlalchemy import CheckConstraint, Column, Index, String, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, Column, Index, String, UniqueConstraint, event, inspect, text
 
 
 class ArticleRecord(SQLModel, table=True):
@@ -43,10 +44,84 @@ class ArticleRecord(SQLModel, table=True):
     content: Optional[str] = Field(default=None, description="文章正文或长摘要")
     extensions_json: Optional[str] = Field(default="{}", description="扩展元数据 (JSON 字符串)")
 
+    # 空值=由本部署产生，可按本机分析策略入队；非空=该条目的
+    # AI 结果由指定 Archive Sync producer 单写。它是数据来源权威，
+    # 不是 collector/reader/all 这类运行角色，也不因部署改名而变化。
+    analysis_authority_id: str = Field(
+        default="",
+        index=True,
+        sa_column_kwargs={"server_default": text("''")},
+        description="分析单写权威 ID；非空时本机不得对该文章重算",
+    )
+
     # 全站累计阅读次数（跨读者）：由 POST /api/reader/articles/{id}/read 随逐用户
     # 计量一并 +1。与 ReaderReadRecord（日×用户×来源聚合，运维口径）互补——
     # 本列是文章粒度的轻量计数器，供阅读窗标题下直接展示，免去逐请求聚合。
     read_count: int = Field(default=0, description="全站累计阅读次数")
+
+
+# Fields that make up the faithfully replicated article archive. Reader-local
+# counters and the analysis authority fence deliberately do not advance this
+# watermark.
+ARTICLE_ARCHIVE_FIELDS = frozenset({
+    "title",
+    "content_type",
+    "source_id",
+    "source_url",
+    "publish_date",
+    "fetched_date",
+    "fetch_run_id",
+    "job_id",
+    "job_run_id",
+    "source_group_id",
+    "run_scope",
+    "has_content",
+    "content",
+    "extensions_json",
+})
+
+
+def next_article_archive_revision(previous: Optional[str] = None) -> str:
+    """Return a wall-clock archive revision strictly newer than ``previous``.
+
+    The articles stream uses a textual keyset cursor, so two faithful writes in
+    the same clock tick must still advance. Legacy valid ISO timestamps retain
+    their timezone style when the monotonic +1 microsecond fallback is needed.
+    """
+
+    candidate = dt.datetime.now().isoformat(timespec="microseconds")
+    old = str(previous or "")
+    if not old or candidate > old:
+        return candidate
+    try:
+        return (dt.datetime.fromisoformat(old) + dt.timedelta(microseconds=1)).isoformat(
+            timespec="microseconds"
+        )
+    except ValueError:
+        # Compatibility rows are normalized on DatabaseStorage startup. If a
+        # malformed value nevertheless remains, a valid current revision is
+        # safer than propagating the malformed key into a new checkpoint.
+        return candidate
+
+
+@event.listens_for(ArticleRecord, "before_update")
+def _advance_article_archive_revision(_mapper, _connection, target: ArticleRecord) -> None:
+    """Last-resort fence so no ORM faithful mutation is invisible to sync v2.
+
+    Importers explicitly assign ``archive_updated_at`` from their producer and
+    must preserve it. Local writers normally leave the field untouched and are
+    bumped here in the same database transaction as their mutation.
+    """
+
+    state = inspect(target)
+    if (target.analysis_authority_id or "").strip():
+        # Receiver-side copies preserve the producer's exact revision. They are
+        # excluded from re-export and local faithful mutations are fenced.
+        return
+    if state.attrs.archive_updated_at.history.has_changes():
+        return
+    if any(state.attrs[field].history.has_changes() for field in ARTICLE_ARCHIVE_FIELDS):
+        target.archive_updated_at = next_article_archive_revision(target.archive_updated_at)
 
 
 class CmsTagRecord(SQLModel, table=True):
@@ -188,6 +263,17 @@ class ArticleAnalysisRecord(SQLModel, table=True):
     prompt_version: str = Field(default="")
     scoring_version: str = Field(default="")
     taxonomy_version: int = Field(default=0)
+    authority_id: str = Field(
+        default="",
+        index=True,
+        sa_column_kwargs={"server_default": text("''")},
+        description="产生该分析结果的稳定权威 ID",
+    )
+    authority_revision: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="权威内单调结果版本；Archive Sync 据此幂等且防倒退",
+    )
     attempt_count: int = Field(default=0, ge=0)
     started_at: Optional[str] = Field(default=None)
     next_attempt_at: Optional[str] = Field(default=None)
@@ -378,6 +464,46 @@ class CmsTagCandidateEvidenceRecord(SQLModel, table=True):
     raw_label: str
     context_excerpt: str = Field(default="", description="最小必要且不得包含私有 RSS 正文")
     prompt_version: str = Field(default="")
+    created_at: str
+
+
+class RemoteCandidateEvidenceRecord(SQLModel, table=True):
+    """用户自定 RSS 向 taxonomy authority 提交的最小化候选证据。
+
+    不保存文章正文或 URL，article_fingerprint 仅用于跨库幂等；
+    该表不进入自动激活统计，只供全局审核池展示溯源。
+    """
+    __tablename__ = "remote_candidate_evidence"
+    __table_args__ = (
+        UniqueConstraint(
+            "authority_id",
+            "article_fingerprint",
+            "proposed_kind",
+            "normalized_label",
+            name="uq_remote_candidate_evidence_identity",
+        ),
+        Index("ix_remote_candidate_evidence_candidate", "candidate_id", "created_at"),
+        CheckConstraint(
+            "proposed_kind IN ('topic','industry','entity')",
+            name="ck_remote_candidate_evidence_kind",
+        ),
+        CheckConstraint(
+            "confidence >= 0.0 AND confidence <= 1.0",
+            name="ck_remote_candidate_evidence_confidence",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    candidate_id: int = Field(foreign_key="cms_tag_candidates.id", ondelete="CASCADE")
+    authority_id: str = Field(index=True)
+    article_fingerprint: str
+    source_provenance: str = Field(default="")
+    label: str
+    normalized_label: str
+    proposed_kind: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    prompt_version: str = Field(default="")
+    sync_snapshot: str = Field(default="", index=True, description="最近一次反向同步快照")
     created_at: str
 
 
@@ -628,6 +754,19 @@ class SourceStateRecord(SQLModel, table=True):
     latest_error_type: str = Field(default="", description="最近一次错误类型")
     latest_error_message: Optional[str] = Field(default=None, description="最近一次错误摘要")
 
+    authority_id: str = Field(
+        default="",
+        index=True,
+        sa_column_kwargs={"server_default": text("''")},
+        description="远端采集状态权威；为空表示本地产生",
+    )
+    authority_revision: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="权威节点提供的单调状态版本",
+    )
+
+
     updated_at: str = Field(description="状态更新时间")
 
 
@@ -653,12 +792,21 @@ class SourceConfigRecord(SQLModel, table=True):
     noise_risk: str = Field(default="", index=True, description="噪声风险判断")
     fetch_reliability: str = Field(default="", index=True, description="抓取可靠性判断")
 
-    # 用户自定源(v3.40):非空=读者自助添加的私有 RSS 源的创建者;空=平台源(admin 管理)。
+    # 用户自定源(v3.40):非空=读者自助添加、未列入公共目录的 RSS 创建者;空=平台源(admin 管理)。
     # 仅作身份标记与溯源,不承担权限差异(删除语义="退订+无人订阅才物理删",与 owner 无关)。
     owner_username: str = Field(default="", index=True, description="用户自定源创建者;空=平台源")
 
-    # 平台源的分析开关。私有 RSS 在 V1 服务层硬性禁用，直到具备逐订阅用户授权；
-    # 此字段不能被解释为源创建者可代表其他订阅者授权。
+    # 非空=源元数据由该 Archive Sync producer 管理。它不影响
+    # reader 可见性/is_active，但所有本地 collector 入口必须拒绝抓取。
+    collection_authority_id: str = Field(
+        default="",
+        index=True,
+        sa_column_kwargs={"server_default": text("''")},
+        description="采集单写权威 ID；非空时本地仅作 reader 元数据使用",
+    )
+
+    # 平台源与普通自定 RSS 的分析开关。含凭证/签名 URL 的源由服务层硬性禁用 MaaS；
+    # 共享自定源的订阅者不能单独改变这一源级策略。
     ai_analysis_enabled: bool = Field(
         default=True,
         sa_column_kwargs={"server_default": text("1")},
@@ -928,13 +1076,24 @@ class MediaAssetRecord(SQLModel, table=True):
 
     url_hash: str = Field(primary_key=True, description="sha256(原始 URL) 十六进制")
     url: str = Field(description="原始图片 URL")
-    status: str = Field(default="cached", index=True, description="cached/failed")
+    status: str = Field(default="cached", index=True, description="pending_sync/cached/failed")
     content_hash: Optional[str] = Field(default=None, index=True, description="sha256(文件字节)，failed 行为空")
     mime: str = Field(default="", description="Content-Type，如 image/png")
     ext: str = Field(default="", description="落盘扩展名，含点，如 .png")
     size_bytes: int = Field(default=0, description="文件字节数")
     fail_count: int = Field(default=0, description="累计下载失败次数")
     last_error: Optional[str] = Field(default=None, description="最近一次失败原因摘要")
+    sync_authority_id: str = Field(
+        default="",
+        index=True,
+        sa_column_kwargs={"server_default": text("''")},
+        description="远端媒体权威；非空时禁止本地回源覆盖",
+    )
+    sync_authority_revision: str = Field(
+        default="",
+        sa_column_kwargs={"server_default": text("''")},
+        description="权威媒体 manifest 版本",
+    )
     created_at: str = Field(description="首次登记时间")
     fetched_at: Optional[str] = Field(default=None, description="最近一次成功下载时间")
     updated_at: str = Field(description="最近一次状态变更时间")
@@ -944,6 +1103,49 @@ class AppSettingRecord(SQLModel, table=True):
     __tablename__ = "app_settings"
     key: str = Field(primary_key=True)
     value: str = ""
+
+
+class ArchiveSyncClockRecord(SQLModel, table=True):
+    """事务化全局时钟；SQLite writer 串行化保证已提交 revision 单调。"""
+
+    __tablename__ = "archive_sync_clock"
+    __table_args__ = (
+        CheckConstraint("revision >= 0", name="ck_archive_sync_clock_revision"),
+    )
+
+    id: int = Field(default=1, primary_key=True)
+    revision: int = Field(default=0, ge=0)
+
+
+class ArchiveSyncEntityStateRecord(SQLModel, table=True):
+    """每个同步实体的最新事务 revision、权威和 upsert/tombstone 状态。"""
+
+    __tablename__ = "archive_sync_entity_states"
+    __table_args__ = (
+        Index(
+            "ix_archive_sync_entity_states_stream_authority_revision_identity",
+            "stream",
+            "authority_id",
+            "revision",
+            "identity",
+        ),
+        CheckConstraint(
+            "stream IN ('sources','articles','analyses','media','source_states')",
+            name="ck_archive_sync_entity_states_stream",
+        ),
+        CheckConstraint(
+            "operation IN ('upsert','tombstone')",
+            name="ck_archive_sync_entity_states_operation",
+        ),
+        CheckConstraint("revision >= 0", name="ck_archive_sync_entity_states_revision"),
+    )
+
+    stream: str = Field(primary_key=True)
+    identity: str = Field(primary_key=True)
+    authority_id: str = Field(default="", index=True)
+    revision: int = Field(default=0, index=True, ge=0)
+    operation: str = Field(default="upsert")
+    updated_at: str = Field(default="")
 
 
 class JobRecord(SQLModel, table=True):
@@ -1145,3 +1347,12 @@ class UserRecord(SQLModel, table=True):
     ai_last_used_at: Optional[str] = Field(default=None, description="最近一次使用 AI（翻译/问答）的时间")
     created_at: str = Field(description="创建时间")
     updated_at: str = Field(description="更新时间")
+
+
+@event.listens_for(SQLModel.metadata, "after_create")
+def _install_archive_sync_revision_schema(_metadata, connection, **_kwargs) -> None:
+    """Keep create_all test/fresh databases equivalent to the Alembic schema."""
+
+    from storage.archive_sync_revision import install_archive_sync_revision_triggers
+
+    install_archive_sync_revision_triggers(connection)

@@ -124,6 +124,12 @@ def extract_image_urls(
                 extensions = parsed
         except (TypeError, ValueError, json.JSONDecodeError):
             pass
+    # 正文/社交图外，Podcast 单集封面通常位于 image_url；
+    # cover_url 兼容微信等已存量扩展字段。音频 URL 故意不在此名单。
+    for image_key in ("image_url", "cover_url"):
+        image_url = extensions.get(image_key)
+        if isinstance(image_url, str):
+            seen.setdefault(image_url.strip(), None)
     media_groups = [extensions.get("media_urls")]
     for reference_key in ("quoted", "reposted"):
         reference = extensions.get(reference_key)
@@ -153,6 +159,29 @@ def _sniff_image_mime(head: bytes, content_type: str) -> Optional[str]:
     if normalized.startswith("image/"):
         return normalized
     return None
+
+
+def validate_synced_image(
+    body: bytes,
+    *,
+    declared_mime: str,
+    declared_ext: str,
+    max_bytes: int,
+) -> tuple[str, str]:
+    """Strictly validate bytes received from another Dorami deployment."""
+
+    if not body or len(body) > max(1, int(max_bytes)):
+        raise ValueError("同步媒体为空或超过大小上限")
+    sniffed = _sniff_image_mime(body[:512], "")
+    if sniffed is None:
+        raise ValueError("同步媒体不是可识别的图片")
+    normalized_mime = (declared_mime or "").split(";", 1)[0].strip().lower()
+    expected_ext = _MIME_EXT.get(sniffed, "")
+    if normalized_mime != sniffed:
+        raise ValueError("同步媒体 MIME 与文件内容不一致")
+    if not expected_ext or (declared_ext or "").lower() != expected_ext:
+        raise ValueError("同步媒体扩展名与文件内容不一致")
+    return sniffed, expected_ext
 
 
 # Clash/Surge 等本机代理的 fake-ip DNS 段：开代理时**所有**域名都解析到这里，
@@ -313,6 +342,10 @@ class MediaStore:
         async with self._lock_for(key):
             # 等锁期间可能已被并发请求补全
             record = self._get_record(key)
+            if record is not None and (record.sync_authority_id or "").strip():
+                # A v2 manifest owns this row. Never race its staged binary by
+                # downloading the mutable origin URL on the receiving node.
+                return record if record.status == "cached" and self.file_path_for(record).is_file() else None
             if record is not None and record.status == "cached" and self.file_path_for(record).is_file():
                 return record
             return await self._download(url, key)
@@ -459,6 +492,96 @@ class MediaStore:
                         "error": record.last_error if record.status == "failed" else None,
                     }
         return result
+
+    def gc_remote_unreferenced(
+        self,
+        *,
+        grace_days: int = 7,
+        now: Optional[datetime.datetime] = None,
+    ) -> Dict[str, int]:
+        """Remove old remote-owned assets no longer referenced by any article.
+
+        The grace window prevents a just-arrived media row from being collected
+        before its matching Article page commits. Local/negative-cache assets are
+        outside this sync lifecycle. Content-addressed files are removed only after
+        the final URL record pointing at the exact on-disk path is gone.
+        """
+
+        current = now or datetime.datetime.now(datetime.timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=datetime.timezone.utc)
+        cutoff = current - datetime.timedelta(days=max(1, int(grace_days)))
+
+        referenced_hashes: set[str] = set()
+        cursor_id = ""
+        with Session(self.engine) as session:
+            while True:
+                articles = session.exec(
+                    select(ArticleRecord)
+                    .where(ArticleRecord.id > cursor_id)
+                    .order_by(ArticleRecord.id)
+                    .limit(500)
+                ).all()
+                if not articles:
+                    break
+                for article in articles:
+                    referenced_hashes.update(
+                        url_hash_of(url)
+                        for url in extract_image_urls(article.content, article.extensions_json)
+                    )
+                cursor_id = articles[-1].id
+
+            candidates: list[MediaAssetRecord] = []
+            for record in session.exec(select(MediaAssetRecord).where(
+                MediaAssetRecord.sync_authority_id != ""
+            )).all():
+                if record.url_hash in referenced_hashes:
+                    continue
+                try:
+                    updated = datetime.datetime.fromisoformat(
+                        str(record.updated_at or "").replace("Z", "+00:00")
+                    )
+                except ValueError:
+                    # Unknown age fails closed; a later repair may normalize it.
+                    continue
+                if updated.tzinfo is None:
+                    updated = updated.replace(tzinfo=datetime.timezone.utc)
+                if updated > cutoff:
+                    continue
+                candidates.append(record)
+
+            file_candidates = {
+                (str(record.content_hash), str(record.ext)): self.file_path_for(record)
+                for record in candidates
+                if record.status == "cached" and record.content_hash and record.ext
+            }
+            for record in candidates:
+                session.delete(record)
+            session.commit()
+
+        files_deleted = 0
+        bytes_reclaimed = 0
+        with Session(self.engine) as session:
+            for (content_hash, ext), path in file_candidates.items():
+                remaining = session.exec(select(MediaAssetRecord.url_hash).where(
+                    MediaAssetRecord.content_hash == content_hash,
+                    MediaAssetRecord.ext == ext,
+                ).limit(1)).first()
+                if remaining is not None or not path.is_file():
+                    continue
+                try:
+                    size = path.stat().st_size
+                    path.unlink()
+                except OSError:
+                    logger.warning("同步媒体 GC 删除文件失败: %s", path, exc_info=True)
+                    continue
+                files_deleted += 1
+                bytes_reclaimed += size
+        return {
+            "records_deleted": len(candidates),
+            "files_deleted": files_deleted,
+            "bytes_reclaimed": bytes_reclaimed,
+        }
 
     # ── 统计 ─────────────────────────────────────────────────
 

@@ -225,14 +225,17 @@ def feed_articles_for_owner(
     仅按发布时间过滤（不暴露归档时间这一内部细节）。若调用方传入 source_ids，
     取其与已订阅集合的交集，避免越权拉取未订阅来源。
 
-    管理员例外：admin 不设订阅（订阅是读者面的概念），其聚合令牌直通全库——
-    不按订阅收窄，显式传入的 source_ids 原样生效（与 MCP 侧「返回 [] = 不限
-    来源」的管理员语义一致）。
+    管理员例外：admin 不设订阅（订阅是读者面的概念），但其公开聚合令牌只覆盖
+    ``resolve_all_visible_source_ids`` 的公共归档域；用户自定源仍只能由订阅者访问。
     """
     requested = [s.strip() for s in (source_ids or "").split(",") if s.strip()]
     user = session.get(UserRecord, username)
     if user is not None and user.role == "admin":
-        scoped_csv = ",".join(requested) if requested else None
+        visible = resolve_all_visible_source_ids(session)
+        allowed = [s for s in requested if s in set(visible)] if requested else visible
+        if not allowed:
+            return []
+        scoped_csv = ",".join(allowed)
     else:
         subscribed = resolve_subscribed_source_ids(session, username)
         if not subscribed:

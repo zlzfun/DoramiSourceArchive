@@ -48,6 +48,7 @@ from services.article_analysis import (  # noqa: E402
     run_analysis_cycle,
     sanitize_error,
     scan_analysis_backfill,
+    source_allows_analysis,
     validate_analysis_payload,
 )
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
@@ -89,12 +90,19 @@ def _article(
     )
 
 
-def _source(source_id: str, *, private: bool = False, enabled: bool = True) -> SourceConfigRecord:
+def _source(
+    source_id: str,
+    *,
+    private: bool = False,
+    enabled: bool = True,
+    credentialed: bool = False,
+) -> SourceConfigRecord:
     return SourceConfigRecord(
         source_id=source_id,
         name=source_id,
         owner_username="reader" if private else "",
         ai_analysis_enabled=enabled,
+        params_json=json.dumps({"credentialed_private": credentialed}),
         created_at=NOW_ISO,
         updated_at=NOW_ISO,
     )
@@ -535,14 +543,111 @@ def test_success_persists_base_tags_attempt_and_candidate_evidence(storage):
         assert get_article_analysis(session, "success")["summary"] == record.summary
 
 
-def test_private_candidate_never_enters_public_candidate_pool(storage):
+def test_user_rss_can_analyze_and_contribute_candidate_when_enabled(storage):
     with Session(storage.engine) as session:
         session.add_all([_tag(), _source("user_rss_private", private=True)])
         article = _article("private", source_id="user_rss_private")
         session.add(article)
         session.commit()
+        assert queue_article_analysis(session, article.id, now=NOW) == "created"
+        session.commit()
+        [task] = claim_analysis_tasks(session, worker_id="custom-rss", now=NOW)
+
+    result = asyncio.run(
+        process_claimed_analysis(
+            storage.engine,
+            task,
+            llm_config=LLM_CONFIG,
+            analyzer=lambda *_args: _payload(candidate=True),
+            candidate_enabled=True,
+            now_fn=lambda: NOW,
+        )
+    )
+    assert result.status == "succeeded"
+    with Session(storage.engine) as session:
+        candidate = session.exec(select(CmsTagCandidateRecord)).one()
+        evidence = session.exec(select(CmsTagCandidateEvidenceRecord)).one()
+        assert candidate.label == "Agent Memory"
+        assert evidence.source_id == "user_rss_private"
+        source = session.get(SourceConfigRecord, "user_rss_private")
+        source.params_json = json.dumps({"credentialed_private": True})
+        source.ai_analysis_enabled = False
+        session.add(source)
+        session.commit()
+        assert queue_article_analysis(session, "private", now=NOW) == "unchanged"
+        session.commit()
+        session.refresh(candidate)
+        assert session.exec(select(CmsTagCandidateEvidenceRecord)).all() == []
+        assert candidate.support_article_count_7d == 0
+
+
+def test_credentialed_user_rss_is_never_queued_for_analysis(storage):
+    with Session(storage.engine) as session:
+        source = _source(
+            "user_rss_credentialed",
+            private=True,
+            enabled=True,
+            credentialed=True,
+        )
+        article = _article("credentialed", source_id=source.source_id)
+        session.add_all([source, article])
+        session.commit()
         assert queue_article_analysis(session, article.id, now=NOW) == "skipped"
         session.commit()
+        record = session.get(ArticleAnalysisRecord, article.id)
+        assert record.status == "skipped"
+        assert record.last_error == "source_ai_analysis_disabled"
+        assert claim_analysis_tasks(session, worker_id="credentialed", now=NOW) == []
+        assert session.exec(select(CmsTagCandidateRecord)).all() == []
+        assert session.exec(select(CmsTagCandidateEvidenceRecord)).all() == []
+
+
+def test_user_rss_policy_fails_closed_without_config_and_accepts_truthy_flag(storage):
+    with Session(storage.engine) as session:
+        orphan = _article("orphan", source_id="user_rss_orphan")
+        flagged = _source("user_rss_flagged", private=True)
+        flagged.params_json = json.dumps({"credentialed_private": "true"})
+        session.add_all([orphan, flagged])
+        session.commit()
+        assert source_allows_analysis(session, orphan.source_id) is False
+        assert queue_article_analysis(session, orphan.id, now=NOW) == "skipped"
+        assert source_allows_analysis(session, flagged.source_id) is False
+
+
+def test_policy_flip_during_llm_discards_result_and_candidates(storage):
+    source_id = "user_rss_flip"
+    source = _source(source_id, private=True)
+    task = None
+    with Session(storage.engine) as session:
+        session.add_all([_tag(), source, _article("flip", source_id=source.source_id)])
+        session.commit()
+        assert queue_article_analysis(session, "flip", now=NOW) == "created"
+        session.commit()
+        task = claim_analysis_tasks(session, worker_id="flip-worker", now=NOW)[0]
+
+    def analyzer(*_args):
+        with Session(storage.engine) as session:
+            current = session.get(SourceConfigRecord, source_id)
+            current.params_json = json.dumps({"credentialed_private": True})
+            current.ai_analysis_enabled = False
+            session.add(current)
+            session.commit()
+        return _payload(candidate=True)
+
+    result = asyncio.run(
+        process_claimed_analysis(
+            storage.engine,
+            task,
+            llm_config=LLM_CONFIG,
+            analyzer=analyzer,
+            candidate_enabled=True,
+            now_fn=lambda: NOW + dt.timedelta(seconds=1),
+        )
+    )
+    assert result.status == "skipped"
+    with Session(storage.engine) as session:
+        record = session.get(ArticleAnalysisRecord, "flip")
+        assert record.quality_score is None
         assert session.exec(select(CmsTagCandidateRecord)).all() == []
         assert session.exec(select(CmsTagCandidateEvidenceRecord)).all() == []
 
@@ -806,7 +911,10 @@ def test_prompt_and_logs_do_not_expose_private_url_or_body(storage, caplog):
     caplog.set_level(logging.WARNING)
     with Session(storage.engine) as session:
         article = _article("privacy", source_id="user_rss_private")
-        session.add(article)
+        session.add_all([
+            article,
+            _source("user_rss_private", private=True, credentialed=True),
+        ])
         session.commit()
         assert queue_article_analysis(session, article.id, now=NOW) == "skipped"
         session.commit()

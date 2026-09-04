@@ -32,6 +32,7 @@ from llm import prompts
 from llm.client import ChatMessage, UsageMeta, chat_completion, parse_json_object
 from models.db import ArticleRecord
 from services.reader_ai import build_numbered_context, build_sources_payload
+from services import user_sources as user_sources_service
 from storage.fts import fts_search_ranked
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,18 @@ _CONTEXT_TOTAL = 14000
 # rowid IN (...) 的防御性上限(SQLite 变量数限制;FTS 命中超此即截断,
 # 靠日期倒序排序保住最近的候选)。
 _MAX_FTS_IDS = 10000
+
+
+def _exportable_source_ids(engine, source_ids: List[str]) -> List[str]:
+    with Session(engine) as session:
+        return user_sources_service.external_ai_allowed_source_ids(session, source_ids)
+
+
+def _exportable_articles(engine, articles: List[ArticleRecord]) -> List[ArticleRecord]:
+    allowed = set(_exportable_source_ids(
+        engine, [str(article.source_id or "") for article in articles]
+    ))
+    return [article for article in articles if article.source_id in allowed]
 
 
 # ==================== 查询规划 ====================
@@ -153,6 +166,7 @@ def fetch_candidates(
       全量正文载入内存。
     keywords 为空或无候选时返回 []。
     """
+    source_ids = _exportable_source_ids(engine, source_ids)
     if not keywords or not source_ids:
         return []
     with Session(engine) as session:
@@ -214,6 +228,7 @@ def fetch_recent_window(
     engine, source_ids: List[str], *, limit: int = CANDIDATE_LIMIT
 ) -> List[ArticleRecord]:
     """时序窗口档:订阅域内按抓取时间倒序的最近若干篇有正文文章。"""
+    source_ids = _exportable_source_ids(engine, source_ids)
     if not source_ids:
         return []
     with Session(engine) as session:
@@ -332,6 +347,7 @@ async def subscription_context(
     规划与选篇是轻量结构化调用,走辅助轻模型档(llm_config.for_aux(),未配置
     aux_model 时即主模型)。
     """
+    source_ids = _exportable_source_ids(engine, source_ids)
     if not source_ids:
         return "", []
     aux_config = llm_config.for_aux()
@@ -392,8 +408,16 @@ async def subscription_context(
     if not candidates:
         return "", []
 
+    # Recheck after retrieval so a source reclassified during query planning
+    # cannot leak its lead text into the selection prompt.
+    candidates = _exportable_articles(engine, candidates)
+    if not candidates:
+        return "", []
+
     _notify(progress, "select", {"candidates": len(candidates)})
     chosen = await select_articles(question, candidates, aux_config, usage_meta)
+    # Recheck once more before constructing the answer context.
+    chosen = _exportable_articles(engine, chosen)
     # 上下文与 sources 必须同源同序(编号 [n] 即引用锚,见 reader_ai 核心层)。
     # 单篇预算按选中篇数摊分(下限保底):选中少时长文能带出更多正文,
     # 不再固定每篇 2000 字符只喂开头(v3.34)。

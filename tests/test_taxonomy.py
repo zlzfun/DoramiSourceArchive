@@ -47,6 +47,7 @@ from services.taxonomy import (  # noqa: E402
     delete_candidate,
     delete_alias,
     create_taxonomy_version,
+    current_taxonomy_sync_revision,
     deprecate_tag,
     merge_tags,
     maybe_auto_activate_candidate,
@@ -54,6 +55,7 @@ from services.taxonomy import (  # noqa: E402
     process_retag_batch,
     queue_retag_job,
     ranked_interest_catalog,
+    reconcile_synced_taxonomy_candidates,
     record_candidate_evidence,
     retag_article_from_evidence,
     reject_candidate,
@@ -386,7 +388,7 @@ def test_candidate_evidence_is_idempotent_and_aggregates_7_and_30_days(storage):
         assert candidate_meets_auto_activation_threshold(candidate, AutoActivationThresholds())
 
 
-def test_private_rss_unknown_term_never_enters_public_candidate(storage):
+def test_credentialed_rss_unknown_term_never_enters_public_candidate(storage):
     with Session(storage.engine) as session:
         session.add_all(
             [
@@ -395,6 +397,9 @@ def test_private_rss_unknown_term_never_enters_public_candidate(storage):
                     source_id="private-rss",
                     name="My private RSS",
                     owner_username="reader",
+                    url="https://private.example/rss?token=secret",
+                    params_json='{"credentialed_private": true}',
+                    ai_analysis_enabled=False,
                     created_at=NOW_ISO,
                     updated_at=NOW_ISO,
                 ),
@@ -416,6 +421,47 @@ def test_private_rss_unknown_term_never_enters_public_candidate(storage):
         assert result is None
         assert session.exec(select(CmsTagCandidateRecord)).first() is None
         assert session.exec(select(CmsTagCandidateEvidenceRecord)).first() is None
+
+
+def test_legacy_id_custom_rss_candidate_requires_manual_governance(storage):
+    with Session(storage.engine) as session:
+        for idx in range(10):
+            source_id = f"legacy_custom_feed_{idx % 3}"
+            if session.get(SourceConfigRecord, source_id) is None:
+                session.add(SourceConfigRecord(
+                    source_id=source_id,
+                    name=source_id,
+                    owner_username="reader",
+                    url=f"https://feeds.example/{source_id}.xml",
+                    ai_analysis_enabled=True,
+                    created_at=NOW_ISO,
+                    updated_at=NOW_ISO,
+                ))
+            session.add(article(f"custom-{idx}", source_id, day=1 if idx < 5 else 31))
+        session.commit()
+        for idx in range(10):
+            record_candidate_evidence(
+                session,
+                CandidateEvidenceInput(
+                    article_id=f"custom-{idx}",
+                    source_id=f"legacy_custom_feed_{idx % 3}",
+                    label="Community Tool",
+                    proposed_kind="topic",
+                    confidence=0.96,
+                    published_date=(NOW if idx < 5 else NOW - dt.timedelta(days=1)).isoformat(),
+                ),
+                now=NOW,
+            )
+        candidate = session.exec(select(CmsTagCandidateRecord)).one()
+        assert candidate.support_article_count_7d == 10
+        set_auto_activation_enabled(session, True)
+        assert maybe_auto_activate_candidate(
+            session,
+            candidate.id,
+            thresholds=AutoActivationThresholds(),
+            now=NOW,
+        ) is None
+        assert candidate.status == "candidate"
 
 
 def test_auto_activation_requires_combined_thresholds_and_keeps_interest_flag_off(storage):
@@ -938,6 +984,7 @@ def test_taxonomy_version_and_retag_lease_cursor_retry(storage):
         session.commit()
         version = create_taxonomy_version(session, change_summary="taxonomy v1", now=NOW)
         activate_taxonomy_version(session, version.version, actor_id="admin", now=NOW)
+        assert current_taxonomy_sync_revision(session) == version.version
         job = queue_retag_job(
             session,
             taxonomy_version=version.version,
@@ -990,6 +1037,39 @@ def test_taxonomy_version_and_retag_lease_cursor_retry(storage):
         retry = retry_failed_retag_job(session, finished, now=NOW)
         assert retry.status == "queued"
         assert '"article_ids": ["r2"]' in retry.scope_json
+
+
+def test_material_change_advances_sync_revision_beyond_legacy_version(storage):
+    with Session(storage.engine) as session:
+        session.add(TaxonomyVersionRecord(version=7, status="active", created_at=NOW_ISO))
+        tag = CmsTagRecord(
+            code="topic.legacy-sync",
+            kind="topic",
+            name_en="Legacy Sync",
+            normalized_name="legacy sync",
+            status="active",
+            taxonomy_version=7,
+            created_at=NOW_ISO,
+            updated_at=NOW_ISO,
+        )
+        session.add(tag)
+        session.commit()
+
+        assert current_taxonomy_sync_revision(session) == 7
+        assert session.get(AppSettingRecord, "taxonomy:sync_revision") is None
+
+        renamed = rename_tag(
+            session,
+            int(tag.id),
+            actor_id="admin",
+            name_en="Renamed Sync",
+            reason="material change",
+            now=NOW,
+        )
+
+        assert renamed.name_en == "Renamed Sync"
+        assert current_taxonomy_sync_revision(session) > 7
+        assert int(session.get(AppSettingRecord, "taxonomy:sync_revision").value) > 7
 
 
 def test_retag_worker_never_claims_or_processes_full_analysis_job(storage):
@@ -1099,3 +1179,171 @@ def test_closed_set_retag_reuses_resolved_evidence_without_rescoring(storage):
         assert analysis.tagging_status == "succeeded"
         assert analysis.quality_score == 8.4
         assert analysis.summary == "keep this full summary"
+
+
+def test_synced_taxonomy_resolves_unique_local_candidates_and_queues_idempotent_retag(storage):
+    with Session(storage.engine) as session:
+        session.add(TaxonomyVersionRecord(
+            version=2,
+            status="active",
+            change_summary="authority v2",
+            created_at=NOW_ISO,
+        ))
+        local_exact = article("sync-local-exact", source_id="user_rss_exact")
+        local_alias = article("sync-local-alias", source_id="user_rss_alias")
+        remote = article("sync-remote", source_id="rss_remote")
+        remote.analysis_authority_id = "producer-a"
+        no_analysis = article("sync-no-analysis", source_id="user_rss_no_analysis")
+        ambiguous = article("sync-ambiguous", source_id="user_rss_ambiguous")
+        session.add_all([local_exact, local_alias, remote, no_analysis, ambiguous])
+        session.flush()
+        for row in (local_exact, local_alias, remote, ambiguous):
+            session.add(ArticleAnalysisRecord(
+                article_id=row.id,
+                status="running" if row is local_alias else "succeeded",
+                tagging_status="succeeded",
+                quality_score=8.0,
+                authority_id="producer-a" if row is remote else "",
+                analyzed_at=NOW_ISO if row is local_alias else None,
+                created_at=NOW_ISO,
+                updated_at=NOW_ISO,
+            ))
+        session.commit()
+
+        exact_candidate = record_candidate_evidence(
+            session,
+            CandidateEvidenceInput(
+                article_id=local_exact.id,
+                source_id=local_exact.source_id,
+                label="Agent Memory",
+                proposed_kind="topic",
+                confidence=0.91,
+                published_date=local_exact.publish_date,
+            ),
+            now=NOW,
+        )
+        record_candidate_evidence(
+            session,
+            CandidateEvidenceInput(
+                article_id=remote.id,
+                source_id=remote.source_id,
+                label="Agent Memory",
+                proposed_kind="topic",
+                confidence=0.88,
+                published_date=remote.publish_date,
+            ),
+            now=NOW,
+        )
+        alias_candidate = record_candidate_evidence(
+            session,
+            CandidateEvidenceInput(
+                article_id=local_alias.id,
+                source_id=local_alias.source_id,
+                label="LLM",
+                proposed_kind="topic",
+                confidence=0.89,
+                published_date=local_alias.publish_date,
+            ),
+            now=NOW,
+        )
+        no_analysis_candidate = record_candidate_evidence(
+            session,
+            CandidateEvidenceInput(
+                article_id=no_analysis.id,
+                source_id=no_analysis.source_id,
+                label="Large Language Model",
+                proposed_kind="topic",
+                confidence=0.86,
+                published_date=no_analysis.publish_date,
+            ),
+            now=NOW,
+        )
+        ambiguous_candidate = record_candidate_evidence(
+            session,
+            CandidateEvidenceInput(
+                article_id=ambiguous.id,
+                source_id=ambiguous.source_id,
+                label="Collision",
+                proposed_kind="topic",
+                confidence=0.84,
+                published_date=ambiguous.publish_date,
+            ),
+            now=NOW,
+        )
+        no_analysis_candidate.status = "rejected"
+        session.add(no_analysis_candidate)
+        session.commit()
+
+        exact_tag = active_tag(session, "topic.agent-memory", "topic", "Agent Memory")
+        alias_tag = active_tag(session, "topic.llm", "topic", "Large Language Model")
+        from services.taxonomy import add_alias
+
+        add_alias(session, tag_id=int(alias_tag.id), alias="LLM", now=NOW)
+        collision_tag = active_tag(session, "topic.collision", "topic", "Collision")
+        collision_other = active_tag(session, "topic.other", "topic", "Other")
+        canonical_alias = session.exec(
+            select(CmsTagAliasRecord).where(
+                CmsTagAliasRecord.tag_id == collision_tag.id,
+                CmsTagAliasRecord.normalized_alias == "collision",
+            )
+        ).first()
+        if canonical_alias is not None:
+            session.delete(canonical_alias)
+            session.flush()
+        session.add(CmsTagAliasRecord(
+            tag_id=int(collision_other.id),
+            kind="topic",
+            alias="Collision",
+            normalized_alias="collision",
+            alias_type="synonym",
+            created_at=NOW_ISO,
+            updated_at=NOW_ISO,
+        ))
+        session.commit()
+
+        result = reconcile_synced_taxonomy_candidates(
+            session,
+            taxonomy_version=2,
+            authority_revision="taxonomy-rev-2",
+            now=NOW,
+        )
+        assert result["resolved_candidate_count"] == 3
+        assert result["article_count"] == 2
+        assert result["job_id"] is not None
+        job = session.get(TagRetagJobRecord, result["job_id"])
+        scope = json.loads(job.scope_json)
+        assert scope["article_ids"] == [local_alias.id, local_exact.id]
+        assert session.get(CmsTagCandidateRecord, exact_candidate.id).resolution_tag_id == exact_tag.id
+        assert session.get(CmsTagCandidateRecord, alias_candidate.id).resolution_tag_id == alias_tag.id
+        assert session.get(CmsTagCandidateRecord, exact_candidate.id).status == "merged"
+        assert session.get(CmsTagCandidateRecord, alias_candidate.id).status == "merged"
+        assert session.get(CmsTagCandidateRecord, no_analysis_candidate.id).status == "merged"
+        assert session.get(CmsTagCandidateRecord, ambiguous_candidate.id).status == "candidate"
+
+        replay = reconcile_synced_taxonomy_candidates(
+            session,
+            taxonomy_version=2,
+            authority_revision="taxonomy-rev-2",
+            now=NOW,
+        )
+        assert replay == {**result, "replayed": True}
+        jobs = session.exec(
+            select(TagRetagJobRecord).where(
+                TagRetagJobRecord.operation == "retag_only"
+            )
+        ).all()
+        assert len(jobs) == 1
+
+        claimed = claim_retag_job(session, lease_owner="runtime-all-retag", now=NOW)
+        process_retag_batch(
+            session,
+            claimed,
+            retag_article_from_evidence,
+            lease_owner="runtime-all-retag",
+            now=NOW,
+        )
+        assignments = session.exec(select(ArticleTagAssignmentRecord)).all()
+        assert {(row.article_id, row.tag_id) for row in assignments} == {
+            (local_exact.id, exact_tag.id),
+            (local_alias.id, alias_tag.id),
+        }

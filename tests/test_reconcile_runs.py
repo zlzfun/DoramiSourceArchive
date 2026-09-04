@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from sqlmodel import SQLModel, Session, create_engine, select
 
 import api.app as app_module
-from models.db import FetchRunRecord, CollectionJobRunRecord, SourceStateRecord
+from models.db import FetchRunRecord, CollectionJobRunRecord, JobRecord, SourceStateRecord
 
 
 def _isolated_engine(monkeypatch):
@@ -30,11 +30,20 @@ def test_reconcile_marks_orphaned_running_records_failed(monkeypatch):
                                      started_at="2026-06-16T14:42:36.060255"))
         s.add(SourceStateRecord(source_id="web_jiqizhixin", fetcher_id="web_jiqizhixin",
                                 status="running", updated_at="2026-06-16T14:42:36"))
+        s.add(JobRecord(
+            id="orphan-remote-sync", type="remote_archive_sync", status="queued",
+            created_at=1.0,
+        ))
         s.commit()
 
     counts = app_module.reconcile_orphaned_runs()
 
-    assert counts == {"fetch_runs": 1, "job_runs": 1, "source_states": 1}
+    assert counts == {
+        "fetch_runs": 1,
+        "job_runs": 1,
+        "source_states": 1,
+        "remote_sync_jobs": 1,
+    }
     with Session(engine) as s:
         run = s.get(FetchRunRecord, 1)
         assert run.status == "failed"
@@ -44,6 +53,7 @@ def test_reconcile_marks_orphaned_running_records_failed(monkeypatch):
         assert s.get(FetchRunRecord, 2).status == "success"
         assert s.get(CollectionJobRunRecord, 9).status == "failed"
         assert s.get(SourceStateRecord, "web_jiqizhixin").status == "unknown"
+        assert s.get(JobRecord, "orphan-remote-sync").status == "failed"
 
 
 def test_reconcile_is_idempotent_noop_when_clean(monkeypatch):
@@ -55,6 +65,11 @@ def test_reconcile_is_idempotent_noop_when_clean(monkeypatch):
 
     counts = app_module.reconcile_orphaned_runs()
 
-    assert counts == {"fetch_runs": 0, "job_runs": 0, "source_states": 0}
+    assert counts == {
+        "fetch_runs": 0,
+        "job_runs": 0,
+        "source_states": 0,
+        "remote_sync_jobs": 0,
+    }
     with Session(engine) as s:
         assert s.get(FetchRunRecord, 1).status == "success"

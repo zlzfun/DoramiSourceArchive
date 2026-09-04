@@ -189,6 +189,35 @@ def test_hidden_source_cannot_be_shared_and_existing_links_die(monkeypatch, tmp_
         assert _create(client).status_code == 403
 
 
+def test_existing_share_dies_when_source_becomes_credentialed(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from models.db import SourceConfigRecord
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        token = _create(client).json()["token"]
+
+    with Session(app_module.db_sink.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id="src_a",
+            name="Reclassified RSS",
+            source_type="rss",
+            url="https://feeds.example.test/rss?subscriber=Abc123Def456Ghi789Jkl012",
+            params_json='{"credentialed_private": true}',
+            created_at="2026-07-02T00:00:00",
+            updated_at="2026-07-02T00:00:00",
+        ))
+        session.commit()
+
+    # Resolve-time policy applies to the article and its media proxy alike.
+    with TestClient(app_module.app) as guest:
+        assert guest.get(f"/api/public/share/{token}").status_code == 404
+        assert guest.get(
+            f"/api/public/share/{token}/media",
+            params={"url": "https://img.example.com/pic.png"},
+        ).status_code == 404
+
+
 def test_global_switch_kills_public_links_without_deleting_them(monkeypatch, tmp_path):
     app_module = _setup_app(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:

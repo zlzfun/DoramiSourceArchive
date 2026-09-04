@@ -8,8 +8,10 @@ from models.content import BaseContent, serialize_to_metadata
 from models.db import (
     ArticleRecord,
     SQLModel,
+    next_article_archive_revision,
 )
 from services.podcast_metadata import merge_podcast_publisher_metadata
+from services import sync_consumer_policy
 
 
 _PLACEHOLDER_ARTICLE_TITLES = {
@@ -165,6 +167,12 @@ class DatabaseStorage(BaseStorage):
 
     async def save(self, item: BaseContent) -> bool:
         with Session(self.engine) as session:
+            if not sync_consumer_policy.local_source_operation_allowed(
+                session, item.source_id, operation="collection"
+            ):
+                # A fetch that started before an Archive Sync authority handoff
+                # or v2 consumer activation must not commit afterwards.
+                return False
             existing = session.get(ArticleRecord, item.id)
             if existing:
                 if (
@@ -178,7 +186,9 @@ class DatabaseStorage(BaseStorage):
                         raw_metadata.get("extensions", {}),
                     ):
                         return False
-                    existing.archive_updated_at = item.fetched_date or existing.archive_updated_at
+                    existing.archive_updated_at = next_article_archive_revision(
+                        existing.archive_updated_at
+                    )
                     session.add(existing)
                     session.commit()
                     # ``save`` is the pipeline's insertion signal.  The refresh was
@@ -190,7 +200,9 @@ class DatabaseStorage(BaseStorage):
                     existing.source_url = item.source_url
                     existing.publish_date = item.publish_date
                     existing.fetched_date = item.fetched_date
-                    existing.archive_updated_at = item.fetched_date
+                    existing.archive_updated_at = next_article_archive_revision(
+                        existing.archive_updated_at
+                    )
                     existing.has_content = True
                     existing.content = item.content
                     existing.extensions_json = json.dumps(raw_metadata.get("extensions", {}), ensure_ascii=False)
@@ -226,6 +238,9 @@ class DatabaseStorage(BaseStorage):
                         existing.publish_date = item.publish_date
                     if source_url_changed:
                         existing.source_url = item.source_url
+                    existing.archive_updated_at = next_article_archive_revision(
+                        existing.archive_updated_at
+                    )
                     session.add(existing)
                     session.commit()
                     return True

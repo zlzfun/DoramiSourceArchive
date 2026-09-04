@@ -136,6 +136,42 @@ def test_favorite_add_list_remove_flow(monkeypatch, tmp_path):
     app_module, sink = _prepare(monkeypatch, tmp_path, "fav.db")
     _seed_article(sink.engine, "a1", "rss_openai", "Alpha")
     _seed_article(sink.engine, "a2", "rss_hf", "Beta")
+    from models.db import ArticleAnalysisRecord, ArticleTagAssignmentRecord, CmsTagRecord
+
+    with Session(sink.engine) as session:
+        tag = CmsTagRecord(
+            code="agents",
+            kind="topic",
+            name_zh="智能体",
+            normalized_name="智能体",
+            status="active",
+            taxonomy_version=1,
+            created_at="2026-05-21T00:00:00+00:00",
+            updated_at="2026-05-21T00:00:00+00:00",
+        )
+        session.add(tag)
+        session.flush()
+        session.add(ArticleAnalysisRecord(
+            article_id="a1",
+            status="running",
+            tagging_status="succeeded",
+            quality_score=8.2,
+            analyzed_at="2026-05-21T01:00:00+00:00",
+            next_attempt_at=None,
+            created_at="2026-05-21T00:00:00+00:00",
+            updated_at="2026-05-21T01:00:00+00:00",
+        ))
+        session.add(ArticleTagAssignmentRecord(
+            article_id="a1",
+            tag_id=int(tag.id),
+            tag_kind="topic",
+            is_primary=True,
+            relevance=0.9,
+            assignment_source="llm",
+            created_at="2026-05-21T01:00:00+00:00",
+            updated_at="2026-05-21T01:00:00+00:00",
+        ))
+        session.commit()
 
     with TestClient(app_module.app) as client:
         _login(client)
@@ -159,6 +195,11 @@ def test_favorite_add_list_remove_flow(monkeypatch, tmp_path):
         listing = client.get("/api/reader/favorites").json()
         assert listing["total"] == 2
         assert [item["id"] for item in listing["items"]] == ["a2", "a1"]
+        analyzed = listing["items"][1]
+        assert analyzed["analysis_status"] == "running"
+        assert analyzed["analysis_has_result"] is True
+        assert analyzed["quality_score"] == 8.2
+        assert analyzed["tags"][0]["assignment_source"] == "llm"
 
         # 搜索过滤
         searched = client.get("/api/reader/favorites", params={"search": "Alpha"}).json()

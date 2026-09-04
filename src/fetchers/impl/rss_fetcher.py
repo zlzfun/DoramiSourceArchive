@@ -61,20 +61,10 @@ class GenericRssFetcher(BaseFetcher):
         ]
 
     async def _fetch_feed_limited(self, client: httpx.AsyncClient, feed_url: str, max_bytes: int) -> bytes:
-        """流式拉取 feed 并限量:Content-Length 预拒 + 逐块累计超限即断开(用户源护栏)。"""
-        async with client.stream("GET", feed_url) as response:
-            response.raise_for_status()
-            declared = response.headers.get("Content-Length")
-            if declared and declared.isdigit() and int(declared) > max_bytes:
-                raise RuntimeError(f"feed 响应超过大小上限: {feed_url}")
-            chunks: List[bytes] = []
-            received = 0
-            async for chunk in response.aiter_bytes():
-                received += len(chunk)
-                if received > max_bytes:
-                    raise RuntimeError(f"feed 响应超过大小上限: {feed_url}")
-                chunks.append(chunk)
-            return b"".join(chunks)
+        """流式拉取 feed：每跳 SSRF 复检并限制响应体积。"""
+        from services.http_safety import fetch_public_bytes_limited
+
+        return await fetch_public_bytes_limited(client, feed_url, max_bytes=max_bytes)
 
     def _entry_id(self, runtime_source_id: str, entry: Any) -> str:
         stable_value = (

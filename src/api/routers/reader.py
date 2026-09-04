@@ -22,7 +22,7 @@ from sqlmodel import Session, func, select
 
 from api import deps
 from api.articles_view import serialize_article_list_item
-from api.routers.articles import content_shape_condition
+from api.routers.articles import _analysis_assets, content_shape_condition
 from api.tokens import generate_feed_token, hash_subscription_token, subscription_token_preview
 from api.sources import (
     DAILY_BRIEF_SOURCE_ID,
@@ -50,7 +50,7 @@ from models.db import (
 )
 from services import accounts as accounts_service
 from services import article_share as article_share_service
-from services.article_display_tags import article_ids_for_flexible_label
+from services.article_display_tags import article_ids_for_flexible_label, load_display_tags
 from services import daily_brief as daily_brief_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
@@ -375,6 +375,15 @@ def _deny_unsubscribed_user_source_article(session: Session, username: str, arti
     if user_sources_service.is_user_source(source_id) and \
             user_sources_service.unauthorized_user_source_ids(session, username, [source_id]):
         raise HTTPException(status_code=404, detail="文章不存在")
+
+
+def _deny_nonexportable_article(session: Session, article) -> None:
+    """Block explicit reader-AI actions before source content reaches MaaS."""
+
+    if article is not None and not user_sources_service.source_content_may_leave_deployment(
+        session, getattr(article, "source_id", "") or ""
+    ):
+        raise HTTPException(status_code=403, detail="该来源含访问凭证，不能发送到 AI 服务")
 
 
 def _require_user_sources_enabled(session: Session) -> None:
@@ -790,7 +799,24 @@ def list_favorites(
     base = base.order_by(ReaderFavoriteRecord.created_at.desc(), ArticleRecord.id.desc())
     total = int(session.exec(count_query).one() or 0)
     rows = session.exec(base.offset(safe_skip).limit(safe_limit)).all()
-    items = [serialize_article_list_item(record, include_content=include_content) for record, _ in rows]
+    records = [record for record, _ in rows]
+    analyses, tags = _analysis_assets(session, [record.id for record in records])
+    display_tags = load_display_tags(
+        session,
+        [record.id for record in records],
+        analyses=analyses,
+        canonical_tags=tags,
+    )
+    items = [
+        serialize_article_list_item(
+            record,
+            include_content=include_content,
+            analysis=analyses.get(record.id),
+            tags=tags.get(record.id, []),
+            display_tags=display_tags.get(record.id, []),
+        )
+        for record in records
+    ]
     favorite_ids = resolve_favorite_article_ids(session, username)
     return {
         "items": items,
@@ -878,7 +904,11 @@ def create_article_share(
     # 与「读者面隐藏 = 内容交付全量排除」同口径：暂不可用的源不能被摊开成公开链接。
     if article.source_id in source_visibility_service.hidden_source_ids(session):
         raise HTTPException(status_code=403, detail="该内容暂不可用，无法分享")
-    # 用户自定源(v3.40 检视返修 F3):非订阅者不得把私有源内容摊开成公开链接——
+    if not user_sources_service.source_content_may_leave_deployment(
+        session, article.source_id
+    ):
+        raise HTTPException(status_code=403, detail="含凭证的自定源不能创建公开分享")
+    # 用户自定源(v3.40 检视返修 F3):非订阅者不得把未列目录的源内容摊开成公开链接——
     # 分享是把内容公开化的动作,授权门槛高于按 id 直达的只读详情。
     _deny_unsubscribed_user_source_article(session, username, article)
 
@@ -1239,9 +1269,9 @@ async def reader_ai_translate(params: ReaderTranslateParams, request: Request):
     username, llm_config = _require_reader_ai(request)
     db_sink = deps.get_db_sink()
     with Session(db_sink.engine) as session:
-        _deny_unsubscribed_user_source_article(
-            session, username, session.get(ArticleRecord, params.article_id)
-        )
+        article = session.get(ArticleRecord, params.article_id)
+        _deny_unsubscribed_user_source_article(session, username, article)
+        _deny_nonexportable_article(session, article)
     try:
         result = await reader_ai_service.translate_article(
             db_sink, params.article_id, llm_config,
@@ -1263,9 +1293,9 @@ async def reader_ai_summarize(params: ReaderTranslateParams, request: Request):
     username, llm_config = _require_reader_ai(request)
     db_sink = deps.get_db_sink()
     with Session(db_sink.engine) as session:
-        _deny_unsubscribed_user_source_article(
-            session, username, session.get(ArticleRecord, params.article_id)
-        )
+        article = session.get(ArticleRecord, params.article_id)
+        _deny_unsubscribed_user_source_article(session, username, article)
+        _deny_nonexportable_article(session, article)
     try:
         result = await reader_ai_service.summarize_article(
             db_sink, params.article_id, llm_config,
@@ -1319,9 +1349,9 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
         with Session(db_sink.engine) as session:
             for aid in explicit_ids:
                 if aid:
-                    _deny_unsubscribed_user_source_article(
-                        session, username, session.get(ArticleRecord, aid)
-                    )
+                    article = session.get(ArticleRecord, aid)
+                    _deny_unsubscribed_user_source_article(session, username, article)
+                    _deny_nonexportable_article(session, article)
 
     # 上下文组装下沉到 reader_ai.assemble_reader_context；此处注入检索闭包
     # （承载鉴权作用域与 LLM 配置），使组装逻辑与 HTTP 请求解耦、可独立单测（D11）。
@@ -1332,6 +1362,9 @@ async def reader_ai_ask(params: ReaderAskParams, request: Request):
                 source_ids = app.resolve_all_visible_source_ids(session)
             else:
                 source_ids = app.resolve_subscribed_source_ids(session, user)
+            source_ids = user_sources_service.external_ai_allowed_source_ids(
+                session, source_ids
+            )
         return await reader_search_service.subscription_context(
             question,
             engine=db_sink.engine,

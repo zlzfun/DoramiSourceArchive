@@ -15,7 +15,7 @@ import sys
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, event, pool
+from sqlalchemy import engine_from_config, event, inspect, pool
 
 # 让 alembic 能 import 到 src/ 下的模型与配置（与 tests 的 sys.path 自举一致）。
 _SRC = os.path.join(os.path.dirname(__file__), "..", "src")
@@ -25,6 +25,9 @@ if _SRC not in sys.path:
 from config import settings  # noqa: E402
 from models.db import SQLModel  # noqa: E402  —— 导入即注册所有表到 metadata
 from storage.fts import fts_include_object  # noqa: E402  —— 排除 FTS 虚拟/shadow 表
+from storage.archive_sync_revision import (  # noqa: E402
+    install_archive_sync_revision_triggers,
+)
 
 config = context.config
 
@@ -93,7 +96,44 @@ def run_migrations_online() -> None:
             transaction_per_migration=True,
         )
         with context.begin_transaction():
+            if _is_sqlite(str(connectable.url)):
+                # create_all databases already carry the runtime triggers. Drop
+                # them before any historical SQLite batch-table replacement;
+                # otherwise a trigger can reference the table while Alembic has
+                # temporarily renamed it away. The current schema reinstalls the
+                # complete trigger set after the migration transaction.
+                for name in (
+                    "archive_sync_source_insert",
+                    "archive_sync_source_update",
+                    "archive_sync_source_delete",
+                    "archive_sync_source_nonpublic_insert",
+                    "archive_sync_source_remote_handoff",
+                    "archive_sync_source_scope_exit",
+                    "archive_sync_source_scope_enter",
+                    "archive_sync_article_insert",
+                    "archive_sync_article_update",
+                    "archive_sync_article_scope_exit",
+                    "archive_sync_article_scope_enter",
+                    "archive_sync_article_remote_handoff",
+                    "archive_sync_article_delete",
+                    "archive_sync_analysis_insert",
+                    "archive_sync_analysis_update",
+                    "archive_sync_analysis_delete",
+                    "archive_sync_assignment_insert",
+                    "archive_sync_assignment_update",
+                    "archive_sync_assignment_delete",
+                    "archive_sync_media_insert",
+                    "archive_sync_media_update",
+                    "archive_sync_source_state_insert",
+                    "archive_sync_source_state_update",
+                    "archive_sync_source_state_delete",
+                ):
+                    connection.exec_driver_sql(f'DROP TRIGGER IF EXISTS "{name}"')
             context.run_migrations()
+            if _is_sqlite(str(connectable.url)):
+                tables = set(inspect(connection).get_table_names())
+                if {"archive_sync_clock", "archive_sync_entity_states"} <= tables:
+                    install_archive_sync_revision_triggers(connection)
 
 
 if context.is_offline_mode():

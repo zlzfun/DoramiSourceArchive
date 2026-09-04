@@ -291,6 +291,16 @@ def calculate_due_source_ids(
             if last_success is None or last_success < now - dt.timedelta(minutes=interval):
                 due.append(source_id)
             continue
+        state = states.get(source_id)
+        if (
+            (config is not None and bool((config.collection_authority_id or "").strip()))
+            or (state is not None and bool((state.authority_id or "").strip()))
+        ):
+            # A v2 receiver has no local CollectionJob for producer-managed
+            # public sources.  Their authoritative SourceState is nevertheless
+            # a real readiness boundary, so the daily edition must wait for it.
+            due.append(source_id)
+            continue
         if (
             source_id == PUBLIC_DAILY_BRIEF_SOURCE_ID
             and _setting_enabled(session, DAILY_BRIEF_ENABLED_KEY)

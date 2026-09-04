@@ -117,5 +117,8 @@ async def get_shared_article_media(
     return FileResponse(
         path,
         media_type=record.mime or "application/octet-stream",
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
