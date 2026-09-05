@@ -42,7 +42,7 @@ import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
 import AnnouncementBanner from './AnnouncementBanner';
 import PodcastAudioPanel, { PodcastCover } from './PodcastAudioPanel';
-import PersonalBriefTab from './PersonalBriefTab';
+import PersonalBriefPage from './PersonalBriefPage';
 import InterestManager from './InterestManager';
 import AnalysisTagChip from './AnalysisTagChip';
 import { excerptOf, hostOf } from '../utils/readerText';
@@ -336,6 +336,7 @@ export default function ReaderTab({
   // ── 右键上下文菜单(v3.28,样页 dorami-context-menu-quiet) ──
   // items 构建在 useReaderState(桌面右键/移动长按共用);弹出定位与开合是桌面视图胶水。
   const { menu: ctxMenu, openMenu: openCtxMenu, closeMenu: closeCtxMenu } = useContextMenu();
+
 
   const openRowContextMenu = (e, entity, kind) => {
     const items = kind === 'source'
@@ -650,10 +651,13 @@ export default function ReaderTab({
         </div>
       </aside>}
 
+      {/* ── 我的早报(issue #23 重做):日期栏顶替源栏槽位 + 报纸面占条目列/阅读窗整幅;
+             点卡片 = openArticleById 跳站内原文(切到所在容器并选中,早报页退场) ── */}
       {briefOpen && (
-        <PersonalBriefTab
+        <PersonalBriefPage
           showToast={showToast}
           interestVersion={interestVersion}
+          sourceMap={sourceMap}
           onManageSubscriptions={() => { setBriefOpen(false); openDiscover(); }}
           onOpenArticle={async (articleId) => {
             const opened = await openArticleById(articleId);

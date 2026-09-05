@@ -31,7 +31,7 @@ import MobileArticlePage from './MobileArticlePage';
 import MobileSourceDrawer from './MobileSourceDrawer';
 import MobileMePage from './MobileMePage';
 import ActionSheet from './ActionSheet';
-import PersonalBriefTab from '../PersonalBriefTab';
+import PersonalBriefPage from '../PersonalBriefPage';
 import InterestManager from '../InterestManager';
 import { dayKeyOf } from '../../utils/readerTime';
 
@@ -249,8 +249,9 @@ export default function MobileReader({
       {/* ── 内容区 ── */}
       <div className="m-content">
         {tab === 'brief' ? (
-          <PersonalBriefTab
+          <PersonalBriefPage
             mobile
+            sourceMap={sourceMap}
             showToast={showToast}
             interestVersion={interestVersion}
             onManageSubscriptions={() => openDiscover()}

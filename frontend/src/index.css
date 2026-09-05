@@ -11144,125 +11144,175 @@ input[type="radio"] {
 .reader-pane-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
 
 
-/* ── 我的早报：视图轨后的整幅工作区 ── */
-.personal-brief {
-  grid-column: 2 / -1;
+/* ── 我的早报(issue #23 重做,二稿):视图轨 · 日期栏 · 报纸面 ──
+   日期栏顶替源栏槽位(canvas 底、源行语法);报纸面占「条目列 + 阅读窗」整幅(grid-column 3/-1,
+   与发现页/社交流同构)——一份卡片式日报:报头(衬线日期 + 版次/篇数 meta)+ 分节卡片网格
+   (标题/完整摘要/衬线渐变评分/标签),点卡片跳站内原文(早报页退场)。历史按天分期:一天一行,
+   同日多版折进报头「共 N 版」;卡片吃完整摘要不截断;来源只标名字(选入理由长句退役)。 */
+.brief-days { background: var(--dorami-canvas); overflow: hidden; }
+.brief-days-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 16px; }
+.brief-day {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--dorami-muted);
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms ease, box-shadow 140ms ease;
+}
+.brief-day:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+/* 选中 = 浮白 + 弱高程(与源行同语法) */
+.brief-day.is-on { background: var(--dorami-surface); box-shadow: var(--sh-1); color: var(--dorami-ink); }
+.brief-day-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brief-day.is-on .brief-day-name { font-weight: 600; }
+.brief-day-meta { flex: none; font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.brief-day-flag { flex: none; font-size: 11px; font-weight: 600; }
+.brief-day-flag.is-bad { color: var(--state-bad); }
+.brief-day-spin { flex: none; width: 13px; height: 13px; color: var(--dorami-accent); }
+
+/* 报纸面:整幅可滚,内容居中限宽(报纸版心) */
+.brief-sheet {
+  grid-column: 3 / -1;
   min-width: 0;
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 232px;
-  background: var(--dorami-canvas);
-  overflow: hidden;
-}
-.brief-main {
-  min-width: 0;
   overflow-y: auto;
-  padding: 30px clamp(20px, 4vw, 58px) 52px;
+  background: var(--rd-list-bg);
 }
-.brief-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
-.brief-head-actions { display: flex; flex: none; align-items: center; gap: 8px; }
-.brief-edition-meta { display: flex; align-items: center; gap: 7px; margin-top: 24px; color: var(--dorami-muted); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.brief-sheet-inner { max-width: 1120px; margin: 0 auto; padding: 34px 44px 72px; }
+.brief-mast {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--dorami-border);
+}
+.brief-mast-main { min-width: 0; }
+.brief-mast-kicker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--dorami-accent-ink); }
+.brief-mast-title {
+  margin-top: 10px;
+  font-family: Charter, Cambria, Baskerville, var(--font-serif);
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  color: var(--dorami-ink);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.brief-mast-title small { margin-left: 12px; font-size: 16px; font-weight: 400; letter-spacing: 0; color: var(--dorami-muted); }
+.brief-mast-sub { margin-top: 10px; font-size: 13px; font-weight: 500; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
+/* 报头动作区字号写容器:内含 button(共 N 版)靠继承(button{font:inherit} 未分层陷阱) */
+.brief-mast-actions { display: flex; flex: none; align-items: center; gap: 10px; font-size: 12px; }
+.brief-rev-toggle { display: inline-flex; align-items: center; gap: 2px; padding: 0 4px; border-radius: var(--r-sm); color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
+.brief-rev-toggle:hover, .brief-rev-toggle[aria-expanded="true"] { color: var(--dorami-accent-ink); }
+.brief-rev-toggle svg { width: 13px; height: 13px; transition: transform var(--motion-fast) var(--motion-ease); }
+.brief-rev-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.brief-rev-strip { display: flex; flex-wrap: wrap; gap: 6px; padding: 14px 0 0; font-size: 12px; }
+.brief-rev {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--dorami-ink) 5%, transparent);
+  color: var(--dorami-muted);
+  font-variant-numeric: tabular-nums;
+  transition: background 140ms ease, color 140ms ease;
+}
+.brief-rev:hover { color: var(--dorami-ink); }
+.brief-rev.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+.brief-rev small { font-size: 11px; color: var(--dorami-faint); }
+
+/* 状态提示:一句一行;警示底 / 信息(wash)底两档 */
+.brief-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 9px 12px;
+  border-radius: var(--r-control);
+  background: var(--state-warn-bg);
+  color: var(--state-warn);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.brief-note svg { flex: none; width: 14px; height: 14px; margin-top: 2px; }
+.brief-note.is-info { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+
+/* 分节头:节名 + 等宽计数 + 延伸的 hairline */
+.brief-sec { margin-top: 30px; }
+.brief-sec-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.brief-sec-title { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; color: var(--dorami-ink); }
+.brief-sec-count { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.brief-sec-rule { flex: 1; height: 1px; background: var(--dorami-border); }
+
+/* 卡片网格:自适应列数(≥2 列时首节首张 lead 通栏) */
+.brief-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: start; }
+.brief-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 18px 20px 16px;
+  border: 1px solid var(--dorami-card-bd);
+  border-radius: var(--r-card);
+  background: var(--dorami-surface);
+  box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge);
+  color: var(--dorami-ink);
+  text-align: left;
+  cursor: pointer;
+  transition: box-shadow var(--motion-medium) var(--motion-ease), transform var(--motion-medium) var(--motion-ease);
+}
+.brief-card:hover { box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge); transform: translateY(-1px); }
+.brief-card.is-lead { grid-column: 1 / -1; padding: 24px 28px 20px; }
+.brief-card.is-skel { cursor: default; min-height: 150px; }
+.brief-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brief-card-src { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.brief-card-srcname { font-size: 12px; font-weight: 500; color: var(--dorami-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 评分:衬线齐线数字 + AI 渐变(见渐变即 AI,与速读卡同一身份);渐变落在数字元素自身 */
+.brief-card-score { flex: none; font-family: Charter, Cambria, Baskerville, var(--font-serif); font-size: 22px; font-weight: 700; line-height: 1; font-variant-numeric: lining-nums tabular-nums; }
+.brief-card.is-lead .brief-card-score { font-size: 28px; }
+.brief-card-title { display: block; font-family: var(--font-serif); font-size: 17px; font-weight: 700; line-height: 1.4; color: var(--dorami-ink); }
+.brief-card.is-lead .brief-card-title { font-size: 24px; line-height: 1.3; }
+.brief-card-sum { display: block; font-size: 13.5px; font-weight: 400; line-height: 1.75; color: var(--dorami-ink-2); }
+.brief-card.is-lead .brief-card-sum { font-size: 14.5px; line-height: 1.8; max-width: 72ch; }
+.brief-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 2px; }
+.brief-card-tags { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.brief-card-time { flex: none; display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 11.5px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.brief-card-go { width: 13px; height: 13px; color: var(--dorami-faint); opacity: 0; transform: translate(-2px, 2px); transition: opacity var(--motion-fast) ease, transform var(--motion-fast) var(--motion-ease), color var(--motion-fast) ease; }
+.brief-card:hover .brief-card-go { opacity: 1; transform: none; color: var(--dorami-accent-ink); }
+/* 兴趣命中 chip:同族同色,只多一枚实心小点作「关注」状态记号(不上第二饱和色) */
+.reader-tag-chip.is-interest::before { content: ''; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: currentColor; }
+
 .brief-state {
-  min-height: 360px;
+  min-height: 320px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 11px;
-  padding: 36px;
+  gap: 8px;
+  padding: 32px 24px;
   text-align: center;
   color: var(--dorami-muted);
+  font-size: 13px;
 }
+.brief-state > svg { width: 22px; height: 22px; margin-bottom: 4px; color: var(--dorami-faint); }
 .brief-state.is-error { color: var(--state-bad); }
-.brief-notice {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin-top: 18px;
-  padding: 14px;
-  border-radius: var(--r-card);
-  background: var(--state-warn-bg);
-  color: var(--state-warn);
+.brief-state-title { font-size: 14px; font-weight: 600; color: var(--dorami-ink); }
+.brief-state.is-error .brief-state-title { color: var(--state-bad); }
+.brief-state-meta { font-size: 12px; line-height: 1.6; color: var(--dorami-faint); }
+.brief-state .action-button { margin-top: 6px; }
+@media (prefers-reduced-motion: reduce) {
+  .brief-card, .brief-card-go { transition: none; }
+  .brief-card:hover { transform: none; }
 }
-.brief-notice strong { display: block; font-size: 13px; }
-.brief-notice p { margin-top: 3px; color: var(--dorami-ink-2); font-size: 12px; font-weight: 600; line-height: 1.55; }
-.brief-section { margin-top: 26px; }
-.brief-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
-.brief-items {
-  overflow: hidden;
-  border-radius: var(--r-card);
-  background: var(--dorami-surface);
-  border: 1px solid var(--dorami-card-bd);
-  box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge);
-}
-.brief-item {
-  width: 100%;
-  display: flex;
-  align-items: flex-start;
-  gap: 13px;
-  padding: 15px 16px;
-  border-top: 1px solid var(--dorami-border);
-  text-align: left;
-  color: var(--dorami-ink);
-  transition: background var(--motion-fast) var(--motion-ease);
-}
-.brief-item:first-child { border-top: none; }
-.brief-item:hover { background: var(--dorami-soft); }
-.brief-item-score {
-  min-width: 38px;
-  color: var(--dorami-accent-ink);
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1.25;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-.brief-item-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
-.brief-item-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; color: var(--dorami-faint); font-size: 11px; font-weight: 600; }
-.brief-item-title { font-size: 15px; font-weight: 700; line-height: 1.45; }
-/* one_sentence_summary 取缔后(issue #13)条目行直接吃 summary,两行截断 */
-.brief-item-summary { color: var(--dorami-ink-2); font-size: 13px; font-weight: 600; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.brief-item-reason { color: var(--dorami-accent-ink); font-size: 12px; font-weight: 600; }
-.brief-item-reason.is-latest { color: var(--dorami-muted); }
-.brief-interest-hint {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 22px;
-  padding: 11px 14px;
-  border-radius: var(--r-control);
-  background: var(--dorami-soft);
-  color: var(--dorami-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-.brief-interest-hint:hover { background: var(--dorami-raised); color: var(--dorami-ink); }
-.brief-history {
-  min-width: 0;
-  overflow-y: auto;
-  padding: 25px 14px;
-  border-left: 1px solid var(--dorami-border);
-  background: var(--dorami-soft);
-}
-.brief-history-head { display: flex; align-items: center; gap: 7px; margin: 0 4px 12px; color: var(--dorami-ink); }
-.brief-history-row {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 10px;
-  border-radius: var(--r-control);
-  color: var(--dorami-ink-2);
-  text-align: left;
-}
-.brief-history-row:hover { background: var(--dorami-raised); }
-.brief-history-row.is-on { background: var(--dorami-surface); box-shadow: inset 3px 0 0 var(--dorami-accent); }
-.brief-history-row > span:first-child { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
-.brief-history-row strong { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.brief-history-row small { color: var(--dorami-faint); font-size: 11px; font-weight: 600; }
-.brief-score { margin-left: auto; color: var(--dorami-accent-ink); font-weight: 700; font-variant-numeric: tabular-nums; }
 
 /* ── CMS taxonomy / Candidate 治理 ── */
 .taxonomy-flag {
@@ -11336,9 +11386,5 @@ input[type="radio"] {
 .taxonomy-version-stat strong { color: var(--dorami-ink); font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 900px) {
-  .brief-head { flex-direction: column; }
-  .brief-head-actions { width: 100%; flex-wrap: wrap; }
-  .personal-brief { grid-template-columns: minmax(0, 1fr); }
-  .brief-history { border-top: 1px solid var(--dorami-border); border-left: none; }
   .taxonomy-row-detail { padding-left: 14px; }
 }
