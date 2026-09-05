@@ -5711,7 +5711,79 @@ input[type="radio"] {
     box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge);
   }
 
-  /* ── 信号灯统计条 ── */
+  /* ── 内容形态一级 Tab：与阅读器的文章/播客/动态/社交四容器保持一致 ── */
+  .node-shape-tabs {
+    flex: none;
+    display: flex;
+    align-items: stretch;
+    gap: 22px;
+    min-height: 50px;
+    padding: 0 18px;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--dorami-border);
+    scrollbar-width: none;
+  }
+
+  .node-shape-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .node-shape-tab {
+    position: relative;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 64px;
+    padding: 0 3px;
+    color: var(--dorami-muted);
+    font-size: 13px;
+    font-weight: 650;
+    white-space: nowrap;
+    transition: color var(--motion-fast) var(--motion-ease);
+  }
+
+  .node-shape-tab:hover {
+    color: var(--dorami-ink-2);
+  }
+
+  .node-shape-tab.is-active {
+    color: var(--dorami-ink);
+  }
+
+  .node-shape-tab.is-active::after {
+    content: "";
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    bottom: -1px;
+    height: 3px;
+    border-radius: var(--r-pill) var(--r-pill) 0 0;
+    background: var(--dorami-blue);
+  }
+
+  .node-shape-count {
+    min-width: 22px;
+    height: 20px;
+    padding: 0 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--r-pill);
+    background: var(--dorami-well);
+    color: var(--dorami-muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .node-shape-tab.is-active .node-shape-count {
+    background: var(--dorami-wash);
+    color: var(--dorami-blue);
+  }
+
+  /* ── 当前 Tab 内的健康与角色筛选条 ── */
   .signal-strip {
     flex: none;
     display: flex;
@@ -5754,6 +5826,16 @@ input[type="radio"] {
   .signal-stat:hover {
     background: var(--dorami-soft);
     color: var(--dorami-ink-2);
+  }
+
+  .signal-stat:disabled {
+    cursor: not-allowed;
+    opacity: 0.38;
+  }
+
+  .signal-stat:disabled:hover {
+    background: transparent;
+    color: var(--dorami-muted);
   }
 
   .signal-stat-on {
@@ -5825,12 +5907,6 @@ input[type="radio"] {
     flex: none;
     border-radius: var(--r-pill);
     background: var(--group-accent, var(--dorami-blue));
-  }
-
-  .signal-shape-group {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
   }
 
   .signal-strip-tools {
@@ -5957,11 +6033,19 @@ input[type="radio"] {
   }
 
   .board-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
     padding: 56px 24px;
     text-align: center;
     color: var(--dorami-faint);
     font-size: 13px;
     font-weight: 600;
+  }
+
+  .board-empty strong {
+    font: inherit;
   }
 
   /* ── 批量选择模式(方案 A):模式内行首多一列勾选框;勾中行 = wash 状态底
