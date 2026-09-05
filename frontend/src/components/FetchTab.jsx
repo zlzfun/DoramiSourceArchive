@@ -53,19 +53,19 @@ import { collectionRunMessage, TEST_RUN_LIMIT } from '../utils/collection';
 const HEALTH_SIGNAL = { healthy: 'ok', failing: 'fail', running: 'running', never_run: 'idle' };
 
 const SIGNAL_STATS = [
-  { key: 'all', label: '全部节点' },
+  { key: 'all', label: '全部' },
   { key: 'healthy', label: '正常', sig: 'ok' },
   { key: 'failing', label: '失败', sig: 'fail' },
   { key: 'running', label: '运行中', sig: 'running' },
   { key: 'never_run', label: '未运行', sig: 'idle' },
 ];
 
-// 内容形态是独立于信息角色的正交筛选轴；标签与阅读器四个内容容器保持一致。
+// 内容形态是节点目录的一级视图；标签与阅读器四个内容容器保持一致。
 const CONTENT_SHAPES = [
   { key: 'article', label: '文章' },
+  { key: 'podcast', label: '播客' },
   { key: 'bulletin', label: '动态' },
   { key: 'social', label: '社交' },
-  { key: 'podcast', label: '播客' },
 ];
 const CONTENT_SHAPE_LABELS = Object.fromEntries(CONTENT_SHAPES.map(item => [item.key, item.label]));
 
@@ -112,7 +112,8 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   const [fetchProgress, setFetchProgress] = useState({});
   const progressSeenFetcherIdsRef = useRef(new Set());
   const [healthFilter, setHealthFilter] = useState('all');
-  const [shapeFilter, setShapeFilter] = useState('all');
+  // 内容形态是节点目录的一级视图，不与其它形态混排；默认从文章目录进入。
+  const [shapeFilter, setShapeFilter] = useState('article');
   // 信息角色筛选(官方/媒体/个人/榜单):与健康、内容形态正交;点击过滤、再点还原。
   const [roleFilter, setRoleFilter] = useState('all');
 
@@ -121,12 +122,33 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   // 「检视选中」(accent 竖条)与「批量勾选」(wash 底)两种选中语义并存、可叠加。
   const [selectMode, setSelectMode] = useState(false);
   const [checkedIds, setCheckedIds] = useState(() => new Set());
+  const shapeTabRefs = useRef({});
   const exitSelectMode = useCallback(() => { setSelectMode(false); setCheckedIds(new Set()); }, []);
   const toggleChecked = useCallback((id) => setCheckedIds(prev => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   }), []);
+  const selectShape = useCallback((shapeKey) => {
+    if (shapeKey === shapeFilter) return;
+    setShapeFilter(shapeKey);
+    setHealthFilter('all');
+    setRoleFilter('all');
+    // 一级内容目录彼此独立，批量勾选不能跨目录残留。
+    setCheckedIds(new Set());
+  }, [shapeFilter]);
+  const handleShapeTabKeyDown = useCallback((event, index) => {
+    let nextIndex = null;
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % CONTENT_SHAPES.length;
+    if (event.key === 'ArrowLeft') nextIndex = (index - 1 + CONTENT_SHAPES.length) % CONTENT_SHAPES.length;
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = CONTENT_SHAPES.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextShape = CONTENT_SHAPES[nextIndex];
+    selectShape(nextShape.key);
+    requestAnimationFrame(() => shapeTabRefs.current[nextShape.key]?.focus());
+  }, [selectShape]);
   useEffect(() => {
     if (!selectMode) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') exitSelectMode(); };
@@ -338,14 +360,14 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   ), [healthByFetcher]);
 
   const matchesHealth = useCallback((f) => healthFilter === 'all' || statusOf(f) === healthFilter, [healthFilter, statusOf]);
-  const matchesShape = useCallback((f) => shapeFilter === 'all' || contentShapeOf(f) === shapeFilter, [shapeFilter]);
+  const matchesShape = useCallback((f) => contentShapeOf(f) === shapeFilter, [shapeFilter]);
   const matchesRole = useCallback((f) => roleFilter === 'all' || sourceRoleOf(f) === roleFilter, [roleFilter]);
 
   // 目录全量 = registry 节点 ∪ SourceConfig 节点（用户自定源和共享 Podcast）。
   const allNodes = useMemo(() => [...availableFetchers, ...customNodes], [availableFetchers, customNodes]);
 
-  // 三轴筛选计数:健康灯按当前角色与内容形态范围收窄;
-  // 角色计数恒为全目录量(与调度板分组组头的节点数一致,作稳定的身份读数)。
+  // 内容形态是一级 Tab；健康和角色是当前 Tab 内的两个联动筛选轴。
+  // 每个筛选轴的数字都排除自身、纳入另一轴，避免展示一个实际点进去却为空的全局数字。
   const healthCounts = useMemo(() => {
     const scoped = allNodes.filter(f => matchesRole(f) && matchesShape(f));
     const counts = { all: scoped.length };
@@ -364,9 +386,11 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
 
   const roleCounts = useMemo(() => {
     const counts = {};
-    allNodes.forEach(f => { const r = sourceRoleOf(f); counts[r] = (counts[r] || 0) + 1; });
+    allNodes
+      .filter(f => matchesShape(f) && matchesHealth(f))
+      .forEach(f => { const r = sourceRoleOf(f); counts[r] = (counts[r] || 0) + 1; });
     return counts;
-  }, [allNodes]);
+  }, [allNodes, matchesHealth, matchesShape]);
 
   // 当前健康档在所选角色下为空时回落「全部」:角色点选永远有结果,不出现死空态。
   useEffect(() => {
@@ -415,8 +439,9 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     }
     setView('catalog');
     setHealthFilter('all');
-    setShapeFilter('all');
+    setShapeFilter(contentShapeOf(fetcher));
     setRoleFilter('all');
+    setCheckedIds(new Set());
     setSelectedNodeId(sid);
     setHighlightedFetcherId(sid);
   }, [pendingFocus, allNodes, onPendingFocusApplied, showToast, setView]);
@@ -1230,13 +1255,36 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       </div>
 
       <div className="nodespaper">
-        <div className="signal-strip" role="group" aria-label="节点健康、内容形态与角色筛选">
+        <div className="node-shape-tabs" role="tablist" aria-label="节点内容类型" aria-orientation="horizontal">
+          {CONTENT_SHAPES.map((shape, index) => (
+            <button
+              key={shape.key}
+              ref={element => { shapeTabRefs.current[shape.key] = element; }}
+              type="button"
+              role="tab"
+              id={`node-shape-tab-${shape.key}`}
+              aria-controls="node-shape-panel"
+              aria-selected={shapeFilter === shape.key}
+              tabIndex={shapeFilter === shape.key ? 0 : -1}
+              className={`node-shape-tab ${shapeFilter === shape.key ? 'is-active' : ''}`}
+              onClick={() => selectShape(shape.key)}
+              onKeyDown={event => handleShapeTabKeyDown(event, index)}
+            >
+              <span>{shape.label}</span>
+              <span className="node-shape-count">{shapeCounts[shape.key] || 0}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="signal-strip" role="group" aria-label="当前内容类型的健康与角色筛选">
           {SIGNAL_STATS.map((stat, idx) => (
             <div key={stat.key} className="signal-stat-wrap">
               {idx === 1 && <span className="signal-strip-divider" />}
               <button
                 type="button"
                 className={`signal-stat ${healthFilter === stat.key ? 'signal-stat-on' : ''}`}
+                aria-pressed={healthFilter === stat.key}
+                disabled={stat.key !== 'all' && (healthCounts[stat.key] || 0) === 0}
                 onClick={() => setHealthFilter(stat.key)}
               >
                 {stat.sig && <span className={`signal-dot signal-dot-${stat.sig}`} />}
@@ -1246,22 +1294,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             </div>
           ))}
           <span className="signal-strip-divider" />
-          <div className="signal-shape-group" role="group" aria-label="按内容形态筛选">
-            {CONTENT_SHAPES.map(shape => (
-              <button
-                key={shape.key}
-                type="button"
-                className={`signal-stat ${shapeFilter === shape.key ? 'signal-stat-on' : ''}`}
-                aria-pressed={shapeFilter === shape.key}
-                title={`筛选${shape.label}节点；再次点击还原全部形态`}
-                onClick={() => setShapeFilter(prev => (prev === shape.key ? 'all' : shape.key))}
-              >
-                <span className="signal-stat-n">{shapeCounts[shape.key] || 0}</span>
-                <span className="signal-stat-label">{shape.label}</span>
-              </button>
-            ))}
-          </div>
-          <span className="signal-strip-divider" />
           {SOURCE_ROLES.map(role => (
             <button
               key={role.key}
@@ -1269,6 +1301,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               className={`signal-stat ${roleFilter === role.key ? 'signal-stat-on' : ''}`}
               style={{ '--group-accent': role.accent }}
               aria-pressed={roleFilter === role.key}
+              disabled={(roleCounts[role.key] || 0) === 0}
               title={role.blurb}
               onClick={() => setRoleFilter(prev => (prev === role.key ? 'all' : role.key))}
             >
@@ -1292,10 +1325,33 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         </div>
 
 
-        <div className={`nodes-body ${mobileInspectorOpen ? 'inspector-open' : ''}`}>
+        <div
+          className={`nodes-body ${mobileInspectorOpen ? 'inspector-open' : ''}`}
+          role="tabpanel"
+          id="node-shape-panel"
+          aria-labelledby={`node-shape-tab-${shapeFilter}`}
+        >
           <div className={`board ${selectMode ? 'is-selecting' : ''}`}>
             {boardIsEmpty ? (
-              <div className="board-empty">当前筛选条件下没有匹配的节点</div>
+              <div className="board-empty">
+                <strong>
+                  {healthFilter === 'all' && roleFilter === 'all'
+                    ? `暂无${CONTENT_SHAPE_LABELS[shapeFilter]}节点`
+                    : `当前筛选下没有匹配的${CONTENT_SHAPE_LABELS[shapeFilter]}节点`}
+                </strong>
+                {(healthFilter !== 'all' || roleFilter !== 'all') && (
+                  <button
+                    type="button"
+                    className="action-button action-button-quiet min-h-[30px] px-3 text-xs"
+                    onClick={() => {
+                      setHealthFilter('all');
+                      setRoleFilter('all');
+                    }}
+                  >
+                    清除筛选
+                  </button>
+                )}
+              </div>
             ) : (
               groupedBoard.map(section => (
                 <div key={section.id} className="board-group">
