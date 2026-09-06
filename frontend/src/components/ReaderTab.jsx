@@ -314,7 +314,7 @@ export default function ReaderTab({
     articles, articlesLoading, loadingMore, hasMore, handleLoadMore,
     listRef, sentinelRef,
     // 选中文章 / 正文
-    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById,
+    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById, supersedePendingOpen,
     schedulePrefetch, cancelPrefetch,
     activeIndex, prevArticle, nextArticle,
     crumbSource, crumbName, displayBody, displayTranslatedBody, bodyStats,
@@ -991,6 +991,7 @@ export default function ReaderTab({
                 type="button"
                 className="reader-brief-trail-btn"
                 onClick={() => {
+                  supersedePendingOpen(); // 「下一条」尚在途时点返回:作废它,别让迟到的响应又把早报关掉
                   setBriefRestore(briefReturn);
                   setBriefReturn(null);
                   setBriefOpen(true);

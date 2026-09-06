@@ -1310,7 +1310,7 @@ export function useReaderState({
     articles, articlesTotal, articlesLoading, loadingMore, hasMore, handleLoadMore,
     listRef, sentinelRef,
     // 选中文章 / 正文
-    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById,
+    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById, supersedePendingOpen,
     schedulePrefetch, cancelPrefetch,
     activeIndex, prevArticle, nextArticle,
     crumbSource, crumbHost, crumbName, displayBody, displayTranslatedBody, bodyStats,

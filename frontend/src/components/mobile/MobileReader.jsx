@@ -111,7 +111,7 @@ export default function MobileReader({
     articles, articlesLoading, loadingMore, hasMore, handleLoadMore,
     listRef, sentinelRef,
     // 选中文章
-    activeArticle, selectArticle, openArticleById, schedulePrefetch, cancelPrefetch,
+    activeArticle, selectArticle, openArticleById, supersedePendingOpen, schedulePrefetch, cancelPrefetch,
     // 收藏
     favoriteIds, favTogglingId, handleToggleFavorite,
     // 动作单 items(桌面右键三份构建器同源)
@@ -120,13 +120,14 @@ export default function MobileReader({
     subscribedSources,
   } = rs;
   const closeArticle = useCallback(() => {
+    supersedePendingOpen(); // 返回时作废在途的按 id 打开(早报卡 / 深链),迟到响应不再把页面拉回去
     if (briefTrailRef.current) {
       setBriefRestore(briefTrailRef.current);
       briefTrailRef.current = null;
       setTab('brief');
     }
     selectArticle(null);
-  }, [selectArticle]);
+  }, [selectArticle, supersedePendingOpen]);
   // 正文页点标签检索(codex 检视 P2):目的地是过滤后的内容列表,不是早报——从早报进来的也丢掉
   // 返回带、落到所属容器 Tab,否则检索结果被早报页盖住看不见。
   const leaveArticleForSearch = useCallback(() => {
