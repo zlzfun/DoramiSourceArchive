@@ -465,7 +465,7 @@ export default function ReaderTab({
               type="button"
               aria-label="我的早报"
               aria-pressed={briefOpen}
-              onClick={() => { setInterestOpen(false); closeDiscover(); setBriefRestore(null); leaveBriefTrail(); setBriefOpen(true); }}
+              onClick={() => { supersedePendingOpen(); setInterestOpen(false); closeDiscover(); setBriefRestore(null); leaveBriefTrail(); setBriefOpen(true); }}
               className={`reader-vrail-btn ${briefOpen ? 'is-on' : ''}`}
             >
               <Newspaper className="h-[18px] w-[18px]" />
@@ -478,7 +478,7 @@ export default function ReaderTab({
               type="button"
               aria-label={onboardingRequired && !interestOpen ? '我的兴趣(待设置)' : '我的兴趣'}
               aria-pressed={interestOpen}
-              onClick={() => { if (interestOpen) return; closeDiscover(); setBriefOpen(false); setInterestOpen(true); }}
+              onClick={() => { if (interestOpen) return; supersedePendingOpen(); closeDiscover(); setBriefOpen(false); setInterestOpen(true); }}
               className={`reader-vrail-btn ${interestOpen ? 'is-on' : ''}`}
             >
               <Tags className="h-[18px] w-[18px]" />
@@ -1007,8 +1007,13 @@ export default function ReaderTab({
                   className="reader-brief-trail-btn is-next"
                   title={next.title || undefined}
                   onClick={async () => {
-                    const opened = await openArticleById(next.article_id);
+                    const opened = await openArticleById(next.article_id, { silent: true });
                     if (opened) setBriefReturn((prev) => (prev ? { ...prev, index: prev.index + 1, itemId: next.id } : prev));
+                    // 站内取不到(源被隐藏 / 退订)与点卡同款回退:序列带着快照原链;await 之后用户激活可能已过期,当前页跳转
+                    else if (opened === false) {
+                      if (next.source_url) window.location.assign(next.source_url);
+                      else showToast('这条内容已不在库中', 'error');
+                    }
                   }}
                 >
                   <span>早报下一条</span>

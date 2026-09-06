@@ -155,6 +155,7 @@ export default function MobileReader({
   }, [mode, personalDigestEnabled]);
 
   const goTab = (t) => {
+    supersedePendingOpen(); // 任何主动切 Tab(含「我的」/早报)都作废在途的按 id 打开,迟到响应不再把人拉走
     briefTrailRef.current = null; // 主动切 Tab = 结束这一程外出
     if (t === 'brief') setBriefRestore(null); // 点 Tab 进早报是新开,不落回旧位
     if (t === 'me' || t === 'brief') { setTab(t); return; }

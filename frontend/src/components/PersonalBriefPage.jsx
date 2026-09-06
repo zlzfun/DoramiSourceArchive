@@ -381,7 +381,7 @@ export default function PersonalBriefPage({
     if (item.article_id && onOpenArticle) {
       const sequence = (edition?.items || [])
         .filter((row) => row.article_id && !isSocialRow(row))
-        .map((row) => ({ id: row.id ?? row.position, article_id: row.article_id, title: row.snapshot?.title || '' }));
+        .map((row) => ({ id: row.id ?? row.position, article_id: row.article_id, title: row.snapshot?.title || '', source_url: row.snapshot?.source_url || '' }));
       const opened = await onOpenArticle(item.article_id, {
         date: selDate,
         revision: edition?.revision ?? null,
