@@ -56,7 +56,7 @@ function monthLabelOf(key, todayKey) {
 function interestLabelOf(item, snapshot) {
   const codes = item.matched_interest_codes || [];
   if (codes.length === 0) return '';
-  const hit = (snapshot.tags || []).find((tag) => tag.code === codes[0]);
+  const hit = [...(snapshot.tags || []), ...(snapshot.display_tags || [])].find((tag) => tag.code === codes[0]);
   if (hit) return tagName(hit);
   const matched = /「([^」]+)」/.exec(item.selection_reason || snapshot.selection_reason || '');
   return matched ? matched[1] : '';
@@ -65,14 +65,19 @@ function interestLabelOf(item, snapshot) {
 function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) {
   const snapshot = item.snapshot || {};
   const score = qualityScoreText(item.quality_score ?? snapshot.quality_score);
-  const tags = snapshot.tags || [];
+  // display_tags 是读者面投影(规范标签 + 灵活标签,codex 检视 P2);tags 只有规范指派,老快照回退用
+  const tags = Array.isArray(snapshot.display_tags) ? snapshot.display_tags : (snapshot.tags || []);
   const interest = interestLabelOf(item, snapshot);
   const chips = [];
   if (interest) chips.push({ key: 'interest', text: `关注 · ${interest}`, cls: 'is-interest', title: '命中你关注的兴趣' });
   tags
     .filter((tag) => tagName(tag) && tagName(tag) !== interest)
     .slice(0, lead ? 3 : 2)
-    .forEach((tag, index) => chips.push({ key: `${tag.code || tag.id || index}`, text: tagName(tag) }));
+    .forEach((tag, index) => chips.push({
+      key: `${tag.type || 'canonical'}-${tag.code || tag.id || tag.candidate_id || index}`,
+      text: tagName(tag),
+      cls: tag.type === 'extracted' ? 'is-extracted' : '',
+    }));
   // one_sentence_summary 自 v3.45.1 取缔;历史 edition 快照仍带该键,保留回退读取
   const summary = snapshot.summary || snapshot.one_sentence_summary || '';
   const sourceName = snapshot.source_name || source?.name || snapshot.source_id || '未知来源';

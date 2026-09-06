@@ -123,6 +123,11 @@ export default function InterestPage({
   const savedRef = useRef({});      // 服务端已确认的立场(失败回滚用)
   const draftRef = useRef(draft);   // 供 timer / 卸载冲刷读最新草稿
   const timerRef = useRef(null);
+  // 保存串行化(codex 检视 P2):整套替换的 PUT 若并发,后发先至会被先发的旧集覆盖;
+  // 所有保存排进一条 promise 链依次发出,并带单调序号——只有最新一次能改本地态,
+  // 排队时已有更新一次在后面的过时保存直接跳过(最新那次带的是最新草稿)。
+  const chainRef = useRef(Promise.resolve());
+  const seqRef = useRef(0);
   const stateTimerRef = useRef(null);
   const onSavedRef = useRef(onSaved);
   const showToastRef = useRef(showToast);
@@ -165,25 +170,41 @@ export default function InterestPage({
 
   const needle = query.trim().toLocaleLowerCase();
   const itemsOf = (stances) => Object.entries(stances).map(([id, stance]) => ({ tag_id: Number(id), stance }));
-  const commit = useCallback(async (stances, { complete = false, toast = null } = {}) => {
+  const performSave = async (seq, stances, { complete = false, toast = null }) => {
+    const latest = () => seq === seqRef.current;
+    // 过时的自动保存跳过(后面排着更新的一次);完成引导的那次不跳
+    if (!complete && !latest()) return true;
     if (!complete && sameStances(stances, savedRef.current)) return true;
     setSaveState('saving');
     window.clearTimeout(stateTimerRef.current);
     try {
       await saveInterests(itemsOf(stances), { completeOnboarding: complete });
       savedRef.current = stances;
-      setSaveState('saved');
-      stateTimerRef.current = window.setTimeout(() => setSaveState('idle'), 2200);
+      if (latest()) {
+        setSaveState('saved');
+        stateTimerRef.current = window.setTimeout(() => setSaveState('idle'), 2200);
+      }
       if (toast) showToastRef.current?.(toast, 'success');
       onSavedRef.current?.({ onboardingCompleted: complete });
       return true;
     } catch (err) {
       setSaveState('error');
-      setDraft(savedRef.current);
-      showToastRef.current?.(err.message || '保存兴趣失败，已恢复上次保存的设置', 'error');
+      // 只在没有更新编辑在途时回滚草稿,否则会把用户后来的改动一起抹掉
+      if (latest() && timerRef.current == null && sameStances(draftRef.current, stances)) {
+        setDraft(savedRef.current);
+        showToastRef.current?.(err.message || '保存兴趣失败，已恢复上次保存的设置', 'error');
+      } else {
+        showToastRef.current?.(err.message || '保存兴趣失败', 'error');
+      }
       return false;
     }
-  }, []);
+  };
+  const commit = useCallback((stances, opts = {}) => {
+    const seq = ++seqRef.current;
+    const run = chainRef.current.then(() => performSave(seq, stances, opts));
+    chainRef.current = run.then(() => undefined, () => undefined);
+    return run;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const scheduleSave = useCallback(() => {
     window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(() => {
@@ -195,9 +216,12 @@ export default function InterestPage({
     // 卸载:未发出的合并保存立即发出(请求不随组件卸载取消)
     if (timerRef.current) {
       window.clearTimeout(timerRef.current);
-      if (!sameStances(draftRef.current, savedRef.current)) {
-        saveInterests(itemsOf(draftRef.current), { completeOnboarding: false }).catch(() => {});
-      }
+      const stances = draftRef.current;
+      // 排在在途保存之后发出,保持整套替换的先后序
+      chainRef.current = chainRef.current.then(() => {
+        if (sameStances(stances, savedRef.current)) return undefined;
+        return saveInterests(itemsOf(stances), { completeOnboarding: false }).then(() => { savedRef.current = stances; });
+      }).catch(() => {});
     }
     window.clearTimeout(stateTimerRef.current);
   }, []);
