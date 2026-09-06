@@ -7655,12 +7655,23 @@ input[type="radio"] {
     border-bottom: 1px solid var(--dorami-border-soft);
   }
 
+  /* 栏名角色(2026-09-06 统一):文章/播客/动态列头、社交头、发现/兴趣页头的标题同为「这一栏叫什么」,
+     此前三种字阶两种字重(14/600 · 15/700 · 17/700),切换时每次都被看见。统一取列头现值 14/600——
+     出现最多,与源栏头 13/600 恰差一阶。早报报头是刻意的报纸面(标题是日期不是栏名),不入此列。
+     横向不强求对齐:各标题与自己下方内容对齐(列头 16 / 社交 24 / 发现随 920 版心)。
+     早报与兴趣是「我的」页,用报头家族(等宽 kicker + 衬线标题),不入此列——规则见 .interest-body 注释。 */
+  .reader-list-title,
+  .reader-social-title,
+  .reader-disc-title {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: normal;
+    line-height: 1.5;
+    color: var(--dorami-ink);
+  }
   .reader-list-title {
     flex: 1;
     min-width: 0;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--dorami-ink);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -8934,11 +8945,10 @@ input[type="radio"] {
     display: flex;
     align-items: center;
     gap: 10px;
-    height: 52px;
-    padding: 0 24px;
+    height: 53px;               /* 与列头同高,标题同落 19px 基线 */
+    padding: 4px 24px 0;
     border-bottom: 1px solid var(--dorami-border-soft);
   }
-  .reader-social-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
   .reader-social-sub { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); }
   .reader-social-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
   /* 社交头:标题常显于左,搜索框在右侧 actions 组内展开(限宽,紧邻开关钮);
@@ -9205,7 +9215,6 @@ input[type="radio"] {
   .reader-disc-body { max-width: 920px; margin: 0 auto; }
 
   .reader-disc-title-row { display: flex; align-items: baseline; gap: 12px; }
-  .reader-disc-title { font-size: 17px; font-weight: 700; color: var(--dorami-ink); }
   .reader-disc-hint { font-size: 11.5px; color: var(--dorami-faint); }
 
   .reader-disc-tools { display: flex; align-items: center; gap: 10px; margin: 14px 0; }
@@ -11380,6 +11389,150 @@ input[type="radio"] {
   .brief-days, .brief-sheet { grid-column: auto; }
   .brief-sheet { overflow: visible; }
   .brief-days-scroll { max-height: 320px; }
+}
+
+/* ── 我的兴趣(issue #23 第二项,弹窗改页面;样页 docs/design/dorami-interest-quiet.html)──
+   与早报页同构:选择台账顶替源栏槽位(canvas 底、源行语法),标签目录面占「条目列 + 阅读窗」整幅。
+   关注态只用 accent 描边高光(拍板去勾选框与 wash 底,名称着 accent-ink 作第二通道);屏蔽态 ink 4% 底 +
+   划线,刻意不用红——屏蔽不是错误。保存条 sticky 贴面底,只在脏态/引导态出现。未分层区(与 .brief-sheet 同理)。 */
+.interest-ledger { background: var(--dorami-canvas); overflow: hidden; }
+.interest-ledger-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 16px; }
+.interest-ledger .reader-src-label b { font-family: var(--mono); font-weight: 500; letter-spacing: 0; margin-left: 5px; color: var(--dorami-faint); }
+.interest-jump {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: var(--dorami-muted);
+  text-align: left;
+  transition: background var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+}
+.interest-jump:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+.interest-jump.is-on { background: var(--dorami-surface); box-shadow: var(--sh-1); color: var(--dorami-ink); }
+.interest-jump-name { flex: 1; min-width: 0; font-size: 13px; }
+.interest-jump.is-on .interest-jump-name { font-weight: 600; }
+.interest-jump-n { flex: none; font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.interest-pick { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px; color: var(--dorami-ink); cursor: default; user-select: none; }
+.interest-pick-x { cursor: pointer; }
+.interest-pick:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+.interest-pick-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--dorami-accent); }
+.interest-pick.is-mute .interest-pick-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--dorami-faint); }
+.interest-pick.is-mute .interest-pick-name { color: var(--dorami-muted); text-decoration: line-through; text-decoration-color: var(--dorami-faint); }
+.interest-pick-name { flex: 1; min-width: 0; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 行尾同一格:常态是分面名右对齐,悬停/聚焦同位置换成 ×(不再右留空槽) */
+.interest-pick-end { flex: none; display: grid; place-items: center end; min-width: 28px; height: 18px; }
+.interest-pick-end > * { grid-area: 1 / 1; }
+/* 分面名淡出后仍是 opacity<1 的层叠上下文,会盖在 × 之上吃掉点击:不接事件,× 提一层 */
+.interest-pick-facet { pointer-events: none; }
+.interest-pick-x { position: relative; z-index: 1; }
+.interest-pick-facet { font-size: 10.5px; letter-spacing: 0.06em; color: var(--dorami-faint); transition: opacity var(--motion-fast) ease; }
+.interest-pick-x { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 6px; color: var(--dorami-faint); font-size: 14px; line-height: 1; opacity: 0; transition: opacity var(--motion-fast) ease, background var(--motion-fast) ease; }
+.interest-pick:hover .interest-pick-facet, .interest-pick:focus-within .interest-pick-facet { opacity: 0; }
+.interest-pick:hover .interest-pick-x, .interest-pick-x:focus-visible { opacity: 1; }
+.interest-pick-x:hover { background: color-mix(in srgb, var(--dorami-ink) 8%, transparent); color: var(--dorami-ink); }
+.interest-ledger-head { justify-content: space-between; gap: 8px; }
+.interest-save-state { flex: none; font-size: 11px; font-weight: 500; color: var(--dorami-faint); letter-spacing: 0.02em; }
+.interest-save-state.is-error { color: var(--state-warn); }
+.interest-ledger-empty { padding: 6px 10px 2px; font-size: 12px; line-height: 1.6; color: var(--dorami-faint); }
+
+.interest-sheet {
+  grid-column: 3 / -1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--rd-list-bg);
+}
+/* 页头规则:「我的」页(早报/兴趣)用报头家族(等宽 kicker + 衬线标题,.brief-mast 同款),容器与目录页用
+   14/600 栏名工具头;版心 1120 同早报。报头随正文滚动;搜索框沿发现页 .reader-disc-search 形制。 */
+.interest-body { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; position: relative; }
+.interest-body-inner { width: 100%; max-width: 1120px; margin: 0 auto; padding: 34px 44px 72px; }
+.interest-body .brief-mast-title { font-family: var(--font-serif); font-size: 32px; line-height: 1.15; }
+.interest-body .brief-mast-sub, .interest-m-head .brief-mast-sub { line-height: 1.7; max-width: 640px; }
+.interest-mast-actions { flex: none; display: flex; align-items: center; gap: 10px; }
+.interest-search { flex: none; width: 220px; }
+.interest-search > svg { flex: none; width: 13px; height: 13px; }
+.interest-search input { font-size: 12.5px; }
+.interest-search input::-webkit-search-cancel-button { display: none; }
+.interest-search-clear { flex: none; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 6px; color: var(--dorami-faint); }
+.interest-search-clear svg { width: 12px; height: 12px; }
+.interest-search-clear:hover { background: color-mix(in srgb, var(--dorami-ink) 8%, transparent); color: var(--dorami-ink); }
+
+.interest-sec { margin-top: 30px; }
+.interest-sec .brief-sec-head { margin-bottom: 12px; }
+.interest-sec-hint { font-size: 12px; color: var(--dorami-faint); margin-left: 2px; }
+.interest-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.interest-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px 10px;
+  border: 1px solid var(--dorami-card-bd);
+  border-radius: var(--r-card);
+  background: var(--dorami-surface);
+  box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge);
+  color: var(--dorami-ink);
+  cursor: pointer;
+  user-select: none;
+  transition: box-shadow var(--motion-medium) var(--motion-ease), transform var(--motion-medium) var(--motion-ease), background var(--motion-fast) ease;
+}
+.interest-card:hover { box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge); transform: translateY(-1px); }
+.interest-card:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 2px; }
+.interest-card-name { font-size: 13.5px; font-weight: 600; line-height: 1.3; }
+.interest-card-desc { font-size: 12px; line-height: 1.55; color: var(--dorami-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* 脚部字号写容器:内含 button(屏蔽)靠继承 */
+.interest-card-foot { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 4px; min-height: 20px; font-size: 11px; }
+.interest-card-kind { font-size: 10.5px; letter-spacing: 0.08em; color: var(--dorami-faint); }
+.interest-card-heat { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.interest-card-heat small { font-size: 10px; margin-left: 3px; opacity: 0.8; }
+.interest-card-ban {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--dorami-faint);
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease, background var(--motion-fast) ease;
+}
+.interest-card-ban svg { width: 12px; height: 12px; }
+.interest-card:hover .interest-card-ban, .interest-card-ban:focus-visible { opacity: 1; }
+.interest-card-ban:hover { background: color-mix(in srgb, var(--dorami-ink) 7%, transparent); color: var(--dorami-ink); }
+.interest-card.is-follow { box-shadow: inset 0 0 0 1.5px var(--dorami-accent), var(--sh-1); }
+.interest-card.is-follow:hover { box-shadow: inset 0 0 0 1.5px var(--dorami-accent), var(--sh-2); }
+.interest-card.is-follow .interest-card-name { color: var(--dorami-accent-ink); }
+.interest-card.is-mute { background: color-mix(in srgb, var(--dorami-ink) 4%, var(--rd-list-bg)); box-shadow: none; border-color: var(--dorami-border-soft); }
+.interest-card.is-mute:hover { box-shadow: none; }
+.interest-card.is-mute .interest-card-name { color: var(--dorami-muted); text-decoration: line-through; text-decoration-color: var(--dorami-faint); }
+.interest-card.is-mute .interest-card-desc { color: var(--dorami-faint); }
+.interest-card.is-mute .interest-card-ban { opacity: 1; color: var(--dorami-muted); background: color-mix(in srgb, var(--dorami-ink) 7%, transparent); }
+.interest-more { margin-top: 12px; display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px; border-radius: var(--r-control); font-size: 12px; font-weight: 500; color: var(--dorami-muted); }
+.interest-more:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); color: var(--dorami-ink); }
+.interest-more svg { width: 13px; height: 13px; }
+
+/* 引导态「完成 / 稍后再说」(报头右侧);.interest-btn 是本页唯一按钮件 */
+.interest-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 14px; border-radius: var(--r-control); font-size: 12.5px; font-weight: 600; color: var(--dorami-muted); transition: background var(--motion-fast) ease, color var(--motion-fast) ease; }
+.interest-btn:hover { background: color-mix(in srgb, var(--dorami-ink) 6%, transparent); color: var(--dorami-ink); }
+.interest-btn:disabled { opacity: 0.55; pointer-events: none; }
+.interest-btn svg { width: 14px; height: 14px; }
+.interest-btn.is-primary { background: var(--dorami-accent); color: #fff; box-shadow: var(--sh-1); }
+.interest-btn.is-primary:hover { background: var(--dorami-accent-ink); color: #fff; }
+@media (prefers-reduced-motion: reduce) {
+  .interest-card:hover { transform: none; }
+}
+/* ≤1024 单列堆叠(同 .brief-sheet 的理由) */
+@media (max-width: 1024px) {
+  .interest-ledger, .interest-sheet { grid-column: auto; }
+  .interest-sheet { overflow: visible; }
+  .interest-ledger-scroll { max-height: 320px; }
 }
 
 /* ── CMS taxonomy / Candidate 治理 ── */

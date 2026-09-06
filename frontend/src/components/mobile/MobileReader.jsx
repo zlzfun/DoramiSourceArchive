@@ -32,7 +32,7 @@ import MobileSourceDrawer from './MobileSourceDrawer';
 import MobileMePage from './MobileMePage';
 import ActionSheet from './ActionSheet';
 import PersonalBriefPage from '../PersonalBriefPage';
-import InterestManager from '../InterestManager';
+import InterestPage from '../InterestPage';
 import { dayKeyOf } from '../../utils/readerTime';
 
 // 静态 noop:ArticleRow 的 onContextMenu 契约位——移动端 contextmenu 由外层
@@ -71,6 +71,8 @@ export default function MobileReader({
   const [tab, setTab] = useState('article');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sheet, setSheet] = useState(null); // { title, items, anchorKey }
+  // 我的兴趣(issue #23 第二项):整页层(从 我的 进),首登引导自动打开一次但不锁层——返回键可退,
+  // 「我的」行挂点直到完成或跳过
   const [interestOpen, setInterestOpen] = useState(false);
   const [interestVersion, setInterestVersion] = useState(0);
   const closeBriefBeforeArticleOpen = useCallback(() => {
@@ -130,6 +132,10 @@ export default function MobileReader({
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;
+  useEffect(() => {
+    if (onboardingRequired) setInterestOpen(true);
+  }, [onboardingRequired]);
+  const closeInterest = useCallback(() => setInterestOpen(false), []);
 
   // mode 被深链/点源/发现页预览改变时,内容 Tab 跟随所属容器(停在「我的」则不动)
   useEffect(() => {
@@ -188,6 +194,7 @@ export default function MobileReader({
   useLayerHistory(discover, closeDiscover);
   // 合集详情是发现页之上的一层:返回先退详情、再退发现页(注册序在 discover 之后)
   useLayerHistory(Boolean(discoverCollectionId), () => setDiscoverCollectionId(null));
+  useLayerHistory(interestOpen, closeInterest);
   useLayerHistory(drawerOpen, () => setDrawerOpen(false));
   useLayerHistory(Boolean(sheet), () => setSheet(null));
 
@@ -287,6 +294,7 @@ export default function MobileReader({
             onShowFavorites={() => { goFavorites(); setTab(mode); }}
             onOpenDiscover={() => openDiscover()}
             onManageInterests={personalDigestEnabled ? () => setInterestOpen(true) : undefined}
+            interestAttention={onboardingRequired}
             onOpenSettings={onOpenSettings}
             onLogout={onLogout}
           />
@@ -520,17 +528,31 @@ export default function MobileReader({
         items={sheet?.items || []}
         onClose={() => setSheet(null)}
       />
-      <InterestManager
-        open={interestOpen || onboardingRequired}
-        onboarding={onboardingRequired}
-        onClose={() => setInterestOpen(false)}
-        onSaved={({ onboardingCompleted } = {}) => {
-          setInterestVersion((value) => value + 1);
-          setInterestOpen(false);
-          if (onboardingCompleted) onUserUpdated?.({ interest_onboarding_completed: true });
-        }}
-        showToast={showToast}
-      />
+      {/* ── 我的兴趣(整页层,与发现页同构;引导完成后落早报 Tab) ── */}
+      {interestOpen && (
+        <div className="m-page" role="region" aria-label="我的兴趣">
+          <div className="m-topbar on-pane">
+            <button type="button" className="m-iconbtn" onClick={closeInterest} aria-label="返回">
+              <ChevronLeft />
+            </button>
+            <span className="m-title">我的兴趣</span>
+          </div>
+          <InterestPage
+            mobile
+            onboarding={onboardingRequired}
+            showToast={showToast}
+            onSaved={({ onboardingCompleted } = {}) => {
+              setInterestVersion((value) => value + 1);
+              if (onboardingCompleted) {
+                onUserUpdated?.({ interest_onboarding_completed: true });
+                setInterestOpen(false);
+                setBriefRestore(null);
+                setTab('brief');
+              }
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -45,7 +45,7 @@ import SocialFlow from './SocialFlow';
 import AnnouncementBanner from './AnnouncementBanner';
 import PodcastAudioPanel, { PodcastCover } from './PodcastAudioPanel';
 import PersonalBriefPage from './PersonalBriefPage';
-import InterestManager from './InterestManager';
+import InterestPage from './InterestPage';
 import AnalysisTagChip from './AnalysisTagChip';
 import { excerptOf, hostOf } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
@@ -272,16 +272,23 @@ export default function ReaderTab({
   const [briefReturn, setBriefReturn] = useState(null);
   const [briefRestore, setBriefRestore] = useState(null); // 返回时交还早报页落位的那份上下文
   const leaveBriefTrail = useCallback(() => setBriefReturn(null), []);
+  // 我的兴趣(issue #23 第二项,弹窗改页面):与早报同为「顶替源栏槽位 + 整幅右栏」的页面态;
+  // 点击即保存(页内 600ms 合并),没有草稿态,离开无需确认;首登引导自动打开一次但不锁页
+  // (视图轨照常可走,轨钮挂点直到完成或跳过)。
   const [interestOpen, setInterestOpen] = useState(false);
   const [interestVersion, setInterestVersion] = useState(0);
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;
+  useEffect(() => {
+    if (onboardingRequired) setInterestOpen(true);
+  }, [onboardingRequired]);
+  const pageOpen = briefOpen || interestOpen;
 
   useEffect(() => {
-    if (!personalDigestEnabled) setBriefOpen(false);
+    if (!personalDigestEnabled) { setBriefOpen(false); setInterestOpen(false); }
   }, [personalDigestEnabled]);
-  const closeBriefBeforeArticleOpen = useCallback(() => setBriefOpen(false), []);
+  const closeBriefBeforeArticleOpen = useCallback(() => { setBriefOpen(false); setInterestOpen(false); }, []);
 
   const {
     // 源目录 / 订阅
@@ -333,7 +340,7 @@ export default function ReaderTab({
   const resyncListScrollbar = useOverlayScrollbar(
     listRef,
     listThumbRef,
-    !briefOpen && !discover && mode !== 'social',
+    !pageOpen && !discover && mode !== 'social',
   );
 
   // 列表内容高度变化(切源/追加/加载态)后重算浮层滚动条滑块
@@ -410,12 +417,26 @@ export default function ReaderTab({
               type="button"
               aria-label="我的早报"
               aria-pressed={briefOpen}
-              onClick={() => { closeDiscover(); setBriefRestore(null); leaveBriefTrail(); setBriefOpen(true); }}
+              onClick={() => { setInterestOpen(false); closeDiscover(); setBriefRestore(null); leaveBriefTrail(); setBriefOpen(true); }}
               className={`reader-vrail-btn ${briefOpen ? 'is-on' : ''}`}
             >
               <Newspaper className="h-[18px] w-[18px]" />
               <span className="reader-vrail-label">早报</span>
               <span className="reader-vrail-tip">我的早报</span>
+            </button>
+            {/* 兴趣紧邻早报(2026-09-06 拍板):两页同为「我的」页、同用报头家族,并排成一组,
+                其余容器与目录页另成两组 */}
+            <button
+              type="button"
+              aria-label={onboardingRequired && !interestOpen ? '我的兴趣(待设置)' : '我的兴趣'}
+              aria-pressed={interestOpen}
+              onClick={() => { if (interestOpen) return; closeDiscover(); setBriefOpen(false); setInterestOpen(true); }}
+              className={`reader-vrail-btn ${interestOpen ? 'is-on' : ''}`}
+            >
+              <Tags className="h-[18px] w-[18px]" />
+              {onboardingRequired && !interestOpen && <span className="vrail-btn-dot" aria-hidden="true" />}
+              <span className="reader-vrail-label">兴趣</span>
+              <span className="reader-vrail-tip">{onboardingRequired && !interestOpen ? '我的兴趣 · 待设置' : '我的兴趣'}</span>
             </button>
             <span className="reader-vrail-divider" aria-hidden="true" />
           </>
@@ -433,9 +454,9 @@ export default function ReaderTab({
             key={view}
             type="button"
             aria-label={label}
-            aria-pressed={!briefOpen && railActive === view}
-            onClick={() => { setBriefOpen(false); leaveBriefTrail(); goView(view); }}
-            className={`reader-vrail-btn ${!briefOpen && railActive === view ? 'is-on' : ''}`}
+            aria-pressed={!pageOpen && railActive === view}
+            onClick={() => { setInterestOpen(false); setBriefOpen(false); leaveBriefTrail(); goView(view); }}
+            className={`reader-vrail-btn ${!pageOpen && railActive === view ? 'is-on' : ''}`}
           >
             <Icon className="h-[18px] w-[18px]" />
             <span className="reader-vrail-label">{short}</span>
@@ -448,26 +469,13 @@ export default function ReaderTab({
         <button
           type="button"
           aria-label="发现"
-          aria-pressed={!briefOpen && discover}
-          onClick={() => { setBriefOpen(false); leaveBriefTrail(); openDiscover(); }}
-          className={`reader-vrail-btn ${!briefOpen && discover ? 'is-on' : ''}`}
+          aria-pressed={!pageOpen && discover}
+          onClick={() => { setInterestOpen(false); setBriefOpen(false); leaveBriefTrail(); openDiscover(); }}
+          className={`reader-vrail-btn ${!pageOpen && discover ? 'is-on' : ''}`}
         >
           <Compass className="h-[18px] w-[18px]" />
           <span className="reader-vrail-label">发现</span>
         </button>
-        {personalDigestEnabled && (
-          <button
-            type="button"
-            aria-label="管理个人兴趣"
-            aria-expanded={interestOpen || onboardingRequired}
-            onClick={() => setInterestOpen(true)}
-            className="reader-vrail-btn"
-          >
-            <Tags className="h-[18px] w-[18px]" />
-            <span className="reader-vrail-label">兴趣</span>
-            <span className="reader-vrail-tip">我的兴趣</span>
-          </button>
-        )}
 
         {/* 轨底(standalone,可发现性波 v3.45):工具钮常态可见——hover 滑出菜单
             (2026-07-24 拍板)退役,上量后实证「常态只见头像」让新用户找不到反馈/设置,
@@ -533,7 +541,7 @@ export default function ReaderTab({
       </nav>
 
       {/* ── 源栏 · 我的订阅 ── */}
-      {!briefOpen && <aside className="reader-col reader-col-sources">
+      {!pageOpen && <aside className="reader-col reader-col-sources">
         <div className="reader-sources-inner">
         <div className="reader-src-head">
           <span className="reader-src-title">我的订阅</span>
@@ -677,8 +685,26 @@ export default function ReaderTab({
         />
       )}
 
+      {/* ── 我的兴趣(issue #23 第二项):选择台账顶替源栏槽位 + 标签目录面占整幅;
+             引导完成后直接落早报页——读者立刻看到兴趣起了作用 ── */}
+      {interestOpen && (
+        <InterestPage
+          onboarding={onboardingRequired}
+          showToast={showToast}
+          onSaved={({ onboardingCompleted } = {}) => {
+            setInterestVersion((value) => value + 1);
+            if (onboardingCompleted) {
+              onUserUpdated?.({ interest_onboarding_completed: true });
+              setInterestOpen(false);
+              setBriefRestore(null);
+              setBriefOpen(true);
+            }
+          }}
+        />
+      )}
+
       {/* ── 发现页:占据 条目列+阅读窗 的整片区域(源栏保持在场,订阅结果即时可见) ── */}
-      {!briefOpen && discover && (
+      {!pageOpen && discover && (
         <DiscoverPage
           sources={discoverSources}
           subscribedIds={subscribedIds}
@@ -700,7 +726,7 @@ export default function ReaderTab({
       )}
 
       {/* ── 社交媒体流(第三容器):占「条目列 + 阅读窗」整幅,取代四带式 ── */}
-      {!briefOpen && !discover && socialView && (
+      {!pageOpen && !discover && socialView && (
         <SocialFlow
           articles={articles}
           sourceMap={sourceMap}
@@ -739,7 +765,7 @@ export default function ReaderTab({
       )}
 
       {/* ── 条目列 ── */}
-      {!briefOpen && !discover && !socialView && (
+      {!pageOpen && !discover && !socialView && (
       <section className="reader-col reader-col-list">
         <div className="reader-list-inner">
         <div className="reader-list-head">
@@ -902,7 +928,7 @@ export default function ReaderTab({
       )}
 
       {/* ── 阅读窗 ── */}
-      {!briefOpen && !discover && !socialView && (
+      {!pageOpen && !discover && !socialView && (
       <section className="reader-col reader-col-read">
         {/* 早报外出返回带(issue #23 三稿):从早报点进来的这一程里常驻阅读窗顶部,不随文章切换重绘。
             左=返回我的早报(落回同一版同一卷动位置),右=早报下一条(顺着本版读完不必回早报)。 */}
@@ -1192,7 +1218,7 @@ export default function ReaderTab({
       </section>
       )}
 
-      {!briefOpen && !discover && (
+      {!pageOpen && !discover && (
         <ReaderAiPanel
           aiEnabled={aiEnabled}
           activeArticle={activeArticle}
@@ -1205,17 +1231,6 @@ export default function ReaderTab({
       {ctxMenu && (
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={closeCtxMenu} />
       )}
-      <InterestManager
-        open={interestOpen || onboardingRequired}
-        onboarding={onboardingRequired}
-        onClose={() => setInterestOpen(false)}
-        onSaved={({ onboardingCompleted } = {}) => {
-          setInterestVersion((value) => value + 1);
-          setInterestOpen(false);
-          if (onboardingCompleted) onUserUpdated?.({ interest_onboarding_completed: true });
-        }}
-        showToast={showToast}
-      />
     </div>
   );
 }
