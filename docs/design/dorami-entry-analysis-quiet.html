@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>条目行 · 分数与标签 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   阅读器中栏条目行:分数与标签(issue #23 第三项)· 静默仪器样页 · 2026-09-06 · 一稿
+
+   从零起稿。条目行的唯一职责是「扫一眼,决定读不读」,元素按扫视优先级只分三档:
+   标题(唯一响亮)> 摘要(安静)> 元信息(最安静:源、时间、分类、分数)。分数与标签
+   都是元信息——它们辅助决定,不是内容本身;现状把二者做成两枚同款饱和胶囊、单独占一行、
+   夹在源名与标题之间,等于在标题上方又放了一排「小标题」,与左侧未读点、右上收藏星
+   在一个角落里抢眼,这就是拥挤与违和的来源。
+
+   ① **分数是数字,不是标签**:全站分数已有一条身份线——速读卡 38px 衬线渐变数字、早报卡
+      22px 衬线渐变数字;列表是第三档:**13px 衬线实色数字(Charter/Cambria/Baskerville 栈,
+      齐线数字,ink-2)**,同一字体家族即同一身份,降档到不着饱和色、不上渐变(渐变=AI 触点
+      身份记号,每行一个渐变就成了噪声;衬线本身已经在说「这是那个分数」)。
+      不绑阈值:#22 会改名改分布,列表只负责把数忠实摆出来。
+   ② **标签是分类,不是徽章**:退成元信息文字,跟在源名后面——「Sean Goedecke · 观点」,
+      与「The Verge · Tech」一样的编辑惯例,同字号同色(11.5 faint)。饱和色胶囊只留给
+      阅读窗标题下的标签行(那里是看细节的地方)与早报卡。源名过长时源名先截断,分类保住。
+   ③ **不新增一行**:分数落在顶部元信息行右缘、时间之前(两者字体家族不同,不会读混:
+      衬线 13/600 ink-2 对无衬线 11.5/400 faint),分类落在同一行左半。条目回到三行
+      「元信息 / 标题 / 摘要」——分析晚到(#15)只在这一行里横向填字,**行高不变、标题不动**。
+      分数槽固定宽度(min-width 2.4em):没有分数时留空,数落地时时间不位移。
+   ④ **分析中**:没有可读结果且 pending/running 时,分数槽显示 faint 小字「分析中」——它占的
+      正是数字将来的位置,落地即换成数;已有旧分的「更新中」不进列表(阅读窗承担),列表只画
+      稳定事实。
+   ⑤ **左角与右角各归其位**:左侧栏只剩未读点(标题行),右上只剩时间与悬停星标——分数与分类
+      都在元信息行内,不再有第三种东西挤进任一角。
+   ⑥ 动态(bulletin)行同一规则:单行标题,元信息行带分类与分数;播客行不动(它有自己的封面布局,
+      不参与本轮)。移动壳复用同一张 ArticleRow,自动同步。
+
+   备选(同页下方):B「分数左列」——数字放元信息行最左,成一列对齐的评分栏(HN 分数式),
+   扫视最快但与标题行左侧未读点同占左角;C「标题尾数」——数字紧跟标题末尾,随文流动,
+   不占固定位,但数字混进标题文字里。推荐 A。
+   拍板(2026-09-06):采用 A;分类留在列内,列表分数实色 ink-2。实现见 ReaderTab.jsx ArticleRow
+   (.reader-entry-tag / .reader-entry-score),隔离栈实测有分/无分行元信息行高一致、时间右缘逐行同位。
+   纪律:全部 token 化,暗色自动翻转;饱和色只在未读点与收藏星;不引第二色系。
+   行数据为 dev 库真实条目(Sean Goedecke 五篇)+ 混合源示意。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif;
+  --serif-num: Charter, Cambria, Baskerville, var(--font-serif);
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-wash: rgba(91, 84, 232, 0.08); --dorami-well: #f1f5f9;
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-soft: rgba(11, 18, 32, 0.06);
+  --dorami-border-strong: rgba(11, 18, 32, 0.18);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-pill: 9999px;
+  --motion-fast: 150ms; --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ai-g1: #3f7bf6; --ai-g2: #8b52f4;
+  --rd-list-bg: var(--dorami-soft);
+  --star: #f59e0b;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-wash: rgba(124, 112, 235, 0.13);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-soft: rgba(255, 255, 255, 0.07);
+  --dorami-border-strong: rgba(255, 255, 255, 0.22);
+  --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --ai-g1: #6ea3ff; --ai-g2: #ab86ff;
+  --rd-list-bg: var(--dorami-well);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink); font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+svg { flex: none; }
+
+.page { padding: 26px 36px 56px; max-width: 1560px; margin: 0 auto; }
+.page-head { display: flex; align-items: center; gap: 14px; min-height: 48px; margin-bottom: 8px; }
+.page-title { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; }
+.page-sub { font-size: 12.5px; color: var(--dorami-muted); max-width: 960px; line-height: 1.7; margin-bottom: 22px; }
+.head-tools { margin-left: auto; display: flex; gap: 8px; }
+.head-tool { height: 32px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border-radius: var(--r-control); color: var(--dorami-ink-2); border: 1px solid var(--dorami-border); background: var(--dorami-surface); font-size: 12px; font-weight: 600; }
+.head-tool.is-on { color: var(--dorami-accent-ink); background: var(--dorami-wash); border-color: transparent; }
+.zone-head { display: flex; align-items: baseline; gap: 10px; margin: 30px 2px 12px; }
+.zone-title { font-size: 14px; font-weight: 700; }
+.zone-sub { font-size: 12px; color: var(--dorami-muted); }
+.frames { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
+.frame { flex: none; }
+.frame-note { font-size: 11.5px; line-height: 1.65; color: var(--dorami-faint); margin: 8px 2px 0; max-width: 372px; }
+.frame-note b { color: var(--dorami-ink-2); font-weight: 600; }
+
+/* ── 条目列容器:复刻 .reader-list 372 宽 + soft 底 ── */
+.col { width: 372px; background: var(--rd-list-bg); border: 1px solid var(--dorami-border-soft); border-radius: var(--r-card); padding: 4px 6px 10px; overflow: hidden; }
+.col.is-mobile { width: 375px; padding: 0 0 10px; border-radius: 22px; }
+.col-head { display: flex; align-items: center; height: 44px; padding: 0 10px 0 10px; }
+.col-title { font-size: 14px; font-weight: 600; }
+.col-tools { margin-left: auto; display: flex; gap: 6px; color: var(--dorami-faint); }
+.col-tools span { width: 26px; height: 26px; display: grid; place-items: center; }
+.col-tools svg { width: 15px; height: 15px; }
+.date-label { padding: 12px 12px 5px 16px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+
+/* ── 条目行(复刻 .reader-entry 现役规格,分析部分为新稿) ── */
+.entry { display: block; width: 100%; text-align: left; padding: 10px 6px 10px 16px; border-radius: var(--r-control); transition: background 130ms var(--motion-ease); }
+.entry:hover { background: color-mix(in srgb, var(--dorami-ink) 4%, transparent); }
+.entry.is-active { background: var(--dorami-surface); box-shadow: var(--sh-1); }
+.entry-top { display: flex; align-items: center; gap: 7px; margin-bottom: 3px; min-width: 0; }
+.entry-logo { flex: none; width: 15px; height: 15px; display: grid; place-items: center; font-size: 12px; line-height: 1; }
+.entry-src { flex: 0 1 auto; min-width: 0; font-size: 11.5px; color: var(--dorami-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ② 分类 = 源名后的元信息文字 */
+.entry-tag { flex: none; font-size: 11.5px; color: var(--dorami-faint); white-space: nowrap; }
+.entry-tag::before { content: '·'; margin: 0 5px 0 -1px; }
+/* ①③ 分数槽:衬线齐线数字,右缘固定槽,时间之前 */
+.entry-score { flex: none; margin-left: auto; min-width: 2.4em; text-align: right; font-family: var(--serif-num); font-size: 13px; font-weight: 600; line-height: 1; color: var(--dorami-ink-2); font-variant-numeric: lining-nums tabular-nums; letter-spacing: -0.01em; }
+.entry-score.is-pending { font-family: inherit; font-size: 11px; font-weight: 400; color: var(--dorami-faint); letter-spacing: 0; }
+.entry-time { flex: none; margin-left: auto; margin-right: 8px; font-size: 11.5px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.entry-score + .entry-time { margin-left: 3px; }
+.entry-titlerow { position: relative; display: block; }
+.unread-dot { position: absolute; left: -12px; top: 7px; width: 7px; height: 7px; border-radius: 9999px; background: var(--dorami-accent); }
+.entry-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; padding-right: 24px; font-size: 14px; font-weight: 600; line-height: 1.5; color: var(--dorami-ink); }
+.entry.is-bulletin { padding-top: 7px; padding-bottom: 7px; }
+.entry.is-bulletin .entry-title { font-size: 13px; -webkit-line-clamp: 1; }
+.entry-fav { position: absolute; top: 1px; right: 8px; display: inline-flex; color: var(--dorami-faint); opacity: 0; transition: opacity 140ms ease; }
+.entry:hover .entry-fav { opacity: 1; }
+.entry-fav.is-on { opacity: 1; color: var(--star); }
+.entry-fav svg { width: 15px; height: 15px; }
+.entry-excerpt { display: block; margin-top: 2px; font-size: 12.5px; line-height: 1.55; color: var(--dorami-faint); white-space: nowrap; overflow: hidden; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+.col.is-mobile .entry-time { margin-right: 0; }
+.col.is-mobile .entry-fav { right: 2px; }
+.col.is-mobile .entry { padding: 10px 12px 10px 18px; border-radius: 0; }
+
+/* 页级开关:隐藏分类 → 只在阅读窗展示 */
+.page.no-tag .entry-tag { display: none; }
+
+/* ── 现状复刻(对照用) ── */
+.old-analysis { display: flex; align-items: center; gap: 5px; margin: 4px 0 3px; }
+.old-chip { display: inline-flex; align-items: center; min-height: 20px; padding: 0 7px; border-radius: var(--r-pill); background: var(--dorami-wash); color: var(--dorami-accent-ink); font-size: 11px; font-weight: 700; line-height: 1; }
+.old-src { flex: 1; }
+
+/* ── 备选 B:分数左列 ── */
+.entry.alt-b .entry-score { order: -1; margin-left: 0; text-align: left; min-width: 2.2em; }
+/* ── 备选 C:标题尾数 ── */
+.entry.alt-c .entry-score { display: none; }
+.title-score { display: inline-block; margin-left: 6px; vertical-align: 1px; font-family: var(--serif-num); font-size: 12.5px; font-weight: 600; color: var(--dorami-ink-2); font-variant-numeric: lining-nums tabular-nums; }
+
+/* ── 身份线:三档同一字体家族 ── */
+.ladder { display: flex; align-items: flex-end; gap: 36px; padding: 18px 22px; background: var(--dorami-surface); border: 1px solid var(--dorami-border-soft); border-radius: var(--r-card); width: max-content; }
+.ladder-item { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.ladder-num { font-family: var(--serif-num); font-weight: 700; line-height: 1; font-variant-numeric: lining-nums tabular-nums; }
+.ai-grad-text { background: linear-gradient(135deg, var(--ai-g1), var(--ai-g2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.ladder-cap { font-size: 11px; color: var(--dorami-faint); letter-spacing: 0.04em; }
+</style>
+</head>
+<body>
+<div class="page" id="page">
+  <div class="page-head">
+    <div class="page-title">条目行 · 分数与标签</div>
+    <div class="head-tools">
+      <button class="head-tool is-on" id="tagToggle" type="button">分类在列</button>
+      <button class="head-tool" id="landToggle" type="button">模拟分数落地</button>
+      <button class="head-tool" id="themeToggle" type="button">暗色</button>
+    </div>
+  </div>
+  <p class="page-sub">条目行只有三档音量:标题响、摘要轻、元信息最轻。分数与分类都是元信息,回到顶部那一行里去——分数是衬线数字(与速读卡、早报卡同一家族的第三档),分类是源名后的一段文字。卡片回到三行,分析晚到只在元信息行里横向填字,标题不动。</p>
+
+  <div class="ladder" aria-label="分数身份线">
+    <div class="ladder-item"><span class="ladder-num ai-grad-text" style="font-size:38px">8.6</span><span class="ladder-cap">速读卡 · 38 · 渐变</span></div>
+    <div class="ladder-item"><span class="ladder-num ai-grad-text" style="font-size:22px">8.6</span><span class="ladder-cap">早报卡 · 22 · 渐变</span></div>
+    <div class="ladder-item"><span class="ladder-num" style="font-size:13px;font-weight:600;color:var(--dorami-ink-2)">8.6</span><span class="ladder-cap">条目行 · 13 · 实色(新)</span></div>
+    <div class="ladder-item"><span class="old-chip">8.6</span><span class="ladder-cap">条目行 · 现状胶囊(废)</span></div>
+  </div>
+
+  <div class="zone-head"><div class="zone-title">A · 元信息行归一(推荐)</div><div class="zone-sub">左:现状复刻 · 中:桌面条目列 · 右:移动壳同一张卡</div></div>
+  <div class="frames">
+
+    <!-- 现状复刻 -->
+    <div class="frame">
+      <div class="col">
+        <div class="col-head"><span class="col-title">文章</span><span class="col-tools"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span></span></div>
+        <div class="date-label">08-22 · 六</div>
+        <div class="entry">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src old-src">Sean Goedecke</span><span class="entry-time">08-22</span></span>
+          <span class="old-analysis"><span class="old-chip">7.8</span><span class="old-chip">观点</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">You should never be angry at work</span></span>
+          <span class="entry-excerpt">文章主张工作中不应愤怒,认为愤怒会破坏团队氛围、导致自己被边缘化</span>
+        </div>
+        <div class="date-label">08-21 · 五</div>
+        <div class="entry">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src old-src">Sean Goedecke</span><span class="entry-time">08-21</span></span>
+          <span class="old-analysis"><span class="old-chip">7.5</span><span class="old-chip">通义千问</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">Readers can't identify watermarked AI text</span></span>
+          <span class="entry-excerpt">作者针对 AI 文本水印是否影响质量的问题,创建了一个静态测验</span>
+        </div>
+        <div class="date-label">08-18 · 二</div>
+        <div class="entry">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src old-src">Sean Goedecke</span><span class="entry-time">08-18</span></span>
+          <span class="old-analysis"><span class="old-chip">8.6</span><span class="old-chip">AI 智能体</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">Help peer</span></span>
+          <span class="entry-excerpt">文章从阿西莫夫的《最后的问题》引入"机器神"概念,对比 Scott</span>
+        </div>
+      </div>
+      <p class="frame-note"><b>现状。</b>四行卡,两枚同款饱和胶囊夹在源名与标题之间;分数读起来像一个叫「7.8」的标签;左角未读点、上方胶囊、右上时间三样东西围着标题起点。</p>
+    </div>
+
+    <!-- 方案 A 桌面 -->
+    <div class="frame">
+      <div class="col" id="colA">
+        <div class="col-head"><span class="col-title">文章</span><span class="col-tools"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span></span></div>
+        <div class="date-label">08-22 · 六</div>
+        <div class="entry">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src">Sean Goedecke</span><span class="entry-tag">观点</span><span class="entry-score">7.8</span><span class="entry-time">08-22</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">You should never be angry at work</span><span class="entry-fav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/></svg></span></span>
+          <span class="entry-excerpt">文章主张工作中不应愤怒,认为愤怒会破坏团队氛围、导致自己被边缘化</span>
+        </div>
+        <div class="date-label">08-21 · 五</div>
+        <div class="entry is-active">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src">Sean Goedecke</span><span class="entry-tag">通义千问</span><span class="entry-score">7.5</span><span class="entry-time">08-21</span></span>
+          <span class="entry-titlerow"><span class="entry-title">Readers can't identify watermarked AI text</span><span class="entry-fav is-on"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/></svg></span></span>
+          <span class="entry-excerpt">作者针对 AI 文本水印是否影响质量的问题,创建了一个静态测验</span>
+        </div>
+        <div class="date-label">08-19 · 三</div>
+        <div class="entry">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src">Sean Goedecke</span><span class="entry-tag">观点</span><span class="entry-score">7.5</span><span class="entry-time">08-19</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">Good writing is obvious, not original</span></span>
+          <span class="entry-excerpt">文章认为几乎所有重要想法都已被前人讨论过,刻意追求原创只会让写作变得晦涩</span>
+        </div>
+        <div class="date-label">08-18 · 二</div>
+        <div class="entry">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src">Sean Goedecke</span><span class="entry-tag">AI 智能体</span><span class="entry-score">8.6</span><span class="entry-time">08-18</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">Help peer</span></span>
+          <span class="entry-excerpt">文章从阿西莫夫的《最后的问题》引入"机器神"概念,对比 Scott Alexander</span>
+        </div>
+        <div class="date-label">今天</div>
+        <div class="entry">
+          <span class="entry-top"><span class="entry-logo">📰</span><span class="entry-src">机器之心 · 人工智能前沿资讯与产业观察</span><span class="entry-tag">模型发布</span><span class="entry-score is-pending" data-land="8.9">分析中</span><span class="entry-time">2 小时前</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">DeepSeek V4 正式发布:1M 上下文、原生多模态,API 价格再降一半</span></span>
+          <span class="entry-excerpt">DeepSeek 今日发布 V4 系列模型,提供 Flash 与 Pro 两档</span>
+        </div>
+        <div class="entry">
+          <span class="entry-top"><span class="entry-logo">🅐</span><span class="entry-src">Anthropic</span><span class="entry-tag">产品更新</span><span class="entry-score">8.2</span><span class="entry-time">5 小时前</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">Claude in Chrome is generally available</span></span>
+          <span class="entry-excerpt">Claude 浏览器扩展结束测试,面向所有付费用户开放</span>
+        </div>
+        <div class="entry">
+          <span class="entry-top"><span class="entry-logo">📄</span><span class="entry-src">HF Daily Papers</span><span class="entry-score is-pending" data-land="6.5">分析中</span><span class="entry-time">6 小时前</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">Scaling Test-Time Compute with Verifier-Guided Search</span></span>
+          <span class="entry-excerpt">We study inference-time scaling laws for verifier-guided tree search</span>
+        </div>
+        <div class="date-label">03-02 · 一</div>
+        <div class="entry">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src">Sean Goedecke</span><span class="entry-time">03-02</span></span>
+          <span class="entry-titlerow"><span class="entry-title">How I use LLMs to write code</span></span>
+          <span class="entry-excerpt">I've been using LLMs to write code for about a year now. Here's what</span>
+        </div>
+      </div>
+      <p class="frame-note"><b>A · 桌面。</b>元信息行=「源标 · 源名 · 分类 ····· 分数 时间」。选中行、收藏星、未读点各在原位;源名过长先截断,分类保住;「分析中」占的是数字的位置(点顶部「模拟分数落地」看落地时标题与时间都不动);三月那篇没有分析,槽留空、什么都不说。</p>
+    </div>
+
+    <!-- 方案 A 移动 -->
+    <div class="frame">
+      <div class="col is-mobile">
+        <div class="col-head" style="padding:0 16px"><span class="col-title">文章</span><span class="col-tools"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span></span></div>
+        <div class="date-label" style="padding-left:18px">08-22 · 六</div>
+        <div class="entry">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src">Sean Goedecke</span><span class="entry-tag">观点</span><span class="entry-score">7.8</span><span class="entry-time">08-22</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">You should never be angry at work</span></span>
+          <span class="entry-excerpt">文章主张工作中不应愤怒,认为愤怒会破坏团队氛围</span>
+        </div>
+        <div class="date-label" style="padding-left:18px">08-21 · 五</div>
+        <div class="entry">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src">Sean Goedecke</span><span class="entry-tag">通义千问</span><span class="entry-score">7.5</span><span class="entry-time">08-21</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">Readers can't identify watermarked AI text</span><span class="entry-fav is-on"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/></svg></span></span>
+          <span class="entry-excerpt">作者针对 AI 文本水印是否影响质量的问题,创建了一个静态测验</span>
+        </div>
+        <div class="date-label" style="padding-left:18px">今天</div>
+        <div class="entry">
+          <span class="entry-top"><span class="entry-logo">📰</span><span class="entry-src">机器之心 · 人工智能前沿资讯与产业观察</span><span class="entry-tag">模型发布</span><span class="entry-score is-pending" data-land="8.9">分析中</span><span class="entry-time">2 小时前</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">DeepSeek V4 正式发布:1M 上下文、原生多模态,API 价格再降一半</span></span>
+          <span class="entry-excerpt">DeepSeek 今日发布 V4 系列模型,提供 Flash 与 Pro 两档</span>
+        </div>
+        <div class="entry">
+          <span class="entry-top"><span class="entry-logo">🅐</span><span class="entry-src">Anthropic</span><span class="entry-tag">产品更新</span><span class="entry-score">8.2</span><span class="entry-time">5 小时前</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">Claude in Chrome is generally available</span></span>
+          <span class="entry-excerpt">Claude 浏览器扩展结束测试,面向所有付费用户开放</span>
+        </div>
+      </div>
+      <p class="frame-note"><b>A · 移动壳。</b>同一张 ArticleRow,375 宽下元信息行仍一行放得下;源名长时截断的是源名。</p>
+    </div>
+  </div>
+
+  <div class="zone-head"><div class="zone-title">动态容器</div><div class="zone-sub">bulletin 行:单行标题、无摘要,元信息行同一规则</div></div>
+  <div class="frames">
+    <div class="frame">
+      <div class="col">
+        <div class="col-head"><span class="col-title">动态</span></div>
+        <div class="date-label">今天</div>
+        <div class="entry is-bulletin">
+          <span class="entry-top"><span class="entry-logo">▲</span><span class="entry-src">Cursor Changelog</span><span class="entry-tag">产品更新</span><span class="entry-score">7.0</span><span class="entry-time">3 小时前</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">1.8: Background agents in the sidebar, faster Tab</span></span>
+        </div>
+        <div class="entry is-bulletin">
+          <span class="entry-top"><span class="entry-logo">⌘</span><span class="entry-src">OpenCode Releases</span><span class="entry-tag">开源动态</span><span class="entry-score">6.0</span><span class="entry-time">8 小时前</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">v1.12.4</span></span>
+        </div>
+        <div class="entry is-bulletin">
+          <span class="entry-top"><span class="entry-logo">🏆</span><span class="entry-src">Arena 排行榜更新</span><span class="entry-score is-pending" data-land="7.5">分析中</span><span class="entry-time">昨天</span></span>
+          <span class="entry-titlerow"><span class="entry-title">Text Arena: Gemini 3.7 Pro takes #1 overall</span></span>
+        </div>
+      </div>
+      <p class="frame-note"><b>动态行。</b>紧凑形不变,两行仍是两行。</p>
+    </div>
+  </div>
+
+  <div class="zone-head"><div class="zone-title">备选</div><div class="zone-sub">同一套字体与元信息化,只换分数位置;不推荐,放这里是为了对照</div></div>
+  <div class="frames">
+    <div class="frame">
+      <div class="col">
+        <div class="col-head"><span class="col-title">文章</span></div>
+        <div class="date-label">08-22 · 六</div>
+        <div class="entry alt-b">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src">Sean Goedecke</span><span class="entry-tag">观点</span><span class="entry-score">7.8</span><span class="entry-time">08-22</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">You should never be angry at work</span></span>
+          <span class="entry-excerpt">文章主张工作中不应愤怒,认为愤怒会破坏团队氛围、导致自己被边缘化</span>
+        </div>
+        <div class="date-label">08-21 · 五</div>
+        <div class="entry alt-b">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src">Sean Goedecke</span><span class="entry-tag">通义千问</span><span class="entry-score">7.5</span><span class="entry-time">08-21</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">Readers can't identify watermarked AI text</span></span>
+          <span class="entry-excerpt">作者针对 AI 文本水印是否影响质量的问题,创建了一个静态测验</span>
+        </div>
+        <div class="date-label">08-18 · 二</div>
+        <div class="entry alt-b">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src">Sean Goedecke</span><span class="entry-tag">AI 智能体</span><span class="entry-score">8.6</span><span class="entry-time">08-18</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">Help peer</span></span>
+          <span class="entry-excerpt">文章从阿西莫夫的《最后的问题》引入"机器神"概念,对比 Scott</span>
+        </div>
+      </div>
+      <p class="frame-note"><b>B · 分数左列。</b>数字排成一列,纵向扫分最快;代价是它落在未读点的正上方,左角又是两样东西——正是这次要解的病。</p>
+    </div>
+    <div class="frame">
+      <div class="col">
+        <div class="col-head"><span class="col-title">文章</span></div>
+        <div class="date-label">08-22 · 六</div>
+        <div class="entry alt-c">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src">Sean Goedecke</span><span class="entry-tag">观点</span><span class="entry-time">08-22</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">You should never be angry at work<span class="title-score">7.8</span></span></span>
+          <span class="entry-excerpt">文章主张工作中不应愤怒,认为愤怒会破坏团队氛围、导致自己被边缘化</span>
+        </div>
+        <div class="date-label">08-21 · 五</div>
+        <div class="entry alt-c">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src">Sean Goedecke</span><span class="entry-tag">通义千问</span><span class="entry-time">08-21</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">Readers can't identify watermarked AI text<span class="title-score">7.5</span></span></span>
+          <span class="entry-excerpt">作者针对 AI 文本水印是否影响质量的问题,创建了一个静态测验</span>
+        </div>
+        <div class="date-label">08-18 · 二</div>
+        <div class="entry alt-c">
+          <span class="entry-top"><span class="entry-logo">🦊</span><span class="entry-src">Sean Goedecke</span><span class="entry-tag">AI 智能体</span><span class="entry-time">08-18</span></span>
+          <span class="entry-titlerow"><span class="unread-dot"></span><span class="entry-title">Help peer<span class="title-score">8.6</span></span></span>
+          <span class="entry-excerpt">文章从阿西莫夫的《最后的问题》引入"机器神"概念,对比 Scott</span>
+        </div>
+      </div>
+      <p class="frame-note"><b>C · 标题尾数。</b>数字紧跟标题末尾随文流动,不占固定位;但它混进标题的字里,位置随标题长短漂,一列扫下来找不到它。</p>
+    </div>
+  </div>
+</div>
+<script>
+  const page = document.getElementById('page');
+  const tagBtn = document.getElementById('tagToggle');
+  tagBtn.addEventListener('click', () => {
+    const on = page.classList.toggle('no-tag');
+    tagBtn.classList.toggle('is-on', !on);
+    tagBtn.textContent = on ? '分类只在阅读窗' : '分类在列';
+  });
+  const landBtn = document.getElementById('landToggle');
+  let landed = false;
+  landBtn.addEventListener('click', () => {
+    landed = !landed;
+    document.querySelectorAll('.entry-score[data-land]').forEach((el) => {
+      el.classList.toggle('is-pending', !landed);
+      el.textContent = landed ? el.dataset.land : '分析中';
+    });
+    landBtn.classList.toggle('is-on', landed);
+    landBtn.textContent = landed ? '分数已落地' : '模拟分数落地';
+  });
+  const themeBtn = document.getElementById('themeToggle');
+  themeBtn.addEventListener('click', () => {
+    const dark = document.documentElement.getAttribute('data-theme') !== 'dark';
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    themeBtn.textContent = dark ? '亮色' : '暗色';
+    themeBtn.classList.toggle('is-on', dark);
+  });
+</script>
+</body>
+</html>

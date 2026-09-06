@@ -8131,7 +8131,7 @@ input[type="radio"] {
   }
 
   .reader-entry-src {
-    flex: 1;
+    flex: 0 1 auto;      /* 可缩:源名过长先截断,后面的分类保住 */
     min-width: 0;
     font-size: 11.5px;
     font-weight: 400;
@@ -8141,8 +8141,53 @@ input[type="radio"] {
     white-space: nowrap;
   }
 
+  /* ── 分析结果归入元信息行(issue #23 第三项,样页 dorami-entry-analysis-quiet.html) ──
+     条目行只有三档音量:标题响、摘要轻、元信息最轻;分类与分数都是元信息,回到顶行里去,
+     卡片回到三行(元信息/标题/摘要),分析晚到只在这一行横向填字、标题不动。
+     · 分类:源名后的一段同规格文字(「Sean Goedecke · 观点」),不是徽章;
+     · 分数:13px 衬线齐线数字——与速读卡 38/早报卡 22 的衬线数字同一家族的第三档,
+       实色 ink-2 不上渐变(每行一个渐变即噪声);不绑阈值(#22 改分布不牵动视觉);
+     · 「分析中」占的正是数字将来的位置(faint 小字),有旧分的「更新中」不进列表。 */
+  .reader-entry-tag {
+    flex: none;
+    font-size: 11.5px;
+    font-weight: 400;
+    color: var(--dorami-faint);
+    white-space: nowrap;
+  }
+
+  .reader-entry-tag::before {
+    content: '·';
+    margin: 0 5px 0 -1px;
+  }
+
+  .reader-entry-score {
+    flex: none;
+    margin-left: auto;
+    min-width: 2.4em;
+    text-align: right;
+    font-family: Charter, Cambria, Baskerville, var(--font-serif);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.01em;
+    color: var(--dorami-ink-2);
+    font-variant-numeric: lining-nums tabular-nums;
+  }
+
+  .reader-entry-score.is-pending {
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0;
+    color: var(--dorami-faint);
+  }
+
+  .reader-entry-score + .reader-entry-time { margin-left: 3px; }
+
   .reader-entry-time {
     flex-shrink: 0;
+    margin-left: auto;   /* 无分数槽时自己靠右;有槽时由上一条规则收成 3px */
     margin-right: 8px;   /* 右移避开浮层滚动条,与星标右缘对齐(距卡右 ~14px) */
     /* 不用 mono 栈:「2 天前」数字/汉字会混排两种字体,Windows 上尤其毛糙;
        继承正文栈 + tabular-nums,数字仍对齐。字号对齐 .reader-entry-src——
@@ -11087,16 +11132,15 @@ input[type="radio"] {
   gap: 8px;
 }
 
-/* ── 文章智能分析：列表轻徽标 + 详情说明 ── */
-.reader-entry-analysis,
+/* ── 文章智能分析:详情说明与管理面轻徽标(阅读器条目行的分数/分类已归入元信息行,
+   见 @layer 内 .reader-entry-tag / .reader-entry-score;.reader-score-chip 只余管理面台账在用) ── */
 .ledger-analysis-meta {
   display: flex;
   align-items: center;
   gap: 5px;
   min-width: 0;
+  margin-top: 5px;
 }
-.reader-entry-analysis { margin-top: 4px; }
-.ledger-analysis-meta { margin-top: 5px; }
 .reader-score-chip,
 .reader-tag-chip,
 .brief-tag {

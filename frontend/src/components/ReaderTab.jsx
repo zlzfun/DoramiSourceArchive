@@ -54,6 +54,7 @@ import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { contentTypeLabel } from '../utils/contentType';
 import { formatPodcastDuration, podcastOf, podcastProcessingMeta } from '../utils/podcast';
 import {
+  SCORE_DISCLAIMER,
   analysisStatusMeta,
   displayAnalysisTags,
   primaryAnalysisLabel,
@@ -214,6 +215,13 @@ export const ArticleRow = memo(function ArticleRow({
                 </span>
               )}
               <span className="reader-entry-src">{sourceName}</span>
+              {/* 分析结果归入元信息行(issue #23 第三项):分类是源名后的一段元信息文字,
+                  分数是衬线数字落在时间之前——不再独占一行,晚到只横向填字、标题不动;
+                  没有可读结果且分析在途时,分数槽先以「分析中」占位,落地即换成数。 */}
+              {analysisLabel && <span className="reader-entry-tag">{analysisLabel}</span>}
+              {score
+                ? <span className="reader-entry-score" title={SCORE_DISCLAIMER}>{score}</span>
+                : (analysisStatus && <span className="reader-entry-score is-pending" role="status">分析中</span>)}
               <span
                 className="reader-entry-time"
                 title={formatDateTime(article.publish_date || article.fetched_date)}
@@ -221,13 +229,6 @@ export const ArticleRow = memo(function ArticleRow({
                 {formatRelativeTime(article.publish_date || article.fetched_date, '')}
               </span>
             </span>
-            {(score || analysisLabel || (!entryPodcast && analysisStatus)) && (
-              <span className="reader-entry-analysis">
-                {score && <span className="reader-score-chip" title="AI 内容价值评估，不代表事实保证或用户评分">{score}</span>}
-                {analysisLabel && <span className="reader-tag-chip">{analysisLabel}</span>}
-                {!entryPodcast && analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
-              </span>
-            )}
             {/* 标题行内收藏控件复用 span role=button，避免 button 嵌套。 */}
             <span className="reader-entry-titlerow">
               <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
