@@ -102,6 +102,15 @@ function TagCard({ tag, stance, onToggle, onMute, compact = false }) {
   );
 }
 
+// 保存链放模块级(codex 检视 P2):离开页面时的卸载冲刷若仍在途、读者随即重开,新实例的
+// 加载与保存都必须排在它之后——per-instance 的链跨不过重挂载,旧冲刷会后到覆盖新选择。
+let saveChain = Promise.resolve();
+const enqueueSave = (task) => {
+  const run = saveChain.then(task);
+  saveChain = run.then(() => undefined, () => undefined);
+  return run;
+};
+
 export default function InterestPage({
   mobile = false,
   onboarding = false,
@@ -126,7 +135,6 @@ export default function InterestPage({
   // 保存串行化(codex 检视 P2):整套替换的 PUT 若并发,后发先至会被先发的旧集覆盖;
   // 所有保存排进一条 promise 链依次发出,并带单调序号——只有最新一次能改本地态,
   // 排队时已有更新一次在后面的过时保存直接跳过(最新那次带的是最新草稿)。
-  const chainRef = useRef(Promise.resolve());
   const seqRef = useRef(0);
   const stateTimerRef = useRef(null);
   const onSavedRef = useRef(onSaved);
@@ -136,10 +144,11 @@ export default function InterestPage({
     const controller = new AbortController();
     setCatalog(null);
     setError('');
-    Promise.all([
+    // 先等在途的保存(含上一实例的卸载冲刷)落定,再读服务端立场——否则读到冲刷前的旧集
+    saveChain.then(() => Promise.all([
       fetchInterestCatalog({ signal: controller.signal }),
       fetchInterests({ signal: controller.signal }),
-    ]).then(([catalogData, current]) => {
+    ])).then(([catalogData, current]) => {
       setCatalog(catalogData);
       const next = {};
       (current.items || []).forEach(({ tag, stance }) => {
@@ -201,9 +210,7 @@ export default function InterestPage({
   };
   const commit = useCallback((stances, opts = {}) => {
     const seq = ++seqRef.current;
-    const run = chainRef.current.then(() => performSave(seq, stances, opts));
-    chainRef.current = run.then(() => undefined, () => undefined);
-    return run;
+    return enqueueSave(() => performSave(seq, stances, opts));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const scheduleSave = useCallback(() => {
     window.clearTimeout(timerRef.current);
@@ -218,7 +225,7 @@ export default function InterestPage({
       window.clearTimeout(timerRef.current);
       const stances = draftRef.current;
       // 排在在途保存之后发出,保持整套替换的先后序
-      chainRef.current = chainRef.current.then(() => {
+      enqueueSave(() => {
         if (sameStances(stances, savedRef.current)) return undefined;
         return saveInterests(itemsOf(stances), { completeOnboarding: false }).then(() => { savedRef.current = stances; });
       }).catch(() => {});

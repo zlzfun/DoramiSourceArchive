@@ -364,7 +364,12 @@ export default function PersonalBriefPage({
     const snapshot = row?.snapshot || {};
     return sourceMap[snapshot.source_id]?.shape === 'social' || snapshot.content_type === 'social_post';
   };
-  const openItem = (item) => {
+  const openExternal = (snapshot) => {
+    const url = snapshot?.source_url;
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    else showToast?.('这条内容已不在库中', 'error');
+  };
+  const openItem = async (item) => {
     const snapshot = item.snapshot || {};
     if (isSocialRow(item) && snapshot.source_url) {
       window.open(snapshot.source_url, '_blank', 'noopener,noreferrer');
@@ -374,7 +379,7 @@ export default function PersonalBriefPage({
       const sequence = (edition?.items || [])
         .filter((row) => row.article_id && !isSocialRow(row))
         .map((row) => ({ id: row.id ?? row.position, article_id: row.article_id, title: row.snapshot?.title || '' }));
-      onOpenArticle(item.article_id, {
+      const opened = await onOpenArticle(item.article_id, {
         date: selDate,
         revision: edition?.revision ?? null,
         scrollTop: sheetRef.current?.scrollTop || 0,
@@ -383,11 +388,12 @@ export default function PersonalBriefPage({
         sequence,
         index: sequence.findIndex((row) => row.article_id === item.article_id),
       });
+      // false=站内已取不到(退订自定源 / 源被隐藏后 404),退到快照原链(codex 检视 P2);
+      // null=被更晚的点击盖过,什么都不做
+      if (opened === false) openExternal(snapshot);
       return;
     }
-    const url = item.snapshot?.source_url;
-    if (url) window.open(url, '_blank', 'noopener,noreferrer');
-    else showToast?.('这条内容已不在库中', 'error');
+    openExternal(snapshot);
   };
 
   // ── 分组:按 section 保序 ──

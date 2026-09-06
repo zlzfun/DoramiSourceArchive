@@ -725,10 +725,12 @@ export default function ReaderTab({
           restore={briefRestore}
           onManageSubscriptions={() => { setBriefOpen(false); leaveBriefTrail(); openDiscover(); }}
           onOpenArticle={async (articleId, ctx) => {
-            const opened = await openArticleById(articleId);
-            if (!opened) return;
+            // 结果回传早报页:false=不在库(早报页退到原链),null=被更晚的点击盖过(不动)
+            const opened = await openArticleById(articleId, { silent: true });
+            if (!opened) return opened;
             setBriefOpen(false);
             setBriefReturn(ctx && ctx.sequence?.length ? ctx : null);
+            return true;
           }}
         />
       )}

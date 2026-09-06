@@ -284,10 +284,11 @@ export default function MobileReader({
             restore={briefRestore}
             onManageSubscriptions={() => openDiscover()}
             onOpenArticle={async (articleId, ctx) => {
-              const opened = await openArticleById(articleId);
-              if (!opened) return;
+              const opened = await openArticleById(articleId, { silent: true });
+              if (!opened) return opened;
               briefTrailRef.current = ctx || null;
               setTab(mode);
+              return true;
             }}
           />
         ) : tab === 'me' ? (

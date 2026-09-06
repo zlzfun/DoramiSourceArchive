@@ -1167,10 +1167,15 @@ export function useReaderState({
   // 切作用域+选中该篇一次完成,deepLinkKeepRef 通知清场 effect 保留右栏。
   // silent=true(深链)取不到时静默——收到链接的人对失效无能为力,报错只是噪声;
   // 默认(引用跳转)取不到时 Toast 说明,因为点击者正在等待跳转发生。
+  // 后发为准(codex 检视 P2):慢网下连点两张早报卡,先发的请求后到不得覆盖后点的那篇;
+  // 过时结果不导航、返回 null(与「不在库」的 false 区分,调用方据此决定是否退到原链)。
+  const openSeqRef = useRef(0);
   const openArticleById = useCallback(async (articleId, { silent = false } = {}) => {
     if (!articleId) return false;
+    const seq = ++openSeqRef.current;
     try {
       const article = await fetchArticle(articleId);
+      if (seq !== openSeqRef.current) return null;
       if (!article?.id) throw new Error('empty');
       const ctx = deepLinkCtxRef.current;
       onBeforeOpenArticle?.();
@@ -1182,6 +1187,7 @@ export function useReaderState({
       ctx.selectArticle(article);
       return true;
     } catch {
+      if (seq !== openSeqRef.current) return null;
       if (!silent) showToast('这条内容已不在库中', 'error');
       return false;
     }
