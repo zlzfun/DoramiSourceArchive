@@ -364,10 +364,13 @@ export default function PersonalBriefPage({
     const snapshot = row?.snapshot || {};
     return sourceMap[snapshot.source_id]?.shape === 'social' || snapshot.content_type === 'social_post';
   };
-  const openExternal = (snapshot) => {
+  // 原链回退:同步路径(点击手势内)开新窗;await 站内请求之后的路径用户激活可能已过期,
+  // window.open 会被当弹窗拦下(noopener 下返回值恒 null,拦没拦无从探测),改当前页跳转(codex 检视 P2)
+  const openExternal = (snapshot, { afterAwait = false } = {}) => {
     const url = snapshot?.source_url;
-    if (url) window.open(url, '_blank', 'noopener,noreferrer');
-    else showToast?.('这条内容已不在库中', 'error');
+    if (!url) { showToast?.('这条内容已不在库中', 'error'); return; }
+    if (afterAwait) window.location.assign(url);
+    else window.open(url, '_blank', 'noopener,noreferrer');
   };
   const openItem = async (item) => {
     const snapshot = item.snapshot || {};
@@ -390,7 +393,7 @@ export default function PersonalBriefPage({
       });
       // false=站内已取不到(退订自定源 / 源被隐藏后 404),退到快照原链(codex 检视 P2);
       // null=被更晚的点击盖过,什么都不做
-      if (opened === false) openExternal(snapshot);
+      if (opened === false) openExternal(snapshot, { afterAwait: true });
       return;
     }
     openExternal(snapshot);

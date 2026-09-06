@@ -150,8 +150,13 @@ export default function InterestPage({
       fetchInterests({ signal: controller.signal }),
     ])).then(([catalogData, current]) => {
       setCatalog(catalogData);
+      // 只收目录里存在的标签(codex 检视 P2):被管理员下架/取消可选的旧选择目录不再返回,
+      // 却仍在 /interests 里;带着它整套替换会被后端整次 400,读者什么都改不了。
+      // 目录对已选标签「落榜仍保留」,故不在目录里的只可能是失效项,静默剔除。
+      const known = new Set((catalogData?.items || []).map((tag) => keyOf(tag)));
       const next = {};
       (current.items || []).forEach(({ tag, stance }) => {
+        if (!known.has(keyOf(tag))) return;
         next[keyOf(tag)] = stance === 'mute' ? 'mute' : 'follow';
       });
       setDraft(next);

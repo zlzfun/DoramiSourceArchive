@@ -114,7 +114,12 @@ export function useReaderState({
   // 发现页(整页视图,取代源栏内联「发现更多来源」):true 时 条目列+阅读窗 被发现页取代
   const [discover, setDiscover] = useState(false);
   // 无论从哪个内容容器进入，发现页都展示完整来源目录；内容形态由页内筛选切换。
-  const openDiscover = useCallback(() => setDiscover(true), []);
+  // 在途「按 id 打开」的序号(见 openArticleById):直接选文章 / 切视图 / 切源 / 进发现页
+  // 都推进它,让慢网下尚未返回的早报卡打开作废,不再后到覆盖读者的直接导航(codex 检视 P2)
+  const openSeqRef = useRef(0);
+  // (useCallback 而非裸箭头:React Compiler 把渲染作用域裸函数里的 ref 写视作渲染期修改)
+  const supersedePendingOpen = useCallback(() => { openSeqRef.current += 1; }, []);
+  const openDiscover = useCallback(() => { supersedePendingOpen(); setDiscover(true); }, [supersedePendingOpen]);
   const closeDiscover = useCallback(() => {
     setDiscover(false);
   }, []);
@@ -410,6 +415,7 @@ export function useReaderState({
   // 列表项已不含正文（include_content=false），仅 meta 即时渲染；正文命中缓存直接用，
   // 否则拉 GET /api/articles/{id}，回来时比对最新选中 id，丢弃过期响应。
   const selectArticle = useCallback((article) => {
+    supersedePendingOpen();
     const prevId = activeIdRef.current;
     setActiveArticle(article);
     setShareOpen(false);   // 分享浮层属于「上一篇」,换篇即收
@@ -488,7 +494,7 @@ export function useReaderState({
           showToast(error.message || '获取文章正文失败', 'error');
         }
       });
-  }, [showToast]);
+  }, [showToast, supersedePendingOpen]);
 
   // ── AI · 要点摘要(结果双层缓存:服务端 extensions_json + 本会话 Map)──
   const handleSummarize = useCallback(async () => {
@@ -1137,6 +1143,7 @@ export function useReaderState({
   // ── 视图导航(容器语义):点容器钮=进入该容器聚合(源内时=回到聚合);搜索是叠加开关 ──
   // 任何内容导航都退出发现页(发现是与容器并列的一级视图,占据 条目列+阅读窗)
   const goView = (v) => {
+    supersedePendingOpen();
     setDiscover(false);
     setMode(v);
     setActiveSourceId(null);
@@ -1146,6 +1153,7 @@ export function useReaderState({
   };
   // 单源=容器内收窄:源所属容器自动点亮(今日不承担单源,从今日点源即跳入所属容器)
   const goSource = (sourceId) => {
+    supersedePendingOpen();
     setDiscover(false);
     setActiveSourceId(sourceId);
     setMode(shapeOfSource(sourceId));
@@ -1169,7 +1177,7 @@ export function useReaderState({
   // 默认(引用跳转)取不到时 Toast 说明,因为点击者正在等待跳转发生。
   // 后发为准(codex 检视 P2):慢网下连点两张早报卡,先发的请求后到不得覆盖后点的那篇;
   // 过时结果不导航、返回 null(与「不在库」的 false 区分,调用方据此决定是否退到原链)。
-  const openSeqRef = useRef(0);
+  // openSeqRef 声明在 selectArticle 之前,直接导航同样推进它。
   const openArticleById = useCallback(async (articleId, { silent = false } = {}) => {
     if (!articleId) return false;
     const seq = ++openSeqRef.current;
@@ -1205,8 +1213,8 @@ export function useReaderState({
 
   // 收藏入口(源栏,与「全部XX」并列):看本容器全部收藏(容器级、不逐源)。
   // Folo 语义——收藏是与「全部」并列的一级过滤,不再挂在列头逐源。
-  const goContainerAll = () => { setDiscover(false); setActiveSourceId(null); setFavOnly(false); };
-  const goFavorites = () => { setDiscover(false); setActiveSourceId(null); setFavOnly(true); };
+  const goContainerAll = () => { supersedePendingOpen(); setDiscover(false); setActiveSourceId(null); setFavOnly(false); };
+  const goFavorites = () => { supersedePendingOpen(); setDiscover(false); setActiveSourceId(null); setFavOnly(true); };
   // 搜索开关(条目列头就地展开):关闭即清词(searchQuery 经防抖同步清空,列表回到无过滤)。
   const toggleSearch = () => {
     setSearchOpen((open) => {
