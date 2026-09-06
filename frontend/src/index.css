@@ -8146,19 +8146,22 @@ input[type="radio"] {
      卡片回到三行(元信息/标题/摘要),分析晚到只在这一行横向填字、标题不动。
      · 分类:源名后的一段同规格文字(「Sean Goedecke · 观点」),不是徽章;
      · 分数:13px 衬线齐线数字——与速读卡 38/早报卡 22 的衬线数字同一家族的第三档,
-       实色 ink-2 不上渐变(每行一个渐变即噪声);不绑阈值(#22 改分布不牵动视觉);
+       着 AI 渐变(.ai-grad-text,与早报卡/速读卡三档同字同色——目检拍板:「见渐变即 AI」在列表里成立);
+       不绑阈值(#22 改分布不牵动视觉);
+     · 分类画成 10px 细线小签——沿用阅读器既有「动态」形态签(.reader-shape-chip)的语法,不着色,
+       靠形态与来源分开;来源保持 faint 元信息;
      · 「分析中」占的正是数字将来的位置(faint 小字),有旧分的「更新中」不进列表。 */
   .reader-entry-tag {
     flex: none;
-    font-size: 11.5px;
+    padding: 0.5px 5px;
+    border: 1px solid var(--dorami-border);
+    border-radius: 4px;
+    font-size: 10px;
     font-weight: 400;
+    line-height: 1.4;
+    letter-spacing: 0.06em;
     color: var(--dorami-faint);
     white-space: nowrap;
-  }
-
-  .reader-entry-tag::before {
-    content: '·';
-    margin: 0 5px 0 -1px;
   }
 
   .reader-entry-score {
@@ -8171,7 +8174,7 @@ input[type="radio"] {
     font-weight: 600;
     line-height: 1;
     letter-spacing: -0.01em;
-    color: var(--dorami-ink-2);
+    color: var(--dorami-ink-2);   /* 兜底色;JSX 同挂 .ai-grad-text 上渐变(文字自身 background-clip) */
     font-variant-numeric: lining-nums tabular-nums;
   }
 

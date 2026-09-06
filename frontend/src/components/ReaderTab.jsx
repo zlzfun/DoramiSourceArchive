@@ -220,7 +220,7 @@ export const ArticleRow = memo(function ArticleRow({
                   没有可读结果且分析在途时,分数槽先以「分析中」占位,落地即换成数。 */}
               {analysisLabel && <span className="reader-entry-tag">{analysisLabel}</span>}
               {score
-                ? <span className="reader-entry-score" title={SCORE_DISCLAIMER}>{score}</span>
+                ? <span className="reader-entry-score ai-grad-text" title={SCORE_DISCLAIMER}>{score}</span>
                 : (analysisStatus && <span className="reader-entry-score is-pending" role="status">分析中</span>)}
               <span
                 className="reader-entry-time"
