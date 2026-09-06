@@ -27,6 +27,8 @@ import {
   Podcast,
   Newspaper,
   Tags,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
@@ -264,6 +266,12 @@ export default function ReaderTab({
 }) {
   const [brandFailed, setBrandFailed] = useState(false); // 品牌 logo 加载失败 → 回退铃铛
   const [briefOpen, setBriefOpen] = useState(false);
+  // 早报「外出」上下文(issue #23 三稿):从早报点卡片进原文后阅读窗顶部出返回带——
+  // {date, revision, scrollTop, itemId, label, sequence[{id,article_id,title}], index}。
+  // 用户主动改作用域(视图轨/源栏/发现页)即清;同列表内翻篇保留。restoreRef 把它交还早报页落位。
+  const [briefReturn, setBriefReturn] = useState(null);
+  const [briefRestore, setBriefRestore] = useState(null); // 返回时交还早报页落位的那份上下文
+  const leaveBriefTrail = useCallback(() => setBriefReturn(null), []);
   const [interestOpen, setInterestOpen] = useState(false);
   const [interestVersion, setInterestVersion] = useState(0);
   const onboardingRequired = personalDigestEnabled
@@ -402,7 +410,7 @@ export default function ReaderTab({
               type="button"
               aria-label="我的早报"
               aria-pressed={briefOpen}
-              onClick={() => { closeDiscover(); setBriefOpen(true); }}
+              onClick={() => { closeDiscover(); setBriefRestore(null); leaveBriefTrail(); setBriefOpen(true); }}
               className={`reader-vrail-btn ${briefOpen ? 'is-on' : ''}`}
             >
               <Newspaper className="h-[18px] w-[18px]" />
@@ -426,7 +434,7 @@ export default function ReaderTab({
             type="button"
             aria-label={label}
             aria-pressed={!briefOpen && railActive === view}
-            onClick={() => { setBriefOpen(false); goView(view); }}
+            onClick={() => { setBriefOpen(false); leaveBriefTrail(); goView(view); }}
             className={`reader-vrail-btn ${!briefOpen && railActive === view ? 'is-on' : ''}`}
           >
             <Icon className="h-[18px] w-[18px]" />
@@ -441,7 +449,7 @@ export default function ReaderTab({
           type="button"
           aria-label="发现"
           aria-pressed={!briefOpen && discover}
-          onClick={() => { setBriefOpen(false); openDiscover(); }}
+          onClick={() => { setBriefOpen(false); leaveBriefTrail(); openDiscover(); }}
           className={`reader-vrail-btn ${!briefOpen && discover ? 'is-on' : ''}`}
         >
           <Compass className="h-[18px] w-[18px]" />
@@ -552,8 +560,8 @@ export default function ReaderTab({
                 <div
                   role="button"
                   tabIndex={0}
-                  onClick={goContainerAll}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goContainerAll(); } }}
+                  onClick={() => { leaveBriefTrail(); goContainerAll(); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); leaveBriefTrail(); goContainerAll(); } }}
                   className={`reader-source-row ${activeSourceId === null && !favOnly ? 'reader-source-row-active' : ''} ${scopeUnread > 0 && activeSourceId === null && !favOnly ? 'has-unread' : ''}`}
                 >
                   <span className="reader-src-allicon" aria-hidden="true">
@@ -569,8 +577,8 @@ export default function ReaderTab({
                 <div
                   role="button"
                   tabIndex={0}
-                  onClick={goFavorites}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goFavorites(); } }}
+                  onClick={() => { leaveBriefTrail(); goFavorites(); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); leaveBriefTrail(); goFavorites(); } }}
                   className={`reader-source-row ${favOnly ? 'reader-source-row-active' : ''}`}
                 >
                   <span className="reader-src-allicon reader-src-allicon-fav" aria-hidden="true">
@@ -595,8 +603,8 @@ export default function ReaderTab({
                         key={source.source_id}
                         role="button"
                         tabIndex={0}
-                        onClick={() => goSource(source.source_id)}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goSource(source.source_id); } }}
+                        onClick={() => { leaveBriefTrail(); goSource(source.source_id); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); leaveBriefTrail(); goSource(source.source_id); } }}
                         onContextMenu={(e) => onRowContextMenu(e, source, 'source')}
                         className={`reader-source-row ${active ? 'reader-source-row-active' : ''} ${unread > 0 ? 'has-unread' : ''} ${source.hidden ? 'is-unavailable' : ''} ${ctxMenu?.anchorKey === `source:${source.source_id}` ? 'is-ctx-anchor' : ''}`}
                       >
@@ -658,10 +666,13 @@ export default function ReaderTab({
           showToast={showToast}
           interestVersion={interestVersion}
           sourceMap={sourceMap}
-          onManageSubscriptions={() => { setBriefOpen(false); openDiscover(); }}
-          onOpenArticle={async (articleId) => {
+          restore={briefRestore}
+          onManageSubscriptions={() => { setBriefOpen(false); leaveBriefTrail(); openDiscover(); }}
+          onOpenArticle={async (articleId, ctx) => {
             const opened = await openArticleById(articleId);
-            if (opened) setBriefOpen(false);
+            if (!opened) return;
+            setBriefOpen(false);
+            setBriefReturn(ctx && ctx.sequence?.length ? ctx : null);
           }}
         />
       )}
@@ -675,7 +686,7 @@ export default function ReaderTab({
           pinningId={pinningId}
           onSubscribe={handleSubscribe}
           onUnsubscribe={handleUnsubscribe}
-          onPreview={(source) => goSource(source.source_id)}
+          onPreview={(source) => { leaveBriefTrail(); goSource(source.source_id); }}
           collections={collections}
           activeCollectionId={discoverCollectionId}
           onOpenCollection={(c) => setDiscoverCollectionId(c.collection_id)}
@@ -893,6 +904,46 @@ export default function ReaderTab({
       {/* ── 阅读窗 ── */}
       {!briefOpen && !discover && !socialView && (
       <section className="reader-col reader-col-read">
+        {/* 早报外出返回带(issue #23 三稿):从早报点进来的这一程里常驻阅读窗顶部,不随文章切换重绘。
+            左=返回我的早报(落回同一版同一卷动位置),右=早报下一条(顺着本版读完不必回早报)。 */}
+        {briefReturn && (() => {
+          const seq = briefReturn.sequence || [];
+          const next = seq[briefReturn.index + 1] || null;
+          return (
+            <nav className="reader-brief-trail" aria-label="来自我的早报">
+              <button
+                type="button"
+                className="reader-brief-trail-btn"
+                onClick={() => {
+                  setBriefRestore(briefReturn);
+                  setBriefReturn(null);
+                  setBriefOpen(true);
+                }}
+              >
+                <ChevronLeft aria-hidden="true" />
+                <span>返回我的早报</span>
+                <small>{briefReturn.label}</small>
+              </button>
+              {next ? (
+                <button
+                  type="button"
+                  className="reader-brief-trail-btn is-next"
+                  title={next.title || undefined}
+                  onClick={async () => {
+                    const opened = await openArticleById(next.article_id);
+                    if (opened) setBriefReturn((prev) => (prev ? { ...prev, index: prev.index + 1, itemId: next.id } : prev));
+                  }}
+                >
+                  <span>早报下一条</span>
+                  <small>{`${briefReturn.index + 2} / ${seq.length}`}</small>
+                  <ChevronRight aria-hidden="true" />
+                </button>
+              ) : (
+                <span className="reader-brief-trail-end">已到本版末尾</span>
+              )}
+            </nav>
+          );
+        })()}
         {activeArticle ? (
           <>
             {/* 阅读进度线：仅正文非空时显示；CSS scroll() 滚动驱动、切文章天然归零，

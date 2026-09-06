@@ -136,9 +136,10 @@
 .brief-sheet.is-mobile .brief-mast { padding-bottom: 14px; }
 .brief-sheet.is-mobile .brief-mast-title { font-size: 28px; }
 .brief-sheet.is-mobile .brief-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-.brief-sheet.is-mobile .brief-card, .brief-sheet.is-mobile .brief-card.is-lead { padding: 16px 16px 14px; }
+.brief-sheet.is-mobile .brief-card, .brief-sheet.is-mobile .brief-card.is-lead, .brief-sheet.is-mobile .brief-card.is-wide { padding: 16px 16px 14px; }
 .brief-sheet.is-mobile .brief-card.is-lead .brief-card-title { font-size: 19px; }
 .brief-sheet.is-mobile .brief-card.is-lead .brief-card-sum { font-size: 13.5px; }
+.brief-sheet.is-mobile .brief-card-aside .brief-card-score { font-size: 26px; }
 .brief-sheet.is-mobile .brief-state { min-height: 46vh; }
 .m-list {
   flex: 1;

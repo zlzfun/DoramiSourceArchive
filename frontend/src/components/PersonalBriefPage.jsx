@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowUpRight, ChevronDown, Clock3, Loader2, RefreshCw } from 'lucide-react';
 import {
   ensurePersonalBrief,
@@ -18,6 +18,10 @@ import { qualityScoreText, SCORE_DISCLAIMER } from '../utils/analysis';
 // 报头(日期/版次/篇数)+ 分节卡片网格(标题/完整摘要/评分/标签),点卡片跳站内原文
 // (openArticleById:切到该篇所在容器并选中,早报页退场)。快照弹窗、选入理由长句退役。
 // 历史按天分期:一天一行,同日多版折进报头「共 N 版」。移动壳:横向日期条 + 同一张报纸面。
+// 三稿(目检返修):头条卡双栏(左标题/摘要,右评分与标签栏——去掉限行宽留下的右侧空白,不放图:
+// 全库近 30 天带图文章不足一成,头条会在两种形态间跳);同行卡片等高、脚部钉底;
+// 「外出返回」:点卡片进原文时把 {日期,版次,卷动位置,条目序列} 交给阅读器,阅读窗顶部出返回带
+// (返回我的早报 / 早报下一条),返回时经 restore 落回同一版同一位置并短暂高亮刚读过的卡。
 
 const TERMINAL = new Set(['ready', 'degraded', 'failed', 'superseded']);
 const LIVE = new Set(['pending', 'generating']);
@@ -58,7 +62,7 @@ function interestLabelOf(item, snapshot) {
   return matched ? matched[1] : '';
 }
 
-function BriefCard({ item, lead, source, onOpen }) {
+function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) {
   const snapshot = item.snapshot || {};
   const score = qualityScoreText(item.quality_score ?? snapshot.quality_score);
   const tags = snapshot.tags || [];
@@ -73,35 +77,67 @@ function BriefCard({ item, lead, source, onOpen }) {
   const summary = snapshot.summary || snapshot.one_sentence_summary || '';
   const sourceName = snapshot.source_name || source?.name || snapshot.source_id || '未知来源';
   const company = source ? resolveCompany(source) : resolveCompany({ source_id: snapshot.source_id, name: sourceName, user_source: true });
-  return (
-    <button type="button" className={`brief-card ${lead ? 'is-lead' : ''}`} onClick={() => onOpen(item)}>
-      <span className="brief-card-head">
-        <span className="brief-card-src">
-          <LogoMark company={company} size="s17" emoji={source?.icon} />
-          <span className="brief-card-srcname">{sourceName}</span>
+  const chipNodes = chips.map((chip) => (
+    <span key={chip.key} className={`reader-tag-chip ${chip.cls || ''}`} title={chip.title}>{chip.text}</span>
+  ));
+  const scoreNode = score && (
+    <span className="brief-card-score" title={SCORE_DISCLAIMER} aria-label={`内容价值分 ${score}`}>
+      <span className="ai-grad-text">{score}</span>
+    </span>
+  );
+  const timeNode = (
+    <span className="brief-card-time">
+      {snapshot.publish_date && (
+        <span title={formatDateTime(snapshot.publish_date)}>{formatRelativeTime(snapshot.publish_date, '')}</span>
+      )}
+      <ArrowUpRight className="brief-card-go" aria-hidden="true" />
+    </span>
+  );
+  const srcNode = (
+    <span className="brief-card-src">
+      <LogoMark company={company} size="s17" emoji={source?.icon} />
+      <span className="brief-card-srcname">{sourceName}</span>
+    </span>
+  );
+  // 通栏双栏:头条(首节首张)与单卡分节(一张卡占三列网格的一格、旁边两格空着很怪)都通栏,
+  // 左栏来源/标题/摘要/时刻,右栏评分(大号 + 「内容价值分」注脚)与标签竖排;头条只多放大字号。
+  // 右栏有内容才双栏;无分无签(极少)退回普通卡形态。
+  const split = (lead || wide) && (score || chips.length > 0);
+  const cls = `brief-card ${lead ? 'is-lead' : ''} ${wide && !lead ? 'is-wide' : ''} ${split ? 'is-split' : ''} ${flash ? 'is-just-read' : ''}`;
+
+  if (split) {
+    return (
+      <button type="button" className={cls} onClick={() => onOpen(item)}>
+        <span className="brief-card-main">
+          <span className="brief-card-head">{srcNode}</span>
+          <span className="brief-card-title">{snapshot.title || '（无标题）'}</span>
+          {summary && <span className="brief-card-sum">{summary}</span>}
+          <span className="brief-card-foot">{timeNode}</span>
         </span>
-        {score && (
-          <span className="brief-card-score" title={SCORE_DISCLAIMER} aria-label={`内容价值分 ${score}`}>
-            <span className="ai-grad-text">{score}</span>
-          </span>
-        )}
+        <span className="brief-card-aside">
+          {score && (
+            <span className="brief-card-aside-score">
+              {scoreNode}
+              <span className="brief-card-aside-cap">内容价值分</span>
+            </span>
+          )}
+          {chips.length > 0 && <span className="brief-card-tags is-stack">{chipNodes}</span>}
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <button type="button" className={cls} onClick={() => onOpen(item)}>
+      <span className="brief-card-head">
+        {srcNode}
+        {scoreNode}
       </span>
       <span className="brief-card-title">{snapshot.title || '（无标题）'}</span>
       {summary && <span className="brief-card-sum">{summary}</span>}
       <span className="brief-card-foot">
-        {chips.length > 0 && (
-          <span className="brief-card-tags">
-            {chips.map((chip) => (
-              <span key={chip.key} className={`reader-tag-chip ${chip.cls || ''}`} title={chip.title}>{chip.text}</span>
-            ))}
-          </span>
-        )}
-        <span className="brief-card-time">
-          {snapshot.publish_date && (
-            <span title={formatDateTime(snapshot.publish_date)}>{formatRelativeTime(snapshot.publish_date, '')}</span>
-          )}
-          <ArrowUpRight className="brief-card-go" aria-hidden="true" />
-        </span>
+        {chips.length > 0 && <span className="brief-card-tags">{chipNodes}</span>}
+        {timeNode}
       </span>
     </button>
   );
@@ -153,13 +189,19 @@ export default function PersonalBriefPage({
   sourceMap = {},
   interestVersion = 0,
   mobile = false,
+  // 从阅读窗「返回我的早报」回来时带的外出上下文 {date, revision, scrollTop, itemId};挂载时一次性读取
+  restore = null,
 }) {
+  const restoreRef = useRef(restore);
+  const [flashId, setFlashId] = useState(null);
   const [history, setHistory] = useState([]);
   const [today, setToday] = useState(null); // {status, edition}
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
-  const [sel, setSel] = useState({ date: null, revision: null }); // date=null → 今天
+  const [sel, setSel] = useState(() => (
+    restore ? { date: restore.date, revision: restore.revision ?? null } : { date: null, revision: null }
+  )); // date=null → 今天
   const [detail, setDetail] = useState({ key: '', edition: null, loading: false, error: '' });
   const [revOpen, setRevOpen] = useState(false);
   const cacheRef = useRef(new Map()); // 终态 edition 不可变,按 date#revision 缓存
@@ -186,7 +228,8 @@ export default function PersonalBriefPage({
 
   useEffect(() => {
     setLoading(true);
-    setSel({ date: null, revision: null });
+    const r = restoreRef.current;
+    setSel(r ? { date: r.date, revision: r.revision ?? null } : { date: null, revision: null });
     setRevOpen(false);
     loadToday({ ensure: true }).finally(() => setLoading(false));
     loadHistory();
@@ -270,6 +313,20 @@ export default function PersonalBriefPage({
 
   const edition = usesToday ? todayEdition : (detail.key === viewKey ? detail.edition : null);
   const detailLoading = !usesToday && (detail.key !== viewKey || detail.loading);
+
+  // 返回落位:卡片进 DOM 的同一提交里把卷动位置放回去(layout effect,不闪一帧顶部),
+  // 刚读过的那张卡短暂高亮;只消费一次,之后本次挂载内换期照常回顶。
+  const cardsReady = !loading && !detailLoading && (edition?.items?.length || 0) > 0;
+  useLayoutEffect(() => {
+    const r = restoreRef.current;
+    if (!r || !cardsReady) return undefined;
+    restoreRef.current = null;
+    if (sheetRef.current) sheetRef.current.scrollTop = r.scrollTop || 0;
+    if (r.itemId == null) return undefined;
+    setFlashId(r.itemId);
+    const timer = window.setTimeout(() => setFlashId(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [cardsReady]);
   const status = usesToday ? (todayStatus || edition?.status) : edition?.status;
 
   const pickDay = (key) => {
@@ -293,9 +350,24 @@ export default function PersonalBriefPage({
     }
   };
 
-  // 点卡片 → 站内原文;文章已不在库(article_id 空)时退到原链
+  // 点卡片 → 站内原文;文章已不在库(article_id 空)时退到原链。
+  // 随行交出外出上下文:所在版 + 卷动位置 + 本版可跳条目序列(阅读窗返回带据此「返回 / 下一条」)
   const openItem = (item) => {
-    if (item.article_id && onOpenArticle) { onOpenArticle(item.article_id); return; }
+    if (item.article_id && onOpenArticle) {
+      const sequence = (edition?.items || [])
+        .filter((row) => row.article_id)
+        .map((row) => ({ id: row.id ?? row.position, article_id: row.article_id, title: row.snapshot?.title || '' }));
+      onOpenArticle(item.article_id, {
+        date: selDate,
+        revision: edition?.revision ?? null,
+        scrollTop: sheetRef.current?.scrollTop || 0,
+        itemId: item.id ?? item.position,
+        label: `${dateTextOf(selDate)}${isToday ? ' · 今天' : ''}`,
+        sequence,
+        index: sequence.findIndex((row) => row.article_id === item.article_id),
+      });
+      return;
+    }
     const url = item.snapshot?.source_url;
     if (url) window.open(url, '_blank', 'noopener,noreferrer');
     else showToast?.('这条内容已不在库中', 'error');
@@ -305,7 +377,7 @@ export default function PersonalBriefPage({
   const grouped = useMemo(() => {
     const result = [];
     (edition?.items || []).forEach((item) => {
-      const key = item.section || (edition.status === 'degraded' ? '订阅源最新更新' : '今日精选');
+      const key = item.section || (edition.degraded_reason ? '订阅源最新更新' : '今日精选');
       const current = result.find((group) => group.key === key);
       if (current) current.items.push(item);
       else result.push({ key, items: [item] });
@@ -332,11 +404,12 @@ export default function PersonalBriefPage({
     '我的早报',
     edition?.revision ? `第 ${edition.revision} 版` : null,
     edition?.generated_at ? `${clockOf(edition.generated_at)} 生成` : null,
-    edition?.status === 'degraded' ? '降级生成' : null,
+    // 「降级生成」只指选篇降级(内容不足退到最新更新);来源/分析未就绪由报体的提示行说明
+    edition?.degraded_reason ? '降级生成' : null,
   ].filter(Boolean).join(' · ');
   const subline = items.length > 0
     ? [
-      `${items.length} 篇${edition?.status === 'degraded' ? '最新更新' : '精选'}`,
+      `${items.length} 篇${edition?.degraded_reason ? '最新更新' : '精选'}`,
       interestCount > 0 ? `${interestCount} 篇命中你的兴趣` : null,
       sourceCount > 0 ? `来自 ${sourceCount} 个来源` : null,
     ].filter(Boolean).join(' · ')
@@ -440,7 +513,9 @@ export default function PersonalBriefPage({
                 <BriefCard
                   key={item.id || item.position}
                   item={item}
-                  lead={groupIndex === 0 && index === 0 && edition.status !== 'degraded'}
+                  lead={groupIndex === 0 && index === 0 && !edition.degraded_reason}
+                  wide={group.items.length === 1}
+                  flash={flashId != null && (item.id ?? item.position) === flashId}
                   source={sourceMap[item.snapshot?.source_id]}
                   onOpen={openItem}
                 />

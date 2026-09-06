@@ -31,6 +31,25 @@
    ④ **点卡片 = openArticleById 跳站内原文**(切到该篇所在容器并选中,早报页退场);
       文章已不在库时退到原链。快照弹窗退役。移动壳:横向日期条 + 同一张报纸面。
 
+   三稿(二稿目检返修,2026-09-06 拍板):
+   ⑤ **头条卡双栏**——二稿头条把摘要限 72ch 留下右侧空白;用户问「空白的用意」,评估过放图
+      (快照无图字段;全库近 30 天带图文章 112/1211,头条会在有图/无图两形态间跳,否决)后拍板
+      去空白:左栏来源/标题/摘要/时刻,右栏 200px hairline 分隔的评分栏(40px 渐变数字 +
+      「内容价值分」等宽注脚)+ 标签竖排。右栏无内容(无分无签)退回普通形态。**单卡分节同样
+      通栏双栏**(is-wide,字号不放大;目检:一张卡占三列网格一格、旁边两格空着)。头条豁免只看
+      **选篇降级**(degraded_reason);来源未更新(sync_stale)的版仍是正常精选,照设头条,「降级生成」
+      kicker 与「最新更新」措辞同此口径。报纸面 <720
+      (container query)退单栏,评分栏横排落在摘要之下(移动壳即此形态)。
+   ⑥ **同行等高、脚部钉底**(align-items: stretch + foot margin-top:auto)——三卡底部不齐
+      构成问题,仍不截断,余量落在摘要与脚部之间。
+   ⑦ **外出返回带**(专用于早报,弃「通用返回上一篇」:用户要回的是早报面 + 卷动位置,不是
+      上一篇文章;通用机制等于在阅读器里重建浏览器历史,做一半更糟)。点卡片进原文时交出
+      {日期,版次,卷动位置,条目序列},阅读窗顶部常驻 34px wash 带:左「‹ 返回我的早报 · 9月5日」
+      (落回同一版同一位置,刚读过的卡描一圈 accent 褪去),右「早报下一条 3/5 ›」(顺着本版读完
+      不必回早报)。用户主动改作用域(视图轨/源栏/发现页)即清,同列表内翻篇保留;浏览器后退不接。
+      移动壳:从早报进正文页,返回键/返回钮回早报 Tab 并落位,不做返回带。
+   ⑧ 摘要内关键词加粗:评估前端整词匹配方案后用户拍板「先不考虑」。
+
    纪律:面底 --rd-list-bg(与条目列同阶),卡片 surface(比面高一阶);饱和色只在评分渐变、
    kicker 与 chip;状态提示一句一行(--state-warn-bg / wash 两档);按钮字号写容器靠继承
    (button{font:inherit} 未分层陷阱);全部 token 化,暗色自动翻转;reduced-motion 关掉浮起。
@@ -150,7 +169,7 @@ svg { flex: none; }
 .brief-sec-title { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; }
 .brief-sec-count { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); }
 .brief-sec-rule { flex: 1; height: 1px; background: var(--dorami-border); }
-.brief-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: start; }
+.brief-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: stretch; }
 .brief-card { display: flex; flex-direction: column; gap: 10px; width: 100%; padding: 18px 20px 16px; border: 1px solid var(--dorami-card-bd); border-radius: var(--r-card); background: var(--dorami-surface); box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge); text-align: left; transition: box-shadow var(--motion-medium) var(--motion-ease), transform var(--motion-medium) var(--motion-ease); }
 .brief-card:hover { box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge); transform: translateY(-1px); }
 .brief-card.is-lead { grid-column: 1 / -1; padding: 24px 28px 20px; }
@@ -164,8 +183,29 @@ svg { flex: none; }
 .brief-card-title { display: block; font-family: var(--font-serif); font-size: 17px; font-weight: 700; line-height: 1.4; }
 .brief-card.is-lead .brief-card-title { font-size: 24px; line-height: 1.3; }
 .brief-card-sum { display: block; font-size: 13.5px; line-height: 1.75; color: var(--dorami-ink-2); }
-.brief-card.is-lead .brief-card-sum { font-size: 14.5px; line-height: 1.8; max-width: 72ch; }
-.brief-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 2px; }
+.brief-card.is-lead .brief-card-sum { font-size: 14.5px; line-height: 1.8; }
+.brief-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 2px; }
+/* 三稿:头条双栏 */
+.brief-card.is-wide { grid-column: 1 / -1; padding: 20px 24px 18px; }
+.brief-card.is-split { display: grid; grid-template-columns: minmax(0, 1fr) 200px; column-gap: 32px; }
+.brief-card-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.brief-card-aside { display: flex; flex-direction: column; gap: 14px; min-width: 0; padding-left: 28px; border-left: 1px solid var(--dorami-border-soft); }
+.brief-card-aside-score { display: flex; flex-direction: column; gap: 6px; }
+.brief-card-aside .brief-card-score { font-size: 32px; }
+.brief-card.is-lead .brief-card-aside .brief-card-score { font-size: 40px; }
+.brief-card-aside-cap { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--dorami-faint); }
+.brief-card-tags.is-stack { flex-direction: column; align-items: flex-start; gap: 6px; }
+.mframe .brief-card.is-split { grid-template-columns: minmax(0, 1fr); row-gap: 14px; }
+.mframe .brief-card-aside { flex-direction: row; align-items: center; gap: 16px; padding-left: 0; padding-top: 14px; border-left: none; border-top: 1px solid var(--dorami-border-soft); }
+.mframe .brief-card-aside-score { flex-direction: row; align-items: baseline; gap: 8px; }
+.mframe .brief-card-aside .brief-card-score { font-size: 26px; }
+.mframe .brief-card-tags.is-stack { flex-direction: row; gap: 5px; }
+/* 三稿:阅读窗顶部外出返回带 */
+.reader-brief-trail { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 34px; padding: 0 14px; border-bottom: 1px solid var(--dorami-border-soft); background: var(--dorami-wash); color: var(--dorami-accent-ink); font-size: 12px; font-weight: 500; }
+.reader-brief-trail-btn { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px; border-radius: var(--r-control); color: inherit; }
+.reader-brief-trail-btn:hover { background: color-mix(in srgb, var(--dorami-accent) 12%, transparent); }
+.reader-brief-trail-btn svg { width: 14px; height: 14px; }
+.reader-brief-trail-btn small { font-size: 11px; font-weight: 400; color: var(--dorami-muted); }
 .brief-card-tags { display: flex; flex-wrap: wrap; gap: 5px; }
 .chip { display: inline-flex; align-items: center; min-height: 20px; padding: 0 7px; border-radius: var(--r-pill); background: var(--dorami-wash); color: var(--dorami-accent-ink); font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap; }
 .chip.is-interest::before { content: ''; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: currentColor; }
@@ -247,11 +287,17 @@ svg { flex: none; }
         <section class="brief-sec">
           <div class="brief-sec-head"><span class="brief-sec-title">模型发布</span><span class="brief-sec-count">1</span><span class="brief-sec-rule"></span></div>
           <div class="brief-grid">
-            <button class="brief-card is-lead">
-              <span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#d9232e">IT</span><span class="brief-card-srcname">IT之家 AI</span></span><span class="brief-card-score">8.2</span></span>
-              <span class="brief-card-title">谷歌推出 Gemini 3.8 Flash Cyber 模型,内部已全面部署用于代码安全防护</span>
-              <span class="brief-card-sum">谷歌于 9 月 2 日推出 Gemini 3.8 Flash Cyber 模型,通过 Fairwind 计划向受信任安全团队开放。该模型在漏洞挖掘基准 CyberGym 上表现领先,内部测试中漏洞挖掘成功率突破 70%;在 CWE-Bench 测试中 Pass@1 达 47.2%,接近顶尖模型且成本更低。谷歌内部已全面部署,Chrome 安全团队发现其生成有效补丁数量为顶尖商业模型的 2.6 倍;Wiz 评测显示召回率提升 7.5%–9.7%,成本降至 1/5.2 至 1/2.3。</span>
-              <span class="brief-card-foot"><span class="brief-card-tags"><span class="chip is-interest">关注 · 网络安全</span><span class="chip">Gemini</span><span class="chip">Google</span></span><span class="brief-card-time">2 天前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span>
+            <button class="brief-card is-lead is-split">
+              <span class="brief-card-main">
+                <span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#d9232e">IT</span><span class="brief-card-srcname">IT之家 AI</span></span></span>
+                <span class="brief-card-title">谷歌推出 Gemini 3.8 Flash Cyber 模型,内部已全面部署用于代码安全防护</span>
+                <span class="brief-card-sum">谷歌于 9 月 2 日推出 Gemini 3.8 Flash Cyber 模型,通过 Fairwind 计划向受信任安全团队开放。该模型在漏洞挖掘基准 CyberGym 上表现领先,内部测试中漏洞挖掘成功率突破 70%;在 CWE-Bench 测试中 Pass@1 达 47.2%,接近顶尖模型且成本更低。谷歌内部已全面部署,Chrome 安全团队发现其生成有效补丁数量为顶尖商业模型的 2.6 倍;Wiz 评测显示召回率提升 7.5%–9.7%,成本降至 1/5.2 至 1/2.3。</span>
+                <span class="brief-card-foot"><span class="brief-card-time">2 天前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span>
+              </span>
+              <span class="brief-card-aside">
+                <span class="brief-card-aside-score"><span class="brief-card-score">8.2</span><span class="brief-card-aside-cap">内容价值分</span></span>
+                <span class="brief-card-tags is-stack"><span class="chip is-interest">关注 · 网络安全</span><span class="chip">Gemini</span><span class="chip">Google</span></span>
+              </span>
             </button>
           </div>
         </section>
@@ -283,7 +329,9 @@ svg { flex: none; }
     <div class="shell-note">
       <p><b>日期栏</b>沿源栏语法:canvas 底、13px 行名、右缘等宽小字(周几);选中浮白 + --sh-1;编排中行尾转小圈,失败改红字。按月打组签,今天恒首位。同日多版不在这里罗列。</p>
       <p><b>报头</b>= 等宽 kicker(我的早报 · 版次 · 生成时刻)+ 衬线 36px 日期 + 小字周几/今天 + 「N 篇精选 · N 篇命中兴趣 · 来自 N 个来源」;右侧重编钮(仅今天)与「共 N 版 ▾」。</p>
-      <p><b>分节</b>= 节名 + 等宽计数 + 延伸 hairline;网格 auto-fill minmax(320px):1440 三列、1160 两列、移动一列;首节首张 lead 通栏(24px 标题、摘要限 72ch)。</p>
+      <p><b>分节</b>= 节名 + 等宽计数 + 延伸 hairline;网格 auto-fill minmax(320px):1440 三列、1160 两列、移动一列;同行卡片等高、脚部钉底。首节首张 lead 通栏且双栏(三稿):左栏正文流,右栏 200px 评分栏(40px 渐变数字 + 「内容价值分」注脚)与标签竖排,hairline 分隔——右侧不再留白,不放图。</p>
+      <p><b>外出返回带</b>(三稿,示意):点卡片进原文后阅读窗顶部常驻——</p>
+      <div class="reader-brief-trail" style="border:1px solid var(--dorami-border-soft);border-radius:var(--r-control)"><span class="reader-brief-trail-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>返回我的早报<small>9月5日</small></span><span class="reader-brief-trail-btn">早报下一条<small>3 / 5</small><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></span></div>
       <p><b>卡片</b>= 品牌标 + 来源名 | 衬线渐变评分(与速读卡同一 AI 身份)/ 衬线标题 / 完整摘要 / chip + 相对时刻,hover 浮起并露出 ↗。点卡片 = openArticleById 跳站内原文,早报页退场。</p>
     </div>
   </div>

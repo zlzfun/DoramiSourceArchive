@@ -11252,8 +11252,8 @@ input[type="radio"] {
 .brief-sec-count { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
 .brief-sec-rule { flex: 1; height: 1px; background: var(--dorami-border); }
 
-/* 卡片网格:自适应列数(≥2 列时首节首张 lead 通栏) */
-.brief-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: start; }
+/* 卡片网格:自适应列数(≥2 列时首节首张 lead 通栏);同行等高、脚部钉底(报纸排版,仍不截断) */
+.brief-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: stretch; }
 .brief-card {
   display: flex;
   flex-direction: column;
@@ -11272,7 +11272,23 @@ input[type="radio"] {
 }
 .brief-card:hover { box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge); transform: translateY(-1px); }
 .brief-card.is-lead { grid-column: 1 / -1; padding: 24px 28px 20px; }
+/* 头条双栏(三稿):左栏正文流,右栏 200px 评分与标签栏,hairline 分隔——右侧不再留白也不放图 */
+.brief-card.is-wide { grid-column: 1 / -1; padding: 20px 24px 18px; }
+.brief-card.is-split { display: grid; grid-template-columns: minmax(0, 1fr) 200px; column-gap: 32px; }
+.brief-card-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.brief-card-aside { display: flex; flex-direction: column; gap: 14px; min-width: 0; padding-left: 28px; border-left: 1px solid var(--dorami-border-soft); }
+.brief-card-aside-score { display: flex; flex-direction: column; gap: 6px; }
+.brief-card-aside .brief-card-score { font-size: 32px; }
+.brief-card.is-lead .brief-card-aside .brief-card-score { font-size: 40px; }
+.brief-card-aside-cap { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--dorami-faint); }
+.brief-card-tags.is-stack { flex-direction: column; align-items: flex-start; gap: 6px; }
 .brief-card.is-skel { cursor: default; min-height: 150px; }
+/* 返回落位高亮:刚读过的卡描一圈 accent 再褪去 */
+.brief-card.is-just-read { animation: brief-card-flash 1.8s var(--motion-ease) both; }
+@keyframes brief-card-flash {
+  0%, 35% { box-shadow: 0 0 0 2px var(--dorami-accent), var(--sh-2), inset 0 1px 0 var(--dorami-edge); }
+  100% { box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge); }
+}
 .brief-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .brief-card-src { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
 .brief-card-srcname { font-size: 12px; font-weight: 500; color: var(--dorami-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -11282,8 +11298,8 @@ input[type="radio"] {
 .brief-card-title { display: block; font-family: var(--font-serif); font-size: 17px; font-weight: 700; line-height: 1.4; color: var(--dorami-ink); }
 .brief-card.is-lead .brief-card-title { font-size: 24px; line-height: 1.3; }
 .brief-card-sum { display: block; font-size: 13.5px; font-weight: 400; line-height: 1.75; color: var(--dorami-ink-2); }
-.brief-card.is-lead .brief-card-sum { font-size: 14.5px; line-height: 1.8; max-width: 72ch; }
-.brief-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 2px; }
+.brief-card.is-lead .brief-card-sum { font-size: 14.5px; line-height: 1.8; }
+.brief-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 2px; }
 .brief-card-tags { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
 .brief-card-time { flex: none; display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 11.5px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
 .brief-card-go { width: 13px; height: 13px; color: var(--dorami-faint); opacity: 0; transform: translate(-2px, 2px); transition: opacity var(--motion-fast) ease, transform var(--motion-fast) var(--motion-ease), color var(--motion-fast) ease; }
@@ -11312,6 +11328,58 @@ input[type="radio"] {
 @media (prefers-reduced-motion: reduce) {
   .brief-card, .brief-card-go { transition: none; }
   .brief-card:hover { transform: none; }
+  .brief-card.is-just-read { animation: none; box-shadow: 0 0 0 2px var(--dorami-accent), var(--sh-1); }
+}
+/* 报纸面窄于 720 时头条退回单栏,评分与标签栏横排落在摘要之下 */
+.brief-sheet { container-type: inline-size; }
+@container (max-width: 720px) {
+  .brief-card.is-split { grid-template-columns: minmax(0, 1fr); row-gap: 14px; }
+  .brief-card-aside { flex-direction: row; align-items: center; gap: 16px; padding-left: 0; padding-top: 14px; border-left: none; border-top: 1px solid var(--dorami-border-soft); }
+  .brief-card-aside-score { flex: none; flex-direction: row; align-items: baseline; gap: 8px; }
+  .brief-card-aside .brief-card-score, .brief-card.is-lead .brief-card-aside .brief-card-score { font-size: 28px; }
+  .brief-card-tags.is-stack { flex-direction: row; align-items: center; gap: 5px; }
+}
+
+/* ── 早报外出返回带(阅读窗顶部,issue #23 三稿)──
+   wash 底 + accent-ink 字:这一程是从早报出来的;左返回、右下一条,字号写容器(button{font:inherit})。 */
+.reader-brief-trail {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 34px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--dorami-border-soft);
+  background: var(--dorami-wash);
+  color: var(--dorami-accent-ink);
+  font-size: 12px;
+  font-weight: 500;
+}
+.reader-brief-trail-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--r-control);
+  color: inherit;
+  transition: background var(--motion-fast) ease;
+}
+.reader-brief-trail-btn:hover { background: color-mix(in srgb, var(--dorami-accent) 12%, transparent); }
+.reader-brief-trail-btn svg { flex: none; width: 14px; height: 14px; }
+.reader-brief-trail-btn small { font-size: 11px; font-weight: 400; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
+.reader-brief-trail-btn.is-next small { margin-left: 2px; }
+.reader-brief-trail-end { font-size: 11px; font-weight: 400; color: var(--dorami-faint); }
+/* 阅读进度线锚在栏顶;有返回带时压到带下缘 */
+.reader-brief-trail + .reader-progress { top: 34px; }
+/* ≤1024 阅读器纵向堆叠(单列网格):早报两带不再跨列——.brief-sheet 的 3/-1 在单列网格里会挤出隐式列;
+   本规则须与 .brief-sheet 同在未分层区,层内写法会被未分层的跨列声明压回 */
+@media (max-width: 1024px) {
+  .brief-days, .brief-sheet { grid-column: auto; }
+  .brief-sheet { overflow: visible; }
+  .brief-days-scroll { max-height: 320px; }
 }
 
 /* ── CMS taxonomy / Candidate 治理 ── */

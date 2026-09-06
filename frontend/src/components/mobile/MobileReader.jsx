@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AtSign,
   CheckCheck,
@@ -76,6 +76,9 @@ export default function MobileReader({
   const closeBriefBeforeArticleOpen = useCallback(() => {
     setTab((current) => (current === 'brief' ? 'article' : current));
   }, []);
+  // 早报外出(issue #23 三稿):从早报进正文页,返回键/返回钮回早报 Tab 并落回原位,而非文章列表
+  const briefTrailRef = useRef(null);
+  const [briefRestore, setBriefRestore] = useState(null);
   const rs = useReaderState({
     showToast,
     account,
@@ -114,6 +117,14 @@ export default function MobileReader({
     // 订阅数(我的页)
     subscribedSources,
   } = rs;
+  const closeArticle = useCallback(() => {
+    if (briefTrailRef.current) {
+      setBriefRestore(briefTrailRef.current);
+      briefTrailRef.current = null;
+      setTab('brief');
+    }
+    selectArticle(null);
+  }, [selectArticle]);
 
   // 底部 Tab:article|podcast|bulletin|social 与容器 mode 一一对应,me 是移动端独有落点
   const onboardingRequired = personalDigestEnabled
@@ -130,6 +141,8 @@ export default function MobileReader({
   }, [mode, personalDigestEnabled]);
 
   const goTab = (t) => {
+    briefTrailRef.current = null; // 主动切 Tab = 结束这一程外出
+    if (t === 'brief') setBriefRestore(null); // 点 Tab 进早报是新开,不落回旧位
     if (t === 'me' || t === 'brief') { setTab(t); return; }
     setTab(t);
     // 与桌面视图轨同语义:点容器钮=回到该容器聚合(清源/收藏/搜索过滤)
@@ -171,7 +184,7 @@ export default function MobileReader({
   const readOpen = listView && !discover && Boolean(activeArticle);
 
   // ── 返回键握手(Wave3):层开着时按返回=关层,不是退出站点(微信内浏览器的肌肉记忆)──
-  useLayerHistory(readOpen, () => selectArticle(null));
+  useLayerHistory(readOpen, closeArticle);
   useLayerHistory(discover, closeDiscover);
   // 合集详情是发现页之上的一层:返回先退详情、再退发现页(注册序在 discover 之后)
   useLayerHistory(Boolean(discoverCollectionId), () => setDiscoverCollectionId(null));
@@ -254,10 +267,13 @@ export default function MobileReader({
             sourceMap={sourceMap}
             showToast={showToast}
             interestVersion={interestVersion}
+            restore={briefRestore}
             onManageSubscriptions={() => openDiscover()}
-            onOpenArticle={async (articleId) => {
+            onOpenArticle={async (articleId, ctx) => {
               const opened = await openArticleById(articleId);
-              if (opened) setTab(mode);
+              if (!opened) return;
+              briefTrailRef.current = ctx || null;
+              setTab(mode);
             }}
           />
         ) : tab === 'me' ? (
@@ -471,7 +487,7 @@ export default function MobileReader({
           rs={rs}
           aiEnabled={aiEnabled}
           showToast={showToast}
-          onBack={() => selectArticle(null)}
+          onBack={closeArticle}
           onMore={() => openArticleSheet(activeArticle)}
         />
       )}
