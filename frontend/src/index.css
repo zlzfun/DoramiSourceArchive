@@ -11355,7 +11355,8 @@ input[type="radio"] {
 
 /* 卡片网格:自适应列数(≥2 列时首节首张 lead 通栏);同行等高、脚部钉底(报纸排版,仍不截断) */
 .brief-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: stretch; }
-.brief-card {
+/* 作用域限定在 .brief-grid 之下(codex 检视):管理台日报面板也叫 surface-card.brief-card(280px 双栏),不可被读者卡规则覆盖 */
+.brief-grid .brief-card {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -11372,21 +11373,21 @@ input[type="radio"] {
   transition: border-color var(--motion-fast) var(--motion-ease);
 }
 /* 悬停不抬升(conventions §卡片:无 hover 位移与加深阴影;codex 检视):只显一圈 hairline */
-.brief-card:hover { border-color: var(--dorami-border-strong); }
-.brief-card.is-lead { grid-column: 1 / -1; padding: 24px 28px 20px; }
+.brief-grid .brief-card:hover { border-color: var(--dorami-border-strong); }
+.brief-grid .brief-card.is-lead { grid-column: 1 / -1; padding: 24px 28px 20px; }
 /* 头条双栏(三稿):左栏正文流,右栏 200px 评分与标签栏,hairline 分隔——右侧不再留白也不放图 */
-.brief-card.is-wide { grid-column: 1 / -1; padding: 20px 24px 18px; }
-.brief-card.is-split { display: grid; grid-template-columns: minmax(0, 1fr) 200px; column-gap: 32px; }
+.brief-grid .brief-card.is-wide { grid-column: 1 / -1; padding: 20px 24px 18px; }
+.brief-grid .brief-card.is-split { display: grid; grid-template-columns: minmax(0, 1fr) 200px; column-gap: 32px; }
 .brief-card-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .brief-card-aside { display: flex; flex-direction: column; gap: 14px; min-width: 0; padding-left: 28px; border-left: 1px solid var(--dorami-border-soft); }
 .brief-card-aside-score { display: flex; flex-direction: column; gap: 6px; }
 .brief-card-aside .brief-card-score { font-size: 32px; }
-.brief-card.is-lead .brief-card-aside .brief-card-score { font-size: 40px; }
+.brief-grid .brief-card.is-lead .brief-card-aside .brief-card-score { font-size: 40px; }
 .brief-card-aside-cap { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--dorami-faint); }
 .brief-card-tags.is-stack { flex-direction: column; align-items: flex-start; gap: 6px; }
-.brief-card.is-skel { cursor: default; min-height: 150px; }
+.brief-grid .brief-card.is-skel { cursor: default; min-height: 150px; }
 /* 返回落位高亮:刚读过的卡描一圈 accent 再褪去 */
-.brief-card.is-just-read { animation: brief-card-flash 1.8s var(--motion-ease) both; }
+.brief-grid .brief-card.is-just-read { animation: brief-card-flash 1.8s var(--motion-ease) both; }
 @keyframes brief-card-flash {
   0%, 35% { box-shadow: 0 0 0 2px var(--dorami-accent), var(--sh-2), inset 0 1px 0 var(--dorami-edge); }
   100% { box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge); }
@@ -11396,16 +11397,16 @@ input[type="radio"] {
 .brief-card-srcname { font-size: 12px; font-weight: 500; color: var(--dorami-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 评分:衬线齐线数字 + AI 渐变(见渐变即 AI,与速读卡同一身份);渐变落在数字元素自身 */
 .brief-card-score { flex: none; font-family: Charter, Cambria, Baskerville, var(--font-serif); font-size: 22px; font-weight: 700; line-height: 1; font-variant-numeric: lining-nums tabular-nums; }
-.brief-card.is-lead .brief-card-score { font-size: 28px; }
+.brief-grid .brief-card.is-lead .brief-card-score { font-size: 28px; }
 .brief-card-title { display: block; font-family: var(--font-serif); font-size: 17px; font-weight: 700; line-height: 1.4; color: var(--dorami-ink); }
-.brief-card.is-lead .brief-card-title { font-size: 24px; line-height: 1.3; }
+.brief-grid .brief-card.is-lead .brief-card-title { font-size: 24px; line-height: 1.3; }
 .brief-card-sum { display: block; font-size: 13.5px; font-weight: 400; line-height: 1.75; color: var(--dorami-ink-2); }
-.brief-card.is-lead .brief-card-sum { font-size: 14.5px; line-height: 1.8; }
+.brief-grid .brief-card.is-lead .brief-card-sum { font-size: 14.5px; line-height: 1.8; }
 .brief-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 2px; }
 .brief-card-tags { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
 .brief-card-time { flex: none; display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 11.5px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
 .brief-card-go { width: 13px; height: 13px; color: var(--dorami-faint); opacity: 0; transform: translate(-2px, 2px); transition: opacity var(--motion-fast) ease, transform var(--motion-fast) var(--motion-ease), color var(--motion-fast) ease; }
-.brief-card:hover .brief-card-go { opacity: 1; transform: none; color: var(--dorami-accent-ink); }
+.brief-grid .brief-card:hover .brief-card-go { opacity: 1; transform: none; color: var(--dorami-accent-ink); }
 /* 兴趣命中 chip:同族同色,只多一枚实心小点作「关注」状态记号(不上第二饱和色) */
 .reader-tag-chip.is-interest::before { content: ''; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: currentColor; }
 
@@ -11428,16 +11429,16 @@ input[type="radio"] {
 .brief-state-meta { font-size: 12px; line-height: 1.6; color: var(--dorami-faint); }
 .brief-state .action-button { margin-top: 6px; }
 @media (prefers-reduced-motion: reduce) {
-  .brief-card, .brief-card-go { transition: none; }
-  .brief-card.is-just-read { animation: none; box-shadow: 0 0 0 2px var(--dorami-accent), var(--sh-1); }
+  .brief-grid .brief-card, .brief-card-go { transition: none; }
+  .brief-grid .brief-card.is-just-read { animation: none; box-shadow: 0 0 0 2px var(--dorami-accent), var(--sh-1); }
 }
 /* 报纸面窄于 720 时头条退回单栏,评分与标签栏横排落在摘要之下 */
 .brief-sheet { container-type: inline-size; }
 @container (max-width: 720px) {
-  .brief-card.is-split { grid-template-columns: minmax(0, 1fr); row-gap: 14px; }
+  .brief-grid .brief-card.is-split { grid-template-columns: minmax(0, 1fr); row-gap: 14px; }
   .brief-card-aside { flex-direction: row; align-items: center; gap: 16px; padding-left: 0; padding-top: 14px; border-left: none; border-top: 1px solid var(--dorami-border-soft); }
   .brief-card-aside-score { flex: none; flex-direction: row; align-items: baseline; gap: 8px; }
-  .brief-card-aside .brief-card-score, .brief-card.is-lead .brief-card-aside .brief-card-score { font-size: 28px; }
+  .brief-card-aside .brief-card-score, .brief-grid .brief-card.is-lead .brief-card-aside .brief-card-score { font-size: 28px; }
   .brief-card-tags.is-stack { flex-direction: row; align-items: center; gap: 5px; }
 }
 
