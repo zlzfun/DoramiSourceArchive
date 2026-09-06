@@ -8732,50 +8732,58 @@ input[type="radio"] {
     color: var(--dorami-muted);
   }
 
+  /* 署名行(样页 dorami-pane-head-quiet.html):只放事实——日期(无真实时刻不画 00:00)·阅读约 N 分钟·
+     阅读量·分析状态,中点分隔;动作不在这一行 */
   .reader-pane-meta {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 6px 14px;
+    gap: 6px 0;
     font-family: var(--mono);
     font-size: 11.5px;
     font-weight: 400;
     color: var(--dorami-faint);
     font-variant-numeric: tabular-nums;
   }
+  .reader-pane-meta > span + span::before { content: '·'; margin: 0 7px; }
 
   /* ── 标题下动作行(v3.45,样页 docs/design/dorami-onboarding-quiet.html):
      「查看原文」胶囊 + 「原文 | 译为中文」二段。沿 meta 行的 11.5px 字阶但用正文字系
      (中文标签不走等宽);胶囊 26px 高、hairline 描边、surface 底;译文激活态沿 AI 渐变身份
      (v3.33 纪律:渐变只上身份标记——渐变 wash 底 + 渐变字,胶囊本体不上 solid accent)。
      字号/字重写在容器上靠继承穿透(button{font:inherit} 未分层陷阱)。 ── */
+  /* 尾行(issue #23 第三项延伸):左标签小签、右动作,贴着标题区分隔线;标签折行时动作随末行,
+     无标签(分析在途)时尾行只有动作 */
+  .reader-pane-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    margin-top: 12px;
+  }
+  .reader-pane-foot .reader-pane-tags { flex: 1 1 auto; min-width: 0; margin-top: 0; }
   .reader-pane-actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
-    margin-top: 12px;
+    gap: 12px;
+    margin-left: auto;
     font-size: 11.5px;
     font-weight: 600;
   }
+  /* 查看原文退成文字链(正文末尾同款),只有语言二段保留控件外形 */
   .reader-pane-act {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    height: 26px;
-    padding: 0 10px;
-    border-radius: var(--r-pill);
-    border: 1px solid var(--dorami-border);
-    background: var(--dorami-surface);
+    gap: 4px;
     color: var(--dorami-ink-2);
     text-decoration: none;
-    transition: border-color var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
   }
   .reader-pane-act svg { color: var(--dorami-faint); }
-  .reader-pane-act:hover { border-color: var(--dorami-border-strong); background: var(--dorami-soft); }
+  .reader-pane-act:hover { text-decoration: underline; }
   .reader-tr-seg {
     display: inline-flex;
-    height: 26px;
+    height: 24px;
     padding: 2px;
     border-radius: var(--r-pill);
     border: 1px solid var(--dorami-border);
@@ -8785,8 +8793,8 @@ input[type="radio"] {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    height: 20px;
-    padding: 0 9px;
+    height: 18px;
+    padding: 0 8px;
     border: none;
     border-radius: var(--r-pill);
     background: transparent;
@@ -11196,8 +11204,30 @@ input[type="radio"] {
 /* p 段仅管理面抽屉/弹窗仍画 score_reason;阅读窗自 issue #13 起理由住速读卡的「评分依据」层(AiReadingCard) */
 .reader-analysis-summary p { margin-top: 8px; font-size: 13px; font-weight: 600; line-height: 1.65; }
 .reader-analysis-summary > small { display: block; margin-top: 8px; line-height: 1.5; }
-/* 阅读窗标题区标签行(issue #13 二轮:分数并入速读卡后,标签自成一行、不再套框) */
-.reader-pane-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+/* 阅读窗标题区标签行(issue #13 二轮:分数并入速读卡后,标签自成一行、不再套框;
+   issue #23 第三项延伸:标签改细线小签——与条目行分类同语法,规范实线 / 灵活虚线可点检索,
+   不着色,标题区饱和色只剩眉头,渐变留给速读卡) */
+.reader-pane-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.reader-pane-tags .reader-tag-chip {
+  min-height: 0;
+  padding: 1px 7px;
+  border: 1px solid var(--dorami-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dorami-faint);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.06em;
+  outline: none;
+}
+.reader-pane-tags .reader-tag-chip.is-extracted { border-style: dashed; }
+.reader-pane-tags .reader-tag-chip.is-actionable:hover,
+.reader-pane-tags .reader-tag-chip.is-actionable:focus-visible {
+  color: var(--dorami-ink-2);
+  border-color: var(--dorami-border-strong);
+  background: transparent;
+}
 
 
 /* ── 我的早报(issue #23 重做,二稿):视图轨 · 日期栏 · 报纸面 ──

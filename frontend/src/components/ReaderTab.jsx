@@ -50,12 +50,12 @@ import AnalysisTagChip from './AnalysisTagChip';
 import { excerptOf, hostOf } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
 import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
-import { formatRelativeTime, formatDateTime } from '../utils/datetime';
-import { contentTypeLabel } from '../utils/contentType';
+import { formatRelativeTime, formatDateTime, formatPublishDate } from '../utils/datetime';
 import { formatPodcastDuration, podcastOf, podcastProcessingMeta } from '../utils/podcast';
 import {
   SCORE_DISCLAIMER,
   analysisStatusMeta,
+  contentGenreLabel,
   displayAnalysisTags,
   primaryAnalysisLabel,
   qualityScoreText,
@@ -1041,11 +1041,15 @@ export default function ReaderTab({
 
           {/* key 按文章 id 重挂载,触发 reader-enter 淡入+轻上移(体验二波 A1) */}
           <article className="reader-pane reader-enter" key={activeArticle.id}>
+            {/* 标题区(issue #23 第三项延伸,样页 docs/design/dorami-pane-head-quiet.html):
+                四行三语言——眉头「源 · 体裁」/ 衬线标题 / 署名行(只放事实:日期·时长·阅读量·分析状态)/
+                尾行「左标签小签 · 右动作」贴着分隔线。内容类型是数据形态(容器已交代),眉头改画分析出的
+                体裁,与条目行分类同一件事。 */}
             <header className="reader-pane-head">
               <div className="reader-kicker">
                 {(sourceNameMap[activeArticle.source_id] || activeArticle.source_id)}
-                {activeArticle.content_type
-                  ? ` · ${contentTypeLabel(activeArticle.content_type, activeArticle.content_type)}`
+                {contentGenreLabel(activeArticle.content_genre)
+                  ? ` · ${contentGenreLabel(activeArticle.content_genre)}`
                   : ''}
               </div>
               {/* 译文态(v3.45):大标题换中文译名,原标题降为其下一行小字 */}
@@ -1057,14 +1061,14 @@ export default function ReaderTab({
               )}
               <div className="reader-pane-meta">
                 {activeArticle.publish_date && (
-                  <span title={formatRelativeTime(activeArticle.publish_date)}>
-                    {formatDateTime(activeArticle.publish_date)}
+                  <span title={formatDateTime(activeArticle.publish_date)}>
+                    {formatPublishDate(activeArticle.publish_date)}
                   </span>
                 )}
                 {/* 字数与时长信息冗余(时长即由字数换算),只留时长;
                     阅读量 = 全站累计阅读次数(跨读者;含本次打开,由 /read 响应回填) */}
                 {bodyStats && (
-                  <span>{podcastView ? '简介阅读约' : '阅读时长'} {bodyStats.minutes} 分钟</span>
+                  <span>{podcastView ? '简介阅读约' : '阅读约'} {bodyStats.minutes} 分钟</span>
                 )}
                 {podcastView && formatPodcastDuration(activeArticle.podcast?.duration_seconds) && (
                   <span>原节目 {formatPodcastDuration(activeArticle.podcast.duration_seconds)}</span>
@@ -1072,9 +1076,25 @@ export default function ReaderTab({
                 {typeof activeArticle.read_count === 'number' && activeArticle.read_count > 0 && (
                   <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
                 )}
+                {/* 分析生命周期是署名行末尾的一段事实,不是一枚章 */}
+                {activeAnalysisStatus && <span role="status">{activeAnalysisStatus.label}</span>}
               </div>
-              {/* 标题下动作行(v3.45):查看原文 + 「原文 | 译为中文」二段——眼睛自标题落到正文的
-                  路径上,文字化;译文二段激活态沿 AI 渐变身份(v3.33),AI 未开启只余原文。 */}
+              {/* 尾行:左标签小签(规范实线 / 灵活虚线可点检索),右动作——「原语言 | 译为中文」二段 +
+                  查看原文文字链(v3.45 拍板的「标题 → 正文」视线路径不变,只是不再独占一行);
+                  译文二段激活态沿 AI 渐变身份(v3.33),AI 未开启只余原文。 */}
+              {(displayAnalysisTags(activeArticle).length > 0 || activeArticle.source_url || (aiEnabled && !activeIsChinese)) && (
+              <div className="reader-pane-foot">
+              {displayAnalysisTags(activeArticle).length > 0 && (
+                <div className="reader-pane-tags">
+                  {displayAnalysisTags(activeArticle).map((tag, index) => (
+                    <AnalysisTagChip
+                      key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
+                      tag={tag}
+                      onTemporarySearch={searchForLabel}
+                    />
+                  ))}
+                </div>
+              )}
               {(activeArticle.source_url || (aiEnabled && !activeIsChinese)) && (
                 <div className="reader-pane-actions">
                   {aiEnabled && !activeIsChinese && (
@@ -1119,23 +1139,7 @@ export default function ReaderTab({
                   )}
                 </div>
               )}
-              {/* issue #13: score/reason live in the shared reading card; the
-                  title area keeps only tags plus the honest analysis lifecycle. */}
-              {(displayAnalysisTags(activeArticle).length > 0 || activeAnalysisStatus) && (
-                <div className="reader-pane-tags">
-                  {displayAnalysisTags(activeArticle).map((tag, index) => (
-                    <AnalysisTagChip
-                      key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
-                      tag={tag}
-                      onTemporarySearch={searchForLabel}
-                    />
-                  ))}
-                  {activeAnalysisStatus && (
-                    <span className={`stamp ${activeAnalysisStatus.cls}`} role="status">
-                      {activeAnalysisStatus.label}
-                    </span>
-                  )}
-                </div>
+              </div>
               )}
             </header>
             <div className="reader-pane-body markdown-body">
