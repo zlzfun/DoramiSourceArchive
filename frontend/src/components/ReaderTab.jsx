@@ -348,6 +348,53 @@ export default function ReaderTab({
   useEffect(() => { resyncListScrollbar(); }, [articles, articlesLoading, activeArticle, resyncListScrollbar]);
 
   const activeAnalysisStatus = analysisStatusMeta(activeArticle, { podcast: podcastView });
+  // 标题区尾行动作(语言二段 + 查看原文):有标签时住尾行右缘,无标签时并入署名行右缘——
+  // 标题下不留一片只挂着两个钮的空白(样页「分析在途」帧即此形态)。
+  const paneTags = activeArticle ? displayAnalysisTags(activeArticle) : [];
+  const paneActions = activeArticle && (activeArticle.source_url || (aiEnabled && !activeIsChinese)) && (
+    <div className="reader-pane-actions">
+      {aiEnabled && !activeIsChinese && (
+        <div className="reader-tr-seg" role="group" aria-label="正文语言">
+          <button
+            type="button"
+            className={`reader-tr-seg-btn ${showTranslation ? '' : 'is-on'}`}
+            aria-pressed={!showTranslation}
+            onClick={() => { if (showTranslation) handleTranslate(); }}
+          >
+            原语言
+          </button>
+          <button
+            type="button"
+            className={`reader-tr-seg-btn ${showTranslation ? 'is-on is-ai' : ''}`}
+            aria-pressed={showTranslation}
+            disabled={translating || activeBodyLoading || !activeBody}
+            title={showTranslation ? '当前显示中文译文' : '将正文译为中文'}
+            onClick={() => { if (!showTranslation) handleTranslate(); }}
+          >
+            {translating
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              : <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}
+            <span className={showTranslation ? 'ai-grad-text' : ''}>
+              {translating ? '翻译中…' : showTranslation ? '中文' : '译为中文'}
+            </span>
+          </button>
+        </div>
+      )}
+      {/* 顺序:语言二段在前、跳原网页在后(目检拍板);「原语言」与「查看原文」用词分家——
+          前者是本页正文的语言档位,后者是跳出站外 */}
+      {activeArticle.source_url && (
+        <a
+          href={activeArticle.source_url}
+          target="_blank"
+          rel="noreferrer"
+          className="reader-pane-act"
+        >
+          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+          查看原文
+        </a>
+      )}
+    </div>
+  );
 
   // ── 右键上下文菜单(v3.28,样页 dorami-context-menu-quiet) ──
   // items 构建在 useReaderState(桌面右键/移动长按共用);弹出定位与开合是桌面视图胶水。
@@ -1059,6 +1106,7 @@ export default function ReaderTab({
               {showTranslation && translatedTitle && activeArticle.title && translatedTitle !== activeArticle.title && (
                 <div className="reader-pane-title-orig">{activeArticle.title}</div>
               )}
+              <div className="reader-pane-byline">
               <div className="reader-pane-meta">
                 {activeArticle.publish_date && (
                   <span title={formatDateTime(activeArticle.publish_date)}>
@@ -1079,67 +1127,24 @@ export default function ReaderTab({
                 {/* 分析生命周期是署名行末尾的一段事实,不是一枚章 */}
                 {activeAnalysisStatus && <span role="status">{activeAnalysisStatus.label}</span>}
               </div>
+              {paneTags.length === 0 && paneActions}
+              </div>
               {/* 尾行:左标签小签(规范实线 / 灵活虚线可点检索),右动作——「原语言 | 译为中文」二段 +
                   查看原文文字链(v3.45 拍板的「标题 → 正文」视线路径不变,只是不再独占一行);
                   译文二段激活态沿 AI 渐变身份(v3.33),AI 未开启只余原文。 */}
-              {(displayAnalysisTags(activeArticle).length > 0 || activeArticle.source_url || (aiEnabled && !activeIsChinese)) && (
-              <div className="reader-pane-foot">
-              {displayAnalysisTags(activeArticle).length > 0 && (
-                <div className="reader-pane-tags">
-                  {displayAnalysisTags(activeArticle).map((tag, index) => (
-                    <AnalysisTagChip
-                      key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
-                      tag={tag}
-                      onTemporarySearch={searchForLabel}
-                    />
-                  ))}
+              {paneTags.length > 0 && (
+                <div className="reader-pane-foot">
+                  <div className="reader-pane-tags">
+                    {paneTags.map((tag, index) => (
+                      <AnalysisTagChip
+                        key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
+                        tag={tag}
+                        onTemporarySearch={searchForLabel}
+                      />
+                    ))}
+                  </div>
+                  {paneActions}
                 </div>
-              )}
-              {(activeArticle.source_url || (aiEnabled && !activeIsChinese)) && (
-                <div className="reader-pane-actions">
-                  {aiEnabled && !activeIsChinese && (
-                    <div className="reader-tr-seg" role="group" aria-label="正文语言">
-                      <button
-                        type="button"
-                        className={`reader-tr-seg-btn ${showTranslation ? '' : 'is-on'}`}
-                        aria-pressed={!showTranslation}
-                        onClick={() => { if (showTranslation) handleTranslate(); }}
-                      >
-                        原语言
-                      </button>
-                      <button
-                        type="button"
-                        className={`reader-tr-seg-btn ${showTranslation ? 'is-on is-ai' : ''}`}
-                        aria-pressed={showTranslation}
-                        disabled={translating || activeBodyLoading || !activeBody}
-                        title={showTranslation ? '当前显示中文译文' : '将正文译为中文'}
-                        onClick={() => { if (!showTranslation) handleTranslate(); }}
-                      >
-                        {translating
-                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                          : <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}
-                        <span className={showTranslation ? 'ai-grad-text' : ''}>
-                          {translating ? '翻译中…' : showTranslation ? '中文' : '译为中文'}
-                        </span>
-                      </button>
-                    </div>
-                  )}
-                  {/* 顺序:语言二段在前、跳原网页在后(目检拍板);「原语言」与「查看原文」用词分家——
-                      前者是本页正文的语言档位,后者是跳出站外 */}
-                  {activeArticle.source_url && (
-                    <a
-                      href={activeArticle.source_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="reader-pane-act"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                      查看原文
-                    </a>
-                  )}
-                </div>
-              )}
-              </div>
               )}
             </header>
             <div className="reader-pane-body markdown-body">

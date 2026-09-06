@@ -8757,10 +8757,18 @@ input[type="radio"] {
   .reader-pane-foot {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
+    align-items: flex-end;   /* 底对齐:小签比语言二段矮,居中会让底边差半格 */
     gap: 8px 14px;
     margin-top: 12px;
   }
+  /* 署名行容器:无标签时动作并入右缘(有标签时动作住尾行) */
+  .reader-pane-byline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+  }
+  .reader-pane-byline .reader-pane-meta { flex: 1 1 auto; min-width: 0; }
   .reader-pane-foot .reader-pane-tags { flex: 1 1 auto; min-width: 0; margin-top: 0; }
   .reader-pane-actions {
     display: flex;
