@@ -358,6 +358,14 @@ export default function PersonalBriefPage({
   // 点卡片 → 站内原文;文章已不在库(article_id 空)时退到原链。
   // 随行交出外出上下文:所在版 + 卷动位置 + 本版可跳条目序列(阅读窗返回带据此「返回 / 下一条」)
   const openItem = (item) => {
+    // 社交条目(codex 检视 P2):社交容器是整幅卡片流,没有「选中一条」的落点——openArticleById
+    // 只会切到该源的流而非那条推文,返回带也不出;推文本体即原链,直接开原链。无原链才退回站内。
+    const snapshot = item.snapshot || {};
+    const social = sourceMap[snapshot.source_id]?.shape === 'social' || snapshot.content_type === 'social_post';
+    if (social && snapshot.source_url) {
+      window.open(snapshot.source_url, '_blank', 'noopener,noreferrer');
+      return;
+    }
     if (item.article_id && onOpenArticle) {
       const sequence = (edition?.items || [])
         .filter((row) => row.article_id)

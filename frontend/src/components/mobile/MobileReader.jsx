@@ -127,6 +127,13 @@ export default function MobileReader({
     }
     selectArticle(null);
   }, [selectArticle]);
+  // 正文页点标签检索(codex 检视 P2):目的地是过滤后的内容列表,不是早报——从早报进来的也丢掉
+  // 返回带、落到所属容器 Tab,否则检索结果被早报页盖住看不见。
+  const leaveArticleForSearch = useCallback(() => {
+    briefTrailRef.current = null;
+    setTab((cur) => (cur === 'brief' || cur === 'me' ? mode : cur));
+    selectArticle(null);
+  }, [selectArticle, mode]);
 
   // 底部 Tab:article|podcast|bulletin|social 与容器 mode 一一对应,me 是移动端独有落点
   const onboardingRequired = personalDigestEnabled
@@ -496,6 +503,7 @@ export default function MobileReader({
           aiEnabled={aiEnabled}
           showToast={showToast}
           onBack={closeArticle}
+          onLeaveForSearch={leaveArticleForSearch}
           onMore={() => openArticleSheet(activeArticle)}
         />
       )}

@@ -31,6 +31,7 @@ export default function MobileArticlePage({
   aiEnabled,
   showToast,
   onBack,
+  onLeaveForSearch = null, // 标签检索离开正文页的专用出口(不走早报返回)
   onMore,
 }) {
   const {
@@ -164,7 +165,7 @@ export default function MobileArticlePage({
                   tag={tag}
                   onTemporarySearch={(label) => {
                     searchForLabel(label);
-                    onBack();
+                    (onLeaveForSearch || onBack)();
                   }}
                 />
               ))}
