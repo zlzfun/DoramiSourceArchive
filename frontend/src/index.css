@@ -11369,9 +11369,10 @@ input[type="radio"] {
   color: var(--dorami-ink);
   text-align: left;
   cursor: pointer;
-  transition: box-shadow var(--motion-medium) var(--motion-ease), transform var(--motion-medium) var(--motion-ease);
+  transition: border-color var(--motion-fast) var(--motion-ease);
 }
-.brief-card:hover { box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge); transform: translateY(-1px); }
+/* 悬停不抬升(conventions §卡片:无 hover 位移与加深阴影;codex 检视):只显一圈 hairline */
+.brief-card:hover { border-color: var(--dorami-border-strong); }
 .brief-card.is-lead { grid-column: 1 / -1; padding: 24px 28px 20px; }
 /* 头条双栏(三稿):左栏正文流,右栏 200px 评分与标签栏,hairline 分隔——右侧不再留白也不放图 */
 .brief-card.is-wide { grid-column: 1 / -1; padding: 20px 24px 18px; }
@@ -11428,7 +11429,6 @@ input[type="radio"] {
 .brief-state .action-button { margin-top: 6px; }
 @media (prefers-reduced-motion: reduce) {
   .brief-card, .brief-card-go { transition: none; }
-  .brief-card:hover { transform: none; }
   .brief-card.is-just-read { animation: none; box-shadow: 0 0 0 2px var(--dorami-accent), var(--sh-1); }
 }
 /* 报纸面窄于 720 时头条退回单栏,评分与标签栏横排落在摘要之下 */
@@ -11571,9 +11571,10 @@ input[type="radio"] {
   color: var(--dorami-ink);
   cursor: pointer;
   user-select: none;
-  transition: box-shadow var(--motion-medium) var(--motion-ease), transform var(--motion-medium) var(--motion-ease), background var(--motion-fast) ease;
+  transition: border-color var(--motion-fast) var(--motion-ease), background var(--motion-fast) ease;
 }
-.interest-card:hover { box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge); transform: translateY(-1px); }
+/* 悬停不抬升(conventions §卡片;codex 检视):hairline 显现即可,关注态描边已足够,不再加深阴影 */
+.interest-card:hover { border-color: var(--dorami-border-strong); }
 .interest-card:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 2px; }
 .interest-card-name { font-size: 13.5px; font-weight: 600; line-height: 1.3; }
 .interest-card-desc { font-size: 12px; line-height: 1.55; color: var(--dorami-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -11599,7 +11600,6 @@ input[type="radio"] {
 .interest-card:hover .interest-card-ban, .interest-card-ban:focus-visible { opacity: 1; }
 .interest-card-ban:hover { background: color-mix(in srgb, var(--dorami-ink) 7%, transparent); color: var(--dorami-ink); }
 .interest-card.is-follow { box-shadow: inset 0 0 0 1.5px var(--dorami-accent), var(--sh-1); }
-.interest-card.is-follow:hover { box-shadow: inset 0 0 0 1.5px var(--dorami-accent), var(--sh-2); }
 .interest-card.is-follow .interest-card-name { color: var(--dorami-accent-ink); }
 .interest-card.is-mute { background: color-mix(in srgb, var(--dorami-ink) 4%, var(--rd-list-bg)); box-shadow: none; border-color: var(--dorami-border-soft); }
 .interest-card.is-mute:hover { box-shadow: none; }
@@ -11618,7 +11618,6 @@ input[type="radio"] {
 .interest-btn.is-primary { background: var(--dorami-accent); color: #fff; box-shadow: var(--sh-1); }
 .interest-btn.is-primary:hover { background: var(--dorami-accent-ink); color: #fff; }
 @media (prefers-reduced-motion: reduce) {
-  .interest-card:hover { transform: none; }
 }
 /* ≤1024 单列堆叠(同 .brief-sheet 的理由) */
 @media (max-width: 1024px) {

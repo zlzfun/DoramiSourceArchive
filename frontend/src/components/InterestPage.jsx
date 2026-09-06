@@ -230,9 +230,14 @@ export default function InterestPage({
       window.clearTimeout(timerRef.current);
       const stances = draftRef.current;
       // 排在在途保存之后发出,保持整套替换的先后序
+      // 成功后照样通知父级(codex 检视 P2):改完兴趣 600ms 内就切去早报时,这是唯一发出的 PUT,
+      // 不通知则 interestVersion 不推进,早报页会停在旧版不去轮询新编排的版本
       enqueueSave(() => {
         if (sameStances(stances, savedRef.current)) return undefined;
-        return saveInterests(itemsOf(stances), { completeOnboarding: false }).then(() => { savedRef.current = stances; });
+        return saveInterests(itemsOf(stances), { completeOnboarding: false }).then(() => {
+          savedRef.current = stances;
+          onSavedRef.current?.({ onboardingCompleted: false });
+        });
       }).catch(() => {});
     }
     window.clearTimeout(stateTimerRef.current);
