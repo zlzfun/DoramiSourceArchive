@@ -11230,11 +11230,18 @@ input[type="radio"] {
   outline: none;
 }
 .reader-pane-tags .reader-tag-chip.is-extracted { border-style: dashed; }
-.reader-pane-tags .reader-tag-chip.is-actionable:hover,
-.reader-pane-tags .reader-tag-chip.is-actionable:focus-visible {
+/* 旧胶囊规则的 :hover 会把 outline-style 置 solid(默认 medium 宽 + currentColor,呈粗黑框),小签里必须显式关掉 */
+.reader-pane-tags .reader-tag-chip.is-actionable:hover {
   color: var(--dorami-ink-2);
   border-color: var(--dorami-border-strong);
   background: transparent;
+  outline: none;
+}
+.reader-pane-tags .reader-tag-chip.is-actionable:focus-visible {
+  color: var(--dorami-ink-2);
+  background: transparent;
+  outline: 2px solid var(--dorami-focus);
+  outline-offset: 1px;
 }
 
 
