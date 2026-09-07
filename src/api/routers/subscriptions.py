@@ -334,7 +334,8 @@ def get_subscription(subscription_id: int, request: Request, session: Session = 
 
 
 def _guard_filter_user_sources(session: Session, username: str, filters: dict) -> None:
-    """订阅 filters 中的用户源 id 归属校验(检视返修 F2:高级订阅路径同守门)。"""
+    """订阅 filters 中的私有归属与动态可用性守门。"""
+    from services import source_visibility as source_visibility_service
     from services import user_sources as user_sources_service
 
     ids: list[str] = []
@@ -343,7 +344,8 @@ def _guard_filter_user_sources(session: Session, username: str, filters: dict) -
         if value:
             ids.extend(part.strip() for part in str(value).split(",") if part.strip())
     denied = user_sources_service.unauthorized_user_source_ids(session, username, ids)
-    if denied:
+    unavailable = source_visibility_service.reader_unavailable_source_ids(session)
+    if denied or any(source_id in unavailable for source_id in ids):
         raise HTTPException(status_code=404, detail="来源不存在或暂不可用")
 
 

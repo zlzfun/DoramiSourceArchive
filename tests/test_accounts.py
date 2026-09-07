@@ -167,6 +167,25 @@ def _login(client, username, password):
     return client.post("/api/auth/login", json={"username": username, "password": password})
 
 
+def test_authenticated_request_reuses_middleware_auth_validation(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        assert _login(client, "admin", "admin").status_code == 200
+        original = app_module.read_auth_token
+        calls = 0
+
+        def counted_read_auth_token(token):
+            nonlocal calls
+            calls += 1
+            return original(token)
+
+        monkeypatch.setattr(app_module, "read_auth_token", counted_read_auth_token)
+        response = client.get("/api/runtime")
+
+    assert response.status_code == 200
+    assert calls == 1
+
+
 def test_db_login_success_failure_and_disabled(monkeypatch, tmp_path):
     app_module = _setup_app(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:

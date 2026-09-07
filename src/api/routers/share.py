@@ -34,8 +34,10 @@ def _resolve_live_share(
     """文章端点与媒体端点共用的全套护栏（总闸 + 令牌 + 隐藏源），失败返回 (None, None)。"""
     if not article_share_service.public_share_enabled(session):
         return None, None
-    hidden = source_visibility_service.hidden_source_ids(session)
-    return article_share_service.resolve_share(session, token, hidden_source_ids=hidden)
+    unavailable = source_visibility_service.reader_unavailable_source_ids(session)
+    return article_share_service.resolve_share(
+        session, token, hidden_source_ids=unavailable
+    )
 
 
 def _friendly_source(source_id: str) -> str:

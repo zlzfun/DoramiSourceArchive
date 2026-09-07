@@ -199,7 +199,7 @@ def resolve_personal_digest_source_ids(session: Session, username: str) -> list[
         for source_id in ids:
             membership.setdefault(source_id, set()).add(subscription.owner_username)
 
-    explicit -= source_visibility.hidden_source_ids(session)
+    explicit -= source_visibility.reader_unavailable_source_ids(session)
     if not explicit:
         return []
 

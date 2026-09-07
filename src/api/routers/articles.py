@@ -290,11 +290,11 @@ def get_articles(
     if not is_admin:
         # 管理面隐藏的源对读者会话整体不可见：不止订阅范围，「全部XX」跨源列表与
         # 直连按 source_id 查询同样排除（admin 会话不受影响，知识台账仍见全档）。
-        hidden = source_visibility_service.hidden_source_ids(session)
-        if hidden:
+        unavailable = source_visibility_service.reader_unavailable_source_ids(session)
+        if unavailable:
             hidden_cond = or_(
                 ArticleRecord.source_id.is_(None),
-                ArticleRecord.source_id.notin_(sorted(hidden)),
+                ArticleRecord.source_id.notin_(sorted(unavailable)),
             )
             query = query.where(hidden_cond)
             count_query = count_query.where(hidden_cond)
@@ -363,6 +363,7 @@ def get_articles(
             record, include_content=include_content, include_extensions=include_extensions,
             analysis=analyses.get(record.id), tags=tags.get(record.id, []),
             display_tags=display_tags.get(record.id, []),
+            premium_score_threshold=_app().settings.podcast.premium_score_threshold,
         )
         for record in records
     ]
@@ -403,6 +404,11 @@ def get_article_facets(
     # 非 admin 剔除全部用户源(F2:防私有源 id 经分面泄露);按前缀判定而非配置表
     # (三轮收口:孤儿用户源文章没有配置行,按表判定仍会短暂暴露 id 与计数)。
     hide_user_sources = not (auth_session and auth_session.get("role") == "admin")
+    unavailable = (
+        source_visibility_service.reader_unavailable_source_ids(session)
+        if hide_user_sources
+        else set()
+    )
 
     def _facet(column):
         q = select(column, func.count(ArticleRecord.id)).group_by(column)
@@ -415,6 +421,11 @@ def get_article_facets(
                     user_sources_service.USER_SOURCE_PREFIX, autoescape=True
                 ),
             ))
+            if unavailable:
+                q = q.where(or_(
+                    ArticleRecord.source_id.is_(None),
+                    ArticleRecord.source_id.notin_(sorted(unavailable)),
+                ))
         rows = session.exec(q).all()
         return [
             {"value": value, "count": int(count)}
@@ -432,6 +443,11 @@ def get_article_facets(
                 user_sources_service.USER_SOURCE_PREFIX, autoescape=True
             ),
         ))
+        if unavailable:
+            total_q = total_q.where(or_(
+                ArticleRecord.source_id.is_(None),
+                ArticleRecord.source_id.notin_(sorted(unavailable)),
+            ))
     return {
         "total": int(session.exec(total_q).one() or 0),
         "content_types": _facet(ArticleRecord.content_type),
@@ -447,7 +463,7 @@ async def get_article_analysis(article_id: str, request: Request):
     auth_session = _app().current_auth_session(request)
     with Session(deps.get_db_sink().engine) as session:
         if record.source_id and not (auth_session and auth_session.get("role") == "admin"):
-            if record.source_id in source_visibility_service.hidden_source_ids(session):
+            if record.source_id in source_visibility_service.reader_unavailable_source_ids(session):
                 raise HTTPException(status_code=404, detail="文章未找到")
             if user_sources_service.is_user_source(record.source_id):
                 viewer = str(auth_session.get("sub", "")) if auth_session else ""
@@ -498,7 +514,7 @@ async def get_article(article_id: str, request: Request):
         auth_session = _app().current_auth_session(request)
         if not (auth_session and auth_session.get("role") == "admin"):
             with Session(deps.get_db_sink().engine) as session:
-                if record.source_id in source_visibility_service.hidden_source_ids(session):
+                if record.source_id in source_visibility_service.reader_unavailable_source_ids(session):
                     # 与列表口径一致：隐藏源的单条详情对读者会话按不存在处理。
                     raise HTTPException(status_code=404, detail="文章未找到")
                 # 用户自定源(v3.40 三轮收口):单篇详情同样要求订阅归属——初版
@@ -524,6 +540,7 @@ async def get_article(article_id: str, request: Request):
             analysis=analyses.get(record.id),
             tags=tags.get(record.id, []),
             display_tags=display_tags.get(record.id, []),
+            premium_score_threshold=_app().settings.podcast.premium_score_threshold,
         )
 
 

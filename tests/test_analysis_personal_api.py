@@ -160,6 +160,28 @@ def _login(client: TestClient, username: str):
     return response.json()
 
 
+def _finish_after_readiness_gate(sink: DatabaseStorage, edition_id: str) -> None:
+    """Advance a first-open edition without depending on the wall-clock hour."""
+
+    from api.routers import personal_briefs
+    from models.db import PersonalDigestEditionRecord
+    from services import personal_digest
+
+    with Session(sink.engine) as session:
+        edition = session.get(PersonalDigestEditionRecord, edition_id)
+        assert edition is not None and edition.check_after
+        check_after = dt.datetime.fromisoformat(
+            edition.check_after.replace("Z", "+00:00")
+        )
+        current = dt.datetime.now(personal_digest.SHANGHAI)
+        completed = personal_briefs.process_pending_edition(
+            session,
+            edition,
+            now=max(current, check_after + dt.timedelta(seconds=1)),
+        )
+        assert completed.status in {"ready", "degraded"}
+
+
 def test_interest_and_personal_brief_api_are_subscription_strict(monkeypatch, tmp_path):
     app_module, _sink, tag_id = _setup(monkeypatch, tmp_path)
     with Session(_sink.engine) as session:
@@ -196,6 +218,9 @@ def test_interest_and_personal_brief_api_are_subscription_strict(monkeypatch, tm
         ensured = client.post("/api/reader/briefs/today/ensure")
         assert ensured.status_code == 200, ensured.text
         edition = ensured.json()["edition"]
+        if edition["status"] == "pending":
+            _finish_after_readiness_gate(_sink, edition["id"])
+            edition = client.get("/api/reader/briefs/today").json()["edition"]
         # With only one followed-interest article and no quality-lane peer, the
         # hard 50% actual-output ceiling correctly uses latest-update fallback.
         assert edition["status"] == "degraded", edition.get("error")
@@ -282,6 +307,9 @@ def test_personal_brief_accepts_persisted_public_brief_without_source_state(monk
     with TestClient(app_module.app) as client:
         _login(client, "alice")
         edition = client.post("/api/reader/briefs/today/ensure").json()["edition"]
+        if edition["status"] == "pending":
+            _finish_after_readiness_gate(sink, edition["id"])
+            edition = client.get("/api/reader/briefs/today").json()["edition"]
         assert edition["status"] == "ready", edition.get("error")
         assert "dorami_daily_brief" in edition["expected_source_ids"]
         assert {item["article_id"] for item in edition["items"]} == {
@@ -643,9 +671,9 @@ def test_first_open_waits_then_degrades_in_place_after_deadline(monkeypatch, tmp
 
         with Session(sink.engine) as session:
             edition = session.get(PersonalDigestEditionRecord, pending["id"])
-            edition.deadline_at = (
-                dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)
-            ).isoformat()
+            expired = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)
+            edition.check_after = expired.isoformat()
+            edition.deadline_at = expired.isoformat()
             session.add(edition)
             session.commit()
         assert personal_briefs.process_pending_editions(sink.engine) == 1
@@ -723,6 +751,7 @@ def test_deadline_source_staleness_is_separate_from_content_fallback(monkeypatch
         assert pending is not None
         assert personal_briefs.readiness_progress(session, pending, now=current)["sources"]["pending"] == 1
         pending.deadline_at = (current - dt.timedelta(seconds=1)).isoformat()
+        pending.check_after = (current - dt.timedelta(seconds=2)).isoformat()
         session.add(pending)
         session.commit()
 

@@ -32,13 +32,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy import delete
 from sqlmodel import Session, select
 
+from config import (
+    DEFAULT_PODCAST_TEXT_ARTIFACT_MAX_BYTES,
+    DEFAULT_PODCAST_TEXT_ARTIFACT_MAX_CHARS,
+    DEFAULT_PODCAST_TEXT_SYNC_PAGE_MAX_BYTES,
+    DEFAULT_PODCAST_TEXT_SYNC_PAGE_MAX_ROWS,
+)
 from models.db import (
     AppSettingRecord,
     ArchiveSyncEntityStateRecord,
@@ -63,8 +69,41 @@ DEFAULT_PAGE_SIZE = 1000
 # 防远端异常返回导致无限翻页)。
 MAX_PAGES = 1000
 # source_states is the readiness fence: publish producer terminal states only
-# after the matching article/analysis/media snapshot has reached the reader.
-V2_STREAM_ORDER = ("sources", "taxonomy", "articles", "analyses", "media", "source_states")
+# after the matching article/analysis/media and negotiated Podcast text snapshot
+# has reached the reader. Older v3 producers keep the original six streams.
+V2_LEGACY_STREAM_ORDER = (
+    "sources",
+    "taxonomy",
+    "articles",
+    "analyses",
+    "media",
+    "source_states",
+)
+V2_STREAM_ORDER = (
+    "sources",
+    "taxonomy",
+    "articles",
+    "analyses",
+    "media",
+    "podcast_texts",
+    "podcast_audio",
+    "source_states",
+)
+
+
+def negotiated_v2_stream_order(capabilities: Sequence[str]) -> tuple[str, ...]:
+    """Return the pull order negotiated from a producer manifest."""
+
+    available = set(capabilities)
+    streams = list(V2_LEGACY_STREAM_ORDER)
+    insert_at = streams.index("source_states")
+    if archive_sync_v2.PODCAST_TEXT_PUBLICATIONS_CAPABILITY in available:
+        streams.insert(insert_at, "podcast_texts")
+        insert_at += 1
+    if archive_sync_v2.PODCAST_AUDIO_PUBLICATIONS_CAPABILITY in available:
+        streams.insert(insert_at, "podcast_audio")
+    return tuple(streams)
+
 
 _REQUEST_TIMEOUT = httpx.Timeout(20.0, read=120.0)
 _MAX_RETRIES = 3
@@ -94,6 +133,7 @@ def prepare_transaction_revision_consumer(
     authority_id: str,
     schema_version: str,
     prepared_at: str,
+    capabilities: Optional[List[str]] = None,
 ) -> bool:
     """Prepare one target for the transaction-revision protocol exactly once."""
 
@@ -105,6 +145,19 @@ def prepare_transaction_revision_consumer(
     authority_id = str(authority_id or "").strip()
     if not authority_id:
         raise RemoteSyncError("远端 transaction-revision manifest 缺少 authority_id")
+    normalized_capabilities: Optional[List[str]] = None
+    if capabilities is not None:
+        normalized_capabilities = list(
+            dict.fromkeys(
+                str(value) for value in capabilities if isinstance(value, str) and value
+            )
+        )
+        try:
+            archive_sync_v2.require_transaction_revision_capability(
+                {"capabilities": normalized_capabilities}
+            )
+        except archive_sync_v2.SyncV2Error as exc:
+            raise RemoteSyncError(str(exc)) from exc
 
     record = session.get(AppSettingRecord, REMOTE_SYNC_STATE_KEY)
     state = _decode_sync_state_record(record)
@@ -118,6 +171,27 @@ def prepare_transaction_revision_consumer(
                 "远端 authority_id 已变化；需人工确认 producer 身份并执行新的 rebase"
             )
         if current_authority == authority_id:
+            if normalized_capabilities is None:
+                return False
+            target["username"] = username
+            target["v2_capabilities"] = normalized_capabilities
+            negotiated_streams = set(
+                negotiated_v2_stream_order(normalized_capabilities)
+            )
+            target["v2_streams"] = {
+                stream: checkpoint
+                for stream, checkpoint in (target.get("v2_streams") or {}).items()
+                if stream in negotiated_streams
+            }
+            targets[base_url] = target
+            state["targets"] = targets
+            value = json.dumps(state, ensure_ascii=False)
+            if record is None:
+                record = AppSettingRecord(key=REMOTE_SYNC_STATE_KEY, value=value)
+            else:
+                record.value = value
+            session.add(record)
+            session.flush()
             return False
     legacy_authorities = {
         str(checkpoint.get("authority_id") or "")
@@ -145,24 +219,32 @@ def prepare_transaction_revision_consumer(
         source.is_active = False
         session.add(source)
     eligible_source_ids = {source.source_id for source in eligible_sources}
-    for state_row in session.exec(select(SourceStateRecord).where(
-        ~SourceStateRecord.source_id.startswith("user_rss_", autoescape=True),
-        SourceStateRecord.authority_id.in_(("", authority_id)),
-    )).all():
+    for state_row in session.exec(
+        select(SourceStateRecord).where(
+            ~SourceStateRecord.source_id.startswith("user_rss_", autoescape=True),
+            SourceStateRecord.authority_id.in_(("", authority_id)),
+        )
+    ).all():
         source = session.get(SourceConfigRecord, state_row.source_id)
         if source is None or state_row.source_id in eligible_source_ids:
             session.delete(state_row)
-    session.exec(delete(ArchiveSyncEntityStateRecord).where(
-        ArchiveSyncEntityStateRecord.authority_id == authority_id
-    ))
+    session.exec(
+        delete(ArchiveSyncEntityStateRecord).where(
+            ArchiveSyncEntityStateRecord.authority_id == authority_id
+        )
+    )
 
-    target.update({
-        "username": username,
-        "v2_schema_version": schema_version,
-        "v2_authority_id": authority_id,
-        "v2_rebased_at": prepared_at,
-        "v2_streams": {},
-    })
+    target.update(
+        {
+            "username": username,
+            "v2_schema_version": schema_version,
+            "v2_authority_id": authority_id,
+            "v2_capabilities": normalized_capabilities
+            or list(archive_sync_v2.REQUIRED_CAPABILITIES),
+            "v2_rebased_at": prepared_at,
+            "v2_streams": {},
+        }
+    )
     targets[base_url] = target
     state["targets"] = targets
     value = json.dumps(state, ensure_ascii=False)
@@ -211,14 +293,18 @@ async def _request_with_retry(
         except (httpx.HTTPError, RemoteSyncError) as exc:
             last_error = exc
             if attempt < _MAX_RETRIES:
-                await asyncio.sleep(min(2 ** attempt, 8))
+                await asyncio.sleep(min(2**attempt, 8))
     raise RemoteSyncError(f"请求远端失败(已重试 {_MAX_RETRIES} 次): {last_error}")
 
 
-async def _login(client: httpx.AsyncClient, base_url: str, username: str, password: str) -> str:
+async def _login(
+    client: httpx.AsyncClient, base_url: str, username: str, password: str
+) -> str:
     """登录远端,返回显式 Cookie 头值;校验账户为 admin(导出面需要)。"""
     response = await _request_with_retry(
-        client, "POST", f"{base_url}/api/auth/login",
+        client,
+        "POST",
+        f"{base_url}/api/auth/login",
         json={"username": username, "password": password},
     )
     if response.status_code == 401:
@@ -228,7 +314,9 @@ async def _login(client: httpx.AsyncClient, base_url: str, username: str, passwo
     try:
         payload = response.json()
     except json.JSONDecodeError as exc:
-        raise RemoteSyncError("远端登录响应不是合法 JSON——该地址可能不是哆啦美后端") from exc
+        raise RemoteSyncError(
+            "远端登录响应不是合法 JSON——该地址可能不是哆啦美后端"
+        ) from exc
     role = ((payload or {}).get("user") or {}).get("role")
     if role != "admin":
         raise RemoteSyncError("远端账户不是管理员——归档导出需要远端 admin 账号")
@@ -261,7 +349,11 @@ def _parse_export_page(raw_text: str) -> Dict[str, Any]:
             )
             if cursor_value > max_fetched_date:
                 max_fetched_date = cursor_value
-    return {"manifest": manifest, "article_count": article_count, "max_fetched_date": max_fetched_date}
+    return {
+        "manifest": manifest,
+        "article_count": article_count,
+        "max_fetched_date": max_fetched_date,
+    }
 
 
 async def _fetch_export_page(
@@ -280,13 +372,18 @@ async def _fetch_export_page(
     if source_ids:
         params["source_ids"] = ",".join(source_ids)
     response = await _request_with_retry(
-        client, "GET", f"{base_url}/api/archive/export/articles.jsonl",
-        params=params, headers={"Cookie": cookie_header},
+        client,
+        "GET",
+        f"{base_url}/api/archive/export/articles.jsonl",
+        params=params,
+        headers={"Cookie": cookie_header},
     )
     if response.status_code == 401:
         raise RemoteSyncError("远端会话失效(401)——同步中断")
     if response.status_code == 403:
-        raise RemoteSyncError("远端拒绝导出(403)——请确认远端部署允许归档导出(collector/all 形态)")
+        raise RemoteSyncError(
+            "远端拒绝导出(403)——请确认远端部署允许归档导出(collector/all 形态)"
+        )
     if response.status_code != 200:
         raise RemoteSyncError(f"远端导出异常:HTTP {response.status_code}")
     return response.text
@@ -302,6 +399,7 @@ async def _fetch_v2_page(
     since: str,
     after: str,
     limit: int,
+    max_bytes: Optional[int] = None,
 ) -> str:
     params: Dict[str, Any] = {"limit": limit}
     if snapshot:
@@ -310,18 +408,53 @@ async def _fetch_v2_page(
         params["since"] = since
     if after:
         params["after"] = after
-    response = await _request_with_retry(
-        client,
-        "GET",
-        f"{base_url}/api/archive/v2/export/{stream}.jsonl",
-        params=params,
-        headers={"Cookie": cookie_header},
-    )
-    if response.status_code in {401, 403}:
-        raise RemoteSyncError(f"远端拒绝 v2 {stream} 导出(HTTP {response.status_code})")
-    if response.status_code != 200:
-        raise RemoteSyncError(f"远端 v2 {stream} 导出异常:HTTP {response.status_code}")
-    return response.text
+    if max_bytes is not None:
+        params["page_max_bytes"] = max_bytes
+    last_error: Optional[Exception] = None
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            async with client.stream(
+                "GET",
+                f"{base_url}/api/archive/v2/export/{stream}.jsonl",
+                params=params,
+                headers={"Cookie": cookie_header},
+            ) as response:
+                if response.status_code >= 500:
+                    raise RemoteSyncError(f"远端服务错误 HTTP {response.status_code}")
+                if response.status_code in {401, 403}:
+                    raise RemoteSyncError(
+                        f"远端拒绝 v2 {stream} 导出(HTTP {response.status_code})"
+                    )
+                if response.status_code != 200:
+                    raise RemoteSyncError(
+                        f"远端 v2 {stream} 导出异常:HTTP {response.status_code}"
+                    )
+                declared = response.headers.get("content-length", "")
+                if (
+                    max_bytes is not None
+                    and declared.isdigit()
+                    and int(declared) > max_bytes
+                ):
+                    raise RemoteSyncError(f"远端 v2 {stream} 页面超过字节上限")
+                chunks: list[bytes] = []
+                received = 0
+                async for chunk in response.aiter_bytes():
+                    received += len(chunk)
+                    if max_bytes is not None and received > max_bytes:
+                        raise RemoteSyncError(f"远端 v2 {stream} 页面超过字节上限")
+                    chunks.append(chunk)
+                try:
+                    return b"".join(chunks).decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise RemoteSyncError(f"远端 v2 {stream} 页面不是 UTF-8") from exc
+        except (httpx.HTTPError, RemoteSyncError) as exc:
+            last_error = exc
+            # Deterministic 4xx/limit/encoding failures must not be retried.
+            if isinstance(exc, RemoteSyncError) and "远端服务错误" not in str(exc):
+                raise
+            if attempt < _MAX_RETRIES:
+                await asyncio.sleep(min(2**attempt, 8))
+    raise RemoteSyncError(f"请求远端失败(已重试 {_MAX_RETRIES} 次): {last_error}")
 
 
 async def _fetch_v2_presence(
@@ -343,16 +476,21 @@ async def _fetch_v2_presence(
         json={"stream": stream, "identities": identities},
     )
     if response.status_code in {401, 403}:
-        raise RemoteSyncError(f"远端拒绝 v2 {stream} presence 查询(HTTP {response.status_code})")
+        raise RemoteSyncError(
+            f"远端拒绝 v2 {stream} presence 查询(HTTP {response.status_code})"
+        )
     if response.status_code != 200:
-        raise RemoteSyncError(f"远端 v2 {stream} presence 查询异常:HTTP {response.status_code}")
+        raise RemoteSyncError(
+            f"远端 v2 {stream} presence 查询异常:HTTP {response.status_code}"
+        )
     try:
         payload = response.json()
     except json.JSONDecodeError as exc:
         raise RemoteSyncError(f"远端 v2 {stream} presence 响应不是 JSON") from exc
     if (
         payload.get("schema_version") != archive_sync_v2.SCHEMA_VERSION
-        or payload.get("capability") != archive_sync_v2.AUTHORITATIVE_PRESENCE_CAPABILITY
+        or payload.get("capability")
+        != archive_sync_v2.AUTHORITATIVE_PRESENCE_CAPABILITY
         or payload.get("authority_id") != authority_id
         or payload.get("stream") != stream
         or payload.get("requested") != identities
@@ -360,7 +498,9 @@ async def _fetch_v2_presence(
     ):
         raise RemoteSyncError(f"远端 v2 {stream} presence 响应契约不匹配")
     present = payload["present"]
-    if any(not isinstance(value, str) for value in present) or not set(present) <= set(identities):
+    if any(not isinstance(value, str) for value in present) or not set(present) <= set(
+        identities
+    ):
         raise RemoteSyncError(f"远端 v2 {stream} presence 返回了未请求的 identity")
     return set(present)
 
@@ -406,18 +546,77 @@ async def _fetch_v2_media_bytes(
         except (httpx.HTTPError, RemoteSyncError) as exc:
             last_error = exc
             if attempt < _MAX_RETRIES:
-                await asyncio.sleep(min(2 ** attempt, 8))
+                await asyncio.sleep(min(2**attempt, 8))
     raise RemoteSyncError(f"远端媒体 {url_hash} 下载失败: {last_error}")
 
 
-def _make_client(transport: Optional[httpx.AsyncBaseTransport] = None) -> httpx.AsyncClient:
+async def _fetch_v2_podcast_audio_bytes(
+    client: httpx.AsyncClient,
+    base_url: str,
+    cookie_header: str,
+    artifact_id: str,
+    *,
+    expected_size: int,
+    max_bytes: int,
+) -> bytes:
+    if expected_size <= 0 or expected_size > max_bytes:
+        raise RemoteSyncError(f"远端 Podcast 音频 {artifact_id} 声明大小超出限制")
+    last_error: Optional[Exception] = None
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            async with client.stream(
+                "GET",
+                f"{base_url}/api/archive/v2/podcast-audio/{artifact_id}",
+                headers={"Cookie": cookie_header},
+            ) as response:
+                if response.status_code >= 500:
+                    raise RemoteSyncError(f"远端服务错误 HTTP {response.status_code}")
+                if response.status_code != 200:
+                    raise RemoteSyncError(
+                        f"远端 Podcast 音频 {artifact_id} 下载失败:HTTP {response.status_code}"
+                    )
+                declared = response.headers.get("content-length", "")
+                if declared.isdigit() and int(declared) != expected_size:
+                    raise RemoteSyncError(
+                        f"远端 Podcast 音频 {artifact_id} Content-Length 不一致"
+                    )
+                chunks: list[bytes] = []
+                received = 0
+                async for chunk in response.aiter_bytes():
+                    received += len(chunk)
+                    if received > expected_size or received > max_bytes:
+                        raise RemoteSyncError(
+                            f"远端 Podcast 音频 {artifact_id} 响应超过声明大小"
+                        )
+                    chunks.append(chunk)
+                if received != expected_size:
+                    raise RemoteSyncError(
+                        f"远端 Podcast 音频 {artifact_id} 响应大小不一致"
+                    )
+                return b"".join(chunks)
+        except (httpx.HTTPError, RemoteSyncError) as exc:
+            last_error = exc
+            if attempt < _MAX_RETRIES:
+                await asyncio.sleep(min(2**attempt, 8))
+    raise RemoteSyncError(f"远端 Podcast 音频 {artifact_id} 下载失败: {last_error}")
+
+
+def _make_client(
+    transport: Optional[httpx.AsyncBaseTransport] = None,
+) -> httpx.AsyncClient:
     """transport 可注入(测试用 httpx.MockTransport 假远端,不打真网——仓内约定)。"""
-    return httpx.AsyncClient(timeout=_REQUEST_TIMEOUT, follow_redirects=True, transport=transport)
+    return httpx.AsyncClient(
+        timeout=_REQUEST_TIMEOUT, follow_redirects=True, transport=transport
+    )
 
 
 async def probe(
-    base_url: str, username: str, password: str,
-    *, protocol: str = "v2", transport: Optional[httpx.AsyncBaseTransport] = None,
+    base_url: str,
+    username: str,
+    password: str,
+    *,
+    protocol: str = "v2",
+    transport: Optional[httpx.AsyncBaseTransport] = None,
 ) -> Dict[str, Any]:
     """「测试连接」探针:登录 → 版本 → 契约可用性 → 总量(尽力而为)。"""
     base = normalize_base_url(base_url)
@@ -437,13 +636,22 @@ async def probe(
         protocol = (protocol or "v2").strip().lower()
         if protocol == "v2":
             sample_text = await _fetch_v2_page(
-                client, base, cookie_header, stream="sources",
-                snapshot="", since="", after="", limit=1,
+                client,
+                base,
+                cookie_header,
+                stream="sources",
+                snapshot="",
+                since="",
+                after="",
+                limit=1,
             )
             try:
                 manifest, rows = archive_sync_v2.parse_page(
-                    sample_text, expected_stream="sources",
-                    requested_snapshot="", requested_since="", requested_after="",
+                    sample_text,
+                    expected_stream="sources",
+                    requested_snapshot="",
+                    requested_since="",
+                    requested_after="",
                 )
                 archive_sync_v2.require_transaction_revision_capability(manifest)
             except archive_sync_v2.SyncV2Error as exc:
@@ -453,15 +661,26 @@ async def probe(
             sample_count = len(rows)
             authority_id = str(manifest["authority_id"])
             taxonomy_text = await _fetch_v2_page(
-                client, base, cookie_header, stream="taxonomy",
-                snapshot="", since="", after="", limit=5000,
+                client,
+                base,
+                cookie_header,
+                stream="taxonomy",
+                snapshot="",
+                since="",
+                after="",
+                limit=5000,
             )
             try:
                 taxonomy_manifest, _taxonomy_rows = archive_sync_v2.parse_page(
-                    taxonomy_text, expected_stream="taxonomy",
-                    requested_snapshot="", requested_since="", requested_after="",
+                    taxonomy_text,
+                    expected_stream="taxonomy",
+                    requested_snapshot="",
+                    requested_since="",
+                    requested_after="",
                 )
-                archive_sync_v2.require_transaction_revision_capability(taxonomy_manifest)
+                archive_sync_v2.require_transaction_revision_capability(
+                    taxonomy_manifest
+                )
             except archive_sync_v2.SyncV2Error as exc:
                 if "published taxonomy_version" in str(exc):
                     raise RemoteSyncError(
@@ -470,17 +689,28 @@ async def probe(
                 raise RemoteSyncError(f"远端 taxonomy v2 契约校验失败:{exc}") from exc
             if str(taxonomy_manifest["authority_id"]) != authority_id:
                 raise RemoteSyncError("远端 sources/taxonomy authority_id 不一致")
+            taxonomy_capabilities = list(taxonomy_manifest.get("capabilities") or [])
+            if negotiated_v2_stream_order(
+                taxonomy_capabilities
+            ) != negotiated_v2_stream_order(capabilities):
+                raise RemoteSyncError("远端 sources/taxonomy capability 协商结果不一致")
             taxonomy_version = int(taxonomy_manifest.get("taxonomy_version") or 0)
             if taxonomy_version <= 0:
-                raise RemoteSyncError("远端 Taxonomy catalog 尚未人工发布，拒绝启动 v2 同步")
+                raise RemoteSyncError(
+                    "远端 Taxonomy catalog 尚未人工发布，拒绝启动 v2 同步"
+                )
             taxonomy_ready = True
         elif protocol == "v1":
-            sample_text = await _fetch_export_page(client, base, cookie_header, skip=0, limit=1)
+            sample_text = await _fetch_export_page(
+                client, base, cookie_header, skip=0, limit=1
+            )
             sample = _parse_export_page(sample_text)
             manifest = sample["manifest"] or {}
             schema_version = str(manifest.get("schema_version") or "")
             if not schema_version:
-                raise RemoteSyncError("远端导出响应缺少 manifest——契约不符,可能是版本过旧的后端")
+                raise RemoteSyncError(
+                    "远端导出响应缺少 manifest——契约不符,可能是版本过旧的后端"
+                )
             sample_count = sample["article_count"]
             authority_id = ""
             capabilities = []
@@ -492,7 +722,9 @@ async def probe(
         article_total: Optional[int] = None
         try:
             total_res = await _request_with_retry(
-                client, "GET", f"{base}/api/articles",
+                client,
+                "GET",
+                f"{base}/api/articles",
                 params={"limit": 1, "include_total": "true"},
                 headers={"Cookie": cookie_header},
             )
@@ -540,7 +772,14 @@ async def run_pull(
     base = normalize_base_url(base_url)
     page_size = min(max(int(page_size), 1), 5000)
 
-    totals = {"pages": 0, "pulled": 0, "imported": 0, "updated": 0, "skipped": 0, "errors": 0}
+    totals = {
+        "pages": 0,
+        "pulled": 0,
+        "imported": 0,
+        "updated": 0,
+        "skipped": 0,
+        "errors": 0,
+    }
     error_samples: List[Dict[str, Any]] = []
     max_fetched_date = ""
 
@@ -552,7 +791,9 @@ async def run_pull(
         if on_total is not None and not fetched_date_start and not source_ids:
             try:
                 total_res = await _request_with_retry(
-                    client, "GET", f"{base}/api/articles",
+                    client,
+                    "GET",
+                    f"{base}/api/articles",
                     params={"limit": 1, "include_total": "true"},
                     headers={"Cookie": cookie_header},
                 )
@@ -566,9 +807,13 @@ async def run_pull(
         skip = 0
         for _ in range(MAX_PAGES):
             raw_text = await _fetch_export_page(
-                client, base, cookie_header,
-                skip=skip, limit=page_size,
-                fetched_date_start=fetched_date_start, source_ids=source_ids,
+                client,
+                base,
+                cookie_header,
+                skip=skip,
+                limit=page_size,
+                fetched_date_start=fetched_date_start,
+                source_ids=source_ids,
             )
             page = _parse_export_page(raw_text)
             article_count = page["article_count"]
@@ -582,7 +827,7 @@ async def run_pull(
             totals["updated"] += int(result.get("updated_count") or 0)
             totals["skipped"] += int(result.get("skipped_count") or 0)
             totals["errors"] += int(result.get("error_count") or 0)
-            for err in (result.get("errors") or []):
+            for err in result.get("errors") or []:
                 if len(error_samples) < 20:
                     error_samples.append(err)
             if page["max_fetched_date"] > max_fetched_date:
@@ -594,7 +839,9 @@ async def run_pull(
                 break
             skip += page_size
         else:
-            raise RemoteSyncError(f"翻页超过安全上限 {MAX_PAGES} 页,同步中止(已导入部分保留)")
+            raise RemoteSyncError(
+                f"翻页超过安全上限 {MAX_PAGES} 页,同步中止(已导入部分保留)"
+            )
 
     return {
         "base_url": base,
@@ -615,6 +862,7 @@ async def run_pull_v2(
     password: str,
     media_root=None,
     media_max_bytes: int = 20 * 1024 * 1024,
+    podcast_artifact_store=None,
     page_size: int = DEFAULT_PAGE_SIZE,
     checkpoints: Optional[Dict[str, Dict[str, str]]] = None,
     on_advance: Optional[Callable[[int], None]] = None,
@@ -622,6 +870,11 @@ async def run_pull_v2(
     transport: Optional[httpx.AsyncBaseTransport] = None,
     push_candidate_evidence: bool = True,
     expected_authority_id: str = "",
+    expected_capabilities: Optional[List[str]] = None,
+    podcast_text_max_bytes: int = DEFAULT_PODCAST_TEXT_ARTIFACT_MAX_BYTES,
+    podcast_text_max_chars: int = DEFAULT_PODCAST_TEXT_ARTIFACT_MAX_CHARS,
+    podcast_text_page_max_bytes: int = DEFAULT_PODCAST_TEXT_SYNC_PAGE_MAX_BYTES,
+    podcast_text_page_max_rows: int = DEFAULT_PODCAST_TEXT_SYNC_PAGE_MAX_ROWS,
 ) -> Dict[str, Any]:
     """Pull every v2 stream with independently checkpointed keyset pages.
 
@@ -629,8 +882,9 @@ async def run_pull_v2(
     stream checkpoint is published only after its terminal page (and, for media,
     all declared binaries) has succeeded.  Replaying committed pages after a
     later failure is intentional and idempotent. All non-Taxonomy streams share
-    one transaction-revision snapshot; ``source_states`` is applied last as the
-    readiness fence.
+    one transaction-revision snapshot; ``podcast_texts`` is pulled only when
+    the producer advertises its optional capability, and ``source_states`` is
+    always applied last as the readiness fence.
     """
 
     base = normalize_base_url(base_url)
@@ -643,13 +897,28 @@ async def run_pull_v2(
         "streams": {},
     }
     expected_authority = str(expected_authority_id or "").strip()
+    expected_stream_order: Optional[tuple[str, ...]] = None
+    if expected_capabilities is not None:
+        try:
+            archive_sync_v2.require_transaction_revision_capability(
+                {"capabilities": expected_capabilities}
+            )
+        except archive_sync_v2.SyncV2Error as exc:
+            raise RemoteSyncError(str(exc)) from exc
+        expected_stream_order = negotiated_v2_stream_order(expected_capabilities)
     # Sources is the first transaction-revision stream and pins one committed
     # generation for every dependent stream. Taxonomy keeps its own governed
     # version counter and is the only exception.
     generation_snapshot = ""
+    negotiated_stream_order: Optional[tuple[str, ...]] = None
     async with _make_client(transport) as client:
         cookie_header = await _login(client, base, username, password)
         for stream in V2_STREAM_ORDER:
+            if (
+                negotiated_stream_order is not None
+                and stream not in negotiated_stream_order
+            ):
+                continue
             previous = checkpoints.get(stream) or {}
             # A completed prior snapshot is the exclusive lower watermark for
             # the next run. `after` is only for pages within the new snapshot.
@@ -664,8 +933,14 @@ async def run_pull_v2(
                 "deleted": 0,
                 "pruned": 0,
                 "media_downloaded": 0,
+                "podcast_audio_downloaded": 0,
             }
             for _ in range(MAX_PAGES):
+                request_limit = (
+                    min(page_size, podcast_text_page_max_rows)
+                    if stream == "podcast_texts"
+                    else page_size
+                )
                 raw_text = await _fetch_v2_page(
                     client,
                     base,
@@ -674,7 +949,12 @@ async def run_pull_v2(
                     snapshot=snapshot,
                     since=since,
                     after=after,
-                    limit=page_size,
+                    limit=request_limit,
+                    max_bytes=(
+                        podcast_text_page_max_bytes
+                        if stream == "podcast_texts"
+                        else None
+                    ),
                 )
                 try:
                     manifest, rows = archive_sync_v2.parse_page(
@@ -683,10 +963,31 @@ async def run_pull_v2(
                         requested_snapshot=snapshot,
                         requested_since=since,
                         requested_after=after,
+                        requested_limit=request_limit,
+                        podcast_text_max_bytes=podcast_text_max_bytes,
+                        podcast_text_max_chars=podcast_text_max_chars,
+                        podcast_text_page_max_bytes=podcast_text_page_max_bytes,
+                        podcast_text_page_max_rows=podcast_text_page_max_rows,
                     )
                     archive_sync_v2.require_transaction_revision_capability(manifest)
                 except archive_sync_v2.SyncV2Error as exc:
                     raise RemoteSyncError(f"v2 {stream} 契约校验失败:{exc}") from exc
+                manifest_capabilities = list(manifest.get("capabilities") or [])
+                page_stream_order = negotiated_v2_stream_order(manifest_capabilities)
+                if negotiated_stream_order is None:
+                    if stream != "sources":
+                        raise RemoteSyncError(
+                            "v2 capability 必须由 sources 首流完成协商"
+                        )
+                    if (
+                        expected_stream_order is not None
+                        and page_stream_order != expected_stream_order
+                    ):
+                        raise RemoteSyncError("v2 capability 在连接预检后发生变化")
+                    negotiated_stream_order = page_stream_order
+                    result["capabilities"] = manifest_capabilities
+                elif page_stream_order != negotiated_stream_order:
+                    raise RemoteSyncError(f"v2 {stream} capability 在同步中发生变化")
                 authority = str(manifest["authority_id"])
                 if expected_authority and authority != expected_authority:
                     raise RemoteSyncError(
@@ -709,6 +1010,11 @@ async def run_pull_v2(
                         engine,
                         raw_text,
                         expected_stream=stream,
+                        requested_limit=request_limit,
+                        podcast_text_max_bytes=podcast_text_max_bytes,
+                        podcast_text_max_chars=podcast_text_max_chars,
+                        podcast_text_page_max_bytes=podcast_text_page_max_bytes,
+                        podcast_text_page_max_rows=podcast_text_page_max_rows,
                     )
                 except archive_sync_v2.SyncV2Error as exc:
                     raise RemoteSyncError(f"v2 {stream} 导入失败:{exc}") from exc
@@ -720,7 +1026,9 @@ async def run_pull_v2(
 
                 if stream == "media" and rows:
                     if media_root is None:
-                        raise RemoteSyncError("本地媒体库未配置，不能完成 v2 media stream")
+                        raise RemoteSyncError(
+                            "本地媒体库未配置，不能完成 v2 media stream"
+                        )
                     for item in rows:
                         key = str(item["payload"]["url_hash"])
                         expected_size = int(item["payload"].get("size_bytes") or 0)
@@ -741,11 +1049,42 @@ async def run_pull_v2(
                             max_bytes=media_max_bytes,
                         )
                         stats["media_downloaded"] += 1
+                if stream == "podcast_audio" and rows:
+                    if podcast_artifact_store is None:
+                        raise RemoteSyncError(
+                            "本地 Podcast artifact store 未配置，不能完成音频同步"
+                        )
+                    for item in rows:
+                        if item.get("operation") != "upsert":
+                            continue
+                        artifact_id = str(item["payload"]["id"])
+                        expected_size = int(item["payload"].get("size_bytes") or 0)
+                        body = await _fetch_v2_podcast_audio_bytes(
+                            client,
+                            base,
+                            cookie_header,
+                            artifact_id,
+                            expected_size=expected_size,
+                            max_bytes=int(podcast_artifact_store.max_bytes),
+                        )
+                        await asyncio.to_thread(
+                            archive_sync_v2.install_podcast_audio_bytes,
+                            engine,
+                            podcast_artifact_store,
+                            artifact_id,
+                            body,
+                        )
+                        stats["podcast_audio_downloaded"] += 1
                 if on_advance is not None:
                     on_advance(int(applied["count"]))
                 after = str(manifest.get("next_cursor") or after)
                 if bool(manifest.get("complete")):
-                    if not since and stream in {"articles", "analyses"}:
+                    if not since and stream in {
+                        "articles",
+                        "analyses",
+                        "podcast_texts",
+                        "podcast_audio",
+                    }:
                         candidates = await asyncio.to_thread(
                             archive_sync_v2.full_authority_stale_identities,
                             engine,
@@ -754,16 +1093,20 @@ async def run_pull_v2(
                         )
                         present: set[str] = set()
                         for start in range(0, len(candidates), 1000):
-                            present.update(await _fetch_v2_presence(
-                                client,
-                                base,
-                                cookie_header,
-                                stream=stream,
-                                identities=candidates[start:start + 1000],
-                                authority_id=authority,
-                            ))
+                            present.update(
+                                await _fetch_v2_presence(
+                                    client,
+                                    base,
+                                    cookie_header,
+                                    stream=stream,
+                                    identities=candidates[start : start + 1000],
+                                    authority_id=authority,
+                                )
+                            )
                         confirmed_absent = [
-                            identity for identity in candidates if identity not in present
+                            identity
+                            for identity in candidates
+                            if identity not in present
                         ]
                         stats["pruned"] += await asyncio.to_thread(
                             archive_sync_v2.finalize_full_authority_stream,
@@ -786,7 +1129,12 @@ async def run_pull_v2(
             else:
                 raise RemoteSyncError(f"v2 {stream} 翻页超过安全上限 {MAX_PAGES}")
         if push_candidate_evidence:
-            evidence_result = {"status": "success", "pages": 0, "inserted": 0, "skipped": 0}
+            evidence_result = {
+                "status": "success",
+                "pages": 0,
+                "inserted": 0,
+                "skipped": 0,
+            }
             try:
                 after = ""
                 evidence_snapshot = ""
@@ -797,8 +1145,13 @@ async def run_pull_v2(
                         snapshot=evidence_snapshot,
                         after=after,
                     )
-                    evidence_manifest, _ = archive_sync_v2.parse_candidate_evidence_page(evidence_page)
-                    if evidence_snapshot and evidence_manifest["snapshot"] != evidence_snapshot:
+                    evidence_manifest, _ = (
+                        archive_sync_v2.parse_candidate_evidence_page(evidence_page)
+                    )
+                    if (
+                        evidence_snapshot
+                        and evidence_manifest["snapshot"] != evidence_snapshot
+                    ):
                         raise RemoteSyncError("Candidate 证据快照在翻页中发生变化")
                     evidence_snapshot = evidence_manifest["snapshot"]
                     response = await _request_with_retry(
@@ -826,13 +1179,16 @@ async def run_pull_v2(
                     raise RemoteSyncError("Candidate 证据分页超过安全上限")
             except Exception as exc:  # Candidate is an auxiliary reverse channel.
                 evidence_result = {"status": "failed", "error": str(exc)[:500]}
-                _logger.warning("Candidate evidence upload failed after main v2 streams: %s", exc)
+                _logger.warning(
+                    "Candidate evidence upload failed after main v2 streams: %s", exc
+                )
             result["candidate_evidence"] = evidence_result
     result["authority_id"] = expected_authority
     return result
 
 
 # ── KV 游标(按 base_url 分目标)────────────────────────────────────────────────
+
 
 def load_sync_state(engine) -> Dict[str, Any]:
     with Session(engine) as session:
@@ -878,10 +1234,13 @@ def record_v2_stream_success(
     synced_at: str,
 ) -> None:
     """原子推进一个 v2 stream checkpoint，不影响其他 stream。"""
-    if stream not in V2_STREAM_ORDER:
-        raise ValueError(f"unsupported v2 stream: {stream}")
     state = load_sync_state(engine)
     target = dict(state["targets"].get(base_url) or {})
+    capabilities = list(
+        target.get("v2_capabilities") or archive_sync_v2.REQUIRED_CAPABILITIES
+    )
+    if stream not in negotiated_v2_stream_order(capabilities):
+        raise ValueError(f"unsupported or unnegotiated v2 stream: {stream}")
     target_schema = str(target.get("v2_schema_version") or "")
     target_authority = str(target.get("v2_authority_id") or "")
     if target_schema != archive_sync_v2.SCHEMA_VERSION:
@@ -890,7 +1249,9 @@ def record_v2_stream_success(
     previous = streams.get(stream) or {}
     incoming_authority = str(checkpoint.get("authority_id") or "")
     if target_authority != incoming_authority:
-        raise RemoteSyncError("checkpoint authority_id 与已确认的 consumer epoch 不一致")
+        raise RemoteSyncError(
+            "checkpoint authority_id 与已确认的 consumer epoch 不一致"
+        )
     if previous.get("authority_id") and previous["authority_id"] != incoming_authority:
         raise RemoteSyncError(
             f"{stream} authority_id 从 {previous['authority_id']} 变为 {incoming_authority}，"
@@ -900,7 +1261,9 @@ def record_v2_stream_success(
         **checkpoint,
         "completed_at": synced_at,
     }
-    target.update({"username": username, "last_synced_at": synced_at, "v2_streams": streams})
+    target.update(
+        {"username": username, "last_synced_at": synced_at, "v2_streams": streams}
+    )
     state["targets"][base_url] = target
     with Session(engine) as session:
         row = session.get(AppSettingRecord, REMOTE_SYNC_STATE_KEY)
@@ -914,6 +1277,7 @@ def record_v2_stream_success(
 
 
 # ── 定时同步配置(KV,凭据只写不回显)──────────────────────────────────────────
+
 
 def _load_schedule_raw(engine) -> Dict[str, Any]:
     with Session(engine) as session:
@@ -947,8 +1311,7 @@ def load_schedule(engine, *, include_secret: bool = False) -> Dict[str, Any]:
 
     with Session(engine) as session:
         protocol_downgrade_blocked = bool(
-            protocol == "v1"
-            and sync_consumer_policy.v2_receiver_state_present(session)
+            protocol == "v1" and sync_consumer_policy.v2_receiver_state_present(session)
         )
     result: Dict[str, Any] = {
         "enabled": (
@@ -971,7 +1334,9 @@ def load_schedule(engine, *, include_secret: bool = False) -> Dict[str, Any]:
     return result
 
 
-def save_schedule(engine, updates: Dict[str, Any], *, updated_at: str) -> Dict[str, Any]:
+def save_schedule(
+    engine, updates: Dict[str, Any], *, updated_at: str
+) -> Dict[str, Any]:
     """合并写回定时同步配置,返回 `load_schedule(include_secret=False)` 形状。
 
     `updates` 里 `password` 为空串/None 表示**保留已存密码**(统一凭据保管
@@ -983,9 +1348,7 @@ def save_schedule(engine, updates: Dict[str, Any], *, updated_at: str) -> Dict[s
         "protocol" not in raw and list(raw.get("source_ids") or [])
     )
     if legacy_protocol_choice_required and "protocol" not in updates:
-        raise RemoteSyncError(
-            "旧版局部同步配置需要管理员显式选择并保存 v1 或 v2 协议"
-        )
+        raise RemoteSyncError("旧版局部同步配置需要管理员显式选择并保存 v1 或 v2 协议")
     merged = dict(raw)
     for key in ("enabled", "cron", "base_url", "username", "source_ids", "protocol"):
         if key in updates:
