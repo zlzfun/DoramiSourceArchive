@@ -5711,7 +5711,79 @@ input[type="radio"] {
     box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge);
   }
 
-  /* ── 信号灯统计条 ── */
+  /* ── 内容形态一级 Tab：与阅读器的文章/播客/动态/社交四容器保持一致 ── */
+  .node-shape-tabs {
+    flex: none;
+    display: flex;
+    align-items: stretch;
+    gap: 22px;
+    min-height: 50px;
+    padding: 0 18px;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--dorami-border);
+    scrollbar-width: none;
+  }
+
+  .node-shape-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .node-shape-tab {
+    position: relative;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 64px;
+    padding: 0 3px;
+    color: var(--dorami-muted);
+    font-size: 13px;
+    font-weight: 650;
+    white-space: nowrap;
+    transition: color var(--motion-fast) var(--motion-ease);
+  }
+
+  .node-shape-tab:hover {
+    color: var(--dorami-ink-2);
+  }
+
+  .node-shape-tab.is-active {
+    color: var(--dorami-ink);
+  }
+
+  .node-shape-tab.is-active::after {
+    content: "";
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    bottom: -1px;
+    height: 3px;
+    border-radius: var(--r-pill) var(--r-pill) 0 0;
+    background: var(--dorami-blue);
+  }
+
+  .node-shape-count {
+    min-width: 22px;
+    height: 20px;
+    padding: 0 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--r-pill);
+    background: var(--dorami-well);
+    color: var(--dorami-muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .node-shape-tab.is-active .node-shape-count {
+    background: var(--dorami-wash);
+    color: var(--dorami-blue);
+  }
+
+  /* ── 当前 Tab 内的健康与角色筛选条 ── */
   .signal-strip {
     flex: none;
     display: flex;
@@ -5754,6 +5826,16 @@ input[type="radio"] {
   .signal-stat:hover {
     background: var(--dorami-soft);
     color: var(--dorami-ink-2);
+  }
+
+  .signal-stat:disabled {
+    cursor: not-allowed;
+    opacity: 0.38;
+  }
+
+  .signal-stat:disabled:hover {
+    background: transparent;
+    color: var(--dorami-muted);
   }
 
   .signal-stat-on {
@@ -5825,12 +5907,6 @@ input[type="radio"] {
     flex: none;
     border-radius: var(--r-pill);
     background: var(--group-accent, var(--dorami-blue));
-  }
-
-  .signal-shape-group {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
   }
 
   .signal-strip-tools {
@@ -5957,11 +6033,19 @@ input[type="radio"] {
   }
 
   .board-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
     padding: 56px 24px;
     text-align: center;
     color: var(--dorami-faint);
     font-size: 13px;
     font-weight: 600;
+  }
+
+  .board-empty strong {
+    font: inherit;
   }
 
   /* ── 批量选择模式(方案 A):模式内行首多一列勾选框;勾中行 = wash 状态底
@@ -7655,12 +7739,23 @@ input[type="radio"] {
     border-bottom: 1px solid var(--dorami-border-soft);
   }
 
+  /* 栏名角色(2026-09-06 统一):文章/播客/动态列头、社交头、发现/兴趣页头的标题同为「这一栏叫什么」,
+     此前三种字阶两种字重(14/600 · 15/700 · 17/700),切换时每次都被看见。统一取列头现值 14/600——
+     出现最多,与源栏头 13/600 恰差一阶。早报报头是刻意的报纸面(标题是日期不是栏名),不入此列。
+     横向不强求对齐:各标题与自己下方内容对齐(列头 16 / 社交 24 / 发现随 920 版心)。
+     早报与兴趣是「我的」页,用报头家族(等宽 kicker + 衬线标题),不入此列——规则见 .interest-body 注释。 */
+  .reader-list-title,
+  .reader-social-title,
+  .reader-disc-title {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: normal;
+    line-height: 1.5;
+    color: var(--dorami-ink);
+  }
   .reader-list-title {
     flex: 1;
     min-width: 0;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--dorami-ink);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -8120,7 +8215,7 @@ input[type="radio"] {
   }
 
   .reader-entry-src {
-    flex: 1;
+    flex: 0 1 auto;      /* 可缩:源名过长先截断,后面的分类保住 */
     min-width: 0;
     font-size: 11.5px;
     font-weight: 400;
@@ -8130,8 +8225,56 @@ input[type="radio"] {
     white-space: nowrap;
   }
 
+  /* ── 分析结果归入元信息行(issue #23 第三项,样页 dorami-entry-analysis-quiet.html) ──
+     条目行只有三档音量:标题响、摘要轻、元信息最轻;分类与分数都是元信息,回到顶行里去,
+     卡片回到三行(元信息/标题/摘要),分析晚到只在这一行横向填字、标题不动。
+     · 分类:源名后的一段同规格文字(「Sean Goedecke · 观点」),不是徽章;
+     · 分数:13px 衬线齐线数字——与速读卡 38/早报卡 22 的衬线数字同一家族的第三档,
+       着 AI 渐变(.ai-grad-text,与早报卡/速读卡三档同字同色——目检拍板:「见渐变即 AI」在列表里成立);
+       不绑阈值(#22 改分布不牵动视觉);
+     · 分类画成 10px 细线小签——沿用阅读器既有「动态」形态签(.reader-shape-chip)的语法,不着色,
+       靠形态与来源分开;来源保持 faint 元信息;
+     · 「分析中」占的正是数字将来的位置(faint 小字),有旧分的「更新中」不进列表。 */
+  .reader-entry-tag {
+    flex: none;
+    padding: 0.5px 5px;
+    border: 1px solid var(--dorami-border);
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 400;
+    line-height: 1.4;
+    letter-spacing: 0.06em;
+    color: var(--dorami-faint);
+    white-space: nowrap;
+  }
+
+  .reader-entry-score {
+    flex: none;
+    margin-left: auto;
+    min-width: 2.4em;
+    text-align: right;
+    font-family: Charter, Cambria, Baskerville, var(--font-serif);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.01em;
+    color: var(--dorami-ink-2);   /* 兜底色;JSX 同挂 .ai-grad-text 上渐变(文字自身 background-clip) */
+    font-variant-numeric: lining-nums tabular-nums;
+  }
+
+  .reader-entry-score.is-pending {
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0;
+    color: var(--dorami-faint);
+  }
+
+  .reader-entry-score + .reader-entry-time { margin-left: 3px; }
+
   .reader-entry-time {
     flex-shrink: 0;
+    margin-left: auto;   /* 无分数槽时自己靠右;有槽时由上一条规则收成 3px */
     margin-right: 8px;   /* 右移避开浮层滚动条,与星标右缘对齐(距卡右 ~14px) */
     /* 不用 mono 栈:「2 天前」数字/汉字会混排两种字体,Windows 上尤其毛糙;
        继承正文栈 + tabular-nums,数字仍对齐。字号对齐 .reader-entry-src——
@@ -8673,50 +8816,66 @@ input[type="radio"] {
     color: var(--dorami-muted);
   }
 
+  /* 署名行(样页 dorami-pane-head-quiet.html):只放事实——日期(无真实时刻不画 00:00)·阅读约 N 分钟·
+     阅读量·分析状态,中点分隔;动作不在这一行 */
   .reader-pane-meta {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 6px 14px;
+    gap: 6px 0;
     font-family: var(--mono);
     font-size: 11.5px;
     font-weight: 400;
     color: var(--dorami-faint);
     font-variant-numeric: tabular-nums;
   }
+  .reader-pane-meta > span + span::before { content: '·'; margin: 0 7px; }
 
   /* ── 标题下动作行(v3.45,样页 docs/design/dorami-onboarding-quiet.html):
      「查看原文」胶囊 + 「原文 | 译为中文」二段。沿 meta 行的 11.5px 字阶但用正文字系
      (中文标签不走等宽);胶囊 26px 高、hairline 描边、surface 底;译文激活态沿 AI 渐变身份
      (v3.33 纪律:渐变只上身份标记——渐变 wash 底 + 渐变字,胶囊本体不上 solid accent)。
      字号/字重写在容器上靠继承穿透(button{font:inherit} 未分层陷阱)。 ── */
+  /* 尾行(issue #23 第三项延伸):左标签小签、右动作,贴着标题区分隔线;标签折行时动作随末行,
+     无标签(分析在途)时尾行只有动作 */
+  .reader-pane-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;   /* 底对齐:小签比语言二段矮,居中会让底边差半格 */
+    gap: 8px 14px;
+    margin-top: 12px;
+  }
+  /* 署名行容器:无标签时动作并入右缘(有标签时动作住尾行) */
+  .reader-pane-byline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+  }
+  .reader-pane-byline .reader-pane-meta { flex: 1 1 auto; min-width: 0; }
+  .reader-pane-foot .reader-pane-tags { flex: 1 1 auto; min-width: 0; margin-top: 0; }
   .reader-pane-actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
-    margin-top: 12px;
+    gap: 12px;
+    margin-left: auto;
     font-size: 11.5px;
     font-weight: 600;
   }
+  /* 查看原文退成文字链(正文末尾同款),只有语言二段保留控件外形 */
   .reader-pane-act {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    height: 26px;
-    padding: 0 10px;
-    border-radius: var(--r-pill);
-    border: 1px solid var(--dorami-border);
-    background: var(--dorami-surface);
+    gap: 4px;
     color: var(--dorami-ink-2);
     text-decoration: none;
-    transition: border-color var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
   }
   .reader-pane-act svg { color: var(--dorami-faint); }
-  .reader-pane-act:hover { border-color: var(--dorami-border-strong); background: var(--dorami-soft); }
+  .reader-pane-act:hover { text-decoration: underline; }
   .reader-tr-seg {
     display: inline-flex;
-    height: 26px;
+    height: 24px;
     padding: 2px;
     border-radius: var(--r-pill);
     border: 1px solid var(--dorami-border);
@@ -8726,8 +8885,8 @@ input[type="radio"] {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    height: 20px;
-    padding: 0 9px;
+    height: 18px;
+    padding: 0 8px;
     border: none;
     border-radius: var(--r-pill);
     background: transparent;
@@ -8934,11 +9093,10 @@ input[type="radio"] {
     display: flex;
     align-items: center;
     gap: 10px;
-    height: 52px;
-    padding: 0 24px;
+    height: 53px;               /* 与列头同高,标题同落 19px 基线 */
+    padding: 4px 24px 0;
     border-bottom: 1px solid var(--dorami-border-soft);
   }
-  .reader-social-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
   .reader-social-sub { font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); }
   .reader-social-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
   /* 社交头:标题常显于左,搜索框在右侧 actions 组内展开(限宽,紧邻开关钮);
@@ -9205,7 +9363,6 @@ input[type="radio"] {
   .reader-disc-body { max-width: 920px; margin: 0 auto; }
 
   .reader-disc-title-row { display: flex; align-items: baseline; gap: 12px; }
-  .reader-disc-title { font-size: 17px; font-weight: 700; color: var(--dorami-ink); }
   .reader-disc-hint { font-size: 11.5px; color: var(--dorami-faint); }
 
   .reader-disc-tools { display: flex; align-items: center; gap: 10px; margin: 14px 0; }
@@ -11078,16 +11235,15 @@ input[type="radio"] {
   gap: 8px;
 }
 
-/* ── 文章智能分析：列表轻徽标 + 详情说明 ── */
-.reader-entry-analysis,
+/* ── 文章智能分析:详情说明与管理面轻徽标(阅读器条目行的分数/分类已归入元信息行,
+   见 @layer 内 .reader-entry-tag / .reader-entry-score;.reader-score-chip 只余管理面台账在用) ── */
 .ledger-analysis-meta {
   display: flex;
   align-items: center;
   gap: 5px;
   min-width: 0;
+  margin-top: 5px;
 }
-.reader-entry-analysis { margin-top: 4px; }
-.ledger-analysis-meta { margin-top: 5px; }
 .reader-score-chip,
 .reader-tag-chip,
 .brief-tag {
@@ -11140,129 +11296,420 @@ input[type="radio"] {
 /* p 段仅管理面抽屉/弹窗仍画 score_reason;阅读窗自 issue #13 起理由住速读卡的「评分依据」层(AiReadingCard) */
 .reader-analysis-summary p { margin-top: 8px; font-size: 13px; font-weight: 600; line-height: 1.65; }
 .reader-analysis-summary > small { display: block; margin-top: 8px; line-height: 1.5; }
-/* 阅读窗标题区标签行(issue #13 二轮:分数并入速读卡后,标签自成一行、不再套框) */
-.reader-pane-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+/* 阅读窗标题区标签行(issue #13 二轮:分数并入速读卡后,标签自成一行、不再套框;
+   issue #23 第三项延伸:标签改细线小签——与条目行分类同语法,规范实线 / 灵活虚线可点检索,
+   不着色,标题区饱和色只剩眉头,渐变留给速读卡) */
+.reader-pane-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.reader-pane-tags .reader-tag-chip {
+  min-height: 0;
+  padding: 1px 7px;
+  border: 1px solid var(--dorami-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dorami-faint);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.06em;
+  outline: none;
+}
+.reader-pane-tags .reader-tag-chip.is-extracted { border-style: dashed; }
+/* 旧胶囊规则的 :hover 会把 outline-style 置 solid(默认 medium 宽 + currentColor,呈粗黑框),小签里必须显式关掉 */
+.reader-pane-tags .reader-tag-chip.is-actionable:hover {
+  color: var(--dorami-ink-2);
+  border-color: var(--dorami-border-strong);
+  background: transparent;
+  outline: none;
+}
+.reader-pane-tags .reader-tag-chip.is-actionable:focus-visible {
+  color: var(--dorami-ink-2);
+  background: transparent;
+  outline: 2px solid var(--dorami-focus);
+  outline-offset: 1px;
+}
 
 
-/* ── 我的早报：视图轨后的整幅工作区 ── */
-.personal-brief {
-  grid-column: 2 / -1;
+/* ── 我的早报(issue #23 重做,二稿):视图轨 · 日期栏 · 报纸面 ──
+   日期栏顶替源栏槽位(canvas 底、源行语法);报纸面占「条目列 + 阅读窗」整幅(grid-column 3/-1,
+   与发现页/社交流同构)——一份卡片式日报:报头(衬线日期 + 版次/篇数 meta)+ 分节卡片网格
+   (标题/完整摘要/衬线渐变评分/标签),点卡片跳站内原文(早报页退场)。历史按天分期:一天一行,
+   同日多版折进报头「共 N 版」;卡片吃完整摘要不截断;来源只标名字(选入理由长句退役)。 */
+.brief-days { background: var(--dorami-canvas); overflow: hidden; }
+.brief-days-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 16px; }
+.brief-day {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--dorami-muted);
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms ease, box-shadow 140ms ease;
+}
+.brief-day:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+/* 选中 = 浮白 + 弱高程(与源行同语法) */
+.brief-day.is-on { background: var(--dorami-surface); box-shadow: var(--sh-1); color: var(--dorami-ink); }
+.brief-day-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brief-day.is-on .brief-day-name { font-weight: 600; }
+.brief-day-meta { flex: none; font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.brief-day-flag { flex: none; font-size: 11px; font-weight: 600; }
+.brief-day-flag.is-bad { color: var(--state-bad); }
+.brief-day-spin { flex: none; width: 13px; height: 13px; color: var(--dorami-accent); }
+
+/* 报纸面:整幅可滚,内容居中限宽(报纸版心) */
+.brief-sheet {
+  grid-column: 3 / -1;
   min-width: 0;
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 232px;
-  background: var(--dorami-canvas);
-  overflow: hidden;
-}
-.brief-main {
-  min-width: 0;
   overflow-y: auto;
-  padding: 30px clamp(20px, 4vw, 58px) 52px;
+  background: var(--rd-list-bg);
 }
-.brief-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
-.brief-head-actions { display: flex; flex: none; align-items: center; gap: 8px; }
-.brief-edition-meta { display: flex; align-items: center; gap: 7px; margin-top: 24px; color: var(--dorami-muted); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.brief-sheet-inner { max-width: 1120px; margin: 0 auto; padding: 34px 44px 72px; }
+.brief-mast {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--dorami-border);
+}
+.brief-mast-main { min-width: 0; }
+.brief-mast-kicker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--dorami-accent-ink); }
+.brief-mast-title {
+  margin-top: 10px;
+  font-family: Charter, Cambria, Baskerville, var(--font-serif);
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  color: var(--dorami-ink);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.brief-mast-title small { margin-left: 12px; font-size: 16px; font-weight: 400; letter-spacing: 0; color: var(--dorami-muted); }
+.brief-mast-sub { margin-top: 10px; font-size: 13px; font-weight: 500; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
+/* 报头动作区字号写容器:内含 button(共 N 版)靠继承(button{font:inherit} 未分层陷阱) */
+.brief-mast-actions { display: flex; flex: none; align-items: center; gap: 10px; font-size: 12px; }
+.brief-rev-toggle { display: inline-flex; align-items: center; gap: 2px; padding: 0 4px; border-radius: var(--r-sm); color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
+.brief-rev-toggle:hover, .brief-rev-toggle[aria-expanded="true"] { color: var(--dorami-accent-ink); }
+.brief-rev-toggle svg { width: 13px; height: 13px; transition: transform var(--motion-fast) var(--motion-ease); }
+.brief-rev-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.brief-rev-strip { display: flex; flex-wrap: wrap; gap: 6px; padding: 14px 0 0; font-size: 12px; }
+.brief-rev {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--dorami-ink) 5%, transparent);
+  color: var(--dorami-muted);
+  font-variant-numeric: tabular-nums;
+  transition: background 140ms ease, color 140ms ease;
+}
+.brief-rev:hover { color: var(--dorami-ink); }
+.brief-rev.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+.brief-rev small { font-size: 11px; color: var(--dorami-faint); }
+
+/* 状态提示:一句一行;警示底 / 信息(wash)底两档 */
+.brief-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 9px 12px;
+  border-radius: var(--r-control);
+  background: var(--state-warn-bg);
+  color: var(--state-warn);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.brief-note svg { flex: none; width: 14px; height: 14px; margin-top: 2px; }
+.brief-note.is-info { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+
+/* 分节头:节名 + 等宽计数 + 延伸的 hairline */
+.brief-sec { margin-top: 30px; }
+.brief-sec-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.brief-sec-title { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; color: var(--dorami-ink); }
+.brief-sec-count { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.brief-sec-rule { flex: 1; height: 1px; background: var(--dorami-border); }
+
+/* 卡片网格:自适应列数(≥2 列时首节首张 lead 通栏);同行等高、脚部钉底(报纸排版,仍不截断) */
+.brief-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: stretch; }
+/* 作用域限定在 .brief-grid 之下(codex 检视):管理台日报面板也叫 surface-card.brief-card(280px 双栏),不可被读者卡规则覆盖 */
+.brief-grid .brief-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 18px 20px 16px;
+  border: 1px solid var(--dorami-card-bd);
+  border-radius: var(--r-card);
+  background: var(--dorami-surface);
+  box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge);
+  color: var(--dorami-ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--motion-ease);
+}
+/* 悬停不抬升(conventions §卡片:无 hover 位移与加深阴影;codex 检视):只显一圈 hairline */
+.brief-grid .brief-card:hover { border-color: var(--dorami-border-strong); }
+.brief-grid .brief-card.is-lead { grid-column: 1 / -1; padding: 24px 28px 20px; }
+/* 头条双栏(三稿):左栏正文流,右栏 200px 评分与标签栏,hairline 分隔——右侧不再留白也不放图 */
+.brief-grid .brief-card.is-wide { grid-column: 1 / -1; padding: 20px 24px 18px; }
+.brief-grid .brief-card.is-split { display: grid; grid-template-columns: minmax(0, 1fr) 200px; column-gap: 32px; }
+.brief-card-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.brief-card-aside { display: flex; flex-direction: column; gap: 14px; min-width: 0; padding-left: 28px; border-left: 1px solid var(--dorami-border-soft); }
+.brief-card-aside-score { display: flex; flex-direction: column; gap: 6px; }
+.brief-card-aside .brief-card-score { font-size: 32px; }
+.brief-grid .brief-card.is-lead .brief-card-aside .brief-card-score { font-size: 40px; }
+.brief-card-aside-cap { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--dorami-faint); }
+.brief-card-tags.is-stack { flex-direction: column; align-items: flex-start; gap: 6px; }
+.brief-grid .brief-card.is-skel { cursor: default; min-height: 150px; }
+/* 返回落位高亮:刚读过的卡描一圈 accent 再褪去 */
+.brief-grid .brief-card.is-just-read { animation: brief-card-flash 1.8s var(--motion-ease) both; }
+@keyframes brief-card-flash {
+  0%, 35% { box-shadow: 0 0 0 2px var(--dorami-accent), var(--sh-2), inset 0 1px 0 var(--dorami-edge); }
+  100% { box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge); }
+}
+.brief-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brief-card-src { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.brief-card-srcname { font-size: 12px; font-weight: 500; color: var(--dorami-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 评分:衬线齐线数字 + AI 渐变(见渐变即 AI,与速读卡同一身份);渐变落在数字元素自身 */
+.brief-card-score { flex: none; font-family: Charter, Cambria, Baskerville, var(--font-serif); font-size: 22px; font-weight: 700; line-height: 1; font-variant-numeric: lining-nums tabular-nums; }
+.brief-grid .brief-card.is-lead .brief-card-score { font-size: 28px; }
+.brief-card-title { display: block; font-family: var(--font-serif); font-size: 17px; font-weight: 700; line-height: 1.4; color: var(--dorami-ink); }
+.brief-grid .brief-card.is-lead .brief-card-title { font-size: 24px; line-height: 1.3; }
+.brief-card-sum { display: block; font-size: 13.5px; font-weight: 400; line-height: 1.75; color: var(--dorami-ink-2); }
+.brief-grid .brief-card.is-lead .brief-card-sum { font-size: 14.5px; line-height: 1.8; }
+.brief-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 2px; }
+.brief-card-tags { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.brief-card-time { flex: none; display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 11.5px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.brief-card-go { width: 13px; height: 13px; color: var(--dorami-faint); opacity: 0; transform: translate(-2px, 2px); transition: opacity var(--motion-fast) ease, transform var(--motion-fast) var(--motion-ease), color var(--motion-fast) ease; }
+.brief-grid .brief-card:hover .brief-card-go { opacity: 1; transform: none; color: var(--dorami-accent-ink); }
+/* 兴趣命中 chip:同族同色,只多一枚实心小点作「关注」状态记号(不上第二饱和色) */
+.reader-tag-chip.is-interest::before { content: ''; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: currentColor; }
+
 .brief-state {
-  min-height: 360px;
+  min-height: 320px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 11px;
-  padding: 36px;
+  gap: 8px;
+  padding: 32px 24px;
   text-align: center;
   color: var(--dorami-muted);
+  font-size: 13px;
 }
+.brief-state > svg { width: 22px; height: 22px; margin-bottom: 4px; color: var(--dorami-faint); }
 .brief-state.is-error { color: var(--state-bad); }
-.brief-notice {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin-top: 18px;
-  padding: 14px;
-  border-radius: var(--r-card);
-  background: var(--state-warn-bg);
-  color: var(--state-warn);
+.brief-state-title { font-size: 14px; font-weight: 600; color: var(--dorami-ink); }
+.brief-state.is-error .brief-state-title { color: var(--state-bad); }
+.brief-state-meta { font-size: 12px; line-height: 1.6; color: var(--dorami-faint); }
+.brief-state .action-button { margin-top: 6px; }
+@media (prefers-reduced-motion: reduce) {
+  .brief-grid .brief-card, .brief-card-go { transition: none; }
+  .brief-grid .brief-card.is-just-read { animation: none; box-shadow: 0 0 0 2px var(--dorami-accent), var(--sh-1); }
 }
-.brief-notice strong { display: block; font-size: 13px; }
-.brief-notice p { margin-top: 3px; color: var(--dorami-ink-2); font-size: 12px; font-weight: 600; line-height: 1.55; }
-.brief-section { margin-top: 26px; }
-.brief-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
-.brief-items {
-  overflow: hidden;
+/* 报纸面窄于 720 时头条退回单栏,评分与标签栏横排落在摘要之下 */
+.brief-sheet { container-type: inline-size; }
+@container (max-width: 720px) {
+  .brief-grid .brief-card.is-split { grid-template-columns: minmax(0, 1fr); row-gap: 14px; }
+  .brief-card-aside { flex-direction: row; align-items: center; gap: 16px; padding-left: 0; padding-top: 14px; border-left: none; border-top: 1px solid var(--dorami-border-soft); }
+  .brief-card-aside-score { flex: none; flex-direction: row; align-items: baseline; gap: 8px; }
+  .brief-card-aside .brief-card-score, .brief-grid .brief-card.is-lead .brief-card-aside .brief-card-score { font-size: 28px; }
+  .brief-card-tags.is-stack { flex-direction: row; align-items: center; gap: 5px; }
+}
+
+/* ── 早报外出返回带(阅读窗顶部,issue #23 三稿)──
+   wash 底 + accent-ink 字:这一程是从早报出来的;左返回、右下一条,字号写容器(button{font:inherit})。 */
+.reader-brief-trail {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 34px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--dorami-border-soft);
+  background: var(--dorami-wash);
+  color: var(--dorami-accent-ink);
+  font-size: 12px;
+  font-weight: 500;
+}
+.reader-brief-trail-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--r-control);
+  color: inherit;
+  transition: background var(--motion-fast) ease;
+}
+.reader-brief-trail-btn:hover { background: color-mix(in srgb, var(--dorami-accent) 12%, transparent); }
+.reader-brief-trail-btn svg { flex: none; width: 14px; height: 14px; }
+.reader-brief-trail-btn small { font-size: 11px; font-weight: 400; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
+.reader-brief-trail-btn.is-next small { margin-left: 2px; }
+.reader-brief-trail-end { font-size: 11px; font-weight: 400; color: var(--dorami-faint); }
+/* 阅读进度线锚在栏顶;有返回带时压到带下缘 */
+.reader-brief-trail + .reader-progress { top: 34px; }
+/* ≤1024 阅读器纵向堆叠(单列网格):早报两带不再跨列——.brief-sheet 的 3/-1 在单列网格里会挤出隐式列;
+   本规则须与 .brief-sheet 同在未分层区,层内写法会被未分层的跨列声明压回 */
+@media (max-width: 1024px) {
+  .brief-days, .brief-sheet { grid-column: auto; }
+  .brief-sheet { overflow: visible; }
+  .brief-days-scroll { max-height: 320px; }
+}
+
+/* ── 我的兴趣(issue #23 第二项,弹窗改页面;样页 docs/design/dorami-interest-quiet.html)──
+   与早报页同构:选择台账顶替源栏槽位(canvas 底、源行语法),标签目录面占「条目列 + 阅读窗」整幅。
+   关注态只用 accent 描边高光(拍板去勾选框与 wash 底,名称着 accent-ink 作第二通道);屏蔽态 ink 4% 底 +
+   划线,刻意不用红——屏蔽不是错误。保存条 sticky 贴面底,只在脏态/引导态出现。未分层区(与 .brief-sheet 同理)。 */
+.interest-ledger { background: var(--dorami-canvas); overflow: hidden; }
+.interest-ledger-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 16px; }
+.interest-ledger .reader-src-label b { font-family: var(--mono); font-weight: 500; letter-spacing: 0; margin-left: 5px; color: var(--dorami-faint); }
+.interest-jump {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: var(--dorami-muted);
+  text-align: left;
+  transition: background var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+}
+.interest-jump:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+.interest-jump.is-on { background: var(--dorami-surface); box-shadow: var(--sh-1); color: var(--dorami-ink); }
+.interest-jump-name { flex: 1; min-width: 0; font-size: 13px; }
+.interest-jump.is-on .interest-jump-name { font-weight: 600; }
+.interest-jump-n { flex: none; font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.interest-pick { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px; color: var(--dorami-ink); cursor: default; user-select: none; }
+.interest-pick-x { cursor: pointer; }
+.interest-pick:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+.interest-pick-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--dorami-accent); }
+.interest-pick.is-mute .interest-pick-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--dorami-faint); }
+.interest-pick.is-mute .interest-pick-name { color: var(--dorami-muted); text-decoration: line-through; text-decoration-color: var(--dorami-faint); }
+.interest-pick-name { flex: 1; min-width: 0; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 行尾同一格:常态是分面名右对齐,悬停/聚焦同位置换成 ×(不再右留空槽) */
+.interest-pick-end { flex: none; display: grid; place-items: center end; min-width: 28px; height: 18px; }
+.interest-pick-end > * { grid-area: 1 / 1; }
+/* 分面名淡出后仍是 opacity<1 的层叠上下文,会盖在 × 之上吃掉点击:不接事件,× 提一层 */
+.interest-pick-facet { pointer-events: none; }
+.interest-pick-x { position: relative; z-index: 1; }
+.interest-pick-facet { font-size: 10.5px; letter-spacing: 0.06em; color: var(--dorami-faint); transition: opacity var(--motion-fast) ease; }
+.interest-pick-x { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 6px; color: var(--dorami-faint); font-size: 14px; line-height: 1; opacity: 0; transition: opacity var(--motion-fast) ease, background var(--motion-fast) ease; }
+.interest-pick:hover .interest-pick-facet, .interest-pick:focus-within .interest-pick-facet { opacity: 0; }
+.interest-pick:hover .interest-pick-x, .interest-pick-x:focus-visible { opacity: 1; }
+.interest-pick-x:hover { background: color-mix(in srgb, var(--dorami-ink) 8%, transparent); color: var(--dorami-ink); }
+.interest-ledger-head { justify-content: space-between; gap: 8px; }
+.interest-save-state { flex: none; font-size: 11px; font-weight: 500; color: var(--dorami-faint); letter-spacing: 0.02em; }
+.interest-save-state.is-error { color: var(--state-warn); }
+.interest-ledger-empty { padding: 6px 10px 2px; font-size: 12px; line-height: 1.6; color: var(--dorami-faint); }
+
+.interest-sheet {
+  grid-column: 3 / -1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--rd-list-bg);
+}
+/* 页头规则:「我的」页(早报/兴趣)用报头家族(等宽 kicker + 衬线标题,.brief-mast 同款),容器与目录页用
+   14/600 栏名工具头;版心 1120 同早报。报头随正文滚动;搜索框沿发现页 .reader-disc-search 形制。 */
+.interest-body { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; position: relative; }
+.interest-body-inner { width: 100%; max-width: 1120px; margin: 0 auto; padding: 34px 44px 72px; }
+.interest-body .brief-mast-title { font-family: var(--font-serif); font-size: 32px; line-height: 1.15; }
+.interest-body .brief-mast-sub, .interest-m-head .brief-mast-sub { line-height: 1.7; max-width: 640px; }
+.interest-mast-actions { flex: none; display: flex; align-items: center; gap: 10px; }
+.interest-search { flex: none; width: 220px; }
+.interest-search > svg { flex: none; width: 13px; height: 13px; }
+.interest-search input { font-size: 12.5px; }
+.interest-search input::-webkit-search-cancel-button { display: none; }
+.interest-search-clear { flex: none; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 6px; color: var(--dorami-faint); }
+.interest-search-clear svg { width: 12px; height: 12px; }
+.interest-search-clear:hover { background: color-mix(in srgb, var(--dorami-ink) 8%, transparent); color: var(--dorami-ink); }
+
+.interest-sec { margin-top: 30px; }
+.interest-sec .brief-sec-head { margin-bottom: 12px; }
+.interest-sec-hint { font-size: 12px; color: var(--dorami-faint); margin-left: 2px; }
+.interest-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.interest-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px 10px;
+  border: 1px solid var(--dorami-card-bd);
   border-radius: var(--r-card);
   background: var(--dorami-surface);
-  border: 1px solid var(--dorami-card-bd);
-  box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge);
-}
-.brief-item {
-  width: 100%;
-  display: flex;
-  align-items: flex-start;
-  gap: 13px;
-  padding: 15px 16px;
-  border-top: 1px solid var(--dorami-border);
-  text-align: left;
+  box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge);
   color: var(--dorami-ink);
-  transition: background var(--motion-fast) var(--motion-ease);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color var(--motion-fast) var(--motion-ease), background var(--motion-fast) ease;
 }
-.brief-item:first-child { border-top: none; }
-.brief-item:hover { background: var(--dorami-soft); }
-.brief-item-score {
-  min-width: 38px;
-  color: var(--dorami-accent-ink);
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1.25;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-.brief-item-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
-.brief-item-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; color: var(--dorami-faint); font-size: 11px; font-weight: 600; }
-.brief-item-title { font-size: 15px; font-weight: 700; line-height: 1.45; }
-/* one_sentence_summary 取缔后(issue #13)条目行直接吃 summary,两行截断 */
-.brief-item-summary { color: var(--dorami-ink-2); font-size: 13px; font-weight: 600; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.brief-item-reason { color: var(--dorami-accent-ink); font-size: 12px; font-weight: 600; }
-.brief-item-reason.is-latest { color: var(--dorami-muted); }
-.brief-interest-hint {
-  width: 100%;
-  display: flex;
+/* 悬停不抬升(conventions §卡片;codex 检视):hairline 显现即可,关注态描边已足够,不再加深阴影 */
+.interest-card:hover { border-color: var(--dorami-border-strong); }
+.interest-card:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 2px; }
+.interest-card-name { font-size: 13.5px; font-weight: 600; line-height: 1.3; }
+.interest-card-desc { font-size: 12px; line-height: 1.55; color: var(--dorami-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* 脚部字号写容器:内含 button(屏蔽)靠继承 */
+.interest-card-foot { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 4px; min-height: 20px; font-size: 11px; }
+.interest-card-kind { font-size: 10.5px; letter-spacing: 0.08em; color: var(--dorami-faint); }
+.interest-card-heat { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.interest-card-heat small { font-size: 10px; margin-left: 3px; opacity: 0.8; }
+.interest-card-ban {
+  margin-left: auto;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 22px;
-  padding: 11px 14px;
-  border-radius: var(--r-control);
-  background: var(--dorami-soft);
-  color: var(--dorami-muted);
-  font-size: 12px;
-  font-weight: 600;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--dorami-faint);
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease, background var(--motion-fast) ease;
 }
-.brief-interest-hint:hover { background: var(--dorami-raised); color: var(--dorami-ink); }
-.brief-history {
-  min-width: 0;
-  overflow-y: auto;
-  padding: 25px 14px;
-  border-left: 1px solid var(--dorami-border);
-  background: var(--dorami-soft);
+.interest-card-ban svg { width: 12px; height: 12px; }
+.interest-card:hover .interest-card-ban, .interest-card-ban:focus-visible { opacity: 1; }
+.interest-card-ban:hover { background: color-mix(in srgb, var(--dorami-ink) 7%, transparent); color: var(--dorami-ink); }
+.interest-card.is-follow { box-shadow: inset 0 0 0 1.5px var(--dorami-accent), var(--sh-1); }
+.interest-card.is-follow .interest-card-name { color: var(--dorami-accent-ink); }
+.interest-card.is-mute { background: color-mix(in srgb, var(--dorami-ink) 4%, var(--rd-list-bg)); box-shadow: none; border-color: var(--dorami-border-soft); }
+.interest-card.is-mute:hover { box-shadow: none; }
+.interest-card.is-mute .interest-card-name { color: var(--dorami-muted); text-decoration: line-through; text-decoration-color: var(--dorami-faint); }
+.interest-card.is-mute .interest-card-desc { color: var(--dorami-faint); }
+.interest-card.is-mute .interest-card-ban { opacity: 1; color: var(--dorami-muted); background: color-mix(in srgb, var(--dorami-ink) 7%, transparent); }
+.interest-more { margin-top: 12px; display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px; border-radius: var(--r-control); font-size: 12px; font-weight: 500; color: var(--dorami-muted); }
+.interest-more:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); color: var(--dorami-ink); }
+.interest-more svg { width: 13px; height: 13px; }
+
+/* 引导态「完成 / 稍后再说」(报头右侧);.interest-btn 是本页唯一按钮件 */
+.interest-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 14px; border-radius: var(--r-control); font-size: 12.5px; font-weight: 600; color: var(--dorami-muted); transition: background var(--motion-fast) ease, color var(--motion-fast) ease; }
+.interest-btn:hover { background: color-mix(in srgb, var(--dorami-ink) 6%, transparent); color: var(--dorami-ink); }
+.interest-btn:disabled { opacity: 0.55; pointer-events: none; }
+.interest-btn svg { width: 14px; height: 14px; }
+.interest-btn.is-primary { background: var(--dorami-accent); color: #fff; box-shadow: var(--sh-1); }
+.interest-btn.is-primary:hover { background: var(--dorami-accent-ink); color: #fff; }
+@media (prefers-reduced-motion: reduce) {
 }
-.brief-history-head { display: flex; align-items: center; gap: 7px; margin: 0 4px 12px; color: var(--dorami-ink); }
-.brief-history-row {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 10px;
-  border-radius: var(--r-control);
-  color: var(--dorami-ink-2);
-  text-align: left;
+/* ≤1024 单列堆叠(同 .brief-sheet 的理由) */
+@media (max-width: 1024px) {
+  .interest-ledger, .interest-sheet { grid-column: auto; }
+  .interest-sheet { overflow: visible; }
+  .interest-ledger-scroll { max-height: 320px; }
 }
-.brief-history-row:hover { background: var(--dorami-raised); }
-.brief-history-row.is-on { background: var(--dorami-surface); box-shadow: inset 3px 0 0 var(--dorami-accent); }
-.brief-history-row > span:first-child { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
-.brief-history-row strong { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.brief-history-row small { color: var(--dorami-faint); font-size: 11px; font-weight: 600; }
-.brief-score { margin-left: auto; color: var(--dorami-accent-ink); font-weight: 700; font-variant-numeric: tabular-nums; }
 
 /* ── CMS taxonomy / Candidate 治理 ── */
 .taxonomy-flag {
@@ -11336,9 +11783,5 @@ input[type="radio"] {
 .taxonomy-version-stat strong { color: var(--dorami-ink); font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 900px) {
-  .brief-head { flex-direction: column; }
-  .brief-head-actions { width: 100%; flex-wrap: wrap; }
-  .personal-brief { grid-template-columns: minmax(0, 1fr); }
-  .brief-history { border-top: 1px solid var(--dorami-border); border-left: none; }
   .taxonomy-row-detail { padding-left: 14px; }
 }

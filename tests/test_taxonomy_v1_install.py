@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import json
 import sys
 from pathlib import Path
@@ -19,12 +18,20 @@ if str(SCRIPTS_DIR) not in sys.path:
 import apply_taxonomy_v1_review as review_apply  # noqa: E402
 import install_taxonomy_v1 as installer  # noqa: E402
 import prepare_taxonomy_v1_review as review_prepare  # noqa: E402
-from models.db import CmsTagCandidateRecord, CmsTagRecord  # noqa: E402
+from config import TaxonomyDeploymentConfig  # noqa: E402
+from models.db import (  # noqa: E402
+    AppSettingRecord,
+    CmsTagAliasRecord,
+    CmsTagEventRecord,
+    CmsTagRecord,
+)
 from services import taxonomy  # noqa: E402
+from services.taxonomy_deployment import (  # noqa: E402
+    TaxonomyDeploymentError,
+    reconcile_approved_taxonomy_v1,
+    run_taxonomy_deployment,
+)
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
-
-
-NOW = dt.datetime(2026, 9, 2, tzinfo=dt.timezone.utc)
 
 
 def test_repository_approved_catalog_is_complete_and_product_confirmed():
@@ -41,44 +48,208 @@ def test_repository_approved_catalog_is_complete_and_product_confirmed():
     assert by_code["industry.cybersecurity"]["user_selectable"] is True
 
 
-def test_fresh_install_reaches_publish_gate_without_publishing():
+def test_authority_reconcile_installs_once_without_publishing():
     storage = DatabaseStorage(db_url="sqlite:///:memory:")
     try:
-        catalog = installer.load_catalog(installer.DEFAULT_CATALOG)
+        first = reconcile_approved_taxonomy_v1(storage.engine)
         with Session(storage.engine) as session:
-            report = review_prepare.prepare_review(session, catalog)
-            review_apply.validate_complete_review(report)
-            counts = installer.apply_fresh(session, report, actor_id="release-test")
-            state = taxonomy.taxonomy_governance_state(session, now=NOW)
+            state = taxonomy.taxonomy_governance_state(session)
             tags = list(session.exec(select(CmsTagRecord)).all())
-            assert counts["created"] == 96
+            aliases_before = len(list(session.exec(select(CmsTagAliasRecord)).all()))
+            events_before = len(list(session.exec(select(CmsTagEventRecord)).all()))
+            assert first["status"] == "installed_awaiting_publish"
+            assert first["created"] == 96
             assert len(tags) == 96
             assert sum(tag.user_selectable for tag in tags) == 94
             assert state["publish_ready"] is True
             assert state["active_version"] == 0
             assert state["review_receipt"]["review_basis"] == "label_set_only"
             assert state["review_receipt"]["coverage_decision"] == "not_applicable"
+
+        second = reconcile_approved_taxonomy_v1(storage.engine)
+        with Session(storage.engine) as session:
+            assert second["status"] == "unchanged"
+            assert second["created"] == 0
+            assert len(list(session.exec(select(CmsTagRecord)).all())) == 96
+            assert len(list(session.exec(select(CmsTagAliasRecord)).all())) == aliases_before
+            assert len(list(session.exec(select(CmsTagEventRecord)).all())) == events_before
     finally:
         storage.engine.dispose()
 
 
-def test_installer_refuses_to_mutate_an_active_v1():
+def test_matching_receipt_remains_noop_after_human_publish():
     storage = DatabaseStorage(db_url="sqlite:///:memory:")
     try:
-        catalog = installer.load_catalog(installer.DEFAULT_CATALOG)
+        reconcile_approved_taxonomy_v1(storage.engine)
         with Session(storage.engine) as session:
-            report = review_prepare.prepare_review(session, catalog)
-            installer.apply_fresh(session, report, actor_id="release-test")
             version = taxonomy.create_taxonomy_version(
                 session,
                 change_summary="published v1",
-                now=NOW,
             )
-            taxonomy.activate_taxonomy_version(session, version.version, actor_id="test", now=NOW)
-            with pytest.raises(ValueError, match="active taxonomy version 0"):
-                installer.apply_fresh(session, report, actor_id="release-test")
+            taxonomy.activate_taxonomy_version(session, version.version, actor_id="human")
+        assert reconcile_approved_taxonomy_v1(storage.engine)["status"] == "unchanged"
     finally:
         storage.engine.dispose()
+
+
+def test_authority_reconcile_recovers_a_compatible_partial_import():
+    storage = DatabaseStorage(db_url="sqlite:///:memory:")
+    catalog = installer.load_catalog(installer.DEFAULT_CATALOG)
+    first_entry = catalog["entries"][0]
+    try:
+        with Session(storage.engine) as session:
+            taxonomy.create_tag(
+                session,
+                code=first_entry["code"],
+                kind=first_entry["kind"],
+                name_zh=first_entry["name_zh"],
+                name_en=first_entry["name_en"],
+                description=first_entry["description"],
+                prompt_description=first_entry["prompt_description"],
+                status="active",
+                user_selectable=first_entry["user_selectable"],
+                filterable=first_entry["filterable"],
+                recommendable=first_entry["recommendable"],
+                activation_mode="manual",
+                entity_type=first_entry["entity_type"],
+                external_key=first_entry.get("external_key"),
+            )
+            session.commit()
+
+        result = reconcile_approved_taxonomy_v1(storage.engine)
+        assert result["created"] == 95
+        with Session(storage.engine) as session:
+            assert len(list(session.exec(select(CmsTagRecord)).all())) == 96
+            assert session.get(
+                AppSettingRecord, taxonomy.TAXONOMY_V1_REVIEW_RECEIPT_KEY
+            ) is not None
+    finally:
+        storage.engine.dispose()
+
+
+def test_authority_reconcile_fails_closed_on_catalog_conflict():
+    storage = DatabaseStorage(db_url="sqlite:///:memory:")
+    catalog = installer.load_catalog(installer.DEFAULT_CATALOG)
+    first_entry = catalog["entries"][0]
+    try:
+        with Session(storage.engine) as session:
+            taxonomy.create_tag(
+                session,
+                code=first_entry["code"],
+                kind=first_entry["kind"],
+                name_zh=first_entry["name_zh"],
+                name_en=first_entry["name_en"],
+                description="conflicting local edit",
+                prompt_description=first_entry["prompt_description"],
+                status="active",
+                user_selectable=first_entry["user_selectable"],
+                filterable=first_entry["filterable"],
+                recommendable=first_entry["recommendable"],
+                activation_mode="manual",
+                entity_type=first_entry["entity_type"],
+                external_key=first_entry.get("external_key"),
+            )
+            session.commit()
+
+        with pytest.raises(TaxonomyDeploymentError, match="conflicts"):
+            reconcile_approved_taxonomy_v1(storage.engine)
+        with Session(storage.engine) as session:
+            assert len(list(session.exec(select(CmsTagRecord)).all())) == 1
+            assert session.get(
+                AppSettingRecord, taxonomy.TAXONOMY_V1_REVIEW_RECEIPT_KEY
+            ) is None
+    finally:
+        storage.engine.dispose()
+
+
+def test_authority_reconcile_fails_closed_on_different_receipt():
+    storage = DatabaseStorage(db_url="sqlite:///:memory:")
+    try:
+        with Session(storage.engine) as session:
+            session.add(
+                AppSettingRecord(
+                    key=taxonomy.TAXONOMY_V1_REVIEW_RECEIPT_KEY,
+                    value=json.dumps({"manifest_sha256": "0" * 64}),
+                )
+            )
+            session.commit()
+        with pytest.raises(TaxonomyDeploymentError, match="receipt conflicts"):
+            reconcile_approved_taxonomy_v1(storage.engine)
+        with Session(storage.engine) as session:
+            assert len(list(session.exec(select(CmsTagRecord)).all())) == 0
+    finally:
+        storage.engine.dispose()
+
+
+def test_authority_reconcile_rejects_incomplete_matching_receipt():
+    storage = DatabaseStorage(db_url="sqlite:///:memory:")
+    catalog = installer.load_catalog(installer.DEFAULT_CATALOG)
+    try:
+        with Session(storage.engine) as session:
+            session.add(
+                AppSettingRecord(
+                    key=taxonomy.TAXONOMY_V1_REVIEW_RECEIPT_KEY,
+                    value=json.dumps(
+                        {"manifest_sha256": catalog["manifest_sha256"]}
+                    ),
+                )
+            )
+            session.commit()
+        with pytest.raises(TaxonomyDeploymentError, match="receipt is malformed"):
+            reconcile_approved_taxonomy_v1(storage.engine)
+    finally:
+        storage.engine.dispose()
+
+
+@pytest.mark.parametrize("mode", ["manual", "replica"])
+def test_non_authority_mode_is_explicit_noop_without_loading_catalog(mode):
+    result = run_taxonomy_deployment(
+        "sqlite:///:memory:",
+        TaxonomyDeploymentConfig(mode=mode, catalog_path="/does/not/exist.json"),
+    )
+    assert result == {"status": mode, "action": "none"}
+
+
+def test_role_all_does_not_infer_taxonomy_authority(monkeypatch, tmp_path):
+    import config
+
+    ini = tmp_path / "backend.ini"
+    ini.write_text("[runtime]\nrole = all\n", encoding="utf-8")
+    monkeypatch.setenv("DORAMI_CONFIG_FILE", str(ini))
+    monkeypatch.delenv("DORAMI_TAXONOMY_DEPLOYMENT", raising=False)
+    assert config.load_config().taxonomy.mode == "manual"
+
+    monkeypatch.setenv("DORAMI_TAXONOMY_DEPLOYMENT", "replica")
+    assert config.load_config().taxonomy.mode == "replica"
+    monkeypatch.setenv("DORAMI_TAXONOMY_DEPLOYMENT", "authority")
+    assert config.load_config().taxonomy.mode == "authority"
+
+
+def test_invalid_taxonomy_deployment_mode_is_rejected(monkeypatch, tmp_path):
+    import config
+
+    ini = tmp_path / "backend.ini"
+    ini.write_text("[taxonomy]\ndeployment = automatic\n", encoding="utf-8")
+    monkeypatch.setenv("DORAMI_CONFIG_FILE", str(ini))
+    monkeypatch.delenv("DORAMI_TAXONOMY_DEPLOYMENT", raising=False)
+    with pytest.raises(ValueError, match="Invalid taxonomy deployment mode"):
+        config.load_config()
+
+
+def test_official_startup_paths_reconcile_after_migration_before_api():
+    main_source = (ROOT / "src/main.py").read_text(encoding="utf-8")
+    container_source = (ROOT / "docker/entrypoint.py").read_text(encoding="utf-8")
+    deploy_source = (ROOT / "deploy.sh").read_text(encoding="utf-8")
+    for source, final_marker in (
+        (main_source, "uvicorn.run("),
+        (container_source, "import uvicorn"),
+        (deploy_source, "Building frontend"),
+    ):
+        assert source.index("ensure_migrated") < source.index("run_taxonomy_deployment")
+        assert source.index("run_taxonomy_deployment") < source.index(final_marker)
+    assert "COPY config/taxonomy-v1-approved-catalog.json" in (
+        ROOT / "docker/backend.Dockerfile"
+    ).read_text(encoding="utf-8")
 
 
 def test_catalog_manifest_detects_content_tampering(tmp_path):

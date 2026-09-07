@@ -1,8 +1,8 @@
-"""用户自定 RSS 源(v3.40):读者自助添加私有消息来源的服务层。
+"""用户自定 RSS 源(v3.40):读者自助添加未列入公共目录的消息来源。
 
 设计方案见 docs/user-custom-rss-wave-plan.md。核心定调:
 
-- **私有订阅资产,不是归档策展资产**(方案 B 隔离):不进公共发现页目录、不进
+- **订阅者可见、目录不收录**:不进公共发现页目录、不进
   scope=all 检索域、不进日报、不进 archive sync export。隔离面各消费点经
   ``user_source_ids()`` / ``USER_SOURCE_PREFIX`` 收口。
 - **最简正文**:配置行固定 ``fetch_detail_if_missing=false``,feed 给什么存什么,
@@ -23,7 +23,7 @@ import hashlib
 import json
 import threading
 from typing import Any, Dict, List, Optional, Set
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 import feedparser
 import httpx
@@ -64,6 +64,39 @@ FEED_MAX_BYTES = 5 * 1024 * 1024
 FEED_TIMEOUT_SECONDS = 20
 PREVIEW_ENTRY_COUNT = 5
 
+# Query-string credentials are common in signed/private feed URLs. They remain valid
+# fetch targets, but their contents must not be sent to MaaS or public sharing.
+_CREDENTIAL_QUERY_KEYS = {
+    "access_token", "api_key", "apikey", "auth", "authkey", "authorization",
+    "bearer", "credential", "credentials", "jwt", "key", "pass", "password",
+    "pwd", "secret", "session", "session_id", "sessionid", "sig", "signature",
+    "token",
+}
+_CREDENTIAL_KEY_MARKERS = (
+    "auth", "bearer", "credential", "jwt", "key", "pass", "pwd", "secret",
+    "session", "sig", "token",
+)
+_CREDENTIAL_PATH_MARKERS = {
+    "auth", "bearer", "credential", "jwt", "key", "pass", "private", "pwd",
+    "secret", "session", "signed", "token",
+}
+# Public feed selectors can legitimately be opaque identifiers (YouTube channel
+# ids are the common case). Unknown query parameters do not get that assumption:
+# a high-entropy value is treated as a bearer credential unless explicitly known
+# to be public routing/filter metadata.
+_PUBLIC_QUERY_KEYS = {
+    "category", "channel_id", "feed", "filter", "format", "lang", "language",
+    "limit", "order", "output", "page", "playlist_id", "q", "query", "search",
+    "sort", "tag", "tags", "topic", "type",
+}
+
+
+def _looks_like_opaque_credential(value: str) -> bool:
+    compact = "".join(char for char in str(value or "") if char.isalnum())
+    # Unknown long opaque values fail closed even when they happen to contain
+    # only letters or digits. Signed feed vendors use all three forms.
+    return len(compact) >= 24
+
 # 日增计数 KV 前缀(检视返修 F9:改不可随删除回退的动作计数,建→删循环不再绕过日限)
 DAILY_ADD_KEY_PREFIX = "user_sources_added:"
 
@@ -93,12 +126,87 @@ def canonical_feed_url(url: str) -> str:
     host = (parts.hostname or "").lower()
     if not host:
         raise ValueError("feed 地址缺少主机名")
+    if parts.username is not None or parts.password is not None:
+        raise ValueError("暂不支持在 RSS 地址中携带用户名或密码")
     port = parts.port
     netloc = host
     if port and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)):
         netloc = f"{host}:{port}"
     path = parts.path.rstrip("/")
     return urlunsplit((scheme, netloc, path, parts.query, ""))
+
+
+def feed_url_has_credentials(url: str) -> bool:
+    """Conservatively classify credential-bearing/signed private feed URLs."""
+
+    parts = urlsplit(str(url or "").strip())
+    if parts.username is not None or parts.password is not None:
+        return True
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    keys = {key.casefold() for key, _value in query}
+    if keys & _CREDENTIAL_QUERY_KEYS or any(
+        marker in key for key in keys for marker in _CREDENTIAL_KEY_MARKERS
+    ):
+        return True
+    if any(
+        key.casefold() not in _PUBLIC_QUERY_KEYS and _looks_like_opaque_credential(value)
+        for key, value in query
+    ):
+        return True
+    segments = [segment for segment in parts.path.split("/") if segment]
+    return any(
+        segment.casefold() in _CREDENTIAL_PATH_MARKERS
+        or _looks_like_opaque_credential(segment)
+        for segment in segments
+    )
+
+
+def source_is_credentialed(record: Optional[SourceConfigRecord]) -> bool:
+    """Return the stored access classification, with URL inference for old rows."""
+
+    if record is None:
+        return False
+    custom_source = bool(
+        (record.owner_username or "").strip()
+        or is_user_source(record.source_id)
+    )
+    try:
+        params = json.loads(record.params_json or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return custom_source or feed_url_has_credentials(record.url or "")
+    if not isinstance(params, dict):
+        return custom_source or feed_url_has_credentials(record.url or "")
+    classified = params.get("credentialed_private", False)
+    if classified is True or str(classified or "").strip().casefold() in {
+        "1", "true", "yes", "on",
+    }:
+        return True
+    return feed_url_has_credentials(record.url or "")
+
+
+def source_content_may_leave_deployment(session: Session, source_id: str) -> bool:
+    """Whether source content may be sent to MaaS or an unauthenticated reader.
+
+    Platform registry sources legitimately have no ``SourceConfig`` row and are
+    public by default. A user RSS without its config row is an orphan whose
+    credential classification cannot be reconstructed, so it fails closed.
+    """
+
+    normalized = str(source_id or "").strip()
+    record = session.get(SourceConfigRecord, normalized) if normalized else None
+    if record is None:
+        return not is_user_source(normalized)
+    return not source_is_credentialed(record)
+
+
+def external_ai_allowed_source_ids(session: Session, source_ids: List[str]) -> List[str]:
+    """Preserve order while removing every source whose content cannot leave."""
+
+    return [
+        source_id
+        for source_id in dict.fromkeys(str(value or "").strip() for value in source_ids)
+        if source_id and source_content_may_leave_deployment(session, source_id)
+    ]
 
 
 def source_id_for_url(canonical_url: str, *, full: bool = False) -> str:
@@ -165,7 +273,7 @@ def exclude_user_sources_condition(session: Session = None):  # noqa: ARG001 - �
     """「排除全部用户源」的 SQL 条件(检视返修 F1 收口原语)。
 
     凡**没有归属主体上下文**的交付查询(/api/feed、空范围 dsub 订阅等)一律应用
-    本条件——私有内容只经「订阅者本人」的域可达。判定按 `user_rss_` 前缀而非查
+    本条件——自定源内容只经其订阅者的域可达。判定按 `user_rss_` 前缀而非查
     配置表(codex 复检二轮):删除与在途抓取竞态产生的孤儿文章没有配置行,按表
     判定会漏进公共交付;前缀是结构性兜底,孤儿同样被隔离。
     """
@@ -339,31 +447,17 @@ async def fetch_feed_preview(
     transport 供测试注入 httpx.MockTransport(与 x_timeline 测试同惯例,不打真网)。
     """
     canonical = canonical_feed_url(url)
-    from services.media_store import ensure_public_host  # SSRF 判定单点(含 fake-ip 豁免)
-
-    await ensure_public_host(urlsplit(canonical).hostname or "")
+    from services.http_safety import fetch_public_bytes_limited
 
     # 流式限量(检视返修 F5):先按 Content-Length 预拒,再逐块累计、超限即断开——
     # 巨大/无限 chunked body 不再先整段读入内存才检查。
     async with httpx.AsyncClient(
-        follow_redirects=True,
+        follow_redirects=False,
         timeout=FEED_TIMEOUT_SECONDS,
         headers={"User-Agent": "DoramiSourceArchive/feed-preview"},
         transport=transport,
     ) as client:
-        async with client.stream("GET", canonical) as response:
-            response.raise_for_status()
-            declared = response.headers.get("Content-Length")
-            if declared and declared.isdigit() and int(declared) > FEED_MAX_BYTES:
-                raise ValueError("feed 体积超过上限")
-            chunks: List[bytes] = []
-            received = 0
-            async for chunk in response.aiter_bytes():
-                received += len(chunk)
-                if received > FEED_MAX_BYTES:
-                    raise ValueError("feed 体积超过上限")
-                chunks.append(chunk)
-            body = b"".join(chunks)
+        body = await fetch_public_bytes_limited(client, canonical, max_bytes=FEED_MAX_BYTES)
 
     parsed = feedparser.parse(body)
     entries = getattr(parsed, "entries", None) or []
@@ -529,6 +623,7 @@ def prepare_user_source(
     _bump_daily_created(session, username)
 
     now = _now_iso()
+    credentialed_private = feed_url_has_credentials(url)
     record = SourceConfigRecord(
         source_id=source_id,
         name=(name or "").strip()[:80] or canonical,
@@ -538,9 +633,9 @@ def prepare_user_source(
         fetcher_id="",  # resolve_source_fetcher_id 按 source_type 路由 generic_rss
         description="",
         owner_username=username,
-        # V1 has no per-subscriber consent/cost attribution for shared custom
-        # feeds, so private content must never be sent to a third-party model.
-        ai_analysis_enabled=False,
+        # Public custom feeds are analyzed once on the internal authority.  A
+        # signed/tokenized URL remains private-by-default and is never sent to MaaS.
+        ai_analysis_enabled=not credentialed_private,
         is_active=True,
         # 最简正文拍板:feed 给什么存什么,不触发详情页补抓。ssrf_guard 与响应上限
         # 由 generic_rss 执行层承接(检视返修 D2/D3:首抓/调度/手工抓取全通道生效)。
@@ -549,6 +644,7 @@ def prepare_user_source(
             "limit": 12,
             "ssrf_guard": True,
             "max_response_bytes": FEED_MAX_BYTES,
+            "credentialed_private": credentialed_private,
         }, ensure_ascii=False),
         created_at=now,
         updated_at=now,
@@ -596,22 +692,22 @@ def list_user_sources(session: Session, username: Optional[str] = None) -> List[
 def set_user_source_ai_analysis(
     session: Session, username: str, source_id: str, enabled: bool
 ) -> SourceConfigRecord:
-    """Keep private-feed analysis disabled until per-subscriber consent exists."""
+    """Expose the effective policy without letting one subscriber affect others."""
 
     with _WRITE_LOCK:
         record = get_user_source(session, source_id)
-        if record is None or record.owner_username != username:
+        if record is None or username not in active_subscriber_usernames(session, source_id):
             raise LookupError("自定源不存在")
-        if enabled:
+        if source_is_credentialed(record) and enabled:
             raise UserSourceQuotaError(
-                "自定源 AI 分析暂未开放：需先实现逐订阅用户授权",
+                "该 RSS 地址含凭证信息，默认不发送到 MaaS",
                 status_code=409,
             )
-        record.ai_analysis_enabled = False
-        record.updated_at = _now_iso()
-        session.add(record)
-        session.commit()
-        session.refresh(record)
+        if bool(enabled) != bool(record.ai_analysis_enabled):
+            raise UserSourceQuotaError(
+                "共享自定源的分析策略由系统统一管理",
+                status_code=409,
+            )
         return record
 
 

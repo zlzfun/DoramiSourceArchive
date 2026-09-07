@@ -6,22 +6,49 @@ import datetime as dt
 import json
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from api import deps
+from config import settings
 from models.db import (
+    AppSettingRecord,
     CmsTagAliasRecord,
     CmsTagCandidateEvidenceRecord,
     CmsTagCandidateRecord,
     CmsTagRecord,
+    RemoteCandidateEvidenceRecord,
 )
 from services import taxonomy as taxonomy_service
+from services import sync_consumer_policy
 
 
-router = APIRouter(tags=["taxonomy"], dependencies=[Depends(deps.require_admin)])
+def _require_local_taxonomy_authority(
+    request: Request,
+    session: Session = Depends(deps.get_session),
+) -> None:
+    """Keep a synced taxonomy read-only while leaving all admin GETs available."""
+
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return
+    authority = session.get(AppSettingRecord, taxonomy_service.TAXONOMY_AUTHORITY_ID_KEY)
+    if (
+        settings.taxonomy.mode == "replica"
+        or (authority is not None and (authority.value or "").strip())
+        or sync_consumer_policy.v2_consumer_mode_active(session)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="taxonomy 由远端权威节点治理，本机仅使用同步镜像",
+        )
+
+
+router = APIRouter(
+    tags=["taxonomy"],
+    dependencies=[Depends(deps.require_admin), Depends(_require_local_taxonomy_authority)],
+)
 
 
 class TagCreate(BaseModel):
@@ -165,6 +192,14 @@ def _candidate_payload(session: Session, candidate: CmsTagCandidateRecord) -> di
             .limit(10)
         ).all()
     )
+    remote_evidence = list(
+        session.exec(
+            select(RemoteCandidateEvidenceRecord)
+            .where(RemoteCandidateEvidenceRecord.candidate_id == candidate.id)
+            .order_by(RemoteCandidateEvidenceRecord.created_at.desc())
+            .limit(10)
+        ).all()
+    )
     return {
         "id": candidate.id,
         "label": candidate.label,
@@ -193,6 +228,17 @@ def _candidate_payload(session: Session, candidate: CmsTagCandidateRecord) -> di
                 "context_excerpt": row.context_excerpt,
             }
             for row in evidence
+        ],
+        "remote_evidence": [
+            {
+                "authority_id": row.authority_id,
+                "source_provenance": row.source_provenance,
+                "confidence": row.confidence,
+                "label": row.label,
+                "prompt_version": row.prompt_version,
+                "created_at": row.created_at,
+            }
+            for row in remote_evidence
         ],
         "first_seen_at": candidate.first_seen_at,
         "last_seen_at": candidate.last_seen_at,

@@ -24,6 +24,7 @@ export default function MobileMePage({
   onShowFavorites,
   onOpenDiscover,
   onManageInterests,
+  interestAttention = false,
   onOpenSettings,
   onLogout,
 }) {
@@ -65,7 +66,8 @@ export default function MobileMePage({
         {onManageInterests && (
           <button type="button" className="m-row" onClick={onManageInterests}>
             <Tags aria-hidden="true" />
-            <span className="m-row-label">管理个人兴趣</span>
+            <span className="m-row-label">我的兴趣</span>
+            {interestAttention && <span className="m-row-dot" aria-hidden="true" />}
             <span className="m-row-chev" aria-hidden="true"><ChevronRight /></span>
           </button>
         )}

@@ -295,6 +295,17 @@ function CandidateRow({ candidate, tags, onChanged, showToast, confirm }) {
               </div>
             ))}</div> : <p className="tiny-meta">还没有可展示的证据样本</p>}
           </div>
+          {candidate.remote_evidence?.length > 0 && (
+            <div>
+              <h4 className="micro-label mb-2">自定源远端证据</h4>
+              <div className="grid gap-2">{candidate.remote_evidence.map((row, index) => (
+                <div key={`${row.authority_id}-${row.created_at}-${index}`} className="rounded-[var(--r-control)] border border-[var(--dorami-border)] p-2 tiny-meta">
+                  <span className="font-mono">{row.authority_id}</span> · {row.source_provenance || '来源未标注'} · 置信 {Math.round(Number(row.confidence || 0) * 100)}%
+                  <p className="mt-1">{row.label}{row.prompt_version ? ` · ${row.prompt_version}` : ''}</p>
+                </div>
+              ))}</div>
+            </div>
+          )}
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <input className="form-input form-input-inline" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="规范 code（可自动生成）" />
             <select className="form-input form-input-inline" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value, entity_type: '', external_key: '' })} aria-label="纠正 Candidate 分面">{Object.entries(KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
@@ -417,6 +428,7 @@ export default function AdminTaxonomyPanel({ showToast, days = 7 }) {
   }, [candidates, kind, query, tags, view]);
 
   const analysis = metrics?.article_analysis;
+  const analysisPending = (analysis?.status_counts?.pending || 0) + (analysis?.status_counts?.running || 0);
   const taxonomy = metrics?.taxonomy;
   return (
     <div className="grid gap-4">
@@ -427,7 +439,7 @@ export default function AdminTaxonomyPanel({ showToast, days = 7 }) {
 
       {metrics && (
         <section className="surface-card kpi-strip" aria-label="分析与 taxonomy 概览">
-          <Metric value={pct(analysis?.success_rate)} label="分析成功率" sub={`近 ${metrics.window_days} 天`} />
+          <Metric value={pct(analysis?.success_rate)} label="分析成功率" sub={`近 ${metrics.window_days} 天待处理 ${analysisPending.toLocaleString()} 篇`} />
           <Metric value={analysis?.score_p50 ?? '—'} label="评分 P50" sub={`P90 ${analysis?.score_p90 ?? '—'}`} />
           <Metric value={pct(analysis?.score_threshold_rates?.['7.0'])} label="7+ 占比" sub={`9+ ${pct(analysis?.score_threshold_rates?.['9.0'])}`} />
           <Metric value={pct(taxonomy?.tagged_article_rate)} label="标签覆盖" sub={`缺主标签 ${pct(taxonomy?.primary_missing_rate)}`} />

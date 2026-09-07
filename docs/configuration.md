@@ -15,38 +15,72 @@
 
 真实部署文件可能包含管理员密码、auth secret、代理账密、小鲁班凭证、图床 secret 等敏感值，已通过 `.gitignore` 排除，不应提交。
 
-运行角色读取 `[runtime] role`（也可用 `DORAMI_RUNTIME_ROLE` 覆盖）。**单机部署保持默认 `all` 即可**，无需改动；此时访问控制只看登录账号角色（见下文「账号角色」）：
+运行角色读取 `[runtime] role`（也可用 `DORAMI_RUNTIME_ROLE` 覆盖）。单机以及当前生产双节点均保持 `all`；采集/分析的单写权威由 Archive Sync v2 的持久化 authority 字段控制，不再用运行角色猜测：
 
 ```ini
 [runtime]
 role = all
 ```
 
-> 以下「分离部署」属高级可选场景。若你只在单台机器（含公网 ECS）上跑、内网也能访问该域名，可直接跳过本节。
+> 以下 `collector` / `reader` 角色只保留给需要物理关闭某一类 API 的部署。当前外网 Dorami + 内网 Dorami 的生产拓扑不是这种模式，两端均为 `all`。
 
-`collector` / `reader` 仅用于把采集与分发拆到不同主机的**分离部署**：
+`collector` / `reader` 可用于把采集与分发拆到不同主机的严格隔离部署：
 
 - `collector`：外网采集归档层，开启抓取、调度、采集任务和运行观测，关闭 MCP/feed 等 reader 交付面。
 - `reader`：内网分发订阅层，开启内容阅览、全文检索、feed 和 MCP，关闭抓取、调度和采集任务。
 
-分离部署步骤：
+当前双 `all` 生产部署步骤：
 
-1. 外网采集归档层部署在可访问公开站点的个人电脑或外网服务器，配置 `role = collector`。
-2. 内网分发订阅层部署在公司内网服务器，配置 `role = reader`。
-3. 采集层通过 `/api/archive/export/articles.jsonl` 导出归档，分发层通过 `/api/archive/import/articles.jsonl` 导入归档。同步契约见 `docs/contracts/archive_sync.md`。
+1. 外网 Dorami 采集并分析平台/公共源；内网 Dorami 同步并提供服务，两端配置 `role = all`。
+2. 内网 Dorami 自行采集用户自定 RSS，并可直接调用外部 MaaS；自定源正文不上传外网 Dorami。
+3. 内网配置远程同步，默认使用 Archive Sync v2 拉取 sources、taxonomy、articles、analyses、media、source_states。同步契约见 `docs/contracts/archive_sync.md`。
 4. 下游应用优先访问分发层的个人聚合接口 `/api/public/feed/articles`（`dfeed_` 令牌，覆盖用户全部订阅源）；订阅源在前端“阅读器”左栏增删，聚合令牌在“接入集成”页面生成/轮换。（按源隔离的 `/api/public/subscriptions/{id}/...` + `dsub_` 令牌仍可用，属高级/自动化路径。）
 
-分离部署最小示例：
+Taxonomy 部署姿态必须另行显式配置，不能由两端共同的 `role = all` 推断。外网在迁移后、
+API/worker 前幂等安装仓库批准目录；内网不安装本地目录，只从 Archive Sync 接收：
 
 ```ini
-# 外网 collector
-[runtime]
-role = collector
+# 外网
+[taxonomy]
+deployment = authority
+catalog = config/taxonomy-v1-approved-catalog.json
 
-# 内网 reader
-[runtime]
-role = reader
+# 内网
+[taxonomy]
+deployment = replica
 ```
+
+未配置时安全默认是 `manual`（启动不动作）。环境变量
+`DORAMI_TAXONOMY_DEPLOYMENT` / `DORAMI_TAXONOMY_CATALOG` 可覆盖 INI。catalog digest
+相同则启动 no-op；receipt 或现存数据冲突时 fail closed。人工发布步骤和恢复说明见
+[`taxonomy-v1-deployment.md`](./taxonomy-v1-deployment.md)。
+
+内网管理员启用 v2 定时同步或手动启动第一次 v2 拉取时，系统会先持久化
+`remote_sync:v2_consumer_mode` 围栏，再创建网络任务；因此第一次 authority 全量尚未
+落地时，普通公共源的本地采集与分析也已经停止。该围栏不写伪造的 authority，用户
+自定 RSS 仍由内网采集；其中普通自定源可分析，签名/凭据源只采集、不调用 MaaS。
+升级前遗留的定时配置若没有 `protocol` 且带 `source_ids`，会以
+`migration_required=true` 安全停用，管理员必须在「数据同步」明确保存 v1 或 v2；
+系统不会替管理员猜测范围。v1 只作为显式兼容模式运行。
+
+生产双节点最小示例：
+
+```ini
+# 外网 Dorami
+[runtime]
+role = all
+[taxonomy]
+deployment = authority
+
+# 内网 Dorami
+[runtime]
+role = all
+[taxonomy]
+deployment = replica
+```
+
+`authority_id` 默认首次运行时持久化到数据库。需要跨数据库迁移时可在生产者显式固定
+`DORAMI_ARCHIVE_AUTHORITY_ID`；值一旦投入同步不得随主机名、容器或运行角色变化。
 
 生产部署有两条官方路径,`[server]`/`[nginx]` 两节的语义随路径而异:
 - **Docker**(推荐,详见 [`deploy-docker.md`](./deploy-docker.md)):容器入口固定监听 `0.0.0.0:8088`,这两节**在容器内不生效**;TLS 由宿主边缘 Nginx 终止。

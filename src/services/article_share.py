@@ -24,6 +24,7 @@ from typing import List, Optional, Tuple
 from sqlmodel import Session, select
 
 from models.db import AppSettingRecord, ArticleRecord, ArticleShareRecord
+from services import user_sources as user_sources_service
 
 # 全局总闸：管理员可一键停用所有公开分享链接（站内深链不受影响）。
 PUBLIC_SHARE_ENABLED_KEY = "public_share_enabled"
@@ -174,6 +175,13 @@ def resolve_share(
     if article is None:
         return None, None
     if hidden_source_ids and article.source_id in hidden_source_ids:
+        return None, None
+    # A source may be reclassified after the link was issued. Resolve-time
+    # enforcement makes existing tokens fail immediately instead of preserving
+    # a stale public-content decision forever.
+    if not user_sources_service.source_content_may_leave_deployment(
+        session, article.source_id
+    ):
         return None, None
     return record, article
 

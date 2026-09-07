@@ -12,10 +12,13 @@ import ShareMenu from '../ShareMenu';
 import PodcastAudioPanel from '../PodcastAudioPanel';
 import AnalysisTagChip from '../AnalysisTagChip';
 import { PaneBodySkeleton } from '../ReaderTab';
-import { formatRelativeTime, formatDateTime } from '../../utils/datetime';
-import { contentTypeLabel } from '../../utils/contentType';
+import { formatDateTime, formatPublishDate } from '../../utils/datetime';
 import { formatPodcastDuration } from '../../utils/podcast';
-import { displayAnalysisTags } from '../../utils/analysis';
+import {
+  analysisStatusMeta,
+  contentGenreLabel,
+  displayAnalysisTags,
+} from '../../utils/analysis';
 import AiReadingCard from '../AiReadingCard';
 import { hostOf } from '../../utils/readerText';
 
@@ -28,6 +31,7 @@ export default function MobileArticlePage({
   aiEnabled,
   showToast,
   onBack,
+  onLeaveForSearch = null, // 标签检索离开正文页的专用出口(不走早报返回)
   onMore,
 }) {
   const {
@@ -48,6 +52,7 @@ export default function MobileArticlePage({
 
   if (!activeArticle) return null;
   const isFav = favoriteIds.has(activeArticle.id);
+  const analysisStatus = analysisStatusMeta(activeArticle, { podcast: podcastView });
 
   return (
     <div className="m-read" role="region" aria-label="正文">
@@ -122,10 +127,11 @@ export default function MobileArticlePage({
 
       <div className="m-read-scroll" ref={scrollRef} key={activeArticle.id}>
         <header className="reader-pane-head">
+          {/* 标题区与桌面同源(眉头「源 · 体裁」/ 标题 / 署名行 / 标签小签);动作行不渲染,顶栏译钮承担 */}
           <div className="reader-kicker">
             {(sourceNameMap[activeArticle.source_id] || activeArticle.source_id)}
-            {activeArticle.content_type
-              ? ` · ${contentTypeLabel(activeArticle.content_type, activeArticle.content_type)}`
+            {contentGenreLabel(activeArticle.content_genre)
+              ? ` · ${contentGenreLabel(activeArticle.content_genre)}`
               : ''}
           </div>
           <h1 className="reader-pane-title">
@@ -136,12 +142,12 @@ export default function MobileArticlePage({
           )}
           <div className="reader-pane-meta">
             {activeArticle.publish_date && (
-              <span title={formatRelativeTime(activeArticle.publish_date)}>
-                {formatDateTime(activeArticle.publish_date)}
+              <span title={formatDateTime(activeArticle.publish_date)}>
+                {formatPublishDate(activeArticle.publish_date)}
               </span>
             )}
             {bodyStats && (
-              <span>{podcastView ? '简介阅读约' : '阅读时长'} {bodyStats.minutes} 分钟</span>
+              <span>{podcastView ? '简介阅读约' : '阅读约'} {bodyStats.minutes} 分钟</span>
             )}
             {podcastView && formatPodcastDuration(activeArticle.podcast?.duration_seconds) && (
               <span>原节目 {formatPodcastDuration(activeArticle.podcast.duration_seconds)}</span>
@@ -149,21 +155,21 @@ export default function MobileArticlePage({
             {typeof activeArticle.read_count === 'number' && activeArticle.read_count > 0 && (
               <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
             )}
+            {analysisStatus && <span role="status">{analysisStatus.label}</span>}
           </div>
-          {/* issue #13 二轮:分数并入速读卡头,标题区只余标签行 */}
           {displayAnalysisTags(activeArticle).length > 0 && (
-            <div className="reader-pane-tags">
+            <div className="reader-pane-foot"><div className="reader-pane-tags">
               {displayAnalysisTags(activeArticle).map((tag, index) => (
                 <AnalysisTagChip
                   key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
                   tag={tag}
                   onTemporarySearch={(label) => {
                     searchForLabel(label);
-                    onBack();
+                    (onLeaveForSearch || onBack)();
                   }}
                 />
               ))}
-            </div>
+            </div></div>
           )}
         </header>
         <div className="m-read-body markdown-body">

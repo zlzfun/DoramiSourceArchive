@@ -71,13 +71,16 @@ pm2 save && pm2 startup           # 开机自启(脚本不做,必须手动执行
 ```
 
 七个步骤:装系统依赖 → 校验配置 → uv 装后端(+Playwright)+ **DB 备份** + 迁移预检 +
-`ensure_migrated` → npm 构建前端 → 写并校验 Nginx 站点 → 发布 dist 到 `html_dir` →
+`ensure_migrated` → 按显式 `[taxonomy] deployment` reconcile → npm 构建前端 →
+写并校验 Nginx 站点 → 发布 dist 到 `html_dir` →
 `pm2 reload` + `nginx -s reload`。
 
 脚本自带的护栏:
 - **迁移前自动备份 SQLite** 到 `backups/`(保留最近 10 份),迁移炸了可直接回滚文件;
 - **迁移预检观测**:打印库当前 revision 与迁移链 head 数——分叉仓合入后 DAG 双头时
   (`ensure_migrated` 自 v3.38.1 起并行全升)在部署日志里可追;
+- **Taxonomy 启动围栏**:迁移完成后、PM2 API/worker reload 前执行；外网 authority
+  幂等安装批准目录，内网 replica 不做本地安装，任何 receipt/数据冲突终止部署;
 - **站点 include 复核**:源码装的 nginx 默认什么都不 include,写了站点文件也不生效;
   脚本用 `nginx -T`(实际生效配置)复核,缺失则备份主配置后往 `http {}` 插一行 include;
 - **目录穿越位**:`html_dir` 各级父目录缺 others 的 `x` 位会让 worker stat 失败 →

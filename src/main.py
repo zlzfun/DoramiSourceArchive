@@ -30,6 +30,16 @@ if __name__ == "__main__":
     print("🗂  正在核对数据库迁移（alembic upgrade head）...")
     ensure_migrated(settings.storage.database_url)
 
+    # 4. Taxonomy 部署姿态是独立显式配置，不能由两端共同使用的
+    #    runtime role=all 推断。authority 在 API/worker 启动前幂等导入批准目录；
+    #    replica/manual 不做本地 catalog 写入。任何冲突直接阻止启动。
+    from services.taxonomy_deployment import run_taxonomy_deployment
+    taxonomy_result = run_taxonomy_deployment(
+        settings.storage.database_url,
+        settings.taxonomy,
+    )
+    print(f"🏷️  Taxonomy deployment: {taxonomy_result['status']}")
+
     # 启动 Uvicorn 服务器，指向 api.app 模块中的 app 实例。
     # reload 由配置驱动（开发热更新）；NODE_ENV=production 时一律强制关闭——
     # reload 会另起文件监视子进程，徒增内存且不稳定，且与进程内调度/内存进度态

@@ -27,13 +27,13 @@
 
 ## Taxonomy v1 生产安装
 
-批准目录的唯一事实来源是 [`config/taxonomy-v1-approved-catalog.json`](../config/taxonomy-v1-approved-catalog.json)。正常上线只运行总入口；下层脚本保留用于测试、诊断和可组合性。
+批准目录的唯一事实来源是 [`config/taxonomy-v1-approved-catalog.json`](../config/taxonomy-v1-approved-catalog.json)。正常 authority 部署会在迁移后、API/worker 前自动 reconcile；脚本保留用于校验和恢复。
 
 | 脚本 | 用途 | 数据边界 |
 |---|---|---|
-| [`install_taxonomy_v1.py`](./install_taxonomy_v1.py) | 总入口：迁移、绑定目标库生成 review、validation-only、可选备份与导入；默认不写，`--apply` 才写，且不会发布 taxonomy 或开启分析。 | 生产允许；必须按 [`docs/taxonomy-v1-deployment.md`](../docs/taxonomy-v1-deployment.md) 执行。 |
+| [`install_taxonomy_v1.py`](./install_taxonomy_v1.py) | runtime reconciler 的薄封装：默认只校验批准目录，`--apply` 才迁移并 reconcile，可选 SQLite 备份；不会发布 taxonomy。 | 仅用于显式验证/恢复；正常部署无需另跑。 |
 | [`prepare_taxonomy_v1_review.py`](./prepare_taxonomy_v1_review.py) | 把批准目录绑定到目标数据库并生成完整审核回执。 | 读数据库、写回执文件。 |
-| [`apply_taxonomy_v1_review.py`](./apply_taxonomy_v1_review.py) | 校验审核回执；只有 `--apply` 才导入规范标签和审计记录。 | 生产允许；通常由总入口调用。 |
+| [`apply_taxonomy_v1_review.py`](./apply_taxonomy_v1_review.py) | 校验审核回执；只有 `--apply` 才导入规范标签和审计记录。 | 保留给含 Candidate/审核历史的复杂数据库恢复。 |
 
 ## 发布与历史回填 smoke
 
@@ -41,6 +41,7 @@
 |---|---|---|
 | [`smoke_analysis_release.py`](./smoke_analysis_release.py) | 真实/合成 RSS、可选真实 LLM、租约重启恢复、SQLite 并发和个人早报 15 分钟降级。 | 强制使用非生产文件型 SQLite。 |
 | [`smoke_full_analysis_backfill.py`](./smoke_full_analysis_backfill.py) | 估算并可选调用真实模型执行小批量 `full_analysis`。 | 拒绝当前配置库并限制最大文章数。 |
+| [`verify_split_sync_e2e.py`](./verify_split_sync_e2e.py) | 启动两个隔离的 `role=all` 后端，经真实 HTTP 验证 Archive Sync v2 六流、权威接管、分析状态、媒体和自定 RSS Candidate 反向通道。 | 只写临时数据库和媒体目录；成功自动清理，失败保留现场供诊断。 |
 
 已移除被完整 release smoke 取代且没有调用方的 `smoke_analysis_personal_digest.py`；持久化指标继续由管理 API 和 `services.analysis_observability` 提供，不保留两个含义重叠的命令入口。
 

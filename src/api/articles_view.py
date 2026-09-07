@@ -222,6 +222,16 @@ def serialize_article_list_item(
         unified_summary = str(getattr(analysis, "summary", "") or "").strip()
         if unified_summary:
             summary = unified_summary
+    projected_tags = list(display_tags if display_tags is not None else (tags or []))
+    machine_tag = any(
+        tag.get("type") == "extracted" or tag.get("assignment_source") == "llm"
+        for tag in [*(tags or []), *projected_tags]
+    )
+    analysis_has_result = bool(
+        (analysis is not None and getattr(analysis, "quality_score", None) is not None)
+        or (analysis is not None and bool(getattr(analysis, "content_genre", None)))
+        or machine_tag
+    )
     item = {
         "id": record.id,
         "title": record.title,
@@ -241,6 +251,8 @@ def serialize_article_list_item(
         "read_count": record.read_count or 0,
         "analysis_status": getattr(analysis, "status", None),
         "tagging_status": getattr(analysis, "tagging_status", None),
+        "analysis_has_result": analysis_has_result,
+        "analysis_next_attempt_at": getattr(analysis, "next_attempt_at", None),
         "quality_score": getattr(analysis, "quality_score", None),
         "score_reason": getattr(analysis, "score_reason", None) or None,
         "content_genre": getattr(analysis, "content_genre", None),
@@ -249,7 +261,7 @@ def serialize_article_list_item(
         # Reader-facing projection: canonical + flexible AI-extracted labels,
         # independently bounded by the display-tag service.  ``tags`` remains
         # canonical-only for filtering, interests and digest selection.
-        "display_tags": display_tags if display_tags is not None else (tags or []),
+        "display_tags": projected_tags,
     }
     if include_content:
         item["content"] = content

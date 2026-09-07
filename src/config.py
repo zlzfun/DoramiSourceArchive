@@ -43,6 +43,14 @@ class RuntimeConfig:
 
 
 @dataclass(frozen=True)
+class TaxonomyDeploymentConfig:
+    """Explicit taxonomy deployment posture; never inferred from runtime role."""
+
+    mode: str = "manual"
+    catalog_path: str = str(PROJECT_ROOT / "config" / "taxonomy-v1-approved-catalog.json")
+
+
+@dataclass(frozen=True)
 class NetworkConfig:
     disable_ca_bundle: bool = True
     hf_endpoint: str = "https://hf-mirror.com"
@@ -174,6 +182,7 @@ class MediaConfig:
 class AppConfig:
     server: ServerConfig
     runtime: RuntimeConfig
+    taxonomy: TaxonomyDeploymentConfig
     network: NetworkConfig
     proxy: ProxyConfig
     auth: AuthConfig
@@ -227,6 +236,17 @@ def _runtime_role(raw_value: str) -> str:
     return role
 
 
+def _taxonomy_deployment_mode(raw_value: str) -> str:
+    mode = (raw_value or "manual").strip().lower()
+    allowed = {"authority", "manual", "replica"}
+    if mode not in allowed:
+        allowed_text = ", ".join(sorted(allowed))
+        raise ValueError(
+            f"Invalid taxonomy deployment mode '{raw_value}'. Expected one of: {allowed_text}"
+        )
+    return mode
+
+
 def load_config() -> AppConfig:
     parser = _read_config_file()
 
@@ -250,6 +270,20 @@ def load_config() -> AppConfig:
         ),
         runtime=RuntimeConfig(
             role=_runtime_role(runtime_role),
+        ),
+        taxonomy=TaxonomyDeploymentConfig(
+            mode=_taxonomy_deployment_mode(
+                os.getenv("DORAMI_TAXONOMY_DEPLOYMENT")
+                or parser.get("taxonomy", "deployment", fallback="manual")
+            ),
+            catalog_path=_path(
+                os.getenv("DORAMI_TAXONOMY_CATALOG")
+                or parser.get(
+                    "taxonomy",
+                    "catalog",
+                    fallback=str(PROJECT_ROOT / "config" / "taxonomy-v1-approved-catalog.json"),
+                )
+            ),
         ),
         network=NetworkConfig(
             disable_ca_bundle=parser.getboolean("network", "disable_ca_bundle", fallback=True),

@@ -8,12 +8,14 @@ import json
 import logging
 import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 from sqlmodel import Session, select
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+from api.articles_view import serialize_article_list_item  # noqa: E402
 from config import LLMConfig  # noqa: E402
 from llm.article_analysis_prompt import (  # noqa: E402
     ARTICLE_ANALYSIS_SYSTEM_PROMPT,
@@ -43,8 +45,10 @@ from services.article_analysis import (  # noqa: E402
     queue_article_analysis,
     recover_expired_leases,
     resolve_summary_with_legacy_fallback,
+    run_analysis_cycle,
     sanitize_error,
     scan_analysis_backfill,
+    source_allows_analysis,
     validate_analysis_payload,
 )
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
@@ -86,12 +90,19 @@ def _article(
     )
 
 
-def _source(source_id: str, *, private: bool = False, enabled: bool = True) -> SourceConfigRecord:
+def _source(
+    source_id: str,
+    *,
+    private: bool = False,
+    enabled: bool = True,
+    credentialed: bool = False,
+) -> SourceConfigRecord:
     return SourceConfigRecord(
         source_id=source_id,
         name=source_id,
         owner_username="reader" if private else "",
         ai_analysis_enabled=enabled,
+        params_json=json.dumps({"credentialed_private": credentialed}),
         created_at=NOW_ISO,
         updated_at=NOW_ISO,
     )
@@ -113,6 +124,36 @@ def _tag(
         created_at=NOW_ISO,
         updated_at=NOW_ISO,
     )
+
+
+def test_analysis_has_result_accepts_genre_or_machine_tags_but_not_manual_tags():
+    article = _article("historical-projection")
+    genre_only = SimpleNamespace(
+        status="succeeded",
+        tagging_status="succeeded",
+        quality_score=None,
+        content_genre="opinion",
+    )
+    no_fields = SimpleNamespace(
+        status="succeeded",
+        tagging_status="succeeded",
+        quality_score=None,
+        content_genre=None,
+    )
+    assert serialize_article_list_item(
+        article, analysis=genre_only, tags=[], display_tags=[]
+    )["analysis_has_result"] is True
+    assert serialize_article_list_item(
+        article,
+        analysis=no_fields,
+        tags=[],
+        display_tags=[{"label": "Agent Memory", "kind": "topic", "type": "extracted"}],
+    )["analysis_has_result"] is True
+    assert serialize_article_list_item(
+        article,
+        analysis=no_fields,
+        tags=[{"code": "manual", "kind": "topic", "assignment_source": "manual"}],
+    )["analysis_has_result"] is False
 
 
 def test_relevant_tag_prompt_boundary_survives_the_dto_contract(storage):
@@ -411,6 +452,33 @@ def test_force_queue_preserves_current_asset_and_never_interrupts_running_lease(
         assert record.lease_owner == "another-worker"
 
 
+def test_version_refresh_preserves_old_asset_across_compensation_scans(storage):
+    article = _article("version-refresh")
+    with Session(storage.engine) as session:
+        session.add(article)
+        session.commit()
+        assert queue_article_analysis(session, article.id, now=NOW) == "created"
+        session.commit()
+        record = session.get(ArticleAnalysisRecord, article.id)
+        record.status = "succeeded"
+        record.quality_score = 7.8
+        record.summary = "old result remains readable"
+        record.analyzed_at = NOW_ISO
+        record.prompt_version = "article-analysis-v0"
+        session.add(record)
+        session.commit()
+
+        assert queue_article_analysis(session, article.id, now=NOW) == "invalidated"
+        session.commit()
+        session.refresh(record)
+        assert record.status == "pending"
+        assert record.quality_score == 7.8
+        assert record.summary == "old result remains readable"
+        assert queue_article_analysis(session, article.id, now=NOW) == "unchanged"
+        session.refresh(record)
+        assert record.quality_score == 7.8
+
+
 def test_backfill_is_seven_days_only_and_claims_newest_first(storage):
     with Session(storage.engine) as session:
         session.add_all(
@@ -475,14 +543,111 @@ def test_success_persists_base_tags_attempt_and_candidate_evidence(storage):
         assert get_article_analysis(session, "success")["summary"] == record.summary
 
 
-def test_private_candidate_never_enters_public_candidate_pool(storage):
+def test_user_rss_can_analyze_and_contribute_candidate_when_enabled(storage):
     with Session(storage.engine) as session:
         session.add_all([_tag(), _source("user_rss_private", private=True)])
         article = _article("private", source_id="user_rss_private")
         session.add(article)
         session.commit()
+        assert queue_article_analysis(session, article.id, now=NOW) == "created"
+        session.commit()
+        [task] = claim_analysis_tasks(session, worker_id="custom-rss", now=NOW)
+
+    result = asyncio.run(
+        process_claimed_analysis(
+            storage.engine,
+            task,
+            llm_config=LLM_CONFIG,
+            analyzer=lambda *_args: _payload(candidate=True),
+            candidate_enabled=True,
+            now_fn=lambda: NOW,
+        )
+    )
+    assert result.status == "succeeded"
+    with Session(storage.engine) as session:
+        candidate = session.exec(select(CmsTagCandidateRecord)).one()
+        evidence = session.exec(select(CmsTagCandidateEvidenceRecord)).one()
+        assert candidate.label == "Agent Memory"
+        assert evidence.source_id == "user_rss_private"
+        source = session.get(SourceConfigRecord, "user_rss_private")
+        source.params_json = json.dumps({"credentialed_private": True})
+        source.ai_analysis_enabled = False
+        session.add(source)
+        session.commit()
+        assert queue_article_analysis(session, "private", now=NOW) == "unchanged"
+        session.commit()
+        session.refresh(candidate)
+        assert session.exec(select(CmsTagCandidateEvidenceRecord)).all() == []
+        assert candidate.support_article_count_7d == 0
+
+
+def test_credentialed_user_rss_is_never_queued_for_analysis(storage):
+    with Session(storage.engine) as session:
+        source = _source(
+            "user_rss_credentialed",
+            private=True,
+            enabled=True,
+            credentialed=True,
+        )
+        article = _article("credentialed", source_id=source.source_id)
+        session.add_all([source, article])
+        session.commit()
         assert queue_article_analysis(session, article.id, now=NOW) == "skipped"
         session.commit()
+        record = session.get(ArticleAnalysisRecord, article.id)
+        assert record.status == "skipped"
+        assert record.last_error == "source_ai_analysis_disabled"
+        assert claim_analysis_tasks(session, worker_id="credentialed", now=NOW) == []
+        assert session.exec(select(CmsTagCandidateRecord)).all() == []
+        assert session.exec(select(CmsTagCandidateEvidenceRecord)).all() == []
+
+
+def test_user_rss_policy_fails_closed_without_config_and_accepts_truthy_flag(storage):
+    with Session(storage.engine) as session:
+        orphan = _article("orphan", source_id="user_rss_orphan")
+        flagged = _source("user_rss_flagged", private=True)
+        flagged.params_json = json.dumps({"credentialed_private": "true"})
+        session.add_all([orphan, flagged])
+        session.commit()
+        assert source_allows_analysis(session, orphan.source_id) is False
+        assert queue_article_analysis(session, orphan.id, now=NOW) == "skipped"
+        assert source_allows_analysis(session, flagged.source_id) is False
+
+
+def test_policy_flip_during_llm_discards_result_and_candidates(storage):
+    source_id = "user_rss_flip"
+    source = _source(source_id, private=True)
+    task = None
+    with Session(storage.engine) as session:
+        session.add_all([_tag(), source, _article("flip", source_id=source.source_id)])
+        session.commit()
+        assert queue_article_analysis(session, "flip", now=NOW) == "created"
+        session.commit()
+        task = claim_analysis_tasks(session, worker_id="flip-worker", now=NOW)[0]
+
+    def analyzer(*_args):
+        with Session(storage.engine) as session:
+            current = session.get(SourceConfigRecord, source_id)
+            current.params_json = json.dumps({"credentialed_private": True})
+            current.ai_analysis_enabled = False
+            session.add(current)
+            session.commit()
+        return _payload(candidate=True)
+
+    result = asyncio.run(
+        process_claimed_analysis(
+            storage.engine,
+            task,
+            llm_config=LLM_CONFIG,
+            analyzer=analyzer,
+            candidate_enabled=True,
+            now_fn=lambda: NOW + dt.timedelta(seconds=1),
+        )
+    )
+    assert result.status == "skipped"
+    with Session(storage.engine) as session:
+        record = session.get(ArticleAnalysisRecord, "flip")
+        assert record.quality_score is None
         assert session.exec(select(CmsTagCandidateRecord)).all() == []
         assert session.exec(select(CmsTagCandidateEvidenceRecord)).all() == []
 
@@ -746,7 +911,10 @@ def test_prompt_and_logs_do_not_expose_private_url_or_body(storage, caplog):
     caplog.set_level(logging.WARNING)
     with Session(storage.engine) as session:
         article = _article("privacy", source_id="user_rss_private")
-        session.add(article)
+        session.add_all([
+            article,
+            _source("user_rss_private", private=True, credentialed=True),
+        ])
         session.commit()
         assert queue_article_analysis(session, article.id, now=NOW) == "skipped"
         session.commit()
@@ -756,6 +924,81 @@ def test_prompt_and_logs_do_not_expose_private_url_or_body(storage, caplog):
     with Session(storage.engine) as session:
         record = session.get(ArticleAnalysisRecord, "privacy")
         assert record.last_error == "source_ai_analysis_disabled"
+
+
+def test_analysis_cycle_drains_eight_map_sized_batches_with_bounded_concurrency(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_article(f"drain-{index:02d}") for index in range(40)])
+        session.commit()
+
+    active = 0
+    peak = 0
+
+    async def measured_analyzer(*_args):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return _payload()
+
+    results = asyncio.run(
+        run_analysis_cycle(
+            storage.engine,
+            worker_id="drain-worker",
+            llm_config=LLM_CONFIG,
+            analyzer=measured_analyzer,
+            enabled=True,
+            candidate_enabled=False,
+            batch_size=8,
+            max_batches=8,
+            now_fn=lambda: NOW,
+        )
+    )
+
+    assert len(results) == 32
+    assert all(item.status == "succeeded" for item in results)
+    assert peak == 4
+    with Session(storage.engine) as session:
+        records = session.exec(select(ArticleAnalysisRecord)).all()
+        assert sum(item.status == "succeeded" for item in records) == 32
+        assert sum(item.status == "pending" for item in records) == 8
+
+    active = 0
+    peak = 0
+    high_concurrency = LLMConfig(
+        base_url="https://llm.invalid/v1",
+        api_key="test",
+        model="fake",
+        map_concurrency=20,
+    )
+    capped = asyncio.run(
+        run_analysis_cycle(
+            storage.engine,
+            worker_id="capped-worker",
+            llm_config=high_concurrency,
+            analyzer=measured_analyzer,
+            enabled=True,
+            candidate_enabled=False,
+            batch_size=8,
+            max_batches=1,
+            now_fn=lambda: NOW,
+        )
+    )
+    assert len(capped) == 4
+    assert peak == 4
+    assert asyncio.run(
+        run_analysis_cycle(
+            storage.engine,
+            worker_id="zero-worker",
+            llm_config=high_concurrency,
+            analyzer=measured_analyzer,
+            enabled=True,
+            candidate_enabled=False,
+            max_batches=0,
+            now_fn=lambda: NOW,
+        )
+    ) == []
 
 
 def test_validation_limits_score_genre_and_active_tag_codes():

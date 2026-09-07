@@ -224,6 +224,7 @@ def load_display_tags(
                             "name_en": target.name_en,
                             "is_primary": False,
                             "relevance": confidence,
+                            "assignment_source": "llm",
                         })
                     continue
             target = names.get((kind, normalize_label(label)))
@@ -236,6 +237,7 @@ def load_display_tags(
                     "name_en": target.name_en,
                     "is_primary": False,
                     "relevance": confidence,
+                    "assignment_source": "llm",
                 })
                 continue
             free.append({**raw, "label": label, "kind": kind, "confidence": confidence})

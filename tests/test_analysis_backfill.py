@@ -261,20 +261,19 @@ def test_scheduler_prioritizes_live_article_then_completes_forced_history(storag
         calls.append(article_input.article_id)
         return _payload()
 
-    for _ in range(3):
-        result = asyncio.run(
-            run_analysis_cycle(
-                storage.engine,
-                worker_id="runtime-all",
-                llm_config=LLM_CONFIG,
-                analyzer=analyzer,
-                enabled=True,
-                candidate_enabled=False,
-                batch_size=1,
-                now_fn=lambda: NOW,
-            )
+    result = asyncio.run(
+        run_analysis_cycle(
+            storage.engine,
+            worker_id="runtime-all",
+            llm_config=LLM_CONFIG,
+            analyzer=analyzer,
+            enabled=True,
+            candidate_enabled=False,
+            batch_size=1,
+            now_fn=lambda: NOW,
         )
-        assert len(result) == 1
+    )
+    assert len(result) == 3
 
     with Session(storage.engine) as session:
         job = session.get(TagRetagJobRecord, job_id)
@@ -286,6 +285,61 @@ def test_scheduler_prioritizes_live_article_then_completes_forced_history(storag
     assert state["progress"] == 1.0
     assert state["counts"]["succeeded"] == 2
     assert all(row.quality_score == 8.6 for row in old_rows)
+
+
+def test_remote_authority_is_excluded_and_late_handoff_is_skipped(storage):
+    with Session(storage.engine) as session:
+        _seed_taxonomy(session)
+        remote = _article("remote", age_days=1)
+        remote.analysis_authority_id = "producer-a"
+        local = _article("late-handoff", age_days=2)
+        session.add_all([remote, local])
+        session.commit()
+        estimate = estimate_full_analysis_backfill(
+            session,
+            days=None,
+            selection="all",
+            now=NOW,
+        )
+        assert estimate["article_count"] == 1
+        job = create_full_analysis_backfill(
+            session,
+            days=None,
+            selection="all",
+            actor_id="admin",
+            confirmation=FULL_ANALYSIS_CONFIRMATION,
+            now=NOW,
+        )
+        local.analysis_authority_id = "producer-a"
+        session.add(local)
+        session.commit()
+        job_id = int(job.id)
+
+    calls = []
+
+    async def analyzer(*_args):
+        calls.append("called")
+        return _payload()
+
+    assert asyncio.run(
+        run_analysis_cycle(
+            storage.engine,
+            worker_id="runtime-all",
+            llm_config=LLM_CONFIG,
+            analyzer=analyzer,
+            enabled=True,
+            candidate_enabled=False,
+            now_fn=lambda: NOW,
+        )
+    ) == []
+    assert calls == []
+    with Session(storage.engine) as session:
+        state = serialize_full_analysis_backfill(
+            session,
+            session.get(TagRetagJobRecord, job_id),
+        )
+        assert state["status"] == "succeeded"
+        assert state["counts"]["skipped"] == 1
 
 
 def test_expired_job_lease_and_queued_analysis_resume_after_restart(storage):

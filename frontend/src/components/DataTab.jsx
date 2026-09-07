@@ -18,7 +18,7 @@ import Sparkline from './charts/Sparkline';
 import { runAction } from '../utils/runAction';
 import { excerptOf } from '../utils/readerText';
 import { contentTypeLabel, CONTENT_TYPE_GROUPS } from '../utils/contentType';
-import { primaryAnalysisLabel, qualityScoreText } from '../utils/analysis';
+import { analysisStatusMeta, primaryAnalysisLabel, qualityScoreText } from '../utils/analysis';
 import { useConfirm } from '../hooks/useConfirm';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
 
@@ -697,6 +697,12 @@ export default function DataTab({
                   <tr><td colSpan={2 + (canSelectArticles ? 1 : 0) + 4} className="px-6 py-16 text-center font-medium text-slate-500">当前筛选条件下未查询到相关数据，试试放宽时间区间或清除筛选</td></tr>
                 ) : articles.map((article) => {
                   const isSel = drawer.open && drawer.article?.id === article.id;
+                  const analysisScore = qualityScoreText(article.quality_score);
+                  const analysisLabel = primaryAnalysisLabel(article);
+                  const analysisStatus = analysisStatusMeta(article, {
+                    includeTerminal: true,
+                    podcast: String(article.content_type || '').startsWith('podcast'),
+                  });
                   return (
                     <tr
                       key={article.id}
@@ -712,10 +718,11 @@ export default function DataTab({
                       )}
                       <td className="ledger-td-title px-4">
                         <div className="ledger-tt">{article.title}</div>
-                        {(article.quality_score != null || primaryAnalysisLabel(article)) && (
+                        {(analysisScore || analysisLabel || analysisStatus) && (
                           <div className="ledger-analysis-meta">
-                            {article.quality_score != null && <span className="reader-score-chip">{qualityScoreText(article.quality_score)}</span>}
-                            {primaryAnalysisLabel(article) && <span className="reader-tag-chip">{primaryAnalysisLabel(article)}</span>}
+                            {analysisScore && <span className="reader-score-chip">{analysisScore}</span>}
+                            {analysisLabel && <span className="reader-tag-chip">{analysisLabel}</span>}
+                            {analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
                           </div>
                         )}
                         <div className="ledger-ex">{excerptOf(article.content_preview || article.content) || '暂无摘要内容'}</div>

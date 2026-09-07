@@ -29,6 +29,15 @@ from services.remote_sync import RemoteSyncError  # noqa: E402
 _SESSION_COOKIE = "dorami_session=remote-secret-token"
 
 
+def _v2_probe(authority_id="producer-a"):
+    return {
+        "schema_version": remote_sync_service.archive_sync_v2.SCHEMA_VERSION,
+        "capabilities": list(remote_sync_service.archive_sync_v2.CAPABILITIES),
+        "authority_id": authority_id,
+        "taxonomy_ready": True,
+    }
+
+
 def _article(i, fetched_date, source_id="rss_demo", archive_updated_at=None):
     return {
         "id": f"art_{i}",
@@ -134,7 +143,7 @@ class FakeRemote:
 def test_probe_success():
     remote = FakeRemote([_article(1, "2026-07-01T10:00:00")])
     result = asyncio.run(remote_sync_service.probe(
-        "http://remote.test/", "admin", "secret", transport=remote.transport(),
+        "http://remote.test/", "admin", "secret", protocol="v1", transport=remote.transport(),
     ))
     assert result["ok"] is True
     assert result["base_url"] == "http://remote.test"
@@ -161,6 +170,12 @@ def test_normalize_base_url_rejects_garbage():
         remote_sync_service.normalize_base_url("ftp://x")
     with pytest.raises(RemoteSyncError):
         remote_sync_service.normalize_base_url("not a url")
+    with pytest.raises(RemoteSyncError, match="用户名或密码"):
+        remote_sync_service.normalize_base_url("https://admin:secret@example.test")
+    with pytest.raises(RemoteSyncError, match="query 或 fragment"):
+        remote_sync_service.normalize_base_url("https://example.test?token=secret")
+    with pytest.raises(RemoteSyncError, match="query 或 fragment"):
+        remote_sync_service.normalize_base_url("https://example.test/#secret")
     assert remote_sync_service.normalize_base_url(" http://a.b:8088/ ") == "http://a.b:8088"
 
 
@@ -365,6 +380,7 @@ def test_start_submits_job_without_password(monkeypatch, tmp_path):
         _login(client, "admin", "admin")
         res = client.post("/api/admin/remote-sync/start", json={
             "base_url": "http://remote.test", "username": "admin", "password": "secret",
+            "protocol": "v1",
         })
         assert res.status_code == 200
         job_id = res.json()["job_id"]
@@ -394,6 +410,34 @@ def test_start_submits_job_without_password(monkeypatch, tmp_path):
         assert status["jobs"][0]["job_id"] == job_id
 
 
+def test_v2_start_rejects_incompatible_peer_before_consumer_quiesce(
+    monkeypatch, tmp_path
+):
+    app_module = _setup_app(monkeypatch, tmp_path)
+
+    async def _reject_old_peer(*_args, **_kwargs):
+        raise RemoteSyncError(
+            "remote v2 peer lacks transaction revision/tombstone capability"
+        )
+
+    monkeypatch.setattr(remote_sync_service, "probe", _reject_old_peer)
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        response = client.post("/api/admin/remote-sync/start", json={
+            "base_url": "http://old-peer.test",
+            "username": "admin",
+            "password": "secret",
+            "protocol": "v2",
+        })
+
+    assert response.status_code == 400
+    from models.db import AppSettingRecord
+    from sqlmodel import Session
+
+    with Session(app_module.db_sink.engine) as session:
+        assert session.get(AppSettingRecord, "remote_sync:v2_consumer_mode") is None
+
+
 # ==================== 定时同步配置(KV,凭据只写不回显)====================
 
 def test_schedule_service_roundtrip_hides_password(tmp_path, monkeypatch):
@@ -412,6 +456,7 @@ def test_schedule_service_roundtrip_hides_password(tmp_path, monkeypatch):
         {
             "enabled": True, "cron": "0 5 * * *", "base_url": "http://remote.test",
             "username": "admin", "password": "s3cret", "source_ids": ["rss_a"],
+            "protocol": "v1",
         },
         updated_at="2026-07-24T00:00:00",
     )
@@ -441,6 +486,32 @@ def test_schedule_service_roundtrip_hides_password(tmp_path, monkeypatch):
     assert kept["cron"] == "0 6 * * *"
 
 
+def test_legacy_filtered_schedule_requires_explicit_protocol_migration(tmp_path, monkeypatch):
+    sink = _make_local_sink(tmp_path, monkeypatch, "sched_legacy.db")
+    from models.db import AppSettingRecord
+    from sqlmodel import Session
+
+    with Session(sink.engine) as session:
+        session.add(AppSettingRecord(
+            key=remote_sync_service.REMOTE_SYNC_SCHEDULE_KEY,
+            value=json.dumps({"enabled": True, "source_ids": ["rss_a"]}),
+        ))
+        session.commit()
+    legacy = remote_sync_service.load_schedule(sink.engine)
+    assert legacy["protocol"] == ""
+    assert legacy["enabled"] is False
+    assert legacy["migration_required"] is True
+
+    with Session(sink.engine) as session:
+        row = session.get(AppSettingRecord, remote_sync_service.REMOTE_SYNC_SCHEDULE_KEY)
+        row.value = json.dumps({"source_ids": []})
+        session.add(row)
+        session.commit()
+    unfiltered = remote_sync_service.load_schedule(sink.engine)
+    assert unfiltered["protocol"] == "v2"
+    assert unfiltered["migration_required"] is False
+
+
 def test_schedule_endpoint_roundtrip_and_validation(monkeypatch, tmp_path):
     app_module = _setup_app(monkeypatch, tmp_path)
     # 调度热生效由 test_reload_remote_sync_schedule_* 单独覆盖;这里只验保存/校验,
@@ -461,6 +532,7 @@ def test_schedule_endpoint_roundtrip_and_validation(monkeypatch, tmp_path):
         res = client.post("/api/admin/remote-sync/schedule", json={
             "enabled": True, "cron": "30 2 * * *", "base_url": "http://remote.test/",
             "username": "admin", "password": "pw123", "source_ids": ["rss_a", " "],
+            "protocol": "v1",
         })
         assert res.status_code == 200
         saved = res.json()
@@ -475,7 +547,7 @@ def test_schedule_endpoint_roundtrip_and_validation(monkeypatch, tmp_path):
         # 空密码再存 → 保留已存密码,允许通过启用校验。
         res = client.post("/api/admin/remote-sync/schedule", json={
             "enabled": True, "cron": "0 4 * * *", "base_url": "http://remote.test",
-            "username": "admin", "password": "",
+            "username": "admin", "password": "", "protocol": "v1",
         })
         assert res.status_code == 200
         assert remote_sync_service.load_schedule(
@@ -504,6 +576,91 @@ def test_schedule_endpoint_roundtrip_and_validation(monkeypatch, tmp_path):
             "enabled": False, "cron": "0 3 * * *", "base_url": "", "username": "",
         })
         assert res.status_code == 200 and res.json()["enabled"] is False
+
+
+def test_legacy_filtered_schedule_api_requires_explicit_protocol(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(app_module, "reload_remote_sync_schedule", lambda: None)
+    from models.db import AppSettingRecord
+    from sqlmodel import Session
+
+    with Session(app_module.db_sink.engine) as session:
+        session.add(AppSettingRecord(
+            key=remote_sync_service.REMOTE_SYNC_SCHEDULE_KEY,
+            value=json.dumps({
+                "enabled": True,
+                "base_url": "http://remote.test",
+                "username": "admin",
+                "password": "secret",
+                "source_ids": ["rss_a"],
+            }),
+        ))
+        session.commit()
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        response = client.post(
+            "/api/admin/remote-sync/schedule",
+            json={"enabled": False, "cron": "0 3 * * *"},
+        )
+        assert response.status_code == 409
+        assert "显式选择" in response.json()["detail"]
+
+        response = client.post(
+            "/api/admin/remote-sync/schedule",
+            json={
+                "enabled": True,
+                "cron": "0 3 * * *",
+                "base_url": "http://remote.test",
+                "username": "admin",
+                "password": "",
+                "source_ids": ["rss_a"],
+                "protocol": "v1",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["protocol"] == "v1"
+        assert response.json()["migration_required"] is False
+
+
+def test_v2_schedule_probes_capability_before_persisting_consumer_fence(
+    monkeypatch, tmp_path
+):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(app_module, "reload_remote_sync_schedule", lambda: None)
+    observed = {}
+
+    async def _compatible_peer(*_args, **_kwargs):
+        from models.db import AppSettingRecord
+        from sqlmodel import Session
+
+        with Session(app_module.db_sink.engine) as session:
+            observed["marker_before_probe"] = session.get(
+                AppSettingRecord,
+                "remote_sync:v2_consumer_mode",
+            )
+        return _v2_probe("compatible-producer")
+
+    monkeypatch.setattr(remote_sync_service, "probe", _compatible_peer)
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        response = client.post("/api/admin/remote-sync/schedule", json={
+            "enabled": True,
+            "cron": "0 3 * * *",
+            "base_url": "http://compatible.test",
+            "username": "admin",
+            "password": "secret",
+            "source_ids": [],
+            "protocol": "v2",
+        })
+
+    assert response.status_code == 200
+    assert observed == {"marker_before_probe": None}
+    from services import sync_consumer_policy
+    from sqlmodel import Session
+
+    with Session(app_module.db_sink.engine) as session:
+        assert sync_consumer_policy.v2_consumer_mode_active(session)
 
 
 def test_schedule_endpoints_admin_gated(monkeypatch, tmp_path):
@@ -552,6 +709,10 @@ def test_execute_remote_sync_job_uses_kv_cursor_and_system_actor(monkeypatch, tm
             id = "job-fake"
         return _J()
 
+    async def _fake_probe(*_args, **_kwargs):
+        return _v2_probe("scheduled-producer")
+
+    monkeypatch.setattr(remote_sync_service, "probe", _fake_probe)
     monkeypatch.setattr(remote_sync_router, "launch_remote_sync_job", _fake_launch)
 
     asyncio.run(app_module.execute_remote_sync_job())
@@ -560,6 +721,7 @@ def test_execute_remote_sync_job_uses_kv_cursor_and_system_actor(monkeypatch, tm
     assert captured["created_by"] == "system"
     assert captured["base_url"] == "http://remote.test"
     assert captured["password"] == "secret"
+    assert captured["v2_probe"] == _v2_probe("scheduled-producer")
 
 
 def test_execute_remote_sync_job_skips_when_running(monkeypatch, tmp_path):
@@ -585,6 +747,27 @@ def test_execute_remote_sync_job_skips_when_running(monkeypatch, tmp_path):
     )
     asyncio.run(app_module.execute_remote_sync_job())
     assert called["n"] == 0  # 防重叠:跳过本轮
+
+
+def test_launch_rejects_second_active_job_for_same_target(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    from api.routers import remote_sync as remote_sync_router
+    from models.db import JobRecord
+    from sqlmodel import Session
+
+    with Session(app_module.db_sink.engine) as session:
+        session.add(JobRecord(
+            id="same-target", type=remote_sync_service.REMOTE_SYNC_JOB_TYPE,
+            status="queued", payload_json=json.dumps({"base_url": "http://remote.test"}),
+            created_at=time.time(),
+        ))
+        session.commit()
+    with pytest.raises(RemoteSyncError, match="已有同步任务"):
+        remote_sync_router.launch_remote_sync_job(
+            app_module.db_sink.engine, base_url="http://remote.test",
+            username="admin", password="secret",
+            v2_probe=_v2_probe(),
+        )
 
 
 def test_execute_remote_sync_job_skips_when_disabled(monkeypatch, tmp_path):

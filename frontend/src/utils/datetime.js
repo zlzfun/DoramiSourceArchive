@@ -7,6 +7,16 @@ export function formatDateTime(value, fallback = '-') {
   return value.replace('T', ' ').substring(0, 19);
 }
 
+// 发布日期(阅读窗署名行):只画日期;feed 没给时刻时后端落的是 00:00:00 假值,
+// 画出来像"凌晨发布",有真实时刻才补 HH:MM。
+export function formatPublishDate(value, fallback = '') {
+  if (!value) return fallback;
+  const text = value.replace('T', ' ');
+  const date = text.substring(0, 10);
+  const time = text.substring(11, 16);
+  return time && time !== '00:00' ? `${date} ${time}` : date;
+}
+
 // ISO 字符串 → 相对时间（刚刚 / N 分钟前 / N 小时前 / N 天前 / MM-DD / YYYY-MM-DD）。
 export function formatRelativeTime(value, fallback = '从未运行') {
   if (!value) return fallback;

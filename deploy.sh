@@ -640,6 +640,12 @@ echo "    Applying database migrations (alembic upgrade head)..."
 DORAMI_CONFIG_FILE="$CONFIG_FILE" PYTHONPATH=src "$VENV_DIR/bin/python" -c \
     "from config import settings; from storage.migrations import ensure_migrated; ensure_migrated(settings.storage.database_url)"
 
+# 与容器/dev 入口同序：schema 迁移成功后、PM2 API/worker reload 前执行。
+# authority 幂等安装批准目录；replica/manual 为显式 no-op；冲突由 set -e 阻止发布。
+echo "    Reconciling configured Taxonomy deployment posture..."
+DORAMI_CONFIG_FILE="$CONFIG_FILE" PYTHONPATH=src "$VENV_DIR/bin/python" -c \
+    "from config import settings; from services.taxonomy_deployment import run_taxonomy_deployment; print(run_taxonomy_deployment(settings.storage.database_url, settings.taxonomy))"
+
 echo "[4/7] Building frontend..."
 cd frontend
 npm install --verbose --no-audit --no-fund --replace-registry-host=always ${NPM_REGISTRY:+--registry=${NPM_REGISTRY}}

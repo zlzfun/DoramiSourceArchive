@@ -27,6 +27,8 @@ import {
   Podcast,
   Newspaper,
   Tags,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
@@ -42,16 +44,22 @@ import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
 import AnnouncementBanner from './AnnouncementBanner';
 import PodcastAudioPanel, { PodcastCover } from './PodcastAudioPanel';
-import PersonalBriefTab from './PersonalBriefTab';
-import InterestManager from './InterestManager';
+import PersonalBriefPage from './PersonalBriefPage';
+import InterestPage from './InterestPage';
 import AnalysisTagChip from './AnalysisTagChip';
 import { excerptOf, hostOf } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
 import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
-import { formatRelativeTime, formatDateTime } from '../utils/datetime';
-import { contentTypeLabel } from '../utils/contentType';
+import { formatRelativeTime, formatDateTime, formatPublishDate } from '../utils/datetime';
 import { formatPodcastDuration, podcastOf, podcastProcessingMeta } from '../utils/podcast';
-import { displayAnalysisTags, primaryAnalysisLabel, qualityScoreText } from '../utils/analysis';
+import {
+  SCORE_DISCLAIMER,
+  analysisStatusMeta,
+  contentGenreLabel,
+  displayAnalysisTags,
+  primaryAnalysisLabel,
+  qualityScoreText,
+} from '../utils/analysis';
 import AiReadingCard from './AiReadingCard';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
@@ -139,7 +147,8 @@ export const ArticleRow = memo(function ArticleRow({
     Boolean(podcast?.condensed_audio_url),
   );
   const analysisLabel = primaryAnalysisLabel(article);
-  const score = article.quality_score != null ? qualityScoreText(article.quality_score) : '';
+  const score = qualityScoreText(article.quality_score);
+  const analysisStatus = analysisStatusMeta(article, { podcast: entryPodcast });
   const favoriteControl = (
     <span
       role="button"
@@ -193,6 +202,7 @@ export const ArticleRow = memo(function ArticleRow({
                   <span>{formatPodcastDuration(podcast.duration_seconds)}</span>
                 )}
                 <span className={`podcast-status is-${podcastStatus.tone}`}>{podcastStatus.label}</span>
+                {analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
               </span>
             </span>
           </span>
@@ -205,6 +215,13 @@ export const ArticleRow = memo(function ArticleRow({
                 </span>
               )}
               <span className="reader-entry-src">{sourceName}</span>
+              {/* 分析结果归入元信息行(issue #23 第三项):分类是源名后的一段元信息文字,
+                  分数是衬线数字落在时间之前——不再独占一行,晚到只横向填字、标题不动;
+                  没有可读结果且分析在途时,分数槽先以「分析中」占位,落地即换成数。 */}
+              {analysisLabel && <span className="reader-entry-tag">{analysisLabel}</span>}
+              {score
+                ? <span className="reader-entry-score ai-grad-text" title={SCORE_DISCLAIMER}>{score}</span>
+                : (analysisStatus && <span className="reader-entry-score is-pending" role="status">分析中</span>)}
               <span
                 className="reader-entry-time"
                 title={formatDateTime(article.publish_date || article.fetched_date)}
@@ -212,12 +229,6 @@ export const ArticleRow = memo(function ArticleRow({
                 {formatRelativeTime(article.publish_date || article.fetched_date, '')}
               </span>
             </span>
-            {(score || analysisLabel) && (
-              <span className="reader-entry-analysis">
-                {score && <span className="reader-score-chip" title="AI 内容价值评估，不代表事实保证或用户评分">{score}</span>}
-                {analysisLabel && <span className="reader-tag-chip">{analysisLabel}</span>}
-              </span>
-            )}
             {/* 标题行内收藏控件复用 span role=button，避免 button 嵌套。 */}
             <span className="reader-entry-titlerow">
               <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
@@ -256,16 +267,33 @@ export default function ReaderTab({
 }) {
   const [brandFailed, setBrandFailed] = useState(false); // 品牌 logo 加载失败 → 回退铃铛
   const [briefOpen, setBriefOpen] = useState(false);
+  // 早报「外出」上下文(issue #23 三稿):从早报点卡片进原文后阅读窗顶部出返回带——
+  // {date, revision, scrollTop, itemId, label, sequence[{id,article_id,title}], index}。
+  // 用户主动改作用域(视图轨/源栏/发现页)即清;同列表内翻篇保留。restoreRef 把它交还早报页落位。
+  const [briefReturn, setBriefReturn] = useState(null);
+  const [briefRestore, setBriefRestore] = useState(null); // 返回时交还早报页落位的那份上下文
+  const leaveBriefTrail = useCallback(() => setBriefReturn(null), []);
+  // 我的兴趣(issue #23 第二项,弹窗改页面):与早报同为「顶替源栏槽位 + 整幅右栏」的页面态;
+  // 点击即保存(页内 600ms 合并),没有草稿态,离开无需确认;首登引导自动打开一次但不锁页
+  // (视图轨照常可走,轨钮挂点直到完成或跳过)。
   const [interestOpen, setInterestOpen] = useState(false);
+  // 引导完成的 PUT 在途时读者可能已从视图轨走开(刻意不锁页):完成回调只在兴趣页仍开着时才跳早报,
+  // 否则会把已经在看的文章/源/发现页拉走(codex 检视 P2);经 ref 读最新值——回调被卸载页的 ref 持有
+  const interestOpenRef = useRef(interestOpen);
+  useEffect(() => { interestOpenRef.current = interestOpen; }, [interestOpen]);
   const [interestVersion, setInterestVersion] = useState(0);
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;
+  useEffect(() => {
+    if (onboardingRequired) setInterestOpen(true);
+  }, [onboardingRequired]);
+  const pageOpen = briefOpen || interestOpen;
 
   useEffect(() => {
-    if (!personalDigestEnabled) setBriefOpen(false);
+    if (!personalDigestEnabled) { setBriefOpen(false); setInterestOpen(false); }
   }, [personalDigestEnabled]);
-  const closeBriefBeforeArticleOpen = useCallback(() => setBriefOpen(false), []);
+  const closeBriefBeforeArticleOpen = useCallback(() => { setBriefOpen(false); setInterestOpen(false); }, []);
 
   const {
     // 源目录 / 订阅
@@ -290,7 +318,7 @@ export default function ReaderTab({
     articles, articlesLoading, loadingMore, hasMore, handleLoadMore,
     listRef, sentinelRef,
     // 选中文章 / 正文
-    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById,
+    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById, supersedePendingOpen,
     schedulePrefetch, cancelPrefetch,
     activeIndex, prevArticle, nextArticle,
     crumbSource, crumbName, displayBody, displayTranslatedBody, bodyStats,
@@ -317,15 +345,65 @@ export default function ReaderTab({
   const resyncListScrollbar = useOverlayScrollbar(
     listRef,
     listThumbRef,
-    !briefOpen && !discover && mode !== 'social',
+    !pageOpen && !discover && mode !== 'social',
   );
 
   // 列表内容高度变化(切源/追加/加载态)后重算浮层滚动条滑块
   useEffect(() => { resyncListScrollbar(); }, [articles, articlesLoading, activeArticle, resyncListScrollbar]);
 
+  const activeAnalysisStatus = analysisStatusMeta(activeArticle, { podcast: podcastView });
+  // 标题区尾行动作(语言二段 + 查看原文):有标签时住尾行右缘,无标签时并入署名行右缘——
+  // 标题下不留一片只挂着两个钮的空白(样页「分析在途」帧即此形态)。
+  const paneTags = activeArticle ? displayAnalysisTags(activeArticle) : [];
+  const paneActions = activeArticle && (activeArticle.source_url || (aiEnabled && !activeIsChinese)) && (
+    <div className="reader-pane-actions">
+      {aiEnabled && !activeIsChinese && (
+        <div className="reader-tr-seg" role="group" aria-label="正文语言">
+          <button
+            type="button"
+            className={`reader-tr-seg-btn ${showTranslation ? '' : 'is-on'}`}
+            aria-pressed={!showTranslation}
+            onClick={() => { if (showTranslation) handleTranslate(); }}
+          >
+            原语言
+          </button>
+          <button
+            type="button"
+            className={`reader-tr-seg-btn ${showTranslation ? 'is-on is-ai' : ''}`}
+            aria-pressed={showTranslation}
+            disabled={translating || activeBodyLoading || !activeBody}
+            title={showTranslation ? '当前显示中文译文' : '将正文译为中文'}
+            onClick={() => { if (!showTranslation) handleTranslate(); }}
+          >
+            {translating
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              : <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}
+            <span className={showTranslation ? 'ai-grad-text' : ''}>
+              {translating ? '翻译中…' : showTranslation ? '中文' : '译为中文'}
+            </span>
+          </button>
+        </div>
+      )}
+      {/* 顺序:语言二段在前、跳原网页在后(目检拍板);「原语言」与「查看原文」用词分家——
+          前者是本页正文的语言档位,后者是跳出站外 */}
+      {activeArticle.source_url && (
+        <a
+          href={activeArticle.source_url}
+          target="_blank"
+          rel="noreferrer"
+          className="reader-pane-act"
+        >
+          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+          查看原文
+        </a>
+      )}
+    </div>
+  );
+
   // ── 右键上下文菜单(v3.28,样页 dorami-context-menu-quiet) ──
   // items 构建在 useReaderState(桌面右键/移动长按共用);弹出定位与开合是桌面视图胶水。
   const { menu: ctxMenu, openMenu: openCtxMenu, closeMenu: closeCtxMenu } = useContextMenu();
+
 
   const openRowContextMenu = (e, entity, kind) => {
     const items = kind === 'source'
@@ -391,12 +469,26 @@ export default function ReaderTab({
               type="button"
               aria-label="我的早报"
               aria-pressed={briefOpen}
-              onClick={() => { closeDiscover(); setBriefOpen(true); }}
+              onClick={() => { supersedePendingOpen(); setInterestOpen(false); closeDiscover(); setBriefRestore(null); leaveBriefTrail(); setBriefOpen(true); }}
               className={`reader-vrail-btn ${briefOpen ? 'is-on' : ''}`}
             >
               <Newspaper className="h-[18px] w-[18px]" />
               <span className="reader-vrail-label">早报</span>
               <span className="reader-vrail-tip">我的早报</span>
+            </button>
+            {/* 兴趣紧邻早报(2026-09-06 拍板):两页同为「我的」页、同用报头家族,并排成一组,
+                其余容器与目录页另成两组 */}
+            <button
+              type="button"
+              aria-label={onboardingRequired && !interestOpen ? '我的兴趣(待设置)' : '我的兴趣'}
+              aria-pressed={interestOpen}
+              onClick={() => { if (interestOpen) return; supersedePendingOpen(); closeDiscover(); setBriefOpen(false); setInterestOpen(true); }}
+              className={`reader-vrail-btn ${interestOpen ? 'is-on' : ''}`}
+            >
+              <Tags className="h-[18px] w-[18px]" />
+              {onboardingRequired && !interestOpen && <span className="vrail-btn-dot" aria-hidden="true" />}
+              <span className="reader-vrail-label">兴趣</span>
+              <span className="reader-vrail-tip">{onboardingRequired && !interestOpen ? '我的兴趣 · 待设置' : '我的兴趣'}</span>
             </button>
             <span className="reader-vrail-divider" aria-hidden="true" />
           </>
@@ -414,9 +506,9 @@ export default function ReaderTab({
             key={view}
             type="button"
             aria-label={label}
-            aria-pressed={!briefOpen && railActive === view}
-            onClick={() => { setBriefOpen(false); goView(view); }}
-            className={`reader-vrail-btn ${!briefOpen && railActive === view ? 'is-on' : ''}`}
+            aria-pressed={!pageOpen && railActive === view}
+            onClick={() => { setInterestOpen(false); setBriefOpen(false); leaveBriefTrail(); goView(view); }}
+            className={`reader-vrail-btn ${!pageOpen && railActive === view ? 'is-on' : ''}`}
           >
             <Icon className="h-[18px] w-[18px]" />
             <span className="reader-vrail-label">{short}</span>
@@ -429,26 +521,13 @@ export default function ReaderTab({
         <button
           type="button"
           aria-label="发现"
-          aria-pressed={!briefOpen && discover}
-          onClick={() => { setBriefOpen(false); openDiscover(); }}
-          className={`reader-vrail-btn ${!briefOpen && discover ? 'is-on' : ''}`}
+          aria-pressed={!pageOpen && discover}
+          onClick={() => { setInterestOpen(false); setBriefOpen(false); leaveBriefTrail(); openDiscover(); }}
+          className={`reader-vrail-btn ${!pageOpen && discover ? 'is-on' : ''}`}
         >
           <Compass className="h-[18px] w-[18px]" />
           <span className="reader-vrail-label">发现</span>
         </button>
-        {personalDigestEnabled && (
-          <button
-            type="button"
-            aria-label="管理个人兴趣"
-            aria-expanded={interestOpen || onboardingRequired}
-            onClick={() => setInterestOpen(true)}
-            className="reader-vrail-btn"
-          >
-            <Tags className="h-[18px] w-[18px]" />
-            <span className="reader-vrail-label">兴趣</span>
-            <span className="reader-vrail-tip">我的兴趣</span>
-          </button>
-        )}
 
         {/* 轨底(standalone,可发现性波 v3.45):工具钮常态可见——hover 滑出菜单
             (2026-07-24 拍板)退役,上量后实证「常态只见头像」让新用户找不到反馈/设置,
@@ -514,7 +593,7 @@ export default function ReaderTab({
       </nav>
 
       {/* ── 源栏 · 我的订阅 ── */}
-      {!briefOpen && <aside className="reader-col reader-col-sources">
+      {!pageOpen && <aside className="reader-col reader-col-sources">
         <div className="reader-sources-inner">
         <div className="reader-src-head">
           <span className="reader-src-title">我的订阅</span>
@@ -541,8 +620,8 @@ export default function ReaderTab({
                 <div
                   role="button"
                   tabIndex={0}
-                  onClick={goContainerAll}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goContainerAll(); } }}
+                  onClick={() => { leaveBriefTrail(); goContainerAll(); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); leaveBriefTrail(); goContainerAll(); } }}
                   className={`reader-source-row ${activeSourceId === null && !favOnly ? 'reader-source-row-active' : ''} ${scopeUnread > 0 && activeSourceId === null && !favOnly ? 'has-unread' : ''}`}
                 >
                   <span className="reader-src-allicon" aria-hidden="true">
@@ -558,8 +637,8 @@ export default function ReaderTab({
                 <div
                   role="button"
                   tabIndex={0}
-                  onClick={goFavorites}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goFavorites(); } }}
+                  onClick={() => { leaveBriefTrail(); goFavorites(); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); leaveBriefTrail(); goFavorites(); } }}
                   className={`reader-source-row ${favOnly ? 'reader-source-row-active' : ''}`}
                 >
                   <span className="reader-src-allicon reader-src-allicon-fav" aria-hidden="true">
@@ -584,8 +663,8 @@ export default function ReaderTab({
                         key={source.source_id}
                         role="button"
                         tabIndex={0}
-                        onClick={() => goSource(source.source_id)}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goSource(source.source_id); } }}
+                        onClick={() => { leaveBriefTrail(); goSource(source.source_id); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); leaveBriefTrail(); goSource(source.source_id); } }}
                         onContextMenu={(e) => onRowContextMenu(e, source, 'source')}
                         className={`reader-source-row ${active ? 'reader-source-row-active' : ''} ${unread > 0 ? 'has-unread' : ''} ${source.hidden ? 'is-unavailable' : ''} ${ctxMenu?.anchorKey === `source:${source.source_id}` ? 'is-ctx-anchor' : ''}`}
                       >
@@ -640,20 +719,48 @@ export default function ReaderTab({
         </div>
       </aside>}
 
+      {/* ── 我的早报(issue #23 重做):日期栏顶替源栏槽位 + 报纸面占条目列/阅读窗整幅;
+             点卡片 = openArticleById 跳站内原文(切到所在容器并选中,早报页退场) ── */}
       {briefOpen && (
-        <PersonalBriefTab
+        <PersonalBriefPage
           showToast={showToast}
           interestVersion={interestVersion}
-          onManageSubscriptions={() => { setBriefOpen(false); openDiscover(); }}
-          onOpenArticle={async (articleId) => {
-            const opened = await openArticleById(articleId);
-            if (opened) setBriefOpen(false);
+          sourceMap={sourceMap}
+          restore={briefRestore}
+          supersedePendingOpen={supersedePendingOpen}
+          onManageSubscriptions={() => { setBriefOpen(false); leaveBriefTrail(); openDiscover(); }}
+          onOpenArticle={async (articleId, ctx) => {
+            // 结果回传早报页:false=不在库(早报页退到原链),null=被更晚的点击盖过(不动)
+            const opened = await openArticleById(articleId, { silent: true });
+            if (!opened) return opened;
+            setBriefOpen(false);
+            setBriefReturn(ctx && ctx.sequence?.length ? ctx : null);
+            return true;
+          }}
+        />
+      )}
+
+      {/* ── 我的兴趣(issue #23 第二项):选择台账顶替源栏槽位 + 标签目录面占整幅;
+             引导完成后直接落早报页——读者立刻看到兴趣起了作用 ── */}
+      {interestOpen && (
+        <InterestPage
+          onboarding={onboardingRequired}
+          showToast={showToast}
+          onSaved={({ onboardingCompleted } = {}) => {
+            setInterestVersion((value) => value + 1);
+            if (onboardingCompleted) {
+              onUserUpdated?.({ interest_onboarding_completed: true });
+              if (!interestOpenRef.current) return; // 读者已走开,只记完成、不跳
+              setInterestOpen(false);
+              setBriefRestore(null);
+              setBriefOpen(true);
+            }
           }}
         />
       )}
 
       {/* ── 发现页:占据 条目列+阅读窗 的整片区域(源栏保持在场,订阅结果即时可见) ── */}
-      {!briefOpen && discover && (
+      {!pageOpen && discover && (
         <DiscoverPage
           sources={discoverSources}
           subscribedIds={subscribedIds}
@@ -661,7 +768,7 @@ export default function ReaderTab({
           pinningId={pinningId}
           onSubscribe={handleSubscribe}
           onUnsubscribe={handleUnsubscribe}
-          onPreview={(source) => goSource(source.source_id)}
+          onPreview={(source) => { leaveBriefTrail(); goSource(source.source_id); }}
           collections={collections}
           activeCollectionId={discoverCollectionId}
           onOpenCollection={(c) => setDiscoverCollectionId(c.collection_id)}
@@ -675,7 +782,7 @@ export default function ReaderTab({
       )}
 
       {/* ── 社交媒体流(第三容器):占「条目列 + 阅读窗」整幅,取代四带式 ── */}
-      {!briefOpen && !discover && socialView && (
+      {!pageOpen && !discover && socialView && (
         <SocialFlow
           articles={articles}
           sourceMap={sourceMap}
@@ -714,7 +821,7 @@ export default function ReaderTab({
       )}
 
       {/* ── 条目列 ── */}
-      {!briefOpen && !discover && !socialView && (
+      {!pageOpen && !discover && !socialView && (
       <section className="reader-col reader-col-list">
         <div className="reader-list-inner">
         <div className="reader-list-head">
@@ -877,8 +984,54 @@ export default function ReaderTab({
       )}
 
       {/* ── 阅读窗 ── */}
-      {!briefOpen && !discover && !socialView && (
+      {!pageOpen && !discover && !socialView && (
       <section className="reader-col reader-col-read">
+        {/* 早报外出返回带(issue #23 三稿):从早报点进来的这一程里常驻阅读窗顶部,不随文章切换重绘。
+            左=返回我的早报(落回同一版同一卷动位置),右=早报下一条(顺着本版读完不必回早报)。 */}
+        {briefReturn && (() => {
+          const seq = briefReturn.sequence || [];
+          const next = seq[briefReturn.index + 1] || null;
+          return (
+            <nav className="reader-brief-trail" aria-label="来自我的早报">
+              <button
+                type="button"
+                className="reader-brief-trail-btn"
+                onClick={() => {
+                  supersedePendingOpen(); // 「下一条」尚在途时点返回:作废它,别让迟到的响应又把早报关掉
+                  setBriefRestore(briefReturn);
+                  setBriefReturn(null);
+                  setBriefOpen(true);
+                }}
+              >
+                <ChevronLeft aria-hidden="true" />
+                <span>返回我的早报</span>
+                <small>{briefReturn.label}</small>
+              </button>
+              {next ? (
+                <button
+                  type="button"
+                  className="reader-brief-trail-btn is-next"
+                  title={next.title || undefined}
+                  onClick={async () => {
+                    const opened = await openArticleById(next.article_id, { silent: true });
+                    if (opened) setBriefReturn((prev) => (prev ? { ...prev, index: prev.index + 1, itemId: next.id } : prev));
+                    // 站内取不到(源被隐藏 / 退订)与点卡同款回退:序列带着快照原链;await 之后用户激活可能已过期,当前页跳转
+                    else if (opened === false) {
+                      if (next.source_url) window.location.assign(next.source_url);
+                      else showToast('这条内容已不在库中', 'error');
+                    }
+                  }}
+                >
+                  <span>早报下一条</span>
+                  <small>{`${briefReturn.index + 2} / ${seq.length}`}</small>
+                  <ChevronRight aria-hidden="true" />
+                </button>
+              ) : (
+                <span className="reader-brief-trail-end">已到本版末尾</span>
+              )}
+            </nav>
+          );
+        })()}
         {activeArticle ? (
           <>
             {/* 阅读进度线：仅正文非空时显示；CSS scroll() 滚动驱动、切文章天然归零，
@@ -949,11 +1102,15 @@ export default function ReaderTab({
 
           {/* key 按文章 id 重挂载,触发 reader-enter 淡入+轻上移(体验二波 A1) */}
           <article className="reader-pane reader-enter" key={activeArticle.id}>
+            {/* 标题区(issue #23 第三项延伸,样页 docs/design/dorami-pane-head-quiet.html):
+                四行三语言——眉头「源 · 体裁」/ 衬线标题 / 署名行(只放事实:日期·时长·阅读量·分析状态)/
+                尾行「左标签小签 · 右动作」贴着分隔线。内容类型是数据形态(容器已交代),眉头改画分析出的
+                体裁,与条目行分类同一件事。 */}
             <header className="reader-pane-head">
               <div className="reader-kicker">
                 {(sourceNameMap[activeArticle.source_id] || activeArticle.source_id)}
-                {activeArticle.content_type
-                  ? ` · ${contentTypeLabel(activeArticle.content_type, activeArticle.content_type)}`
+                {contentGenreLabel(activeArticle.content_genre)
+                  ? ` · ${contentGenreLabel(activeArticle.content_genre)}`
                   : ''}
               </div>
               {/* 译文态(v3.45):大标题换中文译名,原标题降为其下一行小字 */}
@@ -963,16 +1120,17 @@ export default function ReaderTab({
               {showTranslation && translatedTitle && activeArticle.title && translatedTitle !== activeArticle.title && (
                 <div className="reader-pane-title-orig">{activeArticle.title}</div>
               )}
+              <div className="reader-pane-byline">
               <div className="reader-pane-meta">
                 {activeArticle.publish_date && (
-                  <span title={formatRelativeTime(activeArticle.publish_date)}>
-                    {formatDateTime(activeArticle.publish_date)}
+                  <span title={formatDateTime(activeArticle.publish_date)}>
+                    {formatPublishDate(activeArticle.publish_date)}
                   </span>
                 )}
                 {/* 字数与时长信息冗余(时长即由字数换算),只留时长;
                     阅读量 = 全站累计阅读次数(跨读者;含本次打开,由 /read 响应回填) */}
                 {bodyStats && (
-                  <span>{podcastView ? '简介阅读约' : '阅读时长'} {bodyStats.minutes} 分钟</span>
+                  <span>{podcastView ? '简介阅读约' : '阅读约'} {bodyStats.minutes} 分钟</span>
                 )}
                 {podcastView && formatPodcastDuration(activeArticle.podcast?.duration_seconds) && (
                   <span>原节目 {formatPodcastDuration(activeArticle.podcast.duration_seconds)}</span>
@@ -980,63 +1138,26 @@ export default function ReaderTab({
                 {typeof activeArticle.read_count === 'number' && activeArticle.read_count > 0 && (
                   <span>阅读量 {activeArticle.read_count.toLocaleString()}</span>
                 )}
+                {/* 分析生命周期是署名行末尾的一段事实,不是一枚章 */}
+                {activeAnalysisStatus && <span role="status">{activeAnalysisStatus.label}</span>}
               </div>
-              {/* 标题下动作行(v3.45):查看原文 + 「原文 | 译为中文」二段——眼睛自标题落到正文的
-                  路径上,文字化;译文二段激活态沿 AI 渐变身份(v3.33),AI 未开启只余原文。 */}
-              {(activeArticle.source_url || (aiEnabled && !activeIsChinese)) && (
-                <div className="reader-pane-actions">
-                  {aiEnabled && !activeIsChinese && (
-                    <div className="reader-tr-seg" role="group" aria-label="正文语言">
-                      <button
-                        type="button"
-                        className={`reader-tr-seg-btn ${showTranslation ? '' : 'is-on'}`}
-                        aria-pressed={!showTranslation}
-                        onClick={() => { if (showTranslation) handleTranslate(); }}
-                      >
-                        原语言
-                      </button>
-                      <button
-                        type="button"
-                        className={`reader-tr-seg-btn ${showTranslation ? 'is-on is-ai' : ''}`}
-                        aria-pressed={showTranslation}
-                        disabled={translating || activeBodyLoading || !activeBody}
-                        title={showTranslation ? '当前显示中文译文' : '将正文译为中文'}
-                        onClick={() => { if (!showTranslation) handleTranslate(); }}
-                      >
-                        {translating
-                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                          : <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}
-                        <span className={showTranslation ? 'ai-grad-text' : ''}>
-                          {translating ? '翻译中…' : showTranslation ? '中文' : '译为中文'}
-                        </span>
-                      </button>
-                    </div>
-                  )}
-                  {/* 顺序:语言二段在前、跳原网页在后(目检拍板);「原语言」与「查看原文」用词分家——
-                      前者是本页正文的语言档位,后者是跳出站外 */}
-                  {activeArticle.source_url && (
-                    <a
-                      href={activeArticle.source_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="reader-pane-act"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                      查看原文
-                    </a>
-                  )}
-                </div>
-              )}
-              {/* issue #13 二轮:分数并入下方「哆啦美速读」卡头,标题区只余标签行(无框) */}
-              {displayAnalysisTags(activeArticle).length > 0 && (
-                <div className="reader-pane-tags">
-                  {displayAnalysisTags(activeArticle).map((tag, index) => (
-                    <AnalysisTagChip
-                      key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
-                      tag={tag}
-                      onTemporarySearch={searchForLabel}
-                    />
-                  ))}
+              {paneTags.length === 0 && paneActions}
+              </div>
+              {/* 尾行:左标签小签(规范实线 / 灵活虚线可点检索),右动作——「原语言 | 译为中文」二段 +
+                  查看原文文字链(v3.45 拍板的「标题 → 正文」视线路径不变,只是不再独占一行);
+                  译文二段激活态沿 AI 渐变身份(v3.33),AI 未开启只余原文。 */}
+              {paneTags.length > 0 && (
+                <div className="reader-pane-foot">
+                  <div className="reader-pane-tags">
+                    {paneTags.map((tag, index) => (
+                      <AnalysisTagChip
+                        key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
+                        tag={tag}
+                        onTemporarySearch={searchForLabel}
+                      />
+                    ))}
+                  </div>
+                  {paneActions}
                 </div>
               )}
             </header>
@@ -1121,7 +1242,7 @@ export default function ReaderTab({
       </section>
       )}
 
-      {!briefOpen && !discover && (
+      {!pageOpen && !discover && (
         <ReaderAiPanel
           aiEnabled={aiEnabled}
           activeArticle={activeArticle}
@@ -1134,17 +1255,6 @@ export default function ReaderTab({
       {ctxMenu && (
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={closeCtxMenu} />
       )}
-      <InterestManager
-        open={interestOpen || onboardingRequired}
-        onboarding={onboardingRequired}
-        onClose={() => setInterestOpen(false)}
-        onSaved={({ onboardingCompleted } = {}) => {
-          setInterestVersion((value) => value + 1);
-          setInterestOpen(false);
-          if (onboardingCompleted) onUserUpdated?.({ interest_onboarding_completed: true });
-        }}
-        showToast={showToast}
-      />
     </div>
   );
 }

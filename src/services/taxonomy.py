@@ -23,6 +23,7 @@ from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
+from config import settings
 from models.analysis_contracts import (
     AnalysisOperation,
     ArticleTagAssignmentDTO,
@@ -45,17 +46,21 @@ from models.db import (
     CmsTagCandidateRecord,
     CmsTagEventRecord,
     CmsTagRecord,
+    SourceConfigRecord,
     TagRetagJobRecord,
     TaxonomyVersionRecord,
     UserInterestTagRecord,
 )
 from services.article_time import in_time_window, parse_article_time
+from services import sync_consumer_policy
 
 
 AUTO_ACTIVATION_SETTING_KEY = "taxonomy_auto_activation_enabled"
 AUTO_ACTIVATION_THRESHOLDS_SETTING_KEY = "taxonomy_auto_activation_thresholds"
 TAXONOMY_V1_REVIEW_RECEIPT_KEY = "taxonomy_v1_review_receipt"
 INTEREST_CATALOG_POLICY_SETTING_KEY = "taxonomy_interest_catalog_policy"
+TAXONOMY_AUTHORITY_ID_KEY = "taxonomy:authority_id"
+TAXONOMY_SYNC_REVISION_KEY = "taxonomy:sync_revision"
 DEFAULT_FACET_LIMITS: Mapping[str, int] = {"topic": 5, "industry": 2, "entity": 3}
 PRIMARY_KIND_ORDER: Mapping[str, int] = {"topic": 0, "entity": 1, "industry": 2}
 INTEREST_CATALOG_DEFAULT_LIMITS: Mapping[str, int] = {
@@ -233,6 +238,53 @@ def current_taxonomy_version(session: Session) -> int:
     return int(active.version) if active else 0
 
 
+def current_taxonomy_sync_revision(session: Session) -> int:
+    """Return the monotonic export watermark, falling back for older databases."""
+
+    active_version = current_taxonomy_version(session)
+    record = session.get(AppSettingRecord, TAXONOMY_SYNC_REVISION_KEY)
+    try:
+        stored = int(record.value) if record is not None else 0
+    except (TypeError, ValueError):
+        stored = 0
+    return max(0, active_version, stored)
+
+
+def touch_taxonomy_sync_revision(
+    session: Session,
+    *,
+    published_version: Optional[int] = None,
+) -> int:
+    """Advance the taxonomy export watermark in the caller's transaction.
+
+    Publishing the first active version initializes the watermark to that
+    version. Later publishes and every material tag/Alias mutation increment it.
+    Older databases without the setting advance beyond their active version so
+    consumers holding that legacy version as ``since`` cannot miss the change.
+    """
+
+    active_version = current_taxonomy_version(session)
+    published = int(published_version or 0)
+    record = session.get(AppSettingRecord, TAXONOMY_SYNC_REVISION_KEY)
+    if record is None:
+        if active_version <= 0 and published <= 0:
+            return 0
+        revision = max(active_version, published)
+        if published <= 0:
+            revision += 1
+        record = AppSettingRecord(key=TAXONOMY_SYNC_REVISION_KEY, value=str(revision))
+    else:
+        try:
+            previous = int(record.value)
+        except (TypeError, ValueError):
+            previous = max(active_version, published)
+        revision = max(previous + 1, active_version, published)
+        record.value = str(revision)
+    session.add(record)
+    session.flush()
+    return revision
+
+
 def _event(
     session: Session,
     action: str,
@@ -319,6 +371,7 @@ def add_alias(
     )
     session.add(record)
     session.flush()
+    touch_taxonomy_sync_revision(session)
     return record
 
 
@@ -414,6 +467,7 @@ def delete_alias(
         payload=payload,
         now=now,
     )
+    touch_taxonomy_sync_revision(session)
     session.commit()
 
 
@@ -514,6 +568,7 @@ def create_tag(
     session.add(record)
     session.flush()
     _sync_current_name_aliases(session, record, now=now)
+    touch_taxonomy_sync_revision(session)
     return record
 
 
@@ -649,12 +704,13 @@ def assign_article_tags(
 
 
 def _is_private_source(session: Session, source_id: str) -> bool:
-    # Import lazily through a direct query so archived public sources without a
-    # SourceConfig row remain public, while every current custom RSS is isolated.
+    # ``user_added`` is provenance, not a privacy boundary.  Only credentialed
+    # feeds are excluded from global Candidate evidence.
     from models.db import SourceConfigRecord
+    from services.user_sources import source_is_credentialed
 
     record = session.get(SourceConfigRecord, source_id)
-    return bool(record and record.owner_username)
+    return source_is_credentialed(record)
 
 
 def record_candidate_evidence(
@@ -1230,6 +1286,29 @@ def maybe_auto_activate_candidate(
     if not auto_activation_enabled(session):
         return None
     candidate = aggregate_candidate(session, candidate_id, now=now)
+    # User-added evidence is visible in the global review queue, but cannot by
+    # itself (or accidentally through aggregate counts) promote a global tag.
+    from services.user_sources import is_user_source
+
+    evidence_source_ids = {
+        str(source_id)
+        for source_id in session.exec(
+            select(CmsTagCandidateEvidenceRecord.source_id).where(
+                CmsTagCandidateEvidenceRecord.candidate_id == candidate_id
+            )
+        ).all()
+    }
+    configured_sources = list(
+        session.exec(
+            select(SourceConfigRecord).where(
+                SourceConfigRecord.source_id.in_(evidence_source_ids)
+            )
+        ).all()
+    ) if evidence_source_ids else []
+    if any(is_user_source(source_id) for source_id in evidence_source_ids) or any(
+        bool((source.owner_username or "").strip()) for source in configured_sources
+    ):
+        return None
     configured = thresholds or load_auto_activation_thresholds(session)
     if not candidate_meets_auto_activation_threshold(candidate, configured):
         return None
@@ -1260,6 +1339,12 @@ def run_auto_activation_cycle(
     off and never invokes the runtime scheduler.  Entity Candidates remain
     manual because discovery does not provide stable external keys.
     """
+
+    if (
+        settings.taxonomy.mode == "replica"
+        or sync_consumer_policy.v2_consumer_mode_active(session)
+    ):
+        return []
 
     # Runtime discovery must never activate concepts against an unpublished
     # bootstrap vocabulary, even if an operator enables the switch early.
@@ -1413,6 +1498,7 @@ def change_tag_flags(
         payload=changes,
         now=now,
     )
+    touch_taxonomy_sync_revision(session)
     session.commit()
     session.refresh(tag)
     return tag
@@ -1458,6 +1544,7 @@ def change_tag_descriptions(
         payload={"operation": "change_descriptions", "before": before, "after": after},
         now=now,
     )
+    touch_taxonomy_sync_revision(session)
     session.commit()
     session.refresh(tag)
     return tag
@@ -1500,6 +1587,7 @@ def change_entity_metadata(
         payload={"operation": "entity_metadata", "before": before, "after": after},
         now=now,
     )
+    touch_taxonomy_sync_revision(session)
     session.commit()
     session.refresh(tag)
     return tag
@@ -1539,6 +1627,7 @@ def change_tag_parent(
         payload={"operation": "change_parent", "before": before, "after": validated},
         now=now,
     )
+    touch_taxonomy_sync_revision(session)
     session.commit()
     session.refresh(tag)
     return tag
@@ -1619,6 +1708,7 @@ def rename_tag(
         payload={"before": old, "after": {"name_zh": tag.name_zh, "name_en": tag.name_en}},
         now=now,
     )
+    touch_taxonomy_sync_revision(session)
     session.commit()
     session.refresh(tag)
     return tag
@@ -1669,6 +1759,7 @@ def deprecate_tag(
         reason=reason,
         now=now,
     )
+    touch_taxonomy_sync_revision(session)
     session.commit()
     session.refresh(tag)
     return tag
@@ -1833,6 +1924,7 @@ def merge_tags(
         reason=reason,
         now=now,
     )
+    touch_taxonomy_sync_revision(session)
     session.commit()
     session.refresh(target_tag)
     return target_tag
@@ -1882,9 +1974,168 @@ def activate_taxonomy_version(
     record.activated_by = actor_id
     record.activated_at = stamp
     session.add(record)
+    touch_taxonomy_sync_revision(session, published_version=version)
     session.commit()
     session.refresh(record)
     return record
+
+
+def _analysis_has_readable_result(
+    session: Session,
+    analysis: ArticleAnalysisRecord,
+) -> bool:
+    """Whether retagging can safely preserve a prior user-visible analysis."""
+
+    if (
+        analysis.analyzed_at
+        or analysis.quality_score is not None
+        or analysis.content_genre
+        or bool(_json_list(analysis.display_tags_json))
+    ):
+        return True
+    return session.exec(
+        select(ArticleTagAssignmentRecord.id).where(
+            ArticleTagAssignmentRecord.article_id == analysis.article_id,
+            ArticleTagAssignmentRecord.assignment_source == TagAssignmentSource.LLM.value,
+        ).limit(1)
+    ).first() is not None
+
+
+def reconcile_synced_taxonomy_candidates(
+    session: Session,
+    *,
+    taxonomy_version: int,
+    authority_revision: str,
+    now: Optional[dt.datetime] = None,
+) -> dict[str, Any]:
+    """Resolve local Candidate evidence after a new authority taxonomy arrives.
+
+    Resolution is deliberately conservative: an unresolved Candidate is linked
+    only when its ``(kind, normalized_label)`` maps to exactly one active
+    canonical name or alias. The resulting retag-only job contains only
+    locally-authoritative articles with a readable prior analysis and evidence
+    for a newly resolved Candidate. It never schedules paid full analysis.
+
+    ``authority_revision`` is the caller's monotonic sync watermark. Replaying
+    the same imported revision returns the existing job instead of duplicating
+    work. The caller should invoke this after the taxonomy snapshot commits.
+    """
+
+    version = int(taxonomy_version)
+    revision = str(authority_revision or "").strip()
+    if version <= 0 or session.get(TaxonomyVersionRecord, version) is None:
+        raise TaxonomyError("synced taxonomy version does not exist")
+    if not revision:
+        raise TaxonomyError("taxonomy authority revision is required")
+
+    for existing in session.exec(
+        select(TagRetagJobRecord).where(
+            TagRetagJobRecord.operation == AnalysisOperation.RETAG_ONLY.value,
+            TagRetagJobRecord.taxonomy_version == version,
+        )
+    ).all():
+        try:
+            scope = json.loads(existing.scope_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(scope, dict)
+            and scope.get("trigger") == "taxonomy_sync"
+            and str(scope.get("authority_revision") or "") == revision
+        ):
+            return {
+                "resolved_candidate_count": int(scope.get("resolved_candidate_count") or 0),
+                "article_count": len(scope.get("article_ids") or []),
+                "job_id": existing.id,
+                "replayed": True,
+            }
+
+    matches: dict[tuple[str, str], set[int]] = {}
+    active_tags = list(
+        session.exec(select(CmsTagRecord).where(CmsTagRecord.status == TagStatus.ACTIVE.value)).all()
+    )
+    for tag in active_tags:
+        if tag.id is not None:
+            matches.setdefault((tag.kind, tag.normalized_name), set()).add(int(tag.id))
+    for alias, tag in session.exec(
+        select(CmsTagAliasRecord, CmsTagRecord)
+        .join(CmsTagRecord, CmsTagRecord.id == CmsTagAliasRecord.tag_id)
+        .where(CmsTagRecord.status == TagStatus.ACTIVE.value)
+    ).all():
+        if tag.id is not None:
+            matches.setdefault((tag.kind, alias.normalized_alias), set()).add(int(tag.id))
+
+    stamp = now_iso(now)
+    resolved_ids: list[int] = []
+    for candidate in session.exec(select(CmsTagCandidateRecord)).all():
+        target_ids = matches.get(
+            (candidate.proposed_kind, normalize_label(candidate.normalized_label)), set()
+        )
+        if len(target_ids) != 1 or candidate.id is None:
+            continue
+        target_id = next(iter(target_ids))
+        if (
+            candidate.status == TagCandidateStatus.MERGED.value
+            and candidate.resolution_tag_id == target_id
+        ):
+            continue
+        # A synced taxonomy is authoritative: the local Candidate did not
+        # activate a new concept here, it converged into an existing one. This
+        # also repairs stale rejected/activated resolutions from earlier policy.
+        candidate.status = TagCandidateStatus.MERGED.value
+        candidate.resolution_tag_id = target_id
+        candidate.updated_at = stamp
+        session.add(candidate)
+        resolved_ids.append(int(candidate.id))
+
+    article_ids: list[str] = []
+    if resolved_ids:
+        evidence_article_ids = list(
+            session.exec(
+                select(CmsTagCandidateEvidenceRecord.article_id).where(
+                    CmsTagCandidateEvidenceRecord.candidate_id.in_(resolved_ids)
+                )
+            ).all()
+        )
+        for article_id in dict.fromkeys(str(value) for value in evidence_article_ids):
+            article = session.get(ArticleRecord, article_id)
+            analysis = session.get(ArticleAnalysisRecord, article_id)
+            if (
+                article is None
+                or analysis is None
+                or (article.analysis_authority_id or "").strip()
+                or (analysis.authority_id or "").strip()
+                or not _analysis_has_readable_result(session, analysis)
+            ):
+                continue
+            article_ids.append(article_id)
+
+    job: Optional[TagRetagJobRecord] = None
+    if article_ids:
+        scope = {
+            "trigger": "taxonomy_sync",
+            "authority_revision": revision,
+            "resolved_candidate_count": len(resolved_ids),
+            "article_ids": sorted(article_ids),
+        }
+        job = TagRetagJobRecord(
+            taxonomy_version=version,
+            operation=AnalysisOperation.RETAG_ONLY.value,
+            scope_json=json.dumps(scope, ensure_ascii=False, sort_keys=True),
+            status=RetagJobStatus.QUEUED.value,
+            created_at=stamp,
+            updated_at=stamp,
+        )
+        session.add(job)
+    session.commit()
+    if job is not None:
+        session.refresh(job)
+    return {
+        "resolved_candidate_count": len(resolved_ids),
+        "article_count": len(article_ids),
+        "job_id": job.id if job is not None else None,
+        "replayed": False,
+    }
 
 
 def queue_retag_job(
@@ -1930,7 +2181,17 @@ def retag_article_from_evidence(
     """
 
     analysis = session.get(ArticleAnalysisRecord, article.id)
-    if analysis is None or analysis.status != "succeeded":
+    if (
+        analysis is None
+        or (article.analysis_authority_id or "").strip()
+        or (analysis.authority_id or "").strip()
+        or not sync_consumer_policy.local_source_operation_allowed(
+            session,
+            article.source_id,
+            operation="analysis",
+        )
+        or not _analysis_has_readable_result(session, analysis)
+    ):
         return
     active_tags = {
         int(tag.id): tag

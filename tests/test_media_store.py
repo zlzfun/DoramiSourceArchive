@@ -8,6 +8,7 @@ GET /api/media/proxy 的命中回文件/失败 302 回源/停用 302/参数校�
 """
 
 import asyncio
+import datetime
 import json
 import os
 import sys
@@ -145,6 +146,88 @@ def test_get_or_fetch_caches_then_hits_without_network(tmp_path, monkeypatch):
     assert stats["distinct_files"] == 1
     assert stats["disk_bytes"] == len(PNG_BYTES)
     assert stats["failed_count"] == 0
+
+
+def test_remote_managed_pending_asset_never_races_origin_download(tmp_path, monkeypatch):
+    monkeypatch.setattr(ms, "_resolve_is_public", _public_ok)
+    engine = _sink(tmp_path).engine
+    calls = []
+    store = _store(engine, tmp_path, _counting_transport(calls))
+    url = "https://cdn.example.com/pending.png"
+    with Session(engine) as session:
+        session.add(MediaAssetRecord(
+            url_hash=url_hash_of(url), url=url, status="pending_sync",
+            content_hash="a" * 64, mime="image/png", ext=".png", size_bytes=10,
+            sync_authority_id="external", sync_authority_revision="2026-09-01",
+            created_at="2026-09-01", updated_at="2026-09-01",
+        ))
+        session.commit()
+    assert asyncio.run(store.get_or_fetch(url)) is None
+    assert calls == []
+
+
+def test_remote_media_gc_preserves_references_recent_rows_and_shared_files(tmp_path):
+    sink = _sink(tmp_path, "remote-media-gc.db")
+    store = _store(sink.engine, tmp_path, _counting_transport([]))
+    old = "2026-08-01T00:00:00+00:00"
+    recent = "2026-09-03T00:00:00+00:00"
+    referenced_url = "https://cdn.example.com/referenced.png"
+    orphan_url = "https://cdn.example.com/orphan.png"
+    shared_remote_url = "https://cdn.example.com/shared-remote.png"
+    shared_local_url = "https://cdn.example.com/shared-local.png"
+    recent_url = "https://cdn.example.com/recent.png"
+    local_url = "https://cdn.example.com/local.png"
+    orphan_hash = "a" * 64
+    shared_hash = "b" * 64
+
+    def asset(url, content_hash, updated_at, authority="external"):
+        return MediaAssetRecord(
+            url_hash=url_hash_of(url), url=url, status="cached",
+            content_hash=content_hash, mime="image/png", ext=".png",
+            size_bytes=len(PNG_BYTES), sync_authority_id=authority,
+            sync_authority_revision="10" if authority else "",
+            created_at=updated_at, updated_at=updated_at,
+        )
+
+    with Session(sink.engine) as session:
+        session.add(ArticleRecord(
+            id="article-with-image", title="Referenced", content_type="rss_article",
+            source_id="platform", source_url="https://example.test/article",
+            publish_date=old, fetched_date=old,
+            content=f"![image]({referenced_url})", extensions_json="{}",
+        ))
+        session.add_all([
+            asset(referenced_url, "c" * 64, old),
+            asset(orphan_url, orphan_hash, old),
+            asset(shared_remote_url, shared_hash, old),
+            asset(shared_local_url, shared_hash, old, authority=""),
+            asset(recent_url, "d" * 64, recent),
+            asset(local_url, "e" * 64, old, authority=""),
+        ])
+        session.commit()
+
+    for content_hash in (orphan_hash, shared_hash, "c" * 64, "d" * 64, "e" * 64):
+        path = store.root / content_hash[:2] / f"{content_hash}.png"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(PNG_BYTES)
+
+    result = store.gc_remote_unreferenced(
+        now=datetime.datetime(2026, 9, 4, tzinfo=datetime.timezone.utc),
+    )
+    assert result == {
+        "records_deleted": 2,
+        "files_deleted": 1,
+        "bytes_reclaimed": len(PNG_BYTES),
+    }
+    with Session(sink.engine) as session:
+        assert session.get(MediaAssetRecord, url_hash_of(orphan_url)) is None
+        assert session.get(MediaAssetRecord, url_hash_of(shared_remote_url)) is None
+        assert session.get(MediaAssetRecord, url_hash_of(referenced_url)) is not None
+        assert session.get(MediaAssetRecord, url_hash_of(recent_url)) is not None
+        assert session.get(MediaAssetRecord, url_hash_of(local_url)) is not None
+        assert session.get(MediaAssetRecord, url_hash_of(shared_local_url)) is not None
+    assert not (store.root / orphan_hash[:2] / f"{orphan_hash}.png").exists()
+    assert (store.root / shared_hash[:2] / f"{shared_hash}.png").is_file()
 
 
 def test_non_image_response_fails_with_cooling(tmp_path, monkeypatch):

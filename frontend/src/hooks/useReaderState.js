@@ -15,6 +15,11 @@ import {
 import { copyText } from '../utils/clipboard';
 import { articleDeepLink } from '../utils/shareLink';
 import { stripDuplicateLeadingHeading } from '../utils/markdownTitle';
+import {
+  analysisItemsFromResponse,
+  analysisNeedsPolling,
+  preferredAnalysisSummary,
+} from '../utils/analysis';
 import { SOURCE_ROLES, sourceRoleOf } from '../sourceTaxonomy';
 import { usePolling } from './usePolling';
 import { useDebouncedValue } from './useDebouncedValue';
@@ -45,6 +50,27 @@ import {
 
 const PAGE_SIZE = 30;
 const UNREAD_POLL_MS = 60000; // 未读轻轮询间隔（标签页可见时才真正请求）
+const ANALYSIS_POLL_MS = 30000;
+const ANALYSIS_PROJECTION_KEYS = [
+  'analysis_status',
+  'tagging_status',
+  'analysis_has_result',
+  'analysis_next_attempt_at',
+  'quality_score',
+  'score_reason',
+  'summary_zh',
+  'content_genre',
+  'primary_tag',
+  'tags',
+  'display_tags',
+];
+
+function withFreshAnalysis(article, incoming) {
+  if (!article || !incoming) return article;
+  const next = { ...article };
+  for (const key of ANALYSIS_PROJECTION_KEYS) next[key] = incoming[key];
+  return next;
+}
 
 // crumb 的「源名 · 域名」域名段(样页:Simon Willison · simonwillison.net)
 const hostOf = (url) => {
@@ -88,7 +114,12 @@ export function useReaderState({
   // 发现页(整页视图,取代源栏内联「发现更多来源」):true 时 条目列+阅读窗 被发现页取代
   const [discover, setDiscover] = useState(false);
   // 无论从哪个内容容器进入，发现页都展示完整来源目录；内容形态由页内筛选切换。
-  const openDiscover = useCallback(() => setDiscover(true), []);
+  // 在途「按 id 打开」的序号(见 openArticleById):直接选文章 / 切视图 / 切源 / 进发现页
+  // 都推进它,让慢网下尚未返回的早报卡打开作废,不再后到覆盖读者的直接导航(codex 检视 P2)
+  const openSeqRef = useRef(0);
+  // (useCallback 而非裸箭头:React Compiler 把渲染作用域裸函数里的 ref 写视作渲染期修改)
+  const supersedePendingOpen = useCallback(() => { openSeqRef.current += 1; }, []);
+  const openDiscover = useCallback(() => { supersedePendingOpen(); setDiscover(true); }, [supersedePendingOpen]);
   const closeDiscover = useCallback(() => {
     setDiscover(false);
   }, []);
@@ -175,6 +206,7 @@ export function useReaderState({
   // 列表加载的竞态安全器：切源/搜索时慢的旧请求若晚返回会「后发先至」覆盖当前源列表，
   // runList 发新请求前 abort 掉旧的（与 DataTab 同一约定）。
   const runList = useAbortableLoad();
+  const analysisPollContextRef = useRef(null);
 
   // ── 源目录 ──
   const loadSources = useCallback(async () => {
@@ -383,6 +415,7 @@ export function useReaderState({
   // 列表项已不含正文（include_content=false），仅 meta 即时渲染；正文命中缓存直接用，
   // 否则拉 GET /api/articles/{id}，回来时比对最新选中 id，丢弃过期响应。
   const selectArticle = useCallback((article) => {
+    supersedePendingOpen();
     const prevId = activeIdRef.current;
     setActiveArticle(article);
     setShareOpen(false);   // 分享浮层属于「上一篇」,换篇即收
@@ -420,7 +453,10 @@ export function useReaderState({
     }
     // 摘要:会话缓存 → 列表条目自带的 summary_zh(服务端缓存)→ 空(显示生成入口)
     setSummarizing(false);
-    setActiveSummary(id ? (summaryCacheRef.current.get(id) ?? article.summary_zh ?? null) : null);
+    setActiveSummary(id ? preferredAnalysisSummary(
+      summaryCacheRef.current.get(id),
+      article.summary_zh,
+    ) : null);
     if (!id) { setActiveBody(null); setActiveBodyLoading(false); return; }
     // 兜底：若列表项偶然已带正文（如详情接口回填），直接用
     if (article.content != null) { setActiveBody(article.content); setActiveBodyLoading(false); return; }
@@ -433,10 +469,20 @@ export function useReaderState({
         const body = data?.content || '';
         bodyCacheRef.current.set(id, body);
         if (activeIdRef.current === id) {
-          // 播客媒体字段可能只在详情响应完整返回；列表项已有的乐观 read_count 等优先保留。
-          if (data?.podcast) {
-            setActiveArticle((prev) => (prev?.id === id ? { ...prev, podcast: data.podcast } : prev));
-          }
+          // 详情响应同时补齐收藏列表未必具备的媒体/分析投影；列表项已有的
+          // 乐观 read_count 等字段仍由浅合并保留。
+          setActiveArticle((prev) => (
+            prev?.id === id
+              ? withFreshAnalysis({ ...prev, ...(data?.podcast ? { podcast: data.podcast } : {}) }, data)
+              : prev
+          ));
+          setArticles((prev) => prev.map((item) => (
+            item.id === id ? withFreshAnalysis(item, data) : item
+          )));
+          setActiveSummary(preferredAnalysisSummary(
+            summaryCacheRef.current.get(id),
+            data?.summary_zh,
+          ));
           setActiveBody(body);
           setActiveBodyLoading(false);
         }
@@ -448,7 +494,7 @@ export function useReaderState({
           showToast(error.message || '获取文章正文失败', 'error');
         }
       });
-  }, [showToast]);
+  }, [showToast, supersedePendingOpen]);
 
   // ── AI · 要点摘要(结果双层缓存:服务端 extensions_json + 本会话 Map)──
   const handleSummarize = useCallback(async () => {
@@ -553,6 +599,124 @@ export function useReaderState({
     if (!append) setFreshCount(0); // 列表已刷新,新内容提示归零
     if (append) setLoadingMore(false); else setArticlesLoading(false);
   }, [activeSourceId, activeSourceHidden, searchQuery, displayTagQuery, favOnly, unreadOnly, mode, showToast, runList]);
+
+  // 分析任务与采集解耦：列表首拉可能拿到 pending/running。只在确有在途项时
+  // 每 30 秒静默重取当前已加载窗口，既不闪骨架屏也不弹失败 toast；响应回写前
+  // 校验 scopeKey，避免切源/搜索后旧轮询污染新列表。
+  const analysisScopeKey = JSON.stringify([
+    activeSourceId,
+    activeSourceHidden,
+    searchQuery,
+    displayTagQuery,
+    favOnly,
+    unreadOnly,
+    mode,
+  ]);
+  const analysisPollingEnabled = !discover && !activeSourceHidden && (
+    articles.some(analysisNeedsPolling)
+    || analysisNeedsPolling(activeArticle)
+  );
+  useEffect(() => {
+    analysisPollContextRef.current = {
+      activeArticle,
+      activeSourceId,
+      articles,
+      displayTagQuery,
+      favOnly,
+      mode,
+      scopeKey: analysisScopeKey,
+      searchQuery,
+      unreadOnly,
+    };
+  }, [
+    activeArticle,
+    activeSourceId,
+    analysisScopeKey,
+    articles,
+    displayTagQuery,
+    favOnly,
+    mode,
+    searchQuery,
+    unreadOnly,
+  ]);
+  const refreshAnalysisStates = useCallback(async () => {
+    const context = analysisPollContextRef.current;
+    if (!context) return;
+    const activeIds = new Set(
+      context.articles
+        .filter(analysisNeedsPolling)
+        .map((article) => article.id),
+    );
+    const selectedNeedsRefresh = analysisNeedsPolling(context.activeArticle)
+      && !activeIds.has(context.activeArticle.id);
+    if (activeIds.size === 0 && !selectedNeedsRefresh) return;
+
+    const filters = {};
+    if (context.activeSourceId) filters.source_id = context.activeSourceId;
+    else if (!context.favOnly) {
+      filters.subscribed_scope = 'only';
+      filters.shape = context.mode;
+    } else {
+      filters.shape = context.mode;
+    }
+    if (context.displayTagQuery) filters.display_tag = context.displayTagQuery;
+    else if (context.searchQuery) filters.search = context.searchQuery;
+    if (!context.favOnly) {
+      filters.with_unread = 'true';
+      if (context.unreadOnly) filters.unread_only = 'true';
+    }
+
+    try {
+      const listRequest = context.favOnly
+        ? fetchFavorites(
+            filters,
+            Math.max(PAGE_SIZE, context.articles.length),
+            0,
+            { includeContent: false },
+          )
+        : fetchArticles(
+            filters,
+            Math.max(PAGE_SIZE, context.articles.length),
+            0,
+            false,
+            { includeContent: false },
+          );
+      const [data, selected] = await Promise.all([
+        listRequest,
+        selectedNeedsRefresh ? fetchArticle(context.activeArticle.id) : Promise.resolve(null),
+      ]);
+      if (analysisPollContextRef.current?.scopeKey !== context.scopeKey) return;
+      const updates = new Map(
+        analysisItemsFromResponse(data).map((article) => [article.id, article]),
+      );
+      if (selected?.id) updates.set(selected.id, selected);
+      setArticles((current) => current
+        .filter((article) => (
+          !context.displayTagQuery || !activeIds.has(article.id) || updates.has(article.id)
+        ))
+        .map((article) => (
+          updates.has(article.id) ? withFreshAnalysis(article, updates.get(article.id)) : article
+        )));
+      setActiveArticle((current) => (
+        current?.id && updates.has(current.id)
+          ? withFreshAnalysis(current, updates.get(current.id))
+          : current
+      ));
+      const selectedId = activeIdRef.current;
+      if (selectedId && updates.has(selectedId)) {
+        setActiveSummary(preferredAnalysisSummary(
+          summaryCacheRef.current.get(selectedId),
+          updates.get(selectedId)?.summary_zh,
+        ));
+      }
+    } catch {
+      // 状态轮询是增强路径；失败保留当前可读结果，等下一周期。
+    }
+  }, []);
+  usePolling(refreshAnalysisStates, ANALYSIS_POLL_MS, {
+    immediate: false,
+    enabled: analysisPollingEnabled,
+  });
 
   // 切换来源/搜索 → 重置列表、回顶、清空右栏
   // 用 useLayoutEffect：在绘制前同步进入加载态，避免「切源瞬间旧列表被画出一帧」的陈旧帧闪现
@@ -979,6 +1143,7 @@ export function useReaderState({
   // ── 视图导航(容器语义):点容器钮=进入该容器聚合(源内时=回到聚合);搜索是叠加开关 ──
   // 任何内容导航都退出发现页(发现是与容器并列的一级视图,占据 条目列+阅读窗)
   const goView = (v) => {
+    supersedePendingOpen();
     setDiscover(false);
     setMode(v);
     setActiveSourceId(null);
@@ -988,6 +1153,7 @@ export function useReaderState({
   };
   // 单源=容器内收窄:源所属容器自动点亮(今日不承担单源,从今日点源即跳入所属容器)
   const goSource = (sourceId) => {
+    supersedePendingOpen();
     setDiscover(false);
     setActiveSourceId(sourceId);
     setMode(shapeOfSource(sourceId));
@@ -1009,10 +1175,15 @@ export function useReaderState({
   // 切作用域+选中该篇一次完成,deepLinkKeepRef 通知清场 effect 保留右栏。
   // silent=true(深链)取不到时静默——收到链接的人对失效无能为力,报错只是噪声;
   // 默认(引用跳转)取不到时 Toast 说明,因为点击者正在等待跳转发生。
+  // 后发为准(codex 检视 P2):慢网下连点两张早报卡,先发的请求后到不得覆盖后点的那篇;
+  // 过时结果不导航、返回 null(与「不在库」的 false 区分,调用方据此决定是否退到原链)。
+  // openSeqRef 声明在 selectArticle 之前,直接导航同样推进它。
   const openArticleById = useCallback(async (articleId, { silent = false } = {}) => {
     if (!articleId) return false;
+    const seq = ++openSeqRef.current;
     try {
       const article = await fetchArticle(articleId);
+      if (seq !== openSeqRef.current) return null;
       if (!article?.id) throw new Error('empty');
       const ctx = deepLinkCtxRef.current;
       onBeforeOpenArticle?.();
@@ -1024,6 +1195,7 @@ export function useReaderState({
       ctx.selectArticle(article);
       return true;
     } catch {
+      if (seq !== openSeqRef.current) return null;
       if (!silent) showToast('这条内容已不在库中', 'error');
       return false;
     }
@@ -1041,8 +1213,8 @@ export function useReaderState({
 
   // 收藏入口(源栏,与「全部XX」并列):看本容器全部收藏(容器级、不逐源)。
   // Folo 语义——收藏是与「全部」并列的一级过滤,不再挂在列头逐源。
-  const goContainerAll = () => { setDiscover(false); setActiveSourceId(null); setFavOnly(false); };
-  const goFavorites = () => { setDiscover(false); setActiveSourceId(null); setFavOnly(true); };
+  const goContainerAll = () => { supersedePendingOpen(); setDiscover(false); setActiveSourceId(null); setFavOnly(false); };
+  const goFavorites = () => { supersedePendingOpen(); setDiscover(false); setActiveSourceId(null); setFavOnly(true); };
   // 搜索开关(条目列头就地展开):关闭即清词(searchQuery 经防抖同步清空,列表回到无过滤)。
   const toggleSearch = () => {
     setSearchOpen((open) => {
@@ -1138,7 +1310,7 @@ export function useReaderState({
     articles, articlesTotal, articlesLoading, loadingMore, hasMore, handleLoadMore,
     listRef, sentinelRef,
     // 选中文章 / 正文
-    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById,
+    activeArticle, activeBody, activeBodyLoading, selectArticle, openArticleById, supersedePendingOpen,
     schedulePrefetch, cancelPrefetch,
     activeIndex, prevArticle, nextArticle,
     crumbSource, crumbHost, crumbName, displayBody, displayTranslatedBody, bodyStats,

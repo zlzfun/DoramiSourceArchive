@@ -1,32 +1,16 @@
-"""Canonical hashing helpers for repository-approved taxonomy catalogs."""
+"""Compatibility exports for generic taxonomy review/recovery scripts."""
 
-from __future__ import annotations
-
-import hashlib
 import hmac
-import json
-from typing import Any
+
+from services.taxonomy_deployment import (
+    compute_manifest_sha256,
+    manifest_core,
+)
 
 
-def manifest_core(catalog: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value
-        for key, value in catalog.items()
-        if key not in {"manifest_sha256", "coverage"}
-    }
+def validate_manifest(catalog):
+    """Keep generic review tools digest-only while sharing canonical hashing."""
 
-
-def compute_manifest_sha256(catalog: dict[str, Any]) -> str:
-    payload = json.dumps(
-        manifest_core(catalog),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def validate_manifest(catalog: dict[str, Any]) -> None:
     expected = str(catalog.get("manifest_sha256") or "")
     actual = compute_manifest_sha256(catalog)
     if not hmac.compare_digest(expected, actual):

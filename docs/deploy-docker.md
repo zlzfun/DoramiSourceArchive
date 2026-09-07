@@ -18,7 +18,7 @@
 docker-compose.yml
 ├── backend  ← docker/backend.Dockerfile(python:3.12-slim-bookworm + uv 锁定依赖
 │              [torch 走 CPU 轮子] + playwright chromium;入口 docker/entrypoint.py:
-│              ensure_migrated → uvicorn 0.0.0.0:8088)
+│              ensure_migrated → taxonomy reconcile → uvicorn 0.0.0.0:8088)
 └── nginx    ← docker/nginx.Dockerfile(多阶段:node 构建 frontend/dist → nginx:alpine
                + docker/nginx.conf;对外唯一端口)
 ```
@@ -26,13 +26,15 @@ docker-compose.yml
 - 数据全部在宿主 `./data`(SQLite / ChromaDB / 媒体库),卷挂载进 `/app/data`;
   容器无状态,可随意重建。
 - `config/production.ini` 只读挂载,不进镜像(`.dockerignore` 同时兜底)。
+- 批准的 Taxonomy catalog 是非机密运行时资产，随 backend 镜像复制；外网配置
+  `[taxonomy] deployment = authority`，内网配置 `replica`，不可从 `role=all` 推断。
 - 机密经环境变量注入(`DORAMI_X_BEARER_TOKEN` 等),宿主 `export` 或项目根 `.env`。
 
 ## 用法
 
 ```bash
 # 首次:准备配置(同裸机路径)
-cp config/production.example.ini config/production.ini   # 改 secret / 账号种子等
+cp config/production.example.ini config/production.ini   # 改 secret / taxonomy deployment 等
 
 # 部署 / 升级(构建 → 起容器 → 健康验证一条龙)
 ./deploy-docker.sh

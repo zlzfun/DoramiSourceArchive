@@ -57,6 +57,7 @@ from services.article_display_tags import article_ids_for_flexible_label, load_d
 from services import reader_state as reader_state_service
 from services import source_visibility as source_visibility_service
 from services import user_sources as user_sources_service
+from services import sync_consumer_policy
 
 router = APIRouter(tags=["articles"])
 
@@ -64,6 +65,23 @@ router = APIRouter(tags=["articles"])
 def _app():
     """延迟取 api.app（避免导入环；动态调用其留守的 current_username）。"""
     return importlib.import_module("api.app")
+
+
+def _require_local_article_governance(
+    session: Session,
+    source_id: str,
+    *,
+    analysis_authority_id: str = "",
+) -> None:
+    if (analysis_authority_id or "").strip() or not sync_consumer_policy.local_source_operation_allowed(
+        session,
+        source_id,
+        operation="governance",
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="v2 接收端的公共文章由远端权威节点管理，本机不能新增、修改或删除",
+        )
 
 
 def _analysis_assets(
@@ -103,6 +121,7 @@ def _analysis_assets(
                 "name_en": tag.name_en,
                 "is_primary": assignment.is_primary,
                 "relevance": assignment.relevance,
+                "assignment_source": assignment.assignment_source,
             }
         )
     return analyses, tags
@@ -511,6 +530,9 @@ async def get_article(article_id: str, request: Request):
 @router.post("/api/articles")
 async def create_article_manual(params: dict = Body(...)):
     """接收前端传来的手工录入数据并入库"""
+    source_id = str(params.get("source_id", "manual") or "manual")
+    with Session(deps.get_db_sink().engine) as session:
+        _require_local_article_governance(session, source_id)
     content_obj = GenericContent(
         id=params.get("id"),
         title=params.get("title", "未命名"),
@@ -520,7 +542,7 @@ async def create_article_manual(params: dict = Body(...)):
         has_content=True if params.get("content") else False
     )
     content_obj.content_type = params.get("content_type", "manual_entry")
-    content_obj.source_id = params.get("source_id", "manual")
+    content_obj.source_id = source_id
 
     # 扩展字段经 extra_extensions 通道随 serialize_to_metadata 落库——
     # 旧写法逐键 setattr 不进 dataclass fields(),extensions_json 静默丢失
@@ -562,6 +584,14 @@ def _maybe_rewind_daily_brief_cursor(record) -> None:
 @router.delete("/api/articles/{article_id:path}")
 async def delete_article(article_id: str):
     db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        authority_record = session.get(ArticleRecord, article_id)
+        if authority_record is not None:
+            _require_local_article_governance(
+                session,
+                authority_record.source_id,
+                analysis_authority_id=authority_record.analysis_authority_id,
+            )
     record = await db_sink.get(article_id)
     if not record:
         raise HTTPException(status_code=404, detail="文章未找到")
@@ -573,6 +603,16 @@ async def delete_article(article_id: str):
 @router.post("/api/articles/batch-delete")
 async def batch_delete_articles(params: BatchOpParams):
     db_sink = deps.get_db_sink()
+    with Session(db_sink.engine) as session:
+        records = session.exec(
+            select(ArticleRecord).where(ArticleRecord.id.in_(params.ids))
+        ).all()
+        for record in records:
+            _require_local_article_governance(
+                session,
+                record.source_id,
+                analysis_authority_id=record.analysis_authority_id,
+            )
     for uid in params.ids:
         record = await db_sink.get(uid)
         if record:
@@ -591,11 +631,32 @@ class ArticleUpdateParams(BaseModel):
 @router.put("/api/articles/{article_id:path}")
 async def update_article(article_id: str, params: ArticleUpdateParams):
     db_sink = deps.get_db_sink()
-    update_data = {k: v for k, v in params.dict().items() if v is not None}
-    success = await db_sink.update(article_id, update_data)
-    if not success:
-        raise HTTPException(status_code=404, detail="更新失败")
-    _app().queue_article_analysis_after_commit([article_id])
+    update_data = {k: v for k, v in params.model_dump().items() if v is not None}
+    with Session(db_sink.engine) as session:
+        record = session.get(ArticleRecord, article_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="更新失败")
+        _require_local_article_governance(
+            session,
+            record.source_id,
+            analysis_authority_id=record.analysis_authority_id,
+        )
+        for key, value in update_data.items():
+            setattr(record, key, value)
+        session.add(record)
+        enabled = article_analysis_service.read_feature_flag(
+            session,
+            article_analysis_service.ARTICLE_ANALYSIS_ENABLED_KEY,
+            default=False,
+        )
+        # The faithful article mutation, its monotonic archive watermark (ORM
+        # before_update hook), and content-hash invalidation enter one commit.
+        article_analysis_service.queue_article_analysis(
+            session,
+            article_id,
+            enabled=enabled,
+        )
+        session.commit()
     return {"status": "success"}
 
 

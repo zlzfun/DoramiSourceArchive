@@ -87,3 +87,60 @@ def test_collection_result_surfaces_partial_failure(monkeypatch, tmp_path):
     assert result["failed_count"] == 1
     assert result["saved_count"] == 1
     assert "bad_fetcher: bad article failed" in result["error_message"]
+
+
+def test_collection_result_aggregates_analysis_queue_count(monkeypatch, tmp_path):
+    import api.app as app_module
+
+    sink = _make_sink(tmp_path, "collection_analysis_queue_count.db")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+
+    async def fake_run(fetcher_id, params, **_kwargs):
+        queued = int(params["queued"])
+        return {
+            "fetcher_id": fetcher_id,
+            "status": "success",
+            "run_id": queued,
+            "fetched_count": queued,
+            "saved_count": queued,
+            "skipped_count": 0,
+            "saved_content_ids": [f"article-{fetcher_id}"],
+            "analysis_queued_count": queued,
+        }
+
+    monkeypatch.setattr(app_module, "run_fetcher_with_tracking", fake_run)
+    result = asyncio.run(app_module.run_collection_items(
+        [
+            {"fetcher_id": "one", "params": {"queued": 1}},
+            {"fetcher_id": "two", "params": {"queued": 2}},
+        ],
+        name="analysis queue count",
+    ))
+
+    assert result["analysis_queued_count"] == 3
+    assert [item["analysis_queued_count"] for item in result["results"]] == [1, 2]
+
+
+def test_post_commit_hook_counts_only_newly_queued_analysis(monkeypatch, tmp_path):
+    import api.app as app_module
+    from models.db import AppSettingRecord, ArticleRecord
+
+    sink = _make_sink(tmp_path, "post_commit_analysis_queue_count.db")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    with Session(sink.engine) as session:
+        session.add(AppSettingRecord(key="article_analysis_enabled", value="true"))
+        session.add(ArticleRecord(
+            id="eligible",
+            title="Eligible",
+            content_type="article",
+            source_id="platform",
+            source_url="https://example.test/eligible",
+            publish_date="2026-09-04T00:00:00+00:00",
+            fetched_date="2026-09-04T00:00:00+00:00",
+            has_content=True,
+            content="enough body",
+        ))
+        session.commit()
+
+    assert app_module.queue_article_analysis_after_commit(["eligible", "eligible", "missing"]) == 1
+    assert app_module.queue_article_analysis_after_commit(["eligible"]) == 0

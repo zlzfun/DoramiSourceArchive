@@ -276,12 +276,24 @@ function fmtDate(iso) {
   return iso ? iso.slice(0, 16).replace('T', ' ') : '—';
 }
 
+function syncTotals(result) {
+  if (!result?.streams) return result || {};
+  return Object.values(result.streams).reduce((totals, stream) => ({
+    pulled: totals.pulled + Number(stream.count || 0),
+    imported: totals.imported + Number(stream.inserted || 0),
+    updated: totals.updated + Number(stream.updated || 0),
+    skipped: totals.skipped,
+    errors: totals.errors,
+  }), { pulled: 0, imported: 0, updated: 0, skipped: 0, errors: 0 });
+}
+
 function RemoteSyncCard({ showToast, onArticlesChanged }) {
   const [form, setForm] = useState({ baseUrl: '', username: '', password: '' });
   const [targets, setTargets] = useState({});
   const [probe, setProbe] = useState(null);
   const [probing, setProbing] = useState(false);
   const [mode, setMode] = useState('full'); // full | incremental | custom
+  const [protocol, setProtocol] = useState('v2');
   const [customStart, setCustomStart] = useState('');
   const [job, setJob] = useState(null); // 运行中/终态的后台任务
   const [starting, setStarting] = useState(false);
@@ -315,7 +327,7 @@ function RemoteSyncCard({ showToast, onArticlesChanged }) {
     setProbing(true);
     setProbe(null);
     try {
-      const result = await testRemoteSync(form.baseUrl, form.username, form.password);
+      const result = await testRemoteSync(form.baseUrl, form.username, form.password, protocol);
       setProbe(result);
       showToast('远端连接正常', 'success');
     } catch (error) {
@@ -340,7 +352,8 @@ function RemoteSyncCard({ showToast, onArticlesChanged }) {
         if (current.status === 'succeeded' || current.status === 'failed' || current.status === 'cancelled') {
           if (current.status === 'succeeded') {
             const r = current.result || {};
-            showToast(`同步完成:新增 ${r.imported ?? 0},回填 ${r.updated ?? 0},跳过 ${r.skipped ?? 0}`, r.errors ? 'info' : 'success');
+            const totals = syncTotals(r);
+            showToast(`同步完成:新增 ${totals.imported ?? 0},回填 ${totals.updated ?? 0},跳过 ${totals.skipped ?? 0}`, totals.errors ? 'info' : 'success');
             onArticlesChanged?.();
             fetchRemoteSyncStatus().then(data => setTargets(data?.state?.targets || {})).catch(() => {});
           } else if (current.status === 'failed') {
@@ -359,8 +372,9 @@ function RemoteSyncCard({ showToast, onArticlesChanged }) {
     setStarting(true);
     try {
       const options = {};
-      if (mode === 'incremental' && lastTarget?.last_fetched_date) options.fetchedDateStart = lastTarget.last_fetched_date;
-      if (mode === 'custom' && customStart) options.fetchedDateStart = customStart;
+      options.protocol = protocol;
+      if (protocol === 'v1' && mode === 'incremental' && lastTarget?.last_fetched_date) options.fetchedDateStart = lastTarget.last_fetched_date;
+      if (protocol === 'v1' && mode === 'custom' && customStart) options.fetchedDateStart = customStart;
       const { job_id: jobId } = await startRemoteSync(form.baseUrl, form.username, form.password, options);
       setJob({ job_id: jobId, status: 'queued', processed: 0, total: null });
       pollJobLoop(jobId);
@@ -383,6 +397,13 @@ function RemoteSyncCard({ showToast, onArticlesChanged }) {
       </p>
 
       <div className="sett-sync-fields">
+        <label className="sett-field">
+          <span className="sett-field-lbl">同步协议</span>
+          <select value={protocol} onChange={e => { setProtocol(e.target.value); setProbe(null); }} className="form-input" disabled={running}>
+            <option value="v2">v2 一致性全流同步</option>
+            <option value="v1">v1 文章归档兼容</option>
+          </select>
+        </label>
         <label className="sett-field">
           <span className="sett-field-lbl">远端地址</span>
           <input
@@ -425,11 +446,14 @@ function RemoteSyncCard({ showToast, onArticlesChanged }) {
             <div><span className="tiny-meta block">远端版本</span><b>{probe.version || '未知'}</b></div>
             <div><span className="tiny-meta block">文章总量</span><b>{probe.article_total ?? '未知'}</b></div>
             <div><span className="tiny-meta block">数据格式</span><b>{probe.schema_version}</b></div>
+            {probe.authority_id && <div><span className="tiny-meta block">数据权威</span><b className="font-mono">{probe.authority_id}</b></div>}
           </div>
         </div>
       )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-3">
+      {protocol === 'v2' ? (
+        <p className="tiny-meta mt-3">v2 首次按各数据流自动全量同步，之后从各自 checkpoint 增量继续；时间范围无需手动指定。</p>
+      ) : <div className="mt-3 flex flex-wrap items-center gap-3">
         <span className="sett-field-lbl">同步范围</span>
         <div className="mini-seg" role="group" aria-label="同步范围">
           <button type="button" onClick={() => setMode('full')} className={`mini-seg-btn ${mode === 'full' ? 'is-on' : ''}`}>全量</button>
@@ -457,7 +481,7 @@ function RemoteSyncCard({ showToast, onArticlesChanged }) {
         {mode === 'incremental' && lastTarget?.last_fetched_date && (
           <span className="tiny-meta">自 {fmtDate(lastTarget.last_fetched_date)} 起</span>
         )}
-      </div>
+      </div>}
 
       <div className="sett-sync-foot">
         {lastTarget && !running && (
@@ -495,13 +519,18 @@ function RemoteSyncCard({ showToast, onArticlesChanged }) {
             </>
           ) : job.status === 'succeeded' ? (
             <>
+              {(() => {
+                const totals = syncTotals(job.result);
+                return (
               <div className="sett-sync-stats">
-                <div><span className="tiny-meta block">拉取</span><b>{job.result?.pulled ?? 0}</b></div>
-                <div><span className="tiny-meta block">新增</span><b>{job.result?.imported ?? 0}</b></div>
-                <div><span className="tiny-meta block">回填</span><b>{job.result?.updated ?? 0}</b></div>
-                <div><span className="tiny-meta block">跳过</span><b>{job.result?.skipped ?? 0}</b></div>
-                <div><span className="tiny-meta block">错误</span><b className={job.result?.errors ? 'text-rose-500' : ''}>{job.result?.errors ?? 0}</b></div>
+                <div><span className="tiny-meta block">拉取</span><b>{totals.pulled ?? 0}</b></div>
+                <div><span className="tiny-meta block">新增</span><b>{totals.imported ?? 0}</b></div>
+                <div><span className="tiny-meta block">回填</span><b>{totals.updated ?? 0}</b></div>
+                <div><span className="tiny-meta block">跳过</span><b>{totals.skipped ?? 0}</b></div>
+                <div><span className="tiny-meta block">错误</span><b className={totals.errors ? 'text-rose-500' : ''}>{totals.errors ?? 0}</b></div>
               </div>
+                );
+              })()}
               {(job.result?.error_samples?.length ?? 0) > 0 && (
                 <pre className="mt-3 max-h-32 overflow-auto rounded-[var(--r-control)] bg-[var(--dorami-well)] p-3 text-xs font-semibold text-rose-600">
                   {JSON.stringify(job.result.error_samples.slice(0, 5), null, 2)}
@@ -562,6 +591,10 @@ function RemoteSyncScheduleCard({ showToast }) {
   const [updatedAt, setUpdatedAt] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [protocol, setProtocol] = useState('v2');
+  const [requiresProtocolSelection, setRequiresProtocolSelection] = useState(false);
+  const [protocolDowngradeBlocked, setProtocolDowngradeBlocked] = useState(false);
+  const [sourceIds, setSourceIds] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -572,6 +605,11 @@ function RemoteSyncScheduleCard({ showToast }) {
       setUsername(data.username || '');
       setPasswordSet(Boolean(data.password_set));
       setUpdatedAt(data.updated_at || '');
+      const needsChoice = Boolean(data.migration_required);
+      setProtocol(data.protocol || (needsChoice ? '' : 'v2'));
+      setRequiresProtocolSelection(Boolean(data.migration_required));
+      setProtocolDowngradeBlocked(Boolean(data.protocol_downgrade_blocked));
+      setSourceIds(Array.isArray(data.source_ids) ? data.source_ids : []);
       const parsed = freqFromCron(data.cron);
       setFreq(parsed.freq);
       setDailyTime(parsed.dailyTime);
@@ -582,6 +620,10 @@ function RemoteSyncScheduleCard({ showToast }) {
 
   const handleSave = async () => {
     const cron = cronFromFreq(freq, dailyTime, customCron);
+    if (!protocol) {
+      showToast('旧定时配置需要明确选择 v1 或 v2 同步协议', 'error');
+      return;
+    }
     if (enabled) {
       if (!baseUrl.trim() || !username.trim()) {
         showToast('启用定时同步需要填写远端地址与账号', 'error');
@@ -604,10 +646,13 @@ function RemoteSyncScheduleCard({ showToast }) {
         base_url: baseUrl.trim(),
         username: username.trim(),
         password,
-        source_ids: [],
+        source_ids: protocol === 'v1' ? sourceIds : [],
+        protocol,
       });
       setPasswordSet(Boolean(data?.password_set ?? (passwordSet || password)));
       setUpdatedAt(data?.updated_at || updatedAt);
+      setRequiresProtocolSelection(Boolean(data?.migration_required));
+      setProtocolDowngradeBlocked(Boolean(data?.protocol_downgrade_blocked));
       setPassword('');
       showToast(enabled ? '定时同步已开启' : '定时同步已保存(未启用)', 'success');
     } catch (error) {
@@ -636,8 +681,26 @@ function RemoteSyncScheduleCard({ showToast }) {
         到点自动从下方远端做增量拉取(自上次成功位置,无记录则全量)。
         凭据会保存在本端、仅用于定时任务且不回显——建议在远端使用专用同步账号。
       </p>
+      {requiresProtocolSelection && (
+        <div className="sett-sync-panel text-sm font-semibold text-amber-700 dark:text-amber-300" role="alert">
+          检测到升级前的来源过滤配置，定时同步已安全停用。请明确选择 v1 兼容或 v2 全流协议并保存后再启用。
+        </div>
+      )}
+      {protocolDowngradeBlocked && (
+        <div className="sett-sync-panel text-sm font-semibold text-amber-700 dark:text-amber-300" role="alert">
+          本机已进入 v2 consumer 模式，原 v1 定时配置不会运行。请改选 v2 保存，或先停 worker 并恢复升级前备份。
+        </div>
+      )}
 
       <div className="sett-sync-fields">
+        <label className="sett-field">
+          <span className="sett-field-lbl">同步协议</span>
+          <select value={protocol} onChange={e => setProtocol(e.target.value)} className="form-input" disabled={loading}>
+            {requiresProtocolSelection && <option value="" disabled>请选择同步协议</option>}
+            <option value="v2">v2 一致性全流同步</option>
+            <option value="v1">v1 文章归档兼容</option>
+          </select>
+        </label>
         <label className="sett-field">
           <span className="sett-field-lbl">远端地址</span>
           <input

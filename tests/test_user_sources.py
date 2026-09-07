@@ -39,6 +39,16 @@ _FEED_XML = b"""<?xml version="1.0" encoding="utf-8"?>
 def test_canonical_feed_url_normalization():
     from services import user_sources
 
+    assert user_sources.feed_url_has_credentials(
+        "https://private.example/feeds/a81f9c4d38bb479ca09372fe/token.xml"
+    ) is True
+    assert user_sources.feed_url_has_credentials(
+        "https://private.example/feed.xml?subscriber=Abc123Def456Ghi789Jkl012"
+    ) is True
+    assert user_sources.feed_url_has_credentials(
+        "https://www.youtube.com/feeds/videos.xml?channel_id=UC_x5XG1OV2P6uZZ5FSM9Ttw"
+    ) is False
+
     assert user_sources.canonical_feed_url("HTTPS://Blog.Example.com:443/feed/") == \
         "https://blog.example.com/feed"
     assert user_sources.canonical_feed_url("http://a.com:80/rss.xml#frag") == "http://a.com/rss.xml"
@@ -48,6 +58,45 @@ def test_canonical_feed_url_normalization():
     for bad in ("", "ftp://a.com/feed", "not-a-url"):
         with pytest.raises(ValueError):
             user_sources.canonical_feed_url(bad)
+
+
+def test_feed_url_credentials_are_classified_conservatively():
+    from services import user_sources
+
+    assert user_sources.feed_url_has_credentials("https://feeds.example.com/rss?token=secret")
+    assert user_sources.feed_url_has_credentials("https://u:p@feeds.example.com/rss")
+    assert user_sources.feed_url_has_credentials(
+        "https://feeds.example.com/rss?subscriber=Abc123Def456Ghi789Jkl012"
+    )
+    assert user_sources.feed_url_has_credentials(
+        "https://feeds.example.com/rss?authkey=shortsecret"
+    )
+    assert user_sources.feed_url_has_credentials(
+        "https://feeds.example.com/rss?session=abcdefghijklmnopqrstuvwxyzabcdef"
+    )
+    assert user_sources.feed_url_has_credentials(
+        "https://feeds.example.com/abcdefghijklmnopqrstuvwxyzabcdef"
+    )
+    assert not user_sources.feed_url_has_credentials("https://feeds.example.com/rss?q=AI")
+    assert not user_sources.feed_url_has_credentials(
+        "https://feeds.example.com/rss?q=Abc123Def456Ghi789Jkl012"
+    )
+
+
+def test_malformed_custom_source_policy_fails_closed():
+    from models.db import SourceConfigRecord
+    from services import user_sources
+
+    record = SourceConfigRecord(
+        source_id="user_rss_malformed",
+        name="Malformed",
+        owner_username="alice",
+        url="https://feeds.example.com/public.xml",
+        params_json="{legacy-secret-not-json",
+        created_at="now",
+        updated_at="now",
+    )
+    assert user_sources.source_is_credentialed(record) is True
 
 
 def test_source_id_prefix_and_stability():
@@ -111,6 +160,30 @@ def test_fetch_feed_preview_ssrf_rejected():
 
     with pytest.raises(SSRFError):
         asyncio.run(user_sources.fetch_feed_preview("http://127.0.0.1/feed"))
+
+
+def test_fetch_feed_preview_rechecks_every_redirect(monkeypatch):
+    from services import media_store, user_sources
+    from services.media_store import SSRFError
+
+    checked = []
+
+    async def _guard(host):
+        checked.append(host)
+        if host == "127.0.0.1":
+            raise SSRFError("blocked redirect")
+
+    def _redirect(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "blog.example.com":
+            return httpx.Response(302, headers={"Location": "http://127.0.0.1/feed"})
+        raise AssertionError("private redirect target must never be requested")
+
+    monkeypatch.setattr(media_store, "ensure_public_host", _guard)
+    with pytest.raises(SSRFError):
+        asyncio.run(user_sources.fetch_feed_preview(
+            "https://blog.example.com/feed", transport=httpx.MockTransport(_redirect)
+        ))
+    assert checked == ["blog.example.com", "127.0.0.1"]
 
 
 # ==================== 端点测试基建 ====================
@@ -183,10 +256,11 @@ def test_add_custom_source_end_to_end(monkeypatch, tmp_path):
             record = session.get(SourceConfigRecord, source_id)
             assert record is not None and record.owner_username == "alice"
             assert record.source_type == "rss" and record.category == "user"
-            assert record.ai_analysis_enabled is False
+            assert record.ai_analysis_enabled is True
             params = jsonlib.loads(record.params_json)
             # 最简正文拍板:feed 给什么存什么,永不触发详情补抓
             assert params["fetch_detail_if_missing"] is False
+            assert params["credentialed_private"] is False
 
         # 添加即订阅;目录里可见且带 user_source 标记
         catalog = client.get("/api/reader/sources").json()
@@ -198,12 +272,43 @@ def test_add_custom_source_end_to_end(monkeypatch, tmp_path):
         assert [i["source_id"] for i in listing["items"]] == [source_id]
         assert listing["quota"]["used"] == 1
 
-        denied = client.put(
+        unchanged = client.put(
             f"/api/reader/custom-sources/{source_id}/ai-analysis",
             json={"enabled": True},
         )
-        assert denied.status_code == 409
-        assert "逐订阅用户授权" in denied.json()["detail"]
+        assert unchanged.status_code == 200
+        assert unchanged.json()["ai_analysis_enabled"] is True
+
+
+def test_credentialed_custom_source_disables_analysis_and_public_share(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path, "credentialed_custom.db")
+    from models.db import SourceConfigRecord
+    from services import user_sources
+
+    with TestClient(app_module.app) as client:
+        _login(client, "alice", "alice")
+        created = _add(client, "https://blog.example.com/feed?token=reader-secret").json()
+        source_id = created["source_id"]
+        _seed_article(app_module.db_sink.engine, "private-feed-item", source_id)
+
+        with Session(app_module.db_sink.engine) as session:
+            record = session.get(SourceConfigRecord, source_id)
+            assert record.ai_analysis_enabled is False
+            assert user_sources.source_is_credentialed(record) is True
+
+        denied_analysis = client.put(
+            f"/api/reader/custom-sources/{source_id}/ai-analysis",
+            json={"enabled": True},
+        )
+        assert denied_analysis.status_code == 409
+        assert "不发送到 MaaS" in denied_analysis.json()["detail"]
+
+        denied_share = client.post(
+            "/api/reader/articles/private-feed-item/share",
+            json={"expires_in_days": 7},
+        )
+        assert denied_share.status_code == 403
+        assert "含凭证" in denied_share.json()["detail"]
 
 
 def test_preview_endpoint_returns_entries_and_quota(monkeypatch, tmp_path):

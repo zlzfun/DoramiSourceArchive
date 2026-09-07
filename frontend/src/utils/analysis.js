@@ -31,9 +31,11 @@ export function displayAnalysisTags(article) {
 
 export function displayTagProps(tag) {
   const extracted = tag?.type === 'extracted';
+  // 不挂 title:原生 tooltip 是一块黑框,「规范标签」说不出任何读者关心的事,
+  // 长句更把内部术语漏到读者面(issue #23 验收:读者面不得出现「个性化日报」)。
+  // 虚线小签可点检索的语义由 AnalysisTagChip 的 aria-label + 悬停提墨承担。
   return {
     className: `reader-tag-chip${extracted ? ' is-extracted' : ''}`,
-    title: extracted ? 'AI 灵活标签；点击可临时检索，不参与长期兴趣和个性化日报选文' : '规范标签',
   };
 }
 
@@ -43,10 +45,69 @@ export function primaryAnalysisLabel(article) {
 
 export function qualityScoreText(value) {
   // issue #12:Number(null) === 0 会把「未分析」画成 0 分;分数只可能是 null 或 [1,10]。
-  if (value == null || value === '') return '';
+  if (value == null || (typeof value === 'string' && value.trim() === '')) return '';
   const number = Number(value);
   if (!Number.isFinite(number)) return '';
   return number.toFixed(number % 1 ? 1 : 0);
+}
+
+export function hasReadableAnalysis(article) {
+  if (typeof article?.analysis_has_result === 'boolean') return article.analysis_has_result;
+  const machineTag = displayAnalysisTags(article).some((tag) => (
+    tag?.type === 'extracted' || tag?.assignment_source === 'llm'
+  ));
+  return Boolean(
+    qualityScoreText(article?.quality_score)
+    || article?.content_genre
+    || machineTag
+  );
+}
+
+export function analysisNeedsPolling(article) {
+  const status = article?.analysis_status;
+  return status === 'pending' || status === 'running' || (
+    (status === 'failed' || status === 'timeout')
+    && Boolean(article?.analysis_next_attempt_at)
+  );
+}
+
+export function preferredAnalysisSummary(cachedSummary, incomingSummary) {
+  return cachedSummary ?? incomingSummary ?? null;
+}
+
+export function analysisItemsFromResponse(response) {
+  if (Array.isArray(response)) return response;
+  return Array.isArray(response?.items) ? response.items : [];
+}
+
+/**
+ * Human-facing analysis state. Terminal errors stay hidden from readers by
+ * default; admin surfaces opt in with includeTerminal so internal enum values
+ * never leak into UI copy. A pending/running row that still carries a readable
+ * result is a forced refresh and therefore says “更新中” rather than pretending
+ * the old score disappeared.
+ */
+export function analysisStatusMeta(article, { podcast = false, includeTerminal = false } = {}) {
+  const status = article?.analysis_status;
+  const refreshing = hasReadableAnalysis(article);
+  if (status === 'pending') {
+    return {
+      label: refreshing ? (podcast ? '简介更新中…' : '更新中…') : (podcast ? '简介分析中…' : '正在分析…'),
+      cls: 'stamp-run',
+    };
+  }
+  if (status === 'running') {
+    return {
+      label: refreshing ? (podcast ? '简介更新中…' : '更新中…') : (podcast ? '简介分析中…' : '正在分析…'),
+      cls: 'stamp-run',
+    };
+  }
+  if (!includeTerminal) return null;
+  if (status === 'failed') return { label: '分析失败', cls: 'stamp-bad' };
+  if (status === 'timeout') return { label: '分析超时', cls: 'stamp-warn' };
+  if (status === 'skipped') return { label: '未执行分析', cls: 'stamp-idle' };
+  if (!status) return { label: '尚未分析', cls: 'stamp-idle' };
+  return null;
 }
 
 export const SCORE_DISCLAIMER = 'AI 内容价值评估，用于辅助筛选，不代表事实保证或你的个人评分';

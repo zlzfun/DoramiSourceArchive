@@ -26,6 +26,7 @@ from models.db import (
 from services import personal_digest as digest_service
 from services.article_analysis import source_allows_analysis
 from services.article_time import in_time_window
+from services.source_naming import friendly_source_name
 
 
 router = APIRouter(
@@ -126,8 +127,19 @@ def serialize_edition(
         "taxonomy_version": edition.taxonomy_version,
         "interest_version": edition.interest_version,
         "generation_reason": edition.generation_reason,
+        "rebuild_queued": bool(edition.desired_requested_at),
+        "sync_stale": bool(edition.sync_stale),
+        "analysis_incomplete": bool(edition.analysis_incomplete),
         "degraded_reason": edition.degraded_reason,
         "error": edition.error,
+        "readiness": (
+            readiness_progress(session, edition)
+            if edition.status in {
+                PersonalDigestStatus.PENDING.value,
+                PersonalDigestStatus.GENERATING.value,
+            }
+            else None
+        ),
         "items": items,
     }
 
@@ -144,14 +156,14 @@ def _latest_edition(session: Session, username: str, report_date: str) -> Person
     ).first()
 
 
-def _sources_ready(
+def _source_readiness(
     session: Session,
     edition: PersonalDigestEditionRecord,
     now: dt.datetime,
-) -> bool:
+) -> dict[str, Any]:
     due = tuple(str(value) for value in _parse_json(edition.due_source_ids_json, []) if value)
     if not due:
-        return True
+        return {"total": 0, "completed": 0, "pending": 0, "pending_sources": []}
     configs = {
         row.source_id: row
         for row in session.exec(select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(due))).all()
@@ -163,7 +175,9 @@ def _sources_ready(
     day_start = dt.datetime.combine(
         dt.date.fromisoformat(edition.report_date), dt.time.min, digest_service.SHANGHAI
     )
+    pending_sources: list[dict[str, str]] = []
     for source_id in due:
+        ready = False
         # The public daily brief is synthesized into the article ledger rather
         # than collected by a fetcher, so it intentionally has no source-state
         # row.  Treat today's persisted brief as its readiness signal; without
@@ -179,44 +193,63 @@ def _sources_ready(
                 )
             ).first()
             if public_brief is None:
-                return False
-            continue
-        config = configs.get(source_id)
-        private = source_id.startswith(digest_service.PRIVATE_SOURCE_PREFIX) or bool(
-            config and config.owner_username
-        )
-        if private:
-            if source_id in digest_service.calculate_due_source_ids(
-                session, [source_id], as_of=now
-            ):
-                return False
-            continue
-        state = states.get(source_id)
-        completed = _parse_time(state.last_completed_at) if state else None
-        if (
-            state is None
-            or state.status not in TERMINAL_SOURCE_STATES
-            or completed is None
-            or completed < day_start
-        ):
-            return False
-    return True
+                ready = False
+            else:
+                ready = True
+        else:
+            config = configs.get(source_id)
+            private = source_id.startswith(digest_service.PRIVATE_SOURCE_PREFIX) or bool(
+                config and config.owner_username
+            )
+            if private:
+                ready = source_id not in digest_service.calculate_due_source_ids(
+                    session, [source_id], as_of=now
+                )
+            else:
+                state = states.get(source_id)
+                completed = _parse_time(state.last_completed_at) if state else None
+                ready = bool(
+                    state is not None
+                    and state.status in TERMINAL_SOURCE_STATES
+                    and completed is not None
+                    and completed >= day_start
+                )
+        if not ready:
+            config = configs.get(source_id)
+            pending_sources.append({
+                "source_id": source_id,
+                "name": (config.name if config and config.name else friendly_source_name(source_id)),
+            })
+    return {
+        "total": len(due),
+        "completed": len(due) - len(pending_sources),
+        "pending": len(pending_sources),
+        "pending_sources": pending_sources,
+    }
 
 
-def _analysis_ready(
+def _sources_ready(
     session: Session,
     edition: PersonalDigestEditionRecord,
     now: dt.datetime,
 ) -> bool:
+    return _source_readiness(session, edition, now)["pending"] == 0
+
+
+def _analysis_readiness(
+    session: Session,
+    edition: PersonalDigestEditionRecord,
+    now: dt.datetime,
+) -> dict[str, int]:
     if not _enabled(session, ARTICLE_ANALYSIS_ENABLED_KEY):
-        return True
+        return {"total": 0, "completed": 0, "pending": 0}
     source_ids = [
         str(value)
         for value in _parse_json(edition.expected_source_ids_json, [])
         if value and source_allows_analysis(session, str(value))
     ]
     if not source_ids:
-        return True
+        return {"total": 0, "completed": 0, "pending": 0}
     since = now - dt.timedelta(hours=72)
     coarse_start = (since - dt.timedelta(days=1)).date().isoformat()
     coarse_end = (now + dt.timedelta(days=1)).date().isoformat()
@@ -230,12 +263,12 @@ def _analysis_ready(
             )
         ).all()
     )
-    article_ids = [
-        article_id for article_id, fetched_date in article_rows
+    article_ids = sorted({
+        str(article_id) for article_id, fetched_date in article_rows
         if in_time_window(fetched_date, start=since, end=now)
-    ]
+    })
     if not article_ids:
-        return True
+        return {"total": 0, "completed": 0, "pending": 0}
     finished = {
         row.article_id for row in session.exec(
             select(ArticleAnalysisRecord).where(
@@ -254,7 +287,39 @@ def _analysis_ready(
             )
         ).all()
     }
-    return len(finished) == len(set(article_ids))
+    completed = len(finished.intersection(article_ids))
+    return {
+        "total": len(article_ids),
+        "completed": completed,
+        "pending": len(article_ids) - completed,
+    }
+
+
+def readiness_progress(
+    session: Session,
+    edition: PersonalDigestEditionRecord,
+    *,
+    now: dt.datetime | None = None,
+) -> dict[str, Any]:
+    current = (now or dt.datetime.now(digest_service.SHANGHAI)).astimezone(
+        digest_service.SHANGHAI
+    )
+    deadline = _parse_time(edition.deadline_at)
+    check_after = _parse_time(edition.check_after)
+    return {
+        "sources": _source_readiness(session, edition, current),
+        "analysis": _analysis_readiness(session, edition, current),
+        "check_started": check_after is None or current >= check_after,
+        "deadline_reached": deadline is not None and current >= deadline,
+    }
+
+
+def _analysis_ready(
+    session: Session,
+    edition: PersonalDigestEditionRecord,
+    now: dt.datetime,
+) -> bool:
+    return _analysis_readiness(session, edition, now)["pending"] == 0
 
 
 def process_pending_edition(
@@ -280,7 +345,9 @@ def process_pending_edition(
         return edition
     deadline = _parse_time(edition.deadline_at)
     forced = deadline is not None and current >= deadline
-    if not forced and (not _sources_ready(session, edition, current) or not _analysis_ready(session, edition, current)):
+    sources_ready = _sources_ready(session, edition, current)
+    analysis_ready = _analysis_ready(session, edition, current)
+    if not forced and (not sources_ready or not analysis_ready):
         return edition
     edition, generation_token = digest_service.claim_personal_digest_generation(
         session, edition.id, now=current
@@ -295,6 +362,8 @@ def process_pending_edition(
             now=current,
             pending_edition_id=edition.id,
             generation_token=generation_token,
+            sync_stale=forced and not sources_ready,
+            analysis_incomplete=forced and not analysis_ready,
         )
     except Exception as exc:  # noqa: BLE001 - persist lifecycle failure without content
         session.rollback()
@@ -358,6 +427,22 @@ def process_pending_editions(engine: Engine) -> int:
             after = process_pending_edition(session, edition)
             if before != after.status:
                 completed += 1
+        # Desired intents live on their generating carrier revision.  Scan them
+        # after lifecycle work so a just-completed revision can materialize one
+        # coalesced successor in the same scheduler tick.  A process restart is
+        # safe because the marker stays durable until successor creation wins.
+        session.expire_all()
+        intents = list(session.exec(
+            select(PersonalDigestEditionRecord).where(
+                PersonalDigestEditionRecord.desired_requested_at.is_not(None),
+                PersonalDigestEditionRecord.status.notin_([
+                    PersonalDigestStatus.PENDING.value,
+                    PersonalDigestStatus.GENERATING.value,
+                ]),
+            )
+        ).all())
+        for carrier in intents:
+            digest_service.materialize_desired_personal_digest_revision(session, carrier)
         return completed
 
 

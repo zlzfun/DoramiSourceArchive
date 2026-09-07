@@ -12,21 +12,25 @@ deps.get_db_sink()。
 
 import hashlib
 import hmac
+import importlib
 import json
 import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlmodel import Session, select
 from starlette.responses import JSONResponse as StarletteJSONResponse
+from starlette.responses import FileResponse
 
 from api import deps
 from api.articles_view import apply_article_query_filters
 from api.textutils import _coerce_bool, _date_end_value, _json_loads, _now_iso
-from models.db import ArticleRecord
+from models.db import ArticleRecord, SourceConfigRecord
 from services import article_analysis as article_analysis_service
+from services import sync_consumer_policy
 from services.podcast_metadata import json_object, merge_podcast_publisher_metadata
+from services import archive_sync_v2
 
 router = APIRouter(tags=["archive-sync"])
 
@@ -312,10 +316,15 @@ def export_archive_articles_jsonl(
             query = query.where(sync_cursor >= fetched_date_start)
         if fetched_date_end:
             query = query.where(sync_cursor <= _date_end_value(fetched_date_end))
-        # 用户自定源(v3.40 私有订阅资产)不随归档同步外发:内网 reader/下游仓不吃私有内容。
+        # 用户自定源不随归档同步外发：其正文只留在采集它的内网 Dorami。
         from services.user_sources import USER_SOURCE_PREFIX
 
-        query = query.where(~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True))
+        query = query.outerjoin(
+            SourceConfigRecord, SourceConfigRecord.source_id == ArticleRecord.source_id
+        ).where(
+            ~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True),
+            or_(SourceConfigRecord.source_id.is_(None), SourceConfigRecord.owner_username == ""),
+        )
         records = session.exec(
             query.order_by(sync_cursor.asc(), ArticleRecord.id.asc()).offset(skip).limit(safe_limit)
         ).all()
@@ -328,9 +337,129 @@ def export_archive_articles_jsonl(
 
 @router.post("/api/archive/import/articles.jsonl")
 async def import_archive_articles_jsonl(request: Request):
+    with Session(deps.get_db_sink().engine) as session:
+        if sync_consumer_policy.v2_receiver_state_present(session):
+            raise HTTPException(
+                status_code=409,
+                detail="本机已进入 v2 consumer 模式，禁止 legacy v1 归档导入",
+            )
     raw_text = (await request.body()).decode("utf-8")
     if not raw_text.strip():
         raise HTTPException(status_code=400, detail="导入内容不能为空")
     result = import_archive_sync_jsonl(raw_text)
     status_code = 400 if result["error_count"] and not (result["imported_count"] or result["updated_count"]) else 200
     return StarletteJSONResponse(result, status_code=status_code)
+
+
+# ==================== V2 分流快照同步 ====================
+
+@router.get("/api/archive/v2/export/{stream}.jsonl")
+def export_archive_v2_jsonl(
+    stream: str,
+    snapshot: str = "",
+    since: str = "",
+    after: str = "",
+    limit: int = 1000,
+):
+    """按共享事务 revision snapshot 导出 keyset 页；不使用 offset。"""
+    try:
+        body = archive_sync_v2.export_page(
+            deps.get_db_sink().engine,
+            stream,
+            snapshot=snapshot,
+            since=since,
+            after=after,
+            limit=limit,
+        )
+    except archive_sync_v2.SyncV2Error as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(content=body, media_type="application/x-ndjson; charset=utf-8")
+
+
+@router.post("/api/archive/v2/candidate-evidence.jsonl")
+async def import_archive_v2_candidate_evidence(request: Request):
+    """内网向 taxonomy authority 提交最小化自定 RSS 候选证据。"""
+    raw_text = (await request.body()).decode("utf-8")
+    try:
+        return archive_sync_v2.import_candidate_evidence_page(
+            deps.get_db_sink().engine,
+            raw_text,
+        )
+    except archive_sync_v2.SyncV2Error as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/archive/v2/presence")
+async def archive_v2_authoritative_presence(request: Request):
+    """Confirm candidate rows against the producer's current public base tables."""
+
+    try:
+        payload = await request.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("identities"), list):
+            raise archive_sync_v2.SyncV2Error("presence request must contain identities")
+        stream = str(payload.get("stream") or "")
+        requested = [str(value or "") for value in payload["identities"]]
+        present = archive_sync_v2.authority_present_identities(
+            deps.get_db_sink().engine,
+            stream,
+            requested,
+        )
+        return {
+            "schema_version": archive_sync_v2.SCHEMA_VERSION,
+            "capability": archive_sync_v2.AUTHORITATIVE_PRESENCE_CAPABILITY,
+            "authority_id": archive_sync_v2.producer_authority_id(
+                deps.get_db_sink().engine
+            ),
+            "stream": stream,
+            "requested": requested,
+            "present": present,
+        }
+    except (ValueError, archive_sync_v2.SyncV2Error) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/archive/v2/import/{stream}.jsonl")
+async def import_archive_v2_jsonl(stream: str, request: Request):
+    """先完整校验一页，再单事务应用；坏行不会留下半页数据。"""
+    raw_text = (await request.body()).decode("utf-8")
+    try:
+        result = archive_sync_v2.import_page(
+            deps.get_db_sink().engine,
+            raw_text,
+            expected_stream=stream,
+        )
+    except archive_sync_v2.SyncV2Error as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result
+
+
+@router.get("/api/archive/v2/media/{url_hash}")
+def export_archive_v2_media(url_hash: str):
+    """仅导出已在 media manifest 中登记的图片字节；不包含 Podcast 音频。"""
+    from models.db import MediaAssetRecord
+
+    with Session(deps.get_db_sink().engine) as session:
+        record = session.get(MediaAssetRecord, url_hash)
+        public_reference = bool(
+            record is not None
+            and archive_sync_v2.is_public_media_reference(session, record.url)
+        )
+    if (
+        record is None
+        or record.status != "cached"
+        or not record.content_hash
+        or not public_reference
+    ):
+        raise HTTPException(status_code=404, detail="media asset not found")
+    app_module = importlib.import_module("api.app")
+    store = getattr(app_module, "media_store", None)
+    if store is None:
+        raise HTTPException(status_code=404, detail="media store disabled")
+    path = store.file_path_for(record)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="media file missing")
+    return FileResponse(
+        path,
+        media_type=record.mime or "application/octet-stream",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
