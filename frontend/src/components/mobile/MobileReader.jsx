@@ -74,6 +74,8 @@ export default function MobileReader({
   // 我的兴趣(issue #23 第二项):整页层(从 我的 进),首登引导自动打开一次但不锁层——返回键可退,
   // 「我的」行挂点直到完成或跳过
   const [interestOpen, setInterestOpen] = useState(false);
+  const interestOpenRef = useRef(interestOpen); // 引导完成回调只在兴趣层仍开着时才跳早报(同桌面)
+  useEffect(() => { interestOpenRef.current = interestOpen; }, [interestOpen]);
   const [interestVersion, setInterestVersion] = useState(0);
   const closeBriefBeforeArticleOpen = useCallback(() => {
     setTab((current) => (current === 'brief' ? 'article' : current));
@@ -284,6 +286,7 @@ export default function MobileReader({
             showToast={showToast}
             interestVersion={interestVersion}
             restore={briefRestore}
+            supersedePendingOpen={supersedePendingOpen}
             onManageSubscriptions={() => openDiscover()}
             onOpenArticle={async (articleId, ctx) => {
               const opened = await openArticleById(articleId, { silent: true });
@@ -556,6 +559,7 @@ export default function MobileReader({
               setInterestVersion((value) => value + 1);
               if (onboardingCompleted) {
                 onUserUpdated?.({ interest_onboarding_completed: true });
+                if (!interestOpenRef.current) return;
                 setInterestOpen(false);
                 setBriefRestore(null);
                 setTab('brief');

@@ -238,7 +238,10 @@ export default function InterestPage({
           savedRef.current = stances;
           onSavedRef.current?.({ onboardingCompleted: false });
         });
-      }).catch(() => {});
+      }).catch((err) => {
+        // 这是唯一发出的 PUT,失败不能静默——Toast 管道在父级,卸载后仍可用(codex 检视 P2)
+        showToastRef.current?.(err?.message || '保存兴趣失败，最后的改动未能保存', 'error');
+      });
     }
     window.clearTimeout(stateTimerRef.current);
   }, []);

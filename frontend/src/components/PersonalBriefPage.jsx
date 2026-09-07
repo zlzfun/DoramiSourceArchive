@@ -191,6 +191,7 @@ export default function PersonalBriefPage({
   showToast,
   onManageSubscriptions,
   onOpenArticle,
+  supersedePendingOpen = null, // 直接开外链前作废在途的站内打开(慢网下先点内链卡再点社交卡)
   sourceMap = {},
   interestVersion = 0,
   mobile = false,
@@ -375,6 +376,7 @@ export default function PersonalBriefPage({
   const openItem = async (item) => {
     const snapshot = item.snapshot || {};
     if (isSocialRow(item) && snapshot.source_url) {
+      supersedePendingOpen?.(); // 之前点的内链卡若仍在途,作废它,别让迟到响应把早报换成那篇
       window.open(snapshot.source_url, '_blank', 'noopener,noreferrer');
       return;
     }
@@ -396,6 +398,7 @@ export default function PersonalBriefPage({
       if (opened === false) openExternal(snapshot, { afterAwait: true });
       return;
     }
+    supersedePendingOpen?.();
     openExternal(snapshot);
   };
 

@@ -277,6 +277,10 @@ export default function ReaderTab({
   // 点击即保存(页内 600ms 合并),没有草稿态,离开无需确认;首登引导自动打开一次但不锁页
   // (视图轨照常可走,轨钮挂点直到完成或跳过)。
   const [interestOpen, setInterestOpen] = useState(false);
+  // 引导完成的 PUT 在途时读者可能已从视图轨走开(刻意不锁页):完成回调只在兴趣页仍开着时才跳早报,
+  // 否则会把已经在看的文章/源/发现页拉走(codex 检视 P2);经 ref 读最新值——回调被卸载页的 ref 持有
+  const interestOpenRef = useRef(interestOpen);
+  useEffect(() => { interestOpenRef.current = interestOpen; }, [interestOpen]);
   const [interestVersion, setInterestVersion] = useState(0);
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
@@ -723,6 +727,7 @@ export default function ReaderTab({
           interestVersion={interestVersion}
           sourceMap={sourceMap}
           restore={briefRestore}
+          supersedePendingOpen={supersedePendingOpen}
           onManageSubscriptions={() => { setBriefOpen(false); leaveBriefTrail(); openDiscover(); }}
           onOpenArticle={async (articleId, ctx) => {
             // 结果回传早报页:false=不在库(早报页退到原链),null=被更晚的点击盖过(不动)
@@ -745,6 +750,7 @@ export default function ReaderTab({
             setInterestVersion((value) => value + 1);
             if (onboardingCompleted) {
               onUserUpdated?.({ interest_onboarding_completed: true });
+              if (!interestOpenRef.current) return; // 读者已走开,只记完成、不跳
               setInterestOpen(false);
               setBriefRestore(null);
               setBriefOpen(true);
