@@ -229,15 +229,18 @@ def test_preview_config_web(monkeypatch):
 def test_preview_config_podcast_routes_to_podcast_fetcher(monkeypatch):
     from fetchers.impl.podcast_rss_fetcher import GenericPodcastRssFetcher
 
-    class _Resp:
-        def __init__(self, text, url):
-            self.content = text.encode()
-            self.url = url
+    async def fake_public_host(_host):
+        return None
 
-    async def fake_safe_get(self, client, url, **kwargs):
-        return _Resp(PODCAST_XML, url)
+    async def fake_fetch_feed(self, client, url, max_bytes, **kwargs):
+        return PODCAST_XML.encode()
 
-    monkeypatch.setattr(GenericPodcastRssFetcher, "_safe_get", fake_safe_get)
+    monkeypatch.setattr(source_builder, "ensure_public_host", fake_public_host)
+    monkeypatch.setattr(
+        GenericPodcastRssFetcher,
+        "_fetch_feed_limited",
+        fake_fetch_feed,
+    )
 
     result = _run(source_builder.preview_config({
         "source_id": "podcast_demo_preview",

@@ -1130,6 +1130,33 @@ def test_custom_candidate_evidence_uses_fixed_snapshot_keyset_pages(tmp_path):
         )
 
 
+def test_fetch_v2_podcast_page_streams_with_a_hard_byte_limit():
+    requested = []
+
+    def handler(request):
+        requested.append(dict(request.url.params))
+        return httpx.Response(200, content=b"x" * 33)
+
+    async def exercise():
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            await remote_sync_service._fetch_v2_page(  # noqa: SLF001
+                client,
+                "https://remote.test",
+                "session=ok",
+                stream="podcast_texts",
+                snapshot="",
+                since="",
+                after="",
+                limit=1,
+                max_bytes=32,
+            )
+
+    with pytest.raises(remote_sync_service.RemoteSyncError, match="页面超过字节上限"):
+        asyncio.run(exercise())
+    assert requested == [{"limit": "1", "page_max_bytes": "32"}]
+
+
 class _V2Remote:
     def __init__(self, producer, *, fail_stream=""):
         self.producer = producer
@@ -1164,6 +1191,11 @@ class _V2Remote:
                     since=params.get("since", ""),
                     after=params.get("after", ""),
                     limit=int(params.get("limit", 1000)),
+                    podcast_text_requested_page_max_bytes=(
+                        int(params["page_max_bytes"])
+                        if "page_max_bytes" in params
+                        else None
+                    ),
                 ),
             )
         if path == "/api/archive/v2/presence":
@@ -1188,6 +1220,43 @@ class _V2Remote:
         return httpx.Response(404)
 
 
+class _LegacySixStreamV2Remote(_V2Remote):
+    """A v3 producer that predates the optional Podcast text stream."""
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        response = super().handler(request)
+        if response.status_code != 200 or not request.url.path.startswith(
+            "/api/archive/v2/export/"
+        ):
+            return response
+        lines = response.text.splitlines()
+        manifest = json.loads(lines[0])
+        manifest["capabilities"] = list(archive_sync_v2.REQUIRED_CAPABILITIES)
+        return httpx.Response(
+            200,
+            text="\n".join([json.dumps(manifest), *lines[1:]]) + "\n",
+        )
+
+
+def test_podcast_text_capability_is_advertised_but_not_globally_required(tmp_path):
+    producer = _sink(tmp_path, "producer-capability-split.db")
+    manifest, _ = archive_sync_v2.parse_page(
+        archive_sync_v2.export_page(producer.engine, "sources"),
+        expected_stream="sources",
+    )
+
+    assert set(archive_sync_v2.REQUIRED_CAPABILITIES) < set(
+        archive_sync_v2.ADVERTISED_CAPABILITIES
+    )
+    assert (
+        archive_sync_v2.PODCAST_TEXT_PUBLICATIONS_CAPABILITY
+        in manifest["capabilities"]
+    )
+    archive_sync_v2.require_transaction_revision_capability(
+        {"capabilities": list(archive_sync_v2.REQUIRED_CAPABILITIES)}
+    )
+
+
 def test_probe_v2_returns_remote_authority(tmp_path):
     producer = _sink(tmp_path, "producer-probe-v2.db")
     with Session(producer.engine) as session:
@@ -1208,6 +1277,163 @@ def test_probe_v2_returns_remote_authority(tmp_path):
     assert archive_sync_v2.TRANSACTION_REVISION_CAPABILITY in result["capabilities"]
     assert remote.requested_streams == ["sources", "taxonomy"]
     assert result["taxonomy_ready"] is True
+
+
+def test_probe_and_pull_keep_legacy_six_stream_peer_compatible(tmp_path):
+    producer = _sink(tmp_path, "producer-legacy-six-stream.db")
+    consumer = _sink(tmp_path, "consumer-legacy-six-stream.db")
+    with Session(producer.engine) as session:
+        session.add(_source())
+        session.add(TaxonomyVersionRecord(
+            version=1,
+            status="active",
+            created_at="2026-09-01T00:00:00+00:00",
+        ))
+        session.commit()
+    remote = _LegacySixStreamV2Remote(producer)
+    transport = httpx.MockTransport(remote.handler)
+
+    probed = asyncio.run(remote_sync_service.probe(
+        "https://remote.test", "admin", "secret",
+        protocol="v2", transport=transport,
+    ))
+    assert probed["capabilities"] == list(archive_sync_v2.REQUIRED_CAPABILITIES)
+    remote.requested_streams.clear()
+    result = asyncio.run(remote_sync_service.run_pull_v2(
+        engine=consumer.engine,
+        base_url="https://remote.test",
+        username="admin",
+        password="secret",
+        media_root=tmp_path / "legacy-six-stream-media",
+        expected_authority_id=probed["authority_id"],
+        expected_capabilities=probed["capabilities"],
+        transport=transport,
+    ))
+
+    assert remote.requested_streams == list(remote_sync_service.V2_LEGACY_STREAM_ORDER)
+    assert tuple(result["streams"]) == remote_sync_service.V2_LEGACY_STREAM_ORDER
+    assert "podcast_texts" not in result["streams"]
+
+
+def test_pull_negotiates_podcast_text_before_source_readiness(tmp_path):
+    producer = _sink(tmp_path, "producer-podcast-order.db")
+    consumer = _sink(tmp_path, "consumer-podcast-order.db")
+    with Session(producer.engine) as session:
+        session.add(_source())
+        session.commit()
+    remote = _V2Remote(producer)
+
+    result = asyncio.run(remote_sync_service.run_pull_v2(
+        engine=consumer.engine,
+        base_url="https://remote.test",
+        username="admin",
+        password="secret",
+        media_root=tmp_path / "podcast-order-media",
+        expected_capabilities=list(archive_sync_v2.ADVERTISED_CAPABILITIES),
+        podcast_text_page_max_bytes=4096,
+        podcast_text_page_max_rows=1,
+        transport=httpx.MockTransport(remote.handler),
+    ))
+
+    assert remote.requested_streams == list(remote_sync_service.V2_STREAM_ORDER)
+    assert tuple(result["streams"]) == remote_sync_service.V2_STREAM_ORDER
+    podcast_request = next(
+        params for stream, params in remote.requested_params if stream == "podcast_texts"
+    )
+    assert podcast_request["limit"] == "1"
+    assert podcast_request["page_max_bytes"] == "4096"
+    assert result["streams"]["podcast_texts"]["snapshot"] == result["streams"][
+        "source_states"
+    ]["snapshot"]
+
+
+def test_pull_rejects_optional_capability_change_between_streams(tmp_path):
+    producer = _sink(tmp_path, "producer-capability-change.db")
+    consumer = _sink(tmp_path, "consumer-capability-change.db")
+    with Session(producer.engine) as session:
+        session.add(_source())
+        session.commit()
+
+    class CapabilityChangingRemote(_V2Remote):
+        def handler(self, request: httpx.Request) -> httpx.Response:
+            response = super().handler(request)
+            if response.status_code != 200 or not request.url.path.endswith(
+                "/taxonomy.jsonl"
+            ):
+                return response
+            lines = response.text.splitlines()
+            manifest = json.loads(lines[0])
+            manifest["capabilities"] = list(archive_sync_v2.REQUIRED_CAPABILITIES)
+            return httpx.Response(
+                200,
+                text="\n".join([json.dumps(manifest), *lines[1:]]) + "\n",
+            )
+
+    remote = CapabilityChangingRemote(producer)
+    with pytest.raises(remote_sync_service.RemoteSyncError, match="同步中发生变化"):
+        asyncio.run(remote_sync_service.run_pull_v2(
+            engine=consumer.engine,
+            base_url="https://remote.test",
+            username="admin",
+            password="secret",
+            media_root=tmp_path / "capability-change-media",
+            transport=httpx.MockTransport(remote.handler),
+        ))
+    assert remote.requested_streams == ["sources", "taxonomy"]
+
+
+def test_checkpoint_accepts_only_negotiated_streams(tmp_path):
+    consumer = _sink(tmp_path, "consumer-negotiated-checkpoint.db")
+    base_url = "https://remote.test"
+    authority_id = "producer-a"
+    checkpoint = {
+        "authority_id": authority_id,
+        "snapshot": "1",
+        "cursor": "",
+    }
+    with Session(consumer.engine) as session:
+        remote_sync_service.prepare_transaction_revision_consumer(
+            session,
+            base_url=base_url,
+            username="admin",
+            authority_id=authority_id,
+            schema_version=archive_sync_v2.SCHEMA_VERSION,
+            prepared_at="2026-09-05T00:00:00+00:00",
+            capabilities=list(archive_sync_v2.REQUIRED_CAPABILITIES),
+        )
+        session.commit()
+    with pytest.raises(ValueError, match="unnegotiated"):
+        remote_sync_service.record_v2_stream_success(
+            consumer.engine,
+            base_url=base_url,
+            username="admin",
+            stream="podcast_texts",
+            checkpoint=checkpoint,
+            synced_at="2026-09-05T01:00:00+00:00",
+        )
+
+    with Session(consumer.engine) as session:
+        remote_sync_service.prepare_transaction_revision_consumer(
+            session,
+            base_url=base_url,
+            username="admin",
+            authority_id=authority_id,
+            schema_version=archive_sync_v2.SCHEMA_VERSION,
+            prepared_at="2026-09-05T02:00:00+00:00",
+            capabilities=list(archive_sync_v2.ADVERTISED_CAPABILITIES),
+        )
+        session.commit()
+    remote_sync_service.record_v2_stream_success(
+        consumer.engine,
+        base_url=base_url,
+        username="admin",
+        stream="podcast_texts",
+        checkpoint=checkpoint,
+        synced_at="2026-09-05T03:00:00+00:00",
+    )
+    assert "podcast_texts" in remote_sync_service.load_sync_state(
+        consumer.engine
+    )["targets"][base_url]["v2_streams"]
 
 
 def test_probe_rejects_unpublished_taxonomy_before_consumer_transition(tmp_path):

@@ -313,26 +313,28 @@ class GenericPodcastRssFetcher(GenericRssFetcher):
         # 与 generic_rss 一致：运行时配置源 ID 是最终归档来源身份。
         self.source_id = runtime_source_id
 
+        # Podcast feeds are external input regardless of whether they came from
+        # the curated catalog or a user.  Always apply the public-network guard
+        # on every redirect hop and clamp mutable source params to the operator
+        # configured hard ceiling.  This also makes safer limits take effect for
+        # catalog rows created by an older release without rewriting the rows.
+        from config import settings
+
         is_user_source = runtime_source_id.startswith(("user_rss_", "user_podcast_"))
-        ssrf_guard = is_user_source or self._bool_param(kwargs.get("ssrf_guard"), False)
-        max_response_bytes = self._positive_int_param(kwargs.get("max_response_bytes"), 0)
+        configured_cap = settings.podcast.feed_max_bytes
+        requested_cap = self._positive_int_param(
+            kwargs.get("max_response_bytes"), configured_cap
+        )
+        max_response_bytes = min(requested_cap or configured_cap, configured_cap)
         if is_user_source:
             user_cap = 5 * 1024 * 1024
-            max_response_bytes = min(max_response_bytes or user_cap, user_cap)
-        if ssrf_guard:
-            from urllib.parse import urlsplit
-
-            from services.media_store import ensure_public_host
-
-            await ensure_public_host(urlsplit(feed_url).hostname or "")
-
-        if max_response_bytes:
-            feed_bytes = await self._fetch_feed_limited(client, feed_url, max_response_bytes)
-        else:
-            response = await self._safe_get(client, feed_url)
-            if not response:
-                raise RuntimeError(f"Podcast RSS/Atom 请求失败: {feed_url}")
-            feed_bytes = response.content
+            max_response_bytes = min(max_response_bytes, user_cap)
+        feed_bytes = await self._fetch_feed_limited(
+            client,
+            feed_url,
+            max_response_bytes,
+            timeout_seconds=settings.podcast.feed_timeout_seconds,
+        )
 
         parsed_feed = feedparser.parse(feed_bytes)
         if parsed_feed.bozo:

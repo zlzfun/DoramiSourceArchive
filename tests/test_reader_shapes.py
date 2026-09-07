@@ -193,7 +193,6 @@ def test_reader_sources_payload_carries_shape(monkeypatch, tmp_path):
             created_at="2026-07-20T00:00:00",
             updated_at="2026-07-20T00:00:00",
         ))
-        session.commit()
         write_user_cache(
             session,
             "x_configured_zero",

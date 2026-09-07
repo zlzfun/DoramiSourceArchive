@@ -88,10 +88,13 @@ def query_subscription_articles(
         session=session,
     )
     # 管理面隐藏的源在单订阅令牌交付中同样下架（读者面临时不可见的一部分）。
-    hidden = source_visibility.hidden_source_ids(session)
-    if hidden:
+    unavailable = source_visibility.reader_unavailable_source_ids(session)
+    if unavailable:
         query = query.where(
-            or_(ArticleRecord.source_id.is_(None), ArticleRecord.source_id.notin_(sorted(hidden)))
+            or_(
+                ArticleRecord.source_id.is_(None),
+                ArticleRecord.source_id.notin_(sorted(unavailable)),
+            )
         )
     # 用户自定源隔离(v3.40 检视返修 F1):未显式圈定来源的订阅=「全库」语义,
     # 必须减去全部用户源——私有内容只经订阅者本人显式列出的 source_ids 可达
@@ -130,7 +133,7 @@ def resolve_subscribed_source_ids(
     for sub in subs:
         collected.update(subscription_source_ids(sub))
     if not include_hidden:
-        collected -= source_visibility.hidden_source_ids(session)
+        collected -= source_visibility.reader_unavailable_source_ids(session)
     return sorted(collected)
 
 
@@ -158,7 +161,7 @@ def resolve_all_visible_source_ids(session: Session) -> List[str]:
         str(value) for value in rows
         if value and not str(value).startswith(USER_SOURCE_PREFIX)
     }
-    collected -= source_visibility.hidden_source_ids(session)
+    collected -= source_visibility.reader_unavailable_source_ids(session)
     return sorted(collected)
 
 
@@ -191,8 +194,10 @@ def resolve_subscription_sources_by_token(token: str) -> Optional[List[str]]:
         ).first()
         if record:
             # 减去管理面隐藏的源；减空即空作用域（MCP 契约中空列表 = 应返回空，不会放大）。
-            hidden = source_visibility.hidden_source_ids(session)
-            return [sid for sid in subscription_source_ids(record) if sid not in hidden]
+            unavailable = source_visibility.reader_unavailable_source_ids(session)
+            return [
+                sid for sid in subscription_source_ids(record) if sid not in unavailable
+            ]
         owner = resolve_feed_token_owner(session, token)
         if owner is not None:
             user = session.get(UserRecord, owner)

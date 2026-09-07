@@ -21,7 +21,6 @@ from models.db import SourceConfigRecord
 
 CATALOG_VERIFIED_AT = "2026-09-03"
 DEFAULT_FETCH_LIMIT = 20
-DEFAULT_MAX_RESPONSE_BYTES = 20 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -156,18 +155,33 @@ def list_podcast_catalog(session: Session | None = None) -> dict[str, Any]:
     }
 
 
-def _record_params(source: PodcastCatalogSource) -> dict[str, Any]:
+def _record_params(
+    source: PodcastCatalogSource, *, feed_max_bytes: int | None = None
+) -> dict[str, Any]:
+    if feed_max_bytes is None:
+        # Resolve lazily so load_config()/tests can replace configuration without
+        # a stale module-level copy.  Runtime fetching clamps this persisted
+        # value again, so later reductions also protect existing source rows.
+        from config import settings
+
+        feed_max_bytes = settings.podcast.feed_max_bytes
     return {
         "catalog": "ouyan-guanlan-2026-09",
         "catalog_verified_at": CATALOG_VERIFIED_AT,
         "language": source.language,
         "launch_tier": source.launch_tier,
         "limit": DEFAULT_FETCH_LIMIT,
-        "max_response_bytes": DEFAULT_MAX_RESPONSE_BYTES,
+        "max_response_bytes": int(feed_max_bytes),
     }
 
 
-def _apply_catalog_fields(record: SourceConfigRecord, source: PodcastCatalogSource, now: str) -> None:
+def _apply_catalog_fields(
+    record: SourceConfigRecord,
+    source: PodcastCatalogSource,
+    now: str,
+    *,
+    feed_max_bytes: int | None = None,
+) -> None:
     record.name = source.name
     record.source_type = "podcast"
     record.url = source.feed_url
@@ -188,7 +202,11 @@ def _apply_catalog_fields(record: SourceConfigRecord, source: PodcastCatalogSour
     record.fetch_reliability = "high" if source.ingest_status == "ready" else "blocked"
     record.fetch_interval_minutes = 360
     record.cron_expr = ""
-    record.params_json = json.dumps(_record_params(source), ensure_ascii=False, sort_keys=True)
+    record.params_json = json.dumps(
+        _record_params(source, feed_max_bytes=feed_max_bytes),
+        ensure_ascii=False,
+        sort_keys=True,
+    )
     record.updated_at = now
 
 
@@ -198,13 +216,13 @@ def import_podcast_catalog(
     source_ids: Iterable[str] | None = None,
     activate: bool = False,
     update_existing: bool = False,
-    include_blocked: bool = False,
+    feed_max_bytes: int | None = None,
 ) -> dict[str, Any]:
     """Idempotently import selected catalog rows into ``source_configs``.
 
-    With no explicit IDs, all currently ready sources are selected. Existing rows
-    are never changed unless ``update_existing`` is true. Blocked sources require an
-    explicit ``include_blocked`` opt-in even if their IDs were supplied.
+    With no explicit IDs, every catalog source is selected. Existing rows are never
+    changed unless ``update_existing`` is true. Feed-health metadata is informative
+    and never acts as an admission gate.
     """
     by_id = catalog_by_id()
     requested = list(dict.fromkeys(str(item).strip() for item in (source_ids or []) if str(item).strip()))
@@ -215,17 +233,19 @@ def import_podcast_catalog(
 
     created: list[str] = []
     updated: list[str] = []
+    activated: list[str] = []
     skipped_existing: list[str] = []
-    skipped_blocked: list[dict[str, str]] = []
     now = datetime.now().isoformat()
 
     for source in selected:
-        if source.ingest_status != "ready" and not include_blocked:
-            skipped_blocked.append({"source_id": source.source_id, "reason": source.status_note})
-            continue
         record = session.get(SourceConfigRecord, source.source_id)
         if record is not None and not update_existing:
             skipped_existing.append(source.source_id)
+            if record.source_type == "podcast" and activate:
+                record.is_active = True
+                record.updated_at = now
+                session.add(record)
+                activated.append(record.source_id)
             continue
         if record is None:
             record = SourceConfigRecord(
@@ -237,10 +257,15 @@ def import_podcast_catalog(
             created.append(source.source_id)
         else:
             updated.append(source.source_id)
-        previous_active = bool(record.is_active)
-        _apply_catalog_fields(record, source, now)
-        # Updating metadata must not silently disable an already active source.
-        record.is_active = bool(activate or previous_active) if source.source_id in updated else activate
+        previous_active = False if source.source_id in created else bool(record.is_active)
+        _apply_catalog_fields(
+            record, source, now, feed_max_bytes=feed_max_bytes
+        )
+        session.add(record)
+        session.flush()
+        record.is_active = bool(previous_active or activate)
+        if activate and not previous_active:
+            activated.append(record.source_id)
         session.add(record)
 
     session.commit()
@@ -248,24 +273,23 @@ def import_podcast_catalog(
         "selected": len(selected),
         "created": created,
         "updated": updated,
+        "activated": activated,
         "skipped_existing": skipped_existing,
-        "skipped_blocked": skipped_blocked,
         "activate": activate,
         "update_existing": update_existing,
     }
 
 
 def ensure_default_podcast_sources(engine: Any) -> dict[str, Any]:
-    """Install all ready catalog entries once, inactive and without overwrites.
+    """Install every catalog entry once, inactive and without overwrites.
 
     This intentionally delegates to the same idempotent importer exposed to admins:
     new catalog additions appear after a later restart, while local edits, activation
-    choices, and the explicitly blocked catalog entry remain untouched.
+    choices remain untouched.
     """
     with Session(engine) as session:
         return import_podcast_catalog(
             session,
             activate=False,
             update_existing=False,
-            include_blocked=False,
         )

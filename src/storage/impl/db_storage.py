@@ -2,16 +2,19 @@ import json
 import os
 from typing import Optional, Dict, Any, Iterable
 from sqlalchemy import inspect, text, event
+from sqlalchemy.pool import NullPool
 from sqlmodel import Session, create_engine, select
 from storage.base import BaseStorage
 from models.content import BaseContent, serialize_to_metadata
 from models.db import (
     ArticleRecord,
     SQLModel,
+    SourceConfigRecord,
     next_article_archive_revision,
 )
 from services.podcast_metadata import merge_podcast_publisher_metadata
 from services import sync_consumer_policy
+from services.podcast_stage_policy import PodcastStageDenied, require_stage as require_podcast_stage
 
 
 _PLACEHOLDER_ARTICLE_TITLES = {
@@ -38,7 +41,20 @@ class DatabaseStorage(BaseStorage):
         # SQLite：允许跨线程复用连接（asyncio.to_thread / APScheduler 线程池下会用到），
         # 并在每个新连接上启用 WAL（读不阻塞写）+ busy_timeout（写竞争时自动等待而非立即报错）。
         connect_args = {"check_same_thread": False} if is_sqlite else {}
-        self.engine = create_engine(db_url, echo=False, connect_args=connect_args)
+        engine_options = {}
+        if is_sqlite and db_url != "sqlite:///:memory:":
+            # File-backed SQLite connections are cheap and the dashboard opens many
+            # read endpoints at once.  Keeping the default 5+10 QueuePool creates an
+            # artificial ceiling where request-scoped sessions can all wait for a
+            # pooled connection.  NullPool still closes each connection with its
+            # Session, while allowing the web/thread concurrency to be the limit.
+            engine_options["poolclass"] = NullPool
+        self.engine = create_engine(
+            db_url,
+            echo=False,
+            connect_args=connect_args,
+            **engine_options,
+        )
         if is_sqlite:
             self._enable_sqlite_pragmas(
                 self.engine,
@@ -173,6 +189,22 @@ class DatabaseStorage(BaseStorage):
                 # A fetch that started before an Archive Sync authority handoff
                 # or v2 consumer activation must not commit afterwards.
                 return False
+            if getattr(item, "content_type", "") == "podcast_episode":
+                source = session.get(SourceConfigRecord, item.source_id)
+                if (
+                    source is None
+                    or source.source_type != "podcast"
+                    or not source.is_active
+                ):
+                    # This is the last transactional fence before a fetched
+                    # Podcast episode becomes durable.  False tells the pipeline
+                    # that no item was committed and keeps it out of downstream
+                    # analysis/media queues.
+                    return False
+                try:
+                    require_podcast_stage("fetch", boundary="commit")
+                except PodcastStageDenied:
+                    return False
             existing = session.get(ArticleRecord, item.id)
             if existing:
                 if (

@@ -354,7 +354,11 @@ def _sqlite_concurrency_check(database_url: str, writers: int) -> dict[str, Any]
 
 def _deadline_degrade_check(database_url: str) -> dict[str, Any]:
     storage = DatabaseStorage(database_url)
-    now = dt.datetime.now(SHANGHAI).replace(microsecond=0)
+    # Keep this synthetic lifecycle within one report day.  Using the actual
+    # late-night wall clock can move the 15-minute deadline into tomorrow,
+    # where the production historical-date guard correctly refuses generation.
+    report_day = dt.datetime.now(SHANGHAI).date()
+    now = dt.datetime.combine(report_day, dt.time(9, 0), SHANGHAI)
     username = "wp7-deadline-user"
     source_id = "wp7_release_source"
     article_id = "wp7-deadline-article"

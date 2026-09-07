@@ -60,11 +60,23 @@ class GenericRssFetcher(BaseFetcher):
             {"field": "detail_max_chars", "label": "详情页正文最大字符", "type": "number", "default": cls.default_detail_max_chars},
         ]
 
-    async def _fetch_feed_limited(self, client: httpx.AsyncClient, feed_url: str, max_bytes: int) -> bytes:
+    async def _fetch_feed_limited(
+        self,
+        client: httpx.AsyncClient,
+        feed_url: str,
+        max_bytes: int,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> bytes:
         """流式拉取 feed：每跳 SSRF 复检并限制响应体积。"""
         from services.http_safety import fetch_public_bytes_limited
 
-        return await fetch_public_bytes_limited(client, feed_url, max_bytes=max_bytes)
+        return await fetch_public_bytes_limited(
+            client,
+            feed_url,
+            max_bytes=max_bytes,
+            timeout_seconds=timeout_seconds,
+        )
 
     def _entry_id(self, runtime_source_id: str, entry: Any) -> str:
         stable_value = (
