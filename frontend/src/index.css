@@ -70,7 +70,7 @@
      （checkbox/radio/下拉等）会跟随操作系统外观——OS 处于深色模式时，
      浅色 App 里的勾选框会被系统渲染成深色方块。暗色主题另行覆盖为 dark。 */
   color-scheme: light;
-  color: #0b1220;
+  color: var(--dorami-ink);
   background: #eef1f6;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -331,7 +331,7 @@ input[type="radio"] {
 
 ::selection {
   background: rgba(91, 84, 232, 0.18);
-  color: #0b1220;
+  color: var(--dorami-ink);
 }
 
 /* ── Keyframes ── */
@@ -5269,7 +5269,7 @@ input[type="radio"] {
   .source-name {
     font-size: 13.5px;
     font-weight: 700;
-    color: #1e293b;
+    color: var(--dorami-ink);
   }
 
   .source-sub {
@@ -8900,10 +8900,15 @@ input[type="radio"] {
   .reader-tr-seg-btn.is-on.is-ai { background: var(--grad-ai-wash); }
   .reader-tr-seg-btn.is-on.is-ai svg { stroke: url(#ai-grad) var(--dorami-accent); }
 
-  /* 播客详情顶部播放器:原节目永远在首位且明示；中文精华存在时作为第二轨展示。 */
-  .podcast-player-panel {
+  /* 播客详情顶部播放器:页面级模式切换，但 DOM 始终只有一个实际播放器。 */
+  .podcast-experience-panel {
     max-width: 720px;
     margin: 0 auto 26px;
+  }
+
+  .podcast-player-panel {
+    max-width: none;
+    margin: 0;
     padding: 14px;
     border-radius: var(--r-card);
     background: var(--dorami-soft);
@@ -8955,7 +8960,16 @@ input[type="radio"] {
     border-top: 1px solid var(--dorami-border);
   }
 
-  .podcast-audio-track + .podcast-audio-track { margin-top: 12px; }
+  .podcast-mode-switch {
+    display: flex;
+    width: 100%;
+    margin-bottom: 12px;
+  }
+  .podcast-mode-switch .mini-seg-btn {
+    flex: 1;
+    min-width: 0;
+    font-variant-numeric: tabular-nums;
+  }
 
   .podcast-show-notes-head {
     display: flex;
@@ -8971,6 +8985,125 @@ input[type="radio"] {
     color: var(--dorami-faint);
     font-size: 11px;
     font-weight: 600;
+  }
+
+  .podcast-text-panel {
+    max-width: none;
+    margin: 0;
+    color: var(--dorami-ink);
+  }
+  .podcast-text-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 54px;
+    margin-bottom: 20px;
+    color: var(--dorami-muted);
+    font-size: 12px;
+  }
+  .podcast-text-digest {
+    padding: 26px 4px 6px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .podcast-text-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    margin-bottom: 14px;
+  }
+  .podcast-text-heading h2 {
+    margin: 0;
+    color: var(--dorami-ink);
+    font: 600 20px/1.3 var(--font-serif);
+  }
+  .podcast-text-heading span,
+  .podcast-text-truncated {
+    color: var(--dorami-muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .podcast-text-transcript {
+    margin-top: 12px;
+    border: 1px solid var(--dorami-border);
+    border-radius: var(--r-control);
+    background: var(--dorami-soft);
+    overflow: hidden;
+  }
+  .podcast-text-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    padding: 13px 15px;
+    color: var(--dorami-ink);
+    text-align: left;
+  }
+  .podcast-text-toggle > span { display: flex; align-items: baseline; gap: 8px; }
+  .podcast-text-toggle strong { font-size: 13px; }
+  .podcast-text-toggle small { color: var(--dorami-muted); font-size: 11px; }
+  .podcast-text-toggle svg { width: 16px; transition: transform var(--motion-fast) var(--motion-ease); }
+  .podcast-text-toggle svg.is-open { transform: rotate(180deg); }
+  .podcast-text-transcript-body {
+    max-height: 560px;
+    padding: 0 15px 16px;
+    overflow: auto;
+    border-top: 1px solid var(--dorami-border);
+    color: var(--dorami-ink-2);
+    white-space: pre-wrap;
+  }
+  .podcast-text-transcript-body p { margin: 14px 0 6px; }
+  .podcast-text-transcript-body small { color: var(--dorami-faint); }
+  .podcast-text-more {
+    display: block;
+    margin: 12px auto 8px;
+    padding: 6px 12px;
+    border: 1px solid var(--dorami-border);
+    border-radius: var(--r-pill);
+    color: var(--dorami-accent-ink);
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .podcast-text-more:disabled { opacity: 0.55; }
+  .podcast-text-more-error {
+    margin: 6px 0 8px;
+    color: var(--dorami-danger, #b42318);
+    font-size: 11px;
+    text-align: center;
+  }
+  .podcast-text-refresh-notice {
+    margin: 6px 0 8px;
+    color: var(--dorami-muted);
+    font-size: 11px;
+    text-align: center;
+  }
+  .podcast-text-initial-error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 54px;
+    margin: 0 auto 20px;
+    color: var(--dorami-ink-2);
+    font-size: 12px;
+  }
+  .podcast-text-initial-error button {
+    padding: 5px 10px;
+    border: 1px solid var(--dorami-border-strong);
+    border-radius: var(--r-pill);
+    color: var(--dorami-accent-ink);
+    font-weight: 700;
+  }
+
+  [data-theme="dark"] .podcast-text-digest {
+    background: transparent;
+  }
+  [data-theme="dark"] .podcast-text-transcript {
+    background: var(--dorami-well);
   }
 
   .podcast-audio-track-head {
@@ -8989,6 +9122,10 @@ input[type="radio"] {
     color: var(--dorami-ink-2);
   }
 
+  .podcast-audio-ai {
+    color: var(--dorami-accent-ink);
+  }
+
   .podcast-audio-track audio {
     display: block;
     width: 100%;
@@ -9002,6 +9139,36 @@ input[type="radio"] {
     border-top: 1px solid var(--dorami-border);
     font-size: 12px;
     color: var(--dorami-faint);
+  }
+
+  .podcast-audio-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 10px;
+    padding: 9px 10px;
+    border-radius: var(--r-control);
+    background: var(--state-bad-bg);
+    color: var(--state-bad);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .podcast-audio-error-actions {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 8px;
+  }
+  .podcast-audio-error-actions :is(button, a) {
+    color: inherit;
+    font-weight: 700;
+    text-decoration: none;
+  }
+  .podcast-audio-error-actions :is(button, a):hover { text-decoration: underline; }
+  .podcast-audio-error-actions a:focus-visible {
+    outline: 2px solid var(--dorami-focus);
+    outline-offset: 2px;
   }
 
   /* 上一篇/下一篇:沿当前列表序的真实翻页 */
@@ -10625,6 +10792,7 @@ input[type="radio"] {
 
 [data-theme="dark"] {
   color-scheme: dark;
+  color: var(--dorami-ink);
   background: var(--dorami-canvas);
 
   /* —— 表面阶（明暗次序对齐亮色：well/soft 是比 surface 暗的凹陷；raised 才比 surface 亮）—— */
@@ -10771,8 +10939,14 @@ input[type="radio"] {
   --color-violet-700: #c4b5fd;
 }
 
+[data-theme="dark"] ::selection {
+  background: rgba(139, 125, 255, 0.34);
+  color: var(--dorami-ink);
+}
+
 /* ── 页面底：亮色顶部停靠点 #f4f6fa 在暗色会留亮带，整体换暗色渐变 ── */
 [data-theme="dark"] body {
+  color: var(--dorami-ink);
   background:
     radial-gradient(ellipse 70% 50% at 12% -8%, rgba(124, 112, 235, 0.10), transparent 58%),
     radial-gradient(ellipse 55% 45% at 95% 2%, rgba(124, 112, 235, 0.07), transparent 54%),
@@ -11782,6 +11956,78 @@ input[type="radio"] {
 }
 .taxonomy-version-stat strong { color: var(--dorami-ink); font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
+/* Issue #7：运维管理 → 内容的本地 Podcast 音频资产台账。 */
+.podcast-assets-head { margin-top: 18px; }
+.podcast-assets-card { margin-top: 12px; }
+.podcast-assets-table { min-width: 1120px; }
+.podcast-assets-table th:nth-child(1) { width: 27%; }
+.podcast-assets-table th:nth-child(2) { width: 120px; }
+.podcast-assets-table th:nth-child(3) { width: 96px; }
+.podcast-assets-table th:nth-child(4) { width: 110px; }
+.podcast-assets-table th:nth-child(5) { width: 90px; }
+.podcast-assets-table th:nth-child(6) { width: 150px; }
+.podcast-assets-table th:nth-child(7) { width: 180px; }
+.podcast-assets-table th:nth-child(8) { width: 80px; }
+.podcast-assets-episode {
+  display: block;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.podcast-assets-kind { display: block; line-height: 1.35; }
+.podcast-assets-state {
+  min-height: 90px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--dorami-faint);
+  text-align: center;
+}
+.podcast-assets-state.is-error { color: var(--state-bad); }
+.podcast-assets-actions { opacity: 1; }
+.podcast-assets-actions .rowact-btn { display: inline-grid; }
 @media (max-width: 900px) {
   .taxonomy-row-detail { padding-left: 14px; }
 }
+.podcast-premium-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  border: 1px solid color-mix(in srgb, var(--dorami-accent) 45%, transparent);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: #8b6cff;
+  background: color-mix(in srgb, var(--dorami-accent) 12%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.podcast-premium-badge.is-title { margin-top: 8px; }
+.podcast-premium-badge.is-action {
+  height: 26px;
+  padding: 0 10px;
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.podcast-guide-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--dorami-accent) 30%, var(--dorami-border));
+  border-radius: 12px;
+  padding: 14px 16px;
+  color: var(--dorami-ink);
+  background: color-mix(in srgb, var(--dorami-accent) 8%, var(--dorami-surface));
+}
+
+.podcast-guide-button > span { display: flex; align-items: center; gap: 8px; }
+.podcast-guide-button small { color: var(--dorami-muted); font-weight: 400; }
+.podcast-guide-button .is-open { transform: rotate(180deg); }
+.podcast-guide-body { padding: 18px 4px 4px; }
+.podcast-premium-title { display: block; max-width: 560px; }
+.podcast-premium-table th:nth-child(1) { width: 46%; }

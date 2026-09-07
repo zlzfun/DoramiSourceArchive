@@ -19,7 +19,14 @@ import { qualityScoreText, SCORE_DISCLAIMER } from '../utils/analysis';
  * 再点/Esc/换篇回摘要。无分数时右栏承接骨架与生成入口。桌面与移动壳共用。
  */
 export default function AiReadingCard({ article, summary, summarizing, canGenerate, onGenerate, podcast = false }) {
-  // 播客(issue #7 合流):当前摘要/评分只基于 RSS 节目简介,不是音频全文——标题与说明如实标注。
+  // 播客(issue #7):分析依据由后端投影给出；旧数据缺字段时保守按简介初评展示。
+  const analysisBasis = podcast ? (article?.podcast?.analysis_basis || 'show_notes') : '';
+  const transcriptBacked = analysisBasis === 'publisher_transcript' || analysisBasis === 'asr_transcript';
+  const podcastSummaryTitle = transcriptBacked ? '全文导读' : '简介导读';
+  const podcastReasonTitle = transcriptBacked ? '全文深度分析' : '简介初评';
+  const podcastBasisNote = transcriptBacked
+    ? 'AI 基于完整逐字稿分析，关键结论可回到原节目时间码核验'
+    : 'AI 基于节目简介的初步评估，尚未分析完整音频，仅用于辅助筛选';
   const score = article?.quality_score != null ? qualityScoreText(article.quality_score) : '';
   const reason = (article?.score_reason || '').trim();
   const [showReason, setShowReason] = useState(false);
@@ -49,9 +56,9 @@ export default function AiReadingCard({ article, summary, summarizing, canGenera
       <div className="reader-ai-summary-main">
         {summary ? (
           <div className="reader-ai-layer reader-ai-layer-summary" aria-hidden={showReason}>
-            <span className="reader-ai-layer-title">{podcast ? '简介导读' : 'AI 速读'}</span>
+            <span className="reader-ai-layer-title">{podcast ? podcastSummaryTitle : 'AI 速读'}</span>
             <p className="reader-ai-layer-text">{summary}</p>
-            {podcast && <span className="reader-ai-layer-note">基于节目简介，不是音频全文摘要</span>}
+            {podcast && <span className="reader-ai-layer-note">{podcastBasisNote}</span>}
           </div>
         ) : summarizing ? (
           <div className="reader-ai-summary-skel" role="status" aria-label="正在生成速读">
@@ -64,11 +71,11 @@ export default function AiReadingCard({ article, summary, summarizing, canGenera
         ) : null}
         {canFlip && (
           <div className="reader-ai-layer reader-ai-layer-reason" aria-hidden={!showReason}>
-            <span className="reader-ai-layer-title">{podcast ? '简介初评' : '评分依据'}</span>
+            <span className="reader-ai-layer-title">{podcast ? podcastReasonTitle : '评分依据'}</span>
             {reason && <p className="reader-ai-layer-text">{reason}</p>}
             <span className="reader-ai-layer-note">
               {podcast
-                ? 'AI 基于节目简介的初步评估，尚未分析完整音频，仅用于辅助筛选；完整音频分析将在精品处理后提供'
+                ? podcastBasisNote
                 : SCORE_DISCLAIMER}
             </span>
           </div>

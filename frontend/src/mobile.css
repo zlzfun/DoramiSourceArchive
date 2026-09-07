@@ -288,6 +288,8 @@
 .m-read-scroll .reader-pane-head { max-width: none; }
 .m-read-body { padding-top: 16px; }
 .m-read-body .podcast-player-panel { margin-bottom: 20px; padding: 12px; }
+.m-read-body .podcast-mode-switch .mini-seg-btn { padding-inline: 6px; }
+.m-read-body .podcast-audio-error { align-items: flex-start; flex-direction: column; }
 /* 阅读进度线(scroll-timeline 渐进增强,与阅读窗同法同 keyframes;不支持则隐形) */
 @supports (animation-timeline: scroll()) {
   .m-read { timeline-scope: --m-read-scroll; }

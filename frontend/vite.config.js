@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs'
 import process from 'node:process'
 
 const appConfig = JSON.parse(readFileSync(new URL('./app.config.json', import.meta.url), 'utf-8'))
+const allowedHosts = (process.env.DORAMI_VITE_ALLOWED_HOSTS || '')
+  .split(',')
+  .map((host) => host.trim())
+  .filter(Boolean)
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -27,6 +31,9 @@ export default defineConfig({
   },
   server: {
     port: appConfig.devServer?.port || 5173,
+    // Keep temporary preview hosts deployment-configured (for example ngrok)
+    // instead of committing a short-lived hostname.
+    allowedHosts,
     proxy: {
       '/api': {
         // 隔离栈验收时用环境变量把代理指向临时后端(VITE_PROXY_TARGET=http://127.0.0.1:8099)

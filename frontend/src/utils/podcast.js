@@ -2,17 +2,17 @@ const READY_STATUSES = new Set(['ready', 'audio_ready', 'condensed_ready', 'comp
 const FAILED_STATUSES = new Set(['failed', 'error']);
 
 const STATUS_META = {
-  pending: { label: '待生成中文精华', tone: 'idle' },
-  not_started: { label: '待生成中文精华', tone: 'idle' },
+  pending: { label: '待生成单人速览', tone: 'idle' },
+  not_started: { label: '待生成单人速览', tone: 'idle' },
   not_requested: { label: '仅提供原节目', tone: 'idle' },
   original_only: { label: '仅提供原节目', tone: 'idle' },
   idle: { label: '仅提供原节目', tone: 'idle' },
-  queued: { label: '已加入中文精华队列', tone: 'idle' },
+  queued: { label: '已加入单人速览队列', tone: 'idle' },
   downloading: { label: '正在准备音频…', tone: 'run' },
   transcribing: { label: '正在转写…', tone: 'run' },
   summarizing: { label: '正在提炼…', tone: 'run' },
-  synthesizing: { label: '正在生成中文精华音频…', tone: 'run' },
-  processing: { label: '正在生成中文精华…', tone: 'run' },
+  synthesizing: { label: '正在生成单人速览音频…', tone: 'run' },
+  processing: { label: '正在生成单人速览…', tone: 'run' },
   transcript_ready: { label: '转写已完成', tone: 'run' },
   summary_ready: { label: '中文精华稿已完成', tone: 'run' },
   cancelled: { label: '已取消中文精华生成', tone: 'idle' },
@@ -37,10 +37,10 @@ export function formatPodcastDuration(value) {
 export function podcastProcessingMeta(status, hasCondensedAudio = false) {
   const normalized = String(status || '').trim().toLowerCase();
   if (hasCondensedAudio || READY_STATUSES.has(normalized)) {
-    return { label: '中文精华已就绪', tone: 'ok' };
+    return { label: '单人速览已就绪', tone: 'ok' };
   }
   if (FAILED_STATUSES.has(normalized)) {
-    return { label: '中文精华生成失败', tone: 'bad' };
+    return { label: '单人速览生成失败', tone: 'bad' };
   }
   if (STATUS_META[normalized]) return STATUS_META[normalized];
   return normalized
