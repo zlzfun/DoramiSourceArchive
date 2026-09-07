@@ -11,7 +11,7 @@ export default function AnalysisTagChip({ tag, onTemporarySearch }) {
         type="button"
         {...props}
         className={`${props.className} is-actionable`}
-        aria-label={`临时检索标签：${label}`}
+        aria-label={`检索「${label}」`}
         onClick={(event) => {
           event.stopPropagation();
           onTemporarySearch(label);

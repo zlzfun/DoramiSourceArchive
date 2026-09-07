@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>阅读窗标题区 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   阅读窗标题区(issue #23 第三项延伸)· 静默仪器样页 · 2026-09-06 · 一稿
+
+   从零起稿。现状五行五种语言:等宽 accent 眉头 / 衬线标题 / 等宽 faint 元信息 / 26px 描边胶囊
+   动作 / accent wash 标签胶囊,紧接着还有一张渐变速读卡——一屏之内六种视觉语言,每行各说各话。
+   标题区的职责是「这是什么、从哪来、读它要花多少、然后开始读」,报纸头版的 眉头/标题/署名行
+   三段就够了,其它都往这三段里并。
+
+   ① **眉头 = 源 · 体裁**:「资讯文章」是数据形态(容器已经交代),换成分析出的体裁(观点/模型发布/
+      学术论文…),与条目行的分类同一件事——列表看到「观点」,进来还是「观点」。等宽 accent 眉头
+      是全站 报头家族 的语言(早报/兴趣页头同款),保留。
+   ② **标题**衬线 27 不动;译文态译名上、原题降一档,不动。
+   ③ **署名行 = 元信息 + 动作,一行**:左「2026-08-18 · 阅读约 30 分钟 · 阅读量 9」(时刻 00:00:00
+      是 feed 没给时刻的假值,日期即可;有真实时刻才显示 HH:MM),右「原语言 | 译为中文 · 查看原文 ↗」
+      ——动作从独立一行并入署名行右缘,仍在「标题 → 正文」的视线路径上(v3.45 拍板不变),但不再
+      单占一行;语言二段保留 hairline 分段(它是有状态的控件,要有可按的样子),查看原文退成文字
+      链接(正文末尾已有同款,前后一致)。窄于 560 时动作自动折到下一行。
+   ④ **标签 = 细线小签**:与条目行分类同一语法(hairline 框、faint、不着色),规范标签实线、
+      灵活标签虚线(可点临时检索,悬停提到 ink-2)——原来四枚 accent wash 胶囊紧贴渐变速读卡,
+      两种饱和撞在一起;现在标题区内只剩眉头一处 accent,渐变留给速读卡独享。
+      「正在分析…」状态并入署名行末尾 faint 文字,不再是一枚章。
+   ⑤ 五行 → 四行(眉头/标题/署名行/尾行),三种语言(等宽 + 衬线 + 小签),饱和色一处。
+   目检返修一(2026-09-06):动作自署名行右缘挪到**尾行右缘**,与标签同排、贴着分隔线——署名行只剩
+   事实(日期/时长/阅读量/分析状态),尾行「左标签 · 右动作」;标签折行时动作随最后一行底对齐。
+   目检返修二(实现后):尾行改**底对齐**(小签比语言二段矮,居中会让底边差半格);**无标签时动作并入
+   署名行右缘、尾行不渲染**——标题下不留一片只挂着两个钮的空白(本页「分析在途」帧即此形态)。
+   ⑥ 移动壳同一 header(动作行本就不渲染,顶栏译钮承担),自动同步。
+   拍板(2026-09-06):采用 A + 动作落尾行;规范标签取 faint。实现见 ReaderTab.jsx / MobileArticlePage.jsx
+   标题区(.reader-pane-foot / .reader-pane-tags 小签 / formatPublishDate),隔离栈实测尾行右缘与版心齐、
+   标签与动作同排、旧 stamp 零残留。
+
+   备选(页底):B「标签落脚」——标签移到正文末尾「查看原文」之上作脚注,标题区只剩三行;
+   C「署名眉头」——眉头换成 源标 + 源名 的正文字系署名(非等宽、非 accent),更像博客署名;
+   与全站报头家族脱钩,不推荐。
+   纪律:全部 token 化;饱和色只在眉头;渐变只在速读卡与译文激活态。文章为 dev 库真实条目。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif;
+  --serif-num: Charter, Cambria, Baskerville, var(--font-serif);
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-wash: rgba(91, 84, 232, 0.08); --dorami-well: #f1f5f9;
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-soft: rgba(11, 18, 32, 0.06);
+  --dorami-border-strong: rgba(11, 18, 32, 0.18);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-pill: 9999px;
+  --motion-fast: 150ms; --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ai-g1: #3f7bf6; --ai-g2: #8b52f4;
+  --grad-ai: linear-gradient(118deg, var(--ai-g1), var(--ai-g2));
+  --grad-ai-wash: linear-gradient(118deg, rgba(63, 123, 246, 0.09), rgba(139, 82, 244, 0.10));
+  --rd-pane-bg: var(--dorami-surface);
+  --star: #f59e0b;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-wash: rgba(124, 112, 235, 0.13);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-soft: rgba(255, 255, 255, 0.07);
+  --dorami-border-strong: rgba(255, 255, 255, 0.22);
+  --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --ai-g1: #6ea3ff; --ai-g2: #ab86ff;
+  --grad-ai-wash: linear-gradient(118deg, rgba(110, 163, 255, 0.13), rgba(171, 134, 255, 0.15));
+  --rd-pane-bg: var(--dorami-soft);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink); font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+svg { flex: none; }
+a { color: inherit; text-decoration: none; }
+
+.page { padding: 26px 36px 56px; max-width: 1560px; margin: 0 auto; }
+.page-head { display: flex; align-items: center; gap: 14px; min-height: 48px; margin-bottom: 8px; }
+.page-title { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; }
+.page-sub { font-size: 12.5px; color: var(--dorami-muted); max-width: 960px; line-height: 1.7; margin-bottom: 22px; }
+.head-tools { margin-left: auto; display: flex; gap: 8px; }
+.head-tool { height: 32px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border-radius: var(--r-control); color: var(--dorami-ink-2); border: 1px solid var(--dorami-border); background: var(--dorami-surface); font-size: 12px; font-weight: 600; }
+.head-tool.is-on { color: var(--dorami-accent-ink); background: var(--dorami-wash); border-color: transparent; }
+.zone-head { display: flex; align-items: baseline; gap: 10px; margin: 30px 2px 12px; }
+.zone-title { font-size: 14px; font-weight: 700; }
+.zone-sub { font-size: 12px; color: var(--dorami-muted); }
+.frames { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
+.frame { flex: none; }
+.frame-note { font-size: 11.5px; line-height: 1.65; color: var(--dorami-faint); margin: 8px 2px 0; max-width: 780px; }
+.frame-note b { color: var(--dorami-ink-2); font-weight: 600; }
+
+/* ── 阅读窗壳:工具条 + 720 版心 ── */
+.pane { width: 800px; background: var(--rd-pane-bg); border: 1px solid var(--dorami-border-soft); border-radius: var(--r-card); overflow: hidden; }
+.pane.is-mobile { width: 375px; border-radius: 22px; }
+.toolbar { display: flex; align-items: center; height: 44px; padding: 0 16px 0 20px; border-bottom: 1px solid var(--dorami-border-soft); font-size: 12px; color: var(--dorami-faint); }
+.toolbar .crumb b { color: var(--dorami-ink-2); font-weight: 600; }
+.toolbar .tools { margin-left: auto; display: flex; gap: 4px; }
+.toolbar .tools span { width: 28px; height: 28px; display: grid; place-items: center; color: var(--dorami-faint); }
+.toolbar .tools span.is-amber { color: var(--star); }
+.toolbar svg { width: 16px; height: 16px; }
+.pane-scroll { padding: 40px 40px 34px; }
+.pane.is-mobile .pane-scroll { padding: 22px 18px 28px; }
+.head { max-width: 720px; margin: 0 auto; padding-bottom: 16px; border-bottom: 1px solid var(--dorami-border); }
+
+/* 眉头(全站报头家族):等宽 11 / 0.08em / accent-ink */
+.kicker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--dorami-accent-ink); margin-bottom: 10px; }
+.kicker .sep { color: var(--dorami-faint); margin: 0 4px; }
+.title { margin: 0 0 10px; font-family: var(--font-serif); font-size: 27px; line-height: 1.35; font-weight: 700; letter-spacing: 0.01em; text-wrap: balance; }
+.pane.is-mobile .title { font-size: 24px; }
+.title-orig { margin: -4px 0 10px; font-family: var(--font-serif); font-size: 13.5px; line-height: 1.5; color: var(--dorami-muted); }
+
+/* 署名行:元信息左 + 动作右 */
+.byline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; font-family: var(--mono); font-size: 11.5px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.meta span + span::before { content: '·'; margin: 0 7px; }
+.meta .pending { font-family: inherit; }
+.acts { margin-left: auto; display: inline-flex; align-items: center; gap: 12px; font-size: 11.5px; font-weight: 600; }
+.seg { display: inline-flex; height: 24px; padding: 2px; border-radius: var(--r-pill); border: 1px solid var(--dorami-border); background: var(--dorami-surface); }
+.seg-btn { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 8px; border-radius: var(--r-pill); color: var(--dorami-faint); }
+.seg-btn.is-on { background: color-mix(in srgb, var(--dorami-ink) 7%, transparent); color: var(--dorami-ink); }
+.seg-btn.is-on.is-ai { background: var(--grad-ai-wash); }
+.seg-btn.is-on.is-ai .g { background: var(--grad-ai); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.seg-btn svg { width: 13px; height: 13px; }
+.seg-btn.is-on.is-ai svg { stroke: var(--dorami-accent); }
+.ext { display: inline-flex; align-items: center; gap: 4px; color: var(--dorami-ink-2); }
+.ext svg { width: 13px; height: 13px; color: var(--dorami-faint); }
+.ext:hover { text-decoration: underline; }
+
+/* 标签行:细线小签(与条目行分类同语法,字阶 11) */
+.foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 12px; }
+.foot .tags { flex: 1 1 auto; min-width: 0; margin-top: 0; }
+.foot .acts { margin-left: auto; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.tag { display: inline-flex; align-items: center; padding: 1px 7px; border: 1px solid var(--dorami-border); border-radius: 4px; font-size: 11px; letter-spacing: 0.06em; line-height: 1.5; color: var(--dorami-faint); white-space: nowrap; }
+.tag.is-x { border-style: dashed; cursor: pointer; }
+.tag.is-x:hover { color: var(--dorami-ink-2); border-color: var(--dorami-border-strong); }
+/* 拍板可选:规范标签墨一档 */
+.page.tag-ink .tag:not(.is-x) { color: var(--dorami-ink-2); }
+
+/* 速读卡(上下文,复刻要点) */
+.ai-card { max-width: 720px; margin: 20px auto 0; display: grid; grid-template-columns: auto 1fr; gap: 18px; padding: 16px 18px; border-radius: var(--r-card); background: var(--grad-ai-wash); }
+.ai-num { font-family: var(--serif-num); font-size: 38px; font-weight: 700; line-height: 1; background: var(--grad-ai); -webkit-background-clip: text; background-clip: text; color: transparent; align-self: center; font-variant-numeric: lining-nums tabular-nums; }
+.ai-cap { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--dorami-accent-ink); margin-bottom: 4px; }
+.ai-text { font-size: 13.5px; line-height: 1.8; color: var(--dorami-ink-2); }
+.body { max-width: 720px; margin: 18px auto 0; font-family: var(--font-serif); font-size: 16px; line-height: 1.9; color: var(--dorami-ink); }
+.body p + p { margin-top: 12px; }
+.body.is-fade { -webkit-mask-image: linear-gradient(#000 40%, transparent); mask-image: linear-gradient(#000 40%, transparent); }
+.origin { max-width: 720px; margin: 22px auto 0; font-size: 13px; color: var(--dorami-accent-ink); }
+.origin small { font-family: var(--mono); font-size: 11.5px; color: var(--dorami-faint); }
+
+/* ── 现状复刻 ── */
+.old-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-family: var(--mono); font-size: 11.5px; color: var(--dorami-faint); }
+.old-acts { display: flex; gap: 8px; margin-top: 12px; font-size: 11.5px; font-weight: 600; }
+.old-seg { display: inline-flex; height: 26px; padding: 2px; border-radius: var(--r-pill); border: 1px solid var(--dorami-border); background: var(--dorami-surface); }
+.old-seg span { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 9px; border-radius: var(--r-pill); color: var(--dorami-faint); }
+.old-seg span.is-on { background: color-mix(in srgb, var(--dorami-ink) 7%, transparent); color: var(--dorami-ink); }
+.old-seg svg { width: 13px; height: 13px; }
+.old-act { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: var(--r-pill); border: 1px solid var(--dorami-border); background: var(--dorami-surface); color: var(--dorami-ink-2); }
+.old-act svg { width: 13px; height: 13px; color: var(--dorami-faint); }
+.old-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+.old-chip { display: inline-flex; align-items: center; min-height: 20px; padding: 0 7px; border-radius: var(--r-pill); background: var(--dorami-wash); color: var(--dorami-accent-ink); font-size: 11px; font-weight: 700; }
+.old-chip.is-x { background: transparent; color: var(--dorami-ink-2); outline: 1px dashed var(--dorami-border-strong); outline-offset: -1px; font-weight: 600; }
+
+/* ── 备选 C:署名眉头 ── */
+.byline-kicker { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; font-size: 12.5px; color: var(--dorami-ink-2); font-weight: 500; }
+.byline-kicker .logo { width: 16px; height: 16px; display: grid; place-items: center; font-size: 13px; }
+.byline-kicker .genre { color: var(--dorami-faint); font-weight: 400; }
+.byline-kicker .genre::before { content: '·'; margin: 0 6px 0 -1px; }
+
+/* 脚注标签(备选 B) */
+.foot-tags { max-width: 720px; margin: 22px auto 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.foot-tags .cap { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--dorami-faint); margin-right: 4px; }
+</style>
+</head>
+<body>
+<div class="page" id="page">
+  <div class="page-head">
+    <div class="page-title">阅读窗标题区</div>
+    <div class="head-tools">
+      <button class="head-tool" id="inkToggle" type="button">规范标签墨一档</button>
+      <button class="head-tool" id="themeToggle" type="button">暗色</button>
+    </div>
+  </div>
+  <p class="page-sub">标题区只回答四件事:这是什么、从哪来、读它花多少、怎么开始读。报纸头版的 眉头 / 标题 / 署名行 三段够用,其余并进去:内容类型换成体裁,时刻假值不画,动作并入署名行右缘,标签换成与条目行同款的细线小签。五行三语言,饱和色只剩眉头一处,渐变留给速读卡。</p>
+
+  <div class="zone-head"><div class="zone-title">现状</div><div class="zone-sub">五行、六种语言(含紧接的速读卡)</div></div>
+  <div class="frames">
+    <div class="frame">
+      <div class="pane">
+        <div class="toolbar"><span class="crumb">全部文章 › <b>Sean Goedecke</b></span><span class="tools"><span class="is-amber"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/></svg></span><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg></span><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg></span></span></div>
+        <div class="pane-scroll">
+          <div class="head">
+            <div class="kicker">Sean Goedecke <span class="sep">·</span> 资讯文章</div>
+            <h1 class="title">Help peer</h1>
+            <div class="old-meta"><span>2026-08-18 00:00:00</span><span>阅读时长 30 分钟</span><span>阅读量 9</span></div>
+            <div class="old-acts"><span class="old-seg"><span class="is-on">原语言</span><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>译为中文</span></span><span class="old-act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M10 14 21 3M21 14v7H3V3h7"/></svg>查看原文</span></div>
+            <div class="old-tags"><span class="old-chip">AI 智能体</span><span class="old-chip">AI 对齐与安全</span><span class="old-chip is-x">AI治理</span><span class="old-chip">OpenAI</span></div>
+          </div>
+          <div class="ai-card"><div class="ai-num">8.6</div><div><div class="ai-cap">AI 速读</div><div class="ai-text">文章从阿西莫夫的《最后的问题》引入"机器神"概念,对比 Scott Alexander 与 Sean 自己对 AI 对齐的看法,主张与其等待一个全知的仲裁者,不如把 AI 当作需要帮助的同事来对待。</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="zone-head"><div class="zone-title">A · 眉头 / 标题 / 署名行 / 小签(推荐)</div><div class="zone-sub">四行三语言,尾行左标签右动作;右:译文态</div></div>
+  <div class="frames">
+    <div class="frame">
+      <div class="pane">
+        <div class="toolbar"><span class="crumb">全部文章 › <b>Sean Goedecke</b></span><span class="tools"><span class="is-amber"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/></svg></span><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg></span><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg></span></span></div>
+        <div class="pane-scroll">
+          <div class="head">
+            <div class="kicker">Sean Goedecke <span class="sep">·</span> 观点</div>
+            <h1 class="title">Help peer</h1>
+            <div class="byline">
+              <div class="meta"><span>2026-08-18</span><span>阅读约 30 分钟</span><span>阅读量 9</span></div>
+            </div>
+            <div class="foot"><div class="tags"><span class="tag">AI 智能体</span><span class="tag">AI 对齐与安全</span><span class="tag is-x">AI 治理</span><span class="tag">OpenAI</span></div>
+              <div class="acts">
+                <span class="seg"><span class="seg-btn is-on">原语言</span><span class="seg-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>译为中文</span></span>
+                <a class="ext" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M10 14 21 3M21 14v7H3V3h7"/></svg>查看原文</a>
+              </div>
+            </div>
+          </div>
+          <div class="ai-card"><div class="ai-num">8.6</div><div><div class="ai-cap">AI 速读</div><div class="ai-text">文章从阿西莫夫的《最后的问题》引入"机器神"概念,对比 Scott Alexander 与 Sean 自己对 AI 对齐的看法,主张与其等待一个全知的仲裁者,不如把 AI 当作需要帮助的同事来对待。</div></div></div>
+          <div class="body is-fade"><p>There's a short story by Asimov called "The Last Question", in which humanity keeps asking a succession of ever-more-powerful computers how to reverse entropy. Each time the computer says there is insufficient data for a meaningful answer.</p><p>I think about this story a lot when people talk about AI alignment as if we were waiting for a machine god to adjudicate our disagreements.</p></div>
+        </div>
+      </div>
+      <p class="frame-note"><b>A · 日常态。</b>眉头「源 · 体裁」;署名行左事实右动作;标签细线小签,虚线者是灵活标签可点检索。</p>
+    </div>
+    <div class="frame">
+      <div class="pane">
+        <div class="toolbar"><span class="crumb">全部文章 › <b>Sean Goedecke</b></span><span class="tools"><span class="is-amber"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/></svg></span><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg></span><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg></span></span></div>
+        <div class="pane-scroll">
+          <div class="head">
+            <div class="kicker">Sean Goedecke <span class="sep">·</span> 观点</div>
+            <h1 class="title">帮助同事</h1>
+            <div class="title-orig">Help peer</div>
+            <div class="byline">
+              <div class="meta"><span>2026-08-18</span><span>阅读约 30 分钟</span><span>阅读量 9</span></div>
+            </div>
+            <div class="foot"><div class="tags"><span class="tag">AI 智能体</span><span class="tag">AI 对齐与安全</span><span class="tag is-x">AI 治理</span><span class="tag">OpenAI</span></div>
+              <div class="acts">
+                <span class="seg"><span class="seg-btn">原语言</span><span class="seg-btn is-on is-ai"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg><span class="g">中文</span></span></span>
+                <a class="ext" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M10 14 21 3M21 14v7H3V3h7"/></svg>查看原文</a>
+              </div>
+            </div>
+          </div>
+          <div class="ai-card"><div class="ai-num">8.6</div><div><div class="ai-cap">AI 速读</div><div class="ai-text">文章从阿西莫夫的《最后的问题》引入"机器神"概念,对比 Scott Alexander 与 Sean 自己对 AI 对齐的看法,主张与其等待一个全知的仲裁者,不如把 AI 当作需要帮助的同事来对待。</div></div></div>
+          <div class="body is-fade"><p>阿西莫夫有一篇短篇叫《最后的问题》,人类向一代比一代强大的计算机反复追问如何逆转熵增,每一次计算机都回答:数据不足,无法给出有意义的答案。</p><p>每当有人把 AI 对齐说得像是在等一个机器神来裁决我们的分歧时,我都会想起这个故事。</p></div>
+        </div>
+      </div>
+      <p class="frame-note"><b>A · 译文态。</b>译名上、原题降一档;语言二段激活态沿 AI 渐变身份,标题区渐变只在此刻出现。</p>
+    </div>
+  </div>
+
+  <div class="zone-head"><div class="zone-title">A · 其它状态</div><div class="zone-sub">分析在途 / 中文源无翻译 / 移动壳</div></div>
+  <div class="frames">
+    <div class="frame">
+      <div class="pane" style="width:640px">
+        <div class="pane-scroll">
+          <div class="head">
+            <div class="kicker">机器之心</div>
+            <h1 class="title">DeepSeek V4 正式发布:1M 上下文、原生多模态,API 价格再降一半</h1>
+            <div class="byline">
+              <div class="meta"><span>2026-09-06 14:32</span><span>阅读约 6 分钟</span><span>阅读量 41</span><span class="pending">正在分析…</span></div>
+            </div>
+            <div class="foot"><div class="acts"><a class="ext" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M10 14 21 3M21 14v7H3V3h7"/></svg>查看原文</a></div></div>
+          </div>
+        </div>
+      </div>
+      <p class="frame-note"><b>分析在途,中文源。</b>眉头只有源(体裁还没出);「正在分析…」是署名行末尾一段 faint 文字,不是章;标签行不渲染;中文源没有语言二段;有真实时刻才显示 HH:MM。</p>
+    </div>
+    <div class="frame">
+      <div class="pane is-mobile">
+        <div class="toolbar" style="padding:0 10px 0 6px"><span class="crumb">‹</span><span class="tools"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg></span><span class="is-amber"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/></svg></span><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></span></span></div>
+        <div class="pane-scroll">
+          <div class="head">
+            <div class="kicker">Sean Goedecke <span class="sep">·</span> 观点</div>
+            <h1 class="title">Help peer</h1>
+            <div class="byline"><div class="meta"><span>2026-08-18</span><span>阅读约 30 分钟</span><span>阅读量 9</span></div></div>
+            <div class="tags"><span class="tag">AI 智能体</span><span class="tag">AI 对齐与安全</span><span class="tag is-x">AI 治理</span><span class="tag">OpenAI</span></div>
+          </div>
+          <div class="ai-card" style="padding:14px 16px;gap:14px"><div class="ai-num" style="font-size:32px">8.6</div><div><div class="ai-cap">AI 速读</div><div class="ai-text" style="font-size:13px">文章从阿西莫夫的《最后的问题》引入"机器神"概念,对比 Scott Alexander 与 Sean 自己对 AI 对齐的看法。</div></div></div>
+        </div>
+      </div>
+      <p class="frame-note"><b>移动壳。</b>同一 header;动作行本就不渲染(顶栏译钮承担),署名行只剩事实。</p>
+    </div>
+  </div>
+
+  <div class="zone-head"><div class="zone-title">备选</div><div class="zone-sub">对照用</div></div>
+  <div class="frames">
+    <div class="frame">
+      <div class="pane" style="width:640px">
+        <div class="pane-scroll">
+          <div class="head">
+            <div class="kicker">Sean Goedecke <span class="sep">·</span> 观点</div>
+            <h1 class="title">Help peer</h1>
+            <div class="byline">
+              <div class="meta"><span>2026-08-18</span><span>阅读约 30 分钟</span><span>阅读量 9</span></div>
+            </div>
+            <div class="foot"><div class="acts"><span class="seg"><span class="seg-btn is-on">原语言</span><span class="seg-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>译为中文</span></span><a class="ext" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M10 14 21 3M21 14v7H3V3h7"/></svg>查看原文</a></div></div>
+          </div>
+          <div class="ai-card"><div class="ai-num">8.6</div><div><div class="ai-cap">AI 速读</div><div class="ai-text">文章从阿西莫夫的《最后的问题》引入"机器神"概念,对比 Scott Alexander 与 Sean 自己对 AI 对齐的看法。</div></div></div>
+          <div class="body is-fade"><p>There's a short story by Asimov called "The Last Question", in which humanity keeps asking a succession of ever-more-powerful computers how to reverse entropy.</p></div>
+          <div class="foot-tags"><span class="cap">标签</span><span class="tag">AI 智能体</span><span class="tag">AI 对齐与安全</span><span class="tag is-x">AI 治理</span><span class="tag">OpenAI</span></div>
+          <div class="origin">查看原文 ↗ <small>· seangoedecke.com</small></div>
+        </div>
+      </div>
+      <p class="frame-note"><b>B · 标签落脚。</b>标题区只剩三行,标签移到正文末尾作脚注(博客惯例)。代价:读前看不到主题;#27 的「兴趣命中」将来也没处落。</p>
+    </div>
+    <div class="frame">
+      <div class="pane" style="width:640px">
+        <div class="pane-scroll">
+          <div class="head">
+            <div class="byline-kicker"><span class="logo">🦊</span>Sean Goedecke<span class="genre">观点</span></div>
+            <h1 class="title">Help peer</h1>
+            <div class="byline">
+              <div class="meta"><span>2026-08-18</span><span>阅读约 30 分钟</span><span>阅读量 9</span></div>
+            </div>
+            <div class="foot"><div class="tags"><span class="tag">AI 智能体</span><span class="tag">AI 对齐与安全</span><span class="tag is-x">AI 治理</span><span class="tag">OpenAI</span></div>
+              <div class="acts"><span class="seg"><span class="seg-btn is-on">原语言</span><span class="seg-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>译为中文</span></span><a class="ext" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M10 14 21 3M21 14v7H3V3h7"/></svg>查看原文</a></div>
+            </div>
+          </div>
+          <div class="ai-card"><div class="ai-num">8.6</div><div><div class="ai-cap">AI 速读</div><div class="ai-text">文章从阿西莫夫的《最后的问题》引入"机器神"概念,对比 Scott Alexander 与 Sean 自己对 AI 对齐的看法。</div></div></div>
+        </div>
+      </div>
+      <p class="frame-note"><b>C · 署名眉头。</b>眉头换成 源标 + 源名 的正文字系署名(与条目行首行同款),不着 accent。更像博客,但与全站报头家族(等宽 kicker + 衬线标题)脱钩,标题区就没有任何一处品牌色了。</p>
+    </div>
+  </div>
+</div>
+<script>
+  const page = document.getElementById('page');
+  const inkBtn = document.getElementById('inkToggle');
+  inkBtn.addEventListener('click', () => { const on = page.classList.toggle('tag-ink'); inkBtn.classList.toggle('is-on', on); });
+  const themeBtn = document.getElementById('themeToggle');
+  themeBtn.addEventListener('click', () => {
+    const dark = document.documentElement.getAttribute('data-theme') !== 'dark';
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    themeBtn.textContent = dark ? '亮色' : '暗色'; themeBtn.classList.toggle('is-on', dark);
+  });
+</script>
+</body>
+</html>

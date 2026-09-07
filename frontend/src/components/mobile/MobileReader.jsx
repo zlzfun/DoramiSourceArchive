@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AtSign,
   CheckCheck,
@@ -31,8 +31,8 @@ import MobileArticlePage from './MobileArticlePage';
 import MobileSourceDrawer from './MobileSourceDrawer';
 import MobileMePage from './MobileMePage';
 import ActionSheet from './ActionSheet';
-import PersonalBriefTab from '../PersonalBriefTab';
-import InterestManager from '../InterestManager';
+import PersonalBriefPage from '../PersonalBriefPage';
+import InterestPage from '../InterestPage';
 import { dayKeyOf } from '../../utils/readerTime';
 
 // 静态 noop:ArticleRow 的 onContextMenu 契约位——移动端 contextmenu 由外层
@@ -71,11 +71,18 @@ export default function MobileReader({
   const [tab, setTab] = useState('article');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sheet, setSheet] = useState(null); // { title, items, anchorKey }
+  // 我的兴趣(issue #23 第二项):整页层(从 我的 进),首登引导自动打开一次但不锁层——返回键可退,
+  // 「我的」行挂点直到完成或跳过
   const [interestOpen, setInterestOpen] = useState(false);
+  const interestOpenRef = useRef(interestOpen); // 引导完成回调只在兴趣层仍开着时才跳早报(同桌面)
+  useEffect(() => { interestOpenRef.current = interestOpen; }, [interestOpen]);
   const [interestVersion, setInterestVersion] = useState(0);
   const closeBriefBeforeArticleOpen = useCallback(() => {
     setTab((current) => (current === 'brief' ? 'article' : current));
   }, []);
+  // 早报外出(issue #23 三稿):从早报进正文页,返回键/返回钮回早报 Tab 并落回原位,而非文章列表
+  const briefTrailRef = useRef(null);
+  const [briefRestore, setBriefRestore] = useState(null);
   const rs = useReaderState({
     showToast,
     account,
@@ -106,7 +113,7 @@ export default function MobileReader({
     articles, articlesLoading, loadingMore, hasMore, handleLoadMore,
     listRef, sentinelRef,
     // 选中文章
-    activeArticle, selectArticle, openArticleById, schedulePrefetch, cancelPrefetch,
+    activeArticle, selectArticle, openArticleById, supersedePendingOpen, schedulePrefetch, cancelPrefetch,
     // 收藏
     favoriteIds, favTogglingId, handleToggleFavorite,
     // 动作单 items(桌面右键三份构建器同源)
@@ -114,11 +121,31 @@ export default function MobileReader({
     // 订阅数(我的页)
     subscribedSources,
   } = rs;
+  const closeArticle = useCallback(() => {
+    supersedePendingOpen(); // 返回时作废在途的按 id 打开(早报卡 / 深链),迟到响应不再把页面拉回去
+    if (briefTrailRef.current) {
+      setBriefRestore(briefTrailRef.current);
+      briefTrailRef.current = null;
+      setTab('brief');
+    }
+    selectArticle(null);
+  }, [selectArticle, supersedePendingOpen]);
+  // 正文页点标签检索(codex 检视 P2):目的地是过滤后的内容列表,不是早报——从早报进来的也丢掉
+  // 返回带、落到所属容器 Tab,否则检索结果被早报页盖住看不见。
+  const leaveArticleForSearch = useCallback(() => {
+    briefTrailRef.current = null;
+    setTab((cur) => (cur === 'brief' || cur === 'me' ? mode : cur));
+    selectArticle(null);
+  }, [selectArticle, mode]);
 
   // 底部 Tab:article|podcast|bulletin|social 与容器 mode 一一对应,me 是移动端独有落点
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;
+  useEffect(() => {
+    if (onboardingRequired) setInterestOpen(true);
+  }, [onboardingRequired]);
+  const closeInterest = useCallback(() => setInterestOpen(false), []);
 
   // mode 被深链/点源/发现页预览改变时,内容 Tab 跟随所属容器(停在「我的」则不动)
   useEffect(() => {
@@ -130,6 +157,9 @@ export default function MobileReader({
   }, [mode, personalDigestEnabled]);
 
   const goTab = (t) => {
+    supersedePendingOpen(); // 任何主动切 Tab(含「我的」/早报)都作废在途的按 id 打开,迟到响应不再把人拉走
+    briefTrailRef.current = null; // 主动切 Tab = 结束这一程外出
+    if (t === 'brief') setBriefRestore(null); // 点 Tab 进早报是新开,不落回旧位
     if (t === 'me' || t === 'brief') { setTab(t); return; }
     setTab(t);
     // 与桌面视图轨同语义:点容器钮=回到该容器聚合(清源/收藏/搜索过滤)
@@ -171,10 +201,11 @@ export default function MobileReader({
   const readOpen = listView && !discover && Boolean(activeArticle);
 
   // ── 返回键握手(Wave3):层开着时按返回=关层,不是退出站点(微信内浏览器的肌肉记忆)──
-  useLayerHistory(readOpen, () => selectArticle(null));
+  useLayerHistory(readOpen, closeArticle);
   useLayerHistory(discover, closeDiscover);
   // 合集详情是发现页之上的一层:返回先退详情、再退发现页(注册序在 discover 之后)
   useLayerHistory(Boolean(discoverCollectionId), () => setDiscoverCollectionId(null));
+  useLayerHistory(interestOpen, closeInterest);
   useLayerHistory(drawerOpen, () => setDrawerOpen(false));
   useLayerHistory(Boolean(sheet), () => setSheet(null));
 
@@ -249,14 +280,20 @@ export default function MobileReader({
       {/* ── 内容区 ── */}
       <div className="m-content">
         {tab === 'brief' ? (
-          <PersonalBriefTab
+          <PersonalBriefPage
             mobile
+            sourceMap={sourceMap}
             showToast={showToast}
             interestVersion={interestVersion}
+            restore={briefRestore}
+            supersedePendingOpen={supersedePendingOpen}
             onManageSubscriptions={() => openDiscover()}
-            onOpenArticle={async (articleId) => {
-              const opened = await openArticleById(articleId);
-              if (opened) setTab(mode);
+            onOpenArticle={async (articleId, ctx) => {
+              const opened = await openArticleById(articleId, { silent: true });
+              if (!opened) return opened;
+              briefTrailRef.current = ctx || null;
+              setTab(mode);
+              return true;
             }}
           />
         ) : tab === 'me' ? (
@@ -270,6 +307,7 @@ export default function MobileReader({
             onShowFavorites={() => { goFavorites(); setTab(mode); }}
             onOpenDiscover={() => openDiscover()}
             onManageInterests={personalDigestEnabled ? () => setInterestOpen(true) : undefined}
+            interestAttention={onboardingRequired}
             onOpenSettings={onOpenSettings}
             onLogout={onLogout}
           />
@@ -470,7 +508,8 @@ export default function MobileReader({
           rs={rs}
           aiEnabled={aiEnabled}
           showToast={showToast}
-          onBack={() => selectArticle(null)}
+          onBack={closeArticle}
+          onLeaveForSearch={leaveArticleForSearch}
           onMore={() => openArticleSheet(activeArticle)}
         />
       )}
@@ -503,17 +542,32 @@ export default function MobileReader({
         items={sheet?.items || []}
         onClose={() => setSheet(null)}
       />
-      <InterestManager
-        open={interestOpen || onboardingRequired}
-        onboarding={onboardingRequired}
-        onClose={() => setInterestOpen(false)}
-        onSaved={({ onboardingCompleted } = {}) => {
-          setInterestVersion((value) => value + 1);
-          setInterestOpen(false);
-          if (onboardingCompleted) onUserUpdated?.({ interest_onboarding_completed: true });
-        }}
-        showToast={showToast}
-      />
+      {/* ── 我的兴趣(整页层,与发现页同构;引导完成后落早报 Tab) ── */}
+      {interestOpen && (
+        <div className="m-page" role="region" aria-label="我的兴趣">
+          <div className="m-topbar on-pane">
+            <button type="button" className="m-iconbtn" onClick={closeInterest} aria-label="返回">
+              <ChevronLeft />
+            </button>
+            <span className="m-title">我的兴趣</span>
+          </div>
+          <InterestPage
+            mobile
+            onboarding={onboardingRequired}
+            showToast={showToast}
+            onSaved={({ onboardingCompleted } = {}) => {
+              setInterestVersion((value) => value + 1);
+              if (onboardingCompleted) {
+                onUserUpdated?.({ interest_onboarding_completed: true });
+                if (!interestOpenRef.current) return;
+                setInterestOpen(false);
+                setBriefRestore(null);
+                setTab('brief');
+              }
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

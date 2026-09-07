@@ -31,9 +31,11 @@ export function displayAnalysisTags(article) {
 
 export function displayTagProps(tag) {
   const extracted = tag?.type === 'extracted';
+  // 不挂 title:原生 tooltip 是一块黑框,「规范标签」说不出任何读者关心的事,
+  // 长句更把内部术语漏到读者面(issue #23 验收:读者面不得出现「个性化日报」)。
+  // 虚线小签可点检索的语义由 AnalysisTagChip 的 aria-label + 悬停提墨承担。
   return {
     className: `reader-tag-chip${extracted ? ' is-extracted' : ''}`,
-    title: extracted ? 'AI 灵活标签；点击可临时检索，不参与长期兴趣和个性化日报选文' : '规范标签',
   };
 }
 

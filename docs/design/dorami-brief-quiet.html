@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>我的早报 · 卡片式日报 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   我的早报(issue #23 第一项)· 静默仪器样页 · 2026-09-05
+
+   背景:v3.44 首版早报页是「整幅工作区 + 右侧历史栏 + 快照弹窗」的独立形态——历史栏
+   按「每个版本」罗列(同一天重编 7 次就是 7 行);卡片两行截断而 summary 自 v3.45.1 后变长;
+   每条挂一句「来自你订阅的「IT之家」,是今日订阅中的高质量内容」;点卡片弹一个几乎没有
+   新信息的快照弹窗。用户四点意见 + 「从 0 到 1 推翻重来」拍板。
+
+   一稿(已否决,记录):日期栏 · 早报条目列(372)· 阅读窗三带,点条目在右侧阅读窗打开——
+   用户目检:「和我想象的不太一样;左栏没有问题;取缔中栏,只保留一个大的右栏,
+   卡片化的 summary/评分/标签/标题,点击再跳站内原文;右栏做高级感的卡片式日报。」
+
+   二稿(本页,数值 1:1 取自 index.css / mobile.css):
+   ① **日期栏**顶替源栏槽位(canvas 底、源行语法):一天一行「今天 / 昨天 / 9月3日 + 周几」,
+      按月打组签;今天恒首位,编排中行尾转小圈、失败标红字。同日多版折进报头「共 N 版 ▾」。
+   ② **报纸面**占「条目列 + 阅读窗」整幅(grid-column 3/-1,与发现页/社交流同构),版心
+      1120 居中:报头(等宽 kicker「我的早报 · 第 N 版 · 09:01 生成」+ 衬线 36px 日期 +
+      「5 篇精选 · 2 篇命中你的兴趣 · 来自 3 个来源」)/ 分节头(节名 + 等宽计数 + 延伸 hairline)/
+      卡片网格 auto-fill minmax(320px) → 1440 三列、1160 两列、移动一列;首节首张 lead 通栏。
+   ③ **卡片**= 品牌标 + 来源名 | 衬线渐变评分(Charter 齐线数字,AI 渐变=「见渐变即 AI」,
+      与速读卡同一身份)/ 衬线标题 17px(lead 24px)/ 完整摘要 13.5px/1.75 不截断 /
+      标签 chip(兴趣命中=「关注 · 标签」带实心小点)+ 相对时刻 + hover 浮现的 ↗。
+      surface 底 + --sh-1,hover 升 --sh-2 微浮 1px。选入理由长句退役。
+   ④ **点卡片 = openArticleById 跳站内原文**(切到该篇所在容器并选中,早报页退场);
+      文章已不在库时退到原链。快照弹窗退役。移动壳:横向日期条 + 同一张报纸面。
+
+   三稿(二稿目检返修,2026-09-06 拍板):
+   ⑤ **头条卡双栏**——二稿头条把摘要限 72ch 留下右侧空白;用户问「空白的用意」,评估过放图
+      (快照无图字段;全库近 30 天带图文章 112/1211,头条会在有图/无图两形态间跳,否决)后拍板
+      去空白:左栏来源/标题/摘要/时刻,右栏 200px hairline 分隔的评分栏(40px 渐变数字 +
+      「内容价值分」等宽注脚)+ 标签竖排。右栏无内容(无分无签)退回普通形态。**单卡分节同样
+      通栏双栏**(is-wide,字号不放大;目检:一张卡占三列网格一格、旁边两格空着)。头条豁免只看
+      **选篇降级**(degraded_reason);来源未更新(sync_stale)的版仍是正常精选,照设头条,「降级生成」
+      kicker 与「最新更新」措辞同此口径。报纸面 <720
+      (container query)退单栏,评分栏横排落在摘要之下(移动壳即此形态)。
+   ⑥ **同行等高、脚部钉底**(align-items: stretch + foot margin-top:auto)——三卡底部不齐
+      构成问题,仍不截断,余量落在摘要与脚部之间。
+   ⑦ **外出返回带**(专用于早报,弃「通用返回上一篇」:用户要回的是早报面 + 卷动位置,不是
+      上一篇文章;通用机制等于在阅读器里重建浏览器历史,做一半更糟)。点卡片进原文时交出
+      {日期,版次,卷动位置,条目序列},阅读窗顶部常驻 34px wash 带:左「‹ 返回我的早报 · 9月5日」
+      (落回同一版同一位置,刚读过的卡描一圈 accent 褪去),右「早报下一条 3/5 ›」(顺着本版读完
+      不必回早报)。用户主动改作用域(视图轨/源栏/发现页)即清,同列表内翻篇保留;浏览器后退不接。
+      移动壳:从早报进正文页,返回键/返回钮回早报 Tab 并落位,不做返回带。
+   ⑧ 摘要内关键词加粗:评估前端整词匹配方案后用户拍板「先不考虑」。
+
+   纪律:面底 --rd-list-bg(与条目列同阶),卡片 surface(比面高一阶);饱和色只在评分渐变、
+   kicker 与 chip;状态提示一句一行(--state-warn-bg / wash 两档);按钮字号写容器靠继承
+   (button{font:inherit} 未分层陷阱);全部 token 化,暗色自动翻转;reduced-motion 关掉浮起。
+   右上角月亮切亮暗。文章/来源为 dev 库真实快照的改写示意。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif;
+  --serif-num: Charter, Cambria, Baskerville, var(--font-serif);
+  --dorami-blue: #5b54e8; --dorami-blue-2: #7b6cf0;
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-wash: rgba(91, 84, 232, 0.08); --dorami-well: #f1f5f9;
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-soft: rgba(11, 18, 32, 0.06);
+  --dorami-card-bd: transparent; --dorami-edge: rgba(255, 255, 255, 0.62);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-pill: 9999px;
+  --state-warn: #b45309; --state-warn-bg: #fffbeb; --state-bad: #e11d48;
+  --motion-fast: 150ms; --motion-medium: 240ms; --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ai-g1: #3f7bf6; --ai-g2: #8b52f4;
+  --rd-list-bg: var(--dorami-soft); --rd-pane-bg: var(--dorami-surface);
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-wash: rgba(124, 112, 235, 0.13);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-soft: rgba(255, 255, 255, 0.07);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08); --dorami-edge: rgba(255, 255, 255, 0.05);
+  --state-warn: #fbbf24; --state-warn-bg: #2a2412; --state-bad: #fb7185;
+  --dorami-blue: #4d45b5; --dorami-blue-2: #5f57c8;
+  --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --ai-g1: #6ea3ff; --ai-g2: #ab86ff;
+  --rd-list-bg: var(--dorami-well); --rd-pane-bg: var(--dorami-soft);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink); font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+svg { flex: none; }
+
+.page { padding: 26px 36px 56px; max-width: 1560px; margin: 0 auto; }
+.page-head { display: flex; align-items: center; gap: 14px; min-height: 48px; margin-bottom: 8px; }
+.page-title { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; }
+.page-sub { font-size: 12.5px; color: var(--dorami-muted); max-width: 960px; line-height: 1.7; margin-bottom: 26px; }
+.head-tool { margin-left: auto; width: 36px; height: 36px; display: grid; place-items: center; border-radius: var(--r-control); color: var(--dorami-faint); border: 1px solid var(--dorami-border); background: var(--dorami-surface); }
+.head-tool svg { width: 17px; height: 17px; }
+.zone-head { display: flex; align-items: baseline; gap: 10px; margin: 34px 2px 12px; }
+.zone-title { font-size: 14px; font-weight: 700; }
+.zone-sub { font-size: 12px; color: var(--dorami-muted); }
+.row { display: grid; gap: 22px; align-items: start; grid-template-columns: minmax(0, 1fr) 300px; }
+.shell-note { font-size: 11.5px; font-weight: 500; line-height: 1.65; color: var(--dorami-faint); }
+.shell-note b { color: var(--dorami-ink-2); font-weight: 600; }
+.shell-note p + p { margin-top: 10px; }
+
+/* ── 缩微壳 ── */
+.frame { border-radius: var(--r-card); overflow: hidden; border: 1px solid var(--dorami-border); box-shadow: var(--sh-2); background: var(--rd-list-bg); }
+.rshell { --vrail: 64px; --col-l: 232px; display: grid; grid-template-columns: var(--vrail) var(--col-l) minmax(0, 1fr); height: 820px; overflow: hidden; }
+.rcol { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--dorami-border-soft); }
+.vrail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 0 16px; background: var(--dorami-canvas); border-right: 1px solid var(--dorami-border-soft); }
+.vrail-brand { width: 32px; height: 32px; border-radius: 10px; flex: none; margin-bottom: 16px; background: linear-gradient(145deg, var(--dorami-blue-2), var(--dorami-blue)); }
+.vbtn { width: 52px; height: 46px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border-radius: 10px; color: var(--dorami-faint); }
+.vbtn svg { width: 18px; height: 18px; }
+.vbtn span { font-size: 10px; font-weight: 500; letter-spacing: 0.08em; }
+.vbtn.is-on { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+.vdiv { width: 28px; height: 1px; background: var(--dorami-border); margin: 6px 0; }
+
+/* 日期栏(1:1 .brief-days*) */
+.brief-days { background: var(--dorami-canvas); }
+.src-head { display: flex; align-items: baseline; padding: 18px 16px 10px; }
+.src-title { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; color: var(--dorami-ink); }
+.src-label { padding: 14px 10px 6px; font-size: 10.5px; letter-spacing: 0.12em; color: var(--dorami-faint); }
+.brief-days-scroll { flex: 1; overflow-y: auto; padding: 0 8px 16px; }
+.brief-day { display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 8px; border-radius: 8px; border: 1px solid transparent; color: var(--dorami-muted); text-align: left; transition: background 140ms ease, box-shadow 140ms ease; }
+.brief-day:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+.brief-day.is-on { background: var(--dorami-surface); box-shadow: var(--sh-1); color: var(--dorami-ink); }
+.brief-day-name { flex: 1; min-width: 0; font-size: 13px; }
+.brief-day.is-on .brief-day-name { font-weight: 600; }
+.brief-day-meta { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.brief-day-flag { font-size: 11px; font-weight: 600; color: var(--state-bad); }
+.brief-day-spin { width: 13px; height: 13px; color: var(--dorami-accent); animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 报纸面(1:1 .brief-sheet*) */
+.brief-sheet { min-width: 0; min-height: 0; overflow-y: auto; background: var(--rd-list-bg); }
+.brief-sheet-inner { max-width: 1120px; margin: 0 auto; padding: 34px 44px 72px; }
+.brief-mast { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding-bottom: 20px; border-bottom: 1px solid var(--dorami-border); }
+.brief-mast-kicker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--dorami-accent-ink); }
+.brief-mast-title { margin-top: 10px; font-family: var(--serif-num); font-size: 36px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; font-variant-numeric: lining-nums tabular-nums; }
+.brief-mast-title small { margin-left: 12px; font-size: 16px; font-weight: 400; letter-spacing: 0; color: var(--dorami-muted); }
+.brief-mast-sub { margin-top: 10px; font-size: 13px; font-weight: 500; color: var(--dorami-muted); }
+.brief-mast-actions { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.brief-rev-toggle { display: inline-flex; align-items: center; gap: 2px; padding: 0 4px; color: var(--dorami-muted); }
+.brief-rev-toggle[aria-expanded="true"], .brief-rev-toggle:hover { color: var(--dorami-accent-ink); }
+.brief-rev-toggle svg { width: 13px; height: 13px; }
+.brief-rev-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.icon-button { width: 32px; height: 32px; display: grid; place-items: center; border-radius: var(--r-control); border: 1px solid var(--dorami-border); background: var(--dorami-surface); color: var(--dorami-muted); }
+.icon-button svg { width: 15px; height: 15px; }
+.brief-rev-strip { display: flex; flex-wrap: wrap; gap: 6px; padding: 14px 0 0; font-size: 12px; }
+.brief-rev { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
+.brief-rev.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+.brief-rev small { font-size: 11px; color: var(--dorami-faint); }
+.brief-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 18px; padding: 9px 12px; border-radius: var(--r-control); background: var(--state-warn-bg); color: var(--state-warn); font-size: 12.5px; font-weight: 500; line-height: 1.5; }
+.brief-note svg { width: 14px; height: 14px; margin-top: 2px; }
+.brief-sec { margin-top: 30px; }
+.brief-sec-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.brief-sec-title { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; }
+.brief-sec-count { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); }
+.brief-sec-rule { flex: 1; height: 1px; background: var(--dorami-border); }
+.brief-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: stretch; }
+.brief-card { display: flex; flex-direction: column; gap: 10px; width: 100%; padding: 18px 20px 16px; border: 1px solid var(--dorami-card-bd); border-radius: var(--r-card); background: var(--dorami-surface); box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge); text-align: left; transition: box-shadow var(--motion-medium) var(--motion-ease), transform var(--motion-medium) var(--motion-ease); }
+.brief-card:hover { box-shadow: var(--sh-2), inset 0 1px 0 var(--dorami-edge); transform: translateY(-1px); }
+.brief-card.is-lead { grid-column: 1 / -1; padding: 24px 28px 20px; }
+.brief-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brief-card-src { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.logo { width: 17px; height: 17px; border-radius: 5.5px; display: grid; place-items: center; font-size: 8px; font-weight: 700; color: #fff; }
+.brief-card-srcname { font-size: 12px; font-weight: 500; color: var(--dorami-muted); }
+.brief-card-score { font-family: var(--serif-num); font-size: 22px; font-weight: 700; line-height: 1; font-variant-numeric: lining-nums tabular-nums;
+  background: linear-gradient(118deg, var(--ai-g1), var(--ai-g2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.brief-card.is-lead .brief-card-score { font-size: 28px; }
+.brief-card-title { display: block; font-family: var(--font-serif); font-size: 17px; font-weight: 700; line-height: 1.4; }
+.brief-card.is-lead .brief-card-title { font-size: 24px; line-height: 1.3; }
+.brief-card-sum { display: block; font-size: 13.5px; line-height: 1.75; color: var(--dorami-ink-2); }
+.brief-card.is-lead .brief-card-sum { font-size: 14.5px; line-height: 1.8; }
+.brief-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 2px; }
+/* 三稿:头条双栏 */
+.brief-card.is-wide { grid-column: 1 / -1; padding: 20px 24px 18px; }
+.brief-card.is-split { display: grid; grid-template-columns: minmax(0, 1fr) 200px; column-gap: 32px; }
+.brief-card-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.brief-card-aside { display: flex; flex-direction: column; gap: 14px; min-width: 0; padding-left: 28px; border-left: 1px solid var(--dorami-border-soft); }
+.brief-card-aside-score { display: flex; flex-direction: column; gap: 6px; }
+.brief-card-aside .brief-card-score { font-size: 32px; }
+.brief-card.is-lead .brief-card-aside .brief-card-score { font-size: 40px; }
+.brief-card-aside-cap { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--dorami-faint); }
+.brief-card-tags.is-stack { flex-direction: column; align-items: flex-start; gap: 6px; }
+.mframe .brief-card.is-split { grid-template-columns: minmax(0, 1fr); row-gap: 14px; }
+.mframe .brief-card-aside { flex-direction: row; align-items: center; gap: 16px; padding-left: 0; padding-top: 14px; border-left: none; border-top: 1px solid var(--dorami-border-soft); }
+.mframe .brief-card-aside-score { flex-direction: row; align-items: baseline; gap: 8px; }
+.mframe .brief-card-aside .brief-card-score { font-size: 26px; }
+.mframe .brief-card-tags.is-stack { flex-direction: row; gap: 5px; }
+/* 三稿:阅读窗顶部外出返回带 */
+.reader-brief-trail { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 34px; padding: 0 14px; border-bottom: 1px solid var(--dorami-border-soft); background: var(--dorami-wash); color: var(--dorami-accent-ink); font-size: 12px; font-weight: 500; }
+.reader-brief-trail-btn { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px; border-radius: var(--r-control); color: inherit; }
+.reader-brief-trail-btn:hover { background: color-mix(in srgb, var(--dorami-accent) 12%, transparent); }
+.reader-brief-trail-btn svg { width: 14px; height: 14px; }
+.reader-brief-trail-btn small { font-size: 11px; font-weight: 400; color: var(--dorami-muted); }
+.brief-card-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { display: inline-flex; align-items: center; min-height: 20px; padding: 0 7px; border-radius: var(--r-pill); background: var(--dorami-wash); color: var(--dorami-accent-ink); font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap; }
+.chip.is-interest::before { content: ''; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: currentColor; }
+.brief-card-time { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 11.5px; color: var(--dorami-faint); }
+.brief-card-time svg { width: 13px; height: 13px; opacity: 0; transform: translate(-2px, 2px); transition: opacity var(--motion-fast) ease, transform var(--motion-fast) var(--motion-ease); }
+.brief-card:hover .brief-card-time svg { opacity: 1; transform: none; color: var(--dorami-accent-ink); }
+
+/* 移动壳缩微 */
+.mframe { width: 390px; border-radius: 28px; border: 1px solid var(--dorami-border); box-shadow: var(--sh-2); overflow: hidden; background: var(--rd-list-bg); display: flex; flex-direction: column; height: 820px; }
+.m-topbar { padding: 16px 18px 8px; font-size: 20px; font-weight: 700; background: var(--rd-pane-bg); }
+.brief-m-days { display: flex; gap: 6px; padding: 10px 14px 8px; overflow-x: auto; font-size: 12.5px; }
+.brief-m-day { flex: none; padding: 5px 11px; border-radius: var(--r-pill); color: var(--dorami-muted); background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+.brief-m-day.is-on { background: var(--dorami-surface); color: var(--dorami-ink); font-weight: 600; box-shadow: var(--sh-1); }
+.mframe .brief-sheet { flex: 1; }
+.mframe .brief-sheet-inner { padding: 6px 14px 28px; }
+.mframe .brief-mast { padding-bottom: 14px; }
+.mframe .brief-mast-title { font-size: 28px; }
+.mframe .brief-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.mframe .brief-card, .mframe .brief-card.is-lead { padding: 16px 16px 14px; }
+.mframe .brief-card.is-lead .brief-card-title { font-size: 19px; }
+.mframe .brief-card.is-lead .brief-card-sum { font-size: 13.5px; }
+.m-tabbar { margin-top: auto; display: flex; justify-content: space-around; padding: 8px 6px 14px; background: var(--rd-pane-bg); border-top: 1px solid var(--dorami-border-soft); }
+.m-tab { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 12px; border-radius: 10px; font-size: 11px; color: var(--dorami-faint); }
+.m-tab svg { width: 20px; height: 20px; }
+.m-tab.is-on { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+@media (max-width: 1100px) { .row { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page-head">
+    <h1 class="page-title">我的早报 · 卡片式日报</h1>
+    <button class="head-tool" id="theme" title="切换亮暗">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg>
+    </button>
+  </div>
+  <p class="page-sub">左侧日期栏顶替源栏槽位;右侧一整幅报纸面(占条目列 + 阅读窗):报头 + 分节卡片网格,卡片吃完整摘要、衬线渐变评分、标签;点卡片跳站内原文。历史按天分期,同日多版折进报头。快照弹窗与选入理由长句退役。</p>
+
+  <div class="zone-head"><span class="zone-title">画面 A · 桌面 · 今天</span><span class="zone-sub">1440 宽:版心 1120,三列网格,首节首张 lead 通栏</span></div>
+  <div class="row">
+    <div class="frame"><div class="rshell">
+      <nav class="vrail">
+        <div class="vrail-brand"></div>
+        <button class="vbtn is-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9h4"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8z"/></svg><span>早报</span></button>
+        <div class="vdiv"></div>
+        <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg><span>文章</span></button>
+        <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="11" r="1"/><path d="M8 14a5 5 0 1 1 8 0"/><path d="M17 18.5a9 9 0 1 0-10 0"/></svg><span>播客</span></button>
+        <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg><span>动态</span></button>
+        <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg><span>社交</span></button>
+        <div class="vdiv"></div>
+        <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m16.2 7.8-2 6.3-6.4 2.1 2-6.3z"/></svg><span>发现</span></button>
+        <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 5 6.3 6.3a2.4 2.4 0 0 1 0 3.4L17 19"/><path d="M9.6 2.9a2 2 0 0 1 1.4.6l6.2 6.2a2 2 0 0 1 0 2.8l-4.2 4.2a2 2 0 0 1-2.8 0L4 10.5a2 2 0 0 1-.6-1.4V4a2 2 0 0 1 2-2z"/></svg><span>兴趣</span></button>
+      </nav>
+      <aside class="rcol brief-days">
+        <div class="src-head"><span class="src-title">我的早报</span></div>
+        <div class="brief-days-scroll">
+          <div class="src-label">9 月</div>
+          <button class="brief-day is-on"><span class="brief-day-name">今天</span><span class="brief-day-meta">周六</span></button>
+          <button class="brief-day"><span class="brief-day-name">昨天</span><span class="brief-day-meta">周五</span></button>
+          <button class="brief-day"><span class="brief-day-name">9月3日</span><span class="brief-day-meta">周四</span></button>
+          <button class="brief-day"><span class="brief-day-name">9月2日</span><span class="brief-day-flag">失败</span></button>
+          <button class="brief-day"><span class="brief-day-name">9月1日</span><span class="brief-day-meta">周二</span></button>
+          <div class="src-label">8 月</div>
+          <button class="brief-day"><span class="brief-day-name">8月31日</span><span class="brief-day-meta">周一</span></button>
+          <button class="brief-day"><span class="brief-day-name">8月30日</span><span class="brief-day-meta">周日</span></button>
+        </div>
+      </aside>
+      <section class="brief-sheet"><div class="brief-sheet-inner">
+        <header class="brief-mast">
+          <div>
+            <div class="brief-mast-kicker">我的早报 · 第 1 版 · 09:01 生成</div>
+            <h1 class="brief-mast-title">9月5日<small>周六 · 今天</small></h1>
+            <p class="brief-mast-sub">5 篇精选 · 2 篇命中你的兴趣 · 来自 3 个来源</p>
+          </div>
+          <div class="brief-mast-actions">
+            <button class="icon-button" title="重新编排今日早报"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
+          </div>
+        </header>
+        <section class="brief-sec">
+          <div class="brief-sec-head"><span class="brief-sec-title">模型发布</span><span class="brief-sec-count">1</span><span class="brief-sec-rule"></span></div>
+          <div class="brief-grid">
+            <button class="brief-card is-lead is-split">
+              <span class="brief-card-main">
+                <span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#d9232e">IT</span><span class="brief-card-srcname">IT之家 AI</span></span></span>
+                <span class="brief-card-title">谷歌推出 Gemini 3.8 Flash Cyber 模型,内部已全面部署用于代码安全防护</span>
+                <span class="brief-card-sum">谷歌于 9 月 2 日推出 Gemini 3.8 Flash Cyber 模型,通过 Fairwind 计划向受信任安全团队开放。该模型在漏洞挖掘基准 CyberGym 上表现领先,内部测试中漏洞挖掘成功率突破 70%;在 CWE-Bench 测试中 Pass@1 达 47.2%,接近顶尖模型且成本更低。谷歌内部已全面部署,Chrome 安全团队发现其生成有效补丁数量为顶尖商业模型的 2.6 倍;Wiz 评测显示召回率提升 7.5%–9.7%,成本降至 1/5.2 至 1/2.3。</span>
+                <span class="brief-card-foot"><span class="brief-card-time">2 天前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span>
+              </span>
+              <span class="brief-card-aside">
+                <span class="brief-card-aside-score"><span class="brief-card-score">8.2</span><span class="brief-card-aside-cap">内容价值分</span></span>
+                <span class="brief-card-tags is-stack"><span class="chip is-interest">关注 · 网络安全</span><span class="chip">Gemini</span><span class="chip">Google</span></span>
+              </span>
+            </button>
+          </div>
+        </section>
+        <section class="brief-sec">
+          <div class="brief-sec-head"><span class="brief-sec-title">行业资讯</span><span class="brief-sec-count">3</span><span class="brief-sec-rule"></span></div>
+          <div class="brief-grid">
+            <button class="brief-card">
+              <span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#d9232e">IT</span><span class="brief-card-srcname">IT之家 AI</span></span><span class="brief-card-score">8.2</span></span>
+              <span class="brief-card-title">全美最严格课堂 AI 禁令落地纽约,学生上高中之前不得在课上使用</span>
+              <span class="brief-card-sum">纽约市宣布自 2026–2027 学年起,公立学校将实施为期一年的课堂 AI 禁令,覆盖约 60 万名学前班至八年级学生。教师不得使用 AI 批改作业,所有年级禁用陪伴或心理支持类聊天机器人;高中生仅在特定情况下可用,并需接受每年两次的 AI 素养教育。</span>
+              <span class="brief-card-foot"><span class="brief-card-tags"><span class="chip">AI 治理与监管</span></span><span class="brief-card-time">2 天前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span>
+            </button>
+            <button class="brief-card">
+              <span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#c9663a">A</span><span class="brief-card-srcname">Anthropic 新闻</span></span><span class="brief-card-score">7.5</span></span>
+              <span class="brief-card-title">Developing Enterprise Frontier Safeguards with our customers</span>
+              <span class="brief-card-sum">Anthropic 宣布推出 Enterprise Frontier Safeguards(EFS),将零数据保留的隐私性与滥用检测保障结合:数据存储在客户控制的云基础设施中,检测信号直接发送给客户,无需 Anthropic 人工审查。与 100 多家企业及 AWS、Google Cloud、Azure 合作开发,预计今年秋季全面可用。</span>
+              <span class="brief-card-foot"><span class="brief-card-tags"><span class="chip is-interest">关注 · Anthropic</span><span class="chip">数据安全与隐私</span></span><span class="brief-card-time">3 天前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span>
+            </button>
+            <button class="brief-card">
+              <span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#2e6fdc">量</span><span class="brief-card-srcname">量子位</span></span><span class="brief-card-score">7.0</span></span>
+              <span class="brief-card-title">OpenAI 首席科学家回应「AI 推理不透明」争议:复杂度未跳跃增长</span>
+              <span class="brief-card-sum">OpenAI 首席科学家在 X 平台回应关于模型思维链可读性下降的讨论,称当前推理轨迹的复杂度随能力线性增长,并未出现不可解释的跳跃;团队将继续公开部分推理样本以供外部审计。</span>
+              <span class="brief-card-foot"><span class="brief-card-tags"><span class="chip">模型可解释性</span></span><span class="brief-card-time">2 天前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span>
+            </button>
+          </div>
+        </section>
+      </div></section>
+    </div></div>
+    <div class="shell-note">
+      <p><b>日期栏</b>沿源栏语法:canvas 底、13px 行名、右缘等宽小字(周几);选中浮白 + --sh-1;编排中行尾转小圈,失败改红字。按月打组签,今天恒首位。同日多版不在这里罗列。</p>
+      <p><b>报头</b>= 等宽 kicker(我的早报 · 版次 · 生成时刻)+ 衬线 36px 日期 + 小字周几/今天 + 「N 篇精选 · N 篇命中兴趣 · 来自 N 个来源」;右侧重编钮(仅今天)与「共 N 版 ▾」。</p>
+      <p><b>分节</b>= 节名 + 等宽计数 + 延伸 hairline;网格 auto-fill minmax(320px):1440 三列、1160 两列、移动一列;同行卡片等高、脚部钉底。首节首张 lead 通栏且双栏(三稿):左栏正文流,右栏 200px 评分栏(40px 渐变数字 + 「内容价值分」注脚)与标签竖排,hairline 分隔——右侧不再留白,不放图。</p>
+      <p><b>外出返回带</b>(三稿,示意):点卡片进原文后阅读窗顶部常驻——</p>
+      <div class="reader-brief-trail" style="border:1px solid var(--dorami-border-soft);border-radius:var(--r-control)"><span class="reader-brief-trail-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>返回我的早报<small>9月5日</small></span><span class="reader-brief-trail-btn">早报下一条<small>3 / 5</small><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></span></div>
+      <p><b>卡片</b>= 品牌标 + 来源名 | 衬线渐变评分(与速读卡同一 AI 身份)/ 衬线标题 / 完整摘要 / chip + 相对时刻,hover 浮起并露出 ↗。点卡片 = openArticleById 跳站内原文,早报页退场。</p>
+    </div>
+  </div>
+
+  <div class="zone-head"><span class="zone-title">画面 B · 历史日 · 同日多版展开 + 降级日</span><span class="zone-sub">9月3日重编 7 次(2 版被替代不列),默认看最新一版</span></div>
+  <div class="row">
+    <div class="frame"><div class="brief-sheet" style="height:420px"><div class="brief-sheet-inner">
+      <header class="brief-mast">
+        <div>
+          <div class="brief-mast-kicker">我的早报 · 第 5 版 · 22:27 生成 · 降级生成</div>
+          <h1 class="brief-mast-title">9月3日<small>周四</small></h1>
+          <p class="brief-mast-sub">8 篇最新更新 · 来自 2 个来源</p>
+        </div>
+        <div class="brief-mast-actions"><button class="brief-rev-toggle" aria-expanded="true">共 5 版<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button></div>
+      </header>
+      <div class="brief-rev-strip">
+        <button class="brief-rev">第 7 版 <small>23:30</small></button>
+        <button class="brief-rev">第 6 版 <small>23:27</small></button>
+        <button class="brief-rev is-on">第 5 版 <small>22:27 降级</small></button>
+        <button class="brief-rev">第 3 版 <small>20:28 降级</small></button>
+        <button class="brief-rev">第 1 版 <small>19:35 降级</small></button>
+      </div>
+      <div class="brief-note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z"/><path d="M12 9v4M12 17h.01"/></svg><span>今天没有达到入选标准的内容,以下是订阅源最新更新,不计入正式精选</span></div>
+      <section class="brief-sec">
+        <div class="brief-sec-head"><span class="brief-sec-title">订阅源最新更新</span><span class="brief-sec-count">8</span><span class="brief-sec-rule"></span></div>
+        <div class="brief-grid">
+          <button class="brief-card"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#5a7f6a">A</span><span class="brief-card-srcname">AIHOT · 全部 AI 动态</span></span></span><span class="brief-card-title">字节跳动拟议贷款据报从 200 亿美元扩至 296 亿美元,今年资本开支或达 700 亿美元</span><span class="brief-card-foot"><span></span><span class="brief-card-time">09-03</span></span></button>
+          <button class="brief-card"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#5a7f6a">A</span><span class="brief-card-srcname">AIHOT · 全部 AI 动态</span></span></span><span class="brief-card-title">京东 JoyInside 上榜 2026 年《财富》中国最佳设计榜,构建 AI Home 生态</span><span class="brief-card-foot"><span></span><span class="brief-card-time">09-03</span></span></button>
+        </div>
+      </section>
+    </div></div></div>
+    <div class="shell-note">
+      <p><b>版次胶囊条</b>:点报头「共 N 版」展开,每枚 = 第 N 版 + 生成时刻 + 非 ready 的状态词;当前版浮白。被替代(superseded)的版本后端已不列。切版只换报体,日期栏不动。</p>
+      <p><b>降级日</b>:kicker 尾多一段「降级生成」,报体顶部一句话提示(--state-warn-bg),卡片无评分无 chip——快照里本就没有分析结果,不假装;lead 也不给(降级日没有「头条」)。截止前未完成 / 已记录下一版请求也是同款一句话提示(后者 wash 信息档)。</p>
+      <p><b>生命周期</b>(未画):今天编排中 = 报头下居中状态块(时钟 + 「正在编排今日早报…」+ 来源更新 3/5 · 文章分析 12/40 + 仍在等待的来源名),8s 轮询;失败 = 状态块 + 「重试生成」主钮;无订阅 = 「还没有订阅来源」+ 去发现来源。</p>
+    </div>
+  </div>
+
+  <div class="zone-head"><span class="zone-title">画面 C · 移动壳</span><span class="zone-sub">横向日期条 + 同一张报纸面(单列);点卡片推正文页</span></div>
+  <div class="row">
+    <div class="mframe">
+      <div class="m-topbar">我的早报</div>
+      <div class="brief-m-days"><button class="brief-m-day is-on">今天</button><button class="brief-m-day">昨天</button><button class="brief-m-day">9月3日</button><button class="brief-m-day">9月2日</button><button class="brief-m-day">9月1日</button></div>
+      <div class="brief-sheet"><div class="brief-sheet-inner">
+        <header class="brief-mast">
+          <div><div class="brief-mast-kicker">我的早报 · 第 1 版 · 09:01 生成</div><h1 class="brief-mast-title">9月5日<small>周六 · 今天</small></h1><p class="brief-mast-sub">5 篇精选 · 来自 3 个来源</p></div>
+          <div class="brief-mast-actions"><button class="icon-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button></div>
+        </header>
+        <section class="brief-sec">
+          <div class="brief-sec-head"><span class="brief-sec-title">模型发布</span><span class="brief-sec-count">1</span><span class="brief-sec-rule"></span></div>
+          <div class="brief-grid">
+            <button class="brief-card is-lead">
+              <span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#d9232e">IT</span><span class="brief-card-srcname">IT之家 AI</span></span><span class="brief-card-score">8.2</span></span>
+              <span class="brief-card-title">谷歌推出 Gemini 3.8 Flash Cyber 模型,内部已全面部署用于代码安全防护</span>
+              <span class="brief-card-sum">谷歌于 9 月 2 日推出 Gemini 3.8 Flash Cyber 模型,通过 Fairwind 计划向受信任安全团队开放。该模型在漏洞挖掘基准 CyberGym 上表现领先,内部测试中漏洞挖掘成功率突破 70%。</span>
+              <span class="brief-card-foot"><span class="brief-card-tags"><span class="chip is-interest">关注 · 网络安全</span></span><span class="brief-card-time">2 天前</span></span>
+            </button>
+          </div>
+        </section>
+      </div></div>
+      <div class="m-tabbar">
+        <button class="m-tab is-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9h4"/></svg>早报</button>
+        <button class="m-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>文章</button>
+        <button class="m-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="11" r="1"/><path d="M8 14a5 5 0 1 1 8 0"/></svg>播客</button>
+        <button class="m-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>动态</button>
+        <button class="m-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/></svg>社交</button>
+        <button class="m-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>我的</button>
+      </div>
+    </div>
+    <div class="shell-note">
+      <p><b>移动壳</b>没有第二列可给日期,日期条横向滚动置顶(胶囊,选中浮白);报头/分节/卡片与桌面同一组件同一 CSS,网格退单列。点卡片走既有 openArticleById → 推正文页。</p>
+      <p><b>不做</b>:早报页内的阅读窗(一稿做了,用户目检否决——摘要卡本身就是早报的内容,原文另跳);历史栏逐版本罗列(同日多版折进报头);快照弹窗;选入理由长句。</p>
+    </div>
+  </div>
+</div>
+<script>
+  const root = document.documentElement;
+  document.getElementById('theme').addEventListener('click', () => {
+    root.dataset.theme = root.dataset.theme === 'dark' ? '' : 'dark';
+  });
+</script>
+</body>
+</html>
