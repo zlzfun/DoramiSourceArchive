@@ -62,6 +62,8 @@
   dsub_/dfeed_ 令牌签发与轮换、`/api/public/*` 令牌拉取端点。
 - ◇ [contracts/archive_sync.md](./contracts/archive_sync.md) — collector→reader 的 JSONL 导出/导入契约
   (身份/血缘/校验和)。
+- ◇ [contracts/podcast_provider_ports.md](./contracts/podcast_provider_ports.md) — Podcast ASR/TTS
+  provider-neutral ports、供应商 adapter 责任边界、未知提交规则和新增供应商验收清单。
 
 ## frontend/ —— 前端纪律(◉ 活跃)
 

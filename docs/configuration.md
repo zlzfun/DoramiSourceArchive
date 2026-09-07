@@ -15,7 +15,7 @@
 
 真实部署文件可能包含管理员密码、auth secret、代理账密、小鲁班凭证、图床 secret 等敏感值，已通过 `.gitignore` 排除，不应提交。
 
-运行角色读取 `[runtime] role`（也可用 `DORAMI_RUNTIME_ROLE` 覆盖）。单机以及当前生产双节点均保持 `all`；采集/分析的单写权威由 Archive Sync v2 的持久化 authority 字段控制，不再用运行角色猜测：
+运行角色读取 `[runtime] role`（也可用 `DORAMI_RUNTIME_ROLE` 覆盖）。单机以及当前生产双节点均保持 `all`；采集/分析的单写权威由 Archive Sync v3 的持久化 authority 字段控制，不再用运行角色猜测：
 
 ```ini
 [runtime]
@@ -33,8 +33,213 @@ role = all
 
 1. 外网 Dorami 采集并分析平台/公共源；内网 Dorami 同步并提供服务，两端配置 `role = all`。
 2. 内网 Dorami 自行采集用户自定 RSS，并可直接调用外部 MaaS；自定源正文不上传外网 Dorami。
-3. 内网配置远程同步，默认使用 Archive Sync v2 拉取 sources、taxonomy、articles、analyses、media、source_states。同步契约见 `docs/contracts/archive_sync.md`。
+3. 内网配置远程同步，使用 v2 API 上的 Archive Sync v3 manifest 拉取 sources、taxonomy、articles、analyses、media、source_states。同步契约见 `docs/contracts/archive_sync.md`。
 4. 下游应用优先访问分发层的个人聚合接口 `/api/public/feed/articles`（`dfeed_` 令牌，覆盖用户全部订阅源）；订阅源在前端“阅读器”左栏增删，聚合令牌在“接入集成”页面生成/轮换。（按源隔离的 `/api/public/subscriptions/{id}/...` + `dsub_` 令牌仍可用，属高级/自动化路径。）
+
+Podcast 处理能力与 `runtime.role` 正交，部署时由环境变量显式注入。安装 ID 必须在
+容器/进程重建后保持稳定，不能取 hostname 或容器 ID：
+
+```bash
+# 外网 all：完成采集、ASR、中文博客、TTS 与发布
+export DORAMI_PODCAST_INSTALLATION=external
+export DORAMI_PODCAST_AUTHORITY_ID=<stable-external-id>
+export DORAMI_PODCAST_ALLOWED_STAGES=fetch,asr,translate,analyze,digest,script,tts,audio_qa,local_publish
+export ALIYUN_AK_ID=<secret>
+export ALIYUN_AK_SECRET=<secret>
+export NLS_APP_KEY=<secret>
+export NLS_ACCESS_TOKEN=<secret>
+export NLS_TOKEN_EXPIRES_AT=<provider-unix-seconds>
+
+# 内网 all：不执行 Podcast 处理，只通过 Archive Sync 同步并展示
+export DORAMI_PODCAST_INSTALLATION=internal
+export DORAMI_PODCAST_AUTHORITY_ID=<stable-internal-id>
+export DORAMI_PODCAST_ALLOWED_STAGES=
+```
+
+当前阿里云 ISI 接入中，外网 ASR 需要 AK/SK + Appkey，外网 TTS 需要 Appkey + NLS
+Token，并用 AK/SK 按服务端到期时间刷新 Token。内网不配置供应商凭据。可选 STS 另加
+`ALIYUN_SECURITY_TOKEN`。这些值不写入 INI、`.env` 示例或版本库。页面读取和音频播放
+不会触发 provider。Docker Compose 会强制要求安装 ID 与 stage allowlist；裸机使用当前
+shell 环境并由 PM2 `--update-env` 继承。
+
+Reader 的已发布播客文字按字符游标分页，默认页长、单页上限与搜索词上限均可调整，
+避免把长逐字稿一次载入浏览器：
+
+```ini
+[podcast]
+reader_text_default_chars = 12000
+reader_text_max_chars = 50000
+reader_text_query_max_chars = 200
+text_artifact_max_bytes = 8388608
+text_artifact_max_chars = 4000000
+transcript_duration_tolerance_seconds = 5
+text_sync_page_max_bytes = 16777216
+text_sync_page_max_rows = 1000
+# 可选独立 HMAC 密钥（至少 32 字符）；缺省从 [auth] secret 做用途隔离派生
+# reader_cursor_secret =
+processing_enabled = false
+provider_ready_targets =
+text_pipeline_version = podcast-text-v1
+audio_pipeline_version = podcast-audio-v1
+processing_policy_version = podcast-processing-policy-v1
+monthly_budget_cny_minor = 0
+per_run_budget_cny_minor = 0
+budget_scope = podcast-paid-processing
+budget_timezone = Asia/Shanghai
+voice_profiles =
+default_voice_profile =
+premium_score_threshold = 8.5
+premium_min_duration_seconds = 1200
+premium_guide_mode = solo_preview
+premium_max_audio_minutes = 15
+premium_transcript_max_chars = 120000
+premium_blog_max_chars = 6000
+premium_narration_max_chars = 4200
+```
+
+ASR worker 的轮询与租约参数单独配置；启动时首轮总会延后一个 `tick_seconds`，不会因
+进程启动直接调用 provider：
+
+```ini
+[podcast_worker]
+tick_seconds = 10
+lease_seconds = 120
+fallback_retry_seconds = 30
+max_steps_per_tick = 1
+```
+
+对应环境变量为 `DORAMI_PODCAST_WORKER_TICK_SECONDS`、
+`DORAMI_PODCAST_WORKER_LEASE_SECONDS`、
+`DORAMI_PODCAST_WORKER_FALLBACK_RETRY_SECONDS` 与
+`DORAMI_PODCAST_WORKER_MAX_STEPS_PER_TICK`。两台 `runtime.role=all` 主机都可以保留本节；
+ASR job 只由 Podcast stage policy 与运行时 ASR stage-worker registry 决定是否注册；
+管理端 target 的完整 executor/estimator readiness 只限制新任务入队，不会阻断已有付费任务的
+轮询与结算。具体 provider bundle 只有在其 pre-claim readiness 能证明当前有效配置足以安全查询
+已有远端任务时才注册 worker；readiness 失败会在领取数据库租约前停止本轮。
+
+对应环境变量为 `DORAMI_PODCAST_READER_TEXT_DEFAULT_CHARS`、
+`DORAMI_PODCAST_READER_TEXT_MAX_CHARS` 与
+`DORAMI_PODCAST_READER_TEXT_QUERY_MAX_CHARS`。存储文本的字符/UTF-8 字节硬上限对应
+`DORAMI_PODCAST_TEXT_ARTIFACT_MAX_CHARS` 与 `DORAMI_PODCAST_TEXT_ARTIFACT_MAX_BYTES`；
+ASR 标准化结果与源音频的时长绝对误差上限对应
+`DORAMI_PODCAST_TRANSCRIPT_DURATION_TOLERANCE_SECONDS`；
+Podcast 文字同步单页的总字节数/行数还受 `DORAMI_PODCAST_TEXT_SYNC_PAGE_MAX_BYTES` 与
+`DORAMI_PODCAST_TEXT_SYNC_PAGE_MAX_ROWS` 限制（单页字节上限必须大于单工件上限）；
+游标签名可用 `DORAMI_PODCAST_READER_CURSOR_SECRET` 单独轮换。Reader 响应使用 `no-store`，每次读取
+都重新核对来源和单集的可见状态。
+
+付费处理默认关闭。只有 `processing_enabled=true`、目标/阶段/逻辑 voice 配置一致、
+CNY 月度与单次预算均为正数，并且运行时的具体 provider 集成同时注册执行器与费用估算器，
+管理 API 才允许任务入队；只改 INI 不会把 provider 误判为可用。对应配置均支持
+`DORAMI_PODCAST_*` 环境变量覆盖。Provider URL、token、模型名、计价参数和真实 voice ID
+属于主机侧秘密配置，不进入本节或版本库。外网拥有全部 Podcast 处理阶段；内网不拥有任何
+Podcast 处理阶段，只接收已发布的中文博客和导读音频。两台服务的 `[runtime] role` 均保持 `all`。
+
+外网 ASR 需要让服务商短时拉取本地 CAS 中的源音频。公网地址与 HMAC 参数集中在
+`[podcast_asr_fetch]`；`public_base_url` 必须是固定 HTTPS 地址，不得根据请求的
+`Host` 动态构造。`signing_secret` 至少 32 bytes，生产应通过环境变量注入：
+
+```ini
+[podcast_asr_fetch]
+public_base_url = https://archive.example.com/api/public/podcast-asr/source-audio
+# signing_secret 留空，使用 DORAMI_PODCAST_ASR_FETCH_SIGNING_SECRET
+# 轮换时 previous_signing_secret 留空，并临时注入旧 key 对应的环境变量
+previous_signing_secret =
+url_ttl_seconds = 900
+clock_skew_seconds = 30
+min_remaining_seconds = 300
+```
+
+对应环境变量为 `DORAMI_PODCAST_ASR_FETCH_PUBLIC_BASE_URL`、
+`DORAMI_PODCAST_ASR_FETCH_SIGNING_SECRET`、
+`DORAMI_PODCAST_ASR_FETCH_PREVIOUS_SIGNING_SECRET`、`DORAMI_PODCAST_ASR_FETCH_URL_TTL_SECONDS`、
+`DORAMI_PODCAST_ASR_FETCH_CLOCK_SKEW_SECONDS` 与
+`DORAMI_PODCAST_ASR_FETCH_MIN_REMAINING_SECONDS`。内网同步节点可以留空；
+外网 ASR 实际签发/提交时必须解析到完整配置，否则 fail-closed。
+为保证云端异步任务在截止前始终能抓取音频，`url_ttl_seconds` 必须大于等于
+`asr_provider_deadline_seconds`；不满足时 worker 会在任何供应商网络请求前释放预留并重试。
+轮换时 current secret 只用于签发新 URL，previous secret 只用于验证在途旧 URL；至少保留
+一个完整 `url_ttl_seconds` 后再移除 previous secret。
+若 previous secret 由运行时 KV 提供，管理员在宽限期结束后调用
+`DELETE /api/admin/podcast-asr-fetch/previous-signing-secret` 显式清除；该接口仅允许管理员、
+会进入管理审计，且只能清除此临时字段。若环境变量或 INI 仍提供旧 key，需先从部署配置
+移除，再调用接口确认响应中的 `previous_signing_secret_set=false`。current 与 previous 的
+运行时轮换写入按同一数据库事务提交，不存在只更新其中一个字段的中间状态。
+
+阿里云 ISI 的非秘密协议参数集中在 `[aliyun_isi]`，均可由对应
+`DORAMI_ALIYUN_ISI_*` 环境变量覆盖。ASR 与 TTS 鉴权不同，不能互换：
+
+```ini
+[aliyun_isi]
+region_id = cn-shanghai
+asr_domain = filetrans.cn-shanghai.aliyuncs.com
+asr_product = nls-filetrans
+asr_api_version = 2018-08-17
+asr_task_version = 4.0
+asr_enable_words = true
+asr_auto_split = true
+asr_enable_sample_rate_adaptive = true
+token_url = https://nls-meta.cn-shanghai.aliyuncs.com/
+tts_url = https://nls-gateway-cn-shanghai.aliyuncs.com/rest/v1/tts/async
+tts_product = async-long-text-tts
+tts_api_version = rest-v1
+tts_device_id = dorami-source-archive
+# JSON mapping from DORAMI_PODCAST_VOICE_PROFILES aliases to provider settings.
+# Keep empty until a voice is selected and tested.
+tts_voice_profiles_json =
+tts_result_allowed_host_suffixes = aliyuncs.com
+tts_max_chars = 100000
+request_timeout_seconds = 30
+asr_poll_interval_seconds = 10
+tts_poll_interval_seconds = 10
+token_refresh_skew_seconds = 300
+
+# 供应商额度与价格快照；scope/window/revision 为空或 limit/deadline 为 0 时，
+# 对应 provider stage fail-closed。price 可为 0，明确表示免费额度/试用期。
+# ASR 日界固定按上海时区，时长按毫秒向上取整到秒。
+asr_quota_scope =
+asr_quota_timezone = Asia/Shanghai
+asr_daily_audio_seconds_limit = 0
+asr_entitlement_ends_at =
+asr_provider_deadline_seconds = 0
+asr_price_cny_minor_per_hour = 0
+asr_pricing_revision =
+
+# TTS 以一个明确 campaign 累计字符；新一轮审批必须换 campaign_id。
+tts_quota_scope =
+tts_campaign_id =
+tts_campaign_starts_at =
+tts_campaign_ends_at =
+tts_campaign_character_limit = 0
+tts_provider_deadline_seconds = 0
+tts_price_cny_minor_per_10000_chars = 0
+tts_pricing_revision =
+tts_usage_settlement_mode = manual
+```
+
+额度配置与 AK/SK/Appkey/Token 的“能否鉴权”是两套独立门槛：凭据齐全但额度配置
+不完整时仍禁止提交。ASR 在提交前按 `ceil(audio_duration_ms / 1000)` 预占当日秒数，
+日窗口以 `Asia/Shanghai` 的 `[00:00, 次日 00:00)` 为界且不越过 entitlement
+截止时刻；TTS 按实际送给供应商的计费字符数预占 campaign 总量。价格全部用人民币分的
+整数配置，并以向上取整计算，避免浮点误差。
+
+`request_unknown` / `reconciling` 会继续持有人民币预算与供应商额度；只有供应商明确
+确认 `not_submitted` 才释放。结算实际用量超过预占会写入 breach 审计并冻结同一
+scope/period 的后续提交，必须人工核对供应商账单和配置后再开启新的 period。
+`provider_deadline_seconds` 在 attempt 开始时冻结为绝对截止时间，重启或改配置不会延长
+已经提交的任务。
+
+阿里 TTS 任务查询响应没有已核验的实际计费字符字段，因此
+`tts_usage_settlement_mode` 默认 `manual`：任务到达终态后保留预占并进入人工账单对账。
+只有明确接受“冻结的实际提交文本字符数”作为保守的本地结算口径时，才设置为
+`submitted_characters`；该数不是供应商回传账单量。结算模式被纳入 admission fingerprint，
+排队后修改会 fail-closed，不会静默改变已有任务的财务语义。
+
+这 16 个非秘密字段均可由同名大写前缀环境变量覆盖，例如
+`DORAMI_ALIYUN_ISI_ASR_DAILY_AUDIO_SECONDS_LIMIT` 与
+`DORAMI_ALIYUN_ISI_TTS_CAMPAIGN_CHARACTER_LIMIT`；完整名称见
+`config/production.example.ini` 和 `docker-compose.yml`。不要把真实凭据、供应商任务 ID
+或临时 Token 写进这些字段或提交到仓库。
 
 Taxonomy 部署姿态必须另行显式配置，不能由两端共同的 `role = all` 推断。外网在迁移后、
 API/worker 前幂等安装仓库批准目录；内网不安装本地目录，只从 Archive Sync 接收：
@@ -175,3 +380,49 @@ prefetch_concurrency = 4  ; 抓取后预取/回填的并发数
 - 环境变量覆盖:`DORAMI_MEDIA_ENABLED`。
 - 下载防护:仅 http(s)、SSRF 拦截(环回/私网/链路本地拒绝;豁免 Clash/Surge fake-ip 段
   `198.18.0.0/15`,否则本机代理环境整体误杀)、魔数嗅探确认图片、失败负缓存退避。
+
+## `[podcast_artifacts]`——Podcast 本地音频 CAS
+
+首发只支持本地 content-addressed storage；S3-compatible provider 后置。原节目音频默认
+保持发布者外链，ASR 所需下载仅进入有期限的外网临时缓存；内网生成的中文导读长期保存
+在本地 CAS。Docker 镜像和裸机部署都必须提供 `ffmpeg` 与 `ffprobe`。
+
+```ini
+[podcast_artifacts]
+root_dir = data/podcast-artifacts
+max_audio_mb = 512
+total_quota_mb = 10240
+minimum_free_mb = 1024
+allowed_mime_types = audio/mpeg,audio/wav,audio/mp4,audio/ogg,audio/webm
+upload_timeout_seconds = 120
+download_timeout_seconds = 120
+download_max_redirects = 5
+source_audio_ttl_seconds = 604800
+source_audio_quota_mb = 2048
+ffprobe_binary = ffprobe
+probe_timeout_seconds = 15
+orphan_grace_seconds = 3600
+staging_ttl_seconds = 3600
+```
+
+环境变量覆盖为 `DORAMI_PODCAST_ARTIFACT_ROOT_DIR`、
+`DORAMI_PODCAST_ARTIFACT_MAX_AUDIO_MB`、
+`DORAMI_PODCAST_ARTIFACT_TOTAL_QUOTA_MB`、
+`DORAMI_PODCAST_ARTIFACT_MINIMUM_FREE_MB`、
+`DORAMI_PODCAST_ARTIFACT_ALLOWED_MIME_TYPES`、
+`DORAMI_PODCAST_ARTIFACT_UPLOAD_TIMEOUT_SECONDS` 与
+`DORAMI_PODCAST_ARTIFACT_DOWNLOAD_TIMEOUT_SECONDS`、
+`DORAMI_PODCAST_ARTIFACT_DOWNLOAD_MAX_REDIRECTS`、
+`DORAMI_PODCAST_ARTIFACT_SOURCE_AUDIO_TTL_SECONDS` 与
+`DORAMI_PODCAST_ARTIFACT_SOURCE_AUDIO_QUOTA_MB`；需要精确字节值时可用
+`DORAMI_PODCAST_ARTIFACT_TOTAL_QUOTA_BYTES` 与
+`DORAMI_PODCAST_ARTIFACT_MINIMUM_FREE_BYTES` 覆盖 MiB 配置，原音频缓存配额也可用
+`DORAMI_PODCAST_ARTIFACT_SOURCE_AUDIO_QUOTA_BYTES` 精确覆盖；临时上传 TTL 使用
+`DORAMI_PODCAST_ARTIFACT_STAGING_TTL_SECONDS`。Docker Compose 把 root 固定为
+`/app/data/podcast-artifacts`，由宿主 `./data:/app/data` 持久化；裸机默认落在仓库
+`data/podcast-artifacts`。新 unique blob 在原子安装前同时检查 CAS 总配额和磁盘最低
+余量；已存在且哈希校验通过的 blob 去重登记不重复占用配额。每次 API 启动及管理员手动
+对账只会清理超过 TTL 且未被活跃上传/下载锁定的 `.incoming/*.part` 和失效预留标记，
+并仅清理宽限期已过、数据库已无任何引用的孤儿 blob。发布者音频下载逐跳重新解析并固定
+公网 IP，禁用环境代理和连接复用，且不会在日志或 artifact 响应中暴露签名 URL query。
+迁移、备份和恢复时必须连同整个 `data/` 目录处理。
