@@ -30,7 +30,7 @@
 │                            NODE_ENV=production 强制关 uvicorn reload)
 ├── Nginx 站点             ← deploy.sh 按 ini [nginx] 节生成并 `nginx -T` 复核
 │                            (/api/ 反代 + /mcp 反代 + SPA try_files + 可选 TLS)
-└── data/ logs/ backups/   ← SQLite / 媒体库 / PM2 日志 / 迁移前 DB 备份
+└── data/ logs/ backups/   ← SQLite / 图片媒体 / Podcast 本地 CAS / 日志 / DB 备份
 ```
 
 ## 前置
@@ -42,6 +42,7 @@
 | Node/npm | **≥20.19(Vite 8 + React 19)**,建议 22 LTS | 试包管理器,失败则 fail |
 | Nginx | 任意(源码装亦可) | 同上 |
 | PM2 | — | `npm i -g pm2` |
+| ffmpeg/ffprobe | 必须，Podcast 音频封装、响度 QA 与媒体探测 | 试系统 `ffmpeg` 包，缺任一命令则 fail |
 | Chromium | 可选,仅 `rss_openai_news` 渲染节点用 | 试 `playwright install`,失败降级不阻断 |
 
 手装的 nginx / nvm-node 常不在非交互 shell 的 PATH 里:脚本已自动并入
@@ -69,6 +70,12 @@ pm2 logs dorami-backend-v2        # 后端日志
 pm2 restart dorami-backend-v2     # 重启后端
 pm2 save && pm2 startup           # 开机自启(脚本不做,必须手动执行一次)
 ```
+
+`deploy.sh` 生成的站点对 Podcast ASR 签名下载路径
+`/api/public/podcast-asr/source-audio` 使用 exact location：该路径的 HMAC 在
+query 中，因此路由级 access/error request log 不落盘，音频代理不缓冲；
+Uvicorn 也会再清除该路径的查询参数。其他 `/api/` 路由仍保留原有访问
+日志。不要在手工修改 Nginx 站点时删除该 exact location。
 
 七个步骤:装系统依赖 → 校验配置 → uv 装后端(+Playwright)+ **DB 备份** + 迁移预检 +
 `ensure_migrated` → 按显式 `[taxonomy] deployment` reconcile → npm 构建前端 →
@@ -107,6 +114,15 @@ allow_origins = https://your-domain.example.com   # * + allow_credentials 是 er
 [network]
 disable_ca_bundle = false    # 默认 true 会清空 CURL/REQUESTS_CA_BUNDLE,公网置 false
 
+[runtime]
+role = all                   # 外网/内网均保持 all
+
+[podcast_artifacts]
+root_dir = data/podcast-artifacts
+total_quota_mb = 10240
+minimum_free_mb = 1024
+staging_ttl_seconds = 3600
+
 [nginx]
 server_name = your-domain.example.com   # enable_ssl 时不能是 _
 enable_ssl = true
@@ -116,6 +132,34 @@ ssl_key_file  = /etc/letsencrypt/live/your-domain.example.com/privkey.pem
 
 `[server] reload` 必须为 `false`(`config.py` 的 fallback 是 `true`,
 `ecosystem.config.js` 的 `NODE_ENV=production` 另有守卫兜底,显式写上更稳)。
+
+运行 `deploy.sh` 前还必须为本机选择唯一 Podcast stage 集，并给出跨重启稳定的 installation
+ID。当前阿里 ISI 的 ASR 使用 AK/SK 签名；TTS 使用 NLS Token，并用 AK/SK 刷新：
+
+```bash
+# 外网 all
+export DORAMI_PODCAST_INSTALLATION=external
+export DORAMI_PODCAST_AUTHORITY_ID=<stable-external-id>
+export DORAMI_PODCAST_ALLOWED_STAGES=fetch,asr,translate,analyze,digest,script,tts,audio_qa,local_publish
+export ALIYUN_AK_ID=<secret>
+export ALIYUN_AK_SECRET=<secret>
+export NLS_APP_KEY=<secret>
+export NLS_ACCESS_TOKEN=<secret>
+export NLS_TOKEN_EXPIRES_AT=<provider-unix-seconds>
+
+# 内网 all（只同步和展示，不配置供应商凭据）
+export DORAMI_PODCAST_INSTALLATION=internal
+export DORAMI_PODCAST_AUTHORITY_ID=<stable-internal-id>
+export DORAMI_PODCAST_ALLOWED_STAGES=
+```
+
+首次启动前确认 artifact root 所在分区至少保留 `minimum_free_mb`；启动会在跨进程 CAS
+锁内清理过期 `.incoming` 文件和无引用孤儿，不会删除数据库仍引用的音频。管理端
+`/api/admin/podcast-artifacts/stats` 会报告分区容量/可用空间、配额、临时文件和压力状态。
+
+`pm2 start/reload --update-env` 会继承这些变量。不要把 provider secret 写入
+`production.ini`、shell history 或仓库；建议由主机 secret manager 注入。部署脚本会安装并
+复核 `ffmpeg` 与 `ffprobe`，并创建环境变量或 INI 指定的 artifact root。
 
 ## HTTPS(两趟部署)
 
@@ -140,13 +184,13 @@ SELinux 开启时需 `setsebool -P httpd_can_network_connect 1`,否则 nginx 反
 ## 全新服务器部署(含迁移)
 
 ```bash
-# 1. 前置:uv / Node≥20.19 / Nginx;时区 timedatectl set-timezone Asia/Shanghai(cron 语义)
+# 1. 前置:uv / Node≥20.19 / Nginx / ffmpeg;时区 timedatectl set-timezone Asia/Shanghai(cron 语义)
 # 2. 取代码 + 配置
 git clone <repo> && cd DoramiSourceArchive
 cp config/production.example.ini config/production.ini   # 按上节改
 
-# 3.(迁移场景)搬数据——LLM 配置、X token、账号、订阅、采集游标、日报配置全在
-#    DB 的运行时 KV 里,拷 data/ 即全部带走,无需在新机重配:
+# 3.(迁移场景)搬数据——数据库状态与 Podcast 本地 CAS 必须取同一停机恢复点；
+#    拷整个 data/ 才能同时带走账号、采集游标和已发布衍生音频:
 #    老机先 pm2 stop dorami-backend-v2(静止 WAL),再整目录拷:
 rsync -a old:/path/DoramiSourceArchive/data/ ./data/
 #    全新空库则跳过(首启自动建库 + 根管理员 admin/admin,登录后立刻改密码)
@@ -159,6 +203,10 @@ pm2 save && pm2 startup
 机密走环境变量时(如 `DORAMI_X_BEARER_TOKEN`)需在跑 `deploy.sh` 前 `export`——
 `pm2 start/reload --update-env` 会把当时的 shell 环境带进后端进程;也可以登录后在
 设置柜 → 凭据里填(KV 覆盖 env,见 CLAUDE.md 的*外部凭据统一保管层*)。
+
+部署完成后检查 `ffmpeg -version`、`ffprobe -version`、artifact 管理统计和一条已发布
+音频的 `HEAD`/Range 请求。备份必须覆盖数据库与 `data/podcast-artifacts`；普通 Reader
+页面的验收同时断言 provider 调用为 0。
 
 ## 与内网适配分支(master)的关系
 

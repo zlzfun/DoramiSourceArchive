@@ -295,6 +295,28 @@ installation. Media responses use `X-Content-Type-Options: nosniff`; a newer
 manifest revision can replace an already cached binary without using the receiver
 clock as its authority revision.
 
+### Podcast artifact extension (Issue #7 baseline)
+
+Podcast extends this same `archive-sync-v3` protocol; it does not introduce an
+Archive Bundle v2, `ArchiveChangeRecord`, or `ArchiveSyncReceiptRecord`. Both
+deployments remain `runtime.role=all`, while a separate Podcast stage policy makes
+the external node the only writer for fetch/ASR/translation/analysis/digest/script/
+TTS/audio-QA/publication stages. The internal node owns no Podcast processing stage.
+
+The `podcast_texts` stream carries published transcript, Chinese blog and
+`narration_script_zh` records. The `podcast_audio` stream carries only published
+`digest_audio_zh` metadata; the receiver then downloads the authenticated artifact
+blob, verifies its declared size, SHA-256 and audio signature, and installs it in
+the internal CAS before exposing it as published. Both streams use the existing
+authority, entity-state revision, keyset cursor, checksum, tombstone, page
+transaction, and checkpoint contract.
+
+`digest_audio_zh` is external-authority data generated from the matching published
+script and synchronized to internal. A remote tombstone withdraws its internal
+replica; physical CAS deletion may follow through garbage collection. Original
+Podcast audio remains a publisher link or bounded external ASR cache and is never
+added to the replication manifest.
+
 After pulling, internal Dorami may upload minimized Candidate evidence containing
 only label, facet kind, confidence, an opaque article fingerprint, source
 provenance ID, and prompt version. Content, summaries, article IDs, URLs, and

@@ -17,24 +17,42 @@
 ```
 docker-compose.yml
 ├── backend  ← docker/backend.Dockerfile(python:3.12-slim-bookworm + uv 锁定依赖
-│              [torch 走 CPU 轮子] + playwright chromium;入口 docker/entrypoint.py:
+│              + ffmpeg/ffprobe + playwright chromium;入口 docker/entrypoint.py:
 │              ensure_migrated → taxonomy reconcile → uvicorn 0.0.0.0:8088)
 └── nginx    ← docker/nginx.Dockerfile(多阶段:node 构建 frontend/dist → nginx:alpine
                + docker/nginx.conf;对外唯一端口)
 ```
 
-- 数据全部在宿主 `./data`(SQLite / ChromaDB / 媒体库),卷挂载进 `/app/data`;
+- 数据全部在宿主 `./data`（SQLite / 图片媒体库 / Podcast 本地音频 CAS），卷挂载进 `/app/data`;
   容器无状态,可随意重建。
 - `config/production.ini` 只读挂载,不进镜像(`.dockerignore` 同时兜底)。
 - 批准的 Taxonomy catalog 是非机密运行时资产，随 backend 镜像复制；外网配置
   `[taxonomy] deployment = authority`，内网配置 `replica`，不可从 `role=all` 推断。
-- 机密经环境变量注入(`DORAMI_X_BEARER_TOKEN` 等),宿主 `export` 或项目根 `.env`。
+- 两端均显式保持 `DORAMI_RUNTIME_ROLE=all`；Podcast stage allowlist 与稳定 installation ID
+  通过环境变量注入，不从 role/hostname/container ID 推断。
+- 机密经环境变量注入（`DORAMI_X_BEARER_TOKEN`、`ALIYUN_AK_*`、`NLS_*` 等），
+  只放宿主环境或权限受控的项目根 `.env`，不写进 INI/镜像/版本库。
 
 ## 用法
 
 ```bash
 # 首次:准备配置(同裸机路径)
 cp config/production.example.ini config/production.ini   # 改 secret / taxonomy deployment 等
+
+# 二选一写入权限受控的 .env；installation ID 首次生成后须跨容器重建保持稳定
+# 外网 all:
+cat >> .env <<'EOF'
+DORAMI_PODCAST_INSTALLATION=external
+DORAMI_PODCAST_AUTHORITY_ID=<stable-external-id>
+DORAMI_PODCAST_ALLOWED_STAGES=fetch,asr,translate,analyze,digest,script,tts,audio_qa,local_publish
+ALIYUN_AK_ID=<secret>
+ALIYUN_AK_SECRET=<secret>
+NLS_APP_KEY=<secret>
+NLS_ACCESS_TOKEN=<secret>
+NLS_TOKEN_EXPIRES_AT=<provider-unix-seconds>
+EOF
+# 内网 all 改为 installation=internal、stable internal authority ID，并将
+# DORAMI_PODCAST_ALLOWED_STAGES 留空；内网不注入 ASR/TTS 凭据。
 
 # 部署 / 升级(构建 → 起容器 → 健康验证一条龙)
 ./deploy-docker.sh
@@ -46,6 +64,14 @@ docker compose restart backend      # 仅重启后端
 docker compose down                 # 停站(数据在宿主目录,安全)
 ```
 
+Podcast ASR 服务商拉取原音频时，HMAC 授权位于固定路径
+`/api/public/podcast-asr/source-audio` 的 query 中。容器 Nginx 对该精确路径关闭
+access/error request log 并关闭代理缓冲；Uvicorn 在应用加载后再对同一路径
+清除查询参数，其他 API 的访问日志不受影响。若使用宿主 TLS Nginx，必须
+保留 [`docker/edge-nginx.conf.example`](../docker/edge-nginx.conf.example) 中的同名
+exact location；改成 LB/CDN 终止 TLS 时，也要在边缘访问日志中对该路径
+关闭 query 记录。
+
 对外监听默认 80,`DORAMI_HTTP_LISTEN` 可改端口(`8080`)或收进环回
 (`127.0.0.1:8080`,配合外层 TLS 反代);时区默认
 `Asia/Shanghai`(影响采集任务/日报的 cron 语义),`TZ` 环境变量可覆盖。
@@ -56,7 +82,7 @@ docker compose down                 # 停站(数据在宿主目录,安全)
 |---|---|
 | `[server] host/port` | **不生效**。入口固定监听 `0.0.0.0:8088`(nginx 容器经服务名 `backend` 访问);对外端口由 compose 端口映射决定 |
 | `[nginx] *` | **不生效**。站点配置在 `docker/nginx.conf`(与 deploy.sh 生成版同构) |
-| 其余各节 | 照常生效。`[storage]`/`[media]` 的相对路径以 `/app` 为基准,落在挂载卷 `data/` 下,与裸机版一致 |
+| 其余各节 | 照常生效。`[storage]`/`[media]` 的相对路径以 `/app` 为基准；Podcast artifact root 由 Compose 显式固定为 `/app/data/podcast-artifacts`，全部落在宿主持久卷 `data/` 下 |
 
 ## HTTPS
 
@@ -84,8 +110,15 @@ cp config/production.example.ini config/production.ini
 #    rsync -a old:/root/DoramiSourceArchive/data/ ./data/
 #    全新空库则跳过本步(首启自动建库+种子账号,LLM/X 到管理面重配)
 
-# 4. 监听形态二选一:
-echo "DORAMI_HTTP_LISTEN=127.0.0.1:8080" > .env   # A:外层有 TLS 边缘(推荐,生产即此)
+# 4. 写 .env：先选择本机 Podcast 拓扑，再选择监听形态
+cat > .env <<'EOF'
+DORAMI_PODCAST_INSTALLATION=<external-or-internal>
+DORAMI_PODCAST_AUTHORITY_ID=<stable-external-or-internal-id>
+DORAMI_PODCAST_ALLOWED_STAGES=<external-full-list-or-empty-for-internal>
+# 只有 external 节点注入 ALIYUN_AK_ID / ALIYUN_AK_SECRET / NLS_*。
+DORAMI_HTTP_LISTEN=127.0.0.1:8080
+EOF
+#    A:上例为外层有 TLS 边缘(推荐,生产即此)
 #    (然后照下方「HTTPS」节配宿主 Nginx/Caddy + 证书)
 #    B:纯 HTTP 直出则不写 .env,容器 nginx 直接占 80
 
@@ -94,7 +127,21 @@ echo "DORAMI_HTTP_LISTEN=127.0.0.1:8080" > .env   # A:外层有 TLS 边缘(推�
 ```
 
 迁移收尾:老机 `docker compose down`(或 PM2 时代 `pm2 delete`),DNS 切到新机。
-数据只有 `data/` 一个目录 + `production.ini` 一个文件,这就是 SQLite 形态下迁移成本的全部。
+数据只有 `data/` 一个目录 + `production.ini` 一个文件；`data/podcast-artifacts` 与数据库
+必须作为同一恢复点一起备份/迁移。仅恢复数据库会留下缺失音频，仅恢复 CAS 会产生孤儿文件。
+
+## Podcast 音频部署检查
+
+- backend 镜像通过 Debian `ffmpeg` 包同时提供 `ffmpeg`/`ffprobe`，并在同一 apt layer 清理索引。
+- Compose 将 `DORAMI_PODCAST_ARTIFACT_ROOT_DIR` 固定在持久卷内的
+  `/app/data/podcast-artifacts`；不要改到容器临时文件系统。
+- 上线前按卷容量设置 `total_quota_mb` 与 `minimum_free_mb`；默认分别为 10240 MiB 和
+  1024 MiB。启动会自动清理过期上传临时文件和无引用且过宽限期的孤儿 blob，绝不会
+  删除数据库仍引用的音频；管理端统计中的 `storage_pressure` 必须保持为 false。
+- 外网 stage 为 `fetch,asr,translate,analyze,digest,script,tts,audio_qa,local_publish`，
+  注入 ASR/TTS secret；内网 stage 留空且不注入供应商凭据；两端 role 都是 `all`。
+- 升级前备份整个 `data/`，升级后至少验证 `ffmpeg -version`、`ffprobe -version`、
+  artifact 管理统计和一条已发布音频的 `HEAD`/Range 请求。普通页面访问不得产生 provider 调用。
 
 ## PM2 裸机路径(退役 → v3.39.0 扶正回归)
 
