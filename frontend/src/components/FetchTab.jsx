@@ -998,7 +998,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
 
             <p className="inspector-hint">
               {isPodcastConfig
-                ? '这里管理 RSS 采集与读者可见性；准入、权利和“生成精品播客”将在 Podcast 专用管理面继续补齐。'
+                ? '这里管理 RSS 采集与读者可见性；播客默认可进入精品导读处理。'
                 : '订阅人数、停用与删除等治理动作在 运维管理 → 内容 → 用户自定源。'}
             </p>
           </div>

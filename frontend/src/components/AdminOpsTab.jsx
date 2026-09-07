@@ -52,6 +52,8 @@ import AnnouncementsPanel from './admin/AnnouncementsPanel';
 import AdminAuditPanel from './admin/AdminAuditPanel';
 import Pager from './admin/Pager';
 import AdminTaxonomyPanel from './admin/AdminTaxonomyPanel';
+import PodcastArtifactsPanel from './admin/PodcastArtifactsPanel';
+import PodcastPremiumGuidesPanel from './admin/PodcastPremiumGuidesPanel';
 import { pivotDaily, C_READ, C_FAVORITE, C_SUBSCRIBE } from './charts/chartUtils';
 import { PURPOSE_LABELS, formatStamp, fmtNum, truncLabel } from './admin/adminUtils';
 import { avatarInitial, avatarHue } from '../utils/avatarColor';
@@ -1090,6 +1092,9 @@ export default function AdminOpsTab({ showToast, active = true, currentUsername 
                   <MediaHeatmap showToast={showToast} />
                 </>
               )}
+
+              <PodcastPremiumGuidesPanel showToast={showToast} refreshTick={refreshTick} />
+              <PodcastArtifactsPanel showToast={showToast} refreshTick={refreshTick} />
 
               {/* ── 用户自定源(v3.40):读者自助 RSS 源的治理与观测 ── */}
               <UserSourcesPanel showToast={showToast} />
