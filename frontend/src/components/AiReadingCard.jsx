@@ -10,7 +10,7 @@ import { qualityScoreText, SCORE_DISCLAIMER } from '../utils/analysis';
  *   │        │                                       │
  *   └────────┴──────────────────────────────────────┘
  *
- * 左栏一个衬线渐变大数字(内容价值分),入场以「里程表」方式滚到分值:每一位数字住在
+ * 左栏一个衬线渐变大数字(新闻价值分),入场以「里程表」方式滚到分值:每一位数字住在
  * 固定宽度的格子里,格子内 0–9 竖条用 transform 滑到目标——无逐帧重渲染、无布局变化。
  * 渐变落在每个数字/小数点元素自身:挂在外层时 background-clip:text 画不进
  * overflow:hidden 格子里的子元素,实测数字整个消失只剩小数点。
@@ -108,7 +108,7 @@ function ScoreFigure({ score, interactive, pressed, onToggle }) {
     <button
       type="button"
       className={`reader-ai-score-btn ${interactive ? 'is-interactive' : ''}`}
-      aria-label={`内容价值分 ${score}${interactive ? '，点按查看评分依据' : ''}`}
+      aria-label={`新闻价值分 ${score}${interactive ? '，点按查看评分依据' : ''}`}
       aria-pressed={interactive ? pressed : undefined}
       disabled={!interactive}
       onClick={interactive ? onToggle : undefined}

@@ -86,6 +86,9 @@ ARTICLE_ANALYSIS_ENABLED_KEY = "article_analysis_enabled"
 TAXONOMY_CANDIDATE_ENABLED_KEY = "taxonomy_candidate_enabled"
 DEFAULT_BACKFILL_DAYS = 7
 DEFAULT_MAX_ATTEMPTS = 4
+# 版本键过期的 succeeded 行每个扫描 tick 最多失效多少篇(v3.48 收口:版本一变近 7 天存量
+# 曾瞬时全部 invalidated 与新文章抢队列;现慢滴重跑,新到文章永远优先,7 天外等 full_analysis)。
+VERSION_REFRESH_PER_CYCLE = 16
 DEFAULT_BATCH_SIZE = 8
 DEFAULT_MAX_BATCHES_PER_CYCLE = 8
 CLAIM_SCAN_PAGE_SIZE = 64
@@ -161,6 +164,10 @@ class AnalysisInput:
     fetched_date: str
     credentialed_source: bool
     source_owner_or_domain: str
+    # 评分尺子的两个来源信号(issue #22):友好名 + 信息角色(官方/媒体/个人/榜单),
+    # 厂商主次甄别与「一手发布 vs 转述」需要它;服务端派生,不喂 URL。
+    source_name: str = ""
+    source_role: str = ""
 
 
 @dataclass(frozen=True)
@@ -179,6 +186,8 @@ class ReconcileStats:
     invalidated: int = 0
     skipped: int = 0
     unchanged: int = 0
+    # 版本键过期但本 tick 预算用尽、留给下个 tick 的 succeeded 行数
+    deferred: int = 0
 
 
 @dataclass(frozen=True)
@@ -591,8 +600,17 @@ def scan_analysis_backfill(
     now: Optional[dt.datetime] = None,
     lookback_days: int = DEFAULT_BACKFILL_DAYS,
     limit: int = DEFAULT_SCAN_LIMIT,
+    version_refresh_limit: int = VERSION_REFRESH_PER_CYCLE,
 ) -> ReconcileStats:
-    """Scan latest articles in descending order so new arrivals beat backfill."""
+    """Scan latest articles in descending order so new arrivals beat backfill.
+
+    v3.48 收口:扫描只挑**需要动作**的行——轻列 LEFT JOIN ``article_analyses``,命中三类:
+    ①无分析行;②``skipped``(源开关可能已重开);③``succeeded`` 但 prompt/scoring 版本键
+    过期(每 tick 最多 ``version_refresh_limit`` 篇,新到文章永远优先)。其余行
+    (pending/running/failed/timeout/当前 succeeded)扫描不碰:重试与租约机制自管,内容变化
+    由入库钩子与文章编辑端点显式入队覆盖。此前每分钟把 7 天全部正文载入内存逐篇比哈希,
+    绝大多数结果是 unchanged。``scanned`` 自此语义为「需要动作的行数」。
+    """
 
     if not enabled:
         return ReconcileStats()
@@ -600,35 +618,61 @@ def scan_analysis_backfill(
     since_time = now_utc - dt.timedelta(days=max(1, lookback_days))
     coarse_start = (since_time - dt.timedelta(days=1)).date().isoformat()
     coarse_end = (now_utc + dt.timedelta(days=1)).date().isoformat()
-    candidates = list(
-        session.exec(
-            select(ArticleRecord)
-            .where(
-                ArticleRecord.has_content.is_(True),
-                ArticleRecord.content.is_not(None),
-                func.substr(ArticleRecord.fetched_date, 1, 10) >= coarse_start,
-                func.substr(ArticleRecord.fetched_date, 1, 10) <= coarse_end,
-            )
-        ).all()
+    version_stale = (
+        (ArticleAnalysisRecord.status == AnalysisStatus.SUCCEEDED.value)
+        & or_(
+            ArticleAnalysisRecord.prompt_version != ARTICLE_ANALYSIS_PROMPT_VERSION,
+            ArticleAnalysisRecord.scoring_version != ARTICLE_ANALYSIS_SCORING_VERSION,
+        )
     )
+    light_rows = session.exec(
+        select(
+            ArticleRecord.id,
+            ArticleRecord.fetched_date,
+            ArticleAnalysisRecord.status,
+        )
+        .outerjoin(
+            ArticleAnalysisRecord,
+            ArticleAnalysisRecord.article_id == ArticleRecord.id,
+        )
+        .where(
+            ArticleRecord.has_content.is_(True),
+            ArticleRecord.content.is_not(None),
+            ArticleRecord.analysis_authority_id == "",
+            func.substr(ArticleRecord.fetched_date, 1, 10) >= coarse_start,
+            func.substr(ArticleRecord.fetched_date, 1, 10) <= coarse_end,
+            or_(
+                ArticleAnalysisRecord.article_id.is_(None),
+                ArticleAnalysisRecord.status == AnalysisStatus.SKIPPED.value,
+                version_stale,
+            ),
+        )
+    ).all()
     rows = sorted(
         (
-            row for row in candidates
-            if in_time_window(row.fetched_date, start=since_time, end=now_utc)
+            (article_id, fetched, status)
+            for article_id, fetched, status in light_rows
+            if in_time_window(fetched, start=since_time, end=now_utc)
         ),
         key=lambda row: (
-            parse_article_time(row.fetched_date)
-            or dt.datetime.min.replace(tzinfo=dt.timezone.utc),
-            row.id,
+            parse_article_time(row[1]) or dt.datetime.min.replace(tzinfo=dt.timezone.utc),
+            row[0],
         ),
         reverse=True,
     )
     counts: Counter[str] = Counter()
     scanned = 0
     actionable = 0
-    for article in rows:
+    deferred = 0
+    refresh_budget = max(0, version_refresh_limit)
+    for article_id, _fetched, status in rows:
+        if status == AnalysisStatus.SUCCEEDED.value:
+            if refresh_budget <= 0:
+                deferred += 1
+                continue
+            refresh_budget -= 1
         scanned += 1
-        outcome = queue_article_analysis(session, article.id, enabled=True, now=now_utc)
+        outcome = queue_article_analysis(session, article_id, enabled=True, now=now_utc)
         counts[outcome] += 1
         if outcome in {"created", "invalidated", "skipped"}:
             actionable += 1
@@ -641,6 +685,7 @@ def scan_analysis_backfill(
         invalidated=counts["invalidated"],
         skipped=counts["skipped"],
         unchanged=counts["unchanged"],
+        deferred=deferred,
     )
 
 
@@ -1140,8 +1185,18 @@ async def analyze_article_with_llm(
     article: AnalysisInput,
     active_tags: Sequence[TaxonomyTagDTO],
     llm_config: LLMConfig,
+    *,
+    usage_meta: UsageMeta | None = None,
+    http_client=None,
 ) -> dict[str, Any]:
-    """Default analyzer used by the worker; caller may inject a fake in tests."""
+    """The platform's single article-scoring call (issue #22).
+
+    Used by the analysis worker and, for candidates the worker has not reached
+    yet, by the public daily brief's in-place scoring — same prompt, same
+    parser, so both produce the one news-value ruler.  Caller may inject a fake
+    in tests.  ``usage_meta`` defaults to the worker's unattributed
+    ``article_analysis`` purpose; the brief passes its trigger attribution.
+    """
 
     taxonomy_payload = [tag.model_dump() for tag in active_tags]
     raw = await chat_completion(
@@ -1154,15 +1209,47 @@ async def analyze_article_with_llm(
                     body=article.body,
                     content_type=article.content_type,
                     source_id=article.source_id,
+                    source_name=article.source_name,
+                    source_role=article.source_role,
                     taxonomy_tags=taxonomy_payload,
                 ),
             ),
         ],
         config=llm_config.for_aux(),
         response_json=True,
-        usage_meta=UsageMeta(purpose="article_analysis", username=None),
+        usage_meta=usage_meta or UsageMeta(purpose="article_analysis", username=None),
+        http_client=http_client,
     )
     return parse_json_object(raw)
+
+
+def analysis_input_from_article(
+    article: ArticleRecord,
+    source: SourceConfigRecord | None,
+) -> AnalysisInput:
+    """Build the LLM input for one article; shared by the worker and the brief."""
+
+    from services.source_naming import friendly_source_name, source_role
+
+    owner = ((source.source_owner if source else "") or article.source_id).strip()
+    sid = article.source_id or ""
+    return AnalysisInput(
+        article_id=article.id,
+        title=article.title or "",
+        body=article.content or "",
+        content_type=article.content_type or "",
+        source_id=sid,
+        publish_date=article.publish_date or "",
+        fetched_date=article.fetched_date or "",
+        credentialed_source=_is_credentialed_source(source),
+        source_owner_or_domain=owner,
+        source_name=(source.name if source and source.name else friendly_source_name(sid)),
+        source_role=source_role(
+            sid,
+            source_scope=source.source_scope if source else None,
+            provenance_tier=source.provenance_tier if source else None,
+        ),
+    )
 
 
 def _input_for(session: Session, article_id: str) -> tuple[AnalysisInput, list[TaxonomyTagDTO]]:
@@ -1170,19 +1257,8 @@ def _input_for(session: Session, article_id: str) -> tuple[AnalysisInput, list[T
     if article is None:
         raise LookupError("article missing")
     source = session.get(SourceConfigRecord, article.source_id)
-    owner = ((source.source_owner if source else "") or article.source_id).strip()
     return (
-        AnalysisInput(
-            article_id=article.id,
-            title=article.title or "",
-            body=article.content or "",
-            content_type=article.content_type or "",
-            source_id=article.source_id or "",
-            publish_date=article.publish_date or "",
-            fetched_date=article.fetched_date or "",
-            credentialed_source=_is_credentialed_source(source),
-            source_owner_or_domain=owner,
-        ),
+        analysis_input_from_article(article, source),
         load_relevant_active_tags(session, article),
     )
 

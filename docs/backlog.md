@@ -60,13 +60,6 @@
 
 ## 展望(用户表态、未立项)
 
-- ◇ **个人早报 API 测试的时段依赖**(2026-09-05 凌晨跑 v3.45.1 全套时暴露,main 同时段复现):
-  `tests/test_analysis_personal_api.py` 三例(subscription_strict / accepts_persisted_public_brief /
-  first_open_waits_then_degrades)用真实墙钟调 `/api/reader/briefs/today/ensure`,而首开边缘的
-  就绪/降级门槛是当日 08:30(+15 分钟期限),**每天 00:00–08:44 必挂**。修法=路由
-  (`personal_briefs.py` 三处 `dt.datetime.now(SHANGHAI)`)与服务层抽 `_now()` 注入点,
-  测试 monkeypatch 到当日 10:00;`scripts/smoke_analysis_release.py` 的同类问题已在
-  v3.45.1 就地修(按 edition 自身 `deadline_at` 推进,不依赖墙钟)。
 - ◇ **兴趣走出早报**(issue #27,2026-09-06 分析 #23 兴趣页改页面时立项):读者兴趣(关注/屏蔽
   规范标签)目前唯一消费方是个人早报选篇,条目列/问答/feed/MCP 全部无感,首登引导因此像多余步骤;
   与合集是阅读偏好的两根正交轴(合集=看谁,成员关系,全站生效;兴趣=看什么,排序过滤,仅早报),
@@ -78,10 +71,11 @@
   与覆盖面(<5 分仅 4%)远抵不过;真收益只有「只改评分规则时只重打分」,但 `scoring_version`
   至今未变过——需要把一行结果拆成「评分组 / 内容理解组」两组版本键与状态机,租约/重试/
   `full_analysis` 回填都要分叉。等真出现频繁只改评分规则的需求再做。
-- ◇ **公共日报迁移到文章分析结果**(v3.44 adapter 默认关闭,v3.45.1 拍板不并入 #13):
-  adapter 只是事后覆盖 summary/score/classification/tags,legacy map 照跑没有省调用;
-  公共日报的摘要契约是 1–3 条加粗要点 + 100–150 字点评 + 中文标题 + 公司/领域,
-  全部来自 map。真要迁移得先决定这些产出从哪来(分析结果扩字段 vs 保留一次轻 map)。
+- ◇ **新闻价值评分黄金集门禁**(v3.48.0 统一评分波留下的后续):约 30 篇手标新闻价值分作为
+  提示词改动的门禁测试(issue #22 §3 待拍板项:来源与标注人未定);评分尺子 `news-value-v1`
+  首个生产观察期看 `last_run` 的 scored_stored/scored_inline/below_threshold 三读数、`score_histogram`
+  与运维分析面板的分数分布图(v3.48 收口补)后再立项。同波已了结的旧待办:「公共日报迁移到文章分析结果」(map 退役、日报复用分析)、
+  「个人早报 API 测试的时段依赖」(去等待后门槛消失,依赖随之消失)。
 - ◇ **用户自定源安全纵深二期**(v3.40 codex 检视遗留,方案 §9.1):①连接 peer 固定
   (redirect hop 级 SSRF 复检已在 v3.46 完成);②全站
   正式抓取统一响应大小上限(用户源已限 5MiB,策展源 55+ 无上限是全站级决策);

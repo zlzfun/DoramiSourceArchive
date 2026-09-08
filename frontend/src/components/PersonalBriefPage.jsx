@@ -86,7 +86,7 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
     <span key={chip.key} className={`reader-tag-chip ${chip.cls || ''}`} title={chip.title}>{chip.text}</span>
   ));
   const scoreNode = score && (
-    <span className="brief-card-score" title={SCORE_DISCLAIMER} aria-label={`内容价值分 ${score}`}>
+    <span className="brief-card-score" title={SCORE_DISCLAIMER} aria-label={`新闻价值分 ${score}`}>
       <span className="ai-grad-text">{score}</span>
     </span>
   );
@@ -105,7 +105,7 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
     </span>
   );
   // 通栏双栏:头条(首节首张)与单卡分节(一张卡占三列网格的一格、旁边两格空着很怪)都通栏,
-  // 左栏来源/标题/摘要/时刻,右栏评分(大号 + 「内容价值分」注脚)与标签竖排;头条只多放大字号。
+  // 左栏来源/标题/摘要/时刻,右栏评分(大号 + 「新闻价值」注脚)与标签竖排;头条只多放大字号。
   // 右栏有内容才双栏;无分无签(极少)退回普通卡形态。
   const split = (lead || wide) && (score || chips.length > 0);
   const cls = `brief-card ${lead ? 'is-lead' : ''} ${wide && !lead ? 'is-wide' : ''} ${split ? 'is-split' : ''} ${flash ? 'is-just-read' : ''}`;
@@ -123,7 +123,7 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
           {score && (
             <span className="brief-card-aside-score">
               {scoreNode}
-              <span className="brief-card-aside-cap">内容价值分</span>
+              <span className="brief-card-aside-cap">新闻价值</span>
             </span>
           )}
           {chips.length > 0 && <span className="brief-card-tags is-stack">{chipNodes}</span>}
@@ -418,14 +418,6 @@ export default function PersonalBriefPage({
   const interestCount = items.filter((item) => (item.matched_interest_codes || []).length > 0).length;
   const sourceCount = new Set(items.map((item) => item.snapshot?.source_id).filter(Boolean)).size;
   const live = isToday && LIVE.has(status);
-  const readiness = edition?.readiness || {};
-  const sourceReadiness = readiness.sources || {};
-  const analysisReadiness = readiness.analysis || {};
-  const pendingSourceNames = (sourceReadiness.pending_sources || []).map((s) => s.name).filter(Boolean);
-  const readinessLine = [
-    sourceReadiness.total > 0 ? `来源更新 ${sourceReadiness.completed || 0}/${sourceReadiness.total}` : null,
-    analysisReadiness.total > 0 ? `文章分析 ${analysisReadiness.completed || 0}/${analysisReadiness.total}` : null,
-  ].filter(Boolean).join(' · ');
   const ratioUnfillable = edition?.degraded_reason === 'insufficient_non_interest_content';
 
   // ── 报头 ──
@@ -468,15 +460,8 @@ export default function PersonalBriefPage({
     body = (
       <div className="brief-state" role="status" aria-live="polite">
         <Clock3 aria-hidden="true" />
-        <span className="brief-state-title">{status === 'generating' ? '正在编排今日早报…' : '正在等待订阅源和文章分析就绪'}</span>
-        {readinessLine && <span className="brief-state-meta">{readinessLine}</span>}
-        {pendingSourceNames.length > 0 && (
-          <span className="brief-state-meta">仍在等待：{pendingSourceNames.slice(0, 3).join('、')}{pendingSourceNames.length > 3 ? `等 ${pendingSourceNames.length} 个来源` : ''}</span>
-        )}
-        <span className="brief-state-meta">
-          {readiness.check_started === false ? '08:30 后开始检查就绪状态' : '到最晚检查时间仍未全部就绪时，用已完成的内容生成'}
-          {edition?.deadline_at ? ` · 最晚 ${clockOf(edition.deadline_at)}` : ''}
-        </span>
+        <span className="brief-state-title">正在编排今日早报…</span>
+        <span className="brief-state-meta">用现有内容立即编排，稍后想要更全的一版可再点「重新编排」</span>
         {edition?.rebuild_queued && <span className="brief-state-meta">期间的新变更已合并，本版完成后再编排一次</span>}
       </div>
     );
@@ -504,8 +489,8 @@ export default function PersonalBriefPage({
           <div className="brief-note">
             <Clock3 aria-hidden="true" />
             <span>
-              {edition.sync_stale && edition.analysis_incomplete ? '部分来源更新和文章分析' : edition.sync_stale ? '部分来源更新' : '部分文章分析'}
-              未在截止前完成，本版按已就绪的内容生成
+              编排时{edition.sync_stale && edition.analysis_incomplete ? '部分来源更新和文章分析' : edition.sync_stale ? '部分来源更新' : '部分文章分析'}
+              尚未完成，本版按当时已有的内容生成；想要更全的一版可点「重新编排」
             </span>
           </div>
         )}

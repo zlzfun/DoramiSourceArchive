@@ -123,6 +123,8 @@ def test_release_metrics_are_aggregate_and_cover_gate_indicators(tmp_path):
         metrics = collect_release_metrics(session, days=7, now=now)
 
     assert metrics["article_analysis"]["status_counts"] == {"succeeded": 1}
+    # 种子行没写版本键 → 相对现行尺子是「版本过期」的 succeeded 行
+    assert metrics["article_analysis"]["version_stale"] == 1
     assert metrics["article_analysis"]["score_p50"] == 8.0
     assert metrics["taxonomy"]["tagged_article_rate"] == 1.0
     assert metrics["taxonomy"]["primary_missing_rate"] == 0.0
@@ -150,4 +152,3 @@ def test_feature_flag_config_defaults_off_and_updates_explicitly(tmp_path):
         assert flags["personal_digest_enabled"] is True
         assert flags["taxonomy_candidate_enabled"] is False
         assert flags["taxonomy_auto_activation_enabled"] is False
-        assert flags["public_digest_analysis_adapter_enabled"] is False

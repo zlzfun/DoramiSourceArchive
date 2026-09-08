@@ -160,28 +160,6 @@ def _login(client: TestClient, username: str):
     return response.json()
 
 
-def _finish_after_readiness_gate(sink: DatabaseStorage, edition_id: str) -> None:
-    """Advance a first-open edition without depending on the wall-clock hour."""
-
-    from api.routers import personal_briefs
-    from models.db import PersonalDigestEditionRecord
-    from services import personal_digest
-
-    with Session(sink.engine) as session:
-        edition = session.get(PersonalDigestEditionRecord, edition_id)
-        assert edition is not None and edition.check_after
-        check_after = dt.datetime.fromisoformat(
-            edition.check_after.replace("Z", "+00:00")
-        )
-        current = dt.datetime.now(personal_digest.SHANGHAI)
-        completed = personal_briefs.process_pending_edition(
-            session,
-            edition,
-            now=max(current, check_after + dt.timedelta(seconds=1)),
-        )
-        assert completed.status in {"ready", "degraded"}
-
-
 def test_interest_and_personal_brief_api_are_subscription_strict(monkeypatch, tmp_path):
     app_module, _sink, tag_id = _setup(monkeypatch, tmp_path)
     with Session(_sink.engine) as session:
@@ -218,9 +196,6 @@ def test_interest_and_personal_brief_api_are_subscription_strict(monkeypatch, tm
         ensured = client.post("/api/reader/briefs/today/ensure")
         assert ensured.status_code == 200, ensured.text
         edition = ensured.json()["edition"]
-        if edition["status"] == "pending":
-            _finish_after_readiness_gate(_sink, edition["id"])
-            edition = client.get("/api/reader/briefs/today").json()["edition"]
         # With only one followed-interest article and no quality-lane peer, the
         # hard 50% actual-output ceiling correctly uses latest-update fallback.
         assert edition["status"] == "degraded", edition.get("error")
@@ -307,9 +282,6 @@ def test_personal_brief_accepts_persisted_public_brief_without_source_state(monk
     with TestClient(app_module.app) as client:
         _login(client, "alice")
         edition = client.post("/api/reader/briefs/today/ensure").json()["edition"]
-        if edition["status"] == "pending":
-            _finish_after_readiness_gate(sink, edition["id"])
-            edition = client.get("/api/reader/briefs/today").json()["edition"]
         assert edition["status"] == "ready", edition.get("error")
         assert "dorami_daily_brief" in edition["expected_source_ids"]
         assert {item["article_id"] for item in edition["items"]} == {
@@ -634,10 +606,9 @@ def test_article_api_exposes_flexible_display_tags_and_admin_can_delete_candidat
         assert json.loads(event.payload_json)["candidate_id"] == candidate_id
 
 
-def test_first_open_waits_then_degrades_in_place_after_deadline(monkeypatch, tmp_path):
+def test_first_open_generates_immediately_and_marks_incomplete_analysis(monkeypatch, tmp_path):
+    """去等待:首开不等分析队列清空,立即用现有内容生成;未分析完的事实落成版面标记。"""
     app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
-    from api.routers import personal_briefs
-    from models.db import PersonalDigestEditionRecord
 
     with Session(sink.engine) as session:
         analysis = session.get(ArticleAnalysisRecord, "article-a")
@@ -648,48 +619,25 @@ def test_first_open_waits_then_degrades_in_place_after_deadline(monkeypatch, tmp
 
     with TestClient(app_module.app) as client:
         _login(client, "alice")
-        pending = client.post("/api/reader/briefs/today/ensure").json()["edition"]
-        assert pending["status"] == "pending"
-        assert pending["first_open_at"] is not None
-        assert pending["readiness"]["sources"] == {
-            "total": 0,
-            "completed": 0,
-            "pending": 0,
-            "pending_sources": [],
-        }
-        assert pending["readiness"]["analysis"] == {
-            "total": 1,
-            "completed": 0,
-            "pending": 1,
-        }
-        first_rebuild = client.post("/api/reader/briefs/today/rebuild").json()["edition"]
-        repeated_rebuild = client.post("/api/reader/briefs/today/rebuild").json()["edition"]
-        assert first_rebuild["id"] == pending["id"]
-        assert repeated_rebuild["id"] == pending["id"]
-        assert repeated_rebuild["revision"] == pending["revision"]
-        assert repeated_rebuild["generation_reason"] == "manual_rebuild"
-
-        with Session(sink.engine) as session:
-            edition = session.get(PersonalDigestEditionRecord, pending["id"])
-            expired = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)
-            edition.check_after = expired.isoformat()
-            edition.deadline_at = expired.isoformat()
-            session.add(edition)
-            session.commit()
-        assert personal_briefs.process_pending_editions(sink.engine) == 1
-
-        completed = client.get("/api/reader/briefs/today").json()["edition"]
-        assert completed["id"] == pending["id"]
-        assert completed["revision"] == pending["revision"]
+        completed = client.post("/api/reader/briefs/today/ensure").json()["edition"]
         assert completed["status"] == "degraded"
+        assert completed["first_open_at"] is not None
         assert completed["degraded_reason"] == "no_qualified_content"
         assert completed["sync_stale"] is False
         assert completed["analysis_incomplete"] is True
-        assert completed["readiness"] is None
+        assert completed["readiness"] is None  # 终态不再带就绪进度
         assert all(item["article_id"] != "article-b" for item in completed["items"])
 
+        # 重编=立即再来一版(多版机制),不再合并进「等待中」的同一版
+        rebuilt = client.post("/api/reader/briefs/today/rebuild").json()["edition"]
+        assert rebuilt["revision"] == completed["revision"] + 1
+        assert rebuilt["status"] == "degraded"
+        assert rebuilt["generation_reason"] == "manual_rebuild"
+        assert client.get("/api/reader/briefs/today").json()["edition"]["id"] == rebuilt["id"]
 
-def test_first_open_before_check_after_waits_even_if_deadline_looks_expired(monkeypatch, tmp_path):
+
+def test_early_open_generates_before_check_after(monkeypatch, tmp_path):
+    """08:30 之前打开也立即生成,不再等到检查时间。"""
     _app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
     from api.routers import personal_briefs
     from models.analysis_contracts import DigestGenerationReason
@@ -705,22 +653,16 @@ def test_first_open_before_check_after_waits_even_if_deadline_looks_expired(monk
             generation_reason=DigestGenerationReason.FIRST_OPEN,
             first_open_at=early,
         ).edition
-        assert pending is not None
-        assert dt.datetime.fromisoformat(pending.deadline_at).time() == dt.time(8, 45)
-        pending.deadline_at = (early - dt.timedelta(minutes=1)).isoformat()
-        session.add(pending)
-        session.commit()
+        assert pending is not None and pending.status == "pending"
 
-        unchanged = personal_briefs.process_pending_edition(
-            session,
-            pending,
-            now=early + dt.timedelta(minutes=30),
-        )
+        generated = personal_briefs.process_pending_edition(session, pending, now=early)
 
-        assert unchanged.status == "pending"
+        assert generated.id == pending.id
+        assert generated.status in {"ready", "degraded"}
+        assert generated.generated_at is not None
 
 
-def test_deadline_source_staleness_is_separate_from_content_fallback(monkeypatch, tmp_path):
+def test_source_staleness_marks_sync_stale_separately_from_content_fallback(monkeypatch, tmp_path):
     _app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
     from api.routers import personal_briefs
     from models.analysis_contracts import DigestGenerationReason
@@ -750,10 +692,6 @@ def test_deadline_source_staleness_is_separate_from_content_fallback(monkeypatch
         ).edition
         assert pending is not None
         assert personal_briefs.readiness_progress(session, pending, now=current)["sources"]["pending"] == 1
-        pending.deadline_at = (current - dt.timedelta(seconds=1)).isoformat()
-        pending.check_after = (current - dt.timedelta(seconds=2)).isoformat()
-        session.add(pending)
-        session.commit()
 
         completed = personal_briefs.process_pending_edition(session, pending, now=current)
         assert completed.status == "degraded"
@@ -767,7 +705,7 @@ def test_deadline_source_staleness_is_separate_from_content_fallback(monkeypatch
         ).all() == ["article-a"]
 
 
-def test_public_daily_brief_due_waits_for_todays_article_not_yesterdays(monkeypatch, tmp_path):
+def test_public_daily_brief_missing_today_marks_sync_stale(monkeypatch, tmp_path):
     _app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
     from api.routers import personal_briefs
     from models.analysis_contracts import DigestGenerationReason
@@ -823,9 +761,11 @@ def test_public_daily_brief_due_waits_for_todays_article_not_yesterdays(monkeypa
         assert pending is not None
         assert "dorami_daily_brief" in json.loads(pending.due_source_ids_json)
 
-        unchanged = personal_briefs.process_pending_edition(session, pending, now=current)
+        generated = personal_briefs.process_pending_edition(session, pending, now=current)
 
-        assert unchanged.status == "pending"
+        # 昨天的日报不算今天的就绪:立即生成,但标 sync_stale 而非干等
+        assert generated.status == "degraded"
+        assert generated.sync_stale is True
 
 
 def test_generation_exception_after_terminal_cas_rolls_back_before_marking_failed(monkeypatch, tmp_path):

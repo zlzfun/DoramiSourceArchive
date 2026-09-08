@@ -25,7 +25,6 @@ class AnalysisFeatureFlagsPatch(BaseModel):
     taxonomy_candidate_enabled: bool | None = None
     taxonomy_auto_activation_enabled: bool | None = None
     personal_digest_enabled: bool | None = None
-    public_digest_analysis_adapter_enabled: bool | None = None
 
 
 class FullAnalysisScope(BaseModel):

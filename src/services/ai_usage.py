@@ -24,7 +24,7 @@ VALID_PURPOSES = (
     "translate",
     "ask",
     "summarize",
-    "daily_brief_map",
+    "daily_brief_editorial",
     "daily_brief_dedup",
     "daily_brief_reduce",
     "article_analysis",

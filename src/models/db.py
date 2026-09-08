@@ -2255,8 +2255,8 @@ class AiUsageRecord(SQLModel, table=True):
     """AI 用量按天聚合：一行 = 某天某用户某用途某模型的累计调用与 token 消耗。
 
     username 为登录账户名；系统级任务（定时日报等）记为 "system"。
-    purpose ∈ translate / ask / daily_brief_map / daily_brief_dedup /
-    daily_brief_reduce / source_config / detail_profile。
+    purpose ∈ translate / ask / daily_brief_editorial / daily_brief_dedup /
+    daily_brief_reduce / article_analysis / source_config / detail_profile。
     """
     __tablename__ = "ai_usage"
     # 聚合键唯一索引（v3.43 审计 M21）：写路径是「不存在则插、存在则累加」，无约束时

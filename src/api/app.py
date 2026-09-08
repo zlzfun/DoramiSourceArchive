@@ -1764,7 +1764,7 @@ def execute_personal_digest_schedule_job():
 
 
 def execute_personal_digest_pending_job():
-    """Complete ready editions; first-open deadlines force available-content output."""
+    """Generate pending editions immediately from available content (去等待, issue #22)."""
 
     try:
         personal_briefs_router.process_pending_editions(db_sink.engine)
