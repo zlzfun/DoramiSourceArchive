@@ -54,7 +54,7 @@ const FLAG_META = {
   taxonomy_candidate_enabled: ['Candidate 证据', '记录公共内容中的未知概念'],
   taxonomy_auto_activation_enabled: ['候选自动激活', '仅对满足组合阈值的低风险候选生效'],
   personal_digest_enabled: ['个人早报', '开放读者早报 API、调度与页面'],
-  public_digest_analysis_adapter_enabled: ['公共日报 adapter', '让公共日报读取持久化分析，不影响历史快照'],
+  // 公共日报 adapter 开关随 v3.48 退役(日报直接复用分析评分,软依赖不需要开关)
 };
 
 const pct = (value) => `${(Number(value || 0) * 100).toFixed(1)}%`;
@@ -99,7 +99,7 @@ function ScoreHistogram({ histogram, windowDays, versionStale }) {
 function FeatureFlags({ config, onToggle, busy }) {
   if (!config) return <p className="tiny-meta">分析开关尚未接入当前后端版本</p>;
   return (
-    <div className="grid gap-2 lg:grid-cols-5">
+    <div className="grid gap-2 lg:grid-cols-4">
       {Object.entries(FLAG_META).map(([key, [label, hint]]) => {
         const enabled = !!config[key];
         return (
