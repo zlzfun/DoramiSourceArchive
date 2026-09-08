@@ -17,7 +17,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 import smoke_analysis_release as release_smoke  # noqa: E402
 
 
-def test_release_smoke_exercises_recovery_concurrency_and_deadline(tmp_path):
+def test_release_smoke_exercises_recovery_concurrency_and_immediate_first_open(tmp_path):
     database_url = f"sqlite:///{tmp_path / 'release-smoke.db'}"
     report = asyncio.run(
         release_smoke.run_release_smoke(
@@ -38,8 +38,8 @@ def test_release_smoke_exercises_recovery_concurrency_and_deadline(tmp_path):
     ]
     assert report["sqlite_concurrency"]["locked_errors"] == 0
     assert report["sqlite_concurrency"]["persisted_rows"] == 4
-    assert report["first_open_deadline"]["after_status"] == "degraded"
-    assert report["first_open_deadline"]["outside_scope_items"] == 0
+    assert report["first_open_immediate"]["after_status"] == "degraded"
+    assert report["first_open_immediate"]["outside_scope_items"] == 0
 
 
 def test_release_smoke_refuses_configured_application_database():

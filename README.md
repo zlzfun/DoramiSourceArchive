@@ -2,7 +2,7 @@
 
 一个 **AI 内容聚合 CMS**：从多源抓取内容 → 存入 SQLite（内建 FTS5 全文索引），按用户订阅做分发（Feed / MCP / 每日日报），并提供「LLM 计划检索 + FTS5」的问答助手。系统分为**采集/归档**（collector）与**阅读/分发**（reader）两层，由运行时角色与登录账号角色共同门控。
 
-v3.44 起，资讯落盘后可异步完成质量评分、摘要、受治理的 `Topic / Industry / Entity` 标签与最多 6 个灵活展示标签；读者首次登录或从左侧工具栏管理“关注 / 屏蔽”兴趣，并在严格订阅范围内生成个人早报。规范标签、审核回执、历史 `full_analysis` 回填和公共日报 adapter 均有独立的发布与回滚边界。
+v3.44 起，资讯落盘后可异步完成新闻价值评分、摘要、受治理的 `Topic / Industry / Entity` 标签与最多 6 个灵活展示标签；读者首次登录或从左侧工具栏管理“关注 / 屏蔽”兴趣，并在严格订阅范围内生成个人早报。规范标签、审核回执、历史 `full_analysis` 回填和公共日报 adapter 均有独立的发布与回滚边界。
 
 Podcast RSS 现作为文章、动态、社交之外的第四种内容形态：采集 enclosure、时长、节目/单集元数据与 Podcasting 2.0 transcript/chapters 定位信息，桌面端和移动端均可在独立 Podcast 容器中播放原音频。长播客转录、精华博客和 `≤15min` 合成音频仍是后续受权利与预算门控的异步流水线，完整设计见 [`docs/podcast-wave-plan.md`](docs/podcast-wave-plan.md)。
 

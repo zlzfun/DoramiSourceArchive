@@ -1163,7 +1163,7 @@ export default function ReaderTab({
             </header>
             <div className="reader-pane-body markdown-body">
               {podcastView && <PodcastAudioPanel article={activeArticle} />}
-              {/* 哆啦美速读卡(AI 开启时才有):左栏 星+内容价值分,右栏摘要;无缓存给生成入口(不自动生成,控成本) */}
+              {/* 哆啦美速读卡(AI 开启时才有):左栏 新闻价值分,右栏摘要;无缓存给生成入口(不自动生成,控成本) */}
               {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
                 <AiReadingCard
                   article={activeArticle}

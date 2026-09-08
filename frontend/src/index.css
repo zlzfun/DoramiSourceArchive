@@ -3781,6 +3781,7 @@ input[type="radio"] {
   /* 生成流水线计数微字(步进条本体复用 .ledger-pipeline) */
   .pipeline-note { margin-top: 8px; font-family: var(--mono); font-size: 11px; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
   .pipeline-note.is-err { color: var(--state-bad); }
+  .pipeline-note.is-warn { color: var(--state-warn); }
 
   /* 近期日报:紧凑行,点行展开正文,hover 出删除 */
   .brief-run { border-bottom: 1px solid var(--dorami-border); }
@@ -4131,6 +4132,16 @@ input[type="radio"] {
     display: block; margin-top: 1px; font-size: 11px; font-weight: 500;
     color: var(--dorami-faint); font-variant-numeric: tabular-nums;
   }
+
+  /* ── 新闻价值分布迷你柱状图(运维 → 标签/分析,v3.48 收口):十档等宽列,柱高按最高档归一 ── */
+  .score-hist { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; height: 96px; align-items: end; }
+  .score-hist-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; min-width: 0; }
+  .score-hist-bar {
+    display: block; width: 100%; max-width: 28px; border-radius: var(--r-control) var(--r-control) 0 0;
+    background: var(--dorami-accent); opacity: 0.72; transition: opacity var(--motion-fast) var(--motion-ease);
+  }
+  .score-hist-col:hover .score-hist-bar { opacity: 1; }
+  .score-hist-lbl { margin-top: 4px; font-size: 11px; font-weight: 600; color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
 
   /* ── 账户表(ledger-table 语法:46px 行 / hover soft / 选中竖条 / 动作收 hover) ── */
   .acct-scroll { overflow-x: auto; }

@@ -7,6 +7,7 @@ import {
   displayAnalysisTags,
   hasReadableAnalysis,
   qualityScoreText,
+  SCORE_DISCLAIMER,
 } from '../utils/analysis';
 import AnalysisTagChip from './AnalysisTagChip';
 
@@ -97,7 +98,7 @@ export default function ArticleDetailDrawer({
                 {hasAnalysis ? (
                   <div className="reader-analysis-summary">
                     <div className="reader-analysis-top">
-                      {score && <span className="reader-analysis-score"><strong>{score}</strong><small>内容价值分</small></span>}
+                      {score && <span className="reader-analysis-score"><strong>{score}</strong><small>新闻价值</small></span>}
                       {(analysisTags.length > 0 || article.content_genre) && <span className="reader-analysis-tags">
                         {analysisTags.map((tag, index) => (
                           <AnalysisTagChip key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`} tag={tag} onTemporarySearch={onTemporaryTagSearch} />
@@ -108,7 +109,7 @@ export default function ArticleDetailDrawer({
                     </div>
                     {article.score_reason && <p>{article.score_reason}</p>}
                     {article.summary_zh && <p className="tiny-meta">{article.summary_zh}</p>}
-                    <small>AI 评估用于辅助筛选，不代表事实保证或用户评分</small>
+                    <small>{SCORE_DISCLAIMER}</small>
                   </div>
                 ) : (
                   <p className="ledger-excerpt">

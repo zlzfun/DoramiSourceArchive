@@ -1,12 +1,12 @@
-"""公共日报 legacy 生成提示词 (src/llm/prompts.py)。
+"""公共日报生成提示词 (src/llm/prompts.py)。
 
-- MAP 阶段：对单篇文章概括 + 打重要性分（沿用原 Dify 概括 schema，新增 score）。
-- REDUCE 阶段：把择优后的条目汇总成与 dorami-daily-brief Skill 风格一致的 Markdown，
-  并注入近期日报上下文做语义/事件级去重。
-
-本模块是公共日报兼容契约，不是文章级分析 Prompt。article-analysis-v1 位于
-``llm/article_analysis_prompt.py``；shadow/adapter 阶段不得用它覆盖这里的字符串，
-否则即使 adapter 开关关闭也会改变线上公共日报结果。
+- EDITORIAL 阶段(v3.48 统一新闻价值评分波起):对**已入选**的条目逐篇写中文标题、
+  1–3 条加粗要点、100–150 字点评、来源名/厂商/领域与常规标签——**不打分、不分类**。
+  评分与体裁由文章级分析(``llm/article_analysis_prompt.py``)统一产出,日报只复用;
+  历史上的 MAP 逐篇打分已随该波退役。
+- REDUCE 阶段:v3.34 起运行时为确定性渲染,本模块保留 REDUCE_SYSTEM_PROMPT 仅作
+  下载技能包的风格契约。
+- 同事件聚类 / 跨天查重:两次小 JSON 决策提示词。
 """
 
 from __future__ import annotations
@@ -32,11 +32,11 @@ CATEGORY_LABELS: Dict[str, str] = {
 }
 DEFAULT_CATEGORY_LABEL = "📌 其他资讯"
 
-# 允许的中文分类集合（约束 MAP 阶段 classification 取值），顺序即日报呈现顺序。
+# 日报分类集合(v3.48 起由文章级分析的 content_genre 机械映射得到,见 daily_brief.classification_from_genre)，顺序即日报呈现顺序。
 # 注意：导出 shendeng 时由 export_shendeng_daily_news 原样透传分类（shendeng 已兼容多分类）。
 ALLOWED_CLASSIFICATIONS = ["模型发布", "行业资讯", "开源动态", "技术大会", "社交动态", "资讯聚合", "学术论文"]
 
-# classification（MAP 产出的中文分类词）→ 日报分节标签。确定性渲染层
+# classification（genre 映射得到的中文分类词）→ 日报分节标签。确定性渲染层
 # (daily_brief.render_brief_markdown, v3.34) 据此分组排版——顺序沿
 # ALLOWED_CLASSIFICATIONS，未知分类回落 content_type 映射再落 DEFAULT。
 CLASSIFICATION_EMOJI_LABELS: Dict[str, str] = {
@@ -68,39 +68,20 @@ def section_label_order() -> List[str]:
     return list(dict.fromkeys(ordered))
 
 
-# Legacy public-digest MAP contract. Keep byte-stable while the persisted-analysis
-# adapter is disabled; compatibility is implemented in services.daily_brief.
-MAP_SYSTEM_PROMPT = """你是一位极具洞察力的前沿 AI 架构师与行业分析师，为一份面向 AI 从业者读者的资讯日报供稿。读者最关心的是：新模型/新能力发布、重要 AI 应用与产品更新、大厂与业界重大新闻、有明确新意的研究。请仔细阅读下方单篇资讯，严格基于正文事实提炼高质量中文简报。只依据正文事实，绝不臆造原文未出现的数字、结论或参数；正文信息不足时宁可少写也不要编造。
+# 编辑阶段(v3.48):只为入选的十几篇写点评与中文标题。提示词以退役的 MAP 契约为底,
+# 去掉了 score 与 classification 两项——分数与体裁来自文章级分析,日报不再自己打分。
+# 输出键沿用 extensions.items 的既有形状(title_cn/source/company/realm/summary/comment/tags),
+# 神灯导出与内网流水线零感知。
+EDITORIAL_SYSTEM_PROMPT = """你是一位极具洞察力的前沿 AI 架构师与行业分析师，为一份面向 AI 从业者读者的资讯日报供稿。下方这篇资讯已被编辑部选入今日日报，请仔细阅读，严格基于正文事实提炼高质量中文简报。只依据正文事实，绝不臆造原文未出现的数字、结论或参数；正文信息不足时宁可少写也不要编造。
 
 【核心任务要求】
  1. title_cn: 提取核心主旨。原标题为英文需信达雅地翻译；若无实际标题需精准提炼。务必具体（点出主体/产品/数字），不要用「某公司发布新模型」这类空泛标题。
- 2. classification: 从以下类别中按优先级准确判断（取最贴切的一个中文词）：
-    - 「模型发布」(最高优先)：任何新模型 / 新能力 / 新版本上线，闭源或开源均算，含 SOTA、新范式、具身/机器人/世界模型的真实模型发布（如 Qwen-Robot、GLM、MiniMax M3 这类带权重或可调用的模型）。
-    - 「开源动态」：开源工具 / 框架 / 代码库 / 仓库的发布或重要更新，但其本体不是模型（如 coding agent CLI、SDK、库）。
-    - 「学术论文」：arxiv / 论文 / Daily Papers 类研究。
-    - 「技术大会」：线下大会 / 峰会演讲、发布会上的技术分享（如智源大会、各家 Dev Day）。
-    - 「社交动态」：X/推特、社区讨论性质的零散消息。
-    - 「行业资讯」：厂商动态、产品更新、融资、收购、政策、算力等其余业界新闻。
-    - 「资讯聚合」：聚合类、确实无法归入上述任何一类的。
- 3. source: 推断信息来源的准确中文/官方名称。若【指定来源】有值则优化并使用；为空则结合正文聪慧推断最标准的媒体或机构名称（如「机器之心」「Google AI」）。
- 4. company: 提取最主要涉及的科技厂商（如 OpenAI、Microsoft、Google、Meta 等）。若无明显厂商，输出空字符串 ""。
- 5. realm: 归纳所属的 AI 核心领域，如「基础大模型」「AI Agent」「具身智能」「多模态」「算力架构」等专业领域词汇。
- 6. summary: 提取 1-3 条核心看点。严禁泛泛而谈！每一条必须严格使用「**核心概念/技术名**：具体实现细节」的格式（冒号前加粗）。冒号后要落到可验证的实质：机制、架构、关键数字（参数量/上下文长度/价格/榜单分数等）、与既有方案的差异。看点不足 3 条就只写 1-2 条，不要为凑数稀释。
- 7. comment: 撰写 100-150 字的硬核专业点评，回答「这件事为什么重要」——指出工程创新点、对开发链路/成本结构的启发或商业与竞争格局冲击。要有判断与取舍，绝禁「值得关注」「未来可期」这类套话。
- 8. tags: 生成 1-4 个精准的常规技术标签。
- 9. score: 给出该资讯的重要性评分，0-10 的数字，**允许并鼓励 0.5 步长的小数（如 7.5、8.5）**——同档内也要拉开区分度，不要一律给高分。评分锚点：
-    - 9-10 = 行业级重大突破/范式转变（重磅模型发布、格局级大事件）。
-    - 7-8.5 = 头部厂商**旗舰模型与核心 API 的发布/重大变化**、有明确新意的研究、业界重大新闻（重大融资/收购/政策）。
-    - 4-6.5 = 常规更新、增量改进、二线消息。
-    - 0-3 = 边角消息、信息量稀薄。
-    【厂商主次甄别（重要）】头部厂商（OpenAI、Anthropic、Google、DeepSeek、Qwen/阿里、智谱、xAI、Meta、Moonshot 等）的名号本身不加分——加分的是**事情的分量**：
-    - 其「旗舰模型 / 核心 API / 开源权重」的发布与重大变化 → 按 7-10 档正常打。
-    - 其「Agent / 产品线的正式 GA、重大里程碑发布」（如浏览器 Agent 全面开放、编码工具重大版本）→ 按 7-8.5 档正常打，重大产品发布不因「不是模型/API」而降档。
-    - 其「企业客户案例、区域上线、营销叙事、周边生态、纯增量小修小补」 → 压到 4-6 档，不因出自大厂而抬分。
-    - 【风向标厂商例外】OpenAI 与 Anthropic（Claude / Claude Code）是当前模型与应用两端的风向标，其产品功能**即使体量小**也常有巧思、通用性强或引发范式级讨论（历史屡见）——对这两家的功能类更新**不要机械压分**：按「是否引入新交互范式 / 新能力面 / 广泛适用性 / 引发行业讨论」评估，够格就给 7-8.5，只有确属无实质内容的琐碎修补才落 4-6。
-    【读者相关性调整（重要，会改变上面的锚点）】
-    - 车载/智能座舱/自动驾驶类内容（如车机助手、智驾系统落地）**降权**：除非是行业级大事件，否则 score 上限压到 4-5。注意：通用具身/机器人/世界模型的真实模型发布**不**算车载，按其技术价值正常打分。
-    - 公众号软广 / 营销通稿 / PR 稿、站台与赛事 / 招募 / 榜单认证类（典型信号：「XX 权威认证」「XX 大赛」「英雄帖」「返利」「邀你参加」「重磅亮相」却无实质技术或产品信息）、信息量稀薄的纯口播稿，**重罚 score 0-2**。判断标准：通篇是宣传口吻、缺乏可验证的技术细节或实质新闻，即视为软广/营销稿压分。
+ 2. source: 推断信息来源的准确中文/官方名称。若【指定来源】有值则优化并使用；为空则结合正文聪慧推断最标准的媒体或机构名称（如「机器之心」「Google AI」）。
+ 3. company: 提取最主要涉及的科技厂商（如 OpenAI、Microsoft、Google、Meta 等）。若无明显厂商，输出空字符串 ""。
+ 4. realm: 归纳所属的 AI 核心领域，如「基础大模型」「AI Agent」「具身智能」「多模态」「算力架构」等专业领域词汇。
+ 5. summary: 提取 1-3 条核心看点。严禁泛泛而谈！每一条必须严格使用「**核心概念/技术名**：具体实现细节」的格式（冒号前加粗）。冒号后要落到可验证的实质：机制、架构、关键数字（参数量/上下文长度/价格/榜单分数等）、与既有方案的差异。看点不足 3 条就只写 1-2 条，不要为凑数稀释。
+ 6. comment: 撰写 100-150 字的硬核专业点评，回答「这件事为什么重要」——指出工程创新点、对开发链路/成本结构的启发或商业与竞争格局冲击。要有判断与取舍，绝禁「值得关注」「未来可期」这类套话。
+ 7. tags: 生成 1-4 个精准的常规技术标签。
 
 【极其重要的格式输出要求】
 你必须且只能输出一个合法的、纯净的 JSON 对象，直接以 { 开始、以 } 结束。
@@ -109,28 +90,39 @@ MAP_SYSTEM_PROMPT = """你是一位极具洞察力的前沿 AI 架构师与行�
 期望的 JSON 结构：
 {
   "title_cn": "string",
-  "classification": "string",
   "source": "string",
   "company": "string",
   "realm": "string",
   "summary": ["string"],
   "comment": "string",
-  "tags": ["string"],
-  "score": 0
+  "tags": ["string"]
 }"""
 
 
-def build_map_user_prompt(*, title: str, source_name: str, body: str, max_body_chars: int = 6000) -> str:
-    """构造 MAP 阶段的单篇输入。body 截断以控 token。"""
+def build_editorial_user_prompt(
+    *, title: str, source_name: str, body: str, max_body_chars: int = 6000,
+    analysis_summary: str = "", score_reason: str = "",
+) -> str:
+    """构造编辑阶段的单篇输入。body 截断以控 token。
+
+    analysis_summary / score_reason(v3.48 收口)是入库分析读完整篇(24000 字)后的客观摘要
+    与一句评分理由,作「已知事实」喂给编辑:正文截断只剩开头时全局信息不丢,
+    company/realm 的归纳也与选篇阶段同源。
+    """
     clipped = (body or "").strip()
     if len(clipped) > max_body_chars:
         clipped = clipped[:max_body_chars] + "\n...(正文已截断)"
-    return (
-        "【输入数据】\n"
-        f"原标题：{title or '（无标题）'}\n"
-        f"指定来源：{source_name or ''}\n"
-        f"正文内容：{clipped or '（无正文）'}"
-    )
+    lines = ["【输入数据】", f"原标题：{title or '（无标题）'}", f"指定来源：{source_name or ''}"]
+    facts = []
+    if (score_reason or "").strip():
+        facts.append(f"评分理由：{score_reason.strip()}")
+    if (analysis_summary or "").strip():
+        facts.append(f"客观摘要：{analysis_summary.strip()}")
+    if facts:
+        lines.append("【系统分析（已通读全文得出的已知事实，用于定位重点；细节以正文为准）】")
+        lines.extend(facts)
+    lines.append(f"正文内容：{clipped or '（无正文）'}")
+    return "\n".join(lines)
 
 
 # v3.34 起运行时 reduce 已改为**确定性渲染**(daily_brief.render_brief_markdown):
@@ -218,7 +210,7 @@ def build_dedup_user_prompt(entries: List[Dict[str, Any]]) -> str:
 # 跨天查重（确定性渲染层的唯一 LLM 决策，v3.34 取代整篇 reduce 长输出）
 # ==========================================
 
-CROSS_DAY_DEDUP_SYSTEM_PROMPT = """你是 AI 资讯日报的跨天查重编辑。日报正文由系统按结构化条目确定性排版,你只负责一件事:对照最近几天日报**已收录条目的标题清单**,判断今天条目(每条带数字 idx、标题、厂商与一句话要点)里——
+CROSS_DAY_DEDUP_SYSTEM_PROMPT = """你是 AI 资讯日报的跨天查重编辑。日报正文由系统按结构化条目确定性排版,你只负责一件事:对照最近几天日报**已收录条目清单**(标题,多数附一句要点),判断今天条目(每条带数字 idx、标题、厂商与一句话要点)里——
 1. 哪些是**纯重复**:同一事件近期日报已充分覆盖、今天没有实质新信息,列入 drop;
 2. 哪些是同一事件的**后续进展**:有实质增量(新数据、新版本、新表态),列入 followups,并用一句话(30 字内)概括「相对前报的增量」。
 
@@ -235,7 +227,8 @@ def build_cross_day_dedup_user_prompt(
     entries: List[Dict[str, Any]], recent_days: List[Dict[str, Any]]
 ) -> str:
     """构造跨天查重输入。entries 形如 {idx,title,company,role,hint};
-    recent_days 形如 {"date": "YYYY-MM-DD", "titles": [str]}(近几天日报条目标题)。"""
+    recent_days 形如 {"date": "YYYY-MM-DD", "titles": [str], "entries": [{"title","hint"}]}
+    (近几天日报条目;有 entries 时每条附要点,只有 titles 时退回纯标题)。"""
     lines: List[str] = ["【今日条目】"]
     for e in entries:
         company = (e.get("company") or "").strip()
@@ -251,8 +244,16 @@ def build_cross_day_dedup_user_prompt(
     lines.append("【近期日报已收录条目（仅供查重对照）】")
     for day in recent_days:
         lines.append(f"--- {day.get('date') or ''} ---")
-        for title in day.get("titles") or []:
-            lines.append(f"- {title}")
+        rich = day.get("entries")
+        if rich:
+            for entry in rich:
+                title = (entry.get("title") or "").strip() if isinstance(entry, dict) else ""
+                hint = (entry.get("hint") or "").strip() if isinstance(entry, dict) else ""
+                if title:
+                    lines.append(f"- {title}" + (f"（要点：{hint}）" if hint else ""))
+        else:
+            for title in day.get("titles") or []:
+                lines.append(f"- {title}")
     return "\n".join(lines)
 
 
@@ -276,12 +277,12 @@ This Skill must follow the same editorial contract as Dorami's built-in daily br
 {category_lines}
 - anything else → {DEFAULT_CATEGORY_LABEL}
 
-### Map-stage editorial standard
+### Editorial standard (title / 要点 / 点评)
 
-When summarizing individual articles, follow this exact backend system prompt:
+When writing the title, key points and comment for an individual article, follow this exact backend system prompt:
 
 ```text
-{MAP_SYSTEM_PROMPT}
+{EDITORIAL_SYSTEM_PROMPT}
 ```
 
 ### Reduce-stage Markdown style

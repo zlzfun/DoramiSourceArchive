@@ -65,6 +65,37 @@ function Metric({ value, label, sub }) {
   return <div className="kpi"><span className="kpi-num">{value}</span><span className="kpi-lbl">{label}</span>{sub && <span className="kpi-sub">{sub}</span>}</div>;
 }
 
+// 新闻价值分整数档分布(v3.48 收口):日报门槛 6.0 / 早报门槛 5.0 的校准依据。
+// 手写 grid 不引图表库;数字只在 title 里,与运维看板「悬停见数」纪律一致。
+function ScoreHistogram({ histogram, windowDays, versionStale }) {
+  const buckets = Array.from({ length: 10 }, (_, i) => [String(i + 1), Number(histogram?.[String(i + 1)] || 0)]);
+  const total = buckets.reduce((acc, [, n]) => acc + n, 0);
+  const max = Math.max(1, ...buckets.map(([, n]) => n));
+  const stale = Number(versionStale || 0);
+  return (
+    <section className="surface-card card-pad rounded-[var(--r-card)]">
+      <div className="card-head">
+        <div>
+          <h2 className="card-title">新闻价值分布</h2>
+          <p className="tiny-meta mt-1">近 {windowDays} 天已分析 {total.toLocaleString()} 篇{stale > 0 ? ` · 旧尺子结果 ${stale.toLocaleString()} 篇待重跑` : ''}</p>
+        </div>
+      </div>
+      {total === 0 ? (
+        <p className="tiny-meta">窗口内还没有分析结果</p>
+      ) : (
+        <div className="score-hist" role="img" aria-label={buckets.map(([b, n]) => `${b} 分 ${n} 篇`).join('，')}>
+          {buckets.map(([b, n]) => (
+            <div key={b} className="score-hist-col" title={`${b} 分：${n} 篇（${Math.round((n / total) * 100)}%）`}>
+              <span className="score-hist-bar" style={{ height: `${Math.max(2, Math.round((n / max) * 100))}%` }} />
+              <span className="score-hist-lbl">{b}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function FeatureFlags({ config, onToggle, busy }) {
   if (!config) return <p className="tiny-meta">分析开关尚未接入当前后端版本</p>;
   return (
@@ -445,6 +476,10 @@ export default function AdminTaxonomyPanel({ showToast, days = 7 }) {
           <Metric value={pct(taxonomy?.tagged_article_rate)} label="标签覆盖" sub={`缺主标签 ${pct(taxonomy?.primary_missing_rate)}`} />
           <Metric value={taxonomy?.alias_count ?? 0} label="Alias" sub={`自动激活 ${taxonomy?.active_automatic_count ?? 0}`} />
         </section>
+      )}
+
+      {metrics && analysis?.score_histogram && (
+        <ScoreHistogram histogram={analysis.score_histogram} windowDays={metrics.window_days} versionStale={analysis.version_stale} />
       )}
 
       <FullAnalysisBackfillCard showToast={showToast} />

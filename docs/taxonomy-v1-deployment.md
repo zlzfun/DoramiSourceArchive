@@ -58,6 +58,19 @@ Archive Sync v3 的连接预检会读取 Taxonomy 原子快照并要求
 以及已有标签/Alias 与批准目录不一致。reconcile 在写前完成全量校验，并在一个事务中提交；
 失败不会留下半套目录或 receipt。
 
+## 开分析与日报 cron(v3.48 收口补课)
+
+1. Taxonomy 发布后,在「运维管理 → 标签/分析」打开 **文章分析总闸**(`article_analysis_enabled`,
+   KV 默认关)。忘开的表现不是报错:日报照常出报但 `last_run.scored_stored` 恒为 0、
+   `scored_inline` 等于候选数(日报面板会给一句黄字提示),读者面永远没有分数与标签,
+   每天多付一份等于旧 map 的补评费用。
+2. 公共日报 cron 排在分析 worker 追平之后(默认 `30 8 * * *` 已晚于抓取高峰)。
+   `last_run.scored_inline_pending` 是补评时仍在分析队列的篇数——它常态非零就把 cron 往后挪,
+   不要引入写回。
+3. 评分版本键(`ARTICLE_ANALYSIS_PROMPT_VERSION` / `ARTICLE_ANALYSIS_SCORING_VERSION`)变更后,
+   近 7 天存量由扫描**每 tick 最多 16 篇**慢滴重跑(新文章永远优先),分析指标的
+   `version_stale` 是剩余篇数;更早的历史用「历史分析」作业按需回填。
+
 ## 人工验证与恢复工具
 
 正常部署不需要单独跑安装脚本。`scripts/install_taxonomy_v1.py` 是同一 runtime reconciler

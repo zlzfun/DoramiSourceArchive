@@ -274,7 +274,7 @@ def test_global_budget_ignores_system_purposes(monkeypatch, tmp_path):
     from services import accounts as accounts_service
     with Session(sink.engine) as session:
         accounts_service.set_ai_daily_token_budget(session, 1000)
-    _seed_tokens(sink.engine, "daily_brief_map", 999_999, username="system")
+    _seed_tokens(sink.engine, "daily_brief_editorial", 999_999, username="system")
 
     with TestClient(app_module.app) as client:
         _login(client)

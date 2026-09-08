@@ -417,7 +417,7 @@ def test_no_qualified_content_is_honest_degraded_latest_five(storage):
         session.add(_user())
         session.add(_subscribe("alice", "rss_a"))
         for number in range(7):
-            _seed_article(session, number, score=6.5 if number % 2 else None)
+            _seed_article(session, number, score=4.5 if number % 2 else None)
         session.commit()
 
         result = generate_personal_digest(session, "alice", now=NOW)
@@ -472,9 +472,9 @@ def test_mute_excludes_matches_and_unfinished_tagging_from_degraded_area(storage
         tag = _tag("muted")
         session.add_all([user, tag, _subscribe("alice", "rss_a")])
         session.flush()
-        muted = _seed_article(session, 1, score=6.5, tagging_status="succeeded")
-        unfinished = _seed_article(session, 2, score=6.5, tagging_status="pending")
-        safe = _seed_article(session, 3, score=6.5, tagging_status="succeeded")
+        muted = _seed_article(session, 1, score=4.5, tagging_status="succeeded")
+        unfinished = _seed_article(session, 2, score=4.5, tagging_status="pending")
+        safe = _seed_article(session, 3, score=4.5, tagging_status="succeeded")
         session.flush()
         session.add_all([
             ArticleTagAssignmentRecord(

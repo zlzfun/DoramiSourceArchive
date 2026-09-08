@@ -6,7 +6,7 @@
 export const PURPOSE_LABELS = {
   translate: '阅读器翻译',
   ask: '阅读器问答',
-  daily_brief_map: '日报·概括',
+  daily_brief_editorial: '日报·点评',
   daily_brief_dedup: '日报·去重',
   daily_brief_reduce: '日报·汇编',
   source_config: '节点·配置',

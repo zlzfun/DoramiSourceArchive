@@ -1,9 +1,20 @@
 """每日 AI 资讯日报编排 (src/services/daily_brief.py)
 
-流程：预处理(collect_candidates) → map_summarize(每篇 LLM 概括+打分)
-     → dedup_clusters(同日同事件聚类) → select_top(按分数+多样性择优)
+流程(v3.48 统一新闻价值评分波):
+     collect_candidates(游标/名单/裁剪)
+     → load_stored_scores + score_candidates(复用文章级分析的新闻价值分;缺分的候选
+       就地调用**同一个评分函数**补评——喂同一套规范标签闭集,结果只用于本次生成、
+       不写回分析表;无正文候选按标题走同一把尺子)
+     → 阈值过滤(score < daily_brief_min_score 直接 pass;过线但无正文的进附录)
+     → dedup_clusters(机械预聚类 + 同日同事件 LLM 聚类) → select_top(按分数+官方加成+多样性择优)
+     → editorial_polish(只为入选条目逐篇写中文标题/要点/点评,分析摘要与评分理由作已知事实喂入)
      → cross_day_dedup(跨天查重,一次轻量 LLM) → render_brief_markdown(确定性渲染)
      → 写库(幂等 update)。
+
+日报对文章级分析是**软依赖**:分析 worker 跑完了就直接复用(省钱),没跑完或总闸关着
+就自己按同一把尺子补评——评分部分具备或完全不具备都能 work,两个子系统互不知晓。
+日报自己不再打分(历史 MAP 逐篇打分随本波退役),全站只有一把新闻价值尺子:
+llm/article_analysis_prompt.py。方案:docs/unified-news-scoring-plan.md。
 
 v3.34 起 reduce 不再是整篇 LLM 长输出:markdown 由代码从结构化条目排版,
 LLM 在汇编段只做「对照近几天日报条目标题判断 drop/接前报」的小 JSON 决策——
@@ -14,7 +25,7 @@ v3.35 权威机械层(生产实录:近 10 期日报头部名次官方源仅 1/30
 同事件代表权官方在分差门限内优先、select 排序官方 +0.5 有界加成、跨天查重
 官方 drop 机械降级为 followup——三处全是确定性代码,不靠 LLM 自觉。
 同波修同日重跑(合并而非覆盖,见 load_existing_brief_state/merge_same_day)、
-跨天剔条回补(top_n+buffer 预选后裁回)、map 瞬时失败串行重试、候选两段式轻列取数。
+跨天剔条回补(top_n+buffer 预选后裁回)、瞬时失败串行重试、候选两段式轻列取数。
 
 三层去重：
   ① 确定性水位线游标 daily_brief_cursor（fetched_date），写库成功后才推进；
@@ -46,6 +57,7 @@ from llm.client import (
     chat_completion, client_session, parse_json_object,
 )
 from llm import prompts
+from llm.article_analysis_prompt import ARTICLE_ANALYSIS_SCORING_VERSION
 
 # 日报各阶段的 LLM 用量归属：手动触发归到触发它的 admin，定时调度无登录上下文则归 "system"。
 USAGE_SYSTEM = "system"
@@ -53,6 +65,7 @@ USAGE_SYSTEM = "system"
 
 def _usage_meta(purpose: str, username: Optional[str]) -> UsageMeta:
     return UsageMeta(purpose=purpose, username=(username or USAGE_SYSTEM))
+from models.analysis_contracts import TaxonomyTagDTO
 from models.content import DailyBriefContent
 from models.db import (
     AppSettingRecord,
@@ -63,7 +76,10 @@ from models.db import (
     SourceConfigRecord,
 )
 from services import credentials
-from services.source_naming import source_role
+from services.article_analysis import (
+    AnalysisInput, analyze_article_with_llm, load_relevant_active_tags, validate_analysis_payload,
+)
+from services.source_naming import friendly_source_name, source_role
 
 logger = logging.getLogger("dorami.daily_brief")
 
@@ -76,7 +92,7 @@ _PROGRESS: Dict[str, Any] = {"phase": "idle", "message": "", "done": 0, "total":
 
 
 def set_progress(phase: str, message: str = "", *, done: int = 0, total: int = 0) -> None:
-    """更新当前生成阶段。phase ∈ idle/collecting/mapping/selecting/reducing/persisting/done/empty/error。"""
+    """更新当前生成阶段。phase ∈ idle/collecting/scoring/selecting/editing/reducing/persisting/done/empty/error。"""
     _PROGRESS.update({
         "phase": phase, "message": message, "done": done, "total": total, "updated_at": time.time(),
     })
@@ -100,10 +116,10 @@ KEY_CRON = "daily_brief_cron"
 KEY_TOP_N = "daily_brief_top_n"
 KEY_SOURCE_IDS = "daily_brief_source_ids"
 KEY_LAST_RUN = "daily_brief_last_run"
-# 公共日报读取文章级分析的独立发布开关。默认关闭；关闭时 MAP、门槛、渲染和
-# extensions.items 均继续走 legacy 路径。shadow 对比写入另一个内部 KV，不参与输出。
-KEY_ANALYSIS_ADAPTER_ENABLED = "public_digest_analysis_adapter_enabled"
-KEY_ANALYSIS_SHADOW_METRICS = "daily_brief_analysis_shadow_metrics"
+# 入选门槛(v3.48):新闻价值分低于它的候选直接 pass——不进正选也不进附录,随游标跳过。
+# 语义是「pass 掉边角料」的下限,入选仍靠排序与配额:淡日子日报自然变短而不是被灌水。
+KEY_MIN_SCORE = "daily_brief_min_score"
+DEFAULT_MIN_SCORE = 6.0
 # LLM 配置的 KV key 沿用 services/credentials 注册表(与历史存量一致,零迁移)。
 KEY_LLM_BASE_URL = credentials.LLM_NAMESPACE.field_by_name("base_url").kv_key
 KEY_LLM_MODEL = credentials.LLM_NAMESPACE.field_by_name("model").kv_key
@@ -166,11 +182,14 @@ class ScoredItem:
     comment: str = ""
     tags: List[str] = field(default_factory=list)
     score: float = 0.0
-    map_ok: bool = True
+    # 评分是否到手(分析表复用或就地补评成功);False 的条目只有标题与链接,降入附录
+    score_ok: bool = True
     # 同事件去重合并后，被并入本条的其它来源链接（供 reduce 渲染多来源）
     extra_sources: List[str] = field(default_factory=list)
     # 跨天查重判定为「同一事件的后续进展」时的一句增量说明（渲染成「（接前报）」行）
     followup_note: str = ""
+    # 分析给出的评分理由:编辑阶段的已知事实,不进 to_reduce_dict(不能被误当公共点评)
+    score_reason: str = ""
 
     def to_reduce_dict(self) -> Dict[str, Any]:
         return {
@@ -196,20 +215,9 @@ class ScoredItem:
         }
 
 
-@dataclass(frozen=True)
-class PersistedAnalysisCompat:
-    """一篇文章可供公共日报兼容 adapter 消费的只读投影。"""
-
-    article_id: str
-    quality_score: float
-    summary: str
-    content_genre: str
-    canonical_tags: Tuple[str, ...] = ()
-
-
-# 新 analysis 的 content_genre → legacy 公共日报 classification。映射只改变字段
-# 形状，不改变公共日报的候选范围、择优配额或门槛（公共日报目前没有 7 分硬门槛）。
-CONTENT_GENRE_TO_LEGACY_CLASSIFICATION: Dict[str, str] = {
+# 文章级分析的 content_genre → 日报 classification(分节用)。日报自己不再产分类,
+# 体裁与分数一样来自分析结果,映射是确定性代码。
+CLASSIFICATION_FROM_GENRE: Dict[str, str] = {
     "model_release": "模型发布",
     "product_update": "行业资讯",
     "open_source_update": "开源动态",
@@ -226,14 +234,14 @@ CONTENT_GENRE_TO_LEGACY_CLASSIFICATION: Dict[str, str] = {
 }
 
 
-def content_genre_to_legacy_classification(content_genre: str) -> str:
-    """确定性映射新 genre；未知/空值返回空串，让调用方保留 legacy 分类。"""
+def classification_from_genre(content_genre: str) -> str:
+    """确定性映射 genre;未知/空值返回空串,渲染层回落 content_type 映射。"""
 
-    return CONTENT_GENRE_TO_LEGACY_CLASSIFICATION.get((content_genre or "").strip(), "")
+    return CLASSIFICATION_FROM_GENRE.get((content_genre or "").strip(), "")
 
 
 def _analysis_summary_lines(summary: str) -> List[str]:
-    """把文章级纯文本摘要收敛为 legacy ``summary: list[str]`` 形状。"""
+    """把文章级纯文本摘要收敛为 ``summary: list[str]`` 形状(editorial 失败时的要点兜底)。"""
 
     raw = (summary or "").strip()
     if not raw:
@@ -246,10 +254,29 @@ def _analysis_summary_lines(summary: str) -> List[str]:
     return lines or [raw]
 
 
-def load_persisted_analysis_compat(
-    session: Session, article_ids: List[str]
-) -> Dict[str, PersistedAnalysisCompat]:
-    """批量读取成功 analysis 与 active canonical tags，避免公共日报 N+1。"""
+@dataclass(frozen=True)
+class ArticleScore:
+    """一篇文章可供日报消费的评分投影——来自分析表或就地补评,形状相同。
+
+    topic_tags = topic/industry 规范标签显示名(首个作 realm 配额键);
+    entity_tags = entity 标签名,其后补 entities 字段里的实体名(首个作 company)。
+    """
+
+    score: float
+    summary: str
+    genre: str
+    topic_tags: Tuple[str, ...] = ()
+    entity_tags: Tuple[str, ...] = ()
+    # 一句「为什么重要/不重要」:只喂给编辑阶段作已知事实,绝不进 extensions.items
+    score_reason: str = ""
+
+
+def load_stored_scores(session: Session, article_ids: List[str]) -> Dict[str, ArticleScore]:
+    """批量读取分析 worker 已产出的**当前尺子**评分(succeeded 且 scoring_version 为现行版本)。
+
+    旧版本尺子的结果视同没有——版本键就是尺子的名字,混用两把尺子排序没有意义;
+    这批候选会走就地补评。一次 IN 查询 + 一次标签 join,避免 N+1。
+    """
 
     ids = list(dict.fromkeys(str(i) for i in article_ids if i))
     if not ids:
@@ -257,13 +284,9 @@ def load_persisted_analysis_compat(
     analyses = session.exec(
         select(ArticleAnalysisRecord)
         .where(ArticleAnalysisRecord.article_id.in_(ids))
-        .where(
-            or_(
-                ArticleAnalysisRecord.status == "succeeded",
-                ArticleAnalysisRecord.analyzed_at.is_not(None),
-            )
-        )
+        .where(ArticleAnalysisRecord.status == "succeeded")
         .where(ArticleAnalysisRecord.quality_score.is_not(None))
+        .where(ArticleAnalysisRecord.scoring_version == ARTICLE_ANALYSIS_SCORING_VERSION)
     ).all()
     if not analyses:
         return {}
@@ -281,101 +304,43 @@ def load_persisted_analysis_compat(
             CmsTagRecord.id,
         )
     ).all()
-    tags_by_article: Dict[str, List[str]] = {}
+    topics: Dict[str, List[str]] = {}
+    entities: Dict[str, List[str]] = {}
     for assignment, tag in tag_rows:
         display = (tag.name_zh or tag.name_en or tag.code or "").strip()
-        if display and display not in tags_by_article.setdefault(assignment.article_id, []):
-            tags_by_article[assignment.article_id].append(display)
+        bucket = entities if tag.kind == "entity" else topics
+        names = bucket.setdefault(assignment.article_id, [])
+        if display and display not in names:
+            names.append(display)
 
-    return {
-        row.article_id: PersistedAnalysisCompat(
-            article_id=row.article_id,
-            quality_score=float(row.quality_score),
+    out: Dict[str, ArticleScore] = {}
+    for row in analyses:
+        entity_names = list(entities.get(row.article_id, []))
+        for name in _entity_names(row.entities_json):
+            if name not in entity_names:
+                entity_names.append(name)
+        out[row.article_id] = ArticleScore(
+            score=float(row.quality_score),
             summary=row.summary or "",
-            content_genre=row.content_genre or "",
-            canonical_tags=tuple(tags_by_article.get(row.article_id, [])),
+            genre=row.content_genre or "",
+            topic_tags=tuple(topics.get(row.article_id, [])),
+            entity_tags=tuple(entity_names),
+            score_reason=row.score_reason or "",
         )
-        for row in analyses
-    }
+    return out
 
 
-def build_analysis_shadow_metrics(
-    legacy_items: List[ScoredItem],
-    persisted: Dict[str, PersistedAnalysisCompat],
-) -> Dict[str, Any]:
-    """汇总同批新旧评分、摘要和分类差异；不改变任何条目。"""
-
-    comparable = [it for it in legacy_items if it.candidate.id in persisted]
-    score_deltas = [
-        abs(it.score - persisted[it.candidate.id].quality_score)
-        for it in comparable
-    ]
-    classification_matches = 0
-    summary_matches = 0
-    summary_similarities: List[float] = []
-    for item in comparable:
-        new = persisted[item.candidate.id]
-        mapped = content_genre_to_legacy_classification(new.content_genre)
-        if mapped and mapped == (item.classification or "").strip():
-            classification_matches += 1
-        legacy_summary = " ".join(item.summary).strip()
-        analysis_summary = " ".join(_analysis_summary_lines(new.summary)).strip()
-        if legacy_summary and analysis_summary and legacy_summary == analysis_summary:
-            summary_matches += 1
-        if legacy_summary and analysis_summary:
-            summary_similarities.append(
-                difflib.SequenceMatcher(None, legacy_summary, analysis_summary).ratio()
-            )
-    count = len(comparable)
-    return {
-        "legacy_count": len(legacy_items),
-        "persisted_count": len(persisted),
-        "comparable_count": count,
-        "score_mean_abs_delta": (
-            round(sum(score_deltas) / count, 4) if count else None
-        ),
-        "score_max_abs_delta": round(max(score_deltas), 4) if score_deltas else None,
-        "score_within_1_count": sum(delta <= 1.0 for delta in score_deltas),
-        "classification_match_count": classification_matches,
-        "summary_exact_match_count": summary_matches,
-        "summary_mean_similarity": (
-            round(sum(summary_similarities) / len(summary_similarities), 4)
-            if summary_similarities else None
-        ),
-    }
-
-
-def apply_persisted_analysis_adapter(
-    legacy_items: List[ScoredItem],
-    persisted: Dict[str, PersistedAnalysisCompat],
-) -> List[ScoredItem]:
-    """覆盖可复用字段，同时保留 legacy title/source/company/realm/comment。
-
-    ``score_reason`` 不在投影中，因而绝不可能被误当成公共日报 ``comment``。
-    没有成功 analysis 的文章逐对象原样返回，允许渐进覆盖。
-    """
-
-    adapted: List[ScoredItem] = []
-    for item in legacy_items:
-        analysis = persisted.get(item.candidate.id)
-        if analysis is None:
-            adapted.append(item)
-            continue
-        summary = _analysis_summary_lines(analysis.summary) or item.summary
-        classification = (
-            content_genre_to_legacy_classification(analysis.content_genre)
-            or item.classification
-        )
-        adapted.append(
-            replace(
-                item,
-                classification=classification,
-                summary=summary,
-                tags=list(analysis.canonical_tags) or item.tags,
-                score=analysis.quality_score,
-            )
-        )
-    return adapted
+def _entity_names(entities_json: Optional[str]) -> List[str]:
+    try:
+        entries = json.loads(entities_json or "[]")
+    except (TypeError, ValueError):
+        return []
+    names: List[str] = []
+    for entry in entries if isinstance(entries, list) else []:
+        name = str(entry.get("name") or "").strip() if isinstance(entry, dict) else ""
+        if name and name not in names:
+            names.append(name)
+    return names
 
 
 # ==========================================
@@ -427,6 +392,16 @@ def daily_brief_top_n(session: Session) -> int:
     except ValueError:
         value = DEFAULT_TOP_N
     return max(TOP_N_MIN, min(TOP_N_MAX, value))
+
+
+def daily_brief_min_score(session: Session) -> float:
+    """读取入选门槛(新闻价值分下限),非法/越界回落到默认并夹到 [0, 10]。"""
+    raw = get_setting(session, KEY_MIN_SCORE, "")
+    try:
+        value = float(raw) if raw else DEFAULT_MIN_SCORE
+    except ValueError:
+        value = DEFAULT_MIN_SCORE
+    return max(0.0, min(10.0, value))
 
 
 def read_source_scope(session: Session) -> Optional[List[str]]:
@@ -587,104 +562,169 @@ def collect_candidates(
 
 
 # ==========================================
-# 阶段 2：Map（每篇 LLM 概括 + 打分）
+# 阶段 2：Score（复用文章级分析;缺分就地补评——同一函数、同一把尺子）
 # ==========================================
 
-async def _summarize_one(
-    candidate: BriefCandidate, llm_config: config.LLMConfig,
-    usage_meta: Optional[UsageMeta] = None, http_client=None,
-) -> ScoredItem:
-    try:
-        user_prompt = prompts.build_map_user_prompt(
-            title=candidate.title,
-            source_name=candidate.source_id,
-            body=candidate.body,
-        )
-        raw = await chat_completion(
-            messages=[
-                ChatMessage(role="system", content=prompts.MAP_SYSTEM_PROMPT),
-                ChatMessage(role="user", content=user_prompt),
-            ],
-            config=llm_config,
-            response_json=True,
-            usage_meta=usage_meta,
-            http_client=http_client,
-        )
-        data = parse_json_object(raw)
-        return ScoredItem(
-            candidate=candidate,
-            title_cn=str(data.get("title_cn") or candidate.title),
-            classification=str(data.get("classification") or ""),
-            source=str(data.get("source") or candidate.source_id),
-            company=str(data.get("company") or ""),
-            realm=str(data.get("realm") or ""),
-            summary=[str(s) for s in (data.get("summary") or []) if s],
-            comment=str(data.get("comment") or ""),
-            tags=[str(t) for t in (data.get("tags") or []) if t],
-            score=_coerce_score(data.get("score")),
-            map_ok=True,
-        )
-    except (LLMError, Exception) as exc:  # noqa: BLE001 单篇失败降级，不中断整体
-        logger.warning("日报 map 单篇失败 (id=%s): %s", candidate.id, exc)
-        return ScoredItem(
-            candidate=candidate,
-            title_cn=candidate.title,
-            source=candidate.source_id,
-            summary=[],
-            score=3.0,
-            map_ok=False,
-        )
+def _scored_item(candidate: BriefCandidate, score: ArticleScore) -> ScoredItem:
+    """评分投影 → 日报条目。编辑字段(title_cn/要点/点评)留给 editorial_polish;
+    这里先用分析产出机械填好选篇阶段需要的 classification/company/realm/hint。"""
+    return ScoredItem(
+        candidate=candidate,
+        classification=classification_from_genre(score.genre),
+        source=friendly_source_name(candidate.source_id),
+        company=(score.entity_tags[0] if score.entity_tags else ""),
+        realm=(score.topic_tags[0] if score.topic_tags else ""),
+        summary=_analysis_summary_lines(score.summary),
+        tags=list(dict.fromkeys(score.topic_tags + score.entity_tags)),
+        score=score.score,
+        score_ok=True,
+        score_reason=score.score_reason,
+    )
 
 
 def _coerce_score(raw: Any) -> float:
+    """存量 items 的 score → float(同日合并重建用),非法值取 0。"""
     try:
         value = float(raw)
     except (TypeError, ValueError):
-        return 3.0
+        return 0.0
     return max(0.0, min(10.0, value))
 
 
-async def map_summarize(
+def _unscored_item(candidate: BriefCandidate) -> ScoredItem:
+    return ScoredItem(
+        candidate=candidate,
+        title_cn=candidate.title,
+        source=friendly_source_name(candidate.source_id),
+        score=0.0,
+        score_ok=False,
+    )
+
+
+async def _score_one(
+    candidate: BriefCandidate, llm_config: config.LLMConfig,
+    usage_meta: Optional[UsageMeta] = None, http_client=None,
+    active_tags: Tuple[TaxonomyTagDTO, ...] = (),
+) -> ScoredItem:
+    """就地补评:直接调文章级分析的评分函数,结果只用于本次生成、不写回分析表(与 worker 松耦合)。
+
+    v3.48 收口:补评喂 worker 同一套 `load_relevant_active_tags` 召回的规范标签闭集,
+    topic/entity 与存储路径一样只取**规范标签名 + entities 名**,不再混入自由标签——
+    否则 realm 配额键两条来路词汇不同(「大模型」vs「LLM」),`per_realm_cap` 按字符串计数失真。
+    无正文候选同样走这里(body 为空、按标题评),过线者进附录、低于门槛 pass。
+    """
+    try:
+        article_input = AnalysisInput(
+            article_id=candidate.id,
+            title=candidate.title,
+            body=candidate.body,
+            content_type=candidate.content_type,
+            source_id=candidate.source_id,
+            publish_date=candidate.publish_date,
+            fetched_date=candidate.fetched_date,
+            credentialed_source=False,  # 公共日报候选机械排除了用户私有源
+            source_owner_or_domain=candidate.source_id,
+            source_name=friendly_source_name(candidate.source_id),
+            source_role=candidate.source_role,
+        )
+        raw = await analyze_article_with_llm(
+            article_input, active_tags, llm_config, usage_meta=usage_meta, http_client=http_client,
+        )
+        result = validate_analysis_payload(raw, active_tags=active_tags).result
+        name_by_code = {
+            tag.code: (tag.name_zh or tag.name_en or tag.code).strip() for tag in active_tags
+        }
+        topics: List[str] = []
+        entities: List[str] = []
+        for assignment in result.tag_assignments:  # 已按 relevance 降序、首项为 primary
+            name = name_by_code.get(assignment.code, "")
+            bucket = entities if str(assignment.kind) == "entity" else topics
+            if name and name not in bucket:
+                bucket.append(name)
+        for entity in result.entities:
+            name = str(entity.get("name") or "").strip()
+            if name and name not in entities:
+                entities.append(name)
+        return _scored_item(candidate, ArticleScore(
+            score=float(result.quality_score),
+            summary=result.summary,
+            genre=str(result.content_genre),
+            topic_tags=tuple(topics),
+            entity_tags=tuple(entities),
+            score_reason=result.score_reason or "",
+        ))
+    except (LLMError, Exception) as exc:  # noqa: BLE001 单篇失败降级，不中断整体
+        logger.warning("日报补评单篇失败 (id=%s): %s", candidate.id, exc)
+        return _unscored_item(candidate)
+
+
+async def score_candidates(
     candidates: List[BriefCandidate],
     llm_config: config.LLMConfig,
     *,
+    stored: Dict[str, ArticleScore],
     on_item_done=None,
     usage_username: Optional[str] = None,
+    taxonomy_by_id: Optional[Dict[str, Tuple[TaxonomyTagDTO, ...]]] = None,
 ) -> List[ScoredItem]:
-    """对有正文的候选并发 LLM 概括。无正文候选不进 map（reduce 单列附录）。
-    on_item_done(done, total) 每完成一篇回调一次，供上层上报进度。
-    走辅助轻模型档（未配置 aux_model 时即主模型），整个 map 段共享一个连接池。"""
-    with_body = [c for c in candidates if c.has_content]
-    if not with_body:
+    """候选 → 带分条目。stored 里有的直接投影(零调用),没有的并发就地补评,
+    整轮后失败者串行重试一次。无正文候选也进评分(按标题、同一把尺子),由调用方决定
+    过线者进附录;taxonomy_by_id 是每篇补评要喂的规范标签闭集(缺省为空闭集)。
+    on_item_done(done, total) 只统计补评篇数。"""
+    if not candidates:
         return []
-    total = len(with_body)
-    done = 0
-    usage_meta = _usage_meta("daily_brief_map", usage_username)
-    map_config = llm_config.for_aux()
-    semaphore = asyncio.Semaphore(max(1, llm_config.map_concurrency))
+    tags_of = taxonomy_by_id or {}
+    items: List[Optional[ScoredItem]] = [None] * len(candidates)
+    pending: List[int] = []
+    for i, candidate in enumerate(candidates):
+        score = stored.get(candidate.id)
+        if score is not None:
+            items[i] = _scored_item(candidate, score)
+        else:
+            pending.append(i)
+    if pending:
+        total = len(pending)
+        done = 0
+        usage_meta = _usage_meta("article_analysis", usage_username)
+        semaphore = asyncio.Semaphore(max(1, llm_config.map_concurrency))
+        async with client_session(llm_config.for_aux()) as http_client:
+            async def _guarded(i: int) -> ScoredItem:
+                nonlocal done
+                async with semaphore:
+                    result = await _score_one(
+                        candidates[i], llm_config, usage_meta, http_client,
+                        active_tags=tags_of.get(candidates[i].id, ()),
+                    )
+                done += 1
+                if on_item_done is not None:
+                    on_item_done(done, total)
+                return result
 
-    async with client_session(map_config) as http_client:
-        async def _guarded(c: BriefCandidate) -> ScoredItem:
-            nonlocal done
-            async with semaphore:
-                result = await _summarize_one(c, map_config, usage_meta, http_client)
-            done += 1
-            if on_item_done is not None:
-                on_item_done(done, total)
-            return result
+            results = await asyncio.gather(*[_guarded(i) for i in pending])
+            for i, result in zip(pending, results):
+                items[i] = result
+            # 瞬时故障补救(v3.35 沿用):失败会降入附录且游标照推,整轮后串行重试一次
+            failed = [i for i in pending if not items[i].score_ok]
+            if failed:
+                logger.info("日报补评:%d 条失败,串行重试一轮", len(failed))
+                for i in failed:
+                    retried = await _score_one(
+                        candidates[i], llm_config, usage_meta, http_client,
+                        active_tags=tags_of.get(candidates[i].id, ()),
+                    )
+                    if retried.score_ok:
+                        items[i] = retried
+    return [it for it in items if it is not None]
 
-        results = await asyncio.gather(*[_guarded(c) for c in with_body])
-        # 瞬时故障补救(v3.35):map 失败会降入附录且游标照推——LLM 端点中段抖动几分钟,
-        # 那批文章就永久定格成裸标题。整轮结束后对失败者**串行**重试一次(避开并发压力,
-        # 端点恢复即救回),仍失败才认作真失败。
-        failed_idx = [i for i, r in enumerate(results) if not r.map_ok]
-        if failed_idx:
-            logger.info("日报 map:%d 条失败,串行重试一轮", len(failed_idx))
-            for i in failed_idx:
-                retried = await _summarize_one(with_body[i], map_config, usage_meta, http_client)
-                if retried.map_ok:
-                    results[i] = retried
-        return results
+
+def score_histogram(items: List[ScoredItem]) -> Dict[str, int]:
+    """1～10 整数档条数(评分到手的条目;10 分并入「10」档)——写进 last_run 供阈值校准。"""
+    buckets = {str(b): 0 for b in range(1, 11)}
+    for it in items:
+        if not it.score_ok:
+            continue
+        buckets[str(min(10, max(1, int(it.score))))] += 1
+    return buckets
 
 
 # ==========================================
@@ -708,14 +748,79 @@ def _pick_cluster_representative(items: List[ScoredItem], idxs: List[int]) -> in
     return max(idxs, key=lambda i: items[i].score)
 
 
+_TITLE_NOISE_RE = re.compile(r"[\s\-—–_:：|,，.。!！?？'\"“”‘’()（）\[\]【】《》#]+")
+_DIGIT_RUN_RE = re.compile(r"\d+")
+PRECLUSTER_TITLE_RATIO = 0.75
+# 归一化后短于此的标题不参与机械预聚类(「Qwen 更新」类短题共享前缀即高比率,太易误并)
+PRECLUSTER_MIN_TITLE_CHARS = 8
+
+
+def _normalized_title(title: str) -> str:
+    return _TITLE_NOISE_RE.sub("", (title or "").strip().lower())
+
+
+def _titles_look_same(a: str, b: str) -> bool:
+    """归一化标题是否「明显同一事件」:一方包含另一方或 difflib 比率过线,且**数字串一致**
+    (「GPT-5.5」vs「GPT-5.6」、「第 1 期」vs「第 2 期」只差数字却是不同事件,机械层绝不并)。"""
+    if _DIGIT_RUN_RE.findall(a) != _DIGIT_RUN_RE.findall(b):
+        return False
+    return (a in b or b in a) or difflib.SequenceMatcher(None, a, b).ratio() >= PRECLUSTER_TITLE_RATIO
+
+
+def _merge_into_representative(items: List[ScoredItem], idxs: List[int], dropped: set) -> None:
+    """簇内非代表条目的链接并入代表的 extra_sources 并标记丢弃(LLM 簇与机械簇共用)。"""
+    rep = _pick_cluster_representative(items, idxs)
+    for i in idxs:
+        if i == rep:
+            continue
+        for url in [items[i].candidate.source_url, *items[i].extra_sources]:
+            if url and url not in items[rep].extra_sources and url != items[rep].candidate.source_url:
+                items[rep].extra_sources.append(url)
+        dropped.add(i)
+
+
+def precluster_same_event(items: List[ScoredItem]) -> List[ScoredItem]:
+    """同事件机械预聚类(v3.48 收口):分析结果带规范实体后,「同 company + 标题高相似」
+    的明显重复不必再问 LLM——先机械并簇(代表选择与 LLM 簇同一规则),LLM 只处理剩余;
+    LLM 失败时这一层就是兜底。判据刻意保守:company 非空且相同、归一化标题 difflib
+    比率 ≥ PRECLUSTER_TITLE_RATIO(或一方完全包含另一方)且数字串一致、短标题不参与;
+    跨语言(官方英文 vs 媒体中文)与措辞迥异的同事件仍交 LLM。"""
+    if len(items) < 2:
+        return items
+    dropped: set = set()
+    by_company: Dict[str, List[int]] = {}
+    for i, it in enumerate(items):
+        key = (it.company or "").strip().lower()
+        if key:
+            by_company.setdefault(key, []).append(i)
+    for idxs in by_company.values():
+        if len(idxs) < 2:
+            continue
+        titles = {i: _normalized_title(items[i].title_cn or items[i].candidate.title) for i in idxs}
+        remaining = [i for i in idxs if len(titles[i]) >= PRECLUSTER_MIN_TITLE_CHARS]
+        while remaining:
+            seed = remaining.pop(0)
+            group = [seed]
+            rest: List[int] = []
+            for j in remaining:
+                (group if _titles_look_same(titles[seed], titles[j]) else rest).append(j)
+            remaining = rest
+            if len(group) >= 2:
+                _merge_into_representative(items, sorted(group), dropped)
+    if dropped:
+        logger.info("日报预聚类：%d 条同厂商高相似标题机械合并", len(dropped))
+    return [it for i, it in enumerate(items) if i not in dropped]
+
+
 async def dedup_clusters(
     items: List[ScoredItem],
     llm_config: config.LLMConfig,
     usage_username: Optional[str] = None,
 ) -> List[ScoredItem]:
     """识别同一天里报道同一事件的重复条目，每组只保留 score 最高的代表，
-    其余条目的 source_url 并入代表的 extra_sources。LLM 失败时降级为不聚类
-    （返回原列表），不阻断主流程。"""
+    其余条目的 source_url 并入代表的 extra_sources。先跑机械预聚类(同厂商高相似标题),
+    LLM 失败时降级为只保留机械层结果，不阻断主流程。"""
+    items = precluster_same_event(items)
     if len(items) < 2:
         return items
     entries = [
@@ -754,14 +859,7 @@ async def dedup_clusters(
         idxs = [i for i in idxs if i not in dropped]
         if len(idxs) < 2:
             continue
-        rep = _pick_cluster_representative(items, idxs)
-        for i in idxs:
-            if i == rep:
-                continue
-            url = items[i].candidate.source_url
-            if url and url not in items[rep].extra_sources and url != items[rep].candidate.source_url:
-                items[rep].extra_sources.append(url)
-            dropped.add(i)
+        _merge_into_representative(items, idxs, dropped)
 
     if dropped:
         logger.info("日报去重：%d 条同事件重复合并到代表条目", len(dropped))
@@ -826,6 +924,85 @@ def select_top(
 
 
 # ==========================================
+# 阶段 3.5：Editorial（只为入选条目逐篇写中文标题 / 要点 / 点评）
+# ==========================================
+
+async def _polish_one(
+    item: ScoredItem, llm_config: config.LLMConfig,
+    usage_meta: Optional[UsageMeta] = None, http_client=None,
+) -> Tuple[ScoredItem, bool]:
+    try:
+        raw = await chat_completion(
+            messages=[
+                ChatMessage(role="system", content=prompts.EDITORIAL_SYSTEM_PROMPT),
+                ChatMessage(role="user", content=prompts.build_editorial_user_prompt(
+                    title=item.candidate.title, source_name=item.source, body=item.candidate.body,
+                    analysis_summary="\n".join(item.summary), score_reason=item.score_reason,
+                )),
+            ],
+            config=llm_config,
+            response_json=True,
+            usage_meta=usage_meta,
+            http_client=http_client,
+        )
+        data = parse_json_object(raw)
+        summary = [str(x) for x in (data.get("summary") or []) if x]
+        tags = [str(t) for t in (data.get("tags") or []) if t]
+        return replace(
+            item,
+            title_cn=str(data.get("title_cn") or item.candidate.title),
+            source=str(data.get("source") or item.source),
+            company=str(data.get("company") or item.company),
+            realm=str(data.get("realm") or item.realm),
+            summary=summary or item.summary,
+            comment=str(data.get("comment") or ""),
+            tags=tags or item.tags,
+        ), True
+    except (LLMError, Exception) as exc:  # noqa: BLE001 单篇失败保留分析摘要,不降附录
+        logger.warning("日报编辑单篇失败 (id=%s): %s", item.candidate.id, exc)
+        return item, False
+
+
+async def editorial_polish(
+    items: List[ScoredItem],
+    llm_config: config.LLMConfig,
+    *,
+    on_item_done=None,
+    usage_username: Optional[str] = None,
+) -> List[ScoredItem]:
+    """入选条目逐篇一次 LLM 调用写 title_cn/来源名/company/realm/要点/点评/常规标签。
+    只跑十几篇(预选池),不再为上百篇候选付费。失败串行重试一次,仍失败者保留
+    分析摘要作要点、点评留空——分数已到手,不因编辑失败降附录。"""
+    if not items:
+        return []
+    total = len(items)
+    done = 0
+    usage_meta = _usage_meta("daily_brief_editorial", usage_username)
+    edit_config = llm_config.for_aux()
+    semaphore = asyncio.Semaphore(max(1, llm_config.map_concurrency))
+    async with client_session(edit_config) as http_client:
+        async def _guarded(it: ScoredItem) -> Tuple[ScoredItem, bool]:
+            nonlocal done
+            async with semaphore:
+                result = await _polish_one(it, edit_config, usage_meta, http_client)
+            done += 1
+            if on_item_done is not None:
+                on_item_done(done, total)
+            return result
+
+        results = await asyncio.gather(*[_guarded(it) for it in items])
+        polished = [it for it, _ok in results]
+        failed_idx = [i for i, (_it, ok) in enumerate(results) if not ok]
+        if failed_idx:
+            logger.info("日报编辑:%d 条失败,串行重试一轮", len(failed_idx))
+            for i in failed_idx:
+                retried, ok = await _polish_one(items[i], edit_config, usage_meta, http_client)
+                if ok:
+                    polished[i] = retried
+    return polished
+
+
+# ==========================================
 # 阶段 4：汇编（v3.34 确定性渲染 + 跨天查重）
 # reduce 不再是整篇 LLM 长输出：markdown 由代码从结构化条目排版；
 # LLM 只做「对照近期日报条目标题判断 drop/接前报」的小 JSON 决策。
@@ -837,6 +1014,8 @@ _BRIEF_HEADING_RE = re.compile(r"^###\s+\[?([^\]\n]+?)\]?(?:\(|$)", re.M)
 _RECENT_TITLES_PER_DAY = 40
 # 「（接前报）」增量注的长度上限
 _FOLLOWUP_NOTE_CHARS = 60
+# 跨天查重对照物每条附带的要点长度上限
+_RECENT_HINT_CHARS = 60
 
 
 def fetch_recent_brief_items(
@@ -845,7 +1024,9 @@ def fetch_recent_brief_items(
     """近几天日报的条目标题清单（跨天查重的对照物）。
 
     优先读 extensions.items（结构化 title_cn），缺失时回退从正文提取「###」
-    标题行；返回形如 [{"date": "YYYY-MM-DD", "titles": [...]}, ...]。
+    标题行；返回形如 [{"date": "YYYY-MM-DD", "titles": [...], "entries": [{"title","hint"}]}, ...]。
+    entries(v3.48 收口)每条附要点首句(截 _RECENT_HINT_CHARS 字)作查重对照物,
+    titles 保留供旧消费方。
     exclude_date(v3.35)：排除指定日期（传 report_date）——同日重跑时今天自己的
     日报曾混进对照物，增量条目先被「查重」剔光、再整篇覆盖，产出残报。
     """
@@ -860,6 +1041,7 @@ def fetch_recent_brief_items(
     out: List[Dict[str, Any]] = []
     for row in session.exec(statement).all():
         titles: List[str] = []
+        hints: List[str] = []
         try:
             ext = json.loads(row.extensions_json or "{}")
             items = ext.get("items") if isinstance(ext, dict) else None
@@ -868,12 +1050,26 @@ def fetch_recent_brief_items(
                     title = str(it.get("title_cn") or "").strip()
                     if title:
                         titles.append(title)
+                        summary = it.get("summary")
+                        first = ""
+                        if isinstance(summary, list) and summary:
+                            first = str(summary[0] or "")
+                        elif isinstance(summary, str):
+                            first = summary
+                        hints.append(first.replace("**", "").strip()[:_RECENT_HINT_CHARS])
         except (ValueError, TypeError):
             pass
         if not titles and row.content:
             titles = [m.strip() for m in _BRIEF_HEADING_RE.findall(row.content) if m.strip()]
+            hints = [""] * len(titles)
         if titles:
-            out.append({"date": (row.publish_date or "")[:10], "titles": titles[:_RECENT_TITLES_PER_DAY]})
+            titles = titles[:_RECENT_TITLES_PER_DAY]
+            hints = (hints + [""] * len(titles))[:len(titles)]
+            out.append({
+                "date": (row.publish_date or "")[:10],
+                "titles": titles,
+                "entries": [{"title": t, "hint": h} for t, h in zip(titles, hints)],
+            })
     return out
 
 
@@ -1132,6 +1328,27 @@ async def merge_same_day(
 # 主编排
 # ==========================================
 
+@dataclass(frozen=True)
+class _RecallText:
+    """load_relevant_active_tags 只读 .title/.content——候选已在内存,不必再查 ArticleRecord。"""
+
+    title: str
+    content: str
+
+
+def _count_queued_analyses(session: Session, article_ids: List[str]) -> int:
+    """这批文章里有多少条分析行正 pending/running(日报补评与 worker 撞车的观测读数)。"""
+    ids = [i for i in article_ids if i]
+    if not ids:
+        return 0
+    rows = session.exec(
+        select(ArticleAnalysisRecord.article_id)
+        .where(ArticleAnalysisRecord.article_id.in_(ids))
+        .where(ArticleAnalysisRecord.status.in_(("pending", "running")))
+    ).all()
+    return len(rows)
+
+
 def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
@@ -1155,7 +1372,8 @@ async def generate_daily_brief(
 ) -> Dict[str, Any]:
     """生成日报主流程。storage 为 DatabaseStorage 实例（提供 .engine 与 save/get/update）。
 
-    triggered_by：手动触发的 admin 用户名，用于 AI 用量归属；定时调度留空则归 "system"。
+    triggered_by：手动触发的 admin 用户名，用于 AI 用量归属（含就地补评的
+    article_analysis 用量）；定时调度留空则归 "system"。
     """
     report_date = report_date or _today()
     started_at = datetime.now().isoformat()
@@ -1206,70 +1424,66 @@ async def generate_daily_brief(
                 })
         return result
 
-    # 4. map → select → reduce
-    set_progress("mapping", f"概括打分 0/{n_body}", done=0, total=n_body)
-
-    def _on_map_done(done: int, total: int) -> None:
-        set_progress("mapping", f"概括打分 {done}/{total}", done=done, total=total)
-        if done == total or done % 5 == 0:
-            logger.info("日报[%s]：Map 概括打分 %d/%d", report_date, done, total)
-
-    scored = await map_summarize(candidates, cfg, on_item_done=_on_map_done, usage_username=triggered_by)
-
-    # 文章级分析先 shadow 对比、再由独立开关决定是否覆盖兼容字段。legacy MAP 始终
-    # 保留：它继续提供 title_cn/source/company/realm/comment，尤其不能拿 score_reason
-    # 冒充既有点评文案。任何读取/映射异常都降级回完整 legacy 路径。
-    analysis_adapter_enabled = False
-    shadow_metrics: Dict[str, Any] = {}
-    try:
-        with Session(engine) as session:
-            analysis_adapter_enabled = (
-                get_setting(session, KEY_ANALYSIS_ADAPTER_ENABLED, "false").strip().casefold()
-                in {"1", "true", "yes", "on"}
-            )
-            persisted_analysis = load_persisted_analysis_compat(
-                session, [it.candidate.id for it in scored]
-            )
-        shadow_metrics = build_analysis_shadow_metrics(scored, persisted_analysis)
-        shadow_metrics.update({
-            "report_date": report_date,
-            "adapter_enabled": analysis_adapter_enabled,
-            "measured_at": datetime.now().isoformat(),
-        })
-        if analysis_adapter_enabled:
-            scored = apply_persisted_analysis_adapter(scored, persisted_analysis)
-        logger.info(
-            "日报[%s]：analysis shadow 可比 %d/%d，adapter=%s",
-            report_date,
-            shadow_metrics["comparable_count"],
-            shadow_metrics["legacy_count"],
-            analysis_adapter_enabled,
-        )
-    except Exception as exc:  # noqa: BLE001 adapter 失败不能阻断公共日报
-        logger.warning("日报 analysis shadow/adapter 读取失败，回退 legacy: %s", exc)
-        shadow_metrics = {
-            "report_date": report_date,
-            "adapter_enabled": analysis_adapter_enabled,
-            "error": type(exc).__name__,
-            "measured_at": datetime.now().isoformat(),
+    # 4. 评分(复用分析 / 就地补评)→ 阈值 → 聚类 → 择优 → 编辑
+    with Session(engine) as session:
+        min_score = daily_brief_min_score(session)
+        stored = load_stored_scores(session, [c.id for c in candidates if c.has_content])
+        pending_ids = [c.id for c in candidates if c.id not in stored]
+        # 补评喂 worker 同一套闭集(按标题正文词法召回的小子集),两条来路的标签词汇才一致
+        taxonomy_by_id = {
+            c.id: tuple(load_relevant_active_tags(session, _RecallText(c.title, c.body)))
+            for c in candidates if c.id not in stored
         }
+        # 撞车观测:补评的候选里有多少正在 worker 队列里(随后会再算一次)
+        inline_pending = _count_queued_analyses(session, pending_ids)
+    n_inline = len(pending_ids)
+    set_progress("scoring", f"评分 0/{n_inline}（已有分析 {len(stored)} 篇）", done=0, total=n_inline)
+
+    def _on_score_done(done: int, total: int) -> None:
+        set_progress("scoring", f"评分 {done}/{total}（已有分析 {len(stored)} 篇）", done=done, total=total)
+        if done == total or done % 5 == 0:
+            logger.info("日报[%s]：就地补评 %d/%d", report_date, done, total)
+
+    scored = await score_candidates(
+        candidates, cfg, stored=stored, on_item_done=_on_score_done, usage_username=triggered_by,
+        taxonomy_by_id=taxonomy_by_id,
+    )
+    # 评分没到手的条目只有标题与链接——降入「📎 其它收录」附录;低于门槛的直接 pass;
+    # 无正文候选按标题走了同一把尺子:过线者也只能进附录(没有正文可写要点与点评)
+    score_failed = [it.candidate for it in scored if not it.score_ok]
+    usable = [it for it in scored if it.score_ok and it.candidate.has_content and it.score >= min_score]
+    bodyless_passed = [
+        it.candidate for it in scored
+        if it.score_ok and not it.candidate.has_content and it.score >= min_score
+    ]
+    below_threshold = sum(1 for it in scored if it.score_ok and it.score < min_score)
+    histogram = score_histogram(scored)
+    logger.info(
+        "日报[%s]：评分完成——复用分析 %d 篇、补评 %d 篇（其中 %d 篇正在 worker 队列）、失败 %d 篇；"
+        "低于门槛 %.1f 的 %d 篇 pass；分布 %s",
+        report_date, len(stored), n_inline, inline_pending, len(score_failed),
+        min_score, below_threshold, histogram,
+    )
 
     set_progress("selecting", "同事件去重与择优排序…")
-    deduped = await dedup_clusters(scored, cfg, usage_username=triggered_by)
-    logger.info("日报[%s]：去重后 %d 条（map 前 %d）", report_date, len(deduped), len(scored))
-    # map 失败的条目没有总结/点评且 score 是占位值——不参与择优（曾以默认 3 分
-    # 混入正选,渲染出无总结无点评的残条目),降入「📎 其它收录」附录保标题与链接。
-    map_failed = [it.candidate for it in deduped if not it.map_ok]
-    usable = [it for it in deduped if it.map_ok]
-    if map_failed:
-        logger.info("日报[%s]：map 失败 %d 条降入「其它收录」附录", report_date, len(map_failed))
+    deduped = await dedup_clusters(usable, cfg, usage_username=triggered_by)
+    logger.info("日报[%s]：去重后 %d 条（评分后 %d）", report_date, len(deduped), len(usable))
     # 扩选池(v3.35):跨天查重会剔条,旧流程剔完不回补——热点连报日成品远少于 top_n。
     # 现按 top_n+buffer 预选,查重幸存者再裁回 top_n:回补条目天然也过了跨天检查。
     select_buffer = max(3, top_n // 3)
-    preselected = select_top(usable, top_n=top_n + select_buffer)
-    title_only = [c for c in candidates if not c.has_content] + map_failed
+    preselected = select_top(deduped, top_n=top_n + select_buffer)
+    title_only = bodyless_passed + score_failed
     logger.info("日报[%s]：预选 %d 条（目标 %d + 回补池 %d，仅标题 %d 条）",
                 report_date, len(preselected), top_n, select_buffer, len(title_only))
+
+    set_progress("editing", f"撰写点评 0/{len(preselected)}", done=0, total=len(preselected))
+
+    def _on_edit_done(done: int, total: int) -> None:
+        set_progress("editing", f"撰写点评 {done}/{total}", done=done, total=total)
+
+    preselected = await editorial_polish(
+        preselected, cfg, on_item_done=_on_edit_done, usage_username=triggered_by,
+    )
 
     with Session(engine) as session:
         # exclude_date=report_date:同日重跑时今天自己的日报不进对照物(否则增量被剔光)
@@ -1343,6 +1557,14 @@ async def generate_daily_brief(
             # 候选裁剪观测(v3.34):扫描≫取用 说明 max_total/per_source_cap 在裁,
             # 被裁条目随游标永久跳过——涨不涨上限看这两个数。
             "candidates_scanned": scanned_total, "candidates_used": len(candidates),
+            # 评分来源观测(v3.48):复用分析 vs 就地补评 vs 门槛 pass——补评常态化说明
+            # worker 没跟上(或总闸没开),门槛 pass 过多说明阈值偏高;scored_inline_pending
+            # 是补评里正在 worker 队列的篇数(随后会再算一次,cron 该往后挪);
+            # score_histogram 是本次全部到手分数的整数档分布,阈值校准的依据。
+            "scored_stored": len(stored), "scored_inline": n_inline,
+            "scored_inline_pending": inline_pending,
+            "below_threshold": below_threshold, "min_score": min_score,
+            "score_histogram": histogram,
         })
 
     # The synthetic brief is not produced by a collection job, so its successful
@@ -1358,14 +1580,6 @@ async def generate_daily_brief(
         )
     except Exception as exc:  # noqa: BLE001 - personal fan-out is independent
         logger.warning("日报[%s]：触发个人早报 revision 失败，等待巡检恢复: %s", report_date, exc)
-
-    # shadow 是旁路观测，写指标失败绝不能把已成功发布的公共日报翻成失败。
-    if shadow_metrics:
-        try:
-            with Session(engine) as session:
-                set_json_setting(session, KEY_ANALYSIS_SHADOW_METRICS, shadow_metrics)
-        except Exception as exc:  # noqa: BLE001 观测失败不阻断主流程
-            logger.warning("日报 analysis shadow 指标写入失败，忽略: %s", exc)
 
     logger.info("日报[%s]：生成完成，收录 %d 条", report_date, content_obj.articles_count)
     set_progress("done", f"完成 · 收录 {content_obj.articles_count} 条")

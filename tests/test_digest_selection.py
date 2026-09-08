@@ -94,8 +94,8 @@ def test_cross_lane_event_conflict_does_not_hide_a_larger_legal_set():
 def test_mute_and_quality_threshold_are_hard_boundaries():
     candidates = [
         _candidate(1, score=9.8, tags=("muted",)),
-        _candidate(2, score=6.99),
-        _candidate(3, score=7.0),
+        _candidate(2, score=4.99),
+        _candidate(3, score=5.0),
     ]
     interests = [UserInterestDTO(tag_code="muted", stance=InterestStance.MUTE)]
 

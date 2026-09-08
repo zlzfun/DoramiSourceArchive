@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -9,13 +10,15 @@ from config import LLMConfig  # noqa: E402
 from sqlmodel import Session  # noqa: E402
 
 import services.daily_brief as db  # noqa: E402
+from services import article_analysis as analysis_mod  # noqa: E402
 from services.daily_brief import (  # noqa: E402
     BriefCandidate,
     ScoredItem,
     collect_candidates,
     dedup_clusters,
+    editorial_polish,
     generate_daily_brief,
-    map_summarize,
+    score_candidates,
     select_top,
 )
 
@@ -42,7 +45,9 @@ def _seed(engine, article_id, source_id, fetched_date, *, content="正文内容"
         session.commit()
 
 
-def _seed_persisted_analysis(engine, article_id, *, score=4.5, genre="research_paper"):
+def _seed_persisted_analysis(engine, article_id, *, score=4.5, genre="research_paper",
+                             scoring_version=None):
+    from llm.article_analysis_prompt import ARTICLE_ANALYSIS_SCORING_VERSION
     from models.db import (
         ArticleAnalysisRecord,
         ArticleTagAssignmentRecord,
@@ -67,7 +72,9 @@ def _seed_persisted_analysis(engine, article_id, *, score=4.5, genre="research_p
             quality_score=score, score_reason="这是文章级评分理由，不能变成公共点评",
             summary="- 新摘要第一点\n- 新摘要第二点",
             content_genre=genre, content_hash="hash", model_name="analysis-model",
-            prompt_version="article-analysis-v1", scoring_version="content-value-v1",
+            prompt_version="article-analysis-v5",
+            scoring_version=scoring_version or ARTICLE_ANALYSIS_SCORING_VERSION,
+            entities_json='[{"name": "OpenAI", "type": "company", "relevance": 0.9}]',
             analyzed_at=now, tagged_at=now, created_at=now, updated_at=now,
         ))
         session.add(ArticleTagAssignmentRecord(
@@ -81,15 +88,48 @@ def _seed_persisted_analysis(engine, article_id, *, score=4.5, genre="research_p
         session.commit()
 
 
+# 文章级分析(评分尺子)的假响应:与 validate_analysis_payload 的契约一致
+ANALYSIS_PAYLOAD = {
+    "score_reason": "头部厂商旗舰发布", "quality_score": 8.0,
+    "summary": "分析摘要第一句。\n分析摘要第二句。", "content_genre": "industry_news",
+    "primary_tag_code": None, "tag_assignments": [],
+    "tag_candidates": [{"label": "智能体", "proposed_kind": "topic", "confidence": 0.9, "evidence": "e"}],
+    "content_features": [],
+    "entities": [{"name": "OpenAI", "type": "company", "relevance": 0.9}],
+}
+EDITORIAL_PAYLOAD = {
+    "title_cn": "中文标题", "source": "某来源", "company": "OpenAI", "realm": "基础大模型",
+    "summary": ["**X**：细节"], "comment": "点评", "tags": ["标签"],
+}
+
+
+def _is_scoring(messages) -> bool:
+    return "quality_score" in messages[0].content
+
+
+def _is_editorial(messages) -> bool:
+    return "title_cn" in messages[0].content
+
+
+def _orig_title(messages) -> str:
+    m = re.search(r"原标题：(.+)", messages[1].content)
+    return m.group(1).strip() if m else ""
+
+
 async def _fake_chat_completion(*, messages, config, **kwargs):
-    system = messages[0].content
-    if "title_cn" in system and "score" in system:  # MAP
-        return json.dumps({
-            "title_cn": "中文标题", "classification": "产业资讯", "source": "某来源",
-            "company": "OpenAI", "realm": "基础大模型", "summary": ["**X**：细节"],
-            "comment": "点评", "tags": ["标签"], "score": 8,
-        })
-    return "# 🤖 哆啦美 AI 资讯日报 · 2026-06-06\n\n正文\n\n*由哆啦美·归档中枢生成*"
+    if _is_scoring(messages):
+        return json.dumps(ANALYSIS_PAYLOAD)
+    if _is_editorial(messages):
+        # title_cn 带上原标题:同 company 的两篇不同文章若译名完全相同,机械预聚类会
+        # 把它们当同一事件并簇(真实场景里译名相同即同事件,夹具须模拟「不同事件」)
+        return json.dumps({**EDITORIAL_PAYLOAD, "title_cn": f"中文标题 {_orig_title(messages)}"})
+    return json.dumps({"clusters": [], "drop": [], "followups": []})
+
+
+def _patch_llm(monkeypatch, fn):
+    """日报的评分调用走文章级分析模块(同一函数),两个模块的 chat_completion 都要替换。"""
+    monkeypatch.setattr(db, "chat_completion", fn)
+    monkeypatch.setattr(analysis_mod, "chat_completion", fn)
 
 
 # ---------------- collect_candidates ----------------
@@ -204,7 +244,7 @@ def test_dedup_clusters_merges_same_event(monkeypatch):
     async def _fake_cluster(*, messages, config, **kwargs):
         return json.dumps({"clusters": [[0, 1]]})  # 前两条是同一事件
 
-    monkeypatch.setattr(db, "chat_completion", _fake_cluster)
+    _patch_llm(monkeypatch, _fake_cluster)
     items = [
         _scored_full(7, source="ithome", source_url="https://a.test/1", item_id="x1"),
         _scored_full(9, source="qbit", source_url="https://b.test/2", item_id="x2"),  # 分更高 → 代表
@@ -221,7 +261,7 @@ def test_dedup_clusters_degrades_on_llm_failure(monkeypatch):
     async def _boom(*, messages, config, **kwargs):
         raise RuntimeError("llm down")
 
-    monkeypatch.setattr(db, "chat_completion", _boom)
+    _patch_llm(monkeypatch, _boom)
     items = [_scored_full(7, item_id="x1"), _scored_full(8, item_id="x2")]
     result = asyncio.run(dedup_clusters(items, CONFIGURED))
     assert {it.candidate.id for it in result} == {"x1", "x2"}  # 失败降级：原样返回，不丢条目
@@ -231,7 +271,7 @@ def test_dedup_clusters_ignores_singleton_and_bad_idx(monkeypatch):
     async def _fake(*, messages, config, **kwargs):
         return json.dumps({"clusters": [[0], [99], [1, 2]]})  # 单元素/越界忽略，[1,2] 合并
 
-    monkeypatch.setattr(db, "chat_completion", _fake)
+    _patch_llm(monkeypatch, _fake)
     items = [_scored_full(7, source_url="u0", item_id="x0"),
              _scored_full(6, source_url="u1", item_id="x1"),
              _scored_full(9, source_url="u2", item_id="x2")]
@@ -255,26 +295,37 @@ def test_daily_brief_top_n_default_and_clamp(tmp_path):
         assert db.daily_brief_top_n(session) == db.DEFAULT_TOP_N
 
 
-# ---------------- map_summarize 降级 ----------------
+# ---------------- score_candidates 降级 ----------------
 
-def test_map_failure_degrades(tmp_path, monkeypatch):
+def test_score_failure_degrades(tmp_path, monkeypatch):
     async def _boom(*, messages, config, **kwargs):
         raise RuntimeError("llm down")
 
-    monkeypatch.setattr(db, "chat_completion", _boom)
+    _patch_llm(monkeypatch, _boom)
     cand = BriefCandidate(id="c1", title="T", source_id="s", source_url="", content_type="rss_article",
                           publish_date="", fetched_date="", has_content=True, body="body")
-    scored = asyncio.run(map_summarize([cand], CONFIGURED))
+    scored = asyncio.run(score_candidates([cand], CONFIGURED, stored={}))
     assert len(scored) == 1
-    assert scored[0].map_ok is False
-    assert scored[0].score == 3.0
+    assert scored[0].score_ok is False
     assert scored[0].title_cn == "T"
+
+
+def test_daily_brief_min_score_default_and_clamp(tmp_path):
+    sink = _make_sink(tmp_path)
+    with Session(sink.engine) as session:
+        assert db.daily_brief_min_score(session) == db.DEFAULT_MIN_SCORE
+        db.set_setting(session, db.KEY_MIN_SCORE, "7.5")
+        assert db.daily_brief_min_score(session) == 7.5
+        db.set_setting(session, db.KEY_MIN_SCORE, "42")
+        assert db.daily_brief_min_score(session) == 10.0
+        db.set_setting(session, db.KEY_MIN_SCORE, "abc")
+        assert db.daily_brief_min_score(session) == db.DEFAULT_MIN_SCORE
 
 
 # ---------------- generate_daily_brief ----------------
 
 def test_generate_empty_no_write_no_cursor_move(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
+    _patch_llm(monkeypatch, _fake_chat_completion)
     sink = _make_sink(tmp_path)
     # 游标设在未来，无候选
     with Session(sink.engine) as session:
@@ -296,7 +347,7 @@ def test_generate_attributes_usage_to_triggering_admin(tmp_path, monkeypatch):
             seen_users.append(meta.username)
         return await _fake_chat_completion(messages=messages, config=config, **kwargs)
 
-    monkeypatch.setattr(db, "chat_completion", _capture)
+    _patch_llm(monkeypatch, _capture)
     sink = _make_sink(tmp_path)
     _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
     _seed(sink.engine, "a2", "src_b", "2026-06-05T11:00:00")
@@ -321,7 +372,7 @@ def test_generate_attributes_usage_to_triggering_admin(tmp_path, monkeypatch):
 
 
 def test_generate_success_writes_and_advances_cursor(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
+    _patch_llm(monkeypatch, _fake_chat_completion)
     from services import personal_digest
 
     notified = []
@@ -366,7 +417,7 @@ def test_generate_empty_content_fails_no_write_no_cursor_move(tmp_path, monkeypa
     """
     import pytest
 
-    monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
+    _patch_llm(monkeypatch, _fake_chat_completion)
     monkeypatch.setattr(db, "render_brief_markdown", lambda *a, **k: "")
     sink = _make_sink(tmp_path)
     _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
@@ -380,7 +431,7 @@ def test_generate_empty_content_fails_no_write_no_cursor_move(tmp_path, monkeypa
 
 
 def test_generate_idempotent_rerun_updates(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
+    _patch_llm(monkeypatch, _fake_chat_completion)
     sink = _make_sink(tmp_path)
     _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
     with Session(sink.engine) as session:
@@ -427,7 +478,7 @@ def test_apply_filters_exclude_source_ids(tmp_path):
 def test_delete_latest_brief_rewinds_cursor(tmp_path, monkeypatch):
     import api.app as app_module
     monkeypatch.setattr(app_module, "chat_completion", _fake_chat_completion, raising=False)
-    monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
+    _patch_llm(monkeypatch, _fake_chat_completion)
     sink = _make_sink(tmp_path)
     monkeypatch.setattr(app_module, "db_sink", sink)
 
@@ -582,7 +633,7 @@ def test_cross_day_dedup_drops_and_annotates(monkeypatch):
     async def _fake(*, messages, config, **kwargs):
         return json.dumps({"drop": [0], "followups": [{"idx": 1, "note": "开放了 API"}]})
 
-    monkeypatch.setattr(db, "chat_completion", _fake)
+    _patch_llm(monkeypatch, _fake)
     items = [_scored_full(9, item_id="dup"), _scored_full(8, item_id="follow"), _scored_full(7, item_id="fresh")]
     result = asyncio.run(db.cross_day_dedup(items, _recent_days(), CONFIGURED))
     assert [it.candidate.id for it in result] == ["follow", "fresh"]
@@ -594,7 +645,7 @@ def test_cross_day_dedup_degrades_on_failure(monkeypatch):
     async def _boom(*, messages, config, **kwargs):
         raise RuntimeError("llm down")
 
-    monkeypatch.setattr(db, "chat_completion", _boom)
+    _patch_llm(monkeypatch, _boom)
     items = [_scored_full(9, item_id="a"), _scored_full(8, item_id="b")]
     result = asyncio.run(db.cross_day_dedup(items, _recent_days(), CONFIGURED))
     assert [it.candidate.id for it in result] == ["a", "b"]  # 失败降级不丢条目
@@ -604,7 +655,7 @@ def test_cross_day_dedup_all_drop_safety_valve(monkeypatch):
     async def _fake(*, messages, config, **kwargs):
         return json.dumps({"drop": [0, 1], "followups": []})
 
-    monkeypatch.setattr(db, "chat_completion", _fake)
+    _patch_llm(monkeypatch, _fake)
     items = [_scored_full(9, item_id="a"), _scored_full(8, item_id="b")]
     result = asyncio.run(db.cross_day_dedup(items, _recent_days(), CONFIGURED))
     assert len(result) == 2  # 要求丢弃全部视为误判,安全阀忽略 drop
@@ -614,7 +665,7 @@ def test_cross_day_dedup_skips_without_recent(monkeypatch):
     async def _boom(*, messages, config, **kwargs):
         raise AssertionError("无近期日报时不应调用 LLM")
 
-    monkeypatch.setattr(db, "chat_completion", _boom)
+    _patch_llm(monkeypatch, _boom)
     items = [_scored_full(9, item_id="a")]
     result = asyncio.run(db.cross_day_dedup(items, [], CONFIGURED))
     assert [it.candidate.id for it in result] == ["a"]
@@ -642,18 +693,18 @@ def test_fetch_recent_brief_items_reads_ext_and_falls_back(tmp_path):
     assert by_date["2026-08-14"] == ["正文提取的标题"]
 
 
-# ---------------- map 失败条目降级(v3.34) ----------------
+# ---------------- 评分失败条目降级(v3.34 沿用) ----------------
 
-def test_generate_map_failed_items_fall_to_appendix(tmp_path, monkeypatch):
-    """map 失败的条目不得进正选(曾以默认 3 分混入,渲染出无总结残条目),
+def test_generate_score_failed_items_fall_to_appendix(tmp_path, monkeypatch):
+    """评分没到手的条目不得进正选(曾以默认 3 分混入,渲染出无总结残条目),
     降入「📎 其它收录」附录保标题与链接。"""
     async def _fail_one(*, messages, config, **kwargs):
         user = messages[1].content
-        if "标题-bad" in user:
+        if _is_scoring(messages) and "标题-bad" in user:
             raise RuntimeError("llm down for this one")
         return await _fake_chat_completion(messages=messages, config=config, **kwargs)
 
-    monkeypatch.setattr(db, "chat_completion", _fail_one)
+    _patch_llm(monkeypatch, _fail_one)
     sink = _make_sink(tmp_path)
     _seed(sink.engine, "good", "src_a", "2026-06-05T10:00:00")
     _seed(sink.engine, "bad", "src_b", "2026-06-05T11:00:00")
@@ -663,14 +714,14 @@ def test_generate_map_failed_items_fall_to_appendix(tmp_path, monkeypatch):
     assert result["status"] == "success"
     record = asyncio.run(sink.get("daily_brief_2026-06-06"))
     ext = json.loads(record.extensions_json)
-    # 正选 items 只有 map 成功的一条;失败条目以附录形式仍在收录名单里
+    # 正选 items 只有评分成功的一条;失败条目以附录形式仍在收录名单里
     assert len(ext["items"]) == 1
     assert set(ext["included_article_ids"]) == {"good", "bad"}
     assert "## 📎 其它收录" in record.content and "标题-bad" in record.content
 
 
 def test_generate_last_run_reports_scan_and_use(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
+    _patch_llm(monkeypatch, _fake_chat_completion)
     sink = _make_sink(tmp_path)
     for i in range(4):
         _seed(sink.engine, f"c{i}", f"s{i}", f"2026-06-05T0{i}:00:00")
@@ -744,7 +795,7 @@ def test_cross_day_dedup_official_drop_downgraded(monkeypatch):
     async def _fake(*, messages, config, **kwargs):
         return json.dumps({"drop": [0, 1], "followups": []})
 
-    monkeypatch.setattr(db, "chat_completion", _fake)
+    _patch_llm(monkeypatch, _fake)
     official = _role(_scored_full(8, item_id="off"), "official")
     media = _role(_scored_full(9, item_id="med"), "media")
     fresh = _scored_full(7, item_id="fresh")
@@ -787,7 +838,7 @@ def test_collect_candidates_honors_runtime_source_config_role(tmp_path):
     assert candidates[0].source_role == "personal"
 
 
-# ---------------- 同日重跑合并 / 查重回补 / map 重试(v3.35) ----------------
+# ---------------- 同日重跑合并 / 查重回补 / 补评重试(v3.35) ----------------
 
 def test_fetch_recent_brief_items_excludes_date(tmp_path):
     sink = _make_sink(tmp_path)
@@ -809,7 +860,7 @@ def test_fetch_recent_brief_items_excludes_date(tmp_path):
 
 def test_generate_same_day_rerun_merges_not_shrinks(tmp_path, monkeypatch):
     """同日二跑=增量合并:早间条目保留、新条目并入,不再整篇覆盖成残报。"""
-    monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
+    _patch_llm(monkeypatch, _fake_chat_completion)
     sink = _make_sink(tmp_path)
     _seed(sink.engine, "morning1", "src_a", "2026-06-05T08:00:00")
     _seed(sink.engine, "morning2", "src_b", "2026-06-05T08:30:00")
@@ -832,13 +883,11 @@ def test_generate_refills_after_cross_day_drop(tmp_path, monkeypatch):
     """跨天查重剔条后从回补池补足:成品仍达 top_n,不再缺斤短两。"""
     async def _fake(*, messages, config, **kwargs):
         system = messages[0].content
-        if "title_cn" in system and "score" in system:  # MAP
-            return await _fake_chat_completion(messages=messages, config=config, **kwargs)
         if "跨天查重" in system:
             return json.dumps({"drop": [0, 1], "followups": []})  # 剔掉预选前两条
-        return json.dumps({"clusters": []})
+        return await _fake_chat_completion(messages=messages, config=config, **kwargs)
 
-    monkeypatch.setattr(db, "chat_completion", _fake)
+    _patch_llm(monkeypatch, _fake)
     sink = _make_sink(tmp_path)
     from models.db import ArticleRecord
 
@@ -864,8 +913,8 @@ def test_generate_refills_after_cross_day_drop(tmp_path, monkeypatch):
     assert result["status"] == "success"
 
 
-def test_map_summarize_retries_transient_failure(monkeypatch):
-    """map 单篇瞬时失败在整轮后串行重试一次,端点恢复即救回、不降附录。"""
+def test_score_candidates_retries_transient_failure(monkeypatch):
+    """补评单篇瞬时失败在整轮后串行重试一次,端点恢复即救回、不降附录。"""
     calls = {"n": 0}
 
     async def _flaky(*, messages, config, **kwargs):
@@ -874,17 +923,18 @@ def test_map_summarize_retries_transient_failure(monkeypatch):
             raise RuntimeError("transient")
         return await _fake_chat_completion(messages=messages, config=config, **kwargs)
 
-    monkeypatch.setattr(db, "chat_completion", _flaky)
+    _patch_llm(monkeypatch, _flaky)
     cand = BriefCandidate(id="c1", title="t", source_id="s", source_url="", content_type="rss_article",
                           publish_date="", fetched_date="", has_content=True, body="正文")
-    results = asyncio.run(map_summarize([cand], CONFIGURED))
+    results = asyncio.run(score_candidates([cand], CONFIGURED, stored={}))
     assert calls["n"] == 2
-    assert results[0].map_ok is True  # 重试救回,不再定格失败
+    assert results[0].score_ok is True  # 重试救回,不再定格失败
+    assert results[0].score == 8.0
 
 
-# ---------------- 公共日报 analysis shadow / adapter (WP-5) ----------------
+# ---------------- 复用文章级分析 / 门槛 / 编辑(v3.48 统一新闻价值评分波) ----------------
 
-def test_content_genre_mapping_covers_controlled_enum():
+def test_classification_from_genre_covers_controlled_enum():
     expected = {
         "model_release": "模型发布", "product_update": "行业资讯",
         "open_source_update": "开源动态", "research_paper": "学术论文",
@@ -894,103 +944,292 @@ def test_content_genre_mapping_covers_controlled_enum():
         "security_incident": "行业资讯", "regulation": "行业资讯",
         "other": "资讯聚合",
     }
-    assert {
-        genre: db.content_genre_to_legacy_classification(genre)
-        for genre in expected
-    } == expected
-    assert db.content_genre_to_legacy_classification("") == ""
-    assert db.content_genre_to_legacy_classification("future_genre") == ""
+    assert {genre: db.classification_from_genre(genre) for genre in expected} == expected
+    assert db.classification_from_genre("") == ""
+    assert db.classification_from_genre("future_genre") == ""
 
 
-def test_analysis_adapter_batch_loads_canonical_tags_and_preserves_comment(tmp_path):
-    sink = _make_sink(tmp_path, "adapter_unit.db")
+def test_load_stored_scores_projects_tags_and_ignores_old_ruler(tmp_path):
+    sink = _make_sink(tmp_path, "stored.db")
     _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
-    _seed_persisted_analysis(sink.engine, "a1")
-    legacy = _scored_full(8, item_id="a1", classification="行业资讯", summary=["旧摘要"])
-    legacy.comment = "旧公共点评"
-    legacy.tags = ["旧自由标签"]
-
+    _seed(sink.engine, "old", "src_b", "2026-06-05T11:00:00")
+    _seed_persisted_analysis(sink.engine, "a1", score=7.5, genre="research_paper")
+    _seed_persisted_analysis(sink.engine, "old", score=9.0, scoring_version="content-value-v1")
     with Session(sink.engine) as session:
-        persisted = db.load_persisted_analysis_compat(session, ["a1"])
-    assert persisted["a1"].canonical_tags == ("智能体", "OpenAI")
+        stored = db.load_stored_scores(session, ["a1", "old", "missing"])
+    assert set(stored) == {"a1"}  # 旧尺子的结果视同没有:版本键就是尺子的名字
+    assert stored["a1"].score == 7.5
+    assert stored["a1"].topic_tags == ("智能体",)
+    assert stored["a1"].entity_tags == ("OpenAI",)  # entity 标签与 entities 字段合并去重
+    item = db._scored_item(BriefCandidate(
+        id="a1", title="t", source_id="src_a", source_url="", content_type="rss_article",
+        publish_date="", fetched_date="", has_content=True, body="b",
+    ), stored["a1"])
+    assert item.classification == "学术论文" and item.realm == "智能体" and item.company == "OpenAI"
+    assert item.summary == ["新摘要第一点", "新摘要第二点"]
 
-    [adapted] = db.apply_persisted_analysis_adapter([legacy], persisted)
-    assert adapted.score == 4.5
-    assert adapted.classification == "学术论文"
-    assert adapted.summary == ["新摘要第一点", "新摘要第二点"]
-    assert adapted.tags == ["智能体", "OpenAI"]
-    assert adapted.comment == "旧公共点评"  # 绝不替换为 score_reason
-    assert legacy.score == 8 and legacy.summary == ["旧摘要"]  # shadow 输入未被原地改写
 
+def test_generate_reuses_stored_scores_and_only_edits_selected(tmp_path, monkeypatch):
+    """worker 已评过的候选零评分调用:分数/体裁/标签直接复用,LLM 只为入选者写点评。"""
+    scoring_calls = []
 
-def test_analysis_adapter_never_promotes_a_failed_legacy_map_item(tmp_path):
-    sink = _make_sink(tmp_path, "adapter_failed_map.db")
+    async def _spy(*, messages, config, **kwargs):
+        if _is_scoring(messages):
+            scoring_calls.append(messages[1].content)
+        return await _fake_chat_completion(messages=messages, config=config, **kwargs)
+
+    _patch_llm(monkeypatch, _spy)
+    sink = _make_sink(tmp_path, "reuse.db")
     _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
-    _seed_persisted_analysis(sink.engine, "a1")
-    failed = _scored_full(1, item_id="a1", classification="资讯聚合", summary=[])
-    failed.map_ok = False
-
-    with Session(sink.engine) as session:
-        persisted = db.load_persisted_analysis_compat(session, ["a1"])
-    [adapted] = db.apply_persisted_analysis_adapter([failed], persisted)
-
-    assert adapted.map_ok is False
-    assert adapted.score == 4.5
-
-
-def test_adapter_flag_off_is_byte_compatible_and_records_shadow(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
-
-    def _run(name, explicit_false):
-        sink = _make_sink(tmp_path, name)
-        _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
-        _seed_persisted_analysis(sink.engine, "a1")
-        with Session(sink.engine) as session:
-            db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
-            if explicit_false:
-                db.set_setting(session, db.KEY_ANALYSIS_ADAPTER_ENABLED, "false")
-        asyncio.run(generate_daily_brief(
-            storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"
-        ))
-        record = asyncio.run(sink.get("daily_brief_2026-06-06"))
-        with Session(sink.engine) as session:
-            metrics = db.get_json_setting(session, db.KEY_ANALYSIS_SHADOW_METRICS, {})
-        return record.content, json.loads(record.extensions_json)["items"], metrics
-
-    implicit = _run("adapter_default_off.db", False)
-    explicit = _run("adapter_explicit_off.db", True)
-    assert implicit[:2] == explicit[:2]  # 正文与结构化输出逐值一致
-    content, [item], metrics = implicit
-    assert "## 🌐 资讯聚合" in content  # legacy 的未知「产业资讯」照旧回落
-    assert item["score"] == 8
-    assert item["classification"] == "产业资讯"
-    assert item["summary"] == ["**X**：细节"]
-    assert item["tags"] == ["标签"]
-    assert item["comment"] == "点评"
-    assert metrics["adapter_enabled"] is False
-    assert metrics["comparable_count"] == 1
-    assert metrics["score_mean_abs_delta"] == 3.5
-
-
-def test_adapter_flag_on_reads_analysis_without_adding_seven_point_gate(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "chat_completion", _fake_chat_completion)
-    sink = _make_sink(tmp_path, "adapter_on.db")
-    _seed(sink.engine, "a1", "src_a", "2026-06-05T10:00:00")
-    _seed_persisted_analysis(sink.engine, "a1", score=4.5, genre="research_paper")
+    _seed(sink.engine, "a2", "src_b", "2026-06-05T11:00:00")
+    _seed_persisted_analysis(sink.engine, "a1", score=9.0, genre="model_release")
     with Session(sink.engine) as session:
         db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
-        db.set_setting(session, db.KEY_ANALYSIS_ADAPTER_ENABLED, "true")
-
-    result = asyncio.run(generate_daily_brief(
-        storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"
-    ))
-    assert result["articles_count"] == 1  # 4.5 分仍入选：未擅自启用个人日报 7 分门槛
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    assert len(scoring_calls) == 1 and "标题-a2" in scoring_calls[0]  # 只有 a2 需要补评
     record = asyncio.run(sink.get("daily_brief_2026-06-06"))
-    [item] = json.loads(record.extensions_json)["items"]
-    assert item["score"] == 4.5
-    assert item["classification"] == "学术论文"
-    assert item["summary"] == ["新摘要第一点", "新摘要第二点"]
-    assert item["tags"] == ["智能体", "OpenAI"]
-    assert item["comment"] == "点评"
-    assert "score_reason" not in item
-    assert "## 📄 学术论文（1 篇）" in record.content
+    items = {e["id"]: e for e in json.loads(record.extensions_json)["items"]}
+    assert items["a1"]["score"] == 9.0 and items["a1"]["classification"] == "模型发布"
+    assert items["a2"]["score"] == 8.0 and items["a2"]["classification"] == "行业资讯"
+    # 编辑字段来自 editorial 调用,score_reason 绝不进 items
+    assert items["a1"]["comment"] == "点评" and items["a1"]["title_cn"].startswith("中文标题")
+    assert all("score_reason" not in e for e in items.values())
+    assert "## 🚀 模型发布（1 篇）" in record.content
+    with Session(sink.engine) as session:
+        last = db.get_json_setting(session, db.KEY_LAST_RUN, None)
+    assert last["scored_stored"] == 1 and last["scored_inline"] == 1 and last["below_threshold"] == 0
+
+
+def test_generate_works_with_no_analysis_at_all(tmp_path, monkeypatch):
+    """分析 worker 一篇都没跑(总闸关着/刚部署):日报全靠就地补评,照常出报,不写分析表。"""
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path, "inline_only.db")
+    for i in range(3):
+        _seed(sink.engine, f"n{i}", f"s{i}", f"2026-06-05T1{i}:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    result = asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    assert result["status"] == "success" and result["articles_count"] == 3
+    from models.db import ArticleAnalysisRecord
+    from sqlmodel import select
+    with Session(sink.engine) as session:
+        assert session.exec(select(ArticleAnalysisRecord)).all() == []  # 补评不写回:与 worker 松耦合
+        last = db.get_json_setting(session, db.KEY_LAST_RUN, None)
+    assert last["scored_stored"] == 0 and last["scored_inline"] == 3
+
+
+def test_generate_min_score_passes_low_items(tmp_path, monkeypatch):
+    """低于门槛的候选直接 pass:不进正选、不进附录,随游标跳过;观测读数记入 last_run。"""
+    async def _by_title(*, messages, config, **kwargs):
+        if _is_scoring(messages):
+            score = 3.0 if "标题-low" in messages[1].content else 8.5
+            return json.dumps({**ANALYSIS_PAYLOAD, "quality_score": score})
+        return await _fake_chat_completion(messages=messages, config=config, **kwargs)
+
+    _patch_llm(monkeypatch, _by_title)
+    sink = _make_sink(tmp_path, "threshold.db")
+    _seed(sink.engine, "high", "src_a", "2026-06-05T10:00:00")
+    _seed(sink.engine, "low", "src_b", "2026-06-05T11:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    result = asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    assert result["articles_count"] == 1
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    assert [e["id"] for e in ext["items"]] == ["high"]
+    assert ext["included_article_ids"] == ["high"]
+    assert "标题-low" not in record.content
+    with Session(sink.engine) as session:
+        assert db.read_cursor(session) == "2026-06-05T11:00:00"  # 游标照推,low 不再回来
+        last = db.get_json_setting(session, db.KEY_LAST_RUN, None)
+        assert last["below_threshold"] == 1 and last["min_score"] == db.DEFAULT_MIN_SCORE
+        # 门槛设 0 = 不设门槛
+        db.set_setting(session, db.KEY_MIN_SCORE, "0")
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    result = asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-07"))
+    assert result["articles_count"] == 2
+
+
+def test_editorial_failure_keeps_analysis_summary(monkeypatch):
+    """编辑调用失败(重试后仍失败)不降附录:分数已到手,要点回落分析摘要、点评留空。"""
+    async def _no_editorial(*, messages, config, **kwargs):
+        if _is_editorial(messages):
+            raise RuntimeError("editorial down")
+        return await _fake_chat_completion(messages=messages, config=config, **kwargs)
+
+    _patch_llm(monkeypatch, _no_editorial)
+    item = _scored_full(8, item_id="x1", summary=["分析摘要第一句"])
+    [polished] = asyncio.run(editorial_polish([item], CONFIGURED))
+    assert polished.score == 8 and polished.score_ok is True
+    assert polished.summary == ["分析摘要第一句"] and polished.comment == ""
+    assert polished.title_cn == ""  # to_reduce_dict 回落原标题
+
+
+def test_editorial_polish_fills_fields_and_retries(monkeypatch):
+    calls = {"n": 0}
+
+    async def _flaky(*, messages, config, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient")
+        return await _fake_chat_completion(messages=messages, config=config, **kwargs)
+
+    _patch_llm(monkeypatch, _flaky)
+    item = _scored_full(8, item_id="x1", summary=["分析摘要"], company="")
+    [polished] = asyncio.run(editorial_polish([item], CONFIGURED))
+    assert calls["n"] == 2
+    assert polished.title_cn.startswith("中文标题") and polished.comment == "点评"
+    assert polished.summary == ["**X**：细节"] and polished.company == "OpenAI"
+    assert polished.score == 8  # 编辑不碰分数
+
+
+# ---------------- v3.48 收口:口径一致/无正文评分/预聚类/对照物要点/观测读数 ----------------
+
+def _dto(code, kind, name_zh):
+    from models.analysis_contracts import TaxonomyTagDTO
+    return TaxonomyTagDTO(id=1, code=code, kind=kind, name_zh=name_zh, name_en=code,
+                          prompt_description="", status="active", user_selectable=True)
+
+
+def test_inline_scoring_uses_closed_set_names_not_free_labels(monkeypatch):
+    """补评喂规范标签闭集后,realm/company/tags 与分析表路径同一套词汇;自由标签不再混入。"""
+    async def _fake(*, messages, config, **kwargs):
+        assert "topic.agents" in messages[1].content  # 闭集确实进了提示词
+        return json.dumps({
+            **ANALYSIS_PAYLOAD,
+            "primary_tag_code": "topic.agents",
+            "tag_assignments": [
+                {"code": "topic.agents", "kind": "topic", "relevance": 0.9},
+                {"code": "entity.openai", "kind": "entity", "relevance": 0.8},
+            ],
+            "tag_candidates": [{"label": "LLM", "proposed_kind": "topic", "confidence": 0.9, "evidence": "e"}],
+            "entities": [{"name": "Anthropic", "type": "company", "relevance": 0.5}],
+        })
+
+    _patch_llm(monkeypatch, _fake)
+    cand = BriefCandidate(id="c1", title="智能体发布", source_id="s", source_url="https://x/1",
+                          content_type="rss_article", publish_date="", fetched_date="", has_content=True, body="正文")
+    tags = (_dto("topic.agents", "topic", "智能体"), _dto("entity.openai", "entity", "OpenAI"))
+    [item] = asyncio.run(score_candidates([cand], CONFIGURED, stored={}, taxonomy_by_id={"c1": tags}))
+    assert item.realm == "智能体" and item.company == "OpenAI"
+    assert item.tags == ["智能体", "OpenAI", "Anthropic"]  # 规范名 + entities 名,无「LLM」
+    assert item.score_reason == "头部厂商旗舰发布"
+
+
+def test_generate_bodyless_candidates_pass_threshold_or_land_in_appendix(tmp_path, monkeypatch):
+    """无正文候选按标题走同一把尺子:过线进附录、低于门槛 pass(附录不再是无门槛的后门)。"""
+    async def _fake(*, messages, config, **kwargs):
+        if _is_scoring(messages):
+            score = 3.0 if "标题-cold" in messages[1].content else 8.0
+            return json.dumps({**ANALYSIS_PAYLOAD, "quality_score": score})
+        return await _fake_chat_completion(messages=messages, config=config, **kwargs)
+
+    _patch_llm(monkeypatch, _fake)
+    sink = _make_sink(tmp_path)
+    _seed(sink.engine, "hot", "src_a", "2026-06-05T10:00:00", has_content=False)
+    _seed(sink.engine, "cold", "src_b", "2026-06-05T11:00:00", has_content=False)
+    _seed(sink.engine, "full", "src_c", "2026-06-05T12:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    result = asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    assert result["status"] == "success"
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    assert "- [标题-hot](https://example.test/hot)" in record.content
+    assert "标题-cold" not in record.content
+    ext = json.loads(record.extensions_json)
+    assert "hot" in ext["included_article_ids"] and "cold" not in ext["included_article_ids"]
+    with Session(sink.engine) as session:
+        last = db.get_json_setting(session, db.KEY_LAST_RUN)
+    assert last["below_threshold"] == 1
+    assert last["score_histogram"]["8"] == 2 and last["score_histogram"]["3"] == 1
+    assert last["scored_inline"] == 3 and last["scored_inline_pending"] == 0
+
+
+def test_generate_reports_inline_candidates_still_queued_in_worker(tmp_path, monkeypatch):
+    """撞车观测:补评的候选里正 pending/running 的篇数写进 last_run。"""
+    from models.db import ArticleAnalysisRecord
+
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path)
+    _seed(sink.engine, "queued", "src_a", "2026-06-05T10:00:00")
+    _seed(sink.engine, "fresh", "src_b", "2026-06-05T11:00:00")
+    with Session(sink.engine) as session:
+        session.add(ArticleAnalysisRecord(
+            article_id="queued", status="pending", tagging_status="pending", content_hash="h",
+            created_at="2026-06-05T10:00:00", updated_at="2026-06-05T10:00:00",
+        ))
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+        session.commit()
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    with Session(sink.engine) as session:
+        last = db.get_json_setting(session, db.KEY_LAST_RUN)
+    assert last["scored_inline"] == 2 and last["scored_inline_pending"] == 1
+
+
+def test_precluster_merges_obvious_duplicates_only():
+    """机械预聚类:同厂商高相似标题并簇(代表规则同 LLM 簇);数字不同/厂商不同/短标题不并。"""
+    def _item(item_id, title, company, score, role="media", url=""):
+        cand = BriefCandidate(id=item_id, title=title, source_id=f"s-{item_id}", source_url=url or f"https://x/{item_id}",
+                              content_type="rss_article", publish_date="", fetched_date="", has_content=True,
+                              body="", source_role=role)
+        return ScoredItem(candidate=cand, score=score, company=company)
+
+    items = [
+        _item("a", "Claude Opus 4.8 正式发布，上下文 1M", "Anthropic", 8.0),
+        _item("b", "Claude Opus 4.8 正式发布：上下文 1M", "Anthropic", 8.5, role="official"),
+        _item("c", "Claude Opus 4.9 正式发布，上下文 1M", "Anthropic", 8.0),   # 数字不同:不并
+        _item("d", "Claude Opus 4.8 正式发布，上下文 1M", "OpenAI", 8.0),      # 厂商不同:不并
+        _item("e", "GPT 更新", "OpenAI", 7.0), _item("f", "GPT 更新了", "OpenAI", 7.0),  # 短标题:不并
+    ]
+    out = db.precluster_same_event(items)
+    ids = [it.candidate.id for it in out]
+    assert ids == ["b", "c", "d", "e", "f"]  # 官方在分差门限内当代表
+    assert out[0].extra_sources == ["https://x/a"]
+
+
+def test_dedup_clusters_keeps_mechanical_merge_when_llm_fails(monkeypatch):
+    async def _boom(*, messages, config, **kwargs):
+        raise RuntimeError("llm down")
+
+    _patch_llm(monkeypatch, _boom)
+    a = _scored_full(8, item_id="a", company="OpenAI", source_url="https://x/a")
+    b = _scored_full(7, item_id="b", company="OpenAI", source_url="https://x/b")
+    a.title_cn = "OpenAI 发布 GPT-5.6 与新定价"
+    b.title_cn = "OpenAI 发布 GPT-5.6 与新定价方案"
+    out = asyncio.run(dedup_clusters([a, b], CONFIGURED))
+    assert [it.candidate.id for it in out] == ["a"] and out[0].extra_sources == ["https://x/b"]
+
+
+def test_fetch_recent_brief_items_entries_carry_hint(tmp_path):
+    from llm import prompts
+    from models.db import ArticleRecord
+
+    sink = _make_sink(tmp_path)
+    _seed(sink.engine, "daily_brief_2026-08-15", db.DAILY_BRIEF_SOURCE_ID, "2026-08-15T08:30:00",
+          content_type="daily_brief", publish_date="2026-08-15")
+    with Session(sink.engine) as session:
+        rec = session.get(ArticleRecord, "daily_brief_2026-08-15")
+        rec.extensions_json = json.dumps({"items": [
+            {"title_cn": "带要点条目", "summary": ["**模型**：参数 1T", "第二条"]},
+            {"title_cn": "无要点条目"},
+        ]})
+        session.add(rec)
+        session.commit()
+        days = db.fetch_recent_brief_items(session, days=3)
+    assert days[0]["titles"] == ["带要点条目", "无要点条目"]
+    assert days[0]["entries"] == [{"title": "带要点条目", "hint": "模型：参数 1T"}, {"title": "无要点条目", "hint": ""}]
+    text = prompts.build_cross_day_dedup_user_prompt([], days)
+    assert "- 带要点条目（要点：模型：参数 1T）" in text and "- 无要点条目\n" in text + "\n"
+    # 旧形状(只有 titles)照旧可用
+    assert "- 纯标题" in prompts.build_cross_day_dedup_user_prompt([], [{"date": "2026-08-14", "titles": ["纯标题"]}])
+
+
+def test_editorial_prompt_carries_analysis_facts():
+    from llm import prompts
+
+    text = prompts.build_editorial_user_prompt(
+        title="T", source_name="S", body="正文", analysis_summary="客观摘要一句", score_reason="旗舰发布",
+    )
+    assert "【系统分析" in text and "评分理由：旗舰发布" in text and "客观摘要：客观摘要一句" in text
+    assert text.index("评分理由") < text.index("正文内容：")
+    assert "【系统分析" not in prompts.build_editorial_user_prompt(title="T", source_name="S", body="正文")
