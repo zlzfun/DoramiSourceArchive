@@ -231,8 +231,9 @@ tts_usage_settlement_mode = manual
 额度配置与 AK/SK/Appkey/Token 的“能否鉴权”是两套独立门槛：凭据齐全但额度配置
 不完整时仍禁止提交。ASR 在提交前按 `ceil(audio_duration_ms / 1000)` 预占当日秒数，
 日窗口以 `Asia/Shanghai` 的 `[00:00, 次日 00:00)` 为界且不越过 entitlement
-截止时刻；TTS 按实际送给供应商的计费字符数预占 campaign 总量。价格全部用人民币分的
-整数配置，并以向上取整计算，避免浮点误差。
+截止时刻；管理员可在“设置 → 凭据 → 播客 ASR”按小时调整每日上限，修改后同一
+scope/period 内已使用和已预占的时长继续累计。TTS 按实际送给供应商的计费字符数预占
+campaign 总量。价格全部用人民币分的整数配置，并以向上取整计算，避免浮点误差。
 
 `request_unknown` / `reconciling` 会继续持有人民币预算与供应商额度；只有供应商明确
 确认 `not_submitted` 才释放。结算实际用量超过预占会写入 breach 审计并冻结同一
@@ -434,6 +435,7 @@ staging_ttl_seconds = 3600
 `data/podcast-artifacts`。新 unique blob 在原子安装前同时检查 CAS 总配额和磁盘最低
 余量；已存在且哈希校验通过的 blob 去重登记不重复占用配额。每次 API 启动及管理员手动
 对账只会清理超过 TTL 且未被活跃上传/下载锁定的 `.incoming/*.part` 和失效预留标记，
-并仅清理宽限期已过、数据库已无任何引用的孤儿 blob。发布者音频下载逐跳重新解析并固定
-公网 IP，禁用环境代理和连接复用，且不会在日志或 artifact 响应中暴露签名 URL query。
+并仅清理宽限期已过、数据库已无任何引用的孤儿 blob。发布者音频由外网处理节点按原始
+http(s) 地址下载，不做 DNS/IP 段过滤并沿用系统代理，因此可兼容 Clash/Surge Fake-IP；
+下载仍受大小、总超时和重定向次数限制，且不会在日志或 artifact 响应中暴露签名 URL query。
 迁移、备份和恢复时必须连同整个 `data/` 目录处理。

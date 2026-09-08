@@ -1182,7 +1182,6 @@ def _require_provider_usage_capacity(
     expected_definition = (
         _iso(plan.window_start_at),
         _iso(plan.window_end_at),
-        plan.limit_units,
         plan.unit_price_cny_minor,
         plan.price_unit_count,
         plan.pricing_revision,
@@ -1191,7 +1190,6 @@ def _require_provider_usage_capacity(
         definition = (
             reservation.provider_quota_window_start_at,
             reservation.provider_quota_window_end_at,
-            reservation.provider_quota_limit_units,
             reservation.unit_price_cny_minor,
             reservation.price_unit_count,
             reservation.pricing_revision,
