@@ -133,14 +133,14 @@ ssl_key_file  = /etc/letsencrypt/live/your-domain.example.com/privkey.pem
 `[server] reload` 必须为 `false`(`config.py` 的 fallback 是 `true`,
 `ecosystem.config.js` 的 `NODE_ENV=production` 另有守卫兜底,显式写上更稳)。
 
-运行 `deploy.sh` 前还必须为本机选择唯一 Podcast stage 集，并给出跨重启稳定的 installation
-ID。当前阿里 ISI 的 ASR 使用 AK/SK 签名；TTS 使用 NLS Token，并用 AK/SK 刷新：
+运行 `deploy.sh` 前必须选择 Podcast installation 并给出跨重启稳定的 authority ID。
+`external` 默认开启完整 ASR/TTS 处理链，`internal` 默认关闭全部处理阶段。当前阿里 ISI
+的 ASR 使用 AK/SK 签名；TTS 使用 NLS Token，并用 AK/SK 刷新：
 
 ```bash
 # 外网 all
 export DORAMI_PODCAST_INSTALLATION=external
 export DORAMI_PODCAST_AUTHORITY_ID=<stable-external-id>
-export DORAMI_PODCAST_ALLOWED_STAGES=fetch,asr,translate,analyze,digest,script,tts,audio_qa,local_publish
 export ALIYUN_AK_ID=<secret>
 export ALIYUN_AK_SECRET=<secret>
 export NLS_APP_KEY=<secret>
@@ -150,7 +150,6 @@ export NLS_TOKEN_EXPIRES_AT=<provider-unix-seconds>
 # 内网 all（只同步和展示，不配置供应商凭据）
 export DORAMI_PODCAST_INSTALLATION=internal
 export DORAMI_PODCAST_AUTHORITY_ID=<stable-internal-id>
-export DORAMI_PODCAST_ALLOWED_STAGES=
 ```
 
 首次启动前确认 artifact root 所在分区至少保留 `minimum_free_mb`；启动会在跨进程 CAS

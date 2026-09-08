@@ -22,6 +22,25 @@ PODCAST_STAGES = frozenset({
     "audio_qa",
     "local_publish",
 })
+PODCAST_EXTERNAL_DEFAULT_STAGES = (
+    "fetch",
+    "asr",
+    "translate",
+    "analyze",
+    "digest",
+    "script",
+    "tts",
+    "audio_qa",
+    "local_publish",
+)
+PODCAST_EXTERNAL_DEFAULT_TARGETS = (
+    "transcript",
+    "digest_blog",
+    "digest_audio",
+)
+PODCAST_EXTERNAL_DEFAULT_MONTHLY_BUDGET_CNY_MINOR = 100_000
+PODCAST_EXTERNAL_DEFAULT_PER_RUN_BUDGET_CNY_MINOR = 5_000
+PODCAST_EXTERNAL_DEFAULT_VOICE_PROFILE = "narrator_zh"
 
 # One canonical ceiling applies to every Podcast text producer/importer and to
 # the Reader's legacy-data projection. Deployments may lower either value via
@@ -938,7 +957,92 @@ def load_config() -> AppConfig:
             fallback="audio/mpeg,audio/wav,audio/mp4,audio/ogg,audio/webm",
         )
     ))
-    podcast_stages_env = os.getenv("DORAMI_PODCAST_ALLOWED_STAGES")
+    podcast_ini_installation = parser.get(
+        "podcast", "installation", fallback="development"
+    ).strip().lower()
+    podcast_installation_env = os.getenv("DORAMI_PODCAST_INSTALLATION")
+    podcast_installation = (
+        podcast_installation_env or podcast_ini_installation
+    ).strip().lower()
+    podcast_installation_overridden = bool(
+        podcast_installation_env and podcast_installation_env.strip()
+    ) and podcast_installation != podcast_ini_installation
+    external_podcast = podcast_installation == "external"
+    podcast_default_stages = (
+        PODCAST_EXTERNAL_DEFAULT_STAGES
+        if external_podcast
+        else (
+            ()
+            if podcast_installation == "internal"
+            else ("fetch", "local_publish")
+        )
+    )
+
+    def _podcast_setting(env_name: str, option: str, default: str) -> str:
+        environment_value = os.getenv(env_name)
+        if environment_value is not None and environment_value.strip():
+            return environment_value
+        if podcast_installation_overridden:
+            # Settings in an INI posture belong to that installation. When an
+            # environment override switches hosts, use the new host's defaults.
+            return default
+        return parser.get("podcast", option, fallback=default)
+
+    podcast_stages_raw = _podcast_setting(
+        "DORAMI_PODCAST_ALLOWED_STAGES",
+        "allowed_stages",
+        ",".join(podcast_default_stages),
+    )
+    podcast_processing_env = os.getenv("DORAMI_PODCAST_PROCESSING_ENABLED")
+    if podcast_processing_env is not None and podcast_processing_env.strip():
+        podcast_processing_enabled = podcast_processing_env.strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+    elif podcast_installation_overridden:
+        podcast_processing_enabled = external_podcast
+    else:
+        podcast_processing_enabled = parser.getboolean(
+            "podcast", "processing_enabled", fallback=external_podcast
+        )
+    podcast_targets_raw = _podcast_setting(
+        "DORAMI_PODCAST_PROVIDER_READY_TARGETS",
+        "provider_ready_targets",
+        ",".join(PODCAST_EXTERNAL_DEFAULT_TARGETS) if external_podcast else "",
+    )
+    podcast_monthly_budget_raw = _podcast_setting(
+        "DORAMI_PODCAST_MONTHLY_BUDGET_CNY_MINOR",
+        "monthly_budget_cny_minor",
+        str(
+            PODCAST_EXTERNAL_DEFAULT_MONTHLY_BUDGET_CNY_MINOR
+            if external_podcast
+            else 0
+        ),
+    )
+    podcast_per_run_budget_raw = _podcast_setting(
+        "DORAMI_PODCAST_PER_RUN_BUDGET_CNY_MINOR",
+        "per_run_budget_cny_minor",
+        str(
+            PODCAST_EXTERNAL_DEFAULT_PER_RUN_BUDGET_CNY_MINOR
+            if external_podcast
+            else 0
+        ),
+    )
+    podcast_default_voice = (
+        PODCAST_EXTERNAL_DEFAULT_VOICE_PROFILE if external_podcast else ""
+    )
+    podcast_voice_profiles_raw = _podcast_setting(
+        "DORAMI_PODCAST_VOICE_PROFILES",
+        "voice_profiles",
+        podcast_default_voice,
+    )
+    podcast_default_voice_raw = _podcast_setting(
+        "DORAMI_PODCAST_DEFAULT_VOICE_PROFILE",
+        "default_voice_profile",
+        podcast_default_voice,
+    )
     return AppConfig(
         server=ServerConfig(
             host=parser.get("server", "host", fallback="127.0.0.1"),
@@ -994,23 +1098,12 @@ def load_config() -> AppConfig:
             prefetch_concurrency=parser.getint("media", "prefetch_concurrency", fallback=4),
         ),
         podcast=PodcastConfig(
-            installation=(
-                os.getenv("DORAMI_PODCAST_INSTALLATION")
-                or parser.get("podcast", "installation", fallback="development")
-            ),
+            installation=podcast_installation,
             authority_id=(
                 os.getenv("DORAMI_PODCAST_AUTHORITY_ID")
                 or parser.get("podcast", "authority_id", fallback="dev-local")
             ),
-            allowed_stages=tuple(_csv(
-                podcast_stages_env
-                if podcast_stages_env is not None
-                else parser.get(
-                    "podcast",
-                    "allowed_stages",
-                    fallback="fetch,local_publish",
-                )
-            )),
+            allowed_stages=tuple(_csv(podcast_stages_raw)),
             feed_max_bytes=int(
                 os.getenv("DORAMI_PODCAST_FEED_MAX_BYTES")
                 or parser.getint("podcast", "feed_max_bytes", fallback=20 * 1024 * 1024)
@@ -1105,14 +1198,7 @@ def load_config() -> AppConfig:
                 os.getenv("DORAMI_PODCAST_READER_CURSOR_SECRET")
                 or parser.get("podcast", "reader_cursor_secret", fallback="")
             ).strip(),
-            processing_enabled=(
-                os.getenv("DORAMI_PODCAST_PROCESSING_ENABLED", "").strip().lower()
-                in {"1", "true", "yes", "on"}
-                if os.getenv("DORAMI_PODCAST_PROCESSING_ENABLED") is not None
-                else parser.getboolean(
-                    "podcast", "processing_enabled", fallback=False
-                )
-            ),
+            processing_enabled=podcast_processing_enabled,
             text_pipeline_version=(
                 os.getenv("DORAMI_PODCAST_TEXT_PIPELINE_VERSION")
                 or parser.get(
@@ -1133,16 +1219,8 @@ def load_config() -> AppConfig:
                     fallback="podcast-processing-policy-v1",
                 )
             ),
-            monthly_budget_cny_minor=int(
-                os.getenv("DORAMI_PODCAST_MONTHLY_BUDGET_CNY_MINOR")
-                or parser.getint(
-                    "podcast", "monthly_budget_cny_minor", fallback=0
-                )
-            ),
-            per_run_budget_cny_minor=int(
-                os.getenv("DORAMI_PODCAST_PER_RUN_BUDGET_CNY_MINOR")
-                or parser.getint("podcast", "per_run_budget_cny_minor", fallback=0)
-            ),
+            monthly_budget_cny_minor=int(podcast_monthly_budget_raw),
+            per_run_budget_cny_minor=int(podcast_per_run_budget_raw),
             budget_scope=(
                 os.getenv("DORAMI_PODCAST_BUDGET_SCOPE")
                 or parser.get(
@@ -1153,24 +1231,9 @@ def load_config() -> AppConfig:
                 os.getenv("DORAMI_PODCAST_BUDGET_TIMEZONE")
                 or parser.get("podcast", "budget_timezone", fallback="Asia/Shanghai")
             ),
-            provider_ready_targets=tuple(
-                _csv(
-                    os.getenv("DORAMI_PODCAST_PROVIDER_READY_TARGETS")
-                    or parser.get(
-                        "podcast", "provider_ready_targets", fallback=""
-                    )
-                )
-            ),
-            voice_profiles=tuple(
-                _csv(
-                    os.getenv("DORAMI_PODCAST_VOICE_PROFILES")
-                    or parser.get("podcast", "voice_profiles", fallback="")
-                )
-            ),
-            default_voice_profile=(
-                os.getenv("DORAMI_PODCAST_DEFAULT_VOICE_PROFILE")
-                or parser.get("podcast", "default_voice_profile", fallback="")
-            ),
+            provider_ready_targets=tuple(_csv(podcast_targets_raw)),
+            voice_profiles=tuple(_csv(podcast_voice_profiles_raw)),
+            default_voice_profile=podcast_default_voice_raw,
             premium_score_threshold=float(
                 os.getenv("DORAMI_PODCAST_PREMIUM_SCORE_THRESHOLD")
                 or parser.getfloat(

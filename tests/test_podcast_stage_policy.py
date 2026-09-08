@@ -7,7 +7,16 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from config import PodcastConfig, RuntimeConfig, load_config
+from config import (
+    PODCAST_EXTERNAL_DEFAULT_MONTHLY_BUDGET_CNY_MINOR,
+    PODCAST_EXTERNAL_DEFAULT_PER_RUN_BUDGET_CNY_MINOR,
+    PODCAST_EXTERNAL_DEFAULT_STAGES,
+    PODCAST_EXTERNAL_DEFAULT_TARGETS,
+    PODCAST_EXTERNAL_DEFAULT_VOICE_PROFILE,
+    PodcastConfig,
+    RuntimeConfig,
+    load_config,
+)
 from services.podcast_artifacts import PodcastArtifactStore
 from services.podcast_stage_policy import (
     EXECUTION_BOUNDARIES,
@@ -35,7 +44,13 @@ def test_config_parses_allowlist_and_environment_overrides(monkeypatch, tmp_path
     ini = tmp_path / "backend.ini"
     ini.write_text(
         "[podcast]\ninstallation = external\nauthority_id = ini-external\n"
-        "allowed_stages = fetch,asr,translate,analyze,digest,script,local_publish\n",
+        "allowed_stages = fetch,asr,translate,analyze,digest,script,tts,audio_qa,local_publish\n"
+        "processing_enabled = true\n"
+        "provider_ready_targets = transcript,digest_blog,digest_audio\n"
+        "monthly_budget_cny_minor = 100000\n"
+        "per_run_budget_cny_minor = 5000\n"
+        "voice_profiles = narrator_zh\n"
+        "default_voice_profile = narrator_zh\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("DORAMI_CONFIG_FILE", str(ini))
@@ -48,6 +63,12 @@ def test_config_parses_allowlist_and_environment_overrides(monkeypatch, tmp_path
     assert configured.installation == "internal"
     assert configured.authority_id == "internal-a"
     assert configured.allowed_stages == ()
+    assert configured.processing_enabled is False
+    assert configured.provider_ready_targets == ()
+    assert configured.monthly_budget_cny_minor == 0
+    assert configured.per_run_budget_cny_minor == 0
+    assert configured.voice_profiles == ()
+    assert configured.default_voice_profile == ""
 
 
 @pytest.mark.parametrize(
@@ -195,10 +216,71 @@ def test_default_development_policy_has_no_provider_stages(monkeypatch, tmp_path
         "DORAMI_PODCAST_ALLOWED_STAGES",
     ):
         monkeypatch.delenv(key, raising=False)
+
+    # Compose supplies blank values for optional overrides.
+    monkeypatch.setenv("DORAMI_PODCAST_ALLOWED_STAGES", "")
+    monkeypatch.setenv("DORAMI_PODCAST_PROCESSING_ENABLED", "")
+    monkeypatch.setenv("DORAMI_PODCAST_PROVIDER_READY_TARGETS", "")
     config = load_config().podcast
     assert config.installation == "development"
     assert config.allowed_stages == ("fetch", "local_publish")
     assert not ({"asr", "translate", "analyze", "digest", "script", "tts"} & set(config.allowed_stages))
+
+
+@pytest.mark.parametrize("installation", ["external", "internal"])
+def test_installation_derives_podcast_processing_defaults(
+    monkeypatch, tmp_path, installation
+):
+    ini = tmp_path / f"{installation}.ini"
+    ini.write_text(
+        "[podcast]\n"
+        f"installation = {installation}\n"
+        f"authority_id = {installation}-a\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DORAMI_CONFIG_FILE", str(ini))
+    for key in (
+        "DORAMI_PODCAST_INSTALLATION",
+        "DORAMI_PODCAST_AUTHORITY_ID",
+        "DORAMI_PODCAST_ALLOWED_STAGES",
+        "DORAMI_PODCAST_PROCESSING_ENABLED",
+        "DORAMI_PODCAST_PROVIDER_READY_TARGETS",
+        "DORAMI_PODCAST_MONTHLY_BUDGET_CNY_MINOR",
+        "DORAMI_PODCAST_PER_RUN_BUDGET_CNY_MINOR",
+        "DORAMI_PODCAST_VOICE_PROFILES",
+        "DORAMI_PODCAST_DEFAULT_VOICE_PROFILE",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    configured = load_config().podcast
+
+    if installation == "external":
+        assert configured.processing_enabled is True
+        assert configured.allowed_stages == PODCAST_EXTERNAL_DEFAULT_STAGES
+        assert configured.provider_ready_targets == PODCAST_EXTERNAL_DEFAULT_TARGETS
+        assert (
+            configured.monthly_budget_cny_minor
+            == PODCAST_EXTERNAL_DEFAULT_MONTHLY_BUDGET_CNY_MINOR
+        )
+        assert (
+            configured.per_run_budget_cny_minor
+            == PODCAST_EXTERNAL_DEFAULT_PER_RUN_BUDGET_CNY_MINOR
+        )
+        assert configured.voice_profiles == (
+            PODCAST_EXTERNAL_DEFAULT_VOICE_PROFILE,
+        )
+        assert (
+            configured.default_voice_profile
+            == PODCAST_EXTERNAL_DEFAULT_VOICE_PROFILE
+        )
+    else:
+        assert configured.processing_enabled is False
+        assert configured.allowed_stages == ()
+        assert configured.provider_ready_targets == ()
+        assert configured.monthly_budget_cny_minor == 0
+        assert configured.per_run_budget_cny_minor == 0
+        assert configured.voice_profiles == ()
+        assert configured.default_voice_profile == ""
 
 
 def test_admin_capabilities_endpoint_is_read_only_and_redacted(monkeypatch, tmp_path):
