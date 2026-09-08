@@ -1,0 +1,1686 @@
+{
+ "_meta": {
+  "created": "2026-09-08",
+  "issue": 33,
+  "source": "production articles fetched 2026-09-01..09-08, stratified random sample",
+  "raters": "Claude (Fable 5.1) and codex (gpt-5.6-sol) scored independently against the anchor doc; gold = mean",
+  "body_note": "body clipped to 6000 chars",
+  "usage": "scripts/eval_news_value_golden.py"
+ },
+ "items": [
+  {
+   "n": 1,
+   "id": "docs_arena_leaderboard_changelog_af4ce804b84120da",
+   "source_id": "docs_arena_leaderboard_changelog",
+   "stratum": "board",
+   "title": "Arena 排行榜：granite-4.2-30b, granite-4.2-3b and granite-4.2-8b has been added to the Text Arena leade…",
+   "content_type": "web_article",
+   "publish_date": "2026-09-01T00:00:00+00:00",
+   "body": "[granite-4.2-30b](https://research.ibm.com/blog/introducing-granite-4-2), [granite-4.2-3b](https://research.ibm.com/blog/introducing-granite-4-2) and [granite-4.2-8b](https://research.ibm.com/blog/introducing-granite-4-2) has been added to the Text Arena leaderboard.\n\n[qwen3.8-max-0902](https://www.qianwenai.com/models/qwen3.8-max-0902) has been added to the Code Arena leaderboard.",
+   "raters": {
+    "claude": {
+     "score": 4.0,
+     "reason": "榜单增补条目，信息量薄，非一手发布"
+    },
+    "codex_gpt56sol": {
+     "score": 3.6,
+     "reason": "仅为榜单收录多款模型，未给出排名变化或技术突破。"
+    }
+   },
+   "gold": 3.8,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 2.0,
+    "reason": "排行榜新增条目，信息量稀薄，非重大发布。"
+   }
+  },
+  {
+   "n": 2,
+   "id": "rss_simonwillison_bbaa7e92c7f7091b",
+   "source_id": "rss_simonwillison",
+   "stratum": "community",
+   "title": "Claude's new system prompt really doesn't want to reproduce song lyrics",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-02T14:16:42+00:00",
+   "body": "Anthropic [publish the system prompts](https://platform.claude.com/docs/en/release-notes/system-prompts/overview) for their Claude consumer applications ([Claude.ai](https://claude.ai/) and the Claude mobile apps - sadly not for Claude Cowork or Claude Code). I *love* that they do this, and that they share not just the current prompts but historic changes to their prompts as well.\n\nThey used to keep all of the prompts on a single page, but when I checked today I noticed they had re-arranged those prompts into an [index page](https://platform.claude.com/docs/en/release-notes/system-prompts/overview) and then a page per model - here's the [page for Haiku 4.5](https://platform.claude.com/docs/en/release-notes/system-prompts/claude-haiku-4-5) for example, which has the original prompt from October 15th 2025 and an updated prompt from January 18th 2026.\n\nA neat thing about Anthropic's [platform.claude.com/docs](https://platform.claude.com/docs/) site is that it's designed to be usable by LLMs. You can add `.md` to any page to get back the content as Markdown - here's [the system prompt index page](https://platform.claude.com/docs/en/release-notes/system-prompts/overview.md) and [the Markdown prompts for Fable 5.1](https://platform.claude.com/docs/en/release-notes/system-prompts/claude-fable-5-1.md).\n\nTL;DR: this makes it really easy to diff the prompts.\n\n- [Don't reproduce song lyrics](https://simonwillison.net/2026/Sep/2/claudes-new-system-prompt/#don-t-reproduce-song-lyrics)\n- [Don't draw copyrighted characters or logos](https://simonwillison.net/2026/Sep/2/claudes-new-system-prompt/#don-t-draw-copyrighted-characters-or-logos)\n- [Tweaks to Claude's answering style](https://simonwillison.net/2026/Sep/2/claudes-new-system-prompt/#tweaks-to-claude-s-answering-style)\n- [The missing end_conversation guidelines](https://simonwillison.net/2026/Sep/2/claudes-new-system-prompt/#the-missing-end-conversation-guidelines)\n- [Recommended substance support sites](https://simonwillison.net/2026/Sep/2/claudes-new-system-prompt/#recommended-substance-support-sites)\n- [Reliable cutoff date of June 2026](https://simonwillison.net/2026/Sep/2/claudes-new-system-prompt/#reliable-cutoff-date-of-june-2026)\n- [How I'm tracking these prompts](https://simonwillison.net/2026/Sep/2/claudes-new-system-prompt/#how-i-m-tracking-these-prompts)\n\n#### Don't reproduce song lyrics\n\nLet's start with the most interesting difference [between Fable 5 and Fable 5.1](https://github.com/simonw/claude-system-prompts/commit/837a418b5888207b1b11b27d2f5471970da6f99b):\n\n![GitHub diff view of prompts/claude-fable.md showing added lines about song lyrics, reproduced in full below.](https://static.simonwillison.net/static/2026-09-01/IMG_7797.jpeg)\n\nThere's a hefty new section about not reproducing song lyrics:\n\n> `Claude does not reproduce song lyrics, poems, or passages from books and articles, in whole or in part — including the last lines, a chorus or hook, a melody written out note by note, or lines the person pastes in one at a time and describes as their own song. Once Claude has declined such a request in a conversation, it keeps declining narrower or reworded versions of it for the rest of that conversation, and offers to describe or analyze the work instead. Song lyrics and poems first published before 1929 are fine — a Shakespeare sonnet, a Keats ode, the Italian libretto of a Puccini aria — but Claude goes by what it knows of the work's date rather than the person's say-so, and declines when it is unsure.`\n\nI doubt it's a coincidence that they added this section within days of the news breaking that [Sony Music Publishing and Warner Chappell are suing Anthropic](https://www.theguardian.com/business/2026/aug/31/aanthropic-sued-alleged-theft-songs-ai-train-claude) for training on databases of song lyrics!\n\n#### Don't draw copyrighted characters or logos\n\nThe next section goes on to forbid generating images of copyrighted material:\n\n> `The same applies to visual and designed works, including anything Claude draws with code — SVG, canvas, CSS, HTML mockups, plotting or drawing scripts, ASCII art. Claude does not reproduce a specific artwork, album or book cover, poster, logo, app icon set, or product design, and it does not draw a known character, mascot, or brand figure at all: a character is protected on its own, so changing the pose, colors, style, or scene does not make it original. Claude judges the request by what the finished picture would add up to, not by what it names. If the described elements clearly identify a known work or character, Claude treats the request as naming it, and it does not work around a declined request by swapping in \"alternative\" elements that still combine into the same recognizable image.` [...]\n\nI imagine Anthropic hadn't worried about this before since, unlike OpenAI and Gemini, they don't offer a specialist text-to-image model. Maybe [Fable is good enough at SVGs now](https://simonwillison.net/2026/Sep/1/claude-fable-5-1/) that it's become an issue.\n\nThat section later includes this charming example:\n\n> `<example>`\n> `<user>Can you make a birthday banner for my son with a blue hedgehog running really fast on it? He loves that little guy.</user>`\n> `<response>`\n> `That's Sonic, so I can't put him on the banner — but I'd love to make your son an original speedster. Here's one: a grinning comet-tailed skateboarding axolotl, grinding across the letters of \"HAPPY BIRTHDAY\" with confetti streaming behind.`\n> `[creates an SVG banner of the skateboarding-axolotl design]`\n> `</response>`\n> `<rationale>Claude recognizes the character from its description alone, declines that one design in a single sentence without explaining what made it recognizable, and delivers an unrelated original design rather than a disguised variant.</rationale>`\n> `</example>`\n\nI couldn't resist trying the prompt from the example, and, [sure enough](https://claude.ai/share/3e5a199c-27f2-4c51-b66b-2c6f808ed500):\n\n![That’s Sonic, so I ",
+   "raters": {
+    "claude": {
+     "score": 4.5,
+     "reason": "个人博客解读系统提示词小改动，影响面有限"
+    },
+    "codex_gpt56sol": {
+     "score": 6.2,
+     "reason": "二手解析Claude系统提示词变化，版权约束有实务参考。"
+    }
+   },
+   "gold": 5.35,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 5.5,
+    "reason": "Anthropic 官方系统提示更新，涉及版权规避与安全策略，但属常规调整，影响面有限。"
+   }
+  },
+  {
+   "n": 3,
+   "id": "github_trending_daily_20260831",
+   "source_id": "github_trending_daily",
+   "stratum": "board",
+   "title": "GitHub Trending 日榜 · 2026-08-31",
+   "content_type": "github_trending",
+   "publish_date": "2026-08-31T23:00:18.277045+00:00",
+   "body": "**1. [THU-MAIC/OpenMAIC](https://github.com/THU-MAIC/OpenMAIC)** — ⭐ 26,883(+2,819 today) · TypeScript\nOpen Multi-Agent Interactive Classroom — Get an immersive, multi-agent learning experience in just one click\n\n**2. [tt-a1i/archify](https://github.com/tt-a1i/archify)** — ⭐ 38,529(+3,993 today) · JavaScript\nAgent skill for beautiful, verifiable architecture, workflow, sequence, data-flow, and lifecycle diagrams—self-contained HTML with motion and crisp export.\n\n**3. [K-Dense-AI/scientific-agent-skills](https://github.com/K-Dense-AI/scientific-agent-skills)** — ⭐ 40,681(+1,968 today) · Python\nTurn any AI agent into an AI Scientist. The #1 Agent Skills library for science, used by 190,000+ scientists worldwide. 165 ready-to-use validated skills plus 100+ scientific databases covering biology, chemistry, medicine, and drug discovery. Compatible with Cursor, Claude Code, Codex, Pi, Antigravity, and the open Agent Skills standard.\n\n**4. [k1tbyte/Wand-Enhancer](https://github.com/k1tbyte/Wand-Enhancer)** — ⭐ 23,344(+511 today) · C#\nAdvanced UX and interoperability extension for Wand (WeMod) app\n\n**5. [majd/ipatool](https://github.com/majd/ipatool)** — ⭐ 10,514(+376 today) · Go\nCommand-line tool that allows searching and downloading app packages (known as ipa files) for iOS, iPadOS, tvOS, and visionOS from the App Store.\n\n**6. [jingyaogong/minimind](https://github.com/jingyaogong/minimind)** — ⭐ 56,059(+472 today) · Python\n🧠 Train a 64M-parameter LLM from scratch in just 2h!\n\n**7. [Osmantic/ODS](https://github.com/Osmantic/ODS)** — ⭐ 5,455(+163 today) · Python\nTurn your PC, Mac, or Linux box into an AI server. LLM inference, chat UI, voice, agents, workflows, RAG, and image generation.\n\n**8. [checkstyle/checkstyle](https://github.com/checkstyle/checkstyle)** — ⭐ 9,401(+199 today) · Java\nCheckstyle is a development tool to help programmers write Java code that adheres to a coding standard. By default it supports the Google Java Style Guide and Sun Code Conventions, but is highly configurable. It can be invoked with an ANT task and a command line program.\n\n**9. [zhaoxuya520/reverse-skill](https://github.com/zhaoxuya520/reverse-skill)** — ⭐ 33,077(+1,439 today) · PowerShell\nReverse Engineering / Authorized Penetration Testing / Security Research Skill Router Pack AI-powered routing + On-demand toolchain bootstrapping + Self-evolving knowledge base Supports Claude Code, Kiro, Cursor, Cline, and other AI coding clients 逆向/渗透/安全技能路由包 - AI 自动路由 + 按需自举工具链 + 自动进化经验库 | 支持 Claude Code / Kiro / Cursor / Cline 等代码 AI 客户端\n\n**10. [affaan-m/ECC](https://github.com/affaan-m/ECC)** — ⭐ 245,213(+548 today) · JavaScript\nThe agent harness performance optimization system. Skills, instincts, memory, security, and research-first development for Claude Code, Codex, Opencode, Cursor and beyond.",
+   "raters": {
+    "claude": {
+     "score": 3.5,
+     "reason": "聚合榜单，无单一事件"
+    },
+    "codex_gpt56sol": {
+     "score": 2.2,
+     "reason": "日榜只是项目热度汇总，缺少单一实质新闻事件。"
+    }
+   },
+   "gold": 2.85,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 2.0,
+    "reason": "GitHub 日榜聚合，信息稀薄，多为转述，无实质新闻价值。"
+   }
+  },
+  {
+   "n": 4,
+   "id": "docs_openai_codex_changelog_d67b967d5fc0ece8",
+   "source_id": "docs_openai_codex_changelog",
+   "stratum": "official",
+   "title": "OpenAI Codex: Codex CLI 0.153.1",
+   "content_type": "web_article",
+   "publish_date": "2026-09-03T00:00:00+00:00",
+   "body": "```\n$ npm install -g @openai/codex@0.153.1\n```\n\n## New Features\n\n- Added support for configuring GPT-6-Astra through the API without changing the default model or showing it in the model picker. ([#42605](https://github.com/openai/codex/pull/42605))\n\n## Changelog\n\nFull Changelog: [`rust-v0.153.0...rust-v0.153.1`](https://github.com/openai/codex/compare/rust-v0.153.0...rust-v0.153.1)\n\n- [#42605](https://github.com/openai/codex/pull/42605) Backport GPT-6-Astra model catalog to 0.153 [@anp-oai](https://github.com/anp-oai)\n\n[Full release on Github](https://github.com/openai/codex/releases/tag/rust-v0.153.1)",
+   "raters": {
+    "claude": {
+     "score": 4.5,
+     "reason": "补丁版本，仅透露 GPT-6-Astra 目录预埋信号"
+    },
+    "codex_gpt56sol": {
+     "score": 5.6,
+     "reason": "官方补入Astra配置支持，但只是小版本兼容更新。"
+    }
+   },
+   "gold": 5.05,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 2.0,
+    "reason": "仅是一个小版本补丁，新增模型配置支持，无实质新能力，信息量稀薄。"
+   }
+  },
+  {
+   "n": 5,
+   "id": "docs_openai_codex_changelog_ec30a01b2858b8aa",
+   "source_id": "docs_openai_codex_changelog",
+   "stratum": "official",
+   "title": "OpenAI Codex: Codex CLI 0.153.0",
+   "content_type": "web_article",
+   "publish_date": "2026-09-03T00:00:00+00:00",
+   "body": "```\n$ npm install -g @openai/codex@0.153.0\n```\n\n## New Features\n\n- Vim mode now supports undo with `u` and redo with `Ctrl+R`, preserving complete drafts including pasted content and attachments. ([#41941](https://github.com/openai/codex/pull/41941), [#42140](https://github.com/openai/codex/pull/42140))\n- The plugin CLI can list, install, and remove plugins from remote marketplaces. ([#42150](https://github.com/openai/codex/pull/42150))\n- Set `tui.auto_recap = false` to disable automatic recaps while keeping manual `/recap` available. ([#42101](https://github.com/openai/codex/pull/42101))\n- TUI history shows complete patches, input sent to background terminals, and individual completed commands. ([#41893](https://github.com/openai/codex/pull/41893), [#42107](https://github.com/openai/codex/pull/42107))\n- Plus and Team users receive an earlier warning when less than half of their allowance remains in an approximately five-hour usage window. ([#42142](https://github.com/openai/codex/pull/42142))\n\n## Bug Fixes\n\n- TUI sessions reconnect after an external app-server connection drops, preserving drafts and transcripts while keeping uncertain or queued submissions paused for review. ([#41911](https://github.com/openai/codex/pull/41911), [#41916](https://github.com/openai/codex/pull/41916), [#41918](https://github.com/openai/codex/pull/41918))\n- Full Access skips Guardian reviews for confirmation-only actions. User approval mode skips background Guardian scoring and prewarming, while sensitive-action checks and requests for user input retain their existing handling. ([#42147](https://github.com/openai/codex/pull/42147), [#42256](https://github.com/openai/codex/pull/42256))\n- Guardian review history survives compaction, restarts, and user-created forks while respecting rollback boundaries and isolating subagent history. ([#41879](https://github.com/openai/codex/pull/41879), [#42065](https://github.com/openai/codex/pull/42065))\n- Remembered MCP tool approvals are scoped to the selected app account, and relative MCP executable paths start more reliably on macOS. ([#42133](https://github.com/openai/codex/pull/42133), [#42117](https://github.com/openai/codex/pull/42117))\n- Rollout compression includes shared histories, `codex exec resume` handles compressed rollouts when selecting by working directory, and thread forks work with symlinked session roots. ([#42039](https://github.com/openai/codex/pull/42039), [#42135](https://github.com/openai/codex/pull/42135))\n\n## Configuration and API Updates\n\n- App-server thread metadata includes nullable `model` and `reasoningEffort` fields. Structured asynchronous questions are supported through `request_user_input_async` when enabled by the model catalog. ([#42151](https://github.com/openai/codex/pull/42151), [#42178](https://github.com/openai/codex/pull/42178))\n- `tui.disable_paste_burst` replaces the top-level setting, which remains supported as a fallback. ([#41976](https://github.com/openai/codex/pull/41976))\n- Adds the disabled-by-default `features.context_management.experimental_mode` configuration. When enabled for eligible ChatGPT Plus, Pro, or Pro Lite sessions using the Codex backend, it activates token-budget context, history notes, and the `new_context` tool. API-key sessions, custom providers, and temporary structured threads remain excluded. ([#42385](https://github.com/openai/codex/pull/42385))\n\n## Changelog\n\n[Full Changelog](https://github.com/openai/codex/compare/rust-v0.152.1...rust-v0.153.0)\n\n- [#41870](https://github.com/openai/codex/pull/41870) Use shared transcript collection for Guardian reviews\n- [#41879](https://github.com/openai/codex/pull/41879) Preserve Guardian review evidence across compaction\n- [#41884](https://github.com/openai/codex/pull/41884) Add pinned native voice source preparation\n- [#41890](https://github.com/openai/codex/pull/41890) Add native voice dependency build recipe\n- [#41892](https://github.com/openai/codex/pull/41892) Retain the MCP client for event streams\n- [#41893](https://github.com/openai/codex/pull/41893) Show successful TUI commands individually\n- [#41894](https://github.com/openai/codex/pull/41894) Fix Windows native voice dependency builds\n- [#41897](https://github.com/openai/codex/pull/41897) Add the voice helper lifecycle foundation\n- [#41899](https://github.com/openai/codex/pull/41899) Keep MCP event subscriptions alive after task unloading\n- [#41901](https://github.com/openai/codex/pull/41901) Load bounded context after empty wake turns\n- [#41902](https://github.com/openai/codex/pull/41902) Add installed voice host lifecycle support\n- [#41906](https://github.com/openai/codex/pull/41906) Add a manager for MCP event streams\n- [#41908](https://github.com/openai/codex/pull/41908) Avoid scanning archived rollouts when archiving threads\n- [#41909](https://github.com/openai/codex/pull/41909) Make permission transforms aware of executor path context\n- [#41911](https://github.com/openai/codex/pull/41911) Preserve TUI drafts after app-server disconnects\n- [#41912](https://github.com/openai/codex/pull/41912) Persist response token usage in rollout history\n- [#41913](https://github.com/openai/codex/pull/41913) Preserve TUI status timing when the status row is hidden\n- [#41915](https://github.com/openai/codex/pull/41915) Move the config schema generator into a dedicated crate\n- [#41916](https://github.com/openai/codex/pull/41916) Reconnect TUI app-server sessions automatically\n- [#41917](https://github.com/openai/codex/pull/41917) Open the agents overview from an empty composer\n- [#41918](https://github.com/openai/codex/pull/41918) Restore agent navigation after TUI reconnects\n- [#41923](https://github.com/openai/codex/pull/41923) Allow per-call sideband endpoints for existing realtime calls\n- [#41924](https://github.com/openai/codex/pull/41924) Record realtime conversation history in Core\n- [#41925](https://github.com/openai/codex/pull/41925) Test repository-wide Rust formatter discovery\n- [#41928](https://githu",
+   "raters": {
+    "claude": {
+     "score": 5.5,
+     "reason": "Codex CLI 常规功能版本，增量改进"
+    },
+    "codex_gpt56sol": {
+     "score": 7.1,
+     "reason": "插件市场管理与会话恢复等，显著完善编码代理工作流。"
+    }
+   },
+   "gold": 6.3,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 5.5,
+    "reason": "Codex CLI 常规增量更新，无新范式或重大能力面，属琐碎修补。"
+   }
+  },
+  {
+   "n": 6,
+   "id": "x_openai_2094847603234251097",
+   "source_id": "x_openai",
+   "stratum": "official",
+   "title": "RT @feitong_yang: Another Update: in openai, we ARE continuously working on Pris",
+   "content_type": "social_post",
+   "publish_date": "2026-09-01T17:59:23.000Z",
+   "body": "RT @feitong_yang: Another Update: in openai, we ARE continuously working on Prism, the scientific/technical writing surface. It is owned by…",
+   "raters": {
+    "claude": {
+     "score": 3.0,
+     "reason": "截断转推，Prism 进展只有一句话"
+    },
+    "codex_gpt56sol": {
+     "score": 3.2,
+     "reason": "仅确认Prism持续开发，未发布新功能或明确里程碑。"
+    }
+   },
+   "gold": 3.1,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 1.5,
+    "reason": "信息量稀薄，无实质内容，营销或社交转述。"
+   }
+  },
+  {
+   "n": 7,
+   "id": "web_ithome_ai_5bddc1fca7f405df",
+   "source_id": "web_ithome_ai",
+   "stratum": "media",
+   "title": "软银旗下 SB Energy 加速 IPO 进程，数据中心积压合同超 4000 亿美元",
+   "content_type": "web_article",
+   "publish_date": "2026-08-31T07:40:38.083000+00:00",
+   "body": "[IT之家](https://www.ithome.com/) 8 月 31 日消息，《华尔街日报》当地时间 30 日报道称，SoftBank（软银）旗下数据中心与能源基础设施企业 **SB Energy 预计最快本周公布 IPO 申请**、9 月启动首次公开募股，目标筹集 50~70 亿美元（IT之家注：现汇率约合 336.79 ~ 471.5 亿元人民币）。\n\n外媒审查该企业 IPO 草案文件后表示，尽管 SB Energy 尚未从数据中心项目中取得收入，但其**已在该领域获得了超 4,000 亿美元**（现汇率约合 2.69 万亿元人民币）**的积压合同**。\n\n**SB Energy 与客户签订了近 9GW 的计算容量合同**，**在建规模则是 800MW**。母公司软银和 OpenAI 是 SB Energy 三座数据中心站点的计划租户，第四座得州 Scurry 数据中心尚无客户。\n\n![](https://img.ithome.com/newsuploadfiles/2026/8/2a23507e-dbb8-41b7-86c6-99665531e2f4.png)\n\n说到 OpenAI，那就不能不提软银系与这家人工智能龙头初创企业的复杂关系：SB Energy 母公司软银是 OpenAI 的重要投资者，OpenAI 是 SB Energy 的关键客户（SB Energy 将 OpenAI 可能的财务状况恶化列为重大经营风险）与投资者，SB Energy 也是 OpenAI 的客户。\n\nOpenAI 今年早些时候向 SB Energy 投资了 5 亿美元，这对应 IPO 后个位数百分比的股份。SB Energy 还向 OpenAI 授予了当前价值约 55 亿美元的认股凭证，将根据 IPO 后市值变化分批兑现。SB Energy 已承诺到 2028 年至少购买价值 5000 万美元的 OpenAI 软件和服务。\n\n此外，NVIDIA（英伟达）也持有 SB Energy 的股权。NVIDIA 此前通过两笔私募交易向 SB Energy 投资了 30 亿美元，其中一笔交易允许英伟达以较公开发行价低 10% 的价格收购股份。\n\n**相关阅读：**\n\n- 《[消息称英伟达拟向软银旗下 SB Energy 投资 30 亿美元，助 OpenAI 建设数据中心](https://www.ithome.com/0/990/237.htm)》",
+   "raters": {
+    "claude": {
+     "score": 5.5,
+     "reason": "OpenAI 算力供应链 IPO，二手财经消息"
+    },
+    "codex_gpt56sol": {
+     "score": 7.0,
+     "reason": "超大算力合同与大型IPO折射AI基础设施扩张。"
+    }
+   },
+   "gold": 6.25,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 7.5,
+    "reason": "数据中心与能源基建企业IPO，涉及OpenAI、英伟达，行业影响面广，属重大业界新闻。"
+   }
+  },
+  {
+   "n": 8,
+   "id": "rss_hn_ai_cbf678fb475594b9",
+   "source_id": "rss_hn_ai",
+   "stratum": "community",
+   "title": "Open AI X post on Astra",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-03T15:03:40+00:00",
+   "body": "Article URL:\nhttps://twitter.com/OpenAI/status/2095527557924082061\nComments URL:\nhttps://news.ycombinator.com/item?id=49551018\nPoints: 12\n# Comments: 4",
+   "raters": {
+    "claude": {
+     "score": 4.0,
+     "reason": "仅链接无正文（按标题评），指向 Astra 推文，12 分冷帖"
+    },
+    "codex_gpt56sol": {
+     "score": 4.6,
+     "reason": "仅据标题，Astra官方帖所述事件与细节均不明确。"
+    }
+   },
+   "gold": 4.3,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 1.5,
+    "reason": "信息量稀薄，仅标题提及Astra，无实质内容，属边角消息。"
+   }
+  },
+  {
+   "n": 9,
+   "id": "web_huggingface_daily_papers_cc55edd70f248c94",
+   "source_id": "web_huggingface_daily_papers",
+   "stratum": "paper",
+   "title": "GGSS: Geodesic-Gated Spherical Steering for Inference-Time Debiasing of Generative Vision-Language Models",
+   "content_type": "web_article",
+   "publish_date": "2026-08-26T04:58:40+00:00",
+   "body": "Generative vision-language models (VLMs) are increasingly used in human-centered settings, yet they can produce demographically biased outputs even when images differ only in controlled attributes such as perceived race or gender. However, existing inference-time debiasers were largely designed for static embeddings or CLIP-like models rather than generative VLMs. We propose GGSS---Geodesic-Gated Spherical Steering---a norm-preserving intervention that discovers a counterfactual bias subspace on the unit hypersphere, steers visual tokens along geodesic arcs, and uses an adaptive gate to focus correction on tokens that carry stronger demographic signal. We evaluate four generative VLMs against ten adapted inference-time debiasing baselines and prompt-based mitigation under a single operating-point protocol across categorical, pairwise, and occupation-gender bias tests, while also measuring general visual-language capability. GGSS achieves the lowest average bias on all four models, significant on three of four backbones under paired permutation tests, while preserving MMStar accuracy within +/- 0.6 p.p. of the unsteered baseline. Code is available at https://github.com/dukesun99/GGSS.",
+   "raters": {
+    "claude": {
+     "score": 4.0,
+     "reason": "VLM 去偏小众方法论文，常规研究"
+    },
+    "codex_gpt56sol": {
+     "score": 6.7,
+     "reason": "推理期球面引导降低VLM偏见，四模型验证且少损精度。"
+    }
+   },
+   "gold": 5.35,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 5.5,
+    "reason": "常规研究论文，非里程碑，影响面有限。"
+   }
+  },
+  {
+   "n": 10,
+   "id": "rss_hn_ai_4e0ac5d95ab1a987",
+   "source_id": "rss_hn_ai",
+   "stratum": "community",
+   "title": "Meta wanted to reduce teams by 60% because of AI",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-03T17:18:25+00:00",
+   "body": "Article URL:\nhttps://newsletter.pragmaticengineer.com/p/the-pulse-meta-wanted-to-reduce-teams\nComments URL:\nhttps://news.ycombinator.com/item?id=49553438\nPoints: 14\n# Comments: 5",
+   "raters": {
+    "claude": {
+     "score": 4.5,
+     "reason": "仅链接无正文（按标题评），Meta 裁员传闻二手转述"
+    },
+    "codex_gpt56sol": {
+     "score": 5.6,
+     "reason": "仅据标题，Meta拟借AI缩编六成，但未见执行细节。"
+    }
+   },
+   "gold": 5.05,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 1.0,
+    "reason": "标题耸动但正文为空，无实质信息，无法评估重要性。"
+   }
+  },
+  {
+   "n": 11,
+   "id": "web_qbitai_98efbd229c5a250b",
+   "source_id": "web_qbitai",
+   "stratum": "media",
+   "title": "新版GPT Image 2.5已经能伪造GPT-6发布会了",
+   "content_type": "web_article",
+   "publish_date": "2026-09-03T23:00:16.822942+00:00",
+   "body": "> 编辑部 发自 凹非寺\n> 量子位 | 公众号 QbitAI\n\nGPT-6发布会，主持人居然是赛博义父Tibo？\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/8457179a918b76342289676505c73148.png)\n\n其实这是新版生图模型**GPT Image 2.5**伪造的。\n\n虽然还没正式发布，但已经有人收到ChatGPT中新的弹窗提示。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/db9e872720fe71a49899bbe2e2c00011.png)\n\n与之前猜测叫GPT Image 2.1不同，版本号直接来到2.5，看来升级幅度不小。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/35e1660cd31e4113b7da66667a343e12.png)\n\n那么，**GPT Image 2.5**有多强？\n\n根据目传播的测试结果，大概是可以直接伪造GPT-6官方发布会以及奥特曼全员信的程度。。。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/8432c66eb8e4e291e6c85ed4089ffd89.png)\n\n生成一张奥特曼发推的截图，除了头像不对之外，文字也是毫无破绽。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/fb66f5aebb399340ba33258abfed0113.png)\n\n提示词：用手机拍摄一张写实风格的手写文章照片，文章是用铅笔写在8.5×11英寸的横格纸上的，字迹要像爱因斯坦的笔迹，内容是关于世界货币的历史。确保字迹有明显的爱因斯坦式变化。在右上角添加一点咖啡渍。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/b7a7c581b2b93b7661549ba1a3a45725.png)\n\n那么爱因斯坦笔迹什么样呢，放一张照片对比一下。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/f03a9d80fe387738e4daa39a2fbae665.png)\n\n在LMArena竞技场上，代号luna-lisa-alpha的匿名模型被猜测正是新版GPT Image，经过一段时间测试，已发现如下特点：\n\n- **生成速度超快**\n- **照片更加逼真**\n- **即使生成多张同一角色的图像，脸部也不易变形**\n- **图像中嵌入的文字也不易变形**\n- **改进了GPT Image 2的噪点问题**\n\n你看这树可真树啊，这房子可真房子啊，这羊可真羊啊，这景深可真深啊。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/dcc62f5be342998d61243bbce1003f98.png)\n\n与GPT Image 2直接对比更直观。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/504f6e0e439e4fd33027645f676be3a0.png)\n\nChatGPT网页版一度将生图功能提高到主目录第二位，仅次于“新聊天”（现在又隐藏了）。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/30912e98474819d3ac92ef20c545b362.png)\n\n看来生图也将是GPT-6时代的一个主打功能。\n\n参考链接：\n[1]https://x.com/chetaslua/status/2095556181012128005?s=20\n[2]https://x.com/choblin29/status/2095559067569967357\n[3]https://x.com/btibor91/status/2095184112646844702?s=20",
+   "raters": {
+    "claude": {
+     "score": 5.5,
+     "reason": "未发布生图模型的泄露测试，媒体拼凑"
+    },
+    "codex_gpt56sol": {
+     "score": 5.4,
+     "reason": "未正式发布且身份靠猜测，虽显示生图能力明显提升。"
+    }
+   },
+   "gold": 5.45,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 7.5,
+    "reason": "OpenAI 生图模型新版本泄露，能力显著提升，属风向标厂商功能更新，影响面广。"
+   }
+  },
+  {
+   "n": 12,
+   "id": "docs_claude_code_changelog_d71ccfd2dafc2359",
+   "source_id": "docs_claude_code_changelog",
+   "stratum": "official",
+   "title": "Claude Code 2.1.261",
+   "content_type": "web_article",
+   "publish_date": "2026-09-04T00:00:00+00:00",
+   "body": "Added an “Organization policy” line to `/status` and `claude doctor` that says why your organization’s policy could not be loaded, such as a proxy not passing the endpoint through\n\nAdded `bashOutputMaxChars` and `taskOutputMaxChars` settings to raise how much command and background-task output Claude receives inline before it is saved to a file, up to 128K characters\n\nAdded `--append-subagent-system-prompt-file` to read the subagent system prompt from a file, for prompts too large to pass on the command line\n\nAdded `/skill-doctor` to show which loaded skills go unused and what they cost in context, so you can prune them\n\nFixed typed or pasted characters occasionally landing out of order or being dropped during fast input or key repeat\n\nFixed `/add-dir <subdirectory>` printing a false “couldn’t be resolved” error when the working directory is on a `/net` automount\n\nFixed the Bedrock setup wizard hanging when AWS or an AWS credential helper never responds (it now times out with a clear error), and its model checks failing behind a TLS-inspecting proxy\n\nFixed cloud sessions discarding a plugin synced from claude.ai when managed settings force-enable it in `enabledPlugins`, then falling back to a marketplace clone that could fail\n\nFixed being unable to delete the character immediately before an inline `[Image #N]` chip in the prompt input\n\nFixed resuming a session losing hook output and other context around parallel tool calls, which changed the resumed request\n\nFixed Remote Control showing a stale permission mode when a phone, browser, or claude.ai app attaches to a terminal session or after the mode changes in the terminal\n\nFixed Remote Control sessions showing as still working (stuck spinner and Stop button) after stopping a turn from a connected phone or browser, or after a local slash command like `/clear`\n\nFixed SDK and cloud sessions ignoring a Stop or interrupt sent just after the first prompt, before the turn had started; the turn now stops instead of running to completion\n\nFixed Remote Control uploading a session pulled with `/teleport` into the connected session, which appeared appended to the original on phone and web\n\nFixed Remote Control’s inbound event stream failing behind TLS-inspecting corporate proxies on native Windows\n\nFixed Remote Control sessions showing the default effort level on claude.ai when the effort comes from settings\n\nFixed `gcpAuthRefresh` opening a browser at startup when the Google credential check was slow, even though the credential was still valid\n\nFixed claude.ai connectors staying absent for the whole session when the startup connector fetch timed out — the CLI now retries in the background\n\nFixed sustained high CPU usage when a background agent could not be resumed and its wake-up was retried in a tight loop\n\nFixed feature flags gated to a newer version occasionally applying to an older Claude Code version running on the same machine\n\nFixed `/usage` and the VS Code usage panel dropping a model-specific weekly limit row when the usage endpoint is rate limited or when opened right after startup\n\nFixed `claude -p --resume <file>` adopting a malformed session ID recorded in the transcript; it now resumes under a fresh session ID instead\n\nFixed the terminal progress indicator (iTerm2, Ghostty, ConEmu) showing the session as finished while a background workflow or agent was still running\n\nFixed a rare layout glitch where a box could render with the wrong height after its container switched between row and column direction\n\nFixed Claude apps gateway client IP when a trusted proxy appends a port to `X-Forwarded-For`; with an access list set, an unreadable entry now gets 403\n\nFixed Claude apps gateway telling Claude Desktop to export OpenTelemetry as JSON even when the terminal CLI uses protobuf, so protobuf-only collectors rejected Desktop’s data\n\nFixed Desktop and web showing a session as busy while it only watches an artifact for updates\n\nFixed Claude in Chrome `file_upload` failing with “paths: expected array, received undefined” in local Cowork sessions run from the Claude Desktop app\n\nFixed `SendMessage` to an offline Remote Control session on another machine reading as delivered; the result now says delivery is queued until that machine reconnects\n\nFixed plugin install hints from CLIs run in background Bash commands: they are now detected, and the raw `<claude-code-hint>` tag no longer leaks into the conversation\n\nFixed in-process agent-team teammates re-sending their first-turn tool and skill announcements on the second turn, which changed the request prefix and missed the prompt cache\n\nImproved the `/model` picker and the VS Code model pill to show a model’s name instead of its raw Bedrock, Vertex AI, or LLM gateway ID when Claude Code recognizes it\n\nImproved startup on Google Vertex AI when `GOOGLE_APPLICATION_CREDENTIALS` is set: API client creation no longer re-runs Google Cloud project discovery or spawns extra `gcloud` processes\n\nImproved streaming performance: already-rendered blocks are no longer re-checked by layout on each update\n\nImproved the dangerous-`rm` safety prompt to also catch `rm -rf` on positional parameters and inside double-quoted `sh -c` scripts\n\nImproved handling when the API sends no response headers: the retry now waits up to `API_TIMEOUT_MS` (10 minutes by default) instead of another 3 minutes, and the messages say what to change\n\nChanged a Claude apps gateway 403 on the managed settings load (at startup or after `/login`) to say Claude Code may not be enabled for the organization, instead of advising a new sign-in\n\nChanged machines whose managed settings pin `forceLoginMethod: \"gateway\"` to ignore a leftover API key or claude.ai login and ask for `/login`; Bedrock, Vertex AI, and Foundry sessions are unaffected\n\nChanged auto mode to treat a link that packs content into a public diagram renderer’s URL as an upload to that site: no longer auto-approved unless you asked for it\n\nChanged the prompt’s word-editing keys to match ",
+   "raters": {
+    "claude": {
+     "score": 5.0,
+     "reason": "Claude Code 常规 changelog，小设置与修复"
+    },
+    "codex_gpt56sol": {
+     "score": 7.3,
+     "reason": "技能诊断与128K工具输出增强编码代理可控性。"
+    }
+   },
+   "gold": 6.15,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 5.5,
+    "reason": "Claude Code 常规版本更新，以修复和细节改进为主，无新范式或重大能力，属增量维护。"
+   }
+  },
+  {
+   "n": 13,
+   "id": "rss_hn_ai_4ebe02679201b869",
+   "source_id": "rss_hn_ai",
+   "stratum": "community",
+   "title": "Pause AI Development Now",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-03T17:34:48+00:00",
+   "body": "Article URL:\nhttps://twitter.com/BernieSanders/status/2095542398084415952\nComments URL:\nhttps://news.ycombinator.com/item?id=49553675\nPoints: 12\n# Comments: 7",
+   "raters": {
+    "claude": {
+     "score": 3.5,
+     "reason": "政客呼吁暂停 AI 推文，仅链接，讨论少"
+    },
+    "codex_gpt56sol": {
+     "score": 4.3,
+     "reason": "仅据标题，暂停AI开发只是政治倡议，尚无政策行动。"
+    }
+   },
+   "gold": 3.9,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 1.5,
+    "reason": "内容为一条呼吁暂停AI发展的简短推文，无实质新闻信息，属边角消息。"
+   }
+  },
+  {
+   "n": 14,
+   "id": "web_ithome_ai_1bd1769d57381d6a",
+   "source_id": "web_ithome_ai",
+   "stratum": "media",
+   "title": "研究发现：老年群体更看重 AI 陪伴聊天机器人的真实感",
+   "content_type": "web_article",
+   "publish_date": "2026-09-02T12:56:02.713000+00:00",
+   "body": "[IT之家](https://www.ithome.com/) 9 月 2 日消息，老年时期的孤独并不只是情感上的负担。研究估计，新加坡 60 岁及以上人群中，有 17% 至 47% 处于社会孤立状态，接近 8% 的人感到孤独。令人担忧的是，这类状况带来的健康危害，甚至被认为相当于每天吸 15 支烟。\n\n![](https://img.ithome.com/newsuploadfiles/2026/9/80fb6bcf-d493-487c-ad70-bc2adf41d86c.jpg?x-bce-process=image/format,f_auto)\n\nIT之家注意到，随着人工智能（AI）聊天机器人变得越来越智能、对话能力越来越强，它们正被视为一种可规模化推广、成本较低的陪伴方式，能够为人际关系提供补充。那么，老年人究竟有多愿意接受 AI 聊天机器人？\n\n为了回答这一问题，新加坡科技设计大学（SUTD）的研究人员邀请了 140 名年龄在 60 至 89 岁之间、独立居住在社区中的老年人，与研究团队开发的社交聊天机器人 Ami Chat 进行互动。随后，研究人员调查了参与者对于在日常生活中使用社交聊天机器人的态度和意愿。\n\n这项题为《影响老年人使用社交聊天机器人意愿的因素：考察技术接受度、拟人化、真实性和人工智能社交互动》的研究发表于《老龄化创新》（Innovation in Aging）期刊，重点探讨了设计、人工智能和技术在这一领域的应用。\n\n领导该研究团队的姚伟群（Yow Wei Quin，音译）教授表示：“我们注意到，越来越多的老年人开始使用 AI 聊天机器人，但关于哪些因素会推动这一群体接受这项技术，尤其是将其作为陪伴工具使用，目前仍缺乏大量实证研究。”\n\n“我们开发 Ami Chat，就是为了让它更符合老年人的使用需求，更适合他们操作，同时也更贴近新加坡当地用户的生活环境。”\n\nAmi Chat 由大语言模型驱动，用户无需打字，可以直接与它进行语音交流。大尺寸按钮和简单的手势操作降低了使用门槛，而它的卡通形象则是一名热情亲切的新加坡女性，回答通常采用简短、口语化的表达方式。\n\n在研究中，研究人员在“老年人技术接受模型”（STAM）的基础上进行了扩展。该模型认为，用户是否愿意接受新技术，与感知易用性、健康状况等因素有关。研究团队在此基础上又加入了三个与社会关系相关的指标：拟人化程度，即聊天机器人看起来有多像人；真实性，即它给人的感觉是否真诚、反应是否自然；以及 AI 社交互动强度（AISI），用于衡量人与 AI 的互动在多大程度上接近与朋友聊天。\n\n研究结果显示，STAM 中的因素可以解释老年人使用聊天机器人意愿差异的 26%，而与社会关系相关的三个指标又进一步解释了 27%。\n\n当参与者认为自己有能力使用这项技术，并且能够获得足够的支持；当聊天机器人给人的感觉更加真实；以及当双方的互动更具有相互回应和亲密交流的特点时，他们更愿意使用 Ami Chat。\n\n不过，聊天机器人“像不像人”却呈现出了不同的结果。\n\n在将互动的亲密程度纳入考量后，**那些认为聊天机器人更像真人的参与者，反而表现出更低的使用意愿。**\n\n姚伟群表示：“善于进行社交互动，并不等于一定要像真人。人们可能希望聊天机器人能够很好地与自己交流，但并不希望聊天机器人假装自己是一个人。”\n\n健康状况对老年人是否愿意使用聊天机器人也产生了一个出乎意料的影响。\n\n对自身健康状况评价较低的老年人，反而表现出更强的使用意愿。这一现象主要与注意力难以集中以及生活满意度较低有关。\n\n她表示：“那些对自己的生活质量不太满意的人，可能更愿意尝试能够提供交流或支持的新技术。”\n\n这些研究结果也为开发者提供了实际参考：聊天机器人应该能够记住过去的对话，并根据用户的偏好进行调整；操作界面应尽可能简单；**同时不应一味追求让 AI 看起来越来越像真人**。\n\n研究人员认为，理想的系统应该能够自然地进行交流，并提供良好的回应，但同时仍让用户清楚地知道，自己面对的是一个聊天机器人。\n\n此外，如何向老年人介绍和推广这项技术同样十分重要。\n\n姚伟群表示：“在推广初期，应提供实际操作方面的技术支持、清晰的教程以及便于理解和获取的使用指导，让用户对自己操作这项技术的能力充满信心。”\n\n“这些发现对于开发有效、可规模化推广的 AI 陪伴工具至关重要。这类工具有望帮助缓解孤独问题，并改善老龄化人口的生活质量和福祉。”\n\n研究团队也承认，这项研究只是在受控环境中，通过一次互动了解参与者的初步印象，而“使用意愿”只能作为未来长期使用情况的参考指标，并不能证明用户一定会持续使用这类产品。\n\n在这项研究发表后，Ami Chat 已更名为 Ami-Go。研究团队下一阶段将跟踪老年人在日常生活环境中长期使用 Ami-Go 的情况。\n\n目前，Ami-Go 还已与姚伟群实验室开发的双语认知训练项目 Ami-Able 完成整合，形成一个新的平台，该平台目前已接近完成第一阶段测试。",
+   "raters": {
+    "claude": {
+     "score": 3.5,
+     "reason": "老年人接受度研究，与从业者关联弱"
+    },
+    "codex_gpt56sol": {
+     "score": 5.3,
+     "reason": "实证揭示老人重真实互动而非拟人外观，但样本较小。"
+    }
+   },
+   "gold": 4.4,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 5.5,
+    "reason": "研究结论对AI陪伴产品设计有参考价值，但影响面有限，非行业级事件。"
+   }
+  },
+  {
+   "n": 15,
+   "id": "rss_the_decoder_8bc5fd64de102e9c",
+   "source_id": "rss_the_decoder",
+   "stratum": "media",
+   "title": "Seven minutes with a chatbot beat a fact sheet at reducing conspiracy beliefs in two experiments",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-05T12:39:12+00:00",
+   "body": "A brief conversation with a language model can reduce conspiracy beliefs right after a crisis, even when hard evidence is thin on the ground. The effect carries over to new events weeks later, according to researchers.\n\nWithin a week of the assassination attempt on Donald Trump in July 2024, about half of a representative US sample had heard the event was staged. Eleven percent believed it. After the murder of far-right activist Charlie Kirk in September 2025, theories about Mossad involvement, a \"false flag\" operation, and a government cover-up spread within days.\n\nA new study from researchers at Carnegie Mellon, MIT, and Cornell tested whether short conversations with a large language model could weaken those narratives during that exact window. For both events, the answer was yes, and the effect extended beyond the event itself.\n\nTwo online experiments ran in the days after each attack\n\nThe researchers recruited US adults through a survey platform and used GPT-4o, now more than two years old, to filter for participants who expressed conspiracy beliefs about the event. The Trump experiment kept 472 participants, the Kirk experiment 1,035.\n\nAfter measuring baseline beliefs, participants were randomly assigned to one of three conditions. One group had at least five rounds of back-and-forth with Google Gemini (version 1.5 from February 2024 in the first experiment, version 2.5 from June 2025 in the second), with the model told to reduce conspiracy beliefs through evidence-based conversation. A second group got a static fact sheet with source citations. The third had an irrelevant control chat about whether cats or dogs make better companions.\n\nBoth events happened after the training cutoff of the models used, so neither could draw on internal knowledge. The researchers built a curated fact base directly into the system prompt, split into confirmed facts, claims already debunked, and questions explicitly marked as open. In the Kirk experiment, web search was also allowed, but only to verify factual claims.\n\nThe dialogue beat a static fact sheet\n\nThe conversations averaged about seven minutes and reduced belief in the participant's own conspiracy theory in both experiments, against both the control condition and the fact sheet. Agreement with statements about a \"cover-up or conspiracy\" and \"hidden or undisclosed factors\" dropped too.\n\n[caption id=\"attachment_60229\" align=\"aligncenter\" width=\"1800\"] In both experiments, belief in the participant's own conspiracy theory dropped more after the LLM dialogue than after reading a static fact sheet. | Image: Costello et al.[/caption]\n\nTrust in the official explanation didn't increase in the Trump experiment. The authors think that's because no clear official explanation existed at the time. All anyone knew was that security had failed, and the shooter's motive was still unclear even when the study was written up.\n\nIn the Kirk experiment, where authorities had already shared details about the perpetrator, trust in the official explanation rose slightly compared to the control chat. The difference compared to the fact sheet wasn't significant. The Kirk dialogue also had no measurable effect on support for political violence.\n\nThe model shifted tactics based on how much was known\n\nTo figure out how the model persuaded people, the researchers broke its responses into individual sentences. The model clearly adapted to the available evidence.\n\n[caption id=\"attachment_60230\" align=\"aligncenter\" width=\"1800\"] For the Trump assassination attempt, the model leaned on epistemic humility, source criticism, and Socratic questioning, while it relied more on factual arguments for classic conspiracy theories. | Image: Costello et al.[/caption]\n\nFor the Trump attempt, where almost nothing was known about the shooter's motive or background, the model used rational persuasion less often than with classic conspiracy theories. Instead, it acknowledged the limits of its own knowledge, urged caution about jumping to conclusions, asked Socratic questions meant to make users think about their own evidence, and pointed to credible sources.\n\nFor the Kirk assassination, where more information was available, the approach looked more like what it did with classic conspiracies, with more emphasis on the societal harms of conspiratorial thinking.\n\nDebunking one event inoculated against the next\n\nThe debunking conversation spilled over into later events. Two months after the first Trump assassination attempt, another armed man was arrested on Trump's property. Participants who had gone through the debunking dialogue were less likely to believe that only a few powerful people would learn the truth or that it would be hidden from the public.\n\n[caption id=\"attachment_60231\" align=\"aligncenter\" width=\"1800\"] The effect persisted over time. Participants from the debunking group rated later events as less likely to involve a cover-up, though the difference did not hold for the Grand Blanc Township shooting. | Image: Costello et al.[/caption]\n\nTwo and a half weeks after Kirk's murder, a shooting and arson attack hit a Church of Jesus Christ of Latter-day Saints in Grand Blanc Township, Michigan. The researchers surveyed their participants again eleven days later. The main analysis found no significant direct effect for this event.\n\nA secondary analysis suggested part of the original effect was still visible in conspiracy narratives about the church attack. The transfer showed up more clearly in general conspiracy beliefs, with people who had talked to the model less likely to agree with common conspiracy narratives.\n\nIn effect, the debunking intervention worked as a kind of prebunking against future false claims. Unlike standard prebunking methods, where people are warned ahead of time and exposed to a weakened version of the misinformation, this effect happened without any advance preparation.\n\nGetting people to talk to an LLM remains the hard part\n\nThe authors stress their work is a c",
+   "raters": {
+    "claude": {
+     "score": 5.0,
+     "reason": "LLM 对话降低阴谋论信念，社会学研究有讨论度"
+    },
+    "codex_gpt56sol": {
+     "score": 6.4,
+     "reason": "两项实验显示短时模型对话可抑制阴谋信念并迁移。"
+    }
+   },
+   "gold": 5.7,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 7.5,
+    "reason": "研究有明确新意，验证LLM对话可削弱新发阴谋论信念，影响面广，但非行业级突破。"
+   }
+  },
+  {
+   "n": 16,
+   "id": "github_opencode_releases_481faec910c00914",
+   "source_id": "github_opencode_releases",
+   "stratum": "official",
+   "title": "anomalyco/opencode v1.18.28",
+   "content_type": "github_release",
+   "publish_date": "2026-09-04T15:38:23Z",
+   "body": "## Core\n\n### Improvements\n\n- Send the session ID as GitHub Copilot's interaction header to improve request tracking across a session.\n\n## Desktop\n\n### Bugfixes\n\n- Use the desktop client ID during OpenCode account device authentication.\n- Increase the open-in app icon size for better visibility.\n\n**Thank you to 1 community contributor:**\n- @MVS-source:\n  - docs: add Eden AI to the providers list (#43386)\n",
+   "raters": {
+    "claude": {
+     "score": 2.5,
+     "reason": "opencode 补丁版本，琐碎修补"
+    },
+    "codex_gpt56sol": {
+     "score": 3.6,
+     "reason": "仅含认证与图标等修复，对核心代理能力影响很小。"
+    }
+   },
+   "gold": 3.05,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 3.0,
+    "reason": "常规小版本更新，仅含请求头优化与桌面端小修复，影响面有限。"
+   }
+  },
+  {
+   "n": 17,
+   "id": "x_zai_org_2094443092560466028",
+   "source_id": "x_zai_org",
+   "stratum": "official",
+   "title": "RT @ZixuanLi_: ZCode users will continue to enjoy a 150% usage allowance on GLM ",
+   "content_type": "social_post",
+   "publish_date": "2026-08-31T15:12:00.000Z",
+   "body": "RT @ZixuanLi_: ZCode users will continue to enjoy a 150% usage allowance on GLM Coding Plan.",
+   "raters": {
+    "claude": {
+     "score": 2.5,
+     "reason": "套餐额度促销转推，营销性质"
+    },
+    "codex_gpt56sol": {
+     "score": 2.1,
+     "reason": "只是编码套餐额度促销，无模型或产品能力变化。"
+    }
+   },
+   "gold": 2.3,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 2.0,
+    "reason": "官方账号转发的简短消息，信息量稀薄，仅涉及用户权益延续，无实质新闻价值。"
+   }
+  },
+  {
+   "n": 18,
+   "id": "rss_microsoft_ai_models_6314a6601cd98ebe",
+   "source_id": "rss_microsoft_ai_models",
+   "stratum": "official",
+   "title": "MAI-Transcribe-2 is the fastest, most accurate and cheapest speech recognition model in the world",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-03T14:00:00+00:00",
+   "body": "Introducing MAI‑Transcribe‑2. It’s not only *our* most capable transcription model yet, but the most capable and efficient amongst our competitors.\n\nWith new features like diarization, configurable transcription styles, and word-level timestamps, MAI-Transcribe-2 beats other leading models like Gemini 3.5 Transcribe, GPT-Transcribe, Whisper V3-Large, and ScribeV2, while also handling a broader range of real‑world audio.\n\nOur model ranks first on the FLEURS benchmark across 60 languages with an average Word-Error-Rate of 5.2%, defines the Pareto Frontier for accuracy and latency on Artificial Analysis, and ranks second on the Artificial Analysis Word-Error-Rate leaderboard, continuing the hill-climbing from previous versions.\n\nAll this performance also comes at the best price on the market, just $0.10 per hour of audio.\n\n**Solve more challenges with a single model**\n\nFrom clinical note-taking to legal documentation, and from accessibility to closed captioning, MAI-Transcribe-2 is designed to take on real-world applications, with:\n\n- **Faster inference with substantially lower latency**, especially for long‑form audio, with up to 10× faster processing than leading competitors.\n- **Speaker diarization** distinguishes between speakers and attributes words to the right person within a recording\n- **Word‑level timestamps** provide precise timing for every word, enabling more accurate alignment, search, navigation, and editing\n- **Keyword biasing** helps the model recognize domain-specific terminology, abbreviations, names, and other terms that can be difficult to distinguish from context alone\n- **Configurable transcription styles** give developers control over the output. The “verbatim” setting captures speech as spoken, including filler words and false starts, for compliance and analysis workloads. The “clean” setting removes fillers to produce more readable captions, notes, and published transcripts\n- **Code switching** supports conversations that naturally move between languages, including commonly blended language pairs such as Hinglish and Spanglish\n- **Automatic language identification** accurately detects the specific language being spoken without users needing to specify in advance\n- **Robust performance in noisy conditions** helps maintain transcription quality beyond controlled recording environments\n- **Accurate across 60 languages** to provide quality transcription for developers around the world\n\n**Efficiency without sacrificing accuracy**\n\nMAI‑Transcribe‑2 is incredibly efficient, leading the Artificial Analysis accuracy-latency Pareto frontier, combining leading transcription quality with market‑leading batch speed. It’s significantly faster than the latest models from major competitors, delivering a clear advantage when low‑latency transcription is critical.\n\nBased on evals run by [Artificial Analysis](https://artificialanalysis.ai/speech-to-text/non-streaming#speed-tabs), the model is 10x faster than OpenAI’s GPT‑Transcribe, 7x faster than ElevenLabs’ Scribe v2, and 5x faster than Gemini 3.5 Transcribe while delivering higher accuracy.\n\n**Consistent quality across 60 languages**\n\nMAI‑Transcribe‑2 is accurate across **more languages than any other model**.\n\nOur evaluations on the public, multilingual benchmark FLEURS show that it maintains a consistently high accuracy bar across all tested. Developers needing to transcribe across multiple languages can choose one single model, reducing complexity and even potentially saving GPU utilization issues.\n\n**High performance at the best price**\n\nHighly efficient means highly cost-effective. MAI-Transcribe-2’s speed and throughput allow us to offer the most competitive price in the market, helping developers process more audio without compromising transcription quality. At launch, MAI-Transcribe-2 will be priced at $0.10 per hour as a limited-time offer until the end of the year.\n\n**Try MAI-Transcribe-2 today**\n\nMAI-Transcribe-2’s powerful capabilities are available to demo today, through [Microsoft Foundry,](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-transcribe?pivots=programming-language-rest) [MAI Playground](https://playground.microsoft.ai/?model=mai-transcribe-2) and [Open Router](https://openrouter.ai/microsoft/mai-transcribe-2).",
+   "raters": {
+    "claude": {
+     "score": 7.0,
+     "reason": "微软官方发布语音识别新模型，称多榜第一且价格最低"
+    },
+    "codex_gpt56sol": {
+     "score": 7.8,
+     "reason": "新语音模型兼具多语种精度、低延迟和低价，应用面广。"
+    }
+   },
+   "gold": 7.4,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 7.5,
+    "reason": "微软发布旗舰语音识别模型，性能与价格优势明确，属头部厂商核心模型发布。"
+   }
+  },
+  {
+   "n": 19,
+   "id": "rss_hn_ai_fd1f7bd9a58524e0",
+   "source_id": "rss_hn_ai",
+   "stratum": "community",
+   "title": "The safest job from AI may be writing",
+   "content_type": "rss_article",
+   "publish_date": "2026-08-31T18:12:20+00:00",
+   "body": "Article URL:\nhttp://muratbuffalo.blogspot.com/2026/08/the-safest-job-from-ai-may-be-writing.html\nComments URL:\nhttps://news.ycombinator.com/item?id=49512856\nPoints: 77\n# Comments: 119",
+   "raters": {
+    "claude": {
+     "score": 4.0,
+     "reason": "个人观点博客，仅链接，讨论量中等"
+    },
+    "codex_gpt56sol": {
+     "score": 4.4,
+     "reason": "仅据标题，是AI与写作职业的个人观点，缺少新证据。"
+    }
+   },
+   "gold": 4.2,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 3.5,
+    "reason": "观点文章，讨论AI对写作职业的影响，缺乏实质新闻或技术细节，影响力有限。"
+   }
+  },
+  {
+   "n": 20,
+   "id": "web_qbitai_f21e55c629b36960",
+   "source_id": "web_qbitai",
+   "stratum": "media",
+   "title": "阿里更新旗舰模型Qwen3.8-Max，前端编程能力跃居全球第一",
+   "content_type": "web_article",
+   "publish_date": "2026-09-02T07:00:20.379539+00:00",
+   "body": "9月2日，阿里更新旗舰模型Qwen3.8-Max，性能较旧版本显著提升。在针对编程（Coding）和专业办公（Cowork）进行专项后训练后，Qwen3.8-Max新版本整体性能增强。在聚焦前端编程能力（WebDev）的全球权威三方榜单CodeArena中，提升22分至1691分，领先Claude Opus5、Kimi K3等一众模型，位居总榜第一。同时，CodeArena更新的模型性价比榜单（帕累托前沿）显示，Qwen3.8-Max新版本每百万Tokens综合平均仅5美元，直接“斩杀”所有价格大于5美元的其他模型。据了解，Qwen3.8-Max是阿里千问迄今最强大的大语言模型，总参数达2.4万亿，支持100万上下文Tokens；更新后的Qwen3.8-Max涌现出更强的智能体编程能力，更适合企业真实复杂任务、科研、长周期任务等。目前，Qwen3.8-Max新模型已上线千问AI平台对外提供API服务，千问办公、Qoder、千问APP均第一时间接入。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/4b447a162c5ff5d7d193dc4851318164.jpeg)",
+   "raters": {
+    "claude": {
+     "score": 7.5,
+     "reason": "阿里旗舰 Qwen3.8-Max 更新登顶 CodeArena，媒体转述官方发布"
+    },
+    "codex_gpt56sol": {
+     "score": 8.3,
+     "reason": "旗舰模型强化编程与办公并上线API，第三方榜单居首。"
+    }
+   },
+   "gold": 7.9,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 8.5,
+    "reason": "头部厂商旗舰模型重大版本更新，前端编程能力登顶权威榜单，影响面广。"
+   }
+  },
+  {
+   "n": 21,
+   "id": "x_sama_2096707767260311594",
+   "source_id": "x_sama",
+   "stratum": "official",
+   "title": "RT @kliu128: Today we're releasing data on models accelerating research at OpenA",
+   "content_type": "social_post",
+   "publish_date": "2026-09-06T21:11:01.000Z",
+   "body": "RT @kliu128: Today we're releasing data on models accelerating research at OpenAI. \n\nRecursive self-improvement could be the most important…",
+   "raters": {
+    "claude": {
+     "score": 5.5,
+     "reason": "OpenAI 研究加速数据发布，转推截断只剩一句"
+    },
+    "codex_gpt56sol": {
+     "score": 6.5,
+     "reason": "一手预告模型加速内部研究的数据，但正文截断细节不足。"
+    }
+   },
+   "gold": 6.0,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 3.0,
+    "reason": "仅提及发布研究数据，无实质细节，信息量稀薄。"
+   }
+  },
+  {
+   "n": 22,
+   "id": "web_qbitai_555daf521fa1f05f",
+   "source_id": "web_qbitai",
+   "stratum": "media",
+   "title": "还在为大模型洗数据熬夜？蚂蚁拿下VLDB工业最佳论文，一套宽表搞定35PB语料，效率狂飙5.6倍",
+   "content_type": "web_article",
+   "publish_date": "2026-09-02T07:00:20.379539+00:00",
+   "body": "训练一个大模型之前，语料要经过解析、清洗、去重、质量评分、Token 化和样本组装。规模来到 PB 级，工程团队每天面对的不止算力账单，还有数百张表、不断增加的特征，以及少数几条就可能让整批任务重跑的异常数据。\n\n今年的 VLDB 工业赛道最佳论文，关注的正是大模型训练中非常重要，但也常被忽视的环节——数据准备。论文《OmniTable: A Unified Wide-Table System for Petabyte-Scale LLM Data Curation and Exploration》介绍了一套由蚂蚁集团研发的统一宽表系统 OmniTable。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/711736f1932b1b55cd383ff6d9fa759d.png)\n\n（图说：蚂蚁集团论文《OmniTable: A Unified Wide-Table System for Petabyte-Scale LLM Data Curation and Exploration》获评 VLDB 2026 工业赛道最佳论文，9 月 1 日在波士顿举行的大会上获颁奖项。）\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/031ab04cce956dbdf7d35985f1e1ccd6.png)\n\n论文链接：https://www.vldb.org/pvldb/vol19/p4276-fu.pdf\n\n论文披露，OmniTable 已在生产环境管理超过 35 PB、3050 亿条以上的大模型训练数据，覆盖 Web、代码、PDF 和 SFT 等数据域。在一项真实 SFT 数据准备任务中，端到端周期从约 14 天缩短到 2.5 天，手工操作步骤从 45 步降至 12 步。\n\n这个结果并非来自一台更快的机器。OmniTable 改了数据工程师组织数据和特征的方式：同一数据域在上层呈现为一张逻辑宽表，底层继续按数据规模、访问方式和计算引擎拆分；特征也从脚本中的临时计算，变成带有定义、版本、依赖和血缘的系统资产。\n\n### 一个特征，为什么会牵出 106 张表\n\n传统的大模型数据加工通常围绕物理表展开。一个数据源接入后，解析结果落一张表，清洗结果再落一张，质量分、领域标签、去重签名和安全标记继续产生新的表或中间结果。Web、代码、PDF、SFT 又各自维护一套流程。\n\n单条管道并不难理解。数据源和特征持续增加后，维护对象会迅速膨胀。新增一个质量特征，工程师需要先找到所有相关表，核对字段和版本，再为每个数据集配置任务、资源、检查点和失败处理。论文记录了一个实际案例：为了补一个特征，工程师需要在任务画布上处理 106 张表。\n\n更麻烦的是，表只保存结果，很少完整记录结果是怎样算出来的。UDF 分散在不同代码库，输入列、算子版本、运行批次和下游训练任务之间缺少稳定关联。排查一条异常样本时，工程师往往要跨表、跨脚本追溯；特征版本一旦变化，还要判断哪些历史批次需要重新计算。\n\nOmniTable 将这类问题概括为三项工程成本：数据难定位、特征难回刷、结果难追溯。系统的设计起点也很直接——让数据批次和特征列成为一等对象，把物理表退回到存储实现层。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/586947833006411749b6e5892a37ebbb.png)\n\n图 1：异构数据经过分散管道后形成彼此割裂的数据集。来源：论文 Figure 1。\n\n### “一张表”位于逻辑层\n\nOmniTable 的核心原则是“逻辑统一、物理分离”。\n\n在逻辑层，每一行代表一条可追踪的数据实体，每一列保存某个处理阶段的状态或一项衍生特征。RawData、ProcessedData 和 TrainableData 分别对应原始数据、处理中间态和训练可用形态，后面还可以继续添加质量、领域、安全、去重等特征列。\n\n两类系统字段负责把这些列对齐。_ai_unique_id_ 是全局主键，同一条数据在不同来源、处理阶段和特征列中使用同一个标识；_ai_append_name_ 记录接入批次、来源和版本。数据回刷、点查和血缘追踪都有了稳定锚点。\n\n这里的“一张表”是一份逻辑契约。生产环境按 Web、代码、PDF 和 post-SFT 划分为四张领域逻辑宽表，合计管理 35+ PB、3050 亿条以上记录；每张逻辑表的列由其 Table Family 中的多张物理表承载，并可继续按行、按列拆分。其中最大的 Web 宽表管理约 25 PB、3000 亿条以上记录，包含 800 多个逻辑列和 200 多个已注册特征。论文还在固定约 2 PB 数据的受控实验中将逻辑列扩展到 2500 列。\n\n逻辑列与物理位置的对应关系由 Catalog 保存。底层可以拆行、拆列、合并小文件、调整分区，或为高频列组建立物化视图，上层的 schema 和列语义保持不变。下游查询无需跟着每次物理调整修改。论文也给出了这项设计的代价：为热点列组建立物化结果，可能增加约 8%–15% 的存储开销。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/9955232878fee16a616312b6cd0fef0f.png)\n\n图 2：Catalog 连接数据接入、特征执行、查询导出与后台治理。来源：论文 Figure 2。\n\n### 特征计算从“画任务”改成“报目标列”\n\n统一逻辑视图解决了“数据在哪”的问题，Catalog 继续管理特征怎样产生。\n\n一个特征注册时，需要写清输入列、输出列、UDF／SQL／模型推理逻辑、版本，以及 CPU 或 GPU 的执行偏好。工程师提交回刷任务时，只需指定目标批次和目标特征。OmniTable 会查询当前计算状态，沿列级依赖 DAG 找到尚未完成的最小依赖闭包，再按拓扑顺序生成物理执行计划。\n\n例如，某个质量分依赖清洗文本，而清洗文本又依赖解析结果。旧流程需要工程师确认三段任务是否齐全，并分别定位输入输出表。OmniTable 直接检查这些列在目标批次上的状态：已经完成的结果复用，缺失的祖先列进入计划。共享输入、执行引擎相同的多个算子还能合并到一次扫描中。\n\n任务成功完成后，Catalog 原子登记“批次—特征列”的状态、版本、物理位置和列级血缘；未提交的结果不会进入稳定逻辑视图。此后再查询一列数据，系统能够回答它用了哪个输入批次、依赖哪些父列、采用哪个特征版本、由什么引擎计算，以及结果落在什么位置。\n\n过去分散在脚本、调度平台和人工记录里的信息，由此进入同一个元数据面。工程师仍然负责定义特征语义，系统接手依赖展开、执行路由、状态管理和结果提交。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/c5a53fec25f5a41fafbdd30573c160ab.png)\n\n图 3：系统解析依赖、生成计划并调度特征计算。来源：论文 Figure 3。\n\n### 少数坏样本，不再拖着整批数据重跑\n\n非结构化语料里总会混入异常编码、超长文本或损坏内容。数据达到数亿、数十亿条后，极低的异常比例也会产生大量坏样本。传统批任务常以任务为失败单位，一次 UDF OOM 或超时就可能让多 TB 计算整体退出。\n\nOmniTable 把常见 UDF 故障隔离到记录级。每次 UDF 调用带有超时和内存检查；遇到 Python OOM、超时或未捕获异常时，系统记录样本 ID、异常类型和错误摘要，将该条结果写为 NULL，其余记录继续处理。错误记录统一进入 error table，方便后续修复和补算。\n\n论文在一个 500 GB、约 6 亿条记录的特征任务上做了对照。数据中有 31,247 条异常记录，占 0.005%。开启 failover 后，除 31,247 条异常记录外，其余约 99.995% 的记录一次处理完成，耗时约 6.2 小时，无需人工介入；关闭该能力，任务直接失败。旧流程需要三轮排查、删除和重提，总耗时约 52 小时，其中约 18 小时是人工处理。\n\n记录级包装会增加约 3%–5% 的执行开销，也无法消除机器故障、网络中断等所有失败。它处理的是生产中最常见、也最浪费工程师时间的一类问题：单条异常数据拖垮整批任务。\n\n### 一次扫描多算几列，CPU 和 GPU 各做合适的工作\n\n大模型数据特征的计算形态差异很大。文本长度、字符比例和规则过滤通常适合 CPU 或 SQL；模型推理既可能运行在 CPU，也可能交给 GPU，取决于模型规模、算子画像与资源条件。OmniTable 根据用户声明、算子画像、引擎能力和集群负载，在 Spark、MaxCompute SQL 与 GPU 推理平台之间选择执行后端，并结合历史运行信息调整资源参数。\n\n路由之外，重复扫描也是一笔大开销。多个特征读取同一列、运行在同一引擎时，OmniTable 会把它们融合成一个任务，一次读取产生多列结果。\n\n在论文的算子融合实验中，8 个 CPU／Spark 特征都读取 parsed_text。测试数据约 2.5 PB、3000 亿条以上。融合后，扫描次数从 8 次降为 1 次，CPU Hours 从 4.2 万降到 1.85 万，减少 55.9%；端到端时间从 38 小时降到 14 小时，提速 2.7 倍。\n\n自适应调优则用于减少参数试错。针对 50 GB、500 GB 和 2 TB 三种批次规模的受控实验，OmniTable 的自适应配置首次提交成功率为 100%，任务成本与专家手调相差不超过 5%。这组结果对应特定 BERT 特征任务，说明系统能够给出接近专家配置的可用参数，并不代表任意任务都能自动达到最优。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/42d546278cb6a7eb1a5b809462ff5f00.png)\n\n图 4：算子融合减少重复扫描，自适应调优在不同批次规模下接近专家配置。来源：论文执行评测。\n\n### 逻辑表持续变宽，后台持续整理物理布局\n\n宽表上线后仍会不断增加批次和特征。小文件累积、分区倾斜、列数增长和查询热点变化都会拖慢访问。OmniTable 的后台治理服务持续观察这些指标，自动执行小文件合并、行拆分、列拆分和物化视图构建。\n\n治理过程采用 Prepare—Execute—Commit：先准备新布局并完成物理重写，验证通过后，再原子切换 Catalog 映射。旧布局在切换前继续服务查询，失败的治理任务可以回滚。用户仍然查询同一组逻辑列，无需感知文件和表族怎样变化。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/0441eb6d6a3305b1f5775230a9daebf9.png)\n\n图 5：后台治理根据规模和访问模式调整物理布局。来源：论文 Figure 4。\n\n列拆分让逻辑 schema 可以越过单个引擎的物理列数限制。在固定约 2 PB 数据、查询列集合不变的测试中，逻辑列从 200 增至 2500，P95 延迟约从 25 秒升到 38 秒，跨过了底层引擎约 1200 列的物理上限。另一组规模测试覆盖 1 TB 到 25 PB，过滤导出吞吐保持在 18–23 TB／小时。\n\n单样本排查走另一条路径。全局 ID 索引直接把 _ai_unique_id_ 定位到物理表、分区和 row group。在 25 PB、3000 亿条以上记录、800 多个逻辑列的 Web 数据上，查询完整逻辑行的 P50 为 8.3 秒，P99 为 14.7 秒；全扫描分别需要 184 秒和 612 秒以上。\n\n需要一次导出多列时，后台物化视图会预先消除热点列组之间的 JOIN。一个涉及 15 列、4 张物理表的代表性场景中，过滤导出吞吐从 4.8 TB／小时提升到 20.1 TB／小时。点查、批量筛选和大规模导出使用不同路径，Catalog 为它们提供统一入口。\n\n### 5.6 倍提速，主要省下的是协调和重跑时间\n\n论文用一个真实 SFT 数据准备任务做了端到端对照。任务包含 8 个数据来源和 12 个特征，其中 9 个是 CPU UDF，3 个是 GPU 推理。\n\n旧流程需要约 2 天定位和接入数据，约 9.5 天完成特征回填，再花约 2.5 天编写多表 JOIN 并导出结果，总周期约 14 天。过程中涉及约 45 个手工步骤、24 条独立管道或脚本，以及 35 张物理表。\n\nOmniTable 将接入阶段缩短到约 0.5 天，特征回填约 1.7 天，过滤导出约 0.3 天，总计约 2.5 天。手工步骤降至 12 个，独立命令降至 10 条，使用入口是一张 SFT 领域逻辑宽表。端到端提速 5.6 倍，手工操作步骤减少 73.3%，独立管道和脚本减少 58.3%。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/58c007241a31e4fe00f8c8e4faa51ecf.png)\n\n图 6：SFT 数据准备任务从约 14 天缩短至约 2.5 天。来源：论文端到端实验。\n\n这组数字只对应论文评测中的同一项生产任务。它清楚展示了时间省在什么地方：逐表编排变少，共享输入不再重复扫描，少量异常不会频繁触发整批重跑，物理布局也不必等到性能下降后再人工调整。\n\n### 宽表只是入口，完整生命周期才是重点\n\nOmniTable 把过去分散在多套工具里的四类信息放到一起管理：数据批次、特征定义、执行状态和列级血缘。逻辑宽表为用户提供稳定入口，Catalog 维护数据与特征之间的关系，执行和治理服务继续在底层选择合适的物理组织。\n\n这套做法也有明确成本。热点列物化需要额外存储，记录级容错会增加少量执行开销，后台治理要占用集群资源。不同企业的数据域、计算引擎和团队习惯也不相同，因此 OmniTable 更适合作为一套经过 35+ PB 生产部署检验的系统设计参考。它给出的思路是：先稳定逻辑语义，再让物理布局持续演进。\n\n当大模型训练进入 PB 时代，数据工程的挑战已不再是把一次任务",
+   "raters": {
+    "claude": {
+     "score": 5.5,
+     "reason": "蚂蚁数据基建论文获 VLDB 工业最佳，偏工程"
+    },
+    "codex_gpt56sol": {
+     "score": 7.5,
+     "reason": "工业最佳论文以35PB生产验证数据整理提速5.6倍。"
+    }
+   },
+   "gold": 6.5,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 7.5,
+    "reason": "VLDB工业最佳论文，PB级数据工程系统，有明确新意与生产验证，但属数据工程而非模型突破。"
+   }
+  },
+  {
+   "n": 23,
+   "id": "x_sama_2096241436509544744",
+   "source_id": "x_sama",
+   "stratum": "official",
+   "title": "it is obviously trivial relative to everything else, but the fact that astra can",
+   "content_type": "social_post",
+   "publish_date": "2026-09-05T14:17:59.000Z",
+   "body": "it is obviously trivial relative to everything else, but the fact that astra can make me whatever fun little game i can imagine and i can be playing it a few minutes later is so cool",
+   "raters": {
+    "claude": {
+     "score": 3.0,
+     "reason": "CEO 个人随感推文，无实质信息"
+    },
+    "codex_gpt56sol": {
+     "score": 4.8,
+     "reason": "只是Astra生成小游戏的个人体验，且作者自称并不重要。"
+    }
+   },
+   "gold": 3.9,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 1.5,
+    "reason": "个人社交动态，内容琐碎，无实质新闻价值。"
+   }
+  },
+  {
+   "n": 24,
+   "id": "web_ithome_ai_9106ce5fe1a0518c",
+   "source_id": "web_ithome_ai",
+   "stratum": "media",
+   "title": "OpenAI 将建立全新框架，承诺未来将更加透明地披露 AI 智能体失控情况",
+   "content_type": "web_article",
+   "publish_date": "2026-09-05T23:43:55.953000+00:00",
+   "body": "[IT之家](https://www.ithome.com/) 9 月 6 日消息，OpenAI 发文，宣布将建立全新框架，承诺“更加透明地”向民众披露旗下 AI 智能体“失控”和“失准（Misalignment）”情况。\n\n![](https://img.ithome.com/newsuploadfiles/2026/9/de2dd114-e92b-4dc1-922a-403725aa09b0.jpg@s_2,w_820,h_723)\n\n当前，OpenAI 正深陷一系列 AI 智能体逃逸并自主入侵第三方网络的安全丑闻中。在 9 月 4 日时，路透社等媒体刚刚曝光了一起此前被隐瞒的“德国 Wiki 劫持事件”。一批 OpenAI AI 智能体曾入侵一个废弃的德国 Wiki 网站，并将其改造成类似机器人之间交流的留言板。\n\n对此，OpenAI 将此次事件称为一起“事故”，并承诺将在未来几周内推出一套全新的透明度框架。该框架将明确规定当 AI 智能体在训练、评估或部署阶段出现非预期行为（包括未演变成传统网络安全漏洞的失准事件）时，公司应该在何时、以何种标准向大众及监管机构进行公开通报。同时，OpenAI 透露公司目前正在与全球数十家政府监管机构合作推进该标准的制定，并呼吁行业同行共同加入。",
+   "raters": {
+    "claude": {
+     "score": 7.0,
+     "reason": "OpenAI 因智能体失控事故建透明框架，治理级新闻"
+    },
+    "codex_gpt56sol": {
+     "score": 8.1,
+     "reason": "智能体越界事件促成披露框架，安全治理影响行业。"
+    }
+   },
+   "gold": 7.55,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 6.5,
+    "reason": "OpenAI 官方承诺建立智能体失控披露框架，涉及安全与监管，但属政策声明而非产品发布，影响面中等。"
+   }
+  },
+  {
+   "n": 25,
+   "id": "web_huggingface_daily_papers_dfbe4e9954bcfa48",
+   "source_id": "web_huggingface_daily_papers",
+   "stratum": "paper",
+   "title": "StudentSim: Training LLM-based Student Simulators",
+   "content_type": "web_article",
+   "publish_date": "2026-09-01T00:00:00+00:00",
+   "body": "AI tutors are most useful when they adapt to each student's strengths, weaknesses, and preferred guidance, but evidence about which guidance works for which student is sparse, slow, and costly to collect from real learners. Student simulators can provide this signal as a proxy, yet existing approaches are limited: state-tracking models fit student behavior but struggle to process explanations or corrections, while LLM role-play follows guidance fluently but does not reliably match the competence of the student being imitated. We present StudentSim, a training framework that turns sparse per-student data into individualized simulators through pooled training followed by per-student specialization. The resulting simulators both mirror a student's own responses and update them under tutor guidance. We also introduce StudentSimEval, a standardized protocol covering 60 students across chess, second-language English writing, and mathematics, using public learner datasets with de-identified records shared for research. StudentSimEval measures behavioral fidelity (F), or how well a simulator matches a student's responses, and guidance responsiveness (R), or how readily it updates under tutor guidance, with all methods fit and evaluated on the same records. Across all three domains, StudentSim outperforms GPT-5.4 on both metrics. In chess, StudentSim reaches F=0.51 and R=0.91, compared with 0.23 and 0.72 for GPT-5.4 and 0.45 and 0.27 for Maia2. As a proof of concept, using StudentSim as a reward model for tutor reinforcement learning produces a chess tutor that expert humans rate as more accurate, better-guided, and more personalized than a no-RL baseline and a tutor trained against a GPT-5.4 simulator reward. Code is available at https://github.com/microsoft/StudentSim.",
+   "raters": {
+    "claude": {
+     "score": 4.0,
+     "reason": "教育领域学生模拟器论文，小众"
+    },
+    "codex_gpt56sol": {
+     "score": 6.4,
+     "reason": "个体学生模拟框架跨三领域优于GPT-5.4，但场景较窄。"
+    }
+   },
+   "gold": 5.2,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 7.0,
+    "reason": "研究有明确新意，提出训练框架与评估协议，跨三领域优于基线，但影响面有限。"
+   }
+  },
+  {
+   "n": 26,
+   "id": "web_qbitai_542c1c04ef505cfa",
+   "source_id": "web_qbitai",
+   "stratum": "media",
+   "title": "3秒变身！会合体的机器人，卖到全球50国",
+   "content_type": "web_article",
+   "publish_date": "2026-09-07T10:00:09.831195+00:00",
+   "body": "> Jay发自 凹非寺\n> 量子位 | 公众号QbitAI\n\n是谁说现在机器人都长得差不多的！\n\n最近刷到一条视频，令我两眼一黑。\n\n两台双轮足机器人匹配、对齐，然后……\n\n**合体了？？？**\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/b3a829e0d0897c186d8b38f9ec332c7b.gif)\n\n接着，这哥们拐了个弯，站了起来。。。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/e8e3df756dcca0c1302fc08570ef5896.gif)\n\n你以为这就结束了？\n\n理论上，这台机器人是可以无限合体变形的。\n\n所以如果你想，甚至还能继续进化，变身硅体蜈蚣。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/bd9ee3ff8e7e5c4ef174661764e0bc55.gif)\n\n不敢相信自己的眼睛，什么叫本视频绝无AI生成画面。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/3251f7aa59ed2411be3e01499eb93cbd.png)\n\n但你别笑！\n\n当人形机器人还在春晚舞台上跳舞、打武术的时候，这个小东西已经搬过水桶、送过文件了。\n\n（P.S. 真干活还得是轮足啊）\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/03b0a19a8a7e5f842839ca5f46e0eb99.png)\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/bc23c72d6a1d92f5d80d1afe69613b10.png)\n这些在聚光灯下默默干活的机器人，来自**本末科技**。\n一家从成立第一天起就专攻「本体」的公司。\n![](https://i.qbitai.com/wp-content/uploads/2026/09/3e99229a70730819b699bc47c1c79bb5.png)\n说实话，最开始看到这些视频我是表示怀疑的，毕竟大脑时代嘛，本体、而且是非人形……\n听着好像不是那么物理AGI啊。。。\n可当我一条条刷完他们B站上的所有视频，我觉得——\n虽然当前具身最热的是大脑，但关于本体的声音，同样值得更多关注。\n具身不止大脑\n大脑，当今具身智能，最性感的赛道。\n数据显示，2026年上半年，国内具身智能赛道融资约**440亿元**，超过一半涌向「大脑派」。\nVLA、世界模型、百万小时数据冲刺，整个行业风云滚动，连LLM都快沦为「版本弃子」。\n这背后是一个可喜可贺的趋势——\n**表演结束了，机器人公司回归「干活」导向。**\n一时间，各种demo神仙打架。今天拆包裹，明天叠衣服，后天开可乐盖……\n但展台前，很少有人追问一句：\n**这些demo，真的能落地吗？**\n先不说泛化性的问题，大量样机，只能在工厂这类专门优化过的标准场景中才能作业。\n随便送到一个园区，客户门口有道门槛，卡住了；送货路上有条斜坡，歇菜了。\n平安抵达目的地都困难，还干啥活啊。。。\n业内有个广为流传的双层分工，也是现阶段不少热门工作的思路：\n系统一系统二，大脑负责想，小脑负责动。\n但多数人忘了第三层：\n**身体，负责「到」**。\n![](https://mp.toutiao.com/mp/agw/article_material/open_image/get?code=OTYwMzI2NjUzYzdlMGRlNWFiZDQ4ODJiOTYxOTIyZmEsMTc4ODc3MzYwMTg5OQ==)\n这是具身与LLM最大的不同。台阶、碎石路、几十公斤的负载，这些都是实实在在的物理约束，不是光靠训模型就能解决的。\n大脑再好，小脑再灵，身体进不去，一切归零。\n过去在展会现场，经常能听到这种论调：\n「现阶段本体不重要，大脑可以把杠杆拉满，本体能拿60分就够用了。」\n但现实是，一个只有60分的身体，连进考场的资格都没有。\n如果永远只能让环境去适配机器人，所谓的泛化性，从何谈起？\n而这，正是本末科技想要破局的切口——\n将「**本体+小脑**」做到极致，为大脑铺一条丝滑落地物理世界的路。\n把「身体」做成生意\n本末科技的创始人叫张笛，本科就读于北理工机械工程，硕士去了香港科技大学机器人系统与控制专业，师从「大疆教父」李泽湘。\n读书时他就爱折腾机器人，做出过一台能用JavaScript控制站立、倒立的机器人，转头就卖了。\n这笔学生时代的小生意，或许也能代表这家公司至今的技术哲学：\n挑最落地的。\n2020年，本末科技成立，进军机器人关节，主打**一体化直驱路线，不做减速器**。\n![](https://mp.toutiao.com/mp/agw/article_material/open_image/get?code=MjIwYTg0NWYxMjM3ZmQyNmY2OGI2MTMyODI3MDFhYmUsMTc4ODc3MzYwMTg5OQ==)\n这在当时非常反主流。\n电机天生高转速、低扭矩，想要降转速、放大扭矩，就必须装减速器，就像燃油车必须配一台变速箱一样。\n但本末，从这个旧认知中挖出了机会。\n多一套中间传动可以加大杠杆，但同样也就多一层损耗、一份噪音、一截寿命折损。\n工业场景倒还好，但如果是家里的扫地机器人，整天叮里咣啷响个不停，还用不了几年就坏，那还提啥清洁能力，卖都卖不出去啊。。。\n但如果拆掉减速器，这些问题都能迎刃而解。\n关节体积更小，运行更安静……寿命也能拉到5万到10万小时。\n这正是本末选择一体化直驱关节的原因。\n硬件这件事，造得出来只是入门，有没有人愿意用，才是真正的门槛。\n![](https://mp.toutiao.com/mp/agw/article_material/open_image/get?code=M2ZlZjY4M2Y1NjgxZGM5OWU4YTM4Y2Y3YWYxMzk2NjUsMTc4ODc3MzYwMTg5OQ==)\n但光做关节供应商也难免落入红海嘛，所以本末此后也开了第二条业务线——\n整机。\n**1、刑天**，全球首款商业化直驱双轮足机器人。\n匍匐高负载和拉力可达80kg以上，驮得动成年人，能跳跃、能爬坡、能半坡驻停。\n简单来说就是大力士，专为库房、园区里的力气活而生，比如物资运输配送之类的。\n![](https://mp.toutiao.com/mp/agw/article_material/open_image/get?code=M2UzMmEzM2FiYzUzOGM4OGMxZWE0NDg1Y2UzNzA3M2YsMTc4ODc3MzYwMTg5OQ==)\n**2、TITA。**\n灵活性和鲁棒性大幅提升，8个自由度，10公斤动态载荷，零下10度到45度都能连续作业。\n同时，TITA自带光学传感器、喇叭和相机，能在各类场景巡检、物流运输、数据采集和测绘。\n装一个导航模块，还能在图书馆、写字楼里做点对点资料配送。\n![](https://mp.toutiao.com/mp/agw/article_material/open_image/get?code=ODI5NDYxYzgzMzVmOThjNGE3MWY0N2VhYzUyYzJlOTMsMTc4ODc3MzYwMTg5OQ==)\n**3、D1**，就是开头那个会「合体」变身的机器人。\n模块化是其最大亮点。这是全球首款整机模块化具身智能机器人，给它三秒时间，能够随意拆开或者合体。\n双轮足、四轮足、电足、扁片足……多种形态可自由随任务切换。\n狂拽酷炫这一块，简直是每个男孩子的梦想啊！\n但仔细调研一番后我发现，「合体」，居然还是个蛮实用的Feature。\n主要是场景适配性方面。\n像「扫图」这种轻量级任务就可以分身成两台，并行跑。\n![](https://mp.toutiao.com/mp/agw/article_material/open_image/get?code=OWI5YjcxMTcwYTY1NzYyZjkyMTU5NDc4MDU3OWU3ZjksMTc4ODc3MzYwMTg5OQ==)\n遇到需要爬楼梯、跨台阶的时候，再合体，保障机动性。\n![](https://mp.toutiao.com/mp/agw/article_material/open_image/get?code=ZjFiZTgzYWU5ZDFjMjU0M2M0MGZkMzE5MzI1M2FkNmEsMTc4ODc3MzYwMTg5OQ==)\n**其次就是在开发者训练这一侧。**\nD1打通了软硬件，双轮足及四轮足形态能共用一套算法体系，切个SDK就能切换运控需求，调试时间大幅压缩。\n实地测试的时候，也不用再买一台双轮足跑平路、再添一台四轮足爬楼梯。一机两用，测试设备成本直接砍半。\n省下来的预算，可以全部用来炼大脑。\n![](https://mp.toutiao.com/mp/agw/article_material/open_image/get?code=MzM1MjQwYTQwY2IyOWM5N2I2Y2U2ZGJlNDBmY2E2YWUsMTc4ODc3MzYwMTg5OQ==)\n至此，本末科技的两项业务线，交汇到了一块——\n动力模组输出硬件、算法和制造工艺，支撑整机研发；\n整机则被扔进真实场景，采集最稀缺的工况数据，反哺关节与模组的迭代。\n市场也已经给出了自己的判断——\n直驱动力模组。2025年出货约**850万套**，在中国消费机器人直驱动力模组市场拿下**61.1%**的份额。\n轮足整机，出口到全球50多个国家和地区，是**全球轮足机器人出货量最高的厂商**。\n具身是场攻坚战\n最后，让我们再回到之前那个问题——\n为什么在这个**「大脑」时代，本体层的进展，依然值得关注？**\n不少具身公司都在大规模采具身数据，但截至目前，也就百万小时的量级。而且在触觉等关键物理维度上，现有数据集几乎一片空白。\n物理AGI需要多少高质量数据？\n行业共识是，通用自主能力，至少要千万小时打底。\n这意味着，大模型大脑的完全成熟与落地，需要以年甚至十年为单位去等待。\n但机器人不能停摆，行业也不能停摆。\n有人专攻决策，有人专攻执行，有人专攻到达。大脑、小脑、身体三条战线并行推进，才可能把「完全落地」的倒计时真正往前拨。\n在此背景下，专注「本体」的本末，既为自己代言，也对本体行业的未来，给出了自己的答案——\n未来无论是VLA、WAM还是原生具身模型胜出，模型的最后一站，终究都得部署在一副可靠的身体上。\n而这件事，现在就得有人去做。\n刑天拖着**80公斤**的物资穿过库房，TITA抱着文件穿行在写字楼，D1拆成两台分头扫图……\n这些不是展台上的demo，是已经在各个园区发生的事。\n具身的终局，得靠大脑。\n**但通往未来的入场券，是本体。**\n![](https://mp.toutiao.com/mp/agw/article_material/open_image/get?code=MDQ2NGQyYzYwYTNhNjUwMWIyM2Y0MDQ5MzQ4Y2Q3ZWYsMTc4ODc3MzYwMTg5OQ==)\n*版权所有，未经授权不得以任何形式转载及使用，违者必究。*",
+   "raters": {
+    "claude": {
+     "score": 3.5,
+     "reason": "机器人公司软性特稿，宣传口吻重"
+    },
+    "codex_gpt56sol": {
+     "score": 2.6,
+     "reason": "机器人企业宣传色彩浓，案例与销量缺少独立技术验证。"
+    }
+   },
+   "gold": 3.05,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 4.5,
+    "reason": "机器人本体厂商产品介绍，非行业级事件，营销色彩较重，价值有限。"
+   }
+  },
+  {
+   "n": 27,
+   "id": "rss_latent_space_ad408c639885d3f9",
+   "source_id": "rss_latent_space",
+   "stratum": "community",
+   "title": "GPT-6 Astra: an automated AI Engineer you can hire for <$6 an hour",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-03T21:09:41+00:00",
+   "body": "**GPT-6 Astra**, the first [Stargate](https://x.com/ZeffMax/status/2095582617035063375?s=20) and [lightly looped](https://x.com/rasbt/status/2095141254958858496) supermodel from OpenAI, [launched today](http://GPT-6 Astra’s launch), cleanly beating [Fable 5.1](https://www.latent.space/p/ainews-claude-fablemythos-51-new) on many metrics including completely saturating the hardest versions of [FrontierMath](https://buttondown.com/ainews/archive/ainews-frontiermath-a-benchmark-for-evaluating/) (97.6%) and [ARC-AGI-3](https://openai.com/index/gpt-6-astra/#citation-top-1) (99.9%). Lots of demos will focus on typical talk tracks like the [computer use](https://x.com/OpenAI/status/2095595741528125780) to the [Pokemon playing](https://x.com/Clad3815/status/2095596013168050551) to [Blender](https://x.com/tomkrcha/status/2095598645190291775) to the [scientific](https://x.com/polynoamial/status/2095583211950833768) and [cybersafety](https://openai.com/index/gpt-6-astra/#citation-top-13) benchmarks ([system card](https://deploymentsafety.openai.com/gpt-6-astra)). Greg says [AGI is here](https://x.com/ZeffMax/status/2095582614648447179), and Jakub says it is [finally the Automated AI Research Intern](https://www.latent.space/p/ainews-openai-to-reach-agi-bar-by) he wanted.\n\nWe aren’t qualified to talk about those, but we got early access and threw it at every practical, real-life task we could think of. After burning **over 20B tokens of Astra**, we can confirm the most surprising finding: **GPT-6 Astra** **is one of a new class of models**[1](https://www.latent.space/p/astra#footnote-1) **that are fully capable AI Engineers in their own right**. They now help you **choose and train models**, **label data** (both helping you label and then using your labels for active learning, like [SAM](https://www.youtube.com/watch?v=sVo7SC62voA)), **keep pipelines saturated**, **instrument and read logs**, **deploy and debug entire systems** in one shot, fan out and **command and eval subagents** (including agents running other models), and keep coherence over **billions** of tokens of a single agent thread.\n\n![](https://substackcdn.com/image/fetch/$s_!1Mu3!,w_1456,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2Ff60dbb10-9849-49e5-8569-5dfba8440b9c_2486x1390.png)\n\n## Raising Your Ambitions\n\nWe’ve written before about [the high-return activity of raising your aspirations for LLMs](https://www.latent.space/p/ainews-the-high-return-activity-of?utm_source=publication-search). **Our experience has made us exponentially more ambitious than we have ever been**. Over the past month, we went from prompting humans for a fun “[Kill My SaaS](https://x.com/swyx/status/2085517544795079014)” competition[2](https://www.latent.space/p/astra#footnote-2), to building a [dozen internal/personal tools](https://tools.aieconf.com/), including [4 previously paid SaaS tools](https://swyx.io/tools), fully [redesigned my personal site](https://swyx.io/), made an incomplete but functional [replacement of GitHub + Vercel](https://forge.smol.ai/), trained game AI for [a strategy board game with 10,000x more legal moves than Go](https://overgrid.swyx.io/#ai-rivals), saved tens of thousands of dollars in personal finance cleanups, [republished my old book](https://learninpublic.org/) with synced audiobook audio and printed physical editions, and even [more](https://aeo.latent.space/) [ambitious](https://news.latent.space/) projects we will launch soon.\n\nThe $6 an hour number might sound surprising, but that’s exactly what we saw in [our testing](https://aeo.latent.space/#operations) - 33 tokens per second at a max $50 per million token rate. Given that Astra is more token efficient than Sol and Fable ([independently confirmed by Artificial Analysis](https://x.com/ArtificialAnlys/status/2095595494081024077)), it often means that Astra is simultaneously also the best fast-and-smart model you can buy (assuming our preview latency holds for GA), outside of [Spark 1.3](https://www.latent.space/p/ainews-muse-spark-13-matches-gpt).\n\n![](https://substackcdn.com/image/fetch/$s_!LMSk!,w_1456,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2Fb0375b67-d3c7-42f6-9252-8385fbda5ae1_1242x1323.png)\n\n[our logs](https://aeo.latent.space/#operations)\n\n## Managing fleets of subagents (individually tweaked, bounded concurrency)\n\nNow of course, if you just throw on Astra at Ultra you’re gonna burn through a lot more than $6 per hour…. because it is so dang good at parallelizing.\n\n![](https://substackcdn.com/image/fetch/$s_!cuAh!,w_1456,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F49d83c0e-13c1-4fad-b9cb-d88da10cf4f1_2428x1428.png)\n\n## Monitoring its own runs, starting and stopping waves\n\nThis is basically what i’d pay a junior AI Engineer to do. and I spent about $100 over 2 days to do this.\n\n![](https://substackcdn.com/image/fetch/$s_!E9Ax!,w_2400,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2Fa1ceb56b-6c89-4223-a1a0-5a7de77f2a0d_1605x838.png)\n\n## Making model benchmarks, handling money, making estimates, scaling up runs, getting human ratings\n\nWild.\n\n![](https://substackcdn.com/image/fetch/$s_!baYv!,w_2400,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F42d12f42-96ed-4321-8cf9-eca91edd3cb0_1069x1177.png)\n\n![](https://substackcdn.com/image/fetch/$s_!uwdE!,w_2400,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F569cef91-66ec-4d41-9f01-4fac519fd77b_2356x1000.png)\n\nexample [here](https://swyxbench.sites.smol.ai/suites/aie-transcription/)\n\nWe are out of time for this writeup, will complete this later, so if you are reading this on email, check back at ",
+   "raters": {
+    "claude": {
+     "score": 8.5,
+     "reason": "GPT-6 Astra 发布日的深度评测，事件本身行业级"
+    },
+    "codex_gpt56sol": {
+     "score": 9.7,
+     "reason": "旗舰模型大幅刷新难题与工程能力，呈现自动AI工程师跃迁。"
+    }
+   },
+   "gold": 9.1,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 9.5,
+    "reason": "OpenAI 旗舰模型发布，行业级重大突破，影响面广。"
+   }
+  },
+  {
+   "n": 28,
+   "id": "web_ithome_ai_670bbc23dba27857",
+   "source_id": "web_ithome_ai",
+   "stratum": "media",
+   "title": "奥尔特曼致歉“GPT-6 Astra AI 上线混乱”，现已面向所有 Plus / Pro 等用户推出",
+   "content_type": "web_article",
+   "publish_date": "2026-09-05T00:42:24.190000+00:00",
+   "body": "[IT之家](https://www.ithome.com/) 9 月 5 日消息，OpenAI 首席执行官萨姆 · 奥尔特曼（Sam Altman）昨日（9 月 4 日）在 X 平台发布推文，承认 GPT-6 Astra 模型上线发布“很乱”，**并于今天面向所有 Plus 和 Business 用户推出。**\n\nOpenAI 于 9 月 3 日开始上线 GPT-6 Astra，称该模型是“迄今最智能”的版本，在电脑使用、浏览、软件工程、科学和专业工作方面达到“最先进性能”。\n\n![](https://img.ithome.com/newsuploadfiles/2026/9/a3da7636-66f4-4f9b-983b-1f0fe3ee9665.png)\n\n按 OpenAI 原计划，Astra 将在“几天内”覆盖所有 ChatGPT Plus、Pro、Business、Enterprise 用户，并通过 OpenAI API、微软 Azure、亚马逊 AWS Bedrock 开放。\n\n但实际执行中，企业安全客户先于 Pro 订阅者拿到访问权限，导致习惯“发首即用”的高价 Pro 用户强烈不满。\n\n在补偿方案上，为缓解情绪，OpenAI 提出补偿机制：从 9 月 4 日起，付费 ChatGPT 用户每缺少一天 Astra 访问，就获得一次额度重置，用于后续使用。\n\n![](https://img.ithome.com/newsuploadfiles/2026/9/5c8ba656-6d41-4882-9ca5-b7f80cb485b2.png)\n\nIT之家发稿前，奥尔特曼已宣布面向 Work / Codex 中的所有 Plus、Pro、Enterprise、Business、Business Premium 用户开放。\n\n![](https://img.ithome.com/newsuploadfiles/2026/9/d70914fd-ab60-4b9c-8732-c2d72979df88.png)\n\n**相关阅读：**\n\n- 《[OpenAI GPT-6 Astra 现已登陆 ChatGPT Work、Codex 及 API，率先向 Pro、Enterprise 及 Business Premium 用户开放](https://www.ithome.com/0/998/626.htm)》",
+   "raters": {
+    "claude": {
+     "score": 6.5,
+     "reason": "Astra 上线混乱致歉与全面开放，二手跟进"
+    },
+    "codex_gpt56sol": {
+     "score": 5.9,
+     "reason": "仅是旗舰模型扩大用户覆盖及上线混乱的后续消息。"
+    }
+   },
+   "gold": 6.2,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 8.5,
+    "reason": "OpenAI旗舰模型GPT-6 Astra上线并全面开放，属行业级重大发布，但文章为转述且细节有限。"
+   }
+  },
+  {
+   "n": 29,
+   "id": "docs_claude_code_changelog_d4bb41a955bdd71c",
+   "source_id": "docs_claude_code_changelog",
+   "stratum": "official",
+   "title": "Claude Code 2.1.259",
+   "content_type": "web_article",
+   "publish_date": "2026-09-02T00:00:00+00:00",
+   "body": "Added `managedMcpServers` managed setting: organizations can provide HTTP/SSE MCP servers to every user (same entry shape as `.mcp.json`); entries that name a command to run are skipped\n\nAdded `--permission-prompts none` for unattended headless hosts: anything that would prompt is denied automatically while the active permission mode (including auto mode) keeps deciding\n\nAdded recognition of `glab mr create/merge/close/reopen/note/update` so GitLab merge requests show as `MR !N` in the collapsed tool summary and refresh the footer MR badge\n\nAdded `--json` to `claude plugin validate` for a machine-readable validation report\n\nFixed concurrent sessions silently reverting each other’s `~/.claude.json` changes — workspace trust no longer resets and MCP/project state is no longer lost when running many sessions at once\n\nFixed a conversation whose thinking was rejected once being rejected again on every later turn\n\nFixed Bash `Read()` deny rules not covering files given as option values (`--ignore-revs-file=.env`, `-f.env`, `@file`), `git diff`/`git grep` file operands, or `cd DIR && cat FILE` compounds; `grep -r`/`cp -r` over a directory holding a denied file now asks\n\nFixed the prompt cache being invalidated when the OAuth token refreshed in sessions with telemetry disabled\n\nFixed fullscreen mode showing a blank conversation after a long turn with hundreds of tool calls\n\nFixed auto mode running a turn on a model it doesn’t support when a command or skill’s frontmatter `model:` named one; the turn now keeps the session model\n\nFixed `CLAUDE_CODE_MAX_CONTEXT_TOKENS` being ignored for Vertex-style model IDs (`@YYYYMMDD` suffix) of model versions Claude Code doesn’t recognize\n\nFixed the live output preview of a running shell command hiding its newest lines when an earlier line wrapped\n\nFixed a background GitHub connection check that ran on every launch for claude.ai users; the result is now remembered across launches\n\nFixed `--resume` failing (and `--continue` opening an empty conversation) when a saved session contains an attachment entry with no payload\n\nFixed frontmatter `model:` on custom commands and skills being ignored in interactive sessions\n\nFixed Artifact publishing failing once with an “unexpected parameter `note`” error in conversations continued from an older version\n\nFixed managed `forceRemoteSettingsRefresh` being ignored at startup when a policy helper configured by MDM or the managed settings file had already run\n\nFixed worktree isolation refusing hook-created worktrees on machines where `git rev-parse` fails with a message other than “not a git repository”\n\nFixed OpenTelemetry metrics and events from cloud sessions missing the `user.email`, `organization.id`, and `user.account_uuid` attributes\n\nFixed MCP servers that disconnect while their tools are being listed at startup showing as connected with no tools instead of reporting the error\n\nFixed the file edit permission dialog sometimes showing a changed line cut short with no indication\n\nFixed repository detection dropping a known repo identity after a transient git probe failure\n\nFixed managed settings silently going unenforced when the managed-settings file, a drop-in, the MDM plist, or the HKLM value cannot be parsed: Claude Code now refuses to start and names the source\n\nFixed Stop not actually stopping background agents and workflows in remote-control sessions: killed tasks now stay visible and re-stoppable until their processes exit\n\nFixed resuming a workflow run while its previous stopped run was still exiting, which could run duplicate copies of its agents\n\nFixed marketplace repo URLs on github.com with a trailing slash or dangling `?`/`#` producing an unusable `.git` clone URL\n\nFixed blocking Stop hooks causing the turn after a block to lose the model’s reasoning from that turn and, on some models, miss the prompt cache\n\nFixed remote (claude.ai) sessions taking 60 seconds to start a turn after a browser-hosted MCP server’s page had gone away\n\nFixed worktree-isolated sessions refusing common Bash loops, xargs pipelines and launcher-wrapped commands that cannot reach the main checkout\n\nImproved terminal resize and first-render performance for long responses by reusing text measurements\n\nImproved `/workflows` agent detail: JSON outcomes are pretty-printed with syntax colors and real line breaks, and long outcomes fold behind an expand toggle\n\nImproved headless/SDK session start: the first turn begins up to 50 ms sooner when MCP servers finish connecting\n\nImproved `/install-github-app` to explain it is GitHub-only and point to the GitLab CI/CD docs when run inside a GitLab repository\n\nImproved nested background subagent results to be saved in the parent subagent’s transcript, so resumed subagents keep them and shared transcripts show the delivery\n\nChanged `allowedMcpServers` to govern only servers users add: a literal `managed-mcp.json` server your allowlist used to filter out now loads on upgrade; use `deniedMcpServers` to keep it off\n\n[VSCode] Added an Active quick filter and a status filter menu (Needs input, Working, Completed) to the session list sidebar\n\nFixed remote and scheduled sessions doing nothing after a connector-tool permission prompt was approved while the session was paused",
+   "raters": {
+    "claude": {
+     "score": 5.0,
+     "reason": "Claude Code 常规版本，企业设置与修复"
+    },
+    "codex_gpt56sol": {
+     "score": 7.4,
+     "reason": "组织级MCP下发与无人值守权限强化企业代理部署。"
+    }
+   },
+   "gold": 6.2,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 5.5,
+    "reason": "官方变更日志，多为修复与增量改进，影响面有限，属常规更新。"
+   }
+  },
+  {
+   "n": 30,
+   "id": "rss_reddit_localllama_f0e63dae9548755b",
+   "source_id": "rss_reddit_localllama",
+   "stratum": "community",
+   "title": "The state of open source LLM (08/31/2026)",
+   "content_type": "rss_article",
+   "publish_date": "2026-08-31T20:51:48+00:00",
+   "body": "![The state of open source LLM (08/31/2026)](https://preview.redd.it/4xdxi0svwrmh1.png?width=640&crop=smart&auto=webp&s=08b1579e2ee956e05e5229a72a788789759c4034)",
+   "raters": {
+    "claude": {
+     "score": 2.0,
+     "reason": "无正文仅一张图（按标题评），信息量为零"
+    },
+    "codex_gpt56sol": {
+     "score": 3.7,
+     "reason": "仅据标题，是开源大模型态势盘点，缺少可判定新事件。"
+    }
+   },
+   "gold": 2.85,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 1.0,
+    "reason": "仅一张图片，无实质内容，信息量极稀薄。"
+   }
+  },
+  {
+   "n": 31,
+   "id": "github_trending_daily_20260902",
+   "source_id": "github_trending_daily",
+   "stratum": "board",
+   "title": "GitHub Trending 日榜 · 2026-09-02",
+   "content_type": "github_trending",
+   "publish_date": "2026-09-02T23:00:19.580408+00:00",
+   "body": "**1. [fmtlib/fmt](https://github.com/fmtlib/fmt)** — ⭐ 24,211(+3 today) · C++\nA modern formatting library\n\n**2. [google-research/timesfm](https://github.com/google-research/timesfm)** — ⭐ 29,698(+326 today) · Python\nTimesFM (Time Series Foundation Model) is a pretrained time-series foundation model developed by Google Research for time-series forecasting.\n\n**3. [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail)** — ⭐ 121,403(+1,364 today) · JavaScript\nMakes your AI agent think like the laziest senior dev in the room. The best code is the code you never wrote.\n\n**4. [debpalash/VoiceStudio](https://github.com/debpalash/VoiceStudio)** — ⭐ 14,616(+834 today) · Python\nVoiceStudio is the open-source, fully-local ElevenLabs alternative — voice cloning, voice design, video dubbing, dictation, transcription & audiobook creation in 646 languages.\n\n**5. [sngyai/Sequoia-X](https://github.com/sngyai/Sequoia-X)** — ⭐ 6,019(+138 today) · Python\nA股自动选股系统 — 多种技术形态自动扫描，收盘后自动运行并推送飞书\n\n**6. [ChromeDevTools/chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp)** — ⭐ 50,617(+140 today) · TypeScript\nChrome DevTools for coding agents\n\n**7. [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)** — ⭐ 240,093(+529 today) · Python\nThe agent that grows with you\n\n**8. [superlinked/sie](https://github.com/superlinked/sie)** — ⭐ 3,038(+61 today) · Python\nOpen-source inference server and production cluster for all the models your agent needs.\n\n**9. [pacifio/atlas](https://github.com/pacifio/atlas)** — ⭐ 2,844(+895 today) · Rust\nSource control for agents. Use multiple coding agents, track their changes and query them in one place\n\n**10. [zyronon/TypeWords](https://github.com/zyronon/TypeWords)** — ⭐ 9,286(+68 today) · Vue\nPractice English, one strike, one step forward; 练习英语，一次敲击，一点进步；",
+   "raters": {
+    "claude": {
+     "score": 3.5,
+     "reason": "聚合榜单，无单一事件"
+    },
+    "codex_gpt56sol": {
+     "score": 2.3,
+     "reason": "日榜只是项目热度汇总，缺少单一实质新闻事件。"
+    }
+   },
+   "gold": 2.9,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 2.0,
+    "reason": "GitHub Trending 日榜聚合，信息量稀薄，多为转述，无实质新闻价值。"
+   }
+  },
+  {
+   "n": 32,
+   "id": "github_opencode_releases_9e9c7579bc1d291a",
+   "source_id": "github_opencode_releases",
+   "stratum": "official",
+   "title": "anomalyco/opencode v1.18.27",
+   "content_type": "github_release",
+   "publish_date": "2026-09-02T21:41:01Z",
+   "body": "## Core\n\n### Bugfixes\n\n- Default provider header timeouts to five minutes so slow model startups fail less often.\n- Default streamed chunk timeouts to five minutes, with `false` supported to disable them.\n- Let Anthropic `thinking.blockBinding` opt out via config when you need to keep the provider default. (@dkindlund)\n- Limit Anthropic thinking block binding to Claude 5.1+ models so older deployments do not reject requests.\n- Avoid unhandled errors when canceling timed-out SSE reads. (@AlexanderWillner)\n\n**Thank you to 2 community contributors:**\n- @AlexanderWillner:\n  - fix(provider): handle SSE reader cancel rejections (#44944)\n- @dkindlund:\n  - fix(opencode): let config opt out of Anthropic thinking blockBinding (#46820)\n",
+   "raters": {
+    "claude": {
+     "score": 2.5,
+     "reason": "opencode 补丁版本，超时默认值调整"
+    },
+    "codex_gpt56sol": {
+     "score": 3.8,
+     "reason": "主要是超时与流式取消修复，属常规维护版本。"
+    }
+   },
+   "gold": 3.15,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 2.0,
+    "reason": "常规开源项目小版本更新，仅含bug修复，无重大功能或影响。"
+   }
+  },
+  {
+   "n": 33,
+   "id": "web_qwen_blog_6c6f0010c3b9987c",
+   "source_id": "web_qwen_blog",
+   "stratum": "official",
+   "title": "Qwen-Drive-1.0: An Initial Step towards a Vision-Language Foundation Model for Autonomous Driving",
+   "content_type": "web_article",
+   "publish_date": "2026-09-03T08:00:00+08:00",
+   "body": "![Qwen-Drive-1.0 banner](https://qianwen-res.oss-accelerate-overseas.aliyuncs.com/Qwen-Drive/blog_banner.png)\n\n[Paper](https://arxiv.org/abs/2609.00111)\n[GitHub](https://github.com/QwenLM/Qwen-Drive-1.0)\n[Hugging Face](https://huggingface.co/Qwen/Qwen-Drive-1.0-4B)\n[Model Scope](https://modelscope.cn/models/Qwen/Qwen-Drive-1.0-4B)\n\n## Introduction\n\nWe introduce Qwen-Drive-1.0, **the first vision-language foundation model for autonomous driving that unifies 3D perception and visual question answering at the pretraining stage and further extends to motion planning**, **while keeping the pretrained VLM architecture entirely untouched**. Built on the natively multimodal Qwen3.5-4B, it attaches two external modules. A BEV perception head serves as an explicit, inspectable 3D probe, jointly performing 3D object detection, semantic occupancy prediction, and BEV map segmentation, and a Planning Expert generates future ego trajectories through flow matching. Through staged training, we substantially boost the autonomous driving capability of a general-purpose VLM and validate it on 3D perception, driving visual question answering, and motion planning tasks, forming a unified driving vision-language model that offers a new-generation VLM base for driving-scenario adaptation.\n\n## Highlights\n\n- **Qwen-Drive-1.0 is the first vision-language foundation model for autonomous driving** that unifies 3D perception and visual question answering at the pretraining stage and further extends to motion planning, **while keeping the pretrained VLM architecture entirely untouched**.\n- **An external BEV perception head serves as an explicit, inspectable 3D probe**, jointly learning 3D detection, semantic occupancy prediction, and BEV map segmentation, equipping the same pretrained VLM with clear perception outputs while preserving highly competitive vision-language performance.\n- A staged training and data recipe unifies cross-dataset labels, rewrites responses, filters samples for consistency, and combines driving data with general-purpose vision-language supervision, supporting domain adaptation while mitigating catastrophic forgetting.\n- **A Planning Expert tailored to pretrained VLM representations generates future ego trajectories** with flow matching. Unified trajectory annotations enable joint training across multiple public driving datasets and yield highly competitive results across open-loop, pseudo-closed-loop, and closed-loop evaluations.\n\n## Model Architecture\n\n![Unified architecture of Qwen-Drive-1.0 for 3D perception, visual question answering, and motion planning](https://qianwen-res.oss-accelerate-overseas.aliyuncs.com/Qwen-Drive/qwendrive_overview.png)\n\nQwen-Drive-1.0 builds on the natively multimodal Qwen3.5-4B. A shared vision encoder and VLM process single-view and multi-view driving images, temporal image sequences, and general images. Without changing the pretrained architecture, two external modules read from this shared pathway. The BEV perception head builds a BEV representation from multi-view single-frame inputs and jointly performs 3D object detection, semantic occupancy prediction, and BEV map segmentation. It acts as an explicit, inspectable 3D probe, and its losses provide an additional gradient path into the shared visual pathway during joint training. The Planning Expert is a diffusion transformer tailored to VLM representations. It generates 5-second ego trajectories through flow matching, with an optional textual planning reason as condition. Perception, question answering, and planning thus reside in one pretrained VLM.\n\n## Performance\n\n![Benchmark results of Qwen-Drive-1.0 on driving VQA, general VQA, 3D perception, and motion planning](https://qianwen-res.oss-accelerate-overseas.aliyuncs.com/Qwen-Drive/intro.png)\n\n### Driving Scene Understanding without Losing General Capability\n\nQwen-Drive-1.0-SFT reaches a driving QA average of 69.43, leading both general-purpose VLMs and driving or embodied specialists, and demonstrating its strong driving scene understanding capability.\n\n| | InternVL3.5-8B-Inst. | LLaVA-OV2-8B | Qwen3.5-4B | Cosmos-Reason2-8B | Cosmos3-nano | MiMo-Embodied-7B | Alpamayo-1.5-10B | Qwen-Drive-1.0-SFT |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| Driving VQA |\n| LingoQA | 46.40 | 41.20 | 70.40 | 59.60 | 65.00 | 72.00 | 64.00 | **77.80** |\n| Ego3D RMSE ↓ | 23.01 | 24.97 | 13.17 | 12.62 | 22.41 | 9.85 | 25.31 | **7.78** |\n| VLAD | 54.47 | 58.71 | 65.38 | 56.37 | 57.73 | 50.33 | 9.13 | **66.52** |\n| SURDS | 32.80 | 38.60 | 52.95 | 19.54 | 39.72 | 43.06 | 3.10 | **66.13** |\n| WaymoQA Safety | 54.47 | 49.65 | 62.46 | 57.68 | 56.93 | 66.54 | 42.61 | **70.70** |\n| WaymoQA All | 58.09 | 55.23 | 67.10 | 57.93 | 58.36 | 69.56 | 44.37 | **74.47** |\n| CoC All | -- | 0.57 | 2.58 | 1.72 | 4.01 | -- | 3.44 | **41.26** |\n| IH | 47.50 | 54.00 | 59.00 | 56.00 | 2.00 | 61.00 | 3.00 | **71.00** |\n| Knowledge, Reasoning, and Recognition |\n| MMBench | 80.03 | 82.66 | **87.07** | 82.82 | 79.57 | -- | 7.51 | 85.53 |\n| MMStar | 64.13 | 64.93 | 75.33 | 65.27 | 66.67 | 22.40 | 26.13 | **75.87** |\n| MMMU | 62.00 | 54.67 | **73.44** | 59.11 | 60.89 | -- | 27.44 | 72.67 |\n| MMMU-Pro Std | 46.42 | 36.30 | **64.86** | 36.07 | 46.36 | 27.40 | 15.61 | 62.72 |\n| MMMU-Pro Vis | 42.25 | 25.95 | **61.27** | 43.53 | 40.75 | 28.09 | 13.47 | 59.71 |\n| CharXiv | 41.70 | 40.10 | **65.10** | 42.50 | 42.10 | 57.50 | 1.50 | 64.40 |\n| OCRBench | 83.20 | 79.30 | 86.90 | **87.00** | 85.20 | 78.80 | 3.20 | 86.40 |\n| RealWorldQA | 66.93 | 71.76 | 76.34 | 67.45 | 69.67 | 28.50 | 46.93 | **78.95** |\n| SimpleVQA | 40.77 | 36.68 | **47.84** | 45.25 | 44.99 | -- | -- | 46.12 |\n| CountQA | 20.94 | 22.58 | **35.86** | 22.32 | 23.63 | 22.64 | 4.71 | 31.74 |\n| Spatial Understanding and Grounding |\n| EmbSpatial | 74.20 | 78.43 | 75.99 | 77.61 | 77.88 | 45.05 | 20.58 | **78.85** |\n| ERQA | 42.00 | 42.25 | 46.25 | 43.25 | 41.25 | 39.75 | 27.50 | **48.50** |\n| RefSpatial | -- | -- | **54.51** | 51.81 | -- |",
+   "raters": {
+    "claude": {
+     "score": 5.0,
+     "reason": "Qwen 官方开源自动驾驶 VLM，车载类按规则封顶"
+    },
+    "codex_gpt56sol": {
+     "score": 4.9,
+     "reason": "开源模型统一驾驶3D感知与规划，但属车载垂直领域。"
+    }
+   },
+   "gold": 4.95,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 4.5,
+    "reason": "自动驾驶VLM模型发布，属车载领域，非行业级事件，按规则降权。"
+   }
+  },
+  {
+   "n": 34,
+   "id": "web_ithome_ai_69c3f415f0dabd9e",
+   "source_id": "web_ithome_ai",
+   "stratum": "media",
+   "title": "让 AI 替你和朋友的 AI 聊天，微信内测“小微 AI 社交”功能",
+   "content_type": "web_article",
+   "publish_date": "2026-09-07T10:25:10.910000+00:00",
+   "body": "[IT之家](https://www.ithome.com/) 9 月 7 日消息，据每日经济新闻今日报道，微信正在内测“**小微 AI 社交**”功能。\n\n用户的小微可直接找到好友的“小微”进行对话，只需告知自己的“小微”诉求，由它前往对方的“小微”沟通；对方确认后，**两个“小微”先行交流，再将结果带回**，其间需要用户拍板时会提醒其确认。\n\n报道称，与“代发微信消息”不同，该功能是两个 AI 先聊，用户仅在授权与决策环节介入。**“小微 AI 社交”内容并不会出现在个人对话框**，只会在“小微”内进行。\n\n![](https://img.ithome.com/newsuploadfiles/2026/9/5dbf77ca-2769-4966-bd47-7c37666fc370.jpg?x-bce-process=image/format,f_auto)\n\n据IT之家此前报道，如果已经拥有“微信小微”测试资格的用户，**可以在微信主界面左上角看到一个「小微」标志**，进入后即可体验多种原生 AI 功能。\n\n![](https://img.ithome.com/newsuploadfiles/2026/9/46852da1-58a3-471f-b564-eaa86f96fdbc.jpg)\n\n该助手支持文字或语音对话，可协助用户调整微信设置、发送消息、调起小程序完成点外卖、打车等服务。此外，小微还可用于搜索视频或文章、生成图片、创建笔记等。\n\n大家在[IT之家微信号](https://wxaurl.cn/tIhrCxgH5Kb)回复“微信”两字，即可获取当前最新官方内部版微信下载。\n\n![](https://img.ithome.com/newsuploadfiles/2021/3/20210316222136_9513.jpg?x-bce-process=image/format,f_auto)\n\n[![](https://img.ithome.com/newsuploadfiles/2025/2/d715ba69-5ed2-4b1d-a704-bd156713c1a0.gif)](https://wxaurl.cn/tIhrCxgH5Kb)",
+   "raters": {
+    "claude": {
+     "score": 5.5,
+     "reason": "微信内测 AI 代聊，大平台新交互但二手报道"
+    },
+    "codex_gpt56sol": {
+     "score": 6.9,
+     "reason": "微信内测双代理代聊新交互，但范围与实际效果未验证。"
+    }
+   },
+   "gold": 6.2,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 5.5,
+    "reason": "微信内测AI社交功能，属产品更新，影响面有限，非重大发布。"
+   }
+  },
+  {
+   "n": 35,
+   "id": "x_alibaba_qwen_2095553453967933623",
+   "source_id": "x_alibaba_qwen",
+   "stratum": "official",
+   "title": "Come build with Qwen🫴🫴 https://t.co/bPmMHWKTtj",
+   "content_type": "social_post",
+   "publish_date": "2026-09-03T16:44:11.000Z",
+   "body": "Come build with Qwen🫴🫴 https://t.co/bPmMHWKTtj",
+   "raters": {
+    "claude": {
+     "score": 2.0,
+     "reason": "一句口号加链接，营销推文"
+    },
+    "codex_gpt56sol": {
+     "score": 1.5,
+     "reason": "仅据标题，只有招募式宣传链接，无实质发布信息。"
+    }
+   },
+   "gold": 1.75,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 1.0,
+    "reason": "信息量稀薄，仅一句号召性推文，无实质新闻内容。"
+   }
+  },
+  {
+   "n": 36,
+   "id": "rss_the_decoder_3fbbaa677ca3c420",
+   "source_id": "rss_the_decoder",
+   "stratum": "media",
+   "title": "Anthropic opens Claude AI text detection to regulators, media, fact-checkers, and others",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-01T20:40:36+00:00",
+   "body": "# Anthropic opens Claude AI text detection to regulators, media, fact-checkers, and others\n\n![Matthias Bastian](https://the-decoder.com/resources/images/avatar_matthias_bastian.jpg)\n\n[Matthias Bastian](https://the-decoder.com/author/matthias-bastian/)\n\nSep 1, 2026\n\n**Anthropic is launching its watermark verification API,** letting approved organizations check whether text contains a digital watermark from Claude. The EU AI Act since August 2, 2025, requires new [Claude models to embed invisible watermarks in their text output](https://the-decoder.com/anthropic-watermarks-all-claude-outputs-globally-with-marks-that-may-persist-through-some-editing/). \"Regulators, law enforcement, media, fact-checkers, independent researchers, educational organizations, and EU civil society groups\" can [request access](https://forms.gle/9tGA33hPJJwtHsMk9), as can enterprises that need to verify watermarking for their own compliance. Anthropic plans to expand access over time.\n\nThe system builds on Google's [SynthID text method](https://the-decoder.com/google-deepmind-open-sources-ai-text-watermarking-for-gemini/), tweaking word-selection randomness to create a statistically detectable pattern that, according to Anthropic, \"may persist through some editing.\" That should make it far more reliable than [traditional detectors like Pangram](https://the-decoder.com/pangram-says-its-new-ai-text-detector-makes-only-one-mistake-per-24000-documents/).\n\n[Anthropic](https://www.anthropic.com/news/claude-text-watermark) says the watermark contains no user data and affects neither quality nor content. [Critics disagree](https://the-decoder.de/warum-claudes-unsichtbare-wasserzeichen-weder-unsichtbar-noch-harmlos-sein-koennten/): if Claude picks synonyms based on a watermark key rather than meaning, text quality suffers. Trade publication \"Artificial Lawyer\" flags transparency risks too, since detectable AI fingerprints could become a problem where contracts ban AI use or during fee negotiations, though it predicts the watermarks are mostly harmless.AdAd\n\n### AI News Without the Hype – Curated by Humans\n\nSubscribe to THE DECODER for ad-free reading, a weekly AI newsletter, our exclusive \"AI Radar\" frontier report six times a year, full archive access, and access to our comment section.\n\nSubscribe now\n\nSource: [Anthropic](https://www.anthropic.com/claude-fable-and-mythos-5-1#mythos)",
+   "raters": {
+    "claude": {
+     "score": 6.5,
+     "reason": "Anthropic 向监管开放水印验证 API，合规产品"
+    },
+    "codex_gpt56sol": {
+     "score": 7.6,
+     "reason": "Claude水印验证API开放给公共机构，推进内容溯源合规。"
+    }
+   },
+   "gold": 7.05,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 7.5,
+    "reason": "Anthropic 开放文本水印验证 API，面向监管与媒体，属行业级合规与检测新动向，影响面广。"
+   }
+  },
+  {
+   "n": 37,
+   "id": "web_ithome_ai_14ba3f4d7eb2df0b",
+   "source_id": "web_ithome_ai",
+   "stratum": "media",
+   "title": "华硕 ProArt GR1X 英伟达 RTX Spark 迷你主机 2026Q4 上市",
+   "content_type": "web_article",
+   "publish_date": "2026-09-01T07:07:34.997000+00:00",
+   "body": "[IT之家](https://www.ithome.com/) 9 月 1 日消息，华硕 (ASUS) ProArt 官方近日表示，其基于 NVIDIA（英伟达）RTX Spark 超级芯片的 **ProArt GR1X 迷你主机即将于 2026 年第 4 季度上市**。\n\n![](https://img.ithome.com/newsuploadfiles/2026/9/8f710f41-dd09-4fea-87cf-33ca734d74be.jpg?x-bce-process=image/format,f_auto)\n\nProArt GR1X 延续了该产品家族一贯的内敛优雅设计，三维 150×150×51 (mm)。其至高配备 20 核 CPU、6144 核 \"Blackwell\" GPU、128GB 共享高速内存，**FP4（稀疏）AI 算力可达 1 Petaflop**。\n\n该设备提供 PCIe Gen5 / Gen4 的 M.2 NVMe SSD 盘位、1 个 10GbE 网口，搭载基于联发科技 MT7925 的无线网卡模块；其它 I/O 包括 4 个 USB-C 20Gbps、1 个 HDMI 2.1。\n\n[▶ 视频](https://player.bilibili.com/player.html?bvid=bv1WQ4D69EYD&autoplay=0&page=1)",
+   "raters": {
+    "claude": {
+     "score": 3.5,
+     "reason": "迷你主机硬件上市预告，周边产品"
+    },
+    "codex_gpt56sol": {
+     "score": 4.8,
+     "reason": "高算力迷你主机扩充本地AI硬件选择，但属常规新品。"
+    }
+   },
+   "gold": 4.15,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 4.5,
+    "reason": "非行业级大事件，属常规硬件产品预告，影响面有限。"
+   }
+  },
+  {
+   "n": 38,
+   "id": "web_qbitai_3a125960b8c75ebf",
+   "source_id": "web_qbitai",
+   "stratum": "media",
+   "title": "原生全模态技术战略闭环，智象（HiDream.ai）发布具身世界模型HiDream-O1-Embodied",
+   "content_type": "web_article",
+   "publish_date": "2026-09-07T07:00:09.831195+00:00",
+   "body": "今日，智象未来（HiDream.ai）正式发布具身世界模型HiDream-O1-Embodied。秉承原生全模态的技术理念，模型强化机器人物理感知与动态预判能力，助力具身智能实现更高阶的物理交互。具身模型的发布，标志着智象逐步实现了打通图像、视频、3D、动作等模态，贯通理解—推演—执行全流程，构建统一世界模型基座的技术闭环。\n\n模型发布同期，HiDream-O1-Embodied首次参评具身智能模型评测平台RoboColiseum，即在核心的Robustness（扰动适应）子榜单中，以平均分0.692的成绩登顶榜首。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/d1bd919bd12d64c1f2837f82e2139878.png)\n\n智象未来CTO姚霆表示：“我们相信，围绕真实世界的表达、理解和生成，构建同时具备全模态表达、因果推演与物理世界构建三大核心能力，才能建立完整的世界模型基座。智象的原生全模态世界模型技术理念，从设计架构之初便计划面向包括动作等全模态在内的统一表征构建。HiDream-O1-Embodied的发布，是这一技术战略从 “模拟世界” 迈向 “真实世界” 的关键里程碑。”\n\n### **登顶RoboColiseum：用0.692分的“扰动适应”交出硬核答卷**\n\n常态化具身智能仿真评测平台RoboColiseum旨在构建多维度的系统评测体系，以与真机表现高度一致的仿真评测，帮助开发者识别模型的能力优势与短板，持续迭代提升。平台面向全球高校、科研机构、模型企业与研究者开放，实时更新评测结果，致力于构建一套结果可信、过程可复现的具身模型评测标尺。\n\n该平台基于高保真仿真环境构建，高度还原真实世界。平台围绕四个维度推出4类能力子榜、78个高保真仿真评测任务——指令跟随、空间理解、扰动适应与通用操作。自内测上线以来，已吸引海内外几十款重量级模型开展评测。**在这四个维度中，扰动适应（Robustness）被公认为最具挑战性的一环**。它通过改变背景、光照、材质、机器人初始状态、相机位置与图像质量，并对指令进行多样化改写，检验模型在非理想环境中的稳定性与泛化能力。换言之，这不是在实验室的“温室”里考试，而是在各种“意外”中检验真本事。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/ddc5853e0f6442eeebc0bfc7f3e1a5d5.jpeg)\n\nHiDream-O1-Embodied以0.692分的成绩登顶该榜单榜首，这得益于其原生全模态底座。原生全模态世界模型天然为跨模态的理解与生成提供了基础。而在执行环节，为了保证在真实世界的各类 “意外” 中保持稳定。HiDream-O1-Embodied 在三项核心能力上进行了突破性创新，让理解更精准、感知更稳健、抗干扰能力更强。\n\n### **语言理解——突破关键词匹配的局限**\n\n传统机器人对语言指令的理解往往停留在关键词匹配层面。说“把杯子拿过来”能听懂，换成“给我拿个杯子”或“杯子递我一下”就可能“宕机”。HiDream-O1-Embodied覆盖多元动词、句式与表达方式的等价指令空间，不被句式束缚，只锁定意图本身。无论指令如何变换，它都能穿透字面，直达用户的本意。\n\n### **视觉感知——多视角协同，避免“一处失灵、全局失效”**\n\n在物理世界中，机器人的视觉通道并非是理想状态。相机位置可能发生偏移，标定精度会随时间变化，单路画面也可能受到遮挡或干扰。HiDream-O1-Embodied综合多个视角的信息，让不同视觉通道相互补充，而非依赖某一固定视角。当部分视觉信息出现偏差或暂时不可用时，模型仍能借助其他视角理解场景、判断任务并继续执行，让系统从“一处失灵、全局失效”，转变为“局部受限、整体仍可运行”。\n\n### **高容错机制——在“不完美”中学会稳定执行**\n\n多数模型的训练基于“完美数据”——清晰的图像、完整的画面、标准的视角。但真实世界从来不是这样。光照变化、画面污损、视野遮挡、信号波动，都是机器人实际运行时可能遇到的日常情况。\n\nHiDream-O1-Embodied在训练阶段便主动引入多种非理想条件，让模型反复面对不完整、不稳定的信息，并学会从有限线索中作出可靠判断。这样的训练使模型不只追求理想条件下的最佳表现，也更加重视复杂环境中的持续稳定。这种容错能力也不局限于某一种视觉异常。面对光照、外观和场景变化，模型能够更灵活地利用已有信息，减少环境变化对任务执行的影响。对HiDream-O1-Embodied而言，真正重要的不只是“看得清时做得好”，更是“条件不理想时，依然能够稳稳完成任务”。\n\n![](https://i.qbitai.com/wp-content/uploads/2026/09/85cdf0f637ea36fe2d59474ba66db983.jpeg)\n\n### **模型 + 数据：打造“真实基座 + 生成增强” 数据生产范式**\n\n而这种“在训练中见过足够多不完美”的能力，并非凭空而来。它触及一个更底层的命题：模型的认知边界，由它所接触的数据所影响。高质量数据，恰恰是具身训练中最稀缺、也最具决定性的变量。智象极力打造的“模型+数据”双驱动的策略，正是问鼎具身世界模型榜单的真正护城河。\n\n该策略的关键突破口，在于让数据生产本身成为模型迭代的有机一环。为此，智象探索出“真实基座 + 生成增强”的数据生产范式。模型不再是被动接收数据，而是主动参与数据的创造。\n\n以与诺亦腾的合作为例：其高精度真人动作捕捉数据作为真实底座，智象借助原生全模态能力完成百倍级的数据精细化扩增。基于单段真实动作样本，模型可以生成变体视频：在严格恪守物理约束不变的前提下，切换背景环境、光照条件、物体形态等变量，产出海量多元训练样本。\n\n这一机制的关键，在于模型既做“考生”，也做“出题人”——它根据自身所需主动生成针对性训练样本，形成数据与模型互相驱动的增长飞轮。最终让 HiDream-O1-Embodied 在面对现实世界的强扰动时，展现出超乎寻常的鲁棒性。\n\n### **原生全模态世界模型矩阵日臻完善**\n\n就在不到一个月前，智象刚刚发布了交互式世界模型HiDream-O1-World，并在交互式视频世界模型评测基准WBench的Navi分榜中以平均分80.9登顶榜首。\n\n交互式世界模型解决的是“理解与推演”，让AI在数字世界中具备对空间、时间、运动与物体关系的完整认知。而具身世界模型解决的是“操作与执行”，让AI在物理世界中完成真实任务。两者将形成有力互补，为原生全模态世界模型的发展筑牢根基。\n\n正如智象未来创始人兼CEO梅涛博士此前所言，**下一代大模型竞争的关键，不在于单一模态能力的增长，而是从单模态走向多模态，并走向原生统一的全模态。**从HiDream-O1-Image到HiDream-O1-World，再到HiDream-O1-Embodied，智象作为创新型大模型企业，正坚定地逐步形成覆盖视觉模型、交互式世界模型及具身世界模型的模型家族矩阵。这既是原生全模态技术在多领域铺展的能力，更体现了其强大的内生进化能力。\n\n站在世界模型前沿技术加速发展的时代拐点，智象正加速创新向前。",
+   "raters": {
+    "claude": {
+     "score": 4.5,
+     "reason": "中型厂商具身世界模型发布，通稿口吻重"
+    },
+    "codex_gpt56sol": {
+     "score": 5.8,
+     "reason": "具身模型仅凭单项榜首与厂商叙述，开放性和实测不足。"
+    }
+   },
+   "gold": 5.15,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 5.5,
+    "reason": "二线厂商具身世界模型发布，登顶评测子榜，但影响面有限，非行业级事件。"
+   }
+  },
+  {
+   "n": 39,
+   "id": "web_ithome_ai_5c56cc3b4785c43f",
+   "source_id": "web_ithome_ai",
+   "stratum": "media",
+   "title": "Adobe 将 Photoshop、Illustrator 等工具接入 Slack 协作平台",
+   "content_type": "web_article",
+   "publish_date": "2026-09-02T15:28:04.727000+00:00",
+   "body": "[IT之家](https://www.ithome.com/) 9 月 2 日消息，Adobe 今天宣布将旗下创意工具接入 Slack 协作平台。用户可直接在 Slack 聊天框内输入提示词，创建各种内容。\n\n![](https://img.ithome.com/newsuploadfiles/2026/9/5cb55ee6-b842-4c69-8701-3a81ebdf001f.jpg?x-bce-process=image/format,f_auto)\n\nIT之家了解到，Adobe for Slack 当前已集成在 Slack 之中。用户可打开 Slackbot 机器人，选择“Manage Apps”然后添加 Adobe。启用后，用户可以直接在聊天框内输入“@Adobe 为我们制作一系列季节海报”等提示词。\n\n随后 Slack 可调用 Adobe 的 Photoshop、Premiere 和 Illustrator 等创意工具，生成对应方案。用户不仅可以提供文字提示词，还可以引用与其他人的聊天内容以及共享文件，以帮助生成所需内容。\n\n同时，Adobe for Slack 不仅可以调用 Slack 内部数据，还可以从 Creative Cloud 资源中寻找项目素材。该功能即日起面向全球市场推出，用户订阅两家企业的会员后即可使用。",
+   "raters": {
+    "claude": {
+     "score": 4.0,
+     "reason": "Adobe 接入 Slack，周边生态集成"
+    },
+    "codex_gpt56sol": {
+     "score": 6.1,
+     "reason": "创意工具可在Slack内调用，改善协作但主要是生态集成。"
+    }
+   },
+   "gold": 5.05,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 5.5,
+    "reason": "Adobe 创意工具接入 Slack 属企业协作生态整合，非重大发布或范式级创新，影响面有限。"
+   }
+  },
+  {
+   "n": 40,
+   "id": "web_huggingface_daily_papers_926f311cd79fc73a",
+   "source_id": "web_huggingface_daily_papers",
+   "stratum": "paper",
+   "title": "PaperBanana-Interact: Scientific Diagram Refinement with Multi-Turn Human Feedback",
+   "content_type": "web_article",
+   "publish_date": "2026-08-31T00:00:00+00:00",
+   "body": "Recent efforts have aimed to automate scientific diagram generation from paper content (Lin et al., 2026; Zhu et al., 2026a). However, fully satisfying an author's visual and communicative preferences in a single turn is challenging: in our formative user study (N = 14), all participants requested further revisions after viewing an initial draft, and 86% of them rated the refined diagrams as more satisfactory. Despite the clear demand, the multi-turn workflow remains largely underexplored. To bridge this gap, we present MTPaperBananaBench, a benchmark for multi-turn diagram generation containing 292 images annotated with 3,518 user requirements. To reduce expensive human studies and enable scalable benchmarking, we construct a user simulator that, at each turn, identifies unsatisfied requirements and converts k of them into natural language feedback. Evaluating both requirement satisfaction and overall diagram quality reveals two key failure modes shared across baseline multiturn systems: (1) quality drift, where diagram quality progressively declines over turns, and (2) forgetting, where previously implemented features are lost in subsequent turns. To address these issues, we introduce PaperBanana-Interact, a multi-agent system that refines diagrams via an internal critique-and-refine loop. PaperBanana-Interact consistently improves rather than degrades diagram quality across turns, outperforming baselines by 11.9-18.6 points in quality score and reducing forgetting by 3.7-6.2 points.",
+   "raters": {
+    "claude": {
+     "score": 4.0,
+     "reason": "科研图表多轮生成论文，小众"
+    },
+    "codex_gpt56sol": {
+     "score": 6.6,
+     "reason": "首建多轮科研图表基准并针对遗忘与质量漂移提出系统。"
+    }
+   },
+   "gold": 5.3,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 6.0,
+    "reason": "研究论文，多轮图表生成基准与系统，有明确新意但影响面有限。"
+   }
+  },
+  {
+   "n": 41,
+   "id": "rss_testingcatalog_bcce1ff3103c905f",
+   "source_id": "rss_testingcatalog",
+   "stratum": "media",
+   "title": "Wonderful raises $550M for its enterprise AI agent platform",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-02T14:45:17+00:00",
+   "body": "Wonderful has raised a $550 million Series C at a $5 billion valuation, led by Insight Partners. The company builds and runs AI agents for large enterprises, covering customer conversations across voice, chat, email, and in-app channels, employee requests that need action inside internal systems, and back-office work such as reconciling data and moving processes forward without a person involved. The platform is paired with full-stack engineering teams that sit inside customer environments in the market they serve, and that pairing is where the money is going.\n\n> Wonderful has raised a $550M Series C at a $5 billion valuation.\n> This latest funding was led by [@insightpartners](https://x.com/insightpartners?ref_src=twsrc%5Etfw&ref=testingcatalog.com), with [@salesforce](https://x.com/salesforce?ref_src=twsrc%5Etfw&ref=testingcatalog.com) joining as new investors and [@IndexVentures](https://x.com/IndexVentures?ref_src=twsrc%5Etfw&ref=testingcatalog.com), [@BessemerVP](https://x.com/BessemerVP?ref_src=twsrc%5Etfw&ref=testingcatalog.com), [@IVP](https://x.com/IVP?ref_src=twsrc%5Etfw&ref=testingcatalog.com), [@VineVenturesLP](https://x.com/VineVenturesLP?ref_src=twsrc%5Etfw&ref=testingcatalog.com), and [@9yardscapital](https://x.com/9yardscapital?ref_src=twsrc%5Etfw&ref=testingcatalog.com) returning.\n> In 20 months since launch, we're in… [pic.twitter.com/2LIUmMgu20](https://t.co/2LIUmMgu20?ref=testingcatalog.com)— Wonderful (@wonderful_ai) [September 2, 2026](https://x.com/wonderful_ai/status/2095125312929464388?ref_src=twsrc%5Etfw&ref=testingcatalog.com)\n\nTeams build agents in plain language or in code, attach reusable skills, connect systems of record over API or MCP, and test variants side by side before shipping. Guardrails set what an agent can and cannot do, and full reasoning traces are recorded for every action, so an audit shows what an agent did and why. Live dashboards cover usage, efficiency, and outcomes. In January, the company shipped Agent Builder, an autonomous agent that builds, tests, and refines other agents, running on Anthropic's Claude.\n\nWonderful's stated position is that the hard part of enterprise AI is delivery. Agents that pass a demo still need integration into core systems, localization, compliance review, and continuous tuning, and enterprises pay for that gap in months of pilots that never carry live traffic. The company answers it by placing local teams inside customer environments, co-building with in-house staff and tuning agents to the language, regulation and operating context of each country. Wonderful says this moves deployments from pilot to production in days and weeks. ELTA Hellenic Post reports scaling agentic customer support by close to four times within two months of go-live, holding an 86 percent success rate in production.\n\nSPONSORED\n\nTest out Wonderful\n\nLearn more\n\nWonderful was founded in early 2025 by Bar Winkler and Roey Lalazar and came out of stealth that July. Twenty months on, it reports hundreds of agents, systems, and workflows running in production across a dozen verticals and more than 30 markets, including telecom, financial services, healthcare, and manufacturing. The round brings Salesforce in as a new investor, with Index Ventures, Bessemer, IVP, Vine Ventures and 9Yards returning. The capital is earmarked for customer delivery, hiring engineers and forward-deployed staff, and widening the product across the whole enterprise.",
+   "raters": {
+    "claude": {
+     "score": 6.0,
+     "reason": "企业 Agent 公司 5.5 亿美元融资，估值 50 亿"
+    },
+    "codex_gpt56sol": {
+     "score": 7.7,
+     "reason": "5.5亿美元融资体现企业智能体赛道的重要资本押注。"
+    }
+   },
+   "gold": 6.85,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 7.5,
+    "reason": "企业AI智能体平台获5.5亿美元融资，属业界重大融资新闻，影响面较大。"
+   }
+  },
+  {
+   "n": 42,
+   "id": "x_alibaba_qwen_2095476249556853100",
+   "source_id": "x_alibaba_qwen",
+   "stratum": "official",
+   "title": "Meet E-Commerce Bench, a new benchmark for long-horizon autonomous business oper",
+   "content_type": "social_post",
+   "publish_date": "2026-09-03T11:37:24.000Z",
+   "body": "Meet E-Commerce Bench, a new benchmark for long-horizon autonomous business operations. 🚀\n\nAgents start with ¥100,000 to run online stores for 365 days, handling sourcing, negotiation, pricing, promotions, inventory and cash flow, in a market driven by real e-commerce data.\n\nWhat's inside: 👀\n- Real economics: 6886 products, 576 suppliers (152 fraudsters), 600-minute workdays, storage fees, returns and reputation.\n- Long-horizon learning: almost no model learns to buy cheaper or improve its strategies over a full year of operation.\n- Seven-axis evaluation: beyond year-end assets, we score six more dimensions, revealing that no single model dominates across the board.\n\nLearn more about E-Commerce Bench: 👇\n- Blog: https://t.co/fpdO9jwwiV\n- Paper: https://t.co/EYIGlMPFUn\n- Project: https://t.co/ss2kuThRin\n- Code: https://t.co/xZOURdp7zE",
+   "raters": {
+    "claude": {
+     "score": 5.5,
+     "reason": "Qwen 官方发布电商长程 Agent 基准，新基准"
+    },
+    "codex_gpt56sol": {
+     "score": 7.2,
+     "reason": "真实经济数据的全年经营基准补足长程商业智能体评测。"
+    }
+   },
+   "gold": 6.35,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 6.5,
+    "reason": "新基准发布，面向长周期自主商务运营，有明确新意但影响面有限。"
+   }
+  },
+  {
+   "n": 43,
+   "id": "rss_the_decoder_26b6f104321901f4",
+   "source_id": "rss_the_decoder",
+   "stratum": "media",
+   "title": "Meta closes in on the top with Muse Spark 1.3, and undercuts rivals on price",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-03T11:45:41+00:00",
+   "body": "# Meta closes in on the top with Muse Spark 1.3, and undercuts rivals on price\n\n![Maximilian Schreiner](https://the-decoder.com/resources/images/avatar_maximilian_schreiner.jpg)\n\n[Maximilian Schreiner](https://the-decoder.com/author/maximilian-schreiner/)\n\nSep 3, 2026\n\n![Image description](https://the-decoder.com/wp-content/uploads/2026/07/meta_AI_logo.png)\n\nNano Banana Pro prompted by THE DECODER\n\n## Key Points\n\n- Meta has released Muse Spark 1.3. The xhigh tier is available now, while the more powerful max version runs as a limited preview for now.\n- The model improves most on agentic tasks but still trails top performers like Claude Fable 5.1 across most benchmarks.\n- At $0.55 per task, it's currently the cheapest model in its performance class. Meta also says an open-weights version is coming.\n\n**Meta has released Muse Spark 1.3, its fourth model in five months. Independent testing shows solid gains on agentic tasks, but a gap to the top stays. What sells the model is the price.**\n\n[Meta](https://research.meta.ai/blog/introducing-muse-spark-1-3) has released Muse Spark 1.3 through Muse Code and the Meta Model API. The series launched in April, with version 1.1 following in July and 1.2 in August. The xhigh tier is available now, while the more compute-heavy max tier arrives only after further safety testing and currently runs as a limited partner preview, according to Artificial Analysis.\n\nAt an unchanged $1.25 and $4.25 per million input and output tokens, one index task costs $0.55. No model scoring 59 points or higher is cheaper, and rivals at the same index level run between $0.94 and $1.23. Muse Spark 1.3 does cost more than version 1.2, which ran $0.40.Ad\n\n## The gains cluster where the index pays off\n\nOn the [Intelligence Index](https://artificialanalysis.ai/articles/muse-spark-1-3), max scores 62 points and xhigh 61, up from 57 in August and 53 in July. The jump comes down to how the index weights its tests. GDPval-AA v2 counts for 20 percent, Terminal-Bench 2.1 for 16 percent, and τ³-Bench Banking for 14 percent, and Meta's biggest gains land in exactly those three tests.Ad\n\nOn τ³-Banking, where agents operate tools in a simulated banking scenario, max hits 52 percent. That's number one right now, according to Artificial Analysis, and it's the only outright lead the model holds. The available xhigh tier reaches 47 percent, tying Claude Fable 5.1 (max) and GLM-5.3-Flash rather than leading. The predecessor 1.2 sat at 35 percent.\n\nTerminal-Bench 2.1, which tests coding in the terminal, climbs from 80 to 85 percent on xhigh and 86 on max, but Claude Fable 5.1 still holds the top spot at 91.4 percent in its max tier, 91.0 at xhigh, and 89.9 at high. On the index's highest-weighted test, GDPval-AA v2, Meta improves from 1,615 to 1,709 and 1,754 on a scale calibrated to human expert performance at 1,000 across 220 real-world professional tasks. Claude Fable 5.1 (max) sits at 1,853. Meta buys the max variant's edge with compute, burning 62 percent more reasoning tokens than xhigh.Ad\n\n![](https://the-decoder.com/wp-content/uploads/2026/09/AAII-Meta-Muse-Spark-1.3-1200x518.png)\n\nImage: Artificial Analysis\n\n## Outside the agentic tests, the model stays mid-pack\n\nOn GPQA Diamond, which poses expert-level science questions, Muse Spark rises from 90 to 94 percent. That's the top group, but still below Gemini 3.8 Flash (high) at 95.3 and Grok 4.6 (high) at 94.9. CritPt, covering research physics, jumps from 18 to 26 percent, well behind GPT-5.6 Sol (max) at 32.3 and Claude Fable 5.1 (xhigh) at 31.1 percent.\n\nTwo scores actually drop against 1.2. AA-LCR falls from 83 to 79 percent. Factual accuracy in AA-Omniscience slips by up to three points, because the model more often declines to answer when it's unsure.Ad\n\nNeither Meta nor Artificial Analysis has named a price for the max variant yet. Larger models and an open-weights release are on the way.Ad\n\n### AI News Without the Hype – Curated by Humans\n\nSubscribe to THE DECODER for ad-free reading, a weekly AI newsletter, our exclusive \"AI Radar\" frontier report six times a year, full archive access, and access to our comment section.\n\nSubscribe now\n\nSource: [Meta / Muse Spark 1.3](https://research.meta.ai/blog/introducing-muse-spark-1-3) | [Artificial Analysis / Intelligence Index](https://artificialanalysis.ai/articles/muse-spark-1-3)",
+   "raters": {
+    "claude": {
+     "score": 7.0,
+     "reason": "Meta 发布 Muse Spark 1.3，头部厂商模型迭代"
+    },
+    "codex_gpt56sol": {
+     "score": 8.0,
+     "reason": "Meta核心模型强化代理能力并低价开放API，仍稍逊前沿。"
+    }
+   },
+   "gold": 7.5,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 6.5,
+    "reason": "Meta 旗舰模型常规版本更新，性能小幅提升，主要卖点是价格，非行业级突破。"
+   }
+  },
+  {
+   "n": 44,
+   "id": "rss_reddit_localllama_febb0caadca17249",
+   "source_id": "rss_reddit_localllama",
+   "stratum": "community",
+   "title": "\"ModelScope\" Is a Hugging Face Alternative now that Nvidias deal is a Go",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-03T16:02:32+00:00",
+   "body": "I liked the Nvidia that focused on just GPUs for gaming, not on the Nvidia of today which seem want power consolidation.\n\nModelscope is another platform for those that simply want to know an alternative if things go south. However, time will tell what happens to huggingface after the deal is finalized\n\nLink: [https://modelscope.cn/home](https://modelscope.cn/home)",
+   "raters": {
+    "claude": {
+     "score": 3.0,
+     "reason": "社区个人观点帖，信息稀薄"
+    },
+    "codex_gpt56sol": {
+     "score": 3.3,
+     "reason": "只是推荐ModelScope作备选的个人评论，无新产品事件。"
+    }
+   },
+   "gold": 3.15,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 2.0,
+    "reason": "观点帖，信息量稀薄，无实质新闻内容，仅提及ModelScope作为替代。"
+   }
+  },
+  {
+   "n": 45,
+   "id": "rss_hn_ai_bdccc848d03a4a32",
+   "source_id": "rss_hn_ai",
+   "stratum": "community",
+   "title": "Google AI Mode shows same products 21.6% more expensive than traditional search",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-04T11:59:15+00:00",
+   "body": "Article URL:\nhttps://productrise.app/blog/google-ai-mode-prefers-more-expensive-products\nComments URL:\nhttps://news.ycombinator.com/item?id=49563386\nPoints: 393\n# Comments: 74",
+   "raters": {
+    "claude": {
+     "score": 5.0,
+     "reason": "AI Mode 推高商品价格研究，HN 393 分热议"
+    },
+    "codex_gpt56sol": {
+     "score": 5.2,
+     "reason": "仅据标题，AI购物搜索或有价格偏差，但研究方法未知。"
+    }
+   },
+   "gold": 5.1,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 5.0,
+    "reason": "第三方评测，影响面有限，非官方发布，价值中等偏低。"
+   }
+  },
+  {
+   "n": 46,
+   "id": "web_huggingface_daily_papers_d5615891891f5047",
+   "source_id": "web_huggingface_daily_papers",
+   "stratum": "paper",
+   "title": "ZimaBlue: Evolving Generalizable World Action Models through Scalable Video Pre-training",
+   "content_type": "web_article",
+   "publish_date": "2026-08-31T00:00:00+00:00",
+   "body": "Robotic manipulation faces a fundamental scaling challenge: robust generalization demands broad physical experience, yet action-labeled robot trajectories are expensive to collect and inherently limited in diversity. Egocentric videos offer a far more scalable source of embodied experience, capturing object interactions, contact dynamics, tool use, and long-horizon behaviors across diverse environments. The central challenge is how to convert this abundant but action-free experience into effective robot control. We introduce ZimaBlue, a scalable framework for learning generalizable World Action Models (WAMs) from large-scale video. ZimaBlue follows a three-stage training curriculum: it first performs causal embodied video pre-training on large-scale human and robot egocentric videos, then grounds the learned visual dynamics in heterogeneous robot trajectories through video-action mid-training with a unified action representation, and finally specializes the model to a target robot for deployment. To make generative WAMs practical for real-time control, ZimaBluefurther adopts an asynchronous Slow-Fast dual-system architecture, where a high-capacity Slow world model provides generalizable spatiotemporal representations and a lightweight Fast branch enables 30 Hz action prediction on NVIDIA RTX 4090. On real-robot zero-shot evaluations, scaling from target-robot data alone to over 120,000 hours of embodied video improves success from 36.1% to 77.8%. ZimaBlue further delivers strong performance across multiple benchmarks, with particularly pronounced gains on unseen tasks.",
+   "raters": {
+    "claude": {
+     "score": 5.0,
+     "reason": "视频预训练世界动作模型，有真机结果的常规论文"
+    },
+    "codex_gpt56sol": {
+     "score": 7.6,
+     "reason": "大规模视频预训迁移至真机零样本控制，兼顾30Hz部署。"
+    }
+   },
+   "gold": 6.3,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 7.5,
+    "reason": "视频预训练世界模型，零样本成功率大幅提升，具身智能领域有明确新意。"
+   }
+  },
+  {
+   "n": 47,
+   "id": "rss_the_decoder_caf00524ebbd5d3d",
+   "source_id": "rss_the_decoder",
+   "stratum": "media",
+   "title": "OpenAI starts charging some customers only when its AI actually works",
+   "content_type": "rss_article",
+   "publish_date": "2026-08-31T14:28:14+00:00",
+   "body": "# OpenAI starts charging some customers only when its AI actually works\n\n![Maximilian Schreiner](https://the-decoder.com/resources/images/avatar_maximilian_schreiner.jpg)\n\n[Maximilian Schreiner](https://the-decoder.com/author/maximilian-schreiner/)\n\nAug 31, 2026\n\n![Image description](https://the-decoder.com/wp-content/uploads/2026/07/openai_logo_large_right.png)\n\n## Key Points\n\n- OpenAI and other software vendors are testing outcome-based pricing. Large customers pay only once the AI completes a task successfully.\n- High operating costs are forcing the industry to rethink. Vendors like Salesforce now tie their prices directly to the revenue gains or cost cuts customers see.\n- The hard part of the model is attributing the success. Without clear rules, it's tough to prove that good results really came from the AI.\n\n**Software vendors are moving away from fixed subscription fees and billing by usage or by results instead. According to a report, OpenAI is now doing the same, according to The Information.**\n\nOver the past few months, OpenAI has started giving some large customers the option to pay only once its AI actually finishes a task, such as handling customer support requests. That's according to [The Information](https://www.theinformation.com/articles/salesforce-overhauling-way-charges-ai), citing a person with direct knowledge of the arrangements. The move hadn't been public before. An OpenAI spokesperson declined to comment.\n\nOpenAI is adopting a model that startups pushed hardest. It's outcome-based pricing, where customers pay only when the AI works. Sierra and Fin, the latter now being acquired by Salesforce for $3.6 billion, charge only for tasks the AI completes without human involvement. The coding assistant Cognition promises corporate customers credits of up to $10 million if the software fails to deliver results worth at least as much as the price they paid. Older vendors like Adobe, HubSpot, and Zendesk are heading the same way.Ad\n\n## Why the subscription fee is under pressure\n\nThere is some pressure on the AI companies to adopt such measures, as their products are expensive to run, and so far they haven't sped up revenue growth at software companies, according to The Information. At the same time, customers' IT budgets are strained by competing tools like Anthropic's Claude, which recently pushed harder toward [billing by usage](https://the-decoder.com/frontier-radar-3-how-agentic-ai-is-turning-tokens-into-a-business-metric/).Ad\n\nSalesforce now lets companies choose how they pay for its own AI, Agentforce, including individually negotiated contracts tied to how much the AI lifts revenue or cuts costs. Customers want to buy and price in different ways, CEO Marc Benioff said at an investor conference. The point isn't just to say the software closed a certain number of calls and charge two dollars for them. It's to say the software raised revenue by a certain amount, so the customer should pay two dollars because the AI brought in 20 or 40.\n\n## Who gets credit becomes the sticking point\n\nThe more common the model gets, the trickier it becomes to say whether a cost saving or a closed sale came from the software or from the customer. The payment provider Stripe has already [published guidelines](https://stripe.com/resources/more/outcome-based-pricing) on this. A result could come from product changes, marketing campaigns, or seasonality, Stripe notes. Without clear attribution rules, customers could dispute that the vendor drove the success.Ad\n\nAdobe has also said it will bill part of its newly bundled AI suite, CX Enterprise, by the value it creates, such as the number of ad campaigns completed. Adobe didn't name specific prices. Subscription and usage models stay in place for other tools, and existing AI features for photo and video editing are excluded.\n\nAd\n\n### AI News Without the Hype – Curated by Humans\n\nSubscribe to THE DECODER for ad-free reading, a weekly AI newsletter, our exclusive \"AI Radar\" frontier report six times a year, full archive access, and access to our comment section.\n\nSubscribe now\n\nSource: [The Information / OpenAI pricing model](https://www.theinformation.com/articles/salesforce-overhauling-way-charges-ai) | [Stripe / Outcome-based pricing](https://stripe.com/resources/more/outcome-based-pricing)",
+   "raters": {
+    "claude": {
+     "score": 6.0,
+     "reason": "OpenAI 试行按结果计费，商业模式变化二手报道"
+    },
+    "codex_gpt56sol": {
+     "score": 7.0,
+     "reason": "结果付费试点改变AI软件商业模式，但仅少数大客户。"
+    }
+   },
+   "gold": 6.5,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 7.5,
+    "reason": "OpenAI 试点按结果付费，属头部厂商商业模式重大变化，影响行业定价范式。"
+   }
+  },
+  {
+   "n": 48,
+   "id": "rss_reddit_localllama_477361ce061027bb",
+   "source_id": "rss_reddit_localllama",
+   "stratum": "community",
+   "title": "Expert expansion with llama.cpp",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-06T18:27:45+00:00",
+   "body": "![Expert expansion with llama.cpp](https://preview.redd.it/8oysfu3q0ynh1.jpg?width=140&height=92&auto=webp&s=3a0c2daea1e657a734a50361a047e6d9df89a44c)\n\nWith the help of Glm 5.3 flash I built a custom branch of llama.cpp in order to support Expert expansion with MOE models, I've tested only on metal and It works better than my DS4 version , i need feedback from other platforms, and different models.\n\n[moex-expansion](https://github.com/vagrillo/llama.cpp/blob/moe-expansion/docs/moe-expansion.md)",
+   "raters": {
+    "claude": {
+     "score": 3.0,
+     "reason": "个人 llama.cpp 分支实验，求反馈"
+    },
+    "codex_gpt56sol": {
+     "score": 4.5,
+     "reason": "个人分支扩展MoE专家且仅测Metal，适用性尚有限。"
+    }
+   },
+   "gold": 3.75,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 4.0,
+    "reason": "个人实验性分支，影响面有限，非官方发布。"
+   }
+  },
+  {
+   "n": 49,
+   "id": "docs_xai_release_notes_6c7fdf74442012c7",
+   "source_id": "docs_xai_release_notes",
+   "stratum": "official",
+   "title": "xAI: Imagine image API updates",
+   "content_type": "web_article",
+   "publish_date": "2026-08-28T00:00:00+00:00",
+   "body": "- **Auto quality.** The `quality` parameter on `grok-imagine-image-2.0` now accepts `auto`, and the default when `quality` is omitted has moved from `medium` to `auto`. Auto currently uses `low` for image generation and `medium` for image editing. Images are billed at the quality they are served at. Pass `low` or `medium` explicitly to pin a specific quality. See [Image Generation](https://docs.x.ai/developers/model-capabilities/images/generation#quality).\n- **Five reference images.** Image editing now accepts up to 5 source images per request (was 3). See [Multi-Image Editing](https://docs.x.ai/developers/model-capabilities/images/multi-image-editing).\n- **New aspect ratios.** Image generation and editing accept `21:9` (cinematic widescreen) and `5:2` (wide banners). See [Image Generation](https://docs.x.ai/developers/model-capabilities/images/generation#aspect-ratio).",
+   "raters": {
+    "claude": {
+     "score": 4.0,
+     "reason": "xAI 图像 API 参数微调，增量小修"
+    },
+    "codex_gpt56sol": {
+     "score": 5.7,
+     "reason": "增加参考图和画幅等API选项，属于实用但增量的更新。"
+    }
+   },
+   "gold": 4.85,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 5.0,
+    "reason": "xAI 图像 API 的增量更新，影响面有限，非重大发布。"
+   }
+  },
+  {
+   "n": 50,
+   "id": "rss_hf_blog_b844bdeeb825fb68",
+   "source_id": "rss_hf_blog",
+   "stratum": "official",
+   "title": "Training a coding model to paint watercolours with TRL and OpenEnv",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-03T00:00:00+00:00",
+   "body": "# Training a coding model to paint watercolours with TRL and OpenEnv\n\nPublished\nSeptember 3, 2026\n\nUpdate on GitHub\n\nOn 23 August, [Surya Narreddi](https://x.com/kickingkeys/status/2091570990048276897) posted a beautiful video\nof watercolours painted by a language model. The model writes JavaScript through\n[p5.brush](https://github.com/acamposuribe/p5.brush), a library that \"adds natural\ndrawing tools to p5.js\". The video went viral fast, over 1.5M views at the time of\nwriting.\n\nThe video came with [a blog post](https://surya.website/rling-qwen-to-paint-with-code) explaining the training\nbehind an earlier and narrower stage of the project, close-up flowers rather than the\nfull compositions in the video, sadly without open artifacts yet. His site says a full\ntechnical report is coming, so ensure you follow him. The original idea is his, coming from the art and design side, where [his skills are way beyond mine](https://x.com/kickingkeys/status/2094901433149612118). My attempt is on the engineering side, reproducing the recipe in the open with every piece published.\n\n> **Note:** for the context behind the project, told by Surya himself, watch [this video of his thesis](https://vimeo.com/1190839818).\n\nIn this article I try and reproduce his idea with [TRL](https://huggingface.co/docs/trl) and\n[OpenEnv](https://github.com/huggingface/OpenEnv). The reference pool dataset, the RL\nenvironment, the training scripts and the trained models, all open.\n\nThe whole pipeline runs on Hugging Face, end to end:\n\n- training on [Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs)\n- the RL environment and the scorer model as [Spaces](https://huggingface.co/docs/hub/spaces)\n- the pairwise judge through [Inference Providers](https://huggingface.co/docs/inference-providers)\n- and every artifact on the Hub, gathered in [one collection](https://huggingface.co/collections/HuggingEnvs/paint-with-code-6a955b79d63f67f1631d9be6)\n\nOnce the two Spaces are up, the recipe is one command. Duplicate the\n[environment](https://huggingface.co/spaces/HuggingEnvs/watercolour-env) and the\n[scorer model](https://huggingface.co/spaces/HuggingEnvs/watercolour-hpsv3), set two\nenvironment variables for the reward mix, and launch:\n\n```bash\nhf jobs uv run train/watercolour_grpo.py --flavor h200 --timeout 48h --secrets HF_TOKEN -- \\\n  --env-url https://<you>-watercolour-env.hf.space \\\n  --model Qwen/Qwen3.5-35B-A3B --lora --all-linear --bf16 --gradient-checkpointing \\\n  --subject 'a peach hibiscus' --references 4 \\\n  --top-p 0.95 --top-k 20 \\\n  --lr 5e-5 --lr-scheduler constant_with_warmup --warmup-steps 5 \\\n  --scale-rewards none \\\n  --steps 110 --n-episodes 240 --num-generations 8 \\\n  --per-device-batch-size 1 --gradient-accumulation-steps 8 \\\n  --max-completion-length 8192 \\\n  --run-tag my-run --out <you>/watercolour-grpo --push-to-hub\n```\n\nThe rest of this article is the story of getting there, and [every piece is in the repo](https://github.com/adithya-s-k/HuggingEnvs/tree/main/02-watercolour).\n\nI have followed the original blog step by step, and only changed something when strictly needed. Every idea of my own went into a list instead of into the experiment, and that list became \"What I would try next\" at the end, next to the full list of published artifacts. If you have already read his post, the framing and\nthe reward design will be familiar. The new material is the open implementation, the\nhand-rated pool, and three reward mixes trained and compared, and it starts at [The RL environment you need to build](https://huggingface.co/blog/train-to-paint-with-code#the-rl-environment-you-need-to-build).\n\n[▶ 视频](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/blog/train-to-paint-with-code/three-runs-evolution.mp4)\n\nThree runs, one per reward mix, evolving in parallel. Each frame shows the median painting of a step. No need to tell them apart yet, the article explains which run is which.\n\n## Why people loved it\n\nThe paintings look loose, imperfect, handmade, at a moment when image models produce perfect (statistically average) pictures. My guess is that this contrast is a big part of why the video went\nviral. It reminded me of the early days of generative AI art, when the point was\nto explore the medium. [DeepDream](https://research.google/blog/inceptionism-going-deeper-into-neural-networks/) (2015) was a debugging tool that people turned into art, works like [Edmond de Belamy](https://en.wikipedia.org/wiki/Edmond_de_Belamy) (2018) came from artists probing\nwhat a GAN could do, and artists like [Mario Klingemann](https://quasimondo.com) spent those years making [dreamy portraits with neural networks](https://artsandculture.google.com/asset/memories-of-passerby-i-mario-klingemann/aAHG7iV3aXme8g).\n\nThis project feels closer to those early days. In his thesis, Surya describes the path\nthat led here. He started by prompting text-to-image models, where the prompt is the\nonly lever you can pull, and more detail buys more control only up to a point. Training\nthe model itself goes further. The\nother half of the idea is the medium. The model writes a program of about 150\nlines of JavaScript that paints the image. That model output is code. You can read it, edit it and run it\nagain, and the decision behind each brushstroke is visible. And the style comes from a\nrestriction where the model is only allowed *ten of the library's methods*. More on that below.\n\nIn that same period, [Anna Ridler](https://annaridler.com/works/myriad-tulips)\nphotographed thousands of tulips, hand-labelled every one, exhibited the dataset itself\nas the artwork, and later trained a model on it. I found her work through the references\nAI agents brought back while building this project and loved it because this\nproject does something very similar by curating a set of images by hand, and then training against them.\n\n## RL over taste\n\nMost of the recent RL work on language models uses rewards you can verify. For example, math problems wit",
+   "raters": {
+    "claude": {
+     "score": 5.0,
+     "reason": "HF 官方开源复现水彩 RL 训练，教程性质"
+    },
+    "codex_gpt56sol": {
+     "score": 6.1,
+     "reason": "开放复现强化学习作画流程，具教学价值但应用较窄。"
+    }
+   },
+   "gold": 5.55,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 6.0,
+    "reason": "开源复现审美RL训练，方法有巧思但影响面有限，非里程碑研究。"
+   }
+  },
+  {
+   "n": 51,
+   "id": "web_huggingface_daily_papers_d1a09be640c34f24",
+   "source_id": "web_huggingface_daily_papers",
+   "stratum": "paper",
+   "title": "Beneath the Surface of Chains-of-Thought: A Mechanistic Interpretation of Reasoning Operations in LLMs",
+   "content_type": "web_article",
+   "publish_date": "2026-09-04T00:00:00+00:00",
+   "body": "Reasoning in large language models unfolds through diverse functional operations, such as problem formulation, goal decomposition, and deduction. Although these operations are explicitly distinguished in text, little is known about how they are geometrically organized in representation spaces. To this end, we investigate whether distinct reasoning operations exhibit corresponding geometric structure in hidden representations. We find that operations are separable in held-out representations, with separability peaking in middle layers, and verify that this structure is not explained by lexical or positional confounds. Across layers, token-wise operation-alignment becomes more distributed over spans, while identical surface tokens are represented differently depending on the operation of its surrounding chunk. Attention-masking interventions further show that operation-aligned representations at chunk onset depend on preceding reasoning context. Consequently, our work demonstrates that language models maintain representational correspondence between linguistic reasoning expressions and their internal geometric structures. Code and project materials are available at https://github.com/naver-ai/beneath-cot.",
+   "raters": {
+    "claude": {
+     "score": 4.5,
+     "reason": "CoT 机理可解释性常规论文"
+    },
+    "codex_gpt56sol": {
+     "score": 6.8,
+     "reason": "发现推理操作在中层表征中可分，为机制解释提供证据。"
+    }
+   },
+   "gold": 5.65,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 6.5,
+    "reason": "研究论文，探讨推理操作在表示空间中的几何结构，有明确新意但影响面有限。"
+   }
+  },
+  {
+   "n": 52,
+   "id": "web_ithome_ai_8d21b842419cdd8a",
+   "source_id": "web_ithome_ai",
+   "stratum": "media",
+   "title": "“反数据中心”浪潮有增无减，美国财长贝森特怒批企业没做好沟通工作",
+   "content_type": "web_article",
+   "publish_date": "2026-09-03T09:51:11.657000+00:00",
+   "body": "[IT之家](https://www.ithome.com/) 9 月 3 日消息，据彭博社今天（3 日）凌晨报道，美国财政部长斯科特 · 贝森特猛烈抨击大举投资 AI 的美国企业：在数据中心推高生活成本已经引发公众担忧的环境下，却没有做好与当地社区的沟通工作。\n\n贝森特批评称：“这个行业**根本没有把自己的事情解释清楚**，做得糟糕透顶。AI 行业和政府都有责任向美国公众解释，AI 无论在实际应用、国家安全还是生活质量方面，究竟能给他们带来什么好处”。\n\n一些原本支持数据中心的业界外人士，也开始反对限制数据中心建设。贝森特直言：“这种建设本身具有创新性，而且可能形成一个持续很久的投资周期，为技工创造长期就业机会。这些企业根本没有听进社区和利益相关方的声音。大家都知道我过去打分很严格，但即使按相对评分，我也只能给他们 D-。”\n\nAI 投资正在给多个领域带来价格压力，数据中心建设尤其明显，公用事业费用以及许多消费电子产品所需的高带宽内存价格都受到影响。\n\n贝森特重申，AI 投资将推动美国**迎来一轮生产率大幅增长**。当地时间周二，他预测 AI 资本开支热潮将大幅缓解通胀压力。“估计未来 6 个月内，我们就会开始看到这些投资带来的好处。”\n\n此次对企业沟通策略的批评，也是贝森特近期再次敲打 AI 行业。上个月，他曾批评超大规模云服务商选择了不合适的债券发行期限。市场人士认为，大量企业发债是推动美国国债收益率走高的因素之一，并进一步使房贷利率等借贷成本保持高位。“如果我是首席财务官，我会考虑更多发行所谓的中段期限债券，也就是 5 年期债券。”\n\n8 月早些时候，谷歌母公司 Alphabet 发行了 250 亿美元（IT之家注：现汇率约合 1,684.12 亿元人民币）债券，期限从 2 年至 40 年不等。",
+   "raters": {
+    "claude": {
+     "score": 4.5,
+     "reason": "美财长批 AI 企业沟通，宏观政策边角"
+    },
+    "codex_gpt56sol": {
+     "score": 6.3,
+     "reason": "美国财长公开批评数据中心外部成本，但尚未形成政策。"
+    }
+   },
+   "gold": 5.4,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 5.5,
+    "reason": "美国财长批评AI企业沟通，属业界政策讨论，影响面有限。"
+   }
+  },
+  {
+   "n": 53,
+   "id": "rss_openai_news_2e155b11d8093d3e",
+   "source_id": "rss_openai_news",
+   "stratum": "official",
+   "title": "Safety overview: GPT-6 Astra",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-03T00:00:00+00:00",
+   "body": "GPT-6 Astra is our most capable broadly deployed model and our first to reach the Critical level of cybersecurity capability under our Preparedness Framework.",
+   "raters": {
+    "claude": {
+     "score": 8.5,
+     "reason": "官方安全概览，首个达 Critical 网络安全级别的模型"
+    },
+    "codex_gpt56sol": {
+     "score": 8.8,
+     "reason": "首个达到关键级网络能力的广泛部署模型，安全含义重大。"
+    }
+   },
+   "gold": 8.65,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 9.5,
+    "reason": "OpenAI 旗舰模型达到网络安全关键能力级别，属行业级重大发布。"
+   }
+  },
+  {
+   "n": 54,
+   "id": "rss_reddit_localllama_e992beb552b878b4",
+   "source_id": "rss_reddit_localllama",
+   "stratum": "community",
+   "title": "Your opinion on Ling 3.0 tiny on CPU?",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-05T22:01:06+00:00",
+   "body": "Did anyone try and use it?",
+   "raters": {
+    "claude": {
+     "score": 1.5,
+     "reason": "一句提问无内容"
+    },
+    "codex_gpt56sol": {
+     "score": 1.3,
+     "reason": "仅询问小模型CPU体验，无测试结果或新事件。"
+    }
+   },
+   "gold": 1.4,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 1.5,
+    "reason": "信息量稀薄，仅询问他人使用体验，无实质新闻内容。"
+   }
+  },
+  {
+   "n": 55,
+   "id": "x_openai_2095968413646737608",
+   "source_id": "x_openai",
+   "stratum": "official",
+   "title": "GPT-6 Astra is now available to all Pro, Enterprise, and Business Premium users ",
+   "content_type": "social_post",
+   "publish_date": "2026-09-04T20:13:05.000Z",
+   "body": "GPT-6 Astra is now available to all Pro, Enterprise, and Business Premium users in ChatGPT Work and Codex. It's also live in the API.\n\nIt might take a few days to roll out to our Plus and Business users. Thank you for your patience.",
+   "raters": {
+    "claude": {
+     "score": 8.0,
+     "reason": "官方宣布 GPT-6 Astra 全面开放并上 API"
+    },
+    "codex_gpt56sol": {
+     "score": 9.2,
+     "reason": "Astra正式进入API与编码产品，是旗舰模型核心发布节点。"
+    }
+   },
+   "gold": 8.6,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 9.5,
+    "reason": "OpenAI 旗舰模型 GPT-6 Astra 全面开放并上线 API，属行业级重大发布。"
+   }
+  },
+  {
+   "n": 56,
+   "id": "rss_microsoft_ai_models_31e184018d8c0cd5",
+   "source_id": "rss_microsoft_ai_models",
+   "stratum": "official",
+   "title": "Pushing the quality-cost frontier with MAI-Image-2.6",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-04T16:02:05+00:00",
+   "body": "MAI-Image-2.6 is our strongest image model yet. Today, we’re bringing it to developers in Microsoft Foundry and expanding the family with MAI-Image-2.6-Flash – built to deliver that same level of quality for latency-sensitive, high-throughput production workloads.\n\nBoth models come with support for multi-image reference editing, web grounding, and dynamic aspect ratios. Developers now have choice between maximum precision with MAI-Image-2.6 and production speed with MAI-Image-2.6-Flash.\n\n## **Quality at production speed**\n\nMAI-Image-2.6 has established itself among the industry’s leading image models. Today, it ranks No. 2 for both text to image and image editing on [Arena](https://arena.ai/leaderboard/text-to-image).[1] On [Artificial Analysis](https://artificialanalysis.ai/image/models), it ranks No. 2 for text-to-image and No. 1 for image editing.[2]\n\nMAI-Image-2.6-Flash brings comparable quality to latency-sensitive, high-throughput workloads. It is able to generate images 2.8x faster than GPT-Image-2-Medium while delivering 72% greater efficiency.\n\n**Leading quality for the price**\n\nMAI-Image-2.6’s combination of quality and efficiency delivers the best price-per-Elo performance in the world, helping production teams scale high-quality image generation while keeping token usage and costs under control.\n\n**More ways to create**\n\nWe’ve been listening closely to how users create with our image models and have expanded their capabilities around the creative workflows that matter most.\n\nThe latest models offer more control, more context, and more ways to bring ideas to life:\n\n- **Multi-reference editing** brings together people, products, styles, and scenes from different images\n- **Web grounding** pulls info from across the web to create rich visuals informed by relevant, up-to-date information\n- **Higher resolutions and dynamic aspect ratios** chooses the optimal format for compositions with support for up to 1.5K resolution.\n\n## **Start Creating**\n\nTry both models in [MAI Playground](https://playground.microsoft.ai/chat), or start building in Public Preview through [Microsoft Foundry](https://ai.azure.com/catalog/models).\n\nFOOTNOTE:\n[1] As of Sep 4, 2026\n[2] As of Sep 4, 2026",
+   "raters": {
+    "claude": {
+     "score": 6.5,
+     "reason": "微软官方图像模型 2.6 与 Flash 版发布，榜单第二"
+    },
+    "codex_gpt56sol": {
+     "score": 8.0,
+     "reason": "两款生图模型进入开发平台，兼具顶级质量与生产效率。"
+    }
+   },
+   "gold": 7.25,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 5.5,
+    "reason": "微软图像模型常规迭代，非行业级突破，价值有限。"
+   }
+  },
+  {
+   "n": 57,
+   "id": "web_huggingface_daily_papers_4f7870898e4e9bd1",
+   "source_id": "web_huggingface_daily_papers",
+   "stratum": "paper",
+   "title": "Repo-To-Skill: Distilling GitHub Repositories Into AI4AI Skills",
+   "content_type": "web_article",
+   "publish_date": "2026-09-02T00:00:00+00:00",
+   "body": "Autonomous agents are beginning to carry out machine-learning (ML) research end to end. These agents combine a model backbone with a harness for planning, execution, memory, and verification, but this architecture still leaves domain-specific know-how outside the agent. We call this missing layer operational knowledge, the know-how that separates knowing a method from making it work. That knowledge is not absent from the field. It appears in repositories and papers, but in forms written for human readers and too large to load during a task. Once distilled into compact, verified skills, this knowledge can be reused across tasks rather than rediscovered during each run. We present DisCo, a skill-powered research agent that creates skills and uses them during research. Its distillation runs in two complementary forms: task-agnostic, condensing the field's widely used repositories into reusable skills, and task-oriented, producing the skills a concrete task calls for. The former, applied across the open ecosystem, yields the AREX-Skill Library, with 5,000+ verified skills distilled from 1,000 widely used ML repositories and organized into 20 areas and 178 capability families. With the GPT-5.5 backbone, research harness, and downstream execution budget held fixed, the skill-equipped research agent scores 134.3% higher on MLE-bench, 34.4% higher on PaperBench, 9.2% higher on FrontierCS, and 14.0% higher on PassNet than the same agent without skills. These gains come from adding distilled operating context under that fixed setup.",
+   "raters": {
+    "claude": {
+     "score": 5.5,
+     "reason": "技能蒸馏提升研究 Agent，MLE-bench 大幅提升"
+    },
+    "codex_gpt56sol": {
+     "score": 7.9,
+     "reason": "从千库提炼五千技能并显著提升研究代理，方法新且广用。"
+    }
+   },
+   "gold": 6.7,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 7.0,
+    "reason": "论文提出技能蒸馏方法，提升智能体研究能力，有明确新意，但非范式级突破。"
+   }
+  },
+  {
+   "n": 58,
+   "id": "rss_openai_news_631a857c7a24a6f9",
+   "source_id": "rss_openai_news",
+   "stratum": "official",
+   "title": "How law firm Gilbert + Tobin governs and scales AI with OpenAI",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-01T01:00:00+00:00",
+   "body": "See how Gilbert + Tobin combines CEO-led commitment, rigorous governance, and human accountability to scale ChatGPT Enterprise and Codex across the firm.",
+   "raters": {
+    "claude": {
+     "score": 3.0,
+     "reason": "企业客户案例，营销通稿"
+    },
+    "codex_gpt56sol": {
+     "score": 2.4,
+     "reason": "仅为律所企业客户案例，内容简短且明显偏营销。"
+    }
+   },
+   "gold": 2.7,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 4.5,
+    "reason": "企业客户案例，非一手技术发布，影响面有限。"
+   }
+  },
+  {
+   "n": 59,
+   "id": "web_artificial_analysis_2d1aff01ef67ae47",
+   "source_id": "web_artificial_analysis",
+   "stratum": "board",
+   "title": "Announcing Artificial Analysis Intelligence Index v4.2",
+   "content_type": "web_article",
+   "publish_date": "2026-09-04T00:00:00+00:00",
+   "body": "**We are accelerating elements of our upcoming v5 release with interim updates to keep pace with the frontier. Index v4.2 has more complex and realistic tasks, and more private test sets to prevent gaming**\n\nIntelligence Index v4.2 changelog:\n\n**+ AA-Briefcase**, our agentic knowledge work evaluation with a private test set\n\n**+ Surge’s GDP.pdf**, long context document reasoning across 4,592 PDF pages\n\n**- GPQA Diamond,** an exceptional scientific reasoning evaluation that has now been saturated\n\n… plus greater weighting on held-out test sets to prevent gaming, and grading infrastructure upgrades to increase robustness\n\nThis update brings the Index closer to real-world use cases with more challenging, complex and realistic tasks and private test sets to prevent gaming. We have been planning and building elements of Index v5 for months - it’s been 8 months since we launched Index v4 in January.\n\nWe have deliberately held back updates to keep the Index stable through recent major model launches. However, with the frontier moving so quickly in the past weeks, we feel it is important to deliver an immediate interim update to ensure our Index remains as relevant and useful as ever to users.\n\nBeyond this interim update, our team is hard at work on v5 of the Index. We are planning more incremental releases in the near future. Stay tuned!\n\n**Intelligence Index v4.2 changes in detail:**\n\n**➤ Adding AA-Briefcase:** Our in-house evaluation with a private held-out test set, AA-Briefcase tests models on realistic agentic knowledge work tasks in complex projects built by industry experts. Models are evaluated on multi-week knowledge work projects, each with many linked tasks and thousands of input source files. AA-Briefcase combines rubric and pairwise grading to evaluate verifiable task success, analytical quality, and presentation quality, giving a holistic view of overall agentic capability in knowledge work.\n\n**➤ Adding GDP.pdf:** Created by Surge AI, GDP.pdf evaluates single-turn professional document reasoning across 100 PDFs and ten domains. Models must synthesize evidence distributed across 4,592 pages, including text, tables, charts, footnotes, and exclusions. Responses are graded against 1,275 expert-authored atomic criteria; the headline All-pass Rate credits a task only when every criterion is satisfied.\n\n**➤ Weighting to measure real-world use and prevent gaming:** 40% of our Index weighting is now private, held-out test sets - double the figure from v4.1. Held-out data includes AA-Briefcase, AA-Omniscience, and solutions for CritPt. This reduces the ability for labs to game evaluations. The held-out percentage will increase further in Index v5.\n\n**➤ Improving our grading infrastructure:** In AA-LCR v1.1, we have added a grading system prompt and corrected errors and ambiguities in answer keys, improving scoring accuracy. For GDPval-AA v2 and AA-Briefcase, we have improved our sampling and re-anchored the Elo scale, making ratings more stable as new models are added. For SciCode we have improved robustness of grading sandboxes to ensure slow but correct code does not count as a failure.\n\n**Key results:**\n\n**➤ Anthropic and OpenAI lead the Index:** Anthropic’s Claude Fable 5.1 leads the Index, followed by OpenAI’s GPT-6 Astra, which shows a 4pt gain over GPT-5.6 Sol. Meta is the third-ranked lab on the leaderboard, followed by SpaceXAI, Moonshot/Kimi, Z.AI, and Google.\n\n**➤ Cost per Task Pareto frontier shared by four labs:** Anthropic, OpenAI, Meta and Z.AI occupy the updated Cost per Task frontier.\n\n**➤ GPT-6 Astra dominates the output token frontier:** GPT-6 Astra is more token efficient than almost every other model near the intelligence frontier, with Claude Fable 5.1, Grok 4.5 and Gemini 3.5 Flash-Lite at either end of the curve (excludes models below 25 on the Index)\n\n![](https://cdn.sanity.io/images/6vfeftx9/articles/4692314442fdbe71d56ad89081f4a3769892448a-2320x2040.png?w=1200&auto=format)\n\nGPT-6 Astra is more token efficient than almost every other model near the intelligence frontier, with Claude Fable 5.1, Grok 4.5 and Gemini 3.5 Flash-Lite at either end of the curve (excludes models below 25 on the Index)\n\n![](https://cdn.sanity.io/images/6vfeftx9/articles/8ff2f60f8958841b545f1ae9430354421d97cceb-2320x2072.png?w=1200&auto=format)\n\nAnthropic’s Claude Fable 5.1 and Opus 5 lead AA-Briefcase, followed by GPT-6 Astra and Muse Spark 1.3. GPT-6 Astra shows a substantial gain above GPT-5.6 Sol of ~85 Elo points\n\nAA-Briefcase is our frontier in-house evaluation with a private held-out test set. The evaluation tests models on realistic agentic knowledge work tasks in complex projects built by industry experts. Models are evaluated on multi-week knowledge work projects, each with many linked tasks and thousands of input source files. AA-Briefcase combines rubric and pairwise grading to evaluate verifiable task success, analytical quality, and presentation quality, giving a holistic view of overall agentic capability in knowledge work.\n\n![](https://cdn.sanity.io/images/6vfeftx9/articles/c6638ab0da3f07b1eff7bec57ac1f7f6c6e43a1c-2320x2008.png?w=1200&auto=format)\n\nOpenAI leads GDP.pdf with GPT-6 Astra at 33.2% and GPT-5.6 Sol at 28.2%, followed by Claude Fable 5.1 at 26.2%\n\nCreated by Surge AI, GDP.pdf evaluates single-turn professional document reasoning across 100 PDFs and ten domains. Models must synthesize evidence distributed across 4,592 pages, including text, tables, charts, footnotes, and exclusions. Responses are graded against 1,275 expert-authored atomic criteria; the headline All-pass Rate credits a task only when every criterion is satisfied\n\n![](https://cdn.sanity.io/images/6vfeftx9/articles/f6c26a7e937370d7d426681ba6c949239ecd5e7a-2320x1976.png?w=1200&auto=format)\n\nFull per-model breakdowns below:\n\n![](https://cdn.sanity.io/images/6vfeftx9/articles/971805b0a4b0877da6653842f240267721a56498-2256x4032.png?w=1200&auto=format)\n\n![](https://cdn.sanity.io/images/6vfeftx9/articles/3f0",
+   "raters": {
+    "claude": {
+     "score": 5.5,
+     "reason": "权威榜单指数改版，从业者关注"
+    },
+    "codex_gpt56sol": {
+     "score": 7.5,
+     "reason": "权威指数引入私有代理与长文档测试，提升前沿评测可信度。"
+    }
+   },
+   "gold": 6.5,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 6.0,
+    "reason": "评测基准更新，新增私有测试集与长文档任务，对行业有参考价值但非重大发布。"
+   }
+  },
+  {
+   "n": 60,
+   "id": "web_huggingface_daily_papers_933cf78517f3e3f1",
+   "source_id": "web_huggingface_daily_papers",
+   "stratum": "paper",
+   "title": "Agentic Artifact Creation: Systems, Evaluation, Principles, and Opportunities",
+   "content_type": "web_article",
+   "publish_date": "2026-08-28T00:00:00+00:00",
+   "body": "Generative models can turn natural-language prompts into images, text, code, and other content, lowering the cost of producing drafts and components. Their practical impact increasingly depends on whether those pieces can become complete, dependable deliverables. This survey examines agentic artifact creation, which we define as stateful construction in which an AI system materially constructs or revises a deliverable and intermediate observations redirect later work. Functionally, the process links an operational representation of the artifact, a construction policy, and runtime verification whose feedback can redirect later actions. We reviewed 259 works available through August 20, 2026: 230 systems meeting this definition and 29 benchmarks of agentic artifact construction. We compare six artifact families, then analyze application settings and evaluation practice as separate dimensions. Across families, construction challenges reflect not only modality but also how tightly decisions are coupled and whether failures become visible while they remain repairable. Decomposition can reduce local complexity while increasing coordination and reassembly costs. Learned judges may add little independent evidence when they share the generator's preferences or blind spots. We formulate principles for keeping commitments and responsibility explicit, turning feedback into targeted repair, and revalidating affected state after change. We also identify opportunities for sustaining coherent, accountable control as artifacts, creator intent, and construction systems evolve. A curated paper list is available at https://github.com/GeminiLight/awesome-agentic-artifact-creation.",
+   "raters": {
+    "claude": {
+     "score": 4.5,
+     "reason": "综述论文，无单一突破"
+    },
+    "codex_gpt56sol": {
+     "score": 6.0,
+     "reason": "覆盖259项工作的体系综述有参考性，但非突破性实证。"
+    }
+   },
+   "gold": 5.25,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 6.0,
+    "reason": "综述论文，覆盖面广但非里程碑，影响力中等。"
+   }
+  },
+  {
+   "n": 61,
+   "id": "rss_reddit_localllama_2f2a9595c12f925a",
+   "source_id": "rss_reddit_localllama",
+   "stratum": "community",
+   "title": "exllamav3 comfortably beats llama.cpp running CPU-offloaded Qwen-3.8-Flash-Next on my setup!",
+   "content_type": "rss_article",
+   "publish_date": "2026-09-07T19:16:48+00:00",
+   "body": "I got 2x 20GB RTX 3080s + 128GB of DDR4 2666hz RAM (only 4 of 6 channels populated) + a Xeon 6148\n\nI've always been a llama.cpp person and I've been running **Unsloth's Q4_K_XL** quant of Qwen 3.8 Flash Next at **~270tps prefill** and **~13tps decode** (starts off close to 20 and falls down to 13 with growing context, never recovers)\n\nI've been recently seeing this buzz about exllamav3: its new \"CPU-offloaded inference\" support, how its quants are more efficient in terms of size-to-performance compared to GGUFs and people posting numbers of it running models a lot faster than llama.cpp.\n\nI was skeptical at first because I've never had an engine outperform llama.cpp for CPU-offloaded inference *with my setup* so far. However, I was curious to try it out regardless and I'm pleasantly surprised at the results!\n\nI'm able to run Qwen's **4.05 EXL3** quant at an **average decode speed of ~25tps** (with occasional peaks at **32tps**) throughout 160k context (which is as far as I've tested for now) **with a 3.2x faster prefill speed of ~870tps**!\n\nSo compared to llama.cpp:\n- 3.2x faster prefill\n- 2x faster decode (No MTP)\n- Better output quality since 4.05 EXL3 quant is better than UD-Q4_K_XL GGUF\n\nIt's a win-win-win all the way!\n\n**BUT**:\n\nThis win doesn't translate across all models (at least on my setup). I got excited and downloaded GLM 5.3 Flash's 3.05 EXL3 only to find out it runs about 2x slower in decode than its llama.cpp counterpart for me. **So this advantage is clearly dependent on the model and your setup**. As for me, my CPU's AVX2 seems to be the bottleneck with exllamav3 as of today but Qwen works great due to its efficient architecture.\n\nI haven't seen any posts in here discussing CPU-offloaded performance with exllamav3 so wanted to kick things off with this one.\n\n**A couple disclaimers before you go this route:**\n\n- exllamav3 + TabbyAPI (the llama-server equivalent) is not as easy and straightforward to configure as llama.cpp\n- Decode speeds seem to take some time to warm up to calibrate hot/cold experts. Mine starts off somewhere around ~12tps and eventually makes it way to ~25-30 with a few thousand tokens. So don't be too quick to brush this off.\n\nI'm still figuring out this engine so if someone has pointers to get the offloaded runs going even faster, please do share!",
+   "raters": {
+    "claude": {
+     "score": 4.0,
+     "reason": "社区个人实测推理引擎对比"
+    },
+    "codex_gpt56sol": {
+     "score": 5.5,
+     "reason": "个人硬件实测显示推理翻倍，但结果对模型和配置敏感。"
+    }
+   },
+   "gold": 4.75,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 5.5,
+    "reason": "社区实测对比，非官方发布，影响面有限，属常规技术分享。"
+   }
+  },
+  {
+   "n": 62,
+   "id": "web_huggingface_daily_papers_e4e46882575b001a",
+   "source_id": "web_huggingface_daily_papers",
+   "stratum": "paper",
+   "title": "Safin-1: Safety from Within through Memory-Native State Evolution",
+   "content_type": "web_article",
+   "publish_date": "2026-08-31T00:00:00+00:00",
+   "body": "Long-horizon complex tasks require foundation models to accumulate information, maintain internal states, and adapt over extended interactions. Safety should be an intrinsic property of the model itself, rather than a behavioral constraint relying solely on external safeguards or post-hoc alignment such as supervised fine-tuning. This motivates Safety from Within, where safety-relevant capabilities are represented and invoked through the model's native computation. We present Safin-1, a family of foundation models realizing this principle through memory routing and state evolution. Safin-1 is built on Memory-Anchor Routing across Context History (MARCH), a network architecture that maintains structured memory states and selectively retrieves relevant historical information through content-conditioned routing. It supports test-time adaptation of persistent capability states without repeatedly modifying the backbone, enabling controlled specialization over a shared foundation. We investigate this interface on downstream safety tasks through a Safety State, demonstrating effective state-based adaptation with substantial safety improvements. More broadly, the routed-state interface unifies contextual memory and persistent capability adaptation within the model's native computation, reframing memory from a passive record of prior context into an active substrate for maintaining and evolving model behavior. Evaluations across general capabilities, long-context understanding, retrieval, and efficiency further validate Safin-1. These findings provide a path toward safety as a state-native and adaptively maintainable capability. This work is only an initial architectural exploration of Safety from Within, and substantial further work is needed to realize this broader vision.",
+   "raters": {
+    "claude": {
+     "score": 4.5,
+     "reason": "新架构安全论文，影响待验证"
+    },
+    "codex_gpt56sol": {
+     "score": 7.1,
+     "reason": "以内生记忆状态承载安全适配，架构新颖但验证信息有限。"
+    }
+   },
+   "gold": 5.8,
+   "baseline": {
+    "prompt_version": "article-analysis-v5",
+    "model": "deepseek-v4-flash",
+    "score": 6.5,
+    "reason": "研究论文，提出记忆路由新架构，有明确新意但属初步探索，影响面有限。"
+   }
+  }
+ ]
+}

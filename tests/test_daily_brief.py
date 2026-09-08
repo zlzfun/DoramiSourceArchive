@@ -1233,3 +1233,73 @@ def test_editorial_prompt_carries_analysis_facts():
     assert "【系统分析" in text and "评分理由：旗舰发布" in text and "客观摘要：客观摘要一句" in text
     assert text.index("评分理由") < text.index("正文内容：")
     assert "【系统分析" not in prompts.build_editorial_user_prompt(title="T", source_name="S", body="正文")
+
+
+# ---------- 软阈值(v3.48.1,issue #33 F2/F3/F4) ----------
+
+def _score_by_title(table, default=8.5):
+    async def _fn(*, messages, config, **kwargs):
+        if _is_scoring(messages):
+            text = messages[1].content
+            score = next((v for k, v in table.items() if f"标题-{k}" in text), default)
+            return json.dumps({**ANALYSIS_PAYLOAD, "quality_score": score})
+        return await _fake_chat_completion(messages=messages, config=config, **kwargs)
+    return _fn
+
+
+def test_soft_threshold_backfills_body_from_near_band(tmp_path, monkeypatch):
+    """过线不足 min_items 时,近线带 [min−1, min) 按分补足正文并在报头注明;带外仍 pass。"""
+    _patch_llm(monkeypatch, _score_by_title({"high": 8.5, "near_a": 5.5, "near_b": 5.0, "far": 4.5}))
+    sink = _make_sink(tmp_path, "soft.db")
+    for i, aid in enumerate(["high", "near_a", "near_b", "far"]):
+        _seed(sink.engine, aid, f"src_{i}", f"2026-06-05T1{i}:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+        db.set_setting(session, db.KEY_MIN_ITEMS, "2")
+    result = asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    assert [e["id"] for e in ext["items"]] == ["high", "near_a"]        # 正文补到 2 条,near_a 分更高
+    assert "按新闻价值分补足 1 条" in record.content
+    assert "标题-near_b" in record.content and "标题-far" not in record.content  # near_b 进附录补位,far pass
+    assert ext["included_article_ids"] == ["high", "near_a", "near_b"]
+    assert result["articles_count"] == 3
+    with Session(sink.engine) as session:
+        last = db.get_json_setting(session, db.KEY_LAST_RUN, None)
+        assert last["min_items"] == 2 and last["threshold_backfilled"] == 1
+        assert last["near_miss_appendix"] == 1 and last["below_threshold"] == 3
+
+
+def test_soft_threshold_appendix_only_fills_empty_slots(tmp_path, monkeypatch):
+    """min_items=0 不补正文;附录补位只填 top_n 空出的槽位——忙日正文满员一条不加。"""
+    table = {f"h{i}": 8.5 for i in range(3)} | {"n1": 5.5, "n2": 5.2}
+    _patch_llm(monkeypatch, _score_by_title(table))
+    sink = _make_sink(tmp_path, "slots.db")
+    for i, aid in enumerate(table):
+        _seed(sink.engine, aid, f"src_{i}", f"2026-06-05T1{i}:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+        db.set_setting(session, db.KEY_MIN_ITEMS, "0")
+    # top_n=4:正文 3 条,空 1 槽 → 只有 n1 进附录
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06", top_n=4))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    assert len(ext["items"]) == 3 and "补足" not in record.content
+    assert "标题-n1" in record.content and "标题-n2" not in record.content
+    with Session(sink.engine) as session:
+        assert db.get_json_setting(session, db.KEY_LAST_RUN, None)["threshold_backfilled"] == 0
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    # top_n=3:正文满员 → 附录一条不加
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-07", top_n=3))
+    record = asyncio.run(sink.get("daily_brief_2026-06-07"))
+    assert "标题-n1" not in record.content and "标题-n2" not in record.content
+
+
+def test_daily_brief_min_items_default_and_clamp(tmp_path):
+    sink = _make_sink(tmp_path, "minitems.db")
+    with Session(sink.engine) as session:
+        assert db.daily_brief_min_items(session) == db.DEFAULT_MIN_ITEMS
+        db.set_setting(session, db.KEY_MIN_ITEMS, "3"); assert db.daily_brief_min_items(session) == 3
+        db.set_setting(session, db.KEY_MIN_ITEMS, "999"); assert db.daily_brief_min_items(session) == db.TOP_N_MAX
+        db.set_setting(session, db.KEY_MIN_ITEMS, "abc"); assert db.daily_brief_min_items(session) == db.DEFAULT_MIN_ITEMS
+        db.set_setting(session, db.KEY_MIN_ITEMS, "0"); assert db.daily_brief_min_items(session) == 0

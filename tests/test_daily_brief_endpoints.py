@@ -170,3 +170,17 @@ def test_daily_brief_source_scope_roundtrip(monkeypatch, tmp_path):
         # 空列表 = 清空回到全部源
         resp = client.post("/api/daily-brief/config", json={"source_ids": []})
         assert resp.json()["source_ids"] is None
+
+
+def test_daily_brief_config_min_items_round_trip(monkeypatch, tmp_path):
+    """v3.48.1 正文保底条数:读写与校验(0–50),与 min_score 同端点独立可改。"""
+    app_module = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        assert client.get("/api/daily-brief/config").json()["min_items"] == 8
+        assert client.post("/api/daily-brief/config", json={"min_items": 3}).status_code == 200
+        cfg = client.get("/api/daily-brief/config").json()
+        assert cfg["min_items"] == 3 and cfg["min_score"] == 6.0
+        assert client.post("/api/daily-brief/config", json={"min_items": 51}).status_code == 400
+        assert client.post("/api/daily-brief/config", json={"min_items": -1}).status_code == 400
+        assert client.get("/api/daily-brief/pipeline").json()["params"]["min_items"] == 3

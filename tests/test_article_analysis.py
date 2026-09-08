@@ -1004,8 +1004,14 @@ def test_analysis_cycle_drains_eight_map_sized_batches_with_bounded_concurrency(
 
 
 def test_validation_limits_score_genre_and_active_tag_codes():
+    # 闭集外体裁降级为 other 并记 warning,分数与摘要照常保留(issue #33 F6);
+    # 分数缺失/非法仍是 base-field 错误
+    validated = validate_analysis_payload({**_payload(), "content_genre": "made_up"}, active_tags=[])
+    assert str(validated.result.content_genre) == "other"
+    assert "unknown_genre_fallback" in validated.warnings
+    assert validated.result.quality_score == float(_payload()["quality_score"])
     with pytest.raises(ValueError):
-        validate_analysis_payload({**_payload(), "content_genre": "made_up"}, active_tags=[])
+        validate_analysis_payload({**_payload(), "quality_score": "n/a"}, active_tags=[])
     assert "hunter2" not in sanitize_error("password=hunter2")
 
 
