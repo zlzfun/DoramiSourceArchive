@@ -15,16 +15,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > **三条铁律**:
 > 1. **一切内网适配只提交本分支,绝不合并/cherry-pick 回 main**——即使改动看似通用
 >    (先例:`disable_tls_verify` 曾按"通用能力"被提交到 main,后按用户要求回退)。
-> 2. **同步方向单一**:`git merge main`(main → master),反向永远禁止;也不要把
->    本分支推成 PR。
+> 2. **同步方向单一**:main → master,反向永远禁止;也不要把本分支推成 PR。
+>    **2026-09-08 起同步按 main 的版本 tag(`v*`)触发**(GitHub `Sync main → master`
+>    工作流 `--no-ff` 合并;此前逐 push 触发,冲突随机落在任何一次合入上),冲突时任务
+>    失败、人工在 worktree 里 `git merge <tag>` 处理。
 > 3. **每次开工前先核对与 origin/main 的差异**(SessionStart hook 会自动注入概况):
->    落后较多时,先 merge main、解决冲突、验证后再做新工作,避免差异滚雪球。
+>    落后较多时,先 merge 上游 tag、解决冲突、验证后再做新工作,避免差异滚雪球。
 >
-> **本分支独有内容**(即与 main 的预期差异面,v3.39.0 起已收敛为三项):
+> **本分支独有内容以 [`INTRANET_DELTA.md`](./INTRANET_DELTA.md) 为唯一权威登记簿**
+> (2026-09-08 立,上游基线 `UPSTREAM_BASE` 与逐条差异/冲突原则/可否上游化都在那里;
+> 新增内网改动与合并上游都必须更新它)。GitHub 侧 master 的差异面概括:
 > `[network] disable_tls_verify` 开关及 7 处 httpx `verify=settings.network.tls_verify`
 > 接线(fetchers/base、legacy_backend、media_store、remote_sync、source_builder、
-> x_api、llm/client;原 vector_storage×2 已随 v3.31 RAG 退役清仓消亡)、
-> 本须知块、`.claude/settings.json` + hooks。
+> x_api、llm/client)、本须知块、`.claude/settings.json` + hooks、IM 机器人两册文档、
+> 内网修复脚本;内网托管仓在此之上的 SSO 等差异由内网 Agent 按清单 §6 指引补登。
 >
 > **部署面文件已不再是本分支独有**:`deploy.sh` / `ecosystem.config.js` /
 > `production.example.ini` 的 `[server]`/`[nginx]` 两节于 **v3.39.0 回迁 main 扶正**——
@@ -34,7 +38,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > 注意这不是铁律 1 的例外:回迁的是通用裸机部署能力,`disable_tls_verify` 及其接线
 > 明确**未随行**——出网跳过 TLS 校验是内网 MITM 网关的专属妥协,公网开它等于自毁。
 >
-> **merge main 冲突解决原则**:部署面文件(deploy.sh/ecosystem/ini 两节)**以 main 为准**
+> **merge 上游冲突解决原则**(详见 INTRANET_DELTA.md §1):部署面文件(deploy.sh/ecosystem/ini 两节)**以 main 为准**
 > (v3.39.0 前是「以本分支为准」,已反转);`src/` 冲突以 main 的演进为准,但**必须保留
 > `verify=settings.network.tls_verify` 接线**(main 新增 httpx client 时也要顺手接上);
 > 本文件/AGENTS.md 冲突 = 保留须知块 + 采纳 main 的其余更新。

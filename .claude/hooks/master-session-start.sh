@@ -18,10 +18,10 @@ behind="$(git rev-list --count HEAD..origin/main 2>/dev/null || echo '?')"
 ahead="$(git rev-list --count origin/main..HEAD 2>/dev/null || echo '?')"
 
 echo "【master 分支会话提示】当前在内网特殊适配分支 master(曾名 intranet)。"
-echo "纪律:一切改动只提交本分支,绝不合并/cherry-pick 回 main;同步方向单一 main→master。完整须知见 CLAUDE.md 顶部块。"
+echo "纪律:一切改动只提交本分支,绝不合并/cherry-pick 回 main;同步方向单一 main→master(按 main 版本 tag 触发)。完整须知见 CLAUDE.md 顶部块;差异清单与接手指引见 INTRANET_DELTA.md(新增内网改动/合并上游都要更新它)。"
 echo "主干同步状态:落后 origin/main ${behind} 个提交;本分支独有(领先)${ahead} 个。${fetch_note}"
 if [ "$behind" != "0" ] && [ "$behind" != "?" ]; then
-    echo "⚠️ 已落后主干 ${behind} 个提交。开始新工作前建议先 git merge main 并按 CLAUDE.md 顶部的冲突解决原则处理(部署面以 main 为准;src 冲突以 main 为准且保留 verify=settings.network.tls_verify 接线)。落后的提交:"
+    echo "⚠️ 已落后主干 ${behind} 个提交。开始新工作前建议先合并最近的上游版本 tag(git merge vX.Y.Z),按 INTRANET_DELTA.md §1 的冲突解决原则处理(src 以 main 为准再补回清单登记的接线;部署面以 main 为准),合并后更新清单的 UPSTREAM_BASE。落后的提交:"
     git log --oneline HEAD..origin/main 2>/dev/null | head -10
 fi
 exit 0

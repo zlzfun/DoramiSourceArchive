@@ -1,9 +1,10 @@
 # AGENTS.md — Agent 入口(L0)
 
 > ## ⚠️ 你在 `master` 分支(内网特殊适配分支,曾名 `intranet`)
-> 一切改动只提交本分支、**绝不合并/cherry-pick 回 main**;同步单向 `git merge main`;
-> 开工前先核对与 origin/main 的差异。完整纪律与本分支独有内容清单见
-> [`CLAUDE.md`](./CLAUDE.md) 顶部「master 分支须知」块(该块仅存在于本分支)。
+> 一切改动只提交本分支、**绝不合并/cherry-pick 回 main**;同步单向 main → master,
+> 按 main 的版本 tag 触发;开工前先核对与 origin/main 的差异。完整纪律见
+> [`CLAUDE.md`](./CLAUDE.md) 顶部「master 分支须知」块,**差异清单与接手指引见
+> [`INTRANET_DELTA.md`](./INTRANET_DELTA.md)**(两者仅存在于本分支)。
 
 > 面向所有在本仓工作的 Agent。**权威的架构简报 + 开发命令 + 全部工程约定在
 > [`CLAUDE.md`](./CLAUDE.md)**(与本文件同层,内容以它为准,此处不重复);
