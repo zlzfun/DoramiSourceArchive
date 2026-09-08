@@ -44,15 +44,14 @@ cp config/production.example.ini config/production.ini   # 改 secret / taxonomy
 cat >> .env <<'EOF'
 DORAMI_PODCAST_INSTALLATION=external
 DORAMI_PODCAST_AUTHORITY_ID=<stable-external-id>
-DORAMI_PODCAST_ALLOWED_STAGES=fetch,asr,translate,analyze,digest,script,tts,audio_qa,local_publish
 ALIYUN_AK_ID=<secret>
 ALIYUN_AK_SECRET=<secret>
 NLS_APP_KEY=<secret>
 NLS_ACCESS_TOKEN=<secret>
 NLS_TOKEN_EXPIRES_AT=<provider-unix-seconds>
 EOF
-# 内网 all 改为 installation=internal、stable internal authority ID，并将
-# DORAMI_PODCAST_ALLOWED_STAGES 留空；内网不注入 ASR/TTS 凭据。
+# 内网 all 只需改为 installation=internal 和 stable internal authority ID；
+# 处理开关、stage 和 target 会默认关闭，且内网不注入 ASR/TTS 凭据。
 
 # 部署 / 升级(构建 → 起容器 → 健康验证一条龙)
 ./deploy-docker.sh
@@ -114,10 +113,11 @@ cp config/production.example.ini config/production.ini
 cat > .env <<'EOF'
 DORAMI_PODCAST_INSTALLATION=<external-or-internal>
 DORAMI_PODCAST_AUTHORITY_ID=<stable-external-or-internal-id>
-DORAMI_PODCAST_ALLOWED_STAGES=<external-full-list-or-empty-for-internal>
 # 只有 external 节点注入 ALIYUN_AK_ID / ALIYUN_AK_SECRET / NLS_*。
 DORAMI_HTTP_LISTEN=127.0.0.1:8080
 EOF
+
+# 如需偏离默认处理链，再在 .env 中设置 DORAMI_PODCAST_ALLOWED_STAGES。
 #    A:上例为外层有 TLS 边缘(推荐,生产即此)
 #    (然后照下方「HTTPS」节配宿主 Nginx/Caddy + 证书)
 #    B:纯 HTTP 直出则不写 .env,容器 nginx 直接占 80
@@ -138,8 +138,8 @@ EOF
 - 上线前按卷容量设置 `total_quota_mb` 与 `minimum_free_mb`；默认分别为 10240 MiB 和
   1024 MiB。启动会自动清理过期上传临时文件和无引用且过宽限期的孤儿 blob，绝不会
   删除数据库仍引用的音频；管理端统计中的 `storage_pressure` 必须保持为 false。
-- 外网 stage 为 `fetch,asr,translate,analyze,digest,script,tts,audio_qa,local_publish`，
-  注入 ASR/TTS secret；内网 stage 留空且不注入供应商凭据；两端 role 都是 `all`。
+- 外网默认开启完整 Podcast 处理链并注入 ASR/TTS secret；内网默认关闭处理且不注入
+  供应商凭据；两端 role 都是 `all`。显式 `DORAMI_PODCAST_*` 覆盖优先。
 - 升级前备份整个 `data/`，升级后至少验证 `ffmpeg -version`、`ffprobe -version`、
   artifact 管理统计和一条已发布音频的 `HEAD`/Range 请求。普通页面访问不得产生 provider 调用。
 

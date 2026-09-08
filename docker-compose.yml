@@ -10,7 +10,8 @@ services:
     restart: unless-stopped
     environment:
       DORAMI_CONFIG_FILE: /app/config/production.ini
-      # 外网/内网都保持 all；外网配置完整 Podcast stages，内网留空只同步。
+      # 外网/内网都保持 all；空覆盖由 installation 自动派生：external
+      # 开完整处理链，internal 关闭处理并只同步。
       DORAMI_RUNTIME_ROLE: "all"
       DORAMI_PODCAST_INSTALLATION: ${DORAMI_PODCAST_INSTALLATION:?set external or internal}
       DORAMI_PODCAST_ALLOWED_STAGES: ${DORAMI_PODCAST_ALLOWED_STAGES-}
@@ -25,9 +26,9 @@ services:
       DORAMI_PODCAST_TEXT_SYNC_PAGE_MAX_BYTES: ${DORAMI_PODCAST_TEXT_SYNC_PAGE_MAX_BYTES:-}
       DORAMI_PODCAST_TEXT_SYNC_PAGE_MAX_ROWS: ${DORAMI_PODCAST_TEXT_SYNC_PAGE_MAX_ROWS:-}
       DORAMI_PODCAST_READER_CURSOR_SECRET: ${DORAMI_PODCAST_READER_CURSOR_SECRET:-}
-      # Provider-neutral paid processing remains fail-closed unless the concrete
-      # host adapter also registers every stage executor and a CNY estimator.
-      DORAMI_PODCAST_PROCESSING_ENABLED: ${DORAMI_PODCAST_PROCESSING_ENABLED:-false}
+      # External defaults on and internal defaults off. Missing concrete provider
+      # credentials/accounting still prevents any paid request.
+      DORAMI_PODCAST_PROCESSING_ENABLED: ${DORAMI_PODCAST_PROCESSING_ENABLED:-}
       DORAMI_PODCAST_PROVIDER_READY_TARGETS: ${DORAMI_PODCAST_PROVIDER_READY_TARGETS:-}
       DORAMI_PODCAST_TEXT_PIPELINE_VERSION: ${DORAMI_PODCAST_TEXT_PIPELINE_VERSION:-}
       DORAMI_PODCAST_AUDIO_PIPELINE_VERSION: ${DORAMI_PODCAST_AUDIO_PIPELINE_VERSION:-}

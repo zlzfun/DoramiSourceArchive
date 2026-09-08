@@ -1,7 +1,8 @@
 """Deployment guards for the local Podcast audio runtime."""
 
-from pathlib import Path
+import configparser
 import re
+from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,6 +102,20 @@ def test_compose_keeps_all_role_and_wires_persistent_podcast_runtime():
         "DORAMI_ALIYUN_ISI_TTS_USAGE_SETTLEMENT_MODE",
     ):
         assert f"{name}: ${{{name}:-}}" in compose
+
+
+def test_production_template_defaults_external_processing_on():
+    parser = configparser.ConfigParser()
+    parser.read(ROOT / "config/production.example.ini", encoding="utf-8")
+
+    assert parser.get("podcast", "installation") == "external"
+    assert not parser.has_option("podcast", "allowed_stages")
+    assert not parser.has_option("podcast", "processing_enabled")
+    assert not parser.has_option("podcast", "provider_ready_targets")
+    assert not parser.has_option("podcast", "monthly_budget_cny_minor")
+    assert not parser.has_option("podcast", "per_run_budget_cny_minor")
+    assert not parser.has_option("podcast", "voice_profiles")
+    assert not parser.has_option("podcast", "default_voice_profile")
 
 
 def test_baremetal_deploy_requires_audio_tools_and_creates_configured_root():

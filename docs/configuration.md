@@ -36,14 +36,23 @@ role = all
 3. 内网配置远程同步，使用 v2 API 上的 Archive Sync v3 manifest 拉取 sources、taxonomy、articles、analyses、media、source_states。同步契约见 `docs/contracts/archive_sync.md`。
 4. 下游应用优先访问分发层的个人聚合接口 `/api/public/feed/articles`（`dfeed_` 令牌，覆盖用户全部订阅源）；订阅源在前端“阅读器”左栏增删，聚合令牌在“接入集成”页面生成/轮换。（按源隔离的 `/api/public/subscriptions/{id}/...` + `dsub_` 令牌仍可用，属高级/自动化路径。）
 
-Podcast 处理能力与 `runtime.role` 正交，部署时由环境变量显式注入。安装 ID 必须在
+Podcast 处理能力与 `runtime.role` 正交。安装类型决定默认处理姿态，安装 ID 必须在
 容器/进程重建后保持稳定，不能取 hostname 或容器 ID：
+
+| `installation` | 默认处理 | 默认阶段 | 默认目标 |
+| --- | --- | --- | --- |
+| `external` | 开启 | `fetch,asr,translate,analyze,digest,script,tts,audio_qa,local_publish` | `transcript,digest_blog,digest_audio` |
+| `internal` | 关闭 | 空（只同步） | 空 |
+| `development` | 关闭 | `fetch,local_publish` | 空 |
+
+`processing_enabled`、`allowed_stages` 和 `provider_ready_targets` 仍可显式覆盖。
+外网默认开启只代表允许执行；缺少真实供应商凭据、计价/额度或回源签名时，运行时仍会
+拒绝付费请求。
 
 ```bash
 # 外网 all：完成采集、ASR、中文博客、TTS 与发布
 export DORAMI_PODCAST_INSTALLATION=external
 export DORAMI_PODCAST_AUTHORITY_ID=<stable-external-id>
-export DORAMI_PODCAST_ALLOWED_STAGES=fetch,asr,translate,analyze,digest,script,tts,audio_qa,local_publish
 export ALIYUN_AK_ID=<secret>
 export ALIYUN_AK_SECRET=<secret>
 export NLS_APP_KEY=<secret>
@@ -53,13 +62,12 @@ export NLS_TOKEN_EXPIRES_AT=<provider-unix-seconds>
 # 内网 all：不执行 Podcast 处理，只通过 Archive Sync 同步并展示
 export DORAMI_PODCAST_INSTALLATION=internal
 export DORAMI_PODCAST_AUTHORITY_ID=<stable-internal-id>
-export DORAMI_PODCAST_ALLOWED_STAGES=
 ```
 
 当前阿里云 ISI 接入中，外网 ASR 需要 AK/SK + Appkey，外网 TTS 需要 Appkey + NLS
 Token，并用 AK/SK 按服务端到期时间刷新 Token。内网不配置供应商凭据。可选 STS 另加
 `ALIYUN_SECURITY_TOKEN`。这些值不写入 INI、`.env` 示例或版本库。页面读取和音频播放
-不会触发 provider。Docker Compose 会强制要求安装 ID 与 stage allowlist；裸机使用当前
+不会触发 provider。Docker Compose 会强制要求安装类型与安装 ID；裸机使用当前
 shell 环境并由 PM2 `--update-env` 继承。
 
 Reader 的已发布播客文字按字符游标分页，默认页长、单页上限与搜索词上限均可调整，
@@ -77,17 +85,20 @@ text_sync_page_max_bytes = 16777216
 text_sync_page_max_rows = 1000
 # 可选独立 HMAC 密钥（至少 32 字符）；缺省从 [auth] secret 做用途隔离派生
 # reader_cursor_secret =
-processing_enabled = false
-provider_ready_targets =
+# external 默认 true/全目标，internal 默认 false/空目标；仅覆盖时填写
+# processing_enabled = true
+# provider_ready_targets = transcript,digest_blog,digest_audio
 text_pipeline_version = podcast-text-v1
 audio_pipeline_version = podcast-audio-v1
 processing_policy_version = podcast-processing-policy-v1
-monthly_budget_cny_minor = 0
-per_run_budget_cny_minor = 0
+# external 默认 100000 / 5000（人民币分），internal 默认 0 / 0
+# monthly_budget_cny_minor = 100000
+# per_run_budget_cny_minor = 5000
 budget_scope = podcast-paid-processing
 budget_timezone = Asia/Shanghai
-voice_profiles =
-default_voice_profile =
+# external 默认 narrator_zh，internal 默认空
+# voice_profiles = narrator_zh
+# default_voice_profile = narrator_zh
 premium_score_threshold = 8.5
 premium_min_duration_seconds = 1200
 premium_guide_mode = solo_preview
@@ -128,7 +139,7 @@ Podcast 文字同步单页的总字节数/行数还受 `DORAMI_PODCAST_TEXT_SYNC
 游标签名可用 `DORAMI_PODCAST_READER_CURSOR_SECRET` 单独轮换。Reader 响应使用 `no-store`，每次读取
 都重新核对来源和单集的可见状态。
 
-付费处理默认关闭。只有 `processing_enabled=true`、目标/阶段/逻辑 voice 配置一致、
+外网付费处理默认开启，内网和开发环境默认关闭。只有 `processing_enabled=true`、目标/阶段/逻辑 voice 配置一致、
 CNY 月度与单次预算均为正数，并且运行时的具体 provider 集成同时注册执行器与费用估算器，
 管理 API 才允许任务入队；只改 INI 不会把 provider 误判为可用。对应配置均支持
 `DORAMI_PODCAST_*` 环境变量覆盖。Provider URL、token、模型名、计价参数和真实 voice ID
