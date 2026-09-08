@@ -54,6 +54,7 @@ from models.db import (
 from services import source_visibility
 from services.article_display_tags import load_display_tags
 from services.article_time import in_time_window
+from services.collection_nodes import is_public_podcast_source
 from services.digest_selection import (
     DigestSelectionPolicy,
     section_for_genre,
@@ -212,7 +213,11 @@ def resolve_personal_digest_source_ids(session: Session, username: str) -> list[
     allowed: list[str] = []
     for source_id in sorted(explicit):
         config = configs.get(source_id)
-        if config is not None and not config.is_active:
+        if (
+            config is not None
+            and not config.is_active
+            and not is_public_podcast_source(config)
+        ):
             continue
         is_private = source_id.startswith(PRIVATE_SOURCE_PREFIX) or bool(
             config and config.owner_username
@@ -275,7 +280,11 @@ def calculate_due_source_ids(
     due: list[str] = []
     for source_id in expected:
         config = configs.get(source_id)
-        if config is not None and not config.is_active:
+        if (
+            config is not None
+            and not config.is_active
+            and not is_public_podcast_source(config)
+        ):
             continue
         is_private = source_id.startswith(PRIVATE_SOURCE_PREFIX) or bool(
             config and config.owner_username

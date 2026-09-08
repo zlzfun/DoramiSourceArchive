@@ -12,7 +12,6 @@
 """
 
 import datetime
-import json
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,9 +19,9 @@ from sqlalchemy import case, func, or_
 from sqlmodel import Session, select
 
 from api import deps
-from fetchers.registry import fetcher_registry
 from models.db import ArticleRecord, FetchRunRecord, SourceStateRecord
 from pipeline.progress import get_all_progress
+from services.collection_nodes import collection_node_catalog
 
 router = APIRouter(tags=["monitoring"])
 
@@ -115,12 +114,12 @@ def build_fetcher_health_from_state(fetcher_metadata: Dict[str, Any], state: Sou
 
 @router.get("/api/source-health")
 def get_source_health(session: Session = Depends(deps.get_session)):
-    fetchers = fetcher_registry.get_all_metadata()
+    fetchers = collection_node_catalog(session)
 
     # 用户自定源(v3.40)以 fetcher-like 形状并入健康汇总:节点管理信号条的「自定源」
     # 角色档由此有数据可看(设计 §5 承诺的筛选可见)。抓取经 generic_rss 执行,
-    # FetchRunRecord.fetcher_id 不是 source_id,故其健康只走 SourceStateRecord
-    # (无 state = never_run),不回退 run 聚合。
+    # 健康优先走 SourceStateRecord；新运行同时把逻辑 source_id 写入 fetch_runs，
+    # 因此缺快照时也能使用与固化节点相同的运行史回退。
     from models.db import SourceConfigRecord
 
     user_configs = session.exec(
@@ -140,52 +139,6 @@ def get_source_health(session: Session = Depends(deps.get_session)):
             "is_active": record.is_active,
         })
 
-    # 共享 Podcast 源同样由 SourceConfigRecord 驱动，而 generic_podcast_rss 只是隐藏的
-    # 执行模板。若只展示 registry，节点管理只能看到模板之外的固化抓取器，已导入的
-    # Podcast 节目会整批消失。这里把每个 Podcast 配置投影成独立可管理节点；运行仍走
-    # /api/source-configs/{source_id}/fetch，健康事实仍由 source_id 对应的 state 提供。
-    podcast_configs = session.exec(
-        select(SourceConfigRecord).where(
-            SourceConfigRecord.owner_username == "",
-            SourceConfigRecord.source_type == "podcast",
-        )
-    ).all()
-    existing_ids = {fetcher["id"] for fetcher in fetchers}
-    for record in podcast_configs:
-        if record.source_id in existing_ids:
-            continue
-        try:
-            content_tags = json.loads(record.content_tags_json or "[]")
-        except (TypeError, ValueError):
-            content_tags = []
-        fetchers.append({
-            "id": record.source_id,
-            "name": record.name,
-            "icon": "",
-            "desc": record.description or record.url,
-            "category": record.category or "podcast",
-            "content_type": "podcast_episode",
-            "shape": "podcast",
-            "source_config_node": True,
-            "source_type": "podcast",
-            "source_owner": record.source_owner,
-            "source_brand": record.source_brand,
-            "source_scope": record.source_scope,
-            "source_channel": record.source_channel or "podcast_rss",
-            "base_url": record.base_url or record.url,
-            "provenance_tier": record.provenance_tier,
-            "content_tags": content_tags if isinstance(content_tags, list) else [],
-            "signal_strength": record.signal_strength,
-            "noise_risk": record.noise_risk,
-            "fetch_reliability": record.fetch_reliability,
-            "ai_analysis_enabled": record.ai_analysis_enabled,
-            "is_active": record.is_active,
-            "feed_url": record.url,
-            "fetch_interval_minutes": record.fetch_interval_minutes,
-            "cron_expr": record.cron_expr,
-        })
-        existing_ids.add(record.source_id)
-
     fetcher_ids = [fetcher["id"] for fetcher in fetchers]
 
     states = session.exec(select(SourceStateRecord).where(SourceStateRecord.source_id.in_(fetcher_ids))).all()
@@ -199,14 +152,11 @@ def get_source_health(session: Session = Depends(deps.get_session)):
     states_by_source = {state.source_id: state for state in states}
     # 运行史回退只服务「无 SourceStateRecord 快照」的节点(v3.43 审计 M13):
     # 本端点被前端 45s 轮询,此前无条件把全部节点的整个保留窗(180 天)运行行
-    # 载入内存,而绝大多数节点有 state 快照根本用不上。用户自定源同样不回退
-    # (其 FetchRunRecord.fetcher_id 是 generic_rss 而非 source_id)。
+    # 载入内存,而绝大多数节点有 state 快照根本用不上。
     fallback_ids = [
         fetcher["id"]
         for fetcher in fetchers
         if fetcher["id"] not in states_by_source
-        and not fetcher.get("user_source")
-        and not fetcher.get("source_config_node")
     ]
     runs = (
         session.exec(select(FetchRunRecord).where(FetchRunRecord.fetcher_id.in_(fallback_ids))).all()
@@ -224,8 +174,7 @@ def get_source_health(session: Session = Depends(deps.get_session)):
             if fetcher["id"] in states_by_source
             else build_fetcher_health(
                 fetcher,
-                [] if fetcher.get("user_source") or fetcher.get("source_config_node")
-                else runs_by_fetcher.get(fetcher["id"], []),
+                runs_by_fetcher.get(fetcher["id"], []),
             )
         )
         item["total_articles"] = article_count_by_source.get(fetcher["id"], 0)
@@ -242,8 +191,7 @@ def get_source_health(session: Session = Depends(deps.get_session)):
                 "source_config_node", "source_type", "source_owner", "source_brand",
                 "source_scope", "source_channel", "base_url", "provenance_tier",
                 "content_tags", "signal_strength", "noise_risk", "fetch_reliability",
-                "ai_analysis_enabled", "is_active", "feed_url", "fetch_interval_minutes",
-                "cron_expr", "desc",
+                "ai_analysis_enabled", "feed_url", "parameters", "desc",
             ):
                 item[key] = fetcher.get(key)
         health_items.append(item)

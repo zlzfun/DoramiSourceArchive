@@ -655,7 +655,11 @@ def test_source_health_state_path_and_fallback(tmp_path, monkeypatch):
         {"id": "with_state", "name": "A", "icon": "", "desc": "", "category": "c", "content_type": "t"},
         {"id": "no_state", "name": "B", "icon": "", "desc": "", "category": "c", "content_type": "t"},
     ]
-    monkeypatch.setattr(monitoring.fetcher_registry, "get_all_metadata", lambda: [dict(f) for f in fetchers])
+    monkeypatch.setattr(
+        monitoring,
+        "collection_node_catalog",
+        lambda _session: [dict(f) for f in fetchers],
+    )
     now = _iso_days_ago(0)
     with Session(engine) as session:
         session.add(SourceStateRecord(

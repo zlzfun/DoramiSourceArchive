@@ -55,7 +55,6 @@ def _source(source_id="rss_platform", **overrides):
         ai_analysis_enabled=True,
         is_active=True,
         fetch_interval_minutes=60,
-        cron_expr="0 * * * *",
         params_json='{"feed_url":"https://example.test/feed.xml"}',
         created_at="2026-09-01T00:00:00+00:00",
         updated_at="2026-09-02T00:00:00+00:00",
