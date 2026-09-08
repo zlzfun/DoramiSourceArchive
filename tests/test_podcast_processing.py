@@ -3260,6 +3260,56 @@ def test_concurrent_provider_usage_reservations_are_atomic(engine):
         assert reservations[0].provider_quota_limit_units == 100
 
 
+def test_provider_daily_limit_can_change_without_rotating_quota_scope(engine):
+    policy = RecordingPolicy({"asr"})
+    with Session(engine) as session:
+        _enqueue(session, policy, estimated_cost_minor=0)
+        first = claim_next_processing(
+            session,
+            worker_id="quota-limit-worker-1",
+            lease_seconds=60,
+            policy=policy,
+            now=NOW,
+        )
+        assert first is not None
+        _attempt(
+            session,
+            first,
+            policy,
+            suffix="limit-1",
+            estimate=0,
+            provider_usage_plan=_usage_plan(reserved_units=60, limit_units=100),
+        )
+
+        _enqueue(
+            session,
+            policy,
+            episode_id="episode-2",
+            input_fingerprint=deterministic_input_fingerprint(
+                {"audio_sha256": "changed-provider-limit"}
+            ),
+            idempotency_key="provider-quota:changed-limit",
+            estimated_cost_minor=0,
+        )
+        second = claim_next_processing(
+            session,
+            worker_id="quota-limit-worker-2",
+            lease_seconds=60,
+            policy=policy,
+            now=NOW + dt.timedelta(seconds=2),
+        )
+        assert second is not None
+        attempt = _attempt(
+            session,
+            second,
+            policy,
+            suffix="limit-2",
+            estimate=0,
+            provider_usage_plan=_usage_plan(reserved_units=60, limit_units=200),
+        )
+        assert attempt.id
+
+
 def test_request_unknown_holds_provider_quota_until_not_submitted_release(engine):
     policy = RecordingPolicy({"asr"})
     full_hold = _usage_plan(reserved_units=60, limit_units=60)

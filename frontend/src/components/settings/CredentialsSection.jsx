@@ -4,7 +4,9 @@ import {
   fetchCredentialsOverview,
   fetchRemoteSyncSchedule,
   getLLMConfig,
+  getPodcastAsrQuota,
   getXApiConfig,
+  savePodcastAsrQuota,
   saveLLMConfig,
   saveXApiConfig,
   testLLMConfig,
@@ -14,7 +16,7 @@ import SecretField from '../SecretField';
 
 /**
  * 凭据区(v3.27 凭据整合台,设置柜 → 管理组):外部凭据的**单点编辑台**。
- * - LLM / X API 两张编辑卡:与后端 services/credentials 统一保管契约对应
+ * - LLM / X API / 播客 ASR 三张编辑卡:与后端 services/credentials 统一保管契约对应
  *   (来源徽记=field_sources、掩码占位=只写不回显、空 secret=保留);
  * - 「其它凭据」只读回指:定时同步凭据与 cron 同属一个工作流,编辑留在
  *   数据同步区(柜内一跳);GitHub Token 部署级 env-only,无面板编辑;
@@ -50,6 +52,11 @@ export default function CredentialsSection({ showToast, onNavigate }) {
   const [savingX, setSavingX] = useState(false);
   const [testingX, setTestingX] = useState(false);
 
+  // ── 播客 ASR 配额 ──
+  const [asrQuota, setAsrQuota] = useState(null);
+  const [asrHours, setAsrHours] = useState('');
+  const [savingAsr, setSavingAsr] = useState(false);
+
   // ── 只读回指:定时同步凭据 + 部署级 env 机密 ──
   const [schedule, setSchedule] = useState(null);
   const [overview, setOverview] = useState(null);
@@ -79,12 +86,18 @@ export default function CredentialsSection({ showToast, onNavigate }) {
     }));
   }).catch(() => {}), []);
 
+  const loadAsrQuota = useCallback(() => getPodcastAsrQuota().then((d) => {
+    setAsrQuota(d);
+    setAsrHours(String(d.daily_audio_hours_limit ?? 0));
+  }).catch(() => {}), []);
+
   useEffect(() => {
     loadLlm();
     loadX();
+    loadAsrQuota();
     fetchRemoteSyncSchedule().then(setSchedule).catch(() => {});
     fetchCredentialsOverview().then(setOverview).catch(() => {});
-  }, [loadLlm, loadX]);
+  }, [loadAsrQuota, loadLlm, loadX]);
 
   // ── LLM 保存/测试(空 api_key 不入 payload = 保留既有机密) ──
   const updateLlm = (key, value) => setLlmForm((f) => ({ ...f, [key]: value }));
@@ -176,6 +189,25 @@ export default function CredentialsSection({ showToast, onNavigate }) {
   };
 
   const scheduleConfigured = Boolean(schedule?.password_set);
+
+  const handleSaveAsr = async () => {
+    const hours = Number(asrHours);
+    if (!Number.isFinite(hours) || hours <= 0 || hours > 24) {
+      showToast('每日音频上限需大于 0 且不超过 24 小时', 'error');
+      return;
+    }
+    setSavingAsr(true);
+    try {
+      const saved = await savePodcastAsrQuota(Math.round(hours * 3600));
+      setAsrQuota(saved);
+      setAsrHours(String(saved.daily_audio_hours_limit));
+      showToast('已保存 ASR 每日音频上限', 'success');
+    } catch (error) {
+      showToast(error.message || '保存失败', 'error');
+    } finally {
+      setSavingAsr(false);
+    }
+  };
 
   return (
     <div>
@@ -297,6 +329,45 @@ export default function CredentialsSection({ showToast, onNavigate }) {
               {savingX ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} 保存
             </button>
           </div>
+        </div>
+      </section>
+
+      {/* ── 播客 ASR 配额 ── */}
+      <section className="cred-card">
+        <div className="cred-head">
+          <Bot />
+          <span className="cred-title">播客 ASR</span>
+          <div className="cred-head-right">
+            <SrcBadge source={asrQuota?.source} />
+            <CredStamp ok={Boolean(asrQuota?.daily_audio_seconds_limit)} />
+          </div>
+        </div>
+        <p className="cred-sub">限制每天提交给语音识别服务的音频总时长，按配置时区自然日累计。</p>
+        <div className="cred-fields">
+          <label className="sett-field">
+            <span className="sett-field-lbl">每日音频上限（小时）</span>
+            <input
+              className="form-input font-mono"
+              type="number"
+              step="0.5"
+              min="0.5"
+              max="24"
+              value={asrHours}
+              onChange={(e) => setAsrHours(e.target.value)}
+            />
+          </label>
+          <div className="sett-field">
+            <span className="sett-field-lbl">累计周期</span>
+            <div className="cred-ref-meta mt-2">
+              {asrQuota?.quota_timezone || '—'} · {asrQuota?.quota_scope || '—'}
+            </div>
+          </div>
+        </div>
+        <div className="sett-sync-foot">
+          <span className="cred-ref-meta">保存后立即用于新提交的转录任务</span>
+          <button type="button" className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={handleSaveAsr} disabled={savingAsr}>
+            {savingAsr ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} 保存
+          </button>
         </div>
       </section>
 

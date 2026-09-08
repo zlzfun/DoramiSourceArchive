@@ -745,7 +745,7 @@ break_even_minutes = monthly_fixed_gpu_and_ops_cost / managed_asr_price_per_minu
 
 ### 13.3 抓取与媒体安全
 
-- Feed/enclosure/transcript/chapters URL 全部经过 SSRF 防护：只允许 http/https；DNS 解析后拒绝 loopback、link-local、private、metadata IP；每次重定向重新校验。
+- Feed、transcript、chapters URL 沿用自定义源的网络策略。enclosure 由外网 Podcast 处理节点直接下载，不做 DNS/IP 段限制，以兼容 Clash/Surge Fake-IP；仍只允许 http/https，并限制响应大小、超时与重定向次数。
 - 限制 feed、transcript、image、audio 的字节数、连接/读取超时、重定向次数和压缩比；Content-Type 与魔数同时检查。
 - HEAD 不可信，实际流式下载仍逐块累计并在超限时终止。
 - FFmpeg 在无网络、低权限、临时目录、CPU/内存/墙钟配额的隔离 worker 运行；禁止拼接用户参数。
