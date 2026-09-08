@@ -186,6 +186,11 @@ export const ArticleRow = memo(function ArticleRow({
             <span className="reader-podcast-copy">
               <span className="reader-entry-top">
                 <span className="reader-entry-src">{podcast?.show_title || sourceName}</span>
+                {score && (
+                  <span className="reader-entry-score ai-grad-text" title={SCORE_DISCLAIMER}>
+                    {score}
+                  </span>
+                )}
                 <span
                   className="reader-entry-time"
                   title={formatDateTime(article.publish_date || article.fetched_date)}
