@@ -567,6 +567,54 @@ def test_existing_podcast_refreshes_feed_metadata_without_erasing_derived_fields
     assert asyncio.run(sink.save(refreshed)) is False
 
 
+def test_storage_ignores_public_podcast_legacy_active_value_but_keeps_private_gate(
+    monkeypatch, tmp_path
+):
+    import storage.impl.db_storage as storage_module
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'podcast-active-fence.db'}")
+    stamp = "2026-09-08T00:00:00+00:00"
+    with Session(sink.engine) as session:
+        for source_id, source_type, owner in (
+            ("podcast_public_inactive", "podcast", ""),
+            ("podcast_public_alias_inactive", "podcast_rss", ""),
+            ("podcast_private_inactive", "podcast", "reader"),
+        ):
+            session.add(SourceConfigRecord(
+                source_id=source_id,
+                name=source_id,
+                source_type=source_type,
+                url=f"https://example.test/{source_id}.xml",
+                owner_username=owner,
+                is_active=False,
+                created_at=stamp,
+                updated_at=stamp,
+            ))
+        session.commit()
+
+    monkeypatch.setattr(storage_module, "require_podcast_stage", lambda *args, **kwargs: None)
+
+    def episode(source_id: str) -> PodcastEpisodeContent:
+        return PodcastEpisodeContent(
+            id=f"episode_{source_id}",
+            title=source_id,
+            source_url=f"https://example.test/{source_id}/1",
+            publish_date=stamp,
+            source_id=source_id,
+            content="show notes",
+        )
+
+    assert asyncio.run(sink.save(episode("podcast_public_inactive"))) is True
+    assert asyncio.run(sink.save(episode("podcast_public_alias_inactive"))) is True
+    assert asyncio.run(sink.save(episode("podcast_private_inactive"))) is False
+
+    with Session(sink.engine) as session:
+        assert session.get(ArticleRecord, "episode_podcast_public_inactive") is not None
+        assert session.get(ArticleRecord, "episode_podcast_public_alias_inactive") is not None
+        assert session.get(ArticleRecord, "episode_podcast_private_inactive") is None
+
+
 def test_articles_list_and_detail_endpoints_expose_same_podcast_projection(monkeypatch, tmp_path):
     import api.app as app_module
     from config import RuntimeConfig

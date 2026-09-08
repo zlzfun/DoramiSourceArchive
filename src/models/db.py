@@ -824,8 +824,10 @@ class SourceConfigRecord(SQLModel, table=True):
     )
 
     is_active: bool = Field(default=True, index=True, description="是否启用该数据源")
-    fetch_interval_minutes: Optional[int] = Field(default=None, description="建议抓取间隔，分钟")
-    cron_expr: str = Field(default="", description="建议 Cron 表达式，可用于生成 FetchTaskRecord")
+    fetch_interval_minutes: Optional[int] = Field(
+        default=None,
+        description="用户自定源的新鲜度参考间隔，分钟；公共源调度统一由 CollectionJob 管理",
+    )
     params_json: str = Field(default="{}", description="抓取参数 JSON")
 
     created_at: str = Field(description="创建时间")

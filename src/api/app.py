@@ -168,6 +168,7 @@ from services import remote_sync as remote_sync_service
 from services import sync_consumer_policy
 from services import accounts as accounts_service
 from services import admin_audit as admin_audit_service
+from services.collection_nodes import PODCAST_SOURCE_TYPES, resolve_collection_node
 from services import reader_ai as reader_ai_service
 from services import reader_state as reader_state_service
 from services import ai_usage as ai_usage_service
@@ -613,12 +614,12 @@ _set_llm_usage_recorder(_record_llm_usage)
 if accounts_service.seed_root_admin_if_empty(db_sink.engine):
     logging.getLogger("dorami.auth").info("👤 已自动生成根管理员 admin/admin，请登录后立即修改密码")
 
-# 默认播客目录是平台节点基线：新部署自动安装可用项，但保持停用、不给用户订阅，
-# 因而不会在无人确认时触发 RSS 抓取，更不会触发后续 ASR/TTS 成本。
+# 默认播客目录是平台节点基线：新部署自动安装公共逻辑节点，但不给用户订阅；
+# 外部抓取只由管理员保存并启用的采集任务触发。
 _podcast_bootstrap = podcast_catalog_service.ensure_default_podcast_sources(db_sink.engine)
 if _podcast_bootstrap["created"]:
     logging.getLogger("dorami.sources").info(
-        "🎙️ 已安装 %d 个默认播客源（保持停用）",
+        "🎙️ 已安装 %d 个默认播客采集节点",
         len(_podcast_bootstrap["created"]),
     )
 pipeline = DataPipeline(storages=[db_sink])
@@ -1687,11 +1688,6 @@ def load_tasks_to_scheduler():
         replace_existing=True,
         max_instances=1,
     )
-    # 共享 Podcast SourceConfig 以各自的 fetch_interval_minutes 独立调度；
-    # 默认目录全部停用，因此只有管理员显式启用的节目才会注册任务。
-    reload_podcast_source_schedules()
-
-
 async def execute_article_analysis_job():
     """Recover/scan/claim article analysis without coupling it to ingestion."""
 
@@ -2139,119 +2135,6 @@ def reload_user_rss_schedule():
         scheduler.remove_job("user_rss_refresh")
 
 
-PODCAST_SCHEDULE_JOB_PREFIX = "podcast_source_"
-DEFAULT_PODCAST_REFRESH_MINUTES = 360
-
-
-async def execute_podcast_source_refresh_job(source_id: str):
-    """按单源间隔抓取一个已启用的共享 Podcast；执行前再次核对启停状态。"""
-    from api.routers.source_configs import build_source_fetch_params, resolve_source_fetcher_id
-
-    with Session(db_sink.engine) as session:
-        record = session.get(SourceConfigRecord, source_id)
-        if (
-            record is None
-            or not record.is_active
-            or bool(record.owner_username)
-            or bool(record.collection_authority_id)
-            or record.source_type != "podcast"
-        ):
-            return
-        try:
-            require_podcast_stage("fetch", boundary="enqueue")
-        except PodcastStageDenied:
-            return
-        fetcher_id = resolve_source_fetcher_id(record)
-        if not fetcher_id:
-            _dorami_logger.warning("共享播客源未绑定可用抓取器，跳过定时抓取: %s", source_id)
-            return
-        source_name = record.name
-        item = {
-            "source_id": record.source_id,
-            "fetcher_id": fetcher_id,
-            "params": build_source_fetch_params(record, {}),
-        }
-
-    try:
-        await run_collection_items(
-            [item],
-            name=f"定时抓取: {source_name}",
-            trigger_type="scheduled",
-            run_scope="saved_job",
-            max_concurrency=1,
-        )
-    except Exception as exc:  # noqa: BLE001 - 单源故障不影响其它调度任务
-        _dorami_logger.warning("共享播客源定时抓取失败 %s: %s", source_id, exc)
-
-
-def reload_podcast_source_schedules():
-    """让活跃共享 Podcast 的逐源 interval job 与 SourceConfig 即时一致。
-
-    新注册任务用 source_id 的稳定散列错开首轮时间，避免同为 360 分钟的目录源
-    在重启或批量启用后同时出发；已存在且间隔未变的任务不重置 next_run_time。
-    """
-    with Session(db_sink.engine) as session:
-        candidates = session.exec(
-            select(SourceConfigRecord)
-            .where(SourceConfigRecord.owner_username == "")
-            .where(SourceConfigRecord.collection_authority_id == "")
-            .where(SourceConfigRecord.is_active == True)  # noqa: E712
-            .where(SourceConfigRecord.source_type == "podcast")
-            .order_by(SourceConfigRecord.source_id)
-        ).all()
-        records = candidates
-
-    try:
-        require_podcast_stage("fetch", boundary="enqueue")
-    except PodcastStageDenied:
-        records = []
-
-    scheduled_records = []
-    for record in records:
-        try:
-            minutes = int(record.fetch_interval_minutes or DEFAULT_PODCAST_REFRESH_MINUTES)
-        except (TypeError, ValueError):
-            minutes = 0
-        if minutes <= 0:
-            _dorami_logger.warning("共享播客源抓取间隔无效，未注册定时任务: %s", record.source_id)
-            continue
-        scheduled_records.append((record, minutes))
-
-    desired_job_ids = {
-        f"{PODCAST_SCHEDULE_JOB_PREFIX}{record.source_id}"
-        for record, _minutes in scheduled_records
-    }
-    existing_jobs = {job.id: job for job in scheduler.get_jobs()}
-    for job in existing_jobs.values():
-        if job.id.startswith(PODCAST_SCHEDULE_JOB_PREFIX) and job.id not in desired_job_ids:
-            scheduler.remove_job(job.id)
-
-    base_next_run = datetime.datetime.now().astimezone()
-    for record, minutes in scheduled_records:
-        job_id = f"{PODCAST_SCHEDULE_JOB_PREFIX}{record.source_id}"
-        interval_seconds = minutes * 60
-        existing = existing_jobs.get(job_id)
-        existing_interval = getattr(getattr(existing, "trigger", None), "interval", None)
-        if existing_interval is not None and int(existing_interval.total_seconds()) == interval_seconds:
-            continue
-        stagger_window = min(30 * 60, max(60, interval_seconds // 12))
-        stagger_seconds = int(
-            hashlib.sha256(record.source_id.encode("utf-8")).hexdigest()[:8], 16
-        ) % stagger_window
-        scheduler.add_job(
-            execute_podcast_source_refresh_job,
-            "interval",
-            minutes=minutes,
-            args=[record.source_id],
-            id=job_id,
-            replace_existing=True,
-            max_instances=1,
-            next_run_time=base_next_run + datetime.timedelta(
-                seconds=interval_seconds + stagger_seconds,
-            ),
-        )
-
-
 # ==================== 1. 数据台账与 CRUD ====================
 # BatchOpParams 已迁至 api/schemas.py（下方 import re-export，供 articles 批量操作使用）。
 
@@ -2405,13 +2288,22 @@ async def run_fetcher_with_tracking(
         job_run_id: Optional[int] = None,
         run_scope: str = "ad_hoc",
 ) -> Dict[str, Any]:
-    source_id = resolve_state_source_id(fetcher_id, params)
+    logical_node_id = str(fetcher_id or "").strip()
     params = dict(params)
-    is_podcast_run = fetcher_id == "generic_podcast_rss"
     with Session(db_sink.engine) as authority_session:
+        execution_fetcher_id, params = resolve_collection_node(
+            authority_session,
+            logical_node_id,
+            params,
+        )
+        source_id = resolve_state_source_id(execution_fetcher_id, params)
         source = authority_session.get(SourceConfigRecord, source_id)
         is_podcast_run = bool(
-            is_podcast_run or (source is not None and source.source_type == "podcast")
+            execution_fetcher_id == "generic_podcast_rss"
+            or (
+                source is not None
+                and (source.source_type or "").strip().lower() in PODCAST_SOURCE_TYPES
+            )
         )
         if not sync_consumer_policy.local_source_operation_allowed(
             authority_session, source_id, operation="collection"
@@ -2425,10 +2317,11 @@ async def run_fetcher_with_tracking(
                 f"数据源 {source_id} {reason}，本机 role=all 也不得重复抓取"
             )
         if is_podcast_run:
-            if source is None or source.source_type != "podcast":
+            if (
+                source is None
+                or (source.source_type or "").strip().lower() not in PODCAST_SOURCE_TYPES
+            ):
                 raise ValueError("Podcast 采集必须绑定真实的 Podcast SourceConfig")
-            if not source.is_active:
-                raise ValueError(f"Podcast 数据源 {source_id} 未启用，拒绝采集")
             try:
                 require_podcast_stage("fetch", boundary="provider_submit")
             except PodcastStageDenied as exc:
@@ -2437,19 +2330,19 @@ async def run_fetcher_with_tracking(
             params["source_id"] = source.source_id
             params["feed_url"] = source.url
     run_id = create_fetch_run(
-        fetcher_id,
+        logical_node_id,
         params,
         trigger_type=trigger_type,
         job_id=job_id,
         job_run_id=job_run_id,
         run_scope=run_scope,
     )
-    mark_source_state_started(fetcher_id, params, run_id)
-    fetcher_class = fetcher_registry.get_class(fetcher_id)
+    mark_source_state_started(execution_fetcher_id, params, run_id)
+    fetcher_class = fetcher_registry.get_class(execution_fetcher_id)
     if not fetcher_class:
-        message = f"未知的抓取器节点: {fetcher_id}"
+        message = f"未知的抓取器节点: {logical_node_id}"
         finish_fetch_run(run_id, status="failed", error_message=message)
-        mark_source_state_finished(fetcher_id, params, run_id, status="failed", error=message)
+        mark_source_state_finished(execution_fetcher_id, params, run_id, status="failed", error=message)
         raise ValueError(message)
 
     try:
@@ -2472,12 +2365,12 @@ async def run_fetcher_with_tracking(
             podcast_revoke_reason = ""
             if is_podcast_run:
                 current_source = authority_session.get(SourceConfigRecord, source_id)
-                if current_source is None or current_source.source_type != "podcast":
+                if (
+                    current_source is None
+                    or (current_source.source_type or "").strip().lower() not in PODCAST_SOURCE_TYPES
+                ):
                     podcast_revoked = True
                     podcast_revoke_reason = "Podcast SourceConfig 已删除或身份已改变"
-                elif not current_source.is_active:
-                    podcast_revoked = True
-                    podcast_revoke_reason = "Podcast 数据源已停用"
                 else:
                     try:
                         require_podcast_stage("fetch", boundary="commit")
@@ -2500,7 +2393,7 @@ async def run_fetcher_with_tracking(
             )
             raise RuntimeError(f"{reason}，本次本地采集作废")
         finish_fetch_run(run_id, status="success", result=result)
-        mark_source_state_finished(fetcher_id, params, run_id, status="success", result=result)
+        mark_source_state_finished(execution_fetcher_id, params, run_id, status="success", result=result)
         analysis_queued_count = queue_article_analysis_after_commit(result.saved_content_ids)
         schedule_media_prefetch(result.saved_content_ids)
         premium_queued_count = schedule_podcast_premium_after_landing(
@@ -2511,7 +2404,8 @@ async def run_fetcher_with_tracking(
             "run_id": run_id,
             "job_id": job_id,
             "job_run_id": job_run_id,
-            "fetcher_id": fetcher_id,
+            "fetcher_id": logical_node_id,
+            "execution_fetcher_id": execution_fetcher_id,
             "fetched_count": result.fetched_count,
             "saved_count": result.saved_count,
             "skipped_count": result.skipped_count,
@@ -2528,8 +2422,7 @@ async def run_fetcher_with_tracking(
                 current_source = cleanup_session.get(SourceConfigRecord, source_id)
                 cleanup_required = cleanup_required or bool(
                     current_source is None
-                    or current_source.source_type != "podcast"
-                    or not current_source.is_active
+                    or (current_source.source_type or "").strip().lower() not in PODCAST_SOURCE_TYPES
                 )
             if cleanup_required:
                 cleanup_session.exec(
@@ -2537,7 +2430,7 @@ async def run_fetcher_with_tracking(
                 )
                 cleanup_session.commit()
         finish_fetch_run(run_id, status="failed", error_message=str(e))
-        mark_source_state_finished(fetcher_id, params, run_id, status="failed", error=e)
+        mark_source_state_finished(execution_fetcher_id, params, run_id, status="failed", error=e)
         raise
 
 

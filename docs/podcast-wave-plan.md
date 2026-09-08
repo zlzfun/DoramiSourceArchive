@@ -84,7 +84,7 @@ Issue #7 的标题要求“新增播客专栏，收录优质播客；将外部�
 - 轻量投影遗留字段 `processing_eligible = duration_seconds > 1800` 和 `transcript_available`。前者命名错误，只是时长描述，不是资格判定；后续应退役并在确有展示需要时改为 `is_long_form`。
 - 后端 source shape 已扩展为 `article | bulletin | social | podcast`，支持 Podcast 容器过滤与按容器全部标读；`podcast_episode` 也进入内容类型标签。
 - 桌面端与移动端 Reader 增加 Podcast 入口、源过滤、封面/节目名/时长/状态卡片和详情音频区；使用浏览器原生 `<audio controls preload="metadata">` 播放原 enclosure。若现有扩展数据已人工提供 `condensed_audio_url`，同一区域可以显示带“AI 生成”标识的“中文精华”，但系统不会生成它。
-- 应用启动时会幂等安装 35 个共享 Podcast `SourceConfigRecord`（默认停用、不替用户订阅），使全新部署的“节点管理”直接具备播客目录；节点展示健康、累计单集、Feed/采集间隔，并支持启停、立即抓取和读者面隐藏。启用后按单源 `fetch_interval_minutes` 注册独立 APScheduler interval job，以稳定 source-id 散列错开首轮执行；启停/改间隔/删除即时热更新且执行前复核状态。节点运行史支持按逻辑播客源 ID 查询，即使底层共用 `generic_podcast_rss` 也能正确回溯；该任务只更新 RSS 元数据，不触发 ASR/TTS。隐藏的 `generic_podcast_rss` 仍只作为执行模板，不伪装成一个节目。
+- 应用启动时会幂等安装 36 个共享 Podcast `SourceConfigRecord`（不替用户订阅），使全新部署的“节点管理”直接具备播客目录；节点展示健康、累计单集、运行参数和与博客相同的源审查，并支持立即抓取、批量运行、存为采集任务和读者面隐藏。Podcast 与博客一样作为逻辑节点进入统一 `CollectionJobRecord`，任务成员和任务状态决定是否运行，并共用任务 Cron、运行历史和参数覆盖；执行时解析为隐藏的 `generic_podcast_rss` 模板。采集只更新 RSS 元数据，不直接触发 ASR/TTS。
 - 已有后端测试覆盖 RSS 元数据解析、duration 边界、source 路由/shape、轻量投影、列表/详情一致性和 `1800/1801` 秒边界。
 
 明确未实现：

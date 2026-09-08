@@ -6,9 +6,10 @@ import asyncio
 import json
 
 from fastapi.testclient import TestClient
-from sqlmodel import Session
+from sqlmodel import Session, select
 
-from models.db import SourceConfigRecord, UserRecord
+from api.collection_planning import build_collection_job_items
+from models.db import CollectionJobRecord, FetchRunRecord, SourceConfigRecord, UserRecord
 from services import accounts as accounts_service
 from services.podcast_catalog import (
     PODCAST_CATALOG,
@@ -48,7 +49,7 @@ def test_catalog_has_36_stable_unique_entries_and_one_explicit_blocker():
     )
 
 
-def test_default_import_creates_all_sources_inactive_and_is_idempotent(tmp_path):
+def test_default_import_creates_collectable_public_nodes_and_is_idempotent(tmp_path):
     db = DatabaseStorage(f"sqlite:///{tmp_path / 'catalog.db'}")
     with Session(db.engine) as session:
         result = import_podcast_catalog(session, feed_max_bytes=12_345)
@@ -60,16 +61,25 @@ def test_default_import_creates_all_sources_inactive_and_is_idempotent(tmp_path)
         assert latent.source_type == "podcast"
         assert latent.fetcher_id == "generic_podcast_rss"
         assert latent.category == "incubating"
-        assert latent.is_active is False
+        assert latent.is_active is True
         assert latent.owner_username == ""
         assert latent.source_scope == "ai_media"
         assert latent.provenance_tier == "tier1_curated"
+        assert latent.signal_strength == "high_signal"
+        assert latent.noise_risk == "low_noise"
+        assert latent.fetch_reliability == "stable_public"
         nvidia = session.get(SourceConfigRecord, "podcast_nvidia_ai")
         assert nvidia.source_scope == "company"
         assert nvidia.provenance_tier == "tier0_primary"
         dwarkesh = session.get(SourceConfigRecord, "podcast_dwarkesh")
         assert dwarkesh.source_scope == "expert_commentary"
         assert dwarkesh.provenance_tier == "tier2_commentary"
+        extended = session.get(SourceConfigRecord, "podcast_20vc")
+        assert extended.signal_strength == "medium_signal"
+        assert extended.noise_risk == "medium_noise"
+        assert extended.fetch_reliability == "stable_public"
+        blocked = session.get(SourceConfigRecord, "podcast_voices_from_darpa")
+        assert blocked.fetch_reliability == "blocked_or_fragile"
         params = json.loads(latent.params_json)
         assert params["limit"] == 20
         assert params["max_response_bytes"] == 12_345
@@ -82,10 +92,11 @@ def test_default_import_creates_all_sources_inactive_and_is_idempotent(tmp_path)
         assert catalog["total"] == 36
         assert catalog["ready"] == 35
         assert catalog["installed"] == 36
-        assert catalog["active"] == 0
+        assert "active" not in catalog
+        assert all("active" not in item for item in catalog["items"])
 
 
-def test_application_bootstrap_installs_ready_sources_without_overwriting_local_state(tmp_path):
+def test_application_bootstrap_preserves_metadata_and_normalizes_legacy_inactive_rows(tmp_path):
     db = DatabaseStorage(f"sqlite:///{tmp_path / 'bootstrap.db'}")
 
     first = ensure_default_podcast_sources(db.engine)
@@ -94,9 +105,9 @@ def test_application_bootstrap_installs_ready_sources_without_overwriting_local_
     with Session(db.engine) as session:
         latent = session.get(SourceConfigRecord, "podcast_latent_space")
         assert latent is not None
-        assert latent.is_active is False
+        assert latent.is_active is True
         latent.name = "本地维护的名称"
-        latent.is_active = True
+        latent.is_active = False
         session.add(latent)
         session.commit()
 
@@ -110,115 +121,114 @@ def test_application_bootstrap_installs_ready_sources_without_overwriting_local_
         assert latent.is_active is True
         catalog = list_podcast_catalog(session)
         assert catalog["installed"] == 36
-        assert catalog["active"] == 1
+        assert "active" not in catalog
 
 
-class _PodcastScheduler:
-    def __init__(self):
-        self.jobs = {}
-
-    def add_job(self, callback, trigger, **kwargs):
-        self.jobs[kwargs["id"]] = SimpleNamespace(
-            id=kwargs["id"], callback=callback, trigger=trigger, kwargs=kwargs,
-        )
-
-    def get_jobs(self):
-        return list(self.jobs.values())
-
-    def remove_job(self, job_id):
-        self.jobs.pop(job_id, None)
-
-
-def test_active_shared_podcasts_get_independent_interval_schedules(monkeypatch, tmp_path):
+def test_collection_job_resolves_podcast_logical_id_and_limit_override(monkeypatch, tmp_path):
     import api.app as app_module
 
-    db = DatabaseStorage(f"sqlite:///{tmp_path / 'schedules.db'}")
-    ensure_default_podcast_sources(db.engine)
-    with Session(db.engine) as session:
-        latent = session.get(SourceConfigRecord, "podcast_latent_space")
-        latent.is_active = True
-        latent.fetch_interval_minutes = 90
-        session.add(latent)
-        second = session.get(SourceConfigRecord, "podcast_20vc")
-        second.is_active = True
-        second.fetch_interval_minutes = 90
-        session.add(second)
-        session.commit()
-
-    fake = _PodcastScheduler()
-    monkeypatch.setattr(app_module, "db_sink", db)
-    monkeypatch.setattr(app_module, "scheduler", fake)
-    app_module.reload_podcast_source_schedules()
-
-    job_id = f"{app_module.PODCAST_SCHEDULE_JOB_PREFIX}podcast_latent_space"
-    second_job_id = f"{app_module.PODCAST_SCHEDULE_JOB_PREFIX}podcast_20vc"
-    assert set(fake.jobs) == {job_id, second_job_id}
-    assert fake.jobs[job_id].kwargs["minutes"] == 90
-    assert fake.jobs[job_id].kwargs["args"] == ["podcast_latent_space"]
-    assert fake.jobs[job_id].kwargs["next_run_time"] != fake.jobs[second_job_id].kwargs["next_run_time"]
-
-    with Session(db.engine) as session:
-        latent = session.get(SourceConfigRecord, "podcast_latent_space")
-        latent.fetch_interval_minutes = -1
-        session.add(latent)
-        second = session.get(SourceConfigRecord, "podcast_20vc")
-        second.is_active = False
-        session.add(second)
-        session.commit()
-    app_module.reload_podcast_source_schedules()
-    assert fake.jobs == {}
-
-
-def test_scheduled_podcast_job_fetches_active_source_and_rechecks_toggle(monkeypatch, tmp_path):
-    import api.app as app_module
-
-    db = DatabaseStorage(f"sqlite:///{tmp_path / 'scheduled-fetch.db'}")
+    db = DatabaseStorage(f"sqlite:///{tmp_path / 'collection-job.db'}")
     ensure_default_podcast_sources(db.engine)
     with Session(db.engine) as session:
         source = session.get(SourceConfigRecord, "podcast_latent_space")
-        source.is_active = True
         session.add(source)
+        session.add(CollectionJobRecord(
+            id=34,
+            name="Podcast collection",
+            fetcher_ids_json='["podcast_latent_space"]',
+            params_json='{"limit": 10}',
+            per_fetcher_params_json='{"podcast_latent_space": {"limit": 3}}',
+            is_active=True,
+            created_at="2026-09-08T00:00:00+00:00",
+            updated_at="2026-09-08T00:00:00+00:00",
+        ))
         session.commit()
+        job = session.get(CollectionJobRecord, 34)
+        items = build_collection_job_items(job)
 
-    calls = []
+    assert items == [{"fetcher_id": "podcast_latent_space", "params": {"limit": 3}}]
 
-    async def _fake_run(items, **kwargs):
-        calls.append((items, kwargs))
-        return {"status": "success", "results": []}
+    captured = {}
+
+    class FakePipeline:
+        async def run_task(self, fetcher, *, lineage, **params):
+            captured["fetcher_type"] = type(fetcher).__name__
+            captured["lineage"] = lineage
+            captured["params"] = params
+            return SimpleNamespace(
+                fetched_count=3,
+                saved_count=3,
+                skipped_count=0,
+                saved_content_ids=[],
+                latest_content_id="",
+                latest_cursor_value="",
+                latest_content_publish_date="",
+                latest_content_source_id="podcast_latent_space",
+                latest_content_type="podcast_episode",
+            )
 
     monkeypatch.setattr(app_module, "db_sink", db)
-    monkeypatch.setattr(app_module, "run_collection_items", _fake_run)
-    asyncio.run(app_module.execute_podcast_source_refresh_job("podcast_latent_space"))
+    monkeypatch.setattr(app_module, "pipeline", FakePipeline())
+    monkeypatch.setattr(app_module, "require_podcast_stage", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module, "queue_article_analysis_after_commit", lambda _ids: 0)
+    monkeypatch.setattr(app_module, "schedule_media_prefetch", lambda _ids: None)
+    monkeypatch.setattr(app_module, "schedule_podcast_premium_after_landing", lambda _ids: 0)
 
-    assert len(calls) == 1
-    items, kwargs = calls[0]
-    assert items[0]["fetcher_id"] == "generic_podcast_rss"
-    assert items[0]["params"]["feed_url"].startswith("https://")
-    assert kwargs["trigger_type"] == "scheduled"
+    result = asyncio.run(app_module.run_collection_items(
+        items,
+        name="Podcast collection",
+        trigger_type="scheduled",
+        job_id=34,
+        run_scope="saved_job",
+    ))
+
+    assert result["status"] == "success"
+    assert result["results"][0]["fetcher_id"] == "podcast_latent_space"
+    assert result["results"][0]["execution_fetcher_id"] == "generic_podcast_rss"
+    assert captured["fetcher_type"] == "GenericPodcastRssFetcher"
+    assert captured["lineage"]["job_id"] == 34
+    assert captured["params"]["limit"] == 3
+    assert captured["params"]["source_id"] == "podcast_latent_space"
+    assert captured["params"]["feed_url"].startswith("https://")
+
+    with Session(db.engine) as session:
+        run = session.exec(select(FetchRunRecord)).one()
+        assert run.fetcher_id == "podcast_latent_space"
+        assert json.loads(run.params_json)["limit"] == 3
 
     with Session(db.engine) as session:
         source = session.get(SourceConfigRecord, "podcast_latent_space")
         source.is_active = False
         session.add(source)
         session.commit()
-    asyncio.run(app_module.execute_podcast_source_refresh_job("podcast_latent_space"))
-    assert len(calls) == 1
+
+    rerun = asyncio.run(app_module.run_collection_items(
+        items,
+        name="Podcast collection",
+        trigger_type="scheduled",
+        job_id=34,
+        run_scope="saved_job",
+    ))
+    assert rerun["status"] == "success"
+    assert rerun["results"][0]["fetcher_id"] == "podcast_latent_space"
+    with Session(db.engine) as session:
+        # A stale compatibility value cannot create a second public-podcast gate.
+        assert len(session.exec(select(FetchRunRecord)).all()) == 2
 
 
-def test_selective_update_preserves_active_and_allows_unhealthy_feed(tmp_path):
+def test_selective_update_normalizes_public_node_and_allows_unhealthy_feed(tmp_path):
     db = DatabaseStorage(f"sqlite:///{tmp_path / 'selective.db'}")
     with Session(db.engine) as session:
         first = import_podcast_catalog(
             session,
             source_ids=["podcast_latent_space"],
-            activate=True,
         )
         assert first["created"] == ["podcast_latent_space"]
 
         row = session.get(SourceConfigRecord, "podcast_latent_space")
         assert row.is_active is True
         row.name = "Local name"
-        row.is_active = True
+        row.is_active = False
         session.add(row)
         session.commit()
 
@@ -268,7 +278,7 @@ def test_catalog_api_is_not_shadowed_by_dynamic_source_route(monkeypatch, tmp_pa
         assert catalog.json()["total"] == 36
         imported = client.post(
             "/api/source-configs/podcast-catalog/import",
-            json={"source_ids": ["podcast_semianalysis_weekly"], "activate": True},
+            json={"source_ids": ["podcast_semianalysis_weekly"]},
         )
         assert imported.status_code == 200
         assert imported.json()["created"] == ["podcast_semianalysis_weekly"]
@@ -277,6 +287,57 @@ def test_catalog_api_is_not_shadowed_by_dynamic_source_route(monkeypatch, tmp_pa
         assert source.status_code == 200
         assert source.json()["shape"] == "podcast"
         assert source.json()["is_active"] is True
+        assert source.json()["fetch_interval_minutes"] is None
+
+        toggle = client.post(
+            "/api/source-configs/podcast_semianalysis_weekly/toggle",
+            json={"is_active": False},
+        )
+        assert toggle.status_code == 400
+        update = client.put(
+            "/api/source-configs/podcast_semianalysis_weekly",
+            json={"is_active": False},
+        )
+        assert update.status_code == 400
+        interval_update = client.put(
+            "/api/source-configs/podcast_semianalysis_weekly",
+            json={"fetch_interval_minutes": 60},
+        )
+        assert interval_update.status_code == 400
+
+        created = client.post(
+            "/api/source-configs",
+            json={
+                "source_id": "podcast_manual_public",
+                "name": "Manual public podcast",
+                "source_type": "podcast",
+                "url": "https://example.test/manual.xml",
+                "is_active": False,
+                "fetch_interval_minutes": 60,
+            },
+        )
+        assert created.status_code == 200
+        assert created.json()["is_active"] is True
+        assert created.json()["fetch_interval_minutes"] is None
+
+        fetchers = client.get("/api/fetchers")
+        assert fetchers.status_code == 200
+        logical_node = next(
+            item for item in fetchers.json()
+            if item["id"] == "podcast_semianalysis_weekly"
+        )
+        assert logical_node["source_config_node"] is True
+        assert logical_node["execution_fetcher_id"] == "generic_podcast_rss"
+        assert logical_node["parameters"] == [{
+            "field": "limit",
+            "label": "单次获取上限",
+            "type": "number",
+            "default": 20,
+        }]
+        assert logical_node["content_tags"]
+        assert logical_node["signal_strength"] == "high_signal"
+        assert logical_node["noise_risk"] == "low_noise"
+        assert logical_node["fetch_reliability"] == "stable_public"
 
         health = client.get("/api/source-health")
         assert health.status_code == 200
@@ -288,6 +349,10 @@ def test_catalog_api_is_not_shadowed_by_dynamic_source_route(monkeypatch, tmp_pa
         assert node["source_type"] == "podcast"
         assert node["content_type"] == "podcast_episode"
         assert node["shape"] == "podcast"
-        assert node["is_active"] is True
+        assert "is_active" not in node
         assert node["feed_url"].startswith("https://")
         assert node["source_scope"] == "ai_media"
+        assert node["content_tags"]
+        assert node["signal_strength"] == "high_signal"
+        assert node["noise_risk"] == "low_noise"
+        assert node["fetch_reliability"] == "stable_public"

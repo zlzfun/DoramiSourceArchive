@@ -14,6 +14,7 @@ from models.db import (
 )
 from services.podcast_metadata import merge_podcast_publisher_metadata
 from services import sync_consumer_policy
+from services.collection_nodes import PODCAST_SOURCE_TYPES, is_public_podcast_source
 from services.podcast_stage_policy import PodcastStageDenied, require_stage as require_podcast_stage
 
 
@@ -193,8 +194,8 @@ class DatabaseStorage(BaseStorage):
                 source = session.get(SourceConfigRecord, item.source_id)
                 if (
                     source is None
-                    or source.source_type != "podcast"
-                    or not source.is_active
+                    or (source.source_type or "").strip().lower() not in PODCAST_SOURCE_TYPES
+                    or (not source.is_active and not is_public_podcast_source(source))
                 ):
                     # This is the last transactional fence before a fetched
                     # Podcast episode becomes durable.  False tells the pipeline

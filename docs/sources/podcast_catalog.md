@@ -8,7 +8,7 @@ Megaphone、小宇宙分发源等平台各写一个抓取器。2026-09-03 的真
 
 - 35 个 feed 返回可解析的 RSS/Atom，且至少一个单集含音频 enclosure；
 - `Voices from DARPA` 的 Apple 目录仍指向 Blubrry feed，但当前网络 TLS 握手 EOF，标为
-  `blocked`，默认导入会跳过；
+  `blocked`，节点仍保留供后续复验；
 - `Inside AI` 的 feed 可用，但最新单集停在 2025-01，保留在扩展档观察；
 - `Latent Space`、`20VC` 等历史 feed 接近或超过 10 MiB，目录参数统一设置 20 MiB
   响应上限和每轮 20 集，避免无界响应与首次全量处理。
@@ -19,9 +19,10 @@ Megaphone、小宇宙分发源等平台各写一个抓取器。2026-09-03 的真
 
 ## 导入与上线
 
-应用启动时会幂等安装 35 个验证通过的条目，使全新部署的节点管理不再缺少 Podcast；
-这些节点保持停用，不会自动订阅给任何用户，也不会触发 RSS 抓取、ASR 或 TTS。重复启动只补充
-目录新增项，不覆盖管理员对已有节点的名称、配置和启停选择；阻断项仍不安装。
+应用启动时会幂等安装全部 36 个条目，使全新部署的节点管理不再缺少 Podcast。公共播客与
+内置文章节点一样始终可供采集任务选择，不再设源级“启用采集”开关；只有加入启用的采集任务后
+才按任务 Cron 运行。安装不会自动订阅给任何用户，也不会直接触发 ASR 或 TTS。重复启动只补充
+目录新增项，不覆盖管理员对已有节点的名称和配置；Feed 健康状态只用于源审查。
 
 命令行工具用于预览目录或执行选择性运维。默认命令只预览，不写库：
 
@@ -29,16 +30,16 @@ Megaphone、小宇宙分发源等平台各写一个抓取器。2026-09-03 的真
 PYTHONPATH=src uv run python scripts/import_podcast_catalog.py
 ```
 
-小批激活做内容质量观察：
+小批导入做内容质量观察：
 
 ```bash
 PYTHONPATH=src uv run python scripts/import_podcast_catalog.py \
-  --apply --activate \
+  --apply \
   --source podcast_latent_space \
   --source podcast_semianalysis_weekly
 ```
 
-手动补齐所有验证通过的条目但暂不启用：
+手动补齐全部目录条目：
 
 ```bash
 PYTHONPATH=src uv run python scripts/import_podcast_catalog.py --apply
@@ -49,15 +50,14 @@ PYTHONPATH=src uv run python scripts/import_podcast_catalog.py --apply
 - `GET /api/source-configs/podcast-catalog`：目录、验证与当前安装状态；
 - `POST /api/source-configs/podcast-catalog/import`：按 ID 幂等导入。
 
-自动安装和手动导入默认都是 `activate=false`、`update_existing=false`。目录中的所有源都会
-进入节点管理；`ingest_status` 只报告 Feed 健康，不作为准入门槛。更新已有条目不会把已启用源
-悄悄停用。所有新源标记为
-`incubating`，需按源策展策略手工启用并抓取，检查标题、日期、show notes、封面、时长与
-重复率后再扩大采集。启用共享 Podcast 后，服务会按该源的 `fetch_interval_minutes` 注册
-独立定时任务，并按稳定的 source-id 散列错开首轮执行，避免批量启用或重启时集中请求；
-启停、修改间隔或删除会即时刷新调度，任务真正执行前还会再次核对启用状态。节点运行史
-可直接用逻辑播客源 ID 查询，即使底层多个节目共用 `generic_podcast_rss` 执行器也不会显示为空。
-该定时任务只更新 feed/单集元数据，不调用 ASR 或 TTS。
+自动安装和手动导入默认都是 `update_existing=false`。目录中的所有源都会进入节点管理；
+`ingest_status` 只报告 Feed 健康，不作为准入门槛。所有新源标记为 `incubating`，可先立即抓取
+检查标题、日期、show notes、封面、时长与重复率，再扩大采集。可在「采集任务」中像博客节点
+一样选择多个节目、分别设置单次上限，并由任务的统一 Cron 定时运行。任务保存逻辑播客源 ID，
+执行时读取最新 SourceConfig 并解析为共用的 `generic_podcast_rss` 执行器；Feed URL 和源身份
+始终以 SourceConfig 为准，运行开关只存在于采集任务。节点运行史直接使用逻辑播客源 ID。
+采集任务只更新 feed/单集元数据，
+不会直接调用 ASR 或 TTS。
 
 ## 与内部博客 RSS 的边界
 
