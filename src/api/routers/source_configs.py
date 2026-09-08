@@ -138,7 +138,6 @@ class PodcastCatalogImportParams(BaseModel):
     source_ids: List[str] = PydanticField(default_factory=list)
     activate: bool = False
     update_existing: bool = False
-    include_blocked: bool = False
 
 
 # ==================== 序列化 / 路由 helper ====================
@@ -240,6 +239,11 @@ def build_source_fetch_params(source_config: SourceConfigRecord, overrides: Opti
         params["feed_url"] = source_config.url
         params.pop("ssrf_guard", None)
         params.pop("max_response_bytes", None)
+    if (source_config.source_type or "").strip().lower() == "podcast":
+        # A request body may not detach a Podcast run from its configured feed
+        # identity. The generic fetcher still owns its SSRF and size clamps.
+        params["source_id"] = source_config.source_id
+        params["feed_url"] = source_config.url
     return params
 
 
@@ -279,7 +283,7 @@ def import_podcast_catalog(
         params: PodcastCatalogImportParams,
         session: Session = Depends(deps.get_session),
 ):
-    """Import ready catalog sources; safe defaults neither activate nor overwrite."""
+    """Import catalog sources; safe defaults neither activate nor overwrite."""
     _require_local_source_governance(session)
     try:
         result = podcast_catalog_service.import_podcast_catalog(
@@ -287,7 +291,6 @@ def import_podcast_catalog(
             source_ids=params.source_ids,
             activate=params.activate,
             update_existing=params.update_existing,
-            include_blocked=params.include_blocked,
         )
         if result["created"] or result["updated"]:
             _app().reload_podcast_source_schedules()
@@ -317,10 +320,11 @@ def create_source_config(params: SourceConfigCreate, session: Session = Depends(
         raise HTTPException(status_code=400, detail="该 source_id 已存在")
 
     now = _now_iso()
+    source_type = params.source_type.strip().lower() or "rss"
     record = SourceConfigRecord(
         source_id=source_id,
         name=params.name.strip(),
-        source_type=params.source_type.strip() or "rss",
+        source_type=source_type,
         url=params.url.strip(),
         category=params.category.strip(),
         fetcher_id=params.fetcher_id.strip(),
@@ -360,6 +364,18 @@ def update_source_config(source_id: str, params: SourceConfigUpdate, session: Se
     was_shared_podcast = _is_shared_podcast(record)
 
     update_data = params.model_dump(exclude_unset=True)
+    previous_type = (record.source_type or "").strip().lower()
+    requested_type = str(update_data.get("source_type", previous_type) or "").strip().lower()
+    if previous_type == "podcast" and requested_type != "podcast":
+        raise HTTPException(
+            status_code=409,
+            detail="Podcast 数据源不能直接改为其他类型；请停用后创建新的数据源身份",
+        )
+    if requested_type == "podcast" and previous_type not in {"podcast", "rss", "atom"}:
+        raise HTTPException(
+            status_code=409,
+            detail="仅 RSS/Atom 数据源可转换为 Podcast；其他类型请创建新的数据源身份",
+        )
     if (
         record.owner_username
         and update_data.get("ai_analysis_enabled") is True
@@ -378,6 +394,10 @@ def update_source_config(source_id: str, params: SourceConfigUpdate, session: Se
             setattr(record, key, value.strip())
         else:
             setattr(record, key, value)
+
+    if requested_type == "podcast":
+        record.source_type = "podcast"
+        session.add(record)
 
     if user_sources_service.source_is_credentialed(record):
         # Classification changes are a privacy boundary, not just a future-run
@@ -461,7 +481,6 @@ async def fetch_source_config(
             status_code=409,
             detail="该数据源由远端权威节点采集，本机仅同步使用",
         )
-
     fetcher_id = resolve_source_fetcher_id(record)
     if not fetcher_id:
         raise HTTPException(status_code=400, detail="该数据源未绑定可用抓取器")

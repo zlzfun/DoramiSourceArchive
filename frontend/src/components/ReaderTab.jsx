@@ -43,7 +43,8 @@ import { resolveCompany } from '../sourceTaxonomy';
 import DiscoverPage from './DiscoverPage';
 import SocialFlow from './SocialFlow';
 import AnnouncementBanner from './AnnouncementBanner';
-import PodcastAudioPanel, { PodcastCover } from './PodcastAudioPanel';
+import { PodcastCover } from './PodcastAudioPanel';
+import PodcastExperiencePanel from './PodcastExperiencePanel';
 import PersonalBriefPage from './PersonalBriefPage';
 import InterestPage from './InterestPage';
 import AnalysisTagChip from './AnalysisTagChip';
@@ -185,6 +186,11 @@ export const ArticleRow = memo(function ArticleRow({
             <span className="reader-podcast-copy">
               <span className="reader-entry-top">
                 <span className="reader-entry-src">{podcast?.show_title || sourceName}</span>
+                {score && (
+                  <span className="reader-entry-score ai-grad-text" title={SCORE_DISCLAIMER}>
+                    {score}
+                  </span>
+                )}
                 <span
                   className="reader-entry-time"
                   title={formatDateTime(article.publish_date || article.fetched_date)}
@@ -195,6 +201,7 @@ export const ArticleRow = memo(function ArticleRow({
               <span className="reader-entry-titlerow">
                 <span className={`reader-unread-dot ${isUnread ? '' : 'is-off'}`} aria-hidden="true" />
                 <span className="reader-entry-title">{searchQuery ? highlightMatch(article.title || '（无标题）', searchQuery) : (article.title || '（无标题）')}</span>
+                {article.is_premium_podcast && <span className="podcast-premium-badge">优质播客</span>}
                 {favoriteControl}
               </span>
               <span className="reader-podcast-meta">
@@ -339,6 +346,21 @@ export default function ReaderTab({
     onBeforeOpenArticle: closeBriefBeforeArticleOpen,
   });
 
+  const [podcastSelection, setPodcastSelection] = useState({ articleId: '', variant: 'original' });
+  const activePodcast = podcastOf(activeArticle);
+  const defaultPodcastVariant = activePodcast?.audio_url
+    ? 'original'
+    : activePodcast?.condensed_audio_url ? 'digest' : 'original';
+  const podcastVariant = podcastSelection.articleId === activeArticle?.id
+    ? podcastSelection.variant
+    : defaultPodcastVariant;
+  const podcastGuideActive = podcastView
+    && podcastVariant === 'digest'
+    && Boolean(activePodcast?.condensed_audio_url);
+  const handlePodcastVariantChange = (variant) => {
+    setPodcastSelection({ articleId: activeArticle?.id || '', variant });
+  };
+
   const listThumbRef = useRef(null); // 浮层滚动条滑块(压在卡片上,内容满宽)
   // 文章/动态中栏会被发现页与社交流整段卸载；active 让自绘滚动条在 DOM 重建后
   // 重新绑定到新节点，避免监听器滞留在旧节点、出现“内容滚动但滑块不动”。
@@ -355,7 +377,9 @@ export default function ReaderTab({
   // 标题区尾行动作(语言二段 + 查看原文):有标签时住尾行右缘,无标签时并入署名行右缘——
   // 标题下不留一片只挂着两个钮的空白(样页「分析在途」帧即此形态)。
   const paneTags = activeArticle ? displayAnalysisTags(activeArticle) : [];
-  const paneActions = activeArticle && (activeArticle.source_url || (aiEnabled && !activeIsChinese)) && (
+  const paneActions = activeArticle
+    && (activeArticle.source_url || activeArticle.is_premium_podcast || (aiEnabled && !activeIsChinese))
+    && (
     <div className="reader-pane-actions">
       {aiEnabled && !activeIsChinese && (
         <div className="reader-tr-seg" role="group" aria-label="正文语言">
@@ -396,6 +420,9 @@ export default function ReaderTab({
           <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
           查看原文
         </a>
+      )}
+      {activeArticle.is_premium_podcast && (
+        <span className="podcast-premium-badge is-action">优质播客</span>
       )}
     </div>
   );
@@ -1162,9 +1189,15 @@ export default function ReaderTab({
               )}
             </header>
             <div className="reader-pane-body markdown-body">
-              {podcastView && <PodcastAudioPanel article={activeArticle} />}
-              {/* 哆啦美速读卡(AI 开启时才有):左栏 星+内容价值分,右栏摘要;无缓存给生成入口(不自动生成,控成本) */}
-              {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
+              {podcastView && (
+                <PodcastExperiencePanel
+                  article={activeArticle}
+                  variant={podcastVariant}
+                  onVariantChange={handlePodcastVariantChange}
+                />
+              )}
+              {/* 哆啦美速读卡(AI 开启时才有):左栏 新闻价值分,右栏摘要;无缓存给生成入口(不自动生成,控成本) */}
+              {!podcastGuideActive && aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
                 <AiReadingCard
                   article={activeArticle}
                   summary={activeSummary}
@@ -1174,13 +1207,13 @@ export default function ReaderTab({
                   podcast={podcastView}
                 />
               )}
-              {podcastView && !activeBodyLoading && activeBody && (
+              {podcastView && !podcastGuideActive && !activeBodyLoading && activeBody && (
                 <div className="podcast-show-notes-head">
                   <h2 className="section-title">节目简介</h2>
                   <span>来源方提供</span>
                 </div>
               )}
-              {activeBodyLoading ? (
+              {podcastGuideActive ? null : activeBodyLoading ? (
                 <PaneBodySkeleton />
               ) : (showTranslation && translatedBody) ? (
                 <ReaderMarkdown>{displayTranslatedBody}</ReaderMarkdown>
@@ -1193,7 +1226,7 @@ export default function ReaderTab({
               )}
               {/* 正文尾部原文行(v3.40 自定源首创,v3.45 推全站):读完想看原文正是最自然的
                   时刻;摘要型源读完即达原文,全文源多一个出口也无碍。无 source_url 不画。 */}
-              {!activeBodyLoading && activeArticle.source_url && (
+              {!podcastGuideActive && !activeBodyLoading && activeArticle.source_url && (
                 <p className="reader-pane-origin">
                   <a href={activeArticle.source_url} target="_blank" rel="noreferrer">
                     查看原文 ↗

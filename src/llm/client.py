@@ -31,7 +31,7 @@ logger = logging.getLogger("dorami.llm")
 @dataclass
 class UsageMeta:
     """一次 LLM 调用的计量标签：用途 + 归属用户（系统任务用 None/"system"）。"""
-    purpose: str  # translate / ask / daily_brief_map / daily_brief_dedup / daily_brief_reduce / source_config / detail_profile
+    purpose: str  # translate / ask / daily_brief_editorial / daily_brief_dedup / daily_brief_reduce / article_analysis / source_config / detail_profile
     username: Optional[str] = None
 
 

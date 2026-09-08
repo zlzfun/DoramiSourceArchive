@@ -7,6 +7,7 @@ import {
   displayAnalysisTags,
   hasReadableAnalysis,
   qualityScoreText,
+  SCORE_DISCLAIMER,
 } from '../utils/analysis';
 import AnalysisTagChip from './AnalysisTagChip';
 
@@ -89,7 +90,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
               {hasAnalysis ? (
                 <div className="reader-analysis-summary">
                   <div className="reader-analysis-top">
-                    {score && <span className="reader-analysis-score"><strong>{score}</strong><small>内容价值分</small></span>}
+                    {score && <span className="reader-analysis-score"><strong>{score}</strong><small>新闻价值</small></span>}
                     {(analysisTags.length > 0 || data.content_genre) && <span className="reader-analysis-tags">
                       {analysisTags.map((tag, index) => (
                         <AnalysisTagChip key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`} tag={tag} onTemporarySearch={onTemporaryTagSearch} />
@@ -100,7 +101,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
                   </div>
                   {data.score_reason && <p>{data.score_reason}</p>}
                   {data.summary_zh && <p className="tiny-meta">{data.summary_zh}</p>}
-                  <small>AI 内容价值评估，用于辅助筛选，不代表事实保证或用户评分</small>
+                  <small>{SCORE_DISCLAIMER}</small>
                 </div>
               ) : (
                 <div className="rounded-[var(--r-card)] bg-[var(--dorami-soft)] p-4 tiny-meta">

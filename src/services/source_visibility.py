@@ -31,6 +31,12 @@ def hidden_source_ids(session: Session) -> Set[str]:
     return {str(item).strip() for item in data if str(item).strip()}
 
 
+def reader_unavailable_source_ids(session: Session) -> Set[str]:
+    """Dynamic reader deny set controlled only by the explicit hidden-source list."""
+
+    return hidden_source_ids(session)
+
+
 def set_source_hidden(session: Session, source_id: str, hidden: bool) -> list[str]:
     """把单个源标为隐藏/恢复可见（幂等），提交后返回最新的隐藏名单（有序）。"""
     source_id = (source_id or "").strip()

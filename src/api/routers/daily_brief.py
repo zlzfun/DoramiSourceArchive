@@ -110,6 +110,8 @@ class DailyBriefConfigUpdate(BaseModel):
     top_n: Optional[int] = None   # 日报精选条数
     # 日报源范围手工名单:缺省(None)=不改;[]=清空回到全部源;非空=只取名单内源
     source_ids: Optional[List[str]] = None
+    # 入选门槛(v3.48):新闻价值分低于它的候选直接 pass;0 = 不设门槛
+    min_score: Optional[float] = None
 
 
 class DailyBriefGenerateParams(BaseModel):
@@ -124,6 +126,7 @@ def _daily_brief_config_response(session: Session) -> Dict[str, Any]:
         "cron": daily_brief_service.daily_brief_cron(session),
         "cursor": daily_brief_service.read_cursor(session),
         "top_n": daily_brief_service.daily_brief_top_n(session),
+        "min_score": daily_brief_service.daily_brief_min_score(session),
         # None = 全部源;非空名单 = 候选只取名单内源(手工维护)
         "source_ids": daily_brief_service.read_source_scope(session),
         "last_run": daily_brief_service.get_json_setting(session, daily_brief_service.KEY_LAST_RUN, None),
@@ -148,9 +151,15 @@ def set_daily_brief_config(payload: DailyBriefConfigUpdate, session: Session = D
             status_code=400,
             detail=f"精选条数需在 {daily_brief_service.TOP_N_MIN}–{daily_brief_service.TOP_N_MAX} 之间",
         )
+    if payload.min_score is not None and not (0.0 <= payload.min_score <= 10.0):
+        raise HTTPException(status_code=400, detail="入选门槛需在 0–10 之间")
     if payload.enabled is not None:
         daily_brief_service.set_setting(
             session, daily_brief_service.KEY_ENABLED, "true" if payload.enabled else "false"
+        )
+    if payload.min_score is not None:
+        daily_brief_service.set_setting(
+            session, daily_brief_service.KEY_MIN_SCORE, f"{payload.min_score:g}"
         )
     if payload.cron is not None:
         daily_brief_service.set_setting(session, daily_brief_service.KEY_CRON, payload.cron.strip())
@@ -248,22 +257,26 @@ def get_daily_brief_progress():
 @router.get("/api/daily-brief/pipeline")
 def get_daily_brief_pipeline(session: Session = Depends(deps.get_session)):
     """日报生成管线的真实提示词与关键参数，供前端流程图展示（与代码同步，不在前端硬抄）。"""
+    from llm.article_analysis_prompt import ARTICLE_ANALYSIS_SYSTEM_PROMPT
+
     prompts = daily_brief_service.prompts
     cfg = daily_brief_service.resolve_llm_config(session)
-    top_n = daily_brief_service.daily_brief_top_n(session)
     return {
         "model": cfg.model,
         "configured": cfg.configured,
         "params": {
-            "top_n": top_n,
+            "top_n": daily_brief_service.daily_brief_top_n(session),
+            "min_score": daily_brief_service.daily_brief_min_score(session),
             "max_total": 120,          # collect_candidates 默认总量上限
             "per_source_cap": 15,      # collect_candidates 每来源候选上限
             "map_concurrency": cfg.map_concurrency,
-            "map_max_body_chars": 6000,  # MAP 单篇正文截断
+            "editorial_max_body_chars": 6000,  # 编辑阶段单篇正文截断
             "recent_brief_days": 3,    # 跨天查重对照的近期日报天数
         },
         "allowed_classifications": prompts.ALLOWED_CLASSIFICATIONS,
-        "map_system_prompt": prompts.MAP_SYSTEM_PROMPT,
+        # v3.48 起日报不再自己打分:评分尺子即文章级分析提示词,日报复用其结果
+        "scoring_system_prompt": ARTICLE_ANALYSIS_SYSTEM_PROMPT,
+        "editorial_system_prompt": prompts.EDITORIAL_SYSTEM_PROMPT,
         # v3.34 起 reduce 为确定性渲染,汇编段唯一的 LLM 决策是跨天查重
         "reduce_system_prompt": prompts.CROSS_DAY_DEDUP_SYSTEM_PROMPT,
     }

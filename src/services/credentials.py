@@ -61,7 +61,7 @@ class CredentialField:
     name: str
     kv_key: str
     secret: bool = False
-    kind: str = "str"  # str | int | float
+    kind: str = "str"  # str | int | float | bool | csv
     env_var: str = ""
     ini_option: str = ""
 
@@ -77,6 +77,16 @@ class CredentialNamespace:
     name: str
     ini_section: str
     fields: Tuple[CredentialField, ...] = field(default_factory=tuple)
+    clearable_secret_fields: frozenset[str] = field(default_factory=frozenset)
+
+    def __post_init__(self) -> None:
+        known = {item.name: item for item in self.fields}
+        for name in self.clearable_secret_fields:
+            item = known.get(name)
+            if item is None or not item.secret:
+                raise ValueError(
+                    "clearable credential fields must name declared secrets"
+                )
 
     def field_by_name(self, name: str) -> CredentialField:
         for f in self.fields:
@@ -112,9 +122,298 @@ X_API_NAMESPACE = CredentialNamespace(
     ),
 )
 
+ALIYUN_ISI_NAMESPACE = CredentialNamespace(
+    name="aliyun_isi",
+    ini_section="aliyun_isi",
+    fields=(
+        CredentialField(
+            "access_key_id",
+            "aliyun_isi_access_key_id",
+            secret=True,
+            env_var="ALIYUN_AK_ID",
+        ),
+        CredentialField(
+            "access_key_secret",
+            "aliyun_isi_access_key_secret",
+            secret=True,
+            env_var="ALIYUN_AK_SECRET",
+        ),
+        CredentialField(
+            "security_token",
+            "aliyun_isi_security_token",
+            secret=True,
+            env_var="ALIYUN_SECURITY_TOKEN",
+        ),
+        CredentialField(
+            "app_key",
+            "aliyun_isi_app_key",
+            secret=True,
+            env_var="NLS_APP_KEY",
+        ),
+        CredentialField(
+            "access_token",
+            "aliyun_isi_access_token",
+            secret=True,
+            env_var="NLS_ACCESS_TOKEN",
+        ),
+        CredentialField(
+            "token_expires_at",
+            "aliyun_isi_token_expires_at",
+            kind="int",
+            env_var="NLS_TOKEN_EXPIRES_AT",
+        ),
+        CredentialField(
+            "region_id",
+            "aliyun_isi_region_id",
+            env_var="DORAMI_ALIYUN_ISI_REGION_ID",
+        ),
+        CredentialField(
+            "asr_domain",
+            "aliyun_isi_asr_domain",
+            env_var="DORAMI_ALIYUN_ISI_ASR_DOMAIN",
+        ),
+        CredentialField(
+            "asr_product",
+            "aliyun_isi_asr_product",
+            env_var="DORAMI_ALIYUN_ISI_ASR_PRODUCT",
+        ),
+        CredentialField(
+            "asr_api_version",
+            "aliyun_isi_asr_api_version",
+            env_var="DORAMI_ALIYUN_ISI_ASR_API_VERSION",
+        ),
+        CredentialField(
+            "asr_task_version",
+            "aliyun_isi_asr_task_version",
+            env_var="DORAMI_ALIYUN_ISI_ASR_TASK_VERSION",
+        ),
+        CredentialField(
+            "asr_enable_words",
+            "aliyun_isi_asr_enable_words",
+            kind="bool",
+            env_var="DORAMI_ALIYUN_ISI_ASR_ENABLE_WORDS",
+        ),
+        CredentialField(
+            "asr_auto_split",
+            "aliyun_isi_asr_auto_split",
+            kind="bool",
+            env_var="DORAMI_ALIYUN_ISI_ASR_AUTO_SPLIT",
+        ),
+        CredentialField(
+            "asr_enable_sample_rate_adaptive",
+            "aliyun_isi_asr_enable_sample_rate_adaptive",
+            kind="bool",
+            env_var="DORAMI_ALIYUN_ISI_ASR_ENABLE_SAMPLE_RATE_ADAPTIVE",
+        ),
+        CredentialField(
+            "token_url",
+            "aliyun_isi_token_url",
+            env_var="DORAMI_ALIYUN_ISI_TOKEN_URL",
+        ),
+        CredentialField(
+            "tts_url",
+            "aliyun_isi_tts_url",
+            env_var="DORAMI_ALIYUN_ISI_TTS_URL",
+        ),
+        CredentialField(
+            "tts_product",
+            "aliyun_isi_tts_product",
+            env_var="DORAMI_ALIYUN_ISI_TTS_PRODUCT",
+        ),
+        CredentialField(
+            "tts_api_version",
+            "aliyun_isi_tts_api_version",
+            env_var="DORAMI_ALIYUN_ISI_TTS_API_VERSION",
+        ),
+        CredentialField(
+            "tts_device_id",
+            "aliyun_isi_tts_device_id",
+            env_var="DORAMI_ALIYUN_ISI_TTS_DEVICE_ID",
+        ),
+        CredentialField(
+            "tts_voice_profiles_json",
+            "aliyun_isi_tts_voice_profiles_json",
+            env_var="DORAMI_ALIYUN_ISI_TTS_VOICE_PROFILES_JSON",
+        ),
+        CredentialField(
+            "tts_result_allowed_host_suffixes",
+            "aliyun_isi_tts_result_allowed_host_suffixes",
+            kind="csv",
+            env_var="DORAMI_ALIYUN_ISI_TTS_RESULT_ALLOWED_HOST_SUFFIXES",
+        ),
+        CredentialField(
+            "tts_max_chars",
+            "aliyun_isi_tts_max_chars",
+            kind="int",
+            env_var="DORAMI_ALIYUN_ISI_TTS_MAX_CHARS",
+        ),
+        CredentialField(
+            "request_timeout_seconds",
+            "aliyun_isi_request_timeout_seconds",
+            kind="int",
+            env_var="DORAMI_ALIYUN_ISI_REQUEST_TIMEOUT_SECONDS",
+        ),
+        CredentialField(
+            "asr_poll_interval_seconds",
+            "aliyun_isi_asr_poll_interval_seconds",
+            kind="int",
+            env_var="DORAMI_ALIYUN_ISI_ASR_POLL_INTERVAL_SECONDS",
+        ),
+        CredentialField(
+            "tts_poll_interval_seconds",
+            "aliyun_isi_tts_poll_interval_seconds",
+            kind="int",
+            env_var="DORAMI_ALIYUN_ISI_TTS_POLL_INTERVAL_SECONDS",
+        ),
+        CredentialField(
+            "token_refresh_skew_seconds",
+            "aliyun_isi_token_refresh_skew_seconds",
+            kind="int",
+            env_var="DORAMI_ALIYUN_ISI_TOKEN_REFRESH_SKEW_SECONDS",
+        ),
+        CredentialField(
+            "asr_quota_scope",
+            "aliyun_isi_asr_quota_scope",
+            env_var="DORAMI_ALIYUN_ISI_ASR_QUOTA_SCOPE",
+        ),
+        CredentialField(
+            "asr_quota_timezone",
+            "aliyun_isi_asr_quota_timezone",
+            env_var="DORAMI_ALIYUN_ISI_ASR_QUOTA_TIMEZONE",
+        ),
+        CredentialField(
+            "asr_daily_audio_seconds_limit",
+            "aliyun_isi_asr_daily_audio_seconds_limit",
+            kind="int",
+            env_var="DORAMI_ALIYUN_ISI_ASR_DAILY_AUDIO_SECONDS_LIMIT",
+        ),
+        CredentialField(
+            "asr_entitlement_ends_at",
+            "aliyun_isi_asr_entitlement_ends_at",
+            env_var="DORAMI_ALIYUN_ISI_ASR_ENTITLEMENT_ENDS_AT",
+        ),
+        CredentialField(
+            "asr_provider_deadline_seconds",
+            "aliyun_isi_asr_provider_deadline_seconds",
+            kind="int",
+            env_var="DORAMI_ALIYUN_ISI_ASR_PROVIDER_DEADLINE_SECONDS",
+        ),
+        CredentialField(
+            "asr_price_cny_minor_per_hour",
+            "aliyun_isi_asr_price_cny_minor_per_hour",
+            kind="int",
+            env_var="DORAMI_ALIYUN_ISI_ASR_PRICE_CNY_MINOR_PER_HOUR",
+        ),
+        CredentialField(
+            "asr_pricing_revision",
+            "aliyun_isi_asr_pricing_revision",
+            env_var="DORAMI_ALIYUN_ISI_ASR_PRICING_REVISION",
+        ),
+        CredentialField(
+            "tts_quota_scope",
+            "aliyun_isi_tts_quota_scope",
+            env_var="DORAMI_ALIYUN_ISI_TTS_QUOTA_SCOPE",
+        ),
+        CredentialField(
+            "tts_campaign_id",
+            "aliyun_isi_tts_campaign_id",
+            env_var="DORAMI_ALIYUN_ISI_TTS_CAMPAIGN_ID",
+        ),
+        CredentialField(
+            "tts_campaign_starts_at",
+            "aliyun_isi_tts_campaign_starts_at",
+            env_var="DORAMI_ALIYUN_ISI_TTS_CAMPAIGN_STARTS_AT",
+        ),
+        CredentialField(
+            "tts_campaign_ends_at",
+            "aliyun_isi_tts_campaign_ends_at",
+            env_var="DORAMI_ALIYUN_ISI_TTS_CAMPAIGN_ENDS_AT",
+        ),
+        CredentialField(
+            "tts_campaign_character_limit",
+            "aliyun_isi_tts_campaign_character_limit",
+            kind="int",
+            env_var="DORAMI_ALIYUN_ISI_TTS_CAMPAIGN_CHARACTER_LIMIT",
+        ),
+        CredentialField(
+            "tts_provider_deadline_seconds",
+            "aliyun_isi_tts_provider_deadline_seconds",
+            kind="int",
+            env_var="DORAMI_ALIYUN_ISI_TTS_PROVIDER_DEADLINE_SECONDS",
+        ),
+        CredentialField(
+            "tts_price_cny_minor_per_10000_chars",
+            "aliyun_isi_tts_price_cny_minor_per_10000_chars",
+            kind="int",
+            env_var="DORAMI_ALIYUN_ISI_TTS_PRICE_CNY_MINOR_PER_10000_CHARS",
+        ),
+        CredentialField(
+            "tts_pricing_revision",
+            "aliyun_isi_tts_pricing_revision",
+            env_var="DORAMI_ALIYUN_ISI_TTS_PRICING_REVISION",
+        ),
+        CredentialField(
+            "tts_usage_settlement_mode",
+            "aliyun_isi_tts_usage_settlement_mode",
+            env_var="DORAMI_ALIYUN_ISI_TTS_USAGE_SETTLEMENT_MODE",
+        ),
+    ),
+)
+
+# The current/grace keys are deployment-held secret material. Generated URLs remain
+# ephemeral capabilities and are never stored in this credential namespace.
+PODCAST_ASR_FETCH_NAMESPACE = CredentialNamespace(
+    name="podcast_asr_fetch",
+    ini_section="podcast_asr_fetch",
+    clearable_secret_fields=frozenset({"previous_signing_secret"}),
+    fields=(
+        CredentialField(
+            "public_base_url",
+            "podcast_asr_fetch_public_base_url",
+            env_var="DORAMI_PODCAST_ASR_FETCH_PUBLIC_BASE_URL",
+        ),
+        CredentialField(
+            "signing_secret",
+            "podcast_asr_fetch_signing_secret",
+            secret=True,
+            env_var="DORAMI_PODCAST_ASR_FETCH_SIGNING_SECRET",
+        ),
+        CredentialField(
+            "previous_signing_secret",
+            "podcast_asr_fetch_previous_signing_secret",
+            secret=True,
+            env_var="DORAMI_PODCAST_ASR_FETCH_PREVIOUS_SIGNING_SECRET",
+        ),
+        CredentialField(
+            "url_ttl_seconds",
+            "podcast_asr_fetch_url_ttl_seconds",
+            kind="int",
+            env_var="DORAMI_PODCAST_ASR_FETCH_URL_TTL_SECONDS",
+        ),
+        CredentialField(
+            "clock_skew_seconds",
+            "podcast_asr_fetch_clock_skew_seconds",
+            kind="int",
+            env_var="DORAMI_PODCAST_ASR_FETCH_CLOCK_SKEW_SECONDS",
+        ),
+        CredentialField(
+            "min_remaining_seconds",
+            "podcast_asr_fetch_min_remaining_seconds",
+            kind="int",
+            env_var="DORAMI_PODCAST_ASR_FETCH_MIN_REMAINING_SECONDS",
+        ),
+    ),
+)
+
 # 新的外部凭据(内网 SSO、微信/微博等)在此登记命名空间即可获得整套契约。
 REGISTRY: Dict[str, CredentialNamespace] = {
-    ns.name: ns for ns in (LLM_NAMESPACE, X_API_NAMESPACE)
+    ns.name: ns
+    for ns in (
+        LLM_NAMESPACE,
+        X_API_NAMESPACE,
+        ALIYUN_ISI_NAMESPACE,
+        PODCAST_ASR_FETCH_NAMESPACE,
+    )
 }
 
 
@@ -127,13 +426,17 @@ def get_setting(session: Session, key: str) -> str:
     return str(record.value or "") if record is not None else ""
 
 
-def set_setting(session: Session, key: str, value: str) -> None:
+def _stage_setting(session: Session, key: str, value: str) -> None:
     record = session.get(AppSettingRecord, key)
     if record is None:
         record = AppSettingRecord(key=key, value=value)
     else:
         record.value = value
     session.add(record)
+
+
+def set_setting(session: Session, key: str, value: str) -> None:
+    _stage_setting(session, key, value)
     session.commit()
 
 
@@ -152,6 +455,15 @@ def _coerce(raw: str, kind: str, fallback: Any) -> Any:
             return float(raw)
         except ValueError:
             return fallback
+    if kind == "bool":
+        normalized = raw.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        return fallback
+    if kind == "csv":
+        return tuple(item.strip() for item in raw.split(",") if item.strip())
     return raw
 
 
@@ -198,17 +510,62 @@ def save_updates(session: Session, ns: CredentialNamespace, updates: Mapping[str
 
     ``None`` = 不修改;secret 字段空串同样 = 保留既有值(只写不回显契约的
     写入半边);普通字段允许写空串——即清除 KV 覆盖、回落 env/ini 基线。
+    同一命名空间的一次更新只提交一个事务；全是 no-op 值时不触碰调用方事务。
     """
-    for f in ns.fields:
-        if f.name not in updates:
-            continue
-        value = updates[f.name]
-        if value is None:
-            continue
-        text = str(value).strip()
-        if f.secret and not text:
-            continue
-        set_setting(session, f.kv_key, text)
+    staged = False
+    try:
+        for f in ns.fields:
+            if f.name not in updates:
+                continue
+            value = updates[f.name]
+            if value is None:
+                continue
+            if f.kind == "csv" and not isinstance(value, str):
+                if not isinstance(value, (list, tuple)) or any(
+                    not isinstance(item, str) for item in value
+                ):
+                    raise ValueError(
+                        f"{f.name} must be a CSV string or string list"
+                    )
+                text = ",".join(item.strip() for item in value if item.strip())
+            else:
+                text = str(value).strip()
+            if f.secret and not text:
+                continue
+            _stage_setting(session, f.kv_key, text)
+            staged = True
+        if staged:
+            session.commit()
+    except Exception:
+        session.rollback()
+        raise
+
+
+def clear_secret_fields(
+    session: Session,
+    ns: CredentialNamespace,
+    field_names: Tuple[str, ...],
+) -> None:
+    """Clear only namespace-declared ephemeral secrets from runtime KV.
+
+    Ordinary secrets deliberately retain the established empty-value-means-keep
+    contract. Callers cannot supply KV keys, and a namespace must explicitly
+    opt each field into this destructive operation.
+    """
+
+    requested = tuple(dict.fromkeys(str(name or "").strip() for name in field_names))
+    if not requested or any(not name for name in requested):
+        raise ValueError("at least one clearable secret field is required")
+    if not set(requested).issubset(ns.clearable_secret_fields):
+        raise ValueError("credential secret field is not clearable")
+    try:
+        for name in requested:
+            credential_field = ns.field_by_name(name)
+            _stage_setting(session, credential_field.kv_key, "")
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
 
 
 def mask_tail(value: str, keep: int = 4) -> str:

@@ -49,8 +49,9 @@ PYTHONPATH=src uv run python scripts/import_podcast_catalog.py --apply
 - `GET /api/source-configs/podcast-catalog`：目录、验证与当前安装状态；
 - `POST /api/source-configs/podcast-catalog/import`：按 ID 幂等导入。
 
-自动安装和手动导入的安全默认值都是 `activate=false`、`update_existing=false`、
-`include_blocked=false`。更新已有条目不会把已启用源悄悄停用。所有新源标记为
+自动安装和手动导入默认都是 `activate=false`、`update_existing=false`。目录中的所有源都会
+进入节点管理；`ingest_status` 只报告 Feed 健康，不作为准入门槛。更新已有条目不会把已启用源
+悄悄停用。所有新源标记为
 `incubating`，需按源策展策略手工启用并抓取，检查标题、日期、show notes、封面、时长与
 重复率后再扩大采集。启用共享 Podcast 后，服务会按该源的 `fetch_interval_minutes` 注册
 独立定时任务，并按稳定的 source-id 散列错开首轮执行，避免批量启用或重启时集中请求；
@@ -71,3 +72,13 @@ source ID；前者产生 `rss_article`，后者产生 `podcast_episode`，从而
 全文转录、翻译、改写或发布合成音频。长播客精华仍按 `docs/podcast-wave-plan.md` 的 rights
 gate 执行：优先发布方 transcript；没有明确衍生授权时，只做登录态内部辅助或链接回原节目，
 不发布新的公开音频/RSS。
+
+发布者逐字稿正文不会在 RSS 采集或 Reader 页面访问时自动下载。外网管理员需显式调用
+`POST /api/admin/podcast-transcripts/{episode_id}/ingest-publisher`；该动作只接受 VTT、SRT、
+plain UTF-8 text 和 Podcasting 2.0 JSON，并受 `[podcast]` 的 `transcript_max_bytes`、
+`transcript_timeout_seconds`、`transcript_max_segments`、`transcript_max_text_chars` 限制。
+声明的受支持 MIME 优先；缺失 MIME 时才按扩展名识别，声明了不支持 MIME 或 MIME/扩展名
+冲突的候选不会被下载。由于结果会作为公开文本通过 Archive Sync 发布，该入口采用更强的
+`derivative_text_allowed + public_distribution_allowed` 权利门禁（前者同时蕴含
+`transcript_allowed`），而不是把公开 RSS 当作授权。相同正文重试复用当前不可变版本，正文
+变化才新增版本并原子移动发布指针；发布者 URL 只以 SHA-256 记录在 provenance 中。

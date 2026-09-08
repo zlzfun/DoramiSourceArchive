@@ -9,7 +9,6 @@ GET /api/archive/export/articles.jsonl → 本地 import_archive_sync_jsonl 幂�
 """
 
 import importlib
-import json
 from typing import Any, Dict, List, Optional
 
 from apscheduler.triggers.cron import CronTrigger
@@ -37,6 +36,9 @@ def _require_v2_local_media_store() -> None:
     store = getattr(_app(), "media_store", None)
     if store is None or getattr(store, "root", None) is None:
         raise RemoteSyncError("v2 全流同步要求本机启用 media store")
+    podcast_store = getattr(_app(), "podcast_artifact_store", None)
+    if podcast_store is None or getattr(podcast_store, "root", None) is None:
+        raise RemoteSyncError("v2 全流同步要求本机启用 Podcast artifact store")
 
 
 class RemoteSyncCredentials(BaseModel):
@@ -97,10 +99,15 @@ def launch_remote_sync_job(
     if protocol == "v2" and source_ids:
         raise RemoteSyncError("v2 是一致性全流同步，不支持 source_ids 局部过滤")
     if protocol == "v2":
-        if (v2_probe or {}).get("schema_version") != remote_sync_service.archive_sync_v2.SCHEMA_VERSION:
+        if (v2_probe or {}).get(
+            "schema_version"
+        ) != remote_sync_service.archive_sync_v2.SCHEMA_VERSION:
             raise RemoteSyncError("启动 v2 同步前必须先验证兼容的 schema_version")
         capabilities = set((v2_probe or {}).get("capabilities") or [])
-        missing = set(remote_sync_service.archive_sync_v2.CAPABILITIES) - capabilities
+        missing = (
+            set(remote_sync_service.archive_sync_v2.REQUIRED_CAPABILITIES)
+            - capabilities
+        )
         if missing:
             raise RemoteSyncError(
                 "启动 v2 同步前必须先验证远端 capability set: "
@@ -118,10 +125,12 @@ def launch_remote_sync_job(
                     "本机已进入 v2 consumer 模式，不能降级启动 v1 同步"
                 )
     with Session(engine) as session:
-        active = session.exec(select(JobRecord).where(
-            JobRecord.type == REMOTE_SYNC_JOB_TYPE,
-            JobRecord.status.in_(["queued", "running"]),
-        )).all()
+        active = session.exec(
+            select(JobRecord).where(
+                JobRecord.type == REMOTE_SYNC_JOB_TYPE,
+                JobRecord.status.in_(["queued", "running"]),
+            )
+        ).all()
         if active:
             raise RemoteSyncError("已有同步任务运行中；单一 authority 同步必须串行")
     if protocol == "v2":
@@ -140,6 +149,7 @@ def launch_remote_sync_job(
                 authority_id=str((v2_probe or {})["authority_id"]),
                 schema_version=str((v2_probe or {})["schema_version"]),
                 prepared_at=_now_iso(),
+                capabilities=list((v2_probe or {}).get("capabilities") or []),
             )
             session.commit()
 
@@ -147,6 +157,7 @@ def launch_remote_sync_job(
         if protocol == "v2":
             app_module = _app()
             store = getattr(app_module, "media_store", None)
+            podcast_store = getattr(app_module, "podcast_artifact_store", None)
             state = remote_sync_service.load_sync_state(engine)
             target = (state.get("targets") or {}).get(base_url) or {}
 
@@ -167,9 +178,23 @@ def launch_remote_sync_job(
                 password=password,
                 media_root=getattr(store, "root", None),
                 media_max_bytes=getattr(store, "max_bytes", 20 * 1024 * 1024),
+                podcast_artifact_store=podcast_store,
                 page_size=page_size,
                 checkpoints=target.get("v2_streams") or {},
                 expected_authority_id=str((v2_probe or {})["authority_id"]),
+                expected_capabilities=list((v2_probe or {}).get("capabilities") or []),
+                podcast_text_max_bytes=(
+                    app_module.settings.podcast.text_artifact_max_bytes
+                ),
+                podcast_text_max_chars=(
+                    app_module.settings.podcast.text_artifact_max_chars
+                ),
+                podcast_text_page_max_bytes=(
+                    app_module.settings.podcast.text_sync_page_max_bytes
+                ),
+                podcast_text_page_max_rows=(
+                    app_module.settings.podcast.text_sync_page_max_rows
+                ),
                 on_advance=job.advance,
                 on_stream_complete=_record_stream,
             )
@@ -208,7 +233,9 @@ async def test_remote_sync(params: RemoteSyncCredentials):
     try:
         creds = _validated_credentials(params)
         return await remote_sync_service.probe(
-            creds["base_url"], creds["username"], creds["password"],
+            creds["base_url"],
+            creds["username"],
+            creds["password"],
             protocol=params.protocol,
         )
     except RemoteSyncError as exc:
@@ -226,7 +253,9 @@ async def start_remote_sync(params: RemoteSyncStartParams, request: Request):
     engine = deps.get_db_sink().engine
     triggered_by = _app().current_username(request)
     fetched_date_start = (params.fetched_date_start or "").strip() or None
-    source_ids = [s.strip() for s in (params.source_ids or []) if s and s.strip()] or None
+    source_ids = [
+        s.strip() for s in (params.source_ids or []) if s and s.strip()
+    ] or None
     protocol = (params.protocol or "v2").strip().lower()
     if protocol not in {"v1", "v2"}:
         raise HTTPException(status_code=400, detail="protocol 仅支持 v1/v2")
@@ -335,7 +364,9 @@ async def set_remote_sync_schedule(params: RemoteSyncScheduleParams):
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
-        saved = remote_sync_service.save_schedule(engine, updates, updated_at=_now_iso())
+        saved = remote_sync_service.save_schedule(
+            engine, updates, updated_at=_now_iso()
+        )
     except RemoteSyncError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     remote_sync_service.activate_consumer_for_enabled_v2_schedule(

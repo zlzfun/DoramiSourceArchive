@@ -42,6 +42,13 @@
   RSS 可接入性验证、精选目录、幂等导入命令/API、观察期与权利边界。
 - ◉ [taxonomy-v1-deployment.md](./taxonomy-v1-deployment.md) — 已批准 Taxonomy v1 的发布资产与上线手册：
   全新库 migration → validation-only → 导入回执 → 人工发布 → 开分析，以及已发布开发库的安全同步路径。
+- ◉ [unified-news-scoring-plan.md](./unified-news-scoring-plan.md) — **统一新闻价值评分波(issue #22,v3.48.0)**:
+  取缔阅读价值维度,文章级评分只剩一把「新闻价值」尺子(入库分析提示词以日报 MAP 锚点为底改写);
+  公共日报复用该评分、缺分就地补评不写回(软依赖,分析全无也能出报)、门槛 pass、只为入选者写点评;
+  个人早报门槛 5.0 + 去等待。拍板/取舍/明确不做见 §0–§5。
+- ◉ [analysis-brief-review-plan.md](./analysis-brief-review-plan.md) — **入库分析与日报链路审视收口**(v3.48 同 PR):
+  补评喂同一闭集、无正文候选按标题走同一把尺子、worker 轻列扫描 + 版本重跑慢滴、编辑喂分析事实、
+  分数直方图与补评撞车读数、同事件机械预聚类、跨天对照物带要点;审视结论与明确不做见 §0/§5。
 - ◉ [full-analysis-backfill.md](./full-analysis-backfill.md) — 历史文章语义回填：
   `full_analysis` 与 `retag_only` 边界、管理面操作、低优先级调度、恢复语义及上线顺序。
 - ◇ [reader-search-architecture.md](./reader-search-architecture.md) — 检索问答(类 RAG)模块
@@ -72,6 +79,8 @@
 - ◇ [contracts/im_bot_integration.md](./contracts/im_bot_integration.md) — 内网 IM 机器人接入契约:
   dorami-bot 服务账号程序化登录 + ask(scope=all,2026-08-14 自 subscription 改判)问答/引用渲染/多轮 history +
   dfeed_ 日报拉取;责任分界与已拍板决策(哆啦美侧零改动)。
+- ◇ [contracts/podcast_provider_ports.md](./contracts/podcast_provider_ports.md) — Podcast ASR/TTS
+  provider-neutral ports、供应商 adapter 责任边界、未知提交规则和新增供应商验收清单。
 
 ## frontend/ —— 前端纪律(◉ 活跃)
 

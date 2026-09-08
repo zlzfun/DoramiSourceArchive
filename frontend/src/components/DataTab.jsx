@@ -18,7 +18,7 @@ import Sparkline from './charts/Sparkline';
 import { runAction } from '../utils/runAction';
 import { excerptOf } from '../utils/readerText';
 import { contentTypeLabel, CONTENT_TYPE_GROUPS } from '../utils/contentType';
-import { analysisStatusMeta, primaryAnalysisLabel, qualityScoreText } from '../utils/analysis';
+import { SCORE_DISCLAIMER, analysisStatusMeta, primaryAnalysisLabel, qualityScoreText } from '../utils/analysis';
 import { useConfirm } from '../hooks/useConfirm';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
 
@@ -545,13 +545,13 @@ export default function DataTab({
           </div>
 
           <div className="ledger-facet">
-            <h3 className="micro-label ledger-facet-title">内容价值分</h3>
+            <h3 className="micro-label ledger-facet-title">新闻价值</h3>
             <div className="ledger-facet-list">
               {[
                 ['', '全部分数'],
-                ['7', '7+ 值得阅读'],
-                ['8', '8+ 优质内容'],
-                ['9', '9+ 稀有内容'],
+                ['7', '7+ 重要资讯'],
+                ['8', '8+ 头条候选'],
+                ['9', '9+ 重大事件'],
               ].map(([value, label]) => (
                 <button
                   key={value || 'all'}
@@ -568,7 +568,7 @@ export default function DataTab({
                 <button key={value} type="button" className={`mini-seg-btn ${filters.sort === value ? 'is-on' : ''}`} onClick={() => setFilters((prev) => ({ ...prev, sort: value }))}>{label}</button>
               ))}
             </div>
-            <p className="tiny-meta mt-2">AI 内容价值评估，用于辅助筛选，不代表事实保证。</p>
+            <p className="tiny-meta mt-2">{SCORE_DISCLAIMER}</p>
           </div>
 
           <div className="ledger-facet">

@@ -41,7 +41,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--apply", action="store_true", help="写入数据库；默认只做 dry-run。")
     parser.add_argument("--activate", action="store_true", help="新建后立即启用；默认保持停用。")
     parser.add_argument("--update-existing", action="store_true", help="用目录元数据更新已有同 ID 配置。")
-    parser.add_argument("--include-blocked", action="store_true", help="连同当前验证失败的源一起导入。")
     parser.add_argument("--source", action="append", default=[], help="仅处理指定 source_id，可重复。")
     parser.add_argument("--database-url", default=settings.storage.database_url, help="目标数据库 URL。")
     return parser.parse_args()
@@ -60,7 +59,6 @@ def main() -> int:
         items = [
             item for item in catalog["items"]
             if item["source_id"] in selected
-            and (args.include_blocked or item["ingest_status"] == "ready")
         ]
         print(json.dumps({
             "action": "dry_run",
@@ -79,7 +77,6 @@ def main() -> int:
             source_ids=args.source,
             activate=args.activate,
             update_existing=args.update_existing,
-            include_blocked=args.include_blocked,
         )
     print(json.dumps({"action": "applied", "database_url": args.database_url, **result}, ensure_ascii=False, indent=2))
     return 0

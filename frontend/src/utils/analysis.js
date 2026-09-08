@@ -110,4 +110,5 @@ export function analysisStatusMeta(article, { podcast = false, includeTerminal =
   return null;
 }
 
-export const SCORE_DISCLAIMER = 'AI 内容价值评估，用于辅助筛选，不代表事实保证或你的个人评分';
+// 分数语义 v3.48 起是「新闻价值」(这件事有多重要),不是阅读质量;全站唯一一把尺子。
+export const SCORE_DISCLAIMER = 'AI 新闻价值评估，用于辅助筛选，不代表事实保证或你的个人评分';

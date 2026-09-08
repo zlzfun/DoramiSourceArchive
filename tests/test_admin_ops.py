@@ -244,14 +244,14 @@ def test_record_usage_accumulates_not_duplicates(tmp_path):
         ai_usage.record_usage(session, username="alice", purpose="translate", model="m1", usage=meta_usage, day="2026-06-27")
         ai_usage.record_usage(session, username="alice", purpose="translate", model="m1", usage=meta_usage, day="2026-06-27")
         # 系统级日报 + 另一用途。
-        ai_usage.record_usage(session, username="system", purpose="daily_brief_map", model="m1",
+        ai_usage.record_usage(session, username="system", purpose="daily_brief_editorial", model="m1",
                               usage={"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}, day="2026-06-27")
         # 非法用途被忽略。
         ai_usage.record_usage(session, username="alice", purpose="not_a_purpose", model="m1", usage=meta_usage, day="2026-06-27")
 
         from models.db import AiUsageRecord
         rows = list(session.exec(__import__("sqlmodel").select(AiUsageRecord)).all())
-        # alice/translate 累加进一行（calls=2），system/daily_brief_map 一行；非法用途不建行。
+        # alice/translate 累加进一行（calls=2），system/daily_brief_editorial 一行；非法用途不建行。
         assert len(rows) == 2
         alice = next(r for r in rows if r.username == "alice")
         assert alice.calls == 2 and alice.total_tokens == 30 and alice.prompt_tokens == 20
@@ -301,7 +301,7 @@ def test_usage_by_user_and_summarize_user(tmp_path):
         ai_usage.record_usage(session, username="alice", purpose="ask", model="m1",
                               usage={"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}, day=today)
         # 系统任务不计入按用户榜。
-        ai_usage.record_usage(session, username="system", purpose="daily_brief_map", model="m1",
+        ai_usage.record_usage(session, username="system", purpose="daily_brief_editorial", model="m1",
                               usage={"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}, day=today)
 
         by_user = ai_usage.usage_by_user(session, days=30)

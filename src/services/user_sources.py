@@ -518,14 +518,14 @@ def prepare_check(session: Session, url: str) -> Dict[str, Any]:
     if conflict:
         from services import source_visibility
 
-        if conflict["source_id"] in source_visibility.hidden_source_ids(session):
+        if conflict["source_id"] in source_visibility.reader_unavailable_source_ids(session):
             return {"blocked": True}
         return {"existing": {**conflict, "kind": "system"}}
     _, record = _resolve_config_slot(session, canonical)
     if record is not None:
         from services import source_visibility
 
-        if record.source_id in source_visibility.hidden_source_ids(session):
+        if record.source_id in source_visibility.reader_unavailable_source_ids(session):
             # 被 admin 隐藏的既有用户源同样拒绝(检视返修 F6:防重新添加绕过止损)
             return {"blocked": True}
         if not record.is_active and not _auto_disabled(session, record.source_id):
@@ -584,7 +584,7 @@ def prepare_user_source(
     if conflict:
         from services import source_visibility
 
-        if conflict["source_id"] in source_visibility.hidden_source_ids(session):
+        if conflict["source_id"] in source_visibility.reader_unavailable_source_ids(session):
             return {"blocked": True}
         return {"existing_system": conflict}
 
@@ -596,7 +596,7 @@ def prepare_user_source(
         # 复用既有用户源(本人重复添加,或第二人添加同 URL→去重共享)。
         # 隐藏/admin 手动停用的源拒绝复用(F6:防绕过止损);自动停抓(连续失败达
         # 阈值)的源允许经再次添加复活并清计数(有人还要看,值得再试)。
-        if record.source_id in source_visibility.hidden_source_ids(session):
+        if record.source_id in source_visibility.reader_unavailable_source_ids(session):
             return {"blocked": True}
         if not record.is_active and not _auto_disabled(session, record.source_id):
             return {"blocked": True}

@@ -4,9 +4,10 @@
 FROM python:3.12-slim-bookworm
 
 # tzdata:APScheduler 的 cron 按进程本地时区解释,compose 里 TZ=Asia/Shanghai
-# 需要它才生效;curl 供容器健康检查使用。
+# 需要它才生效;curl 供容器健康检查使用;ffmpeg 同时提供 Podcast 衍生音频
+# 封装/响度处理所需的 ffmpeg 与媒体探测所需的 ffprobe。
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tzdata curl \
+ && apt-get install -y --no-install-recommends tzdata curl ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:0.9 /uv /uvx /bin/

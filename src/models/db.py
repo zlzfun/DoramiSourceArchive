@@ -1,7 +1,17 @@
 import datetime as dt
 from typing import Optional
 from sqlmodel import SQLModel, Field
-from sqlalchemy import CheckConstraint, Column, Index, String, UniqueConstraint, event, inspect, text
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    UniqueConstraint,
+    event,
+    inspect,
+    text,
+)
 
 
 class ArticleRecord(SQLModel, table=True):
@@ -822,6 +832,685 @@ class SourceConfigRecord(SQLModel, table=True):
     updated_at: str = Field(description="更新时间")
 
 
+PODCAST_PROCESSING_STAGES = (
+    "fetch",
+    "admission",
+    "asr",
+    "translate",
+    "analyze",
+    "digest",
+    "script",
+    "tts",
+    "audio_qa",
+    "local_publish",
+)
+
+
+class PodcastProcessingRecord(SQLModel, table=True):
+    """Durable, immutable-versioned Podcast pipeline run.
+
+    Unlike ``JobRecord``, this row is the worker correctness boundary.  Claims
+    use a random lease token plus a monotonically increasing fencing token so a
+    worker from an expired lease cannot submit or commit after another worker
+    has reclaimed the run.
+    """
+
+    __tablename__ = "podcast_processings"
+    __table_args__ = (
+        UniqueConstraint(
+            "episode_id",
+            "input_fingerprint",
+            "pipeline_version",
+            "policy_version",
+            "requested_target",
+            "budget_scope",
+            "budget_period",
+            "budget_limit_minor",
+            "per_run_budget_minor",
+            name="uq_podcast_processings_effective_run",
+        ),
+        UniqueConstraint(
+            "idempotency_key", name="uq_podcast_processings_idempotency_key"
+        ),
+        Index(
+            "ix_podcast_processings_claim",
+            "processing_status",
+            "next_retry_at",
+            "lease_expires_at",
+            "queued_at",
+        ),
+        Index(
+            "ix_podcast_processings_input_status",
+            "input_artifact_id",
+            "processing_status",
+        ),
+        Index("ix_podcast_processings_episode_created", "episode_id", "created_at"),
+        CheckConstraint(
+            "eligibility_status IN ('unknown','blocked_source','blocked_rights',"
+            "'rejected_relevance','rejected_value','invalid_input','over_budget','eligible')",
+            name="ck_podcast_processings_eligibility",
+        ),
+        CheckConstraint(
+            "processing_status IN ('not_required','queued','running','retry_wait',"
+            "'reconciliation_required','awaiting_review','ready','failed','cancelled',"
+            "'superseded')",
+            name="ck_podcast_processings_status",
+        ),
+        CheckConstraint(
+            "stage IN ('fetch','admission','asr','translate','analyze','digest','script',"
+            "'tts','audio_qa','local_publish')",
+            name="ck_podcast_processings_stage",
+        ),
+        CheckConstraint(
+            "selection_source IN ('policy','editor')",
+            name="ck_podcast_processings_selection_source",
+        ),
+        CheckConstraint(
+            "requested_target IN ('transcript','digest_blog','digest_audio')",
+            name="ck_podcast_processings_requested_target",
+        ),
+        CheckConstraint(
+            "selection_source <> 'editor' OR length(trim(request_reason)) > 0",
+            name="ck_podcast_processings_editor_reason",
+        ),
+        CheckConstraint(
+            "length(input_fingerprint) = 64 AND length(trim(pipeline_version)) > 0 "
+            "AND length(trim(idempotency_key)) > 0",
+            name="ck_podcast_processings_identity",
+        ),
+        CheckConstraint(
+            "attempt_count >= 0 AND fencing_token >= 0 AND estimated_cost_minor >= 0 "
+            "AND actual_cost_minor >= 0",
+            name="ck_podcast_processings_nonnegative",
+        ),
+        CheckConstraint(
+            "audio_minutes >= 0 AND input_tokens >= 0 AND output_tokens >= 0 "
+            "AND tts_characters >= 0 AND tts_audio_tokens >= 0",
+            name="ck_podcast_processings_usage_nonnegative",
+        ),
+        CheckConstraint(
+            "estimated_cost_minor = CAST(estimated_cost_minor AS INTEGER) AND "
+            "actual_cost_minor = CAST(actual_cost_minor AS INTEGER)",
+            name="ck_podcast_processings_integer_cost",
+        ),
+        CheckConstraint(
+            "cost_currency = 'CNY'", name="ck_podcast_processings_currency"
+        ),
+        CheckConstraint(
+            "processing_status <> 'running' OR "
+            "(lease_owner IS NOT NULL AND length(lease_owner) > 0 AND "
+            "lease_token IS NOT NULL AND length(lease_token) > 0 AND "
+            "lease_expires_at IS NOT NULL)",
+            name="ck_podcast_processings_running_lease",
+        ),
+        CheckConstraint(
+            "processing_status = 'running' OR "
+            "(lease_owner IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL)",
+            name="ck_podcast_processings_idle_lease",
+        ),
+        CheckConstraint(
+            "processing_status <> 'retry_wait' OR next_retry_at IS NOT NULL",
+            name="ck_podcast_processings_retry_time",
+        ),
+        CheckConstraint(
+            "((input_artifact_id IS NOT NULL AND length(trim(input_artifact_id)) > 0 AND "
+            "input_artifact_kind IS NOT NULL AND input_content_hash IS NOT NULL AND "
+            "input_language IS NOT NULL AND length(trim(input_language)) > 0) OR "
+            "(processing_status IN ('not_required','superseded') AND "
+            "eligibility_status IN ('blocked_source','blocked_rights','invalid_input') AND "
+            "input_artifact_id IS NULL AND "
+            "input_artifact_kind IS NULL AND input_content_hash IS NULL AND "
+            "input_language IS NULL))",
+            name="ck_podcast_processings_input_binding",
+        ),
+        CheckConstraint(
+            "((budget_scope IS NOT NULL AND length(trim(budget_scope)) > 0 AND "
+            "budget_period IS NOT NULL AND length(trim(budget_period)) > 0 AND "
+            "budget_limit_minor IS NOT NULL AND per_run_budget_minor IS NOT NULL AND "
+            "budget_limit_minor > 0 AND per_run_budget_minor > 0 AND "
+            "per_run_budget_minor <= budget_limit_minor) OR "
+            "(processing_status IN ('not_required','superseded') AND "
+            "eligibility_status IN ('blocked_source','blocked_rights','invalid_input') AND "
+            "budget_scope IS NULL AND budget_period IS NULL AND "
+            "budget_limit_minor IS NULL AND per_run_budget_minor IS NULL))",
+            name="ck_podcast_processings_budget_binding",
+        ),
+        CheckConstraint(
+            "input_artifact_kind IS NULL OR input_artifact_kind IN "
+            "('source_audio','publisher_transcript','normalized_transcript',"
+            "'transcript_zh','digest_blog_zh','narration_script_zh')",
+            name="ck_podcast_processings_input_kind",
+        ),
+        CheckConstraint(
+            "input_content_hash IS NULL OR "
+            "(length(input_content_hash) = 64 AND "
+            "input_content_hash = lower(input_content_hash))",
+            name="ck_podcast_processings_input_hash",
+        ),
+        CheckConstraint(
+            "(requested_target = 'digest_audio' AND "
+            "narration_artifact_id IS NOT NULL AND narration_content_hash IS NOT NULL "
+            "AND voice_profile_id IS NOT NULL AND "
+            "input_artifact_id = narration_artifact_id AND "
+            "input_content_hash = narration_content_hash AND "
+            "input_artifact_kind = 'narration_script_zh') OR "
+            "(requested_target = 'digest_audio' AND "
+            "processing_status IN ('not_required','superseded') AND "
+            "eligibility_status IN ('blocked_source','blocked_rights','invalid_input') AND "
+            "narration_artifact_id IS NULL AND narration_content_hash IS NULL AND "
+            "voice_profile_id IS NULL) OR "
+            "(requested_target <> 'digest_audio' AND "
+            "narration_artifact_id IS NULL AND narration_content_hash IS NULL AND "
+            "voice_profile_id IS NULL)",
+            name="ck_podcast_processings_audio_binding",
+        ),
+        CheckConstraint(
+            "narration_content_hash IS NULL OR "
+            "(length(narration_content_hash) = 64 AND "
+            "narration_content_hash = lower(narration_content_hash))",
+            name="ck_podcast_processings_narration_hash",
+        ),
+        ForeignKeyConstraint(
+            ["narration_artifact_id"],
+            ["podcast_text_artifacts.id"],
+            name="fk_podcast_processings_narration_artifact",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: str = Field(primary_key=True)
+    episode_id: str = Field(
+        foreign_key="articles.id", ondelete="RESTRICT", index=True
+    )
+    job_id: Optional[str] = Field(
+        default=None, foreign_key="jobs.id", ondelete="SET NULL", index=True
+    )
+    input_fingerprint: str = Field(index=True)
+    pipeline_version: str
+    policy_version: str = Field(default="")
+    requested_target: str
+    selection_source: str = Field(default="policy")
+    requested_by: Optional[str] = Field(default=None)
+    request_reason: str = Field(default="")
+    idempotency_key: str
+    input_artifact_id: Optional[str] = Field(default=None, index=True)
+    input_artifact_kind: Optional[str] = Field(default=None, index=True)
+    input_content_hash: Optional[str] = Field(default=None, index=True)
+    input_language: Optional[str] = Field(default=None)
+    budget_scope: Optional[str] = Field(default=None, index=True)
+    budget_period: Optional[str] = Field(default=None, index=True)
+    budget_limit_minor: Optional[int] = Field(default=None, ge=0)
+    per_run_budget_minor: Optional[int] = Field(default=None, ge=0)
+    narration_artifact_id: Optional[str] = Field(default=None, index=True)
+    narration_content_hash: Optional[str] = Field(default=None, index=True)
+    voice_profile_id: Optional[str] = Field(default=None, index=True)
+
+    eligibility_status: str = Field(default="unknown", index=True)
+    eligibility_reasons_json: str = Field(default="[]")
+    processing_status: str = Field(default="queued", index=True)
+    stage: str = Field(index=True)
+    attempt_count: int = Field(default=0, ge=0)
+    lease_owner: Optional[str] = Field(default=None)
+    lease_token: Optional[str] = Field(default=None)
+    lease_expires_at: Optional[str] = Field(default=None)
+    heartbeat_at: Optional[str] = Field(default=None)
+    fencing_token: int = Field(default=0, ge=0)
+    next_retry_at: Optional[str] = Field(default=None)
+
+    asr_provider: str = Field(default="")
+    asr_model: str = Field(default="")
+    asr_revision: str = Field(default="")
+    llm_provider: str = Field(default="")
+    llm_model: str = Field(default="")
+    llm_revision: str = Field(default="")
+    tts_provider: str = Field(default="")
+    tts_model: str = Field(default="")
+    tts_revision: str = Field(default="")
+
+    audio_minutes: float = Field(default=0, ge=0)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    tts_characters: int = Field(default=0, ge=0)
+    tts_audio_tokens: int = Field(default=0, ge=0)
+    cost_currency: str = Field(default="CNY")
+    estimated_cost_minor: int = Field(default=0, ge=0)
+    actual_cost_minor: int = Field(default=0, ge=0)
+    budget_breached: bool = Field(default=False, index=True)
+    stage_cost_json: str = Field(default="{}")
+
+    error_code: str = Field(default="")
+    error_message: str = Field(default="")
+    queued_at: str = Field(index=True)
+    started_at: Optional[str] = Field(default=None)
+    updated_at: str
+    finished_at: Optional[str] = Field(default=None)
+    created_at: str
+
+
+class PodcastProcessingCommandRecord(SQLModel, table=True):
+    """Immutable-idempotent operator command against one processing run."""
+
+    __tablename__ = "podcast_processing_commands"
+    __table_args__ = (
+        UniqueConstraint(
+            "processing_id",
+            "command_type",
+            "idempotency_key",
+            name="uq_podcast_processing_commands_idempotency",
+        ),
+        Index(
+            "ix_podcast_processing_commands_processing_created",
+            "processing_id",
+            "created_at",
+        ),
+        CheckConstraint(
+            "command_type IN ('manual_retry','provider_reconcile')",
+            name="ck_podcast_processing_commands_type",
+        ),
+        CheckConstraint(
+            "outcome IN ('accepted','rejected')",
+            name="ck_podcast_processing_commands_outcome",
+        ),
+        CheckConstraint(
+            "expected_attempt_count >= 0 AND length(trim(idempotency_key)) > 0 "
+            "AND length(trim(requested_by)) > 0 AND length(trim(reason)) > 0",
+            name="ck_podcast_processing_commands_required",
+        ),
+    )
+
+    id: str = Field(primary_key=True)
+    processing_id: str = Field(
+        foreign_key="podcast_processings.id", ondelete="RESTRICT", index=True
+    )
+    command_type: str = Field(default="manual_retry")
+    idempotency_key: str
+    expected_attempt_count: int = Field(ge=0)
+    requested_by: str
+    reason: str
+    outcome: str
+    error_code: str = Field(default="")
+    error_message: str = Field(default="")
+    created_at: str
+
+
+class PodcastStageAttemptRecord(SQLModel, table=True):
+    """One fenced provider or deterministic stage attempt."""
+
+    __tablename__ = "podcast_stage_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "processing_id", "attempt_no", name="uq_podcast_stage_attempts_number"
+        ),
+        UniqueConstraint(
+            "id", "processing_id", name="uq_podcast_stage_attempts_owner"
+        ),
+        Index(
+            "ix_podcast_stage_attempts_processing_stage",
+            "processing_id",
+            "stage",
+            "attempt_no",
+        ),
+        Index("ix_podcast_stage_attempts_provider_task", "provider_name", "provider_task_id"),
+        UniqueConstraint(
+            "provider_request_key", name="uq_podcast_stage_attempts_provider_request_key"
+        ),
+        CheckConstraint(
+            "stage IN ('fetch','admission','asr','translate','analyze','digest','script',"
+            "'tts','audio_qa','local_publish')",
+            name="ck_podcast_stage_attempts_stage",
+        ),
+        CheckConstraint(
+            "submission_state IN ('prepared','submitted','request_unknown','reconciling',"
+            "'succeeded','failed_retryable','failed_terminal','cancelled')",
+            name="ck_podcast_stage_attempts_submission_state",
+        ),
+        CheckConstraint(
+            "execution_kind IN ('provider','local')",
+            name="ck_podcast_stage_attempts_execution_kind",
+        ),
+        CheckConstraint(
+            "execution_kind <> 'local' OR estimated_cost_minor = 0",
+            name="ck_podcast_stage_attempts_local_zero_estimate",
+        ),
+        CheckConstraint(
+            "execution_kind <> 'local' OR actual_cost_minor = 0",
+            name="ck_podcast_stage_attempts_local_zero_actual",
+        ),
+        CheckConstraint(
+            "execution_kind <> 'local' OR "
+            "(submission_state NOT IN ('submitted','request_unknown','reconciling') "
+            "AND request_unknown IS FALSE AND length(provider_task_id) = 0)",
+            name="ck_podcast_stage_attempts_local_provider_state",
+        ),
+        CheckConstraint(
+            "execution_kind <> 'provider' OR submission_state <> 'submitted' OR "
+            "length(trim(provider_task_id)) > 0",
+            name="ck_podcast_stage_attempts_submitted_task_id",
+        ),
+        CheckConstraint(
+            "retry_state IN ('none','scheduled','reconcile_required','exhausted')",
+            name="ck_podcast_stage_attempts_retry_state",
+        ),
+        CheckConstraint(
+            "attempt_no >= 1 AND fencing_token >= 1 AND estimated_cost_minor >= 0 "
+            "AND actual_cost_minor >= 0 AND poll_count >= 0",
+            name="ck_podcast_stage_attempts_nonnegative",
+        ),
+        CheckConstraint(
+            "(poll_count = 0 AND last_polled_at IS NULL) OR "
+            "(poll_count > 0 AND last_polled_at IS NOT NULL AND "
+            "provider_deadline_at IS NOT NULL)",
+            name="ck_podcast_stage_attempts_poll_state",
+        ),
+        CheckConstraint(
+            "execution_kind <> 'local' OR "
+            "(poll_count = 0 AND last_polled_at IS NULL AND provider_deadline_at IS NULL)",
+            name="ck_podcast_stage_attempts_local_poll_state",
+        ),
+        CheckConstraint(
+            "estimated_cost_minor = CAST(estimated_cost_minor AS INTEGER) AND "
+            "actual_cost_minor = CAST(actual_cost_minor AS INTEGER)",
+            name="ck_podcast_stage_attempts_integer_cost",
+        ),
+        CheckConstraint(
+            "cost_currency = 'CNY'", name="ck_podcast_stage_attempts_currency"
+        ),
+        CheckConstraint(
+            "request_unknown IS FALSE OR "
+            "(submission_state IN ('request_unknown','reconciling') AND "
+            "retry_state = 'reconcile_required')",
+            name="ck_podcast_stage_attempts_unknown_request",
+        ),
+        CheckConstraint(
+            "request_unknown IS TRUE OR submission_state NOT IN ('request_unknown','reconciling')",
+            name="ck_podcast_stage_attempts_unknown_state",
+        ),
+        CheckConstraint(
+            "length(trim(provider_request_key)) > 0",
+            name="ck_podcast_stage_attempts_provider_request_key",
+        ),
+        CheckConstraint(
+            "settings_fingerprint IS NULL OR "
+            "(length(settings_fingerprint) = 64 AND "
+            "settings_fingerprint = lower(settings_fingerprint))",
+            name="ck_podcast_stage_attempts_settings_fingerprint",
+        ),
+        CheckConstraint(
+            "(output_artifact_id IS NULL AND output_artifact_kind IS NULL) OR "
+            "(output_artifact_id IS NOT NULL AND output_artifact_kind IS NOT NULL "
+            "AND length(trim(output_artifact_id)) > 0 "
+            "AND length(trim(output_artifact_kind)) > 0 "
+            "AND length(output_hash) = 64 AND output_hash = lower(output_hash))",
+            name="ck_podcast_stage_attempts_output_binding",
+        ),
+        CheckConstraint(
+            "output_authority_id IS NULL OR length(trim(output_authority_id)) > 0",
+            name="ck_podcast_stage_attempts_output_authority",
+        ),
+        CheckConstraint(
+            "(stage = 'tts' AND execution_kind = 'provider' AND "
+            "usage_settlement_mode IN ('manual','submitted_characters')) OR "
+            "((stage <> 'tts' OR execution_kind <> 'provider') AND "
+            "length(usage_settlement_mode) = 0)",
+            name="ck_podcast_stage_attempts_usage_settlement_mode",
+        ),
+    )
+
+    id: str = Field(primary_key=True)
+    processing_id: str = Field(
+        foreign_key="podcast_processings.id", ondelete="CASCADE", index=True
+    )
+    stage: str = Field(index=True)
+    attempt_no: int = Field(ge=1)
+    fencing_token: int = Field(ge=1)
+    lease_token: str
+    input_hash: str = Field(default="")
+    output_hash: str = Field(default="")
+    settings_fingerprint: Optional[str] = Field(default=None, index=True)
+    output_artifact_id: Optional[str] = Field(default=None, index=True)
+    output_artifact_kind: Optional[str] = Field(default=None)
+    output_authority_id: Optional[str] = Field(default=None)
+    provider_name: str = Field(default="")
+    model_name: str = Field(default="")
+    provider_revision: str = Field(default="")
+    usage_settlement_mode: str = Field(
+        default="", sa_column_kwargs={"server_default": text("''")}
+    )
+    provider_request_key: str
+    provider_task_id: str = Field(default="")
+    execution_kind: str = Field(default="provider")
+    submission_state: str = Field(default="prepared", index=True)
+    request_unknown: bool = Field(default=False)
+    retry_state: str = Field(default="none")
+    usage_json: str = Field(default="{}")
+    cost_currency: str = Field(default="CNY")
+    estimated_cost_minor: int = Field(default=0, ge=0)
+    actual_cost_minor: int = Field(default=0, ge=0)
+    error_code: str = Field(default="")
+    error_message: str = Field(default="")
+    started_at: str
+    submitted_at: Optional[str] = Field(default=None)
+    poll_count: int = Field(default=0, ge=0)
+    last_polled_at: Optional[str] = Field(default=None)
+    provider_deadline_at: Optional[str] = Field(default=None)
+    completed_at: Optional[str] = Field(default=None)
+    created_at: str
+    updated_at: str
+
+
+class PodcastBudgetReservationRecord(SQLModel, table=True):
+    """Pre-provider CNY budget hold, released or settled exactly once."""
+
+    __tablename__ = "podcast_budget_reservations"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", name="uq_podcast_budget_reservations_attempt"),
+        UniqueConstraint(
+            "id",
+            "attempt_id",
+            "processing_id",
+            name="uq_podcast_budget_reservations_owner",
+        ),
+        UniqueConstraint(
+            "idempotency_key", name="uq_podcast_budget_reservations_idempotency_key"
+        ),
+        ForeignKeyConstraint(
+            ["attempt_id", "processing_id"],
+            ["podcast_stage_attempts.id", "podcast_stage_attempts.processing_id"],
+            name="fk_podcast_budget_reservations_attempt_owner",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_podcast_budget_reservations_capacity",
+            "budget_scope",
+            "budget_period",
+            "status",
+        ),
+        Index(
+            "ix_podcast_budget_reservations_provider_capacity",
+            "provider_quota_scope",
+            "provider_quota_period",
+            "provider_quota_unit",
+            "status",
+        ),
+        CheckConstraint(
+            "status IN ('reserved','settled','released')",
+            name="ck_podcast_budget_reservations_status",
+        ),
+        CheckConstraint(
+            "currency = 'CNY'", name="ck_podcast_budget_reservations_currency"
+        ),
+        CheckConstraint(
+            "reserved_minor >= 0 AND actual_cost_minor >= 0",
+            name="ck_podcast_budget_reservations_nonnegative",
+        ),
+        CheckConstraint(
+            "reserved_minor = CAST(reserved_minor AS INTEGER) AND "
+            "actual_cost_minor = CAST(actual_cost_minor AS INTEGER)",
+            name="ck_podcast_budget_reservations_integer_cost",
+        ),
+        CheckConstraint(
+            "((provider_quota_scope IS NULL AND provider_quota_period IS NULL AND "
+            "provider_quota_unit IS NULL AND provider_quota_window_start_at IS NULL AND "
+            "provider_quota_window_end_at IS NULL AND provider_quota_limit_units IS NULL AND "
+            "reserved_usage_units IS NULL AND unit_price_cny_minor IS NULL AND "
+            "price_unit_count IS NULL AND pricing_revision IS NULL AND "
+            "actual_usage_units = 0 AND provider_quota_breached IS FALSE) OR "
+            "(provider_quota_scope IS NOT NULL AND length(trim(provider_quota_scope)) > 0 AND "
+            "provider_quota_period IS NOT NULL AND length(trim(provider_quota_period)) > 0 AND "
+            "provider_quota_unit IN ('audio_seconds','tts_characters') AND "
+            "provider_quota_window_start_at IS NOT NULL AND "
+            "provider_quota_window_end_at IS NOT NULL AND "
+            "provider_quota_limit_units > 0 AND reserved_usage_units > 0 AND "
+            "reserved_usage_units <= provider_quota_limit_units AND "
+            "unit_price_cny_minor >= 0 AND price_unit_count > 0 AND "
+            "pricing_revision IS NOT NULL AND length(trim(pricing_revision)) > 0))",
+            name="ck_podcast_budget_reservations_provider_binding",
+        ),
+        CheckConstraint(
+            "actual_usage_units >= 0 AND "
+            "actual_usage_units = CAST(actual_usage_units AS INTEGER) AND "
+            "(reserved_usage_units IS NULL OR "
+            "reserved_usage_units = CAST(reserved_usage_units AS INTEGER)) AND "
+            "(provider_quota_limit_units IS NULL OR "
+            "provider_quota_limit_units = CAST(provider_quota_limit_units AS INTEGER)) AND "
+            "(unit_price_cny_minor IS NULL OR "
+            "unit_price_cny_minor = CAST(unit_price_cny_minor AS INTEGER)) AND "
+            "(price_unit_count IS NULL OR price_unit_count = CAST(price_unit_count AS INTEGER))",
+            name="ck_podcast_budget_reservations_provider_integer",
+        ),
+        CheckConstraint(
+            "status = 'settled' OR actual_usage_units = 0",
+            name="ck_podcast_budget_reservations_provider_settlement",
+        ),
+        CheckConstraint(
+            "status <> 'settled' OR provider_quota_scope IS NULL OR "
+            "(actual_usage_units >= reserved_usage_units AND "
+            "provider_quota_breached = (actual_usage_units > reserved_usage_units))",
+            name="ck_podcast_budget_reservations_provider_settlement_truth",
+        ),
+    )
+
+    id: str = Field(primary_key=True)
+    processing_id: str = Field(
+        foreign_key="podcast_processings.id", ondelete="CASCADE", index=True
+    )
+    attempt_id: str = Field(index=True)
+    budget_scope: str
+    budget_period: str
+    currency: str = Field(default="CNY")
+    reserved_minor: int = Field(default=0, ge=0)
+    actual_cost_minor: int = Field(default=0, ge=0)
+    budget_breached: bool = Field(default=False, index=True)
+    status: str = Field(default="reserved", index=True)
+    idempotency_key: str
+    expires_at: Optional[str] = Field(default=None)
+    created_at: str
+    updated_at: str
+    settled_at: Optional[str] = Field(default=None)
+    released_at: Optional[str] = Field(default=None)
+    provider_quota_scope: Optional[str] = Field(default=None)
+    provider_quota_period: Optional[str] = Field(default=None)
+    provider_quota_unit: Optional[str] = Field(default=None)
+    provider_quota_window_start_at: Optional[str] = Field(default=None)
+    provider_quota_window_end_at: Optional[str] = Field(default=None)
+    provider_quota_limit_units: Optional[int] = Field(default=None, ge=0)
+    reserved_usage_units: Optional[int] = Field(default=None, ge=0)
+    actual_usage_units: int = Field(default=0, ge=0)
+    unit_price_cny_minor: Optional[int] = Field(default=None, ge=0)
+    price_unit_count: Optional[int] = Field(default=None, ge=0)
+    pricing_revision: Optional[str] = Field(default=None)
+    provider_quota_breached: bool = Field(default=False)
+
+
+class PodcastCostLedgerRecord(SQLModel, table=True):
+    """Immutable actual-cost debit in integer CNY minor units."""
+
+    __tablename__ = "podcast_cost_ledger"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", name="uq_podcast_cost_ledger_attempt"),
+        UniqueConstraint(
+            "settlement_key", name="uq_podcast_cost_ledger_settlement_key"
+        ),
+        ForeignKeyConstraint(
+            ["attempt_id", "processing_id"],
+            ["podcast_stage_attempts.id", "podcast_stage_attempts.processing_id"],
+            name="fk_podcast_cost_ledger_attempt_owner",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["reservation_id", "attempt_id", "processing_id"],
+            [
+                "podcast_budget_reservations.id",
+                "podcast_budget_reservations.attempt_id",
+                "podcast_budget_reservations.processing_id",
+            ],
+            name="fk_podcast_cost_ledger_reservation_owner",
+            ondelete="RESTRICT",
+        ),
+        Index(
+            "ix_podcast_cost_ledger_budget_created",
+            "budget_scope",
+            "budget_period",
+            "created_at",
+        ),
+        Index(
+            "ix_podcast_cost_ledger_provider_usage",
+            "provider_quota_scope",
+            "provider_quota_period",
+            "provider_quota_unit",
+        ),
+        CheckConstraint(
+            "currency = 'CNY'", name="ck_podcast_cost_ledger_currency"
+        ),
+        CheckConstraint(
+            "actual_cost_minor >= 0", name="ck_podcast_cost_ledger_nonnegative"
+        ),
+        CheckConstraint(
+            "actual_cost_minor = CAST(actual_cost_minor AS INTEGER)",
+            name="ck_podcast_cost_ledger_integer_cost",
+        ),
+        CheckConstraint(
+            "((provider_quota_scope IS NULL AND provider_quota_period IS NULL AND "
+            "provider_quota_unit IS NULL AND actual_usage_units = 0 AND "
+            "provider_quota_breached IS FALSE) OR "
+            "(provider_quota_scope IS NOT NULL AND length(trim(provider_quota_scope)) > 0 AND "
+            "provider_quota_period IS NOT NULL AND length(trim(provider_quota_period)) > 0 AND "
+            "provider_quota_unit IN ('audio_seconds','tts_characters') AND "
+            "actual_usage_units >= 0))",
+            name="ck_podcast_cost_ledger_provider_binding",
+        ),
+        CheckConstraint(
+            "actual_usage_units = CAST(actual_usage_units AS INTEGER)",
+            name="ck_podcast_cost_ledger_provider_integer",
+        ),
+    )
+
+    id: str = Field(primary_key=True)
+    processing_id: str = Field(
+        foreign_key="podcast_processings.id", ondelete="RESTRICT", index=True
+    )
+    attempt_id: str = Field(index=True)
+    reservation_id: str = Field(index=True)
+    stage: str = Field(index=True)
+    budget_scope: str
+    budget_period: str
+    currency: str = Field(default="CNY")
+    actual_cost_minor: int = Field(default=0, ge=0)
+    budget_breached: bool = Field(default=False, index=True)
+    usage_json: str = Field(default="{}")
+    provider_name: str = Field(default="")
+    model_name: str = Field(default="")
+    provider_revision: str = Field(default="")
+    provider_task_id: str = Field(default="")
+    settlement_key: str
+    created_at: str
+    provider_quota_scope: Optional[str] = Field(default=None)
+    provider_quota_period: Optional[str] = Field(default=None)
+    provider_quota_unit: Optional[str] = Field(default=None)
+    actual_usage_units: int = Field(default=0, ge=0)
+    provider_quota_breached: bool = Field(default=False)
+
+
 class UserInterestTagRecord(SQLModel, table=True):
     """用户对规范标签的显式关注/屏蔽。priority 仅保留为旧库兼容字段。"""
     __tablename__ = "user_interest_tags"
@@ -1099,6 +1788,396 @@ class MediaAssetRecord(SQLModel, table=True):
     updated_at: str = Field(description="最近一次状态变更时间")
 
 
+class PodcastArtifactRecord(SQLModel, table=True):
+    """Immutable Podcast audio bytes plus mutable publication lifecycle.
+
+    Blob bytes live in the configured local CAS, never in ``extensions_json`` or
+    this row. Multiple rows may reference one content hash; physical deletion is
+    therefore reference-counted by :mod:`services.podcast_artifacts`.
+    """
+
+    __tablename__ = "podcast_artifacts"
+    __table_args__ = (
+        Index(
+            "ix_podcast_artifacts_episode_kind_created",
+            "episode_id",
+            "kind",
+            "created_at",
+        ),
+        Index(
+            "ix_podcast_artifacts_kind_status_expires",
+            "kind",
+            "status",
+            "expires_at",
+        ),
+        Index(
+            "uq_podcast_artifacts_digest_processing",
+            "processing_id",
+            unique=True,
+            sqlite_where=text(
+                "processing_id IS NOT NULL AND kind = 'digest_audio_zh'"
+            ),
+            postgresql_where=text(
+                "processing_id IS NOT NULL AND kind = 'digest_audio_zh'"
+            ),
+        ),
+        UniqueConstraint(
+            "producing_attempt_id",
+            name="uq_podcast_artifacts_producing_attempt",
+        ),
+        CheckConstraint(
+            "kind IN ('source_audio','digest_audio_zh')",
+            name="ck_podcast_artifacts_kind",
+        ),
+        CheckConstraint(
+            "status IN ('ready','published','withdrawn','expired')",
+            name="ck_podcast_artifacts_status",
+        ),
+        CheckConstraint("size_bytes >= 0", name="ck_podcast_artifacts_size_bytes"),
+        CheckConstraint(
+            "duration_seconds IS NULL OR duration_seconds >= 0",
+            name="ck_podcast_artifacts_duration_seconds",
+        ),
+        CheckConstraint(
+            "(narration_artifact_id IS NULL) = (narration_content_hash IS NULL)",
+            name="ck_podcast_artifacts_narration_pair",
+        ),
+        CheckConstraint(
+            "narration_content_hash IS NULL OR "
+            "(length(narration_content_hash) = 64 AND "
+            "narration_content_hash = lower(narration_content_hash))",
+            name="ck_podcast_artifacts_narration_hash",
+        ),
+        CheckConstraint(
+            "kind <> 'source_audio' OR "
+            "(narration_artifact_id IS NULL AND narration_content_hash IS NULL "
+            "AND processing_id IS NULL)",
+            name="ck_podcast_artifacts_source_has_no_narration",
+        ),
+        CheckConstraint(
+            "source_locator_hash IS NULL OR "
+            "(length(source_locator_hash) = 64 AND "
+            "source_locator_hash = lower(source_locator_hash))",
+            name="ck_podcast_artifacts_source_locator_hash",
+        ),
+        CheckConstraint(
+            "kind <> 'source_audio' OR expires_at IS NOT NULL",
+            name="ck_podcast_artifacts_source_expires",
+        ),
+        CheckConstraint(
+            "kind <> 'source_audio' OR status <> 'published'",
+            name="ck_podcast_artifacts_source_never_published",
+        ),
+        CheckConstraint(
+            "kind <> 'digest_audio_zh' OR "
+            "(source_locator_hash IS NULL AND expires_at IS NULL AND expired_at IS NULL)",
+            name="ck_podcast_artifacts_digest_is_durable",
+        ),
+        CheckConstraint(
+            "status <> 'expired' OR "
+            "(kind = 'source_audio' AND expired_at IS NOT NULL)",
+            name="ck_podcast_artifacts_expired_status",
+        ),
+        CheckConstraint(
+            "expired_at IS NULL OR "
+            "(kind = 'source_audio' AND status = 'expired')",
+            name="ck_podcast_artifacts_expired_at",
+        ),
+        CheckConstraint(
+            "kind <> 'digest_audio_zh' OR status = 'withdrawn' OR "
+            "(narration_artifact_id IS NOT NULL AND "
+            "narration_content_hash IS NOT NULL)",
+            name="ck_podcast_artifacts_active_digest_has_narration",
+        ),
+        CheckConstraint(
+            "producing_attempt_id IS NULL OR "
+            "(kind = 'digest_audio_zh' AND processing_id IS NOT NULL)",
+            name="ck_podcast_artifacts_attempt_bound_digest",
+        ),
+        CheckConstraint(
+            "(lower(trim(provenance)) = 'tts' AND producing_attempt_id IS NOT NULL) OR "
+            "(lower(trim(provenance)) <> 'tts' AND producing_attempt_id IS NULL)",
+            name="ck_podcast_artifacts_tts_provenance_binding",
+        ),
+        ForeignKeyConstraint(
+            ["narration_artifact_id"],
+            ["podcast_text_artifacts.id"],
+            name="fk_podcast_artifacts_narration_artifact",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["processing_id"],
+            ["podcast_processings.id"],
+            name="fk_podcast_artifacts_processing",
+            ondelete="SET NULL",
+        ),
+        ForeignKeyConstraint(
+            ["producing_attempt_id", "processing_id"],
+            ["podcast_stage_attempts.id", "podcast_stage_attempts.processing_id"],
+            name="fk_podcast_artifacts_attempt_owner",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: str = Field(primary_key=True, description="Stable artifact identifier")
+    episode_id: str = Field(
+        foreign_key="articles.id",
+        ondelete="CASCADE",
+        index=True,
+        description="ArticleRecord id whose content_type is podcast_episode",
+    )
+    kind: str = Field(index=True, description="source_audio/digest_audio_zh")
+    content_hash: str = Field(index=True, description="SHA-256 of immutable bytes")
+    mime: str = Field(description="Canonical verified audio MIME")
+    ext: str = Field(description="CAS filename extension")
+    size_bytes: int = Field(ge=0)
+    duration_seconds: Optional[float] = Field(default=None, ge=0)
+    status: str = Field(
+        default="ready",
+        index=True,
+        description="ready/published/withdrawn/expired",
+    )
+    provenance: str = Field(default="manual_upload", description="Origin/provider label")
+    authority_id: str = Field(
+        default="",
+        index=True,
+        sa_column_kwargs={"server_default": text("''")},
+        description="Artifact single-writer authority; empty means local",
+    )
+    narration_artifact_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="Immutable narration_script_zh used to generate digest audio",
+    )
+    narration_content_hash: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="Content hash of the exact narration script input",
+    )
+    processing_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="Optional durable Podcast processing run that produced this audio",
+    )
+    producing_attempt_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="TTS attempt that produced an automatic digest audio artifact",
+    )
+    source_locator_hash: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="SHA-256 of the publisher enclosure locator; the raw URL is not stored",
+    )
+    expires_at: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="Temporary source-audio cache expiry; derived audio is durable",
+    )
+    expired_at: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="When a source-audio cache row entered the expired lifecycle",
+    )
+    created_at: str
+    updated_at: str
+    published_at: Optional[str] = None
+    withdrawn_at: Optional[str] = None
+
+
+PODCAST_TEXT_ARTIFACT_KINDS = (
+    "publisher_transcript",
+    "normalized_transcript",
+    "transcript_zh",
+    "digest_blog_zh",
+    "narration_script_zh",
+)
+
+
+class PodcastTextArtifactRecord(SQLModel, table=True):
+    """One immutable, content-addressed version of a Podcast text artifact.
+
+    Publication is deliberately kept in :class:`PodcastTextPublicationRecord`:
+    replacing a published version moves that stable pointer instead of mutating
+    evidence that an Archive Sync receiver may already have verified.
+    """
+
+    __tablename__ = "podcast_text_artifacts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["producing_attempt_id", "processing_id"],
+            ["podcast_stage_attempts.id", "podcast_stage_attempts.processing_id"],
+            name="fk_podcast_text_artifacts_attempt_owner",
+            ondelete="RESTRICT",
+            # This edge closes a logical cycle with processing.narration_artifact_id.
+            # Defer it on databases that support ALTER TABLE; SQLite still emits
+            # the named constraint inline during create_all.
+            use_alter=True,
+        ),
+        Index(
+            "ix_podcast_text_artifacts_episode_kind_created",
+            "episode_id",
+            "kind",
+            "created_at",
+        ),
+        UniqueConstraint(
+            "episode_id",
+            "kind",
+            "version",
+            name="uq_podcast_text_artifacts_episode_kind_version",
+        ),
+        UniqueConstraint(
+            "producing_attempt_id",
+            name="uq_podcast_text_artifacts_producing_attempt",
+        ),
+        UniqueConstraint(
+            "processing_id",
+            "kind",
+            name="uq_podcast_text_artifacts_processing_kind",
+        ),
+        # SQLite requires the referenced column tuple itself to be unique for
+        # the publication slot's composite integrity fence.
+        UniqueConstraint(
+            "id",
+            "episode_id",
+            "kind",
+            name="uq_podcast_text_artifacts_pointer_slot",
+        ),
+        Index(
+            "uq_podcast_text_artifacts_authority_slot",
+            "id",
+            "episode_id",
+            "kind",
+            "authority_id",
+            unique=True,
+        ),
+        CheckConstraint(
+            "kind IN ('publisher_transcript','normalized_transcript','transcript_zh',"
+            "'digest_blog_zh','narration_script_zh')",
+            name="ck_podcast_text_artifacts_kind",
+        ),
+        CheckConstraint(
+            "(processing_id IS NULL AND producing_attempt_id IS NULL) OR "
+            "(processing_id IS NOT NULL AND producing_attempt_id IS NOT NULL)",
+            name="ck_podcast_text_artifacts_processing_attempt_pair",
+        ),
+        CheckConstraint(
+            "kind <> 'normalized_transcript' OR processing_id IS NOT NULL OR "
+            "length(trim(authority_id)) > 0",
+            name="ck_podcast_text_artifacts_normalized_bound",
+        ),
+        CheckConstraint("version >= 1", name="ck_podcast_text_artifacts_version"),
+        CheckConstraint(
+            "length(content_hash) = 64 AND content_hash = lower(content_hash) "
+            "AND content_hash NOT GLOB '*[^0-9a-f]*'",
+            name="ck_podcast_text_artifacts_content_hash",
+        ),
+        CheckConstraint(
+            "source_content_hash IS NULL OR (length(source_content_hash) = 64 "
+            "AND source_content_hash = lower(source_content_hash) "
+            "AND source_content_hash NOT GLOB '*[^0-9a-f]*')",
+            name="ck_podcast_text_artifacts_source_content_hash",
+        ),
+        CheckConstraint("length(inline_text) > 0", name="ck_podcast_text_artifacts_text"),
+        CheckConstraint("length(language) > 0", name="ck_podcast_text_artifacts_language"),
+        CheckConstraint(
+            "length(provenance_json) > 0",
+            name="ck_podcast_text_artifacts_provenance",
+        ),
+    )
+
+    id: str = Field(primary_key=True, description="Immutable artifact identity")
+    episode_id: str = Field(
+        foreign_key="articles.id",
+        ondelete="CASCADE",
+        index=True,
+    )
+    kind: str = Field(index=True, description="Canonical external Podcast text kind")
+    version: int = Field(ge=1)
+    content_hash: str = Field(index=True, description="SHA-256 of inline_text bytes")
+    inline_text: str
+    language: str
+    authority_id: str = Field(
+        default="",
+        index=True,
+        sa_column_kwargs={"server_default": text("''")},
+        description="Empty for a locally authored artifact; remote producer ID otherwise",
+    )
+    source_artifact_id: Optional[str] = Field(default=None, index=True)
+    source_content_hash: Optional[str] = Field(default=None, index=True)
+    processing_id: Optional[str] = Field(default=None, index=True)
+    producing_attempt_id: Optional[str] = Field(default=None, index=True)
+    provenance_json: str = Field(default="{}")
+    created_at: str
+
+
+class PodcastTextPublicationRecord(SQLModel, table=True):
+    """Current publication pointer for one stable ``episode:kind`` slot."""
+
+    __tablename__ = "podcast_text_publications"
+    __table_args__ = (
+        UniqueConstraint(
+            "episode_id",
+            "kind",
+            name="uq_podcast_text_publications_episode_kind",
+        ),
+        # The pointer cannot accidentally publish an artifact from another
+        # episode or canonical kind. Deleting an episode cascades through both
+        # sides; ordinary artifact deletion is rejected by an immutable trigger.
+        ForeignKeyConstraint(
+            ["artifact_id", "episode_id", "kind", "authority_id"],
+            [
+                "podcast_text_artifacts.id",
+                "podcast_text_artifacts.episode_id",
+                "podcast_text_artifacts.kind",
+                "podcast_text_artifacts.authority_id",
+            ],
+            name="fk_podcast_text_publications_artifact_authority_slot",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "kind IN ('publisher_transcript','normalized_transcript','transcript_zh',"
+            "'digest_blog_zh','narration_script_zh')",
+            name="ck_podcast_text_publications_kind",
+        ),
+        CheckConstraint(
+            "identity = episode_id || ':' || kind",
+            name="ck_podcast_text_publications_identity",
+        ),
+        CheckConstraint(
+            "status IN ('published','unpublished')",
+            name="ck_podcast_text_publications_status",
+        ),
+        CheckConstraint(
+            "status <> 'published' OR published_at IS NOT NULL",
+            name="ck_podcast_text_publications_published_at",
+        ),
+        CheckConstraint(
+            "status <> 'unpublished' OR unpublished_at IS NOT NULL",
+            name="ck_podcast_text_publications_unpublished_at",
+        ),
+    )
+
+    identity: str = Field(primary_key=True, description="Stable episode:kind sync identity")
+    episode_id: str = Field(
+        foreign_key="articles.id",
+        ondelete="CASCADE",
+        index=True,
+    )
+    kind: str = Field(index=True)
+    artifact_id: str = Field(index=True, description="Current immutable artifact pointer")
+    status: str = Field(default="published", index=True)
+    authority_id: str = Field(
+        default="",
+        index=True,
+        sa_column_kwargs={"server_default": text("''")},
+        description="Empty for the local producer; remote producer ID on an imported slot",
+    )
+    published_at: Optional[str] = None
+    unpublished_at: Optional[str] = None
+    updated_at: str
+
+
 class AppSettingRecord(SQLModel, table=True):
     __tablename__ = "app_settings"
     key: str = Field(primary_key=True)
@@ -1130,7 +2209,8 @@ class ArchiveSyncEntityStateRecord(SQLModel, table=True):
             "identity",
         ),
         CheckConstraint(
-            "stream IN ('sources','articles','analyses','media','source_states')",
+                "stream IN ('sources','articles','analyses','media','source_states',"
+                "'podcast_texts','podcast_audio')",
             name="ck_archive_sync_entity_states_stream",
         ),
         CheckConstraint(
@@ -1175,8 +2255,8 @@ class AiUsageRecord(SQLModel, table=True):
     """AI 用量按天聚合：一行 = 某天某用户某用途某模型的累计调用与 token 消耗。
 
     username 为登录账户名；系统级任务（定时日报等）记为 "system"。
-    purpose ∈ translate / ask / daily_brief_map / daily_brief_dedup /
-    daily_brief_reduce / source_config / detail_profile。
+    purpose ∈ translate / ask / daily_brief_editorial / daily_brief_dedup /
+    daily_brief_reduce / article_analysis / source_config / detail_profile。
     """
     __tablename__ = "ai_usage"
     # 聚合键唯一索引（v3.43 审计 M21）：写路径是「不存在则插、存在则累加」，无约束时
@@ -1355,4 +2435,907 @@ def _install_archive_sync_revision_schema(_metadata, connection, **_kwargs) -> N
 
     from storage.archive_sync_revision import install_archive_sync_revision_triggers
 
-    install_archive_sync_revision_triggers(connection)
+    install_archive_sync_revision_triggers(connection, include_podcast_audio=True)
+    if connection.dialect.name == "sqlite":
+        for statement in _podcast_processing_audit_trigger_sql(
+            include_execution_kind=True,
+            include_poll_state=True,
+            include_output_binding=True,
+            include_provider_usage=True,
+            include_output_authority=True,
+            include_usage_settlement_mode=True,
+        ):
+            connection.exec_driver_sql(statement)
+        for statement in _podcast_processing_command_audit_sql():
+            connection.exec_driver_sql(statement)
+        for statement in _podcast_audio_dependency_trigger_sql(
+            include_attempt_binding=True
+        ):
+            connection.exec_driver_sql(statement)
+    elif connection.dialect.name == "postgresql":
+        for statement in _podcast_processing_postgresql_audit_sql(
+            include_execution_kind=True,
+            include_poll_state=True,
+            include_output_binding=True,
+            include_provider_usage=True,
+            include_output_authority=True,
+            include_usage_settlement_mode=True,
+        ):
+            connection.exec_driver_sql(statement)
+        for statement in _podcast_processing_command_postgresql_sql():
+            connection.exec_driver_sql(statement)
+        for statement in _podcast_audio_dependency_postgresql_sql(
+            include_attempt_binding=True
+        ):
+            connection.exec_driver_sql(statement)
+
+
+def _podcast_audio_dependency_trigger_sql(
+    *,
+    require_processing_narration: bool = True,
+    include_source_cache_fields: bool = True,
+    include_attempt_binding: bool = False,
+) -> tuple[str, ...]:
+    """SQLite guards for exact script binding and publication invalidation."""
+
+    invalid_active_digest = """
+        NEW.kind = 'digest_audio_zh'
+        AND NEW.status IN ('ready','published')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM podcast_text_publications p
+          JOIN podcast_text_artifacts a ON a.id = p.artifact_id
+          WHERE p.identity = NEW.episode_id || ':narration_script_zh'
+            AND p.episode_id = NEW.episode_id
+            AND p.kind = 'narration_script_zh'
+            AND p.status = 'published'
+            AND a.id = NEW.narration_artifact_id
+            AND a.episode_id = NEW.episode_id
+            AND a.kind = 'narration_script_zh'
+            AND a.content_hash = NEW.narration_content_hash
+        )
+    """
+    processing_narration_guard = (
+        """
+              AND processing.narration_artifact_id = NEW.narration_artifact_id
+              AND processing.narration_content_hash = NEW.narration_content_hash"""
+        if require_processing_narration
+        else ""
+    )
+    invalid_processing = f"""
+        NEW.processing_id IS NOT NULL
+        AND (
+          NEW.kind <> 'digest_audio_zh'
+          OR NOT EXISTS (
+            SELECT 1 FROM podcast_processings processing
+            WHERE processing.id = NEW.processing_id
+              AND processing.episode_id = NEW.episode_id
+              AND processing.requested_target = 'digest_audio'
+              {processing_narration_guard}
+          )
+        )
+    """
+    invalid_attempt = (
+        """
+        NEW.producing_attempt_id IS NOT NULL
+        AND (
+          NEW.kind <> 'digest_audio_zh'
+          OR NEW.processing_id IS NULL
+          OR length(trim(NEW.authority_id)) = 0
+          OR NOT EXISTS (
+            SELECT 1
+            FROM podcast_stage_attempts attempt
+            JOIN podcast_processings processing
+              ON processing.id = attempt.processing_id
+            JOIN podcast_budget_reservations reservation
+              ON reservation.attempt_id = attempt.id
+             AND reservation.processing_id = attempt.processing_id
+            WHERE attempt.id = NEW.producing_attempt_id
+              AND attempt.processing_id = NEW.processing_id
+              AND attempt.stage = 'tts'
+              AND attempt.execution_kind = 'provider'
+              AND attempt.submission_state IN ('submitted','succeeded')
+              AND attempt.request_unknown IS FALSE
+              AND attempt.input_hash = NEW.narration_content_hash
+              AND attempt.output_artifact_id = NEW.id
+              AND attempt.output_artifact_kind = 'digest_audio_zh'
+              AND attempt.output_hash = NEW.content_hash
+              AND attempt.output_authority_id = NEW.authority_id
+              AND processing.episode_id = NEW.episode_id
+              AND processing.requested_target = 'digest_audio'
+              AND processing.narration_artifact_id = NEW.narration_artifact_id
+              AND processing.narration_content_hash = NEW.narration_content_hash
+              AND reservation.status = 'settled'
+          )
+        )
+        """
+        if include_attempt_binding
+        else "0"
+    )
+    attempt_update_column = ", producing_attempt_id" if include_attempt_binding else ""
+    attempt_immutable_condition = (
+        "\n          OR NEW.producing_attempt_id IS NOT OLD.producing_attempt_id"
+        if include_attempt_binding
+        else ""
+    )
+    now = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+    immutable_source_columns = (
+        ", source_locator_hash, expires_at" if include_source_cache_fields else ""
+    )
+    immutable_source_conditions = (
+        "\n          OR NEW.source_locator_hash IS NOT OLD.source_locator_hash"
+        "\n          OR NEW.expires_at IS NOT OLD.expires_at"
+        if include_source_cache_fields
+        else ""
+    )
+    return (
+        f"""
+        CREATE TRIGGER IF NOT EXISTS podcast_audio_dependency_insert
+        BEFORE INSERT ON podcast_artifacts
+        WHEN {invalid_active_digest}
+        BEGIN
+          SELECT RAISE(ABORT, 'digest audio narration dependency is not current');
+        END
+        """,
+        f"""
+        CREATE TRIGGER IF NOT EXISTS podcast_audio_dependency_update
+        BEFORE UPDATE OF episode_id, kind, status, narration_artifact_id,
+          narration_content_hash, processing_id ON podcast_artifacts
+        WHEN {invalid_active_digest}
+        BEGIN
+          SELECT RAISE(ABORT, 'digest audio narration dependency is not current');
+        END
+        """,
+        f"""
+        CREATE TRIGGER IF NOT EXISTS podcast_audio_processing_insert
+        BEFORE INSERT ON podcast_artifacts
+        WHEN {invalid_processing}
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast audio processing dependency is invalid');
+        END
+        """,
+        f"""
+        CREATE TRIGGER IF NOT EXISTS podcast_audio_processing_update
+        BEFORE UPDATE OF episode_id, kind, status, narration_artifact_id,
+          narration_content_hash, processing_id ON podcast_artifacts
+        WHEN {invalid_processing}
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast audio processing dependency is invalid');
+        END
+        """,
+        f"""
+        CREATE TRIGGER IF NOT EXISTS podcast_audio_attempt_insert
+        BEFORE INSERT ON podcast_artifacts
+        WHEN {invalid_attempt}
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast audio producing attempt is invalid');
+        END
+        """,
+        f"""
+        CREATE TRIGGER IF NOT EXISTS podcast_audio_attempt_update
+        BEFORE UPDATE OF episode_id, kind, content_hash, narration_artifact_id,
+          narration_content_hash, processing_id{attempt_update_column}
+          ON podcast_artifacts
+        WHEN {invalid_attempt}
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast audio producing attempt is invalid');
+        END
+        """,
+        f"""
+        CREATE TRIGGER IF NOT EXISTS podcast_audio_binding_immutable
+        BEFORE UPDATE OF episode_id, kind, content_hash, authority_id, narration_artifact_id,
+          narration_content_hash, processing_id{attempt_update_column}{immutable_source_columns}
+          ON podcast_artifacts
+        WHEN NEW.episode_id IS NOT OLD.episode_id
+          OR NEW.kind IS NOT OLD.kind
+          OR NEW.content_hash IS NOT OLD.content_hash
+          OR NEW.authority_id IS NOT OLD.authority_id
+          OR NEW.narration_artifact_id IS NOT OLD.narration_artifact_id
+          OR NEW.narration_content_hash IS NOT OLD.narration_content_hash
+          OR NEW.processing_id IS NOT OLD.processing_id
+          {attempt_immutable_condition}
+          {immutable_source_conditions}
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast audio binding is immutable');
+        END
+        """,
+        f"""
+        CREATE TRIGGER IF NOT EXISTS podcast_script_audio_invalidate_update
+        AFTER UPDATE OF artifact_id, status ON podcast_text_publications
+        WHEN OLD.kind = 'narration_script_zh'
+          AND (NEW.status <> 'published' OR NEW.artifact_id IS NOT OLD.artifact_id)
+        BEGIN
+          UPDATE podcast_artifacts
+          SET status = 'withdrawn', withdrawn_at = {now}, updated_at = {now}
+          WHERE episode_id = OLD.episode_id
+            AND kind = 'digest_audio_zh'
+            AND status IN ('ready','published')
+            AND (NEW.status <> 'published'
+              OR narration_artifact_id IS NOT NEW.artifact_id);
+        END
+        """,
+        f"""
+        CREATE TRIGGER IF NOT EXISTS podcast_script_audio_invalidate_delete
+        AFTER DELETE ON podcast_text_publications
+        WHEN OLD.kind = 'narration_script_zh'
+        BEGIN
+          UPDATE podcast_artifacts
+          SET status = 'withdrawn', withdrawn_at = {now}, updated_at = {now}
+          WHERE episode_id = OLD.episode_id
+            AND kind = 'digest_audio_zh'
+            AND status IN ('ready','published');
+        END
+        """,
+    )
+
+
+def _podcast_audio_dependency_postgresql_sql(
+    *,
+    require_processing_narration: bool = True,
+    include_source_cache_fields: bool = True,
+    include_attempt_binding: bool = False,
+) -> tuple[str, ...]:
+    """PostgreSQL equivalents of the Podcast script/audio guards."""
+
+    processing_narration_guard = (
+        """
+                   AND processing.narration_artifact_id = NEW.narration_artifact_id
+                   AND processing.narration_content_hash = NEW.narration_content_hash"""
+        if require_processing_narration
+        else ""
+    )
+    immutable_source_conditions = (
+        "\n               OR NEW.source_locator_hash IS DISTINCT FROM OLD.source_locator_hash"
+        "\n               OR NEW.expires_at IS DISTINCT FROM OLD.expires_at"
+        if include_source_cache_fields
+        else ""
+    )
+    immutable_source_columns = (
+        ", source_locator_hash, expires_at" if include_source_cache_fields else ""
+    )
+    attempt_immutable_condition = (
+        "\n               OR NEW.producing_attempt_id IS DISTINCT FROM OLD.producing_attempt_id"
+        if include_attempt_binding
+        else ""
+    )
+    attempt_update_column = ", producing_attempt_id" if include_attempt_binding else ""
+    attempt_validation = (
+        """
+          IF NEW.producing_attempt_id IS NOT NULL AND (
+               NEW.kind <> 'digest_audio_zh'
+               OR NEW.processing_id IS NULL
+               OR length(trim(NEW.authority_id)) = 0
+               OR NOT EXISTS (
+                 SELECT 1
+                 FROM podcast_stage_attempts attempt
+                 JOIN podcast_processings processing
+                   ON processing.id = attempt.processing_id
+                 JOIN podcast_budget_reservations reservation
+                   ON reservation.attempt_id = attempt.id
+                  AND reservation.processing_id = attempt.processing_id
+                 WHERE attempt.id = NEW.producing_attempt_id
+                   AND attempt.processing_id = NEW.processing_id
+                   AND attempt.stage = 'tts'
+                   AND attempt.execution_kind = 'provider'
+                   AND attempt.submission_state IN ('submitted','succeeded')
+                   AND attempt.request_unknown IS FALSE
+                   AND attempt.input_hash = NEW.narration_content_hash
+                   AND attempt.output_artifact_id = NEW.id
+                   AND attempt.output_artifact_kind = 'digest_audio_zh'
+                   AND attempt.output_hash = NEW.content_hash
+                   AND attempt.output_authority_id = NEW.authority_id
+                   AND processing.episode_id = NEW.episode_id
+                   AND processing.requested_target = 'digest_audio'
+                   AND processing.narration_artifact_id = NEW.narration_artifact_id
+                   AND processing.narration_content_hash = NEW.narration_content_hash
+                   AND reservation.status = 'settled'
+               )
+             ) THEN
+            RAISE EXCEPTION 'podcast audio producing attempt is invalid';
+          END IF;
+        """
+        if include_attempt_binding
+        else ""
+    )
+    return (
+        f"""
+        CREATE OR REPLACE FUNCTION podcast_audio_dependency_validate_fn()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          PERFORM pg_advisory_xact_lock(
+            hashtextextended('dorami:podcast-audio:' || NEW.episode_id, 0)
+          );
+          IF TG_OP = 'UPDATE' AND (
+               NEW.episode_id IS DISTINCT FROM OLD.episode_id
+               OR NEW.kind IS DISTINCT FROM OLD.kind
+               OR NEW.content_hash IS DISTINCT FROM OLD.content_hash
+               OR NEW.authority_id IS DISTINCT FROM OLD.authority_id
+               OR NEW.narration_artifact_id IS DISTINCT FROM OLD.narration_artifact_id
+               OR NEW.narration_content_hash IS DISTINCT FROM OLD.narration_content_hash
+               OR NEW.processing_id IS DISTINCT FROM OLD.processing_id
+               {attempt_immutable_condition}
+               {immutable_source_conditions}
+             ) THEN
+            RAISE EXCEPTION 'podcast audio binding is immutable';
+          END IF;
+          IF NEW.kind = 'digest_audio_zh'
+             AND NEW.status IN ('ready','published')
+             AND NOT EXISTS (
+               SELECT 1
+               FROM podcast_text_publications p
+               JOIN podcast_text_artifacts a ON a.id = p.artifact_id
+               WHERE p.identity = NEW.episode_id || ':narration_script_zh'
+                 AND p.episode_id = NEW.episode_id
+                 AND p.kind = 'narration_script_zh'
+                 AND p.status = 'published'
+                 AND a.id = NEW.narration_artifact_id
+                 AND a.episode_id = NEW.episode_id
+                 AND a.kind = 'narration_script_zh'
+                 AND a.content_hash = NEW.narration_content_hash
+             ) THEN
+            RAISE EXCEPTION 'digest audio narration dependency is not current';
+          END IF;
+          IF NEW.processing_id IS NOT NULL AND (
+               NEW.kind <> 'digest_audio_zh'
+               OR NOT EXISTS (
+                 SELECT 1 FROM podcast_processings processing
+                 WHERE processing.id = NEW.processing_id
+                   AND processing.episode_id = NEW.episode_id
+                   AND processing.requested_target = 'digest_audio'
+                   {processing_narration_guard}
+               )
+             ) THEN
+            RAISE EXCEPTION 'podcast audio processing dependency is invalid';
+          END IF;
+          {attempt_validation}
+          RETURN NEW;
+        END; $$
+        """,
+        "DROP TRIGGER IF EXISTS podcast_audio_dependency_insert ON podcast_artifacts",
+        "CREATE TRIGGER podcast_audio_dependency_insert BEFORE INSERT ON "
+        "podcast_artifacts FOR EACH ROW EXECUTE FUNCTION "
+        "podcast_audio_dependency_validate_fn()",
+        "DROP TRIGGER IF EXISTS podcast_audio_dependency_update ON podcast_artifacts",
+        "CREATE TRIGGER podcast_audio_dependency_update BEFORE UPDATE OF episode_id, "
+        "kind, status, content_hash, authority_id, narration_artifact_id, narration_content_hash, "
+        f"processing_id{attempt_update_column}{immutable_source_columns} ON "
+        "podcast_artifacts FOR EACH ROW EXECUTE FUNCTION "
+        "podcast_audio_dependency_validate_fn()",
+        """
+        CREATE OR REPLACE FUNCTION podcast_script_audio_invalidate_fn()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        DECLARE
+          changed_at text := CURRENT_TIMESTAMP::text;
+        BEGIN
+          PERFORM pg_advisory_xact_lock(
+            hashtextextended('dorami:podcast-audio:' || OLD.episode_id, 0)
+          );
+          IF TG_OP = 'DELETE' THEN
+            UPDATE podcast_artifacts
+            SET status = 'withdrawn', withdrawn_at = changed_at, updated_at = changed_at
+            WHERE episode_id = OLD.episode_id
+              AND kind = 'digest_audio_zh'
+              AND status IN ('ready','published');
+            RETURN OLD;
+          END IF;
+          IF OLD.kind = 'narration_script_zh'
+             AND (NEW.status <> 'published'
+                  OR NEW.artifact_id IS DISTINCT FROM OLD.artifact_id) THEN
+            UPDATE podcast_artifacts
+            SET status = 'withdrawn', withdrawn_at = changed_at, updated_at = changed_at
+            WHERE episode_id = OLD.episode_id
+              AND kind = 'digest_audio_zh'
+              AND status IN ('ready','published')
+              AND (NEW.status <> 'published'
+                   OR narration_artifact_id IS DISTINCT FROM NEW.artifact_id);
+          END IF;
+          RETURN NEW;
+        END; $$
+        """,
+        "DROP TRIGGER IF EXISTS podcast_script_audio_invalidate_update ON "
+        "podcast_text_publications",
+        "CREATE TRIGGER podcast_script_audio_invalidate_update AFTER UPDATE OF "
+        "artifact_id, status ON podcast_text_publications FOR EACH ROW EXECUTE "
+        "FUNCTION podcast_script_audio_invalidate_fn()",
+        "DROP TRIGGER IF EXISTS podcast_script_audio_invalidate_delete ON "
+        "podcast_text_publications",
+        "CREATE TRIGGER podcast_script_audio_invalidate_delete AFTER DELETE ON "
+        "podcast_text_publications FOR EACH ROW WHEN "
+        "(OLD.kind = 'narration_script_zh') EXECUTE FUNCTION "
+        "podcast_script_audio_invalidate_fn()",
+    )
+
+
+def _podcast_processing_audit_trigger_sql(
+    *,
+    include_execution_kind: bool = False,
+    include_poll_state: bool = False,
+    include_output_binding: bool = False,
+    include_provider_usage: bool = False,
+    include_output_authority: bool = False,
+    include_usage_settlement_mode: bool = False,
+) -> tuple[str, ...]:
+    """SQLite audit guards shared by fresh/create_all databases.
+
+    Alembic repeats these statements for evolved databases.  Deletes caused by
+    a parent cascade remain possible, while direct deletion of billing truth is
+    rejected as long as its processing parent still exists.
+    """
+
+    execution_kind_guard = (
+        "\n          OR NEW.execution_kind IS NOT OLD.execution_kind"
+        if include_execution_kind
+        else ""
+    )
+    usage_settlement_guard = (
+        "\n          OR NEW.usage_settlement_mode IS NOT OLD.usage_settlement_mode"
+        if include_usage_settlement_mode
+        else ""
+    )
+    poll_state_guard = (
+        "\n          OR NEW.poll_count < OLD.poll_count"
+        "\n          OR NEW.poll_count > OLD.poll_count + 1"
+        "\n          OR (NEW.poll_count = OLD.poll_count AND "
+        "NEW.last_polled_at IS NOT OLD.last_polled_at)"
+        "\n          OR (NEW.poll_count = OLD.poll_count + 1 AND "
+        "NEW.last_polled_at IS OLD.last_polled_at)"
+        "\n          OR (OLD.provider_deadline_at IS NOT NULL AND "
+        "NEW.provider_deadline_at IS NOT OLD.provider_deadline_at)"
+        if include_poll_state
+        else ""
+    )
+    output_binding_guard = (
+        "\n          OR NEW.settings_fingerprint IS NOT OLD.settings_fingerprint"
+        "\n          OR (length(OLD.output_hash) > 0 AND NEW.output_hash IS NOT OLD.output_hash)"
+        "\n          OR (OLD.output_artifact_id IS NOT NULL AND "
+        "NEW.output_artifact_id IS NOT OLD.output_artifact_id)"
+        "\n          OR (OLD.output_artifact_kind IS NOT NULL AND "
+        "NEW.output_artifact_kind IS NOT OLD.output_artifact_kind)"
+        if include_output_binding
+        else ""
+    )
+    if include_output_authority:
+        output_binding_guard += (
+            "\n          OR (OLD.output_authority_id IS NOT NULL AND "
+            "NEW.output_authority_id IS NOT OLD.output_authority_id)"
+        )
+    provider_usage_guard = (
+        "\n          OR NEW.provider_quota_scope IS NOT OLD.provider_quota_scope"
+        "\n          OR NEW.provider_quota_period IS NOT OLD.provider_quota_period"
+        "\n          OR NEW.provider_quota_unit IS NOT OLD.provider_quota_unit"
+        "\n          OR NEW.provider_quota_window_start_at IS NOT OLD.provider_quota_window_start_at"
+        "\n          OR NEW.provider_quota_window_end_at IS NOT OLD.provider_quota_window_end_at"
+        "\n          OR NEW.provider_quota_limit_units IS NOT OLD.provider_quota_limit_units"
+        "\n          OR NEW.reserved_usage_units IS NOT OLD.reserved_usage_units"
+        "\n          OR NEW.unit_price_cny_minor IS NOT OLD.unit_price_cny_minor"
+        "\n          OR NEW.price_unit_count IS NOT OLD.price_unit_count"
+        "\n          OR NEW.pricing_revision IS NOT OLD.pricing_revision"
+        if include_provider_usage
+        else ""
+    )
+    provider_release_guard = (
+        " OR NEW.actual_usage_units <> 0"
+        " OR NEW.provider_quota_breached IS NOT FALSE"
+        if include_provider_usage
+        else ""
+    )
+    provider_settlement_guard = (
+        "\n              OR (NEW.provider_quota_scope IS NOT NULL AND ("
+        "\n                  NEW.actual_usage_units < NEW.reserved_usage_units"
+        "\n                  OR NEW.provider_quota_breached IS NOT "
+        "(NEW.actual_usage_units > NEW.reserved_usage_units)"
+        "\n              ))"
+        if include_provider_usage
+        else ""
+    )
+    provider_ledger_binding_guard = (
+        "\n            AND NEW.provider_quota_scope IS r.provider_quota_scope"
+        "\n            AND NEW.provider_quota_period IS r.provider_quota_period"
+        "\n            AND NEW.provider_quota_unit IS r.provider_quota_unit"
+        "\n            AND NEW.actual_usage_units = r.actual_usage_units"
+        "\n            AND NEW.provider_quota_breached IS r.provider_quota_breached"
+        if include_provider_usage
+        else ""
+    )
+    return (
+        f"""
+        CREATE TRIGGER IF NOT EXISTS podcast_stage_attempt_identity_immutable
+        BEFORE UPDATE ON podcast_stage_attempts
+        WHEN NEW.id IS NOT OLD.id
+          OR NEW.processing_id IS NOT OLD.processing_id
+          OR NEW.stage IS NOT OLD.stage
+          OR NEW.attempt_no IS NOT OLD.attempt_no
+          OR NEW.fencing_token IS NOT OLD.fencing_token
+          OR NEW.lease_token IS NOT OLD.lease_token
+          OR NEW.input_hash IS NOT OLD.input_hash
+          OR NEW.provider_name IS NOT OLD.provider_name
+          OR NEW.model_name IS NOT OLD.model_name
+          OR NEW.provider_revision IS NOT OLD.provider_revision
+          OR NEW.provider_request_key IS NOT OLD.provider_request_key
+          {execution_kind_guard}
+          {usage_settlement_guard}
+          {poll_state_guard}
+          {output_binding_guard}
+          OR (length(OLD.provider_task_id) > 0 AND NEW.provider_task_id IS NOT OLD.provider_task_id)
+          OR NEW.cost_currency IS NOT OLD.cost_currency
+          OR NEW.estimated_cost_minor IS NOT OLD.estimated_cost_minor
+          OR NEW.started_at IS NOT OLD.started_at
+          OR NEW.created_at IS NOT OLD.created_at
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast stage attempt identity is immutable');
+        END
+        """,
+        f"""
+        CREATE TRIGGER IF NOT EXISTS podcast_cost_ledger_binding_insert
+        BEFORE INSERT ON podcast_cost_ledger
+        WHEN NOT EXISTS (
+          SELECT 1 FROM podcast_budget_reservations r
+          WHERE r.id = NEW.reservation_id
+            AND r.attempt_id = NEW.attempt_id
+            AND r.processing_id = NEW.processing_id
+            AND r.status = 'settled'
+            AND NEW.budget_scope = r.budget_scope
+            AND NEW.budget_period = r.budget_period
+            AND NEW.currency = r.currency
+            AND NEW.actual_cost_minor = r.actual_cost_minor
+            AND NEW.budget_breached IS r.budget_breached
+            {provider_ledger_binding_guard}
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast cost ledger does not match reservation');
+        END
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS podcast_cost_ledger_immutable_update
+        BEFORE UPDATE ON podcast_cost_ledger
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast cost ledger is immutable');
+        END
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS podcast_cost_ledger_immutable_delete
+        BEFORE DELETE ON podcast_cost_ledger
+        WHEN EXISTS (
+          SELECT 1 FROM podcast_processings p WHERE p.id = OLD.processing_id
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast cost ledger is immutable');
+        END
+        """,
+        f"""
+        CREATE TRIGGER IF NOT EXISTS podcast_budget_reservation_transition
+        BEFORE UPDATE ON podcast_budget_reservations
+        WHEN NEW.id IS NOT OLD.id
+          OR NEW.processing_id IS NOT OLD.processing_id
+          OR NEW.attempt_id IS NOT OLD.attempt_id
+          OR NEW.budget_scope IS NOT OLD.budget_scope
+          OR NEW.budget_period IS NOT OLD.budget_period
+          OR NEW.currency IS NOT OLD.currency
+          OR NEW.reserved_minor IS NOT OLD.reserved_minor
+          {provider_usage_guard}
+          OR NEW.idempotency_key IS NOT OLD.idempotency_key
+          OR NEW.created_at IS NOT OLD.created_at
+          OR OLD.status <> 'reserved'
+          OR NEW.status NOT IN ('settled','released')
+          OR (NEW.status = 'settled' AND (
+              NEW.settled_at IS NULL OR NEW.released_at IS NOT NULL
+              {provider_settlement_guard}
+          ))
+          OR (NEW.status = 'released' AND (
+              NEW.released_at IS NULL OR NEW.settled_at IS NOT NULL
+              OR NEW.actual_cost_minor <> 0{provider_release_guard}
+          ))
+        BEGIN
+          SELECT RAISE(ABORT, 'invalid podcast budget reservation transition');
+        END
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS podcast_budget_reservation_immutable_delete
+        BEFORE DELETE ON podcast_budget_reservations
+        WHEN EXISTS (
+          SELECT 1 FROM podcast_processings p WHERE p.id = OLD.processing_id
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast budget reservation is immutable');
+        END
+        """,
+    )
+
+
+def _podcast_processing_postgresql_audit_sql(
+    *,
+    include_execution_kind: bool = False,
+    include_poll_state: bool = False,
+    include_output_binding: bool = False,
+    include_provider_usage: bool = False,
+    include_output_authority: bool = False,
+    include_usage_settlement_mode: bool = False,
+) -> tuple[str, ...]:
+    """PostgreSQL equivalents of SQLite processing-audit triggers."""
+
+    execution_kind_guard = (
+        "\n             OR NEW.execution_kind IS DISTINCT FROM OLD.execution_kind"
+        if include_execution_kind
+        else ""
+    )
+    usage_settlement_guard = (
+        "\n             OR NEW.usage_settlement_mode IS DISTINCT FROM "
+        "OLD.usage_settlement_mode"
+        if include_usage_settlement_mode
+        else ""
+    )
+    poll_state_guard = (
+        "\n             OR NEW.poll_count < OLD.poll_count"
+        "\n             OR NEW.poll_count > OLD.poll_count + 1"
+        "\n             OR (NEW.poll_count = OLD.poll_count AND "
+        "NEW.last_polled_at IS DISTINCT FROM OLD.last_polled_at)"
+        "\n             OR (NEW.poll_count = OLD.poll_count + 1 AND "
+        "NEW.last_polled_at IS NOT DISTINCT FROM OLD.last_polled_at)"
+        "\n             OR (OLD.provider_deadline_at IS NOT NULL AND "
+        "NEW.provider_deadline_at IS DISTINCT FROM OLD.provider_deadline_at)"
+        if include_poll_state
+        else ""
+    )
+    output_binding_guard = (
+        "\n             OR NEW.settings_fingerprint IS DISTINCT FROM OLD.settings_fingerprint"
+        "\n             OR (length(OLD.output_hash) > 0 AND "
+        "NEW.output_hash IS DISTINCT FROM OLD.output_hash)"
+        "\n             OR (OLD.output_artifact_id IS NOT NULL AND "
+        "NEW.output_artifact_id IS DISTINCT FROM OLD.output_artifact_id)"
+        "\n             OR (OLD.output_artifact_kind IS NOT NULL AND "
+        "NEW.output_artifact_kind IS DISTINCT FROM OLD.output_artifact_kind)"
+        if include_output_binding
+        else ""
+    )
+    if include_output_authority:
+        output_binding_guard += (
+            "\n             OR (OLD.output_authority_id IS NOT NULL AND "
+            "NEW.output_authority_id IS DISTINCT FROM OLD.output_authority_id)"
+        )
+    provider_usage_guard = (
+        "\n             OR NEW.provider_quota_scope IS DISTINCT FROM OLD.provider_quota_scope"
+        "\n             OR NEW.provider_quota_period IS DISTINCT FROM OLD.provider_quota_period"
+        "\n             OR NEW.provider_quota_unit IS DISTINCT FROM OLD.provider_quota_unit"
+        "\n             OR NEW.provider_quota_window_start_at IS DISTINCT FROM OLD.provider_quota_window_start_at"
+        "\n             OR NEW.provider_quota_window_end_at IS DISTINCT FROM OLD.provider_quota_window_end_at"
+        "\n             OR NEW.provider_quota_limit_units IS DISTINCT FROM OLD.provider_quota_limit_units"
+        "\n             OR NEW.reserved_usage_units IS DISTINCT FROM OLD.reserved_usage_units"
+        "\n             OR NEW.unit_price_cny_minor IS DISTINCT FROM OLD.unit_price_cny_minor"
+        "\n             OR NEW.price_unit_count IS DISTINCT FROM OLD.price_unit_count"
+        "\n             OR NEW.pricing_revision IS DISTINCT FROM OLD.pricing_revision"
+        if include_provider_usage
+        else ""
+    )
+    provider_release_guard = (
+        " OR NEW.actual_usage_units <> 0"
+        " OR NEW.provider_quota_breached IS NOT FALSE"
+        if include_provider_usage
+        else ""
+    )
+    provider_settlement_guard = (
+        "\n                 OR (NEW.provider_quota_scope IS NOT NULL AND ("
+        "\n                     NEW.actual_usage_units < NEW.reserved_usage_units"
+        "\n                     OR NEW.provider_quota_breached IS DISTINCT FROM "
+        "(NEW.actual_usage_units > NEW.reserved_usage_units)"
+        "\n                 ))"
+        if include_provider_usage
+        else ""
+    )
+    provider_ledger_binding_guard = (
+        "\n               AND NEW.provider_quota_scope IS NOT DISTINCT FROM r.provider_quota_scope"
+        "\n               AND NEW.provider_quota_period IS NOT DISTINCT FROM r.provider_quota_period"
+        "\n               AND NEW.provider_quota_unit IS NOT DISTINCT FROM r.provider_quota_unit"
+        "\n               AND NEW.actual_usage_units = r.actual_usage_units"
+        "\n               AND NEW.provider_quota_breached IS NOT DISTINCT FROM r.provider_quota_breached"
+        if include_provider_usage
+        else ""
+    )
+    return (
+        f"""
+        CREATE OR REPLACE FUNCTION podcast_cost_ledger_binding_insert_fn()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM podcast_budget_reservations r
+             WHERE r.id = NEW.reservation_id
+               AND r.attempt_id = NEW.attempt_id
+               AND r.processing_id = NEW.processing_id
+               AND r.status = 'settled'
+               AND NEW.budget_scope = r.budget_scope
+               AND NEW.budget_period = r.budget_period
+               AND NEW.currency = r.currency
+               AND NEW.actual_cost_minor = r.actual_cost_minor
+               AND NEW.budget_breached IS NOT DISTINCT FROM r.budget_breached
+               {provider_ledger_binding_guard}
+          ) THEN
+            RAISE EXCEPTION 'podcast cost ledger does not match reservation';
+          END IF;
+          RETURN NEW;
+        END; $$
+        """,
+        "DROP TRIGGER IF EXISTS podcast_cost_ledger_binding_insert ON podcast_cost_ledger",
+        "CREATE TRIGGER podcast_cost_ledger_binding_insert BEFORE INSERT ON podcast_cost_ledger "
+        "FOR EACH ROW EXECUTE FUNCTION podcast_cost_ledger_binding_insert_fn()",
+        """
+        CREATE OR REPLACE FUNCTION podcast_cost_ledger_immutable_fn()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'podcast cost ledger is immutable';
+        END; $$
+        """,
+        "DROP TRIGGER IF EXISTS podcast_cost_ledger_immutable_update ON podcast_cost_ledger",
+        "CREATE TRIGGER podcast_cost_ledger_immutable_update BEFORE UPDATE ON podcast_cost_ledger "
+        "FOR EACH ROW EXECUTE FUNCTION podcast_cost_ledger_immutable_fn()",
+        "DROP TRIGGER IF EXISTS podcast_cost_ledger_immutable_delete ON podcast_cost_ledger",
+        "CREATE TRIGGER podcast_cost_ledger_immutable_delete BEFORE DELETE ON podcast_cost_ledger "
+        "FOR EACH ROW EXECUTE FUNCTION podcast_cost_ledger_immutable_fn()",
+        f"""
+        CREATE OR REPLACE FUNCTION podcast_budget_reservation_transition_fn()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.id IS DISTINCT FROM OLD.id
+             OR NEW.processing_id IS DISTINCT FROM OLD.processing_id
+             OR NEW.attempt_id IS DISTINCT FROM OLD.attempt_id
+             OR NEW.budget_scope IS DISTINCT FROM OLD.budget_scope
+             OR NEW.budget_period IS DISTINCT FROM OLD.budget_period
+             OR NEW.currency IS DISTINCT FROM OLD.currency
+             OR NEW.reserved_minor IS DISTINCT FROM OLD.reserved_minor
+             {provider_usage_guard}
+             OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key
+             OR NEW.created_at IS DISTINCT FROM OLD.created_at
+             OR OLD.status <> 'reserved'
+             OR NEW.status NOT IN ('settled','released')
+             OR (NEW.status = 'settled' AND
+                 (NEW.settled_at IS NULL OR NEW.released_at IS NOT NULL
+                  {provider_settlement_guard}))
+             OR (NEW.status = 'released' AND
+                 (NEW.released_at IS NULL OR NEW.settled_at IS NOT NULL
+                  OR NEW.actual_cost_minor <> 0{provider_release_guard})) THEN
+            RAISE EXCEPTION 'invalid podcast budget reservation transition';
+          END IF;
+          RETURN NEW;
+        END; $$
+        """,
+        "DROP TRIGGER IF EXISTS podcast_budget_reservation_transition ON podcast_budget_reservations",
+        "CREATE TRIGGER podcast_budget_reservation_transition BEFORE UPDATE ON "
+        "podcast_budget_reservations FOR EACH ROW EXECUTE FUNCTION "
+        "podcast_budget_reservation_transition_fn()",
+        """
+        CREATE OR REPLACE FUNCTION podcast_budget_reservation_immutable_delete_fn()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM podcast_processings p WHERE p.id = OLD.processing_id
+          ) THEN
+            RAISE EXCEPTION 'podcast budget reservation is immutable';
+          END IF;
+          RETURN OLD;
+        END; $$
+        """,
+        "DROP TRIGGER IF EXISTS podcast_budget_reservation_immutable_delete ON "
+        "podcast_budget_reservations",
+        "CREATE TRIGGER podcast_budget_reservation_immutable_delete BEFORE DELETE ON "
+        "podcast_budget_reservations FOR EACH ROW EXECUTE FUNCTION "
+        "podcast_budget_reservation_immutable_delete_fn()",
+        f"""
+        CREATE OR REPLACE FUNCTION podcast_stage_attempt_identity_immutable_fn()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.id IS DISTINCT FROM OLD.id
+             OR NEW.processing_id IS DISTINCT FROM OLD.processing_id
+             OR NEW.stage IS DISTINCT FROM OLD.stage
+             OR NEW.attempt_no IS DISTINCT FROM OLD.attempt_no
+             OR NEW.fencing_token IS DISTINCT FROM OLD.fencing_token
+             OR NEW.lease_token IS DISTINCT FROM OLD.lease_token
+             OR NEW.input_hash IS DISTINCT FROM OLD.input_hash
+             OR NEW.provider_name IS DISTINCT FROM OLD.provider_name
+             OR NEW.model_name IS DISTINCT FROM OLD.model_name
+             OR NEW.provider_revision IS DISTINCT FROM OLD.provider_revision
+             OR NEW.provider_request_key IS DISTINCT FROM OLD.provider_request_key
+             {execution_kind_guard}
+             {usage_settlement_guard}
+             {poll_state_guard}
+             {output_binding_guard}
+             OR (length(OLD.provider_task_id) > 0 AND
+                 NEW.provider_task_id IS DISTINCT FROM OLD.provider_task_id)
+             OR NEW.cost_currency IS DISTINCT FROM OLD.cost_currency
+             OR NEW.estimated_cost_minor IS DISTINCT FROM OLD.estimated_cost_minor
+             OR NEW.started_at IS DISTINCT FROM OLD.started_at
+             OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+            RAISE EXCEPTION 'podcast stage attempt identity is immutable';
+          END IF;
+          RETURN NEW;
+        END; $$
+        """,
+        "DROP TRIGGER IF EXISTS podcast_stage_attempt_identity_immutable ON podcast_stage_attempts",
+        "CREATE TRIGGER podcast_stage_attempt_identity_immutable BEFORE UPDATE ON "
+        "podcast_stage_attempts FOR EACH ROW EXECUTE FUNCTION "
+        "podcast_stage_attempt_identity_immutable_fn()",
+    )
+
+
+def _podcast_processing_command_audit_sql() -> tuple[str, ...]:
+    """SQLite immutability guards introduced with bound admin commands."""
+
+    return (
+        """
+        CREATE TRIGGER IF NOT EXISTS podcast_processing_input_immutable
+        BEFORE UPDATE ON podcast_processings
+        WHEN NEW.input_artifact_id IS NOT OLD.input_artifact_id
+          OR NEW.input_artifact_kind IS NOT OLD.input_artifact_kind
+          OR NEW.input_content_hash IS NOT OLD.input_content_hash
+          OR NEW.input_language IS NOT OLD.input_language
+          OR NEW.budget_scope IS NOT OLD.budget_scope
+          OR NEW.budget_period IS NOT OLD.budget_period
+          OR NEW.budget_limit_minor IS NOT OLD.budget_limit_minor
+          OR NEW.per_run_budget_minor IS NOT OLD.per_run_budget_minor
+          OR NEW.narration_artifact_id IS NOT OLD.narration_artifact_id
+          OR NEW.narration_content_hash IS NOT OLD.narration_content_hash
+          OR NEW.voice_profile_id IS NOT OLD.voice_profile_id
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast processing input binding is immutable');
+        END
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS podcast_processing_command_immutable_update
+        BEFORE UPDATE ON podcast_processing_commands
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast processing command is immutable');
+        END
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS podcast_processing_command_immutable_delete
+        BEFORE DELETE ON podcast_processing_commands
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast processing command is immutable');
+        END
+        """,
+    )
+
+
+def _podcast_processing_command_postgresql_sql() -> tuple[str, ...]:
+    """PostgreSQL equivalents for bound input and command audit truth."""
+
+    return (
+        """
+        CREATE OR REPLACE FUNCTION podcast_processing_input_immutable_fn()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.input_artifact_id IS DISTINCT FROM OLD.input_artifact_id
+             OR NEW.input_artifact_kind IS DISTINCT FROM OLD.input_artifact_kind
+             OR NEW.input_content_hash IS DISTINCT FROM OLD.input_content_hash
+             OR NEW.input_language IS DISTINCT FROM OLD.input_language
+             OR NEW.budget_scope IS DISTINCT FROM OLD.budget_scope
+             OR NEW.budget_period IS DISTINCT FROM OLD.budget_period
+             OR NEW.budget_limit_minor IS DISTINCT FROM OLD.budget_limit_minor
+             OR NEW.per_run_budget_minor IS DISTINCT FROM OLD.per_run_budget_minor
+             OR NEW.narration_artifact_id IS DISTINCT FROM OLD.narration_artifact_id
+             OR NEW.narration_content_hash IS DISTINCT FROM OLD.narration_content_hash
+             OR NEW.voice_profile_id IS DISTINCT FROM OLD.voice_profile_id THEN
+            RAISE EXCEPTION 'podcast processing input binding is immutable';
+          END IF;
+          RETURN NEW;
+        END; $$
+        """,
+        "DROP TRIGGER IF EXISTS podcast_processing_input_immutable ON podcast_processings",
+        "CREATE TRIGGER podcast_processing_input_immutable BEFORE UPDATE ON "
+        "podcast_processings FOR EACH ROW EXECUTE FUNCTION "
+        "podcast_processing_input_immutable_fn()",
+        """
+        CREATE OR REPLACE FUNCTION podcast_processing_command_immutable_fn()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'podcast processing command is immutable';
+        END; $$
+        """,
+        "DROP TRIGGER IF EXISTS podcast_processing_command_immutable_update ON "
+        "podcast_processing_commands",
+        "CREATE TRIGGER podcast_processing_command_immutable_update BEFORE UPDATE ON "
+        "podcast_processing_commands FOR EACH ROW EXECUTE FUNCTION "
+        "podcast_processing_command_immutable_fn()",
+        "DROP TRIGGER IF EXISTS podcast_processing_command_immutable_delete ON "
+        "podcast_processing_commands",
+        "CREATE TRIGGER podcast_processing_command_immutable_delete BEFORE DELETE ON "
+        "podcast_processing_commands FOR EACH ROW EXECUTE FUNCTION "
+        "podcast_processing_command_immutable_fn()",
+    )

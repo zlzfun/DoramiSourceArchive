@@ -8,9 +8,12 @@ import base64
 import hashlib
 import hmac
 import time
+import httpx
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Body, Response, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field as PydanticField
 from typing import Optional, List, Dict, Any
@@ -153,6 +156,8 @@ from api.routers.collection import (
 from api.routers import fetchers as fetchers_router
 from api.routers import stats as stats_router
 from api.routers import media as media_router
+from api.routers import podcasts as podcasts_router
+from api.routers import podcast_processing as podcast_processing_router
 from api.routers import feedback as feedback_router
 from api.routers import announcements as announcements_router
 from api.routers import remote_sync as remote_sync_router
@@ -173,7 +178,25 @@ from services import user_sources as user_sources_service
 from services import article_analysis as article_analysis_service
 from services import taxonomy as taxonomy_service
 from services import podcast_catalog as podcast_catalog_service
+from services import aliyun_isi_config as aliyun_isi_config_service
+from services.podcast_stage_policy import (
+    PodcastStageDenied,
+    PodcastStagePolicy,
+    require_stage as require_podcast_stage,
+)
 from services.media_store import MediaStore
+from services.podcast_artifacts import PodcastArtifactStore
+from services.podcast_asr_worker import AsrWorkerConfig, AsrWorkerStep
+from services import podcast_premium_guides as podcast_premium_guide_service
+from services import podcast_source_audio as podcast_source_audio_service
+from services import podcast_processing_admin as podcast_processing_admin_service
+from services.podcast_premium_guide_providers import (
+    AliyunIsiPremiumGuideTtsProvider,
+    OpenAiCompatiblePremiumGuideTextProvider,
+)
+from services.aliyun_isi_asr_worker import register_aliyun_isi_asr_worker
+from services.podcast_processing_admin import PodcastProcessingProviderRegistry
+from services.request_log_redaction import install_uvicorn_sensitive_request_filters
 from llm.client import LLMNotConfigured, LLMError, UsageMeta, ping as llm_ping
 from llm.client import set_usage_recorder as _set_llm_usage_recorder
 
@@ -190,6 +213,11 @@ if not _dorami_logger.handlers:
     _dorami_logger.addHandler(_handler)
     _dorami_logger.setLevel(logging.INFO)
     _dorami_logger.propagate = False
+
+# Uvicorn applies its logging dictConfig before importing this module.  Install
+# the signed-route filter here so startup cannot reset it; also covers the
+# application-owned dorami.* handler created immediately above.
+install_uvicorn_sensitive_request_filters()
 
 
 settings.apply_process_environment()
@@ -336,6 +364,7 @@ COLLECTOR_API_PREFIXES = (
     "/api/archive/export",
     "/api/archive/v2/export",
     "/api/archive/v2/media",
+    "/api/archive/v2/podcast-audio",
     "/api/archive/v2/candidate-evidence.jsonl",
     "/api/source-configs",
     "/api/source-builder",
@@ -355,6 +384,7 @@ READER_API_PREFIXES = (
     "/api/archive/v2/import",
     "/api/feed",
     "/api/mcp",
+    "/api/podcasts",
     "/api/reader",
     "/api/public/feed",
     "/api/public/subscriptions",
@@ -428,6 +458,21 @@ async def lifespan(app: FastAPI):
     # 拒绝启动；开发姿态仅告警。
     enforce_security_config(settings)
 
+    # 两个 all-mode 节点都可能托管本地音频。启动对账只清理超过 TTL 的
+    # 上传临时文件，以及宽限期已过且数据库无引用的 CAS blob。
+    # Tests and embedded hosts may replace the application database at runtime.
+    # Never reconcile a CAS against a different engine: every valid blob would
+    # otherwise appear orphaned and be deleted.
+    podcast_cleanup = (
+        await asyncio.to_thread(podcast_artifact_store.reconcile_storage)
+        if podcast_artifact_store.engine is db_sink.engine
+        else {}
+    )
+    if any(podcast_cleanup.values()):
+        logging.getLogger("dorami.podcasts").info(
+            "Podcast 本地存储启动对账完成: %s", podcast_cleanup
+        )
+
     mcp = None
     if runtime_reader_enabled():
         # Init MCP enabled state from DB
@@ -468,6 +513,10 @@ async def lifespan(app: FastAPI):
         # 仅在调度器新鲜启动（绑定当前事件循环）时注册巡检，避免跨 loop add_job。
         # 明细/埋点表滚动窗清理（每日 04:30）——所有运行角色均注册。
         add_cron_job("retention_cleanup", execute_retention_cleanup_job, "30 4 * * *", [])
+        # Podcast processing authority is a stage-policy axis, not runtime.role.
+        # Both production hosts may run role=all while only the external host is
+        # allowed to register ASR. The first tick is deliberately delayed.
+        reload_podcast_asr_worker_schedule()
         if collector_on:
             # 远程内容同步定时任务(启用且 cron 合法时注册,否则移除既有 job)。
             reload_remote_sync_schedule()
@@ -492,6 +541,40 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Dorami 数据归档中枢 API", lifespan=lifespan)
+
+
+def _is_podcast_text_reader_path(path: str) -> bool:
+    return path.startswith("/api/podcasts/episodes/") and path.endswith("/texts")
+
+
+def _is_podcast_source_cache_path(path: str) -> bool:
+    return path.startswith("/api/admin/podcast-episodes/") and path.endswith(
+        "/cache-source-audio"
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def stable_podcast_reader_validation_error(
+    request: Request, exc: RequestValidationError
+):
+    if _is_podcast_text_reader_path(request.url.path):
+        return StarletteJSONResponse(
+            {
+                "code": "podcast_text_bad_request",
+                "message": "Podcast 文本请求参数无效",
+            },
+            status_code=422,
+            headers={"Cache-Control": "private, no-store", "Vary": "Cookie"},
+        )
+    if _is_podcast_source_cache_path(request.url.path):
+        return StarletteJSONResponse(
+            {
+                "code": "podcast_bad_request",
+                "message": "Podcast 原音频缓存请求无效",
+            },
+            status_code=422,
+        )
+    return await request_validation_exception_handler(request, exc)
 
 # 跨域配置
 app.add_middleware(
@@ -552,9 +635,133 @@ media_store: Optional[MediaStore] = (
     if settings.media.enabled else None
 )
 
+# Podcast 音频不复用图片 MediaStore：它有独立大小/MIME/生命周期约束，按内容
+# SHA-256 落入本地 CAS；记录只保存可校验元数据，不把 blob 塞入数据库 JSON。
+podcast_artifact_store = PodcastArtifactStore(
+    db_sink.engine,
+    Path(settings.podcast_artifacts.root_dir),
+    max_bytes=settings.podcast_artifacts.max_audio_mb * 1024 * 1024,
+    total_quota_bytes=settings.podcast_artifacts.total_quota_bytes,
+    source_audio_quota_bytes=settings.podcast_artifacts.source_audio_quota_bytes,
+    source_audio_ttl_seconds=settings.podcast_artifacts.source_audio_ttl_seconds,
+    minimum_free_bytes=settings.podcast_artifacts.minimum_free_bytes,
+    staging_ttl_seconds=settings.podcast_artifacts.staging_ttl_seconds,
+    allowed_mime_types=settings.podcast_artifacts.allowed_mime_types,
+    ffprobe_binary=settings.podcast_artifacts.ffprobe_binary,
+    probe_timeout_seconds=settings.podcast_artifacts.probe_timeout_seconds,
+    orphan_grace_seconds=settings.podcast_artifacts.orphan_grace_seconds,
+)
+
+# The durable processing state machine is used for resumable ASR. Premium-guide
+# text and TTS use their smaller provider-neutral workflow below.
+podcast_processing_providers = PodcastProcessingProviderRegistry()
+register_aliyun_isi_asr_worker(podcast_processing_providers)
+
 # 抓取后媒体预取的 fire-and-forget 任务强引用（asyncio 只保弱引用）。
 _MEDIA_PREFETCH_TASKS: set = set()
 _PERSONAL_DIGEST_TRIGGER_TASKS: set = set()
+_PODCAST_PREMIUM_GUIDE_TASKS: dict[str, asyncio.Task] = {}
+_PODCAST_PREMIUM_LANDING_TASKS: set[asyncio.Task] = set()
+
+
+def schedule_podcast_premium_guide(episode_id: str) -> bool:
+    """Start one provider-neutral guide conversion without duplicate local runs."""
+
+    existing = _PODCAST_PREMIUM_GUIDE_TASKS.get(episode_id)
+    if existing is not None and not existing.done():
+        return False
+
+    async def _run() -> None:
+        try:
+            with Session(db_sink.engine) as session:
+                llm_config = daily_brief_service.resolve_llm_config(session)
+                aliyun_config = aliyun_isi_config_service.resolve_config(session)
+            voice = settings.podcast.default_voice_profile
+            if not llm_config.configured or not aliyun_config.tts_configured or not voice:
+                raise RuntimeError("精品导读所需的 LLM 或 TTS 配置尚未就绪")
+            await podcast_premium_guide_service.run_premium_guide(
+                db_sink.engine,
+                podcast_artifact_store,
+                episode_id=episode_id,
+                config=settings.podcast,
+                text_provider=OpenAiCompatiblePremiumGuideTextProvider(llm_config),
+                tts_provider=AliyunIsiPremiumGuideTtsProvider(
+                    aliyun_config,
+                    voice_profile=voice,
+                    max_audio_bytes=podcast_artifact_store.max_bytes,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - status is persisted by service
+            _dorami_logger.warning(
+                "Podcast 精品导读生成失败 episode=%s (%s)",
+                episode_id,
+                type(exc).__name__,
+            )
+
+    task = asyncio.create_task(_run())
+    _PODCAST_PREMIUM_GUIDE_TASKS[episode_id] = task
+    task.add_done_callback(
+        lambda _task: _PODCAST_PREMIUM_GUIDE_TASKS.pop(episode_id, None)
+    )
+    return True
+
+
+def schedule_podcast_premium_after_landing(article_ids: List[str]) -> int:
+    """Cache and enqueue ASR only for newly landed Podcast episodes over 20m."""
+
+    eligible: list[str] = []
+    with Session(db_sink.engine) as session:
+        for article_id in article_ids:
+            episode = session.get(ArticleRecord, article_id)
+            if episode is None or episode.content_type != "podcast_episode":
+                continue
+            try:
+                metadata = json.loads(episode.extensions_json or "{}")
+                duration = float(metadata.get("duration_seconds") or 0)
+            except (AttributeError, TypeError, ValueError):
+                duration = 0
+            if duration > settings.podcast.premium_min_duration_seconds:
+                eligible.append(article_id)
+
+    for episode_id in eligible:
+        async def _run(current_episode_id: str = episode_id) -> None:
+            try:
+                cached = await podcast_source_audio_service.cache_source_audio(
+                    db_sink.engine,
+                    podcast_artifact_store,
+                    episode_id=current_episode_id,
+                    podcast_config=settings.podcast,
+                    storage_config=settings.podcast_artifacts,
+                    client_factory=httpx.AsyncClient,
+                )
+                podcast_processing_admin_service.request_processing(
+                    db_sink.engine,
+                    podcast_artifact_store,
+                    podcast_processing_providers,
+                    settings.podcast,
+                    episode_id=current_episode_id,
+                    # The normalized transcript remains internal evidence; the
+                    # only reader product produced from it is digest_blog_zh.
+                    target="transcript",
+                    selection_override=True,
+                    idempotency_key=(
+                        f"premium-landing:{current_episode_id}:"
+                        f"{str(cached.get('content_hash') or '')[:16]}"
+                    ),
+                    reason="落库后自动生成中文精品导读",
+                    actor="system",
+                )
+            except Exception as exc:  # noqa: BLE001 - manual run remains available
+                _dorami_logger.warning(
+                    "Podcast 落库自动转录未启动 episode=%s (%s)",
+                    current_episode_id,
+                    type(exc).__name__,
+                )
+
+        task = asyncio.create_task(_run())
+        _PODCAST_PREMIUM_LANDING_TASKS.add(task)
+        task.add_done_callback(_PODCAST_PREMIUM_LANDING_TASKS.discard)
+    return len(eligible)
 
 
 def schedule_personal_digest_trigger(callback, *args) -> None:
@@ -666,6 +873,8 @@ app.include_router(collection_router.router)
 app.include_router(stats_router.router)
 app.include_router(fetchers_router.router)
 app.include_router(media_router.router)
+app.include_router(podcasts_router.router)
+app.include_router(podcast_processing_router.router)
 app.include_router(feedback_router.router)
 app.include_router(announcements_router.router)
 app.include_router(remote_sync_router.router)
@@ -673,6 +882,7 @@ app.include_router(share_router.router)
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 COLLECTION_FETCH_CONCURRENCY = 4
+PODCAST_ASR_WORKER_JOB_ID = "podcast_asr_worker"
 
 
 # ==================== 管理员登录与会话 ====================
@@ -759,8 +969,27 @@ def read_auth_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
     return data
 
 
+_AUTH_SESSION_UNSET = object()
+
+
 def current_auth_session(request: Request) -> Optional[Dict[str, Any]]:
-    return read_auth_token(request.cookies.get(AUTH_COOKIE_NAME))
+    """Resolve the account once per request and reuse it downstream.
+
+    The authentication middleware validates every protected request before FastAPI
+    opens route dependencies.  Several synchronous routes also ask for the current
+    account after their database dependency has checked out a connection.  Doing a
+    second account lookup there can exhaust a small SQLite pool during the initial
+    dashboard fan-out: every route holds one connection while waiting for another.
+    Request state is isolated by Starlette, so caching both successful and failed
+    validation here preserves revocation semantics across requests while avoiding
+    that nested checkout.
+    """
+    cached = getattr(request.state, "dorami_auth_session", _AUTH_SESSION_UNSET)
+    if cached is not _AUTH_SESSION_UNSET:
+        return cached
+    resolved = read_auth_token(request.cookies.get(AUTH_COOKIE_NAME))
+    request.state.dorami_auth_session = resolved
+    return resolved
 
 
 def current_admin_session(request: Request) -> Optional[Dict[str, Any]]:
@@ -819,10 +1048,38 @@ async def require_admin_session(request: Request, call_next):
     auth_session = current_auth_session(request)
     if path.startswith("/api/"):
         if auth_session is None:
+            if _is_podcast_text_reader_path(path):
+                return StarletteJSONResponse(
+                    {
+                        "code": "podcast_auth_required",
+                        "message": "未登录或登录已过期",
+                    },
+                    status_code=401,
+                    headers={
+                        "Cache-Control": "private, no-store",
+                        "Vary": "Cookie",
+                    },
+                )
+            if _is_podcast_source_cache_path(path):
+                return StarletteJSONResponse(
+                    {
+                        "code": "podcast_auth_required",
+                        "message": "未登录或登录已过期",
+                    },
+                    status_code=401,
+                )
             return StarletteJSONResponse({"detail": "未登录或登录已过期"}, status_code=401)
     disabled_surface = disabled_runtime_surface(path, auth_session)
     if disabled_surface is None and account_admin_required(path):
         if (auth_session or {}).get("role") != "admin":
+            if _is_podcast_source_cache_path(path):
+                return StarletteJSONResponse(
+                    {
+                        "code": "podcast_admin_required",
+                        "message": "该操作需要管理员账号",
+                    },
+                    status_code=403,
+                )
             return StarletteJSONResponse(
                 {
                     "detail": "该操作需要管理员账号",
@@ -1507,7 +1764,7 @@ def execute_personal_digest_schedule_job():
 
 
 def execute_personal_digest_pending_job():
-    """Complete ready editions; first-open deadlines force available-content output."""
+    """Generate pending editions immediately from available content (去等待, issue #22)."""
 
     try:
         personal_briefs_router.process_pending_editions(db_sink.engine)
@@ -1587,6 +1844,121 @@ def reload_daily_brief_schedule():
         add_cron_job("daily_brief", execute_daily_brief_job, cron_expr, [])
     elif scheduler.get_job("daily_brief"):
         scheduler.remove_job("daily_brief")
+
+
+def _configured_podcast_asr_worker():
+    """Resolve an ASR worker from stage authority, independent of target UI readiness.
+
+    Full target readiness gates new admin enqueue requests.  A durable ASR
+    worker must remain able to poll and settle already-paid tasks when an
+    unrelated downstream executor (translate/analyze/digest/script) is absent.
+    """
+
+    podcast_config = settings.podcast
+    if not podcast_config.processing_enabled:
+        return None
+    policy = PodcastStagePolicy(podcast_config)
+    try:
+        policy.require_stage("asr", boundary="claim")
+    except PodcastStageDenied:
+        return None
+    worker = podcast_processing_providers.worker_for("asr")
+    if worker is None:
+        return None
+    return worker
+
+
+async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
+    """Advance bounded ASR work off-loop; empty/incomplete config is inert."""
+
+    resolved = _configured_podcast_asr_worker()
+    if resolved is None:
+        return ()
+    worker = resolved
+    runtime_config = settings.podcast_worker
+    worker_config = AsrWorkerConfig(
+        worker_id=f"podcast-asr:{settings.podcast.authority_id}",
+        lease_seconds=runtime_config.lease_seconds,
+        fallback_retry_seconds=runtime_config.fallback_retry_seconds,
+        next_stage_by_target={"transcript": None, "digest_blog": "translate"},
+    )
+
+    def _run_steps() -> tuple[str, ...]:
+        actions: list[str] = []
+        for _ in range(runtime_config.max_steps_per_tick):
+            try:
+                with Session(db_sink.engine) as session:
+                    # Resolve once and pass this exact effective snapshot as the
+                    # runner's accounting authority.  A concrete provider bundle
+                    # must build its adapter/planner from policy.aliyun_isi rather
+                    # than resolving KV a second time.
+                    effective_aliyun = aliyun_isi_config_service.resolve_config(
+                        session
+                    )
+                    session.rollback()
+                    if not podcast_processing_providers.stage_worker_ready(
+                        "asr", effective_aliyun
+                    ):
+                        break
+                    policy = PodcastStagePolicy(
+                        settings.podcast, effective_aliyun
+                    )
+                    step = worker(session, config=worker_config, policy=policy)
+                if not isinstance(step, AsrWorkerStep):
+                    raise TypeError("Podcast ASR worker returned an invalid step")
+            except Exception as exc:  # noqa: BLE001 - retry on the next bounded tick
+                # Break instead of continuing: a deterministic configuration or
+                # code fault must not spin max_steps times in the same tick.  A
+                # fresh Session on the next scheduled tick provides isolation.
+                _dorami_logger.warning(
+                    "Podcast ASR worker step failed (%s)", type(exc).__name__
+                )
+                break
+            actions.append(step.action)
+            if step.action == "idle":
+                break
+        return tuple(actions)
+
+    try:
+        actions = await asyncio.to_thread(_run_steps)
+        # ASR landing is the trigger boundary for the minimal premium workflow.
+        # The service itself performs full-transcript scoring before any TTS call.
+        for episode_id in await asyncio.to_thread(
+            podcast_premium_guide_service.pending_premium_guide_candidates,
+            db_sink.engine,
+            minimum_duration_seconds=settings.podcast.premium_min_duration_seconds,
+        ):
+            schedule_podcast_premium_guide(episode_id)
+        return actions
+    except Exception as exc:  # noqa: BLE001 - one worker cannot stop the scheduler
+        # Thread infrastructure errors are handled without stopping APScheduler.
+        _dorami_logger.warning(
+            "Podcast ASR worker tick failed (%s)", type(exc).__name__
+        )
+        return ()
+
+
+def reload_podcast_asr_worker_schedule() -> None:
+    """Register one delayed ASR tick, or remove it when readiness disappears."""
+
+    if _configured_podcast_asr_worker() is None:
+        if scheduler.get_job(PODCAST_ASR_WORKER_JOB_ID):
+            scheduler.remove_job(PODCAST_ASR_WORKER_JOB_ID)
+        return
+    interval_seconds = settings.podcast_worker.tick_seconds
+    scheduler.add_job(
+        execute_podcast_asr_worker_job,
+        "interval",
+        seconds=interval_seconds,
+        next_run_time=(
+            datetime.datetime.now(datetime.timezone.utc)
+            + datetime.timedelta(seconds=interval_seconds)
+        ),
+        id=PODCAST_ASR_WORKER_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
 
 
 async def execute_remote_sync_job():
@@ -1785,6 +2157,10 @@ async def execute_podcast_source_refresh_job(source_id: str):
             or record.source_type != "podcast"
         ):
             return
+        try:
+            require_podcast_stage("fetch", boundary="enqueue")
+        except PodcastStageDenied:
+            return
         fetcher_id = resolve_source_fetcher_id(record)
         if not fetcher_id:
             _dorami_logger.warning("共享播客源未绑定可用抓取器，跳过定时抓取: %s", source_id)
@@ -1815,7 +2191,7 @@ def reload_podcast_source_schedules():
     在重启或批量启用后同时出发；已存在且间隔未变的任务不重置 next_run_time。
     """
     with Session(db_sink.engine) as session:
-        records = session.exec(
+        candidates = session.exec(
             select(SourceConfigRecord)
             .where(SourceConfigRecord.owner_username == "")
             .where(SourceConfigRecord.collection_authority_id == "")
@@ -1823,6 +2199,12 @@ def reload_podcast_source_schedules():
             .where(SourceConfigRecord.source_type == "podcast")
             .order_by(SourceConfigRecord.source_id)
         ).all()
+        records = candidates
+
+    try:
+        require_podcast_stage("fetch", boundary="enqueue")
+    except PodcastStageDenied:
+        records = []
 
     scheduled_records = []
     for record in records:
@@ -2024,8 +2406,13 @@ async def run_fetcher_with_tracking(
         run_scope: str = "ad_hoc",
 ) -> Dict[str, Any]:
     source_id = resolve_state_source_id(fetcher_id, params)
+    params = dict(params)
+    is_podcast_run = fetcher_id == "generic_podcast_rss"
     with Session(db_sink.engine) as authority_session:
         source = authority_session.get(SourceConfigRecord, source_id)
+        is_podcast_run = bool(
+            is_podcast_run or (source is not None and source.source_type == "podcast")
+        )
         if not sync_consumer_policy.local_source_operation_allowed(
             authority_session, source_id, operation="collection"
         ):
@@ -2037,6 +2424,18 @@ async def run_fetcher_with_tracking(
             raise ValueError(
                 f"数据源 {source_id} {reason}，本机 role=all 也不得重复抓取"
             )
+        if is_podcast_run:
+            if source is None or source.source_type != "podcast":
+                raise ValueError("Podcast 采集必须绑定真实的 Podcast SourceConfig")
+            if not source.is_active:
+                raise ValueError(f"Podcast 数据源 {source_id} 未启用，拒绝采集")
+            try:
+                require_podcast_stage("fetch", boundary="provider_submit")
+            except PodcastStageDenied as exc:
+                raise ValueError(str(exc)) from exc
+            # Direct/internal callers cannot override the configured source identity.
+            params["source_id"] = source.source_id
+            params["feed_url"] = source.url
     run_id = create_fetch_run(
         fetcher_id,
         params,
@@ -2069,21 +2468,44 @@ async def run_fetcher_with_tracking(
             authority_taken = not sync_consumer_policy.local_source_operation_allowed(
                 authority_session, source_id, operation="collection"
             )
-        if authority_taken:
+            podcast_revoked = False
+            podcast_revoke_reason = ""
+            if is_podcast_run:
+                current_source = authority_session.get(SourceConfigRecord, source_id)
+                if current_source is None or current_source.source_type != "podcast":
+                    podcast_revoked = True
+                    podcast_revoke_reason = "Podcast SourceConfig 已删除或身份已改变"
+                elif not current_source.is_active:
+                    podcast_revoked = True
+                    podcast_revoke_reason = "Podcast 数据源已停用"
+                else:
+                    try:
+                        require_podcast_stage("fetch", boundary="commit")
+                    except PodcastStageDenied as exc:
+                        podcast_revoked = True
+                        podcast_revoke_reason = str(exc)
+        if authority_taken or podcast_revoked:
             # The run began locally but lost authority while network work was in
             # flight. DatabaseStorage fenced every late article commit; do not
             # recreate local readiness or enqueue analysis after handoff.
             with Session(db_sink.engine) as cleanup_session:
-                cleanup_session.exec(delete(ArticleRecord).where(
-                    ArticleRecord.fetch_run_id == run_id,
-                    ArticleRecord.analysis_authority_id == "",
-                ))
+                cleanup_session.exec(
+                    delete(ArticleRecord).where(ArticleRecord.fetch_run_id == run_id)
+                )
                 cleanup_session.commit()
-            raise RuntimeError(f"数据源 {source_id} 已由远端权威接管，本次本地采集作废")
+            reason = (
+                f"数据源 {source_id} 已由远端权威接管"
+                if authority_taken
+                else podcast_revoke_reason
+            )
+            raise RuntimeError(f"{reason}，本次本地采集作废")
         finish_fetch_run(run_id, status="success", result=result)
         mark_source_state_finished(fetcher_id, params, run_id, status="success", result=result)
         analysis_queued_count = queue_article_analysis_after_commit(result.saved_content_ids)
         schedule_media_prefetch(result.saved_content_ids)
+        premium_queued_count = schedule_podcast_premium_after_landing(
+            result.saved_content_ids
+        )
         return {
             "status": "success",
             "run_id": run_id,
@@ -2095,16 +2517,24 @@ async def run_fetcher_with_tracking(
             "skipped_count": result.skipped_count,
             "saved_content_ids": result.saved_content_ids,
             "analysis_queued_count": analysis_queued_count,
+            "premium_queued_count": premium_queued_count,
         }
     except Exception as e:
         with Session(db_sink.engine) as cleanup_session:
-            if not sync_consumer_policy.local_source_operation_allowed(
+            cleanup_required = not sync_consumer_policy.local_source_operation_allowed(
                 cleanup_session, source_id, operation="collection"
-            ):
-                cleanup_session.exec(delete(ArticleRecord).where(
-                    ArticleRecord.fetch_run_id == run_id,
-                    ArticleRecord.analysis_authority_id == "",
-                ))
+            )
+            if is_podcast_run:
+                current_source = cleanup_session.get(SourceConfigRecord, source_id)
+                cleanup_required = cleanup_required or bool(
+                    current_source is None
+                    or current_source.source_type != "podcast"
+                    or not current_source.is_active
+                )
+            if cleanup_required:
+                cleanup_session.exec(
+                    delete(ArticleRecord).where(ArticleRecord.fetch_run_id == run_id)
+                )
                 cleanup_session.commit()
         finish_fetch_run(run_id, status="failed", error_message=str(e))
         mark_source_state_finished(fetcher_id, params, run_id, status="failed", error=e)

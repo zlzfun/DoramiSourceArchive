@@ -352,9 +352,13 @@ def _sqlite_concurrency_check(database_url: str, writers: int) -> dict[str, Any]
         storage.engine.dispose()
 
 
-def _deadline_degrade_check(database_url: str) -> dict[str, Any]:
+def _first_open_immediate_check(database_url: str) -> dict[str, Any]:
     storage = DatabaseStorage(database_url)
-    now = dt.datetime.now(SHANGHAI).replace(microsecond=0)
+    # Keep this synthetic lifecycle within one report day.  Using the actual
+    # late-night wall clock can move the 15-minute deadline into tomorrow,
+    # where the production historical-date guard correctly refuses generation.
+    report_day = dt.datetime.now(SHANGHAI).date()
+    now = dt.datetime.combine(report_day, dt.time(9, 0), SHANGHAI)
     username = "wp7-deadline-user"
     source_id = "wp7_release_source"
     article_id = "wp7-deadline-article"
@@ -418,15 +422,8 @@ def _deadline_degrade_check(database_url: str) -> dict[str, Any]:
                 raise RuntimeError("deadline edition was not created")
             edition_id = started.edition.id
             before_status = started.edition.status
-            # 期限 = max(首开+15min, 当日 08:30+15min):凌晨跑时「now+16min」够不到
-            # 08:45,边缘永远 pending——按 edition 自己记的 deadline_at 之后 1 分钟推进,
-            # 任何时段跑都是「越过期限」这一个语义。
-            deadline_at = dt.datetime.fromisoformat(started.edition.deadline_at)
-            completed = process_pending_edition(
-                session,
-                started.edition,
-                now=max(now, deadline_at) + dt.timedelta(minutes=1),
-            )
+            # 去等待(issue #22):首开立即用现有内容生成,不再等期限
+            completed = process_pending_edition(session, started.edition, now=now)
             items = session.exec(
                 select(PersonalDigestItemRecord)
                 .where(PersonalDigestItemRecord.edition_id == completed.id)
@@ -443,7 +440,6 @@ def _deadline_degrade_check(database_url: str) -> dict[str, Any]:
             "outside_scope_items": sum(
                 snapshot.get("source_id") != source_id for snapshot in snapshots
             ),
-            "deadline_minutes": 15,
         }
     finally:
         storage.engine.dispose()
@@ -459,7 +455,7 @@ async def run_release_smoke(args: argparse.Namespace) -> dict[str, Any]:
     )
     restart_report = await _restart_recovery_check(args.database_url, article)
     sqlite_report = _sqlite_concurrency_check(args.database_url, args.writers)
-    deadline_report = _deadline_degrade_check(args.database_url)
+    deadline_report = _first_open_immediate_check(args.database_url)
 
     violations: list[str] = []
     if live_report["worker_statuses"] != ["succeeded"]:
@@ -484,14 +480,14 @@ async def run_release_smoke(args: argparse.Namespace) -> dict[str, Any]:
         or not deadline_report["same_edition_id"]
         or deadline_report["outside_scope_items"]
     ):
-        violations.append("first_open_deadline_contract_failed")
+        violations.append("first_open_immediate_contract_failed")
 
     return {
         "database_url": args.database_url,
         "live_analysis": live_report,
         "restart_recovery": restart_report,
         "sqlite_concurrency": sqlite_report,
-        "first_open_deadline": deadline_report,
+        "first_open_immediate": deadline_report,
         "violations": violations,
     }
 

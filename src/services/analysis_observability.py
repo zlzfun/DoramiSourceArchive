@@ -10,6 +10,11 @@ from typing import Any, Iterable
 
 from sqlmodel import Session, select
 
+from llm.article_analysis_prompt import (
+    ARTICLE_ANALYSIS_PROMPT_VERSION,
+    ARTICLE_ANALYSIS_SCORING_VERSION,
+)
+
 from models.db import (
     AppSettingRecord,
     ArticleAnalysisAttemptRecord,
@@ -30,7 +35,6 @@ FEATURE_FLAG_KEYS = (
     "taxonomy_candidate_enabled",
     "taxonomy_auto_activation_enabled",
     "personal_digest_enabled",
-    "public_digest_analysis_adapter_enabled",
 )
 
 
@@ -82,6 +86,12 @@ def collect_release_metrics(
         ).all()
     )
     succeeded = [row for row in analyses if row.status == "succeeded"]
+    # 版本键过期的 succeeded 行:扫描每 tick 慢滴失效(VERSION_REFRESH_PER_CYCLE),这里透出剩余量
+    version_stale = sum(
+        1 for row in succeeded
+        if row.prompt_version != ARTICLE_ANALYSIS_PROMPT_VERSION
+        or row.scoring_version != ARTICLE_ANALYSIS_SCORING_VERSION
+    )
     scores = [float(row.quality_score) for row in succeeded if row.quality_score is not None]
     histogram = {
         str(bucket): sum(
@@ -163,6 +173,7 @@ def collect_release_metrics(
             "attempt_status_counts": _counts(row.status for row in attempts),
             "attempt_operation_counts": _counts(row.operation for row in attempts),
             "success_rate": succeeded_total / analyzed_total if analyzed_total else 0.0,
+            "version_stale": version_stale,
             "score_histogram": histogram,
             "score_p50": _percentile(scores, 0.50),
             "score_p90": _percentile(scores, 0.90),

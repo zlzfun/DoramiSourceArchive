@@ -328,6 +328,14 @@ def process_pending_edition(
     *,
     now: dt.datetime | None = None,
 ) -> PersonalDigestEditionRecord:
+    """Generate a pending edition immediately from whatever the archive holds.
+
+    去等待(issue #22, 2026-09-06 拍板):打开 / 重编 / 08:30 自动编排三条路都立即用
+    库里现有内容生成,不再等「订阅源今日抓取完成 + 分析队列清空」到期限。来源与
+    分析的就绪事实仍按生成时刻计算,落成 ``sync_stale`` / ``analysis_incomplete``
+    两个版面标记——想要更全的一版再点重编(多版机制零新增)。``check_after`` /
+    ``deadline_at`` 列保留作记录,不再门控生成。
+    """
     if edition.status not in {
         PersonalDigestStatus.PENDING.value,
         PersonalDigestStatus.GENERATING.value,
@@ -340,15 +348,8 @@ def process_pending_edition(
         lease_expires = _parse_time(edition.generation_lease_expires_at)
         if lease_expires is not None and lease_expires > current:
             return edition
-    check_after = _parse_time(edition.check_after)
-    if check_after is not None and current < check_after:
-        return edition
-    deadline = _parse_time(edition.deadline_at)
-    forced = deadline is not None and current >= deadline
     sources_ready = _sources_ready(session, edition, current)
     analysis_ready = _analysis_ready(session, edition, current)
-    if not forced and (not sources_ready or not analysis_ready):
-        return edition
     edition, generation_token = digest_service.claim_personal_digest_generation(
         session, edition.id, now=current
     )
@@ -362,8 +363,8 @@ def process_pending_edition(
             now=current,
             pending_edition_id=edition.id,
             generation_token=generation_token,
-            sync_stale=forced and not sources_ready,
-            analysis_incomplete=forced and not analysis_ready,
+            sync_stale=not sources_ready,
+            analysis_incomplete=not analysis_ready,
         )
     except Exception as exc:  # noqa: BLE001 - persist lifecycle failure without content
         session.rollback()

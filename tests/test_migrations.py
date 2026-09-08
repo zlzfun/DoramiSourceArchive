@@ -21,7 +21,8 @@ import pytest
 from alembic import command  # noqa: E402
 from alembic.autogenerate import compare_metadata  # noqa: E402
 from alembic.runtime.migration import MigrationContext  # noqa: E402
-from sqlalchemy import create_engine, event, inspect  # noqa: E402
+from sqlalchemy import create_engine, event, inspect, text  # noqa: E402
+from sqlalchemy.exc import IntegrityError  # noqa: E402
 from sqlalchemy.engine import Engine  # noqa: E402
 
 from models.db import SQLModel  # noqa: E402
@@ -38,6 +39,407 @@ def _head_revision() -> str:
     from alembic.script import ScriptDirectory
 
     return ScriptDirectory.from_config(make_alembic_config()).get_current_head()
+
+
+def _insert_legacy_podcast_attempt(
+    db_url: str, *, state: str, stage: str = "asr"
+) -> None:
+    engine = create_engine(db_url)
+    stamp = "2026-09-06T00:00:00.000000+00:00"
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO podcast_stage_attempts "
+                    "(id,processing_id,stage,attempt_no,fencing_token,lease_token,input_hash,"
+                    "output_hash,provider_name,model_name,provider_revision,"
+                    "provider_request_key,provider_task_id,execution_kind,submission_state,"
+                    "request_unknown,retry_state,usage_json,cost_currency,"
+                    "estimated_cost_minor,actual_cost_minor,error_code,error_message,"
+                    "started_at,submitted_at,poll_count,last_polled_at,provider_deadline_at,"
+                    "completed_at,created_at,updated_at) VALUES "
+                    "('legacy-attempt','legacy-processing',:stage,1,1,'lease','input','',"
+                    "'provider','model','revision','legacy-request','','provider',:state,0,"
+                    "'none','{}','CNY',0,0,'','',:stamp,NULL,0,NULL,NULL,:completed_at,"
+                    ":stamp,:stamp)"
+                ),
+                {
+                    "state": state,
+                    "stage": stage,
+                    "stamp": stamp,
+                    "completed_at": stamp if state == "succeeded" else None,
+                },
+            )
+    finally:
+        engine.dispose()
+
+
+def test_tts_settlement_mode_migration_backfills_and_freezes_legacy_attempt(
+    tmp_path,
+):
+    db_url = f"sqlite:///{tmp_path / 'tts-settlement-mode.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "5e9a1c7d3b42")
+    _insert_legacy_podcast_attempt(db_url, state="succeeded", stage="tts")
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            value = conn.execute(text(
+                "SELECT usage_settlement_mode FROM podcast_stage_attempts "
+                "WHERE id='legacy-attempt'"
+            )).scalar_one()
+            assert value == "manual"
+            with pytest.raises(
+                IntegrityError,
+                match="podcast stage attempt identity is immutable",
+            ):
+                conn.execute(text(
+                    "UPDATE podcast_stage_attempts SET "
+                    "usage_settlement_mode='submitted_characters' "
+                    "WHERE id='legacy-attempt'"
+                ))
+    finally:
+        engine.dispose()
+
+
+def _insert_legacy_podcast_cost_rows(db_url: str) -> None:
+    engine = create_engine(db_url)
+    stamp = "2026-09-06T00:00:00.000000+00:00"
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO podcast_budget_reservations "
+                    "(id,processing_id,attempt_id,budget_scope,budget_period,currency,"
+                    "reserved_minor,actual_cost_minor,budget_breached,status,idempotency_key,"
+                    "created_at,updated_at,settled_at) VALUES "
+                    "('legacy-reservation','legacy-processing','legacy-attempt','scope',"
+                    "'2026-09','CNY',0,0,0,'settled','legacy-reservation-key',"
+                    ":stamp,:stamp,:stamp)"
+                ),
+                {"stamp": stamp},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO podcast_cost_ledger "
+                    "(id,processing_id,attempt_id,reservation_id,stage,budget_scope,"
+                    "budget_period,currency,actual_cost_minor,budget_breached,usage_json,"
+                    "provider_name,model_name,provider_revision,provider_task_id,"
+                    "settlement_key,created_at) VALUES "
+                    "('legacy-ledger','legacy-processing','legacy-attempt',"
+                    "'legacy-reservation','asr','scope','2026-09','CNY',0,0,'{}',"
+                    "'provider','model','revision','','legacy-settlement',:stamp)"
+                ),
+                {"stamp": stamp},
+            )
+    finally:
+        engine.dispose()
+
+
+def _assert_provider_ledger_binding_rejects_mismatch(db_url: str) -> None:
+    _insert_legacy_podcast_attempt(db_url, state="succeeded")
+    engine = create_engine(db_url)
+    stamp = "2026-09-06T00:00:00.000000+00:00"
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO podcast_budget_reservations "
+                "(id,processing_id,attempt_id,budget_scope,budget_period,currency,"
+                "reserved_minor,actual_cost_minor,budget_breached,status,idempotency_key,"
+                "created_at,updated_at,settled_at,provider_quota_scope,"
+                "provider_quota_period,provider_quota_unit,provider_quota_window_start_at,"
+                "provider_quota_window_end_at,provider_quota_limit_units,"
+                "reserved_usage_units,actual_usage_units,unit_price_cny_minor,"
+                "price_unit_count,pricing_revision,provider_quota_breached) VALUES "
+                "('bound-reservation','legacy-processing','legacy-attempt','scope',"
+                "'2026-09','CNY',1,0,0,'reserved','bound-reservation-key',:stamp,:stamp,"
+                "NULL,'asr-test','2026-09-06','audio_seconds',:stamp,"
+                "'2026-09-07T00:00:00.000000+00:00',100,1,0,3600,3600,'test-v1',0)"
+            ), {"stamp": stamp})
+            for actual_units, breached in ((0, 0), (2, 0), (1, 1)):
+                with conn.begin_nested():
+                    with pytest.raises(IntegrityError):
+                        conn.execute(text(
+                            "UPDATE podcast_budget_reservations SET status='settled',"
+                            "actual_usage_units=:actual_units,"
+                            "provider_quota_breached=:breached,settled_at=:stamp,"
+                            "updated_at=:stamp WHERE id='bound-reservation'"
+                        ), {
+                            "actual_units": actual_units,
+                            "breached": breached,
+                            "stamp": stamp,
+                        })
+            conn.execute(text(
+                "UPDATE podcast_budget_reservations SET status='settled',"
+                "actual_cost_minor=1,actual_usage_units=1,settled_at=:stamp,"
+                "updated_at=:stamp WHERE id='bound-reservation'"
+            ), {"stamp": stamp})
+            with pytest.raises(
+                IntegrityError,
+                match="podcast cost ledger does not match reservation",
+            ):
+                conn.execute(text(
+                    "INSERT INTO podcast_cost_ledger "
+                    "(id,processing_id,attempt_id,reservation_id,stage,budget_scope,"
+                    "budget_period,currency,actual_cost_minor,budget_breached,usage_json,"
+                    "provider_name,model_name,provider_revision,provider_task_id,"
+                    "settlement_key,created_at,provider_quota_scope,provider_quota_period,"
+                    "provider_quota_unit,actual_usage_units,provider_quota_breached) VALUES "
+                    "('mismatched-ledger','legacy-processing','legacy-attempt',"
+                    "'bound-reservation','asr','scope','2026-09','CNY',1,0,'{}',"
+                    "'provider','model','revision','task','mismatched-settlement',:stamp,"
+                    "'different-scope','2026-09-06','audio_seconds',1,0)"
+                ), {"stamp": stamp})
+    finally:
+        engine.dispose()
+
+
+def test_provider_usage_quota_migration_backfills_legacy_cost_rows(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'provider-usage-backfill.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "6b8d2f4a9c70")
+    _insert_legacy_podcast_attempt(db_url, state="succeeded")
+    _insert_legacy_podcast_cost_rows(db_url)
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            reservation = conn.execute(text(
+                "SELECT provider_quota_scope,provider_quota_period,provider_quota_unit,"
+                "actual_usage_units,provider_quota_breached "
+                "FROM podcast_budget_reservations WHERE id='legacy-reservation'"
+            )).one()
+            ledger = conn.execute(text(
+                "SELECT provider_quota_scope,provider_quota_period,provider_quota_unit,"
+                "actual_usage_units,provider_quota_breached "
+                "FROM podcast_cost_ledger WHERE id='legacy-ledger'"
+            )).one()
+        assert tuple(reservation) == (None, None, None, 0, False)
+        assert tuple(ledger) == (None, None, None, 0, False)
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("schema_path", ["fresh", "upgraded"])
+def test_provider_usage_ledger_binding_rejects_mismatch(tmp_path, schema_path):
+    db_url = f"sqlite:///{tmp_path / f'provider-ledger-{schema_path}.db'}"
+    if schema_path == "fresh":
+        storage = DatabaseStorage(db_url=db_url)
+        storage.engine.dispose()
+    else:
+        cfg = make_alembic_config(db_url)
+        command.upgrade(cfg, "6b8d2f4a9c70")
+        command.upgrade(cfg, "head")
+
+    _assert_provider_ledger_binding_rejects_mismatch(db_url)
+
+
+def test_provider_usage_quota_migration_refuses_active_legacy_provider_hold(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'provider-usage-active-legacy.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "6b8d2f4a9c70")
+    _insert_legacy_podcast_attempt(db_url, state="prepared")
+    engine = create_engine(db_url)
+    stamp = "2026-09-06T00:00:00.000000+00:00"
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO podcast_budget_reservations "
+                "(id,processing_id,attempt_id,budget_scope,budget_period,currency,"
+                "reserved_minor,actual_cost_minor,budget_breached,status,idempotency_key,"
+                "created_at,updated_at) VALUES "
+                "('active-legacy-reservation','legacy-processing','legacy-attempt',"
+                "'scope','2026-09','CNY',0,0,0,'reserved','active-legacy-key',"
+                ":stamp,:stamp)"
+            ), {"stamp": stamp})
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="active legacy provider budget"):
+        command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        assert "provider_quota_scope" not in {
+            item["name"]
+            for item in inspect(engine).get_columns("podcast_budget_reservations")
+        }
+        with engine.connect() as conn:
+            assert (
+                MigrationContext.configure(conn).get_current_revision()
+                == "6b8d2f4a9c70"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_processing_admin_migration_adopts_empty_create_all_command_table(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'processing-admin-command-adoption.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "8f3b2d1c7a90")
+
+    engine = create_engine(db_url)
+    try:
+        SQLModel.metadata.tables["podcast_processing_commands"].create(engine)
+        assert "podcast_processing_commands" in inspect(engine).get_table_names()
+        assert "input_artifact_id" not in {
+            column["name"]
+            for column in inspect(engine).get_columns("podcast_processings")
+        }
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "head")
+
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            assert (
+                MigrationContext.configure(conn).get_current_revision()
+                == _head_revision()
+            )
+        assert "input_artifact_id" in {
+            column["name"]
+            for column in inspect(engine).get_columns("podcast_processings")
+        }
+    finally:
+        engine.dispose()
+
+
+def test_provider_usage_quota_migration_adopts_current_schema_active_hold(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'provider-usage-adopt-current.db'}"
+    DatabaseStorage(db_url=db_url)
+    engine = create_engine(db_url)
+    stamp = "2026-09-06T00:00:00.000000+00:00"
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO podcast_stage_attempts "
+                "(id,processing_id,stage,attempt_no,fencing_token,lease_token,input_hash,"
+                "output_hash,provider_name,model_name,provider_revision,"
+                "provider_request_key,provider_task_id,execution_kind,submission_state,"
+                "request_unknown,retry_state,usage_json,cost_currency,estimated_cost_minor,"
+                "actual_cost_minor,error_code,error_message,started_at,created_at,updated_at,"
+                "settings_fingerprint,poll_count) VALUES "
+                "('current-attempt','current-processing','asr',1,1,'lease','input','',"
+                "'aliyun-isi','filetrans','4.0','current-request','','provider','prepared',"
+                "0,'none','{}','CNY',0,0,'','',:stamp,:stamp,:stamp,:fingerprint,0)"
+            ), {"stamp": stamp, "fingerprint": "f" * 64})
+            conn.execute(text(
+                "INSERT INTO podcast_budget_reservations "
+                "(id,processing_id,attempt_id,budget_scope,budget_period,currency,"
+                "reserved_minor,actual_cost_minor,budget_breached,status,idempotency_key,"
+                "created_at,updated_at,provider_quota_scope,provider_quota_period,"
+                "provider_quota_unit,provider_quota_window_start_at,"
+                "provider_quota_window_end_at,provider_quota_limit_units,"
+                "reserved_usage_units,actual_usage_units,unit_price_cny_minor,"
+                "price_unit_count,pricing_revision,provider_quota_breached) VALUES "
+                "('current-reservation','current-processing','current-attempt','scope',"
+                "'2026-09','CNY',0,0,0,'reserved','current-reservation-key',:stamp,:stamp,"
+                "'asr-test','2026-09-06','audio_seconds',:stamp,"
+                "'2026-09-07T00:00:00.000000+00:00',100,1,0,0,3600,'test-v1',0)"
+            ), {"stamp": stamp})
+    finally:
+        engine.dispose()
+
+    ensure_migrated(db_url)
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            assert MigrationContext.configure(conn).get_current_revision() == _head_revision()
+            row = conn.execute(text(
+                "SELECT provider_quota_scope,reserved_usage_units,status "
+                "FROM podcast_budget_reservations WHERE id='current-reservation'"
+            )).one()
+        assert tuple(row) == ("asr-test", 1, "reserved")
+    finally:
+        engine.dispose()
+
+
+def test_provider_usage_quota_migration_round_trip(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'provider-usage-roundtrip.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "6b8d2f4a9c70")
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        reservation_columns = {
+            item["name"]: item
+            for item in inspect(engine).get_columns("podcast_budget_reservations")
+        }
+        ledger_columns = {
+            item["name"]: item
+            for item in inspect(engine).get_columns("podcast_cost_ledger")
+        }
+        assert "provider_quota_scope" in reservation_columns
+        assert reservation_columns["actual_usage_units"]["default"] is None
+        assert reservation_columns["provider_quota_breached"]["default"] is None
+        assert ledger_columns["actual_usage_units"]["default"] is None
+        assert ledger_columns["provider_quota_breached"]["default"] is None
+    finally:
+        engine.dispose()
+
+    command.downgrade(cfg, "6b8d2f4a9c70")
+    engine = create_engine(db_url)
+    try:
+        assert "provider_quota_scope" not in {
+            item["name"]
+            for item in inspect(engine).get_columns("podcast_budget_reservations")
+        }
+        with engine.connect() as conn:
+            assert (
+                MigrationContext.configure(conn).get_current_revision()
+                == "6b8d2f4a9c70"
+            )
+    finally:
+        engine.dispose()
+    command.upgrade(cfg, "head")
+
+
+def test_provider_usage_quota_migration_refuses_used_binding(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'provider-usage-refusal.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "6b8d2f4a9c70")
+    _insert_legacy_podcast_attempt(db_url, state="succeeded")
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    stamp = "2026-09-06T00:00:00.000000+00:00"
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO podcast_budget_reservations "
+                "(id,processing_id,attempt_id,budget_scope,budget_period,currency,"
+                "reserved_minor,actual_cost_minor,budget_breached,status,idempotency_key,"
+                "created_at,updated_at,provider_quota_scope,provider_quota_period,"
+                "provider_quota_unit,provider_quota_window_start_at,"
+                "provider_quota_window_end_at,provider_quota_limit_units,"
+                "reserved_usage_units,actual_usage_units,unit_price_cny_minor,"
+                "price_unit_count,pricing_revision,provider_quota_breached) VALUES "
+                "('quota-reservation','legacy-processing','legacy-attempt','scope',"
+                "'2026-09','CNY',0,0,0,'reserved','quota-reservation-key',:stamp,:stamp,"
+                "'asr-test','2026-09-06','audio_seconds',:stamp,"
+                "'2026-09-07T00:00:00.000000+00:00',100,1,0,0,3600,'test-v1',0)"
+            ), {"stamp": stamp})
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="provider usage accounting"):
+        command.downgrade(cfg, "6b8d2f4a9c70")
+    engine = create_engine(db_url)
+    try:
+        assert "provider_quota_scope" in {
+            item["name"]
+            for item in inspect(engine).get_columns("podcast_budget_reservations")
+        }
+        with engine.connect() as conn:
+            assert (
+                MigrationContext.configure(conn).get_current_revision()
+                == "8c4e1a7b9d20"
+            )
+    finally:
+        engine.dispose()
 
 
 def test_upgrade_head_has_no_drift_from_metadata(tmp_path):
@@ -63,6 +465,318 @@ def test_upgrade_head_has_no_drift_from_metadata(tmp_path):
         engine.dispose()
 
     assert diffs == [], f"迁移链与模型 metadata 出现漂移（改了 model 却漏写迁移？）：{diffs}"
+
+    engine = create_engine(db_url)
+    try:
+        artifact_fks = inspect(engine).get_foreign_keys("podcast_artifacts")
+        episode_fk = next(
+            fk for fk in artifact_fks if fk["constrained_columns"] == ["episode_id"]
+        )
+        assert episode_fk["options"].get("ondelete") == "CASCADE"
+    finally:
+        engine.dispose()
+
+
+def test_podcast_attempt_execution_kind_migration_backfills_existing_rows(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'podcast-execution-kind.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "7c2e1a9b4d60")
+
+    engine = create_engine(db_url)
+    try:
+        columns = (
+            "id,processing_id,stage,attempt_no,fencing_token,lease_token,input_hash,"
+            "output_hash,provider_name,model_name,provider_revision,provider_request_key,"
+            "provider_task_id,submission_state,request_unknown,retry_state,usage_json,"
+            "cost_currency,estimated_cost_minor,actual_cost_minor,error_code,error_message,"
+            "started_at,submitted_at,completed_at,created_at,updated_at"
+        )
+        values = (
+            ":id,:processing_id,:stage,:attempt_no,1,'lease','input','',"
+            "'executor','model','revision',:request_key,:task_id,:state,0,'none','{}',"
+            "'CNY',:estimate,0,'','',:stamp,NULL,:stamp,:stamp,:stamp"
+        )
+        with engine.begin() as conn:
+            for attempt_no, (stage, state, task_id) in enumerate(
+                (
+                    ("asr", "succeeded", ""),
+                    ("audio_qa", "succeeded", ""),
+                    ("local_publish", "succeeded", ""),
+                    ("tts", "submitted", ""),
+                ),
+                start=1,
+            ):
+                conn.execute(
+                    text(
+                        f"INSERT INTO podcast_stage_attempts ({columns}) VALUES ({values})"
+                    ),
+                    {
+                        "id": f"attempt-{attempt_no}",
+                        "processing_id": f"process-{attempt_no}",
+                        "stage": stage,
+                        "attempt_no": attempt_no,
+                        "request_key": f"request-{attempt_no}",
+                        "state": state,
+                        "task_id": task_id,
+                        "estimate": 0 if stage == "asr" else 25,
+                        "stamp": "2026-09-06T00:00:00+00:00",
+                    },
+                )
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "3f6b9d2a7c41")
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT stage, execution_kind, estimated_cost_minor, "
+                "submission_state, request_unknown, retry_state "
+                "FROM podcast_stage_attempts"
+            )).all()
+            kinds = {row.stage: row.execution_kind for row in rows}
+            estimates = {row.stage: row.estimated_cost_minor for row in rows}
+            states = {
+                row.stage: (
+                    row.submission_state,
+                    row.request_unknown,
+                    row.retry_state,
+                )
+                for row in rows
+            }
+        assert kinds == {
+            "asr": "provider",
+            "audio_qa": "local",
+            "local_publish": "local",
+            "tts": "provider",
+        }
+        assert estimates == {
+            "asr": 0,
+            "audio_qa": 0,
+            "local_publish": 0,
+            "tts": 25,
+        }
+        assert states["tts"] == ("request_unknown", 1, "reconcile_required")
+        check_names = {
+            item["name"]
+            for item in inspect(engine).get_check_constraints(
+                "podcast_stage_attempts"
+            )
+        }
+        assert "ck_podcast_stage_attempts_execution_kind" in check_names
+        assert "ck_podcast_stage_attempts_local_zero_estimate" in check_names
+        assert "ck_podcast_stage_attempts_local_zero_actual" in check_names
+        assert "ck_podcast_stage_attempts_local_provider_state" in check_names
+        assert "ck_podcast_stage_attempts_submitted_task_id" in check_names
+    finally:
+        engine.dispose()
+
+
+def test_podcast_polling_migration_backfills_and_round_trips(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'podcast-polling.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "2e5c8a1d7b40")
+    engine = create_engine(db_url)
+    stamp = "2026-09-06T00:00:00.000000+00:00"
+    try:
+        assert not ({"poll_count", "last_polled_at", "provider_deadline_at"} & {
+            column["name"]
+            for column in inspect(engine).get_columns("podcast_stage_attempts")
+        })
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO podcast_stage_attempts "
+                "(id,processing_id,stage,attempt_no,fencing_token,lease_token,input_hash,"
+                "output_hash,provider_name,model_name,provider_revision,provider_request_key,"
+                "provider_task_id,execution_kind,submission_state,request_unknown,retry_state,"
+                "usage_json,cost_currency,estimated_cost_minor,actual_cost_minor,error_code,"
+                "error_message,started_at,submitted_at,completed_at,created_at,updated_at) "
+                "VALUES ('poll-attempt','poll-process','asr',1,1,'lease','input','',"
+                "'provider','model','revision','poll-request','','provider','prepared',0,"
+                "'none','{}','CNY',0,0,'','',:stamp,NULL,NULL,:stamp,:stamp)"
+            ), {"stamp": stamp})
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "3f6b9d2a7c41")
+    engine = create_engine(db_url)
+    try:
+        attempt_columns = {
+            column["name"]: column
+            for column in inspect(engine).get_columns("podcast_stage_attempts")
+        }
+        assert set(_ for _ in (
+            "poll_count", "last_polled_at", "provider_deadline_at"
+        )).issubset(attempt_columns)
+        assert attempt_columns["poll_count"]["nullable"] is False
+        with engine.connect() as conn:
+            assert conn.execute(text(
+                "SELECT poll_count, last_polled_at, provider_deadline_at "
+                "FROM podcast_stage_attempts WHERE id='poll-attempt'"
+            )).one() == (0, None, None)
+        attempt_checks = {
+            item["name"]
+            for item in inspect(engine).get_check_constraints(
+                "podcast_stage_attempts"
+            )
+        }
+        assert "ck_podcast_stage_attempts_poll_state" in attempt_checks
+        assert "ck_podcast_stage_attempts_local_poll_state" in attempt_checks
+        status_sql = next(
+            item["sqltext"]
+            for item in inspect(engine).get_check_constraints("podcast_processings")
+            if item["name"] == "ck_podcast_processings_status"
+        )
+        assert "reconciliation_required" in status_sql
+        command_sql = next(
+            item["sqltext"]
+            for item in inspect(engine).get_check_constraints(
+                "podcast_processing_commands"
+            )
+            if item["name"] == "ck_podcast_processing_commands_type"
+        )
+        assert "provider_reconcile" in command_sql
+    finally:
+        engine.dispose()
+
+    command.downgrade(cfg, "2e5c8a1d7b40")
+    engine = create_engine(db_url)
+    try:
+        assert not ({"poll_count", "last_polled_at", "provider_deadline_at"} & {
+            column["name"]
+            for column in inspect(engine).get_columns("podcast_stage_attempts")
+        })
+        status_sql = next(
+            item["sqltext"]
+            for item in inspect(engine).get_check_constraints("podcast_processings")
+            if item["name"] == "ck_podcast_processings_status"
+        )
+        assert "reconciliation_required" not in status_sql
+        command_sql = next(
+            item["sqltext"]
+            for item in inspect(engine).get_check_constraints(
+                "podcast_processing_commands"
+            )
+            if item["name"] == "ck_podcast_processing_commands_type"
+        )
+        assert "provider_reconcile" not in command_sql
+    finally:
+        engine.dispose()
+    command.upgrade(cfg, "3f6b9d2a7c41")
+
+
+def test_podcast_polling_migration_refuses_to_discard_live_poll_state(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'podcast-polling-live.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO podcast_stage_attempts "
+                "(id,processing_id,stage,attempt_no,fencing_token,lease_token,input_hash,"
+                "output_hash,provider_name,model_name,provider_revision,provider_request_key,"
+                "provider_task_id,execution_kind,submission_state,request_unknown,retry_state,"
+                "usage_json,cost_currency,estimated_cost_minor,actual_cost_minor,error_code,"
+                "error_message,started_at,submitted_at,poll_count,last_polled_at,"
+                "provider_deadline_at,completed_at,created_at,updated_at) VALUES "
+                "('live-poll-attempt','live-poll-process','asr',1,1,'lease','input','',"
+                "'provider','model','revision','live-poll-request','task','provider',"
+                "'submitted',0,'scheduled','{}','CNY',0,0,'','',:stamp,:stamp,1,:stamp,"
+                ":deadline,NULL,:stamp,:stamp)"
+            ), {
+                "stamp": "2026-09-06T00:00:00.000000+00:00",
+                "deadline": "2026-09-06T01:00:00.000000+00:00",
+            })
+    finally:
+        engine.dispose()
+    with pytest.raises(RuntimeError, match="discard durable Podcast polling"):
+        command.downgrade(cfg, "2e5c8a1d7b40")
+
+
+def test_normalized_transcript_migration_refuses_active_legacy_attempt(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'normalized-active-legacy.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "3f6b9d2a7c41")
+    _insert_legacy_podcast_attempt(db_url, state="prepared")
+
+    with pytest.raises(RuntimeError, match="active legacy Podcast attempts"):
+        command.upgrade(cfg, "head")
+
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            assert (
+                MigrationContext.configure(conn).get_current_revision()
+                == "3f6b9d2a7c41"
+            )
+        assert "settings_fingerprint" not in {
+            column["name"]
+            for column in inspect(engine).get_columns("podcast_stage_attempts")
+        }
+    finally:
+        engine.dispose()
+
+
+def test_normalized_transcript_migration_preserves_terminal_legacy_attempt(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'normalized-terminal-legacy.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "3f6b9d2a7c41")
+    _insert_legacy_podcast_attempt(db_url, state="succeeded")
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(
+                text(
+                    "SELECT settings_fingerprint, output_artifact_id, "
+                    "output_artifact_kind FROM podcast_stage_attempts "
+                    "WHERE id='legacy-attempt'"
+                )
+            ).one() == (None, None, None)
+        artifact_fks = inspect(engine).get_foreign_keys("podcast_text_artifacts")
+        binding_fk = next(
+            fk
+            for fk in artifact_fks
+            if fk["constrained_columns"]
+            == ["producing_attempt_id", "processing_id"]
+        )
+        assert binding_fk["options"].get("ondelete") == "RESTRICT"
+    finally:
+        engine.dispose()
+
+
+def test_normalized_transcript_migration_refuses_used_binding_downgrade(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'normalized-used-binding.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    stamp = "2026-09-06T00:00:00.000000+00:00"
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO podcast_stage_attempts "
+                    "(id,processing_id,stage,attempt_no,fencing_token,lease_token,input_hash,"
+                    "output_hash,settings_fingerprint,provider_name,model_name,"
+                    "provider_revision,provider_request_key,provider_task_id,execution_kind,"
+                    "submission_state,request_unknown,retry_state,usage_json,cost_currency,"
+                    "estimated_cost_minor,actual_cost_minor,error_code,error_message,"
+                    "started_at,submitted_at,poll_count,last_polled_at,provider_deadline_at,"
+                    "completed_at,created_at,updated_at) VALUES "
+                    "('used-attempt','used-processing','asr',1,1,'lease','input','',"
+                    ":fingerprint,'provider','model','revision','used-request','','provider',"
+                    "'succeeded',0,'none','{}','CNY',0,0,'','',:stamp,NULL,0,NULL,NULL,"
+                    ":stamp,:stamp,:stamp)"
+                ),
+                {"fingerprint": "a" * 64, "stamp": stamp},
+            )
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="discard normalized transcript"):
+        command.downgrade(cfg, "3f6b9d2a7c41")
 
 
 def test_parallel_release_heads_converge_without_replay(tmp_path):
@@ -1258,7 +1972,13 @@ def test_archive_sync_v2_downgrade_refuses_to_reopen_live_writers(tmp_path, bloc
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
-            assert MigrationContext.configure(conn).get_current_revision() == _head_revision()
+            # The quota-only revision can be removed losslessly first.  The
+            # normalized-transcript revision is the first schema boundary whose
+            # inherited Archive Sync fence observes these live rows.
+            assert (
+                MigrationContext.configure(conn).get_current_revision()
+                == "6b8d2f4a9c70"
+            )
     finally:
         engine.dispose()
 

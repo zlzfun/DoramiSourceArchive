@@ -494,8 +494,10 @@ def test_backfill_is_seven_days_only_and_claims_newest_first(storage):
         assert first.created == 1
         # The action limit must not pin the scanner forever on the already
         # current newest row; the next cycle progresses into older backfill.
+        # v3.48: the scan only visits rows that need action (the pending "new"
+        # row is no longer loaded or re-hashed), so ``scanned`` counts 1 here.
         second = scan_analysis_backfill(session, now=NOW, limit=1)
-        assert second.scanned == 2
+        assert second.scanned == 1
         assert second.created == 1
         assert session.get(ArticleAnalysisRecord, "old") is None
         tasks = claim_analysis_tasks(session, worker_id="w", limit=2, now=NOW)
@@ -1046,3 +1048,55 @@ def test_reader_summary_prefers_unified_asset_then_legacy(storage):
         )
         session.commit()
         assert resolve_summary_with_legacy_fallback(session, article) == "unified summary"
+
+
+def test_scan_only_visits_rows_that_need_action(storage):
+    """v3.48 收口:扫描不再每分钟载入 7 天正文——pending/failed/当前 succeeded 行不进扫描,
+    无分析行与 skipped 行才会被访问。"""
+    with Session(storage.engine) as session:
+        session.add_all([
+            _article("fresh"), _article("pending"), _article("failed"), _article("done"), _article("skipped"),
+        ])
+        session.commit()
+        for article_id, status in (("pending", "pending"), ("failed", "failed"), ("done", "succeeded"), ("skipped", "skipped")):
+            session.add(ArticleAnalysisRecord(
+                article_id=article_id, status=status, tagging_status="pending",
+                content_hash=compute_content_hash(session.get(ArticleRecord, article_id)),
+                prompt_version=ARTICLE_ANALYSIS_PROMPT_VERSION,
+                scoring_version=ARTICLE_ANALYSIS_SCORING_VERSION,
+                created_at=NOW_ISO, updated_at=NOW_ISO,
+            ))
+        session.commit()
+        stats = scan_analysis_backfill(session, now=NOW)
+        assert stats.scanned == 2  # fresh + skipped
+        assert stats.created == 1
+        assert stats.invalidated == 1  # skipped 行:源开关已开(无配置行=允许),重新入队
+        assert session.get(ArticleAnalysisRecord, "fresh").status == "pending"
+        assert session.get(ArticleAnalysisRecord, "skipped").status == "pending"
+        assert session.get(ArticleAnalysisRecord, "failed").status == "failed"
+
+
+def test_scan_throttles_version_refresh_but_never_new_articles(storage):
+    """版本键过期的 succeeded 行每 tick 最多失效 version_refresh_limit 篇(慢滴重跑),
+    新文章不占该预算、永远优先。"""
+    with Session(storage.engine) as session:
+        session.add(_article("brand-new"))
+        for i in range(3):
+            article = _article(f"stale-{i}", fetched=NOW - dt.timedelta(hours=i + 1))
+            session.add(article)
+            session.flush()
+            session.add(ArticleAnalysisRecord(
+                article_id=article.id, status="succeeded", tagging_status="succeeded",
+                quality_score=7.0, summary="old ruler", analyzed_at=NOW_ISO,
+                content_hash=compute_content_hash(article),
+                prompt_version="article-analysis-v0", scoring_version="reading-quality-v0",
+                created_at=NOW_ISO, updated_at=NOW_ISO,
+            ))
+        session.commit()
+        first = scan_analysis_backfill(session, now=NOW, version_refresh_limit=2)
+        assert first.created == 1 and first.invalidated == 2 and first.deferred == 1
+        assert session.get(ArticleAnalysisRecord, "brand-new").status == "pending"
+        # 旧结果在重跑前仍可读(preserve_authority),分数没被清
+        assert session.get(ArticleAnalysisRecord, "stale-0").quality_score == 7.0
+        second = scan_analysis_backfill(session, now=NOW, version_refresh_limit=2)
+        assert second.invalidated == 1 and second.deferred == 0

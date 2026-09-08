@@ -37,6 +37,12 @@ taxonomy_result = run_taxonomy_deployment(
 )
 print(f"🏷️  Taxonomy deployment: {taxonomy_result['status']}")
 
+from services.request_log_redaction import (  # noqa: E402
+    install_uvicorn_sensitive_request_filters,
+)
+
+install_uvicorn_sensitive_request_filters()
+
 import uvicorn  # noqa: E402
 
 print("🚀 正在启动 AI CMS & RAG 后端 API 服务(容器内 0.0.0.0:8088)...")

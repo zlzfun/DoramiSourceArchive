@@ -18,16 +18,17 @@ const DAILY_BRIEF_SOURCE_ID = 'dorami_daily_brief';
 // 全量带正文取数曾在生产造成进页长卡顿(60 期日报全文一次性拉回)。
 const HISTORY_PAGE_SIZE = 10;
 
-// 生成流水线五段:收集 / 摘要 / 去重 / 精选 / 成稿。
-// 后端 progress phase(collecting/mapping/selecting/reducing/persisting/done)映射到段索引;
-// selecting 阶段内含「同事件去重 + 择优」,取「精选」为进行段、「去重」标记已过。
-const PIPE_SEGMENTS = ['收集', '摘要', '去重', '精选', '成稿'];
-const PHASE_NOW = { collecting: 0, mapping: 1, selecting: 3, reducing: 4, persisting: 4, done: 5 };
+// 生成流水线五段:收集 / 评分 / 精选 / 点评 / 成稿(v3.48 统一新闻价值评分波)。
+// 后端 progress phase(collecting/scoring/selecting/editing/reducing/persisting/done)映射到段索引;
+// 评分=复用文章级分析、缺分就地补评;点评只为入选条目写中文标题/要点/点评。
+const PIPE_SEGMENTS = ['收集', '评分', '精选', '点评', '成稿'];
+const PHASE_NOW = { collecting: 0, scoring: 1, selecting: 2, editing: 3, reducing: 4, persisting: 4, done: 5 };
 const PHASE_NOTE = {
   collecting: '筛选候选内容',
-  mapping: '概括打分',
+  scoring: '复用分析评分 · 缺分补评',
   selecting: '同事件去重与择优',
-  reducing: '汇编日报正文',
+  editing: '撰写标题与点评',
+  reducing: '跨天查重与汇编',
   persisting: '写入与分发',
   done: '已完成',
   empty: '暂无新增内容',
@@ -43,6 +44,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
   const [briefConfig, setBriefConfig] = useState(null);
   const [cron, setCron] = useState('30 8 * * *');
   const [topN, setTopN] = useState(12);
+  const [minScore, setMinScore] = useState(6);
   const [enabled, setEnabled] = useState(false);
   // 源范围手工名单(用户拍板):all=全部源(后端 source_ids 空);custom=只取勾选名单。
   // 新增源默认不进名单——高噪即时源的取舍交给名单 + LLM 打分,不做类型规则过滤。
@@ -64,7 +66,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
 
   const loadBrief = () => getDailyBriefConfig()
     .then(d => {
-      setBriefConfig(d); setCron(d.cron || '30 8 * * *'); setTopN(d.top_n ?? 12); setEnabled(Boolean(d.enabled));
+      setBriefConfig(d); setCron(d.cron || '30 8 * * *'); setTopN(d.top_n ?? 12); setMinScore(d.min_score ?? 6); setEnabled(Boolean(d.enabled));
       const ids = Array.isArray(d.source_ids) ? d.source_ids : null;
       setScopeMode(ids && ids.length > 0 ? 'custom' : 'all');
       setScopeIds(new Set(ids || []));
@@ -190,6 +192,11 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
       showToast('精选条数需为 1–50 的整数', 'error');
       return;
     }
+    const m = Number(minScore);
+    if (!Number.isFinite(m) || m < 0 || m > 10) {
+      showToast('入选门槛需为 0–10 的数字', 'error');
+      return;
+    }
     const c = cron.trim();
     if (!c) {
       showToast('Cron 表达式不能为空,请填写 5 段 cron', 'error');
@@ -201,7 +208,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
     }
     try {
       // 全部来源 → 传 [] 清空名单(后端语义:空=全部);自定 → 传勾选集合
-      await saveDailyBriefConfig({ cron: c, top_n: n, source_ids: scopeMode === 'custom' ? [...scopeIds] : [] });
+      await saveDailyBriefConfig({ cron: c, top_n: n, min_score: m, source_ids: scopeMode === 'custom' ? [...scopeIds] : [] });
       showToast('已保存 日报配置', 'success');
       loadBrief();
     } catch (error) {
@@ -255,6 +262,21 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
 
   const lastRun = briefConfig?.last_run;
   const lastFailed = !generating && lastRun?.status === 'failed';
+  // 评分来源健康提示(v3.48 收口):日报对入库分析是软依赖,补评常态化不报错但意味着
+  // 分析总闸没开或 worker 没追平(成本翻倍、读者面无分数)——只在异常时显示,正常静默
+  const scoringHint = (() => {
+    if (generating || lastRun?.status !== 'success') return '';
+    const stored = Number(lastRun.scored_stored || 0);
+    const inline = Number(lastRun.scored_inline || 0);
+    const queued = Number(lastRun.scored_inline_pending || 0);
+    const total = stored + inline;
+    if (!total || inline / total < 0.5) return '';
+    const head = stored === 0
+      ? `最近一次 ${inline} 篇候选全部由日报就地补评（复用分析 0 篇）：入库分析总闸可能未开启，或 worker 尚未追平`
+      : `最近一次补评占比 ${Math.round((inline / total) * 100)}%（复用 ${stored} / 补评 ${inline}）`;
+    const tail = queued > 0 ? `；其中 ${queued} 篇当时仍在分析队列，建议把 cron 排在 worker 追平之后` : '';
+    return `${head}${tail}`;
+  })();
   const cursorVal = briefConfig?.cursor ? briefConfig.cursor.slice(0, 19) : '（空）';
 
   return (
@@ -285,6 +307,10 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
         <div className="brief-field">
           <label className="form-label" htmlFor="brief-topn">每期条数（Top N，1–50）</label>
           <input id="brief-topn" type="number" min="1" max="50" step="1" value={topN} onChange={e => setTopN(e.target.value)} className="form-input" />
+        </div>
+        <div className="brief-field">
+          <label className="form-label" htmlFor="brief-minscore">入选门槛（新闻价值分，0–10）</label>
+          <input id="brief-minscore" type="number" min="0" max="10" step="0.5" value={minScore} onChange={e => setMinScore(e.target.value)} className="form-input" title="低于门槛的候选直接跳过;0 = 不设门槛" />
         </div>
 
         {/* ── 源范围:手工名单(全部来源 ⇄ 自定名单) ── */}
@@ -373,6 +399,7 @@ export default function DailyBriefPanel({ showToast, collectorEnabled = false, i
         {lastFailed && (
           <p className="pipeline-note is-err mt-3">最近一次生成失败{lastRun?.error_message ? `：${lastRun.error_message}` : ''}</p>
         )}
+        {scoringHint && <p className="pipeline-note is-warn mt-3">{scoringHint}</p>}
 
         <details className="scope-note">
           <summary>取材与去重口径</summary>

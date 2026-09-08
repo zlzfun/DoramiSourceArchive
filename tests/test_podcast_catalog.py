@@ -11,7 +11,6 @@ from sqlmodel import Session
 from models.db import SourceConfigRecord, UserRecord
 from services import accounts as accounts_service
 from services.podcast_catalog import (
-    DEFAULT_MAX_RESPONSE_BYTES,
     PODCAST_CATALOG,
     catalog_by_id,
     ensure_default_podcast_sources,
@@ -49,13 +48,12 @@ def test_catalog_has_36_stable_unique_entries_and_one_explicit_blocker():
     )
 
 
-def test_default_import_creates_only_ready_sources_inactive_and_is_idempotent(tmp_path):
+def test_default_import_creates_all_sources_inactive_and_is_idempotent(tmp_path):
     db = DatabaseStorage(f"sqlite:///{tmp_path / 'catalog.db'}")
     with Session(db.engine) as session:
-        result = import_podcast_catalog(session)
-        assert len(result["created"]) == 35
+        result = import_podcast_catalog(session, feed_max_bytes=12_345)
+        assert len(result["created"]) == 36
         assert result["updated"] == []
-        assert result["skipped_blocked"][0]["source_id"] == "podcast_voices_from_darpa"
 
         latent = session.get(SourceConfigRecord, "podcast_latent_space")
         assert latent is not None
@@ -74,16 +72,16 @@ def test_default_import_creates_only_ready_sources_inactive_and_is_idempotent(tm
         assert dwarkesh.provenance_tier == "tier2_commentary"
         params = json.loads(latent.params_json)
         assert params["limit"] == 20
-        assert params["max_response_bytes"] == DEFAULT_MAX_RESPONSE_BYTES
+        assert params["max_response_bytes"] == 12_345
 
         again = import_podcast_catalog(session)
         assert again["created"] == []
-        assert len(again["skipped_existing"]) == 35
+        assert len(again["skipped_existing"]) == 36
 
         catalog = list_podcast_catalog(session)
         assert catalog["total"] == 36
         assert catalog["ready"] == 35
-        assert catalog["installed"] == 35
+        assert catalog["installed"] == 36
         assert catalog["active"] == 0
 
 
@@ -91,8 +89,7 @@ def test_application_bootstrap_installs_ready_sources_without_overwriting_local_
     db = DatabaseStorage(f"sqlite:///{tmp_path / 'bootstrap.db'}")
 
     first = ensure_default_podcast_sources(db.engine)
-    assert len(first["created"]) == 35
-    assert first["skipped_blocked"][0]["source_id"] == "podcast_voices_from_darpa"
+    assert len(first["created"]) == 36
 
     with Session(db.engine) as session:
         latent = session.get(SourceConfigRecord, "podcast_latent_space")
@@ -105,14 +102,14 @@ def test_application_bootstrap_installs_ready_sources_without_overwriting_local_
 
     second = ensure_default_podcast_sources(db.engine)
     assert second["created"] == []
-    assert len(second["skipped_existing"]) == 35
+    assert len(second["skipped_existing"]) == 36
 
     with Session(db.engine) as session:
         latent = session.get(SourceConfigRecord, "podcast_latent_space")
         assert latent.name == "本地维护的名称"
         assert latent.is_active is True
         catalog = list_podcast_catalog(session)
-        assert catalog["installed"] == 35
+        assert catalog["installed"] == 36
         assert catalog["active"] == 1
 
 
@@ -208,7 +205,7 @@ def test_scheduled_podcast_job_fetches_active_source_and_rechecks_toggle(monkeyp
     assert len(calls) == 1
 
 
-def test_selective_update_preserves_active_and_blocked_requires_opt_in(tmp_path):
+def test_selective_update_preserves_active_and_allows_unhealthy_feed(tmp_path):
     db = DatabaseStorage(f"sqlite:///{tmp_path / 'selective.db'}")
     with Session(db.engine) as session:
         first = import_podcast_catalog(
@@ -219,7 +216,9 @@ def test_selective_update_preserves_active_and_blocked_requires_opt_in(tmp_path)
         assert first["created"] == ["podcast_latent_space"]
 
         row = session.get(SourceConfigRecord, "podcast_latent_space")
+        assert row.is_active is True
         row.name = "Local name"
+        row.is_active = True
         session.add(row)
         session.commit()
 
@@ -233,18 +232,11 @@ def test_selective_update_preserves_active_and_blocked_requires_opt_in(tmp_path)
         assert row.name == "Latent Space"
         assert row.is_active is True
 
-        blocked = import_podcast_catalog(
+        unhealthy = import_podcast_catalog(
             session,
             source_ids=["podcast_voices_from_darpa"],
         )
-        assert blocked["created"] == []
-        assert blocked["skipped_blocked"]
-        allowed = import_podcast_catalog(
-            session,
-            source_ids=["podcast_voices_from_darpa"],
-            include_blocked=True,
-        )
-        assert allowed["created"] == ["podcast_voices_from_darpa"]
+        assert unhealthy["created"] == ["podcast_voices_from_darpa"]
 
 
 def test_catalog_api_is_not_shadowed_by_dynamic_source_route(monkeypatch, tmp_path):

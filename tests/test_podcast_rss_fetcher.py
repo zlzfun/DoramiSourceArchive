@@ -5,6 +5,7 @@ import sys
 from dataclasses import replace
 
 import pytest
+import httpx
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
@@ -20,6 +21,21 @@ from fetchers.impl.podcast_rss_fetcher import GenericPodcastRssFetcher
 from fetchers.registry import fetcher_registry
 from models.content import PodcastEpisodeContent, serialize_to_metadata
 from models.db import ArticleRecord, SourceConfigRecord
+
+
+def _seed_approved_podcast(sink, source_id: str) -> None:
+    with Session(sink.engine) as session:
+        source = SourceConfigRecord(
+            source_id=source_id,
+            name="Podcast Show",
+            source_type="podcast",
+            url="https://example.test/feed.xml",
+            is_active=True,
+            created_at="2026-09-02T00:00:00+00:00",
+            updated_at="2026-09-02T00:00:00+00:00",
+        )
+        session.add(source)
+        session.commit()
 
 
 class DummyResponse:
@@ -75,15 +91,31 @@ def _podcast_feed_xml() -> str:
     </rss>"""
 
 
-def test_generic_podcast_rss_parses_episode_metadata_without_downloading_audio():
+def test_generic_podcast_rss_parses_episode_metadata_without_downloading_audio(
+    monkeypatch,
+):
+    import config
+
+    monkeypatch.setattr(
+        config,
+        "settings",
+        replace(
+            config.settings,
+            podcast=replace(
+                config.settings.podcast,
+                feed_max_bytes=12_345,
+                feed_timeout_seconds=17,
+            ),
+        ),
+    )
     fetcher = GenericPodcastRssFetcher()
     requested_urls = []
 
-    async def fake_safe_get(client, url):
-        requested_urls.append(url)
-        return DummyResponse(_podcast_feed_xml(), url)
+    async def fake_fetch(client, url, max_bytes, *, timeout_seconds=None):
+        requested_urls.append((url, max_bytes, timeout_seconds))
+        return _podcast_feed_xml().encode("utf-8")
 
-    fetcher._safe_get = fake_safe_get
+    fetcher._fetch_feed_limited = fake_fetch
 
     async def collect():
         return [
@@ -99,7 +131,7 @@ def test_generic_podcast_rss_parses_episode_metadata_without_downloading_audio()
     episodes = asyncio.run(collect())
 
     # 只有 feed 被请求；enclosure 与 transcript 都只记录 URL，不在采集阶段下载。
-    assert requested_urls == ["https://example.test/feed.xml"]
+    assert requested_urls == [("https://example.test/feed.xml", 12_345, 17)]
     # 无 enclosure 条目被过滤；其余单集按发布时间倒序。
     assert [item.title for item in episodes] == ["Short Episode", "Long Episode"]
     short_episode, episode = episodes
@@ -143,6 +175,151 @@ def test_generic_podcast_rss_parses_episode_metadata_without_downloading_audio()
     assert metadata["content_type"] == "podcast_episode"
     assert metadata["extensions"]["audio_url"] == episode.audio_url
     assert metadata["extensions"]["duration_seconds"] == 3723
+
+
+def test_podcast_feed_rechecks_redirects_and_never_requests_private_target(
+    monkeypatch,
+):
+    from services import media_store
+    from services.media_store import SSRFError
+
+    checked = []
+
+    async def guard(host):
+        checked.append(host)
+        if host == "127.0.0.1":
+            raise SSRFError("blocked redirect")
+
+    def redirect(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "feeds.example.test":
+            return httpx.Response(
+                302,
+                headers={"Location": "http://127.0.0.1/private.xml"},
+            )
+        raise AssertionError("private redirect target must never be requested")
+
+    monkeypatch.setattr(media_store, "ensure_public_host", guard)
+    fetcher = GenericPodcastRssFetcher()
+
+    async def run():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(redirect)
+        ) as client:
+            return await fetcher._fetch_feed_limited(
+                client,
+                "https://feeds.example.test/show.xml",
+                1024,
+                timeout_seconds=1,
+            )
+
+    with pytest.raises(SSRFError, match="blocked redirect"):
+        asyncio.run(run())
+    assert checked == ["feeds.example.test", "127.0.0.1"]
+
+
+@pytest.mark.parametrize("declared", [True, False])
+def test_podcast_feed_enforces_size_for_declared_and_chunked_bodies(
+    monkeypatch, declared
+):
+    from services import media_store
+
+    async def guard(_host):
+        return None
+
+    monkeypatch.setattr(media_store, "ensure_public_host", guard)
+
+    def oversized(_request: httpx.Request) -> httpx.Response:
+        headers = {"Content-Length": "5"} if declared else {}
+        return httpx.Response(200, headers=headers, content=b"12345")
+
+    fetcher = GenericPodcastRssFetcher()
+
+    async def run():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(oversized)
+        ) as client:
+            return await fetcher._fetch_feed_limited(
+                client,
+                "https://feeds.example.test/show.xml",
+                4,
+                timeout_seconds=1,
+            )
+
+    with pytest.raises(ValueError, match="大小上限"):
+        asyncio.run(run())
+
+
+def test_podcast_feed_wall_clock_timeout_covers_streaming_body(monkeypatch):
+    from services import media_store
+
+    async def guard(_host):
+        return None
+
+    class SlowBody(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            await asyncio.sleep(0.02)
+            yield b"<rss/>"
+
+    monkeypatch.setattr(media_store, "ensure_public_host", guard)
+
+    def slow(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=SlowBody())
+
+    fetcher = GenericPodcastRssFetcher()
+
+    async def run():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(slow)
+        ) as client:
+            return await fetcher._fetch_feed_limited(
+                client,
+                "https://feeds.example.test/show.xml",
+                1024,
+                timeout_seconds=0.001,
+            )
+
+    with pytest.raises(ValueError, match="超时上限"):
+        asyncio.run(run())
+
+
+def test_podcast_runtime_clamps_stale_source_limit_to_config(monkeypatch):
+    import config
+
+    monkeypatch.setattr(
+        config,
+        "settings",
+        replace(
+            config.settings,
+            podcast=replace(
+                config.settings.podcast,
+                feed_max_bytes=4096,
+                feed_timeout_seconds=9,
+            ),
+        ),
+    )
+    fetcher = GenericPodcastRssFetcher()
+    observed = []
+
+    async def fake_fetch(_client, _url, max_bytes, *, timeout_seconds=None):
+        observed.append((max_bytes, timeout_seconds))
+        return b"<rss><channel><title>empty</title></channel></rss>"
+
+    fetcher._fetch_feed_limited = fake_fetch
+
+    async def run():
+        async with httpx.AsyncClient() as client:
+            return [
+                item
+                async for item in fetcher._run(
+                    client,
+                    feed_url="https://feeds.example.test/show.xml",
+                    source_id="podcast_stale",
+                    max_response_bytes=10**9,
+                )
+            ]
+
+    assert asyncio.run(run()) == []
+    assert observed == [(4096, 9)]
 
 
 @pytest.mark.parametrize(
@@ -302,13 +479,14 @@ def test_article_list_and_detail_serializer_project_lightweight_podcast_contract
         ],
         "chapters_url": "https://cdn.example.test/1.chapters.json",
         "chapters_mime": "application/json+chapters",
-        "processing_eligible": False,
+        "analysis_basis": "show_notes",
+        "is_long_form": False,
         "transcript_available": True,
         "processing_status": "",
         "condensed_audio_url": "",
         "condensed_duration_seconds": None,
     }
-    assert over_thirty["podcast"]["processing_eligible"] is True
+    assert over_thirty["podcast"]["is_long_form"] is True
     assert "raw_data" not in over_thirty["podcast"]
 
 
@@ -316,6 +494,7 @@ def test_existing_podcast_refreshes_feed_metadata_without_erasing_derived_fields
     from storage.impl.db_storage import DatabaseStorage
 
     sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'podcast-refresh.db'}")
+    _seed_approved_podcast(sink, "podcast_refresh")
     common = {
         "id": "podcast-refresh-1",
         "source_id": "podcast_refresh",
@@ -396,6 +575,7 @@ def test_articles_list_and_detail_endpoints_expose_same_podcast_projection(monke
     from storage.impl.db_storage import DatabaseStorage
 
     sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'podcast-api.db'}")
+    _seed_approved_podcast(sink, "podcast_e2e")
     monkeypatch.setattr(app_module, "db_sink", sink)
     monkeypatch.setattr(
         app_module,
@@ -449,7 +629,8 @@ def test_articles_list_and_detail_endpoints_expose_same_podcast_projection(monke
         detail_item = detail.json()
 
     assert list_item["podcast"] == detail_item["podcast"]
-    assert list_item["podcast"]["processing_eligible"] is True
+    assert list_item["podcast"]["analysis_basis"] == "show_notes"
+    assert list_item["podcast"]["is_long_form"] is True
     assert list_item["podcast"]["transcript_available"] is True
     assert "content" not in list_item
     assert detail_item["content"] == "Endpoint show notes"
