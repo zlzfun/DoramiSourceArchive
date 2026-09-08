@@ -1,19 +1,29 @@
-# main → master 自动同步(单向)
+# main → master 自动同步(单向,按版本节点)
 #
-# 触发:main 有新提交(PR 合入或直推)即把 main 合并进 master 并推送。
-# master 是内网适配分支,只接收 main 的合并、永不合回 main。
+# 触发:main 打出版本 tag(v*)时,把该 tag 指向的提交合并进 master 并推送;
+# 也可 workflow_dispatch 手动指定 ref(tag 或提交,默认 main 头)。
+# 2026-09-08 起不再按每次 push 触发:内网拿到的应是完整版本节点,
+# 冲突集中在发版时一次解决,由最熟悉这一波改动的发版人处理。
+# master 是内网适配分支,只接收 main 的合并、永不合回 main;
+# 差异面与冲突解决原则登记在 master 的 INTRANET_DELTA.md。
 #
-# 冲突处理:自动合并只在干净的情况下推送;出现冲突时任务失败并在
-# Job Summary 里列出冲突文件,由人工在本地按老流程处理:
-#   git checkout master && git pull && git merge main   # 解决冲突后 push
+# 冲突处理:自动合并只在干净的情况下推送;出现冲突时任务失败并在 Job Summary 里
+# 列出冲突文件,由人工在本地处理(建议用 worktree,不在主仓 checkout master):
+#   git worktree add ../dorami-master master && cd ../dorami-master
+#   git merge <tag>   # 按 INTRANET_DELTA.md 的原则解决冲突,跑测试后 push origin master
 #
 # 注意:仓库 Actions 默认 GITHUB_TOKEN 权限为只读,故此处显式申请 contents: write。
 name: Sync main → master
 
 on:
   push:
-    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+    inputs:
+      ref:
+        description: 要合入 master 的 main 侧引用(tag 或提交;默认 main 头)
+        required: false
+        default: main
 
 permissions:
   contents: write
@@ -35,27 +45,40 @@ jobs:
       - name: Merge main into master
         id: merge
         env:
-          MAIN_SHA: ${{ github.sha }}
+          SYNC_REF: ${{ github.event.inputs.ref || github.ref_name }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git fetch origin main
+          git fetch origin main --tags
+          # 手动 dispatch 传 "main" 时解析到 origin/main 头;tag/提交按字面解析
+          if [ "$SYNC_REF" = "main" ]; then
+            MAIN_SHA="$(git rev-parse origin/main)"
+          else
+            MAIN_SHA="$(git rev-parse "${SYNC_REF}^{commit}")"
+          fi
+          # 只同步 main 线上的提交:打在别的分支上的 tag 不得混进 master
+          if ! git merge-base --is-ancestor "$MAIN_SHA" origin/main; then
+            echo "::error::${SYNC_REF}(${MAIN_SHA:0:7})不在 main 线上,拒绝同步。"
+            exit 1
+          fi
           if git merge-base --is-ancestor "$MAIN_SHA" HEAD; then
-            echo "master 已包含 main@${MAIN_SHA:0:7},无需合并。" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "master 已包含 ${SYNC_REF}(${MAIN_SHA:0:7}),无需合并。" | tee -a "$GITHUB_STEP_SUMMARY"
             echo "pushed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           subject="$(git log -1 --format=%s "$MAIN_SHA")"
-          if git merge --no-ff --no-edit -m "merge main → master(auto-sync): ${subject}" "$MAIN_SHA"; then
+          if git merge --no-ff --no-edit -m "merge main → master(auto-sync ${SYNC_REF}): ${subject}" "$MAIN_SHA"; then
             git push origin HEAD:master
             {
               echo "### ✅ 已同步 main → master"
               echo
-              echo "- main: \`${MAIN_SHA:0:7}\` ${subject}"
+              echo "- 版本节点: \`${SYNC_REF}\` → main \`${MAIN_SHA:0:7}\` ${subject}"
               echo "- master: \`$(git rev-parse --short HEAD)\`"
+              echo
+              echo '内网侧接手后请更新 `INTRANET_DELTA.md` 的 `UPSTREAM_BASE`。'
             } >> "$GITHUB_STEP_SUMMARY"
             echo "pushed=true" >> "$GITHUB_OUTPUT"
           else
@@ -64,12 +87,15 @@ jobs:
             {
               echo "### ❌ main → master 合并冲突,未推送"
               echo
+              echo "- 版本节点: \`${SYNC_REF}\` → main \`${MAIN_SHA:0:7}\` ${subject}"
+              echo
               echo "冲突文件:"
               echo
               echo "$conflicts" | sed 's/^/- `/; s/$/`/'
               echo
-              echo '请本地处理:`git checkout master && git pull && git merge main`,解决后 push。'
+              echo '请本地处理(建议 worktree):`git worktree add ../dorami-master master && cd ../dorami-master && git merge '"${SYNC_REF}"'`,'
+              echo '按 `INTRANET_DELTA.md` 的冲突解决原则处理、跑测试后 `push origin master`。'
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::main → master 合并冲突: $(echo "$conflicts" | tr '\n' ' ')"
+            echo "::error::main → master 合并冲突(${SYNC_REF}): $(echo "$conflicts" | tr '\n' ' ')"
             exit 1
           fi
