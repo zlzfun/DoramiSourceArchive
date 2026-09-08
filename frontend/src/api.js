@@ -14,11 +14,17 @@ async function apiFetch(url, options = {}) {
 
 async function handleApiError(response, defaultMsg) {
   let msg = defaultMsg;
+  let code = '';
   try {
     const data = await response.json();
-    if (data.detail) msg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+    if (data.message) msg = data.message;
+    else if (data.detail) msg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+    code = typeof data.code === 'string' ? data.code : '';
   } catch { /* use defaultMsg */ }
-  throw new Error(msg);
+  const error = new Error(msg);
+  error.status = response.status;
+  error.code = code;
+  throw error;
 }
 
 // 统一 JSON 请求封装：收敛遍布各接口的 `apiFetch → if(!ok) handleApiError → res.json()` 样板。
@@ -170,6 +176,95 @@ export function mediaProxyUrl(src) {
 
 export function fetchMediaStats() {
   return request('/admin/media/stats', { errorMsg: '获取媒体库统计失败' });
+}
+
+// ── Podcast 音频资产（本地存储管理）──
+export function fetchPodcastStageCapabilities(options = {}) {
+  return request('/admin/podcast-stages/capabilities', {
+    errorMsg: '获取播客节点能力失败',
+    ...options,
+  });
+}
+
+export function fetchPodcastArtifactStats(options = {}) {
+  return request('/admin/podcast-artifacts/stats', {
+    errorMsg: '获取播客音频存储统计失败',
+    ...options,
+  });
+}
+
+export function fetchPodcastArtifacts(filters = {}, options = {}) {
+  const params = withFilters(new URLSearchParams(), filters);
+  const query = params.toString();
+  return request(`/admin/podcast-artifacts${query ? `?${query}` : ''}`, {
+    errorMsg: '获取播客音频资产失败',
+    ...options,
+  });
+}
+
+export function cachePodcastSourceAudio(episodeId) {
+  return request(`/admin/podcast-episodes/${enc(episodeId)}/cache-source-audio`, {
+    method: 'POST',
+    errorMsg: '缓存播客原始音频失败',
+  });
+}
+
+export function withdrawPodcastArtifact(artifactId) {
+  return request(`/admin/podcast-artifacts/${enc(artifactId)}/withdraw`, {
+    method: 'POST',
+    errorMsg: '下架播客音频失败',
+  });
+}
+
+export function publishPodcastArtifact(artifactId, expectedUpdatedAt) {
+  const params = new URLSearchParams({ expected_updated_at: expectedUpdatedAt });
+  return request(`/admin/podcast-artifacts/${enc(artifactId)}/publish?${params}`, {
+    method: 'POST',
+    errorMsg: '发布播客音频失败',
+  });
+}
+
+export function deletePodcastArtifact(artifactId) {
+  return request(`/admin/podcast-artifacts/${enc(artifactId)}`, {
+    method: 'DELETE',
+    errorMsg: '删除播客音频失败',
+  });
+}
+
+export function reconcilePodcastArtifacts() {
+  return request('/admin/podcast-artifacts/reconcile', {
+    method: 'POST',
+    errorMsg: '回收播客孤儿音频失败',
+  });
+}
+
+export function fetchPodcastEpisodeTexts(episodeId, filters = {}, options = {}) {
+  const params = withFilters(new URLSearchParams(), filters);
+  const query = params.toString();
+  return request(`/podcasts/episodes/${enc(episodeId)}/texts${query ? `?${query}` : ''}`, {
+    errorMsg: '获取播客文字内容失败',
+    ...options,
+  });
+}
+
+export function fetchPodcastPremiumGuides(filters = {}, options = {}) {
+  const params = withFilters(new URLSearchParams(), filters);
+  const query = params.toString();
+  return request(`/admin/podcast-premium-guides${query ? `?${query}` : ''}`, {
+    errorMsg: '获取精品导读任务失败',
+    ...options,
+  });
+}
+
+export function runPodcastPremiumGuide(episodeId) {
+  return request(`/admin/podcast-premium-guides/${enc(episodeId)}/run`, {
+    method: 'POST',
+    errorMsg: '启动精品导读失败',
+  });
+}
+
+export function podcastArtifactAdminAudioUrl(artifactId) {
+  return `${API_BASE_URL}/admin/podcast-artifacts/${enc(artifactId)}/audio`;
 }
 
 // year 传自然年取该年切片(年份切换轨);缺省为近 days 天滚动窗。响应恒带 years 可用年份列表。

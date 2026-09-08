@@ -142,7 +142,7 @@ def subscribe_source(source_id: str, request: Request, session: Session = Depend
     source_id = (source_id or "").strip()
     if not source_id:
         raise HTTPException(status_code=400, detail="source_id 不能为空")
-    if source_id in source_visibility_service.hidden_source_ids(session):
+    if source_id in source_visibility_service.reader_unavailable_source_ids(session):
         # 管理面隐藏的源不接受新订阅（目录里也不可见；防旧页面状态/直连 API 绕过）。
         raise HTTPException(status_code=404, detail="该内容源暂不可用")
     # 用户源分支整段持写锁(codex 终审:校验→提交窗口内源可能被 purge,提交出
@@ -269,14 +269,14 @@ def subscribe_collection(collection_id: str, request: Request, session: Session 
     collection = source_collections_service.get_collection((collection_id or "").strip())
     if collection is None:
         raise HTTPException(status_code=404, detail="合集不存在")
-    hidden = source_visibility_service.hidden_source_ids(session)
+    unavailable_ids = source_visibility_service.reader_unavailable_source_ids(session)
     registry_meta = _registry_source_meta()
     existing = set(app.resolve_subscribed_source_ids(session, username, include_hidden=True))
     added: List[str] = []
     already_subscribed: List[str] = []
     unavailable: List[str] = []
     for source_id in collection.source_ids:
-        if source_id in hidden or source_id not in registry_meta:
+        if source_id in unavailable_ids or source_id not in registry_meta:
             # 隐藏源不接受新订阅;注册表外成员(注册表漂移的运行时兜底)不下单。
             unavailable.append(source_id)
             continue
@@ -754,11 +754,11 @@ def list_favorites(
     if not (auth_session and auth_session.get("role") == "admin"):
         # 与 /api/articles 同口径：管理面隐藏的源在读者收藏列表里也临时不可见
         # （收藏行保留，恢复可见即回归）。
-        hidden = source_visibility_service.hidden_source_ids(session)
-        if hidden:
+        unavailable = source_visibility_service.reader_unavailable_source_ids(session)
+        if unavailable:
             hidden_cond = or_(
                 ArticleRecord.source_id.is_(None),
-                ArticleRecord.source_id.notin_(sorted(hidden)),
+                ArticleRecord.source_id.notin_(sorted(unavailable)),
             )
             base = base.where(hidden_cond)
             count_query = count_query.where(hidden_cond)
@@ -814,6 +814,7 @@ def list_favorites(
             analysis=analyses.get(record.id),
             tags=tags.get(record.id, []),
             display_tags=display_tags.get(record.id, []),
+            premium_score_threshold=_app().settings.podcast.premium_score_threshold,
         )
         for record in records
     ]
@@ -902,7 +903,7 @@ def create_article_share(
     if article is None:
         raise HTTPException(status_code=404, detail="文章不存在")
     # 与「读者面隐藏 = 内容交付全量排除」同口径：暂不可用的源不能被摊开成公开链接。
-    if article.source_id in source_visibility_service.hidden_source_ids(session):
+    if article.source_id in source_visibility_service.reader_unavailable_source_ids(session):
         raise HTTPException(status_code=403, detail="该内容暂不可用，无法分享")
     if not user_sources_service.source_content_may_leave_deployment(
         session, article.source_id
@@ -1121,7 +1122,7 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
     # 保留条目并标 hidden=True——前端呈「暂不可用」灰显形态,读者可退订也可留着等
     # 恢复(临时下架的常态结局是恢复,静默消失会像数据丢失)。内容交付(列表/未读/
     # feed/检索)仍全量排除,见 resolve_subscribed_source_ids。
-    hidden_ids = source_visibility_service.hidden_source_ids(session)
+    unavailable_ids = source_visibility_service.reader_unavailable_source_ids(session)
     # 用户自定源(v3.40 私有):仅订阅者可见——非订阅者的目录/发现页完全不出现
     # (添加即订阅、移除即退订,故「我的自定源」恒在 subscribed_ids 内)。
     all_user_source_ids = user_sources_service.user_source_ids(session)
@@ -1129,11 +1130,14 @@ def get_reader_sources(request: Request, session: Session = Depends(deps.get_ses
         (
             {
                 **{k: v for k, v in entry.items() if k != "_primary_count"},
-                "hidden": entry["source_id"] in hidden_ids,
+                "hidden": entry["source_id"] in unavailable_ids,
                 "user_source": entry["source_id"] in all_user_source_ids,
             }
             for entry in by_source.values()
-            if (entry["source_id"] not in hidden_ids or entry["source_id"] in subscribed_ids)
+            if (
+                entry["source_id"] not in unavailable_ids
+                or entry["source_id"] in subscribed_ids
+            )
             and (entry["source_id"] not in all_user_source_ids or entry["source_id"] in subscribed_ids)
         ),
         key=lambda s: (s["category"], -s["count"], s["name"]),

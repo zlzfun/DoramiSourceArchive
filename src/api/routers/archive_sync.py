@@ -37,6 +37,27 @@ router = APIRouter(tags=["archive-sync"])
 ARCHIVE_SYNC_SCHEMA_VERSION = "articles-jsonl-v1"
 
 
+def _podcast_config():
+    return importlib.import_module("api.app").settings.podcast
+
+
+async def _read_utf8_body_limited(request: Request, *, max_bytes: int) -> str:
+    """Stream one request body without allowing Starlette to buffer past its cap."""
+
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > max_bytes:
+        raise HTTPException(status_code=413, detail="导入页超过配置的字节上限")
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > max_bytes:
+            raise HTTPException(status_code=413, detail="导入页超过配置的字节上限")
+    try:
+        return bytes(body).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="导入页必须是 UTF-8") from exc
+
+
 def _canonical_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -83,7 +104,9 @@ def archive_manifest_line(count: int, filters: Dict[str, Any]) -> Dict[str, Any]
         "generated_at": _now_iso(),
         "content": "articles",
         "count": count,
-        "filters": {key: value for key, value in filters.items() if value not in (None, "")},
+        "filters": {
+            key: value for key, value in filters.items() if value not in (None, "")
+        },
     }
 
 
@@ -94,7 +117,13 @@ def _coerce_optional_int(value: Any) -> Optional[int]:
 
 
 def build_import_article_record(article: Dict[str, Any]) -> ArticleRecord:
-    required_fields = ["id", "content_type", "source_id", "publish_date", "fetched_date"]
+    required_fields = [
+        "id",
+        "content_type",
+        "source_id",
+        "publish_date",
+        "fetched_date",
+    ]
     missing = [field for field in required_fields if article.get(field) in (None, "")]
     if missing:
         raise ValueError(f"article missing required fields: {', '.join(missing)}")
@@ -112,7 +141,9 @@ def build_import_article_record(article: Dict[str, Any]) -> ArticleRecord:
         source_url=str(article.get("source_url") or ""),
         publish_date=str(article["publish_date"]),
         fetched_date=str(article["fetched_date"]),
-        archive_updated_at=str(article.get("archive_updated_at") or article["fetched_date"]),
+        archive_updated_at=str(
+            article.get("archive_updated_at") or article["fetched_date"]
+        ),
         fetch_run_id=_coerce_optional_int(article.get("fetch_run_id")),
         job_id=_coerce_optional_int(article.get("job_id")),
         job_run_id=_coerce_optional_int(article.get("job_run_id")),
@@ -144,19 +175,25 @@ def import_archive_sync_jsonl(raw_text: str) -> Dict[str, Any]:
                 if kind == "manifest":
                     manifest = item
                     if item.get("schema_version") != ARCHIVE_SYNC_SCHEMA_VERSION:
-                        raise ValueError(f"unsupported schema_version: {item.get('schema_version')}")
+                        raise ValueError(
+                            f"unsupported schema_version: {item.get('schema_version')}"
+                        )
                     continue
                 if kind != "article":
                     raise ValueError(f"unsupported line kind: {kind}")
                 if item.get("schema_version") != ARCHIVE_SYNC_SCHEMA_VERSION:
-                    raise ValueError(f"unsupported schema_version: {item.get('schema_version')}")
+                    raise ValueError(
+                        f"unsupported schema_version: {item.get('schema_version')}"
+                    )
 
                 article = item.get("article")
                 if not isinstance(article, dict):
                     raise ValueError("article line missing article object")
                 expected_checksum = item.get("checksum", "")
                 actual_checksum = archive_article_checksum(article)
-                if expected_checksum and not hmac.compare_digest(str(expected_checksum), actual_checksum):
+                if expected_checksum and not hmac.compare_digest(
+                    str(expected_checksum), actual_checksum
+                ):
                     raise ValueError("checksum mismatch")
 
                 incoming = build_import_article_record(article)
@@ -170,8 +207,12 @@ def import_archive_sync_jsonl(raw_text: str) -> Dict[str, Any]:
                     existing.content_type == "podcast_episode"
                     and incoming.content_type == "podcast_episode"
                 ):
-                    existing_revision = existing.archive_updated_at or existing.fetched_date
-                    incoming_revision = incoming.archive_updated_at or incoming.fetched_date
+                    existing_revision = (
+                        existing.archive_updated_at or existing.fetched_date
+                    )
+                    incoming_revision = (
+                        incoming.archive_updated_at or incoming.fetched_date
+                    )
                     if existing_revision and incoming_revision < existing_revision:
                         skipped_count += 1
                         continue
@@ -193,7 +234,11 @@ def import_archive_sync_jsonl(raw_text: str) -> Dict[str, Any]:
                     else:
                         skipped_count += 1
                     continue
-                if not existing.has_content and incoming.has_content and incoming.content:
+                if (
+                    not existing.has_content
+                    and incoming.has_content
+                    and incoming.content
+                ):
                     existing.title = incoming.title
                     existing.content_type = incoming.content_type
                     existing.source_id = incoming.source_id
@@ -248,9 +293,10 @@ def import_archive_sync_jsonl(raw_text: str) -> Dict[str, Any]:
 
 # ==================== 端点 ====================
 
+
 @router.get("/api/archive/export/articles.jsonl")
 def export_archive_articles_jsonl(
-        content_type: Optional[str] = None,
+    content_type: Optional[str] = None,
         content_types: Optional[str] = None,
         source_id: Optional[str] = None,
         source_ids: Optional[str] = None,
@@ -323,10 +369,15 @@ def export_archive_articles_jsonl(
             SourceConfigRecord, SourceConfigRecord.source_id == ArticleRecord.source_id
         ).where(
             ~ArticleRecord.source_id.startswith(USER_SOURCE_PREFIX, autoescape=True),
-            or_(SourceConfigRecord.source_id.is_(None), SourceConfigRecord.owner_username == ""),
+            or_(
+                SourceConfigRecord.source_id.is_(None),
+                SourceConfigRecord.owner_username == "",
+            ),
         )
         records = session.exec(
-            query.order_by(sync_cursor.asc(), ArticleRecord.id.asc()).offset(skip).limit(safe_limit)
+            query.order_by(sync_cursor.asc(), ArticleRecord.id.asc())
+            .offset(skip)
+            .limit(safe_limit)
         ).all()
 
     lines = [archive_manifest_line(len(records), filters)]
@@ -347,11 +398,17 @@ async def import_archive_articles_jsonl(request: Request):
     if not raw_text.strip():
         raise HTTPException(status_code=400, detail="导入内容不能为空")
     result = import_archive_sync_jsonl(raw_text)
-    status_code = 400 if result["error_count"] and not (result["imported_count"] or result["updated_count"]) else 200
+    status_code = (
+        400
+        if result["error_count"]
+        and not (result["imported_count"] or result["updated_count"])
+        else 200
+    )
     return StarletteJSONResponse(result, status_code=status_code)
 
 
 # ==================== V2 分流快照同步 ====================
+
 
 @router.get("/api/archive/v2/export/{stream}.jsonl")
 def export_archive_v2_jsonl(
@@ -360,6 +417,7 @@ def export_archive_v2_jsonl(
     since: str = "",
     after: str = "",
     limit: int = 1000,
+    page_max_bytes: Optional[int] = None,
 ):
     """按共享事务 revision snapshot 导出 keyset 页；不使用 offset。"""
     try:
@@ -370,6 +428,11 @@ def export_archive_v2_jsonl(
             since=since,
             after=after,
             limit=limit,
+            podcast_text_max_bytes=_podcast_config().text_artifact_max_bytes,
+            podcast_text_max_chars=_podcast_config().text_artifact_max_chars,
+            podcast_text_page_max_bytes=_podcast_config().text_sync_page_max_bytes,
+            podcast_text_page_max_rows=_podcast_config().text_sync_page_max_rows,
+            podcast_text_requested_page_max_bytes=page_max_bytes,
         )
     except archive_sync_v2.SyncV2Error as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -395,8 +458,12 @@ async def archive_v2_authoritative_presence(request: Request):
 
     try:
         payload = await request.json()
-        if not isinstance(payload, dict) or not isinstance(payload.get("identities"), list):
-            raise archive_sync_v2.SyncV2Error("presence request must contain identities")
+        if not isinstance(payload, dict) or not isinstance(
+            payload.get("identities"), list
+        ):
+            raise archive_sync_v2.SyncV2Error(
+                "presence request must contain identities"
+            )
         stream = str(payload.get("stream") or "")
         requested = [str(value or "") for value in payload["identities"]]
         present = archive_sync_v2.authority_present_identities(
@@ -421,12 +488,28 @@ async def archive_v2_authoritative_presence(request: Request):
 @router.post("/api/archive/v2/import/{stream}.jsonl")
 async def import_archive_v2_jsonl(stream: str, request: Request):
     """先完整校验一页，再单事务应用；坏行不会留下半页数据。"""
-    raw_text = (await request.body()).decode("utf-8")
+    if stream not in archive_sync_v2.STREAMS:
+        raise HTTPException(status_code=400, detail=f"unsupported stream: {stream}")
+    config = _podcast_config()
+    if stream == "podcast_texts":
+        raw_text = await _read_utf8_body_limited(
+            request,
+            max_bytes=config.text_sync_page_max_bytes,
+        )
+    else:
+        try:
+            raw_text = (await request.body()).decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail="导入页必须是 UTF-8") from exc
     try:
         result = archive_sync_v2.import_page(
             deps.get_db_sink().engine,
             raw_text,
             expected_stream=stream,
+            podcast_text_max_bytes=config.text_artifact_max_bytes,
+            podcast_text_max_chars=config.text_artifact_max_chars,
+            podcast_text_page_max_bytes=config.text_sync_page_max_bytes,
+            podcast_text_page_max_rows=config.text_sync_page_max_rows,
         )
     except archive_sync_v2.SyncV2Error as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -458,6 +541,32 @@ def export_archive_v2_media(url_hash: str):
     path = store.file_path_for(record)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="media file missing")
+    return FileResponse(
+        path,
+        media_type=record.mime or "application/octet-stream",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.get("/api/archive/v2/podcast-audio/{artifact_id}")
+def export_archive_v2_podcast_audio(artifact_id: str):
+    """Export one published external digest audio declared by the sync stream."""
+
+    from models.db import PodcastArtifactRecord
+
+    with Session(deps.get_db_sink().engine) as session:
+        record = session.get(PodcastArtifactRecord, artifact_id)
+        public_reference = archive_sync_v2.is_public_podcast_audio_reference(
+            session, artifact_id
+        )
+    if record is None or not public_reference:
+        raise HTTPException(status_code=404, detail="podcast audio not found")
+    store = getattr(importlib.import_module("api.app"), "podcast_artifact_store", None)
+    if store is None:
+        raise HTTPException(status_code=404, detail="podcast artifact store disabled")
+    path = store.file_path_for(record)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="podcast audio file missing")
     return FileResponse(
         path,
         media_type=record.mime or "application/octet-stream",

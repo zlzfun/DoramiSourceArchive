@@ -74,7 +74,10 @@ def _podcast_projection(extensions: Dict[str, Any]) -> Dict[str, Any]:
         "transcripts": transcripts,
         "chapters_url": str(extensions.get("chapters_url") or ""),
         "chapters_mime": str(extensions.get("chapters_mime") or ""),
-        "processing_eligible": duration_seconds is not None and duration_seconds > 1800,
+        # RSS ingestion only sees publisher metadata/show notes.  Duration is a
+        # descriptive scheduling signal, never authorization for paid processing.
+        "analysis_basis": str(extensions.get("analysis_basis") or "show_notes"),
+        "is_long_form": duration_seconds is not None and duration_seconds > 1800,
         "transcript_available": any(transcript["url"] for transcript in transcripts),
         "processing_status": str(extensions.get("processing_status") or ""),
         "condensed_audio_url": str(extensions.get("condensed_audio_url") or ""),
@@ -200,6 +203,7 @@ def serialize_article_list_item(
     analysis: Any = None,
     tags: Optional[list[Dict[str, Any]]] = None,
     display_tags: Optional[list[Dict[str, Any]]] = None,
+    premium_score_threshold: float = 8.5,
 ) -> Dict[str, Any]:
     content = record.content or ""
     # AI 要点摘要(extensions_json.summary_zh)作为轻字段随条目透出:
@@ -262,6 +266,12 @@ def serialize_article_list_item(
         # independently bounded by the display-tag service.  ``tags`` remains
         # canonical-only for filtering, interests and digest selection.
         "display_tags": projected_tags,
+        "is_premium_podcast": bool(
+            record.content_type == "podcast_episode"
+            and analysis is not None
+            and getattr(analysis, "quality_score", None) is not None
+            and float(analysis.quality_score) > premium_score_threshold
+        ),
     }
     if include_content:
         item["content"] = content

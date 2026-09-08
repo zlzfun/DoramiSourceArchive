@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ChevronLeft,
   ExternalLink,
@@ -9,11 +9,11 @@ import {
 } from 'lucide-react';
 import ReaderMarkdown from '../ReaderMarkdown';
 import ShareMenu from '../ShareMenu';
-import PodcastAudioPanel from '../PodcastAudioPanel';
+import PodcastExperiencePanel from '../PodcastExperiencePanel';
 import AnalysisTagChip from '../AnalysisTagChip';
 import { PaneBodySkeleton } from '../ReaderTab';
 import { formatDateTime, formatPublishDate } from '../../utils/datetime';
-import { formatPodcastDuration } from '../../utils/podcast';
+import { formatPodcastDuration, podcastOf } from '../../utils/podcast';
 import {
   analysisStatusMeta,
   contentGenreLabel,
@@ -50,9 +50,21 @@ export default function MobileArticlePage({
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
   }, [activeArticle?.id]);
 
+  const [podcastSelection, setPodcastSelection] = useState({ articleId: '', variant: 'original' });
+
   if (!activeArticle) return null;
   const isFav = favoriteIds.has(activeArticle.id);
   const analysisStatus = analysisStatusMeta(activeArticle, { podcast: podcastView });
+  const activePodcast = podcastOf(activeArticle);
+  const defaultPodcastVariant = activePodcast?.audio_url
+    ? 'original'
+    : activePodcast?.condensed_audio_url ? 'digest' : 'original';
+  const podcastVariant = podcastSelection.articleId === activeArticle.id
+    ? podcastSelection.variant
+    : defaultPodcastVariant;
+  const podcastGuideActive = podcastView
+    && podcastVariant === 'digest'
+    && Boolean(activePodcast?.condensed_audio_url);
 
   return (
     <div className="m-read" role="region" aria-label="正文">
@@ -137,6 +149,7 @@ export default function MobileArticlePage({
           <h1 className="reader-pane-title">
             {(showTranslation && translatedTitle) ? translatedTitle : (activeArticle.title || '（无标题）')}
           </h1>
+          {activeArticle.is_premium_podcast && <span className="podcast-premium-badge is-title">优质播客</span>}
           {showTranslation && translatedTitle && activeArticle.title && translatedTitle !== activeArticle.title && (
             <div className="reader-pane-title-orig">{activeArticle.title}</div>
           )}
@@ -173,8 +186,16 @@ export default function MobileArticlePage({
           )}
         </header>
         <div className="m-read-body markdown-body">
-          {podcastView && <PodcastAudioPanel article={activeArticle} />}
-          {aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
+          {podcastView && (
+            <PodcastExperiencePanel
+              article={activeArticle}
+              variant={podcastVariant}
+              onVariantChange={(variant) => {
+                setPodcastSelection({ articleId: activeArticle.id, variant });
+              }}
+            />
+          )}
+          {!podcastGuideActive && aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
             <AiReadingCard
               article={activeArticle}
               summary={activeSummary}
@@ -184,13 +205,13 @@ export default function MobileArticlePage({
               podcast={podcastView}
             />
           )}
-          {podcastView && !activeBodyLoading && activeBody && (
+          {podcastView && !podcastGuideActive && !activeBodyLoading && activeBody && (
             <div className="podcast-show-notes-head">
               <h2 className="section-title">节目简介</h2>
               <span>来源方提供</span>
             </div>
           )}
-          {activeBodyLoading ? (
+          {podcastGuideActive ? null : activeBodyLoading ? (
             <PaneBodySkeleton />
           ) : (showTranslation && translatedBody) ? (
             <ReaderMarkdown>{displayTranslatedBody}</ReaderMarkdown>
@@ -202,7 +223,7 @@ export default function MobileArticlePage({
               : '该文章暂无正文内容，点击「查看原文」阅读完整内容。'
           )}
           {/* 正文尾部原文行(v3.45 推全站,与桌面阅读窗同口径):无 source_url 不画 */}
-          {!activeBodyLoading && activeArticle.source_url && (
+          {!podcastGuideActive && !activeBodyLoading && activeArticle.source_url && (
             <p className="reader-pane-origin">
               <a href={activeArticle.source_url} target="_blank" rel="noreferrer">
                 查看原文 ↗

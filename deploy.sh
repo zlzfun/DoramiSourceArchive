@@ -92,6 +92,7 @@ install_system_packages() {
     command -v nginx >/dev/null 2>&1 || missing+=(nginx)
     command -v npm >/dev/null 2>&1 || missing+=(npm)
     { command -v node >/dev/null 2>&1 || command -v nodejs >/dev/null 2>&1; } || missing+=(nodejs)
+    { command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; } || missing+=(ffmpeg)
 
     if [ ${#missing[@]} -eq 0 ]; then
         echo "System packages already installed."
@@ -120,6 +121,8 @@ install_system_packages() {
     if ! command -v node >/dev/null 2>&1 && ! command -v nodejs >/dev/null 2>&1; then
         fail "node/nodejs not found in script PATH. $hint"
     fi
+    command -v ffmpeg >/dev/null 2>&1 || fail "ffmpeg not found in script PATH. $hint"
+    command -v ffprobe >/dev/null 2>&1 || fail "ffprobe not found in script PATH. Install the ffmpeg package and ensure both binaries are visible."
 }
 
 install_pm2() {
@@ -184,7 +187,16 @@ write_nginx_site_config() {
 server {
     listen ${NGINX_LISTEN_PORT}${NGINX_LISTEN_OPTIONS:+ ${NGINX_LISTEN_OPTIONS}};
     server_name ${NGINX_SERVER_NAME};
-    return 301 https://\$host\$request_uri;
+
+    location = /api/public/podcast-asr/source-audio {
+        access_log off;
+        error_log /dev/null crit;
+        return 301 https://\$host\$request_uri;
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
 }
 
 server {
@@ -206,6 +218,21 @@ ${hsts_header}
     root ${NGINX_HTML_DIR};
     index index.html;
     client_max_body_size 100m;
+
+    # ASR provider fetch 的 HMAC 凭据在 query 中，该精确路径禁止
+    # request-scoped Nginx 日志落盘，并直通上游音频流。
+    location = /api/public/podcast-asr/source-audio {
+        access_log off;
+        error_log /dev/null crit;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+        proxy_pass ${backend_upstream};
+    }
 
     location /api/ {
         proxy_http_version 1.1;
@@ -275,6 +302,21 @@ server {
     index index.html;
     client_max_body_size 100m;
 
+    # ASR provider fetch 的 HMAC 凭据在 query 中，该精确路径禁止
+    # request-scoped Nginx 日志落盘，并直通上游音频流。
+    location = /api/public/podcast-asr/source-audio {
+        access_log off;
+        error_log /dev/null crit;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+        proxy_pass ${backend_upstream};
+    }
+
     location /api/ {
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
@@ -331,6 +373,21 @@ server {
     root ${NGINX_HTML_DIR};
     index index.html;
     client_max_body_size 100m;
+
+    # ASR provider fetch 的 HMAC 凭据在 query 中，该精确路径禁止
+    # request-scoped Nginx 日志落盘，并直通上游音频流。
+    location = /api/public/podcast-asr/source-audio {
+        access_log off;
+        error_log /dev/null crit;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+        proxy_pass ${backend_upstream};
+    }
 
     location /api/ {
         proxy_http_version 1.1;
@@ -438,6 +495,8 @@ validate_nginx_config() {
         || fail "Nginx site root is not ${NGINX_HTML_DIR} in ${NGINX_SITE_FILE}"
     $SUDO grep -F "location /api/" "$NGINX_SITE_FILE" >/dev/null \
         || fail "Nginx site config does not define location /api/"
+    $SUDO grep -F "location = /api/public/podcast-asr/source-audio" "$NGINX_SITE_FILE" >/dev/null \
+        || fail "Nginx site config does not protect the signed Podcast ASR fetch route"
     $SUDO grep -F "proxy_pass ${backend_upstream};" "$NGINX_SITE_FILE" >/dev/null \
         || fail "Nginx /api proxy does not point to ${backend_upstream}"
     if truthy "$NGINX_ENABLE_SSL"; then
@@ -588,7 +647,8 @@ else
     fi
 fi
 
-mkdir -p logs data
+PODCAST_ARTIFACT_ROOT="${DORAMI_PODCAST_ARTIFACT_ROOT_DIR:-$(ini_get podcast_artifacts root_dir data/podcast-artifacts)}"
+mkdir -p logs data "$PODCAST_ARTIFACT_ROOT"
 
 # SQLite 只会创建库文件、不会创建父目录:全新 clone 没有 data/,迁移会直接
 # "unable to open database file"。从 ini 解析库路径并确保父目录存在

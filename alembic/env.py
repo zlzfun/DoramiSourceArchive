@@ -26,6 +26,7 @@ from config import settings  # noqa: E402
 from models.db import SQLModel  # noqa: E402  —— 导入即注册所有表到 metadata
 from storage.fts import fts_include_object  # noqa: E402  —— 排除 FTS 虚拟/shadow 表
 from storage.archive_sync_revision import (  # noqa: E402
+    drop_archive_sync_revision_triggers,
     install_archive_sync_revision_triggers,
 )
 
@@ -102,33 +103,7 @@ def run_migrations_online() -> None:
                 # otherwise a trigger can reference the table while Alembic has
                 # temporarily renamed it away. The current schema reinstalls the
                 # complete trigger set after the migration transaction.
-                for name in (
-                    "archive_sync_source_insert",
-                    "archive_sync_source_update",
-                    "archive_sync_source_delete",
-                    "archive_sync_source_nonpublic_insert",
-                    "archive_sync_source_remote_handoff",
-                    "archive_sync_source_scope_exit",
-                    "archive_sync_source_scope_enter",
-                    "archive_sync_article_insert",
-                    "archive_sync_article_update",
-                    "archive_sync_article_scope_exit",
-                    "archive_sync_article_scope_enter",
-                    "archive_sync_article_remote_handoff",
-                    "archive_sync_article_delete",
-                    "archive_sync_analysis_insert",
-                    "archive_sync_analysis_update",
-                    "archive_sync_analysis_delete",
-                    "archive_sync_assignment_insert",
-                    "archive_sync_assignment_update",
-                    "archive_sync_assignment_delete",
-                    "archive_sync_media_insert",
-                    "archive_sync_media_update",
-                    "archive_sync_source_state_insert",
-                    "archive_sync_source_state_update",
-                    "archive_sync_source_state_delete",
-                ):
-                    connection.exec_driver_sql(f'DROP TRIGGER IF EXISTS "{name}"')
+                drop_archive_sync_revision_triggers(connection)
             context.run_migrations()
             if _is_sqlite(str(connectable.url)):
                 tables = set(inspect(connection).get_table_names())

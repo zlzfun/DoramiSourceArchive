@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
+from sqlalchemy import inspect
 from sqlalchemy.engine import Connection
 
 
@@ -32,7 +33,26 @@ def _public_article(alias: str) -> str:
     )
 
 
-def _state_values(stream: str, identity: str, operation: str, clock: str, now: str) -> str:
+def _public_podcast_text_publication(alias: str) -> str:
+    return (
+        f"{alias}.authority_id = '' AND {alias}.status = 'published' "
+        "AND EXISTS (SELECT 1 FROM articles a "
+        f"WHERE a.id = {alias}.episode_id AND {_public_article('a')})"
+    )
+
+
+def _public_podcast_audio(alias: str) -> str:
+    return (
+        f"{alias}.authority_id = '' AND {alias}.kind = 'digest_audio_zh' "
+        f"AND {alias}.status = 'published' AND {alias}.published_at IS NOT NULL "
+        "AND EXISTS (SELECT 1 FROM articles a "
+        f"WHERE a.id = {alias}.episode_id AND {_public_article('a')})"
+    )
+
+
+def _state_values(
+    stream: str, identity: str, operation: str, clock: str, now: str
+) -> str:
     return f"""
         INSERT INTO archive_sync_entity_states(
           stream, identity, authority_id, revision, operation, updated_at
@@ -43,38 +63,51 @@ def _state_values(stream: str, identity: str, operation: str, clock: str, now: s
     """
 
 
-def _trigger_sql() -> Iterable[tuple[str, str]]:
+def _trigger_sql(
+    *, include_podcast_integrity: bool = True
+) -> Iterable[tuple[str, str]]:
     now = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
     clock = "(SELECT revision FROM archive_sync_clock WHERE id = 1)"
     tick = "UPDATE archive_sync_clock SET revision = revision + 1 WHERE id = 1;"
 
-    yield "archive_sync_source_insert", f"""
+    yield (
+        "archive_sync_source_insert",
+        f"""
         CREATE TRIGGER archive_sync_source_insert AFTER INSERT ON source_configs
-        WHEN {_public_source('NEW')}
+        WHEN {_public_source("NEW")}
         BEGIN
           {tick}
-          {_state_values('sources', 'NEW.source_id', 'upsert', clock, now)}
+          {_state_values("sources", "NEW.source_id", "upsert", clock, now)}
         END
-    """
-    yield "archive_sync_source_update", f"""
+    """,
+    )
+    yield (
+        "archive_sync_source_update",
+        f"""
         CREATE TRIGGER archive_sync_source_update AFTER UPDATE ON source_configs
-        WHEN {_public_source('NEW')}
+        WHEN {_public_source("NEW")}
         BEGIN
           {tick}
-          {_state_values('sources', 'NEW.source_id', 'upsert', clock, now)}
+          {_state_values("sources", "NEW.source_id", "upsert", clock, now)}
         END
-    """
-    yield "archive_sync_source_delete", f"""
+    """,
+    )
+    yield (
+        "archive_sync_source_delete",
+        f"""
         CREATE TRIGGER archive_sync_source_delete AFTER DELETE ON source_configs
-        WHEN {_public_source('OLD')}
+        WHEN {_public_source("OLD")}
         BEGIN
           {tick}
-          {_state_values('sources', 'OLD.source_id', 'tombstone', clock, now)}
+          {_state_values("sources", "OLD.source_id", "tombstone", clock, now)}
           DELETE FROM source_states
           WHERE source_id = OLD.source_id AND authority_id = '';
         END
-    """
-    yield "archive_sync_source_nonpublic_insert", """
+    """,
+    )
+    yield (
+        "archive_sync_source_nonpublic_insert",
+        """
         CREATE TRIGGER archive_sync_source_nonpublic_insert AFTER INSERT ON source_configs
         WHEN NEW.owner_username <> '' OR NEW.collection_authority_id <> ''
         BEGIN
@@ -86,8 +119,11 @@ def _trigger_sql() -> Iterable[tuple[str, str]]:
             ))
           );
         END
-    """
-    yield "archive_sync_source_remote_handoff", """
+    """,
+    )
+    yield (
+        "archive_sync_source_remote_handoff",
+        """
         CREATE TRIGGER archive_sync_source_remote_handoff AFTER UPDATE ON source_configs
         WHEN NEW.collection_authority_id <> ''
         BEGIN
@@ -99,14 +135,17 @@ def _trigger_sql() -> Iterable[tuple[str, str]]:
             ))
           );
         END
-    """
-    yield "archive_sync_source_scope_exit", f"""
+    """,
+    )
+    yield (
+        "archive_sync_source_scope_exit",
+        f"""
         CREATE TRIGGER archive_sync_source_scope_exit AFTER UPDATE ON source_configs
-        WHEN {_public_source('OLD')} AND NEW.owner_username <> ''
+        WHEN {_public_source("OLD")} AND NEW.owner_username <> ''
           AND NEW.collection_authority_id = ''
         BEGIN
           {tick}
-          {_state_values('sources', 'NEW.source_id', 'tombstone', clock, now)}
+          {_state_values("sources", "NEW.source_id", "tombstone", clock, now)}
           INSERT INTO archive_sync_entity_states(
             stream, identity, authority_id, revision, operation, updated_at
           ) SELECT 'articles', a.id, '', {clock}, 'tombstone', {now}
@@ -130,10 +169,13 @@ def _trigger_sql() -> Iterable[tuple[str, str]]:
             revision = excluded.revision, operation = excluded.operation,
             updated_at = excluded.updated_at;
         END
-    """
-    yield "archive_sync_source_scope_enter", f"""
+    """,
+    )
+    yield (
+        "archive_sync_source_scope_enter",
+        f"""
         CREATE TRIGGER archive_sync_source_scope_enter AFTER UPDATE ON source_configs
-        WHEN NOT ({_public_source('OLD')}) AND {_public_source('NEW')}
+        WHEN NOT ({_public_source("OLD")}) AND {_public_source("NEW")}
         BEGIN
           {tick}
           INSERT INTO archive_sync_entity_states(
@@ -159,19 +201,25 @@ def _trigger_sql() -> Iterable[tuple[str, str]]:
             revision = excluded.revision, operation = excluded.operation,
             updated_at = excluded.updated_at;
         END
-    """
+    """,
+    )
 
     article_public_new = _public_article("NEW")
     article_public_old = _public_article("OLD")
-    yield "archive_sync_article_insert", f"""
+    yield (
+        "archive_sync_article_insert",
+        f"""
         CREATE TRIGGER archive_sync_article_insert AFTER INSERT ON articles
         WHEN {article_public_new}
         BEGIN
           {tick}
-          {_state_values('articles', 'NEW.id', 'upsert', clock, now)}
+          {_state_values("articles", "NEW.id", "upsert", clock, now)}
         END
-    """
-    yield "archive_sync_article_update", f"""
+    """,
+    )
+    yield (
+        "archive_sync_article_update",
+        f"""
         CREATE TRIGGER archive_sync_article_update AFTER UPDATE ON articles
         WHEN {article_public_new}
           AND (
@@ -186,7 +234,7 @@ def _trigger_sql() -> Iterable[tuple[str, str]]:
           )
         BEGIN
           {tick}
-          {_state_values('articles', 'NEW.id', 'upsert', clock, now)}
+          {_state_values("articles", "NEW.id", "upsert", clock, now)}
           INSERT INTO archive_sync_entity_states(
             stream, identity, authority_id, revision, operation, updated_at
           ) SELECT 'analyses', NEW.id, '', {clock}, 'upsert', {now}
@@ -198,14 +246,17 @@ def _trigger_sql() -> Iterable[tuple[str, str]]:
             authority_id = '', revision = excluded.revision,
             operation = excluded.operation, updated_at = excluded.updated_at;
         END
-    """
-    yield "archive_sync_article_scope_exit", f"""
+    """,
+    )
+    yield (
+        "archive_sync_article_scope_exit",
+        f"""
         CREATE TRIGGER archive_sync_article_scope_exit AFTER UPDATE ON articles
         WHEN {article_public_old} AND NOT ({article_public_new})
           AND NEW.analysis_authority_id = ''
         BEGIN
           {tick}
-          {_state_values('articles', 'OLD.id', 'tombstone', clock, now)}
+          {_state_values("articles", "OLD.id", "tombstone", clock, now)}
           INSERT INTO archive_sync_entity_states(
             stream, identity, authority_id, revision, operation, updated_at
           ) SELECT 'analyses', OLD.id, '', {clock}, 'tombstone', {now}
@@ -217,13 +268,16 @@ def _trigger_sql() -> Iterable[tuple[str, str]]:
             revision = excluded.revision, operation = excluded.operation,
             updated_at = excluded.updated_at;
         END
-    """
-    yield "archive_sync_article_scope_enter", f"""
+    """,
+    )
+    yield (
+        "archive_sync_article_scope_enter",
+        f"""
         CREATE TRIGGER archive_sync_article_scope_enter AFTER UPDATE ON articles
         WHEN NOT ({article_public_old}) AND {article_public_new}
         BEGIN
           {tick}
-          {_state_values('articles', 'NEW.id', 'upsert', clock, now)}
+          {_state_values("articles", "NEW.id", "upsert", clock, now)}
           INSERT INTO archive_sync_entity_states(
             stream, identity, authority_id, revision, operation, updated_at
           ) SELECT 'analyses', NEW.id, '', {clock}, 'upsert', {now}
@@ -235,8 +289,11 @@ def _trigger_sql() -> Iterable[tuple[str, str]]:
             revision = excluded.revision, operation = excluded.operation,
             updated_at = excluded.updated_at;
         END
-    """
-    yield "archive_sync_article_remote_handoff", """
+    """,
+    )
+    yield (
+        "archive_sync_article_remote_handoff",
+        """
         CREATE TRIGGER archive_sync_article_remote_handoff AFTER UPDATE ON articles
         WHEN NEW.analysis_authority_id <> ''
         BEGIN
@@ -244,13 +301,16 @@ def _trigger_sql() -> Iterable[tuple[str, str]]:
           WHERE authority_id = '' AND identity = NEW.id
             AND stream IN ('articles','analyses');
         END
-    """
-    yield "archive_sync_article_delete", f"""
+    """,
+    )
+    yield (
+        "archive_sync_article_delete",
+        f"""
         CREATE TRIGGER archive_sync_article_delete BEFORE DELETE ON articles
         WHEN {article_public_old}
         BEGIN
           {tick}
-          {_state_values('articles', 'OLD.id', 'tombstone', clock, now)}
+          {_state_values("articles", "OLD.id", "tombstone", clock, now)}
           INSERT INTO archive_sync_entity_states(
             stream, identity, authority_id, revision, operation, updated_at
           ) SELECT 'analyses', OLD.id, '', {clock}, 'tombstone', {now}
@@ -262,34 +322,41 @@ def _trigger_sql() -> Iterable[tuple[str, str]]:
             authority_id = '', revision = excluded.revision,
             operation = excluded.operation, updated_at = excluded.updated_at;
         END
-    """
+    """,
+    )
 
     analysis_scope = (
         "NEW.authority_id = '' AND EXISTS (SELECT 1 FROM articles a "
         f"WHERE a.id = NEW.article_id AND {_public_article('a')})"
     )
     for suffix, action in (("insert", "INSERT"), ("update", "UPDATE")):
-        yield f"archive_sync_analysis_{suffix}", f"""
+        yield (
+            f"archive_sync_analysis_{suffix}",
+            f"""
             CREATE TRIGGER archive_sync_analysis_{suffix}
             AFTER {action} ON article_analyses
             WHEN {analysis_scope}
             BEGIN
               {tick}
-              {_state_values('analyses', 'NEW.article_id', 'upsert', clock, now)}
+              {_state_values("analyses", "NEW.article_id", "upsert", clock, now)}
             END
-        """
-    yield "archive_sync_analysis_delete", f"""
+        """,
+        )
+    yield (
+        "archive_sync_analysis_delete",
+        f"""
         CREATE TRIGGER archive_sync_analysis_delete AFTER DELETE ON article_analyses
         WHEN OLD.authority_id = '' AND EXISTS (
-          SELECT 1 FROM articles a WHERE a.id = OLD.article_id AND {_public_article('a')}
+          SELECT 1 FROM articles a WHERE a.id = OLD.article_id AND {_public_article("a")}
         )
         BEGIN
           {tick}
           DELETE FROM article_tag_assignments
           WHERE article_id = OLD.article_id AND assignment_source = 'llm';
-          {_state_values('analyses', 'OLD.article_id', 'tombstone', clock, now)}
+          {_state_values("analyses", "OLD.article_id", "tombstone", clock, now)}
         END
-    """
+    """,
+    )
 
     assignment_specs = (
         ("insert", "INSERT", "NEW"),
@@ -297,36 +364,45 @@ def _trigger_sql() -> Iterable[tuple[str, str]]:
         ("delete", "DELETE", "OLD"),
     )
     for suffix, action, alias in assignment_specs:
-        yield f"archive_sync_assignment_{suffix}", f"""
+        yield (
+            f"archive_sync_assignment_{suffix}",
+            f"""
             CREATE TRIGGER archive_sync_assignment_{suffix}
             AFTER {action} ON article_tag_assignments
             WHEN {alias}.assignment_source = 'llm' AND EXISTS (
               SELECT 1 FROM article_analyses aa JOIN articles a ON a.id = aa.article_id
               WHERE aa.article_id = {alias}.article_id
-                AND aa.authority_id = '' AND {_public_article('a')}
+                AND aa.authority_id = '' AND {_public_article("a")}
             )
             BEGIN
               {tick}
-              {_state_values('analyses', f'{alias}.article_id', 'upsert', clock, now)}
+              {_state_values("analyses", f"{alias}.article_id", "upsert", clock, now)}
             END
-        """
+        """,
+        )
 
-    yield "archive_sync_media_insert", f"""
+    yield (
+        "archive_sync_media_insert",
+        f"""
         CREATE TRIGGER archive_sync_media_insert AFTER INSERT ON media_assets
         WHEN NEW.sync_authority_id = ''
         BEGIN
           {tick}
-          {_state_values('media', 'NEW.url_hash', 'upsert', clock, now)}
+          {_state_values("media", "NEW.url_hash", "upsert", clock, now)}
         END
-    """
-    yield "archive_sync_media_update", f"""
+    """,
+    )
+    yield (
+        "archive_sync_media_update",
+        f"""
         CREATE TRIGGER archive_sync_media_update AFTER UPDATE ON media_assets
         WHEN NEW.sync_authority_id = ''
         BEGIN
           {tick}
-          {_state_values('media', 'NEW.url_hash', 'upsert', clock, now)}
+          {_state_values("media", "NEW.url_hash", "upsert", clock, now)}
         END
-    """
+    """,
+    )
 
     state_public_new = (
         "NEW.authority_id = '' AND NEW.source_id NOT LIKE 'user\\_rss\\_%' ESCAPE '\\' "
@@ -336,31 +412,517 @@ def _trigger_sql() -> Iterable[tuple[str, str]]:
     )
     state_public_old = state_public_new.replace("NEW.", "OLD.")
     for suffix, action in (("insert", "INSERT"), ("update", "UPDATE")):
-        yield f"archive_sync_source_state_{suffix}", f"""
+        yield (
+            f"archive_sync_source_state_{suffix}",
+            f"""
             CREATE TRIGGER archive_sync_source_state_{suffix}
             AFTER {action} ON source_states
             WHEN {state_public_new}
             BEGIN
               {tick}
-              {_state_values('source_states', 'NEW.source_id', 'upsert', clock, now)}
+              {_state_values("source_states", "NEW.source_id", "upsert", clock, now)}
             END
-        """
-    yield "archive_sync_source_state_delete", f"""
+        """,
+        )
+    yield (
+        "archive_sync_source_state_delete",
+        f"""
         CREATE TRIGGER archive_sync_source_state_delete AFTER DELETE ON source_states
         WHEN {state_public_old}
         BEGIN
           {tick}
-          {_state_values('source_states', 'OLD.source_id', 'tombstone', clock, now)}
+          {_state_values("source_states", "OLD.source_id", "tombstone", clock, now)}
         END
-    """
+    """,
+    )
+
+    podcast_public_new = _public_podcast_text_publication("NEW")
+    podcast_public_old = _public_podcast_text_publication("OLD")
+    yield (
+        "archive_sync_podcast_text_insert",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_text_insert
+        AFTER INSERT ON podcast_text_publications
+        WHEN {podcast_public_new}
+        BEGIN
+          {tick}
+          {_state_values("podcast_texts", "NEW.identity", "upsert", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_podcast_text_update",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_text_update
+        AFTER UPDATE ON podcast_text_publications
+        WHEN {podcast_public_old} AND {podcast_public_new}
+        BEGIN
+          {tick}
+          {_state_values("podcast_texts", "NEW.identity", "upsert", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_podcast_text_scope_exit",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_text_scope_exit
+        AFTER UPDATE ON podcast_text_publications
+        WHEN NOT ({podcast_public_new}) AND EXISTS (
+          SELECT 1 FROM archive_sync_entity_states aes
+          WHERE aes.stream = 'podcast_texts' AND aes.identity = OLD.identity
+            AND aes.authority_id = '' AND aes.operation = 'upsert'
+        )
+        BEGIN
+          {tick}
+          {_state_values("podcast_texts", "OLD.identity", "tombstone", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_podcast_text_scope_enter",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_text_scope_enter
+        AFTER UPDATE ON podcast_text_publications
+        WHEN NOT ({podcast_public_old}) AND {podcast_public_new}
+        BEGIN
+          {tick}
+          {_state_values("podcast_texts", "NEW.identity", "upsert", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_podcast_text_delete",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_text_delete
+        BEFORE DELETE ON podcast_text_publications
+        WHEN EXISTS (
+          SELECT 1 FROM archive_sync_entity_states aes
+          WHERE aes.stream = 'podcast_texts' AND aes.identity = OLD.identity
+            AND aes.authority_id = '' AND aes.operation = 'upsert'
+        )
+        BEGIN
+          {tick}
+          {_state_values("podcast_texts", "OLD.identity", "tombstone", clock, now)}
+        END
+    """,
+    )
+    podcast_audio_public_new = _public_podcast_audio("NEW")
+    podcast_audio_public_old = _public_podcast_audio("OLD")
+    yield (
+        "archive_sync_podcast_audio_insert",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_audio_insert
+        AFTER INSERT ON podcast_artifacts
+        WHEN {podcast_audio_public_new}
+        BEGIN
+          {tick}
+          {_state_values("podcast_audio", "NEW.id", "upsert", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_podcast_audio_update",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_audio_update
+        AFTER UPDATE ON podcast_artifacts
+        WHEN {podcast_audio_public_old} AND {podcast_audio_public_new}
+        BEGIN
+          {tick}
+          {_state_values("podcast_audio", "NEW.id", "upsert", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_podcast_audio_scope_exit",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_audio_scope_exit
+        AFTER UPDATE ON podcast_artifacts
+        WHEN {podcast_audio_public_old} AND NOT ({podcast_audio_public_new})
+        BEGIN
+          {tick}
+          {_state_values("podcast_audio", "OLD.id", "tombstone", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_podcast_audio_scope_enter",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_audio_scope_enter
+        AFTER UPDATE ON podcast_artifacts
+        WHEN NOT ({podcast_audio_public_old}) AND {podcast_audio_public_new}
+        BEGIN
+          {tick}
+          {_state_values("podcast_audio", "NEW.id", "upsert", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_podcast_audio_delete",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_audio_delete
+        BEFORE DELETE ON podcast_artifacts
+        WHEN OLD.authority_id = '' AND OLD.kind = 'digest_audio_zh'
+          AND EXISTS (
+            SELECT 1 FROM archive_sync_entity_states aes
+            WHERE aes.stream = 'podcast_audio' AND aes.identity = OLD.id
+              AND aes.authority_id = '' AND aes.operation = 'upsert'
+          )
+        BEGIN
+          {tick}
+          {_state_values("podcast_audio", "OLD.id", "tombstone", clock, now)}
+        END
+    """,
+    )
+    yield (
+        "archive_sync_podcast_audio_source_scope_exit",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_audio_source_scope_exit
+        AFTER UPDATE ON source_configs
+        WHEN {_public_source("OLD")} AND NOT ({_public_source("NEW")})
+        BEGIN
+          {tick}
+          INSERT INTO archive_sync_entity_states(
+            stream, identity, authority_id, revision, operation, updated_at
+          ) SELECT 'podcast_audio', pa.id, '', {clock}, 'tombstone', {now}
+          FROM podcast_artifacts pa JOIN articles a ON a.id = pa.episode_id
+          WHERE a.source_id = OLD.source_id AND pa.authority_id = ''
+            AND pa.kind = 'digest_audio_zh' AND pa.status = 'published'
+          ON CONFLICT(stream, identity) DO UPDATE SET authority_id = '',
+            revision = excluded.revision, operation = excluded.operation,
+            updated_at = excluded.updated_at;
+        END
+    """,
+    )
+    yield (
+        "archive_sync_podcast_audio_source_scope_enter",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_audio_source_scope_enter
+        AFTER UPDATE ON source_configs
+        WHEN NOT ({_public_source("OLD")}) AND {_public_source("NEW")}
+        BEGIN
+          {tick}
+          INSERT INTO archive_sync_entity_states(
+            stream, identity, authority_id, revision, operation, updated_at
+          ) SELECT 'podcast_audio', pa.id, '', {clock}, 'upsert', {now}
+          FROM podcast_artifacts pa JOIN articles a ON a.id = pa.episode_id
+          WHERE a.source_id = NEW.source_id AND pa.authority_id = ''
+            AND pa.kind = 'digest_audio_zh' AND pa.status = 'published'
+          ON CONFLICT(stream, identity) DO UPDATE SET authority_id = '',
+            revision = excluded.revision, operation = excluded.operation,
+            updated_at = excluded.updated_at;
+        END
+    """,
+    )
+    yield (
+        "archive_sync_podcast_audio_article_scope_exit",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_audio_article_scope_exit
+        AFTER UPDATE ON articles
+        WHEN {article_public_old} AND NOT ({article_public_new})
+        BEGIN
+          {tick}
+          INSERT INTO archive_sync_entity_states(
+            stream, identity, authority_id, revision, operation, updated_at
+          ) SELECT 'podcast_audio', pa.id, '', {clock}, 'tombstone', {now}
+          FROM podcast_artifacts pa
+          WHERE pa.episode_id = OLD.id AND pa.authority_id = ''
+            AND pa.kind = 'digest_audio_zh' AND pa.status = 'published'
+          ON CONFLICT(stream, identity) DO UPDATE SET authority_id = '',
+            revision = excluded.revision, operation = excluded.operation,
+            updated_at = excluded.updated_at;
+        END
+    """,
+    )
+    yield (
+        "archive_sync_podcast_audio_article_scope_enter",
+        f"""
+        CREATE TRIGGER archive_sync_podcast_audio_article_scope_enter
+        AFTER UPDATE ON articles
+        WHEN NOT ({article_public_old}) AND {article_public_new}
+        BEGIN
+          {tick}
+          INSERT INTO archive_sync_entity_states(
+            stream, identity, authority_id, revision, operation, updated_at
+          ) SELECT 'podcast_audio', pa.id, '', {clock}, 'upsert', {now}
+          FROM podcast_artifacts pa
+          WHERE pa.episode_id = NEW.id AND pa.authority_id = ''
+            AND pa.kind = 'digest_audio_zh' AND pa.status = 'published'
+          ON CONFLICT(stream, identity) DO UPDATE SET authority_id = '',
+            revision = excluded.revision, operation = excluded.operation,
+            updated_at = excluded.updated_at;
+        END
+    """,
+    )
+    if include_podcast_integrity:
+        source_public_old = _public_source("OLD")
+        source_public_new = _public_source("NEW")
+        yield (
+            "archive_sync_podcast_text_source_nonpublic_insert",
+            f"""
+            CREATE TRIGGER archive_sync_podcast_text_source_nonpublic_insert
+            AFTER INSERT ON source_configs
+            WHEN NOT ({source_public_new})
+              AND EXISTS (
+                SELECT 1 FROM podcast_text_publications p
+                JOIN articles a ON a.id = p.episode_id
+                JOIN archive_sync_entity_states aes
+                  ON aes.stream = 'podcast_texts' AND aes.identity = p.identity
+                WHERE a.source_id = NEW.source_id AND p.authority_id = ''
+                  AND p.status = 'published' AND aes.authority_id = ''
+                  AND aes.operation = 'upsert'
+              )
+            BEGIN
+              {tick}
+              INSERT INTO archive_sync_entity_states(
+                stream, identity, authority_id, revision, operation, updated_at
+              ) SELECT 'podcast_texts', p.identity, '', {clock}, 'tombstone', {now}
+              FROM podcast_text_publications p
+              JOIN articles a ON a.id = p.episode_id
+              JOIN archive_sync_entity_states aes
+                ON aes.stream = 'podcast_texts' AND aes.identity = p.identity
+              WHERE a.source_id = NEW.source_id AND p.authority_id = ''
+                AND p.status = 'published' AND aes.authority_id = ''
+                AND aes.operation = 'upsert'
+              ON CONFLICT(stream, identity) DO UPDATE SET authority_id = '',
+                revision = excluded.revision, operation = excluded.operation,
+                updated_at = excluded.updated_at;
+            END
+        """,
+        )
+        yield (
+            "archive_sync_podcast_text_source_scope_exit",
+            f"""
+            CREATE TRIGGER archive_sync_podcast_text_source_scope_exit
+            AFTER UPDATE ON source_configs
+            WHEN {source_public_old} AND NOT ({source_public_new})
+              AND EXISTS (
+                SELECT 1 FROM podcast_text_publications p
+                JOIN articles a ON a.id = p.episode_id
+                JOIN archive_sync_entity_states aes
+                  ON aes.stream = 'podcast_texts' AND aes.identity = p.identity
+                WHERE a.source_id = OLD.source_id AND p.authority_id = ''
+                  AND p.status = 'published' AND aes.authority_id = ''
+                  AND aes.operation = 'upsert'
+              )
+            BEGIN
+              {tick}
+              INSERT INTO archive_sync_entity_states(
+                stream, identity, authority_id, revision, operation, updated_at
+              ) SELECT 'podcast_texts', p.identity, '', {clock}, 'tombstone', {now}
+              FROM podcast_text_publications p
+              JOIN articles a ON a.id = p.episode_id
+              JOIN archive_sync_entity_states aes
+                ON aes.stream = 'podcast_texts' AND aes.identity = p.identity
+              WHERE a.source_id = OLD.source_id AND p.authority_id = ''
+                AND p.status = 'published' AND aes.authority_id = ''
+                AND aes.operation = 'upsert'
+              ON CONFLICT(stream, identity) DO UPDATE SET authority_id = '',
+                revision = excluded.revision, operation = excluded.operation,
+                updated_at = excluded.updated_at;
+            END
+        """,
+        )
+        yield (
+            "archive_sync_podcast_text_source_scope_enter",
+            f"""
+            CREATE TRIGGER archive_sync_podcast_text_source_scope_enter
+            AFTER UPDATE ON source_configs
+            WHEN NOT ({source_public_old}) AND {source_public_new}
+              AND EXISTS (
+                SELECT 1 FROM podcast_text_publications p
+                JOIN articles a ON a.id = p.episode_id
+                WHERE a.source_id = NEW.source_id AND p.authority_id = ''
+                  AND p.status = 'published'
+              )
+            BEGIN
+              {tick}
+              INSERT INTO archive_sync_entity_states(
+                stream, identity, authority_id, revision, operation, updated_at
+              ) SELECT 'podcast_texts', p.identity, '', {clock}, 'upsert', {now}
+              FROM podcast_text_publications p
+              JOIN articles a ON a.id = p.episode_id
+              WHERE a.source_id = NEW.source_id AND p.authority_id = ''
+                AND p.status = 'published'
+              ON CONFLICT(stream, identity) DO UPDATE SET authority_id = '',
+                revision = excluded.revision, operation = excluded.operation,
+                updated_at = excluded.updated_at;
+            END
+        """,
+        )
+        yield (
+            "archive_sync_podcast_text_article_scope_exit",
+            f"""
+            CREATE TRIGGER archive_sync_podcast_text_article_scope_exit
+            AFTER UPDATE ON articles
+            WHEN {article_public_old} AND NOT ({article_public_new})
+              AND EXISTS (
+                SELECT 1 FROM podcast_text_publications p
+                JOIN archive_sync_entity_states aes
+                  ON aes.stream = 'podcast_texts' AND aes.identity = p.identity
+                WHERE p.episode_id = OLD.id AND p.authority_id = ''
+                  AND p.status = 'published' AND aes.authority_id = ''
+                  AND aes.operation = 'upsert'
+              )
+            BEGIN
+              {tick}
+              INSERT INTO archive_sync_entity_states(
+                stream, identity, authority_id, revision, operation, updated_at
+              ) SELECT 'podcast_texts', p.identity, '', {clock}, 'tombstone', {now}
+              FROM podcast_text_publications p
+              JOIN archive_sync_entity_states aes
+                ON aes.stream = 'podcast_texts' AND aes.identity = p.identity
+              WHERE p.episode_id = OLD.id AND p.authority_id = ''
+                AND p.status = 'published' AND aes.authority_id = ''
+                AND aes.operation = 'upsert'
+              ON CONFLICT(stream, identity) DO UPDATE SET authority_id = '',
+                revision = excluded.revision, operation = excluded.operation,
+                updated_at = excluded.updated_at;
+            END
+        """,
+        )
+        yield (
+            "archive_sync_podcast_text_article_scope_enter",
+            f"""
+            CREATE TRIGGER archive_sync_podcast_text_article_scope_enter
+            AFTER UPDATE ON articles
+            WHEN NOT ({article_public_old}) AND {article_public_new}
+              AND EXISTS (
+                SELECT 1 FROM podcast_text_publications p
+                WHERE p.episode_id = NEW.id AND p.authority_id = ''
+                  AND p.status = 'published'
+              )
+            BEGIN
+              {tick}
+              INSERT INTO archive_sync_entity_states(
+                stream, identity, authority_id, revision, operation, updated_at
+              ) SELECT 'podcast_texts', p.identity, '', {clock}, 'upsert', {now}
+              FROM podcast_text_publications p
+              WHERE p.episode_id = NEW.id AND p.authority_id = ''
+                AND p.status = 'published'
+              ON CONFLICT(stream, identity) DO UPDATE SET authority_id = '',
+                revision = excluded.revision, operation = excluded.operation,
+                updated_at = excluded.updated_at;
+            END
+        """,
+        )
+    authority_immutable = (
+        "\n          OR NEW.authority_id IS NOT OLD.authority_id"
+        if include_podcast_integrity
+        else ""
+    )
+    yield (
+        "podcast_text_publication_identity_immutable",
+        f"""
+        CREATE TRIGGER podcast_text_publication_identity_immutable
+        BEFORE UPDATE ON podcast_text_publications
+        WHEN NEW.identity IS NOT OLD.identity
+          OR NEW.episode_id IS NOT OLD.episode_id
+          OR NEW.kind IS NOT OLD.kind{authority_immutable}
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast text publication identity is immutable');
+        END
+    """,
+    )
+    yield (
+        "podcast_text_artifact_immutable_update",
+        """
+        CREATE TRIGGER podcast_text_artifact_immutable_update
+        BEFORE UPDATE ON podcast_text_artifacts
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast text artifacts are immutable');
+        END
+    """,
+    )
+    yield (
+        "podcast_text_artifact_immutable_delete",
+        """
+        CREATE TRIGGER podcast_text_artifact_immutable_delete
+        BEFORE DELETE ON podcast_text_artifacts
+        WHEN EXISTS (SELECT 1 FROM articles a WHERE a.id = OLD.episode_id)
+        BEGIN
+          SELECT RAISE(ABORT, 'podcast text artifacts are immutable');
+        END
+    """,
+    )
 
 
-def install_archive_sync_revision_triggers(connection: Connection) -> None:
+_PODCAST_TRIGGER_NAMES = frozenset(
+    {
+        "archive_sync_podcast_text_insert",
+        "archive_sync_podcast_text_update",
+        "archive_sync_podcast_text_scope_exit",
+        "archive_sync_podcast_text_scope_enter",
+        "archive_sync_podcast_text_delete",
+        "archive_sync_podcast_text_source_nonpublic_insert",
+        "archive_sync_podcast_text_source_scope_exit",
+        "archive_sync_podcast_text_source_scope_enter",
+        "archive_sync_podcast_text_article_scope_exit",
+        "archive_sync_podcast_text_article_scope_enter",
+        "podcast_text_publication_identity_immutable",
+        "podcast_text_artifact_immutable_update",
+        "podcast_text_artifact_immutable_delete",
+        "archive_sync_podcast_audio_insert",
+        "archive_sync_podcast_audio_update",
+        "archive_sync_podcast_audio_scope_exit",
+        "archive_sync_podcast_audio_scope_enter",
+        "archive_sync_podcast_audio_delete",
+        "archive_sync_podcast_audio_source_scope_exit",
+        "archive_sync_podcast_audio_source_scope_enter",
+        "archive_sync_podcast_audio_article_scope_exit",
+        "archive_sync_podcast_audio_article_scope_enter",
+    }
+)
+
+_PODCAST_AUDIO_TRIGGER_NAMES = frozenset(
+    {
+        "archive_sync_podcast_audio_insert",
+        "archive_sync_podcast_audio_update",
+        "archive_sync_podcast_audio_scope_exit",
+        "archive_sync_podcast_audio_scope_enter",
+        "archive_sync_podcast_audio_delete",
+        "archive_sync_podcast_audio_source_scope_exit",
+        "archive_sync_podcast_audio_source_scope_enter",
+        "archive_sync_podcast_audio_article_scope_exit",
+        "archive_sync_podcast_audio_article_scope_enter",
+    }
+)
+
+
+def drop_archive_sync_revision_triggers(connection: Connection) -> None:
+    """Drop the complete current trigger set before SQLite table recreation."""
+
+    if connection.dialect.name != "sqlite":
+        return
+    for name, _statement in _trigger_sql():
+        connection.exec_driver_sql(f'DROP TRIGGER IF EXISTS "{name}"')
+
+
+def install_archive_sync_revision_triggers(
+    connection: Connection,
+    *,
+    include_podcast_integrity: bool = True,
+    include_podcast_audio: bool = False,
+) -> None:
     """Install or refresh all revision triggers on a SQLite connection."""
 
     if connection.dialect.name != "sqlite":
         return
     connection.exec_driver_sql(_CLOCK_INIT)
-    for name, statement in _trigger_sql():
+    tables = set(inspect(connection).get_table_names())
+    podcast_text_schema_ready = {
+        "podcast_text_artifacts",
+        "podcast_text_publications",
+        "podcast_artifacts",
+    } <= tables
+    for name, statement in _trigger_sql(
+        include_podcast_integrity=include_podcast_integrity
+    ):
         connection.exec_driver_sql(f'DROP TRIGGER IF EXISTS "{name}"')
+        if name in _PODCAST_TRIGGER_NAMES and not podcast_text_schema_ready:
+            continue
+        # Historical migrations rebuild podcast_artifacts. Only the final audio
+        # stream migration, or a fresh create_all schema, may install triggers
+        # that reference that table.
+        if name in _PODCAST_AUDIO_TRIGGER_NAMES and not include_podcast_audio:
+            continue
         connection.exec_driver_sql(statement)

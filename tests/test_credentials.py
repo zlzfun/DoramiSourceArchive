@@ -15,6 +15,7 @@ from sqlmodel import Session
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
+from models.db import AppSettingRecord  # noqa: E402
 from services import credentials  # noqa: E402
 
 
@@ -79,6 +80,142 @@ def test_save_updates_secret_empty_keeps_existing(session):
     assert credentials.get_setting(session, "llm_api_key") == "sk-first"
 
 
+def test_save_updates_all_noop_values_do_not_commit_caller_state(session):
+    pending = AppSettingRecord(key="caller-pending", value="not-committed")
+    session.add(pending)
+    credentials.save_updates(
+        session,
+        NS,
+        {"api_key": "", "model": None},
+    )
+    assert pending in session.new
+
+
+def test_save_updates_commits_namespace_rotation_once(session, monkeypatch):
+    commit_calls = 0
+    original_commit = session.commit
+
+    def recording_commit():
+        nonlocal commit_calls
+        commit_calls += 1
+        return original_commit()
+
+    monkeypatch.setattr(session, "commit", recording_commit)
+    credentials.save_updates(
+        session,
+        credentials.PODCAST_ASR_FETCH_NAMESPACE,
+        {
+            "signing_secret": "n" * 32,
+            "previous_signing_secret": "o" * 32,
+        },
+    )
+    assert commit_calls == 1
+    assert credentials.get_setting(
+        session, "podcast_asr_fetch_signing_secret"
+    ) == "n" * 32
+    assert credentials.get_setting(
+        session, "podcast_asr_fetch_previous_signing_secret"
+    ) == "o" * 32
+
+
+def test_save_updates_rotation_failure_rolls_back_every_field(
+    session, monkeypatch
+):
+    namespace = credentials.PODCAST_ASR_FETCH_NAMESPACE
+    credentials.save_updates(session, namespace, {"signing_secret": "o" * 32})
+    original_add = session.add
+    add_calls = 0
+
+    def fail_second_add(instance):
+        nonlocal add_calls
+        add_calls += 1
+        if add_calls == 2:
+            raise RuntimeError("simulated staging failure")
+        return original_add(instance)
+
+    monkeypatch.setattr(session, "add", fail_second_add)
+    with pytest.raises(RuntimeError, match="simulated staging failure"):
+        credentials.save_updates(
+            session,
+            namespace,
+            {
+                "signing_secret": "n" * 32,
+                "previous_signing_secret": "o" * 32,
+            },
+        )
+    monkeypatch.setattr(session, "add", original_add)
+    assert credentials.get_setting(
+        session, "podcast_asr_fetch_signing_secret"
+    ) == "o" * 32
+    assert credentials.get_setting(
+        session, "podcast_asr_fetch_previous_signing_secret"
+    ) == ""
+    effective = credentials.resolve_values(
+        session,
+        namespace,
+        credentials.config.PodcastAsrFetchConfig(
+            public_base_url=(
+                "https://audio.example.test/api/public/podcast-asr/source-audio"
+            ),
+            signing_secret="b" * 32,
+        ),
+    )
+    assert effective["signing_secret"] == "o" * 32
+    assert effective["previous_signing_secret"] == ""
+
+
+def test_clear_secret_fields_is_explicitly_allowlisted(session):
+    namespace = credentials.PODCAST_ASR_FETCH_NAMESPACE
+    credentials.save_updates(
+        session,
+        namespace,
+        {"previous_signing_secret": "p" * 32},
+    )
+    credentials.clear_secret_fields(
+        session, namespace, ("previous_signing_secret",)
+    )
+    assert credentials.get_setting(
+        session, "podcast_asr_fetch_previous_signing_secret"
+    ) == ""
+    with pytest.raises(ValueError, match="not clearable"):
+        credentials.clear_secret_fields(
+            session, namespace, ("signing_secret",)
+        )
+    with pytest.raises(ValueError, match="not clearable"):
+        credentials.clear_secret_fields(
+            session, credentials.LLM_NAMESPACE, ("api_key",)
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        ("aliyuncs.com", "example.test"),
+        ["aliyuncs.com", "example.test"],
+    ],
+)
+def test_save_updates_csv_round_trips_as_canonical_text(session, value):
+    ns = credentials.ALIYUN_ISI_NAMESPACE
+    credentials.save_updates(
+        session,
+        ns,
+        {"tts_result_allowed_host_suffixes": value},
+    )
+
+    assert credentials.get_setting(
+        session, "aliyun_isi_tts_result_allowed_host_suffixes"
+    ) == "aliyuncs.com,example.test"
+    resolved = credentials.resolve_values(
+        session,
+        ns,
+        credentials.config.AliyunIsiConfig(),
+    )
+    assert resolved["tts_result_allowed_host_suffixes"] == (
+        "aliyuncs.com",
+        "example.test",
+    )
+
+
 def test_mask_tail_shapes():
     assert credentials.mask_tail("") == ""
     assert credentials.mask_tail("abcd") == "****"
@@ -127,4 +264,99 @@ def test_registry_kv_keys_match_legacy_storage():
         "max_results": "x_api_max_results",
         "monthly_budget_usd": "x_api_monthly_budget_usd",
     }
-    assert set(credentials.REGISTRY) == {"llm", "x_api"}
+    aliyun = {f.name: f.kv_key for f in credentials.ALIYUN_ISI_NAMESPACE.fields}
+    assert aliyun == {
+        "access_key_id": "aliyun_isi_access_key_id",
+        "access_key_secret": "aliyun_isi_access_key_secret",
+        "security_token": "aliyun_isi_security_token",
+        "app_key": "aliyun_isi_app_key",
+        "access_token": "aliyun_isi_access_token",
+        "token_expires_at": "aliyun_isi_token_expires_at",
+        "region_id": "aliyun_isi_region_id",
+        "asr_domain": "aliyun_isi_asr_domain",
+        "asr_product": "aliyun_isi_asr_product",
+        "asr_api_version": "aliyun_isi_asr_api_version",
+        "asr_task_version": "aliyun_isi_asr_task_version",
+        "asr_enable_words": "aliyun_isi_asr_enable_words",
+        "asr_auto_split": "aliyun_isi_asr_auto_split",
+        "asr_enable_sample_rate_adaptive": "aliyun_isi_asr_enable_sample_rate_adaptive",
+        "token_url": "aliyun_isi_token_url",
+        "tts_url": "aliyun_isi_tts_url",
+        "tts_product": "aliyun_isi_tts_product",
+        "tts_api_version": "aliyun_isi_tts_api_version",
+        "tts_device_id": "aliyun_isi_tts_device_id",
+        "tts_voice_profiles_json": "aliyun_isi_tts_voice_profiles_json",
+        "tts_result_allowed_host_suffixes": "aliyun_isi_tts_result_allowed_host_suffixes",
+        "tts_max_chars": "aliyun_isi_tts_max_chars",
+        "request_timeout_seconds": "aliyun_isi_request_timeout_seconds",
+        "asr_poll_interval_seconds": "aliyun_isi_asr_poll_interval_seconds",
+        "tts_poll_interval_seconds": "aliyun_isi_tts_poll_interval_seconds",
+        "token_refresh_skew_seconds": "aliyun_isi_token_refresh_skew_seconds",
+        "asr_quota_scope": "aliyun_isi_asr_quota_scope",
+        "asr_quota_timezone": "aliyun_isi_asr_quota_timezone",
+        "asr_daily_audio_seconds_limit": "aliyun_isi_asr_daily_audio_seconds_limit",
+        "asr_entitlement_ends_at": "aliyun_isi_asr_entitlement_ends_at",
+        "asr_provider_deadline_seconds": "aliyun_isi_asr_provider_deadline_seconds",
+        "asr_price_cny_minor_per_hour": "aliyun_isi_asr_price_cny_minor_per_hour",
+        "asr_pricing_revision": "aliyun_isi_asr_pricing_revision",
+        "tts_quota_scope": "aliyun_isi_tts_quota_scope",
+        "tts_campaign_id": "aliyun_isi_tts_campaign_id",
+        "tts_campaign_starts_at": "aliyun_isi_tts_campaign_starts_at",
+        "tts_campaign_ends_at": "aliyun_isi_tts_campaign_ends_at",
+        "tts_campaign_character_limit": "aliyun_isi_tts_campaign_character_limit",
+        "tts_provider_deadline_seconds": "aliyun_isi_tts_provider_deadline_seconds",
+        "tts_price_cny_minor_per_10000_chars": "aliyun_isi_tts_price_cny_minor_per_10000_chars",
+        "tts_pricing_revision": "aliyun_isi_tts_pricing_revision",
+        "tts_usage_settlement_mode": "aliyun_isi_tts_usage_settlement_mode",
+    }
+    asr_fetch = {
+        f.name: f.kv_key for f in credentials.PODCAST_ASR_FETCH_NAMESPACE.fields
+    }
+    assert asr_fetch == {
+        "public_base_url": "podcast_asr_fetch_public_base_url",
+        "signing_secret": "podcast_asr_fetch_signing_secret",
+        "previous_signing_secret": "podcast_asr_fetch_previous_signing_secret",
+        "url_ttl_seconds": "podcast_asr_fetch_url_ttl_seconds",
+        "clock_skew_seconds": "podcast_asr_fetch_clock_skew_seconds",
+        "min_remaining_seconds": "podcast_asr_fetch_min_remaining_seconds",
+    }
+    assert set(credentials.REGISTRY) == {
+        "llm",
+        "x_api",
+        "aliyun_isi",
+        "podcast_asr_fetch",
+    }
+
+
+def test_aliyun_isi_secrets_are_sanitized():
+    ns = credentials.ALIYUN_ISI_NAMESPACE
+    values = {
+        "access_key_id": "test-ak-id",
+        "access_key_secret": "test-ak-secret",
+        "security_token": "test-sts-token",
+        "app_key": "test-app-key",
+        "access_token": "test-nls-token",
+        "token_expires_at": 123,
+        "region_id": "cn-shanghai",
+    }
+    out = credentials.sanitize_values(ns, values)
+    for key in (
+        "access_key_id",
+        "access_key_secret",
+        "security_token",
+        "app_key",
+        "access_token",
+    ):
+        assert key not in out
+        assert out[f"{key}_set"] is True
+    assert out["token_expires_at"] == 123
+    assert not any(
+        values[key] in str(out)
+        for key in (
+            "access_key_id",
+            "access_key_secret",
+            "security_token",
+            "app_key",
+            "access_token",
+        )
+    )
