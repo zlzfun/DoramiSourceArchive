@@ -383,14 +383,10 @@ def _podcast_people_are_current(
 ) -> bool:
     if article.content_type != "podcast_episode" or record is None:
         return True
-    try:
-        diagnostics = json.loads(record.analysis_diagnostics_json or "{}")
-    except (TypeError, json.JSONDecodeError):
-        return False
-    recorded = diagnostics.get("people") if isinstance(diagnostics, dict) else None
-    if not isinstance(recorded, list):
-        recorded = []
-    return recorded == list(_podcast_people(article))
+    return _podcast_people_payloads_are_current(
+        article.extensions_json,
+        record.analysis_diagnostics_json,
+    )
 
 
 def _clear_authoritative_result(record: ArticleAnalysisRecord) -> None:
@@ -675,9 +671,10 @@ def scan_analysis_backfill(
 ) -> ReconcileStats:
     """Scan latest articles in descending order so new arrivals beat backfill.
 
-    v3.48 收口:扫描只挑**需要动作**的行——轻列 LEFT JOIN ``article_analyses``,命中三类:
+    v3.48 收口:扫描只挑**需要动作**的行——轻列 LEFT JOIN ``article_analyses``,命中四类:
     ①无分析行;②``skipped``(源开关可能已重开);③``succeeded`` 但 prompt/scoring 版本键
-    过期(每 tick 最多 ``version_refresh_limit`` 篇,新到文章永远优先)。其余行
+    过期;④ Podcast ``succeeded`` 但 publisher persons 与 diagnostics 快照不一致
+    (后两类每 tick 合计最多 ``version_refresh_limit`` 篇,新到文章永远优先)。其余行
     (pending/running/failed/timeout/当前 succeeded)扫描不碰:重试与租约机制自管,内容变化
     由入库钩子与文章编辑端点显式入队覆盖。此前每分钟把 7 天全部正文载入内存逐篇比哈希,
     绝大多数结果是 unchanged。``scanned`` 自此语义为「需要动作的行数」。
@@ -736,12 +733,50 @@ def scan_analysis_backfill(
             ),
         )
     ).all()
-    rows = sorted(
-        (
-            (article_id, fetched, status)
+    # Person metadata can change long after publication while the analysis flag
+    # is off.  Scan all local succeeded Podcasts by light JSON columns so an old
+    # episode cannot retain stale people forever merely because it left the
+    # ordinary seven-day arrival window.
+    stale_people_rows = [
+        (article_id, fetched, status)
+        for article_id, fetched, status, extensions_json, diagnostics_json in session.exec(
+            select(
+                ArticleRecord.id,
+                ArticleRecord.fetched_date,
+                ArticleAnalysisRecord.status,
+                ArticleRecord.extensions_json,
+                ArticleAnalysisRecord.analysis_diagnostics_json,
+            )
+            .join(
+                ArticleAnalysisRecord,
+                ArticleAnalysisRecord.article_id == ArticleRecord.id,
+            )
+            .where(
+                ArticleRecord.content_type == "podcast_episode",
+                ArticleRecord.has_content.is_(True),
+                ArticleRecord.content.is_not(None),
+                ArticleRecord.content != "",
+                ArticleRecord.analysis_authority_id == "",
+                ArticleAnalysisRecord.status == AnalysisStatus.SUCCEEDED.value,
+            )
+        ).all()
+        if not _podcast_people_payloads_are_current(
+            extensions_json, diagnostics_json
+        )
+    ]
+    rows_by_id = {
+        article_id: (article_id, fetched, status)
+        for article_id, fetched, status in stale_people_rows
+    }
+    rows_by_id.update(
+        {
+            article_id: (article_id, fetched, status)
             for article_id, fetched, status in light_rows
             if in_time_window(fetched, start=since_time, end=now_utc)
-        ),
+        }
+    )
+    rows = sorted(
+        rows_by_id.values(),
         key=lambda row: (
             parse_article_time(row[1]) or dt.datetime.min.replace(tzinfo=dt.timezone.utc),
             row[0],
@@ -1334,8 +1369,7 @@ def _article_extensions(article: ArticleRecord) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _podcast_people(article: ArticleRecord) -> tuple[dict[str, str], ...]:
-    people = _article_extensions(article).get("persons")
+def _normalized_podcast_people(people: Any) -> tuple[dict[str, str], ...]:
     if not isinstance(people, list):
         return ()
     normalized: list[dict[str, str]] = []
@@ -1360,6 +1394,27 @@ def _podcast_people(article: ArticleRecord) -> tuple[dict[str, str], ...]:
         seen.add(key)
         normalized.append(item)
     return tuple(normalized)
+
+
+def _podcast_people(article: ArticleRecord) -> tuple[dict[str, str], ...]:
+    return _normalized_podcast_people(_article_extensions(article).get("persons"))
+
+
+def _podcast_people_payloads_are_current(
+    extensions_json: str | None,
+    diagnostics_json: str | None,
+) -> bool:
+    try:
+        extensions = json.loads(extensions_json or "{}")
+        diagnostics = json.loads(diagnostics_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(extensions, dict) or not isinstance(diagnostics, dict):
+        return False
+    recorded = diagnostics.get("people")
+    if not isinstance(recorded, list):
+        recorded = []
+    return recorded == list(_normalized_podcast_people(extensions.get("persons")))
 
 
 def build_topic_heat_context(
@@ -1973,6 +2028,24 @@ async def process_claimed_analysis(
                 )
                 session.commit()
             return ProcessResult(task.article_id, "superseded", TaggingStatus.PENDING.value)
+        if (
+            article_input.content_type == "podcast_episode"
+            and tuple(article_input.people) != _podcast_people(article)
+        ):
+            # Podcast persons live in publisher metadata, outside content_hash.
+            # Close this lease, then rebuild a pending task from the newest
+            # metadata so the stale LLM response can never become authoritative.
+            revoke_queued_analysis(
+                session,
+                task.article_id,
+                reason="podcast people changed during analysis",
+                now=ended,
+            )
+            queue_article_analysis(session, task.article_id, enabled=True, now=ended)
+            session.commit()
+            return ProcessResult(
+                task.article_id, "superseded", TaggingStatus.PENDING.value
+            )
         if not source_allows_analysis(session, article.source_id):
             source = session.get(SourceConfigRecord, article.source_id)
             if _is_credentialed_source(source):

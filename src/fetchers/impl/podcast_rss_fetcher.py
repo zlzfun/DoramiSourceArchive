@@ -116,10 +116,14 @@ class GenericPodcastRssFetcher(GenericRssFetcher):
         "token",
     }
     _explicit_person_markers = re.compile(
-        r"(?im)^(?:[-*]\s*)?(?P<label>本期嘉宾|嘉宾|guest(?:s)?|主持人|host(?:s)?)\s*[:：]\s*(?P<names>[^\n]{1,180})$"
+        r"(?im)^(?:[-*]\s*)?(?:\*\*|__)?"
+        r"(?P<label>本期嘉宾|嘉宾|guest(?:s)?|主持人|host(?:s)?)"
+        r"\s*[:：]\s*(?P<names>[^\n]{1,180}?)(?:\*\*|__)?\s*$"
     )
     _title_guest_marker = re.compile(
-        r"(?i)(?:\bwith\b|\bfeat\.?\b|\bft\.?\b)\s+([^|—–:]{2,100})$"
+        r"(?i)(?:(?:^|[|｜—–·]\s*)(?:本期)?嘉宾\s*[:：]\s*"
+        r"|(?:\bwith\b|\bfeat\.?\b|\bft\.?\b)\s+)"
+        r"(?P<names>[^|｜—–:\n]{1,100}?)(?=\s*(?:[|｜—–·]|$))"
     )
     _person_splitter = re.compile(r"\s*(?:,|，|、|;|；|\band\b|\b&\b|/|与)\s*", re.I)
 
@@ -392,7 +396,7 @@ class GenericPodcastRssFetcher(GenericRssFetcher):
                     people.append(person)
         title_match = cls._title_guest_marker.search(title or "")
         if title_match:
-            for name in cls._person_splitter.split(title_match.group(1)):
+            for name in cls._person_splitter.split(title_match.group("names")):
                 person = cls._person_record(
                     name,
                     role="guest",

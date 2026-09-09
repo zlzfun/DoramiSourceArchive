@@ -1,4 +1,5 @@
 import asyncio
+import datetime as dt
 import json
 import os
 import sys
@@ -228,6 +229,32 @@ def test_podcast_people_normalize_only_publisher_explicit_identities():
         and person["role"] == "host"
         and person["group"] == "cast"
         for person in short.persons
+    )
+
+
+def test_podcast_people_parse_explicit_chinese_title_and_markdown_strong_markers():
+    def extract(title):
+        return GenericPodcastRssFetcher._persons(
+            {},
+            {},
+            {},
+            {},
+            title=title,
+            show_notes="**嘉宾：李四**\n本集还讨论了王五的研究。",
+        )
+
+    people = extract("本期嘉宾：张三")
+
+    assert {
+        (person["name"], person["role"], person["scope"], person["evidence"])
+        for person in people
+    } == {
+        ("张三", "guest", "episode", "title:explicit_guest"),
+        ("李四", "guest", "episode", "show_notes:explicit_person"),
+    }
+    assert any(
+        person["name"] == "张三"
+        for person in extract("本期嘉宾：张三｜讨论主题")
     )
 
 
@@ -698,6 +725,84 @@ def test_existing_podcast_refreshes_feed_metadata_without_erasing_derived_fields
 
     # Missing values in a transiently incomplete feed do not erase good stored metadata.
     assert asyncio.run(sink.save(people_refreshed)) is False
+
+
+def test_disabled_analysis_person_refresh_is_reconciled_after_old_episode_leaves_lookback(
+    tmp_path,
+):
+    from llm.article_analysis_prompt import (
+        PODCAST_ANALYSIS_PROMPT_VERSION,
+        PODCAST_ANALYSIS_SCORING_VERSION,
+    )
+    from services.article_analysis import compute_content_hash, scan_analysis_backfill
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'podcast-person-reconcile.db'}")
+    _seed_approved_podcast(sink, "podcast_person_reconcile")
+    common = {
+        "id": "podcast-person-reconcile-1",
+        "source_id": "podcast_person_reconcile",
+        "title": "Old episode",
+        "source_url": "https://example.test/episodes/old",
+        "publish_date": "2026-07-01T00:00:00+00:00",
+        "fetched_date": "2026-07-01T01:00:00+00:00",
+        "content": "Publisher show notes",
+        "has_content": True,
+        "show_title": "Podcast Show",
+        "audio_url": "https://cdn.example.test/old.mp3",
+    }
+    old_person = {
+        "name": "Old Guest",
+        "role": "guest",
+        "scope": "episode",
+        "evidence": "podcast:person",
+    }
+    initial = PodcastEpisodeContent(**common, persons=[old_person])
+    assert asyncio.run(sink.save(initial)) is True
+
+    with Session(sink.engine) as session:
+        article = session.get(ArticleRecord, initial.id)
+        session.add(
+            ArticleAnalysisRecord(
+                article_id=article.id,
+                status="succeeded",
+                tagging_status="succeeded",
+                quality_score=8.0,
+                score_reason="old people",
+                summary="old authority",
+                content_hash=compute_content_hash(article),
+                analysis_basis="podcast_show_notes",
+                analysis_diagnostics_json=json.dumps({"people": [old_person]}),
+                prompt_version=PODCAST_ANALYSIS_PROMPT_VERSION,
+                scoring_version=PODCAST_ANALYSIS_SCORING_VERSION,
+                analyzed_at="2026-07-01T02:00:00+00:00",
+                created_at="2026-07-01T02:00:00+00:00",
+                updated_at="2026-07-01T02:00:00+00:00",
+            )
+        )
+        session.commit()
+
+    new_person = {
+        "name": "New Guest",
+        "role": "guest",
+        "scope": "episode",
+        "evidence": "podcast:person",
+    }
+    # The feature flag is absent/default-off, so the RSS refresh cannot queue now.
+    assert asyncio.run(sink.save(replace(initial, persons=[new_person]))) is False
+    with Session(sink.engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, initial.id)
+        assert analysis.status == "succeeded"
+        stats = scan_analysis_backfill(
+            session,
+            enabled=True,
+            now=dt.datetime(2026, 9, 1, tzinfo=dt.timezone.utc),
+            lookback_days=7,
+        )
+        assert stats.invalidated == 1
+        session.refresh(analysis)
+        assert analysis.status == "pending"
+        assert analysis.quality_score == 8.0
 
 
 def test_storage_ignores_public_podcast_legacy_active_value_but_keeps_private_gate(
