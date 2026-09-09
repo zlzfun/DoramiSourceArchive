@@ -344,18 +344,25 @@ def test_unread_only_filter_and_with_unread_flag(monkeypatch, tmp_path):
         assert flags == {"old1": False, "n1": False, "n2": True}
 
 
-def test_unread_only_without_subscription_returns_empty(monkeypatch, tmp_path):
+def test_unread_only_without_subscription(monkeypatch, tmp_path):
+    """订阅谓词的两档口径(issue #27 三谓词面板):
+    - subscribed_scope=only:零订阅显式空集(不变);
+    - subscribed_scope=off(全站范围):订阅外的源没有水位,按逐篇读态判定——没读过即未读。
+    """
     app_module, sink = _make_app(monkeypatch, tmp_path, "nosub.db")
     _seed_article(sink.engine, "n1", "src_a")
 
     with TestClient(app_module.app) as client:
         _login(client)
-        response = client.get(
-            "/api/articles",
-            params={"unread_only": "true", "include_total": "true", "include_content": "false"},
-        )
-        assert response.status_code == 200
-        assert response.json()["items"] == []
+        base = {"unread_only": "true", "include_total": "true", "include_content": "false"}
+        only = client.get("/api/articles", params={**base, "subscribed_scope": "only"})
+        assert only.status_code == 200
+        assert only.json()["items"] == []
+        site = client.get("/api/articles", params=base)
+        assert site.status_code == 200
+        assert [item["id"] for item in site.json()["items"]] == ["n1"]
+        client.post("/api/reader/articles/n1/read")
+        assert client.get("/api/articles", params=base).json()["items"] == []
 
 
 # ==================== 单篇手动标读 / 标未读 ====================

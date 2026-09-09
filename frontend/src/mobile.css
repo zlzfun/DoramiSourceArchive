@@ -236,7 +236,6 @@
 }
 .interest-mrow-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .interest-mrow .interest-card-desc { -webkit-line-clamp: 1; }
-.interest-mrow .interest-card-heat { flex: none; }
 /* 触屏无悬停:屏蔽钮常显为图标钮 */
 .interest-mrow .interest-card-ban { flex: none; opacity: 1; margin-left: 0; width: 30px; height: 30px; padding: 0; justify-content: center; border-radius: 8px; }
 .interest-mrow .interest-card-ban svg { width: 14px; height: 14px; }
@@ -652,3 +651,13 @@
 }
 /* 分区页正文:分区组件与桌面设置柜同源,窄屏给统一留白;栅格已由 ≤767 断点塌陷 */
 .m-sett-body { padding: 14px 16px calc(24px + env(safe-area-inset-bottom)); background: var(--rd-pane-bg); }
+
+/* ── 兴趣即透镜(issue #27 五稿):抽屉栏头轴切换加高到触摸档;顶栏标题副文案;嵌入态兴趣页 ── */
+.m-axis { margin: 0 12px 6px; }
+.m-axis .reader-axis-btn { height: 34px; font-size: 13px; }
+.m-drawer .reader-axis-empty { margin: 6px 12px 0; }
+.m-title-sub { margin-left: 8px; font-size: 11.5px; font-weight: 400; color: var(--dorami-faint); }
+.interest-m.is-embedded .interest-m-head { padding-top: 8px; }
+.interest-m .interest-onb { flex-direction: column; align-items: stretch; gap: 10px; margin: 0 0 6px; }
+.interest-m .interest-onb .interest-btn { align-self: flex-end; }
+.m-page .reader-disc-interests { padding: 0; }

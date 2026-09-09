@@ -1,8 +1,9 @@
-import { FileText, Zap, AtSign, Podcast, Star, Compass } from 'lucide-react';
+import { Compass } from 'lucide-react';
 import LogoMark from '../LogoMark';
 import { resolveCompany } from '../../sourceTaxonomy';
 import { mediaProxyUrl } from '../../api';
 import { useLongPress } from '../../hooks/useLongPress';
+import { AxisSeg, TagRows } from '../ReaderTab';
 
 // 源抽屉(移动波 Wave2,样页画面④):桌面源栏的移动翻译——选源是作用在当前容器上的
 // **过滤器**而非目的地(§4.1.2),故从条目流顶栏左钮滑入、不占底部 Tab。
@@ -17,12 +18,18 @@ export default function MobileSourceDrawer({
   sidebarGroups,
   unreadBySource,
   activeSourceId,
-  favOnly,
   hasNoSubscriptions,
   activeUnsubscribed,
   sheetAnchorKey = null,
-  goContainerAll,
-  goFavorites,
+  // 左栏一根轴(issue #27 五稿):与桌面栏头同一份 AxisSeg / TagRows
+  scope,
+  onSetAxis,
+  interestAxisEnabled = true,
+  interestGroups,
+  activeTagId,
+  goTag,
+  hasInterests,
+  onOpenInterests,
   goSource,
   onOpenDiscover,
   onSourcePress,
@@ -31,15 +38,18 @@ export default function MobileSourceDrawer({
 
   if (!open) return null;
 
-  const allLabel = mode === 'bulletin' ? '全部动态' : socialView ? '全部社媒' : mode === 'podcast' ? '全部播客' : '全部文章';
-  const AllIcon = mode === 'bulletin' ? Zap : socialView ? AtSign : mode === 'podcast' ? Podcast : FileText;
+  const title = mode === 'bulletin' ? '动态' : socialView ? '社交媒体' : mode === 'podcast' ? '播客' : '文章';
   const pick = (fn) => (...args) => { fn(...args); onClose?.(); };
+  // 列源还是列标签:兴趣轴列标签;社交容器 / 预览单源(临时在来源轴上)列源
+  const showSourceRows = scope.axis !== 'interest' || socialView || Boolean(activeSourceId);
 
   return (
     <div className="m-drawer-layer" role="presentation">
       <div className="m-dim" onClick={onClose} aria-hidden="true" />
-      <aside className="m-drawer" aria-label="订阅源">
-        <div className="m-drawer-title">我的订阅</div>
+      <aside className="m-drawer" aria-label="过滤条件与来源">
+        <div className="m-drawer-title">{title}</div>
+        {/* 栏头轴切换(社交容器没有标签,不出):切段即关抽屉回列表 */}
+        {!socialView && interestAxisEnabled && <AxisSeg axis={scope.axis} onChange={pick(onSetAxis)} className="m-axis" />}
         <div className="m-drawer-scroll">
           {/* 预览锚点行(Folo):正在预览的未订阅源浮现在顶部,交代「你在哪」 */}
           {activeUnsubscribed && (
@@ -50,24 +60,18 @@ export default function MobileSourceDrawer({
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={pick(goContainerAll)}
-            className={`m-agg-row ${activeSourceId === null && !favOnly ? 'is-on' : ''}`}
-          >
-            <AllIcon aria-hidden="true" />
-            <span>{allLabel}</span>
-          </button>
-          <button
-            type="button"
-            onClick={pick(goFavorites)}
-            className={`m-agg-row m-agg-fav ${favOnly ? 'is-on' : ''}`}
-          >
-            <Star aria-hidden="true" fill={favOnly ? 'currentColor' : 'none'} />
-            <span>只看收藏</span>
-          </button>
+          {/* 兴趣轴:关注的标签;点一行即关抽屉回列表;没设兴趣时引导直落发现页兴趣段 */}
+          {!showSourceRows && (
+            <TagRows
+              groups={interestGroups}
+              activeTagId={activeTagId}
+              onPick={pick(goTag)}
+              hasInterests={hasInterests}
+              onOpenInterests={pick(onOpenInterests)}
+            />
+          )}
 
-          {sourcesLoading ? (
+          {!showSourceRows ? null : sourcesLoading ? (
             <div className="m-drawer-skel" aria-hidden="true">
               {[0, 1, 2, 3, 4].map((i) => (
                 <div key={i} className="flex items-center gap-2.5 px-2.5 py-2">
