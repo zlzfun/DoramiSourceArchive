@@ -50,6 +50,13 @@ def upgrade() -> None:
             ["analysis_input_hash"],
             unique=False,
         )
+    if "ix_article_analyses_last_error_article_id" not in _indexes():
+        op.create_index(
+            "ix_article_analyses_last_error_article_id",
+            "article_analyses",
+            ["last_error", "article_id"],
+            unique=False,
+        )
     # Old rows predate the analysis column. The retired premium workflow wrote
     # an extensions marker in the same transaction as its ASR-based score, so
     # preserve that known provenance; every other historical podcast row was
@@ -94,6 +101,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if "ix_article_analyses_last_error_article_id" in _indexes():
+        op.drop_index(
+            "ix_article_analyses_last_error_article_id",
+            table_name="article_analyses",
+        )
     if "ix_article_analyses_analysis_input_hash" in _indexes():
         op.drop_index(
             "ix_article_analyses_analysis_input_hash", table_name="article_analyses"

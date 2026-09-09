@@ -258,6 +258,33 @@ def test_podcast_people_parse_explicit_chinese_title_and_markdown_strong_markers
     )
 
 
+@pytest.mark.parametrize(
+    ("title", "show_notes", "expected_name", "expected_evidence"),
+    [
+        (
+            "Conversation with Sam Altman: The Future of AI",
+            "",
+            "Sam Altman",
+            "title:explicit_guest",
+        ),
+        ("", "**嘉宾**：李四", "李四", "show_notes:explicit_person"),
+        ("", "- **Guest**: Jane Doe", "Jane Doe", "show_notes:explicit_person"),
+    ],
+)
+def test_podcast_people_markdown_and_colon_markers_stop_before_topic(
+    title,
+    show_notes,
+    expected_name,
+    expected_evidence,
+):
+    people = GenericPodcastRssFetcher._persons(
+        {}, {}, {}, {}, title=title, show_notes=show_notes
+    )
+    assert [(person["name"], person["evidence"]) for person in people] == [
+        (expected_name, expected_evidence)
+    ]
+
+
 def test_podcast_feed_rechecks_redirects_and_never_requests_private_target(
     monkeypatch,
 ):
@@ -734,7 +761,11 @@ def test_disabled_analysis_person_refresh_is_reconciled_after_old_episode_leaves
         PODCAST_ANALYSIS_PROMPT_VERSION,
         PODCAST_ANALYSIS_SCORING_VERSION,
     )
-    from services.article_analysis import compute_content_hash, scan_analysis_backfill
+    from services.article_analysis import (
+        PODCAST_PEOPLE_DIRTY_REASON,
+        compute_content_hash,
+        scan_analysis_backfill,
+    )
     from storage.impl.db_storage import DatabaseStorage
 
     sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'podcast-person-reconcile.db'}")
@@ -793,6 +824,7 @@ def test_disabled_analysis_person_refresh_is_reconciled_after_old_episode_leaves
     with Session(sink.engine) as session:
         analysis = session.get(ArticleAnalysisRecord, initial.id)
         assert analysis.status == "succeeded"
+        assert analysis.last_error == PODCAST_PEOPLE_DIRTY_REASON
         stats = scan_analysis_backfill(
             session,
             enabled=True,

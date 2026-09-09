@@ -90,6 +90,9 @@ DEFAULT_MAX_ATTEMPTS = 4
 # 版本键过期的 succeeded 行每个扫描 tick 最多失效多少篇(v3.48 收口:版本一变近 7 天存量
 # 曾瞬时全部 invalidated 与新文章抢队列;现慢滴重跑,新到文章永远优先,7 天外等 full_analysis)。
 VERSION_REFRESH_PER_CYCLE = 16
+PODCAST_PEOPLE_SCAN_PAGE_SIZE = 64
+PODCAST_PEOPLE_SCAN_CURSOR_KEY = "article_analysis:podcast_people_scan_cursor"
+PODCAST_PEOPLE_DIRTY_REASON = "podcast publisher people changed"
 DEFAULT_BATCH_SIZE = 8
 DEFAULT_MAX_BATCHES_PER_CYCLE = 8
 CLAIM_SCAN_PAGE_SIZE = 64
@@ -389,6 +392,35 @@ def _podcast_people_are_current(
     )
 
 
+def mark_podcast_people_dirty(
+    session: Session,
+    article_id: str,
+    *,
+    now: Optional[dt.datetime] = None,
+) -> bool:
+    """Persist a cheap reconciliation marker after publisher metadata refresh."""
+
+    article = session.get(ArticleRecord, article_id)
+    record = session.get(ArticleAnalysisRecord, article_id)
+    if (
+        article is None
+        or article.content_type != "podcast_episode"
+        or record is None
+        or record.status != AnalysisStatus.SUCCEEDED.value
+    ):
+        return False
+    is_current = _podcast_people_are_current(article, record)
+    next_error = None if is_current else PODCAST_PEOPLE_DIRTY_REASON
+    if is_current and record.last_error != PODCAST_PEOPLE_DIRTY_REASON:
+        return False
+    if next_error == record.last_error:
+        return False
+    record.last_error = next_error
+    record.updated_at = _iso(now)
+    session.add(record)
+    return True
+
+
 def _clear_authoritative_result(record: ArticleAnalysisRecord) -> None:
     record.quality_score = None
     record.dimension_scores_json = "{}"
@@ -673,7 +705,7 @@ def scan_analysis_backfill(
 
     v3.48 收口:扫描只挑**需要动作**的行——轻列 LEFT JOIN ``article_analyses``,命中四类:
     ①无分析行;②``skipped``(源开关可能已重开);③``succeeded`` 但 prompt/scoring 版本键
-    过期;④ Podcast ``succeeded`` 但 publisher persons 与 diagnostics 快照不一致
+    过期;④ Podcast ``succeeded`` 被入库刷新持久标记为 publisher persons 过期
     (后两类每 tick 合计最多 ``version_refresh_limit`` 篇,新到文章永远优先)。其余行
     (pending/running/failed/timeout/当前 succeeded)扫描不碰:重试与租约机制自管,内容变化
     由入库钩子与文章编辑端点显式入队覆盖。此前每分钟把 7 天全部正文载入内存逐篇比哈希,
@@ -714,6 +746,7 @@ def scan_analysis_backfill(
         select(
             ArticleRecord.id,
             ArticleRecord.fetched_date,
+            ArticleRecord.source_id,
             ArticleAnalysisRecord.status,
         )
         .outerjoin(
@@ -733,19 +766,22 @@ def scan_analysis_backfill(
             ),
         )
     ).all()
-    # Person metadata can change long after publication while the analysis flag
-    # is off.  Scan all local succeeded Podcasts by light JSON columns so an old
-    # episode cannot retain stale people forever merely because it left the
-    # ordinary seven-day arrival window.
-    stale_people_rows = [
-        (article_id, fetched, status)
-        for article_id, fetched, status, extensions_json, diagnostics_json in session.exec(
+    # Metadata refreshes persist a dirty marker even while analysis is disabled.
+    # A durable keyset cursor walks only a bounded dirty page per tick, so old
+    # episodes are eventually covered without parsing all historical JSON.
+    people_cursor_record = session.get(
+        AppSettingRecord, PODCAST_PEOPLE_SCAN_CURSOR_KEY
+    )
+    people_cursor = (people_cursor_record.value if people_cursor_record else "").strip()
+    people_page_size = max(1, PODCAST_PEOPLE_SCAN_PAGE_SIZE)
+
+    def load_people_page(after_id: str):
+        statement = (
             select(
                 ArticleRecord.id,
                 ArticleRecord.fetched_date,
+                ArticleRecord.source_id,
                 ArticleAnalysisRecord.status,
-                ArticleRecord.extensions_json,
-                ArticleAnalysisRecord.analysis_diagnostics_json,
             )
             .join(
                 ArticleAnalysisRecord,
@@ -758,20 +794,42 @@ def scan_analysis_backfill(
                 ArticleRecord.content != "",
                 ArticleRecord.analysis_authority_id == "",
                 ArticleAnalysisRecord.status == AnalysisStatus.SUCCEEDED.value,
+                ArticleAnalysisRecord.last_error == PODCAST_PEOPLE_DIRTY_REASON,
             )
-        ).all()
-        if not _podcast_people_payloads_are_current(
-            extensions_json, diagnostics_json
+            .order_by(ArticleRecord.id)
+            .limit(people_page_size)
         )
+        if after_id:
+            statement = statement.where(ArticleRecord.id > after_id)
+        return list(session.exec(statement).all())
+
+    people_page = load_people_page(people_cursor)
+    if not people_page and people_cursor:
+        people_cursor = ""
+        people_page = load_people_page(people_cursor)
+    next_people_cursor = (
+        str(people_page[-1][0]) if len(people_page) >= people_page_size else ""
+    )
+    if people_cursor_record is None:
+        people_cursor_record = AppSettingRecord(
+            key=PODCAST_PEOPLE_SCAN_CURSOR_KEY,
+            value=next_people_cursor,
+        )
+    else:
+        people_cursor_record.value = next_people_cursor
+    session.add(people_cursor_record)
+    stale_people_rows = [
+        (article_id, fetched, source_id, status)
+        for article_id, fetched, source_id, status in people_page
     ]
     rows_by_id = {
-        article_id: (article_id, fetched, status)
-        for article_id, fetched, status in stale_people_rows
+        article_id: (article_id, fetched, source_id, status)
+        for article_id, fetched, source_id, status in stale_people_rows
     }
     rows_by_id.update(
         {
-            article_id: (article_id, fetched, status)
-            for article_id, fetched, status in light_rows
+            article_id: (article_id, fetched, source_id, status)
+            for article_id, fetched, source_id, status in light_rows
             if in_time_window(fetched, start=since_time, end=now_utc)
         }
     )
@@ -788,15 +846,24 @@ def scan_analysis_backfill(
     actionable = 0
     deferred = 0
     refresh_budget = max(0, version_refresh_limit)
-    for article_id, _fetched, status in rows:
+    for article_id, _fetched, source_id, status in rows:
         if status == AnalysisStatus.SUCCEEDED.value:
+            source = session.get(SourceConfigRecord, source_id)
+            if (
+                not _source_allows_analysis(source, source_id=source_id)
+                or not sync_consumer_policy.local_source_operation_allowed(
+                    session, source_id, operation="analysis"
+                )
+            ):
+                continue
             if refresh_budget <= 0:
                 deferred += 1
                 continue
-            refresh_budget -= 1
         scanned += 1
         outcome = queue_article_analysis(session, article_id, enabled=True, now=now_utc)
         counts[outcome] += 1
+        if status == AnalysisStatus.SUCCEEDED.value and outcome == "invalidated":
+            refresh_budget -= 1
         if outcome in {"created", "invalidated", "skipped"}:
             actionable += 1
             if actionable >= max(1, limit):
