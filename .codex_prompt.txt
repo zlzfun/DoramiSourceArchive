@@ -1,0 +1,5 @@
+你是这个仓库(DoramiSourceArchive,FastAPI+SQLModel+SQLite 后端,React 前端)的代码检视人。请检视工作目录里的 .codex_pr53.diff(PR #53:兴趣轴「全部标读」按范围逐篇写读态 + 无水位源未读时效下限 30 天 + 留存清理),可以读取仓库里被改动的源文件与相关调用方来核实上下文(src/services/reader_state.py、src/api/routers/reader.py、src/api/routers/articles.py、src/services/retention.py、src/services/reader_interests.py、frontend/src/hooks/useReaderState.js)。
+
+关注:正确性缺陷(过滤与标注不同尺、边界、竞态、SQL 语义)、安全(范围越权、私有源泄露)、性能(全站范围查询)、与既有约定冲突。不要泛泛的风格意见。
+
+输出格式:每条一段,写「严重度(P1/P2/P3)| 文件:行 | 问题 | 复现或推理 | 建议修法」;没有问题就明确说「未发现需要修改的问题」并说明你核实了哪些点。用中文。

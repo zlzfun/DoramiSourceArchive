@@ -328,3 +328,41 @@ def test_mark_scope_read_marks_interest_hits_per_article(monkeypatch, tmp_path):
         assert ids == set()
         ids, _ = _ids(client, subscribed_scope="only", unread_only="true")
         assert "sub_plain" in ids and "sub_hit" not in ids
+
+
+def test_mark_scope_read_response_shape_and_admin_visibility(monkeypatch, tmp_path):
+    """响应带 has_more(未封顶为 false);admin 会话的范围与列表同尺——隐藏源的命中也标(读者会话不标)。"""
+    from services import source_visibility as source_visibility_service
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    e = sink.engine
+    with Session(e) as session:
+        from models.db import CmsTagRecord
+        agents_id = session.exec(select(CmsTagRecord.id).where(CmsTagRecord.code == "ai-agents")).one()
+    _seed_article(e, "hidden_hit", "web_hidden_src")
+    _assign(e, "hidden_hit", agents_id, primary=True, relevance=0.9)
+    _set_interest(e, "admin", agents_id, "follow")
+    with Session(e) as session:
+        source_visibility_service.set_source_hidden(session, "web_hidden_src", True)
+        session.commit()
+    with TestClient(app_module.app) as client:
+        _login(client)  # 读者:隐藏源不可见,不在标读范围
+        res = client.post("/api/reader/mark-scope-read", params={"shape": "article"})
+        body = res.json()
+        assert res.status_code == 200 and body["has_more"] is False
+        assert "hidden_hit" not in _read_ids(e, "user")
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")  # admin:列表能看到隐藏源命中,标读同尺
+        res = client.post("/api/reader/mark-scope-read", params={"shape": "article"})
+        assert res.status_code == 200 and res.json()["marked"] >= 1
+        assert "hidden_hit" in _read_ids(e, "admin")
+
+
+def _read_ids(engine, username: str) -> set:
+    from models.db import ReaderArticleReadStateRecord
+    with Session(engine) as session:
+        rows = session.exec(select(ReaderArticleReadStateRecord.article_id).where(
+            ReaderArticleReadStateRecord.owner_username == username,
+            ReaderArticleReadStateRecord.is_read == True,  # noqa: E712
+        )).all()
+    return set(rows)

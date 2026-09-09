@@ -46,8 +46,10 @@ INIT_UNREAD_BACKLOG = 20
 # ②逐篇已读行只在这个滚动窗内有意义,窗外的行由留存清理回收,表大小从线性变成常量。
 # 订阅源的对应物是订阅时播种的水位(老文章本来就是已读)。
 UNCURSORED_UNREAD_MAX_AGE_DAYS = 30
-# 兴趣轴「全部标读」单次逐篇写入上限(取最新);命中集合远小于订阅全量,这是极端情况的兜底
+# 兴趣轴「全部标读」每批逐篇写入上限(取最新)与批次上限:命中集合远小于订阅全量,批次封顶只是
+# 极端情况的兜底(超出即 has_more=true 如实回报,不谎称「已全部」)
 MARK_SCOPE_READ_MAX = 2000
+MARK_SCOPE_READ_MAX_BATCHES = 10
 
 
 def uncursored_unread_cutoff(now: Optional[datetime.datetime] = None) -> str:

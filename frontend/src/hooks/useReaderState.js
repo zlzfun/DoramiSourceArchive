@@ -1052,13 +1052,14 @@ export function useReaderState({
       const data = interestScope
         ? await markScopeRead(mode, activeTagId)
         : await markAllRead(activeSourceId, activeSourceId ? null : mode);
+      const partial = Boolean(data?.has_more); // 兴趣轴批次封顶未写完:如实说,不谎称「已全部」
       // 后端返回更新后的统计;本页在列条目全部乐观清点(圆点即消)。
       prevScopeUnreadRef.current = null;
       applyUnreadCounts(data);
       for (const a of articles) readOverridesRef.current.set(a.id, true);
       setReadOverrides(new Map(readOverridesRef.current));
       if (unreadOnly) loadArticles(0, false); // 只看未读视图下列表应清空重拉
-      showToast('已全部标为已读', 'success');
+      showToast(partial ? '已标记一批,仍有未读,请再点一次' : '已全部标为已读', partial ? 'info' : 'success');
     } catch (error) {
       showToast(error.message || '标记已读失败', 'error');
     } finally {

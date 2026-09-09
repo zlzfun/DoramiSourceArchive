@@ -183,11 +183,17 @@ def test_retention_read_states_only_uncursored_old_read_rows(tmp_path):
         session.add(rs("recent_uncursored", at=recent))       # 留:文章在窗内
         session.add(rs("old_read_recently", at=recent))       # 留:标读时间在窗内
         session.commit()
+    # 临界:文章与标读都在「29 天 23 小时」前——按日历日截点会误删,按未读判定的精确截点必须保留
+    edge = (datetime.datetime.now() - datetime.timedelta(days=29, hours=23)).isoformat()
+    with Session(engine) as session:
+        session.add(art("edge_uncursored", "web_qbitai", edge))
+        session.add(rs("edge_uncursored", at=edge))
+        session.commit()
     deleted = retention.run_retention_cleanup(engine)
     assert deleted["reader_article_read_states"] == 1
     with Session(engine) as session:
         left = {r.article_id for r in session.exec(select(ReaderArticleReadStateRecord)).all()}
-        assert left == {"old_unread_row", "old_cursored", "recent_uncursored", "old_read_recently"}
+        assert left == {"old_unread_row", "old_cursored", "recent_uncursored", "old_read_recently", "edge_uncursored"}
 
 
 def test_retention_still_covers_fetch_runs(tmp_path):

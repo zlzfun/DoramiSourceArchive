@@ -71,7 +71,7 @@ from models.db import (
     TagRetagJobRecord,
 )
 from models.db import ArticleRecord, ReaderArticleReadStateRecord, ReaderReadCursorRecord
-from services.reader_state import UNCURSORED_UNREAD_MAX_AGE_DAYS
+from services.reader_state import UNCURSORED_UNREAD_MAX_AGE_DAYS, uncursored_unread_cutoff
 
 logger = logging.getLogger("dorami.retention")
 
@@ -176,8 +176,13 @@ def _conditional_cleanups(today: datetime.date) -> List[tuple]:
 
 
 def _read_state_cleanup(today: datetime.date):
-    """无水位源的窗外已读行(见模块注释)。"""
-    cutoff = _cutoff(UNCURSORED_UNREAD_MAX_AGE_DAYS, today=today)
+    """无水位源的窗外已读行(见模块注释)。
+
+    截点直接复用未读判定的精确时间戳 ``uncursored_unread_cutoff()``(而非按日历日的 ``_cutoff``):
+    两者若差半天,清理会删掉尚未满 30×24 小时的已读行,文章随即在无水位判定下复活为未读。
+    """
+    del today  # 与其它条件性清理同签名;本表的截点必须与未读判定同一时刻计算
+    cutoff = uncursored_unread_cutoff()
     old_article = select(ArticleRecord.id).where(ArticleRecord.fetched_date < cutoff)
     cursored = exists().where(
         ReaderReadCursorRecord.owner_username == ReaderArticleReadStateRecord.owner_username,
