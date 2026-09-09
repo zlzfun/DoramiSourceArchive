@@ -224,6 +224,10 @@ class PodcastEpisodeContent(BaseContent):
         default_factory=list,
         metadata={"description": "Podcasting 2.0 transcript 资源列表"},
     )
+    persons: List[Dict[str, str]] = field(
+        default_factory=list,
+        metadata={"description": "发布方明确给出的主持人、嘉宾与角色依据"},
+    )
     chapters_url: str = field(default="", metadata={"description": "Podcasting 2.0 chapters URL"})
     chapters_mime: str = field(default="", metadata={"description": "Podcasting 2.0 chapters MIME 类型"})
     raw_data: Optional[Dict[str, Any]] = field(

@@ -1,4 +1,5 @@
 import asyncio
+import datetime as dt
 import json
 import os
 import sys
@@ -20,7 +21,7 @@ from api.routers.source_configs import (
 from fetchers.impl.podcast_rss_fetcher import GenericPodcastRssFetcher
 from fetchers.registry import fetcher_registry
 from models.content import PodcastEpisodeContent, serialize_to_metadata
-from models.db import ArticleRecord, SourceConfigRecord
+from models.db import ArticleAnalysisRecord, ArticleRecord, SourceConfigRecord
 
 
 def _seed_approved_podcast(sink, source_id: str) -> None:
@@ -175,6 +176,113 @@ def test_generic_podcast_rss_parses_episode_metadata_without_downloading_audio(
     assert metadata["content_type"] == "podcast_episode"
     assert metadata["extensions"]["audio_url"] == episode.audio_url
     assert metadata["extensions"]["duration_seconds"] == 3723
+
+
+def test_podcast_people_normalize_only_publisher_explicit_identities():
+    xml = _podcast_feed_xml()
+    xml = xml.replace(
+        '<itunes:image href="https://cdn.example.test/show.jpg" />',
+        '<itunes:image href="https://cdn.example.test/show.jpg" />\n'
+        '<podcast:person>Alice Host</podcast:person>',
+    ).replace(
+        "<title>Long Episode</title>",
+        "<title>Long Episode with Dana Doe</title>\n"
+        "<author>Episode Author</author>\n"
+        '<podcast:person role="guest" group="cast">Bob Guest</podcast:person>',
+    ).replace(
+        "<p>Detailed show notes.</p>",
+        "<p>Detailed show notes.</p><p>嘉宾：Carol Chen</p>",
+    )
+    fetcher = GenericPodcastRssFetcher()
+
+    async def fake_fetch(*_args, **_kwargs):
+        return xml.encode("utf-8")
+
+    fetcher._fetch_feed_limited = fake_fetch
+
+    async def collect():
+        return [
+            item
+            async for item in fetcher.fetch(
+                feed_url="https://example.test/feed.xml",
+                source_id="podcast_people",
+                limit=10,
+            )
+        ]
+
+    episodes = asyncio.run(collect())
+    episode = next(item for item in episodes if "Long Episode" in item.title)
+    compact = {
+        (person["name"], person["role"], person["scope"], person["evidence"])
+        for person in episode.persons
+    }
+    # Podcasting 2.0 item persons replace, rather than extend, channel persons.
+    assert ("Alice Host", "host", "show", "podcast:person") not in compact
+    assert ("Bob Guest", "guest", "episode", "podcast:person") in compact
+    assert ("Episode Author", "author", "episode", "rss:item.author") in compact
+    assert ("Carol Chen", "guest", "episode", "show_notes:explicit_person") in compact
+    assert ("Dana Doe", "guest", "episode", "title:explicit_guest") in compact
+    assert all(person["name"] != "Speaker 1" for person in episode.persons)
+    short = next(item for item in episodes if item.title == "Short Episode")
+    assert any(
+        person["name"] == "Alice Host"
+        and person["role"] == "host"
+        and person["group"] == "cast"
+        for person in short.persons
+    )
+
+
+def test_podcast_people_parse_explicit_chinese_title_and_markdown_strong_markers():
+    def extract(title):
+        return GenericPodcastRssFetcher._persons(
+            {},
+            {},
+            {},
+            {},
+            title=title,
+            show_notes="**嘉宾：李四**\n本集还讨论了王五的研究。",
+        )
+
+    people = extract("本期嘉宾：张三")
+
+    assert {
+        (person["name"], person["role"], person["scope"], person["evidence"])
+        for person in people
+    } == {
+        ("张三", "guest", "episode", "title:explicit_guest"),
+        ("李四", "guest", "episode", "show_notes:explicit_person"),
+    }
+    assert any(
+        person["name"] == "张三"
+        for person in extract("本期嘉宾：张三｜讨论主题")
+    )
+
+
+@pytest.mark.parametrize(
+    ("title", "show_notes", "expected_name", "expected_evidence"),
+    [
+        (
+            "Conversation with Sam Altman: The Future of AI",
+            "",
+            "Sam Altman",
+            "title:explicit_guest",
+        ),
+        ("", "**嘉宾**：李四", "李四", "show_notes:explicit_person"),
+        ("", "- **Guest**: Jane Doe", "Jane Doe", "show_notes:explicit_person"),
+    ],
+)
+def test_podcast_people_markdown_and_colon_markers_stop_before_topic(
+    title,
+    show_notes,
+    expected_name,
+    expected_evidence,
+):
+    people = GenericPodcastRssFetcher._persons(
+        {}, {}, {}, {}, title=title, show_notes=show_notes
+    )
+    assert [(person["name"], person["evidence"]) for person in people] == [
+        (expected_name, expected_evidence)
+    ]
 
 
 def test_podcast_feed_rechecks_redirects_and_never_requests_private_target(
@@ -490,7 +598,50 @@ def test_article_list_and_detail_serializer_project_lightweight_podcast_contract
     assert "raw_data" not in over_thirty["podcast"]
 
 
+def test_podcast_projection_uses_authoritative_analysis_basis_and_versions():
+    analysis = ArticleAnalysisRecord(
+        article_id="podcast-1800",
+        status="succeeded",
+        tagging_status="succeeded",
+        quality_score=8.4,
+        score_reason="关键人物提供了相关领域的一手信息。",
+        analysis_basis="publisher_transcript",
+        analysis_input_hash="sha256:podcast-input-v1",
+        transcript_artifact_id="publisher-transcript-1",
+        prompt_version="podcast-analysis-v1",
+        scoring_version="podcast-news-value-v1",
+        created_at="2026-09-09T00:00:00+00:00",
+        updated_at="2026-09-09T00:00:00+00:00",
+    )
+    record = _podcast_record(1800)
+    extensions = json.loads(record.extensions_json)
+    extensions["analysis_basis"] = "asr_transcript"
+    record.extensions_json = json.dumps(extensions)
+
+    item = serialize_article_list_item(record, include_content=False, analysis=analysis)
+
+    # RSS extensions 中的旧值不得覆盖权威分析记录。
+    assert item["podcast"]["analysis_basis"] == "publisher_transcript"
+    assert item["analysis_basis"] == "publisher_transcript"
+    assert item["analysis_input_hash"] == "sha256:podcast-input-v1"
+    assert item["transcript_artifact_id"] == "publisher-transcript-1"
+    assert item["prompt_version"] == "podcast-analysis-v1"
+    assert item["scoring_version"] == "podcast-news-value-v1"
+    assert item["quality_score"] == 8.4
+    assert item["score_reason"] == "关键人物提供了相关领域的一手信息。"
+
+    analysis.analysis_basis = ""
+    legacy = serialize_article_list_item(record, include_content=False, analysis=analysis)
+    assert legacy["podcast"]["analysis_basis"] == "podcast_show_notes"
+
+
 def test_existing_podcast_refreshes_feed_metadata_without_erasing_derived_fields(tmp_path):
+    from llm.article_analysis_prompt import (
+        PODCAST_ANALYSIS_PROMPT_VERSION,
+        PODCAST_ANALYSIS_SCORING_VERSION,
+    )
+    from models.db import AppSettingRecord
+    from services.article_analysis import compute_content_hash
     from storage.impl.db_storage import DatabaseStorage
 
     sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'podcast-refresh.db'}")
@@ -563,8 +714,127 @@ def test_existing_podcast_refreshes_feed_metadata_without_erasing_derived_fields
         assert extensions["processing_status"] == "audio_ready"
         assert extensions["condensed_audio_url"].endswith("/condensed.mp3")
 
+        session.add(AppSettingRecord(key="article_analysis_enabled", value="true"))
+        session.add(ArticleAnalysisRecord(
+            article_id=record.id,
+            status="succeeded",
+            tagging_status="succeeded",
+            quality_score=8.0,
+            score_reason="旧人物上下文",
+            summary="旧摘要",
+            content_hash=compute_content_hash(record),
+            analysis_basis="podcast_show_notes",
+            analysis_diagnostics_json='{"people":[]}',
+            prompt_version=PODCAST_ANALYSIS_PROMPT_VERSION,
+            scoring_version=PODCAST_ANALYSIS_SCORING_VERSION,
+            analyzed_at="2026-09-03T02:00:00+00:00",
+            created_at="2026-09-03T02:00:00+00:00",
+            updated_at="2026-09-03T02:00:00+00:00",
+        ))
+        session.commit()
+
+    people_refreshed = replace(
+        refreshed,
+        persons=[{
+            "name": "New Guest",
+            "role": "guest",
+            "scope": "episode",
+            "evidence": "podcast:person",
+        }],
+    )
+    # Metadata-only refreshes remain excluded from saved_count but independently
+    # queue a new assessment when the actual people input changes.
+    assert asyncio.run(sink.save(people_refreshed)) is False
+    with Session(sink.engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, initial.id)
+        assert analysis.status == "pending"
+        assert analysis.quality_score == 8.0
+
     # Missing values in a transiently incomplete feed do not erase good stored metadata.
-    assert asyncio.run(sink.save(refreshed)) is False
+    assert asyncio.run(sink.save(people_refreshed)) is False
+
+
+def test_disabled_analysis_person_refresh_is_reconciled_after_old_episode_leaves_lookback(
+    tmp_path,
+):
+    from llm.article_analysis_prompt import (
+        PODCAST_ANALYSIS_PROMPT_VERSION,
+        PODCAST_ANALYSIS_SCORING_VERSION,
+    )
+    from services.article_analysis import (
+        PODCAST_PEOPLE_DIRTY_REASON,
+        compute_content_hash,
+        scan_analysis_backfill,
+    )
+    from storage.impl.db_storage import DatabaseStorage
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'podcast-person-reconcile.db'}")
+    _seed_approved_podcast(sink, "podcast_person_reconcile")
+    common = {
+        "id": "podcast-person-reconcile-1",
+        "source_id": "podcast_person_reconcile",
+        "title": "Old episode",
+        "source_url": "https://example.test/episodes/old",
+        "publish_date": "2026-07-01T00:00:00+00:00",
+        "fetched_date": "2026-07-01T01:00:00+00:00",
+        "content": "Publisher show notes",
+        "has_content": True,
+        "show_title": "Podcast Show",
+        "audio_url": "https://cdn.example.test/old.mp3",
+    }
+    old_person = {
+        "name": "Old Guest",
+        "role": "guest",
+        "scope": "episode",
+        "evidence": "podcast:person",
+    }
+    initial = PodcastEpisodeContent(**common, persons=[old_person])
+    assert asyncio.run(sink.save(initial)) is True
+
+    with Session(sink.engine) as session:
+        article = session.get(ArticleRecord, initial.id)
+        session.add(
+            ArticleAnalysisRecord(
+                article_id=article.id,
+                status="succeeded",
+                tagging_status="succeeded",
+                quality_score=8.0,
+                score_reason="old people",
+                summary="old authority",
+                content_hash=compute_content_hash(article),
+                analysis_basis="podcast_show_notes",
+                analysis_diagnostics_json=json.dumps({"people": [old_person]}),
+                prompt_version=PODCAST_ANALYSIS_PROMPT_VERSION,
+                scoring_version=PODCAST_ANALYSIS_SCORING_VERSION,
+                analyzed_at="2026-07-01T02:00:00+00:00",
+                created_at="2026-07-01T02:00:00+00:00",
+                updated_at="2026-07-01T02:00:00+00:00",
+            )
+        )
+        session.commit()
+
+    new_person = {
+        "name": "New Guest",
+        "role": "guest",
+        "scope": "episode",
+        "evidence": "podcast:person",
+    }
+    # The feature flag is absent/default-off, so the RSS refresh cannot queue now.
+    assert asyncio.run(sink.save(replace(initial, persons=[new_person]))) is False
+    with Session(sink.engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, initial.id)
+        assert analysis.status == "succeeded"
+        assert analysis.last_error == PODCAST_PEOPLE_DIRTY_REASON
+        stats = scan_analysis_backfill(
+            session,
+            enabled=True,
+            now=dt.datetime(2026, 9, 1, tzinfo=dt.timezone.utc),
+            lookback_days=7,
+        )
+        assert stats.invalidated == 1
+        session.refresh(analysis)
+        assert analysis.status == "pending"
+        assert analysis.quality_score == 8.0
 
 
 def test_storage_ignores_public_podcast_legacy_active_value_but_keeps_private_gate(
@@ -658,6 +928,23 @@ def test_articles_list_and_detail_endpoints_expose_same_podcast_projection(monke
         transcripts=[{"url": "https://cdn.example.test/e2e.vtt", "type": "text/vtt"}],
     )
     assert asyncio.run(sink.save(episode)) is True
+    with Session(sink.engine) as session:
+        session.add(ArticleAnalysisRecord(
+            article_id=episode.id,
+            status="succeeded",
+            tagging_status="succeeded",
+            quality_score=8.1,
+            score_reason="普通嘉宾给出了可复用的技术细节。",
+            summary="节目围绕一项可复用的工程实践展开。",
+            analysis_basis="podcast_show_notes",
+            analysis_input_hash="sha256:endpoint-show-notes",
+            prompt_version="podcast-analysis-v1",
+            scoring_version="podcast-news-value-v1",
+            analyzed_at="2026-09-02T00:10:00+00:00",
+            created_at="2026-09-02T00:05:00+00:00",
+            updated_at="2026-09-02T00:10:00+00:00",
+        ))
+        session.commit()
 
     with TestClient(app_module.app) as client:
         login = client.post(
@@ -675,9 +962,27 @@ def test_articles_list_and_detail_endpoints_expose_same_podcast_projection(monke
         detail = client.get("/api/articles/podcast-e2e-1")
         assert detail.status_code == 200
         detail_item = detail.json()
+        analysis_detail = client.get("/api/articles/podcast-e2e-1/analysis")
+        assert analysis_detail.status_code == 200
 
     assert list_item["podcast"] == detail_item["podcast"]
-    assert list_item["podcast"]["analysis_basis"] == "show_notes"
+    assert list_item["podcast"]["analysis_basis"] == "podcast_show_notes"
+    for key in (
+        "quality_score",
+        "score_reason",
+        "analysis_basis",
+        "analysis_input_hash",
+        "transcript_artifact_id",
+        "prompt_version",
+        "scoring_version",
+    ):
+        assert list_item[key] == detail_item[key]
+    assert list_item["quality_score"] == 8.1
+    assert list_item["score_reason"] == "普通嘉宾给出了可复用的技术细节。"
+    assert list_item["analysis_input_hash"] == "sha256:endpoint-show-notes"
+    assert analysis_detail.json()["analysis_basis"] == "podcast_show_notes"
+    assert analysis_detail.json()["analysis_input_hash"] == "sha256:endpoint-show-notes"
+    assert analysis_detail.json()["transcript_artifact_id"] is None
     assert list_item["podcast"]["is_long_form"] is True
     assert list_item["podcast"]["transcript_available"] is True
     assert "content" not in list_item

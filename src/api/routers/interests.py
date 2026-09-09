@@ -168,7 +168,7 @@ def replace_interests(
         accounts_service.complete_interest_onboarding(session, username)
     session.commit()
 
-    # v3.50.1(issue #33 §5):兴趣变更只记录,不再触发当日早报重编排——早报重编只剩
+    # v3.51.1(issue #33 §5):兴趣变更只记录,不再触发当日早报重编排——早报重编只剩
     # 读者手动「重新编排」与次日定时两个入口,今日版面落后于当前兴趣时由
     # /api/reader/briefs/today 的 interest_stale 提示读者自行决定。
     result = get_interests(auth=auth, session=session)

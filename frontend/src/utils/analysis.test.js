@@ -6,8 +6,10 @@ import {
   analysisNeedsPolling,
   analysisStatusMeta,
   hasReadableAnalysis,
+  podcastAssessmentMeta,
   preferredAnalysisSummary,
   qualityScoreText,
+  shouldShowAiReadingCard,
 } from './analysis.js';
 
 test('qualityScoreText never turns missing values into a zero score', () => {
@@ -100,4 +102,37 @@ test('analysis polling accepts both list and envelope article responses', () => 
   assert.deepEqual(analysisItemsFromResponse(rows), rows);
   assert.deepEqual(analysisItemsFromResponse({ items: rows }), rows);
   assert.deepEqual(analysisItemsFromResponse({}), []);
+});
+
+test('podcast assessment exposes one score with an honest input-basis label', () => {
+  const initial = {
+    content_type: 'podcast_episode',
+    quality_score: 8.2,
+    analysis_basis: 'podcast_show_notes',
+  };
+  assert.equal(podcastAssessmentMeta(initial).label, '简介初评');
+  assert.match(podcastAssessmentMeta(initial).note, /尚未分析完整音频/);
+
+  const transcript = {
+    ...initial,
+    analysis_basis: 'publisher_transcript',
+  };
+  assert.equal(podcastAssessmentMeta(transcript).label, '全文深度分析');
+  assert.equal(podcastAssessmentMeta({ ...initial, quality_score: null }), null);
+  assert.equal(podcastAssessmentMeta({ ...initial, content_type: 'rss_article' }), null);
+});
+
+test('persisted analysis card remains visible without a local LLM', () => {
+  assert.equal(shouldShowAiReadingCard(
+    { quality_score: 8.4, score_reason: '包含一手信息。' },
+    { aiEnabled: false, body: 'show notes' },
+  ), true);
+  assert.equal(shouldShowAiReadingCard(
+    {},
+    { aiEnabled: false, body: 'show notes' },
+  ), false);
+  assert.equal(shouldShowAiReadingCard(
+    {},
+    { aiEnabled: true, body: 'show notes' },
+  ), true);
 });

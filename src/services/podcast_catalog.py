@@ -163,6 +163,7 @@ def _record_params(
     return {
         "catalog": "ouyan-guanlan-2026-09",
         "catalog_verified_at": CATALOG_VERIFIED_AT,
+        "credentialed_private": False,
         "language": source.language,
         "launch_tier": source.launch_tier,
         "limit": DEFAULT_FETCH_LIMIT,
@@ -243,6 +244,21 @@ def import_podcast_catalog(
             skipped_existing.append(source.source_id)
             if record.source_type in {"podcast", "podcast_rss"} and not record.owner_username:
                 record.is_active = True
+                try:
+                    existing_params = json.loads(record.params_json or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    existing_params = None
+                if (
+                    isinstance(existing_params, dict)
+                    and "credentialed_private" not in existing_params
+                    and (record.url or "") == source.feed_url
+                ):
+                    existing_params["credentialed_private"] = False
+                    record.params_json = json.dumps(
+                        existing_params,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
                 record.updated_at = now
                 session.add(record)
             continue

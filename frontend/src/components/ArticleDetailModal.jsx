@@ -6,6 +6,7 @@ import {
   contentGenreLabel,
   displayAnalysisTags,
   hasReadableAnalysis,
+  podcastAssessmentMeta,
   qualityScoreText,
   SCORE_DISCLAIMER,
 } from '../utils/analysis';
@@ -17,7 +18,11 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
   const hasFullDetail = Object.prototype.hasOwnProperty.call(data, 'content') && data.extensions_json !== undefined;
   const canToggleEdit = canEdit && hasFullDetail && !isLoading;
   const hasAnalysis = hasReadableAnalysis(data);
-  const analysisStatus = analysisStatusMeta(data, { includeTerminal: true });
+  const podcastAssessment = podcastAssessmentMeta(data);
+  const analysisStatus = analysisStatusMeta(data, {
+    includeTerminal: true,
+    podcast: data?.content_type === 'podcast_episode',
+  });
   const score = qualityScoreText(data.quality_score);
   const analysisTags = displayAnalysisTags(data);
 
@@ -91,6 +96,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
                 <div className="reader-analysis-summary">
                   <div className="reader-analysis-top">
                     {score && <span className="reader-analysis-score"><strong>{score}</strong><small>新闻价值</small></span>}
+                    {podcastAssessment && <span className="stamp stamp-idle" role="status">{podcastAssessment.label}</span>}
                     {(analysisTags.length > 0 || data.content_genre) && <span className="reader-analysis-tags">
                       {analysisTags.map((tag, index) => (
                         <AnalysisTagChip key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`} tag={tag} onTemporarySearch={onTemporaryTagSearch} />
@@ -101,7 +107,7 @@ export default function ArticleDetailModal({ isOpen, data, isEditing, isLoading 
                   </div>
                   {data.score_reason && <p>{data.score_reason}</p>}
                   {data.summary_zh && <p className="tiny-meta">{data.summary_zh}</p>}
-                  <small>{SCORE_DISCLAIMER}</small>
+                  <small>{podcastAssessment ? `${podcastAssessment.note}；${SCORE_DISCLAIMER}` : SCORE_DISCLAIMER}</small>
                 </div>
               ) : (
                 <div className="rounded-[var(--r-card)] bg-[var(--dorami-soft)] p-4 tiny-meta">

@@ -505,7 +505,7 @@ export default function PersonalBriefPage({
             <span>新的编排请求已记录，本版完成后会生成下一版</span>
           </div>
         )}
-        {/* v3.50.1(issue #33 §5):改关注/订阅不再自动重编,今日版面落后时把主动权交给读者 */}
+        {/* v3.51.1(issue #33 §5):改关注/订阅不再自动重编,今日版面落后时把主动权交给读者 */}
         {usesToday && !edition.rebuild_queued && (edition.interest_stale || edition.scope_stale) && (
           <div className="brief-note is-info" role="status">
             <RefreshCw aria-hidden="true" />

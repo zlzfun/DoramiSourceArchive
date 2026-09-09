@@ -14,6 +14,8 @@ from config import LLMConfig
 from llm.article_analysis_prompt import (
     ARTICLE_ANALYSIS_PROMPT_VERSION,
     ARTICLE_ANALYSIS_SCORING_VERSION,
+    PODCAST_ANALYSIS_PROMPT_VERSION,
+    PODCAST_ANALYSIS_SCORING_VERSION,
 )
 from models.db import (
     ArticleAnalysisRecord,
@@ -285,6 +287,47 @@ def test_scheduler_prioritizes_live_article_then_completes_forced_history(storag
     assert state["progress"] == 1.0
     assert state["counts"]["succeeded"] == 2
     assert all(row.quality_score == 8.6 for row in old_rows)
+
+
+def test_full_analysis_backfill_accepts_podcast_contract_versions(storage):
+    with Session(storage.engine) as session:
+        _seed_taxonomy(session)
+        podcast = _article("podcast-history", age_days=30)
+        podcast.content_type = "podcast_episode"
+        session.add(podcast)
+        session.commit()
+        job = create_full_analysis_backfill(
+            session,
+            days=None,
+            selection="all",
+            actor_id="admin",
+            confirmation=FULL_ANALYSIS_CONFIRMATION,
+            now=NOW,
+        )
+        job_id = int(job.id)
+
+    results = asyncio.run(
+        run_analysis_cycle(
+            storage.engine,
+            worker_id="podcast-backfill",
+            llm_config=LLM_CONFIG,
+            analyzer=lambda *_args: _payload(),
+            enabled=True,
+            candidate_enabled=False,
+            batch_size=1,
+            now_fn=lambda: NOW,
+        )
+    )
+    assert [result.article_id for result in results] == ["podcast-history"]
+    with Session(storage.engine) as session:
+        state = serialize_full_analysis_backfill(
+            session, session.get(TagRetagJobRecord, job_id)
+        )
+        analysis = session.get(ArticleAnalysisRecord, "podcast-history")
+        assert state["status"] == "succeeded"
+        assert state["counts"]["succeeded"] == 1
+        assert analysis.prompt_version == PODCAST_ANALYSIS_PROMPT_VERSION
+        assert analysis.scoring_version == PODCAST_ANALYSIS_SCORING_VERSION
 
 
 def test_remote_authority_is_excluded_and_late_handoff_is_skipped(storage):

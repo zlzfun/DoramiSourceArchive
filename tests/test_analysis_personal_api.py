@@ -963,7 +963,7 @@ def test_archive_write_stays_successful_when_analysis_enqueue_fails(monkeypatch,
 
 
 def test_interest_and_subscription_edits_only_flag_today_edition_stale(monkeypatch, tmp_path):
-    """v3.50.1(issue #33 §5):兴趣/订阅变更只记录,不再自动重编当日早报。
+    """v3.51.1(issue #33 §5):兴趣/订阅变更只记录,不再自动重编当日早报。
 
     今日端点以 interest_stale / scope_stale 说明版面落后于当前偏好;读者手动
     「重新编排」后两位归零。原样重存兴趣不得改写 updated_at(否则会被误标落后)。

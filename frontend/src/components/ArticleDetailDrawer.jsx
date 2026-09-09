@@ -6,6 +6,7 @@ import {
   contentGenreLabel,
   displayAnalysisTags,
   hasReadableAnalysis,
+  podcastAssessmentMeta,
   qualityScoreText,
   SCORE_DISCLAIMER,
 } from '../utils/analysis';
@@ -41,7 +42,11 @@ export default function ArticleDetailDrawer({
   const content = article ? (article.content ?? article.content_preview ?? '') : '';
   const chars = content ? content.replace(/\s+/g, '').length : 0;
   const hasAnalysis = hasReadableAnalysis(article);
-  const analysisStatus = analysisStatusMeta(article, { includeTerminal: true });
+  const podcastAssessment = podcastAssessmentMeta(article);
+  const analysisStatus = analysisStatusMeta(article, {
+    includeTerminal: true,
+    podcast: article?.content_type === 'podcast_episode',
+  });
   const score = qualityScoreText(article?.quality_score);
   const analysisTags = displayAnalysisTags(article);
 
@@ -99,6 +104,7 @@ export default function ArticleDetailDrawer({
                   <div className="reader-analysis-summary">
                     <div className="reader-analysis-top">
                       {score && <span className="reader-analysis-score"><strong>{score}</strong><small>新闻价值</small></span>}
+                      {podcastAssessment && <span className="stamp stamp-idle" role="status">{podcastAssessment.label}</span>}
                       {(analysisTags.length > 0 || article.content_genre) && <span className="reader-analysis-tags">
                         {analysisTags.map((tag, index) => (
                           <AnalysisTagChip key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`} tag={tag} onTemporarySearch={onTemporaryTagSearch} />
@@ -109,7 +115,7 @@ export default function ArticleDetailDrawer({
                     </div>
                     {article.score_reason && <p>{article.score_reason}</p>}
                     {article.summary_zh && <p className="tiny-meta">{article.summary_zh}</p>}
-                    <small>{SCORE_DISCLAIMER}</small>
+                    <small>{podcastAssessment ? `${podcastAssessment.note}；${SCORE_DISCLAIMER}` : SCORE_DISCLAIMER}</small>
                   </div>
                 ) : (
                   <p className="ledger-excerpt">

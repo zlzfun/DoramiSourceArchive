@@ -325,6 +325,10 @@ def _analysis_payload(session: Session, row: ArticleAnalysisRecord) -> dict[str,
         "entities_json",
         "display_tags_json",
         "content_hash",
+        "analysis_basis",
+        "analysis_input_hash",
+        "transcript_artifact_id",
+        "analysis_diagnostics_json",
         "model_name",
         "prompt_version",
         "scoring_version",
@@ -1532,6 +1536,10 @@ def _supersede_local_analysis(
         record.tagging_status = "pending"
         record.quality_score = None
         record.dimension_scores_json = "{}"
+        record.analysis_basis = ""
+        record.analysis_input_hash = ""
+        record.transcript_artifact_id = None
+        record.analysis_diagnostics_json = "{}"
         record.score_reason = ""
         record.summary = ""
         record.content_genre = None
@@ -1984,6 +1992,16 @@ def _apply_analyses(
             inserted += 1
         else:
             updated += 1
+        # New analysis provenance fields are additive within Archive Sync v2.
+        # A page from an older producer legitimately omits them; clear receiver
+        # state instead of pairing a new score/reason with stale prior metadata.
+        for field, default in (
+            ("analysis_basis", ""),
+            ("analysis_input_hash", ""),
+            ("transcript_artifact_id", None),
+            ("analysis_diagnostics_json", "{}"),
+        ):
+            setattr(record, field, data.get(field, default))
         for field in (
             "status",
             "tagging_status",

@@ -33,7 +33,10 @@ def _podcast_optional_int(value: Any) -> Optional[int]:
     return parsed if parsed >= 0 else None
 
 
-def _podcast_projection(extensions: Dict[str, Any]) -> Dict[str, Any]:
+def _podcast_projection(
+    extensions: Dict[str, Any],
+    analysis: Any = None,
+) -> Dict[str, Any]:
     """生成列表/详情共用的轻量播客对象，不透出 raw_data。"""
     duration_seconds = _podcast_optional_int(extensions.get("duration_seconds"))
     raw_transcripts = extensions.get("transcripts") or []
@@ -61,6 +64,17 @@ def _podcast_projection(extensions: Dict[str, Any]) -> Dict[str, Any]:
         else:
             explicit_value = None
 
+    # 分析记录是评分依据的权威来源。extensions.analysis_basis 只用于兼容
+    # 尚未经过新分析链的旧播客；不能让 RSS 元数据覆盖已落库的实际输入依据。
+    if analysis is not None:
+        # 迁移前的分析行没有 basis；保守降级为简介依据，绝不能据 extensions
+        # 中可能由旧 premium 流程写下的 transcript 标记冒充全文权威分析。
+        analysis_basis = str(
+            getattr(analysis, "analysis_basis", "") or "podcast_show_notes"
+        )
+    else:
+        analysis_basis = str(extensions.get("analysis_basis") or "show_notes")
+
     return {
         "show_title": str(extensions.get("show_title") or ""),
         "audio_url": str(extensions.get("audio_url") or ""),
@@ -76,7 +90,7 @@ def _podcast_projection(extensions: Dict[str, Any]) -> Dict[str, Any]:
         "chapters_mime": str(extensions.get("chapters_mime") or ""),
         # RSS ingestion only sees publisher metadata/show notes.  Duration is a
         # descriptive scheduling signal, never authorization for paid processing.
-        "analysis_basis": str(extensions.get("analysis_basis") or "show_notes"),
+        "analysis_basis": analysis_basis,
         "is_long_form": duration_seconds is not None and duration_seconds > 1800,
         "transcript_available": any(transcript["url"] for transcript in transcripts),
         "processing_status": str(extensions.get("processing_status") or ""),
@@ -259,6 +273,11 @@ def serialize_article_list_item(
         "analysis_next_attempt_at": getattr(analysis, "next_attempt_at", None),
         "quality_score": getattr(analysis, "quality_score", None),
         "score_reason": getattr(analysis, "score_reason", None) or None,
+        "analysis_basis": getattr(analysis, "analysis_basis", None) or None,
+        "analysis_input_hash": getattr(analysis, "analysis_input_hash", None) or None,
+        "transcript_artifact_id": getattr(analysis, "transcript_artifact_id", None) or None,
+        "prompt_version": getattr(analysis, "prompt_version", None) or None,
+        "scoring_version": getattr(analysis, "scoring_version", None) or None,
         "content_genre": getattr(analysis, "content_genre", None),
         "primary_tag": next((tag for tag in (tags or []) if tag.get("is_primary")), None),
         "tags": tags or [],
@@ -276,7 +295,7 @@ def serialize_article_list_item(
     if include_content:
         item["content"] = content
     if record.content_type == "podcast_episode":
-        item["podcast"] = _podcast_projection(ext)
+        item["podcast"] = _podcast_projection(ext, analysis)
     if include_content or include_extensions:
         item["extensions_json"] = record.extensions_json or "{}"
     return item

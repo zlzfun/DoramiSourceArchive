@@ -111,7 +111,7 @@ def serialize_edition(
 ) -> dict[str, Any]:
     """Project one edition.
 
-    ``include_freshness`` adds ``interest_stale``/``scope_stale``(v3.50.1,issue #33 §5:
+    ``include_freshness`` adds ``interest_stale``/``scope_stale``(v3.51.1,issue #33 §5:
     兴趣/订阅变更不再自动重编,今日版面是否落后于当前偏好由这两位说明);只对今日
     端点开启——历史版本天然落后,列表端点也不必为每行多查两次。
     """
