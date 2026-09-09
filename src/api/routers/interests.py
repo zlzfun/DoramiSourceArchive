@@ -156,7 +156,7 @@ def replace_interests(
             )
         elif row.stance == item.stance and row.priority == "normal" and row.source == "explicit":
             # 原样重存不算变更:兴趣版本(personal_digest._interest_version)混入 updated_at,
-            # 无谓改写会让今日早报被误标「关注已更新」。
+            # 无谓改写会让今日早报被误标「兴趣已更新」。
             continue
         else:
             row.stance = item.stance

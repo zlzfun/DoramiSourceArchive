@@ -275,7 +275,7 @@ def _selection_reason(
     if lane == SelectionLane.INTEREST.value and row.matched_codes:
         code = row.matched_codes[0]
         display_name = tag_display_names.get(code, code)
-        return f"匹配你关注的「{display_name}」，且是今日订阅中的高质量内容。"
+        return f"命中你的兴趣「{display_name}」，且是今日订阅中的高质量内容。"
     source_name = source_display_names.get(row.candidate.source_id, row.candidate.source_id)
     return f"来自你订阅的「{source_name}」，是今日订阅中的高质量内容。"
 
