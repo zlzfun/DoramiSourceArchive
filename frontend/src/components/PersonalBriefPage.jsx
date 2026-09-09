@@ -69,7 +69,8 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
   const tags = Array.isArray(snapshot.display_tags) ? snapshot.display_tags : (snapshot.tags || []);
   const interest = interestLabelOf(item, snapshot);
   const chips = [];
-  if (interest) chips.push({ key: 'interest', text: `关注 · ${interest}`, cls: 'is-interest', title: '命中你关注的兴趣' });
+  // 重大事件通道(v3.50):跨订阅范围的头条位,chip 与「关注 ·」同族,title 里给准入理由
+  if (item.selection_lane === 'breaking') chips.push({ key: 'breaking', text: '重大事件', cls: 'is-breaking', title: item.selection_reason || snapshot.selection_reason || '今日重大事件' });
   tags
     .filter((tag) => tagName(tag) && tagName(tag) !== interest)
     .slice(0, lead ? 3 : 2)
@@ -415,8 +416,11 @@ export default function PersonalBriefPage({
   }, [edition]);
 
   const items = edition?.items || [];
-  const interestCount = items.filter((item) => (item.matched_interest_codes || []).length > 0).length;
-  const sourceCount = new Set(items.map((item) => item.snapshot?.source_id).filter(Boolean)).size;
+  // 重大事件条目额外于精选之上、可能来自订阅外,报头统计只数用户自己那份精选
+  const breakingCount = items.filter((item) => item.selection_lane === 'breaking').length;
+  const ownItems = items.filter((item) => item.selection_lane !== 'breaking');
+  const interestCount = ownItems.filter((item) => (item.matched_interest_codes || []).length > 0).length;
+  const sourceCount = new Set(ownItems.map((item) => item.snapshot?.source_id).filter(Boolean)).size;
   const live = isToday && LIVE.has(status);
   const ratioUnfillable = edition?.degraded_reason === 'insufficient_non_interest_content';
 
@@ -430,7 +434,8 @@ export default function PersonalBriefPage({
   ].filter(Boolean).join(' · ');
   const subline = items.length > 0
     ? [
-      `${items.length} 篇${edition?.degraded_reason ? '最新更新' : '精选'}`,
+      breakingCount > 0 ? `${breakingCount} 条重大事件` : null,
+      ownItems.length > 0 ? `${ownItems.length} 篇${edition?.degraded_reason ? '最新更新' : '精选'}` : null,
       interestCount > 0 ? `${interestCount} 篇命中你的兴趣` : null,
       sourceCount > 0 ? `来自 ${sourceCount} 个来源` : null,
     ].filter(Boolean).join(' · ')

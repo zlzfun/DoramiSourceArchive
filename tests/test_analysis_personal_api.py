@@ -347,6 +347,34 @@ def test_admin_can_configure_interest_top_n_and_must_classify_entities(monkeypat
         assert any(alias["alias"] == "MCP" for alias in payload["aliases"])
 
 
+def test_admin_can_tune_personal_digest_breaking_lane(monkeypatch, tmp_path):
+    app_module, _sink, _tag_id = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client, "admin")
+        initial = client.get("/api/admin/analysis/config")
+        assert initial.status_code == 200
+        assert initial.json()["personal_digest_breaking"] == {
+            "min_score": 9.0,
+            "max_items": 2,
+            "max_items_limit": 5,
+        }
+        updated = client.put(
+            "/api/admin/analysis/config",
+            json={"personal_digest_breaking_min_score": 9.5, "personal_digest_breaking_max_items": 0},
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["personal_digest_breaking"]["min_score"] == 9.5
+        assert updated.json()["personal_digest_breaking"]["max_items"] == 0
+        # 布尔开关不受影响、越界值被 422 挡住。
+        assert updated.json()["feature_flags"]["personal_digest_enabled"] is True
+        assert client.put(
+            "/api/admin/analysis/config", json={"personal_digest_breaking_max_items": 9}
+        ).status_code == 422
+        assert client.put(
+            "/api/admin/analysis/config", json={"personal_digest_breaking_min_score": 11}
+        ).status_code == 422
+
+
 def test_synced_taxonomy_is_read_only_on_internal_node(monkeypatch, tmp_path):
     app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
     with Session(sink.engine) as session:

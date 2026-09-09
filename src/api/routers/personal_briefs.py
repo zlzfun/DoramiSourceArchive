@@ -83,7 +83,7 @@ def _parse_time(raw: str | None) -> dt.datetime | None:
 
 
 def _serialize_item(item: PersonalDigestItemRecord) -> dict[str, Any]:
-    return {
+    payload = {
         "id": item.id,
         "article_id": item.article_id,
         "position": item.position,
@@ -95,6 +95,11 @@ def _serialize_item(item: PersonalDigestItemRecord) -> dict[str, Any]:
         "selection_reason": item.selection_reason,
         "snapshot": _parse_json(item.snapshot_json, {}),
     }
+    if item.selection_lane == "breaking":
+        # v3.50 重大事件通道:准入依据(official|corroborated)、同事件来源数、是否在订阅内。
+        features = _parse_json(item.ranking_features_json, {})
+        payload["breaking"] = features.get("breaking") if isinstance(features, dict) else None
+    return payload
 
 
 def serialize_edition(

@@ -28,6 +28,7 @@ from models.db import (  # noqa: E402
 )
 from services.digest_selection import DigestSelectionPolicy  # noqa: E402
 from services.personal_digest import (  # noqa: E402
+    BREAKING_MAX_ITEMS_KEY,
     calculate_due_source_ids,
     claim_personal_digest_generation,
     freeze_personal_digest_scope,
@@ -1092,3 +1093,214 @@ def test_item_keeps_full_snapshot_after_article_is_physically_deleted(storage):
         assert json.loads(item.snapshot_json) == snapshot_before
         assert "content" not in snapshot_before
         assert snapshot_before["title"] == "Article 1"
+
+
+# ── 「重大事件」通道(v3.50,issue #33 §2)──
+
+def _entity_tag(code: str) -> CmsTagRecord:
+    return CmsTagRecord(
+        code=code,
+        kind="entity",
+        name_zh=code,
+        normalized_name=code,
+        status="active",
+        user_selectable=True,
+        entity_type="organization",
+        created_at=NOW_ISO,
+        updated_at=NOW_ISO,
+    )
+
+
+def _assign(article: ArticleRecord, tag: CmsTagRecord) -> ArticleTagAssignmentRecord:
+    return ArticleTagAssignmentRecord(
+        article_id=article.id,
+        tag_id=tag.id,
+        tag_kind=tag.kind,
+        relevance=0.9,
+        created_at=NOW_ISO,
+        updated_at=NOW_ISO,
+    )
+
+
+def test_breaking_official_headline_comes_from_outside_the_subscription(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        tag = _entity_tag("entity.openai")
+        session.add(tag)
+        session.flush()
+        own = _seed_article(session, 1, score=8.0)
+        # 注册表官方源(rss_openai_news 是 registry preset,role=official/shape=article),
+        # alice 没订它;分数过线即以「重大事件」通道进入头条位。
+        headline = _seed_article(session, 2, source="rss_openai_news", score=9.6)
+        tweet = _seed_article(session, 3, source="x_openai", score=9.8)
+        lone_media = _seed_article(session, 4, source="web_aiera", score=9.4)
+        session.flush()
+        session.add_all([_assign(headline, tag), _assign(tweet, tag)])
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "ready"
+        assert [item.article_id for item in result.items] == [headline.id, own.id]
+        first, second = result.items
+        assert first.position == 0 and first.selection_lane == "breaking"
+        assert first.section == "重大事件"
+        assert "不在你的订阅内" in first.selection_reason
+        features = json.loads(first.ranking_features_json)
+        assert features["breaking"] == {"basis": "official", "source_count": 2, "subscribed": False}
+        assert features["event_entity_codes"] == ["entity.openai"]
+        assert json.loads(first.snapshot_json)["source_name"]
+        assert second.position == 1 and second.selection_lane == "quality"
+        assert lone_media.id not in {item.article_id for item in result.items}
+
+
+def test_breaking_lane_skips_hidden_and_private_sources_and_can_be_switched_off(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.add(AppSettingRecord(key="reader_hidden_source_ids", value=json.dumps(["rss_openai_news"])))
+        session.add(SourceConfigRecord(
+            source_id="user_rss_private01",
+            name="private",
+            source_type="rss",
+            owner_username="bob",
+            created_at=NOW_ISO,
+            updated_at=NOW_ISO,
+        ))
+        session.flush()
+        own = _seed_article(session, 1, score=8.0)
+        _seed_article(session, 2, source="rss_openai_news", score=9.9)
+        _seed_article(session, 3, source="user_rss_private01", score=9.9)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+        assert [item.article_id for item in result.items] == [own.id]
+
+        # 隐藏解除后头条出现;KV 条数 0 关闭通道后又消失(同日重编排取新版本)。
+        session.delete(session.get(AppSettingRecord, "reader_hidden_source_ids"))
+        session.commit()
+        rebuilt = generate_personal_digest(
+            session, "alice", now=NOW, generation_reason=DigestGenerationReason.MANUAL_REBUILD
+        )
+        assert [item.selection_lane for item in rebuilt.items] == ["breaking", "quality"]
+
+        session.add(AppSettingRecord(key=BREAKING_MAX_ITEMS_KEY, value="0"))
+        session.commit()
+        disabled = generate_personal_digest(
+            session, "alice", now=NOW, generation_reason=DigestGenerationReason.MANUAL_REBUILD
+        )
+        assert [item.selection_lane for item in disabled.items] == ["quality"]
+
+
+def test_breaking_same_entity_is_suppressed_after_a_recent_headline_and_empty_scope_stays_empty(storage):
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _user("bob"), _subscribe("alice", "rss_a")])
+        tag = _entity_tag("entity.openai")
+        session.add(tag)
+        session.flush()
+        own = _seed_article(session, 1, score=8.0)
+        followup = _seed_article(session, 2, source="rss_openai_news", score=9.7)
+        session.flush()
+        session.add(_assign(followup, tag))
+        yesterday = PersonalDigestEditionRecord(
+            owner_username="alice",
+            report_date="2026-08-31",
+            revision=1,
+            status="ready",
+            check_after="2026-08-31T08:30:00+08:00",
+            cutoff_at="2026-08-31T08:30:00+08:00",
+            generated_at="2026-08-31T08:30:00+08:00",
+            created_at="2026-08-31T08:30:00+08:00",
+            updated_at="2026-08-31T08:30:00+08:00",
+        )
+        session.add(yesterday)
+        session.flush()
+        session.add(PersonalDigestItemRecord(
+            edition_id=yesterday.id,
+            article_id=None,
+            position=0,
+            section="重大事件",
+            selection_lane="breaking",
+            quality_score_snapshot=9.8,
+            ranking_features_json=json.dumps({"event_entity_codes": ["entity.openai", "entity.chatgpt"]}),
+            snapshot_json="{}",
+            created_at="2026-08-31T08:30:00+08:00",
+        ))
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+        assert [item.article_id for item in result.items] == [own.id]
+
+        # 没有订阅的读者不会因为重大事件通道凭空得到早报。
+        empty = generate_personal_digest(session, "bob", now=NOW)
+        assert empty.status == "empty_subscriptions"
+        assert empty.edition is None
+
+
+def test_breaking_lane_excludes_owner_scoped_legacy_sources(storage):
+    """非 user_rss_ 前缀但带 owner_username 的存量私有源同样不进全读者共享的头条池(codex P1)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.add(SourceConfigRecord(
+            source_id="legacy_private_feed",
+            name="legacy private",
+            source_type="rss",
+            source_scope="",
+            provenance_tier="",
+            owner_username="bob",
+            created_at=NOW_ISO,
+            updated_at=NOW_ISO,
+        ))
+        session.flush()
+        own = _seed_article(session, 1, score=8.0)
+        _seed_article(session, 2, source="legacy_private_feed", score=9.9)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+        assert [item.article_id for item in result.items] == [own.id]
+
+
+def test_breaking_qualification_ignores_subscription_and_promotes_selected_article(storage):
+    """头条资格按全池判定:读者已订阅的官方源过线稿从精选提级为头条,不重复、不算降级(codex P2)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,rss_openai_news")])
+        tag = _entity_tag("entity.openai")
+        session.add(tag)
+        session.flush()
+        own = _seed_article(session, 1, score=8.0)
+        headline = _seed_article(session, 2, source="rss_openai_news", score=9.6)
+        session.flush()
+        session.add(_assign(headline, tag))
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "ready"
+        assert [(item.article_id, item.selection_lane) for item in result.items] == [
+            (headline.id, "breaking"), (own.id, "quality"),
+        ]
+        first = result.items[0]
+        assert first.selection_reason.endswith("官方一手发布。")
+        assert json.loads(first.ranking_features_json)["breaking"]["subscribed"] is True
+
+
+def test_promoted_headline_does_not_consume_a_curated_slot(storage):
+    """精选已满 target 时头条提级后按同一策略重选,精选仍满员——头条额外于 target 之上(codex P2)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,rss_openai_news")])
+        tag = _entity_tag("entity.openai")
+        session.add(tag)
+        session.flush()
+        headline = _seed_article(session, 1, source="rss_openai_news", score=9.6)
+        others = [_seed_article(session, n, score=8.0 - n * 0.1) for n in range(2, 6)]
+        session.flush()
+        session.add(_assign(headline, tag))
+        session.commit()
+
+        result = generate_personal_digest(
+            session, "alice", now=NOW, policy=DigestSelectionPolicy(target_items=3, per_source_max=5)
+        )
+
+        lanes = [(item.article_id, item.selection_lane) for item in result.items]
+        assert lanes[0] == (headline.id, "breaking")
+        assert [lane for _id, lane in lanes[1:]] == ["quality", "quality", "quality"]
+        assert {aid for aid, _lane in lanes[1:]} == {a.id for a in others[:3]}
