@@ -87,6 +87,7 @@ export default function MobileReader({
     initialArticleId,
     onDeepLinkConsumed,
     onBeforeOpenArticle: closeBriefBeforeArticleOpen,
+    interestAxisEnabled: personalDigestEnabled,
   });
   const {
     // 源目录 / 订阅
@@ -100,7 +101,7 @@ export default function MobileReader({
     bulletinView, socialView, podcastView, listTitle, listSubtitle,
     goView, goSource, goTag, goFavorites,
     scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
-    showUnsubscribedMark, showInterestHit,
+    interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
     searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch,
@@ -616,6 +617,7 @@ export default function MobileReader({
         sheetAnchorKey={sheet?.anchorKey || null}
         scope={scope}
         onSetAxis={setAxis}
+        interestAxisEnabled={interestAxisEnabled}
         interestGroups={interestGroups}
         activeTagId={activeTagId}
         goTag={goTag}

@@ -413,7 +413,7 @@ export default function ReaderTab({
     bulletinView, socialView, podcastView, railActive, listTitle, listSubtitle,
     goView, goSource, goTag,
     scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
-    showUnsubscribedMark, showInterestHit,
+    interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
     searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch, searchForLabel,
@@ -445,6 +445,7 @@ export default function ReaderTab({
     initialArticleId,
     onDeepLinkConsumed,
     onBeforeOpenArticle: closeBriefBeforeArticleOpen,
+    interestAxisEnabled: personalDigestEnabled,
   });
 
   // 首登引导自动落到发现页兴趣段一次(不锁页;发现钮挂点直到完成或跳过)
@@ -478,6 +479,8 @@ export default function ReaderTab({
     () => buildListPlan(articles, grouping, expandedMutedDays),
     [articles, grouping, expandedMutedDays],
   );
+  // 栏头轴切换:社交容器没有标签不出;「个人早报」能力位关闭时兴趣端点不可用、也不出
+  const showAxisSeg = !socialView && interestAxisEnabled;
   // 左栏列源还是列标签:兴趣轴列标签;社交容器 / 预览单源(临时在来源轴上)列源
   const showSourceRows = scope.axis !== 'interest' || socialView || Boolean(activeSourceId);
   // 全部标读推进源水位,只在来源轴(含单源)上成立
@@ -754,11 +757,11 @@ export default function ReaderTab({
         <div className="reader-sources-inner">
         {/* 栏头 = 容器名 + 轴切换(issue #27 五稿):左栏是一根轴,栏头二选一决定其下列源还是列标签。
             社交容器没有标签(推文不打标),不出轴切换,只列账号。 */}
-        <div className={`reader-src-head ${!socialView ? 'is-axis' : ''}`}>
+        <div className={`reader-src-head ${showAxisSeg ? 'is-axis' : ''}`}>
           <span className="reader-src-title">
             {mode === 'bulletin' ? '动态' : socialView ? '社交媒体' : podcastView ? '播客' : '文章'}
           </span>
-          {!socialView && (
+          {showAxisSeg && (
             <AxisSeg axis={scope.axis} onChange={(axis) => { leaveBriefTrail(); setAxis(axis); }} />
           )}
         </div>

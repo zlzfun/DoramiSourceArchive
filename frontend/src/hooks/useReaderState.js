@@ -118,6 +118,9 @@ const ANALYSIS_PROJECTION_KEYS = [
   'tags',
   'display_tags',
   'podcast',
+  // 兴趣标注随分析轮询刷新:pending 篇拿到标签后,命中胶囊 / 屏蔽折叠不必等整列重载(codex 检视 P2)
+  'interest_hits',
+  'interest_muted',
 ];
 
 function withFreshAnalysis(article, incoming) {
@@ -157,6 +160,9 @@ export function useReaderState({
   initialArticleId = '',
   onDeepLinkConsumed,
   onBeforeOpenArticle,
+  // 兴趣轴随「个人早报」能力位:关闭时兴趣端点 403、发现页也没有兴趣编辑面,轴切换整体不出、
+  // 记住的兴趣轴回落到订阅轴(codex 检视 P2)
+  interestAxisEnabled = true,
 }) {
   const [sources, setSources] = useState([]);
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
@@ -165,7 +171,12 @@ export function useReaderState({
   // ── 左栏一根轴(issue #27 五稿):scope = { axis, favorite };下钻项是 activeSourceId / activeTagId。
   //    点源 / 按 id 打开一篇 = 临时进入来源轴(不落盘);回聚合(goContainerAll / goView)读回记住的。 ──
   const scopeUser = account?.username || '';
-  const [scope, setScopeState] = useState(() => readStoredScope(scopeUser, 'article'));
+  const [storedScope, setScopeState] = useState(() => readStoredScope(scopeUser, 'article'));
+  // 能力位关闭时兴趣轴不可达:记住的兴趣轴就地回落到订阅轴(不改写存储,重新开启即恢复)
+  const scope = useMemo(
+    () => (interestAxisEnabled || storedScope.axis !== 'interest' ? storedScope : { ...storedScope, axis: 'subscribed' }),
+    [storedScope, interestAxisEnabled],
+  );
   const scopeUserRef = useRef(scopeUser);
   useEffect(() => { scopeUserRef.current = scopeUser; }, [scopeUser]);
   // favOnly 沿用旧名给消费方(SocialFlow 等):列头收藏星开着
@@ -176,13 +187,14 @@ export function useReaderState({
   // 兴趣页保存后由 refreshInterests 刷新
   const [followedTags, setFollowedTags] = useState([]);
   const refreshInterests = useCallback(async () => {
+    if (!interestAxisEnabled) return; // 端点在能力位关闭时 403,不必打
     try {
       const data = await fetchInterests();
       setFollowedTags((data.items || [])
         .filter((it) => it.stance !== 'mute' && it.tag?.id)
         .map((it) => ({ id: it.tag.id, kind: it.tag.kind, name: it.tag.name_zh || it.tag.name_en || String(it.tag.id) })));
     } catch { /* 非关键路径:失败保持上次已知值 */ }
-  }, []);
+  }, [interestAxisEnabled]);
   useEffect(() => { refreshInterests(); }, [refreshInterests]);
   const hasInterests = followedTags.length > 0;
   // 兴趣轴分组(与源栏的角色分组同一形制:组头 + 行),按目录面分组,词汇与兴趣页一致
@@ -1226,6 +1238,7 @@ export function useReaderState({
   };
   // 单标签=兴趣轴的下钻(只在兴趣轴上可达)
   const goTag = (tagId) => {
+    if (!interestAxisEnabled) return;
     supersedePendingOpen();
     setDiscover(false);
     setActiveSourceId(null);
@@ -1303,6 +1316,7 @@ export function useReaderState({
   };
   // 栏头切轴:清掉两根轴的下钻项、落盘;点已点亮的段 = 回该轴全集(与点容器钮回聚合同义)。
   const setAxis = (axis) => {
+    if (axis === 'interest' && !interestAxisEnabled) return;
     supersedePendingOpen();
     setDiscover(false);
     setActiveSourceId(null);
@@ -1415,7 +1429,7 @@ export function useReaderState({
     goView, goSource, goTag, goContainerAll, goFavorites,
     // 左栏一根轴(issue #27 五稿)
     scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
-    showUnsubscribedMark, showInterestHit,
+    interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
     searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch, searchForLabel,

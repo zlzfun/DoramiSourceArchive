@@ -24,6 +24,7 @@ export default function MobileSourceDrawer({
   // 左栏一根轴(issue #27 五稿):与桌面栏头同一份 AxisSeg / TagRows
   scope,
   onSetAxis,
+  interestAxisEnabled = true,
   interestGroups,
   activeTagId,
   goTag,
@@ -48,7 +49,7 @@ export default function MobileSourceDrawer({
       <aside className="m-drawer" aria-label="过滤条件与来源">
         <div className="m-drawer-title">{title}</div>
         {/* 栏头轴切换(社交容器没有标签,不出):切段即关抽屉回列表 */}
-        {!socialView && <AxisSeg axis={scope.axis} onChange={pick(onSetAxis)} className="m-axis" />}
+        {!socialView && interestAxisEnabled && <AxisSeg axis={scope.axis} onChange={pick(onSetAxis)} className="m-axis" />}
         <div className="m-drawer-scroll">
           {/* 预览锚点行(Folo):正在预览的未订阅源浮现在顶部,交代「你在哪」 */}
           {activeUnsubscribed && (

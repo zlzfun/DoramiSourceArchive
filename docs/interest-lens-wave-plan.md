@@ -1,4 +1,4 @@
-# 兴趣即透镜波(issue #27 第一波,v3.51.0)
+# 兴趣即透镜波(issue #27 第一波,v3.52.0)
 
 > 状态:**已实现**(2026-09-09,五稿)。本文是方案与决策记录;样页 `docs/design/dorami-interest-axis-quiet.html`
 > (五稿,现行)与 `docs/design/dorami-interest-lens-quiet.html`(四稿,含三次被否方案的注记)。
@@ -94,6 +94,12 @@ v3.47(#23)把「我的兴趣」做成了整幅页面,但消费方仍只有个人
 - **P2 · 引导完成回调闭包陈旧**:`onSaved` 里的 `discover` 是渲染时快照,PUT 在途读者走开后仍会开早报盖住当前页。
   修法 = 桌面 / 移动各经 `discoverRef` 读最新值。
 - **P2 · uv.lock 根包版本未随 bump**:沿上一波惯例只提交根包 `version` 一行(开发机镜像源改写不入库)。
+
+第二轮(对五稿):**P2 · 兴趣轴未随能力位**——`personal_digest_enabled` 关闭时兴趣端点 403、发现页无兴趣编辑面,
+轴切换却照出,选了得到空列表。修法 = hook 加 `interestAxisEnabled`(桌面 / 移动传 `personalDigestEnabled`):
+轴切换不出、记住的兴趣轴就地回落订阅轴(不改写存储,重开即恢复)、不打兴趣端点。**P2 · 分析轮询丢兴趣标注**——
+`withFreshAnalysis` 只投影分析键,pending 篇拿到标签后胶囊 / 折叠要等整列重载;`interest_hits` / `interest_muted`
+加入投影键。两轮上限到此,合入。
 
 ## 明确不做 / 后续
 
