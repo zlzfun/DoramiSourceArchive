@@ -11687,6 +11687,9 @@ input[type="radio"] {
 .brief-grid .brief-card.is-lead .brief-card-score { font-size: 28px; }
 .brief-card-title { display: block; font-family: var(--font-serif); font-size: 17px; font-weight: 700; line-height: 1.4; color: var(--dorami-ink); }
 .brief-grid .brief-card.is-lead .brief-card-title { font-size: 24px; line-height: 1.3; }
+/* 原标题副行(v3.52.1):中文译名当主标题后,英文原题降一档挂在其下——与阅读窗 .reader-pane-title-orig 同语 */
+.brief-card-title-orig { display: block; margin-top: 3px; font-family: var(--font-serif); font-size: 12.5px; line-height: 1.45; color: var(--dorami-muted); }
+.brief-grid .brief-card.is-lead .brief-card-title-orig { font-size: 13.5px; margin-top: 4px; }
 .brief-card-sum { display: block; font-size: 13.5px; font-weight: 400; line-height: 1.75; color: var(--dorami-ink-2); }
 .brief-grid .brief-card.is-lead .brief-card-sum { font-size: 14.5px; line-height: 1.8; }
 .brief-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 2px; }

@@ -1047,3 +1047,56 @@ def test_interest_and_subscription_edits_only_flag_today_edition_stale(monkeypat
         emptied = client.post("/api/reader/briefs/today/rebuild").json()
         assert emptied["status"] == "empty_subscriptions" and emptied["edition"] is None
         assert client.get("/api/reader/briefs/today").json()["status"] == "not_started"
+
+
+def test_personal_brief_items_carry_chinese_titles_after_generation(monkeypatch, tmp_path):
+    """v3.52.1(issue #33 §4):编排完成后条目快照带 title_zh,翻译写回文章缓存;失败不影响版本。"""
+    from config import LLMConfig
+    from services import personal_digest_titles as digest_titles
+
+    app_module, sink, _tag_id = _setup(monkeypatch, tmp_path)
+    calls: list[str] = []
+
+    async def fake_translate(title, config, usage_meta=None, http_client=None):
+        calls.append(title)
+        return "智能体发布"
+
+    monkeypatch.setattr(digest_titles, "_translate_title", fake_translate)
+    monkeypatch.setattr(
+        digest_titles, "_llm_config",
+        lambda session: LLMConfig(base_url="http://llm.test", api_key="k", model="m"),
+    )
+    with TestClient(app_module.app) as client:
+        _login(client, "alice")
+        ensured = client.post("/api/reader/briefs/today/ensure")
+        assert ensured.status_code == 200, ensured.text
+        edition = ensured.json()["edition"]
+        assert edition["status"] in {"ready", "degraded"}
+        item = edition["items"][0]
+        assert item["snapshot"]["title"] == "Agent release"
+        assert item["snapshot"]["title_zh"] == "智能体发布"
+        assert calls == ["Agent release"]
+        # 重编:同一篇命中文章缓存,不再调 LLM
+        rebuilt = client.post("/api/reader/briefs/today/rebuild").json()["edition"]
+        assert rebuilt["items"][0]["snapshot"]["title_zh"] == "智能体发布"
+        assert calls == ["Agent release"]
+    with Session(sink.engine) as session:
+        ext = json.loads(session.get(ArticleRecord, "article-a").extensions_json)
+        assert ext["translation_zh_title"] == "智能体发布"
+
+
+def test_personal_brief_title_localization_failure_keeps_edition(monkeypatch, tmp_path):
+    from services import personal_digest_titles as digest_titles
+
+    app_module, _sink, _tag_id = _setup(monkeypatch, tmp_path)
+
+    def boom(session, edition, **kwargs):
+        raise RuntimeError("titles exploded")
+
+    monkeypatch.setattr(digest_titles, "localize_edition_titles", boom)
+    with TestClient(app_module.app) as client:
+        _login(client, "alice")
+        edition = client.post("/api/reader/briefs/today/ensure").json()["edition"]
+        assert edition["status"] in {"ready", "degraded"}
+        assert "title_zh" not in edition["items"][0]["snapshot"]
+        assert client.get("/api/reader/briefs/today").json()["edition"]["id"] == edition["id"]
