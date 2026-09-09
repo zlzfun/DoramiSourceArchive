@@ -121,6 +121,37 @@ function FeatureFlags({ config, onToggle, busy }) {
   );
 }
 
+// 个人早报「重大事件」通道(v3.50,issue #33 §2):跨订阅范围的头条位。两枚旋钮走同一个分析配置端点,
+// 窗口(24h)/多源印证来源数(2)是常量不开放;条数 0 = 关闭通道。
+function BreakingLaneCard({ config, onSave, showToast }) {
+  const [form, setForm] = useState({ min_score: 9, max_items: 2 });
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (config) setForm({ min_score: config.min_score ?? 9, max_items: config.max_items ?? 2 });
+  }, [config]);
+  if (!config) return null;
+  const save = async () => {
+    setBusy(true);
+    try {
+      await onSave({ personal_digest_breaking_min_score: Number(form.min_score), personal_digest_breaking_max_items: Number(form.max_items) });
+      showToast?.('已更新重大事件通道', 'success');
+    } catch (error) { showToast?.(error.message || '更新重大事件通道失败', 'error'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <section className="surface-card card-pad rounded-[var(--r-card)]">
+      <div className="card-head">
+        <div><h2 className="card-title">早报重大事件通道</h2><p className="tiny-meta mt-1">不看订阅范围的头条位：官方一手 ≥ 阈值，或 ≥2 个来源同事件 ≥ 阈值−0.5 且至少一条过线；近 24 小时、同实体前两期上过即不重复；额外加在精选之上</p></div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <label><span className="form-label">新闻价值分阈值</span><input type="number" min="0" max="10" step="0.1" className="form-input" value={form.min_score} onChange={(e) => setForm({ ...form, min_score: e.target.value })} /><small className="tiny-meta">默认 9.0</small></label>
+        <label><span className="form-label">每期条数上限</span><input type="number" min="0" max={config.max_items_limit ?? 5} step="1" className="form-input" value={form.max_items} onChange={(e) => setForm({ ...form, max_items: e.target.value })} /><small className="tiny-meta">0 = 关闭通道，默认 2</small></label>
+      </div>
+      <div className="mt-3 flex justify-end"><button type="button" disabled={busy} className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={save}>{busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} 保存通道设置</button></div>
+    </section>
+  );
+}
+
 function InterestCatalogPolicyCard({ showToast }) {
   const [data, setData] = useState(null);
   const [limits, setLimits] = useState({ topic: 30, industry: 15, entity: 20 });
@@ -374,6 +405,7 @@ export default function AdminTaxonomyPanel({ showToast, days = 7 }) {
   const [candidateTotal, setCandidateTotal] = useState(0);
   const [candidatePage, setCandidatePage] = useState(0);
   const [config, setConfig] = useState(null);
+  const [breaking, setBreaking] = useState(null);
   const [metrics, setMetrics] = useState(null);
   const [taxonomyState, setTaxonomyState] = useState(null);
   const [flagBusy, setFlagBusy] = useState('');
@@ -408,9 +440,13 @@ export default function AdminTaxonomyPanel({ showToast, days = 7 }) {
   }, [load]);
   useEffect(() => { setCandidatePage(0); }, [candidateStatus, kind, query]);
   useEffect(() => {
-    fetchAnalysisConfig().then((data) => setConfig(data.feature_flags || {})).catch(() => setConfig(null));
+    fetchAnalysisConfig().then((data) => { setConfig(data.feature_flags || {}); setBreaking(data.personal_digest_breaking || null); }).catch(() => { setConfig(null); setBreaking(null); });
     fetchAnalysisMetrics(days).then(setMetrics).catch(() => setMetrics(null));
   }, [days]);
+  const saveBreaking = async (payload) => {
+    const data = await updateAnalysisConfig(payload);
+    setBreaking(data.personal_digest_breaking || null);
+  };
 
   const toggleFlag = async (key, enabled) => {
     if (key === 'taxonomy_auto_activation_enabled' && enabled
@@ -501,6 +537,7 @@ export default function AdminTaxonomyPanel({ showToast, days = 7 }) {
         </section>
       )}
 
+      <BreakingLaneCard config={breaking} onSave={saveBreaking} showToast={showToast} />
       <InterestCatalogPolicyCard showToast={showToast} />
 
       <div className="zone-head">

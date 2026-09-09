@@ -1615,7 +1615,7 @@ class PersonalDigestItemRecord(SQLModel, table=True):
         Index("ix_personal_digest_items_article_id", "article_id"),
         CheckConstraint("position >= 0", name="ck_personal_digest_items_position"),
         CheckConstraint(
-            "selection_lane IN ('interest','quality')",
+            "selection_lane IN ('interest','quality','breaking')",
             name="ck_personal_digest_items_selection_lane",
         ),
         CheckConstraint(
@@ -1638,7 +1638,7 @@ class PersonalDigestItemRecord(SQLModel, table=True):
     )
     position: int = Field(ge=0)
     section: str = Field(default="")
-    selection_lane: str = Field(description="interest/quality")
+    selection_lane: str = Field(description="interest/quality/breaking(v3.50 重大事件通道)")
     quality_score_snapshot: Optional[float] = Field(default=None, ge=1.0, le=10.0)
     matched_interest_codes_json: str = Field(default="[]")
     ranking_features_json: str = Field(default="{}", description="内部排障特征，不是对外个人评分")

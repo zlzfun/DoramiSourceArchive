@@ -149,6 +149,9 @@ class PersonalDigestStatus(StringEnum):
 class SelectionLane(StringEnum):
     INTEREST = "interest"
     QUALITY = "quality"
+    # v3.50(issue #33 §2):「重大事件」通道——不看订阅范围的头条位,机械准入
+    # (官方一手 ≥ 阈值,或多源印证),额外加在 target 之上、不进兴趣配额分母。
+    BREAKING = "breaking"
 
 
 class DigestGenerationReason(StringEnum):
@@ -180,6 +183,17 @@ PERSONAL_DIGEST_MIN_QUALITY_SCORE = 5.0
 PERSONAL_DIGEST_WINDOW_HOURS = 36
 PERSONAL_DIGEST_FALLBACK_WINDOW_HOURS = 72
 PERSONAL_DIGEST_LATEST_FALLBACK_LIMIT = 5
+# 「重大事件」通道(v3.50,issue #33 §2)。生产 7 天实证(699 篇,v6b 单分):≥9.0 官方
+# 9 条只对应 2 个事件;Fable 5.1 的官博不在库、只以媒体形态 9.2 存在,故准入是
+# 「官方一手 ≥ T」或「≥2 个不同来源 ≥ T−0.5 且至少一条 ≥ T」双路;24h 窗不回退;
+# 同实体前 2 期上过头条即抑制(GPT-6 三天连续 ≥9.5 官方稿的实证)。
+PERSONAL_DIGEST_BREAKING_MIN_SCORE = 9.0
+PERSONAL_DIGEST_BREAKING_MAX_ITEMS = 2
+PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT = 5
+PERSONAL_DIGEST_BREAKING_WINDOW_HOURS = 24
+PERSONAL_DIGEST_BREAKING_CORROBORATION_SOURCES = 2
+PERSONAL_DIGEST_BREAKING_CORROBORATION_SLACK = 0.5
+PERSONAL_DIGEST_BREAKING_SUPPRESS_EDITIONS = 2
 
 
 class ContractModel(BaseModel):
@@ -240,6 +254,10 @@ class DigestArticleCandidateDTO(ContractModel):
     tag_codes: tuple[str, ...] = Field(default_factory=tuple)
     primary_tag_code: Optional[str] = None
     duplicate_group_id: Optional[int] = None
+    # v3.50 重大事件通道用:来源角色(source_naming.source_role)与内容形态;
+    # 订阅域选篇不读这两项,默认值保持既有 DTO 构造不变。
+    source_role: str = "media"
+    content_shape: str = "article"
 
 
 class UserInterestDTO(ContractModel):
@@ -254,3 +272,8 @@ class DigestSelectionDTO(ContractModel):
     matched_interest_codes: tuple[str, ...] = Field(default_factory=tuple)
     selection_reason: str
     coverage_adjustments: tuple[str, ...] = Field(default_factory=tuple)
+    # 仅 lane=breaking 填写:准入依据 official|corroborated、同事件来源数、
+    # 事件实体码(跨天抑制的对照物,随条目 ranking_features 落库)。
+    breaking_basis: Optional[str] = None
+    breaking_source_count: int = 0
+    event_entity_codes: tuple[str, ...] = Field(default_factory=tuple)

@@ -7,9 +7,11 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from api import deps
+from models.analysis_contracts import PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT
 from models.db import AppSettingRecord, TagRetagJobRecord
 from services import analysis_backfill as backfill_service
 from services import daily_brief as daily_brief_service
+from services import personal_digest as personal_digest_service
 from services.analysis_observability import FEATURE_FLAG_KEYS, collect_release_metrics
 
 
@@ -25,6 +27,17 @@ class AnalysisFeatureFlagsPatch(BaseModel):
     taxonomy_candidate_enabled: bool | None = None
     taxonomy_auto_activation_enabled: bool | None = None
     personal_digest_enabled: bool | None = None
+    # v3.50 个人早报「重大事件」通道旋钮(非布尔开关,单独落 KV):阈值 0～10,条数 0～上限,0 = 关闭通道。
+    personal_digest_breaking_min_score: float | None = Field(default=None, ge=0.0, le=10.0)
+    personal_digest_breaking_max_items: int | None = Field(
+        default=None, ge=0, le=PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT
+    )
+
+
+_BREAKING_KEYS = {
+    "personal_digest_breaking_min_score": personal_digest_service.BREAKING_MIN_SCORE_KEY,
+    "personal_digest_breaking_max_items": personal_digest_service.BREAKING_MAX_ITEMS_KEY,
+}
 
 
 class FullAnalysisScope(BaseModel):
@@ -44,6 +57,15 @@ def _flags(session: Session) -> dict[str, bool]:
             and str(row.value or "").strip().casefold() in {"1", "true", "yes", "on"}
         )
         for key in FEATURE_FLAG_KEYS
+    }
+
+
+def _breaking(session: Session) -> dict[str, Any]:
+    policy = personal_digest_service.breaking_policy(session)
+    return {
+        "min_score": policy.min_score,
+        "max_items": policy.max_items,
+        "max_items_limit": PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT,
     }
 
 
@@ -69,7 +91,7 @@ def _domain_error(exc: backfill_service.AnalysisBackfillError) -> HTTPException:
 
 @router.get("/config")
 def get_config(session: Session = Depends(deps.get_session)):
-    return {"feature_flags": _flags(session)}
+    return {"feature_flags": _flags(session), "personal_digest_breaking": _breaking(session)}
 
 
 @router.put("/config")
@@ -78,12 +100,16 @@ def update_config(
     session: Session = Depends(deps.get_session),
 ):
     changes = body.model_dump(exclude_none=True)
-    for key, enabled in changes.items():
-        row = session.get(AppSettingRecord, key) or AppSettingRecord(key=key)
-        row.value = "true" if enabled else "false"
+    for key, value in changes.items():
+        if key in _BREAKING_KEYS:
+            row = session.get(AppSettingRecord, _BREAKING_KEYS[key]) or AppSettingRecord(key=_BREAKING_KEYS[key])
+            row.value = str(value)
+        else:
+            row = session.get(AppSettingRecord, key) or AppSettingRecord(key=key)
+            row.value = "true" if value else "false"
         session.add(row)
     session.commit()
-    return {"feature_flags": _flags(session)}
+    return {"feature_flags": _flags(session), "personal_digest_breaking": _breaking(session)}
 
 
 @router.get("/metrics")
