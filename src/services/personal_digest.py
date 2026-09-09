@@ -1789,10 +1789,22 @@ def generate_personal_digest(
                 ),
             )
 
-    # 订阅域里已选中的文章若成为头条代表,从精选里提级到头条位(不重复出现,也不算降级)
+    # 订阅域里已选中的文章若成为头条代表,从精选里提级到头条位(不重复出现,也不算降级);
+    # 空出的精选名额按同一策略重选补回——头条是额外于 target 之上的,不能占精选位
     promoted_ids = {selection.article_id for selection in breaking_selections}
     had_own_selections = bool(selections)
-    selections = [selection for selection in selections if selection.article_id not in promoted_ids]
+    if promoted_ids.intersection(selection.article_id for selection in selections):
+        remaining = [candidate for candidate in candidates if candidate.article_id not in promoted_ids]
+        selections = select_digest_articles(
+            remaining,
+            interests,
+            policy=policy,
+            topic_codes_by_article=_topic_codes_by_article(
+                session, [candidate.article_id for candidate in remaining]
+            ),
+            tag_display_names=tag_display_names,
+            source_display_names=source_display_names,
+        )
 
     generated_at = current.isoformat()
     first_open = _as_shanghai(first_open_at) if first_open_at else None

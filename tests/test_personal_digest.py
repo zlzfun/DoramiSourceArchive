@@ -1281,3 +1281,26 @@ def test_breaking_qualification_ignores_subscription_and_promotes_selected_artic
         first = result.items[0]
         assert first.selection_reason.endswith("官方一手发布。")
         assert json.loads(first.ranking_features_json)["breaking"]["subscribed"] is True
+
+
+def test_promoted_headline_does_not_consume_a_curated_slot(storage):
+    """精选已满 target 时头条提级后按同一策略重选,精选仍满员——头条额外于 target 之上(codex P2)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,rss_openai_news")])
+        tag = _entity_tag("entity.openai")
+        session.add(tag)
+        session.flush()
+        headline = _seed_article(session, 1, source="rss_openai_news", score=9.6)
+        others = [_seed_article(session, n, score=8.0 - n * 0.1) for n in range(2, 6)]
+        session.flush()
+        session.add(_assign(headline, tag))
+        session.commit()
+
+        result = generate_personal_digest(
+            session, "alice", now=NOW, policy=DigestSelectionPolicy(target_items=3, per_source_max=5)
+        )
+
+        lanes = [(item.article_id, item.selection_lane) for item in result.items]
+        assert lanes[0] == (headline.id, "breaking")
+        assert [lane for _id, lane in lanes[1:]] == ["quality", "quality", "quality"]
+        assert {aid for aid, _lane in lanes[1:]} == {a.id for a in others[:3]}
