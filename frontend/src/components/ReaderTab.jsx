@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
   X,
@@ -29,6 +29,9 @@ import {
   Tags,
   ChevronLeft,
   ChevronRight,
+  Rss,
+  Check,
+  Ban,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
 import BrandLogoImage from './BrandLogoImage';
@@ -50,7 +53,8 @@ import InterestPage from './InterestPage';
 import AnalysisTagChip from './AnalysisTagChip';
 import { excerptOf, hostOf } from '../utils/readerText';
 import { highlightMatch } from '../utils/highlight';
-import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
+import { dayLabelOf } from '../utils/readerTime';
+import { buildListPlan } from '../utils/listPlan';
 import { formatRelativeTime, formatDateTime, formatPublishDate } from '../utils/datetime';
 import { formatPodcastDuration, podcastOf, podcastProcessingMeta } from '../utils/podcast';
 import {
@@ -134,10 +138,63 @@ export function PaneBodySkeleton() {
 // 变化的行才重渲(此前整列随任意父级 state 重渲)。回调经父级 latest-ref 稳定包装,
 // article/source 对象引用在增量追加下保持不变,memo 浅比较即可生效。
 // (export 供移动壳复用同一张条目卡——语法/收藏星/未读点单一事实来源。)
+/* ── 三谓词过滤面板(issue #27 兴趣即透镜,样页 dorami-interest-lens-quiet ①):
+   订阅 / 兴趣 / 收藏 三枚可多选开关,按源 / 按标签 / 按篇两两正交,AND 联合;
+   选中态 = wash 底 + 勾(多选语义),与单选源行的浮白 + 弱高程分家;兴趣未设时灰掉,点它直落发现页兴趣段。
+   桌面源栏与移动抽屉共用。 */
+export function ScopeToggles({ scope, hasInterests, onToggle, onOpenInterests, className = '' }) {
+  const rows = [
+    ['subscribed', '订阅', Rss, true],
+    ['interest', '兴趣', Tags, hasInterests || scope.interest],
+    ['favorite', '收藏', Star, true],
+  ];
+  return (
+    <div className={`reader-scope ${className}`} role="group" aria-label="过滤条件">
+      {rows.map(([key, label, Icon, enabled]) => {
+        const on = Boolean(scope[key]);
+        const disabled = !enabled;
+        return (
+          <button
+            key={key}
+            type="button"
+            aria-pressed={on}
+            aria-disabled={disabled || undefined}
+            title={disabled ? '还没有设置兴趣,去发现页选几个感兴趣的方向' : undefined}
+            onClick={() => { if (disabled) onOpenInterests?.(); else onToggle(key); }}
+            className={`reader-scope-row ${on ? 'is-on' : ''} ${disabled ? 'is-disabled' : ''} is-${key}`}
+          >
+            <span className="reader-scope-ic" aria-hidden="true">
+              <Icon className="h-3.5 w-3.5" fill={key === 'favorite' && on ? 'currentColor' : 'none'} />
+            </span>
+            <span className="reader-scope-name">{label}</span>
+            <Check className="reader-scope-check h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* 屏蔽折叠行:「已屏蔽 · 机器人技术、具身智能 · 展开」——写屏蔽了什么,不写几篇 */
+export function MutedFoldRow({ tags, expanded, onToggle, showLabel = false, dayKey = '' }) {
+  return (
+    <>
+      {showLabel && <div className="reader-date-label">{dayLabelOf(dayKey)}</div>}
+      <button type="button" className={`reader-fold ${expanded ? 'is-open' : ''}`} onClick={onToggle} aria-expanded={expanded}>
+        <Ban className="h-3 w-3" aria-hidden="true" />
+        <span className="reader-fold-text">已屏蔽 · <b>{tags.join('、')}</b></span>
+        <span className="reader-fold-act">{expanded ? '收起' : '展开'}</span>
+      </button>
+    </>
+  );
+}
+
 export const ArticleRow = memo(function ArticleRow({
   article, active, isUnread, isFav, entryBulletin, entryPodcast, showLabel, dayKey, searchQuery,
   source, sourceName, onSelect, onPrefetchEnter, onPrefetchLeave, onToggleFavorite,
   onContextMenu, ctxAnchor,
+  // issue #27 兴趣即透镜:命中的兴趣标签名(顶行一枚胶囊)/ 订阅外标记(悬停翻「+ 订阅」)/ 屏蔽项展开态
+  interestHit = '', unsubscribed = false, onSubscribeSource = null, muted = false,
 }) {
   const excerpt = entryBulletin
     ? ''
@@ -178,7 +235,7 @@ export const ArticleRow = memo(function ArticleRow({
         onMouseEnter={() => onPrefetchEnter(article)}
         onMouseLeave={onPrefetchLeave}
         onContextMenu={(e) => onContextMenu(e, article, 'article')}
-        className={`reader-entry ${entryBulletin ? 'is-bulletin' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''}`}
+        className={`reader-entry ${entryBulletin ? 'is-bulletin' : ''} ${entryPodcast ? 'is-podcast' : ''} ${active ? 'is-active' : ''} ${isUnread ? '' : 'is-read'} ${isFav ? 'is-fav' : ''} ${ctxAnchor ? 'is-ctx-anchor' : ''} ${muted ? 'is-muted' : ''}`}
       >
         {entryPodcast ? (
           <span className="reader-podcast-layout">
@@ -222,10 +279,25 @@ export const ArticleRow = memo(function ArticleRow({
                 </span>
               )}
               <span className="reader-entry-src">{sourceName}</span>
+              {/* 订阅外文章(订阅谓词关着的全站范围):源名后 faint「未订阅」,悬停卡片翻成「+ 订阅」——
+                  发现的动作发生在阅读现场,不必去发现页 */}
+              {unsubscribed && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="reader-entry-unsub"
+                  title="订阅这个来源"
+                  onClick={(e) => { e.stopPropagation(); onSubscribeSource?.(article.source_id); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSubscribeSource?.(article.source_id); } }}
+                />
+              )}
+              {/* 命中兴趣:只挂一枚胶囊,写命中的那个兴趣标签(命中多个取第一个);它是透镜的产物,与开关无关。
+                  与分析主签同名时顶替它(不并列两枚同名签)。 */}
+              {interestHit && <span className="reader-entry-hit">{interestHit}</span>}
               {/* 分析结果归入元信息行(issue #23 第三项):分类是源名后的一段元信息文字,
                   分数是衬线数字落在时间之前——不再独占一行,晚到只横向填字、标题不动;
                   没有可读结果且分析在途时,分数槽先以「分析中」占位,落地即换成数。 */}
-              {analysisLabel && <span className="reader-entry-tag">{analysisLabel}</span>}
+              {analysisLabel && analysisLabel !== interestHit && <span className="reader-entry-tag">{analysisLabel}</span>}
               {score
                 ? <span className="reader-entry-score ai-grad-text" title={SCORE_DISCLAIMER}>{score}</span>
                 : (analysisStatus && <span className="reader-entry-score is-pending" role="status">分析中</span>)}
@@ -280,27 +352,20 @@ export default function ReaderTab({
   const [briefReturn, setBriefReturn] = useState(null);
   const [briefRestore, setBriefRestore] = useState(null); // 返回时交还早报页落位的那份上下文
   const leaveBriefTrail = useCallback(() => setBriefReturn(null), []);
-  // 我的兴趣(issue #23 第二项,弹窗改页面):与早报同为「顶替源栏槽位 + 整幅右栏」的页面态;
-  // 点击即保存(页内 600ms 合并),没有草稿态,离开无需确认;首登引导自动打开一次但不锁页
-  // (视图轨照常可走,轨钮挂点直到完成或跳过)。
-  const [interestOpen, setInterestOpen] = useState(false);
-  // 引导完成的 PUT 在途时读者可能已从视图轨走开(刻意不锁页):完成回调只在兴趣页仍开着时才跳早报,
-  // 否则会把已经在看的文章/源/发现页拉走(codex 检视 P2);经 ref 读最新值——回调被卸载页的 ref 持有
-  const interestOpenRef = useRef(interestOpen);
-  useEffect(() => { interestOpenRef.current = interestOpen; }, [interestOpen]);
+  // 兴趣(issue #27 三稿「兴趣不是地方」):编辑面并入发现页第三段「兴趣」,视图轨不再有兴趣钮;
+  // 读东西永远在容器里,兴趣以源栏过滤面板的「兴趣」开关作透镜。首登引导 = 发现页兴趣段顶部一条横幅
+  // (不锁页,视图轨照常可走),完成即落早报。发现页的段位提升到这里:引导/「我的」入口要能指定落到兴趣段。
+  const [discoverTab, setDiscoverTab] = useState('sources'); // sources | collections | interests
   const [interestVersion, setInterestVersion] = useState(0);
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;
-  useEffect(() => {
-    if (onboardingRequired) setInterestOpen(true);
-  }, [onboardingRequired]);
-  const pageOpen = briefOpen || interestOpen;
+  const pageOpen = briefOpen;
 
   useEffect(() => {
-    if (!personalDigestEnabled) { setBriefOpen(false); setInterestOpen(false); }
+    if (!personalDigestEnabled) setBriefOpen(false);
   }, [personalDigestEnabled]);
-  const closeBriefBeforeArticleOpen = useCallback(() => { setBriefOpen(false); setInterestOpen(false); }, []);
+  const closeBriefBeforeArticleOpen = useCallback(() => { setBriefOpen(false); }, []);
 
   const {
     // 源目录 / 订阅
@@ -311,8 +376,9 @@ export default function ReaderTab({
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover,
-    bulletinView, socialView, podcastView, railActive, listTitle,
-    goView, goSource, goContainerAll, goFavorites,
+    bulletinView, socialView, podcastView, railActive, listTitle, listSubtitle,
+    goView, goSource,
+    scope, toggleScope, hasInterests, refreshInterests, showUnsubscribedMark,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
     searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch, searchForLabel,
@@ -345,6 +411,38 @@ export default function ReaderTab({
     onDeepLinkConsumed,
     onBeforeOpenArticle: closeBriefBeforeArticleOpen,
   });
+
+  // 首登引导自动落到发现页兴趣段一次(不锁页;发现钮挂点直到完成或跳过)
+  const onboardingOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!onboardingRequired || onboardingOpenedRef.current) return;
+    onboardingOpenedRef.current = true;
+    setBriefOpen(false);
+    setDiscoverTab('interests');
+    openDiscover();
+  }, [onboardingRequired, openDiscover]);
+  // 「兴趣」的编辑入口(源栏开关灰态提示 / 引导):直落发现页兴趣段
+  const openInterests = useCallback(() => {
+    supersedePendingOpen();
+    setBriefOpen(false);
+    leaveBriefTrail();
+    setDiscoverTab('interests');
+    openDiscover();
+  }, [supersedePendingOpen, leaveBriefTrail, openDiscover]);
+  // 屏蔽折叠行的展开态:按日期组记(切作用域时随列表重挂载归零)
+  const [expandedMutedDays, setExpandedMutedDays] = useState(() => new Set());
+  const toggleMutedDay = useCallback((dayKey) => {
+    setExpandedMutedDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(dayKey)) next.delete(dayKey); else next.add(dayKey);
+      return next;
+    });
+  }, []);
+  useEffect(() => { setExpandedMutedDays(new Set()); }, [activeSourceId, mode, scope, searchQuery]);
+  const listPlan = useMemo(
+    () => buildListPlan(articles, grouping, expandedMutedDays),
+    [articles, grouping, expandedMutedDays],
+  );
 
   const [podcastSelection, setPodcastSelection] = useState({ articleId: '', variant: 'original' });
   const activePodcast = podcastOf(activeArticle);
@@ -449,6 +547,7 @@ export default function ReaderTab({
   const onRowPrefetchEnter = useCallback((a) => rowHandlersRef.current.prefetchEnter(a), []);
   const onRowPrefetchLeave = useCallback(() => rowHandlersRef.current.prefetchLeave(), []);
   const onRowToggleFavorite = useCallback((a, e) => rowHandlersRef.current.toggleFav(a, e), []);
+  const onRowSubscribeSource = useCallback((sid) => rowHandlersRef.current.subscribeSource(sid), []);
   const onRowToggleSocialRead = useCallback((a) => rowHandlersRef.current.toggleSocialRead(a), []);
   // 右键菜单(v3.28):同走 latest-ref——onContextMenu 是新的一列级 prop,引用漂移会让
   // ArticleRow/SocialPost 的 memo 整列失效。
@@ -463,6 +562,8 @@ export default function ReaderTab({
       toggleFav: handleToggleFavorite,
       toggleSocialRead: handleToggleSocialRead,
       contextMenu: openRowContextMenu,
+      // 条目行「+ 订阅」:按 source_id 取目录里的源对象(目录未含时用最小对象,Toast 名字回退 id)
+      subscribeSource: (sid) => handleSubscribe(sourceMap[sid] || { source_id: sid, name: sourceNameMap[sid] || sid }),
     };
   });
 
@@ -496,26 +597,12 @@ export default function ReaderTab({
               type="button"
               aria-label="我的早报"
               aria-pressed={briefOpen}
-              onClick={() => { supersedePendingOpen(); setInterestOpen(false); closeDiscover(); setBriefRestore(null); leaveBriefTrail(); setBriefOpen(true); }}
+              onClick={() => { supersedePendingOpen(); closeDiscover(); setBriefRestore(null); leaveBriefTrail(); setBriefOpen(true); }}
               className={`reader-vrail-btn ${briefOpen ? 'is-on' : ''}`}
             >
               <Newspaper className="h-[18px] w-[18px]" />
               <span className="reader-vrail-label">早报</span>
               <span className="reader-vrail-tip">我的早报</span>
-            </button>
-            {/* 兴趣紧邻早报(2026-09-06 拍板):两页同为「我的」页、同用报头家族,并排成一组,
-                其余容器与目录页另成两组 */}
-            <button
-              type="button"
-              aria-label={onboardingRequired && !interestOpen ? '我的兴趣(待设置)' : '我的兴趣'}
-              aria-pressed={interestOpen}
-              onClick={() => { if (interestOpen) return; supersedePendingOpen(); closeDiscover(); setBriefOpen(false); setInterestOpen(true); }}
-              className={`reader-vrail-btn ${interestOpen ? 'is-on' : ''}`}
-            >
-              <Tags className="h-[18px] w-[18px]" />
-              {onboardingRequired && !interestOpen && <span className="vrail-btn-dot" aria-hidden="true" />}
-              <span className="reader-vrail-label">兴趣</span>
-              <span className="reader-vrail-tip">{onboardingRequired && !interestOpen ? '我的兴趣 · 待设置' : '我的兴趣'}</span>
             </button>
             <span className="reader-vrail-divider" aria-hidden="true" />
           </>
@@ -534,7 +621,7 @@ export default function ReaderTab({
             type="button"
             aria-label={label}
             aria-pressed={!pageOpen && railActive === view}
-            onClick={() => { setInterestOpen(false); setBriefOpen(false); leaveBriefTrail(); goView(view); }}
+            onClick={() => { setBriefOpen(false); leaveBriefTrail(); goView(view); }}
             className={`reader-vrail-btn ${!pageOpen && railActive === view ? 'is-on' : ''}`}
           >
             <Icon className="h-[18px] w-[18px]" />
@@ -547,12 +634,13 @@ export default function ReaderTab({
         <span className="reader-vrail-divider" aria-hidden="true" />
         <button
           type="button"
-          aria-label="发现"
+          aria-label={onboardingRequired && !discover ? '发现(兴趣待设置)' : '发现'}
           aria-pressed={!pageOpen && discover}
-          onClick={() => { setInterestOpen(false); setBriefOpen(false); leaveBriefTrail(); openDiscover(); }}
+          onClick={() => { setBriefOpen(false); leaveBriefTrail(); openDiscover(); }}
           className={`reader-vrail-btn ${!pageOpen && discover ? 'is-on' : ''}`}
         >
           <Compass className="h-[18px] w-[18px]" />
+          {onboardingRequired && !discover && <span className="vrail-btn-dot" aria-hidden="true" />}
           <span className="reader-vrail-label">发现</span>
         </button>
 
@@ -622,8 +710,11 @@ export default function ReaderTab({
       {/* ── 源栏 · 我的订阅 ── */}
       {!pageOpen && <aside className="reader-col reader-col-sources">
         <div className="reader-sources-inner">
+        {/* 栏头 = 容器名(issue #27 四稿):左栏是过滤面板,栏里只有一种东西——过滤条件 */}
         <div className="reader-src-head">
-          <span className="reader-src-title">我的订阅</span>
+          <span className="reader-src-title">
+            {mode === 'bulletin' ? '动态' : socialView ? '社交媒体' : podcastView ? '播客' : '文章'}
+          </span>
         </div>
 
         <div className="reader-source-scroll">
@@ -642,38 +733,16 @@ export default function ReaderTab({
                 </div>
               )}
 
-              {/* 容器聚合入口 + 收藏入口(Folo 语义:收藏与「全部」并列,容器级过滤) */}
-              <div className="reader-subs">
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => { leaveBriefTrail(); goContainerAll(); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); leaveBriefTrail(); goContainerAll(); } }}
-                  className={`reader-source-row ${activeSourceId === null && !favOnly ? 'reader-source-row-active' : ''} ${scopeUnread > 0 && activeSourceId === null && !favOnly ? 'has-unread' : ''}`}
-                >
-                  <span className="reader-src-allicon" aria-hidden="true">
-                    {mode === 'bulletin' ? <Zap className="h-3.5 w-3.5" />
-                      : socialView ? <AtSign className="h-3.5 w-3.5" />
-                        : podcastView ? <Podcast className="h-3.5 w-3.5" />
-                          : <FileText className="h-3.5 w-3.5" />}
-                  </span>
-                  <p className="reader-source-name min-w-0 flex-1">
-                    {mode === 'bulletin' ? '全部动态' : socialView ? '全部社媒' : podcastView ? '全部播客' : '全部文章'}
-                  </p>
-                </div>
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => { leaveBriefTrail(); goFavorites(); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); leaveBriefTrail(); goFavorites(); } }}
-                  className={`reader-source-row ${favOnly ? 'reader-source-row-active' : ''}`}
-                >
-                  <span className="reader-src-allicon reader-src-allicon-fav" aria-hidden="true">
-                    <Star className="h-3.5 w-3.5" fill={favOnly ? 'currentColor' : 'none'} />
-                  </span>
-                  <p className="reader-source-name min-w-0 flex-1">只看收藏</p>
-                </div>
-              </div>
+              {/* 三谓词过滤面板(issue #27 兴趣即透镜):订阅 / 兴趣 / 收藏 可多选,AND 联合;
+                  三者全关 = 全站可见源。开关的选中态 = wash 底 + 勾(多选语义),与下方单选源行的
+                  浮白 + 弱高程分家。「全部XX / 只看收藏」两行聚合入口自此退役。 */}
+              <ScopeToggles
+                scope={scope}
+                hasInterests={hasInterests}
+                onToggle={(key) => { leaveBriefTrail(); toggleScope(key); }}
+                onOpenInterests={openInterests}
+              />
+              {sidebarGroups.length > 0 && <div className="reader-src-label reader-src-axis">来源</div>}
 
               {/* 订阅来源按编辑分层分组(样页):官方·一手信息 / 媒体·观察 / 个人·洞见 / 榜单·动态。
                   源栏跟随容器(层级化):文章容器只列文章形源,动态容器只列榜单·动态,今日列全部。
@@ -767,24 +836,6 @@ export default function ReaderTab({
         />
       )}
 
-      {/* ── 我的兴趣(issue #23 第二项):选择台账顶替源栏槽位 + 标签目录面占整幅;
-             引导完成后直接落早报页——读者立刻看到兴趣起了作用 ── */}
-      {interestOpen && (
-        <InterestPage
-          onboarding={onboardingRequired}
-          showToast={showToast}
-          onSaved={({ onboardingCompleted } = {}) => {
-            setInterestVersion((value) => value + 1);
-            if (onboardingCompleted) {
-              onUserUpdated?.({ interest_onboarding_completed: true });
-              if (!interestOpenRef.current) return; // 读者已走开,只记完成、不跳
-              setInterestOpen(false);
-              setBriefRestore(null);
-              setBriefOpen(true);
-            }
-          }}
-        />
-      )}
 
       {/* ── 发现页:占据 条目列+阅读窗 的整片区域(源栏保持在场,订阅结果即时可见) ── */}
       {!pageOpen && discover && (
@@ -805,6 +856,27 @@ export default function ReaderTab({
           onUnsubscribeCollection={handleUnsubscribeCollection}
           userSourcesEnabled={userSourcesEnabled}
           onAddCustomSource={handleAddCustomSource}
+          tab={discoverTab}
+          onTabChange={setDiscoverTab}
+          interestsPanel={personalDigestEnabled ? (
+            <InterestPage
+              embedded
+              onboarding={onboardingRequired}
+              showToast={showToast}
+              onSaved={({ onboardingCompleted } = {}) => {
+                setInterestVersion((value) => value + 1);
+                refreshInterests();
+                if (onboardingCompleted) {
+                  onUserUpdated?.({ interest_onboarding_completed: true });
+                  // 引导完成即落早报——读者立刻看到兴趣起了作用(在途时若已走开,只记完成)
+                  if (!discover) return;
+                  closeDiscover();
+                  setBriefRestore(null);
+                  setBriefOpen(true);
+                }
+              }}
+            />
+          ) : null}
         />
       )}
 
@@ -866,10 +938,13 @@ export default function ReaderTab({
               />
             </div>
           ) : (
-            <span className="reader-list-title">{listTitle}</span>
+            <span className="reader-list-title">
+              {listTitle}
+              {listSubtitle && <span className="reader-list-subtitle">{listSubtitle}</span>}
+            </span>
           )}
-          {/* 未读筛选(全部/未读)+ 全部标读:搜索展开或收藏过滤时让位(未读语义此时关闭)。 */}
-          {!favOnly && !searchOpen && (
+          {/* 未读筛选(全部/未读)+ 全部标读:搜索展开时让位(三谓词面板下未读对任何组合都成立)。 */}
+          {!searchOpen && (
             <>
               <div className="reader-seg" role="tablist" aria-label="未读筛选">
                 {[[false, '全部'], [true, '未读']].map(([value, label]) => (
@@ -929,7 +1004,7 @@ export default function ReaderTab({
         <div className="reader-scrollwrap">
         <div className="reader-list-scroll" ref={listRef}>
           {/* 新内容提示条:轮询发现未读正增量时出现,点击刷新——不自动插入打断阅读 */}
-          {!favOnly && !articlesLoading && freshCount > 0 && (
+          {!favOnly && scope.subscribed && !articlesLoading && freshCount > 0 && (
             <button type="button" className="reader-fresh-pill" onClick={handleRefreshFresh}>
               <RefreshCw className="h-3 w-3" />
               {podcastView ? `载入 ${freshCount} 期新播客` : `载入 ${freshCount} 篇新文章`}
@@ -937,7 +1012,7 @@ export default function ReaderTab({
           )}
           {articlesLoading ? (
             <ArticleCardsSkeleton />
-          ) : !favOnly && hasNoSubscriptions && !activeSourceId ? (
+          ) : scope.subscribed && !scope.interest && !favOnly && hasNoSubscriptions && !activeSourceId ? (
             <div className="reader-empty reader-empty-tall">
               <Compass className="h-7 w-7 text-slate-300" />
               <span>你还没有订阅任何来源</span>
@@ -958,6 +1033,8 @@ export default function ReaderTab({
                   ? (podcastView ? '没有匹配的播客' : '没有匹配的文章')
                   : favOnly
                     ? '当前范围还没有收藏，阅读时点右上角星标即可收藏'
+                    : scope.interest
+                      ? '当前范围没有命中兴趣的文章'
                     : unreadOnly
                       ? '没有未读内容，都看完啦'
                       : activeSourceId
@@ -967,9 +1044,23 @@ export default function ReaderTab({
             </div>
           ) : (
             /* key 按视图范围重挂载,切源/切容器时列表整体淡入(A1) */
-            <div key={`${activeSourceId ?? '__all__'}|${mode}|${favOnly ? 'fav' : 'flow'}`} className="reader-list-enter">
-              {articles.map((article, index) => {
-                const key = dayKeyOf(article);
+            <div key={`${activeSourceId ?? '__all__'}|${mode}|${scope.subscribed ? 's' : ''}${scope.interest ? 'i' : ''}${scope.favorite ? 'f' : ''}`} className="reader-list-enter">
+              {listPlan.map((entry) => {
+                if (entry.type === 'fold') {
+                  /* 屏蔽折叠行(issue #27):同一日期组内命中屏蔽标签的条目折成一行——写屏蔽了什么,不写几篇;
+                     点开就地摊开(条目降调),再点收回。屏蔽是全局透镜,任何谓词组合都生效。 */
+                  return (
+                    <MutedFoldRow
+                      key={`fold:${entry.dayKey}`}
+                      tags={entry.tags}
+                      expanded={entry.expanded}
+                      showLabel={entry.showLabel}
+                      dayKey={entry.dayKey}
+                      onToggle={() => toggleMutedDay(entry.dayKey)}
+                    />
+                  );
+                }
+                const { article } = entry;
                 return (
                   <ArticleRow
                     key={article.id}
@@ -981,8 +1072,8 @@ export default function ReaderTab({
                        动态容器整条呈紧凑形(无独立标题,不挂摘要),不再需要逐条形态 chip。 */
                     entryBulletin={bulletinView}
                     entryPodcast={podcastView}
-                    showLabel={grouping && (index === 0 || key !== dayKeyOf(articles[index - 1]))}
-                    dayKey={key}
+                    showLabel={entry.showLabel}
+                    dayKey={entry.dayKey}
                     searchQuery={searchQuery}
                     source={sourceMap[article.source_id]}
                     sourceName={sourceNameMap[article.source_id] || article.source_id}
@@ -992,6 +1083,10 @@ export default function ReaderTab({
                     onToggleFavorite={onRowToggleFavorite}
                     onContextMenu={onRowContextMenu}
                     ctxAnchor={ctxMenu?.anchorKey === `article:${article.id}`}
+                    interestHit={article.interest_hits?.[0] || ''}
+                    unsubscribed={showUnsubscribedMark && !subscribedIds.has(article.source_id)}
+                    onSubscribeSource={onRowSubscribeSource}
+                    muted={entry.muted}
                   />
                 );
               })}
@@ -1139,6 +1234,20 @@ export default function ReaderTab({
                 {contentGenreLabel(activeArticle.content_genre)
                   ? ` · ${contentGenreLabel(activeArticle.content_genre)}`
                   : ''}
+                {/* 全站范围里读到订阅外的文章:眉头挂一枚「+ 订阅」胶囊(源被收窄预览时列头已有横幅,不重复) */}
+                {!activeUnsubscribed && !subscribedIds.has(activeArticle.source_id) && !sourceMap[activeArticle.source_id]?.hidden && (
+                  <button
+                    type="button"
+                    className="reader-pane-sub"
+                    disabled={pinningId === activeArticle.source_id}
+                    onClick={() => onRowSubscribeSource(activeArticle.source_id)}
+                  >
+                    {pinningId === activeArticle.source_id
+                      ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                      : <Plus className="h-3 w-3" aria-hidden="true" />}
+                    订阅{sourceNameMap[activeArticle.source_id] ? ` ${sourceNameMap[activeArticle.source_id]}` : ''}
+                  </button>
+                )}
               </div>
               {/* 译文态(v3.45):大标题换中文译名,原标题降为其下一行小字 */}
               <h1 className="reader-pane-title">

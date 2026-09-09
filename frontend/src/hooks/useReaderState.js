@@ -34,6 +34,7 @@ import {
   subscribeSource,
   unsubscribeSource,
   fetchFavorites,
+  fetchInterests,
   addFavorite,
   removeFavorite,
   translateArticle,
@@ -49,6 +50,45 @@ import {
 } from '../api';
 
 const PAGE_SIZE = 30;
+
+// ── 过滤面板持久化(issue #27):按用户按容器记住三枚开关;默认订阅开着 ──
+const SCOPE_STORAGE_PREFIX = 'dorami-reader-scope';
+const DEFAULT_SCOPE = Object.freeze({ subscribed: true, interest: false, favorite: false });
+export function readStoredScope(username, mode) {
+  try {
+    const raw = window.localStorage.getItem(`${SCOPE_STORAGE_PREFIX}:${username || 'anon'}:${mode}`);
+    if (!raw) return { ...DEFAULT_SCOPE };
+    const parsed = JSON.parse(raw);
+    return {
+      subscribed: parsed.subscribed !== false,
+      interest: Boolean(parsed.interest),
+      favorite: Boolean(parsed.favorite),
+    };
+  } catch {
+    return { ...DEFAULT_SCOPE };
+  }
+}
+function writeStoredScope(username, mode, scope) {
+  try {
+    window.localStorage.setItem(`${SCOPE_STORAGE_PREFIX}:${username || 'anon'}:${mode}`, JSON.stringify(scope));
+  } catch { /* 隐私模式等写不进去:面板退化为会话态 */ }
+}
+// 列表请求参数的单一拼装点:三谓词 + 源轴 + 容器形态 + 读态 + 搜索(列表首拉与分析轮询共用)
+function buildListFilters({ activeSourceId, mode, scope, displayTagQuery, searchQuery, unreadOnly }) {
+  const filters = {};
+  if (activeSourceId) filters.source_id = activeSourceId;
+  else filters.shape = mode; // 容器分流(文章/动态/社交各取自己那类)
+  filters.subscribed_scope = scope.subscribed ? 'only' : 'off'; // off = 全站可见源
+  if (scope.interest) filters.interest_scope = 'only';
+  if (scope.favorite) filters.favorite_scope = 'only';
+  if (displayTagQuery) filters.display_tag = displayTagQuery;
+  else if (searchQuery) filters.search = searchQuery;
+  filters.with_unread = 'true';    // 条目附页级未读标记(水位由 unread-counts 校准)
+  filters.with_interest = 'true';  // 条目附命中的关注 / 屏蔽标签名(胶囊与折叠行)
+  if (unreadOnly) filters.unread_only = 'true';
+  return filters;
+}
+
 const UNREAD_POLL_MS = 60000; // 未读轻轮询间隔（标签页可见时才真正请求）
 const ANALYSIS_POLL_MS = 30000;
 const ANALYSIS_PROJECTION_KEYS = [
@@ -107,8 +147,27 @@ export function useReaderState({
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
   const [sourcesLoading, setSourcesLoading] = useState(true);
   const [activeSourceId, setActiveSourceId] = useState(null); // null = 当前容器的聚合流
-  // 收藏 = 容器内的正交过滤器(Folo 语义:各视图有自己的收藏钮),不再是独立视图
-  const [favOnly, setFavOnly] = useState(false);
+  // ── 三谓词过滤面板(issue #27 兴趣即透镜,样页 docs/design/dorami-interest-lens-quiet.html):
+  //    订阅 / 兴趣 / 收藏 两两正交(按源 / 按标签 / 按篇),AND 联合;三者全关 = 全站可见源。
+  //    初始状态订阅开着,按用户按容器记住(localStorage)——日常体验与「全部文章」同义,
+  //    关掉订阅是显式动作,全站在原地展开。源栏的来源列表是第四个轴,与三谓词联合。
+  //    点未订源(发现页预览 / 深链)时订阅谓词**临时**关掉不落盘,离开该源即恢复记住的状态。 ──
+  const scopeUser = account?.username || '';
+  const [scope, setScopeState] = useState(() => readStoredScope(scopeUser, 'article'));
+  const scopeUserRef = useRef(scopeUser);
+  useEffect(() => { scopeUserRef.current = scopeUser; }, [scopeUser]);
+  // favOnly 沿用旧名给消费方(SocialFlow 等):收藏谓词开着
+  const favOnly = scope.favorite;
+  // 兴趣存在性:没设任何兴趣时「兴趣」开关灰掉(去发现页设);兴趣页保存后由 refreshInterests 刷新
+  const [interestCount, setInterestCount] = useState(0);
+  const refreshInterests = useCallback(async () => {
+    try {
+      const data = await fetchInterests();
+      setInterestCount((data.items || []).filter((it) => it.stance !== 'mute').length);
+    } catch { /* 非关键路径:失败保持上次已知值 */ }
+  }, []);
+  useEffect(() => { refreshInterests(); }, [refreshInterests]);
+  const hasInterests = interestCount > 0;
   const [favoriteIds, setFavoriteIds] = useState(() => new Set());
   const [favTogglingId, setFavTogglingId] = useState(null);
   // 发现页(整页视图,取代源栏内联「发现更多来源」):true 时 条目列+阅读窗 被发现页取代
@@ -155,6 +214,13 @@ export function useReaderState({
   // (「今日」跨宇宙混合流已取缔:它用文章形态渲染推文,违反容器模型的前提——
   //  三个宇宙渲染形态不同才需要分容器;各容器默认倒序 + 未读体系已能回答「最近/未看」。)
   const [mode, setMode] = useState('article');
+  // 切容器同批读回该容器记住的过滤面板(同一次 setState 批次,不产生「旧 scope × 新容器」的中间请求)
+  const applyMode = useCallback((nextMode) => {
+    setMode(nextMode);
+    setScopeState(readStoredScope(scopeUserRef.current, nextMode));
+  }, []);
+  const modeRef = useRef(mode);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
 
   // ── 未读体系 ──
   // 计数来自 GET /api/reader/unread-counts(挂载即拉一次以校准水位,随后 60s 轻轮询);
@@ -273,18 +339,18 @@ export function useReaderState({
   const applyUnreadCounts = useCallback((data) => {
     const bySource = data.by_source || {};
     setUnreadBySource(bySource);
-    if (favOnly) return; // 收藏过滤中不做新内容提示
-    // 范围口径:单源看该源;容器聚合看本容器形态;今日=全形态
-    const scope = activeSourceId
+    if (favOnly || !scope.subscribed) return; // 收藏过滤中 / 全站范围(未读计数只覆盖订阅源)不做新内容提示
+    // 范围口径:单源看该源;容器聚合看本容器形态
+    const scopeCount = activeSourceId
       ? (bySource[activeSourceId] || 0)
       : Object.entries(bySource).reduce(
           (sum, [sid, n]) => sum + (shapeOfSource(sid) === mode ? n : 0),
           0,
         );
     const prev = prevScopeUnreadRef.current;
-    prevScopeUnreadRef.current = scope;
-    if (prev !== null && scope > prev) setFreshCount((c) => c + (scope - prev));
-  }, [activeSourceId, favOnly, mode, shapeOfSource]);
+    prevScopeUnreadRef.current = scopeCount;
+    if (prev !== null && scopeCount > prev) setFreshCount((c) => c + (scopeCount - prev));
+  }, [activeSourceId, favOnly, scope.subscribed, mode, shapeOfSource]);
 
   const loadUnreadCounts = useCallback(async () => {
     try {
@@ -560,26 +626,10 @@ export function useReaderState({
       // 列表只渲染摘要（content_preview），故请求统一不带全文，正文按需懒加载（见 selectArticle）。
       // 「我的订阅」聚合由后端 subscribed_scope=only 自行解析范围，前端无需先拿到订阅集合即可发请求。
       data = await runList((signal) => {
-        if (favOnly) {
-          // 容器内收藏:范围跟随当前容器/源
-          const filters = {};
-          if (activeSourceId) filters.source_id = activeSourceId;
-          else filters.shape = mode;
-          if (displayTagQuery) filters.display_tag = displayTagQuery;
-          else if (searchQuery) filters.search = searchQuery;
-          // 社交收藏也走卡片流,需要 extensions(引用推/转推/头像)——与非收藏分支一致
-          return fetchFavorites(filters, PAGE_SIZE, skip, { signal, includeContent: mode === 'social' });
-        }
-        const filters = {};
-        if (activeSourceId) filters.source_id = activeSourceId;
-        else {
-          filters.subscribed_scope = 'only'; // 聚合视图：后端硬过滤到已订阅源
-          filters.shape = mode; // 容器分流(文章/动态/社交各取自己那类)
-        }
-        if (displayTagQuery) filters.display_tag = displayTagQuery;
-        else if (searchQuery) filters.search = searchQuery;
-        filters.with_unread = 'true';           // 条目附页级未读标记（水位由 unread-counts 校准）
-        if (unreadOnly) filters.unread_only = 'true';
+        // 三谓词面板 + 源轴 + 读态 + 搜索,一份拼装(分析轮询复用同一函数,不再分叉)
+        const filters = buildListFilters({
+          activeSourceId, mode, scope, displayTagQuery, searchQuery, unreadOnly,
+        });
         // 社交流全文直出(推文正文 2~4 行,取回零负担),且卡片要 extensions
         // (引用推/转推/图链)——那只在 include_content=true 时随列表返回。
         return fetchArticles(filters, PAGE_SIZE, skip, true, { signal, includeContent: mode === 'social' });
@@ -590,7 +640,6 @@ export function useReaderState({
       return;
     }
     if (data === undefined) return; // 被更新的请求取代，loading 交给新请求，不在此清除
-    if (favOnly && data.favorite_ids) setFavoriteIds(new Set(data.favorite_ids));
     const items = data.items || [];
     setArticlesTotal(data.total || 0);
     setArticles(prev => (append ? [...prev, ...items] : items));
@@ -598,7 +647,7 @@ export function useReaderState({
     // 等用户主动点选一篇才加载正文并计一次阅读（见 selectArticle）。
     if (!append) setFreshCount(0); // 列表已刷新,新内容提示归零
     if (append) setLoadingMore(false); else setArticlesLoading(false);
-  }, [activeSourceId, activeSourceHidden, searchQuery, displayTagQuery, favOnly, unreadOnly, mode, showToast, runList]);
+  }, [activeSourceId, activeSourceHidden, searchQuery, displayTagQuery, scope, unreadOnly, mode, showToast, runList]);
 
   // 分析任务与采集解耦：列表首拉可能拿到 pending/running。只在确有在途项时
   // 每 30 秒静默重取当前已加载窗口，既不闪骨架屏也不弹失败 toast；响应回写前
@@ -608,7 +657,7 @@ export function useReaderState({
     activeSourceHidden,
     searchQuery,
     displayTagQuery,
-    favOnly,
+    scope,
     unreadOnly,
     mode,
   ]);
@@ -622,7 +671,7 @@ export function useReaderState({
       activeSourceId,
       articles,
       displayTagQuery,
-      favOnly,
+      scope,
       mode,
       scopeKey: analysisScopeKey,
       searchQuery,
@@ -634,7 +683,7 @@ export function useReaderState({
     analysisScopeKey,
     articles,
     displayTagQuery,
-    favOnly,
+    scope,
     mode,
     searchQuery,
     unreadOnly,
@@ -651,36 +700,16 @@ export function useReaderState({
       && !activeIds.has(context.activeArticle.id);
     if (activeIds.size === 0 && !selectedNeedsRefresh) return;
 
-    const filters = {};
-    if (context.activeSourceId) filters.source_id = context.activeSourceId;
-    else if (!context.favOnly) {
-      filters.subscribed_scope = 'only';
-      filters.shape = context.mode;
-    } else {
-      filters.shape = context.mode;
-    }
-    if (context.displayTagQuery) filters.display_tag = context.displayTagQuery;
-    else if (context.searchQuery) filters.search = context.searchQuery;
-    if (!context.favOnly) {
-      filters.with_unread = 'true';
-      if (context.unreadOnly) filters.unread_only = 'true';
-    }
+    const filters = buildListFilters(context);
 
     try {
-      const listRequest = context.favOnly
-        ? fetchFavorites(
-            filters,
-            Math.max(PAGE_SIZE, context.articles.length),
-            0,
-            { includeContent: false },
-          )
-        : fetchArticles(
-            filters,
-            Math.max(PAGE_SIZE, context.articles.length),
-            0,
-            false,
-            { includeContent: false },
-          );
+      const listRequest = fetchArticles(
+        filters,
+        Math.max(PAGE_SIZE, context.articles.length),
+        0,
+        false,
+        { includeContent: false },
+      );
       const [data, selected] = await Promise.all([
         listRequest,
         selectedNeedsRefresh ? fetchArticle(context.activeArticle.id) : Promise.resolve(null),
@@ -799,7 +828,7 @@ export function useReaderState({
   // 订阅集合变化后，若正看聚合视图需显式重拉（loadArticles 已不依赖 subscribedIds，
   // 故不会自动刷新）；看具体来源时由 activeSourceId 变化驱动，无需在此处理。
   const refreshAggregateIfActive = () => {
-    if (!favOnly && !activeSourceId) loadArticles(0, false);
+    if (!activeSourceId) loadArticles(0, false);
   };
 
   const handleSubscribe = async (source) => {
@@ -1145,19 +1174,22 @@ export function useReaderState({
   const goView = (v) => {
     supersedePendingOpen();
     setDiscover(false);
-    setMode(v);
+    applyMode(v); // 过滤面板按容器记住,点容器钮不重置它——只清源轴与搜索
     setActiveSourceId(null);
-    setFavOnly(false);
     setSearchOpen(false);
     setSearchInput('');
   };
-  // 单源=容器内收窄:源所属容器自动点亮(今日不承担单源,从今日点源即跳入所属容器)
+  // 单源=容器内收窄:源所属容器自动点亮(今日不承担单源,从今日点源即跳入所属容器)。
+  // 未订阅源(发现页预览):订阅谓词临时关掉(不落盘)——「订阅 ∧ 未订源」是空集,没有意义;
+  // 回到聚合(goContainerAll / goView)即读回记住的状态。
   const goSource = (sourceId) => {
     supersedePendingOpen();
     setDiscover(false);
     setActiveSourceId(sourceId);
-    setMode(shapeOfSource(sourceId));
-    setFavOnly(false);
+    const nextMode = shapeOfSource(sourceId);
+    setMode(nextMode);
+    const stored = readStoredScope(scopeUserRef.current, nextMode);
+    setScopeState(subscribedIds.has(sourceId) ? stored : { ...stored, subscribed: false });
   };
   // 站内分享深链:分享出来的 #/reader/a/{id},进来直接开这篇。
   // 等 sources 到位再执行——要靠 shapeOfSource 把容器切到这篇所属的宇宙(文章/动态/社交),
@@ -1169,7 +1201,7 @@ export function useReaderState({
   const deepLinkDoneRef = useRef('');
   const deepLinkCtxRef = useRef(null);
   useEffect(() => {   // 每轮渲染后同步最新回调(声明在深链 effect 之前,同轮先执行)
-    deepLinkCtxRef.current = { shapeOfSource, selectArticle, onDeepLinkConsumed };
+    deepLinkCtxRef.current = { shapeOfSource, selectArticle, onDeepLinkConsumed, subscribedIds };
   });
   // 「按 id 打开一篇」的可复用落地(深链初始播种与 AI 问答引用跳转共用同一路):
   // 切作用域+选中该篇一次完成,deepLinkKeepRef 通知清场 effect 保留右栏。
@@ -1189,9 +1221,12 @@ export function useReaderState({
       onBeforeOpenArticle?.();
       deepLinkKeepRef.current = true; // 通知作用域清场 effect:这次切换保留右栏(见 useLayoutEffect)
       setDiscover(false);
-      setFavOnly(false);
       setActiveSourceId(article.source_id || null);
-      setMode(ctx.shapeOfSource(article.source_id));
+      const nextMode = ctx.shapeOfSource(article.source_id);
+      setMode(nextMode);
+      // 按 id 打开 = 导航到一篇具体文章:兴趣/收藏谓词临时放开(否则该源列表可能不含这篇),
+      // 订阅谓词按该源是否已订阅临时定;都不落盘,回聚合即恢复
+      setScopeState({ subscribed: ctx.subscribedIds.has(article.source_id), interest: false, favorite: false });
       ctx.selectArticle(article);
       return true;
     } catch {
@@ -1213,8 +1248,30 @@ export function useReaderState({
 
   // 收藏入口(源栏,与「全部XX」并列):看本容器全部收藏(容器级、不逐源)。
   // Folo 语义——收藏是与「全部」并列的一级过滤,不再挂在列头逐源。
-  const goContainerAll = () => { supersedePendingOpen(); setDiscover(false); setActiveSourceId(null); setFavOnly(false); };
-  const goFavorites = () => { supersedePendingOpen(); setDiscover(false); setActiveSourceId(null); setFavOnly(true); };
+  const goContainerAll = () => {
+    supersedePendingOpen(); setDiscover(false); setActiveSourceId(null);
+    setScopeState(readStoredScope(scopeUserRef.current, modeRef.current)); // 离开源轴:恢复记住的面板
+  };
+  // 「我的」页收藏入口(移动壳):回聚合并开收藏谓词(其余谓词照记住的)
+  const goFavorites = () => {
+    supersedePendingOpen(); setDiscover(false); setActiveSourceId(null);
+    const next = { ...readStoredScope(scopeUserRef.current, modeRef.current), favorite: true };
+    writeStoredScope(scopeUserRef.current, modeRef.current, next);
+    setScopeState(next);
+  };
+  // 过滤面板开关:翻转一枚谓词并落盘;兴趣未设时兴趣开关无效;
+  // 停在未订源上开「订阅」= 回到聚合(「订阅 ∧ 未订源」是空集)。
+  const toggleScope = (key) => {
+    if (key === 'interest' && !scope.interest && !hasInterests) return;
+    supersedePendingOpen();
+    setDiscover(false);
+    const next = { ...scope, [key]: !scope[key] };
+    if (key === 'subscribed' && next.subscribed && activeSourceId && !subscribedIds.has(activeSourceId)) {
+      setActiveSourceId(null);
+    }
+    writeStoredScope(scopeUserRef.current, modeRef.current, next);
+    setScopeState(next);
+  };
   // 搜索开关(条目列头就地展开):关闭即清词(searchQuery 经防抖同步清空,列表回到无过滤)。
   const toggleSearch = () => {
     setSearchOpen((open) => {
@@ -1225,11 +1282,21 @@ export function useReaderState({
   // 视图轨激活态 = 发现页 或 当前容器(源内保持点亮——层级关系,不再互斥)
   const railActive = discover ? 'discover' : mode;
 
-  const listTitle = favOnly
-    ? '收藏'
-    : activeSourceId
-      ? (sourceNameMap[activeSourceId] || activeSourceId)
-      : mode === 'article' ? '文章' : mode === 'social' ? '社交媒体' : mode === 'podcast' ? '播客' : '动态';
+  // 列头回显激活集(模型的安全网):标题 = 激活的谓词(顺序固定 订阅 · 兴趣 · 收藏,不按点击先后);
+  // 全关 = 「全部」+ faint「全站」;被源收窄时标题 = 源名,副文案 = 其余谓词。
+  const scopeLabels = [
+    scope.subscribed && '订阅',
+    scope.interest && '兴趣',
+    scope.favorite && '收藏',
+  ].filter(Boolean);
+  const listTitle = activeSourceId
+    ? (sourceNameMap[activeSourceId] || activeSourceId)
+    : (scopeLabels.length ? scopeLabels.join(' · ') : '全部');
+  const listSubtitle = activeSourceId
+    ? scopeLabels.filter((label) => label !== '订阅').join(' · ')
+    : (scope.subscribed ? '' : '全站');
+  // 条目的「未订阅」标记只在订阅谓词关着(全站范围)时有意义
+  const showUnsubscribedMark = !scope.subscribed && !activeSourceId;
 
   // ── 翻页(上一篇/下一篇):沿当前列表序 ──
   const activeIndex = useMemo(
@@ -1274,8 +1341,8 @@ export function useReaderState({
     return { chars, minutes: Math.max(1, Math.round(chars / 400)) };
   }, [activeBody]);
 
-  // 日期分组只在「到货序」列表上有意义;收藏过滤按收藏时间排序,不分组
-  const grouping = !favOnly;
+  // 三谓词面板下列表统一按到货序(收藏不再按收藏时间另排),日期分组恒开
+  const grouping = true;
 
   // 预览中的未订阅源(发现页「预览」跳入,Folo 语义):源栏顶浮现锚点行,
   // 条目列头下给显眼「＋ 订阅」横幅;订阅成功后两者自然消失、源落入所属分组。
@@ -1296,8 +1363,10 @@ export function useReaderState({
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover,
-    bulletinView, socialView, podcastView, railActive, listTitle,
+    bulletinView, socialView, podcastView, railActive, listTitle, listSubtitle,
     goView, goSource, goContainerAll, goFavorites,
+    // 三谓词过滤面板(issue #27)
+    scope, toggleScope, hasInterests, refreshInterests, showUnsubscribedMark,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
     searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch, searchForLabel,

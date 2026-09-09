@@ -11853,8 +11853,6 @@ input[type="radio"] {
 /* 脚部字号写容器:内含 button(屏蔽)靠继承 */
 .interest-card-foot { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 4px; min-height: 20px; font-size: 11px; }
 .interest-card-kind { font-size: 10.5px; letter-spacing: 0.08em; color: var(--dorami-faint); }
-.interest-card-heat { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
-.interest-card-heat small { font-size: 10px; margin-left: 3px; opacity: 0.8; }
 .interest-card-ban {
   margin-left: auto;
   display: inline-flex;
@@ -12044,3 +12042,204 @@ input[type="radio"] {
 .podcast-guide-body { padding: 18px 4px 4px; }
 .podcast-premium-title { display: block; max-width: 560px; }
 .podcast-premium-table th:nth-child(1) { width: 46%; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   兴趣即透镜(issue #27 第一波,样页 docs/design/dorami-interest-lens-quiet.html)
+   未分层区:含 button/input 字号的规则写在这里(@layer 内会被全局 button{font:inherit} 压掉)。
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── 左栏三谓词过滤面板:订阅 / 兴趣 / 收藏 可多选 ──
+   选中态 = wash 底 + 勾(多选语义),与单选源行的浮白 + 弱高程分家;
+   兴趣未设时灰掉(点它去发现页兴趣段);收藏开着时星标着琥珀(与收藏星同色)。 */
+.reader-scope { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.reader-scope-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dorami-muted);
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.reader-scope-row:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+.reader-scope-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-sm);
+  color: var(--dorami-faint);
+  flex-shrink: 0;
+}
+.reader-scope-name { flex: 1; min-width: 0; }
+.reader-scope-check { color: var(--dorami-accent-ink); opacity: 0; flex-shrink: 0; transition: opacity 140ms ease; }
+.reader-scope-row.is-on { background: var(--dorami-wash); color: var(--dorami-ink); font-weight: 600; }
+.reader-scope-row.is-on .reader-scope-ic { color: var(--dorami-accent-ink); }
+.reader-scope-row.is-on .reader-scope-check { opacity: 1; }
+.reader-scope-row.is-favorite.is-on .reader-scope-ic { color: #f59e0b; }
+.reader-scope-row.is-disabled { opacity: 0.45; }
+.reader-scope-row.is-disabled:hover { opacity: 0.7; }
+/* 「来源」小标:面板与来源分组之间的一枚 kicker,与分组头同族但多一档上距 */
+.reader-src-axis { padding-top: 16px; }
+
+/* ── 列头回显激活集:副文案 faint 小字(「全站」/ 源收窄时的其余谓词) ── */
+.reader-list-subtitle {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--dorami-faint);
+}
+
+/* ── 条目命中胶囊:顶行源名后一枚 accent wash 小胶囊,只写命中的那个兴趣标签 ── */
+.reader-entry-hit {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0.5px 6px 0.5px 5px;
+  border-radius: 4px;
+  background: var(--dorami-wash);
+  color: var(--dorami-accent-ink);
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.reader-entry-hit::before { content: ''; width: 4px; height: 4px; border-radius: 50%; background: var(--dorami-accent); }
+
+/* ── 订阅外标记:源名后 faint「未订阅」,悬停卡片翻成 accent「+ 订阅」(就地订阅) ── */
+.reader-entry-unsub {
+  flex: none;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--dorami-faint);
+  white-space: nowrap;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0 3px;
+}
+.reader-entry-unsub::before { content: '未订阅'; }
+.reader-entry:hover .reader-entry-unsub,
+.reader-entry-unsub:focus-visible { color: var(--dorami-accent-ink); }
+.reader-entry:hover .reader-entry-unsub::before,
+.reader-entry-unsub:focus-visible::before { content: '+ 订阅'; }
+.reader-entry-unsub:hover { background: var(--dorami-wash); }
+
+/* ── 屏蔽折叠行:「已屏蔽 · 机器人技术、具身智能 · 展开」——写屏蔽了什么,不写几篇;展开的条目降调 ── */
+.reader-fold {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: calc(100% - 22px);
+  margin: 2px 6px 2px 16px;
+  padding: 6px 8px;
+  border: 1px dashed var(--dorami-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dorami-faint);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.reader-fold:hover { background: color-mix(in srgb, var(--dorami-ink) 4%, transparent); }
+.reader-fold svg { flex: none; }
+.reader-fold-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reader-fold-text b { font-weight: 500; color: var(--dorami-muted); }
+.reader-fold-act { flex: none; color: var(--dorami-faint); }
+.reader-entry.is-muted { opacity: 0.6; }
+.reader-entry.is-muted:hover, .reader-entry.is-muted.is-active { opacity: 1; }
+
+/* ── 阅读窗眉头「+ 订阅」胶囊:全站范围里读到订阅外的文章 ── */
+.reader-pane-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--dorami-accent);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--dorami-accent-ink);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.reader-pane-sub:hover { background: var(--dorami-wash); }
+.reader-pane-sub:disabled { opacity: 0.6; cursor: default; }
+
+/* ── 发现页第三段「兴趣」:InterestPage 嵌入态 ── */
+.reader-disc-interests { padding-top: 4px; }
+.interest-embed { display: flex; flex-direction: column; }
+.interest-embed-tools { display: flex; align-items: center; gap: 10px; padding: 6px 0 2px; }
+.interest-embed-tools .interest-search { width: 240px; }
+.interest-embed .interest-sec { margin-top: 22px; }
+.interest-embed .interest-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1280px) { .interest-embed .interest-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* 我的关注 chip 行(顶替左槽台账):关注 accent 实点、屏蔽划线空心点,悬停浮出 × */
+.interest-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 0 4px; }
+.interest-picks-label { font-size: 10.5px; letter-spacing: 0.12em; color: var(--dorami-faint); margin-right: 4px; }
+.interest-picks-empty { font-size: 12px; color: var(--dorami-faint); }
+.interest-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 6px 0 8px;
+  border-radius: 7px;
+  background: var(--dorami-surface);
+  box-shadow: var(--sh-1);
+  font-size: 12px;
+  color: var(--dorami-ink);
+}
+.interest-chip-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--dorami-accent); flex: none; }
+.interest-chip.is-mute { color: var(--dorami-muted); background: color-mix(in srgb, var(--dorami-ink) 4%, var(--rd-list-bg)); box-shadow: none; }
+.interest-chip.is-mute .interest-chip-name { text-decoration: line-through; text-decoration-color: var(--dorami-faint); }
+.interest-chip.is-mute .interest-chip-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--dorami-faint); }
+.interest-chip-x {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--dorami-faint);
+  font-size: 13px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  cursor: pointer;
+}
+.interest-chip:hover .interest-chip-x, .interest-chip-x:focus-visible { opacity: 1; }
+.interest-chip-x:hover { background: color-mix(in srgb, var(--dorami-ink) 8%, transparent); color: var(--dorami-ink); }
+/* 首登横幅:同一页顶部一条,不锁页 */
+.interest-onb {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 10px 0 2px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--dorami-surface);
+  box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge);
+}
+.interest-onb-main { flex: 1; min-width: 0; }
+.interest-onb-text { margin-top: 3px; font-size: 12.5px; line-height: 1.6; color: var(--dorami-ink-2); }
+.interest-onb-text b { font-weight: 600; }
+@media (hover: none) {
+  .reader-entry-unsub::before { content: '+ 订阅'; }
+  .reader-entry-unsub { color: var(--dorami-accent-ink); }
+  .interest-chip-x { opacity: 1; }
+}
+/* 发现页栏名不折行:兴趣段的 hint 较长,窄屏下标题曾被挤成竖排 */
+.reader-disc-title-row .reader-disc-title { flex: none; white-space: nowrap; }

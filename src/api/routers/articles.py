@@ -54,6 +54,7 @@ from models.db import (
 )
 from services import article_analysis as article_analysis_service
 from services.article_display_tags import article_ids_for_flexible_label, load_display_tags
+from services import reader_interests as reader_interests_service
 from services import reader_state as reader_state_service
 from services import source_visibility as source_visibility_service
 from services import user_sources as user_sources_service
@@ -202,6 +203,11 @@ def get_articles(
         fetched_date_start: Optional[str] = None,
         fetched_date_end: Optional[str] = None,
         subscribed_scope: str = "off",  # off | only | prioritize：相对当前用户订阅的源
+        # ── 三谓词过滤面板(issue #27 兴趣即透镜):订阅 / 兴趣 / 收藏 两两正交,AND 联合 ──
+        # 兴趣 = 命中读者关注标签(主标签或相关度过门槛);收藏 = 读者收藏过;三者全关 = 全站可见源。
+        interest_scope: str = "off",  # off | only
+        favorite_scope: str = "off",  # off | only
+        with_interest: bool = False,  # 给返回条目附 interest_hits / interest_muted(列表胶囊与折叠行)
         shape: Optional[str] = None,  # article | bulletin | social | podcast：阅读器内容形态分流
         unread_only: bool = False,  # 只看未读（按当前用户订阅源的水位+逐篇已读判定）
         with_unread: bool = False,  # 给返回条目附 unread 标记（页级，reader 列表用）
@@ -218,15 +224,17 @@ def get_articles(
         session: Session = Depends(deps.get_session),
 ):
     scope = (subscribed_scope or "off").strip().lower()
+    interest_only = (interest_scope or "off").strip().lower() == "only"
+    favorite_only = (favorite_scope or "off").strip().lower() == "only"
     safe_limit = min(max(int(limit), 1), 500)
     safe_skip = max(int(skip), 0)
     auth_session = _app().current_auth_session(request)
     is_admin = bool(auth_session and auth_session.get("role") == "admin")
-    username = (
-        str(auth_session.get("sub", ""))
-        if auth_session and (scope in {"only", "prioritize"} or unread_only or with_unread)
-        else ""
+    needs_username = (
+        scope in {"only", "prioritize"} or unread_only or with_unread
+        or interest_only or favorite_only or with_interest
     )
+    username = str(auth_session.get("sub", "")) if auth_session and needs_username else ""
     subscribed_ids = (
         resolve_subscribed_source_ids(session, username)
         if scope in {"only", "prioritize"} or unread_only else []
@@ -317,6 +325,20 @@ def get_articles(
         # 仅当前用户已订阅的源；无订阅时显式返回空集。
         query = query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
         count_query = count_query.where(ArticleRecord.source_id.in_(subscribed_ids or ["__none__"]))
+    interests = (
+        reader_interests_service.load_interest_map(session, username)
+        if username and (interest_only or with_interest)
+        else reader_interests_service.InterestMap()
+    )
+    if interest_only:
+        # 「兴趣」谓词:无关注标签时显式空集(与零订阅同理),不退化成不过滤。
+        interest_cond = reader_interests_service.interest_filter_condition(interests.followed.keys())
+        query = query.where(interest_cond)
+        count_query = count_query.where(interest_cond)
+    if favorite_only:
+        favorite_cond = reader_interests_service.favorite_filter_condition(username)
+        query = query.where(favorite_cond)
+        count_query = count_query.where(favorite_cond)
     shape_value = (shape or "").strip().lower()
     if shape_value in VALID_CONTENT_SHAPES:
         cond = content_shape_condition(shape_value, session)
@@ -324,8 +346,10 @@ def get_articles(
         count_query = count_query.where(cond)
     if unread_only:
         # 未读 = 订阅源内 fetched_date 越过水位 ∧ 未逐篇读过；无可判定源时显式空集。
+        # 订阅谓词关掉(全站范围)时,订阅外的源没有水位:按逐篇读态判定(没读过即未读)。
         unread_cond = reader_state_service.unread_filter_condition(
-            session, username=username, source_ids=subscribed_ids
+            session, username=username, source_ids=subscribed_ids,
+            include_uncursored=scope != "only",
         )
         if unread_cond is None:
             query = query.where(ArticleRecord.id.in_(["__none__"]))
@@ -374,6 +398,9 @@ def get_articles(
         )
         for item in items:
             item["unread"] = item.get("id") in unread_ids
+    if with_interest:
+        # 逐条标注命中的关注 / 屏蔽标签名(与兴趣谓词同一把门槛尺子);无兴趣时两键为空列表
+        reader_interests_service.annotate_interest(items, tags, interests)
     if not include_total:
         return items
     return {

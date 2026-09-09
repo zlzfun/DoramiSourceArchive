@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AtSign,
   CheckCheck,
@@ -23,7 +23,8 @@ import { useReaderState } from '../../hooks/useReaderState';
 import { useLongPress } from '../../hooks/useLongPress';
 import { useLayerHistory } from '../../hooks/useLayerHistory';
 import { articleDeepLink } from '../../utils/shareLink';
-import { ArticleRow, ArticleCardsSkeleton } from '../ReaderTab';
+import { ArticleRow, ArticleCardsSkeleton, MutedFoldRow } from '../ReaderTab';
+import { buildListPlan } from '../../utils/listPlan';
 import SocialFlow from '../SocialFlow';
 import DiscoverPage from '../DiscoverPage';
 import AnnouncementBanner from '../AnnouncementBanner';
@@ -33,7 +34,6 @@ import MobileMePage from './MobileMePage';
 import ActionSheet from './ActionSheet';
 import PersonalBriefPage from '../PersonalBriefPage';
 import InterestPage from '../InterestPage';
-import { dayKeyOf } from '../../utils/readerTime';
 
 // 静态 noop:ArticleRow 的 onContextMenu 契约位——移动端 contextmenu 由外层
 // .m-press 包装统一接管(useLongPress 的 onContextMenu 覆盖 Android 长按/桌面右键),
@@ -71,11 +71,8 @@ export default function MobileReader({
   const [tab, setTab] = useState('article');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sheet, setSheet] = useState(null); // { title, items, anchorKey }
-  // 我的兴趣(issue #23 第二项):整页层(从 我的 进),首登引导自动打开一次但不锁层——返回键可退,
-  // 「我的」行挂点直到完成或跳过
-  const [interestOpen, setInterestOpen] = useState(false);
-  const interestOpenRef = useRef(interestOpen); // 引导完成回调只在兴趣层仍开着时才跳早报(同桌面)
-  useEffect(() => { interestOpenRef.current = interestOpen; }, [interestOpen]);
+  // 兴趣(issue #27 三稿):编辑面并入发现页第三段;首登引导自动落到发现页兴趣段一次(不锁层)
+  const [discoverTab, setDiscoverTab] = useState('sources');
   const [interestVersion, setInterestVersion] = useState(0);
   const closeBriefBeforeArticleOpen = useCallback(() => {
     setTab((current) => (current === 'brief' ? 'article' : current));
@@ -99,8 +96,9 @@ export default function MobileReader({
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover,
-    bulletinView, socialView, podcastView, listTitle,
-    goView, goSource, goContainerAll, goFavorites,
+    bulletinView, socialView, podcastView, listTitle, listSubtitle,
+    goView, goSource, goFavorites,
+    scope, toggleScope, hasInterests, refreshInterests, showUnsubscribedMark,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
     searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch,
@@ -142,10 +140,29 @@ export default function MobileReader({
   const onboardingRequired = personalDigestEnabled
     && account?.role === 'user'
     && account?.interest_onboarding_completed === false;
+  const onboardingOpenedRef = useRef(false);
   useEffect(() => {
-    if (onboardingRequired) setInterestOpen(true);
-  }, [onboardingRequired]);
-  const closeInterest = useCallback(() => setInterestOpen(false), []);
+    if (!onboardingRequired || onboardingOpenedRef.current) return;
+    onboardingOpenedRef.current = true;
+    setDiscoverTab('interests');
+    openDiscover();
+  }, [onboardingRequired, openDiscover]);
+  const openInterests = useCallback(() => { setDiscoverTab('interests'); openDiscover(); }, [openDiscover]);
+  // 屏蔽折叠行展开态(按日期组)
+  const [expandedMutedDays, setExpandedMutedDays] = useState(() => new Set());
+  const toggleMutedDay = useCallback((dayKey) => {
+    setExpandedMutedDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(dayKey)) next.delete(dayKey); else next.add(dayKey);
+      return next;
+    });
+  }, []);
+  useEffect(() => { setExpandedMutedDays(new Set()); }, [activeSourceId, mode, scope, searchQuery]);
+  const listPlan = useMemo(
+    () => buildListPlan(articles, grouping, expandedMutedDays),
+    [articles, grouping, expandedMutedDays],
+  );
+  const subscribeSourceById = (sid) => handleSubscribe(sourceMap[sid] || { source_id: sid, name: sourceNameMap[sid] || sid });
 
   // mode 被深链/点源/发现页预览改变时,内容 Tab 跟随所属容器(停在「我的」则不动)
   useEffect(() => {
@@ -205,7 +222,6 @@ export default function MobileReader({
   useLayerHistory(discover, closeDiscover);
   // 合集详情是发现页之上的一层:返回先退详情、再退发现页(注册序在 discover 之后)
   useLayerHistory(Boolean(discoverCollectionId), () => setDiscoverCollectionId(null));
-  useLayerHistory(interestOpen, closeInterest);
   useLayerHistory(drawerOpen, () => setDrawerOpen(false));
   useLayerHistory(Boolean(sheet), () => setSheet(null));
 
@@ -234,10 +250,13 @@ export default function MobileReader({
               />
             </div>
           ) : (
-            <span className="m-title">{listTitle}</span>
+            <span className="m-title">
+              {listTitle}
+              {listSubtitle && <span className="m-title-sub">{listSubtitle}</span>}
+            </span>
           )}
           <div className="m-topbar-sp" />
-          {!favOnly && !searchOpen && (
+          {!searchOpen && (
             <>
               <div className="mini-seg" role="tablist" aria-label="未读筛选">
                 {[[false, '全部'], [true, '未读']].map(([value, label]) => (
@@ -306,7 +325,7 @@ export default function MobileReader({
             onSetTheme={onSetTheme}
             onShowFavorites={() => { goFavorites(); setTab(mode); }}
             onOpenDiscover={() => openDiscover()}
-            onManageInterests={personalDigestEnabled ? () => setInterestOpen(true) : undefined}
+            onManageInterests={personalDigestEnabled ? openInterests : undefined}
             interestAttention={onboardingRequired}
             onOpenSettings={onOpenSettings}
             onLogout={onLogout}
@@ -366,7 +385,7 @@ export default function MobileReader({
                 订阅「{activeUnsubscribed.name || activeUnsubscribed.source_id}」
               </button>
             )}
-            {!favOnly && !articlesLoading && freshCount > 0 && (
+            {!favOnly && scope.subscribed && !articlesLoading && freshCount > 0 && (
               <button type="button" className="reader-fresh-pill" onClick={handleRefreshFresh}>
                 <RefreshCw className="h-3 w-3" />
                 {podcastView ? `载入 ${freshCount} 期新播客` : `载入 ${freshCount} 篇新文章`}
@@ -374,7 +393,7 @@ export default function MobileReader({
             )}
             {articlesLoading ? (
               <ArticleCardsSkeleton />
-            ) : !favOnly && hasNoSubscriptions && !activeSourceId ? (
+            ) : scope.subscribed && !scope.interest && !favOnly && hasNoSubscriptions && !activeSourceId ? (
               <div className="reader-empty reader-empty-tall">
                 <Compass className="h-7 w-7 text-slate-300" />
                 <span>你还没有订阅任何来源</span>
@@ -395,6 +414,8 @@ export default function MobileReader({
                     ? (podcastView ? '没有匹配的播客' : '没有匹配的文章')
                     : favOnly
                       ? '当前范围还没有收藏，阅读时点星标即可收藏'
+                      : scope.interest
+                        ? '当前范围没有命中兴趣的文章'
                       : unreadOnly
                         ? '没有未读内容，都看完啦'
                         : activeSourceId
@@ -403,9 +424,21 @@ export default function MobileReader({
                 </span>
               </div>
             ) : (
-              <div key={`${activeSourceId ?? '__all__'}|${mode}|${favOnly ? 'fav' : 'flow'}`}>
-                {articles.map((article, index) => {
-                  const key = dayKeyOf(article);
+              <div key={`${activeSourceId ?? '__all__'}|${mode}|${scope.subscribed ? 's' : ''}${scope.interest ? 'i' : ''}${scope.favorite ? 'f' : ''}`}>
+                {listPlan.map((entry) => {
+                  if (entry.type === 'fold') {
+                    return (
+                      <MutedFoldRow
+                        key={`fold:${entry.dayKey}`}
+                        tags={entry.tags}
+                        expanded={entry.expanded}
+                        showLabel={entry.showLabel}
+                        dayKey={entry.dayKey}
+                        onToggle={() => toggleMutedDay(entry.dayKey)}
+                      />
+                    );
+                  }
+                  const { article } = entry;
                   return (
                     <div key={article.id} className="m-press" {...pressBind(article)}>
                       <ArticleRow
@@ -415,8 +448,8 @@ export default function MobileReader({
                         isFav={favoriteIds.has(article.id)}
                         entryBulletin={bulletinView}
                         entryPodcast={podcastView}
-                        showLabel={grouping && (index === 0 || key !== dayKeyOf(articles[index - 1]))}
-                        dayKey={key}
+                        showLabel={entry.showLabel}
+                        dayKey={entry.dayKey}
                         searchQuery={searchQuery}
                         source={sourceMap[article.source_id]}
                         sourceName={sourceNameMap[article.source_id] || article.source_id}
@@ -426,6 +459,10 @@ export default function MobileReader({
                         onToggleFavorite={handleToggleFavorite}
                         onContextMenu={noopContextMenu}
                         ctxAnchor={sheet?.anchorKey === `article:${article.id}`}
+                        interestHit={article.interest_hits?.[0] || ''}
+                        unsubscribed={showUnsubscribedMark && !subscribedIds.has(article.source_id)}
+                        onSubscribeSource={subscribeSourceById}
+                        muted={entry.muted}
                       />
                     </div>
                   );
@@ -497,6 +534,27 @@ export default function MobileReader({
               onUnsubscribeCollection={handleUnsubscribeCollection}
               userSourcesEnabled={userSourcesEnabled}
               onAddCustomSource={handleAddCustomSource}
+              tab={discoverTab}
+              onTabChange={setDiscoverTab}
+              interestsPanel={personalDigestEnabled ? (
+                <InterestPage
+                  mobile
+                  embedded
+                  onboarding={onboardingRequired}
+                  showToast={showToast}
+                  onSaved={({ onboardingCompleted } = {}) => {
+                    setInterestVersion((value) => value + 1);
+                    refreshInterests();
+                    if (onboardingCompleted) {
+                      onUserUpdated?.({ interest_onboarding_completed: true });
+                      if (!discover) return;
+                      closeDiscover();
+                      setBriefRestore(null);
+                      setTab('brief');
+                    }
+                  }}
+                />
+              ) : null}
             />
           </div>
         </div>
@@ -524,12 +582,13 @@ export default function MobileReader({
         sidebarGroups={sidebarGroups}
         unreadBySource={unreadBySource}
         activeSourceId={activeSourceId}
-        favOnly={favOnly}
         hasNoSubscriptions={hasNoSubscriptions}
         activeUnsubscribed={activeUnsubscribed}
         sheetAnchorKey={sheet?.anchorKey || null}
-        goContainerAll={goContainerAll}
-        goFavorites={goFavorites}
+        scope={scope}
+        hasInterests={hasInterests}
+        onToggleScope={toggleScope}
+        onOpenInterests={openInterests}
         goSource={goSource}
         onOpenDiscover={openDiscover}
         onSourcePress={openSourceSheet}
@@ -542,32 +601,6 @@ export default function MobileReader({
         items={sheet?.items || []}
         onClose={() => setSheet(null)}
       />
-      {/* ── 我的兴趣(整页层,与发现页同构;引导完成后落早报 Tab) ── */}
-      {interestOpen && (
-        <div className="m-page" role="region" aria-label="我的兴趣">
-          <div className="m-topbar on-pane">
-            <button type="button" className="m-iconbtn" onClick={closeInterest} aria-label="返回">
-              <ChevronLeft />
-            </button>
-            <span className="m-title">我的兴趣</span>
-          </div>
-          <InterestPage
-            mobile
-            onboarding={onboardingRequired}
-            showToast={showToast}
-            onSaved={({ onboardingCompleted } = {}) => {
-              setInterestVersion((value) => value + 1);
-              if (onboardingCompleted) {
-                onUserUpdated?.({ interest_onboarding_completed: true });
-                if (!interestOpenRef.current) return;
-                setInterestOpen(false);
-                setBriefRestore(null);
-                setTab('brief');
-              }
-            }}
-          />
-        </div>
-      )}
     </div>
   );
 }
