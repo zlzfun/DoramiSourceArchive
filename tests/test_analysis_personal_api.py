@@ -1028,3 +1028,22 @@ def test_interest_and_subscription_edits_only_flag_today_edition_stale(monkeypat
                 )
             ).all()
         assert sorted(row.generation_reason for row in revisions) == ["first_open", "manual_rebuild"]
+
+        # 退订到一个来源都不剩:普通打开仍复用今日版本(不可变快照 + scope_stale),
+        # 只有显式重编才清成 empty_subscriptions(codex 检视 P2)
+        assert client.delete("/api/reader/sources/source-b/subscribe").status_code == 200
+        with Session(sink.engine) as session:
+            for row in session.exec(
+                select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.owner_username == "alice")
+            ).all():
+                row.is_active = False
+                session.add(row)
+            session.commit()
+        reopened = client.post("/api/reader/briefs/today/ensure").json()
+        assert reopened["status"] == rebuilt["status"]
+        assert reopened["edition"]["id"] == rebuilt["id"]
+        assert reopened["edition"]["scope_stale"] is True
+        assert client.get("/api/reader/briefs/today").json()["edition"]["id"] == rebuilt["id"]
+        emptied = client.post("/api/reader/briefs/today/rebuild").json()
+        assert emptied["status"] == "empty_subscriptions" and emptied["edition"] is None
+        assert client.get("/api/reader/briefs/today").json()["status"] == "not_started"

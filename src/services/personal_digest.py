@@ -1263,6 +1263,15 @@ def start_personal_digest_edition(
         scheduled_source_ids=scheduled_source_ids,
     )
     if not scope.expected_source_ids:
+        # v3.50.1(issue #33 §5):退订到一个来源都不剩,今日已有的版本仍是不可变快照——
+        # 普通打开(first_open)复用它并由 scope_stale 提示「下次编排生效」;只有显式
+        # 重编/定时/系统触发才把当日版本清成 empty_subscriptions。
+        if reason == DigestGenerationReason.FIRST_OPEN.value:
+            existing = _latest_edition(session, username, report_date)
+            if existing is not None:
+                return _reuse_edition(
+                    session, existing, first_open_at=first_open_at, current=current
+                )
         stale_editions = list(
             session.exec(
                 select(PersonalDigestEditionRecord).where(
