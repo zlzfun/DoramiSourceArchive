@@ -230,6 +230,9 @@ class ScoredItem:
             "extra_sources": self.extra_sources,
             "followup_note": self.followup_note,
             "backfilled": self.backfilled,
+            # 并入代表的条目 id 随 items 落库:游标重置重生成时这些文章会再次成为候选,
+            # 靠它们才能识别「早间已被代表吸收」而不重复计数/渲染
+            "merged_ids": list(self.merged_ids),
         }
 
 
@@ -1289,6 +1292,7 @@ def _scored_item_from_stored(entry: Dict[str, Any], article_id: str) -> ScoredIt
         extra_sources=[str(u) for u in (entry.get("extra_sources") or []) if u],
         followup_note=str(entry.get("followup_note") or ""),
         backfilled=bool(entry.get("backfilled")),
+        merged_ids=[str(i) for i in (entry.get("merged_ids") or []) if i],
     )
 
 
@@ -1511,6 +1515,11 @@ async def generate_daily_brief(
     prior_items: List[ScoredItem] = list(prior_state[0]) if prior_state is not None else []
     prior_title_only: List[BriefCandidate] = list(prior_state[1]) if prior_state is not None else []
     prior_ids = {it.candidate.id for it in prior_items}
+    for it in prior_items:
+        prior_ids.update(it.merged_ids)   # 早间已被代表吸收的条目同样视为「已在场」
+    prior_backfilled_ids = {
+        mid for it in prior_items if it.backfilled for mid in (it.candidate.id, *it.merged_ids)
+    }
     if prior_ids:
         # 游标重置后同日重生成:与早间正文**同一文章 id** 的候选已由早间行代表,不再作为本批
         # 过线稿/近线稿重复入簇(否则聚类回退原样时同一篇被数两次,缺口算小)
@@ -1546,6 +1555,10 @@ async def generate_daily_brief(
 
     counted_ids = qualified_ids | prior_ids
     core = [it for it in deduped_all if _cluster_ids(it) & counted_ids]
+    for it in core:
+        # 近线新稿当了早间补足稿的代表:事件仍是「按分补足」的,标记随簇继承(过线稿当代表则不算)
+        if it.candidate.id not in qualified_ids and _cluster_ids(it) & prior_backfilled_ids:
+            it.backfilled = True
     core_ids = {it.candidate.id for it in core}
     prior_core = sum(1 for it in core if it.candidate.id in prior_ids)
     near_survivors = sorted(

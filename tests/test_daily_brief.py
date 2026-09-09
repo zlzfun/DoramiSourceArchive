@@ -1552,6 +1552,39 @@ def test_soft_threshold_appendix_capacity_counts_current_title_only(tmp_path, mo
     assert "标题-n5" not in record.content
 
 
+def test_scored_item_round_trips_backfilled_and_merged_ids():
+    """items 落库/重建保留补足标记与并入代表的条目 id(游标重置重生成与同日合并依赖)(codex 八轮 P2)。"""
+    item = db.ScoredItem(candidate=db.BriefCandidate(
+        id="a1", title="T", source_id="src", source_url="https://x/a1", content_type="rss_article",
+        publish_date="2026-06-05", fetched_date="2026-06-05", has_content=True, body="b",
+    ), score=5.5, backfilled=True, merged_ids=["a2", "a3"])
+    stored = item.to_reduce_dict()
+    assert stored["backfilled"] is True and stored["merged_ids"] == ["a2", "a3"]
+    rebuilt = db._scored_item_from_stored(stored, "a1")
+    assert rebuilt.backfilled is True and rebuilt.merged_ids == ["a2", "a3"]
+
+
+def test_soft_threshold_backfill_flag_survives_representative_replacement(tmp_path, monkeypatch):
+    """同日重跑:更高分的近线稿成为早间补足稿的代表 → 事件仍按「补足」计入报头与 last_run(codex 八轮 P2)。"""
+    _patch_llm(monkeypatch, _fake_by_ids({"h1": 8.5, "n5": 5.5, "n7": 5.8}, clusters=(("n5", "n7"),)))
+    sink = _make_sink(tmp_path, "rep-replace.db")
+    for i, aid in enumerate(["h1", "n5"]):
+        _seed(sink.engine, aid, f"src_{i}", f"2026-06-05T1{i}:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+        db.set_setting(session, db.KEY_MIN_ITEMS, "2")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    _seed(sink.engine, "n7", "src_late", "2026-06-05T20:00:00")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    by_id = {e["id"]: e for e in ext["items"]}
+    assert sorted(by_id) == ["h1", "n7"] and by_id["n7"]["backfilled"] is True
+    assert "n5" in by_id["n7"]["merged_ids"] and "按新闻价值分补足 1 条" in record.content
+    with Session(sink.engine) as session:
+        assert db.get_json_setting(session, db.KEY_LAST_RUN, None)["threshold_backfilled"] == 1
+
+
 def test_daily_brief_min_items_default_and_clamp(tmp_path):
     sink = _make_sink(tmp_path, "minitems.db")
     with Session(sink.engine) as session:
