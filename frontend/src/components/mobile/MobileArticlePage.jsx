@@ -18,6 +18,7 @@ import {
   analysisStatusMeta,
   contentGenreLabel,
   displayAnalysisTags,
+  shouldShowAiReadingCard,
 } from '../../utils/analysis';
 import AiReadingCard from '../AiReadingCard';
 import { hostOf } from '../../utils/readerText';
@@ -195,12 +196,16 @@ export default function MobileArticlePage({
               }}
             />
           )}
-          {!podcastGuideActive && aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
+          {!podcastGuideActive && !activeBodyLoading && shouldShowAiReadingCard(activeArticle, {
+            summary: activeSummary,
+            aiEnabled,
+            body: activeBody,
+          }) && (
             <AiReadingCard
               article={activeArticle}
               summary={activeSummary}
               summarizing={summarizing}
-              canGenerate={Boolean(activeBody)}
+              canGenerate={aiEnabled && Boolean(activeBody)}
               onGenerate={handleSummarize}
               podcast={podcastView}
             />

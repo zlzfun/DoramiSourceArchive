@@ -23,6 +23,7 @@ from llm.article_analysis_prompt import (
     ARTICLE_ANALYSIS_PROMPT_VERSION,
     ARTICLE_ANALYSIS_SCORING_VERSION,
     MAX_ANALYSIS_BODY_CHARS,
+    analysis_contract_versions,
 )
 from models.analysis_contracts import AnalysisOperation, AnalysisStatus, TaggingStatus
 from models.db import (
@@ -124,13 +125,14 @@ def _eligible_rows(
         if fetched_at is None or fetched_at > current or (since_time and fetched_at < since_time):
             continue
         content_hash = compute_content_hash(article)
+        expected_prompt, expected_scoring = analysis_contract_versions(article.content_type)
         is_current = bool(
             analysis is not None
             and analysis.status == AnalysisStatus.SUCCEEDED.value
             and analysis.tagging_status != TaggingStatus.FAILED.value
             and analysis.content_hash == content_hash
-            and analysis.prompt_version == ARTICLE_ANALYSIS_PROMPT_VERSION
-            and analysis.scoring_version == ARTICLE_ANALYSIS_SCORING_VERSION
+            and analysis.prompt_version == expected_prompt
+            and analysis.scoring_version == expected_scoring
             and int(analysis.taxonomy_version) == int(taxonomy_version)
         )
         if selection == "missing_or_outdated" and is_current:
@@ -177,6 +179,12 @@ def estimate_full_analysis_backfill(
         "taxonomy_version": taxonomy_version,
         "prompt_version": ARTICLE_ANALYSIS_PROMPT_VERSION,
         "scoring_version": ARTICLE_ANALYSIS_SCORING_VERSION,
+        "contracts": sorted(
+            {
+                ":".join(analysis_contract_versions(item.article.content_type))
+                for item in targets
+            }
+        ),
         "ready": taxonomy_version > 0 and bool(targets),
         "blockers": [
             message
@@ -240,6 +248,12 @@ def create_full_analysis_backfill(
         "created_by": actor_id.strip() or "admin",
         "target_prompt_version": ARTICLE_ANALYSIS_PROMPT_VERSION,
         "target_scoring_version": ARTICLE_ANALYSIS_SCORING_VERSION,
+        "target_contracts": sorted(
+            {
+                ":".join(analysis_contract_versions(item.article.content_type))
+                for item in targets
+            }
+        ),
         "target_taxonomy_version": taxonomy_version,
     }
     job = TagRetagJobRecord(
@@ -338,10 +352,16 @@ def _item_counts(session: Session, job_id: int) -> Counter[str]:
 
 
 def _target_versions_match(job: TagRetagJobRecord, scope: dict[str, Any]) -> bool:
+    current_contracts = {
+        ":".join(analysis_contract_versions("")),
+        ":".join(analysis_contract_versions("podcast_episode")),
+    }
+    scoped_contracts = set(scope.get("target_contracts") or [])
     return bool(
         int(scope.get("target_taxonomy_version") or 0) == int(job.taxonomy_version)
         and scope.get("target_prompt_version") == ARTICLE_ANALYSIS_PROMPT_VERSION
         and scope.get("target_scoring_version") == ARTICLE_ANALYSIS_SCORING_VERSION
+        and (not scoped_contracts or scoped_contracts <= current_contracts)
     )
 
 
@@ -389,12 +409,15 @@ def reconcile_full_analysis_backfill(
             item.last_error = "analysis_queue_missing"
         else:
             current_hash = compute_content_hash(article)
+            expected_prompt, expected_scoring = analysis_contract_versions(
+                article.content_type
+            )
             current_result = bool(
                 analysis.status == AnalysisStatus.SUCCEEDED.value
                 and analysis.tagging_status != TaggingStatus.FAILED.value
                 and analysis.content_hash == current_hash
-                and analysis.prompt_version == scope.get("target_prompt_version")
-                and analysis.scoring_version == scope.get("target_scoring_version")
+                and analysis.prompt_version == expected_prompt
+                and analysis.scoring_version == expected_scoring
                 and int(analysis.taxonomy_version) == int(job.taxonomy_version)
             )
             terminal_failure = bool(

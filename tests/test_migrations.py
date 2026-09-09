@@ -1994,3 +1994,53 @@ def test_archive_sync_v2_downgrade_allows_empty_non_consumer_database(tmp_path):
             assert MigrationContext.configure(conn).get_current_revision() == "d8b3f1a6c9e2"
     finally:
         engine.dispose()
+
+
+def test_podcast_initial_assessment_migration_preserves_legacy_basis(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'podcast-analysis-basis.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "c7e1a9d4b2f6")
+    engine = create_engine(db_url)
+    try:
+        with engine.begin() as conn:
+            for article_id, content_type, extensions in (
+                ("article", "article", "{}"),
+                ("podcast-notes", "podcast_episode", "{}"),
+                (
+                    "podcast-asr",
+                    "podcast_episode",
+                    '{"analysis_basis":"transcript"}',
+                ),
+            ):
+                conn.execute(text(
+                    "INSERT INTO articles "
+                    "(id,title,content_type,source_id,source_url,publish_date,fetched_date,"
+                    "run_scope,has_content,content,extensions_json) VALUES "
+                    "(:id,:id,:content_type,'source','','2026-09-01','2026-09-01',"
+                    "'',1,'body',:extensions)"
+                ), {"id": article_id, "content_type": content_type, "extensions": extensions})
+                conn.execute(text(
+                    "INSERT INTO article_analyses "
+                    "(article_id,status,tagging_status,dimension_scores_json,score_reason,"
+                    "summary,content_features_json,entities_json,content_hash,model_name,"
+                    "prompt_version,scoring_version,taxonomy_version,attempt_count,created_at,updated_at) "
+                    "VALUES (:id,'succeeded','succeeded','{}','reason','summary','[]','[]',"
+                    "'hash','model','old','old',0,1,'2026-09-01','2026-09-01')"
+                ), {"id": article_id})
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            rows = dict(conn.execute(text(
+                "SELECT article_id, analysis_basis FROM article_analyses"
+            )).all())
+        assert rows == {
+            "article": "article_body",
+            "podcast-notes": "podcast_show_notes",
+            "podcast-asr": "asr_transcript",
+        }
+    finally:
+        engine.dispose()

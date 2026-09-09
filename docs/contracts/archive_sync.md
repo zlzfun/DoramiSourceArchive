@@ -188,6 +188,12 @@ The receiver pulls the following independent streams in this exact order:
 5. `media`
 6. `source_states`
 
+The `analyses` payload carries the complete authoritative single-score contract,
+including `analysis_basis`, the SHA-256 `analysis_input_hash` of the exact model
+messages, optional `transcript_artifact_id`, `analysis_diagnostics_json`, and the
+prompt/scoring versions. `content_hash` remains the separate article-version guard
+used during import; receivers must not recompute or overwrite a producer score.
+
 `source_states` is last by design. All non-Taxonomy streams use the same committed
 transaction-revision snapshot, so publishing terminal readiness cannot outrun
 the matching article, analysis, or media generation. A stream checkpoint advances

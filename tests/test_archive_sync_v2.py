@@ -396,6 +396,10 @@ def test_analysis_maps_tags_by_code_and_preserves_manual_overlay(tmp_path):
             quality_score=8.5, score_reason="good",
             summary="summary", content_genre="industry_news",
             content_hash=compute_content_hash(article), model_name="model",
+            analysis_basis="podcast_show_notes",
+            analysis_input_hash="actual-model-input-sha256",
+            transcript_artifact_id="publisher-transcript-v1",
+            analysis_diagnostics_json='{"topic_heat":{"window_days":7}}',
             prompt_version="p1", scoring_version="s1", taxonomy_version=1,
             analyzed_at=now, tagged_at=now, created_at=now, updated_at=now,
         ))
@@ -434,6 +438,10 @@ def test_analysis_maps_tags_by_code_and_preserves_manual_overlay(tmp_path):
             ArticleTagAssignmentRecord.article_id == "article-1"
         )).all()
         assert record.quality_score == 8.5
+        assert record.analysis_basis == "podcast_show_notes"
+        assert record.analysis_input_hash == "actual-model-input-sha256"
+        assert record.transcript_artifact_id == "publisher-transcript-v1"
+        assert json.loads(record.analysis_diagnostics_json)["topic_heat"]["window_days"] == 7
         assert record.authority_id == archive_sync_v2.producer_authority_id(producer.engine)
         assert record.authority_revision == str(producer_revision)
         assert sorted((row.assignment_source, row.tag_kind, row.is_primary) for row in assignments) == [
@@ -445,6 +453,56 @@ def test_analysis_maps_tags_by_code_and_preserves_manual_overlay(tmp_path):
     _, replay = _copy_stream(producer, consumer, "analyses")
     assert replay["inserted"] == 0
     assert replay["updated"] == 0
+
+
+def test_legacy_v2_analysis_payload_clears_newer_provenance_fields(tmp_path):
+    consumer = _sink(tmp_path, "consumer-legacy-analysis.db")
+    authority_id = "producer-legacy"
+    now = "2026-09-02T02:00:00+00:00"
+    with Session(consumer.engine) as session:
+        article = _article()
+        article.analysis_authority_id = authority_id
+        session.add(article)
+        session.flush()
+        session.add(ArticleAnalysisRecord(
+            article_id=article.id,
+            status="succeeded",
+            quality_score=8.0,
+            content_hash=compute_content_hash(article),
+            analysis_basis="podcast_show_notes",
+            analysis_input_hash="stale-hash",
+            transcript_artifact_id="stale-artifact",
+            analysis_diagnostics_json='{"stale":true}',
+            authority_id=authority_id,
+            authority_revision="1",
+            created_at=now,
+            updated_at=now,
+        ))
+        session.commit()
+
+        archive_sync_v2._apply_analyses(
+            session,
+            [{
+                "revision": "2",
+                "payload": {
+                    "article_id": article.id,
+                    "status": "succeeded",
+                    "quality_score": 8.5,
+                    "content_hash": compute_content_hash(article),
+                    "created_at": now,
+                    "updated_at": now,
+                    "assignments": [],
+                },
+            }],
+            authority_id,
+        )
+        session.commit()
+        record = session.get(ArticleAnalysisRecord, article.id)
+        assert record.quality_score == 8.5
+        assert record.analysis_basis == ""
+        assert record.analysis_input_hash == ""
+        assert record.transcript_artifact_id is None
+        assert record.analysis_diagnostics_json == "{}"
 
 
 def test_new_article_body_hides_old_authority_analysis_until_matching_result_arrives(tmp_path):
@@ -461,6 +519,10 @@ def test_new_article_body_hides_old_authority_analysis_until_matching_result_arr
             status="succeeded",
             tagging_status="succeeded",
             quality_score=8.0,
+            analysis_basis="article_body",
+            analysis_input_hash="old-input",
+            transcript_artifact_id="old-artifact",
+            analysis_diagnostics_json='{"old":true}',
             content_hash=compute_content_hash(article),
             created_at=first_revision,
             updated_at=first_revision,
@@ -501,6 +563,10 @@ def test_new_article_body_hides_old_authority_analysis_until_matching_result_arr
         assert article.content == "Body B"
         assert analysis.status == "pending"
         assert analysis.quality_score is None
+        assert analysis.analysis_basis == ""
+        assert analysis.analysis_input_hash == ""
+        assert analysis.transcript_artifact_id is None
+        assert analysis.analysis_diagnostics_json == "{}"
 
     raw = archive_sync_v2.export_page(
         producer.engine,

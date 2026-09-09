@@ -11,8 +11,7 @@ from typing import Any, Iterable
 from sqlmodel import Session, select
 
 from llm.article_analysis_prompt import (
-    ARTICLE_ANALYSIS_PROMPT_VERSION,
-    ARTICLE_ANALYSIS_SCORING_VERSION,
+    analysis_contract_versions,
 )
 
 from models.db import (
@@ -78,19 +77,21 @@ def collect_release_metrics(
     since = (current - dt.timedelta(days=days)).isoformat()
     since_date = (current.date() - dt.timedelta(days=days - 1)).isoformat()
 
-    analyses = list(
+    analysis_rows = list(
         session.exec(
-            select(ArticleAnalysisRecord)
+            select(ArticleAnalysisRecord, ArticleRecord.content_type)
             .join(ArticleRecord, ArticleRecord.id == ArticleAnalysisRecord.article_id)
             .where(ArticleRecord.fetched_date >= since)
         ).all()
     )
+    analyses = [row for row, _content_type in analysis_rows]
+    content_types = {row.article_id: content_type for row, content_type in analysis_rows}
     succeeded = [row for row in analyses if row.status == "succeeded"]
     # 版本键过期的 succeeded 行:扫描每 tick 慢滴失效(VERSION_REFRESH_PER_CYCLE),这里透出剩余量
     version_stale = sum(
         1 for row in succeeded
-        if row.prompt_version != ARTICLE_ANALYSIS_PROMPT_VERSION
-        or row.scoring_version != ARTICLE_ANALYSIS_SCORING_VERSION
+        if (row.prompt_version, row.scoring_version)
+        != analysis_contract_versions(content_types.get(row.article_id, ""))
     )
     scores = [float(row.quality_score) for row in succeeded if row.quality_score is not None]
     histogram = {

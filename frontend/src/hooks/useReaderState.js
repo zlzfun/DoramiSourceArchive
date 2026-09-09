@@ -58,11 +58,17 @@ const ANALYSIS_PROJECTION_KEYS = [
   'analysis_next_attempt_at',
   'quality_score',
   'score_reason',
+  'analysis_basis',
+  'analysis_input_hash',
+  'transcript_artifact_id',
+  'prompt_version',
+  'scoring_version',
   'summary_zh',
   'content_genre',
   'primary_tag',
   'tags',
   'display_tags',
+  'podcast',
 ];
 
 function withFreshAnalysis(article, incoming) {
