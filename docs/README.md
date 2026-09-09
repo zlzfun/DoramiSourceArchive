@@ -52,6 +52,9 @@
 - ◉ [personal-brief-breaking-lane-plan.md](./personal-brief-breaking-lane-plan.md) — **个人早报「重大事件」通道(issue #33 §2,v3.50.0)**:
   跨订阅范围的头条位——官方一手 ≥T 或多源印证双准入、entity 标签连通归并、代表优先级官方>非社交>分数、
   24h 窗、同实体前两期抑制、额外于精选之上;生产 7 天实证(Fable 5.1 官博不在库)与不做清单。
+- ◉ [personal-brief-title-localization.md](./personal-brief-title-localization.md) — **个人早报标题中文化(issue #33 §4,v3.52.1)**:
+  条目快照补 `title_zh`,来源按成本 译名缓存 → 公共日报 title_cn → 编排后批量翻译(aux、20s 预算、写回缓存);
+  中文不译不画副标题、失败回退原标题、不并入分析调用;卡片中文主标题 + 英文原题副行。
 - ◉ [personal-brief-rebuild-entrypoints.md](./personal-brief-rebuild-entrypoints.md) — **个人早报重编入口收口(issue #33 §5,v3.51.1)**:
   兴趣/订阅变更只记录不触发重编,重编只剩手动与次日定时;今日端点 `interest_stale`/`scope_stale`
   驱动「下次编排生效 · 立即重编」提示;系统侧保留公共日报就绪与管理员下架两处维护性触发。

@@ -9,7 +9,8 @@
 - ☐ **issue #33 个人早报产品优化波**(v3.50.x):§2 重大事件通道已落地(v3.50.0,方案
   `docs/personal-brief-breaking-lane-plan.md`,观察期看实体目录覆盖/月均头条数/同实体抑制误伤);
   §5 兴趣/订阅变更不触发重编已落地(v3.51.1,`docs/personal-brief-rebuild-entrypoints.md`);
-  余下 §4 中文标题(翻译缓存复用)→ §3 页面「个性化/智能化」(样页先行,把 §5 的过期提示行并入编排说明头)。
+  §4 中文标题已落地(v3.52.1,`docs/personal-brief-title-localization.md`);
+  余下 §3 页面「个性化/智能化」(样页先行,把 §5 的过期提示行并入编排说明头)。
 
 ## 排队中(用户拍板、未动工)
 
