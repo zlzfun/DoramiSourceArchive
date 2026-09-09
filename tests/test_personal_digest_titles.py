@@ -162,3 +162,38 @@ def test_run_async_works_inside_running_loop(monkeypatch):
         return titles._run_async(inner())
 
     assert asyncio.run(outer()) == 42
+
+
+def test_credentialed_private_sources_never_reach_external_llm(storage, monkeypatch):
+    """带凭证的自定源条目不送外部 LLM(codex 检视 P1);缓存/日报两级仍可用;孤儿私有源 fail closed。"""
+    from models.db import SourceConfigRecord
+
+    calls: list = []
+    _fake_translate(monkeypatch, {"Public Title": "公开译名", "Secret Feed Title": "泄露", "Orphan Title": "孤儿"}, calls=calls)
+    cached_ext = {TRANSLATION_TITLE_KEY: "私有缓存译名", TRANSLATION_TITLE_FP_KEY: _body_fingerprint("Secret Cached")}
+    with Session(storage.engine) as session:
+        edition = _seed(session, {
+            "a-public": "Public Title",
+            "a-secret": "Secret Feed Title",
+            "a-secret-cached": ("Secret Cached", cached_ext),
+            "a-orphan": "Orphan Title",
+        })
+        for article_id, source_id in (("a-secret", "user_rss_secret01"), ("a-secret-cached", "user_rss_secret01"), ("a-orphan", "user_rss_orphan01")):
+            session.get(ArticleRecord, article_id).source_id = source_id
+        session.add(SourceConfigRecord(
+            source_id="user_rss_secret01", name="secret", owner_username="alice",
+            url="https://feeds.example.com/rss?token=s3cret",
+            params_json=json.dumps({"credentialed_private": True}),
+            created_at=NOW_ISO, updated_at=NOW_ISO,
+        ))
+        session.commit()
+        stats = titles.localize_edition_titles(session, edition, llm_config=CONFIGURED)
+        snaps = _snapshots(session, edition.id)
+        secret_ext = json.loads(session.get(ArticleRecord, "a-secret").extensions_json)
+
+    assert calls == [("Public Title", "aux", "personal_digest_title")]
+    assert snaps["a-public"]["title_zh"] == "公开译名"
+    assert snaps["a-secret-cached"]["title_zh"] == "私有缓存译名"
+    assert "title_zh" not in snaps["a-secret"] and "title_zh" not in snaps["a-orphan"]
+    assert TRANSLATION_TITLE_KEY not in secret_ext
+    assert stats == {"chinese": 0, "cached": 1, "public_brief": 0, "translated": 1, "fallback": 2}

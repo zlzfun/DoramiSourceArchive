@@ -11,8 +11,9 @@ edition 生成完成后为每条补一个 ``title_zh``(写进 ``snapshot_json``)
 3. 都没有则在编排后批量译标题(aux 轻模型,与阅读窗同一提示词,并发 + 总时长预算),
    写回 ``translation_zh_title`` 缓存让阅读窗与其他读者的早报都受益。
 
-纪律:中文标题(``looks_chinese``)不译不画副标题;任何一步失败都回退原标题,绝不
-拖垮编排(edition 早已 ready,本步只补展示字段);LLM 未配置时只做 1/2 两级。
+纪律:中文标题(``looks_chinese``)不译不画副标题;带凭证的自定源条目不送外部 LLM
+(与阅读窗 AI 同一道 ``external_ai_allowed_source_ids`` 闸,只走 1/2 两级);任何一步失败
+都回退原标题,绝不拖垮编排(edition 早已 ready,本步只补展示字段);LLM 未配置时只做 1/2 两级。
 不并入入库分析调用(issue #22 结论:点评/中文标题不进分析)。
 """
 
@@ -29,6 +30,7 @@ from sqlmodel import Session, select
 from config import LLMConfig
 from llm.client import UsageMeta, client_session
 from models.db import ArticleRecord, PersonalDigestEditionRecord, PersonalDigestItemRecord
+from services import user_sources as user_sources_service
 from services.reader_ai import (
     TRANSLATION_TITLE_FP_KEY,
     TRANSLATION_TITLE_KEY,
@@ -212,8 +214,19 @@ def localize_edition_titles(
     for article_id, title_cn in _recent_public_brief_titles(session, remaining).items():
         resolved[article_id] = title_cn
         stats["public_brief"] += 1
-    # ③ 批量翻译并写回文章缓存
+    # ③ 批量翻译并写回文章缓存。带凭证的自定源(token/签名 feed)内容不得离开部署——
+    # 与阅读窗 translate/summarize 的 _ensure_articles_exportable 同一道闸(codex 检视 P1):
+    # 早报会收录读者自己的私有源,其标题若送外部 LLM 就泄露了;这类条目只走 ①②,否则原标题。
+    # 文章行缺失时来源不可判定,同样不送(fail closed)。
     remaining = {aid: pending[aid] for aid in pending if aid not in resolved}
+    if remaining:
+        exportable = set(user_sources_service.external_ai_allowed_source_ids(
+            session, [records[aid].source_id for aid in remaining if aid in records],
+        ))
+        remaining = {
+            aid: title for aid, title in remaining.items()
+            if aid in records and records[aid].source_id in exportable
+        }
     config = llm_config if llm_config is not None else _llm_config(session)
     if remaining and config.configured:
         translated = _run_async(_translate_batch(

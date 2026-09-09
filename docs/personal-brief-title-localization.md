@@ -20,8 +20,10 @@
   3. 编排后批量译标题:aux 轻模型、阅读窗同一提示词 `TRANSLATE_TITLE_SYSTEM_PROMPT`、并发受
      `map_concurrency`、整体 **20s 预算**(超时条目回退原标题,下次再补);译文写回
      `translation_zh_title` + 指纹,阅读窗与其他读者的早报都受益。
-- **纪律**:中文标题(`looks_chinese`)不译不画副标题;任何一步失败回退原标题;LLM 未配置只做
-  1/2 两级;**不并入入库分析调用**(issue #22 结论)。
+- **纪律**:中文标题(`looks_chinese`)不译不画副标题;**带凭证的自定源条目不送外部 LLM**(与阅读窗
+  translate/summarize 同一道 `external_ai_allowed_source_ids` 闸——早报会收录读者自己的私有源,标题送出去
+  就是泄露;这类条目只走 1/2 两级,文章行缺失同样不送,fail closed;codex 检视 P1);任何一步失败回退原标题;
+  LLM 未配置只做 1/2 两级;**不并入入库分析调用**(issue #22 结论)。
 - **接入点**:`personal_briefs.process_pending_edition` 在 edition 落成 ready/degraded **之后**调
   `localize_edition_titles`——只补展示字段 `snapshot.title_zh`,异常只记警告、绝不把已完成的版本打成
   failed;幂等(已带 `title_zh` 的条目跳过)。打开/重编/08:30 三条路同一钩子。
@@ -42,6 +44,6 @@
 
 - `tests/test_personal_digest_titles.py`:三级来源按成本顺序命中且只有缺来源的条目调 LLM(aux 模型、
   系统用途)、中文跳过、译文写回缓存而日报编辑标题不写回、单条失败回退、幂等、未配置只做两级、
-  预算超时不阻塞、`_run_async` 在事件循环内可用。
+  预算超时不阻塞、`_run_async` 在事件循环内可用、带凭证自定源与孤儿私有源不送 LLM(缓存仍可用)。
 - `tests/test_analysis_personal_api.py`:ensure 后条目带 `title_zh`,重编命中缓存不再调 LLM;
   中文化整体异常时版本照常 ready、无 `title_zh`。
