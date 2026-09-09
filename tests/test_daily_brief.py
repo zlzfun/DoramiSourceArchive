@@ -1484,6 +1484,32 @@ def test_soft_threshold_floor_is_capped_by_top_n(tmp_path, monkeypatch):
         assert last["min_items"] == 2 and last["threshold_backfilled"] == 1
 
 
+def test_soft_threshold_cursor_reset_regenerate_counts_prior_rows_once(tmp_path, monkeypatch):
+    """游标重置后同日重生成:与早间正文同 id 的候选不重复入簇、早间附录被提级的条目不再占附录容量(codex 五轮 P2)。"""
+    scores = {"h1": 8.5, "n5": 5.5, "n6": 5.4}
+    _patch_llm(monkeypatch, _score_by_title(scores))
+    sink = _make_sink(tmp_path, "cursor-reset.db")
+    for i, aid in enumerate(["h1", "n5"]):
+        _seed(sink.engine, aid, f"src_{i}", f"2026-06-05T1{i}:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+        db.set_setting(session, db.KEY_MIN_ITEMS, "0")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06", top_n=3))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    assert json.loads(record.extensions_json)["included_article_ids"] == ["h1", "n5"]   # 正文 h1,附录 n5
+    # 重置游标重生成:n5 重评过线提级进正文,新来的 n6 进近线带;附录容量 = 3 − 1(n5) − 1(h1) − 0(被提级不占)= 1
+    scores["n5"] = 8.5
+    _seed(sink.engine, "n6", "src_2", "2026-06-05T20:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06", top_n=3))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    assert sorted(e["id"] for e in ext["items"]) == ["h1", "n5"]
+    assert ext["included_article_ids"][2:] == ["n6"] and "标题-n6" in record.content
+    assert [e["id"] for e in ext["items"]].count("h1") == 1
+
+
 def test_daily_brief_min_items_default_and_clamp(tmp_path):
     sink = _make_sink(tmp_path, "minitems.db")
     with Session(sink.engine) as session:

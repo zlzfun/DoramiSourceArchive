@@ -1511,6 +1511,10 @@ async def generate_daily_brief(
     prior_items: List[ScoredItem] = list(prior_state[0]) if prior_state is not None else []
     prior_title_only: List[BriefCandidate] = list(prior_state[1]) if prior_state is not None else []
     prior_ids = {it.candidate.id for it in prior_items}
+    if prior_ids:
+        # 游标重置后同日重生成:与早间正文**同一文章 id** 的候选已由早间行代表,不再作为本批
+        # 过线稿/近线稿重复入簇(否则聚类回退原样时同一篇被数两次,缺口算小)
+        usable = [it for it in usable if it.candidate.id not in prior_ids]
     # 软阈值(v3.49.1):近线带 = 有正文、分在 [min_score−APPENDIX_BAND, min_score) 的条目,按有效分降序。
     # 保底缺口在同事件归并**之后**计算:过线稿若互为重复会坍缩,缺口要按归并后的合格簇数算;
     # 近线带最多取 min_items 条陪跑进同一次聚类(与过线稿同事件的自然并入代表,不重复出场)。
@@ -1521,6 +1525,7 @@ async def generate_daily_brief(
         near_band = sorted(
             (it for it in scored
              if it.score_ok and it.candidate.has_content
+             and it.candidate.id not in prior_ids
              and min_score - APPENDIX_BAND <= it.score < min_score),
             key=_effective_score, reverse=True,
         )
@@ -1618,8 +1623,10 @@ async def generate_daily_brief(
     # 早间条目若已被本批新稿并成同一簇(新稿当代表),同日合并会把两行收成一行,容量只扣一次
     dedup_rep_ids = {it.candidate.id for it in deduped_all}
     prior_absorbed = sum(1 for pid in prior_ids if pid not in dedup_rep_ids)
+    # 早间附录里被本批重评提级进正文的条目,同日合并会从附录移除,不再占附录容量
+    prior_appendix_kept = sum(1 for c in prior_title_only if c.id not in selected_ids)
     appendix_slots = max(
-        0, top_n - len(selected) - (len(prior_items) - prior_absorbed) - len(prior_title_only)
+        0, top_n - len(selected) - (len(prior_items) - prior_absorbed) - prior_appendix_kept
     )
     near_miss_appendix = [
         it.candidate for it in near_band if it.candidate.id not in selected_ids
