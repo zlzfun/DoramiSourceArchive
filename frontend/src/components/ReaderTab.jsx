@@ -61,8 +61,10 @@ import {
   analysisStatusMeta,
   contentGenreLabel,
   displayAnalysisTags,
+  podcastAssessmentMeta,
   primaryAnalysisLabel,
   qualityScoreText,
+  shouldShowAiReadingCard,
 } from '../utils/analysis';
 import AiReadingCard from './AiReadingCard';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
@@ -236,6 +238,7 @@ export const ArticleRow = memo(function ArticleRow({
   const analysisLabel = primaryAnalysisLabel(article);
   const score = qualityScoreText(article.quality_score);
   const analysisStatus = analysisStatusMeta(article, { podcast: entryPodcast });
+  const podcastAssessment = entryPodcast ? podcastAssessmentMeta(article) : null;
   const favoriteControl = (
     <span
       role="button"
@@ -295,6 +298,7 @@ export const ArticleRow = memo(function ArticleRow({
                   <span>{formatPodcastDuration(podcast.duration_seconds)}</span>
                 )}
                 <span className={`podcast-status is-${podcastStatus.tone}`}>{podcastStatus.label}</span>
+                {podcastAssessment && <span className="stamp stamp-idle" role="status">{podcastAssessment.label}</span>}
                 {analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
               </span>
             </span>
@@ -1374,13 +1378,17 @@ export default function ReaderTab({
                   onVariantChange={handlePodcastVariantChange}
                 />
               )}
-              {/* 哆啦美速读卡(AI 开启时才有):左栏 新闻价值分,右栏摘要;无缓存给生成入口(不自动生成,控成本) */}
-              {!podcastGuideActive && aiEnabled && !activeBodyLoading && (activeSummary || activeBody) && (
+              {/* 已落库分析始终可读；本端 AI 开启时才额外给现场生成入口。 */}
+              {!podcastGuideActive && !activeBodyLoading && shouldShowAiReadingCard(activeArticle, {
+                summary: activeSummary,
+                aiEnabled,
+                body: activeBody,
+              }) && (
                 <AiReadingCard
                   article={activeArticle}
                   summary={activeSummary}
                   summarizing={summarizing}
-                  canGenerate={Boolean(activeBody)}
+                  canGenerate={aiEnabled && Boolean(activeBody)}
                   onGenerate={handleSummarize}
                   podcast={podcastView}
                 />

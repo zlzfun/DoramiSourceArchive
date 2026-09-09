@@ -82,6 +82,9 @@ PERSONAL_DIGEST_ENABLED_KEY = "personal_digest_enabled"
 # 「重大事件」通道旋钮(v3.50):阈值与条数存 KV,0 条 = 关闭通道;窗口/印证来源数是常量。
 BREAKING_MIN_SCORE_KEY = "personal_digest_breaking_min_score"
 BREAKING_MAX_ITEMS_KEY = "personal_digest_breaking_max_items"
+# 会开新同日 revision 的原因。interest_changed/subscription_changed 自 v3.51.1 起不再由
+# 读者面写入(兴趣/订阅变更只记录,下次编排生效),保留是为历史版本与服务契约兼容;
+# subscription_changed 仍用于管理员下架来源的全员重编。
 REBUILD_REASON_VALUES = frozenset({
     DigestGenerationReason.INTEREST_CHANGED.value,
     DigestGenerationReason.SUBSCRIPTION_CHANGED.value,
@@ -500,6 +503,25 @@ def _interest_version(session: Session, username: str) -> int:
         f"{row.tag_id}:{row.stance}:{row.priority}:{row.updated_at}" for row in rows
     ))
     return zlib.crc32(payload.encode("utf-8")) if payload else 0
+
+
+def edition_freshness(
+    session: Session, edition: PersonalDigestEditionRecord
+) -> dict[str, bool]:
+    """Compare a frozen edition with the reader's *current* interests and scope.
+
+    v3.51.1(issue #33 §5):兴趣/订阅变更不再自动重编当日早报,读者看到的今日版面
+    可能落后于当前偏好。这里只回答「落后了没有」——``interest_stale`` 比对冻结的
+    兴趣版本,``scope_stale`` 比对冻结的权限边界与当前订阅解析结果——由页面提示
+    「下次编排生效 · 立即重编」,主动权交给读者。历史日期的版本天然可能落后,
+    调用方只对今日版本取值。
+    """
+
+    username = edition.owner_username
+    interest_stale = _interest_version(session, username) != int(edition.interest_version or 0)
+    frozen_scope = sorted(_json_list(edition.expected_source_ids_json))
+    scope_stale = sorted(resolve_personal_digest_source_ids(session, username)) != frozen_scope
+    return {"interest_stale": interest_stale, "scope_stale": scope_stale}
 
 
 def _interest_display_names(
@@ -1241,6 +1263,15 @@ def start_personal_digest_edition(
         scheduled_source_ids=scheduled_source_ids,
     )
     if not scope.expected_source_ids:
+        # v3.51.1(issue #33 §5):退订到一个来源都不剩,今日已有的版本仍是不可变快照——
+        # 普通打开(first_open)复用它并由 scope_stale 提示「下次编排生效」;只有显式
+        # 重编/定时/系统触发才把当日版本清成 empty_subscriptions。
+        if reason == DigestGenerationReason.FIRST_OPEN.value:
+            existing = _latest_edition(session, username, report_date)
+            if existing is not None:
+                return _reuse_edition(
+                    session, existing, first_open_at=first_open_at, current=current
+                )
         stale_editions = list(
             session.exec(
                 select(PersonalDigestEditionRecord).where(
@@ -1635,9 +1666,13 @@ def generate_personal_digest(
 ) -> PersonalDigestGenerationResult:
     """Generate and persist one immutable personal-digest edition.
 
-    Normal ensure calls are idempotent.  Interest/subscription/manual rebuilds create
-    a new same-day revision; an ``interest_changed`` request for a historical date is
-    rejected so historical editions never move with today's preferences.
+    Normal ensure calls are idempotent.  Rebuild reasons (manual rebuild, public
+    brief ready, the admin source-takedown fan-out; the legacy interest/subscription
+    reasons are still accepted for the service contract) create a new same-day
+    revision; an ``interest_changed`` request for a historical date is rejected so
+    historical editions never move with today's preferences.  Since v3.51.1 reader
+    interest/subscription edits no longer call in here at all — they surface as
+    ``edition_freshness`` flags until the reader rebuilds or the next scheduled run.
     """
 
     policy = policy or DigestSelectionPolicy()

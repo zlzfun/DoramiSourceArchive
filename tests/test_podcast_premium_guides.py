@@ -128,7 +128,7 @@ def _wav() -> bytes:
 
 class TextProvider:
     async def create_blog(self, **_kwargs):
-        return PremiumGuideDraft(9.1, "技术细节和案例完整", "# 精品导读\n\n核心内容。")
+        return PremiumGuideDraft("# 精品导读\n\n核心内容。")
 
     async def create_narration(self, **_kwargs):
         return "这是内部中文播客导读。"
@@ -174,7 +174,11 @@ def test_premium_guide_runs_from_asr_to_published_blog_and_audio(tmp_path):
             ArticleAnalysisRecord(
                 article_id="episode-1",
                 status="succeeded",
-                quality_score=5.0,
+                quality_score=9.0,
+                score_reason="简介中的第一手安全披露",
+                summary="简介初评摘要",
+                analysis_basis="podcast_show_notes",
+                analysis_input_hash="authoritative-input-hash",
                 created_at=STAMP,
                 updated_at=STAMP,
             )
@@ -224,7 +228,11 @@ def test_premium_guide_runs_from_asr_to_published_blog_and_audio(tmp_path):
     assert result["is_premium"] is True
     with Session(sink.engine) as session:
         analysis = session.get(ArticleAnalysisRecord, "episode-1")
-        assert analysis.quality_score == 9.1
+        assert analysis.quality_score == 9.0
+        assert analysis.score_reason == "简介中的第一手安全披露"
+        assert analysis.summary == "简介初评摘要"
+        assert analysis.analysis_basis == "podcast_show_notes"
+        assert analysis.analysis_input_hash == "authoritative-input-hash"
         assert session.get(PodcastTextPublicationRecord, "episode-1:digest_blog_zh")
         assert session.get(PodcastTextPublicationRecord, "episode-1:narration_script_zh")
     tasks = list_premium_guide_tasks(sink.engine, threshold=8.5)
@@ -235,6 +243,65 @@ def test_premium_guide_runs_from_asr_to_published_blog_and_audio(tmp_path):
         "audio_ready": True,
         "status": "ready",
     } == tasks["items"][0]
+
+
+def test_premium_guide_low_authoritative_score_never_calls_provider(tmp_path):
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'premium-low.db'}")
+    transcript = json.dumps({"text": "complete transcript"})
+    with Session(sink.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id="podcast-low", name="Low", source_type="podcast",
+            url="https://example.test/low.xml", created_at=STAMP, updated_at=STAMP,
+        ))
+        session.commit()
+        session.add(ArticleRecord(
+            id="episode-low", title="Low", content_type="podcast_episode",
+            source_id="podcast-low", source_url="https://example.test/low",
+            publish_date=STAMP, fetched_date=STAMP, content="notes",
+            extensions_json='{"duration_seconds":2400}',
+        ))
+        session.commit()
+        session.add(ArticleAnalysisRecord(
+            article_id="episode-low", status="succeeded", quality_score=7.5,
+            score_reason="权威简介初评", analysis_basis="podcast_show_notes",
+            created_at=STAMP, updated_at=STAMP,
+        ))
+        session.add(PodcastTextArtifactRecord(
+            id="transcript-low", episode_id="episode-low",
+            kind="normalized_transcript", version=1,
+            content_hash=hashlib.sha256(transcript.encode()).hexdigest(),
+            inline_text=transcript, language="en", authority_id="test-authority",
+            provenance_json='{"provider":"fake"}', created_at=STAMP,
+        ))
+        session.commit()
+
+    class ForbiddenProvider:
+        async def create_blog(self, **_kwargs):
+            raise AssertionError("low authoritative score must skip blog generation")
+
+        async def create_narration(self, **_kwargs):
+            raise AssertionError("low authoritative score must skip narration")
+
+        async def synthesize(self, _text):
+            raise AssertionError("low authoritative score must skip TTS")
+
+    provider = ForbiddenProvider()
+    store = PodcastArtifactStore(
+        sink.engine, tmp_path / "low-audio", max_bytes=1024 * 1024,
+        total_quota_bytes=10 * 1024 * 1024, minimum_free_bytes=0,
+        staging_ttl_seconds=60, allowed_mime_types=("audio/wav",),
+        probe_runner=lambda *_a, **_k: None,
+    )
+    result = asyncio.run(run_premium_guide(
+        sink.engine, store, episode_id="episode-low", config=_external_config(),
+        text_provider=provider, tts_provider=provider,
+    ))
+    assert result == {"episode_id": "episode-low", "is_premium": False, "score": 7.5}
+    with Session(sink.engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "episode-low")
+        assert analysis.quality_score == 7.5
+        assert analysis.score_reason == "权威简介初评"
+        assert analysis.analysis_basis == "podcast_show_notes"
 
 
 def test_premium_guide_skips_episode_not_over_twenty_minutes(tmp_path):

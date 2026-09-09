@@ -70,6 +70,34 @@ class DatabaseStorage(BaseStorage):
             ensure_fts(self.engine)
         self.logger.info(f"🗄️ 关系型数据库已连接: {db_url}")
 
+    def _queue_refreshed_podcast_analysis(self, article_id: str) -> None:
+        """Queue a metadata-only Podcast refresh without reporting a new save."""
+
+        try:
+            from services import article_analysis
+
+            with Session(self.engine) as session:
+                dirty_changed = article_analysis.mark_podcast_people_dirty(
+                    session, article_id
+                )
+                enabled = article_analysis.read_feature_flag(
+                    session,
+                    article_analysis.ARTICLE_ANALYSIS_ENABLED_KEY,
+                    default=False,
+                )
+                if not enabled:
+                    if dirty_changed:
+                        session.commit()
+                    return
+                article_analysis.queue_article_analysis(session, article_id)
+                session.commit()
+        except Exception as exc:  # noqa: BLE001 - metadata is already durable
+            self.logger.warning(
+                "Podcast metadata refresh analysis queue failed (article_id=%s): %s",
+                article_id,
+                type(exc).__name__,
+            )
+
     @staticmethod
     def _enable_sqlite_pragmas(engine, *, enable_wal: bool) -> None:
         """在每个新建的 SQLite 连接上启用外键、WAL 与 busy_timeout。
@@ -224,6 +252,7 @@ class DatabaseStorage(BaseStorage):
                     )
                     session.add(existing)
                     session.commit()
+                    self._queue_refreshed_podcast_analysis(existing.id)
                     # ``save`` is the pipeline's insertion signal.  The refresh was
                     # persisted, but must not inflate saved_count/saved_content_ids.
                     return False

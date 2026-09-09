@@ -28,6 +28,7 @@ PODCAST_FEED_EXTENSION_FIELDS = (
     "explicit",
     "image_url",
     "transcripts",
+    "persons",
     "chapters_url",
     "chapters_mime",
     "raw_data",

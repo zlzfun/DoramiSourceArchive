@@ -11614,6 +11614,24 @@ input[type="radio"] {
 }
 .brief-note svg { flex: none; width: 14px; height: 14px; margin-top: 2px; }
 .brief-note.is-info { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+/* 提示行末的行内动作(「立即重编」):文字钮,不另起一行,与提示同色只加下划线表可点 */
+.brief-note-act {
+  margin-left: auto;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  cursor: pointer;
+  transition: text-decoration-color var(--motion-fast) var(--motion-ease);
+}
+.brief-note-act:hover { text-decoration-color: currentColor; }
+.brief-note-act:disabled { cursor: default; opacity: 0.6; text-decoration: none; }
 
 /* 分节头:节名 + 等宽计数 + 延伸的 hairline */
 .brief-sec { margin-top: 30px; }

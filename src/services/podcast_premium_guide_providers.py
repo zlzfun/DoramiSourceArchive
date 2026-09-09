@@ -25,10 +25,9 @@ class OpenAiCompatiblePremiumGuideTextProvider:
                 ChatMessage(
                     role="system",
                     content=(
-                        "你是中文科技播客编辑。只依据完整 ASR 文本评估内容价值并写精品导读。"
-                        "评分为1到10分，技术深度、信息密度、独特洞察和可操作性都强才可超过8.5。"
-                        "忽略口语赘词和轻微识别错误，不得补造事实。返回严格JSON，字段为"
-                        "quality_score、score_reason、blog_markdown。博客应有标题、导语、核心观点、"
+                        "你是中文科技播客编辑。只依据完整 ASR 文本写精品导读，不做质量评分。"
+                        "忽略口语赘词和轻微识别错误，不得补造事实。返回严格JSON，只含字段"
+                        "blog_markdown。博客应有标题、导语、核心观点、"
                         "关键案例和结论，保留重要英文专有名词。删除寒暄、重复、广告、跑题和"
                         "不影响结论的细节，产出比逐字稿显著精简的核心内容。"
                     ),
@@ -48,8 +47,6 @@ class OpenAiCompatiblePremiumGuideTextProvider:
         )
         payload = parse_json_object(raw)
         return PremiumGuideDraft(
-            quality_score=float(payload["quality_score"]),
-            score_reason=str(payload.get("score_reason") or "完整转录评估"),
             blog_markdown=str(payload["blog_markdown"]),
         )
 
