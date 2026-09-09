@@ -129,6 +129,8 @@ DEFAULT_MIN_SCORE = 6.0
 KEY_MIN_ITEMS = "daily_brief_min_items"
 DEFAULT_MIN_ITEMS = 8
 APPENDIX_BAND = 1.0
+# 软阈值保底时陪跑进同事件聚类的近线稿下限(条):近线稿之间互为重复会坍缩,名额要留足
+NEAR_BAND_PROBE_MIN = 12
 # LLM 配置的 KV key 沿用 services/credentials 注册表(与历史存量一致,零迁移)。
 KEY_LLM_BASE_URL = credentials.LLM_NAMESPACE.field_by_name("base_url").kv_key
 KEY_LLM_MODEL = credentials.LLM_NAMESPACE.field_by_name("model").kv_key
@@ -1513,9 +1515,10 @@ async def generate_daily_brief(
              and min_score - APPENDIX_BAND <= it.score < min_score),
             key=_effective_score, reverse=True,
         )
-    # 陪跑名额取缺口的两倍(至少缺口+1):陪跑稿之间也可能互为重复,归并后仍要够填缺口。
+    # 陪跑名额远大于缺口(缺口×3 且不少于 NEAR_BAND_PROBE_MIN):陪跑稿之间也可能互为重复,
+    # 归并后仍要够填缺口;聚类是一次轻量结构化调用,多带十几行标题的代价可忽略。
     want = max(0, min_items - len(prior_items)) if min_items else 0
-    probe = near_band[:max(want * 2, want + 1)] if want else []
+    probe = near_band[:max(want * 3, NEAR_BAND_PROBE_MIN)] if want else []
     qualified_ids = {it.candidate.id for it in usable}
 
     set_progress("selecting", "同事件去重与择优排序…")
@@ -1601,7 +1604,12 @@ async def generate_daily_brief(
     # 只填空出的槽位(扣掉当日已有正文)——忙日正文满员则一条不加,同日重跑也不会一轮轮
     # 把附录堆成近线条目的倾倒场。
     selected_ids = {it.candidate.id for it in selected}
-    appendix_slots = max(0, top_n - len(selected) - len(prior_items) - len(prior_title_only))
+    # 早间条目若已被本批新稿并成同一簇(新稿当代表),同日合并会把两行收成一行,容量只扣一次
+    dedup_rep_ids = {it.candidate.id for it in deduped_all}
+    prior_absorbed = sum(1 for pid in prior_ids if pid not in dedup_rep_ids)
+    appendix_slots = max(
+        0, top_n - len(selected) - (len(prior_items) - prior_absorbed) - len(prior_title_only)
+    )
     near_miss_appendix = [
         it.candidate for it in near_band if it.candidate.id not in selected_ids
     ][:appendix_slots]

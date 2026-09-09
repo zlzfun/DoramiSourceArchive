@@ -1388,10 +1388,11 @@ def test_soft_threshold_deficit_counts_prior_body_by_event_not_by_row(tmp_path, 
 
 
 def test_soft_threshold_probe_survives_duplicates_inside_near_band(tmp_path, monkeypatch):
-    """近线带前两条互为同一事件 → 陪跑名额留有余量,归并后第三条近线稿仍能补满缺口(codex 复检 P2)。"""
-    _patch_llm(monkeypatch, _fake_by_ids({"a": 5.6, "b": 5.5, "c": 5.4}, clusters=(("a", "b"),)))
+    """近线带前四条互为同一事件 → 陪跑名额远大于缺口,归并后第五条近线稿仍能补满缺口(codex 复检 P2)。"""
+    table = {"a": 5.6, "b": 5.5, "b2": 5.5, "b3": 5.5, "c": 5.4}
+    _patch_llm(monkeypatch, _fake_by_ids(table, clusters=(("a", "b", "b2", "b3"),)))
     sink = _make_sink(tmp_path, "probe.db")
-    for i, aid in enumerate(["a", "b", "c"]):
+    for i, aid in enumerate(table):
         _seed(sink.engine, aid, f"src_{i}", f"2026-06-05T1{i}:00:00")
     with Session(sink.engine) as session:
         db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
