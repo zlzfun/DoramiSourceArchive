@@ -1,0 +1,530 @@
+diff --git a/frontend/src/api.js b/frontend/src/api.js
+index bd7e6aa..1cd54c7 100644
+--- a/frontend/src/api.js
++++ b/frontend/src/api.js
+@@ -965,6 +965,16 @@ export function markArticleUnread(articleId) {
+   return request(`/reader/articles/${enc(articleId)}/mark-unread`, { method: 'POST', errorMsg: '标为未读失败' });
+ }
+ 
++// 兴趣轴「全部标读」(issue #27 五稿返修):按当前范围逐篇标已读(不推水位);
++// interestTagId 为空 = 兴趣全集;返回 {marked, by_source, total}。
++export function markScopeRead(shape = null, interestTagId = null) {
++  const params = new URLSearchParams();
++  if (shape) params.set('shape', shape);
++  if (interestTagId) params.set('interest_tag_id', String(interestTagId));
++  const qs = params.toString();
++  return request(`/reader/mark-scope-read${qs ? `?${qs}` : ''}`, { method: 'POST', errorMsg: '标记已读失败' });
++}
++
+ // sourceId 为空 = 全部订阅源标为已读；返回更新后的 {by_source, total}。
+ export function markAllRead(sourceId = null, shape = null) {
+   // shape=article|bulletin|social|podcast:全部标读只作用于当前内容容器
+diff --git a/frontend/src/components/ReaderTab.jsx b/frontend/src/components/ReaderTab.jsx
+index b5c1e1d..ae6103d 100644
+--- a/frontend/src/components/ReaderTab.jsx
++++ b/frontend/src/components/ReaderTab.jsx
+@@ -483,8 +483,9 @@ export default function ReaderTab({
+   const showAxisSeg = !socialView && interestAxisEnabled;
+   // 左栏列源还是列标签:兴趣轴列标签;社交容器 / 预览单源(临时在来源轴上)列源
+   const showSourceRows = scope.axis !== 'interest' || socialView || Boolean(activeSourceId);
+-  // 全部标读推进源水位,只在来源轴(含单源)上成立
+-  const canMarkAllRead = scope.axis !== 'interest' || Boolean(activeSourceId);
++  const markAllLabel = activeSourceId
++    ? '本来源全部标为已读'
++    : activeTagId ? '这个兴趣全部标为已读' : scope.axis === 'interest' ? '兴趣全部标为已读' : '本容器全部标为已读';
+   // 兴趣页保存回调在 PUT 在途时可能已随发现页卸载,闭包里的 discover 是旧值——经 ref 读最新(codex 检视 P2)
+   const discoverRef = useRef(discover);
+   useEffect(() => { discoverRef.current = discover; }, [discover]);
+@@ -1022,20 +1023,17 @@ export default function ReaderTab({
+               >
+                 <Star className="h-4 w-4" fill={favOnly ? 'currentColor' : 'none'} />
+               </button>
+-              {/* 全部标读只在来源轴上出现:它推进的是源水位,兴趣轴是全站透镜、订阅外源没有水位,
+-                  标了也会在下次重载复活为未读(codex 检视 P2)——不给一个做不到的动作 */}
+-              {canMarkAllRead && (
+-                <button
+-                  type="button"
+-                  onClick={handleMarkAllRead}
+-                  disabled={markingRead}
+-                  aria-label={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
+-                  title={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
+-                  className="reader-unread-icon"
+-                >
+-                  {markingRead ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
+-                </button>
+-              )}
++              {/* 全部标读两根轴同一枚钮:订阅轴推源水位,兴趣轴按范围逐篇写行(hook 内分流) */}
++              <button
++                type="button"
++                onClick={handleMarkAllRead}
++                disabled={markingRead}
++                aria-label={markAllLabel}
++                title={markAllLabel}
++                className="reader-unread-icon"
++              >
++                {markingRead ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
++              </button>
+             </>
+           )}
+           {/* 搜索开关(就地展开:图标 ↔ ✕):由视图轨降级而来的条目列过滤器,与未读/收藏同维度 */}
+diff --git a/frontend/src/components/mobile/MobileReader.jsx b/frontend/src/components/mobile/MobileReader.jsx
+index 56101dc..8e05a01 100644
+--- a/frontend/src/components/mobile/MobileReader.jsx
++++ b/frontend/src/components/mobile/MobileReader.jsx
+@@ -288,19 +288,16 @@ export default function MobileReader({
+               >
+                 <Star fill={favOnly ? 'currentColor' : 'none'} />
+               </button>
+-              {/* 全部标读只在来源轴上出现(兴趣轴是全站透镜,订阅外源没有水位可推) */}
+-              {(scope.axis !== 'interest' || activeSourceId) && (
+-                <button
+-                  type="button"
+-                  onClick={handleMarkAllRead}
+-                  disabled={markingRead}
+-                  aria-label={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
+-                  title={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
+-                  className="m-iconbtn"
+-                >
+-                  {markingRead ? <Loader2 className="animate-spin" /> : <CheckCheck />}
+-                </button>
+-              )}
++              {/* 全部标读两根轴同一枚钮(hook 内按轴分流:推水位 / 逐篇写行) */}
++              <button
++                type="button"
++                onClick={handleMarkAllRead}
++                disabled={markingRead}
++                aria-label={activeSourceId ? '本来源全部标为已读' : scope.axis === 'interest' ? '兴趣全部标为已读' : '本容器全部标为已读'}
++                className="m-iconbtn"
++              >
++                {markingRead ? <Loader2 className="animate-spin" /> : <CheckCheck />}
++              </button>
+             </>
+           )}
+           <button
+diff --git a/frontend/src/hooks/useReaderState.js b/frontend/src/hooks/useReaderState.js
+index 3008794..7d4764a 100644
+--- a/frontend/src/hooks/useReaderState.js
++++ b/frontend/src/hooks/useReaderState.js
+@@ -41,6 +41,7 @@ import {
+   recordArticleRead,
+   fetchUnreadCounts,
+   markAllRead,
++  markScopeRead,
+   markArticleRead,
+   markArticleUnread,
+   summarizeArticle,
+@@ -1041,12 +1042,16 @@ export function useReaderState({
+   };
+ 
+   // ── 全部标读(当前范围:某来源 / 本容器 / 今日全订阅)──
++  // 同一枚钮、同一份读态的两条写路:订阅轴(含单源)按源推水位;兴趣轴按范围逐篇写行——
++  // 兴趣是跨源透镜,推水位会把源里未命中兴趣的文章一并标掉,越出读者看见的范围。
+   const handleMarkAllRead = async () => {
+     if (markingRead) return;
+-    if (scope.axis === 'interest' && !activeSourceId) return; // 兴趣轴无水位可推(入口已隐藏,此为兜底)
+     setMarkingRead(true);
+     try {
+-      const data = await markAllRead(activeSourceId, activeSourceId ? null : mode);
++      const interestScope = scope.axis === 'interest' && !activeSourceId;
++      const data = interestScope
++        ? await markScopeRead(mode, activeTagId)
++        : await markAllRead(activeSourceId, activeSourceId ? null : mode);
+       // 后端返回更新后的统计;本页在列条目全部乐观清点(圆点即消)。
+       prevScopeUnreadRef.current = null;
+       applyUnreadCounts(data);
+diff --git a/src/api/routers/reader.py b/src/api/routers/reader.py
+index c40eb69..651ae2e 100644
+--- a/src/api/routers/reader.py
++++ b/src/api/routers/reader.py
+@@ -55,6 +55,7 @@ from services import daily_brief as daily_brief_service
+ from services import reader_activity as reader_activity_service
+ from services import reader_ai as reader_ai_service
+ from services import reader_search as reader_search_service
++from services import reader_interests as reader_interests_service
+ from services import reader_state as reader_state_service
+ from services import source_collections as source_collections_service
+ from services import source_visibility as source_visibility_service
+@@ -705,6 +706,63 @@ def mark_all_read(
+     return _mark_all_read_response(app, session, username, source_ids)
+ 
+ 
++@router.post("/mark-scope-read")
++def mark_scope_read(
++    request: Request,
++    shape: Optional[str] = None,
++    interest_tag_id: Optional[int] = None,
++    session: Session = Depends(deps.get_session),
++):
++    """兴趣轴的「全部标读」(issue #27 五稿返修):把当前范围内**未读**的兴趣命中逐篇标已读。
++
++    范围 = 全站可见源(隐藏源与非我订阅的私有自定源排除)∩ 兴趣命中(``interest_tag_id`` 只认关注中的
++    那一枚)∩ 可选 ``shape`` 容器 ∩ 未读(订阅源按水位、无水位源按逐篇读态 + 时效下限,与列表同尺)。
++    不推水位:兴趣是跨源透镜,推水位会越出读者看见的范围。单次上限 ``MARK_SCOPE_READ_MAX``(取最新),
++    响应回报 ``marked`` 与更新后的订阅源未读统计(与 ``/mark-all-read`` 同形)。
++    """
++    app = _app()
++    username = app.current_username(request)
++    interests = reader_interests_service.load_interest_map(session, username)
++    followed_ids = list(interests.followed.keys())
++    if interest_tag_id is not None:
++        followed_ids = [tid for tid in followed_ids if tid == int(interest_tag_id)]
++    subscribed = app.resolve_subscribed_source_ids(session, username)
++    marked = 0
++    if followed_ids:
++        query = select(ArticleRecord.id).where(
++            reader_interests_service.interest_filter_condition(followed_ids)
++        )
++        unavailable = source_visibility_service.reader_unavailable_source_ids(session)
++        if unavailable:
++            query = query.where(or_(
++                ArticleRecord.source_id.is_(None),
++                ArticleRecord.source_id.notin_(sorted(unavailable)),
++            ))
++        my_user_ids = sorted(
++            sid for sid in app.resolve_subscribed_source_ids(session, username, include_hidden=True)
++            if user_sources_service.is_user_source(sid)
++        )
++        query = query.where(or_(
++            ArticleRecord.source_id.is_(None),
++            ~ArticleRecord.source_id.startswith(user_sources_service.USER_SOURCE_PREFIX, autoescape=True),
++            *([ArticleRecord.source_id.in_(my_user_ids)] if my_user_ids else []),
++        ))
++        shape_value = (shape or "").strip().lower()
++        if shape_value in VALID_CONTENT_SHAPES:
++            query = query.where(content_shape_condition(shape_value, session))
++        unread_cond = reader_state_service.unread_filter_condition(
++            session, username=username, source_ids=subscribed, include_uncursored=True,
++        )
++        query = query.where(unread_cond).order_by(ArticleRecord.fetched_date.desc()).limit(
++            reader_state_service.MARK_SCOPE_READ_MAX
++        )
++        ids = [row for row in session.exec(query).all()]
++        marked = reader_state_service.mark_ids_read(session, username=username, article_ids=ids)
++        session.commit()
++    by_source = reader_state_service.unread_counts(session, username=username, source_ids=subscribed)
++    return {"status": "success", "marked": marked, "by_source": by_source, "total": sum(by_source.values())}
++
++
+ @router.post("/sources/{source_id}/mark-all-read")
+ def mark_source_all_read(source_id: str, request: Request, session: Session = Depends(deps.get_session)):
+     """把单个来源标为已读，返回更新后的未读统计。"""
+diff --git a/src/services/reader_state.py b/src/services/reader_state.py
+index 15becfc..b82c10a 100644
+--- a/src/services/reader_state.py
++++ b/src/services/reader_state.py
+@@ -28,6 +28,7 @@ import datetime
+ from typing import Dict, Iterable, List, Optional, Sequence, Set
+ 
+ from sqlalchemy import delete
++from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+ from sqlmodel import Session, and_, func, or_, select
+ 
+ from models.db import ArticleRecord, ReaderArticleReadStateRecord, ReaderReadCursorRecord
+@@ -40,6 +41,20 @@ def _now_iso() -> str:
+ # 水位初始化时保留为未读的最近文章篇数（订阅成功 / 存量订阅懒初始化共用）
+ INIT_UNREAD_BACKLOG = 20
+ 
++# 无水位源(兴趣轴里的订阅外源)的未读时效下限(issue #27 五稿返修):没有逐篇行且入库超过
++# 这个天数的文章一律视为已读。作用有二:①新关注一个标签不会把全站历史命中全部灌成未读;
++# ②逐篇已读行只在这个滚动窗内有意义,窗外的行由留存清理回收,表大小从线性变成常量。
++# 订阅源的对应物是订阅时播种的水位(老文章本来就是已读)。
++UNCURSORED_UNREAD_MAX_AGE_DAYS = 30
++# 兴趣轴「全部标读」单次逐篇写入上限(取最新);命中集合远小于订阅全量,这是极端情况的兜底
++MARK_SCOPE_READ_MAX = 2000
++
++
++def uncursored_unread_cutoff(now: Optional[datetime.datetime] = None) -> str:
++    """无水位源未读时效下限的 ISO 截止串:``fetched_date`` 早于它即视为已读。"""
++    base = now or datetime.datetime.now()
++    return (base - datetime.timedelta(days=UNCURSORED_UNREAD_MAX_AGE_DAYS)).isoformat()
++
+ 
+ # ==================== 逐篇显式覆盖 ====================
+ 
+@@ -213,10 +228,16 @@ def _unread_condition(cursors: Dict[str, str], username: str, *, include_uncurso
+             ArticleRecord.id.in_(unread_sub),
+         ))
+     if include_uncursored:
+-        uncursored = ArticleRecord.id.not_in(read_sub)
++        # 时效下限:无水位源只有近 UNCURSORED_UNREAD_MAX_AGE_DAYS 天的文章参与未读判定
++        uncursored = and_(
++            ArticleRecord.id.not_in(read_sub),
++            ArticleRecord.fetched_date >= uncursored_unread_cutoff(),
++        )
+         if cursors:
+             uncursored = and_(ArticleRecord.source_id.not_in(list(cursors.keys())), uncursored)
+         branches.append(uncursored)
++        # 显式未读行在无水位源同样生效(压过时效下限)——与 unread_ids_among「显式覆盖优先」同尺
++        branches.append(ArticleRecord.id.in_(unread_sub))
+     return or_(*branches) if len(branches) > 1 else branches[0]
+ 
+ 
+@@ -281,6 +302,7 @@ def unread_ids_among(
+     states = read_states_among(
+         session, username=username, article_ids=[r.id for r in records]
+     )
++    age_cutoff = uncursored_unread_cutoff()
+     unread: Set[str] = set()
+     for r in records:
+         explicit = states.get(r.id)
+@@ -290,13 +312,38 @@ def unread_ids_among(
+             continue
+         wm = cursors.get(r.source_id)
+         if wm is None:
+-            if include_uncursored:
++            if include_uncursored and (r.fetched_date or "") >= age_cutoff:
+                 unread.add(r.id)
+         elif (r.fetched_date or "") > wm:
+             unread.add(r.id)
+     return unread
+ 
+ 
++def mark_ids_read(session: Session, *, username: str, article_ids: Sequence[str]) -> int:
++    """按篇批量标已读(兴趣轴「全部标读」):一条 INSERT … ON CONFLICT 写整批逐篇行,不 commit。
++
++    与 ``mark_all_read`` 推水位是同一份读态的两条写路:订阅轴按源推水位,兴趣轴按篇写行——
++    兴趣是跨源的透镜,推水位会把源里未命中兴趣的文章一并标掉,越出读者看见的范围。
++    返回实际写入的篇数(去重、去空后)。
++    """
++    username = (username or "").strip()
++    ids = list(dict.fromkeys(a for a in (str(x or "").strip() for x in article_ids) if a))
++    if not username or not ids:
++        return 0
++    now = _now_iso()
++    table = ReaderArticleReadStateRecord.__table__
++    stmt = sqlite_insert(table).values([
++        {"owner_username": username, "article_id": aid, "is_read": True, "read_at": now}
++        for aid in ids
++    ])
++    stmt = stmt.on_conflict_do_update(
++        index_elements=[table.c.owner_username, table.c.article_id],
++        set_={"is_read": True, "read_at": now},
++    )
++    session.execute(stmt)
++    return len(ids)
++
++
+ # ==================== 全部标读 ====================
+ 
+ def mark_all_read(
+diff --git a/src/services/retention.py b/src/services/retention.py
+index ae133b8..0dcaebd 100644
+--- a/src/services/retention.py
++++ b/src/services/retention.py
+@@ -22,6 +22,10 @@
+   open/in_progress 永不清（未处理的诉求不因久拖而蒸发）。
+ - `article_shares`（公开分享链接）：**已失效**（已撤销，或已过期且未撤销）满
+   180 天删除；存活链接（含永久档）永不清——删活链接等于替读者撤销。
++- `reader_article_read_states`（逐篇读态，issue #27 五稿返修）：**无水位源**（该用户没有该源的
++  水位行）的**已读行**，文章入库与标读时间都超过 `UNCURSORED_UNREAD_MAX_AGE_DAYS`（30 天）即删——
++  未读判定对无水位源有同样的时效下限，窗外的已读行不再改变任何判定，删掉零信息损失。显式未读行
++  （is_read=false）与订阅源的行不清（后者由「全部标读」推水位时按水位回收）。
+ 
+ 刻意不清理：`announcement_dismissals`（行数有界 = 用户数 × 公告数，且承载
+ 「一次性通知」语义——公告下线再重新上线时，关闭过的读者不应再被打扰；清掉
+@@ -48,9 +52,9 @@ import logging
+ from dataclasses import dataclass
+ from typing import Any, Dict, List
+ 
+-from sqlalchemy import delete, func, or_
++from sqlalchemy import delete, exists, func, or_
+ from sqlalchemy.engine import Engine
+-from sqlmodel import Session
++from sqlmodel import Session, select
+ 
+ from models.db import (
+     AdminAuditRecord,
+@@ -66,6 +70,8 @@ from models.db import (
+     ReaderReadRecord,
+     TagRetagJobRecord,
+ )
++from models.db import ArticleRecord, ReaderArticleReadStateRecord, ReaderReadCursorRecord
++from services.reader_state import UNCURSORED_UNREAD_MAX_AGE_DAYS
+ 
+ logger = logging.getLogger("dorami.retention")
+ 
+@@ -165,9 +171,30 @@ def _conditional_cleanups(today: datetime.date) -> List[tuple]:
+                 PersonalDigestEditionRecord.updated_at < personal_digest_cutoff,
+             ),
+         ),
++        _read_state_cleanup(today),
+     ]
+ 
+ 
++def _read_state_cleanup(today: datetime.date):
++    """无水位源的窗外已读行(见模块注释)。"""
++    cutoff = _cutoff(UNCURSORED_UNREAD_MAX_AGE_DAYS, today=today)
++    old_article = select(ArticleRecord.id).where(ArticleRecord.fetched_date < cutoff)
++    cursored = exists().where(
++        ReaderReadCursorRecord.owner_username == ReaderArticleReadStateRecord.owner_username,
++        ReaderReadCursorRecord.source_id == ArticleRecord.source_id,
++        ArticleRecord.id == ReaderArticleReadStateRecord.article_id,
++    )
++    return (
++        "reader_article_read_states",
++        delete(ReaderArticleReadStateRecord).where(
++            ReaderArticleReadStateRecord.is_read == True,  # noqa: E712
++            ReaderArticleReadStateRecord.read_at < cutoff,
++            ReaderArticleReadStateRecord.article_id.in_(old_article),
++            ~cursored,
++        ),
++    )
++
++
+ def _cutoff(retention_days: int, *, today: datetime.date) -> str:
+     """保留窗口起点的 date-only 截止串：早于它（`< cutoff`）的行删除。
+ 
+diff --git a/src/version.py b/src/version.py
+index 1a172b4..dc47f58 100644
+--- a/src/version.py
++++ b/src/version.py
+@@ -12,4 +12,4 @@
+ 3.0.0 = 静默仪器全站重构 + 实体简化/阶段3 收官(style/quiet-instrument 合入 main)。
+ """
+ 
+-__version__ = "3.52.1"
++__version__ = "3.52.2"
+diff --git a/tests/test_data_lifecycle.py b/tests/test_data_lifecycle.py
+index 231244f..ffa6c8c 100644
+--- a/tests/test_data_lifecycle.py
++++ b/tests/test_data_lifecycle.py
+@@ -38,6 +38,9 @@ from models.db import (  # noqa: E402
+     TagRetagJobRecord,
+     TaxonomyVersionRecord,
+     UserRecord,
++    ArticleRecord,
++    ReaderArticleReadStateRecord,
++    ReaderReadCursorRecord,
+ )
+ from services import ai_usage, reader_activity, retention  # noqa: E402
+ from services.accounts import create_user, last_login_for_user, touch_login  # noqa: E402
+@@ -154,6 +157,39 @@ def test_retention_shares_dual_timestamp_dead(tmp_path):
+         assert kept == {"dshr_fresh_exp"}
+ 
+ 
++def test_retention_read_states_only_uncursored_old_read_rows(tmp_path):
++    """逐篇读态清理:只删无水位源的窗外已读行;显式未读行、订阅源(有水位)的行、窗内行都保留。"""
++    engine = _engine(tmp_path)
++    old = _iso_days_ago(60)
++    recent = _iso_days_ago(3)
++    def art(aid, sid, fetched):
++        return ArticleRecord(
++            id=aid, title=aid, content_type="web_article", source_id=sid,
++            source_url=f"https://example.test/{aid}", publish_date=fetched, fetched_date=fetched,
++            has_content=True, content="x", extensions_json="{}",
++        )
++    def rs(aid, is_read=True, at=old):
++        return ReaderArticleReadStateRecord(owner_username="u", article_id=aid, is_read=is_read, read_at=at)
++    with Session(engine) as session:
++        session.add(art("old_uncursored", "web_qbitai", old))
++        session.add(art("old_unread_row", "web_qbitai", old))
++        session.add(art("old_cursored", "web_anthropic_news", old))
++        session.add(art("recent_uncursored", "web_qbitai", recent))
++        session.add(art("old_read_recently", "web_qbitai", old))
++        session.add(ReaderReadCursorRecord(owner_username="u", source_id="web_anthropic_news", mark_read_before=recent, updated_at=recent))
++        session.add(rs("old_uncursored"))                     # 删:无水位、已读、文章与标读都在窗外
++        session.add(rs("old_unread_row", is_read=False))      # 留:显式未读是读者意图
++        session.add(rs("old_cursored"))                       # 留:该源有水位,交给推水位回收
++        session.add(rs("recent_uncursored", at=recent))       # 留:文章在窗内
++        session.add(rs("old_read_recently", at=recent))       # 留:标读时间在窗内
++        session.commit()
++    deleted = retention.run_retention_cleanup(engine)
++    assert deleted["reader_article_read_states"] == 1
++    with Session(engine) as session:
++        left = {r.article_id for r in session.exec(select(ReaderArticleReadStateRecord)).all()}
++        assert left == {"old_unread_row", "old_cursored", "recent_uncursored", "old_read_recently"}
++
++
+ def test_retention_still_covers_fetch_runs(tmp_path):
+     """扩面不回归：原有纯时间窗表照常清理。"""
+     engine = _engine(tmp_path)
+diff --git a/tests/test_reader_interests.py b/tests/test_reader_interests.py
+index add6b7a..2071ae8 100644
+--- a/tests/test_reader_interests.py
++++ b/tests/test_reader_interests.py
+@@ -15,6 +15,7 @@ from sqlmodel import Session, select
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+ 
+ from services.reader_interests import INTEREST_MATCH_MIN_RELEVANCE  # noqa: E402
++from services.reader_state import UNCURSORED_UNREAD_MAX_AGE_DAYS  # noqa: E402
+ 
+ STAMP = "2026-09-09T00:00:00"
+ 
+@@ -42,9 +43,12 @@ def _seed_users(engine):
+         session.commit()
+ 
+ 
+-def _seed_article(engine, article_id: str, source_id: str, *, fetched: str = "2026-05-21T00:00:00"):
++def _seed_article(engine, article_id: str, source_id: str, *, fetched: str = ""):
++    """默认昨天入库:无水位源的未读有 30 天时效下限,固定的历史日期会让样本一律视为已读。"""
+     from models.db import ArticleRecord
+ 
++    fetched = fetched or (datetime.datetime.now() - datetime.timedelta(days=1)).isoformat()
++
+     with Session(engine) as session:
+         session.add(ArticleRecord(
+             id=article_id,
+@@ -264,3 +268,63 @@ def test_unread_only_in_site_scope_uses_per_article_read_state(monkeypatch, tmp_
+         assert flags["out_fresh"] is True and flags["out_hit"] is False and flags["sub_hit"] is True
+         ids, _ = _ids(client, subscribed_scope="off", interest_scope="only", unread_only="true")
+         assert "out_fresh" in ids and "out_hit" not in ids
++
++
++def _days_ago(days: int) -> str:
++    return (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat()
++
++
++def test_uncursored_unread_has_age_floor(monkeypatch, tmp_path):
++    """无水位源的未读时效下限:入库超过 UNCURSORED_UNREAD_MAX_AGE_DAYS 的命中一律视为已读(过滤与标注同尺)。"""
++    app_module, sink = _setup(monkeypatch, tmp_path)
++    e = sink.engine
++    with Session(e) as session:
++        from models.db import CmsTagRecord
++        agents_id = session.exec(select(CmsTagRecord.id).where(CmsTagRecord.code == "ai-agents")).one()
++    _seed_article(e, "out_recent", "web_qbitai", fetched=_days_ago(3))
++    _seed_article(e, "out_stale", "web_qbitai", fetched=_days_ago(UNCURSORED_UNREAD_MAX_AGE_DAYS + 5))
++    _assign(e, "out_recent", agents_id, primary=True, relevance=0.9)
++    _assign(e, "out_stale", agents_id, primary=True, relevance=0.9)
++    with TestClient(app_module.app) as client:
++        _login(client)
++        ids, data = _ids(client, subscribed_scope="off", interest_scope="only", with_unread="true")
++        flags = {item["id"]: item["unread"] for item in data["items"]}
++        assert flags["out_recent"] is True and flags["out_stale"] is False
++        ids, _ = _ids(client, subscribed_scope="off", interest_scope="only", unread_only="true")
++        assert "out_recent" in ids and "out_stale" not in ids
++        # 显式标未读压过时效下限(读者的意图优先)
++        assert client.post("/api/reader/articles/out_stale/mark-unread").status_code == 200
++        ids, _ = _ids(client, subscribed_scope="off", interest_scope="only", unread_only="true")
++        assert "out_stale" in ids
++
++
++def test_mark_scope_read_marks_interest_hits_per_article(monkeypatch, tmp_path):
++    """兴趣轴「全部标读」:按范围逐篇写读态,不推水位;单标签范围只标该标签的命中。"""
++    app_module, sink = _setup(monkeypatch, tmp_path)
++    e = sink.engine
++    llm = _seed_tag(e, "llm", "大语言模型")
++    _seed_article(e, "out_llm", "web_qbitai", fetched=_days_ago(2))
++    _assign(e, "out_llm", llm, primary=True, relevance=0.9)
++    _set_interest(e, "user", llm, "follow")
++    with Session(e) as session:
++        from models.db import CmsTagRecord
++        agents_id = session.exec(select(CmsTagRecord.id).where(CmsTagRecord.code == "ai-agents")).one()
++    with TestClient(app_module.app) as client:
++        _login(client)
++        client.post("/api/reader/sources/web_anthropic_news/subscribe")
++        client.get("/api/reader/unread-counts")
++        # 先只标「大语言模型」:AI 智能体的命中仍未读
++        res = client.post("/api/reader/mark-scope-read", params={"shape": "article", "interest_tag_id": agents_id + llm + 1000})
++        assert res.status_code == 200 and res.json()["marked"] == 0  # 非关注标签 id:显式空集
++        res = client.post("/api/reader/mark-scope-read", params={"shape": "article", "interest_tag_id": llm})
++        assert res.status_code == 200 and res.json()["marked"] == 1
++        ids, _ = _ids(client, subscribed_scope="off", interest_scope="only", unread_only="true")
++        assert "out_llm" not in ids and "out_hit" in ids and "sub_hit" in ids
++        # 兴趣全集标读:订阅源的命中也按篇写行,该源里未命中兴趣的 sub_plain 不受影响(不推水位)
++        res = client.post("/api/reader/mark-scope-read", params={"shape": "article"})
++        body = res.json()
++        assert res.status_code == 200 and body["marked"] >= 2 and "by_source" in body
++        ids, _ = _ids(client, subscribed_scope="off", interest_scope="only", unread_only="true")
++        assert ids == set()
++        ids, _ = _ids(client, subscribed_scope="only", unread_only="true")
++        assert "sub_plain" in ids and "sub_hit" not in ids

@@ -55,6 +55,7 @@ from services import daily_brief as daily_brief_service
 from services import reader_activity as reader_activity_service
 from services import reader_ai as reader_ai_service
 from services import reader_search as reader_search_service
+from services import reader_interests as reader_interests_service
 from services import reader_state as reader_state_service
 from services import source_collections as source_collections_service
 from services import source_visibility as source_visibility_service
@@ -703,6 +704,78 @@ def mark_all_read(
             if source_shape(sid, content_types.get(sid), source_meta) == shape_value
         ]
     return _mark_all_read_response(app, session, username, source_ids)
+
+
+@router.post("/mark-scope-read")
+def mark_scope_read(
+    request: Request,
+    shape: Optional[str] = None,
+    interest_tag_id: Optional[int] = None,
+    session: Session = Depends(deps.get_session),
+):
+    """兴趣轴的「全部标读」(issue #27 五稿返修):把当前范围内**未读**的兴趣命中逐篇标已读。
+
+    范围 = 全站可见源(隐藏源与非我订阅的私有自定源排除)∩ 兴趣命中(``interest_tag_id`` 只认关注中的
+    那一枚)∩ 可选 ``shape`` 容器 ∩ 未读(订阅源按水位、无水位源按逐篇读态 + 时效下限,与列表同尺)。
+    不推水位:兴趣是跨源透镜,推水位会越出读者看见的范围。按 ``MARK_SCOPE_READ_MAX`` 一批批写到写完
+    (每批取最新;批次总数封顶,极端情况 ``has_more=true`` 如实回报,前端据此不谎称「已全部」),
+    响应回报 ``marked`` 与更新后的订阅源未读统计(与 ``/mark-all-read`` 同形)。
+    可见范围与 ``GET /api/articles`` 同尺:读者会话排除隐藏源与非我订阅的私有自定源,admin 会话不受限。
+    """
+    app = _app()
+    username = app.current_username(request)
+    auth_session = app.current_auth_session(request)
+    is_admin = bool(auth_session and auth_session.get("role") == "admin")
+    interests = reader_interests_service.load_interest_map(session, username)
+    followed_ids = list(interests.followed.keys())
+    if interest_tag_id is not None:
+        followed_ids = [tid for tid in followed_ids if tid == int(interest_tag_id)]
+    subscribed = app.resolve_subscribed_source_ids(session, username)
+    marked = 0
+    has_more = False
+    if followed_ids:
+        query = select(ArticleRecord.id).where(
+            reader_interests_service.interest_filter_condition(followed_ids)
+        )
+        if not is_admin:
+            unavailable = source_visibility_service.reader_unavailable_source_ids(session)
+            if unavailable:
+                query = query.where(or_(
+                    ArticleRecord.source_id.is_(None),
+                    ArticleRecord.source_id.notin_(sorted(unavailable)),
+                ))
+            my_user_ids = sorted(
+                sid for sid in app.resolve_subscribed_source_ids(session, username, include_hidden=True)
+                if user_sources_service.is_user_source(sid)
+            )
+            query = query.where(or_(
+                ArticleRecord.source_id.is_(None),
+                ~ArticleRecord.source_id.startswith(user_sources_service.USER_SOURCE_PREFIX, autoescape=True),
+                *([ArticleRecord.source_id.in_(my_user_ids)] if my_user_ids else []),
+            ))
+        shape_value = (shape or "").strip().lower()
+        if shape_value in VALID_CONTENT_SHAPES:
+            query = query.where(content_shape_condition(shape_value, session))
+        unread_cond = reader_state_service.unread_filter_condition(
+            session, username=username, source_ids=subscribed, include_uncursored=True,
+        )
+        batch_query = query.where(unread_cond).order_by(ArticleRecord.fetched_date.desc()).limit(
+            reader_state_service.MARK_SCOPE_READ_MAX
+        )
+        # 逐批写完:每批写入后这些篇已不满足未读条件,下一批自然是余下的;写满一批就再取一批
+        for _ in range(reader_state_service.MARK_SCOPE_READ_MAX_BATCHES):
+            ids = [row for row in session.exec(batch_query).all()]
+            marked += reader_state_service.mark_ids_read(session, username=username, article_ids=ids)
+            session.commit()
+            if len(ids) < reader_state_service.MARK_SCOPE_READ_MAX:
+                break
+        else:
+            has_more = session.exec(batch_query.limit(1)).first() is not None
+    by_source = reader_state_service.unread_counts(session, username=username, source_ids=subscribed)
+    return {
+        "status": "success", "marked": marked, "has_more": has_more,
+        "by_source": by_source, "total": sum(by_source.values()),
+    }
 
 
 @router.post("/sources/{source_id}/mark-all-read")

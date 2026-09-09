@@ -483,8 +483,9 @@ export default function ReaderTab({
   const showAxisSeg = !socialView && interestAxisEnabled;
   // 左栏列源还是列标签:兴趣轴列标签;社交容器 / 预览单源(临时在来源轴上)列源
   const showSourceRows = scope.axis !== 'interest' || socialView || Boolean(activeSourceId);
-  // 全部标读推进源水位,只在来源轴(含单源)上成立
-  const canMarkAllRead = scope.axis !== 'interest' || Boolean(activeSourceId);
+  const markAllLabel = activeSourceId
+    ? '本来源全部标为已读'
+    : activeTagId ? '这个兴趣全部标为已读' : scope.axis === 'interest' ? '兴趣全部标为已读' : '本容器全部标为已读';
   // 兴趣页保存回调在 PUT 在途时可能已随发现页卸载,闭包里的 discover 是旧值——经 ref 读最新(codex 检视 P2)
   const discoverRef = useRef(discover);
   useEffect(() => { discoverRef.current = discover; }, [discover]);
@@ -1022,20 +1023,17 @@ export default function ReaderTab({
               >
                 <Star className="h-4 w-4" fill={favOnly ? 'currentColor' : 'none'} />
               </button>
-              {/* 全部标读只在来源轴上出现:它推进的是源水位,兴趣轴是全站透镜、订阅外源没有水位,
-                  标了也会在下次重载复活为未读(codex 检视 P2)——不给一个做不到的动作 */}
-              {canMarkAllRead && (
-                <button
-                  type="button"
-                  onClick={handleMarkAllRead}
-                  disabled={markingRead}
-                  aria-label={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
-                  title={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
-                  className="reader-unread-icon"
-                >
-                  {markingRead ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
-                </button>
-              )}
+              {/* 全部标读两根轴同一枚钮:订阅轴推源水位,兴趣轴按范围逐篇写行(hook 内分流) */}
+              <button
+                type="button"
+                onClick={handleMarkAllRead}
+                disabled={markingRead}
+                aria-label={markAllLabel}
+                title={markAllLabel}
+                className="reader-unread-icon"
+              >
+                {markingRead ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
+              </button>
             </>
           )}
           {/* 搜索开关(就地展开:图标 ↔ ✕):由视图轨降级而来的条目列过滤器,与未读/收藏同维度 */}
