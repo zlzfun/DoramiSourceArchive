@@ -113,6 +113,8 @@ aria-label、免责文案(统一为 `SCORE_DISCLAIMER` 常量,四处手写副本
 
 ## 6. 实施记录 · v3.49.1 检视返修(issue #33 §1,2026-09-08)
 
+> 2026-09-09 codex bot 检视返修(PR #37,两条 P2 均成立):软阈值的保底缺口原按去重前、同日合并前的增量池计算,附录容量也未扣当日已有正文——同日重跑时早间已满员的日报仍会被增量批的近线稿补一轮、附录一轮轮增长。现改为:当日已有日报先读出,近线带最多 `min_items` 条陪跑进同事件聚类,缺口 = `min_items − 当日已有正文 − 归并后合格簇数`;附录空槽 = `top_n − 本批正文 − 当日已有正文`。回归用例 `test_soft_threshold_same_day_rerun_counts_prior_body` / `test_soft_threshold_deficit_is_measured_after_same_event_dedup`。
+
 上线前用生产近 7 天 699 篇文章做了一轮实证(生产仍在 v3.39.2,文章导出后本地跑本方案链路,
 模型对齐生产 deepseek-v4-flash),62 篇分层黄金集(官方 20 / 媒体 18 / 论文 8 / 榜单 4 / 社区 12)
 由 Claude 与 codex(gpt-5.6-sol)各自独立按 §1 锚点打分。完整数据在 issue #33 的两条评论。

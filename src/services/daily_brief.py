@@ -199,6 +199,9 @@ class ScoredItem:
     followup_note: str = ""
     # 分析给出的评分理由:编辑阶段的已知事实,不进 to_reduce_dict(不能被误当公共点评)
     score_reason: str = ""
+    # 同事件归并时并入本条(代表)的其它条目文章 id:软阈值保底据此判断「簇里有没有过线稿」——
+    # 近线官方稿当了过线媒体稿的代表时,簇仍算合格稿,不能被当成补足稿裁掉(codex 检视 P2)
+    merged_ids: List[str] = field(default_factory=list)
 
     def to_reduce_dict(self) -> Dict[str, Any]:
         return {
@@ -795,6 +798,9 @@ def _merge_into_representative(items: List[ScoredItem], idxs: List[int], dropped
         for url in [items[i].candidate.source_url, *items[i].extra_sources]:
             if url and url not in items[rep].extra_sources and url != items[rep].candidate.source_url:
                 items[rep].extra_sources.append(url)
+        for merged_id in [items[i].candidate.id, *items[i].merged_ids]:
+            if merged_id and merged_id not in items[rep].merged_ids:
+                items[rep].merged_ids.append(merged_id)
         dropped.add(i)
 
 
@@ -1479,9 +1485,24 @@ async def generate_daily_brief(
         if it.score_ok and not it.candidate.has_content and it.score >= min_score
     ]
     below_threshold = sum(1 for it in scored if it.score_ok and it.score < min_score)
+    histogram = score_histogram(scored)
+    logger.info(
+        "日报[%s]：评分完成——复用分析 %d 篇、补评 %d 篇（其中 %d 篇正在 worker 队列）、失败 %d 篇；"
+        "低于门槛 %.1f 的 %d 篇；分布 %s",
+        report_date, len(stored), n_inline, inline_pending, len(score_failed),
+        min_score, below_threshold, histogram,
+    )
+    # 同日已有日报先读出来:软阈值的「正文保底」与「附录补位」都要按**最终成品**(当日已有
+    # 正文 ∪ 本批)算缺口——否则同日重跑时早间已满员的日报还会被增量批的近线稿补一轮,
+    # 附录也会一轮轮长成近线稿的倾倒场(codex 检视 P2 ×2)。
+    with Session(engine) as session:
+        prior_state = load_existing_brief_state(session, report_date)
+    prior_body = len(prior_state[0]) if prior_state is not None else 0
     # 软阈值(v3.49.1):近线带 = 有正文、分在 [min_score−APPENDIX_BAND, min_score) 的条目,按有效分降序。
-    # 正选池不足 min_items 时先从近线带补正文(照常写要点与点评);带内其余条目留作附录补位
-    # (正文没填满 top_n 时以标题+链接填进「其它收录」)。低于近线带的仍直接 pass。
+    # 保底缺口在同事件归并**之后**计算:过线稿若互为重复会坍缩,缺口要按归并后的合格簇数算;
+    # 近线带最多取 min_items 条陪跑进同一次聚类(与过线稿同事件的自然并入代表,不重复出场)。
+    # 补进正文的近线稿照常写要点与点评;带内其余条目留作附录补位(正文没填满 top_n 时以
+    # 标题+链接填进「其它收录」)。低于近线带的仍直接 pass。
     near_band: List[ScoredItem] = []
     if min_score > 0:
         near_band = sorted(
@@ -1490,22 +1511,33 @@ async def generate_daily_brief(
              and min_score - APPENDIX_BAND <= it.score < min_score),
             key=_effective_score, reverse=True,
         )
-    backfilled: List[ScoredItem] = []
-    if min_items and len(usable) < min_items and near_band:
-        backfilled = near_band[:min_items - len(usable)]
-        near_band = near_band[len(backfilled):]
-        usable = usable + backfilled
-    histogram = score_histogram(scored)
-    logger.info(
-        "日报[%s]：评分完成——复用分析 %d 篇、补评 %d 篇（其中 %d 篇正在 worker 队列）、失败 %d 篇；"
-        "低于门槛 %.1f 的 %d 篇（正文保底 %d 条：近线带补足 %d 条、余 %d 条待附录补位）；分布 %s",
-        report_date, len(stored), n_inline, inline_pending, len(score_failed),
-        min_score, below_threshold, min_items, len(backfilled), len(near_band), histogram,
-    )
+    probe = near_band[:max(0, min_items - prior_body)] if min_items else []
+    qualified_ids = {it.candidate.id for it in usable}
 
     set_progress("selecting", "同事件去重与择优排序…")
-    deduped = await dedup_clusters(usable, cfg, usage_username=triggered_by)
-    logger.info("日报[%s]：去重后 %d 条（评分后 %d）", report_date, len(deduped), len(usable))
+    deduped_all = await dedup_clusters(usable + probe, cfg, usage_username=triggered_by)
+    core = [
+        it for it in deduped_all
+        if it.candidate.id in qualified_ids
+        or any(merged_id in qualified_ids for merged_id in it.merged_ids)
+    ]
+    core_ids = {it.candidate.id for it in core}
+    near_survivors = sorted(
+        (it for it in deduped_all if it.candidate.id not in core_ids),
+        key=_effective_score, reverse=True,
+    )
+    deficit = max(0, min_items - prior_body - len(core)) if min_items else 0
+    backfilled: List[ScoredItem] = near_survivors[:deficit]
+    deduped = core + backfilled
+    consumed_ids = {it.candidate.id for it in deduped}
+    for it in deduped:
+        consumed_ids.update(it.merged_ids)
+    near_band = [it for it in near_band if it.candidate.id not in consumed_ids]
+    logger.info(
+        "日报[%s]：去重后 %d 条合格稿（评分后 %d，当日已有正文 %d）；正文保底 %d 条：近线带补足 %d 条、"
+        "余 %d 条待附录补位",
+        report_date, len(core), len(usable), prior_body, min_items, len(backfilled), len(near_band),
+    )
     # 扩选池(v3.35):跨天查重会剔条,旧流程剔完不回补——热点连报日成品远少于 top_n。
     # 现按 top_n+buffer 预选,查重幸存者再裁回 top_n:回补条目天然也过了跨天检查。
     select_buffer = max(3, top_n // 3)
@@ -1536,9 +1568,10 @@ async def generate_daily_brief(
     if len(survivors) > len(selected):
         logger.info("日报[%s]：查重幸存 %d 条，按有效分裁回 %d 条", report_date, len(survivors), len(selected))
     # 附录补位(v3.49.1):正文没填满 top_n 时,近线带余下条目按分数以标题+链接填进附录,
-    # 只填空出的槽位——忙日正文满员则一条不加,附录不因软阈值变成近线条目的倾倒场。
+    # 只填空出的槽位(扣掉当日已有正文)——忙日正文满员则一条不加,同日重跑也不会一轮轮
+    # 把附录堆成近线条目的倾倒场。
     selected_ids = {it.candidate.id for it in selected}
-    appendix_slots = max(0, top_n - len(selected))
+    appendix_slots = max(0, top_n - len(selected) - prior_body)
     near_miss_appendix = [
         it.candidate for it in near_band if it.candidate.id not in selected_ids
     ][:appendix_slots]
@@ -1550,8 +1583,6 @@ async def generate_daily_brief(
     backfilled_in_brief = sum(1 for it in selected if it.candidate.id in backfilled_ids)
 
     # 同日重跑合并:当日已有日报 → 新旧条目合并重排,不再整篇覆盖丢早间条目
-    with Session(engine) as session:
-        prior_state = load_existing_brief_state(session, report_date)
     if prior_state is not None:
         prior_items, prior_title_only = prior_state
         logger.info("日报[%s]：当日已有日报（%d 条），执行增量合并", report_date, len(prior_items))
