@@ -25,6 +25,11 @@ from models.analysis_contracts import (
     DigestArticleCandidateDTO,
     DigestGenerationReason,
     InterestStance,
+    PERSONAL_DIGEST_BREAKING_MAX_ITEMS,
+    PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT,
+    PERSONAL_DIGEST_BREAKING_MIN_SCORE,
+    PERSONAL_DIGEST_BREAKING_SUPPRESS_EDITIONS,
+    PERSONAL_DIGEST_BREAKING_WINDOW_HOURS,
     PERSONAL_DIGEST_FALLBACK_WINDOW_HOURS,
     PERSONAL_DIGEST_LATEST_FALLBACK_LIMIT,
     PERSONAL_DIGEST_WINDOW_HOURS,
@@ -56,11 +61,14 @@ from services.article_display_tags import load_display_tags
 from services.article_time import in_time_window
 from services.collection_nodes import is_public_podcast_source
 from services.digest_selection import (
+    BREAKING_SECTION,
+    BreakingSelectionPolicy,
     DigestSelectionPolicy,
     section_for_genre,
+    select_breaking_events,
     select_digest_articles,
 )
-from services.source_naming import friendly_source_name
+from services.source_naming import friendly_source_name, source_role
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -71,6 +79,9 @@ GENERATION_LEASE_SECONDS = 300
 PUBLIC_DAILY_BRIEF_SOURCE_ID = "dorami_daily_brief"
 DAILY_BRIEF_ENABLED_KEY = "daily_brief_enabled"
 PERSONAL_DIGEST_ENABLED_KEY = "personal_digest_enabled"
+# 「重大事件」通道旋钮(v3.50):阈值与条数存 KV,0 条 = 关闭通道;窗口/印证来源数是常量。
+BREAKING_MIN_SCORE_KEY = "personal_digest_breaking_min_score"
+BREAKING_MAX_ITEMS_KEY = "personal_digest_breaking_max_items"
 REBUILD_REASON_VALUES = frozenset({
     DigestGenerationReason.INTEREST_CHANGED.value,
     DigestGenerationReason.SUBSCRIPTION_CHANGED.value,
@@ -152,6 +163,34 @@ def _setting_enabled(session: Session, key: str) -> bool:
     return bool(
         row and str(row.value or "").strip().casefold() in {"1", "true", "yes", "on"}
     )
+
+
+def _setting_value(session: Session, key: str) -> str | None:
+    record = session.get(AppSettingRecord, key)
+    if record is None:
+        return None
+    value = str(record.value or "").strip()
+    return value or None
+
+
+def breaking_policy(session: Session) -> BreakingSelectionPolicy:
+    """Read the breaking-lane knobs from KV; bad/missing values fall back to defaults."""
+
+    min_score = PERSONAL_DIGEST_BREAKING_MIN_SCORE
+    max_items = PERSONAL_DIGEST_BREAKING_MAX_ITEMS
+    raw_score = _setting_value(session, BREAKING_MIN_SCORE_KEY)
+    if raw_score is not None:
+        try:
+            min_score = min(10.0, max(0.0, float(raw_score)))
+        except ValueError:
+            pass
+    raw_items = _setting_value(session, BREAKING_MAX_ITEMS_KEY)
+    if raw_items is not None:
+        try:
+            max_items = min(PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT, max(0, int(float(raw_items))))
+        except ValueError:
+            pass
+    return BreakingSelectionPolicy(min_score=min_score, max_items=max_items)
 
 
 def _explicit_subscription_source_ids(subscription: ReaderSubscriptionRecord) -> set[str]:
@@ -676,6 +715,102 @@ def _topic_codes_by_article(
     }
 
 
+def _query_candidate_rows(
+    session: Session,
+    *,
+    source_ids: Sequence[str] | None,
+    cutoff_at: dt.datetime,
+    window_hours: int,
+    require_tagging_complete: bool,
+    min_score: float | None = None,
+) -> list[tuple[ArticleRecord, ArticleAnalysisRecord]]:
+    """Shared window query.  ``source_ids=None`` means every non-private source."""
+
+    cutoff = _as_shanghai(cutoff_at)
+    since = cutoff - dt.timedelta(hours=window_hours)
+    # Coarse padded date guard keeps the query bounded without trusting mixed
+    # timestamp strings for the final instant comparison.
+    coarse_start = (since - dt.timedelta(days=1)).date().isoformat()
+    coarse_end = (cutoff + dt.timedelta(days=1)).date().isoformat()
+    query = (
+        select(ArticleRecord, ArticleAnalysisRecord)
+        .join(ArticleAnalysisRecord, ArticleAnalysisRecord.article_id == ArticleRecord.id)
+        .where(
+            func.substr(ArticleRecord.publish_date, 1, 10) >= coarse_start,
+            func.substr(ArticleRecord.publish_date, 1, 10) <= coarse_end,
+            or_(
+                ArticleAnalysisRecord.status == AnalysisStatus.SUCCEEDED.value,
+                ArticleAnalysisRecord.analyzed_at.is_not(None),
+            ),
+            ArticleAnalysisRecord.quality_score.is_not(None),
+        )
+    )
+    if source_ids is not None:
+        query = query.where(ArticleRecord.source_id.in_(source_ids))
+    else:
+        query = query.where(
+            ArticleRecord.source_id.is_not(None),
+            ArticleRecord.source_id.not_like(f"{PRIVATE_SOURCE_PREFIX}%"),
+            ArticleRecord.source_id != PUBLIC_DAILY_BRIEF_SOURCE_ID,
+        )
+    if min_score is not None:
+        query = query.where(ArticleAnalysisRecord.quality_score >= min_score)
+    if require_tagging_complete:
+        query = query.where(
+            ArticleAnalysisRecord.tagging_status.in_((
+                TaggingStatus.SUCCEEDED.value,
+                TaggingStatus.PARTIAL.value,
+            ))
+        )
+    return [
+        row for row in session.exec(query).all()
+        if in_time_window(row[0].publish_date, start=since, end=cutoff)
+    ]
+
+
+def _source_role_and_shape(
+    session: Session, source_ids: Iterable[str]
+) -> dict[str, tuple[str, str]]:
+    """source_id → (role, content_shape); config metadata first, registry second."""
+
+    wanted = sorted({sid for sid in source_ids if sid})
+    if not wanted:
+        return {}
+    configs = {
+        row.source_id: row for row in session.exec(
+            select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(wanted))
+        ).all()
+    }
+    try:
+        from fetchers.registry import fetcher_registry
+    except Exception:  # noqa: BLE001 - registry is optional for the digest
+        fetcher_registry = None  # type: ignore[assignment]
+    result: dict[str, tuple[str, str]] = {}
+    for source_id in wanted:
+        config = configs.get(source_id)
+        fetcher_class = None
+        if fetcher_registry is not None:
+            try:
+                fetcher_class = fetcher_registry.get_class(source_id)
+            except Exception:  # noqa: BLE001
+                fetcher_class = None
+        if config is not None:
+            role = source_role(
+                source_id,
+                source_scope=config.source_scope or "",
+                provenance_tier=config.provenance_tier or "",
+            )
+            source_type = str(config.source_type or "").strip().lower()
+            shape = "social" if source_type in {"x", "x_timeline"} else (
+                "podcast" if source_type in {"podcast", "podcast_rss"} else "article"
+            )
+        else:
+            role = source_role(source_id)
+            shape = str(getattr(fetcher_class, "content_shape", "article") or "article")
+        result[source_id] = (role, shape)
+    return result
+
+
 def load_digest_candidates(
     session: Session,
     source_ids: Sequence[str],
@@ -688,37 +823,52 @@ def load_digest_candidates(
 
     if not source_ids:
         return []
-    cutoff = _as_shanghai(cutoff_at)
-    since = cutoff - dt.timedelta(hours=window_hours)
-    # Coarse padded date guard keeps the query bounded without trusting mixed
-    # timestamp strings for the final instant comparison.
-    coarse_start = (since - dt.timedelta(days=1)).date().isoformat()
-    coarse_end = (cutoff + dt.timedelta(days=1)).date().isoformat()
-    query = (
-        select(ArticleRecord, ArticleAnalysisRecord)
-        .join(ArticleAnalysisRecord, ArticleAnalysisRecord.article_id == ArticleRecord.id)
-        .where(
-            ArticleRecord.source_id.in_(source_ids),
-            func.substr(ArticleRecord.publish_date, 1, 10) >= coarse_start,
-            func.substr(ArticleRecord.publish_date, 1, 10) <= coarse_end,
-            or_(
-                ArticleAnalysisRecord.status == AnalysisStatus.SUCCEEDED.value,
-                ArticleAnalysisRecord.analyzed_at.is_not(None),
-            ),
-            ArticleAnalysisRecord.quality_score.is_not(None),
-        )
+    rows = _query_candidate_rows(
+        session,
+        source_ids=source_ids,
+        cutoff_at=cutoff_at,
+        window_hours=window_hours,
+        require_tagging_complete=require_tagging_complete,
     )
-    if require_tagging_complete:
-        query = query.where(
-            ArticleAnalysisRecord.tagging_status.in_((
-                TaggingStatus.SUCCEEDED.value,
-                TaggingStatus.PARTIAL.value,
-            ))
-        )
-    rows = [
-        row for row in session.exec(query).all()
-        if in_time_window(row[0].publish_date, start=since, end=cutoff)
-    ]
+    return _candidates_from_rows(session, rows)
+
+
+def load_breaking_candidates(
+    session: Session,
+    *,
+    cutoff_at: dt.datetime,
+    window_hours: int = PERSONAL_DIGEST_BREAKING_WINDOW_HOURS,
+    min_score: float,
+    require_tagging_complete: bool = False,
+) -> list[DigestArticleCandidateDTO]:
+    """Reader-visible, cross-subscription pool for the breaking lane.
+
+    Private ``user_rss_`` sources and the public daily brief record are excluded in
+    SQL; hidden sources (reader-side takedown) are removed afterwards.  Candidates
+    carry source role/shape so the selector can prefer official, non-social
+    representatives.
+    """
+
+    rows = _query_candidate_rows(
+        session,
+        source_ids=None,
+        cutoff_at=cutoff_at,
+        window_hours=window_hours,
+        require_tagging_complete=require_tagging_complete,
+        min_score=min_score,
+    )
+    hidden = source_visibility.reader_unavailable_source_ids(session)
+    rows = [row for row in rows if row[0].source_id not in hidden]
+    meta = _source_role_and_shape(session, (article.source_id for article, _analysis in rows))
+    return _candidates_from_rows(session, rows, source_meta=meta)
+
+
+def _candidates_from_rows(
+    session: Session,
+    rows: Sequence[tuple[ArticleRecord, ArticleAnalysisRecord]],
+    *,
+    source_meta: Mapping[str, tuple[str, str]] | None = None,
+) -> list[DigestArticleCandidateDTO]:
     article_ids = [article.id for article, _analysis in rows]
     tag_codes, _tag_snapshots = _tag_maps(session, article_ids)
     primary_ids = {
@@ -741,12 +891,14 @@ def load_digest_candidates(
         ).all()
     } if article_ids else {}
     candidates: list[DigestArticleCandidateDTO] = []
+    meta = source_meta or {}
     for article, analysis in rows:
         try:
             genre = ContentGenre(analysis.content_genre or ContentGenre.OTHER.value)
         except ValueError:
             genre = ContentGenre.OTHER
         primary_code = primary_codes.get(analysis.primary_tag_id)
+        role, shape = meta.get(article.source_id, ("media", "article"))
         candidates.append(DigestArticleCandidateDTO(
             article_id=article.id,
             source_id=article.source_id,
@@ -760,6 +912,8 @@ def load_digest_candidates(
             tag_codes=tag_codes.get(article.id, ()),
             primary_tag_code=primary_code,
             duplicate_group_id=duplicate_groups.get(article.id),
+            source_role=role,
+            content_shape=shape,
         ))
     return candidates
 
@@ -817,6 +971,58 @@ def _previous_edition_article_ids(
         )
     ).all()
     return {str(article_id) for article_id in rows if article_id}
+
+
+def _previous_breaking_entities(
+    session: Session,
+    username: str,
+    report_date: str,
+    *,
+    editions: int = PERSONAL_DIGEST_BREAKING_SUPPRESS_EDITIONS,
+) -> list[frozenset[str]]:
+    """Entity code sets of breaking headlines in the reader's last N completed dates.
+
+    Suppression works by shared entity, so a three-day launch (post → rollout →
+    long-form) tops the digest once instead of every morning.
+    """
+
+    if editions <= 0:
+        return []
+    rows = session.exec(
+        select(PersonalDigestEditionRecord).where(
+            PersonalDigestEditionRecord.owner_username == username,
+            PersonalDigestEditionRecord.report_date < report_date,
+            PersonalDigestEditionRecord.status.in_((
+                PersonalDigestStatus.READY.value,
+                PersonalDigestStatus.DEGRADED.value,
+            )),
+        ).order_by(
+            PersonalDigestEditionRecord.report_date.desc(),
+            PersonalDigestEditionRecord.revision.desc(),
+        )
+    ).all()
+    chosen: dict[str, int] = {}
+    for edition in rows:
+        if edition.id is None or edition.report_date in chosen:
+            continue
+        chosen[edition.report_date] = edition.id
+        if len(chosen) >= editions:
+            break
+    if not chosen:
+        return []
+    items = session.exec(
+        select(PersonalDigestItemRecord).where(
+            PersonalDigestItemRecord.edition_id.in_(list(chosen.values())),
+            PersonalDigestItemRecord.selection_lane == SelectionLane.BREAKING.value,
+        )
+    ).all()
+    result: list[frozenset[str]] = []
+    for item in items:
+        features = _json_mapping(item.ranking_features_json)
+        codes = features.get("event_entity_codes")
+        if isinstance(codes, list) and codes:
+            result.append(frozenset(str(code) for code in codes))
+    return result
 
 
 def _items_for_edition(
@@ -1542,6 +1748,36 @@ def generate_personal_digest(
             source_display_names=source_display_names,
         )
 
+    # 「重大事件」通道(v3.50):跨订阅范围的头条位,额外于 target 之上。空订阅早已在
+    # 上方返回,所以这里永远是「在已有早报之上加头条」,不是「无订阅也出报」。
+    breaking_selections: list = []
+    breaking_policy_value = breaking_policy(session)
+    if breaking_policy_value.max_items > 0:
+        breaking_candidates = load_breaking_candidates(
+            session,
+            cutoff_at=current,
+            window_hours=PERSONAL_DIGEST_BREAKING_WINDOW_HOURS,
+            min_score=breaking_policy_value.min_score - breaking_policy_value.corroboration_slack,
+            require_tagging_complete=has_mutes,
+        )
+        if breaking_candidates:
+            breaking_selections = select_breaking_events(
+                breaking_candidates,
+                interests,
+                policy=breaking_policy_value,
+                previous_breaking_entities=_previous_breaking_entities(
+                    session, username, report_date
+                ),
+                excluded_article_ids=previous_article_ids.union(
+                    selection.article_id for selection in selections
+                ),
+                subscribed_source_ids=scope.expected_source_ids,
+                source_display_names=_source_display_names(
+                    session,
+                    sorted({candidate.source_id for candidate in breaking_candidates}),
+                ),
+            )
+
     generated_at = current.isoformat()
     first_open = _as_shanghai(first_open_at) if first_open_at else None
     report_day = dt.date.fromisoformat(report_date)
@@ -1668,6 +1904,66 @@ def generate_personal_digest(
             session.flush()
 
     item_records: list[PersonalDigestItemRecord] = []
+    if breaking_selections:
+        breaking_ids = [selection.article_id for selection in breaking_selections]
+        breaking_articles = {
+            row.id: row for row in session.exec(
+                select(ArticleRecord).where(ArticleRecord.id.in_(breaking_ids))
+            ).all()
+        }
+        breaking_analyses = {
+            row.article_id: row for row in session.exec(
+                select(ArticleAnalysisRecord).where(ArticleAnalysisRecord.article_id.in_(breaking_ids))
+            ).all()
+        }
+        _b_codes, breaking_tag_snapshots = _tag_maps(session, breaking_ids)
+        breaking_display_tags = load_display_tags(
+            session,
+            breaking_ids,
+            analyses=breaking_analyses,
+            canonical_tags=breaking_tag_snapshots,
+        )
+        breaking_names = _source_display_names(
+            session,
+            sorted({article.source_id for article in breaking_articles.values()}),
+        )
+        for selection in breaking_selections:
+            article = breaking_articles.get(selection.article_id)
+            analysis = breaking_analyses.get(selection.article_id)
+            if article is None or analysis is None:
+                continue
+            record = PersonalDigestItemRecord(
+                edition_id=edition.id,
+                article_id=article.id,
+                position=len(item_records),
+                section=BREAKING_SECTION,
+                selection_lane=SelectionLane.BREAKING.value,
+                quality_score_snapshot=analysis.quality_score,
+                matched_interest_codes_json="[]",
+                ranking_features_json=_json({
+                    "policy_version": POLICY_VERSION,
+                    "breaking": {
+                        "basis": selection.breaking_basis,
+                        "source_count": selection.breaking_source_count,
+                        "subscribed": article.source_id in set(scope.expected_source_ids),
+                    },
+                    "event_entity_codes": list(selection.event_entity_codes),
+                }),
+                coverage_adjustments_json="[]",
+                selection_reason=selection.selection_reason,
+                snapshot_json=_json(_snapshot(
+                    article,
+                    analysis,
+                    breaking_tag_snapshots.get(article.id, []),
+                    source_name=breaking_names.get(article.source_id, article.source_id),
+                    display_tags=breaking_display_tags.get(article.id, []),
+                    selection_reason=selection.selection_reason,
+                    degraded=False,
+                )),
+                created_at=generated_at,
+            )
+            session.add(record)
+            item_records.append(record)
     if selections:
         selection_by_id = {selection.article_id: selection for selection in selections}
         article_ids = list(selection_by_id)
@@ -1688,7 +1984,7 @@ def generate_personal_digest(
             analyses=analyses,
             canonical_tags=tag_snapshots,
         )
-        for position, selection in enumerate(selections):
+        for position, selection in enumerate(selections, start=len(item_records)):
             article = articles.get(selection.article_id)
             analysis = analyses.get(selection.article_id)
             if article is None or analysis is None:
@@ -1729,7 +2025,9 @@ def generate_personal_digest(
             item.tag_code for item in interests
             if getattr(item.stance, "value", item.stance) == InterestStance.FOLLOW.value
         }
-        for position, (article, analysis, codes, tags, display_tags) in enumerate(latest):
+        for position, (article, analysis, codes, tags, display_tags) in enumerate(
+            latest, start=len(item_records)
+        ):
             matched_codes = tuple(sorted(followed_codes.intersection(codes)))
             lane = (
                 SelectionLane.INTEREST.value
@@ -1803,7 +2101,11 @@ def generate_personal_digest(
 
 
 __all__ = [
+    "BREAKING_MAX_ITEMS_KEY",
+    "BREAKING_MIN_SCORE_KEY",
     "FrozenDigestScope",
+    "breaking_policy",
+    "load_breaking_candidates",
     "PersonalDigestGenerationResult",
     "calculate_due_source_ids",
     "freeze_personal_digest_scope",

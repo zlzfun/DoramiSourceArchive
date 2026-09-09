@@ -18,6 +18,11 @@ from models.analysis_contracts import (
     DigestArticleCandidateDTO,
     DigestSelectionDTO,
     InterestStance,
+    PERSONAL_DIGEST_BREAKING_CORROBORATION_SLACK,
+    PERSONAL_DIGEST_BREAKING_CORROBORATION_SOURCES,
+    PERSONAL_DIGEST_BREAKING_MAX_ITEMS,
+    PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT,
+    PERSONAL_DIGEST_BREAKING_MIN_SCORE,
     PERSONAL_DIGEST_INTEREST_MAX_RATIO,
     PERSONAL_DIGEST_MIN_QUALITY_SCORE,
     PERSONAL_DIGEST_TARGET_ITEMS,
@@ -385,9 +390,205 @@ def select_digest_articles(
     return result
 
 
+# ── 「重大事件」通道(v3.50,issue #33 §2)──
+# 与兴趣/分数两通道并列的第三条通道,但语义不同:它不看订阅范围,只回答「今天有没有
+# 对所有读者都是头条的事」。准入全是机械层,不靠 LLM 自觉:
+#   ① 官方一手:source_role == official 且 分数 ≥ T;
+#   ② 多源印证:同一事件下 ≥ N 个不同来源 ≥ T − slack,且至少一条 ≥ T。
+# 同事件按 entity.* 标签连通分量归并(生产实证:DuplicateGroup 从未写入、URL/标题键
+# 分不出 4 条 X·OpenAI 推文是同一件事);无实体标签的候选回落 _event_key。每事件只
+# 出一条代表:官方 > 非社交形态 > 分数 > 发布更早。同实体前几期已上过头条即抑制。
+
+ENTITY_TAG_PREFIX = "entity."
+BREAKING_SECTION = "重大事件"
+BREAKING_BASIS_OFFICIAL = "official"
+BREAKING_BASIS_CORROBORATED = "corroborated"
+
+
+@dataclass(frozen=True)
+class BreakingSelectionPolicy:
+    min_score: float = PERSONAL_DIGEST_BREAKING_MIN_SCORE
+    max_items: int = PERSONAL_DIGEST_BREAKING_MAX_ITEMS
+    corroboration_sources: int = PERSONAL_DIGEST_BREAKING_CORROBORATION_SOURCES
+    corroboration_slack: float = PERSONAL_DIGEST_BREAKING_CORROBORATION_SLACK
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.min_score <= 10.0:
+            raise ValueError("min_score 必须在 0～10 之间")
+        if not 0 <= self.max_items <= PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT:
+            raise ValueError(f"max_items 必须在 0～{PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT} 之间")
+        if self.corroboration_sources < 2:
+            raise ValueError("corroboration_sources 至少为 2,单源不构成印证")
+        if self.corroboration_slack < 0:
+            raise ValueError("corroboration_slack 不能为负数")
+
+
+@dataclass(frozen=True)
+class _BreakingEvent:
+    members: tuple[DigestArticleCandidateDTO, ...]
+    entity_codes: frozenset[str]
+    basis: str
+    representative: DigestArticleCandidateDTO
+
+    @property
+    def top_score(self) -> float:
+        return max(item.quality_score for item in self.members)
+
+    @property
+    def source_count(self) -> int:
+        return len({item.source_id for item in self.members})
+
+
+def _entity_codes(candidate: DigestArticleCandidateDTO) -> frozenset[str]:
+    return frozenset(code for code in candidate.tag_codes if code.startswith(ENTITY_TAG_PREFIX))
+
+
+def _group_breaking_events(
+    rows: Sequence[DigestArticleCandidateDTO],
+) -> list[list[DigestArticleCandidateDTO]]:
+    """Union-find over shared entity codes; entity-less rows fall back to _event_key."""
+
+    parent: dict[str, str] = {}
+
+    def find(key: str) -> str:
+        while parent.setdefault(key, key) != key:
+            parent[key] = parent[parent[key]]
+            key = parent[key]
+        return key
+
+    def union(left: str, right: str) -> None:
+        parent[find(left)] = find(right)
+
+    for candidate in rows:
+        node = f"article:{candidate.article_id}"
+        find(node)
+        entities = _entity_codes(candidate)
+        if entities:
+            for code in entities:
+                union(node, f"entity:{code}")
+        else:
+            union(node, f"event:{_event_key(candidate)}")
+    groups: dict[str, list[DigestArticleCandidateDTO]] = {}
+    for candidate in rows:
+        groups.setdefault(find(f"article:{candidate.article_id}"), []).append(candidate)
+    # Deterministic order: by the smallest article_id inside each component.
+    return sorted(groups.values(), key=lambda members: min(item.article_id for item in members))
+
+
+def _representative_key(candidate: DigestArticleCandidateDTO) -> tuple[object, ...]:
+    return (
+        candidate.source_role != "official",
+        candidate.content_shape == "social",
+        -candidate.quality_score,
+        _published_timestamp(candidate.publish_date),
+        candidate.article_id,
+    )
+
+
+def _breaking_reason(
+    event: _BreakingEvent,
+    *,
+    subscribed: set[str],
+    source_display_names: Mapping[str, str],
+) -> str:
+    representative = event.representative
+    name = source_display_names.get(representative.source_id, representative.source_id)
+    tail = "。" if representative.source_id in subscribed else "，不在你的订阅内也为你保留。"
+    if event.basis == BREAKING_BASIS_OFFICIAL:
+        return f"今日重大事件 · 「{name}」官方一手发布{tail}"
+    return f"今日重大事件 · {event.source_count} 家来源同时报道，代表来源「{name}」{tail}"
+
+
+def select_breaking_events(
+    candidates: Iterable[DigestArticleCandidateDTO],
+    interests: Iterable[UserInterestDTO] = (),
+    *,
+    policy: BreakingSelectionPolicy | None = None,
+    previous_breaking_entities: Iterable[Iterable[str]] = (),
+    excluded_article_ids: Iterable[str] = (),
+    subscribed_source_ids: Iterable[str] = (),
+    source_display_names: Mapping[str, str] | None = None,
+) -> list[DigestSelectionDTO]:
+    """Pick at most ``policy.max_items`` cross-subscription headline events.
+
+    Candidates are expected to span every reader-visible source (the caller applies
+    hidden/private-source filtering).  Mute stays a hard exclusion; already-used
+    article ids are skipped; an event sharing any entity with a recent breaking
+    headline of the same reader is suppressed.  Deterministic for equal input.
+    """
+
+    policy = policy or BreakingSelectionPolicy()
+    if policy.max_items <= 0:
+        return []
+    muted, _followed = _interest_maps(interests)
+    excluded = set(excluded_article_ids)
+    subscribed = set(subscribed_source_ids)
+    floor = policy.min_score - policy.corroboration_slack
+    eligible = [
+        candidate for candidate in candidates
+        if candidate.article_id not in excluded
+        and candidate.quality_score >= floor - 1e-9
+        and not muted.intersection(candidate.tag_codes)
+    ]
+    if not eligible:
+        return []
+    previous = [frozenset(codes) for codes in previous_breaking_entities]
+    events: list[_BreakingEvent] = []
+    for members in _group_breaking_events(eligible):
+        top = max(item.quality_score for item in members)
+        official_hit = any(
+            item.source_role == "official" and item.quality_score >= policy.min_score - 1e-9
+            for item in members
+        )
+        source_count = len({item.source_id for item in members})
+        corroborated = (
+            source_count >= policy.corroboration_sources
+            and top >= policy.min_score - 1e-9
+        )
+        if official_hit:
+            basis = BREAKING_BASIS_OFFICIAL
+        elif corroborated:
+            basis = BREAKING_BASIS_CORROBORATED
+        else:
+            continue
+        entity_codes = frozenset().union(*(_entity_codes(item) for item in members))
+        if entity_codes and any(entity_codes & seen for seen in previous):
+            continue
+        events.append(_BreakingEvent(
+            members=tuple(members),
+            entity_codes=entity_codes,
+            basis=basis,
+            representative=min(members, key=_representative_key),
+        ))
+    events.sort(key=lambda event: (
+        -event.top_score,
+        event.basis != BREAKING_BASIS_OFFICIAL,
+        event.representative.article_id,
+    ))
+    names = source_display_names or {}
+    return [
+        DigestSelectionDTO(
+            article_id=event.representative.article_id,
+            lane=SelectionLane.BREAKING,
+            matched_interest_codes=(),
+            selection_reason=_breaking_reason(
+                event, subscribed=subscribed, source_display_names=names
+            ),
+            coverage_adjustments=(),
+            breaking_basis=event.basis,
+            breaking_source_count=event.source_count,
+            event_entity_codes=tuple(sorted(event.entity_codes)),
+        )
+        for event in events[: policy.max_items]
+    ]
+
+
 __all__ = [
+    "BREAKING_SECTION",
+    "BreakingSelectionPolicy",
     "DigestSelectionPolicy",
     "GENRE_SECTIONS",
     "section_for_genre",
+    "select_breaking_events",
     "select_digest_articles",
 ]
