@@ -122,11 +122,19 @@ export default function DiscoverPage({
   // ── 用户自定源(v3.40):总闸开且传入添加动作时,头部出现「添加源」入口 ──
   userSourcesEnabled = false,
   onAddCustomSource = null,
+  // ── 兴趣段(issue #27 三稿):发现页第三段「源 · 合集 · 兴趣」——挑源、挑合集、挑标签都是「挑」,
+  //    同一个目录页;读东西全在容器。段位受控(tab/onTabChange):首登引导与「我的」入口要能直落兴趣段。
+  //    interestsPanel 由上层传入(InterestPage embedded),为 null 时不出第三段。 ──
+  tab: controlledTab = null,
+  onTabChange = null,
+  interestsPanel = null,
 }) {
-  const [tab, setTab] = useState('sources'); // sources | collections
+  const [localTab, setLocalTab] = useState('sources'); // sources | collections | interests
+  const tab = controlledTab ?? localTab;
+  const setTab = (next) => { setLocalTab(next); onTabChange?.(next); };
   const [addOpen, setAddOpen] = useState(false); // 添加自定源浮层
   const [shape, setShape] = useState('all');   // all | article | bulletin | social | podcast
-  const activeTab = tab;
+  const activeTab = interestsPanel || tab !== 'interests' ? tab : 'sources';
   const activeShape = shape;
   const [query, setQuery] = useState('');
   // 排序小开关:默认(收录量降序,原有秩序)⇄ 订阅降序(全站订阅人数,选源社会证明)
@@ -288,13 +296,15 @@ export default function DiscoverPage({
                 <span className="reader-disc-hint">
                   {activeTab === 'collections'
                     ? '按主题策展的来源合集,一键整组订阅'
-                    : '浏览全站收录的来源,一键订阅到你的阅读器'}
+                    : activeTab === 'interests'
+                      ? '感兴趣的方向会把全站相关文章带进阅读器,并在早报里优先呈现;屏蔽的不再出现'
+                      : '浏览全站收录的来源,一键订阅到你的阅读器'}
                 </span>
               </div>
               <div className="reader-disc-tools">
                 {/* 目录视图切换:平铺源目录 ⇄ 策展合集 */}
                 <span className="reader-seg reader-disc-viewseg" role="group" aria-label="目录视图">
-                  {[['sources', '源'], ['collections', '合集']].map(([key, label]) => (
+                  {[['sources', '源'], ['collections', '合集'], ...(interestsPanel ? [['interests', '兴趣']] : [])].map(([key, label]) => (
                     <button
                       key={key}
                       type="button"
@@ -305,6 +315,8 @@ export default function DiscoverPage({
                     </button>
                   ))}
                 </span>
+                {/* 兴趣段自带标签搜索(InterestPage 内),头部搜索框让位 */}
+                {activeTab !== 'interests' && (
                 <label className="reader-disc-search">
                   <Search className="h-[13px] w-[13px]" aria-hidden="true" />
                   <input
@@ -315,6 +327,7 @@ export default function DiscoverPage({
                     aria-label={activeTab === 'collections' ? '筛选合集' : '筛选来源'}
                   />
                 </label>
+                )}
                 {activeTab === 'sources' && (
                   <>
                     {userSourcesEnabled && onAddCustomSource && (
@@ -362,7 +375,10 @@ export default function DiscoverPage({
 
       <div className="reader-disc-scroll">
         <div className="reader-disc-body">
-          {loading ? (
+          {activeTab === 'interests' ? (
+            /* ── 兴趣段:InterestPage(embedded)——我的关注 chip 行 + 三面目录卡,点击即保存 ── */
+            <div className="reader-disc-interests">{interestsPanel}</div>
+          ) : loading ? (
             <div className="reader-disc-empty">目录加载中…</div>
           ) : inDetail ? (
             /* ── 合集详情:成员源卡网格(与源视图同一张卡,单源仍可独立订阅/预览) ── */

@@ -25,6 +25,9 @@
   ini 两节/HTTPS 两趟部署(certbot certonly 而非 --nginx)/全新服务器与迁移。
 - ◉ [engage-sync-wave-plan.md](./engage-sync-wave-plan.md) — v3.18 互通波设计:读者反馈收件箱/
   管理员公告横幅(逐用户一次性 dismiss)/远程内容同步(接收方拉取,复用归档同步契约)。
+- ◉ [interest-lens-wave-plan.md](./interest-lens-wave-plan.md) — 兴趣即透镜波(v3.52.0 已实现,issue #27
+  第一波,含四稿设计取舍与宏观拍板):左栏改三谓词过滤面板(订阅 / 兴趣 / 收藏 多选 AND,全关 = 全站),
+  列头回显激活集,命中胶囊 / 屏蔽折叠行 / 订阅外就地订阅,兴趣编辑面并入发现页第三段;后续候选清单。
 - ◉ [source-collections-wave-plan.md](./source-collections-wave-plan.md) — 源合集波(v3.38.0 已实现,
   含实施记录):发现页策展合集(「源 ⇄ 合集」seg + 合集卡/详情 + 一键批量订阅);定调=目录呈现层
   批量动作而非订阅实体,代码注册表策展,交付链路零感知。首发五枚:HN 博客 2025/前沿实验室官方/
@@ -103,6 +106,10 @@
 
 静默仪器各工作区改造时的 HTML 设计样页(`dorami-*-quiet.html`),`index.css` 注释以
 「刻度 1:1 取自」引用之;阅读器/设置柜/发现页的后续样页在 Claude Artifact(见各波记录)。
+`dorami-interest-axis-quiet.html`(v3.52 兴趣即透镜波,issue #27;**五稿,现行**):左栏一根轴「订阅 | 兴趣」/
+标签行 / 列头收藏星 / 单标签视图 / 空态 / 移动抽屉,顶部一张与四稿的差异表。
+`dorami-interest-lens-quiet.html`(同波四稿,含一稿「关注动态 + 主题流」、二稿「源栏兴趣组」、三稿「作用域推翻」
+三次被否的注记;四稿三谓词面板实现后因「选源后订阅开关空转」被五稿取代):列头回显 / 折叠行 / 发现页兴趣段 / 移动壳。
 `dorami-onboarding-quiet.html`(v3.45 阅读器可发现性波,issue #9):视图轨微标签 / 轨底改制 /
 标题下动作行三提案并排(A 现状 / B 微标签 / C 完整态 / D 管理台导轨),可点试两击退出与译文二段。
 `dorami-brief-quiet.html`(issue #23 第一项,我的早报卡片式日报):日期栏 + 报纸面(报头 / 分节卡片网格 /

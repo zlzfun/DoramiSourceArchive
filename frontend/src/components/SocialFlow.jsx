@@ -282,6 +282,7 @@ export default function SocialFlow({
   favTogglingId,
   onToggleFavorite,
   favOnly = false,
+  onToggleFavOnly,
   searchOpen = false,
   searchInput = '',
   searchQuery = '',
@@ -371,6 +372,19 @@ export default function SocialFlow({
                   : <CheckCheck className="h-4 w-4" />}
               </button>
             </>
+          )}
+          {/* 收藏星(issue #27 五稿):与文章列头同一枚;收藏过滤开着时也要能点回来,故不进上面的守卫 */}
+          {!searchOpen && onToggleFavOnly && (
+            <button
+              type="button"
+              className={`reader-unread-icon reader-fav-toggle ${favOnly ? 'is-on' : ''}`}
+              aria-pressed={favOnly}
+              aria-label={favOnly ? '取消只看收藏' : '只看收藏'}
+              title={favOnly ? '取消只看收藏' : '只看收藏'}
+              onClick={() => onToggleFavOnly()}
+            >
+              <Star className="h-4 w-4" fill={favOnly ? 'currentColor' : 'none'} />
+            </button>
           )}
           {searchOpen && (
             <div className="reader-search-inline reader-social-search">

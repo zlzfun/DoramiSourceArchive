@@ -183,18 +183,16 @@ def drop_cursor(session: Session, *, username: str, source_id: str) -> None:
 
 # ==================== 未读统计 / 过滤 ====================
 
-def _unread_condition(cursors: Dict[str, str], username: str):
+def _unread_condition(cursors: Dict[str, str], username: str, *, include_uncursored: bool = False):
     """构造未读 SQL 条件（显式覆盖优先，水位兜底）：
     （任一源命中 fetched_date > 水位 ∧ 无显式已读行）∨（订阅源内有显式未读行）。
 
-    cursors 为空时返回 None（调用方按空集处理）。
+    include_uncursored(issue #27 三谓词面板,订阅谓词关掉的全站范围):无水位的源没有
+    「到货序」可言,按逐篇读态判定——没读过即未读。此时 cursors 为空也不返回 None。
+    cursors 为空且不含无水位源时返回 None（调用方按空集处理）。
     """
-    if not cursors:
+    if not cursors and not include_uncursored:
         return None
-    per_source = [
-        and_(ArticleRecord.source_id == sid, ArticleRecord.fetched_date > wm)
-        for sid, wm in cursors.items()
-    ]
     read_sub = select(ReaderArticleReadStateRecord.article_id).where(
         ReaderArticleReadStateRecord.owner_username == username,
         ReaderArticleReadStateRecord.is_read == True,  # noqa: E712
@@ -203,13 +201,23 @@ def _unread_condition(cursors: Dict[str, str], username: str):
         ReaderArticleReadStateRecord.owner_username == username,
         ReaderArticleReadStateRecord.is_read == False,  # noqa: E712
     )
-    return or_(
-        and_(or_(*per_source), ArticleRecord.id.not_in(read_sub)),
-        and_(
+    branches = []
+    if cursors:
+        per_source = [
+            and_(ArticleRecord.source_id == sid, ArticleRecord.fetched_date > wm)
+            for sid, wm in cursors.items()
+        ]
+        branches.append(and_(or_(*per_source), ArticleRecord.id.not_in(read_sub)))
+        branches.append(and_(
             ArticleRecord.source_id.in_(list(cursors.keys())),
             ArticleRecord.id.in_(unread_sub),
-        ),
-    )
+        ))
+    if include_uncursored:
+        uncursored = ArticleRecord.id.not_in(read_sub)
+        if cursors:
+            uncursored = and_(ArticleRecord.source_id.not_in(list(cursors.keys())), uncursored)
+        branches.append(uncursored)
+    return or_(*branches) if len(branches) > 1 else branches[0]
 
 
 def unread_counts(
@@ -236,19 +244,24 @@ def unread_counts(
 
 
 def unread_filter_condition(
-    session: Session, *, username: str, source_ids: Sequence[str]
+    session: Session, *, username: str, source_ids: Sequence[str], include_uncursored: bool = False
 ):
-    """给 GET /api/articles?unread_only=true 用的查询条件；无可判定源时返回 None。"""
+    """给 GET /api/articles?unread_only=true 用的查询条件；无可判定源时返回 None。
+
+    include_uncursored:订阅谓词关掉(全站范围)时,给定源之外的文章按逐篇读态判定。
+    """
     username = (username or "").strip()
-    if not username or not source_ids:
+    if not username:
         return None
-    cursors = ensure_cursors(session, username=username, source_ids=source_ids)
+    if not source_ids and not include_uncursored:
+        return None
+    cursors = ensure_cursors(session, username=username, source_ids=source_ids) if source_ids else {}
     cursors = {sid: wm for sid, wm in cursors.items() if sid in set(source_ids)}
-    return _unread_condition(cursors, username)
+    return _unread_condition(cursors, username, include_uncursored=include_uncursored)
 
 
 def unread_ids_among(
-    session: Session, *, username: str, records: Sequence[ArticleRecord]
+    session: Session, *, username: str, records: Sequence[ArticleRecord], include_uncursored: bool = False
 ) -> Set[str]:
     """页级未读标记：给定文章记录集合，返回其中未读的 ID 子集。
 
@@ -256,6 +269,10 @@ def unread_ids_among(
     只读现有水位行、不懒初始化（避免任意浏览路径写库）；无水位且无显式行的源
     视为无未读，与 unread_counts 的口径由「阅读器挂载即拉一次 unread-counts
     （会补水位）」对齐。
+
+    include_uncursored:与 ``unread_filter_condition`` 同一把尺子——全站范围(兴趣轴)里无水位的源
+    按逐篇读态判定,没读过即未读。过滤与标注必须同口径,否则「只看未读」列表会把订阅外条目画成已读
+    (codex 检视 P1)。
     """
     username = (username or "").strip()
     if not username or not records:
@@ -272,7 +289,10 @@ def unread_ids_among(
                 unread.add(r.id)
             continue
         wm = cursors.get(r.source_id)
-        if wm is not None and (r.fetched_date or "") > wm:
+        if wm is None:
+            if include_uncursored:
+                unread.add(r.id)
+        elif (r.fetched_date or "") > wm:
             unread.add(r.id)
     return unread
 

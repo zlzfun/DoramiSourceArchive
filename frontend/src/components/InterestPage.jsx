@@ -84,7 +84,6 @@ function TagCard({ tag, stance, onToggle, onMute, compact = false }) {
           <span className="interest-card-name">{tag.name_zh}</span>
           <span className="interest-card-desc">{tag.description}</span>
         </span>
-        <span className="interest-card-heat">{tag.heat_30d ?? 0}</span>
         {banBtn}
       </div>
     );
@@ -95,7 +94,6 @@ function TagCard({ tag, stance, onToggle, onMute, compact = false }) {
       <span className="interest-card-desc">{tag.description}</span>
       <span className="interest-card-foot">
         {kindLabel && <span className="interest-card-kind">{kindLabel}</span>}
-        <span className="interest-card-heat">{tag.heat_30d ?? 0} 篇<small>/ 30 天</small></span>
         {banBtn}
       </span>
     </div>
@@ -114,6 +112,9 @@ const enqueueSave = (task) => {
 export default function InterestPage({
   mobile = false,
   onboarding = false,
+  // embedded(issue #27 三稿):作为发现页第三段「兴趣」的正文——不画报头与左槽台账,
+  // 「我的关注」改成目录之上的一行 chip;首登引导 = 顶部一条横幅(不锁页)
+  embedded = false,
   onSaved,
   showToast,
 }) {
@@ -311,7 +312,7 @@ export default function InterestPage({
   // 主语、同从视图轨下半区进入、同占源栏槽位 + 整幅右栏,共享等宽 kicker + 衬线标题的报头家族;
   // 文章/社交/发现是内容容器与站内目录,用 14/600 栏名工具头。差异是「不同类」而非「不一致」。
   const kicker = onboarding ? '初始设置 · 欢迎来到哆啦美' : KINDS.map((k) => KIND_META[k].label).join(' / ');
-  const hint = onboarding ? '选几个关注的方向，早报会优先呈现。' : '兴趣内容将在早报中优先呈现。';
+  const hint = onboarding ? '选几个感兴趣的方向，全站相关文章会进入你的阅读器，早报也会优先呈现。' : '感兴趣的方向会把全站相关文章带进阅读器，并在早报里优先呈现。';
   const saveStateNode = saveState !== 'idle' && (
     <span className={`interest-save-state ${saveState === 'error' ? 'is-error' : ''}`} role="status" aria-live="polite">
       {saveState === 'saving' ? '保存中…' : saveState === 'saved' ? '已保存' : '保存失败'}
@@ -349,16 +350,91 @@ export default function InterestPage({
     </div>
   );
 
+  // 我的关注 chip 行(嵌入态顶替左槽台账):关注 accent 实点、屏蔽划线空心点,悬停浮出 ×;目录序排列
+  const pickChip = (tag, stance) => (
+    <span key={keyOf(tag)} className={`interest-chip ${stance === 'mute' ? 'is-mute' : ''}`}>
+      <span className="interest-chip-dot" aria-hidden="true" />
+      <span className="interest-chip-name">{tag.name_zh}</span>
+      <button type="button" className="interest-chip-x" aria-label={`移出 ${tag.name_zh}`} title="移出" onClick={() => setStance(tag, null)}>×</button>
+    </span>
+  );
+  const onboardingBanner = onboarding && catalog && (
+    <div className="interest-onb" role="region" aria-label="初始设置">
+      <div className="interest-onb-main">
+        <div className="brief-mast-kicker">欢迎来到哆啦美</div>
+        <p className="interest-onb-text">
+          已为你预置了几个来源。在这里选几个<b>感兴趣的方向</b>，全站相关文章会进入你的阅读器，早报也会优先呈现；也可以先去「源」里挑更多来源。现在跳过也可以，随时能回来。
+        </p>
+      </div>
+      {onboardingBtn}
+    </div>
+  );
+  const catalogSections = catalog && KINDS.map((kind) => {
+    const sec = sectionOf(kind);
+    if (needle && sec.filtered.length === 0) return null;
+    return (
+      <section key={kind} className="interest-sec" aria-label={KIND_META[kind].label} ref={(el) => { sectionRefs.current[kind] = el; }}>
+        <div className="brief-sec-head">
+          <span className="brief-sec-title">{KIND_META[kind].label}</span>
+          <span className="brief-sec-count">{needle ? `${sec.filtered.length} / ${sec.all.length}` : sec.all.length}</span>
+          <span className="interest-sec-hint">{KIND_META[kind].hint}</span>
+          <span className="brief-sec-rule" />
+        </div>
+        <div className="interest-grid">
+          {sec.rows.map((tag) => (
+            <TagCard key={keyOf(tag)} tag={tag} stance={draft[keyOf(tag)]} onToggle={toggleFollow} onMute={toggleMute} />
+          ))}
+        </div>
+        {sec.capped && (
+          <button type="button" className="interest-more" onClick={() => setExpanded((prev) => ({ ...prev, [kind]: true }))}>
+            <ChevronDown aria-hidden="true" />展开全部 {sec.all.length} 个{KIND_META[kind].label}
+          </button>
+        )}
+      </section>
+    );
+  });
+
+  // ── 嵌入态(发现页第三段,桌面):横幅(引导) → 工具行(搜索 + 回执) → 我的关注 chip 行 → 三面目录 ──
+  if (embedded && !mobile) {
+    const anyMatchEmbed = KINDS.some((k) => sectionOf(k).filtered.length > 0);
+    return (
+      <div className="interest-embed" aria-label="我的兴趣">
+        {onboardingBanner}
+        <div className="interest-embed-tools">
+          {searchNode}
+          {saveStateNode}
+        </div>
+        {catalog && (
+          <div className="interest-picks" aria-label="我的关注">
+            <span className="interest-picks-label">我的关注</span>
+            {picksEmpty
+              ? <span className="interest-picks-empty">点击下方标签加入关注。</span>
+              : [...picks.follow.map((t) => pickChip(t, 'follow')), ...picks.mute.map((t) => pickChip(t, 'mute'))]}
+          </div>
+        )}
+        {stateNode}
+        {catalogSections}
+        {catalog && needle && !anyMatchEmbed && (
+          <div className="brief-state">没有匹配「{query.trim()}」的标签</div>
+        )}
+      </div>
+    );
+  }
+
   // ── 移动壳:行式列表 + sticky seg + 折叠台账 + 贴底保存条 ──
   if (mobile) {
     const section = sectionOf(activeKind);
     const searching = Boolean(needle);
     const visibleKinds = searching ? KINDS.filter((k) => sectionOf(k).filtered.length > 0) : [activeKind];
     return (
-      <div className="interest-m" aria-label="我的兴趣">
+      <div className={`interest-m ${embedded ? 'is-embedded' : ''}`} aria-label="我的兴趣">
         <div className="interest-m-head">
-          <div className="brief-mast-kicker">{kicker}</div>
-          <p className="brief-mast-sub">{hint}</p>
+          {embedded ? onboardingBanner : (
+            <>
+              <div className="brief-mast-kicker">{kicker}</div>
+              <p className="brief-mast-sub">{hint}</p>
+            </>
+          )}
           {searchNode}
           {catalog && (
             <div className="interest-m-row">
@@ -368,7 +444,7 @@ export default function InterestPage({
               </button>
               {saveStateNode}
               <span className="interest-m-sp" />
-              {onboardingBtn}
+              {!embedded && onboardingBtn}
             </div>
           )}
           {picksOpen && catalog && (
