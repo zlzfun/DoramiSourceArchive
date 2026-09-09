@@ -1497,7 +1497,9 @@ async def generate_daily_brief(
     # 附录也会一轮轮长成近线稿的倾倒场(codex 检视 P2 ×2)。
     with Session(engine) as session:
         prior_state = load_existing_brief_state(session, report_date)
-    prior_body = len(prior_state[0]) if prior_state is not None else 0
+    prior_items: List[ScoredItem] = list(prior_state[0]) if prior_state is not None else []
+    prior_title_only: List[BriefCandidate] = list(prior_state[1]) if prior_state is not None else []
+    prior_ids = {it.candidate.id for it in prior_items}
     # 软阈值(v3.49.1):近线带 = 有正文、分在 [min_score−APPENDIX_BAND, min_score) 的条目,按有效分降序。
     # 保底缺口在同事件归并**之后**计算:过线稿若互为重复会坍缩,缺口要按归并后的合格簇数算;
     # 近线带最多取 min_items 条陪跑进同一次聚类(与过线稿同事件的自然并入代表,不重复出场)。
@@ -1511,32 +1513,41 @@ async def generate_daily_brief(
              and min_score - APPENDIX_BAND <= it.score < min_score),
             key=_effective_score, reverse=True,
         )
-    probe = near_band[:max(0, min_items - prior_body)] if min_items else []
+    # 陪跑名额取缺口的两倍(至少缺口+1):陪跑稿之间也可能互为重复,归并后仍要够填缺口。
+    want = max(0, min_items - len(prior_items)) if min_items else 0
+    probe = near_band[:max(want * 2, want + 1)] if want else []
     qualified_ids = {it.candidate.id for it in usable}
 
     set_progress("selecting", "同事件去重与择优排序…")
-    deduped_all = await dedup_clusters(usable + probe, cfg, usage_username=triggered_by)
-    core = [
-        it for it in deduped_all
-        if it.candidate.id in qualified_ids
-        or any(merged_id in qualified_ids for merged_id in it.merged_ids)
-    ]
+    # 当日已有正文一起进聚类:同日重跑时增量批与早间批报同一事件(不同文章 id)只算一个簇,
+    # 缺口不会被重复计数;早间条目本身不进增量管线(由同日合并阶段统一处理)。
+    deduped_all = await dedup_clusters(prior_items + usable + probe, cfg, usage_username=triggered_by)
+
+    def _cluster_ids(item: ScoredItem) -> set:
+        return {item.candidate.id, *item.merged_ids}
+
+    counted_ids = qualified_ids | prior_ids
+    core = [it for it in deduped_all if _cluster_ids(it) & counted_ids]
     core_ids = {it.candidate.id for it in core}
+    prior_core = sum(1 for it in core if it.candidate.id in prior_ids)
     near_survivors = sorted(
         (it for it in deduped_all if it.candidate.id not in core_ids),
         key=_effective_score, reverse=True,
     )
-    deficit = max(0, min_items - prior_body - len(core)) if min_items else 0
-    backfilled: List[ScoredItem] = near_survivors[:deficit]
-    deduped = core + backfilled
-    consumed_ids = {it.candidate.id for it in deduped}
-    for it in deduped:
-        consumed_ids.update(it.merged_ids)
+    deficit = max(0, min_items - len(core)) if min_items else 0
+    # 多带一条备用稿:合格稿或补足稿被跨天查重剔掉时顶上,终选再按剩余缺口裁回。
+    backfilled: List[ScoredItem] = near_survivors[:deficit + (1 if deficit else 0)]
+    backfill_ids = {it.candidate.id for it in backfilled}
+    deduped = [it for it in core + backfilled if it.candidate.id not in prior_ids]
+    consumed_ids: set = set()
+    for it in core + backfilled:
+        consumed_ids |= _cluster_ids(it)
     near_band = [it for it in near_band if it.candidate.id not in consumed_ids]
     logger.info(
-        "日报[%s]：去重后 %d 条合格稿（评分后 %d，当日已有正文 %d）；正文保底 %d 条：近线带补足 %d 条、"
-        "余 %d 条待附录补位",
-        report_date, len(core), len(usable), prior_body, min_items, len(backfilled), len(near_band),
+        "日报[%s]：去重后 %d 条合格簇（本批过线 %d、当日已有正文 %d）；正文保底 %d 条：缺口 %d、"
+        "近线带带入 %d 条（含备用）、余 %d 条待附录补位",
+        report_date, len(core), len(usable), len(prior_items), min_items, deficit,
+        len(backfilled), len(near_band),
     )
     # 扩选池(v3.35):跨天查重会剔条,旧流程剔完不回补——热点连报日成品远少于 top_n。
     # 现按 top_n+buffer 预选,查重幸存者再裁回 top_n:回补条目天然也过了跨天检查。
@@ -1564,6 +1575,25 @@ async def generate_daily_brief(
     set_progress("reducing", "跨天查重与汇编…")
     logger.info("日报[%s]：跨天查重（对照近期日报 %d 天条目）后确定性渲染", report_date, len(recent_items))
     survivors = await cross_day_dedup(preselected, recent_items, cfg, usage_username=triggered_by)
+    # 保底终裁:补足稿只留到**剩余缺口**(备用稿在合格稿/补足稿被跨天查重剔掉时顶上);
+    # 没用上的备用稿退回近线带作附录补位候选,被跨天查重剔掉的(近期已报过)不退回。
+    survivor_ids = {it.candidate.id for it in survivors}
+    crossday_dropped = {it.candidate.id for it in preselected} - survivor_ids
+    qualified_survivors = [it for it in survivors if it.candidate.id not in backfill_ids]
+    need = max(0, min_items - prior_core - len(qualified_survivors)) if min_items else 0
+    backfill_survivors = sorted(
+        (it for it in survivors if it.candidate.id in backfill_ids),
+        key=_effective_score, reverse=True,
+    )
+    survivors = qualified_survivors + backfill_survivors[:need]
+    kept_ids = {it.candidate.id for it in survivors}
+    near_band = sorted(
+        near_band + [
+            it for it in backfilled
+            if it.candidate.id not in kept_ids and it.candidate.id not in crossday_dropped
+        ],
+        key=_effective_score, reverse=True,
+    )
     selected = sorted(survivors, key=_effective_score, reverse=True)[:top_n]
     if len(survivors) > len(selected):
         logger.info("日报[%s]：查重幸存 %d 条，按有效分裁回 %d 条", report_date, len(survivors), len(selected))
@@ -1571,7 +1601,7 @@ async def generate_daily_brief(
     # 只填空出的槽位(扣掉当日已有正文)——忙日正文满员则一条不加,同日重跑也不会一轮轮
     # 把附录堆成近线条目的倾倒场。
     selected_ids = {it.candidate.id for it in selected}
-    appendix_slots = max(0, top_n - len(selected) - prior_body)
+    appendix_slots = max(0, top_n - len(selected) - len(prior_items) - len(prior_title_only))
     near_miss_appendix = [
         it.candidate for it in near_band if it.candidate.id not in selected_ids
     ][:appendix_slots]
@@ -1579,12 +1609,10 @@ async def generate_daily_brief(
         title_only = title_only + near_miss_appendix
         logger.info("日报[%s]：正文 %d 条未满 %d，近线带 %d 条以标题补进附录",
                     report_date, len(selected), top_n, len(near_miss_appendix))
-    backfilled_ids = {it.candidate.id for it in backfilled}
-    backfilled_in_brief = sum(1 for it in selected if it.candidate.id in backfilled_ids)
+    backfilled_in_brief = sum(1 for it in selected if it.candidate.id in backfill_ids)
 
     # 同日重跑合并:当日已有日报 → 新旧条目合并重排,不再整篇覆盖丢早间条目
     if prior_state is not None:
-        prior_items, prior_title_only = prior_state
         logger.info("日报[%s]：当日已有日报（%d 条），执行增量合并", report_date, len(prior_items))
         selected, title_only = await merge_same_day(
             prior_items, selected, prior_title_only, title_only, cfg, usage_username=triggered_by,
