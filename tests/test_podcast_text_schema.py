@@ -414,7 +414,9 @@ def test_episode_delete_cascades_text_rows_and_leaves_sync_tombstone(tmp_path):
 def test_podcast_text_migration_is_single_head_and_matches_create_all(tmp_path):
     cfg = make_alembic_config(f"sqlite:///{tmp_path / 'migration.db'}")
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_heads() == ["b34d9f1a72e1"]
+    # 断言的是「单头」而不是某个具体 revision:主链每加一条迁移都会换头,写死 id 只会让
+    # 无关波次的迁移把这条 Podcast 用例打红(v3.50 c7e1a9d4b2f6 即撞上)。
+    assert len(script.get_heads()) == 1
     command.upgrade(cfg, "head")
 
     engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
