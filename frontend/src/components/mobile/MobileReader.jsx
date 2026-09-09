@@ -288,19 +288,16 @@ export default function MobileReader({
               >
                 <Star fill={favOnly ? 'currentColor' : 'none'} />
               </button>
-              {/* 全部标读只在来源轴上出现(兴趣轴是全站透镜,订阅外源没有水位可推) */}
-              {(scope.axis !== 'interest' || activeSourceId) && (
-                <button
-                  type="button"
-                  onClick={handleMarkAllRead}
-                  disabled={markingRead}
-                  aria-label={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
-                  title={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
-                  className="m-iconbtn"
-                >
-                  {markingRead ? <Loader2 className="animate-spin" /> : <CheckCheck />}
-                </button>
-              )}
+              {/* 全部标读两根轴同一枚钮(hook 内按轴分流:推水位 / 逐篇写行) */}
+              <button
+                type="button"
+                onClick={handleMarkAllRead}
+                disabled={markingRead}
+                aria-label={activeSourceId ? '本来源全部标为已读' : scope.axis === 'interest' ? '兴趣全部标为已读' : '本容器全部标为已读'}
+                className="m-iconbtn"
+              >
+                {markingRead ? <Loader2 className="animate-spin" /> : <CheckCheck />}
+              </button>
             </>
           )}
           <button

@@ -965,6 +965,16 @@ export function markArticleUnread(articleId) {
   return request(`/reader/articles/${enc(articleId)}/mark-unread`, { method: 'POST', errorMsg: '标为未读失败' });
 }
 
+// 兴趣轴「全部标读」(issue #27 五稿返修):按当前范围逐篇标已读(不推水位);
+// interestTagId 为空 = 兴趣全集;返回 {marked, by_source, total}。
+export function markScopeRead(shape = null, interestTagId = null) {
+  const params = new URLSearchParams();
+  if (shape) params.set('shape', shape);
+  if (interestTagId) params.set('interest_tag_id', String(interestTagId));
+  const qs = params.toString();
+  return request(`/reader/mark-scope-read${qs ? `?${qs}` : ''}`, { method: 'POST', errorMsg: '标记已读失败' });
+}
+
 // sourceId 为空 = 全部订阅源标为已读；返回更新后的 {by_source, total}。
 export function markAllRead(sourceId = null, shape = null) {
   // shape=article|bulletin|social|podcast:全部标读只作用于当前内容容器

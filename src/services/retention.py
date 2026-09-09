@@ -22,6 +22,10 @@
   open/in_progress 永不清（未处理的诉求不因久拖而蒸发）。
 - `article_shares`（公开分享链接）：**已失效**（已撤销，或已过期且未撤销）满
   180 天删除；存活链接（含永久档）永不清——删活链接等于替读者撤销。
+- `reader_article_read_states`（逐篇读态，issue #27 五稿返修）：**无水位源**（该用户没有该源的
+  水位行）的**已读行**，文章入库与标读时间都超过 `UNCURSORED_UNREAD_MAX_AGE_DAYS`（30 天）即删——
+  未读判定对无水位源有同样的时效下限，窗外的已读行不再改变任何判定，删掉零信息损失。显式未读行
+  （is_read=false）与订阅源的行不清（后者由「全部标读」推水位时按水位回收）。
 
 刻意不清理：`announcement_dismissals`（行数有界 = 用户数 × 公告数，且承载
 「一次性通知」语义——公告下线再重新上线时，关闭过的读者不应再被打扰；清掉
@@ -48,9 +52,9 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
-from sqlalchemy import delete, func, or_
+from sqlalchemy import delete, exists, func, or_
 from sqlalchemy.engine import Engine
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from models.db import (
     AdminAuditRecord,
@@ -66,6 +70,8 @@ from models.db import (
     ReaderReadRecord,
     TagRetagJobRecord,
 )
+from models.db import ArticleRecord, ReaderArticleReadStateRecord, ReaderReadCursorRecord
+from services.reader_state import UNCURSORED_UNREAD_MAX_AGE_DAYS, uncursored_unread_cutoff
 
 logger = logging.getLogger("dorami.retention")
 
@@ -165,7 +171,33 @@ def _conditional_cleanups(today: datetime.date) -> List[tuple]:
                 PersonalDigestEditionRecord.updated_at < personal_digest_cutoff,
             ),
         ),
+        _read_state_cleanup(today),
     ]
+
+
+def _read_state_cleanup(today: datetime.date):
+    """无水位源的窗外已读行(见模块注释)。
+
+    截点直接复用未读判定的精确时间戳 ``uncursored_unread_cutoff()``(而非按日历日的 ``_cutoff``):
+    两者若差半天,清理会删掉尚未满 30×24 小时的已读行,文章随即在无水位判定下复活为未读。
+    """
+    del today  # 与其它条件性清理同签名;本表的截点必须与未读判定同一时刻计算
+    cutoff = uncursored_unread_cutoff()
+    old_article = select(ArticleRecord.id).where(ArticleRecord.fetched_date < cutoff)
+    cursored = exists().where(
+        ReaderReadCursorRecord.owner_username == ReaderArticleReadStateRecord.owner_username,
+        ReaderReadCursorRecord.source_id == ArticleRecord.source_id,
+        ArticleRecord.id == ReaderArticleReadStateRecord.article_id,
+    )
+    return (
+        "reader_article_read_states",
+        delete(ReaderArticleReadStateRecord).where(
+            ReaderArticleReadStateRecord.is_read == True,  # noqa: E712
+            ReaderArticleReadStateRecord.read_at < cutoff,
+            ReaderArticleReadStateRecord.article_id.in_(old_article),
+            ~cursored,
+        ),
+    )
 
 
 def _cutoff(retention_days: int, *, today: datetime.date) -> str:
