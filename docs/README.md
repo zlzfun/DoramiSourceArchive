@@ -49,6 +49,9 @@
 - ◉ [personal-brief-breaking-lane-plan.md](./personal-brief-breaking-lane-plan.md) — **个人早报「重大事件」通道(issue #33 §2,v3.50.0)**:
   跨订阅范围的头条位——官方一手 ≥T 或多源印证双准入、entity 标签连通归并、代表优先级官方>非社交>分数、
   24h 窗、同实体前两期抑制、额外于精选之上;生产 7 天实证(Fable 5.1 官博不在库)与不做清单。
+- ◉ [personal-brief-rebuild-entrypoints.md](./personal-brief-rebuild-entrypoints.md) — **个人早报重编入口收口(issue #33 §5,v3.51.1)**:
+  兴趣/订阅变更只记录不触发重编,重编只剩手动与次日定时;今日端点 `interest_stale`/`scope_stale`
+  驱动「下次编排生效 · 立即重编」提示;系统侧保留公共日报就绪与管理员下架两处维护性触发。
 - ◉ [analysis-brief-review-plan.md](./analysis-brief-review-plan.md) — **入库分析与日报链路审视收口**(v3.48 同 PR):
   补评喂同一闭集、无正文候选按标题走同一把尺子、worker 轻列扫描 + 版本重跑慢滴、编辑喂分析事实、
   分数直方图与补评撞车读数、同事件机械预聚类、跨天对照物带要点;审视结论与明确不做见 §0/§5。
