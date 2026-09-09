@@ -818,6 +818,10 @@ break_even_minutes = monthly_fixed_gpu_and_ops_cost / managed_asr_price_per_minu
   可选 transcript artifact 引用、版本与内部诊断；Reader/知识台账显示“简介初评”。旧 premium
   guide 只能读取该权威分，Archive Sync v2 同步完整契约。
 - 已将现有 Podcast 分析统一标成“简介初评”，并只使用描述性的 `is_long_form`。
+- 两段评分各自承担一种决策：简介初评只作为后续全文处理的成本门（严格 `> 5.0`，
+  `5.0` 不通过、`5.1` 通过，管理员可强制绕过）；发布方逐字稿或 ASR 全文完成后重新评分，
+  该全文终评才按优质门槛（默认 `>= 8.0`）决定“优质播客”资格及精品导读生成。两分不加权、
+  不合并；Reader 始终只展示当前阶段的权威分，全文终评完成后替换简介初评。
 - 所有“发现更多来源”入口统一打开完整来源目录，Podcast 只是可选内容形态筛选。
 - 修复 20VC 暗色继承、美元金额误解析与“简介阅读时长”文案。
 - 修复真实 reader role 同步、partial import 游标、keyset/checksum/凭据和重启遗留 Job。
