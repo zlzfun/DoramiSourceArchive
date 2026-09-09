@@ -83,6 +83,14 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
   const summary = snapshot.summary || snapshot.one_sentence_summary || '';
   const sourceName = snapshot.source_name || source?.name || snapshot.source_id || '未知来源';
   const company = source ? resolveCompany(source) : resolveCompany({ source_id: snapshot.source_id, name: sourceName, user_source: true });
+  // 中文标题(v3.51.2,issue #33 §4):编排后补的 title_zh 作主标题,原标题降为其下小字(沿阅读窗译名的视觉语言)
+  const titleZh = snapshot.title_zh && snapshot.title_zh !== snapshot.title ? snapshot.title_zh : '';
+  const titleNode = (
+    <>
+      <span className="brief-card-title">{titleZh || snapshot.title || '（无标题）'}</span>
+      {titleZh && <span className="brief-card-title-orig">{snapshot.title}</span>}
+    </>
+  );
   const chipNodes = chips.map((chip) => (
     <span key={chip.key} className={`reader-tag-chip ${chip.cls || ''}`} title={chip.title}>{chip.text}</span>
   ));
@@ -116,7 +124,7 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
       <button type="button" className={cls} onClick={() => onOpen(item)}>
         <span className="brief-card-main">
           <span className="brief-card-head">{srcNode}</span>
-          <span className="brief-card-title">{snapshot.title || '（无标题）'}</span>
+          {titleNode}
           {summary && <span className="brief-card-sum">{summary}</span>}
           <span className="brief-card-foot">{timeNode}</span>
         </span>
@@ -139,7 +147,7 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
         {srcNode}
         {scoreNode}
       </span>
-      <span className="brief-card-title">{snapshot.title || '（无标题）'}</span>
+      {titleNode}
       {summary && <span className="brief-card-sum">{summary}</span>}
       <span className="brief-card-foot">
         {chips.length > 0 && <span className="brief-card-tags">{chipNodes}</span>}

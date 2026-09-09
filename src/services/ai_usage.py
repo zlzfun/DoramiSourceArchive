@@ -28,6 +28,8 @@ VALID_PURPOSES = (
     "daily_brief_dedup",
     "daily_brief_reduce",
     "article_analysis",
+    # v3.51.2(issue #33 §4):个人早报条目标题批量翻译(系统任务,不进读者预算三处)
+    "personal_digest_title",
     "source_config",
     "detail_profile",
 )

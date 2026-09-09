@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,6 +25,7 @@ from models.db import (
     UserRecord,
 )
 from services import personal_digest as digest_service
+from services import personal_digest_titles as digest_titles
 from services.article_analysis import source_allows_analysis
 from services.article_time import in_time_window
 from services.source_naming import friendly_source_name
@@ -34,6 +36,8 @@ router = APIRouter(
     tags=["personal-briefs"],
     dependencies=[Depends(deps.require_reader)],
 )
+
+_logger = logging.getLogger("dorami.personal_digest")
 
 PERSONAL_DIGEST_ENABLED_KEY = "personal_digest_enabled"
 ARTICLE_ANALYSIS_ENABLED_KEY = "article_analysis_enabled"
@@ -388,6 +392,19 @@ def process_pending_edition(
             generation_token=generation_token,
         )
     assert result.edition is not None
+    if result.edition.status in {
+        PersonalDigestStatus.READY.value,
+        PersonalDigestStatus.DEGRADED.value,
+    }:
+        # v3.51.2(issue #33 §4):编排完成后补条目中文标题(缓存 → 公共日报 title_cn →
+        # 批量翻译);只补展示字段,失败回退原标题,绝不把已 ready 的版本打成 failed。
+        try:
+            stats = digest_titles.localize_edition_titles(session, result.edition)
+            if stats.get("translated") or stats.get("fallback"):
+                _logger.info("个人早报标题中文化 edition=%s %s", result.edition.id, stats)
+        except Exception:  # noqa: BLE001 - display-only enrichment
+            session.rollback()
+            _logger.warning("个人早报标题中文化失败 edition=%s", result.edition.id, exc_info=True)
     return result.edition
 
 
