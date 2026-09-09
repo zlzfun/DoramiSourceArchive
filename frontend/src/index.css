@@ -12044,53 +12044,93 @@ input[type="radio"] {
 .podcast-premium-table th:nth-child(1) { width: 46%; }
 
 /* ══════════════════════════════════════════════════════════════════════
-   兴趣即透镜(issue #27 第一波,样页 docs/design/dorami-interest-lens-quiet.html)
+   兴趣即透镜(issue #27 第一波,四稿 docs/design/dorami-interest-lens-quiet.html → 五稿 dorami-interest-axis-quiet.html)
    未分层区:含 button/input 字号的规则写在这里(@layer 内会被全局 button{font:inherit} 压掉)。
    ══════════════════════════════════════════════════════════════════════ */
 
-/* ── 左栏三谓词过滤面板:订阅 / 兴趣 / 收藏 可多选 ──
-   选中态 = wash 底 + 勾(多选语义),与单选源行的浮白 + 弱高程分家;
-   兴趣未设时灰掉(点它去发现页兴趣段);收藏开着时星标着琥珀(与收藏星同色)。 */
-.reader-scope { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
-.reader-scope-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--dorami-muted);
-  font-size: 13px;
-  font-weight: 400;
-  text-align: left;
-  cursor: pointer;
-  transition: background 140ms ease, color 140ms ease;
+/* ── 左栏一根轴(五稿,样页 docs/design/dorami-interest-axis-quiet.html):栏头 = 容器名 + 二段轴切换 ──
+   单选语义:选中态浮白 + 弱高程,与其下源行 / 标签行的选中态同一语法(整栏只有一种语义:单选)。 */
+.reader-src-head.is-axis {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding-bottom: 6px;
 }
-.reader-scope-row:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
-.reader-scope-ic {
+.reader-axis {
+  display: flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dorami-ink) 5%, transparent);
+}
+.reader-axis-btn {
+  flex: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dorami-faint);
+  font-size: 12px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.reader-axis-btn:hover { color: var(--dorami-ink); }
+.reader-axis-btn.is-on {
+  background: var(--dorami-surface);
+  color: var(--dorami-ink);
+  font-weight: 600;
+  box-shadow: var(--sh-1);
+}
+.reader-axis-btn.is-on svg { color: var(--dorami-accent-ink); }
+/* 兴趣轴的标签行:源行同语法,图标位是标签圆点(与命中胶囊的圆点同一符号) */
+.reader-tag-dot {
   width: 20px;
   height: 20px;
-  border-radius: var(--r-sm);
-  color: var(--dorami-faint);
-  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
 }
-.reader-scope-name { flex: 1; min-width: 0; }
-.reader-scope-check { color: var(--dorami-accent-ink); opacity: 0; flex-shrink: 0; transition: opacity 140ms ease; }
-.reader-scope-row.is-on { background: var(--dorami-wash); color: var(--dorami-ink); font-weight: 600; }
-.reader-scope-row.is-on .reader-scope-ic { color: var(--dorami-accent-ink); }
-.reader-scope-row.is-on .reader-scope-check { opacity: 1; }
-.reader-scope-row.is-favorite.is-on .reader-scope-ic { color: #f59e0b; }
-.reader-scope-row.is-disabled { opacity: 0.45; }
-.reader-scope-row.is-disabled:hover { opacity: 0.7; }
-/* 「来源」小标:面板与来源分组之间的一枚 kicker,与分组头同族但多一档上距 */
-.reader-src-axis { padding-top: 16px; }
+.reader-tag-dot::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dorami-accent);
+  opacity: 0.75;
+}
+.reader-source-row-active .reader-tag-dot::before { width: 7px; height: 7px; opacity: 1; }
+/* 兴趣轴空态:一句引导直落发现页兴趣段,不锁栏 */
+.reader-axis-empty {
+  margin: 8px 8px 0;
+  padding: 11px 12px;
+  border: 1px dashed var(--dorami-border);
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dorami-faint);
+}
+.reader-axis-empty-link {
+  display: block;
+  margin-top: 2px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dorami-accent-ink);
+  text-align: left;
+  cursor: pointer;
+}
+.reader-axis-empty-link:hover { text-decoration: underline; }
+/* 列头收藏星:与 seg 并排;开着时琥珀实心(收藏色只此一处,与条目右缘的收藏星同色) */
+.reader-fav-toggle.is-on,
+.reader-fav-toggle.is-on:hover { color: #f59e0b; background: rgba(245, 158, 11, 0.12); }
 
-/* ── 列头回显激活集:副文案 faint 小字(「全站」/ 源收窄时的其余谓词) ── */
+/* ── 列头回显:副文案 faint 小字(兴趣轴的「全站」/ 收藏星开着时的「收藏」) ── */
 .reader-list-subtitle {
   margin-left: 8px;
   font-size: 11px;

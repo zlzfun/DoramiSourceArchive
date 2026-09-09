@@ -10,7 +10,7 @@ import sys
 from dataclasses import replace
 
 from fastapi.testclient import TestClient
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -161,6 +161,38 @@ def test_interest_scope_composes_with_subscribed_scope(monkeypatch, tmp_path):
         assert ids == {"sub_hit", "sub_weak", "sub_plain", "sub_muted"}
 
 
+def test_interest_tag_id_narrows_to_one_followed_tag(monkeypatch, tmp_path):
+    """兴趣轴下钻(五稿):interest_tag_id 只看命中这一个关注标签的;非关注标签 id 显式空集。"""
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    e = sink.engine
+    llm = _seed_tag(e, "llm", "大语言模型")
+    _seed_article(e, "out_llm", "web_qbitai")
+    _assign(e, "out_llm", llm, primary=True, relevance=0.9)
+    _set_interest(e, "user", llm, "follow")
+    with Session(e) as session:
+        from models.db import CmsTagRecord
+        agents_id = session.exec(select(CmsTagRecord.id).where(CmsTagRecord.code == "ai-agents")).one()
+        robots_id = session.exec(select(CmsTagRecord.id).where(CmsTagRecord.code == "robotics")).one()
+    with TestClient(app_module.app) as client:
+        _login(client)
+        # 兴趣全集(全站):两枚关注标签的命中并集
+        ids, _ = _ids(client, interest_scope="only")
+        assert ids == {"sub_hit", "sub_muted", "out_hit", "out_llm"}
+        # 下钻到「AI 智能体」:大语言模型的命中不在
+        ids, data = _ids(client, interest_scope="only", interest_tag_id=agents_id)
+        assert ids == {"sub_hit", "sub_muted", "out_hit"}
+        assert data["total"] == 3
+        # 下钻到「大语言模型」
+        ids, _ = _ids(client, interest_scope="only", interest_tag_id=llm)
+        assert ids == {"out_llm"}
+        # 屏蔽标签不是关注标签:按它下钻是显式空集,不退化成全部兴趣
+        ids, data = _ids(client, interest_scope="only", interest_tag_id=robots_id)
+        assert ids == set() and data["total"] == 0
+        # 不带 interest_scope=only 时 interest_tag_id 无效(单独的 tag id 检索走 tag_ids)
+        ids, _ = _ids(client, interest_tag_id=agents_id)
+        assert "sub_plain" in ids
+
+
 def test_interest_scope_without_interests_is_explicit_empty(monkeypatch, tmp_path):
     app_module, sink = _make_app(monkeypatch, tmp_path, "nointerest.db")
     _seed_article(sink.engine, "a1", "web_anthropic_news")
@@ -220,3 +252,15 @@ def test_unread_only_in_site_scope_uses_per_article_read_state(monkeypatch, tmp_
         ids, _ = _ids(client, subscribed_scope="only", unread_only="true")
         assert "out_hit" not in ids
         assert "sub_hit" in ids
+        # 页级 unread 标注与过滤同尺子(codex 检视 P1):全站范围里无水位源的条目
+        # 没读过即 unread=true、读过即 false;只订阅范围不受影响
+        _seed_article(sink.engine, "out_fresh", "web_qbitai")
+        with Session(sink.engine) as session:
+            from models.db import CmsTagRecord
+            agents_id = session.exec(select(CmsTagRecord.id).where(CmsTagRecord.code == "ai-agents")).one()
+        _assign(sink.engine, "out_fresh", agents_id, primary=True, relevance=0.9)
+        _, data = _ids(client, subscribed_scope="off", interest_scope="only", with_unread="true")
+        flags = {item["id"]: item["unread"] for item in data["items"]}
+        assert flags["out_fresh"] is True and flags["out_hit"] is False and flags["sub_hit"] is True
+        ids, _ = _ids(client, subscribed_scope="off", interest_scope="only", unread_only="true")
+        assert "out_fresh" in ids and "out_hit" not in ids

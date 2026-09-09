@@ -3,7 +3,7 @@ import LogoMark from '../LogoMark';
 import { resolveCompany } from '../../sourceTaxonomy';
 import { mediaProxyUrl } from '../../api';
 import { useLongPress } from '../../hooks/useLongPress';
-import { ScopeToggles } from '../ReaderTab';
+import { AxisSeg, TagRows } from '../ReaderTab';
 
 // 源抽屉(移动波 Wave2,样页画面④):桌面源栏的移动翻译——选源是作用在当前容器上的
 // **过滤器**而非目的地(§4.1.2),故从条目流顶栏左钮滑入、不占底部 Tab。
@@ -21,10 +21,13 @@ export default function MobileSourceDrawer({
   hasNoSubscriptions,
   activeUnsubscribed,
   sheetAnchorKey = null,
-  // 三谓词过滤面板(issue #27):与桌面源栏同一份 ScopeToggles
+  // 左栏一根轴(issue #27 五稿):与桌面栏头同一份 AxisSeg / TagRows
   scope,
+  onSetAxis,
+  interestGroups,
+  activeTagId,
+  goTag,
   hasInterests,
-  onToggleScope,
   onOpenInterests,
   goSource,
   onOpenDiscover,
@@ -36,12 +39,16 @@ export default function MobileSourceDrawer({
 
   const title = mode === 'bulletin' ? '动态' : socialView ? '社交媒体' : mode === 'podcast' ? '播客' : '文章';
   const pick = (fn) => (...args) => { fn(...args); onClose?.(); };
+  // 列源还是列标签:兴趣轴列标签;社交容器 / 预览单源(临时在来源轴上)列源
+  const showSourceRows = scope.axis !== 'interest' || socialView || Boolean(activeSourceId);
 
   return (
     <div className="m-drawer-layer" role="presentation">
       <div className="m-dim" onClick={onClose} aria-hidden="true" />
       <aside className="m-drawer" aria-label="过滤条件与来源">
         <div className="m-drawer-title">{title}</div>
+        {/* 栏头轴切换(社交容器没有标签,不出):切段即关抽屉回列表 */}
+        {!socialView && <AxisSeg axis={scope.axis} onChange={pick(onSetAxis)} className="m-axis" />}
         <div className="m-drawer-scroll">
           {/* 预览锚点行(Folo):正在预览的未订阅源浮现在顶部,交代「你在哪」 */}
           {activeUnsubscribed && (
@@ -52,17 +59,18 @@ export default function MobileSourceDrawer({
             </div>
           )}
 
-          {/* 三枚开关(订阅 / 兴趣 / 收藏):切一枚即关抽屉回列表;兴趣未设时点它直落发现页兴趣段 */}
-          <ScopeToggles
-            scope={scope}
-            hasInterests={hasInterests}
-            onToggle={pick(onToggleScope)}
-            onOpenInterests={pick(onOpenInterests)}
-            className="m-scope"
-          />
-          {sidebarGroups.length > 0 && <div className="reader-src-label reader-src-axis">来源</div>}
+          {/* 兴趣轴:关注的标签;点一行即关抽屉回列表;没设兴趣时引导直落发现页兴趣段 */}
+          {!showSourceRows && (
+            <TagRows
+              groups={interestGroups}
+              activeTagId={activeTagId}
+              onPick={pick(goTag)}
+              hasInterests={hasInterests}
+              onOpenInterests={pick(onOpenInterests)}
+            />
+          )}
 
-          {sourcesLoading ? (
+          {!showSourceRows ? null : sourcesLoading ? (
             <div className="m-drawer-skel" aria-hidden="true">
               {[0, 1, 2, 3, 4].map((i) => (
                 <div key={i} className="flex items-center gap-2.5 px-2.5 py-2">

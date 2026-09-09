@@ -13,6 +13,7 @@ import {
   Search,
   Share2,
   Star,
+  Tags,
   UserRound,
   X,
   Zap,
@@ -97,8 +98,9 @@ export default function MobileReader({
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover,
     bulletinView, socialView, podcastView, listTitle, listSubtitle,
-    goView, goSource, goFavorites,
-    scope, toggleScope, hasInterests, refreshInterests, showUnsubscribedMark,
+    goView, goSource, goTag, goFavorites,
+    scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
+    showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
     searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch,
@@ -148,6 +150,9 @@ export default function MobileReader({
     openDiscover();
   }, [onboardingRequired, openDiscover]);
   const openInterests = useCallback(() => { setDiscoverTab('interests'); openDiscover(); }, [openDiscover]);
+  // 兴趣页保存回调经 ref 读最新的 discover(PUT 在途时读者可能已走开,闭包值陈旧——codex 检视 P2)
+  const discoverRef = useRef(discover);
+  useEffect(() => { discoverRef.current = discover; }, [discover]);
   // 屏蔽折叠行展开态(按日期组)
   const [expandedMutedDays, setExpandedMutedDays] = useState(() => new Set());
   const toggleMutedDay = useCallback((dayKey) => {
@@ -157,7 +162,7 @@ export default function MobileReader({
       return next;
     });
   }, []);
-  useEffect(() => { setExpandedMutedDays(new Set()); }, [activeSourceId, mode, scope, searchQuery]);
+  useEffect(() => { setExpandedMutedDays(new Set()); }, [activeSourceId, activeTagId, mode, scope, searchQuery]);
   const listPlan = useMemo(
     () => buildListPlan(articles, grouping, expandedMutedDays),
     [articles, grouping, expandedMutedDays],
@@ -272,16 +277,29 @@ export default function MobileReader({
                   </button>
                 ))}
               </div>
+              {/* 收藏星(issue #27 五稿):逐篇状态,与未读 seg 并排;开着时琥珀实心 */}
               <button
                 type="button"
-                onClick={handleMarkAllRead}
-                disabled={markingRead}
-                aria-label={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
-                title={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
-                className="m-iconbtn"
+                onClick={toggleFavoriteScope}
+                aria-pressed={favOnly}
+                aria-label={favOnly ? '取消只看收藏' : '只看收藏'}
+                className={`m-iconbtn ${favOnly ? 'is-amber' : ''}`}
               >
-                {markingRead ? <Loader2 className="animate-spin" /> : <CheckCheck />}
+                <Star fill={favOnly ? 'currentColor' : 'none'} />
               </button>
+              {/* 全部标读只在来源轴上出现(兴趣轴是全站透镜,订阅外源没有水位可推) */}
+              {(scope.axis !== 'interest' || activeSourceId) && (
+                <button
+                  type="button"
+                  onClick={handleMarkAllRead}
+                  disabled={markingRead}
+                  aria-label={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
+                  title={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
+                  className="m-iconbtn"
+                >
+                  {markingRead ? <Loader2 className="animate-spin" /> : <CheckCheck />}
+                </button>
+              )}
             </>
           )}
           <button
@@ -385,7 +403,7 @@ export default function MobileReader({
                 订阅「{activeUnsubscribed.name || activeUnsubscribed.source_id}」
               </button>
             )}
-            {!favOnly && scope.subscribed && !articlesLoading && freshCount > 0 && (
+            {!favOnly && scope.axis === 'subscribed' && !articlesLoading && freshCount > 0 && (
               <button type="button" className="reader-fresh-pill" onClick={handleRefreshFresh}>
                 <RefreshCw className="h-3 w-3" />
                 {podcastView ? `载入 ${freshCount} 期新播客` : `载入 ${freshCount} 篇新文章`}
@@ -393,12 +411,20 @@ export default function MobileReader({
             )}
             {articlesLoading ? (
               <ArticleCardsSkeleton />
-            ) : scope.subscribed && !scope.interest && !favOnly && hasNoSubscriptions && !activeSourceId ? (
+            ) : scope.axis === 'subscribed' && !favOnly && hasNoSubscriptions && !activeSourceId ? (
               <div className="reader-empty reader-empty-tall">
                 <Compass className="h-7 w-7 text-slate-300" />
                 <span>你还没有订阅任何来源</span>
                 <button type="button" className="action-button action-button-primary" onClick={openDiscover}>
                   去发现来源
+                </button>
+              </div>
+            ) : scope.axis === 'interest' && !favOnly && !hasInterests && !activeSourceId ? (
+              <div className="reader-empty reader-empty-tall">
+                <Tags className="h-7 w-7 text-slate-300" />
+                <span>还没有设置兴趣</span>
+                <button type="button" className="action-button action-button-primary" onClick={openInterests}>
+                  去选几个感兴趣的方向
                 </button>
               </div>
             ) : activeSourceHidden ? (
@@ -414,8 +440,10 @@ export default function MobileReader({
                     ? (podcastView ? '没有匹配的播客' : '没有匹配的文章')
                     : favOnly
                       ? '当前范围还没有收藏，阅读时点星标即可收藏'
-                      : scope.interest
-                        ? '当前范围没有命中兴趣的文章'
+                      : activeTagId
+                        ? '还没有命中这个兴趣的文章'
+                      : scope.axis === 'interest'
+                        ? '还没有命中兴趣的文章'
                       : unreadOnly
                         ? '没有未读内容，都看完啦'
                         : activeSourceId
@@ -424,7 +452,7 @@ export default function MobileReader({
                 </span>
               </div>
             ) : (
-              <div key={`${activeSourceId ?? '__all__'}|${mode}|${scope.subscribed ? 's' : ''}${scope.interest ? 'i' : ''}${scope.favorite ? 'f' : ''}`}>
+              <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}`}>
                 {listPlan.map((entry) => {
                   if (entry.type === 'fold') {
                     return (
@@ -459,7 +487,8 @@ export default function MobileReader({
                         onToggleFavorite={handleToggleFavorite}
                         onContextMenu={noopContextMenu}
                         ctxAnchor={sheet?.anchorKey === `article:${article.id}`}
-                        interestHit={article.interest_hits?.[0] || ''}
+                        interestHit={showInterestHit ? (article.interest_hits?.[0] || '') : ''}
+                        labelSuppress={activeTagName}
                         unsubscribed={showUnsubscribedMark && !subscribedIds.has(article.source_id)}
                         onSubscribeSource={subscribeSourceById}
                         muted={entry.muted}
@@ -547,7 +576,7 @@ export default function MobileReader({
                     refreshInterests();
                     if (onboardingCompleted) {
                       onUserUpdated?.({ interest_onboarding_completed: true });
-                      if (!discover) return;
+                      if (!discoverRef.current) return;
                       closeDiscover();
                       setBriefRestore(null);
                       setTab('brief');
@@ -586,8 +615,11 @@ export default function MobileReader({
         activeUnsubscribed={activeUnsubscribed}
         sheetAnchorKey={sheet?.anchorKey || null}
         scope={scope}
+        onSetAxis={setAxis}
+        interestGroups={interestGroups}
+        activeTagId={activeTagId}
+        goTag={goTag}
         hasInterests={hasInterests}
-        onToggleScope={toggleScope}
         onOpenInterests={openInterests}
         goSource={goSource}
         onOpenDiscover={openDiscover}

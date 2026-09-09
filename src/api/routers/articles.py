@@ -206,6 +206,7 @@ def get_articles(
         # ── 三谓词过滤面板(issue #27 兴趣即透镜):订阅 / 兴趣 / 收藏 两两正交,AND 联合 ──
         # 兴趣 = 命中读者关注标签(主标签或相关度过门槛);收藏 = 读者收藏过;三者全关 = 全站可见源。
         interest_scope: str = "off",  # off | only
+        interest_tag_id: Optional[int] = None,  # 兴趣轴下钻:只看命中这一个关注标签的(五稿,须与 interest_scope=only 同用)
         favorite_scope: str = "off",  # off | only
         with_interest: bool = False,  # 给返回条目附 interest_hits / interest_muted(列表胶囊与折叠行)
         shape: Optional[str] = None,  # article | bulletin | social | podcast：阅读器内容形态分流
@@ -332,7 +333,12 @@ def get_articles(
     )
     if interest_only:
         # 「兴趣」谓词:无关注标签时显式空集(与零订阅同理),不退化成不过滤。
-        interest_cond = reader_interests_service.interest_filter_condition(interests.followed.keys())
+        # 单标签下钻只认读者**关注中的**标签(不是任意标签检索——那是 tag_ids 的事);
+        # 传了不在关注集里的 id 同样显式空集,不退化成全部兴趣。
+        followed_ids = list(interests.followed.keys())
+        if interest_tag_id is not None:
+            followed_ids = [tid for tid in followed_ids if tid == int(interest_tag_id)]
+        interest_cond = reader_interests_service.interest_filter_condition(followed_ids)
         query = query.where(interest_cond)
         count_query = count_query.where(interest_cond)
     if favorite_only:
@@ -393,8 +399,9 @@ def get_articles(
     ]
     if with_unread:
         # 页级未读标记：只读现有水位（不写库）；水位由 /api/reader/unread-counts 挂载校准。
+        # 全站范围(subscribed_scope!=only)与 unread_only 的过滤同尺子:无水位源按逐篇读态。
         unread_ids = reader_state_service.unread_ids_among(
-            session, username=username, records=records
+            session, username=username, records=records, include_uncursored=scope != "only",
         )
         for item in items:
             item["unread"] = item.get("id") in unread_ids

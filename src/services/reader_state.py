@@ -261,7 +261,7 @@ def unread_filter_condition(
 
 
 def unread_ids_among(
-    session: Session, *, username: str, records: Sequence[ArticleRecord]
+    session: Session, *, username: str, records: Sequence[ArticleRecord], include_uncursored: bool = False
 ) -> Set[str]:
     """页级未读标记：给定文章记录集合，返回其中未读的 ID 子集。
 
@@ -269,6 +269,10 @@ def unread_ids_among(
     只读现有水位行、不懒初始化（避免任意浏览路径写库）；无水位且无显式行的源
     视为无未读，与 unread_counts 的口径由「阅读器挂载即拉一次 unread-counts
     （会补水位）」对齐。
+
+    include_uncursored:与 ``unread_filter_condition`` 同一把尺子——全站范围(兴趣轴)里无水位的源
+    按逐篇读态判定,没读过即未读。过滤与标注必须同口径,否则「只看未读」列表会把订阅外条目画成已读
+    (codex 检视 P1)。
     """
     username = (username or "").strip()
     if not username or not records:
@@ -285,7 +289,10 @@ def unread_ids_among(
                 unread.add(r.id)
             continue
         wm = cursors.get(r.source_id)
-        if wm is not None and (r.fetched_date or "") > wm:
+        if wm is None:
+            if include_uncursored:
+                unread.add(r.id)
+        elif (r.fetched_date or "") > wm:
             unread.add(r.id)
     return unread
 

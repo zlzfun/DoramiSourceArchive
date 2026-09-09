@@ -30,7 +30,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Rss,
-  Check,
   Ban,
 } from 'lucide-react';
 import LogoMark from './LogoMark';
@@ -142,37 +141,67 @@ export function PaneBodySkeleton() {
    订阅 / 兴趣 / 收藏 三枚可多选开关,按源 / 按标签 / 按篇两两正交,AND 联合;
    选中态 = wash 底 + 勾(多选语义),与单选源行的浮白 + 弱高程分家;兴趣未设时灰掉,点它直落发现页兴趣段。
    桌面源栏与移动抽屉共用。 */
-export function ScopeToggles({ scope, hasInterests, onToggle, onOpenInterests, className = '' }) {
-  const rows = [
-    ['subscribed', '订阅', Rss, true],
-    ['interest', '兴趣', Tags, hasInterests || scope.interest],
-    ['favorite', '收藏', Star, true],
-  ];
+/* 栏头二段 = 轴切换(issue #27 五稿):订阅(其下列已订阅源)| 兴趣(其下列关注的标签),互斥;
+   单选语义——选中态浮白 + 弱高程,与其下源行 / 标签行同一语法(整栏只有一种语义:单选)。
+   点已点亮的段 = 回该轴全集。桌面源栏与移动抽屉共用。 */
+export function AxisSeg({ axis, onChange, className = '' }) {
+  const rows = [['subscribed', '订阅', Rss], ['interest', '兴趣', Tags]];
   return (
-    <div className={`reader-scope ${className}`} role="group" aria-label="过滤条件">
-      {rows.map(([key, label, Icon, enabled]) => {
-        const on = Boolean(scope[key]);
-        const disabled = !enabled;
+    <div className={`reader-axis ${className}`} role="radiogroup" aria-label="按什么切分">
+      {rows.map(([key, label, Icon]) => {
+        const on = axis === key;
         return (
           <button
             key={key}
             type="button"
-            aria-pressed={on}
-            aria-disabled={disabled || undefined}
-            title={disabled ? '还没有设置兴趣,去发现页选几个感兴趣的方向' : undefined}
-            onClick={() => { if (disabled) onOpenInterests?.(); else onToggle(key); }}
-            className={`reader-scope-row ${on ? 'is-on' : ''} ${disabled ? 'is-disabled' : ''} is-${key}`}
+            role="radio"
+            aria-checked={on}
+            onClick={() => onChange(key)}
+            className={`reader-axis-btn ${on ? 'is-on' : ''}`}
           >
-            <span className="reader-scope-ic" aria-hidden="true">
-              <Icon className="h-3.5 w-3.5" fill={key === 'favorite' && on ? 'currentColor' : 'none'} />
-            </span>
-            <span className="reader-scope-name">{label}</span>
-            <Check className="reader-scope-check h-3.5 w-3.5" aria-hidden="true" />
+            <Icon className="h-3 w-3" aria-hidden="true" />
+            <span>{label}</span>
           </button>
         );
       })}
     </div>
   );
+}
+
+/* 兴趣轴的列表:关注的标签按目录面分组,行语法与源行一致(图标位是标签圆点);
+   没设兴趣时一句引导直落发现页兴趣段(不锁栏、不弹层——拍板 3 另议,此为占位形态)。 */
+export function TagRows({ groups, activeTagId, onPick, hasInterests, onOpenInterests }) {
+  if (!hasInterests) {
+    return (
+      <div className="reader-axis-empty">
+        还没有设置兴趣。
+        <button type="button" className="reader-axis-empty-link" onClick={onOpenInterests}>去发现页选几个感兴趣的方向 →</button>
+      </div>
+    );
+  }
+  return groups.map(({ key, label, list }) => (
+    <section className="reader-subs" key={key}>
+      <div className="reader-src-label">{label}</div>
+      <div className="reader-group-body">
+        {list.map((tag) => {
+          const active = activeTagId === tag.id;
+          return (
+            <div
+              key={tag.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onPick(tag.id)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPick(tag.id); } }}
+              className={`reader-source-row reader-tag-row ${active ? 'reader-source-row-active' : ''}`}
+            >
+              <span className="reader-tag-dot" aria-hidden="true" />
+              <p className="reader-source-name min-w-0 flex-1">{tag.name}</p>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  ));
 }
 
 /* 屏蔽折叠行:「已屏蔽 · 机器人技术、具身智能 · 展开」——写屏蔽了什么,不写几篇 */
@@ -194,7 +223,7 @@ export const ArticleRow = memo(function ArticleRow({
   source, sourceName, onSelect, onPrefetchEnter, onPrefetchLeave, onToggleFavorite,
   onContextMenu, ctxAnchor,
   // issue #27 兴趣即透镜:命中的兴趣标签名(顶行一枚胶囊)/ 订阅外标记(悬停翻「+ 订阅」)/ 屏蔽项展开态
-  interestHit = '', unsubscribed = false, onSubscribeSource = null, muted = false,
+  interestHit = '', labelSuppress = '', unsubscribed = false, onSubscribeSource = null, muted = false,
 }) {
   const excerpt = entryBulletin
     ? ''
@@ -297,7 +326,8 @@ export const ArticleRow = memo(function ArticleRow({
               {/* 分析结果归入元信息行(issue #23 第三项):分类是源名后的一段元信息文字,
                   分数是衬线数字落在时间之前——不再独占一行,晚到只横向填字、标题不动;
                   没有可读结果且分析在途时,分数槽先以「分析中」占位,落地即换成数。 */}
-              {analysisLabel && analysisLabel !== interestHit && <span className="reader-entry-tag">{analysisLabel}</span>}
+              {/* 分析主签与命中胶囊同名时让位;单标签视图里与当前标签同名时也让位(每行都写同一个词是重复信息) */}
+              {analysisLabel && analysisLabel !== interestHit && analysisLabel !== labelSuppress && <span className="reader-entry-tag">{analysisLabel}</span>}
               {score
                 ? <span className="reader-entry-score ai-grad-text" title={SCORE_DISCLAIMER}>{score}</span>
                 : (analysisStatus && <span className="reader-entry-score is-pending" role="status">分析中</span>)}
@@ -377,8 +407,9 @@ export default function ReaderTab({
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover,
     bulletinView, socialView, podcastView, railActive, listTitle, listSubtitle,
-    goView, goSource,
-    scope, toggleScope, hasInterests, refreshInterests, showUnsubscribedMark,
+    goView, goSource, goTag,
+    scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
+    showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
     searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch, searchForLabel,
@@ -438,11 +469,18 @@ export default function ReaderTab({
       return next;
     });
   }, []);
-  useEffect(() => { setExpandedMutedDays(new Set()); }, [activeSourceId, mode, scope, searchQuery]);
+  useEffect(() => { setExpandedMutedDays(new Set()); }, [activeSourceId, activeTagId, mode, scope, searchQuery]);
   const listPlan = useMemo(
     () => buildListPlan(articles, grouping, expandedMutedDays),
     [articles, grouping, expandedMutedDays],
   );
+  // 左栏列源还是列标签:兴趣轴列标签;社交容器 / 预览单源(临时在来源轴上)列源
+  const showSourceRows = scope.axis !== 'interest' || socialView || Boolean(activeSourceId);
+  // 全部标读推进源水位,只在来源轴(含单源)上成立
+  const canMarkAllRead = scope.axis !== 'interest' || Boolean(activeSourceId);
+  // 兴趣页保存回调在 PUT 在途时可能已随发现页卸载,闭包里的 discover 是旧值——经 ref 读最新(codex 检视 P2)
+  const discoverRef = useRef(discover);
+  useEffect(() => { discoverRef.current = discover; }, [discover]);
 
   const [podcastSelection, setPodcastSelection] = useState({ articleId: '', variant: 'original' });
   const activePodcast = podcastOf(activeArticle);
@@ -710,11 +748,15 @@ export default function ReaderTab({
       {/* ── 源栏 · 我的订阅 ── */}
       {!pageOpen && <aside className="reader-col reader-col-sources">
         <div className="reader-sources-inner">
-        {/* 栏头 = 容器名(issue #27 四稿):左栏是过滤面板,栏里只有一种东西——过滤条件 */}
-        <div className="reader-src-head">
+        {/* 栏头 = 容器名 + 轴切换(issue #27 五稿):左栏是一根轴,栏头二选一决定其下列源还是列标签。
+            社交容器没有标签(推文不打标),不出轴切换,只列账号。 */}
+        <div className={`reader-src-head ${!socialView ? 'is-axis' : ''}`}>
           <span className="reader-src-title">
             {mode === 'bulletin' ? '动态' : socialView ? '社交媒体' : podcastView ? '播客' : '文章'}
           </span>
+          {!socialView && (
+            <AxisSeg axis={scope.axis} onChange={(axis) => { leaveBriefTrail(); setAxis(axis); }} />
+          )}
         </div>
 
         <div className="reader-source-scroll">
@@ -733,21 +775,22 @@ export default function ReaderTab({
                 </div>
               )}
 
-              {/* 三谓词过滤面板(issue #27 兴趣即透镜):订阅 / 兴趣 / 收藏 可多选,AND 联合;
-                  三者全关 = 全站可见源。开关的选中态 = wash 底 + 勾(多选语义),与下方单选源行的
-                  浮白 + 弱高程分家。「全部XX / 只看收藏」两行聚合入口自此退役。 */}
-              <ScopeToggles
-                scope={scope}
-                hasInterests={hasInterests}
-                onToggle={(key) => { leaveBriefTrail(); toggleScope(key); }}
-                onOpenInterests={openInterests}
-              />
-              {sidebarGroups.length > 0 && <div className="reader-src-label reader-src-axis">来源</div>}
+              {/* 兴趣轴:其下列关注的标签(与源行同一形制);点一行 = 收窄到该标签 */}
+              {!showSourceRows && (
+                <TagRows
+                  groups={interestGroups}
+                  activeTagId={activeTagId}
+                  onPick={(id) => { leaveBriefTrail(); goTag(id); }}
+                  hasInterests={hasInterests}
+                  onOpenInterests={openInterests}
+                />
+              )}
 
-              {/* 订阅来源按编辑分层分组(样页):官方·一手信息 / 媒体·观察 / 个人·洞见 / 榜单·动态。
-                  源栏跟随容器(层级化):文章容器只列文章形源,动态容器只列榜单·动态,今日列全部。
-                  组头=样页 .src-label 细字距灰签。退订钮浮层化:绝对定位悬停现,不占布局。 */}
-              {sidebarGroups.map(({ key, label, list }) => (
+              {/* 订阅轴:来源按编辑分层分组(样页):官方·一手信息 / 媒体·观察 / 个人·洞见 / 榜单·动态。
+                  源栏跟随容器(层级化):文章容器只列文章形源,动态容器只列榜单·动态。
+                  组头=样页 .src-label 细字距灰签。退订钮浮层化:绝对定位悬停现,不占布局。
+                  (预览未订源时临时在来源轴上,故也按此列) */}
+              {showSourceRows && sidebarGroups.map(({ key, label, list }) => (
                 <section className="reader-subs" key={key}>
                   <div className="reader-src-label">{label}</div>
                   <div className="reader-group-body">
@@ -794,12 +837,12 @@ export default function ReaderTab({
                 </section>
               ))}
 
-              {hasNoSubscriptions && (
+              {showSourceRows && hasNoSubscriptions && (
                 <p className="reader-side-hint">还没有订阅任何来源，在「发现」页挑选并添加。</p>
               )}
 
               {/* 「发现更多来源」内联子列表已退役——发现升格为整页视图(视图轨 Compass 钮) */}
-              {!hasNoSubscriptions && (
+              {showSourceRows && !hasNoSubscriptions && (
                 <button
                   type="button"
                   onClick={openDiscover}
@@ -869,7 +912,7 @@ export default function ReaderTab({
                 if (onboardingCompleted) {
                   onUserUpdated?.({ interest_onboarding_completed: true });
                   // 引导完成即落早报——读者立刻看到兴趣起了作用(在途时若已走开,只记完成)
-                  if (!discover) return;
+                  if (!discoverRef.current) return;
                   closeDiscover();
                   setBriefRestore(null);
                   setBriefOpen(true);
@@ -894,6 +937,7 @@ export default function ReaderTab({
           favTogglingId={favTogglingId}
           onToggleFavorite={onRowToggleFavorite}
           favOnly={favOnly}
+          onToggleFavOnly={toggleFavoriteScope}
           searchOpen={searchOpen}
           searchInput={searchInput}
           searchQuery={searchQuery}
@@ -960,16 +1004,31 @@ export default function ReaderTab({
                   </button>
                 ))}
               </div>
+              {/* 收藏星(issue #27 五稿):逐篇状态,与未读 seg 同类归同类;开着时琥珀实心 */}
               <button
                 type="button"
-                onClick={handleMarkAllRead}
-                disabled={markingRead}
-                aria-label={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
-                title={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
-                className="reader-unread-icon"
+                onClick={toggleFavoriteScope}
+                aria-pressed={favOnly}
+                aria-label={favOnly ? '取消只看收藏' : '只看收藏'}
+                title={favOnly ? '取消只看收藏' : '只看收藏'}
+                className={`reader-unread-icon reader-fav-toggle ${favOnly ? 'is-on' : ''}`}
               >
-                {markingRead ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
+                <Star className="h-4 w-4" fill={favOnly ? 'currentColor' : 'none'} />
               </button>
+              {/* 全部标读只在来源轴上出现:它推进的是源水位,兴趣轴是全站透镜、订阅外源没有水位,
+                  标了也会在下次重载复活为未读(codex 检视 P2)——不给一个做不到的动作 */}
+              {canMarkAllRead && (
+                <button
+                  type="button"
+                  onClick={handleMarkAllRead}
+                  disabled={markingRead}
+                  aria-label={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
+                  title={activeSourceId ? '本来源全部标为已读' : '本容器全部标为已读'}
+                  className="reader-unread-icon"
+                >
+                  {markingRead ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
+                </button>
+              )}
             </>
           )}
           {/* 搜索开关(就地展开:图标 ↔ ✕):由视图轨降级而来的条目列过滤器,与未读/收藏同维度 */}
@@ -983,7 +1042,6 @@ export default function ReaderTab({
           >
             {searchOpen ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
           </button>
-          {/* 收藏过滤器已移出列头 → 源栏「收藏」入口(容器级,与「全部XX」并列) */}
         </div>
 
         {/* 预览未订阅源:显眼订阅横幅(Folo 的「＋ 订阅」条),订阅成功即消失 */}
@@ -1004,7 +1062,7 @@ export default function ReaderTab({
         <div className="reader-scrollwrap">
         <div className="reader-list-scroll" ref={listRef}>
           {/* 新内容提示条:轮询发现未读正增量时出现,点击刷新——不自动插入打断阅读 */}
-          {!favOnly && scope.subscribed && !articlesLoading && freshCount > 0 && (
+          {!favOnly && scope.axis === 'subscribed' && !articlesLoading && freshCount > 0 && (
             <button type="button" className="reader-fresh-pill" onClick={handleRefreshFresh}>
               <RefreshCw className="h-3 w-3" />
               {podcastView ? `载入 ${freshCount} 期新播客` : `载入 ${freshCount} 篇新文章`}
@@ -1012,12 +1070,20 @@ export default function ReaderTab({
           )}
           {articlesLoading ? (
             <ArticleCardsSkeleton />
-          ) : scope.subscribed && !scope.interest && !favOnly && hasNoSubscriptions && !activeSourceId ? (
+          ) : scope.axis === 'subscribed' && !favOnly && hasNoSubscriptions && !activeSourceId ? (
             <div className="reader-empty reader-empty-tall">
               <Compass className="h-7 w-7 text-slate-300" />
               <span>你还没有订阅任何来源</span>
               <button type="button" className="action-button action-button-primary" onClick={openDiscover}>
                 去发现来源
+              </button>
+            </div>
+          ) : scope.axis === 'interest' && !favOnly && !hasInterests && !activeSourceId ? (
+            <div className="reader-empty reader-empty-tall">
+              <Tags className="h-7 w-7 text-slate-300" />
+              <span>还没有设置兴趣</span>
+              <button type="button" className="action-button action-button-primary" onClick={openInterests}>
+                去选几个感兴趣的方向
               </button>
             </div>
           ) : activeSourceHidden ? (
@@ -1033,8 +1099,10 @@ export default function ReaderTab({
                   ? (podcastView ? '没有匹配的播客' : '没有匹配的文章')
                   : favOnly
                     ? '当前范围还没有收藏，阅读时点右上角星标即可收藏'
-                    : scope.interest
-                      ? '当前范围没有命中兴趣的文章'
+                    : activeTagId
+                      ? '还没有命中这个兴趣的文章'
+                    : scope.axis === 'interest'
+                      ? '还没有命中兴趣的文章'
                     : unreadOnly
                       ? '没有未读内容，都看完啦'
                       : activeSourceId
@@ -1044,7 +1112,7 @@ export default function ReaderTab({
             </div>
           ) : (
             /* key 按视图范围重挂载,切源/切容器时列表整体淡入(A1) */
-            <div key={`${activeSourceId ?? '__all__'}|${mode}|${scope.subscribed ? 's' : ''}${scope.interest ? 'i' : ''}${scope.favorite ? 'f' : ''}`} className="reader-list-enter">
+            <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}`} className="reader-list-enter">
               {listPlan.map((entry) => {
                 if (entry.type === 'fold') {
                   /* 屏蔽折叠行(issue #27):同一日期组内命中屏蔽标签的条目折成一行——写屏蔽了什么,不写几篇;
@@ -1083,7 +1151,8 @@ export default function ReaderTab({
                     onToggleFavorite={onRowToggleFavorite}
                     onContextMenu={onRowContextMenu}
                     ctxAnchor={ctxMenu?.anchorKey === `article:${article.id}`}
-                    interestHit={article.interest_hits?.[0] || ''}
+                    interestHit={showInterestHit ? (article.interest_hits?.[0] || '') : ''}
+                    labelSuppress={activeTagName}
                     unsubscribed={showUnsubscribedMark && !subscribedIds.has(article.source_id)}
                     onSubscribeSource={onRowSubscribeSource}
                     muted={entry.muted}
