@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>兴趣即透镜 · 五稿 · 左栏一根轴 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   兴趣即透镜(issue #27)· 静默仪器样页 · 五稿 · 2026-09-09
+
+   四稿(三谓词多选 AND 联合)上线后的真实别扭(用户目检):选中左栏某个源之后,「订阅」开关不再有意义——
+   订阅集 ∩ 单源 = 单源,全站 ∩ 单源 = 单源,开关空转;停在未订源上它又被临时关掉、再点变成「回聚合」,
+   同一枚开关两种状态两种动作。根因:「订阅」与来源列表约束的是同一个变量(来源),不是正交的第四维。
+
+   五稿(用户 idea,2026-09-09 拍板方向)**左栏 = 一根轴,栏头二选一决定按什么切分**:
+   · 栏头 = 容器名 + 二段切换「订阅 | 兴趣」,**互斥**。订阅 → 其下列已订阅源(按角色分组,今天的源栏);
+     兴趣 → 其下列关注的标签(按目录面分组,与源列表同一套行语法)。点栏头段 = 该轴全集,点一行 = 收窄到一项。
+     两侧结构完全对称,「选了源之后订阅还有没有意义」在结构上消失。
+   · 兴趣模式的范围 = **全站可见源**(拍板 1):只在订阅内就退化成订阅的子集,失去「看见订阅之外」这一透镜的核心价值。
+     订阅外条目沿四稿:faint「未订阅」悬停翻「+ 订阅」,阅读窗眉头订阅胶囊。
+   · 「全站」浏览态(四稿三者全关)随互斥消失(拍板 2)——它本是副产品,发现页与未订源预览锚点行已覆盖。
+   · **收藏挪到列头**(与 全部 / 未读 seg 并排的一枚星):未读与收藏都是「逐篇的状态」,与「按什么切分」正交,
+     同类归同类;可与 订阅 / 单源 / 兴趣 / 单标签 任一组合。这反转了 v3.10「收藏进源栏当一级入口」——当时源栏没有轴语义。
+   · 命中胶囊仍是透镜:订阅全集 / 单源 / 兴趣全集里照挂;**单标签视图不挂**(每行都命中同一个标签,挂了是重复信息,
+     与「选了单源订阅空转」同一类冗余)。屏蔽仍是全局透镜(折叠行,无数字)。
+   · 列头回显:订阅 / 源名 / 兴趣(+ faint 全站)/ 标签名;收藏开着时副文案「收藏」。
+   · 被四稿暂缓的「按单个兴趣标签收窄」在这里有了自然的家(兴趣轴的下钻行),不再需要列头 chip 行。
+   · 待单独讨论(拍板 3):标签列表列什么(仅关注 / 是否露屏蔽)、无兴趣时的引导形态。本稿按「仅列关注的标签,
+     屏蔽不进列表、只作折叠行」画,空态按一句引导直落发现页兴趣段画,均为占位。
+   · 状态持久化:轴(订阅/兴趣)+ 选中项 + 收藏 + 未读 seg,按用户按容器记住;四稿里「临时关订阅不落盘」等补丁全部删除。
+   · 数据契约:GET /api/articles 在四稿 interest_scope 之上加 interest_tag_id(单标签收窄;谓词本就吃标签 id 列表);
+     兴趣轴 = 全站范围 + 兴趣谓词;其余不变。交付面不动。
+   纪律同前:面底 --rd-list-bg,卡 surface;饱和色只用于命中(accent)与收藏(琥珀);无篇数;暗色自动翻转。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif;
+  --serif-num: Charter, Cambria, Baskerville, var(--font-serif);
+  --dorami-blue: #5b54e8; --dorami-blue-2: #7b6cf0;
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-wash: rgba(91, 84, 232, 0.08); --dorami-well: #f1f5f9;
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-soft: rgba(11, 18, 32, 0.06);
+  --dorami-card-bd: transparent; --dorami-edge: rgba(255, 255, 255, 0.62);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-pill: 9999px;
+  --state-warn: #b45309; --state-bad: #e11d48;
+  --motion-fast: 150ms; --motion-medium: 240ms; --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ai-g1: #3f7bf6; --ai-g2: #8b52f4;
+  --rd-list-bg: var(--dorami-soft); --rd-pane-bg: var(--dorami-surface);
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-wash: rgba(124, 112, 235, 0.13);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-soft: rgba(255, 255, 255, 0.07);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08); --dorami-edge: rgba(255, 255, 255, 0.05);
+  --state-warn: #fbbf24; --state-bad: #fb7185;
+  --dorami-blue: #4d45b5; --dorami-blue-2: #5f57c8;
+  --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --ai-g1: #6ea3ff; --ai-g2: #ab86ff;
+  --rd-list-bg: var(--dorami-well); --rd-pane-bg: var(--dorami-soft);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink); font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+svg { flex: none; }
+a { color: var(--dorami-accent-ink); text-decoration: none; }
+.ai-grad-text { background: linear-gradient(90deg, var(--ai-g1), var(--ai-g2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+.page { padding: 26px 36px 56px; max-width: 1560px; margin: 0 auto; }
+.page-head { display: flex; align-items: center; gap: 14px; min-height: 48px; margin-bottom: 8px; }
+.page-title { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; }
+.page-sub { font-size: 12.5px; color: var(--dorami-muted); max-width: 960px; line-height: 1.7; margin-bottom: 26px; }
+.head-tool { margin-left: auto; width: 36px; height: 36px; display: grid; place-items: center; border-radius: var(--r-control); color: var(--dorami-faint); border: 1px solid var(--dorami-border); background: var(--dorami-surface); }
+.head-tool svg { width: 17px; height: 17px; }
+.zone-head { display: flex; align-items: baseline; gap: 10px; margin: 34px 2px 12px; }
+.zone-title { font-size: 14px; font-weight: 700; }
+.zone-sub { font-size: 12px; color: var(--dorami-muted); }
+.row { display: grid; gap: 22px; align-items: start; grid-template-columns: minmax(0, 1fr) 300px; }
+.shell-note { font-size: 11.5px; font-weight: 500; line-height: 1.65; color: var(--dorami-faint); }
+.shell-note b { color: var(--dorami-ink-2); font-weight: 600; }
+.shell-note p + p { margin-top: 10px; }
+.shell-note em { font-style: normal; color: var(--dorami-accent-ink); }
+
+/* ── 缩微壳 ── */
+.frame { border-radius: var(--r-card); overflow: hidden; border: 1px solid var(--dorami-border); box-shadow: var(--sh-2); background: var(--rd-list-bg); }
+.rshell { --vrail: 64px; --col-l: 232px; display: grid; grid-template-columns: var(--vrail) var(--col-l) 372px minmax(0, 1fr); height: 780px; overflow: hidden; }
+.rshell.is-disc { grid-template-columns: var(--vrail) var(--col-l) minmax(0, 1fr); }
+.rcol { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--dorami-border-soft); }
+.vrail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 0 16px; background: var(--dorami-canvas); border-right: 1px solid var(--dorami-border-soft); }
+.vrail-brand { width: 32px; height: 32px; border-radius: 10px; flex: none; margin-bottom: 16px; background: linear-gradient(145deg, var(--dorami-blue-2), var(--dorami-blue)); }
+.vbtn { position: relative; width: 52px; height: 46px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border-radius: 10px; color: var(--dorami-faint); }
+.vbtn svg { width: 18px; height: 18px; }
+.vbtn span { font-size: 10px; font-weight: 500; letter-spacing: 0.08em; }
+.vbtn.is-on { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+.vbtn.has-dot::after { content: ''; position: absolute; top: 7px; right: 9px; width: 6px; height: 6px; border-radius: 50%; background: var(--dorami-accent); box-shadow: 0 0 0 2px var(--dorami-canvas); }
+.vdiv { width: 28px; height: 1px; background: var(--dorami-border); margin: 6px 0; }
+
+/* ── 源栏 ── */
+.srccol { background: var(--dorami-canvas); }
+.src-head { display: flex; align-items: baseline; justify-content: space-between; padding: 18px 16px 10px; }
+.src-title { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; }
+.srccol-scroll { flex: 1; overflow-y: auto; padding: 0 8px 16px; }
+.srow { display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 8px; border-radius: 8px; color: var(--dorami-muted); text-align: left; }
+.srow:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+.srow.is-on { background: var(--dorami-surface); box-shadow: var(--sh-1); color: var(--dorami-ink); font-weight: 600; }
+.src-mark { width: 18px; height: 18px; border-radius: 6px; display: inline-grid; place-items: center; font-size: 9px; font-weight: 700; color: #fff; background: var(--dorami-muted); flex: none; }
+.srow.is-on .src-mark { background: var(--dorami-accent); }
+.srow.is-on .src-mark.is-fav { background: #f59e0b; }
+.src-mark.is-sub { background: transparent; color: var(--dorami-muted); box-shadow: inset 0 0 0 1.5px var(--dorami-muted); }
+.srow.is-on .src-mark.is-sub { background: transparent; color: var(--dorami-accent-ink); box-shadow: inset 0 0 0 1.5px var(--dorami-accent); }
+/* 订阅外条目:源名后 faint「未订阅」,悬停卡片时翻成 accent「+ 订阅」——桥就地消解 */
+.e-unsub { flex: none; font-size: 10.5px; color: var(--dorami-faint); letter-spacing: 0.04em; white-space: nowrap; }
+.e-unsub::before { content: '未订阅'; }
+.entry:hover .e-unsub, .entry.is-hover .e-unsub { color: var(--dorami-accent-ink); }
+.entry:hover .e-unsub::before, .entry.is-hover .e-unsub::before { content: '+ 订阅'; }
+.pane-sub { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--dorami-accent); font-size: 11px; color: var(--dorami-accent-ink); }
+.srow.is-tag.is-on .tag-dot::before { background: var(--dorami-accent); box-shadow: none; width: 8px; height: 8px; }
+.srow .sname { flex: 1; min-width: 0; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow .sn { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); }
+.grp-head { display: flex; align-items: center; gap: 8px; padding: 12px 10px 4px; font-size: 10.5px; letter-spacing: 0.12em; color: var(--dorami-faint); }
+.grp-head::before { content: ''; width: 3px; height: 10px; border-radius: 2px; background: var(--dorami-accent); opacity: 0.6; }
+/* 只看关注态的标签 chip 行:列头之下、列表之上,横向滚动;与「只看收藏」同理——列表自管收窄 */
+.lens-row { display: flex; gap: 6px; padding: 8px 12px 6px 16px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--dorami-border-soft); }
+.lens-chip { flex: none; height: 24px; padding: 0 10px; border-radius: 999px; font-size: 12px; color: var(--dorami-muted); background: var(--dorami-canvas); white-space: nowrap; }
+.lens-chip:hover { color: var(--dorami-ink); }
+.lens-chip.is-on { background: var(--dorami-wash); color: var(--dorami-accent-ink); font-weight: 500; }
+/* 兴趣组行:源行同语法,图标位是标签圆点(与标签 chip 的圆点同一符号) */
+.srow.is-tag { padding-left: 8px; }
+.tag-dot { width: 18px; height: 18px; display: inline-grid; place-items: center; flex: none; }
+.tag-dot::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--dorami-accent); }
+.srow.is-on .tag-dot::before { width: 7px; height: 7px; }
+.tag-dot.is-all::before { width: 8px; height: 8px; background: transparent; box-shadow: inset 0 0 0 2px var(--dorami-accent); }
+
+/* ── 条目列 ── */
+.rlist { background: var(--rd-list-bg); }
+.list-head { display: flex; align-items: center; gap: 8px; padding: 14px 6px 10px 16px; border-bottom: 1px solid var(--dorami-border-soft); }
+.list-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; }
+.list-title small { font-size: 11px; font-weight: 400; color: var(--dorami-faint); }
+.seg { display: flex; flex-shrink: 0; padding: 2px; border-radius: 8px; background: var(--dorami-canvas); }
+.seg button { padding: 3px 8px; border-radius: 6px; font-size: 12px; color: var(--dorami-faint); }
+.seg button.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+.ibtn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 7px; color: var(--dorami-faint); }
+.ibtn svg { width: 15px; height: 15px; }
+.list-scroll { flex: 1; overflow-y: auto; padding: 6px 4px 12px 4px; }
+.day-head { position: sticky; top: 0; z-index: 1; padding: 10px 16px 6px; font-size: 10.5px; letter-spacing: 0.12em; color: var(--dorami-faint); background: var(--rd-list-bg); }
+.entry { display: block; width: 100%; text-align: left; padding: 10px 6px 10px 16px; border-radius: var(--r-control); }
+.entry:hover { background: color-mix(in srgb, var(--dorami-ink) 4%, transparent); }
+.entry.is-active { background: var(--dorami-surface); box-shadow: var(--sh-1); }
+.e-top { display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
+.e-src { flex: 0 1 auto; min-width: 0; font-size: 11.5px; color: var(--dorami-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.e-tag { flex: none; padding: 0.5px 5px; border: 1px solid var(--dorami-border); border-radius: 4px; font-size: 10px; line-height: 1.4; letter-spacing: 0.06em; color: var(--dorami-faint); white-space: nowrap; }
+.e-hit { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 0.5px 6px 0.5px 5px; border-radius: 4px; font-size: 10px; line-height: 1.4; letter-spacing: 0.04em; color: var(--dorami-accent-ink); background: var(--dorami-wash); white-space: nowrap; }
+.e-hit::before { content: ''; width: 4px; height: 4px; border-radius: 50%; background: var(--dorami-accent); }
+.e-score { flex: none; margin-left: auto; min-width: 2.4em; text-align: right; font-family: var(--serif-num); font-size: 13px; font-weight: 600; line-height: 1; letter-spacing: -0.01em; font-variant-numeric: lining-nums tabular-nums; }
+.e-score.is-pending { font-family: inherit; font-size: 11px; font-weight: 400; color: var(--dorami-faint); }
+.e-time { flex: none; margin-left: 3px; margin-right: 8px; font-size: 11.5px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.e-titlerow { position: relative; display: block; }
+.e-title { font-size: 14px; font-weight: 600; line-height: 1.5; color: var(--dorami-ink); padding-right: 24px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.e-dot { position: absolute; left: -12px; top: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--dorami-accent); }
+.e-ex { margin-top: 2px; font-size: 12.5px; line-height: 1.55; color: var(--dorami-faint); white-space: nowrap; overflow: hidden; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+.fold { display: flex; align-items: center; gap: 7px; margin: 2px 6px 2px 16px; padding: 6px 8px; border-radius: 8px; font-size: 11.5px; color: var(--dorami-faint); border: 1px dashed var(--dorami-border); cursor: pointer; }
+.fold svg { width: 12px; height: 12px; }
+.fold b { font-weight: 500; color: var(--dorami-muted); }
+.fold .fold-open { margin-left: auto; }
+.fold:hover { background: color-mix(in srgb, var(--dorami-ink) 4%, transparent); }
+
+/* ── 阅读窗 ── */
+.pane { background: var(--rd-pane-bg); overflow-y: auto; min-width: 0; }
+.pane-tools { display: flex; justify-content: flex-end; gap: 2px; padding: 10px 14px 0; }
+.pane-inner { max-width: 640px; margin: 0 auto; padding: 22px 40px 60px; }
+.pane-kicker { font-size: 11.5px; color: var(--dorami-faint); display: flex; gap: 8px; }
+.pane-title { margin-top: 8px; font-family: var(--font-serif); font-size: 26px; font-weight: 700; line-height: 1.3; letter-spacing: -0.01em; }
+.pane-meta { margin-top: 10px; font-size: 12px; color: var(--dorami-faint); display: flex; gap: 8px; flex-wrap: wrap; }
+.pane-tags { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+.ptag { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--dorami-border); font-size: 11px; color: var(--dorami-muted); letter-spacing: 0.02em; cursor: pointer; }
+.ptag.is-follow { border-color: transparent; background: var(--dorami-wash); color: var(--dorami-accent-ink); font-weight: 500; }
+.ptag.is-follow::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--dorami-accent); }
+.ptag .ptag-add { display: none; font-size: 10.5px; color: var(--dorami-accent-ink); }
+.ptag:not(.is-follow):hover, .ptag.is-hover { border-color: var(--dorami-accent); color: var(--dorami-ink); }
+.ptag:not(.is-follow):hover .ptag-add, .ptag.is-hover .ptag-add { display: inline; }
+.pane-actions { margin-top: 14px; display: flex; align-items: center; gap: 8px; }
+.pane-seg { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--dorami-canvas); }
+.pane-seg span { padding: 3px 9px; border-radius: 6px; font-size: 12px; color: var(--dorami-faint); }
+.pane-seg span.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+.pane-pill { height: 24px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--dorami-border); font-size: 12px; color: var(--dorami-muted); display: inline-flex; align-items: center; }
+.pane-body { margin-top: 22px; display: flex; flex-direction: column; gap: 12px; }
+.pane-body p { font-size: 15px; line-height: 1.85; color: var(--dorami-ink-2); }
+.ghost { height: 11px; border-radius: 6px; background: color-mix(in srgb, var(--dorami-ink) 7%, transparent); }
+.ghost.w1 { width: 100%; } .ghost.w2 { width: 92%; } .ghost.w3 { width: 76%; } .ghost.w4 { width: 55%; }
+
+/* ── 发现页(1:1 .reader-disc-* 语法)── */
+.disc { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--rd-list-bg); }
+.disc-head { flex: none; padding: 18px 28px 0; border-bottom: 1px solid var(--dorami-border-soft); }
+.disc-inner { max-width: 920px; margin: 0 auto; }
+.disc-title-row { display: flex; align-items: baseline; gap: 12px; }
+.disc-title { font-size: 14px; font-weight: 600; }
+.disc-hint { font-size: 11.5px; color: var(--dorami-faint); }
+.disc-tools { display: flex; align-items: center; gap: 10px; margin: 14px 0; }
+.disc-search { flex: 1; max-width: 320px; display: flex; align-items: center; gap: 7px; padding: 6px 11px; background: var(--dorami-well); border-radius: 9px; box-shadow: inset 0 1px 3px rgba(11,18,32,0.08); color: var(--dorami-faint); font-size: 12.5px; }
+.disc-search svg { width: 13px; height: 13px; }
+.disc-tools .seg { margin-left: auto; }
+.save-state { font-size: 11px; color: var(--dorami-faint); margin-left: 6px; }
+.disc-body { flex: 1; overflow-y: auto; padding: 0 28px 40px; }
+.disc-body .disc-inner { padding-top: 6px; }
+/* 我的关注 chip 行 */
+.picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 0 4px; }
+.picks-label { font-size: 10.5px; letter-spacing: 0.12em; color: var(--dorami-faint); margin-right: 4px; }
+.chip { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px 0 8px; border-radius: 7px; background: var(--dorami-surface); box-shadow: var(--sh-1); font-size: 12px; color: var(--dorami-ink); cursor: default; }
+.chip::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--dorami-accent); }
+.chip.is-mute { color: var(--dorami-muted); text-decoration: line-through; text-decoration-color: var(--dorami-faint); background: color-mix(in srgb, var(--dorami-ink) 4%, var(--rd-list-bg)); box-shadow: none; }
+.chip.is-mute::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--dorami-faint); }
+.chip .chip-x { display: none; width: 14px; height: 14px; border-radius: 4px; font-size: 12px; line-height: 1; color: var(--dorami-faint); place-items: center; margin-left: -2px; }
+.chip:hover .chip-x, .chip.is-hover .chip-x { display: grid; }
+.chip .chip-x:hover { background: color-mix(in srgb, var(--dorami-ink) 8%, transparent); color: var(--dorami-ink); }
+.picks-empty { font-size: 12px; color: var(--dorami-faint); }
+/* 组头 + 卡 */
+.disc-grp { display: flex; align-items: center; gap: 10px; margin: 22px 0 10px; }
+.disc-grp-title { font-size: 12.5px; font-weight: 700; letter-spacing: 0.04em; }
+.disc-grp-hint { font-size: 11.5px; color: var(--dorami-faint); }
+.disc-grp-rule { flex: 1; height: 1px; background: var(--dorami-border); }
+.tgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.tcard { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 11px 13px 9px; border-radius: 10px; background: var(--dorami-surface); box-shadow: var(--sh-1); cursor: pointer; transition: box-shadow var(--motion-fast) var(--motion-ease), transform var(--motion-medium) var(--motion-ease); }
+.tcard:hover { box-shadow: var(--sh-2); transform: translateY(-1px); }
+.tcard-name { font-size: 13.5px; font-weight: 600; line-height: 1.3; }
+.tcard-desc { font-size: 11.5px; line-height: 1.55; color: var(--dorami-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tcard-foot { position: relative; display: flex; align-items: center; gap: 6px; margin-top: auto; padding-top: 6px; min-height: 22px; }
+.tcard-foot-label { font-size: 10.5px; letter-spacing: 0.08em; color: var(--dorami-faint); margin-right: 2px; white-space: nowrap; }
+.tcard-foot .src-mark { width: 16px; height: 16px; border-radius: 5px; font-size: 8.5px; }
+.tcard-foot .src-mark.is-unsub { background: transparent; color: var(--dorami-faint); box-shadow: inset 0 0 0 1px var(--dorami-faint); opacity: 0.7; }
+.tcard-foot .src-mark.is-unsub.is-hover, .tcard-foot .src-mark.is-unsub:hover { opacity: 1; box-shadow: inset 0 0 0 1px var(--dorami-accent); color: var(--dorami-accent-ink); }
+.tcard-foot .src-tip { margin-left: 2px; display: none; align-items: center; gap: 5px; height: 18px; padding: 0 6px; border-radius: 5px; background: var(--dorami-wash); font-size: 10.5px; color: var(--dorami-accent-ink); white-space: nowrap; }
+.tcard-foot .src-tip.is-show { display: inline-flex; }
+.tcard-foot .src-tip.is-show ~ .tcard-ban { display: none; }
+.tcard-foot .src-tip b { font-weight: 600; }
+.tcard-ban { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: 6px; font-size: 11px; color: var(--dorami-faint); opacity: 0; transition: opacity var(--motion-fast) ease; }
+.tcard-ban svg { width: 12px; height: 12px; }
+.tcard:hover .tcard-ban, .tcard.is-hover .tcard-ban { opacity: 1; }
+.tcard-ban:hover { background: color-mix(in srgb, var(--dorami-ink) 7%, transparent); color: var(--dorami-ink); }
+.tcard.is-follow { box-shadow: inset 0 0 0 1.5px var(--dorami-accent), var(--sh-1); }
+.tcard.is-follow .tcard-name { color: var(--dorami-accent-ink); }
+.tcard.is-mute { background: color-mix(in srgb, var(--dorami-ink) 4%, var(--rd-list-bg)); box-shadow: none; }
+.tcard.is-mute .tcard-name { color: var(--dorami-muted); text-decoration: line-through; text-decoration-color: var(--dorami-faint); }
+.tcard.is-mute .tcard-desc { color: var(--dorami-faint); }
+.tcard.is-mute .tcard-ban { opacity: 1; color: var(--dorami-muted); background: color-mix(in srgb, var(--dorami-ink) 7%, transparent); }
+.more { margin-top: 10px; display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px; border-radius: var(--r-control); font-size: 12px; font-weight: 500; color: var(--dorami-muted); }
+.more svg { width: 13px; height: 13px; }
+.more:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); color: var(--dorami-ink); }
+/* 首登横幅 */
+.onb { display: flex; align-items: center; gap: 14px; margin: 12px 0 2px; padding: 12px 16px; border-radius: 12px; background: var(--dorami-surface); box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge); }
+.onb-main { flex: 1; min-width: 0; }
+.onb-kicker { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em; color: var(--dorami-accent-ink); }
+.onb-text { margin-top: 3px; font-size: 12.5px; color: var(--dorami-ink-2); line-height: 1.6; }
+.onb-text b { font-weight: 600; }
+.btn { display: inline-flex; align-items: center; justify-content: center; height: 30px; padding: 0 13px; border-radius: var(--r-control); font-size: 12.5px; font-weight: 600; color: var(--dorami-muted); flex: none; }
+.btn:hover { background: color-mix(in srgb, var(--dorami-ink) 6%, transparent); color: var(--dorami-ink); }
+.btn.is-primary { background: var(--dorami-accent); color: #fff; box-shadow: var(--sh-1); }
+
+/* ── 移动壳 ── */
+.mrow-wrap { display: flex; gap: 22px; align-items: flex-start; }
+.mframe { position: relative; width: 390px; flex: none; border-radius: 28px; border: 1px solid var(--dorami-border); box-shadow: var(--sh-2); overflow: hidden; background: var(--rd-list-bg); display: flex; flex-direction: column; height: 780px; }
+.m-topbar { display: flex; align-items: center; gap: 10px; padding: 16px 18px 8px; font-size: 20px; font-weight: 700; background: var(--rd-pane-bg); }
+.m-topbar .m-sp { flex: 1; }
+.m-topbar .ibtn { color: var(--dorami-muted); }
+.m-topbar.is-sub { font-size: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--dorami-border-soft); }
+.m-back { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; color: var(--dorami-muted); }
+.m-back svg { width: 18px; height: 18px; }
+.m-scroll { flex: 1; overflow-y: auto; }
+.m-tabbar { display: flex; justify-content: space-around; padding: 8px 6px 14px; background: var(--rd-pane-bg); border-top: 1px solid var(--dorami-border-soft); }
+.m-tab { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 12px; border-radius: 10px; font-size: 11px; color: var(--dorami-faint); }
+.m-tab svg { width: 20px; height: 20px; }
+.m-tab.is-on { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+.mframe .entry { padding: 10px 14px 10px 26px; }
+.mframe .seg-row { display: flex; align-items: center; gap: 8px; padding: 8px 14px 4px; }
+.m-scrim { z-index: 5; position: absolute; inset: 0; background: rgba(11, 18, 32, 0.32); }
+.m-drawer { z-index: 6; position: absolute; top: 0; bottom: 0; left: 0; width: 300px; background: var(--dorami-canvas); box-shadow: var(--sh-2); display: flex; flex-direction: column; }
+.m-drawer .srccol-scroll { padding-bottom: 24px; }
+.m-disc-head { padding: 12px 16px 0; background: var(--rd-pane-bg); border-bottom: 1px solid var(--dorami-border-soft); }
+.m-disc-head .seg { width: 100%; }
+.m-disc-head .seg button { flex: 1; text-align: center; }
+.m-disc-hint { padding: 8px 0 10px; font-size: 11.5px; color: var(--dorami-faint); line-height: 1.5; }
+.m-picks { padding: 10px 14px 2px; }
+.m-grp { padding: 14px 16px 6px; display: flex; align-items: baseline; gap: 8px; font-size: 11px; letter-spacing: 0.1em; color: var(--dorami-faint); }
+.mrow { display: flex; align-items: center; gap: 10px; margin: 0 12px 6px; padding: 10px 10px 10px 14px; border-radius: 12px; background: var(--dorami-surface); box-shadow: var(--sh-1); text-align: left; }
+.mrow-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.mrow .tcard-desc { -webkit-line-clamp: 1; }
+.mrow .tcard-ban { opacity: 1; margin-left: 0; width: 28px; height: 28px; padding: 0; justify-content: center; border-radius: 8px; }
+.mrow .tcard-ban svg { width: 14px; height: 14px; }
+.mrow.is-follow { box-shadow: inset 0 0 0 1.5px var(--dorami-accent); }
+.mrow.is-follow .tcard-name { color: var(--dorami-accent-ink); }
+.mrow.is-mute { background: color-mix(in srgb, var(--dorami-ink) 4%, var(--rd-list-bg)); box-shadow: none; }
+.mrow.is-mute .tcard-name { color: var(--dorami-muted); text-decoration: line-through; }
+
+@media (max-width: 1100px) { .row { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .tcard:hover { transform: none; } }
+
+/* ── 左栏 = 过滤面板:三枚可多选开关(wash 底 = 多选语义,与单选源行的 surface+sh-1 分家)── */
+.tg { display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 8px; border-radius: 8px; color: var(--dorami-muted); text-align: left; }
+.tg:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+.tg-ic { width: 18px; height: 18px; border-radius: 6px; display: inline-grid; place-items: center; flex: none; color: var(--dorami-faint); }
+.tg-ic svg { width: 13px; height: 13px; }
+.tg-name { flex: 1; font-size: 12.5px; }
+.tg-check { width: 14px; height: 14px; color: var(--dorami-accent-ink); opacity: 0; }
+.tg.is-on { background: var(--dorami-wash); color: var(--dorami-ink); }
+.tg.is-on .tg-name { font-weight: 600; }
+.tg.is-on .tg-ic { color: var(--dorami-accent-ink); }
+.tg.is-on .tg-check { opacity: 1; }
+.tg.is-fav.is-on .tg-ic { color: #f59e0b; }
+.tg.is-off-disabled { opacity: 0.45; }
+.src-label { padding: 14px 10px 4px; font-size: 10.5px; letter-spacing: 0.12em; color: var(--dorami-faint); }
+.list-title .lt-sub { font-size: 11px; font-weight: 400; color: var(--dorami-faint); letter-spacing: 0.02em; }
+/* 未订阅源的临时锚点行(既有机制):虚线圈标 + faint 名 + 尾部「订阅」 */
+.srow.is-anchor { color: var(--dorami-muted); }
+.srow.is-anchor .src-mark { background: transparent; color: var(--dorami-faint); box-shadow: inset 0 0 0 1px var(--dorami-faint); }
+.srow.is-anchor .sn { font-family: inherit; color: var(--dorami-accent-ink); }
+
+
+/* ── 五稿:栏头二段 = 轴切换(单选语义:浮白 + 弱高程,与源行 / 标签行的选中态同语)── */
+.src-head.is-axis { flex-direction: column; align-items: stretch; gap: 10px; padding-bottom: 6px; }
+.src-seg { display: flex; padding: 2px; border-radius: 8px; background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+.src-seg button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 26px; border-radius: 6px; font-size: 12px; color: var(--dorami-faint); }
+.src-seg button svg { width: 12px; height: 12px; }
+.src-seg button.is-on { background: var(--dorami-surface); color: var(--dorami-ink); font-weight: 600; box-shadow: var(--sh-1); }
+.src-seg button.is-on svg { color: var(--dorami-accent-ink); }
+/* 列头收藏星:与 seg 并排,开着时琥珀实心(收藏色只此一处) */
+.ibtn.is-fav.is-on { color: #f59e0b; background: rgba(245, 158, 11, 0.12); }
+.ibtn.is-fav.is-on svg { fill: currentColor; }
+/* 条目右缘收藏星(既有语法) */
+.e-titlerow .e-star { position: absolute; right: 6px; top: 3px; width: 13px; height: 13px; color: #f59e0b; fill: currentColor; }
+/* 兴趣轴空态:一句引导,不锁栏 */
+.axis-empty { margin: 8px 8px 0; padding: 12px 12px; border-radius: 10px; border: 1px dashed var(--dorami-border); font-size: 12px; line-height: 1.6; color: var(--dorami-faint); }
+.axis-empty a { font-weight: 500; }
+/* 差异表 */
+.diff { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 6px 0 4px; }
+.diff th, .diff td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--dorami-border-soft); vertical-align: top; line-height: 1.55; }
+.diff th { font-size: 11px; letter-spacing: 0.08em; color: var(--dorami-faint); font-weight: 600; }
+.diff td:first-child { color: var(--dorami-muted); white-space: nowrap; }
+.diff td b { font-weight: 600; }
+.diff-wrap { background: var(--dorami-surface); border-radius: var(--r-card); box-shadow: var(--sh-1); padding: 10px 14px; margin-bottom: 8px; overflow-x: auto; }
+
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-news" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6Z"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10a7 7 0 0 1-14 0M12 17v5M8 22h8"/></symbol>
+  <symbol id="i-act" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+  <symbol id="i-at" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.9 7.9"/></symbol>
+  <symbol id="i-compass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m16.2 7.8-2.2 6.4-6.4 2.2 2.2-6.4 6.4-2.2Z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></symbol>
+  <symbol id="i-ban" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1L12 2Z"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></symbol>
+  <symbol id="i-checks" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 7 17l-4-4M22 10l-7.5 7.5"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18M6 12h12M10 19h4"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-rss" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></symbol>
+  <symbol id="i-tagdot" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="12" r="5"/></symbol>
+</svg>
+<div class="page">
+  <div class="page-head">
+    <h1 class="page-title">兴趣即透镜 · 五稿 · 左栏一根轴</h1>
+    <button class="head-tool" id="themeBtn" title="切换亮暗"><svg><use href="#i-sun"/></svg></button>
+  </div>
+  <p class="page-sub">五稿。左栏是<b>一根轴</b>:栏头二选一决定按什么切分——<b>订阅</b>(其下列已订阅源)或<b>兴趣</b>(其下列关注的标签),两者互斥、结构对称:点栏头段 = 该轴全集,点一行 = 收窄到一项。兴趣轴的范围是全站可见源。<b>收藏挪到列头</b>,与 全部 / 未读 并排,是逐篇状态,可与任一轴取值组合。命中胶囊与屏蔽折叠行仍是透镜;单标签视图不挂胶囊。全页不出现任何篇数。</p>
+
+  <div class="zone-head"><span class="zone-title">与四稿的差异</span><span class="zone-sub">只列变化的位置</span></div>
+  
+<div class="diff-wrap"><table class="diff">
+<tr><th>位置</th><th>四稿(现行)</th><th>五稿</th></tr>
+<tr><td>左栏栏头</td><td>容器名 + 三行可多选开关 订阅 / 兴趣 / 收藏</td><td>容器名 + <b>二段互斥切换「订阅 | 兴趣」</b>,决定其下列源还是列标签</td></tr>
+<tr><td>左栏列表</td><td>恒为已订阅源分组(第四轴,与开关 AND)</td><td>订阅 → 源分组(不变);兴趣 → <b>关注的标签分组</b>,同一套行语法;点一行 = 收窄到该项,点栏头段 = 全集</td></tr>
+<tr><td>收藏</td><td>左栏第三枚开关</td><td><b>列头一枚星</b>,与 全部 / 未读 seg 并排;逐篇状态归一处,可与任一轴取值组合</td></tr>
+<tr><td>兴趣的范围</td><td>兴趣单开 = 全站;订阅 ∧ 兴趣 = 订阅内</td><td>兴趣轴 = <b>全站可见源</b>;「订阅内命中兴趣」不再是可选过滤,靠订阅轴里的命中胶囊呈现</td></tr>
+<tr><td>全站浏览态</td><td>三者全关 = 「全部 · 全站」</td><td><b>取消</b>(发现页与未订源锚点行覆盖)</td></tr>
+<tr><td>单源 / 单标签</td><td>单源:订阅开关空转;单标签:暂缓</td><td>两者对称:栏头段保持点亮表示「在哪根轴上」,行选中表示收窄到哪一项;<b>单标签视图不挂命中胶囊</b></td></tr>
+<tr><td>列头回显</td><td>激活谓词集 / 源名 / 「全部 · 全站」</td><td>订阅 / 源名 / 兴趣 + faint 全站 / 标签名;收藏开着时副文案「收藏」</td></tr>
+<tr><td>持久化</td><td>三布尔按用户按容器;未订源临时关订阅不落盘</td><td>轴 + 选中项 + 收藏 + 未读 seg 按用户按容器;<b>临时态补丁全删</b></td></tr>
+<tr><td>后端</td><td>interest_scope / favorite_scope / with_interest</td><td>+ <b>interest_tag_id</b>(单标签收窄);其余复用</td></tr>
+</table></div>
+
+
+  <div class="zone-head"><span class="zone-title">① 订阅轴 · 全集(默认态)</span><span class="zone-sub">栏头「订阅」点亮,其下是今天的源栏;列头「订阅」,收藏星未开</span></div>
+  <div class="row">
+    <div class="frame"><div class="rshell" style="height:780px"><nav class="vrail"><div class="vrail-brand"></div><button class="vbtn"><svg><use href="#i-news"/></svg><span>早报</span></button><div class="vdiv"></div><button class="vbtn is-on"><svg><use href="#i-file"/></svg><span>文章</span></button><button class="vbtn"><svg><use href="#i-mic"/></svg><span>播客</span></button><button class="vbtn"><svg><use href="#i-act"/></svg><span>动态</span></button><button class="vbtn"><svg><use href="#i-at"/></svg><span>社交</span></button><div class="vdiv"></div><button class="vbtn"><svg><use href="#i-compass"/></svg><span>发现</span></button></nav><aside class="rcol srccol"><div class="src-head is-axis"><span class="src-title">文章</span><div class="src-seg" role="radiogroup" aria-label="按什么切分"><button class="is-on"><svg><use href="#i-rss"/></svg>订阅</button><button class=""><svg><use href="#i-tagdot"/></svg>兴趣</button></div></div><div class="srccol-scroll"><div class="grp-head">官方</div><button class="srow"><span class="src-mark" style="background:#d97757">A</span><span class="sname">Anthropic 新闻</span></button><button class="srow"><span class="src-mark" style="background:#d97757">C</span><span class="sname">Claude 博客</span></button><button class="srow"><span class="src-mark" style="background:#111">O</span><span class="sname">OpenAI 新闻</span></button><button class="srow"><span class="src-mark" style="background:#4285f4">G</span><span class="sname">Gemini 模型更新</span></button><div class="grp-head">媒体</div><button class="srow"><span class="src-mark" style="background:#0f7b6c">I</span><span class="sname">IT之家 AI</span></button><div class="grp-head">榜单</div><button class="srow"><span class="src-mark" style="background:#f2a900">H</span><span class="sname">HF Daily Papers</span></button></div></aside><section class="rcol rlist"><div class="list-head"><div class="list-title">订阅</div><div class="seg"><button class="is-on">全部</button><button class="">未读</button></div><button class="ibtn is-fav" title="只看收藏" aria-pressed="false"><svg><use href="#i-star"/></svg></button><button class="ibtn" title="全部标为已读"><svg><use href="#i-checks"/></svg></button><button class="ibtn" title="搜索"><svg><use href="#i-search"/></svg></button></div><div class="list-scroll"><div class="day-head">今天 · 9 月 9 日</div><button class="entry"><span class="e-top"><span class="e-src">Gemini 模型更新</span><span class="e-hit">AI 智能体</span><span class="e-tag">发布</span><span class="e-score ai-grad-text">8.5</span><span class="e-time">5 小时前</span></span><span class="e-titlerow"><span class="e-dot"></span><span class="e-title">Introducing Gemini 3.8 Flash and 3.8 Flash Cyber</span></span><span class="e-ex">面向软件工程与智能体任务的轻量旗舰,新增网络安全专用变体。</span></button><button class="entry"><span class="e-top"><span class="e-src">IT之家 AI</span><span class="e-tag">新闻</span><span class="e-score ai-grad-text">8.2</span><span class="e-time">6 小时前</span></span><span class="e-titlerow"><span class="e-dot"></span><span class="e-title">Meta 发布最强 AI 模型 Muse Spark 1.3,编码能力超 GPT-5.6 Sol</span></span><span class="e-ex">新版在多项编码基准上刷新纪录,并首次开放 API 预览。</span></button><button class="entry is-active"><span class="e-top"><span class="e-src">Claude 博客</span><span class="e-hit">Anthropic</span><span class="e-tag">指南</span><span class="e-score ai-grad-text">7.5</span><span class="e-time">2 小时前</span></span><span class="e-titlerow"><span class="e-title">Building commerce agents with Claude</span></span><span class="e-ex">从检索、结构化工具调用到安全失败的结账循环,一份可靠商业智能体的搭建指南。</span></button><div class="fold"><svg><use href="#i-ban"/></svg><span>已屏蔽 · <b>机器人技术、具身智能</b></span><span class="fold-open">展开</span></div><button class="entry"><span class="e-top"><span class="e-src">HF Daily Papers</span><span class="e-tag">论文</span><span class="e-score ai-grad-text">6.0</span><span class="e-time">8 小时前</span></span><span class="e-titlerow"><span class="e-dot"></span><span class="e-title">Self-Distilled Reasoners: Scaling Test-Time Compute without Verifiers</span></span><span class="e-ex">无验证器的测试时计算扩展,自蒸馏推理器在数学与代码基准上取得增益。</span></button><div class="day-head">昨天 · 9 月 8 日</div><button class="entry"><span class="e-top"><span class="e-src">OpenAI 新闻</span><span class="e-hit">大语言模型</span><span class="e-tag">发布</span><span class="e-score ai-grad-text">9.0</span><span class="e-time">昨天 21:10</span></span><span class="e-titlerow"><span class="e-title">GPT-5.6 Sol now available to all Plus users</span><svg class="e-star"><use href="#i-star"/></svg></span><span class="e-ex">旗舰模型全面开放,含更长上下文与更低延迟。</span></button><button class="entry"><span class="e-top"><span class="e-src">IT之家 AI</span><span class="e-hit">通义千问</span><span class="e-tag">新闻</span><span class="e-score ai-grad-text">7.8</span><span class="e-time">昨天 18:02</span></span><span class="e-titlerow"><span class="e-title">阿里通义千问开源 Qwen3.8-27B,支持 256K 上下文</span></span><span class="e-ex">中等尺寸开源权重,面向本地部署与端侧推理。</span></button></div></section><section class="pane"><div class="pane-tools"><button class="ibtn"><svg><use href="#i-star"/></svg></button><button class="ibtn"><svg><use href="#i-check"/></svg></button><button class="ibtn"><svg><use href="#i-share"/></svg></button></div><div class="pane-inner"><div class="pane-kicker"><span>Claude 博客</span><span>·</span><span>指南</span></div><h1 class="pane-title">Building commerce agents with Claude</h1><div class="pane-meta"><span>2026-09-09 08:40</span><span>·</span><span>阅读量 12</span><span>·</span><span>新闻价值 <b class="ai-grad-text">7.5</b></span></div><div class="pane-tags"><span class="ptag is-follow">AI 智能体</span><span class="ptag is-follow">Anthropic</span><span class="ptag is-hover">企业 AI<span class="ptag-add">+ 关注</span></span><span class="ptag">Claude<span class="ptag-add">+ 关注</span></span></div><div class="pane-actions"><div class="pane-seg"><span class="is-on">原语言</span><span>中文</span></div><span class="pane-pill">查看原文 ↗</span></div><div class="pane-body"><p>Commerce agents sit between a shopper's intent and a merchant's catalog. This guide walks through the pieces that make them reliable: retrieval, structured tool calls, and a checkout loop that fails safely.</p><div class="ghost w1"></div><div class="ghost w2"></div><div class="ghost w1"></div><div class="ghost w3"></div><div class="ghost w1" style="margin-top:8px"></div><div class="ghost w2"></div><div class="ghost w4"></div></div></div></section></div></div>
+    <div class="shell-note">
+      <p><b>栏头二段是轴切换,不是过滤开关。</b>选中态用浮白 + 弱高程,与其下源行 / 标签行的选中态同一语法——整栏自此只有一种语义:单选。四稿的 wash 底 + 勾(多选语义)整体退役。</p>
+      <p><b>列头:</b>标题「订阅」;全部 / 未读 seg 旁多一枚星 = 只看收藏。未读与收藏都是逐篇状态,同类归同类。</p>
+      <p><b>命中胶囊照挂</b>(订阅全集里,命中兴趣标签的条目挂一枚,只写命中的那个);屏蔽照样折成一行。两者与轴无关,是透镜。</p>
+    </div>
+  </div>
+
+  <div class="zone-head"><span class="zone-title">② 订阅轴 · 单源 + 收藏</span><span class="zone-sub">点了「IT之家 AI」,再点亮列头星:该源里我收藏过的</span></div>
+  <div class="row">
+    <div class="frame"><div class="rshell" style="height:780px"><nav class="vrail"><div class="vrail-brand"></div><button class="vbtn"><svg><use href="#i-news"/></svg><span>早报</span></button><div class="vdiv"></div><button class="vbtn is-on"><svg><use href="#i-file"/></svg><span>文章</span></button><button class="vbtn"><svg><use href="#i-mic"/></svg><span>播客</span></button><button class="vbtn"><svg><use href="#i-act"/></svg><span>动态</span></button><button class="vbtn"><svg><use href="#i-at"/></svg><span>社交</span></button><div class="vdiv"></div><button class="vbtn"><svg><use href="#i-compass"/></svg><span>发现</span></button></nav><aside class="rcol srccol"><div class="src-head is-axis"><span class="src-title">文章</span><div class="src-seg" role="radiogroup" aria-label="按什么切分"><button class="is-on"><svg><use href="#i-rss"/></svg>订阅</button><button class=""><svg><use href="#i-tagdot"/></svg>兴趣</button></div></div><div class="srccol-scroll"><div class="grp-head">官方</div><button class="srow"><span class="src-mark" style="background:#d97757">A</span><span class="sname">Anthropic 新闻</span></button><button class="srow"><span class="src-mark" style="background:#d97757">C</span><span class="sname">Claude 博客</span></button><button class="srow"><span class="src-mark" style="background:#111">O</span><span class="sname">OpenAI 新闻</span></button><button class="srow"><span class="src-mark" style="background:#4285f4">G</span><span class="sname">Gemini 模型更新</span></button><div class="grp-head">媒体</div><button class="srow is-on"><span class="src-mark" style="background:#0f7b6c">I</span><span class="sname">IT之家 AI</span></button><div class="grp-head">榜单</div><button class="srow"><span class="src-mark" style="background:#f2a900">H</span><span class="sname">HF Daily Papers</span></button></div></aside><section class="rcol rlist"><div class="list-head"><div class="list-title">IT之家 AI<span class="lt-sub">收藏</span></div><div class="seg"><button class="is-on">全部</button><button class="">未读</button></div><button class="ibtn is-fav is-on" title="只看收藏" aria-pressed="true"><svg><use href="#i-star"/></svg></button><button class="ibtn" title="全部标为已读"><svg><use href="#i-checks"/></svg></button><button class="ibtn" title="搜索"><svg><use href="#i-search"/></svg></button></div><div class="list-scroll"><div class="day-head">昨天 · 9 月 8 日</div><button class="entry is-active"><span class="e-top"><span class="e-src">IT之家 AI</span><span class="e-hit">通义千问</span><span class="e-tag">新闻</span><span class="e-score ai-grad-text">7.8</span><span class="e-time">昨天 18:02</span></span><span class="e-titlerow"><span class="e-title">阿里通义千问开源 Qwen3.8-27B,支持 256K 上下文</span><svg class="e-star"><use href="#i-star"/></svg></span><span class="e-ex">中等尺寸开源权重,面向本地部署与端侧推理。</span></button><div class="day-head">9 月 5 日</div><button class="entry"><span class="e-top"><span class="e-src">IT之家 AI</span><span class="e-tag">新闻</span><span class="e-score ai-grad-text">7.0</span><span class="e-time">9 月 5 日</span></span><span class="e-titlerow"><span class="e-title">英伟达收购 Hugging Face 传闻再起,双方均未置评</span><svg class="e-star"><use href="#i-star"/></svg></span><span class="e-ex">多家媒体援引知情人士称谈判已进入后期。</span></button><div class="day-head">8 月 30 日</div><button class="entry"><span class="e-top"><span class="e-src">IT之家 AI</span><span class="e-hit">DeepSeek</span><span class="e-tag">新闻</span><span class="e-score ai-grad-text">8.0</span><span class="e-time">8 月 30 日</span></span><span class="e-titlerow"><span class="e-title">DeepSeek V4 Flash 上线,思考模式默认开启</span><svg class="e-star"><use href="#i-star"/></svg></span><span class="e-ex">轻量版本对齐旗舰能力,API 价格下调三成。</span></button></div></section><section class="pane"><div class="pane-tools"><button class="ibtn"><svg><use href="#i-star"/></svg></button><button class="ibtn"><svg><use href="#i-check"/></svg></button><button class="ibtn"><svg><use href="#i-share"/></svg></button></div><div class="pane-inner"><div class="pane-kicker"><span>IT之家 AI</span><span>·</span><span>新闻</span></div><h1 class="pane-title">阿里通义千问开源 Qwen3.8-27B,支持 256K 上下文</h1><div class="pane-meta"><span>2026-09-08 18:02</span><span>·</span><span>阅读量 41</span><span>·</span><span>新闻价值 <b class="ai-grad-text">7.8</b></span></div><div class="pane-tags"><span class="ptag is-follow">通义千问</span><span class="ptag is-follow">开源模型</span><span class="ptag">阿里巴巴<span class="ptag-add">+ 关注</span></span></div><div class="pane-actions"><div class="pane-seg"><span class="is-on">原语言</span><span>中文</span></div><span class="pane-pill">查看原文 ↗</span></div><div class="pane-body"><p>通义千问团队今日开源 Qwen3.8-27B,提供基座与指令微调两个版本,原生支持 256K 上下文,权重以 Apache 2.0 协议发布。</p><div class="ghost w1"></div><div class="ghost w2"></div><div class="ghost w1"></div><div class="ghost w3"></div><div class="ghost w1" style="margin-top:8px"></div><div class="ghost w2"></div><div class="ghost w4"></div></div></div></section></div></div>
+    <div class="shell-note">
+      <p><b>栏头「订阅」段保持点亮</b>——它表示「现在在来源轴上」,不再是一个会空转的过滤开关;源行选中表示收窄到哪一项。四稿的别扭在此消失。</p>
+      <p><b>列头:</b>标题 = 源名,副文案「收藏」回显星的状态;星本身琥珀实心。收藏色全页只此一处(与条目右缘的收藏星同色)。</p>
+      <p>切到「兴趣」段会清掉源选中;切回「订阅」段回到订阅全集(不记住上次选的源——与今天点容器钮回聚合一致)。</p>
+    </div>
+  </div>
+
+  <div class="zone-head"><span class="zone-title">③ 兴趣轴 · 全集</span><span class="zone-sub">栏头切到「兴趣」,其下是我关注的标签;范围 = 全站可见源</span></div>
+  <div class="row">
+    <div class="frame"><div class="rshell" style="height:780px"><nav class="vrail"><div class="vrail-brand"></div><button class="vbtn"><svg><use href="#i-news"/></svg><span>早报</span></button><div class="vdiv"></div><button class="vbtn is-on"><svg><use href="#i-file"/></svg><span>文章</span></button><button class="vbtn"><svg><use href="#i-mic"/></svg><span>播客</span></button><button class="vbtn"><svg><use href="#i-act"/></svg><span>动态</span></button><button class="vbtn"><svg><use href="#i-at"/></svg><span>社交</span></button><div class="vdiv"></div><button class="vbtn"><svg><use href="#i-compass"/></svg><span>发现</span></button></nav><aside class="rcol srccol"><div class="src-head is-axis"><span class="src-title">文章</span><div class="src-seg" role="radiogroup" aria-label="按什么切分"><button class=""><svg><use href="#i-rss"/></svg>订阅</button><button class="is-on"><svg><use href="#i-tagdot"/></svg>兴趣</button></div></div><div class="srccol-scroll"><div class="grp-head">方向</div><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">AI 智能体</span></button><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">大语言模型</span></button><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">开源模型</span></button><div class="grp-head">玩家</div><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">Anthropic</span></button><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">DeepSeek</span></button><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">通义千问</span></button><div class="grp-head">行业</div><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">企业 AI</span></button></div></aside><section class="rcol rlist"><div class="list-head"><div class="list-title">兴趣<span class="lt-sub">全站</span></div><div class="seg"><button class="is-on">全部</button><button class="">未读</button></div><button class="ibtn is-fav" title="只看收藏" aria-pressed="false"><svg><use href="#i-star"/></svg></button><button class="ibtn" title="全部标为已读"><svg><use href="#i-checks"/></svg></button><button class="ibtn" title="搜索"><svg><use href="#i-search"/></svg></button></div><div class="list-scroll"><div class="day-head">今天 · 9 月 9 日</div><button class="entry"><span class="e-top"><span class="e-src">量子位</span><span class="e-unsub"></span><span class="e-hit">DeepSeek</span><span class="e-tag">新闻</span><span class="e-score ai-grad-text">8.4</span><span class="e-time">1 小时前</span></span><span class="e-titlerow"><span class="e-dot"></span><span class="e-title">DeepSeek 发布 V4.1,长上下文推理成本再降一半</span></span><span class="e-ex">官方称 128K 上下文下推理成本降至上代 45%,API 已同步更新。</span></button><button class="entry"><span class="e-top"><span class="e-src">Gemini 模型更新</span><span class="e-hit">AI 智能体</span><span class="e-tag">发布</span><span class="e-score ai-grad-text">8.5</span><span class="e-time">5 小时前</span></span><span class="e-titlerow"><span class="e-dot"></span><span class="e-title">Introducing Gemini 3.8 Flash and 3.8 Flash Cyber</span></span><span class="e-ex">面向软件工程与智能体任务的轻量旗舰,新增网络安全专用变体。</span></button><button class="entry is-active"><span class="e-top"><span class="e-src">机器之心</span><span class="e-unsub"></span><span class="e-hit">Anthropic</span><span class="e-tag">新闻</span><span class="e-score ai-grad-text">7.6</span><span class="e-time">3 小时前</span></span><span class="e-titlerow"><span class="e-dot"></span><span class="e-title">Anthropic 发布 Claude 智能体评测集 AgentBench-Pro</span></span><span class="e-ex">覆盖 12 类真实任务,首次纳入长程工具调用与失败恢复。</span></button><button class="entry"><span class="e-top"><span class="e-src">Claude 博客</span><span class="e-hit">Anthropic</span><span class="e-tag">指南</span><span class="e-score ai-grad-text">7.5</span><span class="e-time">2 小时前</span></span><span class="e-titlerow"><span class="e-title">Building commerce agents with Claude</span></span><span class="e-ex">从检索、结构化工具调用到安全失败的结账循环。</span></button><div class="fold"><svg><use href="#i-ban"/></svg><span>已屏蔽 · <b>机器人技术、具身智能</b></span><span class="fold-open">展开</span></div><div class="day-head">昨天 · 9 月 8 日</div><button class="entry"><span class="e-top"><span class="e-src">OpenAI 新闻</span><span class="e-hit">大语言模型</span><span class="e-tag">发布</span><span class="e-score ai-grad-text">9.0</span><span class="e-time">昨天 21:10</span></span><span class="e-titlerow"><span class="e-title">GPT-5.6 Sol now available to all Plus users</span><svg class="e-star"><use href="#i-star"/></svg></span><span class="e-ex">旗舰模型全面开放,含更长上下文与更低延迟。</span></button><button class="entry"><span class="e-top"><span class="e-src">新智元</span><span class="e-unsub"></span><span class="e-hit">企业 AI</span><span class="e-tag">深度</span><span class="e-score ai-grad-text">6.5</span><span class="e-time">昨天 19:30</span></span><span class="e-titlerow"><span class="e-title">企业级 Agent 平台混战:谁在真正落地</span></span><span class="e-ex">访谈六家企业客户,拆解落地卡点。</span></button><button class="entry"><span class="e-top"><span class="e-src">IT之家 AI</span><span class="e-hit">通义千问</span><span class="e-tag">新闻</span><span class="e-score ai-grad-text">7.8</span><span class="e-time">昨天 18:02</span></span><span class="e-titlerow"><span class="e-title">阿里通义千问开源 Qwen3.8-27B,支持 256K 上下文</span></span><span class="e-ex">中等尺寸开源权重,面向本地部署与端侧推理。</span></button></div></section><section class="pane"><div class="pane-tools"><button class="ibtn"><svg><use href="#i-star"/></svg></button><button class="ibtn"><svg><use href="#i-check"/></svg></button><button class="ibtn"><svg><use href="#i-share"/></svg></button></div><div class="pane-inner"><div class="pane-kicker"><span>机器之心</span><span>·</span><span>新闻</span><span>·</span><span class="pane-sub">+ 订阅</span></div><h1 class="pane-title">Anthropic 发布 Claude 智能体评测集 AgentBench-Pro</h1><div class="pane-meta"><span>2026-09-09 10:15</span><span>·</span><span>新闻价值 <b class="ai-grad-text">7.6</b></span></div><div class="pane-tags"><span class="ptag is-follow">Anthropic</span><span class="ptag is-follow">AI 智能体</span><span class="ptag">评测基准<span class="ptag-add">+ 关注</span></span></div><div class="pane-actions"><div class="pane-seg"><span class="is-on">原语言</span><span>中文</span></div><span class="pane-pill">查看原文 ↗</span></div><div class="pane-body"><p>Anthropic 今日开源智能体评测集 AgentBench-Pro,覆盖软件工程、数据分析、网页操作等 12 类真实任务,并首次把长程工具调用与失败恢复纳入计分。</p><div class="ghost w1"></div><div class="ghost w2"></div><div class="ghost w1"></div><div class="ghost w3"></div><div class="ghost w1" style="margin-top:8px"></div><div class="ghost w2"></div><div class="ghost w4"></div></div></div></section></div></div>
+    <div class="shell-note">
+      <p><b>左栏列表换成关注的标签</b>,按目录面分组(方向 / 玩家 / 行业),行语法与源行完全一致(图标位是标签圆点)。本稿按「仅列关注的标签,屏蔽不进列表」画,列什么另议(拍板 3)。</p>
+      <p><b>范围是全站</b>:列头「兴趣」+ faint「全站」如实交代;订阅外条目源名后 faint「未订阅」,悬停翻「+ 订阅」;阅读窗眉头一枚订阅胶囊。这里是透镜的核心价值——看见订阅之外。</p>
+      <p><b>命中胶囊在全集里照挂</b>:一篇可能命中多个关注标签,胶囊告诉你它为什么在这里。</p>
+    </div>
+  </div>
+
+  <div class="zone-head"><span class="zone-title">④ 兴趣轴 · 单标签</span><span class="zone-sub">点了「DeepSeek」:全站里命中这个实体的文章</span></div>
+  <div class="row">
+    <div class="frame"><div class="rshell" style="height:780px"><nav class="vrail"><div class="vrail-brand"></div><button class="vbtn"><svg><use href="#i-news"/></svg><span>早报</span></button><div class="vdiv"></div><button class="vbtn is-on"><svg><use href="#i-file"/></svg><span>文章</span></button><button class="vbtn"><svg><use href="#i-mic"/></svg><span>播客</span></button><button class="vbtn"><svg><use href="#i-act"/></svg><span>动态</span></button><button class="vbtn"><svg><use href="#i-at"/></svg><span>社交</span></button><div class="vdiv"></div><button class="vbtn"><svg><use href="#i-compass"/></svg><span>发现</span></button></nav><aside class="rcol srccol"><div class="src-head is-axis"><span class="src-title">文章</span><div class="src-seg" role="radiogroup" aria-label="按什么切分"><button class=""><svg><use href="#i-rss"/></svg>订阅</button><button class="is-on"><svg><use href="#i-tagdot"/></svg>兴趣</button></div></div><div class="srccol-scroll"><div class="grp-head">方向</div><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">AI 智能体</span></button><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">大语言模型</span></button><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">开源模型</span></button><div class="grp-head">玩家</div><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">Anthropic</span></button><button class="srow is-tag is-on"><span class="tag-dot"></span><span class="sname">DeepSeek</span></button><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">通义千问</span></button><div class="grp-head">行业</div><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">企业 AI</span></button></div></aside><section class="rcol rlist"><div class="list-head"><div class="list-title">DeepSeek</div><div class="seg"><button class="is-on">全部</button><button class="">未读</button></div><button class="ibtn is-fav" title="只看收藏" aria-pressed="false"><svg><use href="#i-star"/></svg></button><button class="ibtn" title="全部标为已读"><svg><use href="#i-checks"/></svg></button><button class="ibtn" title="搜索"><svg><use href="#i-search"/></svg></button></div><div class="list-scroll"><div class="day-head">今天 · 9 月 9 日</div><button class="entry is-active"><span class="e-top"><span class="e-src">量子位</span><span class="e-unsub"></span><span class="e-tag">新闻</span><span class="e-score ai-grad-text">8.4</span><span class="e-time">1 小时前</span></span><span class="e-titlerow"><span class="e-dot"></span><span class="e-title">DeepSeek 发布 V4.1,长上下文推理成本再降一半</span></span><span class="e-ex">官方称 128K 上下文下推理成本降至上代 45%,API 已同步更新。</span></button><button class="entry"><span class="e-top"><span class="e-src">DeepSeek 官方</span><span class="e-unsub"></span><span class="e-tag">发布</span><span class="e-score ai-grad-text">8.8</span><span class="e-time">2 小时前</span></span><span class="e-titlerow"><span class="e-dot"></span><span class="e-title">DeepSeek-V4.1 Release Notes</span></span><span class="e-ex">Improved long-context reasoning, lower API pricing, and a new thinking budget parameter.</span></button><div class="day-head">8 月 30 日</div><button class="entry"><span class="e-top"><span class="e-src">IT之家 AI</span><span class="e-tag">新闻</span><span class="e-score ai-grad-text">8.0</span><span class="e-time">8 月 30 日</span></span><span class="e-titlerow"><span class="e-title">DeepSeek V4 Flash 上线,思考模式默认开启</span><svg class="e-star"><use href="#i-star"/></svg></span><span class="e-ex">轻量版本对齐旗舰能力,API 价格下调三成。</span></button><button class="entry"><span class="e-top"><span class="e-src">机器之心</span><span class="e-unsub"></span><span class="e-tag">评测</span><span class="e-score ai-grad-text">6.8</span><span class="e-time">8 月 30 日</span></span><span class="e-titlerow"><span class="e-title">DeepSeek V4 Flash 实测:思考模式下的成本与延迟</span></span><span class="e-ex">对比三档思考强度在编码任务上的表现。</span></button><div class="day-head">8 月 22 日</div><button class="entry"><span class="e-top"><span class="e-src">HF Daily Papers</span><span class="e-tag">论文</span><span class="e-score ai-grad-text">6.2</span><span class="e-time">8 月 22 日</span></span><span class="e-titlerow"><span class="e-title">DeepSeek-Prover-V3: Formal Theorem Proving at Scale</span></span><span class="e-ex">形式化定理证明的大规模训练与推理框架。</span></button></div></section><section class="pane"><div class="pane-tools"><button class="ibtn"><svg><use href="#i-star"/></svg></button><button class="ibtn"><svg><use href="#i-check"/></svg></button><button class="ibtn"><svg><use href="#i-share"/></svg></button></div><div class="pane-inner"><div class="pane-kicker"><span>量子位</span><span>·</span><span>新闻</span><span>·</span><span class="pane-sub">+ 订阅</span></div><h1 class="pane-title">DeepSeek 发布 V4.1,长上下文推理成本再降一半</h1><div class="pane-meta"><span>2026-09-09 11:02</span><span>·</span><span>新闻价值 <b class="ai-grad-text">8.4</b></span></div><div class="pane-tags"><span class="ptag is-follow">DeepSeek</span><span class="ptag is-follow">大语言模型</span><span class="ptag">推理成本<span class="ptag-add">+ 关注</span></span></div><div class="pane-actions"><div class="pane-seg"><span class="is-on">原语言</span><span>中文</span></div><span class="pane-pill">查看原文 ↗</span></div><div class="pane-body"><p>DeepSeek 今日发布 V4.1。官方称在 128K 上下文下,推理成本降至上一代的 45%,API 已同步更新,思考预算参数首次开放给开发者。</p><div class="ghost w1"></div><div class="ghost w2"></div><div class="ghost w1"></div><div class="ghost w3"></div><div class="ghost w1" style="margin-top:8px"></div><div class="ghost w2"></div><div class="ghost w4"></div></div></div></section></div></div>
+    <div class="shell-note">
+      <p><b>与 ② 完全对称</b>:栏头「兴趣」段保持点亮,标签行选中;列头标题 = 标签名。四稿暂缓的「按单个兴趣标签收窄」在这里有了自然的家,不需要列头 chip 行。</p>
+      <p><b>不挂命中胶囊</b>:每一篇都因同一个标签而在,再挂是重复信息——与「单源里订阅开关空转」同一类冗余。阅读窗标签行里该标签仍着 accent。</p>
+      <p>「关注对象以实体为主」的宏观拍板在这一屏最直观:跟一个玩家,比跟一个方向更像订阅一个「人」。</p>
+    </div>
+  </div>
+
+  <div class="zone-head"><span class="zone-title">⑤ 兴趣轴 · 空态(占位,拍板 3 另议)</span><span class="zone-sub">没设过兴趣时切到「兴趣」段</span></div>
+  <div class="row">
+    <div class="frame"><div class="rshell" style="height:780px"><nav class="vrail"><div class="vrail-brand"></div><button class="vbtn"><svg><use href="#i-news"/></svg><span>早报</span></button><div class="vdiv"></div><button class="vbtn is-on"><svg><use href="#i-file"/></svg><span>文章</span></button><button class="vbtn"><svg><use href="#i-mic"/></svg><span>播客</span></button><button class="vbtn"><svg><use href="#i-act"/></svg><span>动态</span></button><button class="vbtn"><svg><use href="#i-at"/></svg><span>社交</span></button><div class="vdiv"></div><button class="vbtn"><svg><use href="#i-compass"/></svg><span>发现</span></button></nav><aside class="rcol srccol"><div class="src-head is-axis"><span class="src-title">文章</span><div class="src-seg" role="radiogroup" aria-label="按什么切分"><button class=""><svg><use href="#i-rss"/></svg>订阅</button><button class="is-on"><svg><use href="#i-tagdot"/></svg>兴趣</button></div></div><div class="srccol-scroll"><div class="axis-empty">还没有设置兴趣。<a href="#">去发现页选几个感兴趣的方向 →</a></div></div></aside><section class="rcol rlist"><div class="list-head"><div class="list-title">兴趣<span class="lt-sub">全站</span></div><div class="seg"><button class="is-on">全部</button><button class="">未读</button></div><button class="ibtn is-fav" title="只看收藏" aria-pressed="false"><svg><use href="#i-star"/></svg></button><button class="ibtn" title="全部标为已读"><svg><use href="#i-checks"/></svg></button><button class="ibtn" title="搜索"><svg><use href="#i-search"/></svg></button></div><div class="list-scroll"><div class="axis-empty" style="margin:14px 12px">还没有设置兴趣,列表是空的。<a href="#">去发现页选几个感兴趣的方向 →</a></div></div></section><section class="pane"></section></div></div>
+    <div class="shell-note">
+      <p>四稿把无兴趣时的开关灰掉、点它直落发现页;五稿里「兴趣」是一根轴,不宜灰掉——切过去看到一句引导直落发现页兴趣段,不锁栏、不弹层。列什么、屏蔽是否露面、引导形态按你说的另开讨论,此屏只是占位。</p>
+    </div>
+  </div>
+
+  <div class="zone-head"><span class="zone-title">⑥ 移动壳 · 抽屉</span><span class="zone-sub">左:订阅轴;右:兴趣轴已收窄到「DeepSeek」</span></div>
+  <div class="row">
+    <div class="mrow-wrap"><div class="mframe"><div class="m-topbar"><button class="ibtn"><svg><use href="#i-filter"/></svg></button><span>订阅</span><span class="m-sp"></span><button class="ibtn is-fav"><svg><use href="#i-star"/></svg></button><button class="ibtn"><svg><use href="#i-search"/></svg></button></div><div class="seg-row"><div class="seg"><button class="is-on">全部</button><button>未读</button></div></div><div class="m-scroll"><div class="day-head">今天 · 9 月 9 日</div><button class="entry"><span class="e-top"><span class="e-src">Gemini 模型更新</span><span class="e-hit">AI 智能体</span><span class="e-tag">发布</span><span class="e-score ai-grad-text">8.5</span><span class="e-time">5 小时前</span></span><span class="e-titlerow"><span class="e-dot"></span><span class="e-title">Introducing Gemini 3.8 Flash and 3.8 Flash Cyber</span></span><span class="e-ex">面向软件工程与智能体任务的轻量旗舰。</span></button><button class="entry"><span class="e-top"><span class="e-src">IT之家 AI</span><span class="e-tag">新闻</span><span class="e-score ai-grad-text">8.2</span><span class="e-time">6 小时前</span></span><span class="e-titlerow"><span class="e-dot"></span><span class="e-title">Meta 发布最强 AI 模型 Muse Spark 1.3</span></span><span class="e-ex">新版在多项编码基准上刷新纪录。</span></button></div><div class="m-tabbar"><button class="m-tab is-on"><svg><use href="#i-file"/></svg>文章</button><button class="m-tab"><svg><use href="#i-mic"/></svg>播客</button><button class="m-tab"><svg><use href="#i-act"/></svg>动态</button><button class="m-tab"><svg><use href="#i-at"/></svg>社交</button><button class="m-tab"><svg><use href="#i-user"/></svg>我的</button></div><div class="m-scrim"></div><div class="m-drawer"><div class="src-head is-axis"><span class="src-title">文章</span><div class="src-seg" role="radiogroup" aria-label="按什么切分"><button class="is-on"><svg><use href="#i-rss"/></svg>订阅</button><button class=""><svg><use href="#i-tagdot"/></svg>兴趣</button></div></div><div class="srccol-scroll"><div class="grp-head">官方</div><button class="srow"><span class="src-mark" style="background:#d97757">A</span><span class="sname">Anthropic 新闻</span></button><button class="srow"><span class="src-mark" style="background:#d97757">C</span><span class="sname">Claude 博客</span></button><button class="srow"><span class="src-mark" style="background:#111">O</span><span class="sname">OpenAI 新闻</span></button><button class="srow"><span class="src-mark" style="background:#4285f4">G</span><span class="sname">Gemini 模型更新</span></button><div class="grp-head">媒体</div><button class="srow"><span class="src-mark" style="background:#0f7b6c">I</span><span class="sname">IT之家 AI</span></button><div class="grp-head">榜单</div><button class="srow"><span class="src-mark" style="background:#f2a900">H</span><span class="sname">HF Daily Papers</span></button></div></div></div><div class="mframe"><div class="m-topbar"><button class="ibtn"><svg><use href="#i-filter"/></svg></button><span>DeepSeek</span><span class="m-sp"></span><button class="ibtn is-fav"><svg><use href="#i-star"/></svg></button><button class="ibtn"><svg><use href="#i-search"/></svg></button></div><div class="seg-row"><div class="seg"><button class="is-on">全部</button><button>未读</button></div></div><div class="m-scroll"><div class="day-head">今天 · 9 月 9 日</div><button class="entry"><span class="e-top"><span class="e-src">Gemini 模型更新</span><span class="e-hit">AI 智能体</span><span class="e-tag">发布</span><span class="e-score ai-grad-text">8.5</span><span class="e-time">5 小时前</span></span><span class="e-titlerow"><span class="e-dot"></span><span class="e-title">Introducing Gemini 3.8 Flash and 3.8 Flash Cyber</span></span><span class="e-ex">面向软件工程与智能体任务的轻量旗舰。</span></button><button class="entry"><span class="e-top"><span class="e-src">IT之家 AI</span><span class="e-tag">新闻</span><span class="e-score ai-grad-text">8.2</span><span class="e-time">6 小时前</span></span><span class="e-titlerow"><span class="e-dot"></span><span class="e-title">Meta 发布最强 AI 模型 Muse Spark 1.3</span></span><span class="e-ex">新版在多项编码基准上刷新纪录。</span></button></div><div class="m-tabbar"><button class="m-tab is-on"><svg><use href="#i-file"/></svg>文章</button><button class="m-tab"><svg><use href="#i-mic"/></svg>播客</button><button class="m-tab"><svg><use href="#i-act"/></svg>动态</button><button class="m-tab"><svg><use href="#i-at"/></svg>社交</button><button class="m-tab"><svg><use href="#i-user"/></svg>我的</button></div><div class="m-scrim"></div><div class="m-drawer"><div class="src-head is-axis"><span class="src-title">文章</span><div class="src-seg" role="radiogroup" aria-label="按什么切分"><button class=""><svg><use href="#i-rss"/></svg>订阅</button><button class="is-on"><svg><use href="#i-tagdot"/></svg>兴趣</button></div></div><div class="srccol-scroll"><div class="grp-head">方向</div><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">AI 智能体</span></button><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">大语言模型</span></button><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">开源模型</span></button><div class="grp-head">玩家</div><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">Anthropic</span></button><button class="srow is-tag is-on"><span class="tag-dot"></span><span class="sname">DeepSeek</span></button><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">通义千问</span></button><div class="grp-head">行业</div><button class="srow is-tag"><span class="tag-dot"></span><span class="sname">企业 AI</span></button></div></div></div></div>
+    <div class="shell-note">
+      <p>抽屉顶部 = 桌面栏头同一份:容器名 + 二段切换,其下列表随段切换。切段或点一行即关抽屉回列表。</p>
+      <p>顶栏标题回显(订阅 / 源名 / 兴趣 / 标签名),收藏星与搜索并列在顶栏右侧,seg 行照旧。</p>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('themeBtn').addEventListener('click', function () {
+  var root = document.documentElement;
+  root.setAttribute('data-theme', root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+});
+</script>
+</body>
+</html>

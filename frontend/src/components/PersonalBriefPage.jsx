@@ -83,7 +83,7 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
   const summary = snapshot.summary || snapshot.one_sentence_summary || '';
   const sourceName = snapshot.source_name || source?.name || snapshot.source_id || '未知来源';
   const company = source ? resolveCompany(source) : resolveCompany({ source_id: snapshot.source_id, name: sourceName, user_source: true });
-  // 中文标题(v3.51.2,issue #33 §4):编排后补的 title_zh 作主标题,原标题降为其下小字(沿阅读窗译名的视觉语言)
+  // 中文标题(v3.52.1,issue #33 §4):编排后补的 title_zh 作主标题,原标题降为其下小字(沿阅读窗译名的视觉语言)
   const titleZh = snapshot.title_zh && snapshot.title_zh !== snapshot.title ? snapshot.title_zh : '';
   const titleNode = (
     <>

@@ -34,6 +34,7 @@ import {
   subscribeSource,
   unsubscribeSource,
   fetchFavorites,
+  fetchInterests,
   addFavorite,
   removeFavorite,
   translateArticle,
@@ -49,6 +50,54 @@ import {
 } from '../api';
 
 const PAGE_SIZE = 30;
+
+// ── 左栏一根轴(issue #27 五稿,样页 docs/design/dorami-interest-axis-quiet.html):
+//    栏头二选一 axis = 'subscribed'(其下列已订阅源)| 'interest'(其下列关注的标签),互斥;
+//    点一行 = 收窄到一项(activeSourceId / activeTagId),点栏头段 = 该轴全集。
+//    favorite = 列头星:逐篇状态,与轴正交,可与任一轴取值组合。轴 + 收藏 按用户按容器记住。 ──
+const SCOPE_STORAGE_PREFIX = 'dorami-reader-scope';
+const DEFAULT_SCOPE = Object.freeze({ axis: 'subscribed', favorite: false });
+export function readStoredScope(username, mode) {
+  try {
+    const raw = window.localStorage.getItem(`${SCOPE_STORAGE_PREFIX}:${username || 'anon'}:${mode}`);
+    if (!raw) return { ...DEFAULT_SCOPE };
+    const parsed = JSON.parse(raw);
+    // 四稿存的是三布尔 {subscribed, interest, favorite}:兴趣单开 → 兴趣轴,其余 → 订阅轴
+    const axis = parsed.axis === 'interest' || (parsed.axis === undefined && parsed.interest && parsed.subscribed === false)
+      ? 'interest' : 'subscribed';
+    return { axis, favorite: Boolean(parsed.favorite) };
+  } catch {
+    return { ...DEFAULT_SCOPE };
+  }
+}
+function writeStoredScope(username, mode, scope) {
+  try {
+    window.localStorage.setItem(`${SCOPE_STORAGE_PREFIX}:${username || 'anon'}:${mode}`, JSON.stringify(scope));
+  } catch { /* 隐私模式等写不进去:面板退化为会话态 */ }
+}
+// 列表请求参数的单一拼装点:轴 + 下钻项 + 收藏 + 容器形态 + 读态 + 搜索(列表首拉与分析轮询共用)
+function buildListFilters({ activeSourceId, activeTagId, mode, scope, displayTagQuery, searchQuery, unreadOnly }) {
+  const filters = {};
+  if (activeSourceId) filters.source_id = activeSourceId;
+  else filters.shape = mode; // 容器分流(文章/动态/社交各取自己那类)
+  if (scope.axis === 'interest') {
+    // 兴趣轴 = 全站可见源 ∩ 命中关注标签(下钻时只认那一枚)
+    filters.subscribed_scope = 'off';
+    filters.interest_scope = 'only';
+    if (activeTagId) filters.interest_tag_id = activeTagId;
+  } else {
+    // 订阅轴:全集 = 订阅源;单源 = 该源(未订阅的预览源也要能看,故 off)
+    filters.subscribed_scope = activeSourceId ? 'off' : 'only';
+  }
+  if (scope.favorite) filters.favorite_scope = 'only';
+  if (displayTagQuery) filters.display_tag = displayTagQuery;
+  else if (searchQuery) filters.search = searchQuery;
+  filters.with_unread = 'true';    // 条目附页级未读标记(水位由 unread-counts 校准)
+  filters.with_interest = 'true';  // 条目附命中的关注 / 屏蔽标签名(胶囊与折叠行)
+  if (unreadOnly) filters.unread_only = 'true';
+  return filters;
+}
+
 const UNREAD_POLL_MS = 60000; // 未读轻轮询间隔（标签页可见时才真正请求）
 const ANALYSIS_POLL_MS = 30000;
 const ANALYSIS_PROJECTION_KEYS = [
@@ -69,6 +118,9 @@ const ANALYSIS_PROJECTION_KEYS = [
   'tags',
   'display_tags',
   'podcast',
+  // 兴趣标注随分析轮询刷新:pending 篇拿到标签后,命中胶囊 / 屏蔽折叠不必等整列重载(codex 检视 P2)
+  'interest_hits',
+  'interest_muted',
 ];
 
 function withFreshAnalysis(article, incoming) {
@@ -108,13 +160,55 @@ export function useReaderState({
   initialArticleId = '',
   onDeepLinkConsumed,
   onBeforeOpenArticle,
+  // 兴趣轴随「个人早报」能力位:关闭时兴趣端点 403、发现页也没有兴趣编辑面,轴切换整体不出、
+  // 记住的兴趣轴回落到订阅轴(codex 检视 P2)
+  interestAxisEnabled = true,
 }) {
   const [sources, setSources] = useState([]);
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
   const [sourcesLoading, setSourcesLoading] = useState(true);
   const [activeSourceId, setActiveSourceId] = useState(null); // null = 当前容器的聚合流
-  // 收藏 = 容器内的正交过滤器(Folo 语义:各视图有自己的收藏钮),不再是独立视图
-  const [favOnly, setFavOnly] = useState(false);
+  // ── 左栏一根轴(issue #27 五稿):scope = { axis, favorite };下钻项是 activeSourceId / activeTagId。
+  //    点源 / 按 id 打开一篇 = 临时进入来源轴(不落盘);回聚合(goContainerAll / goView)读回记住的。 ──
+  const scopeUser = account?.username || '';
+  const [storedScope, setScopeState] = useState(() => readStoredScope(scopeUser, 'article'));
+  // 能力位关闭时兴趣轴不可达:记住的兴趣轴就地回落到订阅轴(不改写存储,重新开启即恢复)
+  const scope = useMemo(
+    () => (interestAxisEnabled || storedScope.axis !== 'interest' ? storedScope : { ...storedScope, axis: 'subscribed' }),
+    [storedScope, interestAxisEnabled],
+  );
+  const scopeUserRef = useRef(scopeUser);
+  useEffect(() => { scopeUserRef.current = scopeUser; }, [scopeUser]);
+  // favOnly 沿用旧名给消费方(SocialFlow 等):列头收藏星开着
+  const favOnly = scope.favorite;
+  // 兴趣轴的下钻项(关注标签 id);与 activeSourceId 互斥(切轴即清)
+  const [activeTagId, setActiveTagId] = useState(null);
+  // 关注的标签 = 兴趣轴的列表(仅 follow;屏蔽不进列表,只作折叠行透镜——拍板 3 另议);
+  // 兴趣页保存后由 refreshInterests 刷新
+  const [followedTags, setFollowedTags] = useState([]);
+  const refreshInterests = useCallback(async () => {
+    if (!interestAxisEnabled) return; // 端点在能力位关闭时 403,不必打
+    try {
+      const data = await fetchInterests();
+      setFollowedTags((data.items || [])
+        .filter((it) => it.stance !== 'mute' && it.tag?.id)
+        .map((it) => ({ id: it.tag.id, kind: it.tag.kind, name: it.tag.name_zh || it.tag.name_en || String(it.tag.id) })));
+    } catch { /* 非关键路径:失败保持上次已知值 */ }
+  }, [interestAxisEnabled]);
+  useEffect(() => { refreshInterests(); }, [refreshInterests]);
+  const hasInterests = followedTags.length > 0;
+  // 兴趣轴分组(与源栏的角色分组同一形制:组头 + 行),按目录面分组,词汇与兴趣页一致
+  const interestGroups = useMemo(() => {
+    const meta = [['topic', '主题'], ['industry', '行业'], ['entity', '实体']];
+    return meta
+      .map(([key, label]) => ({ key, label, list: followedTags.filter((t) => t.kind === key) }))
+      .filter((g) => g.list.length > 0);
+  }, [followedTags]);
+  const tagNameMap = useMemo(() => Object.fromEntries(followedTags.map((t) => [t.id, t.name])), [followedTags]);
+  // 下钻的标签被取消关注(兴趣页里移出)→ 退回兴趣全集
+  useEffect(() => {
+    if (activeTagId && followedTags.length && !tagNameMap[activeTagId]) setActiveTagId(null);
+  }, [activeTagId, followedTags.length, tagNameMap]);
   const [favoriteIds, setFavoriteIds] = useState(() => new Set());
   const [favTogglingId, setFavTogglingId] = useState(null);
   // 发现页(整页视图,取代源栏内联「发现更多来源」):true 时 条目列+阅读窗 被发现页取代
@@ -161,6 +255,13 @@ export function useReaderState({
   // (「今日」跨宇宙混合流已取缔:它用文章形态渲染推文,违反容器模型的前提——
   //  三个宇宙渲染形态不同才需要分容器;各容器默认倒序 + 未读体系已能回答「最近/未看」。)
   const [mode, setMode] = useState('article');
+  // 切容器同批读回该容器记住的过滤面板(同一次 setState 批次,不产生「旧 scope × 新容器」的中间请求)
+  const applyMode = useCallback((nextMode) => {
+    setMode(nextMode);
+    setScopeState(readStoredScope(scopeUserRef.current, nextMode));
+  }, []);
+  const modeRef = useRef(mode);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
 
   // ── 未读体系 ──
   // 计数来自 GET /api/reader/unread-counts(挂载即拉一次以校准水位,随后 60s 轻轮询);
@@ -279,18 +380,18 @@ export function useReaderState({
   const applyUnreadCounts = useCallback((data) => {
     const bySource = data.by_source || {};
     setUnreadBySource(bySource);
-    if (favOnly) return; // 收藏过滤中不做新内容提示
-    // 范围口径:单源看该源;容器聚合看本容器形态;今日=全形态
-    const scope = activeSourceId
+    if (favOnly || scope.axis !== 'subscribed') return; // 收藏过滤中 / 兴趣轴(全站,未读计数只覆盖订阅源)不做新内容提示
+    // 范围口径:单源看该源;容器聚合看本容器形态
+    const scopeCount = activeSourceId
       ? (bySource[activeSourceId] || 0)
       : Object.entries(bySource).reduce(
           (sum, [sid, n]) => sum + (shapeOfSource(sid) === mode ? n : 0),
           0,
         );
     const prev = prevScopeUnreadRef.current;
-    prevScopeUnreadRef.current = scope;
-    if (prev !== null && scope > prev) setFreshCount((c) => c + (scope - prev));
-  }, [activeSourceId, favOnly, mode, shapeOfSource]);
+    prevScopeUnreadRef.current = scopeCount;
+    if (prev !== null && scopeCount > prev) setFreshCount((c) => c + (scopeCount - prev));
+  }, [activeSourceId, favOnly, scope.axis, mode, shapeOfSource]);
 
   const loadUnreadCounts = useCallback(async () => {
     try {
@@ -566,26 +667,10 @@ export function useReaderState({
       // 列表只渲染摘要（content_preview），故请求统一不带全文，正文按需懒加载（见 selectArticle）。
       // 「我的订阅」聚合由后端 subscribed_scope=only 自行解析范围，前端无需先拿到订阅集合即可发请求。
       data = await runList((signal) => {
-        if (favOnly) {
-          // 容器内收藏:范围跟随当前容器/源
-          const filters = {};
-          if (activeSourceId) filters.source_id = activeSourceId;
-          else filters.shape = mode;
-          if (displayTagQuery) filters.display_tag = displayTagQuery;
-          else if (searchQuery) filters.search = searchQuery;
-          // 社交收藏也走卡片流,需要 extensions(引用推/转推/头像)——与非收藏分支一致
-          return fetchFavorites(filters, PAGE_SIZE, skip, { signal, includeContent: mode === 'social' });
-        }
-        const filters = {};
-        if (activeSourceId) filters.source_id = activeSourceId;
-        else {
-          filters.subscribed_scope = 'only'; // 聚合视图：后端硬过滤到已订阅源
-          filters.shape = mode; // 容器分流(文章/动态/社交各取自己那类)
-        }
-        if (displayTagQuery) filters.display_tag = displayTagQuery;
-        else if (searchQuery) filters.search = searchQuery;
-        filters.with_unread = 'true';           // 条目附页级未读标记（水位由 unread-counts 校准）
-        if (unreadOnly) filters.unread_only = 'true';
+        // 三谓词面板 + 源轴 + 读态 + 搜索,一份拼装(分析轮询复用同一函数,不再分叉)
+        const filters = buildListFilters({
+          activeSourceId, activeTagId, mode, scope, displayTagQuery, searchQuery, unreadOnly,
+        });
         // 社交流全文直出(推文正文 2~4 行,取回零负担),且卡片要 extensions
         // (引用推/转推/图链)——那只在 include_content=true 时随列表返回。
         return fetchArticles(filters, PAGE_SIZE, skip, true, { signal, includeContent: mode === 'social' });
@@ -596,7 +681,6 @@ export function useReaderState({
       return;
     }
     if (data === undefined) return; // 被更新的请求取代，loading 交给新请求，不在此清除
-    if (favOnly && data.favorite_ids) setFavoriteIds(new Set(data.favorite_ids));
     const items = data.items || [];
     setArticlesTotal(data.total || 0);
     setArticles(prev => (append ? [...prev, ...items] : items));
@@ -604,17 +688,18 @@ export function useReaderState({
     // 等用户主动点选一篇才加载正文并计一次阅读（见 selectArticle）。
     if (!append) setFreshCount(0); // 列表已刷新,新内容提示归零
     if (append) setLoadingMore(false); else setArticlesLoading(false);
-  }, [activeSourceId, activeSourceHidden, searchQuery, displayTagQuery, favOnly, unreadOnly, mode, showToast, runList]);
+  }, [activeSourceId, activeTagId, activeSourceHidden, searchQuery, displayTagQuery, scope, unreadOnly, mode, showToast, runList]);
 
   // 分析任务与采集解耦：列表首拉可能拿到 pending/running。只在确有在途项时
   // 每 30 秒静默重取当前已加载窗口，既不闪骨架屏也不弹失败 toast；响应回写前
   // 校验 scopeKey，避免切源/搜索后旧轮询污染新列表。
   const analysisScopeKey = JSON.stringify([
     activeSourceId,
+    activeTagId,
     activeSourceHidden,
     searchQuery,
     displayTagQuery,
-    favOnly,
+    scope,
     unreadOnly,
     mode,
   ]);
@@ -626,9 +711,10 @@ export function useReaderState({
     analysisPollContextRef.current = {
       activeArticle,
       activeSourceId,
+      activeTagId,
       articles,
       displayTagQuery,
-      favOnly,
+      scope,
       mode,
       scopeKey: analysisScopeKey,
       searchQuery,
@@ -637,10 +723,11 @@ export function useReaderState({
   }, [
     activeArticle,
     activeSourceId,
+    activeTagId,
     analysisScopeKey,
     articles,
     displayTagQuery,
-    favOnly,
+    scope,
     mode,
     searchQuery,
     unreadOnly,
@@ -657,36 +744,16 @@ export function useReaderState({
       && !activeIds.has(context.activeArticle.id);
     if (activeIds.size === 0 && !selectedNeedsRefresh) return;
 
-    const filters = {};
-    if (context.activeSourceId) filters.source_id = context.activeSourceId;
-    else if (!context.favOnly) {
-      filters.subscribed_scope = 'only';
-      filters.shape = context.mode;
-    } else {
-      filters.shape = context.mode;
-    }
-    if (context.displayTagQuery) filters.display_tag = context.displayTagQuery;
-    else if (context.searchQuery) filters.search = context.searchQuery;
-    if (!context.favOnly) {
-      filters.with_unread = 'true';
-      if (context.unreadOnly) filters.unread_only = 'true';
-    }
+    const filters = buildListFilters(context);
 
     try {
-      const listRequest = context.favOnly
-        ? fetchFavorites(
-            filters,
-            Math.max(PAGE_SIZE, context.articles.length),
-            0,
-            { includeContent: false },
-          )
-        : fetchArticles(
-            filters,
-            Math.max(PAGE_SIZE, context.articles.length),
-            0,
-            false,
-            { includeContent: false },
-          );
+      const listRequest = fetchArticles(
+        filters,
+        Math.max(PAGE_SIZE, context.articles.length),
+        0,
+        false,
+        { includeContent: false },
+      );
       const [data, selected] = await Promise.all([
         listRequest,
         selectedNeedsRefresh ? fetchArticle(context.activeArticle.id) : Promise.resolve(null),
@@ -805,7 +872,7 @@ export function useReaderState({
   // 订阅集合变化后，若正看聚合视图需显式重拉（loadArticles 已不依赖 subscribedIds，
   // 故不会自动刷新）；看具体来源时由 activeSourceId 变化驱动，无需在此处理。
   const refreshAggregateIfActive = () => {
-    if (!favOnly && !activeSourceId) loadArticles(0, false);
+    if (!activeSourceId) loadArticles(0, false);
   };
 
   const handleSubscribe = async (source) => {
@@ -976,6 +1043,7 @@ export function useReaderState({
   // ── 全部标读(当前范围:某来源 / 本容器 / 今日全订阅)──
   const handleMarkAllRead = async () => {
     if (markingRead) return;
+    if (scope.axis === 'interest' && !activeSourceId) return; // 兴趣轴无水位可推(入口已隐藏,此为兜底)
     setMarkingRead(true);
     try {
       const data = await markAllRead(activeSourceId, activeSourceId ? null : mode);
@@ -1151,19 +1219,31 @@ export function useReaderState({
   const goView = (v) => {
     supersedePendingOpen();
     setDiscover(false);
-    setMode(v);
+    applyMode(v); // 轴与收藏按容器记住,点容器钮不重置它——只清下钻项与搜索
     setActiveSourceId(null);
-    setFavOnly(false);
+    setActiveTagId(null);
     setSearchOpen(false);
     setSearchInput('');
   };
-  // 单源=容器内收窄:源所属容器自动点亮(今日不承担单源,从今日点源即跳入所属容器)
+  // 单源=来源轴的下钻:源所属容器自动点亮。从发现页预览 / 文章行源名进来时可能停在兴趣轴上,
+  // 故**临时**切到来源轴(不落盘,收藏照记住的);回到聚合(goContainerAll / goView)即读回记住的轴。
   const goSource = (sourceId) => {
     supersedePendingOpen();
     setDiscover(false);
     setActiveSourceId(sourceId);
-    setMode(shapeOfSource(sourceId));
-    setFavOnly(false);
+    setActiveTagId(null);
+    const nextMode = shapeOfSource(sourceId);
+    setMode(nextMode);
+    setScopeState({ ...readStoredScope(scopeUserRef.current, nextMode), axis: 'subscribed' });
+  };
+  // 单标签=兴趣轴的下钻(只在兴趣轴上可达)
+  const goTag = (tagId) => {
+    if (!interestAxisEnabled) return;
+    supersedePendingOpen();
+    setDiscover(false);
+    setActiveSourceId(null);
+    setActiveTagId(tagId);
+    setScopeState((prev) => ({ ...prev, axis: 'interest' }));
   };
   // 站内分享深链:分享出来的 #/reader/a/{id},进来直接开这篇。
   // 等 sources 到位再执行——要靠 shapeOfSource 把容器切到这篇所属的宇宙(文章/动态/社交),
@@ -1175,7 +1255,7 @@ export function useReaderState({
   const deepLinkDoneRef = useRef('');
   const deepLinkCtxRef = useRef(null);
   useEffect(() => {   // 每轮渲染后同步最新回调(声明在深链 effect 之前,同轮先执行)
-    deepLinkCtxRef.current = { shapeOfSource, selectArticle, onDeepLinkConsumed };
+    deepLinkCtxRef.current = { shapeOfSource, selectArticle, onDeepLinkConsumed, subscribedIds };
   });
   // 「按 id 打开一篇」的可复用落地(深链初始播种与 AI 问答引用跳转共用同一路):
   // 切作用域+选中该篇一次完成,deepLinkKeepRef 通知清场 effect 保留右栏。
@@ -1195,9 +1275,13 @@ export function useReaderState({
       onBeforeOpenArticle?.();
       deepLinkKeepRef.current = true; // 通知作用域清场 effect:这次切换保留右栏(见 useLayoutEffect)
       setDiscover(false);
-      setFavOnly(false);
       setActiveSourceId(article.source_id || null);
-      setMode(ctx.shapeOfSource(article.source_id));
+      setActiveTagId(null);
+      const nextMode = ctx.shapeOfSource(article.source_id);
+      setMode(nextMode);
+      // 按 id 打开 = 导航到一篇具体文章:临时进入来源轴且放开收藏(否则该源列表可能不含这篇);
+      // 不落盘,回聚合即恢复
+      setScopeState({ axis: 'subscribed', favorite: false });
       ctx.selectArticle(article);
       return true;
     } catch {
@@ -1219,8 +1303,35 @@ export function useReaderState({
 
   // 收藏入口(源栏,与「全部XX」并列):看本容器全部收藏(容器级、不逐源)。
   // Folo 语义——收藏是与「全部」并列的一级过滤,不再挂在列头逐源。
-  const goContainerAll = () => { supersedePendingOpen(); setDiscover(false); setActiveSourceId(null); setFavOnly(false); };
-  const goFavorites = () => { supersedePendingOpen(); setDiscover(false); setActiveSourceId(null); setFavOnly(true); };
+  const goContainerAll = () => {
+    supersedePendingOpen(); setDiscover(false); setActiveSourceId(null); setActiveTagId(null);
+    setScopeState(readStoredScope(scopeUserRef.current, modeRef.current)); // 离开下钻:恢复记住的轴
+  };
+  // 「我的」页收藏入口(移动壳):回聚合并点亮收藏星(轴照记住的)
+  const goFavorites = () => {
+    supersedePendingOpen(); setDiscover(false); setActiveSourceId(null); setActiveTagId(null);
+    const next = { ...readStoredScope(scopeUserRef.current, modeRef.current), favorite: true };
+    writeStoredScope(scopeUserRef.current, modeRef.current, next);
+    setScopeState(next);
+  };
+  // 栏头切轴:清掉两根轴的下钻项、落盘;点已点亮的段 = 回该轴全集(与点容器钮回聚合同义)。
+  const setAxis = (axis) => {
+    if (axis === 'interest' && !interestAxisEnabled) return;
+    supersedePendingOpen();
+    setDiscover(false);
+    setActiveSourceId(null);
+    setActiveTagId(null);
+    const next = { ...scope, axis };
+    writeStoredScope(scopeUserRef.current, modeRef.current, next);
+    setScopeState(next);
+  };
+  // 列头收藏星:翻转并落盘;与轴 / 下钻项正交,不动它们
+  const toggleFavoriteScope = () => {
+    supersedePendingOpen();
+    const next = { ...scope, favorite: !scope.favorite };
+    writeStoredScope(scopeUserRef.current, modeRef.current, next);
+    setScopeState(next);
+  };
   // 搜索开关(条目列头就地展开):关闭即清词(searchQuery 经防抖同步清空,列表回到无过滤)。
   const toggleSearch = () => {
     setSearchOpen((open) => {
@@ -1231,11 +1342,23 @@ export function useReaderState({
   // 视图轨激活态 = 发现页 或 当前容器(源内保持点亮——层级关系,不再互斥)
   const railActive = discover ? 'discover' : mode;
 
-  const listTitle = favOnly
-    ? '收藏'
-    : activeSourceId
-      ? (sourceNameMap[activeSourceId] || activeSourceId)
-      : mode === 'article' ? '文章' : mode === 'social' ? '社交媒体' : mode === 'podcast' ? '播客' : '动态';
+  // 列头回显(模型的安全网):标题 = 订阅 / 源名 / 兴趣 / 标签名;
+  // 副文案 = 兴趣轴的「全站」+ 收藏星开着时的「收藏」。
+  const interestAxis = scope.axis === 'interest';
+  const listTitle = activeSourceId
+    ? (sourceNameMap[activeSourceId] || activeSourceId)
+    : activeTagId
+      ? (tagNameMap[activeTagId] || '兴趣')
+      : (interestAxis ? '兴趣' : '订阅');
+  const listSubtitle = [
+    interestAxis && !activeTagId && '全站',
+    scope.favorite && '收藏',
+  ].filter(Boolean).join(' · ');
+  // 条目的「未订阅」标记只在兴趣轴(全站范围)有意义;单源预览由订阅横幅承担
+  const showUnsubscribedMark = interestAxis && !activeSourceId;
+  // 命中胶囊是透镜:全集与单源里照挂;单标签视图不挂(每行都因同一个标签而在,再挂是重复信息)
+  const showInterestHit = !activeTagId;
+  const activeTagName = activeTagId ? (tagNameMap[activeTagId] || '') : '';
 
   // ── 翻页(上一篇/下一篇):沿当前列表序 ──
   const activeIndex = useMemo(
@@ -1280,8 +1403,8 @@ export function useReaderState({
     return { chars, minutes: Math.max(1, Math.round(chars / 400)) };
   }, [activeBody]);
 
-  // 日期分组只在「到货序」列表上有意义;收藏过滤按收藏时间排序,不分组
-  const grouping = !favOnly;
+  // 三谓词面板下列表统一按到货序(收藏不再按收藏时间另排),日期分组恒开
+  const grouping = true;
 
   // 预览中的未订阅源(发现页「预览」跳入,Folo 语义):源栏顶浮现锚点行,
   // 条目列头下给显眼「＋ 订阅」横幅;订阅成功后两者自然消失、源落入所属分组。
@@ -1302,8 +1425,11 @@ export function useReaderState({
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover,
-    bulletinView, socialView, podcastView, railActive, listTitle,
-    goView, goSource, goContainerAll, goFavorites,
+    bulletinView, socialView, podcastView, railActive, listTitle, listSubtitle,
+    goView, goSource, goTag, goContainerAll, goFavorites,
+    // 左栏一根轴(issue #27 五稿)
+    scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
+    interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
     // 搜索
     searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch, searchForLabel,

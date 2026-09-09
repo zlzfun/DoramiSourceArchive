@@ -1,6 +1,6 @@
 [project]
 name = "doramisourcearchive"
-version = "3.51.2"
+version = "3.52.1"
 description = "Add your description here"
 requires-python = ">=3.10"
 dependencies = [

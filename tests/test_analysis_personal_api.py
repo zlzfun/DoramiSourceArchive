@@ -1050,7 +1050,7 @@ def test_interest_and_subscription_edits_only_flag_today_edition_stale(monkeypat
 
 
 def test_personal_brief_items_carry_chinese_titles_after_generation(monkeypatch, tmp_path):
-    """v3.51.2(issue #33 §4):编排完成后条目快照带 title_zh,翻译写回文章缓存;失败不影响版本。"""
+    """v3.52.1(issue #33 §4):编排完成后条目快照带 title_zh,翻译写回文章缓存;失败不影响版本。"""
     from config import LLMConfig
     from services import personal_digest_titles as digest_titles
 

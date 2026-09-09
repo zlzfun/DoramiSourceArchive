@@ -396,7 +396,7 @@ def process_pending_edition(
         PersonalDigestStatus.READY.value,
         PersonalDigestStatus.DEGRADED.value,
     }:
-        # v3.51.2(issue #33 §4):编排完成后补条目中文标题(缓存 → 公共日报 title_cn →
+        # v3.52.1(issue #33 §4):编排完成后补条目中文标题(缓存 → 公共日报 title_cn →
         # 批量翻译);只补展示字段,失败回退原标题,绝不把已 ready 的版本打成 failed。
         try:
             stats = digest_titles.localize_edition_titles(session, result.edition)
