@@ -1917,12 +1917,13 @@ async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
 
     try:
         actions = await asyncio.to_thread(_run_steps)
-        # ASR landing is the trigger boundary for the minimal premium workflow.
-        # The service itself performs full-transcript scoring before any TTS call.
+        # ASR landing is the trigger boundary for the legacy guide workflow.  It
+        # consumes the authoritative initial score and never re-scores/overwrites it.
         for episode_id in await asyncio.to_thread(
             podcast_premium_guide_service.pending_premium_guide_candidates,
             db_sink.engine,
             minimum_duration_seconds=settings.podcast.premium_min_duration_seconds,
+            score_threshold=settings.podcast.premium_score_threshold,
         ):
             schedule_podcast_premium_guide(episode_id)
         return actions

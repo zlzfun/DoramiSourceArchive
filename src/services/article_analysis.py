@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from pydantic import ValidationError
-from sqlalchemy import delete, func, or_, update
+from sqlalchemy import and_, delete, func, or_, update
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -44,7 +44,8 @@ from config import LLMConfig
 from llm.article_analysis_prompt import (
     ARTICLE_ANALYSIS_PROMPT_VERSION,
     ARTICLE_ANALYSIS_SCORING_VERSION,
-    ARTICLE_ANALYSIS_SYSTEM_PROMPT,
+    analysis_contract_versions,
+    analysis_system_prompt,
     build_article_analysis_user_prompt,
 )
 from llm.client import ChatMessage, UsageMeta, chat_completion, parse_json_object
@@ -89,6 +90,9 @@ DEFAULT_MAX_ATTEMPTS = 4
 # 版本键过期的 succeeded 行每个扫描 tick 最多失效多少篇(v3.48 收口:版本一变近 7 天存量
 # 曾瞬时全部 invalidated 与新文章抢队列;现慢滴重跑,新到文章永远优先,7 天外等 full_analysis)。
 VERSION_REFRESH_PER_CYCLE = 16
+PODCAST_PEOPLE_SCAN_PAGE_SIZE = 64
+PODCAST_PEOPLE_SCAN_CURSOR_KEY = "article_analysis:podcast_people_scan_cursor"
+PODCAST_PEOPLE_DIRTY_REASON = "podcast publisher people changed"
 DEFAULT_BATCH_SIZE = 8
 DEFAULT_MAX_BATCHES_PER_CYCLE = 8
 CLAIM_SCAN_PAGE_SIZE = 64
@@ -97,6 +101,14 @@ DEFAULT_SCAN_LIMIT = 500
 # score_reason 解析上限：提示词要求 ≤40 汉字，此处留余量；超出即截断而非拒收。
 _SCORE_REASON_MAX_CHARS = 120
 MAX_ERROR_CHARS = 800
+_PODCAST_FACTOR_KEYS = (
+    "guest_authority",
+    "topic_timeliness",
+    "novelty",
+    "evidence_depth",
+    "viewpoint_diversity",
+    "practical_value",
+)
 
 _TAG_LIMITS = {"topic": 5, "industry": 2, "entity": 3}
 _GENERIC_RECALL_TOKENS = {"ai", "artificial", "intelligence", "topic", "industry", "entity"}
@@ -168,6 +180,10 @@ class AnalysisInput:
     # 厂商主次甄别与「一手发布 vs 转述」需要它;服务端派生,不喂 URL。
     source_name: str = ""
     source_role: str = ""
+    analysis_basis: str = "article_body"
+    people: tuple[dict[str, str], ...] = ()
+    topic_heat: dict[str, Any] | None = None
+    transcript_artifact_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -201,6 +217,7 @@ class ProcessResult:
 class ValidatedAnalysis:
     result: ArticleAnalysisResultDTO
     warnings: tuple[str, ...]
+    podcast_factors: dict[str, dict[str, str]]
 
 
 Analyzer = Callable[
@@ -257,6 +274,42 @@ def compute_content_hash(article: ArticleRecord) -> str:
     title = unicodedata.normalize("NFKC", article.title or "").strip()
     body = unicodedata.normalize("NFKC", article.content or "").strip()
     payload = json.dumps([title, body], ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _analysis_messages(
+    article: AnalysisInput, active_tags: Sequence[TaxonomyTagDTO]
+) -> list[ChatMessage]:
+    taxonomy_payload = [tag.model_dump() for tag in active_tags]
+    return [
+        ChatMessage(role="system", content=analysis_system_prompt(article.content_type)),
+        ChatMessage(
+            role="user",
+            content=build_article_analysis_user_prompt(
+                title=article.title,
+                body=article.body,
+                content_type=article.content_type,
+                source_id=article.source_id,
+                source_name=article.source_name,
+                source_role=article.source_role,
+                taxonomy_tags=taxonomy_payload,
+                people=article.people,
+                topic_heat=article.topic_heat,
+            ),
+        ),
+    ]
+
+
+def compute_analysis_input_hash(
+    article: AnalysisInput, active_tags: Sequence[TaxonomyTagDTO]
+) -> str:
+    """Hash the exact role/content messages sent to the configured model."""
+
+    payload = json.dumps(
+        [[str(message.role), message.content] for message in _analysis_messages(article, active_tags)],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -328,9 +381,53 @@ def has_authoritative_analysis(record: ArticleAnalysisRecord | None) -> bool:
     )
 
 
+def _podcast_people_are_current(
+    article: ArticleRecord, record: ArticleAnalysisRecord | None
+) -> bool:
+    if article.content_type != "podcast_episode" or record is None:
+        return True
+    return _podcast_people_payloads_are_current(
+        article.extensions_json,
+        record.analysis_diagnostics_json,
+    )
+
+
+def mark_podcast_people_dirty(
+    session: Session,
+    article_id: str,
+    *,
+    now: Optional[dt.datetime] = None,
+) -> bool:
+    """Persist a cheap reconciliation marker after publisher metadata refresh."""
+
+    article = session.get(ArticleRecord, article_id)
+    record = session.get(ArticleAnalysisRecord, article_id)
+    if (
+        article is None
+        or article.content_type != "podcast_episode"
+        or record is None
+        or record.status != AnalysisStatus.SUCCEEDED.value
+    ):
+        return False
+    is_current = _podcast_people_are_current(article, record)
+    next_error = None if is_current else PODCAST_PEOPLE_DIRTY_REASON
+    if is_current and record.last_error != PODCAST_PEOPLE_DIRTY_REASON:
+        return False
+    if next_error == record.last_error:
+        return False
+    record.last_error = next_error
+    record.updated_at = _iso(now)
+    session.add(record)
+    return True
+
+
 def _clear_authoritative_result(record: ArticleAnalysisRecord) -> None:
     record.quality_score = None
     record.dimension_scores_json = "{}"
+    record.analysis_basis = ""
+    record.analysis_input_hash = ""
+    record.transcript_artifact_id = None
+    record.analysis_diagnostics_json = "{}"
     record.score_reason = ""
     record.summary = ""
     record.content_genre = None
@@ -447,6 +544,7 @@ def queue_article_analysis(
 
     now_iso = _iso(now)
     content_hash = compute_content_hash(article)
+    prompt_version, scoring_version = analysis_contract_versions(article.content_type)
     source = session.get(SourceConfigRecord, article.source_id)
     record = session.get(ArticleAnalysisRecord, article.id)
     if not sync_consumer_policy.local_source_operation_allowed(
@@ -480,8 +578,8 @@ def queue_article_analysis(
             record is not None
             and record.status == AnalysisStatus.SKIPPED.value
             and record.content_hash == content_hash
-            and record.prompt_version == ARTICLE_ANALYSIS_PROMPT_VERSION
-            and record.scoring_version == ARTICLE_ANALYSIS_SCORING_VERSION
+            and record.prompt_version == prompt_version
+            and record.scoring_version == scoring_version
         ):
             return "unchanged"
         if record is None:
@@ -490,8 +588,8 @@ def queue_article_analysis(
                 status=AnalysisStatus.SKIPPED.value,
                 tagging_status=TaggingStatus.PENDING.value,
                 content_hash=content_hash,
-                prompt_version=ARTICLE_ANALYSIS_PROMPT_VERSION,
-                scoring_version=ARTICLE_ANALYSIS_SCORING_VERSION,
+                prompt_version=prompt_version,
+                scoring_version=scoring_version,
                 last_error="source_ai_analysis_disabled",
                 created_at=now_iso,
                 updated_at=now_iso,
@@ -505,8 +603,8 @@ def queue_article_analysis(
             )
             record.status = AnalysisStatus.SKIPPED.value
             record.content_hash = content_hash
-            record.prompt_version = ARTICLE_ANALYSIS_PROMPT_VERSION
-            record.scoring_version = ARTICLE_ANALYSIS_SCORING_VERSION
+            record.prompt_version = prompt_version
+            record.scoring_version = scoring_version
             record.next_attempt_at = None
             record.started_at = None
             record.lease_owner = None
@@ -519,8 +617,9 @@ def queue_article_analysis(
     same_content = bool(record is not None and record.content_hash == content_hash)
     is_current = bool(
         same_content
-        and record.prompt_version == ARTICLE_ANALYSIS_PROMPT_VERSION
-        and record.scoring_version == ARTICLE_ANALYSIS_SCORING_VERSION
+        and record.prompt_version == prompt_version
+        and record.scoring_version == scoring_version
+        and _podcast_people_are_current(article, record)
     )
     if not force and is_current and record.status != AnalysisStatus.SKIPPED.value:
         return "unchanged"
@@ -546,8 +645,8 @@ def queue_article_analysis(
                 status=AnalysisStatus.PENDING.value,
                 tagging_status=TaggingStatus.PENDING.value,
                 content_hash=content_hash,
-                prompt_version=ARTICLE_ANALYSIS_PROMPT_VERSION,
-                scoring_version=ARTICLE_ANALYSIS_SCORING_VERSION,
+                prompt_version=prompt_version,
+                scoring_version=scoring_version,
                 created_at=now_iso,
                 updated_at=now_iso,
             )
@@ -580,8 +679,8 @@ def queue_article_analysis(
     if not preserve_authority:
         record.model_name = ""
     if not preserve_authority:
-        record.prompt_version = ARTICLE_ANALYSIS_PROMPT_VERSION
-        record.scoring_version = ARTICLE_ANALYSIS_SCORING_VERSION
+        record.prompt_version = prompt_version
+        record.scoring_version = scoring_version
     record.attempt_count = 0
     record.started_at = None
     record.next_attempt_at = None
@@ -604,9 +703,10 @@ def scan_analysis_backfill(
 ) -> ReconcileStats:
     """Scan latest articles in descending order so new arrivals beat backfill.
 
-    v3.48 收口:扫描只挑**需要动作**的行——轻列 LEFT JOIN ``article_analyses``,命中三类:
+    v3.48 收口:扫描只挑**需要动作**的行——轻列 LEFT JOIN ``article_analyses``,命中四类:
     ①无分析行;②``skipped``(源开关可能已重开);③``succeeded`` 但 prompt/scoring 版本键
-    过期(每 tick 最多 ``version_refresh_limit`` 篇,新到文章永远优先)。其余行
+    过期;④ Podcast ``succeeded`` 被入库刷新持久标记为 publisher persons 过期
+    (后两类每 tick 合计最多 ``version_refresh_limit`` 篇,新到文章永远优先)。其余行
     (pending/running/failed/timeout/当前 succeeded)扫描不碰:重试与租约机制自管,内容变化
     由入库钩子与文章编辑端点显式入队覆盖。此前每分钟把 7 天全部正文载入内存逐篇比哈希,
     绝大多数结果是 unchanged。``scanned`` 自此语义为「需要动作的行数」。
@@ -618,17 +718,35 @@ def scan_analysis_backfill(
     since_time = now_utc - dt.timedelta(days=max(1, lookback_days))
     coarse_start = (since_time - dt.timedelta(days=1)).date().isoformat()
     coarse_end = (now_utc + dt.timedelta(days=1)).date().isoformat()
-    version_stale = (
-        (ArticleAnalysisRecord.status == AnalysisStatus.SUCCEEDED.value)
-        & or_(
-            ArticleAnalysisRecord.prompt_version != ARTICLE_ANALYSIS_PROMPT_VERSION,
-            ArticleAnalysisRecord.scoring_version != ARTICLE_ANALYSIS_SCORING_VERSION,
-        )
+    from llm.article_analysis_prompt import (
+        PODCAST_ANALYSIS_PROMPT_VERSION,
+        PODCAST_ANALYSIS_SCORING_VERSION,
+    )
+
+    version_stale = and_(
+        ArticleAnalysisRecord.status == AnalysisStatus.SUCCEEDED.value,
+        or_(
+            and_(
+                ArticleRecord.content_type == "podcast_episode",
+                or_(
+                    ArticleAnalysisRecord.prompt_version != PODCAST_ANALYSIS_PROMPT_VERSION,
+                    ArticleAnalysisRecord.scoring_version != PODCAST_ANALYSIS_SCORING_VERSION,
+                ),
+            ),
+            and_(
+                ArticleRecord.content_type != "podcast_episode",
+                or_(
+                    ArticleAnalysisRecord.prompt_version != ARTICLE_ANALYSIS_PROMPT_VERSION,
+                    ArticleAnalysisRecord.scoring_version != ARTICLE_ANALYSIS_SCORING_VERSION,
+                ),
+            ),
+        ),
     )
     light_rows = session.exec(
         select(
             ArticleRecord.id,
             ArticleRecord.fetched_date,
+            ArticleRecord.source_id,
             ArticleAnalysisRecord.status,
         )
         .outerjoin(
@@ -648,12 +766,75 @@ def scan_analysis_backfill(
             ),
         )
     ).all()
-    rows = sorted(
-        (
-            (article_id, fetched, status)
-            for article_id, fetched, status in light_rows
+    # Metadata refreshes persist a dirty marker even while analysis is disabled.
+    # A durable keyset cursor walks only a bounded dirty page per tick, so old
+    # episodes are eventually covered without parsing all historical JSON.
+    people_cursor_record = session.get(
+        AppSettingRecord, PODCAST_PEOPLE_SCAN_CURSOR_KEY
+    )
+    people_cursor = (people_cursor_record.value if people_cursor_record else "").strip()
+    people_page_size = max(1, PODCAST_PEOPLE_SCAN_PAGE_SIZE)
+
+    def load_people_page(after_id: str):
+        statement = (
+            select(
+                ArticleRecord.id,
+                ArticleRecord.fetched_date,
+                ArticleRecord.source_id,
+                ArticleAnalysisRecord.status,
+            )
+            .join(
+                ArticleAnalysisRecord,
+                ArticleAnalysisRecord.article_id == ArticleRecord.id,
+            )
+            .where(
+                ArticleRecord.content_type == "podcast_episode",
+                ArticleRecord.has_content.is_(True),
+                ArticleRecord.content.is_not(None),
+                ArticleRecord.content != "",
+                ArticleRecord.analysis_authority_id == "",
+                ArticleAnalysisRecord.status == AnalysisStatus.SUCCEEDED.value,
+                ArticleAnalysisRecord.last_error == PODCAST_PEOPLE_DIRTY_REASON,
+            )
+            .order_by(ArticleRecord.id)
+            .limit(people_page_size)
+        )
+        if after_id:
+            statement = statement.where(ArticleRecord.id > after_id)
+        return list(session.exec(statement).all())
+
+    people_page = load_people_page(people_cursor)
+    if not people_page and people_cursor:
+        people_cursor = ""
+        people_page = load_people_page(people_cursor)
+    next_people_cursor = (
+        str(people_page[-1][0]) if len(people_page) >= people_page_size else ""
+    )
+    if people_cursor_record is None:
+        people_cursor_record = AppSettingRecord(
+            key=PODCAST_PEOPLE_SCAN_CURSOR_KEY,
+            value=next_people_cursor,
+        )
+    else:
+        people_cursor_record.value = next_people_cursor
+    session.add(people_cursor_record)
+    stale_people_rows = [
+        (article_id, fetched, source_id, status)
+        for article_id, fetched, source_id, status in people_page
+    ]
+    rows_by_id = {
+        article_id: (article_id, fetched, source_id, status)
+        for article_id, fetched, source_id, status in stale_people_rows
+    }
+    rows_by_id.update(
+        {
+            article_id: (article_id, fetched, source_id, status)
+            for article_id, fetched, source_id, status in light_rows
             if in_time_window(fetched, start=since_time, end=now_utc)
-        ),
+        }
+    )
+    rows = sorted(
+        rows_by_id.values(),
         key=lambda row: (
             parse_article_time(row[1]) or dt.datetime.min.replace(tzinfo=dt.timezone.utc),
             row[0],
@@ -665,15 +846,24 @@ def scan_analysis_backfill(
     actionable = 0
     deferred = 0
     refresh_budget = max(0, version_refresh_limit)
-    for article_id, _fetched, status in rows:
+    for article_id, _fetched, source_id, status in rows:
         if status == AnalysisStatus.SUCCEEDED.value:
+            source = session.get(SourceConfigRecord, source_id)
+            if (
+                not _source_allows_analysis(source, source_id=source_id)
+                or not sync_consumer_policy.local_source_operation_allowed(
+                    session, source_id, operation="analysis"
+                )
+            ):
+                continue
             if refresh_budget <= 0:
                 deferred += 1
                 continue
-            refresh_budget -= 1
         scanned += 1
         outcome = queue_article_analysis(session, article_id, enabled=True, now=now_utc)
         counts[outcome] += 1
+        if status == AnalysisStatus.SUCCEEDED.value and outcome == "invalidated":
+            refresh_budget -= 1
         if outcome in {"created", "invalidated", "skipped"}:
             actionable += 1
             if actionable >= max(1, limit):
@@ -866,6 +1056,7 @@ def claim_analysis_tasks(
             record = session.get(ArticleAnalysisRecord, article_id)
             if record is None:
                 continue
+            prompt_version, scoring_version = analysis_contract_versions(article.content_type)
             attempt_no = _next_attempt_number(session, article_id)
             session.add(
                 ArticleAnalysisAttemptRecord(
@@ -876,8 +1067,8 @@ def claim_analysis_tasks(
                     content_hash=record.content_hash,
                     # A preserved V_old keeps its own version fields readable while
                     # refresh is pending; this attempt always runs the current contract.
-                    prompt_version=ARTICLE_ANALYSIS_PROMPT_VERSION,
-                    scoring_version=ARTICLE_ANALYSIS_SCORING_VERSION,
+                    prompt_version=prompt_version,
+                    scoring_version=scoring_version,
                     taxonomy_version=record.taxonomy_version,
                     started_at=now_iso,
                     created_at=now_iso,
@@ -981,6 +1172,24 @@ def validate_analysis_payload(
     summary = _clean_text(payload.get("summary"), max_chars=6_000)
     if not reason or not summary:
         raise ValueError("analysis summary and score_reason must be non-empty")
+
+    factors: dict[str, dict[str, str]] = {}
+    raw_factors = payload.get("podcast_factors")
+    if raw_factors is not None:
+        if not isinstance(raw_factors, dict):
+            warnings.append("podcast_factors_not_object")
+        else:
+            for key in _PODCAST_FACTOR_KEYS:
+                item = raw_factors.get(key)
+                if not isinstance(item, dict):
+                    warnings.append(f"missing_podcast_factor:{key}")
+                    continue
+                level = str(item.get("level") or "").strip().casefold()
+                evidence = _clean_text(item.get("evidence"), max_chars=120)
+                if level not in {"low", "medium", "high"} or not evidence:
+                    warnings.append(f"invalid_podcast_factor:{key}")
+                    continue
+                factors[key] = {"level": level, "evidence": evidence}
 
     tag_map = {tag.code: tag for tag in active_tags if tag.status == "active"}
     raw_assignments = payload.get("tag_assignments", [])
@@ -1104,7 +1313,11 @@ def validate_analysis_payload(
         )
     except ValidationError as exc:
         raise ValueError("analysis base fields failed schema validation") from exc
-    return ValidatedAnalysis(result=result, warnings=tuple(dict.fromkeys(warnings)))
+    return ValidatedAnalysis(
+        result=result,
+        warnings=tuple(dict.fromkeys(warnings)),
+        podcast_factors=factors,
+    )
 
 
 def _active_taxonomy_version(session: Session) -> int:
@@ -1205,23 +1418,8 @@ async def analyze_article_with_llm(
     ``article_analysis`` purpose; the brief passes its trigger attribution.
     """
 
-    taxonomy_payload = [tag.model_dump() for tag in active_tags]
     raw = await chat_completion(
-        messages=[
-            ChatMessage(role="system", content=ARTICLE_ANALYSIS_SYSTEM_PROMPT),
-            ChatMessage(
-                role="user",
-                content=build_article_analysis_user_prompt(
-                    title=article.title,
-                    body=article.body,
-                    content_type=article.content_type,
-                    source_id=article.source_id,
-                    source_name=article.source_name,
-                    source_role=article.source_role,
-                    taxonomy_tags=taxonomy_payload,
-                ),
-            ),
-        ],
+        messages=_analysis_messages(article, active_tags),
         config=llm_config.for_aux(),
         response_json=True,
         usage_meta=usage_meta or UsageMeta(purpose="article_analysis", username=None),
@@ -1230,9 +1428,163 @@ async def analyze_article_with_llm(
     return parse_json_object(raw)
 
 
+def _article_extensions(article: ArticleRecord) -> dict[str, Any]:
+    try:
+        value = json.loads(article.extensions_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _normalized_podcast_people(people: Any) -> tuple[dict[str, str], ...]:
+    if not isinstance(people, list):
+        return ()
+    normalized: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for raw in people[:40]:
+        if not isinstance(raw, dict):
+            continue
+        item = {
+            key: _clean_text(raw.get(key), max_chars=160)
+            for key in ("name", "role", "group", "scope", "evidence")
+            if raw.get(key)
+        }
+        if not item.get("name"):
+            continue
+        key = (
+            unicodedata.normalize("NFKC", item["name"]).casefold(),
+            item.get("role", ""),
+            item.get("scope", ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(item)
+    return tuple(normalized)
+
+
+def _podcast_people(article: ArticleRecord) -> tuple[dict[str, str], ...]:
+    return _normalized_podcast_people(_article_extensions(article).get("persons"))
+
+
+def _podcast_people_payloads_are_current(
+    extensions_json: str | None,
+    diagnostics_json: str | None,
+) -> bool:
+    try:
+        extensions = json.loads(extensions_json or "{}")
+        diagnostics = json.loads(diagnostics_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(extensions, dict) or not isinstance(diagnostics, dict):
+        return False
+    recorded = diagnostics.get("people")
+    if not isinstance(recorded, list):
+        recorded = []
+    return recorded == list(_normalized_podcast_people(extensions.get("persons")))
+
+
+def build_topic_heat_context(
+    session: Session,
+    *,
+    article_id: str,
+    active_tags: Sequence[TaxonomyTagDTO],
+    now: Optional[dt.datetime] = None,
+) -> dict[str, Any]:
+    """Snapshot seven-day canonical topic/entity heat without RSS volume bias."""
+
+    snapshot = _as_utc(now)
+    start = snapshot - dt.timedelta(days=7)
+    relevant = {
+        int(tag.id): tag
+        for tag in active_tags
+        if str(tag.kind) in {"topic", "entity"}
+    }
+    context: dict[str, Any] = {
+        "window_days": 7,
+        "snapshot_at": _iso(snapshot),
+        "signals": [],
+    }
+    if not relevant:
+        return context
+
+    public_ids: set[str] = set()
+    briefs = session.exec(
+        select(ArticleRecord).where(ArticleRecord.source_id == "dorami_daily_brief")
+    ).all()
+    for brief in briefs:
+        brief_time = parse_article_time(brief.publish_date) or parse_article_time(
+            brief.fetched_date
+        )
+        if brief_time is None or not (start <= brief_time <= snapshot):
+            continue
+        included = _article_extensions(brief).get("included_article_ids")
+        if isinstance(included, list):
+            public_ids.update(str(value) for value in included if value)
+
+    rows = session.exec(
+        select(
+            ArticleTagAssignmentRecord,
+            ArticleRecord,
+            ArticleAnalysisRecord,
+        )
+        .join(ArticleRecord, ArticleRecord.id == ArticleTagAssignmentRecord.article_id)
+        .outerjoin(
+            ArticleAnalysisRecord,
+            ArticleAnalysisRecord.article_id == ArticleRecord.id,
+        )
+        .where(
+            ArticleTagAssignmentRecord.tag_id.in_(list(relevant)),
+            ArticleRecord.id != article_id,
+            ArticleRecord.source_id != "dorami_daily_brief",
+        )
+    ).all()
+    aggregates: dict[int, dict[str, Any]] = {}
+    for assignment, evidence_article, analysis in rows:
+        seen_at = parse_article_time(evidence_article.publish_date) or parse_article_time(
+            evidence_article.fetched_date
+        )
+        if seen_at is None or not (start <= seen_at <= snapshot):
+            continue
+        tag_id = int(assignment.tag_id)
+        aggregate = aggregates.setdefault(
+            tag_id,
+            {"sources": set(), "max_quality_score": None, "latest_seen_at": seen_at,
+             "in_public_daily_brief": False},
+        )
+        aggregate["sources"].add(evidence_article.source_id)
+        aggregate["latest_seen_at"] = max(aggregate["latest_seen_at"], seen_at)
+        if evidence_article.id in public_ids:
+            aggregate["in_public_daily_brief"] = True
+        score = analysis.quality_score if analysis is not None else None
+        if score is not None:
+            current = aggregate["max_quality_score"]
+            aggregate["max_quality_score"] = max(float(score), current or float(score))
+
+    for tag_id in sorted(aggregates, key=lambda value: relevant[value].code):
+        tag = relevant[tag_id]
+        aggregate = aggregates[tag_id]
+        context["signals"].append(
+            {
+                "code": tag.code,
+                "kind": str(tag.kind),
+                "name": tag.name_zh or tag.name_en or tag.code,
+                "distinct_source_count": len(aggregate["sources"]),
+                "max_quality_score": aggregate["max_quality_score"],
+                "latest_seen_at": _iso(aggregate["latest_seen_at"]),
+                "in_public_daily_brief": aggregate["in_public_daily_brief"],
+            }
+        )
+    return context
+
+
 def analysis_input_from_article(
     article: ArticleRecord,
     source: SourceConfigRecord | None,
+    *,
+    active_tags: Sequence[TaxonomyTagDTO] = (),
+    session: Session | None = None,
+    now: Optional[dt.datetime] = None,
 ) -> AnalysisInput:
     """Build the LLM input for one article; shared by the worker and the brief."""
 
@@ -1240,6 +1592,7 @@ def analysis_input_from_article(
 
     owner = ((source.source_owner if source else "") or article.source_id).strip()
     sid = article.source_id or ""
+    is_podcast = (article.content_type or "").strip() == "podcast_episode"
     return AnalysisInput(
         article_id=article.id,
         title=article.title or "",
@@ -1256,6 +1609,18 @@ def analysis_input_from_article(
             source_scope=source.source_scope if source else None,
             provenance_tier=source.provenance_tier if source else None,
         ),
+        analysis_basis="podcast_show_notes" if is_podcast else "article_body",
+        people=_podcast_people(article) if is_podcast else (),
+        topic_heat=(
+            build_topic_heat_context(
+                session,
+                article_id=article.id,
+                active_tags=active_tags,
+                now=now,
+            )
+            if is_podcast and session is not None
+            else None
+        ),
     )
 
 
@@ -1264,9 +1629,15 @@ def _input_for(session: Session, article_id: str) -> tuple[AnalysisInput, list[T
     if article is None:
         raise LookupError("article missing")
     source = session.get(SourceConfigRecord, article.source_id)
+    active_tags = load_relevant_active_tags(session, article)
     return (
-        analysis_input_from_article(article, source),
-        load_relevant_active_tags(session, article),
+        analysis_input_from_article(
+            article,
+            source,
+            active_tags=active_tags,
+            session=session,
+        ),
+        active_tags,
     )
 
 
@@ -1631,6 +2002,7 @@ async def process_claimed_analysis(
                 max_attempts=max_attempts,
             )
         effective_model = llm_config.for_aux().model
+        analysis_input_hash = compute_analysis_input_hash(article_input, active_tags)
         taxonomy_version = _active_taxonomy_version(session)
         record.model_name = effective_model
         record.taxonomy_version = taxonomy_version
@@ -1723,6 +2095,24 @@ async def process_claimed_analysis(
                 )
                 session.commit()
             return ProcessResult(task.article_id, "superseded", TaggingStatus.PENDING.value)
+        if (
+            article_input.content_type == "podcast_episode"
+            and tuple(article_input.people) != _podcast_people(article)
+        ):
+            # Podcast persons live in publisher metadata, outside content_hash.
+            # Close this lease, then rebuild a pending task from the newest
+            # metadata so the stale LLM response can never become authoritative.
+            revoke_queued_analysis(
+                session,
+                task.article_id,
+                reason="podcast people changed during analysis",
+                now=ended,
+            )
+            queue_article_analysis(session, task.article_id, enabled=True, now=ended)
+            session.commit()
+            return ProcessResult(
+                task.article_id, "superseded", TaggingStatus.PENDING.value
+            )
         if not source_allows_analysis(session, article.source_id):
             source = session.get(SourceConfigRecord, article.source_id)
             if _is_credentialed_source(source):
@@ -1742,8 +2132,20 @@ async def process_claimed_analysis(
             return ProcessResult(task.article_id, record.status, record.tagging_status)
 
         result = validated.result
+        prompt_version, scoring_version = analysis_contract_versions(article.content_type)
         record.status = AnalysisStatus.SUCCEEDED.value
         record.quality_score = result.quality_score
+        record.dimension_scores_json = json.dumps(
+            {
+                "schema_version": "podcast-factors-v1",
+                "factors": validated.podcast_factors,
+            }
+            if article_input.content_type == "podcast_episode"
+            else {},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         record.score_reason = result.score_reason
         record.summary = result.summary
         record.content_genre = str(result.content_genre)
@@ -1755,8 +2157,23 @@ async def process_claimed_analysis(
             extracted_tag_snapshot(result.tag_candidates), ensure_ascii=False
         )
         record.model_name = llm_config.for_aux().model
-        record.prompt_version = ARTICLE_ANALYSIS_PROMPT_VERSION
-        record.scoring_version = ARTICLE_ANALYSIS_SCORING_VERSION
+        record.analysis_basis = article_input.analysis_basis
+        record.analysis_input_hash = analysis_input_hash
+        record.transcript_artifact_id = article_input.transcript_artifact_id
+        record.analysis_diagnostics_json = json.dumps(
+            {
+                "people": list(article_input.people),
+                "topic_heat": article_input.topic_heat,
+                "podcast_factors": validated.podcast_factors,
+            }
+            if article_input.content_type == "podcast_episode"
+            else {},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        record.prompt_version = prompt_version
+        record.scoring_version = scoring_version
         record.taxonomy_version = _active_taxonomy_version(session)
         record.analyzed_at = _iso(ended)
         record.started_at = None
@@ -1773,7 +2190,7 @@ async def process_claimed_analysis(
                     session,
                     article=article_input,
                     result=result,
-                    prompt_version=ARTICLE_ANALYSIS_PROMPT_VERSION,
+                    prompt_version=prompt_version,
                     taxonomy_version=record.taxonomy_version,
                     candidate_enabled=candidate_enabled,
                     now=ended,
@@ -2008,6 +2425,9 @@ def get_article_analysis(session: Session, article_id: str) -> Optional[dict[str
         "summary": record.summary,
         "content_genre": record.content_genre,
         "primary_tag_id": record.primary_tag_id,
+        "analysis_basis": record.analysis_basis,
+        "analysis_input_hash": record.analysis_input_hash,
+        "transcript_artifact_id": record.transcript_artifact_id,
         "prompt_version": record.prompt_version,
         "scoring_version": record.scoring_version,
         "taxonomy_version": record.taxonomy_version,

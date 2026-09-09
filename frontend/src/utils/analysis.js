@@ -51,6 +51,37 @@ export function qualityScoreText(value) {
   return number.toFixed(number % 1 ? 1 : 0);
 }
 
+const TRANSCRIPT_ANALYSIS_BASES = new Set(['publisher_transcript', 'asr_transcript']);
+
+/** 播客唯一分数的输入依据标签；不返回任何第二套分值。 */
+export function podcastAssessmentMeta(article) {
+  if (article?.content_type !== 'podcast_episode') return null;
+  if (!qualityScoreText(article?.quality_score) && !String(article?.score_reason || '').trim()) {
+    return null;
+  }
+  const basis = String(article?.analysis_basis || article?.podcast?.analysis_basis || '').trim();
+  if (TRANSCRIPT_ANALYSIS_BASES.has(basis)) {
+    return {
+      label: '全文深度分析',
+      note: 'AI 基于完整逐字稿分析，关键结论可回到原节目时间码核验',
+    };
+  }
+  return {
+    label: '简介初评',
+    note: 'AI 基于节目简介的初步评估，尚未分析完整音频，仅用于辅助筛选',
+  };
+}
+
+/** 已落库分析不依赖本部署是否配置 LLM；aiEnabled 只决定能否现场生成。 */
+export function shouldShowAiReadingCard(article, { summary, aiEnabled, body } = {}) {
+  return Boolean(
+    summary
+    || qualityScoreText(article?.quality_score)
+    || String(article?.score_reason || '').trim()
+    || (aiEnabled && body)
+  );
+}
+
 export function hasReadableAnalysis(article) {
   if (typeof article?.analysis_has_result === 'boolean') return article.analysis_has_result;
   const machineTag = displayAnalysisTags(article).some((tag) => (

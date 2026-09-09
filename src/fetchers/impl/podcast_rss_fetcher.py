@@ -5,6 +5,7 @@
 """
 
 import hashlib
+import re
 import unicodedata
 from collections.abc import Mapping
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
@@ -43,7 +44,7 @@ def _raw_podcast_supplements(feed_bytes: bytes) -> Tuple[Dict[str, Any], List[Di
     container = containers[0] if containers else root
 
     def parse_element(parent: ElementTree.Element) -> Dict[str, Any]:
-        data: Dict[str, Any] = {"transcripts": []}
+        data: Dict[str, Any] = {"transcripts": [], "persons": []}
         for child in list(parent):
             name = _local_name(child.tag)
             if name == "explicit":
@@ -59,6 +60,18 @@ def _raw_podcast_supplements(feed_bytes: bytes) -> Tuple[Dict[str, Any], List[Di
                 }
                 if transcript["url"]:
                     data["transcripts"].append(transcript)
+            elif name == "person":
+                person_name = " ".join(str(child.text or "").split())
+                if person_name:
+                    data["persons"].append(
+                        {
+                            "name": person_name,
+                            "role": str(child.attrib.get("role") or "").strip(),
+                            "group": str(child.attrib.get("group") or "").strip(),
+                            "href": str(child.attrib.get("href") or "").strip(),
+                            "image_url": str(child.attrib.get("img") or "").strip(),
+                        }
+                    )
             elif name == "chapters":
                 data["chapters"] = {
                     "url": str(child.attrib.get("url") or "").strip(),
@@ -102,6 +115,18 @@ class GenericPodcastRssFetcher(GenericRssFetcher):
         "signature",
         "token",
     }
+    _explicit_person_markers = re.compile(
+        r"(?im)^(?:[-*]\s*)?(?:\*\*|__)?"
+        r"(?P<label>本期嘉宾|嘉宾|guest(?:s)?|主持人|host(?:s)?)"
+        r"(?:\*\*|__)?\s*[:：]\s*"
+        r"(?P<names>[^\n]{1,180}?)(?:\*\*|__)?\s*$"
+    )
+    _title_guest_marker = re.compile(
+        r"(?i)(?:(?:^|[|｜—–·]\s*)(?:本期)?嘉宾\s*[:：]\s*"
+        r"|(?:\bwith\b|\bfeat\.?\b|\bft\.?\b)\s+)"
+        r"(?P<names>[^|｜—–:：\n]{1,100}?)(?=\s*(?:[|｜—–·:：]|$))"
+    )
+    _person_splitter = re.compile(r"\s*(?:,|，|、|;|；|\band\b|\b&\b|/|与)\s*", re.I)
 
     @classmethod
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
@@ -276,6 +301,127 @@ class GenericPodcastRssFetcher(GenericRssFetcher):
         value = raw.get("chapters") or entry.get("podcast_chapters") or {}
         return self._mapping_value(value, "url", "href"), self._mapping_value(value, "type")
 
+    @classmethod
+    def _person_record(
+        cls,
+        name: Any,
+        *,
+        role: str,
+        group: str = "",
+        scope: str,
+        evidence: str,
+        href: str = "",
+        image_url: str = "",
+    ) -> Dict[str, str] | None:
+        normalized_name = " ".join(str(name or "").split()).strip(" ,，、;；")
+        if not normalized_name or len(normalized_name) > 120:
+            return None
+        normalized_role = " ".join(str(role or "").split()).casefold()
+        role_aliases = {
+            "presenter": "host",
+            "co-host": "host",
+            "cohost": "host",
+            "interviewer": "host",
+            "嘉宾": "guest",
+            "主持人": "host",
+        }
+        normalized_role = role_aliases.get(normalized_role, normalized_role) or "person"
+        return {
+            "name": normalized_name,
+            "role": normalized_role,
+            "group": " ".join(str(group or "").split()),
+            "scope": scope,
+            "evidence": evidence,
+            "href": str(href or "").strip(),
+            "image_url": str(image_url or "").strip(),
+        }
+
+    @classmethod
+    def _persons(
+        cls,
+        entry: Any,
+        feed: Any,
+        raw_entry: Dict[str, Any],
+        raw_feed: Dict[str, Any],
+        *,
+        title: str,
+        show_notes: str,
+    ) -> List[Dict[str, str]]:
+        """Normalize only publisher-explicit identities; never infer from voice."""
+
+        people: List[Dict[str, str]] = []
+        # Podcasting 2.0 defines item-level people as a replacement for the
+        # channel list, not an additive overlay. Publishers must restate a show
+        # host on the item when that host participates in the episode.
+        person_scopes = (
+            (("episode", raw_entry),)
+            if raw_entry.get("persons")
+            else (("show", raw_feed),)
+        )
+        for scope, raw in person_scopes:
+            for value in raw.get("persons") or []:
+                if not isinstance(value, Mapping):
+                    continue
+                person = cls._person_record(
+                    value.get("name"),
+                    role=str(value.get("role") or "host"),
+                    group=str(value.get("group") or "cast"),
+                    scope=scope,
+                    evidence="podcast:person",
+                    href=str(value.get("href") or ""),
+                    image_url=str(value.get("image_url") or ""),
+                )
+                if person:
+                    people.append(person)
+
+        for scope, value, evidence in (
+            ("show", feed.get("author"), "rss:channel.author"),
+            ("episode", entry.get("author"), "rss:item.author"),
+        ):
+            person = cls._person_record(
+                value, role="author", scope=scope, evidence=evidence
+            )
+            if person:
+                people.append(person)
+
+        for match in cls._explicit_person_markers.finditer(show_notes or ""):
+            role = "host" if "host" in match.group("label").casefold() or "主持" in match.group("label") else "guest"
+            for name in cls._person_splitter.split(match.group("names")):
+                person = cls._person_record(
+                    name,
+                    role=role,
+                    scope="episode",
+                    evidence="show_notes:explicit_person",
+                )
+                if person:
+                    people.append(person)
+        title_match = cls._title_guest_marker.search(title or "")
+        if title_match:
+            for name in cls._person_splitter.split(title_match.group("names")):
+                person = cls._person_record(
+                    name,
+                    role="guest",
+                    scope="episode",
+                    evidence="title:explicit_guest",
+                )
+                if person:
+                    people.append(person)
+
+        # Prefer richer Podcasting 2.0 evidence when the same person appears in
+        # legacy author/show-note fields, while preserving distinct roles/scopes.
+        rank = {"podcast:person": 0, "rss:item.author": 1, "rss:channel.author": 2}
+        deduped: Dict[tuple[str, str, str], Dict[str, str]] = {}
+        for person in people:
+            key = (
+                cls._normalized_identity_text(person["name"]),
+                person["role"],
+                person["scope"],
+            )
+            current = deduped.get(key)
+            if current is None or rank.get(person["evidence"], 3) < rank.get(current["evidence"], 3):
+                deduped[key] = person
+        return list(deduped.values())
+
     def _image_url(
         self,
         entry: Any,
@@ -368,9 +514,10 @@ class GenericPodcastRssFetcher(GenericRssFetcher):
                 "type": audio_mime,
                 "length": audio_bytes,
             }
+            title = str(entry.get("title") or "未命名播客单集")
             yield PodcastEpisodeContent(
                 id=self._entry_id(runtime_source_id, entry),
-                title=str(entry.get("title") or "未命名播客单集"),
+                title=title,
                 source_url=source_url,
                 publish_date=self._entry_datetime(entry, "published"),
                 content=content_text,
@@ -394,6 +541,14 @@ class GenericPodcastRssFetcher(GenericRssFetcher):
                 explicit=self._explicit(explicit_value),
                 image_url=self._image_url(entry, parsed_feed.feed, raw_entry, raw_feed),
                 transcripts=self._transcripts(entry, raw_entry),
+                persons=self._persons(
+                    entry,
+                    parsed_feed.feed,
+                    raw_entry,
+                    raw_feed,
+                    title=title,
+                    show_notes=content_text,
+                ),
                 chapters_url=chapters_url,
                 chapters_mime=chapters_mime,
                 raw_data=raw_data,

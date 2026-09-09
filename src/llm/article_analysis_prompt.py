@@ -21,6 +21,8 @@ from typing import Any
 
 ARTICLE_ANALYSIS_PROMPT_VERSION = "article-analysis-v6"
 ARTICLE_ANALYSIS_SCORING_VERSION = "news-value-v2"
+PODCAST_ANALYSIS_PROMPT_VERSION = "podcast-show-notes-v1"
+PODCAST_ANALYSIS_SCORING_VERSION = "news-value-v2-podcast-v1"
 MAX_ANALYSIS_BODY_CHARS = 24_000
 
 
@@ -110,6 +112,48 @@ tag_candidates 元素形如 {"label":"...","proposed_kind":"topic",\
 """
 
 
+PODCAST_ANALYSIS_SYSTEM_PROMPT = ARTICLE_ANALYSIS_SYSTEM_PROMPT + """\
+
+【播客简介初评补丁】当前输入是播客单集的标题与节目简介，不是完整音频或逐字稿。仍然只输出
+唯一的 quality_score，并以新闻价值标尺为底座，再综合以下播客因素：嘉宾在当前议题中的权威
+与直接参与程度、议题的当下热度和及时性、观点或发现的新颖性、推理/数据/案例/技术细节、
+不同人物观点的互补或分歧、可迁移的实践价值。
+
+这里的「议题当下热度和及时性」是对通用规则【不看时效】的播客内容类型例外并覆盖它：文章
+规则不因发布时间早晚扣分；播客初评则必须使用 topic_heat 判断议题在快照时点的讨论热度与
+及时性。仍不得把热度直接当成质量，或因节目发布时间较新就机械加分。
+
+人物名气本身绝不加分。只有人物确实在其相关领域谈论且提供实质内容时，影响力才提高观点
+分量；名人泛泛聊天或讨论无关领域通常落 6.0～7.9 或更低。热门议题也不自动加分：重复已知
+信息不得仅靠热度达到 8.0；非热门议题若有重要原创发现、扎实技术细节或强启发，普通嘉宾也
+可以达到 8.0。简介无法证明的事实不得臆测，身份不明确的人物保持中性。
+
+播客锚点：
+- 9.0～10.0：关键人物披露重大第一手信息、重要新发现，或足以改变行业判断；
+- 8.0～8.9：值得关注的议题中有明显新观点、扎实论证或技术细节，或权威嘉宾给出有分量的
+  原创判断；
+- 6.0～7.9：内容有用或深入，但缺少当前重要性、新颖发现或实际影响；名人重复已知观点也在此档；
+- 1.0～5.9：泛泛聊天、宣传、重复信息或缺少明确论据。
+
+输入中的 people 只包含发布方明确给出的人物/角色及来源依据；topic_heat 是 Dorami 最近 7 天
+规范 topic/entity 的快照（不同来源数、最高新闻价值分、最近时间、是否进入公共日报、快照时间）。
+热度只作上下文，不能代替新颖性和实质内容。
+
+除通用字段外，JSON 末尾必须增加 podcast_factors 对象。键固定为 guest_authority、
+topic_timeliness、novelty、evidence_depth、viewpoint_diversity、practical_value；每项形如
+{"level":"low|medium|high","evidence":"不超过40字的输入内证据"}。这些因素仅供内部诊断，
+不得形成第二套面向用户的分数。
+"""
+
+
+def analysis_contract_versions(content_type: str) -> tuple[str, str]:
+    """Return the immutable prompt/scoring contract for one content shape."""
+
+    if (content_type or "").strip() == "podcast_episode":
+        return PODCAST_ANALYSIS_PROMPT_VERSION, PODCAST_ANALYSIS_SCORING_VERSION
+    return ARTICLE_ANALYSIS_PROMPT_VERSION, ARTICLE_ANALYSIS_SCORING_VERSION
+
+
 def build_article_analysis_user_prompt(
     *,
     title: str,
@@ -119,6 +163,8 @@ def build_article_analysis_user_prompt(
     source_name: str = "",
     source_role: str = "",
     taxonomy_tags: Sequence[dict[str, Any]] = (),
+    people: Sequence[dict[str, Any]] = (),
+    topic_heat: dict[str, Any] | None = None,
 ) -> str:
     """Build the untrusted-input envelope without including an article URL.
 
@@ -151,6 +197,14 @@ def build_article_analysis_user_prompt(
         "source_role": (source_role or "").strip(),
         "body": (body or "")[:MAX_ANALYSIS_BODY_CHARS],
     }
+    if (content_type or "").strip() == "podcast_episode":
+        article["analysis_basis"] = "podcast_show_notes"
+        article["people"] = list(people)
+        article["topic_heat"] = topic_heat or {
+            "window_days": 7,
+            "snapshot_at": "",
+            "signals": [],
+        }
     return (
         "可用的 active 规范标签：\n"
         + json.dumps(safe_tags, ensure_ascii=False, separators=(",", ":"))
@@ -158,3 +212,11 @@ def build_article_analysis_user_prompt(
         + json.dumps(article, ensure_ascii=False, separators=(",", ":"))
         + "\n</untrusted_article>"
     )
+
+
+def analysis_system_prompt(content_type: str) -> str:
+    """Select the shape-specific prompt without changing the article ruler."""
+
+    if (content_type or "").strip() == "podcast_episode":
+        return PODCAST_ANALYSIS_SYSTEM_PROMPT
+    return ARTICLE_ANALYSIS_SYSTEM_PROMPT
