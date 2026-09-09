@@ -11,7 +11,6 @@ from sqlmodel import Session, select
 
 from api import deps
 from api.routers import personal_briefs
-from models.analysis_contracts import DigestGenerationReason
 from models.db import CmsTagRecord, UserInterestTagRecord
 from services import accounts as accounts_service
 from services import taxonomy as taxonomy_service
@@ -144,24 +143,34 @@ def replace_interests(
             session.delete(row)
     now = dt.datetime.now(dt.timezone.utc).isoformat()
     for tag_id, item in requested.items():
-        row = existing.get(tag_id) or UserInterestTagRecord(
-            owner_username=username,
-            tag_id=tag_id,
-            created_at=now,
-            updated_at=now,
-        )
-        row.stance = item.stance
-        row.priority = "normal"
-        row.source = "explicit"
-        row.updated_at = now
+        row = existing.get(tag_id)
+        if row is None:
+            row = UserInterestTagRecord(
+                owner_username=username,
+                tag_id=tag_id,
+                stance=item.stance,
+                priority="normal",
+                source="explicit",
+                created_at=now,
+                updated_at=now,
+            )
+        elif row.stance == item.stance and row.priority == "normal" and row.source == "explicit":
+            # 原样重存不算变更:兴趣版本(personal_digest._interest_version)混入 updated_at,
+            # 无谓改写会让今日早报被误标「关注已更新」。
+            continue
+        else:
+            row.stance = item.stance
+            row.priority = "normal"
+            row.source = "explicit"
+            row.updated_at = now
         session.add(row)
     if body.complete_onboarding:
         accounts_service.complete_interest_onboarding(session, username)
     session.commit()
 
-    personal_briefs.trigger_today_revision(
-        deps.get_db_sink().engine, username, DigestGenerationReason.INTEREST_CHANGED
-    )
+    # v3.50.1(issue #33 §5):兴趣变更只记录,不再触发当日早报重编排——早报重编只剩
+    # 读者手动「重新编排」与次日定时两个入口,今日版面落后于当前兴趣时由
+    # /api/reader/briefs/today 的 interest_stale 提示读者自行决定。
     result = get_interests(auth=auth, session=session)
     result["onboarding_completed"] = bool(body.complete_onboarding)
     return result

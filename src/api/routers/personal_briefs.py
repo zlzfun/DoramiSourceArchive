@@ -107,7 +107,14 @@ def serialize_edition(
     edition: PersonalDigestEditionRecord,
     *,
     include_items: bool = True,
+    include_freshness: bool = False,
 ) -> dict[str, Any]:
+    """Project one edition.
+
+    ``include_freshness`` adds ``interest_stale``/``scope_stale``(v3.50.1,issue #33 §5:
+    兴趣/订阅变更不再自动重编,今日版面是否落后于当前偏好由这两位说明);只对今日
+    端点开启——历史版本天然落后,列表端点也不必为每行多查两次。
+    """
     items = []
     if include_items:
         rows = session.exec(
@@ -146,6 +153,7 @@ def serialize_edition(
             else None
         ),
         "items": items,
+        **(digest_service.edition_freshness(session, edition) if include_freshness else {}),
     }
 
 
@@ -471,7 +479,10 @@ def _ensure(
     if result.edition is None:
         return {"status": "empty_subscriptions", "edition": None}
     edition = process_pending_edition(session, result.edition, now=now)
-    return {"status": edition.status, "edition": serialize_edition(session, edition)}
+    return {
+        "status": edition.status,
+        "edition": serialize_edition(session, edition, include_freshness=True),
+    }
 
 
 @router.post("/today/ensure")
@@ -510,7 +521,10 @@ def get_today(
     edition = _latest_edition(session, _username(auth), today)
     if edition is None:
         return {"status": "not_started", "edition": None}
-    return {"status": edition.status, "edition": serialize_edition(session, edition)}
+    return {
+        "status": edition.status,
+        "edition": serialize_edition(session, edition, include_freshness=True),
+    }
 
 
 @router.get("/{report_date}")

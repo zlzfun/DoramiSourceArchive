@@ -1168,38 +1168,12 @@ async def require_admin_session(request: Request, call_next):
             body=audit_body,
         )
     if response.status_code < 400 and auth_session is not None:
-        # Subscription/private-source/visibility mutations affect only today's
-        # current revision. Historical editions remain immutable snapshots.
+        # v3.50.1(issue #33 §5):读者自己的订阅/自定源变更不再触发当日早报重编排——
+        # 范围变化与兴趣变化同口径「下次编排生效」(手动重编或次日定时),今日版面
+        # 落后于当前订阅时由 /api/reader/briefs/today 的 scope_stale 提示。
+        # 管理员下架来源仍即时重编全员当日版:那是内容交付层的止损动作,不是读者偏好。
+        # Historical editions remain immutable snapshots either way.
         try:
-            subscription_changed = (
-                normalized_method in {"POST", "PUT", "DELETE"}
-                and (
-                    (
-                        _path_matches(path, ("/api/subscriptions",))
-                        and not path.endswith("/rotate-token")
-                    )
-                    or (
-                        path.startswith("/api/reader/sources/")
-                        and path.endswith("/subscribe")
-                    )
-                    or (
-                        path.startswith("/api/reader/collections/")
-                        and path.endswith("/subscribe")
-                    )
-                    or path == "/api/reader/custom-sources"
-                    or (
-                        normalized_method == "DELETE"
-                        and path.startswith("/api/reader/custom-sources/")
-                    )
-                )
-            )
-            if subscription_changed:
-                schedule_personal_digest_trigger(
-                    personal_briefs_router.trigger_today_revision,
-                    db_sink.engine,
-                    str(auth_session.get("sub") or ""),
-                    "subscription_changed",
-                )
             if (
                 normalized_method == "POST"
                 and path.startswith("/api/admin/source-visibility/")

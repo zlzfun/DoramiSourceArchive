@@ -505,6 +505,19 @@ export default function PersonalBriefPage({
             <span>新的编排请求已记录，本版完成后会生成下一版</span>
           </div>
         )}
+        {/* v3.50.1(issue #33 §5):改关注/订阅不再自动重编,今日版面落后时把主动权交给读者 */}
+        {usesToday && !edition.rebuild_queued && (edition.interest_stale || edition.scope_stale) && (
+          <div className="brief-note is-info" role="status">
+            <RefreshCw aria-hidden="true" />
+            <span>
+              {edition.interest_stale && edition.scope_stale ? '你的关注和订阅' : edition.interest_stale ? '你的关注' : '你的订阅'}
+              已更新，下次编排生效
+            </span>
+            <button type="button" className="brief-note-act" onClick={handleRebuild} disabled={working}>
+              {working ? '编排中…' : '立即重编'}
+            </button>
+          </div>
+        )}
         {edition.degraded_reason && (
           <div className="brief-note">
             <AlertTriangle aria-hidden="true" />
