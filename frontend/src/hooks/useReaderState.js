@@ -41,6 +41,7 @@ import {
   recordArticleRead,
   fetchUnreadCounts,
   markAllRead,
+  markScopeRead,
   markArticleRead,
   markArticleUnread,
   summarizeArticle,
@@ -1041,12 +1042,16 @@ export function useReaderState({
   };
 
   // ── 全部标读(当前范围:某来源 / 本容器 / 今日全订阅)──
+  // 同一枚钮、同一份读态的两条写路:订阅轴(含单源)按源推水位;兴趣轴按范围逐篇写行——
+  // 兴趣是跨源透镜,推水位会把源里未命中兴趣的文章一并标掉,越出读者看见的范围。
   const handleMarkAllRead = async () => {
     if (markingRead) return;
-    if (scope.axis === 'interest' && !activeSourceId) return; // 兴趣轴无水位可推(入口已隐藏,此为兜底)
     setMarkingRead(true);
     try {
-      const data = await markAllRead(activeSourceId, activeSourceId ? null : mode);
+      const interestScope = scope.axis === 'interest' && !activeSourceId;
+      const data = interestScope
+        ? await markScopeRead(mode, activeTagId)
+        : await markAllRead(activeSourceId, activeSourceId ? null : mode);
       // 后端返回更新后的统计;本页在列条目全部乐观清点(圆点即消)。
       prevScopeUnreadRef.current = null;
       applyUnreadCounts(data);

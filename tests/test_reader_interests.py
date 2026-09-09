@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from services.reader_interests import INTEREST_MATCH_MIN_RELEVANCE  # noqa: E402
+from services.reader_state import UNCURSORED_UNREAD_MAX_AGE_DAYS  # noqa: E402
 
 STAMP = "2026-09-09T00:00:00"
 
@@ -42,8 +43,11 @@ def _seed_users(engine):
         session.commit()
 
 
-def _seed_article(engine, article_id: str, source_id: str, *, fetched: str = "2026-05-21T00:00:00"):
+def _seed_article(engine, article_id: str, source_id: str, *, fetched: str = ""):
+    """默认昨天入库:无水位源的未读有 30 天时效下限,固定的历史日期会让样本一律视为已读。"""
     from models.db import ArticleRecord
+
+    fetched = fetched or (datetime.datetime.now() - datetime.timedelta(days=1)).isoformat()
 
     with Session(engine) as session:
         session.add(ArticleRecord(
@@ -264,3 +268,63 @@ def test_unread_only_in_site_scope_uses_per_article_read_state(monkeypatch, tmp_
         assert flags["out_fresh"] is True and flags["out_hit"] is False and flags["sub_hit"] is True
         ids, _ = _ids(client, subscribed_scope="off", interest_scope="only", unread_only="true")
         assert "out_fresh" in ids and "out_hit" not in ids
+
+
+def _days_ago(days: int) -> str:
+    return (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat()
+
+
+def test_uncursored_unread_has_age_floor(monkeypatch, tmp_path):
+    """无水位源的未读时效下限:入库超过 UNCURSORED_UNREAD_MAX_AGE_DAYS 的命中一律视为已读(过滤与标注同尺)。"""
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    e = sink.engine
+    with Session(e) as session:
+        from models.db import CmsTagRecord
+        agents_id = session.exec(select(CmsTagRecord.id).where(CmsTagRecord.code == "ai-agents")).one()
+    _seed_article(e, "out_recent", "web_qbitai", fetched=_days_ago(3))
+    _seed_article(e, "out_stale", "web_qbitai", fetched=_days_ago(UNCURSORED_UNREAD_MAX_AGE_DAYS + 5))
+    _assign(e, "out_recent", agents_id, primary=True, relevance=0.9)
+    _assign(e, "out_stale", agents_id, primary=True, relevance=0.9)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        ids, data = _ids(client, subscribed_scope="off", interest_scope="only", with_unread="true")
+        flags = {item["id"]: item["unread"] for item in data["items"]}
+        assert flags["out_recent"] is True and flags["out_stale"] is False
+        ids, _ = _ids(client, subscribed_scope="off", interest_scope="only", unread_only="true")
+        assert "out_recent" in ids and "out_stale" not in ids
+        # 显式标未读压过时效下限(读者的意图优先)
+        assert client.post("/api/reader/articles/out_stale/mark-unread").status_code == 200
+        ids, _ = _ids(client, subscribed_scope="off", interest_scope="only", unread_only="true")
+        assert "out_stale" in ids
+
+
+def test_mark_scope_read_marks_interest_hits_per_article(monkeypatch, tmp_path):
+    """兴趣轴「全部标读」:按范围逐篇写读态,不推水位;单标签范围只标该标签的命中。"""
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    e = sink.engine
+    llm = _seed_tag(e, "llm", "大语言模型")
+    _seed_article(e, "out_llm", "web_qbitai", fetched=_days_ago(2))
+    _assign(e, "out_llm", llm, primary=True, relevance=0.9)
+    _set_interest(e, "user", llm, "follow")
+    with Session(e) as session:
+        from models.db import CmsTagRecord
+        agents_id = session.exec(select(CmsTagRecord.id).where(CmsTagRecord.code == "ai-agents")).one()
+    with TestClient(app_module.app) as client:
+        _login(client)
+        client.post("/api/reader/sources/web_anthropic_news/subscribe")
+        client.get("/api/reader/unread-counts")
+        # 先只标「大语言模型」:AI 智能体的命中仍未读
+        res = client.post("/api/reader/mark-scope-read", params={"shape": "article", "interest_tag_id": agents_id + llm + 1000})
+        assert res.status_code == 200 and res.json()["marked"] == 0  # 非关注标签 id:显式空集
+        res = client.post("/api/reader/mark-scope-read", params={"shape": "article", "interest_tag_id": llm})
+        assert res.status_code == 200 and res.json()["marked"] == 1
+        ids, _ = _ids(client, subscribed_scope="off", interest_scope="only", unread_only="true")
+        assert "out_llm" not in ids and "out_hit" in ids and "sub_hit" in ids
+        # 兴趣全集标读:订阅源的命中也按篇写行,该源里未命中兴趣的 sub_plain 不受影响(不推水位)
+        res = client.post("/api/reader/mark-scope-read", params={"shape": "article"})
+        body = res.json()
+        assert res.status_code == 200 and body["marked"] >= 2 and "by_source" in body
+        ids, _ = _ids(client, subscribed_scope="off", interest_scope="only", unread_only="true")
+        assert ids == set()
+        ids, _ = _ids(client, subscribed_scope="only", unread_only="true")
+        assert "sub_plain" in ids and "sub_hit" not in ids

@@ -38,6 +38,9 @@ from models.db import (  # noqa: E402
     TagRetagJobRecord,
     TaxonomyVersionRecord,
     UserRecord,
+    ArticleRecord,
+    ReaderArticleReadStateRecord,
+    ReaderReadCursorRecord,
 )
 from services import ai_usage, reader_activity, retention  # noqa: E402
 from services.accounts import create_user, last_login_for_user, touch_login  # noqa: E402
@@ -152,6 +155,39 @@ def test_retention_shares_dual_timestamp_dead(tmp_path):
     with Session(engine) as session:
         kept = {s.token for s in session.exec(select(ArticleShareRecord)).all()}
         assert kept == {"dshr_fresh_exp"}
+
+
+def test_retention_read_states_only_uncursored_old_read_rows(tmp_path):
+    """逐篇读态清理:只删无水位源的窗外已读行;显式未读行、订阅源(有水位)的行、窗内行都保留。"""
+    engine = _engine(tmp_path)
+    old = _iso_days_ago(60)
+    recent = _iso_days_ago(3)
+    def art(aid, sid, fetched):
+        return ArticleRecord(
+            id=aid, title=aid, content_type="web_article", source_id=sid,
+            source_url=f"https://example.test/{aid}", publish_date=fetched, fetched_date=fetched,
+            has_content=True, content="x", extensions_json="{}",
+        )
+    def rs(aid, is_read=True, at=old):
+        return ReaderArticleReadStateRecord(owner_username="u", article_id=aid, is_read=is_read, read_at=at)
+    with Session(engine) as session:
+        session.add(art("old_uncursored", "web_qbitai", old))
+        session.add(art("old_unread_row", "web_qbitai", old))
+        session.add(art("old_cursored", "web_anthropic_news", old))
+        session.add(art("recent_uncursored", "web_qbitai", recent))
+        session.add(art("old_read_recently", "web_qbitai", old))
+        session.add(ReaderReadCursorRecord(owner_username="u", source_id="web_anthropic_news", mark_read_before=recent, updated_at=recent))
+        session.add(rs("old_uncursored"))                     # 删:无水位、已读、文章与标读都在窗外
+        session.add(rs("old_unread_row", is_read=False))      # 留:显式未读是读者意图
+        session.add(rs("old_cursored"))                       # 留:该源有水位,交给推水位回收
+        session.add(rs("recent_uncursored", at=recent))       # 留:文章在窗内
+        session.add(rs("old_read_recently", at=recent))       # 留:标读时间在窗内
+        session.commit()
+    deleted = retention.run_retention_cleanup(engine)
+    assert deleted["reader_article_read_states"] == 1
+    with Session(engine) as session:
+        left = {r.article_id for r in session.exec(select(ReaderArticleReadStateRecord)).all()}
+        assert left == {"old_unread_row", "old_cursored", "recent_uncursored", "old_read_recently"}
 
 
 def test_retention_still_covers_fetch_runs(tmp_path):

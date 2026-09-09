@@ -28,6 +28,7 @@ import datetime
 from typing import Dict, Iterable, List, Optional, Sequence, Set
 
 from sqlalchemy import delete
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import Session, and_, func, or_, select
 
 from models.db import ArticleRecord, ReaderArticleReadStateRecord, ReaderReadCursorRecord
@@ -39,6 +40,20 @@ def _now_iso() -> str:
 
 # 水位初始化时保留为未读的最近文章篇数（订阅成功 / 存量订阅懒初始化共用）
 INIT_UNREAD_BACKLOG = 20
+
+# 无水位源(兴趣轴里的订阅外源)的未读时效下限(issue #27 五稿返修):没有逐篇行且入库超过
+# 这个天数的文章一律视为已读。作用有二:①新关注一个标签不会把全站历史命中全部灌成未读;
+# ②逐篇已读行只在这个滚动窗内有意义,窗外的行由留存清理回收,表大小从线性变成常量。
+# 订阅源的对应物是订阅时播种的水位(老文章本来就是已读)。
+UNCURSORED_UNREAD_MAX_AGE_DAYS = 30
+# 兴趣轴「全部标读」单次逐篇写入上限(取最新);命中集合远小于订阅全量,这是极端情况的兜底
+MARK_SCOPE_READ_MAX = 2000
+
+
+def uncursored_unread_cutoff(now: Optional[datetime.datetime] = None) -> str:
+    """无水位源未读时效下限的 ISO 截止串:``fetched_date`` 早于它即视为已读。"""
+    base = now or datetime.datetime.now()
+    return (base - datetime.timedelta(days=UNCURSORED_UNREAD_MAX_AGE_DAYS)).isoformat()
 
 
 # ==================== 逐篇显式覆盖 ====================
@@ -213,10 +228,16 @@ def _unread_condition(cursors: Dict[str, str], username: str, *, include_uncurso
             ArticleRecord.id.in_(unread_sub),
         ))
     if include_uncursored:
-        uncursored = ArticleRecord.id.not_in(read_sub)
+        # 时效下限:无水位源只有近 UNCURSORED_UNREAD_MAX_AGE_DAYS 天的文章参与未读判定
+        uncursored = and_(
+            ArticleRecord.id.not_in(read_sub),
+            ArticleRecord.fetched_date >= uncursored_unread_cutoff(),
+        )
         if cursors:
             uncursored = and_(ArticleRecord.source_id.not_in(list(cursors.keys())), uncursored)
         branches.append(uncursored)
+        # 显式未读行在无水位源同样生效(压过时效下限)——与 unread_ids_among「显式覆盖优先」同尺
+        branches.append(ArticleRecord.id.in_(unread_sub))
     return or_(*branches) if len(branches) > 1 else branches[0]
 
 
@@ -281,6 +302,7 @@ def unread_ids_among(
     states = read_states_among(
         session, username=username, article_ids=[r.id for r in records]
     )
+    age_cutoff = uncursored_unread_cutoff()
     unread: Set[str] = set()
     for r in records:
         explicit = states.get(r.id)
@@ -290,11 +312,36 @@ def unread_ids_among(
             continue
         wm = cursors.get(r.source_id)
         if wm is None:
-            if include_uncursored:
+            if include_uncursored and (r.fetched_date or "") >= age_cutoff:
                 unread.add(r.id)
         elif (r.fetched_date or "") > wm:
             unread.add(r.id)
     return unread
+
+
+def mark_ids_read(session: Session, *, username: str, article_ids: Sequence[str]) -> int:
+    """按篇批量标已读(兴趣轴「全部标读」):一条 INSERT … ON CONFLICT 写整批逐篇行,不 commit。
+
+    与 ``mark_all_read`` 推水位是同一份读态的两条写路:订阅轴按源推水位,兴趣轴按篇写行——
+    兴趣是跨源的透镜,推水位会把源里未命中兴趣的文章一并标掉,越出读者看见的范围。
+    返回实际写入的篇数(去重、去空后)。
+    """
+    username = (username or "").strip()
+    ids = list(dict.fromkeys(a for a in (str(x or "").strip() for x in article_ids) if a))
+    if not username or not ids:
+        return 0
+    now = _now_iso()
+    table = ReaderArticleReadStateRecord.__table__
+    stmt = sqlite_insert(table).values([
+        {"owner_username": username, "article_id": aid, "is_read": True, "read_at": now}
+        for aid in ids
+    ])
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[table.c.owner_username, table.c.article_id],
+        set_={"is_read": True, "read_at": now},
+    )
+    session.execute(stmt)
+    return len(ids)
 
 
 # ==================== 全部标读 ====================
