@@ -1522,9 +1522,10 @@ def test_soft_threshold_appendix_candidates_are_clustered_against_body(tmp_path,
     asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06", top_n=4))
     record = asyncio.run(sink.get("daily_brief_2026-06-06"))
     ext = json.loads(record.extensions_json)
-    assert [e["id"] for e in ext["items"]] == ["h1", "h2"] and ext["items"][0]["extra_sources"]
+    by_id = {e["id"]: e for e in ext["items"]}
+    assert sorted(by_id) == ["h1", "h2"] and by_id["h1"]["extra_sources"]   # n5 并入 h1 的来源行
     assert "标题-n6" in record.content and "标题-n5" not in record.content
-    assert ext["included_article_ids"] == ["h1", "h2", "n6"]
+    assert sorted(ext["included_article_ids"]) == ["h1", "h2", "n6"]
 
 
 def test_soft_threshold_appendix_capacity_counts_current_title_only(tmp_path, monkeypatch):
