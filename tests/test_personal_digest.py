@@ -1234,3 +1234,50 @@ def test_breaking_same_entity_is_suppressed_after_a_recent_headline_and_empty_sc
         empty = generate_personal_digest(session, "bob", now=NOW)
         assert empty.status == "empty_subscriptions"
         assert empty.edition is None
+
+
+def test_breaking_lane_excludes_owner_scoped_legacy_sources(storage):
+    """非 user_rss_ 前缀但带 owner_username 的存量私有源同样不进全读者共享的头条池(codex P1)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a")])
+        session.add(SourceConfigRecord(
+            source_id="legacy_private_feed",
+            name="legacy private",
+            source_type="rss",
+            source_scope="",
+            provenance_tier="",
+            owner_username="bob",
+            created_at=NOW_ISO,
+            updated_at=NOW_ISO,
+        ))
+        session.flush()
+        own = _seed_article(session, 1, score=8.0)
+        _seed_article(session, 2, source="legacy_private_feed", score=9.9)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+        assert [item.article_id for item in result.items] == [own.id]
+
+
+def test_breaking_qualification_ignores_subscription_and_promotes_selected_article(storage):
+    """头条资格按全池判定:读者已订阅的官方源过线稿从精选提级为头条,不重复、不算降级(codex P2)。"""
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", "rss_a,rss_openai_news")])
+        tag = _entity_tag("entity.openai")
+        session.add(tag)
+        session.flush()
+        own = _seed_article(session, 1, score=8.0)
+        headline = _seed_article(session, 2, source="rss_openai_news", score=9.6)
+        session.flush()
+        session.add(_assign(headline, tag))
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "ready"
+        assert [(item.article_id, item.selection_lane) for item in result.items] == [
+            (headline.id, "breaking"), (own.id, "quality"),
+        ]
+        first = result.items[0]
+        assert first.selection_reason.endswith("官方一手发布。")
+        assert json.loads(first.ranking_features_json)["breaking"]["subscribed"] is True

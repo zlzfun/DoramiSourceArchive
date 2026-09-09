@@ -858,7 +858,18 @@ def load_breaking_candidates(
         min_score=min_score,
     )
     hidden = source_visibility.reader_unavailable_source_ids(session)
-    rows = [row for row in rows if row[0].source_id not in hidden]
+    # 私有源的第二个判据:非 user_rss_ 前缀但带 owner_username 的存量/导入自定源,与
+    # resolve_personal_digest_source_ids 同口径——头条池是全读者共享的,私有内容一条不能漏出
+    owner_scoped = set(session.exec(
+        select(SourceConfigRecord.source_id).where(
+            SourceConfigRecord.owner_username.is_not(None),
+            SourceConfigRecord.owner_username != "",
+        )
+    ).all())
+    rows = [
+        row for row in rows
+        if row[0].source_id not in hidden and row[0].source_id not in owner_scoped
+    ]
     meta = _source_role_and_shape(session, (article.source_id for article, _analysis in rows))
     return _candidates_from_rows(session, rows, source_meta=meta)
 
@@ -1768,15 +1779,20 @@ def generate_personal_digest(
                 previous_breaking_entities=_previous_breaking_entities(
                     session, username, report_date
                 ),
-                excluded_article_ids=previous_article_ids.union(
-                    selection.article_id for selection in selections
-                ),
+                # 只排除前一日已用条目,不排除本期订阅域选中的文章:头条资格按全池判定,
+                # 与读者是否订阅了该来源无关;已被订阅域选中的代表随后提级到头条位
+                excluded_article_ids=previous_article_ids,
                 subscribed_source_ids=scope.expected_source_ids,
                 source_display_names=_source_display_names(
                     session,
                     sorted({candidate.source_id for candidate in breaking_candidates}),
                 ),
             )
+
+    # 订阅域里已选中的文章若成为头条代表,从精选里提级到头条位(不重复出现,也不算降级)
+    promoted_ids = {selection.article_id for selection in breaking_selections}
+    had_own_selections = bool(selections)
+    selections = [selection for selection in selections if selection.article_id not in promoted_ids]
 
     generated_at = current.isoformat()
     first_open = _as_shanghai(first_open_at) if first_open_at else None
@@ -1787,7 +1803,7 @@ def generate_personal_digest(
         source_id: raw_source_snapshot.get(source_id, {})
         for source_id in scope.expected_source_ids
     }
-    selection_degraded = not selections
+    selection_degraded = not had_own_selections
     degraded_reason: str | None = None
     if selection_degraded:
         followed_codes = {
@@ -1964,7 +1980,7 @@ def generate_personal_digest(
             )
             session.add(record)
             item_records.append(record)
-    if selections:
+    if had_own_selections:
         selection_by_id = {selection.article_id: selection for selection in selections}
         article_ids = list(selection_by_id)
         articles = {
