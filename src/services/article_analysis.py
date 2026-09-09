@@ -964,9 +964,17 @@ def validate_analysis_payload(
 
     try:
         score = float(payload["quality_score"])
-        genre = ContentGenre(str(payload["content_genre"]))
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("analysis base fields are invalid") from exc
+    warnings: list[str] = []
+    try:
+        genre = ContentGenre(str(payload.get("content_genre") or ""))
+    except ValueError:
+        # 闭集外体裁(模型自造 model_evaluation 之类)降级为 other 并记 warning:
+        # 体裁是展示字段,不该让整篇分析连同分数一起作废(issue #33 F6——生产样本里
+        # 一篇 7.0 分的评测因此永远进不了分析表,重试两次同样输出)。
+        genre = ContentGenre.OTHER
+        warnings.append("unknown_genre_fallback")
     # score_reason 是分数注脚（提示词要求 ≤40 字）：上限留 3 倍余量容忍模型超写，
     # 但不再给它 1200 字——那正是它长成第二段摘要的空间（issue #13）。
     reason = _clean_text(payload.get("score_reason"), max_chars=_SCORE_REASON_MAX_CHARS)
@@ -975,7 +983,6 @@ def validate_analysis_payload(
         raise ValueError("analysis summary and score_reason must be non-empty")
 
     tag_map = {tag.code: tag for tag in active_tags if tag.status == "active"}
-    warnings: list[str] = []
     raw_assignments = payload.get("tag_assignments", [])
     if not isinstance(raw_assignments, list):
         raw_assignments = []

@@ -4,10 +4,8 @@
 统一强制）：列表/详情/创建/更新/启停/删除 + 单源触发 + 批量触发活跃 RSS/Web 源；
 Podcast wave 增加精选目录查询与安全幂等导入。
 
-配置序列化与 source_type→fetcher 路由 helper（serialize_source_config /
-normalize_source_id / parse_json_object / resolve_source_fetcher_id /
-build_source_fetch_params）随迁入本文件，经 app.py re-export 保持 api.app.X 兼容
-（test_configurable_web_fetcher 直接调用 app_module.resolve_source_fetcher_id 等）。
+配置序列化留在本 Router；source_type→fetcher 与参数绑定由
+``services.collection_nodes`` 统一提供，并经本模块继续 re-export 以兼容既有调用方。
 
 采集核心 run_single_fetch_as_collection / run_collection_items 仍留守 app.py（与
 抓取追踪 + APScheduler 编排同源），经 _app() 延迟动态调用。数据访问经
@@ -17,19 +15,13 @@ deps.get_session()。
 import importlib
 import json
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session, select
 
 from api import deps
-from api.sources import (
-    PODCAST_SOURCE_TYPES,
-    X_SOURCE_TYPES,
-    configured_source_platform,
-    configured_source_shape,
-)
+from api.sources import configured_source_platform, configured_source_shape
 from api.textutils import _json_dumps, _now_iso
 from models.db import SourceConfigRecord
 from services import jobs
@@ -37,6 +29,12 @@ from services import article_analysis as article_analysis_service
 from services import podcast_catalog as podcast_catalog_service
 from services import user_sources as user_sources_service
 from services import sync_consumer_policy
+from services.collection_nodes import (
+    build_source_fetch_params,
+    is_public_podcast_source,
+    parse_json_object,
+    resolve_source_fetcher_id,
+)
 
 router = APIRouter(tags=["source-configs"])
 
@@ -44,15 +42,6 @@ router = APIRouter(tags=["source-configs"])
 def _app():
     """延迟取 api.app（避免导入环；动态调用留守的采集核心 run_*_collection*）。"""
     return importlib.import_module("api.app")
-
-
-def _is_shared_podcast(record: SourceConfigRecord) -> bool:
-    return not record.owner_username and record.source_type == "podcast"
-
-
-def _reload_podcast_schedules_if_needed(*, before: bool = False, after: bool = False) -> None:
-    if before or after:
-        _app().reload_podcast_source_schedules()
 
 
 def _require_local_source_governance(
@@ -102,7 +91,6 @@ class SourceConfigCreate(BaseModel):
     ai_analysis_enabled: bool = True
     is_active: bool = True
     fetch_interval_minutes: Optional[int] = None
-    cron_expr: str = ""
     params: Dict[str, Any] = PydanticField(default_factory=dict)
 
 
@@ -126,7 +114,6 @@ class SourceConfigUpdate(BaseModel):
     ai_analysis_enabled: Optional[bool] = None
     is_active: Optional[bool] = None
     fetch_interval_minutes: Optional[int] = None
-    cron_expr: Optional[str] = None
     params: Optional[Dict[str, Any]] = None
 
 
@@ -136,7 +123,6 @@ class SourceFetchParams(BaseModel):
 
 class PodcastCatalogImportParams(BaseModel):
     source_ids: List[str] = PydanticField(default_factory=list)
-    activate: bool = False
     update_existing: bool = False
 
 
@@ -166,87 +152,6 @@ def normalize_source_id(source_id: str) -> str:
     return source_id.strip()
 
 
-def parse_json_object(raw_json: str) -> Dict[str, Any]:
-    try:
-        parsed = json.loads(raw_json or "{}")
-        return parsed if isinstance(parsed, dict) else {}
-    except json.JSONDecodeError:
-        return {}
-
-
-def resolve_source_fetcher_id(source_config: SourceConfigRecord) -> str:
-    if source_config.fetcher_id:
-        return source_config.fetcher_id
-    source_type = (source_config.source_type or "").strip().lower()
-    if source_type in PODCAST_SOURCE_TYPES:
-        return "generic_podcast_rss"
-    if source_type in {"rss", "atom"}:
-        return "generic_rss"
-    if source_type in {"web", "webpage"}:
-        return "generic_web"
-    if source_type in X_SOURCE_TYPES:
-        return "generic_x_timeline"
-    return ""
-
-
-def _configured_x_handle(source_config: SourceConfigRecord, params: Dict[str, Any]) -> str:
-    """优先使用 params.handle，并兼容把 url 填成 @handle 或 x.com/handle。"""
-    handle = str(params.get("handle") or "").strip().lstrip("@")
-    if handle:
-        return handle
-    raw_url = (source_config.url or "").strip()
-    if not raw_url:
-        return ""
-    if "://" not in raw_url:
-        return raw_url.strip("/").split("/", 1)[0].lstrip("@")
-    parsed = urlparse(raw_url)
-    return parsed.path.strip("/").split("/", 1)[0].lstrip("@")
-
-
-def build_source_fetch_params(source_config: SourceConfigRecord, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    params = parse_json_object(source_config.params_json)
-    params.update({
-        "source_id": source_config.source_id,
-        "category": source_config.category,
-    })
-    source_type = (source_config.source_type or "").strip().lower()
-    if source_type in {"web", "webpage"}:
-        # 通用网页抓取器（generic_web）：url 即列表页；其余 web 配置（URL 模式 / 详情 Profile /
-        # listing_css）已在 params_json 内，随上面的 parse_json_object 透传。
-        params.update({
-            "listing_url": source_config.url,
-            "site_name": params.get("site_name") or source_config.name,
-        })
-    elif source_type in X_SOURCE_TYPES:
-        # X 通用模板：handle/user_id 均从 params_json 透传；url 只是
-        # handle 未填时的便捷兜底，不注入 RSS/Web 专用参数。
-        handle = _configured_x_handle(source_config, params)
-        if handle:
-            params["handle"] = handle
-    else:
-        # RSS/Atom/Podcast：维持统一的 feed_url/feed_name 语义。
-        params.update({
-            "feed_url": source_config.url,
-            "feed_name": source_config.name,
-        })
-    if overrides:
-        params.update(overrides)
-    if source_config.owner_username:
-        # 用户自定源(v3.40 三轮收口):请求 overrides 不得改写身份/护栏——source_id
-        # 是 generic_rss 执行层「前缀即策略」的判定依据,被覆盖成非 user_rss_ 值
-        # 即绕过 SSRF/限量;feed_url 同理钉回配置行。
-        params["source_id"] = source_config.source_id
-        params["feed_url"] = source_config.url
-        params.pop("ssrf_guard", None)
-        params.pop("max_response_bytes", None)
-    if (source_config.source_type or "").strip().lower() == "podcast":
-        # A request body may not detach a Podcast run from its configured feed
-        # identity. The generic fetcher still owns its SSRF and size clamps.
-        params["source_id"] = source_config.source_id
-        params["feed_url"] = source_config.url
-    return params
-
-
 # ==================== CRUD ====================
 
 @router.get("/api/source-configs")
@@ -274,7 +179,7 @@ def get_source_configs(
 
 @router.get("/api/source-configs/podcast-catalog")
 def get_podcast_catalog(session: Session = Depends(deps.get_session)):
-    """Return the reviewed podcast catalog with current install/active state."""
+    """Return the reviewed podcast catalog with its current install state."""
     return podcast_catalog_service.list_podcast_catalog(session)
 
 
@@ -283,17 +188,14 @@ def import_podcast_catalog(
         params: PodcastCatalogImportParams,
         session: Session = Depends(deps.get_session),
 ):
-    """Import catalog sources; safe defaults neither activate nor overwrite."""
+    """Import catalog sources without overwriting local metadata by default."""
     _require_local_source_governance(session)
     try:
         result = podcast_catalog_service.import_podcast_catalog(
             session,
             source_ids=params.source_ids,
-            activate=params.activate,
             update_existing=params.update_existing,
         )
-        if result["created"] or result["updated"]:
-            _app().reload_podcast_source_schedules()
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -340,9 +242,12 @@ def create_source_config(params: SourceConfigCreate, session: Session = Depends(
         noise_risk=params.noise_risk.strip(),
         fetch_reliability=params.fetch_reliability.strip(),
         ai_analysis_enabled=params.ai_analysis_enabled,
-        is_active=params.is_active,
-        fetch_interval_minutes=params.fetch_interval_minutes,
-        cron_expr=params.cron_expr.strip(),
+        is_active=True if source_type in {"podcast", "podcast_rss"} else params.is_active,
+        fetch_interval_minutes=(
+            None
+            if source_type in {"podcast", "podcast_rss"}
+            else params.fetch_interval_minutes
+        ),
         params_json=_json_dumps(params.params),
         created_at=now,
         updated_at=now
@@ -350,7 +255,6 @@ def create_source_config(params: SourceConfigCreate, session: Session = Depends(
     session.add(record)
     session.commit()
     session.refresh(record)
-    _reload_podcast_schedules_if_needed(after=_is_shared_podcast(record))
     return serialize_source_config(record)
 
 
@@ -361,17 +265,27 @@ def update_source_config(source_id: str, params: SourceConfigUpdate, session: Se
     if not record:
         raise HTTPException(status_code=404, detail="数据源配置不存在")
     _require_local_source_governance(session, record)
-    was_shared_podcast = _is_shared_podcast(record)
-
     update_data = params.model_dump(exclude_unset=True)
+    retired_public_podcast_fields = {"is_active", "fetch_interval_minutes"} & update_data.keys()
+    if is_public_podcast_source(record) and retired_public_podcast_fields:
+        raise HTTPException(
+            status_code=400,
+            detail="公共 Podcast 不支持源级启停或抓取间隔，请在采集任务中控制运行节奏",
+        )
     previous_type = (record.source_type or "").strip().lower()
     requested_type = str(update_data.get("source_type", previous_type) or "").strip().lower()
-    if previous_type == "podcast" and requested_type != "podcast":
+    if (
+        previous_type in {"podcast", "podcast_rss"}
+        and requested_type not in {"podcast", "podcast_rss"}
+    ):
         raise HTTPException(
             status_code=409,
-            detail="Podcast 数据源不能直接改为其他类型；请停用后创建新的数据源身份",
+            detail="Podcast 数据源不能直接改为其他类型；请创建新的数据源身份",
         )
-    if requested_type == "podcast" and previous_type not in {"podcast", "rss", "atom"}:
+    if (
+        requested_type in {"podcast", "podcast_rss"}
+        and previous_type not in {"podcast", "podcast_rss", "rss", "atom"}
+    ):
         raise HTTPException(
             status_code=409,
             detail="仅 RSS/Atom 数据源可转换为 Podcast；其他类型请创建新的数据源身份",
@@ -395,8 +309,11 @@ def update_source_config(source_id: str, params: SourceConfigUpdate, session: Se
         else:
             setattr(record, key, value)
 
-    if requested_type == "podcast":
+    if requested_type in {"podcast", "podcast_rss"}:
         record.source_type = "podcast"
+        if not record.owner_username:
+            record.is_active = True
+            record.fetch_interval_minutes = None
         session.add(record)
 
     if user_sources_service.source_is_credentialed(record):
@@ -413,10 +330,6 @@ def update_source_config(source_id: str, params: SourceConfigUpdate, session: Se
     session.add(record)
     session.commit()
     session.refresh(record)
-    _reload_podcast_schedules_if_needed(
-        before=was_shared_podcast,
-        after=_is_shared_podcast(record),
-    )
     return serialize_source_config(record)
 
 
@@ -429,12 +342,16 @@ def toggle_source_config(
     if not record:
         raise HTTPException(status_code=404, detail="数据源配置不存在")
     _require_local_source_governance(session, record)
+    if is_public_podcast_source(record):
+        raise HTTPException(
+            status_code=400,
+            detail="公共 Podcast 节点始终可采集，请在采集任务中控制运行节奏",
+        )
     record.is_active = is_active
     record.updated_at = _now_iso()
     session.add(record)
     session.commit()
     session.refresh(record)
-    _reload_podcast_schedules_if_needed(after=_is_shared_podcast(record))
     return serialize_source_config(record)
 
 
@@ -452,13 +369,11 @@ def delete_source_config(source_id: str, session: Session = Depends(deps.get_ses
 
         result = user_sources_service.admin_delete_user_source(session, source_id)
         return {"status": "success", **result}
-    was_shared_podcast = _is_shared_podcast(record)
     # Preserve the established product distinction: toggle is a reversible
     # soft stop, while DELETE physically removes the source configuration.
     # Archive Sync emits a source tombstone from this transaction.
     session.delete(record)
     session.commit()
-    _reload_podcast_schedules_if_needed(before=was_shared_podcast)
     return {"status": "success"}
 
 
@@ -472,7 +387,7 @@ async def fetch_source_config(
     record = session.get(SourceConfigRecord, source_id)
     if not record:
         raise HTTPException(status_code=404, detail="数据源配置不存在")
-    if not record.is_active:
+    if not record.is_active and not is_public_podcast_source(record):
         raise HTTPException(status_code=400, detail="数据源已停用，无法触发抓取")
     if not sync_consumer_policy.local_source_operation_allowed(
         session, record.source_id, operation="collection"
@@ -481,15 +396,13 @@ async def fetch_source_config(
             status_code=409,
             detail="该数据源由远端权威节点采集，本机仅同步使用",
         )
-    fetcher_id = resolve_source_fetcher_id(record)
-    if not fetcher_id:
+    if not resolve_source_fetcher_id(record):
         raise HTTPException(status_code=400, detail="该数据源未绑定可用抓取器")
-    params = build_source_fetch_params(record, body.params if body else {})
 
     try:
         result = await _app().run_single_fetch_as_collection(
-            fetcher_id,
-            params,
+            source_id,
+            body.params if body else {},
             name=f"临时抓取: {source_id}",
             trigger_type="manual",
             run_scope="ad_hoc",
@@ -507,7 +420,7 @@ async def fetch_active_rss_sources(
         select(SourceConfigRecord)
         .where(SourceConfigRecord.is_active == True)  # noqa: E712
         .where(SourceConfigRecord.collection_authority_id == "")
-        .where(SourceConfigRecord.source_type.in_(["rss", "atom", "podcast"]))
+        .where(SourceConfigRecord.source_type.in_(["rss", "atom"]))
         .order_by(SourceConfigRecord.name)
     ).all()
 
@@ -518,13 +431,14 @@ async def fetch_active_rss_sources(
             session, record.source_id, operation="collection"
         ):
             continue
-        fetcher_id = resolve_source_fetcher_id(record)
-        if not fetcher_id:
+        if not resolve_source_fetcher_id(record):
             skipped_results.append({"source_id": record.source_id, "status": "skipped", "error": "未绑定可用抓取器"})
             continue
-
-        params = build_source_fetch_params(record, body.params if body else {})
-        items.append({"source_id": record.source_id, "fetcher_id": fetcher_id, "params": params})
+        items.append({
+            "source_id": record.source_id,
+            "fetcher_id": record.source_id,
+            "params": body.params if body else {},
+        })
 
     async def _work(bg) -> Dict[str, Any]:
         result = await _app().run_collection_items(
@@ -564,12 +478,14 @@ async def fetch_active_web_sources(
             session, record.source_id, operation="collection"
         ):
             continue
-        fetcher_id = resolve_source_fetcher_id(record)
-        if not fetcher_id:
+        if not resolve_source_fetcher_id(record):
             skipped_results.append({"source_id": record.source_id, "status": "skipped", "error": "未绑定可用抓取器"})
             continue
-        params = build_source_fetch_params(record, body.params if body else {})
-        items.append({"source_id": record.source_id, "fetcher_id": fetcher_id, "params": params})
+        items.append({
+            "source_id": record.source_id,
+            "fetcher_id": record.source_id,
+            "params": body.params if body else {},
+        })
 
     async def _work(bg) -> Dict[str, Any]:
         result = await _app().run_collection_items(

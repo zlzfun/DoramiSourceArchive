@@ -169,6 +169,56 @@ def test_scope_uses_only_explicit_active_visible_memberships_even_for_admin(stor
     assert "user_rss_orphan" not in resolved
 
 
+def test_scope_only_exempts_public_podcast_from_legacy_source_active_gate(storage):
+    source_ids = (
+        "rss_public_inactive",
+        "podcast_public_inactive",
+        "podcast_private_inactive",
+    )
+    with Session(storage.engine) as session:
+        session.add(_user())
+        session.add(_subscribe("alice", ",".join(source_ids)))
+        session.add_all([
+            SourceConfigRecord(
+                source_id="rss_public_inactive",
+                name="Inactive public RSS",
+                source_type="rss",
+                is_active=False,
+                created_at=NOW_ISO,
+                updated_at=NOW_ISO,
+            ),
+            SourceConfigRecord(
+                source_id="podcast_public_inactive",
+                name="Legacy inactive public podcast",
+                source_type="podcast",
+                is_active=False,
+                created_at=NOW_ISO,
+                updated_at=NOW_ISO,
+            ),
+            SourceConfigRecord(
+                source_id="podcast_private_inactive",
+                name="Inactive private podcast",
+                source_type="podcast",
+                owner_username="alice",
+                is_active=False,
+                created_at=NOW_ISO,
+                updated_at=NOW_ISO,
+            ),
+        ])
+        session.commit()
+
+        resolved = resolve_personal_digest_source_ids(session, "alice")
+        due = calculate_due_source_ids(
+            session,
+            source_ids,
+            as_of=NOW,
+            scheduled_source_ids=source_ids,
+        )
+
+    assert resolved == ["podcast_public_inactive"]
+    assert due == ["podcast_public_inactive"]
+
+
 def test_expected_and_due_are_frozen_separately_with_private_freshness(storage):
     fresh_private = "user_rss_fresh"
     stale_private = "user_rss_stale"
