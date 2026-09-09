@@ -269,6 +269,23 @@ class ArticleAnalysisRecord(SQLModel, table=True):
         description="列表查询缓存；真实关系以 assignment 为准",
     )
     content_hash: str = Field(default="", description="参与分析的标题与正文哈希")
+    analysis_basis: str = Field(
+        default="",
+        description="实际评分依据：article_body/podcast_show_notes/publisher_transcript/asr_transcript",
+    )
+    analysis_input_hash: str = Field(
+        default="",
+        index=True,
+        description="实际发送给模型的版本化输入哈希，独立于文章内容哈希",
+    )
+    transcript_artifact_id: Optional[str] = Field(
+        default=None,
+        description="可选逐字稿 artifact 引用；不设外键以允许 analyses 先于 podcast_texts 同步",
+    )
+    analysis_diagnostics_json: str = Field(
+        default="{}",
+        description="内部诊断：播客人物、热度快照及评分因素，不作为公开第二分数",
+    )
     model_name: str = Field(default="")
     prompt_version: str = Field(default="")
     scoring_version: str = Field(default="")

@@ -1116,6 +1116,56 @@ def test_inline_scoring_uses_closed_set_names_not_free_labels(monkeypatch):
     assert item.score_reason == "头部厂商旗舰发布"
 
 
+def test_inline_podcast_scoring_uses_worker_people_and_heat_context(monkeypatch):
+    async def _fake(*, messages, config, **kwargs):
+        prompt = messages[1].content
+        assert '"analysis_basis":"podcast_show_notes"' in prompt
+        assert '"name":"Ada"' in prompt
+        assert '"distinct_source_count":2' in prompt
+        return json.dumps({
+            **ANALYSIS_PAYLOAD,
+            "podcast_factors": {
+                key: {"level": "medium", "evidence": "简介证据"}
+                for key in (
+                    "guest_authority", "topic_timeliness", "novelty",
+                    "evidence_depth", "viewpoint_diversity", "practical_value",
+                )
+            },
+        })
+
+    _patch_llm(monkeypatch, _fake)
+    candidate = BriefCandidate(
+        id="podcast-inline", title="Agents with Ada", source_id="podcast",
+        source_url="https://example.test/podcast", content_type="podcast_episode",
+        publish_date="", fetched_date="", has_content=True, body="show notes",
+    )
+    article_input = analysis_mod.AnalysisInput(
+        article_id=candidate.id,
+        title=candidate.title,
+        body=candidate.body,
+        content_type=candidate.content_type,
+        source_id=candidate.source_id,
+        publish_date="",
+        fetched_date="",
+        credentialed_source=False,
+        source_owner_or_domain="podcast",
+        analysis_basis="podcast_show_notes",
+        people=({"name": "Ada", "role": "guest", "evidence": "podcast:person"},),
+        topic_heat={
+            "window_days": 7,
+            "snapshot_at": "2026-09-09T00:00:00+00:00",
+            "signals": [{"code": "topic.agents", "distinct_source_count": 2}],
+        },
+    )
+    [item] = asyncio.run(score_candidates(
+        [candidate],
+        CONFIGURED,
+        stored={},
+        analysis_inputs_by_id={candidate.id: article_input},
+    ))
+    assert item.score_ok is True
+
+
 def test_generate_bodyless_candidates_pass_threshold_or_land_in_appendix(tmp_path, monkeypatch):
     """无正文候选按标题走同一把尺子:过线进附录、低于门槛 pass(附录不再是无门槛的后门)。"""
     async def _fake(*, messages, config, **kwargs):

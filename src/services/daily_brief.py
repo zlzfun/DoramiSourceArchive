@@ -60,7 +60,7 @@ from llm.client import (
     chat_completion, client_session, parse_json_object,
 )
 from llm import prompts
-from llm.article_analysis_prompt import ARTICLE_ANALYSIS_SCORING_VERSION
+from llm.article_analysis_prompt import analysis_contract_versions
 
 # 日报各阶段的 LLM 用量归属：手动触发归到触发它的 admin，定时调度无登录上下文则归 "system"。
 USAGE_SYSTEM = "system"
@@ -80,7 +80,11 @@ from models.db import (
 )
 from services import credentials
 from services.article_analysis import (
-    AnalysisInput, analyze_article_with_llm, load_relevant_active_tags, validate_analysis_payload,
+    AnalysisInput,
+    analysis_input_from_article,
+    analyze_article_with_llm,
+    load_relevant_active_tags,
+    validate_analysis_payload,
 )
 from services.source_naming import friendly_source_name, source_role
 
@@ -302,13 +306,18 @@ def load_stored_scores(session: Session, article_ids: List[str]) -> Dict[str, Ar
     ids = list(dict.fromkeys(str(i) for i in article_ids if i))
     if not ids:
         return {}
-    analyses = session.exec(
-        select(ArticleAnalysisRecord)
+    rows = session.exec(
+        select(ArticleAnalysisRecord, ArticleRecord.content_type)
+        .join(ArticleRecord, ArticleRecord.id == ArticleAnalysisRecord.article_id)
         .where(ArticleAnalysisRecord.article_id.in_(ids))
         .where(ArticleAnalysisRecord.status == "succeeded")
         .where(ArticleAnalysisRecord.quality_score.is_not(None))
-        .where(ArticleAnalysisRecord.scoring_version == ARTICLE_ANALYSIS_SCORING_VERSION)
     ).all()
+    analyses = [
+        analysis
+        for analysis, content_type in rows
+        if analysis.scoring_version == analysis_contract_versions(content_type)[1]
+    ]
     if not analyses:
         return {}
 
@@ -636,6 +645,7 @@ async def _score_one(
     candidate: BriefCandidate, llm_config: config.LLMConfig,
     usage_meta: Optional[UsageMeta] = None, http_client=None,
     active_tags: Tuple[TaxonomyTagDTO, ...] = (),
+    analysis_input: AnalysisInput | None = None,
 ) -> ScoredItem:
     """就地补评:直接调文章级分析的评分函数,结果只用于本次生成、不写回分析表(与 worker 松耦合)。
 
@@ -645,7 +655,7 @@ async def _score_one(
     无正文候选同样走这里(body 为空、按标题评),过线者进附录、低于门槛 pass。
     """
     try:
-        article_input = AnalysisInput(
+        article_input = analysis_input or AnalysisInput(
             article_id=candidate.id,
             title=candidate.title,
             body=candidate.body,
@@ -697,6 +707,7 @@ async def score_candidates(
     on_item_done=None,
     usage_username: Optional[str] = None,
     taxonomy_by_id: Optional[Dict[str, Tuple[TaxonomyTagDTO, ...]]] = None,
+    analysis_inputs_by_id: Optional[Dict[str, AnalysisInput]] = None,
 ) -> List[ScoredItem]:
     """候选 → 带分条目。stored 里有的直接投影(零调用),没有的并发就地补评,
     整轮后失败者串行重试一次。无正文候选也进评分(按标题、同一把尺子),由调用方决定
@@ -705,6 +716,7 @@ async def score_candidates(
     if not candidates:
         return []
     tags_of = taxonomy_by_id or {}
+    inputs_of = analysis_inputs_by_id or {}
     items: List[Optional[ScoredItem]] = [None] * len(candidates)
     pending: List[int] = []
     for i, candidate in enumerate(candidates):
@@ -725,6 +737,7 @@ async def score_candidates(
                     result = await _score_one(
                         candidates[i], llm_config, usage_meta, http_client,
                         active_tags=tags_of.get(candidates[i].id, ()),
+                        analysis_input=inputs_of.get(candidates[i].id),
                     )
                 done += 1
                 if on_item_done is not None:
@@ -742,6 +755,7 @@ async def score_candidates(
                     retried = await _score_one(
                         candidates[i], llm_config, usage_meta, http_client,
                         active_tags=tags_of.get(candidates[i].id, ()),
+                        analysis_input=inputs_of.get(candidates[i].id),
                     )
                     if retried.score_ok:
                         items[i] = retried
@@ -1473,10 +1487,29 @@ async def generate_daily_brief(
         stored = load_stored_scores(session, [c.id for c in candidates if c.has_content])
         pending_ids = [c.id for c in candidates if c.id not in stored]
         # 补评喂 worker 同一套闭集(按标题正文词法召回的小子集),两条来路的标签词汇才一致
-        taxonomy_by_id = {
-            c.id: tuple(load_relevant_active_tags(session, _RecallText(c.title, c.body)))
-            for c in candidates if c.id not in stored
-        }
+        article_records = {
+            row.id: row
+            for row in session.exec(
+                select(ArticleRecord).where(ArticleRecord.id.in_(pending_ids))
+            ).all()
+        } if pending_ids else {}
+        taxonomy_by_id = {}
+        analysis_inputs_by_id = {}
+        for candidate in candidates:
+            if candidate.id in stored:
+                continue
+            record = article_records.get(candidate.id)
+            recall_record = record or _RecallText(candidate.title, candidate.body)
+            tags = tuple(load_relevant_active_tags(session, recall_record))
+            taxonomy_by_id[candidate.id] = tags
+            if record is not None and record.content_type == "podcast_episode":
+                source = session.get(SourceConfigRecord, record.source_id)
+                analysis_inputs_by_id[candidate.id] = analysis_input_from_article(
+                    record,
+                    source,
+                    active_tags=tags,
+                    session=session,
+                )
         # 撞车观测:补评的候选里有多少正在 worker 队列里(随后会再算一次)
         inline_pending = _count_queued_analyses(session, pending_ids)
     n_inline = len(pending_ids)
@@ -1490,6 +1523,7 @@ async def generate_daily_brief(
     scored = await score_candidates(
         candidates, cfg, stored=stored, on_item_done=_on_score_done, usage_username=triggered_by,
         taxonomy_by_id=taxonomy_by_id,
+        analysis_inputs_by_id=analysis_inputs_by_id,
     )
     # 评分没到手的条目只有标题与链接——降入「📎 其它收录」附录;低于门槛的直接 pass;
     # 无正文候选按标题走了同一把尺子:过线者也只能进附录(没有正文可写要点与点评)

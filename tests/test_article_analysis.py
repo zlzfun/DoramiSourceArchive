@@ -19,6 +19,9 @@ from api.articles_view import serialize_article_list_item  # noqa: E402
 from config import LLMConfig  # noqa: E402
 from llm.article_analysis_prompt import (  # noqa: E402
     ARTICLE_ANALYSIS_SYSTEM_PROMPT,
+    PODCAST_ANALYSIS_PROMPT_VERSION,
+    PODCAST_ANALYSIS_SCORING_VERSION,
+    PODCAST_ANALYSIS_SYSTEM_PROMPT,
     build_article_analysis_user_prompt,
 )
 from models.analysis_contracts import TaxonomyTagDTO  # noqa: E402
@@ -37,7 +40,9 @@ from models.db import (  # noqa: E402
 from services.article_analysis import (  # noqa: E402
     ARTICLE_ANALYSIS_PROMPT_VERSION,
     ARTICLE_ANALYSIS_SCORING_VERSION,
+    build_topic_heat_context,
     claim_analysis_tasks,
+    compute_analysis_input_hash,
     compute_content_hash,
     get_article_analysis,
     load_relevant_active_tags,
@@ -275,6 +280,8 @@ def test_relevant_tag_recall_uses_prompt_description_for_astra_safety_case(stora
 def test_prompt_and_validator_rank_tags_by_relevance_and_align_primary():
     assert "tag_assignments 必须按 relevance 从高到低排列" in ARTICLE_ANALYSIS_SYSTEM_PROMPT
     assert "词序变化，不得再输出为 tag_candidates" in ARTICLE_ANALYSIS_SYSTEM_PROMPT
+    assert "对通用规则【不看时效】的播客内容类型例外并覆盖它" in PODCAST_ANALYSIS_SYSTEM_PROMPT
+    assert "必须使用 topic_heat" in PODCAST_ANALYSIS_SYSTEM_PROMPT
     active_tags = [
         TaxonomyTagDTO(
             id=1,
@@ -543,6 +550,166 @@ def test_success_persists_base_tags_attempt_and_candidate_evidence(storage):
         assert candidate.support_article_count_7d == 1
         assert evidence.article_id == "success"
         assert get_article_analysis(session, "success")["summary"] == record.summary
+
+
+def test_podcast_initial_assessment_persists_actual_basis_input_and_diagnostics(storage):
+    article = _article("podcast-initial", title="Agents with Ada")
+    article.content_type = "podcast_episode"
+    article.extensions_json = json.dumps(
+        {
+            "persons": [
+                {
+                    "name": "Ada",
+                    "role": "guest",
+                    "scope": "episode",
+                    "evidence": "podcast:person",
+                }
+            ]
+        }
+    )
+    with Session(storage.engine) as session:
+        session.add_all([article, _tag()])
+        session.commit()
+    task = _seed_and_claim(storage, article)
+    captured = {}
+
+    async def analyzer(article_input, tags, _config):
+        captured["input"] = article_input
+        captured["hash"] = compute_analysis_input_hash(article_input, tags)
+        return {
+            **_payload(),
+            "podcast_factors": {
+                key: {"level": "high", "evidence": "简介中的明确证据"}
+                for key in (
+                    "guest_authority",
+                    "topic_timeliness",
+                    "novelty",
+                    "evidence_depth",
+                    "viewpoint_diversity",
+                    "practical_value",
+                )
+            },
+        }
+
+    result = asyncio.run(
+        process_claimed_analysis(
+            storage.engine,
+            task,
+            llm_config=LLM_CONFIG,
+            analyzer=analyzer,
+            now_fn=lambda: NOW + dt.timedelta(seconds=2),
+        )
+    )
+    assert result.status == "succeeded"
+    assert captured["input"].analysis_basis == "podcast_show_notes"
+    assert captured["input"].people[0]["name"] == "Ada"
+    with Session(storage.engine) as session:
+        record = session.get(ArticleAnalysisRecord, "podcast-initial")
+        assert record.prompt_version == PODCAST_ANALYSIS_PROMPT_VERSION
+        assert record.scoring_version == PODCAST_ANALYSIS_SCORING_VERSION
+        assert record.analysis_basis == "podcast_show_notes"
+        assert record.analysis_input_hash == captured["hash"]
+        assert record.analysis_input_hash != record.content_hash
+        diagnostics = json.loads(record.analysis_diagnostics_json)
+        assert diagnostics["people"][0]["role"] == "guest"
+        assert diagnostics["topic_heat"]["window_days"] == 7
+        assert diagnostics["podcast_factors"]["novelty"]["level"] == "high"
+
+        episode = session.get(ArticleRecord, "podcast-initial")
+        extensions = json.loads(episode.extensions_json)
+        extensions["persons"].append(
+            {
+                "name": "Grace",
+                "role": "host",
+                "scope": "episode",
+                "evidence": "podcast:person",
+            }
+        )
+        episode.extensions_json = json.dumps(extensions)
+        session.add(episode)
+        session.commit()
+        assert queue_article_analysis(session, episode.id, now=NOW) == "invalidated"
+        session.commit()
+        session.refresh(record)
+        assert record.status == "pending"
+        assert record.quality_score == 8.6  # old authority stays readable during refresh
+
+
+def test_podcast_topic_heat_counts_distinct_sources_and_daily_brief(storage):
+    with Session(storage.engine) as session:
+        tag = _tag()
+        target = _article("heat-target", fetched=NOW, title="Agents roundtable")
+        target.content_type = "podcast_episode"
+        evidence = [
+            _article("heat-a", source_id="feed-a", fetched=NOW - dt.timedelta(days=1)),
+            _article("heat-a-repeat", source_id="feed-a", fetched=NOW - dt.timedelta(days=2)),
+            _article("heat-b", source_id="feed-b", fetched=NOW - dt.timedelta(days=3)),
+            _article("heat-old", source_id="feed-c", fetched=NOW - dt.timedelta(days=8)),
+        ]
+        brief = _article("brief", source_id="dorami_daily_brief", fetched=NOW)
+        brief.extensions_json = json.dumps({"included_article_ids": ["heat-b"]})
+        session.add_all([tag, target, brief, *evidence])
+        session.flush()
+        for index, item in enumerate(evidence):
+            session.add(
+                ArticleTagAssignmentRecord(
+                    article_id=item.id,
+                    tag_id=tag.id,
+                    tag_kind="topic",
+                    relevance=0.9,
+                    assignment_source="llm",
+                    created_at=NOW_ISO,
+                    updated_at=NOW_ISO,
+                )
+            )
+            session.add(
+                ArticleAnalysisRecord(
+                    article_id=item.id,
+                    status="succeeded",
+                    quality_score=6.0 + index,
+                    created_at=NOW_ISO,
+                    updated_at=NOW_ISO,
+                )
+            )
+        # The derived public brief is an inclusion flag, never a third source
+        # or a score signal of its own.
+        session.add(ArticleTagAssignmentRecord(
+            article_id=brief.id,
+            tag_id=tag.id,
+            tag_kind="topic",
+            relevance=1.0,
+            assignment_source="llm",
+            created_at=NOW_ISO,
+            updated_at=NOW_ISO,
+        ))
+        session.add(ArticleAnalysisRecord(
+            article_id=brief.id,
+            status="succeeded",
+            quality_score=10.0,
+            created_at=NOW_ISO,
+            updated_at=NOW_ISO,
+        ))
+        session.commit()
+        tags = load_relevant_active_tags(session, target)
+        heat = build_topic_heat_context(
+            session, article_id=target.id, active_tags=tags, now=NOW
+        )
+
+    assert heat["window_days"] == 7
+    assert heat["snapshot_at"].startswith("2026-09-01T01:00:00")
+    assert heat["signals"] == [
+        {
+            "code": "agents",
+            "kind": "topic",
+            "name": "智能体",
+            "distinct_source_count": 2,
+            "max_quality_score": 8.0,
+            "latest_seen_at": (NOW - dt.timedelta(days=1)).isoformat(
+                timespec="microseconds"
+            ),
+            "in_public_daily_brief": True,
+        }
+    ]
 
 
 def test_user_rss_can_analyze_and_contribute_candidate_when_enabled(storage):
