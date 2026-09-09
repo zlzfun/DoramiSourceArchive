@@ -1620,16 +1620,21 @@ async def generate_daily_brief(
     # 只填空出的槽位(扣掉当日已有正文)——忙日正文满员则一条不加,同日重跑也不会一轮轮
     # 把附录堆成近线条目的倾倒场。
     selected_ids = {it.candidate.id for it in selected}
-    # 早间条目若已被本批新稿并成同一簇(新稿当代表),同日合并会把两行收成一行,容量只扣一次
-    dedup_rep_ids = {it.candidate.id for it in deduped_all}
-    prior_absorbed = sum(1 for pid in prior_ids if pid not in dedup_rep_ids)
+    # 早间条目若已被本批新稿并成同一簇(新稿当代表)且该代表最终入选,同日合并会把两行收成
+    # 一行,容量只扣一次;代表若在跨天查重被剔掉,早间行仍在,照扣
+    absorbed_by_selected: set = set()
+    for it in selected:
+        absorbed_by_selected.update(it.merged_ids)
+    prior_absorbed = len(prior_ids & absorbed_by_selected)
     # 早间附录里被本批重评提级进正文的条目,同日合并会从附录移除,不再占附录容量
     prior_appendix_kept = sum(1 for c in prior_title_only if c.id not in selected_ids)
     appendix_slots = max(
         0, top_n - len(selected) - (len(prior_items) - prior_absorbed) - prior_appendix_kept
     )
+    prior_appendix_ids = {c.id for c in prior_title_only}
     near_miss_appendix = [
-        it.candidate for it in near_band if it.candidate.id not in selected_ids
+        it.candidate for it in near_band
+        if it.candidate.id not in selected_ids and it.candidate.id not in prior_appendix_ids
     ][:appendix_slots]
     if near_miss_appendix:
         title_only = title_only + near_miss_appendix
