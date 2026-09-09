@@ -1510,6 +1510,47 @@ def test_soft_threshold_cursor_reset_regenerate_counts_prior_rows_once(tmp_path,
     assert [e["id"] for e in ext["items"]].count("h1") == 1
 
 
+def test_soft_threshold_appendix_candidates_are_clustered_against_body(tmp_path, monkeypatch):
+    """保底已满时近线稿仍陪跑进同事件聚类:与正文同事件的近线稿并入代表,不再以标题重复出现在附录(codex 七轮 P2)。"""
+    _patch_llm(monkeypatch, _fake_by_ids({"h1": 8.5, "h2": 8.5, "n5": 5.5, "n6": 5.4}, clusters=(("h1", "n5"),)))
+    sink = _make_sink(tmp_path, "appendix-cluster.db")
+    for i, aid in enumerate(["h1", "h2", "n5", "n6"]):
+        _seed(sink.engine, aid, f"src_{i}", f"2026-06-05T1{i}:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+        db.set_setting(session, db.KEY_MIN_ITEMS, "2")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06", top_n=4))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    assert [e["id"] for e in ext["items"]] == ["h1", "h2"] and ext["items"][0]["extra_sources"]
+    assert "标题-n6" in record.content and "标题-n5" not in record.content
+    assert ext["included_article_ids"] == ["h1", "h2", "n6"]
+
+
+def test_soft_threshold_appendix_capacity_counts_current_title_only(tmp_path, monkeypatch):
+    """本批评分失败/无正文的仅标题条目也占附录容量:top_n=3、正文 1 + 失败 2 → 近线稿不再补进(codex 七轮 P2)。"""
+    score_fn = _score_by_title({"h1": 8.5, "n5": 5.5})
+
+    async def _fn(*, messages, config, **kwargs):
+        if _is_scoring(messages) and "标题-bad" in messages[1].content:
+            return "{not json"
+        return await score_fn(messages=messages, config=config, **kwargs)
+
+    _patch_llm(monkeypatch, _fn)
+    sink = _make_sink(tmp_path, "appendix-current.db")
+    for i, aid in enumerate(["h1", "bad1", "bad2", "n5"]):
+        _seed(sink.engine, aid, f"src_{i}", f"2026-06-05T1{i}:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+        db.set_setting(session, db.KEY_MIN_ITEMS, "0")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06", top_n=3))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    assert [e["id"] for e in ext["items"]] == ["h1"]
+    assert sorted(ext["included_article_ids"]) == ["bad1", "bad2", "h1"]
+    assert "标题-n5" not in record.content
+
+
 def test_daily_brief_min_items_default_and_clamp(tmp_path):
     sink = _make_sink(tmp_path, "minitems.db")
     with Session(sink.engine) as session:

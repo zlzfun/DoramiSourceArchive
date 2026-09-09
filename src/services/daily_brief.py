@@ -1529,10 +1529,11 @@ async def generate_daily_brief(
              and min_score - APPENDIX_BAND <= it.score < min_score),
             key=_effective_score, reverse=True,
         )
-    # 陪跑名额远大于缺口(缺口×3 且不少于 NEAR_BAND_PROBE_MIN):陪跑稿之间也可能互为重复,
-    # 归并后仍要够填缺口;聚类是一次轻量结构化调用,多带十几行标题的代价可忽略。
+    # 近线带前若干条一律陪跑进同事件聚类(名额 = 缺口×3 且不少于 NEAR_BAND_PROBE_MIN):
+    # 一是陪跑稿之间也可能互为重复,归并后仍要够填缺口;二是与正文同事件的近线稿被并入代表后
+    # 不会再以标题形式重复出现在附录。聚类是一次轻量结构化调用,多带十几行标题的代价可忽略。
     want = max(0, min_items - len(prior_items)) if min_items else 0
-    probe = near_band[:max(want * 3, NEAR_BAND_PROBE_MIN)] if want else []
+    probe = near_band[:max(want * 3, NEAR_BAND_PROBE_MIN)]
     qualified_ids = {it.candidate.id for it in usable}
 
     set_progress("selecting", "同事件去重与择优排序…")
@@ -1627,11 +1628,14 @@ async def generate_daily_brief(
         absorbed_by_selected.update(it.merged_ids)
     prior_absorbed = len(prior_ids & absorbed_by_selected)
     # 早间附录里被本批重评提级进正文的条目,同日合并会从附录移除,不再占附录容量
-    prior_appendix_kept = sum(1 for c in prior_title_only if c.id not in selected_ids)
-    appendix_slots = max(
-        0, top_n - len(selected) - (len(prior_items) - prior_absorbed) - prior_appendix_kept
-    )
     prior_appendix_ids = {c.id for c in prior_title_only}
+    prior_appendix_kept = sum(1 for c in prior_title_only if c.id not in selected_ids)
+    # 本批已定的仅标题条目(无正文过线稿、评分失败稿)同样占附录容量
+    current_title_only = len({c.id for c in title_only} - selected_ids - prior_appendix_ids)
+    appendix_slots = max(
+        0,
+        top_n - len(selected) - (len(prior_items) - prior_absorbed) - prior_appendix_kept - current_title_only,
+    )
     near_miss_appendix = [
         it.candidate for it in near_band
         if it.candidate.id not in selected_ids and it.candidate.id not in prior_appendix_ids

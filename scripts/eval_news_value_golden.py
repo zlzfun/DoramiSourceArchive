@@ -28,6 +28,8 @@ async def main() -> int:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--concurrency", type=int, default=6)
     ap.add_argument("--out", default="", help="逐篇结果 JSON 输出路径")
+    ap.add_argument("--allow-regression", action="store_true",
+                    help="只报告不判定(默认:任一篇评分失败、或 MAE/档位一致率劣于夹具里的 v5 基线即非零退出)")
     args = ap.parse_args()
 
     from sqlmodel import Session
@@ -101,6 +103,25 @@ async def main() -> int:
     if args.out:
         json.dump({"prompt_version": ARTICLE_ANALYSIS_PROMPT_VERSION, "model": cfg.model,
                    "results": {str(k): v for k, v in results.items()}}, open(args.out, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    if args.allow_regression:
+        return 0
+    # 门禁判定:评分失败即失败(提示词产出畸形输出不能靠「至少评了一篇」混过);
+    # 与黄金均值的 MAE 与档位一致率不得劣于夹具自带的 v5 基线(同一 ok 子集上比较)。
+    failed = [it["n"] for it in items if "score" not in results.get(it["n"], {})]
+    if failed:
+        print(f"门禁失败:{len(failed)} 篇评分失败 {failed}", file=sys.stderr)
+        return 3
+    with_base = [it for it in ok if it["baseline"].get("score") is not None]
+    if with_base:
+        cur_mae = mae((results[it["n"]]["score"], it["gold"]) for it in with_base)
+        base_mae = mae((it["baseline"]["score"], it["gold"]) for it in with_base)
+        cur_agree = sum(band(results[it["n"]]["score"]) == band(it["gold"]) for it in with_base) / len(with_base)
+        base_agree = sum(band(it["baseline"]["score"]) == band(it["gold"]) for it in with_base) / len(with_base)
+        if cur_mae > base_mae + 1e-9 or cur_agree < base_agree - 1e-9:
+            print(f"门禁失败:MAE {cur_mae:.2f}(基线 {base_mae:.2f})/ 档位一致率 {cur_agree:.0%}(基线 {base_agree:.0%})劣于 v5 基线",
+                  file=sys.stderr)
+            return 4
+        print(f"门禁通过:MAE {cur_mae:.2f} ≤ 基线 {base_mae:.2f},档位一致率 {cur_agree:.0%} ≥ 基线 {base_agree:.0%}")
     return 0
 
 
