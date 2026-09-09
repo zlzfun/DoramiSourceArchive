@@ -263,6 +263,20 @@ export function runPodcastPremiumGuide(episodeId) {
   });
 }
 
+export function getPodcastAsrQuota() {
+  return request('/admin/podcast-asr-quota', {
+    errorMsg: '获取 ASR 配额配置失败',
+  });
+}
+
+export function savePodcastAsrQuota(dailyAudioSecondsLimit) {
+  return request('/admin/podcast-asr-quota', {
+    method: 'PUT',
+    body: { daily_audio_seconds_limit: dailyAudioSecondsLimit },
+    errorMsg: '保存 ASR 配额配置失败',
+  });
+}
+
 export function podcastArtifactAdminAudioUrl(artifactId) {
   return `${API_BASE_URL}/admin/podcast-artifacts/${enc(artifactId)}/audio`;
 }

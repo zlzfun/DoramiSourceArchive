@@ -1,10 +1,9 @@
-"""Curated podcast source catalog and safe SourceConfig bootstrap/importer.
+"""Curated podcast source catalog and SourceConfig bootstrap/importer.
 
 The catalog is deliberately separate from the fetcher registry: every show uses the
 same ``generic_podcast_rss`` execution path, while its stable identity and curation
-metadata live here. Ready catalog entries are installed inactive at application
-bootstrap so a fresh deployment has podcast nodes without unexpectedly starting
-network collection; the import API remains available for selective operator actions.
+metadata live here. Catalog entries are installed as public collection nodes at
+application bootstrap; CollectionJob membership and status control when they run.
 """
 
 from __future__ import annotations
@@ -136,21 +135,17 @@ def catalog_by_id() -> dict[str, PodcastCatalogSource]:
 def list_podcast_catalog(session: Session | None = None) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     installed_count = 0
-    active_count = 0
     for source in PODCAST_CATALOG:
         row = session.get(SourceConfigRecord, source.source_id) if session is not None else None
         installed = row is not None
-        active = bool(row and row.is_active)
         installed_count += int(installed)
-        active_count += int(active)
-        items.append({**source.to_dict(), "installed": installed, "active": active})
+        items.append({**source.to_dict(), "installed": installed})
     return {
         "verified_at": CATALOG_VERIFIED_AT,
         "total": len(items),
         "ready": sum(item["ingest_status"] == "ready" for item in items),
         "blocked": sum(item["ingest_status"] != "ready" for item in items),
         "installed": installed_count,
-        "active": active_count,
         "items": items,
     }
 
@@ -197,11 +192,18 @@ def _apply_catalog_fields(
     record.base_url = source.feed_url
     record.provenance_tier = source.provenance_tier
     record.content_tags_json = json.dumps(list(source.topics), ensure_ascii=False)
-    record.signal_strength = "high" if source.launch_tier == "core" else "medium"
-    record.noise_risk = "low" if source.launch_tier == "core" else "medium"
-    record.fetch_reliability = "high" if source.ingest_status == "ready" else "blocked"
-    record.fetch_interval_minutes = 360
-    record.cron_expr = ""
+    record.signal_strength = "high_signal" if source.launch_tier == "core" else "medium_signal"
+    record.noise_risk = "low_noise" if source.launch_tier == "core" else "medium_noise"
+    record.fetch_reliability = (
+        "stable_public" if source.ingest_status == "ready" else "blocked_or_fragile"
+    )
+    # Public podcast rows share the SourceConfig table with user sources, whose
+    # is_active flag is meaningful. For public podcast nodes it is a compatibility
+    # invariant only; collection cadence is controlled by CollectionJobRecord.
+    record.is_active = True
+    # Podcast scheduling belongs to CollectionJobRecord. The SourceConfig keeps
+    # only the feed identity and per-run parameters.
+    record.fetch_interval_minutes = None
     record.params_json = json.dumps(
         _record_params(source, feed_max_bytes=feed_max_bytes),
         ensure_ascii=False,
@@ -214,7 +216,6 @@ def import_podcast_catalog(
     session: Session,
     *,
     source_ids: Iterable[str] | None = None,
-    activate: bool = False,
     update_existing: bool = False,
     feed_max_bytes: int | None = None,
 ) -> dict[str, Any]:
@@ -233,7 +234,6 @@ def import_podcast_catalog(
 
     created: list[str] = []
     updated: list[str] = []
-    activated: list[str] = []
     skipped_existing: list[str] = []
     now = datetime.now().isoformat()
 
@@ -241,11 +241,10 @@ def import_podcast_catalog(
         record = session.get(SourceConfigRecord, source.source_id)
         if record is not None and not update_existing:
             skipped_existing.append(source.source_id)
-            if record.source_type == "podcast" and activate:
+            if record.source_type in {"podcast", "podcast_rss"} and not record.owner_username:
                 record.is_active = True
                 record.updated_at = now
                 session.add(record)
-                activated.append(record.source_id)
             continue
         if record is None:
             record = SourceConfigRecord(
@@ -257,15 +256,9 @@ def import_podcast_catalog(
             created.append(source.source_id)
         else:
             updated.append(source.source_id)
-        previous_active = False if source.source_id in created else bool(record.is_active)
         _apply_catalog_fields(
             record, source, now, feed_max_bytes=feed_max_bytes
         )
-        session.add(record)
-        session.flush()
-        record.is_active = bool(previous_active or activate)
-        if activate and not previous_active:
-            activated.append(record.source_id)
         session.add(record)
 
     session.commit()
@@ -273,23 +266,21 @@ def import_podcast_catalog(
         "selected": len(selected),
         "created": created,
         "updated": updated,
-        "activated": activated,
         "skipped_existing": skipped_existing,
-        "activate": activate,
         "update_existing": update_existing,
     }
 
 
 def ensure_default_podcast_sources(engine: Any) -> dict[str, Any]:
-    """Install every catalog entry once, inactive and without overwrites.
+    """Install every catalog entry as a public node without metadata overwrites.
 
     This intentionally delegates to the same idempotent importer exposed to admins:
-    new catalog additions appear after a later restart, while local edits, activation
-    choices remain untouched.
+    new catalog additions appear after a later restart, while local metadata edits
+    remain untouched. Legacy inactive podcast rows are normalized to the public-node
+    invariant.
     """
     with Session(engine) as session:
         return import_podcast_catalog(
             session,
-            activate=False,
             update_existing=False,
         )

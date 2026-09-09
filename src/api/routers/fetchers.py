@@ -13,13 +13,14 @@ api.collection_planning。请求模型随迁，经 app.py re-export 保持 api.a
 import importlib
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, Field as PydanticField
+from sqlmodel import Session
 
 from api import deps
 from api.collection_planning import test_run_overrides
-from fetchers.registry import fetcher_registry
 from services import jobs
+from services.collection_nodes import collection_node_catalog
 
 router = APIRouter(tags=["fetchers"])
 
@@ -39,8 +40,8 @@ class FetchBatchParams(BaseModel):
 
 
 @router.get("/api/fetchers")
-async def get_available_fetchers():
-    return fetcher_registry.get_all_metadata()
+async def get_available_fetchers(session: Session = Depends(deps.get_session)):
+    return collection_node_catalog(session)
 
 
 @router.post("/api/fetch/batch")

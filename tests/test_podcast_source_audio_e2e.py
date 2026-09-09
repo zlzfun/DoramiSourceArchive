@@ -176,7 +176,7 @@ def _setup(monkeypatch, tmp_path):
 
 def test_external_cache_to_processing_and_ttl_gc_http_e2e(monkeypatch, tmp_path):
     from api.routers import podcasts as podcasts_router
-    from services import http_safety, podcast_artifacts as artifact_service
+    from services import podcast_artifacts as artifact_service
 
     app_module, sink, store = _setup(monkeypatch, tmp_path)
     real_async_client = httpx.AsyncClient
@@ -196,12 +196,6 @@ def test_external_cache_to_processing_and_ttl_gc_http_e2e(monkeypatch, tmp_path)
         )
 
     monkeypatch.setattr(podcasts_router.httpx, "AsyncClient", client_factory)
-    monkeypatch.setattr(
-        http_safety,
-        "_default_public_resolver",
-        lambda _host: ["93.184.216.34"],
-    )
-
     with TestClient(app_module.app) as client:
         assert (
             client.post(
@@ -223,7 +217,7 @@ def test_external_cache_to_processing_and_ttl_gc_http_e2e(monkeypatch, tmp_path)
         )
         assert artifact["expires_at"]
         assert "do-not-expose" not in cached.text
-        assert str(requests[0].url).startswith("https://93.184.216.34/")
+        assert str(requests[0].url) == SIGNED_URL
         assert requests[0].headers["Host"] == "audio.publisher.test"
         assert (
             store.file_path_for_hash(artifact["content_hash"], "audio/wav").read_bytes()
@@ -365,8 +359,6 @@ def test_enclosure_rotation_during_download_fails_closed_without_cache(
     monkeypatch, tmp_path
 ):
     from api.routers import podcasts as podcasts_router
-    from services import http_safety
-
     app_module, sink, store = _setup(monkeypatch, tmp_path)
     real_async_client = httpx.AsyncClient
 
@@ -391,11 +383,6 @@ def test_enclosure_rotation_during_download_fails_closed_without_cache(
             transport=httpx.MockTransport(handler), follow_redirects=False
         ),
     )
-    monkeypatch.setattr(
-        http_safety,
-        "_default_public_resolver",
-        lambda _host: ["93.184.216.34"],
-    )
     with TestClient(app_module.app) as client:
         assert (
             client.post(
@@ -418,8 +405,6 @@ def test_enclosure_rotation_during_download_fails_closed_without_cache(
 
 def test_source_cache_maps_network_timeout_to_gateway_timeout(monkeypatch, tmp_path):
     from api.routers import podcasts as podcasts_router
-    from services import http_safety
-
     app_module, sink, _store = _setup(monkeypatch, tmp_path)
     real_async_client = httpx.AsyncClient
 
@@ -432,11 +417,6 @@ def test_source_cache_maps_network_timeout_to_gateway_timeout(monkeypatch, tmp_p
         lambda **kwargs: real_async_client(
             transport=httpx.MockTransport(handler), **kwargs
         ),
-    )
-    monkeypatch.setattr(
-        http_safety,
-        "_default_public_resolver",
-        lambda _host: ["93.184.216.34"],
     )
     with TestClient(app_module.app) as client:
         assert (
@@ -457,8 +437,6 @@ def test_source_cache_maps_network_timeout_to_gateway_timeout(monkeypatch, tmp_p
 
 def test_source_cache_redownload_repairs_corrupt_locator_blob(monkeypatch, tmp_path):
     from api.routers import podcasts as podcasts_router
-    from services import http_safety
-
     app_module, sink, store = _setup(monkeypatch, tmp_path)
     real_async_client = httpx.AsyncClient
     requests = 0
@@ -478,11 +456,6 @@ def test_source_cache_redownload_repairs_corrupt_locator_blob(monkeypatch, tmp_p
         lambda **kwargs: real_async_client(
             transport=httpx.MockTransport(handler), **kwargs
         ),
-    )
-    monkeypatch.setattr(
-        http_safety,
-        "_default_public_resolver",
-        lambda _host: ["93.184.216.34"],
     )
     with TestClient(app_module.app) as client:
         assert (

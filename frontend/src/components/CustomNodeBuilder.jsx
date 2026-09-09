@@ -56,9 +56,7 @@ function toPayload(f) {
         wait_for: f.wait_for,
         ...(f.listing_css ? { listing_css: f.listing_css } : {}),
       }
-    : f.source_type === 'podcast'
-      ? { limit: Number(f.limit) || 12 }
-      : { limit: Number(f.limit) || 12, fetch_detail_if_missing: true };
+    : { limit: Number(f.limit) || 12, fetch_detail_if_missing: true };
   return {
     source_id: f.source_id,
     name: f.name,
@@ -105,7 +103,7 @@ export default function CustomNodeBuilder({ showToast }) {
   const loadSaved = useCallback(async () => {
     try {
       const rows = await fetchSourceConfigs({}, 200);
-      setSaved(rows.filter(r => ['web', 'webpage', 'rss', 'atom', 'podcast'].includes((r.source_type || '').toLowerCase())));
+      setSaved(rows.filter(r => ['web', 'webpage', 'rss', 'atom'].includes((r.source_type || '').toLowerCase())));
     } catch (e) {
       showToast?.(e.message || '加载已存源失败', 'error');
     }
@@ -230,7 +228,6 @@ export default function CustomNodeBuilder({ showToast }) {
               <select className={inputCls} value={form.source_type} onChange={e => set('source_type', e.target.value)}>
                 <option value="web">网页列表 (web)</option>
                 <option value="rss">RSS/Atom</option>
-                <option value="podcast">播客 RSS (podcast)</option>
               </select>
             </Field>
             <Field label="入口 URL"><input className={inputCls} value={form.url} onChange={e => set('url', e.target.value)} /></Field>

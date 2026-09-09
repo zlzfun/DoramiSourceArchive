@@ -1235,7 +1235,7 @@ def test_editorial_prompt_carries_analysis_facts():
     assert "【系统分析" not in prompts.build_editorial_user_prompt(title="T", source_name="S", body="正文")
 
 
-# ---------- 软阈值(v3.48.1,issue #33 F2/F3/F4) ----------
+# ---------- 软阈值(v3.49.1,issue #33 F2/F3/F4) ----------
 
 def _score_by_title(table, default=8.5):
     async def _fn(*, messages, config, **kwargs):

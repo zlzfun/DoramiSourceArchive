@@ -71,9 +71,9 @@
   与覆盖面(<5 分仅 4%)远抵不过;真收益只有「只改评分规则时只重打分」,但 `scoring_version`
   至今未变过——需要把一行结果拆成「评分组 / 内容理解组」两组版本键与状态机,租约/重试/
   `full_analysis` 回填都要分叉。等真出现频繁只改评分规则的需求再做。
-- ◇ **评分链路观察期待办**(v3.48.1 issue #33 §1 检视返修后;黄金集门禁已落地——62 篇
+- ◇ **评分链路观察期待办**(v3.49.1 issue #33 §1 检视返修后;黄金集门禁已落地——62 篇
   `tests/fixtures/golden_news_value.json` + `scripts/eval_news_value_golden.py`,取代原「约 30 篇
-  手标」待办):①生产升到 v3.48.1 后看 `last_run` 的 threshold_backfilled/near_miss_appendix 常态
+  手标」待办):①生产升到 v3.49.1 后看 `last_run` 的 threshold_backfilled/near_miss_appendix 常态
   是否非零(常态非零=门槛偏高或名单过窄);②无正文官方模型卡(hf_deepseek_models)复评 8.0/5.5
   摇摆——若日报漏掉一手权重发布,考虑对 hf_* 源在抓取侧补模型卡正文;③个人早报 5.0 门槛在新分布
   下(博客/论文落 4.5–5.5)看空报率,必要时降到 4.5 或改「兴趣通道不看分」;④黄金集扩到 100+ 篇

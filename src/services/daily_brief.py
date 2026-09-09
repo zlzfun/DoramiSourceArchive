@@ -5,7 +5,7 @@
      → load_stored_scores + score_candidates(复用文章级分析的新闻价值分;缺分的候选
        就地调用**同一个评分函数**补评——喂同一套规范标签闭集,结果只用于本次生成、
        不写回分析表;无正文候选按标题走同一把尺子)
-     → 软阈值(v3.48.1,issue #33):score ≥ min_score 进正选池;正选池不足 min_items 时,
+     → 软阈值(v3.49.1,issue #33):score ≥ min_score 进正选池;正选池不足 min_items 时,
        从近线带 [min_score−1.0, min_score) 按有效分补足正文条目;近线带其余条目在正文
        未填满 top_n 时以标题+链接填进附录;低于近线带的直接 pass(随游标跳过);过线但
        无正文的进附录
@@ -123,7 +123,7 @@ KEY_LAST_RUN = "daily_brief_last_run"
 # 语义是「pass 掉边角料」的下限,入选仍靠排序与配额:淡日子日报自然变短而不是被灌水。
 KEY_MIN_SCORE = "daily_brief_min_score"
 DEFAULT_MIN_SCORE = 6.0
-# 正文保底条数(v3.48.1,issue #33 F2/F3/F4):分数吸附在 .5 刻度且 5.5/6.5 双峰卡在 6.0 两侧,
+# 正文保底条数(v3.49.1,issue #33 F2/F3/F4):分数吸附在 .5 刻度且 5.5/6.5 双峰卡在 6.0 两侧,
 # 同篇复评一成会跨线翻转,清淡日过线只剩 3 条——硬阈值在这种分布上不可靠。过线不足 min_items
 # 时从近线带补足,近线带宽度固定 APPENDIX_BAND;0 = 不保底。
 KEY_MIN_ITEMS = "daily_brief_min_items"
@@ -1198,7 +1198,7 @@ def render_brief_markdown(
     """把择优条目确定性渲染成日报 markdown（分节/条目格式忠实沿用原 reduce 契约）。
 
     selected 已按 score 降序（select_top 出口），分节内顺序即重要性顺序。
-    backfilled > 0 时在报头如实注明「过线内容不足、按分数补足」(软阈值,v3.48.1)。
+    backfilled > 0 时在报头如实注明「过线内容不足、按分数补足」(软阈值,v3.49.1)。
     """
     sections: Dict[str, List[ScoredItem]] = {}
     for item in selected:
@@ -1479,7 +1479,7 @@ async def generate_daily_brief(
         if it.score_ok and not it.candidate.has_content and it.score >= min_score
     ]
     below_threshold = sum(1 for it in scored if it.score_ok and it.score < min_score)
-    # 软阈值(v3.48.1):近线带 = 有正文、分在 [min_score−APPENDIX_BAND, min_score) 的条目,按有效分降序。
+    # 软阈值(v3.49.1):近线带 = 有正文、分在 [min_score−APPENDIX_BAND, min_score) 的条目,按有效分降序。
     # 正选池不足 min_items 时先从近线带补正文(照常写要点与点评);带内其余条目留作附录补位
     # (正文没填满 top_n 时以标题+链接填进「其它收录」)。低于近线带的仍直接 pass。
     near_band: List[ScoredItem] = []
@@ -1535,7 +1535,7 @@ async def generate_daily_brief(
     selected = sorted(survivors, key=_effective_score, reverse=True)[:top_n]
     if len(survivors) > len(selected):
         logger.info("日报[%s]：查重幸存 %d 条，按有效分裁回 %d 条", report_date, len(survivors), len(selected))
-    # 附录补位(v3.48.1):正文没填满 top_n 时,近线带余下条目按分数以标题+链接填进附录,
+    # 附录补位(v3.49.1):正文没填满 top_n 时,近线带余下条目按分数以标题+链接填进附录,
     # 只填空出的槽位——忙日正文满员则一条不加,附录不因软阈值变成近线条目的倾倒场。
     selected_ids = {it.candidate.id for it in selected}
     appendix_slots = max(0, top_n - len(selected))
@@ -1618,7 +1618,7 @@ async def generate_daily_brief(
             "scored_inline_pending": inline_pending,
             "below_threshold": below_threshold, "min_score": min_score,
             "score_histogram": histogram,
-            # 软阈值观测(v3.48.1):正文保底补足条数 / 附录补位条数——两者常态非零说明
+            # 软阈值观测(v3.49.1):正文保底补足条数 / 附录补位条数——两者常态非零说明
             # 门槛偏高或名单过窄;全为零说明保底从未介入。
             "min_items": min_items, "threshold_backfilled": backfilled_in_brief,
             "near_miss_appendix": len(near_miss_appendix),

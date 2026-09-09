@@ -173,7 +173,7 @@ def test_daily_brief_source_scope_roundtrip(monkeypatch, tmp_path):
 
 
 def test_daily_brief_config_min_items_round_trip(monkeypatch, tmp_path):
-    """v3.48.1 正文保底条数:读写与校验(0–50),与 min_score 同端点独立可改。"""
+    """v3.49.1 正文保底条数:读写与校验(0–50),与 min_score 同端点独立可改。"""
     app_module = _setup(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
         _login(client)

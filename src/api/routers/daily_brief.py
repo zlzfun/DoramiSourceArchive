@@ -112,7 +112,7 @@ class DailyBriefConfigUpdate(BaseModel):
     source_ids: Optional[List[str]] = None
     # 入选门槛(v3.48):新闻价值分低于它的候选直接 pass;0 = 不设门槛
     min_score: Optional[float] = None
-    # 正文保底条数(v3.48.1):过线不足时从近线带(门槛下 1 分内)补足;0 = 不保底
+    # 正文保底条数(v3.49.1):过线不足时从近线带(门槛下 1 分内)补足;0 = 不保底
     min_items: Optional[int] = None
 
 

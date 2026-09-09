@@ -4,12 +4,11 @@
 Examples (run from repository root)::
 
     PYTHONPATH=src uv run python scripts/import_podcast_catalog.py
-    PYTHONPATH=src uv run python scripts/import_podcast_catalog.py --apply --activate
+    PYTHONPATH=src uv run python scripts/import_podcast_catalog.py --apply
     PYTHONPATH=src uv run python scripts/import_podcast_catalog.py --apply \
         --source podcast_latent_space --source podcast_semianalysis_weekly
 
-The default is a read-only dry run. ``--apply`` writes source-config rows, and
-new rows remain inactive unless ``--activate`` is explicitly supplied.
+The default is a read-only dry run. ``--apply`` writes public collection nodes.
 """
 
 from __future__ import annotations
@@ -39,7 +38,6 @@ from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="审核或幂等导入精选播客目录。")
     parser.add_argument("--apply", action="store_true", help="写入数据库；默认只做 dry-run。")
-    parser.add_argument("--activate", action="store_true", help="新建后立即启用；默认保持停用。")
     parser.add_argument("--update-existing", action="store_true", help="用目录元数据更新已有同 ID 配置。")
     parser.add_argument("--source", action="append", default=[], help="仅处理指定 source_id，可重复。")
     parser.add_argument("--database-url", default=settings.storage.database_url, help="目标数据库 URL。")
@@ -63,7 +61,6 @@ def main() -> int:
         print(json.dumps({
             "action": "dry_run",
             "database_url": args.database_url,
-            "activate": args.activate,
             "update_existing": args.update_existing,
             "selected": len(items),
             "items": items,
@@ -75,7 +72,6 @@ def main() -> int:
         result = import_podcast_catalog(
             session,
             source_ids=args.source,
-            activate=args.activate,
             update_existing=args.update_existing,
         )
     print(json.dumps({"action": "applied", "database_url": args.database_url, **result}, ensure_ascii=False, indent=2))

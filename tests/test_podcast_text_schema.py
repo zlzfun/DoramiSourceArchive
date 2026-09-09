@@ -414,7 +414,7 @@ def test_episode_delete_cascades_text_rows_and_leaves_sync_tombstone(tmp_path):
 def test_podcast_text_migration_is_single_head_and_matches_create_all(tmp_path):
     cfg = make_alembic_config(f"sqlite:///{tmp_path / 'migration.db'}")
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_heads() == ["9c5e2a7d1b40"]
+    assert script.get_heads() == ["b34d9f1a72e1"]
     command.upgrade(cfg, "head")
 
     engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
@@ -429,6 +429,52 @@ def test_podcast_text_migration_is_single_head_and_matches_create_all(tmp_path):
                 },
             )
             assert compare_metadata(context, SQLModel.metadata) == []
+    finally:
+        engine.dispose()
+
+
+def test_public_podcast_migration_removes_legacy_source_activation_gate(tmp_path):
+    cfg = make_alembic_config(f"sqlite:///{tmp_path / 'public-podcast.db'}")
+    command.upgrade(cfg, "a34c7e2f91d0")
+    engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
+    try:
+        with Session(engine) as session:
+            session.add(SourceConfigRecord(
+                source_id="podcast_legacy_inactive",
+                name="Legacy public podcast",
+                source_type="podcast",
+                url="https://example.test/feed.xml",
+                owner_username="",
+                is_active=False,
+                fetch_interval_minutes=60,
+                created_at=STAMP,
+                updated_at=STAMP,
+            ))
+            session.add(SourceConfigRecord(
+                source_id="user_rss_legacy_inactive",
+                name="Private source",
+                source_type="rss",
+                url="https://example.test/private.xml",
+                owner_username="reader",
+                is_active=False,
+                fetch_interval_minutes=60,
+                created_at=STAMP,
+                updated_at=STAMP,
+            ))
+            session.commit()
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
+    try:
+        with Session(engine) as session:
+            public = session.get(SourceConfigRecord, "podcast_legacy_inactive")
+            private = session.get(SourceConfigRecord, "user_rss_legacy_inactive")
+            assert public.is_active is True
+            assert public.fetch_interval_minutes is None
+            assert private.is_active is False
+            assert private.fetch_interval_minutes == 60
     finally:
         engine.dispose()
 

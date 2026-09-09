@@ -178,9 +178,7 @@ async def cache_source_audio(
                         raise SourceAudioTooLarge(
                             "Podcast enclosure 超过配置的音频大小上限"
                         ) from None
-                    raise SourceAudioFetchFailed(
-                        "Podcast enclosure 下载失败或触发网络安全限制"
-                    ) from None
+                    raise SourceAudioFetchFailed("Podcast enclosure 下载失败") from None
                 destination.flush()
                 os.fsync(destination.fileno())
             if result.size <= 0:

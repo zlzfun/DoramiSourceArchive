@@ -63,6 +63,8 @@ from services import source_visibility as source_visibility_service
 from services import user_sources as user_sources_service
 from services import podcast_text_reader as podcast_text_reader_service
 from services import podcast_premium_guides as podcast_premium_guide_service
+from services import aliyun_isi_config as aliyun_isi_config_service
+from services import credentials as credentials_service
 
 
 router = APIRouter(tags=["podcasts"])
@@ -147,6 +149,18 @@ class PodcastAsrFetchSecretStatusResponse(BaseModel):
     ]
 
 
+class PodcastAsrQuotaResponse(BaseModel):
+    daily_audio_seconds_limit: int = Field(ge=0)
+    daily_audio_hours_limit: float = Field(ge=0)
+    quota_scope: str
+    quota_timezone: str
+    source: Literal["runtime_kv", "env", "ini", "default"]
+
+
+class PodcastAsrQuotaUpdate(BaseModel):
+    daily_audio_seconds_limit: int = Field(ge=1, le=86_400)
+
+
 class PodcastAudioArtifactResponse(BaseModel):
     id: str
     episode_id: str
@@ -178,6 +192,18 @@ class PodcastAudioArtifactResponse(BaseModel):
 
 def _app():
     return importlib.import_module("api.app")
+
+
+def _asr_quota_response(session: Session) -> PodcastAsrQuotaResponse:
+    config = aliyun_isi_config_service.resolve_config(session)
+    sources = aliyun_isi_config_service.field_sources(session)
+    return PodcastAsrQuotaResponse(
+        daily_audio_seconds_limit=config.asr_daily_audio_seconds_limit,
+        daily_audio_hours_limit=config.asr_daily_audio_seconds_limit / 3600,
+        quota_scope=config.asr_quota_scope,
+        quota_timezone=config.asr_quota_timezone,
+        source=sources["asr_daily_audio_seconds_limit"],
+    )
 
 
 def _store():
@@ -824,6 +850,32 @@ def clear_podcast_asr_fetch_previous_signing_secret(
         previous_signing_secret_set=bool(resolved.previous_signing_secret),
         previous_signing_secret_source=sources["previous_signing_secret"],
     )
+
+
+@router.get(
+    "/api/admin/podcast-asr-quota",
+    response_model=PodcastAsrQuotaResponse,
+    dependencies=[Depends(deps.require_admin)],
+)
+def get_podcast_asr_quota(session: Session = Depends(deps.get_session)):
+    return _asr_quota_response(session)
+
+
+@router.put(
+    "/api/admin/podcast-asr-quota",
+    response_model=PodcastAsrQuotaResponse,
+    dependencies=[Depends(deps.require_admin)],
+)
+def update_podcast_asr_quota(
+    payload: PodcastAsrQuotaUpdate,
+    session: Session = Depends(deps.get_session),
+):
+    credentials_service.save_updates(
+        session,
+        credentials_service.ALIYUN_ISI_NAMESPACE,
+        {"asr_daily_audio_seconds_limit": payload.daily_audio_seconds_limit},
+    )
+    return _asr_quota_response(session)
 
 
 @router.head(ASR_FETCH_PATH, include_in_schema=False)
