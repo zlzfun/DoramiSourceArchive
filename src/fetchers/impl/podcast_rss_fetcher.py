@@ -118,12 +118,13 @@ class GenericPodcastRssFetcher(GenericRssFetcher):
     _explicit_person_markers = re.compile(
         r"(?im)^(?:[-*]\s*)?(?:\*\*|__)?"
         r"(?P<label>本期嘉宾|嘉宾|guest(?:s)?|主持人|host(?:s)?)"
-        r"\s*[:：]\s*(?P<names>[^\n]{1,180}?)(?:\*\*|__)?\s*$"
+        r"(?:\*\*|__)?\s*[:：]\s*"
+        r"(?P<names>[^\n]{1,180}?)(?:\*\*|__)?\s*$"
     )
     _title_guest_marker = re.compile(
         r"(?i)(?:(?:^|[|｜—–·]\s*)(?:本期)?嘉宾\s*[:：]\s*"
         r"|(?:\bwith\b|\bfeat\.?\b|\bft\.?\b)\s+)"
-        r"(?P<names>[^|｜—–:\n]{1,100}?)(?=\s*(?:[|｜—–·]|$))"
+        r"(?P<names>[^|｜—–:：\n]{1,100}?)(?=\s*(?:[|｜—–·:：]|$))"
     )
     _person_splitter = re.compile(r"\s*(?:,|，|、|;|；|\band\b|\b&\b|/|与)\s*", re.I)
 

@@ -2033,6 +2033,11 @@ def test_podcast_initial_assessment_migration_preserves_legacy_basis(tmp_path):
     command.upgrade(cfg, "head")
     engine = create_engine(db_url)
     try:
+        indexes = {
+            item["name"]
+            for item in inspect(engine).get_indexes("article_analyses")
+        }
+        assert "ix_article_analyses_last_error_article_id" in indexes
         with engine.connect() as conn:
             rows = dict(conn.execute(text(
                 "SELECT article_id, analysis_basis FROM article_analyses"

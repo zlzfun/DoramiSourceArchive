@@ -83,6 +83,7 @@ def test_default_import_creates_collectable_public_nodes_and_is_idempotent(tmp_p
         params = json.loads(latent.params_json)
         assert params["limit"] == 20
         assert params["max_response_bytes"] == 12_345
+        assert params["credentialed_private"] is False
 
         again = import_podcast_catalog(session)
         assert again["created"] == []
@@ -108,6 +109,10 @@ def test_application_bootstrap_preserves_metadata_and_normalizes_legacy_inactive
         assert latent.is_active is True
         latent.name = "本地维护的名称"
         latent.is_active = False
+        params = json.loads(latent.params_json)
+        params.pop("credentialed_private")
+        params["local_setting"] = "preserve-me"
+        latent.params_json = json.dumps(params)
         session.add(latent)
         session.commit()
 
@@ -119,9 +124,51 @@ def test_application_bootstrap_preserves_metadata_and_normalizes_legacy_inactive
         latent = session.get(SourceConfigRecord, "podcast_latent_space")
         assert latent.name == "本地维护的名称"
         assert latent.is_active is True
+        params = json.loads(latent.params_json)
+        assert params["credentialed_private"] is False
+        assert params["local_setting"] == "preserve-me"
         catalog = list_podcast_catalog(session)
         assert catalog["installed"] == 36
         assert "active" not in catalog
+
+
+def test_catalog_public_identity_overrides_opaque_url_only_while_exactly_governed(
+    tmp_path,
+):
+    from services.user_sources import (
+        feed_url_has_credentials,
+        source_is_credentialed,
+    )
+    from services.article_analysis import source_allows_analysis
+
+    db = DatabaseStorage(f"sqlite:///{tmp_path / 'catalog-credential-policy.db'}")
+    ensure_default_podcast_sources(db.engine)
+    with Session(db.engine) as session:
+        practical = session.get(SourceConfigRecord, "podcast_practical_ai")
+        ted = session.get(SourceConfigRecord, "podcast_ted_ai_show")
+        assert feed_url_has_credentials(practical.url) is True
+        assert feed_url_has_credentials(ted.url) is True
+        assert source_is_credentialed(practical) is False
+        assert source_is_credentialed(ted) is False
+        assert source_allows_analysis(session, practical.source_id) is True
+        assert source_allows_analysis(session, ted.source_id) is True
+
+        practical.url = f"{practical.url}?token=later-private-token"
+        session.add(practical)
+        session.commit()
+        assert source_is_credentialed(practical) is True
+
+        custom = SourceConfigRecord(
+            source_id="user_rss_explicit_false",
+            name="User feed",
+            owner_username="alice",
+            source_type="rss",
+            url="https://feeds.example.test/abcdefghijklmnopqrstuvwxyzabcdef",
+            params_json=json.dumps({"credentialed_private": False}),
+            created_at="now",
+            updated_at="now",
+        )
+        assert source_is_credentialed(custom) is True
 
 
 def test_collection_job_resolves_podcast_logical_id_and_limit_override(monkeypatch, tmp_path):

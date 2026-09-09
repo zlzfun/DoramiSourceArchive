@@ -222,6 +222,11 @@ class ArticleAnalysisRecord(SQLModel, table=True):
             "lease_expires_at",
         ),
         Index("ix_article_analyses_content_hash", "content_hash"),
+        Index(
+            "ix_article_analyses_last_error_article_id",
+            "last_error",
+            "article_id",
+        ),
         CheckConstraint(
             "status IN ('pending','running','succeeded','failed','skipped','timeout')",
             name="ck_article_analyses_status",

@@ -77,11 +77,17 @@ class DatabaseStorage(BaseStorage):
             from services import article_analysis
 
             with Session(self.engine) as session:
-                if not article_analysis.read_feature_flag(
+                dirty_changed = article_analysis.mark_podcast_people_dirty(
+                    session, article_id
+                )
+                enabled = article_analysis.read_feature_flag(
                     session,
                     article_analysis.ARTICLE_ANALYSIS_ENABLED_KEY,
                     default=False,
-                ):
+                )
+                if not enabled:
+                    if dirty_changed:
+                        session.commit()
                     return
                 article_analysis.queue_article_analysis(session, article_id)
                 session.commit()

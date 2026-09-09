@@ -40,6 +40,7 @@ from models.db import (  # noqa: E402
 from services.article_analysis import (  # noqa: E402
     ARTICLE_ANALYSIS_PROMPT_VERSION,
     ARTICLE_ANALYSIS_SCORING_VERSION,
+    PODCAST_PEOPLE_DIRTY_REASON,
     build_topic_heat_context,
     claim_analysis_tasks,
     compute_analysis_input_hash,
@@ -1355,3 +1356,130 @@ def test_scan_throttles_version_refresh_but_never_new_articles(storage):
         assert session.get(ArticleAnalysisRecord, "stale-0").quality_score == 7.0
         second = scan_analysis_backfill(session, now=NOW, version_refresh_limit=2)
         assert second.invalidated == 1 and second.deferred == 0
+
+
+def test_disabled_dirty_podcasts_do_not_starve_legal_version_refresh(storage):
+    with Session(storage.engine) as session:
+        for index in range(16):
+            source_id = f"disabled-podcast-{index:02d}"
+            session.add(
+                SourceConfigRecord(
+                    source_id=source_id,
+                    name=source_id,
+                    source_type="podcast",
+                    ai_analysis_enabled=False,
+                    created_at=NOW_ISO,
+                    updated_at=NOW_ISO,
+                )
+            )
+            article = _article(
+                f"disabled-dirty-{index:02d}",
+                source_id=source_id,
+                fetched=NOW - dt.timedelta(minutes=index),
+            )
+            article.content_type = "podcast_episode"
+            article.extensions_json = json.dumps(
+                {"persons": [{"name": "New Guest", "role": "guest"}]}
+            )
+            session.add(article)
+            session.flush()
+            session.add(
+                ArticleAnalysisRecord(
+                    article_id=article.id,
+                    status="succeeded",
+                    tagging_status="succeeded",
+                    quality_score=7.0,
+                    content_hash=compute_content_hash(article),
+                    analysis_diagnostics_json=json.dumps(
+                        {"people": [{"name": "Old Guest", "role": "guest"}]}
+                    ),
+                    prompt_version=PODCAST_ANALYSIS_PROMPT_VERSION,
+                    scoring_version=PODCAST_ANALYSIS_SCORING_VERSION,
+                    last_error=PODCAST_PEOPLE_DIRTY_REASON,
+                    analyzed_at=NOW_ISO,
+                    created_at=NOW_ISO,
+                    updated_at=NOW_ISO,
+                )
+            )
+
+        legal = _article("legal-version-stale", fetched=NOW - dt.timedelta(hours=1))
+        session.add(legal)
+        session.flush()
+        session.add(
+            ArticleAnalysisRecord(
+                article_id=legal.id,
+                status="succeeded",
+                tagging_status="succeeded",
+                quality_score=7.5,
+                content_hash=compute_content_hash(legal),
+                prompt_version="article-analysis-v0",
+                scoring_version="news-value-v0",
+                analyzed_at=NOW_ISO,
+                created_at=NOW_ISO,
+                updated_at=NOW_ISO,
+            )
+        )
+        session.commit()
+
+        stats = scan_analysis_backfill(
+            session, now=NOW, version_refresh_limit=1
+        )
+        assert stats.invalidated == 1
+        assert stats.deferred == 0
+        assert session.get(ArticleAnalysisRecord, legal.id).status == "pending"
+        assert all(
+            session.get(ArticleAnalysisRecord, f"disabled-dirty-{index:02d}").status
+            == "succeeded"
+            for index in range(16)
+        )
+
+
+def test_dirty_podcast_people_scan_is_bounded_and_advances_cursor(
+    storage, monkeypatch
+):
+    import services.article_analysis as analysis_module
+
+    monkeypatch.setattr(analysis_module, "PODCAST_PEOPLE_SCAN_PAGE_SIZE", 2)
+    with Session(storage.engine) as session:
+        for index in range(3):
+            article = _article(
+                f"old-dirty-{index}",
+                fetched=NOW - dt.timedelta(days=30 + index),
+            )
+            article.content_type = "podcast_episode"
+            article.extensions_json = json.dumps(
+                {"persons": [{"name": f"New Guest {index}", "role": "guest"}]}
+            )
+            session.add(article)
+            session.flush()
+            session.add(
+                ArticleAnalysisRecord(
+                    article_id=article.id,
+                    status="succeeded",
+                    tagging_status="succeeded",
+                    quality_score=7.0,
+                    content_hash=compute_content_hash(article),
+                    analysis_diagnostics_json=json.dumps(
+                        {"people": [{"name": f"Old Guest {index}", "role": "guest"}]}
+                    ),
+                    prompt_version=PODCAST_ANALYSIS_PROMPT_VERSION,
+                    scoring_version=PODCAST_ANALYSIS_SCORING_VERSION,
+                    last_error=PODCAST_PEOPLE_DIRTY_REASON,
+                    analyzed_at=NOW_ISO,
+                    created_at=NOW_ISO,
+                    updated_at=NOW_ISO,
+                )
+            )
+        session.commit()
+
+        first = scan_analysis_backfill(
+            session, now=NOW, lookback_days=7, version_refresh_limit=10
+        )
+        assert first.invalidated == 2
+        assert session.get(ArticleAnalysisRecord, "old-dirty-2").status == "succeeded"
+
+        second = scan_analysis_backfill(
+            session, now=NOW, lookback_days=7, version_refresh_limit=10
+        )
+        assert second.invalidated == 1
+        assert session.get(ArticleAnalysisRecord, "old-dirty-2").status == "pending"

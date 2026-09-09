@@ -176,11 +176,24 @@ def source_is_credentialed(record: Optional[SourceConfigRecord]) -> bool:
         return custom_source or feed_url_has_credentials(record.url or "")
     if not isinstance(params, dict):
         return custom_source or feed_url_has_credentials(record.url or "")
-    classified = params.get("credentialed_private", False)
+    classified = params.get("credentialed_private")
     if classified is True or str(classified or "").strip().casefold() in {
         "1", "true", "yes", "on",
     }:
         return True
+    if classified is False and not custom_source:
+        # Only the repository-governed catalog identity may override conservative
+        # opaque-path inference.  Any URL edit (including a later signed URL)
+        # immediately loses the exemption and falls back to fail-closed parsing.
+        from services.podcast_catalog import catalog_by_id
+
+        catalog_source = catalog_by_id().get(record.source_id)
+        if (
+            catalog_source is not None
+            and record.source_type in {"podcast", "podcast_rss"}
+            and (record.url or "") == catalog_source.feed_url
+        ):
+            return False
     return feed_url_has_credentials(record.url or "")
 
 
