@@ -115,6 +115,8 @@ export default function InterestPage({
   // embedded(issue #27 三稿):作为发现页第三段「兴趣」的正文——不画报头与左槽台账,
   // 「我的兴趣」(口径:关注/兴趣统一叫兴趣,2026-09-10)改成目录之上的一行 chip;首登引导 = 顶部一条横幅(不锁页)
   embedded = false,
+  // 发现页头部搜索框注入的检索词(v3.52.2):非 null 时嵌入态不画自己的搜索框,与源/合集两段同形
+  externalQuery = null,
   onSaved,
   showToast,
 }) {
@@ -183,7 +185,8 @@ export default function InterestPage({
     return { follow, mute };
   }, [catalog, draft]);
 
-  const needle = query.trim().toLocaleLowerCase();
+  const effectiveQuery = externalQuery != null ? externalQuery : query;
+  const needle = effectiveQuery.trim().toLocaleLowerCase();
   const itemsOf = (stances) => Object.entries(stances).map(([id, stance]) => ({ tag_id: Number(id), stance }));
   const performSave = async (seq, stances, { complete = false, toast = null }) => {
     const latest = () => seq === seqRef.current;
@@ -400,22 +403,27 @@ export default function InterestPage({
     return (
       <div className="interest-embed" aria-label="我的兴趣">
         {onboardingBanner}
-        <div className="interest-embed-tools">
-          {searchNode}
-          {saveStateNode}
-        </div>
+        {/* 搜索由发现页头部承担时(externalQuery 注入)不画工具行,「已保存」回执挪到 chip 行右端——
+            回执只在保存前后短暂出现,独占一行会让版面上下跳 */}
+        {externalQuery == null && (
+          <div className="interest-embed-tools">
+            {searchNode}
+            {saveStateNode}
+          </div>
+        )}
         {catalog && (
           <div className="interest-picks" aria-label="我的兴趣">
             <span className="interest-picks-label">我的兴趣</span>
             {picksEmpty
               ? <span className="interest-picks-empty">点击下方标签加入兴趣。</span>
               : [...picks.follow.map((t) => pickChip(t, 'follow')), ...picks.mute.map((t) => pickChip(t, 'mute'))]}
+            {externalQuery != null && saveStateNode}
           </div>
         )}
         {stateNode}
         {catalogSections}
         {catalog && needle && !anyMatchEmbed && (
-          <div className="brief-state">没有匹配「{query.trim()}」的标签</div>
+          <div className="brief-state">没有匹配「{effectiveQuery.trim()}」的标签</div>
         )}
       </div>
     );
@@ -483,7 +491,7 @@ export default function InterestPage({
             );
           })}
           {catalog && searching && visibleKinds.length === 0 && (
-            <div className="brief-state">没有匹配「{query.trim()}」的标签</div>
+            <div className="brief-state">没有匹配「{effectiveQuery.trim()}」的标签</div>
           )}
         </div>
       </div>
@@ -557,7 +565,7 @@ export default function InterestPage({
             );
           })}
           {catalog && needle && !anyMatch && (
-            <div className="brief-state">没有匹配「{query.trim()}」的标签</div>
+            <div className="brief-state">没有匹配「{effectiveQuery.trim()}」的标签</div>
           )}
         </div>
         </div>
