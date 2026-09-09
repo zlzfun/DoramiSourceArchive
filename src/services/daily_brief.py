@@ -204,6 +204,9 @@ class ScoredItem:
     # 同事件归并时并入本条(代表)的其它条目文章 id:软阈值保底据此判断「簇里有没有过线稿」——
     # 近线官方稿当了过线媒体稿的代表时,簇仍算合格稿,不能被当成补足稿裁掉(codex 检视 P2)
     merged_ids: List[str] = field(default_factory=list)
+    # 软阈值补足稿标记(v3.49.1):随 items 落库,同日重跑合并后报头「按分补足 N 条」与
+    # last_run.threshold_backfilled 才能如实计入早间批补进的条目
+    backfilled: bool = False
 
     def to_reduce_dict(self) -> Dict[str, Any]:
         return {
@@ -226,6 +229,7 @@ class ScoredItem:
             "score": self.score,
             "extra_sources": self.extra_sources,
             "followup_note": self.followup_note,
+            "backfilled": self.backfilled,
         }
 
 
@@ -1284,6 +1288,7 @@ def _scored_item_from_stored(entry: Dict[str, Any], article_id: str) -> ScoredIt
         score=_coerce_score(entry.get("score")),
         extra_sources=[str(u) for u in (entry.get("extra_sources") or []) if u],
         followup_note=str(entry.get("followup_note") or ""),
+        backfilled=bool(entry.get("backfilled")),
     )
 
 
@@ -1457,6 +1462,10 @@ async def generate_daily_brief(
     with Session(engine) as session:
         min_score = daily_brief_min_score(session)
         min_items = daily_brief_min_items(session)
+        if min_items > top_n:
+            # 正文最终裁到 top_n,保底不能承诺比 top_n 还多(配置端点两者独立可改,单次 top_n 覆盖也会撞上)
+            logger.info("日报[%s]：正文保底 %d 大于 top_n %d，按 top_n 钳制", report_date, min_items, top_n)
+            min_items = top_n
         stored = load_stored_scores(session, [c.id for c in candidates if c.has_content])
         pending_ids = [c.id for c in candidates if c.id not in stored]
         # 补评喂 worker 同一套闭集(按标题正文词法召回的小子集),两条来路的标签词汇才一致
@@ -1540,6 +1549,8 @@ async def generate_daily_brief(
     deficit = max(0, min_items - len(core)) if min_items else 0
     # 多带一条备用稿:合格稿或补足稿被跨天查重剔掉时顶上,终选再按剩余缺口裁回。
     backfilled: List[ScoredItem] = near_survivors[:deficit + (1 if deficit else 0)]
+    for it in backfilled:
+        it.backfilled = True
     backfill_ids = {it.candidate.id for it in backfilled}
     deduped = [it for it in core + backfilled if it.candidate.id not in prior_ids]
     consumed_ids: set = set()
@@ -1617,7 +1628,6 @@ async def generate_daily_brief(
         title_only = title_only + near_miss_appendix
         logger.info("日报[%s]：正文 %d 条未满 %d，近线带 %d 条以标题补进附录",
                     report_date, len(selected), top_n, len(near_miss_appendix))
-    backfilled_in_brief = sum(1 for it in selected if it.candidate.id in backfill_ids)
 
     # 同日重跑合并:当日已有日报 → 新旧条目合并重排,不再整篇覆盖丢早间条目
     if prior_state is not None:
@@ -1625,6 +1635,8 @@ async def generate_daily_brief(
         selected, title_only = await merge_same_day(
             prior_items, selected, prior_title_only, title_only, cfg, usage_username=triggered_by,
         )
+    # 补足稿计数在同日合并**之后**算:早间批补进的条目随 items 的 backfilled 标记回来
+    backfilled_in_brief = sum(1 for it in selected if it.backfilled)
     markdown = render_brief_markdown(
         selected, title_only, report_date=report_date, backfilled=backfilled_in_brief,
     )

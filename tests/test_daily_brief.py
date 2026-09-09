@@ -1443,6 +1443,47 @@ def test_soft_threshold_appendix_capacity_counts_prior_appendix(tmp_path, monkey
     assert sorted(ext["included_article_ids"]) == ["h1", "h2", "n1", "n2"]
 
 
+def test_soft_threshold_backfill_disclosure_survives_same_day_rerun(tmp_path, monkeypatch):
+    """早间批补进的近线稿在同日重跑合并后仍计入报头「按分补足」与 last_run(codex 四轮 P2)。
+    近线稿 id 取 n5:夹具的编辑译名同 company 且只差数字串,数字相同会被机械预聚类当同一事件并掉。"""
+    _patch_llm(monkeypatch, _score_by_title({"h1": 8.5, "n5": 5.5, "h2": 8.5}))
+    sink = _make_sink(tmp_path, "disclosure.db")
+    for i, aid in enumerate(["h1", "n5"]):
+        _seed(sink.engine, aid, f"src_{i}", f"2026-06-05T1{i}:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+        db.set_setting(session, db.KEY_MIN_ITEMS, "2")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    _seed(sink.engine, "h2", "src_late", "2026-06-05T20:00:00")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06"))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    assert sorted(e["id"] for e in ext["items"]) == ["h1", "h2", "n5"]
+    assert [e["backfilled"] for e in sorted(ext["items"], key=lambda e: e["id"])] == [False, False, True]
+    assert "按新闻价值分补足 1 条" in record.content
+    with Session(sink.engine) as session:
+        assert db.get_json_setting(session, db.KEY_LAST_RUN, None)["threshold_backfilled"] == 1
+
+
+def test_soft_threshold_floor_is_capped_by_top_n(tmp_path, monkeypatch):
+    """min_items 大于 top_n 时按 top_n 钳制:正文 2 条(1 过线 + 1 补足),不承诺不可能的 8 条(codex 四轮 P2)。"""
+    _patch_llm(monkeypatch, _score_by_title({"h1": 8.5, "n1": 5.6, "n2": 5.5, "n3": 5.4}))
+    sink = _make_sink(tmp_path, "cap.db")
+    for i, aid in enumerate(["h1", "n1", "n2", "n3"]):
+        _seed(sink.engine, aid, f"src_{i}", f"2026-06-05T1{i}:00:00")
+    with Session(sink.engine) as session:
+        db.set_setting(session, db.KEY_CURSOR, "2026-06-01T00:00:00")
+        db.set_setting(session, db.KEY_MIN_ITEMS, "8")
+    asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date="2026-06-06", top_n=2))
+    record = asyncio.run(sink.get("daily_brief_2026-06-06"))
+    ext = json.loads(record.extensions_json)
+    assert [e["id"] for e in ext["items"]] == ["h1", "n1"]
+    assert "按新闻价值分补足 1 条" in record.content
+    with Session(sink.engine) as session:
+        last = db.get_json_setting(session, db.KEY_LAST_RUN, None)
+        assert last["min_items"] == 2 and last["threshold_backfilled"] == 1
+
+
 def test_daily_brief_min_items_default_and_clamp(tmp_path):
     sink = _make_sink(tmp_path, "minitems.db")
     with Session(sink.engine) as session:
