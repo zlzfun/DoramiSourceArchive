@@ -2100,7 +2100,7 @@ def generate_personal_digest(
             if matched_codes:
                 display_name = tag_display_names.get(matched_codes[0], matched_codes[0])
                 selection_reason = (
-                    f"匹配你关注的「{display_name}」；因非兴趣内容不足，"
+                    f"命中你的兴趣「{display_name}」；因非兴趣内容不足，"
                     "本条仅作为订阅源最新更新展示，不计入正式精选。"
                 )
             else:

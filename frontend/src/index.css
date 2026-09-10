@@ -11711,9 +11711,9 @@ input[type="radio"] {
 .brief-card-time { flex: none; display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 11.5px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
 .brief-card-go { width: 13px; height: 13px; color: var(--dorami-faint); opacity: 0; transform: translate(-2px, 2px); transition: opacity var(--motion-fast) ease, transform var(--motion-fast) var(--motion-ease), color var(--motion-fast) ease; }
 .brief-grid .brief-card:hover .brief-card-go { opacity: 1; transform: none; color: var(--dorami-accent-ink); }
-/* 兴趣命中 chip:同族同色,只多一枚实心小点作「关注」状态记号(不上第二饱和色) */
+/* 兴趣命中 chip:同族同色,只多一枚实心小点作「兴趣」状态记号(不上第二饱和色) */
 .reader-tag-chip.is-interest::before { content: ''; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: currentColor; }
-/* 重大事件 chip(v3.50):同族形制,accent 墨色加粗 + 细描边,与「关注」的小点区分;不引第二饱和色 */
+/* 重大事件 chip(v3.50):同族形制,accent 墨色加粗 + 细描边,与「兴趣」的小点区分;不引第二饱和色 */
 .reader-tag-chip.is-breaking { color: var(--dorami-accent-ink); font-weight: 600; box-shadow: inset 0 0 0 1px currentColor; }
 
 .brief-state {
@@ -12265,6 +12265,7 @@ input[type="radio"] {
 .interest-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 0 4px; }
 .interest-picks-label { font-size: 10.5px; letter-spacing: 0.12em; color: var(--dorami-faint); margin-right: 4px; }
 .interest-picks-empty { font-size: 12px; color: var(--dorami-faint); }
+.interest-picks .interest-save-state { margin-left: auto; }
 .interest-chip {
   display: inline-flex;
   align-items: center;

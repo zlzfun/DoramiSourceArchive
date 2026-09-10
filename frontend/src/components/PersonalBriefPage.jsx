@@ -69,7 +69,9 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
   const tags = Array.isArray(snapshot.display_tags) ? snapshot.display_tags : (snapshot.tags || []);
   const interest = interestLabelOf(item, snapshot);
   const chips = [];
-  // 重大事件通道(v3.50):跨订阅范围的头条位,chip 与「关注 ·」同族,title 里给准入理由
+  // 兴趣命中 chip(issue #23);v3.50.0 合入时被误删(替换成了下一行而非追加),v3.52.3 恢复并改口径「兴趣 · X」(关注/兴趣统一叫兴趣)
+  if (interest) chips.push({ key: 'interest', text: `兴趣 · ${interest}`, cls: 'is-interest', title: '命中你的兴趣' });
+  // 重大事件通道(v3.50):跨订阅范围的头条位,chip 与「兴趣 ·」同族,title 里给准入理由
   if (item.selection_lane === 'breaking') chips.push({ key: 'breaking', text: '重大事件', cls: 'is-breaking', title: item.selection_reason || snapshot.selection_reason || '今日重大事件' });
   tags
     .filter((tag) => tagName(tag) && tagName(tag) !== interest)
@@ -513,12 +515,12 @@ export default function PersonalBriefPage({
             <span>新的编排请求已记录，本版完成后会生成下一版</span>
           </div>
         )}
-        {/* v3.51.1(issue #33 §5):改关注/订阅不再自动重编,今日版面落后时把主动权交给读者 */}
+        {/* v3.51.1(issue #33 §5):改兴趣/订阅不再自动重编,今日版面落后时把主动权交给读者 */}
         {usesToday && !edition.rebuild_queued && (edition.interest_stale || edition.scope_stale) && (
           <div className="brief-note is-info" role="status">
             <RefreshCw aria-hidden="true" />
             <span>
-              {edition.interest_stale && edition.scope_stale ? '你的关注和订阅' : edition.interest_stale ? '你的关注' : '你的订阅'}
+              {edition.interest_stale && edition.scope_stale ? '你的兴趣和订阅' : edition.interest_stale ? '你的兴趣' : '你的订阅'}
               已更新，下次编排生效
             </span>
             <button type="button" className="brief-note-act" onClick={handleRebuild} disabled={working}>

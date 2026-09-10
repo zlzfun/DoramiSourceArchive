@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDownWideNarrow, ArrowLeft, ChevronRight, Loader2, Plus, Search } from 'lucide-react';
 import LogoMark from './LogoMark';
 import AddCustomSourceModal from './AddCustomSourceModal';
@@ -315,19 +315,18 @@ export default function DiscoverPage({
                     </button>
                   ))}
                 </span>
-                {/* 兴趣段自带标签搜索(InterestPage 内),头部搜索框让位 */}
-                {activeTab !== 'interests' && (
+                {/* 三段共用头部搜索框(v3.52.3 目检:兴趣段此前把搜索放在 chip 行之下,与另两段不同形);
+                    兴趣段的检索词经 externalQuery 注入 InterestPage,由它按标签名/别名过滤 */}
                 <label className="reader-disc-search">
                   <Search className="h-[13px] w-[13px]" aria-hidden="true" />
                   <input
                     type="search"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder={activeTab === 'collections' ? '筛选合集…' : '筛选来源名称或简介…'}
-                    aria-label={activeTab === 'collections' ? '筛选合集' : '筛选来源'}
+                    placeholder={activeTab === 'collections' ? '筛选合集…' : activeTab === 'interests' ? '搜索标签…' : '筛选来源名称或简介…'}
+                    aria-label={activeTab === 'collections' ? '筛选合集' : activeTab === 'interests' ? '搜索标签' : '筛选来源'}
                   />
                 </label>
-                )}
                 {activeTab === 'sources' && (
                   <>
                     {userSourcesEnabled && onAddCustomSource && (
@@ -377,7 +376,9 @@ export default function DiscoverPage({
         <div className="reader-disc-body">
           {activeTab === 'interests' ? (
             /* ── 兴趣段:InterestPage(embedded)——我的关注 chip 行 + 三面目录卡,点击即保存 ── */
-            <div className="reader-disc-interests">{interestsPanel}</div>
+            <div className="reader-disc-interests">
+              {isValidElement(interestsPanel) ? cloneElement(interestsPanel, { externalQuery: query }) : interestsPanel}
+            </div>
           ) : loading ? (
             <div className="reader-disc-empty">目录加载中…</div>
           ) : inDetail ? (
