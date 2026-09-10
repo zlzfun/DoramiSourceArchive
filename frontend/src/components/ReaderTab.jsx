@@ -466,7 +466,7 @@ export default function ReaderTab({
   // 「发现更多来源」类入口(源栏底 / 条目列与阅读窗空态):明说的是「来源」,段位必须落「源」——
   // 发现页段位是粘性的(首登引导落过兴趣段后会一直停在那),不切回会让「发现更多来源」开到标签清单;
   // 形态随 openDiscover 缺省取当前容器(issue #55)。视图轨 Compass 是全局入口,沿用上次段位不动。
-  const openDiscoverSources = useCallback(() => { setDiscoverTab('sources'); openDiscover(); }, [openDiscover]);
+  const openDiscoverSources = useCallback((opts) => { setDiscoverTab('sources'); openDiscover(opts); }, [openDiscover]);
   // 「兴趣」的编辑入口(源栏开关灰态提示 / 引导):直落发现页兴趣段
   const openInterests = useCallback(() => {
     supersedePendingOpen();
@@ -885,7 +885,7 @@ export default function ReaderTab({
           sourceMap={sourceMap}
           restore={briefRestore}
           supersedePendingOpen={supersedePendingOpen}
-          onManageSubscriptions={() => { setBriefOpen(false); leaveBriefTrail(); openDiscover({ shape: 'all' }); }}
+          onManageSubscriptions={() => { setBriefOpen(false); leaveBriefTrail(); openDiscoverSources({ shape: 'all' }); }}
           onOpenArticle={async (articleId, ctx) => {
             // 结果回传早报页:false=不在库(早报页退到原链),null=被更晚的点击盖过(不动)
             const opened = await openArticleById(articleId, { silent: true });
