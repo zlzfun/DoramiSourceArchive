@@ -11684,7 +11684,7 @@ input[type="radio"] {
 .brief-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: stretch; }
 /* 作用域限定在 .brief-grid 之下(codex 检视):管理台日报面板也叫 surface-card.brief-card(280px 双栏),不可被读者卡规则覆盖 */
 .brief-grid .brief-card {
-  position: relative; /* 标题按钮的拉伸覆盖层以卡片为定位基准(v3.53:卡片由 <button> 改为容器) */
+  position: relative; /* 标题按钮的拉伸覆盖层以卡片为定位基准(v3.54:卡片由 <button> 改为容器) */
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -11749,7 +11749,7 @@ input[type="radio"] {
 /* 重大事件 chip(v3.50):同族形制,accent 墨色加粗 + 细描边,与「兴趣」的小点区分;不引第二饱和色 */
 .reader-tag-chip.is-breaking { color: var(--dorami-accent-ink); font-weight: 600; box-shadow: inset 0 0 0 1px currentColor; }
 
-/* ── 编排说明行(v3.53,issue #33 §3):报头 hairline 之下、正文之上的一行「为什么」——
+/* ── 编排说明行(v3.54,issue #33 §3):报头 hairline 之下、正文之上的一行「为什么」——
    渐变星 + 渐变「哆啦美」是 AI 身份(全站唯一渐变 = AI 触点,与速读卡/问答同族),其后是事实句
    「从你订阅的 N 个来源和 K 个兴趣 · M 篇里选出 P 篇,x 篇命中你的兴趣」,右端「调整兴趣」文字链。
    §5 的「兴趣已更新」、来源/分析未完成、重编排队三条提示行并入本行尾句,一次只显一条。
@@ -11814,7 +11814,7 @@ input[type="radio"] {
   .brief-byline-act { order: 3; margin-left: 0; width: 100%; justify-content: flex-start; padding-left: 21px; }
 }
 
-/* ── 卡头右侧:选篇理由(元信息档,v3.53 issue #33 §3)——四个词回答同一个问题「它为什么在这」:
+/* ── 卡头右侧:选篇理由(元信息档,v3.54 issue #33 §3)——四个词回答同一个问题「它为什么在这」:
    兴趣 · 标签(accent + 实点,沿 is-interest 语法)/ 重大事件 · 官方一手 | N 家来源(accent + 闪电)/
    新闻价值入选(faint)/ 最新更新(faint,降级版面)。脚部 chip 自此只答「讲什么」(单轴)。
    普通卡里理由跟在来源名后、分数仍在右缘;通栏卡分数在右栏,理由独占头行右侧。 ── */
@@ -11824,7 +11824,7 @@ input[type="radio"] {
 .brief-card-why svg { width: 12px; height: 12px; }
 .brief-card-why-sep { width: 1px; height: 10px; background: var(--dorami-border); flex: none; }
 .brief-card-src .brief-card-why { margin-left: 2px; }
-/* 订阅外标记(v3.53「订阅 ∪ 兴趣」):源名后 faint「未订阅」,悬停卡片翻成 accent「+ 订阅」——沿条目列 .reader-entry-unsub 同语 */
+/* 订阅外标记(v3.54「订阅 ∪ 兴趣」):源名后 faint「未订阅」,悬停卡片翻成 accent「+ 订阅」——沿条目列 .reader-entry-unsub 同语 */
 .brief-card-unsub { position: relative; z-index: 1; flex: none; padding: 0 3px; border: 0; background: none; font: inherit; font-size: 10.5px; letter-spacing: 0.04em; color: var(--dorami-faint); white-space: nowrap; cursor: pointer; border-radius: 4px; }
 .brief-card-unsub::before { content: '未订阅'; }
 .brief-grid .brief-card:hover .brief-card-unsub, .brief-card-unsub:focus-visible { color: var(--dorami-accent-ink); }

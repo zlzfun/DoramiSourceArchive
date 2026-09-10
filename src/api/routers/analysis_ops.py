@@ -36,7 +36,7 @@ class AnalysisFeatureFlagsPatch(BaseModel):
     personal_digest_breaking_max_items: int | None = Field(
         default=None, ge=0, le=PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT
     )
-    # v3.53 个人早报「订阅 ∪ 兴趣」旋钮:订阅外兴趣候选的新闻价值门槛(0～10)与每源每期硬上限(1～上限)。
+    # v3.54 个人早报「订阅 ∪ 兴趣」旋钮:订阅外兴趣候选的新闻价值门槛(0～10)与每源每期硬上限(1～上限)。
     personal_digest_external_min_score: float | None = Field(default=None, ge=0.0, le=10.0)
     personal_digest_external_per_source_max: int | None = Field(
         default=None, ge=1, le=PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX_LIMIT

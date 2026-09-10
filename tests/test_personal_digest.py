@@ -1306,7 +1306,7 @@ def test_promoted_headline_does_not_consume_a_curated_slot(storage):
         assert {aid for aid, _lane in lanes[1:]} == {a.id for a in others[:3]}
 
 
-# ── v3.53「订阅 ∪ 兴趣」(issue #33 §3 前置) ──
+# ── v3.54「订阅 ∪ 兴趣」(issue #33 §3 前置) ──
 
 
 def _assign_topic(session: Session, article: ArticleRecord, tag: CmsTagRecord, *, relevance: float = 0.9, primary: bool = False) -> None:

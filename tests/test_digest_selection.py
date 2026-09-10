@@ -266,7 +266,7 @@ def test_breaking_mute_and_exclusions_are_hard_and_output_is_deterministic():
     assert first[0].event_entity_codes == ()
 
 
-# ── v3.53「订阅 ∪ 兴趣」(issue #33 §3 前置):订阅外候选只进兴趣通道、门槛更高、每源硬上限 ──
+# ── v3.54「订阅 ∪ 兴趣」(issue #33 §3 前置):订阅外候选只进兴趣通道、门槛更高、每源硬上限 ──
 
 
 def _external(number: int, **kwargs) -> DigestArticleCandidateDTO:

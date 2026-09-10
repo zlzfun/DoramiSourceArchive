@@ -66,7 +66,7 @@ class DigestSelectionPolicy:
     min_quality_score: float = PERSONAL_DIGEST_MIN_QUALITY_SCORE
     per_source_max: int = 2
     coverage_quality_delta: float = 0.3
-    # v3.53「订阅 ∪ 兴趣」:订阅外候选(candidate.subscribed=False)只走兴趣通道,门槛更高、
+    # v3.54「订阅 ∪ 兴趣」:订阅外候选(candidate.subscribed=False)只走兴趣通道,门槛更高、
     # 每源上限是硬的(不参与下面「不足时逐级放宽」的循环)。
     external_min_quality_score: float = PERSONAL_DIGEST_EXTERNAL_MIN_QUALITY_SCORE
     external_per_source_max: int = PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX
@@ -95,7 +95,7 @@ class DigestSelectionPolicy:
 
 
 def interest_only_policy(policy: DigestSelectionPolicy) -> DigestSelectionPolicy:
-    """Policy for a reader with interests but no subscriptions(v3.53).
+    """Policy for a reader with interests but no subscriptions(v3.54).
 
     There is no quality lane to fill the other half, so the edition is just the
     interest allocation(at most ``interest_slots`` items)with the 50% ceiling
@@ -344,7 +344,7 @@ def _selection_reason(
         code = row.matched_codes[0]
         display_name = tag_display_names.get(code, code)
         if not row.candidate.subscribed:
-            # v3.53 订阅外命中:如实交代它不在订阅内、是按更高的新闻价值门槛进来的
+            # v3.54 订阅外命中:如实交代它不在订阅内、是按更高的新闻价值门槛进来的
             return f"命中你的兴趣「{display_name}」，来自你未订阅的「{source_name}」，按新闻价值入选。"
         return f"命中你的兴趣「{display_name}」，且是今日订阅中的高质量内容。"
     return f"来自你订阅的「{source_name}」，是今日订阅中的高质量内容。"
@@ -365,7 +365,7 @@ def select_digest_articles(
     the interest-share ceiling.  Only the per-source cap is relaxed, one step at a
     time, when it is the reason the target cannot otherwise be reached.
 
-    v3.53「订阅 ∪ 兴趣」: candidates flagged ``subscribed=False`` are admitted only
+    v3.54「订阅 ∪ 兴趣」: candidates flagged ``subscribed=False`` are admitted only
     into the interest lane, must clear ``external_min_quality_score`` and share a
     hard ``external_per_source_max`` that the relaxation loop never touches;
     subscribed matches rank ahead of external ones.  The quality lane remains

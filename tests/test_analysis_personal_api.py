@@ -373,7 +373,7 @@ def test_admin_can_tune_personal_digest_breaking_lane(monkeypatch, tmp_path):
         assert client.put(
             "/api/admin/analysis/config", json={"personal_digest_breaking_min_score": 11}
         ).status_code == 422
-        # v3.53「订阅 ∪ 兴趣」旋钮同端点:默认 6.0 / 2,可改,越界 422
+        # v3.54「订阅 ∪ 兴趣」旋钮同端点:默认 6.0 / 2,可改,越界 422
         assert updated.json()["personal_digest_selection"] == {
             "min_score": 5.0,
             "external_min_score": 6.0,
@@ -1062,7 +1062,7 @@ def test_interest_and_subscription_edits_only_flag_today_edition_stale(monkeypat
         assert reopened["edition"]["id"] == rebuilt["id"]
         assert reopened["edition"]["scope_stale"] is True
         assert client.get("/api/reader/briefs/today").json()["edition"]["id"] == rebuilt["id"]
-        # v3.53「订阅 ∪ 兴趣」:订阅清空但兴趣还在 → 显式重编出「只有兴趣半」的一版
+        # v3.54「订阅 ∪ 兴趣」:订阅清空但兴趣还在 → 显式重编出「只有兴趣半」的一版
         # (两篇都命中 topic-agents 且 ≥ 订阅外门槛 6.0,全部标 subscribed=False),不再是空报
         interest_only = client.post("/api/reader/briefs/today/rebuild").json()
         assert interest_only["status"] in {"ready", "degraded"}

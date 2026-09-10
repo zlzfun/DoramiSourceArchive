@@ -22,7 +22,7 @@ import { qualityScoreText, scoreTierClass, SCORE_DISCLAIMER } from '../utils/ana
 // 全库近 30 天带图文章不足一成,头条会在两种形态间跳);同行卡片等高、脚部钉底;
 // 「外出返回」:点卡片进原文时把 {日期,版次,卷动位置,条目序列} 交给阅读器,阅读窗顶部出返回带
 // (返回我的早报 / 早报下一条),返回时经 restore 落回同一版同一位置并短暂高亮刚读过的卡。
-// v3.53(issue #33 §3「页面体现个性化 / 智能化」,样页 docs/design/dorami-brief-personal-quiet.html):
+// v3.54(issue #33 §3「页面体现个性化 / 智能化」,样页 docs/design/dorami-brief-personal-quiet.html):
 // 把「为什么」说出来——① 报头之下一行编排说明(渐变星 + 渐变「哆啦美」= AI 身份;事实句「从你订阅的
 // N 个来源和 K 个兴趣 · M 篇里选出 P 篇,x 篇命中你的兴趣」;右端「调整兴趣」深链发现页兴趣段),
 // §5 的「兴趣已更新」、来源/分析未完成、重编排队三条提示行并入本行尾句(一次只显一条,优先级
@@ -69,7 +69,7 @@ function interestLabelOf(item, snapshot) {
   return matched ? matched[1] : '';
 }
 
-// 卡头右侧的选篇理由(v3.53 §3):四个词回答同一个问题「它为什么在这」。前两个是「为你」的证据(accent),
+// 卡头右侧的选篇理由(v3.54 §3):四个词回答同一个问题「它为什么在这」。前两个是「为你」的证据(accent),
 // 后两个只是诚实交代(faint)。「今日最重要」一类说过头的词不用——一篇 6 分稿叫不出「最重要」。
 function whyOf(item, snapshot, interest) {
   if (item.selection_lane === 'breaking') {
@@ -91,7 +91,7 @@ function BriefCard({ item, lead, wide = false, source, onOpen, onSubscribeSource
   const tags = Array.isArray(snapshot.display_tags) ? snapshot.display_tags : (snapshot.tags || []);
   const interest = interestLabelOf(item, snapshot);
   const why = whyOf(item, snapshot, interest);
-  // 脚部 chip 自 v3.53 只答「讲什么」:「兴趣 · X」「重大事件」两枚迁到卡头右侧的理由位,不再和主题标签混在一条线上
+  // 脚部 chip 自 v3.54 只答「讲什么」:「兴趣 · X」「重大事件」两枚迁到卡头右侧的理由位,不再和主题标签混在一条线上
   const chips = [];
   tags
     .filter((tag) => tagName(tag) && tagName(tag) !== interest)
@@ -132,7 +132,7 @@ function BriefCard({ item, lead, wide = false, source, onOpen, onSubscribeSource
       <ArrowUpRight className="brief-card-go" aria-hidden="true" />
     </span>
   );
-  // 订阅外(v3.53「订阅 ∪ 兴趣」):快照事实 subscribed=false,且当前仍未订阅(订阅后即不再画,不必等重编)
+  // 订阅外(v3.54「订阅 ∪ 兴趣」):快照事实 subscribed=false,且当前仍未订阅(订阅后即不再画,不必等重编)
   const unsubscribed = snapshot.subscribed === false && !(source && source.subscribed) && !!snapshot.source_id;
   const unsubNode = unsubscribed && (
     <button
@@ -246,7 +246,7 @@ function RevisionStrip({ revisions, current, onPick }) {
 export default function PersonalBriefPage({
   showToast,
   onManageSubscriptions,
-  onManageInterests = null, // 「调整兴趣」深链发现页兴趣段(v3.53 §3)
+  onManageInterests = null, // 「调整兴趣」深链发现页兴趣段(v3.54 §3)
   onSubscribeSource = null, // 订阅外卡片「+ 订阅」就地订阅(source_id)
   onOpenArticle,
   supersedePendingOpen = null, // 直接开外链前作废在途的站内打开(慢网下先点内链卡再点社交卡)
@@ -480,7 +480,7 @@ export default function PersonalBriefPage({
   const sourceCount = new Set(ownItems.map((item) => item.snapshot?.source_id).filter(Boolean)).size;
   const live = isToday && LIVE.has(status);
   const ratioUnfillable = edition?.degraded_reason === 'insufficient_non_interest_content';
-  // v3.53:选篇统计(编排时一次写入;历史版本无值则说明行省略「M 篇里」);订阅为空只按兴趣编排 = interest_only
+  // v3.54:选篇统计(编排时一次写入;历史版本无值则说明行省略「M 篇里」);订阅为空只按兴趣编排 = interest_only
   const stats = edition?.selection_stats || null;
   const scopeCount = (edition?.expected_source_ids || []).length;
   const interestOnly = !!edition && scopeCount === 0 && (stats ? !!stats.interest_only : items.length > 0);
@@ -552,7 +552,7 @@ export default function PersonalBriefPage({
   } else if (!edition) {
     body = <div className="brief-state"><span className="brief-state-meta">这一天没有早报</span></div>;
   } else {
-    // ── 编排说明行(v3.53 §3):事实句 + 尾句(三态一行) + 「调整兴趣」──
+    // ── 编排说明行(v3.54 §3):事实句 + 尾句(三态一行) + 「调整兴趣」──
     const deadlineIncomplete = edition.sync_stale || edition.analysis_incomplete;
     const stale = usesToday && (edition.interest_stale || edition.scope_stale);
     const n = (value) => <b>{value}</b>;

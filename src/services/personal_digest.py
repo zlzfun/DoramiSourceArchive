@@ -89,7 +89,7 @@ PERSONAL_DIGEST_ENABLED_KEY = "personal_digest_enabled"
 # 「重大事件」通道旋钮(v3.50):阈值与条数存 KV,0 条 = 关闭通道;窗口/印证来源数是常量。
 BREAKING_MIN_SCORE_KEY = "personal_digest_breaking_min_score"
 BREAKING_MAX_ITEMS_KEY = "personal_digest_breaking_max_items"
-# v3.53「订阅 ∪ 兴趣」(issue #33 §3 前置):订阅外兴趣候选的门槛与每源硬上限,管理面 KV 旋钮
+# v3.54「订阅 ∪ 兴趣」(issue #33 §3 前置):订阅外兴趣候选的门槛与每源硬上限,管理面 KV 旋钮
 EXTERNAL_MIN_SCORE_KEY = "personal_digest_external_min_score"
 EXTERNAL_PER_SOURCE_MAX_KEY = "personal_digest_external_per_source_max"
 # 会开新同日 revision 的原因。interest_changed/subscription_changed 自 v3.51.1 起不再由
@@ -762,7 +762,7 @@ def _qualifying_interest_codes(
 ) -> dict[str, tuple[str, ...]]:
     """article_id → codes whose assignment qualifies as an interest hit.
 
-    v3.53:与阅读器兴趣透镜同一尺(``reader_interests``)——只认主标签或相关度 ≥
+    v3.54:与阅读器兴趣透镜同一尺(``reader_interests``)——只认主标签或相关度 ≥
     ``INTEREST_MATCH_MIN_RELEVANCE`` 的指派;屏蔽仍看全集(选篇层用 tag_codes)。
     """
 
@@ -982,7 +982,7 @@ def load_interest_candidates(
     min_score: float,
     require_tagging_complete: bool = False,
 ) -> list[DigestArticleCandidateDTO]:
-    """v3.53「订阅 ∪ 兴趣」:the outside-subscription interest pool.
+    """v3.54「订阅 ∪ 兴趣」:the outside-subscription interest pool.
 
     全站可见源 ∩ 命中兴趣标签(主标签或相关度过线)∩ 分数 ≥ 订阅外门槛,减去订阅源本身
     (它们走 load_digest_candidates 的订阅池)、私有源、隐藏源与公共日报记录。返回的候选
@@ -1045,7 +1045,7 @@ def _candidates_from_rows(
 ) -> list[DigestArticleCandidateDTO]:
     article_ids = [article.id for article, _analysis in rows]
     tag_codes, tag_snapshots = _tag_maps(session, article_ids)
-    # 兴趣命中判据(v3.53):只认主标签或相关度过线的指派;followed_codes=None 时不算(旧口径全集)
+    # 兴趣命中判据(v3.54):只认主标签或相关度过线的指派;followed_codes=None 时不算(旧口径全集)
     interest_codes = (
         _qualifying_interest_codes(tag_snapshots, article_ids)
         if followed_codes is not None else None
@@ -1289,7 +1289,7 @@ def _snapshot(
         "display_tags": list(display_tags if display_tags is not None else tags),
         "selection_reason": selection_reason,
         "is_latest_update": degraded,
-        # v3.53:是否在读者订阅面内(订阅外兴趣命中 / 订阅外头条为 False);快照事实,不随后来的订阅变
+        # v3.54:是否在读者订阅面内(订阅外兴趣命中 / 订阅外头条为 False);快照事实,不随后来的订阅变
         "subscribed": subscribed,
     }
 
@@ -1415,7 +1415,7 @@ def start_personal_digest_edition(
         as_of=current,
         scheduled_source_ids=scheduled_source_ids,
     )
-    # v3.53「订阅 ∪ 兴趣」:订阅为空但设了兴趣,仍出报(只有兴趣半);两者都空才走空订阅分支
+    # v3.54「订阅 ∪ 兴趣」:订阅为空但设了兴趣,仍出报(只有兴趣半);两者都空才走空订阅分支
     if not scope.expected_source_ids and not _followed_codes(_load_interests(session, username)):
         # v3.51.1(issue #33 §5):退订到一个来源都不剩,今日已有的版本仍是不可变快照——
         # 普通打开(first_open)复用它并由 scope_stale 提示「下次编排生效」;只有显式
@@ -1829,7 +1829,7 @@ def generate_personal_digest(
     ``edition_freshness`` flags until the reader rebuilds or the next scheduled run.
     """
 
-    # 订阅外门槛 / 每源硬上限走管理面 KV(v3.53);显式传入 policy 的调用方(测试)不受影响
+    # 订阅外门槛 / 每源硬上限走管理面 KV(v3.54);显式传入 policy 的调用方(测试)不受影响
     policy = policy or selection_policy(session)
     current = _as_shanghai(now)
     report_date = report_date or current.date().isoformat()
@@ -1888,7 +1888,7 @@ def generate_personal_digest(
         else _load_interests(session, username)
     )
     followed_codes = _followed_codes(interests)
-    # v3.53「订阅 ∪ 兴趣」:订阅为空但设了兴趣 → 只出兴趣半(interest_only);两者都空才空报
+    # v3.54「订阅 ∪ 兴趣」:订阅为空但设了兴趣 → 只出兴趣半(interest_only);两者都空才空报
     interest_only = not scope.expected_source_ids
     if interest_only and not followed_codes:
         return PersonalDigestGenerationResult(status="empty_subscriptions", edition=None)
@@ -2026,7 +2026,7 @@ def generate_personal_digest(
             if qualified_interest_exists
             else "no_qualified_content"
         )
-    # v3.53(issue #33 §3):选篇统计,页面「编排说明行」的事实来源;只记事实不参与判定
+    # v3.54(issue #33 §3):选篇统计,页面「编排说明行」的事实来源;只记事实不参与判定
     subscribed_set = set(scope.expected_source_ids)
     candidate_by_id = {candidate.article_id: candidate for candidate in candidates}
     own_selections = list(selections) if had_own_selections else []

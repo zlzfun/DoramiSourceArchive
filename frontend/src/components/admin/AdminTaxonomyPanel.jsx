@@ -152,7 +152,7 @@ function BreakingLaneCard({ config, onSave, showToast }) {
   );
 }
 
-// 个人早报「订阅 ∪ 兴趣」(v3.53,issue #33 §3 前置):兴趣半的候选池扩到全站可见源。订阅外没有
+// 个人早报「订阅 ∪ 兴趣」(v3.54,issue #33 §3 前置):兴趣半的候选池扩到全站可见源。订阅外没有
 // 「读者明说信任」这层背书,门槛与每源上限另算;订阅内仍 5.0 / 软上限。两枚旋钮同走分析配置端点。
 function UnionLaneCard({ config, onSave, showToast }) {
   const [form, setForm] = useState({ external_min_score: 6, external_per_source_max: 2 });
