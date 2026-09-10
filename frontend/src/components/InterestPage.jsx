@@ -443,7 +443,8 @@ export default function InterestPage({
               <p className="brief-mast-sub">{hint}</p>
             </>
           )}
-          {searchNode}
+          {/* 发现页头部已承担搜索(externalQuery 注入)时不画本地搜索框——否则两框并存且下框失效(codex P2) */}
+          {externalQuery == null && searchNode}
           {catalog && (
             <div className="interest-m-row">
               <button type="button" className="interest-mpicks" aria-expanded={picksOpen} onClick={() => setPicksOpen((v) => !v)}>
