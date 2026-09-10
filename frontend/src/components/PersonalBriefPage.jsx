@@ -107,11 +107,14 @@ function BriefCard({ item, lead, wide = false, source, onOpen, onSubscribeSource
   const company = source ? resolveCompany(source) : resolveCompany({ source_id: snapshot.source_id, name: sourceName, user_source: true });
   // 中文标题(v3.52.1,issue #33 §4):编排后补的 title_zh 作主标题,原标题降为其下小字(沿阅读窗译名的视觉语言)
   const titleZh = snapshot.title_zh && snapshot.title_zh !== snapshot.title ? snapshot.title_zh : '';
+  // 卡片是容器,标题按钮是唯一的「打开」控件:::after 拉伸覆盖整卡,点卡任意处即打开;订阅外的「+ 订阅」
+  // 是它的兄弟按钮(z-index 浮在覆盖层之上)——不再把可聚焦控件嵌在 <button> 里(codex 检视 P2:嵌套交互
+  // 元素语义无效,读屏会拍平、键盘会撞上两个按钮)。
   const titleNode = (
-    <>
+    <button type="button" className="brief-card-open" onClick={() => onOpen(item)}>
       <span className="brief-card-title">{titleZh || snapshot.title || '（无标题）'}</span>
       {titleZh && <span className="brief-card-title-orig">{snapshot.title}</span>}
-    </>
+    </button>
   );
   const chipNodes = chips.map((chip) => (
     <span key={chip.key} className={`reader-tag-chip ${chip.cls || ''}`} title={chip.title}>{chip.text}</span>
@@ -132,13 +135,12 @@ function BriefCard({ item, lead, wide = false, source, onOpen, onSubscribeSource
   // 订阅外(v3.53「订阅 ∪ 兴趣」):快照事实 subscribed=false,且当前仍未订阅(订阅后即不再画,不必等重编)
   const unsubscribed = snapshot.subscribed === false && !(source && source.subscribed) && !!snapshot.source_id;
   const unsubNode = unsubscribed && (
-    <span
-      role="button"
-      tabIndex={0}
+    <button
+      type="button"
       className="brief-card-unsub"
       title="订阅这个来源"
-      onClick={(e) => { e.stopPropagation(); onSubscribeSource?.(snapshot.source_id); }}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onSubscribeSource?.(snapshot.source_id); } }}
+      aria-label={`订阅 ${sourceName}`}
+      onClick={() => onSubscribeSource?.(snapshot.source_id)}
     />
   );
   const whyNode = (
@@ -162,7 +164,7 @@ function BriefCard({ item, lead, wide = false, source, onOpen, onSubscribeSource
 
   if (split) {
     return (
-      <button type="button" className={cls} onClick={() => onOpen(item)}>
+      <div className={cls}>
         <span className="brief-card-main">
           <span className="brief-card-head">{srcNode}{whyNode}</span>
           {titleNode}
@@ -178,12 +180,12 @@ function BriefCard({ item, lead, wide = false, source, onOpen, onSubscribeSource
           )}
           {chips.length > 0 && <span className="brief-card-tags is-stack">{chipNodes}</span>}
         </span>
-      </button>
+      </div>
     );
   }
 
   return (
-    <button type="button" className={cls} onClick={() => onOpen(item)}>
+    <div className={cls}>
       <span className="brief-card-head">
         <span className="brief-card-src">
           {srcNode}
@@ -198,7 +200,7 @@ function BriefCard({ item, lead, wide = false, source, onOpen, onSubscribeSource
         {chips.length > 0 && <span className="brief-card-tags">{chipNodes}</span>}
         {timeNode}
       </span>
-    </button>
+    </div>
   );
 }
 

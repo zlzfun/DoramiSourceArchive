@@ -11684,6 +11684,7 @@ input[type="radio"] {
 .brief-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: stretch; }
 /* 作用域限定在 .brief-grid 之下(codex 检视):管理台日报面板也叫 surface-card.brief-card(280px 双栏),不可被读者卡规则覆盖 */
 .brief-grid .brief-card {
+  position: relative; /* 标题按钮的拉伸覆盖层以卡片为定位基准(v3.53:卡片由 <button> 改为容器) */
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -11725,6 +11726,12 @@ input[type="radio"] {
 /* 评分:衬线齐线数字 + AI 渐变(见渐变即 AI,与速读卡同一身份);渐变落在数字元素自身 */
 .brief-card-score { flex: none; font-family: Charter, Cambria, Baskerville, var(--font-serif); font-size: 22px; font-weight: 700; line-height: 1; font-variant-numeric: lining-nums tabular-nums; }
 .brief-grid .brief-card.is-lead .brief-card-score { font-size: 28px; }
+/* 标题按钮 = 卡片唯一的「打开」控件:::after 拉伸盖满整卡(点卡任意处即打开,与旧 <button> 卡观感一致);
+   聚焦环画在卡片上而不是标题文字上(:has 由 Chrome 105+/Safari 15.4+ 支持,项目基线之内)。 */
+.brief-card-open { display: block; width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.brief-card-open::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
+.brief-card-open:focus-visible { outline: none; } /* 本区未分层,压得住全局 button:focus-visible;环由下一条画在卡片上 */
+.brief-grid .brief-card:has(.brief-card-open:focus-visible) { box-shadow: 0 0 0 2px var(--dorami-focus), var(--sh-1), inset 0 1px 0 var(--dorami-edge); }
 .brief-card-title { display: block; font-family: var(--font-serif); font-size: 17px; font-weight: 700; line-height: 1.4; color: var(--dorami-ink); }
 .brief-grid .brief-card.is-lead .brief-card-title { font-size: 24px; line-height: 1.3; }
 /* 原标题副行(v3.52.1):中文译名当主标题后,英文原题降一档挂在其下——与阅读窗 .reader-pane-title-orig 同语 */
@@ -11818,7 +11825,7 @@ input[type="radio"] {
 .brief-card-why-sep { width: 1px; height: 10px; background: var(--dorami-border); flex: none; }
 .brief-card-src .brief-card-why { margin-left: 2px; }
 /* 订阅外标记(v3.53「订阅 ∪ 兴趣」):源名后 faint「未订阅」,悬停卡片翻成 accent「+ 订阅」——沿条目列 .reader-entry-unsub 同语 */
-.brief-card-unsub { flex: none; font-size: 10.5px; letter-spacing: 0.04em; color: var(--dorami-faint); white-space: nowrap; cursor: pointer; border-radius: 4px; padding: 0 3px; }
+.brief-card-unsub { position: relative; z-index: 1; flex: none; padding: 0 3px; border: 0; background: none; font: inherit; font-size: 10.5px; letter-spacing: 0.04em; color: var(--dorami-faint); white-space: nowrap; cursor: pointer; border-radius: 4px; }
 .brief-card-unsub::before { content: '未订阅'; }
 .brief-grid .brief-card:hover .brief-card-unsub, .brief-card-unsub:focus-visible { color: var(--dorami-accent-ink); }
 .brief-grid .brief-card:hover .brief-card-unsub::before, .brief-card-unsub:focus-visible::before { content: '+ 订阅'; }
