@@ -147,6 +147,8 @@ def serialize_edition(
         "sync_stale": bool(edition.sync_stale),
         "analysis_incomplete": bool(edition.analysis_incomplete),
         "degraded_reason": edition.degraded_reason,
+        # v3.53(issue #33 §3):编排说明行的事实来源;历史版本无值为 null,前端省略对应半句
+        "selection_stats": _parse_json(edition.selection_stats_json, None) if edition.selection_stats_json else None,
         "error": edition.error,
         "readiness": (
             readiness_progress(session, edition)

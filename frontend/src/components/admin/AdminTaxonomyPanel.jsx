@@ -152,6 +152,37 @@ function BreakingLaneCard({ config, onSave, showToast }) {
   );
 }
 
+// 个人早报「订阅 ∪ 兴趣」(v3.53,issue #33 §3 前置):兴趣半的候选池扩到全站可见源。订阅外没有
+// 「读者明说信任」这层背书,门槛与每源上限另算;订阅内仍 5.0 / 软上限。两枚旋钮同走分析配置端点。
+function UnionLaneCard({ config, onSave, showToast }) {
+  const [form, setForm] = useState({ external_min_score: 6, external_per_source_max: 2 });
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (config) setForm({ external_min_score: config.external_min_score ?? 6, external_per_source_max: config.external_per_source_max ?? 2 });
+  }, [config]);
+  if (!config) return null;
+  const save = async () => {
+    setBusy(true);
+    try {
+      await onSave({ personal_digest_external_min_score: Number(form.external_min_score), personal_digest_external_per_source_max: Number(form.external_per_source_max) });
+      showToast?.('已更新早报订阅外兴趣设置', 'success');
+    } catch (error) { showToast?.(error.message || '更新早报订阅外兴趣设置失败', 'error'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <section className="surface-card card-pad rounded-[var(--r-card)]">
+      <div className="card-head">
+        <div><h2 className="card-title">早报订阅外兴趣</h2><p className="tiny-meta mt-1">兴趣半（最多 {config.interest_slots ?? 5} 篇）从全站可见来源里取命中兴趣的文章：订阅内门槛 {config.min_score ?? 5}、订阅外门槛另设且每源每期硬上限；订阅内命中排前，质量半仍只从订阅来源选；订阅为空但设了兴趣时只出兴趣半</p></div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <label><span className="form-label">订阅外新闻价值门槛</span><input type="number" min="0" max="10" step="0.1" className="form-input" value={form.external_min_score} onChange={(e) => setForm({ ...form, external_min_score: e.target.value })} /><small className="tiny-meta">默认 6.0（公共日报入选线）</small></label>
+        <label><span className="form-label">订阅外每源每期上限</span><input type="number" min="1" max={config.external_per_source_max_limit ?? 5} step="1" className="form-input" value={form.external_per_source_max} onChange={(e) => setForm({ ...form, external_per_source_max: e.target.value })} /><small className="tiny-meta">硬上限，不参与放宽；默认 2</small></label>
+      </div>
+      <div className="mt-3 flex justify-end"><button type="button" disabled={busy} className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={save}>{busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} 保存订阅外设置</button></div>
+    </section>
+  );
+}
+
 function InterestCatalogPolicyCard({ showToast }) {
   const [data, setData] = useState(null);
   const [limits, setLimits] = useState({ topic: 30, industry: 15, entity: 20 });
@@ -406,6 +437,7 @@ export default function AdminTaxonomyPanel({ showToast, days = 7 }) {
   const [candidatePage, setCandidatePage] = useState(0);
   const [config, setConfig] = useState(null);
   const [breaking, setBreaking] = useState(null);
+  const [selection, setSelection] = useState(null);
   const [metrics, setMetrics] = useState(null);
   const [taxonomyState, setTaxonomyState] = useState(null);
   const [flagBusy, setFlagBusy] = useState('');
@@ -440,12 +472,13 @@ export default function AdminTaxonomyPanel({ showToast, days = 7 }) {
   }, [load]);
   useEffect(() => { setCandidatePage(0); }, [candidateStatus, kind, query]);
   useEffect(() => {
-    fetchAnalysisConfig().then((data) => { setConfig(data.feature_flags || {}); setBreaking(data.personal_digest_breaking || null); }).catch(() => { setConfig(null); setBreaking(null); });
+    fetchAnalysisConfig().then((data) => { setConfig(data.feature_flags || {}); setBreaking(data.personal_digest_breaking || null); setSelection(data.personal_digest_selection || null); }).catch(() => { setConfig(null); setBreaking(null); setSelection(null); });
     fetchAnalysisMetrics(days).then(setMetrics).catch(() => setMetrics(null));
   }, [days]);
   const saveBreaking = async (payload) => {
     const data = await updateAnalysisConfig(payload);
     setBreaking(data.personal_digest_breaking || null);
+    setSelection(data.personal_digest_selection || null);
   };
 
   const toggleFlag = async (key, enabled) => {
@@ -538,6 +571,7 @@ export default function AdminTaxonomyPanel({ showToast, days = 7 }) {
       )}
 
       <BreakingLaneCard config={breaking} onSave={saveBreaking} showToast={showToast} />
+      <UnionLaneCard config={selection} onSave={saveBreaking} showToast={showToast} />
       <InterestCatalogPolicyCard showToast={showToast} />
 
       <div className="zone-head">

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable, Mapping, Sequence
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -23,6 +23,9 @@ from models.analysis_contracts import (
     PERSONAL_DIGEST_BREAKING_MAX_ITEMS,
     PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT,
     PERSONAL_DIGEST_BREAKING_MIN_SCORE,
+    PERSONAL_DIGEST_EXTERNAL_MIN_QUALITY_SCORE,
+    PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX,
+    PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX_LIMIT,
     PERSONAL_DIGEST_INTEREST_MAX_RATIO,
     PERSONAL_DIGEST_MIN_QUALITY_SCORE,
     PERSONAL_DIGEST_TARGET_ITEMS,
@@ -63,6 +66,10 @@ class DigestSelectionPolicy:
     min_quality_score: float = PERSONAL_DIGEST_MIN_QUALITY_SCORE
     per_source_max: int = 2
     coverage_quality_delta: float = 0.3
+    # v3.53「订阅 ∪ 兴趣」:订阅外候选(candidate.subscribed=False)只走兴趣通道,门槛更高、
+    # 每源上限是硬的(不参与下面「不足时逐级放宽」的循环)。
+    external_min_quality_score: float = PERSONAL_DIGEST_EXTERNAL_MIN_QUALITY_SCORE
+    external_per_source_max: int = PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX
 
     def __post_init__(self) -> None:
         if self.target_items < 1:
@@ -73,6 +80,34 @@ class DigestSelectionPolicy:
             raise ValueError("per_source_max 必须至少为 1")
         if self.coverage_quality_delta < 0:
             raise ValueError("coverage_quality_delta 不能为负数")
+        if not 0.0 <= self.external_min_quality_score <= 10.0:
+            raise ValueError("external_min_quality_score 必须在 0～10 之间")
+        if not 1 <= self.external_per_source_max <= PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX_LIMIT:
+            raise ValueError(
+                f"external_per_source_max 必须在 1～{PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX_LIMIT} 之间"
+            )
+
+    @property
+    def interest_slots(self) -> int:
+        """The interest allocation size(target × ratio,floored)."""
+
+        return math.floor(self.target_items * self.interest_max_ratio + 1e-9)
+
+
+def interest_only_policy(policy: DigestSelectionPolicy) -> DigestSelectionPolicy:
+    """Policy for a reader with interests but no subscriptions(v3.53).
+
+    There is no quality lane to fill the other half, so the edition is just the
+    interest allocation(at most ``interest_slots`` items)with the 50% ceiling
+    lifted——otherwise a half that has no counterpart could never be filled.
+    Thresholds and the external per-source cap are unchanged.
+    """
+
+    return replace(
+        policy,
+        target_items=max(1, policy.interest_slots),
+        interest_max_ratio=1.0,
+    )
 
 
 @dataclass(frozen=True)
@@ -121,6 +156,32 @@ def _event_key(candidate: DigestArticleCandidateDTO) -> str:
     return f"title:{title or candidate.article_id}"
 
 
+def interest_codes_of(candidate: DigestArticleCandidateDTO) -> tuple[str, ...]:
+    """Codes eligible for a follow match(qualifying assignments;full set as fallback)."""
+
+    if candidate.interest_tag_codes is not None:
+        return candidate.interest_tag_codes
+    return candidate.tag_codes
+
+
+def eligible_for_selection(
+    candidate: DigestArticleCandidateDTO,
+    *,
+    policy: DigestSelectionPolicy,
+    muted: set[str],
+    followed: Mapping[str, int],
+) -> bool:
+    """Hard admission: mute, score floor per subscription status, external = interest only."""
+
+    if muted.intersection(candidate.tag_codes):
+        return False
+    if candidate.subscribed:
+        return candidate.quality_score >= policy.min_quality_score
+    if candidate.quality_score < policy.external_min_quality_score:
+        return False
+    return any(code in followed for code in interest_codes_of(candidate))
+
+
 def _interest_maps(
     interests: Iterable[UserInterestDTO],
 ) -> tuple[set[str], dict[str, int]]:
@@ -143,7 +204,7 @@ def _ranked(
 ) -> list[_RankedCandidate]:
     rows: list[_RankedCandidate] = []
     for candidate in candidates:
-        matched = tuple(sorted(code for code in set(candidate.tag_codes) if code in followed))
+        matched = tuple(sorted(code for code in set(interest_codes_of(candidate)) if code in followed))
         rows.append(_RankedCandidate(
             candidate=candidate,
             matched_codes=matched,
@@ -156,7 +217,9 @@ def _ranked(
 
 
 def _sort_interest(row: _RankedCandidate) -> tuple[object, ...]:
+    # 订阅内命中排在订阅外之前:订阅是读者明说的信任,同样命中时先给它
     return (
+        not row.candidate.subscribed,
         -row.match_priority,
         -row.candidate.quality_score,
         -_published_timestamp(row.candidate.publish_date),
@@ -196,6 +259,7 @@ def _coverage_order(
                 not preserve_interest_strength
                 or (
                     row.match_priority == anchor.match_priority
+                    and row.candidate.subscribed == anchor.candidate.subscribed
                 )
             )
         ]
@@ -231,6 +295,7 @@ def _choose_at_cap(
     target: int,
     interest_limit: int,
     source_cap: int,
+    external_source_cap: int,
     quality_first: bool = False,
 ) -> list[tuple[_RankedCandidate, str]]:
     selected: list[tuple[_RankedCandidate, str]] = []
@@ -245,7 +310,9 @@ def _choose_at_cap(
             event_key = _event_key(candidate)
             if event_key in event_keys:
                 continue
-            if source_counts.get(candidate.source_id, 0) >= source_cap:
+            # 订阅外来源的上限是硬的:它不随「不足时放宽」的 source_cap 走
+            cap = source_cap if candidate.subscribed else external_source_cap
+            if source_counts.get(candidate.source_id, 0) >= cap:
                 continue
             selected.append((row, lane))
             event_keys.add(event_key)
@@ -272,11 +339,14 @@ def _selection_reason(
     tag_display_names: Mapping[str, str],
     source_display_names: Mapping[str, str],
 ) -> str:
+    source_name = source_display_names.get(row.candidate.source_id, row.candidate.source_id)
     if lane == SelectionLane.INTEREST.value and row.matched_codes:
         code = row.matched_codes[0]
         display_name = tag_display_names.get(code, code)
+        if not row.candidate.subscribed:
+            # v3.53 订阅外命中:如实交代它不在订阅内、是按更高的新闻价值门槛进来的
+            return f"命中你的兴趣「{display_name}」，来自你未订阅的「{source_name}」，按新闻价值入选。"
         return f"命中你的兴趣「{display_name}」，且是今日订阅中的高质量内容。"
-    source_name = source_display_names.get(row.candidate.source_id, row.candidate.source_id)
     return f"来自你订阅的「{source_name}」，是今日订阅中的高质量内容。"
 
 
@@ -294,14 +364,20 @@ def select_digest_articles(
     Hard rules are never relaxed: mute, minimum score, same-event uniqueness and
     the interest-share ceiling.  Only the per-source cap is relaxed, one step at a
     time, when it is the reason the target cannot otherwise be reached.
+
+    v3.53「订阅 ∪ 兴趣」: candidates flagged ``subscribed=False`` are admitted only
+    into the interest lane, must clear ``external_min_quality_score`` and share a
+    hard ``external_per_source_max`` that the relaxation loop never touches;
+    subscribed matches rank ahead of external ones.  The quality lane remains
+    subscription-only(the caller never passes external non-matching rows,and
+    ``eligible_for_selection`` drops them anyway).
     """
 
     policy = policy or DigestSelectionPolicy()
     muted, followed = _interest_maps(interests)
     eligible = [
         candidate for candidate in candidates
-        if candidate.quality_score >= policy.min_quality_score
-        and not muted.intersection(candidate.tag_codes)
+        if eligible_for_selection(candidate, policy=policy, muted=muted, followed=followed)
     ]
     rows = _ranked(eligible, followed, topic_codes_by_article or {})
     interest_rows = sorted((row for row in rows if row.matched_codes), key=_sort_interest)
@@ -315,16 +391,14 @@ def select_digest_articles(
     )
     quality_rows, quality_adjustments = _coverage_order(quality_rows, policy=policy)
 
-    interest_limit = min(
-        len(interest_rows),
-        math.floor(policy.target_items * policy.interest_max_ratio + 1e-9),
-    )
+    interest_limit = min(len(interest_rows), policy.interest_slots)
+    subscribed_rows = [row for row in rows if row.candidate.subscribed]
     maximum_cap = max(
         policy.per_source_max,
         max(
             (
-                sum(row.candidate.source_id == source_id for row in rows)
-                for source_id in {row.candidate.source_id for row in rows}
+                sum(row.candidate.source_id == source_id for row in subscribed_rows)
+                for source_id in {row.candidate.source_id for row in subscribed_rows}
             ),
             default=0,
         ),
@@ -341,6 +415,7 @@ def select_digest_articles(
                     target=policy.target_items,
                     interest_limit=actual_interest_limit,
                     source_cap=source_cap,
+                    external_source_cap=policy.external_per_source_max,
                     quality_first=quality_first,
                 )
                 interest_count = sum(
@@ -372,7 +447,11 @@ def select_digest_articles(
             (interest_adjustments if lane == SelectionLane.INTEREST.value else quality_adjustments)
             .get(candidate.article_id, ())
         )
-        if used_cap > policy.per_source_max and source_seen[candidate.source_id] > policy.per_source_max:
+        if (
+            candidate.subscribed
+            and used_cap > policy.per_source_max
+            and source_seen[candidate.source_id] > policy.per_source_max
+        ):
             adjustments.append(f"source_limit_relaxed:{used_cap}")
         result.append(DigestSelectionDTO(
             article_id=candidate.article_id,
@@ -588,6 +667,9 @@ __all__ = [
     "BreakingSelectionPolicy",
     "DigestSelectionPolicy",
     "GENRE_SECTIONS",
+    "eligible_for_selection",
+    "interest_codes_of",
+    "interest_only_policy",
     "section_for_genre",
     "select_breaking_events",
     "select_digest_articles",

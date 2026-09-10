@@ -1304,3 +1304,212 @@ def test_promoted_headline_does_not_consume_a_curated_slot(storage):
         assert lanes[0] == (headline.id, "breaking")
         assert [lane for _id, lane in lanes[1:]] == ["quality", "quality", "quality"]
         assert {aid for aid, _lane in lanes[1:]} == {a.id for a in others[:3]}
+
+
+# ── v3.53「订阅 ∪ 兴趣」(issue #33 §3 前置) ──
+
+
+def _assign_topic(session: Session, article: ArticleRecord, tag: CmsTagRecord, *, relevance: float = 0.9, primary: bool = False) -> None:
+    session.add(ArticleTagAssignmentRecord(
+        article_id=article.id,
+        tag_id=tag.id,
+        tag_kind="topic",
+        is_primary=primary,
+        relevance=relevance,
+        created_at=NOW_ISO,
+        updated_at=NOW_ISO,
+    ))
+
+
+def _follow(session: Session, username: str, tag: CmsTagRecord) -> None:
+    session.add(UserInterestTagRecord(
+        owner_username=username,
+        tag_id=tag.id,
+        stance="follow",
+        priority="normal",
+        created_at=NOW_ISO,
+        updated_at=NOW_ISO,
+    ))
+
+
+def test_interest_lane_reaches_outside_the_subscription_with_the_higher_floor(storage):
+    with Session(storage.engine) as session:
+        tag = _tag("agents")
+        session.add_all([_user(), _subscribe("alice", "rss_a"), tag])
+        session.flush()
+        # 订阅内:6 篇质量稿(不命中)
+        for number in range(1, 7):
+            _seed_article(session, number, source="rss_a", score=7.0)
+        # 订阅外命中:一篇 6.5 进、一篇 5.5 不进(订阅外门槛 6.0)、一篇相关度 0.5 的弱指派不算命中
+        outside_hit = _seed_article(session, 11, source="rss_outside", score=6.5)
+        outside_low = _seed_article(session, 12, source="rss_outside", score=5.5)
+        weak = _seed_article(session, 13, source="rss_outside2", score=8.0)
+        session.flush()
+        _assign_topic(session, outside_hit, tag)
+        _assign_topic(session, outside_low, tag)
+        _assign_topic(session, weak, tag, relevance=0.5)
+        _follow(session, "alice", tag)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "ready"
+        by_id = {item.article_id: item for item in result.items}
+        assert "article-11" in by_id and "article-12" not in by_id and "article-13" not in by_id
+        item = by_id["article-11"]
+        assert item.selection_lane == "interest"
+        assert json.loads(item.matched_interest_codes_json) == ["agents"]
+        snapshot = json.loads(item.snapshot_json)
+        assert snapshot["subscribed"] is False
+        assert "来自你未订阅的" in item.selection_reason
+        assert json.loads(item.ranking_features_json)["subscribed"] is False
+        assert all(json.loads(by_id[f"article-{n:02d}"].snapshot_json)["subscribed"] is True for n in range(1, 7))
+        # 冻结的权限边界仍只有订阅源
+        assert json.loads(result.edition.expected_source_ids_json) == ["rss_a"]
+        stats = json.loads(result.edition.selection_stats_json)
+        assert stats["external_candidate_count"] == 1
+        assert stats["subscribed_candidate_count"] == 6
+        assert stats["interest_hits"] == 1 and stats["external_hits"] == 1
+        assert stats["followed_count"] == 1 and stats["interest_only"] is False
+        assert stats["external_min_score"] == 6.0
+
+
+def test_outside_pool_skips_hidden_private_and_daily_brief_sources(storage):
+    with Session(storage.engine) as session:
+        tag = _tag("agents")
+        session.add_all([_user(), _subscribe("alice", "rss_a"), tag])
+        session.add(AppSettingRecord(key="reader_hidden_source_ids", value=json.dumps(["rss_hidden"])))
+        session.add(SourceConfigRecord(
+            source_id="legacy_private",
+            name="legacy",
+            source_type="rss",
+            fetcher_id="generic_rss",
+            owner_username="bob",
+            is_active=True,
+            params_json="{}",
+            created_at=NOW_ISO,
+            updated_at=NOW_ISO,
+        ))
+        session.flush()
+        for number in range(1, 7):
+            _seed_article(session, number, source="rss_a", score=7.0)
+        rows = [
+            _seed_article(session, 21, source="rss_hidden", score=9.0),
+            _seed_article(session, 22, source="user_rss_abc", score=9.0),
+            _seed_article(session, 23, source="legacy_private", score=9.0),
+            _seed_article(session, 24, source="dorami_daily_brief", score=9.0),
+            _seed_article(session, 25, source="rss_public", score=9.0),
+        ]
+        session.flush()
+        for row in rows:
+            _assign_topic(session, row, tag)
+        _follow(session, "alice", tag)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        ids = {item.article_id for item in result.items}
+        assert "article-25" in ids
+        assert ids.isdisjoint({"article-21", "article-22", "article-23", "article-24"})
+
+
+def test_no_subscriptions_but_interests_yields_an_interest_only_edition(storage):
+    with Session(storage.engine) as session:
+        tag = _tag("agents")
+        session.add_all([_user(), tag])
+        session.flush()
+        for number in range(1, 9):
+            article = _seed_article(session, number, source=f"rss_{number % 3}", score=9.0 - number / 10)
+            session.flush()
+            _assign_topic(session, article, tag)
+        _follow(session, "alice", tag)
+        session.commit()
+
+        assert resolve_personal_digest_source_ids(session, "alice") == []
+        started = start_personal_digest_edition(
+            session, "alice", now=NOW, generation_reason=DigestGenerationReason.FIRST_OPEN, first_open_at=NOW
+        )
+        assert started.status == "pending" and started.edition is not None
+        assert json.loads(started.edition.expected_source_ids_json) == []
+
+        result = generate_personal_digest(
+            session, "alice", now=NOW, pending_edition_id=started.edition.id
+        )
+
+        assert result.status == "ready"
+        assert 1 <= len(result.items) <= 5
+        assert {item.selection_lane for item in result.items} == {"interest"}
+        assert all(json.loads(item.snapshot_json)["subscribed"] is False for item in result.items)
+        # 订阅外每源硬上限 2:三个来源各最多 2 条
+        per_source: dict[str, int] = {}
+        for item in result.items:
+            source_id = json.loads(item.snapshot_json)["source_id"]
+            per_source[source_id] = per_source.get(source_id, 0) + 1
+        assert max(per_source.values()) <= 2
+        stats = json.loads(result.edition.selection_stats_json)
+        assert stats["interest_only"] is True and stats["followed_count"] == 1
+
+
+def test_no_subscriptions_and_no_interests_still_reports_empty(storage):
+    with Session(storage.engine) as session:
+        session.add(_user())
+        session.commit()
+        started = start_personal_digest_edition(session, "alice", now=NOW)
+        assert started.status == "empty_subscriptions" and started.edition is None
+        assert generate_personal_digest(session, "alice", now=NOW).status == "empty_subscriptions"
+
+
+def test_interest_only_edition_with_nothing_qualifying_is_honest_and_empty(storage):
+    with Session(storage.engine) as session:
+        tag = _tag("agents")
+        session.add_all([_user(), tag])
+        session.flush()
+        low = _seed_article(session, 1, source="rss_x", score=5.5)  # 低于订阅外门槛
+        session.flush()
+        _assign_topic(session, low, tag)
+        _follow(session, "alice", tag)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "degraded"
+        assert result.edition.degraded_reason == "no_qualified_content"
+        assert result.items == ()
+        assert json.loads(result.edition.selection_stats_json)["interest_only"] is True
+
+
+def test_subscribed_relevance_threshold_matches_the_reader_lens(storage):
+    """订阅内的兴趣命中也只认主标签或相关度 ≥ 0.8 的指派(与阅读器透镜同一尺)。"""
+    with Session(storage.engine) as session:
+        tag = _tag("agents")
+        session.add_all([_user(), _subscribe("alice", "rss_a"), tag])
+        session.flush()
+        weak = _seed_article(session, 1, source="rss_a", score=9.5)
+        primary = _seed_article(session, 2, source="rss_a", score=6.0)
+        for number in range(3, 9):
+            _seed_article(session, number, source="rss_a", score=7.0)
+        session.flush()
+        _assign_topic(session, weak, tag, relevance=0.4)
+        _assign_topic(session, primary, tag, relevance=0.3, primary=True)
+        _follow(session, "alice", tag)
+        session.commit()
+
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        lanes = {item.article_id: item.selection_lane for item in result.items}
+        assert lanes["article-01"] == "quality"   # 弱指派:仍入选,但不算命中
+        assert lanes["article-02"] == "interest"  # 主标签:命中
+
+
+def test_external_knobs_are_read_from_kv(storage):
+    from services.personal_digest import EXTERNAL_MIN_SCORE_KEY, EXTERNAL_PER_SOURCE_MAX_KEY, selection_policy
+
+    with Session(storage.engine) as session:
+        assert selection_policy(session).external_min_quality_score == 6.0
+        assert selection_policy(session).external_per_source_max == 2
+        session.add(AppSettingRecord(key=EXTERNAL_MIN_SCORE_KEY, value="7.5"))
+        session.add(AppSettingRecord(key=EXTERNAL_PER_SOURCE_MAX_KEY, value="9"))  # 越界钳到上限 5
+        session.commit()
+        policy = selection_policy(session)
+        assert policy.external_min_quality_score == 7.5
+        assert policy.external_per_source_max == 5

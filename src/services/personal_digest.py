@@ -30,6 +30,9 @@ from models.analysis_contracts import (
     PERSONAL_DIGEST_BREAKING_MIN_SCORE,
     PERSONAL_DIGEST_BREAKING_SUPPRESS_EDITIONS,
     PERSONAL_DIGEST_BREAKING_WINDOW_HOURS,
+    PERSONAL_DIGEST_EXTERNAL_MIN_QUALITY_SCORE,
+    PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX,
+    PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX_LIMIT,
     PERSONAL_DIGEST_FALLBACK_WINDOW_HOURS,
     PERSONAL_DIGEST_LATEST_FALLBACK_LIMIT,
     PERSONAL_DIGEST_WINDOW_HOURS,
@@ -64,10 +67,14 @@ from services.digest_selection import (
     BREAKING_SECTION,
     BreakingSelectionPolicy,
     DigestSelectionPolicy,
+    eligible_for_selection,
+    interest_codes_of,
+    interest_only_policy,
     section_for_genre,
     select_breaking_events,
     select_digest_articles,
 )
+from services.reader_interests import INTEREST_MATCH_MIN_RELEVANCE
 from services.source_naming import friendly_source_name, source_role
 
 
@@ -82,6 +89,9 @@ PERSONAL_DIGEST_ENABLED_KEY = "personal_digest_enabled"
 # 「重大事件」通道旋钮(v3.50):阈值与条数存 KV,0 条 = 关闭通道;窗口/印证来源数是常量。
 BREAKING_MIN_SCORE_KEY = "personal_digest_breaking_min_score"
 BREAKING_MAX_ITEMS_KEY = "personal_digest_breaking_max_items"
+# v3.53「订阅 ∪ 兴趣」(issue #33 §3 前置):订阅外兴趣候选的门槛与每源硬上限,管理面 KV 旋钮
+EXTERNAL_MIN_SCORE_KEY = "personal_digest_external_min_score"
+EXTERNAL_PER_SOURCE_MAX_KEY = "personal_digest_external_per_source_max"
 # 会开新同日 revision 的原因。interest_changed/subscription_changed 自 v3.51.1 起不再由
 # 读者面写入(兴趣/订阅变更只记录,下次编排生效),保留是为历史版本与服务契约兼容;
 # subscription_changed 仍用于管理员下架来源的全员重编。
@@ -174,6 +184,31 @@ def _setting_value(session: Session, key: str) -> str | None:
         return None
     value = str(record.value or "").strip()
     return value or None
+
+
+def selection_policy(session: Session) -> DigestSelectionPolicy:
+    """Read the「订阅 ∪ 兴趣」knobs from KV; bad/missing values fall back to defaults."""
+
+    external_min = PERSONAL_DIGEST_EXTERNAL_MIN_QUALITY_SCORE
+    external_cap = PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX
+    raw_min = _setting_value(session, EXTERNAL_MIN_SCORE_KEY)
+    if raw_min is not None:
+        try:
+            external_min = min(10.0, max(0.0, float(raw_min)))
+        except ValueError:
+            pass
+    raw_cap = _setting_value(session, EXTERNAL_PER_SOURCE_MAX_KEY)
+    if raw_cap is not None:
+        try:
+            external_cap = min(
+                PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX_LIMIT, max(1, int(float(raw_cap)))
+            )
+        except ValueError:
+            pass
+    return DigestSelectionPolicy(
+        external_min_quality_score=external_min,
+        external_per_source_max=external_cap,
+    )
 
 
 def breaking_policy(session: Session) -> BreakingSelectionPolicy:
@@ -714,6 +749,34 @@ def _tag_maps(
     )
 
 
+def _followed_codes(interests: Iterable[UserInterestDTO]) -> set[str]:
+    return {
+        item.tag_code for item in interests
+        if getattr(item.stance, "value", item.stance) == InterestStance.FOLLOW.value
+    }
+
+
+def _qualifying_interest_codes(
+    tag_snapshots: Mapping[str, Sequence[Mapping[str, object]]],
+    article_ids: Iterable[str],
+) -> dict[str, tuple[str, ...]]:
+    """article_id → codes whose assignment qualifies as an interest hit.
+
+    v3.53:与阅读器兴趣透镜同一尺(``reader_interests``)——只认主标签或相关度 ≥
+    ``INTEREST_MATCH_MIN_RELEVANCE`` 的指派;屏蔽仍看全集(选篇层用 tag_codes)。
+    """
+
+    result: dict[str, tuple[str, ...]] = {}
+    for article_id in article_ids:
+        codes = {
+            str(item["code"]) for item in tag_snapshots.get(article_id, [])
+            if bool(item.get("is_primary"))
+            or float(item.get("relevance") or 0.0) >= INTEREST_MATCH_MIN_RELEVANCE
+        }
+        result[article_id] = tuple(sorted(codes))
+    return result
+
+
 def _topic_codes_by_article(
     session: Session, article_ids: Sequence[str]
 ) -> dict[str, tuple[str, ...]]:
@@ -745,8 +808,15 @@ def _query_candidate_rows(
     window_hours: int,
     require_tagging_complete: bool,
     min_score: float | None = None,
+    interest_tag_codes: Sequence[str] | None = None,
+    exclude_source_ids: Sequence[str] = (),
 ) -> list[tuple[ArticleRecord, ArticleAnalysisRecord]]:
-    """Shared window query.  ``source_ids=None`` means every non-private source."""
+    """Shared window query.  ``source_ids=None`` means every non-private source.
+
+    ``interest_tag_codes`` narrows to articles with a qualifying assignment(primary
+    or relevance ≥ ``INTEREST_MATCH_MIN_RELEVANCE``)for one of those codes——the
+    全站 interest pool must be bounded in SQL, not loaded and filtered in Python.
+    """
 
     cutoff = _as_shanghai(cutoff_at)
     since = cutoff - dt.timedelta(hours=window_hours)
@@ -775,8 +845,28 @@ def _query_candidate_rows(
             ArticleRecord.source_id.not_like(f"{PRIVATE_SOURCE_PREFIX}%"),
             ArticleRecord.source_id != PUBLIC_DAILY_BRIEF_SOURCE_ID,
         )
+    if exclude_source_ids:
+        query = query.where(ArticleRecord.source_id.notin_(sorted(set(exclude_source_ids))))
     if min_score is not None:
         query = query.where(ArticleAnalysisRecord.quality_score >= min_score)
+    if interest_tag_codes is not None:
+        codes = sorted({str(code) for code in interest_tag_codes if code})
+        if not codes:
+            return []
+        qualifying = (
+            select(ArticleTagAssignmentRecord.id)
+            .join(CmsTagRecord, CmsTagRecord.id == ArticleTagAssignmentRecord.tag_id)
+            .where(
+                ArticleTagAssignmentRecord.article_id == ArticleRecord.id,
+                CmsTagRecord.status == TagStatus.ACTIVE.value,
+                CmsTagRecord.code.in_(codes),
+                or_(
+                    ArticleTagAssignmentRecord.is_primary.is_(True),
+                    ArticleTagAssignmentRecord.relevance >= INTEREST_MATCH_MIN_RELEVANCE,
+                ),
+            )
+        )
+        query = query.where(exists(qualifying))
     if require_tagging_complete:
         query = query.where(
             ArticleAnalysisRecord.tagging_status.in_((
@@ -833,6 +923,32 @@ def _source_role_and_shape(
     return result
 
 
+def _reader_visible_rows(
+    session: Session,
+    rows: Sequence[tuple[ArticleRecord, ArticleAnalysisRecord]],
+) -> list[tuple[ArticleRecord, ArticleAnalysisRecord]]:
+    """Drop hidden(reader-side takedown)and owner-scoped private sources.
+
+    共享给重大事件池与订阅外兴趣池:两者都是跨订阅的全读者池,私有内容一条不能漏出。
+    ``user_rss_`` 前缀已在 SQL 排除;这里补第二判据——非该前缀但带 owner_username 的
+    存量/导入自定源(与 resolve_personal_digest_source_ids 同口径)。
+    """
+
+    if not rows:
+        return []
+    hidden = source_visibility.reader_unavailable_source_ids(session)
+    owner_scoped = set(session.exec(
+        select(SourceConfigRecord.source_id).where(
+            SourceConfigRecord.owner_username.is_not(None),
+            SourceConfigRecord.owner_username != "",
+        )
+    ).all())
+    return [
+        row for row in rows
+        if row[0].source_id not in hidden and row[0].source_id not in owner_scoped
+    ]
+
+
 def load_digest_candidates(
     session: Session,
     source_ids: Sequence[str],
@@ -840,8 +956,9 @@ def load_digest_candidates(
     cutoff_at: dt.datetime,
     window_hours: int,
     require_tagging_complete: bool = False,
+    followed_codes: Iterable[str] | None = None,
 ) -> list[DigestArticleCandidateDTO]:
-    """Bulk-load succeeded analyses inside the requested window."""
+    """Bulk-load succeeded analyses inside the requested window(subscribed pool)."""
 
     if not source_ids:
         return []
@@ -852,7 +969,41 @@ def load_digest_candidates(
         window_hours=window_hours,
         require_tagging_complete=require_tagging_complete,
     )
-    return _candidates_from_rows(session, rows)
+    return _candidates_from_rows(session, rows, followed_codes=followed_codes)
+
+
+def load_interest_candidates(
+    session: Session,
+    *,
+    followed_codes: Iterable[str],
+    exclude_source_ids: Iterable[str],
+    cutoff_at: dt.datetime,
+    window_hours: int,
+    min_score: float,
+    require_tagging_complete: bool = False,
+) -> list[DigestArticleCandidateDTO]:
+    """v3.53「订阅 ∪ 兴趣」:the outside-subscription interest pool.
+
+    全站可见源 ∩ 命中兴趣标签(主标签或相关度过线)∩ 分数 ≥ 订阅外门槛,减去订阅源本身
+    (它们走 load_digest_candidates 的订阅池)、私有源、隐藏源与公共日报记录。返回的候选
+    带 ``subscribed=False``,选篇层据此只让它们进兴趣通道并套硬上限。
+    """
+
+    codes = sorted({str(code) for code in followed_codes if code})
+    if not codes:
+        return []
+    rows = _query_candidate_rows(
+        session,
+        source_ids=None,
+        cutoff_at=cutoff_at,
+        window_hours=window_hours,
+        require_tagging_complete=require_tagging_complete,
+        min_score=min_score,
+        interest_tag_codes=codes,
+        exclude_source_ids=tuple(exclude_source_ids),
+    )
+    rows = _reader_visible_rows(session, rows)
+    return _candidates_from_rows(session, rows, followed_codes=codes, subscribed=False)
 
 
 def load_breaking_candidates(
@@ -879,19 +1030,7 @@ def load_breaking_candidates(
         require_tagging_complete=require_tagging_complete,
         min_score=min_score,
     )
-    hidden = source_visibility.reader_unavailable_source_ids(session)
-    # 私有源的第二个判据:非 user_rss_ 前缀但带 owner_username 的存量/导入自定源,与
-    # resolve_personal_digest_source_ids 同口径——头条池是全读者共享的,私有内容一条不能漏出
-    owner_scoped = set(session.exec(
-        select(SourceConfigRecord.source_id).where(
-            SourceConfigRecord.owner_username.is_not(None),
-            SourceConfigRecord.owner_username != "",
-        )
-    ).all())
-    rows = [
-        row for row in rows
-        if row[0].source_id not in hidden and row[0].source_id not in owner_scoped
-    ]
+    rows = _reader_visible_rows(session, rows)
     meta = _source_role_and_shape(session, (article.source_id for article, _analysis in rows))
     return _candidates_from_rows(session, rows, source_meta=meta)
 
@@ -901,9 +1040,16 @@ def _candidates_from_rows(
     rows: Sequence[tuple[ArticleRecord, ArticleAnalysisRecord]],
     *,
     source_meta: Mapping[str, tuple[str, str]] | None = None,
+    followed_codes: Iterable[str] | None = None,
+    subscribed: bool = True,
 ) -> list[DigestArticleCandidateDTO]:
     article_ids = [article.id for article, _analysis in rows]
-    tag_codes, _tag_snapshots = _tag_maps(session, article_ids)
+    tag_codes, tag_snapshots = _tag_maps(session, article_ids)
+    # 兴趣命中判据(v3.53):只认主标签或相关度过线的指派;followed_codes=None 时不算(旧口径全集)
+    interest_codes = (
+        _qualifying_interest_codes(tag_snapshots, article_ids)
+        if followed_codes is not None else None
+    )
     primary_ids = {
         analysis.primary_tag_id for _article, analysis in rows
         if analysis.primary_tag_id is not None
@@ -947,6 +1093,10 @@ def _candidates_from_rows(
             duplicate_group_id=duplicate_groups.get(article.id),
             source_role=role,
             content_shape=shape,
+            subscribed=subscribed,
+            interest_tag_codes=(
+                interest_codes.get(article.id, ()) if interest_codes is not None else None
+            ),
         ))
     return candidates
 
@@ -1118,6 +1268,7 @@ def _snapshot(
     display_tags: Sequence[dict[str, object]] | None = None,
     selection_reason: str,
     degraded: bool,
+    subscribed: bool = True,
 ) -> dict[str, object]:
     return {
         "article_id": article.id,
@@ -1138,6 +1289,8 @@ def _snapshot(
         "display_tags": list(display_tags if display_tags is not None else tags),
         "selection_reason": selection_reason,
         "is_latest_update": degraded,
+        # v3.53:是否在读者订阅面内(订阅外兴趣命中 / 订阅外头条为 False);快照事实,不随后来的订阅变
+        "subscribed": subscribed,
     }
 
 
@@ -1262,7 +1415,8 @@ def start_personal_digest_edition(
         as_of=current,
         scheduled_source_ids=scheduled_source_ids,
     )
-    if not scope.expected_source_ids:
+    # v3.53「订阅 ∪ 兴趣」:订阅为空但设了兴趣,仍出报(只有兴趣半);两者都空才走空订阅分支
+    if not scope.expected_source_ids and not _followed_codes(_load_interests(session, username)):
         # v3.51.1(issue #33 §5):退订到一个来源都不剩,今日已有的版本仍是不可变快照——
         # 普通打开(first_open)复用它并由 scope_stale 提示「下次编排生效」;只有显式
         # 重编/定时/系统触发才把当日版本清成 empty_subscriptions。
@@ -1675,7 +1829,8 @@ def generate_personal_digest(
     ``edition_freshness`` flags until the reader rebuilds or the next scheduled run.
     """
 
-    policy = policy or DigestSelectionPolicy()
+    # 订阅外门槛 / 每源硬上限走管理面 KV(v3.53);显式传入 policy 的调用方(测试)不受影响
+    policy = policy or selection_policy(session)
     current = _as_shanghai(now)
     report_date = report_date or current.date().isoformat()
     reason = str(getattr(generation_reason, "value", generation_reason))
@@ -1727,7 +1882,15 @@ def generate_personal_digest(
         scope = frozen_scope or freeze_personal_digest_scope(
             session, username, as_of=current, scheduled_source_ids=scheduled_source_ids
         )
-    if not scope.expected_source_ids:
+    interests = (
+        _deserialize_interests(pending_edition.interest_snapshot_json)
+        if pending_edition is not None
+        else _load_interests(session, username)
+    )
+    followed_codes = _followed_codes(interests)
+    # v3.53「订阅 ∪ 兴趣」:订阅为空但设了兴趣 → 只出兴趣半(interest_only);两者都空才空报
+    interest_only = not scope.expected_source_ids
+    if interest_only and not followed_codes:
         return PersonalDigestGenerationResult(status="empty_subscriptions", edition=None)
     if pending_edition is None and not force_new_revision and reason not in REBUILD_REASON_VALUES:
         existing = _latest_completed_edition(session, username, report_date)
@@ -1737,62 +1900,66 @@ def generate_personal_digest(
                 edition=existing,
                 items=_items_for_edition(session, existing.id),
             )
+    if interest_only:
+        policy = interest_only_policy(policy)
 
-    interests = (
-        _deserialize_interests(pending_edition.interest_snapshot_json)
-        if pending_edition is not None
-        else _load_interests(session, username)
-    )
     tag_display_names = _interest_display_names(session, interests)
-    source_display_names = _source_display_names(session, scope.expected_source_ids)
     previous_article_ids = _previous_edition_article_ids(session, username, report_date)
     has_mutes = any(
         getattr(item.stance, "value", item.stance) == InterestStance.MUTE.value
         for item in interests
     )
-    candidates = load_digest_candidates(
-        session,
-        scope.expected_source_ids,
-        cutoff_at=current,
-        window_hours=PERSONAL_DIGEST_WINDOW_HOURS,
-        require_tagging_complete=has_mutes,
-    )
-    candidates = [
-        candidate for candidate in candidates
-        if candidate.article_id not in previous_article_ids
-    ]
-    selections = select_digest_articles(
-        candidates,
-        interests,
-        policy=policy,
-        topic_codes_by_article=_topic_codes_by_article(
-            session, [candidate.article_id for candidate in candidates]
-        ),
-        tag_display_names=tag_display_names,
-        source_display_names=source_display_names,
-    )
-    if len(selections) < policy.target_items:
-        candidates = load_digest_candidates(
+
+    def _load_union(window_hours: int) -> list[DigestArticleCandidateDTO]:
+        """订阅池(兴趣 + 质量两通道)∪ 订阅外兴趣池(只进兴趣通道),排除前一日已用条目。"""
+
+        pool = load_digest_candidates(
             session,
             scope.expected_source_ids,
             cutoff_at=current,
-            window_hours=PERSONAL_DIGEST_FALLBACK_WINDOW_HOURS,
+            window_hours=window_hours,
             require_tagging_complete=has_mutes,
+            followed_codes=followed_codes,
         )
-        candidates = [
-            candidate for candidate in candidates
-            if candidate.article_id not in previous_article_ids
-        ]
-        selections = select_digest_articles(
-            candidates,
+        if followed_codes:
+            pool.extend(load_interest_candidates(
+                session,
+                followed_codes=followed_codes,
+                exclude_source_ids=scope.expected_source_ids,
+                cutoff_at=current,
+                window_hours=window_hours,
+                min_score=policy.external_min_quality_score,
+                require_tagging_complete=has_mutes,
+            ))
+        return [candidate for candidate in pool if candidate.article_id not in previous_article_ids]
+
+    def _select(pool: Sequence[DigestArticleCandidateDTO]):
+        return select_digest_articles(
+            pool,
             interests,
             policy=policy,
             topic_codes_by_article=_topic_codes_by_article(
-                session, [candidate.article_id for candidate in candidates]
+                session, [candidate.article_id for candidate in pool]
             ),
             tag_display_names=tag_display_names,
             source_display_names=source_display_names,
         )
+
+    candidate_window_hours = PERSONAL_DIGEST_WINDOW_HOURS
+    candidates = _load_union(candidate_window_hours)
+    source_display_names = _source_display_names(
+        session,
+        sorted(set(scope.expected_source_ids) | {candidate.source_id for candidate in candidates}),
+    )
+    selections = _select(candidates)
+    if len(selections) < policy.target_items:
+        candidate_window_hours = PERSONAL_DIGEST_FALLBACK_WINDOW_HOURS
+        candidates = _load_union(candidate_window_hours)
+        source_display_names = _source_display_names(
+            session,
+            sorted(set(scope.expected_source_ids) | {candidate.source_id for candidate in candidates}),
+        )
+        selections = _select(candidates)
 
     # 「重大事件」通道(v3.50):跨订阅范围的头条位,额外于 target 之上。空订阅早已在
     # 上方返回,所以这里永远是「在已有早报之上加头条」,不是「无订阅也出报」。
@@ -1830,16 +1997,7 @@ def generate_personal_digest(
     had_own_selections = bool(selections)
     if promoted_ids.intersection(selection.article_id for selection in selections):
         remaining = [candidate for candidate in candidates if candidate.article_id not in promoted_ids]
-        selections = select_digest_articles(
-            remaining,
-            interests,
-            policy=policy,
-            topic_codes_by_article=_topic_codes_by_article(
-                session, [candidate.article_id for candidate in remaining]
-            ),
-            tag_display_names=tag_display_names,
-            source_display_names=source_display_names,
-        )
+        selections = _select(remaining)
 
     generated_at = current.isoformat()
     first_open = _as_shanghai(first_open_at) if first_open_at else None
@@ -1853,18 +2011,14 @@ def generate_personal_digest(
     selection_degraded = not had_own_selections
     degraded_reason: str | None = None
     if selection_degraded:
-        followed_codes = {
-            item.tag_code for item in interests
-            if getattr(item.stance, "value", item.stance) == InterestStance.FOLLOW.value
-        }
         muted_codes = {
             item.tag_code for item in interests
             if getattr(item.stance, "value", item.stance) == InterestStance.MUTE.value
         }
+        followed_map = {code: 1 for code in followed_codes}
         qualified_interest_exists = any(
-            candidate.quality_score >= policy.min_quality_score
-            and not muted_codes.intersection(candidate.tag_codes)
-            and bool(followed_codes.intersection(candidate.tag_codes))
+            eligible_for_selection(candidate, policy=policy, muted=muted_codes, followed=followed_map)
+            and bool(followed_codes.intersection(interest_codes_of(candidate)))
             for candidate in candidates
         )
         degraded_reason = (
@@ -1872,6 +2026,33 @@ def generate_personal_digest(
             if qualified_interest_exists
             else "no_qualified_content"
         )
+    # v3.53(issue #33 §3):选篇统计,页面「编排说明行」的事实来源;只记事实不参与判定
+    subscribed_set = set(scope.expected_source_ids)
+    candidate_by_id = {candidate.article_id: candidate for candidate in candidates}
+    own_selections = list(selections) if had_own_selections else []
+    selection_stats = {
+        "candidate_count": len(candidates),
+        "subscribed_candidate_count": sum(1 for candidate in candidates if candidate.subscribed),
+        "external_candidate_count": sum(1 for candidate in candidates if not candidate.subscribed),
+        "window_hours": candidate_window_hours,
+        "followed_count": len(followed_codes),
+        "muted_count": sum(
+            1 for item in interests
+            if getattr(item.stance, "value", item.stance) == InterestStance.MUTE.value
+        ),
+        "selected_count": len(own_selections),
+        "interest_hits": sum(1 for selection in own_selections if selection.matched_interest_codes),
+        "external_hits": sum(
+            1 for selection in own_selections
+            if selection.matched_interest_codes
+            and selection.article_id in candidate_by_id
+            and not candidate_by_id[selection.article_id].subscribed
+        ),
+        "breaking_count": len(breaking_selections),
+        "interest_only": interest_only,
+        "external_min_score": policy.external_min_quality_score,
+        "external_per_source_max": policy.external_per_source_max,
+    }
     revision = (
         pending_edition.revision
         if pending_edition is not None
@@ -1890,6 +2071,7 @@ def generate_personal_digest(
         "sync_stale": bool(sync_stale),
         "analysis_incomplete": bool(analysis_incomplete),
         "degraded_reason": degraded_reason,
+        "selection_stats_json": _json(selection_stats),
         "error": None,
         "updated_at": generated_at,
         "generation_token": None,
@@ -2022,6 +2204,7 @@ def generate_personal_digest(
                     display_tags=breaking_display_tags.get(article.id, []),
                     selection_reason=selection.selection_reason,
                     degraded=False,
+                    subscribed=article.source_id in subscribed_set,
                 )),
                 created_at=generated_at,
             )
@@ -2052,6 +2235,7 @@ def generate_personal_digest(
             analysis = analyses.get(selection.article_id)
             if article is None or analysis is None:
                 continue
+            in_scope = article.source_id in subscribed_set
             record = PersonalDigestItemRecord(
                 edition_id=edition.id,
                 article_id=article.id,
@@ -2060,7 +2244,10 @@ def generate_personal_digest(
                 selection_lane=str(getattr(selection.lane, "value", selection.lane)),
                 quality_score_snapshot=analysis.quality_score,
                 matched_interest_codes_json=_json(list(selection.matched_interest_codes)),
-                ranking_features_json=_json({"policy_version": POLICY_VERSION}),
+                ranking_features_json=_json({
+                    "policy_version": POLICY_VERSION,
+                    "subscribed": in_scope,
+                }),
                 coverage_adjustments_json=_json(list(selection.coverage_adjustments)),
                 selection_reason=selection.selection_reason,
                 snapshot_json=_json(_snapshot(
@@ -2071,6 +2258,7 @@ def generate_personal_digest(
                     display_tags=display_tags.get(article.id, []),
                     selection_reason=selection.selection_reason,
                     degraded=False,
+                    subscribed=in_scope,
                 )),
                 created_at=generated_at,
             )
@@ -2084,14 +2272,11 @@ def generate_personal_digest(
             limit=PERSONAL_DIGEST_LATEST_FALLBACK_LIMIT,
             excluded_article_ids=previous_article_ids,
         )
-        followed_codes = {
-            item.tag_code for item in interests
-            if getattr(item.stance, "value", item.stance) == InterestStance.FOLLOW.value
-        }
         for position, (article, analysis, codes, tags, display_tags) in enumerate(
             latest, start=len(item_records)
         ):
-            matched_codes = tuple(sorted(followed_codes.intersection(codes)))
+            qualifying = _qualifying_interest_codes({article.id: tags}, [article.id])[article.id]
+            matched_codes = tuple(sorted(followed_codes.intersection(qualifying)))
             lane = (
                 SelectionLane.INTEREST.value
                 if matched_codes
@@ -2166,9 +2351,13 @@ def generate_personal_digest(
 __all__ = [
     "BREAKING_MAX_ITEMS_KEY",
     "BREAKING_MIN_SCORE_KEY",
+    "EXTERNAL_MIN_SCORE_KEY",
+    "EXTERNAL_PER_SOURCE_MAX_KEY",
     "FrozenDigestScope",
     "breaking_policy",
+    "selection_policy",
     "load_breaking_candidates",
+    "load_interest_candidates",
     "PersonalDigestGenerationResult",
     "calculate_due_source_ids",
     "freeze_personal_digest_scope",

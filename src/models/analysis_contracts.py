@@ -180,6 +180,13 @@ PERSONAL_DIGEST_INTEREST_MAX_RATIO = 0.5
 # 新闻价值尺子下(v3.48)博客/教程/观点落 4～6 分,7.0 会让博客订阅者的早报常态为空;
 # 5.0 只挡边角与营销,兴趣/质量两通道同门槛。
 PERSONAL_DIGEST_MIN_QUALITY_SCORE = 5.0
+# v3.53(issue #33 §3 前置,「订阅 ∪ 兴趣」):兴趣半的候选池不再被订阅面截断——全站可见源里命中
+# 兴趣标签的文章也能进兴趣半;订阅外没有「你明说信任」这层背书,门槛用公共日报的入选线 6.0,
+# 且每源每期硬上限 2 条(HF Daily Papers 一类高产源一天几十篇,不设上限兴趣半会被一家占满)。
+# 订阅内仍 5.0、每源软上限(不足时逐级放宽)。两枚都是管理面 KV 旋钮(见 personal_digest)。
+PERSONAL_DIGEST_EXTERNAL_MIN_QUALITY_SCORE = 6.0
+PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX = 2
+PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX_LIMIT = 5
 PERSONAL_DIGEST_WINDOW_HOURS = 36
 PERSONAL_DIGEST_FALLBACK_WINDOW_HOURS = 72
 PERSONAL_DIGEST_LATEST_FALLBACK_LIMIT = 5
@@ -258,6 +265,12 @@ class DigestArticleCandidateDTO(ContractModel):
     # 订阅域选篇不读这两项,默认值保持既有 DTO 构造不变。
     source_role: str = "media"
     content_shape: str = "article"
+    # v3.53「订阅 ∪ 兴趣」:是否在读者的订阅面内。订阅外候选只能走兴趣通道、门槛与每源上限
+    # 另算;默认 True 保持既有构造与订阅域语义不变。
+    subscribed: bool = True
+    # 兴趣命中判据用的标签码(主标签或相关度过线的指派,与阅读器兴趣透镜同一尺);None = 回退到
+    # tag_codes 全集(旧调用方/纯策略测试)。屏蔽仍看 tag_codes 全集——宁漏放勿误放。
+    interest_tag_codes: Optional[tuple[str, ...]] = None
 
 
 class UserInterestDTO(ContractModel):

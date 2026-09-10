@@ -7,7 +7,11 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from api import deps
-from models.analysis_contracts import PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT
+from models.analysis_contracts import (
+    PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT,
+    PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX_LIMIT,
+    PERSONAL_DIGEST_MIN_QUALITY_SCORE,
+)
 from models.db import AppSettingRecord, TagRetagJobRecord
 from services import analysis_backfill as backfill_service
 from services import daily_brief as daily_brief_service
@@ -32,11 +36,18 @@ class AnalysisFeatureFlagsPatch(BaseModel):
     personal_digest_breaking_max_items: int | None = Field(
         default=None, ge=0, le=PERSONAL_DIGEST_BREAKING_MAX_ITEMS_LIMIT
     )
+    # v3.53 个人早报「订阅 ∪ 兴趣」旋钮:订阅外兴趣候选的新闻价值门槛(0～10)与每源每期硬上限(1～上限)。
+    personal_digest_external_min_score: float | None = Field(default=None, ge=0.0, le=10.0)
+    personal_digest_external_per_source_max: int | None = Field(
+        default=None, ge=1, le=PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX_LIMIT
+    )
 
 
 _BREAKING_KEYS = {
     "personal_digest_breaking_min_score": personal_digest_service.BREAKING_MIN_SCORE_KEY,
     "personal_digest_breaking_max_items": personal_digest_service.BREAKING_MAX_ITEMS_KEY,
+    "personal_digest_external_min_score": personal_digest_service.EXTERNAL_MIN_SCORE_KEY,
+    "personal_digest_external_per_source_max": personal_digest_service.EXTERNAL_PER_SOURCE_MAX_KEY,
 }
 
 
@@ -69,6 +80,25 @@ def _breaking(session: Session) -> dict[str, Any]:
     }
 
 
+def _selection(session: Session) -> dict[str, Any]:
+    policy = personal_digest_service.selection_policy(session)
+    return {
+        "min_score": PERSONAL_DIGEST_MIN_QUALITY_SCORE,
+        "external_min_score": policy.external_min_quality_score,
+        "external_per_source_max": policy.external_per_source_max,
+        "external_per_source_max_limit": PERSONAL_DIGEST_EXTERNAL_PER_SOURCE_MAX_LIMIT,
+        "interest_slots": policy.interest_slots,
+    }
+
+
+def _config_payload(session: Session) -> dict[str, Any]:
+    return {
+        "feature_flags": _flags(session),
+        "personal_digest_breaking": _breaking(session),
+        "personal_digest_selection": _selection(session),
+    }
+
+
 def _actor(auth: dict[str, Any]) -> str:
     return str(auth.get("sub") or auth.get("username") or auth.get("user") or "admin")
 
@@ -91,7 +121,7 @@ def _domain_error(exc: backfill_service.AnalysisBackfillError) -> HTTPException:
 
 @router.get("/config")
 def get_config(session: Session = Depends(deps.get_session)):
-    return {"feature_flags": _flags(session), "personal_digest_breaking": _breaking(session)}
+    return _config_payload(session)
 
 
 @router.put("/config")
@@ -109,7 +139,7 @@ def update_config(
             row.value = "true" if value else "false"
         session.add(row)
     session.commit()
-    return {"feature_flags": _flags(session), "personal_digest_breaking": _breaking(session)}
+    return _config_payload(session)
 
 
 @router.get("/metrics")

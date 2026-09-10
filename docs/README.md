@@ -57,6 +57,10 @@
 - ◉ [personal-brief-title-localization.md](./personal-brief-title-localization.md) — **个人早报标题中文化(issue #33 §4,v3.52.1)**:
   条目快照补 `title_zh`,来源按成本 译名缓存 → 公共日报 title_cn → 编排后批量翻译(aux、20s 预算、写回缓存);
   中文不译不画副标题、失败回退原标题、不并入分析调用;卡片中文主标题 + 英文原题副行。
+- ◉ [personal-brief-interest-union.md](./personal-brief-interest-union.md) — **个人早报「订阅 ∪ 兴趣」+ 页面体现个性化(issue #33 §3,v3.53.0)**:
+  兴趣半候选池扩到全站可见源(订阅外门槛 6.0 / 每源硬上限 2,管理面旋钮;订阅内命中排前;订阅空但有兴趣只出兴趣半);
+  页面加编排说明行(哆啦美身份 + 「从 N 个来源和 K 个兴趣 · M 篇里选出 P 篇」,§5 三条提示并入尾句)、
+  选篇理由四词进卡头右侧、订阅外卡挂「未订阅」;`selection_stats_json` 入库。
 - ◉ [personal-brief-rebuild-entrypoints.md](./personal-brief-rebuild-entrypoints.md) — **个人早报重编入口收口(issue #33 §5,v3.51.1)**:
   兴趣/订阅变更只记录不触发重编,重编只剩手动与次日定时;今日端点 `interest_stale`/`scope_stale`
   驱动「下次编排生效 · 立即重编」提示;系统侧保留公共日报就绪与管理员下架两处维护性触发。

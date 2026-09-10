@@ -373,6 +373,24 @@ def test_admin_can_tune_personal_digest_breaking_lane(monkeypatch, tmp_path):
         assert client.put(
             "/api/admin/analysis/config", json={"personal_digest_breaking_min_score": 11}
         ).status_code == 422
+        # v3.53「订阅 ∪ 兴趣」旋钮同端点:默认 6.0 / 2,可改,越界 422
+        assert updated.json()["personal_digest_selection"] == {
+            "min_score": 5.0,
+            "external_min_score": 6.0,
+            "external_per_source_max": 2,
+            "external_per_source_max_limit": 5,
+            "interest_slots": 5,
+        }
+        tuned = client.put(
+            "/api/admin/analysis/config",
+            json={"personal_digest_external_min_score": 6.5, "personal_digest_external_per_source_max": 3},
+        )
+        assert tuned.status_code == 200, tuned.text
+        assert tuned.json()["personal_digest_selection"]["external_min_score"] == 6.5
+        assert tuned.json()["personal_digest_selection"]["external_per_source_max"] == 3
+        assert client.put(
+            "/api/admin/analysis/config", json={"personal_digest_external_per_source_max": 0}
+        ).status_code == 422
 
 
 def test_synced_taxonomy_is_read_only_on_internal_node(monkeypatch, tmp_path):
@@ -1044,6 +1062,22 @@ def test_interest_and_subscription_edits_only_flag_today_edition_stale(monkeypat
         assert reopened["edition"]["id"] == rebuilt["id"]
         assert reopened["edition"]["scope_stale"] is True
         assert client.get("/api/reader/briefs/today").json()["edition"]["id"] == rebuilt["id"]
+        # v3.53「订阅 ∪ 兴趣」:订阅清空但兴趣还在 → 显式重编出「只有兴趣半」的一版
+        # (两篇都命中 topic-agents 且 ≥ 订阅外门槛 6.0,全部标 subscribed=False),不再是空报
+        interest_only = client.post("/api/reader/briefs/today/rebuild").json()
+        assert interest_only["status"] in {"ready", "degraded"}
+        edition_io = interest_only["edition"]
+        assert edition_io["expected_source_ids"] == []
+        assert edition_io["selection_stats"]["interest_only"] is True
+        assert edition_io["selection_stats"]["external_hits"] == 2
+        assert {item["selection_lane"] for item in edition_io["items"]} == {"interest"}
+        assert all(item["snapshot"]["subscribed"] is False for item in edition_io["items"])
+        assert edition_io["scope_stale"] is False
+        # 兴趣也清空 → 才是 empty_subscriptions
+        cleared = client.put(
+            "/api/reader/interests", json={"items": [], "complete_onboarding": True}
+        )
+        assert cleared.status_code == 200, cleared.text
         emptied = client.post("/api/reader/briefs/today/rebuild").json()
         assert emptied["status"] == "empty_subscriptions" and emptied["edition"] is None
         assert client.get("/api/reader/briefs/today").json()["status"] == "not_started"
