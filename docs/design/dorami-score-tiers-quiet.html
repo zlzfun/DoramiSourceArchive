@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>新闻价值分按分值着色 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   新闻价值分按分值着色(issue #54)· 静默仪器样页 · 一稿 · 2026-09-10
+
+   现状:条目列 .reader-entry-score / 早报卡 .brief-card-score / 速读卡里程表数字 三处全挂同一 AI 渐变,
+   9.2 与 4.5 视觉分量完全一样,分数只能靠读数字才有信息。
+
+   本稿:分数**按值分档**着色——越高越鲜明,越低越灰暗,低于「灰线」后退成与旁边元信息同一个灰(faint),
+   不再有身份色。做法:渐变两个端色(--ai-g1/--ai-g2)各自向 --dorami-faint 做 color-mix,混合比按档位递增;
+   灰线以下不画渐变、直接取 faint。渐变仍是 AI 身份(v3.33「见渐变即 AI」),只是「有渐变 = 值得看」本身成了信息。
+
+   · 档位而非连续插值(默认):一列里能读出档;连续映射在页里也可切来对比。
+   · 灰线默认 6.0(= 公共日报入选线 daily_brief_min_score,读者可对照「为什么这条没进日报」),5.0 备选。
+   · 数字字号/字重/字体一律不动:只改颜色。低分仍显示数字,不隐藏(v3.46:缺分是缺席,低分是事实)。
+   · 「分析中」占位样式不变。管理面台账不上渐变(无 AI 身份纪律),可复用同一档位助手改 ink 混合。
+   · 亮暗自动翻转:混合的是各主题自己的 faint 与端色。
+   拍板(2026-09-10,用户放权自主定):灰线 6.0 / 分档 / 陡峭(0/30/60/85)——与页内默认一致;
+   落地 utils/analysis.scoreTierClass + index.css `.ai-grad-text.is-score-*`,v3.53.0。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --font-serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif;
+  --serif-num: Charter, Cambria, Baskerville, var(--font-serif);
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc; --dorami-well: #f1f5f9;
+  --dorami-wash: rgba(91, 84, 232, 0.08);
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-soft: rgba(11, 18, 32, 0.06);
+  --dorami-edge: rgba(255, 255, 255, 0.62);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px;
+  --ai-g1: #3f7bf6; --ai-g2: #8b52f4;
+  --grad-ai-wash: linear-gradient(118deg, rgba(63, 123, 246, 0.09), rgba(139, 82, 244, 0.10));
+  --rd-list-bg: var(--dorami-soft); --rd-pane-bg: var(--dorami-surface);
+  --amber: #d97706;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26; --dorami-surface: #20252f;
+  --dorami-wash: rgba(124, 112, 235, 0.13);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-soft: rgba(255, 255, 255, 0.07);
+  --dorami-edge: rgba(255, 255, 255, 0.05);
+  --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --ai-g1: #6ea3ff; --ai-g2: #ab86ff;
+  --grad-ai-wash: linear-gradient(118deg, rgba(110, 163, 255, 0.11), rgba(171, 134, 255, 0.12));
+  --rd-list-bg: var(--dorami-well); --rd-pane-bg: var(--dorami-soft);
+  --amber: #fbbf24;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { background: #dfe3ea; }
+body { color: var(--dorami-ink); font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased; padding: 28px 24px 60px; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+
+/* ── 页首:说明 + 控件 ── */
+.hd { max-width: 1240px; margin: 0 auto 18px; color: #0b1220; }
+.hd h1 { font-family: var(--font-serif); font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+.hd p { font-size: 12.5px; color: #5b6678; max-width: 900px; }
+.ctl { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 14px; align-items: center; }
+.ctl-g { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: #5b6678; }
+.seg { display: inline-flex; background: rgba(11,18,32,.06); border-radius: 8px; padding: 2px; }
+.seg button { padding: 3px 10px; border-radius: 6px; font-size: 12px; color: #5b6678; }
+.seg button.is-on { background: #fff; color: #0b1220; box-shadow: 0 1px 2px rgba(11,18,32,.12); }
+
+/* ── 档位表(说明用) ── */
+.tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 14px; max-width: 1240px; margin-left: auto; margin-right: auto; }
+.tier { background: #fff; border-radius: 10px; padding: 10px 12px; box-shadow: 0 1px 2px rgba(11,18,32,.08); display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.tier small { font-size: 11px; color: #5b6678; letter-spacing: .04em; }
+.tier .sc { font-size: 22px; }
+
+/* ── 两栏:亮 / 暗 ── */
+.themes { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1240px; margin: 20px auto 0; }
+@media (max-width: 980px) { .themes { grid-template-columns: 1fr; } }
+.theme { background: var(--dorami-canvas); color: var(--dorami-ink); border-radius: 16px; padding: 18px; box-shadow: 0 1px 3px rgba(11,18,32,.15); }
+.theme h2 { font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--dorami-faint); margin-bottom: 12px; }
+.blk { margin-bottom: 22px; }
+.blk-t { font-size: 11px; color: var(--dorami-faint); letter-spacing: .06em; margin-bottom: 8px; }
+
+/* ═══ 分数着色核心(本稿唯一新增的 CSS 语义)═══
+   --sc-mix: 端色向 faint 的混合比(0%=纯渐变 … 100%=faint);.is-below: 灰线以下,纯 faint 不画渐变。 */
+.sc {
+  font-family: var(--serif-num);
+  font-variant-numeric: lining-nums tabular-nums;
+  background: linear-gradient(118deg,
+    color-mix(in oklab, var(--ai-g1), var(--dorami-faint) var(--sc-mix, 0%)),
+    color-mix(in oklab, var(--ai-g2), var(--dorami-faint) var(--sc-mix, 0%)));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.sc.is-below { background: none; color: var(--dorami-faint); }
+
+/* ── 条目列(.reader-entry 复刻,只画顶行 + 标题 + 摘要) ── */
+.list { background: var(--rd-list-bg); border-radius: 12px; padding: 6px 8px; }
+.entry { position: relative; display: block; width: 100%; text-align: left; padding: 9px 10px 10px; border-radius: 10px; }
+.entry + .entry { margin-top: 2px; }
+.entry:hover { background: var(--dorami-surface); box-shadow: var(--sh-1); }
+.entry.is-read .e-title { color: var(--dorami-ink-2); }
+.e-top { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--dorami-faint); }
+.e-logo { width: 15px; height: 15px; border-radius: 4px; background: var(--dorami-well); border: 1px solid var(--dorami-border-soft); display: inline-flex; align-items: center; justify-content: center; font-size: 9px; color: var(--dorami-muted); }
+.e-src { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.e-tag { flex: none; padding: .5px 5px; border: 1px solid var(--dorami-border); border-radius: 4px; font-size: 10px; letter-spacing: .06em; color: var(--dorami-faint); }
+.e-hit { flex: none; padding: .5px 6px; border-radius: 999px; background: var(--dorami-wash); color: var(--dorami-accent-ink); font-size: 10px; letter-spacing: .04em; }
+.e-score { flex: none; margin-left: auto; min-width: 2.4em; text-align: right; font-size: 13px; font-weight: 600; line-height: 1; letter-spacing: -.01em; }
+.e-score.is-pending { font-family: inherit; font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--dorami-faint); background: none; }
+.e-score + .e-time { margin-left: 3px; }
+.e-time { flex: none; margin-right: 8px; white-space: nowrap; }
+.e-titlerow { display: flex; align-items: flex-start; gap: 6px; margin-top: 4px; padding-right: 24px; }
+.e-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--dorami-accent); margin-top: 7px; }
+.e-dot.is-off { background: transparent; }
+.e-title { font-size: 14px; font-weight: 600; line-height: 1.4; color: var(--dorami-ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.e-ex { margin-top: 3px; padding-left: 12px; font-size: 12px; color: var(--dorami-muted); display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.e-fav { position: absolute; top: 34px; right: 10px; color: var(--amber); font-size: 13px; }
+
+/* ── 早报卡 ── */
+.bgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.bcard { background: var(--dorami-surface); border-radius: var(--r-card); padding: 14px 16px; box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge); }
+.bcard.is-lead { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 150px; gap: 20px; }
+.b-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.b-src { display: inline-flex; align-items: center; gap: 7px; min-width: 0; font-size: 12px; font-weight: 500; color: var(--dorami-muted); }
+.b-score { flex: none; font-size: 22px; font-weight: 700; line-height: 1; }
+.is-lead .b-score { font-size: 40px; }
+.b-title { display: block; margin-top: 8px; font-family: var(--font-serif); font-size: 16px; font-weight: 700; line-height: 1.4; color: var(--dorami-ink); }
+.is-lead .b-title { font-size: 22px; line-height: 1.3; }
+.b-orig { display: block; margin-top: 3px; font-family: var(--font-serif); font-size: 12px; color: var(--dorami-muted); }
+.b-sum { margin-top: 8px; font-size: 12.5px; line-height: 1.65; color: var(--dorami-ink-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.b-aside { display: flex; flex-direction: column; gap: 12px; padding-left: 24px; border-left: 1px solid var(--dorami-border-soft); }
+.b-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+.chip { padding: 1px 7px; border-radius: 999px; border: 1px solid var(--dorami-border); font-size: 10.5px; color: var(--dorami-muted); }
+.chip.is-interest { border-color: transparent; background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+.b-time { font-size: 11px; color: var(--dorami-faint); }
+
+/* ── 速读卡(AiReadingCard 复刻,静态) ── */
+.ai-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ai { display: grid; grid-template-columns: 60px 1fr; gap: 14px; padding: 14px 16px; border-radius: 12px; background: var(--grad-ai-wash); }
+.ai-num { display: flex; align-items: center; justify-content: center; font-size: 38px; font-weight: 700; line-height: 1; }
+.ai-k { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--dorami-accent-ink); }
+.ai-b { margin-top: 4px; font-size: 13px; line-height: 1.7; color: var(--dorami-ink-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+.note { max-width: 1240px; margin: 22px auto 0; font-size: 12px; color: #5b6678; line-height: 1.7; }
+.note b { color: #0b1220; }
+</style>
+</head>
+<body>
+
+<div class="hd">
+  <h1>新闻价值分按分值着色 · 一稿</h1>
+  <p>分数越高渐变越鲜明,越低越向元信息灰靠拢;灰线以下不再有身份色,与旁边的来源名 / 时间同一个 faint 灰。字号、字重、字体、位置全部不动,只改颜色。下面控件可切换方案对比,拍板后按所选写进 <code>utils/analysis.js</code>(档位助手)与 <code>index.css</code>(档位 class)。</p>
+  <div class="ctl">
+    <div class="ctl-g">灰线
+      <div class="seg" id="ctl-line">
+        <button data-v="6" class="is-on">6.0(日报入选线)</button>
+        <button data-v="5">5.0(早报硬底)</button>
+        <button data-v="0">不设(全部渐变)</button>
+      </div>
+    </div>
+    <div class="ctl-g">映射
+      <div class="seg" id="ctl-map">
+        <button data-v="tier" class="is-on">分档(灰线上 4 档)</button>
+        <button data-v="cont">连续插值</button>
+      </div>
+    </div>
+    <div class="ctl-g">档间跨度
+      <div class="seg" id="ctl-steep">
+        <button data-v="soft">平缓(0 / 20 / 45 / 70)</button>
+        <button data-v="hard" class="is-on">陡峭(0 / 30 / 60 / 85)</button>
+      </div>
+    </div>
+  </div>
+  <div class="tiers" id="tiers"></div>
+</div>
+
+<div class="themes">
+  <section class="theme" data-theme="light"><h2>亮色</h2><div class="demo"></div></section>
+  <section class="theme" data-theme="dark"><h2>暗色</h2><div class="demo"></div></section>
+</div>
+
+<div class="note">
+  <b>三处读者面触点同一套档位</b>:条目列 13px / 早报卡 22–40px / 速读卡 38px。大字号下低档灰会显得「暗」,这是意图——低分的大数字不该比旁边正文还响。<br>
+  <b>灰线以下仍显示数字</b>:缺分是「缺席」(不画),低分是事实(画,但退到元信息音量)。「分析中」占位不变。<br>
+  <b>管理面台账</b>不上渐变(无 AI 身份纪律),同一档位助手改成向 ink 混合即可,本稿不画。<br>
+  <b>实现要点</b>:两端色各自 <code>color-mix(in oklab, var(--ai-g1), var(--dorami-faint) N%)</code>,不能对渐变整体 filter(会连 wash 底一起变);混合的是各主题自己的令牌,暗色自动翻转。
+</div>
+
+<script>
+const ENTRIES = [
+  { src: 'Anthropic', logo: 'A', tag: '官方', hit: '兴趣 · Claude', score: 9.4, time: '2 小时前', unread: true, title: 'Claude Fable 5.1 正式发布:Mythos 级能力面向所有开发者开放', ex: '新模型在 agentic 编码、长程规划与多模态理解上全面超越 Opus 5,API 同日上线。' },
+  { src: '量子位', logo: '量', tag: '媒体', score: 8.6, time: '3 小时前', unread: true, title: 'DeepSeek V4 开源权重放出,推理成本再降六成', ex: '官方 GitHub 与 HuggingFace 同步放出 MoE 权重,社区首日复现基准。' },
+  { src: 'OpenAI', logo: 'O', tag: '官方', score: 7.8, time: '5 小时前', unread: true, fav: true, title: 'Codex CLI 0.160 支持多仓库工作区与并行子代理', ex: '本次更新面向大型单体仓库,子代理可各自持有独立 worktree。' },
+  { src: 'IT之家 AI', logo: 'IT', tag: '媒体', score: 7.2, time: '6 小时前', unread: false, title: '苹果被曝洽谈接入第三方模型为 Siri 提供摘要能力', ex: '知情人士称谈判仍在早期,涉及多家头部实验室。' },
+  { src: 'Sean Goedecke', logo: 'S', tag: '观点', score: 6.4, time: '昨天', unread: false, title: '为什么大厂里的 AI 项目总在第三个月死掉', ex: '不是模型不行,是没人负责把它塞进既有流程。' },
+  { src: 'HF Daily Papers', logo: 'HF', tag: '论文', score: 5.8, time: '昨天', unread: false, title: 'Sparse Mixture of Latent Experts for Long-Context Retrieval', ex: '在 128k 上下文检索任务上比稠密基线提升 3.1 个点。' },
+  { src: 'Import AI', logo: 'I', tag: '通讯', score: 5.1, time: '昨天', unread: false, title: 'Import AI 428:合成数据的收益递减曲线', ex: '本期回顾三篇关于合成数据规模效应的工作。' },
+  { src: 'Meta AI', logo: 'M', tag: '官方', score: 4.3, time: '2 天前', unread: false, title: 'Meta 在欧洲七国上线 AI 助手的语音功能', ex: '区域上线,功能与美区一致。' },
+  { src: 'Kimi Research', logo: 'K', tag: '', score: null, pending: true, time: '2 天前', unread: true, title: 'Kimi K3 技术报告:面向 Agent 的长程记忆架构', ex: '' },
+];
+const BRIEFS = [
+  { lead: true, src: 'Anthropic', score: 9.4, title: 'Claude Fable 5.1 正式发布', orig: 'Introducing Claude Fable 5.1', sum: 'Mythos 级能力首次面向所有开发者开放,agentic 编码与长程规划显著领先;API、Claude Code 与桌面端同日更新。', chips: ['兴趣 · Claude', 'Anthropic', '模型发布'], time: '2 小时前' },
+  { src: 'OpenAI', score: 7.8, title: 'Codex CLI 支持多仓库工作区', orig: 'Codex CLI 0.160: multi-repo workspaces', sum: '面向大型单体仓库,子代理各自持有独立 worktree。', chips: ['OpenAI', '编码工具'], time: '5 小时前' },
+  { src: 'HF Daily Papers', score: 5.6, title: '面向长上下文检索的稀疏潜专家混合', orig: 'Sparse Mixture of Latent Experts', sum: '在 128k 上下文检索上比稠密基线提升 3.1 个点;常规论文,按新闻价值补足入选。', chips: ['论文', '检索'], time: '昨天' },
+];
+const CARDS = [
+  { score: 9.4, k: 'AI 速读', b: 'Anthropic 发布 Claude Fable 5.1,Mythos 级能力首次面向所有开发者开放;agentic 编码、长程规划与多模态理解全面领先 Opus 5。' },
+  { score: 7.2, k: 'AI 速读', b: '苹果被曝洽谈接入第三方模型为 Siri 提供摘要能力,谈判仍在早期;传闻类按上限 5.9 之上一档给分。' },
+  { score: 5.8, k: 'AI 速读', b: '一篇常规论文:在 128k 上下文检索任务上比稠密基线提升 3.1 个点,无开源权重,未引发广泛讨论。' },
+  { score: 4.3, k: 'AI 速读', b: 'Meta AI 助手语音功能在欧洲七国上线,区域上线且功能与美区一致——外围产品更新。' },
+];
+
+const state = { line: 6, map: 'tier', steep: 'hard' };
+const STEPS = { soft: [0, 20, 45, 70], hard: [0, 30, 60, 85] };
+
+// 档位助手(将来落到 utils/analysis.js 的 scoreTier):灰线之上按 (10 - line) 等分 4 档
+function tierOf(score) {
+  const line = state.line;
+  if (line > 0 && score < line) return { below: true, mix: 100, tier: 0 };
+  const lo = line > 0 ? line : 4;               // 不设灰线时按 4–10 铺
+  const span = 10 - lo;
+  if (state.map === 'cont') {
+    const t = Math.min(1, Math.max(0, (score - lo) / span));
+    const mixMax = STEPS[state.steep][3];
+    return { below: false, mix: Math.round((1 - t) * mixMax), tier: 1 + Math.round(t * 3) };
+  }
+  const idx = Math.min(3, Math.floor(((score - lo) / span) * 4));   // 0..3 从低到高
+  const steps = STEPS[state.steep];
+  return { below: false, mix: steps[3 - idx], tier: idx + 1 };
+}
+function scoreHtml(score, cls) {
+  const t = tierOf(score);
+  const val = Number.isInteger(score) ? String(score) : score.toFixed(1);
+  return `<span class="sc ${cls} ${t.below ? 'is-below' : ''}" style="--sc-mix:${t.mix}%" title="新闻价值分 ${val} · 档 ${t.tier}">${val}</span>`;
+}
+
+function renderDemo(root) {
+  root.innerHTML = `
+    <div class="blk"><div class="blk-t">条目列 · 13px</div><div class="list">${ENTRIES.map((e) => `
+      <div class="entry ${e.unread ? '' : 'is-read'}">
+        <div class="e-top">
+          <span class="e-logo">${e.logo}</span><span class="e-src">${e.src}</span>
+          ${e.hit ? `<span class="e-hit">${e.hit}</span>` : ''}
+          ${e.tag && !e.hit ? `<span class="e-tag">${e.tag}</span>` : ''}
+          ${e.pending ? '<span class="e-score is-pending">分析中</span>' : scoreHtml(e.score, 'e-score')}
+          <span class="e-time">${e.time}</span>
+        </div>
+        <div class="e-titlerow"><span class="e-dot ${e.unread ? '' : 'is-off'}"></span><span class="e-title">${e.title}</span></div>
+        ${e.ex ? `<div class="e-ex">${e.ex}</div>` : ''}
+        ${e.fav ? '<span class="e-fav">★</span>' : ''}
+      </div>`).join('')}</div></div>
+    <div class="blk"><div class="blk-t">早报卡 · 头条 40px / 普通 22px</div><div class="bgrid">${BRIEFS.map((b) => b.lead ? `
+      <div class="bcard is-lead">
+        <div>
+          <div class="b-head"><span class="b-src"><span class="e-logo">${b.src[0]}</span>${b.src}</span></div>
+          <span class="b-title">${b.title}</span><span class="b-orig">${b.orig}</span>
+          <div class="b-sum">${b.sum}</div>
+        </div>
+        <div class="b-aside">${scoreHtml(b.score, 'b-score')}
+          <div class="b-chips">${b.chips.map((c, i) => `<span class="chip ${i === 0 ? 'is-interest' : ''}">${c}</span>`).join('')}</div>
+          <span class="b-time">${b.time}</span>
+        </div>
+      </div>` : `
+      <div class="bcard">
+        <div class="b-head"><span class="b-src"><span class="e-logo">${b.src[0]}</span>${b.src}</span>${scoreHtml(b.score, 'b-score')}</div>
+        <span class="b-title">${b.title}</span><span class="b-orig">${b.orig}</span>
+        <div class="b-sum">${b.sum}</div>
+        <div class="b-chips">${b.chips.map((c) => `<span class="chip">${c}</span>`).join('')}</div>
+      </div>`).join('')}</div></div>
+    <div class="blk"><div class="blk-t">速读卡 · 38px</div><div class="ai-row">${CARDS.map((c) => `
+      <div class="ai"><div class="ai-num">${scoreHtml(c.score, '')}</div><div><div class="ai-k">${c.k}</div><div class="ai-b">${c.b}</div></div></div>`).join('')}</div></div>`;
+}
+function renderTiers() {
+  const samples = [9.6, 8.7, 7.9, 6.8, 5.9, 4.4, 3.2];
+  document.getElementById('tiers').innerHTML = samples.map((s) => {
+    const t = tierOf(s);
+    return `<div class="tier"><small>${t.below ? '灰线以下 · faint' : `档 ${t.tier} · 混 ${t.mix}%`}</small>${scoreHtml(s, '')}</div>`;
+  }).join('');
+}
+function renderAll() { document.querySelectorAll('.demo').forEach(renderDemo); renderTiers(); }
+function bindSeg(id, key, cast) {
+  const el = document.getElementById(id);
+  el.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button'); if (!b) return;
+    el.querySelectorAll('button').forEach((x) => x.classList.toggle('is-on', x === b));
+    state[key] = cast ? cast(b.dataset.v) : b.dataset.v;
+    renderAll();
+  });
+}
+bindSeg('ctl-line', 'line', Number); bindSeg('ctl-map', 'map'); bindSeg('ctl-steep', 'steep');
+renderAll();
+</script>
+</body>
+</html>

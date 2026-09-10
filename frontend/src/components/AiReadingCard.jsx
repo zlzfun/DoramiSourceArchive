@@ -3,6 +3,7 @@ import {
   podcastAnalysisBasis,
   podcastAssessmentMeta,
   qualityScoreText,
+  scoreTierClass,
   SCORE_DISCLAIMER,
 } from '../utils/analysis';
 
@@ -34,6 +35,7 @@ export default function AiReadingCard({ article, summary, summarizing, canGenera
     ? 'AI 基于完整逐字稿分析，关键结论可回到原节目时间码核验'
     : 'AI 基于节目简介的初步评估，尚未分析完整音频，仅用于辅助筛选');
   const score = article?.quality_score != null ? qualityScoreText(article.quality_score) : '';
+  const scoreTier = scoreTierClass(article?.quality_score);   // issue #54:档位挂在每位数字自身(渐变落在元素自身)
   const reason = (article?.score_reason || '').trim();
   const [showReason, setShowReason] = useState(false);
 
@@ -58,6 +60,7 @@ export default function AiReadingCard({ article, summary, summarizing, canGenera
           <ScoreFigure
             key={article.id}
             score={score}
+            tierClass={scoreTier}
             interactive={canFlip}
             pressed={showReason}
             onToggle={() => setShowReason((v) => !v)}
@@ -108,7 +111,7 @@ function prefersReducedMotion() {
 }
 
 /** 衬线渐变大数字:里程表式入场(每位数字在定宽格内滑到位),点按在摘要/评分依据间切换。 */
-function ScoreFigure({ score, interactive, pressed, onToggle }) {
+function ScoreFigure({ score, tierClass = '', interactive, pressed, onToggle }) {
   const reduced = prefersReducedMotion();
   // 先以 0 挂载,下一帧再落到目标值,让 CSS transition 接管滑动;减少动画时直落。
   const [armed, setArmed] = useState(reduced);
@@ -130,7 +133,7 @@ function ScoreFigure({ score, interactive, pressed, onToggle }) {
     >
       <span className="reader-ai-odo" aria-hidden="true">
         {score.split('').map((ch, i) => {
-          if (ch === '.') return <span key={i} className="reader-ai-odo-dot ai-grad-text">.</span>;
+          if (ch === '.') return <span key={i} className={`reader-ai-odo-dot ai-grad-text ${tierClass}`}>.</span>;
           const target = armed ? Number(ch) : 0;
           const order = digitIndex++;
           return (
@@ -139,7 +142,7 @@ function ScoreFigure({ score, interactive, pressed, onToggle }) {
                 className="reader-ai-odo-strip"
                 style={{ transform: `translateY(${-target * 1.2}em)`, transitionDelay: `${order * 220}ms` }}
               >
-                {DIGITS.map((d) => <span key={d} className="reader-ai-odo-digit ai-grad-text">{d}</span>)}
+                {DIGITS.map((d) => <span key={d} className={`reader-ai-odo-digit ai-grad-text ${tierClass}`}>{d}</span>)}
               </span>
             </span>
           );

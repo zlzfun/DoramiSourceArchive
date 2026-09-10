@@ -97,7 +97,7 @@ export default function MobileReader({
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
-    mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover,
+    mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     bulletinView, socialView, podcastView, listTitle, listSubtitle,
     goView, goSource, goTag, goFavorites,
     scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
@@ -148,9 +148,11 @@ export default function MobileReader({
     if (!onboardingRequired || onboardingOpenedRef.current) return;
     onboardingOpenedRef.current = true;
     setDiscoverTab('interests');
-    openDiscover();
+    openDiscover({ shape: 'all' });
   }, [onboardingRequired, openDiscover]);
-  const openInterests = useCallback(() => { setDiscoverTab('interests'); openDiscover(); }, [openDiscover]);
+  const openInterests = useCallback(() => { setDiscoverTab('interests'); openDiscover({ shape: 'all' }); }, [openDiscover]);
+  // 「发现更多来源」入口落「源」段(段位粘性,见桌面 ReaderTab 同名函数注释);形态:抽屉=当前容器,「我的」=全部
+  const openDiscoverSources = useCallback((opts) => { setDiscoverTab('sources'); openDiscover(opts); }, [openDiscover]);
   // 兴趣页保存回调经 ref 读最新的 discover(PUT 在途时读者可能已走开,闭包值陈旧——codex 检视 P2)
   const discoverRef = useRef(discover);
   useEffect(() => { discoverRef.current = discover; }, [discover]);
@@ -322,7 +324,7 @@ export default function MobileReader({
             interestVersion={interestVersion}
             restore={briefRestore}
             supersedePendingOpen={supersedePendingOpen}
-            onManageSubscriptions={() => openDiscover()}
+            onManageSubscriptions={() => openDiscover({ shape: 'all' })}
             onOpenArticle={async (articleId, ctx) => {
               const opened = await openArticleById(articleId, { silent: true });
               if (!opened) return opened;
@@ -340,7 +342,7 @@ export default function MobileReader({
             themePref={themePref}
             onSetTheme={onSetTheme}
             onShowFavorites={() => { goFavorites(); setTab(mode); }}
-            onOpenDiscover={() => openDiscover()}
+            onOpenDiscover={() => openDiscoverSources({ shape: 'all' })}
             onManageInterests={personalDigestEnabled ? openInterests : undefined}
             interestAttention={onboardingRequired}
             onOpenSettings={onOpenSettings}
@@ -413,7 +415,7 @@ export default function MobileReader({
               <div className="reader-empty reader-empty-tall">
                 <Compass className="h-7 w-7 text-slate-300" />
                 <span>你还没有订阅任何来源</span>
-                <button type="button" className="action-button action-button-primary" onClick={openDiscover}>
+                <button type="button" className="action-button action-button-primary" onClick={() => openDiscoverSources()}>
                   去发现来源
                 </button>
               </div>
@@ -563,6 +565,8 @@ export default function MobileReader({
               onAddCustomSource={handleAddCustomSource}
               tab={discoverTab}
               onTabChange={setDiscoverTab}
+              shape={discoverShape}
+              onShapeChange={setDiscoverShape}
               interestsPanel={personalDigestEnabled ? (
                 <InterestPage
                   mobile
@@ -621,7 +625,7 @@ export default function MobileReader({
         hasInterests={hasInterests}
         onOpenInterests={openInterests}
         goSource={goSource}
-        onOpenDiscover={openDiscover}
+        onOpenDiscover={() => openDiscoverSources()}
         onSourcePress={openSourceSheet}
       />
 

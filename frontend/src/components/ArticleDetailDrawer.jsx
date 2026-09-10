@@ -9,6 +9,7 @@ import {
   podcastAssessmentMeta,
   podcastFullProcessingMeta,
   qualityScoreText,
+  scoreTierClass,
   SCORE_DISCLAIMER,
 } from '../utils/analysis';
 import AnalysisTagChip from './AnalysisTagChip';
@@ -123,7 +124,7 @@ export default function ArticleDetailDrawer({
                 {hasAnalysis ? (
                   <div className="reader-analysis-summary">
                     <div className="reader-analysis-top">
-                      {score && <span className="reader-analysis-score"><strong>{score}</strong><small>新闻价值</small></span>}
+                      {score && <span className={`reader-analysis-score ${scoreTierClass(article?.quality_score)}`}><strong>{score}</strong><small>新闻价值</small></span>}
                       {podcastAssessment && <span className="stamp stamp-idle" role="status">{podcastAssessment.label}</span>}
                       {(analysisTags.length > 0 || article.content_genre) && <span className="reader-analysis-tags">
                         {analysisTags.map((tag, index) => (
