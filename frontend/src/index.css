@@ -11684,6 +11684,7 @@ input[type="radio"] {
 .brief-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: stretch; }
 /* 作用域限定在 .brief-grid 之下(codex 检视):管理台日报面板也叫 surface-card.brief-card(280px 双栏),不可被读者卡规则覆盖 */
 .brief-grid .brief-card {
+  position: relative; /* 标题按钮的拉伸覆盖层以卡片为定位基准(v3.54:卡片由 <button> 改为容器) */
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -11725,6 +11726,12 @@ input[type="radio"] {
 /* 评分:衬线齐线数字 + AI 渐变(见渐变即 AI,与速读卡同一身份);渐变落在数字元素自身 */
 .brief-card-score { flex: none; font-family: Charter, Cambria, Baskerville, var(--font-serif); font-size: 22px; font-weight: 700; line-height: 1; font-variant-numeric: lining-nums tabular-nums; }
 .brief-grid .brief-card.is-lead .brief-card-score { font-size: 28px; }
+/* 标题按钮 = 卡片唯一的「打开」控件:::after 拉伸盖满整卡(点卡任意处即打开,与旧 <button> 卡观感一致);
+   聚焦环画在卡片上而不是标题文字上(:has 由 Chrome 105+/Safari 15.4+ 支持,项目基线之内)。 */
+.brief-card-open { display: block; width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.brief-card-open::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
+.brief-card-open:focus-visible { outline: none; } /* 本区未分层,压得住全局 button:focus-visible;环由下一条画在卡片上 */
+.brief-grid .brief-card:has(.brief-card-open:focus-visible) { box-shadow: 0 0 0 2px var(--dorami-focus), var(--sh-1), inset 0 1px 0 var(--dorami-edge); }
 .brief-card-title { display: block; font-family: var(--font-serif); font-size: 17px; font-weight: 700; line-height: 1.4; color: var(--dorami-ink); }
 .brief-grid .brief-card.is-lead .brief-card-title { font-size: 24px; line-height: 1.3; }
 /* 原标题副行(v3.52.1):中文译名当主标题后,英文原题降一档挂在其下——与阅读窗 .reader-pane-title-orig 同语 */
@@ -11741,6 +11748,91 @@ input[type="radio"] {
 .reader-tag-chip.is-interest::before { content: ''; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: currentColor; }
 /* 重大事件 chip(v3.50):同族形制,accent 墨色加粗 + 细描边,与「兴趣」的小点区分;不引第二饱和色 */
 .reader-tag-chip.is-breaking { color: var(--dorami-accent-ink); font-weight: 600; box-shadow: inset 0 0 0 1px currentColor; }
+
+/* ── 编排说明行(v3.54,issue #33 §3):报头 hairline 之下、正文之上的一行「为什么」——
+   渐变星 + 渐变「哆啦美」是 AI 身份(全站唯一渐变 = AI 触点,与速读卡/问答同族),其后是事实句
+   「从你订阅的 N 个来源和 K 个兴趣 · M 篇里选出 P 篇,x 篇命中你的兴趣」,右端「调整兴趣」文字链。
+   §5 的「兴趣已更新」、来源/分析未完成、重编排队三条提示行并入本行尾句,一次只显一条。
+   音量与报头 sub 同档(13px/ink-2),数字加粗只为扫读;操作件保持 solid accent,不上渐变。 ── */
+.brief-byline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-height: 40px;
+  margin-top: 4px;
+  padding: 8px 0 10px;
+  border-bottom: 1px solid var(--dorami-border-soft);
+  font-size: 13px;
+  color: var(--dorami-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.brief-byline-id { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.brief-byline-id svg { width: 15px; height: 15px; stroke: url(#ai-grad) var(--dorami-accent); }
+.brief-byline-name { font-weight: 700; font-size: 12.5px; letter-spacing: 0.02em; }
+/* 事实句吃弹性:窄面上与身份标记同行、句内折行,而不是整句掉到第二行 */
+.brief-byline-text { flex: 1 1 240px; min-width: 0; }
+.brief-byline-text b { font-weight: 600; color: var(--dorami-ink); }
+.brief-byline-act {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--dorami-accent-ink);
+  cursor: pointer;
+}
+.brief-byline-act svg { width: 13px; height: 13px; }
+.brief-byline-act:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* 尾句三态:stale(兴趣/订阅已更新,accent)/ partial(来源/分析未完成,warn)/ queued(重编排队,accent)。
+   样页画的是同一行换尾句;实测 1440 宽下事实句 + 尾句 + 动作链放不进一行,flex-wrap 会把动作链甩到第二行右缘,
+   位置随文案长短跳——改为尾句固定占第二行、左对齐到事实句文字起点(order 排在动作链之后),
+   第一行永远是「身份 · 事实句 · 调整兴趣」,布局不随内容条件变化。 */
+.brief-byline-tail {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  order: 2;
+  width: 100%;
+  padding-left: 21px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--dorami-accent-ink);
+}
+.brief-byline-tail svg { width: 13px; height: 13px; }
+.brief-byline.is-partial .brief-byline-tail { color: var(--state-warn); }
+.brief-byline-tail .brief-note-act { margin-left: 0; }
+/* 窄面(容器 < 720)与移动壳:动作链也落到第三行,左对齐到文字起点 */
+@container (max-width: 720px) {
+  .brief-byline-act { order: 3; margin-left: 0; width: 100%; justify-content: flex-start; padding-left: 21px; }
+}
+
+/* ── 卡头右侧:选篇理由(元信息档,v3.54 issue #33 §3)——四个词回答同一个问题「它为什么在这」:
+   兴趣 · 标签(accent + 实点,沿 is-interest 语法)/ 重大事件 · 官方一手 | N 家来源(accent + 闪电)/
+   新闻价值入选(faint)/ 最新更新(faint,降级版面)。脚部 chip 自此只答「讲什么」(单轴)。
+   普通卡里理由跟在来源名后、分数仍在右缘;通栏卡分数在右栏,理由独占头行右侧。 ── */
+.brief-card-why { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); white-space: nowrap; letter-spacing: 0.01em; }
+.brief-card-why.is-interest, .brief-card-why.is-breaking { color: var(--dorami-accent-ink); font-weight: 600; }
+.brief-card-why.is-interest::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.brief-card-why svg { width: 12px; height: 12px; }
+.brief-card-why-sep { width: 1px; height: 10px; background: var(--dorami-border); flex: none; }
+.brief-card-src .brief-card-why { margin-left: 2px; }
+/* 订阅外标记(v3.54「订阅 ∪ 兴趣」):源名后 faint「未订阅」,悬停卡片翻成 accent「+ 订阅」——沿条目列 .reader-entry-unsub 同语 */
+.brief-card-unsub { position: relative; z-index: 1; flex: none; padding: 0 3px; border: 0; background: none; font: inherit; font-size: 10.5px; letter-spacing: 0.04em; color: var(--dorami-faint); white-space: nowrap; cursor: pointer; border-radius: 4px; }
+.brief-card-unsub::before { content: '未订阅'; }
+.brief-grid .brief-card:hover .brief-card-unsub, .brief-card-unsub:focus-visible { color: var(--dorami-accent-ink); }
+.brief-grid .brief-card:hover .brief-card-unsub::before, .brief-card-unsub:focus-visible::before { content: '+ 订阅'; }
+.brief-card-unsub:hover { background: var(--dorami-wash); }
+@container (max-width: 720px) {
+  .brief-card-head { flex-wrap: wrap; row-gap: 4px; }
+}
 
 .brief-state {
   min-height: 320px;

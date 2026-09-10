@@ -1625,6 +1625,10 @@ class PersonalDigestEditionRecord(SQLModel, table=True):
     analysis_incomplete: bool = Field(default=False, sa_column_kwargs={"server_default": text("0")})
     degraded_reason: Optional[str] = Field(default=None)
     error: Optional[str] = Field(default=None)
+    # v3.54(issue #33 §3):编排时一次写入的选篇统计——候选总数(订阅内/外)、窗口小时数、
+    # 兴趣数、命中数、头条数;页面「编排说明行」据此说「从 N 个来源和 K 个兴趣 · M 篇里选出 P 篇」。
+    # 历史版本为 NULL 时前端省略「M 篇里」;只是展示事实,不参与任何选篇判定。
+    selection_stats_json: Optional[str] = Field(default=None)
     created_at: str
     updated_at: str
 

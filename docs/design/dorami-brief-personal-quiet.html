@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>我的早报 · 个性化与智能化触点 · 静默仪器样页</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   我的早报 · 体现「个性化 / 智能化」(issue #33 §3)· 静默仪器样页 · 2026-09-10 · 一稿
+
+   问题:早报页已是四带 + 卡片式日报,但整页看上去和一个普通列表没有区别——读者感知不到「这是为我编的」。
+   拍板前提(issue §3):触点只用 edition 既有字段,零新调用;AI 身份只上身份标记(渐变),操作件保持 solid accent;
+   不做欢迎卡式啰嗦文案(v3.22 已否决);§5 的「兴趣已更新」提示行并入本页的说明头。
+
+   三处改动,一条主线——**把「为什么」说出来**:
+   ① **编排说明行**(报头之下、正文之上,一行):渐变星 + 渐变「哆啦美」字头是 AI 身份(全站唯一渐变 = AI 触点,
+      与速读卡/问答同族),其后是事实句「从你订阅的 12 个来源 · 86 篇里选出 10 篇,3 篇命中你的兴趣」,
+      右端一枚文字链「调整兴趣 ↗」(深链发现页兴趣段,兴趣回路)。三态同一行:正常 / 兴趣或订阅已更新
+      (§5:「你的兴趣已更新,下次编排生效 · 立即重编」)/ 编排时来源或分析未完成(原 brief-note 警示行并入,
+      不再另起一行)。报头 kicker「我的早报 · 第 1 版 · 09:01 生成」与 sub「N 篇精选 · …」保留原位。
+   ② **选篇理由进卡头右侧**:卡头行左边一直是来源,右边此前空着——理由是元信息档(三档音量的最轻档),
+      落在这里不给卡片加行。词汇只有四个,回答同一个问题「它为什么在这」:
+        兴趣 · Agent(accent + 实点,沿 is-interest 语法) / 重大事件 · 官方一手 | 3 家来源(accent) /
+        新闻价值入选(faint) / 最新更新(faint,降级版面)。
+      原脚部 chip 行里的「兴趣 · X」「重大事件」两枚**迁到这里不再重复**——脚部 chip 自此只剩主题标签
+      (conventions §4.1.1 单轴:头行右侧答「为什么」,脚部答「讲什么」,两个问题不再混在一条 chip 行里)。
+   ③ **移动壳同源**:说明行折成两行(身份句 / 动作链),卡头右侧理由照旧;报头 sub 不变。
+
+   数据契约(拍板项):说明行里的「M 篇候选」edition 目前不存——选篇时 candidates 只在内存;要它就在
+   personal_digest_editions 加一列 selection_stats_json(candidate_count / window_hours / interest_hits /
+   breaking_count,生成时一次写入,历史版本无值则说明行省略「M 篇里」);不要它则句式退成「从你订阅的
+   12 个来源里选出 10 篇」。其余字段(来源数 = expected_source_ids,K = items,x = matched_interest_codes,
+   理由 = selection_lane + matched_interest_codes + breaking.basis/source_count + is_latest_update)全部现成。
+   纪律:饱和色仍只在 kicker/兴趣命中/重大事件;渐变只上身份(星 + 字头);token 化,暗色自动翻转;
+   动效零新增。文章为 dev 库真实快照(标题为 §4 的中文译名 + 英文原题副行)。
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  font-family: "PingFang SC", "SF Pro Display", "SF Pro Text", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif;
+  --serif-num: Charter, Cambria, Baskerville, var(--font-serif);
+  --dorami-blue: #5b54e8; --dorami-blue-2: #7b6cf0;
+  --dorami-accent: #5b54e8; --dorami-accent-ink: #4a43d4;
+  --dorami-ink: #0b1220; --dorami-ink-2: #2b3445;
+  --dorami-muted: #5b6678; --dorami-faint: #64748b;
+  --dorami-canvas: #eef1f6; --dorami-surface: #ffffff; --dorami-soft: #f8fafc;
+  --dorami-wash: rgba(91, 84, 232, 0.08); --dorami-well: #f1f5f9;
+  --dorami-border: rgba(11, 18, 32, 0.09); --dorami-border-soft: rgba(11, 18, 32, 0.06);
+  --dorami-card-bd: transparent; --dorami-edge: rgba(255, 255, 255, 0.62);
+  --sh-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --sh-2: 0 1px 3px rgba(11, 18, 32, 0.05), 0 6px 16px rgba(11, 18, 32, 0.07);
+  --dorami-focus: rgba(91, 84, 232, 0.32);
+  --r-sm: 6px; --r-control: 10px; --r-card: 14px; --r-pill: 9999px;
+  --state-warn: #b45309; --state-warn-bg: #fffbeb; --state-bad: #e11d48;
+  --motion-fast: 150ms; --motion-medium: 240ms; --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ai-g1: #3f7bf6; --ai-g2: #8b52f4;
+  --rd-list-bg: var(--dorami-soft); --rd-pane-bg: var(--dorami-surface);
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --dorami-canvas: #0c0e13; --dorami-well: #15181f; --dorami-soft: #1a1e26;
+  --dorami-surface: #20252f; --dorami-wash: rgba(124, 112, 235, 0.13);
+  --dorami-ink: #f2f4f7; --dorami-ink-2: #d2d7df; --dorami-muted: #99a1ad; --dorami-faint: #828b97;
+  --dorami-border: rgba(255, 255, 255, 0.10); --dorami-border-soft: rgba(255, 255, 255, 0.07);
+  --dorami-card-bd: rgba(255, 255, 255, 0.08); --dorami-edge: rgba(255, 255, 255, 0.05);
+  --state-warn: #fbbf24; --state-warn-bg: #2a2412; --state-bad: #fb7185;
+  --dorami-blue: #4d45b5; --dorami-blue-2: #5f57c8;
+  --dorami-accent: #8b84f0; --dorami-accent-ink: #aaa4f6;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --dorami-focus: rgba(124, 112, 235, 0.5);
+  --ai-g1: #6ea3ff; --ai-g2: #ab86ff;
+  --rd-list-bg: var(--dorami-well); --rd-pane-bg: var(--dorami-soft);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--dorami-canvas); color: var(--dorami-ink); font-size: 13px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: -2px; }
+svg { flex: none; }
+
+.page { padding: 26px 36px 56px; max-width: 1560px; margin: 0 auto; }
+.page-head { display: flex; align-items: center; gap: 14px; min-height: 48px; margin-bottom: 8px; }
+.page-title { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; }
+.page-sub { font-size: 12.5px; color: var(--dorami-muted); max-width: 960px; line-height: 1.7; margin-bottom: 26px; }
+.head-tool { margin-left: auto; width: 36px; height: 36px; display: grid; place-items: center; border-radius: var(--r-control); color: var(--dorami-faint); border: 1px solid var(--dorami-border); background: var(--dorami-surface); }
+.head-tool svg { width: 17px; height: 17px; }
+.zone-head { display: flex; align-items: baseline; gap: 10px; margin: 34px 2px 12px; }
+.zone-title { font-size: 14px; font-weight: 700; }
+.zone-sub { font-size: 12px; color: var(--dorami-muted); }
+.row { display: grid; gap: 22px; align-items: start; grid-template-columns: minmax(0, 1fr) 300px; }
+.shell-note { font-size: 11.5px; font-weight: 500; line-height: 1.65; color: var(--dorami-faint); }
+.shell-note b { color: var(--dorami-ink-2); font-weight: 600; }
+.shell-note p + p { margin-top: 10px; }
+
+/* ── 缩微壳 ── */
+.frame { border-radius: var(--r-card); overflow: hidden; border: 1px solid var(--dorami-border); box-shadow: var(--sh-2); background: var(--rd-list-bg); }
+.rshell { --vrail: 64px; --col-l: 232px; display: grid; grid-template-columns: var(--vrail) var(--col-l) minmax(0, 1fr); height: 820px; overflow: hidden; }
+.rcol { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--dorami-border-soft); }
+.vrail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 0 16px; background: var(--dorami-canvas); border-right: 1px solid var(--dorami-border-soft); }
+.vrail-brand { width: 32px; height: 32px; border-radius: 10px; flex: none; margin-bottom: 16px; background: linear-gradient(145deg, var(--dorami-blue-2), var(--dorami-blue)); }
+.vbtn { width: 52px; height: 46px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border-radius: 10px; color: var(--dorami-faint); }
+.vbtn svg { width: 18px; height: 18px; }
+.vbtn span { font-size: 10px; font-weight: 500; letter-spacing: 0.08em; }
+.vbtn.is-on { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+.vdiv { width: 28px; height: 1px; background: var(--dorami-border); margin: 6px 0; }
+
+/* 日期栏(1:1 .brief-days*) */
+.brief-days { background: var(--dorami-canvas); }
+.src-head { display: flex; align-items: baseline; padding: 18px 16px 10px; }
+.src-title { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; color: var(--dorami-ink); }
+.src-label { padding: 14px 10px 6px; font-size: 10.5px; letter-spacing: 0.12em; color: var(--dorami-faint); }
+.brief-days-scroll { flex: 1; overflow-y: auto; padding: 0 8px 16px; }
+.brief-day { display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 8px; border-radius: 8px; border: 1px solid transparent; color: var(--dorami-muted); text-align: left; transition: background 140ms ease, box-shadow 140ms ease; }
+.brief-day:hover { background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+.brief-day.is-on { background: var(--dorami-surface); box-shadow: var(--sh-1); color: var(--dorami-ink); }
+.brief-day-name { flex: 1; min-width: 0; font-size: 13px; }
+.brief-day.is-on .brief-day-name { font-weight: 600; }
+.brief-day-meta { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.brief-day-flag { font-size: 11px; font-weight: 600; color: var(--state-bad); }
+.brief-day-spin { width: 13px; height: 13px; color: var(--dorami-accent); animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 报纸面(1:1 .brief-sheet*) */
+.brief-sheet { min-width: 0; min-height: 0; overflow-y: auto; background: var(--rd-list-bg); }
+.brief-sheet-inner { max-width: 1120px; margin: 0 auto; padding: 34px 44px 72px; }
+.brief-mast { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding-bottom: 20px; border-bottom: 1px solid var(--dorami-border); }
+.brief-mast-kicker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--dorami-accent-ink); }
+.brief-mast-title { margin-top: 10px; font-family: var(--serif-num); font-size: 36px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; font-variant-numeric: lining-nums tabular-nums; }
+.brief-mast-title small { margin-left: 12px; font-size: 16px; font-weight: 400; letter-spacing: 0; color: var(--dorami-muted); }
+.brief-mast-sub { margin-top: 10px; font-size: 13px; font-weight: 500; color: var(--dorami-muted); }
+.brief-mast-actions { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.brief-rev-toggle { display: inline-flex; align-items: center; gap: 2px; padding: 0 4px; color: var(--dorami-muted); }
+.brief-rev-toggle[aria-expanded="true"], .brief-rev-toggle:hover { color: var(--dorami-accent-ink); }
+.brief-rev-toggle svg { width: 13px; height: 13px; }
+.brief-rev-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.icon-button { width: 32px; height: 32px; display: grid; place-items: center; border-radius: var(--r-control); border: 1px solid var(--dorami-border); background: var(--dorami-surface); color: var(--dorami-muted); }
+.icon-button svg { width: 15px; height: 15px; }
+.brief-rev-strip { display: flex; flex-wrap: wrap; gap: 6px; padding: 14px 0 0; font-size: 12px; }
+.brief-rev { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); color: var(--dorami-muted); font-variant-numeric: tabular-nums; }
+.brief-rev.is-on { background: var(--dorami-surface); color: var(--dorami-ink); box-shadow: var(--sh-1); }
+.brief-rev small { font-size: 11px; color: var(--dorami-faint); }
+.brief-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 18px; padding: 9px 12px; border-radius: var(--r-control); background: var(--state-warn-bg); color: var(--state-warn); font-size: 12.5px; font-weight: 500; line-height: 1.5; }
+.brief-note svg { width: 14px; height: 14px; margin-top: 2px; }
+.brief-sec { margin-top: 30px; }
+.brief-sec-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.brief-sec-title { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; }
+.brief-sec-count { font-family: var(--mono); font-size: 11px; color: var(--dorami-faint); }
+.brief-sec-rule { flex: 1; height: 1px; background: var(--dorami-border); }
+.brief-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: stretch; }
+.brief-card { display: flex; flex-direction: column; gap: 10px; width: 100%; padding: 18px 20px 16px; border: 1px solid var(--dorami-card-bd); border-radius: var(--r-card); background: var(--dorami-surface); box-shadow: var(--sh-1), inset 0 1px 0 var(--dorami-edge); text-align: left; transition: box-shadow var(--motion-medium) var(--motion-ease), transform var(--motion-medium) var(--motion-ease); }
+.brief-card:hover { border-color: var(--dorami-border-strong, var(--dorami-border)); }
+.brief-card.is-lead { grid-column: 1 / -1; padding: 24px 28px 20px; }
+.brief-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brief-card-src { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.logo { width: 17px; height: 17px; border-radius: 5.5px; display: grid; place-items: center; font-size: 8px; font-weight: 700; color: #fff; }
+.brief-card-srcname { font-size: 12px; font-weight: 500; color: var(--dorami-muted); }
+.brief-card-score { font-family: var(--serif-num); font-size: 22px; font-weight: 700; line-height: 1; font-variant-numeric: lining-nums tabular-nums;
+  background: linear-gradient(118deg, var(--ai-g1), var(--ai-g2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.brief-card.is-lead .brief-card-score { font-size: 28px; }
+.brief-card-title { display: block; font-family: var(--font-serif); font-size: 17px; font-weight: 700; line-height: 1.4; }
+.brief-card.is-lead .brief-card-title { font-size: 24px; line-height: 1.3; }
+.brief-card-sum { display: block; font-size: 13.5px; line-height: 1.75; color: var(--dorami-ink-2); }
+.brief-card.is-lead .brief-card-sum { font-size: 14.5px; line-height: 1.8; }
+.brief-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 2px; }
+/* 三稿:头条双栏 */
+.brief-card.is-wide { grid-column: 1 / -1; padding: 20px 24px 18px; }
+.brief-card.is-split { display: grid; grid-template-columns: minmax(0, 1fr) 200px; column-gap: 32px; }
+.brief-card-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.brief-card-aside { display: flex; flex-direction: column; gap: 14px; min-width: 0; padding-left: 28px; border-left: 1px solid var(--dorami-border-soft); }
+.brief-card-aside-score { display: flex; flex-direction: column; gap: 6px; }
+.brief-card-aside .brief-card-score { font-size: 32px; }
+.brief-card.is-lead .brief-card-aside .brief-card-score { font-size: 40px; }
+.brief-card-aside-cap { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--dorami-faint); }
+.brief-card-tags.is-stack { flex-direction: column; align-items: flex-start; gap: 6px; }
+.mframe .brief-card.is-split { grid-template-columns: minmax(0, 1fr); row-gap: 14px; }
+.mframe .brief-card-aside { flex-direction: row; align-items: center; gap: 16px; padding-left: 0; padding-top: 14px; border-left: none; border-top: 1px solid var(--dorami-border-soft); }
+.mframe .brief-card-aside-score { flex-direction: row; align-items: baseline; gap: 8px; }
+.mframe .brief-card-aside .brief-card-score { font-size: 26px; }
+.mframe .brief-card-tags.is-stack { flex-direction: row; gap: 5px; }
+/* 三稿:阅读窗顶部外出返回带 */
+.reader-brief-trail { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 34px; padding: 0 14px; border-bottom: 1px solid var(--dorami-border-soft); background: var(--dorami-wash); color: var(--dorami-accent-ink); font-size: 12px; font-weight: 500; }
+.reader-brief-trail-btn { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px; border-radius: var(--r-control); color: inherit; }
+.reader-brief-trail-btn:hover { background: color-mix(in srgb, var(--dorami-accent) 12%, transparent); }
+.reader-brief-trail-btn svg { width: 14px; height: 14px; }
+.reader-brief-trail-btn small { font-size: 11px; font-weight: 400; color: var(--dorami-muted); }
+.brief-card-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { display: inline-flex; align-items: center; min-height: 20px; padding: 0 7px; border-radius: var(--r-pill); background: var(--dorami-wash); color: var(--dorami-accent-ink); font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap; }
+.chip.is-interest::before { content: ''; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: currentColor; }
+.brief-card-time { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 11.5px; color: var(--dorami-faint); }
+.brief-card-time svg { width: 13px; height: 13px; opacity: 0; transform: translate(-2px, 2px); transition: opacity var(--motion-fast) ease, transform var(--motion-fast) var(--motion-ease); }
+.brief-card:hover .brief-card-time svg { opacity: 1; transform: none; color: var(--dorami-accent-ink); }
+
+/* 移动壳缩微 */
+.mframe { width: 390px; border-radius: 28px; border: 1px solid var(--dorami-border); box-shadow: var(--sh-2); overflow: hidden; background: var(--rd-list-bg); display: flex; flex-direction: column; height: 820px; }
+.m-topbar { padding: 16px 18px 8px; font-size: 20px; font-weight: 700; background: var(--rd-pane-bg); }
+.brief-m-days { display: flex; gap: 6px; padding: 10px 14px 8px; overflow-x: auto; font-size: 12.5px; }
+.brief-m-day { flex: none; padding: 5px 11px; border-radius: var(--r-pill); color: var(--dorami-muted); background: color-mix(in srgb, var(--dorami-ink) 5%, transparent); }
+.brief-m-day.is-on { background: var(--dorami-surface); color: var(--dorami-ink); font-weight: 600; box-shadow: var(--sh-1); }
+.mframe .brief-sheet { flex: 1; }
+.mframe .brief-sheet-inner { padding: 6px 14px 28px; }
+.mframe .brief-mast { padding-bottom: 14px; }
+.mframe .brief-mast-title { font-size: 28px; }
+.mframe .brief-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.mframe .brief-card, .mframe .brief-card.is-lead { padding: 16px 16px 14px; }
+.mframe .brief-card.is-lead .brief-card-title { font-size: 19px; }
+.mframe .brief-card.is-lead .brief-card-sum { font-size: 13.5px; }
+.m-tabbar { margin-top: auto; display: flex; justify-content: space-around; padding: 8px 6px 14px; background: var(--rd-pane-bg); border-top: 1px solid var(--dorami-border-soft); }
+
+
+.ai-grad-text { background: linear-gradient(90deg, var(--ai-g1), var(--ai-g2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+/* ── ① 编排说明行 ── */
+.brief-byline { display: flex; align-items: center; gap: 10px; min-height: 40px; margin-top: 4px; padding: 8px 0 10px; border-bottom: 1px solid var(--dorami-border-soft); font-size: 13px; color: var(--dorami-ink-2); font-variant-numeric: tabular-nums; }
+.brief-byline-id { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.brief-byline-id svg { width: 15px; height: 15px; }
+.brief-byline-id .star { stroke: url(#ai-grad); fill: none; }
+.brief-byline-name { font-weight: 700; font-size: 12.5px; letter-spacing: 0.02em; }
+.brief-byline-text { min-width: 0; }
+.brief-byline-text b { font-weight: 600; color: var(--dorami-ink); }
+.brief-byline-act { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 12.5px; font-weight: 600; color: var(--dorami-accent-ink); }
+.brief-byline-act svg { width: 13px; height: 13px; }
+.brief-byline-act:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* 三态:stale(兴趣/订阅已更新)与 partial(来源/分析未完成)——同一行,尾句换掉,不另起行 */
+.brief-byline.is-stale .brief-byline-tail { color: var(--dorami-accent-ink); }
+.brief-byline.is-partial .brief-byline-tail { color: var(--state-warn); }
+.brief-byline-tail { display: inline-flex; align-items: center; gap: 6px; flex: none; margin-left: 14px; padding-left: 14px; border-left: 1px solid var(--dorami-border); font-size: 12.5px; font-weight: 500; }
+.brief-byline-tail svg { width: 13px; height: 13px; }
+.brief-byline-tail .act { font-weight: 600; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
+
+/* ── ② 卡头右侧:选篇理由(元信息档) ── */
+.brief-card-why { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 500; color: var(--dorami-faint); white-space: nowrap; letter-spacing: 0.01em; }
+.brief-card-why.is-interest, .brief-card-why.is-breaking { color: var(--dorami-accent-ink); font-weight: 600; }
+.brief-card-why.is-interest::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.brief-card-why.is-breaking svg { width: 12px; height: 12px; }
+.brief-card-why.is-fallback { color: var(--dorami-faint); }
+.brief-card-title-orig { display: block; margin-top: 3px; font-family: var(--font-serif); font-size: 12.5px; line-height: 1.45; color: var(--dorami-muted); font-weight: 400; }
+.brief-card.is-lead .brief-card-title-orig { font-size: 13.5px; margin-top: 4px; }
+
+/* 对照:现状卡(chip 混轴)用于画板 B 左侧 */
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.compare-cap { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; color: var(--dorami-faint); margin-bottom: 8px; }
+.compare .brief-card { cursor: default; }
+.mframe .brief-byline { flex-wrap: wrap; row-gap: 4px; padding: 8px 0 10px; font-size: 12.5px; }
+.mframe .brief-byline-act { margin-left: 0; width: 100%; justify-content: flex-start; padding-left: 21px; }
+.mframe .brief-byline-tail { margin-left: 0; padding-left: 21px; border-left: 0; width: 100%; }
+.mframe .brief-card-head { flex-wrap: wrap; row-gap: 4px; }
+.m-tab { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10px; color: var(--dorami-faint); }
+.m-tab.is-on { color: var(--dorami-accent-ink); }
+.m-tab svg { width: 20px; height: 20px; }
+.m-tab.is-on svg { background: var(--dorami-wash); border-radius: 8px; padding: 2px; }
+
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="ai-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--ai-g1)"/><stop offset="1" stop-color="var(--ai-g2)"/></linearGradient></defs></svg>
+<div class="page">
+  <div class="page-head">
+    <h1 class="page-title">我的早报 · 「为我编的」怎么看得出来</h1>
+    <button class="head-tool" id="theme" title="切换亮暗"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg></button>
+  </div>
+  <p class="page-sub">三处改动一条主线——把「为什么」说出来:① 报头之下一行<b>编排说明</b>(渐变星 + 渐变「哆啦美」= AI 身份;事实句;右端「调整兴趣」深链),§5 的过期提示与「来源未完成」警示都并进这一行的尾句;② <b>选篇理由进卡头右侧</b>,四个词回答同一个问题「它为什么在这」,脚部 chip 只剩主题标签;③ 移动壳同源。零新调用、零新动效、渐变只上身份。</p>
+
+  <div class="zone-head"><span class="zone-title">画板 A · 桌面 · 今天 · 正常态</span><span class="zone-sub">1440 宽:说明行在报头 hairline 之下;卡头右侧理由;重大事件两条通栏,精选按体裁分节</span></div>
+  <div class="row">
+    <div class="frame"><div class="rshell"><nav class="vrail">
+        <div class="vrail-brand"></div>
+        <button class="vbtn is-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9h4"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8z"/></svg><span>早报</span></button>
+        <div class="vdiv"></div>
+        <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg><span>文章</span></button>
+        <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="11" r="1"/><path d="M8 14a5 5 0 1 1 8 0"/><path d="M17 18.5a9 9 0 1 0-10 0"/></svg><span>播客</span></button>
+        <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg><span>动态</span></button>
+        <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg><span>社交</span></button>
+        <div class="vdiv"></div>
+        <button class="vbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m16.2 7.8-2 6.3-6.4 2.1 2-6.3z"/></svg><span>发现</span></button>
+        
+      </nav><aside class="rcol brief-days">
+        <div class="src-head"><span class="src-title">我的早报</span></div>
+        <div class="brief-days-scroll">
+          <div class="src-label">9 月</div>
+          <button class="brief-day is-on"><span class="brief-day-name">今天</span><span class="brief-day-meta">周六</span></button>
+          <button class="brief-day"><span class="brief-day-name">昨天</span><span class="brief-day-meta">周五</span></button>
+          <button class="brief-day"><span class="brief-day-name">9月3日</span><span class="brief-day-meta">周四</span></button>
+          <button class="brief-day"><span class="brief-day-name">9月2日</span><span class="brief-day-flag">失败</span></button>
+          <button class="brief-day"><span class="brief-day-name">9月1日</span><span class="brief-day-meta">周二</span></button>
+          <div class="src-label">8 月</div>
+          <button class="brief-day"><span class="brief-day-name">8月31日</span><span class="brief-day-meta">周一</span></button>
+          <button class="brief-day"><span class="brief-day-name">8月30日</span><span class="brief-day-meta">周日</span></button>
+        </div>
+      </aside><section class="brief-sheet"><div class="brief-sheet-inner"><header class="brief-mast"><div><div class="brief-mast-kicker">我的早报 · 第 1 版 · 09:01 生成</div><h1 class="brief-mast-title">9月10日<small>周四 · 今天</small></h1><p class="brief-mast-sub">2 条重大事件 · 10 篇精选 · 3 篇命中你的兴趣 · 来自 8 个来源</p></div><div class="brief-mast-actions"><button class="icon-button" title="重新编排今日早报"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button></div></header><div class="brief-byline"><span class="brief-byline-id"><svg viewBox="0 0 24 24" class="star" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l2.4 6.1L20.5 12l-6.1 2.4L12 21l-2.4-6.6L3.5 12l6.1-2.9z"/></svg><span class="brief-byline-name ai-grad-text">哆啦美</span></span><span class="brief-byline-text">从你订阅的 <b>12</b> 个来源和 <b>4</b> 个兴趣 · <b>86</b> 篇里选出 <b>10</b> 篇,<b>3</b> 篇命中你的兴趣(<b>1</b> 篇来自订阅外)</span><a class="brief-byline-act" href="#">调整兴趣 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></a></div><section class="brief-sec"><div class="brief-sec-head"><span class="brief-sec-title">重大事件</span><span class="brief-sec-count">2</span><span class="brief-sec-rule"></span></div><div class="brief-grid"><button class="brief-card is-lead is-split"><span class="brief-card-main"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#1d4ed8">机</span><span class="brief-card-srcname">机器之心</span></span><span class="brief-card-why is-breaking"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>重大事件 · 官方一手</span></span><span class="brief-card-title">OpenAI 发布 GPT-6:原生多智能体协作与百万级上下文</span><span class="brief-card-sum">OpenAI 今日发布 GPT-6,原生支持多智能体协作与百万 token 上下文,同步开放 API。官方博客与 X 账号同时发布,多家媒体跟进报道。</span><span class="brief-card-foot"><span class="brief-card-time">5 小时前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span></span><span class="brief-card-aside"><span class="brief-card-aside-score"><span class="brief-card-score">9.6</span><span class="brief-card-aside-cap">新闻价值</span></span><span class="brief-card-tags is-stack"><span class="chip">OpenAI</span><span class="chip">GPT-6</span></span></span></button><button class="brief-card is-wide is-split"><span class="brief-card-main"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#d97757">A</span><span class="brief-card-srcname">Anthropic 博客</span></span><span class="brief-card-why is-breaking"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>重大事件 · 3 家来源</span></span><span class="brief-card-title">Claude Fable 5.1 发布:Mythos 级模型面向全部用户开放</span><span class="brief-card-title-orig">Introducing Claude Fable 5.1</span><span class="brief-card-sum">Anthropic 发布 Claude Fable 5.1,与 Claude Mythos 5.1 共享同一底层模型,面向所有用户开放并附加双用途能力的安全措施。官方称其为目前最智能的通用模型,同时上线 Claude Code 与 API。</span><span class="brief-card-foot"><span class="brief-card-time">3 小时前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span></span><span class="brief-card-aside"><span class="brief-card-aside-score"><span class="brief-card-score">9.4</span><span class="brief-card-aside-cap">新闻价值</span></span><span class="brief-card-tags is-stack"><span class="chip">Anthropic</span><span class="chip">Claude</span></span></span></button></div></section><section class="brief-sec"><div class="brief-sec-head"><span class="brief-sec-title">开源动态</span><span class="brief-sec-count">1</span><span class="brief-sec-rule"></span></div><div class="brief-grid"><button class="brief-card"><span class="brief-card-main"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#0ea5e9">量</span><span class="brief-card-srcname">量子位</span><span class="brief-card-why-sep" aria-hidden="true"></span><span class="brief-card-why is-interest">兴趣 · 开源模型</span></span><span class="brief-card-score">8.2</span></span><span class="brief-card-title">智谱开源 GLM-5.3 全系权重,Agent 基准超越闭源对手</span><span class="brief-card-sum">智谱一次性开源 GLM-5.3 全系权重与推理框架,在 AgentBench 与 SWE-bench 上超过同级闭源模型,并提供本地部署工具链。</span><span class="brief-card-foot"><span class="brief-card-tags"><span class="chip">智谱</span><span class="chip">开源模型</span></span><span class="brief-card-time">2 小时前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span></span></button></div></section><section class="brief-sec"><div class="brief-sec-head"><span class="brief-sec-title">工程实践</span><span class="brief-sec-count">1</span><span class="brief-sec-rule"></span></div><div class="brief-grid"><button class="brief-card"><span class="brief-card-main"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#475569">S</span><span class="brief-card-srcname">Simon Willison</span><span class="brief-card-why-sep" aria-hidden="true"></span><span class="brief-card-why is-interest">兴趣 · Claude Code</span></span><span class="brief-card-score">7.1</span></span><span class="brief-card-title">用 Claude Code 一夜重写我的博客构建链</span><span class="brief-card-title-orig">Rewriting my blog build pipeline overnight with Claude Code</span><span class="brief-card-sum">作者记录了用 Claude Code 把十年老构建脚本迁到新工具链的完整过程,包括失败的三次尝试与最终可用的提示词结构,对 Agent 工程实践有直接参考价值。</span><span class="brief-card-foot"><span class="brief-card-tags"><span class="chip">Claude Code</span><span class="chip">工程实践</span></span><span class="brief-card-time">6 小时前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span></span></button></div></section><section class="brief-sec"><div class="brief-sec-head"><span class="brief-sec-title">学术论文</span><span class="brief-sec-count">1</span><span class="brief-sec-rule"></span></div><div class="brief-grid"><button class="brief-card"><span class="brief-card-main"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#f59e0b">HF</span><span class="brief-card-srcname">Hugging Face Daily Papers</span><span class="brief-card-why-sep" aria-hidden="true"></span><span class="brief-card-why is-interest">兴趣 · Agent</span></span><span class="brief-card-score">6.4</span></span><span class="brief-card-title">面向长程 Agent 的记忆压缩:一种可验证的检索预算方法</span><span class="brief-card-title-orig">Memory Compression for Long-Horizon Agents with Verifiable Retrieval Budgets</span><span class="brief-card-sum">论文提出把 Agent 记忆检索预算显式化并可验证的方法,在 GAIA 长程任务上以 40% 检索开销取得持平效果。</span><span class="brief-card-foot"><span class="brief-card-tags"><span class="chip">Agent</span><span class="chip">论文</span></span><span class="brief-card-time">8 小时前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span></span></button></div></section><section class="brief-sec"><div class="brief-sec-head"><span class="brief-sec-title">行业资讯</span><span class="brief-sec-count">1</span><span class="brief-sec-rule"></span></div><div class="brief-grid"><button class="brief-card"><span class="brief-card-main"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#d9232e">IT</span><span class="brief-card-srcname">IT之家 AI</span><span class="brief-card-why-sep" aria-hidden="true"></span><span class="brief-card-why">新闻价值入选</span></span><span class="brief-card-score">5.6</span></span><span class="brief-card-title">谷歌 Gemini 3.8 Flash 面向企业上线区域版本</span><span class="brief-card-sum">谷歌宣布 Gemini 3.8 Flash 在亚太区域新增两个数据驻留选项,面向金融与医疗客户。</span><span class="brief-card-foot"><span class="brief-card-tags"><span class="chip">Google</span><span class="chip">Gemini</span></span><span class="brief-card-time">9 小时前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span></span></button></div></section></div></section></div></div>
+    <div class="shell-note">
+      <p><b>说明行</b>是唯一新增的行,音量与报头 sub 同档(13px/ink-2),只有身份标记用渐变;数字加粗是为了扫读——一眼读出「12 个来源 · 86 篇 · 10 篇 · 3 篇命中」四个数。「调整兴趣 ↗」是这一页唯一的兴趣回路入口,深链发现页兴趣段(v3.52 起兴趣编辑面在那里)。</p>
+      <p><b>卡头右侧的理由</b>只用四个词:<em>兴趣 · 标签</em>(accent + 实点,沿 is-interest 语法)、<em>重大事件 · 官方一手 / N 家来源</em>(accent + 闪电)、<em>新闻价值入选</em>(faint)、<em>最新更新</em>(faint,降级版面)。前两者是「为你」的证据,后两者只是诚实交代。普通卡里理由跟在来源名后、分数仍在右缘;通栏卡的分数在右栏,理由独占头行右侧。</p>
+      <p><b>脚部 chip 自此只答「讲什么」</b>:「兴趣 · X」「重大事件」两枚从 chip 行迁走,不再和主题标签混在一条线上(单轴)。命中的那个标签仍从主题 chip 里去重(现行逻辑保留)。</p>
+      <p><b>拍板项</b>:说明行里的「86 篇里」需要 edition 记一列 selection_stats_json(生成时一次写入;历史版本无值则省略这半句)。不要这个数,句子退成「从你订阅的 12 个来源里选出 10 篇,3 篇命中你的兴趣」——也成立,只是少了「筛过多少」这层智能感。</p>
+    </div>
+  </div>
+
+  <div class="zone-head"><span class="zone-title">画板 B · 说明行三态 + 卡片对照</span><span class="zone-sub">同一行换尾句,不另起提示行;右列为现状与一稿的同一张卡</span></div>
+  <div class="row">
+    <div>
+      <div class="frame" style="padding: 22px 44px 26px; background: var(--rd-list-bg)">
+        <div class="compare-cap">正常</div><div class="brief-byline"><span class="brief-byline-id"><svg viewBox="0 0 24 24" class="star" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l2.4 6.1L20.5 12l-6.1 2.4L12 21l-2.4-6.6L3.5 12l6.1-2.9z"/></svg><span class="brief-byline-name ai-grad-text">哆啦美</span></span><span class="brief-byline-text">从你订阅的 <b>12</b> 个来源和 <b>4</b> 个兴趣 · <b>86</b> 篇里选出 <b>10</b> 篇,<b>3</b> 篇命中你的兴趣(<b>1</b> 篇来自订阅外)</span><a class="brief-byline-act" href="#">调整兴趣 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></a></div>
+        <div class="compare-cap" style="margin-top:22px">兴趣 / 订阅已更新(§5 并入;accent 尾句 + 立即重编)</div><div class="brief-byline is-stale"><span class="brief-byline-id"><svg viewBox="0 0 24 24" class="star" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l2.4 6.1L20.5 12l-6.1 2.4L12 21l-2.4-6.6L3.5 12l6.1-2.9z"/></svg><span class="brief-byline-name ai-grad-text">哆啦美</span></span><span class="brief-byline-text">从你订阅的 <b>12</b> 个来源和 <b>4</b> 个兴趣 · <b>86</b> 篇里选出 <b>10</b> 篇,<b>3</b> 篇命中你的兴趣(<b>1</b> 篇来自订阅外)</span><span class="brief-byline-tail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>你的兴趣已更新,下次编排生效 · <span class="act">立即重编</span></span><a class="brief-byline-act" href="#">调整兴趣 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></a></div>
+        <div class="compare-cap" style="margin-top:22px">编排时部分来源或分析未完成(原警示行并入;warn 色尾句)</div><div class="brief-byline is-partial"><span class="brief-byline-id"><svg viewBox="0 0 24 24" class="star" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l2.4 6.1L20.5 12l-6.1 2.4L12 21l-2.4-6.6L3.5 12l6.1-2.9z"/></svg><span class="brief-byline-name ai-grad-text">哆啦美</span></span><span class="brief-byline-text">从你订阅的 <b>12</b> 个来源和 <b>4</b> 个兴趣 · <b>86</b> 篇里选出 <b>10</b> 篇,<b>3</b> 篇命中你的兴趣(<b>1</b> 篇来自订阅外)</span><span class="brief-byline-tail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>部分来源更新尚未完成,按当时已有内容编排 · <span class="act">重新编排</span></span><a class="brief-byline-act" href="#">调整兴趣 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></a></div>
+      </div>
+      <div class="frame" style="padding: 22px 24px 26px; margin-top: 16px; background: var(--rd-list-bg)"><div class="compare">
+  <div><div class="compare-cap">现状(v3.52):脚部 chip 混轴——「兴趣 · X」「重大事件」与主题标签同行</div><div class="brief-grid"><button class="brief-card"><span class="brief-card-main"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#0ea5e9">量</span><span class="brief-card-srcname">量子位</span><span class="brief-card-why-sep" aria-hidden="true"></span></span><span class="brief-card-score">8.2</span></span><span class="brief-card-title">智谱开源 GLM-5.3 全系权重,Agent 基准超越闭源对手</span><span class="brief-card-sum">智谱一次性开源 GLM-5.3 全系权重与推理框架,在 AgentBench 与 SWE-bench 上超过同级闭源模型,并提供本地部署工具链。</span><span class="brief-card-foot"><span class="brief-card-tags"><span class="chip is-interest">兴趣 · 开源模型</span><span class="chip">智谱</span><span class="chip">开源模型</span></span><span class="brief-card-time">2 小时前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span></span></button></div></div>
+  <div><div class="compare-cap">一稿:理由进卡头右侧(元信息档),脚部只剩主题标签</div><div class="brief-grid"><button class="brief-card"><span class="brief-card-main"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#0ea5e9">量</span><span class="brief-card-srcname">量子位</span><span class="brief-card-why-sep" aria-hidden="true"></span><span class="brief-card-why is-interest">兴趣 · 开源模型</span></span><span class="brief-card-score">8.2</span></span><span class="brief-card-title">智谱开源 GLM-5.3 全系权重,Agent 基准超越闭源对手</span><span class="brief-card-sum">智谱一次性开源 GLM-5.3 全系权重与推理框架,在 AgentBench 与 SWE-bench 上超过同级闭源模型,并提供本地部署工具链。</span><span class="brief-card-foot"><span class="brief-card-tags"><span class="chip">智谱</span><span class="chip">开源模型</span></span><span class="brief-card-time">2 小时前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span></span></button></div></div>
+</div></div>
+    </div>
+    <div class="shell-note">
+      <p><b>三态一行</b>:此前「兴趣已更新」「部分来源未完成」「已记录重编请求」是三条各自独立的提示行,叠起来最多三行;现在都并入说明行尾句,一次只显一条(优先级:重编排队 &gt; 未完成 &gt; 已更新),页面上永远只有一行说明。尾句的动作(立即重编 / 重新编排)沿 §5 的行内文字钮语法。</p>
+      <p><b>对照</b>:现状卡的脚部 chip 行把「兴趣 · 开源模型」(为什么)和「智谱」「开源模型」(讲什么)排在一起;一稿把前者提到卡头右侧,脚部只剩主题,读卡的顺序变成「来源 → 为什么 → 标题 → 摘要 → 讲什么 → 时间」。</p>
+      <p><b>不做</b>:每卡一句人话长理由(issue #23 已让「选入理由长句」退役,理由回到四个词);欢迎卡;为说明行加动画;头像/署名等拟人化装饰——身份标记止于星与字头。</p>
+    </div>
+  </div>
+
+  <div class="zone-head"><span class="zone-title">画板 C · 移动壳</span><span class="zone-sub">390 宽:说明行折两行(身份句 / 尾句 + 动作),卡头理由照旧,通栏卡退单栏</span></div>
+  <div class="row"><div style="display:flex;gap:22px;align-items:flex-start"><div class="mframe"><div class="m-topbar">早报</div><div class="brief-m-days"><span class="brief-m-day is-on">今天</span><span class="brief-m-day">昨天</span><span class="brief-m-day">9月8日</span><span class="brief-m-day">9月7日</span></div><section class="brief-sheet"><div class="brief-sheet-inner"><header class="brief-mast"><div><div class="brief-mast-kicker">我的早报 · 第 1 版 · 09:01 生成</div><h1 class="brief-mast-title">9月10日<small>周四 · 今天</small></h1><p class="brief-mast-sub">2 条重大事件 · 10 篇精选 · 3 篇命中你的兴趣 · 来自 8 个来源</p></div><div class="brief-mast-actions"><button class="icon-button" title="重新编排今日早报"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button></div></header><div class="brief-byline is-stale"><span class="brief-byline-id"><svg viewBox="0 0 24 24" class="star" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l2.4 6.1L20.5 12l-6.1 2.4L12 21l-2.4-6.6L3.5 12l6.1-2.9z"/></svg><span class="brief-byline-name ai-grad-text">哆啦美</span></span><span class="brief-byline-text">从你订阅的 <b>12</b> 个来源和 <b>4</b> 个兴趣 · <b>86</b> 篇里选出 <b>10</b> 篇,<b>3</b> 篇命中你的兴趣(<b>1</b> 篇来自订阅外)</span><span class="brief-byline-tail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>你的兴趣已更新,下次编排生效 · <span class="act">立即重编</span></span><a class="brief-byline-act" href="#">调整兴趣 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></a></div><section class="brief-sec"><div class="brief-sec-head"><span class="brief-sec-title">重大事件</span><span class="brief-sec-count">2</span><span class="brief-sec-rule"></span></div><div class="brief-grid"><button class="brief-card is-lead is-split"><span class="brief-card-main"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#1d4ed8">机</span><span class="brief-card-srcname">机器之心</span></span><span class="brief-card-why is-breaking"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>重大事件 · 官方一手</span></span><span class="brief-card-title">OpenAI 发布 GPT-6:原生多智能体协作与百万级上下文</span><span class="brief-card-sum">OpenAI 今日发布 GPT-6,原生支持多智能体协作与百万 token 上下文,同步开放 API。官方博客与 X 账号同时发布,多家媒体跟进报道。</span><span class="brief-card-foot"><span class="brief-card-time">5 小时前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span></span><span class="brief-card-aside"><span class="brief-card-aside-score"><span class="brief-card-score">9.6</span><span class="brief-card-aside-cap">新闻价值</span></span><span class="brief-card-tags is-stack"><span class="chip">OpenAI</span><span class="chip">GPT-6</span></span></span></button><button class="brief-card is-wide is-split"><span class="brief-card-main"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#d97757">A</span><span class="brief-card-srcname">Anthropic 博客</span></span><span class="brief-card-why is-breaking"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>重大事件 · 3 家来源</span></span><span class="brief-card-title">Claude Fable 5.1 发布:Mythos 级模型面向全部用户开放</span><span class="brief-card-title-orig">Introducing Claude Fable 5.1</span><span class="brief-card-sum">Anthropic 发布 Claude Fable 5.1,与 Claude Mythos 5.1 共享同一底层模型,面向所有用户开放并附加双用途能力的安全措施。官方称其为目前最智能的通用模型,同时上线 Claude Code 与 API。</span><span class="brief-card-foot"><span class="brief-card-time">3 小时前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span></span><span class="brief-card-aside"><span class="brief-card-aside-score"><span class="brief-card-score">9.4</span><span class="brief-card-aside-cap">新闻价值</span></span><span class="brief-card-tags is-stack"><span class="chip">Anthropic</span><span class="chip">Claude</span></span></span></button></div></section><section class="brief-sec"><div class="brief-sec-head"><span class="brief-sec-title">开源动态</span><span class="brief-sec-count">1</span><span class="brief-sec-rule"></span></div><div class="brief-grid"><button class="brief-card"><span class="brief-card-main"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#0ea5e9">量</span><span class="brief-card-srcname">量子位</span><span class="brief-card-why-sep" aria-hidden="true"></span><span class="brief-card-why is-interest">兴趣 · 开源模型</span></span><span class="brief-card-score">8.2</span></span><span class="brief-card-title">智谱开源 GLM-5.3 全系权重,Agent 基准超越闭源对手</span><span class="brief-card-sum">智谱一次性开源 GLM-5.3 全系权重与推理框架,在 AgentBench 与 SWE-bench 上超过同级闭源模型,并提供本地部署工具链。</span><span class="brief-card-foot"><span class="brief-card-tags"><span class="chip">智谱</span><span class="chip">开源模型</span></span><span class="brief-card-time">2 小时前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span></span></button></div></section><section class="brief-sec"><div class="brief-sec-head"><span class="brief-sec-title">工程实践</span><span class="brief-sec-count">1</span><span class="brief-sec-rule"></span></div><div class="brief-grid"><button class="brief-card"><span class="brief-card-main"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#475569">S</span><span class="brief-card-srcname">Simon Willison</span><span class="brief-card-why-sep" aria-hidden="true"></span><span class="brief-card-why is-interest">兴趣 · Claude Code</span></span><span class="brief-card-score">7.1</span></span><span class="brief-card-title">用 Claude Code 一夜重写我的博客构建链</span><span class="brief-card-title-orig">Rewriting my blog build pipeline overnight with Claude Code</span><span class="brief-card-sum">作者记录了用 Claude Code 把十年老构建脚本迁到新工具链的完整过程,包括失败的三次尝试与最终可用的提示词结构,对 Agent 工程实践有直接参考价值。</span><span class="brief-card-foot"><span class="brief-card-tags"><span class="chip">Claude Code</span><span class="chip">工程实践</span></span><span class="brief-card-time">6 小时前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span></span></button></div></section><section class="brief-sec"><div class="brief-sec-head"><span class="brief-sec-title">学术论文</span><span class="brief-sec-count">1</span><span class="brief-sec-rule"></span></div><div class="brief-grid"><button class="brief-card"><span class="brief-card-main"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#f59e0b">HF</span><span class="brief-card-srcname">Hugging Face Daily Papers</span><span class="brief-card-why-sep" aria-hidden="true"></span><span class="brief-card-why is-interest">兴趣 · Agent</span></span><span class="brief-card-score">6.4</span></span><span class="brief-card-title">面向长程 Agent 的记忆压缩:一种可验证的检索预算方法</span><span class="brief-card-title-orig">Memory Compression for Long-Horizon Agents with Verifiable Retrieval Budgets</span><span class="brief-card-sum">论文提出把 Agent 记忆检索预算显式化并可验证的方法,在 GAIA 长程任务上以 40% 检索开销取得持平效果。</span><span class="brief-card-foot"><span class="brief-card-tags"><span class="chip">Agent</span><span class="chip">论文</span></span><span class="brief-card-time">8 小时前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span></span></button></div></section><section class="brief-sec"><div class="brief-sec-head"><span class="brief-sec-title">行业资讯</span><span class="brief-sec-count">1</span><span class="brief-sec-rule"></span></div><div class="brief-grid"><button class="brief-card"><span class="brief-card-main"><span class="brief-card-head"><span class="brief-card-src"><span class="logo" style="background:#d9232e">IT</span><span class="brief-card-srcname">IT之家 AI</span><span class="brief-card-why-sep" aria-hidden="true"></span><span class="brief-card-why">新闻价值入选</span></span><span class="brief-card-score">5.6</span></span><span class="brief-card-title">谷歌 Gemini 3.8 Flash 面向企业上线区域版本</span><span class="brief-card-sum">谷歌宣布 Gemini 3.8 Flash 在亚太区域新增两个数据驻留选项,面向金融与医疗客户。</span><span class="brief-card-foot"><span class="brief-card-tags"><span class="chip">Google</span><span class="chip">Gemini</span></span><span class="brief-card-time">9 小时前 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10M7 17 17 7"/></svg></span></span></span></button></div></section></div></section><nav class="m-tabbar"><span class="m-tab is-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9h4"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8z"/></svg>早报</span><span class="m-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>文章</span><span class="m-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>动态</span><span class="m-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>我的</span></nav></div></div>
+    <div class="shell-note"><p><b>移动壳</b>与桌面同一组件(PersonalBriefPage mobile 变体),说明行 flex-wrap:第一行身份 + 事实句,第二行尾句/动作链左对齐到文字起点。卡头右侧理由在窄屏可折到第二行,不截断。</p><p><b>实现面</b>:前端 PersonalBriefPage(说明行 + 卡头理由 + chip 行去两枚)+ index.css 两组类;后端可选一列 selection_stats_json(迁移一条)+ 今日/历史端点透出;§5 的 brief-note 提示行收编进说明行。</p></div>
+  </div>
+</div>
+<script>
+  const root = document.documentElement;
+  document.getElementById('theme').addEventListener('click', () => {
+    root.dataset.theme = root.dataset.theme === 'dark' ? '' : 'dark';
+  });
+</script>
+</body>
+</html>

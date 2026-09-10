@@ -325,6 +325,8 @@ export default function MobileReader({
             restore={briefRestore}
             supersedePendingOpen={supersedePendingOpen}
             onManageSubscriptions={() => openDiscoverSources({ shape: 'all' })}
+            onManageInterests={openInterests}
+            onSubscribeSource={subscribeSourceById}
             onOpenArticle={async (articleId, ctx) => {
               const opened = await openArticleById(articleId, { silent: true });
               if (!opened) return opened;

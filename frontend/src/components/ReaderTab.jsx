@@ -886,6 +886,8 @@ export default function ReaderTab({
           restore={briefRestore}
           supersedePendingOpen={supersedePendingOpen}
           onManageSubscriptions={() => { setBriefOpen(false); leaveBriefTrail(); openDiscoverSources({ shape: 'all' }); }}
+          onManageInterests={openInterests}
+          onSubscribeSource={onRowSubscribeSource}
           onOpenArticle={async (articleId, ctx) => {
             // 结果回传早报页:false=不在库(早报页退到原链),null=被更晚的点击盖过(不动)
             const opened = await openArticleById(articleId, { silent: true });
