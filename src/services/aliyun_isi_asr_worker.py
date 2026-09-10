@@ -49,6 +49,7 @@ from services.podcast_asr_worker import (
 from services.podcast_processing import deterministic_input_fingerprint
 from services.podcast_processing_admin import AdmissionEstimate
 from services.podcast_stage_policy import PodcastStagePolicy
+from services.podcast_transcript_dedup import deduplicate_transcript_evidence
 from services.podcast_worker_contracts import (
     Accepted,
     ArtifactRef,
@@ -277,29 +278,6 @@ def _error_code(prefix: str, value: object) -> str:
     return f"aliyun_{prefix}_{safe or 'unknown'}"
 
 
-def _deduplicate_exact_cross_channel(items):
-    """Drop only byte-for-byte timeline duplicates from another channel.
-
-    Some stereo Podcast files contain the same mixed programme on both
-    channels.  Aliyun ``auto_split`` then returns every sentence/word twice.
-    Keep genuinely different channel evidence, and also keep repeated evidence
-    on the same channel so this adapter does not silently repair other provider
-    anomalies.
-    """
-
-    observed: dict[tuple[int, int, str], set[int]] = {}
-    result = []
-    for item in items:
-        key = (item.begin_ms, item.end_ms, item.text)
-        channels = observed.setdefault(key, set())
-        if channels and item.channel_id not in channels:
-            channels.add(item.channel_id)
-            continue
-        channels.add(item.channel_id)
-        result.append(item)
-    return tuple(result)
-
-
 def _wall_clock_duration_ms(
     transcript: AsrTranscript,
     *,
@@ -334,8 +312,12 @@ def _normalized_transcript(
 ) -> str:
     """Map Aliyun sentence/word evidence to the canonical provider-neutral shape."""
 
-    segments = _deduplicate_exact_cross_channel(transcript.segments)
-    words = _deduplicate_exact_cross_channel(transcript.words)
+    deduplicated = deduplicate_transcript_evidence(
+        transcript.segments,
+        transcript.words,
+    )
+    segments = deduplicated.segments
+    words = deduplicated.words
     segment_words: list[list[dict[str, object]]] = [
         [] for _ in segments
     ]

@@ -34,7 +34,7 @@ def _actor(auth: dict[str, Any]) -> str:
 
 
 class PodcastProcessRequest(BaseModel):
-    target: Literal["transcript", "digest_blog"]
+    target: Literal["transcript", "full_analysis", "digest_blog"]
     selection_override: bool = False
     reason: Reason
     idempotency_key: IdempotencyKey
@@ -66,18 +66,14 @@ def _error(exc: admin.PodcastAdminError) -> JSONResponse:
 
 
 @router.post("/podcast-episodes/{episode_id}/process", status_code=202)
-def request_processing(
+async def request_processing(
     episode_id: str,
     body: PodcastProcessRequest,
     auth: dict[str, Any] = Depends(deps.require_collector),
 ):
     app = _app()
     try:
-        record = admin.request_processing(
-            app.db_sink.engine,
-            app.podcast_artifact_store,
-            app.podcast_processing_providers,
-            app.settings.podcast,
+        record = await app.enqueue_podcast_processing_with_input(
             episode_id=episode_id,
             target=body.target,
             selection_override=body.selection_override,

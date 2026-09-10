@@ -19,6 +19,7 @@ from sqlmodel import Session, select
 
 from config import PodcastConfig
 from models.db import (
+    ArticleAnalysisRecord,
     ArticleRecord,
     PodcastArtifactRecord,
     PodcastBudgetReservationRecord,
@@ -41,6 +42,9 @@ from services.podcast_processing_inputs import (
     source_audio_duration_ms,
 )
 from services.podcast_stage_policy import PodcastStageDenied, PodcastStagePolicy
+from services.podcast_publisher_transcripts import (
+    publisher_artifact_matches_current_locator,
+)
 
 
 ERROR_MESSAGES: Mapping[str, str] = {
@@ -107,6 +111,7 @@ class StageWorker(Protocol):
 
 TARGET_STAGES: Mapping[str, frozenset[str]] = {
     "transcript": frozenset({"asr"}),
+    "full_analysis": frozenset({"asr", "analyze"}),
     "digest_blog": frozenset({"asr", "translate", "analyze", "digest", "script"}),
     "digest_audio": frozenset({"tts", "audio_qa", "local_publish"}),
 }
@@ -412,6 +417,17 @@ def _current_text(
     return artifact
 
 
+def require_full_analysis_llm(session: Session, target: str) -> None:
+    """Check the effective runtime LLM before preparing or enqueueing work."""
+
+    if target != "full_analysis":
+        return
+    from services.daily_brief import resolve_llm_config
+
+    if not resolve_llm_config(session).configured:
+        raise PodcastAdminError("podcast_provider_unavailable", status_code=503)
+
+
 def _select_external_input(
     session: Session,
     store: PodcastArtifactStore,
@@ -419,12 +435,55 @@ def _select_external_input(
     episode_id: str,
     target: str,
 ) -> SelectedInput:
-    if target == "digest_blog":
-        for kind in ("transcript_zh", "publisher_transcript"):
+    if target in {"full_analysis", "digest_blog"}:
+        kinds = (
+            ("publisher_transcript", "normalized_transcript")
+            if target == "full_analysis"
+            else ("transcript_zh", "publisher_transcript")
+        )
+        for kind in kinds:
             artifact = _current_text(session, episode_id, kind)
+            if (
+                target == "full_analysis"
+                and kind == "publisher_transcript"
+                and artifact is not None
+                and not publisher_artifact_matches_current_locator(
+                    session, episode_id=episode_id, artifact=artifact
+                )
+            ):
+                artifact = None
+            if artifact is None and kind == "normalized_transcript":
+                artifact = session.exec(
+                    select(PodcastTextArtifactRecord)
+                    .join(
+                        PodcastStageAttemptRecord,
+                        PodcastStageAttemptRecord.id
+                        == PodcastTextArtifactRecord.producing_attempt_id,
+                    )
+                    .where(
+                        PodcastTextArtifactRecord.episode_id == episode_id,
+                        PodcastTextArtifactRecord.kind == kind,
+                        PodcastTextArtifactRecord.processing_id.is_not(None),
+                        PodcastStageAttemptRecord.submission_state == "succeeded",
+                        PodcastStageAttemptRecord.output_artifact_id
+                        == PodcastTextArtifactRecord.id,
+                        PodcastStageAttemptRecord.output_hash
+                        == PodcastTextArtifactRecord.content_hash,
+                    )
+                    .order_by(
+                        PodcastTextArtifactRecord.version.desc(),
+                        PodcastTextArtifactRecord.created_at.desc(),
+                    )
+                ).first()
             if artifact is not None:
                 language = str(artifact.language or "").lower()
-                stage = "analyze" if kind == "transcript_zh" or language.startswith("zh") else "translate"
+                stage = (
+                    "analyze"
+                    if target == "full_analysis"
+                    or kind == "transcript_zh"
+                    or language.startswith("zh")
+                    else "translate"
+                )
                 return SelectedInput(stage, artifact.id, artifact.content_hash, kind, artifact.language)
     audio_statement = (
         select(PodcastArtifactRecord)
@@ -454,6 +513,20 @@ def _select_external_input(
                 source_audio_duration_ms(artifact.duration_seconds),
             )
     raise PodcastAdminError("podcast_artifact_not_ready", status_code=409)
+
+
+def select_full_analysis_input(
+    engine: Engine,
+    store: PodcastArtifactStore,
+    *,
+    episode_id: str,
+) -> SelectedInput:
+    """Read the current authoritative full-analysis input for reconciliation."""
+
+    with Session(engine) as session:
+        return _select_external_input(
+            session, store, episode_id=episode_id, target="full_analysis"
+        )
 
 
 def _budget_period(config: PodcastConfig) -> str:
@@ -553,6 +626,7 @@ def _enqueue_locked(
     idempotency_key: str,
     reason: str,
     actor: str,
+    selection_source: str,
     estimate: AdmissionEstimate,
     config: PodcastConfig,
     policy: PodcastStagePolicy,
@@ -619,7 +693,7 @@ def _enqueue_locked(
         policy_version=config.processing_policy_version,
         requested_target=target,
         idempotency_key=idempotency_key,
-        selection_source="editor",
+        selection_source=selection_source,
         requested_by=actor,
         request_reason=reason,
         estimated_cost_minor=estimate.cost_minor,
@@ -683,12 +757,10 @@ def request_processing(
     reason: str,
     actor: str,
 ) -> PodcastProcessingRecord:
-    if target not in {"transcript", "digest_blog"}:
+    if target not in {"transcript", "full_analysis", "digest_blog"}:
         raise PodcastAdminError("podcast_processing_conflict", status_code=422)
     if config.installation != "external":
         raise PodcastAdminError("podcast_stage_denied", status_code=403)
-    if not selection_override:
-        raise PodcastAdminError("podcast_selection_required", status_code=409)
     policy = PodcastStagePolicy(config)
     with Session(engine) as session:
         try:
@@ -707,7 +779,33 @@ def request_processing(
                 return replay
             _locked_episode(session, engine, episode_id)
             _require_runtime(config, registry, target)
+            require_full_analysis_llm(session, target)
             selected = _select_external_input(session, store, episode_id=episode_id, target=target)
+            selection_source = "editor" if selection_override else "policy"
+            if not selection_override:
+                analysis = session.get(ArticleAnalysisRecord, episode_id)
+                initial_candidate = bool(
+                    analysis is not None
+                    and analysis.status == "succeeded"
+                    and analysis.analysis_basis == "podcast_show_notes"
+                    and analysis.quality_score is not None
+                    and float(analysis.quality_score) >= 5.0
+                )
+                transcript_refresh = bool(
+                    analysis is not None
+                    and analysis.status == "succeeded"
+                    and analysis.analysis_basis
+                    in {"publisher_transcript", "asr_transcript"}
+                    and selected.kind
+                    in {"publisher_transcript", "normalized_transcript"}
+                    and selected.artifact_id != analysis.transcript_artifact_id
+                )
+                if target != "full_analysis" or not (
+                    initial_candidate or transcript_refresh
+                ):
+                    raise PodcastAdminError(
+                        "podcast_selection_required", status_code=409
+                    )
             estimate = registry.estimate(
                 target,
                 selected.__dict__,
@@ -722,6 +820,7 @@ def request_processing(
                 idempotency_key=idempotency_key,
                 reason=reason,
                 actor=actor,
+                selection_source=selection_source,
                 estimate=estimate,
                 config=config,
                 policy=policy,
@@ -844,6 +943,12 @@ def retry_processing(
                 else:
                     code = ""
                     message = ""
+            if not code:
+                try:
+                    require_full_analysis_llm(session, record.requested_target)
+                except PodcastAdminError as exc:
+                    code = exc.code
+                    message = exc.message
             if not code and (
                 record.processing_status == "reconciliation_required"
                 or (active_attempt is not None and not recoverable_output)

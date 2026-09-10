@@ -1,4 +1,5 @@
 import { API_BASE_URL } from './config';
+import { podcastFullAnalysisCommand } from './utils/podcastFullAnalysis';
 
 async function apiFetch(url, options = {}) {
   const response = await fetch(url, {
@@ -244,6 +245,15 @@ export function fetchPodcastEpisodeTexts(episodeId, filters = {}, options = {}) 
   return request(`/podcasts/episodes/${enc(episodeId)}/texts${query ? `?${query}` : ''}`, {
     errorMsg: '获取播客文字内容失败',
     ...options,
+  });
+}
+
+export function forcePodcastFullAnalysis(episodeId, idempotencyKey = '', podcast = {}) {
+  const command = podcastFullAnalysisCommand(episodeId, podcast, idempotencyKey);
+  return request(command.path, {
+    method: 'POST',
+    body: command.body,
+    errorMsg: '启动全文处理失败，请检查逐字稿或原节目音频后重试',
   });
 }
 

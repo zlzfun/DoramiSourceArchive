@@ -282,7 +282,12 @@ def _analysis_messages(
 ) -> list[ChatMessage]:
     taxonomy_payload = [tag.model_dump() for tag in active_tags]
     return [
-        ChatMessage(role="system", content=analysis_system_prompt(article.content_type)),
+        ChatMessage(
+            role="system",
+            content=analysis_system_prompt(
+                article.content_type, article.analysis_basis
+            ),
+        ),
         ChatMessage(
             role="user",
             content=build_article_analysis_user_prompt(
@@ -295,6 +300,7 @@ def _analysis_messages(
                 taxonomy_tags=taxonomy_payload,
                 people=article.people,
                 topic_heat=article.topic_heat,
+                analysis_basis=article.analysis_basis,
             ),
         ),
     ]
@@ -547,6 +553,20 @@ def queue_article_analysis(
     prompt_version, scoring_version = analysis_contract_versions(article.content_type)
     source = session.get(SourceConfigRecord, article.source_id)
     record = session.get(ArticleAnalysisRecord, article.id)
+    if (
+        article.content_type == "podcast_episode"
+        and record is not None
+        and record.analysis_basis in {"publisher_transcript", "asr_transcript"}
+    ):
+        # Show notes are a lower-fidelity input.  Refresh/backfill/manual legacy
+        # entry points must use the Podcast full-analysis selector instead of
+        # replacing a completed transcript result.
+        next_hash = compute_content_hash(article)
+        if record.content_hash != next_hash:
+            record.content_hash = next_hash
+            record.updated_at = _iso(now)
+            session.add(record)
+        return "unchanged"
     if not sync_consumer_policy.local_source_operation_allowed(
         session, article.source_id, operation="analysis"
     ):
@@ -2095,6 +2115,22 @@ async def process_claimed_analysis(
                 )
                 session.commit()
             return ProcessResult(task.article_id, "superseded", TaggingStatus.PENDING.value)
+        if (
+            article_input.content_type == "podcast_episode"
+            and record.analysis_basis
+            in {"publisher_transcript", "asr_transcript"}
+            and article_input.analysis_basis == "podcast_show_notes"
+        ):
+            revoke_queued_analysis(
+                session,
+                task.article_id,
+                reason="transcript analysis superseded show notes",
+                now=ended,
+            )
+            session.commit()
+            return ProcessResult(
+                task.article_id, "superseded", record.tagging_status
+            )
         if (
             article_input.content_type == "podcast_episode"
             and tuple(article_input.people) != _podcast_people(article)

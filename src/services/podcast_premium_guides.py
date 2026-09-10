@@ -191,7 +191,7 @@ def _publish_text(
 
 
 def _source_transcript(
-    session: Session, episode_id: str
+    session: Session, episode_id: str, config: PodcastConfig
 ) -> tuple[ArticleRecord, PodcastTextArtifactRecord, str]:
     episode = session.get(ArticleRecord, episode_id)
     if episode is None or episode.content_type != "podcast_episode":
@@ -199,26 +199,31 @@ def _source_transcript(
     duration = float(_extensions(episode).get("duration_seconds") or 0)
     if duration <= 0:
         raise PremiumGuideError("播客时长未知，暂不触发精品导读")
-    artifact = session.exec(
-        select(PodcastTextArtifactRecord)
-        .where(
-            PodcastTextArtifactRecord.episode_id == episode_id,
-            PodcastTextArtifactRecord.kind == "normalized_transcript",
-        )
-        .order_by(
-            PodcastTextArtifactRecord.version.desc(),
-            PodcastTextArtifactRecord.created_at.desc(),
-        )
-    ).first()
-    if artifact is None:
-        raise PremiumGuideError("ASR 转录尚未完成")
+    analysis = session.get(ArticleAnalysisRecord, episode_id)
+    if (
+        not has_authoritative_analysis(analysis)
+        or analysis.analysis_basis not in {"publisher_transcript", "asr_transcript"}
+        or not analysis.transcript_artifact_id
+    ):
+        raise PremiumGuideError("播客全文分析尚未完成")
+    artifact = session.get(PodcastTextArtifactRecord, analysis.transcript_artifact_id)
+    expected_kind = (
+        "publisher_transcript"
+        if analysis.analysis_basis == "publisher_transcript"
+        else "normalized_transcript"
+    )
+    if (
+        artifact is None
+        or artifact.episode_id != episode_id
+        or artifact.kind != expected_kind
+    ):
+        raise PremiumGuideError("全文分析逐字稿不可用")
     try:
-        document = json.loads(artifact.inline_text)
-        transcript = str(document.get("text") or "").strip()
-    except (AttributeError, TypeError, ValueError):
-        transcript = ""
-    if not transcript:
-        raise PremiumGuideError("ASR 转录内容为空")
+        from services.podcast_full_analysis import _transcript_text
+
+        transcript = _transcript_text(artifact, config)
+    except ValueError as exc:
+        raise PremiumGuideError("全文分析逐字稿内容不可用") from exc
     return episode, artifact, transcript
 
 
@@ -248,7 +253,7 @@ async def run_premium_guide(
     try:
         with Session(engine) as session:
             episode, transcript_artifact, transcript = _source_transcript(
-                session, episode_id
+                session, episode_id, config
             )
             analysis = session.get(ArticleAnalysisRecord, episode_id)
             if not has_authoritative_analysis(analysis):
@@ -462,7 +467,14 @@ def pending_premium_guide_candidates(
             )
             .where(
                 ArticleRecord.content_type == "podcast_episode",
-                PodcastTextArtifactRecord.kind == "normalized_transcript",
+                PodcastTextArtifactRecord.id
+                == ArticleAnalysisRecord.transcript_artifact_id,
+                PodcastTextArtifactRecord.kind.in_(
+                    ("normalized_transcript", "publisher_transcript")
+                ),
+                ArticleAnalysisRecord.analysis_basis.in_(
+                    ("asr_transcript", "publisher_transcript")
+                ),
                 ArticleAnalysisRecord.quality_score > score_threshold,
             )
         ).all()

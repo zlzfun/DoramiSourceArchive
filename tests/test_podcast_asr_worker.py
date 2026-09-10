@@ -50,6 +50,7 @@ from services.aliyun_isi_asr import (  # noqa: E402
 from services.aliyun_isi_asr_worker import (  # noqa: E402
     AliyunIsiAsrAdapter,
     AliyunIsiAsrWorkerBundle,
+    _normalized_transcript,
     aliyun_asr_admission_fingerprint,
     aliyun_asr_identity,
     aliyun_asr_worker_ready,
@@ -2462,3 +2463,37 @@ def test_aliyun_adapter_folds_identical_stereo_and_uses_wall_clock_duration(
     assert document["segments"][0]["words"] == [
         {"channel": 0, "end_ms": 59_000, "start_ms": 0, "text": "hello"}
     ]
+
+
+def test_aliyun_normalizer_folds_offset_rechunked_mirror_but_keeps_distinct_channel():
+    transcript = AsrTranscript(
+        text="unused provider aggregate",
+        segments=(
+            TranscriptSegment(0, 4_000, "AI is becoming more powerful", 0),
+            TranscriptSegment(0, 8_000, "the guest gives a distinct answer", 1),
+            TranscriptSegment(
+                3,
+                8_003,
+                "AI is becoming more powerful and resources are concentrated",
+                2,
+            ),
+            TranscriptSegment(4_000, 8_000, "resources are concentrated", 0),
+        ),
+        words=(),
+        audio_duration_ms=24_000,
+    )
+
+    document = json.loads(
+        _normalized_transcript(
+            transcript,
+            language="en",
+            source_audio_duration_ms=8_000,
+        )
+    )
+
+    assert document["audio_duration_ms"] == 8_000
+    retained_channels = {segment["channel"] for segment in document["segments"]}
+    assert 1 in retained_channels
+    assert len(retained_channels & {0, 2}) == 1
+    assert document["text"].count("AI is becoming more powerful") == 1
+    assert "the guest gives a distinct answer" in document["text"]

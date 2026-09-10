@@ -930,7 +930,7 @@ class PodcastProcessingRecord(SQLModel, table=True):
             name="ck_podcast_processings_selection_source",
         ),
         CheckConstraint(
-            "requested_target IN ('transcript','digest_blog','digest_audio')",
+            "requested_target IN ('transcript','full_analysis','digest_blog','digest_audio')",
             name="ck_podcast_processings_requested_target",
         ),
         CheckConstraint(

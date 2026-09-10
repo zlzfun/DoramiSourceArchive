@@ -8389,6 +8389,7 @@ input[type="radio"] {
   .podcast-status.is-ok { color: var(--state-ok); background: var(--state-ok-bg); }
   .podcast-status.is-run { color: var(--state-run); background: var(--state-run-bg); }
   .podcast-status.is-bad { color: var(--state-bad); background: var(--state-bad-bg); }
+  .podcast-status.is-warn { color: var(--state-warn); background: var(--state-warn-bg); }
   .podcast-status.is-idle { color: var(--state-idle); background: var(--state-idle-bg); }
 
   .reader-load-more {
@@ -8931,6 +8932,19 @@ input[type="radio"] {
     gap: 12px;
     margin-bottom: 13px;
   }
+
+  .podcast-full-state {
+    margin: -3px 0 12px;
+    padding: 8px 10px;
+    border-radius: var(--r-control);
+    background: var(--dorami-well);
+    color: var(--dorami-muted);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.55;
+  }
+  .podcast-full-state.is-bad { color: var(--state-bad); background: var(--state-bad-bg); }
+  .podcast-full-state.is-warn { color: var(--state-warn); background: var(--state-warn-bg); }
 
   .podcast-player-cover {
     flex: none;

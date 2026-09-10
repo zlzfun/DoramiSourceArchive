@@ -31,6 +31,7 @@ from models.db import (
     PodcastProcessingRecord,
     PodcastStageAttemptRecord,
     PodcastTextArtifactRecord,
+    PodcastTextPublicationRecord,
 )
 from services.podcast_worker_contracts import (
     NormalizedUsage,
@@ -80,6 +81,10 @@ StagePolicyCheck = StagePolicy | Callable[..., None]
 
 STAGE_GRAPH: dict[str, dict[str, frozenset[Optional[str]]]] = {
     "transcript": {"asr": frozenset({None})},
+    "full_analysis": {
+        "asr": frozenset({"analyze"}),
+        "analyze": frozenset({None}),
+    },
     "digest_blog": {
         "asr": frozenset({"translate", "analyze"}),
         "translate": frozenset({"analyze"}),
@@ -247,9 +252,42 @@ def _evaluate_input_binding(
     content_hash = str(process.input_content_hash or "").strip().lower()
     if not artifact_id or not artifact_kind or not content_hash:
         return "invalid_input", ["Podcast processing input binding is missing"]
-    if artifact_kind == "source_audio":
-        from models.db import PodcastArtifactRecord
-
+    if (
+        artifact_kind == "source_audio"
+        and process.requested_target == "full_analysis"
+        and process.stage == "analyze"
+    ):
+        # Once ASR has committed, the durable normalized transcript is the
+        # analyze-stage input.  Source audio may expire after the paid call and
+        # must not strand a restart-safe local analysis.
+        predecessor = session.exec(
+            select(PodcastStageAttemptRecord)
+            .where(
+                PodcastStageAttemptRecord.processing_id == process.id,
+                PodcastStageAttemptRecord.stage == "asr",
+                PodcastStageAttemptRecord.submission_state == "succeeded",
+                PodcastStageAttemptRecord.output_artifact_kind
+                == "normalized_transcript",
+            )
+            .order_by(PodcastStageAttemptRecord.attempt_no.desc())
+        ).first()
+        transcript = (
+            session.get(PodcastTextArtifactRecord, predecessor.output_artifact_id)
+            if predecessor is not None and predecessor.output_artifact_id
+            else None
+        )
+        if (
+            predecessor is None
+            or transcript is None
+            or transcript.processing_id != process.id
+            or transcript.episode_id != process.episode_id
+            or transcript.kind != "normalized_transcript"
+            or transcript.content_hash != predecessor.output_hash
+        ):
+            return "invalid_input", [
+                "Podcast normalized transcript output is no longer usable"
+            ]
+    elif artifact_kind == "source_audio":
         source_audio = session.get(PodcastArtifactRecord, artifact_id)
         if (
             source_audio is None
@@ -261,21 +299,57 @@ def _evaluate_input_binding(
         ):
             return "invalid_input", ["Podcast source audio input is no longer current"]
     else:
-        from models.db import PodcastTextArtifactRecord, PodcastTextPublicationRecord
-
         text_artifact = session.get(PodcastTextArtifactRecord, artifact_id)
         publication = session.get(
             PodcastTextPublicationRecord, f"{process.episode_id}:{artifact_kind}"
+        )
+        producing_attempt = (
+            session.get(
+                PodcastStageAttemptRecord, text_artifact.producing_attempt_id
+            )
+            if text_artifact is not None
+            and text_artifact.producing_attempt_id
+            else None
+        )
+        producing_process = (
+            session.get(PodcastProcessingRecord, text_artifact.processing_id)
+            if text_artifact is not None and text_artifact.processing_id
+            else None
+        )
+        normalized_bound = bool(
+            artifact_kind == "normalized_transcript"
+            and text_artifact is not None
+            and producing_attempt is not None
+            and producing_process is not None
+            and producing_attempt.processing_id == text_artifact.processing_id
+            and producing_process.id == text_artifact.processing_id
+            and producing_process.episode_id == process.episode_id
+            and (
+                text_artifact.processing_id == process.id
+                or process.requested_target == "full_analysis"
+            )
+            and producing_attempt.stage == "asr"
+            and producing_attempt.submission_state == "succeeded"
+            and producing_attempt.output_artifact_kind == "normalized_transcript"
+            and producing_attempt.output_artifact_id == text_artifact.id
+            and producing_attempt.output_hash == text_artifact.content_hash
+            and hashlib.sha256(text_artifact.inline_text.encode("utf-8")).hexdigest()
+            == text_artifact.content_hash
         )
         if (
             text_artifact is None
             or text_artifact.episode_id != process.episode_id
             or text_artifact.kind != artifact_kind
             or text_artifact.content_hash != content_hash
-            or publication is None
-            or publication.status != "published"
-            or publication.artifact_id != artifact_id
-            or publication.authority_id != text_artifact.authority_id
+            or (
+                not normalized_bound
+                and (
+                    publication is None
+                    or publication.status != "published"
+                    or publication.artifact_id != artifact_id
+                    or publication.authority_id != text_artifact.authority_id
+                )
+            )
         ):
             return "invalid_input", ["Podcast text input is no longer current"]
 
@@ -436,8 +510,15 @@ def enqueue_processing(
     fingerprint = _validate_fingerprint(input_fingerprint)
     pipeline_version = _require_nonempty(pipeline_version, "pipeline_version")
     requested_target = _require_nonempty(requested_target, "requested_target")
-    if requested_target not in {"transcript", "digest_blog", "digest_audio"}:
-        raise ValueError("requested_target must be transcript, digest_blog or digest_audio")
+    if requested_target not in {
+        "transcript",
+        "full_analysis",
+        "digest_blog",
+        "digest_audio",
+    }:
+        raise ValueError(
+            "requested_target must be transcript, full_analysis, digest_blog or digest_audio"
+        )
     _validate_stage_graph(requested_target, stage)
     bound_artifact_id = _require_nonempty(input_artifact_id, "input_artifact_id")
     bound_artifact_kind = _require_nonempty(
@@ -746,6 +827,7 @@ def claim_next_processing(
     worker_id: str,
     lease_seconds: int,
     policy: Optional[StagePolicyCheck] = None,
+    requested_target: Optional[str] = None,
     now: Optional[dt.datetime] = None,
 ) -> Optional[PodcastProcessingClaim]:
     """Atomically claim one due row, including work abandoned after restart."""
@@ -765,6 +847,11 @@ def claim_next_processing(
         if configured is not None:
             allowed_stages = {str(item) for item in configured}
     conditions = [or_(_claimable(stamp), _drain_candidate())]
+    if requested_target is not None:
+        conditions.append(
+            PodcastProcessingRecord.requested_target
+            == _require_nonempty(requested_target, "requested_target")
+        )
     if allowed_stages is not None:
         if not allowed_stages:
             return None

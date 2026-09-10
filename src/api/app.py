@@ -26,6 +26,7 @@ from apscheduler.triggers.cron import CronTrigger
 from storage.impl.db_storage import DatabaseStorage
 from pipeline.core import DataPipeline
 from models.db import (
+    ArticleAnalysisRecord,
     ArticleRecord,
     CollectionJobRecord,
     CollectionJobRunRecord,
@@ -189,13 +190,18 @@ from services.media_store import MediaStore
 from services.podcast_artifacts import PodcastArtifactStore
 from services.podcast_asr_worker import AsrWorkerConfig, AsrWorkerStep
 from services import podcast_premium_guides as podcast_premium_guide_service
+from services import podcast_publisher_transcripts as podcast_publisher_transcript_service
 from services import podcast_source_audio as podcast_source_audio_service
 from services import podcast_processing_admin as podcast_processing_admin_service
 from services.podcast_premium_guide_providers import (
     AliyunIsiPremiumGuideTtsProvider,
     OpenAiCompatiblePremiumGuideTextProvider,
 )
-from services.aliyun_isi_asr_worker import register_aliyun_isi_asr_worker
+from services.aliyun_isi_asr_worker import (
+    AliyunIsiAsrAdmissionEstimator,
+    register_aliyun_isi_asr_worker,
+)
+from services import podcast_full_analysis as podcast_full_analysis_service
 from services.podcast_processing_admin import PodcastProcessingProviderRegistry
 from services.request_log_redaction import install_uvicorn_sensitive_request_filters
 from llm.client import LLMNotConfigured, LLMError, UsageMeta, ping as llm_ping
@@ -656,7 +662,15 @@ podcast_artifact_store = PodcastArtifactStore(
 # The durable processing state machine is used for resumable ASR. Premium-guide
 # text and TTS use their smaller provider-neutral workflow below.
 podcast_processing_providers = PodcastProcessingProviderRegistry()
-register_aliyun_isi_asr_worker(podcast_processing_providers)
+_podcast_asr_admission_estimator = AliyunIsiAsrAdmissionEstimator()
+register_aliyun_isi_asr_worker(
+    podcast_processing_providers,
+    admission_estimator=_podcast_asr_admission_estimator,
+)
+podcast_full_analysis_service.register_full_analysis_worker(
+    podcast_processing_providers,
+    asr_estimator=_podcast_asr_admission_estimator,
+)
 
 # 抓取后媒体预取的 fire-and-forget 任务强引用（asyncio 只保弱引用）。
 _MEDIA_PREFETCH_TASKS: set = set()
@@ -708,53 +722,163 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
 
 
 def schedule_podcast_premium_after_landing(article_ids: List[str]) -> int:
-    """Cache and enqueue ASR only for newly landed Podcast episodes over 20m."""
+    """Legacy hook retained as an inert compatibility seam.
 
-    eligible: list[str] = []
+    Issue #44 admits Podcast work only after the persisted show-notes score is
+    available; duration and article landing no longer enqueue ASR.
+    """
+
+    return 0
+
+
+async def enqueue_podcast_processing_with_input(
+    *,
+    episode_id: str,
+    target: str,
+    selection_override: bool,
+    idempotency_key: str,
+    reason: str,
+    actor: str,
+):
+    """Prepare a full-analysis input, then issue the durable admin command."""
+
+    if target == "full_analysis":
+        with Session(db_sink.engine) as session:
+            podcast_processing_admin_service.require_full_analysis_llm(session, target)
+
+    def enqueue():
+        return podcast_processing_admin_service.request_processing(
+            db_sink.engine,
+            podcast_artifact_store,
+            podcast_processing_providers,
+            settings.podcast,
+            episode_id=episode_id,
+            target=target,
+            selection_override=selection_override,
+            idempotency_key=idempotency_key,
+            reason=reason,
+            actor=actor,
+        )
+
+    locator_revision = (
+        podcast_publisher_transcript_service.publisher_transcript_refresh_revision(
+            db_sink.engine, episode_id=episode_id
+        )
+        if target == "full_analysis"
+        else None
+    )
+    if locator_revision:
+        try:
+            async with httpx.AsyncClient() as client:
+                await podcast_publisher_transcript_service.ingest_publisher_transcript(
+                    db_sink.engine,
+                    episode_id=episode_id,
+                    config=settings.podcast,
+                    client=client,
+                )
+        except podcast_publisher_transcript_service.PublisherTranscriptError as exc:
+            try:
+                stale_selected = (
+                    podcast_processing_admin_service.select_full_analysis_input(
+                        db_sink.engine,
+                        podcast_artifact_store,
+                        episode_id=episode_id,
+                    )
+                )
+            except podcast_processing_admin_service.PodcastAdminError:
+                stale_selected = None
+    try:
+        return enqueue()
+    except podcast_processing_admin_service.PodcastAdminError as exc:
+        if target != "full_analysis" or exc.code != "podcast_artifact_not_ready":
+            raise
+    try:
+        async with httpx.AsyncClient() as client:
+            await podcast_publisher_transcript_service.ingest_publisher_transcript(
+                db_sink.engine,
+                episode_id=episode_id,
+                config=settings.podcast,
+                client=client,
+            )
+    except podcast_publisher_transcript_service.PublisherTranscriptError:
+        await podcast_source_audio_service.cache_source_audio(
+            db_sink.engine,
+            podcast_artifact_store,
+            episode_id=episode_id,
+            podcast_config=settings.podcast,
+            storage_config=settings.podcast_artifacts,
+            client_factory=httpx.AsyncClient,
+        )
+    return enqueue()
+
+
+def schedule_podcast_full_analysis(article_ids: List[str]) -> int:
+    """Prepare and durably enqueue every newly successful >=5 assessment."""
+
+    eligible: list[tuple[str, str]] = []
     with Session(db_sink.engine) as session:
         for article_id in article_ids:
-            episode = session.get(ArticleRecord, article_id)
-            if episode is None or episode.content_type != "podcast_episode":
+            analysis = session.get(ArticleAnalysisRecord, article_id)
+            initial_candidate = (
+                analysis is not None
+                and analysis.status == "succeeded"
+                and analysis.analysis_basis == "podcast_show_notes"
+                and analysis.quality_score is not None
+                and float(analysis.quality_score)
+                >= podcast_full_analysis_service.INITIAL_PROCESSING_THRESHOLD
+            )
+            transcript_result = bool(
+                analysis is not None
+                and analysis.status == "succeeded"
+                and analysis.analysis_basis
+                in {"publisher_transcript", "asr_transcript"}
+            )
+            if not initial_candidate and not transcript_result:
                 continue
-            try:
-                metadata = json.loads(episode.extensions_json or "{}")
-                duration = float(metadata.get("duration_seconds") or 0)
-            except (AttributeError, TypeError, ValueError):
-                duration = 0
-            if duration > settings.podcast.premium_min_duration_seconds:
-                eligible.append(article_id)
-
-    for episode_id in eligible:
-        async def _run(current_episode_id: str = episode_id) -> None:
-            try:
-                cached = await podcast_source_audio_service.cache_source_audio(
-                    db_sink.engine,
-                    podcast_artifact_store,
-                    episode_id=current_episode_id,
-                    podcast_config=settings.podcast,
-                    storage_config=settings.podcast_artifacts,
-                    client_factory=httpx.AsyncClient,
+            locator_revision = (
+                podcast_publisher_transcript_service.publisher_transcript_refresh_revision(
+                    db_sink.engine, episode_id=article_id
                 )
-                podcast_processing_admin_service.request_processing(
+            )
+            try:
+                selected = podcast_processing_admin_service.select_full_analysis_input(
                     db_sink.engine,
                     podcast_artifact_store,
-                    podcast_processing_providers,
-                    settings.podcast,
+                    episode_id=article_id,
+                )
+            except podcast_processing_admin_service.PodcastAdminError as exc:
+                if not initial_candidate or exc.code != "podcast_artifact_not_ready":
+                    continue
+                revision = "prepare"
+            else:
+                if (
+                    transcript_result
+                    and not locator_revision
+                    and selected.artifact_id == analysis.transcript_artifact_id
+                ):
+                    continue
+                revision = (locator_revision or selected.content_hash)[:16]
+            eligible.append((article_id, revision))
+
+    for episode_id, revision in eligible:
+        async def _run(
+            current_episode_id: str = episode_id,
+            current_revision: str = revision,
+        ) -> None:
+            try:
+                await enqueue_podcast_processing_with_input(
                     episode_id=current_episode_id,
-                    # The normalized transcript remains internal evidence; the
-                    # only reader product produced from it is digest_blog_zh.
-                    target="transcript",
-                    selection_override=True,
+                    target="full_analysis",
+                    selection_override=False,
                     idempotency_key=(
-                        f"premium-landing:{current_episode_id}:"
-                        f"{str(cached.get('content_hash') or '')[:16]}"
+                        f"full-analysis:auto:{current_episode_id}:{current_revision}"
                     ),
-                    reason="落库后自动生成中文精品导读",
+                    reason="简介初评达到全文处理线",
                     actor="system",
                 )
-            except Exception as exc:  # noqa: BLE001 - manual run remains available
+            except Exception as exc:  # noqa: BLE001 - next analysis tick can reconcile
                 _dorami_logger.warning(
-                    "Podcast 落库自动转录未启动 episode=%s (%s)",
+                    "Podcast 全文处理未启动 episode=%s (%s)",
                     current_episode_id,
                     type(exc).__name__,
                 )
@@ -1675,6 +1799,24 @@ async def execute_article_analysis_job():
             worker_id="runtime-all",
             llm_config=llm_config,
         )
+        with Session(db_sink.engine) as session:
+            candidate_ids = list(
+                session.exec(
+                    select(ArticleAnalysisRecord.article_id)
+                    .where(
+                        ArticleAnalysisRecord.status == "succeeded",
+                        ArticleAnalysisRecord.analysis_basis.in_(
+                            (
+                                "podcast_show_notes",
+                                "publisher_transcript",
+                                "asr_transcript",
+                            )
+                        ),
+                    )
+                    .order_by(ArticleAnalysisRecord.updated_at.desc())
+                ).all()
+            )
+        schedule_podcast_full_analysis(candidate_ids)
         # Candidate aggregation commits with each article.  Automatic promotion
         # runs only afterwards, outside those transactions, and remains inert
         # unless the explicit governance switch is enabled.
@@ -1838,11 +1980,23 @@ def _configured_podcast_asr_worker():
     return worker
 
 
+def _configured_podcast_full_analysis_worker():
+    podcast_config = settings.podcast
+    if not podcast_config.processing_enabled:
+        return None
+    try:
+        PodcastStagePolicy(podcast_config).require_stage("analyze", boundary="claim")
+    except PodcastStageDenied:
+        return None
+    return podcast_processing_providers.worker_for("analyze")
+
+
 async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
-    """Advance bounded ASR work off-loop; empty/incomplete config is inert."""
+    """Advance bounded ASR and full-analysis work from the durable queue."""
 
     resolved = _configured_podcast_asr_worker()
-    if resolved is None:
+    analysis_worker = _configured_podcast_full_analysis_worker()
+    if resolved is None and analysis_worker is None:
         return ()
     worker = resolved
     runtime_config = settings.podcast_worker
@@ -1850,12 +2004,18 @@ async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
         worker_id=f"podcast-asr:{settings.podcast.authority_id}",
         lease_seconds=runtime_config.lease_seconds,
         fallback_retry_seconds=runtime_config.fallback_retry_seconds,
-        next_stage_by_target={"transcript": None, "digest_blog": "translate"},
+        next_stage_by_target={
+            "transcript": None,
+            "full_analysis": "analyze",
+            "digest_blog": "translate",
+        },
     )
 
     def _run_steps() -> tuple[str, ...]:
         actions: list[str] = []
         for _ in range(runtime_config.max_steps_per_tick):
+            if worker is None:
+                break
             try:
                 with Session(db_sink.engine) as session:
                     # Resolve once and pass this exact effective snapshot as the
@@ -1887,12 +2047,35 @@ async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
             actions.append(step.action)
             if step.action == "idle":
                 break
+        if analysis_worker is not None:
+            with Session(db_sink.engine) as llm_session:
+                llm_config = daily_brief_service.resolve_llm_config(llm_session)
+            if llm_config.configured:
+                for _ in range(runtime_config.max_steps_per_tick):
+                    with Session(db_sink.engine) as session:
+                        step = asyncio.run(
+                            analysis_worker(
+                                session,
+                                config=podcast_full_analysis_service.FullAnalysisWorkerConfig(
+                                    worker_id=(
+                                        f"podcast-analysis:{settings.podcast.authority_id}"
+                                    ),
+                                    lease_seconds=runtime_config.lease_seconds,
+                                    retry_seconds=runtime_config.fallback_retry_seconds,
+                                    llm_config=llm_config,
+                                    map_concurrency=llm_config.map_concurrency,
+                                ),
+                                podcast_config=settings.podcast,
+                                policy=PodcastStagePolicy(settings.podcast),
+                            )
+                        )
+                    actions.append(step.action)
+                    if step.action == "idle":
+                        break
         return tuple(actions)
 
     try:
         actions = await asyncio.to_thread(_run_steps)
-        # ASR landing is the trigger boundary for the legacy guide workflow.  It
-        # consumes the authoritative initial score and never re-scores/overwrites it.
         for episode_id in await asyncio.to_thread(
             podcast_premium_guide_service.pending_premium_guide_candidates,
             db_sink.engine,
@@ -1912,7 +2095,10 @@ async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
 def reload_podcast_asr_worker_schedule() -> None:
     """Register one delayed ASR tick, or remove it when readiness disappears."""
 
-    if _configured_podcast_asr_worker() is None:
+    if (
+        _configured_podcast_asr_worker() is None
+        and _configured_podcast_full_analysis_worker() is None
+    ):
         if scheduler.get_job(PODCAST_ASR_WORKER_JOB_ID):
             scheduler.remove_job(PODCAST_ASR_WORKER_JOB_ID)
         return
