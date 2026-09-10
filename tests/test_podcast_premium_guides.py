@@ -22,6 +22,7 @@ from services.podcast_premium_guides import (
     PremiumGuideDraft,
     SynthesizedAudio,
     list_premium_guide_tasks,
+    pending_premium_guide_candidates,
     run_premium_guide,
 )
 from storage.impl.db_storage import DatabaseStorage
@@ -140,9 +141,11 @@ class TtsProvider:
         return SynthesizedAudio(_wav(), "audio/wav", "provider-task")
 
 
-def test_premium_guide_runs_from_asr_to_published_blog_and_audio(tmp_path):
+@pytest.mark.parametrize("kind", ["normalized_transcript", "publisher_transcript"])
+def test_premium_guide_runs_from_asr_to_published_blog_and_audio(tmp_path, kind):
     sink = DatabaseStorage(f"sqlite:///{tmp_path / 'premium.db'}")
-    transcript = json.dumps({"text": "detailed source transcript"})
+    transcript = (json.dumps({"text": "detailed source transcript"})
+                  if kind == "normalized_transcript" else "detailed publisher transcript")
     transcript_hash = hashlib.sha256(transcript.encode()).hexdigest()
     with Session(sink.engine) as session:
         session.add(
@@ -177,7 +180,8 @@ def test_premium_guide_runs_from_asr_to_published_blog_and_audio(tmp_path):
                 quality_score=9.0,
                 score_reason="简介中的第一手安全披露",
                 summary="简介初评摘要",
-                analysis_basis="podcast_show_notes",
+                analysis_basis="asr_transcript" if kind == "normalized_transcript" else "publisher_transcript",
+                transcript_artifact_id="transcript-1",
                 analysis_input_hash="authoritative-input-hash",
                 created_at=STAMP,
                 updated_at=STAMP,
@@ -187,7 +191,7 @@ def test_premium_guide_runs_from_asr_to_published_blog_and_audio(tmp_path):
             PodcastTextArtifactRecord(
                 id="transcript-1",
                 episode_id="episode-1",
-                kind="normalized_transcript",
+                kind=kind,
                 version=1,
                 content_hash=transcript_hash,
                 inline_text=transcript,
@@ -214,13 +218,33 @@ def test_premium_guide_runs_from_asr_to_published_blog_and_audio(tmp_path):
             stderr="",
         ),
     )
+    with Session(sink.engine) as session:
+        session.add(PodcastTextArtifactRecord(
+            id="unscored-newer-transcript", episode_id="episode-1", kind=kind,
+            version=2, content_hash=hashlib.sha256(b"unscored transcript").hexdigest(),
+            inline_text="unscored transcript", language="en", authority_id="test-authority",
+            created_at=STAMP,
+        ))
+        session.commit()
+    assert pending_premium_guide_candidates(
+        sink.engine, minimum_duration_seconds=1200, score_threshold=8.5
+    ) == ["episode-1"]
+
+    class BoundTextProvider(TextProvider):
+        async def create_blog(self, **kwargs):
+            assert kwargs["transcript"] == (
+                "detailed source transcript" if kind == "normalized_transcript"
+                else "detailed publisher transcript"
+            )
+            return await super().create_blog(**kwargs)
+
     result = asyncio.run(
         run_premium_guide(
             sink.engine,
             store,
             episode_id="episode-1",
             config=_external_config(),
-            text_provider=TextProvider(),
+            text_provider=BoundTextProvider(),
             tts_provider=TtsProvider(),
         )
     )
@@ -231,7 +255,7 @@ def test_premium_guide_runs_from_asr_to_published_blog_and_audio(tmp_path):
         assert analysis.quality_score == 9.0
         assert analysis.score_reason == "简介中的第一手安全披露"
         assert analysis.summary == "简介初评摘要"
-        assert analysis.analysis_basis == "podcast_show_notes"
+        assert analysis.analysis_basis == ("asr_transcript" if kind == "normalized_transcript" else "publisher_transcript")
         assert analysis.analysis_input_hash == "authoritative-input-hash"
         assert session.get(PodcastTextPublicationRecord, "episode-1:digest_blog_zh")
         assert session.get(PodcastTextPublicationRecord, "episode-1:narration_script_zh")
@@ -263,7 +287,8 @@ def test_premium_guide_low_authoritative_score_never_calls_provider(tmp_path):
         session.commit()
         session.add(ArticleAnalysisRecord(
             article_id="episode-low", status="succeeded", quality_score=7.5,
-            score_reason="权威简介初评", analysis_basis="podcast_show_notes",
+            score_reason="权威简介初评", analysis_basis="asr_transcript",
+            transcript_artifact_id="transcript-low",
             created_at=STAMP, updated_at=STAMP,
         ))
         session.add(PodcastTextArtifactRecord(
@@ -301,7 +326,7 @@ def test_premium_guide_low_authoritative_score_never_calls_provider(tmp_path):
         analysis = session.get(ArticleAnalysisRecord, "episode-low")
         assert analysis.quality_score == 7.5
         assert analysis.score_reason == "权威简介初评"
-        assert analysis.analysis_basis == "podcast_show_notes"
+        assert analysis.analysis_basis == "asr_transcript"
 
 
 def test_premium_guide_skips_episode_not_over_twenty_minutes(tmp_path):
@@ -322,6 +347,7 @@ def test_premium_guide_skips_episode_not_over_twenty_minutes(tmp_path):
         session.commit()
         session.add(ArticleAnalysisRecord(
             article_id="episode-short", status="succeeded", quality_score=5,
+            analysis_basis="asr_transcript", transcript_artifact_id="transcript-short",
             created_at=STAMP, updated_at=STAMP,
         ))
         session.add(PodcastTextArtifactRecord(

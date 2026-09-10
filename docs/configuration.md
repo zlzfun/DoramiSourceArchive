@@ -41,7 +41,7 @@ Podcast 处理能力与 `runtime.role` 正交。安装类型决定默认处理�
 
 | `installation` | 默认处理 | 默认阶段 | 默认目标 |
 | --- | --- | --- | --- |
-| `external` | 开启 | `fetch,asr,translate,analyze,digest,script,tts,audio_qa,local_publish` | `transcript,digest_blog,digest_audio` |
+| `external` | 开启 | `fetch,asr,translate,analyze,digest,script,tts,audio_qa,local_publish` | `transcript,full_analysis,digest_blog,digest_audio` |
 | `internal` | 关闭 | 空（只同步） | 空 |
 | `development` | 关闭 | `fetch,local_publish` | 空 |
 
@@ -87,7 +87,7 @@ text_sync_page_max_rows = 1000
 # reader_cursor_secret =
 # external 默认 true/全目标，internal 默认 false/空目标；仅覆盖时填写
 # processing_enabled = true
-# provider_ready_targets = transcript,digest_blog,digest_audio
+# provider_ready_targets = transcript,full_analysis,digest_blog,digest_audio
 text_pipeline_version = podcast-text-v1
 audio_pipeline_version = podcast-audio-v1
 processing_policy_version = podcast-processing-policy-v1
@@ -107,6 +107,11 @@ premium_transcript_max_chars = 120000
 premium_blog_max_chars = 6000
 premium_narration_max_chars = 4200
 ```
+
+播客评分分两步但页面只展示一个当前分数：简介初评达到 `>= 5.0`（或管理员强制）
+后进入 `full_analysis`；发布方完整逐字稿优先，否则才使用 ASR。全文评分完成后替换
+简介初评，当前固定以 `>= 8.0` 判定“优质播客”。这两个边界与节目时长无关，也不
+复用旧精品导读配置；终评门槛的运行时管理由后续任务提供。
 
 ASR worker 的轮询与租约参数单独配置；启动时首轮总会延后一个 `tick_seconds`，不会因
 进程启动直接调用 provider：

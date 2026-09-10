@@ -1,4 +1,4 @@
-import { X, Edit2, Trash2, ExternalLink } from 'lucide-react';
+import { X, Edit2, FileAudio2, Trash2, ExternalLink } from 'lucide-react';
 import { contentTypeLabel } from '../utils/contentType';
 import { excerptOf } from '../utils/readerText';
 import {
@@ -7,12 +7,16 @@ import {
   displayAnalysisTags,
   hasReadableAnalysis,
   podcastAssessmentMeta,
+  podcastFullProcessingMeta,
   qualityScoreText,
   SCORE_DISCLAIMER,
 } from '../utils/analysis';
 import AnalysisTagChip from './AnalysisTagChip';
 
 const fmtTime = (value) => (value ? value.replace('T', ' ').substring(0, 16) : '—');
+const FULL_PROCESSING_LOCKED_STATUSES = new Set([
+  'not_started', 'queued', 'running', 'retry_wait', 'reconciliation_required', 'ready',
+]);
 
 function prettyExtensions(raw, loading) {
   if (loading) return '正在加载元数据…';
@@ -37,12 +41,28 @@ export default function ArticleDetailDrawer({
   onClose,
   onEdit,
   onDelete,
+  onForceFullAnalysis,
+  forcingFullAnalysis = false,
   onTemporaryTagSearch,
 }) {
   const content = article ? (article.content ?? article.content_preview ?? '') : '';
   const chars = content ? content.replace(/\s+/g, '').length : 0;
   const hasAnalysis = hasReadableAnalysis(article);
   const podcastAssessment = podcastAssessmentMeta(article);
+  const podcastFullProcessing = podcastFullProcessingMeta(article);
+  const podcastProcessingStatus = String(
+    article?.podcast?.processing_status || article?.podcast?.status || '',
+  ).toLowerCase();
+  const forceFullLocked = Boolean(
+    podcastFullProcessing && FULL_PROCESSING_LOCKED_STATUSES.has(podcastProcessingStatus),
+  );
+  const forceFullLabel = forcingFullAnalysis
+    ? '启动全文处理中…'
+    : podcastProcessingStatus === 'ready'
+      ? '全文处理已完成'
+      : forceFullLocked
+        ? '全文处理中…'
+        : '强制全文处理';
   const analysisStatus = analysisStatusMeta(article, {
     includeTerminal: true,
     podcast: article?.content_type === 'podcast_episode',
@@ -124,6 +144,16 @@ export default function ArticleDetailDrawer({
                       : '暂无可展示的智能分析结果'}
                   </p>
                 )}
+                {podcastFullProcessing && (
+                  <div className="reader-analysis-summary mt-2">
+                    <div className="reader-analysis-top">
+                      <span className={`podcast-status is-${podcastFullProcessing.tone}`} role="status">
+                        {podcastFullProcessing.label}
+                      </span>
+                    </div>
+                    {podcastFullProcessing.detail && <p>{podcastFullProcessing.detail}</p>}
+                  </div>
+                )}
               </section>
 
               <section>
@@ -148,6 +178,17 @@ export default function ArticleDetailDrawer({
                 >
                   <Edit2 className="h-3.5 w-3.5" /> 编辑
                 </button>
+                {article.content_type === 'podcast_episode' && (
+                  <button
+                    type="button"
+                    onClick={() => onForceFullAnalysis?.(article)}
+                    disabled={loading || forcingFullAnalysis || forceFullLocked}
+                    className="action-button action-button-secondary min-h-[32px] px-3 text-xs"
+                  >
+                    <FileAudio2 className="h-3.5 w-3.5" />
+                    {forceFullLabel}
+                  </button>
+                )}
                 <span className="flex-1" />
                 <button
                   type="button"

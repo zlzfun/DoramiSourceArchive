@@ -22,7 +22,11 @@ from sqlmodel import Session, func, select
 
 from api import deps
 from api.articles_view import serialize_article_list_item
-from api.routers.articles import _analysis_assets, content_shape_condition
+from api.routers.articles import (
+    _analysis_assets,
+    _podcast_processing_assets,
+    content_shape_condition,
+)
 from api.tokens import generate_feed_token, hash_subscription_token, subscription_token_preview
 from api.sources import (
     DAILY_BRIEF_SOURCE_ID,
@@ -874,6 +878,9 @@ def list_favorites(
     rows = session.exec(base.offset(safe_skip).limit(safe_limit)).all()
     records = [record for record, _ in rows]
     analyses, tags = _analysis_assets(session, [record.id for record in records])
+    processings = _podcast_processing_assets(
+        session, [record.id for record in records]
+    )
     display_tags = load_display_tags(
         session,
         [record.id for record in records],
@@ -888,6 +895,7 @@ def list_favorites(
             tags=tags.get(record.id, []),
             display_tags=display_tags.get(record.id, []),
             premium_score_threshold=_app().settings.podcast.premium_score_threshold,
+            processing=processings.get(record.id),
         )
         for record in records
     ]

@@ -62,6 +62,7 @@ import {
   contentGenreLabel,
   displayAnalysisTags,
   podcastAssessmentMeta,
+  podcastFullProcessingMeta,
   primaryAnalysisLabel,
   qualityScoreText,
   shouldShowAiReadingCard,
@@ -231,7 +232,8 @@ export const ArticleRow = memo(function ArticleRow({
     ? ''
     : excerptOf(article.summary_zh || article.content_preview || article.content);
   const podcast = entryPodcast ? podcastOf(article) : null;
-  const podcastStatus = podcastProcessingMeta(
+  const podcastFullStatus = entryPodcast ? podcastFullProcessingMeta(article) : null;
+  const podcastStatus = podcastFullStatus || podcastProcessingMeta(
     podcast?.processing_status,
     Boolean(podcast?.condensed_audio_url),
   );
@@ -297,7 +299,9 @@ export const ArticleRow = memo(function ArticleRow({
                 {formatPodcastDuration(podcast?.duration_seconds) && (
                   <span>{formatPodcastDuration(podcast.duration_seconds)}</span>
                 )}
-                <span className={`podcast-status is-${podcastStatus.tone}`}>{podcastStatus.label}</span>
+                <span className={`podcast-status is-${podcastStatus.tone}`} role={podcastFullStatus ? 'status' : undefined}>
+                  {podcastStatus.label}
+                </span>
                 {podcastAssessment && <span className="stamp stamp-idle" role="status">{podcastAssessment.label}</span>}
                 {analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
               </span>

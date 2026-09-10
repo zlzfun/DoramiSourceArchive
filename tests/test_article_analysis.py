@@ -22,6 +22,7 @@ from llm.article_analysis_prompt import (  # noqa: E402
     PODCAST_ANALYSIS_PROMPT_VERSION,
     PODCAST_ANALYSIS_SCORING_VERSION,
     PODCAST_ANALYSIS_SYSTEM_PROMPT,
+    PODCAST_TRANSCRIPT_ANALYSIS_SYSTEM_PROMPT,
     build_article_analysis_user_prompt,
 )
 from models.analysis_contracts import TaxonomyTagDTO  # noqa: E402
@@ -283,6 +284,14 @@ def test_prompt_and_validator_rank_tags_by_relevance_and_align_primary():
     assert "词序变化，不得再输出为 tag_candidates" in ARTICLE_ANALYSIS_SYSTEM_PROMPT
     assert "对通用规则【不看时效】的播客内容类型例外并覆盖它" in PODCAST_ANALYSIS_SYSTEM_PROMPT
     assert "必须使用 topic_heat" in PODCAST_ANALYSIS_SYSTEM_PROMPT
+    assert "人物名气与公共影响力本身是明确的正向信号" in PODCAST_ANALYSIS_SYSTEM_PROMPT
+    assert "当前输入是播客单集的标题与节目简介" in PODCAST_ANALYSIS_SYSTEM_PROMPT
+    assert "当前输入是播客单集的标题与节目简介" not in (
+        PODCAST_TRANSCRIPT_ANALYSIS_SYSTEM_PROMPT
+    )
+    assert "从零生成唯一最终分数" in PODCAST_TRANSCRIPT_ANALYSIS_SYSTEM_PROMPT
+    assert "不推测、继承或" in PODCAST_TRANSCRIPT_ANALYSIS_SYSTEM_PROMPT
+    assert "参考任何简介初评分数" in PODCAST_TRANSCRIPT_ANALYSIS_SYSTEM_PROMPT
     active_tags = [
         TaxonomyTagDTO(
             id=1,

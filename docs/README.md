@@ -39,6 +39,8 @@
 - ◉ [podcast-wave-plan.md](./podcast-wave-plan.md) — Podcast 专栏与长播客精华设计:博客/播客 RSS
   分轨治理、竞品与 Podcasting 2.0 调研、`>30min` 权利/质量/预算门控、带时间戳证据的中文博客、
   `≤15min` AI 精华音频、数据/API/状态机/成本/安全以及分期与端到端验收。
+- ◉ [podcast-transcript-dedup.md](./podcast-transcript-dedup.md) — Provider 无关的逐段逐字稿
+  去重策略：同源片段时间覆盖与连续 token 双判定、部分镜像保留独有内容、真实多声道验收矩阵。
 - ◉ [Issue #7 可执行规格](../specs/007-podcast-intelligence/spec.md) — Podcast Intelligence 的
   用户故事、成功指标、研究决策、数据模型、OpenAPI 契约、多 Agent 任务和主会话验收入口。
 - ◉ [sources/podcast_catalog.md](./sources/podcast_catalog.md) — 内部「欧研观澜」36 个节目样本的

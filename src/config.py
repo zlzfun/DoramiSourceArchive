@@ -35,6 +35,7 @@ PODCAST_EXTERNAL_DEFAULT_STAGES = (
 )
 PODCAST_EXTERNAL_DEFAULT_TARGETS = (
     "transcript",
+    "full_analysis",
     "digest_blog",
     "digest_audio",
 )
@@ -371,7 +372,8 @@ class PodcastConfig:
         except ZoneInfoNotFoundError as exc:
             raise ValueError("Podcast budget_timezone is unknown") from exc
         unknown_targets = sorted(
-            set(ready_targets) - {"transcript", "digest_blog", "digest_audio"}
+            set(ready_targets)
+            - {"transcript", "full_analysis", "digest_blog", "digest_audio"}
         )
         if unknown_targets:
             raise ValueError(
@@ -388,9 +390,19 @@ class PodcastConfig:
                 "enabled Podcast processing requires targets and positive CNY budgets"
             )
         allowed_targets = {
-            "external": {"transcript", "digest_blog", "digest_audio"},
+            "external": {
+                "transcript",
+                "full_analysis",
+                "digest_blog",
+                "digest_audio",
+            },
             "internal": set(),
-            "development": {"transcript", "digest_blog", "digest_audio"},
+            "development": {
+                "transcript",
+                "full_analysis",
+                "digest_blog",
+                "digest_audio",
+            },
         }[installation]
         if set(ready_targets) - allowed_targets:
             raise ValueError(
@@ -398,6 +410,7 @@ class PodcastConfig:
             )
         required_target_stages = {
             "transcript": {"asr"},
+            "full_analysis": {"asr", "analyze"},
             "digest_blog": {"asr", "translate", "analyze", "digest", "script"},
             "digest_audio": {"tts", "audio_qa", "local_publish"},
         }

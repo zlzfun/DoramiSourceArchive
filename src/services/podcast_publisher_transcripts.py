@@ -413,6 +413,55 @@ def _episode_and_candidate(
     return episode, select_candidate(extensions.get("transcripts"))
 
 
+def publisher_transcript_refresh_revision(
+    engine: Engine, *, episode_id: str
+) -> str | None:
+    """Return the changed locator revision, ``""`` if current, or None if absent."""
+
+    with Session(engine) as session:
+        try:
+            _episode, candidate = _episode_and_candidate(session, episode_id)
+        except PublisherTranscriptError:
+            return None
+        locator_hash = hashlib.sha256(candidate.url.encode("utf-8")).hexdigest()
+        publication = session.get(
+            PodcastTextPublicationRecord, f"{episode_id}:{KIND}"
+        )
+        artifact = (
+            session.get(PodcastTextArtifactRecord, publication.artifact_id)
+            if publication is not None and publication.status == "published"
+            else None
+        )
+        if artifact is None:
+            return locator_hash
+        try:
+            provenance = json.loads(artifact.provenance_json or "{}")
+        except (TypeError, ValueError):
+            return locator_hash
+        return "" if provenance.get("url_sha256") == locator_hash else locator_hash
+
+
+def publisher_artifact_matches_current_locator(
+    session: Session,
+    *,
+    episode_id: str,
+    artifact: PodcastTextArtifactRecord,
+) -> bool:
+    """Whether a published artifact was fetched from the current RSS locator."""
+
+    try:
+        _episode, candidate = _episode_and_candidate(session, episode_id)
+        provenance = json.loads(artifact.provenance_json or "{}")
+    except PublisherTranscriptNotFound:
+        # Synced/manual publications may not retain a live RSS locator.
+        return True
+    except (PublisherTranscriptError, TypeError, ValueError):
+        return False
+    return provenance.get("url_sha256") == hashlib.sha256(
+        candidate.url.encode("utf-8")
+    ).hexdigest()
+
+
 def _serialize(
     artifact: PodcastTextArtifactRecord,
     publication: PodcastTextPublicationRecord,
