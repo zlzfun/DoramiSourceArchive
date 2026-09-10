@@ -128,12 +128,18 @@ export default function DiscoverPage({
   tab: controlledTab = null,
   onTabChange = null,
   interestsPanel = null,
+  // ── 形态过滤受控(issue #55):从哪个容器进入就落在哪个形态,由上层(useReaderState.discoverShape)
+  //    随 openDiscover 写入;是初值不是锁定,页内 seg 仍可切。不传时退回页内局部态(初值「全部」)。 ──
+  shape: controlledShape = null,
+  onShapeChange = null,
 }) {
   const [localTab, setLocalTab] = useState('sources'); // sources | collections | interests
   const tab = controlledTab ?? localTab;
   const setTab = (next) => { setLocalTab(next); onTabChange?.(next); };
   const [addOpen, setAddOpen] = useState(false); // 添加自定源浮层
-  const [shape, setShape] = useState('all');   // all | article | bulletin | social | podcast
+  const [localShape, setLocalShape] = useState('all');   // all | article | bulletin | social | podcast
+  const shape = controlledShape ?? localShape;
+  const setShape = (next) => { setLocalShape(next); onShapeChange?.(next); };
   const activeTab = interestsPanel || tab !== 'interests' ? tab : 'sources';
   const activeShape = shape;
   const [query, setQuery] = useState('');

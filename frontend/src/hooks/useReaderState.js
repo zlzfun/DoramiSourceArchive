@@ -214,13 +214,23 @@ export function useReaderState({
   const [favTogglingId, setFavTogglingId] = useState(null);
   // 发现页(整页视图,取代源栏内联「发现更多来源」):true 时 条目列+阅读窗 被发现页取代
   const [discover, setDiscover] = useState(false);
-  // 无论从哪个内容容器进入，发现页都展示完整来源目录；内容形态由页内筛选切换。
+  // 发现页初始形态(issue #55):从哪个容器进入就落在哪个形态——入口的上下文不在跳转那一刻丢掉。
+  // 是**初值**不是锁定,页内形态 seg 仍可切;'all' 留给非容器入口(零订阅自动进入 / 早报页「管理订阅」/
+  // 移动「我的」/ 首登兴趣引导)。mode 经 ref 读取,让 openDiscover 保持稳定引用——它是零订阅自动进入
+  // effect 的依赖,若随 mode 变化,零订阅者从发现页预览某源(goSource 切容器)会被立刻弹回发现页。
+  const [discoverShape, setDiscoverShape] = useState('all');
+  const modeRef = useRef('article');   // 与下方 mode 同步(effect 在 mode 声明处)
   // 在途「按 id 打开」的序号(见 openArticleById):直接选文章 / 切视图 / 切源 / 进发现页
   // 都推进它,让慢网下尚未返回的早报卡打开作废,不再后到覆盖读者的直接导航(codex 检视 P2)
   const openSeqRef = useRef(0);
   // (useCallback 而非裸箭头:React Compiler 把渲染作用域裸函数里的 ref 写视作渲染期修改)
   const supersedePendingOpen = useCallback(() => { openSeqRef.current += 1; }, []);
-  const openDiscover = useCallback(() => { supersedePendingOpen(); setDiscover(true); }, [supersedePendingOpen]);
+  const openDiscover = useCallback((opts) => {
+    supersedePendingOpen();
+    // 直接挂 onClick 时 opts 是事件对象,没有 shape 键 → 取当前容器
+    setDiscoverShape(opts?.shape ?? modeRef.current);
+    setDiscover(true);
+  }, [supersedePendingOpen]);
   const closeDiscover = useCallback(() => {
     setDiscover(false);
   }, []);
@@ -261,8 +271,7 @@ export function useReaderState({
     setMode(nextMode);
     setScopeState(readStoredScope(scopeUserRef.current, nextMode));
   }, []);
-  const modeRef = useRef(mode);
-  useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { modeRef.current = mode; }, [mode]);   // modeRef 声明在发现页块(openDiscover 也读它)
 
   // ── 未读体系 ──
   // 计数来自 GET /api/reader/unread-counts(挂载即拉一次以校准水位,随后 60s 轻轮询);
@@ -492,7 +501,7 @@ export function useReaderState({
 
   // 零订阅时自动进入发现页,引导用户添加第一个订阅
   useEffect(() => {
-    if (hasNoSubscriptions) openDiscover();
+    if (hasNoSubscriptions) openDiscover({ shape: 'all' });
   }, [hasNoSubscriptions, openDiscover]);
 
   // ── hover 预取正文(A4):150ms 去抖;命中缓存/进行中/无 id 都不发 ──
@@ -1430,7 +1439,7 @@ export function useReaderState({
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
-    mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover,
+    mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     bulletinView, socialView, podcastView, railActive, listTitle, listSubtitle,
     goView, goSource, goTag, goContainerAll, goFavorites,
     // 左栏一根轴(issue #27 五稿)

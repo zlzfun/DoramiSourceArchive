@@ -11,8 +11,22 @@ import {
   podcastFullProcessingMeta,
   preferredAnalysisSummary,
   qualityScoreText,
+  scoreTierClass,
   shouldShowAiReadingCard,
 } from './analysis.js';
+
+test('scoreTierClass grays out below the 6.0 line and steps up one tier per point', () => {
+  assert.equal(scoreTierClass(null), '');
+  assert.equal(scoreTierClass(''), '');
+  assert.equal(scoreTierClass(5.9), 'is-score-below');
+  assert.equal(scoreTierClass(6), 'is-score-1');
+  assert.equal(scoreTierClass(6.9), 'is-score-1');
+  assert.equal(scoreTierClass(7.5), 'is-score-2');
+  assert.equal(scoreTierClass(8.4), 'is-score-3');
+  assert.equal(scoreTierClass(9), 'is-score-4');
+  assert.equal(scoreTierClass(10), 'is-score-4');
+  assert.equal(scoreTierClass('8.0'), 'is-score-3');
+});
 
 test('qualityScoreText never turns missing values into a zero score', () => {
   assert.equal(qualityScoreText(null), '');

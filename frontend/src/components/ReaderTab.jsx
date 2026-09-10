@@ -65,6 +65,7 @@ import {
   podcastFullProcessingMeta,
   primaryAnalysisLabel,
   qualityScoreText,
+  scoreTierClass,
   shouldShowAiReadingCard,
 } from '../utils/analysis';
 import AiReadingCard from './AiReadingCard';
@@ -239,6 +240,7 @@ export const ArticleRow = memo(function ArticleRow({
   );
   const analysisLabel = primaryAnalysisLabel(article);
   const score = qualityScoreText(article.quality_score);
+  const scoreTier = scoreTierClass(article.quality_score);   // issue #54:按分值分档着色
   const analysisStatus = analysisStatusMeta(article, { podcast: entryPodcast });
   const podcastAssessment = entryPodcast ? podcastAssessmentMeta(article) : null;
   const favoriteControl = (
@@ -278,7 +280,7 @@ export const ArticleRow = memo(function ArticleRow({
               <span className="reader-entry-top">
                 <span className="reader-entry-src">{podcast?.show_title || sourceName}</span>
                 {score && (
-                  <span className="reader-entry-score ai-grad-text" title={SCORE_DISCLAIMER}>
+                  <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={SCORE_DISCLAIMER}>
                     {score}
                   </span>
                 )}
@@ -337,7 +339,7 @@ export const ArticleRow = memo(function ArticleRow({
               {/* 分析主签与命中胶囊同名时让位;单标签视图里与当前标签同名时也让位(每行都写同一个词是重复信息) */}
               {analysisLabel && analysisLabel !== interestHit && analysisLabel !== labelSuppress && <span className="reader-entry-tag">{analysisLabel}</span>}
               {score
-                ? <span className="reader-entry-score ai-grad-text" title={SCORE_DISCLAIMER}>{score}</span>
+                ? <span className={`reader-entry-score ai-grad-text ${scoreTier}`} title={SCORE_DISCLAIMER}>{score}</span>
                 : (analysisStatus && <span className="reader-entry-score is-pending" role="status">分析中</span>)}
               <span
                 className="reader-entry-time"
@@ -413,7 +415,7 @@ export default function ReaderTab({
     collections, discoverCollectionId, setDiscoverCollectionId,
     collectionPinningId, handleSubscribeCollection, handleUnsubscribeCollection,
     // 视图 / 导航
-    mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover,
+    mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     bulletinView, socialView, podcastView, railActive, listTitle, listSubtitle,
     goView, goSource, goTag,
     scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
@@ -459,15 +461,19 @@ export default function ReaderTab({
     onboardingOpenedRef.current = true;
     setBriefOpen(false);
     setDiscoverTab('interests');
-    openDiscover();
+    openDiscover({ shape: 'all' });
   }, [onboardingRequired, openDiscover]);
+  // 「发现更多来源」类入口(源栏底 / 条目列与阅读窗空态):明说的是「来源」,段位必须落「源」——
+  // 发现页段位是粘性的(首登引导落过兴趣段后会一直停在那),不切回会让「发现更多来源」开到标签清单;
+  // 形态随 openDiscover 缺省取当前容器(issue #55)。视图轨 Compass 是全局入口,沿用上次段位不动。
+  const openDiscoverSources = useCallback((opts) => { setDiscoverTab('sources'); openDiscover(opts); }, [openDiscover]);
   // 「兴趣」的编辑入口(源栏开关灰态提示 / 引导):直落发现页兴趣段
   const openInterests = useCallback(() => {
     supersedePendingOpen();
     setBriefOpen(false);
     leaveBriefTrail();
     setDiscoverTab('interests');
-    openDiscover();
+    openDiscover({ shape: 'all' });
   }, [supersedePendingOpen, leaveBriefTrail, openDiscover]);
   // 屏蔽折叠行的展开态:按日期组记(切作用域时随列表重挂载归零)
   const [expandedMutedDays, setExpandedMutedDays] = useState(() => new Set());
@@ -857,7 +863,7 @@ export default function ReaderTab({
               {showSourceRows && !hasNoSubscriptions && (
                 <button
                   type="button"
-                  onClick={openDiscover}
+                  onClick={openDiscoverSources}
                   className="reader-src-more"
                 >
                   <Compass className="h-3.5 w-3.5" />
@@ -879,7 +885,7 @@ export default function ReaderTab({
           sourceMap={sourceMap}
           restore={briefRestore}
           supersedePendingOpen={supersedePendingOpen}
-          onManageSubscriptions={() => { setBriefOpen(false); leaveBriefTrail(); openDiscover(); }}
+          onManageSubscriptions={() => { setBriefOpen(false); leaveBriefTrail(); openDiscoverSources({ shape: 'all' }); }}
           onOpenArticle={async (articleId, ctx) => {
             // 结果回传早报页:false=不在库(早报页退到原链),null=被更晚的点击盖过(不动)
             const opened = await openArticleById(articleId, { silent: true });
@@ -913,6 +919,8 @@ export default function ReaderTab({
           onAddCustomSource={handleAddCustomSource}
           tab={discoverTab}
           onTabChange={setDiscoverTab}
+          shape={discoverShape}
+          onShapeChange={setDiscoverShape}
           interestsPanel={personalDigestEnabled ? (
             <InterestPage
               embedded
@@ -1083,7 +1091,7 @@ export default function ReaderTab({
             <div className="reader-empty reader-empty-tall">
               <Compass className="h-7 w-7 text-slate-300" />
               <span>你还没有订阅任何来源</span>
-              <button type="button" className="action-button action-button-primary" onClick={openDiscover}>
+              <button type="button" className="action-button action-button-primary" onClick={openDiscoverSources}>
                 去发现来源
               </button>
             </div>
@@ -1458,7 +1466,7 @@ export default function ReaderTab({
             <BookOpenText className="h-8 w-8 text-slate-300" />
             <span>{bulletinView ? '选择一条动态以开始阅读' : podcastView ? '选择一期播客以开始收听' : '选择一篇文章以开始阅读'}</span>
             {/* 新老用户通用的轻引导:空态下一行小字直达发现页(欢迎卡方案已否决——太啰嗦) */}
-            <button type="button" className="reader-empty-link" onClick={openDiscover}>
+            <button type="button" className="reader-empty-link" onClick={openDiscoverSources}>
               去「发现」添加订阅
             </button>
           </div>

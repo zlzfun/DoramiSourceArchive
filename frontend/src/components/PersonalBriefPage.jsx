@@ -11,7 +11,7 @@ import LogoMark from './LogoMark';
 import { resolveCompany } from '../sourceTaxonomy';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { fmtDayKey, WEEKDAY_CHARS } from '../utils/readerTime';
-import { qualityScoreText, SCORE_DISCLAIMER } from '../utils/analysis';
+import { qualityScoreText, scoreTierClass, SCORE_DISCLAIMER } from '../utils/analysis';
 
 // ── 我的早报(issue #23 重做,二稿)──
 // 桌面 = 视图轨 · 日期栏(顶替源栏槽位) · 报纸面(占条目列 + 阅读窗整幅):一份卡片式日报——
@@ -65,6 +65,7 @@ function interestLabelOf(item, snapshot) {
 function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) {
   const snapshot = item.snapshot || {};
   const score = qualityScoreText(item.quality_score ?? snapshot.quality_score);
+  const scoreTier = scoreTierClass(item.quality_score ?? snapshot.quality_score);   // issue #54
   // display_tags 是读者面投影(规范标签 + 灵活标签,codex 检视 P2);tags 只有规范指派,老快照回退用
   const tags = Array.isArray(snapshot.display_tags) ? snapshot.display_tags : (snapshot.tags || []);
   const interest = interestLabelOf(item, snapshot);
@@ -98,7 +99,7 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
   ));
   const scoreNode = score && (
     <span className="brief-card-score" title={SCORE_DISCLAIMER} aria-label={`新闻价值分 ${score}`}>
-      <span className="ai-grad-text">{score}</span>
+      <span className={`ai-grad-text ${scoreTier}`}>{score}</span>
     </span>
   );
   const timeNode = (
