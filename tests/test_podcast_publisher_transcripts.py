@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import hashlib
 import json
 import threading
 from dataclasses import replace
@@ -305,6 +306,55 @@ def test_ingest_is_bounded_idempotent_and_moves_immutable_pointer(
         assert "token=secret" not in artifacts[0].provenance_json
 
 
+def test_same_content_at_a_new_locator_rebinds_with_a_new_immutable_version(
+    monkeypatch, tmp_path
+):
+    sink = _sink(tmp_path)
+    first = _run_ingest(sink, monkeypatch)
+    new_url = "https://cdn.publisher.example/reissued.vtt"
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "episode-publisher")
+        episode.extensions_json = json.dumps(
+            {
+                "transcripts": [
+                    {
+                        "url": new_url,
+                        "type": "text/vtt",
+                        "language": "en-US",
+                    }
+                ]
+            }
+        )
+        session.add(episode)
+        session.commit()
+
+    rebound = _run_ingest(sink, monkeypatch)
+
+    assert rebound["created"] is True
+    assert rebound["artifact"]["id"] != first["artifact"]["id"]
+    assert rebound["artifact"]["version"] == 2
+    assert (
+        transcripts.publisher_transcript_refresh_revision(
+            sink.engine, episode_id="episode-publisher"
+        )
+        == ""
+    )
+    with Session(sink.engine) as session:
+        artifacts = session.exec(
+            select(PodcastTextArtifactRecord).order_by(
+                PodcastTextArtifactRecord.version
+            )
+        ).all()
+        assert len(artifacts) == 2
+        assert artifacts[0].content_hash == artifacts[1].content_hash
+        first_provenance = json.loads(artifacts[0].provenance_json)
+        rebound_provenance = json.loads(artifacts[1].provenance_json)
+        assert first_provenance["url_sha256"] != rebound_provenance["url_sha256"]
+        assert rebound_provenance["url_sha256"] == hashlib.sha256(
+            new_url.encode()
+        ).hexdigest()
+
+
 @pytest.mark.parametrize(
     "limit_changes",
     [
@@ -554,6 +604,69 @@ def test_admin_api_is_explicit_and_reader_get_never_fetches(monkeypatch, tmp_pat
         assert response.status_code == 200
         assert response.json()["provider_calls"] == 0
         assert fetches == [1]
+
+
+def test_admin_api_rebinds_same_content_from_a_changed_locator(monkeypatch, tmp_path):
+    import api.app as app_module
+
+    sink = _sink(tmp_path)
+    seed_default_accounts(sink.engine)
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    monkeypatch.setattr(
+        app_module,
+        "settings",
+        replace(
+            app_module.settings,
+            runtime=RuntimeConfig(role="all"),
+            podcast=_config(),
+        ),
+    )
+    requested_urls = []
+
+    async def fake_fetch(_client, url, **_kwargs):
+        requested_urls.append(url)
+        return VTT
+
+    monkeypatch.setattr(
+        transcripts.http_safety, "fetch_public_bytes_limited", fake_fetch
+    )
+    with TestClient(app_module.app) as client:
+        assert client.post(
+            "/api/auth/login", json={"username": "admin", "password": "admin"}
+        ).status_code == 200
+        first = client.post(
+            "/api/admin/podcast-transcripts/episode-publisher/ingest-publisher"
+        )
+        assert first.status_code == 200
+
+        new_url = "https://cdn.publisher.example/reissued.vtt"
+        with Session(sink.engine) as session:
+            episode = session.get(ArticleRecord, "episode-publisher")
+            episode.extensions_json = json.dumps(
+                {
+                    "transcripts": [
+                        {
+                            "url": new_url,
+                            "type": "text/vtt",
+                            "language": "en-US",
+                        }
+                    ]
+                }
+            )
+            session.add(episode)
+            session.commit()
+
+        rebound = client.post(
+            "/api/admin/podcast-transcripts/episode-publisher/ingest-publisher"
+        )
+
+    assert rebound.status_code == 200
+    assert rebound.json()["created"] is True
+    assert rebound.json()["artifact"]["version"] == 2
+    assert requested_urls == [
+        "https://cdn.publisher.example/episode.vtt?token=secret",
+        new_url,
+    ]
 
 
 @pytest.mark.parametrize(

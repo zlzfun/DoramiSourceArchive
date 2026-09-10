@@ -319,6 +319,164 @@ def test_audio_only_candidate_enters_existing_asr_state_machine(engine):
     assert process.processing_status == "queued"
 
 
+def test_analysis_worker_skips_due_asr_rows_for_the_same_target(engine):
+    asr_process = _request(
+        engine, "episode-asr", override=False, key="asr-must-stay-with-asr-worker"
+    )
+    analyze_process = _request(
+        engine, "episode-50", override=False, key="analyze-worker-owned-row"
+    )
+    provider = _Provider()
+    config = _config()
+
+    with Session(engine) as session:
+        step = asyncio.run(
+            run_full_analysis_worker_step(
+                session,
+                config=FullAnalysisWorkerConfig(
+                    worker_id="analysis-only-worker",
+                    lease_seconds=120,
+                    retry_seconds=10,
+                    llm_config=LLMConfig(
+                        base_url="https://llm.example.test",
+                        api_key="test",
+                        model="test-model",
+                    ),
+                ),
+                podcast_config=config,
+                policy=PodcastStagePolicy(config),
+                provider=provider,
+            )
+        )
+        assert step.action == "completed"
+        assert step.processing_id == analyze_process.id
+        untouched = session.get(PodcastProcessingRecord, asr_process.id)
+        assert untouched.processing_status == "queued"
+        assert untouched.stage == "asr"
+
+
+@pytest.mark.parametrize("authority_field", ["article", "analysis"])
+def test_full_analysis_admission_rejects_remote_analysis_authority(
+    engine, authority_field
+):
+    with Session(engine) as session:
+        if authority_field == "article":
+            target = session.get(ArticleRecord, "episode-50")
+            target.analysis_authority_id = "remote-producer"
+        else:
+            target = session.get(ArticleAnalysisRecord, "episode-50")
+            target.authority_id = "remote-producer"
+        session.add(target)
+        session.commit()
+
+    with pytest.raises(PodcastAdminError) as denied:
+        _request(engine, "episode-50", override=True, key=f"remote-{authority_field}")
+    assert denied.value.code == "podcast_stage_denied"
+    with Session(engine) as session:
+        assert session.exec(select(PodcastProcessingRecord)).all() == []
+
+
+def test_queued_full_analysis_is_parked_when_remote_authority_arrives(engine):
+    process = _request(
+        engine, "episode-50", override=False, key="authority-arrives-before-claim"
+    )
+    with Session(engine) as session:
+        episode = session.get(ArticleRecord, "episode-50")
+        episode.analysis_authority_id = "remote-producer"
+        session.add(episode)
+        session.commit()
+
+    provider = _Provider()
+    config = _config()
+    with Session(engine) as session:
+        step = asyncio.run(
+            run_full_analysis_worker_step(
+                session,
+                config=FullAnalysisWorkerConfig(
+                    worker_id="authority-aware-worker",
+                    lease_seconds=120,
+                    retry_seconds=10,
+                    llm_config=LLMConfig(
+                        base_url="https://llm.example.test",
+                        api_key="test",
+                        model="test-model",
+                    ),
+                ),
+                podcast_config=config,
+                policy=PodcastStagePolicy(config),
+                provider=provider,
+            )
+        )
+        assert step.action == "idle"
+        parked = session.get(PodcastProcessingRecord, process.id)
+        assert parked.processing_status == "not_required"
+        assert parked.eligibility_status == "blocked_source"
+        assert provider.chunks == []
+
+
+def test_idempotent_replay_is_denied_after_remote_authority_arrives(engine):
+    _request(engine, "episode-50", override=True, key="authority-replay")
+    with Session(engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "episode-50")
+        analysis.authority_id = "remote-producer"
+        session.add(analysis)
+        session.commit()
+
+    with pytest.raises(PodcastAdminError) as denied:
+        _request(engine, "episode-50", override=True, key="authority-replay")
+    assert denied.value.code == "podcast_stage_denied"
+
+
+class _AuthorityChangingProvider(_Provider):
+    def __init__(self, engine) -> None:
+        super().__init__(score=9.0)
+        self.engine = engine
+
+    async def reduce(self, **kwargs):
+        with Session(self.engine) as session:
+            episode = session.get(ArticleRecord, "episode-50")
+            analysis = session.get(ArticleAnalysisRecord, "episode-50")
+            episode.analysis_authority_id = "remote-producer"
+            analysis.authority_id = "remote-producer"
+            session.add(episode)
+            session.add(analysis)
+            session.commit()
+        return await super().reduce(**kwargs)
+
+
+def test_full_analysis_does_not_overwrite_authority_changed_during_llm(engine):
+    process = _request(
+        engine, "episode-50", override=False, key="authority-arrives-before-persist"
+    )
+    config = _config()
+    with Session(engine) as session:
+        step = asyncio.run(
+            run_full_analysis_worker_step(
+                session,
+                config=FullAnalysisWorkerConfig(
+                    worker_id="persistence-authority-worker",
+                    lease_seconds=120,
+                    retry_seconds=10,
+                    llm_config=LLMConfig(
+                        base_url="https://llm.example.test",
+                        api_key="test",
+                        model="test-model",
+                    ),
+                ),
+                podcast_config=config,
+                policy=PodcastStagePolicy(config),
+                provider=_AuthorityChangingProvider(engine),
+            )
+        )
+        assert step.action == "not_required"
+        analysis = session.get(ArticleAnalysisRecord, "episode-50")
+        assert analysis.authority_id == "remote-producer"
+        assert analysis.quality_score == 5.0
+        pending = session.get(PodcastProcessingRecord, process.id)
+        assert pending.processing_status == "not_required"
+        assert pending.eligibility_status == "blocked_source"
+
+
 def test_map_reduce_covers_every_character_and_exact_eight_is_premium(engine):
     process = _request(
         engine, "episode-50", override=False, key="worker-episode-50"
@@ -668,6 +826,11 @@ def test_one_click_orchestration_ingests_publisher_before_audio(monkeypatch):
         app_module.podcast_processing_admin_service,
         "request_processing",
         fake_enqueue,
+    )
+    monkeypatch.setattr(
+        app_module.podcast_processing_admin_service,
+        "require_full_analysis_authority",
+        lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
         app_module.podcast_publisher_transcript_service,

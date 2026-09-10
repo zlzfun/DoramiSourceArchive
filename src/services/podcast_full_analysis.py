@@ -40,6 +40,7 @@ from services.podcast_processing import (
     heartbeat_processing,
     resolve_claim_before_attempt,
     settle_attempt_cost,
+    _evaluate_full_analysis_authority,
 )
 from services.podcast_processing_admin import AdmissionEstimate
 from services.podcast_publisher_transcripts import (
@@ -497,6 +498,13 @@ def _persist_result(
         or process.lease_expires_at <= stamp
     ):
         raise RuntimeError("full-analysis lease was lost before persistence")
+    authority_status, _authority_reasons = _evaluate_full_analysis_authority(
+        session,
+        episode,
+        requested_target=process.requested_target,
+    )
+    if authority_status != "eligible":
+        raise RuntimeError("full-analysis authority changed before persistence")
     if record is None:
         record = ArticleAnalysisRecord(
             article_id=episode.id,
