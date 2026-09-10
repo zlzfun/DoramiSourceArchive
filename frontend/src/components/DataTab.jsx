@@ -19,7 +19,7 @@ import Sparkline from './charts/Sparkline';
 import { runAction } from '../utils/runAction';
 import { excerptOf } from '../utils/readerText';
 import { contentTypeLabel, CONTENT_TYPE_GROUPS } from '../utils/contentType';
-import { SCORE_DISCLAIMER, analysisStatusMeta, primaryAnalysisLabel, qualityScoreText } from '../utils/analysis';
+import { SCORE_DISCLAIMER, analysisStatusMeta, primaryAnalysisLabel, qualityScoreText, scoreTierClass } from '../utils/analysis';
 import { useConfirm } from '../hooks/useConfirm';
 import { useAbortableLoad } from '../hooks/useAbortableLoad';
 
@@ -768,7 +768,7 @@ export default function DataTab({
                         <div className="ledger-tt">{article.title}</div>
                         {(analysisScore || analysisLabel || analysisStatus) && (
                           <div className="ledger-analysis-meta">
-                            {analysisScore && <span className="reader-score-chip">{analysisScore}</span>}
+                            {analysisScore && <span className={`reader-score-chip ${scoreTierClass(article.quality_score)}`}>{analysisScore}</span>}
                             {analysisLabel && <span className="reader-tag-chip">{analysisLabel}</span>}
                             {analysisStatus && <span className={`stamp ${analysisStatus.cls}`} role="status">{analysisStatus.label}</span>}
                           </div>

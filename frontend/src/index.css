@@ -10196,6 +10196,19 @@ input[type="radio"] {
     background-clip: text;
     color: transparent;
   }
+  /* 分数分档着色(issue #54,样页 dorami-score-tiers-quiet.html):渐变两端色各自向 faint 混合,
+     灰线(6.0 = 评分尺子档界,固定刻度不随日报 KV 联动)之上按整数分一档、越低混得越多(--score-mix 见文件尾未分层区);
+     灰线以下不画渐变,与旁边元信息同灰。档位由 utils/analysis.scoreTierClass 判定,
+     条目列 / 早报卡 / 速读卡数字三处读者面触点同一套;≥9 是完整渐变(不挂档位类)。
+     color-mix 必须分别作用于两个端色——对渐变整体 filter 会连 wash 底一起变。 */
+  .ai-grad-text.is-score-1,
+  .ai-grad-text.is-score-2,
+  .ai-grad-text.is-score-3 {
+    background-image: linear-gradient(118deg,
+      color-mix(in oklab, var(--ai-g1), var(--dorami-faint) var(--score-mix)),
+      color-mix(in oklab, var(--ai-g2), var(--dorami-faint) var(--score-mix)));
+  }
+  .ai-grad-text.is-score-below { background: none; color: var(--dorami-faint); }
   .reader-ai-a-body {
     font-size: 13.5px;
     line-height: 1.7;
@@ -11433,6 +11446,19 @@ input[type="radio"] {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* ── 分数档位混合比(issue #54):档位类由 utils/analysis.scoreTierClass 挂,读者面渐变(@layer 内
+   .ai-grad-text.is-score-*)与管理面纯色(下方 .reader-score-chip / .reader-analysis-score)共用同一组比例。
+   管理面无 AI 身份纪律,只把 accent-ink 向 faint 混;灰线以下同样退到 faint。 ── */
+.is-score-1 { --score-mix: 85%; }
+.is-score-2 { --score-mix: 60%; }
+.is-score-3 { --score-mix: 30%; }
+.reader-score-chip.is-score-1, .reader-score-chip.is-score-2, .reader-score-chip.is-score-3,
+.reader-analysis-score.is-score-1 strong, .reader-analysis-score.is-score-2 strong, .reader-analysis-score.is-score-3 strong {
+  color: color-mix(in oklab, var(--dorami-accent-ink), var(--dorami-faint) var(--score-mix));
+}
+.reader-score-chip.is-score-below { background: var(--dorami-well); color: var(--dorami-faint); }
+.reader-analysis-score.is-score-below strong { color: var(--dorami-faint); }
 
 /* ── 文章智能分析:详情说明与管理面轻徽标(阅读器条目行的分数/分类已归入元信息行,
    见 @layer 内 .reader-entry-tag / .reader-entry-score;.reader-score-chip 只余管理面台账在用) ── */

@@ -121,6 +121,8 @@
 
 静默仪器各工作区改造时的 HTML 设计样页(`dorami-*-quiet.html`),`index.css` 注释以
 「刻度 1:1 取自」引用之;阅读器/设置柜/发现页的后续样页在 Claude Artifact(见各波记录)。
+`dorami-score-tiers-quiet.html`(v3.53 阅读面小特性波,issue #54):新闻价值分按分值分档着色——三处触点 × 亮暗,
+页顶控件可切灰线(6.0/5.0/不设)、分档 vs 连续插值、档间跨度;拍板 6.0 / 分档 / 陡峭。
 `dorami-interest-axis-quiet.html`(v3.52 兴趣即透镜波,issue #27;**五稿,现行**):左栏一根轴「订阅 | 兴趣」/
 标签行 / 列头收藏星 / 单标签视图 / 空态 / 移动抽屉,顶部一张与四稿的差异表。
 `dorami-interest-lens-quiet.html`(同波四稿,含一稿「关注动态 + 主题流」、二稿「源栏兴趣组」、三稿「作用域推翻」
