@@ -482,12 +482,12 @@ def test_full_analysis_does_not_overwrite_authority_changed_during_llm(engine):
         assert pending.eligibility_status == "blocked_source"
 
 
-def test_map_reduce_covers_every_character_and_exact_threshold_is_not_premium(engine):
+def test_map_reduce_covers_every_character_and_exact_runtime_threshold_is_premium(engine):
     process = _request(
         engine, "episode-50", override=False, key="worker-episode-50"
     )
     config = replace(_config(), premium_score_threshold=8.25)
-    provider = _Provider(score=config.premium_score_threshold)
+    provider = _Provider(score=8.0)
     with Session(engine) as session:
         step = asyncio.run(
             run_full_analysis_worker_step(
@@ -518,12 +518,14 @@ def test_map_reduce_covers_every_character_and_exact_threshold_is_not_premium(en
         analysis = session.get(ArticleAnalysisRecord, "episode-50")
         assert persisted.processing_status == "ready"
         assert analysis.analysis_basis == "publisher_transcript"
-        assert analysis.quality_score == config.premium_score_threshold
+        assert analysis.quality_score == 8.0
+        assert analysis.podcast_initial_score == 5.0
+        assert analysis.podcast_final_score == 8.0
         diagnostics = json.loads(analysis.analysis_diagnostics_json)
         assert diagnostics["coverage"]["source_chars"] == len("".join(provider.chunks))
         assert diagnostics["coverage"]["chunk_count"] == len(provider.chunks)
-        assert diagnostics["final_premium_threshold"] == config.premium_score_threshold
-        assert diagnostics["final_premium"] is False
+        assert diagnostics["final_premium_threshold"] == 8.0
+        assert diagnostics["final_premium"] is True
 
 
 def test_split_and_reduce_never_drop_middle_or_end(engine):
@@ -905,7 +907,7 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
     )
     assert projected["transcript_source"] == "asr_transcript"
     assert projected["full_analysis_candidate"] is False
-    assert projected["final_premium"] is False
+    assert projected["final_premium"] is True
 
     final.quality_score = 8.5001
     projected = _podcast_projection(
@@ -930,8 +932,8 @@ def test_podcast_projection_exposes_durable_status_basis_and_thresholds():
         analysis=final,
         premium_score_threshold=8.5,
     )
-    assert item["is_premium_podcast"] is False
-    assert item["podcast"]["final_premium"] is False
+    assert item["is_premium_podcast"] is True
+    assert item["podcast"]["final_premium"] is True
     final.quality_score = 8.5001
     item = serialize_article_list_item(
         record,
@@ -1238,7 +1240,7 @@ def test_historical_asr_reuse_rejects_a_cross_episode_producer(engine):
         )[0] == "invalid_input"
 
 
-@pytest.mark.parametrize("score,expected", [(8.5, []), (8.6, ["episode-50"]), (None, [])])
+@pytest.mark.parametrize("score,expected", [(7.9, []), (8.0, ["episode-50"]), (None, [])])
 def test_scheduler_triggers_premium_only_after_successful_final_score(engine, monkeypatch, score, expected):
     from dataclasses import replace
     import api.app as app_module
@@ -1252,7 +1254,7 @@ def test_scheduler_triggers_premium_only_after_successful_final_score(engine, mo
         session.commit()
     monkeypatch.setattr(app_module, "db_sink", SimpleNamespace(engine=engine))
     monkeypatch.setattr(app_module, "settings", replace(
-        app_module.settings, podcast=replace(_config(), premium_score_threshold=8.5),
+        app_module.settings, podcast=replace(_config(), premium_score_threshold=8.0),
         podcast_worker=replace(app_module.settings.podcast_worker, max_steps_per_tick=1),
     ))
     monkeypatch.setattr(app_module, "_configured_podcast_asr_worker", lambda: None)

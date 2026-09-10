@@ -252,6 +252,23 @@ export function fetchPodcastPremiumGuides(filters = {}, options = {}) {
   });
 }
 
+export function fetchPodcastPremiumTasks(filters = {}, options = {}) {
+  const params = withFilters(new URLSearchParams(), filters);
+  const query = params.toString();
+  return request(`/admin/podcast-premium-tasks${query ? `?${query}` : ''}`, {
+    errorMsg: '获取播客处理任务失败',
+    ...options,
+  });
+}
+
+export function updatePodcastPremiumThreshold(threshold) {
+  return request('/admin/podcast-premium-threshold', {
+    method: 'PUT',
+    body: { threshold },
+    errorMsg: '保存优质门槛失败',
+  });
+}
+
 export function runPodcastPremiumGuide(episodeId) {
   return request(`/admin/podcast-premium-guides/${enc(episodeId)}/run`, {
     method: 'POST',

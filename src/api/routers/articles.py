@@ -60,6 +60,7 @@ from services.article_display_tags import article_ids_for_flexible_label, load_d
 from services import reader_interests as reader_interests_service
 from services import reader_state as reader_state_service
 from services import source_visibility as source_visibility_service
+from services import podcast_premium as podcast_premium_service
 from services import user_sources as user_sources_service
 from services import sync_consumer_policy
 
@@ -464,7 +465,7 @@ def get_articles(
             record, include_content=include_content, include_extensions=include_extensions,
             analysis=analyses.get(record.id), tags=tags.get(record.id, []),
             display_tags=display_tags.get(record.id, []),
-            premium_score_threshold=_app().settings.podcast.premium_score_threshold,
+            premium_score_threshold=podcast_premium_service.get_threshold(session),
             processing=processings.get(record.id),
             published_podcast_text_kinds=text_publications.get(record.id, set()),
         )
@@ -652,7 +653,7 @@ async def get_article(article_id: str, request: Request):
             analysis=analyses.get(record.id),
             tags=tags.get(record.id, []),
             display_tags=display_tags.get(record.id, []),
-            premium_score_threshold=_app().settings.podcast.premium_score_threshold,
+            premium_score_threshold=podcast_premium_service.get_threshold(session),
             processing=processings.get(record.id),
             published_podcast_text_kinds=text_publications.get(record.id, set()),
         )

@@ -258,6 +258,28 @@ def _login(client: TestClient) -> None:
     )
 
 
+def test_premium_threshold_api_persists_and_returns_effective_value(api_env):
+    app_module, _sink, _store, _source_audio, _config = api_env
+    with TestClient(app_module.app) as client:
+        _login(client)
+        initial = client.get("/api/admin/podcast-premium-tasks")
+        assert initial.status_code == 200
+        assert initial.json()["threshold"] == 8.0
+        assert initial.json()["initial_processing_threshold"] == 5.0
+
+        saved = client.put(
+            "/api/admin/podcast-premium-threshold", json={"threshold": 7.5}
+        )
+        assert saved.status_code == 200
+        assert saved.json()["threshold"] == 7.5
+        refreshed = client.get("/api/admin/podcast-premium-tasks")
+        assert refreshed.json()["threshold"] == 7.5
+
+        assert client.put(
+            "/api/admin/podcast-premium-threshold", json={"threshold": 8.55}
+        ).status_code == 422
+
+
 def test_provider_registry_requires_the_complete_target_stage_chain():
     registry = PodcastProcessingProviderRegistry()
     with pytest.raises(ValueError, match="one executor per pipeline stage"):

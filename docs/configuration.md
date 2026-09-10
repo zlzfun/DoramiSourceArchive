@@ -99,7 +99,8 @@ budget_timezone = Asia/Shanghai
 # external 默认 narrator_zh，internal 默认空
 # voice_profiles = narrator_zh
 # default_voice_profile = narrator_zh
-premium_score_threshold = 8.5
+# 旧精品导读流程的启动基线；管理面保存后以运行时 KV 为准
+premium_score_threshold = 8.0
 premium_min_duration_seconds = 1200
 premium_guide_mode = solo_preview
 premium_max_audio_minutes = 15
@@ -108,10 +109,11 @@ premium_blog_max_chars = 6000
 premium_narration_max_chars = 4200
 ```
 
-播客评分分两步但页面只展示一个当前分数：简介初评达到 `>= 5.0`（或管理员强制）
+播客评分分两步但阅读面只展示一个当前分数：简介初评达到 `>= 5.0`（或管理员强制）
 后进入 `full_analysis`；发布方完整逐字稿优先，否则才使用 ASR。全文评分完成后替换
-简介初评，当前固定以 `>= 8.0` 判定“优质播客”。这两个边界与节目时长无关，也不
-复用旧精品导读配置；终评门槛的运行时管理由后续任务提供。
+简介初评。简介线固定不变；“优质播客”只按全文终评与 AppSettingRecord KV
+`podcast_premium_score_threshold` 判定，缺省 `8.0`、范围 `1.0–10.0`、最多一位小数。
+管理面修改后即时重算历史全文资格与待生成状态，不重排简介候选，也不删除已发布成品。
 
 ASR worker 的轮询与租约参数单独配置；启动时首轮总会延后一个 `tick_seconds`，不会因
 进程启动直接调用 provider：

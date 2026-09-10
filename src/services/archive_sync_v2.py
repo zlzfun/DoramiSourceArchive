@@ -317,6 +317,8 @@ def _analysis_payload(session: Session, row: ArticleAnalysisRecord) -> dict[str,
         "status",
         "tagging_status",
         "quality_score",
+        "podcast_initial_score",
+        "podcast_final_score",
         "dimension_scores_json",
         "score_reason",
         "summary",
@@ -1535,6 +1537,8 @@ def _supersede_local_analysis(
         )
         record.tagging_status = "pending"
         record.quality_score = None
+        record.podcast_initial_score = None
+        record.podcast_final_score = None
         record.dimension_scores_json = "{}"
         record.analysis_basis = ""
         record.analysis_input_hash = ""
@@ -2000,6 +2004,8 @@ def _apply_analyses(
             ("analysis_input_hash", ""),
             ("transcript_artifact_id", None),
             ("analysis_diagnostics_json", "{}"),
+            ("podcast_initial_score", None),
+            ("podcast_final_score", None),
         ):
             setattr(record, field, data.get(field, default))
         for field in (

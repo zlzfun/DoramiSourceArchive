@@ -271,7 +271,7 @@ class PodcastConfig:
     provider_ready_targets: tuple[str, ...] = ()
     voice_profiles: tuple[str, ...] = ()
     default_voice_profile: str = ""
-    premium_score_threshold: float = 8.5
+    premium_score_threshold: float = 8.0
     premium_transcript_max_chars: int = 120_000
     premium_blog_max_chars: int = 6_000
     premium_narration_max_chars: int = 4_200
@@ -335,8 +335,8 @@ class PodcastConfig:
             raise ValueError("Podcast Reader text limits are invalid")
         if self.reader_cursor_secret and len(self.reader_cursor_secret) < 32:
             raise ValueError("Podcast Reader cursor secret must contain at least 32 characters")
-        if not 1.0 <= self.premium_score_threshold < 10.0:
-            raise ValueError("Podcast premium_score_threshold must be in [1, 10)")
+        if not 1.0 <= self.premium_score_threshold <= 10.0:
+            raise ValueError("Podcast premium_score_threshold must be in [1, 10]")
         if any(
             value <= 0
             for value in (
@@ -1237,7 +1237,7 @@ def load_config() -> AppConfig:
             premium_score_threshold=float(
                 os.getenv("DORAMI_PODCAST_PREMIUM_SCORE_THRESHOLD")
                 or parser.getfloat(
-                    "podcast", "premium_score_threshold", fallback=8.5
+                    "podcast", "premium_score_threshold", fallback=8.0
                 )
             ),
             premium_transcript_max_chars=int(

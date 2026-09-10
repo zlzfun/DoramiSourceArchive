@@ -125,6 +125,7 @@ from services.media_store import MediaStore
 from services.podcast_artifacts import PodcastArtifactStore
 from services.podcast_asr_worker import AsrWorkerConfig, AsrWorkerStep
 from services import podcast_premium_guides as podcast_premium_guide_service
+from services import podcast_premium as podcast_premium_service
 from services import podcast_publisher_transcripts as podcast_publisher_transcript_service
 from services import podcast_source_media as podcast_source_media_service
 from services import podcast_processing_admin as podcast_processing_admin_service
@@ -622,6 +623,7 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
             with Session(db_sink.engine) as session:
                 llm_config = daily_brief_service.resolve_llm_config(session)
                 aliyun_config = aliyun_isi_config_service.resolve_config(session)
+                premium_threshold = podcast_premium_service.get_threshold(session)
             voice = settings.podcast.default_voice_profile
             if not llm_config.configured or not aliyun_config.tts_configured or not voice:
                 raise RuntimeError("精品导读所需的 LLM 或 TTS 配置尚未就绪")
@@ -636,6 +638,7 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                     voice_profile=voice,
                     max_audio_bytes=podcast_artifact_store.max_bytes,
                 ),
+                score_threshold=premium_threshold,
             )
         except Exception as exc:  # noqa: BLE001 - status is persisted by service
             _dorami_logger.warning(
@@ -761,8 +764,8 @@ def schedule_podcast_full_analysis(article_ids: List[str]) -> int:
                 analysis is not None
                 and analysis.status == "succeeded"
                 and analysis.analysis_basis == "podcast_show_notes"
-                and analysis.quality_score is not None
-                and float(analysis.quality_score)
+                and podcast_premium_service.initial_score(analysis) is not None
+                and podcast_premium_service.initial_score(analysis)
                 >= podcast_full_analysis_service.INITIAL_PROCESSING_THRESHOLD
             )
             transcript_result = bool(
@@ -2013,11 +2016,15 @@ async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
 
     try:
         actions = await asyncio.to_thread(_run_steps)
+        with Session(db_sink.engine) as threshold_session:
+            premium_threshold = podcast_premium_service.get_threshold(
+                threshold_session
+            )
         for episode_id in await asyncio.to_thread(
             podcast_premium_guide_service.pending_premium_guide_candidates,
             db_sink.engine,
             minimum_duration_seconds=settings.podcast.premium_min_duration_seconds,
-            score_threshold=settings.podcast.premium_score_threshold,
+            score_threshold=premium_threshold,
         ):
             schedule_podcast_premium_guide(episode_id)
         return actions

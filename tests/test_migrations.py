@@ -2439,10 +2439,10 @@ def test_podcast_initial_assessment_migration_preserves_legacy_basis(tmp_path):
                 ), {"id": article_id, "content_type": content_type, "extensions": extensions})
                 conn.execute(text(
                     "INSERT INTO article_analyses "
-                    "(article_id,status,tagging_status,dimension_scores_json,score_reason,"
+                    "(article_id,status,tagging_status,quality_score,dimension_scores_json,score_reason,"
                     "summary,content_features_json,entities_json,content_hash,model_name,"
                     "prompt_version,scoring_version,taxonomy_version,attempt_count,created_at,updated_at) "
-                    "VALUES (:id,'succeeded','succeeded','{}','reason','summary','[]','[]',"
+                    "VALUES (:id,'succeeded','succeeded',8.0,'{}','reason','summary','[]','[]',"
                     "'hash','model','old','old',0,1,'2026-09-01','2026-09-01')"
                 ), {"id": article_id})
     finally:
@@ -2458,13 +2458,17 @@ def test_podcast_initial_assessment_migration_preserves_legacy_basis(tmp_path):
         }
         assert "ix_article_analyses_last_error_article_id" in indexes
         with engine.connect() as conn:
-            rows = dict(conn.execute(text(
-                "SELECT article_id, analysis_basis FROM article_analyses"
-            )).all())
+            rows = {
+                article_id: (basis, initial_score, final_score)
+                for article_id, basis, initial_score, final_score in conn.execute(text(
+                    "SELECT article_id, analysis_basis, podcast_initial_score, "
+                    "podcast_final_score FROM article_analyses"
+                )).all()
+            }
         assert rows == {
-            "article": "article_body",
-            "podcast-notes": "podcast_show_notes",
-            "podcast-asr": "asr_transcript",
+            "article": ("article_body", None, None),
+            "podcast-notes": ("podcast_show_notes", 8.0, None),
+            "podcast-asr": ("asr_transcript", None, 8.0),
         }
     finally:
         engine.dispose()
