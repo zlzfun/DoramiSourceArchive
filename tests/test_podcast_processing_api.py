@@ -413,6 +413,48 @@ def test_external_process_is_bound_redacted_and_idempotent(api_env, monkeypatch)
         assert replay.json()["id"] == payload["id"]
 
 
+def test_full_analysis_http_rejects_remote_authority_before_provider_work(
+    api_env, monkeypatch
+):
+    app_module, sink, _store, _source_audio, _config = api_env
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "episode-ok")
+        episode.analysis_authority_id = "remote-analysis-producer"
+        session.add(episode)
+        session.commit()
+
+    monkeypatch.setattr(
+        app_module.podcast_processing_admin_service,
+        "require_full_analysis_llm",
+        lambda *_args, **_kwargs: pytest.fail(
+            "remote authority must be rejected before LLM resolution"
+        ),
+    )
+    monkeypatch.setattr(
+        app_module.podcast_publisher_transcript_service,
+        "publisher_transcript_refresh_revision",
+        lambda *_args, **_kwargs: pytest.fail(
+            "remote authority must be rejected before transcript refresh"
+        ),
+    )
+    with TestClient(app_module.app) as client:
+        _login(client)
+        response = client.post(
+            "/api/admin/podcast-episodes/episode-ok/process",
+            json={
+                "target": "full_analysis",
+                "selection_override": True,
+                "reason": "remote analysis authority must remain single writer",
+                "idempotency_key": "remote-authority-http-e2e-01",
+            },
+        )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "podcast_stage_denied"
+    with Session(sink.engine) as session:
+        assert session.exec(select(PodcastProcessingRecord)).all() == []
+
+
 def test_admin_transcript_enqueue_runs_worker_backed_aliyun_e2e(api_env, monkeypatch):
     app_module, sink, _store, source_audio, podcast_config = api_env
     now = [dt.datetime.now(dt.timezone.utc).replace(microsecond=0)]

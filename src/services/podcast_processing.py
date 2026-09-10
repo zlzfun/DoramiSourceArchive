@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from models.db import (
+    ArticleAnalysisRecord,
     ArticleRecord,
     PODCAST_PROCESSING_STAGES,
     PodcastArtifactRecord,
@@ -240,6 +241,39 @@ def _evaluate_external_asr_export(
     ]
 
 
+def _evaluate_full_analysis_authority(
+    session: Session,
+    article: ArticleRecord,
+    *,
+    requested_target: str,
+) -> tuple[str, list[str]]:
+    """Keep synced analysis single-writer at every Podcast processing boundary."""
+
+    if requested_target != "full_analysis":
+        return "eligible", []
+    analysis = session.get(ArticleAnalysisRecord, article.id)
+    if (
+        (article.analysis_authority_id or "").strip()
+        or (
+            analysis is not None
+            and (analysis.authority_id or "").strip()
+        )
+    ):
+        return "blocked_source", [
+            "Podcast analysis is owned by a remote authority"
+        ]
+
+    from services import sync_consumer_policy
+
+    if not sync_consumer_policy.local_source_operation_allowed(
+        session, article.source_id, operation="analysis"
+    ):
+        return "blocked_source", [
+            "Podcast source analysis is not owned by this installation"
+        ]
+    return "eligible", []
+
+
 def _evaluate_input_binding(
     session: Session,
     process: PodcastProcessingRecord,
@@ -389,6 +423,13 @@ def _evaluate_processing_eligibility(
     article = session.get(ArticleRecord, process.episode_id)
     if article is None or article.content_type != "podcast_episode":
         return "invalid_input", ["Podcast episode no longer exists"]
+    eligibility, reasons = _evaluate_full_analysis_authority(
+        session,
+        article,
+        requested_target=str(process.requested_target or "").strip().lower(),
+    )
+    if eligibility != "eligible":
+        return eligibility, reasons
     eligibility, reasons = _evaluate_external_asr_export(
         session,
         article,
@@ -841,9 +882,11 @@ def claim_next_processing(
     _require_clean_session(session, "processing claim")
     allowed_stages: Optional[set[str]] = None
     if policy is not None:
-        configured = getattr(getattr(policy, "config", None), "allowed_stages", None)
+        configured = getattr(policy, "allowed", None)
         if configured is None:
-            configured = getattr(policy, "allowed", None)
+            configured = getattr(
+                getattr(policy, "config", None), "allowed_stages", None
+            )
         if configured is not None:
             allowed_stages = {str(item) for item in configured}
     conditions = [or_(_claimable(stamp), _drain_candidate())]

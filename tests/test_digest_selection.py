@@ -264,3 +264,117 @@ def test_breaking_mute_and_exclusions_are_hard_and_output_is_deterministic():
     assert first == second
     assert [item.article_id for item in first] == ["a03"]
     assert first[0].event_entity_codes == ()
+
+
+# ── v3.54「订阅 ∪ 兴趣」(issue #33 §3 前置):订阅外候选只进兴趣通道、门槛更高、每源硬上限 ──
+
+
+def _external(number: int, **kwargs) -> DigestArticleCandidateDTO:
+    return _candidate(number, **kwargs).model_copy(update={"subscribed": False})
+
+
+def test_external_candidates_need_the_higher_floor_and_an_interest_hit():
+    interests = [UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW)]
+    candidates = [
+        _candidate(1, source="sub", score=5.2, tags=("other",)),          # 订阅内质量通道,5.0 线上
+        _external(2, source="ext-a", score=5.8, tags=("agent",)),          # 订阅外命中但 < 6.0 → 不进
+        _external(3, source="ext-b", score=6.4, tags=("agent",)),          # 订阅外命中 ≥ 6.0 → 兴趣通道
+        _external(4, source="ext-c", score=9.9, tags=("other",)),          # 订阅外不命中 → 永不进(质量通道只看订阅)
+    ]
+
+    selected = select_digest_articles(candidates, interests)
+
+    assert [item.article_id for item in selected] == ["a03", "a01"]
+    assert selected[0].lane == "interest"
+    assert "来自你未订阅的「ext-b」" in selected[0].selection_reason
+    assert "按新闻价值入选" in selected[0].selection_reason
+
+
+def test_subscribed_interest_hits_rank_ahead_of_external_ones():
+    interests = [UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW)]
+    candidates = [
+        _external(1, source="ext", score=9.8, tags=("agent",)),
+        _candidate(2, source="sub", score=6.1, tags=("agent",)),
+    ] + [_candidate(i, source=f"q{i}", score=7.0, tags=("other",)) for i in range(3, 6)]
+
+    selected = select_digest_articles(candidates, interests)
+
+    interest_items = [item for item in selected if item.lane == "interest"]
+    assert [item.article_id for item in interest_items] == ["a02", "a01"]
+    assert "今日订阅中的高质量内容" in interest_items[0].selection_reason
+
+
+def test_external_per_source_cap_is_hard_and_never_relaxed():
+    interests = [UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW)]
+    # 一个高产的订阅外来源命中 5 篇 ≥ 6.0;订阅内只有 2 篇质量稿 → 目标 10 达不到,
+    # 订阅内的每源上限会被放宽,订阅外的仍钉在 2
+    candidates = [
+        _external(i, source="hf-papers", score=8.0 - i * 0.1, tags=("agent",)) for i in range(1, 6)
+    ] + [_candidate(i, source="sub", score=7.0, tags=("other",)) for i in range(6, 12)]
+
+    selected = select_digest_articles(candidates, interests)
+
+    external = [item for item in selected if item.article_id in {f"a{i:02d}" for i in range(1, 6)}]
+    assert len(external) == 2
+    assert all(item.lane == "interest" for item in external)
+    assert not any(
+        adj.startswith("source_limit_relaxed") for item in external for adj in item.coverage_adjustments
+    )
+    # 订阅内 sub 源放宽超过 2 条时才标 relaxed
+    relaxed = [item for item in selected if any(a.startswith("source_limit_relaxed") for a in item.coverage_adjustments)]
+    assert relaxed and all(item.article_id not in {f"a{i:02d}" for i in range(1, 6)} for item in relaxed)
+
+
+def test_external_cap_override_via_policy():
+    interests = [UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW)]
+    candidates = [
+        _external(i, source="hf", score=8.0 - i * 0.1, tags=("agent",)) for i in range(1, 6)
+    ] + [_candidate(i, source=f"q{i}", score=7.0, tags=("other",)) for i in range(6, 12)]
+
+    policy = DigestSelectionPolicy(external_per_source_max=1, external_min_quality_score=7.8)
+    selected = select_digest_articles(candidates, interests, policy=policy)
+
+    external = [item for item in selected if item.article_id.startswith("a0") and int(item.article_id[1:]) < 6]
+    assert [item.article_id for item in external] == ["a01"]
+
+
+def test_interest_tag_codes_drive_matching_but_mute_still_reads_the_full_set():
+    interests = [
+        UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW),
+        UserInterestDTO(tag_code="crypto", stance=InterestStance.MUTE),
+    ]
+    weak_hit = _candidate(1, source="s1", score=8.0, tags=("agent",)).model_copy(
+        update={"interest_tag_codes": ()}   # 指派相关度不过线:不算命中,但仍是合格的质量稿
+    )
+    muted_by_weak_tag = _candidate(2, source="s2", score=9.0, tags=("agent", "crypto")).model_copy(
+        update={"interest_tag_codes": ("agent",)}  # 屏蔽看全集:任一指派即排除
+    )
+    strong_hit = _candidate(3, source="s3", score=7.0, tags=("agent",)).model_copy(
+        update={"interest_tag_codes": ("agent",)}
+    )
+
+    selected = select_digest_articles([weak_hit, muted_by_weak_tag, strong_hit], interests)
+
+    lanes = {item.article_id: item.lane for item in selected}
+    assert lanes == {"a01": "quality", "a03": "interest"}
+
+
+def test_interest_only_policy_lifts_the_ratio_and_keeps_the_half_size():
+    from services.digest_selection import interest_only_policy
+
+    interests = [UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW)]
+    candidates = [_external(i, source=f"e{i}", score=9.0 - i * 0.1, tags=("agent",)) for i in range(1, 9)]
+
+    assert select_digest_articles(candidates, interests) == []  # 没有质量半可配 → 50% 上限下选不出
+    only = select_digest_articles(candidates, interests, policy=interest_only_policy(DigestSelectionPolicy()))
+    assert len(only) == 5
+    assert all(item.lane == "interest" for item in only)
+
+
+def test_policy_rejects_out_of_range_external_knobs():
+    import pytest
+
+    with pytest.raises(ValueError):
+        DigestSelectionPolicy(external_min_quality_score=11)
+    with pytest.raises(ValueError):
+        DigestSelectionPolicy(external_per_source_max=0)

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowUpRight, ChevronDown, Clock3, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowUpRight, ChevronDown, Clock3, Loader2, RefreshCw, Sparkles, Zap } from 'lucide-react';
 import {
   ensurePersonalBrief,
   fetchPersonalBrief,
@@ -22,6 +22,13 @@ import { qualityScoreText, scoreTierClass, SCORE_DISCLAIMER } from '../utils/ana
 // 全库近 30 天带图文章不足一成,头条会在两种形态间跳);同行卡片等高、脚部钉底;
 // 「外出返回」:点卡片进原文时把 {日期,版次,卷动位置,条目序列} 交给阅读器,阅读窗顶部出返回带
 // (返回我的早报 / 早报下一条),返回时经 restore 落回同一版同一位置并短暂高亮刚读过的卡。
+// v3.54(issue #33 §3「页面体现个性化 / 智能化」,样页 docs/design/dorami-brief-personal-quiet.html):
+// 把「为什么」说出来——① 报头之下一行编排说明(渐变星 + 渐变「哆啦美」= AI 身份;事实句「从你订阅的
+// N 个来源和 K 个兴趣 · M 篇里选出 P 篇,x 篇命中你的兴趣」;右端「调整兴趣」深链发现页兴趣段),
+// §5 的「兴趣已更新」、来源/分析未完成、重编排队三条提示行并入本行尾句(一次只显一条,优先级
+// 排队 > 未完成 > 已更新);② 选篇理由进卡头右侧,四个词回答「它为什么在这」(兴趣 · 标签 / 重大事件 ·
+// 官方一手|N 家来源 / 新闻价值入选 / 最新更新),脚部 chip 自此只剩主题标签(单轴);③ 同波「订阅 ∪ 兴趣」:
+// 订阅外命中的卡在源名后挂 faint「未订阅」悬停翻「+ 订阅」,订阅为空只按兴趣编排时报头与空态如实说明。
 
 const TERMINAL = new Set(['ready', 'degraded', 'failed', 'superseded']);
 const LIVE = new Set(['pending', 'generating']);
@@ -62,18 +69,30 @@ function interestLabelOf(item, snapshot) {
   return matched ? matched[1] : '';
 }
 
-function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) {
+// 卡头右侧的选篇理由(v3.54 §3):四个词回答同一个问题「它为什么在这」。前两个是「为你」的证据(accent),
+// 后两个只是诚实交代(faint)。「今日最重要」一类说过头的词不用——一篇 6 分稿叫不出「最重要」。
+function whyOf(item, snapshot, interest) {
+  if (item.selection_lane === 'breaking') {
+    const basis = item.breaking?.basis;
+    const count = item.breaking?.source_count || 0;
+    const detail = basis === 'official' ? '官方一手' : count >= 2 ? `${count} 家来源` : '';
+    return { cls: 'is-breaking', icon: true, text: detail ? `重大事件 · ${detail}` : '重大事件', title: item.selection_reason || snapshot.selection_reason || '今日重大事件' };
+  }
+  if (snapshot.is_latest_update) return { cls: 'is-fallback', text: '最新更新', title: item.selection_reason || snapshot.selection_reason || '' };
+  if (interest) return { cls: 'is-interest', text: `兴趣 · ${interest}`, title: item.selection_reason || snapshot.selection_reason || '命中你的兴趣' };
+  return { cls: '', text: '新闻价值入选', title: item.selection_reason || snapshot.selection_reason || '' };
+}
+
+function BriefCard({ item, lead, wide = false, source, onOpen, onSubscribeSource = null, flash = false }) {
   const snapshot = item.snapshot || {};
   const score = qualityScoreText(item.quality_score ?? snapshot.quality_score);
   const scoreTier = scoreTierClass(item.quality_score ?? snapshot.quality_score);   // issue #54
   // display_tags 是读者面投影(规范标签 + 灵活标签,codex 检视 P2);tags 只有规范指派,老快照回退用
   const tags = Array.isArray(snapshot.display_tags) ? snapshot.display_tags : (snapshot.tags || []);
   const interest = interestLabelOf(item, snapshot);
+  const why = whyOf(item, snapshot, interest);
+  // 脚部 chip 自 v3.54 只答「讲什么」:「兴趣 · X」「重大事件」两枚迁到卡头右侧的理由位,不再和主题标签混在一条线上
   const chips = [];
-  // 兴趣命中 chip(issue #23);v3.50.0 合入时被误删(替换成了下一行而非追加),v3.52.3 恢复并改口径「兴趣 · X」(关注/兴趣统一叫兴趣)
-  if (interest) chips.push({ key: 'interest', text: `兴趣 · ${interest}`, cls: 'is-interest', title: '命中你的兴趣' });
-  // 重大事件通道(v3.50):跨订阅范围的头条位,chip 与「兴趣 ·」同族,title 里给准入理由
-  if (item.selection_lane === 'breaking') chips.push({ key: 'breaking', text: '重大事件', cls: 'is-breaking', title: item.selection_reason || snapshot.selection_reason || '今日重大事件' });
   tags
     .filter((tag) => tagName(tag) && tagName(tag) !== interest)
     .slice(0, lead ? 3 : 2)
@@ -88,11 +107,14 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
   const company = source ? resolveCompany(source) : resolveCompany({ source_id: snapshot.source_id, name: sourceName, user_source: true });
   // 中文标题(v3.52.1,issue #33 §4):编排后补的 title_zh 作主标题,原标题降为其下小字(沿阅读窗译名的视觉语言)
   const titleZh = snapshot.title_zh && snapshot.title_zh !== snapshot.title ? snapshot.title_zh : '';
+  // 卡片是容器,标题按钮是唯一的「打开」控件:::after 拉伸覆盖整卡,点卡任意处即打开;订阅外的「+ 订阅」
+  // 是它的兄弟按钮(z-index 浮在覆盖层之上)——不再把可聚焦控件嵌在 <button> 里(codex 检视 P2:嵌套交互
+  // 元素语义无效,读屏会拍平、键盘会撞上两个按钮)。
   const titleNode = (
-    <>
+    <button type="button" className="brief-card-open" onClick={() => onOpen(item)}>
       <span className="brief-card-title">{titleZh || snapshot.title || '（无标题）'}</span>
       {titleZh && <span className="brief-card-title-orig">{snapshot.title}</span>}
-    </>
+    </button>
   );
   const chipNodes = chips.map((chip) => (
     <span key={chip.key} className={`reader-tag-chip ${chip.cls || ''}`} title={chip.title}>{chip.text}</span>
@@ -110,10 +132,28 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
       <ArrowUpRight className="brief-card-go" aria-hidden="true" />
     </span>
   );
+  // 订阅外(v3.54「订阅 ∪ 兴趣」):快照事实 subscribed=false,且当前仍未订阅(订阅后即不再画,不必等重编)
+  const unsubscribed = snapshot.subscribed === false && !(source && source.subscribed) && !!snapshot.source_id;
+  const unsubNode = unsubscribed && (
+    <button
+      type="button"
+      className="brief-card-unsub"
+      title="订阅这个来源"
+      aria-label={`订阅 ${sourceName}`}
+      onClick={() => onSubscribeSource?.(snapshot.source_id)}
+    />
+  );
+  const whyNode = (
+    <span className={`brief-card-why ${why.cls}`} title={why.title}>
+      {why.icon && <Zap aria-hidden="true" />}
+      {why.text}
+    </span>
+  );
   const srcNode = (
     <span className="brief-card-src">
       <LogoMark company={company} size="s17" emoji={source?.icon} />
       <span className="brief-card-srcname">{sourceName}</span>
+      {unsubNode}
     </span>
   );
   // 通栏双栏:头条(首节首张)与单卡分节(一张卡占三列网格的一格、旁边两格空着很怪)都通栏,
@@ -124,9 +164,9 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
 
   if (split) {
     return (
-      <button type="button" className={cls} onClick={() => onOpen(item)}>
+      <div className={cls}>
         <span className="brief-card-main">
-          <span className="brief-card-head">{srcNode}</span>
+          <span className="brief-card-head">{srcNode}{whyNode}</span>
           {titleNode}
           {summary && <span className="brief-card-sum">{summary}</span>}
           <span className="brief-card-foot">{timeNode}</span>
@@ -140,14 +180,18 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
           )}
           {chips.length > 0 && <span className="brief-card-tags is-stack">{chipNodes}</span>}
         </span>
-      </button>
+      </div>
     );
   }
 
   return (
-    <button type="button" className={cls} onClick={() => onOpen(item)}>
+    <div className={cls}>
       <span className="brief-card-head">
-        {srcNode}
+        <span className="brief-card-src">
+          {srcNode}
+          <span className="brief-card-why-sep" aria-hidden="true" />
+          {whyNode}
+        </span>
         {scoreNode}
       </span>
       {titleNode}
@@ -156,7 +200,7 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
         {chips.length > 0 && <span className="brief-card-tags">{chipNodes}</span>}
         {timeNode}
       </span>
-    </button>
+    </div>
   );
 }
 
@@ -202,6 +246,8 @@ function RevisionStrip({ revisions, current, onPick }) {
 export default function PersonalBriefPage({
   showToast,
   onManageSubscriptions,
+  onManageInterests = null, // 「调整兴趣」深链发现页兴趣段(v3.54 §3)
+  onSubscribeSource = null, // 订阅外卡片「+ 订阅」就地订阅(source_id)
   onOpenArticle,
   supersedePendingOpen = null, // 直接开外链前作废在途的站内打开(慢网下先点内链卡再点社交卡)
   sourceMap = {},
@@ -434,6 +480,12 @@ export default function PersonalBriefPage({
   const sourceCount = new Set(ownItems.map((item) => item.snapshot?.source_id).filter(Boolean)).size;
   const live = isToday && LIVE.has(status);
   const ratioUnfillable = edition?.degraded_reason === 'insufficient_non_interest_content';
+  // v3.54:选篇统计(编排时一次写入;历史版本无值则说明行省略「M 篇里」);订阅为空只按兴趣编排 = interest_only
+  const stats = edition?.selection_stats || null;
+  const scopeCount = (edition?.expected_source_ids || []).length;
+  const interestOnly = !!edition && scopeCount === 0 && (stats ? !!stats.interest_only : items.length > 0);
+  const followedCount = stats?.followed_count ?? null;
+  const externalHits = ownItems.filter((item) => (item.matched_interest_codes || []).length > 0 && item.snapshot?.subscribed === false).length;
 
   // ── 报头 ──
   const kicker = [
@@ -449,6 +501,7 @@ export default function PersonalBriefPage({
       ownItems.length > 0 ? `${ownItems.length} 篇${edition?.degraded_reason ? '最新更新' : '精选'}` : null,
       interestCount > 0 ? `${interestCount} 篇命中你的兴趣` : null,
       sourceCount > 0 ? `来自 ${sourceCount} 个来源` : null,
+      interestOnly ? '未订阅来源' : null,
     ].filter(Boolean).join(' · ')
     : '';
   const dayName = dayNameOf(selDate, todayKey);
@@ -467,9 +520,10 @@ export default function PersonalBriefPage({
   } else if (isToday && todayStatus === 'empty_subscriptions') {
     body = (
       <div className="brief-state">
-        <span className="brief-state-title">还没有订阅来源</span>
-        <span className="brief-state-meta">早报只在你订阅的来源里编排，先去发现页添加几个</span>
+        <span className="brief-state-title">还没有订阅来源，也没有设置兴趣</span>
+        <span className="brief-state-meta">早报按你订阅的来源和兴趣编排，先去发现页订阅几个来源或选几个兴趣</span>
         <button type="button" className="action-button action-button-primary min-h-[32px] px-3 text-xs" onClick={onManageSubscriptions}>去发现来源</button>
+        {onManageInterests && <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onManageInterests}>设置兴趣</button>}
       </div>
     );
   } else if (live) {
@@ -498,51 +552,86 @@ export default function PersonalBriefPage({
   } else if (!edition) {
     body = <div className="brief-state"><span className="brief-state-meta">这一天没有早报</span></div>;
   } else {
+    // ── 编排说明行(v3.54 §3):事实句 + 尾句(三态一行) + 「调整兴趣」──
     const deadlineIncomplete = edition.sync_stale || edition.analysis_incomplete;
+    const stale = usesToday && (edition.interest_stale || edition.scope_stale);
+    const n = (value) => <b>{value}</b>;
+    let fact;
+    if (edition.degraded_reason) {
+      fact = interestOnly
+        ? <>今天没有命中你兴趣的新内容{followedCount ? <>（{n(followedCount)} 个兴趣）</> : null}</>
+        : (
+          <>
+            {ratioUnfillable ? '今天缺少用于补齐的非兴趣内容' : '今天没有达到入选标准的内容'}，以下是
+            {scopeCount > 0 ? <> {n(scopeCount)} 个订阅来源</> : '订阅来源'}的最新更新，不计入正式精选
+          </>
+        );
+    } else if (interestOnly) {
+      fact = (
+        <>
+          你还没有订阅来源，本期只按你的{followedCount ? <> {n(followedCount)} 个</> : null}兴趣编排
+          {stats?.candidate_count != null && <> · {n(stats.candidate_count)} 篇里</>}选出 {n(ownItems.length)} 篇
+        </>
+      );
+    } else {
+      fact = (
+        <>
+          从你订阅的 {n(scopeCount)} 个来源{followedCount ? <>和 {n(followedCount)} 个兴趣</> : null}
+          {stats?.candidate_count != null && <> · {n(stats.candidate_count)} 篇里</>}选出 {n(ownItems.length)} 篇
+          {interestCount > 0 && <>，{n(interestCount)} 篇命中你的兴趣{externalHits > 0 && <>（{n(externalHits)} 篇来自订阅外）</>}</>}
+        </>
+      );
+    }
+    let tail = null;
+    let tailCls = '';
+    if (edition.rebuild_queued) {
+      tail = <><RefreshCw aria-hidden="true" />新的编排请求已记录，本版完成后会生成下一版</>;
+    } else if (deadlineIncomplete) {
+      tailCls = 'is-partial';
+      tail = (
+        <>
+          <Clock3 aria-hidden="true" />
+          {edition.sync_stale && edition.analysis_incomplete ? '部分来源更新和文章分析' : edition.sync_stale ? '部分来源更新' : '部分文章分析'}尚未完成，按当时已有内容编排
+          {usesToday && <> · <button type="button" className="brief-note-act" onClick={handleRebuild} disabled={working}>{working ? '编排中…' : '重新编排'}</button></>}
+        </>
+      );
+    } else if (stale) {
+      // v3.51.1(issue #33 §5):改兴趣/订阅不再自动重编,今日版面落后时把主动权交给读者
+      tail = (
+        <>
+          <RefreshCw aria-hidden="true" />
+          {edition.interest_stale && edition.scope_stale ? '你的兴趣和订阅' : edition.interest_stale ? '你的兴趣' : '你的订阅'}已更新，下次编排生效
+          {' · '}<button type="button" className="brief-note-act" onClick={handleRebuild} disabled={working}>{working ? '编排中…' : '立即重编'}</button>
+        </>
+      );
+    }
+    const act = interestOnly
+      ? { label: '去发现来源', onClick: onManageSubscriptions }
+      : { label: followedCount ? '调整兴趣' : '设置兴趣', onClick: onManageInterests || onManageSubscriptions };
     body = (
       <>
-        {deadlineIncomplete && (
-          <div className="brief-note">
-            <Clock3 aria-hidden="true" />
-            <span>
-              编排时{edition.sync_stale && edition.analysis_incomplete ? '部分来源更新和文章分析' : edition.sync_stale ? '部分来源更新' : '部分文章分析'}
-              尚未完成，本版按当时已有的内容生成；想要更全的一版可点「重新编排」
-            </span>
-          </div>
-        )}
-        {edition.rebuild_queued && (
-          <div className="brief-note is-info">
-            <RefreshCw aria-hidden="true" />
-            <span>新的编排请求已记录，本版完成后会生成下一版</span>
-          </div>
-        )}
-        {/* v3.51.1(issue #33 §5):改兴趣/订阅不再自动重编,今日版面落后时把主动权交给读者 */}
-        {usesToday && !edition.rebuild_queued && (edition.interest_stale || edition.scope_stale) && (
-          <div className="brief-note is-info" role="status">
-            <RefreshCw aria-hidden="true" />
-            <span>
-              {edition.interest_stale && edition.scope_stale ? '你的兴趣和订阅' : edition.interest_stale ? '你的兴趣' : '你的订阅'}
-              已更新，下次编排生效
-            </span>
-            <button type="button" className="brief-note-act" onClick={handleRebuild} disabled={working}>
-              {working ? '编排中…' : '立即重编'}
+        <div className={`brief-byline ${tailCls}`} role={tail ? 'status' : undefined}>
+          <span className="brief-byline-id">
+            <Sparkles aria-hidden="true" />
+            <span className="brief-byline-name ai-grad-text">哆啦美</span>
+          </span>
+          <span className="brief-byline-text">{fact}</span>
+          {tail && <span className="brief-byline-tail">{tail}</span>}
+          {act.onClick && (
+            <button type="button" className="brief-byline-act" onClick={act.onClick}>
+              {act.label}
+              <ArrowUpRight aria-hidden="true" />
             </button>
-          </div>
-        )}
-        {edition.degraded_reason && (
-          <div className="brief-note">
-            <AlertTriangle aria-hidden="true" />
-            <span>
-              {ratioUnfillable
-                ? '今天缺少用于补齐的非兴趣内容，以下是订阅源最新更新，不计入正式精选'
-                : '今天没有达到入选标准的内容，以下是订阅源最新更新，不计入正式精选'}
-            </span>
-          </div>
-        )}
+          )}
+        </div>
         {grouped.length === 0 ? (
           <div className="brief-state">
-            <span className="brief-state-meta">{isToday ? '你的订阅源今天还没有可展示的更新' : '这一天的订阅源没有可展示的更新'}</span>
-            <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onManageSubscriptions}>管理订阅</button>
+            <span className="brief-state-meta">
+              {interestOnly
+                ? (isToday ? '今天还没有命中你兴趣的内容，订阅几个来源会让早报更完整' : '这一天没有命中你兴趣的内容')
+                : (isToday ? '你的订阅源今天还没有可展示的更新' : '这一天的订阅源没有可展示的更新')}
+            </span>
+            <button type="button" className="action-button action-button-secondary min-h-[32px] px-3 text-xs" onClick={onManageSubscriptions}>{interestOnly ? '去发现来源' : '管理订阅'}</button>
           </div>
         ) : grouped.map((group, groupIndex) => (
           <section key={group.key} className="brief-sec" aria-label={group.key}>
@@ -561,6 +650,7 @@ export default function PersonalBriefPage({
                   flash={flashId != null && (item.id ?? item.position) === flashId}
                   source={sourceMap[item.snapshot?.source_id]}
                   onOpen={openItem}
+                  onSubscribeSource={onSubscribeSource}
                 />
               ))}
             </div>

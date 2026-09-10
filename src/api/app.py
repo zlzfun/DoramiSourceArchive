@@ -744,6 +744,11 @@ async def enqueue_podcast_processing_with_input(
 
     if target == "full_analysis":
         with Session(db_sink.engine) as session:
+            podcast_processing_admin_service.require_full_analysis_authority(
+                session,
+                episode_id=episode_id,
+                target=target,
+            )
             podcast_processing_admin_service.require_full_analysis_llm(session, target)
 
     def enqueue():

@@ -34,6 +34,7 @@ from services.podcast_artifacts import PodcastArtifactStore
 from services.podcast_processing import (
     ACTIVE_ATTEMPT_STATES,
     PodcastProcessingConflict,
+    _evaluate_full_analysis_authority,
     _evaluate_processing_eligibility,
     enqueue_processing,
 )
@@ -428,6 +429,28 @@ def require_full_analysis_llm(session: Session, target: str) -> None:
         raise PodcastAdminError("podcast_provider_unavailable", status_code=503)
 
 
+def require_full_analysis_authority(
+    session: Session,
+    *,
+    episode_id: str,
+    target: str,
+    episode: ArticleRecord | None = None,
+) -> ArticleRecord:
+    """Reject remote-owned analysis before any full-analysis provider work."""
+
+    selected = episode or session.get(ArticleRecord, episode_id)
+    if selected is None or selected.content_type != "podcast_episode":
+        raise PodcastAdminError("podcast_not_found", status_code=404)
+    eligibility, _reasons = _evaluate_full_analysis_authority(
+        session,
+        selected,
+        requested_target=target,
+    )
+    if eligibility != "eligible":
+        raise PodcastAdminError("podcast_stage_denied", status_code=403)
+    return selected
+
+
 def _select_external_input(
     session: Session,
     store: PodcastArtifactStore,
@@ -765,6 +788,13 @@ def request_processing(
     with Session(engine) as session:
         try:
             _begin_locked(session, engine, f"{episode_id}:{target}")
+            episode = _locked_episode(session, engine, episode_id)
+            require_full_analysis_authority(
+                session,
+                episode_id=episode_id,
+                target=target,
+                episode=episode,
+            )
             replay = _replay_request(
                 session,
                 episode_id=episode_id,
@@ -777,7 +807,6 @@ def request_processing(
                 session.expunge(replay)
                 session.commit()
                 return replay
-            _locked_episode(session, engine, episode_id)
             _require_runtime(config, registry, target)
             require_full_analysis_llm(session, target)
             selected = _select_external_input(session, store, episode_id=episode_id, target=target)

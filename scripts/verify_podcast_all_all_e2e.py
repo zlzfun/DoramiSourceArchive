@@ -139,7 +139,11 @@ async def fixture_resolver(host):
 
 def fixture_handler(request):
     assert request.method == "GET"
-    assert request.url.host == "93.184.216.34", request.url
+    # The downloader validates the logical hostname through the patched public
+    # resolver, while httpx keeps that hostname on the request URL.  Pinning the
+    # transport-visible URL to the resolver's IP made this fixture depend on an
+    # implementation detail that the production downloader does not promise.
+    assert request.url.host == "audio.example.test", request.url
     assert request.headers["Host"] == "audio.example.test"
     with request_log.open("a", encoding="ascii") as handle:
         handle.write("request\n")
@@ -1057,11 +1061,26 @@ def main(argv: list[str] | None = None) -> int:
             )
             assert after_restart == before_restart
             third = _run_sync(internal_admin, external_url)
-            assert all(value["count"] == 0 for value in third["streams"].values())
+            # Startup reconciles built-in source definitions and can therefore
+            # advance only the sources stream.  Podcast publications must stay
+            # zero-delta; one follow-up clears its page cursor and the next proves
+            # the settled checkpoint is stable.
+            assert all(
+                stats["count"] == 0
+                for stream, stats in third["streams"].items()
+                if stream != "sources"
+            )
+            fourth = _run_sync(internal_admin, external_url)
+            assert all(value["count"] == 0 for value in fourth["streams"].values())
+            settled_checkpoint = _checkpoint_identity(
+                internal_admin.get("/api/admin/remote-sync/status").json(), external_url
+            )
+            fifth = _run_sync(internal_admin, external_url)
+            assert all(value["count"] == 0 for value in fifth["streams"].values())
             final_checkpoint = _checkpoint_identity(
                 internal_admin.get("/api/admin/remote-sync/status").json(), external_url
             )
-            assert final_checkpoint == before_restart
+            assert final_checkpoint == settled_checkpoint
             _assert_internal_database(internal_db, internal_artifacts)
         finally:
             internal_admin.close()

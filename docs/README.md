@@ -57,6 +57,10 @@
 - ◉ [personal-brief-title-localization.md](./personal-brief-title-localization.md) — **个人早报标题中文化(issue #33 §4,v3.52.1)**:
   条目快照补 `title_zh`,来源按成本 译名缓存 → 公共日报 title_cn → 编排后批量翻译(aux、20s 预算、写回缓存);
   中文不译不画副标题、失败回退原标题、不并入分析调用;卡片中文主标题 + 英文原题副行。
+- ◉ [personal-brief-interest-union.md](./personal-brief-interest-union.md) — **个人早报「订阅 ∪ 兴趣」+ 页面体现个性化(issue #33 §3,v3.54.0)**:
+  兴趣半候选池扩到全站可见源(订阅外门槛 6.0 / 每源硬上限 2,管理面旋钮;订阅内命中排前;订阅空但有兴趣只出兴趣半);
+  页面加编排说明行(哆啦美身份 + 「从 N 个来源和 K 个兴趣 · M 篇里选出 P 篇」,§5 三条提示并入尾句)、
+  选篇理由四词进卡头右侧、订阅外卡挂「未订阅」;`selection_stats_json` 入库。
 - ◉ [personal-brief-rebuild-entrypoints.md](./personal-brief-rebuild-entrypoints.md) — **个人早报重编入口收口(issue #33 §5,v3.51.1)**:
   兴趣/订阅变更只记录不触发重编,重编只剩手动与次日定时;今日端点 `interest_stale`/`scope_stale`
   驱动「下次编排生效 · 立即重编」提示;系统侧保留公共日报就绪与管理员下架两处维护性触发。
@@ -121,7 +125,7 @@
 
 静默仪器各工作区改造时的 HTML 设计样页(`dorami-*-quiet.html`),`index.css` 注释以
 「刻度 1:1 取自」引用之;阅读器/设置柜/发现页的后续样页在 Claude Artifact(见各波记录)。
-`dorami-score-tiers-quiet.html`(v3.53 阅读面小特性波,issue #54):新闻价值分按分值分档着色——三处触点 × 亮暗,
+`dorami-score-tiers-quiet.html`(v3.54 阅读面小特性波,issue #54):新闻价值分按分值分档着色——三处触点 × 亮暗,
 页顶控件可切灰线(6.0/5.0/不设)、分档 vs 连续插值、档间跨度;拍板 6.0 / 分档 / 陡峭。
 `dorami-interest-axis-quiet.html`(v3.52 兴趣即透镜波,issue #27;**五稿,现行**):左栏一根轴「订阅 | 兴趣」/
 标签行 / 列头收藏星 / 单标签视图 / 空态 / 移动抽屉,顶部一张与四稿的差异表。
