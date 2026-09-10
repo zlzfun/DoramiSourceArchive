@@ -556,10 +556,16 @@ def _commit_publication(
             if publication is not None
             else None
         )
+        locator_hash = hashlib.sha256(candidate.url.encode("utf-8")).hexdigest()
+        try:
+            current_provenance = json.loads(current.provenance_json) if current else {}
+        except (TypeError, ValueError):
+            current_provenance = {}
         if (
             current is not None
             and current.content_hash == content_hash
             and publication.status == "published"
+            and current_provenance.get("url_sha256") == locator_hash
         ):
             return _serialize(
                 current, publication, created=False, candidate=candidate
@@ -580,7 +586,7 @@ def _commit_publication(
                 "raw_sha256": raw_hash,
                 "segment_count": parsed.segment_count,
                 "source": "podcast:transcript",
-                "url_sha256": hashlib.sha256(candidate.url.encode("utf-8")).hexdigest(),
+                "url_sha256": locator_hash,
             },
             ensure_ascii=False,
             sort_keys=True,
