@@ -50,6 +50,7 @@ from models.db import (
     ArticleRecord,
     ArticleTagAssignmentRecord,
     CmsTagRecord,
+    PodcastProcessingRecord,
     SourceConfigRecord,
 )
 from services import article_analysis as article_analysis_service
@@ -126,6 +127,28 @@ def _analysis_assets(
             }
         )
     return analyses, tags
+
+
+def _podcast_processing_assets(
+    session: Session, article_ids: list[str]
+) -> dict[str, PodcastProcessingRecord]:
+    if not article_ids:
+        return {}
+    rows = session.exec(
+        select(PodcastProcessingRecord)
+        .where(
+            PodcastProcessingRecord.episode_id.in_(article_ids),
+            PodcastProcessingRecord.requested_target == "full_analysis",
+        )
+        .order_by(
+            PodcastProcessingRecord.created_at.desc(),
+            PodcastProcessingRecord.id.desc(),
+        )
+    ).all()
+    result: dict[str, PodcastProcessingRecord] = {}
+    for row in rows:
+        result.setdefault(row.episode_id, row)
+    return result
 
 
 def _source_ids_by_shape(session: Optional[Session] = None) -> dict[str, set[str]]:
@@ -382,6 +405,9 @@ def get_articles(
     total = int(session.exec(count_query).one() or 0) if include_total else None
     records = session.exec(query.offset(safe_skip).limit(safe_limit)).all()
     analyses, tags = _analysis_assets(session, [record.id for record in records])
+    processings = _podcast_processing_assets(
+        session, [record.id for record in records]
+    )
     display_tags = load_display_tags(
         session,
         [record.id for record in records],
@@ -394,6 +420,7 @@ def get_articles(
             analysis=analyses.get(record.id), tags=tags.get(record.id, []),
             display_tags=display_tags.get(record.id, []),
             premium_score_threshold=_app().settings.podcast.premium_score_threshold,
+            processing=processings.get(record.id),
         )
         for record in records
     ]
@@ -565,6 +592,7 @@ async def get_article(article_id: str, request: Request):
                         raise HTTPException(status_code=404, detail="文章未找到")
     with Session(deps.get_db_sink().engine) as session:
         analyses, tags = _analysis_assets(session, [record.id])
+        processings = _podcast_processing_assets(session, [record.id])
         display_tags = load_display_tags(
             session,
             [record.id],
@@ -578,6 +606,7 @@ async def get_article(article_id: str, request: Request):
             tags=tags.get(record.id, []),
             display_tags=display_tags.get(record.id, []),
             premium_score_threshold=_app().settings.podcast.premium_score_threshold,
+            processing=processings.get(record.id),
         )
 
 

@@ -65,7 +65,7 @@ def test_interest_is_capped_at_half_and_quality_fills_the_rest():
     assert sum(item.lane == "interest" for item in selected) == 5
     assert sum(item.lane == "quality" for item in selected) == 5
     assert all(item.matched_interest_codes == ("agent",) for item in selected[:5])
-    assert "匹配你关注的" in selected[0].selection_reason
+    assert "命中你的兴趣" in selected[0].selection_reason
 
 
 def test_interest_ceiling_applies_to_actual_sparse_output():

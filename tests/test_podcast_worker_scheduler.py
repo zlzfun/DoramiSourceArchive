@@ -198,6 +198,7 @@ def test_tick_passes_config_and_policy_and_stops_when_idle(monkeypatch):
     assert worker_config.fallback_retry_seconds == 29
     assert worker_config.next_stage_by_target == {
         "transcript": None,
+        "full_analysis": "analyze",
         "digest_blog": "translate",
     }
     assert isinstance(observed[0][2], PodcastStagePolicy)

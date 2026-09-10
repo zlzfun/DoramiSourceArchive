@@ -113,8 +113,10 @@ export default function InterestPage({
   mobile = false,
   onboarding = false,
   // embedded(issue #27 三稿):作为发现页第三段「兴趣」的正文——不画报头与左槽台账,
-  // 「我的关注」改成目录之上的一行 chip;首登引导 = 顶部一条横幅(不锁页)
+  // 「我的兴趣」(口径:关注/兴趣统一叫兴趣,2026-09-10)改成目录之上的一行 chip;首登引导 = 顶部一条横幅(不锁页)
   embedded = false,
+  // 发现页头部搜索框注入的检索词(v3.52.3):非 null 时嵌入态不画自己的搜索框,与源/合集两段同形
+  externalQuery = null,
   onSaved,
   showToast,
 }) {
@@ -183,7 +185,8 @@ export default function InterestPage({
     return { follow, mute };
   }, [catalog, draft]);
 
-  const needle = query.trim().toLocaleLowerCase();
+  const effectiveQuery = externalQuery != null ? externalQuery : query;
+  const needle = effectiveQuery.trim().toLocaleLowerCase();
   const itemsOf = (stances) => Object.entries(stances).map(([id, stance]) => ({ tag_id: Number(id), stance }));
   const performSave = async (seq, stances, { complete = false, toast = null }) => {
     const latest = () => seq === seqRef.current;
@@ -400,22 +403,27 @@ export default function InterestPage({
     return (
       <div className="interest-embed" aria-label="我的兴趣">
         {onboardingBanner}
-        <div className="interest-embed-tools">
-          {searchNode}
-          {saveStateNode}
-        </div>
+        {/* 搜索由发现页头部承担时(externalQuery 注入)不画工具行,「已保存」回执挪到 chip 行右端——
+            回执只在保存前后短暂出现,独占一行会让版面上下跳 */}
+        {externalQuery == null && (
+          <div className="interest-embed-tools">
+            {searchNode}
+            {saveStateNode}
+          </div>
+        )}
         {catalog && (
-          <div className="interest-picks" aria-label="我的关注">
-            <span className="interest-picks-label">我的关注</span>
+          <div className="interest-picks" aria-label="我的兴趣">
+            <span className="interest-picks-label">我的兴趣</span>
             {picksEmpty
-              ? <span className="interest-picks-empty">点击下方标签加入关注。</span>
+              ? <span className="interest-picks-empty">点击下方标签加入兴趣。</span>
               : [...picks.follow.map((t) => pickChip(t, 'follow')), ...picks.mute.map((t) => pickChip(t, 'mute'))]}
+            {externalQuery != null && saveStateNode}
           </div>
         )}
         {stateNode}
         {catalogSections}
         {catalog && needle && !anyMatchEmbed && (
-          <div className="brief-state">没有匹配「{query.trim()}」的标签</div>
+          <div className="brief-state">没有匹配「{effectiveQuery.trim()}」的标签</div>
         )}
       </div>
     );
@@ -435,11 +443,12 @@ export default function InterestPage({
               <p className="brief-mast-sub">{hint}</p>
             </>
           )}
-          {searchNode}
+          {/* 发现页头部已承担搜索(externalQuery 注入)时不画本地搜索框——否则两框并存且下框失效(codex P2) */}
+          {externalQuery == null && searchNode}
           {catalog && (
             <div className="interest-m-row">
               <button type="button" className="interest-mpicks" aria-expanded={picksOpen} onClick={() => setPicksOpen((v) => !v)}>
-                关注 <b>{picks.follow.length}</b> · 屏蔽 <b>{picks.mute.length}</b>
+                兴趣 <b>{picks.follow.length}</b> · 屏蔽 <b>{picks.mute.length}</b>
                 <ChevronDown aria-hidden="true" />
               </button>
               {saveStateNode}
@@ -450,7 +459,7 @@ export default function InterestPage({
           {picksOpen && catalog && (
             <div className="interest-mpicks-list">
               {picks.follow.length + picks.mute.length === 0
-                ? <div className="interest-ledger-empty">点击下方标签加入关注。</div>
+                ? <div className="interest-ledger-empty">点击下方标签加入兴趣。</div>
                 : [...picks.follow.map((t) => pickRow(t, 'follow')), ...picks.mute.map((t) => pickRow(t, 'mute'))]}
             </div>
           )}
@@ -483,7 +492,7 @@ export default function InterestPage({
             );
           })}
           {catalog && searching && visibleKinds.length === 0 && (
-            <div className="brief-state">没有匹配「{query.trim()}」的标签</div>
+            <div className="brief-state">没有匹配「{effectiveQuery.trim()}」的标签</div>
           )}
         </div>
       </div>
@@ -506,9 +515,9 @@ export default function InterestPage({
           ))}
           {catalog && (
             <>
-              <div className="reader-src-label">关注<b>{picks.follow.length}</b></div>
+              <div className="reader-src-label">兴趣<b>{picks.follow.length}</b></div>
               {picks.follow.length === 0
-                ? <div className="interest-ledger-empty">点击右侧标签加入关注。</div>
+                ? <div className="interest-ledger-empty">点击右侧标签加入兴趣。</div>
                 : picks.follow.map((t) => pickRow(t, 'follow'))}
               {picks.mute.length > 0 && (
                 <>
@@ -557,7 +566,7 @@ export default function InterestPage({
             );
           })}
           {catalog && needle && !anyMatch && (
-            <div className="brief-state">没有匹配「{query.trim()}」的标签</div>
+            <div className="brief-state">没有匹配「{effectiveQuery.trim()}」的标签</div>
           )}
         </div>
         </div>

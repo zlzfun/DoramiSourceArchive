@@ -13,6 +13,7 @@ import {
   deleteArticle,
   updateArticle,
   createArticle,
+  forcePodcastFullAnalysis,
 } from '../api';
 import Sparkline from './charts/Sparkline';
 import { runAction } from '../utils/runAction';
@@ -66,6 +67,7 @@ export default function DataTab({
   const [selectedArticles, setSelectedArticles] = useState(new Set());
   const [modalState, setModalState] = useState({ isOpen: false, data: null, isEditing: false });
   const [detailLoading, setDetailLoading] = useState(false);
+  const [forcingFullAnalysisId, setForcingFullAnalysisId] = useState('');
   const [manualAddModal, setManualAddModal] = useState(false);
   const [showMore, setShowMore] = useState(false);
   // 表格密度:舒适(含摘录行)/紧凑(仅标题,44px 行高)。持久化偏好。
@@ -430,6 +432,52 @@ export default function DataTab({
   const closeDrawer = () => {
     setDetailLoading(false);
     setDrawer({ open: false, article: null });
+  };
+
+  const handleForceFullAnalysis = async (article) => {
+    if (!article?.id || forcingFullAnalysisId) return;
+    setForcingFullAnalysisId(article.id);
+    try {
+      const processing = await forcePodcastFullAnalysis(article.id, '', article.podcast);
+      const immediate = {
+        ...article,
+        podcast: {
+          ...(article.podcast || {}),
+          full_analysis_candidate: true,
+          id: processing.id,
+          attempt_count: processing.attempt_count,
+          processing_status: processing.status,
+          stage: processing.stage,
+          error: processing.error_message || '',
+          retryable: false,
+        },
+      };
+      setDrawer((current) => current.article?.id === article.id
+        ? { ...current, article: immediate }
+        : current);
+      setArticles((current) => current.map((item) => item.id === article.id ? immediate : item));
+      showToast('已启动全文处理', 'success');
+      try {
+        const detail = await fetchArticle(article.id);
+        setDrawer((current) => current.article?.id === article.id
+          ? { ...current, article: { ...current.article, ...detail } }
+          : current);
+        setArticles((current) => current.map((item) => (
+          item.id === article.id ? { ...item, ...detail } : item
+        )));
+      } catch {
+        // 已有 processing 响应足以即时反馈；详情刷新失败留给下一次打开/手动同步。
+      }
+    } catch (error) {
+      showToast(
+        error.code === 'podcast_artifact_not_ready'
+          ? '无法启动全文处理：请先在运维管理中缓存原节目音频后重试'
+          : (error.message || '启动全文处理失败，请稍后重试'),
+        'error',
+      );
+    } finally {
+      setForcingFullAnalysisId('');
+    }
   };
 
   // 抽屉「编辑」→ 复用既有编辑模态（抽屉已载入全文，直接进编辑态）；
@@ -831,6 +879,8 @@ export default function DataTab({
         onClose={closeDrawer}
         onEdit={openEditModal}
         onDelete={handleDeleteSingle}
+        onForceFullAnalysis={handleForceFullAnalysis}
+        forcingFullAnalysis={forcingFullAnalysisId === drawer.article?.id}
         onTemporaryTagSearch={handleTemporaryTagSearch}
       />
 

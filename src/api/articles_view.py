@@ -36,6 +36,7 @@ def _podcast_optional_int(value: Any) -> Optional[int]:
 def _podcast_projection(
     extensions: Dict[str, Any],
     analysis: Any = None,
+    processing: Any = None,
 ) -> Dict[str, Any]:
     """生成列表/详情共用的轻量播客对象，不透出 raw_data。"""
     duration_seconds = _podcast_optional_int(extensions.get("duration_seconds"))
@@ -75,6 +76,37 @@ def _podcast_projection(
     else:
         analysis_basis = str(extensions.get("analysis_basis") or "show_notes")
 
+    transcript_basis = analysis_basis in {
+        "publisher_transcript",
+        "asr_transcript",
+    }
+    processing_status = (
+        str(getattr(processing, "processing_status", "") or "")
+        if processing is not None
+        else str(extensions.get("processing_status") or "")
+    )
+    processing_stage = str(getattr(processing, "stage", "") or "")
+    input_kind = str(getattr(processing, "input_artifact_kind", "") or "")
+    transcript_source = (
+        analysis_basis
+        if transcript_basis
+        else (
+            "publisher_transcript"
+            if input_kind == "publisher_transcript"
+            else "asr_transcript"
+            if input_kind == "normalized_transcript"
+            or (input_kind == "source_audio" and processing_stage == "analyze")
+            else ""
+        )
+    )
+    final_premium = (
+        float(getattr(analysis, "quality_score")) >= 8.0
+        if transcript_basis
+        and analysis is not None
+        and getattr(analysis, "quality_score", None) is not None
+        else None
+    )
+
     return {
         "show_title": str(extensions.get("show_title") or ""),
         "audio_url": str(extensions.get("audio_url") or ""),
@@ -93,7 +125,23 @@ def _podcast_projection(
         "analysis_basis": analysis_basis,
         "is_long_form": duration_seconds is not None and duration_seconds > 1800,
         "transcript_available": any(transcript["url"] for transcript in transcripts),
-        "processing_status": str(extensions.get("processing_status") or ""),
+        "id": str(getattr(processing, "id", "") or ""),
+        "attempt_count": getattr(processing, "attempt_count", 0),
+        "status": processing_status,
+        "processing_status": processing_status,
+        "stage": processing_stage,
+        "error": str(getattr(processing, "error_message", "") or ""),
+        "retryable": processing_status
+        in {"retry_wait", "reconciliation_required", "failed"},
+        "transcript_source": transcript_source,
+        "full_analysis_candidate": bool(
+            analysis is not None
+            and analysis_basis == "podcast_show_notes"
+            and getattr(analysis, "status", "") == "succeeded"
+            and getattr(analysis, "quality_score", None) is not None
+            and float(getattr(analysis, "quality_score")) >= 5.0
+        ),
+        "final_premium": final_premium,
         "condensed_audio_url": str(extensions.get("condensed_audio_url") or ""),
         "condensed_duration_seconds": _podcast_optional_int(
             extensions.get("condensed_duration_seconds")
@@ -218,6 +266,7 @@ def serialize_article_list_item(
     tags: Optional[list[Dict[str, Any]]] = None,
     display_tags: Optional[list[Dict[str, Any]]] = None,
     premium_score_threshold: float = 8.5,
+    processing: Any = None,
 ) -> Dict[str, Any]:
     content = record.content or ""
     # AI 要点摘要(extensions_json.summary_zh)作为轻字段随条目透出:
@@ -288,14 +337,16 @@ def serialize_article_list_item(
         "is_premium_podcast": bool(
             record.content_type == "podcast_episode"
             and analysis is not None
+            and getattr(analysis, "analysis_basis", "")
+            in {"publisher_transcript", "asr_transcript"}
             and getattr(analysis, "quality_score", None) is not None
-            and float(analysis.quality_score) > premium_score_threshold
+            and float(analysis.quality_score) >= 8.0
         ),
     }
     if include_content:
         item["content"] = content
     if record.content_type == "podcast_episode":
-        item["podcast"] = _podcast_projection(ext, analysis)
+        item["podcast"] = _podcast_projection(ext, analysis, processing)
     if include_content or include_extensions:
         item["extensions_json"] = record.extensions_json or "{}"
     return item

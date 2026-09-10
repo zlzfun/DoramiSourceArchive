@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  podcastAnalysisBasis,
   podcastAssessmentMeta,
   qualityScoreText,
   SCORE_DISCLAIMER,
@@ -25,9 +26,7 @@ import {
 export default function AiReadingCard({ article, summary, summarizing, canGenerate, onGenerate, podcast = false }) {
   // 新分析记录是依据的事实源；旧数据仍由 podcast projection 回退 show_notes。
   const assessment = podcast ? podcastAssessmentMeta(article) : null;
-  const analysisBasis = podcast
-    ? (article?.analysis_basis || article?.podcast?.analysis_basis || 'show_notes')
-    : '';
+  const analysisBasis = podcast ? podcastAnalysisBasis(article) : '';
   const transcriptBacked = analysisBasis === 'publisher_transcript' || analysisBasis === 'asr_transcript';
   const podcastSummaryTitle = transcriptBacked ? '全文导读' : '简介导读';
   const podcastReasonTitle = assessment?.label || (transcriptBacked ? '全文深度分析' : '简介初评');

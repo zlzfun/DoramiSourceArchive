@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Podcast } from 'lucide-react';
 import { mediaProxyUrl } from '../api';
 import { formatPodcastDuration, podcastOf, podcastProcessingMeta } from '../utils/podcast';
+import { podcastFullProcessingMeta } from '../utils/analysis';
 import {
   readPodcastPosition,
   resumablePodcastPosition,
@@ -49,7 +50,8 @@ export default function PodcastAudioPanel({ article, variant, onVariantChange })
 }
 
 function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVariantChange }) {
-  const status = podcastProcessingMeta(
+  const fullProcessing = podcastFullProcessingMeta(article);
+  const status = fullProcessing || podcastProcessingMeta(
     podcast.processing_status,
     Boolean(podcast.condensed_audio_url),
   );
@@ -125,6 +127,11 @@ function PodcastAudioPlayer({ article, podcast, variant: controlledVariant, onVa
           <span className={`podcast-status is-${status.tone}`}>{status.label}</span>
         </div>
       </div>
+      {fullProcessing?.detail && (
+        <p className={`podcast-full-state is-${fullProcessing.tone}`} role="status">
+          {fullProcessing.detail}
+        </p>
+      )}
       {hasDigest && (
         <div className="mini-seg podcast-mode-switch" role="group" aria-label="播客播放模式">
           <button
