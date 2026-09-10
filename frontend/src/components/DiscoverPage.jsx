@@ -315,7 +315,7 @@ export default function DiscoverPage({
                     </button>
                   ))}
                 </span>
-                {/* 三段共用头部搜索框(v3.52.2 目检:兴趣段此前把搜索放在 chip 行之下,与另两段不同形);
+                {/* 三段共用头部搜索框(v3.52.3 目检:兴趣段此前把搜索放在 chip 行之下,与另两段不同形);
                     兴趣段的检索词经 externalQuery 注入 InterestPage,由它按标签名/别名过滤 */}
                 <label className="reader-disc-search">
                   <Search className="h-[13px] w-[13px]" aria-hidden="true" />

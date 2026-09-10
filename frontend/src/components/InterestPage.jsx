@@ -115,7 +115,7 @@ export default function InterestPage({
   // embedded(issue #27 三稿):作为发现页第三段「兴趣」的正文——不画报头与左槽台账,
   // 「我的兴趣」(口径:关注/兴趣统一叫兴趣,2026-09-10)改成目录之上的一行 chip;首登引导 = 顶部一条横幅(不锁页)
   embedded = false,
-  // 发现页头部搜索框注入的检索词(v3.52.2):非 null 时嵌入态不画自己的搜索框,与源/合集两段同形
+  // 发现页头部搜索框注入的检索词(v3.52.3):非 null 时嵌入态不画自己的搜索框,与源/合集两段同形
   externalQuery = null,
   onSaved,
   showToast,

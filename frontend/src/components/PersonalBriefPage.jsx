@@ -69,7 +69,7 @@ function BriefCard({ item, lead, wide = false, source, onOpen, flash = false }) 
   const tags = Array.isArray(snapshot.display_tags) ? snapshot.display_tags : (snapshot.tags || []);
   const interest = interestLabelOf(item, snapshot);
   const chips = [];
-  // 兴趣命中 chip(issue #23);v3.50.0 合入时被误删(替换成了下一行而非追加),v3.52.2 恢复并改口径「兴趣 · X」(关注/兴趣统一叫兴趣)
+  // 兴趣命中 chip(issue #23);v3.50.0 合入时被误删(替换成了下一行而非追加),v3.52.3 恢复并改口径「兴趣 · X」(关注/兴趣统一叫兴趣)
   if (interest) chips.push({ key: 'interest', text: `兴趣 · ${interest}`, cls: 'is-interest', title: '命中你的兴趣' });
   // 重大事件通道(v3.50):跨订阅范围的头条位,chip 与「兴趣 ·」同族,title 里给准入理由
   if (item.selection_lane === 'breaking') chips.push({ key: 'breaking', text: '重大事件', cls: 'is-breaking', title: item.selection_reason || snapshot.selection_reason || '今日重大事件' });
