@@ -12217,7 +12217,51 @@ input[type="radio"] {
 .podcast-guide-button .is-open { transform: rotate(180deg); }
 .podcast-guide-body { padding: 18px 4px 4px; }
 .podcast-premium-title { display: block; max-width: 560px; }
-.podcast-premium-table th:nth-child(1) { width: 46%; }
+.podcast-premium-settings {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px 18px;
+  margin-bottom: 12px;
+}
+.podcast-premium-threshold-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.podcast-premium-threshold-row .form-input { width: 92px; text-align: center; }
+.podcast-premium-readonly { display: grid; justify-items: end; gap: 3px; }
+.podcast-premium-readonly strong { color: var(--dorami-ink); font-size: 18px; }
+.podcast-premium-filterbar { display: flex; margin: 12px 0 8px; }
+.podcast-premium-filterbar .mini-seg { flex-wrap: wrap; }
+.podcast-premium-table { min-width: 1180px; }
+.podcast-premium-table th:nth-child(1) { width: 19%; }
+.podcast-premium-table th:nth-child(2) { width: 14%; }
+.podcast-premium-table th:nth-child(3) { width: 10%; }
+.podcast-premium-table th:nth-child(4) { width: 10%; }
+.podcast-premium-table th:nth-child(5) { width: 20%; }
+.podcast-premium-table th:nth-child(6) { width: 18%; }
+.podcast-premium-table th:nth-child(7) { width: 9%; }
+.podcast-premium-scoreline { display: block; color: var(--dorami-ink-2); font-weight: 650; }
+.podcast-premium-reason { color: var(--dorami-muted); font-size: 12px; line-height: 1.5; }
+.podcast-premium-action {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border-radius: var(--r-control);
+  padding: 0 8px;
+  color: var(--dorami-muted);
+  background: var(--dorami-raised);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.podcast-premium-action:hover { color: var(--dorami-ink); background: var(--dorami-soft); }
+.podcast-premium-action:disabled { opacity: 0.45; cursor: not-allowed; }
+.podcast-premium-action svg { width: 13px; height: 13px; }
+@media (max-width: 720px) {
+  .podcast-premium-settings { align-items: stretch; flex-direction: column; }
+  .podcast-premium-readonly { justify-items: start; }
+}
 
 /* ══════════════════════════════════════════════════════════════════════
    兴趣即透镜(issue #27 第一波,四稿 docs/design/dorami-interest-lens-quiet.html → 五稿 dorami-interest-axis-quiet.html)

@@ -32,6 +32,7 @@ from services.podcast_artifacts import (
     withdraw_digest_audio_for_script_change,
 )
 from services.podcast_stage_policy import PodcastStagePolicy
+from services import podcast_premium
 from services.article_analysis import has_authoritative_analysis
 
 
@@ -246,6 +247,7 @@ async def run_premium_guide(
     config: PodcastConfig,
     text_provider: PremiumGuideTextProvider,
     tts_provider: PremiumGuideTtsProvider,
+    score_threshold: float | None = None,
 ) -> dict:
     """Publish a guide using, but never replacing, the authoritative assessment."""
 
@@ -268,8 +270,10 @@ async def run_premium_guide(
             )
             analysis = session.get(ArticleAnalysisRecord, episode_id)
             if not has_authoritative_analysis(analysis):
-                raise PremiumGuideError("播客简介初评尚未完成")
-            score = float(analysis.quality_score)
+                raise PremiumGuideError("播客全文终评尚未完成")
+            score = podcast_premium.final_score(analysis)
+            if score is None:
+                raise PremiumGuideError("播客全文终评尚未完成")
             title = episode.title
             duration = float(_extensions(episode).get("duration_seconds") or 0)
         if duration <= config.premium_min_duration_seconds:
@@ -282,7 +286,12 @@ async def run_premium_guide(
             }
         if config.premium_guide_mode != "solo_preview":
             raise PremiumGuideError("当前原型仅开放单人速览模式")
-        if score <= config.premium_score_threshold:
+        effective_threshold = (
+            config.premium_score_threshold
+            if score_threshold is None
+            else float(score_threshold)
+        )
+        if score < effective_threshold:
             _set_episode_status(engine, episode_id, "not_required")
             return {"episode_id": episode_id, "is_premium": False, "score": score}
         draft = await text_provider.create_blog(
@@ -382,10 +391,16 @@ def list_premium_guide_tasks(
     if page_size < 1 or page_size > 100:
         raise ValueError("page_size must be between 1 and 100")
     with Session(engine) as session:
+        effective_final_score = func.coalesce(
+            ArticleAnalysisRecord.podcast_final_score,
+            ArticleAnalysisRecord.quality_score,
+        )
         premium_filter = (
             ArticleRecord.content_type == "podcast_episode",
-            ArticleAnalysisRecord.quality_score.is_not(None),
-            ArticleAnalysisRecord.quality_score > threshold,
+            ArticleAnalysisRecord.analysis_basis.in_(
+                ("publisher_transcript", "asr_transcript")
+            ),
+            effective_final_score >= threshold,
             or_(
                 ArticleAnalysisRecord.status == "succeeded",
                 ArticleAnalysisRecord.analyzed_at.is_not(None),
@@ -413,7 +428,7 @@ def list_premium_guide_tasks(
         ).all()
         result = []
         for episode, analysis in rows:
-            score = analysis.quality_score if analysis is not None else None
+            score = podcast_premium.final_score(analysis)
             extensions = _extensions(episode)
             guide = extensions.get("premium_guide")
             if not isinstance(guide, dict):
@@ -461,11 +476,18 @@ def list_premium_guide_tasks(
 
 
 def pending_premium_guide_candidates(
-    engine: Engine, *, minimum_duration_seconds: int, score_threshold: float = 8.5
+    engine: Engine,
+    *,
+    minimum_duration_seconds: int,
+    score_threshold: float = podcast_premium.DEFAULT_PREMIUM_SCORE_THRESHOLD,
 ) -> list[str]:
     """Return only episodes whose authoritative score requires guide generation."""
 
     with Session(engine) as session:
+        effective_final_score = func.coalesce(
+            ArticleAnalysisRecord.podcast_final_score,
+            ArticleAnalysisRecord.quality_score,
+        )
         rows = session.exec(
             select(ArticleRecord, ArticleAnalysisRecord)
             .join(
@@ -486,7 +508,7 @@ def pending_premium_guide_candidates(
                 ArticleAnalysisRecord.analysis_basis.in_(
                     ("asr_transcript", "publisher_transcript")
                 ),
-                ArticleAnalysisRecord.quality_score > score_threshold,
+                effective_final_score >= score_threshold,
             )
         ).all()
         return [
@@ -496,7 +518,7 @@ def pending_premium_guide_candidates(
             and float(_extensions(row).get("duration_seconds") or 0)
             > minimum_duration_seconds
             and str(_extensions(row).get("processing_status") or "")
-            not in {"summarizing", "synthesizing", "ready", "not_required", "failed"}
+            not in {"summarizing", "synthesizing", "ready", "failed"}
         ]
 
 

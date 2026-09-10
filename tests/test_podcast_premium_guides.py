@@ -116,6 +116,8 @@ def test_premium_guide_tasks_only_list_premium_episodes_and_paginate(tmp_path):
                 article_id=f"episode-{index:03}",
                 status="succeeded",
                 quality_score=score,
+                podcast_final_score=score,
+                analysis_basis="publisher_transcript",
                 created_at=STAMP,
                 updated_at=STAMP,
             ))
@@ -128,13 +130,13 @@ def test_premium_guide_tasks_only_list_premium_episodes_and_paginate(tmp_path):
         sink.engine, threshold=8.5, page=3, page_size=100
     )
 
-    assert first["total"] == 205
+    assert first["total"] == 206
     assert first["total_pages"] == 3
     assert len(first["items"]) == 100
-    assert all(item["quality_score"] > 8.5 for item in first["items"])
-    assert len(last["items"]) == 5
+    assert all(item["quality_score"] >= 8.5 for item in first["items"])
+    assert len(last["items"]) == 6
     assert {item["episode_id"] for item in last["items"]} == {
-        f"episode-{index:03}" for index in range(5)
+        f"episode-{index:03}" for index in range(6)
     }
     with pytest.raises(ValueError, match="page_size"):
         list_premium_guide_tasks(
@@ -303,8 +305,8 @@ def test_premium_guide_runs_from_asr_to_published_blog_and_audio(tmp_path, kind)
     } == tasks["items"][0]
 
 
-@pytest.mark.parametrize("score", [7.5, 8.5])
-def test_premium_guide_score_not_over_threshold_never_calls_provider(
+@pytest.mark.parametrize("score", [7.5, 8.4])
+def test_premium_guide_score_below_threshold_never_calls_provider(
     tmp_path, score
 ):
     sink = DatabaseStorage(f"sqlite:///{tmp_path / 'premium-low.db'}")

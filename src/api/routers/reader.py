@@ -54,6 +54,7 @@ from models.db import (
     SourceConfigRecord,
 )
 from services import accounts as accounts_service
+from services import podcast_premium as podcast_premium_service
 from services import article_share as article_share_service
 from services.article_display_tags import article_ids_for_flexible_label, load_display_tags
 from services import daily_brief as daily_brief_service
@@ -898,7 +899,7 @@ def list_favorites(
             analysis=analyses.get(record.id),
             tags=tags.get(record.id, []),
             display_tags=display_tags.get(record.id, []),
-            premium_score_threshold=_app().settings.podcast.premium_score_threshold,
+            premium_score_threshold=podcast_premium_service.get_threshold(session),
             processing=processings.get(record.id),
             published_podcast_text_kinds=text_publications.get(record.id, set()),
         )

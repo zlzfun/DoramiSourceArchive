@@ -32,6 +32,7 @@ from models.db import (
     SourceConfigRecord,
 )
 from services import article_analysis
+from services import podcast_premium
 from services.podcast_processing import (
     PodcastProcessingClaim,
     begin_stage_attempt,
@@ -50,7 +51,8 @@ from services.podcast_publisher_transcripts import (
 )
 
 
-INITIAL_PROCESSING_THRESHOLD = 5.0
+INITIAL_PROCESSING_THRESHOLD = podcast_premium.INITIAL_PROCESSING_THRESHOLD
+FINAL_PREMIUM_THRESHOLD = podcast_premium.DEFAULT_PREMIUM_SCORE_THRESHOLD
 FULL_ANALYSIS_PROMPT_VERSION = "podcast-full-map-reduce-v2"
 DEFAULT_CHUNK_CHARS = 12_000
 REDUCE_EVIDENCE_MAX_CHARS = 16_000
@@ -512,8 +514,16 @@ def _persist_result(
             updated_at=stamp,
         )
     result = validated.result
+    effective_premium_threshold = podcast_premium.get_threshold(session)
+    if (
+        record.analysis_basis == "podcast_show_notes"
+        and record.quality_score is not None
+        and record.podcast_initial_score is None
+    ):
+        record.podcast_initial_score = record.quality_score
     record.status = "succeeded"
     record.quality_score = result.quality_score
+    record.podcast_final_score = result.quality_score
     record.dimension_scores_json = json.dumps(
         {
             "schema_version": "podcast-factors-v1",
@@ -573,9 +583,11 @@ def _persist_result(
                     separators=(",", ":"),
                 ).encode("utf-8")
             ).hexdigest(),
-            "final_premium_threshold": premium_score_threshold,
+            # Diagnostic snapshot only. Runtime qualification always re-reads
+            # the current persisted threshold.
+            "final_premium_threshold": effective_premium_threshold,
             "final_premium": float(result.quality_score)
-            > premium_score_threshold,
+            >= effective_premium_threshold,
             "podcast_factors": validated.podcast_factors,
         },
         ensure_ascii=False,
@@ -1061,6 +1073,7 @@ def register_full_analysis_worker(
 
 
 __all__ = [
+    "FINAL_PREMIUM_THRESHOLD",
     "FULL_ANALYSIS_PROMPT_VERSION",
     "FullAnalysisWorkerConfig",
     "FullAnalysisWorkerStep",

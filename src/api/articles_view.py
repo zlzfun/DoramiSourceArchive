@@ -15,6 +15,7 @@ from sqlalchemy import literal_column
 from api.textutils import _date_end_value, _json_loads, _split_csv
 from models.content import BaseContent
 from models.db import ArticleRecord
+from services import podcast_premium
 from storage.fts import fts_search_ids
 
 
@@ -40,7 +41,7 @@ def _podcast_projection(
     processing: Any = None,
     published_text_kinds: Collection[str] = (),
     *,
-    premium_score_threshold: float = 8.5,
+    premium_score_threshold: float = podcast_premium.DEFAULT_PREMIUM_SCORE_THRESHOLD,
 ) -> Dict[str, Any]:
     """生成列表/详情共用的轻量播客对象，不透出 raw_data。"""
     raw_premium_guide = extensions.get("premium_guide")
@@ -110,12 +111,10 @@ def _podcast_projection(
             else ""
         )
     )
+    score_initial = podcast_premium.initial_score(analysis)
+    score_final = podcast_premium.final_score(analysis)
     final_premium = (
-        float(getattr(analysis, "quality_score")) > premium_score_threshold
-        if transcript_basis
-        and analysis is not None
-        and getattr(analysis, "quality_score", None) is not None
-        else None
+        score_final >= premium_score_threshold if score_final is not None else None
     )
 
     return {
@@ -154,8 +153,8 @@ def _podcast_projection(
             analysis is not None
             and analysis_basis == "podcast_show_notes"
             and getattr(analysis, "status", "") == "succeeded"
-            and getattr(analysis, "quality_score", None) is not None
-            and float(getattr(analysis, "quality_score")) >= 5.0
+            and score_initial is not None
+            and score_initial >= podcast_premium.INITIAL_PROCESSING_THRESHOLD
         ),
         "final_premium": final_premium,
         "premium_guide": {
@@ -287,7 +286,7 @@ def serialize_article_list_item(
     analysis: Any = None,
     tags: Optional[list[Dict[str, Any]]] = None,
     display_tags: Optional[list[Dict[str, Any]]] = None,
-    premium_score_threshold: float = 8.5,
+    premium_score_threshold: float = podcast_premium.DEFAULT_PREMIUM_SCORE_THRESHOLD,
     processing: Any = None,
     published_podcast_text_kinds: Collection[str] = (),
 ) -> Dict[str, Any]:
@@ -359,11 +358,7 @@ def serialize_article_list_item(
         "display_tags": projected_tags,
         "is_premium_podcast": bool(
             record.content_type == "podcast_episode"
-            and analysis is not None
-            and getattr(analysis, "analysis_basis", "")
-            in {"publisher_transcript", "asr_transcript"}
-            and getattr(analysis, "quality_score", None) is not None
-            and float(analysis.quality_score) > premium_score_threshold
+            and podcast_premium.is_premium(analysis, premium_score_threshold)
         ),
     }
     if include_content:

@@ -30,6 +30,7 @@ from models.db import (
     PodcastTextArtifactRecord,
     PodcastTextPublicationRecord,
 )
+from services import podcast_premium
 from services.podcast_processing import (
     ACTIVE_ATTEMPT_STATES,
     PodcastProcessingConflict,
@@ -819,7 +820,8 @@ def request_processing(
                     and analysis.status == "succeeded"
                     and analysis.analysis_basis == "podcast_show_notes"
                     and analysis.quality_score is not None
-                    and float(analysis.quality_score) >= 5.0
+                    and float(analysis.quality_score)
+                    >= podcast_premium.INITIAL_PROCESSING_THRESHOLD
                 )
                 transcript_refresh = bool(
                     analysis is not None

@@ -240,6 +240,16 @@ class ArticleAnalysisRecord(SQLModel, table=True):
             name="ck_article_analyses_quality_score",
         ),
         CheckConstraint(
+            "podcast_initial_score IS NULL OR "
+            "(podcast_initial_score >= 1.0 AND podcast_initial_score <= 10.0)",
+            name="ck_article_analyses_podcast_initial_score",
+        ),
+        CheckConstraint(
+            "podcast_final_score IS NULL OR "
+            "(podcast_final_score >= 1.0 AND podcast_final_score <= 10.0)",
+            name="ck_article_analyses_podcast_final_score",
+        ),
+        CheckConstraint(
             "content_genre IS NULL OR content_genre IN ("
             "'model_release','product_update','open_source_update','research_paper',"
             "'tutorial','opinion','industry_news','conference','social_discussion',"
@@ -257,6 +267,18 @@ class ArticleAnalysisRecord(SQLModel, table=True):
     status: str = Field(default="pending", description="基础评分与摘要状态")
     tagging_status: str = Field(default="pending", description="正式标签关联的独立状态")
     quality_score: Optional[float] = Field(default=None, ge=1.0, le=10.0)
+    podcast_initial_score: Optional[float] = Field(
+        default=None,
+        ge=1.0,
+        le=10.0,
+        description="Podcast 简介初评分；全文终评写入后仍保留",
+    )
+    podcast_final_score: Optional[float] = Field(
+        default=None,
+        ge=1.0,
+        le=10.0,
+        description="Podcast 全文终评分；优质资格的唯一分数来源",
+    )
     dimension_scores_json: str = Field(default="{}", description="内部版本化评分维度，不对外展示")
     score_reason: str = Field(default="", description="一句话评分理由（≤40 字，分数注脚，不复述内容）")
     summary: str = Field(default="", description="文章唯一摘要：速读卡 / 个人早报 / 列表 summary_zh 投影共用")

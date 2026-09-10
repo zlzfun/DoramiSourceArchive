@@ -56,6 +56,7 @@ from services import source_visibility as source_visibility_service
 from services import user_sources as user_sources_service
 from services import podcast_text_reader as podcast_text_reader_service
 from services import podcast_premium_guides as podcast_premium_guide_service
+from services import podcast_premium as podcast_premium_service
 from services import aliyun_isi_config as aliyun_isi_config_service
 from services import credentials as credentials_service
 
@@ -107,6 +108,10 @@ class PodcastEpisodeTextsResponse(BaseModel):
     episode_id: str
     query: str | None = None
     items: list[PodcastTextItemResponse]
+
+
+class PodcastPremiumThresholdRequest(BaseModel):
+    threshold: float
 
 
 class PodcastDomainErrorResponse(BaseModel):
@@ -780,6 +785,59 @@ def admin_audio(request: Request, artifact_id: str):
 
 
 @router.get(
+    "/api/admin/podcast-premium-tasks",
+    dependencies=[Depends(deps.require_admin)],
+)
+def list_podcast_premium_tasks(
+    status: Literal[
+        "all",
+        "pending_full",
+        "processing",
+        "premium",
+        "below_threshold",
+        "failed",
+    ] = "all",
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=100),
+):
+    app = _app()
+    try:
+        return podcast_premium_service.dashboard(
+            app.db_sink.engine,
+            status_filter=status,
+            page=page,
+            page_size=page_size,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.put(
+    "/api/admin/podcast-premium-threshold",
+    dependencies=[Depends(deps.require_admin)],
+)
+def update_podcast_premium_threshold(body: PodcastPremiumThresholdRequest):
+    app = _app()
+    try:
+        with Session(app.db_sink.engine) as session:
+            threshold = podcast_premium_service.set_threshold(
+                session, body.threshold
+            )
+        snapshot = podcast_premium_service.dashboard(
+            app.db_sink.engine, page=1, page_size=1
+        )
+        return {
+            "threshold": threshold,
+            "initial_processing_threshold": (
+                podcast_premium_service.INITIAL_PROCESSING_THRESHOLD
+            ),
+            "stats": snapshot["stats"],
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get(
     "/api/admin/podcast-premium-guides",
     dependencies=[Depends(deps.require_admin)],
 )
@@ -788,15 +846,17 @@ def list_podcast_premium_guides(
     page_size: int = Query(100, ge=1, le=100),
 ):
     app = _app()
+    with Session(app.db_sink.engine) as session:
+        threshold = podcast_premium_service.get_threshold(session)
     result = podcast_premium_guide_service.list_premium_guide_tasks(
         app.db_sink.engine,
-        threshold=app.settings.podcast.premium_score_threshold,
+        threshold=threshold,
         mode=app.settings.podcast.premium_guide_mode,
         page=page,
         page_size=page_size,
     )
     return {
-        "threshold": app.settings.podcast.premium_score_threshold,
+        "threshold": threshold,
         **result,
     }
 
