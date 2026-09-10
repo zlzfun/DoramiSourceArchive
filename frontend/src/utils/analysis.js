@@ -52,7 +52,8 @@ export function qualityScoreText(value) {
 }
 
 // 分数分档着色(issue #54,样页 docs/design/dorami-score-tiers-quiet.html):
-// 灰线 = 公共日报入选线 6.0(读者可对照「为什么这条没进日报」);灰线以下与旁边元信息同灰、不画身份色,
+// 灰线 6.0 取自评分尺子自身的档界(提示词:1.0–5.9 泛泛/宣传/重复,6.0 起「有用或深入」)——固定视觉刻度,
+// 随尺子版本走、不随运营旋钮 daily_brief_min_score 联动(台账 7+/8+/9+ 同口径);灰线以下与旁边元信息同灰、不画身份色,
 // 其上按整数分一档(6.x/7.x/8.x/9+ → 1..4),越高渐变越鲜明;9+ 是完整渐变。档位只改颜色,
 // 字号/字重/字体/位置一律不动;无分数返回空串(缺分是「缺席」,不是 0 分——与 qualityScoreText 同口径)。
 export const SCORE_GRAY_LINE = 6;

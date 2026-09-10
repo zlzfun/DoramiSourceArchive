@@ -16,7 +16,8 @@
    灰线以下不画渐变、直接取 faint。渐变仍是 AI 身份(v3.33「见渐变即 AI」),只是「有渐变 = 值得看」本身成了信息。
 
    · 档位而非连续插值(默认):一列里能读出档;连续映射在页里也可切来对比。
-   · 灰线默认 6.0(= 公共日报入选线 daily_brief_min_score,读者可对照「为什么这条没进日报」),5.0 备选。
+   · 灰线默认 6.0(评分尺子自身的档界:提示词 1.0–5.9 泛泛/宣传/重复、6.0 起「有用或深入」;日报默认入选线恰好同值,
+     但不随 KV daily_brief_min_score 联动——固定视觉刻度,codex 检视 P2 拍板),5.0 备选。
    · 数字字号/字重/字体一律不动:只改颜色。低分仍显示数字,不隐藏(v3.46:缺分是缺席,低分是事实)。
    · 「分析中」占位样式不变。管理面台账不上渐变(无 AI 身份纪律),可复用同一档位助手改 ink 混合。
    · 亮暗自动翻转:混合的是各主题自己的 faint 与端色。
@@ -157,7 +158,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   <div class="ctl">
     <div class="ctl-g">灰线
       <div class="seg" id="ctl-line">
-        <button data-v="6" class="is-on">6.0(日报入选线)</button>
+        <button data-v="6" class="is-on">6.0(评分尺子档界)</button>
         <button data-v="5">5.0(早报硬底)</button>
         <button data-v="0">不设(全部渐变)</button>
       </div>

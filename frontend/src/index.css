@@ -10197,7 +10197,7 @@ input[type="radio"] {
     color: transparent;
   }
   /* 分数分档着色(issue #54,样页 dorami-score-tiers-quiet.html):渐变两端色各自向 faint 混合,
-     灰线(6.0 = 日报入选线)之上按整数分一档、越低混得越多(--score-mix 见文件尾未分层区);
+     灰线(6.0 = 评分尺子档界,固定刻度不随日报 KV 联动)之上按整数分一档、越低混得越多(--score-mix 见文件尾未分层区);
      灰线以下不画渐变,与旁边元信息同灰。档位由 utils/analysis.scoreTierClass 判定,
      条目列 / 早报卡 / 速读卡数字三处读者面触点同一套;≥9 是完整渐变(不挂档位类)。
      color-mix 必须分别作用于两个端色——对渐变整体 filter 会连 wash 底一起变。 */
